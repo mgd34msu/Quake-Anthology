@@ -1,6 +1,7 @@
 #include "internal.h"
 #include <limits.h>
 #include <fenv.h>
+#include <stdatomic.h>
 #include <SDL_thread.h>
 #include <SDL_mutex.h>
 #include <SDL_cpuinfo.h>
@@ -61,13 +62,20 @@ typedef struct cpu_raster_worker {
   cpu_raster_job job;
   bool stop;
 } cpu_raster_worker;
+typedef struct cpu_raster_slice {
+  int64_t first, last;
+  size_t completed_commands;
+  int exceptions;
+} cpu_raster_slice;
 struct cpu_raster_pool {
   cpu_triangle *triangles;
   size_t triangle_count, triangle_capacity;
   cpu_raster_command *commands;
   size_t command_count, command_capacity;
-  uint64_t *row_work;
-  size_t row_capacity;
+  cpu_raster_slice *slices;
+  size_t slice_count, slice_capacity;
+  atomic_size_t next_slice;
+  cpu_raster_job batch;
   unsigned count;
   cpu_raster_worker workers[];
 };
@@ -92,25 +100,51 @@ static cpu_raster_job raster_command_job(const cpu_raster_job *batch,
   job.command_count = 0;
   return job;
 }
+static bool raster_commands(cpu_raster_job *batch, bool restore_environment) {
+  for (; batch->completed_commands < batch->command_count;
+       ++batch->completed_commands) {
+    size_t i = batch->completed_commands;
+    if (!raster_command_overlaps(batch, i)) continue;
+    if (restore_environment &&
+        fesetenv(&batch->commands[i].environment) != 0) return false;
+    cpu_raster_job job = raster_command_job(batch, i);
+    raster_prepared_draw(&job);
+    if (restore_environment) batch->exceptions |= fetestexcept(FE_ALL_EXCEPT);
+  }
+  return true;
+}
+static cpu_raster_job raster_slice_job(const struct cpu_raster_pool *pool,
+                                       size_t index) {
+  const cpu_raster_slice *slice = &pool->slices[index];
+  cpu_raster_job job = pool->batch;
+  job.bounds.y0 = slice->first;
+  job.bounds.y1 = slice->last;
+  job.completed_commands = slice->completed_commands;
+  job.exceptions = slice->exceptions;
+  return job;
+}
+static void raster_slices(struct cpu_raster_pool *pool,
+                          bool restore_environment) {
+  for (;;) {
+    size_t index = atomic_fetch_add_explicit(&pool->next_slice, 1,
+                                             memory_order_relaxed);
+    if (index >= pool->slice_count) return;
+    cpu_raster_job job = raster_slice_job(pool, index);
+    bool completed = raster_commands(&job, restore_environment);
+    pool->slices[index].completed_commands = job.completed_commands;
+    pool->slices[index].exceptions = job.exceptions;
+    if (!completed) return;
+  }
+}
 static int SDLCALL raster_worker(void *context) {
   cpu_raster_worker *worker = context;
   for (;;) {
     SDL_SemWait(worker->start);
     if (worker->stop) return 0;
     if (worker->job.command_count) {
-      worker->job.exceptions = 0;
-      worker->job.completed_commands = 0;
-      for (size_t i = 0; i < worker->job.command_count; ++i) {
-        if (raster_command_overlaps(&worker->job, i)) {
-          if (fesetenv(&worker->job.commands[i].environment) != 0) break;
-          cpu_raster_job job = raster_command_job(&worker->job, i);
-          raster_prepared_draw(&job);
-          worker->job.exceptions |= fetestexcept(FE_ALL_EXCEPT);
-        }
-        ++worker->job.completed_commands;
-      }
-      worker->job.completed =
-          worker->job.completed_commands == worker->job.command_count;
+      struct cpu_raster_pool *pool = worker->job.renderer->raster_pool;
+      if (pool->slice_count) raster_slices(pool, true);
+      else worker->job.completed = raster_commands(&worker->job, true);
     } else {
       worker->job.completed = fesetenv(&worker->job.environment) == 0;
       if (worker->job.completed) {
@@ -138,7 +172,7 @@ void cpu_raster_pool_destroy(qa_cpu_renderer *renderer) {
   }
   free(pool->triangles);
   free(pool->commands);
-  free(pool->row_work);
+  free(pool->slices);
   free(pool);
   renderer->raster_pool = NULL;
 }
@@ -153,6 +187,7 @@ void cpu_raster_pool_create(qa_cpu_renderer *renderer) {
   if (!pool) return;
   renderer->raster_pool = pool;
   pool->count = count;
+  atomic_init(&pool->next_slice, 0);
   for (unsigned i = 0; i < pool->count; ++i) {
     cpu_raster_worker *worker = &pool->workers[i];
     worker->start = SDL_CreateSemaphore(0);
@@ -1116,36 +1151,32 @@ static void raster_draw(cpu_raster_job *job) {
     memset(&worker->job, 0, sizeof(worker->job));
   }
 }
-static bool raster_row_work(struct cpu_raster_pool *pool, int64_t first,
-                            int64_t rows, uint64_t *total) {
-  if ((uint64_t)rows >= SIZE_MAX / sizeof(*pool->row_work)) return false;
-  size_t count = (size_t)rows + 1;
-  if (pool->row_capacity < count) {
-    uint64_t *work = realloc(pool->row_work, count * sizeof(*work));
-    if (!work) return false;
-    pool->row_work = work;
-    pool->row_capacity = count;
+static bool raster_slice_prepare(struct cpu_raster_pool *pool,
+                                  const cpu_raster_job *batch, unsigned bands) {
+  uint64_t rows = (uint64_t)(batch->bounds.y1 - batch->bounds.y0 + 1);
+  uint64_t desired = (uint64_t)bands * 4;
+  uint64_t height = (rows + desired - 1) / desired;
+  uint64_t count = (rows + height - 1) / height;
+  if (count > SIZE_MAX / sizeof(*pool->slices) ||
+      count > SIZE_MAX - pool->count - 1) return false;
+  if (pool->slice_capacity < (size_t)count) {
+    cpu_raster_slice *slices = realloc(pool->slices,
+        (size_t)count * sizeof(*slices));
+    if (!slices) return false;
+    pool->slices = slices;
+    pool->slice_capacity = (size_t)count;
   }
-  memset(pool->row_work, 0, count * sizeof(*pool->row_work));
-  *total = 0;
-  for (size_t i = 0; i < pool->triangle_count; ++i) {
-    const cpu_scissor *bounds = &pool->triangles[i].bounds;
-    uint64_t width = (uint64_t)(bounds->x1 - bounds->x0 + 1);
-    uint64_t height = (uint64_t)(bounds->y1 - bounds->y0 + 1);
-    if (width > (UINT64_MAX - *total) / height) return false;
-    *total += width * height;
-    pool->row_work[(size_t)(bounds->y0 - first)] += width;
-    pool->row_work[(size_t)(bounds->y1 - first + 1)] -= width;
+  for (size_t i = 0; i < (size_t)count; ++i) {
+    uint64_t end = height * (i + 1);
+    if (end > rows) end = rows;
+    pool->slices[i] = (cpu_raster_slice){
+        .first = batch->bounds.y0 + (int64_t)(height * i),
+        .last = batch->bounds.y0 + (int64_t)end - 1};
   }
-  /* Unsigned difference events wrap at their end points; checked total work
-   * bounds the actual row widths and cumulative sums reconstructed here. */
-  uint64_t width = 0, sum = 0;
-  for (size_t i = 0; i < (size_t)rows; ++i) {
-    width += pool->row_work[i];
-    sum += width;
-    pool->row_work[i] = sum;
-  }
-  return *total != 0;
+  pool->batch = *batch;
+  pool->slice_count = (size_t)count;
+  atomic_store_explicit(&pool->next_slice, 0, memory_order_relaxed);
+  return true;
 }
 void cpu_raster_flush(qa_cpu_renderer *renderer) {
   struct cpu_raster_pool *pool = renderer->raster_pool;
@@ -1169,45 +1200,41 @@ void cpu_raster_flush(qa_cpu_renderer *renderer) {
   batch.bounds.y1 = last;
   int64_t rows = last - first + 1;
   unsigned bands = workers + 1;
-  uint64_t total = 0;
-  bool balanced = workers && raster_row_work(pool, first, rows, &total);
-  int64_t begin = first;
+  pool->slice_count = 0;
+  bool sliced = workers && raster_slice_prepare(pool, &batch, bands);
   for (unsigned i = 0; i < workers; ++i) {
     cpu_raster_worker *worker = &pool->workers[i];
     worker->job = batch;
-    int64_t end = first + rows * (i + 1) / bands;
-    if (balanced) {
-      uint64_t target = (total / bands) * (i + 1) +
-          (total % bands) * (i + UINT64_C(1)) / bands;
-      end = begin + 1;
-      int64_t maximum = last - (int64_t)(workers - i) + 1;
-      while (end < maximum &&
-             pool->row_work[(size_t)(end - first - 1)] < target) ++end;
+    if (!sliced) {
+      worker->job.bounds.y0 = first + rows * i / bands;
+      worker->job.bounds.y1 = first + rows * (i + 1) / bands - 1;
     }
-    worker->job.bounds.y0 = begin;
-    worker->job.bounds.y1 = end - 1;
-    begin = end;
     SDL_SemPost(worker->start);
   }
   cpu_raster_job main = batch;
-  main.bounds.y0 = begin;
-  for (size_t i = 0; i < main.command_count; ++i) {
-    if (!raster_command_overlaps(&main, i)) continue;
-    cpu_raster_job job = raster_command_job(&main, i);
-    raster_prepared_draw(&job);
+  if (sliced) raster_slices(pool, false);
+  else {
+    main.bounds.y0 = first + rows * workers / bands;
+    raster_commands(&main, false);
   }
   for (unsigned i = 0; i < workers; ++i) {
     cpu_raster_worker *worker = &pool->workers[i];
     SDL_SemWait(worker->done);
-    for (size_t j = worker->job.completed_commands;
-         j < worker->job.command_count; ++j) {
-      if (!raster_command_overlaps(&worker->job, j)) continue;
-      cpu_raster_job job = raster_command_job(&worker->job, j);
-      raster_prepared_draw(&job);
+    if (!sliced) {
+      raster_commands(&worker->job, false);
+      feraiseexcept(worker->job.exceptions);
     }
-    feraiseexcept(worker->job.exceptions);
     memset(&worker->job, 0, sizeof(worker->job));
   }
+  if (sliced) {
+    for (size_t i = 0; i < pool->slice_count; ++i) {
+      cpu_raster_job job = raster_slice_job(pool, i);
+      raster_commands(&job, false);
+      feraiseexcept(job.exceptions);
+    }
+  }
+  pool->slice_count = 0;
+  memset(&pool->batch, 0, sizeof(pool->batch));
   pool->command_count = pool->triangle_count = 0;
 }
 static bool raster_queue(cpu_raster_job *job) {
