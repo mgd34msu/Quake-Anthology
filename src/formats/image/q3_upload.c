@@ -6,8 +6,7 @@ bool qa_q3_image_upload_options_valid(const qa_q3_image_upload_options *options,
     if (!options || options->picmip < 0 || options->picmip > 16 ||
         options->maximum_texture_size > INT32_MAX)
         return qa_img_fail(error, QA_ERROR_ARGUMENT, 0, "Source upload requires its actual texture limit and source picmip");
-    qa_q3_color_mappings mappings;
-    return qa_q3_color_mappings_create(&options->color, &mappings, error);
+    return qa_img_q3_color_valid(&options->color, error);
 }
 
 bool qa_q3_image_upload_options_equal(const qa_q3_image_upload_options *a,

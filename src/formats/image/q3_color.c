@@ -1,5 +1,6 @@
 #include "qa/q3_color.h"
 #include "internal.h"
+#include <fenv.h>
 #include <math.h>
 #include "qa/source_save.h"
 
@@ -40,28 +41,42 @@ bool qa_q3_color_lighting_read(const qa_q3_color_device *device, int32_t request
     return true;
 }
 
-bool qa_q3_color_mappings_create(const qa_q3_color_inputs *inputs,
+static bool color_mappings_evaluate(const qa_q3_color_inputs *inputs,
     qa_q3_color_mappings *out, qa_error *error)
 {
-    if (!inputs || !out || !isfinite(inputs->gamma) || inputs->gamma < .5f || inputs->gamma > 3 ||
+    if (!inputs || !isfinite(inputs->gamma) || inputs->gamma < .5f || inputs->gamma > 3 ||
         !isfinite(inputs->intensity) || inputs->intensity < 1)
         return qa_img_fail(error, QA_ERROR_ARGUMENT, 0, "Source color tables require source-clamped gamma and intensity");
     qa_q3_color_mappings next = {.inputs = *inputs};
     if (!qa_q3_color_lighting_read(&inputs->device, inputs->requested_overbright_bits,
         &next.lighting, error)) return false;
+    bool tables = out != NULL || (fetestexcept(FE_INEXACT) & FE_INEXACT) == 0;
     for (unsigned i = 0; i < 256; ++i) {
-        float sample = (float)i / 255.0f, exponent = 1.0f / inputs->gamma;
-        double corrected = inputs->gamma == 1 ? i : floor(255.0 * pow(sample, exponent) + .5);
-        unsigned shifted = (unsigned)corrected << next.lighting.overbright_bits;
-        next.gamma[i] = (uint8_t)(shifted > 255 ? 255 : shifted);
+        if (tables) {
+            float sample = (float)i / 255.0f, exponent = 1.0f / inputs->gamma;
+            double corrected = inputs->gamma == 1 ? i : floor(255.0 * pow(sample, exponent) + .5);
+            unsigned shifted = (unsigned)corrected << next.lighting.overbright_bits;
+            next.gamma[i] = (uint8_t)(shifted > 255 ? 255 : shifted);
+        }
         float scaled = (float)i * inputs->intensity;
         if (!isfinite(scaled) || (double)scaled >= 2147483648.0)
             return qa_img_fail(error, QA_ERROR_ARGUMENT, i, "Source intensity conversion exceeds signed int32");
         int32_t intensity = (int32_t)scaled;
         next.intensity[i] = (uint8_t)(intensity > 255 ? 255 : intensity);
     }
-    *out = next;
+    if (out) *out = next;
     return true;
+}
+bool qa_img_q3_color_valid(const qa_q3_color_inputs *inputs, qa_error *error)
+{
+    return color_mappings_evaluate(inputs, NULL, error);
+}
+bool qa_q3_color_mappings_create(const qa_q3_color_inputs *inputs,
+    qa_q3_color_mappings *out, qa_error *error)
+{
+    if (!out)
+        return qa_img_fail(error, QA_ERROR_ARGUMENT, 0, "Source color tables require source-clamped gamma and intensity");
+    return color_mappings_evaluate(inputs, out, error);
 }
 
 bool qa_q3_color_map_shift(int32_t requested, const qa_q3_color_lighting *lighting,
