@@ -1,9 +1,10 @@
 #include "internal.h"
 
-static void texel(const qa_scene_image *image,
+static void texel(const cpu_sampler *sampler,
                   const qa_scene_image_level *level,
                   const cpu_framebuffer *target, int64_t x, int64_t y,
                   double out[4]) {
+  const qa_scene_image *image = sampler->image;
   if (image->wrap == QA_SCENE_REPEAT) {
     x = x < 0 ? x + level->width : x >= level->width ? x - level->width : x;
     y = y < 0 ? y + level->height : y >= level->height ? y - level->height : y;
@@ -11,7 +12,7 @@ static void texel(const qa_scene_image *image,
     out[0] = image->border.x;
     out[1] = image->border.y;
     out[2] = image->border.z;
-    out[3] = qa_render_source_texture_alpha(image) ? image->border.w : 1;
+    out[3] = sampler->alpha ? image->border.w : 1;
     return;
   }
   size_t index = (size_t)y * level->width + (size_t)x;
@@ -24,7 +25,7 @@ static void texel(const qa_scene_image *image,
     } else {
       for (size_t c = 0; c < 3; ++c)
         out[c] = target->color[index * 4 + c] / 255.0;
-      out[3] = qa_render_source_texture_alpha(image)
+      out[3] = sampler->alpha
                    ? target->color[index * 4 + 3] / 255.0
                    : 1;
     }
@@ -38,7 +39,7 @@ static void texel(const qa_scene_image *image,
     const uint8_t *pixel = (const uint8_t *)level->pixels + index * 4;
     for (size_t c = 0; c < 3; ++c)
       out[c] = image->source_q3 ? qa_render_source_texture_component(image->source_format,pixel[c]) : pixel[c] / 255.0;
-    out[3] = qa_render_source_texture_alpha(image) ?
+    out[3] = sampler->alpha ?
         (image->source_q3 ? qa_render_source_texture_component(image->source_format,pixel[3]) : pixel[3] / 255.0) : 1;
   }
 }
@@ -51,17 +52,17 @@ static void sample_level(const cpu_sampler *sampler, size_t index, double u,
   if (!linear) {
     int64_t x = (int64_t)fmin(level->width - 1, floor(u * level->width));
     int64_t y = (int64_t)fmin(level->height - 1, floor(v * level->height));
-    texel(image, level, target, x, y, out);
+    texel(sampler, level, target, x, y, out);
     return;
   }
   double x = u * level->width - 0.5, y = v * level->height - 0.5;
   int64_t x0 = (int64_t)floor(x), y0 = (int64_t)floor(y);
   double fx = x - (double)x0, fy = y - (double)y0;
   double taps[4][4];
-  texel(image, level, target, x0, y0, taps[0]);
-  texel(image, level, target, x0 + 1, y0, taps[1]);
-  texel(image, level, target, x0, y0 + 1, taps[2]);
-  texel(image, level, target, x0 + 1, y0 + 1, taps[3]);
+  texel(sampler, level, target, x0, y0, taps[0]);
+  texel(sampler, level, target, x0 + 1, y0, taps[1]);
+  texel(sampler, level, target, x0, y0 + 1, taps[2]);
+  texel(sampler, level, target, x0 + 1, y0 + 1, taps[3]);
   for (size_t c = 0; c < 4; ++c)
     out[c] = taps[0][c] * (1 - fx) * (1 - fy) + taps[1][c] * fx * (1 - fy) +
              taps[2][c] * (1 - fx) * fy + taps[3][c] * fx * fy;
@@ -70,6 +71,7 @@ bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
                           const qa_scene_image *image, cpu_sampler *sampler) {
   *sampler = (cpu_sampler){.image = image};
   if (!image) return true;
+  sampler->alpha = qa_render_source_texture_alpha(image);
   qa_scene_filter filter=qa_render_controls_image_filter(&renderer->controls,image);
   bool linear = filter == QA_SCENE_LINEAR ||
                 filter == QA_SCENE_LINEAR_MIPMAP_NEAREST ||
