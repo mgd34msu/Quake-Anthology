@@ -2738,10 +2738,10 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             (!qa_q2_items_admit_player(arsenal->state.q2, actor, true, error) ||
              !qa_q2_weapon_bind(arsenal->state.q2, actor, QA_Q2_BLASTER, error)))
             return false;
-        if (map_source->kind != APPLICATION_PROVIDER_Q1 &&
-            !spawn_q3_player_roles(application, actor, &body, combat.team, error)) return false;
         if (!admit_control(application, actor, body.angles, error))
             return false;
+        if (map_source->kind != APPLICATION_PROVIDER_Q1 &&
+            !spawn_q3_player_roles(application, actor, &body, combat.team, error)) return false;
         if (map_source->kind == APPLICATION_PROVIDER_Q3) {
             if (application_world_provider(application, QA_ROLE_ENTITIES, "") != map_source ||
                 !record->userinfo)
