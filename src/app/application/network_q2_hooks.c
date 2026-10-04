@@ -1,4 +1,5 @@
 #include "network_q2_private.h"
+#include "client_events.h"
 #include "native_q2_visibility.h"
 #include "qa/application_network.h"
 #include "qa/network_local.h"
@@ -222,22 +223,18 @@ static bool userinfo(void *context, qa_net_client_id id, qa_net_seat_id seat,
             return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 userinfo has no returned Source dictionary");
         returned = engine->clients[physical.source_slot].userinfo;
     }
-    char *copy = application_network_q2_copy(returned, error);
-    if (!copy) { application_fault(owner->app, error); return false; }
     char *normalized = application_network_q2_copy(returned, error);
-    if (!normalized) { free(copy); application_fault(owner->app, error); return false; }
-    row = NULL;
-    for (size_t i = 0; owner->app->players && i < owner->app->players->count; ++i) {
-        application_player_record *candidate = &owner->app->players->records[i];
-        if (!candidate->retiring && candidate->remote && qa_actor_id_equal(candidate->actor, actor) &&
-            qa_net_client_id_equal(candidate->remote_client, id) &&
-            candidate->remote_seat.owner == seat.owner && candidate->remote_seat.index == seat.index) {
-            if (row) { free(copy); free(normalized); return application_fail(error, QA_ERROR_FORMAT, "Q2 userinfo callback aliased its Source roster"); }
-            row = candidate;
-        }
-    }
-    if (!row) { free(copy); free(normalized); return application_fail(error, QA_ERROR_ARGUMENT, "Q2 userinfo callback lost its Source roster"); }
-    free(row->userinfo); row->userinfo = copy;
+    if (!normalized) { application_fault(owner->app, error); return false; }
+    ok = application_client_userinfo_publish(owner->app, actor, returned, error);
+    qa_network_q2_player current;
+    if (ok && (!seat_actor(owner, id, seat, &after, error) ||
+        !qa_actor_id_equal(after, actor) ||
+        !qa_application_network_q2_player(owner, actor, &current, error) ||
+        current.source_owner != physical.source_owner || current.source_slot != physical.source_slot ||
+        current.movement != physical.movement))
+        ok = application_fail(error, QA_ERROR_ARGUMENT,
+            "Q2 userinfo notification changed its physical Source recipient");
+    if (!ok) { free(normalized); application_fault(owner->app, error); return false; }
     *result = (qa_buffer){.data = (uint8_t *)normalized, .size = strlen(normalized) + 1};
     return true;
 }

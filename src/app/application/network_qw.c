@@ -6,6 +6,7 @@
 #include "native_q1_wire_qw.h"
 #include "native_q1_spectator.h"
 #include "native_q1_console.h"
+#include "client_events.h"
 #include "qa/application_network_qw.h"
 #include "qa/application_network.h"
 #include "qa/application_qc_presentation.h"
@@ -511,7 +512,7 @@ bool qa_application_network_qw_pause(qa_application *app, qa_actor_id actor,
     return true;
 }
 
-bool qa_application_network_qw_userinfo(qa_application *app, qa_actor_id actor,
+static bool qw_userinfo(qa_application *app, qa_actor_id actor,
     const char *text, qa_error *error)
 {
     if (application_native_q1_qw_selected(app)) return application_native_q1_qw_userinfo(app, actor, text, error);
@@ -549,6 +550,17 @@ bool qa_application_network_qw_userinfo(qa_application *app, qa_actor_id actor,
     }
     for (size_t i = 0; i < 4; ++i) free(copies[i]);
     qa_qw_info_free(&info); return ok;
+}
+
+bool qa_application_network_qw_userinfo(qa_application *app, qa_actor_id actor,
+    const char *text, qa_error *error)
+{
+    const char *actual;
+    if (!qw_userinfo(app, actor, text, error)) return false;
+    bool ok = qa_application_network_qw_userinfo_read(app, actor, &actual, error) &&
+        application_client_userinfo_publish(app, actor, actual, error);
+    if (!ok) application_fault(app, error);
+    return ok;
 }
 
 bool qa_application_network_qw_entity_next(qa_application *app, uint32_t *cursor,

@@ -3,6 +3,9 @@
 
 #include "internal.h"
 
+/* Publish the primary Source's returned dictionary. Pending clients retain it
+ * for their existing Begin admission; admitted clients notify shared listeners. */
+bool application_client_userinfo_publish(qa_application *, qa_actor_id, const char *, qa_error *);
 /* The Source has already published the canonical userinfo and completed its
  * own callback. Notify the other physical, admitted client listeners once. */
 bool application_client_userinfo_changed(qa_application *, qa_actor_id, qa_error *);

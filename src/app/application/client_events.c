@@ -41,16 +41,46 @@ static bool gear_current(qa_application *app, const client_listener *row,
     return true;
 }
 
-static application_player_record *player(qa_application *app, qa_actor_id actor)
+static application_player_record *player_record(qa_application *app, qa_actor_id actor)
 {
     if (!app || !app->players || !app->session ||
         !qa_actors_get(qa_session_actors(app->session), actor)) return NULL;
+    application_player_record *found = NULL;
     for (size_t i = 0; i < app->players->count; ++i) {
         application_player_record *row = app->players->records + i;
-        if (qa_actor_id_equal(row->actor, actor) && !row->retiring &&
-            !row->source_begin_pending) return row;
+        if (!qa_actor_id_equal(row->actor, actor) || row->retiring) continue;
+        if (found) return NULL;
+        found = row;
     }
-    return NULL;
+    return found;
+}
+
+static application_player_record *player(qa_application *app, qa_actor_id actor)
+{
+    application_player_record *row = player_record(app, actor);
+    return row && !row->source_begin_pending ? row : NULL;
+}
+
+bool application_client_userinfo_publish(qa_application *app, qa_actor_id actor,
+    const char *text, qa_error *error)
+{
+    application_player_record *row = player_record(app, actor);
+    application_provider *source = app && app->players ? app->players->map_provider : NULL;
+    if (!text || !row || !source || source->application != app ||
+        !source->constructed || !source->attached || source->close_pending ||
+        source != application_world_provider(app, QA_ROLE_ENTITIES, ""))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Userinfo publication requires its live canonical Source client");
+    if (text != row->userinfo) {
+        size_t size = strlen(text) + 1;
+        char *copy = malloc(size);
+        if (!copy) return application_fail(error, QA_ERROR_MEMORY,
+            "Retaining returned Source client userinfo");
+        memcpy(copy, text, size);
+        free(row->userinfo); row->userinfo = copy;
+    }
+    return row->deferred || row->source_begin_pending ||
+        application_client_userinfo_changed(app, actor, error);
 }
 
 static bool provider_current(const qa_application *app, const client_listener *row)

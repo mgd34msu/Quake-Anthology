@@ -12,7 +12,9 @@
 #include "native_q3_console.h"
 #include "native_q3_clients.h"
 #include "native_q3_remote_role.h"
+#include "client_events.h"
 #include "qa/application_network.h"
+#include "qa/application_network_qw.h"
 #include "qa/network_q3_prediction_scene.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_round.h"
@@ -492,7 +494,12 @@ bool qa_application_network_q1_pause(qa_application *app, qa_actor_id player,
 bool qa_application_network_q1_name(qa_application *app, qa_actor_id player,
     const char *name, qa_error *error)
 {
-    if (q1_native(app)) return application_native_q1_wire_name(app, player, name, error);
+    if (q1_native(app)) {
+        const char *actual;
+        return application_native_q1_wire_name(app, player, name, error) &&
+            qa_application_network_qw_userinfo_read(app, player, &actual, error) &&
+            application_client_userinfo_publish(app, player, actual, error);
+    }
     if (!name) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 client name");
     uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
     if (!engine) return false;
@@ -519,7 +526,12 @@ bool qa_application_network_q1_name(qa_application *app, qa_actor_id player,
 bool qa_application_network_q1_colors(qa_application *app, qa_actor_id player,
     int32_t top, int32_t bottom, qa_error *error)
 {
-    if (q1_native(app)) return application_native_q1_wire_colors(app, player, top, bottom, error);
+    if (q1_native(app)) {
+        const char *actual;
+        return application_native_q1_wire_colors(app, player, top, bottom, error) &&
+            qa_application_network_qw_userinfo_read(app, player, &actual, error) &&
+            application_client_userinfo_publish(app, player, actual, error);
+    }
     uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
     return engine && application_qc_client_colors(engine->provider, player, top, bottom, error);
 }
@@ -1183,13 +1195,21 @@ bool qa_application_network_q3_userinfo(qa_application *application, qa_actor_id
 {
     uint32_t slot;
     application_provider *primary = application ? application_world_provider(application, QA_ROLE_ENTITIES, "") : NULL;
+    bool ok;
     if (primary && primary->kind == APPLICATION_PROVIDER_Q3) {
         application_provider *provider = q3_native_actor(application, actor, &slot, error);
-        return provider && application_native_q3_wire_userinfo(provider, slot, text, error) &&
+        ok = provider && application_native_q3_wire_userinfo(provider, slot, text, error) &&
             application_native_q3_client_userinfo_changed(provider, actor, error);
+    } else {
+        struct application_q3_guest *engine = source(application, actor, &slot, error);
+        ok = engine && application_q3_guest_client_userinfo(engine->provider, slot, text, error);
     }
-    struct application_q3_guest *engine = source(application, actor, &slot, error);
-    return engine && application_q3_guest_client_userinfo(engine->provider, slot, text, error);
+    if (!ok) return false;
+    const char *actual;
+    ok = qa_application_network_q3_userinfo_read(application, actor, &actual, error) &&
+        application_client_userinfo_publish(application, actor, actual, error);
+    if (!ok) application_fault(application, error);
+    return ok;
 }
 
 bool qa_application_network_q3_userinfo_read(qa_application *application, qa_actor_id actor,
