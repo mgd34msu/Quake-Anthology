@@ -772,6 +772,7 @@ bool q1_monster_die(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_monster_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_monster_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_monster_face(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_ctf_monster_removed(qa_bytes classname);
 qa_actor_id q1_find_target(const qa_q1_game *, qa_string_id);
 qa_actor_id q1_monster_route(const qa_q1_game *, const q1_actor *);
 bool q1_monster_found(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);

@@ -839,17 +839,23 @@ bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
            q1_rocket_ogre_frame(g, entity, frame->name, error);
 }
 
+bool q1_ctf_monster_removed(qa_bytes classname) {
+    static const char *const removed[] = {
+        "monster_army", "monster_dog", "monster_ogre", "monster_ogre_marksman",
+        "monster_knight", "monster_hell_knight", "monster_wizard", "monster_demon1",
+        "monster_shambler", "monster_zombie", "monster_tarbaby", "monster_fish",
+        "monster_enforcer", "monster_shalrath", "monster_boss", "monster_oldone"};
+    for (size_t i = 0; i < sizeof(removed) / sizeof(*removed); ++i)
+        if (classname.size == strlen(removed[i]) &&
+            !memcmp(classname.data, removed[i], classname.size))
+            return true;
+    return false;
+}
 bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, qa_error *error) {
-    if (g->options.program == QA_Q1_CTF) {
-        static const char *const removed[] = {
-            "monster_army", "monster_dog", "monster_ogre", "monster_ogre_marksman",
-            "monster_knight", "monster_hell_knight", "monster_wizard", "monster_demon1",
-            "monster_shambler", "monster_zombie", "monster_tarbaby", "monster_fish",
-            "monster_enforcer", "monster_shalrath", "monster_boss", "monster_oldone"};
-        for (size_t i = 0; i < sizeof(removed) / sizeof(*removed); ++i)
-            if (q1_classnamed(g, entity->id, removed[i]))
-                return q1_remove(g, entity, error);
-    }
+    if (g->options.program == QA_Q1_CTF &&
+        q1_ctf_monster_removed(qa_strings_text(qa_session_strings(g->services.session),
+                                             entity->classname)))
+        return q1_remove(g, entity, error);
     if (!g->services.physics) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "native Q1 monsters require shared physics");
         return false;

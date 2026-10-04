@@ -1088,16 +1088,11 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         }
     }
     if (g->options.program == QA_Q1_CTF) {
-        static const char *removed[] = {
-            "monster_army", "monster_dog", "monster_ogre", "monster_ogre_marksman",
-            "monster_knight", "monster_hell_knight", "monster_wizard", "monster_demon1",
-            "monster_shambler", "monster_zombie", "monster_tarbaby", "monster_fish",
-            "monster_enforcer", "monster_shalrath", "monster_boss", "monster_oldone"};
-        for (size_t i = 0; i < sizeof(removed) / sizeof(*removed); ++i)
-            if (!strcmp(spawn->classname, removed[i])) {
-                *handled = true;
-                return q1_remove(g, entity, error);
-            }
+        qa_bytes classname = {(const uint8_t *)spawn->classname, strlen(spawn->classname)};
+        if (q1_ctf_monster_removed(classname)) {
+            *handled = true;
+            return q1_remove(g, entity, error);
+        }
         if (!strcmp(spawn->classname, "trigger_voteexit"))
             kind = Q1_MAP_CTF_VOTE_EXIT;
         else if (!strcmp(spawn->classname, "trigger_changelevel"))
