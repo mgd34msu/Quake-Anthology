@@ -224,6 +224,20 @@ static uint32_t stencil_operation(uint32_t current,
   }
   return current;
 }
+static void sample_fragment_texture(const cpu_sampler *sampler,
+                                    const cpu_derivative *derivative,
+                                    const double uv[2], double out[4]) {
+  double rho = 0;
+  if (sampler->level_count > 1 ||
+      sampler->magnification_linear != sampler->linear) {
+    const qa_scene_image_level *level = &sampler->image->levels[0];
+    rho = fmax(hypot(derivative->dudx * level->width,
+                     derivative->dvdx * level->height),
+               hypot(derivative->dudy * level->width,
+                     derivative->dvdy * level->height));
+  }
+  cpu_sample_texture(sampler, uv[0], uv[1], rho, out);
+}
 void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                         const cpu_sampler samplers[2], const cpu_fragment *fragment) {
   cpu_framebuffer *buffer = renderer->current;
@@ -236,14 +250,8 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     return;
   double texel[4] = {1, 1, 1, 1};
   if (draw->texture_count && draw->textures[0]) {
-    const qa_scene_image *image = draw->textures[0];
-    const cpu_derivative *d = &fragment->derivative[0];
-    double rho = fmax(hypot(d->dudx * image->levels[0].width,
-                            d->dvdx * image->levels[0].height),
-                      hypot(d->dudy * image->levels[0].width,
-                            d->dvdy * image->levels[0].height));
-    cpu_sample_texture(&samplers[0], fragment->uv[0][0], fragment->uv[0][1],
-                       rho, texel);
+    sample_fragment_texture(&samplers[0], &fragment->derivative[0],
+                            fragment->uv[0], texel);
     if (draw->luminance_alpha) {
       double luminance =
           (texel[0] + texel[1] + texel[2]) / 3 * fragment->color[3];
@@ -254,14 +262,8 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   double color[4];
   shade(renderer, draw, fragment, texel, color);
   if (draw->texture_count > 1 && draw->textures[1]) {
-    const qa_scene_image *image = draw->textures[1];
-    const cpu_derivative *d = &fragment->derivative[1];
-    double rho = fmax(hypot(d->dudx * image->levels[0].width,
-                            d->dvdx * image->levels[0].height),
-                      hypot(d->dudy * image->levels[0].width,
-                            d->dvdy * image->levels[0].height));
-    cpu_sample_texture(&samplers[1], fragment->uv[1][0], fragment->uv[1][1],
-                       rho, texel);
+    sample_fragment_texture(&samplers[1], &fragment->derivative[1],
+                            fragment->uv[1], texel);
     for (size_t c = 0; c < 3; ++c) {
       if (draw->environment == QA_TEXTURE_MODULATE)
         color[c] *= texel[c];
@@ -270,7 +272,7 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
       else
         color[c] = texel[c];
     }
-    if (qa_render_source_texture_alpha(image))
+    if (samplers[1].alpha)
       color[3] = draw->environment == QA_TEXTURE_REPLACE ? texel[3]
                                                          : color[3] * texel[3];
   }
