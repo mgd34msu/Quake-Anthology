@@ -1,4 +1,28 @@
 #include "internal.h"
+#include <fenv.h>
+
+bool cpu_texture_components_init(qa_cpu_renderer *renderer, qa_error *error) {
+  fenv_t environment;
+  renderer->texture_components_ready = false;
+  if (fegetenv(&environment) != 0)
+    return true;
+  bool ready = fesetenv(FE_DFL_ENV) == 0 && fegetround() == FE_TONEAREST;
+  if (ready) {
+    const qa_q3_texture_format formats[3] = {
+        QA_Q3_TEXTURE_RGBA8, QA_Q3_TEXTURE_RGB5, QA_Q3_TEXTURE_RGBA4};
+    for (size_t format = 0; format < 3; ++format)
+      for (size_t value = 0; value < 256; ++value)
+        renderer->texture_components[format][value] =
+            qa_render_source_texture_component(formats[format], (uint8_t)value);
+  }
+  if (fesetenv(&environment) != 0) {
+    qa_error_set(error, QA_ERROR_UNSUPPORTED, 0,
+                 "Restoring CPU texture floating-point environment");
+    return false;
+  }
+  renderer->texture_components_ready = ready;
+  return true;
+}
 
 static void texel(const cpu_sampler *sampler,
                   const qa_scene_image_level *level,
@@ -23,10 +47,15 @@ static void texel(const cpu_sampler *sampler,
       out[0] = out[1] = out[2] = target->depth[index];
       out[3] = 1;
     } else {
+      const uint8_t *pixel = target->color + index * 4;
       for (size_t c = 0; c < 3; ++c)
-        out[c] = target->color[index * 4 + c] / 255.0;
+        out[c] = sampler->target_components
+                     ? sampler->target_components[pixel[c]]
+                     : pixel[c] / 255.0;
       out[3] = sampler->alpha
-                   ? target->color[index * 4 + 3] / 255.0
+                   ? (sampler->target_components
+                          ? sampler->target_components[pixel[3]]
+                          : pixel[3] / 255.0)
                    : 1;
     }
   } else if (image->kind == QA_SCENE_DEPTH32F) {
@@ -38,9 +67,11 @@ static void texel(const cpu_sampler *sampler,
   } else {
     const uint8_t *pixel = (const uint8_t *)level->pixels + index * 4;
     for (size_t c = 0; c < 3; ++c)
-      out[c] = image->source_q3 ? qa_render_source_texture_component(image->source_format,pixel[c]) : pixel[c] / 255.0;
+      out[c] = sampler->components ? sampler->components[pixel[c]] :
+          image->source_q3 ? qa_render_source_texture_component(image->source_format,pixel[c]) : pixel[c] / 255.0;
     out[3] = sampler->alpha ?
-        (image->source_q3 ? qa_render_source_texture_component(image->source_format,pixel[3]) : pixel[3] / 255.0) : 1;
+        (sampler->components ? sampler->components[pixel[3]] :
+         image->source_q3 ? qa_render_source_texture_component(image->source_format,pixel[3]) : pixel[3] / 255.0) : 1;
   }
 }
 static void sample_level(const cpu_sampler *sampler, size_t index, double u,
@@ -71,6 +102,14 @@ bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
                           const qa_scene_image *image, cpu_sampler *sampler) {
   *sampler = (cpu_sampler){.image = image};
   if (!image) return true;
+  if (renderer->texture_components_ready && fegetround() == FE_TONEAREST &&
+      fetestexcept(FE_INEXACT) != 0) {
+    size_t format = !image->source_q3 ? 0 :
+        image->source_format == QA_Q3_TEXTURE_RGB5 ? 1 :
+        image->source_format == QA_Q3_TEXTURE_RGBA4 ? 2 : 0;
+    sampler->components = renderer->texture_components[format];
+    sampler->target_components = renderer->texture_components[0];
+  }
   sampler->alpha = qa_render_source_texture_alpha(image);
   qa_scene_filter filter=qa_render_controls_image_filter(&renderer->controls,image);
   bool linear = filter == QA_SCENE_LINEAR ||

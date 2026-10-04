@@ -143,6 +143,10 @@ qa_cpu_renderer *qa_cpu_create(const qa_cpu_options *options, qa_error *error) {
     qa_cpu_destroy(renderer);
     return NULL;
   }
+  if (!cpu_texture_components_init(renderer, error)) {
+    qa_cpu_destroy(renderer);
+    return NULL;
+  }
   cpu_raster_pool_create(renderer);
   return renderer;
 }
@@ -1417,6 +1421,10 @@ bool qa_cpu_restore(qa_bytes bytes,const qa_cpu_options *options,const qa_render
   if (!ok) {
     qa_cpu_destroy(renderer);
     if (!error || error->code==QA_OK) qa_error_set(error,QA_ERROR_FORMAT,0,"Invalid saved CPU renderer continuation");
+    return false;
+  }
+  if (!cpu_texture_components_init(renderer, error)) {
+    qa_cpu_destroy(renderer);
     return false;
   }
   cpu_raster_pool_create(renderer);
