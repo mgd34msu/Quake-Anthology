@@ -228,8 +228,7 @@ static void sample_fragment_texture(const cpu_sampler *sampler,
                                     const cpu_derivative *derivative,
                                     const double uv[2], double out[4]) {
   double rho = 0;
-  if (sampler->level_count > 1 ||
-      sampler->magnification_linear != sampler->linear) {
+  if (cpu_sampler_requires_derivatives(sampler)) {
     const qa_scene_image_level *level = &sampler->image->levels[0];
     rho = fmax(hypot(derivative->dudx * level->width,
                      derivative->dvdx * level->height),

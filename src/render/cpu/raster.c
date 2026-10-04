@@ -571,12 +571,16 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   const double (*uv)[2][3] = triangle->uv;
   const double (*uv_dx)[2] = triangle->uv_dx, (*uv_dy)[2] = triangle->uv_dy;
   bool constant_depth = triangle->constant_depth;
+  bool derivatives[2] = {false, false};
+  for (size_t unit = 0; unit < draw->texture_count; ++unit)
+    if (draw->textures[unit])
+      derivatives[unit] = cpu_sampler_requires_derivatives(&samplers[unit]);
   for (int64_t y = (int64_t)min_y; y <= (int64_t)max_y; ++y) {
     int64_t left = (int64_t)min_x, right = (int64_t)max_x;
     for (size_t i = 0; i < 3; ++i)
       trim(&left, &right, coverage[i], (double)y + 0.5);
     for (int64_t x = left; x <= right; ++x) {
-      double weight[3], perspective[3], q = 0, z = 0;
+      double weight[3], q = 0, z = 0;
       for (size_t i = 0; i < 3; ++i) {
         weight[i] = evaluate(attributes[i], (double)x + 0.5, (double)y + 0.5) * inverse_area;
         q += vertices[i].q * weight[i];
@@ -597,8 +601,6 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
               renderer->current->depth[(size_t)fragment.y *
                   renderer->current->width + fragment.x]))
         continue;
-      for (size_t i = 0; i < 3; ++i)
-        perspective[i] = vertices[i].q * weight[i] * reciprocal;
       for (size_t channel = 0; channel < 4; ++channel) {
         double color = 0;
         for (size_t i = 0; i < 3; ++i)
@@ -617,15 +619,21 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
           coordinate *= reciprocal;
           fragment.uv[unit][axis] =
               vertices[0].vertex->uv[unit][axis] + coordinate;
-          derivative_x[axis] =
-              (uv_dx[unit][axis] - coordinate * q_dx) * reciprocal;
-          derivative_y[axis] =
-              (uv_dy[unit][axis] - coordinate * q_dy) * reciprocal;
+          if (derivatives[unit]) {
+            derivative_x[axis] =
+                (uv_dx[unit][axis] - coordinate * q_dx) * reciprocal;
+            derivative_y[axis] =
+                (uv_dy[unit][axis] - coordinate * q_dy) * reciprocal;
+          }
         }
-        fragment.derivative[unit] = (cpu_derivative){
-            derivative_x[0], derivative_x[1], derivative_y[0], derivative_y[1]};
+        if (derivatives[unit])
+          fragment.derivative[unit] = (cpu_derivative){
+              derivative_x[0], derivative_x[1], derivative_y[0], derivative_y[1]};
       }
       if (draw->lighting != QA_LIGHT_VERTEX) {
+        double perspective[3];
+        for (size_t i = 0; i < 3; ++i)
+          perspective[i] = vertices[i].q * weight[i] * reciprocal;
         double position[3] = {0}, normal[3] = {0};
         for (size_t axis = 0; axis < 3; ++axis)
           for (size_t i = 0; i < 3; ++i) {

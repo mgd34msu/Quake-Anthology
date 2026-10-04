@@ -69,6 +69,10 @@ typedef struct cpu_sampler {
   bool linear, magnification_linear, blend, alpha, inexact;
   double magnification_limit;
 } cpu_sampler;
+static inline bool cpu_sampler_requires_derivatives(const cpu_sampler *sampler) {
+  return sampler->level_count > 1 ||
+         sampler->magnification_linear != sampler->linear;
+}
 typedef struct cpu_fragment {
   uint32_t x, y;
   double depth, eye_depth;
