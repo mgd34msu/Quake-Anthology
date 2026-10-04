@@ -14,25 +14,27 @@ struct frontend_classic_client_graph {
 };
 static uint64_t q1_owner(size_t ordinal)
 { return UINT64_C(0x2000000000000000)|(uint64_t)(ordinal+1); }
-static bool numbers(qa_frontend *f,frontend_scene_namespace *space,qa_error *error)
+static bool numbers(qa_frontend *f,frontend_scene_namespace *space,bool capture,qa_error *error)
 {
     for(size_t i=0;i<frontend_remote_q1_count(f);++i) {
         frontend_remote_q1 *row=frontend_remote_q1_at(f,i);
         for(size_t j=0;j<remote_q1_effects_light_count(row);++j) {
             uint64_t id=0;
             if(!remote_q1_effects_light_at(row,j,&id)) continue;
-            if(!frontend_scene_namespace_capture_light(space,q1_owner(i),j,id,error)) return false;
+            if(!(capture?frontend_scene_namespace_capture_light(space,q1_owner(i),j,id,error):
+                frontend_scene_namespace_qualify_light(space,q1_owner(i),j,id,error))) return false;
         }
         for(size_t j=0;j<remote_q1_effects_static_count(row);++j) {
             uint64_t id=0; const qa_audio_asset *asset=NULL; qa_audio_mixer *mixer=NULL;
             if(!remote_q1_effects_static_at(row,j,&id,&asset,&mixer) || !id || !asset || !mixer ||
-                !frontend_scene_namespace_capture_static_audio(space,q1_owner(i),j,id,error)) return false;
+                !(capture?frontend_scene_namespace_capture_static_audio(space,q1_owner(i),j,id,error):
+                    frontend_scene_namespace_qualify_static_audio(space,q1_owner(i),j,id,error))) return false;
         }
     }
     return true;
 }
 bool frontend_classic_client_graph_capture_numbers(qa_frontend *f,frontend_scene_namespace *space,qa_error *error)
-{ return f && f->capture && space && numbers(f,space,error); }
+{ return f && f->capture && space && numbers(f,space,true,error); }
 static bool span(qa_source_save_io *io,qa_bytes *bytes)
 {
     size_t count=bytes->size;
@@ -117,7 +119,8 @@ bool frontend_classic_client_graph_finish(frontend_classic_client_graph *graph,c
     if(!graph || !graph->prepared || !refs) return false;
     if(!graph->present) return true;
     frontend_remote_q1_restore_refs scoped=*refs; scoped.owner=1; scoped.effects_owner=q1_owner(0);
-    return frontend_network_q1_finish_import(graph->frontend,&scoped,error);
+    return frontend_network_q1_finish_import(graph->frontend,&scoped,error) &&
+        numbers(graph->frontend,refs->scene,false,error);
 }
 void frontend_classic_client_graph_destroy(frontend_classic_client_graph *graph)
 {
