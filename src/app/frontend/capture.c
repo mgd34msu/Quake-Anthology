@@ -967,11 +967,13 @@ static bool resource_collect(frontend_resource_inventory *inventory,qa_error *er
     }
     return true;
 }
+static bool resource_cinematics_associated(const frontend_resource_inventory *inventory);
 static bool resource_parent_matches(const frontend_resource_inventory *inventory,bool consuming)
 {
     const qa_frontend *f=inventory?inventory->frontend:NULL;
     bool publishing=consuming && inventory && !inventory->engine_only;
-    if (!f || inventory->cinematics || f->resource_inventory!=inventory || f->application!=inventory->application ||
+    if (!f || (inventory->cinematics && !resource_cinematics_associated(inventory)) ||
+        f->resource_inventory!=inventory || f->application!=inventory->application ||
         (f->stepping && !inventory->video) || f->round || f->shutdown || f->capture || f->source_restoring ||
         f->scene_world!=inventory->scene_world || f->map_resource!=inventory->map_resource ||
         &f->frame!=inventory->frame || f->seats!=inventory->seats || f->options.seats!=inventory->seat_count ||
