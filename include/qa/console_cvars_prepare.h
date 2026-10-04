@@ -34,6 +34,10 @@ typedef struct qa_cvars_edit_command {
     qa_console_dialect source_dialect; /* Direct assignment numeric grammar. */
 } qa_cvars_edit_command;
 
+/* Applies a live operation through the same scalar kernel as an edit ticket,
+ * retaining the live registry's notification and observer drain boundary. */
+bool qa_cvars_apply(qa_cvars *, const qa_cvars_edit_command *, qa_error *);
+
 /* The ticket owns scalar records, while the registry retains its actual
  * bindings, callbacks and identity. Preparation leaves live values untouched.
  * Views borrow the ticket until its next edit or terminal operation. */

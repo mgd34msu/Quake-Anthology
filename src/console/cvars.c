@@ -380,7 +380,7 @@ static bool retain_shared_variable(cvar_target target,const char *name,qa_error 
     return true;
 }
 bool qa_cvars_retain_shared(qa_cvars *registry,const char *name,qa_error *error)
-{ return retain_shared_variable(live_target(registry),name,error); }
+{ return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_RETAIN_SHARED,.name=name},error); }
 
 typedef enum cvar_edit_event_kind {
     CVAR_EDIT_NOTIFY, CVAR_EDIT_EFFECT, CVAR_EDIT_PRINT
@@ -1248,21 +1248,26 @@ static bool set_cheats_variables(cvar_target target, bool allowed, qa_error *err
 bool qa_cvars_register(qa_cvars *registry, const char *name, const char *value,
     uint32_t flags, uint64_t owner, const char *description, qa_error *error)
 {
-    if (!mutation_begin(registry,error)) return false;
-    return mutation_end(registry,register_variable(live_target(registry),name,value,flags,owner,description,error),error);
+    return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_REGISTER,
+        .name=name,.value=value,.flags=flags,.owner=owner,.description=description},error);
+}
+static bool add_flags_variable(cvar_target target,const char *name,uint32_t flags,qa_error *error)
+{
+    if (!target_touch(target,error)) return false;
+    const cvar_alias *alias=find_alias(target.registry,target.values,name);
+    if (alias && alias_info_flags(target.registry,flags))
+        return qac_fail(error,QA_ERROR_ARGUMENT,"cvar alias requires an explicit protocol info-key mapping");
+    cvar *entry=name?qac_cvars_find_values(target.registry,target.values,
+        canonical_name(target.registry,target.values,source_name(target.registry,name))):NULL;
+    if (!entry) return qac_fail(error,QA_ERROR_NOT_FOUND,target.edit ?
+        "flag declaration requires its prepared cvar" : "Flag declaration requires its registered cvar");
+    entry->view.flags|=flags;
+    return true;
 }
 bool qa_cvars_add_flags(qa_cvars *registry,const char *name,uint32_t flags,qa_error *error)
 {
-    if (!mutation_begin(registry,error)) return false;
-    bool ok=qac_cvars_touch(registry,error);
-    const cvar_alias *alias=ok?find_alias(registry,&registry->values,name):NULL;
-    if (alias && alias_info_flags(registry,flags))
-        ok=qac_fail(error,QA_ERROR_ARGUMENT,"cvar alias requires an explicit protocol info-key mapping");
-    cvar *entry=ok && name?find_variable(registry,canonical_name(registry,&registry->values,
-        source_name(registry,name))):NULL;
-    if (ok && !entry) ok=qac_fail(error,QA_ERROR_NOT_FOUND,"Flag declaration requires its registered cvar");
-    if (ok) entry->view.flags|=flags;
-    return mutation_end(registry,ok,error);
+    return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_ADD_FLAGS,
+        .name=name,.flags=flags},error);
 }
 static bool vm_bind_variable(cvar_target target,const char *name,const char *default_value,
     uint32_t flags,uint64_t owner,size_t *handle,qa_error *error)
@@ -1352,53 +1357,44 @@ static bool assign_variable(cvar_target target, const char *name, const char *va
 bool qa_cvars_assign(qa_cvars *registry, const char *name, const char *value,
     qa_console_dialect source_dialect, qa_error *error)
 {
-    if (!mutation_begin(registry, error)) return false;
-    return mutation_end(registry, assign_variable(live_target(registry), name, value, source_dialect, error), error);
+    return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_ASSIGN,
+        .name=name,.value=value,.source_dialect=source_dialect,.force=true},error);
 }
 bool qa_cvars_set(qa_cvars *registry, const char *name, const char *value, bool force, qa_error *error)
 {
-    if (!mutation_begin(registry,error)) return false;
-    return mutation_end(registry,set_variable(live_target(registry),name,value,force,error),error);
+    return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET,.name=name,.value=value,.force=force},error);
 }
 bool qa_cvars_set_console(qa_cvars *registry, const char *name, const char *value, qa_error *error)
 {
-    if (!mutation_begin(registry,error)) return false;
-    return mutation_end(registry,set_console_variable(live_target(registry),name,value,error),error);
+    return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET_CONSOLE,.name=name,.value=value},error);
 }
 bool qa_cvars_set_number(qa_cvars *registry, const char *name, float value, qa_error *error)
 {
-    if (!mutation_begin(registry,error)) return false;
-    return mutation_end(registry,set_number_variable(live_target(registry),name,value,error),error);
+    return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET_NUMBER,.name=name,.number=value},error);
 }
 bool qa_cvars_full_set(qa_cvars *registry, const char *name, const char *value, uint32_t flags, qa_error *error)
 {
-    if (!mutation_begin(registry,error)) return false;
-    return mutation_end(registry,full_set_variable(live_target(registry),name,value,flags,error),error);
+    return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_FULL_SET,.name=name,.value=value,.flags=flags},error);
 }
 bool qa_cvars_set_flags(qa_cvars *registry, const char *name, const char *value, uint32_t flags, qa_error *error)
 {
-    if (!mutation_begin(registry,error)) return false;
-    return mutation_end(registry,set_flags_variable(live_target(registry),name,value,flags,error),error);
+    return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET_FLAGS,.name=name,.value=value,.flags=flags},error);
 }
 bool qa_cvars_stage(qa_cvars *registry, const char *name, const char *value, qa_error *error)
 {
-    if (!mutation_begin(registry,error)) return false;
-    return mutation_end(registry,stage_variable(live_target(registry),name,value,error),error);
+    return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_STAGE,.name=name,.value=value},error);
 }
 bool qa_cvars_apply_latched(qa_cvars *registry, const char *name, qa_error *error)
 {
-    if (!mutation_begin(registry,error)) return false;
-    return mutation_end(registry,apply_latched_variables(live_target(registry),name,error),error);
+    return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_APPLY_LATCHED,.name=name},error);
 }
 bool qa_cvars_reset(qa_cvars *registry, const char *name, bool force, qa_error *error)
 {
-    if (!mutation_begin(registry,error)) return false;
-    return mutation_end(registry,reset_variable(live_target(registry),name,force,error),error);
+    return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_RESET,.name=name,.force=force},error);
 }
 bool qa_cvars_restart(qa_cvars *registry, qa_error *error)
 {
-    if (!mutation_begin(registry,error)) return false;
-    return mutation_end(registry,restart_variables(live_target(registry),error),error);
+    return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_RESTART},error);
 }
 bool qa_cvars_set_cheats(qa_cvars *registry, bool allowed, qa_error *error)
 {
@@ -1515,6 +1511,53 @@ const qa_cvar_view *qa_cvars_edit_visible_at(const qa_cvars_edit *edit,size_t or
     }
     return NULL;
 }
+static bool apply_operation(cvar_target target,const qa_cvars_edit_command *command,qa_error *error)
+{
+    switch (command->kind) {
+    case QA_CVARS_EDIT_REGISTER:
+        return register_variable(target,command->name,command->value,command->flags,
+            command->owner,command->description,error);
+    case QA_CVARS_EDIT_SET:
+        return set_variable(target,command->name,command->value,command->force,error);
+    case QA_CVARS_EDIT_ASSIGN:
+        return command->force ? assign_variable(target,command->name,command->value,command->source_dialect,error) :
+            qac_fail(error,QA_ERROR_ARGUMENT,"direct cvar assignment requires explicit force");
+    case QA_CVARS_EDIT_SET_CONSOLE:
+        return set_console_variable(target,command->name,command->value,error);
+    case QA_CVARS_EDIT_SET_FLAGS:
+        return set_flags_variable(target,command->name,command->value,command->flags,error);
+    case QA_CVARS_EDIT_ADD_FLAGS:
+        return add_flags_variable(target,command->name,command->flags,error);
+    case QA_CVARS_EDIT_FULL_SET:
+        return full_set_variable(target,command->name,command->value,command->flags,error);
+    case QA_CVARS_EDIT_STAGE:
+        return stage_variable(target,command->name,command->value,error);
+    case QA_CVARS_EDIT_APPLY_LATCHED:
+        return apply_latched_variables(target,command->name,error);
+    case QA_CVARS_EDIT_RESET:
+        return reset_variable(target,command->name,command->force,error);
+    case QA_CVARS_EDIT_RESTART:
+        return restart_variables(target,error);
+    case QA_CVARS_EDIT_SET_NUMBER:
+        return set_number_variable(target,command->name,command->number,error);
+    case QA_CVARS_EDIT_RETAIN_SHARED:
+        return retain_shared_variable(target,command->name,error);
+    }
+    return qac_fail(error,QA_ERROR_ARGUMENT,target.edit ?
+        "unknown prepared cvar operation" : "unknown routed cvar operation");
+}
+bool qa_cvars_apply(qa_cvars *registry,const qa_cvars_edit_command *command,qa_error *error)
+{
+    if (!command) return qac_fail(error,QA_ERROR_ARGUMENT,"live cvar mutation requires its operation");
+    /* Forced assignment admission and unknown packets precede live mutation;
+     * shared-owner retention has no notification drain. */
+    if ((unsigned)command->kind>(unsigned)QA_CVARS_EDIT_ASSIGN ||
+        (command->kind==QA_CVARS_EDIT_ASSIGN && !command->force) ||
+        command->kind==QA_CVARS_EDIT_RETAIN_SHARED)
+        return apply_operation(live_target(registry),command,error);
+    if (!mutation_begin(registry,error)) return false;
+    return mutation_end(registry,apply_operation(live_target(registry),command,error),error);
+}
 bool qa_cvars_edit_apply(qa_cvars_edit *edit,const qa_cvars_edit_command *command,qa_error *error)
 {
     if (!edit || !command)
@@ -1522,48 +1565,7 @@ bool qa_cvars_edit_apply(qa_cvars_edit *edit,const qa_cvars_edit_command *comman
     cvar_target target={edit->registry,&edit->values,edit};
     qa_error fault={0};
     bool ok=target_touch(target,&fault);
-    if (ok) switch (command->kind) {
-    case QA_CVARS_EDIT_REGISTER:
-        ok=register_variable(target,command->name,command->value,command->flags,
-            command->owner,command->description,&fault); break;
-    case QA_CVARS_EDIT_SET:
-        ok=set_variable(target,command->name,command->value,command->force,&fault); break;
-    case QA_CVARS_EDIT_ASSIGN:
-        ok=command->force ? assign_variable(target,command->name,command->value,command->source_dialect,&fault) :
-            qac_fail(&fault,QA_ERROR_ARGUMENT,"direct cvar assignment requires explicit force"); break;
-    case QA_CVARS_EDIT_SET_CONSOLE:
-        ok=set_console_variable(target,command->name,command->value,&fault); break;
-    case QA_CVARS_EDIT_SET_FLAGS:
-        ok=set_flags_variable(target,command->name,command->value,command->flags,&fault); break;
-    case QA_CVARS_EDIT_ADD_FLAGS: {
-        const cvar_alias *alias=find_alias(edit->registry,&edit->values,command->name);
-        if (alias && alias_info_flags(edit->registry,command->flags)) {
-            ok=qac_fail(&fault,QA_ERROR_ARGUMENT,"cvar alias requires an explicit protocol info-key mapping");
-            break;
-        }
-        cvar *entry=command->name?qac_cvars_find_values(edit->registry,&edit->values,
-            canonical_name(edit->registry,&edit->values,source_name(edit->registry,command->name))):NULL;
-        if (!entry) ok=qac_fail(&fault,QA_ERROR_NOT_FOUND,"flag declaration requires its prepared cvar");
-        else entry->view.flags|=command->flags;
-        break;
-    }
-    case QA_CVARS_EDIT_FULL_SET:
-        ok=full_set_variable(target,command->name,command->value,command->flags,&fault); break;
-    case QA_CVARS_EDIT_STAGE:
-        ok=stage_variable(target,command->name,command->value,&fault); break;
-    case QA_CVARS_EDIT_APPLY_LATCHED:
-        ok=apply_latched_variables(target,command->name,&fault); break;
-    case QA_CVARS_EDIT_RESET:
-        ok=reset_variable(target,command->name,command->force,&fault); break;
-    case QA_CVARS_EDIT_RESTART:
-        ok=restart_variables(target,&fault); break;
-    case QA_CVARS_EDIT_SET_NUMBER:
-        ok=set_number_variable(target,command->name,command->number,&fault); break;
-    case QA_CVARS_EDIT_RETAIN_SHARED:
-        ok=retain_shared_variable(target,command->name,&fault); break;
-    default:
-        ok=qac_fail(&fault,QA_ERROR_ARGUMENT,"unknown prepared cvar operation"); break;
-    }
+    if (ok) ok=apply_operation(target,command,&fault);
     if (edit->fault.code!=QA_OK) { if (fault.code==QA_OK) fault=edit->fault; ok=false; }
     if (!ok) {
         if (fault.code==QA_OK) qac_fail(&fault,QA_ERROR_ARGUMENT,"prepared cvar operation failed");

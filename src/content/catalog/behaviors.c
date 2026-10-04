@@ -10,14 +10,6 @@ const qa_catalog_weapon_behavior *qa_catalog_weapon_behavior_find(const qa_catal
         if (c->behaviors[i].product == product && !strcmp(c->behaviors[i].id, id)) return &c->behaviors[i];
     return NULL;
 }
-static bool optional(qa_vfs *view, const char *path, qa_resource **out, qa_error *error)
-{
-    qa_error reason = {0};
-    if (qa_vfs_acquire(view, path, out, NULL, &reason)) return true;
-    if (reason.code == QA_ERROR_NOT_FOUND) { *out = NULL; return true; }
-    if (error) *error = reason;
-    return false;
-}
 static bool artifact(qa_catalog *c, qa_vfs *view, const qa_json_document *doc,
                       qa_json_id row, const char *default_path,
                       qa_catalog_weapon_behavior *behavior, qa_error *error)
@@ -42,7 +34,7 @@ static bool read_document(qa_catalog *c, catalog_product *p, qa_vfs *view,
                            const char *path, qa_program_kind runtime, bool *found, qa_error *error)
 {
     qa_resource *resource;
-    if (!optional(view, path, &resource, error)) return false;
+    if (!catalog_optional_resource(view, path, &resource, error)) return false;
     *found = resource != NULL;
     if (!resource) return true;
     qa_json_document *doc = NULL; bool ok = false;
@@ -122,7 +114,7 @@ bool catalog_read_behaviors(qa_catalog *c, catalog_product *p, qa_error *error)
         read_document(c, p, view, "native-weapon-behaviors.json", QA_PROGRAM_NATIVE, &native, error);
     if (ok && !native && !p->view.builtin && p->view.family == QA_GAME_Q2 && p->view.edition == QA_EDITION_RERELEASE) {
         qa_resource *program;
-        ok = optional(view, "game_x64.dll", &program, error);
+        ok = catalog_optional_resource(view, "game_x64.dll", &program, error);
         if (ok && program) {
             qa_sha256_digest known;
             ok = qa_sha256_parse("b60b79f7fb6f115218681a9cbab8765267e34f72466975526df05ad288925dde", &known, error);

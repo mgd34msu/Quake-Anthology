@@ -456,11 +456,6 @@ bool script_lexer_next_into(qa_script_lexer *l,qa_script_token *out,bool *found,
         if(!whitespace) return false;
         out->leading_whitespace.data=(uint8_t *)whitespace;
     }
-    if(out->location.path) {
-        char *path=script_string(&l->arena,out->location.path,strlen(out->location.path),error);
-        if(!path) return false;
-        out->location.path=path;
-    }
     if(ok && *found && !unread && out->kind!=QA_SCRIPT_PRIMITIVE) {
         memcpy(l->record.bytes+SCRIPT_LEXER_TOKEN,raw,SCRIPT_TOKEN_BYTES);
         l->token_extent=out->text.size && memchr(out->text.data,0,out->text.size)?out->text.size:SIZE_MAX;

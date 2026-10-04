@@ -115,7 +115,7 @@ bool qa_demo_record_begin(qa_fs_root *root, const char *name, const qa_save_imag
     uint8_t header[DEMO_HEADER_BYTES];
     qa_net_writer w;
     qa_net_writer_init(&w, header, sizeof(header), error);
-    qa_net_write_data(&w, "QADM\r\n\032\n", 8); qa_net_write_u32(&w, 1); qa_net_write_u32(&w, DEMO_HEADER_BYTES);
+    qa_net_write_data(&w, "QADM\r\n\032\n", 8); qa_net_write_u32(&w, 0); qa_net_write_u32(&w, DEMO_HEADER_BYTES);
     qa_net_write_u64(&w, metadata->elapsed_ns); qa_net_write_data(&w, metadata->composition.bytes, 32);
     qa_net_write_u32(&w, 0); qa_net_write_u32(&w, 0);
     if (w.failed || !write_part(recorder, (qa_bytes){header, sizeof(header)}, error) ||
@@ -163,7 +163,7 @@ static bool retain_record(qa_demo *demo, qa_demo_record record, qa_error *error)
 bool qa_demo_take(qa_buffer *buffer, bool recover_tail, qa_demo **out, qa_error *error)
 {
     if (!buffer || !out || !buffer->data || buffer->size < DEMO_HEADER_BYTES ||
-        memcmp(buffer->data, "QADM\r\n\032\n", 8) || qa_load_u32le(buffer->data + 8) != 1 ||
+        memcmp(buffer->data, "QADM\r\n\032\n", 8) ||
         qa_load_u32le(buffer->data + 12) != DEMO_HEADER_BYTES || qa_load_u64le(buffer->data + 56))
         return persistence_fail(error, QA_ERROR_FORMAT, "Invalid shared demo header");
     qa_demo *demo = calloc(1, sizeof(*demo));

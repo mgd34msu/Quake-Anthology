@@ -869,13 +869,20 @@ static bool entity_pass(qa_bytes text, qa_entity_syntax syntax, qa_entities *res
     return true;
 }
 
+static bool entity_count(qa_bytes *text, qa_entity_syntax syntax, qa_entities *out,
+                         qa_error *error)
+{
+    if ((text->size > 0 && text->data == NULL) || (syntax != QA_ENTITY_Q1 && syntax != QA_ENTITY_Q3))
+        return fail(error, QA_ERROR_ARGUMENT, 0, "invalid entity parser request");
+    if (text->size > 0) *text = string_span(text->data, text->size);
+    return entity_pass(*text, syntax, out, false, error);
+}
+
 bool qa_entities_parse(qa_bytes text, qa_entity_syntax syntax, qa_entities *out, qa_error *error)
 {
-    if (out == NULL || (text.size > 0 && text.data == NULL) || (syntax != QA_ENTITY_Q1 && syntax != QA_ENTITY_Q3))
-        return fail(error, QA_ERROR_ARGUMENT, 0, "invalid entity parser request");
-    if (text.size > 0) text = string_span(text.data, text.size);
+    if (out == NULL) return fail(error, QA_ERROR_ARGUMENT, 0, "invalid entity parser request");
     qa_entities result = {0};
-    if (!entity_pass(text, syntax, &result, false, error)) return false;
+    if (!entity_count(&text, syntax, &result, error)) return false;
     if (result.count > SIZE_MAX / sizeof(*result.records)
         || result.property_count > SIZE_MAX / sizeof(*result.properties))
         return fail(error, QA_ERROR_MEMORY, 0, "entity table is too large");
@@ -1467,8 +1474,8 @@ bool qa_bsp_validate(const qa_bsp_view *map, qa_error *error)
     if (map->family == QA_BSP_Q2 && (counts[QA_BSP_MODELS] == 0 || counts[QA_BSP_NODES] == 0 || counts[QA_BSP_LEAVES] == 0))
         return fail(error,QA_ERROR_FORMAT,0,"Q2 map requires models, nodes and leaves");
     qa_entities entities = {0};
-    if (!qa_entities_parse(map->lumps[QA_BSP_ENTITIES].bytes,map->family == QA_BSP_Q3 ? QA_ENTITY_Q3 : QA_ENTITY_Q1,&entities,error)) return false;
-    qa_entities_free(&entities);
+    qa_bytes text = map->lumps[QA_BSP_ENTITIES].bytes;
+    if (!entity_count(&text,map->family == QA_BSP_Q3 ? QA_ENTITY_Q3 : QA_ENTITY_Q1,&entities,error)) return false;
     for (size_t i = 0; i < counts[QA_BSP_PLANES]; ++i) {
         qa_bsp_plane plane;
         if (!qa_bsp_read_plane(map,i,&plane,error)) return false;

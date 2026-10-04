@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <ctype.h>
 
-static bool optional_resource(qa_vfs *view, const char *path, qa_resource **out, qa_error *error)
+bool catalog_optional_resource(qa_vfs *view, const char *path, qa_resource **out, qa_error *error)
 {
     qa_error reason = {0};
     if (qa_vfs_acquire(view, path, out, NULL, &reason)) return true;
@@ -159,7 +159,7 @@ bool catalog_read_starts(qa_catalog *c, catalog_product *p, qa_error *error)
     qa_vfs *view;
     if (!qa_catalog_open(c, p->view.id, &view, error)) return false;
     qa_resource *resource;
-    if (!optional_resource(view, "mapdb.json", &resource, error)) { qa_vfs_destroy(view); return false; }
+    if (!catalog_optional_resource(view, "mapdb.json", &resource, error)) { qa_vfs_destroy(view); return false; }
     qa_vfs_destroy(view);
     if (!resource) return true;
     qa_json_document *doc = NULL; bool ok = false;

@@ -46,10 +46,9 @@ static bool text(qa_source_save_io *io, qa_catalog *catalog, const char **value)
     size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? io->input.size - io->offset : SIZE_MAX;
     if (!qa_source_save_count(io, &length, maximum)) return false;
     if (io->direction == QA_SOURCE_SAVE_WRITE) return qa_source_save_bytes(io, (void *)*value, length);
-    if (length > io->input.size - io->offset) return false;
-    qa_bytes bytes = {io->input.data + io->offset, length};
+    qa_bytes bytes;
+    if (!qa_source_save_span(io, length, &bytes)) return false;
     if (memchr(bytes.data, 0, bytes.size)) return fail(io->error, QA_ERROR_FORMAT, "Retained catalog text contains NUL");
-    io->offset += length;
     if (!qa_strings_intern(catalog->restored_literals, bytes, &id, io->error)) return false;
     *value = qa_strings_cstr(catalog->restored_literals, id); return *value != NULL;
 }

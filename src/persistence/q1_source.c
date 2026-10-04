@@ -1,6 +1,7 @@
 /* Source Quake v5 and rerelease v6 text saves. */
 #include "qa/q1_save.h"
 #include "qa/text.h"
+#include "qa/source_save.h"
 #include <float.h>
 #include <math.h>
 #include <stdio.h>
@@ -8,7 +9,7 @@
 #include <string.h>
 
 typedef struct scanner { qa_bytes bytes; size_t offset; qa_error *error; } scanner;
-typedef struct writer { qa_buffer bytes; size_t capacity; qa_error *error; } writer;
+typedef qa_source_save_io writer;
 static bool js_space(uint8_t c) { return c==32 || c==160 || (c>=9 && c<=13); }
 static bool fail(qa_error *error,size_t offset,const char *message)
 { qa_error_set(error,QA_ERROR_FORMAT,offset,"%s",message); return false; }
@@ -159,26 +160,14 @@ bool qa_q1_save_decode(qa_bytes bytes,qa_q1_save_data **out,qa_error *error)
     *out=save; return true;
 }
 static bool append(writer *w,const void *data,size_t size)
-{
-    if (size>SIZE_MAX-w->bytes.size) return fail(w->error,w->bytes.size,"Source output extent overflows");
-    size_t required=w->bytes.size+size;
-    if (required>w->capacity) {
-        size_t capacity=w->capacity?w->capacity:512;
-        while (capacity<required) { if (capacity>SIZE_MAX/2) { capacity=required; break; } capacity*=2; }
-        uint8_t *next=realloc(w->bytes.data,capacity);
-        if (!next) { qa_error_set(w->error,QA_ERROR_MEMORY,w->bytes.size,"Allocating source output"); return false; }
-        w->bytes.data=next; w->capacity=capacity;
-    }
-    if (size) memcpy(w->bytes.data+w->bytes.size,data,size);
-    w->bytes.size=required; return true;
-}
+{ return qa_source_save_bytes(w,(void *)data,size); }
 static bool line(writer *w,const char *text)
 { return append(w,text,strlen(text)) && append(w,"\n",1); }
 static bool header_token(writer *w,const char *text)
 {
-    if (!text || !*text) return fail(w->error,w->bytes.size,"Empty source header token");
+    if (!text || !*text) return fail(w->error,w->offset,"Empty source header token");
     for (const unsigned char *p=(const unsigned char *)text;*p;++p)
-        if (js_space(*p) || *p=='"') return fail(w->error,w->bytes.size,"Invalid source header token");
+        if (js_space(*p) || *p=='"') return fail(w->error,w->offset,"Invalid source header token");
     return line(w,text);
 }
 /* Binary64 header numbers follow Number.toFixed, while QC FIELD values retain
@@ -274,7 +263,7 @@ static bool shortest_header(double value,const header_integer *actual,char text[
 }
 static bool decimal(writer *w,double value,unsigned digits)
 {
-    if (!isfinite(value)) return fail(w->error,w->bytes.size,"Nonfinite source header number");
+    if (!isfinite(value)) return fail(w->error,w->offset,"Nonfinite source header number");
     if (!digits) { char integer[384]; return qa_format_fixed(value,0,integer,sizeof(integer),w->error) && line(w,integer); }
     _Static_assert(sizeof(double)==8 && FLT_RADIX==2 && DBL_MANT_DIG==53 && DBL_MAX_EXP==1024,
         "Source header codec requires binary64 numbers");
@@ -306,7 +295,7 @@ static bool put_record(writer *w,const qa_q1_save_record *record)
     for (size_t i=0;i<record->count;++i) {
         const qa_q1_save_pair *pair=record->pairs+i;
         if (!pair->key || !pair->value || strchr(pair->key,'"') || strchr(pair->value,'"'))
-            return fail(w->error,w->bytes.size,"Source fields cannot contain quotes");
+            return fail(w->error,w->offset,"Source fields cannot contain quotes");
         if (!append(w,"\"",1) || !append(w,pair->key,strlen(pair->key)) || !append(w,"\" \"",3) ||
             !append(w,pair->value,strlen(pair->value)) || !line(w,"\"")) return false;
     }
@@ -317,7 +306,7 @@ bool qa_q1_save_encode(const qa_q1_save_data *save,qa_buffer *out,qa_error *erro
     if (!save || !out || out->data || out->size || (save->version!=5 && save->version!=6) ||
         (save->entity_count && !save->entities) || (save->extension.size && !save->extension.data))
         return fail(error,0,"Invalid source save/output");
-    writer w={{0},0,error}; bool ok=line(&w,save->version==5?"5":"6");
+    writer w={0}; bool ok=qa_source_save_writer(&w,NULL,error) && line(&w,save->version==5?"5":"6");
     if (ok && save->version==6) ok=header_token(&w,save->game_directories);
     if (ok) ok=header_token(&w,save->comment);
     for (size_t i=0;ok && i<16;++i) ok=decimal(&w,save->spawn_parameters[i],6);
@@ -326,10 +315,10 @@ bool qa_q1_save_encode(const qa_q1_save_data *save,qa_buffer *out,qa_error *erro
     if (ok) ok=put_record(&w,&save->globals);
     for (size_t i=0;ok && i<save->entity_count;++i) ok=put_record(&w,save->entities+i);
     if (ok && save->extension.size && memchr(save->extension.data,0,save->extension.size))
-        ok=fail(error,w.bytes.size,"NUL in source extension text");
+        ok=fail(error,w.offset,"NUL in source extension text");
     if (ok) ok=append(&w,save->extension.data,save->extension.size);
-    if (!ok) { qa_buffer_free(&w.bytes); return false; }
-    *out=w.bytes; return true;
+    if (ok) ok=qa_source_save_finish(&w,out);
+    qa_source_save_dispose(&w); return ok;
 }
 bool qa_q1_save_singleplayer(const qa_q1_save_data *save,qa_error *error)
 {
