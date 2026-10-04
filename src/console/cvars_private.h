@@ -21,14 +21,24 @@ typedef struct cvar_post_event {
     cvar_observer *observers[];
 } cvar_post_event;
 
-typedef struct cvar {
+typedef struct cvar cvar;
+typedef struct cvar_alias cvar_alias;
+typedef struct cvar_name_node {
+    struct cvar_name_node *next;
+    const char *name;
+    bool alias;
+    union { cvar *entry; cvar_alias *alias; } owner;
+} cvar_name_node;
+
+struct cvar {
     qa_cvar_view view;
     qa_cvar_binding binding;
     bool bound;
     uint64_t binding_order;
     struct cvar *next;
-} cvar;
-typedef struct cvar_alias {
+    cvar_name_node indexed_name;
+};
+struct cvar_alias {
     struct cvar_alias *next;
     char *name, *target, *description;
     const qa_console_documentation *documentation;
@@ -37,7 +47,8 @@ typedef struct cvar_alias {
     bool vm_bound;
     qa_cvar_view projection;
     char value[32], reset[32], latched[32];
-} cvar_alias;
+    cvar_name_node indexed_name;
+};
 typedef struct cvar_values {
     cvar *first;
     cvar_alias *aliases, *last_alias;
@@ -45,6 +56,8 @@ typedef struct cvar_values {
     size_t count, next_handle;
     uint32_t changed_flags;
     bool userinfo_modified, server_active, high_characters, cheats;
+    cvar_name_node **name_buckets;
+    size_t name_bucket_count;
 } cvar_values;
 typedef struct cvar_edit_event cvar_edit_event;
 typedef struct cvar_edit_binding {
@@ -86,4 +99,10 @@ bool qac_cvars_touch(qa_cvars *, qa_error *);
 void qac_cvars_entry_free(cvar *);
 void qac_cvars_alias_free(cvar_alias *);
 cvar_alias *qac_cvars_alias_copy(const cvar_alias *, qa_error *);
+bool qac_cvars_name_equal(const qa_cvars *, const char *, const char *);
+cvar *qac_cvars_find_values(const qa_cvars *, const cvar_values *, const char *);
+bool qac_cvars_index_reserve(const qa_cvars *, cvar_values *, size_t, qa_error *);
+void qac_cvars_index_entry(const qa_cvars *, cvar_values *, cvar *);
+void qac_cvars_index_alias(const qa_cvars *, cvar_values *, cvar_alias *);
+void qac_cvars_values_free(cvar_values *);
 #endif

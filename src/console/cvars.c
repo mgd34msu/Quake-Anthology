@@ -36,26 +36,102 @@ bool qa_cvars_capture_metadata(const qa_cvars *registry, qa_cvar_registry_state 
 static const uint32_t q2_no_archive = QA_Q2_CVAR_NOSET | QA_Q2_CVAR_CHEAT |
     QA_Q2_CVAR_PRIVATE | QA_Q2_CVAR_READONLY | QA_Q2_CVAR_NO_ARCHIVE;
 
-static bool name_equal(const qa_cvars *registry, const char *a, const char *b)
+bool qac_cvars_name_equal(const qa_cvars *registry, const char *a, const char *b)
 {
     return registry->options.dialect == QA_CONSOLE_Q3 ? qac_equal(a, b) : strcmp(a, b) == 0;
 }
 
-static cvar *find_values(const qa_cvars *registry, const cvar_values *values, const char *name)
+static size_t name_hash(const qa_cvars *registry, const char *name)
 {
-    if (registry == NULL || values == NULL || name == NULL) return NULL;
-    for (cvar *entry = values->first; entry != NULL; entry = entry->next)
-        if (name_equal(registry, name, entry->view.name)) return entry;
+    uint64_t hash = UINT64_C(14695981039346656037);
+    bool folded = registry->options.dialect == QA_CONSOLE_Q3;
+    for (const unsigned char *p = (const unsigned char *)name; *p; ++p) {
+        unsigned char byte = *p;
+        if (folded && byte >= 'A' && byte <= 'Z')
+            byte = (unsigned char)(byte + ('a' - 'A'));
+        hash = (hash ^ byte) * UINT64_C(1099511628211);
+    }
+    return (size_t)hash;
+}
+bool qac_cvars_index_reserve(const qa_cvars *registry, cvar_values *values,
+                            size_t count, qa_error *error)
+{
+    if (count <= values->name_bucket_count) return true;
+    size_t capacity = values->name_bucket_count ? values->name_bucket_count : 16;
+    while (capacity < count) {
+        if (capacity > SIZE_MAX / 2)
+            return qac_fail(error, QA_ERROR_MEMORY, "cvar name index exceeds address space");
+        capacity *= 2;
+    }
+    if (capacity > SIZE_MAX / sizeof(*values->name_buckets))
+        return qac_fail(error, QA_ERROR_MEMORY, "cvar name index exceeds address space");
+    cvar_name_node **buckets = calloc(capacity, sizeof(*buckets));
+    if (!buckets) return qac_fail(error, QA_ERROR_MEMORY, "allocating cvar name index");
+    for (size_t i = 0; i < values->name_bucket_count; ++i) {
+        cvar_name_node *node = values->name_buckets[i];
+        while (node) {
+            cvar_name_node *next = node->next;
+            size_t slot = name_hash(registry, node->name) & (capacity - 1);
+            node->next = buckets[slot]; buckets[slot] = node;
+            node = next;
+        }
+    }
+    free(values->name_buckets);
+    values->name_buckets = buckets; values->name_bucket_count = capacity;
+    return true;
+}
+static void index_add(const qa_cvars *registry, cvar_values *values,
+                       cvar_name_node *node)
+{
+    size_t slot = name_hash(registry, node->name) & (values->name_bucket_count - 1);
+    node->next = values->name_buckets[slot]; values->name_buckets[slot] = node;
+}
+void qac_cvars_index_entry(const qa_cvars *registry, cvar_values *values, cvar *entry)
+{
+    entry->indexed_name = (cvar_name_node){.name=entry->view.name, .owner.entry=entry};
+    index_add(registry, values, &entry->indexed_name);
+}
+void qac_cvars_index_alias(const qa_cvars *registry, cvar_values *values, cvar_alias *alias)
+{
+    alias->indexed_name = (cvar_name_node){.name=alias->name, .alias=true, .owner.alias=alias};
+    index_add(registry, values, &alias->indexed_name);
+}
+static void index_remove(const qa_cvars *registry, cvar_values *values,
+                          cvar_name_node *node)
+{
+    size_t slot = name_hash(registry, node->name) & (values->name_bucket_count - 1);
+    cvar_name_node **link = &values->name_buckets[slot];
+    while (*link != node) link = &(*link)->next;
+    *link = node->next; node->next = NULL;
+}
+static bool index_reserve_add(const qa_cvars *registry, cvar_values *values,
+                               qa_error *error)
+{
+    if (values->alias_count >= SIZE_MAX - values->count)
+        return qac_fail(error, QA_ERROR_MEMORY, "cvar name index exceeds address space");
+    return qac_cvars_index_reserve(registry, values,
+        values->count + values->alias_count + 1, error);
+}
+static cvar_name_node *find_name(const qa_cvars *registry,
+                                const cvar_values *values, const char *name)
+{
+    if (!registry || !values || !name || !values->name_bucket_count) return NULL;
+    size_t slot = name_hash(registry, name) & (values->name_bucket_count - 1);
+    for (cvar_name_node *node = values->name_buckets[slot]; node; node = node->next)
+        if (qac_cvars_name_equal(registry, name, node->name)) return node;
     return NULL;
 }
+cvar *qac_cvars_find_values(const qa_cvars *registry, const cvar_values *values, const char *name)
+{
+    const cvar_name_node *node = find_name(registry, values, name);
+    return node && !node->alias ? node->owner.entry : NULL;
+}
 static cvar *find_variable(const qa_cvars *registry, const char *name)
-{ return find_values(registry, registry ? &registry->values : NULL, name); }
+{ return qac_cvars_find_values(registry, registry ? &registry->values : NULL, name); }
 static cvar_alias *find_alias(const qa_cvars *registry, const cvar_values *values, const char *name)
 {
-    if (!registry || !values || !name) return NULL;
-    for (cvar_alias *alias=values->aliases;alias;alias=alias->next)
-        if (name_equal(registry,name,alias->name)) return alias;
-    return NULL;
+    const cvar_name_node *node = find_name(registry, values, name);
+    return node && node->alias ? node->owner.alias : NULL;
 }
 static const char *canonical_name(const qa_cvars *registry, const cvar_values *values, const char *name)
 {
@@ -97,7 +173,7 @@ static const char *alias_read(const cvar_alias *alias,const char *source,char ou
 }
 static const qa_cvar_view *alias_view(const qa_cvars *registry,const cvar_values *values,cvar_alias *alias)
 {
-    const cvar *target=find_values(registry,values,alias->target);
+    const cvar *target=qac_cvars_find_values(registry,values,alias->target);
     if (!target) return NULL;
     alias->projection=target->view;
     alias->projection.name=alias->name;
@@ -159,7 +235,7 @@ static bool post_prepare(qa_cvars *registry, const cvar *entry,
 {
     size_t count=0;
     for (cvar_observer *row=registry->observers;row;row=row->next)
-        if (row->active && !row->suppressed && name_equal(registry,row->name,entry->view.name)) {
+        if (row->active && !row->suppressed && qac_cvars_name_equal(registry,row->name,entry->view.name)) {
             if (count==SIZE_MAX || row->references==SIZE_MAX)
                 return qac_fail(error,QA_ERROR_MEMORY,"cvar observer inventory is exhausted");
             ++count;
@@ -172,7 +248,7 @@ static bool post_prepare(qa_cvars *registry, const cvar *entry,
     if (!event) return qac_fail(error,QA_ERROR_MEMORY,"retaining cvar publication observers");
     event->next=NULL; event->count=0;
     for (cvar_observer *row=registry->observers;row;row=row->next)
-        if (row->active && !row->suppressed && name_equal(registry,row->name,entry->view.name)) {
+        if (row->active && !row->suppressed && qac_cvars_name_equal(registry,row->name,entry->view.name)) {
             ++row->references; event->observers[event->count++]=row;
         }
     *out=event; return true;
@@ -272,7 +348,7 @@ bool qa_cvars_restore_metadata(qa_cvars *registry, const qa_cvar_registry_state 
             (entry->bound && (entry->view.owner != records[i].owner || entry->view.handle != records[i].handle)))
             return qac_fail(error, QA_ERROR_FORMAT, "invalid saved cvar metadata identity");
         for (size_t earlier = 0; earlier < i; ++earlier)
-            if (records[earlier].handle == records[i].handle || name_equal(registry, records[earlier].name, records[i].name))
+            if (records[earlier].handle == records[i].handle || qac_cvars_name_equal(registry, records[earlier].name, records[i].name))
                 return qac_fail(error, QA_ERROR_FORMAT, "duplicate saved cvar metadata identity");
     }
     for (const cvar_alias *alias=registry->values.aliases;alias;alias=alias->next) {
@@ -297,7 +373,7 @@ bool qa_cvars_restore_metadata(qa_cvars *registry, const qa_cvar_registry_state 
 static bool retain_shared_variable(cvar_target target,const char *name,qa_error *error)
 {
     if (!target_touch(target,error)) return false;
-    cvar *entry=find_values(target.registry,target.values,
+    cvar *entry=qac_cvars_find_values(target.registry,target.values,
         canonical_name(target.registry,target.values,name));
     if (entry == NULL) return qac_fail(error, QA_ERROR_NOT_FOUND, "shared cvar is not registered");
     entry->view.owner = 0;
@@ -323,6 +399,7 @@ static cvar *entry_copy(const cvar *source, qa_error *error)
     if (!copy) { qac_fail(error,QA_ERROR_MEMORY,"copying prepared cvar record"); return NULL; }
     *copy=*source;
     copy->next=NULL;
+    copy->indexed_name=(cvar_name_node){0};
     copy->view.name=qac_copy(source->view.name,error);
     copy->view.value=qac_copy(source->view.value,error);
     copy->view.reset_value=qac_copy(source->view.reset_value,error);
@@ -430,7 +507,7 @@ bool qa_cvars_alias_register(qa_cvars *registry,const char *name,const char *tar
         !qa_cvars_name_valid(registry->options.dialect, name) ||
         !qa_cvars_name_valid(registry->options.dialect, target) ||
         conversion>QA_CVAR_ALIAS_KILOHERTZ || conversion<QA_CVAR_ALIAS_IDENTITY ||
-        name_equal(registry,name,target) || find_variable(registry,name) ||
+        qac_cvars_name_equal(registry,name,target) || find_variable(registry,name) ||
         find_alias(registry,&registry->values,name) || find_alias(registry,&registry->values,target))
         return qac_fail(error,QA_ERROR_ARGUMENT,"cvar alias requires a unique name and canonical target");
     const cvar *entry=find_variable(registry,target);
@@ -449,9 +526,11 @@ bool qa_cvars_alias_register(qa_cvars *registry,const char *name,const char *tar
     cvar_alias *alias=qac_cvars_alias_copy(&source,error);
     if (!alias) return false;
     if (!qac_cvars_touch(registry,error)) { qac_cvars_alias_free(alias); return false; }
+    if (!index_reserve_add(registry,&registry->values,error)) { qac_cvars_alias_free(alias); return false; }
     if (registry->values.last_alias) registry->values.last_alias->next=alias;
     else registry->values.aliases=alias;
     registry->values.last_alias=alias; ++registry->values.alias_count;
+    qac_cvars_index_alias(registry,&registry->values,alias);
     return true;
 }
 
@@ -589,7 +668,7 @@ static bool cheats_allowed(cvar_target target)
         bool allowed=registry->options.cheats_allowed(registry->options.user);
         --owned->notifying; return allowed;
     }
-    const cvar *cheats = find_values(registry, target.values, "sv_cheats");
+    const cvar *cheats = qac_cvars_find_values(registry, target.values, "sv_cheats");
     return cheats == NULL ? target.values->cheats : cheats->view.integer != 0;
 }
 
@@ -613,16 +692,7 @@ void qa_cvars_destroy(qa_cvars *registry)
 {
     if (registry == NULL) return;
     if (!qa_cvars_observer_idle(registry)) return;
-    cvar *entry = registry->values.first;
-    while (entry != NULL) {
-        cvar *next = entry->next;
-        qac_cvars_entry_free(entry);
-        entry = next;
-    }
-    while (registry->values.aliases) {
-        cvar_alias *alias=registry->values.aliases;
-        registry->values.aliases=alias->next; qac_cvars_alias_free(alias);
-    }
+    qac_cvars_values_free(&registry->values);
     while (registry->observers) {
         cvar_observer *row=registry->observers;
         registry->observers=row->next; free(row->name); free(row);
@@ -637,10 +707,9 @@ qa_console_dialect qa_cvars_dialect(const qa_cvars *registry)
 
 const qa_cvar_view *qa_cvars_find(const qa_cvars *registry, const char *name)
 {
-    cvar_alias *alias=find_alias(registry,registry?&registry->values:NULL,name);
-    if (alias) return alias_view(registry,&registry->values,alias);
-    const cvar *entry = find_variable(registry, name);
-    return entry == NULL ? NULL : &entry->view;
+    const cvar_name_node *node=find_name(registry,registry?&registry->values:NULL,name);
+    if (!node) return NULL;
+    return node->alias ? alias_view(registry,&registry->values,node->owner.alias) : &node->owner.entry->view;
 }
 
 const qa_cvar_view *qa_cvars_at(const qa_cvars *registry, size_t ordinal)
@@ -760,7 +829,7 @@ static bool register_variable(cvar_target target, const char *name, const char *
     if (find_alias(registry,target.values,name)) {
         if (alias_info_flags(registry,flags))
             return qac_fail(error,QA_ERROR_ARGUMENT,"cvar alias requires an explicit protocol info-key mapping");
-        return find_values(registry,target.values,canonical_name(registry,target.values,name))!=NULL ||
+        return qac_cvars_find_values(registry,target.values,canonical_name(registry,target.values,name))!=NULL ||
             qac_fail(error,QA_ERROR_NOT_FOUND,"cvar alias canonical target is absent");
     }
     const qa_console_dialect dialect = registry->options.dialect;
@@ -768,7 +837,7 @@ static bool register_variable(cvar_target target, const char *name, const char *
     if (q2 && (flags & (QA_CVAR_USERINFO | QA_CVAR_SERVERINFO)) != 0 &&
         (!valid_info(name) || !valid_info(default_value)))
         return qac_fail(error, QA_ERROR_FORMAT, "invalid info cvar name or default");
-    cvar *entry = find_values(registry, target.values, name);
+    cvar *entry = qac_cvars_find_values(registry, target.values, name);
     if (entry != NULL) {
         if (entry->bound && entry->binding.validate != NULL &&
             !validate_value(registry,&entry->binding,default_value,error)) return false;
@@ -813,6 +882,7 @@ static bool register_variable(cvar_target target, const char *name, const char *
     }
     if (target.values->next_handle == SIZE_MAX)
         return qac_fail(error, QA_ERROR_MEMORY, "cvar handles exhausted");
+    if (!index_reserve_add(registry,target.values,error)) return false;
     entry = calloc(1, sizeof(*entry));
     if (entry == NULL) return qac_fail(error, QA_ERROR_MEMORY, "allocating cvar");
     entry->view.name = qac_copy(name, error);
@@ -833,6 +903,7 @@ static bool register_variable(cvar_target target, const char *name, const char *
     entry->next = target.values->first;
     target.values->first = entry;
     ++target.values->count;
+    qac_cvars_index_entry(registry,target.values,entry);
     if (dialect == QA_CONSOLE_QW) propagate(target, entry, true);
     return true;
 }
@@ -852,7 +923,7 @@ static bool set_variable(cvar_target target, const char *name, const char *value
         if (!text) { if (fault.code!=QA_OK && error) *error=fault; return fault.code==QA_OK; }
         return set_variable(target,alias->target,text,force,error);
     }
-    cvar *entry = find_values(registry, target.values, name);
+    cvar *entry = qac_cvars_find_values(registry, target.values, name);
     const qa_console_dialect dialect = registry->options.dialect;
     bool q2 = qac_q2(dialect);
     if (entry == NULL) {
@@ -952,7 +1023,7 @@ static bool set_console_variable(cvar_target target, const char *name, const cha
         if (!text) { if (fault.code!=QA_OK && error) *error=fault; return fault.code==QA_OK; }
         return set_console_variable(target,alias->target,text,error);
     }
-    cvar *entry = find_values(registry, target.values, name);
+    cvar *entry = qac_cvars_find_values(registry, target.values, name);
     if (qac_q2(registry->options.dialect) && entry != NULL && strcmp(entry->view.value, value) == 0) {
         cvar_post_event *event=NULL;
         if (!target.edit && !post_prepare(registry,entry,&event,error)) return false;
@@ -1001,7 +1072,7 @@ static bool full_set_variable(cvar_target target, const char *name, const char *
         if (!text) { if (fault.code!=QA_OK && error) *error=fault; return fault.code==QA_OK; }
         return full_set_variable(target,alias->target,text,flags,error);
     }
-    cvar *entry = find_values(registry, target.values, name);
+    cvar *entry = qac_cvars_find_values(registry, target.values, name);
     if (entry == NULL) return register_variable(target, name, value, flags, 0, NULL, error);
     if (entry->bound && entry->binding.validate != NULL &&
         !validate_value(registry,&entry->binding,value,error)) return false;
@@ -1036,12 +1107,12 @@ static bool set_flags_variable(cvar_target target, const char *name, const char 
     if (!q3 && flag != QA_CVAR_ARCHIVE && (!valid_info(name) || !valid_info(value) ||
         (q2 && (strlen(name) >= 64 || strlen(value) >= 64))))
         return qac_fail(error, QA_ERROR_FORMAT, "invalid info cvar name or value");
-    cvar *entry = find_values(registry, target.values, name);
+    cvar *entry = qac_cvars_find_values(registry, target.values, name);
     uint32_t old_flags = entry == NULL ? 0 : entry->view.flags;
     if (entry == NULL) {
         uint32_t created = q2 ? QA_Q2_CVAR_CUSTOM : registry->options.dialect == QA_CONSOLE_Q3 ? QA_CVAR_USER_CREATED : 0;
         if (!register_variable(target, name, value, flag | created, 0, NULL, error)) return false;
-        entry = find_values(registry, target.values, source_name(registry, name));
+        entry = qac_cvars_find_values(registry, target.values, source_name(registry, name));
         entry->view.console_created = true;
     } else {
         if (!set_console_variable(target, name, value, error)) return false;
@@ -1071,7 +1142,7 @@ static bool stage_variable(cvar_target target, const char *name, const char *val
         if (!text) { if (fault.code!=QA_OK && error) *error=fault; return fault.code==QA_OK; }
         return stage_variable(target,alias->target,text,error);
     }
-    cvar *entry = find_values(registry, target.values, name);
+    cvar *entry = qac_cvars_find_values(registry, target.values, name);
     if (entry == NULL) return qac_fail(error, QA_ERROR_NOT_FOUND, "cannot stage unregistered cvar");
     if (entry->bound && entry->binding.validate != NULL &&
         !validate_value(registry,&entry->binding,value,error)) return false;
@@ -1099,7 +1170,7 @@ static bool apply_latched_variables(cvar_target target, const char *name, qa_err
     if (registry == NULL) return qac_fail(error, QA_ERROR_ARGUMENT, "cvar registry is NULL");
     name=canonical_name(registry,target.values,name);
     for (cvar *entry = target.values->first; entry != NULL; entry = entry->next) {
-        if ((name != NULL && !name_equal(registry, name, entry->view.name)) || entry->view.latched_value == NULL) continue;
+        if ((name != NULL && !qac_cvars_name_equal(registry, name, entry->view.name)) || entry->view.latched_value == NULL) continue;
         const char *pending = entry->view.latched_value;
         entry->view.latched_value = NULL;
         if (!apply_value(target, entry, pending, registry->options.dialect == QA_CONSOLE_Q3, error)) {
@@ -1117,7 +1188,7 @@ static bool reset_variable(cvar_target target, const char *name, bool force, qa_
 {
     if (!target_touch(target, error)) return false;
     name=canonical_name(target.registry,target.values,name);
-    cvar *entry = find_values(target.registry, target.values, name);
+    cvar *entry = qac_cvars_find_values(target.registry, target.values, name);
     if (entry == NULL) return qac_fail(error, QA_ERROR_NOT_FOUND, "cannot reset unregistered cvar");
     return set_variable(target, name, entry->view.reset_value, force, error);
 }
@@ -1135,6 +1206,7 @@ static bool restart_variables(cvar_target target, qa_error *error)
             link = &entry->next;
         } else if ((entry->view.flags & QA_CVAR_USER_CREATED) != 0) {
             *link = entry->next;
+            index_remove(registry,target.values,&entry->indexed_name);
             qac_cvars_entry_free(entry);
             --target.values->count;
         } else {
@@ -1192,20 +1264,20 @@ static bool vm_bind_variable(cvar_target target,const char *name,const char *def
     if (registry->options.dialect!=QA_CONSOLE_Q3) {
         if (alias && (flags&(QA_CVAR_USERINFO|QA_CVAR_SERVERINFO|QA_CVAR_SYSTEMINFO)))
             return qac_fail(error,QA_ERROR_ARGUMENT,"guest cvar alias requires a canonical protocol info-key mapping");
-        if (!find_values(registry,target.values,canonical_name(registry,target.values,name)))
+        if (!qac_cvars_find_values(registry,target.values,canonical_name(registry,target.values,name)))
             return qac_fail(error,QA_ERROR_NOT_FOUND,"unknown guest cvar requires its actual Q3 registry");
     }
     if (!alias || alias->conversion==QA_CVAR_ALIAS_IDENTITY) {
-        if (!find_values(registry,target.values,canonical_name(registry,target.values,name)) &&
+        if (!qac_cvars_find_values(registry,target.values,canonical_name(registry,target.values,name)) &&
             target.values->next_handle>=1024)
             return qac_fail(error,QA_ERROR_MEMORY,"MAX_CVARS");
         if (registry->options.dialect==QA_CONSOLE_Q3 &&
             !register_variable(target,name,default_value,flags,owner,NULL,error)) return false;
-        const cvar *entry=find_values(registry,target.values,canonical_name(registry,target.values,name));
+        const cvar *entry=qac_cvars_find_values(registry,target.values,canonical_name(registry,target.values,name));
         if (!entry) return qac_fail(error,QA_ERROR_NOT_FOUND,"VM canonical cvar is absent");
         *handle=entry->view.handle; return true;
     }
-    if (alias_info_flags(registry,flags) || !find_values(registry,target.values,alias->target))
+    if (alias_info_flags(registry,flags) || !qac_cvars_find_values(registry,target.values,alias->target))
         return qac_fail(error,QA_ERROR_ARGUMENT,"VM alias lacks its canonical protocol admission");
     if (alias->vm_bound) { *handle=alias->handle; return true; }
     if (target.values->next_handle>=1024)
@@ -1248,7 +1320,7 @@ static bool assign_variable(cvar_target target, const char *name, const char *va
         if (!text) { if (fault.code != QA_OK && error) *error = fault; return fault.code == QA_OK; }
         return assign_variable(target, alias->target, text, source_dialect, error);
     }
-    cvar *entry = find_values(registry, target.values, name);
+    cvar *entry = qac_cvars_find_values(registry, target.values, name);
     if (!entry) return qac_fail(error, QA_ERROR_NOT_FOUND, "direct cvar assignment requires an existing registration");
     if (!replace_text(&entry->view.value, value, error)) return false;
     entry->view.number = qac_number(entry->view.value, source_dialect);
@@ -1322,8 +1394,9 @@ bool qa_cvars_set_cheats(qa_cvars *registry, bool allowed, qa_error *error)
     return mutation_end(registry,set_cheats_variables(live_target(registry),allowed,error),error);
 }
 
-static void values_free(cvar_values *values)
+void qac_cvars_values_free(cvar_values *values)
 {
+    free(values->name_buckets);
     while (values->first) {
         cvar *entry=values->first;
         values->first=entry->next; qac_cvars_entry_free(entry);
@@ -1343,27 +1416,32 @@ bool qa_cvars_edit_prepare(qa_cvars *registry,qa_cvars_edit **out,qa_error *erro
     edit->registry=registry; edit->revision=registry->mutation_revision;
     edit->values=registry->values; edit->values.first=NULL;
     edit->values.aliases=NULL; edit->values.last_alias=NULL;
+    edit->values.name_buckets=NULL; edit->values.name_bucket_count=0;
+    if (!qac_cvars_index_reserve(registry,&edit->values,
+        edit->values.count+edit->values.alias_count,error)) { free(edit); return false; }
     cvar **tail=&edit->values.first;
     for (const cvar *entry=registry->values.first;entry;entry=entry->next) {
         cvar *copy=entry_copy(entry,error);
-        if (!copy) { values_free(&edit->values); free(edit); return false; }
+        if (!copy) { qac_cvars_values_free(&edit->values); free(edit); return false; }
         *tail=copy; tail=&copy->next;
+        qac_cvars_index_entry(registry,&edit->values,copy);
         if (entry->bound) ++edit->binding_count;
     }
     for (const cvar_alias *alias=registry->values.aliases;alias;alias=alias->next) {
         cvar_alias *copy=qac_cvars_alias_copy(alias,error);
-        if (!copy) { values_free(&edit->values); free(edit); return false; }
+        if (!copy) { qac_cvars_values_free(&edit->values); free(edit); return false; }
         if (edit->values.last_alias) edit->values.last_alias->next=copy;
         else edit->values.aliases=copy;
         edit->values.last_alias=copy;
+        qac_cvars_index_alias(registry,&edit->values,copy);
     }
     if (edit->binding_count>SIZE_MAX/sizeof(*edit->bindings)) {
-        values_free(&edit->values); free(edit);
+        qac_cvars_values_free(&edit->values); free(edit);
         return qac_fail(error,QA_ERROR_MEMORY,"prepared cvar bindings exceed address space");
     }
     edit->bindings=edit->binding_count?calloc(edit->binding_count,sizeof(*edit->bindings)):NULL;
     if (edit->binding_count && !edit->bindings) {
-        values_free(&edit->values); free(edit);
+        qac_cvars_values_free(&edit->values); free(edit);
         return qac_fail(error,QA_ERROR_MEMORY,"retaining actual cvar binding order");
     }
     size_t count=0;
@@ -1382,10 +1460,9 @@ qa_cvars *qa_cvars_edit_registry(const qa_cvars_edit *edit)
 { return edit?edit->registry:NULL; }
 const qa_cvar_view *qa_cvars_edit_find(const qa_cvars_edit *edit,const char *name)
 {
-    cvar_alias *alias=edit?find_alias(edit->registry,&edit->values,name):NULL;
-    if (alias) return alias_view(edit->registry,&edit->values,alias);
-    const cvar *entry=edit?find_values(edit->registry,&edit->values,name):NULL;
-    return entry?&entry->view:NULL;
+    const cvar_name_node *node=edit?find_name(edit->registry,&edit->values,name):NULL;
+    if (!node) return NULL;
+    return node->alias ? alias_view(edit->registry,&edit->values,node->owner.alias) : &node->owner.entry->view;
 }
 const qa_cvar_view *qa_cvars_edit_at(const qa_cvars_edit *edit,size_t ordinal)
 {
@@ -1412,7 +1489,7 @@ size_t qa_cvars_edit_visible_count(const qa_cvars_edit *edit)
     if (!edit) return 0;
     size_t count=edit->values.count;
     for (const cvar_alias *alias=edit->values.aliases;alias;alias=alias->next)
-        if (find_values(edit->registry,&edit->values,alias->target)) ++count;
+        if (qac_cvars_find_values(edit->registry,&edit->values,alias->target)) ++count;
     return count;
 }
 const qa_cvar_view *qa_cvars_edit_visible_at(const qa_cvars_edit *edit,size_t ordinal)
@@ -1452,7 +1529,7 @@ bool qa_cvars_edit_apply(qa_cvars_edit *edit,const qa_cvars_edit_command *comman
             ok=qac_fail(&fault,QA_ERROR_ARGUMENT,"cvar alias requires an explicit protocol info-key mapping");
             break;
         }
-        cvar *entry=command->name?find_values(edit->registry,&edit->values,
+        cvar *entry=command->name?qac_cvars_find_values(edit->registry,&edit->values,
             canonical_name(edit->registry,&edit->values,source_name(edit->registry,command->name))):NULL;
         if (!entry) ok=qac_fail(&fault,QA_ERROR_NOT_FOUND,"flag declaration requires its prepared cvar");
         else entry->view.flags|=command->flags;
@@ -1508,7 +1585,7 @@ bool qa_cvars_edit_ready_is(const qa_cvars_edit *edit)
         const cvar *prepared=edit->bindings[i].prepared;
         if (!actual || !prepared ||
             find_variable(edit->registry,actual->view.name)!=actual ||
-            find_values(edit->registry,&edit->values,actual->view.name)!=prepared ||
+            qac_cvars_find_values(edit->registry,&edit->values,actual->view.name)!=prepared ||
             !actual->bound || !prepared->bound || prepared->view.handle!=actual->view.handle ||
             prepared->binding.owner!=actual->binding.owner || prepared->binding.user!=actual->binding.user ||
             prepared->binding.validate!=actual->binding.validate || prepared->binding.changed!=actual->binding.changed ||
@@ -1522,7 +1599,7 @@ bool qa_cvars_edit_ready(qa_cvars_edit *edit,qa_error *error)
         return qac_fail(error,QA_ERROR_ARGUMENT,"prepared cvar publication is unavailable or stale");
     for (size_t i=0;i<edit->binding_count;++i) {
         const cvar *actual=edit->bindings[i].actual;
-        cvar *prepared=find_values(edit->registry,&edit->values,actual->view.name);
+        cvar *prepared=qac_cvars_find_values(edit->registry,&edit->values,actual->view.name);
         if (!prepared || !prepared->bound || prepared->view.handle!=actual->view.handle ||
             prepared->binding.owner!=actual->binding.owner || prepared->binding.user!=actual->binding.user ||
             prepared->binding.validate!=actual->binding.validate || prepared->binding.changed!=actual->binding.changed ||
@@ -1535,8 +1612,8 @@ bool qa_cvars_edit_ready(qa_cvars_edit *edit,qa_error *error)
         edit->bindings[i].prepared=prepared;
     }
     for (const cvar_alias *alias=edit->values.aliases;alias;alias=alias->next)
-        if (find_values(edit->registry,&edit->values,alias->name) ||
-            (alias->vm_bound && !find_values(edit->registry,&edit->values,alias->target)))
+        if (qac_cvars_find_values(edit->registry,&edit->values,alias->name) ||
+            (alias->vm_bound && !qac_cvars_find_values(edit->registry,&edit->values,alias->target)))
             return qac_fail(error,QA_ERROR_ARGUMENT,"prepared cvar publication would lose a declared alias target");
     edit->ready=true; return true;
 }
@@ -1549,7 +1626,7 @@ void qa_cvars_edit_publish(qa_cvars_edit *edit)
     registry->edit_bindings_pending=true;
     registry->edit_bindings=edit->bindings; registry->edit_binding_count=edit->binding_count;
     registry->ready_edit=NULL; ++registry->mutation_revision;
-    values_free(&previous); free(edit);
+    qac_cvars_values_free(&previous); free(edit);
 }
 bool qa_cvars_edit_finish(qa_cvars *registry,qa_error *error)
 {
@@ -1584,7 +1661,7 @@ void qa_cvars_edit_abort(qa_cvars_edit *edit)
         cvar_edit_event *event=edit->first;
         edit->first=event->next; edit_event_free(registry,event);
     }
-    values_free(&edit->values);
+    qac_cvars_values_free(&edit->values);
     registry->ready_edit=NULL; free(edit->bindings); free(edit);
 }
 
@@ -1611,6 +1688,7 @@ void qa_cvars_remove_owner(qa_cvars *registry, uint64_t owner)
         }
         if (entry->view.owner != owner) { link = &entry->next; continue; }
         *link = entry->next;
+        index_remove(registry,&registry->values,&entry->indexed_name);
         registry->values.changed_flags |= entry->view.flags;
         if ((entry->view.flags & QA_CVAR_USERINFO) != 0) registry->values.userinfo_modified = true;
         --registry->values.count;
@@ -1729,14 +1807,14 @@ const char *qa_cvars_archive_value(const qa_cvars *registry,const qa_cvar_view *
 const char *qa_cvars_edit_archive_value(const qa_cvars_edit *edit,const qa_cvar_view *variable)
 {
     if (!edit_current(edit) || !variable) return NULL;
-    const cvar *row=find_values(edit->registry,&edit->values,variable->name);
+    const cvar *row=qac_cvars_find_values(edit->registry,&edit->values,variable->name);
     return row && &row->view==variable?archive_value(edit->registry,&edit->values,variable):NULL;
 }
 
 const qa_cvar_view *qa_cvars_edit_canonical_record(const qa_cvars_edit *edit,const char *name)
 {
     if (!edit_current(edit) || !name) return NULL;
-    const cvar *row=find_values(edit->registry,&edit->values,
+    const cvar *row=qac_cvars_find_values(edit->registry,&edit->values,
         canonical_name(edit->registry,&edit->values,name));
     return row?&row->view:NULL;
 }
