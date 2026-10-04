@@ -10,6 +10,7 @@
 #include "network_initial_graph.h"
 #include "music_sources.h"
 #include "remote_q1_restore.h"
+#include "remote_q1_effects.h"
 #include "remote_q2_restore.h"
 #include "unified_media_inventory.h"
 #include "qa/persistence_content.h"
@@ -180,6 +181,15 @@ static bool holders(const qa_frontend *f, qa_audio_asset ***out, size_t *count, 
     }
     ok = ok && frontend_event_audio_assets_read(f, &part, &size, error) && append(out, count, part, size, error);
     free(part); part=NULL; size=0;
+    for(size_t i=0;ok && i<frontend_remote_q1_count(f);++i) {
+        frontend_remote_q1 *row=frontend_remote_q1_at(f,i);
+        for(size_t n=0;ok && n<remote_q1_effects_static_count(row);++n) {
+            uint64_t key=0; const qa_audio_asset *asset=NULL; qa_audio_mixer *mixer=NULL;
+            ok=remote_q1_effects_static_at(row,n,&key,&asset,&mixer) && asset;
+            qa_audio_asset *held=(qa_audio_asset *)asset;
+            if(ok) ok=append(out,count,&held,1,error);
+        }
+    }
     for(size_t i=0;ok && i<frontend_remote_unified_count(f);++i) {
         frontend_unified_presentation_children children;
         ok=frontend_remote_unified_presentation_children_read(frontend_remote_unified_at(f,i),&children,error);
