@@ -404,7 +404,7 @@ static bool enter_initial_fullscreen(qa_display *display,
 static bool cpu_surface_create(qa_display *display, qa_error *error)
 {
     SDL_Renderer *renderer = SDL_CreateRenderer(
-        display->window, -1, 0);
+        display->window, -1, SDL_RENDERER_SOFTWARE);
     if (renderer == NULL)
         return display_error(error, QA_ERROR_IO, "SDL_CreateRenderer");
     int width = 0, height = 0;
