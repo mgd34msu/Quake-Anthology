@@ -3,6 +3,7 @@
 #include "qa/render_controls.h"
 #include "qa/source_save.h"
 #include "material/source_scratch_private.h"
+#include <math.h>
 
 typedef enum qa_render_controls_backend {
     QA_RENDER_CONTROLS_CPU, QA_RENDER_CONTROLS_GL
@@ -149,7 +150,12 @@ bool qa_render_source_texture_level(qa_render_source_texture *,uint32_t,const qa
     qa_scene_resources *,qa_scene_image_kind,qa_q3_texture_format,qa_error *);
 bool qa_render_source_texture_subimage(qa_render_source_texture *,const qa_scene_image *,bool *,qa_error *);
 const qa_scene_image *qa_render_source_texture_view(qa_render_source_texture *);
-double qa_render_source_texture_component(qa_q3_texture_format, uint8_t);
+static inline double qa_render_source_texture_component(qa_q3_texture_format format,uint8_t value)
+{
+    if (format!=QA_Q3_TEXTURE_RGB5 && format!=QA_Q3_TEXTURE_RGBA4) return value/255.0;
+    double maximum=format==QA_Q3_TEXTURE_RGB5?31:15;
+    return floor((double)value*maximum/255+.5)/maximum;
+}
 bool qa_render_source_texture_alpha(const qa_scene_image *);
 bool qa_render_source_texture_saved_fields(qa_source_save_io *,qa_render_source_texture *,const qa_render_checkpoint_refs *);
 const qa_scene_image *qa_cpu_source_texture_image(qa_render_controls *,uint32_t,const qa_scene_image *);

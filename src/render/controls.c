@@ -29,12 +29,6 @@ struct material_source_reset {
     uint32_t max_polys, max_vertices;
     bool published;
 };
-double qa_render_source_texture_component(qa_q3_texture_format format,uint8_t value)
-{
-    if (format!=QA_Q3_TEXTURE_RGB5 && format!=QA_Q3_TEXTURE_RGBA4) return value/255.0;
-    double maximum=format==QA_Q3_TEXTURE_RGB5?31:15;
-    return floor((double)value*maximum/255+.5)/maximum;
-}
 bool qa_render_source_texture_alpha(const qa_scene_image *image)
 {
     return image && image->kind!=QA_SCENE_DEPTH32F && (image->source_q3?
