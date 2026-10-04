@@ -2464,6 +2464,8 @@ static bool client_attempts_drain(qa_frontend_network *n, qa_error *error)
                     (view.retired ? !qa_application_client_retirement_current(f->application,&view.physical.source) :
                         !frontend_client_source_current(&view.physical)))
                     return frontend_fail(error,QA_ERROR_ARGUMENT,"Queued connection lost its actual Q1 CLIENT namespace");
+                if (f->archive_enabled && view.configured && !view.retired &&
+                    !frontend_config_store_save(f->config_store,error)) return false;
                 if (!frontend_network_q1_client_disconnect(n->q1_client_owner,"disconnected",error)) return false;
                 if (!request->disconnect) {
                     qa_error retirement={0};
