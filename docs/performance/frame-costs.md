@@ -1,7 +1,7 @@
 # Native frame costs
 
-The latest measured Q3 CPU frame takes **24.309 ms**, including **16.645 ms**
-of raster execution; latest interval-1 GL takes **17.123 ms**. Removing a quadratic settings
+The latest measured Q3 CPU frame takes **26.343 ms**, including **17.419 ms**
+of raster execution; latest interval-1 GL takes **18.627 ms**. Removing a quadratic settings
 lookup cuts shared scene work. Replacing duplicate SDL texture layers reduces
 CPU presentation to about **0.3 ms**. Raster execution is now the largest CPU cost.
 
@@ -61,6 +61,7 @@ material totals include more observer overhead than the standard runs above.
 | `8773a8f3` | 24.680 | 16.624 | 150.164 |
 | `7a078e87` | 25.210 | 16.844 | 152.449 |
 | `086dea5a` | 24.309 | 16.645 | 151.845 |
+| `2a54dca2` | 26.343 | 17.419 | 154.462 |
 
 With the same subdivision, GL takes 31.411 ms on `e900075f` and 30.501 ms
 on `436272c5`. Material submission falls from 13.104 to 12.399 ms on CPU
@@ -147,6 +148,24 @@ errors and floating-point flags. Matched whole-frame benefit is still pending.
 Both proposed Q2 axial endpoint shortcuts made complete geometry queries
 slower on GCC and Clang and were withdrawn.
 
+`2a54dca2` preserves all recorded state/count rows and same-backend final
+images, but its 26.343 ms CPU and 18.627 ms GL frames establish no gain over
+the preceding control. A comparison using one frozen SDK and the original
+driver was prepared to isolate the worker environment change. Its first case
+failed before measured samples; no isolated timing result is available yet.
+
+`61f6e302` unifies immediate and queued scheduling around prepared CPU triangle
+bounds, removing an advisory projection scan. `19ff5f41` shares float fraction
+clamping across the three collision adapters. Both pass all default GCC/Clang
+build targets; neither has a whole-frame speedup result. A separate constant
+fraction bypass was withdrawn after longer full-query timings showed no gain.
+
+`d96f55e4` shares coordinate generation/modification between Source and generic
+material callers and deletes copied stage/vertex adapters. Both compiler
+fixtures preserve exact outputs/errors/flags. Four-modifier public submission
+cost falls 5–7% in the short fixture, while zero-modifier cost is unchanged.
+Whole-frame benefit remains unmeasured.
+
 Ordered command batching reduces matched frame time by 38.1% and raster time
 by 62.2%. Aggregate CPU work rises: the gain comes from parallel scheduling,
 not less total CPU work. The batch preserves command order within disjoint
@@ -179,17 +198,17 @@ the CPU frame shows no latency improvement.
 
 ## Current costs and optimization targets
 
-These are inclusive medians on `086dea5a` CPU and interval-1 GL.
+These are inclusive medians on `2a54dca2` CPU and interval-1 GL.
 Both include the subdivision scopes.
 Nested durations overlap, so the rows must not be added together.
 
 | Scope | CPU ms | GL ms |
 | --- | ---: | ---: |
-| Scene construction | 5.122 | 4.863 |
-| Material submission, 554 calls | 3.723 | 3.596 |
-| World submission, including its materials | 3.664 | 3.515 |
-| Renderer execution / GL submission | 16.645 | 1.787 |
-| CPU native presentation / GL swap | 0.237 | 8.217 |
+| Scene construction | 5.397 | 5.229 |
+| Material submission, 554 calls | 3.888 | 3.773 |
+| World submission, including its materials | 3.828 | 3.718 |
+| Renderer execution / GL submission | 17.419 | 1.966 |
+| CPU native presentation / GL swap | 0.352 | 8.396 |
 
 The first GL baseline separately measured 3.596 ms median GPU elapsed time
 around renderer execution. GPU intervals overlap CPU work and presentation;
