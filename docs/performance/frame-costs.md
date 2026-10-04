@@ -1,9 +1,9 @@
 # Native frame costs
 
-The measured Q3 CPU frame now takes **49.500 ms**, including **18.392 ms**
-of raster execution. It remains too slow. The latest standard GL measurement
-takes **28.836 ms**. Material submission and presentation are the next large
-measured costs.
+The latest measured Q3 CPU frame takes **33.838 ms**, including **16.922 ms**
+of raster execution; GL takes **20.446 ms**. Removing a quadratic settings
+lookup and repeated unit-color interpolation reduces both frame time and CPU
+work. Raster execution and presentation are now the largest measured CPU costs.
 
 ## Workload
 
@@ -48,6 +48,22 @@ material totals include more observer overhead than the standard runs above.
 | `f143350a`, subdivision | 81.310 | 49.820 | 153.838 |
 | `84a881d9` | 79.914 | 48.660 | 150.202 |
 | `428ec046` | 49.500 | 18.392 | 183.634 |
+| `e900075f` | 50.046 | 18.470 | 183.143 |
+| `d164f40c` | 46.575 | 17.489 | 176.752 |
+| `436272c5` | 51.426 | 19.668 | 183.142 |
+| `70dd4397` | 33.838 | 16.922 | 154.816 |
+
+With the same subdivision, GL takes 31.411 ms on `e900075f` and 30.501 ms
+on `436272c5`. Material submission falls from 13.104 to 12.399 ms on CPU
+and from 13.302 to 12.395 ms on GL. CPU raster and presentation costs rise
+in the latest run, so these material cuts do not establish a whole-frame CPU
+gain. SDL RenderPresent varies from 8.430 to 10.376 ms across these controls.
+
+`70dd4397` removes the shared settings lookup's quadratic traversal and includes
+the unit-color raster cut. CPU frame time falls 34.2% from `436272c5`; GL falls
+33.0% to 20.446 ms. Material submission drops to 4.234 ms CPU and 4.600 ms GL.
+Aggregate CPU work falls to 154.816 ms. Raster and presentation also vary between
+runs, so the full frame reduction cannot be attributed to the lookup alone.
 
 Ordered command batching reduces matched frame time by 38.1% and raster time
 by 62.2%. Aggregate CPU work rises: the gain comes from parallel scheduling,
@@ -61,18 +77,17 @@ it does not establish each worker's individual contribution.
 
 ## Current costs and optimization targets
 
-These are inclusive medians on the subdivided `428ec046` CPU run and the
-standard `f143350a` GL run. CPU includes the additional observer scopes.
+These are inclusive medians on the matched `70dd4397` CPU and GL runs.
+Both include the subdivision scopes.
 Nested durations overlap, so the rows must not be added together.
 
 | Scope | CPU ms | GL ms |
 | --- | ---: | ---: |
-| Scene construction | 18.557 | 16.433 |
-| Material submission, about 554 calls | 13.392 | 11.692 |
-| World submission, including its materials | 12.843 | Not separately recorded here |
-| Final scene sorting | 0.081 | Not separately recorded here |
-| Renderer execution / GL submission | 18.392 | 1.846 |
-| SDL presentation / swap | 10.175 | 8.116 |
+| Scene construction | 5.858 | 6.387 |
+| Material submission, 554 calls | 4.234 | 4.600 |
+| World submission, including its materials | 4.140 | 4.522 |
+| Renderer execution / GL submission | 16.922 | 2.128 |
+| SDL RenderPresent / swap | 8.180 | 8.521 |
 
 The first GL baseline separately measured 3.596 ms median GPU elapsed time
 around renderer execution. GPU intervals overlap CPU work and presentation;
@@ -89,14 +104,29 @@ time and aggregate CPU work. Preparing material constants once per stage and
 skipping unused texture derivatives on `f143350a` preserve output; their
 standard matched run does not establish a material-stage speedup.
 
-The subdivision attributes about 0.63 ms to mesh deformation and 0.81 ms to
-frame draw assembly. The generic image-variant helper is not reached, so an
-image cache would not address this workload. SDL RenderPresent itself takes
-9.985 ms; texture upload takes 0.083 ms. Selecting SDL's default accelerated
-blitter did not materially improve presentation and changed framebuffer
-readback alpha during genuine saved-image restoration. `e900075f` restores
-the original software blitter and includes a guarded unused vertex color
-conversion cut. Its matched CPU and GL measurements are pending.
+The earlier subdivision attributes about 0.63 ms to mesh deformation and
+0.81 ms to frame draw assembly. Its generic image-variant helper is not
+reached, but a later attribution run observes about 1,040 calls per frame
+through the actual Source image path. Image upload validation runs about
+1,507 times. Those scopes nest and their extra clocks add about 7 ms to
+material timing; that diagnostic run cannot serve as a speed comparison.
+Gamma remains 1, so exponentiation is not reached. The validated cuts remove
+unused color table construction, repeated admitted intensity scans and
+display queries that only need backend/fullscreen state.
+
+Source image handling also calls the shared renderer-settings lookup about
+1,040 times per frame. Its old ordinal iteration rescans the linked registry
+for each row. `70dd4397` replaces that quadratic traversal with the existing
+linear lookup while preserving physical rows and alias exclusion. `2433048c`
+reuses the raster kernel's existing weighted sum for exact unit-color
+triangles. Both pass optimized GCC/Clang builds and focused old/new production
+comparisons. Their matched pair preserves all states and pixels while reducing
+the shared scene cost from about 17 ms to 6 ms.
+
+Selecting SDL's default accelerated blitter did not materially improve
+presentation and changed readback alpha during genuine saved-image
+restoration. `e900075f` restores the original software blitter. Every later
+completed CPU pair retains exact display RGBA as well as engine RGBA.
 
 ## Fidelity and limits
 
