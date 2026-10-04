@@ -194,9 +194,7 @@ static bool source_fields(qa_source_save_io *io, qa_material_source_scratch *sou
     /* Inactive cells are real retained BSS, including writes preceding ERR_DROP. */
     for (size_t i = 0; i < QA_SOURCE_TESS_VERTICES; ++i) {
         qa_scene_vertex *vertex = source->vertices + i;
-        if (!qa_source_save_vec3(io, &vertex->position) || !qa_source_save_vec3(io, &vertex->normal) ||
-            !coordinates_fields(io, &vertex->texcoord) || !coordinates_fields(io, &vertex->lightmap) ||
-            !color_fields(io, &vertex->color) || !color_fields(io, source->colors + i) ||
+        if (!render_save_vertex(io,vertex) || !color_fields(io, source->colors + i) ||
             !coordinates_fields(io, &source->coordinates[0][i]) ||
             !coordinates_fields(io, &source->coordinates[1][i])) return false;
     }

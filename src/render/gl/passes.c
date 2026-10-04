@@ -456,10 +456,6 @@ bool gl_output_resolve(qa_gl_renderer *renderer, qa_error *error)
     }
     gl_output_target *output = &renderer->output;
     gl_api *gl = &renderer->gl;
-    GLint viewport[4], scissor_box[4];
-    gl->GetIntegerv(GL_VIEWPORT, viewport);
-    gl->GetIntegerv(GL_SCISSOR_BOX, scissor_box);
-    bool scissor = gl->IsEnabled(GL_SCISSOR_TEST) != GL_FALSE;
     gl_composite_state retained;
     composite_state_read(renderer,&retained);
     composite_state(renderer, output->width, output->height);
@@ -500,10 +496,6 @@ bool gl_output_resolve(qa_gl_renderer *renderer, qa_error *error)
     gl->UseProgram(0);
     gl->DrawBuffer(gl_draw_buffer_name(renderer->draw_buffer));
     gl->ReadBuffer(gl_draw_buffer_name(renderer->draw_buffer));
-    gl->Viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-    gl->Scissor(scissor_box[0], scissor_box[1], scissor_box[2],
-                scissor_box[3]);
-    if (scissor) gl->Enable(GL_SCISSOR_TEST);
     composite_state_restore(renderer,&retained);
     if (!gl_check(renderer, "OpenGL output gamma resolve", error)) return false;
     for (unsigned slot = 0; slot < GL_DRAW_BUFFER_COUNT_QA; ++slot)

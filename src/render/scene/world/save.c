@@ -4,6 +4,7 @@
 #include "qa/material_library_save.h"
 #include "qa/source_save.h"
 #include "qa/hash.h"
+#include "../../save_fields.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -65,12 +66,6 @@ static bool profile(qa_source_save_io *io, const qa_scene_world *world)
     FIELD(f32,&options,subdivisions); FIELD(f32,&options,q1_water_alpha); FIELD(f32,&options,q2_light_modulate);
     FIELD(u32,&options,q3_overbright); return qa_source_save_u32(io,&encoding);
 }
-static bool vertex(qa_source_save_io *io, qa_scene_vertex *value)
-{
-    FIELD(vec3,value,position); FIELD(vec3,value,normal);
-    FIELD(f32,&value->texcoord,x); FIELD(f32,&value->texcoord,y); FIELD(f32,&value->lightmap,x); FIELD(f32,&value->lightmap,y);
-    FIELD(f32,&value->color,x); FIELD(f32,&value->color,y); FIELD(f32,&value->color,z); FIELD(f32,&value->color,w); return true;
-}
 static bool geometry(qa_source_save_io *io, const qa_scene_world *world)
 {
     if (!profile(io,world)) return false;
@@ -123,7 +118,7 @@ static bool geometry(qa_source_save_io *io, const qa_scene_world *world)
             !qa_source_save_u64(io,&mesh.revision) || !bounds(io,&mesh.bounds) ||
             !qa_source_save_count(io,&mesh.vertex_count,SIZE_MAX) || !qa_source_save_count(io,&mesh.index_count,SIZE_MAX)) return false;
         for (size_t j=0;j<mesh.vertex_count;++j) {
-            qa_scene_vertex value=mesh.vertices[j]; if (!vertex(io,&value)) return false;
+            qa_scene_vertex value=mesh.vertices[j]; if (!render_save_vertex(io,&value)) return false;
         }
         for (size_t j=0;j<mesh.index_count;++j) {
             uint32_t value=mesh.indices[j]; if (!qa_source_save_u32(io,&value)) return false;

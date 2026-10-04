@@ -30,15 +30,19 @@ bool scene_model_topology(qa_scene_model *model, uint32_t mesh_index, qa_error *
     mesh->indices = calloc(corners ? corners : 1, sizeof(*mesh->indices));
     mesh->shaders = calloc(source->shader_count ? source->shader_count : 1, sizeof(*mesh->shaders));
     if (!mesh->vertices || !mesh->sources || !mesh->indices || !mesh->shaders) goto memory;
-    size_t capacity = 16;
-    if (corners > SIZE_MAX / 2) goto too_large;
-    while (capacity < corners * 2) {
-        if (capacity > SIZE_MAX / 2) goto too_large;
-        capacity *= 2;
+    size_t capacity = 0;
+    corner_entry *table = NULL;
+    if (!model->source_topology) {
+        capacity = 16;
+        if (corners > SIZE_MAX / 2) goto too_large;
+        while (capacity < corners * 2) {
+            if (capacity > SIZE_MAX / 2) goto too_large;
+            capacity *= 2;
+        }
+        if (capacity > SIZE_MAX / sizeof(corner_entry)) goto too_large;
+        table = calloc(capacity, sizeof(*table));
+        if (!table) goto memory;
     }
-    if (capacity > SIZE_MAX / sizeof(corner_entry)) goto too_large;
-    corner_entry *table = calloc(capacity, sizeof(*table));
-    if (!table) goto memory;
     size_t vertex_count = 0;
     qa_bounds bounds = model_bounds_empty();
     if (model->source_topology) {

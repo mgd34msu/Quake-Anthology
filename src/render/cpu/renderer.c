@@ -852,24 +852,22 @@ const qa_scene_image *qa_cpu_source_texture_metadata_at(const qa_render_controls
   }
   return NULL;
 }
-qa_scene_filter qa_cpu_source_image_filter(const qa_render_controls *controls,const qa_scene_image *image)
+qa_scene_filter qa_cpu_source_image_sampling(const qa_render_controls *controls,const qa_scene_image *image,
+    bool *magnification_linear)
 {
   const qa_cpu_renderer *renderer=controls->owner.cpu;
-  if (image==&controls->zero_texture.view) return image->filter;
-  for (uint32_t i=0;i<renderer->source_image_count;++i)
-    if (image==&renderer->source_images[i].texture.view) return image->filter;
-    else if (renderer->source_images[i].image==image) return renderer->source_images[i].texture.filter;
-  return image->source_mipmap?controls->source_filter:image->filter;
-}
-bool qa_cpu_source_image_magnification_linear(const qa_render_controls *controls,const qa_scene_image *image)
-{
-  const qa_cpu_renderer *renderer=controls->owner.cpu;
-  if (image==&controls->zero_texture.view) return controls->zero_texture.magnification_linear;
-  for (uint32_t i=0;i<renderer->source_image_count;++i)
-    if (image==&renderer->source_images[i].texture.view || renderer->source_images[i].image==image)
-      return renderer->source_images[i].texture.magnification_linear;
-  return image->filter==QA_SCENE_LINEAR || image->filter==QA_SCENE_LINEAR_MIPMAP_NEAREST ||
+  const qa_render_source_texture *texture=NULL;
+  if (image==&controls->zero_texture.view) texture=&controls->zero_texture;
+  else for (uint32_t i=0;i<renderer->source_image_count;++i)
+    if (image==&renderer->source_images[i].texture.view || renderer->source_images[i].image==image) {
+      texture=&renderer->source_images[i].texture;
+      break;
+    }
+  if (magnification_linear) *magnification_linear=texture?texture->magnification_linear:
+      image->filter==QA_SCENE_LINEAR || image->filter==QA_SCENE_LINEAR_MIPMAP_NEAREST ||
       image->filter==QA_SCENE_LINEAR_MIPMAP_LINEAR;
+  if (texture) return image==&texture->view?image->filter:texture->filter;
+  return image->source_mipmap?controls->source_filter:image->filter;
 }
 static cpu_source_image *cpu_source_object(qa_cpu_renderer *renderer,const qa_scene_image *image)
 {

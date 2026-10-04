@@ -108,8 +108,7 @@ size_t qa_cpu_source_images_metadata_count(const qa_render_controls *);
 size_t qa_cpu_source_texture_metadata_count(const qa_render_controls *);
 const qa_scene_image *qa_cpu_source_texture_metadata_at(const qa_render_controls *,size_t);
 const qa_scene_image *qa_cpu_source_image_metadata_at(const qa_render_controls *,size_t);
-qa_scene_filter qa_cpu_source_image_filter(const qa_render_controls *,const qa_scene_image *);
-bool qa_cpu_source_image_magnification_linear(const qa_render_controls *,const qa_scene_image *);
+qa_scene_filter qa_cpu_source_image_sampling(const qa_render_controls *,const qa_scene_image *,bool *magnification_linear);
 bool qa_cpu_source_texture_filter_apply(qa_render_controls *,bool no_bind,qa_error *);
 typedef struct qa_cpu_source_images_ticket qa_cpu_source_images_ticket;
 bool qa_cpu_source_images_prepare(qa_render_controls *,qa_scene_resource_policy *const *,size_t,bool,

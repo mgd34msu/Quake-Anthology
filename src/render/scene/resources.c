@@ -1585,6 +1585,24 @@ bool qa_scene_resources_source_q3_initialize(qa_scene_resources *resources,
     memcpy(resources->source_scratch, scratch, sizeof(scratch)); resources->source_fog = fog;
     resources->source_builtins_upload = *profile; resources->source_builtins = true; return true;
 }
+void scene_image_skin_flood(uint8_t *pixels, uint32_t width, uint32_t height,
+    uint8_t fill, uint8_t black, size_t *queue)
+{
+    size_t head = 0, tail = 1; queue[0] = 0; pixels[0] = 255;
+    while (head < tail) {
+        size_t pixel = queue[head++], x = pixel % width, y = pixel / width;
+        size_t adjacent[4] = {x > 0 ? pixel-1 : SIZE_MAX, x+1 < width ? pixel+1 : SIZE_MAX,
+            y > 0 ? pixel-width : SIZE_MAX, y+1 < height ? pixel+width : SIZE_MAX};
+        uint8_t color = black;
+        for (size_t i = 0; i < 4; ++i) {
+            size_t next = adjacent[i]; if (next == SIZE_MAX) continue;
+            uint8_t value = pixels[next];
+            if (value == fill) { pixels[next] = 255; queue[tail++] = next; }
+            else if (value != 255) color = value;
+        }
+        pixels[pixel] = color;
+    }
+}
 static bool flood_skin(qa_image *image, qa_bytes palette, qa_error *error)
 {
     if (image->indices.size == 0) return true;
@@ -1596,20 +1614,7 @@ static bool flood_skin(qa_image *image, qa_bytes palette, qa_error *error)
     }
     size_t *queue = malloc(image->indices.size * sizeof(*queue));
     if (queue == NULL) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate skin flood queue"); return false; }
-    size_t head = 0, tail = 1; queue[0] = 0; image->indices.data[0] = 255;
-    while (head < tail) {
-        size_t pixel = queue[head++], x = pixel % image->width, y = pixel / image->width;
-        size_t adjacent[4] = {x > 0 ? pixel-1 : SIZE_MAX, x+1 < image->width ? pixel+1 : SIZE_MAX,
-            y > 0 ? pixel-image->width : SIZE_MAX, y+1 < image->height ? pixel+image->width : SIZE_MAX};
-        uint8_t color = black;
-        for (size_t i = 0; i < 4; ++i) {
-            size_t next = adjacent[i]; if (next == SIZE_MAX) continue;
-            uint8_t value = image->indices.data[next];
-            if (value == fill) { image->indices.data[next] = 255; queue[tail++] = next; }
-            else if (value != 255) color = value;
-        }
-        image->indices.data[pixel] = color;
-    }
+    scene_image_skin_flood(image->indices.data, image->width, image->height, fill, black, queue);
     free(queue); return true;
 }
 

@@ -1,17 +1,10 @@
 #include "qa/scene_geometry_save.h"
 #include "qa/source_save.h"
+#include "../save_fields.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-#define FIELD(type, object, name) do { if (!qa_source_save_##type(io, &(object)->name)) return false; } while (0)
-static bool vertex(qa_source_save_io *io, qa_scene_vertex *value)
-{
-    FIELD(vec3,value,position); FIELD(vec3,value,normal);
-    FIELD(f32,&value->texcoord,x); FIELD(f32,&value->texcoord,y);
-    FIELD(f32,&value->lightmap,x); FIELD(f32,&value->lightmap,y);
-    FIELD(f32,&value->color,x); FIELD(f32,&value->color,y); FIELD(f32,&value->color,z); FIELD(f32,&value->color,w); return true;
-}
 static bool failure(qa_error *error, qa_status status, const char *message)
 { qa_error_set(error,status,0,"%s",message); return false; }
 static bool fields(qa_source_save_io *io, qa_scene_geometry_view *saved)
@@ -30,7 +23,7 @@ static bool fields(qa_source_save_io *io, qa_scene_geometry_view *saved)
     }
     for (size_t i=0;i<saved->vertex_count;++i) {
         qa_scene_vertex value=reading?(qa_scene_vertex){0}:saved->vertices[i];
-        if (!vertex(io,&value)) return false;
+        if (!render_save_vertex(io,&value)) return false;
         if (reading) ((qa_scene_vertex *)saved->vertices)[i]=value;
     }
     for (size_t i=0;i<saved->index_count;++i) {
@@ -78,4 +71,3 @@ bool qa_scene_geometry_checkpoint_ready(const qa_scene_geometry *geometry, qa_by
     qa_buffer_free(&current);
     return ok || failure(error,QA_ERROR_FORMAT,"Saved geometry differs from its actual qualified allocation");
 }
-#undef FIELD

@@ -2,6 +2,7 @@
 #include "qa/source_save.h"
 #include "qa/material.h"
 #include "../material/source_scratch_private.h"
+#include "../save_fields.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -70,12 +71,6 @@ static bool shadow_light(qa_source_save_io *io, const qa_scene_frame_checkpoint_
     FIELD(u64,light,revision); FIELD(u32,light,shadow_resolution); ENUM(qa_scene_family,light,family,QA_SCENE_Q3);
     if (!vec4(io,&value->atlas_rect) || !matrix(io,&value->shadow_matrix)) return false;
     FIELD(bool,value,point_shadow); FIELD(bool,value,shadow_valid); FIELD(vec3,value,model_fraction); return true;
-}
-static bool vertex(qa_source_save_io *io, qa_scene_vertex *value)
-{
-    FIELD(vec3,value,position); FIELD(vec3,value,normal);
-    FIELD(f32,&value->texcoord,x); FIELD(f32,&value->texcoord,y); FIELD(f32,&value->lightmap,x); FIELD(f32,&value->lightmap,y);
-    return vec4(io,&value->color);
 }
 static bool allocate(qa_source_save_io *io, void **out, size_t count, size_t stride)
 {
@@ -173,7 +168,7 @@ static bool mesh(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_fr
         if (vertex_storage && !value->vertices) return false;
         for (size_t i=0;i<vertex_storage;++i) {
             qa_scene_vertex item=reading?(qa_scene_vertex){0}:value->vertices[i];
-            if (!vertex(io,&item)) return false;
+            if (!render_save_vertex(io,&item)) return false;
             if (reading) ((qa_scene_vertex *)value->vertices)[i]=item;
         }
     }

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../resources_internal.h"
 #include <ctype.h>
 #include <stdio.h>
 
@@ -127,22 +128,7 @@ static bool flood_skin(uint8_t *pixels, uint32_t width, uint32_t height,
     }
     size_t *queue = malloc(count * sizeof(*queue));
     if (!queue) { qa_error_set(error, QA_ERROR_MEMORY, 0, "model skin flood queue allocation failed"); return false; }
-    size_t tail = 1;
-    queue[0] = 0;
-    pixels[0] = 255;
-    for (size_t head = 0; head < tail; ++head) {
-        size_t pixel = queue[head], x = pixel % width, y = pixel / width;
-        size_t neighbors[4] = {x ? pixel - 1 : SIZE_MAX, x + 1 < width ? pixel + 1 : SIZE_MAX,
-                              y ? pixel - width : SIZE_MAX, y + 1 < height ? pixel + width : SIZE_MAX};
-        uint8_t color = black;
-        for (unsigned i = 0; i < 4; ++i) {
-            size_t next = neighbors[i];
-            if (next == SIZE_MAX) continue;
-            if (pixels[next] == fill) { pixels[next] = 255; queue[tail++] = next; }
-            else if (pixels[next] != 255) color = pixels[next];
-        }
-        pixels[pixel] = color;
-    }
+    scene_image_skin_flood(pixels, width, height, fill, black, queue);
     free(queue);
     return true;
 }

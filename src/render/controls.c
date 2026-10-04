@@ -704,7 +704,7 @@ bool qa_render_controls_source_images_abort(qa_render_source_images_ticket **out
 qa_scene_filter qa_render_controls_image_filter(const qa_render_controls *controls,const qa_scene_image *image)
 {
     if (image->source_q3 && controls->backend==QA_RENDER_CONTROLS_CPU)
-        return qa_cpu_source_image_filter(controls,image);
+        return qa_cpu_source_image_sampling(controls,image,NULL);
     if (image->source_q3 && controls->backend==QA_RENDER_CONTROLS_GL)
         return qa_gl_source_image_filter(controls,image);
     return image->source_q3 && image->source_mipmap ? controls->source_filter : image->filter;

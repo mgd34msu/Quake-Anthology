@@ -122,14 +122,20 @@ bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
     sampler->target_components = renderer->texture_components[0];
   }
   sampler->alpha = qa_render_source_texture_alpha(image);
-  qa_scene_filter filter=qa_render_controls_image_filter(&renderer->controls,image);
+  bool magnification_linear;
+  qa_scene_filter filter;
+  if (image->source_q3)
+    filter=qa_cpu_source_image_sampling(&renderer->controls,image,&magnification_linear);
+  else {
+    filter=image->filter;
+    magnification_linear=filter==QA_SCENE_LINEAR || filter==QA_SCENE_LINEAR_MIPMAP_NEAREST ||
+        filter==QA_SCENE_LINEAR_MIPMAP_LINEAR;
+  }
   bool linear = filter == QA_SCENE_LINEAR ||
                 filter == QA_SCENE_LINEAR_MIPMAP_NEAREST ||
                 filter == QA_SCENE_LINEAR_MIPMAP_LINEAR;
   bool mipmap =
       filter != QA_SCENE_NEAREST && filter != QA_SCENE_LINEAR;
-  bool magnification_linear=image->source_q3?
-      qa_cpu_source_image_magnification_linear(&renderer->controls,image):linear;
   double magnification_limit=magnification_linear &&
       (filter==QA_SCENE_NEAREST_MIPMAP_NEAREST || filter==QA_SCENE_NEAREST_MIPMAP_LINEAR)?
       1.4142135623730951:1;
