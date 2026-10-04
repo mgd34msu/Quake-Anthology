@@ -646,6 +646,7 @@ static bool execute_material(const qa_material *material, const qa_material *ori
     bool collapsed = material_plan(material, context->fragment_lighting, &collapsed_environment, &collapsed_state, &passes, &iterator);
     bool fast_iterator = iterator == QA_MATERIAL_VERTEX_LIT || iterator == QA_MATERIAL_LIGHTMAPPED;
     qa_material_source_scratch *source = context->source_scratch;
+    bool offset = source && material->polygon_offset && !fast_iterator;
     size_t source_storage = source ? source_draw_extent(geometry) : 0;
     if (source && source->issuing) {
         if (iterator == QA_MATERIAL_VERTEX_LIT && material->stage_count &&
@@ -674,8 +675,10 @@ static bool execute_material(const qa_material *material, const qa_material *ori
             (stage->is_lightmap || (second && second->is_lightmap) || stage->vertex_lightmap)) break;
         if (second != NULL) ++i;
     }
-    return emit_dlights(material, original, geometry, context, fast_iterator, frame, error) &&
-           emit_fog(material, original, geometry, context, source_storage, frame, error);
+    if (!emit_dlights(material, original, geometry, context, fast_iterator, frame, error) ||
+        !emit_fog(material, original, geometry, context, source_storage, frame, error)) return false;
+    return !offset || !source->issuing || material_source_polygon_offset(source, false,
+        context->source_diagnostics.polygon_offset_factor, context->source_diagnostics.polygon_offset_units, error);
 }
 static double shader_seconds(const qa_material *original, const qa_material *material,
                               const qa_material_context *context)
@@ -900,7 +903,8 @@ static bool submit_source(const qa_material *original, const qa_material *materi
                     }
                 }
             }
-        } else for (size_t i = 0; i < mesh->vertex_count; ++i) {
+        } else if (context->source_writer != QA_SOURCE_WRITE_FULL ||
+                   mesh->vertices != source->vertices) for (size_t i = 0; i < mesh->vertex_count; ++i) {
             qa_scene_vertex previous = source->vertices[i], vertex = mesh->vertices[i];
             switch (context->source_writer) {
             case QA_SOURCE_WRITE_MODEL: /* fall through */
@@ -951,16 +955,8 @@ static bool submit_source(const qa_material *original, const qa_material *materi
         ok = indices != NULL;
         if (ok) { memcpy(indices, geometry.indices, geometry.index_count * sizeof(*indices)); geometry.indices = indices; }
     }
-    qa_scene_texture_environment plan_environment; qa_scene_state plan_state;
-    size_t plan_passes; qa_material_iterator plan_iterator;
-    (void)material_plan(material, context->fragment_lighting, &plan_environment, &plan_state, &plan_passes, &plan_iterator);
-    bool offset = ok && !skipped && reached && material->polygon_offset &&
-        plan_iterator != QA_MATERIAL_VERTEX_LIT && plan_iterator != QA_MATERIAL_LIGHTMAPPED;
     if (ok && !skipped && reached) {
         ok = execute_material(material, original, &geometry, context, time, frame, error);
-        if (ok && offset && source->issuing)
-            ok = material_source_polygon_offset(source, false, context->source_diagnostics.polygon_offset_factor,
-                context->source_diagnostics.polygon_offset_units, error);
         ok = ok &&
             (cloud || source_debug(material, original, &geometry, context, frame, error)) &&
             material_source_current(source, error);
