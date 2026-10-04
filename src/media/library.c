@@ -176,10 +176,9 @@ bool qa_media_asset_load(qa_media_library *library, qa_resource *resource, qa_ci
 }
 static bool library_asset(qa_media_library *library, const char *path, qa_cinematic_format kind, bool source_roq,
     qa_resource *resource, qa_cinematic_asset **out, qa_error *error) {
-    const qa_sha256_digest *digest = qa_resource_digest(resource);
     for (const qa_media_library *owner = library; owner; owner = owner->parent)
         for (qa_cinematic_asset *asset = owner->assets; asset; asset = asset->next)
-            if (asset->source.format == kind && asset->source_roq==source_roq && qa_sha256_equal(&asset->digest, digest)) {
+            if (asset->source.format == kind && asset->source_roq==source_roq && asset->source_record==resource) {
                 qa_cinematic_asset_retain(asset); qa_resource_release(resource);
                 *out = asset; return true;
             }
@@ -193,7 +192,6 @@ static bool library_asset(qa_media_library *library, const char *path, qa_cinema
     asset->source.asset = asset;
     asset->source.format = kind;
     asset->source_roq = source_roq;
-    asset->digest = *digest;
     size_t length = strlen(path);
     asset->name = malloc(length + 1);
     if (!asset->name) {

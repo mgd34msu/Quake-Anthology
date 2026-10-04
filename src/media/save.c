@@ -54,8 +54,7 @@ static bool picture(qa_source_save_io *io, qa_cin_picture_checkpoint *value)
 static bool cin(qa_source_save_io *io, qa_cin_playback_checkpoint *value)
 {
     qa_cin_checkpoint *decoder = &value->decoder;
-    return qa_source_save_bytes(io, decoder->content.bytes, sizeof(decoder->content.bytes)) &&
-        qa_source_save_u64(io, &decoder->input_size) && qa_source_save_u64(io, &decoder->offset) &&
+    return qa_source_save_u64(io, &decoder->input_size) && qa_source_save_u64(io, &decoder->offset) &&
         qa_source_save_u64(io, &decoder->next_frame) && qa_source_save_bytes(io, decoder->palette, sizeof(decoder->palette)) &&
         qa_source_save_bool(io, &decoder->ended) && picture(io, &value->picture) && picture(io, &value->pending) &&
         qa_source_save_f64(io, &value->epoch_ms) && isfinite(value->epoch_ms) && qa_source_save_u64(io, &value->loop) &&
@@ -66,8 +65,7 @@ static bool roq(qa_source_save_io *io, qa_roq_playback_checkpoint *value)
 {
     qa_roq_checkpoint *decoder = &value->decoder; qa_roq_stream_checkpoint *stream = &decoder->stream;
     uint32_t end_policy = decoder->end_policy; size_t physical = value->physical_offset;
-    bool ok = qa_source_save_bytes(io, decoder->content.bytes, sizeof(decoder->content.bytes)) &&
-        qa_source_save_u64(io, &decoder->input_size) && qa_source_save_u64(io, &stream->position) &&
+    bool ok = qa_source_save_u64(io, &decoder->input_size) && qa_source_save_u64(io, &stream->position) &&
         qa_source_save_u64(io, &stream->played) && qa_source_save_u64(io, &stream->buffer_offset) &&
         qa_source_save_u32(io, &stream->chunk_offset) && qa_source_save_u32(io, &stream->buffered_length) &&
         qa_source_save_u32(io, &stream->next_size) && qa_source_save_u16(io, &stream->next_id) &&
@@ -91,8 +89,7 @@ static bool roq(qa_source_save_io *io, qa_roq_playback_checkpoint *value)
 }
 static bool ogv(qa_source_save_io *io, qa_ogv_checkpoint *value)
 {
-    bool ok = qa_source_save_bytes(io, value->content.bytes, sizeof(value->content.bytes)) &&
-        qa_source_save_f64(io, &value->epoch_ms) && isfinite(value->epoch_ms) &&
+    bool ok = qa_source_save_f64(io, &value->epoch_ms) && isfinite(value->epoch_ms) &&
         qa_source_save_u64(io, &value->loop) && qa_source_save_u64(io, &value->next_index) &&
         qa_source_save_u64(io, &value->audio_position) && status(io, &value->status) &&
         frame(io, &value->frame) && blob(io, &value->pixels) && qa_source_save_bool(io, &value->has_frame) &&
@@ -138,7 +135,7 @@ static bool fields(qa_source_save_io *io, const qa_media_checkpoint_refs *refs, 
     case QA_CINEMATIC_CIN: return cin(io, &value->decoder.cin);
     case QA_CINEMATIC_ROQ: return roq(io, &value->decoder.roq);
     case QA_CINEMATIC_OGV: return ogv(io, &value->decoder.ogv);
-    case QA_CINEMATIC_IMAGE: return qa_source_save_bytes(io, value->decoder.image.bytes, sizeof(value->decoder.image.bytes));
+    case QA_CINEMATIC_IMAGE: return true;
     }
     return false;
 }

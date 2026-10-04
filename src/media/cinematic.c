@@ -192,16 +192,6 @@ static bool same_target(qa_cinematic_target left, qa_cinematic_target right) {
            (left.kind == QA_CINEMATIC_SEAT ? left.id.seat == right.id.seat
                                            : left.id.material == right.id.material);
 }
-static void still_digest(const qa_scene_image *image, qa_sha256_digest *out) {
-    uint8_t dimensions[8];
-    qa_store_u32le(dimensions, image->levels[0].width);
-    qa_store_u32le(dimensions + 4, image->levels[0].height);
-    qa_sha256_context hash;
-    qa_sha256_init(&hash);
-    qa_sha256_update(&hash, (qa_bytes){dimensions, sizeof(dimensions)});
-    qa_sha256_update(&hash, (qa_bytes){image->levels[0].pixels, image->levels[0].bytes});
-    qa_sha256_final(&hash, out);
-}
 static bool restore(qa_cinematic *movie, const qa_cinematic_checkpoint *saved, bool qualified, qa_error *error) {
     if (qualified && movie->format==QA_CINEMATIC_ROQ && movie->options.roq_scratch &&
         saved->elapsed_ms!=movie->start_ms)
@@ -230,14 +220,9 @@ static bool restore(qa_cinematic *movie, const qa_cinematic_checkpoint *saved, b
     case QA_CINEMATIC_OGV:
         ok = qa_ogv_playback_restore(movie->movie.ogv, &saved->decoder.ogv, error);
         break;
-    case QA_CINEMATIC_IMAGE: {
-        qa_sha256_digest digest;
-        still_digest(movie->movie.image, &digest);
-        ok = qa_sha256_equal(&digest, &saved->decoder.image);
-        if (!ok)
-            cinematic_fail(error, "Cinematic still image changed");
+    case QA_CINEMATIC_IMAGE:
+        ok = true;
         break;
-    }
     }
     if (!ok)
         return false;
@@ -257,9 +242,9 @@ static bool restore(qa_cinematic *movie, const qa_cinematic_checkpoint *saved, b
                                   saved->silent || !movie->options.audio)))
         return cinematic_fail(error, "Saved cinematic has an invalid shared audio attachment");
     if (qualified && saved->audio_attached) {
-        if (!qa_audio_engine_raw_checkpoint_ready(movie->options.audio, movie->options.audio_bus,
+        if (!qa_audio_engine_raw_ready(movie->options.audio, movie->options.audio_bus,
             audio_audience(&movie->options), movie->options.gain,
-            (qa_bytes){saved->audio.data,saved->audio.size}, error)) return false;
+            saved->audio.size != 0, error)) return false;
     } else if (saved->audio.size) {
         if (!movie->options.audio || saved->completed || saved->silent || !saved->audio.data)
             return cinematic_fail(error, "Saved cinematic audio has no active owner");
@@ -609,7 +594,6 @@ static bool capture(qa_cinematic *movie, qa_cinematic_checkpoint *out, qa_error 
         ok = qa_ogv_playback_capture(movie->movie.ogv, &saved.decoder.ogv, error);
         break;
     case QA_CINEMATIC_IMAGE:
-        still_digest(movie->movie.image, &saved.decoder.image);
         ok = true;
         break;
     }
@@ -662,13 +646,7 @@ bool qa_cinematic_audio_rebind_ready(qa_cinematic *movie, qa_audio_engine *engin
     qa_audio_raw_stream *raw = current_raw(movie);
     if ((raw != NULL) != (next != NULL))
         return cinematic_fail(error, "Cinematic raw queue presence differs from restored engine");
-    if (!next || raw == next) return true;
-    qa_buffer original = {0}, candidate = {0};
-    bool ok = qa_audio_raw_checkpoint(raw, &original, error) &&
-        qa_audio_raw_checkpoint(next, &candidate, error);
-    if (ok && (original.size != candidate.size || memcmp(original.data, candidate.data, original.size)))
-        ok = cinematic_fail(error, "Cinematic raw queue differs from restored engine");
-    qa_buffer_free(&original); qa_buffer_free(&candidate); return ok;
+    return true;
 }
 
 void qa_cinematic_audio_rebind(qa_cinematic *movie, qa_audio_engine *engine, uint64_t bus)

@@ -180,7 +180,7 @@ bool qa_audio_bank_graph_restore(qa_audio_bank *const *banks, size_t count,
     uint64_t bank_count = qa_ac_get64(&r), sample_count = qa_ac_get64(&r), asset_count = qa_ac_get64(&r);
     ok = ok && !r.failed && bank_count == count && count <= bytes.size / 32 &&
         sample_count <= SIZE_MAX / sizeof(*samples) && sample_count <= bytes.size / 52 &&
-        asset_count <= SIZE_MAX / sizeof(*inventory->assets) && asset_count <= bytes.size / 96;
+        asset_count <= SIZE_MAX / sizeof(*inventory->assets) && asset_count <= bytes.size / 64;
     if (ok) {
         decoded = calloc(count ? count : 1, sizeof(*decoded));
         samples = calloc(sample_count ? (size_t)sample_count : 1, sizeof(*samples));

@@ -82,13 +82,12 @@ typedef struct qa_cinematic_checkpoint {
         qa_cin_playback_checkpoint cin;
         qa_roq_playback_checkpoint roq;
         qa_ogv_checkpoint ogv;
-        qa_sha256_digest image;
     } decoder;
 } qa_cinematic_checkpoint;
 typedef struct qa_cinematic qa_cinematic;
 typedef struct qa_media_library qa_media_library;
 /* One asset cache can serve multiple independently ordered VFS views. Resolve
- * a view first, then share by content digest, format and admission mode. */
+ * a view first, then share by retained resource, format and admission mode. */
 qa_media_library *qa_media_library_create(qa_scene_resources *, qa_error *);
 void qa_media_library_destroy(qa_media_library *);
 void qa_media_library_trim(qa_media_library *);

@@ -6,7 +6,6 @@ struct qa_cinematic_asset {
     size_t references;
     qa_cinematic_source source;
     qa_resource *source_record;
-    qa_sha256_digest digest;
     uint32_t width, height;
     bool source_roq;
     char *name;

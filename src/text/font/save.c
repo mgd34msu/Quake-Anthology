@@ -50,19 +50,6 @@ static bool resource_owner(const qa_font_library *library, const qa_resource *re
     for (size_t i=0;i<count;++i) if (qa_vfs_resource_at(library->vfs,i,NULL)==resource) return true;
     return false;
 }
-static bool same_resource(qa_source_save_io *io, const qa_resource *resource)
-{
-    const char *path=qa_resource_path(resource); size_t length=strlen(path), saved_length=length;
-    qa_sha256_digest digest=*qa_resource_digest(resource), saved=digest;
-    if (!qa_source_save_count(io,&saved_length,SIZE_MAX) || saved_length!=length) return false;
-    if (io->direction==QA_SOURCE_SAVE_WRITE) {
-        if (!qa_source_save_bytes(io,(void *)path,length)) return false;
-    } else {
-        if (length>io->input.size-io->offset || memcmp(io->input.data+io->offset,path,length)) return false;
-        io->offset+=length;
-    }
-    return qa_source_save_bytes(io,saved.bytes,sizeof(saved.bytes)) && !memcmp(digest.bytes,saved.bytes,sizeof(saved.bytes));
-}
 static bool owners(qa_source_save_io *io, qa_font *font, const qa_font_checkpoint_refs *refs)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
@@ -102,7 +89,6 @@ static bool owners(qa_source_save_io *io, qa_font *font, const qa_font_checkpoin
             if (!refs->resource_decode(refs->context,key,&resource,io->error) || !resource || !resource_owner(font->library,resource)) return false;
             qa_resource_retain((qa_resource *)resource); font->sources[i]=(qa_resource *)resource;
         }
-        if (!same_resource(io,font->sources[i])) return false;
         for (size_t j=0;j<i;++j) if (font->sources[j]==font->sources[i]) return false;
     }
     return true;
@@ -124,61 +110,6 @@ static bool glyph(qa_source_save_io *io, qa_font *font, qa_font_glyph *value)
         isfinite(value->height) && value->height>=0 && isfinite(value->advance) &&
         isfinite(value->bearing_x) && isfinite(value->bearing_y) &&
         isfinite(value->uv.x) && isfinite(value->uv.y) && isfinite(value->uv.z) && isfinite(value->uv.w);
-}
-static bool classic_glyph(const qa_font *font, size_t index)
-{
-    const qa_scene_image *image=font->images[0];
-    const qa_font_glyph *value=&font->glyphs[index];
-    if (!image->logical_width || !image->logical_height || image->logical_width%16 || image->logical_height%16) return false;
-    float width=(float)image->logical_width/16.0f, height=(float)image->logical_height/16.0f, zero=0;
-    float x=(float)(index&15u)*width, y=(float)(index>>4)*height;
-    qa_scene_vec4 uv={x/(float)image->logical_width,y/(float)image->logical_height,
-        (x+width)/(float)image->logical_width,(y+height)/(float)image->logical_height};
-    return value->codepoint==index && value->image==image && !memcmp(&value->uv,&uv,sizeof(uv)) &&
-        !memcmp(&value->width,&width,sizeof(width)) && !memcmp(&value->height,&height,sizeof(height)) &&
-        !memcmp(&value->advance,&width,sizeof(width)) && !memcmp(&value->bearing_y,&height,sizeof(height)) &&
-        !memcmp(&value->bearing_x,&zero,sizeof(zero)) && value->visible==((index&127u)!=32u) &&
-        value->baked_color==font->glyphs[0].baked_color &&
-        !memcmp(&font->line_height,&height,sizeof(height)) && !memcmp(&font->ascent,&height,sizeof(height)) &&
-        !memcmp(&font->descent,&zero,sizeof(zero));
-}
-static bool kfont_glyph(const qa_font *font, size_t index)
-{
-    const qa_font_glyph *value=&font->glyphs[index]; float zero=0;
-    return value->image==font->images[0] && !memcmp(&value->advance,&value->width,sizeof(value->width)) &&
-        !memcmp(&value->bearing_y,&value->height,sizeof(value->height)) && !memcmp(&value->bearing_x,&zero,sizeof(zero)) &&
-        !value->baked_color && value->visible==(value->codepoint!=32u && value->width>0 && value->height>0);
-}
-static bool q3_glyph(const qa_font *font, size_t index)
-{
-    const qa_font_glyph *value=&font->glyphs[index];
-    const qa_q3_glyph_record *record=&font->q3_record.glyphs[index];
-    float scale=font->q3_record.glyph_scale;
-    qa_scene_vec4 uv={record->s,record->t,record->s2,record->t2};
-    float width=(float)record->image_width*scale, height=(float)record->image_height*scale;
-    float advance=(float)record->x_skip*scale, bearing=(float)record->top*scale, zero=0;
-    bool visible=index!=32u && value->image && record->image_width>0 && record->image_height>0;
-    return value->codepoint==index && !memcmp(&value->uv,&uv,sizeof(uv)) &&
-        !memcmp(&value->width,&width,sizeof(width)) && !memcmp(&value->height,&height,sizeof(height)) &&
-        !memcmp(&value->advance,&advance,sizeof(advance)) && !memcmp(&value->bearing_y,&bearing,sizeof(bearing)) &&
-        !memcmp(&value->bearing_x,&zero,sizeof(zero)) && value->visible==visible && !value->baked_color &&
-        (index<255u?((value->image!=NULL)==(record->shader_name[0]!=0)):value->image==NULL);
-}
-static bool q3_metrics(const qa_font *font)
-{
-    float ascent=0, descent=0, tallest=0, scale=font->q3_record.glyph_scale;
-    for (size_t i=0;i<QA_Q3_FONT_GLYPHS;++i) {
-        const qa_q3_glyph_record *glyph=&font->q3_record.glyphs[i];
-        if ((float)glyph->top*scale>ascent) ascent=(float)glyph->top*scale;
-        float below=((float)glyph->height-(float)glyph->top)*scale;
-        if (below>descent) descent=below;
-        if ((float)glyph->height*scale>tallest) tallest=(float)glyph->height*scale;
-    }
-    ascent=ascent>0?ascent:tallest; descent=descent>0?descent:0;
-    float height=ascent+descent;
-    if (!(height>0)) height=tallest>0?tallest:1;
-    return !memcmp(&font->ascent,&ascent,sizeof(ascent)) && !memcmp(&font->descent,&descent,sizeof(descent)) &&
-        !memcmp(&font->line_height,&height,sizeof(height));
 }
 static bool record(qa_source_save_io *io, qa_font *font, const qa_font_checkpoint_refs *refs)
 {
@@ -227,7 +158,7 @@ static bool record(qa_source_save_io *io, qa_font *font, const qa_font_checkpoin
         if (!reading && !qa_q3_font_record_encode(&font->q3_record,bytes,io->error)) return false;
         if (!qa_source_save_bytes(io,bytes,sizeof(bytes)) ||
             (reading && !qa_q3_font_record_decode((qa_bytes){bytes,sizeof(bytes)},&font->q3_record,io->error))) return false;
-        if (strcmp(font->q3_record.name,font->name) || !q3_metrics(font)) return false;
+        if (strcmp(font->q3_record.name,font->name)) return false;
     }
     if (!qa_source_save_count(io,&font->glyph_count,reading?io->input.size/50:SIZE_MAX) || !font->glyph_count ||
         ((kind==QA_FONT_Q3 || kind==QA_FONT_CLASSIC) && font->glyph_count!=256) ||
@@ -237,9 +168,7 @@ static bool record(qa_source_save_io *io, qa_font *font, const qa_font_checkpoin
         (font->glyph_count && !font->glyphs)) return false;
     size_t coverage_at=0;
     for (size_t i=0;i<font->glyph_count;++i) {
-        if (!glyph(io,font,&font->glyphs[i]) || (i && font->glyphs[i].codepoint<=font->glyphs[i-1].codepoint) ||
-            (kind==QA_FONT_CLASSIC && !classic_glyph(font,i)) || (kind==QA_FONT_KFONT && !kfont_glyph(font,i)) ||
-            (kind==QA_FONT_Q3 && !q3_glyph(font,i))) return false;
+        if (!glyph(io,font,&font->glyphs[i]) || (i && font->glyphs[i].codepoint<=font->glyphs[i-1].codepoint)) return false;
         if (kind==QA_FONT_TRUETYPE) {
             while (coverage_at<font->truetype_coverage_count && font->truetype_coverage[coverage_at]<font->glyphs[i].codepoint) ++coverage_at;
             if (coverage_at==font->truetype_coverage_count || font->truetype_coverage[coverage_at]!=font->glyphs[i].codepoint ||

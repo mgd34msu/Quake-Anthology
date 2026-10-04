@@ -417,8 +417,6 @@ bool qa_roq_decoder_capture(qa_roq_decoder *decoder, qa_roq_checkpoint *out, qa_
                                .end_policy = decoder->stream.policy,
                                .unknown_chunk = decoder->unknown,
                                .silent = decoder->silent};
-    if (!qa_media_input_digest(decoder->stream.input, &saved.content, error))
-        return false;
     saved.scratch.data = malloc(ROQ_SAVED_BYTES);
     saved.scratch.size = ROQ_SAVED_BYTES;
     if (!saved.scratch.data) {
@@ -452,11 +450,6 @@ bool qa_roq_decoder_restore(qa_roq_decoder *decoder, const qa_roq_checkpoint *sa
         (!state->invalid && state->has_next && state->next_size > 65536) ||
         (state->buffered_next && (!state->has_next || state->invalid)))
         return roq_fail(error, "Invalid RoQ stream checkpoint");
-    qa_sha256_digest digest;
-    if (!qa_media_input_digest(decoder->stream.input, &digest, error))
-        return false;
-    if (!qa_sha256_equal(&digest, &saved->content))
-        return roq_fail(error, "RoQ checkpoint source changed");
     const uint8_t *bytes = saved->scratch.data;
     memcpy(decoder->scratch->file, bytes, ROQ_FILE_BYTES);
     bytes += ROQ_FILE_BYTES;

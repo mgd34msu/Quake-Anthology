@@ -17,7 +17,6 @@ void qa_media_input_release(qa_media_input *);
 uint64_t qa_media_input_size(const qa_media_input *);
 bool qa_media_input_read(qa_media_input *, uint64_t offset, void *destination,
                           size_t length, qa_error *);
-bool qa_media_input_digest(qa_media_input *, qa_sha256_digest *out, qa_error *);
 
 typedef struct qa_cin_asset qa_cin_asset;
 typedef struct qa_cin_decoder qa_cin_decoder;
@@ -33,7 +32,6 @@ typedef struct qa_cin_frame {
     qa_cin_info info;
 } qa_cin_frame;
 typedef struct qa_cin_checkpoint {
-    qa_sha256_digest content;
     uint64_t input_size, offset, next_frame;
     uint8_t palette[768];
     bool ended;
@@ -170,7 +168,6 @@ typedef struct qa_roq_stream_checkpoint {
     bool has_next, invalid, retained_eof, buffered_next;
 } qa_roq_stream_checkpoint;
 typedef struct qa_roq_checkpoint {
-    qa_sha256_digest content;
     uint64_t input_size;
     qa_roq_stream_checkpoint stream;
     qa_buffer scratch;

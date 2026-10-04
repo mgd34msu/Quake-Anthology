@@ -18,7 +18,6 @@ typedef struct qa_ogv_options {
     bool (*audio)(void *, const qa_media_audio *, qa_error *);
 } qa_ogv_options;
 typedef struct qa_ogv_checkpoint {
-    qa_sha256_digest content;
     double epoch_ms;
     uint64_t loop, next_index, audio_position;
     qa_media_status status;

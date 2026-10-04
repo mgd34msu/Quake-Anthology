@@ -111,9 +111,8 @@ bool qa_haptic_cache_sound(qa_haptic_cache *cache, qa_vfs *vfs, const char *soun
             *error = failure;
         return false;
     }
-    const qa_sha256_digest *digest = qa_resource_digest(resource);
     for (struct haptic_entry *entry = cache->entries; entry; entry = entry->next)
-        if (memcmp(&entry->digest, digest, sizeof(*digest)) == 0) {
+        if (entry->source == resource) {
             qa_haptic_pattern_retain(entry->pattern);
             *out = entry->pattern;
             qa_resource_release(resource);
@@ -132,7 +131,7 @@ bool qa_haptic_cache_sound(qa_haptic_cache *cache, qa_vfs *vfs, const char *soun
         return false;
     }
     qa_resource_retain(resource);
-    *entry = (struct haptic_entry){.digest = *digest, .pattern = pattern,
+    *entry = (struct haptic_entry){.pattern = pattern,
                                    .source = resource, .next = cache->entries};
     cache->entries = entry;
     qa_resource_release(resource);

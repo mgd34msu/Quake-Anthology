@@ -16,19 +16,8 @@ static size_t get_index(qa_source_save_io *r, size_t count) {
 }
 static bool put_prepared(qa_source_save_io *w, const qa_audio_checkpoint_refs *refs, const qa_mixer_prepared *p) {
     if (!qa_ac_u32(w, p != NULL) || !p) return !w->failed;
-    qa_buffer sample = {0};
-    if (!qa_audio_sample_checkpoint(p->sample, &sample, w->error)) { w->failed = true; return false; }
-    bool ok = qa_ac_blob(w, (qa_bytes){sample.data, sample.size}); qa_buffer_free(&sample);
-    ok = ok && qa_ac_u32(w, p->layout.q3) && qa_ac_u32(w, p->doppler_sums != NULL) && qa_ac_u32(w, p->asset != NULL);
+    bool ok = qa_ac_u32(w, p->layout.q3) && qa_ac_u32(w, p->doppler_sums != NULL) && qa_ac_u32(w, p->asset != NULL);
     if (ok && p->asset) {
-        const qa_resource *resource = qa_audio_asset_resource(p->asset);
-        const qa_sha256_digest *digest = qa_resource_digest(resource);
-        const char *name = qa_audio_asset_name(p->asset);
-        if (!digest || !name) {
-            qa_error_set(w->error, QA_ERROR_ARGUMENT, 0, "Audio asset has no persistent source identity"); w->failed = true; return false;
-        }
-        ok = qa_ac_u32(w, qa_audio_asset_family(p->asset)) &&
-            qa_ac_blob(w, (qa_bytes){(const uint8_t *)name, strlen(name)}) && qa_ac_write(w, digest->bytes, sizeof(digest->bytes));
         qa_buffer descriptor = {0};
         if (ok && (!refs || !refs->asset_encode || !refs->asset_encode(refs->context, p->asset, &descriptor, w->error))) {
             if (!refs || !refs->asset_encode) qa_error_set(w->error, QA_ERROR_ARGUMENT, 0, "Audio asset identity encoder is absent");
@@ -38,6 +27,10 @@ static bool put_prepared(qa_source_save_io *w, const qa_audio_checkpoint_refs *r
             qa_error_set(w->error, QA_ERROR_ARGUMENT, 0, "Audio asset descriptor storage is absent"); w->failed = true; ok = false;
         }
         ok = ok && qa_ac_blob(w, (qa_bytes){descriptor.data, descriptor.size}); qa_buffer_free(&descriptor);
+    } else if (ok) {
+        qa_buffer sample = {0};
+        if (!qa_audio_sample_checkpoint(p->sample, &sample, w->error)) { w->failed = true; return false; }
+        ok = qa_ac_blob(w, (qa_bytes){sample.data, sample.size}); qa_buffer_free(&sample);
     }
     return ok;
 }
@@ -58,42 +51,23 @@ static bool make_doppler(qa_mixer_prepared *p, qa_source_save_io *r) {
 }
 static void get_prepared(qa_source_save_io *r, const qa_audio_checkpoint_refs *refs, qa_audio_mixer *m, size_t slot) {
     if (!qa_ac_bool(r) || r->failed) return;
+    bool q3 = qa_ac_bool(r), doppler = qa_ac_bool(r), asset = qa_ac_bool(r);
     qa_bytes bytes;
-    if (!qa_ac_getblob(r, &bytes)) return;
+    if (r->failed || !qa_ac_getblob(r, &bytes)) return;
     qa_mixer_prepared *p = calloc(1, sizeof(*p));
     if (!p) { qa_error_set(r->error, QA_ERROR_MEMORY, r->offset, "Restoring prepared sound"); r->failed = true; return; }
     m->prepared[slot] = p; p->slot = slot;
-    if (!qa_audio_sample_restore(bytes, &p->sample, r->error)) { r->failed = true; return; }
-    bool q3 = qa_ac_bool(r), doppler = qa_ac_bool(r), asset = qa_ac_bool(r);
-    if (r->failed) return;
     if (asset) {
-        uint32_t family = qa_ac_get32(r); qa_bytes name, digest;
-        if (!qa_ac_getblob(r, &name) || !qa_ac_read(r, 32, &digest)) return;
-        if (family > QA_AUDIO_Q3 || name.size == SIZE_MAX || memchr(name.data, 0, name.size)) { qa_ac_bad(r, "Invalid saved sound asset identity"); return; }
-        qa_bytes descriptor;
-        if (!qa_ac_getblob(r, &descriptor)) return;
-        qa_sha256_digest identity; memcpy(identity.bytes, digest.data, 32);
-        bool resolved = refs && refs->asset_decode && refs->asset_decode(refs->context, descriptor, &p->asset, r->error);
+        bool resolved = refs && refs->asset_decode && refs->asset_decode(refs->context, bytes, &p->asset, r->error);
         if (!resolved || !p->asset) {
             if (!refs || !refs->asset_decode) qa_error_set(r->error, QA_ERROR_ARGUMENT, r->offset, "Audio candidate asset resolver is absent");
             r->failed = true; return;
         }
-        const char *actual_name = qa_audio_asset_name(p->asset);
-        if (!actual_name || strlen(actual_name) != name.size || memcmp(actual_name, name.data, name.size)) {
-            qa_ac_bad(r, "Saved audio asset name differs from its exact candidate"); return;
-        }
         qa_audio_sample *actual = qa_audio_asset_sample(p->asset);
-        const qa_sha256_digest *actual_digest = qa_resource_digest(qa_audio_asset_resource(p->asset));
-        if (!actual || !actual_digest || memcmp(actual_digest->bytes, identity.bytes, 32) ||
-            qa_audio_asset_family(p->asset) != (qa_audio_family)family ||
-            actual->sample_rate != p->sample->sample_rate || actual->channels != p->sample->channels ||
-            actual->frame_count != p->sample->frame_count || actual->loop_start != p->sample->loop_start ||
-            actual->source_bytes_per_sample != p->sample->source_bytes_per_sample ||
-            memcmp(actual->samples, p->sample->samples, (size_t)actual->frame_count * actual->channels * 2)) {
-            qa_ac_bad(r, "Saved sound asset differs from candidate content"); return;
-        }
-        if (!qa_audio_sample_retain(actual)) { qa_ac_bad(r, "Saved sound sample reference is exhausted"); return; }
-        qa_audio_sample_release(p->sample); p->sample = actual;
+        p->sample = qa_audio_sample_retain(actual);
+        if (!p->sample) { qa_ac_bad(r, "Saved sound sample reference is exhausted"); return; }
+    } else if (!qa_audio_sample_restore(bytes, &p->sample, r->error)) {
+        r->failed = true; return;
     }
     if (!p->sample->frame_count || p->sample->channels != 1) {
         qa_ac_bad(r, "Saved prepared sound is not nonempty mono PCM"); return;

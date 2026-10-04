@@ -42,13 +42,6 @@ static qa_audio_wav_policy source_policy(const qa_resource *source, qa_audio_fam
     qa_bytes bytes = qa_resource_bytes(source);
     return bytes.size && bytes.data[0] == 'R' ? (family == QA_AUDIO_Q3 ? QA_WAV_Q3 : QA_WAV_QUAKE) : QA_WAV_FORMAT;
 }
-static bool pcm_equal(const qa_audio_sample *a, const qa_audio_sample *b)
-{
-    return a && b && a->sample_rate == b->sample_rate && a->channels == b->channels &&
-        a->source_bytes_per_sample == b->source_bytes_per_sample && a->frame_count == b->frame_count &&
-        a->loop_start == b->loop_start && a->frame_count <= SIZE_MAX / a->channels / sizeof(int16_t) &&
-        !memcmp(a->samples, b->samples, (size_t)a->frame_count * a->channels * sizeof(int16_t));
-}
 bool qa_bank_asset_valid(const qa_audio_asset *asset, qa_error *error)
 {
     qa_vfs_resource_origin origin;
@@ -57,10 +50,7 @@ bool qa_bank_asset_valid(const qa_audio_asset *asset, qa_error *error)
         !qa_vfs_resource_origin_read(asset->files, asset->mount, asset->resource, &origin) ||
         asset->policy != source_policy(asset->resource, asset->family))
         return fail(error, QA_ERROR_FORMAT, "Audio asset identity is not source-qualified");
-    qa_audio_sample *parsed = NULL;
-    if (!qa_audio_decode(qa_resource_bytes(asset->resource), asset->policy, &parsed, error)) return false;
-    bool same = pcm_equal(parsed, asset->sample); qa_audio_sample_release(parsed);
-    return same || fail(error, QA_ERROR_FORMAT, "Audio PCM differs from its retained source");
+    return true;
 }
 static bool capacity_valid(uint64_t capacity)
 {
@@ -108,9 +98,7 @@ bool qa_bank_write_asset(qa_source_save_io *w, const struct asset_row *row,
     const qa_audio_asset *a = row->asset; uint64_t view = 0, pool = 0, resource = 0;
     if (!refs->view_encode(refs->context, a->files, &view, w->error) ||
         !refs->resource_encode(refs->context, a->resource, &pool, &resource, w->error)) { w->failed = true; return false; }
-    const qa_sha256_digest *digest = qa_resource_digest(a->resource);
-    if (!digest) { w->failed = true; return fail(w->error, QA_ERROR_FORMAT, "Audio source digest is absent"); }
-    return qa_ac_u64(w, view) && qa_ac_u64(w, pool) && qa_ac_u64(w, resource) && qa_ac_write(w, digest, sizeof(*digest)) &&
+    return qa_ac_u64(w, view) && qa_ac_u64(w, pool) && qa_ac_u64(w, resource) &&
         qa_ac_u64(w, a->mount) && qa_ac_u32(w, a->family) && qa_ac_u32(w, a->policy) &&
         qa_ac_blob(w, (qa_bytes){(const uint8_t *)a->name, strlen(a->name)}) &&
         qa_ac_u64(w, qa_bank_sample_index(samples, sample_count, a->sample));
@@ -153,8 +141,7 @@ bool qa_audio_bank_checkpoint(const qa_audio_bank *bank, qa_audio_asset *const *
 bool qa_bank_read_asset(qa_source_save_io *r, struct asset_row *row, struct sample_row *samples,
     size_t sample_count, const qa_audio_bank_checkpoint_refs *refs)
 {
-    uint64_t view = qa_ac_get64(r), pool = qa_ac_get64(r), resource = qa_ac_get64(r); qa_bytes digest, name;
-    if (!qa_ac_read(r, sizeof(qa_sha256_digest), &digest)) return false;
+    uint64_t view = qa_ac_get64(r), pool = qa_ac_get64(r), resource = qa_ac_get64(r); qa_bytes name;
     uint64_t mount = qa_ac_get64(r); uint32_t family = qa_ac_get32(r), policy = qa_ac_get32(r);
     if (!qa_ac_getblob(r, &name)) return false;
     uint64_t sample = qa_ac_get64(r);
@@ -166,8 +153,7 @@ bool qa_bank_read_asset(qa_source_save_io *r, struct asset_row *row, struct samp
     if (!refs->view_decode(refs->context, view, &files, r->error)) { r->failed = true; return false; }
     if (!files) return qa_ac_bad(r, "Saved audio source view is absent");
     if (!refs->resource_decode(refs->context, pool, resource, &source, r->error)) { r->failed = true; return false; }
-    if (!source || !qa_resource_digest(source) || memcmp(qa_resource_digest(source), digest.data, digest.size))
-        return qa_ac_bad(r, "Saved audio source identity changed");
+    if (!source) return qa_ac_bad(r, "Saved audio source is absent");
     qa_audio_asset *a = calloc(1, sizeof(*a) + name.size + 1);
     if (!a) { r->failed = true; return fail(r->error, QA_ERROR_MEMORY, "Restoring audio asset"); }
     atomic_init(&a->references, 1); row->asset = a;
@@ -204,7 +190,7 @@ bool qa_audio_bank_restore(qa_audio_bank *bank, qa_audio_asset **external, size_
     const qa_vfs *resolved = NULL;
     ok = ok && !r.failed && slots == count && entries <= capacity && capacity <= SIZE_MAX / sizeof(bank_entry) &&
         sample_count <= SIZE_MAX / sizeof(struct sample_row) && asset_count <= SIZE_MAX / sizeof(struct asset_row) &&
-        sample_count <= bytes.size / 52 && asset_count <= bytes.size / 88 && entries <= bytes.size / 16 && count <= bytes.size / 8 &&
+        sample_count <= bytes.size / 52 && asset_count <= bytes.size / 56 && entries <= bytes.size / 16 && count <= bytes.size / 8 &&
         refs->view_decode(refs->context, view, &resolved, error) && resolved == bank->view &&
         qa_bank_read_extent(&r, capacity, entries);
     struct sample_row *samples = NULL; struct asset_row *assets = NULL; qa_audio_asset **holders = NULL;

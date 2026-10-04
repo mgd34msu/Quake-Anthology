@@ -17,8 +17,6 @@ struct qa_media_input {
     qa_bytes memory;
     void *lease;
     void (*release)(void *);
-    qa_sha256_digest digest;
-    bool has_digest;
 };
 
 bool qa_media_input_file(const char *path, qa_media_input **out, qa_error *error) {
@@ -52,7 +50,6 @@ bool qa_media_input_resource(qa_resource *resource, qa_media_input **out, qa_err
     qa_media_input *input;
     if (!qa_media_input_memory(qa_resource_bytes(resource), resource, resource_release, &input, error)) return false;
     qa_resource_retain(resource);
-    input->digest = *qa_resource_digest(resource); input->has_digest = true;
     *out = input; return true;
 }
 void qa_media_input_retain(qa_media_input *input) { if (input) ++input->references; }
@@ -79,21 +76,4 @@ bool qa_media_input_read(qa_media_input *input, uint64_t offset, void *destinati
         read_bytes += (size_t)count;
     }
     return true;
-}
-bool qa_media_input_digest(qa_media_input *input, qa_sha256_digest *out, qa_error *error) {
-    if (!input || !out) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing media digest output"); return false; }
-    if (!input->has_digest) {
-        qa_sha256_context hash; qa_sha256_init(&hash);
-        if (input->descriptor < 0) qa_sha256_update(&hash, input->memory);
-        else {
-            uint8_t block[65536];
-            for (uint64_t offset = 0; offset < input->size;) {
-                size_t size = input->size - offset < sizeof(block) ? (size_t)(input->size - offset) : sizeof(block);
-                if (!qa_media_input_read(input, offset, block, size, error)) return false;
-                qa_sha256_update(&hash, (qa_bytes){block, size}); offset += size;
-            }
-        }
-        qa_sha256_final(&hash, &input->digest); input->has_digest = true;
-    }
-    *out = input->digest; return true;
 }

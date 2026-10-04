@@ -13,20 +13,6 @@ static bool pattern_valid(const qa_haptic_pattern *p)
         (p->loop ? p->start < p->end && p->end <= p->count :
                    !p->start && !p->end && !p->interval);
 }
-static bool source_matches(const qa_resource *source, const qa_sha256_digest *digest,
-                           const qa_haptic_pattern *pattern, qa_error *error)
-{
-    if (!source || memcmp(qa_resource_digest(source), digest, sizeof(*digest)))
-        return fail(error, QA_ERROR_FORMAT, "tactile cache source identity changed");
-    qa_haptic_pattern *parsed = NULL;
-    if (!qa_haptic_pattern_parse(qa_resource_bytes(source), &parsed, error)) return false;
-    bool same = parsed->count == pattern->count && parsed->rate == pattern->rate &&
-        parsed->loop == pattern->loop && parsed->start == pattern->start &&
-        parsed->end == pattern->end && parsed->interval == pattern->interval &&
-        !memcmp(parsed->samples, pattern->samples, pattern->count * 4);
-    qa_haptic_pattern_release(parsed);
-    return same || fail(error, QA_ERROR_FORMAT, "tactile pattern differs from its real source");
-}
 static bool players_valid(qa_haptic_player *const *players, size_t count, qa_error *error)
 {
     if (count && !players) return fail(error, QA_ERROR_ARGUMENT, "missing tactile player holders");
@@ -121,10 +107,9 @@ bool qa_haptic_checkpoint(const qa_haptic_cache *cache, qa_haptic_player *const 
     for (const struct haptic_entry *e = cache->entries; success && e; e = e->next) {
         if (entries == SIZE_MAX) { success = false; break; }
         ++entries;
-        success = pattern_valid(e->pattern) && add_pattern(&rows, &patterns, e->pattern, error) &&
-            source_matches(e->source, &e->digest, e->pattern, error);
+        success = e->source && pattern_valid(e->pattern) && add_pattern(&rows, &patterns, e->pattern, error);
         for (const struct haptic_entry *other = cache->entries; success && other != e; other = other->next)
-            if (!memcmp(&other->digest, &e->digest, sizeof(e->digest))) success = false;
+            if (other->source == e->source) success = false;
     }
     for (size_t i = 0; success && i < count; ++i)
         success = player_valid(players[i]) && add_pattern(&rows, &patterns, players[i]->pattern, error);
@@ -135,10 +120,9 @@ bool qa_haptic_checkpoint(const qa_haptic_cache *cache, qa_haptic_player *const 
     for (size_t i = 0; success && i < patterns; ++i) success = pattern_fields(&io, &rows[i].pattern);
     for (const struct haptic_entry *e = cache->entries; success && e; e = e->next) {
         uint64_t pool = 0, resource = 0, index = find_pattern(rows, patterns, e->pattern);
-        qa_sha256_digest digest = e->digest;
         success = refs->resource_encode(refs->context, e->source, &pool, &resource, error) &&
             qa_source_save_u64(&io, &pool) && qa_source_save_u64(&io, &resource) &&
-            qa_source_save_bytes(&io, &digest, sizeof(digest)) && qa_source_save_u64(&io, &index);
+            qa_source_save_u64(&io, &index);
     }
     for (size_t i = 0; success && i < count; ++i) {
         qa_haptic_player saved = *players[i];
@@ -165,7 +149,7 @@ bool qa_haptic_restore(qa_haptic_cache *cache, qa_haptic_player *const *players,
     bool success = qa_source_save_reader(&io, NULL, bytes, error) && header(&io, &patterns, &entries, &player_count) &&
         player_count == count;
     if (success && (io.offset > bytes.size || patterns > (bytes.size - io.offset) / 23 ||
-        entries > (bytes.size - io.offset) / 56 || count > (bytes.size - io.offset) / 38)) success = false;
+        entries > (bytes.size - io.offset) / 24 || count > (bytes.size - io.offset) / 38)) success = false;
     if (success) {
         rows = calloc(patterns ? patterns : 1, sizeof(*rows));
         saved = calloc(count ? count : 1, sizeof(*saved));
@@ -175,18 +159,17 @@ bool qa_haptic_restore(qa_haptic_cache *cache, qa_haptic_player *const *players,
     struct haptic_entry **tail = &candidate->entries;
     for (size_t i = 0; success && i < entries; ++i) {
         uint64_t pool = 0, resource = 0, index = 0;
-        qa_sha256_digest digest = {{0}};
         const qa_resource *source = NULL;
         success = qa_source_save_u64(&io, &pool) && qa_source_save_u64(&io, &resource) &&
-            qa_source_save_bytes(&io, &digest, sizeof(digest)) && qa_source_save_u64(&io, &index) &&
+            qa_source_save_u64(&io, &index) &&
             index < patterns && refs->resource_decode(refs->context, pool, resource, &source, error) &&
-            source_matches(source, &digest, rows[index].pattern, error);
+            source != NULL;
         for (struct haptic_entry *e = candidate->entries; success && e; e = e->next)
-            if (!memcmp(&e->digest, &digest, sizeof(digest))) success = false;
+            if (e->source == source) success = false;
         if (!success) break;
         struct haptic_entry *e = calloc(1, sizeof(*e));
         if (!e) { success = fail(error, QA_ERROR_MEMORY, "restoring tactile cache entry"); break; }
-        e->digest = digest; e->pattern = rows[index].pattern; e->source = (qa_resource *)source;
+        e->pattern = rows[index].pattern; e->source = (qa_resource *)source;
         qa_haptic_pattern_retain(e->pattern); qa_resource_retain(e->source);
         ++rows[index].holders;
         *tail = e; tail = &e->next;

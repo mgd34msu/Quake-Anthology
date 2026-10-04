@@ -424,8 +424,7 @@ bool qa_ogv_playback_capture(qa_ogv_playback *playback, qa_ogv_checkpoint *out, 
     }
     if (!available(playback, true, error))
         return false;
-    qa_ogv_checkpoint checkpoint = {.content = playback->asset->movie.content,
-                                    .epoch_ms = playback->epoch_ms,
+    qa_ogv_checkpoint checkpoint = {.epoch_ms = playback->epoch_ms,
                                     .loop = playback->loop,
                                     .next_index = playback->next_index,
                                     .audio_position = qa_audio_stream_position(playback->audio),
@@ -455,7 +454,6 @@ static bool checkpoint_valid(const qa_ogv_playback *playback, const qa_ogv_check
     const qa_ogv_info *info = &playback->asset->info;
     bool audio = info->has_audio && !playback->options.silent;
     bool valid = checkpoint &&
-                 qa_sha256_equal(&checkpoint->content, &playback->asset->movie.content) &&
                  isfinite(checkpoint->epoch_ms) && checkpoint->next_index <= info->frames &&
                  checkpoint->has_frame == (checkpoint->next_index != 0) &&
                  checkpoint->has_audio == audio && (audio || checkpoint->audio_position == 0) &&

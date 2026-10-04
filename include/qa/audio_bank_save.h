@@ -19,8 +19,9 @@ typedef struct qa_audio_bank_checkpoint_refs {
 bool qa_audio_bank_checkpoint(const qa_audio_bank *, qa_audio_asset *const *, size_t,
     const qa_audio_bank_checkpoint_refs *, qa_buffer *empty, qa_error *);
 /* Restore into an empty installed bank and empty external holder slots. Its
- * exact borrowed view must already be restored. Source bytes are decoded only
- * to qualify immutable PCM; no registration, playback or VFS acquisition runs.
+ * exact borrowed view must already be restored. Saved immutable PCM is decoded
+ * once and shared by its asset inventory; no registration, playback or VFS
+ * acquisition runs.
  * Failure preserves the bank and all external slots. Success gives one owned
  * asset reference to each nonempty slot. */
 bool qa_audio_bank_restore(qa_audio_bank *, qa_audio_asset **, size_t,

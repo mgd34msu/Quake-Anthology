@@ -33,20 +33,13 @@ static bool fields(qa_source_save_io *io, const qa_cinematic *movie, const qa_sc
             image->wrap!=QA_SCENE_CLAMP || image->filter!=QA_SCENE_LINEAR)
             return cinematic_fail(io->error,"Cinematic publication image has incompatible metadata");
         if (initial || *revision==movie->revision) {
-            static const uint8_t black[4]={0,0,0,255};
             uint32_t width=movie->has_picture?movie->picture.width:1, height=movie->has_picture?movie->picture.height:1;
-            const void *pixels=movie->has_picture?movie->picture.rgba.data:black;
-            size_t bytes=movie->has_picture?movie->picture.rgba.size:sizeof(black);
+            size_t bytes=movie->has_picture?movie->picture.rgba.size:4;
             bool transparent=initial || (!movie->has_picture && movie->options.target.kind==QA_CINEMATIC_MATERIAL);
             if (transparent && !cinematic_initial_dimensions(movie,&width,&height,&bytes,io->error)) return false;
             if (image->levels[0].width!=width || image->levels[0].height!=height || image->levels[0].bytes!=bytes ||
-                (bytes && (!image->levels[0].pixels || (!transparent && (!pixels || memcmp(image->levels[0].pixels,pixels,bytes))))))
+                (bytes && !image->levels[0].pixels))
                 return cinematic_fail(io->error,"Cinematic current publication differs from retained decoded frame");
-            if (transparent) {
-                const uint8_t *actual=image->levels[0].pixels;
-                for (size_t i=0;i<bytes;++i) if (actual[i])
-                    return cinematic_fail(io->error,"Initial shader movie pixels differ from the retained transparent surface");
-            }
         }
     }
     return true;

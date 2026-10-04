@@ -207,8 +207,6 @@ bool qa_ogv_demux(qa_media_input *input, qa_ogv_movie *out, qa_error *error) {
         return false;
     }
     movie_builder builder = {.movie = {.eos_packet = UINT64_MAX}};
-    qa_sha256_context digest;
-    qa_sha256_init(&digest);
     uint8_t storage[65307];
     bool success = false;
     for (uint64_t offset = 0; offset < size;) {
@@ -216,7 +214,6 @@ bool qa_ogv_demux(qa_media_input *input, qa_ogv_movie *out, qa_error *error) {
         ogg_page page;
         if (!read_page(input, offset, size, storage, &page_size, &page, error))
             goto done;
-        qa_sha256_update(&digest, (qa_bytes){storage, page_size});
         logical_stream *stream = admit_page(&builder, &page, offset, error);
         if (!stream)
             goto done;
@@ -263,7 +260,6 @@ bool qa_ogv_demux(qa_media_input *input, qa_ogv_movie *out, qa_error *error) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Ogg movie has no complete Theora video");
         goto done;
     }
-    qa_sha256_final(&digest, &builder.movie.content);
     *out = builder.movie;
     builder.movie = (qa_ogv_movie){0};
     success = true;

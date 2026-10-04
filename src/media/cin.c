@@ -163,15 +163,11 @@ bool qa_cin_decoder_capture(qa_cin_decoder *decoder, qa_cin_checkpoint *out, qa_
     if (!decoder || !out) return fail(error, "Missing CIN checkpoint output");
     qa_cin_checkpoint result = {.input_size = qa_media_input_size(decoder->asset->input),
         .offset = decoder->offset, .next_frame = decoder->index, .ended = decoder->ended};
-    if (!qa_media_input_digest(decoder->asset->input, &result.content, error)) return false;
     memcpy(result.palette, decoder->palette, sizeof(result.palette)); *out = result; return true;
 }
 bool qa_cin_decoder_restore(qa_cin_decoder *decoder, const qa_cin_checkpoint *saved, qa_error *error) {
     if (!decoder || !saved || saved->input_size != qa_media_input_size(decoder->asset->input) ||
         saved->offset < CIN_HEADER_BYTES || saved->offset > saved->input_size) return fail(error, "Invalid CIN checkpoint position");
-    qa_sha256_digest digest;
-    if (!qa_media_input_digest(decoder->asset->input, &digest, error)) return false;
-    if (!qa_sha256_equal(&saved->content, &digest)) return fail(error, "CIN checkpoint source changed");
     decoder->offset = saved->offset; decoder->index = saved->next_frame; decoder->ended = saved->ended;
     memcpy(decoder->palette, saved->palette, sizeof(decoder->palette)); return true;
 }

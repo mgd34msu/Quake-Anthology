@@ -10,7 +10,6 @@ struct qa_haptic_pattern {
     uint8_t samples[];
 };
 struct haptic_entry {
-    qa_sha256_digest digest;
     qa_haptic_pattern *pattern;
     qa_resource *source;
     struct haptic_entry *next;

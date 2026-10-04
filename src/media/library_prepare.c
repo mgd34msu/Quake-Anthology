@@ -45,14 +45,13 @@ bool qa_media_library_stage_ready(qa_media_library_stage *stage, qa_error *error
     if (stage->sealed) return true;
     qa_cinematic_asset *tail = NULL;
     for (qa_cinematic_asset *asset = stage->destination->assets; asset; asset = asset->next) {
-        if (!asset->references || asset->source.asset != asset || !asset->source_record ||
-            !qa_sha256_equal(&asset->digest, qa_resource_digest(asset->source_record)))
+        if (!asset->references || asset->source.asset != asset || !asset->source_record)
             return cinematic_fail(error, "Prepared media cache lost a genuine decoded resource");
         for (qa_cinematic_asset *old = stage->original; old; old = old->next)
-            if (old->source.format == asset->source.format && old->source_roq==asset->source_roq && qa_sha256_equal(&old->digest, &asset->digest))
+            if (old->source.format == asset->source.format && old->source_roq==asset->source_roq && old->source_record==asset->source_record)
                 return cinematic_fail(error, "Prepared media cache duplicates an actual shared asset");
         for (qa_cinematic_asset *prior = stage->destination->assets; prior != asset; prior = prior->next)
-            if (prior->source.format == asset->source.format && prior->source_roq==asset->source_roq && qa_sha256_equal(&prior->digest, &asset->digest))
+            if (prior->source.format == asset->source.format && prior->source_roq==asset->source_roq && prior->source_record==asset->source_record)
                 return cinematic_fail(error, "Prepared media cache repeats a decoded asset");
         tail = asset;
     }

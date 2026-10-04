@@ -20,7 +20,6 @@ typedef struct qa_ogv_movie {
     qa_ogv_packet *packets;
     size_t packet_count;
     uint64_t eos_packet;
-    qa_sha256_digest content;
 } qa_ogv_movie;
 struct qa_ogv_asset {
     size_t references;

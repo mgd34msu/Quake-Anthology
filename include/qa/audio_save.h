@@ -65,9 +65,8 @@ qa_audio_raw_stream *qa_audio_engine_bus_stream(qa_audio_engine *, uint64_t bus)
 bool qa_audio_engine_music_ready(const qa_audio_engine *, uint64_t bus,
     uint32_t audience, float gain);
 
-/* Read-only qualification of a separately restored cinematic queue and route.
- * An empty descriptor qualifies the actual absence of a raw queue. */
-bool qa_audio_engine_raw_checkpoint_ready(const qa_audio_engine *, uint64_t bus,
-    uint32_t audience, float gain, qa_bytes checkpoint, qa_error *);
+/* Read-only qualification of the actual restored cinematic queue and route. */
+bool qa_audio_engine_raw_ready(const qa_audio_engine *, uint64_t bus,
+    uint32_t audience, float gain, bool present, qa_error *);
 
 #endif

@@ -3,7 +3,6 @@
 #include "qa/media_library_save.h"
 #include "qa/scene_save.h"
 #include "qa/source_save.h"
-#include "qa/binary.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -41,20 +40,6 @@ static bool text(qa_source_save_io *io, char **value)
     }
     return qa_source_save_bytes(io,*value,length) && !memchr(*value,0,length);
 }
-static bool provenance(qa_source_save_io *io, const qa_resource *resource)
-{
-    const char *path=qa_resource_path(resource);
-    size_t length=strlen(path), saved_length=length;
-    qa_sha256_digest digest=*qa_resource_digest(resource), saved=digest;
-    if (!qa_source_save_count(io,&saved_length,SIZE_MAX) || saved_length!=length) return false;
-    if (io->direction==QA_SOURCE_SAVE_WRITE) {
-        if (!qa_source_save_bytes(io,(void *)path,length)) return false;
-    } else {
-        if (length>io->input.size-io->offset || memcmp(io->input.data+io->offset,path,length)) return false;
-        io->offset+=length;
-    }
-    return qa_source_save_bytes(io,saved.bytes,sizeof(saved.bytes)) && qa_sha256_equal(&digest,&saved);
-}
 static bool image_owner(const qa_media_library *library, const qa_scene_image *image)
 {
     const qa_scene_resources *owners[]={library->resources}; size_t owner;
@@ -76,7 +61,7 @@ static bool record(qa_source_save_io *io, qa_media_library *library, qa_cinemati
     uint32_t width=asset->width, height=asset->height;
     uint64_t resource_key=0;
     if (!reading && (!asset->references || !asset->source_record || asset->source.asset!=asset ||
-        asset->source.name!=asset->name || !qa_sha256_equal(&asset->digest,qa_resource_digest(asset->source_record)) ||
+        asset->source.name!=asset->name ||
         !refs->resource_encode(refs->context,asset->source_record,&resource_key,io->error))) return false;
     if (!qa_source_save_u32(io,&width) || !qa_source_save_u32(io,&height) ||
         (asset->source_roq ? width || height : !width || !height) ||
@@ -85,12 +70,6 @@ static bool record(qa_source_save_io *io, qa_media_library *library, qa_cinemati
         const qa_resource *resource=NULL;
         if (!refs->resource_decode(refs->context,resource_key,&resource,io->error) || !resource) return false;
         qa_resource_retain((qa_resource *)resource); asset->source_record=(qa_resource *)resource;
-        asset->digest=*qa_resource_digest(resource);
-    }
-    if (!provenance(io,asset->source_record)) return false;
-    if (kind==QA_CINEMATIC_ROQ) {
-        qa_bytes source=qa_resource_bytes(asset->source_record);
-        if (source.size<2 || qa_load_u16le(source.data)!=UINT16_C(0x1084)) return false;
     }
     if (kind==QA_CINEMATIC_IMAGE) {
         uint64_t image_key=0;
@@ -111,7 +90,7 @@ static bool record(qa_source_save_io *io, qa_media_library *library, qa_cinemati
     return asset->width==width && asset->height==height;
 }
 static bool same_identity(const qa_cinematic_asset *a, const qa_cinematic_asset *b)
-{ return a->source.format==b->source.format && a->source_roq==b->source_roq && qa_sha256_equal(&a->digest,&b->digest); }
+{ return a->source.format==b->source.format && a->source_roq==b->source_roq && a->source_record==b->source_record; }
 
 bool qa_media_library_checkpoint(const qa_media_library *library, const qa_media_library_checkpoint_refs *refs,
                                  qa_buffer *out, qa_error *error)
@@ -143,7 +122,7 @@ bool qa_media_library_restore(qa_media_library *library, qa_bytes bytes, const q
     qa_cinematic_asset **saved=NULL, **installed=NULL;
     if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;
     bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QMLB",4) &&
-        qa_source_save_count(&io,&count,bytes.size/60) && count<=SIZE_MAX/sizeof(*saved);
+        qa_source_save_count(&io,&count,bytes.size/29) && count<=SIZE_MAX/sizeof(*saved);
     if (ok && count) {
         saved=calloc(count,sizeof(*saved)); installed=calloc(count,sizeof(*installed));
         if (!saved || !installed) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating restored media cache"); ok=false; }
