@@ -4,6 +4,8 @@
 #include "remote_q1_prediction.h"
 #include "remote_q1_skins.h"
 #include "save_private.h"
+#include "save_commands.h"
+#include "qa/console_save.h"
 #include "qa/scene_resource_save.h"
 #include "qa/scene_save.h"
 #include "qa/material_library_save.h"
@@ -355,6 +357,9 @@ bool frontend_remote_q1_checkpoint(const frontend_remote_q1 *source,
         .domain_catalog = qa_application_content_catalog_id(refs->content, row->options.domain.catalog),
         .catalog = qa_application_content_catalog_id(refs->content, row->content.catalog),
         .mounts = qa_application_content_view_id(refs->content, row->content.mounts)};
+    saved.domain.command_context.registry = qa_console_save_context_registry(
+        qa_application_session(row->frontend->application), saved.domain.command_context.registry,
+        frontend_save_commands_registry(row->frontend));
     frontend_remote_q1 captured = *row; captured.saved_world = 0;
     bool ok = (!row->map || qa_application_content_resource_id(refs->content, row->map, &saved.map_pool, &saved.map_resource)) &&
         (!row->world || frontend_world_encode(refs->roots, row->world, &captured.saved_world, error));
@@ -388,7 +393,10 @@ bool frontend_remote_q1_restore_prepare(qa_frontend *f, const frontend_remote_q1
     saved.domain.catalog = qa_application_content_catalog(refs->content, saved.domain_catalog);
     saved.domain.console = options->domain.console; saved.domain.cvars = options->domain.cvars;
     saved.domain.actors = options->domain.actors;
-    if (ok) ok = remote_q1_domain_equal(&saved.domain, &options->domain) &&
+    frontend_remote_q1_domain expected = options->domain;
+    expected.command_context.registry = qa_console_save_context_registry(
+        qa_application_session(f->application), expected.command_context.registry, frontend_save_commands_registry(f));
+    if (ok) ok = remote_q1_domain_equal(&saved.domain, &expected) &&
         options->domain.physical_seat < f->options.seats &&
         (row->bound ? options->domain.client.owner && options->domain.client.generation && options->domain.epoch :
             !options->domain.client.owner && !options->domain.epoch);
