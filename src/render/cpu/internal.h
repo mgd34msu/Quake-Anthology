@@ -58,6 +58,13 @@ struct qa_cpu_renderer {
 typedef struct cpu_derivative {
   double dudx, dvdx, dudy, dvdy;
 } cpu_derivative;
+typedef struct cpu_sampler {
+  const qa_scene_image *image;
+  const cpu_framebuffer *target;
+  size_t level_count;
+  bool linear, magnification_linear, blend;
+  double magnification_limit;
+} cpu_sampler;
 typedef struct cpu_fragment {
   uint32_t x, y;
   double depth, eye_depth;
@@ -90,9 +97,10 @@ bool cpu_image_valid(const qa_scene_image *image, qa_error *error);
 bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
               qa_error *error);
 void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
-                        const cpu_fragment *fragment);
-void cpu_sample_texture(const qa_cpu_renderer *renderer,
-                        const qa_scene_image *image, double u, double v,
+                        const cpu_sampler samplers[2], const cpu_fragment *fragment);
+bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
+                          const qa_scene_image *image, cpu_sampler *sampler);
+void cpu_sample_texture(const cpu_sampler *sampler, double u, double v,
                         double rho, double out[4]);
 bool cpu_depth_fog(qa_cpu_renderer *renderer, const qa_scene_fog *fog,
                    const qa_scene_view *view, qa_error *error);

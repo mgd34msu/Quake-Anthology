@@ -225,7 +225,7 @@ static uint32_t stencil_operation(uint32_t current,
   return current;
 }
 void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
-                        const cpu_fragment *fragment) {
+                        const cpu_sampler samplers[2], const cpu_fragment *fragment) {
   cpu_framebuffer *buffer = renderer->current;
   const qa_scene_state *state = &draw->state;
   size_t index = (size_t)fragment->y * buffer->width + fragment->x;
@@ -242,7 +242,7 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                             d->dvdx * image->levels[0].height),
                       hypot(d->dudy * image->levels[0].width,
                             d->dvdy * image->levels[0].height));
-    cpu_sample_texture(renderer, image, fragment->uv[0][0], fragment->uv[0][1],
+    cpu_sample_texture(&samplers[0], fragment->uv[0][0], fragment->uv[0][1],
                        rho, texel);
     if (draw->luminance_alpha) {
       double luminance =
@@ -260,7 +260,7 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                             d->dvdx * image->levels[0].height),
                       hypot(d->dudy * image->levels[0].width,
                             d->dvdy * image->levels[0].height));
-    cpu_sample_texture(renderer, image, fragment->uv[1][0], fragment->uv[1][1],
+    cpu_sample_texture(&samplers[1], fragment->uv[1][0], fragment->uv[1][1],
                        rho, texel);
     for (size_t c = 0; c < 3; ++c) {
       if (draw->environment == QA_TEXTURE_MODULATE)

@@ -61,19 +61,6 @@ bool cpu_image_valid(const qa_scene_image *image, qa_error *error) {
   }
   return true;
 }
-static bool mip_chain_complete(const qa_scene_image *image) {
-  if (!image || image->filter == QA_SCENE_NEAREST ||
-      image->filter == QA_SCENE_LINEAR)
-    return true;
-  uint32_t width = image->levels[0].width, height = image->levels[0].height;
-  for (size_t i = 1; i < image->level_count && (width > 1 || height > 1); ++i) {
-    width = width > 1 ? width / 2 : 1;
-    height = height > 1 ? height / 2 : 1;
-    if (image->levels[i].width != width || image->levels[i].height != height)
-      return false;
-  }
-  return true;
-}
 static bool draw_valid(const qa_scene_draw *draw, qa_error *error) {
   const qa_scene_state *s = &draw->state;
   if (draw->texture_count > 2 ||
@@ -388,6 +375,7 @@ static void trim(int64_t *left, int64_t *right, edge_equation edge, double y) {
   }
 }
 static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
+                     const cpu_sampler samplers[2],
                      screen_vertex a, screen_vertex b, screen_vertex c,
                      const screen_vertex *interpolation) {
   double area = evaluate(edge(a, b), c.x, c.y);
@@ -522,7 +510,7 @@ static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
         fragment.world_normal =
             (qa_vec3){(float)normal[0], (float)normal[1], (float)normal[2]};
       }
-      cpu_write_fragment(renderer, draw, &fragment);
+      cpu_write_fragment(renderer, draw, samplers, &fragment);
     }
   }
 }
@@ -562,6 +550,7 @@ static bool exits_diamond(double ax, double ay, double bx, double by, double x,
   return enter < exit && exit < 1;
 }
 static void line(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
+                 const cpu_sampler samplers[2],
                  cpu_vertex a, cpu_vertex b, bool portal_clip) {
   cpu_scissor bounds = scissor(renderer);
   if (bounds.x0 > bounds.x1 || bounds.y0 > bounds.y1)
@@ -693,12 +682,13 @@ static void line(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
             (int64_t)view.height - 1 - (x_major ? actual : major) + view.y;
         fragment.x = (uint32_t)actual_x;
         fragment.y = (uint32_t)actual_y;
-        cpu_write_fragment(renderer, draw, &fragment);
+        cpu_write_fragment(renderer, draw, samplers, &fragment);
       }
     }
   }
 }
 static void draw_triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
+                          const cpu_sampler samplers[2],
                           const cpu_vertex original[3]) {
   cpu_vertex polygon[32];
   size_t count = clip_polygon(original, &renderer->view, polygon);
@@ -716,7 +706,7 @@ static void draw_triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
         (draw->state.cull == QA_CULL_FRONT && area < 0))
       return;
     for (size_t i = 0; i < count; ++i)
-      line(renderer, draw, polygon[i], polygon[(i + 1) % count], false);
+      line(renderer, draw, samplers, polygon[i], polygon[(i + 1) % count], false);
     return;
   }
   bool z_inside = true, xy_outside = false;
@@ -742,7 +732,7 @@ static void draw_triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   for (size_t i = 1; i + 1 < count; ++i) {
     double scale = fmin(polygon[0].clip[3],
                         fmin(polygon[i].clip[3], polygon[i + 1].clip[3]));
-    triangle(renderer, draw, project(&polygon[0], renderer, scale),
+    triangle(renderer, draw, samplers, project(&polygon[0], renderer, scale),
              project(&polygon[i], renderer, scale),
              project(&polygon[i + 1], renderer, scale), attributes);
   }
@@ -760,6 +750,7 @@ static cpu_vertex source_vertex(const qa_cpu_renderer *renderer, uint32_t index,
   return vertex;
 }
 static void draw_source_strips(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
+                                const cpu_sampler samplers[2],
                                 bool discrete) {
   size_t cursor = 0;
   qa_render_strip strip;
@@ -769,7 +760,7 @@ static void draw_source_strips(qa_cpu_renderer *renderer, const qa_scene_draw *d
     for (size_t ordinal = 2; ordinal < strip.triangles + 2; ++ordinal) {
       cpu_vertex c = source_vertex(renderer, qa_render_strip_vertex(&strip, ordinal), discrete);
       cpu_vertex vertices[3] = {ordinal & 1 ? b : a, ordinal & 1 ? a : b, c};
-      draw_triangle(renderer, draw, vertices);
+      draw_triangle(renderer, draw, samplers, vertices);
       a = b; b = c;
     }
   }
@@ -821,25 +812,27 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
   qa_render_primitive_mode mode = draw->source_primitives && draw->mesh.primitive == QA_SCENE_TRIANGLES
       ? qa_render_primitives_mode(renderer->controls.values.primitives, false) : QA_RENDER_PRIMITIVES_INDEXED;
   if (!qa_render_source_attributes_resolve(&renderer->controls,&resolved,renderer->bound,mode,error)) return false;
+  cpu_sampler samplers[2];
   for (size_t i = 0; i < resolved.texture_count; ++i)
-    if (!mip_chain_complete(resolved.textures[i])) resolved.textures[i] = NULL;
+    if (!cpu_sampler_prepare(renderer, resolved.textures[i], &samplers[i]))
+      resolved.textures[i] = NULL;
   if (mode == QA_RENDER_PRIMITIVES_NONE) return true;
   if (draw->mesh.index_count && !transform(renderer, draw, mode, error)) return false;
   if (mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS || mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS) {
-    draw_source_strips(renderer, draw, mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS);
+    draw_source_strips(renderer, draw, samplers, mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS);
     qa_render_source_attributes_finish(&renderer->controls,draw,mode);
     return true;
   }
   if (draw->mesh.primitive == QA_SCENE_LINES) {
     for (size_t i = 0; i < draw->mesh.index_count; i += 2)
-      line(renderer, draw, renderer->vertices[draw->mesh.indices[i]],
+      line(renderer, draw, samplers, renderer->vertices[draw->mesh.indices[i]],
            renderer->vertices[draw->mesh.indices[i + 1]], true);
   } else {
     for (size_t i = 0; i < draw->mesh.index_count; i += 3) {
       cpu_vertex vertices[3] = {renderer->vertices[draw->mesh.indices[i]],
                                 renderer->vertices[draw->mesh.indices[i + 1]],
                                 renderer->vertices[draw->mesh.indices[i + 2]]};
-      draw_triangle(renderer, draw, vertices);
+      draw_triangle(renderer, draw, samplers, vertices);
     }
   }
   if (draw->source_direct==QA_SOURCE_DIRECT_AXIS) renderer->pipeline.line_width=1;
