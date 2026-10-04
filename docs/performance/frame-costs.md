@@ -1,7 +1,7 @@
 # Native frame costs
 
-The latest measured Q3 CPU frame takes **26.343 ms**, including **17.419 ms**
-of raster execution; latest interval-1 GL takes **18.627 ms**. Removing a quadratic settings
+The latest measured Q3 CPU frame takes **26.059 ms**, including **16.866 ms**
+of raster execution; latest interval-1 GL takes **17.436 ms**. Removing a quadratic settings
 lookup cuts shared scene work. Replacing duplicate SDL texture layers reduces
 CPU presentation to about **0.3 ms**. Raster execution is now the largest CPU cost.
 
@@ -62,6 +62,23 @@ material totals include more observer overhead than the standard runs above.
 | `7a078e87` | 25.210 | 16.844 | 152.449 |
 | `086dea5a` | 24.309 | 16.645 | 151.845 |
 | `2a54dca2` | 26.343 | 17.419 | 154.462 |
+| `364ef131` | 26.059 | 16.866 | 155.369 |
+
+The `364ef131` run includes the shared material-coordinate implementation,
+the same-family collision-mask return and reduced CPU fragment initialization.
+CPU frame P95 is 27.105 ms; material submission is 3.905 ms. Interval-1 GL
+takes 17.436 ms, with P95 17.879 ms, material submission 3.643 ms, GL submission
+1.805 ms and native swap 8.249 ms. All 30 recorded states/counts and final
+same-backend pixels match both `2a54dca2` and `086dea5a`. The CPU retained display
+also matches its engine image, and actual native RGB has zero differences.
+Both cases exit naturally with code zero and all owned processes gone.
+These are shared-machine sequential runs; the small combined CPU change does
+not isolate any one refactor's effect. Raster remains the largest CPU cost.
+
+Separately, the shared collision-mask return preserves the same 1,097,728 BSP
+queries per sample and reduces median thread CPU from 242.229 to 194.748 ms
+under GCC and 200.543 to 164.314 ms under Clang. This is a fixed query workload;
+whole bot-runtime benefit remains unverified.
 
 With the same subdivision, GL takes 31.411 ms on `e900075f` and 30.501 ms
 on `436272c5`. Material submission falls from 13.104 to 12.399 ms on CPU
