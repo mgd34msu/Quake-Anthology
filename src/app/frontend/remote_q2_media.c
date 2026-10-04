@@ -6,7 +6,6 @@
 #include "remote_q2_clientinfo.h"
 #include "remote_q2_material_movies_bridge.h"
 #include "qa/material.h"
-#include "qa/hash.h"
 #include "qa/scene_world_save.h"
 #include "qa/scene_model_save.h"
 #include "qa/network_q2_materials.h"
@@ -27,45 +26,25 @@ bool remote_q2_model_scope_required(const char *path, qa_bytes bytes)
     return path && (!strncmp(path, "models/qa/", 10) || !strncmp(path, "players/qa/", 11)) &&
         bytes.data && bytes.size >= 4 && (!memcmp(bytes.data, "IDPO", 4) || !memcmp(bytes.data, "IDSP", 4));
 }
-static bool model_scope_options(const frontend_remote_q2 *row, const remote_q2_model *m,
-    qa_q2_material_model_scope *scope, qa_scene_image_options *options, qa_error *error)
-{
-    if (!row->options.material_scripts || !m->scope || !m->palette)
-        return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 indexed model lost its retained Source palette companion");
-    if (!qa_q2_material_model_scope_read(qa_resource_bytes(m->scope), m->path, scope, error)) return false;
-    if (!m->scope_opening.path || strcmp(m->scope_opening.path, scope->companion_path) ||
-        !m->palette_opening.path || strcmp(m->palette_opening.path, scope->palette_alias))
-        return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 indexed model companion addresses another retained opening");
-    if (!qa_q2_material_model_scope_apply(scope, qa_resource_bytes(m->palette), options, error)) return false;
-    const qa_resource *resources[] = {m->scope, m->palette};
-    const qa_vfs_acquisition *receipts[] = {&m->scope_opening, &m->palette_opening};
-    for (size_t i = 0; i < 2; ++i)
-        if (qa_resource_pool_find(qa_vfs_resources(row->content.mounts), qa_resource_id(resources[i])) != resources[i] ||
-            receipts[i]->resource_id != qa_resource_id(resources[i]) ||
-            !qa_vfs_acquisition_retained(row->content.mounts, receipts[i], error)) return false;
-    return true;
-}
 bool remote_q2_model_scope_current(const frontend_remote_q2 *row, const remote_q2_model *m, qa_error *error)
 {
     if (!row || !m || !m->resource) return false;
     if (!remote_q2_model_scope_required(m->path, qa_resource_bytes(m->resource)))
         return (!m->scope && !m->palette) ||
             remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 unscoped model has unrelated palette custody");
-    qa_q2_material_model_scope scope; qa_scene_image_options expected;
-    if (!model_scope_options(row, m, &scope, &expected, error)) return false;
-    if (!m->scene) return true;
-    const qa_scene_image_options *actual = qa_scene_model_image_options(m->scene);
-    bool valid = actual && actual->family == expected.family && actual->wrap == expected.wrap && actual->filter == expected.filter &&
-        actual->usage == expected.usage && actual->mipmap == expected.mipmap && actual->transparent == expected.transparent &&
-        actual->fullbright_only == expected.fullbright_only && actual->transparent_index == expected.transparent_index &&
-        actual->source_q3 == expected.source_q3 &&
-        (!actual->source_q3 || qa_q3_image_upload_options_equal(&actual->source_upload, &expected.source_upload)) &&
-        actual->palette_rgb.size == expected.palette_rgb.size && actual->translation.size == expected.translation.size &&
-        (!actual->palette_rgb.size || (actual->palette_rgb.data &&
-            !memcmp(actual->palette_rgb.data, expected.palette_rgb.data, actual->palette_rgb.size))) &&
-        (!actual->translation.size || (actual->translation.data &&
-            !memcmp(actual->translation.data, expected.translation.data, actual->translation.size)));
-    return valid || remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 model constructor options differ from its retained Source companion");
+    if (!row->options.material_scripts || !m->scope || !m->palette || !row->content.mounts)
+        return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 indexed model lost its retained Source palette companion");
+    const qa_resource *resources[] = {m->scope, m->palette};
+    const qa_vfs_acquisition *receipts[] = {&m->scope_opening, &m->palette_opening};
+    for (size_t i = 0; i < 2; ++i)
+        if (qa_resource_pool_find(qa_vfs_resources(row->content.mounts), qa_resource_id(resources[i])) != resources[i] ||
+            receipts[i]->resource_id != qa_resource_id(resources[i]) ||
+            !qa_vfs_acquisition_retained(row->content.mounts, receipts[i], error)) return false;
+    if (m->scene && (qa_scene_model_source(m->scene) != (m->source ? m->source : &m->decoded) ||
+        qa_scene_model_resource_owner(m->scene) != row->images ||
+        qa_scene_model_material_owner(m->scene) != row->materials))
+        return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 model left its actual source or scene resource owners");
+    return true;
 }
 static bool model_scope_acquire(frontend_remote_q2 *row, remote_q2_model *m,
     qa_q2_material_model_scope *scope, qa_scene_image_options *options, qa_error *error)
@@ -78,7 +57,8 @@ static bool model_scope_acquire(frontend_remote_q2 *row, remote_q2_model *m,
         !qa_vfs_acquire_receipt(row->content.mounts, companion, &m->scope, &m->scope_opening, error) ||
         !qa_q2_material_model_scope_read(qa_resource_bytes(m->scope), m->path, scope, error) ||
         !qa_vfs_acquire_receipt(row->content.mounts, scope->palette_alias, &m->palette, &m->palette_opening, error)) return false;
-    return model_scope_options(row, m, scope, options, error);
+    return qa_q2_material_model_scope_apply(scope, qa_resource_bytes(m->palette), options, error) &&
+        remote_q2_model_scope_current(row, m, error);
 }
 static bool model_materials(frontend_remote_q2 *row, const qa_model *model, qa_error *error)
 {
