@@ -67,7 +67,7 @@ static bool selection_fields(qa_source_save_io *io, frontend_q1_sky *owner, fron
     }
     frontend_q1_sky_selection *row = *link;
     if (!row || !frontend_save_provider(io, owner->application, &row->provider) ||
-        !qa_source_save_actor(io, &row->recipient) || !frontend_save_text(io, &row->name) || !row->name ||
+        !qa_source_save_actor(io, &row->recipient) || !qa_source_save_owned_text(io, &row->name) || !row->name ||
         !qa_source_save_u64(io, &row->sequence) || !qa_source_save_u64(io, &row->map_revision) ||
         !qa_source_save_u8(io, &row->found) || row->found > 63) return false;
     if (reading) {

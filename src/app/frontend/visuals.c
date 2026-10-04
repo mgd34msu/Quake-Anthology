@@ -330,7 +330,7 @@ static bool topology_fields(qa_source_save_io *io, qa_application *application, 
         visual_owner_plan *plan=&(*plans)[i]; uint32_t family=plan->family;
         char *key=!reading && plan->owner<=UINT32_MAX?(char *)qa_strings_cstr(strings,(qa_string_id)plan->owner):NULL;
         if (!reading && (!plan->owner || !key)) return false;
-        bool ok=frontend_save_text(io,&key);
+        bool ok=qa_source_save_owned_text(io,&key);
         if (reading) {
             plan->owner=key?qa_strings_find(strings,(qa_bytes){(const uint8_t *)key,strlen(key)}):0;
             free(key);
@@ -352,7 +352,7 @@ static bool topology_fields(qa_source_save_io *io, qa_application *application, 
                 visual_model_recipe *recipe = *recipes + row;
                 uint64_t pool = 0, resource = 0;
                 if (!reading && !qa_application_content_resource_id(graph, recipe->resource, &pool, &resource)) return false;
-                if (!frontend_save_text(io, &recipe->path) || !recipe->path || !recipe->path[0] ||
+                if (!qa_source_save_owned_text(io, &recipe->path) || !recipe->path || !recipe->path[0] ||
                     !qa_source_save_u64(io, &pool) || !pool || !qa_source_save_u64(io, &resource) || !resource ||
                     !qa_source_save_bool(io, &recipe->known) || !qa_source_save_i64(io, &recipe->rank) ||
                     recipe->rank < -1 || (!recipe->known && recipe->rank) || (kind && recipe->known)) return false;

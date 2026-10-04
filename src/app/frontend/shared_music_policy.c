@@ -698,6 +698,8 @@ bool frontend_music_policy_update(frontend_music_policy *owner, qa_error *e) {
     const qa_cvar_view *shuffle = qa_cvars_find(qa_application_cvars(owner->application), "music_shuffle");
     const qa_cvar_view *menu = qa_cvars_find(qa_application_cvars(owner->application), "music_menu_track");
     if (owner->menu && (!menu || !menu->value)) return fail(e, "Menu music frame lacks its actual canonical preference");
+    if (owner->menu && owner->state.menu_track && !strcmp(owner->state.menu_track, menu->value) &&
+        frontend_shared_menu_track_valid(menu->value)) return true;
     bool enabled = shuffle && shuffle->number != 0; music_state next = {0};
     if (!state_copy(&owner->state, &next, e)) return false;
     owner->busy = true; qa_audio_stream *intro = NULL, *loop = NULL; unsigned cd = 0; bool changed = false;
@@ -966,8 +968,8 @@ static bool source_fields(qa_source_save_io *io, qa_application_content_graph *g
     const qa_product *alternate = !reading && source->fallback_product ? qa_catalog_product(source->catalog, source->fallback_product) : NULL;
     char *fallback_key = alternate ? (char *)alternate->key : NULL;
     bool ok = qa_source_save_u64(io, &catalog) && catalog && qa_source_save_u64(io, &files) && files &&
-        qa_source_save_u64(io, &fallback) && frontend_save_text(io, &key) && key &&
-        frontend_save_text(io, &fallback_key) && (!!fallback == !!fallback_key);
+        qa_source_save_u64(io, &fallback) && qa_source_save_owned_text(io, &key) && key &&
+        qa_source_save_owned_text(io, &fallback_key) && (!!fallback == !!fallback_key);
     if (reading && ok) {
         ok = qa_application_content_retain_catalog(graph, catalog, &source->catalog, io->error) &&
             qa_application_content_claim_view(graph, files, &source->files, io->error) &&
@@ -989,7 +991,7 @@ static bool source_fields(qa_source_save_io *io, qa_application_content_graph *g
     }
     if (reading) source->track_count = source->tracks ? count : 0;
     for (size_t i = 0; ok && i < count; ++i) {
-        ok = frontend_save_text(io, source->tracks + i) && source->tracks[i] && track_valid(source->tracks[i]) && extension(source->tracks[i]) &&
+        ok = qa_source_save_owned_text(io, source->tracks + i) && source->tracks[i] && track_valid(source->tracks[i]) && extension(source->tracks[i]) &&
             (!i || name_compare(source->tracks + i - 1, source->tracks + i) < 0);
     }
     if (reading && ok) ok = qa_audio_bank_create(source->files, &source->bank, io->error) &&
@@ -1040,7 +1042,7 @@ static bool fields(qa_source_save_io *io, qa_application_content_graph *graph, c
         if (!attached && !owner->external_player) ok = qa_audio_music_restore(private_player, &owner->music, io->error);
     }
     qa_buffer_free(&encoded);
-    if (ok) ok = frontend_save_text(io, &owner->authored_cue) && owner->authored_cue &&
+    if (ok) ok = qa_source_save_owned_text(io, &owner->authored_cue) && owner->authored_cue &&
         qa_source_save_count(io, &owner->source_count, owner->menu ? 2 : 1) && owner->source_count;
     if (reading && ok) {
         owner->sources = calloc(owner->source_count, sizeof(*owner->sources));
@@ -1055,7 +1057,7 @@ static bool fields(qa_source_save_io *io, qa_application_content_graph *graph, c
         ok = theme->family == QA_GAME_Q2 && theme->edition == QA_EDITION_RERELEASE && !strcmp(theme->campaign, "baseq2");
     }
     music_state *state = &owner->state;
-    if (ok) ok = frontend_save_text(io, &state->track) && frontend_save_text(io, &state->menu_track) &&
+    if (ok) ok = qa_source_save_owned_text(io, &state->track) && qa_source_save_owned_text(io, &state->menu_track) &&
         qa_source_save_count(io, &state->source, owner->source_count - 1) && qa_source_save_u64(io, &state->random) &&
         qa_source_save_u64(io, &state->completed) && qa_source_save_bool(io, &state->initialized) &&
         qa_source_save_bool(io, &state->automatic) && qa_source_save_bool(io, &state->shuffle) && qa_source_save_bool(io, &state->looping) &&

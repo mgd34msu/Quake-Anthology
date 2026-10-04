@@ -131,7 +131,7 @@ static bool provider_at(const qa_frontend *f,size_t ordinal,qa_q3_presentation_p
     }
     frontend_equipment_media_view equipment;
     if(!frontend_equipment_media_at(f,ordinal,&equipment) || !equipment.source_slot) return false;
-    *provider=(qa_q3_presentation_provider){equipment.owner.mounts,equipment.owner.images,equipment.owner.materials,QA_SCENE_Q3}; return true;
+    *provider=(qa_q3_presentation_provider){equipment.owner.mounts,equipment.owner.images,equipment.owner.materials,equipment.owner.family}; return true;
 }
 bool frontend_material_provider_encode(const qa_frontend *f,const qa_q3_presentation_provider *provider,
     uint64_t *key,qa_error *error)
@@ -401,7 +401,7 @@ static bool metadata(qa_source_save_io *io,qa_frontend *f,const material_owner *
         qa_source_save_u64(io,&saved.view) && saved.view==owner->view &&
         qa_source_save_u64(io,&saved.pool) && saved.pool==owner->pool &&
         qa_source_save_u64(io,&saved.source_view) && saved.source_view==owner->source_view &&
-        qa_source_save_u32(io,&family) && family==(uint32_t)owner->family && frontend_save_text(io,&provider);
+        qa_source_save_u32(io,&family) && family==(uint32_t)owner->family && qa_source_save_owned_text(io,&provider);
     if (ok) ok=expected?(provider && !strcmp(provider,expected)):provider==NULL;
     if (io->direction==QA_SOURCE_SAVE_READ) free(provider);
     return ok;

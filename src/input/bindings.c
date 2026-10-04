@@ -2,42 +2,28 @@
 #include "qa/text.h"
 #include <stdio.h>
 
-struct action_command {
-    const char *name;
-    qa_input_action action;
+static const char *const actions[QA_INPUT_ACTION_COUNT] = {
+    [QA_INPUT_ATTACK] = "+attack", [QA_INPUT_JUMP] = "+jump",
+    [QA_INPUT_FORWARD] = "+forward", [QA_INPUT_BACK] = "+back",
+    [QA_INPUT_MOVE_LEFT] = "+moveleft", [QA_INPUT_MOVE_RIGHT] = "+moveright",
+    [QA_INPUT_MOVE_UP] = "+moveup", [QA_INPUT_MOVE_DOWN] = "+movedown",
+    [QA_INPUT_USE] = "+use", [QA_INPUT_CROUCH] = "+crouch",
+    [QA_INPUT_WALK] = "+speed", [QA_INPUT_SCORES] = "+scores",
+    [QA_INPUT_TURN_LEFT] = "+left", [QA_INPUT_TURN_RIGHT] = "+right",
+    [QA_INPUT_LOOK_UP] = "+lookup", [QA_INPUT_LOOK_DOWN] = "+lookdown",
+    [QA_INPUT_STRAFE] = "+strafe", [QA_INPUT_MLOOK] = "+mlook",
+    [QA_INPUT_KLOOK] = "+klook", [QA_INPUT_HOLSTER] = "+holster",
+    [QA_INPUT_BUTTON0] = "+button0", [QA_INPUT_BUTTON1] = "+button1",
+    [QA_INPUT_BUTTON2] = "+button2", [QA_INPUT_BUTTON3] = "+button3",
+    [QA_INPUT_BUTTON4] = "+button4", [QA_INPUT_BUTTON5] = "+button5",
+    [QA_INPUT_BUTTON6] = "+button6", [QA_INPUT_BUTTON7] = "+button7",
+    [QA_INPUT_BUTTON8] = "+button8", [QA_INPUT_BUTTON9] = "+button9",
+    [QA_INPUT_BUTTON10] = "+button10", [QA_INPUT_BUTTON11] = "+button11",
+    [QA_INPUT_BUTTON12] = "+button12", [QA_INPUT_BUTTON13] = "+button13",
+    [QA_INPUT_BUTTON14] = "+button14"
 };
-static const struct action_command actions[] = {{"+attack", QA_INPUT_ATTACK},
-                                                {"+jump", QA_INPUT_JUMP},
-                                                {"+forward", QA_INPUT_FORWARD},
-                                                {"+back", QA_INPUT_BACK},
-                                                {"+moveleft", QA_INPUT_MOVE_LEFT},
-                                                {"+moveright", QA_INPUT_MOVE_RIGHT},
-                                                {"+moveup", QA_INPUT_MOVE_UP},
-                                                {"+movedown", QA_INPUT_MOVE_DOWN},
-                                                {"+use", QA_INPUT_USE},
-                                                {"+crouch", QA_INPUT_CROUCH},
-                                                {"+speed", QA_INPUT_WALK},
-                                                {"+scores", QA_INPUT_SCORES},
-                                                {"+showscores", QA_INPUT_SCORES},
-                                                {"+left", QA_INPUT_TURN_LEFT},
-                                                {"+right", QA_INPUT_TURN_RIGHT},
-                                                {"+lookup", QA_INPUT_LOOK_UP},
-                                                {"+lookdown", QA_INPUT_LOOK_DOWN},
-                                                {"+strafe", QA_INPUT_STRAFE},
-                                                {"+mlook", QA_INPUT_MLOOK},
-                                                {"+klook", QA_INPUT_KLOOK},
-                                                {"+holster", QA_INPUT_HOLSTER}};
 const char *qa_input_action_command(qa_input_action action) {
-    for (size_t i = 0; i < sizeof(actions) / sizeof(*actions); ++i)
-        if (actions[i].action == action)
-            return actions[i].name;
-    static const char *const buttons[] = {
-        "+button0", "+button1", "+button2", "+button3", "+button4",
-        "+button5", "+button6", "+button7", "+button8", "+button9",
-        "+button10", "+button11", "+button12", "+button13", "+button14"};
-    if (action >= QA_INPUT_BUTTON0 && action <= QA_INPUT_BUTTON14)
-        return buttons[(unsigned)action - (unsigned)QA_INPUT_BUTTON0];
-    return NULL;
+    return (unsigned)action < QA_INPUT_ACTION_COUNT ? actions[action] : NULL;
 }
 struct qa_input_console {
     qa_input_console_options options;
@@ -74,11 +60,12 @@ static bool command(void *user, const qa_command_invocation *cmd, qa_error *erro
             return true;
         }
         qa_input_action action = QA_INPUT_ACTION_COUNT;
-        for (size_t i = 0; i < sizeof(actions) / sizeof(*actions); ++i)
-            if (qa_input_ascii_equal(base, actions[i].name + 1)) {
-                action = actions[i].action;
-                break;
-            }
+        if (qa_input_ascii_equal(base, "showscores"))
+            action = QA_INPUT_SCORES;
+        for (unsigned i = 0; action == QA_INPUT_ACTION_COUNT && i < QA_INPUT_ACTION_COUNT; ++i)
+            if (actions[i] && (i < QA_INPUT_BUTTON0 || i > QA_INPUT_BUTTON14) &&
+                qa_input_ascii_equal(base, actions[i] + 1))
+                action = (qa_input_action)i;
         if (action == QA_INPUT_ACTION_COUNT && strncmp(base, "button", 6) == 0) {
             char *end;
             long number = strtol(base + 6, &end, 10);
@@ -197,15 +184,28 @@ qa_input_console *qa_input_console_create(const qa_input_console_options *o, qa_
     }
     c->options = *o;
     char name[32];
-    for (size_t i = 0; i < sizeof(actions) / sizeof(*actions); ++i)
+    static const qa_input_action order[] = {
+        QA_INPUT_ATTACK, QA_INPUT_JUMP, QA_INPUT_FORWARD, QA_INPUT_BACK,
+        QA_INPUT_MOVE_LEFT, QA_INPUT_MOVE_RIGHT, QA_INPUT_MOVE_UP, QA_INPUT_MOVE_DOWN,
+        QA_INPUT_USE, QA_INPUT_CROUCH, QA_INPUT_WALK, QA_INPUT_SCORES,
+        QA_INPUT_TURN_LEFT, QA_INPUT_TURN_RIGHT, QA_INPUT_LOOK_UP, QA_INPUT_LOOK_DOWN,
+        QA_INPUT_STRAFE, QA_INPUT_MLOOK, QA_INPUT_KLOOK, QA_INPUT_HOLSTER};
+    for (size_t i = 0; i < sizeof(order) / sizeof(*order); ++i) {
         for (unsigned down = 0; down < 2; ++down) {
-            (void)snprintf(name, sizeof(name), "%c%s", down ? '+' : '-', actions[i].name + 1);
+            (void)snprintf(name, sizeof(name), "%c%s", down ? '+' : '-', actions[order[i]] + 1);
             if (!register_command(c, name, error))
                 goto fail;
         }
+        if (order[i] == QA_INPUT_SCORES)
+            for (unsigned down = 0; down < 2; ++down) {
+                (void)snprintf(name, sizeof(name), "%cshowscores", down ? '+' : '-');
+                if (!register_command(c, name, error))
+                    goto fail;
+            }
+    }
     for (unsigned i = 0; i < 15; ++i)
         for (unsigned down = 0; down < 2; ++down) {
-            (void)snprintf(name, sizeof(name), "%cbutton%u", down ? '+' : '-', i);
+            (void)snprintf(name, sizeof(name), "%c%s", down ? '+' : '-', actions[QA_INPUT_BUTTON0 + i] + 1);
             if (!register_command(c, name, error))
                 goto fail;
         }

@@ -100,7 +100,7 @@ static bool source(qa_source_save_io *io,remote_component_state *state)
     for(size_t i=0;i<state->command_count;++i) {
         application_q3_scene_command *command=state->commands+i;
         if(!qa_source_save_i32(io,&command->sequence)||command->sequence!=first+(int32_t)i||
-            !qa_source_save_bool(io,&command->addressed)||!frontend_save_text(io,(char **)&command->text)||
+            !qa_source_save_bool(io,&command->addressed)||!qa_source_save_owned_text(io,(char **)&command->text)||
             !command->text||!arguments(io,state->arguments+i)) return fail(io,"Saved component reliable history is not contiguous");
         command->arguments=state->arguments+i;
     }
@@ -109,7 +109,7 @@ static bool source(qa_source_save_io *io,remote_component_state *state)
 static bool state(qa_source_save_io *io,frontend_unified_components *owner,remote_component_state *value)
 {
     uint32_t abi=(uint32_t)value->abi;
-    if(!frontend_save_text(io,&value->provider)||!value->provider||
+    if(!qa_source_save_owned_text(io,&value->provider)||!value->provider||
         !qa_source_save_u64(io,&value->owner_generation)||!value->owner_generation||value->owner_generation>QA_UNIFIED_SAFE_INTEGER||
         !qa_source_save_u64(io,&value->generation)||value->generation>QA_UNIFIED_SAFE_INTEGER||
         !qa_source_save_u32(io,&abi)||(abi!=QA_QVM_Q3_MODERN&&abi!=QA_QVM_Q3_116N)||!qa_source_save_bool(io,&value->player_events)||
@@ -192,8 +192,8 @@ static bool resource(qa_source_save_io *io,qa_vfs *files,const frontend_unified_
         return fail(io,"Component program is outside the actual captured content holders");
     if(!qa_source_save_u64(io,&pool)||!pool||!qa_source_save_u64(io,&id)||!id||
         !qa_source_save_u64(io,&opening->mount)||!qa_source_save_u64(io,&opening->resource_id)||
-        !frontend_save_text(io,&opening->path)||!frontend_save_text(io,&opening->lookup_path)||
-        !frontend_save_text(io,&opening->link_source)||!frontend_save_text(io,&opening->link_target)||
+        !qa_source_save_owned_text(io,&opening->path)||!qa_source_save_owned_text(io,&opening->lookup_path)||
+        !qa_source_save_owned_text(io,&opening->link_source)||!qa_source_save_owned_text(io,&opening->link_target)||
         !qa_vfs_acquisition_opening_codec(io,files,opening)||!opening->opening_present||
         !qa_vfs_acquisition_retained(files,opening,io->error)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ) {

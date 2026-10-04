@@ -63,7 +63,7 @@ static bool client_fields(qa_source_save_io *io, qw_frontend_peer *peer, fronten
         !qa_source_save_u64(io, &peer->command_time_ns) || !qa_source_save_u64(io, &peer->last_received_ns) ||
         !qa_source_save_u16(io, &peer->qport) || !qa_source_save_u32(io, &peer->rate) || !qa_source_save_u16(io, &peer->stat_mask) ||
         !command_fields(io, &peer->command) || !qa_source_save_f32(io, &peer->frags) || !isfinite(peer->frags) ||
-        !frontend_save_text(io, &peer->userinfo) || !qa_source_save_i32(io, &peer->message_level) ||
+        !qa_source_save_owned_text(io, &peer->userinfo) || !qa_source_save_i32(io, &peer->message_level) ||
         !qa_source_save_bytes(io, peer->reason, sizeof(peer->reason)) || !memchr(peer->reason, 0, sizeof(peer->reason))) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) peer->host = bound ? host : NULL;
     for (size_t i = 0; i < 16; ++i)
@@ -89,8 +89,8 @@ static bool fields(qa_source_save_io *io, frontend_qw_host *host)
         !qa_source_save_bytes(io, host->composition.bytes, sizeof(host->composition.bytes)) ||
         !qa_source_save_count(io, &host->model_count, 255) || !qa_source_save_count(io, &host->sound_count, 255)) return false;
     for (size_t i = 0; i < 255; ++i)
-        if (!frontend_save_text(io, host->models + i) || !frontend_save_text(io, host->sounds + i)) return false;
-    for (size_t i = 0; i < 64; ++i) if (!frontend_save_text(io, host->styles + i)) return false;
+        if (!qa_source_save_owned_text(io, host->models + i) || !qa_source_save_owned_text(io, host->sounds + i)) return false;
+    for (size_t i = 0; i < 64; ++i) if (!qa_source_save_owned_text(io, host->styles + i)) return false;
     if (!qa_source_save_count(io, &host->baseline_count, 511)) return false;
     for (size_t i = 0; i < host->baseline_count; ++i) if (!entity_fields(io, host->baselines + i)) return false;
     if (!qa_source_save_count(io, &host->signon_count, 65536)) return false;
@@ -137,7 +137,7 @@ static bool fields(qa_source_save_io *io, frontend_qw_host *host)
         if (!action || !qa_source_save_u64(io, &action->client.owner) || !qa_source_save_u64(io, &action->client.generation) ||
             !qa_source_save_u32(io, &action->client.slot) || !qa_source_save_u64(io, &action->seat.owner) || !qa_source_save_u32(io, &action->seat.index) ||
             !qa_source_save_actor(io, &action->actor) || !qa_source_save_u64(io, &action->epoch) ||
-            !qa_source_save_u64(io, &action->received_ns) || !frontend_save_text(io, &action->text) || !action->text) return false;
+            !qa_source_save_u64(io, &action->received_ns) || !qa_source_save_owned_text(io, &action->text) || !action->text) return false;
         if (!reading) action = action->next;
     }
     return reading || !action;

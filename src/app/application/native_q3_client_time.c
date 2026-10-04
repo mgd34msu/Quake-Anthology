@@ -167,8 +167,8 @@ static bool refresh_settings(qa_native_q3_client_service *service,qa_error *erro
     /* serverSettings() captures its source snapshot array before a CGAME set
      * can reenter and change GAME cvars. Keep that precise publication cut. */
     size_t extent=qa_cvars_count(registry);
-    for (size_t i=0;ok && i<extent;++i) {
-        const qa_cvar_view *value=qa_cvars_at(registry,i);
+    const qa_cvar_view *value=qa_cvars_next(registry,NULL);
+    for (size_t i=0;ok && i<extent;++i,value=qa_cvars_next(registry,value)) {
         if (!value) { ok=native_client_fail(error,QA_ERROR_FORMAT,"Native GAME settings registry changed its retained order"); break; }
         const char *name=value->name; bool shared=false;
         for (size_t j=0;j<service->count;++j) if ((!native_client_definitions[j].missionpack ||

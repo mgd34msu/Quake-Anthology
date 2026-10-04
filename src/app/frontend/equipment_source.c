@@ -1227,7 +1227,7 @@ static bool saved_fields(qa_source_save_io *io, qa_application *application,
         !qa_source_save_string(io,&hud->gear_namespace) || !hud->gear_namespace ||
         !qa_source_save_u64(io,&hud->gear_service_owner) || !hud->gear_service_owner)) return false;
     if (!qa_source_save_string(io,&hud->item) || !qa_source_save_string(io,&hud->ammo) ||
-        !frontend_save_text(io,&saved->label) || !qa_source_save_f64(io,&hud->ammo_count) || !isfinite(hud->ammo_count) ||
+        !qa_source_save_owned_text(io,&saved->label) || !qa_source_save_f64(io,&hud->ammo_count) || !isfinite(hud->ammo_count) ||
         !qa_source_save_bool(io,&hud->visible) || !qa_source_save_bool(io,&hud->has_weapon_status) ||
         !qa_source_save_bool(io,&hud->finite_ammo) || !qa_source_save_bool(io,&hud->has_ammo_to_start) ||
         !qa_source_save_bool(io,&hud->low_ammo) || !qa_source_save_bool(io,&hud->has_start_requirement)) return false;

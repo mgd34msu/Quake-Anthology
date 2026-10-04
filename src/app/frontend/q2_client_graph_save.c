@@ -20,7 +20,7 @@ struct frontend_q2_client_graph {
 static bool text(qa_source_save_io *io,const char **value)
 {
     char *owned=(char *)*value;
-    bool okay=frontend_save_text(io,&owned);
+    bool okay=qa_source_save_owned_text(io,&owned);
     if(io->direction==QA_SOURCE_SAVE_READ) *value=owned;
     return okay;
 }

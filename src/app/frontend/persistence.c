@@ -588,7 +588,7 @@ static bool audio_encode(void *context, qa_audio_reference_kind kind, uint64_t i
     case QA_AUDIO_REFERENCE_ACTOR: break;
     }
     bool ok=valid && qa_source_save_writer(&io,NULL,error) && qa_source_save_u32(&io,&tag) &&
-        (kind==QA_AUDIO_REFERENCE_OWNER && (!tag || tag==4)?frontend_save_text(&io,&owner):qa_source_save_u64(&io,&key)) &&
+        (kind==QA_AUDIO_REFERENCE_OWNER && (!tag || tag==4)?qa_source_save_owned_text(&io,&owner):qa_source_save_u64(&io,&key)) &&
         ((tag!=7 && tag!=8 && tag!=13 && tag!=14 && tag!=17 && tag!=21) || qa_source_save_u64(&io,&role)) &&
         qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);
@@ -608,7 +608,7 @@ static bool audio_decode(void *context, qa_audio_reference_kind kind, qa_bytes b
     }
     qa_source_save_io io={0}; uint32_t tag=0; uint64_t key=0,id=0,role=0; char *owner=NULL;
     bool ok=f && out && qa_source_save_reader(&io,NULL,bytes,error) && qa_source_save_u32(&io,&tag) &&
-        (kind==QA_AUDIO_REFERENCE_OWNER && (!tag || tag==4)?frontend_save_text(&io,&owner):qa_source_save_u64(&io,&key)) &&
+        (kind==QA_AUDIO_REFERENCE_OWNER && (!tag || tag==4)?qa_source_save_owned_text(&io,&owner):qa_source_save_u64(&io,&key)) &&
         ((tag!=7 && tag!=8 && tag!=13 && tag!=14 && tag!=17 && tag!=21) || qa_source_save_u64(&io,&role)) &&
         qa_source_save_finish(&io,NULL);
     if (ok) switch (kind) {

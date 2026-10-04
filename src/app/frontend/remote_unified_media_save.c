@@ -85,8 +85,8 @@ static bool options(qa_source_save_io *io, unified_media_model *row)
 static bool opening(qa_source_save_io *io, qa_vfs *files, qa_vfs_acquisition *value)
 {
     return qa_source_save_u64(io, &value->mount) && qa_source_save_u64(io, &value->resource_id) &&
-        frontend_save_text(io, &value->path) && frontend_save_text(io, &value->lookup_path) &&
-        frontend_save_text(io, &value->link_source) && frontend_save_text(io, &value->link_target) &&
+        qa_source_save_owned_text(io, &value->path) && qa_source_save_owned_text(io, &value->lookup_path) &&
+        qa_source_save_owned_text(io, &value->link_source) && qa_source_save_owned_text(io, &value->link_target) &&
         qa_vfs_acquisition_opening_codec(io, files, value) && value->opening_present &&
         qa_vfs_acquisition_retained(files, value, io->error);
 }
@@ -254,7 +254,7 @@ static bool fields(qa_source_save_io *io, frontend_unified_media *owner,
         bool assets = row->q3_assets != NULL, map = false, movies = row->media != NULL,
             cinematic_audio = row->cinematic_audio_owner != 0;
         qa_buffer state = {0};
-        if (!frontend_save_text(io, &row->content) || !row->content || !*row->content ||
+        if (!qa_source_save_owned_text(io, &row->content) || !row->content || !*row->content ||
             !qa_source_save_u64(io, &view) || !view || !qa_source_save_u32(io, &product) ||
             !qa_source_save_bool(io, &assets) || !qa_source_save_bool(io, &movies) ||
             !qa_source_save_bool(io, &cinematic_audio)) return false;
@@ -326,7 +326,7 @@ static bool fields(qa_source_save_io *io, frontend_unified_media *owner,
             if (model == UINT64_MAX) return false;
             ++model;
         }
-        if (!qa_source_save_count(io, &bank, banks - 1) || !frontend_save_text(io, &row->path) ||
+        if (!qa_source_save_count(io, &bank, banks - 1) || !qa_source_save_owned_text(io, &row->path) ||
             !row->path || !*row->path || row->path[0] == '*' || !options(io, row) ||
             !qa_source_save_u64(io, &pool) || !pool || !qa_source_save_u64(io, &resource) || !resource) return false;
         row->bank = bank_at(owner, bank);

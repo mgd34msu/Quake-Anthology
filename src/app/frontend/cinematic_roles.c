@@ -101,14 +101,17 @@ bool frontend_cinematic_roles_adopt(qa_frontend *f, qa_q3_cinematic_source **slo
     if (!qa_q3_cinematic_source_role_detach(source, diagnostic_context, error)) { free(row); return false; }
     append(f, row); *slot = NULL; return true;
 }
-static bool remove_rows(qa_frontend *f, frontend_material_movies *parent, qa_error *error)
+static bool remove_rows(qa_frontend *f, frontend_material_movies *parent, bool unused_only, qa_error *error)
 {
     frontend_cinematic_roles *owner = f ? f->cinematic_roles : NULL;
     if (!owner) return true;
     cinematic_role **link = &owner->first;
     while (*link) {
         cinematic_role *row = *link;
-        if (parent && row->view.parent != parent) { link = &row->next; continue; }
+        if ((parent && row->view.parent != parent) ||
+            (unused_only && qa_q3_cinematic_source_retained(row->view.cinematics))) {
+            link = &row->next; continue;
+        }
         if (!qa_q3_cinematic_source_destroy(&row->view.cinematics, error)) return false;
         *link = row->next; free(row); --owner->count;
     }
@@ -118,32 +121,20 @@ static bool remove_rows(qa_frontend *f, frontend_material_movies *parent, qa_err
     return true;
 }
 bool frontend_cinematic_roles_parent_destroy(qa_frontend *f, frontend_material_movies *parent, qa_error *error)
-{ return parent && remove_rows(f, parent, error); }
+{ return parent && remove_rows(f, parent, false, error); }
 void frontend_cinematic_roles_parent_rebind(qa_frontend *f, frontend_material_movies *parent)
 {
     for (cinematic_role *row = f && f->cinematic_roles ? f->cinematic_roles->first : NULL; row; row = row->next)
         if (row->view.parent == parent) row->view.source = parent->source;
 }
 bool frontend_cinematic_roles_destroy(qa_frontend *f, qa_error *error)
-{ return f && remove_rows(f, NULL, error); }
+{ return f && remove_rows(f, NULL, false, error); }
 bool frontend_cinematic_roles_prune(qa_frontend *f, qa_error *error)
 {
     if (!f || f->source_restoring || f->capture || f->resource_inventory ||
         (f->source_cinematics && !qa_q3_cinematic_handles_idle(f->source_cinematics)))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Detached cinematic pruning requires its returned live pool");
-    frontend_cinematic_roles *owner = f->cinematic_roles;
-    if (!owner) return true;
-    cinematic_role **link = &owner->first;
-    while (*link) {
-        cinematic_role *row = *link;
-        if (qa_q3_cinematic_source_retained(row->view.cinematics)) { link = &row->next; continue; }
-        if (!qa_q3_cinematic_source_destroy(&row->view.cinematics, error)) return false;
-        *link = row->next; free(row); --owner->count;
-    }
-    owner->last = owner->first;
-    while (owner->last && owner->last->next) owner->last = owner->last->next;
-    if (!owner->count) { free(owner); f->cinematic_roles = NULL; }
-    return true;
+    return remove_rows(f, NULL, true, error);
 }
 bool frontend_cinematic_roles_restore_add(qa_frontend *f,
     const frontend_material_movie_source *source, uint32_t seat, size_t index, qa_error *error)

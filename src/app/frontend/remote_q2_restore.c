@@ -107,8 +107,8 @@ static bool opening(qa_source_save_io *io, qa_vfs_acquisition *value,
     const frontend_remote_q2_restore_refs *refs, uint64_t saved_view, const qa_vfs *files)
 {
     if (!qa_source_save_u64(io, &value->mount) || !qa_source_save_u64(io, &value->resource_id) ||
-        !frontend_save_text(io, &value->path) || !frontend_save_text(io, &value->lookup_path) ||
-        !frontend_save_text(io, &value->link_source) || !frontend_save_text(io, &value->link_target)) return false;
+        !qa_source_save_owned_text(io, &value->path) || !qa_source_save_owned_text(io, &value->lookup_path) ||
+        !qa_source_save_owned_text(io, &value->link_source) || !qa_source_save_owned_text(io, &value->link_target)) return false;
     if (!value->resource_id) return !value->mount && !value->opening_present;
     if (io->direction == QA_SOURCE_SAVE_READ) files = qa_application_content_view(refs->content, saved_view);
     return files && qa_vfs_acquisition_opening_codec(io, files, value) && value->opening_present;
@@ -198,7 +198,7 @@ static bool fog_fields(qa_source_save_io *io, qa_scene_fog *fog)
 }
 static bool download_fields(qa_source_save_io *io, frontend_remote_q2 *row, saved_q2 *saved)
 {
-    if (!frontend_save_text(io, &row->download_path) || !qa_source_save_u64(io, &row->download_logical_nonce) ||
+    if (!qa_source_save_owned_text(io, &row->download_path) || !qa_source_save_u64(io, &row->download_logical_nonce) ||
         !qa_source_save_u64(io, &row->download_bytes) || !qa_source_save_u8(io, &row->download_percent) ||
         row->download_bytes > INT32_MAX || row->download_percent > 100 ||
         !qa_source_save_bool(io, &row->download_block_pending) || !blob(io, &row->download_block) ||
@@ -310,7 +310,7 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
     if (!qa_vec_finite(row->prediction_origin) || !qa_vec_finite(row->prediction_angles) ||
         !qa_vec_finite(row->prediction_error) || !qa_vec_finite(row->prediction_pml) ||
         row->acknowledged_command > row->last_command) return false;
-    for (size_t i = 0; i < row->layout.max_configs; ++i) if (!frontend_save_text(io, &row->configs[i])) return false;
+    for (size_t i = 0; i < row->layout.max_configs; ++i) if (!qa_source_save_owned_text(io, &row->configs[i])) return false;
     size_t count = row->baseline_count;
     size_t maximum = reading ? (io->input.size - io->offset) / 4 : SIZE_MAX;
     if (maximum > SIZE_MAX / sizeof(*row->baselines)) maximum = SIZE_MAX / sizeof(*row->baselines);
@@ -322,7 +322,7 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
     for (size_t i = 0; i < count; ++i)
         if (!qa_q2_save_entity(io, row->baselines + i) || (i && row->baselines[i - 1].number >= row->baselines[i].number)) return false;
     for (size_t i = 0; i < 256; ++i) if (!qa_source_save_i32(io, row->inventory + i)) return false;
-    if (!frontend_save_text(io, &row->overlay)) return false;
+    if (!qa_source_save_owned_text(io, &row->overlay)) return false;
     if (!qa_source_save_count(io, &row->hud_table.row_count, 11) ||
         !qa_source_save_count(io, &row->hud_table.column_count, 5)) return false;
     for (size_t i = 0; i < 5; ++i)
@@ -341,7 +341,7 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
             !frontend_model_encode(refs->models, m->source, &model, io->error) ||
             !frontend_scene_root_encode(refs->roots, m->scene, &scene, io->error))) return false;
         if (!reading) { if (model == UINT64_MAX) return false; ++model; }
-        if (!frontend_save_text(io, &m->path) || !qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &resource) ||
+        if (!qa_source_save_owned_text(io, &m->path) || !qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &resource) ||
             !opening(io, &m->opening, refs, saved->mounts, row->content.mounts) ||
             !model_receipt(io, &m->scope, &m->scope_opening, refs, saved->mounts, row->content.mounts) ||
             !model_receipt(io, &m->palette, &m->palette_opening, refs, saved->mounts, row->content.mounts) ||
@@ -360,7 +360,7 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
     remote_q2_missing_model **missing = &row->missing_models;
     for (size_t i = 0; i < count; ++i) {
         if (reading) { *missing = calloc(1, sizeof(**missing)); if (!*missing) return false; }
-        if (!frontend_save_text(io, &(*missing)->path) || !(*missing)->path || !*(*missing)->path) return false;
+        if (!qa_source_save_owned_text(io, &(*missing)->path) || !(*missing)->path || !*(*missing)->path) return false;
         missing = &(*missing)->next;
     }
     count = 0; for (remote_q2_picture *p = row->pictures; p; p = p->next) ++count;
@@ -371,7 +371,7 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
         if (reading) { *picture = calloc(1, sizeof(**picture)); if (!*picture) return false; }
         remote_q2_picture *p = *picture; uint64_t image = p->saved_image;
         if (!reading && !frontend_scene_image_encode(refs->scene, p->image, &image, io->error)) return false;
-        if (!frontend_save_text(io, &p->name) || !qa_source_save_u64(io, &image) || !image) return false;
+        if (!qa_source_save_owned_text(io, &p->name) || !qa_source_save_u64(io, &image) || !image) return false;
         if (reading) p->saved_image = image;
         picture = &p->next;
     }
@@ -383,7 +383,7 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
         row->download_attempted = count ? calloc(count, sizeof(*row->download_attempted)) : NULL;
         row->download_attempted_count = count; if (count && !row->download_attempted) return false;
     }
-    for (size_t i = 0; i < count; ++i) if (!frontend_save_text(io, row->download_attempted + i) || !row->download_attempted[i]) return false;
+    for (size_t i = 0; i < count; ++i) if (!qa_source_save_owned_text(io, row->download_attempted + i) || !row->download_attempted[i]) return false;
     return download_fields(io, row, saved);
 }
 bool frontend_remote_q2_checkpoint(const frontend_remote_q2 *source,

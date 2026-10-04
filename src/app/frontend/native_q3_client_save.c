@@ -48,8 +48,8 @@ static bool adapter_fields(qa_source_save_io *io,frontend_native_q3 *row)
     for(unsigned i=0;i<3;++i)if(!qa_source_save_vec3(io,listener->axis+i))return false;
     if(!qa_source_save_f32(io,&listener->gain) || !qa_source_save_bool(io,&listener->underwater) ||
         !qa_source_save_bool(io,&row->view.music_attached) || !qa_source_save_bool(io,&row->music_looping) ||
-        !frontend_save_text(io,&row->music_intro) || !frontend_save_text(io,&row->music_loop) ||
-        !frontend_save_text(io,&row->disconnect))return false;
+        !qa_source_save_owned_text(io,&row->music_intro) || !qa_source_save_owned_text(io,&row->music_loop) ||
+        !qa_source_save_owned_text(io,&row->disconnect))return false;
     if(row->view.has_listener && (listener->seat!=row->view.seat || !qa_vec_finite(listener->origin) ||
         !qa_vec_finite(listener->axis[0]) || !qa_vec_finite(listener->axis[1]) || !qa_vec_finite(listener->axis[2]) ||
         !isfinite(listener->gain) || listener->gain<0 ||

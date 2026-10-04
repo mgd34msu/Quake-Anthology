@@ -432,7 +432,7 @@ static bool gear_namespace(qa_source_save_io *io,qa_application *application,qa_
     qa_strings *strings=qa_session_strings(io->session);
     char *text=!reading && *owner<=UINT32_MAX?(char *)qa_strings_cstr(strings,(qa_string_id)*owner):NULL;
     if (!reading && (!text || !*text)) return false;
-    bool ok=frontend_save_text(io,&text);
+    bool ok=qa_source_save_owned_text(io,&text);
     if (reading) {
         *owner=text?qa_strings_find(strings,(qa_bytes){(const uint8_t *)text,strlen(text)}):0;
         free(text);

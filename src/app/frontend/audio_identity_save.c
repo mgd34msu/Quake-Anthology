@@ -4,15 +4,12 @@
 
 bool frontend_audio_id_read(const qa_frontend *f, uint64_t id, qa_actor_id *actor, bool *retired)
 {
-    if (!f || !id || id == QA_AUDIO_NO_ACTOR) return false;
-    for (size_t i = 0; i < f->audio_id_count; ++i) {
-        const frontend_audio_identity *entry = &f->audio_ids[i];
-        if (entry->id != id) continue;
-        if (actor) *actor = entry->actor;
-        if (retired) *retired = entry->retired;
-        return true;
-    }
-    return false;
+    if (!f || !id || id == QA_AUDIO_NO_ACTOR || id > f->audio_id_count) return false;
+    const frontend_audio_identity *entry = &f->audio_ids[id - 1];
+    if (entry->id != id) return false;
+    if (actor) *actor = entry->actor;
+    if (retired) *retired = entry->retired;
+    return true;
 }
 static bool fields(qa_source_save_io *io, qa_frontend *state)
 {

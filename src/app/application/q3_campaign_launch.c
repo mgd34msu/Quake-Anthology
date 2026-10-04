@@ -86,8 +86,8 @@ bool application_q3_campaign_launch_cvars(application_provider *provider,
         cvars == state->previous_cvars || qa_cvars_dialect(cvars) != QA_CONSOLE_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Campaign startup values require their fresh physical GAME registry");
-    for (size_t i = 0; i < qa_cvars_count(state->previous_cvars); ++i) {
-        const qa_cvar_view *value = qa_cvars_at(state->previous_cvars, i);
+    for (const qa_cvar_view *value = qa_cvars_next(state->previous_cvars, NULL); value;
+         value = qa_cvars_next(state->previous_cvars, value)) {
         if (named(value->name, "mapname") || named(value->name, "sv_mapname") ||
             named(value->name, "sv_cheats")) continue;
         uint64_t owner = value->owner == state->previous_owner ? provider->owner :

@@ -23,7 +23,7 @@ static bool provider(qa_source_save_io *io, qa_actor_owner *value)
     qa_strings *strings = qa_session_strings(io->session);
     char *name = !reading && *value <= UINT32_MAX ? (char *)qa_strings_cstr(strings, (qa_string_id)*value) : NULL;
     if (!reading && (!*value || !name || !*name)) return false;
-    bool okay = frontend_save_text(io, &name);
+    bool okay = qa_source_save_owned_text(io, &name);
     if (reading) {
         *value = name ? qa_strings_find(strings, (qa_bytes){(const uint8_t *)name, strlen(name)}) : 0;
         free(name);

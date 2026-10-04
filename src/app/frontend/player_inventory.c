@@ -137,10 +137,10 @@ static bool fields(qa_source_save_io *io, player_record *row)
         return fail(io, "Player timer label leaves its actual copied owner");
     if (!qa_source_save_actor(io, &row->actor) || !view_field(io, &row->view) ||
         !vitals_field(io, row->vitals) || !qa_source_save_u64(io, &row->timer.until_ns) ||
-        !qa_source_save_string(io, &row->timer_item) || !frontend_save_text(io, &row->timer_label)) return false;
+        !qa_source_save_string(io, &row->timer_item) || !qa_source_save_owned_text(io, &row->timer_label)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) row->timer.label = row->timer_label;
     for (unsigned i = 0; i < 2; ++i) {
-        if (!frontend_save_text(io, row->help_text + i) ||
+        if (!qa_source_save_owned_text(io, row->help_text + i) ||
             !qa_source_save_u8(io, row->help_alias + i)) return false;
         if (row->help_alias[i] > HELP_OWNED ||
             (row->help_text[i] ? (!*row->help_text[i] || row->help_alias[i] != HELP_OWNED)

@@ -1,6 +1,7 @@
 #include "map_players_private.h"
 #include "client_events.h"
 #include "qa/source_number.h"
+#include "qa/text.h"
 #include "guest_projection_private.h"
 #include "guest_q3_combat.h"
 #include "guest_q3_weapons_services.h"
@@ -551,8 +552,8 @@ static bool qw_initial_userinfo(qa_application *app, application_player_record *
     char text[512] = {0};
     bool name = false, team = false, skin = false;
     qa_cvars *cvars = qa_application_cvars(app);
-    for (size_t i = 0; i < qa_cvars_count(cvars); ++i) {
-        const qa_cvar_view *view = qa_cvars_at(cvars, i);
+    for (const qa_cvar_view *view = qa_cvars_next(cvars, NULL); view;
+         view = qa_cvars_next(cvars, view)) {
         if (!(view->flags & QA_CVAR_USERINFO)) continue;
         name |= !strcmp(view->name, "name");
         team |= !strcmp(view->name, "team");
@@ -2085,17 +2086,6 @@ static bool q1_initial_travel(qa_application *app, application_provider *source,
         application_fail(error, QA_ERROR_ARGUMENT, "Q1 initial travel lost its source player");
 }
 
-static int32_t source_word(double value)
-{
-    if (!isfinite(value) || value == 0) return 0;
-    double reduced = fmod(trunc(value), 4294967296.0);
-    if (reduced < 0) reduced += 4294967296.0;
-    uint32_t bits = (uint32_t)reduced;
-    int32_t result;
-    memcpy(&result, &bits, sizeof(result));
-    return result;
-}
-
 static bool source_team_name(const char *text, const char *name)
 {
     while (*text && *name) {
@@ -2140,8 +2130,8 @@ static bool q1_selected_q3_pose(void *opaque, qa_actor_id actor,
         source_team_name(team, "team:blue") || source_team_name(team, "blue") || !strcmp(team, "14") ||
         source_team_name(team, "q3:2") || source_team_name(team, "q2:2") ? 2 : 0;
     *out = (qa_q3_selected_source_pose){.view_angles = control.view_angles,
-        .view_height = control.view_height, .max_health = source_word(physical_max_health),
-        .team = source_team, .quad_until_ms = source_word(
+        .view_height = control.view_height, .max_health = qa_number_to_i32(physical_max_health),
+        .team = source_team, .quad_until_ms = qa_number_to_i32(
             qa_q1_game_power_expires(source->state.q1, actor, QA_Q1_QUAD) * 1000)};
     return true;
 }
@@ -4185,7 +4175,7 @@ bool application_players_guest_attach(qa_application *application,
             (selected == application_provider_for(application, actor, QA_ROLE_EFFECTS, "") ? QA_Q3_EFFECTS : 0u) |
             (selected == application_provider_for(application, actor, QA_ROLE_COMBAT, "") ? QA_Q3_COMBAT : 0u) |
             (selected == application_provider_for(application, actor, QA_ROLE_EQUIPMENT, "") ? QA_Q3_EQUIPMENT : 0u);
-        if (roles && (!qa_q3_bind_player(selected->state.q3, actor, roles, source_word(combat.health), error) ||
+        if (roles && (!qa_q3_bind_player(selected->state.q3, actor, roles, qa_number_to_i32(combat.health), error) ||
             !qa_q3_spawn_player(selected->state.q3, actor, &body, combat.team, error))) goto failed;
     }
     if (!application_guest_actor_admit(provider, actor, error)) goto failed;

@@ -31,7 +31,7 @@ static bool owner_fields(qa_source_save_io *io, qa_actor_owner *owner)
     char *name = !reading && *owner <= UINT32_MAX ?
         (char *)qa_strings_cstr(strings, (qa_string_id)*owner) : NULL;
     if (!reading && (!*owner || !name || !*name)) return false;
-    bool ok = frontend_save_text(io, &name);
+    bool ok = qa_source_save_owned_text(io, &name);
     if (reading) {
         *owner = name ? qa_strings_find(strings, (qa_bytes){(const uint8_t *)name, strlen(name)}) : 0;
         free(name);
@@ -61,8 +61,8 @@ static bool declaration_fields(qa_source_save_io *io, qa_application_content_gra
     if (reading) declaration->source = (qa_resource *)source;
     if (!ok || !qa_source_save_bool(io, &declaration->none)) return false;
     if (declaration->none) return true;
-    if (!frontend_save_text(io, &declaration->path) || !declaration->path || !*declaration->path ||
-        !frontend_save_text(io, &declaration->fallback) ||
+    if (!qa_source_save_owned_text(io, &declaration->path) || !declaration->path || !*declaration->path ||
+        !qa_source_save_owned_text(io, &declaration->fallback) ||
         (declaration->fallback && !*declaration->fallback) ||
         !qa_source_save_bool(io, &declaration->has_digest) ||
         !qa_source_save_bytes(io, &declaration->digest, sizeof(declaration->digest)) ||
@@ -119,7 +119,7 @@ static bool row_fields(qa_source_save_io *io, qa_application_content_graph *grap
         (row->gear_namespace && family != QA_GAME_Q3) ||
         !qa_source_save_string(io, &row->item) || !qa_source_save_bool(io,&row->source_slot) ||
         (row->source_slot&&(!row->item||!qa_source_save_u64(io,&row->source_generation)||row->gear_namespace||row->gear_service_owner)) ||
-        !frontend_save_text(io, &row->view_path) || !row->view_path ||
+        !qa_source_save_owned_text(io, &row->view_path) || !row->view_path ||
         (row->source_slot?*row->view_path!=0:!*row->view_path))return false;
     if(row->source_slot) {
         uint64_t view=io->direction==QA_SOURCE_SAVE_WRITE?qa_application_content_view_id(graph,row->owner.mounts):0;
@@ -156,7 +156,7 @@ static bool row_fields(qa_source_save_io *io, qa_application_content_graph *grap
     row->family = (qa_game_family)family;
     if (row->declaration.none) return true;
     return (row->source_slot||qa_source_save_count(io, &row->saved_parent, SIZE_MAX)) &&
-        frontend_save_text(io, &row->saved_parent_path) && row->saved_parent_path && *row->saved_parent_path &&
+        qa_source_save_owned_text(io, &row->saved_parent_path) && row->saved_parent_path && *row->saved_parent_path &&
         resource_fields(io, graph, &row->held_parent.resource) && row->held_parent.resource &&
         transform_fields(io, &row->held.alignment) && qa_source_save_u32(io, &row->held.reference_frame) &&
         row->held.reference_frame == row->declaration.reference_frame;

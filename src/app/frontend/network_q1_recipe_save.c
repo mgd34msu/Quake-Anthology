@@ -16,7 +16,7 @@ static bool address_fields(qa_source_save_io *io,qa_net_address *address)
 static bool text_fields(qa_source_save_io *io,const char **text)
 {
     char *owned=(char *)*text;
-    bool ok=frontend_save_text(io,&owned);
+    bool ok=qa_source_save_owned_text(io,&owned);
     if(io->direction==QA_SOURCE_SAVE_READ) *text=owned;
     return ok;
 }

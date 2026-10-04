@@ -277,8 +277,8 @@ bool frontend_shared_storage_save_input(frontend_shared_storage *owner,const qa_
     if (!owner || !qa_cvars_observer_idle(registry)) return fail(e,"Shared input save requires published returned scalars");
     qa_json_writer w={0}; qa_json_writer_object(&w); key_number(&w,"version",1); key_string(&w,"dialect","q3");
     qa_json_writer_key(&w,"entries"); qa_json_writer_array(&w);
-    for (size_t i=0;i<qa_cvars_count(registry);++i) {
-        const qa_cvar_view *row=qa_cvars_at(registry,i);
+    for (const qa_cvar_view *row=qa_cvars_next(registry,NULL);row;
+         row=qa_cvars_next(registry,row)) {
         const char *value=qa_cvars_archive_value(registry,row);
         if (!value || !input_name(registry,row->name)) continue;
         qa_json_writer_object(&w); key_string(&w,"name",row->name); key_string(&w,"value",value); qa_json_writer_end(&w);
@@ -359,8 +359,8 @@ static bool fields(qa_source_save_io *io,storage_state *state)
         !qa_source_save_u32(io,&bits) || !qa_source_save_u32(io,&channels) ||
         !qa_source_save_f64(io,&state->audio.effects) || !qa_source_save_f64(io,&state->audio.music) ||
         !qa_source_save_bool(io,&state->audio.has_shuffle) || !qa_source_save_bool(io,&state->audio.shuffle) ||
-        !qa_source_save_bool(io,&state->audio.has_menu_track) || !frontend_save_text(io,&state->device) ||
-        !frontend_save_text(io,&state->menu) || !qa_source_save_bool(io,&state->view.present) ||
+        !qa_source_save_bool(io,&state->audio.has_menu_track) || !qa_source_save_owned_text(io,&state->device) ||
+        !qa_source_save_owned_text(io,&state->menu) || !qa_source_save_bool(io,&state->view.present) ||
         !qa_source_save_f64(io,&state->view.field_of_view)) return false;
     state->audio.format=(qa_audio_output_format){rate,channels,bits};
     size_t count=state->archive.count;
@@ -372,8 +372,8 @@ static bool fields(qa_source_save_io *io,storage_state *state)
         state->archive.count=count;
     }
     for (size_t i=0;i<count;++i)
-        if (!frontend_save_text(io,&state->archive.entries[i].name) ||
-            !frontend_save_text(io,&state->archive.entries[i].value)) return false;
+        if (!qa_source_save_owned_text(io,&state->archive.entries[i].name) ||
+            !qa_source_save_owned_text(io,&state->archive.entries[i].value)) return false;
     return state_valid(state);
 }
 bool frontend_shared_storage_checkpoint(const frontend_shared_storage *owner,

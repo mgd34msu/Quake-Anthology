@@ -27,6 +27,12 @@ bool qa_parse_atof(const char *text, double *out, qa_error *error);
 bool qa_parse_strtod(const char *, double *, size_t *consumed, bool *range_error, qa_error *);
 /* The same prefix conversion rounded directly to binary32. */
 bool qa_parse_atof_float(const char *text, float *out, qa_error *error);
+/* Truncate finite binary64 modulo 2^32 and reinterpret the resulting signed
+ * word. Zero and nonfinite input produce zero. */
+int32_t qa_number_to_i32(double value);
+/* Q3 bg_lib AddInt spelling, including its wrapped INT32_MIN digit bytes.
+ * Output includes a trailing NUL; the returned length excludes it. */
+size_t qa_format_q3_integer(int32_t value, char out[12]);
 /* Finite double serialization in the same C locale, with round-trip precision. */
 bool qa_format_number(double value, char out[32], qa_error *error);
 /* ECMAScript Number/String spelling: shortest round-tripping binary64,

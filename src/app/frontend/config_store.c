@@ -1969,9 +1969,10 @@ static bool registry_carry(frontend_config_source *source,const qa_cvars *previo
     }
     /* Callbacks stay with their old host. CLIENT declarations transfer to
      * their actual new Source; other carried scalars use registry lifetime. */
-    for (size_t i=0;ok && i<qa_cvars_count(*out);++i) {
-        const qa_cvar_view *value=qa_cvars_at(*out,i);
+    for (const qa_cvar_view *value=qa_cvars_next(*out,NULL);ok && value;) {
+        const qa_cvar_view *next=qa_cvars_next(*out,value);
         if (value->owner) ok=qa_cvars_retain_shared(*out,value->name,error);
+        value=next;
     }
     return ok;
 }
@@ -2155,8 +2156,8 @@ bool frontend_config_store_carry_variables(frontend_config_store *manager,qa_app
         if (!receipt) return fail(error,QA_ERROR_MEMORY,"Retaining the actual early GAME scalar carry");
     }
     const bool q3=qa_cvars_dialect(cvars)==QA_CONSOLE_Q3;
-    for (size_t i=0;i<qa_cvars_count(previous->cvars);++i) {
-        const qa_cvar_view *value=qa_cvars_at(previous->cvars,i);
+    for (const qa_cvar_view *value=qa_cvars_next(previous->cvars,NULL);value;
+         value=qa_cvars_next(previous->cvars,value)) {
         if (equal(value->name,"mapname") || equal(value->name,"sv_mapname") ||
             (q3 && ((value->flags&QA_CVAR_INIT) || equal(value->name,"sv_cheats")))) continue;
         uint64_t owner=value->owner==previous->command.owner?authority->command.owner:
@@ -3807,7 +3808,7 @@ static bool config_row(frontend_config_source *source,qa_source_save_io *io,
     uint32_t scope=source->scope.kind;
     uint64_t key=frontend_key_profile_id(source->keys);
     bool same=source->fallback==source->movement;
-    bool ok=frontend_save_text(io,&name) && name && *name &&
+    bool ok=qa_source_save_owned_text(io,&name) && name && *name &&
         qa_source_save_bytes(io,&identity,sizeof(identity)) && qa_source_save_u32(io,&dialect) && dialect<=QA_CONSOLE_Q3 &&
         qa_source_save_u32(io,&scope) && scope<=QA_APPLICATION_CONSOLE_Q2_GAME &&
         qa_source_save_u32(io,&source->scope.seat) &&
@@ -3862,7 +3863,7 @@ static bool config_row(frontend_config_source *source,qa_source_save_io *io,
                     frontend_client_registry_matches(owner,instance(source),seat->logical);
                 if (ok) receiver=(char *)physical->selection.instance;
             }
-            if (ok) ok=frontend_save_text(io,&receiver) && receiver && *receiver &&
+            if (ok) ok=qa_source_save_owned_text(io,&receiver) && receiver && *receiver &&
                 qa_source_save_u32(io,&logical) && logical==seat->logical && !strcmp(receiver,name);
             if (!writing) seat->registry_instance=receiver;
         } else if (ok) ok=registry_bytes(source,io,&seat->cvars);
@@ -3938,7 +3939,7 @@ bool frontend_config_store_checkpoint(const frontend_config_store *manager,
         qa_settings_store user=frontend_global_settings_storage_user_store(manager->frontend->global_settings_storage);
         ok=source && source==published_primary(manager,manager->frontend->application) &&
             frontend_source_admin_checkpoint(manager->admin,source->application,source->console,source->cvars,
-                &source->command,user,&admin,error) && frontend_save_text(&io,&name) &&
+                &source->command,user,&admin,error) && qa_source_save_owned_text(&io,&name) &&
             qa_source_save_bytes(&io,&identity,sizeof(identity));
         bytes=(qa_bytes){admin.data,admin.size};
         if (ok) ok=config_blob(&io,&bytes);
@@ -4009,7 +4010,7 @@ bool frontend_config_store_restore(qa_frontend *frontend,qa_application *applica
     qa_bytes admin={0}; bool early=false;
     if (ok) ok=qa_source_save_bool(&io,&early);
     if (ok && early) {
-        ok=frontend_save_text(&io,&manager->admin_source) && manager->admin_source && *manager->admin_source &&
+        ok=qa_source_save_owned_text(&io,&manager->admin_source) && manager->admin_source && *manager->admin_source &&
             qa_source_save_bytes(&io,&manager->admin_identity,sizeof(manager->admin_identity)) &&
             config_blob(&io,&admin) && admin.size;
         frontend_config_source *source=manager->sources;

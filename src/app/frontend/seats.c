@@ -307,8 +307,8 @@ static bool settings(void *context, uint32_t id, qa_ui_menu *out, qa_error *erro
         if (!rows) return frontend_fail(error, QA_ERROR_MEMORY, "allocating settings list");
         seat->settings_rows = rows; seat->settings_capacity = count; ++seat->settings_revision;
     }
-    for (size_t i = 0; i < count; ++i) {
-        const qa_cvar_view *setting = qa_cvars_at(cvars, i);
+    const qa_cvar_view *setting = qa_cvars_next(cvars, NULL);
+    for (size_t i = 0; i < count; ++i, setting = qa_cvars_next(cvars, setting)) {
         seat->settings_rows[i] = (qa_ui_row){.key = setting->name, .label = setting->name,
             .detail = setting->value, .enabled = true};
     }

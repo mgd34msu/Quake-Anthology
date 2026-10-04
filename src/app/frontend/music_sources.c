@@ -244,8 +244,8 @@ bool frontend_music_sources_preferences_read(const frontend_music_sources *owner
     const qa_cvar_view *a = qa_cvars_find(cvars, "music_shuffle"), *b = qa_cvars_find(cvars, "music_menu_track");
     if (!a || !a->value || !b || !b->value || (strcmp(a->value, "0") && strcmp(a->value, "1"))) return false;
     bool canonical_a = false, canonical_b = false;
-    for (size_t i = 0; i < qa_cvars_count(cvars); ++i) {
-        const qa_cvar_view *row = qa_cvars_at(cvars, i);
+    for (const qa_cvar_view *row = qa_cvars_next(cvars, NULL); row;
+         row = qa_cvars_next(cvars, row)) {
         canonical_a |= row == a; canonical_b |= row == b;
     }
     if (!canonical_a || !canonical_b) return false;

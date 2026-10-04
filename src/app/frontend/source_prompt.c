@@ -229,7 +229,7 @@ bool frontend_source_prompt_input(frontend_source_prompt *o,const qa_input_event
 }
 static bool saved_text(qa_source_save_io *io,char **text)
 {
-    return frontend_save_text(io,text) && (!*text || qa_utf8_valid((qa_bytes){(const uint8_t *)*text,strlen(*text)}));
+    return qa_source_save_owned_text(io,text) && (!*text || qa_utf8_valid((qa_bytes){(const uint8_t *)*text,strlen(*text)}));
 }
 static bool fields(qa_source_save_io *io,frontend_source_prompt *o)
 {

@@ -212,10 +212,7 @@ bool script_eval_directive(qa_script *s, qa_script_location location, bool integ
                              .number = dollar ? number : magnitude,
                              .text = {(const uint8_t *)stored, size},
                              .location = qa_script_position(s)};
-    double integral=fmod(trunc(token.number),4294967296.0);
-    if(integral<0) integral+=4294967296.0;
-    uint32_t integer=(uint32_t)integral;
-    memcpy(&token.integer,&integer,4);
+    token.integer=qa_number_to_i32(token.number);
     const char *unsupported=dollar?NULL:"#eval and #evalfloat leave numeric fields uninitialized";
     if (!script_push(s, (script_queued_token){.token=token,.unsupported=unsupported}, e))
         return false;

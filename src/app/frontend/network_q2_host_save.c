@@ -183,7 +183,7 @@ static bool configs_fields(qa_source_save_io *io,char ***configs,size_t *count,
         if(!*configs) return frontend_fail(io->error,QA_ERROR_MEMORY,"Restoring genuine Q2 config beforeimages");
     }
     if((*configs!=NULL)!=(*count!=0)) return false;
-    for(size_t i=0;i<*count;++i) if(!frontend_save_text(io,&(*configs)[i])) return false;
+    for(size_t i=0;i<*count;++i) if(!qa_source_save_owned_text(io,&(*configs)[i])) return false;
     return true;
 }
 static bool peer_fields(qa_source_save_io *io,frontend_network_q2_host *host,q2_host_peer *p,

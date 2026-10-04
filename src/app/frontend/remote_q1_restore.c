@@ -21,8 +21,8 @@ typedef struct saved_q1 {
 static bool opening(qa_source_save_io *io, qa_vfs *files, qa_vfs_acquisition *a)
 {
     if (!qa_source_save_u64(io, &a->mount) || !qa_source_save_u64(io, &a->resource_id) ||
-        !frontend_save_text(io, &a->path) || !frontend_save_text(io, &a->lookup_path) ||
-        !frontend_save_text(io, &a->link_source) || !frontend_save_text(io, &a->link_target)) return false;
+        !qa_source_save_owned_text(io, &a->path) || !qa_source_save_owned_text(io, &a->lookup_path) ||
+        !qa_source_save_owned_text(io, &a->link_source) || !qa_source_save_owned_text(io, &a->link_target)) return false;
     if (!a->mount) return !a->resource_id && !a->path && !a->lookup_path && !a->link_source && !a->link_target &&
         !a->opening_present && !a->opening.order && !a->opening.prefix;
     return qa_vfs_acquisition_opening_codec(io, files, a) && a->opening_present;
@@ -96,7 +96,7 @@ static bool names(qa_source_save_io *io, char ***rows, size_t *count)
     if (io->direction == QA_SOURCE_SAVE_READ) {
         *rows = *count ? calloc(*count, sizeof(**rows)) : NULL; if (*count && !*rows) return false;
     }
-    for (size_t i = 0; i < *count; ++i) if (!frontend_save_text(io, *rows + i) || !(*rows)[i]) return false;
+    for (size_t i = 0; i < *count; ++i) if (!qa_source_save_owned_text(io, *rows + i) || !(*rows)[i]) return false;
     return true;
 }
 static bool player(qa_source_save_io *io, qa_qw_player *v)
@@ -133,10 +133,10 @@ static bool pending(qa_source_save_io *io, frontend_remote_q1 *row)
         if (io->direction == QA_SOURCE_SAVE_READ) m->op = op;
         switch (m->op) {
         case QA_NQ_NAME: case QA_NQ_LIGHTSTYLE:
-            if (!qa_source_save_u8(io, &m->data.indexed_text.index) || !frontend_save_text(io, &p->text) || !p->text) return false;
+            if (!qa_source_save_u8(io, &m->data.indexed_text.index) || !qa_source_save_owned_text(io, &p->text) || !p->text) return false;
             m->data.indexed_text.text = p->text; break;
         case QA_NQ_PRINT: case QA_NQ_CENTERPRINT: case QA_NQ_FINALE:
-            if (!frontend_save_text(io, &p->text) || !p->text) return false;
+            if (!qa_source_save_owned_text(io, &p->text) || !p->text) return false;
             m->data.text = p->text; break;
         case QA_NQ_COLORS: case QA_NQ_FRAGS:
             if (!qa_source_save_u8(io, &m->data.indexed.index) || !qa_source_save_i32(io, &m->data.indexed.value)) return false;
@@ -205,7 +205,7 @@ static bool fields(qa_source_save_io *io, frontend_remote_q1 *row,
         !entities(io, &row->current) || !entities(io, &row->previous) || !entities(io, &row->statics) ||
         !entities(io, &row->qw_entities) || !entities(io, &row->qw_nails) || !entities(io, &row->qw_batch_players) || !pending(io, row) ||
         !names(io, &row->models, &row->model_count) || !names(io, &row->sounds, &row->sound_count) ||
-        !frontend_save_text(io, &row->skybox) || !qa_source_save_u8(io, &row->sky_found) || row->sky_found > 63 ||
+        !qa_source_save_owned_text(io, &row->skybox) || !qa_source_save_u8(io, &row->sky_found) || row->sky_found > 63 ||
         !qa_source_save_u64(io, &row->saved_world)) return false;
     if (reading) row->loaded = saved->loaded;
     if (reading) {
@@ -215,11 +215,11 @@ static bool fields(qa_source_save_io *io, frontend_remote_q1 *row,
     for (size_t i = 0; i < row->sound_count; ++i)
         if (!row->sound_available || !qa_source_save_bool(io, row->sound_available + i)) return false;
     for (unsigned i = 0; i < 6; ++i) if (!qa_source_save_u64(io, row->saved_sky + i)) return false;
-    for (size_t i = 0; i < 256; ++i) if (!frontend_save_text(io, row->styles + i) || !qa_source_save_i32(io, row->qw_stats + i)) return false;
+    for (size_t i = 0; i < 256; ++i) if (!qa_source_save_owned_text(io, row->styles + i) || !qa_source_save_i32(io, row->qw_stats + i)) return false;
     for (size_t i = 0; i < 256; ++i) {
         remote_q1_client *c = row->clients + i;
-        if (!frontend_save_text(io, &c->name) || !frontend_save_text(io, &c->social) ||
-            !frontend_save_text(io, &c->player_info) || !frontend_save_text(io, &c->userinfo) ||
+        if (!qa_source_save_owned_text(io, &c->name) || !qa_source_save_owned_text(io, &c->social) ||
+            !qa_source_save_owned_text(io, &c->player_info) || !qa_source_save_owned_text(io, &c->userinfo) ||
             !qa_source_save_i32(io, &c->frags) || !qa_source_save_i32(io, &c->ping) || !qa_source_save_u8(io, &c->colors) ||
             !qa_source_save_bool(io, &c->present) || !qa_source_save_bool(io, &c->has_ping) ||
             !qa_source_save_bool(io, &c->has_social) || !qa_source_save_bool(io, &c->has_player_info)) return false;
@@ -228,7 +228,7 @@ static bool fields(qa_source_save_io *io, frontend_remote_q1 *row,
         if (!qa_source_save_bool(io, row->qw_player_valid + i) || !player(io, row->qw_players + i) ||
             (row->qw_player_valid[i] && row->qw_players[i].slot != i)) return false;
     bool qw = row->qw_directory != NULL;
-    if (!qa_source_save_bool(io, &qw) || !frontend_save_text(io, &row->qw_directory) || !frontend_save_text(io, &row->qw_level)) return false;
+    if (!qa_source_save_bool(io, &qw) || !qa_source_save_owned_text(io, &row->qw_directory) || !qa_source_save_owned_text(io, &row->qw_level)) return false;
     if (qw) {
         qa_qw_movevars *m = &row->qw.movement;
         if (!row->qw_directory || !row->qw_level || !protocol(io, &row->qw.protocol) ||
@@ -280,7 +280,7 @@ static bool fields(qa_source_save_io *io, frontend_remote_q1 *row,
                 ++parsed; /* Parsed inventory keys are zero-based; this field has an absent state. */
             }
         }
-        if (!frontend_save_text(io, &m->path) || !qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &resource) ||
+        if (!qa_source_save_owned_text(io, &m->path) || !qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &resource) ||
             !opening(io, row->content.mounts, &m->opening) || !qa_source_save_bool(io, &m->colors) || !qa_source_save_u8(io, &m->top) ||
             !qa_source_save_u8(io, &m->bottom) || !qa_source_save_u64(io, &parsed) || !qa_source_save_u64(io, &scene) ||
             !qa_source_save_u64(io, &world) || (!!world == !!parsed) || (!!parsed != !!scene)) return false;

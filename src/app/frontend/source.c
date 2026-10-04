@@ -3109,7 +3109,7 @@ static bool source_role_fields(qa_source_save_io *io,qa_frontend *f,source_role_
             !qa_source_save_bool(io,&row->time_alias) || !qa_source_save_u32(io,&row->time_dialect) ||
             row->time_dialect>QA_CONSOLE_Q3)) return false;
     }
-    if (!frontend_save_text(io,&row->system_info) || !qa_source_save_bool(io,&row->bound) ||
+    if (!qa_source_save_owned_text(io,&row->system_info) || !qa_source_save_bool(io,&row->bound) ||
         !qa_source_save_count(io,&row->name_count,6)) return false;
     const char *names[6]; size_t count=row->time_present?time_names((qa_console_dialect)row->time_dialect,names,true):0;
     uint32_t previous=0;
@@ -3123,7 +3123,7 @@ static bool source_role_fields(qa_source_save_io *io,qa_frontend *f,source_role_
     }
     if (row->bound && (!row->admitted || !row->time_present || row->time_alias || !row->name_count)) return false;
     if (!row->bound && row->name_count) return false;
-    if (!qa_source_save_bool(io,&row->disconnect_pending) || !frontend_save_text(io,&row->disconnect_reason)) return false;
+    if (!qa_source_save_bool(io,&row->disconnect_pending) || !qa_source_save_owned_text(io,&row->disconnect_reason)) return false;
     if ((row->disconnect_pending || row->system_info) && !row->admitted) return false;
     if (row->disconnect_pending != (row->disconnect_reason!=NULL)) return false;
     if (!qa_source_save_bool(io,&row->has_equipment) || row->has_equipment!=(lease->equipment!=NULL) ||
@@ -3147,7 +3147,7 @@ static bool source_saved_fields(qa_source_save_io *io,qa_frontend *f,source_grou
             !source_listener_fields(io,f,group) || !qa_source_save_bool(io,&group->has_music) ||
             !qa_source_save_bool(io,&group->music_attached) || (group->music_attached && !group->has_music) ||
             (group->has_music && (!source_blob(io,&group->music) || !group->music.size)) ||
-            !frontend_save_text(io,&group->music_intro) || !frontend_save_text(io,&group->music_loop) ||
+            !qa_source_save_owned_text(io,&group->music_intro) || !qa_source_save_owned_text(io,&group->music_loop) ||
             !qa_source_save_bool(io,&group->music_looping) || !qa_source_save_bool(io,&group->music_pending) ||
             (group->music_pending && !group->has_music) ||
             ((group->music_intro!=NULL)!=(group->music_loop!=NULL)) ||

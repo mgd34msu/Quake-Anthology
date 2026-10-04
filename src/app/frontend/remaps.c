@@ -89,8 +89,8 @@ static bool remap_fields(qa_source_save_io *io,frontend_remap **head)
             if (!row) return frontend_fail(io->error,QA_ERROR_MEMORY,"Retaining actual frontend shader remap continuation");
             *tail=row; tail=&row->next;
         }
-        if (!row || !frontend_save_text(io,&row->original) || !row->original || !*row->original ||
-            !frontend_save_text(io,&row->replacement) || !row->replacement || !*row->replacement ||
+        if (!row || !qa_source_save_owned_text(io,&row->original) || !row->original || !*row->original ||
+            !qa_source_save_owned_text(io,&row->replacement) || !row->replacement || !*row->replacement ||
             !qa_source_save_f32(io,&row->offset) || !isfinite(row->offset)) return false;
         for (const frontend_remap *prior=*head;prior!=row;prior=prior->next)
             if (!strcmp(prior->original,row->original)) return false;

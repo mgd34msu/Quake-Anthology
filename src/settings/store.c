@@ -306,9 +306,8 @@ bool qa_settings_save_cvars(qa_settings_store store, const char *const *owner, s
     settings_key_string(&w, "dialect", dialects[qa_cvars_dialect(vars)]);
     qa_json_writer_key(&w, "entries");
     qa_json_writer_array(&w);
-    size_t total = qa_cvars_count(vars);
-    for (size_t i = 0; i < total; ++i) {
-        const qa_cvar_view *entry = qa_cvars_at(vars, i);
+    for (const qa_cvar_view *entry = qa_cvars_next(vars, NULL); entry;
+         entry = qa_cvars_next(vars, entry)) {
         const char *value = qa_cvars_archive_value(vars, entry);
         if (!value)
             continue;

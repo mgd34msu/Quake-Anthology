@@ -1137,13 +1137,13 @@ static bool fields(frontend_remote_config *row,qa_source_save_io *io,frontend_ke
     uint64_t key=frontend_key_profile_id(row->keys);
     if (writing && (!frontend_client_registry_source(row->registry,&physical,&seat) || seat!=row->scope.seat)) return false;
     if (writing) registry=(char *)physical->selection.instance;
-    bool ok=frontend_save_text(io,&name) && name && *name &&
+    bool ok=qa_source_save_owned_text(io,&name) && name && *name &&
         qa_source_save_bytes(io,&identity,sizeof(identity)) && qa_source_save_u32(io,&scope) &&
         (scope==QA_APPLICATION_CONSOLE_Q3_CGAME || scope==QA_APPLICATION_CONSOLE_Q3_UI) &&
         qa_source_save_u32(io,&row->scope.seat) && qa_source_save_u32(io,&row->physical_seat) &&
         row->physical_seat<row->owner->frontend->options.seats && qa_source_save_u32(io,&movement) && movement<=QA_MOVEMENT_Q3 &&
         qa_source_save_bool(io,&row->hosted) && qa_source_save_u64(io,&key) && key &&
-        frontend_save_text(io,&registry) && registry && *registry;
+        qa_source_save_owned_text(io,&registry) && registry && *registry;
     if (!writing) {
         row->saved_instance=name; row->saved_registry=registry; row->saved_identity=identity;
         row->scope.kind=(qa_application_console_kind)scope; row->movement=(qa_movement_kind)movement;

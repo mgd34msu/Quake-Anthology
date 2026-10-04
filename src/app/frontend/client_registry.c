@@ -179,7 +179,7 @@ static void import_free(frontend_client_registry_import *import)
 }
 static bool saved_fields(qa_source_save_io *io,client_registry_saved *row)
 {
-    if (!frontend_save_text(io,&row->instance) || !row->instance || !*row->instance ||
+    if (!qa_source_save_owned_text(io,&row->instance) || !row->instance || !*row->instance ||
         !qa_source_save_bytes(io,row->identity.bytes,sizeof(row->identity.bytes)) ||
         !qa_source_save_u64(io,&row->catalog) || !row->catalog ||
         !qa_source_save_u64(io,&row->view) || !row->view ||

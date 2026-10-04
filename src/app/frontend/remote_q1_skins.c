@@ -442,8 +442,8 @@ qa_vfs *frontend_remote_q1_skins_files(const frontend_remote_q1_skins *o) { retu
 static bool opening(qa_source_save_io *io, const qa_vfs *files, qa_vfs_acquisition *a)
 {
     return qa_source_save_u64(io, &a->mount) && qa_source_save_u64(io, &a->resource_id) &&
-        frontend_save_text(io, &a->path) && frontend_save_text(io, &a->lookup_path) &&
-        frontend_save_text(io, &a->link_source) && frontend_save_text(io, &a->link_target) &&
+        qa_source_save_owned_text(io, &a->path) && qa_source_save_owned_text(io, &a->lookup_path) &&
+        qa_source_save_owned_text(io, &a->link_source) && qa_source_save_owned_text(io, &a->link_target) &&
         qa_vfs_acquisition_opening_codec(io, files, a) && a->opening_present;
 }
 static bool fields(frontend_remote_q1_skins *o, const frontend_remote_q1_restore_refs *refs,
@@ -461,8 +461,8 @@ static bool fields(frontend_remote_q1_skins *o, const frontend_remote_q1_restore
         if (!qa_application_content_claim_view(refs->content, view, &o->files, io->error)) return false;
     }
     if (!root_current(o)) return false;
-    if (!qa_source_save_f32(io, &o->noskins) || !frontend_save_text(io, &o->base) ||
-        !frontend_save_text(io, &o->all) || !o->all || !qa_source_save_bool(io, &o->loading) ||
+    if (!qa_source_save_f32(io, &o->noskins) || !qa_source_save_owned_text(io, &o->base) ||
+        !qa_source_save_owned_text(io, &o->all) || !o->all || !qa_source_save_bool(io, &o->loading) ||
         !qa_source_save_bool(io, &o->again) || !qa_source_save_bool(io, &o->waiting) ||
         !qa_source_save_bool(io, &o->staged) || !qa_source_save_bool(io, &o->paused) ||
         !qa_source_save_bool(io, &o->waiting_block) || !qa_source_save_bool(io, &o->resume_requested) ||
@@ -529,7 +529,7 @@ static bool fields(frontend_remote_q1_skins *o, const frontend_remote_q1_restore
         }
     }
     for (unsigned i = 0; i < 32; ++i) {
-        if (!frontend_save_text(io, o->infos + i) || !qa_source_save_u8(io, o->selected + i) ||
+        if (!qa_source_save_owned_text(io, o->infos + i) || !qa_source_save_u8(io, o->selected + i) ||
             o->selected[i] > o->count || (o->selected[i] &&
                 (o->loading || !o->cache[o->selected[i] - 1].pixels.data))) return false;
     }

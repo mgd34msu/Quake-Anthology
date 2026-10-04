@@ -4,6 +4,7 @@
 #include "qa/game_q1_bots.h"
 #include "qa/game_q2_bots.h"
 #include "qa/application_players.h"
+#include "qa/text.h"
 #include "bots_transport.h"
 #include <limits.h>
 #include <stdio.h>
@@ -38,12 +39,6 @@ static qa_actor_id bot_actor(void *context,int32_t client) {
     }
     return (qa_actor_id){0};
 }
-static bool integer(double value,int32_t *out,qa_error *error) {
-    (void)error;
-    double reduced=isfinite(value)?fmod(trunc((double)value),4294967296.0):0;
-    if(reduced<0) reduced+=4294967296.0;
-    uint32_t bits=(uint32_t)reduced;memcpy(out,&bits,sizeof(*out));return true;
-}
 static bool metadata(void *context,qa_actor_id actor,application_bot_world_metadata *out,
     bool *found,qa_error *error) {
     application_bot_world_binding *binding=context;
@@ -59,7 +54,8 @@ static bool metadata(void *context,qa_actor_id actor,application_bot_world_metad
         if(!qa_q2_bot_entity_read(q2->state.q2,actor,&actual,error)) return false;
         if(actual.present) {
             const char *model=actual.model?qa_strings_cstr(strings,actual.model):"";
-            int32_t maximum;if(!model || !integer(actual.max_health,&maximum,error)) return false;
+            if(!model) return false;
+            int32_t maximum=qa_number_to_i32(actual.max_health);
             *out=(application_bot_world_metadata){.model=model,.classname=actual.classname,
                 .frame=actual.frame,.max_health=maximum,.hidden=actual.hidden,.worldspawn=actual.worldspawn};
             *found=true;return true;
@@ -69,7 +65,7 @@ static bool metadata(void *context,qa_actor_id actor,application_bot_world_metad
     qa_q1_bot_entity actual;
     if(!qa_q1_bot_entity_read(source->state.q1,actor,&actual,error)) return false;
     if(!actual.present) return true;
-    int32_t maximum;if(!integer(actual.max_health,&maximum,error)) return false;
+    int32_t maximum=qa_number_to_i32(actual.max_health);
     const char *model=actual.model?qa_strings_cstr(strings,actual.model):"";
     if(!model) return application_fail(error,QA_ERROR_FORMAT,"shared Q1 metadata has no actual source model text");
     *out=(application_bot_world_metadata){.model=model,.classname=actual.classname,.frame=actual.frame,
@@ -85,7 +81,7 @@ static bool movement(void *context,qa_actor_id actor,application_bot_world_movem
     application_player_record *record=player(binding,actor);
     if(!record || record->client_slot>INT32_MAX)
         return application_fail(error,QA_ERROR_FORMAT,"shared bot selected movement has no actual source player client");
-    int32_t height;if(!integer(control.view_height,&height,error)) return false;
+    int32_t height=qa_number_to_i32(control.view_height);
     *out=(application_bot_world_movement){.source_client=(int32_t)record->client_slot,
         .view_height=height,.view_angles=control.view_angles};return true;
 }
@@ -102,7 +98,7 @@ static bool client(void *context,qa_actor_id actor,application_bot_world_client 
     qa_q1_source_client_view actual;
     *found=qa_q1_source_client_read(binding->source->state.q1,actor,&actual);
     if(!*found) return true;
-    int32_t score;if(!integer(actual.frags,&score,error)) return false;
+    int32_t score=qa_number_to_i32(actual.frags);
     qa_application *app=binding->bots->application;
     application_provider *appearance=application_provider_for(app,actor,QA_ROLE_SKIN,NULL);
     if(!actual.name || !appearance || !appearance->launch)
@@ -117,8 +113,9 @@ static bool combat(void *context,qa_actor_id actor,application_bot_world_combat 
     qa_combat_state state;qa_error local={0};
     *found=qa_combat_read(binding->bots->application->combat,actor,&state,&local);
     if(!*found) {if(local.code!=QA_ERROR_NOT_FOUND) {if(error) *error=local;return false;}return true;}
-    return integer(state.health,&out->health,error) &&
-        integer(state.armor.regular.kind==QA_ARMOR_NONE?0:state.armor.regular.points,&out->armor,error);
+    out->health=qa_number_to_i32(state.health);
+    out->armor=qa_number_to_i32(state.armor.regular.kind==QA_ARMOR_NONE?0:state.armor.regular.points);
+    return true;
 }
 static bool brush(void *context,qa_actor_id actor,bool *out,qa_error *error) {
     application_bot_world_binding *binding=context;
@@ -139,11 +136,7 @@ static qa_actor_id world_actor(void *context) {
     return qa_q2_bot_world_actor(binding->source->state.q2);
 }
 static int32_t milliseconds(double seconds) {
-    if(!isfinite(seconds)) return 0;
-    double reduced=fmod(trunc(seconds*1000.0),4294967296.0);
-    if(reduced<0) reduced+=4294967296.0;
-    uint32_t bits=(uint32_t)reduced;int32_t result;
-    memcpy(&result,&bits,sizeof(result));return result;
+    return qa_number_to_i32(seconds*1000.0);
 }
 static bool clock(void *context,int32_t *time,int32_t *intermission,qa_error *error) {
     application_bot_world_binding *binding=context;

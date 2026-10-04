@@ -564,7 +564,7 @@ static bool tools_saved_fields(qa_source_save_io *io, frontend_tools_saved *save
         qa_source_save_u64(io, &saved->files) && saved->files && saved->settings != saved->files &&
         qa_source_save_u64(io, &saved->private_mount) && saved->private_mount &&
         qa_source_save_u64(io, &saved->output_mount) && saved->output_mount &&
-        frontend_save_text(io, &saved->output_root) && saved->output_root &&
+        qa_source_save_owned_text(io, &saved->output_root) && saved->output_root &&
         qa_source_save_u64(io, &saved->configuration) && qa_source_save_u64(io, &saved->map_revision) &&
         qa_source_save_f32(io, &saved->debug_width) && isfinite(saved->debug_width) && saved->debug_width > 0 &&
         qa_source_save_f64(io, &saved->profiler_anchor) && isfinite(saved->profiler_anchor) &&

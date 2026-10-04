@@ -4,6 +4,15 @@
 #include "qa/persistence_slots.h"
 typedef struct frontend_cinematic_captions frontend_cinematic_captions;
 typedef struct frontend_shared_ui frontend_shared_ui;
+typedef struct frontend_caption_collection {
+    qa_arena *arena;
+    qa_active_caption *values;
+    size_t count;
+    qa_error *error;
+    bool failed;
+} frontend_caption_collection;
+void frontend_caption_count(void *,const qa_active_caption *);
+void frontend_caption_collect(void *,const qa_active_caption *);
 typedef struct frontend_ui_seat_features {
     qa_sound_captions *captions;
     qa_localization *localization;

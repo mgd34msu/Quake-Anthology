@@ -3,6 +3,7 @@
 #include "qa/game_q2_bots.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q3_bots.h"
+#include "qa/text.h"
 #include <limits.h>
 #include <math.h>
 #include <string.h>
@@ -10,13 +11,6 @@
 static double count(application_bots *bots,qa_actor_id actor,qa_item_id item) {
     qa_inventory_entry entry;
     return item && qa_inventory_entry_read(bots->application->inventory,actor,item,&entry,NULL)?entry.count:0;
-}
-static int32_t integer(double value) {
-    if(!isfinite(value) || value==0) return 0;
-    double reduced=fmod(trunc(value),4294967296.0);
-    if(reduced<0) reduced+=4294967296.0;
-    uint32_t bits=(uint32_t)reduced;int32_t result;
-    memcpy(&result,&bits,sizeof(result));return result;
 }
 static float q2_spread(float endpoint,float range,float degrees) {
     float angular=range>0?atanf(endpoint/range)*(180.0f/3.14159265358979323846f):0;
@@ -79,11 +73,11 @@ static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *e
             qa_bot_weapon_knowledge *value=&bots->knowledge[bots->knowledge_count++];
             *value=(qa_bot_weapon_knowledge){.weapon={.valid=true,.number=source+1,
                 .weapon_inventory=65+source,.ammo_inventory=97+source,
-                .ammo_amount=integer(view.ammo_per_shot),.projectile_count=(int32_t)view.shots,
+                .ammo_amount=qa_number_to_i32(view.ammo_per_shot),.projectile_count=(int32_t)view.shots,
                 .reload=view.fire_interval,.speed=view.speed,.extra_z_velocity=view.extra_z_velocity,
                 .horizontal_spread=(float)(atan(view.horizontal_spread)*(180.0/3.14159265358979323846)/6),
                 .vertical_spread=(float)(atan(view.vertical_spread)*(180.0/3.14159265358979323846)/6)},
-                .projectile={.damage=integer(view.damage),.radius=view.blast_radius,
+                .projectile={.damage=qa_number_to_i32(view.damage),.radius=view.blast_radius,
                     .gravity=view.gravity,.detonation=view.lifetime,
                     .damage_type=1|(view.blast_radius>0?2:0)},
                 .selected_projectile_damage=view.damage,.selected_splash_damage=view.blast_damage,
@@ -116,12 +110,12 @@ static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *e
             qa_bot_weapon_knowledge *value=&bots->knowledge[bots->knowledge_count++];
             *value=(qa_bot_weapon_knowledge){.weapon={.valid=true,.number=(int32_t)ordinal+1,
                 .weapon_inventory=(int32_t)ordinal+65,.ammo_inventory=(int32_t)ordinal+97,
-                .ammo_amount=integer(fact.required_ammo),.projectile_count=(int32_t)fact.shots,
+                .ammo_amount=qa_number_to_i32(fact.required_ammo),.projectile_count=(int32_t)fact.shots,
                 .reload=fact.cycle,.activate=fact.activate,.spin_up=fact.spin_up,
                 .speed=fact.speed,.extra_z_velocity=fact.extra_z_velocity,.offset=fact.offset,
                 .horizontal_spread=q2_spread(fact.spread_x,fact.range,fact.spread_degrees_x),
                 .vertical_spread=q2_spread(fact.spread_y,fact.range,fact.spread_degrees_y)},
-                .projectile={.damage=integer(fact.damage),.radius=fact.radius,
+                .projectile={.damage=qa_number_to_i32(fact.damage),.radius=fact.radius,
                     .gravity=fact.ballistic?1:0,.detonation=fact.fuse,
                     .damage_type=1|(fact.radius>0?2:0)},
                 .selected_projectile_damage=fact.damage,.selected_splash_damage=fact.splash_damage,
@@ -171,9 +165,9 @@ bool application_bot_inventory(application_bots *bots,qa_actor_id actor,const qa
         if(!qa_bot_inventory_write(inventory,index,0,error)) return false;
     qa_combat_state combat;
     bool present=qa_combat_read(bots->application->combat,actor,&combat,NULL);
-    if(!qa_bot_inventory_write(inventory,QA_BOT_INV_HEALTH,present?integer(combat.health):0,error) ||
+    if(!qa_bot_inventory_write(inventory,QA_BOT_INV_HEALTH,present?qa_number_to_i32(combat.health):0,error) ||
        !qa_bot_inventory_write(inventory,QA_BOT_INV_ARMOR,
-           present && combat.armor.regular.kind!=QA_ARMOR_NONE?integer(combat.armor.regular.points):0,error)) return false;
+           present && combat.armor.regular.kind!=QA_ARMOR_NONE?qa_number_to_i32(combat.armor.regular.points):0,error)) return false;
     if(provider->kind==APPLICATION_PROVIDER_Q1) {
         double time,started;bool intermission;
         if(!qa_q1_bot_clock_read(provider->state.q1,&time,&intermission,&started,error)) return false;
@@ -185,7 +179,7 @@ bool application_bot_inventory(application_bots *bots,qa_actor_id actor,const qa
             if(!covered) continue;
             if(!qa_q1_bot_weapon_usable(provider->state.q1,actor,(qa_q1_weapon)source,&usable,error)) return false;
             if(!qa_bot_inventory_write(inventory,65+source,usable,error) ||
-               !qa_bot_inventory_write(inventory,97+source,integer(count(bots,actor,ammo)),error)) return false;
+               !qa_bot_inventory_write(inventory,97+source,qa_number_to_i32(count(bots,actor,ammo)),error)) return false;
         }
     } else if(provider->kind==APPLICATION_PROVIDER_Q2) {
         uint32_t registered_count;
@@ -197,7 +191,7 @@ bool application_bot_inventory(application_bots *bots,qa_actor_id actor,const qa
             if(!qa_q2_bot_weapon_read(provider->state.q2,actor,definition->weapon,&fact,&found,error)) return false;
             if(!found) continue;
             if(!qa_bot_inventory_write(inventory,(int32_t)(65+ordinal),fact.owned,error) ||
-               !qa_bot_inventory_write(inventory,(int32_t)(97+ordinal),integer(count(bots,actor,fact.ammo)),error)) return false;
+               !qa_bot_inventory_write(inventory,(int32_t)(97+ordinal),qa_number_to_i32(count(bots,actor,fact.ammo)),error)) return false;
         }
     } else {
         qa_q3_product product;
@@ -221,7 +215,7 @@ bool application_bot_inventory(application_bots *bots,qa_actor_id actor,const qa
             int source=ammunition[index];
             if(source>maximum) continue;
             qa_item_id ammo=qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)source,true);
-            if(!qa_bot_inventory_write(inventory,ammo_indices[source],integer(count(bots,actor,ammo)),error)) return false;
+            if(!qa_bot_inventory_write(inventory,ammo_indices[source],qa_number_to_i32(count(bots,actor,ammo)),error)) return false;
         }
     }
     return true;

@@ -254,18 +254,11 @@ bool frontend_ui_features_content_visit(const qa_frontend *f,
         if (!qa_sound_captions_views_visit(f->ui_features->seats[i].captions, visitor->view, visitor->context, error)) return false;
     return frontend_ui_cinematic_content_visit(f,visitor,error);
 }
-typedef struct caption_collection {
-    qa_arena *arena;
-    qa_active_caption *values;
-    size_t count;
-    qa_error *error;
-    bool failed;
-} caption_collection;
-static void count_caption(void *context, const qa_active_caption *caption)
-{ caption_collection *collection = context; (void)caption; ++collection->count; }
-static void collect_caption(void *context, const qa_active_caption *caption)
+void frontend_caption_count(void *context, const qa_active_caption *caption)
+{ frontend_caption_collection *collection = context; (void)caption; ++collection->count; }
+void frontend_caption_collect(void *context, const qa_active_caption *caption)
 {
-    caption_collection *collection = context;
+    frontend_caption_collection *collection = context;
     if (collection->failed) return;
     qa_active_caption value = *caption;
     size_t text_size = strlen(caption->text) + 1, speaker_size = caption->speaker ? strlen(caption->speaker) + 1 : 0;
@@ -286,12 +279,12 @@ bool frontend_ui_features_captions(frontend_seat *seat, const qa_active_caption 
     uint64_t frame = qa_audio_engine_clock(seat->frontend->audio);
     if (frame > INT64_MAX) return frontend_fail(error, QA_ERROR_FORMAT, "Caption delivery clock exceeds source range");
     qa_caption_preferences enabled = {.sound_captions = true, .subtitles = true, .speakers = true};
-    caption_collection collection = {.arena = &seat->frontend->frame.storage, .error = error};
-    if (!qa_sound_captions_visit(state->captions, (int64_t)frame, enabled, count_caption, &collection, error)) return false;
+    frontend_caption_collection collection = {.arena = &seat->frontend->frame.storage, .error = error};
+    if (!qa_sound_captions_visit(state->captions, (int64_t)frame, enabled, frontend_caption_count, &collection, error)) return false;
     if (collection.count > SIZE_MAX / sizeof(qa_active_caption)) return frontend_fail(error, QA_ERROR_MEMORY, "Active captions exceed memory extent");
     collection.values = collection.count ? qa_arena_alloc(collection.arena, collection.count * sizeof(*collection.values), _Alignof(qa_active_caption), error) : NULL;
     if (collection.count && !collection.values) return false;
     collection.count = 0;
-    if (!qa_sound_captions_visit(state->captions, (int64_t)frame, enabled, collect_caption, &collection, error) || collection.failed) return false;
+    if (!qa_sound_captions_visit(state->captions, (int64_t)frame, enabled, frontend_caption_collect, &collection, error) || collection.failed) return false;
     *out = collection.values; *count = collection.count; return true;
 }

@@ -768,7 +768,7 @@ static bool native_q2_plan_fields(qa_source_save_io *io, qa_strings *strings, na
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     char *owner = !reading ? (char *)qa_strings_cstr(strings, plan->owner) : NULL;
-    if ((!reading && (!plan->owner || !owner || !*owner)) || !frontend_save_text(io, &owner)) return false;
+    if ((!reading && (!plan->owner || !owner || !*owner)) || !qa_source_save_owned_text(io, &owner)) return false;
     if (reading) {
         plan->owner = owner ? qa_strings_find(strings, (qa_bytes){(const uint8_t *)owner, strlen(owner)}) : 0;
         free(owner);

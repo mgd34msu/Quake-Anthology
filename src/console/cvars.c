@@ -720,6 +720,18 @@ const qa_cvar_view *qa_cvars_at(const qa_cvars *registry, size_t ordinal)
     return NULL;
 }
 
+const qa_cvar_view *qa_cvars_next(const qa_cvars *registry, const qa_cvar_view *previous)
+{
+    if (!registry) return NULL;
+    const cvar *entry = registry->values.first;
+    if (previous) {
+        entry = find_variable(registry, previous->name);
+        if (!entry || &entry->view != previous) return NULL;
+        entry = entry->next;
+    }
+    return entry ? &entry->view : NULL;
+}
+
 const qa_cvar_view *qa_cvars_handle(const qa_cvars *registry, size_t handle)
 {
     if (registry == NULL) return NULL;

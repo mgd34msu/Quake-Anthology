@@ -913,7 +913,7 @@ static bool record_fields(qa_source_save_io *io, frontend_unified_q2_rr_hud *o,
     if (!document_fields(io,&r->document,QA_UNIFIED_CHECKPOINT)) return false;
     if (!r->document) return true;
     if (read && !parse(o,r->document,qa_unified_document_root(r->document),true,true,r,io->error)) return false;
-    if (!frontend_save_text(io,&r->localized) || !frontend_save_text(io,&r->secondary_localized)) return false;
+    if (!qa_source_save_owned_text(io,&r->localized) || !qa_source_save_owned_text(io,&r->secondary_localized)) return false;
     bool image=r->image!=NULL;
     if (!qa_source_save_bool(io,&image)) return false;
     if (image) {
@@ -958,7 +958,7 @@ static bool fields(qa_source_save_io *io, frontend_unified_q2_rr_hud *o, const f
         if (read) { *tail=calloc(1,sizeof(**tail));
             if (!*tail) return frontend_unified_fail(io->error,QA_ERROR_MEMORY,"Restoring RR retirement ownership"); }
         rr_retired *item=*tail;
-        if (!frontend_save_text(io,&item->provider) || !item->provider || !*item->provider ||
+        if (!qa_source_save_owned_text(io,&item->provider) || !item->provider || !*item->provider ||
             !qa_source_save_u64(io,&item->generation) || !item->generation) return false;
         for (rr_retired *prior=o->retired; prior!=item; prior=prior->next)
             if (prior->generation==item->generation && !strcmp(prior->provider,item->provider)) return false;

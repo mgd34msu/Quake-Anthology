@@ -103,9 +103,9 @@ static bool acquisition_fields(qa_source_save_io *io, qa_vfs_acquisition *receip
 {
     return qa_source_save_u64(io, &receipt->mount) && receipt->mount &&
         qa_source_save_u64(io, &receipt->resource_id) && receipt->resource_id &&
-        frontend_save_text(io, &receipt->path) && receipt->path && *receipt->path &&
-        frontend_save_text(io, &receipt->lookup_path) && receipt->lookup_path && *receipt->lookup_path &&
-        frontend_save_text(io, &receipt->link_source) && frontend_save_text(io, &receipt->link_target) &&
+        qa_source_save_owned_text(io, &receipt->path) && receipt->path && *receipt->path &&
+        qa_source_save_owned_text(io, &receipt->lookup_path) && receipt->lookup_path && *receipt->lookup_path &&
+        qa_source_save_owned_text(io, &receipt->link_source) && qa_source_save_owned_text(io, &receipt->link_target) &&
         (!!receipt->link_source == !!receipt->link_target);
 }
 static bool resource_fields(qa_source_save_io *io, qa_application_content_graph *graph,
@@ -154,7 +154,7 @@ static bool selection_fields(qa_source_save_io *io, qa_application_content_graph
     const char *fields[] = {selection->definition, selection->model, selection->skin, selection->head_model, selection->head_skin};
     for (unsigned i = 0; i < 5; ++i) {
         char *text = io->direction == QA_SOURCE_SAVE_WRITE ? (char *)fields[i] : NULL;
-        bool okay = frontend_save_text(io, &text) && text && !strcmp(text, fields[i]);
+        bool okay = qa_source_save_owned_text(io, &text) && text && !strcmp(text, fields[i]);
         if (io->direction == QA_SOURCE_SAVE_READ) free(text);
         if (!okay) return false;
     }

@@ -95,12 +95,12 @@ static bool fields(qa_source_save_io *io, frontend_nq_host *host)
     }
     for (size_t i = 0; i < 256; ++i) {
         nq_status_cache *v = host->board + i;
-        if (!frontend_save_text(io, &v->name) || !qa_source_save_i32(io, &v->frags) || !qa_source_save_f32(io, &v->source_frags) ||
+        if (!qa_source_save_owned_text(io, &v->name) || !qa_source_save_i32(io, &v->frags) || !qa_source_save_f32(io, &v->source_frags) ||
             !qa_source_save_u8(io, &v->colors) || !qa_source_save_bool(io, &v->present)) return false;
     }
     for (size_t i = 0; i < 256; ++i)
-        if (!frontend_save_text(io, host->published_names + i)) return false;
-    for (size_t i = 0; i < 64; ++i) if (!frontend_save_text(io, host->styles + i)) return false;
+        if (!qa_source_save_owned_text(io, host->published_names + i)) return false;
+    for (size_t i = 0; i < 64; ++i) if (!qa_source_save_owned_text(io, host->styles + i)) return false;
     return true;
 }
 static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_error *error)

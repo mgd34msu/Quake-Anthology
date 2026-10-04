@@ -25,7 +25,7 @@ static bool key(qa_source_save_io *io, qa_strings *strings, uint64_t *owner)
         (char *)qa_strings_cstr(strings, (qa_string_id)*owner) : NULL;
     if (io->direction == QA_SOURCE_SAVE_WRITE && (!*owner || !text))
         return frontend_fail(io->error, QA_ERROR_FORMAT, "frontend service lacks its actual foundation key");
-    if (!frontend_save_text(io, &text)) return false;
+    if (!qa_source_save_owned_text(io, &text)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) {
         *owner = text ? qa_strings_find(strings, (qa_bytes){(const uint8_t *)text, strlen(text)}) : 0;
         free(text);

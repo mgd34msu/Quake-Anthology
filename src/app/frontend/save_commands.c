@@ -223,7 +223,7 @@ static bool root_fields(qa_source_save_io *io, frontend_save_commands *owner)
         && kind == QA_FS_DIRECTORY;
     uint64_t volume = identity.words[0], object = identity.words[1];
     if (io->direction == QA_SOURCE_SAVE_WRITE) saved = actual;
-    ok = ok && frontend_save_text(io, &saved)
+    ok = ok && qa_source_save_owned_text(io, &saved)
         && qa_source_save_u64(io, &volume) && qa_source_save_u64(io, &object);
     if (ok && io->direction == QA_SOURCE_SAVE_READ)
         ok = saved && !strcmp(saved, actual) && volume == identity.words[0] && object == identity.words[1];
@@ -245,8 +245,8 @@ static bool fields(qa_source_save_io *io, frontend_save_commands *owner)
     uint32_t format = request->format;
     ok = qa_source_save_bool(io, &request->load) && qa_source_save_u32(io, &format)
         && format <= SAVE_Q1_V6 && (!request->load || format == SAVE_SHARED)
-        && frontend_save_text(io, &request->name) && request->name && qa_save_slot_name(request->name, io->error)
-        && !strncmp(request->name, "saves/", 6) && frontend_save_text(io, &request->product)
+        && qa_source_save_owned_text(io, &request->name) && request->name && qa_save_slot_name(request->name, io->error)
+        && !strncmp(request->name, "saves/", 6) && qa_source_save_owned_text(io, &request->product)
         && (!request->product || (request->load && *request->product))
         && frontend_save_command_context(io, &request->context, &request->script, registry);
     if (ok) request->format = (save_command_format)format;

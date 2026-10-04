@@ -131,6 +131,10 @@ bool qa_cvars_name_valid(qa_console_dialect dialect, const char *name);
  * registry during notification. Host work can be queued through the console. */
 const qa_cvar_view *qa_cvars_find(const qa_cvars *registry, const char *name);
 const qa_cvar_view *qa_cvars_at(const qa_cvars *registry, size_t ordinal);
+/* Iterates physical rows in ordinal order; NULL starts the registry. Previous
+ * must be an exact borrowed live row from this registry, valid until mutation.
+ * Alias projections and rows from another registry are not physical cursors. */
+const qa_cvar_view *qa_cvars_next(const qa_cvars *registry, const qa_cvar_view *previous);
 const qa_cvar_view *qa_cvars_handle(const qa_cvars *registry, size_t handle);
 size_t qa_cvars_count(const qa_cvars *registry);
 size_t qa_cvars_handle_count(const qa_cvars *registry);

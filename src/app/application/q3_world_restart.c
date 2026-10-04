@@ -394,8 +394,8 @@ static bool capture_cvars(application_q3_world_restart_state *state, qa_error *e
     qa_cvars *resolved = qa_cvars_create(&options, error);
     if (!resolved) return false;
     bool okay = true;
-    for (size_t i = 0; okay && i < count; ++i) {
-        const qa_cvar_view *view = qa_cvars_at(source, i);
+    const qa_cvar_view *view = qa_cvars_next(source, NULL);
+    for (size_t i = 0; okay && i < count; ++i, view = qa_cvars_next(source, view)) {
         if (!view || !view->name || !view->value || !view->reset_value ||
             (state->native && view->owner != state->source->owner && view->owner != 0)) {
             okay = application_fail(error, QA_ERROR_ARGUMENT,

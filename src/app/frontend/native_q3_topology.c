@@ -75,9 +75,9 @@ static bool acquisition_fields(qa_source_save_io *io,qa_vfs_acquisition *a)
 {
     return qa_source_save_u64(io,&a->mount) && a->mount &&
         qa_source_save_u64(io,&a->resource_id) && a->resource_id &&
-        frontend_save_text(io,&a->path) && a->path && *a->path &&
-        frontend_save_text(io,&a->lookup_path) && a->lookup_path && *a->lookup_path &&
-        frontend_save_text(io,&a->link_source) && frontend_save_text(io,&a->link_target) &&
+        qa_source_save_owned_text(io,&a->path) && a->path && *a->path &&
+        qa_source_save_owned_text(io,&a->lookup_path) && a->lookup_path && *a->lookup_path &&
+        qa_source_save_owned_text(io,&a->link_source) && qa_source_save_owned_text(io,&a->link_target) &&
         ((a->link_source!=NULL)==(a->link_target!=NULL));
 }
 static bool recipe_fields(qa_source_save_io *io,native_plan *row)
@@ -91,10 +91,10 @@ static bool recipe_fields(qa_source_save_io *io,native_plan *row)
     uint32_t runtime=p->runtime;
     if(!qa_source_save_u64(io,&catalog) || !catalog || !qa_source_save_u64(io,&view) || !view ||
         !qa_source_save_u32(io,&p->product) || !p->product ||
-        !frontend_save_text(io,(char **)&p->instance) || !p->instance || !*p->instance ||
+        !qa_source_save_owned_text(io,(char **)&p->instance) || !p->instance || !*p->instance ||
         !qa_source_save_u32(io,&runtime) || runtime!=QA_PROGRAM_BUILTIN ||
-        !frontend_save_text(io,(char **)&p->implementation) ||
-        !frontend_save_text(io,(char **)&p->artifact) || !frontend_save_text(io,(char **)&p->component) ||
+        !qa_source_save_owned_text(io,(char **)&p->implementation) ||
+        !qa_source_save_owned_text(io,(char **)&p->artifact) || !qa_source_save_owned_text(io,(char **)&p->component) ||
         !clock_fields(io,&p->clock) || !bytes_fields(io,&p->options,true) ||
         !qa_source_save_u64(io,&row->roles) || !row->roles || (row->roles>>QA_ROLE_COUNT) ||
         !(row->roles&QA_ROLE_BIT(QA_ROLE_ENTITIES)) ||
@@ -125,7 +125,7 @@ static bool recipe_fields(qa_source_save_io *io,native_plan *row)
     for(size_t i=0;i<recipe->interface_count;++i) {
         qa_launch_resource *r=(qa_launch_resource *)recipe->interfaces+i;
         if(!qa_source_save_u32(io,&r->product) || !qa_catalog_product(recipe->catalog,r->product) ||
-            !frontend_save_text(io,(char **)&r->path) || !r->path || !*r->path ||
+            !qa_source_save_owned_text(io,(char **)&r->path) || !r->path || !*r->path ||
             !resource_fields(io,graph,&r->resource) || !r->resource ||
             qa_resource_pool_find(pool,qa_resource_id(r->resource))!=r->resource) return false;
     }
@@ -137,7 +137,7 @@ static bool recipe_fields(qa_source_save_io *io,native_plan *row)
     }
     for(size_t i=0;i<recipe->behavior_count;++i) {
         char *id=reading?NULL:(char *)(recipe->behaviors[i]?recipe->behaviors[i]->id:NULL);
-        bool ok=frontend_save_text(io,&id) && id && *id;
+        bool ok=qa_source_save_owned_text(io,&id) && id && *id;
         const qa_catalog_weapon_behavior *behavior=ok?qa_catalog_weapon_behavior_find(recipe->catalog,p->product,id):NULL;
         if(reading) { free(id); ((const qa_catalog_weapon_behavior **)recipe->behaviors)[i]=behavior; }
         if(!ok || !behavior || behavior!=recipe->behaviors[i]) return false;

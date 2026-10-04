@@ -267,6 +267,15 @@ bool frontend_input_settings_read(const frontend_input_settings *owner,
 }
 static void proofs(const frontend_input_settings *owner,const qa_input_release *out[QA_INPUT_LOCAL_SEATS])
 { for (unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) out[slot]=owner->release[slot]; }
+static void finish_releases(frontend_input_settings *owner,bool retired)
+{
+    for (unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) if (owner->release[slot]) {
+        if (retired) qa_input_release_retirement_publish(owner->release[slot]);
+        else qa_input_release_publish(owner->release[slot]);
+        owner->release[slot]=NULL;
+    }
+    owner->terminal=true;
+}
 bool frontend_input_settings_window_stage(frontend_input_settings *owner,
     qa_display_surface_ticket *surface,qa_error *error)
 {
@@ -347,10 +356,7 @@ bool frontend_input_settings_ready_is(const frontend_input_settings *owner)
 void frontend_input_settings_publish(frontend_input_settings *owner)
 {
     qa_input_platform_settings_publish(owner->native);
-    for (unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) if (owner->release[slot]) {
-        qa_input_release_publish(owner->release[slot]); owner->release[slot]=NULL;
-    }
-    owner->terminal=true;
+    finish_releases(owner,false);
 }
 bool frontend_input_settings_abort(frontend_input_settings *owner,qa_error *error)
 {
@@ -384,12 +390,8 @@ bool frontend_input_settings_retire_entered(frontend_input_settings *owner,qa_er
     owner->aborting=true;
     const qa_input_release *release[QA_INPUT_LOCAL_SEATS]; proofs(owner,release);
     bool ok=qa_input_platform_settings_retire_entered(owner->native,release,error);
-    if (qa_input_platform_settings_result(owner->native)==QA_INPUT_PLATFORM_SETTINGS_RETIRED) {
-        for (unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) if (owner->release[slot]) {
-            qa_input_release_publish(owner->release[slot]); owner->release[slot]=NULL;
-        }
-        owner->terminal=true;
-    }
+    if (qa_input_platform_settings_result(owner->native)==QA_INPUT_PLATFORM_SETTINGS_RETIRED)
+        finish_releases(owner,false);
     if (!ok) retain_failure(owner,error);
     return ok;
 }
@@ -404,10 +406,7 @@ bool frontend_input_settings_abort_empty(frontend_input_settings *owner,qa_error
     bool ok=qa_input_platform_settings_retire_entered_empty(owner->native,release,error);
     if (qa_input_platform_settings_result(owner->native)==QA_INPUT_PLATFORM_SETTINGS_RETIRED) {
         owner->aborting=true;
-        for (unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) if (owner->release[slot]) {
-            qa_input_release_publish(owner->release[slot]); owner->release[slot]=NULL;
-        }
-        owner->terminal=true;
+        finish_releases(owner,false);
     }
     if (!ok) retain_failure(owner,error);
     return ok;
@@ -483,10 +482,7 @@ bool frontend_input_settings_engine_shutdown(frontend_input_settings *owner,
         qa_input_platform_settings_abort(owner->native,error));
     qa_input_platform_settings_outcome result=qa_input_platform_settings_result(owner->native);
     if (!owner->native || result==QA_INPUT_PLATFORM_SETTINGS_ABORTED || result==QA_INPUT_PLATFORM_SETTINGS_RETIRED) {
-        for (unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) if (owner->release[slot]) {
-            qa_input_release_retirement_publish(owner->release[slot]); owner->release[slot]=NULL;
-        }
-        owner->terminal=true; *complete=true;
+        finish_releases(owner,true); *complete=true;
     }
     if (!ok) retain_failure(owner,error);
     return ok;
@@ -508,12 +504,8 @@ bool frontend_input_settings_retire_actor(frontend_input_settings *owner,qa_erro
             QA_CONSOLE_RELEASE_RETIRED_ACTOR,retirement,owner,error):
         qa_input_platform_settings_abort(owner->native,error));
     qa_input_platform_settings_outcome result=qa_input_platform_settings_result(owner->native);
-    if (!owner->native || result==QA_INPUT_PLATFORM_SETTINGS_ABORTED || result==QA_INPUT_PLATFORM_SETTINGS_RETIRED) {
-        for (unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) if (owner->release[slot]) {
-            qa_input_release_retirement_publish(owner->release[slot]); owner->release[slot]=NULL;
-        }
-        owner->terminal=true;
-    }
+    if (!owner->native || result==QA_INPUT_PLATFORM_SETTINGS_ABORTED || result==QA_INPUT_PLATFORM_SETTINGS_RETIRED)
+        finish_releases(owner,true);
     if (!ok) retain_failure(owner,error);
     return ok;
 }
@@ -536,12 +528,8 @@ bool frontend_input_settings_retire_source(frontend_input_settings *owner,qa_app
         const qa_input_release *release[QA_INPUT_LOCAL_SEATS]; proofs(owner,release);
         bool ok=qa_input_platform_settings_retire_entered_disposition(owner->native,release,
             QA_CONSOLE_RELEASE_DETACHED_SOURCE,retirement,owner,error);
-        if (qa_input_platform_settings_result(owner->native)==QA_INPUT_PLATFORM_SETTINGS_RETIRED) {
-            for (unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) if (owner->release[slot]) {
-                qa_input_release_retirement_publish(owner->release[slot]); owner->release[slot]=NULL;
-            }
-            owner->terminal=true;
-        }
+        if (qa_input_platform_settings_result(owner->native)==QA_INPUT_PLATFORM_SETTINGS_RETIRED)
+            finish_releases(owner,true);
         if (!ok) retain_failure(owner,error);
         return ok;
     }

@@ -879,8 +879,8 @@ bool application_native_q1_console_create(application_provider *provider,
     qa_cvars *cvars = application_native_q1_console_registry(provider);
     bool cloned;
     bool okay = clone_source(provider, cvars, &cloned, error);
-    for (size_t i = 0; okay && !cloned && i < qa_cvars_count(provider->application->cvars); ++i) {
-        const qa_cvar_view *startup = qa_cvars_at(provider->application->cvars, i);
+    for (const qa_cvar_view *startup = qa_cvars_next(provider->application->cvars, NULL);
+         okay && !cloned && startup; startup = qa_cvars_next(provider->application->cvars, startup)) {
         if (!startup || (startup->owner && startup->owner != provider->owner) ||
             (!startup->console_created && !(startup->flags & QA_CVAR_ARCHIVE) && startup->owner != provider->owner)) continue;
         okay = qa_cvars_register(cvars, startup->name,
@@ -942,8 +942,8 @@ bool application_native_q1_console_create(application_provider *provider,
         if (okay && fresh_info) {
             /* QW SV_InitLocal publishes VERSION (bothdefs.h: 2.40). */
             info_set(owner, owner->serverinfo, 512, "*version", "2.40", true);
-            for (size_t i = 0; i < qa_cvars_count(cvars); ++i) {
-                const qa_cvar_view *variable = qa_cvars_at(cvars, i);
+            for (const qa_cvar_view *variable = qa_cvars_next(cvars, NULL); variable;
+                 variable = qa_cvars_next(cvars, variable)) {
                 bool standard = false;
                 for (size_t n = 0; n < sizeof(info_names) / sizeof(*info_names); ++n)
                     if (!strcmp(variable->name, info_names[n])) standard = true;

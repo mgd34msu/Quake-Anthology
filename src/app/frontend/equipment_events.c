@@ -181,7 +181,7 @@ static bool namespace_fields(qa_source_save_io *io, equipment_namespace *source)
         !qa_source_save_string(io, &source->selected) || !source->selected ||
         !qa_source_save_string(io, &source->service) || !source->service) return false;
     for (size_t i = 0; i < 1024; ++i)
-        if (!frontend_save_text(io, &source->configstrings[i])) return false;
+        if (!qa_source_save_owned_text(io, &source->configstrings[i])) return false;
     return true;
 }
 static bool saved_current(const frontend_equipment_events *owner, qa_error *error)

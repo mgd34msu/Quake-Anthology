@@ -11,10 +11,11 @@ static bool span(qa_source_save_io *io,qa_arena *arena,qa_bytes *value)
     size_t size=value->size;
     if(!qa_source_save_count(io,&size,SIZE_MAX)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ) {
-        if(size>io->input.size-io->offset) return fail(io,"Truncated global precompiler bytes");
-        char *bytes=script_string(arena,io->input.data+io->offset,size,io->error);
+        qa_bytes input;
+        if(!qa_source_save_span(io,size,&input)) return false;
+        char *bytes=script_string(arena,input.data,size,io->error);
         if(!bytes) {io->failed=true;return false;}
-        *value=(qa_bytes){(uint8_t *)bytes,size};io->offset+=size;return true;
+        *value=(qa_bytes){(uint8_t *)bytes,size};return true;
     }
     return qa_source_save_bytes(io,(void *)value->data,size);
 }

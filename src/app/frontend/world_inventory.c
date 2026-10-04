@@ -662,7 +662,7 @@ static bool policy_fields(qa_source_save_io *io,world_policy *policy)
         !qa_source_save_f32(io,&o->subdivisions) || !qa_source_save_f32(io,&o->q1_water_alpha) ||
         !qa_source_save_f32(io,&o->q2_light_modulate) || !qa_source_save_u32(io,&o->q3_overbright) ||
         !qa_source_save_u32(io,&encoding) || !qa_source_save_bool(io,&o->has_external_entities) ||
-        !frontend_save_text(io,&policy->sky)) return false;
+        !qa_source_save_owned_text(io,&policy->sky)) return false;
     image->family=(qa_scene_family)family; image->wrap=(qa_scene_wrap)wrap;
     image->filter=(qa_scene_filter)filter; image->usage=(qa_scene_image_usage)usage;
     image->transparent_index=transparent_index; o->q1_lightmap_encoding=(qa_scene_q1_lightmap_encoding)encoding;
@@ -701,7 +701,7 @@ static bool rows_fields(qa_source_save_io *io,frontend_world_inventory *inventor
         model_row *row=inventory->models_roots+i; qa_scene_resources *images=NULL; qa_material_library *materials=NULL;
         if (!owner_fields(io,&row->view.owner,false) || !heap_fields(io,inventory,&row->heap,&row->pool,&row->resource,
             &row->view.source.files,&images,&materials,&row->view.source.resource) || !qa_source_save_u64(io,&row->model) ||
-            !frontend_save_text(io,&row->path) ||
+            !qa_source_save_owned_text(io,&row->path) ||
             ((row->view.owner.kind==FRONTEND_SCENE_OWNER_VISUAL ||
               row->view.owner.kind==FRONTEND_SCENE_OWNER_REMOTE_Q1 ||
               row->view.owner.kind==FRONTEND_SCENE_OWNER_REMOTE_Q2 ||

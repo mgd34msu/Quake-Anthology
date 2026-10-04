@@ -224,8 +224,8 @@ static bool register_engine(struct application_guest_q3_console *owner,
     };
     application_provider *provider = owner->engine->provider;
     qa_cvars *startup = provider->application->cvars;
-    for (size_t i = 0; i < qa_cvars_count(startup); ++i) {
-        const qa_cvar_view *value = qa_cvars_at(startup, i);
+    for (const qa_cvar_view *value = qa_cvars_next(startup, NULL); value;
+         value = qa_cvars_next(startup, value)) {
         if (value->owner || named(value->name, "sv_cheats") || named(value->name, "mapname") ||
             named(value->name, "sv_mapname") || named(value->name, "com_prereleaseDemo") ||
             named(value->name, "com_prereleaseTeamArenaDemo") || named(value->name, "fs_restrict")) continue;

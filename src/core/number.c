@@ -50,6 +50,36 @@ static bool ready(qa_error *error) {
     return true;
 }
 
+int32_t qa_number_to_i32(double value) {
+    if (!isfinite(value) || value == 0.0)
+        return 0;
+    double reduced = fmod(trunc(value), 4294967296.0);
+    if (reduced < 0.0)
+        reduced += 4294967296.0;
+    uint32_t bits = (uint32_t)reduced;
+    int32_t result;
+    memcpy(&result, &bits, sizeof(result));
+    return result;
+}
+
+size_t qa_format_q3_integer(int32_t value, char out[12]) {
+    unsigned char reversed[11];
+    size_t count = 0;
+    uint32_t bits = value < 0 ? 0u - (uint32_t)value : (uint32_t)value;
+    int32_t remaining;
+    memcpy(&remaining, &bits, sizeof(remaining));
+    do {
+        reversed[count++] = (unsigned char)(48 + remaining % 10);
+        remaining /= 10;
+    } while (remaining);
+    if (value < 0)
+        reversed[count++] = '-';
+    for (size_t index = 0; index < count; ++index)
+        out[index] = (char)reversed[count - index - 1];
+    out[count] = 0;
+    return count;
+}
+
 bool qa_format_number(double value, char out[32], qa_error *error) {
     if (!out || !isfinite(value)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "cannot serialize nonfinite number");

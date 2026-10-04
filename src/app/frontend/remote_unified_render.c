@@ -610,7 +610,7 @@ static bool render_model_fields(frontend_unified_render *r,unified_render_model 
     }
     bool okay=qa_source_save_u32(io,&actor.slot) && qa_source_save_u64(io,&actor.generation) &&
         qa_source_save_u64(io,&binding) && qa_source_save_bool(io,&is_inline) &&
-        qa_source_save_u32(io,&inline_model) && frontend_save_text(io,&content) && frontend_save_text(io,&m->path) &&
+        qa_source_save_u32(io,&inline_model) && qa_source_save_owned_text(io,&content) && qa_source_save_owned_text(io,&m->path) &&
         qa_source_save_vec3(io,&m->origin) && qa_source_save_vec3(io,&m->angles) &&
         qa_source_save_vec3(io,&m->previous_origin) && qa_source_save_f32(io,&m->scale) &&
         qa_source_save_bool(io,&m->visible) && qa_source_save_bool(io,&m->has_previous_origin) &&
@@ -669,7 +669,7 @@ static bool render_fields(frontend_unified_render *r,const frontend_unified_rend
         qa_source_save_vec3(io,&r->angles) && qa_source_save_vec3(io,&r->kick) &&
         qa_source_save_f32(io,&r->height) && qa_source_save_f64(io,&r->seconds) &&
         qa_source_save_f64(io,&r->field_of_view) && qa_source_save_bool(io,&r->explicit_fov) &&
-        qa_source_save_bool(io,&r->source_view_offset) && frontend_save_text(io,&r->ammo_label);
+        qa_source_save_bool(io,&r->source_view_offset) && qa_source_save_owned_text(io,&r->ammo_label);
     for (size_t i=0;okay && i<3;++i) okay=qa_source_save_f64(io,&r->vitals[i].value) && qa_source_save_bool(io,&r->vitals[i].warning);
     size_t count=r->model_count;
     if (okay) okay=qa_source_save_count(io,&count,reading?io->input.size-io->offset:SIZE_MAX);

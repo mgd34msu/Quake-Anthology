@@ -133,6 +133,15 @@ static bool selected_bindings(qa_frontend *frontend,qa_error *error)
     }
     return true;
 }
+static bool wheel_sample(frontend_seat *seat,uint64_t time,qa_seat_input_sample *sample,qa_error *error)
+{
+    qa_hud_wheel_command wheel;
+    if (!qa_hud_wheel_update(seat->wheel,time,error) ||
+        !qa_hud_wheel_prepare(seat->wheel,sample->buttons[QA_INPUT_ATTACK].active,time,&wheel,error)) return false;
+    if (wheel.consume_attack) sample->buttons[QA_INPUT_ATTACK]=(qa_input_action_sample){0};
+    if (wheel.holster) sample->buttons[QA_INPUT_HOLSTER].active=true;
+    return true;
+}
 static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_elapsed_ns,qa_error *error)
 {
     double now=(double)frontend->wall_time_ns/1000000.0;
@@ -156,12 +165,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
                 qa_application_player_actor(frontend->application,selected_seat,&selected_actor)) {
                 qa_application_control_view selected_control;
                 if (qa_application_control_read(frontend->application,selected_actor,&selected_control)) {
-                    qa_hud_wheel_command wheel;
-                    if (!qa_hud_wheel_update(seat->wheel,frontend->time_ns,error) ||
-                        !qa_hud_wheel_prepare(seat->wheel,sample.buttons[QA_INPUT_ATTACK].active,
-                            frontend->time_ns,&wheel,error)) return false;
-                    if (wheel.consume_attack) sample.buttons[QA_INPUT_ATTACK]=(qa_input_action_sample){0};
-                    if (wheel.holster) sample.buttons[QA_INPUT_HOLSTER].active=true;
+                    if (!wheel_sample(seat,frontend->time_ns,&sample,error)) return false;
                 }
             }
             bool handled=false; uint64_t sequence=seat->sequence+1;
@@ -202,12 +206,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
                 qa_application_player_actor(frontend->application,selected_seat,&selected_actor)) {
                 qa_application_control_view selected_control;
                 if (qa_application_control_read(frontend->application,selected_actor,&selected_control)) {
-                    qa_hud_wheel_command wheel;
-                    if (!qa_hud_wheel_update(seat->wheel,frontend->time_ns,error) ||
-                        !qa_hud_wheel_prepare(seat->wheel,sample.buttons[QA_INPUT_ATTACK].active,
-                            frontend->time_ns,&wheel,error)) return false;
-                    if (wheel.consume_attack) sample.buttons[QA_INPUT_ATTACK]=(qa_input_action_sample){0};
-                    if (wheel.holster) sample.buttons[QA_INPUT_HOLSTER].active=true;
+                    if (!wheel_sample(seat,frontend->time_ns,&sample,error)) return false;
                 }
             }
             bool handled=false;
@@ -249,12 +248,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
         if (!qa_input_seat_sample(seat->input,now,wall_duration,&sample,error) ||
             !qa_input_settings_read_routed(input_settings, view_settings, kind, &tuning, error)) return false;
         if (!remote && qa_application_q1_paused(frontend->application)) continue;
-        qa_hud_wheel_command wheel;
-        if (!qa_hud_wheel_update(seat->wheel, frontend->time_ns, error) ||
-            !qa_hud_wheel_prepare(seat->wheel, sample.buttons[QA_INPUT_ATTACK].active,
-                frontend->time_ns, &wheel, error)) return false;
-        if (wheel.consume_attack) sample.buttons[QA_INPUT_ATTACK] = (qa_input_action_sample){0};
-        if (wheel.holster) sample.buttons[QA_INPUT_HOLSTER].active = true;
+        if (!wheel_sample(seat,frontend->time_ns,&sample,error)) return false;
         qa_input_command_frame frame = {.kind = kind, .sequence = ++seat->sequence,
             .server_time_ms = (int32_t)((frontend->time_ns / 1000000) & INT32_MAX),
             .sensitivity = 1, .attack_allowed = true, .grounded = state.ground.hit != QA_TRACE_HIT_NONE};

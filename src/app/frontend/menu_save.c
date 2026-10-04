@@ -44,7 +44,7 @@ static bool fields(qa_source_save_io *io, uint32_t seat, menu_state *state)
     uint32_t id = seat, kind = state->pending.kind;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QFMU", sizeof(magic)) ||
         !qa_source_save_u32(io, &id) || id != seat ||
-        !frontend_save_text(io, &state->command) ||
+        !qa_source_save_owned_text(io, &state->command) ||
         !qa_source_save_count(io, &state->binding_capacity, SIZE_MAX / sizeof(qa_ui_row)) ||
         !reservation(io,state->binding_capacity,sizeof(qa_ui_row)) ||
         !qa_source_save_count(io, &state->label_capacity, SIZE_MAX) ||

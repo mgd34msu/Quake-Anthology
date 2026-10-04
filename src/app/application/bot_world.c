@@ -1,5 +1,6 @@
 #include "bot_world.h"
 #include "../../bots/save_fields.h"
+#include "qa/text.h"
 #include <limits.h>
 #include <ctype.h>
 #include <math.h>
@@ -162,15 +163,10 @@ static double inline_index(const char *name) {
     char *end;double value=strtod(start,&end);
     return (size_t)(end-start)==length?value:NAN;
 }
-static int32_t source_i32(double value) {
-    if(!isfinite(value) || value==0.0) return 0;
-    double reduced=fmod(trunc(value),4294967296.0);if(reduced<0) reduced+=4294967296.0;
-    uint32_t bits=(uint32_t)reduced;int32_t result;memcpy(&result,&bits,sizeof(result));return result;
-}
 static bool model_index(application_bot_world *world,const char *name,int32_t *out,qa_error *error) {
     if(!name || !out) return fail(error,QA_ERROR_ARGUMENT,"shared bot model query requires actual source text");
     if(!*name) {*out=0;return true;}
-    if(*name=='*') {*out=source_i32(inline_index(name));return true;}
+    if(*name=='*') {*out=qa_number_to_i32(inline_index(name));return true;}
     for(size_t i=0;i<world->model_count;++i) if(!strcmp(world->models[i].text,name)) {
         *out=(int32_t)world->models[i].id;return true;
     }

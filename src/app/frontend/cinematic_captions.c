@@ -241,27 +241,6 @@ bool frontend_ui_cinematic_prepare(qa_frontend *f,qa_vfs *files,const char *path
     free(state->failed_language); state->failed_language=NULL;
     state->view=view; state->origin=files; state->path=saved_path; state->language=language; return true;
 }
-typedef struct caption_copy {
-    qa_arena *arena;
-    qa_active_caption *values;
-    size_t count;
-    bool failed;
-    qa_error *error;
-} caption_copy;
-static void count_caption(void *context,const qa_active_caption *value)
-{ (void)value; ++((caption_copy *)context)->count; }
-static void copy_caption(void *context,const qa_active_caption *value)
-{
-    caption_copy *copy=context;
-    if (copy->failed) return;
-    qa_active_caption active=*value;
-    size_t text_size=strlen(value->text)+1,speaker_size=value->speaker?strlen(value->speaker)+1:0;
-    char *text=qa_arena_alloc(copy->arena,text_size,1,copy->error);
-    char *speaker=speaker_size?qa_arena_alloc(copy->arena,speaker_size,1,copy->error):NULL;
-    if (!text || (speaker_size && !speaker)) { copy->failed=true; return; }
-    memcpy(text,value->text,text_size); if (speaker_size) memcpy(speaker,value->speaker,speaker_size);
-    active.text=text; active.speaker=speaker; copy->values[copy->count++]=active;
-}
 bool frontend_ui_cinematic_draw(qa_frontend *f,qa_vfs *files,const char *path,uint32_t seat,double elapsed,
     double source,uint64_t loop,qa_media_status status,qa_scene_rect viewport,qa_scene_frame *scene,qa_error *error)
 {
@@ -285,13 +264,13 @@ bool frontend_ui_cinematic_draw(qa_frontend *f,qa_vfs *files,const char *path,ui
     }
     if (!preferences.captions || viewport.width<=16 || !viewport.height) return true;
     qa_caption_preferences enabled={.subtitles=true,.sound_captions=true,.speakers=true};
-    caption_copy copy={.arena=&scene->storage,.error=error};
-    if (!qa_media_captions_visit(state->captions,path,source,status,enabled,count_caption,&copy,error)) return false;
+    frontend_caption_collection copy={.arena=&scene->storage,.error=error};
+    if (!qa_media_captions_visit(state->captions,path,source,status,enabled,frontend_caption_count,&copy,error)) return false;
     if (copy.count>SIZE_MAX/sizeof(*copy.values)) return frontend_fail(error,QA_ERROR_MEMORY,"Active subtitles overflow");
     copy.values=copy.count?qa_arena_alloc(copy.arena,copy.count*sizeof(*copy.values),_Alignof(qa_active_caption),error):NULL;
     if (copy.count && !copy.values) return false;
     copy.count=0;
-    if (!qa_media_captions_visit(state->captions,path,source,status,enabled,copy_caption,&copy,error) || copy.failed) return false;
+    if (!qa_media_captions_visit(state->captions,path,source,status,enabled,frontend_caption_collect,&copy,error) || copy.failed) return false;
     return qa_ui_captions_draw(f->seats[seat].ui,scene,viewport,
         (qa_scene_rect_f){(float)viewport.x+8,(float)viewport.y+(float)viewport.height*.65f,
             (float)viewport.width-16,(float)viewport.height*.30f},
@@ -315,8 +294,8 @@ bool frontend_ui_cinematic_fields(qa_source_save_io *io,qa_frontend *f)
         if (reading && (state->view || state->path || state->language || state->origin || state->failed_language)) return false;
         uint64_t view=reading || !state->view?0:qa_application_content_view_id(qa_application_content_graph_read(f->application),state->view);
         if ((!reading && state->view && !view) || !qa_source_save_u64(io,&view) ||
-            !frontend_save_text(io,&state->path) || !frontend_save_text(io,&state->language) ||
-            !frontend_save_text(io,&state->failed_language) ||
+            !qa_source_save_owned_text(io,&state->path) || !qa_source_save_owned_text(io,&state->language) ||
+            !qa_source_save_owned_text(io,&state->failed_language) ||
             ((view!=0)!=(state->path!=NULL)) || ((view!=0)!=(state->language!=NULL))) return false;
         if (state->failed_language) {
             if (!view || !*state->failed_language || !strcmp(state->failed_language,state->language)) return false;

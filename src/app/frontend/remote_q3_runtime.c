@@ -1345,7 +1345,7 @@ static bool codec_fields(qa_source_save_io *io,frontend_remote_q3_runtime *o)
     for(unsigned i=0;i<3;++i)if(!q3nh_vector(io,listener->axis+i))return false;
     if(!q3nh_float(io,&listener->gain) || !qa_source_save_bool(io,&listener->underwater) ||
        !qa_source_save_bool(io,&o->music_attached) || !qa_source_save_bool(io,&o->music_looping) ||
-       !frontend_save_text(io,&o->music_intro) || !frontend_save_text(io,&o->music_loop))return false;
+       !qa_source_save_owned_text(io,&o->music_intro) || !qa_source_save_owned_text(io,&o->music_loop))return false;
     if(o->has_listener && (listener->seat!=physical || listener->gain<0 ||
        (listener->actor!=QA_AUDIO_NO_ACTOR && !frontend_audio_id_read(o->frontend,listener->actor,NULL,NULL))))return false;
     return (!o->music_looping || (o->music_intro && o->music_loop)) &&

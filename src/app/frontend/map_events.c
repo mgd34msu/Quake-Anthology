@@ -194,7 +194,7 @@ static bool event_topology_fields(qa_source_save_io *io, qa_application *applica
         event_owner_plan *plan = &(*plans)[i]; uint32_t family = plan->family;
         char *key = !reading && plan->owner <= UINT32_MAX ? (char *)qa_strings_cstr(strings, (qa_string_id)plan->owner) : NULL;
         if (!reading && (!key || !plan->owner)) return false;
-        bool ok = frontend_save_text(io, &key);
+        bool ok = qa_source_save_owned_text(io, &key);
         if (reading) {
             plan->owner = key ? qa_strings_find(strings, (qa_bytes){(const uint8_t *)key, strlen(key)}) : 0;
             free(key);
@@ -1252,7 +1252,7 @@ static bool retained_asset(qa_source_save_io *io, qa_frontend *frontend, const q
         digest = *actual;
     }
     bool ok = frontend_save_sound_owner(io, frontend->application, owner, family) && *owner &&
-        frontend_save_text(io, &name) && name &&
+        qa_source_save_owned_text(io, &name) && name &&
         qa_source_save_bytes(io, digest.bytes, sizeof(digest.bytes)) && qa_source_save_u64(io, &index);
     qa_audio_asset *qualified = reading ? qa_audio_asset_inventory_at(inventory, index) : *asset;
     const frontend_event_resources *resources = frontend->events ? frontend->events->resources : NULL;
@@ -1332,7 +1332,7 @@ static bool audio_projection_fields(qa_source_save_io *io, qa_frontend *frontend
     }
     uint32_t origin_kind = sound->origin_kind, audience = sound->audience;
     if (!retained_audio_asset(io, frontend, inventory, &sound->owner, &sound->family, &sound->asset) ||
-        !frontend_save_text(io, &entry->name) || !qa_source_save_i32(io, &entry->milliseconds) ||
+        !qa_source_save_owned_text(io, &entry->name) || !qa_source_save_i32(io, &entry->milliseconds) ||
         !qa_source_save_u32(io, &origin_kind) || !qa_source_save_u32(io, &audience) ||
         !qa_source_save_vec3(io, &sound->origin) || !qa_vec_finite(sound->origin) ||
         !qa_source_save_i32(io, &sound->channel) || !qa_source_save_f32(io, &sound->volume) ||
@@ -1411,7 +1411,7 @@ static bool view_fields(qa_source_save_io *io, qa_frontend *frontend, frontend_s
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     for (unsigned i = 0; i < FRONTEND_STYLES; ++i)
-        if (!frontend_save_text(io, &view->q1_patterns[i]) || !frontend_save_text(io, &view->q2_patterns[i]) ||
+        if (!qa_source_save_owned_text(io, &view->q1_patterns[i]) || !qa_source_save_owned_text(io, &view->q2_patterns[i]) ||
             !qa_source_save_f32(io, &view->q1_styles[i]) || !isfinite(view->q1_styles[i]) ||
             !qa_source_save_vec3(io, &view->q2_styles[i]) || !qa_vec_finite(view->q2_styles[i])) return false;
     if (!q1_fog_fields(io, frontend, seat, &view->q1_fog) ||
@@ -1422,13 +1422,13 @@ static bool view_fields(qa_source_save_io *io, qa_frontend *frontend, frontend_s
         !qa_source_save_vec3(io, &view->sky_axis) || !qa_vec_finite(view->sky_axis) ||
         !qa_source_save_f32(io, &view->sky_rotation) || !isfinite(view->sky_rotation) || !qa_source_save_bool(io, &view->sky_auto)) return false;
     if (view->sky_received && !view->sky_owner) return false;
-    if ((!frontend_save_text(io, &view->sky_name) ||
+    if ((!qa_source_save_owned_text(io, &view->sky_name) ||
         (!view->sky_received && view->sky_name))) return false;
     for (unsigned i = 0; i < 6; ++i) {
         uint64_t reference = 0;
         char *name = reading ? NULL : view->sky[i] ? (char *)view->sky[i]->name : NULL;
         bool ok = (reading || !view->sky[i] || frontend_scene_image_encode(space, view->sky[i], &reference, io->error)) &&
-            qa_source_save_u64(io, &reference) && frontend_save_text(io, &name) &&
+            qa_source_save_u64(io, &reference) && qa_source_save_owned_text(io, &name) &&
             ((reference != 0) == (name != NULL)) && (view->sky_received ? reference != 0 : reference == 0);
         if (ok && reference && reading) {
             const qa_scene_image *image = NULL;

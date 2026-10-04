@@ -16,7 +16,7 @@ bool frontend_save_command_context(qa_source_save_io *io, qa_command_context *co
         && qa_source_save_u32(io, &origin) && origin <= QA_COMMAND_REMOTE
         && qa_source_save_bool(io, &context->direct) && qa_source_save_bool(io, &context->console_text)
         && qa_source_save_u64(io, &context->registry) && qa_source_save_u64(io, &context->generation)
-        && qa_source_save_actor(io, &context->actor) && frontend_save_text(io, script);
+        && qa_source_save_actor(io, &context->actor) && qa_source_save_owned_text(io, script);
     if (ok && io->direction == QA_SOURCE_SAVE_READ) {
         context->dialect = (qa_console_dialect)dialect; context->origin = (qa_command_origin)origin;
         context->script = *script;
@@ -33,7 +33,7 @@ bool frontend_save_provider(qa_source_save_io *io, qa_application *application, 
     if (io->direction == QA_SOURCE_SAVE_WRITE && *owner && !instance)
         return frontend_fail(io->error, QA_ERROR_NOT_FOUND, "presentation provider has no selected instance identity");
     char *text = (char *)instance;
-    if (!frontend_save_text(io, &text)) return false;
+    if (!qa_source_save_owned_text(io, &text)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) {
         bool resolved = !text || qa_application_provider_owner(application, text, owner);
         if (!text) *owner = 0;
@@ -61,7 +61,7 @@ bool frontend_save_sound_owner(qa_source_save_io *io, qa_application *applicatio
         qa_strings *strings = qa_session_strings(qa_application_session(application));
         char *name = !reading ? (char *)qa_strings_cstr(strings, *owner) : NULL;
         if (!reading && !name) return false;
-        bool ok = frontend_save_text(io, &name);
+        bool ok = qa_source_save_owned_text(io, &name);
         if (reading) {
             *owner = name ? qa_strings_find(strings, (qa_bytes){(const uint8_t *)name, strlen(name)}) : 0;
             free(name);
@@ -70,31 +70,6 @@ bool frontend_save_sound_owner(qa_source_save_io *io, qa_application *applicatio
             return false;
     } else *owner = 0;
     *family = (qa_audio_family)kind;
-    return true;
-}
-bool frontend_save_text(qa_source_save_io *io, char **owned)
-{
-    bool present = io->direction == QA_SOURCE_SAVE_WRITE && *owned;
-    if (!qa_source_save_bool(io, &present)) return false;
-    size_t length = present && io->direction == QA_SOURCE_SAVE_WRITE ? strlen(*owned) : 0;
-    if (present) {
-        size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? io->input.size - io->offset : SIZE_MAX - 1;
-        if (!qa_source_save_count(io, &length, maximum) || length == SIZE_MAX) return false;
-        if (io->direction == QA_SOURCE_SAVE_WRITE) return qa_source_save_bytes(io, *owned, length);
-    }
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        char *copy = NULL;
-        if (present) {
-            copy = malloc(length + 1);
-            if (!copy) return frontend_fail(io->error, QA_ERROR_MEMORY, "retaining saved presentation text");
-            if (!qa_source_save_bytes(io, copy, length)) { free(copy); return false; }
-            if (memchr(copy, 0, length)) {
-                free(copy); return frontend_fail(io->error, QA_ERROR_FORMAT, "saved presentation text contains a NUL byte");
-            }
-            copy[length] = 0;
-        }
-        free(*owned); *owned = copy;
-    }
     return true;
 }
 bool frontend_save_random(qa_source_save_io *io, qa_builtin_random *random)

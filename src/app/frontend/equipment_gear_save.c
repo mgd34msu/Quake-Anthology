@@ -14,7 +14,7 @@ static bool namespace_fields(qa_source_save_io *io, qa_actor_owner *owner)
     qa_strings *strings = qa_session_strings(io->session);
     char *name = !reading && *owner <= UINT32_MAX ? (char *)qa_strings_cstr(strings, (qa_string_id)*owner) : NULL;
     if (!reading && (!name || !*name)) return false;
-    bool okay = frontend_save_text(io, &name);
+    bool okay = qa_source_save_owned_text(io, &name);
     if (reading) {
         *owner = name ? qa_strings_find(strings, (qa_bytes){(const uint8_t *)name, strlen(name)}) : 0;
         free(name);
@@ -29,7 +29,7 @@ static bool header(qa_source_save_io *io, const char expected[4])
 static bool exact_profile(qa_source_save_io *io, const char *expected)
 {
     char *profile = io->direction == QA_SOURCE_SAVE_WRITE ? (char *)expected : NULL;
-    bool okay = frontend_save_text(io, &profile) && profile && !strcmp(profile, expected);
+    bool okay = qa_source_save_owned_text(io, &profile) && profile && !strcmp(profile, expected);
     if (io->direction == QA_SOURCE_SAVE_READ) free(profile);
     return okay;
 }
@@ -93,7 +93,7 @@ bool frontend_equipment_gear_prepare_restored(qa_frontend *frontend, qa_bytes by
         const application_q3_grapple_definition *definition = NULL; frontend_visual_owner_view content;
         okay = namespace_fields(&io, &namespace) && namespace_fields(&io, &selected) &&
             namespace_fields(&io, &service) && qa_source_save_u32(&io, &product) && product <= QA_Q3_TEAM_ARENA &&
-            frontend_save_text(&io, &profile) && profile &&
+            qa_source_save_owned_text(&io, &profile) && profile &&
             qa_source_save_count(&io, &visual, SIZE_MAX) &&
             frontend_equipment_gear_source(frontend, namespace, &source, &definition, error) &&
             source.selected_owner == selected && source.service_owner == service && !strcmp(profile, definition->id) &&

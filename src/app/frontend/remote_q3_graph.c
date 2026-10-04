@@ -34,7 +34,7 @@ static bool fields(qa_source_save_io *io,frontend_remote_q3_graph_recipe *recipe
         !qa_source_save_u64(io,&recipe->mounts) || !recipe->mounts ||
         !qa_source_save_u64(io,&recipe->roles) || !recipe->roles || (recipe->roles>>QA_ROLE_COUNT) ||
         !qa_source_save_u32(io,&recipe->product) || !recipe->product ||
-        !frontend_save_text(io,&recipe->instance) || !recipe->instance || !*recipe->instance ||
+        !qa_source_save_owned_text(io,&recipe->instance) || !recipe->instance || !*recipe->instance ||
         !qa_source_save_bytes(io,recipe->descriptor_identity.bytes,32) ||
         !qa_source_save_u64(io,&pool) || !qa_source_save_u64(io,&resource) || (!!pool!=!!resource) ||
         !blob(io,&v->portals)) return false;

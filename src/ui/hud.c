@@ -295,11 +295,6 @@ bool qa_hud_ctf_capture(qa_hud *hud, const qa_builtin_event *event,
     hud->ctf_capture_present = true;
     return true;
 }
-static uint32_t source_bits(double value) {
-    double bits = fmod(trunc(value), 4294967296.0);
-    if (bits < 0) bits += 4294967296.0;
-    return (uint32_t)bits;
-}
 static void expire(hud_message *messages, size_t *count, uint64_t now) {
     size_t retained = 0;
     for (size_t i = 0; i < *count; ++i) {
@@ -543,7 +538,8 @@ static bool ctf_draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *sce
     snprintf(row, sizeof(row), "Red %s - Blue %s", red, blue);
     qa_scene_vec4 color = {1, 1, 1, 1};
     if (!text(hud, scene, frame->safe_area, 320, 56, row, color, 1, QA_FONT_ALIGN_CENTER, error)) return false;
-    uint32_t flags = source_bits(hud->ctf_status.flags), runes = source_bits(hud->ctf_status.rune_items);
+    uint32_t flags = (uint32_t)qa_number_to_i32(hud->ctf_status.flags);
+    uint32_t runes = (uint32_t)qa_number_to_i32(hud->ctf_status.rune_items);
     snprintf(row, sizeof(row), "Red flag %s - Blue flag %s",
         flag_status(flags & 7), flag_status((flags >> 3) & 7));
     if (!text(hud, scene, frame->safe_area, 320, 72, row, color, 1, QA_FONT_ALIGN_CENTER, error)) return false;

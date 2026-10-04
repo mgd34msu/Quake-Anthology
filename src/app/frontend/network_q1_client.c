@@ -830,10 +830,10 @@ static bool controller_fields(frontend_network_q1_client *o,const frontend_remot
         !qa_source_save_u64(io,&o->now_ns) || !address_fields(io,&o->attachment.endpoint) ||
         !qa_source_save_bytes(io,o->attachment.composition.bytes,sizeof(o->attachment.composition.bytes)) ||
         !qa_source_save_u64(io,&catalog) || !qa_source_save_u64(io,&files) || !qa_source_save_u64(io,&skins) ||
-        !qa_source_save_u32(io,&o->content_product) || !frontend_save_text(io,&o->pending_allskins) ||
-        !frontend_save_text(io,&o->userinfo) || !frontend_save_text(io,&o->userinfo_pending) ||
-        !qa_source_save_count(io,&o->userinfo_next,1024) || !frontend_save_text(io,&o->signon_name) ||
-        !frontend_save_text(io,&o->spawn_parameters) || !qa_source_save_u8(io,&o->signon_color) ||
+        !qa_source_save_u32(io,&o->content_product) || !qa_source_save_owned_text(io,&o->pending_allskins) ||
+        !qa_source_save_owned_text(io,&o->userinfo) || !qa_source_save_owned_text(io,&o->userinfo_pending) ||
+        !qa_source_save_count(io,&o->userinfo_next,1024) || !qa_source_save_owned_text(io,&o->signon_name) ||
+        !qa_source_save_owned_text(io,&o->spawn_parameters) || !qa_source_save_u8(io,&o->signon_color) ||
         !qa_source_save_bytes(io,o->reason,sizeof(o->reason)) || !memchr(o->reason,0,sizeof(o->reason)) ||
         !qa_source_save_u64(io,&o->input_sequence) || !qa_source_save_u64(io,&o->input_sample) ||
         !qa_source_save_bool(io,&o->input_center)) return false;

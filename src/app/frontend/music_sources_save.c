@@ -18,7 +18,7 @@ static bool world_fields(qa_source_save_io *io, qa_application_content_graph *gr
             !qa_application_content_resource_id(graph, world->map, &pool, &resource)) return false;
         identity = instance->identity;
     }
-    bool ok = frontend_save_text(io, &world->instance) && world->instance && *world->instance &&
+    bool ok = qa_source_save_owned_text(io, &world->instance) && world->instance && *world->instance &&
         frontend_save_provider(io, owner->application, &world->provider) &&
         qa_source_save_u64(io, &world->map_revision) && qa_source_save_u64(io, &pool) && pool &&
         qa_source_save_u64(io, &resource) && resource && qa_source_save_bytes(io, &identity, sizeof(identity));
@@ -52,9 +52,9 @@ static bool origin_fields(qa_source_save_io *io, frontend_music_sources *owner) 
         qa_source_save_u32(io, &kind) && kind <= FRONTEND_MUSIC_COMPONENT &&
         qa_source_save_bool(io, &owner->origin_recipe) && (!owner->origin_recipe || kind == FRONTEND_MUSIC_COMPONENT || kind == FRONTEND_MUSIC_REMOTE) &&
         qa_source_save_u32(io, &origin->physical_seat) && origin->physical_seat < owner->frontend->options.seats &&
-        frontend_save_text(io, &receiver) && receiver && *receiver &&
-        frontend_save_text(io, &instance) && instance && *instance &&
-        frontend_save_text(io, &key) && key && *key && qa_source_save_bytes(io, &identity, sizeof(identity));
+        qa_source_save_owned_text(io, &receiver) && receiver && *receiver &&
+        qa_source_save_owned_text(io, &instance) && instance && *instance &&
+        qa_source_save_owned_text(io, &key) && key && *key && qa_source_save_bytes(io, &identity, sizeof(identity));
     if (reading) {
         if (ok) {
             origin->kind = (frontend_music_origin_kind)kind;
@@ -87,7 +87,7 @@ static bool command_fields(qa_source_save_io *io, frontend_music_command *comman
     }
     size_t size = 0;
     for (size_t i = 0; ok && i < command->argc; ++i) {
-        ok = frontend_save_text(io, command->argv + i) && command->argv[i];
+        ok = qa_source_save_owned_text(io, command->argv + i) && command->argv[i];
         if (ok) { size_t n = strlen(command->argv[i]); ok = n < 9216 - size; if (ok) size += n + 1; }
     }
     return ok && (!strcmp(command->argv[0], "music") || !strcmp(command->argv[0], "cd"));
@@ -100,7 +100,7 @@ static bool fields(qa_source_save_io *io, qa_application_content_graph *graph, c
     uint64_t catalog = reading ? 0 : qa_application_content_catalog_id(graph, owner->menu_catalog);
     const qa_product *selected = !reading && owner->menu_product ? qa_catalog_product(owner->menu_catalog, owner->menu_product) : NULL;
     char *key = selected ? (char *)selected->key : NULL;
-    if (ok) ok = qa_source_save_u64(io, &catalog) && catalog && frontend_save_text(io, &key);
+    if (ok) ok = qa_source_save_u64(io, &catalog) && catalog && qa_source_save_owned_text(io, &key);
     if (reading && ok) {
         ok = qa_application_content_retain_catalog(graph, catalog, &owner->menu_catalog, io->error) &&
             owner->menu_catalog == qa_application_catalog(owner->application);

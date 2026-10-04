@@ -126,13 +126,12 @@ static bool collect(qa_frontend *frontend, font_owner **out, size_t *count, qa_e
     }
     *out=owners; return true;
 }
-bool frontend_font_encode(void *context, const qa_font *font, uint64_t *out, qa_error *error)
+static bool font_encode(const font_owner *owners, size_t count, const qa_font *font,
+    uint64_t *out, qa_error *error)
 {
-    qa_frontend *frontend=context;
     if (!out) return frontend_fail(error,QA_ERROR_ARGUMENT,"Font encoder output is absent");
     if (!font) { *out=0; return true; }
-    font_owner *owners=NULL; size_t count=0; uint64_t key=0;
-    bool ok=collect(frontend,&owners,&count,error), found=false;
+    uint64_t key=0; bool ok=true, found=false;
     for (size_t i=0;ok && i<count && !found;++i) {
         size_t fonts=qa_font_library_record_count(owners[i].library);
         if (fonts>UINT64_MAX-key) { ok=false; break; }
@@ -141,25 +140,42 @@ bool frontend_font_encode(void *context, const qa_font *font, uint64_t *out, qa_
         }
         if (!found) key+=fonts;
     }
-    free(owners);
     if (!ok || !found) return frontend_fail(error,QA_ERROR_FORMAT,"Font reference is outside its actual library inventory");
     *out=key; return true;
 }
-bool frontend_font_decode(void *context, uint64_t key, const qa_font **out, qa_error *error)
+static bool font_decode(const font_owner *owners, size_t count, uint64_t key,
+    const qa_font **out, qa_error *error)
 {
-    qa_frontend *frontend=context;
     if (!out) return frontend_fail(error,QA_ERROR_ARGUMENT,"Font decoder output is absent");
     if (!key) { *out=NULL; return true; }
-    font_owner *owners=NULL; size_t count=0;
-    bool ok=collect(frontend,&owners,&count,error); const qa_font *font=NULL;
-    for (size_t i=0;ok && i<count;++i) {
+    const qa_font *font=NULL;
+    for (size_t i=0;i<count;++i) {
         size_t fonts=qa_font_library_record_count(owners[i].library);
         if (key<=fonts) { font=qa_font_library_record_at(owners[i].library,(size_t)key-1); break; }
         key-=fonts;
     }
-    free(owners);
-    if (!ok || !font) return frontend_fail(error,QA_ERROR_FORMAT,"Saved font row is absent from restored actual libraries");
+    if (!font) return frontend_fail(error,QA_ERROR_FORMAT,"Saved font row is absent from restored actual libraries");
     *out=font; return true;
+}
+bool frontend_font_encode(void *context, const qa_font *font, uint64_t *out, qa_error *error)
+{
+    if (!out) return frontend_fail(error,QA_ERROR_ARGUMENT,"Font encoder output is absent");
+    if (!font) { *out=0; return true; }
+    font_owner *owners=NULL; size_t count=0;
+    bool ok=collect(context,&owners,&count,error);
+    if (ok) ok=font_encode(owners,count,font,out,error);
+    else frontend_fail(error,QA_ERROR_FORMAT,"Font reference is outside its actual library inventory");
+    free(owners); return ok;
+}
+bool frontend_font_decode(void *context, uint64_t key, const qa_font **out, qa_error *error)
+{
+    if (!out) return frontend_fail(error,QA_ERROR_ARGUMENT,"Font decoder output is absent");
+    if (!key) { *out=NULL; return true; }
+    font_owner *owners=NULL; size_t count=0;
+    bool ok=collect(context,&owners,&count,error);
+    if (ok) ok=font_decode(owners,count,key,out,error);
+    else frontend_fail(error,QA_ERROR_FORMAT,"Saved font row is absent from restored actual libraries");
+    free(owners); return ok;
 }
 static bool image_encode(void *context, const qa_scene_image *image, uint64_t *out, qa_error *error)
 { return frontend_scene_image_encode(((font_scope *)context)->space,image,out,error); }
@@ -220,22 +236,22 @@ static bool fields(qa_source_save_io *io, qa_frontend *frontend, frontend_scene_
     }
     uint64_t classic=0, primary=0;
     if (!reading && (!root_font(frontend->fonts,frontend->classic) || !root_font(frontend->fonts,frontend->primary))) return false;
-    if (!reading && (!frontend_font_encode(frontend,frontend->classic,&classic,io->error) ||
-        !frontend_font_encode(frontend,frontend->primary,&primary,io->error))) return false;
+    if (!reading && (!font_encode(owners,count,frontend->classic,&classic,io->error) ||
+        !font_encode(owners,count,frontend->primary,&primary,io->error))) return false;
     if (!qa_source_save_u64(io,&classic) || !qa_source_save_u64(io,&primary) ||
         (frontend->fonts!=NULL)!=(classic!=0) || (frontend->fonts!=NULL)!=(primary!=0)) return false;
-    if (reading && (!frontend_font_decode(frontend,classic,&frontend->classic,io->error) ||
-        !frontend_font_decode(frontend,primary,&frontend->primary,io->error))) return false;
+    if (reading && (!font_decode(owners,count,classic,&frontend->classic,io->error) ||
+        !font_decode(owners,count,primary,&frontend->primary,io->error))) return false;
     if (!root_font(frontend->fonts,frontend->classic) || !root_font(frontend->fonts,frontend->primary) || !frontend->ui_features) return false;
     frontend_ui_features *features=frontend->ui_features;
     uint64_t bold=0,console=0;
     if (!reading && (!root_font(frontend->fonts,features->bold) ||
         (features->console && !root_font(frontend->fonts,features->console)) ||
-        !frontend_font_encode(frontend,features->bold,&bold,io->error) ||
-        !frontend_font_encode(frontend,features->console,&console,io->error))) return false;
+        !font_encode(owners,count,features->bold,&bold,io->error) ||
+        !font_encode(owners,count,features->console,&console,io->error))) return false;
     if (!qa_source_save_u64(io,&bold) || !qa_source_save_u64(io,&console) || (frontend->fonts!=NULL)!=(bold!=0)) return false;
-    if (reading && (!frontend_font_decode(frontend,bold,&features->bold,io->error) ||
-        !frontend_font_decode(frontend,console,&features->console,io->error))) return false;
+    if (reading && (!font_decode(owners,count,bold,&features->bold,io->error) ||
+        !font_decode(owners,count,console,&features->console,io->error))) return false;
     size_t fallbacks=features->fallback_count,capacity=features->fallback_capacity;
     if (!qa_source_save_count(io,&fallbacks,SIZE_MAX/sizeof(*features->fallbacks)) ||
         !qa_source_save_count(io,&capacity,SIZE_MAX/sizeof(*features->fallbacks)) || capacity<fallbacks) return false;
@@ -249,9 +265,9 @@ static bool fields(qa_source_save_io *io, qa_frontend *frontend, frontend_scene_
     if (fallbacks && !features->fallbacks) return false;
     for (size_t i=0;i<fallbacks;++i) {
         uint64_t key=0;
-        if (!reading && !frontend_font_encode(frontend,features->fallbacks[i],&key,io->error)) return false;
+        if (!reading && !font_encode(owners,count,features->fallbacks[i],&key,io->error)) return false;
         if (!qa_source_save_u64(io,&key) || !key) return false;
-        if (reading && !frontend_font_decode(frontend,key,features->fallbacks+i,io->error)) return false;
+        if (reading && !font_decode(owners,count,key,features->fallbacks+i,io->error)) return false;
         if (!root_font(frontend->fonts,features->fallbacks[i])) return false;
         for (size_t j=0;j<i;++j) if (features->fallbacks[j]==features->fallbacks[i]) return false;
         if (reading) ++features->fallback_count;

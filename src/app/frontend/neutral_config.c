@@ -383,8 +383,8 @@ static bool initialize(void *context,const qa_launch_instance *selected,qa_cvars
     if (count>SIZE_MAX/sizeof(qa_cvar_archive_entry)) return fail(e,QA_ERROR_MEMORY,"Canonical archive exceeds storage");
     row->shared_archive.entries=calloc(count?count:1,sizeof(qa_cvar_archive_entry));
     if (!row->shared_archive.entries) return fail(e,QA_ERROR_MEMORY,"Retaining the actual canonical archive");
-    for (size_t i=0;i<count;++i) {
-        const qa_cvar_view *value=qa_cvars_at(engine,i);
+    for (const qa_cvar_view *value=qa_cvars_next(engine,NULL);value;
+         value=qa_cvars_next(engine,value)) {
         const char *archived=qa_cvars_archive_value(engine,value);
         if (!archived) continue;
         qa_cvar_archive_entry *entry=row->shared_archive.entries+row->shared_archive.count++;
@@ -1221,7 +1221,7 @@ static bool row_fields(frontend_neutral_config *row,qa_source_save_io *io,
     char *name=writing?(char *)held->selection.instance:NULL;
     qa_sha256_digest identity=writing?held->identity:(qa_sha256_digest){0};
     uint32_t dialect=row->dialect,movement=row->kind,logical=writing?row->command.seat:0;
-    bool ok=frontend_save_text(io,&name) && name && *name &&
+    bool ok=qa_source_save_owned_text(io,&name) && name && *name &&
         qa_source_save_bytes(io,&identity,sizeof(identity)) && qa_source_save_u32(io,&dialect) && dialect<=QA_CONSOLE_Q3 &&
         qa_source_save_u32(io,&movement) && movement<=QA_MOVEMENT_Q3 && qa_source_save_u32(io,&logical) &&
         qa_source_save_u32(io,&row->physical_seat) && row->physical_seat<row->owner->frontend->options.seats &&

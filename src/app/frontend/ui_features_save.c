@@ -46,7 +46,7 @@ static bool save_fields(qa_source_save_io *io, frontend_ui_seat_features *seat)
     if (count && (!seat->saves.entries || !seat->save_qualification)) return false;
     for (size_t i = 0; i < count; ++i) {
         qa_save_slot_entry *entry = seat->saves.entries + i; uint32_t format=entry->format;
-        if (!frontend_save_text(io, &entry->name) || !entry->name || strncmp(entry->name, "saves/", 6) ||
+        if (!qa_source_save_owned_text(io, &entry->name) || !entry->name || strncmp(entry->name, "saves/", 6) ||
             !qa_save_slot_name(entry->name, io->error) || (i && strcmp(seat->saves.entries[i - 1].name, entry->name) >= 0) ||
             !qa_source_save_u32(io,&format) || format>QA_SAVE_SLOT_Q1_V6) return false;
         if (reading) entry->format=(qa_save_slot_format)format;
@@ -60,10 +60,10 @@ static bool save_fields(qa_source_save_io *io, frontend_ui_seat_features *seat)
             if (reading) entry->metadata.purpose=(qa_save_purpose)purpose;
         } else {
             qa_q1_save_slot_metadata *source=&entry->source;
-            if (!frontend_save_text(io,&source->comment) || !frontend_save_text(io,&source->map) ||
-                !frontend_save_text(io,&source->game_directories) || !frontend_save_text(io,&source->world_message) ||
-                !frontend_save_text(io,&source->killed_monsters) || !frontend_save_text(io,&source->total_monsters) ||
-                !frontend_save_text(io,&source->found_secrets) || !frontend_save_text(io,&source->total_secrets) ||
+            if (!qa_source_save_owned_text(io,&source->comment) || !qa_source_save_owned_text(io,&source->map) ||
+                !qa_source_save_owned_text(io,&source->game_directories) || !qa_source_save_owned_text(io,&source->world_message) ||
+                !qa_source_save_owned_text(io,&source->killed_monsters) || !qa_source_save_owned_text(io,&source->total_monsters) ||
+                !qa_source_save_owned_text(io,&source->found_secrets) || !qa_source_save_owned_text(io,&source->total_secrets) ||
                 !qa_source_save_f64(io,&source->time) || !isfinite(source->time) ||
                 !qa_source_save_i32(io,&source->skill) || !qa_source_save_count(io,&source->entity_count,SIZE_MAX) ||
                 !qa_source_save_bool(io,&source->player_record_present)) return false;
@@ -74,7 +74,7 @@ static bool save_fields(qa_source_save_io *io, frontend_ui_seat_features *seat)
     }
     if (!qa_source_save_count(io,&seat->selected_save,SIZE_MAX) ||
         (!count?seat->selected_save!=0:seat->selected_save>=count) || !qa_source_save_u64(io,&seat->save_revision) ||
-        !frontend_save_text(io,&seat->save_name) || !fixed_text(io,seat->save_error,sizeof(seat->save_error)) ||
+        !qa_source_save_owned_text(io,&seat->save_name) || !fixed_text(io,seat->save_error,sizeof(seat->save_error)) ||
         !qa_source_save_bool(io,&seat->overwrite)) return false;
     size_t choices=seat->save_product_count;
     if (!qa_source_save_count(io,&choices,reading?(io->input.size-io->offset)/10:SIZE_MAX/sizeof(char *)) ||
@@ -89,7 +89,7 @@ static bool save_fields(qa_source_save_io *io, frontend_ui_seat_features *seat)
     }
     if (choices && (!seat->save_product_keys || !seat->save_product_labels)) return false;
     for (size_t i=0;i<choices;++i) {
-        if (!frontend_save_text(io,seat->save_product_keys+i) || !frontend_save_text(io,seat->save_product_labels+i) ||
+        if (!qa_source_save_owned_text(io,seat->save_product_keys+i) || !qa_source_save_owned_text(io,seat->save_product_labels+i) ||
             !seat->save_product_labels[i] || !*seat->save_product_labels[i] ||
             (!i?seat->save_product_keys[i]!=NULL:(!seat->save_product_keys[i] || !*seat->save_product_keys[i]))) return false;
         for (size_t j=1;j<i;++j) if (!strcmp(seat->save_product_keys[j],seat->save_product_keys[i])) return false;
@@ -101,7 +101,7 @@ static bool campaign_fields(qa_source_save_io *io,qa_frontend *f,frontend_ui_sea
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     (void)f;
-    if (!frontend_save_text(io,&seat->campaign_instance) || !frontend_save_text(io,&seat->shown_instance) ||
+    if (!qa_source_save_owned_text(io,&seat->campaign_instance) || !qa_source_save_owned_text(io,&seat->shown_instance) ||
         !qa_source_save_u64(io,&seat->campaign_generation) || !qa_source_save_u64(io,&seat->shown_generation) ||
         !qa_source_save_u64(io,&seat->shown_map_revision) || !qa_source_save_u64(io,&seat->shown_command_generation) ||
         !qa_source_save_i32(io,&seat->shown_intermission) || !qa_source_save_i32(io,&seat->campaign_level) ||
@@ -144,11 +144,11 @@ static bool fields(qa_source_save_io *io, qa_frontend *f, const qa_audio_asset_i
     if (!refs.context) return false;
     for (unsigned i = 0; !dedicated && i < seats; ++i) {
         frontend_ui_seat_features *seat = owner->seats + i;
-        if (!seat->captions || !frontend_save_text(io, &seat->accessibility_language) ||
+        if (!seat->captions || !qa_source_save_owned_text(io, &seat->accessibility_language) ||
             !save_fields(io, seat) || !campaign_fields(io,f,seat)) return false;
         uint64_t catalog=0;
         if (!reading && !qa_localization_pool_catalog_key(owner->catalogs,seat->localization,&catalog)) return false;
-        if (!frontend_save_text(io,&seat->language) || !qa_source_save_u64(io,&catalog) ||
+        if (!qa_source_save_owned_text(io,&seat->language) || !qa_source_save_u64(io,&catalog) ||
             ((seat->language!=NULL)!=(catalog!=0))) return false;
         if (reading) {
             seat->localization=qa_localization_pool_catalog(owner->catalogs,catalog);
