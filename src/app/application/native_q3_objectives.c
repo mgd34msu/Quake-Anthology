@@ -727,6 +727,14 @@ bool application_native_q3_objective_drop(void *opaque, qa_actor_id actor, qa_er
 
 bool application_native_q3_source_flags_cleared(void *opaque, qa_actor_id actor, qa_error *error)
 {
+    application_provider *provider = opaque;
+    qa_mode_id mode;
+    bool found;
+    if (!application_native_q3_source_mode(provider, &mode, &found, error)) return false;
+    if (!found) {
+        uint32_t slot;
+        return qa_q3_native_client_slot(provider->state.q3, actor, &slot, error);
+    }
     objective_call call;
     if (!primary(opaque, &call, error)) return false;
     mode_q3_objective_services source;

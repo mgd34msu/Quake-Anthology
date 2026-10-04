@@ -84,9 +84,6 @@ bool application_native_q3_source_mode(application_provider *provider, qa_mode_i
         *found = true;
         return true;
     }
-    if (!application_native_q3_source_entered(provider))
-        return application_fail(error, QA_ERROR_ARGUMENT,
-            "Supplemental Q3 mode requires its actual entered Source operation");
     qa_mode_id selected = {0};
     bool admitted = false;
     for (size_t i = 0; i < app->mode_count; ++i) {
