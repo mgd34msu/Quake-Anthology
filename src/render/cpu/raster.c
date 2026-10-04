@@ -460,21 +460,34 @@ static size_t clip_polygon(const cpu_vertex input[3], const qa_scene_view *view,
        ++plane) {
     unsigned destination = source ^ 1;
     size_t produced = 0;
+    bool changed = false;
     const cpu_vertex *previous = &work[source][count - 1];
     double previous_distance = distance(previous, plane, view);
     for (size_t i = 0; i < count; ++i) {
       const cpu_vertex *current = &work[source][i];
       double current_distance = distance(current, plane, view);
-      if ((current_distance >= 0) != (previous_distance >= 0))
+      if ((current_distance >= 0) != (previous_distance >= 0)) {
+        if (!changed) {
+          memcpy(work[destination], work[source], produced * sizeof(*input));
+          changed = true;
+        }
         work[destination][produced++] = intersection(
             previous, current, previous_distance, current_distance, plane);
-      if (current_distance >= 0)
-        work[destination][produced++] = *current;
+      }
+      if (current_distance >= 0) {
+        if (changed) work[destination][produced] = *current;
+        ++produced;
+      } else if (!changed) {
+        memcpy(work[destination], work[source], produced * sizeof(*input));
+        changed = true;
+      }
       previous = current;
       previous_distance = current_distance;
     }
-    count = produced;
-    source = destination;
+    if (changed) {
+      count = produced;
+      source = destination;
+    }
   }
   size_t produced = 0;
   for (size_t i = 0; i < count; ++i)
