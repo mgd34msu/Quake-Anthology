@@ -22,19 +22,11 @@ typedef struct q3p_name {
     bool option, generated;
     char name[];
 } q3p_name;
-typedef struct q3p_opening_order {
-    qa_mount_id *mounts;
-    size_t count;
-    char *prefix;
-    bool user_overlay;
-} q3p_opening_order;
 typedef struct q3p_model {
     qa_resource *resource;
     qa_resource *lod_resources[3];
     char *first_requested_path;
     qa_vfs_acquisition opening, lod_openings[3];
-    int64_t opening_rank, lod_opening_ranks[3];
-    q3p_opening_order opening_order, lod_opening_orders[3];
     const qa_model *sources[3];
     qa_q3_asset_model_lease source_leases[3];
     qa_q3_presentation_provider provider;
@@ -51,8 +43,6 @@ typedef struct q3p_model {
     qa_scene_model *source_md4_scene;
     qa_resource *source_md4_resource;
     qa_vfs_acquisition source_md4_opening;
-    int64_t source_md4_rank;
-    q3p_opening_order source_md4_order;
     uint64_t source_md4_scene_ordinal;
     qa_model_format source_kind;
     uint32_t source_num_lods;

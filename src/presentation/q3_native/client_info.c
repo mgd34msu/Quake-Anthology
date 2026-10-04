@@ -408,16 +408,7 @@ static bool copy_media(q3n_clients *owner, uint32_t index, q3n_client_info *ci,
     const q3n_client_info *source = &owner->clients[index];
     const q3n_animation_holder *from = &owner->holders[index];
     q3n_animation_holder next = {0};
-    /* Receipts retain the exact request, including links, rather than replaying
-     * a deduplicated resource's first path. */
-    const char *strings[] = {from->receipt.path, from->receipt.lookup_path, from->receipt.link_source, from->receipt.link_target};
-    char **targets[] = {&next.receipt.path, &next.receipt.lookup_path, &next.receipt.link_source, &next.receipt.link_target};
-    next.receipt.mount = from->receipt.mount; next.receipt.resource_id = from->receipt.resource_id;
-    for (size_t i = 0; i < 4; ++i) if (strings[i]) {
-        size_t length = strlen(strings[i]); *targets[i] = malloc(length + 1);
-        if (!*targets[i]) { q3n_animation_dispose(&next); return q3n_client_fail(error, QA_ERROR_MEMORY, "Copying native Q3 animation receipt"); }
-        memcpy(*targets[i], strings[i], length + 1);
-    }
+    if (from->resource && !qa_vfs_acquisition_copy(&from->receipt, &next.receipt, error)) return false;
     next.resource = from->resource; qa_resource_retain(next.resource);
     q3n_animation_dispose(holder); *holder = next;
     bool fixed_legs = ci->animations.fixed_legs, fixed_torso = ci->animations.fixed_torso;

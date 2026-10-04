@@ -145,6 +145,7 @@ static bool fields(qa_source_save_io *io, q3n_selected_media *o, const q3n_selec
             !qa_source_save_u64(io, &o->animation_receipt.mount) || !qa_source_save_u64(io, &o->animation_receipt.resource_id) ||
             !text(io, &o->animation_receipt.path) || !text(io, &o->animation_receipt.lookup_path) ||
             !text(io, &o->animation_receipt.link_source) || !text(io, &o->animation_receipt.link_target) ||
+            !qa_vfs_acquisition_opening_codec(io, o->animation_content, &o->animation_receipt) ||
             !animation_fields(io, &o->animation_config)) return false;
         if (io->direction == QA_SOURCE_SAVE_READ) {
             const qa_resource *resolved = NULL;

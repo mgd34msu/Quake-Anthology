@@ -99,13 +99,14 @@ bool q3n_selected_authored_prepare(q3n_selected_authored_media *owner, bool view
     if (!q3n_selected_authored_idle(owner) || !read || !out || !qa_q3_assets_idle(owner->options.assets))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Authored Q3 admission requires its actual idle observation and registry");
     if (!current(context, read, error)) return false;
-    int32_t *models = owner->options.attachment_count ?
+    bool prepare_attachments = view && !owner->view_ready;
+    int32_t *models = prepare_attachments && owner->options.attachment_count ?
         calloc(owner->options.attachment_count, sizeof(*models)) : NULL;
-    if (owner->options.attachment_count && !models)
+    if (prepare_attachments && owner->options.attachment_count && !models)
         return q3p_fail(error, QA_ERROR_MEMORY, "Preparing authored Q3 attachment handles");
     if (models) memcpy(models, owner->attachment_models, owner->options.attachment_count * sizeof(*models));
     q3n_selected_authored_media candidate = *owner;
-    candidate.attachment_models = models;
+    if (models) candidate.attachment_models = models;
     owner->busy = true; bool okay = true;
     if (!candidate.gun_ready) {
         okay = model(&candidate, candidate.gun, true, &candidate.gun_model, context, read, error);
@@ -131,7 +132,8 @@ bool q3n_selected_authored_prepare(q3n_selected_authored_media *owner, bool view
     }
     if (okay) okay = current(context, read, error);
     if (okay) {
-        free(owner->attachment_models); *owner = candidate; models = NULL;
+        if (models) free(owner->attachment_models);
+        *owner = candidate; models = NULL;
         *out = tuple(owner, view);
     }
     owner->busy = false;

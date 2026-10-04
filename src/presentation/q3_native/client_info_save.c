@@ -115,7 +115,8 @@ static bool holder_fields(qa_source_save_io *io, q3n_clients *owner,
         !qa_source_save_u64(io, &id) || !id || !qa_source_save_u64(io, &holder->receipt.mount) ||
         !qa_source_save_u64(io, &holder->receipt.resource_id) ||
         !text(io, &holder->receipt.path) || !text(io, &holder->receipt.lookup_path) ||
-        !text(io, &holder->receipt.link_source) || !text(io, &holder->receipt.link_target)) return false;
+        !text(io, &holder->receipt.link_source) || !text(io, &holder->receipt.link_target) ||
+        !qa_vfs_acquisition_opening_codec(io, owner->options.content, &holder->receipt)) return false;
     if (read) {
         const qa_resource *resource = NULL;
         if (!refs->resource_decode(refs->context, id, &resource, io->error) || !resource) return false;

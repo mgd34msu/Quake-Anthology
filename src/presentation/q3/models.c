@@ -12,7 +12,6 @@ void q3p_model_free(q3p_model *model)
     if (!model->borrowed_models) qa_model_free(&model->source_md4_model);
     qa_resource_release(model->source_md4_resource);
     qa_vfs_acquisition_dispose(&model->source_md4_opening);
-    free(model->source_md4_order.mounts); free(model->source_md4_order.prefix);
     for (unsigned i = 0; i < 3; ++i) {
         bool shared = false;
         for (unsigned j = 0; j < i; ++j) if (model->scene[i] == model->scene[j]) shared = true;
@@ -26,11 +25,9 @@ void q3p_model_free(q3p_model *model)
     } else for (unsigned i = 0; i < 3; ++i) free(model->lods.paths[i]);
     for (unsigned i = 0; i < 3; ++i) {
         qa_vfs_acquisition_dispose(&model->lod_openings[i]);
-        free(model->lod_opening_orders[i].mounts); free(model->lod_opening_orders[i].prefix);
         qa_resource_release(model->lod_resources[i]);
     }
     qa_vfs_acquisition_dispose(&model->opening); free(model->first_requested_path);
-    free(model->opening_order.mounts); free(model->opening_order.prefix);
     qa_resource_release(model->resource); free(model);
 }
 
@@ -41,12 +38,9 @@ static bool model_opening(const q3p_model *m, uint32_t slot,
     if (!m) return true;
     const qa_resource *resource = m->resource;
     const qa_vfs_acquisition *opening = resource ? &m->opening : NULL;
-    int64_t rank = m->opening_rank;
-    const q3p_opening_order *order = &m->opening_order;
     if (slot == QA_Q3_MODEL_MD4_OPENING) {
         if (!m->source_md4_resource) return true;
         resource = m->source_md4_resource; opening = &m->source_md4_opening;
-        rank = m->source_md4_rank; order = &m->source_md4_order;
     } else if (slot != QA_Q3_MODEL_PRIMARY_OPENING) {
         if (!m->has_lods) { if (slot || m->world) return true; }
         else {
@@ -58,14 +52,14 @@ static bool model_opening(const q3p_model *m, uint32_t slot,
             }
             if (m->lods.states[target] != QA_MODEL_LOD_LOADED) return true;
             resource = m->lod_resources[target]; opening = &m->lod_openings[target];
-            rank = m->lod_opening_ranks[target];
-            order = &m->lod_opening_orders[target];
         }
     }
+    const qa_vfs_read_opening *snapshot = opening ? &opening->opening : NULL;
     *out = (qa_q3_model_opening){.present = true, .first_requested_path = m->first_requested_path,
-        .provider = m->provider, .resource = resource, .receipt = opening, .rank = rank,
-        .order = order->mounts, .order_count = order->count, .prefix = order->prefix,
-        .user_overlay = order->user_overlay};
+        .provider = m->provider, .resource = resource, .receipt = opening,
+        .rank = snapshot ? snapshot->rank : 0, .order = snapshot ? snapshot->order : NULL,
+        .order_count = snapshot ? snapshot->order_count : 0, .prefix = snapshot ? snapshot->prefix : NULL,
+        .user_overlay = snapshot && snapshot->user_overlay};
     return true;
 }
 
@@ -76,28 +70,6 @@ bool qa_q3_assets_model_opening(const qa_q3_presentation_assets *a, size_t ordin
         ordinal >= a->model_count || (slot != QA_Q3_MODEL_PRIMARY_OPENING && slot > QA_Q3_MODEL_MD4_OPENING))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 model opening requires an idle or captured holder");
     return model_opening(a->models[ordinal], slot, out, error);
-}
-
-static bool opening_rank(const qa_vfs *files, const qa_vfs_acquisition *opening,
-    int64_t *out, q3p_opening_order *snapshot, qa_error *error)
-{
-    if (!files || !opening->opening_present)
-        return q3p_fail(error, QA_ERROR_FORMAT, "Q3 model acquisition lacks its actual opening snapshot");
-    const qa_vfs_read_opening *admitted = &opening->opening;
-    size_t count = admitted->order_count;
-    if (count > SIZE_MAX / sizeof(*snapshot->mounts) || (count && !admitted->order))
-        return q3p_fail(error, QA_ERROR_FORMAT, "Q3 model opening order is incomplete");
-    snapshot->mounts = count ? malloc(count * sizeof(*snapshot->mounts)) : NULL;
-    if (count && !snapshot->mounts) return q3p_fail(error, QA_ERROR_MEMORY, "Retaining Q3 model opening order");
-    snapshot->count = count; snapshot->user_overlay = admitted->user_overlay;
-    if (count) memcpy(snapshot->mounts, admitted->order, count * sizeof(*snapshot->mounts));
-    if (admitted->prefix) {
-        size_t length = strlen(admitted->prefix);
-        snapshot->prefix = length < SIZE_MAX ? malloc(length + 1) : NULL;
-        if (!snapshot->prefix) return q3p_fail(error, QA_ERROR_MEMORY, "Retaining Q3 model opening prefix");
-        memcpy(snapshot->prefix, admitted->prefix, length + 1);
-    }
-    *out = admitted->rank; return true;
 }
 
 const qa_model *q3p_model_source(const q3p_model *model, uint32_t slot)
@@ -147,10 +119,6 @@ static bool read_lod(void *context, const char *path, qa_buffer *out, qa_error *
     qa_resource *resource = NULL;
     if (!qa_vfs_acquire_receipt(reader->model->provider.mounts, path, &resource,
         &reader->model->lod_openings[slot], error)) return false;
-    if (!opening_rank(reader->model->provider.mounts, &reader->model->lod_openings[slot],
-        &reader->model->lod_opening_ranks[slot], &reader->model->lod_opening_orders[slot], error)) {
-        qa_resource_release(resource); return false;
-    }
     qa_bytes source = qa_resource_bytes(resource);
     uint8_t *copy = source.size ? malloc(source.size) : NULL;
     if (source.size && !copy) {
@@ -215,15 +183,12 @@ static bool decode(q3p_model *model, const char *path, qa_error *error)
 
 static bool source_primary(q3p_model *model, unsigned slot, qa_error *error)
 {
-    qa_vfs_acquisition opening = {0}; q3p_opening_order order = {0}; int64_t rank = 0;
-    if (!qa_vfs_acquisition_copy(&model->lod_openings[slot], &opening, error) ||
-        !opening_rank(model->provider.mounts, &opening, &rank, &order, error)) {
-        qa_vfs_acquisition_dispose(&opening); free(order.mounts); free(order.prefix); return false;
-    }
+    qa_vfs_acquisition opening = {0};
+    if (!qa_vfs_acquisition_copy(&model->lod_openings[slot], &opening, error)) return false;
     qa_resource_retain(model->lod_resources[slot]); qa_resource_release(model->resource);
-    qa_vfs_acquisition_dispose(&model->opening); free(model->opening_order.mounts); free(model->opening_order.prefix);
+    qa_vfs_acquisition_dispose(&model->opening);
     model->resource = model->lod_resources[slot]; model->opening = opening;
-    model->opening_rank = rank; model->opening_order = order; return true;
+    return true;
 }
 static bool source_model_lods(qa_q3_presentation_assets *assets, q3p_model *model,
     const char *path, qa_error *error)
@@ -255,8 +220,6 @@ static bool source_model_lods(qa_q3_presentation_assets *assets, q3p_model *mode
             if (error) *error = observed;
             return false;
         }
-        if (!opening_rank(model->provider.mounts, &model->lod_openings[slot],
-            &model->lod_opening_ranks[slot], &model->lod_opening_orders[slot], error)) return false;
         model->lods.load_order[model->lods.load_count++] = (uint32_t)slot;
         if (!model->resource && !source_primary(model, (unsigned)slot, error)) return false;
         qa_bytes bytes = qa_resource_bytes(model->lod_resources[slot]);
@@ -285,11 +248,7 @@ static bool source_model_lods(qa_q3_presentation_assets *assets, q3p_model *mode
             qa_resource_release(model->source_md4_resource);
             model->source_md4_resource = model->lod_resources[slot]; qa_resource_retain(model->source_md4_resource);
             qa_vfs_acquisition_dispose(&model->source_md4_opening);
-            free(model->source_md4_order.mounts); free(model->source_md4_order.prefix);
-            model->source_md4_order = (q3p_opening_order){0};
-            if (!qa_vfs_acquisition_copy(&model->lod_openings[slot], &model->source_md4_opening, error) ||
-                !opening_rank(model->provider.mounts, &model->source_md4_opening,
-                    &model->source_md4_rank, &model->source_md4_order, error)) return false;
+            if (!qa_vfs_acquisition_copy(&model->lod_openings[slot], &model->source_md4_opening, error)) return false;
             model->source_md4_slots[slot] = true;
         }
         /* Material admission is reached before the next file read, preserving
@@ -396,8 +355,6 @@ bool qa_q3_register_model(qa_q3_presentation_assets *a, const char *path,
         if (ok && source_lods) ok = source_model_lods(a, model, normalized, &local);
         else if (ok) ok = qa_vfs_acquire_receipt(model->provider.mounts, normalized,
             &model->resource, &model->opening, &local);
-        if (ok && !source_lods) ok = opening_rank(model->provider.mounts, &model->opening, &model->opening_rank,
-            &model->opening_order, &local);
         if (!ok && local.code == QA_ERROR_NOT_FOUND) { ok = true; q3p_model_free(model); model = NULL; }
         else if (!ok && error) *error = local;
         if (ok && model) {

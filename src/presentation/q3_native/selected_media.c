@@ -140,18 +140,6 @@ bool q3n_selected_animation_parse(qa_bytes bytes, const char *source_path,
     config.animations[36] = (qa_player_animation){16, 5, 1, 66, 66, true, false, true};
     *out = config; return true;
 }
-static bool copy_receipt(const qa_vfs_acquisition *from, qa_vfs_acquisition *out, qa_error *e)
-{
-    qa_vfs_acquisition copy = {.mount = from->mount, .resource_id = from->resource_id};
-    const char *sources[] = {from->path, from->lookup_path, from->link_source, from->link_target};
-    char **targets[] = {&copy.path, &copy.lookup_path, &copy.link_source, &copy.link_target};
-    for (unsigned i = 0; i < 4; ++i) if (sources[i]) {
-        size_t length = strlen(sources[i]) + 1; *targets[i] = malloc(length);
-        if (!*targets[i]) { qa_vfs_acquisition_dispose(&copy); return q3p_fail(e, QA_ERROR_MEMORY, "Retaining selected CHARACTER animation receipt"); }
-        memcpy(*targets[i], sources[i], length);
-    }
-    *out = copy; return true;
-}
 static bool same_text(const char *a, const char *b)
 { return a && b ? !strcmp(a, b) : a == b; }
 static bool same_receipt(const qa_vfs_acquisition *a, const qa_vfs_acquisition *b)
@@ -191,7 +179,7 @@ static bool animation(q3n_selected_media *o, const q3n_selected_media_request *r
     qa_vfs *content = character ? character->content : o->options.content;
     bool ok;
     if (character) {
-        ok = copy_receipt(character->receipt, &receipt, e);
+        ok = qa_vfs_acquisition_copy(character->receipt, &receipt, e);
         if (ok) { resource = (qa_resource *)character->resource; qa_resource_retain(resource); config = *character->config; }
     } else {
         ok = qa_vfs_acquire_receipt(content, "models/players/sarge/animation.cfg", &resource, &receipt, e) && current(r, e);

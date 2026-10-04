@@ -1126,19 +1126,16 @@ bool native_profile_refresh_entities(qa_native_instance *instance, qa_error *err
 #endif
         table.stride = (size_t)stride;
     }
-    if ((!table.base && table.capacity) || (!table.stride && table.capacity) ||
-        table.count > table.capacity || table.capacity > 1048576u)
-        return native_fail(error, QA_ERROR_FORMAT, fields,
-                           "invalid native Q2 entity table metadata");
-    instance->entities = table;
-    if (table.capacity > instance->slot_capacity) {
-        native_slot *slots = realloc(instance->slots, (size_t)table.capacity * sizeof(*slots));
-        if (!slots)
-            return native_fail(error, QA_ERROR_MEMORY, 0, "allocating native source slot bindings");
-        memset(slots + instance->slot_capacity, 0,
-               (size_t)(table.capacity - instance->slot_capacity) * sizeof(*slots));
-        instance->slots = slots;
-        instance->slot_capacity = table.capacity;
+    qa_error publication = {0};
+    if (!native_entity_table_store(instance, table, &publication)) {
+        if (publication.code == QA_ERROR_ARGUMENT)
+            return native_fail(error, QA_ERROR_FORMAT, fields,
+                               "invalid native Q2 entity table metadata");
+        if (publication.code == QA_ERROR_MEMORY)
+            return native_fail(error, QA_ERROR_MEMORY, 0,
+                               "allocating native source slot bindings");
+        if (error) *error = publication;
+        return false;
     }
     return true;
 }
