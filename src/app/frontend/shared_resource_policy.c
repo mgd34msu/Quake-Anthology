@@ -638,17 +638,47 @@ bool frontend_shared_resource_policy_prepare_children(frontend_shared_resource_p
         const qa_material_library *materials = qa_scene_model_material_owner(model->model);
         if (ok && materials) ok = qa_scene_model_image_policy_materials(model->ticket, policy_library(ticket, materials), error);
     }
-    if (ok) ok = frontend_visual_policy_prepare(f, &models, ticket->models, ticket->model_count, &ticket->visuals, error) &&
-        frontend_visual_registered_model_policy_prepare(f, &models, ticket->assets, ticket->asset_count, ticket->models, ticket->model_count, error) &&
-        frontend_native_q2_image_policy_prepare(f, ticket->banks, ticket->bank_count, &ticket->q2, error) &&
-        frontend_event_image_policy_prepare(f, ticket->banks, ticket->bank_count, &ticket->events, error) &&
-        frontend_remote_q1_sky_policy_prepare(f, ticket->banks, ticket->bank_count, &ticket->remote_q1_sky, error) &&
-        frontend_remote_q2_image_policy_prepare(f, ticket->banks, ticket->bank_count, &ticket->remote_q2_images, error) &&
-        (!ticket->sky_owner || frontend_q1_sky_policy_prepare(ticket->sky_owner, ticket->banks,
-            ticket->bank_count, &ticket->sky, error)) &&
-        scalar_current(ticket, false) && frontend_resource_inventory_current(ticket->inventory);
+    const char *failure = "Prepared resource source or canonical values changed";
+    if (ok) {
+        failure = "Prepared visual resource policy failed";
+        ok = frontend_visual_policy_prepare(f, &models, ticket->models, ticket->model_count, &ticket->visuals, error);
+    }
+    if (ok) {
+        failure = "Prepared registered-model resource policy failed";
+        ok = frontend_visual_registered_model_policy_prepare(f, &models, ticket->assets, ticket->asset_count,
+            ticket->models, ticket->model_count, error);
+    }
+    if (ok) {
+        failure = "Prepared native Q2 image policy failed";
+        ok = frontend_native_q2_image_policy_prepare(f, ticket->banks, ticket->bank_count, &ticket->q2, error);
+    }
+    if (ok) {
+        failure = "Prepared event image policy failed";
+        ok = frontend_event_image_policy_prepare(f, ticket->banks, ticket->bank_count, &ticket->events, error);
+    }
+    if (ok) {
+        failure = "Prepared remote Q1 sky policy failed";
+        ok = frontend_remote_q1_sky_policy_prepare(f, ticket->banks, ticket->bank_count, &ticket->remote_q1_sky, error);
+    }
+    if (ok) {
+        failure = "Prepared remote Q2 image policy failed";
+        ok = frontend_remote_q2_image_policy_prepare(f, ticket->banks, ticket->bank_count, &ticket->remote_q2_images, error);
+    }
+    if (ok) {
+        failure = "Prepared Q1 sky policy failed";
+        ok = !ticket->sky_owner || frontend_q1_sky_policy_prepare(ticket->sky_owner, ticket->banks,
+            ticket->bank_count, &ticket->sky, error);
+    }
+    if (ok) {
+        failure = "Prepared resource canonical values changed";
+        ok = scalar_current(ticket, false);
+    }
+    if (ok) {
+        failure = "Prepared resource owner inventory changed";
+        ok = frontend_resource_inventory_current(ticket->inventory);
+    }
     if (ok) ticket->children_prepared = true;
-    else if (error && error->code == QA_OK) policy_fail(error, "Prepared resource source or canonical values changed");
+    else if (error && error->code == QA_OK) policy_fail(error, failure);
     return ok;
 }
 bool frontend_shared_resource_policy_prepare(qa_frontend *f, const qa_launch_snapshot *candidate,
