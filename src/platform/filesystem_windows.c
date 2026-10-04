@@ -128,7 +128,7 @@ static wchar_t *full_path(const wchar_t *path, qa_error *error)
 {
     DWORD needed = GetFullPathNameW(path, 0, NULL, NULL);
     if (needed == 0 || needed == UINT32_MAX
-        || (size_t)needed > SIZE_MAX / sizeof(wchar_t) - 1) {
+        || sizeof(wchar_t) > SIZE_MAX / ((size_t)needed + 1)) {
         fail_windows(error, "cannot resolve path", "", GetLastError());
         return NULL;
     }
@@ -154,7 +154,7 @@ static wchar_t *handle_path(HANDLE handle, qa_error *error)
                                               FILE_NAME_NORMALIZED
                                               | VOLUME_NAME_DOS);
     if (needed == 0 || needed == UINT32_MAX
-        || (size_t)needed > SIZE_MAX / sizeof(wchar_t) - 1) {
+        || sizeof(wchar_t) > SIZE_MAX / ((size_t)needed + 1)) {
         fail_windows(error, "cannot resolve opened filesystem object", "",
                      GetLastError());
         return NULL;
