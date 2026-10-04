@@ -231,14 +231,13 @@ static bool string(qa_native_instance *instance, uint64_t pointer, uint32_t maxi
 static bool identity(application_q3_native_catalog *c, const application_q3_catalog_record *record,
     bool weapon, qa_item_id *out, qa_error *error)
 {
-    static const char *const names[] = {NULL,"gauntlet","machinegun","shotgun","grenadelauncher","rocketlauncher","lightning","railgun","plasmagun","bfg","grapple","nailgun","proxlauncher","chaingun"};
     size_t count;
     const qa_q3_item *known = qa_q3_items(QA_Q3_TEAM_ARENA, &count);
     const char *canonical = NULL;
     for (size_t i = 1; i < count; ++i)
         if (known[i].kind == (weapon ? QA_Q3_ITEM_WEAPON : QA_Q3_ITEM_AMMO) &&
-            !strcmp(known[i].classname, record->class_name) && known[i].tag > 0 &&
-            (size_t)known[i].tag < sizeof(names) / sizeof(*names)) canonical = names[known[i].tag];
+            !strcmp(known[i].classname, record->class_name) && known[i].tag > 0)
+            canonical = qa_q3_weapon_identity_name((qa_q3_weapon)known[i].tag);
     char digest[65]; qa_sha256_hex(&c->info.image.digest, digest);
     size_t length = strlen(record->class_name);
     if (length > SIZE_MAX - 96) return fail(error, QA_ERROR_MEMORY, "Native item identity exceeds storage");

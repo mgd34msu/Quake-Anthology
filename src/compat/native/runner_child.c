@@ -431,10 +431,8 @@ static bool child_targets_equal(qa_native_target left, qa_native_target right) {
 static void child_dependencies_free(qa_native_dependency *dependencies, size_t count) {
     if (!dependencies)
         return;
-    for (size_t index = 0; index < count; ++index) {
+    for (size_t index = 0; index < count; ++index)
         free((void *)dependencies[index].path);
-        free((void *)dependencies[index].bytes.data);
-    }
     free(dependencies);
 }
 
@@ -482,20 +480,11 @@ static bool child_load(native_child_state *state, native_wire_reader *reader,
         qa_bytes bytes;
         ok = native_wire_get_string(reader, &path, error) &&
              native_wire_get_bytes(reader, &bytes, error);
-        if (ok) {
-            uint8_t *copy = malloc(bytes.size ? bytes.size : 1u);
-            if (!copy) {
-                qa_buffer_free(&path);
-                native_fail(error, QA_ERROR_MEMORY, index,
-                            "allocating native runner dependency bytes");
-                ok = false;
-            } else {
-                if (bytes.size)
-                    memcpy(copy, bytes.data, bytes.size);
-                dependencies[index] =
-                    (qa_native_dependency){.path = (char *)path.data, .bytes = {copy, bytes.size}};
-            }
-        }
+        if (ok)
+            dependencies[index] =
+                (qa_native_dependency){.path = (char *)path.data, .bytes = bytes};
+        else
+            qa_buffer_free(&path);
     }
     if (ok)
         ok = native_wire_end(reader, error);

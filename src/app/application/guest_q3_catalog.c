@@ -188,7 +188,6 @@ static bool read_string(application_q3_catalog *c, int32_t pointer, const char *
 }
 static void records_free(application_q3_catalog_record *records, size_t count)
 { for (size_t i = 0; i < count; ++i) { free((void *)records[i].class_name); free((void *)records[i].pickup_name); } free(records); }
-static const char *const weapon_names[] = {NULL,"gauntlet","machinegun","shotgun","grenadelauncher","rocketlauncher","lightning","railgun","plasmagun","bfg","grapple","nailgun","proxlauncher","chaingun"};
 static bool item_id(application_q3_catalog *c, const application_q3_catalog_record *record, bool weapon, qa_item_id *out, qa_error *e)
 {
     if (weapon) for (size_t i = 0; i < c->selection_count; ++i)
@@ -201,8 +200,9 @@ static bool item_id(application_q3_catalog *c, const application_q3_catalog_reco
     size_t capacity = strlen(record->class_name) + 96;
     char *text = malloc(capacity);
     if (!text) return fail(e, QA_ERROR_MEMORY, "Retaining original catalog identity");
-    if (tag > 0 && (size_t)tag < sizeof(weapon_names) / sizeof(*weapon_names))
-        snprintf(text, capacity, "q3:%s/%s", weapon ? "weapon" : "ammo", weapon_names[tag]);
+    const char *canonical = qa_q3_weapon_identity_name((qa_q3_weapon)tag);
+    if (canonical)
+        snprintf(text, capacity, "q3:%s/%s", weapon ? "weapon" : "ammo", canonical);
     else snprintf(text, capacity, "q3:guest/sha256:%s/%s", digest, record->class_name);
     bool ok = qa_strings_intern_cstr(c->strings, text, out, e); free(text); return ok;
 }
@@ -382,11 +382,12 @@ bool application_q3_catalog_create(qa_qvm_image *image, qa_qvm *vm, qa_qvm_abi a
             size_t count; const qa_q3_item *stock = qa_q3_items(QA_Q3_TEAM_ARENA, &count);
             for (size_t i = 0; ok && i < c->weapon_count; ++i) {
                 uint32_t slot = (uint32_t)i + 1; char text[64];
-                snprintf(text, sizeof(text), "q3:weapon/%s", weapon_names[slot]);
+                const char *canonical = qa_q3_weapon_identity_name((qa_q3_weapon)slot);
+                snprintf(text, sizeof(text), "q3:weapon/%s", canonical);
                 application_q3_catalog_weapon *w = c->weapons + i; w->weapon = (int32_t)slot;
                 ok = qa_strings_intern_cstr(strings, text, &w->item, e);
                 if (ok && slot != 1 && slot != 10) {
-                    snprintf(text, sizeof(text), "q3:ammo/%s", weapon_names[slot]);
+                    snprintf(text, sizeof(text), "q3:ammo/%s", canonical);
                     ok = qa_strings_intern_cstr(strings, text, &w->ammo, e);
                 }
                 for (size_t j = 1; j < count; ++j)

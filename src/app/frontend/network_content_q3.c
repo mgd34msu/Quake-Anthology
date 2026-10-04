@@ -1075,18 +1075,12 @@ bool frontend_q3_content_checkpoint(const frontend_q3_content *content,
     if (ok && saved.has_map) {
         ok = qa_application_content_resource_id(graph, content->map, &saved.map_pool, &saved.map_resource) &&
             map_cut(content, content->map, &content->map_acquisition, error);
-        if (ok) {
-            const qa_vfs_acquisition *source = &content->map_acquisition;
-            saved.map_acquisition = (qa_vfs_acquisition){.mount = source->mount, .resource_id = source->resource_id,
-                .path = copy(source->path, error), .lookup_path = copy(source->lookup_path, error),
-                .link_source = copy(source->link_source, error), .link_target = copy(source->link_target, error)};
-            ok = saved.map_acquisition.path && saved.map_acquisition.lookup_path &&
-                saved.map_acquisition.link_source && saved.map_acquisition.link_target;
-        }
+        if (ok) saved.map_acquisition = content->map_acquisition;
     }
     if (ok) ok = qa_q3_pak_references_checkpoint(content->references, &saved.references, error);
     qa_source_save_io io = {0};
     if (ok) ok = qa_source_save_writer(&io, NULL, error) && saved_fields(&io, &saved) && qa_source_save_finish(&io, out);
+    saved.map_acquisition = (qa_vfs_acquisition){0};
     qa_source_save_dispose(&io); saved_dispose(&saved);
     if (!ok && (!error || error->code == QA_OK))
         fail(error, QA_ERROR_FORMAT, "Remote content continuation leaves its actual graph and source field domains");
