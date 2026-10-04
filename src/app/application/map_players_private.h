@@ -100,6 +100,8 @@ bool application_player_qw_spectator(const application_provider *, const applica
 bool application_players_native_q3_retire(qa_application *, application_provider *,
     qa_actor_id, qa_error *);
 bool application_players_bot_detach(qa_application *,qa_actor_id,qa_error *);
+bool application_players_source_disconnect(qa_application *,application_provider *,qa_actor_id,qa_error *);
+bool application_players_character_disconnect(qa_application *,application_provider *,qa_actor_id,qa_error *);
 bool application_players_component_retire(qa_application *,application_provider *,qa_actor_id,qa_error *);
 bool application_players_bot_allocate(qa_application *,const qa_launch_seat *,int32_t *,qa_error *);
 bool application_players_bot_begin(qa_application *,uint32_t,qa_error *);

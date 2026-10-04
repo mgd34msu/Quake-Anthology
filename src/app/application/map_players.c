@@ -3488,6 +3488,95 @@ bool application_player_bot(const qa_application *app, qa_actor_id actor)
     return false;
 }
 
+static bool disconnect_provider(qa_application *app,application_provider *source,
+    application_provider *provider,qa_actor_id actor,qa_error *error)
+{
+    struct application_player_roster *roster=app->players;
+    application_player_record *record=physical_player(app,roster,actor,error);
+    if(!record) return false;
+    application_provider *character=record->character;
+    if(!source||roster->map_provider!=source||source->application!=app||
+        !provider||provider->application!=app||!provider->constructed||!provider->attached||
+        provider->close_pending||(provider!=source&&provider!=character))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Player disconnect lost its actual Source or character owner");
+    uint32_t client_slot=record->client_slot,source_slot=record->source_slot;
+    uint64_t generation=app->publication_generation;
+    bool okay=true;
+    if(provider==source&&provider->kind==APPLICATION_PROVIDER_Q1) {
+        if(provider->component.clock.kind==QA_CLOCK_QUAKEWORLD&&!record->source_begin_pending)
+            okay=record->spectator?application_native_q1_spectator_disconnect(provider,actor,error):
+                application_native_q1_client_disconnect(provider,actor,error);
+    }
+    else if(provider==source&&provider->kind==APPLICATION_PROVIDER_Q3)
+        okay=application_native_q3_client_disconnect(provider,actor,error);
+    else if(provider->kind==APPLICATION_PROVIDER_Q2)
+        okay=qa_q2_player_disconnect(provider->state.q2,actor,error);
+    else if(provider->kind==APPLICATION_PROVIDER_NATIVE&&provider->state.native.q2_engine)
+        okay=application_native_q2_actor_disconnect(provider,actor,error);
+    if(!okay) return false;
+    record=physical_player(app,roster,actor,error);
+    return record&&roster->map_provider==source&&app->publication_generation==generation&&
+        record->character==character&&record->client_slot==client_slot&&record->source_slot==source_slot ? true:
+        application_fail(error,QA_ERROR_ARGUMENT,"Player disconnect changed its full actor or Source publication");
+}
+
+bool application_players_source_disconnect(qa_application *app,application_provider *source,
+    qa_actor_id actor,qa_error *error)
+{
+    if(!app||!app->players||!app->session)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Player disconnect requires its actual Source roster");
+    return disconnect_provider(app,source,source,actor,error);
+}
+
+bool application_players_character_disconnect(qa_application *app,application_provider *source,
+    qa_actor_id actor,qa_error *error)
+{
+    if(!app||!app->players||!app->session||app->players->map_provider!=source)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Character disconnect requires its actual Source roster");
+    application_player_record *record=physical_player(app,app->players,actor,error);
+    if(!record) return false;
+    return !record->character||record->character==source||
+        disconnect_provider(app,source,record->character,actor,error);
+}
+
+static bool retire_player(qa_application *app,application_provider *source,
+    qa_actor_id actor,qa_error *error)
+{
+    struct application_player_roster *roster=app->players;
+    application_player_record *found=NULL;
+    for(size_t i=0;i<roster->count;++i) {
+        application_player_record *record=roster->records+i;
+        if(!qa_actor_id_equal(record->actor,actor)) continue;
+        if(found) return application_fail(error,QA_ERROR_FORMAT,"Retiring actor has duplicate primary rows");
+        found=record;
+    }
+    if(!found) return !qa_actors_get(qa_session_actors(app->session),actor)||
+        application_fail(error,QA_ERROR_NOT_FOUND,"Retirement lost its live Source roster row");
+    uint32_t client_slot=found->client_slot,source_slot=found->source_slot;
+    application_provider *character=found->character;
+    uint64_t generation=app->publication_generation;
+    if(!application_client_declared_disconnect(app,actor,error)) return false;
+    found=physical_player(app,roster,actor,error);
+    if(!found||roster->map_provider!=source||app->publication_generation!=generation||
+        found->character!=character||found->client_slot!=client_slot||found->source_slot!=source_slot)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Declared disconnect changed its full actor or Source publication");
+    if(source->kind==APPLICATION_PROVIDER_Q1&&
+        (!application_native_q1_check_client_retire(source,actor,error)||
+         (source->component.clock.kind==QA_CLOCK_QUAKEWORLD&&
+          !application_native_q1_qw_retire_capture(source,actor,error)))) return false;
+    found->retiring=true;
+    if(qa_actors_get(qa_session_actors(app->session),actor)&&!qa_session_release(app->session,actor,error)) return false;
+    /* Release callbacks can grow or consume the real roster. */
+    if(app->players!=roster||roster->map_provider!=source||app->publication_generation!=generation)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Player release changed its actual Source publication");
+    for(size_t i=0;i<app->players->count;++i) {
+        application_player_record *record=app->players->records+i;
+        if(!qa_actor_id_equal(record->actor,actor)) continue;
+        record_free(record);record->dynamic=true;
+    }
+    return true;
+}
+
 bool application_players_component_retire(qa_application *app,application_provider *source,
     qa_actor_id actor,qa_error *error)
 {
@@ -3495,27 +3584,7 @@ bool application_players_component_retire(qa_application *app,application_provid
         source->application!=app||!app->session||!qa_session_safe(app->session)||
         !qa_world_idle(app->world)||!application_rankings_idle(app))
         return application_fail(error,QA_ERROR_ARGUMENT,"Component drop has not returned to its actual source roster");
-    application_player_record *found=NULL;
-    for(size_t i=0;i<app->players->count;++i) {
-        application_player_record *record=app->players->records+i;
-        if(!qa_actor_id_equal(record->actor,actor)) continue;
-        if(found) return application_fail(error,QA_ERROR_FORMAT,"Component drop actor has duplicate primary rows");
-        found=record;
-    }
-    if(!found) return !qa_actors_get(qa_session_actors(app->session),actor)||
-        application_fail(error,QA_ERROR_NOT_FOUND,"Component drop lost its live source roster row");
-    if(!application_client_declared_disconnect(app,actor,error)) return false;
-    found=physical_player(app,app->players,actor,error);
-    if(!found) return false;
-    found->retiring=true;
-    if(qa_actors_get(qa_session_actors(app->session),actor)&&!qa_session_release(app->session,actor,error)) return false;
-    /* Release callbacks can grow or consume the real roster. */
-    for(size_t i=0;i<app->players->count;++i) {
-        application_player_record *record=app->players->records+i;
-        if(!qa_actor_id_equal(record->actor,actor)) continue;
-        record_free(record);record->dynamic=true;
-    }
-    return true;
+    return retire_player(app,source,actor,error);
 }
 
 bool application_players_native_q3_retire(qa_application *app,
@@ -3545,20 +3614,7 @@ bool application_players_native_q3_retire(qa_application *app,
     while (index < app->players->count && !qa_actor_id_equal(app->players->records[index].actor, actor)) ++index;
     if (index == app->players->count)
         return application_fail(error, QA_ERROR_NOT_FOUND, "native Q3 retiring client has no canonical roster row");
-    if (!application_client_declared_disconnect(app, actor, error)) return false;
-    application_player_record *actual = physical_player(app, app->players, actor, error);
-    if (!actual) return false;
-    actual->retiring = true;
-    if (qa_actors_get(qa_session_actors(app->session), actor) &&
-        !qa_session_release(app->session, actor, error)) return false;
-    for (index = 0; index < app->players->count; ++index) {
-        application_player_record *record = &app->players->records[index];
-        if (!qa_actor_id_equal(record->actor, actor)) continue;
-        record_free(record);
-        record->dynamic = true;
-        return true;
-    }
-    return true;
+    return retire_player(app,provider,actor,error);
 }
 
 static bool record_text(application_player_record *record, const char *name,
@@ -3984,48 +4040,21 @@ bool qa_application_remote_player_detach(qa_application *application,
     if (index == application->players->count) return true;
     application_player_record *record = &application->players->records[index];
     application->operation = APPLICATION_CONFIGURING;
-    bool ok = true;
     qa_actor_id actor = record->actor;
-    application_provider *character = record->character;
     application_provider *source = application->players->map_provider;
-    if (source && source->kind == APPLICATION_PROVIDER_Q1 &&
-        source->component.clock.kind == QA_CLOCK_QUAKEWORLD && !record->source_begin_pending)
-        ok = record->spectator ? application_native_q1_spectator_disconnect(source, actor, error) :
-            application_native_q1_client_disconnect(source, actor, error);
-    if (ok && source && source->kind == APPLICATION_PROVIDER_Q3)
-        ok = application_native_q3_client_disconnect(source, actor, error);
-    else if (ok) ok = application_rankings_disconnect(application, actor, error);
-    if (ok && source && source->kind == APPLICATION_PROVIDER_Q2)
-        ok = qa_q2_player_disconnect(source->state.q2, actor, error);
-    if (ok && source && source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine)
-        ok = application_native_q2_actor_disconnect(source, actor, error);
-    if (ok && character->kind == APPLICATION_PROVIDER_Q2 && character != source)
-        ok = qa_q2_player_disconnect(character->state.q2, actor, error);
-    if (ok && character->kind == APPLICATION_PROVIDER_NATIVE && character->state.native.q2_engine && character != source)
-        ok = application_native_q2_actor_disconnect(character, actor, error);
-    if (ok) ok = application_client_declared_disconnect(application, actor, error);
-    if (ok && source && source->kind==APPLICATION_PROVIDER_Q1)
-        ok=application_native_q1_check_client_retire(source,actor,error);
-    if (ok && source && source->kind==APPLICATION_PROVIDER_Q1 &&
-        source->component.clock.kind==QA_CLOCK_QUAKEWORLD)
-        ok=application_native_q1_qw_retire_capture(source,actor,error);
-    if (ok) {
-        record = physical_player(application, application->players, actor, error);
-        ok = record != NULL;
-        if (ok) record->retiring = true;
-    }
-    if (ok && qa_actors_get(qa_session_actors(application->session), actor))
-        ok = qa_session_release(application->session, actor, error);
+    bool ok = source != NULL || application_fail(error, QA_ERROR_ARGUMENT,
+        "Remote detach lost its actual Source owner");
+    if (ok && (source->kind == APPLICATION_PROVIDER_Q1 || source->kind == APPLICATION_PROVIDER_Q3))
+        ok = application_players_source_disconnect(application, source, actor, error);
+    if (ok && source->kind != APPLICATION_PROVIDER_Q3)
+        ok = application_rankings_disconnect(application, actor, error);
+    if (ok && (source->kind == APPLICATION_PROVIDER_Q2 ||
+        (source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine)))
+        ok = application_players_source_disconnect(application, source, actor, error);
+    if (ok) ok = application_players_character_disconnect(application, source, actor, error);
+    if (ok) ok = retire_player(application, source, actor, error);
     application->operation = APPLICATION_IDLE;
     if (!ok) { application_fault(application, error); return false; }
-    /* Release observers may reallocate the roster, so reacquire by identity. */
-    for (index = 0; index < application->players->count; ++index) {
-        record = &application->players->records[index];
-        if (!record->remote || !qa_net_client_id_equal(record->remote_client, client) || (record->remote_seat.owner != seat.owner || record->remote_seat.index != seat.index)) continue;
-        record_free(record);
-        record->dynamic = true;
-        break;
-    }
     return true;
 }
 
@@ -4051,39 +4080,15 @@ bool application_players_bot_detach(qa_application *application,qa_actor_id acto
     application_operation previous=application->operation;
     application->operation=APPLICATION_CONFIGURING;
     bool okay=true;
-    if(source->kind==APPLICATION_PROVIDER_Q1 && source->component.clock.kind==QA_CLOCK_QUAKEWORLD &&
-       !record->source_begin_pending)
-        okay=record->spectator ? application_native_q1_spectator_disconnect(source,actor,error) :
-            application_native_q1_client_disconnect(source,actor,error);
+    if(source->kind==APPLICATION_PROVIDER_Q1)
+        okay=application_players_source_disconnect(application,source,actor,error);
     if(okay) okay=application_rankings_disconnect(application,actor,error);
     if(okay && source->kind==APPLICATION_PROVIDER_Q2)
-        okay=qa_q2_player_disconnect(source->state.q2,actor,error);
-    if(okay && character->kind==APPLICATION_PROVIDER_Q2 && character!=source)
-        okay=qa_q2_player_disconnect(character->state.q2,actor,error);
-    if(okay) okay=application_client_declared_disconnect(application,actor,error);
-    if(okay) {
-        record=physical_player(application,application->players,actor,error);
-        okay=record!=NULL;
-    }
-    if(okay && source->kind==APPLICATION_PROVIDER_Q1)
-        okay=application_native_q1_check_client_retire(source,actor,error);
-    if(okay && source->kind==APPLICATION_PROVIDER_Q1 &&
-       source->component.clock.kind==QA_CLOCK_QUAKEWORLD && !record->source_begin_pending)
-        okay=application_native_q1_qw_retire_capture(source,actor,error);
-    if(okay) {
-        for(size_t i=0;i<application->players->count;++i)
-            if(qa_actor_id_equal(application->players->records[i].actor,actor)) application->players->records[i].retiring=true;
-        if(qa_actors_get(qa_session_actors(application->session),actor))
-            okay=qa_session_release(application->session,actor,error);
-    }
+        okay=application_players_source_disconnect(application,source,actor,error);
+    if(okay) okay=application_players_character_disconnect(application,source,actor,error);
+    if(okay) okay=retire_player(application,source,actor,error);
     application->operation=previous;
     if(!okay) {application_fault(application,error);return false;}
-    for(size_t i=0;i<application->players->count;++i) {
-        record=application->players->records+i;
-        if(record->bot && !record->remote && qa_actor_id_equal(record->actor,actor)) {
-            record_free(record);record->dynamic=true;break;
-        }
-    }
     return true;
 }
 

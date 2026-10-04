@@ -577,6 +577,11 @@ bool application_q3_component_client_adapter_drain(application_q3_component_clie
             }
             request->transport=true;
         }
+        if(!request->source&&source->kind==APPLICATION_PROVIDER_Q1) {
+            ok=application_players_source_disconnect(app,source,request->actor,e);
+            if(!ok) break;
+            request->source=true;
+        }
         if(!request->rankings) {
             ok=source->kind==APPLICATION_PROVIDER_Q3||application_rankings_disconnect(app,request->actor,e);
             if(!ok) break;
@@ -598,9 +603,9 @@ bool application_q3_component_client_adapter_drain(application_q3_component_clie
             else if(source->kind==APPLICATION_PROVIDER_QC)
                 ok=application_qc_disconnect_player(source,request->actor,e);
             else if(source->kind==APPLICATION_PROVIDER_Q2)
-                ok=qa_q2_player_disconnect(source->state.q2,request->actor,e);
+                ok=application_players_source_disconnect(app,source,request->actor,e);
             else if(source->kind==APPLICATION_PROVIDER_NATIVE&&source->state.native.q2_engine)
-                ok=application_native_q2_client_disconnect(source,request->slot+1,e);
+                ok=application_players_source_disconnect(app,source,request->actor,e);
             else if(q3g_engine(source)) {
                 q3g_role *game=q3g_engine(source)->game;
                 if(!request->transport) {
@@ -623,13 +628,11 @@ bool application_q3_component_client_adapter_drain(application_q3_component_clie
             goto consumed;
         }
         p=retained_player(a,request->actor);
-        if(!p) {ok=application_fail(e,QA_ERROR_ARGUMENT,"Component drop lost its retained canonical client");break;}
+        if(!p||p->client_slot!=request->slot) {
+            ok=application_fail(e,QA_ERROR_ARGUMENT,"Component drop lost its retained full actor/client slot");break;
+        }
         if(!request->character) {
-            if(p->character&&p->character!=source&&p->character->kind==APPLICATION_PROVIDER_Q2)
-                ok=qa_q2_player_disconnect(p->character->state.q2,request->actor,e);
-            else if(p->character&&p->character!=source&&p->character->kind==APPLICATION_PROVIDER_NATIVE&&
-                p->character->state.native.q2_engine)
-                ok=application_native_q2_actor_disconnect(p->character,request->actor,e);
+            ok=application_players_character_disconnect(app,source,request->actor,e);
             if(!ok) break;
             request->character=true;
         }
