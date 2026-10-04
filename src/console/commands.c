@@ -146,10 +146,17 @@ void qa_console_emit(qa_console *console, const qa_command_context *context, con
         output(console, context_for(console, context), text);
 }
 
-bool qa_console_idle(const qa_console *console)
+static bool returned(const qa_console *console)
 {
     return console == NULL || (console->frame == NULL && console->redirect == NULL &&
-        console->output_calls == 0 && !console->draining && !console->cvar_scope);
+        console->output_calls == 0 && !console->draining);
+}
+bool qa_console_idle(const qa_console *console)
+{ return returned(console) && (!console || !console->cvar_scope); }
+bool qa_console_cvar_returned(const qa_console *console)
+{
+    return returned(console) && (!console || !console->cvar_scope ||
+        qa_console_cvar_entered(console, &console->options.context));
 }
 bool qa_console_invocation_current(const qa_console *console,const qa_command_invocation *command)
 {

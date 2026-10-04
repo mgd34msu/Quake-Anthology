@@ -167,10 +167,12 @@ static void print(void *context, const qa_command_context *command, const char *
 }
 static void cvar_print(void *context, const char *text)
 { frontend_client_source *s = context; print(s, &s->command, text); }
+static bool cvar_current(frontend_client_source *s, const qa_command_context *command)
+{ return active(s, command) || (s && qa_console_cvar_entered(s->console, command)); }
 static qa_cvars *cvars(void *context, const qa_command_context *command, const char *name)
 {
     frontend_client_source *s = context;
-    if (!active(s, command)) return NULL;
+    if (!cvar_current(s, command)) return NULL;
     if (!s->options.cvar_owner) return registry(s);
     ++s->calls; qa_cvars *out = s->options.cvar_owner(s->options.context, command, name); --s->calls;
     return out;
@@ -178,7 +180,7 @@ static qa_cvars *cvars(void *context, const qa_command_context *command, const c
 static qa_cvars *visible(void *context, const qa_command_context *command, size_t ordinal)
 {
     frontend_client_source *s = context;
-    if (!active(s, command)) return NULL;
+    if (!cvar_current(s, command)) return NULL;
     if (!s->options.visible_cvars) return ordinal ? NULL : registry(s);
     ++s->calls; qa_cvars *out = s->options.visible_cvars(s->options.context, command, ordinal); --s->calls;
     return out;
@@ -187,7 +189,7 @@ static bool edit(void *context, const qa_command_context *command, qa_cvars *var
     struct qa_cvars_edit **out, qa_error *error)
 {
     frontend_client_source *s = context;
-    if (!out || !active(s, command)) return false;
+    if (!out || !cvar_current(s, command)) return false;
     ++s->calls;
     bool ok = s->options.cvar_edit(s->options.context, command, variables, out, error);
     --s->calls; return ok;
@@ -266,6 +268,27 @@ static uint32_t capabilities(const frontend_client_source_options *o)
         (o->retire ? 32768u : 0u) | (o->released ? 65536u : 0u) |
         (o->configuration_advance ? 131072u : 0u) | (o->retirement_current ? 262144u : 0u);
 }
+static bool install_current(void *context, const qa_console *console,
+    const qa_command_context *command, qa_error *error)
+{
+    frontend_client_source *s = context;
+    if (!linked(s) || !s->constructing || !s->restored_constructor || !s->app_attached ||
+        !s->calls || s->calls == UINT_MAX || !s->frontend->source_restoring ||
+        s->frontend->capture || s->frontend->resource_inventory || console != s->console ||
+        !physical_current(s, s->application.descriptor, s->console, registry(s), command) ||
+        !qa_application_client_associated(s->frontend->application, &s->application) ||
+        !qa_application_command_context_active(s->frontend->application, command) ||
+        (!qa_application_client_current(s->frontend->application, &s->application) &&
+            !qa_application_client_retirement_current(s->frontend->application, &s->application)))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT handler import lost its entered physical constructor");
+    return true;
+}
+static bool install_restored(void *context, const qa_command_context *command, qa_error *error)
+{
+    frontend_client_source *s = context;
+    (void)command;
+    return s->options.install(s->options.context, &s->application, true, error);
+}
 static bool construct(qa_frontend *f, const frontend_client_source_options *options,
     const qa_launch_restored_instance *metadata, const frontend_client_source_state *state,
     const qa_console_save_resolvers *resolvers, frontend_client_source **out, qa_error *error)
@@ -343,7 +366,8 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
     }
     if (options->install) {
         ++s->calls;
-        ok = options->install(options->context, &s->application, state != NULL, error);
+        ok = state ? qa_console_cvar_enter(s->console, &s->command, install_current, s,
+            install_restored, s, error) : options->install(options->context, &s->application, false, error);
         --s->calls;
         if (!ok) goto done;
     }

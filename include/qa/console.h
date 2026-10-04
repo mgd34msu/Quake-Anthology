@@ -343,6 +343,9 @@ bool qa_console_cvar_enter(qa_console *, const qa_command_context *,
  * Routing callbacks may use this proof separately from ordinary command
  * admission. It never admits scripts, aliases or command handlers. */
 bool qa_console_cvar_entered(const qa_console *, const qa_command_context *);
+/* Returned native handlers may be installed inside the exact entered cvar
+ * scope for this console's constructor. Invocation and output remain idle. */
+bool qa_console_cvar_returned(const qa_console *);
 /* Resolves one name's actual owner and optional canonical prepared view.
  * Both pointers are borrowed; a rejected view never falls back to live state. */
 bool qa_console_cvar_access(qa_console *,const qa_command_context *,const char *,

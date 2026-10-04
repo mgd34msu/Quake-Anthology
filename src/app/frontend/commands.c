@@ -144,7 +144,7 @@ bool frontend_commands_client_unbind(frontend_client_commands **slot,qa_error *e
 {
     frontend_client_commands *owner=slot?*slot:NULL;
     if (!owner) return true;
-    if (!qa_console_idle(owner->console))
+    if (!qa_console_cvar_returned(owner->console))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT menu handler has not returned");
     for (size_t i=0;i<owner->registered;++i) qa_console_unregister(owner->console,client_menus[i],owner->receiver);
     free(owner); *slot=NULL; return true;
@@ -153,7 +153,7 @@ bool frontend_commands_client_bind(qa_frontend *f,const qa_application_client_so
     frontend_client_commands **out,qa_error *error)
 {
     if (!f || !source || !out || *out || !source->context.receiver ||
-        !qa_console_idle(source->context.console) ||
+        !qa_console_cvar_returned(source->context.console) ||
         (!qa_application_client_current(f->application,source) &&
             !(f->source_restoring && qa_application_client_retirement_current(f->application,source))))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT menus require their actual returned Source console");

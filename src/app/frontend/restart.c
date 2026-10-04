@@ -334,7 +334,7 @@ bool frontend_restart_client_unbind(frontend_restart_client_binding **slot,qa_er
 {
     frontend_restart_client_binding *binding=slot?*slot:NULL;
     if (!binding) return true;
-    if (!qa_console_idle(binding->console) || (binding->controller && binding->controller->running))
+    if (!qa_console_cvar_returned(binding->console) || (binding->controller && binding->controller->running))
         return fail(error,QA_ERROR_ARGUMENT,"CLIENT restart binding has an entered handler");
     static const char *const names[]={"vid_restart","in_restart","snd_restart"};
     for (unsigned i=0;i<3;++i) if (binding->registered&(1u<<i))
@@ -350,7 +350,7 @@ bool frontend_restart_client_bind(frontend_restart *owner,const qa_application_c
     frontend_restart_client_binding **out,qa_error *error)
 {
     if (!owner || !source || !out || *out || owner->running || !source->context.receiver ||
-        !qa_console_idle(source->context.console) ||
+        !qa_console_cvar_returned(source->context.console) ||
         (!qa_application_client_current(owner->options.frontend->application,source) &&
             !(owner->options.frontend->source_restoring &&
                 qa_application_client_retirement_current(owner->options.frontend->application,source))))
