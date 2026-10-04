@@ -73,7 +73,7 @@ bool nav_graph_finish(qa_nav_graph *g, qa_error *e) {
     size_t max_node = 0, max_edge = 0, mover_count = 0;
     for (size_t i = 0; i < n; ++i) {
         if (g->nodes[i].id == QA_NAV_NO_INDEX || !qa_vec_finite(g->nodes[i].origin) ||
-            !nav_bounds_valid(g->nodes[i].bounds) || !isfinite(g->nodes[i].radius) ||
+            !qa_bounds_valid(g->nodes[i].bounds) || !isfinite(g->nodes[i].radius) ||
             g->nodes[i].radius < 0)
             goto invalid;
         if ((size_t)g->nodes[i].id + 1 > max_node)

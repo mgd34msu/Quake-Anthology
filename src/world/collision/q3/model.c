@@ -146,8 +146,8 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
         || !qa_vec_finite(target_bounds.mins) || !qa_vec_finite(target_bounds.maxs)
         || (target_kind != QA_SHAPE_BOX && target_kind != QA_SHAPE_CAPSULE)
         || query->shape.kind < QA_SHAPE_POINT || query->shape.kind > QA_SHAPE_CAPSULE
-        || (query->shape.kind != QA_SHAPE_POINT && !qa_collision_bounds_valid(query->shape.bounds))
-        || (target_kind == QA_SHAPE_CAPSULE && !qa_collision_bounds_valid(target_bounds))) {
+        || (query->shape.kind != QA_SHAPE_POINT && !qa_bounds_valid(query->shape.bounds))
+        || (target_kind == QA_SHAPE_CAPSULE && !qa_bounds_valid(target_bounds))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q3 temporary collision query"); return false;
     }
     qa_trace_result result = qa_collision_empty_trace(query, QA_COLLISION_Q3);

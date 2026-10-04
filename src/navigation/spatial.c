@@ -104,7 +104,7 @@ bool qa_navigation_area(qa_navigation *n, qa_actor_id actor, qa_vec3 point, uint
 bool qa_navigation_bbox_areas(qa_navigation *n, qa_nav_workspace *w, qa_bounds bounds,
                               uint32_t *out, size_t capacity, size_t *count, qa_error *e) {
     if (n == NULL || w == NULL || count == NULL || (capacity != 0 && out == NULL) ||
-        !nav_bounds_valid(bounds)) {
+        !qa_bounds_valid(bounds)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid navigation bounds-area query");
         return false;
     }

@@ -103,7 +103,7 @@ bool nav_entity(qa_navigation *n, const qa_nav_edge *edge, qa_nav_entity_state *
     if (!n->services.entity(n->services.context, &edge->entity, out, found, e))
         return false;
     if (*found &&
-        (!nav_bounds_valid(out->bounds) || !qa_vec_finite(out->velocity) ||
+        (!qa_bounds_valid(out->bounds) || !qa_vec_finite(out->velocity) ||
          (out->has_destination && !qa_vec_finite(out->destination)) ||
          (unsigned)out->kind > QA_NAV_ENTITY_TRAIN ||
          (out->kind == QA_NAV_ENTITY_TRAIN &&

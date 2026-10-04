@@ -143,7 +143,7 @@ bool nav_kex_read(qa_bytes bytes, qa_nav_asset **out, qa_error *e) {
         entity[i].tail_count = (uint8_t)tail_count;
         for (size_t word = 0; word < tail_count; ++word)
             entity[i].tail[word] = qa_load_i32le(p + word * 4);
-        if (entity[i].link >= (uint32_t)links || !nav_bounds_valid(entity[i].bounds))
+        if (entity[i].link >= (uint32_t)links || !qa_bounds_valid(entity[i].bounds))
             goto malformed;
     }
     *out = asset;

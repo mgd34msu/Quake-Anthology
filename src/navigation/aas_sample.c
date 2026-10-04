@@ -196,7 +196,7 @@ bool qa_aas_trace_collect(const qa_aas_view *v, qa_aas_query *q, qa_vec3 start, 
 bool qa_aas_bbox_areas(const qa_aas_view *v, qa_aas_query *q, qa_bounds bounds, uint32_t *out,
                        size_t capacity, size_t *count, qa_error *e) {
     if (v == NULL || q == NULL || count == NULL || (capacity != 0 && out == NULL) ||
-        !nav_bounds_valid(bounds)) {
+        !qa_bounds_valid(bounds)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid AAS bounds query");
         return false;
     }

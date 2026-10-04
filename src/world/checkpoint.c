@@ -176,12 +176,12 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
                 ok = checkpoint_fail(error, QA_ERROR_FORMAT, "Duplicate saved body or attachment ordering identity");
         if (!ok) break;
         if (!qa_vec_finite(stored_state.origin) || !qa_vec_finite(stored_state.angles) ||
-            !qa_vec_finite(stored_state.velocity) || !qa_collision_bounds_valid(stored_state.bounds) ||
+            !qa_vec_finite(stored_state.velocity) || !qa_bounds_valid(stored_state.bounds) ||
             !qa_vec_finite(state.origin) || !qa_vec_finite(state.angles) || !qa_vec_finite(state.velocity) ||
-            !qa_collision_bounds_valid(state.bounds) || (link.linked && (!link.link_count ||
+            !qa_bounds_valid(state.bounds) || (link.linked && (!link.link_count ||
                 !qa_vec_finite(link.state.origin) || !qa_vec_finite(link.state.angles) ||
-                !qa_vec_finite(link.state.velocity) || !qa_collision_bounds_valid(link.state.bounds) ||
-                !qa_collision_bounds_valid(link.absolute_bounds)))) {
+                !qa_vec_finite(link.state.velocity) || !qa_bounds_valid(link.state.bounds) ||
+                !qa_bounds_valid(link.absolute_bounds)))) {
             ok = checkpoint_fail(error, QA_ERROR_FORMAT, "Invalid saved body/link fields"); break;
         }
         if (!body) {

@@ -24,6 +24,24 @@ bool qa_move_qw(qa_move_context *);
 bool qa_move_q2(qa_move_context *);
 bool qa_move_q2r(qa_move_context *);
 bool qa_move_q3(qa_move_context *);
+static inline void qa_move_q3_view(qa_q3_movement_state *state, const qa_movement_command *command) {
+    int32_t angles[3];
+    for (unsigned i = 0; i < 3; ++i) {
+        uint32_t word = ((uint32_t)command->angle_words[i] + (uint32_t)state->delta_angle_words[i]) & 65535;
+        angles[i] = word >= 32768 ? (int32_t)word - 65536 : (int32_t)word;
+    }
+    if (angles[0] > 16000 || angles[0] < -16000) {
+        int32_t pitch = angles[0] > 0 ? 16000 : -16000;
+        uint32_t delta = (uint32_t)pitch - (uint32_t)command->angle_words[0];
+        state->delta_angle_words[0] = delta <= INT32_MAX ? (int32_t)delta :
+                                       -1 - (int32_t)(UINT32_MAX - delta);
+        angles[0] = pitch;
+    }
+    state->view_angles = qa_v3((float)angles[0] * (360.0f / 65536.0f),
+                               (float)angles[1] * (360.0f / 65536.0f),
+                               (float)angles[2] * (360.0f / 65536.0f));
+}
+
 
 bool qa_move_trace(qa_move_context *, qa_vec3 start, qa_vec3 end, qa_bounds,
                     uint32_t mask, bool world_only, qa_trace_result *);

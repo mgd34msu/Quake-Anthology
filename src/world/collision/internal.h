@@ -38,9 +38,6 @@ static inline qa_trace_result qa_collision_empty_trace(const qa_trace_query *q, 
     qa_trace_result result={0}; result.family=family; result.fraction=1.0f; result.end=q->end;
     result.contents=family==QA_COLLISION_Q1?-1:0; result.model=q->target.inline_model?q->target.model:0; return result;
 }
-static inline bool qa_collision_bounds_valid(qa_bounds b) {
-    return qa_vec_finite(b.mins)&&qa_vec_finite(b.maxs)&&b.mins.x<=b.maxs.x&&b.mins.y<=b.maxs.y&&b.mins.z<=b.maxs.z;
-}
 static inline float qa_vec_component(qa_vec3 v, unsigned axis) { return axis==0?v.x:axis==1?v.y:v.z; }
 static inline void qa_vec_set_component(qa_vec3 *v, unsigned axis, float value) { if(axis==0)v->x=value;else if(axis==1)v->y=value;else v->z=value; }
 static inline float qa_collision_clamp_fraction(float fraction) { return fmaxf(0, fminf(1, fraction)); }

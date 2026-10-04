@@ -40,7 +40,7 @@ static qa_world_body *ensure_body(qa_world *world, qa_actor_id actor, qa_error *
 static bool valid_state(const qa_body_state *state)
 {
     return state!=NULL && qa_vec_finite(state->origin) && qa_vec_finite(state->angles)
-        && qa_vec_finite(state->velocity) && qa_collision_bounds_valid(state->bounds);
+        && qa_vec_finite(state->velocity) && qa_bounds_valid(state->bounds);
 }
 
 bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
@@ -431,7 +431,7 @@ static bool link_body(qa_world *world,qa_actor_id actor,const qa_vec3 *origin_ov
     qa_bounds bounds={0};
     if(explicit_bounds!=NULL) {
         bounds=*explicit_bounds;
-        if(!qa_collision_bounds_valid(bounds)) return fail(error,QA_ERROR_ARGUMENT,"Invalid explicit body bounds");
+        if(!qa_bounds_valid(bounds)) return fail(error,QA_ERROR_ARGUMENT,"Invalid explicit body bounds");
     }
     qa_body_state state;
     if(!qa_world_body_read(world,actor,&state,error)) return false;
@@ -450,7 +450,7 @@ static bool link_body(qa_world *world,qa_actor_id actor,const qa_vec3 *origin_ov
         if(body==NULL || body->storage_serial!=serial)
             return fail(error,QA_ERROR_NOT_FOUND,"Body storage changed during link bounds callback");
     }
-    if(!qa_collision_bounds_valid(bounds)) return fail(error,QA_ERROR_ARGUMENT,"Invalid absolute body bounds");
+    if(!qa_bounds_valid(bounds)) return fail(error,QA_ERROR_ARGUMENT,"Invalid absolute body bounds");
     if(body->link_count==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Body link count exhausted");
     qa_linked_body linked={actor,state,bounds,body->link_count+1};
     return publish_link(world,body,&linked,error);
@@ -504,7 +504,7 @@ bool qa_world_restore_link_state(qa_world *world,qa_actor_id actor,const qa_body
 {
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL || saved==NULL || (saved->linked && (saved->link_count==0 || !valid_state(&saved->state)
-        || !qa_collision_bounds_valid(saved->absolute_bounds))))
+        || !qa_bounds_valid(saved->absolute_bounds))))
         return fail(error,QA_ERROR_ARGUMENT,"Invalid saved body link state");
     if(!saved->linked) {
         qa_spatial_remove(world,body); body->linked=false; body->link_count=saved->link_count;

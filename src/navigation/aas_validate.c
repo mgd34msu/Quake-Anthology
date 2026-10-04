@@ -78,7 +78,7 @@ bool qa_aas_validate(const qa_aas_view *v, qa_error *e) {
     } while (0)
     CHECK(v->count[QA_AAS_AREAS] == v->count[QA_AAS_SETTINGS], "area/settings count", 0);
     for (size_t i = 0; i < v->count[QA_AAS_BOXES]; ++i)
-        CHECK(nav_bounds_valid(v->boxes[i].bounds), "box", i);
+        CHECK(qa_bounds_valid(v->boxes[i].bounds), "box", i);
     for (size_t i = 0; i < v->count[QA_AAS_VERTICES]; ++i)
         CHECK(qa_vec_finite(v->vertices[i]), "vertex", i);
     for (size_t i = 0; i < v->count[QA_AAS_PLANES]; ++i)
@@ -105,7 +105,7 @@ bool qa_aas_validate(const qa_aas_view *v, qa_error *e) {
         CHECK(oriented_valid(v->face_index[i], v->count[QA_AAS_FACES]), "face index", i);
     for (size_t i = 0; i < v->count[QA_AAS_AREAS]; ++i) {
         const qa_aas_area *p = v->areas + i;
-        CHECK(p->number == (int32_t)i && nav_bounds_valid(p->bounds) && qa_vec_finite(p->center) &&
+        CHECK(p->number == (int32_t)i && qa_bounds_valid(p->bounds) && qa_vec_finite(p->center) &&
                   span_valid(p->first_face, p->face_count, v->count[QA_AAS_FACE_INDEX]),
               "area", i);
         const qa_aas_setting *s = v->settings + i;

@@ -15,26 +15,10 @@ static void q3_jump_animation(qa_q3_step *step) {
 }
 
 static void q3_view(qa_q3_step *step) {
-    qa_q3_movement_state *state = q3_state(step);
-    qa_movement_command *command = &step->context->command;
     int32_t type = q3_type(step);
     if (type == Q3_INTERMISSION || type == Q3_SPINTERMISSION ||
         (type != Q3_SPECTATOR && step->context->input->environment.health <= 0)) return;
-    int32_t angles[3];
-    for (unsigned i = 0; i < 3; ++i) {
-        uint32_t word = ((uint32_t)command->angle_words[i] + (uint32_t)state->delta_angle_words[i]) & 65535;
-        angles[i] = word >= 32768 ? (int32_t)word - 65536 : (int32_t)word;
-    }
-    if (angles[0] > 16000 || angles[0] < -16000) {
-        int32_t pitch = angles[0] > 0 ? 16000 : -16000;
-        uint32_t delta = (uint32_t)pitch - (uint32_t)command->angle_words[0];
-        state->delta_angle_words[0] = delta <= INT32_MAX ? (int32_t)delta :
-                                       -1 - (int32_t)(UINT32_MAX - delta);
-        angles[0] = pitch;
-    }
-    state->view_angles = qa_v3((float)angles[0] * (360.0f / 65536.0f),
-                               (float)angles[1] * (360.0f / 65536.0f),
-                               (float)angles[2] * (360.0f / 65536.0f));
+    qa_move_q3_view(q3_state(step), &step->context->command);
 }
 
 static void q3_friction(qa_q3_step *step) {

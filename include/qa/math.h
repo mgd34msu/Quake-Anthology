@@ -33,6 +33,10 @@ static inline qa_vec3 qa_vec_lerp(qa_vec3 a, qa_vec3 b, float t) {
     return qa_vec_add(a, qa_vec_scale(qa_vec_sub(b, a), t));
 }
 static inline bool qa_vec_finite(qa_vec3 v) { return isfinite(v.x) && isfinite(v.y) && isfinite(v.z); }
+static inline bool qa_bounds_valid(qa_bounds b) {
+    return qa_vec_finite(b.mins) && qa_vec_finite(b.maxs) &&
+           b.mins.x <= b.maxs.x && b.mins.y <= b.maxs.y && b.mins.z <= b.maxs.z;
+}
 static inline bool qa_bounds_overlap(qa_bounds a, qa_bounds b) {
     return a.mins.x <= b.maxs.x && a.maxs.x >= b.mins.x &&
            a.mins.y <= b.maxs.y && a.maxs.y >= b.mins.y &&

@@ -45,12 +45,7 @@ bool qa_q3_prediction_view(qa_movement_state *state, int32_t health, const qa_mo
     }
     qa_q3_movement_state *s=&state->data.q3;
     if (s->movement_type==5||s->movement_type==6||(s->movement_type!=2&&health<=0)) return true;
-    int32_t pitch=qa_move_short(signed_word((uint32_t)command->angle_words[0]+(uint32_t)s->delta_angle_words[0]));
-    if (pitch>16000) { s->delta_angle_words[0]=signed_word(16000u-(uint32_t)command->angle_words[0]); pitch=16000; }
-    else if (pitch < -16000) { s->delta_angle_words[0]=signed_word((uint32_t)-16000-(uint32_t)command->angle_words[0]); pitch=-16000; }
-    s->view_angles=qa_v3((float)pitch*(360.0f/65536.0f),
-        qa_move_short_angle(signed_word((uint32_t)command->angle_words[1]+(uint32_t)s->delta_angle_words[1])),
-        qa_move_short_angle(signed_word((uint32_t)command->angle_words[2]+(uint32_t)s->delta_angle_words[2])));
+    qa_move_q3_view(s, command);
     return true;
 }
 void qa_movement_q3_finish_jump_pads(qa_movement_state *state) {

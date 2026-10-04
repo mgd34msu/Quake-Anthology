@@ -10,10 +10,6 @@ static bool fail(qa_move_context *c, const char *message) {
     qa_error_set(c->error, QA_ERROR_ARGUMENT, 0, "%s", message);
     return false;
 }
-static bool valid_bounds(qa_bounds b) {
-    return qa_vec_finite(b.mins) && qa_vec_finite(b.maxs) &&
-        b.mins.x <= b.maxs.x && b.mins.y <= b.maxs.y && b.mins.z <= b.maxs.z;
-}
 static bool valid_origin(const qa_movement_state *state) {
     if (state->kind == QA_MOVEMENT_QUAKEWORLD) {
         qa_qw_origin value = state->data.qw.origin;
@@ -293,7 +289,7 @@ bool qa_move_bounds(qa_move_context *c, qa_bounds requested, uint32_t mask, qa_b
     qa_bounds previous=c->result->bounds;
     bool expands=requested.mins.x<previous.mins.x||requested.mins.y<previous.mins.y||requested.mins.z<previous.mins.z||
         requested.maxs.x>previous.maxs.x||requested.maxs.y>previous.maxs.y||requested.maxs.z>previous.maxs.z;
-    if (!valid_bounds(requested)) return fail(c,"Invalid requested movement bounds");
+    if (!qa_bounds_valid(requested)) return fail(c,"Invalid requested movement bounds");
     if (expands) {
         qa_vec3 origin=qa_movement_origin(c->state); qa_trace_result trace;
         if (!qa_move_trace(c,origin,origin,requested,mask,false,&trace)) return false;
@@ -335,13 +331,13 @@ static bool move_stage(const qa_movement_input *input, const qa_movement_service
         (input->state.kind!=QA_MOVEMENT_NETQUAKE&&
          (!valid_origin(&input->state)||!qa_vec_finite(qa_movement_velocity(&input->state))))||
         input->shape.kind<QA_SHAPE_POINT||input->shape.kind>QA_SHAPE_CAPSULE||
-        (input->shape.kind!=QA_SHAPE_POINT&&!valid_bounds(input->shape.bounds))||
-        (input->has_current_bounds&&!valid_bounds(input->current_bounds))||
-        (input->environment.has_body_bounds&&!valid_bounds(input->environment.body_bounds))||
-        (input->environment.fixed_pose&&(!valid_bounds(input->environment.pose.bounds)||!isfinite(input->environment.pose.view_height)))||
-        !valid_bounds(input->standing.bounds)||!isfinite(input->standing.view_height)||
-        !valid_bounds(input->crouched.bounds)||!isfinite(input->crouched.view_height)||
-        !valid_bounds(input->dead.bounds)||!isfinite(input->dead.view_height)||
+        (input->shape.kind!=QA_SHAPE_POINT&&!qa_bounds_valid(input->shape.bounds))||
+        (input->has_current_bounds&&!qa_bounds_valid(input->current_bounds))||
+        (input->environment.has_body_bounds&&!qa_bounds_valid(input->environment.body_bounds))||
+        (input->environment.fixed_pose&&(!qa_bounds_valid(input->environment.pose.bounds)||!isfinite(input->environment.pose.view_height)))||
+        !qa_bounds_valid(input->standing.bounds)||!isfinite(input->standing.view_height)||
+        !qa_bounds_valid(input->crouched.bounds)||!isfinite(input->crouched.view_height)||
+        !qa_bounds_valid(input->dead.bounds)||!isfinite(input->dead.view_height)||
         !isfinite(input->environment.gravity_multiplier)||input->environment.gravity_multiplier<0||
         !isfinite(input->environment.speed_multiplier)||input->environment.speed_multiplier<0) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid movement input, selected family or services"); return false;

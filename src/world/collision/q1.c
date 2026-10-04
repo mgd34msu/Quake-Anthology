@@ -627,14 +627,14 @@ fail:
 }
 
 bool qa_q1_trace_box(const qa_trace_query *query,qa_bounds target,qa_vec3 origin,qa_trace_result *out,qa_error *error) {
-    if(query==NULL || out==NULL || query->shape.kind==QA_SHAPE_CAPSULE || !qa_collision_bounds_valid(target)
+    if(query==NULL || out==NULL || query->shape.kind==QA_SHAPE_CAPSULE || !qa_bounds_valid(target)
         || !qa_vec_finite(origin) || !qa_vec_finite(query->start) || !qa_vec_finite(query->end)
-        || (query->shape.kind!=QA_SHAPE_POINT && !qa_collision_bounds_valid(query->shape.bounds))) {
+        || (query->shape.kind!=QA_SHAPE_POINT && !qa_bounds_valid(query->shape.bounds))) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Quake actor box trace"); return false;
     }
     qa_bounds moving=query->shape.kind==QA_SHAPE_POINT?hull_bounds[0]:query->shape.bounds;
     qa_bounds expanded={qa_vec_sub(target.mins,moving.maxs),qa_vec_sub(target.maxs,moving.mins)};
-    if(!qa_collision_bounds_valid(expanded)) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Quake actor trace bounds overflow"); return false; }
+    if(!qa_bounds_valid(expanded)) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Quake actor trace bounds overflow"); return false; }
     qa_collision_plane planes[6]; q1node nodes[6];
     for(unsigned i=0;i<6;i++) {
         unsigned axis=i/2;

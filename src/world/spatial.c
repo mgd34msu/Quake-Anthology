@@ -21,7 +21,7 @@ static void build_sector(qa_world *world,uint32_t index,qa_bounds bounds,unsigne
 
 bool qa_spatial_initialize(qa_world *world,qa_bounds bounds,qa_error *error)
 {
-    if(!qa_collision_bounds_valid(bounds)) return fail(error,QA_ERROR_ARGUMENT,"Invalid spatial world bounds");
+    if(!qa_bounds_valid(bounds)) return fail(error,QA_ERROR_ARGUMENT,"Invalid spatial world bounds");
     uint32_t next=1; build_sector(world,0,bounds,0,&next); return true;
 }
 
@@ -119,7 +119,7 @@ static bool visit_sector(qa_world *world,uint32_t index,qa_bounds bounds,qa_spat
 
 bool qa_spatial_visit_raw(qa_world *world,qa_bounds bounds,qa_spatial_raw_fn visit,void *context,qa_error *error)
 {
-    if(world==NULL || visit==NULL || !qa_collision_bounds_valid(bounds)) return fail(error,QA_ERROR_ARGUMENT,"Invalid spatial visit");
+    if(world==NULL || visit==NULL || !qa_bounds_valid(bounds)) return fail(error,QA_ERROR_ARGUMENT,"Invalid spatial visit");
     if(world->visit_depth==UINT32_MAX) return fail(error,QA_ERROR_ARGUMENT,"Spatial visit nesting exhausted");
     ++world->visit_depth; (void)visit_sector(world,0,bounds,visit,context); --world->visit_depth;
     if(world->visit_depth==0) recycle_retired(world);

@@ -17,10 +17,6 @@ struct qa_nav_asset {
 bool nav_aas_read(qa_bytes, const int32_t *, qa_nav_asset **, qa_error *);
 bool nav_kex_read(qa_bytes, qa_nav_asset **, qa_error *);
 bool nav_aas_allocate(const size_t counts[QA_AAS_LUMP_COUNT], qa_nav_asset **, qa_error *);
-static inline bool nav_bounds_valid(qa_bounds b) {
-    return qa_vec_finite(b.mins) && qa_vec_finite(b.maxs) && b.mins.x <= b.maxs.x &&
-           b.mins.y <= b.maxs.y && b.mins.z <= b.maxs.z;
-}
 static inline qa_vec3 nav_vector(const uint8_t *p) {
     return qa_v3(qa_load_f32le(p), qa_load_f32le(p + 4), qa_load_f32le(p + 8));
 }

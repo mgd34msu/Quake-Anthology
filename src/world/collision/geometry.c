@@ -230,7 +230,7 @@ static bool load_topology(qa_collision_geometry *geometry, qa_error *error)
             bounds.mins = qa_vec_sub(bounds.mins, qa_v3(1, 1, 1));
             bounds.maxs = qa_vec_add(bounds.maxs, qa_v3(1, 1, 1));
         }
-        if (!qa_collision_bounds_valid(bounds))
+        if (!qa_bounds_valid(bounds))
             return geometry_fail(error, QA_ERROR_FORMAT, "Invalid collision model bounds");
         geometry->model_bounds[i] = bounds;
         if (i == 0) {
@@ -370,7 +370,7 @@ bool qa_collision_trace(qa_collision_geometry *geometry, const qa_trace_query *q
     if (geometry == NULL || query == NULL || out == NULL || !qa_vec_finite(query->start)
         || !qa_vec_finite(query->end) || !valid_policy(&query->policy) || !valid_target(geometry, &query->target)
         || (unsigned)query->shape.kind > (unsigned)QA_SHAPE_CAPSULE
-        || (query->shape.kind != QA_SHAPE_POINT && !qa_collision_bounds_valid(query->shape.bounds)))
+        || (query->shape.kind != QA_SHAPE_POINT && !qa_bounds_valid(query->shape.bounds)))
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid geometry trace query");
     qa_trace_query local = *query;
     if (local.shape.kind == QA_SHAPE_BOX && local.shape.bounds.mins.x == 0 && local.shape.bounds.mins.y == 0
@@ -416,7 +416,7 @@ bool qa_collision_trace_q3_model(qa_collision_geometry *geometry, const qa_trace
         || !qa_vec_finite(query->start) || !qa_vec_finite(query->end)
         || (transformed && (!qa_vec_finite(query->target.origin) || !qa_vec_finite(query->target.angles)))
         || (unsigned)query->shape.kind > QA_SHAPE_CAPSULE
-        || (query->shape.kind != QA_SHAPE_POINT && !qa_collision_bounds_valid(query->shape.bounds)))
+        || (query->shape.kind != QA_SHAPE_POINT && !qa_bounds_valid(query->shape.bounds)))
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid source Q3 model trace query");
     qa_trace_query local = *query;
     local.target.inline_model = true;
@@ -490,7 +490,7 @@ static unsigned box_side(const qa_collision_geometry *geometry, qa_bounds bounds
 bool qa_collision_box_leaves(const qa_collision_geometry *geometry, qa_bounds bounds, uint32_t *leaves,
                              size_t capacity, qa_leaf_list *out, qa_error *error)
 {
-    if (geometry == NULL || out == NULL || (capacity != 0 && leaves == NULL) || !qa_collision_bounds_valid(bounds))
+    if (geometry == NULL || out == NULL || (capacity != 0 && leaves == NULL) || !qa_bounds_valid(bounds))
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid box-leaf query");
     geometry_scratch *scratch = geometry->scratch;
     if (geometry->family == QA_COLLISION_Q1 && ++scratch->stamp == 0) {
@@ -603,7 +603,7 @@ bool qa_collision_q1_bounds_visible(const qa_collision_geometry *geometry, qa_by
     qa_bounds bounds, bool *out, qa_error *error)
 {
     if (!geometry || geometry->family != QA_COLLISION_Q1 || !out ||
-        !qa_collision_bounds_valid(bounds) || pvs.size != geometry->visibility_bytes || (pvs.size && !pvs.data))
+        !qa_bounds_valid(bounds) || pvs.size != geometry->visibility_bytes || (pvs.size && !pvs.data))
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Q1 entity visibility requires its actual fat-PVS and source bounds");
     *out = false;
     size_t count = 1, touched = 0; geometry->scratch->nodes[0] = geometry->root;

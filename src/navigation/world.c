@@ -15,7 +15,7 @@ bool nav_profile_valid(const qa_nav_profile *p, qa_error *e) {
     for (unsigned i = 0; i < (p->has_crouched_shape ? 2u : 1u); ++i) {
         qa_bounds b = shapes[i]->bounds;
         if ((shapes[i]->kind != QA_SHAPE_BOX && shapes[i]->kind != QA_SHAPE_CAPSULE) ||
-            !nav_bounds_valid(b) || b.mins.x == b.maxs.x || b.mins.y == b.maxs.y ||
+            !qa_bounds_valid(b) || b.mins.x == b.maxs.x || b.mins.y == b.maxs.y ||
             b.mins.z == b.maxs.z)
             goto invalid;
     }

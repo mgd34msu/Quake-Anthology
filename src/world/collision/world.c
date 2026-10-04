@@ -84,12 +84,13 @@ static bool skip_owner(const qa_world *world,const qa_trace_query *query,const q
     qa_actor_id actor=query->pass_actor;
     if(actor.registry==0) return false;
     if(qa_actor_id_equal(actor,id)) return true;
-    const qa_actor_record *pass_record=qa_actors_get(world->actors,actor);
-    const qa_actor_record *candidate_record=qa_actors_get(world->actors,id);
-    if(query->policy.family==QA_COLLISION_Q3 && pass!=NULL && pass->has_q3_owner && candidate->has_q3_owner
-        && pass_record!=NULL && candidate_record!=NULL && pass_record->owner==candidate_record->owner) {
-        int32_t owner=pass->q3_owner_number==1023?-1:pass->q3_owner_number;
-        return candidate->q3_owner_number==pass->q3_entity_number || candidate->q3_owner_number==owner;
+    if(query->policy.family==QA_COLLISION_Q3 && pass!=NULL && pass->has_q3_owner && candidate->has_q3_owner) {
+        const qa_actor_record *pass_record=qa_actors_get(world->actors,actor);
+        const qa_actor_record *candidate_record=qa_actors_get(world->actors,id);
+        if(pass_record!=NULL && candidate_record!=NULL && pass_record->owner==candidate_record->owner) {
+            int32_t owner=pass->q3_owner_number==1023?-1:pass->q3_owner_number;
+            return candidate->q3_owner_number==pass->q3_entity_number || candidate->q3_owner_number==owner;
+        }
     }
     if(candidate->owner.registry!=0 && qa_actor_id_equal(actor,candidate->owner)) return true;
     if(pass==NULL || pass->owner.registry==0) return false;
