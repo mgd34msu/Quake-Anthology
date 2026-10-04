@@ -651,11 +651,8 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   if (min_y > max_y) return;
   int64_t min_x = triangle->bounds.x0, max_x = triangle->bounds.x1;
   const edge_equation *coverage = triangle->coverage, *attributes = triangle->attributes;
-  screen_vertex vertices[3];
-  for (size_t i = 0; i < 3; ++i) {
-    vertices[i] = triangle->vertices[i];
-    vertices[i].vertex = &triangle->values[i];
-  }
+  const screen_vertex *vertices = triangle->vertices;
+  const cpu_vertex *values = triangle->values;
   double inverse_area = triangle->inverse_area, near_depth = triangle->near_depth,
       far_depth = triangle->far_depth, q_dx = triangle->q_dx, q_dy = triangle->q_dy,
       offset = triangle->offset;
@@ -702,7 +699,7 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
           double color = 0;
           for (size_t i = 0; i < 3; ++i)
             color +=
-                vertices[i].vertex->color[channel] * vertices[i].q * weight[i];
+                values[i].color[channel] * vertices[i].q * weight[i];
           fragment.color[channel] = cpu_clamp(color * reciprocal);
         }
       }
@@ -716,7 +713,7 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
             coordinate += uv[unit][axis][i] * weight[i];
           coordinate *= reciprocal;
           fragment.uv[unit][axis] =
-              vertices[0].vertex->uv[unit][axis] + coordinate;
+              values[0].uv[unit][axis] + coordinate;
           if (derivatives[unit]) {
             derivative_x[axis] =
                 (uv_dx[unit][axis] - coordinate * q_dx) * reciprocal;
@@ -735,8 +732,8 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
         double position[3] = {0}, normal[3] = {0};
         for (size_t axis = 0; axis < 3; ++axis)
           for (size_t i = 0; i < 3; ++i) {
-            position[axis] += vertices[i].vertex->world[axis] * perspective[i];
-            normal[axis] += vertices[i].vertex->normal[axis] * perspective[i];
+            position[axis] += values[i].world[axis] * perspective[i];
+            normal[axis] += values[i].normal[axis] * perspective[i];
           }
         fragment.world_position = (qa_vec3){
             (float)position[0], (float)position[1], (float)position[2]};
