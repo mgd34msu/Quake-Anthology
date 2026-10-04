@@ -254,22 +254,11 @@ static bool q2_visit_brush(q2_collision *collision, uint32_t index)
     return true;
 }
 
-static bool q2_target(const q2_collision *collision, const qa_collision_target *target,
-                      uint32_t *model, qa_vec3 basis[3], qa_error *error)
+static uint32_t q2_target(const qa_collision_target *target, qa_vec3 basis[3])
 {
-    *model = target->inline_model ? target->model : 0;
-    if ((size_t)*model >= collision->model_count) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q2 collision model %u", (unsigned)*model);
-        return false;
-    }
-    if (target->inline_model) {
-        if (!qa_vec_finite(target->origin) || !qa_vec_finite(target->angles)) {
-            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Nonfinite Q2 collision model transform");
-            return false;
-        }
+    if (target->inline_model)
         qa_collision_basis(target->angles, basis);
-    }
-    return true;
+    return target->inline_model ? target->model : 0;
 }
 
 static qa_vec3 q2_local(qa_vec3 point, const qa_collision_target *target, const qa_vec3 basis[3])
@@ -282,13 +271,9 @@ static bool q2_point_contents(void *opaque, const qa_point_query *query,
                               qa_point_contents *out, qa_error *error)
 {
     q2_collision *collision = opaque;
-    if (query == NULL || out == NULL || !qa_vec_finite(query->point)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q2 point contents query");
-        return false;
-    }
-    uint32_t model;
     qa_vec3 basis[3];
-    if (!q2_target(collision, &query->target, &model, basis, error)) return false;
+    uint32_t model = q2_target(&query->target, basis);
+    (void)error;
     qa_vec3 point = q2_local(query->point, &query->target, basis);
     int32_t child = collision->headnodes[model];
     while (child >= 0) {
@@ -591,15 +576,9 @@ static bool q2_trace(void *opaque, const qa_trace_query *query,
                      qa_trace_result *out, qa_error *error)
 {
     q2_collision *collision = opaque;
-    if (query == NULL || out == NULL || !qa_vec_finite(query->start) || !qa_vec_finite(query->end)
-        || (unsigned)query->shape.kind > (unsigned)QA_SHAPE_CAPSULE
-        || (query->shape.kind != QA_SHAPE_POINT && !qa_collision_bounds_valid(query->shape.bounds))) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q2 trace query");
-        return false;
-    }
-    uint32_t model;
     qa_vec3 basis[3];
-    if (!q2_target(collision, &query->target, &model, basis, error)) return false;
+    uint32_t model = q2_target(&query->target, basis);
+    (void)error;
     q2_work work = {0};
     work.collision = collision;
     work.query = query;
