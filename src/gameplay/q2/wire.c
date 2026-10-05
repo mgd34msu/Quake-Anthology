@@ -138,7 +138,7 @@ bool q2_wire_admit(qa_q2_game *g, q2_actor *a, qa_actor_id id, qa_error *error)
     uint32_t slot;
     if(!spawn_slot(g,&slot,error))return false;
     if (record->owner == g->options.owner &&
-        !qa_actors_bind_source(qa_session_actors(g->services.session), id, slot, error)) return false;
+        !qa_actors_bind_source(qa_session_actor_registry(g->services.session), id, slot, error)) return false;
     return bind(g, a, id, slot, error);
 }
 
