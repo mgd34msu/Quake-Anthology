@@ -22,8 +22,5 @@ typedef struct qa_render_checkpoint_refs {
  * rows. The caller protects the renderer/resource lifetime throughout. */
 typedef bool (*qa_render_resource_visit_fn)(void *,const qa_scene_image *,const qa_scene_geometry *,size_t,qa_error *);
 bool qa_cpu_checkpoint_resources(const qa_cpu_renderer *,qa_render_resource_visit_fn,void *,qa_error *);
-bool qa_cpu_checkpoint(const qa_cpu_renderer *,const qa_render_checkpoint_refs *,qa_buffer *,qa_error *);
-/* Detached private buffers and retained image aliases; no presentation call. */
-bool qa_cpu_restore(qa_bytes,const qa_cpu_options *,const qa_render_checkpoint_refs *,qa_cpu_renderer **,qa_error *);
 bool qa_gl_checkpoint_resources(const qa_gl_renderer *,qa_render_resource_visit_fn,void *,qa_error *);
 #endif

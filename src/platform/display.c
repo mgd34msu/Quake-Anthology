@@ -1,7 +1,6 @@
 #include "qa/display.h"
 #include "qa/display_save.h"
 #include "qa/display_settings.h"
-#include "qa/source_save.h"
 
 #include <SDL.h>
 #include <SDL_opengl.h>
@@ -1217,20 +1216,17 @@ bool qa_display_gamma_finish(qa_display_gamma_ticket **out, qa_error *error)
 typedef struct display_saved {
     qa_display_info info;
     int32_t x,y,swap_interval;
-    /* The wire fields retain their existing layout for saved RGBA frames. */
-    uint32_t texture_width,texture_height;
     char *title;
     char fullscreen_failure[256];
-    qa_buffer pixels;
-    bool texture,frame;
+    bool frame;
 } display_saved;
 struct qa_display_restore_guard {
     qa_display *active,*candidate;
     SDL_Window *window;
     SDL_GLContext context;
     SDL_Surface *frame;
-    display_saved saved,baseline,staged;
-    bool attempted,prepared,transferred,fresh;
+    display_saved baseline,staged;
+    bool attempted,prepared,transferred;
 };
 static bool display_save_error(qa_error *error,qa_status status,const char *message)
 { qa_error_set(error,status,0,"%s",message); return false; }
@@ -1240,57 +1236,12 @@ bool qa_display_restore_info(const qa_display_restore_guard *guard,const qa_disp
         !guard->active || guard->active->destroy_pending || candidate->destroy_pending ||
         !candidate->native_borrowed || candidate->window!=guard->window ||
         guard->active->window!=guard->window || !candidate->lease || candidate->lease!=guard->active->lease) return false;
-    *out=guard->saved.info;
+    *out=guard->baseline.info;
     return true;
 }
 static void display_saved_free(display_saved *saved)
-{ free(saved->title); qa_buffer_free(&saved->pixels); }
-static bool display_save_fields(qa_source_save_io *io,display_saved *saved)
-{
-    bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','D','S','P'}; uint32_t backend=saved->info.backend,fullscreen=saved->info.fullscreen;
-    int32_t index=saved->info.display_index,refresh=saved->info.refresh_rate;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QDSP",4) ||
-        !qa_source_save_u32(io,&backend) || backend>QA_DISPLAY_OPENGL ||
-        !qa_source_save_u32(io,&fullscreen) || fullscreen>QA_DISPLAY_EXCLUSIVE ||
-        !qa_source_save_u32(io,&saved->info.logical_width) || !qa_source_save_u32(io,&saved->info.logical_height) ||
-        !qa_source_save_u32(io,&saved->info.drawable_width) || !qa_source_save_u32(io,&saved->info.drawable_height) ||
-        !valid_dimensions(saved->info.logical_width,saved->info.logical_height,io->error) ||
-        !valid_dimensions(saved->info.drawable_width,saved->info.drawable_height,io->error) ||
-        !qa_source_save_i32(io,&index) || index<0 || !qa_source_save_i32(io,&refresh) || refresh<0 ||
-        !qa_source_save_bool(io,&saved->info.visible) || !qa_source_save_bool(io,&saved->info.focused) ||
-        !qa_source_save_bool(io,&saved->info.minimized) || !qa_source_save_bool(io,&saved->info.maximized) ||
-        !qa_source_save_i32(io,&saved->x) || !qa_source_save_i32(io,&saved->y) ||
-        !qa_source_save_i32(io,&saved->swap_interval) || saved->swap_interval < -1 || saved->swap_interval>1) return false;
-    saved->info.backend=(qa_display_backend)backend; saved->info.fullscreen=(qa_display_fullscreen)fullscreen;
-    saved->info.display_index=index; saved->info.refresh_rate=refresh;
-    size_t title=reading?0:strlen(saved->title);
-    if (!qa_source_save_count(io,&title,reading?io->input.size-io->offset:SIZE_MAX-1) || title==SIZE_MAX) return false;
-    if (reading) {
-        saved->title=malloc(title+1);
-        if (!saved->title) return display_save_error(io->error,QA_ERROR_MEMORY,"Restoring display title");
-    }
-    if (!qa_source_save_bytes(io,saved->title,title) || memchr(saved->title,0,title) ||
-        !qa_source_save_bytes(io,saved->fullscreen_failure,sizeof(saved->fullscreen_failure)) ||
-        !memchr(saved->fullscreen_failure,0,sizeof(saved->fullscreen_failure)) ||
-        !qa_source_save_bool(io,&saved->texture) || !qa_source_save_bool(io,&saved->frame) ||
-        !qa_source_save_u32(io,&saved->texture_width) || !qa_source_save_u32(io,&saved->texture_height)) return false;
-    if (reading) saved->title[title]=0;
-    if (backend==QA_DISPLAY_OPENGL) return !saved->texture && !saved->frame && !saved->texture_width && !saved->texture_height;
-    if (saved->frame && !saved->texture) return false;
-    if (!saved->texture) return !saved->texture_width && !saved->texture_height;
-    if (!valid_dimensions(saved->texture_width,saved->texture_height,io->error)) return false;
-    if (!saved->frame) return true;
-    if (saved->texture_width!=saved->info.drawable_width || saved->texture_height!=saved->info.drawable_height ||
-        (size_t)saved->texture_width>SIZE_MAX/saved->texture_height/4) return false;
-    size_t size=(size_t)saved->texture_width*saved->texture_height*4;
-    if (reading) {
-        saved->pixels.data=malloc(size); saved->pixels.size=size;
-        if (!saved->pixels.data) return display_save_error(io->error,QA_ERROR_MEMORY,"Restoring display's genuine presented texture pixels");
-    }
-    return saved->pixels.size==size && qa_source_save_bytes(io,saved->pixels.data,size);
-}
-static bool display_observe(qa_display *display,display_saved *saved,bool pixels,qa_error *error)
+{ free(saved->title); }
+static bool display_observe(qa_display *display,display_saved *saved,qa_error *error)
 {
     if (!display || !display->window || display->capturing || !qa_display_info_get(display,&saved->info,error)) return false;
     int x=0,y=0; SDL_GetWindowPosition(display->window,&x,&y); saved->x=x; saved->y=y;
@@ -1298,9 +1249,7 @@ static bool display_observe(qa_display *display,display_saved *saved,bool pixels
     if (size==SIZE_MAX || !(saved->title=malloc(size+1))) return display_save_error(error,QA_ERROR_MEMORY,"Retaining display title");
     memcpy(saved->title,title,size+1); memcpy(saved->fullscreen_failure,display->fullscreen_failure,sizeof(saved->fullscreen_failure));
     if (display->backend==QA_DISPLAY_OPENGL) return qa_display_swap_interval(display,&saved->swap_interval,error);
-    saved->texture=display->native.cpu.frame!=NULL; saved->frame=display->native.cpu.has_frame;
-    saved->texture_width=display->native.cpu.width; saved->texture_height=display->native.cpu.height;
-    if (pixels && saved->frame) return qa_display_capture_cpu(display,&saved->pixels,NULL,NULL,error);
+    saved->frame=display->native.cpu.has_frame;
     return true;
 }
 static bool display_current_equal(const display_saved *a,const display_saved *b)
@@ -1335,28 +1284,12 @@ static bool window_settings_stage(qa_display *display,const qa_display_settings 
     if (display->backend==QA_DISPLAY_CPU && !cpu_window_surface(display,error)) return false;
     return true;
 }
-bool qa_display_checkpoint(qa_display *display,qa_buffer *out,qa_error *error)
-{
-    if (display && display->surface_ticket)
-        return display_save_error(error,QA_ERROR_ARGUMENT,"Display checkpoint retains a surface settings ticket");
-    if (!out || out->data || out->size) return display_save_error(error,QA_ERROR_ARGUMENT,"Display checkpoint output must be empty");
-    display_saved saved={0}; qa_source_save_io io={0};
-    bool ok=display_observe(display,&saved,true,error);
-    if (ok) {
-        display->capturing=true;
-        ok=qa_source_save_writer(&io,NULL,error) && display_save_fields(&io,&saved) && qa_source_save_finish(&io,out);
-        display->capturing=false;
-    }
-    qa_source_save_dispose(&io); display_saved_free(&saved);
-    if (!ok && (!error || error->code==QA_OK)) display_save_error(error,QA_ERROR_FORMAT,"Invalid genuine display continuation");
-    return ok;
-}
 static void display_detached_bind(qa_display *active,qa_display *candidate,qa_display_restore_guard *guard)
 {
     candidate->backend=active->backend; candidate->window=active->window; candidate->native_borrowed=true;
     candidate->revision=1;
     candidate->lease=active->lease; ++candidate->lease->references;
-    memcpy(candidate->fullscreen_failure,guard->saved.fullscreen_failure,sizeof(candidate->fullscreen_failure));
+    memcpy(candidate->fullscreen_failure,guard->baseline.fullscreen_failure,sizeof(candidate->fullscreen_failure));
     if (active->backend==QA_DISPLAY_OPENGL) candidate->native.gl=active->native.gl;
     guard->active=active; guard->candidate=candidate; guard->window=active->window;
     candidate->restore_guard=guard;
@@ -1375,35 +1308,12 @@ bool qa_display_create_detached(qa_display *active,qa_display **out,
         free(guard); free(candidate);
         return display_save_error(error,QA_ERROR_MEMORY,"Allocating fresh detached display");
     }
-    if (!display_observe(active,&guard->saved,false,error) || !display_observe(active,&guard->baseline,false,error)) {
-        display_saved_free(&guard->saved); display_saved_free(&guard->baseline);
+    if (!display_observe(active,&guard->baseline,error)) {
+        display_saved_free(&guard->baseline);
         free(guard); free(candidate); return false;
     }
-    guard->saved.texture=guard->saved.frame=false;
-    guard->saved.texture_width=guard->saved.texture_height=0;
-    guard->fresh=true;
     display_detached_bind(active,candidate,guard);
     *out=candidate; *guard_out=guard; return true;
-}
-bool qa_display_restore(qa_bytes bytes,const qa_display *active,qa_display **out,qa_display_restore_guard **guard_out,qa_error *error)
-{
-    if (!active || active->surface_ticket || active->pending_restore || active->destroy_pending || active->native_borrowed ||
-        !active->lease || active->lease->references==SIZE_MAX || !out || *out || !guard_out || *guard_out)
-        return display_save_error(error,QA_ERROR_ARGUMENT,"Display restore requires separate active and detached native owners");
-    qa_display_restore_guard *guard=calloc(1,sizeof(*guard)); qa_display *candidate=calloc(1,sizeof(*candidate));
-    if (!guard || !candidate) { free(guard); free(candidate); return display_save_error(error,QA_ERROR_MEMORY,"Allocating detached display continuation"); }
-    qa_source_save_io io={0};
-    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && display_save_fields(&io,&guard->saved) && qa_source_save_finish(&io,NULL) &&
-        display_observe((qa_display *)active,&guard->baseline,true,error) &&
-        guard->saved.info.backend==guard->baseline.info.backend;
-    if (ok) {
-        display_detached_bind((qa_display *)active,candidate,guard);
-        *out=candidate; *guard_out=guard; candidate=NULL; guard=NULL;
-    }
-    qa_source_save_dispose(&io); qa_display_destroy(candidate);
-    qa_display_restore_guard_destroy(guard);
-    if (!ok && (!error || error->code==QA_OK)) display_save_error(error,QA_ERROR_FORMAT,"Saved display differs from its current qualified native window");
-    return ok;
 }
 static bool display_guard_owned(const qa_display_restore_guard *guard,bool retiring,qa_error *error)
 {
@@ -1423,7 +1333,7 @@ static bool display_guard_ready(const qa_display_restore_guard *guard,qa_error *
     if (!display_guard_owned(guard,false,error)) return false;
     display_saved current={0};
     const display_saved *expected=guard->prepared?&guard->staged:&guard->baseline;
-    bool ok=display_observe(guard->active,&current,false,error) && display_current_equal(expected,&current);
+    bool ok=display_observe(guard->active,&current,error) && display_current_equal(expected,&current);
     display_saved_free(&current);
     if (!ok && (!error || error->code==QA_OK)) display_save_error(error,QA_ERROR_ARGUMENT,"Display native state changed after saved-cut qualification");
     return ok;
@@ -1438,31 +1348,12 @@ bool qa_display_handoff_prepare(qa_display_restore_guard *guard,qa_error *error)
         return display_save_error(error,QA_ERROR_ARGUMENT,"Display candidate belongs to another native restore guard");
     guard->candidate->restore_guard=guard;
     guard->attempted=true;
-    if (guard->fresh) {
-        if (!display_observe(guard->candidate,&guard->staged,false,error) ||
-            (guard->candidate->backend==QA_DISPLAY_CPU &&
-                !resize_cpu_frame(guard->candidate,guard->staged.info.drawable_width,guard->staged.info.drawable_height,error))) return false;
-        guard->prepared=true; return true;
-    }
-    display_changed(guard->active);
-    qa_display_settings settings={.width=guard->saved.info.logical_width,.height=guard->saved.info.logical_height,
-        .fullscreen=guard->saved.info.fullscreen,.swap_interval=guard->saved.swap_interval};
-    if (!window_settings_stage(guard->candidate,&settings,guard->baseline.info.visible,
-            guard->baseline.info.focused,error) ||
-        !display_observe(guard->candidate,&guard->staged,false,error)) return false;
-    if (guard->staged.info.backend!=guard->saved.info.backend ||
-        guard->staged.info.fullscreen!=guard->saved.info.fullscreen ||
-        guard->staged.info.drawable_width!=guard->saved.info.drawable_width ||
-        guard->staged.info.drawable_height!=guard->saved.info.drawable_height)
-        return display_save_error(error,QA_ERROR_UNSUPPORTED,"Saved renderer extent differs from its actual staged native drawable");
-    if (guard->candidate->backend==QA_DISPLAY_CPU && guard->saved.texture) {
-        if (!resize_cpu_frame(guard->candidate,guard->saved.texture_width,guard->saved.texture_height,error)) return false;
-        if (guard->saved.frame && (!cpu_frame_write(guard->candidate,guard->saved.pixels.data,error) ||
-            !cpu_frame_blit(guard->candidate,false,error))) return false;
-        guard->candidate->native.cpu.has_frame=guard->saved.frame;
-    }
+    if (!display_observe(guard->candidate,&guard->staged,error) ||
+        (guard->candidate->backend==QA_DISPLAY_CPU &&
+            !resize_cpu_frame(guard->candidate,guard->staged.info.drawable_width,guard->staged.info.drawable_height,error))) return false;
     guard->prepared=true; return true;
 }
+
 bool qa_display_handoff_abort(qa_display_restore_guard *guard,qa_error *error)
 {
     if (!guard || guard->transferred) return true;
@@ -1471,58 +1362,19 @@ bool qa_display_handoff_abort(qa_display_restore_guard *guard,qa_error *error)
         return true;
     }
     if (!display_guard_owned(guard,true,error)) return false;
-    if (guard->fresh) {
-        if (guard->active->backend==QA_DISPLAY_CPU && guard->baseline.frame &&
-            !cpu_frame_blit(guard->active,true,error)) return false;
-        display_saved_free(&guard->staged); guard->staged=(display_saved){0};
-        guard->attempted=guard->prepared=false;
-        if (guard->candidate->restore_guard==guard) guard->candidate->restore_guard=NULL;
-        return true;
-    }
-    qa_display_settings settings={.width=guard->baseline.info.logical_width,.height=guard->baseline.info.logical_height,
-        .fullscreen=guard->baseline.info.fullscreen,.swap_interval=guard->baseline.swap_interval};
-    if (!window_settings_stage(guard->active,&settings,guard->baseline.info.visible,
-            guard->baseline.info.focused,error)) return false;
-    SDL_SetWindowPosition(guard->window,guard->baseline.x,guard->baseline.y);
-    if (guard->baseline.info.minimized) SDL_MinimizeWindow(guard->window);
-    else if (guard->baseline.info.maximized) SDL_MaximizeWindow(guard->window);
-    else SDL_RestoreWindow(guard->window);
-    display_saved current={0};
-    bool ok=display_observe(guard->active,&current,false,error) && display_current_equal(&guard->baseline,&current);
-    display_saved_free(&current);
-    if (!ok) return display_save_error(error,QA_ERROR_IO,"The original native display has not recovered; retain its restore guard");
-    if (guard->active->backend==QA_DISPLAY_CPU && guard->baseline.frame) {
-        if (!guard->active->native.cpu.frame ||
-            guard->active->native.cpu.width!=guard->baseline.texture_width ||
-            guard->active->native.cpu.height!=guard->baseline.texture_height ||
-            !cpu_frame_write(guard->active,guard->baseline.pixels.data,error) ||
-            !cpu_frame_blit(guard->active,true,error))
-            return false;
-    }
-    display_changed(guard->active); display_changed(guard->candidate);
-    memcpy(guard->active->fullscreen_failure,guard->baseline.fullscreen_failure,sizeof(guard->baseline.fullscreen_failure));
+    if (guard->active->backend==QA_DISPLAY_CPU && guard->baseline.frame &&
+        !cpu_frame_blit(guard->active,true,error)) return false;
     display_saved_free(&guard->staged); guard->staged=(display_saved){0};
     guard->attempted=guard->prepared=false;
     if (guard->candidate->restore_guard==guard) guard->candidate->restore_guard=NULL;
     return true;
 }
+
 bool qa_display_handoff_ready(const qa_display_restore_guard *guard,qa_error *error)
 {
     if (!display_guard_ready(guard,error)) return false;
     if (!guard->prepared) return display_save_error(error,QA_ERROR_ARGUMENT,"Display publication requires native presentation preparation");
     return true;
-}
-bool qa_display_restore_checkpoint(const qa_display_restore_guard *guard,qa_buffer *out,qa_error *error)
-{
-    if (!out || out->data || out->size || !display_guard_ready(guard,error)) return false;
-    display_saved saved=guard->saved; saved.pixels=(qa_buffer){0}; qa_source_save_io io={0};
-    if (guard->prepared && saved.frame) {
-        if (!qa_display_capture_cpu(guard->candidate,&saved.pixels,NULL,NULL,error)) return false;
-    } else saved.pixels=guard->saved.pixels;
-    bool ok=qa_source_save_writer(&io,NULL,error) && display_save_fields(&io,&saved) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io);
-    if (guard->prepared && saved.frame) qa_buffer_free(&saved.pixels);
-    return ok;
 }
 void qa_display_handoff(qa_display_restore_guard *guard)
 {
@@ -1535,8 +1387,6 @@ void qa_display_handoff(qa_display_restore_guard *guard)
     }
     guard->candidate->native_borrowed=false; guard->active->native_borrowed=true;
     guard->candidate->restore_guard=NULL;
-    if (guard->candidate->backend==QA_DISPLAY_CPU && guard->saved.frame)
-        SDL_UpdateWindowSurface(guard->window);
     guard->transferred=true;
 }
 void qa_display_restore_guard_destroy(qa_display_restore_guard *guard)
@@ -1549,7 +1399,7 @@ void qa_display_restore_guard_destroy(qa_display_restore_guard *guard)
     if (guard->active && guard->active->pending_restore==guard) guard->active->pending_restore=NULL;
     if (guard->candidate && guard->candidate->pending_restore==guard) guard->candidate->pending_restore=NULL;
     if (guard->candidate && guard->candidate->restore_guard==guard) guard->candidate->restore_guard=NULL;
-    display_saved_free(&guard->saved); display_saved_free(&guard->baseline); display_saved_free(&guard->staged); free(guard);
+    display_saved_free(&guard->baseline); display_saved_free(&guard->staged); free(guard);
 }
 bool qa_display_restore_cleanup(qa_display *display,qa_error *error)
 {
