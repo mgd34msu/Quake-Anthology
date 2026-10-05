@@ -133,7 +133,7 @@ static bool styles(qa_application *app, const application_unified_source *source
         else if (native) pattern = native->configstrings[base + i];
         qa_unified_style_pattern *row = out->styles + out->style_count++;
         row->family = source->family; row->index = (uint32_t)i;
-        if (!application_unified_frame_string(NULL, &row->pattern, pattern, error)) return false;
+        if (!application_unified_frame_string(NULL, &row->pattern, pattern ? pattern : "", error)) return false;
     }
     return true;
 }
