@@ -872,7 +872,9 @@ void qa_render_source_attributes_vertex(qa_render_controls *controls,const qa_sc
     qa_render_primitive_mode mode,size_t index,const qa_scene_vertex *vertex,qa_scene_vec4 *color,qa_scene_vec2 uv[2])
 {
     qa_render_source_attributes *attributes=&controls->attributes;
-    *color=vertex->color; uv[0]=vertex->texcoord; uv[1]=vertex->lightmap;
+    *color=draw->vertex_inputs.constant_color?draw->vertex_inputs.color:vertex->color;
+    uv[0]=draw->vertex_inputs.swap_uv?vertex->lightmap:vertex->texcoord;
+    uv[1]=draw->vertex_inputs.swap_uv?vertex->texcoord:vertex->lightmap;
     if (!source_draw_attributes(draw)) return;
     if (draw->source_arrays && mode==QA_RENDER_PRIMITIVES_DISCRETE_STRIPS) {
         *color=controls->source.colors[index]; uv[0]=controls->source.coordinates[0][index];

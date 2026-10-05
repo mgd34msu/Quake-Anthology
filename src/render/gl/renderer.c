@@ -651,6 +651,7 @@ static bool draw_valid(const qa_gl_renderer *renderer,
         !finite3(draw->fog.color) || !isfinite(draw->fog.density) ||
         !isfinite(draw->fog.amount) || !isfinite(draw->shade_scale) ||
         !isfinite(draw->shadow_near) ||
+        (draw->vertex_inputs.constant_color && !finite4(draw->vertex_inputs.color)) ||
         !material_source_vertex_storage_valid(draw) ||
         (draw->mesh.identity != 0 && draw->mesh.geometry == NULL) ||
         (draw->mesh.vertex_count != 0 && draw->mesh.vertices == NULL) ||
@@ -863,7 +864,7 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
     }
     qa_scene_mesh uploaded=draw.mesh;
     if (draw.source_vertex_storage) uploaded.vertex_count=draw.source_vertex_storage;
-    if (!gl_mesh_bind(renderer, &uploaded, resident, error)) return false;
+    if (!gl_mesh_bind(renderer, &uploaded, resident, &draw.vertex_inputs, error)) return false;
     if (source_pipeline && draw.mesh.vertex_count) {
         qa_scene_vec4 color; qa_scene_vec2 uv[2];
         qa_render_source_attributes_vertex(&renderer->controls,&draw,mode,0,draw.mesh.vertices,&color,uv);

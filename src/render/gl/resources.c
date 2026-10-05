@@ -1042,7 +1042,8 @@ void gl_meshes_prune(qa_gl_renderer *renderer)
 }
 
 bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
-                  const gl_mesh_entry *resident, qa_error *error)
+                  const gl_mesh_entry *resident, const qa_scene_vertex_inputs *inputs,
+                  qa_error *error)
 {
     GLuint vertices, indices;
     if (!mesh_storage(renderer, mesh, resident, &vertices, &indices, error)) return false;
@@ -1062,14 +1063,20 @@ bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
                             (const void *)(uintptr_t)offsetof(qa_scene_vertex,
                                                              normal));
     gl->VertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
-                            (const void *)(uintptr_t)offsetof(qa_scene_vertex,
-                                                             texcoord));
+                            (const void *)(uintptr_t)(inputs->swap_uv
+                                ? offsetof(qa_scene_vertex, lightmap)
+                                : offsetof(qa_scene_vertex, texcoord)));
     gl->VertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride,
-                            (const void *)(uintptr_t)offsetof(qa_scene_vertex,
-                                                             lightmap));
+                            (const void *)(uintptr_t)(inputs->swap_uv
+                                ? offsetof(qa_scene_vertex, texcoord)
+                                : offsetof(qa_scene_vertex, lightmap)));
     gl->VertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride,
                             (const void *)(uintptr_t)offsetof(qa_scene_vertex,
                                                              color));
+    if (inputs->constant_color) {
+        gl->DisableVertexAttribArray(4);
+        gl->VertexAttrib4f(4, inputs->color.x, inputs->color.y, inputs->color.z, inputs->color.w);
+    }
     return true;
 }
 

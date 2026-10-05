@@ -280,7 +280,7 @@ void gl_meshes_prune(qa_gl_renderer *renderer);
 void gl_resources_destroy(qa_gl_renderer *renderer);
 const gl_mesh_entry *gl_mesh_resident(const qa_gl_renderer *, const qa_scene_mesh *);
 bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
-                  const gl_mesh_entry *, qa_error *error);
+                  const gl_mesh_entry *, const qa_scene_vertex_inputs *, qa_error *error);
 void gl_mesh_unbind(qa_gl_renderer *renderer);
 
 bool gl_bind_destination(qa_gl_renderer *renderer, qa_error *error);

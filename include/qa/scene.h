@@ -463,8 +463,13 @@ typedef enum qa_scene_source_direct {
     QA_SOURCE_DIRECT_NONE, QA_SOURCE_DIRECT_BEAM, QA_SOURCE_DIRECT_AXIS, QA_SOURCE_DIRECT_SKY,
     QA_SOURCE_DIRECT_SHADOW_FINISH, QA_SOURCE_DIRECT_SHADOW_VOLUME_END, QA_SOURCE_DIRECT_RAW, QA_SOURCE_DIRECT_IMAGE_GRID
 } qa_scene_source_direct;
+typedef struct qa_scene_vertex_inputs {
+    qa_scene_vec4 color;
+    bool constant_color, swap_uv;
+} qa_scene_vertex_inputs;
 typedef struct qa_scene_draw {
     qa_scene_mesh mesh;
+    qa_scene_vertex_inputs vertex_inputs;
     qa_scene_matrix model, mvp;
     const qa_scene_image *textures[2];
     /* Preserve the preceding binding for a source stage whose video/image

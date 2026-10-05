@@ -302,6 +302,34 @@ static size_t source_draw_extent(const qa_scene_mesh *geometry)
     }
     return extent;
 }
+static bool uniform_color_generator(qa_material_color_kind kind)
+{
+    switch (kind) {
+    case QA_COLOR_IDENTITY:
+    case QA_COLOR_IDENTITY_LIGHTING:
+    case QA_COLOR_ENTITY:
+    case QA_COLOR_ONE_MINUS_ENTITY:
+    case QA_COLOR_CONSTANT:
+    case QA_COLOR_WAVE:
+        return true;
+    default:
+        return false;
+    }
+}
+static bool retained_coordinates(const qa_material_stage *first,
+                                  const qa_material_stage *second, bool *swap)
+{
+    if (first->tcmod_count || (second && second->tcmod_count)) return false;
+    if (first->tcgen == QA_TC_TEXTURE && (!second || second->tcgen == QA_TC_LIGHTMAP)) {
+        *swap = false;
+        return true;
+    }
+    if (first->tcgen == QA_TC_LIGHTMAP && (!second || second->tcgen == QA_TC_TEXTURE)) {
+        *swap = true;
+        return true;
+    }
+    return false;
+}
 static bool emit_stage(const qa_material *material, const qa_material *original,
                         const qa_material_stage *stage, const qa_material_stage *second,
                         qa_scene_texture_environment environment, qa_scene_state state,
@@ -328,7 +356,6 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
     if (source && second_binding && context->source_diagnostics.lightmap)
         environment = QA_TEXTURE_REPLACE;
     qa_scene_draw draw = initial_draw(material, original, *geometry, context);
-    draw.mesh.identity = draw.mesh.revision = 0;
     draw.environment = environment;
     qa_scene_cull cull = draw.state.cull;
     draw.state = state;
@@ -408,6 +435,23 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
         draw.fog = context->fog;
         draw.fog.effect = adjustment;
     }
+    bool swap = false;
+    if (!source && geometry->vertex_count &&
+        uniform_color_generator(stage->rgb) && uniform_color_generator(stage->alpha) &&
+        (context->fog_tc_scale <= 0 ||
+         (adjustment != QA_FOG_RGB && adjustment != QA_FOG_ALPHA && adjustment != QA_FOG_RGBA)) &&
+        retained_coordinates(first_binding, second_binding, &swap)) {
+        material_color_state uniform;
+        qa_scene_vec4 color;
+        if (!material_color_prepare(stage, context, time, &uniform, error) ||
+            !material_color_vertex(stage, geometry->vertices, context, &uniform,
+                                   previous_colors[0], &color, error)) return false;
+        draw.vertex_inputs = (qa_scene_vertex_inputs){.constant_color = true,
+            .swap_uv = swap, .color = color};
+        for (size_t i = 0; i < geometry->vertex_count; ++i) previous_colors[i] = color;
+        return qa_scene_frame_draw(frame, &draw, error);
+    }
+    draw.mesh.identity = draw.mesh.revision = 0;
     size_t storage = source ? source_storage : geometry->vertex_count;
     qa_scene_vertex *vertices = frame_array(frame, storage, sizeof(*vertices), alignof(qa_scene_vertex), error);
     if (storage && vertices == NULL) return false;

@@ -333,12 +333,8 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
     if (!unlit && !input->shadow_only && !apply_shadow_lights(&draw, input, frame, error)) return false;
     if (!qa_scene_frame_draw(frame, &draw, error)) return false;
     if (!unlit && !input->shadow_only && image && image->fullbright) {
-        qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage,
-            mesh->vertex_count * sizeof(*vertices), _Alignof(qa_scene_vertex), error);
-        if (!vertices) return false;
-        memcpy(vertices, mesh->vertices, mesh->vertex_count * sizeof(*vertices));
-        for (size_t i = 0; i < mesh->vertex_count; ++i) vertices[i].color = (qa_scene_vec4){1, 1, 1, input->color.w};
-        draw.mesh.vertices = vertices; draw.mesh.identity = 0;
+        draw.vertex_inputs = (qa_scene_vertex_inputs){.constant_color = true,
+            .color = {1, 1, 1, input->color.w}};
         draw.textures[0] = qa_scene_image_at_time(image->fullbright, input->seconds);
         if (!recipient_image(model, input, &draw.textures[0], error)) return false;
         draw.state.depth_write = false;

@@ -286,6 +286,7 @@ static bool draw_valid(const qa_scene_draw *draw, qa_error *error) {
       !finite3(draw->fog.color) || !isfinite(draw->fog.density) ||
       !isfinite(draw->fog.amount) || !isfinite(draw->shade_scale) ||
       !isfinite(draw->shadow_near) ||
+      (draw->vertex_inputs.constant_color && !finite4(draw->vertex_inputs.color)) ||
       !material_source_vertex_storage_valid(draw) ||
       (draw->mesh.vertex_count && !draw->mesh.vertices) ||
       (draw->mesh.index_count && !draw->mesh.indices) ||

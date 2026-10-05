@@ -448,10 +448,11 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
             (!q1 && input->legacy_policy.monolightmap != '0'))) &&
         (blended || (input->fog.kind == QA_FOG_EXP2 && input->fog.density > 0));
     float intensity = !q1 && (legacy->warp || blended) ? 0.5f : 1;
-    qa_scene_mesh mesh;
-    qa_scene_vertex *vertices;
-    if (!transient_mesh(surface, frame, &mesh, &vertices, error)) return false;
-    for (size_t i = 0; i < mesh.vertex_count; ++i) {
+    qa_scene_mesh mesh = surface->mesh;
+    qa_scene_vertex *vertices = NULL;
+    if (!diagnostic && (legacy->warp || legacy->flowing) &&
+        !transient_mesh(surface, frame, &mesh, &vertices, error)) return false;
+    for (size_t i = 0; vertices && i < mesh.vertex_count; ++i) {
         qa_scene_vec2 uv = vertices[i].texcoord;
         if (legacy->warp) {
             double scroll = !q1 && legacy->flowing ? -64 * (input->seconds * 0.5 - trunc(input->seconds * 0.5)) : 0;
@@ -461,11 +462,12 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
             float scroll = (float)(-64 * (input->seconds / 40 - trunc(input->seconds / 40)));
             vertices[i].texcoord.x += scroll == 0 ? -64 : scroll;
         }
-        vertices[i].color = (qa_scene_vec4){context->entity_color.x * intensity, context->entity_color.y * intensity,
-            context->entity_color.z * intensity, alpha};
     }
     qa_scene_draw draw;
     draw_state(&draw, context, &mesh);
+    draw.vertex_inputs = (qa_scene_vertex_inputs){.constant_color = true,
+        .color = {context->entity_color.x * intensity, context->entity_color.y * intensity,
+                  context->entity_color.z * intensity, alpha}};
     draw.textures[0] = base_image;
     draw.state.depth_write = !blended;
     draw.state.alpha_test = legacy->fence ? QA_ALPHA_GT0 : QA_ALPHA_NONE;
@@ -475,10 +477,8 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
         draw.textures[0] = surface->lightmap;
         draw.state.blend_source = QA_BLEND_ONE;
         draw.state.blend_destination = QA_BLEND_ZERO;
-        for (size_t i = 0; i < mesh.vertex_count; ++i) {
-            vertices[i].texcoord = vertices[i].lightmap;
-            vertices[i].color = (qa_scene_vec4){1, 1, 1, 1};
-        }
+        draw.vertex_inputs.color = (qa_scene_vec4){1, 1, 1, 1};
+        draw.vertex_inputs.swap_uv = true;
     }
     if ((!lightmapped || paired) && !diagnostic)
         if (!fragment_lights(world, input, frame, &draw, error)) return false;
@@ -488,24 +488,15 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
         if (input->shadow_lights) {
             draw.textures[0] = legacy->direct_lightmap;
             draw.textures[1] = base_image;
-            for (size_t i = 0; i < mesh.vertex_count; ++i) {
-                qa_scene_vec2 coordinate = vertices[i].texcoord;
-                vertices[i].texcoord = vertices[i].lightmap;
-                vertices[i].lightmap = coordinate;
-            }
+            draw.vertex_inputs.swap_uv = true;
         }
     }
     if (!qa_scene_frame_draw(frame, &draw, error)) return false;
     if (lightmapped && !paired && !diagnostic) {
-        qa_scene_mesh light_mesh;
-        qa_scene_vertex *light_vertices;
-        if (!transient_mesh(surface, frame, &light_mesh, &light_vertices, error)) return false;
-        for (size_t i = 0; i < light_mesh.vertex_count; ++i) {
-            light_vertices[i].texcoord = light_vertices[i].lightmap;
-            light_vertices[i].color = (qa_scene_vec4){1,1,1,1};
-        }
         qa_scene_draw light_draw = draw;
-        light_draw.mesh = light_mesh;
+        light_draw.mesh = surface->mesh;
+        light_draw.vertex_inputs = (qa_scene_vertex_inputs){.constant_color = true,
+            .swap_uv = true, .color = {1, 1, 1, 1}};
         light_draw.textures[0] = q1 && input->shadow_lights ? legacy->direct_lightmap : surface->lightmap;
         bool inverted = q1 && !input->shadow_lights && world->options.q1_lightmap_encoding != QA_Q1_LIGHTMAP_RGB;
         light_draw.state.blend_source = inverted ? QA_BLEND_ZERO : QA_BLEND_DST_COLOR;
@@ -530,13 +521,10 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
         if (!fragment_lights(world, input, frame, &light_draw, error) || !qa_scene_frame_draw(frame, &light_draw, error)) return false;
     }
     if (texture->fullbright && !diagnostic) {
-        qa_scene_mesh bright_mesh;
-        qa_scene_vertex *bright_vertices;
-        if (!transient_mesh(surface, frame, &bright_mesh, &bright_vertices, error)) return false;
-        for (size_t i = 0; i < bright_mesh.vertex_count; ++i)
-            bright_vertices[i].color = (qa_scene_vec4){context->entity_color.x, context->entity_color.y, context->entity_color.z, alpha};
         qa_scene_draw bright_draw = draw;
-        bright_draw.mesh = bright_mesh;
+        bright_draw.mesh = surface->mesh;
+        bright_draw.vertex_inputs = (qa_scene_vertex_inputs){.constant_color = true,
+            .color = {context->entity_color.x, context->entity_color.y, context->entity_color.z, alpha}};
         bright_draw.textures[0] = qa_scene_image_at_time(texture->fullbright, input->seconds);
         if (!recipient_image(context, &bright_draw.textures[0], world->options.images.mipmap, error)) return false;
         bright_draw.textures[1] = NULL;
