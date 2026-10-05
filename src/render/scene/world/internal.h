@@ -102,12 +102,7 @@ struct qa_scene_source_world_view {
     size_t count;
 };
 
-struct qa_scene_world_checkpoint_refs;
 bool qaw_world_owners_retain(qa_scene_world *, qa_scene_resources *, qa_material_library *, qa_error *);
-struct qa_scene_world_image_refs;
-bool qaw_world_checkpoint_locked(const qa_scene_world *, const struct qa_scene_world_checkpoint_refs *, qa_buffer *, qa_error *);
-bool qaw_lighting_checkpoint_locked(const qa_scene_world *, const struct qa_scene_world_image_refs *, qa_buffer *, qa_error *);
-bool qaw_lighting_restore_locked(qa_scene_world *, qa_bytes, const struct qa_scene_world_image_refs *, qa_error *);
 
 bool qaw_build_legacy(qa_scene_world *, qa_error *);
 bool qawl_light_styles(qa_scene_world *, const qa_scene_world_input *, qa_error *);

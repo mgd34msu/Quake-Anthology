@@ -1829,3 +1829,11 @@ bool qa_scene_world_fog_for_bounds(const qa_scene_world *world, qa_bounds bounds
         bounds.mins.z > bounds.maxs.z) return false;
     return qaw_q3_fog_for_bounds(world, bounds, out);
 }
+
+const qa_scene_mesh *qa_scene_world_mesh_at(const qa_scene_world *world, size_t index)
+{ return world && index<world->surface_count?&world->surfaces[index].mesh:NULL; }
+size_t qa_scene_world_model_count(const qa_scene_world *world) { return world?world->model_count:0; }
+uint64_t qa_scene_world_model_identity_at(const qa_scene_world *world, size_t index)
+{ return world && index<world->model_count?world->models[index].identity:0; }
+qa_scene_resources *qa_scene_world_resource_owner(const qa_scene_world *world) { return world?world->resources:NULL; }
+qa_material_library *qa_scene_world_material_owner(const qa_scene_world *world) { return world?world->materials:NULL; }

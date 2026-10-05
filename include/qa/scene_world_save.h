@@ -4,82 +4,11 @@
 /* The caller supplies the actual already opened immutable map resource. */
 bool qa_scene_world_source_resource_bind(qa_scene_world *, const qa_resource *, qa_error *);
 const qa_resource *qa_scene_world_source_resource_read(const qa_scene_world *);
-typedef struct qa_scene_world_image_refs {
-    void *context;
-    bool (*encode)(void *, const qa_scene_image *, uint64_t *, qa_error *);
-    /* Returns a borrowed immutable version in the world's resource owner. */
-    bool (*decode)(void *, uint64_t, const qa_scene_image **, qa_error *);
-} qa_scene_world_image_refs;
-/* Legacy lighting includes actual retained texture/sky/lightmap versions,
- * texel buffers and lightstyle caches. The existing candidate world must own
- * byte-identical BSP/options/static descriptors. Restore does not regenerate
- * images or lighting, and publishes only after complete validation. */
-bool qa_scene_world_lighting_checkpoint(const qa_scene_world *, const qa_scene_world_image_refs *, qa_buffer *, qa_error *);
-bool qa_scene_world_lighting_restore(qa_scene_world *, qa_bytes, const qa_scene_world_image_refs *, qa_error *);
-typedef struct qa_scene_world_checkpoint_refs {
-    qa_scene_world_image_refs images;
-    void *context;
-    bool (*material_encode)(void *, const qa_material *, uint64_t *, qa_error *);
-    bool (*material_decode)(void *, uint64_t, const qa_material **, qa_error *);
-    bool (*frame_encode)(void *, const qa_scene_frame *, uint64_t *, qa_error *);
-    bool (*frame_decode)(void *, uint64_t, const qa_scene_frame **, qa_error *);
-} qa_scene_world_checkpoint_refs;
-/* The candidate is the actual already admitted world. Its immutable source,
- * topology, mesh/patch data and constructor policy must match exactly. Its
- * resource inventory, renderer order and material owner are restored first.
- * Process-local world/model/mesh identities stay attached to that qualified
- * geometry and are mapped by the enclosing frame/content dictionary. */
-bool qa_scene_world_checkpoint(const qa_scene_world *, const qa_scene_world_checkpoint_refs *, qa_buffer *, qa_error *);
-bool qa_scene_world_restore(qa_scene_world *, qa_bytes, const qa_scene_world_checkpoint_refs *, qa_error *);
-/* Referenced frame allocations may precede their command imports. Complete
- * those imports before finishing the world's saved admission cursor. Pending
- * worlds permit dictionary metadata reads, but no submission or capture. */
-bool qa_scene_world_restore_finish(qa_scene_world *, qa_error *);
 typedef enum qa_scene_world_identity_kind {
     QA_SCENE_WORLD_IDENTITY_WORLD,
     QA_SCENE_WORLD_IDENTITY_MODEL,
     QA_SCENE_WORLD_IDENTITY_MESH
 } qa_scene_world_identity_kind;
-typedef struct qa_scene_world_owner_refs {
-    qa_scene_world_checkpoint_refs state;
-    void *context;
-    bool (*geometry_encode)(void *, const qa_scene_geometry *, uint64_t *, qa_error *);
-    bool (*geometry_decode)(void *, uint64_t, const qa_scene_geometry **, qa_error *);
-    /* Readonly qualification of actual immutable map/content inputs, including
-     * external lighting and palette/translation policy. No acquisition. */
-    bool (*source_qualify)(void *, qa_bytes, const qa_scene_world_options *, qa_error *);
-    /* Reuses the enclosing world's single restored constructor policy. */
-    bool (*source_options)(void *, qa_scene_world_options *, qa_error *);
-    /* Resolve the actual preallocated scene namespace. Material/frame imports
-     * use these same identities. It must not mint IDs or execute source code. */
-    bool (*identity_decode)(void *, qa_scene_world_identity_kind, size_t ordinal,
-        uint64_t saved, uint64_t *installed, qa_error *);
-    /* Optional canonical capture mapping for an imported owner. Qualifies its
-     * physical producer and returns the original saved identity without
-     * modifying the installed world. NULL preserves actual identities. */
-    bool (*identity_encode)(void *, qa_scene_world_identity_kind, size_t ordinal,
-        uint64_t installed, uint64_t *saved, qa_error *);
-} qa_scene_world_owner_refs;
-typedef struct qa_scene_world_saved_identity {
-    qa_scene_world_identity_kind kind;
-    size_t ordinal;
-    uint64_t saved;
-} qa_scene_world_saved_identity;
-/* Read the actual saved identity inventory before material/frame imports.
- * The complete static owner is decoded into temporary detached allocations,
- * qualified against real source/image/geometry owners and then destroyed.
- * No namespace IDs are minted. Free the returned array with free(). */
-bool qa_scene_world_owner_identities_read(const qa_bsp_view *qualified_source, qa_scene_resources *, qa_bytes,
-    const qa_scene_world_owner_refs *, qa_scene_world_saved_identity **, size_t *, qa_error *);
-/* Full detached owner construction preserves saved static geometry allocations
- * and mutable continuation. Resources/palette/images, geometry and material
- * tables must exist first. Immutable BSP parsing qualifies source records; no
- * world builder, image/material admission or lighting update runs. The caller
- * owns qualified_source and every resolver target through the whole decode.
- * Only a completely decoded owner is returned; outputs must be empty. */
-bool qa_scene_world_owner_checkpoint(const qa_scene_world *, const qa_scene_world_owner_refs *, qa_buffer *, qa_error *);
-bool qa_scene_world_owner_restore(const qa_bsp_view *qualified_source, qa_scene_resources *, qa_material_library *,
-    qa_bytes, const qa_scene_world_owner_refs *, qa_scene_world **, qa_error *);
 const qa_scene_mesh *qa_scene_world_mesh_at(const qa_scene_world *, size_t);
 size_t qa_scene_world_model_count(const qa_scene_world *);
 uint64_t qa_scene_world_model_identity_at(const qa_scene_world *, size_t);
