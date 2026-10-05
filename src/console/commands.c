@@ -163,6 +163,37 @@ bool qa_console_invocation_current(const qa_console *console,const qa_command_in
     return console && command && command->console==console && console->frame &&
         console->frame->invocation==command;
 }
+bool qa_console_observe_dispatch(qa_console *console,void *context,
+    qa_console_dispatch_observer observer,qa_error *error)
+{
+    if (!console || !context || !observer || !qa_console_idle(console) ||
+        (console->dispatch_observer &&
+         (console->dispatch_observer_context != context || console->dispatch_observer != observer)))
+        return qac_fail(error,QA_ERROR_ARGUMENT,"Console observation requires its returned sole owner");
+    console->dispatch_observer_context = context;
+    console->dispatch_observer = observer;
+    return true;
+}
+bool qa_console_unobserve_dispatch(qa_console *console,void *context,qa_error *error)
+{
+    if (!console || !qa_console_idle(console) ||
+        (console->dispatch_observer && console->dispatch_observer_context != context))
+        return qac_fail(error,QA_ERROR_ARGUMENT,"Console observation removal requires its returned owner");
+    console->dispatch_observer_context = NULL;
+    console->dispatch_observer = NULL;
+    return true;
+}
+bool qa_console_defer_invocation(qa_console *console,const qa_command_invocation *command,qa_error *error)
+{
+    if (!qa_console_invocation_current(console,command))
+        return qac_fail(error,QA_ERROR_ARGUMENT,"Deferred request lost its entered console invocation");
+    console->frame->deferred = true;
+    return true;
+}
+bool qa_console_invocation_deferred(const qa_console *console,const qa_command_invocation *command)
+{
+    return qa_console_invocation_current(console,command) && console->frame->deferred;
+}
 bool qa_console_forward_text(const qa_command_invocation *command,const char **text,
     bool *explicit_command,qa_error *error)
 {
@@ -271,6 +302,12 @@ bool qa_console_cvar_context(qa_console *console,const qa_command_context *sourc
         !console->options.capture_context(console->options.user,&captured,&captured,error)) return false;
     if (!valid_context(console,&captured,error)) return false;
     *out=captured; return true;
+}
+bool qa_console_context_read(qa_console *console,qa_command_context *out,qa_error *error)
+{
+    if (!console || !out || !qa_console_idle(console))
+        return qac_fail(error,QA_ERROR_ARGUMENT,"Console context requires its returned constructor");
+    return qa_console_cvar_context(console,&console->options.context,out,error);
 }
 bool qa_console_cvar_enter(qa_console *console,const qa_command_context *source,
     qa_console_cvar_entered_fn qualifier,void *qualifier_user,
@@ -507,6 +544,8 @@ bool qa_console_destroy_ready(const qa_console *console)
 void qa_console_destroy(qa_console *console)
 {
     if (console == NULL || !qa_console_destroy_ready(console)) return;
+    console->dispatch_observer = NULL;
+    console->dispatch_observer_context = NULL;
     while (console->commands != NULL) {
         command_entry *next = console->commands->next;
         free_command(console->commands);
@@ -1044,7 +1083,7 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
         (const char *const *)tokens.values, tokens.args_text, raw};
     command.context.direct = context->direct && context->script == NULL &&
         (context->origin == QA_COMMAND_LOCAL || context->origin == QA_COMMAND_SEAT);
-    command_frame frame = {&command, console->frame};
+    command_frame frame = {.invocation=&command, .parent=console->frame};
     console->frame = &frame;
     if (console->release_owner && console->release_advancing)
         console->release_dispatch_context=&command.context;
@@ -1112,6 +1151,16 @@ done:
         if (!observed && success) {
             if (observation.code==QA_OK)
                 qac_fail(&observation,QA_ERROR_ARGUMENT,"post-dispatch observation refused its invocation");
+            if (error && error->code==QA_OK) *error=observation;
+            success=false;
+        }
+    }
+    if (dispatched && !frame.parent && console->dispatch_observer) {
+        qa_error observation={0};
+        bool observed=console->dispatch_observer(console->dispatch_observer_context,&command,success,&observation);
+        if (!observed && success) {
+            if (observation.code==QA_OK)
+                qac_fail(&observation,QA_ERROR_ARGUMENT,"Dispatch observer refused its actual invocation");
             if (error && error->code==QA_OK) *error=observation;
             success=false;
         }
@@ -1240,7 +1289,7 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
             console->head = first->next;
             if (console->tail == first) console->tail = NULL;
             qa_command_invocation invocation = {console, first->context, 0, NULL, "", ""};
-            command_frame frame = {&invocation, console->frame};
+            command_frame frame = {.invocation=&invocation, .parent=console->frame};
             console->frame = &frame;
             if (console->options.script_complete != NULL)
                 console->options.script_complete(console->options.user, &first->context, first->context.script, first->success);

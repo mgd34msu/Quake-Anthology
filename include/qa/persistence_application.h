@@ -93,6 +93,11 @@ typedef struct qa_application_persistence_ops {
      * Hub revisits re-admit the current carried players here, before validation
      * and external publication. This uses the same isolated candidate reader. */
     bool (*complete_state)(void *, qa_application *, const qa_save_image *, qa_error *);
+    /* Optional recovery replay, after initial restored validation and before
+     * final qualification. Source calls affect only the isolated idle candidate.
+     * Its genuine resulting progression becomes the publication expectation;
+     * replay must return all callbacks and leave an ordinary safe world. */
+    bool (*replay)(void *, qa_application *, const qa_save_image *, qa_error *);
     /* Validate every service's restored references and pending continuation.
      * No external publication, file writes or source callbacks are allowed. */
     bool (*validate)(void *, qa_application *, const qa_save_image *, qa_error *);

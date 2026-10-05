@@ -1862,6 +1862,20 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
     if (ok && operation->ops->complete_state)
         ok=operation->ops->complete_state(operation->ops->context,candidate,image,error);
     if (ok) ok = operation->ops->validate(operation->ops->context, candidate, image, error);
+    if (ok && operation->ops->replay) {
+        ok = operation->ops->replay(operation->ops->context, candidate, image, error);
+        if (ok && !persistence_safe(candidate))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Recovery replay did not return an idle world");
+        qa_buffer progression = {0};
+        if (ok) ok = application_save_progression_capture(candidate, operation->ops, &progression, error);
+        if (ok) {
+            qa_buffer_free(&operation->progression);
+            operation->progression = progression;
+            progression = (qa_buffer){0};
+            ok = operation->ops->validate(operation->ops->context, candidate, image, error);
+        }
+        qa_buffer_free(&progression);
+    }
     if (ok && !persistence_safe(candidate))
         ok = application_fail(error, QA_ERROR_FORMAT, "restored candidate changed during final validation");
     if (ok) ok = persistence_unchanged(operation, error);

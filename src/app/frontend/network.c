@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "save_commands.h"
 #include "qa/application_network.h"
 #include "qa/application_network_qw.h"
 #include "qa/application_character_selection.h"
@@ -5733,7 +5734,9 @@ bool frontend_network_command(qa_frontend *f, uint32_t seat, qa_actor_id actor,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "local network command actor no longer owns its roster seat");
     if (frontend_network_remote(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Remote physical input requires its paired source command producer");
-    return qa_application_control_move(f->application, actor, movement, error);
+    if (!qa_application_control_move(f->application, actor, movement, error)) return false;
+    frontend_save_commands_recovery_input(f,launch_seat,movement);
+    return true;
 }
 bool frontend_network_publish(qa_frontend *f, qa_error *error)
 {

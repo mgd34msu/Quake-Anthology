@@ -2,6 +2,7 @@
 #define QA_FRONTEND_SAVE_COMMANDS_H
 #include "qa/frontend.h"
 #include "qa/source_save.h"
+#include "qa/movement.h"
 
 bool frontend_save_commands_create(qa_frontend *, qa_error *);
 bool frontend_save_commands_destroy(qa_frontend *, qa_error *);
@@ -22,6 +23,14 @@ bool frontend_save_commands_queue(qa_frontend *, const qa_command_invocation *, 
  * heap remains owned for ordinary cleanup, including after publication. */
 bool frontend_save_commands_drain(qa_frontend **slot, qa_error *);
 bool frontend_save_commands_autosave(qa_frontend *, qa_error *);
+bool frontend_save_commands_recovery_available(qa_frontend *,bool *,qa_error *);
+bool frontend_save_commands_recovery_queue(qa_frontend *,bool resume,qa_error *);
+bool frontend_save_commands_recovery_begin_frame(qa_frontend *,qa_error *);
+void frontend_save_commands_recovery_advanced(qa_frontend *,uint64_t);
+void frontend_save_commands_recovery_completed(qa_frontend *);
+void frontend_save_commands_recovery_input(qa_frontend *,uint32_t,const qa_movement_command *);
+bool frontend_save_commands_recovery_complete_frame(qa_frontend *,qa_error *);
+void frontend_save_commands_recovery_abandon(qa_frontend *);
 /* Prepare a real departure; a cached visit is published by the existing
  * driver-slot drain. handled also covers an already queued save operation. */
 bool frontend_save_commands_campaign(qa_frontend *, uint64_t revision, bool *handled, qa_error *);

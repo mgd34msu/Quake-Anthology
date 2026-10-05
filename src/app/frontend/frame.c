@@ -625,7 +625,7 @@ static bool stop_server(qa_frontend *f, bool *complete, qa_error *error)
     return true;
 }
 
-bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error)
+static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error)
 {
     if (!frontend || frontend->shutdown || frontend->stepping || frontend->preparing || frontend->round || !frontend_save_commands_idle(frontend) ||
         frontend_save_commands_restoring(frontend) ||
@@ -830,6 +830,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
             if (ok && source_ready && !client_only && !paused) {
                 ok=qa_profiler_push(profiler, "application", error);
                 if (ok) ok=frontend_profiler_end(profiler, qa_application_advance(frontend->application, application_duration, error), error);
+                if (ok) frontend_save_commands_recovery_advanced(frontend,application_duration);
             }
         }
         if (ok) {
@@ -887,6 +888,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         ok=qa_profiler_push(profiler,"frame_completion",error);
         if (ok) ok=frontend_profiler_end(profiler,
             qa_application_complete_frame(frontend->application, error),error);
+        if (ok) frontend_save_commands_recovery_completed(frontend);
     }
     if (ok) {
         ok=qa_profiler_push(profiler,"source_events",error);
@@ -895,9 +897,17 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     }
     if (ok) ++frontend->frame_number;
     if (!ok) return false;
+    if (!frontend_save_commands_recovery_complete_frame(frontend,error)) return false;
     qa_application_map_view previous, current;
     bool mapped=qa_application_map_read(frontend->application,&previous);
     if (!frontend_travel(frontend,error)) return false;
     return !qa_application_map_read(frontend->application,&current) ||
         (mapped && previous.revision==current.revision) || control_bindings(frontend,error);
+}
+bool qa_frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,qa_error *error)
+{
+    if (!frontend_save_commands_recovery_begin_frame(frontend,error)) return false;
+    bool ok=frontend_step(frontend,elapsed_ns,error);
+    if (!ok) frontend_save_commands_recovery_abandon(frontend);
+    return ok && frontend_save_commands_recovery_complete_frame(frontend,error);
 }

@@ -36,6 +36,8 @@ typedef struct qa_recovery_input {
     qa_movement_command command;
 } qa_recovery_input;
 bool qa_recovery_input_encode(const qa_recovery_input *, qa_buffer *, qa_error *);
+/* Append the same fields to an owner's reusable canonical writer. */
+bool qa_recovery_input_write(qa_source_save_io *, const qa_recovery_input *);
 bool qa_recovery_input_decode(qa_bytes, qa_recovery_input *, qa_error *);
 /* Missing and cleanly closed journals are not recovery candidates. A corrupt
  * complete record is an error; only an incomplete final block is discarded. */

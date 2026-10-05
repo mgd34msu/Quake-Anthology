@@ -33,13 +33,19 @@ static bool input_fields(qa_source_save_io *io, qa_recovery_input *input)
     return ok || persistence_io_fail(io, QA_ERROR_FORMAT, "Invalid recovery input fields");
 }
 
+bool qa_recovery_input_write(qa_source_save_io *io,const qa_recovery_input *input)
+{
+    if (!io || !input || io->direction!=QA_SOURCE_SAVE_WRITE)
+        return persistence_io_fail(io,QA_ERROR_ARGUMENT,"Recovery input requires its canonical writer");
+    qa_recovery_input value=*input;
+    return input_fields(io,&value);
+}
 bool qa_recovery_input_encode(const qa_recovery_input *input, qa_buffer *out, qa_error *error)
 {
     if (!input || !out || out->data || out->size)
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Recovery input requires an empty output");
-    qa_recovery_input value = *input;
     qa_source_save_io io = {0};
-    bool ok = qa_source_save_writer(&io, NULL, error) && input_fields(&io, &value) &&
+    bool ok = qa_source_save_writer(&io, NULL, error) && qa_recovery_input_write(&io,input) &&
         qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     return ok;

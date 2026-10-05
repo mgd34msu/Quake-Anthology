@@ -192,7 +192,7 @@ struct frontend_save_menu {
     qa_ui_saves *menus;
     qa_ui_save_entry *entries;
     int64_t *saved_at;
-    size_t count;
+    size_t count,recovery_rows;
     char policy[256],listing_error[256];
 };
 static int newest_first(const void *left,const void *right)
@@ -203,14 +203,28 @@ static int newest_first(const void *left,const void *right)
 }
 static bool read_entries(void *context,const qa_ui_save_entry **entries,size_t *count,const char **message,qa_error *error)
 {
-    frontend_save_menu *owner=context;(void)error;
-    *entries=owner->entries;*count=owner->count;*message=owner->listing_error;return true;
+    frontend_save_menu *owner=context;qa_ui_state state;bool available=false;
+    if (!qa_ui_state_read(owner->seat->ui,&state,error) ||
+        !frontend_save_commands_recovery_available(owner->seat->frontend,&available,error)) return false;
+    size_t first=state.menu==FRONTEND_LOAD && available?0:owner->recovery_rows;
+    *entries=owner->entries?owner->entries+first:NULL;
+    *count=owner->count-first;*message=owner->listing_error;return true;
 }
 static bool rebuild_entries(frontend_save_menu *owner,int64_t *saved_at,bool inspect_time,qa_error *error)
 {
     frontend_ui_seat_features *state=frontend_ui_features_seat(owner->seat);
-    qa_ui_save_entry *rows=state->saves.count?calloc(state->saves.count,sizeof(*rows)):NULL;
-    if(state->saves.count && !rows)return frontend_fail(error,QA_ERROR_MEMORY,"Retaining saved game menu entries");
+    bool available=false;
+    if (!frontend_save_commands_recovery_available(owner->seat->frontend,&available,error)) return false;
+    size_t prefix=available?2:0;
+    if (state->saves.count>SIZE_MAX/sizeof(qa_ui_save_entry)-prefix)
+        return frontend_fail(error,QA_ERROR_MEMORY,"Saved game menu entries exceed memory");
+    size_t count=state->saves.count+prefix;
+    qa_ui_save_entry *rows=count?calloc(count,sizeof(*rows)):NULL;
+    if(count && !rows)return frontend_fail(error,QA_ERROR_MEMORY,"Retaining saved game menu entries");
+    if (prefix) {
+        rows[0]=(qa_ui_save_entry){.id="recovery:resume",.label="Recover interrupted session",.map="Last completed frame",.game=""};
+        rows[1]=(qa_ui_save_entry){.id="recovery:discard",.label="Discard interrupted session",.map="Keep current game",.game=""};
+    }
     for(size_t i=0;i<state->saves.count;++i) {
         qa_save_slot_entry *entry=state->saves.entries+i;
         char *label=state->save_details+i*128;
@@ -220,7 +234,7 @@ static bool rebuild_entries(frontend_save_menu *owner,int64_t *saved_at,bool ins
         if(!strcmp(label,"autosave"))snprintf(label,128,"Autosave");
         else if(!strcmp(label,"quicksave"))snprintf(label,128,"Quicksave");
         else for(char *part=label;*part;++part)if(*part=='_')*part=' ';
-        rows[i]=(qa_ui_save_entry){.id=entry->name,.label=label,
+        rows[prefix+i]=(qa_ui_save_entry){.id=entry->name,.label=label,
             .map=entry->format==QA_SAVE_SLOT_SHARED?entry->metadata.map:entry->source.map?entry->source.map:"",
             .game=entry->format==QA_SAVE_SLOT_SHARED?entry->metadata.game:state->save_details+state->saves.count*128+i*128,
             .unavailable=entry->error.code!=QA_OK?entry->error.message:state->save_qualification[i].code!=QA_OK?state->save_qualification[i].message:NULL,
@@ -230,10 +244,11 @@ static bool rebuild_entries(frontend_save_menu *owner,int64_t *saved_at,bool ins
             kind==QA_FS_REGULAR && qa_fs_identity_modified_time(&identity,&stamp) &&
             stamp.seconds>=0 && stamp.seconds<=(INT64_MAX-(int64_t)(stamp.nanoseconds/1000000))/1000)
             saved_at[i]=stamp.seconds*1000+(int64_t)(stamp.nanoseconds/1000000);
-        rows[i].saved_at_ms=saved_at[i];
+        rows[prefix+i].saved_at_ms=saved_at[i];
     }
-    free(owner->entries);free(owner->saved_at);owner->entries=rows;owner->saved_at=saved_at;owner->count=state->saves.count;
-    if(owner->count)qsort(owner->entries,owner->count,sizeof(*owner->entries),newest_first);
+    free(owner->entries);free(owner->saved_at);owner->entries=rows;owner->saved_at=saved_at;
+    owner->count=count;owner->recovery_rows=prefix;
+    if(state->saves.count)qsort(owner->entries+prefix,state->saves.count,sizeof(*owner->entries),newest_first);
     return true;
 }
 static bool refresh_entries(void *context,qa_error *error)
@@ -273,6 +288,8 @@ static bool write_save(void *context,const char *name,const char *overwrite,qa_e
 static bool load_save(void *context,const char *id,qa_error *error)
 {
     frontend_save_menu *owner=context;frontend_ui_seat_features *state=frontend_ui_features_seat(owner->seat);
+    if (!strcmp(id,"recovery:resume") || !strcmp(id,"recovery:discard"))
+        return frontend_save_commands_recovery_queue(owner->seat->frontend,!strcmp(id,"recovery:resume"),error);
     size_t i=0;while(i<state->saves.count && strcmp(id,state->saves.entries[i].name))++i;
     if(i==state->saves.count)return frontend_fail(error,QA_ERROR_ARGUMENT,"Selected saved game is no longer listed");
     state->selected_save=i;if(!products(owner->seat,error))return false;

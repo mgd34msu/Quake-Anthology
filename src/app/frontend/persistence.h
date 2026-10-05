@@ -26,6 +26,10 @@ bool frontend_persistence_capture_detached(qa_frontend *, const qa_application_p
     const frontend_persistence_native *,qa_save_purpose,qa_save_image **,qa_error *);
 bool frontend_persistence_restore(qa_frontend **, const qa_application_persistence_ops *,
     const qa_save_image *, qa_frontend **displaced, qa_frontend **retained, qa_error *);
+typedef bool (*frontend_persistence_replay_fn)(void *,qa_frontend *,qa_error *);
+bool frontend_persistence_restore_replay(qa_frontend **,const qa_application_persistence_ops *,
+    const qa_save_image *,void *,frontend_persistence_replay_fn,
+    qa_frontend **displaced,qa_frontend **retained,qa_error *);
 /* source is the actual isolated original-Q1 frontend that produced image.
  * Its constructor capabilities remain borrowed through this operation. */
 bool frontend_persistence_restore_original(qa_frontend **,const qa_application_persistence_ops *,
