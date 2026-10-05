@@ -548,7 +548,7 @@ bool qa_render_controls_live_primitives(qa_render_controls *controls, int32_t pr
 bool qa_render_controls_source_texture_mode_read(const qa_render_controls *controls,
     qa_scene_filter *filter, bool *initialized, qa_error *error)
 {
-    if (!filter || !initialized || !current(controls))
+    if (!filter || !initialized || !idle_owner(controls))
         return fail(error,"Source texture mode requires its actual renderer owner");
     *filter=controls->source_filter;
     *initialized=controls->source_filter_initialized;
@@ -557,7 +557,7 @@ bool qa_render_controls_source_texture_mode_read(const qa_render_controls *contr
 bool qa_render_controls_source_texture_mode(qa_render_controls *controls, qa_scene_filter filter,
     bool no_bind,qa_error *error)
 {
-    if (!current(controls) || controls->ticket || controls->image_ticket || controls->source.entered ||
+    if (!idle_owner(controls) || controls->ticket || controls->image_ticket || controls->source.entered ||
         (unsigned)filter>QA_SCENE_LINEAR_MIPMAP_LINEAR)
         return fail(error,"Source texture mode requires its actual idle image renderer");
     controls->source_filter=filter;
@@ -568,7 +568,7 @@ bool qa_render_controls_source_texture_mode(qa_render_controls *controls, qa_sce
 bool qa_render_controls_source_scene_limits_initialize(qa_render_controls *controls,int32_t max_polys,
     int32_t max_polyverts,qa_error *error)
 {
-    if (!current(controls) || controls->ticket || controls->image_ticket || controls->source.entered)
+    if (!idle_owner(controls) || controls->ticket || controls->image_ticket || controls->source.entered)
         return fail(error,"Source scene allocation requires its actual idle physical renderer");
     if (controls->source_limits_initialized) return true;
     controls->source_max_polys=max_polys<600?600:(uint32_t)max_polys;
@@ -579,7 +579,7 @@ bool qa_render_controls_source_scene_limits_initialize(qa_render_controls *contr
 bool qa_render_controls_source_scene_limits_read(const qa_render_controls *controls,uint32_t *max_polys,
     uint32_t *max_polyverts,bool *initialized,qa_error *error)
 {
-    if (!max_polys || !max_polyverts || !initialized || !source_current(controls))
+    if (!max_polys || !max_polyverts || !initialized || !idle_owner(controls) || controls->image_ticket)
         return fail(error,"Source scene capacities lost their actual physical renderer");
     *max_polys=controls->source_max_polys;
     *max_polyverts=controls->source_max_polyverts;

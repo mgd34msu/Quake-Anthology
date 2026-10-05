@@ -163,6 +163,9 @@ static void texture_parameters(qa_gl_renderer *renderer,
 }
 bool qa_gl_source_texture_filter_apply(qa_render_controls *controls,bool no_bind,qa_error *error)
 {
+    if (qa_gl_render_controls_callback_candidate(controls) && !controls->ticket &&
+        !controls->image_ticket && !controls->source.entered && !controls->owner.gl->source_image_count)
+        return true;
     if (!qa_gl_source_scratch_current(controls) || controls->ticket || controls->source.entered) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source filter lost its real idle OpenGL image owner");
         return false;

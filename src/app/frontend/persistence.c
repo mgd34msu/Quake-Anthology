@@ -79,6 +79,7 @@
 #include "network_client_commands.h"
 #include "remote_q1_effects.h"
 #include "q3_color_policy.h"
+#include "q3_render_policy.h"
 #include "q1_sky_save.h"
 #include "qc_messages.h"
 #include "remote_q3_graph_roster.h"
@@ -708,7 +709,8 @@ static bool renderer_rebuild(frontend_persistence *operation,qa_error *error)
     if (ok) ok=frontend_graphics_create_detached(f,active,&native,error);
     operation->display_guard=native.display;
     operation->gl_guard=native.gl;
-    return ok && (!operation->display_guard || qa_display_handoff_prepare(operation->display_guard,error));
+    return ok && (!operation->display_guard || qa_display_handoff_prepare(operation->display_guard,error)) &&
+        (!f->source_color || (frontend_q3_texture_mode_initialize(f,error) && frontend_q3_scene_limits_initialize(f,error)));
 }
 static bool aliases_fields(qa_source_save_io *io, qa_frontend *f, frontend_scene_namespace *space)
 {
