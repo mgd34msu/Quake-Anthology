@@ -1,7 +1,6 @@
 #ifndef QA_FRONTEND_NETWORK_QW_PRIVATE_H
 #define QA_FRONTEND_NETWORK_QW_PRIVATE_H
 #include "network_qw.h"
-#include "save_private.h"
 #include "qa/network_q1_connection_save.h"
 enum { QW_CLIENTS = 32, QW_PENDING = 32, QW_MESSAGE = 1450, QW_SIGNON = 1400, QW_ACTIONS = 256 };
 typedef struct qw_source_action {
