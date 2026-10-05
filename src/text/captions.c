@@ -631,68 +631,6 @@ static bool track_fields(qa_source_save_io *io,qa_caption_track *track)
     }
     return true;
 }
-static bool library_fields(qa_source_save_io *io, qa_caption_library *library)
-{
-    bool reading = io->direction == QA_SOURCE_SAVE_READ; size_t count = 0;
-    if (!qa_text_save_header(io, "QCTL")) return false;
-    if (!reading) for (caption_asset *asset = library->first; asset; asset = asset->next) ++count;
-    if (!qa_source_save_count(io, &count, reading ? (io->input.size - io->offset) / 53 : SIZE_MAX)) return false;
-    caption_asset **link = &library->first;
-    for (size_t i = 0; i < count; ++i) {
-        caption_asset *asset = *link;
-        if (reading) {
-            asset = calloc(1, sizeof(*asset));
-            if (!asset) return fail(io->error, QA_ERROR_MEMORY, "Restoring caption cache entry");
-            *link = asset;
-        }
-        uint32_t kind = asset->kind;
-        if (!qa_source_save_bytes(io, asset->digest.bytes, sizeof(asset->digest.bytes)) ||
-            !qa_source_save_u32(io, &kind) || kind > QA_CAPTION_SOUND ||
-            !qa_source_save_owned_text(io, &asset->path) || !asset->path || !*asset->path) return false;
-        if (reading) asset->kind = (qa_caption_kind)kind;
-        if (reading) {
-            asset->track = calloc(1, sizeof(*asset->track));
-            if (!asset->track) return fail(io->error, QA_ERROR_MEMORY, "Restoring immutable caption track");
-            asset->track->references = 1;
-        }
-        size_t cues = asset->track->count;
-        if (!qa_source_save_count(io, &cues, reading ? (io->input.size - io->offset) / 38 : SIZE_MAX / sizeof(cue_record))) return false;
-        if (reading && cues) {
-            asset->track->cues = calloc(cues, sizeof(*asset->track->cues));
-            if (!asset->track->cues) return fail(io->error, QA_ERROR_MEMORY, "Restoring immutable cue records");
-        }
-        for (size_t j = 0; j < cues; ++j) {
-            if (!cue_fields(io, asset->track->cues + j)) return false;
-            if (reading) ++asset->track->count;
-            if (asset->track->cues[j].cue.kind != asset->kind) return false;
-            for (size_t k = 0; k < j; ++k)
-                if (!strcmp(asset->track->cues[k].cue.id, asset->track->cues[j].cue.id)) return false;
-        }
-        for (caption_asset *prior = library->first; prior != asset; prior = prior->next)
-            if (prior->kind == asset->kind && !strcmp(prior->path, asset->path) && qa_sha256_equal(&prior->digest, &asset->digest)) return false;
-        link = &asset->next;
-    }
-    return true;
-}
-bool qa_caption_library_checkpoint(const qa_caption_library *library, qa_buffer *out, qa_error *e)
-{
-    if (!library || !out || out->data || out->size) return fail(e, QA_ERROR_ARGUMENT, "Caption cache requires an actual owner and empty output");
-    qa_source_save_io io = {0};
-    bool ok = qa_source_save_writer(&io, NULL, e) && library_fields(&io, (qa_caption_library *)library) && qa_source_save_finish(&io, out);
-    qa_source_save_dispose(&io); if (!ok && e && e->code == QA_OK) fail(e, QA_ERROR_FORMAT, "Invalid actual caption cache"); return ok;
-}
-bool qa_caption_library_restore(qa_caption_library *library, qa_bytes bytes, qa_error *e)
-{
-    if (!library || library->first) return fail(e, QA_ERROR_ARGUMENT, "Caption cache restore requires its empty actual owner");
-    qa_caption_library *candidate = qa_caption_library_create(e);
-    if (!candidate) return false;
-    qa_source_save_io io = {0};
-    bool ok = qa_source_save_reader(&io, NULL, bytes, e) && library_fields(&io, candidate) && qa_source_save_finish(&io, NULL);
-    if (ok) { library->first = candidate->first; candidate->first = NULL; }
-    qa_source_save_dispose(&io); qa_caption_library_destroy(candidate);
-    if (!ok && e && e->code == QA_OK) fail(e, QA_ERROR_FORMAT, "Invalid saved caption cache");
-    return ok;
-}
 static bool timeline_fields(qa_source_save_io *io, qa_captions *timeline,
     const qa_caption_library *library, const qa_localization_pool *pool)
 {
