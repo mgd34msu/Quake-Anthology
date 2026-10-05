@@ -208,7 +208,12 @@ static bool gl_native_buffers(qa_gl_renderer *renderer,bool stereo,uint32_t *mas
     gl->GetIntegerv(GL_READ_BUFFER,&read_buffer);
     if (!gl_check(renderer,"Beginning native color buffer discovery",error)) return false;
     bool ok=true; *mask=0;
+    const char *driver=SDL_GetCurrentVideoDriver();
+    bool back_only=driver && !strcmp(driver,"wayland");
     for (size_t i=0;i<4;++i) {
+        /* EGL window surfaces expose no preserved front image after swap,
+         * even when selecting GL_FRONT succeeds. Retain the completed back image. */
+        if (back_only && i<2) continue;
         if (!stereo && (i&1)) continue;
         gl->ReadBuffer(gl_native_buffer(stereo,i));
         GLenum status=gl->GetError();
