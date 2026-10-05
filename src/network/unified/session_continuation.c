@@ -1,4 +1,6 @@
 #include "session_internal.h"
+#include "qa/network_unified_frame.h"
+#include "qa/unified_frame_events.h"
 #include "channel_internal.h"
 
 #include <string.h>
@@ -38,10 +40,8 @@ bool qa_unified_session_continuation_valid(const qa_unified_session *s, const qa
         if (qa_unified_session_kind(held->document, "disconnect") && commit->applied && s->admitted)
             return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Retained disconnect commit still admits its retired Source player");
     } else if (commit->applied) {
-        double acknowledged;
-        if (!qa_unified_document_number(held->document, qa_json_get(qa_unified_document_json(held->document),
-            qa_unified_document_root(held->document), "acknowledgedInput"), &acknowledged, e) ||
-            commit->acknowledged_input != (int64_t)acknowledged)
+        const qa_unified_frame *frame=qa_unified_document_frame(held->document);
+        if (!frame || commit->acknowledged_input != frame->acknowledged_input)
             return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Retained frame commit changes its genuine input acknowledgement");
     }
     size_t count = commit->followup_count + (commit->reply != NULL);

@@ -36,7 +36,7 @@ typedef struct q1_wire_state {
     q1_wire_damage *damage;
     q1_wire_client *board;
     size_t damage_count, damage_capacity;
-    uint64_t generation, revision;
+    uint64_t generation, revision, lightstyle_revision;
     qa_string_id map_path;
     qa_string_id lightstyles[64];
     double qw_client_stats[32][16];

@@ -11,6 +11,8 @@
 #include "qa/q1_text.h"
 #include "qa/ui_preferences.h"
 #include "qa/player_progress.h"
+#include "qa/network_unified_frame.h"
+#include "qa/unified_frame_events.h"
 #include <float.h>
 #include <math.h>
 #include <stdlib.h>
@@ -22,18 +24,17 @@ typedef enum q1_event_kind {
     Q1_PARTICLES,Q1_EFFECT,Q1_COLORS,Q1_BEAM,Q1_STYLE,Q1_STATIC,Q1_WEAPON,
     Q1_POWER,Q1_MESSAGE,Q1_STOP,Q1_AMBIENT,Q1_SOUND,Q1_CTF_STATUS,Q1_CTF_CAPTURE,
     Q1_PROMPT,Q1_CLEAR_PROMPT,Q1_LOG,Q1_TOTAL,Q1_FOUND,Q1_ACHIEVEMENT,Q1_CLIENT,Q1_SKY,
-    Q1_FOG,Q1_FINALE,Q1_ACTION,Q1_MUSIC,Q1_PAUSE,Q1_COMPLETED
+    Q1_FOG,Q1_FINALE,Q1_ACTION,Q1_MUSIC,Q1_PAUSE,Q1_COMPLETED,Q1_SELL_SCREEN
 } q1_event_kind;
 typedef struct q1_event {
     q1_event_kind kind;
     qa_buffer content,text,name,extra,provider;
-    qa_saved_actor_id actor;
+    qa_actor_id actor;
     qa_vec3 origin,end,angles;
     double seconds,a,b,c,d,sky_factor;
     uint64_t sequence,owner_generation;
     bool actor_present,flag,muzzle;
-    const qa_unified_document *document;
-    qa_json_id value;
+    const qa_unified_presentation_event *row;
 } q1_event;
 typedef struct q1_activation {
     struct q1_activation *next;
@@ -48,7 +49,7 @@ typedef struct q1_light {
     uint64_t identity;
 } q1_light;
 typedef struct q1_beam {
-    qa_saved_actor_id actor;
+    qa_actor_id actor;
     qa_vec3 start,end;
     double until;
     uint8_t kind;
@@ -69,7 +70,6 @@ typedef struct q1_ambient {
     qa_vec3 origin;
     float volume,attenuation;
     uint64_t identity;
-    bool saved_installed;
 } q1_ambient;
 typedef struct q1_group {
     frontend_unified_q1 *parent;
@@ -110,8 +110,7 @@ struct frontend_unified_q1 {
     q1_group *groups;
     q1_activation *activations,*weapon_activation,*prompt_activation,*ctf_activation;
     q1_activation *power_activations[Q1_POWERS];
-    qa_unified_document *weapon,*prompt;
-    qa_unified_document *finale;
+    qa_unified_presentation_event *weapon,*prompt,*finale;
     qa_scene_image *finale_image;
     q1_activation *fog_activation,*finale_activation;
     struct {qa_vec3 previous,target;double previous_density,target_density,start,duration,sky_factor;bool active;} fog;
@@ -120,7 +119,6 @@ struct frontend_unified_q1 {
     bool music_retiring;
     double monsters,total_monsters,secrets,total_secrets;
     const qa_unified_document *preparing_document;
-    qa_unified_document *restored_preparing;
     qa_hud_timer timers[Q1_POWERS];
     double powers[Q1_POWERS];
     qa_hud_value ctf[4];
@@ -130,7 +128,7 @@ struct frontend_unified_q1 {
     uint32_t epoch;
     uint64_t frame,prepared_frame;
     double seconds,prepared_seconds,bonus_until,capture_until;
-    bool has_frame,prepared,busy,ctf_present,restoring;
+    bool has_frame,prepared,busy,ctf_present;
     bool monsters_present,secrets_present;
     qa_scene_light *scene_lights;
     size_t scene_capacity;
@@ -140,45 +138,28 @@ struct frontend_unified_q1 {
 };
 static const char *const powers[Q1_POWERS]={"quad","invulnerability","invisibility","suit",
     "hipnotic:wetsuit","hipnotic:empathy","rogue:shield","rogue:antigrav","mg3:lavasuit"};
-static qa_json_id field(const qa_json_document *j,qa_json_id row,const char *key)
-{ return qa_json_get(j,row,key); }
 static bool fail(qa_error *e,const char *message)
 { return frontend_unified_fail(e,QA_ERROR_FORMAT,message); }
-static bool number(const qa_unified_document *d,qa_json_id row,double *out,qa_error *e)
-{ return (qa_unified_document_number(d,row,out,e) && isfinite(*out)) || fail(e,"Q1 presentation scalar is not finite"); }
-static bool word(const qa_unified_document *d,qa_json_id row,double *out,double maximum,qa_error *e)
-{ return number(d,row,out,e) && ((*out>=0 && *out<=maximum && trunc(*out)==*out) || fail(e,"Q1 presentation word exceeds its source domain")); }
-static bool vec(const qa_unified_document *d,qa_json_id row,qa_vec3 *out,qa_error *e)
+static bool text_copy(const char *text,qa_buffer *out,qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(d); double x,y,z;
-    if(!number(d,field(j,row,"x"),&x,e) || !number(d,field(j,row,"y"),&y,e) ||
-        !number(d,field(j,row,"z"),&z,e) || fabs(x)>FLT_MAX || fabs(y)>FLT_MAX || fabs(z)>FLT_MAX) return fail(e,"Q1 presentation vector exceeds float storage");
-    *out=qa_v3((float)x,(float)y,(float)z); return true;
+    size_t length=text?strlen(text):0;
+    out->data=malloc(length+1);
+    if (!out->data) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 Source text");
+    if (length) memcpy(out->data,text,length);
+    out->data[length]=0; out->size=length; return true;
 }
-static bool string(const qa_unified_document *d,qa_json_id row,qa_buffer *out,qa_error *e)
-{ return qa_json_string(qa_unified_document_json(d),row,out,e) &&
-    (!memchr(out->data,0,out->size) || fail(e,"Q1 presentation text contains NUL")); }
-static bool wire(const qa_unified_document *d,qa_json_id row,qa_saved_actor_id *out,bool *present,bool optional,qa_error *e)
-{
-    const qa_json_document *j=qa_unified_document_json(d);
-    if(optional && qa_json_type(j,row)==QA_JSON_NULL) { *present=false; *out=(qa_saved_actor_id){0}; return true; }
-    uint64_t slot,generation;
-    if(!qa_json_u64(j,field(j,row,"slot"),&slot,e) || slot>UINT32_MAX ||
-        !qa_json_u64(j,field(j,row,"generation"),&generation,e)) return fail(e,"Q1 presentation actor lacks its full wire identity");
-    *out=(qa_saved_actor_id){.slot=(uint32_t)slot,.generation=generation}; *present=true; return true;
-}
-static bool same_wire(qa_saved_actor_id a,qa_saved_actor_id b)
-{ return a.slot==b.slot && a.generation==b.generation; }
+static void retained_free(qa_unified_presentation_event *row)
+{ if (row) { qa_unified_presentation_event_dispose(row); free(row); } }
+static bool same_wire(qa_actor_id a,qa_actor_id b)
+{ return qa_actor_id_equal(a,b); }
 static uint64_t ns(double value)
 { return value<=0?0:value>=18446744073.709551615?UINT64_MAX:(uint64_t)(value*1e9); }
 static void event_free(q1_event *p)
 { qa_buffer_free(&p->content);qa_buffer_free(&p->text);qa_buffer_free(&p->name);qa_buffer_free(&p->extra);qa_buffer_free(&p->provider); }
-static bool owner_parse(const qa_unified_document *d,qa_json_id value,q1_event *p,qa_error *e)
+static bool owner_parse(const qa_unified_presentation_owner *owner,q1_event *p,qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(d);
-    if(value==QA_JSON_NONE || qa_json_type(j,value)==QA_JSON_NULL)return true;
-    return string(d,field(j,value,"provider"),&p->provider,e) && p->provider.size>0 &&
-        qa_json_u64(j,field(j,value,"generation"),&p->owner_generation,e) && p->owner_generation>0;
+    p->owner_generation=owner->generation;
+    return !owner->provider || text_copy(owner->provider,&p->provider,e);
 }
 bool frontend_unified_q1_current(const frontend_unified_q1 *o)
 {
@@ -193,132 +174,83 @@ static bool checkpoint_current(const frontend_unified_q1 *o,qa_error *e)
 }
 static bool mutable(frontend_unified_q1 *o,qa_error *e)
 {
-    return (frontend_unified_q1_current(o) && !o->restoring && !o->frontend->capture && !o->frontend->resource_inventory &&
+    return (frontend_unified_q1_current(o) && !o->frontend->capture && !o->frontend->resource_inventory &&
         !o->frontend->source_restoring) || frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q1 CLIENT presentation has a foreign or captured parent");
 }
-static bool parse(frontend_unified_q1 *o,const qa_unified_document *d,qa_json_id row,q1_event *p,qa_error *e)
+static bool parse(frontend_unified_q1 *o,const qa_unified_presentation_event *row,q1_event *p,qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(d); qa_json_id kind=field(j,row,"kind"),v=field(j,row,"event"),k=field(j,v,"kind");
-    p->document=d;p->value=v;
-    if(!number(d,field(j,row,"seconds"),&p->seconds,e) || !qa_json_u64(j,field(j,row,"sequence"),&p->sequence,e) ||
-        !string(d,field(j,row,"content"),&p->content,e) || !owner_parse(d,field(j,row,"owner"),p,e)) return false;
+    if (!row || row->payload.kind!=QA_UNIFIED_PRESENTATION_BUILTIN || row->family!=QA_GAME_Q1)
+        return fail(e,"Q1 presentation has no actual builtin Source event");
+    const qa_unified_builtin_event *v=&row->payload.value.builtin;
+    p->row=row; p->seconds=row->seconds; p->sequence=row->sequence;
+    p->actor=v->actor; p->actor_present=v->actor.registry!=0;
+    p->origin=v->origin; p->end=v->end; p->angles=v->muzzle_angles;
+    if (!text_copy(row->content,&p->content,e) || !owner_parse(&row->owner,p,e)) return false;
     const qa_product *product=qa_catalog_find(qa_executable_recipe_catalog(frontend_remote_unified_recipe(o->replica)),(char *)p->content.data);
-    if(!product || product->family!=QA_GAME_Q1) return fail(e,"Q1 event content is not an admitted Q1 provider");
-    bool q1=qa_json_string_equal(j,kind,"q1"),composition=qa_json_string_equal(j,kind,"q1-composition");
-    if(qa_json_string_equal(j,kind,"q1-fog") && qa_json_string_equal(j,k,"transition")){
-        p->kind=Q1_FOG;qa_json_id transition=field(j,v,"transition"),previous=field(j,transition,"previous"),target=field(j,transition,"target");
-        return wire(d,field(j,v,"player"),&p->actor,&p->actor_present,true,e) && vec(d,field(j,previous,"color"),&p->origin,e) &&
-            vec(d,field(j,target,"color"),&p->end,e) && number(d,field(j,previous,"density"),&p->a,e) &&
-            number(d,field(j,target,"density"),&p->b,e) && number(d,field(j,transition,"start"),&p->c,e) &&
-            number(d,field(j,transition,"duration"),&p->d,e) && number(d,field(j,v,"skyFactor"),&p->sky_factor,e);
+    if (!product || product->family!=QA_GAME_Q1) return fail(e,"Q1 event content is absent from its admitted Source");
+    const char *effect_name=NULL;
+    switch (v->kind) {
+    case QA_BUILTIN_SOUND:
+        p->kind=v->flags&1u?Q1_AMBIENT:Q1_SOUND; p->flag=true;
+        p->a=v->volume; p->b=v->attenuation; p->c=v->channel;
+        return text_copy(v->resource,&p->text,e);
+    case QA_BUILTIN_STOP_SOUND:p->kind=Q1_STOP; p->a=v->channel; return true;
+    case QA_BUILTIN_PARTICLES:p->kind=Q1_PARTICLES; p->end=v->direction; p->a=v->code; p->b=v->count; return true;
+    case QA_BUILTIN_LIGHT:p->kind=Q1_STYLE; p->a=v->code; return text_copy(v->resource,&p->text,e);
+    case QA_BUILTIN_BEAM: {
+        static const char *const names[]={"lightning1","lightning2","lightning3","grapple"};
+        if (v->code<1 || v->code>4) return fail(e,"Q1 beam has no original Source style");
+        p->kind=Q1_BEAM; return text_copy(names[v->code-1],&p->name,e);
     }
-    if((qa_json_string_equal(j,kind,"q1-level") || q1) && qa_json_string_equal(j,k,"finale")){
-        p->kind=Q1_FINALE;p->a=4;
-        return string(d,field(j,v,"text"),&p->text,e) && (q1?(word(d,field(j,v,"stage"),&p->a,6,e) && p->a>=1):word(d,field(j,v,"track"),&p->b,255,e));
+    case QA_BUILTIN_IMPACT:
+        if (v->code==1) {effect_name="blood";p->a=v->value*2;}
+        else effect_name=v->code==2?"gunshot":v->code==3?"spike":v->code==4?"superspike":
+            v->code==7?"wizard-spike":v->code==8?"knight-spike":v->code==10?"lava-splash":NULL;
+        break;
+    case QA_BUILTIN_EXPLOSION:effect_name=v->code==1?"tar-explosion":v->code==10?"lava-splash":"explosion"; break;
+    case QA_BUILTIN_TELEPORT:effect_name="teleport";break;
+    case QA_BUILTIN_MUZZLE:effect_name="muzzleflash";p->muzzle=v->has_muzzle_pose;p->end=v->origin;break;
+    case QA_BUILTIN_ITEM:p->actor=v->other;p->actor_present=v->other.registry!=0;effect_name="pickup";break;
+    case QA_BUILTIN_ANIMATION:p->kind=Q1_WEAPON;p->a=v->frame;p->b=v->value;return text_copy(v->resource,&p->text,e);
+    case QA_BUILTIN_MESSAGE:case QA_BUILTIN_CENTERPRINT:
+        p->kind=Q1_MESSAGE;p->flag=v->kind==QA_BUILTIN_CENTERPRINT || !(v->flags&2u);return text_copy(v->text,&p->text,e);
+    case QA_BUILTIN_ACHIEVEMENT:p->kind=Q1_ACHIEVEMENT;return text_copy(v->text,&p->text,e);
+    case QA_BUILTIN_CTF_STATUS:p->kind=Q1_CTF_STATUS;p->a=v->ctf_red;p->b=v->ctf_blue;p->c=v->ctf_flags;p->d=v->ctf_rune_items;return true;
+    case QA_BUILTIN_CTF_CAPTURE:p->kind=Q1_CTF_CAPTURE;p->a=v->ctf_capture_total;return text_copy(v->ctf_capture_blue?"blue":"red",&p->name,e);
+    case QA_BUILTIN_SOURCE_LOG:p->kind=Q1_LOG;return text_copy(v->text,&p->text,e);
+    case QA_BUILTIN_SOURCE_PROMPT:p->kind=Q1_PROMPT;return text_copy(v->text,&p->text,e);
+    case QA_BUILTIN_CLEAR_PROMPT:p->kind=Q1_CLEAR_PROMPT;return true;
+    case QA_BUILTIN_Q1_POWERUP:
+        if (v->q1_power>=Q1_POWERS) return fail(e,"Q1 power has no Source timer identity");
+        p->kind=Q1_POWER;p->a=v->q1_power_expires;return text_copy(powers[v->q1_power],&p->name,e);
+    case QA_BUILTIN_DEATH:p->kind=Q1_FOUND;p->a=v->count;p->b=v->code;return true;
+    case QA_BUILTIN_TARGET:
+        if ((v->flags&UINT32_C(0x80000000)) && v->code==1) {p->kind=Q1_COMPLETED;return true;}
+        return fail(e,"Q1 target has no native presentation operation");
+    case QA_BUILTIN_EFFECT:
+        if (v->resource && !strcmp(v->resource,"music")) {p->kind=Q1_MUSIC;p->a=v->code;return true;}
+        if (v->resource && !strcmp(v->resource,"sell-screen")) {p->kind=Q1_SELL_SCREEN;return true;}
+        if (v->flags&UINT32_C(0x80000000)) {p->kind=v->code==1?Q1_COMPLETED:Q1_FINALE;p->a=v->code;
+            return text_copy(v->text,&p->text,e);}
+        if (v->resource && !strcmp(v->resource,"cutscene")) {p->kind=Q1_FINALE;p->a=3;return text_copy(v->text,&p->text,e);}
+        if (v->resource && !strcmp(v->resource,"colored-explosion")) {p->kind=Q1_COLORS;p->a=v->code;p->b=v->count;return true;}
+        if (v->resource && !strcmp(v->resource,"developer-message")) {p->kind=Q1_MESSAGE;p->flag=false;return text_copy(v->text,&p->text,e);}
+        if (!v->actor.registry && v->resource) {p->kind=Q1_STATIC;p->a=v->frame;p->b=v->code;p->c=v->channel;p->angles=v->direction;return text_copy(v->resource,&p->text,e);}
+        if (!v->resource && v->other.registry && v->count>0) {p->kind=Q1_FOUND;p->flag=true;p->a=v->count;p->b=v->code;return true;}
+        return fail(e,"Q1 effect has no reached original Source operation");
+    default:return fail(e,"Q1 presentation has no installed native consumer");
     }
-    if(qa_json_string_equal(j,kind,"view-reset")){
-        p->kind=Q1_ACTION;p->value=row;
-        return wire(d,field(j,row,"actor"),&p->actor,&p->actor_present,false,e) && vec(d,field(j,row,"angles"),&p->angles,e);
-    }
-    if(qa_json_string_equal(j,kind,"music")){
-        if(qa_json_string_equal(j,k,"cd-track")){p->kind=Q1_MUSIC;return word(d,field(j,v,"track"),&p->a,255,e);}
-        if(qa_json_string_equal(j,k,"pause")){p->kind=Q1_PAUSE;return qa_json_bool(j,field(j,v,"paused"),&p->flag,e);}
-        return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 music event has no received player operation");
-    }
-    if(qa_json_string_equal(j,kind,"q1-session") && qa_json_string_equal(j,k,"level-completed")){
-        p->kind=Q1_COMPLETED;return true;
-    }
-    if(qa_json_string_equal(j,kind,"q1-session") || qa_json_string_equal(j,kind,"q1-level")){
-        p->kind=Q1_ACTION;return string(d,k,&p->name,e);
-    }
-    if(qa_json_string_equal(j,kind,"q1-client")) {
-        p->kind=Q1_CLIENT;if(!word(d,field(j,v,"slot"),&p->a,255,e) || !string(d,k,&p->name,e))return false;
-        if(qa_json_string_equal(j,k,"name") || qa_json_string_equal(j,k,"social") || qa_json_string_equal(j,k,"player-info"))return string(d,field(j,v,"value"),&p->text,e);
-        if(qa_json_string_equal(j,k,"colors"))return word(d,field(j,v,"value"),&p->b,255,e);
-        if(qa_json_string_equal(j,k,"frags") || qa_json_string_equal(j,k,"ping"))return number(d,field(j,v,"value"),&p->b,e);
-        return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 client metadata has no actual field consumer");
-    }
-    if(qa_json_string_equal(j,kind,"q1-sky") && qa_json_string_equal(j,k,"skybox")) {p->kind=Q1_SKY;return string(d,field(j,v,"name"),&p->text,e);}
-    if(!q1 && !composition) return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"This Q1 child does not consume that Source presentation domain");
-    if(q1 && qa_json_string_equal(j,k,"particles")) {
-        p->kind=Q1_PARTICLES;return vec(d,field(j,v,"origin"),&p->origin,e) && vec(d,field(j,v,"direction"),&p->end,e) && word(d,field(j,v,"color"),&p->a,255,e) && word(d,field(j,v,"count"),&p->b,INT32_MAX,e);
-    }
-    if(q1 && qa_json_string_equal(j,k,"effect")) {
-        p->kind=Q1_EFFECT;
-        if(!string(d,field(j,v,"effect"),&p->name,e) || !wire(d,field(j,v,"actor"),&p->actor,&p->actor_present,true,e) ||
-            !vec(d,field(j,v,"origin"),&p->origin,e) || !word(d,field(j,v,"amount"),&p->a,INT32_MAX,e))return false;
-        qa_json_id muzzle=field(j,v,"muzzle");
-        if(muzzle!=QA_JSON_NONE && qa_json_type(j,muzzle)!=QA_JSON_NULL){p->muzzle=true;
-            return vec(d,field(j,muzzle,"origin"),&p->end,e) && vec(d,field(j,muzzle,"angles"),&p->angles,e);}
-        return true;
-    }
-    if(q1 && qa_json_string_equal(j,k,"colored-explosion")) {
-        p->kind=Q1_COLORS;return vec(d,field(j,v,"origin"),&p->origin,e) && word(d,field(j,v,"colorStart"),&p->a,255,e) && word(d,field(j,v,"colorLength"),&p->b,256,e) && (p->b>0 || fail(e,"Q1 color explosion has an empty run"));
-    }
-    if(q1 && qa_json_string_equal(j,k,"beam")) {
-        p->kind=Q1_BEAM;return wire(d,field(j,v,"actor"),&p->actor,&p->actor_present,false,e) && string(d,field(j,v,"style"),&p->name,e) && vec(d,field(j,v,"start"),&p->origin,e) && vec(d,field(j,v,"end"),&p->end,e);
-    }
-    if(q1 && qa_json_string_equal(j,k,"lightstyle")) {
-        p->kind=Q1_STYLE;return word(d,field(j,v,"style"),&p->a,255,e) && string(d,field(j,v,"pattern"),&p->text,e);
-    }
-    if(q1 && qa_json_string_equal(j,k,"static-model")) {
-        p->kind=Q1_STATIC;return string(d,field(j,v,"path"),&p->text,e) && vec(d,field(j,v,"origin"),&p->origin,e) && vec(d,field(j,v,"angles"),&p->angles,e) && word(d,field(j,v,"frame"),&p->a,UINT32_MAX,e) && word(d,field(j,v,"skin"),&p->b,UINT32_MAX,e) && word(d,field(j,v,"colorMap"),&p->c,255,e);
-    }
-    if(q1 && qa_json_string_equal(j,k,"weapon")) {
-        p->kind=Q1_WEAPON;return wire(d,field(j,v,"player"),&p->actor,&p->actor_present,false,e) && string(d,field(j,v,"weapon"),&p->name,e) && string(d,field(j,v,"viewModel"),&p->text,e) && word(d,field(j,v,"frame"),&p->a,UINT32_MAX,e) && number(d,field(j,v,"punch"),&p->b,e);
-    }
-    if(q1 && qa_json_string_equal(j,k,"intermission")){
-        p->kind=Q1_COMPLETED;
-        return vec(d,field(j,v,"origin"),&p->origin,e) && vec(d,field(j,v,"angles"),&p->angles,e) &&
-            string(d,field(j,v,"map"),&p->text,e) && number(d,field(j,v,"exitAfter"),&p->a,e) && number(d,field(j,v,"track"),&p->b,e);
-    }
-    if(q1 && (qa_json_string_equal(j,k,"teleport-player") || qa_json_string_equal(j,k,"camera"))){
-        p->kind=Q1_ACTION;return string(d,k,&p->name,e);
-    }
-    if(q1 && qa_json_string_equal(j,k,"powerup")) {
-        p->kind=Q1_POWER;return wire(d,field(j,v,"player"),&p->actor,&p->actor_present,false,e) && string(d,field(j,v,"powerup"),&p->name,e) && number(d,field(j,v,"expires"),&p->a,e);
-    }
-    if(q1 && qa_json_string_equal(j,k,"message")) {
-        p->kind=Q1_MESSAGE;return wire(d,field(j,v,"player"),&p->actor,&p->actor_present,false,e) && string(d,field(j,v,"text"),&p->text,e) && qa_json_bool(j,field(j,v,"center"),&p->flag,e);
-    }
-    if(q1 && qa_json_string_equal(j,k,"stop-sound")) {
-        p->kind=Q1_STOP;return wire(d,field(j,v,"actor"),&p->actor,&p->actor_present,false,e) && word(d,field(j,v,"channel"),&p->a,INT32_MAX,e);
-    }
-    if(q1 && (qa_json_string_equal(j,k,"sound") || qa_json_string_equal(j,k,"ambient"))) {
-        p->kind=qa_json_string_equal(j,k,"sound")?Q1_SOUND:Q1_AMBIENT;
-        qa_json_id origin=field(j,v,"origin");p->flag=origin!=QA_JSON_NONE && qa_json_type(j,origin)!=QA_JSON_NULL;
-        return string(d,field(j,v,"path"),&p->text,e) && (p->flag?vec(d,origin,&p->origin,e):p->kind==Q1_SOUND) && number(d,field(j,v,"volume"),&p->a,e) && number(d,field(j,v,"attenuation"),&p->b,e) &&
-            (p->kind==Q1_AMBIENT || wire(d,field(j,v,"actor"),&p->actor,&p->actor_present,false,e));
-    }
-    if(composition && qa_json_string_equal(j,k,"ctf-status")) {
-        p->kind=Q1_CTF_STATUS;qa_json_id s=field(j,v,"status");return wire(d,field(j,v,"actor"),&p->actor,&p->actor_present,false,e) && number(d,field(j,s,"red"),&p->a,e) && number(d,field(j,s,"blue"),&p->b,e) && number(d,field(j,s,"flags"),&p->c,e) && number(d,field(j,s,"runeItems"),&p->d,e);
-    }
-    if(composition && qa_json_string_equal(j,k,"ctf-capture")) {
-        p->kind=Q1_CTF_CAPTURE;return string(d,field(j,v,"team"),&p->name,e) && number(d,field(j,v,"total"),&p->a,e) && ((!strcmp((char *)p->name.data,"red") || !strcmp((char *)p->name.data,"blue")) || fail(e,"CTF capture has no actual team"));
-    }
-    if(composition && (qa_json_string_equal(j,k,"prompt") || qa_json_string_equal(j,k,"clear-prompt"))) {
-        p->kind=qa_json_string_equal(j,k,"prompt")?Q1_PROMPT:Q1_CLEAR_PROMPT;
-        return wire(d,field(j,v,"actor"),&p->actor,&p->actor_present,false,e) &&
-            (p->kind==Q1_CLEAR_PROMPT || (string(d,field(j,v,"title"),&p->text,e) && qa_json_type(j,field(j,v,"choices"))==QA_JSON_ARRAY && qa_json_size(j,field(j,v,"choices"))<=256));
-    }
-    if(composition && qa_json_string_equal(j,k,"source-log")) {
-        p->kind=Q1_LOG;return wire(d,field(j,v,"actor"),&p->actor,&p->actor_present,false,e) && string(d,field(j,v,"action"),&p->text,e);
-    }
-    if(q1 && qa_json_string_equal(j,k,"monster-total")) {p->kind=Q1_TOTAL;return number(d,field(j,v,"total"),&p->a,e);}
-    if(q1 && (qa_json_string_equal(j,k,"secret") || qa_json_string_equal(j,k,"monster-killed"))) {
-        p->kind=Q1_FOUND;return wire(d,field(j,v,"actor"),&p->actor,&p->actor_present,true,e) && number(d,field(j,v,"total"),&p->a,e) && number(d,field(j,v,"found"),&p->b,e);
-    }
-    if(q1 && qa_json_string_equal(j,k,"achievement")) {p->kind=Q1_ACHIEVEMENT;return wire(d,field(j,v,"player"),&p->actor,&p->actor_present,true,e) && string(d,field(j,v,"id"),&p->text,e);}
-    return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 presentation event has no installed physical CLIENT consumer");
+    if (!effect_name) return fail(e,"Q1 impact has no original effect recipe");
+    p->kind=Q1_EFFECT;return text_copy(effect_name,&p->name,e);
 }
 static bool owns(frontend_unified_q1 *o,const q1_event *p,qa_error *e)
 {
     qa_actor_id actual,player;uint32_t source;
     if(!p->actor_present) return true;
-    return frontend_remote_unified_actor(o->replica,p->actor.slot,p->actor.generation,&actual,e) &&
+    return frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(frontend_remote_unified_frame(o->replica)),p->actor,false,&actual,e) &&
         frontend_remote_unified_player(o->replica,&player,&source) && qa_actor_id_equal(actual,player);
 }
-static bool progress_target(frontend_unified_q1 *o,const q1_event *p,qa_json_id row,
+static bool progress_target(frontend_unified_q1 *o,const q1_event *p,
     bool *local,qa_player_progress **store,const char **value,uint32_t *seat,qa_error *e)
 {
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
@@ -326,11 +258,8 @@ static bool progress_target(frontend_unified_q1 *o,const q1_event *p,qa_json_id 
         o->frontend->seats[domain->physical_seat].frontend!=o->frontend)
         return fail(e,"Q1 progress lost its actual local frontend seat");
     *local=!p->actor_present || same_wire(p->actor,o->replica->wire_player);
-    const qa_json_document *j=qa_unified_document_json(p->document);qa_json_id recipient=field(j,row,"recipient");
-    if(recipient!=QA_JSON_NONE && qa_json_type(j,recipient)!=QA_JSON_NULL){qa_saved_actor_id actor;bool present;
-        if(!wire(p->document,recipient,&actor,&present,false,e))return false;
-        *local=*local && same_wire(actor,o->replica->wire_player);
-    }
+    if (p->row->recipient.registry)
+        *local=*local && same_wire(p->row->recipient,o->replica->wire_player);
     *value=p->kind==Q1_ACHIEVEMENT?(const char *)p->text.data:NULL;
     if(p->kind==Q1_COMPLETED){const qa_recipe_choices *choices=qa_executable_recipe_choices(frontend_remote_unified_recipe(o->replica));
         if(!choices || !choices->world.map || !*choices->world.map)return fail(e,"Q1 completion has no actual admitted map declaration");
@@ -341,10 +270,10 @@ static bool progress_target(frontend_unified_q1 *o,const q1_event *p,qa_json_id 
     return !*local || !*value || !**value || *store ||
         frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 progress has no installed player profile store");
 }
-static bool progress_record(frontend_unified_q1 *o,const q1_event *p,qa_json_id row,qa_error *e)
+static bool progress_record(frontend_unified_q1 *o,const q1_event *p,qa_error *e)
 {
     bool local;qa_player_progress *store;const char *value;uint32_t seat;
-    if(!progress_target(o,p,row,&local,&store,&value,&seat,e))return false;
+    if(!progress_target(o,p,&local,&store,&value,&seat,e))return false;
     if(!local || !value || !*value)return true;
     const char *prefix=p->kind==Q1_ACHIEVEMENT?"achievement:":"level:";
     size_t a=strlen(prefix),b=p->content.size,c=strlen(value);
@@ -419,8 +348,13 @@ static bool music_play(q1_group *g,double track,qa_error *e)
     char cue[4];snprintf(cue,sizeof(cue),"%u",(unsigned)track);
     return frontend_received_music_play(g->music,cue,e);
 }
-static bool clone_row(const qa_unified_document *d,qa_json_id row,qa_unified_document **out,qa_error *e)
-{ return qa_unified_document_create(QA_UNIFIED_CHECKPOINT,qa_json_source(qa_unified_document_json(d),row),out,e); }
+static bool clone_row(const qa_unified_presentation_event *row,qa_unified_presentation_event **out,qa_error *e)
+{
+    *out=calloc(1,sizeof(**out));
+    if (!*out) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 Source continuation");
+    if (qa_unified_presentation_event_clone(row,*out,e)) return true;
+    retained_free(*out); *out=NULL; return false;
+}
 static qa_scene_image_options model_options(void)
 { return (qa_scene_image_options){.family=QA_SCENE_Q1,.usage=QA_IMAGE_USAGE_SKIN,.wrap=QA_SCENE_REPEAT,.filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255}; }
 static q1_light *light(q1_group *g,qa_vec3 origin,double seconds,float radius,float decay,double duration)
@@ -436,18 +370,18 @@ static bool effect_sound(frontend_unified_q1 *o,const q1_event *p,const char *pa
     return frontend_unified_events_sound_path(o->events,(char *)p->content.data,path,
         (qa_actor_id){0},p->origin,p->seconds*1000,0,1,1,0,e);
 }
-static bool pose_angles(frontend_unified_q1 *o,qa_saved_actor_id actor,qa_vec3 *angles,bool *found,qa_error *e)
+static bool pose_angles(frontend_unified_q1 *o,qa_actor_id actor,qa_vec3 *angles,bool *found,qa_error *e)
 {
     *found=false;
     const qa_unified_document *frame=frontend_remote_unified_frame(o->replica);
     if(!frame)return true;
-    const qa_json_document *j=qa_unified_document_json(frame);
-    qa_json_id models=field(j,qa_unified_document_root(frame),"models");
-    for(size_t i=0;i<qa_json_size(j,models);++i){qa_json_id model=qa_json_at(j,models,i);
-        qa_saved_actor_id candidate;bool present;
-        if(!wire(frame,field(j,model,"actor"),&candidate,&present,false,e))return false;
-        if(same_wire(actor,candidate)){*found=true;return vec(frame,field(j,model,"angles"),angles,e);}
+    const qa_unified_frame *received=qa_unified_document_frame(frame);
+    if (!received || !received->visuals) return fail(e,"Q1 muzzle pose lost its actual typed frame");
+    for (size_t i=0;i<received->visuals->model_count;++i) {
+        const qa_unified_model_state *model=received->visuals->models+i;
+        if (same_wire(actor,model->actor)) {*found=true;*angles=model->angles;return true;}
     }
+    (void)e;
     return true;
 }
 static bool effect(frontend_unified_q1 *o,q1_group *g,const q1_event *p,qa_error *e)
@@ -518,27 +452,25 @@ bool frontend_unified_q1_events(frontend_unified_q1 *o,frontend_unified_events *
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q1 CLIENT event route changed its actual private audio owner");
     o->events=events;return true;
 }
-bool frontend_unified_q1_validate(frontend_unified_q1 *o,bool simulation,const qa_unified_document *d,qa_json_id row,qa_error *e)
+bool frontend_unified_q1_presentation_validate(frontend_unified_q1 *o,const qa_unified_presentation_event *row,qa_error *e)
 {
-    if(!frontend_unified_q1_current(o) || !d) return fail(e,"Q1 validation lost its real CLIENT recipe");
-    if(simulation) return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 child does not acknowledge generic simulation events");
-    q1_event p={0};bool ok=parse(o,d,row,&p,e);
+    if(!frontend_unified_q1_current(o) || !row) return fail(e,"Q1 validation lost its real CLIENT recipe");
+    q1_event p={0};bool ok=parse(o,row,&p,e);
     if(ok && p.kind==Q1_EFFECT) {static const char *const known[]={"blood","gunshot","spike","superspike","explosion","teleport","muzzleflash","pickup","lava-splash","tar-explosion","meat-spray","wizard-spike","knight-spike"};bool found=false;
         for(size_t i=0;i<sizeof(known)/sizeof(*known);++i) found|=!strcmp((char *)p.name.data,known[i]);
         ok=found || fail(e,"Q1 effect kind has no recipe");}
     if(ok && p.kind==Q1_BEAM) ok=(!strcmp((char *)p.name.data,"lightning1") || !strcmp((char *)p.name.data,"lightning2") || !strcmp((char *)p.name.data,"lightning3") || !strcmp((char *)p.name.data,"grapple")) || fail(e,"Q1 beam has no actual model recipe");
     if(ok && p.kind==Q1_POWER) {bool found=false;for(size_t i=0;i<Q1_POWERS;++i) found|=!strcmp((char *)p.name.data,powers[i]);ok=found || fail(e,"Q1 power timer has no declared identity");}
-    if(ok && p.kind==Q1_ACTION)ok=(o->options.action && o->options.action_validate)?
-        o->options.action_validate(o->options.context,d,row,e):
-        frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 session/view/music action has no actual CLIENT callback");
     if(ok && (p.kind==Q1_ACHIEVEMENT || p.kind==Q1_COMPLETED)){
         bool local;qa_player_progress *store;const char *value;uint32_t seat;
-        ok=progress_target(o,&p,row,&local,&store,&value,&seat,e);
+        ok=progress_target(o,&p,&local,&store,&value,&seat,e);
     }
     event_free(&p);return ok;
 }
+bool frontend_unified_q1_simulation_validate(frontend_unified_q1 *o,const qa_unified_simulation_event *row,qa_error *e)
+{ (void)o;(void)row;return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 child has no separate native simulation message consumer"); }
 static void prompt_clear(frontend_unified_q1 *o)
-{free(o->prompt_title);o->prompt_title=NULL;for(size_t i=0;i<o->prompt_count;++i) free(o->prompt_lines[i]);free(o->prompt_lines);o->prompt_lines=NULL;o->prompt_count=0;qa_unified_document_destroy(o->prompt);o->prompt=NULL;o->prompt_activation=NULL;}
+{free(o->prompt_title);o->prompt_title=NULL;for(size_t i=0;i<o->prompt_count;++i) free(o->prompt_lines[i]);free(o->prompt_lines);o->prompt_lines=NULL;o->prompt_count=0;retained_free(o->prompt);o->prompt=NULL;o->prompt_activation=NULL;}
 static void group_free(q1_group *g)
 {
     while(g->ambient){q1_ambient *a=g->ambient;g->ambient=a->next;
@@ -549,26 +481,23 @@ static void group_free(q1_group *g)
     for(size_t i=0;i<6;++i)qa_scene_image_release(g->sky[i]);
     free(g->sky_name);qa_scene_image_release(g->particle_image);qa_localization_release(g->localization);free(g->content);free(g);
 }
-static bool retirement_parse(const qa_unified_document *d,qa_json_id row,q1_event *p,bool *retired,qa_error *e)
+static bool retirement_parse(const qa_unified_presentation_event *row,q1_event *p,bool *retired,qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(d);qa_json_id event=field(j,row,"event"),kind=field(j,event,"kind");
-    if(!qa_json_string_equal(j,field(j,row,"kind"),"presentation-owner") ||
-        (!qa_json_string_equal(j,kind,"retired") && !qa_json_string_equal(j,kind,"refreshed")))
-        return fail(e,"Q1 Source retirement lacks an actual presentation-owner record");
-    *retired=qa_json_string_equal(j,kind,"retired");
-    return owner_parse(d,field(j,event,"owner"),p,e) && p->provider.size>0 &&
-        number(d,field(j,row,"seconds"),&p->seconds,e) && qa_json_u64(j,field(j,row,"sequence"),&p->sequence,e);
+    if (!row || row->payload.kind!=QA_UNIFIED_PRESENTATION_OWNER) return fail(e,"Q1 retirement has no typed owner record");
+    const qa_unified_owner_event *v=&row->payload.value.owner;
+    *retired=v->kind==QA_UNIFIED_OWNER_RETIRED;p->seconds=row->seconds;p->sequence=row->sequence;
+    return owner_parse(&v->owner,p,e) && p->provider.size>0;
 }
-bool frontend_unified_q1_owner_validate(frontend_unified_q1 *o,const qa_unified_document *d,qa_json_id row,qa_error *e)
+bool frontend_unified_q1_owner_validate(frontend_unified_q1 *o,const qa_unified_presentation_event *row,qa_error *e)
 {
-    if(!frontend_unified_q1_current(o) || !d)return fail(e,"Q1 Source retirement lost its retained replica");
-    q1_event p={0};bool retired;bool ok=retirement_parse(d,row,&p,&retired,e);event_free(&p);return ok;
+    if(!frontend_unified_q1_current(o) || !row)return fail(e,"Q1 Source retirement lost its retained replica");
+    q1_event p={0};bool retired;bool ok=retirement_parse(row,&p,&retired,e);event_free(&p);return ok;
 }
-bool frontend_unified_q1_owner_retire(frontend_unified_q1 *o,const qa_unified_document *d,qa_json_id row,qa_error *e)
+bool frontend_unified_q1_owner_retire(frontend_unified_q1 *o,const qa_unified_presentation_event *row,qa_error *e)
 {
     if(!o || !frontend_unified_q1_idle(o) || !mutable(o,e))return false;
     q1_event p={0};bool retired;q1_activation *owner=NULL;
-    bool ok=retirement_parse(d,row,&p,&retired,e) && activation(o,&p,&owner,e);
+    bool ok=retirement_parse(row,&p,&retired,e) && activation(o,&p,&owner,e);
     event_free(&p);if(!ok)return false;
     if(!retired || owner->retired)return true;
     for(q1_group *g=o->groups;g;g=g->next)if(g->activation==owner)
@@ -581,41 +510,42 @@ bool frontend_unified_q1_owner_retire(frontend_unified_q1 *o,const qa_unified_do
     for(q1_group *g=o->groups;g;g=g->next)if(g->activation==owner && !frontend_received_music_destroy(&g->music,e))return false;
     q1_group **next=&o->groups;
     while(*next){q1_group *g=*next;if(g->activation==owner){*next=g->next;group_free(g);}else next=&g->next;}
-    if(o->weapon_activation==owner){qa_unified_document_destroy(o->weapon);o->weapon=NULL;o->weapon_activation=NULL;}
+    if(o->weapon_activation==owner){retained_free(o->weapon);o->weapon=NULL;o->weapon_activation=NULL;}
     if(o->prompt_activation==owner)prompt_clear(o);
     for(size_t i=0;i<Q1_POWERS;++i)if(o->power_activations[i]==owner){o->powers[i]=0;o->power_activations[i]=NULL;}
     if(o->ctf_activation==owner){o->ctf_present=false;o->capture_until=0;o->ctf_activation=NULL;}
     if(o->fog_activation==owner){o->fog.active=false;o->fog_activation=NULL;}
-    if(o->finale_activation==owner){qa_unified_document_destroy(o->finale);o->finale=NULL;
+    if(o->finale_activation==owner){retained_free(o->finale);o->finale=NULL;
         qa_scene_image_release(o->finale_image);o->finale_image=NULL;o->finale_activation=NULL;qa_hud_clear_center(o->hud,NULL);}
     owner->retired=true;return mutable(o,e);
 }
-static bool prompt_set(frontend_unified_q1 *o,const q1_event *p,qa_json_id row,qa_error *e)
+static bool prompt_set(frontend_unified_q1 *o,const q1_event *p,qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(p->document);qa_json_id choices=field(j,p->value,"choices");size_t count=qa_json_size(j,choices);
-    char **lines=calloc(count?count:1,sizeof(*lines));qa_unified_document *doc=NULL;
-    if(!lines) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 Source prompt");
-    bool ok=clone_row(p->document,row,&doc,e);
-    for(size_t i=0;ok && i<count;++i) {qa_json_id choice=qa_json_at(j,choices,i);qa_buffer label={0};double impulse;
-        ok=string(p->document,field(j,choice,"label"),&label,e) && word(p->document,field(j,choice,"impulse"),&impulse,255,e);
-        if(ok) {lines[i]=(char *)label.data;label=(qa_buffer){0};}qa_buffer_free(&label);}
-    char *title=ok?malloc(p->text.size+1):NULL;if(ok && !title) ok=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 prompt title");
-    if(!ok) {for(size_t i=0;i<count;++i) free(lines[i]);free(lines);qa_unified_document_destroy(doc);return false;}
+    const qa_unified_builtin_event *value=&p->row->payload.value.builtin;
+    size_t count=value->prompt_choice_count; char **lines=calloc(count?count:1,sizeof(*lines));
+    qa_unified_presentation_event *doc=NULL;
+    if (!lines) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 Source prompt");
+    bool okay=clone_row(p->row,&doc,e);
+    for (size_t i=0;okay && i<count;++i) { qa_buffer label={0};okay=text_copy(value->prompt_choices[i].label,&label,e);lines[i]=(char *)label.data; }
+    char *title=okay?malloc(p->text.size+1):NULL; if (okay && !title) okay=false;
+    if (!okay) {for(size_t i=0;i<count;++i)free(lines[i]);free(lines);retained_free(doc);return false;}
     memcpy(title,p->text.data,p->text.size+1);prompt_clear(o);o->prompt=doc;o->prompt_title=title;o->prompt_lines=lines;o->prompt_count=count;return true;
 }
-static bool localize_piece(q1_group *g,const qa_unified_document *doc,qa_json_id text_id,qa_json_id args,qa_buffer *out,qa_error *e)
+static bool localize_piece(q1_group *g,const qa_unified_builtin_event *value,qa_buffer *out,qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(doc);qa_buffer base={0};if(!string(doc,text_id,&base,e))return false;
-    size_t count=qa_json_size(j,args);if(count>8){qa_buffer_free(&base);return fail(e,"Q1 message exceeds eight Source arguments");}
-    qa_buffer values[8]={{0}};const char *argv[8]={0};char numeric[8][32];bool ok=true;
-    for(size_t i=0;ok && i<count;++i){qa_json_id a=qa_json_at(j,args,i);if(qa_json_type(j,a)==QA_JSON_STRING){ok=string(doc,a,&values[i],e);argv[i]=(char *)values[i].data;}
-        else {double n;ok=number(doc,a,&n,e) && qa_format_number(n,numeric[i],e);argv[i]=numeric[i];}}
-    if(ok){out->data=malloc(65536);if(!out->data)ok=frontend_unified_fail(e,QA_ERROR_MEMORY,"Resolving received Q1 message");
-        else if(g->product->edition!=QA_EDITION_RERELEASE && (base.data[0]!='$' || !qa_localization_find(g->localization,(char *)base.data+1))){
-            ok=qa_q1_classic_text((char *)base.data,argv,count,(char *)out->data,65536,e);if(ok)out->size=strlen((char *)out->data);}
-        else out->size=qa_localize_presentation(g->localization,(char *)base.data,argv,count,true,(char *)out->data,65536);}
-    for(size_t i=0;i<count;++i)qa_buffer_free(values+i);
-    qa_buffer_free(&base);return ok;
+    size_t count=value->argument_count; if (count>8)return fail(e,"Q1 message exceeds its Source arguments");
+    const char *base=value->text?value->text:""; const char *argv[8]={0}; char numeric[8][32];
+    for (size_t i=0;i<count;++i) {
+        const qa_unified_message_arg *arg=value->arguments+i;
+        if (arg->kind==QA_BUILTIN_MESSAGE_STRING) argv[i]=arg->text;
+        else {if(!qa_format_number(arg->number,numeric[i],e))return false;argv[i]=numeric[i];}
+    }
+    out->data=malloc(65536); if (!out->data)return false;
+    if (g->product->edition!=QA_EDITION_RERELEASE && (base[0]!='$' || !qa_localization_find(g->localization,base+1))) {
+        if (!qa_q1_classic_text(base,argv,count,(char *)out->data,65536,e))return false;
+        out->size=strlen((char *)out->data);
+    } else out->size=qa_localize_presentation(g->localization,base,argv,count,true,(char *)out->data,65536);
+    return true;
 }
 static bool localized(frontend_unified_q1 *o,q1_group *g,const q1_event *p,qa_buffer *out,qa_error *e)
 {
@@ -625,24 +555,18 @@ static bool localized(frontend_unified_q1 *o,q1_group *g,const q1_event *p,qa_bu
         if(strlen(language)>=sizeof(g->language) || !qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),g->content,&files,&product,e) ||
             !qa_localization_acquire(o->localizations,files,language,&(qa_localization_options){.profile=QA_LOCALIZATION_Q1_RERELEASE},&catalog,e)) return false;
         qa_localization_release(g->localization);g->localization=catalog;strcpy(g->language,language);}
-    const qa_json_document *j=qa_unified_document_json(p->document);qa_json_id args=field(j,p->value,"args"),parts=field(j,p->value,"parts");
-    if(parts==QA_JSON_NONE || qa_json_size(j,parts)==0)return localize_piece(g,p->document,field(j,p->value,"text"),args,out,e);
-    if(qa_json_type(j,parts)!=QA_JSON_ARRAY || qa_json_size(j,parts)>256)return fail(e,"Q1 multipart message has no bounded actual parts");
-    bool ok=true;for(size_t i=0;ok && i<qa_json_size(j,parts);++i){qa_json_id part=qa_json_at(j,parts,i);qa_buffer value={0};
-        ok=localize_piece(g,p->document,field(j,part,"text"),field(j,part,"args"),&value,e);
-        if(ok && value.size>UINT32_C(1048576)-out->size)ok=fail(e,"Q1 multipart message exceeds its retained text extent");
-        if(ok){uint8_t *bytes=realloc(out->data,out->size+value.size+1);if(!bytes)ok=frontend_unified_fail(e,QA_ERROR_MEMORY,"Joining Q1 Source message parts");
-            else {out->data=bytes;memcpy(bytes+out->size,value.data,value.size);out->size+=value.size;bytes[out->size]=0;}}qa_buffer_free(&value);}
-    return ok;
+    return localize_piece(g,&p->row->payload.value.builtin,out,e);
 }
-bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_document *d,qa_json_id row,bool *mirrored,qa_error *e)
+bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_presentation_event *row,bool *mirrored,qa_error *e)
 {
     if(!o || !mirrored || o->busy || o->prepared || !mutable(o,e)) return false;
     *mirrored=false;
     q1_event p={0};q1_group *g=NULL;q1_activation *owner=NULL;
-    bool ok=parse(o,d,row,&p,e) && activation(o,&p,&owner,e);if(!ok) {event_free(&p);return false;}
+    bool ok=parse(o,row,&p,e) && activation(o,&p,&owner,e);if(!ok) {event_free(&p);return false;}
     if(owner && owner->retired){event_free(&p);return true;}
-    if(p.kind==Q1_COMPLETED){ok=progress_record(o,&p,row,e);event_free(&p);return ok && mutable(o,e);}
+    if(p.kind==Q1_COMPLETED){ok=progress_record(o,&p,e);event_free(&p);return ok && mutable(o,e);}
+    if(p.kind==Q1_SELL_SCREEN){ok=frontend_remote_unified_command_text(o->replica,"help\n",e);
+        event_free(&p);return ok && mutable(o,e);}
     bool persistent=p.kind==Q1_BEAM || p.kind==Q1_STYLE || p.kind==Q1_STATIC || p.kind==Q1_AMBIENT || p.kind==Q1_CLIENT || p.kind==Q1_SKY ||
         p.kind==Q1_MUSIC || p.kind==Q1_PAUSE || p.kind==Q1_FINALE;
     if(!group(o,(char *)p.content.data,persistent?owner:NULL,&g,e)){event_free(&p);return false;}
@@ -671,7 +595,7 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_do
         ok=s && frontend_unified_media_model(o->media,g->content,(char *)p.text.data,QA_SCENE_Q1,&images,&s->model,e);
         if(ok) {s->path=(char *)p.text.data;p.text=(qa_buffer){0};s->origin=p.origin;s->angles=p.angles;s->frame=(uint32_t)p.a;s->skin=(uint32_t)p.b;
             q1_static **tail=&g->statics;while(*tail) tail=&(*tail)->next;*tail=s;}else free(s);break;}
-    case Q1_WEAPON: {qa_unified_document *doc=NULL;ok=clone_row(d,row,&doc,e);if(ok) {qa_unified_document_destroy(o->weapon);o->weapon=doc;o->weapon_activation=owner;}break;}
+    case Q1_WEAPON: {qa_unified_presentation_event *doc=NULL;ok=clone_row(row,&doc,e);if(ok) {retained_free(o->weapon);o->weapon=doc;o->weapon_activation=owner;}break;}
     case Q1_POWER:for(size_t i=0;i<Q1_POWERS;++i) if(!strcmp((char *)p.name.data,powers[i])) {o->powers[i]=p.a;o->power_activations[i]=owner;}break;
     case Q1_MESSAGE: {qa_buffer message={0};ok=localized(o,g,&p,&message,e);
         if(ok) ok=p.flag?qa_hud_center_print(o->hud,(char *)message.data,ns(p.seconds),UINT64_C(3000000000),true,0,e):qa_hud_notify(o->hud,(char *)message.data,false,ns(p.seconds),UINT64_C(3000000000),e);
@@ -679,7 +603,7 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_do
             const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);qa_console_emit(domain->console,&domain->command_context,copy);}}
         if(ok) *mirrored=true;
         qa_buffer_free(&message);break;}
-    case Q1_STOP: {qa_actor_id actor;ok=frontend_remote_unified_actor(o->replica,p.actor.slot,p.actor.generation,&actor,e);
+    case Q1_STOP: {qa_actor_id actor;ok=frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(frontend_remote_unified_frame(o->replica)),p.actor,false,&actor,e);
         if(ok && o->frontend->audio) {uint64_t audio;ok=o->options.audio_actor(o->options.context,actor,&audio,e);
             if(ok) qa_audio_engine_stop_channel(o->frontend->audio,audio,o->options.audio_owner,QA_AUDIO_Q1,(int32_t)p.a); }break;}
     case Q1_SOUND:ok=frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 sound must be paired with the real declared simulation sound route");break;
@@ -689,33 +613,32 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_do
         else {if(a) qa_audio_asset_release(a->asset);free(a);}break;}
     case Q1_CTF_STATUS:o->ctf[0].value=p.a;o->ctf[1].value=p.b;o->ctf[2].value=p.c;o->ctf[3].value=p.d;o->ctf_present=true;o->ctf_activation=owner;break;
     case Q1_CTF_CAPTURE:o->ctf[!strcmp((char *)p.name.data,"blue")?1:0].value=p.a;o->ctf_present=true;o->capture_until=p.seconds+3;o->ctf_activation=owner;break;
-    case Q1_PROMPT:ok=prompt_set(o,&p,row,e);if(ok)o->prompt_activation=owner;break;
+    case Q1_PROMPT:ok=prompt_set(o,&p,e);if(ok)o->prompt_activation=owner;break;
     case Q1_CLEAR_PROMPT:prompt_clear(o);break;
     case Q1_LOG:ok=qa_hud_notify(o->hud,(char *)p.text.data,false,ns(p.seconds),UINT64_C(3000000000),e);break;
-    case Q1_ACHIEVEMENT:ok=progress_record(o,&p,row,e);
+    case Q1_ACHIEVEMENT:ok=progress_record(o,&p,e);
         if(ok && p.text.size)ok=qa_hud_notify(o->hud,(char *)p.text.data,false,ns(p.seconds),UINT64_C(3000000000),e);
         break;
-    case Q1_COMPLETED:break;
+    case Q1_COMPLETED:case Q1_SELL_SCREEN:break;
     case Q1_TOTAL:o->total_monsters=p.a;o->monsters_present=true;break;
-    case Q1_FOUND: {const qa_json_document *j=qa_unified_document_json(d);
-        if(qa_json_string_equal(j,field(j,p.value,"kind"),"secret")){o->secrets=p.b;o->total_secrets=p.a;o->secrets_present=true;}
-        else {o->monsters=p.b;o->total_monsters=p.a;o->monsters_present=true;}break;}
+    case Q1_FOUND:
+        if(p.flag){o->secrets=p.b;o->total_secrets=p.a;o->secrets_present=true;}
+        else {o->monsters=p.b;o->total_monsters=p.a;o->monsters_present=true;}
+        break;
     case Q1_FOG:o->fog.previous=p.origin;o->fog.target=p.end;o->fog.previous_density=p.a;o->fog.target_density=p.b;
         o->fog.start=p.c;o->fog.duration=p.d;o->fog.sky_factor=p.sky_factor;o->fog.active=true;o->fog_activation=owner;break;
     case Q1_FINALE: {
         if(p.a>4)break;
-        const qa_json_document *json=qa_unified_document_json(d);
-        if(qa_json_string_equal(json,field(json,row,"kind"),"q1-level") && !music_play(g,p.b,e)){ok=false;break;}
-        qa_unified_document *doc=NULL;qa_scene_image *image=NULL;qa_buffer text={0};
+        qa_unified_presentation_event *doc=NULL;qa_scene_image *image=NULL;qa_buffer text={0};
         qa_scene_image_options options={.family=QA_SCENE_Q1,.usage=QA_IMAGE_USAGE_PICTURE,.wrap=QA_SCENE_CLAMP,.filter=QA_SCENE_NEAREST,.transparent=true,.transparent_index=255};
-        ok=clone_row(d,row,&doc,e) && localized(o,g,&p,&text,e) && qa_scene_image_load_exact(g->images,"gfx/finale.lmp",&options,&image,e);
+        ok=clone_row(row,&doc,e) && localized(o,g,&p,&text,e) && qa_scene_image_load_exact(g->images,"gfx/finale.lmp",&options,&image,e);
         if(ok && !image)ok=fail(e,"Q1 finale picture is absent from its actual Source content");
         if(ok)ok=qa_hud_clear_center(o->hud,e) && qa_hud_center_print(o->hud,(char *)text.data,ns(p.seconds),UINT64_MAX,false,UINT64_C(125000000),e);
-        if(ok){qa_unified_document_destroy(o->finale);o->finale=doc;doc=NULL;qa_scene_image_release(o->finale_image);o->finale_image=image;image=NULL;
+        if(ok){retained_free(o->finale);o->finale=doc;doc=NULL;qa_scene_image_release(o->finale_image);o->finale_image=image;image=NULL;
             o->finale_banner=p.a>=4;o->finale_activation=owner;}
-        qa_scene_image_release(image);qa_unified_document_destroy(doc);qa_buffer_free(&text);break;
+        qa_scene_image_release(image);retained_free(doc);qa_buffer_free(&text);break;
     }
-    case Q1_ACTION:ok=o->options.action?o->options.action(o->options.context,d,row,e):frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 action has no actual CLIENT owner");break;
+    case Q1_ACTION:ok=fail(e,"Q1 action is not a native emitted presentation");break;
     case Q1_MUSIC:ok=music_play(g,p.a,e);break;
     case Q1_PAUSE:if(o->frontend->audio){
         ok=frontend_music_sources_received_pause(o->frontend->music_sources,p.flag,e);
@@ -740,19 +663,16 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_do
     }
     event_free(&p);return ok && mutable(o,e);
 }
-bool frontend_unified_q1_sound_presentation(frontend_unified_q1 *o,const qa_unified_document *d,qa_json_id row,bool simulation_owned,qa_error *e)
+bool frontend_unified_q1_sound_presentation(frontend_unified_q1 *o,const qa_unified_presentation_event *row,bool simulation_owned,qa_error *e)
 {
     if(!o || o->busy || o->prepared || !mutable(o,e)) return false;
-    q1_event p={0};bool ok=parse(o,d,row,&p,e);q1_group *g=NULL;
+    q1_event p={0};bool ok=parse(o,row,&p,e);q1_group *g=NULL;
     if(ok && p.kind!=Q1_SOUND) ok=fail(e,"Q1 sound pairing received a different Source event");
     if(ok && !simulation_owned) {
         ok=group(o,(char *)p.content.data,NULL,&g,e);qa_audio_asset *asset=NULL;qa_actor_id actor;uint64_t audio;
-        if(ok) ok=frontend_remote_unified_actor(o->replica,p.actor.slot,p.actor.generation,&actor,e) &&
+        if(ok) ok=frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(frontend_remote_unified_frame(o->replica)),p.actor,false,&actor,e) &&
             o->options.audio_actor(o->options.context,actor,&audio,e) && qa_audio_bank_register(g->sounds,(char *)p.text.data,QA_AUDIO_Q1,&asset,e);
-        const qa_json_document *j=qa_unified_document_json(d);qa_json_id channel=field(j,p.value,"channel");int32_t c=0;
-        static const char *const channels[]={"auto","weapon","voice","item","body"};bool known=false;
-        for(size_t i=0;i<5;++i) if(qa_json_string_equal(j,channel,channels[i])) {c=(int32_t)i;known=true;break;}
-        if(ok && !known) {double n;ok=word(d,channel,&n,INT32_MAX,e);if(ok)c=(int32_t)n;}
+        int32_t c=(int32_t)p.c;
         if(ok && asset && o->frontend->audio) {
             const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
             qa_audio_play play={.sample=qa_audio_asset_sample(asset),.asset=asset,.resource_id=qa_resource_id(qa_audio_asset_resource(asset)),
@@ -770,11 +690,10 @@ bool frontend_unified_q1_sound_presentation(frontend_unified_q1 *o,const qa_unif
 bool frontend_unified_q1_frame_prepare(frontend_unified_q1 *o,const qa_unified_document *d,qa_error *e)
 {
     if(!o || o->busy || o->prepared || !d || qa_unified_document_type(d)!=QA_UNIFIED_FRAME_DOCUMENT || !mutable(o,e)) return false;
-    const qa_json_document *j=qa_unified_document_json(d);qa_json_id root=qa_unified_document_root(d),frame=field(j,field(j,field(j,root,"output"),"snapshot"),"frame"),time=field(j,frame,"time");
-    uint64_t epoch,n;double seconds;
-    if(!qa_json_u64(j,field(j,root,"epoch"),&epoch,e) || epoch!=o->epoch || !qa_json_u64(j,field(j,frame,"frame"),&n,e) || !number(d,field(j,time,"value"),&seconds,e)) return false;
-    if(qa_json_string_equal(j,field(j,time,"kind"),"milliseconds"))seconds/=1000;
-    else if(!qa_json_string_equal(j,field(j,time,"kind"),"seconds"))return fail(e,"Q1 received frame has no Source time domain");
+    const qa_unified_frame *frame=qa_unified_document_frame(d);
+    if(!frame || !frame->world || frame->epoch!=o->epoch) return fail(e,"Q1 received frame lost its typed Source owner");
+    uint64_t n=frame->world->source.number;
+    double seconds=(double)frame->world->source.time_ns/1e9;
     if(o->has_frame && n<=o->frame) return fail(e,"Q1 frame publication does not advance its actual receipt");
     o->prepared_frame=n;o->prepared_seconds=seconds;o->preparing_document=d;o->prepared=true;return true;
 }
@@ -797,14 +716,15 @@ void frontend_unified_q1_frame_commit(frontend_unified_q1 *o)
             qa_scene_q1_particle_advance(&p,elapsed,800);g->particles.values.q1[kept++]=p;}
         g->particles.count=kept;g->sampled=o->prepared_seconds;g->has_sample=true;
     }
-    o->frame=o->prepared_frame;o->seconds=o->prepared_seconds;o->has_frame=true;o->prepared=false;o->preparing_document=NULL;qa_unified_document_destroy(o->restored_preparing);o->restored_preparing=NULL;
+    o->frame=o->prepared_frame;o->seconds=o->prepared_seconds;o->has_frame=true;o->prepared=false;o->preparing_document=NULL;
 }
 void frontend_unified_q1_frame_abort(frontend_unified_q1 *o)
-{if(o && !o->busy){o->prepared=false;o->preparing_document=NULL;qa_unified_document_destroy(o->restored_preparing);o->restored_preparing=NULL;}}
+{if(o && !o->busy){o->prepared=false;o->preparing_document=NULL;}}
 bool frontend_unified_q1_world_input(frontend_unified_q1 *o,qa_scene_world_input *input,qa_error *e)
 {
     if(!o || !input || o->busy || o->prepared || !o->has_frame || !mutable(o,e))return false;
-    size_t capacity=input->light_count,groups=frontend_unified_q1_group_count(o);
+    size_t capacity=input->light_count,groups=0;
+    for (const q1_group *g=o->groups;g;g=g->next) ++groups;
     if(groups>(SIZE_MAX-capacity)/Q1_LIGHTS)return fail(e,"Q1 private scene light roster exceeds storage");
     capacity+=groups*Q1_LIGHTS;
     if(capacity>o->scene_capacity){qa_scene_light *lights=realloc(o->scene_lights,capacity*sizeof(*lights));if(!lights)return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 reached scene lights");o->scene_lights=lights;o->scene_capacity=capacity;}
@@ -815,8 +735,7 @@ bool frontend_unified_q1_world_input(frontend_unified_q1 *o,qa_scene_world_input
         for(size_t i=0;i<Q1_LIGHTS;++i){q1_light *l=g->lights+i;if(l->until<=input->seconds)continue;float radius=fmaxf(0,l->radius-(float)(input->seconds-l->born)*l->decay);
             if(radius>0)o->scene_lights[count++]=(qa_scene_light){.family=QA_SCENE_Q1,.origin=l->origin,.color={1,1,1},.radius=radius,.minimum=l->minimum,.scale=1,.additive=true,.identity=l->identity};}
         for(size_t i=0;i<256;++i)if(g->styles[i] && (!received[i] || g->style_sequences[i]>=sequences[i])){
-            const char *pattern=g->styles[i];size_t length=strlen(pattern);float value=256;
-            if(length){double sample=fmod(floor(input->seconds*10),(double)length);if(sample<0)sample+=(double)length;value=(float)((uint8_t)pattern[(size_t)sample]-'a')*22;}
+            float value=frontend_legacy_lightstyle_sample(QA_GAME_Q1,g->styles[i],input->seconds);
             received[i]=true;sequences[i]=g->style_sequences[i];o->scene_styles[i]=value;}
         if(g->sky_name && (!sky || g->sky_sequence>=sky->sky_sequence))sky=g;
     }
@@ -844,8 +763,8 @@ bool frontend_unified_q1_model(frontend_unified_q1 *o,qa_actor_id actor,const ch
 {
     if(!o || !content || !path || !input || !mutable(o,e))return false;
     if(!o->weapon || !input->view_model || input->family!=QA_SCENE_Q1)return true;
-    q1_event p={0};qa_json_id root=qa_unified_document_root(o->weapon);bool ok=parse(o,o->weapon,root,&p,e);qa_actor_id received;
-    if(ok)ok=frontend_remote_unified_actor(o->replica,p.actor.slot,p.actor.generation,&received,e);
+    q1_event p={0};bool ok=parse(o,o->weapon,&p,e);qa_actor_id received;
+    if(ok)ok=frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(frontend_remote_unified_frame(o->replica)),p.actor,false,&received,e);
     if(ok && qa_actor_id_equal(actor,received) && !strcmp(content,(char *)p.content.data) && !strcmp(path,(char *)p.text.data))input->frame=(uint32_t)p.a;
     event_free(&p);return ok;
 }
@@ -880,7 +799,7 @@ bool frontend_unified_q1_world_models(frontend_unified_q1 *o,const qa_scene_worl
         }
         static const char *const models[]={"progs/bolt.mdl","progs/bolt2.mdl","progs/bolt3.mdl","progs/beam.mdl"};
         for(size_t i=0;ok && i<Q1_BEAMS;++i) {q1_beam *b=g->beams+i;if(b->until<=world->seconds)continue;qa_actor_id actual;
-            ok=frontend_remote_unified_actor(o->replica,b->actor.slot,b->actor.generation,&actual,e);if(!ok)break;
+            ok=frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(frontend_remote_unified_frame(o->replica)),b->actor,false,&actual,e);if(!ok)break;
             frontend_unified_model model;qa_scene_image_options images=model_options();ok=frontend_unified_media_model(o->media,g->content,models[b->kind],QA_SCENE_Q1,&images,&model,e);if(!ok)break;
             qa_vec3 direction=qa_vec_sub(b->end,b->start);float length=qa_vec_length(direction);if(length<=0)continue;direction=qa_vec_scale(direction,1/length);
             qa_vec3 angles=qa_v3(-atan2f(direction.z,hypotf(direction.x,direction.y))*57.29577951308232f,atan2f(direction.y,direction.x)*57.29577951308232f,0);
@@ -1019,264 +938,6 @@ bool frontend_unified_q1_destroy(frontend_unified_q1 **slot,qa_error *e)
     o->hud=NULL;
     while(o->groups){q1_group *g=o->groups;o->groups=g->next;group_free(g);}
     while(o->activations){q1_activation *a=o->activations;o->activations=a->next;free(a->provider);free(a);}
-    prompt_clear(o);qa_unified_document_destroy(o->weapon);qa_unified_document_destroy(o->finale);qa_scene_image_release(o->finale_image);
+    prompt_clear(o);retained_free(o->weapon);retained_free(o->finale);qa_scene_image_release(o->finale_image);
     qa_localization_pool_destroy(o->localizations);free(o->scene_lights);free(o->scores);free(o);*slot=NULL;return true;
-}
-static const q1_group *group_at(const frontend_unified_q1 *o,size_t index)
-{const q1_group *g=o?o->groups:NULL;while(g && index--)g=g->next;return g;}
-size_t frontend_unified_q1_group_count(const frontend_unified_q1 *o)
-{size_t count=0;for(const q1_group *g=o?o->groups:NULL;g;g=g->next)++count;return count;}
-bool frontend_unified_q1_music_at(const frontend_unified_q1 *o,size_t index,uint64_t *bus,qa_audio_music **player)
-{
-    const q1_group *g=group_at(o,index);
-    if(!g || !player || !frontend_received_music_bus(g->music,bus))return false;
-    *player=frontend_received_music_player(g->music);return true;
-}
-const qa_scene_image *frontend_unified_q1_particle_image(const frontend_unified_q1 *o,size_t index)
-{const q1_group *g=group_at(o,index);return g?g->particle_image:NULL;}
-size_t frontend_unified_q1_light_count(const frontend_unified_q1 *o,size_t index)
-{const q1_group *g=group_at(o,index);size_t count=0;for(size_t i=0;g && i<Q1_LIGHTS;++i)if(g->lights[i].identity)++count;return count;}
-bool frontend_unified_q1_light_at(const frontend_unified_q1 *o,size_t group_index,size_t index,uint64_t *out)
-{const q1_group *g=group_at(o,group_index);if(!g || !out)return false;for(size_t i=0;i<Q1_LIGHTS;++i)if(g->lights[i].identity){if(index--==0){*out=g->lights[i].identity;return true;}}return false;}
-size_t frontend_unified_q1_static_count(const frontend_unified_q1 *o,size_t index)
-{const q1_group *g=group_at(o,index);size_t count=0;for(const q1_ambient *a=g?g->ambient:NULL;a;a=a->next)++count;return count;}
-bool frontend_unified_q1_static_at(const frontend_unified_q1 *o,size_t group_index,size_t index,uint64_t *identity,const qa_audio_asset **asset,qa_audio_mixer **mixer)
-{
-    const q1_group *g=group_at(o,group_index);const q1_ambient *a=g?g->ambient:NULL;while(a && index--)a=a->next;
-    if(!a || !identity || !asset || !mixer)return false;
-    *identity=a->identity;*asset=a->asset;*mixer=a->mixer;return true;
-}
-static bool saved_text(qa_source_save_io *io,char **value)
-{
-    bool present=*value!=NULL;if(!qa_source_save_bool(io,&present))return false;
-    if(!present){if(io->direction==QA_SOURCE_SAVE_READ)*value=NULL;return true;}
-    size_t count=io->direction==QA_SOURCE_SAVE_WRITE?strlen(*value):0;
-    if(!qa_source_save_count(io,&count,UINT32_C(1048576)))return false;
-    if(io->direction==QA_SOURCE_SAVE_READ){*value=malloc(count+1);if(!*value)return false;(*value)[count]=0;}
-    return qa_source_save_bytes(io,*value,count) && !memchr(*value,0,count);
-}
-static bool saved_bytes(qa_source_save_io *io,qa_buffer *buffer)
-{
-    if(!qa_source_save_count(io,&buffer->size,UINT32_C(16777216)))return false;
-    if(io->direction==QA_SOURCE_SAVE_READ && buffer->size){buffer->data=malloc(buffer->size);if(!buffer->data)return false;}
-    return qa_source_save_bytes(io,buffer->data,buffer->size);
-}
-static bool saved_document(qa_source_save_io *io,qa_unified_document **doc,qa_error *e)
-{
-    bool present=*doc!=NULL;if(!qa_source_save_bool(io,&present))return false;if(!present)return true;
-    qa_buffer bytes={0};bool ok=io->direction==QA_SOURCE_SAVE_READ || qa_unified_document_encode(*doc,&bytes,e);
-    if(ok)ok=saved_bytes(io,&bytes);
-    if(ok && io->direction==QA_SOURCE_SAVE_READ)ok=qa_unified_document_decode(QA_UNIFIED_CHECKPOINT,(qa_bytes){bytes.data,bytes.size},doc,e);
-    qa_buffer_free(&bytes);return ok;
-}
-static bool saved_identity(qa_source_save_io *io,const frontend_unified_q1_refs *refs,bool audio,uint64_t *identity,qa_error *e)
-{
-    uint64_t value=0;bool present=*identity!=0;if(!qa_source_save_bool(io,&present))return false;if(!present)return true;
-    bool ok=refs && (io->direction==QA_SOURCE_SAVE_READ?refs->identity_decode!=NULL:refs->identity_encode!=NULL);
-    if(ok && io->direction==QA_SOURCE_SAVE_WRITE)ok=refs->identity_encode(refs->context,audio,*identity,&value,e);
-    if(ok)ok=qa_source_save_u64(io,&value) && value!=0;
-    if(ok && io->direction==QA_SOURCE_SAVE_READ)ok=refs->identity_decode(refs->context,audio,value,identity,e) && *identity!=0;
-    return ok || fail(e,"Q1 cold producer lost its actual shared scene/audio identity");
-}
-static bool finite_field(qa_source_save_io *io,double *value)
-{return qa_source_save_f64(io,value) && isfinite(*value);}
-static bool saved_activation(frontend_unified_q1 *o,qa_source_save_io *io,q1_activation **owner,qa_error *e)
-{
-    uint64_t ordinal=0;
-    if(io->direction==QA_SOURCE_SAVE_WRITE && *owner){uint64_t index=1;
-        for(q1_activation *a=o->activations;a;a=a->next,++index)if(a==*owner){ordinal=index;break;}
-        if(!ordinal)return fail(e,"Q1 cold state has a foreign Source activation");}
-    if(!qa_source_save_u64(io,&ordinal))return false;
-    if(io->direction==QA_SOURCE_SAVE_READ){*owner=NULL;if(ordinal){q1_activation *a=o->activations;
-        while(a && --ordinal)a=a->next;
-        if(!a || a->retired)return fail(e,"Q1 cold state refers to an absent or retired Source activation");
-        *owner=a;}}
-    return true;
-}
-static bool fields(frontend_unified_q1 *o,qa_source_save_io *io,const frontend_unified_q1_refs *refs,qa_error *e)
-{
-    bool reading=io->direction==QA_SOURCE_SAVE_READ;uint32_t magic=UINT32_C(0x31554651),epoch=o->epoch;
-    if(!qa_source_save_u32(io,&magic) || magic!=UINT32_C(0x31554651) || !qa_source_save_u32(io,&epoch) || epoch!=o->epoch || !qa_source_save_u64(io,&o->frame) || !finite_field(io,&o->seconds) ||
-        !qa_source_save_bool(io,&o->has_frame) || !finite_field(io,&o->bonus_until) || !finite_field(io,&o->capture_until) ||
-        !qa_source_save_bool(io,&o->ctf_present))return false;
-    if(!qa_source_save_bool(io,&o->prepared))return false;
-    if(o->prepared){qa_buffer bytes={0};
-        if(!qa_source_save_u64(io,&o->prepared_frame) || !finite_field(io,&o->prepared_seconds) ||
-            (o->has_frame && o->prepared_frame<=o->frame))return false;
-        bool ok=reading || (o->preparing_document && qa_unified_document_encode(o->preparing_document,&bytes,e));
-        if(ok)ok=saved_bytes(io,&bytes);
-        if(ok && reading)ok=qa_unified_document_decode(QA_UNIFIED_FRAME_DOCUMENT,(qa_bytes){bytes.data,bytes.size},&o->restored_preparing,e);
-        qa_buffer_free(&bytes);if(!ok)return false;
-        if(reading)o->preparing_document=o->restored_preparing;
-        const qa_unified_document *d=o->preparing_document;const qa_json_document *j=qa_unified_document_json(d);
-        qa_json_id root=qa_unified_document_root(d),f=field(j,field(j,field(j,root,"output"),"snapshot"),"frame"),t=field(j,f,"time");
-        uint64_t actual_epoch,n;double seconds;
-        if(!qa_json_u64(j,field(j,root,"epoch"),&actual_epoch,e) || actual_epoch!=epoch ||
-            !qa_json_u64(j,field(j,f,"frame"),&n,e) || n!=o->prepared_frame || !number(d,field(j,t,"value"),&seconds,e))return false;
-        if(qa_json_string_equal(j,field(j,t,"kind"),"milliseconds"))seconds/=1000;
-        else if(!qa_json_string_equal(j,field(j,t,"kind"),"seconds"))return false;
-        if(seconds!=o->prepared_seconds)return false;
-    }
-    if(!qa_source_save_bytes(io,o->random.words,sizeof(o->random.words)) || !qa_source_save_u8(io,&o->random.front) || !qa_source_save_u8(io,&o->random.rear) ||
-        o->random.front>=31 || o->random.rear>=31 || !qa_source_save_u64(io,&o->random.draws))return false;
-    size_t owners=0;for(q1_activation *owner=o->activations;owner;owner=owner->next)++owners;
-    if(!qa_source_save_count(io,&owners,65536))return false;
-    q1_activation *owner_row=o->activations,**owner_tail=&o->activations;
-    for(size_t i=0;i<owners;++i){if(reading){owner_row=calloc(1,sizeof(*owner_row));if(!owner_row)return frontend_unified_fail(e,QA_ERROR_MEMORY,"Restoring Q1 Source activation");*owner_tail=owner_row;owner_tail=&owner_row->next;}
-        if(!saved_text(io,&owner_row->provider) || !owner_row->provider || !*owner_row->provider || !qa_source_save_u64(io,&owner_row->generation) || !owner_row->generation || !qa_source_save_bool(io,&owner_row->retired))return false;
-        if(reading){for(q1_activation *old=o->activations;old!=owner_row;old=old->next)
-            if(old->generation==owner_row->generation && !strcmp(old->provider,owner_row->provider))return fail(e,"Q1 cold Source activation is duplicated");}
-        else owner_row=owner_row->next;
-    }
-    for(size_t i=0;i<Q1_POWERS;++i)if(!finite_field(io,o->powers+i) || !saved_activation(o,io,o->power_activations+i,e))return false;
-    if(!saved_activation(o,io,&o->weapon_activation,e) || !saved_activation(o,io,&o->prompt_activation,e) || !saved_activation(o,io,&o->ctf_activation,e))return false;
-    if(!saved_activation(o,io,&o->fog_activation,e) || !saved_activation(o,io,&o->finale_activation,e) || !saved_activation(o,io,&o->pause_activation,e) ||
-        !qa_source_save_bool(io,&o->fog.active) || !qa_source_save_vec3(io,&o->fog.previous) || !qa_source_save_vec3(io,&o->fog.target) ||
-        !qa_vec_finite(o->fog.previous) || !qa_vec_finite(o->fog.target) || !finite_field(io,&o->fog.previous_density) ||
-        !finite_field(io,&o->fog.target_density) || !finite_field(io,&o->fog.start) || !finite_field(io,&o->fog.duration) || !finite_field(io,&o->fog.sky_factor) ||
-        !qa_source_save_bool(io,&o->monsters_present) || !qa_source_save_bool(io,&o->secrets_present) || !finite_field(io,&o->monsters) ||
-        !finite_field(io,&o->total_monsters) || !finite_field(io,&o->secrets) || !finite_field(io,&o->total_secrets) || !qa_source_save_bool(io,&o->finale_banner))return false;
-    for(size_t i=0;i<4;++i)if(!finite_field(io,&o->ctf[i].value))return false;
-    if(!saved_document(io,&o->weapon,e) || !saved_document(io,&o->prompt,e) || !saved_document(io,&o->finale,e))return false;
-    if(reading && o->finale){q1_event p={0};q1_activation *actual=NULL;
-        bool valid=parse(o,o->finale,qa_unified_document_root(o->finale),&p,e) && p.kind==Q1_FINALE &&
-            activation(o,&p,&actual,e) && actual==o->finale_activation;event_free(&p);if(!valid)return false;}
-    bool has_finale_image=o->finale_image!=NULL;uint64_t finale_image_id=0;
-    if(!qa_source_save_bool(io,&has_finale_image))return false;
-    if(has_finale_image){if(!refs || (!reading && (!refs->hud.image_encode || !refs->hud.image_encode(refs->hud.context,o->finale_image,&finale_image_id,e))) ||
-            !qa_source_save_u64(io,&finale_image_id) || !finale_image_id)return fail(e,"Q1 finale image has no actual cold image graph");
-        if(reading){const qa_scene_image *image=NULL;q1_event p={0};qa_scene_resources *images;qa_material_library *materials;qa_font_library *fonts;qa_audio_bank *sounds;
-            bool valid=o->finale && parse(o,o->finale,qa_unified_document_root(o->finale),&p,e) &&
-                frontend_unified_media_bank(o->media,(char *)p.content.data,&images,&materials,&fonts,&sounds,e) &&
-                refs->hud.image_decode && refs->hud.image_decode(refs->hud.context,finale_image_id,&image,e) && image && qa_scene_image_owner(image)==images;
-            event_free(&p);if(!valid)return fail(e,"Q1 finale image does not belong to its restored content");
-            o->finale_image=(qa_scene_image *)image;qa_scene_image_retain(image);}}
-    if((o->finale!=NULL)!=has_finale_image)return fail(e,"Q1 finale lost its genuine retained image/text pair");
-    if(reading && o->weapon){q1_event p={0};q1_activation *actual=NULL;
-        bool ok=parse(o,o->weapon,qa_unified_document_root(o->weapon),&p,e) && p.kind==Q1_WEAPON && activation(o,&p,&actual,e) && actual==o->weapon_activation;
-        event_free(&p);if(!ok)return false;}
-    if(reading && o->prompt){qa_unified_document *doc=o->prompt;o->prompt=NULL;q1_event p={0};qa_json_id root=qa_unified_document_root(doc);
-        q1_activation *actual=NULL,*expected=o->prompt_activation;
-        bool ok=parse(o,doc,root,&p,e) && p.kind==Q1_PROMPT && activation(o,&p,&actual,e) && actual==expected && prompt_set(o,&p,root,e);
-        if(ok)o->prompt_activation=expected;
-        event_free(&p);qa_unified_document_destroy(doc);if(!ok)return false;}
-    qa_buffer hud={0};bool ok=reading || qa_hud_checkpoint(o->hud,refs?&refs->hud:NULL,&hud,e);
-    if(ok)ok=saved_bytes(io,&hud);
-    if(ok && reading){const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);qa_hud *restored=NULL;
-        ok=qa_hud_restore((qa_bytes){hud.data,hud.size},&(qa_hud_options){.ui=o->frontend->seats[d->physical_seat].ui,
-            .application=d->application,.seat=d->physical_seat,.context=o,.read=hud_read},refs?&refs->hud:NULL,&restored,e);
-        if(ok){ok=qa_hud_destroy(o->hud,e);if(ok)o->hud=restored;else qa_hud_destroy(restored,NULL);}}
-    qa_buffer_free(&hud);if(!ok)return false;
-    size_t count=frontend_unified_q1_group_count(o);if(!qa_source_save_count(io,&count,4096))return false;
-    q1_group *g=o->groups;
-    for(size_t index=0;index<count;++index){char *content=reading?NULL:g->content;q1_activation *owner=reading?NULL:g->activation;
-        if(!saved_text(io,&content) || !content)return false;
-        if(!saved_activation(o,io,&owner,e)){if(reading)free(content);return false;}
-        if(reading){for(q1_group *old=o->groups;old;old=old->next)if(old->activation==owner && !strcmp(old->content,content)){free(content);return fail(e,"Q1 cold content/Source group is duplicated");}
-            bool loaded=group(o,content,owner,&g,e);free(content);if(!loaded)return false;}
-        if(!frontend_received_music_fields(o->frontend,&g->music,io,refs?refs->audio:NULL,e))return false;
-        if(!frontend_fx_particles_fields(io,&g->particles) || g->particles.family!=QA_GAME_Q1 ||
-            !finite_field(io,&g->sampled) || !qa_source_save_bool(io,&g->has_sample))return false;
-        bool image=g->particle_image!=NULL;uint64_t image_id=0;
-        if(!qa_source_save_bool(io,&image))return false;
-        if(image){if(!refs)return fail(e,"Q1 particle image has no retained cold graph");
-            if(!reading && (!refs->hud.image_encode || !refs->hud.image_encode(refs->hud.context,g->particle_image,&image_id,e)))return false;
-            if(!qa_source_save_u64(io,&image_id) || !image_id)return false;
-            if(reading){const qa_scene_image *actual=NULL;if(!refs->hud.image_decode || !refs->hud.image_decode(refs->hud.context,image_id,&actual,e) || !actual || qa_scene_image_owner(actual)!=g->images)return fail(e,"Q1 particle image is outside its restored content bank");
-                g->particle_image=(qa_scene_image *)actual;qa_scene_image_retain(actual);}}
-        for(size_t i=0;i<Q1_LIGHTS;++i){q1_light *l=g->lights+i;if(!qa_source_save_vec3(io,&l->origin) || !qa_vec_finite(l->origin) || !finite_field(io,&l->born) || !finite_field(io,&l->until) ||
-                !qa_source_save_f32(io,&l->radius) || !qa_source_save_f32(io,&l->decay) || !qa_source_save_f32(io,&l->minimum) || !isfinite(l->radius) || l->radius<0 || !isfinite(l->decay) || l->decay<0 || !isfinite(l->minimum) || l->minimum<0 || !saved_identity(io,refs,false,&l->identity,e))return false;}
-        for(size_t i=0;i<Q1_BEAMS;++i){q1_beam *b=g->beams+i;if(!qa_source_save_u32(io,&b->actor.slot) || !qa_source_save_u64(io,&b->actor.generation) || !qa_source_save_vec3(io,&b->start) || !qa_source_save_vec3(io,&b->end) ||
-                !qa_vec_finite(b->start) || !qa_vec_finite(b->end) || !finite_field(io,&b->until) || !qa_source_save_u8(io,&b->kind) || b->kind>3 || !qa_source_save_u32(io,&b->roll_seed))return false;}
-        for(size_t i=0;i<256;++i){if(!saved_text(io,g->styles+i) || !qa_source_save_u64(io,g->style_sequences+i) ||
-            !qa_source_save_bool(io,&g->clients[i].present) || !qa_source_save_bool(io,&g->clients[i].has_ping) || !saved_text(io,&g->clients[i].name) ||
-            !saved_text(io,&g->clients[i].social) || !saved_text(io,&g->clients[i].info) || !finite_field(io,&g->clients[i].colors) || !finite_field(io,&g->clients[i].frags) || !finite_field(io,&g->clients[i].ping))return false;}
-        for(size_t i=0;i<256;++i)for(size_t column=0;column<6;++column)
-            if(!qa_source_save_u64(io,g->clients[i].sequences+column) || !qa_source_save_bool(io,g->clients[i].fields+column))return false;
-        if(!saved_text(io,&g->sky_name) || !qa_source_save_bool(io,&g->sky_found) || !qa_source_save_u64(io,&g->sky_sequence))return false;
-        for(size_t i=0;i<6;++i){bool present=g->sky[i]!=NULL;uint64_t id=0;if(!qa_source_save_bool(io,&present))return false;if(!present)continue;
-            if(!refs || (!reading && (!refs->hud.image_encode || !refs->hud.image_encode(refs->hud.context,g->sky[i],&id,e))) || !qa_source_save_u64(io,&id) || !id)return false;
-            if(reading){const qa_scene_image *sky_image=NULL;if(!refs->hud.image_decode || !refs->hud.image_decode(refs->hud.context,id,&sky_image,e) || !sky_image || qa_scene_image_owner(sky_image)!=g->images)return fail(e,"Q1 sky is outside its actual cold image bank");g->sky[i]=(qa_scene_image *)sky_image;qa_scene_image_retain(sky_image);}}
-        size_t statics=0;for(q1_static *s=g->statics;s;s=s->next)++statics;
-        if(!qa_source_save_count(io,&statics,65536))return false;
-        q1_static *s=g->statics,**static_tail=&g->statics;
-        for(size_t i=0;i<statics;++i){if(reading){s=calloc(1,sizeof(*s));if(!s)return false;*static_tail=s;static_tail=&s->next;}
-            if(!saved_text(io,&s->path) || !s->path || !qa_source_save_vec3(io,&s->origin) || !qa_source_save_vec3(io,&s->angles) ||
-                !qa_vec_finite(s->origin) || !qa_vec_finite(s->angles) || !qa_source_save_u32(io,&s->frame) || !qa_source_save_u32(io,&s->skin))return false;
-            if(reading){qa_scene_image_options options=model_options();if(!frontend_unified_media_model(o->media,g->content,s->path,QA_SCENE_Q1,&options,&s->model,e))return false;}else s=s->next;}
-        size_t ambient=0;for(q1_ambient *a=g->ambient;a;a=a->next)++ambient;
-        if(!qa_source_save_count(io,&ambient,65536))return false;
-        q1_ambient *a=g->ambient,**audio_tail=&g->ambient;
-        for(size_t i=0;i<ambient;++i){if(reading){a=calloc(1,sizeof(*a));if(!a)return false;*audio_tail=a;audio_tail=&a->next;}
-            bool installed=a->mixer!=NULL;uint64_t asset=0;
-            if(!saved_text(io,&a->path) || !a->path || !qa_source_save_vec3(io,&a->origin) || !qa_vec_finite(a->origin) || !qa_source_save_f32(io,&a->volume) || !qa_source_save_f32(io,&a->attenuation) ||
-                !isfinite(a->volume) || !isfinite(a->attenuation) || !saved_identity(io,refs,true,&a->identity,e) || !a->identity || !qa_source_save_bool(io,&installed))return false;
-            if(!refs || (!reading && (!refs->asset_encode || !refs->asset_encode(refs->context,a->asset,&asset,e))) || !qa_source_save_u64(io,&asset) || !asset)return fail(e,"Q1 ambient asset is absent from the actual cold audio graph");
-            if(reading){const qa_audio_asset *actual=NULL;if(!refs->asset_decode || !refs->asset_decode(refs->context,asset,&actual,e) || !actual)return false;
-                const qa_audio_asset *bank=qa_audio_bank_get(g->sounds,qa_resource_id(qa_audio_asset_resource(actual)),QA_AUDIO_Q1);
-                if(bank!=actual)return fail(e,"Q1 ambient asset does not belong to its imported content bank");
-                a->asset=(qa_audio_asset *)actual;qa_audio_asset_retain(a->asset);}
-            if(reading)a->saved_installed=installed;
-            if(!reading && installed){qa_audio_mixer *m=a->mixer;qa_audio_static_view view;
-                if(!m || !qa_audio_mixer_static_read(m,a->identity,&view) || view.sample!=qa_audio_asset_sample(a->asset) ||
-                    view.origin.x!=a->origin.x || view.origin.y!=a->origin.y || view.origin.z!=a->origin.z ||
-                    view.volume!=trunc((double)truncf(a->volume*255)/255*255) || view.attenuation!=(double)truncf(a->attenuation*64)/64000)
-                    return fail(e,"Q1 ambient voice does not match the imported actual mixer");
-            }
-            if(!reading)a=a->next;
-        }
-        if(!reading)g=g->next;
-    }
-    return true;
-}
-bool frontend_unified_q1_checkpoint(frontend_unified_q1 *o,const frontend_unified_q1_refs *refs,qa_buffer *out,qa_error *e)
-{
-    if(!o || o->restoring || !out || out->data || !frontend_unified_q1_checkpoint_ready(o) || !checkpoint_current(o,e))return fail(e,"Q1 cold capture overlaps a live or foreign CLIENT owner");
-    qa_source_save_io io;if(!qa_source_save_writer(&io,NULL,e))return false;
-    bool ok=fields(o,&io,refs,e) && qa_source_save_finish(&io,out);qa_source_save_dispose(&io);return ok;
-}
-bool frontend_unified_q1_restore(qa_frontend *f,frontend_remote_unified *r,frontend_unified_media *media,const frontend_unified_q1_options *options,
-    const frontend_unified_q1_refs *refs,qa_bytes input,frontend_unified_q1 **out,qa_error *e)
-{
-    if(!out || *out)return fail(e,"Q1 cold candidate output is occupied");
-    frontend_unified_q1 *o=NULL;
-    if(!frontend_unified_q1_create(f,r,media,options,&o,e))return false;
-    o->restoring=true;
-    *out=o;
-    qa_source_save_io io;
-    bool opened=qa_source_save_reader(&io,NULL,input,e),ok=opened && fields(o,&io,refs,e) && qa_source_save_finish(&io,NULL);
-    if(opened)qa_source_save_dispose(&io);
-    if(!ok){/* Preserve a checked cleanup owner even when imported native audio prevents disposal. */
-        frontend_unified_q1_frame_abort(o);(void)frontend_unified_q1_destroy(out,NULL);
-        return false;}
-    return true;
-}
-bool frontend_unified_q1_restore_finish(frontend_unified_q1 *o,qa_error *e)
-{
-    if(!o || !o->frontend->source_restoring || !checkpoint_current(o,e))return fail(e,"Q1 music import lost its real retained CLIENT recipe");
-    for(q1_group *g=o->groups;g;g=g->next)if(g->music){frontend_music_origin origin;
-        if(!music_origin(g,&origin,e) || !frontend_received_music_restore_finish(g->music,&origin,e))return false;}
-    for(q1_group *g=o->groups;g;g=g->next)for(q1_ambient *a=g->ambient;a;a=a->next)if(a->saved_installed){
-        qa_audio_mixer *m=qa_audio_engine_seat_mixer(o->frontend->audio,o->replica->options.domain.physical_seat);
-        qa_audio_static_view view;
-        if(!m || !qa_audio_mixer_callbacks_idle(m) || !qa_audio_mixer_static_read(m,a->identity,&view) ||
-            view.sample!=qa_audio_asset_sample(a->asset) || view.origin.x!=a->origin.x ||
-            view.origin.y!=a->origin.y || view.origin.z!=a->origin.z ||
-            view.volume!=trunc((double)truncf(a->volume*255)/255*255) ||
-            view.attenuation!=(double)truncf(a->attenuation*64)/64000)
-            return fail(e,"Q1 ambient voice does not match the imported actual mixer");
-        a->mixer=m;a->saved_installed=false;
-    }
-    o->restoring=false;
-    return true;
-}
-
-bool frontend_unified_q1_frame_restore_bind(frontend_unified_q1 *o,const qa_unified_document *d,qa_error *e)
-{
-    if(!o || !o->frontend->source_restoring || !frontend_unified_q1_checkpoint_ready(o) || !checkpoint_current(o,e))return false;
-    if(!o->prepared)return d==o->replica->prepared_frame;
-    if(!d || d!=o->replica->prepared_frame || qa_unified_document_type(d)!=QA_UNIFIED_FRAME_DOCUMENT)return false;
-    if(!o->restored_preparing)return o->preparing_document==d;
-    if(!frontend_unified_document_restore_bind(&o->restored_preparing,d,true,e)) return false;
-    o->preparing_document=d;qa_unified_document_destroy(o->restored_preparing);o->restored_preparing=NULL;return true;
 }

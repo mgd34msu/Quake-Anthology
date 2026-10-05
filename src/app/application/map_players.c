@@ -2728,6 +2728,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (phase == PLAYER_ADMISSION_RESERVE) return true;
             if (!application_native_q1_spectator_begin(map_source, actor, error)) return false;
             record->source_begin_pending = false;
+            ++application->players->revision;
             return admit_components(application, actor, error);
         }
         bool found = true;
@@ -3151,6 +3152,7 @@ bool application_players_publish(qa_application *application,
              !qa_modes_start_relics(application->modes, application->mode_ids[i], error)))
             return false;
     }
+    ++application->players->revision;
     return true;
 }
 
@@ -3485,6 +3487,7 @@ bool application_players_advance(qa_application *application, qa_error *error)
              !q1_player_current(application, source, character, arsenal, actor, true, &ordinal, error))) return false;
         if (source->kind == APPLICATION_PROVIDER_Q1) record = application->players->records + ordinal;
         record->deferred = false;
+        ++application->players->revision;
         if (source->kind == APPLICATION_PROVIDER_Q1 &&
             !q1_finish_first_spawn(application,
                 qa_launch_snapshot_choices(qa_application_launch(application)), source,
@@ -3601,6 +3604,7 @@ static bool retire_player(qa_application *app,application_provider *source,
           !application_native_q1_qw_retire_capture(source,actor,error)))) return false;
     application_actor_routes_invalidate(app, actor);
     found->retiring=true;
+    ++roster->revision;
     if(qa_actors_get(qa_session_actors(app->session),actor)&&!qa_session_release(app->session,actor,error)) return false;
     /* Release callbacks can grow or consume the real roster. */
     if(app->players!=roster||roster->map_provider!=source||app->publication_generation!=generation)
@@ -3765,6 +3769,7 @@ static bool record_append(qa_application *application, application_player_record
         if (roster->records[i].dynamic && roster->records[i].actor.registry == 0 &&
             roster->records[i].character == NULL) {
             roster->records[i] = record;
+            ++roster->revision;
             application_actor_routes_bind(application, record.actor);
             *out = i;
             return true;
@@ -3773,6 +3778,7 @@ static bool record_append(qa_application *application, application_player_record
         return application_fail(error, QA_ERROR_MEMORY, "canonical player roster capacity is exhausted");
     *out = roster->count;
     roster->records[roster->count++] = record;
+    ++roster->revision;
     application_actor_routes_bind(application, record.actor);
     return true;
 }
@@ -3876,6 +3882,7 @@ bool application_players_bot_allocate(qa_application *app,
         application_actor_routes_invalidate(app, app->players->records[index].actor);
         record_free(&app->players->records[index]);
         app->players->records[index] = record;
+        ++app->players->revision;
     } else if (!record_append(app, record, &index, error)) { record_free(&record); return false; }
     application_operation previous = app->operation;
     app->operation = APPLICATION_CONFIGURING;
@@ -3944,6 +3951,7 @@ bool application_players_bot_begin(qa_application *app, uint32_t physical, qa_er
     app->operation = previous;
     if (!okay) { application_fault(app, error); return false; }
     record->source_begin_pending = false;
+    ++app->players->revision;
     if (!admit_components(app, record->actor, error)) {
         application_fault(app, error); return false;
     }
@@ -4553,6 +4561,7 @@ bool application_players_guest_detach(qa_application *application,
             if (record->dynamic && !record->remote && record->character == provider && record->guest_count == 0) {
                 application_actor_routes_invalidate(application, actor);
                 record_free(record);
+                ++roster->revision;
                 record->dynamic = true;
             }
             return true;
@@ -5051,6 +5060,7 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
     application->operation = APPLICATION_IDLE;
     if (!ok) { application_fault(application, error); return false; }
     record->source_begin_pending = false;
+    ++application->players->revision;
     if (!admit_components(application, actor, error)) {
         application_fault(application, error); return false;
     }

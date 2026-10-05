@@ -1,6 +1,8 @@
 #ifndef QA_UNIFIED_SESSION_INTERNAL_H
 #define QA_UNIFIED_SESSION_INTERNAL_H
 #include "qa/network_unified_session.h"
+#include "qa/network_unified_frame_pool.h"
+#include "value_internal.h"
 
 #define QA_UNIFIED_FRAME_BACKUP 32u
 #define QA_UNIFIED_FRAME_HISTORY_BYTES (64u * 1024u * 1024u)
@@ -11,6 +13,7 @@ typedef struct qa_unified_frame_receipt {
 } qa_unified_frame_receipt;
 
 typedef struct qa_unified_held {
+    qa_unified_frame_lease *lease;
     struct qa_unified_held *next;
     qa_unified_document *document;
     qa_unified_document_kind kind;
@@ -28,6 +31,8 @@ struct qa_unified_session {
     qa_unified_token token;
     qa_unified_limits limits;
     qa_unified_channel *channel;
+    qa_unified_frame_pool *frame_pool;
+    qa_unified_builder frame_wire;
     qa_unified_session_hooks hooks;
     qa_unified_held *held, *tail;
     qa_unified_held *timeout_delivery;

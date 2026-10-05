@@ -1,4 +1,6 @@
 #include "session_internal.h"
+#include "qa/network_unified_frame.h"
+#include "qa/unified_frame_events.h"
 #include "channel_internal.h"
 #include "value_internal.h"
 
@@ -65,7 +67,7 @@ bool qa_unified_session_frame_retain(qa_unified_session *s, uint32_t sequence,
     qa_unified_document *retained = NULL;
     if (!sequence || !document || qa_unified_document_type(document) != QA_UNIFIED_FRAME_DOCUMENT)
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Retaining a Unified baseline requires its actual frame receipt");
-    size_t bytes = qa_json_source(qa_unified_document_json(document), qa_unified_document_root(document)).size;
+    size_t bytes = qa_unified_document_memory(document);
     if (!qa_unified_document_retain(document, &retained, e)) return false;
     qa_unified_frame_receipt *slot = s->frames + sequence % QA_UNIFIED_FRAME_BACKUP;
     frame_release(s, slot);
@@ -88,7 +90,7 @@ bool qa_unified_session_frame_decode(const qa_unified_session *s, qa_bytes bytes
     if (!qa_unified_frame_baseline(bytes, &sequence, e)) return false;
     const qa_unified_document *baseline = qa_unified_session_frame_find(s, sequence);
     if (sequence && !baseline) { *missing = true; return true; }
-    return qa_unified_frame_decode(bytes, baseline, sequence, out, e);
+    return qa_unified_frame_decode(bytes, baseline, sequence, s->frame_pool, out, e);
 }
 
 void qa_unified_session_release(qa_unified_session *s)
@@ -102,6 +104,8 @@ void qa_unified_session_release(qa_unified_session *s)
     qa_unified_session_frames_clear(s);
     qa_unified_inputs_free(&s->inputs);
     qa_unified_channel_destroy(s->channel);
+    free(s->frame_wire.data);
+    qa_unified_frame_pool_destroy(&s->frame_pool);
     free(s);
 }
 
@@ -130,28 +134,34 @@ static bool hold_delivery(void *context, const qa_unified_delivery *delivery, qa
     qa_unified_session *s = context;
     if (!admit_delivery(s, delivery))
         return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Production document holding capacity exceeded");
-    qa_unified_held *held = calloc(1, sizeof(*held));
-    if (!held) return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Retaining production document delivery");
     qa_unified_document_kind kind = delivery->kind == QA_UNIFIED_RELIABLE ? QA_UNIFIED_CONTROL_DOCUMENT :
         s->server ? QA_UNIFIED_INPUT_DOCUMENT : QA_UNIFIED_FRAME_DOCUMENT;
-    held->kind = kind;
-    held->wire.data = malloc(delivery->payload.size ? delivery->payload.size : 1);
-    if (!held->wire.data) { free(held); return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Retaining complete production delivery bytes"); }
-    held->wire.size = delivery->payload.size;
-    if (held->wire.size) memcpy(held->wire.data, delivery->payload.data, held->wire.size);
+    qa_unified_document *document=NULL;
     if (!s->server) {
-        bool missing = false;
-        bool okay = kind == QA_UNIFIED_FRAME_DOCUMENT ? qa_unified_session_frame_decode(s,
-            (qa_bytes){held->wire.data, held->wire.size}, &held->document, &missing, e) :
-            qa_unified_document_decode(kind, (qa_bytes){held->wire.data, held->wire.size}, &held->document, e);
+        bool missing=false;
+        bool okay=kind==QA_UNIFIED_FRAME_DOCUMENT ? qa_unified_session_frame_decode(s,
+            delivery->payload,&document,&missing,e) : qa_unified_document_decode(kind,delivery->payload,&document,e);
         if (!okay || missing) {
             if (missing) {
-                s->frame_applied = delivery->sequence;
-                s->channel->frame_ack_pending = s->channel->frame_admitted != 0;
+                s->frame_applied=delivery->sequence;
+                s->channel->frame_ack_pending=s->channel->frame_admitted!=0;
             }
-            qa_unified_session_delivery_free(held); return okay;
+            qa_unified_document_destroy(document); return okay;
         }
     }
+    const qa_unified_frame *frame=qa_unified_document_frame(document);
+    qa_unified_frame_lease *lease=frame?frame->lease:NULL;
+    if (lease && !qa_unified_frame_lease_retain(lease,e)) { qa_unified_document_destroy(document); return false; }
+    qa_unified_held *held=lease ? qa_unified_frame_lease_alloc(lease,1,sizeof(*held),_Alignof(qa_unified_held),e) : calloc(1,sizeof(*held));
+    if (!held) { qa_unified_document_destroy(document); qa_unified_frame_lease_release(lease);
+        return qa_unified_session_fail(e,QA_ERROR_MEMORY,"Retaining production document delivery"); }
+    held->lease=lease; held->document=document;
+    held->kind = kind;
+    held->wire.data=lease ? qa_unified_frame_lease_alloc(lease,delivery->payload.size?delivery->payload.size:1,1,1,e) :
+        malloc(delivery->payload.size?delivery->payload.size:1);
+    if (!held->wire.data) { qa_unified_session_delivery_free(held); return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Retaining complete production delivery bytes"); }
+    held->wire.size = delivery->payload.size;
+    if (held->wire.size) memcpy(held->wire.data, delivery->payload.data, held->wire.size);
     held->bytes = delivery->payload.size; held->sequence = delivery->sequence; held->required = delivery->required_reliable;
     if (s->tail) s->tail->next = held; else s->held = held;
     s->tail = held; s->held_bytes += held->bytes; ++s->held_count;
@@ -290,7 +300,10 @@ bool qa_unified_session_attach(qa_network_runtime *runtime, const qa_net_connect
     if (s->limits.queued_reliable_bytes > SIZE_MAX - s->limits.message_bytes) {
         free(s); return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production holding capacity exceeds storage");
     }
-    if (!qa_unified_channel_create(token, &s->limits, &s->channel, e)) { free(s); return false; }
+    s->frame_pool=qa_unified_frame_pool_create(0,e);
+    if (!s->frame_pool || !qa_unified_channel_create(token, &s->limits, &s->channel, e)) {
+        qa_unified_session_release(s); return false;
+    }
     const qa_network_peer_ops ops = qa_unified_session_operations();
     if (!qa_network_attach(runtime, request, &ops, s, now, &s->id, e)) { qa_unified_session_release(s); return false; }
     s->bound_source = true;

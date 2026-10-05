@@ -28,6 +28,18 @@ bool q3components_identity(component_game_row *row,qa_error *e)
     bool ok=application_q3_component_identity_create(row->publication.metadata,
         qa_catalog_product(row->provider->product_catalog,row->publication.metadata->product),
         row->publication.descriptor->selection.instance,&row->identity,e);
-    if(ok) row->publication.identity=row->identity;
+    if(ok) {
+        const qa_json_document *j=qa_unified_document_json(row->identity);
+        qa_json_id module=qa_json_at(j,qa_json_get(j,qa_unified_document_root(row->identity),"modules"),0);
+        static const char *const names[]={"id","artifactPath","digest","revision"};
+        char **fields[]={&row->module.id,&row->module.artifact_path,&row->module.digest,&row->module.revision};
+        for(size_t i=0;ok && i<4;++i) {
+            qa_buffer text={0};
+            ok=qa_json_string(j,qa_json_get(j,module,names[i]),&text,e);
+            if(ok) *fields[i]=(char *)text.data;
+            else qa_buffer_free(&text);
+        }
+        if(ok) { row->publication.identity=row->identity; row->publication.module=&row->module; }
+    }
     return ok;
 }

@@ -2,6 +2,7 @@
 #define QA_FRONTEND_NETWORK_UNIFIED_PRIVATE_H
 
 #include "network_unified.h"
+#include "qa/network_unified_frame_pool.h"
 #define UNIFIED_PEERS 264u
 
 typedef struct unified_peer {
@@ -17,6 +18,7 @@ typedef struct unified_peer {
 struct frontend_network_unified {
     frontend_network_unified_options options;
     qa_unified_bootstrap *bootstrap;
+    qa_unified_frame_pool *world_frames;
     unified_peer peers[UNIFIED_PEERS];
     application_unified_source source, travel_source;
     qa_buffer bootstrap_import;

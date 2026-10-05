@@ -59,6 +59,7 @@ typedef struct application_player_point {
     uint32_t ordinal;
 } application_player_point;
 struct application_player_roster {
+    uint64_t revision;
     application_player_record *records;
     size_t count, capacity;
     application_player_point *points;

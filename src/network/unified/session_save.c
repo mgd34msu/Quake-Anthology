@@ -1,18 +1,13 @@
 #include "session_internal.h"
+#include "qa/network_unified_frame.h"
+#include "qa/unified_frame_events.h"
 #include "qa/network_unified_save.h"
+#include "value_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 static bool token_equal(qa_unified_token a, qa_unified_token b) { return !memcmp(a.bytes, b.bytes, 16); }
-static bool document_equal(const qa_unified_document *a, const qa_unified_document *b)
-{
-    if (!a || !b) return a == b;
-    qa_bytes x = qa_json_source(qa_unified_document_json(a), qa_unified_document_root(a));
-    qa_bytes y = qa_json_source(qa_unified_document_json(b), qa_unified_document_root(b));
-    return qa_unified_document_type(a) == qa_unified_document_type(b) && x.size == y.size &&
-        (!x.size || !memcmp(x.data, y.data, x.size));
-}
 bool qa_unified_session_client_receipt(const qa_unified_session *s, uint32_t epoch,
     bool admitted, bool retired, const qa_unified_document *offer,
     const qa_unified_document *frame, const qa_unified_document *pending_frame, qa_error *e)
@@ -23,7 +18,7 @@ bool qa_unified_session_client_receipt(const qa_unified_session *s, uint32_t epo
     bool receiving_offer = head && qa_unified_session_kind(head->document, "offer");
     bool receiving_admission = head && qa_unified_session_kind(head->document, "admitted");
     bool receiving_disconnect = head && qa_unified_session_kind(head->document, "disconnect");
-    if (offer && (!receiving_offer || !document_equal(offer, head->document)))
+    if (offer && (!receiving_offer || !qa_unified_document_equal(offer, head->document)))
         return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Readonly Source pending offer differs from its actual receive head");
     if (epoch > s->epoch) {
         uint32_t offered = 0;
@@ -39,10 +34,10 @@ bool qa_unified_session_client_receipt(const qa_unified_session *s, uint32_t epo
     if (retired && !s->disconnected && !(receiving_disconnect && head->source_finished && head->commit.applied))
         return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Readonly Source retirement has no actual disconnect receipt");
     if (pending_frame && (!head || head->kind != QA_UNIFIED_FRAME_DOCUMENT || head->source_finished ||
-        !document_equal(pending_frame, head->document)))
+        !qa_unified_document_equal(pending_frame, head->document)))
         return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Readonly Source pending frame differs from its actual receive head");
     if (head && head->kind == QA_UNIFIED_FRAME_DOCUMENT && head->source_finished && head->commit.applied &&
-        (!frame || !document_equal(frame, head->document)))
+        (!frame || !qa_unified_document_equal(frame, head->document)))
         return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Readonly Source committed frame differs from its retained lower continuation");
     return true;
 }
@@ -145,7 +140,7 @@ bool qa_unified_session_qualified(const qa_unified_session *s, const qa_net_clie
             qa_unified_document_type(frame->document) != QA_UNIFIED_FRAME_DOCUMENT ||
             !qa_unified_session_document_epoch(frame->document, &epoch, e) || epoch != s->epoch ||
             (s->server ? frame->sequence >= progress.next_frame : frame->sequence > progress.frame_admitted) ||
-            frame->bytes != qa_json_source(qa_unified_document_json(frame->document), qa_unified_document_root(frame->document)).size ||
+            frame->bytes != qa_unified_document_memory(frame->document) ||
             frame->bytes > QA_UNIFIED_FRAME_HISTORY_BYTES - frame_bytes)
             return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Unified baseline changes its actual frame, epoch or bounded history");
         frame_bytes += frame->bytes;
@@ -260,6 +255,8 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production restore lacks its actual candidate connection");
     qa_unified_session *s = calloc(1, sizeof(*s));
     if (!s) return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Restoring complete production session");
+    s->frame_pool=qa_unified_frame_pool_create(0,e);
+    if (!s->frame_pool) { qa_unified_session_release(s); return false; }
     s->runtime = runtime; s->id = client->id; s->seat = client->seats[0].seat; s->hooks = *hooks;
     qa_net_reader r; qa_net_reader_init(&r, bytes, e);
     char magic[4]; bool ok = qa_net_read_data(&r, magic, 4);
@@ -293,9 +290,9 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
         uint32_t sequence = qa_net_read_u32(&r);
         qa_bytes wire = {0}; qa_unified_document *frame = NULL;
         ok = sequence != 0 && blob(&r, &wire) &&
-            qa_unified_document_decode(QA_UNIFIED_FRAME_DOCUMENT, wire, &frame, e);
+            qa_unified_frame_decode(wire,NULL,0,s->frame_pool,&frame,e);
         qa_unified_frame_receipt *slot = s->frames + sequence % QA_UNIFIED_FRAME_BACKUP;
-        size_t size = frame ? qa_json_source(qa_unified_document_json(frame), qa_unified_document_root(frame)).size : 0;
+        size_t size = frame ? qa_unified_document_memory(frame) : 0;
         if (ok && (slot->document || size > QA_UNIFIED_FRAME_HISTORY_BYTES - s->frame_bytes))
             ok = qa_net_reader_fail(&r, "Unified baseline continuation changes its ring membership or budget");
         if (ok) { *slot = (qa_unified_frame_receipt){frame, size, sequence}; s->frame_bytes += size; }

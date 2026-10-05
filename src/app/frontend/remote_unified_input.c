@@ -206,13 +206,6 @@ bool frontend_unified_input_idle(const frontend_unified_input *p)
 { return !p || (!p->busy && frontend_client_source_idle(p->client)); }
 bool frontend_unified_input_pending(const frontend_unified_input *p)
 { return p&&(p->has_sample||p->has_pending); }
-bool frontend_unified_input_view_angles(frontend_unified_input *p,const qa_unified_vec3 *angles,qa_error *e)
-{
-    if(!p || p->busy || p->has_sample || !angles || !isfinite(angles->x) ||
-        !isfinite(angles->y) || !isfinite(angles->z) || !current(p,e))
-        return fail(e,"Unified view reset requires its current input with no retained sample");
-    p->builder.angles=*angles;return true;
-}
 bool frontend_unified_input_command_values(frontend_unified_input *p,int32_t weapon,float sensitivity,qa_error *e)
 {
     if(!p||p->busy||!isfinite(sensitivity)||!current(p,e))

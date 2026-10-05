@@ -173,6 +173,7 @@ struct qa_q2_game {
     uint32_t wire_capacity, wire_extent, wire_clients;
     uint64_t wire_frame;
     qa_string_id wire_lightstyles[256];
+    uint64_t wire_lightstyle_revision;
     qa_q2_wire_shadow_light wire_shadows[256];
     uint32_t wire_shadow_count;
     qa_string_id wire_music;

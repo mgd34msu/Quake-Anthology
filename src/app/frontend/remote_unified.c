@@ -1,8 +1,12 @@
 #include "remote_unified_private.h"
 #include "../application/unified_output_json.h"
 #include "qa/network_unified_save.h"
+#include "qa/unified_frame_prediction.h"
+#include "qa/unified_frame_player.h"
+#include "qa/unified_frame_events.h"
 #include "remote_unified_save.h"
 #include "remote_unified_presentation.h"
+#include "remote_unified_metadata.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -22,6 +26,21 @@ bool frontend_remote_unified_actor_retained(const frontend_remote_unified *owner
             *out=row->actual; return true;
         }
     return frontend_unified_fail(error,QA_ERROR_FORMAT,"Unified import references an absent private identity receipt");
+}
+
+bool frontend_remote_unified_source_actor(frontend_remote_unified *owner,
+    const qa_unified_frame *frame, qa_actor_id wire, bool retained,
+    qa_actor_id *out, qa_error *error)
+{
+    if (!owner || !out || !owner->admitted || !owner->wire_player.registry ||
+        (frame && (!frame->world || !frame->world->actor_count || frame->epoch != owner->epoch ||
+            frame->world->actors[0].actor.registry != owner->wire_player.registry)))
+        return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified actor lost its admitted Source frame");
+    if (!wire.registry && !wire.generation && !wire.slot) { *out = (qa_actor_id){0}; return true; }
+    if (wire.registry != owner->wire_player.registry)
+        return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified actor belongs to a foreign Source registry");
+    return retained ? frontend_remote_unified_actor_retained(owner, wire.slot, wire.generation, out, error) :
+        frontend_remote_unified_actor(owner, wire.slot, wire.generation, out, error);
 }
 
 static bool linked(const frontend_remote_unified *owner)
@@ -105,34 +124,24 @@ uint32_t frontend_remote_unified_epoch(const frontend_remote_unified *owner)
 { return owner ? owner->epoch : 0; }
 
 static const qa_recipe_provider *frame_provider(const frontend_remote_unified *owner,
-    const qa_unified_document *frame,qa_launch_role role,const char *selector)
+    const qa_unified_document *document, qa_launch_role role, const char *selector)
 {
-    if (!owner || !owner->admitted || !owner->recipe || (selector && *selector)) return NULL;
-    if (!frame) return NULL;
-    const qa_json_document *json = qa_unified_document_json(frame);
-    qa_json_id output = qa_json_get(json, qa_unified_document_root(frame), "output");
-    qa_json_id rows = qa_json_get(json, qa_json_get(json, output, "snapshot"), "configurations");
-    const char *field = role == QA_ROLE_MOVEMENT ? "movement" : role == QA_ROLE_ARSENAL ? "weapons" :
-        role == QA_ROLE_INVENTORY ? "inventory" : role == QA_ROLE_CHARACTER || role == QA_ROLE_BODY ? "character" : NULL;
-    if (!field) return NULL;
-    for (size_t i = 0; i < qa_json_size(json, rows); ++i) {
-        qa_json_id row = qa_json_at(json, rows, i), actor = qa_json_get(json, row, "actor");
-        uint64_t slot, generation;
-        if (!qa_json_u64(json, qa_json_get(json, actor, "slot"), &slot, NULL) ||
-            !qa_json_u64(json, qa_json_get(json, actor, "generation"), &generation, NULL) ||
-            slot != owner->wire_player.slot || generation != owner->wire_player.generation) continue;
-        qa_json_id selected = qa_json_get(json, row, field);
-        if (role == QA_ROLE_ARSENAL) selected = qa_json_at(json, selected, 0);
-        if (role == QA_ROLE_CHARACTER || role == QA_ROLE_BODY)
-            selected = qa_json_get(json, selected, role == QA_ROLE_CHARACTER ? "definition" : "appearance");
-        qa_json_id instance = qa_json_get(json, selected, "provider"), content = qa_json_get(json, selected, "content");
+    const qa_unified_frame *frame = qa_unified_document_frame(document);
+    const qa_unified_frame_metadata *metadata=frontend_remote_unified_metadata(owner);
+    if (!owner || !owner->admitted || !owner->recipe || (selector && *selector) || !frame || !frame->world ||
+        !metadata || metadata->epoch!=frame->epoch || metadata->frame>frame->world->source.number) return NULL;
+    for (size_t i = 0; i < metadata->configuration_count; ++i) {
+        const qa_unified_configuration_state *row = metadata->configurations + i;
+        if (!qa_actor_id_equal(row->actor,owner->wire_player)) continue;
+        const qa_unified_provider_state *selected = role == QA_ROLE_MOVEMENT ? &row->movement :
+            role == QA_ROLE_INVENTORY ? &row->inventory : role == QA_ROLE_CHARACTER ? &row->character :
+            role == QA_ROLE_BODY ? &row->appearance : role == QA_ROLE_ARSENAL && row->weapon_count ? row->weapons : NULL;
+        if (!selected || !selected->provider || !selected->content) return NULL;
         for (size_t p = 0; p < qa_executable_recipe_provider_count(owner->recipe); ++p) {
             const qa_recipe_provider *provider = qa_executable_recipe_provider(owner->recipe, p);
-            const qa_product *product = provider ? qa_catalog_product(owner->options.domain.catalog,
-                provider->selection.product) : NULL;
+            const qa_product *product = provider ? qa_catalog_product(owner->options.domain.catalog, provider->selection.product) : NULL;
             if (provider && product && (provider->roles & QA_ROLE_BIT(role)) &&
-                qa_json_string_equal(json, instance, provider->selection.instance) &&
-                qa_json_string_equal(json, content, product->identity)) return provider;
+                !strcmp(selected->provider, provider->selection.instance) && !strcmp(selected->content, product->identity)) return provider;
         }
         return NULL;
     }
@@ -152,21 +161,18 @@ const qa_recipe_provider *frontend_remote_unified_provider_published(const front
     return frame_provider(owner,owner?owner->frame:NULL,role,selector);
 }
 
-static bool frame_actor_present(const qa_unified_document *frame,uint32_t slot,uint64_t generation)
+static bool frame_actor_present(const qa_unified_document *document, uint32_t slot, uint64_t generation)
 {
-    if (frame) {
-        const qa_json_document *json = qa_unified_document_json(frame);
-        qa_json_id rows = qa_json_get(json, qa_json_get(json, qa_json_get(json,
-            qa_unified_document_root(frame), "output"), "snapshot"), "actors");
-        for (size_t i = 0; i < qa_json_size(json, rows); ++i) {
-            qa_json_id id = qa_json_get(json, qa_json_at(json, rows, i), "id");
-            uint64_t actual_slot, actual_generation;
-            if (qa_json_u64(json, qa_json_get(json, id, "slot"), &actual_slot, NULL) &&
-                qa_json_u64(json, qa_json_get(json, id, "generation"), &actual_generation, NULL) &&
-                actual_slot == slot && actual_generation == generation) return true;
-        }
+    const qa_unified_frame *frame = qa_unified_document_frame(document);
+    if (!frame || !frame->world) return false;
+    const qa_unified_world_frame *world = frame->world;
+    size_t low = 0, high = world->actor_count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2; qa_actor_id actor = world->actors[middle].actor;
+        if (actor.slot < slot || (actor.slot == slot && actor.generation < generation)) low = middle + 1;
+        else high = middle;
     }
-    return false;
+    return low < world->actor_count && world->actors[low].actor.slot == slot && world->actors[low].actor.generation == generation;
 }
 bool frontend_remote_unified_actor_present(const frontend_remote_unified *owner,uint32_t slot,uint64_t generation)
 { return owner && frame_actor_present(owner->prepared_frame?owner->prepared_frame:owner->frame,slot,generation); }
@@ -209,13 +215,7 @@ bool frontend_remote_unified_player(const frontend_remote_unified *owner, qa_act
 static qa_json_id value(const qa_unified_document *document)
 { return qa_json_get(qa_unified_document_json(document), qa_unified_document_root(document), "value"); }
 bool frontend_unified_document_equal(const qa_unified_document *a, const qa_unified_document *b)
-{
-    if (!a || !b || qa_unified_document_type(a) != qa_unified_document_type(b)) return false;
-    if (a==b) return true;
-    qa_bytes x = qa_json_source(qa_unified_document_json(a), qa_unified_document_root(a));
-    qa_bytes y = qa_json_source(qa_unified_document_json(b), qa_unified_document_root(b));
-    return x.size == y.size && (!x.size || !memcmp(x.data, y.data, x.size));
-}
+{ return a && b && qa_unified_document_equal(a, b); }
 bool frontend_unified_document_restore_bind(qa_unified_document **retained,
     const qa_unified_document *canonical, bool encoded, qa_error *error)
 {
@@ -247,30 +247,31 @@ static bool wire_actor(const qa_json_document *json, qa_json_id id, qa_saved_act
     *out = (qa_saved_actor_id){.slot = (uint32_t)slot, .generation = generation}; return true;
 }
 
+static void staged_metadata_clear(frontend_remote_unified *owner)
+{
+    if (owner->metadata_lease) qa_unified_frame_lease_release(owner->metadata_lease);
+    else free(owner->metadata);
+    owner->metadata=NULL; owner->metadata_count=0; owner->metadata_lease=NULL;
+}
 static bool stage_metadata(frontend_remote_unified *owner, qa_error *error)
 {
-    const qa_json_document *json = qa_unified_document_json(owner->prepared_frame);
-    qa_json_id rows = qa_json_get(json, qa_json_get(json, qa_json_get(json,
-        qa_unified_document_root(owner->prepared_frame), "output"), "snapshot"), "actors");
-    size_t count = qa_json_size(json, rows);
-    frontend_unified_metadata *metadata = count ? calloc(count, sizeof(*metadata)) : NULL;
-    if (count && !metadata) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Staging received actor metadata");
+    const qa_unified_frame *frame = qa_unified_document_frame(owner->prepared_frame);
+    if (!frame || !frame->world) return false;
+    size_t count = frame->world->actor_count;
+    qa_unified_frame_lease *lease=frame->lease;
+    if (lease && !qa_unified_frame_lease_retain(lease,error)) return false;
+    frontend_unified_metadata *metadata = count ? (lease ? qa_unified_frame_lease_alloc(lease,count,sizeof(*metadata),
+        _Alignof(frontend_unified_metadata),error) : calloc(count,sizeof(*metadata))) : NULL;
+    if (count && !metadata) { qa_unified_frame_lease_release(lease);
+        return frontend_unified_fail(error, QA_ERROR_MEMORY, "Staging received actor metadata"); }
     for (size_t i = 0; i < count; ++i) {
-        qa_json_id row = qa_json_at(json, rows, i);
-        qa_saved_actor_id wire; qa_buffer source = {0}, definition = {0};
-        bool okay = wire_actor(json, qa_json_get(json, row, "id"), &wire, error) &&
-            frontend_remote_unified_actor(owner, wire.slot, wire.generation, &metadata[i].actor, error) &&
-            qa_json_string(json, qa_json_get(json, row, "owner"), &source, error) &&
-            qa_json_string(json, qa_json_get(json, row, "definition"), &definition, error) &&
-            qa_strings_intern_cstr(owner->strings, (const char *)source.data, &metadata[i].owner, error) &&
-            qa_strings_intern_cstr(owner->strings, (const char *)definition.data, &metadata[i].definition, error);
-        qa_buffer_free(&source); qa_buffer_free(&definition);
-        if (!okay) { free(metadata); return false; }
-        for (size_t j = 0; j < i; ++j) if (qa_actor_id_equal(metadata[j].actor, metadata[i].actor)) {
-            free(metadata); return frontend_unified_fail(error, QA_ERROR_FORMAT, "Duplicate received actor metadata");
-        }
+        const qa_unified_actor_state *row = frame->world->actors + i;
+        bool okay = frontend_remote_unified_source_actor(owner, frame, row->actor, false, &metadata[i].actor, error) &&
+            qa_strings_intern_cstr(owner->strings, row->owner, &metadata[i].owner, error) &&
+            qa_strings_intern_cstr(owner->strings, row->definition, &metadata[i].definition, error);
+        if (!okay) { if (lease) qa_unified_frame_lease_release(lease); else free(metadata); return false; }
     }
-    owner->metadata = metadata; owner->metadata_count = count; return true;
+    owner->metadata = metadata; owner->metadata_count = count; owner->metadata_lease=lease; return true;
 }
 
 static bool metadata_apply(frontend_remote_unified *owner, qa_error *error)
@@ -328,50 +329,38 @@ static bool prepare_frame(frontend_remote_unified *owner, const qa_unified_docum
 {
     if (!owner->recipe || !owner->admitted || owner->preparing)
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified frame precedes actual world and player admission");
-    const qa_json_document *json = qa_unified_document_json(document);
-    qa_json_id root = qa_unified_document_root(document), player = qa_json_get(json, root, "player");
-    qa_saved_actor_id actor;
-    if (!wire_actor(json, qa_json_get(json, player, "actor"), &actor, error) ||
-        actor.slot != owner->wire_player.slot || actor.generation != owner->wire_player.generation)
-        return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified frame changes its admitted full player");
+    const qa_unified_frame *frame = qa_unified_document_frame(document);
+    const qa_unified_frame *published = qa_unified_document_frame(owner->frame);
+    const qa_unified_frame_metadata *metadata=frontend_remote_unified_metadata(owner);
+    if (!frame || !frame->world || !frame->player || !frame->prediction || frame->epoch != owner->epoch ||
+        frame->player->actor.slot != owner->wire_player.slot || frame->player->actor.generation != owner->wire_player.generation ||
+        !qa_actor_id_equal(frame->prediction->actor, frame->player->actor) ||
+        frame->prediction->sequence != frame->acknowledged_input ||
+        frame->player->actor.registry != owner->wire_player.registry ||
+        (published && frame->player->actor.registry != published->player->actor.registry) ||
+        !metadata || metadata->epoch!=frame->epoch || metadata->frame>frame->world->source.number)
+        return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified frame changes its actual Source player or acknowledgement");
     if (owner->prepared_frame && !frontend_unified_document_equal(owner->prepared_frame, document))
-        return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified frame preparation changed its retained source bytes");
-    if (!owner->prepared_frame) {
-        qa_unified_document *prediction = NULL, *copy = NULL;
-        bool okay = qa_unified_document_child(document, qa_json_get(json, root, "prediction"),
-            QA_UNIFIED_PREDICTION_DOCUMENT, &prediction, error) &&
-            qa_unified_document_retain(document, &copy, error);
-        if (!okay) { qa_unified_document_destroy(prediction); qa_unified_document_destroy(copy); return false; }
-        const qa_json_document *p = qa_unified_document_json(prediction);
-        qa_saved_actor_id predicted; int64_t sequence, acknowledged;
-        okay = wire_actor(p, qa_json_get(p, qa_unified_document_root(prediction), "actor"), &predicted, error) &&
-            qa_json_i64(p, qa_json_get(p, qa_unified_document_root(prediction), "sequence"), &sequence, error) &&
-            qa_json_i64(json, qa_json_get(json, root, "acknowledgedInput"), &acknowledged, error) &&
-            predicted.slot == actor.slot && predicted.generation == actor.generation && sequence == acknowledged;
-        if (!okay) { qa_unified_document_destroy(prediction); qa_unified_document_destroy(copy);
-            return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified prediction changes the admitted player or acknowledgement"); }
-        owner->prediction = prediction; owner->prepared_frame = copy;
-    }
-    qa_json_id snapshot = qa_json_get(json,qa_json_get(json,root,"output"),"snapshot");
-    uint64_t number;
-    if (!qa_json_u64(json,qa_json_get(json,qa_json_get(json,snapshot,"frame"),"frame"),&number,error)) return false;
+        return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified frame preparation changed its retained Source state");
+    if (!owner->prepared_frame && !qa_unified_document_retain(document, &owner->prepared_frame, error)) return false;
+    uint64_t number = frame->world->source.number;
     if (owner->frame && number <= owner->frame_number) { *ready = true; return true; }
     if (!owner->metadata && !stage_metadata(owner, error)) return false;
-    frontend_unified_frame_preparation state=FRONTEND_UNIFIED_FRAME_WAIT;
+    frontend_unified_frame_preparation state = FRONTEND_UNIFIED_FRAME_WAIT;
     if (!owner->options.consumers.frame(owner->options.consumers.context, owner,
-        owner->prepared_frame, owner->prediction, &state, error) || !frontend_remote_unified_current(owner,error)) return false;
-    if (state>FRONTEND_UNIFIED_FRAME_OBSOLETE)
-        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified frame consumer returned an unknown preparation disposition");
-    owner->frame_obsolete=state==FRONTEND_UNIFIED_FRAME_OBSOLETE;
-    *ready=state!=FRONTEND_UNIFIED_FRAME_WAIT; return true;
+        owner->prepared_frame, &state, error) || !frontend_remote_unified_current(owner, error)) return false;
+    if (state > FRONTEND_UNIFIED_FRAME_OBSOLETE)
+        return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified frame consumer returned an unknown preparation disposition");
+    owner->frame_obsolete = state == FRONTEND_UNIFIED_FRAME_OBSOLETE;
+    *ready = state != FRONTEND_UNIFIED_FRAME_WAIT; return true;
 }
 
 static bool transport_continue(frontend_remote_unified *owner,const qa_unified_document *document,qa_error *error)
 {
     if (!owner || !owner->transport_restarted || !owner->offer) return true;
+    if (!frontend_unified_document_equal(owner->offer,document)) return true;
     const qa_json_document *json=qa_unified_document_json(document);
     uint64_t wire_epoch;
-    if (!frontend_unified_document_equal(owner->offer,document)) return true;
     if (!qa_json_u64(json,qa_json_get(json,value(document),"epoch"),&wire_epoch,error)) return false;
     if (wire_epoch!=owner->epoch) return true;
     if (!owner->recipe || !frontend_unified_document_equal(owner->offer,document) ||
@@ -399,7 +388,7 @@ static bool prepare(void *context, qa_net_client_id client, const qa_unified_doc
     bool okay = true;
     if (qa_unified_document_type(document) == QA_UNIFIED_FRAME_DOCUMENT)
         okay = prepare_frame(owner, document, ready, error);
-    else if (qa_json_string_equal(qa_unified_document_json(document),
+    else if (!qa_unified_document_events(document) && !qa_unified_document_metadata(document) && qa_json_string_equal(qa_unified_document_json(document),
         qa_json_get(qa_unified_document_json(document), value(document), "kind"), "offer"))
         okay = prepare_offer(owner, document, ready, error);
     owner->busy = false; return okay;
@@ -448,6 +437,14 @@ static bool control(void *context, qa_network_runtime *runtime, qa_net_client_id
     if (!owner || owner->busy || frontend_remote_unified_presentation_video_held(owner) ||
         runtime != owner->options.domain.runtime ||
         !qa_net_client_id_equal(client, owner->options.domain.client) || !commit) return false;
+    if (qa_unified_document_events(document) || qa_unified_document_metadata(document)) {
+        if (!frontend_remote_unified_current(owner, error)) return false;
+        if (epoch != owner->epoch) return true;
+        owner->busy = true;
+        bool applied = owner->recipe && owner->options.consumers.control(
+            owner->options.consumers.context, owner, document, error);
+        owner->busy = false; commit->applied = applied; return applied;
+    }
     const qa_json_document *json = qa_unified_document_json(document);
     qa_json_id v = value(document), kind = qa_json_get(json, v, "kind");
     bool pending_disconnect=false;
@@ -467,11 +464,12 @@ static bool control(void *context, qa_network_runtime *runtime, qa_net_client_id
             if (okay) {
                 owner->retiring_recipe = owner->recipe; owner->recipe = owner->preparing_recipe; owner->preparing_recipe = NULL;
                 owner->epoch = epoch; owner->admitted = false; owner->player = (qa_actor_id){0}; owner->transport_restarted = false;
+                owner->wire_player = (qa_actor_id){0};
+                frontend_remote_unified_metadata_clear(owner);
                 owner->frame_number = 0; owner->preparing = owner->prepared = false;
                 qa_unified_document_destroy(owner->frame); owner->frame = NULL;
                 qa_unified_document_destroy(owner->prepared_frame); owner->prepared_frame = NULL;
-                qa_unified_document_destroy(owner->prediction); owner->prediction = NULL;
-                free(owner->metadata); owner->metadata = NULL; owner->metadata_count = 0;
+                staged_metadata_clear(owner);
                 okay = qa_actors_clear(owner->actors, error);
                 if (okay) while (owner->identities) { frontend_unified_identity *row = owner->identities;
                     owner->identities = row->next; free(row); }
@@ -490,12 +488,16 @@ static bool control(void *context, qa_network_runtime *runtime, qa_net_client_id
         if (okay) { qa_unified_document_destroy(owner->offer); owner->offer = NULL; commit->applied = true; }
     } else if (epoch != owner->epoch && !pending_disconnect) okay = true;
     else if (qa_json_string_equal(json, kind, "admitted")) {
-        qa_saved_actor_id actor, wire_client; uint64_t source;
-        okay = wire_actor(json, qa_json_get(json, v, "actor"), &actor, error) &&
+        qa_saved_actor_id actor, wire_client; uint64_t source, registry;
+        qa_json_id source_actor = qa_json_get(json, v, "actor");
+        okay = wire_actor(json, source_actor, &actor, error) &&
+            qa_json_u64(json, qa_json_get(json, source_actor, "registry"), &registry, error) && registry &&
             wire_actor(json, qa_json_get(json, v, "client"), &wire_client, error) &&
             qa_json_u64(json, qa_json_get(json, v, "sourceEntity"), &source, error) && source <= UINT32_MAX &&
+            (!owner->admitted || (owner->wire_player.registry == registry && owner->wire_player.slot == actor.slot &&
+                owner->wire_player.generation == actor.generation)) &&
             frontend_remote_unified_actor(owner, actor.slot, actor.generation, &owner->player, error);
-        if (okay) { owner->wire_player = actor; owner->wire_client = wire_client;
+        if (okay) { owner->wire_player = (qa_actor_id){.registry = registry, .slot = actor.slot, .generation = actor.generation}; owner->wire_client = wire_client;
             owner->source_entity = (uint32_t)source; owner->admitted = true; commit->applied = true; }
     } else if (qa_json_string_equal(json, kind, "resources")) {
         okay = owner->recipe && resources(owner, document, error);
@@ -518,16 +520,14 @@ static bool frame(void *context, qa_network_runtime *runtime, qa_net_client_id c
     if (!owner || owner->busy || runtime != owner->options.domain.runtime || !commit ||
         !qa_net_client_id_equal(client, owner->options.domain.client) || !frontend_remote_unified_current(owner, error) ||
         !frontend_unified_document_equal(owner->prepared_frame, document)) return false;
-    const qa_json_document *json = qa_unified_document_json(document);
-    qa_json_id root = qa_unified_document_root(document), snapshot = qa_json_get(json, qa_json_get(json, root, "output"), "snapshot");
-    uint64_t number; int64_t acknowledged;
-    if (!qa_json_u64(json, qa_json_get(json, qa_json_get(json, snapshot, "frame"), "frame"), &number, error) ||
-        !qa_json_i64(json, qa_json_get(json, root, "acknowledgedInput"), &acknowledged, error)) return false;
+    const qa_unified_frame *received = qa_unified_document_frame(document);
+    if (!received || !received->world) return false;
+    uint64_t number = received->world->source.number;
+    int64_t acknowledged = received->acknowledged_input;
     owner->busy = true; bool okay = true;
     if (owner->frame_obsolete) {
         qa_unified_document_destroy(owner->prepared_frame); owner->prepared_frame=NULL;
-        qa_unified_document_destroy(owner->prediction); owner->prediction=NULL;
-        free(owner->metadata); owner->metadata=NULL; owner->metadata_count=0;
+        staged_metadata_clear(owner);
         owner->frame_obsolete=false; commit->applied=false; owner->busy=false; return true;
     }
     if (!owner->frame || number > owner->frame_number) {
@@ -540,8 +540,7 @@ static bool frame(void *context, qa_network_runtime *runtime, qa_net_client_id c
         if (!owner->frame || number > owner->frame_number) { qa_unified_document_destroy(owner->frame);
             owner->frame = owner->prepared_frame; owner->prepared_frame = NULL; owner->frame_number = number; }
         else { qa_unified_document_destroy(owner->prepared_frame); owner->prepared_frame = NULL; }
-        qa_unified_document_destroy(owner->prediction); owner->prediction = NULL;
-        free(owner->metadata); owner->metadata = NULL; owner->metadata_count = 0;
+        staged_metadata_clear(owner);
         commit->applied = true; commit->acknowledged_input = acknowledged;
     }
     owner->busy = false; return okay;
@@ -734,14 +733,15 @@ bool frontend_remote_unified_destroy(frontend_remote_unified **slot, qa_error *e
     if (owner->preparing_recipe) { if (!qa_executable_recipe_close(owner->preparing_recipe, error)) return false; owner->preparing_recipe = NULL; }
     if (owner->recipe) { if (!qa_executable_recipe_close(owner->recipe, error)) return false; owner->recipe = NULL; }
     if (!qa_actors_destroy(owner->actors, error)) return false;
-    qa_strings_destroy(owner->strings); free(owner->metadata);
+    qa_strings_destroy(owner->strings); staged_metadata_clear(owner);
     frontend_remote_unified **row = &owner->frontend->remote_unified;
     while (*row != owner) row = &(*row)->next;
     *row = owner->next;
     while (owner->identities) { frontend_unified_identity *identity = owner->identities;
         owner->identities = identity->next; free(identity); }
     qa_unified_document_destroy(owner->offer); qa_unified_document_destroy(owner->frame);
-    qa_unified_document_destroy(owner->prepared_frame); qa_unified_document_destroy(owner->prediction);
+    qa_unified_document_destroy(owner->prepared_frame);
+    frontend_remote_unified_metadata_clear(owner);
     qa_catalog_release(owner->options.domain.catalog);
     if (owner->options.consumers.dispose) owner->options.consumers.dispose(owner->options.consumers.context);
     free(owner); *slot = NULL; return true;

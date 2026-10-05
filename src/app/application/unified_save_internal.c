@@ -199,19 +199,11 @@ bool application_unified_save_player(qa_source_save_io *io, const qa_unified_ses
     if (!writing) qa_buffer_free(&arsenal);
     return okay;
 }
-static bool document_equal(const qa_unified_document *a, const qa_unified_document *b)
-{
-    if (!a || !b) return a == b;
-    qa_bytes x = qa_json_source(qa_unified_document_json(a), qa_unified_document_root(a));
-    qa_bytes y = qa_json_source(qa_unified_document_json(b), qa_unified_document_root(b));
-    return qa_unified_document_type(a) == qa_unified_document_type(b) && x.size == y.size &&
-        (!x.size || !memcmp(x.data, y.data, x.size));
-}
 bool application_unified_save_output_equal(const application_unified_output *a,
     const application_unified_output *b)
 {
-    if (!a || !b || a->control_count != b->control_count || !document_equal(a->frame, b->frame)) return false;
+    if (!a || !b || a->control_count != b->control_count || !qa_unified_document_equal(a->frame, b->frame)) return false;
     for (size_t i = 0; i < a->control_count; ++i)
-        if (!document_equal(a->controls[i], b->controls[i])) return false;
+        if (!qa_unified_document_equal(a->controls[i], b->controls[i])) return false;
     return true;
 }

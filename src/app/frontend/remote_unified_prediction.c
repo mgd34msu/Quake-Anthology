@@ -1,337 +1,64 @@
 #include "remote_unified_prediction_private.h"
-#include "remote_unified_save.h"
+#include "remote_unified_private.h"
 #include "qa/text.h"
+#include "remote_unified_save.h"
+#include "qa/unified_frame_prediction.h"
 #include <fenv.h>
 #include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct prediction_reader {
-    const qa_unified_document *document;
-    const qa_json_document *json;
-    frontend_remote_unified *replica;
-    bool importing;
-} prediction_reader;
-
 static bool fail(qa_error *e, qa_status code, const char *message)
-{ qa_error_set(e, code, 0, "%s", message); return false; }
-static qa_json_id get(const prediction_reader *r, qa_json_id id, const char *name)
-{ return qa_json_get(r->json, id, name); }
-static bool equal(const prediction_reader *r, qa_json_id id, const char *value)
-{ return qa_json_string_equal(r->json, id, value); }
-static bool number(const prediction_reader *r, qa_json_id id, double *out, qa_error *e)
+{ return frontend_unified_fail(e,code,message); }
+static bool actor_read(const frontend_remote_unified_prediction *p,const qa_unified_frame *frame,
+    qa_actor_id source,qa_actor_id *out,qa_error *e)
+{ return frontend_remote_unified_source_actor(p->replica,frame,source,p->importing,out,e); }
+static bool ground_read(const frontend_remote_unified_prediction *p,const qa_unified_frame *frame,qa_movement_ground *ground,qa_error *e)
+{ return ground->hit!=QA_TRACE_HIT_ACTOR || actor_read(p,frame,ground->actor,&ground->actor,e); }
+static bool state_actors_read(const frontend_remote_unified_prediction *p,const qa_unified_frame *frame,qa_movement_state *state,qa_error *e)
 {
-    double v;
-    if (!qa_unified_document_number(r->document, id, &v, e)) return false;
-    if (!isfinite(v)) return fail(e, QA_ERROR_FORMAT, "Unified prediction requires a finite native scalar");
-    *out = v; return true;
-}
-static bool real(const prediction_reader *r, qa_json_id id, float *out, qa_error *e)
-{
-    double v;
-    if (!number(r, id, &v, e)) return false;
-    if (fabs(v) > FLT_MAX) return fail(e, QA_ERROR_FORMAT, "Unified prediction scalar exceeds its native float field");
-    *out = (float)v; return true;
-}
-static bool integer(const prediction_reader *r, qa_json_id id, double lo, double hi, int64_t *out, qa_error *e)
-{
-    double v;
-    if (!number(r, id, &v, e)) return false;
-    if (trunc(v) != v || v < lo || v > hi) return fail(e, QA_ERROR_FORMAT, "Unified prediction integer exceeds its native field");
-    *out = (int64_t)v; return true;
-}
-static bool i32(const prediction_reader *r, qa_json_id id, int32_t *out, qa_error *e)
-{ int64_t v; if (!integer(r, id, INT32_MIN, INT32_MAX, &v, e)) return false; *out = (int32_t)v; return true; }
-static bool u32(const prediction_reader *r, qa_json_id id, uint32_t *out, qa_error *e)
-{ int64_t v; if (!integer(r, id, 0, UINT32_MAX, &v, e)) return false; *out = (uint32_t)v; return true; }
-static bool i16(const prediction_reader *r, qa_json_id id, int16_t *out, qa_error *e)
-{ int64_t v; if (!integer(r, id, INT16_MIN, INT16_MAX, &v, e)) return false; *out = (int16_t)v; return true; }
-static bool u8(const prediction_reader *r, qa_json_id id, uint8_t *out, qa_error *e)
-{ int64_t v; if (!integer(r, id, 0, UINT8_MAX, &v, e)) return false; *out = (uint8_t)v; return true; }
-static bool u16(const prediction_reader *r, qa_json_id id, uint16_t *out, qa_error *e)
-{ int64_t v; if (!integer(r, id, 0, UINT16_MAX, &v, e)) return false; *out = (uint16_t)v; return true; }
-static bool boolean(const prediction_reader *r, qa_json_id id, bool *out, qa_error *e)
-{ return qa_json_bool(r->json, id, out, e); }
-static bool vector(const prediction_reader *r, qa_json_id id, qa_vec3 *out, qa_error *e)
-{
-    return real(r, get(r, id, "x"), &out->x, e) && real(r, get(r, id, "y"), &out->y, e) &&
-        real(r, get(r, id, "z"), &out->z, e);
-}
-static bool bounds(const prediction_reader *r, qa_json_id id, qa_bounds *out, qa_error *e)
-{
-    if (!vector(r, get(r, id, "min"), &out->mins, e) || !vector(r, get(r, id, "max"), &out->maxs, e)) return false;
-    return (out->mins.x<=out->maxs.x && out->mins.y<=out->maxs.y && out->mins.z<=out->maxs.z) ||
-        fail(e, QA_ERROR_FORMAT, "Unified prediction bounds are inverted");
-}
-static bool actor(const prediction_reader *r, qa_json_id id, qa_actor_id *out, qa_error *e)
-{
-    if (qa_json_type(r->json, id) == QA_JSON_NULL) { *out = (qa_actor_id){0}; return true; }
-    uint32_t slot; int64_t generation;
-    if (!u32(r, get(r, id, "slot"), &slot, e) ||
-        !integer(r, get(r, id, "generation"), 0, QA_UNIFIED_SAFE_INTEGER, &generation, e)) return false;
-    return r->importing ? frontend_remote_unified_actor_retained(r->replica,slot,(uint64_t)generation,out,e) :
-        frontend_remote_unified_actor(r->replica,slot,(uint64_t)generation,out,e);
-}
-static bool ground(const prediction_reader *r, qa_json_id id, qa_movement_ground *out, qa_error *e)
-{
-    qa_json_id kind = get(r, id, "kind");
-    *out = (qa_movement_ground){0};
-    if (equal(r, kind, "none")) { out->hit = QA_TRACE_HIT_NONE; return true; }
-    if (equal(r, kind, "world")) { out->hit = QA_TRACE_HIT_WORLD; return u32(r, get(r, id, "model"), &out->model, e); }
-    if (equal(r, kind, "actor")) {
-        out->hit = QA_TRACE_HIT_ACTOR;
-        return actor(r, get(r, id, "actor"), &out->actor, e) &&
-            (out->actor.registry || fail(e, QA_ERROR_FORMAT, "Unified ground actor is absent"));
-    }
-    return fail(e, QA_ERROR_FORMAT, "Unified prediction has an unknown ground contact");
-}
-static bool kind(const prediction_reader *r, qa_json_id id, qa_movement_kind *out, qa_error *e)
-{
-    static const char *names[] = {"q1-netquake", "q1-quakeworld", "q2-classic", "q2-rerelease", "q3"};
-    for (unsigned i = 0; i < sizeof(names) / sizeof(*names); ++i)
-        if (equal(r, id, names[i])) { *out = (qa_movement_kind)i; return true; }
-    return fail(e, QA_ERROR_FORMAT, "Unified prediction has an unknown movement kernel");
-}
-
-#define V(field,name) vector(r,get(r,id,name),&(field),e)
-#define F(field,name) real(r,get(r,id,name),&(field),e)
-#define D(field,name) number(r,get(r,id,name),&(field),e)
-#define I(field,name) i32(r,get(r,id,name),&(field),e)
-#define U(field,name) u32(r,get(r,id,name),&(field),e)
-#define B(field,name) boolean(r,get(r,id,name),&(field),e)
-#define G(field,name) ground(r,get(r,id,name),&(field),e)
-static bool state_read(const prediction_reader *r, qa_json_id id, qa_movement_state *out, qa_error *e)
-{
-    if (!kind(r, get(r,id,"kind"), &out->kind, e)) return false;
-    switch (out->kind) {
-    case QA_MOVEMENT_NETQUAKE: {
-        qa_nq_movement_state *v = &out->data.nq;
-        return V(v->origin,"origin") && V(v->velocity,"velocity") && V(v->angles,"angles") &&
-            V(v->old_origin,"oldOrigin") && V(v->angular_velocity,"angularVelocity") && V(v->view_angles,"viewAngles") &&
-            V(v->punch_angles,"punchAngles") && V(v->water_jump_direction,"waterJumpDirection") &&
-            I(v->move_type,"moveType") && U(v->flags,"flags") && G(v->ground,"ground") &&
-            I(v->water_level,"waterLevel") && I(v->water_type,"waterType") && D(v->teleport_time_seconds,"teleportTimeSeconds") &&
-            F(v->ideal_pitch,"idealPitch") && B(v->fix_angle,"fixAngle") && F(v->health,"health");
-    }
-    case QA_MOVEMENT_QUAKEWORLD: {
-        qa_qw_movement_state *v = &out->data.qw;
-        qa_json_id origin = get(r,id,"origin");
-        return number(r,get(r,origin,"x"),&v->origin.x,e) && number(r,get(r,origin,"y"),&v->origin.y,e) &&
-            number(r,get(r,origin,"z"),&v->origin.z,e) && V(v->velocity,"velocity") && V(v->angles,"angles") &&
-            U(v->old_buttons,"oldButtons") && F(v->water_jump_time_seconds,"waterJumpTimeSeconds") &&
-            B(v->dead,"dead") && I(v->spectator,"spectator") && G(v->ground,"ground");
-    }
-    case QA_MOVEMENT_Q2_CLASSIC: {
-        qa_q2_movement_state *v = &out->data.q2;
-        qa_json_id origin=get(r,id,"originEighths"), velocity=get(r,id,"velocityEighths"), delta=get(r,id,"deltaAngleShorts");
-        qa_json_id storage=get(r,id,"coordinateStorage");
-        if (storage!=QA_JSON_NONE) {
-            if (!equal(r,storage,"q2pro-extended-v2")) return fail(e,QA_ERROR_FORMAT,"Unified Q2 state has an unknown coordinate storage");
-            v->wide_coordinates=true;
-        }
-        if (qa_json_size(r->json,origin)!=3 || qa_json_size(r->json,velocity)!=3 || qa_json_size(r->json,delta)!=3)
-            return fail(e,QA_ERROR_FORMAT,"Unified Q2 state changes its coordinate vector extent");
-        for (size_t i=0;i<3;++i) {
-            if (!i16(r,qa_json_at(r->json,delta,i),v->delta_angle_shorts+i,e)) return false;
-            if (v->wide_coordinates) {
-                if (!i32(r,qa_json_at(r->json,origin,i),v->wide.origin_eighths+i,e) ||
-                    !i32(r,qa_json_at(r->json,velocity,i),v->wide.velocity_eighths+i,e)) return false;
-            } else if (!i16(r,qa_json_at(r->json,origin,i),v->origin_eighths+i,e) ||
-                !i16(r,qa_json_at(r->json,velocity,i),v->velocity_eighths+i,e)) return false;
-        }
-        return I(v->type,"type") && U(v->flags,"flags") &&
-            (v->wide_coordinates ? u16(r,get(r,id,"timeMilliseconds"),&v->wide.time_ms,e) :
-                u8(r,get(r,id,"timeEightMilliseconds"),&v->time_eight_ms,e)) &&
-            i16(r,get(r,id,"gravity"),&v->gravity,e);
-    }
-    case QA_MOVEMENT_Q2_RERELEASE: {
-        qa_q2r_movement_state *v=&out->data.q2r;
-        return I(v->type,"type") && V(v->origin,"origin") && V(v->velocity,"velocity") && U(v->flags,"flags") &&
-            U(v->time_ms,"timeMilliseconds") && i16(r,get(r,id,"gravity"),&v->gravity,e) &&
-            V(v->delta_angles,"deltaAngles") && F(v->view_height,"viewHeight");
-    }
-    case QA_MOVEMENT_Q3: {
-        qa_q3_movement_state *v=&out->data.q3;
-        qa_json_id delta=get(r,id,"deltaAngleWords");
-        if (qa_json_size(r->json,delta)!=3) return fail(e,QA_ERROR_FORMAT,"Unified Q3 state changes its angle vector extent");
-        for (size_t i=0;i<3;++i) if (!i32(r,qa_json_at(r->json,delta,i),v->delta_angle_words+i,e)) return false;
-        return I(v->command_time_ms,"commandTimeMilliseconds") && I(v->movement_type,"movementType") && I(v->bob_cycle,"bobCycle") &&
-            U(v->movement_flags,"movementFlags") && I(v->movement_time_ms,"movementTimeMilliseconds") && V(v->origin,"origin") &&
-            V(v->velocity,"velocity") && I(v->gravity,"gravity") && I(v->speed,"speed") && I(v->movement_direction,"movementDirection") &&
-            V(v->grapple_point,"grapplePoint") && U(v->flags,"flags") && V(v->view_angles,"viewAngles") && F(v->view_height,"viewHeight") &&
-            G(v->ground,"ground") && U(v->event_sequence,"predictableEventSequence") && actor(r,get(r,id,"jumpPad"),&v->jump_pad,e) &&
-            I(v->movement_frame,"movementFrame") && I(v->jump_pad_frame,"jumpPadFrame");
-    }
+    switch(state->kind){
+    case QA_MOVEMENT_NETQUAKE:return ground_read(p,frame,&state->data.nq.ground,e);
+    case QA_MOVEMENT_QUAKEWORLD:return ground_read(p,frame,&state->data.qw.ground,e);
+    case QA_MOVEMENT_Q2_CLASSIC:case QA_MOVEMENT_Q2_RERELEASE:return true;
+    case QA_MOVEMENT_Q3:return ground_read(p,frame,&state->data.q3.ground,e) && actor_read(p,frame,state->data.q3.jump_pad,&state->data.q3.jump_pad,e);
     }
     return false;
 }
-static bool parameters(const prediction_reader *r, qa_json_id id, qa_q1_movement_parameters *v, qa_error *e)
+static bool profile_read(const frontend_remote_unified_prediction *p,const qa_unified_frame_prediction *received,
+    int *rounding,qa_error *e)
 {
-    return F(v->gravity,"gravity") && F(v->stop_speed,"stopSpeed") && F(v->max_speed,"maxSpeed") &&
-        F(v->spectator_max_speed,"spectatorMaxSpeed") && F(v->accelerate,"accelerate") && F(v->air_accelerate,"airAccelerate") &&
-        F(v->water_accelerate,"waterAccelerate") && F(v->friction,"friction") && F(v->water_friction,"waterFriction") &&
-        F(v->entity_gravity,"entityGravity");
-}
-static bool numeric(const prediction_reader *r, qa_json_id id, qa_movement_kind k, int *rounding, qa_error *e)
-{
-#if !defined(__GNUC__) && !defined(__clang__)
-    (void)r; (void)id; (void)k; (void)rounding;
-    return fail(e,QA_ERROR_UNSUPPORTED,"Private native prediction has no declared C contraction policy");
-#else
-    qa_json_id arithmetic=get(r,id,"arithmetic");
-    int32_t radix,scalar_bits,double_bits,evaluation,version;
-    bool qw;
-    if (!equal(r,get(r,id,"id"),"qa:numeric/movement-c") || !equal(r,get(r,id,"scalarStorage"),"binary32") ||
-        !equal(r,get(r,id,"floatToInt"),"checked-c-truncation") || !equal(r,get(r,id,"integerOverflow"),"wrap32") ||
-        !equal(r,get(r,arithmetic,"kind"),"native-c") || !equal(r,get(r,arithmetic,"kernel"),"qa-movement") ||
-        !equal(r,get(r,arithmetic,"language"),"c17") || !equal(r,get(r,arithmetic,"contraction"),"off") ||
-        !i32(r,get(r,arithmetic,"version"),&version,e) || version!=1 ||
-        !i32(r,get(r,arithmetic,"radix"),&radix,e) || radix!=FLT_RADIX ||
-        !i32(r,get(r,arithmetic,"scalarMantissaBits"),&scalar_bits,e) || scalar_bits!=FLT_MANT_DIG ||
-        !i32(r,get(r,arithmetic,"doubleMantissaBits"),&double_bits,e) || double_bits!=DBL_MANT_DIG ||
-        !i32(r,get(r,arithmetic,"evaluationMethod"),&evaluation,e) || evaluation!=FLT_EVAL_METHOD ||
-        !boolean(r,get(r,arithmetic,"quakeWorldOriginBinary64"),&qw,e) || qw!=(k==QA_MOVEMENT_QUAKEWORLD))
-        return fail(e,QA_ERROR_UNSUPPORTED,"Received movement arithmetic differs from the actual native kernel");
-    qa_json_id value=get(r,arithmetic,"rounding");
-    int expected=equal(r,value,"nearest-even")?FE_TONEAREST:equal(r,value,"toward-negative")?FE_DOWNWARD:
-        equal(r,value,"toward-positive")?FE_UPWARD:equal(r,value,"toward-zero")?FE_TOWARDZERO:-1;
-    if (expected<0 || expected!=fegetround()) return fail(e,QA_ERROR_UNSUPPORTED,"Private prediction has a different rounding environment");
-    *rounding=expected; return true;
-#endif
-}
-static bool clock_read(const prediction_reader *r, qa_json_id id, qa_movement_kind kind,
-    const qa_clock_config *clock, qa_error *e)
-{
-    qa_clock_kind expected;
-    switch (kind) {
-    case QA_MOVEMENT_NETQUAKE: expected=QA_CLOCK_NETQUAKE; break;
-    case QA_MOVEMENT_QUAKEWORLD: expected=QA_CLOCK_QUAKEWORLD; break;
-    case QA_MOVEMENT_Q2_CLASSIC: expected=QA_CLOCK_Q2_CLASSIC; break;
-    case QA_MOVEMENT_Q2_RERELEASE: expected=QA_CLOCK_Q2_RERELEASE; break;
-    case QA_MOVEMENT_Q3: expected=QA_CLOCK_Q3; break;
-    default: return fail(e,QA_ERROR_FORMAT,"Prediction has no movement clock domain");
-    }
-    if (clock->kind!=expected)
-        return fail(e,QA_ERROR_FORMAT,"Prediction clock differs from its admitted provider clock");
-    double value;
-    if (kind==QA_MOVEMENT_NETQUAKE) {
-        qa_json_id fixed=get(r,id,"fixedFrameSeconds");
-        if (!number(r,get(r,id,"minimumFrameSeconds"),&value,e) || value!=(double)clock->minimum_frame_ns/1e9 ||
-            !number(r,get(r,id,"maximumFrameSeconds"),&value,e) || value!=(double)clock->maximum_frame_ns/1e9)
-            return fail(e,QA_ERROR_FORMAT,"Prediction changes its admitted NetQuake frame bounds");
-        return (!clock->interval_ns?qa_json_type(r->json,fixed)==QA_JSON_NULL:
-            number(r,fixed,&value,e) && value==(double)clock->interval_ns/1e9) ||
-            fail(e,QA_ERROR_FORMAT,"Prediction changes its admitted NetQuake fixed interval");
-    }
-    if (kind==QA_MOVEMENT_QUAKEWORLD) return true;
-    return (number(r,get(r,id,kind==QA_MOVEMENT_Q3?"serverFrameMilliseconds":"frameMilliseconds"),&value,e) &&
-        value==(double)clock->interval_ns/1e6) || fail(e,QA_ERROR_FORMAT,"Prediction changes its admitted server frame interval");
-}
-static bool profile_read(const prediction_reader *r, qa_json_id id, qa_movement_profile *v, int *rounding, qa_error *e)
-{
-    if (!kind(r,get(r,id,"kind"),&v->kind,e) || !numeric(r,get(r,id,"numeric"),v->kind,rounding,e)) return false;
-    const qa_recipe_provider *provider=r->importing ? frontend_remote_unified_provider_published(r->replica,QA_ROLE_MOVEMENT,"") :
-        frontend_remote_unified_provider(r->replica,QA_ROLE_MOVEMENT,"");
-    if (!provider || !equal(r,get(r,id,"id"),provider->selection.instance))
+    const qa_recipe_provider *provider=p->importing ? frontend_remote_unified_provider_published(p->replica,QA_ROLE_MOVEMENT,"") :
+        frontend_remote_unified_provider(p->replica,QA_ROLE_MOVEMENT,"");
+    if (!provider || !received->profile_id || strcmp(received->profile_id,provider->selection.instance))
         return fail(e,QA_ERROR_FORMAT,"Prediction profile differs from its actual received player movement provider");
-    if (!clock_read(r,get(r,id,"clock"),v->kind,&provider->selection.clock,e)) return false;
-    switch(v->kind) {
-    case QA_MOVEMENT_NETQUAKE: {
-        qa_json_id edition=get(r,id,"edition");
-        if (equal(r,edition,"classic")) v->data.nq.edition=QA_Q1_CLASSIC;
-        else if (equal(r,edition,"rerelease")) v->data.nq.edition=QA_Q1_RERELEASE;
-        else if (equal(r,edition,"quake64")) v->data.nq.edition=QA_Q1_QUAKE64;
-        else return fail(e,QA_ERROR_FORMAT,"Prediction has an unknown NetQuake edition");
-        return parameters(r,get(r,id,"parameters"),&v->data.nq.parameters,e) && F(v->data.nq.edge_friction,"edgeFriction") &&
-            F(v->data.nq.max_velocity,"maxVelocity") && F(v->data.nq.ideal_pitch_scale,"idealPitchScale") &&
-            F(v->data.nq.roll_speed,"rollSpeed") && F(v->data.nq.roll_angle,"rollAngle") && B(v->data.nq.no_clip_angle_hack,"noClipAngleHack") &&
-            B(v->data.nq.no_step,"noStep") && B(v->data.nq.source_jump_authority,"sourceJumpAuthority") &&
-            B(v->data.nq.preserve_fixangle_roll,"preserveFixAngleRoll");
-    }
-    case QA_MOVEMENT_QUAKEWORLD: {
-        qa_json_id clock=get(r,id,"clock");
-        return parameters(r,get(r,id,"parameters"),&v->data.qw.parameters,e) &&
-            u32(r,get(r,clock,"maximumCommandMilliseconds"),&v->data.qw.maximum_command_ms,e) && B(v->data.qw.shared_controls,"sharedControls");
-    }
-    case QA_MOVEMENT_Q2_CLASSIC:
-        return F(v->data.q2.air_accelerate,"airAccelerate") && B(v->data.q2.snap_initial,"snapInitial") && B(v->data.q2.strafejump_hack,"strafejumpHack");
-    case QA_MOVEMENT_Q2_RERELEASE:
-        return F(v->data.q2r.air_accelerate,"airAccelerate") && B(v->data.q2r.n64_physics,"n64Physics");
-    case QA_MOVEMENT_Q3: {
-        qa_json_id product=get(r,id,"product"), fixed=get(r,id,"fixedMilliseconds");
-        if (!equal(r,product,"baseq3") && !equal(r,product,"missionpack")) return fail(e,QA_ERROR_FORMAT,"Prediction has an unknown Q3 product");
-        v->data.q3.missionpack=equal(r,product,"missionpack");
-        return (qa_json_type(r->json,fixed)==QA_JSON_NULL || u32(r,fixed,&v->data.q3.fixed_ms,e)) && B(v->data.q3.no_footsteps,"noFootsteps");
-    }
-    }
-    return false;
+    const qa_clock_config *clock=&provider->selection.clock,*actual=&received->clock;
+    if (actual->kind!=clock->kind || actual->interval_ns!=clock->interval_ns ||
+        actual->minimum_frame_ns!=clock->minimum_frame_ns || actual->maximum_frame_ns!=clock->maximum_frame_ns)
+        return fail(e,QA_ERROR_FORMAT,"Prediction clock differs from its admitted provider clock");
+    const qa_unified_movement_numeric *numeric=&received->numeric;
+    if (!numeric->native_c || numeric->radix!=FLT_RADIX || numeric->scalar_mantissa_bits!=FLT_MANT_DIG ||
+        numeric->double_mantissa_bits!=DBL_MANT_DIG || numeric->evaluation_method!=FLT_EVAL_METHOD ||
+        numeric->qw_origin_binary64!=(received->profile.kind==QA_MOVEMENT_QUAKEWORLD))
+        return fail(e,QA_ERROR_UNSUPPORTED,"Received movement arithmetic differs from the actual native kernel");
+    if (numeric->rounding!=fegetround()) return fail(e,QA_ERROR_UNSUPPORTED,"Private prediction has a different rounding environment");
+    *rounding=numeric->rounding; return true;
 }
-static bool environment_read(const prediction_reader *r, qa_json_id id, qa_movement_environment *v, qa_error *e)
+static bool scene_read(const frontend_remote_unified_prediction *p,const qa_unified_frame *frame,
+    qa_world *scene,qa_error *e)
 {
-    if (!F(v->health,"health") || !B(v->flight,"flight") || !B(v->haste,"haste") || !B(v->invulnerable,"invulnerable") ||
-        !F(v->gravity_multiplier,"gravityMultiplier") || !F(v->speed_multiplier,"speedMultiplier") ||
-        !B(v->fixed_pose,"fixedPose") || !B(v->fixed_crouched,"fixedCrouched") ||
-        !bounds(r,get(r,id,"poseBounds"),&v->pose.bounds,e) || !F(v->pose.view_height,"poseViewHeight")) return false;
-    qa_json_id outputs=get(r,id,"clientOutputs"), mode=get(r,outputs,"mode"), stance=get(r,outputs,"stance"), body=get(r,outputs,"bodyBounds");
-    if (mode!=QA_JSON_NONE) {
-        v->has_mode=true;
-        if (equal(r,mode,"normal")) v->mode=QA_MOVEMENT_MODE_NORMAL;
-        else if (equal(r,mode,"noclip")) v->mode=QA_MOVEMENT_MODE_NOCLIP;
-        else if (equal(r,mode,"freeze")) v->mode=QA_MOVEMENT_MODE_FREEZE;
-        else return fail(e,QA_ERROR_FORMAT,"Prediction has an unknown client movement mode");
-    }
-    if (stance!=QA_JSON_NONE) { v->has_stance=true; if(!boolean(r,stance,&v->crouched,e)) return false; }
-    if (body!=QA_JSON_NONE) { v->has_body_bounds=true; if(!bounds(r,body,&v->body_bounds,e)) return false; }
-    return (v->gravity_multiplier>=0 && v->speed_multiplier>=0) || fail(e,QA_ERROR_FORMAT,"Prediction has a negative environment multiplier");
-}
-#undef V
-#undef F
-#undef D
-#undef I
-#undef U
-#undef B
-#undef G
-
-static bool scene_read(const prediction_reader *r, qa_json_id array, qa_world *scene, qa_error *e)
-{
-    for(size_t i=0;i<qa_json_size(r->json,array);++i) {
-        qa_json_id row=qa_json_at(r->json,array,i), body=get(r,row,"body"), value=get(r,body,"state"), policy=get(r,row,"collision");
-        qa_actor_id id; qa_saved_actor_id wire; qa_body_state state={0}; qa_actor_collision collision={0}; qa_body_link_state link={.linked=true}; int64_t count;
-        if (!actor(r,get(r,body,"actor"),&id,e) || !id.registry ||
-            !frontend_remote_unified_wire_actor(r->replica,id,&wire) ||
-            !((r->importing ? frontend_remote_unified_actor_published(r->replica,wire.slot,wire.generation) :
-                frontend_remote_unified_actor_present(r->replica,wire.slot,wire.generation)) ||
-                fail(e,QA_ERROR_FORMAT,"Prediction collision body lacks its received live actor metadata")) ||
-            !vector(r,get(r,value,"origin"),&state.origin,e) || !vector(r,get(r,value,"angles"),&state.angles,e) ||
-            !vector(r,get(r,value,"velocity"),&state.velocity,e) || !bounds(r,get(r,value,"bounds"),&state.bounds,e) ||
-            !actor(r,get(r,value,"ground"),&state.ground,e) || !bounds(r,get(r,body,"absoluteBounds"),&link.absolute_bounds,e) ||
-            !integer(r,get(r,body,"linkCount"),1,QA_UNIFIED_SAFE_INTEGER,&count,e)) return false;
-        qa_body_state duplicate;
-        if (qa_world_body_read(scene,id,&duplicate,NULL)) return fail(e,QA_ERROR_FORMAT,"Prediction repeats a collision body actor");
-        link.state=state; link.link_count=(uint64_t)count;
-        qa_json_id family=get(r,policy,"family"), role=get(r,policy,"role"), shape=get(r,policy,"shape"), shape_kind=get(r,shape,"kind");
-        if(equal(r,family,"q1")) collision.family=QA_COLLISION_Q1;
-        else if(equal(r,family,"q2")) collision.family=QA_COLLISION_Q2;
-        else if(equal(r,family,"q3")) collision.family=QA_COLLISION_Q3;
-        else return fail(e,QA_ERROR_FORMAT,"Prediction has an unknown collision family");
-        if(equal(r,role,"solid")) collision.role=QA_COLLISION_SOLID;
-        else if(equal(r,role,"trigger")) collision.role=QA_COLLISION_TRIGGER;
-        else if(equal(r,role,"both")) collision.role=QA_COLLISION_BOTH;
-        else return fail(e,QA_ERROR_FORMAT,"Prediction has an unknown collision role");
-        if(equal(r,shape_kind,"box")) collision.shape=QA_SHAPE_BOX;
-        else if(equal(r,shape_kind,"capsule")) collision.shape=QA_SHAPE_CAPSULE;
-        else if(equal(r,shape_kind,"model")) { collision.inline_model=true; if(!u32(r,get(r,shape,"model"),&collision.model,e)) return false; }
-        else return fail(e,QA_ERROR_FORMAT,"Prediction has an unknown collision shape");
-        if (!i32(r,get(r,policy,"contents"),&collision.contents,e) || !actor(r,get(r,policy,"owner"),&collision.owner,e) ||
-            !boolean(r,get(r,policy,"monster"),&collision.monster,e) || !boolean(r,get(r,policy,"deadMonster"),&collision.dead_monster,e)) return false;
-        qa_json_id corpse=get(r,policy,"q1Corpse"), owner=get(r,policy,"q3Owner");
-        if(corpse!=QA_JSON_NONE && !boolean(r,corpse,&collision.q1_corpse,e)) return false;
-        if(owner!=QA_JSON_NONE) {
-            collision.has_q3_owner=true;
-            if(!i32(r,get(r,owner,"entityNumber"),&collision.q3_entity_number,e) || !i32(r,get(r,owner,"ownerNumber"),&collision.q3_owner_number,e)) return false;
-        }
-        if(!qa_world_body_create(scene,id,&state,e) || !qa_world_set_collision(scene,id,&collision,e) ||
+    const qa_unified_world_frame *received=frame->world;
+    for (size_t i=0;i<received->collision_count;++i) {
+        const qa_spatial_actor *row=received->collisions+i;
+        qa_actor_id id; qa_body_state state=row->body.state; qa_actor_collision collision=row->collision;
+        qa_body_link_state link={.linked=true,.absolute_bounds=row->body.absolute_bounds,.link_count=row->body.link_count};
+        if (!actor_read(p,frame,row->body.actor,&id,e) || !id.registry ||
+            !(p->importing ? frontend_remote_unified_actor_published(p->replica,row->body.actor.slot,row->body.actor.generation) :
+                frontend_remote_unified_actor_present(p->replica,row->body.actor.slot,row->body.actor.generation)) ||
+            !actor_read(p,frame,state.ground,&state.ground,e) || !actor_read(p,frame,collision.owner,&collision.owner,e)) return false;
+        link.state=state;
+        if (!qa_world_body_create(scene,id,&state,e) || !qa_world_set_collision(scene,id,&collision,e) ||
             !qa_world_restore_link_state(scene,id,&link,e)) return false;
     }
     return true;
@@ -370,32 +97,24 @@ bool frontend_prediction_import_create(frontend_remote_unified *replica,
 bool frontend_remote_unified_prediction_receive(frontend_remote_unified_prediction *p,
     const qa_unified_document *document, qa_error *e)
 {
-    if(!p || p->busy || !document || qa_unified_document_type(document)!=QA_UNIFIED_PREDICTION_DOCUMENT || !current(p,e)) return false;
+    const qa_unified_frame *frame=qa_unified_document_frame(document);
+    if(!p || p->busy || !frame || !frame->world || !frame->prediction || frame->epoch!=p->epoch || !current(p,e)) return false;
     p->busy=true;
-    prediction_reader r={document,qa_unified_document_json(document),p->replica,p->importing};
-    qa_json_id root=qa_unified_document_root(document);
-    prediction_snapshot s={0}; qa_actor_id admitted; uint32_t source_entity; int rounding=0;
+    const qa_unified_frame_prediction *received=frame->prediction;
+    prediction_snapshot s={.angles=received->view_angles,.offset=received->view_offset,
+        .pml=received->rerelease_origin,.ground=received->ground,.height=received->view_height,
+        .water_level=received->water_level,.water_type=received->water_type,
+        .time_ms=received->command_time_ms,.sequence=received->sequence};
+    s.input.state=received->state; s.input.profile=received->profile; s.input.environment=received->environment;
+    s.input.standing=received->standing; s.input.crouched=received->crouched; s.input.dead=received->dead;
+    s.input.invulnerability_bounds=received->invulnerability_bounds; s.input.current_bounds=received->bounds;
+    qa_actor_id admitted; uint32_t source_entity; int rounding=0;
     qa_world *scene=NULL; qa_unified_document *copy=NULL;
-    uint64_t authoritative_frame=0;
-    const qa_unified_document *frame=p->importing?NULL:frontend_remote_unified_frame_prepared(p->replica);
-    if(!frame) frame=frontend_remote_unified_frame(p->replica);
-    const qa_json_document *frame_json=qa_unified_document_json(frame);
-    qa_json_id frame_snapshot=qa_json_get(frame_json,qa_json_get(frame_json,qa_unified_document_root(frame),"output"),"snapshot");
-    bool ok=frontend_remote_unified_player(p->replica,&admitted,&source_entity) && actor(&r,get(&r,root,"actor"),&s.input.actor,e) &&
-        frame&&qa_json_u64(frame_json,qa_json_get(frame_json,qa_json_get(frame_json,frame_snapshot,"frame"),"frame"),&authoritative_frame,e)&&
-        qa_actor_id_equal(admitted,s.input.actor) && integer(&r,get(&r,root,"sequence"),-1,QA_UNIFIED_SAFE_INTEGER,&s.sequence,e) &&
-        number(&r,get(&r,root,"commandTimeMilliseconds"),&s.time_ms,e) && state_read(&r,get(&r,root,"state"),&s.input.state,e) &&
-        profile_read(&r,get(&r,root,"profile"),&s.input.profile,&rounding,e) && s.input.profile.kind==s.input.state.kind &&
-        environment_read(&r,get(&r,root,"environment"),&s.input.environment,e) && bounds(&r,get(&r,root,"standingBounds"),&s.input.standing.bounds,e) &&
-        real(&r,get(&r,root,"standingViewHeight"),&s.input.standing.view_height,e) && bounds(&r,get(&r,root,"bounds"),&s.input.current_bounds,e) &&
-        vector(&r,get(&r,root,"viewAngles"),&s.angles,e) && vector(&r,get(&r,root,"viewOffset"),&s.offset,e) && real(&r,get(&r,root,"viewHeight"),&s.height,e);
-    qa_json_id postures=get(&r,root,"nativePostures"), contact=get(&r,root,"contact");
-    if(ok) ok=bounds(&r,get(&r,postures,"crouchedBounds"),&s.input.crouched.bounds,e) && real(&r,get(&r,postures,"crouchedViewHeight"),&s.input.crouched.view_height,e) &&
-        bounds(&r,get(&r,postures,"deadBounds"),&s.input.dead.bounds,e) && real(&r,get(&r,postures,"deadViewHeight"),&s.input.dead.view_height,e) &&
-        bounds(&r,get(&r,postures,"invulnerabilityBounds"),&s.input.invulnerability_bounds,e) && ground(&r,get(&r,contact,"ground"),&s.ground,e) &&
-        i32(&r,get(&r,contact,"waterLevel"),&s.water_level,e) && i32(&r,get(&r,contact,"waterType"),&s.water_type,e);
-    if(ok && s.input.state.kind==QA_MOVEMENT_Q2_RERELEASE) ok=vector(&r,get(&r,root,"rereleaseOrigin"),&s.pml,e);
-    if(ok) ok=qa_world_create(p->registry,p->geometry,NULL,&scene,e) && scene_read(&r,get(&r,root,"collisions"),scene,e) &&
+    uint64_t authoritative_frame=frame->world->source.number;
+    bool ok=frontend_remote_unified_player(p->replica,&admitted,&source_entity) && actor_read(p,frame,received->actor,&s.input.actor,e) &&
+        qa_actor_id_equal(admitted,s.input.actor) && s.input.profile.kind==s.input.state.kind &&
+        profile_read(p,received,&rounding,e) && state_actors_read(p,frame,&s.input.state,e) && ground_read(p,frame,&s.ground,e) &&
+        qa_world_create(p->registry,p->geometry,NULL,&scene,e) && scene_read(p,frame,scene,e) &&
         qa_unified_document_retain(document,&copy,e) && current(p,e);
     if(ok && p->received && (s.sequence<p->snapshot.sequence || s.input.state.kind!=p->snapshot.input.state.kind))
         ok=fail(e,QA_ERROR_FORMAT,"Prediction snapshot rewinds its acknowledgement or changes movement family");

@@ -35,12 +35,10 @@ static bool storage(const application_native_q2_publication *p)
         qa_sha256_equal(qa_resource_digest(held->declaration), &p->metadata->declaration_digest);
 }
 
-static bool identity(application_native_q2_publication *p, qa_error *e)
+bool application_native_q2_component_identity_create(const qa_catalog_mod *m,
+    const qa_product *product,const char *instance,qa_unified_document **out,qa_error *e)
 {
-    const qa_catalog_mod *m = p->metadata;
-    const qa_launch_instance *d = qa_launch_instance_lease_view(p->lease);
-    const qa_product *product = qa_catalog_product(qa_launch_instance_catalog(d), m->product);
-    if (!product || !product->key || !product->identity || !m->id)
+    if (!m || !product || !product->key || !product->identity || !m->id || !instance || !out || *out)
         return application_fail(e, QA_ERROR_ARGUMENT, "Native component lost its discovered identity");
     application_unified_json module = {0}, j = {0};
     char declaration[72] = "sha256:", program[72] = "sha256:";
@@ -51,17 +49,25 @@ static bool identity(application_native_q2_publication *p, qa_error *e)
 #define TEXT(s) application_unified_json_text(&j, (s), e)
 #define STRING(s) application_unified_json_string(&j, (s), e)
     if (ok) ok = TEXT("{\"selection\":{\"product\":") && STRING(product->key) && TEXT(",\"id\":") && STRING(m->id) &&
-        TEXT("},\"source\":{\"content\":") && STRING(product->identity) && TEXT(",\"provider\":") && STRING(d->selection.instance) &&
+        TEXT("},\"source\":{\"content\":") && STRING(product->identity) && TEXT(",\"provider\":") && STRING(instance) &&
         TEXT("},\"declarationDigest\":") && STRING(declaration) && TEXT(",\"modules\":[{\"id\":") && STRING((char *)module.bytes.data) &&
         TEXT(",\"artifactPath\":") && STRING(m->program_path) && TEXT(",\"digest\":") && STRING(program) &&
         TEXT(",\"revision\":") && STRING(program) && TEXT("}],\"providers\":[{\"provider\":") && STRING((char *)module.bytes.data) &&
         TEXT(",\"schema\":\"native:mod\",\"version\":1}]}") &&
-        qa_unified_document_create(QA_UNIFIED_CHECKPOINT, (qa_bytes){j.bytes.data, j.bytes.size}, &p->identity, e);
+        qa_unified_document_create(QA_UNIFIED_CHECKPOINT, (qa_bytes){j.bytes.data, j.bytes.size}, out, e);
 #undef TEXT
 #undef STRING
-    if (ok) qa_sha256((qa_bytes){j.bytes.data, j.bytes.size}, &p->identity_digest);
     application_unified_json_dispose(&module); application_unified_json_dispose(&j);
     return ok;
+}
+
+static bool identity(application_native_q2_publication *p,qa_error *e)
+{
+    const qa_launch_instance *d=qa_launch_instance_lease_view(p->lease);
+    const qa_product *product=qa_catalog_product(qa_launch_instance_catalog(d),p->metadata->product);
+    if (!application_native_q2_component_identity_create(p->metadata,product,d->selection.instance,&p->identity,e)) return false;
+    qa_sha256(qa_json_source(qa_unified_document_json(p->identity),qa_unified_document_root(p->identity)),&p->identity_digest);
+    return true;
 }
 
 static bool namespace_text(const application_native_q2_publication *p, uint64_t generation,

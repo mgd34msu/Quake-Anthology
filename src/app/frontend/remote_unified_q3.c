@@ -22,7 +22,7 @@
 #include "qa/q3_assets_save.h"
 #include "qa/q3_presentation_save.h"
 #include "qa/source_save.h"
-#include <float.h>
+#include "qa/unified_frame_visuals.h"
 #include <math.h>
 
 typedef struct unified_q3_bank {
@@ -106,63 +106,10 @@ struct frontend_unified_q3 {
     qa_ui_preferences preferences;
     bool busy, prepared, has_frame;
 };
-static qa_json_id field(const qa_json_document *j, qa_json_id row, const char *name)
-{ return qa_json_get(j, row, name); }
-static bool number(const qa_unified_document *d, qa_json_id row, double *n, qa_error *e)
-{ return (qa_unified_document_number(d, row, n, e) && isfinite(*n)) ||
-    frontend_unified_fail(e, QA_ERROR_FORMAT, "Unified Q3 scalar is not finite"); }
-static bool real(const qa_unified_document *d, qa_json_id row, float *out, qa_error *e)
+static bool actor(frontend_unified_q3 *o,qa_actor_id wire,qa_actor_id *out,qa_error *e)
 {
-    double n; if (!number(d, row, &n, e)) return false;
-    if (fabs(n) > FLT_MAX) return frontend_unified_fail(e, QA_ERROR_FORMAT, "Unified Q3 scalar exceeds float storage");
-    *out = (float)n; return true;
-}
-static bool integer(const qa_unified_document *d, qa_json_id row, int32_t *out, qa_error *e)
-{
-    double n; if (!number(d, row, &n, e)) return false;
-    if (n < INT32_MIN || n > INT32_MAX || trunc(n) != n)
-        return frontend_unified_fail(e, QA_ERROR_FORMAT, "Unified Q3 integer exceeds its Source domain");
-    *out = (int32_t)n; return true;
-}
-static bool word(const qa_unified_document *d,qa_json_id row,uint32_t *out,qa_error *e)
-{
-    double n;
-    if(!number(d,row,&n,e) || n<INT32_MIN || n>UINT32_MAX || trunc(n)!=n)
-        return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified Q3 word exceeds its actual Source storage");
-    *out=n<0?(uint32_t)(int32_t)n:(uint32_t)n;return true;
-}
-static bool source_time(double value,int32_t *out,qa_error *e)
-{
-    if(!isfinite(value)||value < -0x1p63||value >= 0x1p63) {
-        (void)frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified Q3 clock exceeds native millisecond storage");
-        return false;
-    }
-    uint32_t bits=(uint32_t)(int64_t)value;memcpy(out,&bits,sizeof(bits));return true;
-}
-static bool clock_integer(const qa_unified_document *d,qa_json_id row,int32_t *out,qa_error *e)
-{
-    double value;
-    return number(d,row,&value,e) && source_time(value,out,e);
-}
-static bool vector(const qa_unified_document *d, qa_json_id row, qa_vec3 *v, qa_error *e)
-{
-    const qa_json_document *j = qa_unified_document_json(d);
-    return real(d, field(j,row,"x"), &v->x,e) && real(d, field(j,row,"y"), &v->y,e) &&
-        real(d, field(j,row,"z"), &v->z,e);
-}
-static bool text(const qa_unified_document *d, qa_json_id row, qa_buffer *b, qa_error *e)
-{
-    if (!qa_json_string(qa_unified_document_json(d), row, b, e)) return false;
-    if (!memchr(b->data, 0, b->size)) return true;
-    qa_buffer_free(b); return frontend_unified_fail(e, QA_ERROR_FORMAT, "Unified Q3 text contains NUL");
-}
-static bool actor(frontend_unified_q3 *o, const qa_unified_document *d, qa_json_id row, qa_actor_id *id, qa_error *e)
-{
-    const qa_json_document *j = qa_unified_document_json(d); uint64_t slot, generation;
-    if (qa_json_type(j,row) == QA_JSON_NULL) { *id = (qa_actor_id){0}; return true; }
-    return qa_json_u64(j,field(j,row,"slot"),&slot,e) && slot <= UINT32_MAX &&
-        qa_json_u64(j,field(j,row,"generation"),&generation,e) &&
-        frontend_remote_unified_actor(o->replica,(uint32_t)slot,generation,id,e);
+    return frontend_remote_unified_source_actor(o->replica,
+        qa_unified_document_frame(frontend_remote_unified_frame(o->replica)),wire,false,out,e);
 }
 bool frontend_unified_q3_current(const frontend_unified_q3 *o)
 { return o && o->epoch == frontend_remote_unified_epoch(o->replica) &&
@@ -335,14 +282,13 @@ static bool sound_output(void *context,const q3n_frame *f,qa_audio_asset *asset,
 }
 static bool frame_read(frontend_unified_q3 *o, const qa_unified_document *d, int32_t *time, qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(d); qa_json_id root=qa_unified_document_root(d);
-    qa_json_id snap=field(j,field(j,root,"output"),"snapshot"), t=field(j,field(j,snap,"frame"),"time");
-    uint64_t epoch; double n;
-    if (!qa_json_u64(j,field(j,root,"epoch"),&epoch,e) || epoch!=o->epoch || !number(d,field(j,t,"value"),&n,e)) return false;
-    if (qa_json_string_equal(j,field(j,t,"kind"),"seconds")) n*=1000;
-    else if (!qa_json_string_equal(j,field(j,t,"kind"),"milliseconds"))
-        return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified Q3 clock has no Source time domain");
-    return source_time(n,time,e);
+    const qa_unified_frame *frame=qa_unified_document_frame(d);
+    if(!frame||!frame->world||frame->epoch!=o->epoch) {
+        frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified Q3 clock lost its actual typed Source frame");
+        return false;
+    }
+    uint32_t word=(uint32_t)(frame->world->source.time_ns/UINT64_C(1000000));
+    memcpy(time,&word,sizeof(word)); return true;
 }
 bool frontend_unified_q3_create(qa_frontend *f, frontend_remote_unified *r,
     frontend_unified_media *m, frontend_unified_q3 **out, qa_error *e)
@@ -402,37 +348,24 @@ static bool component_bank_read(frontend_unified_q3 *o,qa_error *e)
     if(!bank_children(b,product,e) || !frontend_unified_components_current(o->components))return false;
     o->component_bank=b;return true;
 }
-static bool retirement_read(const qa_unified_document *d,qa_json_id row,qa_buffer *instance,
-    uint64_t *generation,bool *retired,qa_error *e)
+bool frontend_unified_q3_owner_validate(frontend_unified_q3 *o,const qa_unified_presentation_event *row,qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(d);qa_json_id v=field(j,row,"event"),kind=field(j,v,"kind");
-    if(!qa_json_string_equal(j,field(j,row,"kind"),"presentation-owner") ||
-        (!qa_json_string_equal(j,kind,"retired") && !qa_json_string_equal(j,kind,"refreshed")))
-        return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 owner retirement lacks its actual tagged record");
-    *retired=qa_json_string_equal(j,kind,"retired");qa_json_id owner=field(j,v,"owner");
-    return text(d,field(j,owner,"provider"),instance,e) && instance->size>1 &&
-        qa_json_u64(j,field(j,owner,"generation"),generation,e) && *generation;
+    return o&&row&&current(o,e)&&(row->payload.kind==QA_UNIFIED_PRESENTATION_OWNER||
+        frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 owner retirement lacks its actual tagged record"));
 }
-bool frontend_unified_q3_owner_validate(frontend_unified_q3 *o,const qa_unified_document *d,qa_json_id row,qa_error *e)
+bool frontend_unified_q3_owner_retire(frontend_unified_q3 *o,const qa_unified_presentation_event *row,qa_error *e)
 {
-    qa_buffer instance={0};uint64_t generation;bool retired;
-    bool okay=o && d && current(o,e) && retirement_read(d,row,&instance,&generation,&retired,e);
-    qa_buffer_free(&instance);return okay;
-}
-bool frontend_unified_q3_owner_retire(frontend_unified_q3 *o,const qa_unified_document *d,qa_json_id row,qa_error *e)
-{
-    qa_buffer instance={0};uint64_t generation;bool retired;
-    bool okay=o && d && frontend_unified_q3_idle(o) && current(o,e) &&
-        retirement_read(d,row,&instance,&generation,&retired,e);
-    if(okay && retired)for(unified_q3_bank *b=o->banks;b;b=b->next)
-        if(b->activation && !strcmp(b->activation,(const char *)instance.data) && b->generation==generation && !b->retired){
-            for(unified_q3_ballistic *v=o->ballistics;v;v=v->next)if(v->bank==b){
-                if(o->events && (v->bolt || v->projectile) && !frontend_unified_events_sound_stop_loop(o->events,v->actor,e)){okay=false;break;}
-                v->projectile=v->flash=v->bolt=v->last_fire=false;}
+    bool okay=frontend_unified_q3_owner_validate(o,row,e)&&frontend_unified_q3_idle(o);
+    const qa_unified_owner_event *v=row?&row->payload.value.owner:NULL;
+    if(okay&&v->kind==QA_UNIFIED_OWNER_RETIRED)for(unified_q3_bank *b=o->banks;b;b=b->next)
+        if(b->activation&&!strcmp(b->activation,v->owner.provider)&&b->generation==v->owner.generation&&!b->retired){
+            for(unified_q3_ballistic *state=o->ballistics;state;state=state->next)if(state->bank==b){
+                if(o->events&&(state->bolt||state->projectile)&&!frontend_unified_events_sound_stop_loop(o->events,state->actor,e)){okay=false;break;}
+                state->projectile=state->flash=state->bolt=state->last_fire=false;}
             if(!okay)break;
             q3n_events_round(b->effects);q3n_particles_round(b->particles,o->time);b->retired=true;
         }
-    qa_buffer_free(&instance);return okay;
+    return okay;
 }
 bool frontend_unified_q3_frame_prepare(frontend_unified_q3 *o, const qa_unified_document *d, qa_error *e)
 {
@@ -479,80 +412,6 @@ static q3n_frame effect_frame(frontend_unified_q3 *o, unified_q3_bank *b, int32_
 static const q3n_event_settings effect_settings={.blood=true,.gibs=true,.add_marks=true};
 static const q3n_weapon_settings weapon_settings={.rail_trail_time=400,.tracer_length=160,
     .tracer_width=1,.tracer_chance=.4f,.draw_gun=true};
-static bool content_text(const qa_unified_document *d, qa_json_id row, qa_buffer *content, qa_error *e)
-{ return text(d,field(qa_unified_document_json(d),row,"content"),content,e); }
-static bool event_owner(const qa_unified_document *d,qa_json_id row,qa_buffer *instance,uint64_t *generation,qa_error *e)
-{
-    const qa_json_document *j=qa_unified_document_json(d);qa_json_id owner=field(j,row,"owner");*generation=0;
-    if(owner==QA_JSON_NONE || qa_json_type(j,owner)==QA_JSON_NULL)return true;
-    return text(d,field(j,owner,"provider"),instance,e) && instance->size>1 &&
-        qa_json_u64(j,field(j,owner,"generation"),generation,e) && *generation;
-}
-typedef enum ballistic_kind {
-    BALL_REMOVE,BALL_FIRE,BALL_PROJECTILE,BALL_BOUNCE,BALL_TRAIL,BALL_IMPACT,
-    BALL_CONTACT,BALL_SHOTGUN,BALL_RAIL,BALL_RAIL_AWARD
-} ballistic_kind;
-typedef struct ballistic_event {
-    ballistic_kind kind;
-    qa_actor_id actor,target;
-    int32_t weapon,time,surface,contact,count,until;
-    qa_vec3 origin,end,normal,point,start,direction;
-    qa_q3_trajectory trajectory;
-    uint32_t seed;
-    float volume;
-    bool flesh,rail_surface;
-} ballistic_event;
-static bool ballistic_read(frontend_unified_q3 *o,const qa_unified_document *d,qa_json_id row,
-    ballistic_event *out,qa_error *e)
-{
-    const qa_json_document *j=qa_unified_document_json(d);qa_json_id v=field(j,row,"event"),kind=field(j,v,"kind");
-    const char *names[]={"remove","fire","projectile","bounce","trail","impact","contact","shotgun","rail","rail-award"};
-    size_t k=0;while(k<sizeof(names)/sizeof(*names) && !qa_json_string_equal(j,kind,names[k]))++k;
-    if(k==sizeof(names)/sizeof(*names))return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unknown Unified Q3 ballistic variant");
-    *out=(ballistic_event){.kind=(ballistic_kind)k};
-    if(!actor(o,d,field(j,v,"actor"),&out->actor,e) || !out->actor.registry ||
-        !integer(d,field(j,v,"weapon"),&out->weapon,e) || out->weapon<0 || out->weapon>13 ||
-        !vector(d,field(j,v,"origin"),&out->origin,e) || !vector(d,field(j,v,"end"),&out->end,e) ||
-        !vector(d,field(j,v,"normal"),&out->normal,e) || !actor(o,d,field(j,v,"target"),&out->target,e) ||
-        !integer(d,field(j,v,"surfaceFlags"),&out->surface,e) ||
-        !clock_integer(d,field(j,v,"timeMilliseconds"),&out->time,e))return false;
-    qa_json_id extra;
-    switch(out->kind){
-    case BALL_FIRE:return real(d,field(j,v,"volume"),&out->volume,e);
-    case BALL_PROJECTILE:{
-        extra=field(j,v,"trajectory");qa_vec3 base,delta;
-        if(!integer(d,field(j,extra,"type"),&out->trajectory.type,e) || out->trajectory.type<0 || out->trajectory.type>5 ||
-            !integer(d,field(j,extra,"time"),&out->trajectory.time,e) || !integer(d,field(j,extra,"duration"),&out->trajectory.duration,e) ||
-            !vector(d,field(j,extra,"base"),&base,e) || !vector(d,field(j,extra,"delta"),&delta,e))return false;
-        q3ne_store(out->trajectory.base,base);q3ne_store(out->trajectory.delta,delta);return true;}
-    case BALL_IMPACT:
-        extra=field(j,v,"hitKind");out->flesh=qa_json_string_equal(j,extra,"flesh");
-        return out->flesh || qa_json_string_equal(j,extra,"wall") || frontend_unified_fail(e,QA_ERROR_FORMAT,"Unknown Q3 impact hit kind");
-    case BALL_CONTACT:
-        extra=field(j,v,"contact");kind=field(j,extra,"kind");
-        if(qa_json_string_equal(j,kind,"gauntlet-quad")){out->contact=0;return true;}
-        if(qa_json_string_equal(j,kind,"hit") || qa_json_string_equal(j,kind,"miss")){
-            out->contact=qa_json_string_equal(j,kind,"hit")?1:2;
-            return vector(d,field(j,extra,"point"),&out->point,e) && vector(d,field(j,extra,"normal"),&out->normal,e) &&
-                (out->contact!=1 || actor(o,d,field(j,extra,"target"),&out->target,e));}
-        if(qa_json_string_equal(j,kind,"lightning-reflection")){
-            out->contact=3;return vector(d,field(j,extra,"start"),&out->start,e) && vector(d,field(j,extra,"end"),&out->end,e);}
-        return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unknown Q3 contact variant");
-    case BALL_SHOTGUN:{
-        extra=field(j,v,"shot");int32_t seed;
-        if(!vector(d,field(j,extra,"muzzle"),&out->start,e) || !vector(d,field(j,extra,"direction"),&out->direction,e) ||
-            !integer(d,field(j,extra,"seed"),&seed,e))return false;
-        out->seed=(uint32_t)seed;return true;}
-    case BALL_RAIL:
-        extra=field(j,v,"trail");
-        if(!vector(d,field(j,extra,"start"),&out->start,e) || !vector(d,field(j,extra,"end"),&out->end,e))return false;
-        extra=field(j,extra,"impact");kind=field(j,extra,"kind");out->rail_surface=qa_json_string_equal(j,kind,"surface");
-        return out->rail_surface?vector(d,field(j,extra,"normal"),&out->normal,e):
-            qa_json_string_equal(j,kind,"none") || frontend_unified_fail(e,QA_ERROR_FORMAT,"Unknown Q3 rail impact variant");
-    case BALL_RAIL_AWARD:return integer(d,field(j,v,"count"),&out->count,e) && clock_integer(d,field(j,v,"until"),&out->until,e);
-    default:return true;
-    }
-}
 static unified_q3_ballistic *ballistic_find(frontend_unified_q3 *o,unified_q3_bank *b,qa_actor_id id)
 { for(unified_q3_ballistic *v=o->ballistics;v;v=v->next)if(v->bank==b && qa_actor_id_equal(v->actor,id))return v;return NULL; }
 static bool ballistic_sound(frontend_unified_q3 *o,unified_q3_bank *b,int32_t handle,qa_actor_id id,
@@ -562,25 +421,26 @@ static bool ballistic_sound(frontend_unified_q3 *o,unified_q3_bank *b,int32_t ha
     return !asset || (o->events && frontend_unified_events_sound_path(o->events,b->content,
         qa_audio_asset_name(asset),id,origin,time,channel,volume,1,0,e) && effect_current(&b->source));
 }
-static bool ballistic_event_apply(frontend_unified_q3 *o,const qa_unified_document *d,qa_json_id row,qa_error *e)
+static bool ballistic_event_apply(frontend_unified_q3 *o,const qa_unified_presentation_event *row,qa_error *e)
 {
-    ballistic_event v;qa_buffer content={0},instance={0};uint64_t generation;unified_q3_bank *b=NULL;
-    bool okay=ballistic_read(o,d,row,&v,e) && content_text(d,row,&content,e) && event_owner(d,row,&instance,&generation,e) && enter(o,v.actor,e);
-    if(okay && v.kind==BALL_REMOVE){
+    qa_unified_q3_ballistic_event v=row->payload.value.q3_ballistic; unified_q3_bank *b=NULL;
+    const char *content=row->content,*instance=row->owner.provider; uint64_t generation=row->owner.generation;
+    bool okay=actor(o,v.actor,&v.actor,e)&&actor(o,v.target,&v.target,e)&&enter(o,v.actor,e);
+    if(okay && v.kind==QA_UNIFIED_Q3_REMOVE){
         for(unified_q3_bank *existing=o->banks;existing;existing=existing->next){
-            if(!existing->content || strcmp(existing->content,(const char *)content.data) ||
-                (instance.data && (!existing->activation || strcmp(existing->activation,(const char *)instance.data) || existing->generation!=generation)))continue;
+            if(!existing->content || strcmp(existing->content,content) ||
+                (instance && (!existing->activation || strcmp(existing->activation,instance) || existing->generation!=generation)))continue;
             unified_q3_ballistic *state=ballistic_find(o,existing,v.actor);
             if(state){state->projectile=false;state->bolt=false;}
         }
-        qa_buffer_free(&content);qa_buffer_free(&instance);return leave(o,true,e);
+        return leave(o,true,e);
     }
-    if(okay)okay=bank_read(o,(const char *)content.data,(const char *)instance.data,generation,&b,e);
+    if(okay)okay=bank_read(o,content,instance,generation,&b,e);
     unified_q3_ballistic *state=okay?ballistic_find(o,b,v.actor):NULL;
     if(okay){
         const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
         okay=backend_read(b,frontend_viewport(o->frontend,domain->physical_seat),e);
-        q3n_frame f=effect_frame(o,b,v.time);f.weapon_settings=&weapon_settings;f.event_settings=&effect_settings;
+        q3n_frame f=effect_frame(o,b,v.time_ms);f.weapon_settings=&weapon_settings;f.event_settings=&effect_settings;
         if(okay)okay=q3n_media_load_unified_effects(b->media,&b->source,e) &&
             q3n_particles_load_unified(b->particles,&f,e) &&
             q3n_media_register_weapon(b->media,(uint32_t)v.weapon,e) && effect_current(&b->source);
@@ -590,141 +450,105 @@ static bool ballistic_event_apply(frontend_unified_q3 *o,const qa_unified_docume
         const q3n_media_view *m=okay?q3n_media_read(b->media):NULL;
         const q3n_weapon_media *w=okay?&m->weapons[v.weapon]:NULL;
         if(okay)switch(v.kind){
-        case BALL_FIRE:{
-            bool silent=v.weapon==6 && state->last_fire && state->last_fire_weapon==v.weapon && q3ne_sub(v.time,state->last_fire_time)<=50;
-            state->last_fire=true;state->last_fire_time=v.time;state->last_fire_weapon=v.weapon;
-            state->flash=true;state->fire_time=v.time;state->flash_origin=v.origin;state->flash_end=v.end;state->weapon=v.weapon;
+        case QA_UNIFIED_Q3_FIRE:{
+            bool silent=v.weapon==6 && state->last_fire && state->last_fire_weapon==v.weapon && q3ne_sub(v.time_ms,state->last_fire_time)<=50;
+            state->last_fire=true;state->last_fire_time=v.time_ms;state->last_fire_weapon=v.weapon;
+            state->flash=true;state->fire_time=v.time_ms;state->flash_origin=v.origin;state->flash_end=v.end;state->weapon=v.weapon;
             int32_t sounds[4];size_t n=0;for(unsigned i=0;i<4;++i)if(w->flash_sounds[i])sounds[n++]=w->flash_sounds[i];
-            if(!silent && n)okay=ballistic_sound(o,b,sounds[(uint32_t)q3n_events_rand(b->effects)%n],v.actor,v.origin,v.time,2,v.volume,e);
+            if(!silent && n)okay=ballistic_sound(o,b,sounds[(uint32_t)q3n_events_rand(b->effects)%n],v.actor,v.origin,v.time_ms,2,v.volume,e);
             break;}
-        case BALL_PROJECTILE:{
+        case QA_UNIFIED_Q3_PROJECTILE:{
             bool previous=state->projectile;int32_t prior=state->time;
-            state->projectile=true;state->weapon=v.weapon;state->trajectory=v.trajectory;state->origin=v.origin;state->end=v.end;state->time=v.time;
+            state->projectile=true;state->weapon=v.weapon;state->trajectory=v.trajectory;state->origin=v.origin;state->end=v.end;state->time=v.time_ms;
             if(previous && w->trail==Q3N_TRAIL_PLASMA)okay=q3n_weapons_effect_plasma(&f,v.weapon,v.end,e);
             else if(previous && w->trail!=Q3N_TRAIL_NONE && w->trail!=Q3N_TRAIL_GRAPPLE && v.trajectory.type){
                 qa_vec3 origin,old;uint32_t contents_now,contents_old;
-                okay=q3n_trajectory(&v.trajectory,v.time,&origin,e) && q3n_trajectory(&v.trajectory,prior,&old,e) &&
+                okay=q3n_trajectory(&v.trajectory,v.time_ms,&origin,e) && q3n_trajectory(&v.trajectory,prior,&old,e) &&
                     q3n_events_point_contents(&f,origin,-1,&contents_now,e) && q3n_events_point_contents(&f,old,-1,&contents_old,e);
                 if(okay && (contents_now&(8|16|32))){if(contents_now&contents_old&32)okay=q3n_effect_bubbles(&f,old,origin,8,e);}
                 else if(okay){int32_t tick=q3ne_word((uint32_t)(q3ne_plus(prior,50)/50)*UINT32_C(50));
-                    for(;okay && tick<=v.time;){qa_vec3 point;okay=q3n_trajectory(&v.trajectory,tick,&point,e);
+                    for(;okay && tick<=v.time_ms;){qa_vec3 point;okay=q3n_trajectory(&v.trajectory,tick,&point,e);
                         if(okay){q3n_smoke smoke={.origin=point,.radius=w->trail_radius,.color={1,1,1,.33f},.duration=(float)w->trail_time,
                             .start_time=tick,.shader=m->graphics[w->trail==Q3N_TRAIL_NAIL?Q3N_G_NAIL_PUFF:Q3N_G_SMOKE_PUFF]};
                             q3n_effect_smoke(&f,&smoke)->type=Q3N_LE_SCALE_FADE;}
                         if(tick>INT32_MAX-50)break;
                         tick=q3ne_plus(tick,50);}}
             }break;}
-        case BALL_BOUNCE:okay=ballistic_sound(o,b,m->sounds[(q3n_events_rand(b->effects)&1)?Q3N_S_GRENADE_BOUNCE2:Q3N_S_GRENADE_BOUNCE1],(qa_actor_id){0},v.end,v.time,0,1,e);break;
-        case BALL_SHOTGUN:okay=q3n_weapons_effect_shotgun(&f,v.start,v.direction,v.seed,e);break;
-        case BALL_RAIL:
+        case QA_UNIFIED_Q3_BOUNCE:okay=ballistic_sound(o,b,m->sounds[(q3n_events_rand(b->effects)&1)?Q3N_S_GRENADE_BOUNCE2:Q3N_S_GRENADE_BOUNCE1],(qa_actor_id){0},v.end,v.time_ms,0,1,e);break;
+        case QA_UNIFIED_Q3_SHOTGUN:okay=q3n_weapons_effect_shotgun(&f,v.start,v.direction,v.seed,e);break;
+        case QA_UNIFIED_Q3_RAIL:
             okay=q3n_weapons_effect_rail(&f,qa_v3(1,1,1),qa_v3(1,1,1),&v.start,v.end,e);
             if(okay && v.rail_surface){float best=0;int32_t byte=0;for(int32_t i=0;i<162;++i){float dot=qa_vec_dot(v.normal,q3n_events_direction(i));if(dot>best){best=dot;byte=i;}}
                 okay=q3n_weapons_impact(&f,7,0,v.end,q3n_events_direction(byte),Q3N_IMPACT_DEFAULT,e);}break;
-        case BALL_CONTACT:
-            if(v.contact==0)okay=ballistic_sound(o,b,m->sounds[Q3N_S_QUAD],(qa_actor_id){0},v.origin,v.time,4,1,e);
+        case QA_UNIFIED_Q3_CONTACT:
+            if(v.contact==0)okay=ballistic_sound(o,b,m->sounds[Q3N_S_QUAD],(qa_actor_id){0},v.origin,v.time_ms,4,1,e);
             else if(v.contact==1)bleed(&f,b,v.point,v.target);
             else if(v.contact==2)okay=q3n_weapons_impact(&f,0,0,v.point,v.normal,Q3N_IMPACT_DEFAULT,e);
             else okay=frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Mission reflection requires its genuine compiled Source presentation binding");
             break;
-        case BALL_TRAIL:
+        case QA_UNIFIED_Q3_TRAIL:
             if(v.weapon==6 || v.weapon==10){state->bolt=v.weapon!=10 || qa_vec_length(qa_vec_sub(v.end,v.origin))>=64;
-                state->bolt_time=v.time;state->bolt_weapon=v.weapon;state->bolt_origin=v.origin;state->bolt_end=v.end;}
+                state->bolt_time=v.time_ms;state->bolt_weapon=v.weapon;state->bolt_origin=v.origin;state->bolt_end=v.end;}
             if(v.weapon==7)okay=q3n_weapons_effect_rail(&f,qa_v3(1,1,1),qa_v3(1,1,1),&v.origin,v.end,e);
             break;
-        case BALL_IMPACT:
+        case QA_UNIFIED_Q3_IMPACT:
             state->projectile=false;
             if(v.surface&16)break;
             if(v.flesh){if(v.target.registry)bleed(&f,b,v.end,v.target);
                 if(v.weapon!=4 && v.weapon!=5 && !(b->source.product==QA_Q3_TEAM_ARENA && (v.weapon==11 || v.weapon==12 || v.weapon==13)))break;}
             okay=q3n_weapons_impact(&f,v.weapon,0,v.end,v.normal,v.flesh?Q3N_IMPACT_FLESH:(v.surface&4096)?Q3N_IMPACT_METAL:Q3N_IMPACT_DEFAULT,e);break;
-        case BALL_RAIL_AWARD:okay=frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Rail award requires its genuine compiled Source presentation binding");break;
+        case QA_UNIFIED_Q3_RAIL_AWARD:okay=frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Rail award requires its genuine compiled Source presentation binding");break;
         default:break;
         }
     }
-    qa_buffer_free(&content);qa_buffer_free(&instance);return o->busy?leave(o,okay,e):okay;
+    return o->busy?leave(o,okay,e):okay;
 }
-bool frontend_unified_q3_validate(frontend_unified_q3 *o, bool simulation,
-    const qa_unified_document *d, qa_json_id row, qa_error *e)
+bool frontend_unified_q3_presentation_validate(frontend_unified_q3 *o,const qa_unified_presentation_event *row,qa_error *e)
 {
-    if (!o || !d || !current(o,e)) return false;
-    const qa_json_document *j=qa_unified_document_json(d);
-    qa_json_id kind=field(j,row,"kind"), event=field(j,row,"event");
-    if (simulation) return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q3 simulation requires an actual normalized family event");
-    qa_buffer content={0}; bool okay=content_text(d,row,&content,e);
+    if(!o||!row||!current(o,e))return false;
     const qa_product *product=NULL;
     qa_catalog *catalog=qa_executable_recipe_catalog(frontend_remote_unified_recipe(o->replica));
-    for(size_t i=0;okay && !product && i<qa_catalog_count(catalog);++i){
-        const qa_product *p=qa_catalog_at(catalog,i);
-        if(!strcmp(p->identity,(const char *)content.data))product=p;
+    for(size_t i=0;!product&&i<qa_catalog_count(catalog);++i){
+        const qa_product *p=qa_catalog_at(catalog,i);if(!strcmp(p->identity,row->content))product=p;
     }
-    if(okay)okay=product && product->family==QA_GAME_Q3;
-    qa_buffer_free(&content); if (!okay) return false;
-    qa_actor_id id; int32_t n; qa_vec3 v;
-    if (qa_json_string_equal(j,kind,"q3-character"))
-        return actor(o,d,field(j,event,"actor"),&id,e) && integer(d,field(j,event,"event"),&n,e) &&
-            integer(d,field(j,event,"parameter"),&n,e) && number(d,field(j,event,"timeMilliseconds"),&(double){0},e);
-    if (qa_json_string_equal(j,kind,"q3-ballistics"))return ballistic_read(o,d,row,&(ballistic_event){0},e);
-    if (!qa_json_string_equal(j,kind,"q3-source"))
+    if(!product||product->family!=QA_GAME_Q3)return false;
+    qa_actor_id id;
+    if(row->payload.kind==QA_UNIFIED_PRESENTATION_Q3_CHARACTER)
+        return actor(o,row->payload.value.q3_character.actor,&id,e);
+    if(row->payload.kind==QA_UNIFIED_PRESENTATION_Q3_BALLISTIC){
+        const qa_unified_q3_ballistic_event *v=&row->payload.value.q3_ballistic;
+        return actor(o,v->actor,&id,e)&&actor(o,v->target,&id,e);
+    }
+    if(row->payload.kind!=QA_UNIFIED_PRESENTATION_Q3)
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 CLIENT received another event family");
-    kind=field(j,event,"kind");
-    if(qa_json_string_equal(j,kind,"server-command") || qa_json_string_equal(j,kind,"configstring")) {
-        qa_buffer instance={0};
-        bool stamped=text(d,field(j,field(j,row,"source"),"provider"),&instance,e);
-        qa_buffer_free(&instance);
-        if(!stamped)return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 Source event has no actual emitter stamp");
-    }
-    if (qa_json_string_equal(j,kind,"print") || qa_json_string_equal(j,kind,"log") ||
-        qa_json_string_equal(j,kind,"console-command")) {
-        qa_buffer b={0}; okay=text(d,field(j,event,"text"),&b,e); qa_buffer_free(&b); return okay;
-    }
-    if (qa_json_string_equal(j,kind,"server-command")) {
-        qa_buffer b={0}; okay=integer(d,field(j,event,"client"),&n,e) && text(d,field(j,event,"text"),&b,e);
-        qa_buffer_free(&b); return okay;
-    }
-    if (qa_json_string_equal(j,kind,"configstring")) {
-        qa_buffer b={0}; okay=integer(d,field(j,event,"index"),&n,e) && n>=0 && n<1024 && text(d,field(j,event,"value"),&b,e);
-        qa_buffer_free(&b); return okay;
-    }
-    if (qa_json_string_equal(j,kind,"sound")) {
-        qa_buffer b={0}; okay=actor(o,d,field(j,event,"actor"),&id,e) && vector(d,field(j,event,"origin"),&v,e) &&
-            vector(d,field(j,event,"velocity"),&v,e) && text(d,field(j,event,"path"),&b,e) &&
-            integer(d,field(j,event,"channel"),&n,e) && n>=0 && real(d,field(j,event,"volume"),&(float){0},e) &&
-            qa_json_bool(j,field(j,event,"loop"),&(bool){false},e);
-        qa_buffer_free(&b); return okay;
-    }
-    if (qa_json_string_equal(j,kind,"player-event") || qa_json_string_equal(j,kind,"entity-event"))
-        return actor(o,d,field(j,event,"actor"),&id,e) && vector(d,field(j,event,"origin"),&v,e) &&
-            integer(d,field(j,event,"time"),&n,e);
-    if (qa_json_string_equal(j,kind,"drop-client")) {
-        qa_buffer b={0}; okay=integer(d,field(j,event,"client"),&n,e) && text(d,field(j,event,"reason"),&b,e);
-        qa_buffer_free(&b); return okay;
+    const qa_unified_q3_event *v=&row->payload.value.q3;
+    switch(v->kind){
+    case QA_UNIFIED_Q3_SOUND: case QA_UNIFIED_Q3_PLAYER_EVENT: case QA_UNIFIED_Q3_ENTITY_EVENT:
+        return actor(o,v->actor,&id,e);
+    case QA_UNIFIED_Q3_SERVER_COMMAND: case QA_UNIFIED_Q3_CONFIGSTRING:
+        return row->provider||frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 Source event has no actual emitter stamp");
+    case QA_UNIFIED_Q3_PRINT: case QA_UNIFIED_Q3_LOG: case QA_UNIFIED_Q3_CONSOLE_COMMAND: case QA_UNIFIED_Q3_DROP_CLIENT:
+        return true;
     }
     return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 CLIENT received an unknown source event variant");
 }
-static bool character_event(frontend_unified_q3 *o, const qa_unified_document *d, qa_json_id row, qa_error *e)
+static bool character_event(frontend_unified_q3 *o,const qa_unified_presentation_event *row,qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(d); qa_json_id v=field(j,row,"event");
-    qa_actor_id id; int32_t event,parameter,time; double ms;
-    if (!actor(o,d,field(j,v,"actor"),&id,e) || !integer(d,field(j,v,"event"),&event,e) ||
-        !integer(d,field(j,v,"parameter"),&parameter,e) || !number(d,field(j,v,"timeMilliseconds"),&ms,e)) return false;
-    (void)parameter;
-    if (ms<INT32_MIN || ms>INT32_MAX) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 event clock exceeds Source storage");
-    time=(int32_t)ms; event&=~0x300; qa_vec3 origin={0}; bool found=false;
-    const qa_json_document *f=qa_unified_document_json(o->frame);
-    qa_json_id chars=field(f,field(f,qa_unified_document_root(o->frame),"output"),"characters");
-    for (size_t i=0; i<qa_json_size(f,chars); ++i) {
-        qa_json_id c=qa_json_at(f,chars,i); qa_actor_id actual;
-        if (!actor(o,o->frame,field(f,c,"actor"),&actual,e)) return false;
-        if (qa_actor_id_equal(actual,id)) { if (!vector(o->frame,field(f,c,"origin"),&origin,e)) return false; found=true; break; }
+    const qa_unified_q3_character_event *v=&row->payload.value.q3_character;
+    qa_actor_id id;
+    if(!actor(o,v->actor,&id,e))return false;
+    int32_t time=v->time_ms,event=v->event&~0x300; qa_vec3 origin={0}; bool found=false;
+    const qa_unified_frame *received=qa_unified_document_frame(o->frame);
+    const qa_unified_frame_visuals *visuals=received->visuals;
+    for (size_t i=0;visuals && i<visuals->character_count;++i) {
+        const qa_unified_character_state *c=visuals->characters+i; qa_actor_id actual;
+        if (!frontend_remote_unified_source_actor(o->replica,received,c->actor,false,&actual,e)) return false;
+        if (qa_actor_id_equal(actual,id)) { origin=c->origin; found=true; break; }
     }
-    qa_json_id bodies=field(f,field(f,field(f,qa_unified_document_root(o->frame),"output"),"snapshot"),"bodies");
-    for(size_t i=0;!found && i<qa_json_size(f,bodies);++i){
-        qa_json_id body=qa_json_at(f,bodies,i);qa_actor_id actual;
-        if(!actor(o,o->frame,field(f,body,"actor"),&actual,e))return false;
-        if(qa_actor_id_equal(actual,id)){
-            if(!vector(o->frame,field(f,field(f,body,"body"),"origin"),&origin,e))return false;
-            found=true;
-        }
+    for(size_t i=0;!found && i<received->world->body_count;++i){
+        const qa_unified_body_state *body=received->world->bodies+i; qa_actor_id actual;
+        if(!frontend_remote_unified_source_actor(o->replica,received,body->actor,false,&actual,e))return false;
+        if(qa_actor_id_equal(actual,id)){ origin=body->body.origin; found=true; }
     }
     if (!found) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 character event has no current full actor body");
     /* Events with separate sound records do not create a second voice. */
@@ -733,9 +557,9 @@ static bool character_event(frontend_unified_q3 *o, const qa_unified_document *d
         event==Q3N_EV_STOP_LOOP || event==Q3N_EV_TAUNT) return true;
     if (event!=Q3N_EV_JUMP_PAD && event!=Q3N_EV_TELEPORT_IN && event!=Q3N_EV_TELEPORT_OUT && event!=Q3N_EV_GIB)
         return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q3 character event requires actual cgame snapshot context");
-    qa_buffer content={0},instance={0};uint64_t generation; unified_q3_bank *b=NULL;
-    bool okay=content_text(d,row,&content,e) && event_owner(d,row,&instance,&generation,e) && enter(o,id,e);
-    if (okay) okay=bank_read(o,(const char *)content.data,(const char *)instance.data,generation,&b,e);
+    unified_q3_bank *b=NULL;
+    bool okay=enter(o,id,e);
+    if (okay) okay=bank_read(o,row->content,row->owner.provider,row->owner.generation,&b,e);
     if (okay) {
         q3n_frame frame=effect_frame(o,b,time); frame.event_settings=&effect_settings;
         okay=q3n_media_load_unified_effects(b->media,&b->source,e);
@@ -746,7 +570,7 @@ static bool character_event(frontend_unified_q3 *o, const qa_unified_document *d
         } else if (okay && event==Q3N_EV_GIB) q3n_effect_gib_player(&frame,origin);
         else if (okay) q3n_effect_spawn(&frame,origin);
     }
-    qa_buffer_free(&content);qa_buffer_free(&instance); return o->busy?leave(o,okay,e):okay;
+     return o->busy?leave(o,okay,e):okay;
 }
 static bool resource_first(unified_q3_bank *b,const char *const *paths,size_t count,
     qa_resource **out,char selected[256],qa_error *e)
@@ -825,10 +649,10 @@ static bool character_assets(frontend_unified_q3 *o,unified_q3_character *c,qa_e
     else qa_resource_release(holder);
     return okay;
 }
-static bool character_read(frontend_unified_q3 *o,qa_json_id row,unified_q3_character **out,qa_error *e)
+static bool character_read(frontend_unified_q3 *o,const qa_unified_character_state *row,unified_q3_character **out,qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(o->frame); qa_actor_id id;
-    if (!actor(o,o->frame,field(j,row,"actor"),&id,e)) return false;
+    const qa_unified_frame *frame=qa_unified_document_frame(o->frame); qa_actor_id id;
+    if (!frontend_remote_unified_source_actor(o->replica,frame,row->actor,false,&id,e)) return false;
     const qa_recipe_provider *p=frontend_remote_unified_provider(o->replica,QA_ROLE_BODY,"");
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     const qa_product *product=p?qa_catalog_product(domain->catalog,p->selection.product):NULL;
@@ -849,24 +673,11 @@ static bool character_read(frontend_unified_q3 *o,qa_json_id row,unified_q3_char
     }
     if (c->bank!=bank) { qa_resource_release(c->animation_holder); c->animation_holder=NULL; c->bank=bank; c->reset=true; }
     if (!c->animation_holder && !character_assets(o,c,e)) return false;
-    qa_json_id animation=field(j,row,"animation");
-    if (!vector(o->frame,field(j,row,"origin"),&c->origin,e) || !vector(o->frame,field(j,row,"angles"),&c->angles,e) ||
-        !vector(o->frame,field(j,row,"velocity"),&c->velocity,e) ||
-        !integer(o->frame,field(j,row,"movementDirection"),&c->movement,e) ||
-        !qa_json_string_equal(j,field(j,animation,"kind"),"q3") ||
-        !integer(o->frame,field(j,animation,"legs"),&c->legs,e) || !integer(o->frame,field(j,animation,"torso"),&c->torso,e) ||
-        !word(o->frame,field(j,row,"sourceFlags"),&c->flags,e) || !word(o->frame,field(j,row,"powerups"),&c->powerups,e)) return false;
-    c->scale=c->opacity=1;
-    qa_json_id scale=field(j,row,"scale"),opacity=field(j,row,"opacity"),team=field(j,row,"team");
-    if((scale!=QA_JSON_NONE && !real(o->frame,scale,&c->scale,e)) ||
-        (opacity!=QA_JSON_NONE && !real(o->frame,opacity,&c->opacity,e)))return false;
-    c->team=qa_json_string_equal(j,team,"red")?1:qa_json_string_equal(j,team,"blue")?2:0;
-    if(!c->team && qa_json_type(j,team)!=QA_JSON_NULL) {
-        frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 character has no actual nullable team tag");
-        return false;
-    }
-    const char *names[]={"x","y","z","w"}; qa_json_id color=field(j,row,"color");
-    for (unsigned i=0;i<4;++i) if (!real(o->frame,field(j,color,names[i]),c->color+i,e)) return false;
+    c->origin=row->origin; c->angles=row->angles; c->velocity=row->velocity;
+    c->movement=row->movement_direction; c->legs=row->legs; c->torso=row->torso;
+    c->flags=row->source_flags; c->powerups=row->powerups; c->scale=row->scale; c->opacity=row->opacity;
+    c->team=row->has_team?row->team:0;
+    memcpy(c->color,row->color,sizeof(c->color));
     c->visible=true; *out=c; return true;
 }
 static bool character_draw(frontend_unified_q3 *o,unified_q3_character *c,qa_error *e)
@@ -998,9 +809,9 @@ static bool sample(frontend_unified_q3 *o,const qa_scene_view *view,const qa_sce
     }
     if(okay){qa_q3_source_scene_bank_frame(o->scene_bank);okay=component_bank_read(o,e);}
     for (unified_q3_character *c=o->characters;c;c=c->next) { c->visible=false;c->submitted=false;c->hidden=false; }
-    const qa_json_document *j=qa_unified_document_json(o->frame);
-    qa_json_id rows=field(j,field(j,qa_unified_document_root(o->frame),"output"),"characters");
-    size_t character_count=qa_json_size(j,rows);
+    const qa_unified_frame *received=qa_unified_document_frame(o->frame);
+    const qa_unified_frame_visuals *visuals=received->visuals;
+    size_t character_count=visuals?visuals->character_count:0;
     o->character_count=0;
     if(okay && character_count>o->character_capacity) {
         if(character_count>SIZE_MAX/sizeof(*o->character_order))
@@ -1013,7 +824,7 @@ static bool sample(frontend_unified_q3 *o,const qa_scene_view *view,const qa_sce
     }
     for (size_t i=0;okay && i<character_count;++i) {
         unified_q3_character *c;
-        okay=character_read(o,qa_json_at(j,rows,i),&c,e);
+        okay=character_read(o,visuals->characters+i,&c,e);
         if(okay)o->character_order[o->character_count++]=c;
     }
     for (unified_q3_bank *b=o->banks;okay && b;b=b->next)if(!b->retired) {
@@ -1208,79 +1019,51 @@ bool frontend_unified_q3_reflected_world(frontend_unified_q3 *o,const qa_scene_w
         okay=qa_q3_presentation_supplement_draw(b->supplement,&options,scene,e) && current(o,e);
     return leave(o,okay,e);
 }
-static bool source_command_event(frontend_unified_q3 *o,const qa_unified_document *d,
-    qa_json_id row,bool command,qa_error *e)
+static bool source_command_event(frontend_unified_q3 *o,const qa_unified_presentation_event *row,bool command,qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(d);
-    qa_json_id event=field(j,row,"event");
-    qa_buffer content={0},instance={0},value={0};
-    double sequence=0;int32_t recipient=-1,index=0;
-    qa_json_id source=field(j,row,"source");
-    bool okay=content_text(d,row,&content,e) && text(d,field(j,source,"provider"),&instance,e);
-    if(okay && command) {
-        okay=number(d,field(j,row,"sequence"),&sequence,e);
-        if(okay && (sequence<0 || sequence>9007199254740991.0 || trunc(sequence)!=sequence))
-            okay=frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 reliable event sequence exceeds its actual source domain");
-        if(okay)okay=integer(d,field(j,event,"client"),&recipient,e) && text(d,field(j,event,"text"),&value,e);
-    } else if(okay) {
-        okay=integer(d,field(j,event,"index"),&index,e) && index>=0 && index<1024 &&
-            text(d,field(j,event,"value"),&value,e);
-    }
-    bool matched=false;
+    const qa_unified_q3_event *v=&row->payload.value.q3;
+    bool okay=true,matched=false;
     size_t count=frontend_remote_unified_presentation_q3_client_count(o->replica);
-    for(size_t i=0;okay && i<count;++i) {
+    for(size_t i=0;okay&&i<count;++i){
         frontend_unified_q3_client *client=frontend_remote_unified_presentation_q3_client(o->replica,i);
-        if(!frontend_unified_q3_client_event_matches(client,(const char *)instance.data,
-            (const char *)content.data,o->epoch))continue;
+        if(!frontend_unified_q3_client_event_matches(client,row->provider,row->content,o->epoch))continue;
         matched=true;
-        if(command)okay=frontend_unified_q3_client_server_command(client,(uint64_t)sequence,
-            recipient,(const char *)value.data,e);
-        /* Notification values may be intermediate writes. The real CLIENT
+        if(command)okay=frontend_unified_q3_client_server_command(client,row->sequence,v->client,v->text,e);
+        /* Configstring notifications can be intermediate writes. The CLIENT
          * compares the committed Source dictionary and reaches its own cs. */
         if(okay)okay=current(o,e);
     }
-    if(okay && !matched)okay=frontend_unified_fail(e,QA_ERROR_ARGUMENT,
-        "Q3 Source event has no matching retained CLIENT activation");
-    qa_buffer_free(&content);qa_buffer_free(&instance);qa_buffer_free(&value);return okay;
+    return okay&&(matched||frontend_unified_fail(e,QA_ERROR_ARGUMENT,
+        "Q3 Source event has no matching retained CLIENT activation"));
 }
-bool frontend_unified_q3_presentation(frontend_unified_q3 *o, const qa_unified_document *d,
-    qa_json_id row, bool *mirrored, qa_error *e)
+bool frontend_unified_q3_presentation(frontend_unified_q3 *o,const qa_unified_presentation_event *row,
+    bool *mirrored,qa_error *e)
 {
-    if (!mirrored || !frontend_unified_q3_validate(o,false,d,row,e)) return false;
-    *mirrored=false; const qa_json_document *j=qa_unified_document_json(d);
-    qa_json_id kind=field(j,row,"kind"), v=field(j,row,"event");
-    if (qa_json_string_equal(j,kind,"q3-character")) return character_event(o,d,row,e);
-    if (qa_json_string_equal(j,kind,"q3-ballistics"))return ballistic_event_apply(o,d,row,e);
-    kind=field(j,v,"kind"); qa_buffer b={0}; bool okay;
-    if (qa_json_string_equal(j,kind,"sound")) {
-        qa_buffer content={0},path={0}; qa_actor_id id; qa_vec3 origin,velocity; int32_t channel; float volume; double seconds; bool loop;
-        okay=o->events && content_text(d,row,&content,e) && text(d,field(j,v,"path"),&path,e) &&
-            actor(o,d,field(j,v,"actor"),&id,e) && vector(d,field(j,v,"origin"),&origin,e) && vector(d,field(j,v,"velocity"),&velocity,e) &&
-            integer(d,field(j,v,"channel"),&channel,e) && real(d,field(j,v,"volume"),&volume,e) &&
-            number(d,field(j,row,"seconds"),&seconds,e) && qa_json_bool(j,field(j,v,"loop"),&loop,e);
-        bool duplicate=false;
-        if (okay) okay=frontend_unified_events_sound_mirrored(o->events,d,row,&duplicate,e);
-        if (okay && !duplicate) {
-            if(loop)okay=frontend_unified_events_sound_loop_path(o->events,(const char *)content.data,
-                (const char *)path.data,id,origin,velocity,seconds*1000,channel,volume,1,
+    if(!mirrored||!frontend_unified_q3_presentation_validate(o,row,e))return false;
+    *mirrored=false;
+    if(row->payload.kind==QA_UNIFIED_PRESENTATION_Q3_CHARACTER)return character_event(o,row,e);
+    if(row->payload.kind==QA_UNIFIED_PRESENTATION_Q3_BALLISTIC)return ballistic_event_apply(o,row,e);
+    const qa_unified_q3_event *v=&row->payload.value.q3;
+    if(v->kind==QA_UNIFIED_Q3_SOUND){
+        qa_actor_id id; bool duplicate=false;
+        bool okay=o->events&&actor(o,v->actor,&id,e)&&frontend_unified_events_sound_mirrored(o->events,row,&duplicate,e);
+        if(okay&&!duplicate){
+            if(v->loop)okay=frontend_unified_events_sound_loop_path(o->events,row->content,v->resource,id,
+                v->origin,v->velocity,row->seconds*1000,v->channel,v->volume,1,
                 q3ne_word((uint32_t)o->frontend->frame_number),true,e);
-            else okay=frontend_unified_events_sound_path(o->events,(const char *)content.data,
-                (const char *)path.data,id,origin,seconds*1000,channel,volume,1,0,e);
+            else okay=frontend_unified_events_sound_path(o->events,row->content,v->resource,id,v->origin,
+                row->seconds*1000,v->channel,v->volume,1,0,e);
         }
-        qa_buffer_free(&content); qa_buffer_free(&path); return okay && current(o,e);
+        return okay&&current(o,e);
     }
-    if (qa_json_string_equal(j,kind,"print") || qa_json_string_equal(j,kind,"log")) {
-        okay=text(d,field(j,v,"text"),&b,e);
+    if(v->kind==QA_UNIFIED_Q3_PRINT||v->kind==QA_UNIFIED_Q3_LOG){
         const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
-        if (okay) qa_console_emit(domain->console,&domain->command_context,(const char *)b.data);
-        qa_buffer_free(&b); return okay && current(o,e);
+        qa_console_emit(domain->console,&domain->command_context,v->text);return current(o,e);
     }
-    if (qa_json_string_equal(j,kind,"server-command")) return source_command_event(o,d,row,true,e);
-    if (qa_json_string_equal(j,kind,"configstring")) return source_command_event(o,d,row,false,e);
+    if(v->kind==QA_UNIFIED_Q3_SERVER_COMMAND)return source_command_event(o,row,true,e);
+    if(v->kind==QA_UNIFIED_Q3_CONFIGSTRING)return source_command_event(o,row,false,e);
     return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q3 Source event requires the actual retained cgame command/snapshot owner");
 }
-bool frontend_unified_q3_simulation(frontend_unified_q3 *o, const qa_unified_document *d, qa_json_id row, qa_error *e)
-{ return frontend_unified_q3_validate(o,true,d,row,e); }
 static bool q3_returned(const frontend_unified_q3 *o)
 {
     if (!o || o->busy) return false;

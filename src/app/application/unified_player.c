@@ -1,5 +1,5 @@
 #include "unified_player.h"
-#include "unified_output_json.h"
+#include "unified_frame_private.h"
 #include "internal.h"
 #include "control_frame.h"
 #include "guest_q3_private.h"
@@ -30,6 +30,10 @@
 
 typedef struct player_observation {
     qa_application *app;
+    qa_unified_frame_lease *lease;
+    const qa_inventory_entry *recipient_inventory;
+    size_t recipient_inventory_count;
+    qa_unified_inventory_entry *recipient_ui_inventory;
     const application_unified_source *source;
     const qa_unified_session_player *player;
     const application_unified_player_external *external;
@@ -38,7 +42,7 @@ typedef struct player_observation {
     qa_actor_id ui_actor;
     uint64_t actors_revision;
     qa_combat_state combat;
-    qa_inventory_entry *inventory;
+    const qa_inventory_entry *inventory;
     size_t inventory_count;
     qa_item_definition *definitions;
     size_t definition_count;
@@ -64,17 +68,6 @@ typedef struct player_observation {
     bool has_q3, has_q2, has_equipment, intermission;
 } player_observation;
 
-static bool text(application_unified_json *j, const char *s, qa_error *e)
-{ return application_unified_json_text(j, s, e); }
-static bool string(application_unified_json *j, const char *s, qa_error *e)
-{ return application_unified_json_string(j, s, e); }
-static bool number(application_unified_json *j, double n, qa_error *e)
-{ return application_unified_json_number(j, n, e); }
-static bool boolean(application_unified_json *j, bool n, qa_error *e)
-{ return text(j, n ? "true" : "false", e); }
-static bool vector(application_unified_json *j, qa_vec3 v, qa_error *e)
-{ return application_unified_json_vector(j, v, e); }
-
 static bool current(player_observation *o, qa_error *error)
 {
     return (application_unified_source_current(o->app, o->source) &&
@@ -93,8 +86,8 @@ static bool current(player_observation *o, qa_error *error)
 
 static const char *identity(player_observation *o, qa_string_id id)
 { return qa_strings_cstr(qa_session_strings(o->source->session), id); }
-static bool item(application_unified_json *j, player_observation *o, qa_item_id id, qa_error *e)
-{ return id ? string(j, identity(o, id), e) : text(j, "null", e); }
+static bool item(char **out, player_observation *o, qa_item_id id, qa_error *e)
+{ return application_unified_frame_string(o->lease, out, id ? identity(o, id) : NULL, e); }
 static double count(player_observation *o, qa_item_id id)
 {
     if (o->has_q3 && o->primary->kind != APPLICATION_PROVIDER_Q3 &&
@@ -119,24 +112,24 @@ static const application_q3_catalog_weapon *q3_active(const player_observation *
     return NULL;
 }
 
-static bool provider(application_unified_json *j, application_provider *p, qa_error *e)
+static bool provider(qa_unified_provider_state *out, player_observation *o, application_provider *p, qa_error *e)
 {
-    return p && p->constructed && p->attached && !p->close_pending && p->launch && p->product &&
-        text(j, "{\"provider\":", e) && string(j, p->launch->selection.instance, e) &&
-        text(j, ",\"content\":", e) && string(j, p->product->identity, e) && text(j, "}", e);
+    if (!p || !p->constructed || !p->attached || p->close_pending || !p->launch || !p->product)
+        return application_fail(e, QA_ERROR_ARGUMENT, "Unified player lost its selected provider");
+    return application_unified_frame_string(o->lease, &out->provider, p->launch->selection.instance, e) &&
+        application_unified_frame_string(o->lease, &out->content, p->product->identity, e);
 }
 
 static void qc_bindings_clear(player_observation *o)
 {
-    for (size_t i = 0; i < o->qc_binding_count; ++i) free((char *)o->qc_bindings[i].label);
-    free(o->qc_bindings); o->qc_bindings = NULL; o->qc_binding_count = 0;
+    o->qc_bindings = NULL; o->qc_binding_count = 0;
 }
 static bool qc_bindings_read(player_observation *o, const qa_application_qc_player_ui *view, qa_error *e)
 {
     qc_bindings_clear(o);
     if (view->binding_count > SIZE_MAX / sizeof(*o->qc_bindings))
         return application_fail(e, QA_ERROR_MEMORY, "QC UI bindings exceed their host extent");
-    o->qc_bindings = view->binding_count ? calloc(view->binding_count, sizeof(*o->qc_bindings)) : NULL;
+    o->qc_bindings = view->binding_count ? application_unified_frame_alloc(o->lease, view->binding_count, sizeof(*o->qc_bindings), e) : NULL;
     if (view->binding_count && !o->qc_bindings)
         return application_fail(e, QA_ERROR_MEMORY, "Retaining actual QC UI declarations");
     for (size_t i = 0; i < view->binding_count; ++i) {
@@ -144,10 +137,8 @@ static bool qc_bindings_read(player_observation *o, const qa_application_qc_play
         if (!qa_application_qc_message_player_ui_binding(o->app, view, i, &binding, e) || !current(o, e)) return false;
         if (!binding.item || !binding.label)
             return application_fail(e, QA_ERROR_FORMAT, "QC UI binding lacks its genuine item or label");
-        size_t length = strlen(binding.label);
-        char *label = malloc(length + 1);
-        if (!label) return application_fail(e, QA_ERROR_MEMORY, "Copying actual QC weapon label");
-        memcpy(label, binding.label, length + 1);
+        char *label = NULL;
+        if (!application_unified_frame_string(o->lease, &label, binding.label, e)) return false;
         o->qc_bindings[i] = binding; o->qc_bindings[i].label = label;
         o->qc_binding_count = i + 1;
     }
@@ -184,8 +175,7 @@ static const char *qc_ammo_item(const player_observation *o)
 
 static void q3_catalog_clear(player_observation *o)
 {
-    for (size_t i = 0; i < o->q3_weapon_count; ++i) free((char *)o->q3_weapons[i].label);
-    free(o->q3_weapons); o->q3_weapons = NULL; o->q3_weapon_count = 0;
+    o->q3_weapons = NULL; o->q3_weapon_count = 0;
     o->q3_ui_owner = NULL; o->q3_active = 0;
 }
 
@@ -202,16 +192,14 @@ static bool q3_catalog_read(player_observation *o, application_provider *p,
     q3_catalog_clear(o);
     if (length > SIZE_MAX / sizeof(*o->q3_weapons))
         return application_fail(e, QA_ERROR_MEMORY, "Original Q3 catalog exceeds its host extent");
-    o->q3_weapons = length ? calloc(length, sizeof(*o->q3_weapons)) : NULL;
+    o->q3_weapons = length ? application_unified_frame_alloc(o->lease, length, sizeof(*o->q3_weapons), e) : NULL;
     if (length && !o->q3_weapons) return application_fail(e, QA_ERROR_MEMORY, "Retaining actual Q3 UI catalog");
     for (size_t i = 0; i < length; ++i) {
         if (weapons[i].weapon <= 0 || (size_t)weapons[i].weapon >= sizeof(ps->ammo) / sizeof(ps->ammo[0]) ||
             weapons[i].weapon >= 32 || !weapons[i].label || !weapons[i].item)
             return application_fail(e, QA_ERROR_FORMAT, "Original Q3 UI catalog leaves its actual PS weapon fields");
-        size_t bytes = strlen(weapons[i].label);
-        char *label = malloc(bytes + 1);
-        if (!label) return application_fail(e, QA_ERROR_MEMORY, "Copying real Q3 source item label");
-        memcpy(label, weapons[i].label, bytes + 1);
+        char *label = NULL;
+        if (!application_unified_frame_string(o->lease, &label, weapons[i].label, e)) return false;
         o->q3_weapons[i] = weapons[i]; o->q3_weapons[i].label = label;
         o->q3_weapon_count = i + 1;
     }
@@ -257,19 +245,23 @@ static bool q3_read(player_observation *o, qa_error *e)
 static bool copy_inventory(player_observation *o, qa_error *e)
 {
     size_t extent = 0, actual = 0;
-    if (!qa_inventory_entries(o->app->inventory, o->ui_actor, NULL, 0, &extent, e) || !current(o, e)) return false;
-    if (extent > SIZE_MAX / sizeof(*o->inventory))
-        return application_fail(e, QA_ERROR_MEMORY, "Unified inventory exceeds its host extent");
-    o->inventory = extent ? calloc(extent, sizeof(*o->inventory)) : NULL;
-    if (extent && !o->inventory) return application_fail(e, QA_ERROR_MEMORY, "Copying actual player inventory");
-    if (!qa_inventory_entries(o->app->inventory, o->ui_actor, o->inventory, extent, &actual, e) ||
-        actual != extent || !current(o, e)) return false;
-    o->inventory_count = actual;
+    if (qa_actor_id_equal(o->ui_actor, o->player->actor)) {
+        o->inventory = o->recipient_inventory;
+        o->inventory_count = o->recipient_inventory_count;
+    } else {
+        if (!qa_inventory_entries(o->app->inventory, o->ui_actor, NULL, 0, &extent, e) || !current(o, e)) return false;
+        qa_inventory_entry *entries = extent ? application_unified_frame_alloc(o->lease, extent, sizeof(*entries), e) : NULL;
+        if (extent && !entries) return false;
+        if (!qa_inventory_entries(o->app->inventory, o->ui_actor, entries, extent, &actual, e) ||
+            actual != extent || !current(o, e)) return false;
+        o->inventory = entries;
+        o->inventory_count = actual;
+    }
     extent = 0;
     if (!qa_inventory_item_definitions(o->app->inventory, o->ui_actor, NULL, 0, &extent, e) || !current(o, e)) return false;
     if (extent > SIZE_MAX / sizeof(*o->definitions))
         return application_fail(e, QA_ERROR_MEMORY, "Unified item definitions exceed their host extent");
-    o->definitions = extent ? calloc(extent, sizeof(*o->definitions)) : NULL;
+    o->definitions = extent ? application_unified_frame_alloc(o->lease, extent, sizeof(*o->definitions), e) : NULL;
     if (extent && !o->definitions) return application_fail(e, QA_ERROR_MEMORY, "Copying actual player item declarations");
     if (!qa_inventory_item_definitions(o->app->inventory, o->ui_actor, o->definitions, extent, &actual, e) ||
         actual != extent || !current(o, e)) return false;
@@ -279,97 +271,94 @@ static bool copy_inventory(player_observation *o, qa_error *e)
         const char *label = o->definitions[i].label;
         o->definitions[i].label = NULL;
         if (!label) return application_fail(e, QA_ERROR_FORMAT, "Player item has no actual declared label");
-        size_t length = strlen(label);
-        char *copy = malloc(length + 1);
-        if (!copy) return application_fail(e, QA_ERROR_MEMORY, "Retaining player item label");
-        memcpy(copy, label, length + 1);
+        char *copy = NULL;
+        if (!application_unified_frame_string(o->lease, &copy, label, e)) return false;
         o->definitions[i].label = copy;
         o->definition_count = i + 1;
     }
     return true;
 }
 
-static bool armor(application_unified_json *j, player_observation *o, qa_error *e)
+static bool armor(qa_unified_armor_state *out, player_observation *o, qa_error *e)
 {
     if (o->has_q3 && o->primary->kind != APPLICATION_PROVIDER_Q3 && !o->q3_combat) {
-        if (!text(j, "{\"regular\":{\"kind\":", e) || !string(j, o->q3.stats[3] ? "q3" : "none", e)) return false;
-        if (o->q3.stats[3] && (!text(j, ",\"points\":", e) || !number(j, o->q3.stats[3], e) ||
-            !text(j, ",\"protection\":", e) || !number(j, (float).66, e))) return false;
-        return text(j, "},\"powered\":{\"kind\":\"none\"}}", e);
+        out->kind = o->q3.stats[3] ? QA_UNIFIED_ARMOR_Q3 : QA_UNIFIED_ARMOR_NONE;
+        out->points = o->q3.stats[3]; out->protection = (float).66;
+        return true;
     }
     if (o->has_q2) {
-        if (!text(j, "{\"regular\":{\"kind\":", e) ||
-            !string(j, o->q2.stats[5] ? "q2" : "none", e)) return false;
-        if (o->q2.stats[5] && (!text(j, ",\"points\":", e) || !number(j, o->q2.stats[5], e) ||
-            !text(j, ",\"normalProtection\":0,\"energyProtection\":0,\"item\":\"q2:remote-armor\"", e))) return false;
-        return text(j, "},\"powered\":{\"kind\":\"none\"}}", e);
+        out->kind = o->q2.stats[5] ? QA_UNIFIED_ARMOR_Q2 : QA_UNIFIED_ARMOR_NONE;
+        out->points = o->q2.stats[5];
+        return !o->q2.stats[5] || application_unified_frame_string(o->lease, &out->item, "q2:remote-armor", e);
     }
     qa_regular_armor r = o->combat.armor.regular;
-    static const char *const names[] = {"none", "q1", "q2", "q3", "source"};
-    if ((unsigned)r.kind >= sizeof(names) / sizeof(names[0]))
-        return application_fail(e, QA_ERROR_FORMAT, "Player armor lost its actual protection kind");
-    if (!text(j, "{\"regular\":{\"kind\":", e) || !string(j, names[r.kind], e)) return false;
-    if (r.kind != QA_ARMOR_NONE) {
-        if (!text(j, ",\"points\":", e) || !number(j, r.points, e) ||
-            !text(j, ",\"item\":", e) || !item(j, o, r.item, e)) return false;
-        if (r.kind == QA_ARMOR_Q1 && (!text(j, ",\"absorption\":", e) || !number(j, r.protection.q1_absorption, e))) return false;
-        if (r.kind == QA_ARMOR_Q2 && (!text(j, ",\"normalProtection\":", e) || !number(j, r.protection.q2.normal, e) ||
-            !text(j, ",\"energyProtection\":", e) || !number(j, r.protection.q2.energy, e))) return false;
-        if (r.kind == QA_ARMOR_Q3 && (!text(j, ",\"protection\":", e) || !number(j, r.protection.q3_protection, e))) return false;
+    out->kind = (qa_unified_armor_kind)r.kind; out->points = r.points;
+    if (r.kind != QA_ARMOR_NONE && !item(&out->item, o, r.item, e)) return false;
+    switch (r.kind) {
+    case QA_ARMOR_Q1: out->absorption = r.protection.q1_absorption; break;
+    case QA_ARMOR_Q2: out->normal = r.protection.q2.normal; out->energy = r.protection.q2.energy; break;
+    case QA_ARMOR_Q3: out->protection = r.protection.q3_protection; break;
+    case QA_ARMOR_NONE: case QA_ARMOR_SOURCE: break;
     }
-    qa_powered_armor p = o->combat.armor.powered;
-    if (p.kind < QA_POWER_NONE || p.kind > QA_POWER_SHIELD)
-        return application_fail(e, QA_ERROR_FORMAT, "Player powered armor lost its actual source kind");
-    if (!text(j, "},\"powered\":{\"kind\":", e) ||
-        !string(j, p.kind == QA_POWER_NONE ? "none" : p.kind == QA_POWER_SCREEN ? "screen" : "shield", e)) return false;
-    return (p.kind == QA_POWER_NONE || (text(j, ",\"cells\":", e) && number(j, p.cells, e))) && text(j, "}}", e);
-}
-
-static bool inventory(application_unified_json *j, player_observation *o, qa_error *e)
-{
-    if (!text(j, "[", e)) return false;
-    if (o->has_q3 && o->primary->kind != APPLICATION_PROVIDER_Q3 && o->arsenal == o->primary && !o->q3_inventory) {
-        for (size_t i = 0; i < o->q3_weapon_count; ++i) {
-            const application_q3_catalog_weapon *w = o->q3_weapons + i;
-            if ((i && !text(j, ",", e)) || !text(j, "{\"item\":", e) || !item(j, o, w->item, e) ||
-                !text(j, ",\"count\":", e) || !number(j, count(o, w->item), e) || !text(j, ",\"capacity\":1}", e)) return false;
-            if (w->ammo && (!text(j, ",{\"item\":", e) || !item(j, o, w->ammo, e) || !text(j, ",\"count\":", e) ||
-                !number(j, count(o, w->ammo), e) || !text(j, ",\"capacity\":200}", e))) return false;
-        }
-        return text(j, "]", e);
-    }
-    for (size_t i = 0; i < o->inventory_count; ++i) {
-        qa_inventory_entry value = o->inventory[i];
-        if ((i && !text(j, ",", e)) || !text(j, "{\"item\":", e) || !item(j, o, value.item, e) ||
-            !text(j, ",\"count\":", e) || !number(j, value.count, e) ||
-            !text(j, ",\"capacity\":", e) || !number(j, value.capacity, e)) return false;
-        if (value.policy != QA_COUNT_STACK && (!text(j, ",\"countPolicy\":{\"kind\":\"source-counter\",\"arithmetic\":", e) ||
-            !string(j, value.policy == QA_COUNT_SOURCE_INT32 ? "int32" :
-                value.policy == QA_COUNT_SOURCE_DOUBLE ? "binary64" : "binary32", e) || !text(j, "}", e))) return false;
-        if (!text(j, "}", e)) return false;
-    }
-    return text(j, "]", e);
-}
-
-static bool timer(application_unified_json *j, bool *first, const char *id,
-    const char *label, double seconds, qa_error *e)
-{
-    if (!(seconds > 0)) return true;
-    if ((!*first && !text(j, ",", e)) || !text(j, "{\"item\":", e) || !string(j, id, e) ||
-        !text(j, ",\"label\":", e) || !string(j, label, e) ||
-        !text(j, ",\"remainingSeconds\":", e) || !number(j, seconds, e) || !text(j, "}", e)) return false;
-    *first = false;
+    out->powered_kind = (qa_unified_power_armor_kind)o->combat.armor.powered.kind;
+    out->cells = o->combat.armor.powered.cells;
     return true;
 }
 
-static bool timers(application_unified_json *j, player_observation *o, qa_error *e)
+static bool inventory(qa_unified_player_ui *out, player_observation *o, qa_error *e)
 {
-    if (!text(j, "[", e)) return false;
-    bool first = true;
+    bool original = o->has_q3 && o->primary->kind != APPLICATION_PROVIDER_Q3 &&
+        o->arsenal == o->primary && !o->q3_inventory;
+    if (!original && o->lease && qa_actor_id_equal(o->ui_actor, o->player->actor)) {
+        out->inventory = o->recipient_ui_inventory;
+        out->inventory_count = o->recipient_inventory_count;
+        return true;
+    }
+    size_t extent = original ? o->q3_weapon_count * 2 : o->inventory_count;
+    out->inventory = extent ? application_unified_frame_alloc(o->lease, extent, sizeof(*out->inventory), e) : NULL;
+    if (extent && !out->inventory) return application_fail(e, QA_ERROR_MEMORY, "Retaining actual UI inventory");
+    if (original) {
+        for (size_t i = 0; i < o->q3_weapon_count; ++i) {
+            const application_q3_catalog_weapon *w = o->q3_weapons + i;
+            qa_unified_inventory_entry *row = out->inventory + out->inventory_count++;
+            row->count = count(o, w->item); row->capacity = 1;
+            if (!item(&row->item, o, w->item, e)) return false;
+            if (w->ammo) {
+                row = out->inventory + out->inventory_count++;
+                row->count = count(o, w->ammo); row->capacity = 200;
+                if (!item(&row->item, o, w->ammo, e)) return false;
+            }
+        }
+        return true;
+    }
+    for (size_t i = 0; i < o->inventory_count; ++i) {
+        const qa_inventory_entry *v = o->inventory + i;
+        qa_unified_inventory_entry *row = out->inventory + out->inventory_count++;
+        row->count = v->count; row->capacity = v->capacity; row->policy = v->policy;
+        if (!item(&row->item, o, v->item, e)) return false;
+    }
+    return true;
+}
+
+static bool timer(qa_unified_player_ui *out, player_observation *o, const char *id,
+    const char *label, double seconds, qa_error *e)
+{
+    if (!(seconds > 0)) return true;
+    qa_unified_powerup_state *row = out->powerups + out->powerup_count++;
+    *row = (qa_unified_powerup_state){.seconds = seconds};
+    return application_unified_frame_string(o->lease, &row->id, id, e) && application_unified_frame_string(o->lease, &row->label, label, e);
+}
+
+static bool timers(qa_unified_player_ui *out, player_observation *o, qa_error *e)
+{
+    size_t capacity = o->primary->kind == APPLICATION_PROVIDER_QC ? o->qc.timer_count :
+        o->primary->kind == APPLICATION_PROVIDER_Q1 ? QA_Q1_POWER_COUNT : 7;
+    out->powerups = capacity ? application_unified_frame_alloc(o->lease, capacity, sizeof(*out->powerups), e) : NULL;
+    if (capacity && !out->powerups) return false;
     if (o->primary->kind == APPLICATION_PROVIDER_QC) {
         for (size_t i = 0; i < o->qc.timer_count; ++i) {
             const qa_application_qc_power_timer *power = o->qc.timers + i;
-            if (!timer(j, &first, power->item, power->label, power->expires_seconds - o->qc.now_seconds, e)) return false;
+            if (!timer(out, o, power->item, power->label, power->expires_seconds - o->qc.now_seconds, e)) return false;
         }
     } else if (o->primary->kind == APPLICATION_PROVIDER_Q1) {
         static const char *const ids[QA_Q1_POWER_COUNT] = {"q1:item_artifact_super_damage", "q1:item_artifact_invulnerability",
@@ -381,7 +370,7 @@ static bool timers(application_unified_json *j, player_observation *o, qa_error 
         if (!qa_q1_player_ui_powers_read(o->primary->state.q1, o->ui_actor, &powers, e) || !current(o, e)) return false;
         for (size_t i = 0; i < powers.count; ++i) {
             qa_q1_ui_power power = powers.powers[i];
-            if (!timer(j, &first, ids[power.power], labels[power.power], power.expires - powers.seconds, e)) return false;
+            if (!timer(out, o, ids[power.power], labels[power.power], power.expires - powers.seconds, e)) return false;
         }
     } else if (o->primary->kind == APPLICATION_PROVIDER_Q2) {
         qa_q2_powerups powers;
@@ -396,7 +385,7 @@ static bool timers(application_unified_json *j, player_observation *o, qa_error 
         if (!qa_session_clock(o->source->session, o->primary->owner, &clock))
             return application_fail(e, QA_ERROR_NOT_FOUND, "Q2 UI powers have no actual source clock");
         for (size_t i = 0; i < sizeof(expires) / sizeof(expires[0]); ++i)
-            if (expires[i] > clock.frame.time_ns && !timer(j, &first, ids[i], labels[i],
+            if (expires[i] > clock.frame.time_ns && !timer(out, o, ids[i], labels[i],
                 (double)(expires[i] - clock.frame.time_ns) / 1e9, e)) return false;
     } else if (o->has_q3) {
         static const char *const ids[] = {"q3:item_quad", "q3:item_enviro", "q3:item_haste", "q3:item_invis", "q3:item_regen", "q3:item_flight"};
@@ -412,28 +401,23 @@ static bool timers(application_unified_json *j, player_observation *o, qa_error 
             actor = binding.actor;
         }
         for (size_t i = 0; i < sizeof(ids) / sizeof(ids[0]); ++i)
-            if (!timer(j, &first, ids[i], labels[i], ((double)viewed.powerups[i + 1] - o->q3_time) / 1000, e)) return false;
+            if (!timer(out, o, ids[i], labels[i], ((double)viewed.powerups[i + 1] - o->q3_time) / 1000, e)) return false;
         if (o->primary->kind == APPLICATION_PROVIDER_Q3) {
             qa_q3_player_state state;
             if (!qa_q3_player_read(o->primary->state.q3, actor, &state))
                 return application_fail(e, QA_ERROR_NOT_FOUND, "Q3 UI invulnerability lost its viewed source client");
-            if (!timer(j, &first, "q3:holdable_invulnerability", "Invulnerability",
+            if (!timer(out, o, "q3:holdable_invulnerability", "Invulnerability",
                 ((double)state.invulnerability_until - o->q3_time) / 1000, e)) return false;
         }
     } /* Original Q2's public PS exposes no complete source timer collection. */
-    return text(j, "]", e);
+    return true;
 }
 
-static bool blend(application_unified_json *j, const float value[4], qa_error *e)
-{
-    return text(j, "{\"x\":", e) && number(j, value[0], e) && text(j, ",\"y\":", e) &&
-        number(j, value[1], e) && text(j, ",\"z\":", e) && number(j, value[2], e) &&
-        text(j, ",\"w\":", e) && number(j, value[3], e) && text(j, "}", e);
-}
+
 
 static qa_vec3 from_array(const float v[3]) { return qa_v3(v[0], v[1], v[2]); }
 
-static bool view(application_unified_json *j, player_observation *o, qa_error *e)
+static bool view(qa_unified_player_view *out, player_observation *o, qa_error *e)
 {
     qa_application_control_view control;
     qa_application_camera_view camera;
@@ -564,151 +548,140 @@ static bool view(application_unified_json *j, player_observation *o, qa_error *e
         punch = weapon.punch_angles;
     }
     kick = qa_vec_add(kick, punch);
-    if (!text(j, "{\"origin\":", e) || !vector(j, origin, e) || !text(j, ",\"angles\":", e) ||
-        !(has_death_yaw ? text(j, "{\"x\":", e) && number(j, angles.x, e) && text(j, ",\"y\":", e) &&
-            number(j, death_yaw, e) && text(j, ",\"z\":", e) && number(j, angles.z, e) && text(j, "}", e) :
-            vector(j, angles, e)) || !text(j, ",\"viewHeight\":", e) || !number(j, height, e) ||
-        !text(j, ",\"kickAngles\":", e) || !vector(j, kick, e)) return false;
-    if (has_fov && (!text(j, ",\"fieldOfView\":", e) || !number(j, fov, e))) return false;
-    if (camera.has_client_view_offset && (!text(j, ",\"clientViewOffsetDelta\":", e) || !vector(j, client_delta, e))) return false;
-    if (has_blend && (!text(j, ",\"blend\":", e) || !blend(j, rgba, e))) return false;
-    if (has_damage && (!text(j, ",\"damageBlend\":", e) || !blend(j, damage_rgba, e))) return false;
-    if (foreign_death && !text(j, ",\"foreignCharacterDeath\":true", e)) return false;
+    out->origin = origin; out->angles = angles;
+    if (has_death_yaw) out->angles.y = (float)death_yaw;
+    out->view_height = height; out->kick_angles = kick;
+    out->has_field_of_view = has_fov; out->field_of_view = fov;
+    out->has_client_view_offset_delta = camera.has_client_view_offset;
+    out->client_view_offset_delta = client_delta;
+    out->has_blend = has_blend; out->has_damage_blend = has_damage;
+    memcpy(out->blend, rgba, sizeof(rgba)); memcpy(out->damage_blend, damage_rgba, sizeof(damage_rgba));
+    out->foreign_character_death = foreign_death;
     if (control.state.kind == QA_MOVEMENT_NETQUAKE || control.state.kind == QA_MOVEMENT_QUAKEWORLD) {
         bool nq = control.state.kind == QA_MOVEMENT_NETQUAKE;
-        bool disabled = camera.cutscene || o->intermission || view_combat.health <= 0 ||
+        out->has_pitch_drift = true; out->grounded = control.ground.hit != QA_TRACE_HIT_NONE;
+        out->ideal_pitch = nq ? control.state.data.nq.ideal_pitch : 0;
+        out->pitch_drift_disabled = camera.cutscene || o->intermission || view_combat.health <= 0 ||
             (nq ? control.state.data.nq.move_type != 3 : control.state.data.qw.spectator != 0);
-        if (!text(j, ",\"pitchDrift\":{\"grounded\":", e) || !boolean(j, control.ground.hit != QA_TRACE_HIT_NONE, e) ||
-            !text(j, ",\"idealPitch\":", e) || !number(j, nq ? control.state.data.nq.ideal_pitch : 0, e) ||
-            !text(j, ",\"disabled\":", e) || !boolean(j, disabled, e) || !text(j, "}", e)) return false;
     }
-    return text(j, "}", e) && current(o, e);
+    return current(o, e);
 }
 
-static bool presentation_owner(application_unified_json *j,
-    const qa_application_qc_client_presentation *frame,qa_error *e)
+static bool presentation_owner(qa_unified_source_identity *out,
+    player_observation *o, const qa_application_qc_client_presentation *frame, qa_error *e)
 {
-    return text(j,"{\"provider\":",e) && application_unified_json_natural(j,frame->source.provider,e) &&
-        text(j,",\"instance\":",e) && string(j,frame->source.descriptor->selection.instance,e) && text(j,"}",e);
+    out->provider = frame->source.provider;
+    return application_unified_frame_string(o->lease, &out->instance, frame->source.descriptor->selection.instance, e);
 }
-static bool client_presentation(application_unified_json *j,player_observation *o,qa_error *e)
+static bool client_presentation(qa_unified_frame_player *out, player_observation *o, qa_error *e)
 {
-    const application_unified_player_external *external=o->external;
-    if(!external || (!external->declared_vitals && !external->declared_camera))return true;
-    if(!text(j,",\"clientPresentation\":{\"recipient\":",e) ||
-        !application_unified_json_actor(j,o->player->actor,e) || !text(j,",\"hud\":",e))return false;
-    const qa_application_qc_client_presentation *v=external->declared_vitals;
-    if(v) {
-        if(!qa_actor_id_equal(v->recipient,o->player->actor) || !v->vitals ||
-            !qa_application_qc_client_presentation_current(o->app,v) || !text(j,"{\"source\":",e) ||
-            !presentation_owner(j,v,e) || !text(j,",\"health\":",e) || !number(j,v->health,e) ||
-            !text(j,",\"armor\":",e) || !number(j,v->armor,e) || !text(j,"}",e))return false;
-    } else if(!text(j,"null",e))return false;
-    if(!text(j,",\"view\":",e))return false;
-    const qa_application_camera_view *camera=external->declared_camera;
-    if(camera) {
-        const qa_application_qc_client_presentation *source=external->declared_view;
-        if(!source || !source->view || !qa_actor_id_equal(camera->actor,o->player->actor) ||
-            !qa_actor_id_equal(source->recipient,o->player->actor) ||
-            !qa_application_qc_client_presentation_current(o->app,source))return false;
-        qa_vec3 origin=qa_vec_add(camera->origin,qa_v3(camera->view_offset.x,camera->view_offset.y,0));
-        if(!text(j,"{\"source\":",e) || !presentation_owner(j,source,e) || !text(j,",\"origin\":",e) ||
-            !vector(j,origin,e) || !text(j,",\"angles\":",e) || !vector(j,camera->angles,e) ||
-            !text(j,",\"viewHeight\":",e) || !number(j,camera->view_offset.z,e) || !text(j,"}",e))return false;
-    } else if(!text(j,"null",e))return false;
-    return text(j,"}",e) && current(o,e);
+    const application_unified_player_external *external = o->external;
+    if (!external || (!external->declared_vitals && !external->declared_camera)) return true;
+    qa_unified_client_presentation *p = application_unified_frame_alloc(o->lease, 1, sizeof(*p), e);
+    if (!p) return application_fail(e, QA_ERROR_MEMORY, "Retaining actual declared CLIENT presentation");
+    out->client_presentation = p; p->recipient = o->player->actor;
+    const qa_application_qc_client_presentation *v = external->declared_vitals;
+    if (v) {
+        if (!qa_actor_id_equal(v->recipient, o->player->actor) || !v->vitals ||
+            !qa_application_qc_client_presentation_current(o->app, v) || !presentation_owner(&p->hud_source, o, v, e)) return false;
+        p->has_hud = true; p->health = v->health; p->armor = v->armor;
+    }
+    const qa_application_camera_view *camera = external->declared_camera;
+    if (camera) {
+        const qa_application_qc_client_presentation *source = external->declared_view;
+        if (!source || !source->view || !qa_actor_id_equal(camera->actor, o->player->actor) ||
+            !qa_actor_id_equal(source->recipient, o->player->actor) ||
+            !qa_application_qc_client_presentation_current(o->app, source) || !presentation_owner(&p->view_source, o, source, e)) return false;
+        p->has_view = true; p->origin = qa_vec_add(camera->origin, qa_v3(camera->view_offset.x, camera->view_offset.y, 0));
+        p->angles = camera->angles; p->view_height = camera->view_offset.z;
+    }
+    return current(o, e);
 }
 
-static bool native_inventory_presentation(application_unified_json *j,player_observation *o,
-    const application_native_q2_inventory_presentation *p,qa_error *e)
+static bool native_inventory_presentation(qa_unified_inventory_presentation *out,
+    player_observation *o, const application_native_q2_inventory_presentation *p, qa_error *e)
 {
-    if(p->kind==APPLICATION_NATIVE_INVENTORY_PRESENTATION_NONE) return true;
-    application_provider *owner=NULL;
-    for(size_t i=0;i<o->app->provider_count;++i) if(o->app->providers[i]->owner==p->source) { owner=o->app->providers[i]; break; }
+    if (p->kind == APPLICATION_NATIVE_INVENTORY_PRESENTATION_NONE) return true;
+    application_provider *owner = NULL;
+    for (size_t i = 0; i < o->app->provider_count; ++i)
+        if (o->app->providers[i]->owner == p->source) { owner = o->app->providers[i]; break; }
     application_q3_component_publication component = {0};
     const qa_product *product = owner ? owner->product : NULL;
-    if (!owner) {
-        if (!application_q3_components_event_source_read(o->app,p->source,&component,e) ||
-            !component.descriptor || !component.product || !component.content || !current(o,e)) return false;
+    if (owner) { if (!provider(&out->source, o, owner, e)) return false; }
+    else {
+        if (!application_q3_components_event_source_read(o->app, p->source, &component, e) ||
+            !component.descriptor || !component.product || !component.content || !current(o, e)) return false;
         product = component.product;
+        if (!application_unified_frame_string(o->lease, &out->source.provider, component.descriptor->selection.instance, e) ||
+            !application_unified_frame_string(o->lease, &out->source.content, product->identity, e)) return false;
     }
-    if(!text(j,",\"presentation\":{\"source\":",e)) return false;
-    if (owner) { if (!provider(j,owner,e)) return false; }
-    else if (!text(j,"{\"provider\":",e) || !string(j,component.descriptor->selection.instance,e) ||
-        !text(j,",\"content\":",e) || !string(j,product->identity,e) || !text(j,"}",e)) return false;
-    if(!text(j,",\"kind\":",e)) return false;
-    if(p->kind==APPLICATION_NATIVE_INVENTORY_PRESENTATION_WEAPON||p->kind==APPLICATION_NATIVE_INVENTORY_PRESENTATION_AMMUNITION)
-        return string(j,p->kind==APPLICATION_NATIVE_INVENTORY_PRESENTATION_WEAPON?"weapon":"ammunition",e)&&
-            text(j,",\"weapon\":",e)&&item(j,o,p->weapon,e)&&text(j,"}",e);
-    if(p->kind!=APPLICATION_NATIVE_INVENTORY_PRESENTATION_ITEM)
-        return application_fail(e,QA_ERROR_FORMAT,"Native inventory presentation lost its declared kind");
-    if(!string(j,"item",e)||!text(j,",\"icon\":",e)) return false;
-    if(p->icon_kind==APPLICATION_NATIVE_INVENTORY_ICON_NONE) return text(j,"null}",e);
-    if(!p->icon||!product) return application_fail(e,QA_ERROR_FORMAT,"Native inventory icon lost its retained source metadata");
-    if(p->icon_kind==APPLICATION_NATIVE_INVENTORY_ICON_SHADER)
-        return text(j,"{\"kind\":\"shader\",\"content\":",e)&&string(j,product->identity,e)&&
-            text(j,",\"name\":",e)&&string(j,p->icon,e)&&text(j,"}}",e);
-    if(p->icon_kind!=APPLICATION_NATIVE_INVENTORY_ICON_IMAGE&&p->icon_kind!=APPLICATION_NATIVE_INVENTORY_ICON_WAD_PICTURE)
-        return application_fail(e,QA_ERROR_FORMAT,"Native inventory icon lost its actual resource kind");
-    if(!text(j,"{\"kind\":",e)||!string(j,p->icon_kind==APPLICATION_NATIVE_INVENTORY_ICON_IMAGE?"image":"wad-picture",e)||
-        !text(j,",\"resource\":{\"content\":",e)||!string(j,product->identity,e)||
-        !text(j,",\"path\":",e)||!string(j,p->icon,e)||!text(j,"}",e)) return false;
-    if(p->icon_kind==APPLICATION_NATIVE_INVENTORY_ICON_WAD_PICTURE&&
-        (!p->lump||!text(j,",\"lump\":",e)||!string(j,p->lump,e))) return false;
-    return text(j,"}}",e);
+    out->kind = (qa_unified_inventory_presentation_kind)p->kind;
+    if (p->kind == APPLICATION_NATIVE_INVENTORY_PRESENTATION_WEAPON || p->kind == APPLICATION_NATIVE_INVENTORY_PRESENTATION_AMMUNITION)
+        return item(&out->weapon, o, p->weapon, e);
+    switch (p->icon_kind) {
+    case APPLICATION_NATIVE_INVENTORY_ICON_NONE: out->icon_kind = QA_UNIFIED_INVENTORY_ICON_NONE; break;
+    case APPLICATION_NATIVE_INVENTORY_ICON_IMAGE: out->icon_kind = QA_UNIFIED_INVENTORY_ICON_IMAGE; break;
+    case APPLICATION_NATIVE_INVENTORY_ICON_WAD_PICTURE: out->icon_kind = QA_UNIFIED_INVENTORY_ICON_WAD_PICTURE; break;
+    case APPLICATION_NATIVE_INVENTORY_ICON_SHADER: out->icon_kind = QA_UNIFIED_INVENTORY_ICON_SHADER; break;
+    }
+    if (p->icon_kind == APPLICATION_NATIVE_INVENTORY_ICON_NONE) return true;
+    return application_unified_frame_string(o->lease, &out->content, product->identity, e) &&
+        application_unified_frame_string(o->lease, &out->path, p->icon, e) &&
+        application_unified_frame_string(o->lease, &out->lump, p->lump, e);
 }
 
-static bool ui_gear(application_unified_json *j, player_observation *o,
-    bool comma, size_t ordinal, qa_error *e)
+static bool ui_item(qa_unified_player_ui *out, player_observation *o,
+    qa_item_id id, const char *label, bool weapon, int64_t ordinal,
+    bool owned, bool has_ammo, bool finite, double value, double warning, qa_error *e)
 {
-    if (!o->has_gear) return true;
-    return (!comma || text(j, ",", e)) && text(j, "{\"id\":", e) && item(j, o, o->gear.item, e) &&
-        text(j, ",\"label\":", e) && string(j, o->gear.label, e) &&
-        text(j, ",\"kind\":\"weapon\",\"sourceOrdinal\":", e) && application_unified_json_natural(j, ordinal, e) &&
-        text(j, ",\"owned\":", e) && boolean(j, count(o, o->gear.item) > 0, e) &&
-        text(j, ",\"hasAmmo\":true,\"count\":null,\"warningCount\":0}", e);
+    qa_unified_ui_item *v = out->items + out->item_count++;
+    *v = (qa_unified_ui_item){.kind = weapon ? QA_UNIFIED_UI_WEAPON : QA_UNIFIED_UI_POWERUP,
+        .source_ordinal = ordinal, .owned = owned, .has_ammo = has_ammo, .has_count = finite,
+        .count = value, .warning_count = warning};
+    return item(&v->id, o, id, e) && application_unified_frame_string(o->lease, &v->label, label, e);
+}
+static bool ui_gear(qa_unified_player_ui *out, player_observation *o, size_t ordinal, qa_error *e)
+{
+    return !o->has_gear || ui_item(out, o, o->gear.item, o->gear.label, true, (int64_t)ordinal,
+        count(o, o->gear.item) > 0, true, false, 0, 0, e);
 }
 
-static bool ui_items(application_unified_json *j, player_observation *o, qa_error *e)
+static bool ui_items(qa_unified_player_ui *out, player_observation *o, qa_error *e)
 {
+    size_t capacity = native_original(o) ? 0 : qc_arsenal(o) ? o->qc_binding_count :
+        catalog_q3(o) ? o->q3_weapon_count : o->definition_count;
+    if (o->has_gear) {
+        if (capacity == SIZE_MAX) return application_fail(e, QA_ERROR_MEMORY, "Unified UI item extent overflows");
+        ++capacity;
+    }
+    out->items = capacity ? application_unified_frame_alloc(o->lease, capacity, sizeof(*out->items), e) : NULL;
+    if (capacity && !out->items) return false;
     /* Original API3/API2023 PlayerUI exposes inventory separately from its
      * public PS. Selected constituents below supply their complete UI roster. */
-    if (native_original(o)) return text(j, "[", e) && ui_gear(j, o, false, 0, e) && text(j, "]", e);
-    if (!text(j, "[", e)) return false;
+    if (native_original(o)) return ui_gear(out, o, 0, e);
     if (qc_arsenal(o)) {
         const qa_application_qc_weapon_ui_binding *active = qc_active(o);
         const char *ammo = qc_ammo_item(o);
-        bool first = true;
         for (size_t i = 0; i < o->qc_binding_count; ++i) {
             const qa_application_qc_weapon_ui_binding *w = o->qc_bindings + i;
             if (o->has_gear && w->item == o->gear.item) continue;
-            if ((!first && !text(j, ",", e)) || !text(j, "{\"id\":", e) || !item(j, o, w->item, e) ||
-                !text(j, ",\"label\":", e) || !string(j, w->label, e) || !text(j, ",\"kind\":\"weapon\",\"sourceOrdinal\":", e) ||
-                !number(j, w->impulse, e) || !text(j, ",\"owned\":", e) || !boolean(j, (qc_weapons(o)->items & w->bit) != 0, e) ||
-                !text(j, ",\"hasAmmo\":", e) || !boolean(j, w != active || !ammo || o->qc_ammo > 0, e) ||
-                !text(j, ",\"count\":", e) || !(w == active && ammo ? number(j, o->qc_ammo, e) : text(j, "null", e)) ||
-                !text(j, ",\"warningCount\":0}", e)) return false;
-            first = false;
+            if (!ui_item(out, o, w->item, w->label, true, w->impulse,
+                (qc_weapons(o)->items & w->bit) != 0, w != active || !ammo || o->qc_ammo > 0,
+                w == active && ammo, o->qc_ammo, 0, e)) return false;
         }
-        return ui_gear(j, o, !first, o->qc_binding_count, e) && text(j, "]", e);
+        return ui_gear(out, o, o->qc_binding_count, e);
     }
     if (catalog_q3(o)) {
-        bool first = true;
         for (size_t i = 0; i < o->q3_weapon_count; ++i) {
             const application_q3_catalog_weapon *w = o->q3_weapons + i;
             if (o->has_gear && w->item == o->gear.item) continue;
             double ammo = w->ammo ? count(o, w->ammo) : 0;
-            if ((!first && !text(j, ",", e)) || !text(j, "{\"id\":", e) || !item(j, o, w->item, e) ||
-                !text(j, ",\"label\":", e) || !string(j, w->label, e) || !text(j, ",\"kind\":\"weapon\",\"sourceOrdinal\":", e) ||
-                !number(j, w->weapon, e) || !text(j, ",\"owned\":", e) || !boolean(j, count(o, w->item) > 0, e) ||
-                !text(j, ",\"hasAmmo\":", e) || !boolean(j, !w->ammo ||
-                    (o->q3_ui_owner == o->primary ? ammo != 0 : ammo > 0), e) || !text(j, ",\"count\":", e) ||
-                !(w->ammo ? number(j, ammo, e) : text(j, "null", e)) || !text(j, ",\"warningCount\":0}", e)) return false;
-            first = false;
+            if (!ui_item(out, o, w->item, w->label, true, w->weapon,
+                count(o, w->item) > 0, !w->ammo || (o->q3_ui_owner == o->primary ? ammo != 0 : ammo > 0),
+                w->ammo != 0, ammo, 0, e)) return false;
         }
-        return ui_gear(j, o, !first, o->q3_weapon_count, e) && text(j, "]", e);
+        return ui_gear(out, o, o->q3_weapon_count, e);
     }
-    bool first = true;
     size_t base_count = 0;
     for (size_t i = 0; i < o->definition_count; ++i) {
         const qa_item_definition *d = o->definitions + i;
@@ -790,74 +763,64 @@ static bool ui_items(application_unified_json *j, player_observation *o, qa_erro
                 if (!found) return application_fail(e, QA_ERROR_NOT_FOUND, "Q3 UI weapon lacks its actual source catalog row");
             }
         }
-        if ((!first && !text(j, ",", e)) || !text(j, "{\"id\":", e) || !item(j, o, d->item, e) ||
-            !text(j, ",\"label\":", e) || !string(j, label, e) || !text(j, ",\"kind\":", e) ||
-            !string(j, d->weapon ? "weapon" : "powerup", e) || !text(j, ",\"sourceOrdinal\":", e) ||
-            !application_unified_json_natural(j, ordinal, e) || !text(j, ",\"owned\":", e) || !boolean(j, owned > 0, e) ||
-            !text(j, ",\"hasAmmo\":", e) || !boolean(j, has_ammo, e) || !text(j, ",\"count\":", e) ||
-            !(finite ? number(j, ammo, e) : text(j, "null", e)) || !text(j, ",\"warningCount\":", e) ||
-            !number(j, warning, e) || !text(j, "}", e)) return false;
-        first = false;
+        if (!ui_item(out, o, d->item, label, d->weapon, (int64_t)ordinal, owned > 0,
+            has_ammo, finite, ammo, warning, e)) return false;
     }
-    return ui_gear(j, o, !first, base_count, e) && text(j, "]", e);
+    return ui_gear(out, o, base_count, e);
 }
 
-static bool weapon_status(application_unified_json *j, player_observation *o, qa_error *e)
+static bool weapon_status(qa_unified_player_ui *out, player_observation *o, qa_error *e)
 {
+    qa_unified_weapon_status value = {0};
+    application_provider *owner = NULL;
+    qa_item_id selected = 0, ammo = 0;
+    const char *label = NULL, *direct_item = NULL, *direct_ammo = NULL;
     if (o->has_gear && o->gear.active) {
-        application_provider *owner = NULL;
         for (size_t i = 0; i < o->app->provider_count; ++i)
             if (o->app->providers[i]->owner == o->gear.source.owner) { owner = o->app->providers[i]; break; }
-        return text(j, "{\"source\":", e) && provider(j, owner, e) && text(j, ",\"item\":", e) &&
-            item(j, o, o->gear.item, e) && text(j, ",\"label\":", e) && string(j, o->gear.label, e) &&
-            text(j, ",\"ammo\":{\"kind\":\"unmetered\"}}", e);
-    }
-    if (catalog_q3(o)) {
+        selected = o->gear.item; label = o->gear.label;
+    } else if (catalog_q3(o)) {
         const application_q3_catalog_weapon *w = q3_active(o);
-        if (!w) return text(j, "null", e);
-        double ammo = w->ammo ? count(o, w->ammo) : -1;
-        if (!text(j, "{\"source\":", e) || !provider(j, o->q3_ui_owner, e) || !text(j, ",\"item\":", e) ||
-            !item(j, o, w->item, e) || !text(j, ",\"label\":", e) || !string(j, w->label, e) || !text(j, ",\"ammo\":", e)) return false;
-        if (!w->ammo || (o->q3_ui_owner == o->primary && ammo == -1))
-            return text(j, "{\"kind\":\"unmetered\"}}", e);
-        return text(j, "{\"kind\":\"finite\",\"item\":", e) && item(j, o, w->ammo, e) && text(j, ",\"count\":", e) &&
-            number(j, ammo, e) && text(j, ",\"hasAmmoToStart\":", e) && boolean(j, ammo > 0, e) && text(j, ",\"low\":false}}", e);
-    }
-    if (native_original(o)) {
+        if (!w) return true;
+        owner = o->q3_ui_owner; selected = w->item; label = w->label;
+        double amount = w->ammo ? count(o, w->ammo) : -1;
+        if (w->ammo && !(o->q3_ui_owner == o->primary && amount == -1)) {
+            value.finite = true; ammo = w->ammo; value.count = amount; value.has_ammo_to_start = amount > 0;
+        }
+    } else if (native_original(o)) {
         const qa_q2_weapon_definition *w = o->native_weapon;
-        if (!w) return text(j, "null", e);
-        if (!text(j, "{\"source\":", e) || !provider(j, o->primary, e) ||
-            !text(j, ",\"item\":", e) || !string(j, w->item, e) ||
-            !text(j, ",\"label\":", e) || !string(j, qa_q2_weapon_display_name(w->weapon), e) ||
-            !text(j, ",\"ammo\":", e)) return false;
-        if (!w->ammo) return text(j, "{\"kind\":\"unmetered\"}}", e);
-        return text(j, "{\"kind\":\"finite\",\"item\":", e) && string(j, w->ammo, e) &&
-            text(j, ",\"count\":", e) && number(j, o->q2.stats[3], e) &&
-            text(j, ",\"hasAmmoToStart\":", e) && boolean(j, o->q2.stats[3] >= w->quantity, e) &&
-            text(j, ",\"low\":", e) && boolean(j, o->q2.stats[3] <= w->warning, e) && text(j, "}}", e);
+        if (!w) return true;
+        owner = o->primary; direct_item = w->item; label = qa_q2_weapon_display_name(w->weapon);
+        if (w->ammo) {
+            value.finite = true; direct_ammo = w->ammo; value.count = o->q2.stats[3];
+            value.has_ammo_to_start = value.count >= w->quantity; value.low = value.count <= w->warning;
+        }
+    } else if (qc_arsenal(o)) return true;
+    else {
+        qa_application_equipment_view *v = &o->equipment;
+        if (!v->has_weapon_status || !v->item) return true;
+        owner = o->arsenal;
+        if (v->equipment_slot) {
+            owner = NULL;
+            for (size_t i = 0; i < o->app->provider_count; ++i)
+                if (o->app->providers[i]->owner == v->provider) { owner = o->app->providers[i]; break; }
+        }
+        selected = v->item; label = o->equipment_label;
+        value.finite = v->finite_ammo;
+        if (value.finite) {
+            ammo = v->ammo; value.count = v->ammo_count;
+            value.has_ammo_to_start = v->has_ammo_to_start; value.low = v->low_ammo;
+        }
     }
-    if (qc_arsenal(o))
-        return text(j, "null", e);
-    qa_application_equipment_view *v = &o->equipment;
-    if (!v->has_weapon_status || !v->item) return text(j, "null", e);
-    application_provider *owner = o->arsenal;
-    if (v->equipment_slot) {
-        owner = NULL;
-        for (size_t i = 0; i < o->app->provider_count; ++i)
-            if (o->app->providers[i]->owner == v->provider) { owner = o->app->providers[i]; break; }
-    }
-    if (!text(j, "{\"source\":", e) || !provider(j, owner, e) ||
-        !text(j, ",\"item\":", e) || !item(j, o, v->item, e) || !text(j, ",\"label\":", e) ||
-        !string(j, o->equipment_label, e) || !text(j, ",\"ammo\":", e)) return false;
-    if (!v->finite_ammo) {
-        if (!text(j, "{\"kind\":\"unmetered\"}", e)) return false;
-    } else if (!text(j, "{\"kind\":\"finite\",\"item\":", e) || !item(j, o, v->ammo, e) ||
-        !text(j, ",\"count\":", e) || !number(j, v->ammo_count, e) ||
-        !text(j, ",\"hasAmmoToStart\":", e) || !boolean(j, v->has_ammo_to_start, e) ||
-        !text(j, ",\"low\":", e) || !boolean(j, v->low_ammo, e) || !text(j, "}", e)) return false;
-    return text(j, "}", e);
+    out->weapon_status = application_unified_frame_alloc(o->lease, 1, sizeof(*out->weapon_status), e);
+    if (!out->weapon_status) return application_fail(e, QA_ERROR_MEMORY, "Retaining actual selected weapon status");
+    *out->weapon_status = value;
+    qa_unified_weapon_status *v = out->weapon_status;
+    return provider(&v->source, o, owner, e) &&
+        application_unified_frame_string(o->lease, &v->item, direct_item ? direct_item : selected ? identity(o, selected) : NULL, e) &&
+        application_unified_frame_string(o->lease, &v->label, label, e) &&
+        application_unified_frame_string(o->lease, &v->ammo_item, direct_ammo ? direct_ammo : ammo ? identity(o, ammo) : NULL, e);
 }
-
 static const char *original_q3_warning(player_observation *o)
 {
     if (!o->q3_standard) return "none";
@@ -901,112 +864,119 @@ static const char *arsenal_warning(player_observation *o)
     return "none";
 }
 
-static bool q1_team_face(application_unified_json *j,player_observation *o,qa_error *e)
+static bool q1_team_face(qa_unified_player_ui *out, player_observation *o, qa_error *e)
 {
-    if (o->source->family!=QA_GAME_Q1 || strcmp(o->primary->product->campaign,"rogue")) return true;
-    qa_cvars *cvars=qa_application_network_q1_cvars(o->app,o->primary->owner,e);
+    if (o->source->family != QA_GAME_Q1 || strcmp(o->primary->product->campaign, "rogue")) return true;
+    qa_cvars *cvars = qa_application_network_q1_cvars(o->app, o->primary->owner, e);
     if (!cvars) return false;
-    const qa_cvar_view *teamplay=qa_cvars_find(cvars,"teamplay");
-    if (!teamplay || !qa_q1_rogue_team_face_active(o->source->max_clients,teamplay->number)) return true;
-    qa_application_network_q1_status_player players[255]; size_t count=0;
-    if (!qa_application_network_q1_status(o->app,o->primary->owner,players,&count,e) || !current(o,e)) return false;
-    for (size_t i=0;i<count;++i) if (qa_actor_id_equal(players[i].actor,o->player->actor))
-        return text(j,",\"q1TeamFace\":{\"content\":",e) && string(j,o->primary->product->identity,e) &&
-            text(j,",\"colors\":",e) && number(j,players[i].colors,e) &&
-            text(j,",\"frags\":",e) && number(j,players[i].frags,e) && text(j,"}",e);
-    return application_fail(e,QA_ERROR_ARGUMENT,"Rogue team face lost its physical Source player");
+    const qa_cvar_view *teamplay = qa_cvars_find(cvars, "teamplay");
+    if (!teamplay || !qa_q1_rogue_team_face_active(o->source->max_clients, teamplay->number)) return true;
+    qa_application_network_q1_status_player players[255]; size_t count = 0;
+    if (!qa_application_network_q1_status(o->app, o->primary->owner, players, &count, e) || !current(o, e)) return false;
+    for (size_t i = 0; i < count; ++i) if (qa_actor_id_equal(players[i].actor, o->player->actor)) {
+        out->q1_team_face = application_unified_frame_alloc(o->lease, 1, sizeof(*out->q1_team_face), e);
+        if (!out->q1_team_face) return application_fail(e, QA_ERROR_MEMORY, "Retaining actual Rogue team face");
+        out->q1_team_face->colors = players[i].colors; out->q1_team_face->frags = players[i].frags;
+        return application_unified_frame_string(o->lease, &out->q1_team_face->content, o->primary->product->identity, e);
+    }
+    return application_fail(e, QA_ERROR_ARGUMENT, "Rogue team face lost its physical Source player");
 }
-static bool ui(application_unified_json *j, player_observation *o, qa_error *e)
+static qa_unified_arsenal_warning warning_kind(const char *value)
 {
-    if (!text(j, "{\"health\":", e) || !number(j, o->has_q2 ? (double)o->q2.stats[1] :
-        o->has_q3 && o->primary->kind != APPLICATION_PROVIDER_Q3 ? (double)o->q3.stats[0] :
-        (double)o->combat.health, e) ||
-        !text(j, ",\"armor\":", e) || !armor(j, o, e) || !text(j, ",\"inventory\":", e) || !inventory(j, o, e) ||
-        !text(j, ",\"powerups\":", e) || !timers(j, o, e) || !text(j, ",\"items\":", e) || !ui_items(j, o, e) ||
-        !text(j, ",\"weaponStatus\":", e) || !weapon_status(j, o, e) || !text(j, ",\"arsenalWarning\":", e)) return false;
-    bool qc = qc_arsenal(o);
+    return !strcmp(value, "empty") ? QA_UNIFIED_ARSENAL_EMPTY :
+        !strcmp(value, "low") ? QA_UNIFIED_ARSENAL_LOW : QA_UNIFIED_ARSENAL_NONE;
+}
+static bool native_inventory_item(qa_unified_native_inventory *out, player_observation *o,
+    qa_item_id id, const char *label, double amount, qa_error *e)
+{
+    qa_unified_native_inventory_item *row = out->items + out->item_count++;
+    row->count = amount;
+    return item(&row->item, o, id, e) && application_unified_frame_string(o->lease, &row->label, label, e);
+}
+static bool ui(qa_unified_player_ui *out, player_observation *o, qa_error *e)
+{
+    out->health = o->has_q2 ? (double)o->q2.stats[1] :
+        o->has_q3 && o->primary->kind != APPLICATION_PROVIDER_Q3 ? (double)o->q3.stats[0] : (double)o->combat.health;
+    if (!armor(&out->armor, o, e) || !inventory(out, o, e) || !timers(out, o, e) ||
+        !ui_items(out, o, e) || !weapon_status(out, o, e)) return false;
+    const char *active = NULL, *ammo = NULL;
     if (o->has_gear && o->gear.active) {
-        if (!string(j, arsenal_warning(o), e) || !text(j, ",\"activeWeapon\":", e) ||
-            !item(j, o, o->gear.item, e) || !text(j, ",\"ammo\":null", e)) return false;
+        out->arsenal_warning = warning_kind(arsenal_warning(o)); active = identity(o, o->gear.item);
     } else if (catalog_q3(o)) {
         const application_q3_catalog_weapon *w = q3_active(o);
-        if (!string(j, original_q3_warning(o), e) || !text(j, ",\"activeWeapon\":", e) ||
-            !item(j, o, o->q3_active, e) || !text(j, ",\"ammo\":", e)) return false;
-        if (w && w->ammo) {
-            if (!text(j, "{\"item\":", e) || !item(j, o, w->ammo, e) || !text(j, ",\"count\":", e) ||
-                !number(j, count(o, w->ammo), e) || !text(j, "}", e)) return false;
-        } else if (!text(j, "null", e)) return false;
+        out->arsenal_warning = warning_kind(original_q3_warning(o)); active = o->q3_active ? identity(o, o->q3_active) : NULL;
+        if (w && w->ammo) { ammo = identity(o, w->ammo); out->ammo_count = count(o, w->ammo); }
     } else if (native_original(o)) {
         const qa_q2_weapon_definition *w = o->native_weapon;
-        if (!text(j, "\"none\",\"activeWeapon\":", e) ||
-            !(w ? string(j, w->item, e) : text(j, "null", e)) || !text(j, ",\"ammo\":", e)) return false;
-        if (w && w->ammo) {
-            if (!text(j, "{\"item\":", e) || !string(j, w->ammo, e) || !text(j, ",\"count\":", e) ||
-                !number(j, o->q2.stats[3], e) || !text(j, "}", e)) return false;
-        } else if (!text(j, "null", e)) return false;
-    } else if (qc) {
-        const qa_application_qc_weapon_ui_binding *active = qc_active(o);
-        const char *ammo = qc_ammo_item(o);
-        if (!string(j, "none", e) || !text(j, ",\"activeWeapon\":", e) || !item(j, o, active ? active->item : 0, e) ||
-            !text(j, ",\"ammo\":", e)) return false;
-        if (ammo) {
-            if (!text(j, "{\"item\":", e) || !string(j, ammo, e) || !text(j, ",\"count\":", e) ||
-                !number(j, o->qc_ammo, e) || !text(j, "}", e)) return false;
-        } else if (!text(j, "null", e)) return false;
+        if (w) { active = w->item; ammo = w->ammo; out->ammo_count = o->q2.stats[3]; }
+    } else if (qc_arsenal(o)) {
+        const qa_application_qc_weapon_ui_binding *w = qc_active(o);
+        active = w ? identity(o, w->item) : NULL; ammo = qc_ammo_item(o); out->ammo_count = o->qc_ammo;
     } else {
-        static const char *const warnings[] = {"none", "low", "empty"};
-        if ((unsigned)o->equipment.warning >= sizeof(warnings) / sizeof(warnings[0]))
-            return application_fail(e, QA_ERROR_FORMAT, "Unified arsenal lost its genuine warning kind");
-        if (!string(j, warnings[o->equipment.warning], e) || !text(j, ",\"activeWeapon\":", e) ||
-            !item(j, o, o->equipment.item, e) || !text(j, ",\"ammo\":", e)) return false;
-        if (o->equipment.ammo) {
-            if (!text(j, "{\"item\":", e) || !item(j, o, o->equipment.ammo, e) ||
-                !text(j, ",\"count\":", e) || !number(j, o->equipment.ammo_count, e) || !text(j, "}", e)) return false;
-        } else if (!text(j, "null", e)) return false;
+        out->arsenal_warning = (qa_unified_arsenal_warning)o->equipment.warning;
+        active = o->equipment.item ? identity(o, o->equipment.item) : NULL;
+        ammo = o->equipment.ammo ? identity(o, o->equipment.ammo) : NULL;
+        out->ammo_count = o->equipment.ammo_count;
     }
-    if (o->arsenal != o->primary && !text(j, ",\"selectedArsenal\":true", e)) return false;
+    out->has_ammo = ammo != NULL; out->selected_arsenal = o->arsenal != o->primary;
+    if (!application_unified_frame_string(o->lease, &out->active_weapon, active, e) ||
+        !application_unified_frame_string(o->lease, &out->ammo_item, ammo, e)) return false;
     if (o->primary->kind == APPLICATION_PROVIDER_NATIVE && o->primary->state.native.q2_engine) {
-        if(o->primary->state.native.q2_engine->inventory_scanner) {
-            application_native_q2_inventory_readout mixed={0};
-            if(!application_native_q2_inventory_mixed_read(o->primary,o->ui_actor,&mixed,e)||!current(o,e)) {
+        struct application_native_q2 *engine = o->primary->state.native.q2_engine;
+        if (engine->inventory_scanner) {
+            application_native_q2_inventory_readout mixed = {0};
+            if (!application_native_q2_inventory_mixed_read(o->primary, o->ui_actor, &mixed, e) || !current(o, e)) {
                 application_native_q2_inventory_readout_free(&mixed); return false;
             }
-            bool ok=true;
-            if(mixed.present) {
-                ok=text(j,",\"nativeInventory\":{\"items\":[",e);
-                for(size_t i=0;ok&&i<mixed.count;++i) ok=(!i||text(j,",",e))&&text(j,"{\"item\":",e)&&item(j,o,mixed.rows[i].item,e)&&
-                    text(j,",\"label\":",e)&&string(j,mixed.rows[i].label,e)&&text(j,",\"count\":",e)&&number(j,mixed.rows[i].count,e)&&text(j,"}",e);
-                if(ok) ok=text(j,"],\"selected\":",e)&&item(j,o,mixed.selected,e)&&
-                    native_inventory_presentation(j,o,&mixed.selected_presentation,e)&&text(j,"}",e);
+            bool ok = true;
+            if (mixed.present) {
+                out->native_inventory = application_unified_frame_alloc(o->lease, 1, sizeof(*out->native_inventory), e);
+                if (!out->native_inventory) ok = application_fail(e, QA_ERROR_MEMORY, "Retaining native inventory");
+                qa_unified_native_inventory *v = out->native_inventory;
+                if (ok && mixed.count) {
+                    v->items = application_unified_frame_alloc(o->lease, mixed.count, sizeof(*v->items), e);
+                    if (!v->items) ok = application_fail(e, QA_ERROR_MEMORY, "Retaining native inventory rows");
+                }
+                for (size_t i = 0; ok && i < mixed.count; ++i)
+                    ok = native_inventory_item(v, o, mixed.rows[i].item, mixed.rows[i].label, mixed.rows[i].count, e);
+                if (ok) ok = item(&v->selected, o, mixed.selected, e) &&
+                    native_inventory_presentation(&v->presentation, o, &mixed.selected_presentation, e);
             }
             application_native_q2_inventory_readout_free(&mixed);
-            if(!ok) return false;
-        } else if(o->primary->state.native.q2_engine->primary_inventory) {
-        application_native_q2_ui_inventory native = {0};
-        if (!application_native_q2_inventory_ui_read(o->primary, o->ui_actor, &native, e) || !current(o, e)) {
-            application_native_q2_inventory_ui_free(&native); return false;
-        }
-        bool ok = text(j, ",\"nativeInventory\":{\"items\":[", e);
-        for (size_t i = 0; ok && i < native.count; ++i)
-            ok = (!i || text(j, ",", e)) && text(j, "{\"item\":", e) && item(j, o, native.items[i].item, e) &&
-                text(j, ",\"label\":", e) && string(j, native.items[i].label, e) &&
-                text(j, ",\"count\":", e) && number(j, native.items[i].count, e) && text(j, "}", e);
-        if (ok) ok = text(j, "],\"selected\":", e) && item(j, o, native.selected, e) && text(j, "}", e);
-        application_native_q2_inventory_ui_free(&native);
-        if (!ok) return false;
+            if (!ok) return false;
+        } else if (engine->primary_inventory) {
+            application_native_q2_ui_inventory native = {0};
+            if (!application_native_q2_inventory_ui_read(o->primary, o->ui_actor, &native, e) || !current(o, e)) {
+                application_native_q2_inventory_ui_free(&native); return false;
+            }
+            out->native_inventory = application_unified_frame_alloc(o->lease, 1, sizeof(*out->native_inventory), e);
+            bool ok = out->native_inventory != NULL;
+            if (!ok) application_fail(e, QA_ERROR_MEMORY, "Retaining native inventory");
+            qa_unified_native_inventory *v = out->native_inventory;
+            if (ok && native.count) {
+                v->items = application_unified_frame_alloc(o->lease, native.count, sizeof(*v->items), e);
+                if (!v->items) ok = application_fail(e, QA_ERROR_MEMORY, "Retaining native inventory rows");
+            }
+            for (size_t i = 0; ok && i < native.count; ++i)
+                ok = native_inventory_item(v, o, native.items[i].item, native.items[i].label, native.items[i].count, e);
+            if (ok) ok = item(&v->selected, o, native.selected, e);
+            application_native_q2_inventory_ui_free(&native);
+            if (!ok) return false;
         }
     }
-    return q1_team_face(j,o,e) && text(j, "}", e) && current(o, e);
+    return q1_team_face(out, o, e) && current(o, e);
 }
 
 bool application_unified_player_values(qa_application *app, const application_unified_source *source,
     qa_net_client_id client, const qa_unified_session_player *player,
-    const application_unified_player_external *external, qa_unified_document **out, qa_error *error)
+    const application_unified_player_external *external, qa_unified_frame *frame,
+    const qa_inventory_entry *entries, size_t entry_count, qa_error *error)
 {
-    if (!app || !source || !player || !out || !application_unified_source_current(app, source) ||
+    if (!app || !source || !player || !frame || frame->player || !application_unified_source_current(app, source) ||
         !application_unified_player_current(app, client, player))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified player requires its actual returned Source recipient");
-    player_observation o = {.app = app, .source = source, .player = player, .external = external, .client = client,
+    player_observation o = {.app = app, .lease = frame->lease, .recipient_inventory = entries,
+        .recipient_inventory_count = entry_count, .recipient_ui_inventory = frame->inventories->entries, .source = source, .player = player, .external = external, .client = client,
         .ui_actor = player->actor, .actors_revision = qa_actors_revision(qa_session_actors(source->session))};
     o.primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
     if (!o.primary || o.primary->owner != source->owner)
@@ -1034,7 +1004,9 @@ bool application_unified_player_values(qa_application *app, const application_un
     o.arsenal = application_provider_for(app, o.ui_actor, QA_ROLE_ARSENAL, "");
     if (!o.arsenal || !o.arsenal->constructed || !o.arsenal->attached || o.arsenal->close_pending || !o.arsenal->product)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Unified UI has no actual selected arsenal owner");
-    application_unified_json json = {0};
+    qa_unified_frame_player *out = application_unified_frame_alloc(o.lease, 1, sizeof(*out), error);
+    if (!out) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Unified player state");
+    frame->player = out; out->actor = player->actor; out->ui_actor = o.ui_actor;
     bool ok = current(&o, error) && qa_combat_read(app->combat, o.ui_actor, &o.combat, error) &&
         current(&o, error) && copy_inventory(&o, error);
     if (ok && o.primary->kind == APPLICATION_PROVIDER_QC) ok = qc_read(&o, error);
@@ -1089,23 +1061,11 @@ bool application_unified_player_values(qa_application *app, const application_un
         current(&o, error) && qa_application_equipment_current(app, &o.equipment);
     if (ok && !qc && !source_q3 && !gear) {
         o.has_equipment = true;
-        if (o.equipment.label) {
-            size_t length = strlen(o.equipment.label);
-            o.equipment_label = malloc(length + 1);
-            if (!o.equipment_label) ok = application_fail(error, QA_ERROR_MEMORY, "Copying genuine weapon status label");
-            else memcpy(o.equipment_label, o.equipment.label, length + 1);
-        }
+        if (o.equipment.label)
+            ok = application_unified_frame_string(o.lease, &o.equipment_label, o.equipment.label, error);
     }
-    if (ok) ok = text(&json, "{\"view\":", error) && view(&json, &o, error) && text(&json, ",\"ui\":", error) &&
-        ui(&json, &o, error) && client_presentation(&json, &o, error) && text(&json, "}", error) && current(&o, error);
-    qa_unified_document *document = NULL;
-    if (ok) ok = qa_unified_document_create(QA_UNIFIED_CHECKPOINT,
-        (qa_bytes){json.bytes.data, json.bytes.size}, &document, error) && current(&o, error);
-    if (ok) *out = document;
-    else qa_unified_document_destroy(document);
-    application_unified_json_dispose(&json);
-    for (size_t i = 0; i < o.definition_count; ++i) free((char *)o.definitions[i].label);
-    free(o.definitions); free(o.inventory); free(o.equipment_label);
+    if (ok) ok = view(&out->view, &o, error) && ui(&out->ui, &o, error) &&
+        client_presentation(out, &o, error) && current(&o, error);
     q3_catalog_clear(&o);
     qc_bindings_clear(&o);
     return ok;

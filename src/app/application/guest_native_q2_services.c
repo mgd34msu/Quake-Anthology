@@ -100,6 +100,8 @@ static bool config_set(void *opaque, int32_t index, const char *value, qa_error 
     memcpy(copy, value, size + 1);
     free(engine->configstrings[index]); engine->configstrings[index] = copy;
     ++engine->config_revision;
+    uint32_t styles = engine->resource_base[QA_NATIVE_HOST_IMAGE] + engine->resource_limit[QA_NATIVE_HOST_IMAGE];
+    if ((uint32_t)index >= styles && (uint32_t)index - styles < 256) ++engine->lightstyle_revision;
     if (!engine->map_ready) return true;
     qa_q2_server_event event = {.kind = QA_Q2_SVC_CONFIGSTRING,
         .data.config = {.index = (uint16_t)index, .value = copy}};

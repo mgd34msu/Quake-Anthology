@@ -3,6 +3,8 @@
 
 #include "internal.h"
 
+float frontend_legacy_lightstyle_sample(qa_game_family, const char *pattern, double seconds);
+
 typedef struct frontend_legacy_render_policy {
     qa_scene_family family;
     bool quakeworld, flashblend, double_eyes, planar_shadows, texture_sort;

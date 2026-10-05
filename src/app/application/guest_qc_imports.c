@@ -333,7 +333,11 @@ bool application_qc_import(void *opaque, qa_qc_instance *vm, qa_qc_builtin built
         bool ok = application_emit_protocol(engine->provider, &event, error) &&
             qa_builtin_emit(&engine->services, &light, error);
         free(bytes);
-        if (ok) { free(engine->lightstyles[(uint32_t)style]); engine->lightstyles[(uint32_t)style] = copy; } else free(copy);
+        if (ok) {
+            const char *prior = engine->lightstyles[(uint32_t)style];
+            if (!prior || strcmp(prior, copy)) ++engine->lightstyle_revision;
+            free(engine->lightstyles[(uint32_t)style]); engine->lightstyles[(uint32_t)style] = copy;
+        } else free(copy);
         return ok;
     }
     case QA_QC_BUILTIN_CHANGELEVEL: {

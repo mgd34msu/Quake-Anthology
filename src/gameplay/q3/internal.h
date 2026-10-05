@@ -128,6 +128,7 @@ struct qa_q3_game {
     qa_q3_shader_remap_state shader_remaps;
     char *configstrings[QA_Q3_NATIVE_CONFIGSTRINGS];
     uint64_t configstring_revisions[QA_Q3_NATIVE_CONFIGSTRINGS];
+    uint64_t configstring_table_revision;
     qa_q3_native_client clients[QA_Q3_NATIVE_CLIENTS];
     q3_actor client_actors[QA_Q3_NATIVE_CLIENTS];
     qa_q3_source_binding source_entities[QA_Q3_SOURCE_ENTITIES];

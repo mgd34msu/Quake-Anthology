@@ -1,4 +1,7 @@
 #include "value_internal.h"
+#include "frame_internal.h"
+#include "qa/unified_frame_events.h"
+#include "qa/unified_frame_metadata.h"
 
 #include <math.h>
 #include <float.h>
@@ -15,7 +18,15 @@ struct qa_unified_document {
     qa_unified_document_kind kind;
     qa_buffer source;
     qa_json_document *json;
+    qa_unified_frame *frame;
+    qa_unified_input_batch *inputs;
+    qa_unified_frame_events *events;
+    qa_unified_frame_metadata *metadata;
+    size_t bytes;
 };
+
+static bool typed_encode(const qa_unified_document *, qa_buffer *, qa_error *);
+static bool typed_decode(qa_unified_document_kind, qa_bytes, qa_unified_document **, qa_error *);
 
 static bool bad(qa_error *error, const char *message) {
     qa_error_set(error,QA_ERROR_FORMAT,0,"%s",message); return false;
@@ -86,8 +97,7 @@ static size_t wire_limit(qa_unified_document_kind kind) {
     case QA_UNIFIED_INPUT_DOCUMENT: return 65536;
     case QA_UNIFIED_FRAME_DOCUMENT: return VALUE_LIMIT;
     case QA_UNIFIED_CONTROL_DOCUMENT: return FRAME_LIMIT;
-    case QA_UNIFIED_EVENTS_DOCUMENT: return 16u*1024u*1024u;
-    case QA_UNIFIED_CHECKPOINT: case QA_UNIFIED_PREDICTION_DOCUMENT: return VALUE_LIMIT;
+    case QA_UNIFIED_CHECKPOINT: return VALUE_LIMIT;
     }
     return 0;
 }
@@ -96,7 +106,7 @@ static bool create_document(qa_unified_document_kind kind, qa_buffer source,
                               qa_unified_document **out, qa_error *error) {
     qa_unified_document *d=calloc(1,sizeof(*d));
     if (!d) { qa_buffer_free(&source); qa_error_set(error,QA_ERROR_MEMORY,0,"allocating unified document"); return false; }
-    d->references=1; d->kind=kind; d->source=source;
+    d->references=1; d->kind=kind; d->source=source; d->bytes=source.size;
     if (!qa_json_parse((qa_bytes){d->source.data,d->source.size},&d->json,error) ||
         !qa_unified_tag_check(d->json,qa_json_root(d->json),0,error) ||
         !qa_unified_schema_check(kind,d->json,error)) {
@@ -107,7 +117,9 @@ static bool create_document(qa_unified_document_kind kind, qa_buffer source,
 
 bool qa_unified_document_create(qa_unified_document_kind kind, qa_bytes bytes,
                                  qa_unified_document **out, qa_error *error) {
-    size_t maximum=kind==QA_UNIFIED_FRAME_DOCUMENT?VALUE_LIMIT:wire_limit(kind);
+    if (kind==QA_UNIFIED_FRAME_DOCUMENT || kind==QA_UNIFIED_INPUT_DOCUMENT)
+        return bad(error,"Typed Source records require their actual record constructor");
+    size_t maximum=wire_limit(kind);
     if (!out || !maximum || !bytes.data || !bytes.size || bytes.size>maximum)
         return bad(error,"invalid unified document kind or byte extent");
     qa_buffer source={.data=malloc(bytes.size),.size=bytes.size};
@@ -121,13 +133,11 @@ bool qa_unified_document_decode(qa_unified_document_kind kind, qa_bytes bytes,
     size_t maximum=wire_limit(kind);
     if (!out || !maximum || !bytes.data || !bytes.size || bytes.size>maximum)
         return bad(error,"invalid unified document kind or byte extent");
-    if (kind==QA_UNIFIED_FRAME_DOCUMENT) return qa_unified_frame_decode(bytes,NULL,0,out,error);
+    if (kind==QA_UNIFIED_FRAME_DOCUMENT) return qa_unified_frame_decode(bytes,NULL,0,NULL,out,error);
+    if (kind==QA_UNIFIED_INPUT_DOCUMENT || (kind==QA_UNIFIED_CONTROL_DOCUMENT && bytes.size>=4 &&
+        (!memcmp(bytes.data,"QUEV",4) || !memcmp(bytes.data,"QUMD",4))))
+        return typed_decode(kind,bytes,out,error);
     return qa_unified_document_create(kind,bytes,out,error);
-}
-
-bool qa_unified_document_child(const qa_unified_document *document, qa_json_id id,
-    qa_unified_document_kind kind, qa_unified_document **out, qa_error *error) {
-    return qa_unified_document_create(kind, qa_json_source(document ? document->json : NULL, id), out, error);
 }
 
 bool qa_unified_document_validate(const qa_unified_document *d,
@@ -139,13 +149,16 @@ bool qa_unified_document_validate(const qa_unified_document *d,
 
 bool qa_unified_document_encode(const qa_unified_document *d, qa_buffer *out, qa_error *error) {
     if (!d || !out) return bad(error,"invalid unified document output");
+    if (d->inputs || d->events || d->metadata) return typed_encode(d,out,error);
     if (d->kind!=QA_UNIFIED_FRAME_DOCUMENT) {
         uint8_t *data=malloc(d->source.size?d->source.size:1);
         if (!data) { qa_error_set(error,QA_ERROR_MEMORY,0,"copying unified document"); return false; }
         if (d->source.size) memcpy(data,d->source.data,d->source.size);
         *out=(qa_buffer){data,d->source.size}; return true;
     }
-    return qa_unified_frame_encode(d,NULL,0,VALUE_LIMIT,out,error);
+    qa_unified_builder builder={0};
+    if (!qa_unified_frame_write(d,NULL,0,VALUE_LIMIT,&builder,error)) { free(builder.data); return false; }
+    *out=(qa_buffer){builder.data,builder.size}; return true;
 }
 
 bool qa_unified_document_retain(const qa_unified_document *source,
@@ -160,6 +173,11 @@ bool qa_unified_document_retain(const qa_unified_document *source,
 
 void qa_unified_document_destroy(qa_unified_document *d) {
     if (!d || --d->references) return;
+    if (d->frame && d->frame->lease) { qa_unified_frame_destroy(d->frame); return; }
+    qa_unified_frame_destroy(d->frame);
+    if (d->inputs) { qa_unified_inputs_free(d->inputs); free(d->inputs); }
+    qa_unified_frame_events_destroy(d->events);
+    qa_unified_frame_metadata_destroy(d->metadata);
     qa_json_destroy(d->json); qa_buffer_free(&d->source); free(d);
 }
 const qa_json_document *qa_unified_document_json(const qa_unified_document *d) { return d?d->json:NULL; }
@@ -260,307 +278,245 @@ bool qa_unified_checkpoint_number(double value, qa_buffer *out, qa_error *error)
     memcpy(data,text,size); *out=(qa_buffer){data,size}; return true;
 }
 
-/* Typed frame values share the document's immutable Source projection. The
- * retained acknowledged document supplies unchanged fields; no simulation or
- * presentation state is reconstructed by the transport. */
-typedef enum frame_value {
-    FRAME_SAME, FRAME_NULL, FRAME_FALSE, FRAME_TRUE, FRAME_INTEGER, FRAME_NUMBER,
-    FRAME_STRING, FRAME_ARRAY, FRAME_OBJECT, FRAME_ARRAY_DELTA, FRAME_OBJECT_DELTA,
-    FRAME_ACTOR_ARRAY, FRAME_BYTES
-} frame_value;
 
-static bool frame_byte(qa_unified_builder *b, uint8_t value, qa_error *e)
-{ return qa_unified_append(b, &value, 1, e); }
-
-static bool frame_unsigned(qa_unified_builder *b, uint64_t value, qa_error *e)
+const qa_unified_frame *qa_unified_document_frame(const qa_unified_document *d)
+{ return d ? d->frame : NULL; }
+const qa_unified_input_batch *qa_unified_document_inputs(const qa_unified_document *d)
+{ return d ? d->inputs : NULL; }
+const qa_unified_frame_events *qa_unified_document_events(const qa_unified_document *d)
+{ return d ? d->events : NULL; }
+const qa_unified_frame_metadata *qa_unified_document_metadata(const qa_unified_document *d)
+{ return d ? d->metadata : NULL; }
+size_t qa_unified_document_memory(const qa_unified_document *d)
 {
-    do {
-        uint8_t byte = (uint8_t)(value & 127u); value >>= 7;
-        if (value) byte |= 128u;
-        if (!frame_byte(b, byte, e)) return false;
-    } while (value);
-    return true;
-}
-
-static bool frame_text_equal(const qa_json_document *a, qa_json_id ai,
-    const qa_json_document *b, qa_json_id bi)
-{
-    if (!a || !b || ai == QA_JSON_NONE || bi == QA_JSON_NONE) return false;
-    qa_bytes x = qa_json_source(a, ai), y = qa_json_source(b, bi);
-    return x.size == y.size && (!x.size || !memcmp(x.data, y.data, x.size));
-}
-
-static bool frame_string(qa_unified_builder *b, const qa_json_document *d, qa_json_id id, qa_error *e)
-{
-    qa_buffer value = {0};
-    if (!qa_json_string(d, id, &value, e)) return false;
-    bool okay = frame_unsigned(b, value.size, e) && qa_unified_append(b, value.data, value.size, e);
-    qa_buffer_free(&value); return okay;
-}
-
-static bool frame_keys_equal(const qa_json_document *a, qa_json_id ai,
-    const qa_json_document *b, qa_json_id bi)
-{
-    size_t count = qa_json_size(a, ai);
-    if (qa_json_type(b, bi) != QA_JSON_OBJECT || count != qa_json_size(b, bi)) return false;
-    for (size_t i = 0; i < count; ++i)
-        if (!frame_text_equal(a, qa_json_key_at(a, ai, i), b, qa_json_key_at(b, bi, i))) return false;
-    return true;
-}
-
-typedef struct frame_identity { uint32_t slot; uint64_t generation; } frame_identity;
-
-static int frame_identity_compare(frame_identity a, frame_identity b)
-{
-    if (a.slot != b.slot) return a.slot < b.slot ? -1 : 1;
-    return a.generation == b.generation ? 0 : a.generation < b.generation ? -1 : 1;
-}
-
-static bool frame_actor(const qa_json_document *d, qa_json_id row, frame_identity *identity)
-{
-    qa_json_id actor = qa_json_get(d, row, "actor");
-    if (actor == QA_JSON_NONE) actor = qa_json_get(d, row, "id");
-    uint64_t slot, generation;
-    if (!qa_json_u64(d, qa_json_get(d, actor, "slot"), &slot, NULL) || slot > UINT32_MAX ||
-        !qa_json_u64(d, qa_json_get(d, actor, "generation"), &generation, NULL))
-        return false;
-    *identity = (frame_identity){(uint32_t)slot, generation}; return true;
-}
-
-static bool frame_actor_array(const qa_json_document *d, qa_json_id array)
-{
-    if (qa_json_type(d, array) != QA_JSON_ARRAY) return false;
-    frame_identity previous = {0};
-    size_t count = qa_json_size(d, array);
-    for (size_t i = 0; i < count; ++i) {
-        frame_identity identity;
-        if (!frame_actor(d, qa_json_at(d, array, i), &identity) || (i && frame_identity_compare(identity, previous) <= 0)) return false;
-        previous = identity;
+    if (!d) return 0;
+    if (!d->frame || !d->frame->lease) return d->bytes;
+    size_t bytes=qa_unified_frame_lease_used(d->frame->lease);
+    const qa_unified_world_frame *world=d->frame->world;
+    if (world && world->lease && world->lease!=d->frame->lease) {
+        size_t shared=qa_unified_frame_lease_used(world->lease);
+        if (shared>SIZE_MAX-bytes) return SIZE_MAX;
+        bytes+=shared;
     }
-    return true;
+    return bytes;
 }
-
-static bool frame_write_value(qa_unified_builder *b, const qa_unified_document *to, qa_json_id id,
-    const qa_unified_document *from, qa_json_id old, unsigned depth, qa_error *e)
+bool qa_unified_document_equal(const qa_unified_document *a, const qa_unified_document *b)
 {
-    if (depth > 128) return bad(e, "Unified frame nesting exceeds its value domain");
-    const qa_json_document *d = to->json, *base = from ? from->json : NULL;
-    qa_json_kind kind = qa_json_type(d, id);
-    if (frame_text_equal(d, id, base, old)) return frame_byte(b, FRAME_SAME, e);
-    switch (kind) {
-    case QA_JSON_NULL: return frame_byte(b, FRAME_NULL, e);
-    case QA_JSON_BOOL: {
-        bool value;
-        return qa_json_bool(d, id, &value, e) && frame_byte(b, value ? FRAME_TRUE : FRAME_FALSE, e);
-    }
-    case QA_JSON_NUMBER: {
-        double value, prior;
-        if (!qa_json_number(d, id, &value, e)) return false;
-        if (qa_json_type(base, old) == QA_JSON_NUMBER && qa_json_number(base, old, &prior, e) &&
-            value == prior && (value != 0 || signbit(value) == signbit(prior)))
-            return frame_byte(b, FRAME_SAME, e);
-        if (value >= -(double)QA_UNIFIED_SAFE_INTEGER && value <= (double)QA_UNIFIED_SAFE_INTEGER &&
-            trunc(value) == value && !(value == 0 && signbit(value))) {
-            int64_t integer = (int64_t)value;
-            uint64_t word = integer < 0 ? (uint64_t)(-integer) * 2u - 1u : (uint64_t)integer * 2u;
-            return frame_byte(b, FRAME_INTEGER, e) && frame_unsigned(b, word, e);
+    if (a==b) return true;
+    if (!a || !b || a->kind!=b->kind) return false;
+    if (a->frame || b->frame) return a->frame && b->frame && qa_unified_frame_equal(a->frame,b->frame);
+    if (a->inputs || b->inputs) return a->inputs && b->inputs && qa_unified_record_equal(&qa_unified_inputs_layout,a->inputs,b->inputs);
+    if (a->events || b->events) return a->events && b->events && qa_unified_record_equal(&qa_unified_events_layout,a->events,b->events);
+    if (a->metadata || b->metadata) return a->metadata && b->metadata && qa_unified_record_equal(&qa_unified_metadata_layout,a->metadata,b->metadata);
+    return a->source.size==b->source.size && (!a->source.size || !memcmp(a->source.data,b->source.data,a->source.size));
+}
+static qa_unified_document *typed_document(qa_unified_document_kind kind, size_t bytes,
+    qa_unified_frame_lease *lease, qa_error *error)
+{
+    qa_unified_document *d=lease ? qa_unified_frame_lease_alloc(lease,1,sizeof(*d),_Alignof(qa_unified_document),error) : calloc(1,sizeof(*d));
+    if (!d) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating actual typed Unified document"); return NULL; }
+    d->references=1; d->kind=kind; d->bytes=bytes; return d;
+}
+bool qa_unified_document_create_frame(qa_unified_frame **owned, qa_unified_document **out, qa_error *error)
+{
+    size_t bytes=0;
+    if (!owned || !*owned || !out || *out || !(*owned)->world)
+        return bad(error,"Unified FRAME transfer requires its actual owned world cut");
+    qa_unified_frame *frame=*owned;
+    if (!frame->lease && !qa_unified_record_measure(&qa_unified_frame_layout,frame,&bytes,error)) return false;
+    qa_unified_document *d=typed_document(QA_UNIFIED_FRAME_DOCUMENT,bytes,frame->lease,error);
+    if (!d) return false;
+    if (frame->lease) {
+        bytes=qa_unified_frame_lease_used(frame->lease);
+        if (frame->world->lease && frame->world->lease!=frame->lease) {
+            size_t world_bytes=qa_unified_frame_lease_used(frame->world->lease);
+            if (world_bytes>VALUE_LIMIT || bytes>VALUE_LIMIT-world_bytes)
+                return bad(error,"Unified FRAME exceeds its retained memory bound");
+            bytes+=world_bytes;
         }
-        uint64_t word; uint8_t bytes[8];
-        memcpy(&word, &value, sizeof(word)); qa_store_u64le(bytes, word);
-        return frame_byte(b, FRAME_NUMBER, e) && qa_unified_append(b, bytes, sizeof(bytes), e);
+        if (bytes>VALUE_LIMIT) return bad(error,"Unified FRAME exceeds its retained memory bound");
+        d->bytes=bytes;
     }
-    case QA_JSON_STRING: return frame_byte(b, FRAME_STRING, e) && frame_string(b, d, id, e);
-    case QA_JSON_OBJECT: {
-        if (qa_json_string_equal(d, qa_json_get(d, id, "$qts"), "bytes")) {
-            qa_buffer bytes = {0};
-            if (!qa_unified_document_bytes(to, id, &bytes, e)) return false;
-            bool okay = frame_byte(b, FRAME_BYTES, e) && frame_unsigned(b, bytes.size, e) &&
-                qa_unified_append(b, bytes.data, bytes.size, e);
-            qa_buffer_free(&bytes); return okay;
+    d->frame=*owned; *owned=NULL; *out=d; return true;
+}
+bool qa_unified_document_create_inputs(qa_unified_input_batch **owned, qa_unified_document **out, qa_error *error)
+{
+    size_t bytes;
+    if (!owned || !*owned || !out || *out || !qa_unified_inputs_check(*owned,&bytes,error)) return false;
+    qa_unified_document *d=typed_document(QA_UNIFIED_INPUT_DOCUMENT,bytes,NULL,error);
+    if (!d) return false;
+    d->inputs=*owned; *owned=NULL; *out=d; return true;
+}
+bool qa_unified_document_create_events(qa_unified_frame_events **owned, qa_unified_document **out, qa_error *error)
+{
+    size_t bytes;
+    if (!owned || !*owned || !out || *out || !(*owned)->epoch ||
+        !qa_unified_record_measure(&qa_unified_events_layout,*owned,&bytes,error)) return false;
+    qa_unified_document *d=typed_document(QA_UNIFIED_CONTROL_DOCUMENT,bytes,NULL,error);
+    if (!d) return false;
+    d->events=*owned; *owned=NULL; *out=d; return true;
+}
+bool qa_unified_document_create_metadata(qa_unified_frame_metadata **owned, qa_unified_document **out, qa_error *error)
+{
+    size_t bytes;
+    if (!owned || !*owned || !out || *out || !qa_unified_metadata_check(*owned,&bytes,error)) return false;
+    qa_unified_document *d=typed_document(QA_UNIFIED_CONTROL_DOCUMENT,bytes,NULL,error);
+    if (!d) return false;
+    d->metadata=*owned; *owned=NULL; *out=d; return true;
+}
+bool qa_unified_metadata_apply(const qa_unified_document *previous, const qa_unified_document *update,
+    qa_unified_document **out, qa_error *error)
+{
+    const qa_unified_frame_metadata *old=qa_unified_document_metadata(previous);
+    const qa_unified_frame_metadata *next=qa_unified_document_metadata(update);
+    if (!out || *out || !next || (previous && !old) ||
+        (!old && (!next->replace_configurations || !next->replace_styles || !next->replace_q3)) ||
+        (old && (old->epoch!=next->epoch || !old->replace_configurations || !old->replace_styles || !old->replace_q3 ||
+            next->frame<old->frame || next->configuration_revision<old->configuration_revision ||
+            next->roster_revision<old->roster_revision || next->style_revision<old->style_revision ||
+            (!next->replace_configurations && (next->configuration_revision!=old->configuration_revision ||
+                next->roster_revision!=old->roster_revision)) ||
+            (!next->replace_styles && next->style_revision!=old->style_revision))))
+        return bad(error,"Unified metadata update lost its actual retained revision domains");
+    qa_unified_frame_metadata merged=*next;
+    merged.replace_configurations=true; merged.replace_styles=true; merged.replace_q3=true;
+    if (old) {
+        if (!next->replace_configurations) { merged.configurations=old->configurations; merged.configuration_count=old->configuration_count; }
+        if (!next->replace_styles) { merged.styles=old->styles; merged.style_count=old->style_count; }
+        if (!next->replace_q3) { merged.q3_configurations=old->q3_configurations; merged.q3_configuration_count=old->q3_configuration_count; }
+        qa_unified_frame_metadata same=*old; same.frame=next->frame;
+        if (next->replace_configurations && next->configuration_revision==old->configuration_revision &&
+            next->roster_revision==old->roster_revision) {
+            qa_unified_frame_metadata compared=same;
+            compared.configurations=next->configurations; compared.configuration_count=next->configuration_count;
+            if (!qa_unified_record_equal(&qa_unified_metadata_layout,&same,&compared))
+                return bad(error,"Unified configuration changed without its actual Source revision");
         }
-        bool delta = frame_keys_equal(d, id, base, old);
-        size_t count = qa_json_size(d, id);
-        if (!frame_byte(b, delta ? FRAME_OBJECT_DELTA : FRAME_OBJECT, e) ||
-            (!delta && !frame_unsigned(b, count, e))) return false;
-        for (size_t i = 0; i < count; ++i) {
-            qa_json_id prior = delta ? qa_json_at(base, old, i) : QA_JSON_NONE;
-            if ((!delta && !frame_string(b, d, qa_json_key_at(d, id, i), e)) ||
-                !frame_write_value(b, to, qa_json_at(d, id, i), from, prior, depth + 1, e)) return false;
+        if (next->replace_styles && next->style_revision==old->style_revision) {
+            qa_unified_frame_metadata compared=same;
+            compared.styles=next->styles; compared.style_count=next->style_count;
+            if (!qa_unified_record_equal(&qa_unified_metadata_layout,&same,&compared))
+                return bad(error,"Unified lightstyle changed without its actual Source revision");
         }
-        return true;
-    }
-    case QA_JSON_ARRAY: {
-        size_t count = qa_json_size(d, id), old_count = qa_json_size(base, old);
-        bool delta = qa_json_type(base, old) == QA_JSON_ARRAY;
-        bool actors = delta && count != old_count && frame_actor_array(d, id) && frame_actor_array(base, old);
-        if (!frame_byte(b, actors ? FRAME_ACTOR_ARRAY : delta && count == old_count ? FRAME_ARRAY_DELTA : FRAME_ARRAY, e) ||
-            ((actors || !delta || count != old_count) && !frame_unsigned(b, count, e))) return false;
-        size_t cursor = 0;
-        for (size_t i = 0; i < count; ++i) {
-            qa_json_id prior = delta && i < old_count ? qa_json_at(base, old, i) : QA_JSON_NONE;
-            if (actors) {
-                frame_identity identity = {0}, previous = {0};
-                (void)frame_actor(d, qa_json_at(d, id, i), &identity);
-                while (cursor < old_count) {
-                    (void)frame_actor(base, qa_json_at(base, old, cursor), &previous);
-                    if (frame_identity_compare(previous, identity) >= 0) break;
-                    ++cursor;
+        if (next->replace_q3) {
+            for (size_t i=0;i<next->q3_configuration_count;++i) {
+                const qa_unified_q3_configuration *row=next->q3_configurations+i;
+                for (size_t p=0;p<old->q3_configuration_count;++p) {
+                    const qa_unified_q3_configuration *prior=old->q3_configurations+p;
+                    if (strcmp(prior->provider_name,row->provider_name) || strcmp(prior->instance,row->instance) ||
+                        strcmp(prior->content,row->content) || prior->publication!=row->publication || prior->map_revision!=row->map_revision) continue;
+                    if (row->configuration_revision<prior->configuration_revision ||
+                        (row->configuration_revision==prior->configuration_revision &&
+                            !qa_unified_record_equal(&qa_unified_q3_configuration_layout,prior,row)))
+                        return bad(error,"Unified Q3 configuration changed without its actual Source revision");
                 }
-                bool found = cursor < old_count && frame_identity_compare(previous, identity) == 0;
-                prior = found ? qa_json_at(base, old, cursor) : QA_JSON_NONE;
-                if (!frame_unsigned(b, found ? cursor + 1 : 0, e)) return false;
             }
-            if (!frame_write_value(b, to, qa_json_at(d, id, i), from, prior, depth + 1, e)) return false;
-        }
-        return true;
-    }
-    case QA_JSON_INVALID: break;
-    }
-    return bad(e, "Unified frame contains an invalid typed value");
-}
-
-typedef struct frame_reader { qa_bytes bytes; size_t at; qa_error *error; } frame_reader;
-
-static bool frame_read_bytes(frame_reader *r, size_t size, qa_bytes *out)
-{
-    if (size > r->bytes.size - r->at) return bad(r->error, "Truncated Unified typed frame");
-    *out = (qa_bytes){r->bytes.data + r->at, size}; r->at += size; return true;
-}
-
-static bool frame_read_unsigned(frame_reader *r, uint64_t *out)
-{
-    uint64_t value = 0;
-    for (unsigned shift = 0; shift <= 63; shift += 7) {
-        qa_bytes byte;
-        if (!frame_read_bytes(r, 1, &byte)) return false;
-        if (shift == 63 && byte.data[0] > 1) return bad(r->error, "Unified frame integer overflow");
-        value |= (uint64_t)(byte.data[0] & 127u) << shift;
-        if (!(byte.data[0] & 128u)) {
-            if (shift && !byte.data[0]) return bad(r->error, "Noncanonical Unified frame integer");
-            *out = value; return true;
         }
     }
-    return bad(r->error, "Unified frame integer overflow");
+    if (next->replace_configurations && next->replace_styles && next->replace_q3)
+        return qa_unified_document_retain(update,out,error);
+    qa_unified_frame_metadata *owned=calloc(1,sizeof(*owned));
+    if (!owned) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining complete Unified metadata"); return false; }
+    bool okay=qa_unified_record_clone(&qa_unified_metadata_layout,&merged,owned,error) &&
+        qa_unified_document_create_metadata(&owned,out,error);
+    qa_unified_frame_metadata_destroy(owned); return okay;
 }
-
-static bool frame_read_string(frame_reader *r, qa_unified_builder *b)
+static bool record_encode(const char magic[4], const qa_unified_record_layout *layout,
+    const void *record, const void *baseline, bool frame, uint32_t sequence, size_t maximum,
+    qa_buffer *out, qa_error *error)
 {
-    uint64_t size; qa_bytes bytes; qa_buffer quoted = {0};
-    if (!frame_read_unsigned(r, &size) || size > SIZE_MAX || !frame_read_bytes(r, (size_t)size, &bytes) ||
-        !qa_json_quote(bytes, &quoted, r->error)) return false;
-    bool okay = qa_unified_append(b, quoted.data, quoted.size, r->error);
-    qa_buffer_free(&quoted); return okay;
+    size_t header_size=frame?8:4;
+    if (!out || maximum<=header_size) return bad(error,"Typed Unified record lacks its bounded output");
+    qa_unified_builder builder={.maximum=maximum};
+    uint8_t header[8]; memcpy(header,magic,4); if (frame) qa_store_u32le(header+4,sequence);
+    bool okay=qa_unified_append(&builder,header,header_size,error) &&
+        qa_unified_record_delta_write(layout,record,baseline,&builder,error);
+    if (!okay) { free(builder.data); return false; }
+    *out=(qa_buffer){builder.data,builder.size}; return true;
 }
-
-static bool frame_read_value(frame_reader *r, qa_unified_builder *b,
-    const qa_json_document *base, qa_json_id old, unsigned depth)
+static bool typed_encode(const qa_unified_document *d, qa_buffer *out, qa_error *error)
 {
-    if (depth > 128) return bad(r->error, "Unified frame nesting exceeds its value domain");
-    qa_bytes tag;
-    if (!frame_read_bytes(r, 1, &tag)) return false;
-    frame_value kind = (frame_value)tag.data[0];
-    switch (kind) {
-    case FRAME_SAME: {
-        if (qa_json_type(base, old) == QA_JSON_INVALID) return bad(r->error, "Unified delta lacks its field baseline");
-        qa_bytes value = qa_json_source(base, old);
-        return qa_unified_append(b, value.data, value.size, r->error);
+    if (d->inputs) {
+        qa_unified_builder builder={0};
+        if (!qa_unified_inputs_write(d->inputs,65536,&builder,error)) { free(builder.data); return false; }
+        *out=(qa_buffer){builder.data,builder.size}; return true;
     }
-    case FRAME_NULL: return qa_unified_append(b, "null", 4, r->error);
-    case FRAME_FALSE: return qa_unified_append(b, "false", 5, r->error);
-    case FRAME_TRUE: return qa_unified_append(b, "true", 4, r->error);
-    case FRAME_INTEGER: case FRAME_NUMBER: {
-        double value;
-        if (kind == FRAME_INTEGER) {
-            uint64_t word;
-            if (!frame_read_unsigned(r, &word) || word > QA_UNIFIED_SAFE_INTEGER * 2u)
-                return bad(r->error, "Unified frame integer exceeds its exact value domain");
-            value = (word & 1u) ? -(double)(word / 2u + 1u) : (double)(word / 2u);
-        } else {
-            qa_bytes bytes;
-            if (!frame_read_bytes(r, 8, &bytes)) return false;
-            uint64_t word = qa_load_u64le(bytes.data); memcpy(&value, &word, sizeof(value));
-        }
-        char text[32];
-        return qa_unified_number_text(value, text, r->error) && qa_unified_append(b, text, strlen(text), r->error);
-    }
-    case FRAME_STRING: return frame_read_string(r, b);
-    case FRAME_BYTES: {
-        uint64_t size; qa_bytes bytes; qa_buffer tagged_bytes = {0};
-        if (!frame_read_unsigned(r, &size) || size > SIZE_MAX || !frame_read_bytes(r, (size_t)size, &bytes) ||
-            !qa_unified_checkpoint_bytes(bytes, &tagged_bytes, r->error)) return false;
-        bool okay = qa_unified_append(b, tagged_bytes.data, tagged_bytes.size, r->error);
-        qa_buffer_free(&tagged_bytes); return okay;
-    }
-    case FRAME_OBJECT: case FRAME_OBJECT_DELTA: case FRAME_ARRAY: case FRAME_ARRAY_DELTA: case FRAME_ACTOR_ARRAY: {
-        bool object = kind == FRAME_OBJECT || kind == FRAME_OBJECT_DELTA;
-        bool delta = kind == FRAME_OBJECT_DELTA || kind == FRAME_ARRAY_DELTA;
-        bool actors = kind == FRAME_ACTOR_ARRAY;
-        qa_json_kind expected = object ? QA_JSON_OBJECT : QA_JSON_ARRAY;
-        if ((delta || actors) && qa_json_type(base, old) != expected)
-            return bad(r->error, "Unified container delta lacks its typed baseline");
-        uint64_t count = qa_json_size(base, old);
-        if (!delta && !frame_read_unsigned(r, &count)) return false;
-        if (count > r->bytes.size - r->at) return bad(r->error, "Unified frame container exceeds its record extent");
-        if (!qa_unified_append(b, object ? "{" : "[", 1, r->error)) return false;
-        size_t previous = 0;
-        for (size_t i = 0; i < (size_t)count; ++i) {
-            if (i && !qa_unified_append(b, ",", 1, r->error)) return false;
-            qa_json_id prior = qa_json_type(base, old) == expected ? qa_json_at(base, old, i) : QA_JSON_NONE;
-            if (object) {
-                if (delta) {
-                    qa_bytes key = qa_json_source(base, qa_json_key_at(base, old, i));
-                    if (!qa_unified_append(b, key.data, key.size, r->error)) return false;
-                } else if (!frame_read_string(r, b)) return false;
-                if (!qa_unified_append(b, ":", 1, r->error)) return false;
-                if (!delta) prior = QA_JSON_NONE;
-            }
-            if (actors) {
-                uint64_t index;
-                if (!frame_read_unsigned(r, &index) || index > qa_json_size(base, old) || (index && index <= previous))
-                    return bad(r->error, "Unified actor delta changes its ordered baseline membership");
-                prior = index ? qa_json_at(base, old, (size_t)index - 1) : QA_JSON_NONE;
-                if (index) previous = (size_t)index;
-            }
-            if (!frame_read_value(r, b, base, prior, depth + 1)) return false;
-        }
-        return qa_unified_append(b, object ? "}" : "]", 1, r->error);
-    }
-    }
-    return bad(r->error, "Unknown Unified typed frame field");
+    return d->metadata ? record_encode("QUMD",&qa_unified_metadata_layout,d->metadata,NULL,false,0,FRAME_LIMIT,out,error) :
+        record_encode("QUEV",&qa_unified_events_layout,d->events,NULL,false,0,FRAME_LIMIT,out,error);
 }
-
-bool qa_unified_frame_encode(const qa_unified_document *document, const qa_unified_document *baseline,
-    uint32_t sequence, size_t maximum, qa_buffer *out, qa_error *e)
+bool qa_unified_inputs_write(const qa_unified_input_batch *batch, size_t maximum,
+    qa_unified_builder *out, qa_error *error)
 {
-    if (!out || !document || document->kind != QA_UNIFIED_FRAME_DOCUMENT ||
-        ((sequence != 0) != (baseline != NULL)) || (baseline && baseline->kind != QA_UNIFIED_FRAME_DOCUMENT))
-        return bad(e, "Unified delta encoding requires its actual frame baseline");
-    qa_unified_builder b = {.maximum = maximum < VALUE_LIMIT ? maximum : VALUE_LIMIT};
-    uint8_t header[8] = {'Q','U','F','R',0,0,0,0}; qa_store_u32le(header + 4, sequence);
-    bool okay = qa_unified_append(&b, header, sizeof(header), e) && frame_write_value(&b, document,
-        qa_json_root(document->json), baseline, baseline ? qa_json_root(baseline->json) : QA_JSON_NONE, 0, e);
-    if (!okay) { free(b.data); return false; }
-    *out = (qa_buffer){b.data, b.size}; return true;
+    if (!batch || !batch->epoch || batch->count>64 || !out || maximum<5)
+        return bad(error,"Unified INPUT lacks its actual retained command batch");
+    out->size=0; out->maximum=maximum<65536?maximum:65536;
+    return qa_unified_append(out,"QUIN",4,error) &&
+        qa_unified_record_delta_write(&qa_unified_inputs_layout,batch,NULL,out,error);
 }
-
-bool qa_unified_frame_baseline(qa_bytes bytes, uint32_t *out, qa_error *e)
+static bool typed_decode(qa_unified_document_kind kind, qa_bytes bytes, qa_unified_document **out, qa_error *error)
 {
-    if (!out || !bytes.data || bytes.size < 9 || bytes.size > VALUE_LIMIT || memcmp(bytes.data, "QUFR", 4))
-        return bad(e, "Invalid Unified typed frame extent");
-    *out = qa_load_u32le(bytes.data + 4); return true;
+    bool input=kind==QA_UNIFIED_INPUT_DOCUMENT;
+    bool metadata=!input && bytes.size>=4 && !memcmp(bytes.data,"QUMD",4);
+    if (bytes.size<5 || memcmp(bytes.data,input?"QUIN":metadata?"QUMD":"QUEV",4)) return bad(error,"Typed Unified record has the wrong external envelope");
+    qa_bytes body={bytes.data+4,bytes.size-4};
+    if (input) {
+        qa_unified_input_batch *record=calloc(1,sizeof(*record));
+        if (!record) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating actual Unified input batch"); return false; }
+        bool okay=qa_unified_record_delta_decode(&qa_unified_inputs_layout,body,NULL,record,NULL,error) &&
+            qa_unified_document_create_inputs(&record,out,error);
+        if (record) { qa_unified_inputs_free(record); free(record); }
+        return okay;
+    }
+    if (metadata) {
+        qa_unified_frame_metadata *record=calloc(1,sizeof(*record));
+        if (!record) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating actual Unified metadata"); return false; }
+        bool okay=qa_unified_record_delta_decode(&qa_unified_metadata_layout,body,NULL,record,NULL,error) &&
+            qa_unified_document_create_metadata(&record,out,error);
+        qa_unified_frame_metadata_destroy(record); return okay;
+    }
+    qa_unified_frame_events *record=calloc(1,sizeof(*record));
+    if (!record) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating actual Unified events"); return false; }
+    size_t measured;
+    bool okay=qa_unified_record_delta_decode(&qa_unified_events_layout,body,NULL,record,NULL,error) &&
+        qa_unified_events_check(record,&measured,error);
+    if (okay) okay=qa_unified_document_create_events(&record,out,error);
+    qa_unified_frame_events_destroy(record); return okay;
 }
-
+bool qa_unified_frame_write(const qa_unified_document *document, const qa_unified_document *baseline,
+    uint32_t sequence, size_t maximum, qa_unified_builder *out, qa_error *error)
+{
+    if (!document || !document->frame || ((sequence!=0)!=(baseline!=NULL)) || (baseline && !baseline->frame))
+        return bad(error,"Unified delta encoding requires its actual acknowledged frame");
+    if (!out || maximum<9) return bad(error,"Unified FRAME lacks its actual bounded wire buffer");
+    out->size=0; out->maximum=maximum<VALUE_LIMIT?maximum:VALUE_LIMIT;
+    uint8_t header[8]; memcpy(header,"QUFR",4); qa_store_u32le(header+4,sequence);
+    return qa_unified_append(out,header,sizeof(header),error) &&
+        qa_unified_record_delta_write(&qa_unified_frame_layout,document->frame,baseline?baseline->frame:NULL,out,error);
+}
+bool qa_unified_frame_baseline(qa_bytes bytes, uint32_t *out, qa_error *error)
+{
+    if (!out || !bytes.data || bytes.size<9 || bytes.size>VALUE_LIMIT || memcmp(bytes.data,"QUFR",4))
+        return bad(error,"Invalid Unified typed frame extent");
+    *out=qa_load_u32le(bytes.data+4); return true;
+}
 bool qa_unified_frame_decode(qa_bytes bytes, const qa_unified_document *baseline, uint32_t sequence,
-    qa_unified_document **out, qa_error *e)
+    qa_unified_frame_pool *pool, qa_unified_document **out, qa_error *error)
 {
     uint32_t required;
-    if (!out || !qa_unified_frame_baseline(bytes, &required, e)) return false;
-    if (required != sequence || ((required != 0) != (baseline != NULL)) ||
-        (baseline && baseline->kind != QA_UNIFIED_FRAME_DOCUMENT))
-        return bad(e, "Unified delta decoding lacks its exact acknowledged frame");
-    frame_reader r = {bytes, 8, e}; qa_unified_builder b = {.maximum = VALUE_LIMIT};
-    bool okay = frame_read_value(&r, &b, baseline ? baseline->json : NULL,
-        baseline ? qa_json_root(baseline->json) : QA_JSON_NONE, 0) && r.at == bytes.size;
-    if (!okay) { free(b.data); if (!e || e->code == QA_OK) bad(e, "Trailing Unified typed frame fields"); return false; }
-    return create_document(QA_UNIFIED_FRAME_DOCUMENT, (qa_buffer){b.data, b.size}, out, e);
+    if (!out || !qa_unified_frame_baseline(bytes,&required,error)) return false;
+    if (required!=sequence || ((required!=0)!=(baseline!=NULL)) || (baseline && !baseline->frame))
+        return bad(error,"Unified delta decoding lacks its exact acknowledged frame");
+    qa_unified_frame *record=qa_unified_frame_create(pool,error);
+    if (!record) return false;
+    qa_unified_frame_lease *lease=record->lease;
+    bool okay=qa_unified_record_delta_decode(&qa_unified_frame_layout,(qa_bytes){bytes.data+8,bytes.size-8},
+        baseline?baseline->frame:NULL,record,lease,error);
+    record->lease=lease;
+    if (okay && record->world) {
+        record->world->references=1;
+        if (lease) { okay=qa_unified_frame_lease_retain(lease,error); if (okay) record->world->lease=lease; else record->world=NULL; }
+    }
+    size_t measured;
+    if (okay) okay=qa_unified_frame_check(record,&measured,error) && qa_unified_document_create_frame(&record,out,error);
+    qa_unified_frame_destroy(record); return okay;
 }

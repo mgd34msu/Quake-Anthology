@@ -317,6 +317,7 @@ static const qa_unified_field qa_unified_q3_source_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_q3_source, content, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_FIELD(qa_unified_q3_source, publication, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_q3_source, map_revision, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_unified_q3_source, configuration_revision, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_q3_source, product, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_unified_q3_source, server_time, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_unified_q3_source, level_start, QA_UNIFIED_FIELD_I32),
@@ -329,8 +330,6 @@ static const qa_unified_field qa_unified_q3_source_fields[] = {
     QA_UNIFIED_ARRAY(qa_unified_q3_source, entities, entity_count, qa_unified_q3_entity_layout, QA_Q3_ENTITIES),
     QA_UNIFIED_ARRAY(qa_unified_q3_source, clients, client_count, qa_unified_q3_client_layout, 64),
     QA_UNIFIED_POINTER(qa_unified_q3_source, visibility, qa_unified_q3_visibility_layout),
-    QA_UNIFIED_POINTER(qa_unified_q3_source, game_state, qa_q3_gamestate_layout),
-    QA_UNIFIED_FIXED(qa_unified_q3_source, config_revisions, uint64_t_layout, QA_Q3_CONFIGSTRINGS),
 };
 static const qa_unified_record_layout qa_unified_q3_source_layout = QA_UNIFIED_LAYOUT(qa_unified_q3_source, qa_unified_q3_source_fields);
 
@@ -1836,7 +1835,7 @@ static bool q3_sources_check(const qa_unified_frame_q3 *section, uint64_t regist
         if (!source->provider_name || !*source->provider_name || !source->instance || !*source->instance ||
             !source->content || !*source->content || !source->max_clients || source->max_clients > 64 ||
             (source->snapshot_bit != 0 && source->snapshot_bit != 4) || source->entity_count > QA_Q3_ENTITIES ||
-            source->client_count > source->max_clients || !q3_gamestate_check(source->game_state, error))
+            source->client_count > source->max_clients)
             return frame_bad(error, "Typed Q3 source lost its actual owner or client bounds");
         for (size_t i = 0; i < source->entity_count; ++i) {
             const qa_unified_q3_entity *row = source->entities + i;
@@ -2027,6 +2026,17 @@ static const qa_unified_field style_pattern_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_style_pattern, pattern, QA_UNIFIED_FIELD_STRING),
 };
 static const qa_unified_record_layout style_pattern_layout = QA_UNIFIED_LAYOUT(qa_unified_style_pattern, style_pattern_fields);
+static const qa_unified_field q3_configuration_fields[] = {
+    QA_UNIFIED_FIELD(qa_unified_q3_configuration, provider_name, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_q3_configuration, instance, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_q3_configuration, content, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_q3_configuration, publication, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_unified_q3_configuration, map_revision, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_unified_q3_configuration, configuration_revision, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_POINTER(qa_unified_q3_configuration, game_state, qa_q3_gamestate_layout),
+    QA_UNIFIED_FIXED(qa_unified_q3_configuration, config_revisions, uint64_t_layout, QA_Q3_CONFIGSTRINGS),
+};
+const qa_unified_record_layout qa_unified_q3_configuration_layout = QA_UNIFIED_LAYOUT(qa_unified_q3_configuration, q3_configuration_fields);
 static const qa_unified_field metadata_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_frame_metadata, epoch, QA_UNIFIED_FIELD_U32),
     QA_UNIFIED_FIELD(qa_unified_frame_metadata, frame, QA_UNIFIED_FIELD_U64),
@@ -2035,8 +2045,10 @@ static const qa_unified_field metadata_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_frame_metadata, style_revision, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_frame_metadata, replace_configurations, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_frame_metadata, replace_styles, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_unified_frame_metadata, replace_q3, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_ARRAY(qa_unified_frame_metadata, configurations, configuration_count, qa_unified_configuration_state_layout, 65536),
     QA_UNIFIED_ARRAY(qa_unified_frame_metadata, styles, style_count, style_pattern_layout, 320),
+    QA_UNIFIED_ARRAY(qa_unified_frame_metadata, q3_configurations, q3_configuration_count, qa_unified_q3_configuration_layout, 256),
 };
 const qa_unified_record_layout qa_unified_metadata_layout = QA_UNIFIED_LAYOUT(qa_unified_frame_metadata, metadata_fields);
 void qa_unified_frame_metadata_destroy(qa_unified_frame_metadata *value)
@@ -2046,6 +2058,7 @@ bool qa_unified_metadata_check(const qa_unified_frame_metadata *value, size_t *b
 {
     if (!value || !value->epoch || (!value->replace_configurations && value->configuration_count) ||
         (!value->replace_styles && value->style_count) ||
+        (!value->replace_q3 && value->q3_configuration_count) ||
         !qa_unified_record_measure(&qa_unified_metadata_layout,value,bytes,error))
         return frame_bad(error,"Unified metadata lost its explicit replacement domains");
     uint64_t registry=value->configuration_count?value->configurations[0].actor.registry:0;
@@ -2066,6 +2079,15 @@ bool qa_unified_metadata_check(const qa_unified_frame_metadata *value, size_t *b
             (i && (value->styles[i-1].family>row->family ||
                 (value->styles[i-1].family==row->family && value->styles[i-1].index>=row->index))))
             return frame_bad(error,"Unified lightstyle metadata has an invalid or repeated Source pattern");
+    }
+    for (size_t i=0;i<value->q3_configuration_count;++i) {
+        const qa_unified_q3_configuration *row=value->q3_configurations+i;
+        if (!row->provider_name || !*row->provider_name || !row->instance || !*row->instance ||
+            !row->content || !*row->content || !q3_gamestate_check(row->game_state,error))
+            return frame_bad(error,"Unified Q3 metadata lost its actual Source owner or gamestate");
+        for (size_t prior=0;prior<i;++prior)
+            if (!strcmp(value->q3_configurations[prior].provider_name,row->provider_name))
+                return frame_bad(error,"Unified Q3 metadata repeats its actual Source provider");
     }
     return true;
 }

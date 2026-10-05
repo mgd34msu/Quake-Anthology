@@ -1,24 +1,21 @@
 #include "unified_output.h"
 #include "unified_output_json.h"
+#include "unified_frame_private.h"
+#include "unified_q3_sources.h"
 #include "map_players_private.h"
 #include "network_q1_source.h"
 #include "guest_native_q2_private.h"
+#include "qa/unified_frame_prediction.h"
+#include "qa/unified_frame_player.h"
 #include "qa/application_native_q2_presentation.h"
 #include "qa/game_q1_wire.h"
 #include "qa/game_q2_wire.h"
 
-#include <math.h>
-#include <stdlib.h>
-#include <string.h>
 
 static bool text(application_unified_json *j, const char *s, qa_error *e)
 { return application_unified_json_text(j, s, e); }
 static bool string(application_unified_json *j, const char *s, qa_error *e)
 { return application_unified_json_string(j, s, e); }
-static bool number(application_unified_json *j, double n, qa_error *e)
-{ return application_unified_json_number(j, n, e); }
-static bool actor(application_unified_json *j, qa_actor_id a, qa_error *e)
-{ return application_unified_json_actor(j, a, e); }
 
 static bool current(qa_application *app, const application_unified_source *source,
     uint64_t revision, qa_error *error)
@@ -26,34 +23,6 @@ static bool current(qa_application *app, const application_unified_source *sourc
     return (application_unified_source_current(app, source) &&
         qa_actors_revision(qa_session_actors(source->session)) == revision) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Unified output changed its Source or full actor roster");
-}
-
-static bool provider(application_unified_json *j, const application_provider *p, qa_error *error)
-{
-    if (!p || !p->constructed || !p->attached || p->close_pending || !p->launch ||
-        !p->launch->selection.instance || !p->product || !p->product->identity)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Unified configuration lost its published provider");
-    return text(j, "{\"provider\":", error) && string(j, p->launch->selection.instance, error) &&
-        text(j, ",\"content\":", error) && string(j, p->product->identity, error) && text(j, "}", error);
-}
-
-static bool time_value(application_unified_json *j, qa_clock_kind kind, uint64_t ns, qa_error *error)
-{
-    bool ms = kind == QA_CLOCK_Q2_RERELEASE || kind == QA_CLOCK_Q3;
-    return text(j, ms ? "{\"kind\":\"milliseconds\",\"value\":" : "{\"kind\":\"seconds\",\"value\":", error) &&
-        number(j, (double)ns / (ms ? 1e6 : 1e9), error) && text(j, "}", error);
-}
-
-static bool frame(application_unified_json *j, const qa_source_frame *f, qa_error *error)
-{
-    static const char *const phases[] = {"frame-entry", "client-command", "entity-prethink",
-        "entity-physics", "entity-think", "client-end-frame", "frame-exit"};
-    if ((unsigned)f->phase >= sizeof(phases) / sizeof(phases[0]))
-        return application_fail(error, QA_ERROR_FORMAT, "Unified Source has an unknown frame phase");
-    return text(j, "{\"frame\":", error) && application_unified_json_natural(j, f->number, error) &&
-        text(j, ",\"time\":", error) && time_value(j, f->kind, f->time_ns, error) &&
-        text(j, ",\"elapsed\":", error) && time_value(j, f->kind, f->elapsed_ns, error) &&
-        text(j, ",\"phase\":", error) && string(j, phases[f->phase], error) && text(j, "}", error);
 }
 
 static bool resource(application_unified_json *j, const qa_product *product, const char *path,
@@ -70,213 +39,232 @@ static bool resource(application_unified_json *j, const qa_product *product, con
         application_unified_json_natural(j, qa_resource_bytes(r).size, error) && text(j, "}", error);
 }
 
-static bool actor_rows(qa_application *app, application_unified_json *j, qa_error *error)
+static bool provider(qa_unified_provider_state *out, const application_provider *p, qa_error *error)
 {
-    const qa_actor_registry *registry = qa_session_actors(app->session);
-    qa_strings *strings = qa_session_strings(app->session);
-    uint32_t cursor = 0;
-    const qa_actor_record *row;
-    bool first = true;
-    while (qa_actors_next(registry, &cursor, &row)) {
-        qa_actor_record observed = *row;
-        if ((!first && !text(j, ",", error)) || !text(j, "{\"id\":", error) ||
-            !actor(j, observed.id, error) || !text(j, ",\"owner\":", error) ||
-            !string(j, qa_strings_cstr(strings, observed.owner), error) ||
-            !text(j, ",\"definition\":", error) ||
-            !string(j, qa_strings_cstr(strings, observed.definition), error) || !text(j, "}", error)) return false;
-        first = false;
-    }
-    return true;
+    if (!p || !p->constructed || !p->attached || p->close_pending || !p->launch || !p->product)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified configuration lost its published provider");
+    return application_unified_frame_string(NULL, &out->provider, p->launch->selection.instance, error) &&
+        application_unified_frame_string(NULL, &out->content, p->product->identity, error);
 }
 
-static bool body_rows(qa_application *app, const application_unified_source *source,
-    uint64_t revision, application_unified_json *j, qa_error *error)
+static int configuration_compare(const void *left, const void *right)
 {
-    uint32_t cursor = 0;
-    const qa_actor_record *row;
-    bool first = true;
-    while (qa_actors_next(qa_session_actors(source->session), &cursor, &row)) {
-        qa_actor_id id = row->id;
-        /* This is the real body's storage membership, independently of its
-         * collision link or currently selected appearance. */
-        if (!qa_world_body_storage_serial(source->world, id)) continue;
-        qa_body_state body;
-        if (!qa_world_body_read(source->world, id, &body, error) ||
-            !current(app, source, revision, error)) return false;
-        if (body.ground.registry && body.ground.registry != qa_actors_identity(qa_session_actors(source->session)))
-            return application_fail(error, QA_ERROR_FORMAT, "Unified body ground belongs to another registry");
-        if ((!first && !text(j, ",", error)) || !text(j, "{\"actor\":", error) ||
-            !actor(j, id, error) || !text(j, ",\"body\":", error) ||
-            !application_unified_json_body(j, &body, error) || !text(j, "}", error)) return false;
-        first = false;
-    }
-    return true;
+    qa_actor_id a = ((const qa_unified_configuration_state *)left)->actor;
+    qa_actor_id b = ((const qa_unified_configuration_state *)right)->actor;
+    if (a.registry != b.registry) return a.registry < b.registry ? -1 : 1;
+    if (a.slot != b.slot) return a.slot < b.slot ? -1 : 1;
+    return a.generation == b.generation ? 0 : a.generation < b.generation ? -1 : 1;
 }
 
-static bool inventory_rows(qa_application *app, const application_unified_source *source,
-    uint64_t revision, qa_actor_id recipient, application_unified_json *j, qa_error *error)
+static bool configurations(qa_application *app, qa_unified_frame_metadata *out, qa_error *error)
 {
-    size_t count = 0, actual = 0;
-    if (!qa_inventory_entries(app->inventory, recipient, NULL, 0, &count, error)) return false;
-    if (count > SIZE_MAX / sizeof(qa_inventory_entry))
-        return application_fail(error, QA_ERROR_MEMORY, "Unified recipient inventory extent is too large");
-    qa_inventory_entry *entries = count ? calloc(count, sizeof(*entries)) : NULL;
-    if (count && !entries) return application_fail(error, QA_ERROR_MEMORY, "Allocating actual Unified recipient inventory");
-    bool ok = qa_inventory_entries(app->inventory, recipient, entries, count, &actual, error);
-    if (ok && actual != count)
-        ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified recipient inventory changed between reads");
-    ok = ok && current(app, source, revision, error) && text(j, "{\"actor\":", error) &&
-        actor(j, recipient, error) && text(j, ",\"entries\":[", error);
-    for (size_t i = 0; ok && i < actual; ++i)
-        ok = (!i || text(j, ",", error)) && application_unified_json_inventory_entry(j,
-            qa_session_strings(app->session), entries + i, error);
-    if (ok) ok = text(j, "]}", error);
-    free(entries);
-    return ok;
-}
-
-static bool configurations(qa_application *app, application_unified_json *j, qa_error *error)
-{
-    bool first = true;
-    for (size_t i = 0; i < app->players->count; ++i) {
+    size_t count = app->players->count;
+    out->configurations = count ? calloc(count, sizeof(*out->configurations)) : NULL;
+    if (count && !out->configurations) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual player configurations");
+    for (size_t i = 0; i < count; ++i) {
         const application_player_record *row = app->players->records + i;
         if (row->retiring || row->deferred || row->source_begin_pending) continue;
-        if (!qa_actors_get(qa_session_actors(app->session), row->actor))
-            return application_fail(error, QA_ERROR_ARGUMENT, "Unified configuration lost its admitted player");
-        application_provider *movement = application_provider_for(app, row->actor, QA_ROLE_MOVEMENT, "");
-        application_provider *character = application_provider_for(app, row->actor, QA_ROLE_CHARACTER, "");
-        application_provider *body = application_provider_for(app, row->actor, QA_ROLE_BODY, "");
-        application_provider *arsenal = application_provider_for(app, row->actor, QA_ROLE_ARSENAL, "");
-        application_provider *inventory = application_provider_for(app, row->actor, QA_ROLE_INVENTORY, "");
-        if ((!first && !text(j, ",", error)) || !text(j, "{\"actor\":", error) ||
-            !actor(j, row->actor, error) || !text(j, ",\"movement\":", error) || !provider(j, movement, error) ||
-            !text(j, ",\"character\":{\"definition\":", error) || !provider(j, character, error) ||
-            !text(j, ",\"appearance\":", error) || !provider(j, body, error) ||
-            !text(j, "},\"weapons\":[", error) || !provider(j, arsenal, error) ||
-            !text(j, "],\"inventory\":", error) || !provider(j, inventory, error) || !text(j, "}", error)) return false;
-        first = false;
+        qa_unified_configuration_state *v = out->configurations + out->configuration_count++;
+        v->actor = row->actor;
+        v->weapons = calloc(1, sizeof(*v->weapons));
+        if (!v->weapons) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual arsenal configuration");
+        v->weapon_count = 1;
+        if (!provider(&v->movement, application_provider_for(app, row->actor, QA_ROLE_MOVEMENT, ""), error) ||
+            !provider(&v->character, application_provider_for(app, row->actor, QA_ROLE_CHARACTER, ""), error) ||
+            !provider(&v->appearance, application_provider_for(app, row->actor, QA_ROLE_BODY, ""), error) ||
+            !provider(v->weapons, application_provider_for(app, row->actor, QA_ROLE_ARSENAL, ""), error) ||
+            !provider(&v->inventory, application_provider_for(app, row->actor, QA_ROLE_INVENTORY, ""), error)) return false;
     }
+    if (out->configuration_count > 1)
+        qsort(out->configurations, out->configuration_count, sizeof(*out->configurations), configuration_compare);
     return true;
 }
 
-static bool style(application_unified_json *j, unsigned index, const char *pattern,
-    bool q1, double seconds, bool *first, qa_error *error)
+static bool metadata_revision(qa_application *app, const application_unified_source *source,
+    uint32_t epoch, application_unified_metadata_receipt *out, qa_error *error)
 {
-    if (!pattern) return true;
-    size_t length = strlen(pattern);
-    double letter = length ? (unsigned char)pattern[(size_t)fmod(floor(seconds * 10), (double)length)] - 97.0 : 12;
-    if ((!*first && !text(j, ",", error)) || !text(j, q1 ? "{\"kind\":\"q1\",\"style\":" :
-        "{\"kind\":\"q2\",\"style\":", error) || !number(j, index, error)) return false;
-    bool ok;
-    if (q1) ok = text(j, ",\"value\":", error) && number(j, length ? letter * 22 : 256, error);
-    else {
-        double value = letter / 12;
-        ok = text(j, ",\"rgb\":{\"x\":", error) && number(j, value, error) &&
-            text(j, ",\"y\":", error) && number(j, value, error) &&
-            text(j, ",\"z\":", error) && number(j, value, error) &&
-            text(j, "},\"white\":", error) && number(j, value * 3, error);
+    *out = (application_unified_metadata_receipt){.epoch = epoch, .style_source = source->owner,
+        .publication_revision = source->publication, .roster_revision = app->players ? app->players->revision : 0,
+        .map_revision = source->map_revision};
+    application_provider *p = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    if (!p || p->owner != source->owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified metadata lost its actual primary Source");
+    if (p->kind == APPLICATION_PROVIDER_Q1)
+        return qa_q1_source_lightstyle_revision(p->state.q1, &out->style_revision, error);
+    if (p->kind == APPLICATION_PROVIDER_Q2)
+        return qa_q2_wire_lightstyle_revision(p->state.q2, &out->style_revision, error);
+    if (p->kind == APPLICATION_PROVIDER_QC) {
+        struct application_qc_state *engine = application_network_q1_qc_source(app, p->owner, error);
+        if (!engine) return false;
+        out->style_revision = engine->lightstyle_revision;
+    } else if (p->kind == APPLICATION_PROVIDER_NATIVE && source->family == QA_GAME_Q2) {
+        if (!p->state.native.q2_engine) return application_fail(error, QA_ERROR_ARGUMENT, "Unified metadata lost its original Q2 Source");
+        out->style_revision = p->state.native.q2_engine->lightstyle_revision;
     }
-    if (ok) ok = text(j, "}", error);
-    *first = false;
-    return ok;
+    return true;
 }
 
 static bool styles(qa_application *app, const application_unified_source *source,
-    application_unified_json *j, qa_error *error)
+    qa_unified_frame_metadata *out, qa_error *error)
 {
     application_provider *p = application_world_provider(app, QA_ROLE_ENTITIES, "");
     qa_strings *strings = qa_session_strings(source->session);
-    double seconds = (double)source->frame.time_ns / 1e9;
-    bool first = true, ok = true;
-    if (p->kind == APPLICATION_PROVIDER_Q1) {
-        for (unsigned i = 0; ok && i < 64; ++i) {
-            qa_string_id pattern;
-            ok = qa_q1_source_lightstyle_read(p->state.q1, i, &pattern, error);
-            if (ok && pattern) ok = style(j, i, qa_strings_cstr(strings, pattern), true, seconds, &first, error);
-        }
-    } else if (p->kind == APPLICATION_PROVIDER_QC) {
-        struct application_qc_state *engine = application_network_q1_qc_source(app, p->owner, error);
-        if (!engine) return false;
-        for (unsigned i = 0; ok && i < 64; ++i) ok = style(j, i, engine->lightstyles[i], true, seconds, &first, error);
-    } else if (p->kind == APPLICATION_PROVIDER_Q2) {
-        for (unsigned i = 0; ok && i < 256; ++i) {
-            qa_string_id pattern;
-            ok = qa_q2_wire_lightstyle_read(p->state.q2, i, &pattern, error);
-            if (ok && pattern) ok = style(j, i, qa_strings_cstr(strings, pattern), false, seconds, &first, error);
-        }
-    } else if (p->kind == APPLICATION_PROVIDER_NATIVE && source->family == QA_GAME_Q2) {
-        qa_application_native_q2_presentation cut;
-        bool found;
-        if (!qa_application_native_q2_presentation_selected(app, &cut, &found, error)) return false;
-        struct application_native_q2 *engine = p->state.native.q2_engine;
-        if (!found || cut.kind != QA_APPLICATION_NATIVE_Q2_ORIGINAL || !engine ||
-            engine->provider != p || engine->calls || !engine->configstrings)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Unified lightstyles lost their original Q2 Source owner");
-        uint64_t revision = engine->config_revision;
-        uint32_t base = engine->resource_base[2] + engine->resource_limit[2];
-        if (base > engine->configstring_count || engine->configstring_count - base < 256)
-            return application_fail(error, QA_ERROR_FORMAT, "Original Q2 lightstyle table exceeds its real configstrings");
-        for (unsigned i = 0; ok && i < 256; ++i)
-            if (engine->configstrings[base + i])
-                ok = style(j, i, engine->configstrings[base + i], false, seconds, &first, error);
-        if (ok && (revision != engine->config_revision ||
-            !qa_application_native_q2_presentation_current(app, &cut)))
-            ok = application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 lightstyles changed their actual Source receipt");
+    size_t extent = source->family == QA_GAME_Q1 ? 64 : source->family == QA_GAME_Q2 ? 256 : 0;
+    out->styles = extent ? calloc(extent, sizeof(*out->styles)) : NULL;
+    if (extent && !out->styles) return application_fail(error, QA_ERROR_MEMORY, "Retaining changed Source lightstyle patterns");
+    struct application_qc_state *qc = p->kind == APPLICATION_PROVIDER_QC ?
+        application_network_q1_qc_source(app, p->owner, error) : NULL;
+    if (p->kind == APPLICATION_PROVIDER_QC && !qc) return false;
+    struct application_native_q2 *native = p->kind == APPLICATION_PROVIDER_NATIVE && source->family == QA_GAME_Q2 ?
+        p->state.native.q2_engine : NULL;
+    uint32_t base = native ? native->resource_base[QA_NATIVE_HOST_IMAGE] + native->resource_limit[QA_NATIVE_HOST_IMAGE] : 0;
+    if (native && (!native->configstrings || base > native->configstring_count || native->configstring_count - base < 256))
+        return application_fail(error, QA_ERROR_FORMAT, "Original Q2 lightstyles leave actual configstrings");
+    for (size_t i = 0; i < extent; ++i) {
+        const char *pattern = NULL;
+        qa_string_id id = 0;
+        if (p->kind == APPLICATION_PROVIDER_Q1) {
+            if (!qa_q1_source_lightstyle_read(p->state.q1, (uint32_t)i, &id, error)) return false;
+            if (id) pattern = qa_strings_cstr(strings, id);
+        } else if (p->kind == APPLICATION_PROVIDER_Q2) {
+            if (!qa_q2_wire_lightstyle_read(p->state.q2, (uint32_t)i, &id, error)) return false;
+            if (id) pattern = qa_strings_cstr(strings, id);
+        } else if (qc) pattern = qc->lightstyles[i];
+        else if (native) pattern = native->configstrings[base + i];
+        qa_unified_style_pattern *row = out->styles + out->style_count++;
+        row->family = source->family; row->index = (uint32_t)i;
+        if (!application_unified_frame_string(NULL, &row->pattern, pattern, error)) return false;
     }
-    return ok;
-}
-
-bool application_unified_output_snapshot(qa_application *app, const application_unified_source *source,
-    qa_net_client_id recipient, const qa_unified_session_player *player, uint32_t epoch,
-    application_unified_snapshot *out, qa_error *error)
-{
-    if (!out || out->snapshot || !epoch || !player || !source ||
-        !application_unified_source_current(app, source) || player->source_owner != source->owner ||
-        !qa_actors_get(qa_session_actors(source->session), player->actor))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Unified output requires its actual admitted Source player and frame");
-    if (!application_unified_player_current(app, recipient, player))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Unified output differs from its authentic connection player");
-    qa_application_map_view map;
-    if (!qa_application_map_read(app, &map) || map.revision != source->map_revision || !map.resource)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Unified output lost its published map resource");
-    uint64_t revision = qa_actors_revision(qa_session_actors(source->session));
-    application_unified_snapshot candidate = {0};
-    application_unified_json j = {0};
-    bool ok = text(&j, "{\"frame\":", error) && frame(&j, &source->frame, error) &&
-        text(&j, ",\"actors\":[", error) && actor_rows(app, &j, error) &&
-        text(&j, "],\"bodies\":[", error) && body_rows(app, source, revision, &j, error) &&
-        text(&j, "],\"inventories\":[", error) && inventory_rows(app, source, revision, player->actor, &j, error) &&
-        text(&j, "],\"configurations\":[", error) && configurations(app, &j, error) &&
-        text(&j, "],\"scene\":{\"time\":", error) && time_value(&j, source->frame.kind, source->frame.time_ns, error) &&
-        text(&j, ",\"world\":", error) && resource(&j, qa_catalog_product(qa_launch_snapshot_catalog(source->launch), map.geometry),
-            qa_resource_path(map.resource), map.resource, error) &&
-        text(&j, ",\"entities\":[],\"lights\":[],\"particles\":[],\"lightStyles\":[", error) && styles(app, source, &j, error) &&
-        text(&j, "],\"areaBits\":null}}", error) &&
-        current(app, source, revision, error) &&
-        (application_unified_player_current(app, recipient, player) ||
-            application_fail(error, QA_ERROR_ARGUMENT, "Unified recipient changed during Source output")) &&
-        qa_unified_document_create(QA_UNIFIED_CHECKPOINT, (qa_bytes){j.bytes.data, j.bytes.size}, &candidate.snapshot, error);
-    application_unified_json_dispose(&j);
-    if (!ok) { application_unified_snapshot_dispose(&candidate); return false; }
-    *out = candidate;
     return true;
 }
 
-void application_unified_snapshot_dispose(application_unified_snapshot *out)
+bool application_unified_output_metadata(qa_application *app, const application_unified_source *source,
+    const application_unified_q3_sources *q3_sources, uint32_t epoch, const application_unified_metadata_receipt *committed,
+    const qa_unified_document *committed_q3_metadata, application_unified_metadata_receipt *proposed, qa_unified_document **out, qa_error *error)
 {
-    if (!out) return;
-    qa_unified_document_destroy(out->snapshot);
-    *out = (application_unified_snapshot){0};
+    if (!app || !source || !epoch || !proposed || !out || *out || !application_unified_source_current(app, source))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified metadata requires its completed Source and recipient epoch");
+    application_unified_metadata_receipt value;
+    if (!metadata_revision(app, source, epoch, &value, error)) return false;
+    bool initial = !committed || committed->epoch != epoch || committed->map_revision != value.map_revision;
+    bool configuration_changed = initial || committed->publication_revision != value.publication_revision ||
+        committed->roster_revision != value.roster_revision;
+    bool styles_changed = initial || committed->style_source != value.style_source || committed->style_revision != value.style_revision;
+    bool q3_changed = initial || !application_unified_q3_sources_metadata_current(q3_sources, committed_q3_metadata);
+    if (!configuration_changed && !styles_changed && !q3_changed) { *proposed = value; return true; }
+    qa_unified_frame_metadata *metadata = calloc(1, sizeof(*metadata));
+    if (!metadata) return application_fail(error, QA_ERROR_MEMORY, "Retaining changed Unified Source metadata");
+    metadata->epoch = epoch; metadata->frame = source->frame.number;
+    metadata->configuration_revision = value.publication_revision; metadata->roster_revision = value.roster_revision;
+    metadata->style_revision = value.style_revision;
+    metadata->replace_configurations = configuration_changed; metadata->replace_styles = styles_changed;
+    metadata->replace_q3 = q3_changed;
+    bool ok = (!configuration_changed || configurations(app, metadata, error)) &&
+        (!styles_changed || styles(app, source, metadata, error)) &&
+        (!q3_changed || application_unified_q3_sources_metadata(q3_sources, metadata, error));
+    application_unified_metadata_receipt after;
+    if (ok) ok = metadata_revision(app, source, epoch, &after, error) &&
+        after.publication_revision == value.publication_revision && after.roster_revision == value.roster_revision &&
+        after.style_revision == value.style_revision && application_unified_q3_sources_current(q3_sources) &&
+        application_unified_source_current(app, source);
+    if (ok) ok = qa_unified_document_create_metadata(&metadata, out, error);
+    if (!ok) { qa_unified_frame_metadata_destroy(metadata); return false; }
+    *proposed = value;
+    return true;
 }
 
-static bool child_field(application_unified_json *out, const qa_unified_document *document,
-    qa_json_id parent, const char *name, qa_json_kind kind, qa_error *error)
+bool application_unified_output_world(qa_application *app, const application_unified_source *source,
+    qa_unified_frame_pool *pool, qa_unified_world_frame **out, qa_error *error)
 {
-    const qa_json_document *json = qa_unified_document_json(document);
-    qa_json_id value = qa_json_get(json, parent, name);
-    if (qa_json_type(json, value) != kind)
-        return application_fail(error, QA_ERROR_FORMAT, "Unified presentation lacks its actual typed projection");
-    return application_unified_json_append(out, qa_json_source(json, value), error);
+    if (!out || *out || !source || !application_unified_source_current(app, source))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified world requires its actual completed Source");
+    qa_application_map_view map;
+    if (!qa_application_map_read(app, &map) || map.revision != source->map_revision || !map.resource)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified output lost its published map resource");
+    const qa_actor_registry *registry = qa_session_actors(source->session);
+    uint64_t revision = qa_actors_revision(registry);
+    size_t count = qa_actors_count(registry);
+    qa_unified_world_frame *v = qa_unified_world_frame_create(pool, error);
+    if (!v) return false;
+    v->source = source->frame;
+    v->actors = count ? application_unified_frame_alloc(v->lease, count, sizeof(*v->actors), error) : NULL;
+    v->bodies = count ? application_unified_frame_alloc(v->lease, count, sizeof(*v->bodies), error) : NULL;
+    v->collisions = count ? application_unified_frame_alloc(v->lease, count, sizeof(*v->collisions), error) : NULL;
+    v->world = application_unified_frame_alloc(v->lease, 1, sizeof(*v->world), error);
+    bool ok = (!count || (v->actors && v->bodies && v->collisions)) && v->world;
+    if (!ok) application_fail(error, QA_ERROR_MEMORY, "Retaining actual Source world rows");
+    uint32_t cursor = 0; const qa_actor_record *record;
+    qa_strings *strings = qa_session_strings(source->session);
+    while (ok && qa_actors_next(registry, &cursor, &record)) {
+        if (qa_actors_revision(registry) != revision) {
+            ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified world actor roster changed during observation");
+            break;
+        }
+        qa_actor_id id = record->id;
+        qa_unified_actor_state *a = v->actors + v->actor_count++;
+        a->actor = id;
+        ok = application_unified_frame_string(v->lease, &a->owner, qa_strings_cstr(strings, record->owner), error) &&
+            application_unified_frame_string(v->lease, &a->definition, qa_strings_cstr(strings, record->definition), error);
+        if (ok && qa_world_body_storage_serial(source->world, id)) {
+            qa_unified_body_state *b = v->bodies + v->body_count++;
+            b->actor = id; ok = qa_world_body_read(source->world, id, &b->body, error);
+            if (ok && qa_actors_revision(registry) != revision)
+                ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified world actor roster changed during observation");
+            qa_spatial_actor row = {0};
+            if (ok && qa_world_linked(source->world, id, &row.body)) {
+                qa_error observed = {0};
+                if (qa_world_get_collision(source->world, id, &row.collision, &observed)) {
+                    row.body.state = b->body;
+                    v->collisions[v->collision_count++] = row;
+                } else if (observed.code != QA_OK) {
+                    if (error) *error = observed;
+                    ok = false;
+                }
+            }
+            if (ok && qa_actors_revision(registry) != revision)
+                ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified world actor roster changed during observation");
+        }
+    }
+    const qa_product *product = qa_catalog_product(qa_launch_snapshot_catalog(source->launch), map.geometry);
+    if (ok && (!product || !qa_resource_digest(map.resource)))
+        ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified world lost its installed resource provenance");
+    if (ok) {
+        v->world->digest = *qa_resource_digest(map.resource); v->world->byte_length = qa_resource_bytes(map.resource).size;
+        ok = application_unified_frame_string(v->lease, &v->world->content, product->identity, error) &&
+            application_unified_frame_string(v->lease, &v->world->path, qa_resource_path(map.resource), error) &&
+            current(app, source, revision, error);
+    }
+    if (!ok) { qa_unified_world_frame_destroy(v); return false; }
+    *out = v;
+    return true;
+}
+
+bool application_unified_output_inventory(qa_application *app, qa_actor_id actor,
+    qa_unified_frame *out, const qa_inventory_entry **raw, size_t *raw_count, qa_error *error)
+{
+    size_t count = 0, actual = 0;
+    if (!qa_inventory_entries(app->inventory, actor, NULL, 0, &count, error)) return false;
+    qa_inventory_entry *entries = count ? application_unified_frame_alloc(out->lease, count, sizeof(*entries), error) : NULL;
+    if (count && !entries) return application_fail(error, QA_ERROR_MEMORY, "Reading actual Unified recipient inventory");
+    bool ok = qa_inventory_entries(app->inventory, actor, entries, count, &actual, error);
+    if (ok && actual != count) ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified recipient inventory changed between reads");
+    if (ok) {
+        out->inventories = application_unified_frame_alloc(out->lease, 1, sizeof(*out->inventories), error);
+        if (!out->inventories) ok = application_fail(error, QA_ERROR_MEMORY, "Retaining actual Unified recipient inventory");
+    }
+    if (ok) {
+        out->inventory_count = 1; out->inventories->actor = actor;
+        out->inventories->entries = count ? application_unified_frame_alloc(out->lease, count, sizeof(*out->inventories->entries), error) : NULL;
+        if (count && !out->inventories->entries) ok = application_fail(error, QA_ERROR_MEMORY, "Retaining actual inventory rows");
+    }
+    for (size_t i = 0; ok && i < count; ++i) {
+        qa_unified_inventory_entry *row = out->inventories->entries + out->inventories->entry_count++;
+        row->count = entries[i].count; row->capacity = entries[i].capacity; row->policy = entries[i].policy;
+        ok = application_unified_frame_string(out->lease, &row->item,
+            qa_strings_cstr(qa_session_strings(app->session), entries[i].item), error);
+    }
+    if (ok) { *raw = entries; *raw_count = count; }
+    return ok;
 }
 
 static bool children_current(qa_application *app, const application_unified_source *source,
@@ -285,98 +273,41 @@ static bool children_current(qa_application *app, const application_unified_sour
 {
     return (application_unified_source_current(app, source) &&
         application_unified_player_current(app, recipient, player) &&
-        children->current(children->context, app, source, recipient, player) &&
-        application_unified_source_current(app, source) &&
-        application_unified_player_current(app, recipient, player)) ||
+        children->current(children->context, app, source, recipient, player)) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Unified frame lost an actual Source projection owner");
 }
 
 bool application_unified_output_build(qa_application *app, const application_unified_source *source,
-    qa_net_client_id recipient, const qa_unified_session_player *player, uint32_t epoch,
-    int64_t acknowledged, const application_unified_frame_children *children,
+    qa_net_client_id recipient, const qa_unified_session_player *player,
+    qa_unified_frame **owned, const application_unified_frame_children *children,
     application_unified_output *out, qa_error *error)
 {
-    if (!out || out->frame || out->controls || out->control_count || !source || !player ||
-        !children || !children->current || !children->prediction || !children->presentation ||
-        !children->simulation_events || (children->control_count && !children->controls) ||
-        children->control_count > SIZE_MAX / sizeof(*out->controls) ||
-        qa_unified_document_type(children->prediction) != QA_UNIFIED_PREDICTION_DOCUMENT ||
-        qa_unified_document_type(children->presentation) != QA_UNIFIED_CHECKPOINT ||
-        qa_unified_document_type(children->simulation_events) != QA_UNIFIED_CHECKPOINT ||
-        acknowledged < -1 || acknowledged > (int64_t)QA_UNIFIED_SAFE_INTEGER || !epoch)
+    if (!out || out->frame || out->controls || out->control_count || !owned || !*owned ||
+        !source || !player || !children || !children->current ||
+        (children->control_count && !children->controls))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified frame requires its real typed Source children");
+    qa_unified_frame *frame = *owned;
+    if (!frame->world || !frame->prediction || !frame->player || !frame->visuals || !frame->epoch ||
+        !qa_actor_id_equal(frame->prediction->actor, player->actor) ||
+        !qa_actor_id_equal(frame->player->actor, player->actor) || frame->prediction->sequence != frame->acknowledged_input)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified frame differs from its actual player acknowledgement");
     if (!children_current(app, source, recipient, player, children, error)) return false;
-    const qa_json_document *prediction = qa_unified_document_json(children->prediction);
-    qa_json_id root = qa_unified_document_root(children->prediction);
-    uint64_t slot, generation;
-    int64_t sequence;
-    qa_json_id predicted_actor = qa_json_get(prediction, root, "actor");
-    if (!qa_json_u64(prediction, qa_json_get(prediction, predicted_actor, "slot"), &slot, error) ||
-        !qa_json_u64(prediction, qa_json_get(prediction, predicted_actor, "generation"), &generation, error) ||
-        !qa_json_i64(prediction, qa_json_get(prediction, root, "sequence"), &sequence, error)) return false;
-    if (slot != player->actor.slot || generation != player->actor.generation || sequence != acknowledged)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Unified prediction differs from its full recipient and input acknowledgement");
-    if (qa_json_type(qa_unified_document_json(children->simulation_events),
-        qa_unified_document_root(children->simulation_events)) != QA_JSON_ARRAY)
-        return application_fail(error, QA_ERROR_FORMAT, "Unified Source events are not their actual output array");
-
-    application_unified_snapshot snapshot = {0};
-    if (!application_unified_output_snapshot(app, source, recipient, player, epoch, &snapshot, error)) return false;
-    application_unified_output candidate = {0};
-    application_unified_json j = {0};
-    const qa_json_document *presentation = qa_unified_document_json(children->presentation);
-    qa_json_id p = qa_unified_document_root(children->presentation);
-    qa_json_id presented_player = qa_json_get(presentation, p, "player");
-    bool ok = text(&j, "{\"schema\":\"qts-unified-frame\",\"epoch\":", error) &&
-        application_unified_json_natural(&j, epoch, error) && text(&j, ",\"acknowledgedInput\":", error) &&
-        number(&j, (double)acknowledged, error) && text(&j, ",\"prediction\":", error) &&
-        application_unified_json_document(&j, children->prediction, error) &&
-        text(&j, ",\"output\":{\"snapshot\":", error) && application_unified_json_document(&j, snapshot.snapshot, error) &&
-        text(&j, ",\"events\":", error) && application_unified_json_document(&j, children->simulation_events, error) &&
-        text(&j, "},\"models\":", error) && child_field(&j, children->presentation, p, "models", QA_JSON_ARRAY, error) &&
-        text(&j, ",\"characters\":", error) && child_field(&j, children->presentation, p, "characters", QA_JSON_ARRAY, error) &&
-        text(&j, ",\"worldText\":", error) && child_field(&j, children->presentation, p, "worldText", QA_JSON_ARRAY, error) &&
-        text(&j, ",\"player\":{\"actor\":", error) && actor(&j, player->actor, error) &&
-        text(&j, ",\"view\":", error) && child_field(&j, children->presentation, presented_player, "view", QA_JSON_OBJECT, error) &&
-        text(&j, ",\"ui\":", error) && child_field(&j, children->presentation, presented_player, "ui", QA_JSON_OBJECT, error);
-    if (ok && qa_json_get(presentation, presented_player, "clientPresentation") != QA_JSON_NONE)
-        ok = text(&j, ",\"clientPresentation\":", error) &&
-            child_field(&j, children->presentation, presented_player, "clientPresentation", QA_JSON_OBJECT, error);
-    if (ok) ok = text(&j, "}", error);
-    static const char *const optional[] = {"nativeCamera", "components"};
-    for (size_t i = 0; ok && i < sizeof(optional) / sizeof(optional[0]); ++i) {
-        qa_json_id field = qa_json_get(presentation, p, optional[i]);
-        if (field != QA_JSON_NONE)
-            ok = text(&j, ",", error) && string(&j, optional[i], error) && text(&j, ":", error) &&
-                child_field(&j, children->presentation, p, optional[i], QA_JSON_OBJECT, error);
-    }
-    if (ok && qa_json_get(presentation, p, "compiledQ3Sources") != QA_JSON_NONE)
-        ok = text(&j, ",\"compiledQ3Sources\":", error) &&
-            child_field(&j, children->presentation, p, "compiledQ3Sources", QA_JSON_ARRAY, error);
-    if (ok) ok = text(&j, "}", error) && children_current(app, source, recipient, player, children, error) &&
-        qa_unified_document_create(QA_UNIFIED_FRAME_DOCUMENT, (qa_bytes){j.bytes.data, j.bytes.size}, &candidate.frame, error);
+    application_unified_output candidate = {.controls_pooled = frame->lease != NULL};
+    bool ok = true;
     if (ok && children->control_count) {
-        candidate.controls = calloc(children->control_count, sizeof(*candidate.controls));
-        if (!candidate.controls) ok = application_fail(error, QA_ERROR_MEMORY, "Allocating actual Unified reliable prerequisites");
+        candidate.controls = application_unified_frame_alloc(frame->lease, children->control_count, sizeof(*candidate.controls), error);
+        if (!candidate.controls) ok = application_fail(error, QA_ERROR_MEMORY, "Retaining Unified reliable prerequisites");
     }
     for (size_t i = 0; ok && i < children->control_count; ++i) {
         const qa_unified_document *control = children->controls[i];
         if (!control || qa_unified_document_type(control) != QA_UNIFIED_CONTROL_DOCUMENT) {
-            ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified prerequisite is not its actual reliable control");
-            break;
+            ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified prerequisite is not its actual reliable control"); break;
         }
-        const qa_json_document *json = qa_unified_document_json(control);
-        uint64_t control_epoch;
-        qa_json_id value = qa_json_get(json, qa_unified_document_root(control), "value");
-        if (!qa_json_u64(json, qa_json_get(json, value, "epoch"), &control_epoch, error)) { ok = false; break; }
-        if (control_epoch != epoch) { ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified prerequisite belongs to another epoch"); break; }
-        ok = qa_unified_document_retain(control,
-            candidate.controls + candidate.control_count, error);
+        ok = qa_unified_document_retain(control, candidate.controls + candidate.control_count, error);
         if (ok) ++candidate.control_count;
     }
-    if (ok) ok = children_current(app, source, recipient, player, children, error);
-    application_unified_json_dispose(&j);
-    application_unified_snapshot_dispose(&snapshot);
+    if (ok) ok = children_current(app, source, recipient, player, children, error) &&
+        qa_unified_document_create_frame(owned, &candidate.frame, error);
     if (!ok) { application_unified_output_dispose(&candidate); return false; }
     *out = candidate;
     return true;
@@ -385,9 +316,9 @@ bool application_unified_output_build(qa_application *app, const application_uni
 void application_unified_output_dispose(application_unified_output *out)
 {
     if (!out) return;
-    qa_unified_document_destroy(out->frame);
     for (size_t i = 0; i < out->control_count; ++i) qa_unified_document_destroy(out->controls[i]);
-    free(out->controls);
+    if (!out->controls_pooled) free(out->controls);
+    qa_unified_document_destroy(out->frame);
     *out = (application_unified_output){0};
 }
 

@@ -6,6 +6,7 @@
 #include "qa/ui_preferences.h"
 #include "qa/caption_save.h"
 #include "qa/text.h"
+#include "qa/network_unified_frame.h"
 #include <float.h>
 #include <math.h>
 #include <stdio.h>
@@ -14,23 +15,15 @@ typedef enum rr_kind {
     RR_POI, RR_KEYED_POI, RR_REMOVE_POI, RR_HEALTHBAR, RR_DAMAGE,
     RR_PATH, RR_COOP, RR_REPORT, RR_OBJECTIVE, RR_MISSION, RR_HELP, RR_UNKNOWN
 } rr_kind;
-static const char *const variants[] = {
-    "poi", "keyed-poi", "remove-poi", "healthbar", "directional-damage",
-    "help-path", "coop-respawn", "end-of-unit", "mission-objective", "mission-status", "help-computer"
-};
-static const char *const coop_states[] = {"none", "in-combat", "bad-area", "blocked", "waiting", "no-lives"};
 static const char *const coop_keys[] = {"", "$g_coop_respawn_in_combat", "$g_coop_respawn_bad_area",
     "$g_coop_respawn_blocked", "$g_coop_respawn_waiting", "$g_coop_respawn_no_lives"};
-typedef struct rr_level {
-    char *map, *name;
-    double order, total_secrets, found_secrets, total_monsters, killed_monsters, time;
-} rr_level;
+typedef qa_unified_q2_campaign_level rr_level;
 typedef struct rr_record {
-    qa_unified_document *document;
+    qa_unified_presentation_event *event;
     rr_kind kind;
     char *content, *source_provider, *owner_provider;
     uint64_t owner_generation;
-    double seconds, frame_milliseconds;
+    double seconds;
     qa_actor_id actor, target;
     qa_scene_image *image;
     char *localized, *secondary_localized;
@@ -78,8 +71,6 @@ struct frontend_unified_q2_rr_hud {
     qa_scene_view view;
     bool have_view, busy, help_open, controls_registered;
 };
-static qa_json_id field(const qa_json_document *j, qa_json_id row, const char *name)
-{ return qa_json_get(j, row, name); }
 static bool fail(qa_error *e, const char *message)
 { return frontend_unified_fail(e, QA_ERROR_FORMAT, message); }
 static bool current(frontend_unified_q2_rr_hud *o, qa_error *e)
@@ -88,166 +79,130 @@ static bool current(frontend_unified_q2_rr_hud *o, qa_error *e)
         ((o->frontend->capture || o->frontend->source_restoring) ?
             frontend_remote_unified_checkpoint_current(o->replica, e) : frontend_remote_unified_current(o->replica, e));
 }
-static bool number(const qa_unified_document *d, qa_json_id id, double *out, qa_error *e)
-{ return (qa_unified_document_number(d, id, out, e) && isfinite(*out)) || fail(e, "RR HUD number is not finite"); }
-static bool integer(const qa_unified_document *d, qa_json_id id, int32_t *out, qa_error *e)
-{
-    double value;
-    if (!number(d, id, &value, e)) return false;
-    if (value < INT32_MIN || value > INT32_MAX || trunc(value) != value) return fail(e, "RR HUD integer exceeds its source word");
-    *out = (int32_t)value; return true;
-}
-static bool vector(const qa_unified_document *d, qa_json_id id, qa_vec3 *out, qa_error *e)
-{
-    const qa_json_document *j = qa_unified_document_json(d); double value[3];
-    if (!number(d, field(j,id,"x"), value, e) || !number(d, field(j,id,"y"), value+1, e) ||
-        !number(d, field(j,id,"z"), value+2, e)) return false;
-    for (unsigned i=0; i<3; ++i) if (fabs(value[i]) > FLT_MAX) return fail(e, "RR HUD vector exceeds native float storage");
-    *out = qa_v3((float)value[0], (float)value[1], (float)value[2]); return true;
-}
-static bool text(const qa_unified_document *d, qa_json_id id, char **out, qa_error *e)
-{
-    qa_buffer value={0};
-    if (!qa_json_string(qa_unified_document_json(d), id, &value, e)) return false;
-    if (memchr(value.data, 0, value.size)) { qa_buffer_free(&value); return fail(e, "RR HUD string contains NUL"); }
-    *out=(char *)value.data; return true;
-}
-static bool actor_read(frontend_unified_q2_rr_hud *o, const qa_unified_document *d, qa_json_id id,
+static bool actor_read(frontend_unified_q2_rr_hud *o, qa_actor_id actor,
     bool retained, bool resolve, qa_actor_id *out, qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(d); uint64_t slot, generation;
-    if (!qa_json_u64(j,field(j,id,"slot"),&slot,e) || slot>UINT32_MAX ||
-        !qa_json_u64(j,field(j,id,"generation"),&generation,e) || !generation) return false;
+    if (!actor.registry || !actor.generation) return fail(e,"RR HUD actor has no Source identity");
     if (!resolve) return true;
-    return retained ? frontend_remote_unified_actor_retained(o->replica,(uint32_t)slot,generation,out,e) :
-        frontend_remote_unified_actor(o->replica,(uint32_t)slot,generation,out,e);
+    return frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(o->frame),actor,retained,out,e);
 }
-static rr_kind kind_read(const qa_unified_document *d, qa_json_id row)
+static rr_kind kind_read(const qa_unified_presentation_event *row)
 {
-    const qa_json_document *j=qa_unified_document_json(d);
-    if (!qa_json_string_equal(j,field(j,row,"kind"),"q2-rerelease")) return RR_UNKNOWN;
-    qa_json_id kind=field(j,field(j,row,"event"),"kind");
-    for (unsigned i=0; i<RR_UNKNOWN; ++i) if (qa_json_string_equal(j,kind,variants[i])) return (rr_kind)i;
-    return RR_UNKNOWN;
+    if (!row || row->q2_profile!=2) return RR_UNKNOWN;
+    switch (row->payload.kind) {
+    case QA_UNIFIED_PRESENTATION_Q2_MAP:
+        switch (row->payload.value.q2_map.kind) {
+        case QA_Q2_MAP_POI: return RR_POI;
+        case QA_Q2_MAP_REMOVE_POI: return RR_REMOVE_POI;
+        case QA_Q2_MAP_HEALTHBAR: return RR_HEALTHBAR;
+        case QA_Q2_MAP_END_UNIT: return RR_REPORT;
+        case QA_Q2_MAP_MISSION_OBJECTIVE: return RR_OBJECTIVE;
+        case QA_Q2_MAP_MISSION_STATUS: return RR_MISSION;
+        case QA_Q2_MAP_HELP_COMPUTER: return RR_HELP;
+        default: return RR_UNKNOWN;
+        }
+    case QA_UNIFIED_PRESENTATION_Q2_PLAYER:
+        switch (row->payload.value.q2_player.kind) {
+        case QA_Q2_PLAYER_DIRECTIONAL_DAMAGE: return RR_DAMAGE;
+        case QA_Q2_PLAYER_HELP_PATH: return RR_PATH;
+        case QA_Q2_PLAYER_RESPAWN_STATUS: return RR_COOP;
+        default: return RR_UNKNOWN;
+        }
+    case QA_UNIFIED_PRESENTATION_Q2_PROTOCOL:
+        switch (row->payload.value.q2_protocol.kind) {
+        case QA_Q2_SVC_POI: return row->payload.value.q2_protocol.poi.remove?RR_REMOVE_POI:RR_KEYED_POI;
+        case QA_Q2_SVC_DAMAGE: return RR_DAMAGE;
+        case QA_Q2_SVC_HELP_PATH: return RR_PATH;
+        default: return RR_UNKNOWN;
+        }
+    default: return RR_UNKNOWN;
+    }
 }
-bool frontend_unified_q2_rr_known(const qa_unified_document *d, qa_json_id row)
-{ return d && kind_read(d,row)!=RR_UNKNOWN; }
+bool frontend_unified_q2_rr_known(const qa_unified_presentation_event *row)
+{ return kind_read(row)!=RR_UNKNOWN; }
 static void record_clear(rr_record *r)
 {
     if (!r) return;
-    switch (r->kind) {
-    case RR_POI: case RR_KEYED_POI: free(r->value.poi.path); break;
-    case RR_HEALTHBAR: free(r->value.bar.name); break;
-    case RR_REPORT:
-        for (size_t i=0; i<r->value.report.count; ++i) { free(r->value.report.levels[i].map); free(r->value.report.levels[i].name); }
-        free(r->value.report.levels); break;
-    case RR_OBJECTIVE:
-        free(r->value.objective.text);
-        for (size_t i=0; i<r->value.objective.count; ++i) free(r->value.objective.args[i]);
-        free(r->value.objective.args); break;
-    case RR_HELP: free(r->value.help.primary); free(r->value.help.secondary); break;
-    default: break;
-    }
-    qa_unified_document_destroy(r->document); qa_scene_image_release(r->image);
-    free(r->content); free(r->source_provider); free(r->owner_provider);
+    if (r->kind==RR_OBJECTIVE) free(r->value.objective.args);
+    if (r->event) { qa_unified_presentation_event_dispose(r->event); free(r->event); }
+    qa_scene_image_release(r->image);
     free(r->localized); free(r->secondary_localized); *r=(rr_record){0};
 }
 static void record_replace(rr_record *destination, rr_record *source)
 { record_clear(destination); *destination=*source; *source=(rr_record){0}; }
-static bool token(const qa_unified_document *d, qa_json_id id, char **provider, uint64_t *generation, qa_error *e)
-{
-    const qa_json_document *j=qa_unified_document_json(d);
-    if (id==QA_JSON_NONE || qa_json_type(j,id)==QA_JSON_NULL) { *generation=0; return true; }
-    return text(d,field(j,id,"provider"),provider,e) && **provider &&
-        qa_json_u64(j,field(j,id,"generation"),generation,e) && *generation;
-}
-static bool parse(frontend_unified_q2_rr_hud *o, const qa_unified_document *d, qa_json_id row,
+static bool parse(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_event *row,
     bool retained, bool resolve, rr_record *r, qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(d);
-    qa_json_id event=field(j,row,"event"), source=field(j,row,"source"); uint64_t sequence;
-    r->kind=kind_read(d,row);
+    r->kind=kind_read(row);
     if (r->kind==RR_UNKNOWN) return fail(e,"RR HUD event variant is unknown");
-    bool okay=text(d,field(j,row,"content"),&r->content,e) && *r->content &&
-        text(d,field(j,source,"provider"),&r->source_provider,e) && *r->source_provider &&
-        qa_json_string_equal(j,field(j,source,"profile"),"rerelease") &&
-        number(d,field(j,source,"frameMilliseconds"),&r->frame_milliseconds,e) && r->frame_milliseconds>0 &&
-        number(d,field(j,row,"seconds"),&r->seconds,e) && r->seconds>=0 && isfinite(r->seconds*1000) &&
-        qa_json_u64(j,field(j,row,"sequence"),&sequence,e) &&
-        token(d,field(j,row,"owner"),&r->owner_provider,&r->owner_generation,e);
-    if (okay && r->kind!=RR_REPORT) okay=actor_read(o,d,field(j,event,"actor"),retained,resolve,&r->actor,e);
+    if (!row->content || !*row->content || !row->provider || !*row->provider || !row->q2_interval_ns ||
+        !isfinite(row->seconds) || row->seconds<0 || !isfinite(row->seconds*1000) ||
+        (row->owner.generation && (!row->owner.provider || !*row->owner.provider)))
+        return fail(e,"RR HUD event lacks its actual Source clock and owner");
+    r->content=row->content; r->source_provider=row->provider;
+    r->owner_provider=row->owner.provider; r->owner_generation=row->owner.generation;
+    r->seconds=row->seconds;
+    const qa_unified_q2_map_event *map=row->payload.kind==QA_UNIFIED_PRESENTATION_Q2_MAP?&row->payload.value.q2_map:NULL;
+    const qa_unified_q2_player_event *player=row->payload.kind==QA_UNIFIED_PRESENTATION_Q2_PLAYER?&row->payload.value.q2_player:NULL;
+    const qa_unified_q2_protocol_event *protocol=row->payload.kind==QA_UNIFIED_PRESENTATION_Q2_PROTOCOL?&row->payload.value.q2_protocol:NULL;
+    qa_actor_id actor=map?map->recipient:player?player->actor:protocol->actor;
+    bool okay=r->kind==RR_REPORT || actor_read(o,actor,retained,resolve,&r->actor,e);
     switch (r->kind) {
     case RR_POI: case RR_KEYED_POI:
-        r->value.poi.key=1; r->value.poi.flags=1;
-        if (okay && r->kind==RR_KEYED_POI) okay=integer(d,field(j,event,"key"),&r->value.poi.key,e) &&
-            integer(d,field(j,event,"flags"),&r->value.poi.flags,e);
-        okay=okay && vector(d,field(j,event,"position"),&r->value.poi.origin,e) &&
-            text(d,field(j,event,"image"),&r->value.poi.path,e) && *r->value.poi.path &&
-            number(d,field(j,event,"duration"),&r->value.poi.duration,e) &&
-            integer(d,field(j,event,"color"),&r->value.poi.color,e);
-        if (okay) okay=isfinite(r->seconds*1000+r->value.poi.duration);
-        r->value.poi.tint=(qa_scene_vec4){1,1,1,1}; break;
-    case RR_REMOVE_POI: okay=okay && integer(d,field(j,event,"key"),&r->value.remove.key,e); break;
+        r->value.poi.key=map?1:protocol->poi.key;
+        r->value.poi.flags=map?1:protocol->poi.flags;
+        r->value.poi.origin=map?map->origin:protocol->poi.position;
+        r->value.poi.path=map?map->resource:protocol->resource;
+        r->value.poi.duration=map?map->duration:protocol->poi.duration;
+        r->value.poi.color=map?map->count:protocol->poi.color;
+        r->value.poi.tint=(qa_scene_vec4){1,1,1,1};
+        okay=okay && qa_vec_finite(r->value.poi.origin) && r->value.poi.path && *r->value.poi.path &&
+            isfinite(r->value.poi.duration) && isfinite(r->seconds*1000+r->value.poi.duration); break;
+    case RR_REMOVE_POI: r->value.remove.key=map?map->slot:protocol->poi.key; break;
     case RR_HEALTHBAR:
-        okay=okay && integer(d,field(j,event,"slot"),&r->value.bar.slot,e) &&
-            actor_read(o,d,field(j,event,"target"),retained,resolve,&r->target,e) &&
-            text(d,field(j,event,"name"),&r->value.bar.name,e) &&
-            number(d,field(j,event,"fraction"),&r->value.bar.fraction,e) &&
-            qa_json_bool(j,field(j,event,"visible"),&r->value.bar.visible,e); break;
+        r->value.bar.slot=map->slot; r->value.bar.name=map->text;
+        r->value.bar.fraction=map->value; r->value.bar.visible=map->visible;
+        okay=okay && actor_read(o,map->target,retained,resolve,&r->target,e) &&
+            r->value.bar.name && isfinite(r->value.bar.fraction); break;
     case RR_DAMAGE:
-        okay=okay && vector(d,field(j,event,"direction"),&r->value.damage.direction,e) &&
-            number(d,field(j,event,"damage"),&r->value.damage.amount,e) &&
-            qa_json_bool(j,field(j,event,"health"),&r->value.damage.health,e) &&
-            qa_json_bool(j,field(j,event,"armor"),&r->value.damage.armor,e) &&
-            qa_json_bool(j,field(j,event,"shield"),&r->value.damage.shield,e); break;
+        r->value.damage.direction=player?player->direction:protocol->direction;
+        r->value.damage.amount=player?player->damage:protocol->damage;
+        r->value.damage.health=player?player->health:protocol->health;
+        r->value.damage.armor=player?player->armor:protocol->armor;
+        r->value.damage.shield=player?player->shield:protocol->shield;
+        okay=okay && qa_vec_finite(r->value.damage.direction) && isfinite(r->value.damage.amount); break;
     case RR_PATH:
-        okay=okay && vector(d,field(j,event,"position"),&r->value.path.origin,e) &&
-            vector(d,field(j,event,"direction"),&r->value.path.direction,e) &&
-            qa_json_bool(j,field(j,event,"first"),&r->value.path.first,e); break;
-    case RR_COOP: {
-        uint32_t state=0; bool found=false;
-        for (; state<6; ++state) if (qa_json_string_equal(j,field(j,event,"state"),coop_states[state])) { found=true; break; }
-        okay=okay && found && number(d,field(j,event,"lives"),&r->value.coop.lives,e);
-        r->value.coop.state=state; break;
-    }
-    case RR_REPORT: {
-        qa_json_id levels=field(j,event,"levels"); size_t count=qa_json_size(j,levels);
-        okay=okay && qa_json_type(j,levels)==QA_JSON_ARRAY && count<=65536 &&
-            number(d,field(j,event,"buttonTime"),&r->value.report.ready,e) && isfinite(r->value.report.ready*1000);
-        if (okay && count) { r->value.report.levels=calloc(count,sizeof(rr_level));
-            okay=r->value.report.levels!=NULL;
-            if (!okay) frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining real RR unit level report"); }
-        for (size_t i=0; okay && i<count; ++i) {
-            rr_level *level=r->value.report.levels+i; r->value.report.count=i+1;
-            qa_json_id item=qa_json_at(j,levels,i);
-            okay=text(d,field(j,item,"map"),&level->map,e) && text(d,field(j,item,"name"),&level->name,e) &&
-                number(d,field(j,item,"visitOrder"),&level->order,e) &&
-                number(d,field(j,item,"totalSecrets"),&level->total_secrets,e) &&
-                number(d,field(j,item,"foundSecrets"),&level->found_secrets,e) &&
-                number(d,field(j,item,"totalMonsters"),&level->total_monsters,e) &&
-                number(d,field(j,item,"killedMonsters"),&level->killed_monsters,e) && number(d,field(j,item,"time"),&level->time,e);
+        r->value.path.origin=player?player->origin:protocol->origin;
+        r->value.path.direction=player?player->direction:protocol->direction;
+        r->value.path.first=player?player->first:protocol->first;
+        okay=okay && qa_vec_finite(r->value.path.origin) && qa_vec_finite(r->value.path.direction); break;
+    case RR_COOP:
+        r->value.coop.state=(uint32_t)player->respawn_status; r->value.coop.lives=player->lives;
+        okay=okay && r->value.coop.state<6; break;
+    case RR_REPORT:
+        r->value.report.levels=map->levels; r->value.report.count=map->level_count;
+        r->value.report.ready=(double)map->button_time_ns/1e9;
+        okay=okay && map->level_count<=QA_Q2_CAMPAIGN_LEVEL_LIMIT && (!map->level_count || map->levels);
+        for (size_t i=0; okay && i<map->level_count; ++i)
+            okay=map->levels[i].map && map->levels[i].name && isfinite(map->levels[i].time_seconds);
+        break;
+    case RR_OBJECTIVE:
+        r->value.objective.text=map->text; r->value.objective.talk=(map->flags&1u)!=0;
+        okay=okay && map->text && map->argument_count<=65536 && (!map->argument_count || map->arguments);
+        if (okay && map->argument_count) {
+            r->value.objective.args=calloc(map->argument_count,sizeof(char *));
+            if (!r->value.objective.args) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining RR objective argument view");
+        }
+        for (size_t i=0; okay && i<map->argument_count; ++i) {
+            okay=map->arguments[i].kind==QA_BUILTIN_MESSAGE_STRING && map->arguments[i].text;
+            if (okay) r->value.objective.args[r->value.objective.count++]=map->arguments[i].text;
         }
         break;
-    }
-    case RR_OBJECTIVE: {
-        qa_json_id args=field(j,event,"args"); size_t count=qa_json_size(j,args);
-        okay=okay && text(d,field(j,event,"text"),&r->value.objective.text,e) &&
-            qa_json_type(j,args)==QA_JSON_ARRAY && count<=65536 &&
-            qa_json_bool(j,field(j,event,"talkSound"),&r->value.objective.talk,e);
-        if (okay && count) { r->value.objective.args=calloc(count,sizeof(char *));
-            okay=r->value.objective.args!=NULL;
-            if (!okay) frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining real RR objective arguments"); }
-        for (size_t i=0; okay && i<count; ++i) {
-            r->value.objective.count=i+1; okay=text(d,qa_json_at(j,args,i),r->value.objective.args+i,e);
-        }
-        break;
-    }
-    case RR_MISSION: okay=okay && qa_json_bool(j,field(j,event,"iconVisible"),&r->value.mission.visible,e); break;
+    case RR_MISSION: r->value.mission.visible=map->visible; break;
     case RR_HELP:
-        okay=okay && text(d,field(j,event,"primary"),&r->value.help.primary,e) &&
-            text(d,field(j,event,"secondary"),&r->value.help.secondary,e) &&
-            qa_json_bool(j,field(j,event,"visible"),&r->value.help.visible,e) &&
-            qa_json_bool(j,field(j,event,"slowTime"),&r->value.help.slow,e); break;
+        r->value.help.primary=map->text; r->value.help.secondary=map->resource;
+        r->value.help.visible=map->visible; r->value.help.slow=(map->flags&1u)!=0;
+        okay=okay && map->text && map->resource; break;
     case RR_UNKNOWN: break;
     }
     if (!okay && (!e || e->code==QA_OK)) fail(e,"RR HUD event lacks its actual Source, actor or typed payload");
@@ -260,11 +215,11 @@ static bool retired(const frontend_unified_q2_rr_hud *o, const rr_record *r)
         if (item->generation==r->owner_generation && !strcmp(item->provider,r->owner_provider)) return true;
     return false;
 }
-bool frontend_unified_q2_rr_validate(frontend_unified_q2_rr_hud *o, const qa_unified_document *d,
-    qa_json_id row, qa_error *e)
+bool frontend_unified_q2_rr_validate(frontend_unified_q2_rr_hud *o,
+    const qa_unified_presentation_event *row, qa_error *e)
 {
-    if (!o || !d || !current(o,e)) return false;
-    rr_record record={0}; bool okay=parse(o,d,row,false,false,&record,e); record_clear(&record); return okay;
+    if (!o || !row || !current(o,e)) return false;
+    rr_record record={0}; bool okay=parse(o,row,false,false,&record,e); record_clear(&record); return okay;
 }
 static bool media_bank(frontend_unified_q2_rr_hud *o, const char *content, bool fresh,
     frontend_unified_bank_view *out, qa_error *e)
@@ -307,8 +262,17 @@ static uint64_t nanoseconds(double seconds)
     long double value=(long double)seconds*1e9L;
     return value<=0?0:value>=UINT64_MAX?UINT64_MAX:(uint64_t)value;
 }
-static bool clone_record(const qa_unified_document *d, qa_json_id row, rr_record *r, qa_error *e)
-{ return qa_unified_document_create(QA_UNIFIED_CHECKPOINT,qa_json_source(qa_unified_document_json(d),row),&r->document,e); }
+static bool clone_record(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_event *row,
+    rr_record *r, qa_error *e)
+{
+    r->event=calloc(1,sizeof(*r->event));
+    if (!r->event) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining RR Source event");
+    if (!qa_unified_presentation_event_clone(row,r->event,e)) return false;
+    if (r->kind==RR_OBJECTIVE) {
+        free(r->value.objective.args); r->value.objective.args=NULL; r->value.objective.count=0;
+    }
+    return parse(o,r->event,false,false,r,e);
+}
 static bool controls(frontend_unified_q2_rr_hud *o, bool *pois, bool *damage, double *damage_ms,
     double *edge, double *maximum, qa_error *e)
 {
@@ -338,14 +302,6 @@ static bool controls_admit(frontend_unified_q2_rr_hud *o, qa_error *e)
         if (!qa_cvars_register(d->cvars,control_defaults[i].name,control_defaults[i].value,0,
             d->command_context.owner,"Received RR HUD",e) || !current(o,e)) return false;
     o->controls_registered=true; return true;
-}
-static bool controls_restored(const frontend_unified_q2_rr_hud *o)
-{
-    const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
-    if (!d || !d->cvars) return false;
-    for (size_t i=0; i<sizeof(control_defaults)/sizeof(*control_defaults); ++i)
-        if (!qa_cvars_find(d->cvars,control_defaults[i].name)) return false;
-    return true;
 }
 static bool poi_apply(frontend_unified_q2_rr_hud *o, rr_record *r, qa_error *e)
 {
@@ -410,9 +366,10 @@ static bool damage_apply(frontend_unified_q2_rr_hud *o, rr_record *r, double lif
 }
 static bool objective_apply(frontend_unified_q2_rr_hud *o, rr_record *r, qa_error *e)
 {
-    if (o->pending_objective.document) {
-        if (!frontend_unified_document_equal(o->pending_objective.document,r->document))
+    if (o->pending_objective.event) {
+        if (o->pending_objective.event->sequence!=r->event->sequence) {
             return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"RR objective retry differs from its retained delivery prefix");
+        }
     } else {
         if (!localized(o,r,r->value.objective.text,(const char *const *)r->value.objective.args,
             r->value.objective.count,&r->localized,e)) return false;
@@ -431,18 +388,18 @@ static bool objective_apply(frontend_unified_q2_rr_hud *o, rr_record *r, qa_erro
     }
     record_replace(&o->objective,pending); o->pending_printed=false; o->pending_sound=false; return true;
 }
-bool frontend_unified_q2_rr_presentation(frontend_unified_q2_rr_hud *o, const qa_unified_document *d,
-    qa_json_id row, bool *mirrored, qa_error *e)
+bool frontend_unified_q2_rr_presentation(frontend_unified_q2_rr_hud *o,
+    const qa_unified_presentation_event *row, bool *mirrored, qa_error *e)
 {
-    if (!o || !d || !mirrored || o->busy || o->frontend->capture || o->frontend->resource_inventory ||
+    if (!o || !row || !mirrored || o->busy || o->frontend->capture || o->frontend->resource_inventory ||
         o->frontend->source_restoring || !current(o,e)) return false;
-    *mirrored=false; rr_record r={0}; bool okay=parse(o,d,row,false,true,&r,e);
+    *mirrored=false; rr_record r={0}; bool okay=parse(o,row,false,true,&r,e);
     qa_actor_id viewer; uint32_t number_id;
     if (okay) okay=frontend_remote_unified_player(o->replica,&viewer,&number_id);
     if (okay && ((r.kind!=RR_REPORT && !qa_actor_id_equal(viewer,r.actor)) || retired(o,&r))) {
         record_clear(&r); return true;
     }
-    if (okay) okay=clone_record(d,row,&r,e);
+    if (okay) okay=clone_record(o,row,&r,e);
     if (!okay) { record_clear(&r); return false; }
     o->busy=true;
     okay=controls_admit(o,e);
@@ -502,39 +459,27 @@ bool frontend_unified_q2_rr_presentation(frontend_unified_q2_rr_hud *o, const qa
 bool frontend_unified_q2_rr_help_visible(const frontend_unified_q2_rr_hud *o)
 {
     qa_actor_id viewer; uint32_t number_id;
-    return o && o->help.document && o->help_open &&
+    return o && o->help.event && o->help_open &&
         frontend_remote_unified_player(o->replica,&viewer,&number_id) && qa_actor_id_equal(o->help.actor,viewer);
 }
-bool frontend_unified_q2_rr_overlay(frontend_unified_q2_rr_hud *o, const qa_unified_document *d,
-    qa_json_id row, qa_error *e)
+bool frontend_unified_q2_rr_overlay(frontend_unified_q2_rr_hud *o,
+    const qa_unified_presentation_event *row, qa_error *e)
 {
-    if (!o || !d || o->busy || !current(o,e)) return false;
-    const qa_json_document *j=qa_unified_document_json(d);
-    qa_json_id event=field(j,row,"event"), kind=field(j,event,"kind");
+    if (!o || !row || o->busy || !current(o,e)) return false;
+    if (row->payload.kind!=QA_UNIFIED_PRESENTATION_Q2_PLAYER)
+        return fail(e,"RR help interlock received no actual player event");
+    const qa_unified_q2_player_event *player=&row->payload.value.q2_player;
     qa_actor_id actor,viewer; uint32_t source_number;
-    if (!qa_json_string_equal(j,field(j,row,"kind"),"q2-player") ||
-        !actor_read(o,d,field(j,event,"actor"),false,true,&actor,e) ||
+    if (!actor_read(o,player->actor,false,true,&actor,e) ||
         !frontend_remote_unified_player(o->replica,&viewer,&source_number)) return false;
     if (!qa_actor_id_equal(actor,viewer)) return true;
-    if (qa_json_string_equal(j,kind,"help")) {
-        bool visible;
-        if (!qa_json_bool(j,field(j,event,"visible"),&visible,e)) return false;
-        o->help_open=visible; return true;
+    switch (player->kind) {
+    case QA_Q2_PLAYER_HELP: o->help_open=player->visible; return true;
+    case QA_Q2_PLAYER_INVENTORY: if (player->visible) o->help_open=false; return true;
+    case QA_Q2_PLAYER_SCOREBOARD: o->help_open=false; return true;
+    case QA_Q2_PLAYER_VIEW: if (!(player->view.layouts&1)) o->help_open=false; return true;
+    default: return fail(e,"RR help interlock received an unsupported actual player overlay");
     }
-    if (qa_json_string_equal(j,kind,"inventory")) {
-        qa_json_id flag=field(j,event,"visible"); bool visible=true;
-        if (flag!=QA_JSON_NONE && !qa_json_bool(j,flag,&visible,e)) return false;
-        if (visible) o->help_open=false;
-        return true;
-    }
-    if (qa_json_string_equal(j,kind,"scoreboard")) { o->help_open=false; return true; }
-    if (qa_json_string_equal(j,kind,"view")) {
-        uint64_t layouts;
-        if (!qa_json_u64(j,field(j,field(j,event,"view"),"layouts"),&layouts,e)) return false;
-        if (!(layouts&1)) o->help_open=false;
-        return true;
-    }
-    return fail(e,"RR help interlock received an unsupported actual player overlay");
 }
 static bool empty_hud(void *ctx, const qa_hud_frame *frame, qa_hud_data *out, qa_error *e)
 {
@@ -582,38 +527,43 @@ bool frontend_unified_q2_rr_destroy(frontend_unified_q2_rr_hud **slot, qa_error 
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->prepared);
     qa_localization_pool_destroy(o->localizations); free(o); *slot=NULL; return true;
 }
-static bool owner_parse(const qa_unified_document *d, qa_json_id row, char **provider,
+static bool owner_parse(const qa_unified_presentation_event *row, const char **provider,
     uint64_t *generation, bool *is_retired, qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(d);
-    qa_json_id event=field(j,row,"event"), kind=field(j,event,"kind"); double seconds; uint64_t sequence;
-    *is_retired=qa_json_string_equal(j,kind,"retired");
-    return qa_json_string_equal(j,field(j,row,"kind"),"presentation-owner") &&
-        (*is_retired || qa_json_string_equal(j,kind,"refreshed")) &&
-        token(d,field(j,event,"owner"),provider,generation,e) && *generation &&
-        number(d,field(j,row,"seconds"),&seconds,e) && qa_json_u64(j,field(j,row,"sequence"),&sequence,e);
+    if (!row || row->payload.kind!=QA_UNIFIED_PRESENTATION_OWNER || !isfinite(row->seconds))
+        return fail(e,"RR owner event lacks its actual Source payload");
+    const qa_unified_owner_event *event=&row->payload.value.owner;
+    if ((unsigned)event->kind>QA_UNIFIED_OWNER_REFRESHED || !event->owner.provider ||
+        !*event->owner.provider || !event->owner.generation)
+        return fail(e,"RR owner event lacks its actual lifetime token");
+    *provider=event->owner.provider; *generation=event->owner.generation;
+    *is_retired=event->kind==QA_UNIFIED_OWNER_RETIRED; return true;
 }
-bool frontend_unified_q2_rr_owner_validate(frontend_unified_q2_rr_hud *o, const qa_unified_document *d,
-    qa_json_id row, qa_error *e)
+bool frontend_unified_q2_rr_owner_validate(frontend_unified_q2_rr_hud *o,
+    const qa_unified_presentation_event *row, qa_error *e)
 {
-    if (!o || !d || !current(o,e)) return false;
-    char *provider=NULL; uint64_t generation=0; bool is_retired;
-    bool okay=owner_parse(d,row,&provider,&generation,&is_retired,e); free(provider); return okay;
+    if (!o || !row || !current(o,e)) return false;
+    const char *provider; uint64_t generation; bool is_retired;
+    return owner_parse(row,&provider,&generation,&is_retired,e);
 }
 static bool owned(const rr_record *r, const rr_retired *owner)
-{ return r->document && r->owner_generation==owner->generation && r->owner_provider && !strcmp(r->owner_provider,owner->provider); }
-bool frontend_unified_q2_rr_owner_retire(frontend_unified_q2_rr_hud *o, const qa_unified_document *d,
-    qa_json_id row, qa_error *e)
+{ return r->event && r->owner_generation==owner->generation && r->owner_provider && !strcmp(r->owner_provider,owner->provider); }
+bool frontend_unified_q2_rr_owner_retire(frontend_unified_q2_rr_hud *o,
+    const qa_unified_presentation_event *row, qa_error *e)
 {
-    if (!o || !d || o->busy || !current(o,e)) return false;
-    char *provider=NULL; uint64_t generation=0; bool is_retired;
-    if (!owner_parse(d,row,&provider,&generation,&is_retired,e)) { free(provider); return false; }
-    if (!is_retired) { free(provider); return true; }
+    if (!o || !row || o->busy || !current(o,e)) return false;
+    const char *provider; uint64_t generation; bool is_retired;
+    if (!owner_parse(row,&provider,&generation,&is_retired,e)) return false;
+    if (!is_retired) return true;
     for (rr_retired *item=o->retired; item; item=item->next)
-        if (item->generation==generation && !strcmp(item->provider,provider)) { free(provider); return true; }
+        if (item->generation==generation && !strcmp(item->provider,provider)) return true;
     rr_retired *item=calloc(1,sizeof(*item));
-    if (!item) { free(provider); return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual RR presentation retirement"); }
-    item->provider=provider; item->generation=generation; item->next=o->retired; o->retired=item;
+    if (!item) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual RR presentation retirement");
+    size_t size=strlen(provider)+1;
+    item->provider=malloc(size);
+    if (!item->provider) { free(item); return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual RR owner identity"); }
+    memcpy(item->provider,provider,size);
+    item->generation=generation; item->next=o->retired; o->retired=item;
     size_t kept=0;
     for (size_t i=0; i<o->poi_count; ++i) {
         if (owned(o->pois+i,item)) record_clear(o->pois+i);
@@ -638,17 +588,15 @@ bool frontend_unified_q2_rr_owner_retire(frontend_unified_q2_rr_hud *o, const qa
         if (records[i]==&o->help) o->help_open=false;
         record_clear(records[i]);
     }
-    if (!o->pending_objective.document) { o->pending_printed=false; o->pending_sound=false; }
+    if (!o->pending_objective.event) { o->pending_printed=false; o->pending_sound=false; }
     return true;
 }
 static bool frame_clock(const qa_unified_document *d, double *seconds, qa_error *e)
 {
     if (!d || qa_unified_document_type(d)!=QA_UNIFIED_FRAME_DOCUMENT) return fail(e,"RR HUD clock lacks its actual committed frame");
-    const qa_json_document *j=qa_unified_document_json(d); qa_json_id root=qa_unified_document_root(d);
-    qa_json_id time=field(j,field(j,field(j,field(j,root,"output"),"snapshot"),"frame"),"time");
-    if (!number(d,field(j,time,"value"),seconds,e)) return false;
-    if (qa_json_string_equal(j,field(j,time,"kind"),"milliseconds")) *seconds/=1000;
-    else if (!qa_json_string_equal(j,field(j,time,"kind"),"seconds")) return false;
+    const qa_unified_frame *frame=qa_unified_document_frame(d);
+    if (!frame || !frame->world) return fail(e,"RR HUD clock lost its typed Source frame");
+    *seconds=(double)frame->world->source.time_ns/1e9;
     return *seconds>=0 && isfinite(*seconds*1000);
 }
 bool frontend_unified_q2_rr_frame_prepare(frontend_unified_q2_rr_hud *o, const qa_unified_document *d, qa_error *e)
@@ -661,13 +609,6 @@ bool frontend_unified_q2_rr_frame_ready(frontend_unified_q2_rr_hud *o, const qa_
     double seconds;
     return o && !o->busy && o->prepared && qa_hud_idle(o->prints) && current(o,e) &&
         frame_clock(d,&seconds,e) && seconds==o->prepared_seconds && o->prepared==d;
-}
-bool frontend_unified_q2_rr_frame_restore_bind(frontend_unified_q2_rr_hud *o,
-    const qa_unified_document *d, qa_error *e)
-{
-    return o && o->frontend->source_restoring && frontend_unified_q2_rr_checkpoint_ready(o) &&
-        current(o,e) && frontend_unified_document_restore_bind(&o->prepared,d,false,e) &&
-        frontend_unified_q2_rr_frame_ready(o,d,e);
 }
 void frontend_unified_q2_rr_frame_commit(frontend_unified_q2_rr_hud *o)
 {
@@ -772,8 +713,8 @@ typedef struct rr_level_order { const rr_level *level; size_t index; } rr_level_
 static int level_compare(const void *a, const void *b)
 {
     const rr_level_order *x=a,*y=b;
-    if (x->level->order<y->level->order) return -1;
-    if (x->level->order>y->level->order) return 1;
+    if (x->level->visit_order<y->level->visit_order) return -1;
+    if (x->level->visit_order>y->level->visit_order) return 1;
     return x->index<y->index?-1:x->index>y->index?1:0;
 }
 static bool draw_report(frontend_unified_q2_rr_hud *o, rr_draw *draw, qa_error *e)
@@ -793,8 +734,8 @@ static bool draw_report(frontend_unified_q2_rr_hud *o, rr_draw *draw, qa_error *
             !qa_format_number(level->total_monsters,monsters,e) ||
             !qa_format_number(level->found_secrets,secrets,e) ||
             !qa_format_number(level->total_secrets,total,e) ||
-            !qa_format_number(floor(level->time/60),minutes,e) ||
-            !qa_format_number(floor(fmod(level->time,60)),seconds,e)) return false;
+            !qa_format_number(floor(level->time_seconds/60),minutes,e) ||
+            !qa_format_number(floor(fmod(level->time_seconds,60)),seconds,e)) return false;
         size_t size=strlen(name); if (size>SIZE_MAX-256) return fail(e,"RR unit report row exceeds storage");
         char *line=qa_arena_alloc(&draw->frame->storage,size+256,1,e);
         if (!line) return false;
@@ -819,14 +760,14 @@ bool frontend_unified_q2_rr_draw(frontend_unified_q2_rr_hud *o, qa_ui *ui,
     if (!okay) return false;
     draw.scale=fminf((float)viewport.width/640.f,(float)viewport.height/480.f);
     draw.x=(float)viewport.x+((float)viewport.width-640*draw.scale)*.5f; draw.y=(float)viewport.y+((float)viewport.height-480*draw.scale)*.5f;
-    const char *content=o->report.document?o->report.content:o->bars?o->bars->row.content:
-        o->help.document?o->help.content:o->path.document?o->path.content:o->coop.document?o->coop.content:
+    const char *content=o->report.event?o->report.content:o->bars?o->bars->row.content:
+        o->help.event?o->help.content:o->path.event?o->path.content:o->coop.event?o->coop.content:
         o->poi_count?o->pois[0].content:o->damage_count?o->damage[0].row.content:NULL;
     if (content) { frontend_unified_bank_view bank={0};
         okay=media_bank(o,content,false,&bank,e); if (okay) draw.white=qa_scene_white(bank.images); }
     o->busy=true;
-    if (okay && ((o->objective.document && qa_actor_id_equal(o->objective.actor,viewer)) ||
-        (o->pending_objective.document && qa_actor_id_equal(o->pending_objective.actor,viewer))))
+    if (okay && ((o->objective.event && qa_actor_id_equal(o->objective.actor,viewer)) ||
+        (o->pending_objective.event && qa_actor_id_equal(o->pending_objective.actor,viewer))))
         okay=qa_hud_draw(o->prints,&(qa_hud_frame){.seat=domain->physical_seat,.actor=viewer,
         .time_ns=nanoseconds(o->seconds),.viewport=viewport,.safe_area=viewport,.scale=1,.visible=true},frame,e);
     bool show_pois=false,show_damage=false; double lifetime=0,edge=0,maximum=1;
@@ -837,7 +778,7 @@ bool frontend_unified_q2_rr_draw(frontend_unified_q2_rr_hud *o, qa_ui *ui,
     grouped.x=draw.x+320*draw.scale*(1-draw.prefs.hud_scale);
     grouped.y=draw.y+240*draw.scale*(1-draw.prefs.hud_scale);
     if (okay && o->have_view && show_damage) okay=draw_damage(o,viewer,&grouped,lifetime,e);
-    if (okay && o->have_view && o->path.document && qa_actor_id_equal(o->path.actor,viewer) &&
+    if (okay && o->have_view && o->path.event && qa_actor_id_equal(o->path.actor,viewer) &&
         o->path.seconds*1000+10000>o->seconds*1000) {
         qa_scene_matrix projector=qa_scene_matrix_multiply(o->view.projection,qa_scene_view_matrix(&o->view));
         for (unsigned i=0; okay && i<3; ++i) {
@@ -859,11 +800,11 @@ bool frontend_unified_q2_rr_draw(frontend_unified_q2_rr_hud *o, qa_ui *ui,
             draw_fill(&grouped,160,y+20,320*(float)fmax(0,fmin(1,row->value.bar.fraction)),8,(qa_scene_vec4){.8f,.12f,.08f,1},e);
         ++index;
     }
-    if (okay && o->mission.document && qa_actor_id_equal(o->mission.actor,viewer) &&
-        o->mission.value.mission.visible && o->objective.document && qa_actor_id_equal(o->objective.actor,viewer) &&
+    if (okay && o->mission.event && qa_actor_id_equal(o->mission.actor,viewer) &&
+        o->mission.value.mission.visible && o->objective.event && qa_actor_id_equal(o->objective.actor,viewer) &&
         o->objective.localized && *o->objective.localized)
         okay=draw_text(&draw,"New objective",320,394,QA_FONT_ALIGN_CENTER,(qa_scene_vec4){1,.8f,.3f,1},e);
-    if (okay && o->coop.document && qa_actor_id_equal(o->coop.actor,viewer)) {
+    if (okay && o->coop.event && qa_actor_id_equal(o->coop.actor,viewer)) {
         if (o->coop.value.coop.state)
             okay=draw_text(&draw,o->coop.localized,320,360,QA_FONT_ALIGN_CENTER,(qa_scene_vec4){1,.8f,.3f,1},e);
         if (okay && o->coop.value.coop.lives!=0) {
@@ -872,183 +813,11 @@ bool frontend_unified_q2_rr_draw(frontend_unified_q2_rr_hud *o, qa_ui *ui,
                 draw_text(&draw,o->coop.secondary_localized,624,28,QA_FONT_ALIGN_RIGHT,(qa_scene_vec4){1,1,1,1},e);
         }
     }
-    if (okay && o->report.document) okay=draw_report(o,&draw,e);
+    if (okay && o->report.event) okay=draw_report(o,&draw,e);
     else if (okay && frontend_unified_q2_rr_help_visible(o))
         okay=draw_fill(&draw,48,48,544,360,(qa_scene_vec4){0,0,0,.8f},e) &&
             draw_text(&draw,"Help computer",320,68,QA_FONT_ALIGN_CENTER,(qa_scene_vec4){1,.8f,.3f,1},e) &&
             draw_text(&draw,o->help.localized,68,104,QA_FONT_ALIGN_LEFT,(qa_scene_vec4){1,1,1,1},e) &&
             draw_text(&draw,o->help.secondary_localized,68,144,QA_FONT_ALIGN_LEFT,(qa_scene_vec4){1,1,1,1},e);
     o->busy=false; return okay;
-}
-static bool blob(qa_source_save_io *io, qa_buffer *bytes)
-{
-    size_t size=bytes->size;
-    if (!qa_source_save_count(io,&size,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)) return false;
-    if (io->direction==QA_SOURCE_SAVE_READ) {
-        bytes->data=size?malloc(size):NULL; bytes->size=size;
-        if (size && !bytes->data) return frontend_unified_fail(io->error,QA_ERROR_MEMORY,"Retaining RR HUD continuation bytes");
-    }
-    return qa_source_save_bytes(io,bytes->data,size);
-}
-static bool document_fields(qa_source_save_io *io, qa_unified_document **document, qa_unified_document_kind type)
-{
-    bool present=*document!=NULL;
-    if (!qa_source_save_bool(io,&present)) return false;
-    if (!present) return true;
-    qa_buffer bytes={0}; bool read=io->direction==QA_SOURCE_SAVE_READ;
-    if (!read) {
-        if (qa_unified_document_type(*document)!=type) return false;
-        qa_bytes source=qa_json_source(qa_unified_document_json(*document),qa_unified_document_root(*document));
-        bytes=(qa_buffer){(uint8_t *)source.data,source.size};
-    }
-    bool okay=blob(io,&bytes);
-    if (okay && read) okay=qa_unified_document_create(type,(qa_bytes){bytes.data,bytes.size},document,io->error);
-    if (read) qa_buffer_free(&bytes);
-    return okay;
-}
-static bool record_fields(qa_source_save_io *io, frontend_unified_q2_rr_hud *o,
-    const frontend_unified_q2_refs *refs, rr_record *r)
-{
-    bool read=io->direction==QA_SOURCE_SAVE_READ;
-    if (!document_fields(io,&r->document,QA_UNIFIED_CHECKPOINT)) return false;
-    if (!r->document) return true;
-    if (read && !parse(o,r->document,qa_unified_document_root(r->document),true,true,r,io->error)) return false;
-    if (!qa_source_save_owned_text(io,&r->localized) || !qa_source_save_owned_text(io,&r->secondary_localized)) return false;
-    bool image=r->image!=NULL;
-    if (!qa_source_save_bool(io,&image)) return false;
-    if (image) {
-        uint64_t id=0; const qa_scene_image *decoded=NULL;
-        if ((!read && (!refs->effects.image_encode ||
-            !refs->effects.image_encode(refs->effects.context,r->image,&id,io->error))) ||
-            !qa_source_save_u64(io,&id) || !id) return false;
-        if (read) {
-            frontend_unified_bank_view bank={0};
-            if (!refs->effects.image_decode ||
-                !refs->effects.image_decode(refs->effects.context,id,&decoded,io->error) || !decoded ||
-                !media_bank(o,r->content,false,&bank,io->error) || qa_scene_image_resource_owner(decoded)!=bank.images) return false;
-            qa_scene_image_retain(decoded); r->image=(qa_scene_image *)decoded;
-        }
-    }
-    if (r->kind==RR_POI || r->kind==RR_KEYED_POI) {
-        qa_scene_vec4 *tint=&r->value.poi.tint;
-        if (!qa_source_save_f32(io,&tint->x) || !qa_source_save_f32(io,&tint->y) ||
-            !qa_source_save_f32(io,&tint->z) || !qa_source_save_f32(io,&tint->w) ||
-            !isfinite(tint->x) || !isfinite(tint->y) || !isfinite(tint->z) || !isfinite(tint->w)) return false;
-    }
-    if ((r->kind==RR_HEALTHBAR || r->kind==RR_COOP || r->kind==RR_OBJECTIVE || r->kind==RR_HELP) && !r->localized) return false;
-    if ((r->kind==RR_HELP || r->kind==RR_COOP) && !r->secondary_localized) return false;
-    return !retired(o,r);
-}
-static bool fields(qa_source_save_io *io, frontend_unified_q2_rr_hud *o, const frontend_unified_q2_refs *refs)
-{
-    bool read=io->direction==QA_SOURCE_SAVE_READ; uint8_t magic[4]={'Q','U','R','H'}; if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QURH",4) ||
-        !qa_source_save_f64(io,&o->seconds) ||
-        !isfinite(o->seconds) || o->seconds<0 || !document_fields(io,&o->frame,QA_UNIFIED_FRAME_DOCUMENT)) return false;
-    if (o->frame) { double actual_seconds;
-        if (!frame_clock(o->frame,&actual_seconds,io->error) || actual_seconds!=o->seconds) return false;
-    } else if (o->seconds!=0) return false;
-    if(!document_fields(io,&o->prepared,QA_UNIFIED_FRAME_DOCUMENT))return false;
-    if(o->prepared){double actual_seconds;
-        if(!qa_source_save_f64(io,&o->prepared_seconds) || !isfinite(o->prepared_seconds) ||
-            !frame_clock(o->prepared,&actual_seconds,io->error) || actual_seconds!=o->prepared_seconds)return false;}
-    size_t count=0; rr_retired **tail=&o->retired;
-    if (!read) for (rr_retired *item=o->retired; item; item=item->next) ++count;
-    if (!qa_source_save_count(io,&count,65536)) return false;
-    for (size_t i=0; i<count; ++i) {
-        if (read) { *tail=calloc(1,sizeof(**tail));
-            if (!*tail) return frontend_unified_fail(io->error,QA_ERROR_MEMORY,"Restoring RR retirement ownership"); }
-        rr_retired *item=*tail;
-        if (!qa_source_save_owned_text(io,&item->provider) || !item->provider || !*item->provider ||
-            !qa_source_save_u64(io,&item->generation) || !item->generation) return false;
-        for (rr_retired *prior=o->retired; prior!=item; prior=prior->next)
-            if (prior->generation==item->generation && !strcmp(prior->provider,item->provider)) return false;
-        tail=&item->next;
-    }
-    size_t pois=o->poi_count;
-    if (!qa_source_save_count(io,&pois,32)) return false;
-    if (read) o->poi_count=pois;
-    for (size_t i=0; i<pois; ++i) {
-        rr_record *r=o->pois+i;
-        if (!record_fields(io,o,refs,r) || !r->document || (r->kind!=RR_POI && r->kind!=RR_KEYED_POI)) return false;
-        if (r->value.poi.key) for (size_t k=0; k<i; ++k) if (o->pois[k].value.poi.key==r->value.poi.key) return false;
-    }
-    size_t damage=o->damage_count;
-    if (!qa_source_save_count(io,&damage,32)) return false;
-    if (read) o->damage_count=damage;
-    for (size_t i=0; i<damage; ++i) {
-        rr_damage *entry=o->damage+i;
-        if (!record_fields(io,o,refs,&entry->row) || !entry->row.document || entry->row.kind!=RR_DAMAGE ||
-            !qa_source_save_vec3(io,&entry->direction) || !qa_source_save_vec3(io,&entry->color) ||
-            !qa_source_save_f64(io,&entry->amount) || !qa_source_save_f64(io,&entry->expires_ms) ||
-            !qa_source_save_bool(io,&entry->health) || !qa_source_save_bool(io,&entry->armor) ||
-            !qa_source_save_bool(io,&entry->shield) || !qa_vec_finite(entry->direction) || !qa_vec_finite(entry->color) ||
-            !isfinite(entry->amount) || !isfinite(entry->expires_ms)) return false;
-    }
-    size_t bars=0; rr_bar **bar_tail=&o->bars;
-    if (!read) for (rr_bar *bar=o->bars; bar; bar=bar->next) ++bars;
-    if (!qa_source_save_count(io,&bars,65536)) return false;
-    int32_t previous=0;
-    for (size_t i=0; i<bars; ++i) {
-        if (read) { *bar_tail=calloc(1,sizeof(**bar_tail));
-            if (!*bar_tail) return frontend_unified_fail(io->error,QA_ERROR_MEMORY,"Restoring actual RR health bar"); }
-        rr_bar *bar=*bar_tail;
-        if (!record_fields(io,o,refs,&bar->row) || !bar->row.document || bar->row.kind!=RR_HEALTHBAR ||
-            !bar->row.value.bar.visible || (i && bar->row.value.bar.slot<=previous)) return false;
-        previous=bar->row.value.bar.slot; bar_tail=&bar->next;
-    }
-    rr_record *records[]={&o->path,&o->coop,&o->report,&o->objective,&o->mission,&o->help,&o->pending_objective};
-    const rr_kind kinds[]={RR_PATH,RR_COOP,RR_REPORT,RR_OBJECTIVE,RR_MISSION,RR_HELP,RR_OBJECTIVE};
-    for (size_t i=0; i<sizeof(records)/sizeof(*records); ++i)
-        if (!record_fields(io,o,refs,records[i]) || (records[i]->document && records[i]->kind!=kinds[i])) return false;
-    if (!qa_source_save_bool(io,&o->controls_registered) || (o->controls_registered && !controls_restored(o)) ||
-        (!o->controls_registered && (o->poi_count || o->damage_count || o->bars || o->path.document ||
-            o->coop.document || o->report.document || o->objective.document || o->mission.document ||
-            o->help.document || o->pending_objective.document)) ||
-        !qa_source_save_bool(io,&o->help_open) || !qa_source_save_bool(io,&o->pending_printed) || !qa_source_save_bool(io,&o->pending_sound) ||
-        ((!o->pending_objective.document) && (o->pending_printed || o->pending_sound)) ||
-        (o->pending_sound && !o->pending_objective.value.objective.talk)) return false;
-    qa_buffer catalogs={0};
-    bool okay=read?blob(io,&catalogs):qa_localization_pool_checkpoint(o->localizations,&catalogs,io->error) && blob(io,&catalogs);
-    if (okay && read) okay=qa_localization_pool_restore(o->localizations,(qa_bytes){catalogs.data,catalogs.size},io->error);
-    qa_buffer_free(&catalogs); if (!okay) return false;
-    qa_hud_checkpoint_refs hud_refs={.context=refs->effects.context,
-        .image_encode=refs->effects.image_encode,.image_decode=refs->effects.image_decode};
-    qa_buffer prints={0};
-    okay=read?blob(io,&prints):qa_hud_checkpoint(o->prints,&hud_refs,&prints,io->error) && blob(io,&prints);
-    if (okay && read) {
-        qa_hud_options options=print_options(o);
-        okay=qa_hud_destroy(o->prints,io->error); if (okay) o->prints=NULL;
-        if (okay) okay=qa_hud_restore((qa_bytes){prints.data,prints.size},&options,&hud_refs,&o->prints,io->error);
-    }
-    qa_buffer_free(&prints); return okay;
-}
-bool frontend_unified_q2_rr_checkpoint(frontend_unified_q2_rr_hud *o, const frontend_unified_q2_refs *refs,
-    qa_buffer *out, qa_error *e)
-{
-    if (!o || !refs || !refs->content || !out || out->data || out->size ||
-        !frontend_unified_q2_rr_checkpoint_ready(o) || !current(o,e))
-        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"RR HUD checkpoint requires its genuine idle dictionary prefix");
-    qa_source_save_io io={0}; o->busy=true;
-    bool okay=qa_source_save_writer(&io,NULL,e) && fields(&io,o,refs) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); o->busy=false;
-    if (!okay && (!e || e->code==QA_OK)) fail(e,"Invalid RR HUD ownership continuation");
-    return okay;
-}
-bool frontend_unified_q2_rr_restore(qa_frontend *f, frontend_remote_unified *replica,
-    frontend_unified_media *media, frontend_unified_events *events, const frontend_unified_q2_refs *refs,
-    qa_bytes bytes, frontend_unified_q2_rr_hud **out, qa_error *e)
-{
-    if (!f || !f->source_restoring || !refs || !refs->content || !out || *out)
-        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"RR HUD import requires the isolated restored CLIENT graph");
-    frontend_unified_q2_rr_hud *o=NULL;
-    if (!frontend_unified_q2_rr_create(f,replica,media,events,&o,e)) return false;
-    qa_source_save_io io={0}; o->busy=true;
-    bool okay=qa_source_save_reader(&io,NULL,bytes,e) && fields(&io,o,refs) && qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io); o->busy=false;
-    if (!okay) {
-        (void)frontend_unified_q2_rr_destroy(&o,NULL);
-        if (!e || e->code==QA_OK) fail(e,"Invalid saved RR HUD source or dictionary identity");
-        return false;
-    }
-    *out=o; return true;
 }

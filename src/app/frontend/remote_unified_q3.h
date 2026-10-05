@@ -3,6 +3,7 @@
 #include "remote_unified_media.h"
 #include "qa/persistence_content.h"
 #include "qa/q3_source_scene_bank.h"
+#include "qa/unified_frame_events.h"
 #include "../../presentation/q3_native/player_fx.h"
 typedef struct frontend_unified_q3 frontend_unified_q3;
 struct frontend_unified_events;
@@ -12,11 +13,10 @@ bool frontend_unified_q3_create(qa_frontend *, frontend_remote_unified *, fronte
 bool frontend_unified_q3_audio(frontend_unified_q3 *, uint64_t, void *, bool (*)(void *, qa_actor_id, uint64_t *, qa_error *), qa_error *);
 bool frontend_unified_q3_events(frontend_unified_q3 *, struct frontend_unified_events *, qa_error *);
 bool frontend_unified_q3_components(frontend_unified_q3 *,struct frontend_unified_components *,qa_error *);
-bool frontend_unified_q3_validate(frontend_unified_q3 *, bool simulation, const qa_unified_document *, qa_json_id, qa_error *);
-bool frontend_unified_q3_owner_validate(frontend_unified_q3 *,const qa_unified_document *,qa_json_id,qa_error *);
-bool frontend_unified_q3_owner_retire(frontend_unified_q3 *,const qa_unified_document *,qa_json_id,qa_error *);
-bool frontend_unified_q3_presentation(frontend_unified_q3 *, const qa_unified_document *, qa_json_id, bool *mirrored, qa_error *);
-bool frontend_unified_q3_simulation(frontend_unified_q3 *, const qa_unified_document *, qa_json_id, qa_error *);
+bool frontend_unified_q3_presentation_validate(frontend_unified_q3 *, const qa_unified_presentation_event *, qa_error *);
+bool frontend_unified_q3_owner_validate(frontend_unified_q3 *,const qa_unified_presentation_event *,qa_error *);
+bool frontend_unified_q3_owner_retire(frontend_unified_q3 *,const qa_unified_presentation_event *,qa_error *);
+bool frontend_unified_q3_presentation(frontend_unified_q3 *, const qa_unified_presentation_event *, bool *mirrored, qa_error *);
 bool frontend_unified_q3_frame_prepare(frontend_unified_q3 *, const qa_unified_document *, qa_error *);
 bool frontend_unified_q3_frame_ready(frontend_unified_q3 *, const qa_unified_document *, qa_error *);
 void frontend_unified_q3_frame_commit(frontend_unified_q3 *);

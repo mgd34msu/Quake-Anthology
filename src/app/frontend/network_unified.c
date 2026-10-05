@@ -219,9 +219,15 @@ bool frontend_network_unified_create(const frontend_network_unified_options *opt
     frontend_network_unified *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating actual Unified Network controller");
     owner->options = *options; owner->epoch = 1; owner->source = source;
+    if (options->server) {
+        owner->world_frames = qa_unified_frame_pool_create(0, error);
+        if (!owner->world_frames) { free(owner); return false; }
+    }
     qa_unified_bootstrap_options bootstrap = {.server = options->server, .max_clients = capacity,
         .remote = options->remote, .hooks = {owner, attach}};
-    if (!qa_unified_bootstrap_create(options->runtime, &bootstrap, &owner->bootstrap, error)) { free(owner); return false; }
+    if (!qa_unified_bootstrap_create(options->runtime, &bootstrap, &owner->bootstrap, error)) {
+        qa_unified_frame_pool_destroy(&owner->world_frames); free(owner); return false;
+    }
     *out = owner; return true;
 }
 
@@ -307,6 +313,7 @@ bool frontend_network_unified_publish(frontend_network_unified *owner,
         return fail(error, "Unified output precedes its actual Source travel publication");
     if (!owner->frame_boundary || source.frame.phase != QA_FRAME_EXIT || source.frame.number <= owner->frame_before) return true;
     ++owner->calls; bool okay = prune(owner, error), complete = true;
+    qa_unified_world_frame *world = NULL;
     for (size_t i = 0; okay && i < UNIFIED_PEERS; ++i) {
         unified_peer *peer = owner->peers + i;
         if (peer->server && qa_unified_session_retiring(peer->session) &&
@@ -319,6 +326,11 @@ bool frontend_network_unified_publish(frontend_network_unified *owner,
             application_unified_output_external observed = external ? *external : (application_unified_output_external){0};
             const application_unified_output_external *actual_external = external;
             if (peer->server->admitted && peer->server->preparing_frame && !peer->server->pending_capture) {
+                if (!world && !application_unified_output_world(owner->options.frontend->application,
+                    &source, owner->world_frames, &world, error)) {
+                    okay = false;
+                    break;
+                }
                 qa_unified_session_player player; bool present = false;
                 okay = application_unified_player_read(owner->options.frontend->application,
                     peer->client, peer->binding.seat, &player, error) &&
@@ -334,11 +346,12 @@ bool frontend_network_unified_publish(frontend_network_unified *owner,
                     }
                 }
             }
-            if (okay) okay = application_unified_server_publish(peer->server, actual_external, error);
+            if (okay) okay = application_unified_server_publish(peer->server, world, actual_external, error);
             if (okay) peer->frame_published = application_unified_server_publication_complete(peer->server);
             if (okay && !peer->frame_published) complete = false;
         }
     }
+    qa_unified_world_frame_destroy(world);
     if (okay && complete) owner->frame_boundary = false;
     --owner->calls; return okay;
 }
@@ -425,7 +438,9 @@ bool frontend_network_unified_destroy(frontend_network_unified **slot, qa_error 
         }
         if (!release_peer(peer, error)) return false;
     }
-    qa_unified_bootstrap_destroy(owner->bootstrap); free(owner->restored_sidecars); free(owner); *slot = NULL; return true;
+    qa_unified_bootstrap_destroy(owner->bootstrap);
+    qa_unified_frame_pool_destroy(&owner->world_frames);
+    free(owner->restored_sidecars); free(owner); *slot = NULL; return true;
 }
 bool frontend_network_unified_close(frontend_network_unified *owner, qa_net_client_id id,
     const char *reason, qa_error *error)

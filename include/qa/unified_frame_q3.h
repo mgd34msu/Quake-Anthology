@@ -27,7 +27,7 @@ typedef struct qa_unified_q3_visibility {
 } qa_unified_q3_visibility;
 typedef struct qa_unified_q3_source {
     char *provider_name, *instance, *content;
-    uint64_t publication, map_revision;
+    uint64_t publication, map_revision, configuration_revision;
     qa_q3_product product;
     int32_t server_time, level_start, game_type;
     uint32_t max_clients;
@@ -40,8 +40,6 @@ typedef struct qa_unified_q3_source {
     qa_unified_q3_client *clients;
     size_t client_count;
     qa_unified_q3_visibility *visibility;
-    qa_q3_gamestate *game_state;
-    uint64_t config_revisions[QA_Q3_CONFIGSTRINGS];
 } qa_unified_q3_source;
 struct qa_unified_frame_q3 {
     qa_unified_q3_source *sources;

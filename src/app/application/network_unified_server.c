@@ -16,6 +16,13 @@ static qa_json_id control_value(const qa_unified_document *document)
     return qa_json_get(qa_unified_document_json(document), qa_unified_document_root(document), "value");
 }
 
+static void metadata_clear(application_unified_server *owner)
+{
+    qa_unified_document_destroy(owner->committed_q3_metadata);
+    owner->committed_q3_metadata = NULL;
+    owner->committed_metadata = (application_unified_metadata_receipt){0};
+}
+
 static void player_receipt_clear(application_unified_server *owner)
 {
     qa_buffer_free(&owner->admitted_arsenal);
@@ -100,6 +107,8 @@ bool application_unified_server_offer(application_unified_server *owner, uint32_
     owner->offer = offer; owner->composition = canonical.digest; owner->offered = source;
     owner->epoch = epoch; owner->acknowledged = -1; owner->admitted = false;
     owner->preparing_frame = false; owner->published_frame = source.frame.number;
+    owner->declared_resources = owner->pending_declared_resources = 0;
+    metadata_clear(owner);
     qa_unified_composition_free(&canonical); *out = copy; return true;
 }
 
@@ -114,7 +123,10 @@ bool application_unified_server_create(qa_application *app, qa_network_runtime *
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Allocating unified Source peer");
     *owner = (application_unified_server){.application = app, .runtime = runtime,
         .seat = seat, .application_seat = application_seat, .acknowledged = -1};
-    if (!application_unified_server_offer(owner, epoch, sidecars, count, offer, error)) { free(owner); return false; }
+    owner->recipient_pool = qa_unified_frame_pool_create(0, error);
+    if (!owner->recipient_pool || !application_unified_server_offer(owner, epoch, sidecars, count, offer, error)) {
+        qa_unified_frame_pool_destroy(&owner->recipient_pool); free(owner); return false;
+    }
     *out = owner; return true;
 }
 
@@ -203,6 +215,24 @@ static bool source_custody_ready(void *context,qa_network_runtime *runtime,qa_ne
         application_fail(error,QA_ERROR_ARGUMENT,"Unified obsolete offer lacks its genuine historical player admission");
 }
 
+static bool resource_declarations(application_unified_server *owner, size_t first, size_t count,
+    qa_unified_document **out, qa_error *error)
+{
+    if (!count) return true;
+    qa_unified_document **keys = calloc(count, sizeof(*keys));
+    if (!keys) return application_fail(error, QA_ERROR_MEMORY, "Retaining newly registered Source dictionary");
+    bool okay = true;
+    for (size_t i = 0; okay && i < count; ++i) {
+        const application_unified_event_resource *row = application_unified_event_resource_at(owner->application, first + i);
+        okay = row && qa_unified_document_create(QA_UNIFIED_CHECKPOINT,
+            (qa_bytes){row->key.data, row->key.size}, keys + i, error);
+    }
+    if (okay) okay = application_unified_resource_control(owner->epoch,
+        (const qa_unified_document *const *)keys, count, out, error);
+    for (size_t i = 0; i < count; ++i) qa_unified_document_destroy(keys[i]);
+    free(keys); return okay;
+}
+
 static bool admitted_document(application_unified_server *owner, const qa_unified_session_player *player,
     qa_unified_document **out, qa_error *error)
 {
@@ -213,8 +243,13 @@ static bool admitted_document(application_unified_server *owner, const qa_unifie
         application_unified_json_natural(&json, owner->client.slot, error) &&
         application_unified_json_text(&json, ",\"generation\":", error) &&
         application_unified_json_natural(&json, owner->client.generation, error) &&
-        application_unified_json_text(&json, "},\"actor\":", error) &&
-        application_unified_json_actor(&json, player->actor, error) &&
+        application_unified_json_text(&json, "},\"actor\":{\"registry\":", error) &&
+        application_unified_json_natural(&json, player->actor.registry, error) &&
+        application_unified_json_text(&json, ",\"slot\":", error) &&
+        application_unified_json_natural(&json, player->actor.slot, error) &&
+        application_unified_json_text(&json, ",\"generation\":", error) &&
+        application_unified_json_natural(&json, player->actor.generation, error) &&
+        application_unified_json_text(&json, "}", error) &&
         application_unified_json_text(&json, ",\"sourceEntity\":", error) &&
         application_unified_json_natural(&json, player->source_slot, error) &&
         application_unified_json_text(&json, "}}", error) &&
@@ -266,17 +301,26 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
         if (okay) okay = application_unified_source_read(owner->application, &current_source, error) &&
             application_unified_events_initial_read(owner->application, &current_source, client, &actual,
                 epoch, &initial, error);
-        if (okay && initial.control_count > sizeof(commit->followups) / sizeof(commit->followups[0]))
+        size_t resources = application_unified_event_resource_count(owner->application);
+        qa_unified_document *declarations = NULL;
+        if (okay && resources > owner->declared_resources)
+            okay = resource_declarations(owner, owner->declared_resources,
+                resources - owner->declared_resources, &declarations, error);
+        size_t prerequisite = declarations ? 1 : 0;
+        if (okay && initial.control_count + prerequisite > sizeof(commit->followups) / sizeof(commit->followups[0]))
             okay = application_fail(error, QA_ERROR_FORMAT, "Initial Source controls exceed the actual ordered reply capacity");
         if (okay && !application_unified_events_current(&initial))
             okay = application_fail(error, QA_ERROR_ARGUMENT, "Initial Source events changed before retained reply transfer");
         if (okay) {
+            if (declarations) { commit->followups[0] = declarations; declarations = NULL; }
             for (size_t i = 0; i < initial.control_count; ++i) {
-                commit->followups[i] = initial.controls[i]; initial.controls[i] = NULL;
+                commit->followups[i + prerequisite] = initial.controls[i]; initial.controls[i] = NULL;
             }
-            commit->followup_count = initial.control_count;
+            commit->followup_count = initial.control_count + prerequisite;
             owner->events_after = initial.through;
+            owner->declared_resources = resources;
         }
+        qa_unified_document_destroy(declarations);
         application_unified_events_dispose(&initial);
         if (okay) { owner->admitted = true; commit->applied = true; }
         return okay;
@@ -358,6 +402,7 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
                 owner->control_cursor=0; owner->pending_first=owner->pending_last=0;
                 owner->preparing_frame=false; owner->pending_events_through=0;
                 player_receipt_clear(owner);
+                metadata_clear(owner);
             }
         }
         commit->applied = okay; return okay;
@@ -399,6 +444,7 @@ static void closed(void *context, qa_net_client_id client)
     application_unified_server *owner = context;
     if (owner && owner->bound && qa_net_client_id_equal(client, owner->client)) {
         owner->closed = true; owner->session = NULL;
+        metadata_clear(owner);
     }
 }
 
@@ -554,10 +600,10 @@ bool application_unified_server_source_drop_finish(application_unified_server *o
     owner->admitted=false; owner->player_attached=false; owner->preparing_frame=false;
     if (!application_unified_components_destroy(&owner->components,error) ||
         !application_unified_inputs_destroy(owner->inputs,error)) return false;
-    owner->inputs=NULL; player_receipt_clear(owner); owner->source_dropped=false; return true;
+    owner->inputs=NULL; player_receipt_clear(owner); metadata_clear(owner); owner->source_dropped=false; return true;
 }
 
-bool application_unified_server_publish(application_unified_server *owner,
+bool application_unified_server_publish(application_unified_server *owner, qa_unified_world_frame *borrowed_world,
     const application_unified_output_external *external, qa_error *error)
 {
     if (owner && owner->source_dropped && !application_unified_server_source_drop_finish(owner,error)) return false;
@@ -575,18 +621,33 @@ bool application_unified_server_publish(application_unified_server *owner,
     if (!owner->pending.frame) {
         int64_t acknowledged = application_unified_inputs_submitted(owner->inputs);
         application_unified_output_capture *capture = NULL;
-        if (!application_unified_output_acquire(owner->application, &source, owner->client,
+        if (!application_unified_output_acquire(owner->application, &source, borrowed_world,
+            owner->recipient_pool, &owner->committed_metadata, owner->committed_q3_metadata, owner->client,
             &actual, owner->epoch, acknowledged, owner->events_after, owner->components, external, &capture, error)) return false;
         const application_unified_output *observed = application_unified_output_capture_value(capture);
-        application_unified_output candidate = {0};
+        const qa_unified_frame *frame = qa_unified_document_frame(observed->frame);
+        application_unified_output candidate = {.controls_pooled = true};
+        size_t resources = application_unified_event_resource_count(owner->application);
+        bool declare = resources > owner->declared_resources;
         bool copied = qa_unified_document_retain(observed->frame, &candidate.frame, error);
-        if (copied && observed->control_count) {
-            candidate.controls = calloc(observed->control_count, sizeof(*candidate.controls));
+        if (copied && declare) {
+            candidate.controls = qa_unified_frame_lease_alloc(frame->lease,
+                observed->control_count + 1, sizeof(*candidate.controls),
+                _Alignof(qa_unified_document *), error);
             if (!candidate.controls) copied = application_fail(error, QA_ERROR_MEMORY, "Retaining actual unified prerequisite controls");
+        } else if (copied) candidate.controls = observed->controls;
+        if (copied && declare) {
+            copied = resource_declarations(owner, owner->declared_resources,
+                resources - owner->declared_resources, candidate.controls, error);
+            if (copied) ++candidate.control_count;
         }
         for (size_t i = 0; copied && i < observed->control_count; ++i) {
-            copied = qa_unified_document_retain(observed->controls[i], candidate.controls + i, error);
-            if (copied) ++candidate.control_count;
+            qa_unified_document *retained = NULL;
+            copied = qa_unified_document_retain(observed->controls[i], &retained, error);
+            if (copied) {
+                if (declare) candidate.controls[candidate.control_count] = retained;
+                ++candidate.control_count;
+            }
         }
         if (copied && !application_unified_output_capture_current(capture))
             copied = application_fail(error, QA_ERROR_ARGUMENT, "Unified output children retired during retained publication");
@@ -596,6 +657,7 @@ bool application_unified_server_publish(application_unified_server *owner,
             application_unified_output_dispose(&candidate); return false; }
         owner->pending_capture = capture;
         owner->pending = candidate; owner->pending_events_through = through;
+        owner->pending_declared_resources = resources;
         owner->acknowledged = acknowledged; owner->published_frame = source.frame.number;
     } else if (source.frame.number != owner->published_frame)
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified pending publication was overtaken by another Source frame");
@@ -614,16 +676,27 @@ bool application_unified_server_publish(application_unified_server *owner,
             ++owner->control_cursor;
         }
     }
+    qa_unified_document *q3_metadata = NULL;
+    const qa_unified_document *proposed_q3 = application_unified_output_capture_q3_metadata(owner->pending_capture);
+    if (okay && proposed_q3) okay = qa_unified_document_retain(proposed_q3, &q3_metadata, error);
     if (okay) okay = qa_unified_session_frame(owner->session, owner->pending.frame, error);
     owner->entered = false;
     if (okay) {
         application_unified_output_capture_commit(owner->pending_capture);
+        owner->committed_metadata = *application_unified_output_capture_metadata(owner->pending_capture);
+        if (q3_metadata) {
+            qa_unified_document_destroy(owner->committed_q3_metadata);
+            owner->committed_q3_metadata = q3_metadata;
+            q3_metadata = NULL;
+        }
         application_unified_output_capture_dispose(owner->pending_capture); owner->pending_capture = NULL;
         owner->events_after = owner->pending_events_through;
+        owner->declared_resources = owner->pending_declared_resources;
         application_unified_output_dispose(&owner->pending); owner->control_cursor = 0;
         owner->pending_first=owner->pending_last=0;
         owner->preparing_frame = false;
     }
+    qa_unified_document_destroy(q3_metadata);
     return okay;
 }
 
@@ -646,7 +719,9 @@ bool application_unified_server_destroy(application_unified_server *owner, qa_er
         owner->client, owner->seat, error)) return false;
     if (!application_unified_inputs_destroy(owner->inputs, error)) return false;
     qa_unified_document_destroy(owner->offer); application_unified_output_dispose(&owner->pending);
+    qa_unified_frame_pool_destroy(&owner->recipient_pool);
     player_receipt_clear(owner);
+    metadata_clear(owner);
     free(owner); return true;
 }
 bool application_unified_server_transport_retired(application_unified_server *owner,
@@ -656,6 +731,7 @@ bool application_unified_server_transport_retired(application_unified_server *ow
         !qa_unified_session_source_retired(session))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified Source retirement retains real transport callbacks");
     owner->session = NULL; owner->closed = true;
+    metadata_clear(owner);
     /* The physical Source roster belongs to the successful custody transfer.
      * This old bridge never tears down that transferred player. */
     owner->player_attached = owner->admitted = false;

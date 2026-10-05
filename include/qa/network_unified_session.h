@@ -19,6 +19,7 @@ bool qa_unified_inputs_read(const qa_unified_document *, qa_unified_input_batch 
 bool qa_unified_inputs_document(uint32_t epoch, const qa_unified_input *, size_t,
     qa_unified_document **, qa_error *);
 void qa_unified_inputs_free(qa_unified_input_batch *);
+const qa_unified_input_batch *qa_unified_document_inputs(const qa_unified_document *);
 
 /* Server receipts identify the admitted physical Source player. Client
  * receipts identify its admitted replica actor and providers from the real

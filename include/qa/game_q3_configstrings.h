@@ -13,6 +13,9 @@ bool qa_q3_configstring_read(const qa_q3_game *, uint32_t index,
  * when nested writes restore the same text. It is not saved gameplay state. */
 bool qa_q3_configstring_revision(const qa_q3_game *, uint32_t index,
                                  uint64_t *out, qa_error *);
+/* Derived identity of the authoritative table. Only changed Source text
+ * advances it; it is not saved gameplay state. */
+bool qa_q3_configstring_table_revision(const qa_q3_game *, uint64_t *out, qa_error *);
 /* NULL means empty, matching the source setter. Commit precedes its ordinary
  * authored notification. Fast round reset retains these engine-owned slots. */
 bool qa_q3_configstring_write(qa_q3_game *, uint32_t index,

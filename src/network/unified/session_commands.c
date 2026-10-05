@@ -113,12 +113,8 @@ static bool retain_input(qa_unified_session *s, const qa_unified_input *input, q
     if (input->command.kind != player.movement ||
         (input->has_arsenal && !bytes_equal(input->arsenal.provider, player.arsenal)))
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production input changes the player's selected providers");
-    /* The real schema boundary retains binary64 before a provider rounds it. */
-    qa_unified_document *document = NULL;
     qa_unified_input_batch decoded = {0};
-    bool ok = qa_unified_inputs_document(s->epoch, input, 1, &document, e) &&
-        qa_unified_inputs_read(document, &decoded, e);
-    qa_unified_document_destroy(document);
+    bool ok=qa_unified_inputs_copy(s->epoch,input,1,&decoded,e);
     if (!ok) { qa_unified_inputs_free(&decoded); return false; }
     if (s->inputs.count == 64) remove_input(&s->inputs, 0);
     size_t at = s->inputs.count++;
@@ -139,13 +135,9 @@ bool qa_unified_session_input(qa_unified_session *s, const qa_unified_input *inp
 
 bool qa_unified_session_queue_inputs(qa_unified_session *s, qa_error *e)
 {
-    qa_unified_document *document = NULL;
-    qa_buffer wire = {0};
-    bool ok = qa_unified_inputs_document(s->epoch, s->inputs.commands, s->inputs.count, &document, e) &&
-        qa_unified_document_encode(document, &wire, e) &&
-        qa_unified_channel_frame(s->channel, (qa_bytes){wire.data, wire.size}, 0, e);
-    qa_unified_document_destroy(document); qa_buffer_free(&wire);
-    return ok;
+    s->inputs.epoch=s->epoch;
+    return qa_unified_inputs_write(&s->inputs,s->limits.message_bytes,&s->frame_wire,e) &&
+        qa_unified_channel_frame(s->channel,(qa_bytes){s->frame_wire.data,s->frame_wire.size},0,e);
 }
 
 static qa_unified_movement command_movement(const qa_movement_command *command)

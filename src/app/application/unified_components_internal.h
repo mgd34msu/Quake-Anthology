@@ -27,12 +27,14 @@ struct application_unified_component_publisher {
     uint64_t revision, serial;
     uint32_t epoch;
     component_cursor *rows;
-    size_t count;
+    size_t count, capacity;
     native_cursor native;
     application_unified_component_capture *pending;
 };
 struct application_unified_component_capture {
     application_unified_component_publisher *owner;
+    qa_unified_frame *target;
+    qa_unified_frame_lease *lease;
     application_unified_source source;
     qa_unified_session_player player;
     application_q3_components *roster;
@@ -41,10 +43,13 @@ struct application_unified_component_capture {
     size_t count;
     uint64_t revision, serial;
     uint32_t epoch;
-    qa_unified_document *frame, *control, *native_camera;
+    qa_unified_frame_components *frame;
+    qa_unified_document *frame_document, *control;
     application_unified_q2_component_documents native_documents;
     native_cursor native;
     bool sealed, committed;
 };
+
+bool application_unified_components_reserve(application_unified_component_publisher *, size_t, qa_error *);
 
 #endif

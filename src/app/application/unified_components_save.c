@@ -4,7 +4,6 @@
 #include "native_q2_publication.h"
 #include "map_players_private.h"
 #include "unified_save_internal.h"
-#include "qa/q3_abi.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -63,11 +62,13 @@ static bool cursor_fields(qa_source_save_io *io, component_cursor *row)
         (row->abi == QA_QVM_Q3_MODERN || row->abi == QA_QVM_Q3_116N);
 }
 
-static bool rows_fields(qa_source_save_io *io, component_cursor **rows, size_t *count)
+static bool rows_fields(qa_source_save_io *io, component_cursor **rows, size_t *count,
+    qa_unified_frame_lease *lease)
 {
     if (!qa_source_save_count(io, count, 256)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ && *count) {
-        *rows = calloc(*count, sizeof(**rows));
+        *rows = lease ? qa_unified_frame_lease_alloc(lease, *count, sizeof(**rows),
+            _Alignof(component_cursor), io->error) : calloc(*count, sizeof(**rows));
         if (!*rows) return application_fail(io->error, QA_ERROR_MEMORY, "Retaining component recipient cursors");
     }
     for (size_t i = 0; i < *count; ++i) {
@@ -153,7 +154,7 @@ static bool publisher_fields(qa_source_save_io *io, application_unified_componen
 {
     return magic(io, "QUCP") && recipient_fields(io, p->recipient, p->actor) &&
         qa_source_save_u32(io, &p->epoch) && qa_source_save_u64(io, &p->revision) &&
-        qa_source_save_u64(io, &p->serial) && rows_fields(io, &p->rows, &p->count) && native_fields(io, &p->native) &&
+        qa_source_save_u64(io, &p->serial) && rows_fields(io, &p->rows, &p->count, NULL) && native_fields(io, &p->native) &&
         p->revision <= QA_UNIFIED_SAFE_INTEGER &&
         (p->epoch ? p->serial && ((!p->count && !p->native.present) || p->revision) :
             (!p->revision && !p->serial && !p->count && !p->native.present));
@@ -263,6 +264,7 @@ static bool publisher_restore(qa_bytes bytes, qa_application *app,
     if (!ok && !io.failed && (!e || e->code == QA_OK)) bad(e, "Saved component publisher differs from its imported Source");
     qa_source_save_dispose(&io);
     if (!ok) { free(p->rows); free(p); return false; }
+    p->capacity = p->count;
     *out = p;
     return true;
 }
@@ -291,26 +293,11 @@ static bool owner_json(const qa_json_document *json, qa_json_id value, qa_sessio
         qa_json_u64(json, qa_json_get(json, value, "generation"), &saved, e) && saved == generation;
 }
 
-static bool actor_json(const qa_json_document *json, qa_json_id value, qa_actor_id actor, qa_error *e)
-{
-    uint64_t slot, generation;
-    return qa_json_u64(json, qa_json_get(json, value, "slot"), &slot, e) && slot == actor.slot &&
-        qa_json_u64(json, qa_json_get(json, value, "generation"), &generation, e) && generation == actor.generation;
-}
-
 static bool json_equal(const qa_json_document *a, qa_json_id av,
     const qa_json_document *b, qa_json_id bv, qa_error *e)
 {
     qa_sha256_digest x, y;
     return hash_json(a, av, &x, e) && hash_json(b, bv, &y, e) && qa_sha256_equal(&x, &y);
-}
-
-static bool bytes_extent(const qa_unified_document *doc, qa_json_id value, size_t expected, qa_error *e)
-{
-    qa_buffer bytes = {0};
-    bool ok = qa_unified_document_bytes(doc, value, &bytes, e) && bytes.size == expected;
-    qa_buffer_free(&bytes);
-    return ok;
 }
 
 static bool game_state_json(const qa_unified_document *doc, qa_json_id value, qa_error *e)
@@ -372,8 +359,8 @@ static bool candidate_valid(const application_unified_component_capture *v, qa_e
         bad(e, "Sealed component update does not follow its committed cursor");
 }
 
-static bool roster_json(const qa_unified_document *doc, qa_json_id root,
-    const application_unified_component_capture *v, bool control, qa_error *e)
+static bool roster_control(const qa_unified_document *doc, qa_json_id root,
+    const application_unified_component_capture *v, qa_error *e)
 {
     const qa_json_document *json = qa_unified_document_json(doc);
     uint64_t revision;
@@ -389,60 +376,68 @@ static bool roster_json(const qa_unified_document *doc, qa_json_id root,
             !qa_json_u64(json, qa_json_get(json, item, "generation"), &generation, e) || generation != row->generation ||
             !qa_json_i64(json, qa_json_get(json, item, "gameStateRevision"), &gs, e) || gs != row->game_state_revision ||
             !qa_json_string_equal(json, qa_json_get(json, item, "abi"),
-                row->abi == QA_QVM_Q3_MODERN ? "q3-modern" : "q3-1.16n-base")) return false;
-        if (!control && qa_json_type(json, qa_json_get(json, item, "scene")) !=
-            (row->scene ? QA_JSON_OBJECT : QA_JSON_NULL)) return false;
-        if (!control && !actor_json(json, qa_json_get(json, item, "viewer"), v->player.actor, e)) return false;
-        if (!control) {
-            qa_json_id snapshot = qa_json_get(json, item, "snapshot");
-            if (!bytes_extent(doc, qa_json_get(json, snapshot, "playerState"), qa_qvm_player_bytes(row->abi), e)) return false;
-            if (row->scene) {
-                qa_json_id scene = qa_json_get(json, item, "scene"), snap = qa_json_get(json, scene, "snapshot");
-                qa_json_id entities = qa_json_get(json, snap, "entities"); int64_t through;
-                if (!bytes_extent(doc, qa_json_get(json, snap, "playerState"), qa_qvm_player_bytes(row->abi), e) ||
-                    !bytes_extent(doc, qa_json_get(json, snap, "areaMask"), 32, e) ||
-                    qa_json_type(json, entities) != QA_JSON_ARRAY || qa_json_size(json, entities) > 256 ||
-                    !qa_json_i64(json, qa_json_get(json, snap, "serverCommandSequence"), &through, e) || through != row->sequence) return false;
-                for (size_t index = 0; index < qa_json_size(json, entities); ++index)
-                    if (!bytes_extent(doc, qa_json_at(json, entities, index), qa_qvm_entity_bytes(row->abi), e)) return false;
+                row->abi == QA_QVM_Q3_MODERN ? "q3-modern" : "q3-1.16n-base") ||
+            !qa_json_string_equal(json, qa_json_get(json, item, "runtime"),
+                row->scene ? "qvm-scene" : "qvm-player-events")) return false;
+        qa_sha256_digest identity; int64_t base;
+        const component_cursor *old = previous_row(v, row);
+        int32_t expected_base = old ? old->sequence : row->sequence;
+        qa_json_id commands = qa_json_get(json, item, "commands");
+        if (!hash_json(json, qa_json_get(json, item, "identity"), &identity, e) ||
+            !qa_sha256_equal(&identity, &row->identity) ||
+            !qa_json_i64(json, qa_json_get(json, item, "commandBase"), &base, e) || base != expected_base ||
+            qa_json_type(json, commands) != QA_JSON_ARRAY || qa_json_size(json, commands) > 64) return false;
+        for (size_t c = 0; c < qa_json_size(json, commands); ++c) {
+            qa_json_id command = qa_json_at(json, commands, c); int64_t sequence;
+            qa_json_id arguments = qa_json_get(json, command, "arguments");
+            if (!qa_json_i64(json, qa_json_get(json, command, "sequence"), &sequence, e) ||
+                base == INT32_MAX || sequence != ++base || sequence > row->sequence ||
+                qa_json_type(json, arguments) != QA_JSON_ARRAY || qa_json_size(json, arguments) > 128) return false;
+            for (size_t a = 0; a < qa_json_size(json, arguments); ++a) {
+                qa_buffer argument = {0};
+                if (!qa_json_string(json, qa_json_at(json, arguments, a), &argument, e)) return false;
+                bool valid = argument.size <= 8192 && !memchr(argument.data, 0, argument.size);
+                qa_buffer_free(&argument);
+                if (!valid) return false;
             }
         }
-        if (control && !qa_json_string_equal(json, qa_json_get(json, item, "runtime"),
-            row->scene ? "qvm-scene" : "qvm-player-events")) return false;
-        if (control) {
-            qa_sha256_digest identity; int64_t base;
-            const component_cursor *old = previous_row(v, row);
-            int32_t expected_base = old ? old->sequence : row->sequence;
-            qa_json_id commands = qa_json_get(json, item, "commands");
-            if (!hash_json(json, qa_json_get(json, item, "identity"), &identity, e) ||
-                !qa_sha256_equal(&identity, &row->identity) ||
-                !qa_json_i64(json, qa_json_get(json, item, "commandBase"), &base, e) || base != expected_base ||
-                qa_json_type(json, commands) != QA_JSON_ARRAY || qa_json_size(json, commands) > 64) return false;
-            for (size_t c = 0; c < qa_json_size(json, commands); ++c) {
-                qa_json_id command = qa_json_at(json, commands, c); int64_t sequence;
-                qa_json_id arguments = qa_json_get(json, command, "arguments");
-                if (!qa_json_i64(json, qa_json_get(json, command, "sequence"), &sequence, e) ||
-                    base == INT32_MAX || sequence != ++base || sequence > row->sequence ||
-                    qa_json_type(json, arguments) != QA_JSON_ARRAY || qa_json_size(json, arguments) > 128) return false;
-                for (size_t a = 0; a < qa_json_size(json, arguments); ++a) {
-                    qa_buffer argument = {0};
-                    if (!qa_json_string(json, qa_json_at(json, arguments, a), &argument, e)) return false;
-                    bool valid = argument.size <= 8192 && !memchr(argument.data, 0, argument.size);
-                    qa_buffer_free(&argument);
-                    if (!valid) return false;
-                }
-            }
-            if (base != row->sequence) return false;
-            qa_json_id state = qa_json_get(json, item, "gameState");
-            bool game_changed = !old || old->game_state_revision != row->game_state_revision;
-            if (game_changed ? !game_state_json(doc, state, e) : qa_json_type(json, state) != QA_JSON_NULL) return false;
-        }
+        if (base != row->sequence) return false;
+        qa_json_id state = qa_json_get(json, item, "gameState");
+        bool game_changed = !old || old->game_state_revision != row->game_state_revision;
+        if (game_changed ? !game_state_json(doc, state, e) : qa_json_type(json, state) != QA_JSON_NULL) return false;
     }
     if (v->native.present) {
         qa_json_id item = qa_json_at(json, native, 0); uint64_t generation;
         if (!owner_json(json, qa_json_get(json, item, "owner"), v->source.session, v->native.owner, v->native.activation, e) ||
             !qa_json_u64(json, qa_json_get(json, item, "generation"), &generation, e) || generation != v->native.generation) return false;
-        if (!control && !actor_json(json, qa_json_get(json, item, "viewer"), v->player.actor, e)) return false;
+    }
+    return true;
+}
+
+static bool frame_owner(const qa_unified_component_owner *owner, qa_session *session,
+    qa_actor_owner actor_owner, uint64_t generation)
+{
+    const char *name = qa_strings_cstr(qa_session_strings(session), actor_owner);
+    return name && owner->provider && !strcmp(name, owner->provider) && owner->generation == generation;
+}
+static bool roster_frame(const application_unified_component_capture *v)
+{
+    const qa_unified_frame *frame = qa_unified_document_frame(v->frame_document);
+    if (!frame || frame->epoch != v->epoch || frame->components != v->frame ||
+        !v->frame || v->frame->revision != v->revision || v->frame->source_count != v->count ||
+        v->frame->native_count != (v->native.present ? 1u : 0u)) return false;
+    for (size_t i = 0; i < v->count; ++i) {
+        const component_cursor *cursor = v->rows + i;
+        const qa_unified_component_source *row = v->frame->sources + i;
+        if (!frame_owner(&row->owner, v->source.session, cursor->owner, cursor->generation) ||
+            row->abi != cursor->abi || row->game_state_revision != cursor->game_state_revision ||
+            row->scene != cursor->scene || !qa_actor_id_equal(row->viewer, v->player.actor) ||
+            row->snapshot.server_command_number != cursor->sequence) return false;
+    }
+    if (v->native.present) {
+        const qa_unified_native_component *row = v->frame->native;
+        if (!frame_owner(&row->owner, v->source.session, v->native.owner, v->native.activation) ||
+            row->generation != v->native.generation || !qa_actor_id_equal(row->viewer, v->player.actor)) return false;
     }
     return true;
 }
@@ -450,8 +445,7 @@ static bool roster_json(const qa_unified_document *doc, qa_json_id root,
 static bool capture_documents(const application_unified_component_capture *v, qa_error *e)
 {
     if (!candidate_valid(v, e)) return false;
-    if (!v->frame || qa_unified_document_type(v->frame) != QA_UNIFIED_CHECKPOINT ||
-        !roster_json(v->frame, qa_unified_document_root(v->frame), v, false, e))
+    if (!roster_frame(v))
         return bad(e, "Component queue frame differs from its retained cursor");
     if (v->control) {
         const qa_json_document *json = qa_unified_document_json(v->control);
@@ -460,16 +454,8 @@ static bool capture_documents(const application_unified_component_capture *v, qa
         if (qa_unified_document_type(v->control) != QA_UNIFIED_CONTROL_DOCUMENT ||
             !qa_json_string_equal(json, qa_json_get(json, value, "kind"), "components") ||
             !qa_json_u64(json, qa_json_get(json, value, "epoch"), &epoch, e) || epoch != v->epoch ||
-            !roster_json(v->control, qa_json_get(json, value, "update"), v, true, e))
+            !roster_control(v->control, qa_json_get(json, value, "update"), v, e))
             return bad(e, "Component reliable update differs from its immutable queue token");
-    }
-    if (v->native_camera) {
-        const qa_json_document *json = qa_unified_document_json(v->native_camera);
-        qa_json_id root = qa_unified_document_root(v->native_camera); uint64_t generation;
-        if (!v->native.present || !owner_json(json, qa_json_get(json, root, "owner"), v->source.session,
-            v->native.owner, v->native.activation, e) ||
-            !qa_json_u64(json, qa_json_get(json, root, "generation"), &generation, e) || generation != v->native.generation)
-            return bad(e, "Component camera has another native owner");
     }
     if (v->native.present) {
         qa_sha256_digest state, identity, configs;
@@ -490,10 +476,6 @@ static bool capture_documents(const application_unified_component_capture *v, qa
             v->native.owner, v->native.activation, e) ||
             !qa_json_u64(full_json, qa_json_get(full_json, full_root, "generation"), &full_generation, e) ||
             full_generation != v->native.generation) return bad(e, "Sealed full native state has another owner");
-        const qa_json_document *frame_json = qa_unified_document_json(v->frame);
-        qa_json_id native_frame_value = qa_json_at(frame_json, qa_json_get(frame_json, qa_unified_document_root(v->frame), "native"), 0);
-        if (qa_json_type(frame_json, qa_json_get(frame_json, native_frame_value, "view")) !=
-            (v->native_camera ? QA_JSON_OBJECT : QA_JSON_NULL)) return bad(e, "Sealed native frame lost its camera presence");
         if (v->control) {
             const qa_json_document *control = qa_unified_document_json(v->control);
             qa_json_id update = qa_json_get(control, qa_json_get(control, qa_unified_document_root(v->control), "value"), "update");
@@ -521,16 +503,6 @@ static bool capture_documents(const application_unified_component_capture *v, qa
                     return bad(e, "Reliable native config delta differs from its committed cursor");
             }
         }
-        if (v->native_camera) {
-            const qa_json_document *camera = qa_unified_document_json(v->native_camera);
-            qa_json_id root = qa_unified_document_root(v->native_camera);
-            const qa_json_document *frame = qa_unified_document_json(v->frame);
-            qa_json_id native_frame = qa_json_at(frame, qa_json_get(frame, qa_unified_document_root(v->frame), "native"), 0);
-            if (!json_equal(camera, qa_json_get(camera, root, "identity"), full_json,
-                qa_json_get(full_json, full_root, "identity"), e) ||
-                !json_equal(camera, qa_json_get(camera, root, "view"), frame,
-                    qa_json_get(frame, native_frame, "view"), e)) return bad(e, "Native camera differs from its sealed frame");
-        }
     } else if (v->native_documents.state || v->native_documents.source.hud_state)
         return bad(e, "Absent native component retains reliable state");
     return true;
@@ -542,10 +514,8 @@ static bool capture_fields(qa_source_save_io *io, application_unified_component_
     return magic(io, "QUCT") && recipient_fields(io, v->owner->recipient, v->owner->actor) &&
         source_fields(io, v->owner->application, &actual, &v->source, &v->player) && qa_source_save_u32(io, &v->epoch) &&
         qa_source_save_u64(io, &v->revision) && qa_source_save_u64(io, &v->serial) &&
-        rows_fields(io, &v->rows, &v->count) && native_fields(io, &v->native) &&
-        application_unified_save_document(io, &v->frame, QA_UNIFIED_CHECKPOINT) &&
+        rows_fields(io, &v->rows, &v->count, v->lease) && native_fields(io, &v->native) &&
         application_unified_save_document(io, &v->control, QA_UNIFIED_CONTROL_DOCUMENT) &&
-        application_unified_save_document(io, &v->native_camera, QA_UNIFIED_CHECKPOINT) &&
         application_unified_save_document(io, &v->native_documents.state, QA_UNIFIED_CHECKPOINT) &&
         application_unified_save_document(io, &v->native_documents.source.hud_state, QA_UNIFIED_CHECKPOINT) &&
         v->epoch && v->revision <= QA_UNIFIED_SAFE_INTEGER && v->serial == v->owner->serial && v->serial != UINT64_MAX;
@@ -571,17 +541,22 @@ bool application_unified_components_capture_checkpoint(const application_unified
 
 bool application_unified_components_capture_restore(qa_bytes bytes, application_unified_component_publisher *p,
     const application_unified_source *source, const qa_unified_session_player *player,
-    application_unified_component_capture **out, qa_error *e)
+    const qa_unified_document *frame, application_unified_component_capture **out, qa_error *e)
 {
     if (!p || p->pending || !out || *out || !source_current(p->application, source, p->recipient, player) ||
         !qa_actor_id_equal(player->actor, p->actor))
         return application_fail(e, QA_ERROR_ARGUMENT, "Component token restore requires its actual idle publisher");
-    application_unified_component_capture *v = calloc(1, sizeof(*v));
-    if (!v) return application_fail(e, QA_ERROR_MEMORY, "Restoring sealed component queue token");
+    const qa_unified_frame *target = qa_unified_document_frame(frame);
+    if (!target || !target->lease || !qa_unified_frame_lease_retain(target->lease, e)) return false;
+    application_unified_component_capture *v = qa_unified_frame_lease_alloc(target->lease, 1, sizeof(*v),
+        _Alignof(application_unified_component_capture), e);
+    if (!v) { qa_unified_frame_lease_release(target->lease); return false; }
+    v->lease = target->lease;
     v->owner = p; v->source = *source; v->player = *player; v->sealed = true;
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, source->session, bytes, e) && capture_fields(&io, v) &&
-        qa_source_save_finish(&io, NULL) && capture_documents(v, e) &&
+        qa_source_save_finish(&io, NULL) && application_unified_components_bind_frame(v, frame, e) &&
+        capture_documents(v, e) && application_unified_components_reserve(p, v->count, e) &&
         owners_valid(p->application, source, v->rows, v->count, &v->native, true, false, e) && source_current(p->application, source, p->recipient, player);
     if (!ok && !io.failed && (!e || e->code == QA_OK)) bad(e, "Saved component token differs from its imported publisher");
     qa_source_save_dispose(&io);

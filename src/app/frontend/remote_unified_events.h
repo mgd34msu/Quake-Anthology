@@ -2,6 +2,7 @@
 #define QA_FRONTEND_REMOTE_UNIFIED_EVENTS_H
 #include "remote_unified_media.h"
 #include "qa/source_save.h"
+#include "qa/unified_frame_events.h"
 
 typedef struct frontend_unified_events frontend_unified_events;
 typedef struct frontend_unified_event_refs {
@@ -14,9 +15,10 @@ typedef struct frontend_unified_event_options {
     void *context;
     /* Source-specific records enter the retained CLIENT presentation owner.
      * Validation must not execute an event or acquire live renderer state. */
-    bool (*validate)(void *, bool simulation, const qa_unified_document *, qa_json_id, qa_error *);
-    bool (*presentation)(void *, const qa_unified_document *, qa_json_id, bool *mirrored, qa_error *);
-    bool (*simulation)(void *, const qa_unified_document *, qa_json_id, qa_error *);
+    bool (*presentation_validate)(void *, const qa_unified_presentation_event *, qa_error *);
+    bool (*simulation_validate)(void *, const qa_unified_simulation_event *, qa_error *);
+    bool (*presentation)(void *, const qa_unified_presentation_event *, bool *mirrored, qa_error *);
+    bool (*simulation)(void *, const qa_unified_simulation_event *, qa_error *);
     bool (*audio_actor)(void *, qa_actor_id, uint64_t *, qa_error *);
 } frontend_unified_event_options;
 
@@ -56,7 +58,7 @@ bool frontend_unified_events_restore_finish(frontend_unified_events *,qa_error *
 /* Transfer actual engine route custody only when the enclosing candidate is
  * published. Rejected cold candidates never stop a previous owner's voices. */
 void frontend_unified_events_adopt(frontend_unified_events *);
-bool frontend_unified_events_sound_mirrored(frontend_unified_events *, const qa_unified_document *, qa_json_id, bool *, qa_error *);
+bool frontend_unified_events_sound_mirrored(frontend_unified_events *, const qa_unified_presentation_event *, bool *, qa_error *);
 bool frontend_unified_events_sound_path(frontend_unified_events *, const char *content, const char *path,
     qa_actor_id, qa_vec3, double milliseconds, int32_t channel, float volume, float attenuation,
     double delay_seconds, qa_error *);

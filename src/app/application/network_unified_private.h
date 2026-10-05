@@ -31,6 +31,9 @@ struct application_unified_server {
     application_unified_inputs *inputs;
     application_unified_component_publisher *components;
     application_unified_output_capture *pending_capture;
+    qa_unified_frame_pool *recipient_pool;
+    application_unified_metadata_receipt committed_metadata;
+    qa_unified_document *committed_q3_metadata;
     application_unified_source offered;
     qa_unified_session_player admitted_player;
     qa_buffer admitted_arsenal;
@@ -41,6 +44,8 @@ struct application_unified_server {
     uint32_t pending_first, pending_last;
     uint64_t frame_before, published_frame;
     uint64_t events_after, pending_events_through;
+    /* Derived setup receipts; a restored transport declares its dictionary again. */
+    size_t declared_resources, pending_declared_resources;
     int64_t acknowledged;
     bool bound, admitted, player_attached, admitted_receipt, preparing_frame, entered, closed;
     bool restore_pending;

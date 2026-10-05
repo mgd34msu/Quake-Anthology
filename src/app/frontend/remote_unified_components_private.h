@@ -6,10 +6,12 @@
 #include "qa/q3_abi.h"
 #include "remote_unified_events.h"
 #include "component_scene.h"
+#include "qa/unified_frame_components.h"
 
 typedef struct remote_component_state {
     qa_unified_document *identity,*presentation_owner;
     char *provider;
+    qa_unified_mod_identity module;
     uint64_t owner_generation,generation,game_state_revision;
     int32_t command_sequence;
     qa_qvm_abi abi;
@@ -22,6 +24,7 @@ typedef struct remote_component_state {
     size_t command_count;
 } remote_component_state;
 typedef struct remote_component_frame {
+    qa_unified_document *packet;
     application_q3_scene_context context;
     qa_actor_id viewer;
     qa_q3_snapshot snapshot;
@@ -118,7 +121,7 @@ void q3remote_component_state_free(remote_component_state *);
 void q3remote_component_frame_free(remote_component_frame *);
 bool q3remote_component_state_read(frontend_unified_components *,const qa_unified_document *,qa_json_id,
     const remote_component *,remote_component_state *,qa_error *);
-bool q3remote_component_frame_read(frontend_unified_components *,remote_component *,const qa_unified_document *,qa_json_id,
+bool q3remote_component_frame_read(frontend_unified_components *,remote_component *,const qa_unified_document *,const qa_unified_component_source *,
     remote_component_frame **,qa_error *);
 bool q3remote_component_close(remote_component **,qa_error *);
 bool q3remote_component_retire(remote_component *,qa_error *);

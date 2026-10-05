@@ -3,6 +3,8 @@
 
 #include "qa/game_q1.h"
 
+bool qa_q1_source_lightstyle_revision(const qa_q1_game *, uint64_t *, qa_error *);
+
 /* A receipt holds the actual native source owner through every dependent read.
  * Model and sound zero are empty; all other rows retain declaration order. */
 typedef struct qa_q1_wire_receipt {

@@ -9,6 +9,16 @@
 #include "qa/ui_preferences.h"
 #include <string.h>
 
+float frontend_legacy_lightstyle_sample(qa_game_family family,const char *pattern,double seconds)
+{
+    size_t length=pattern?strlen(pattern):0;
+    if (!length)return family==QA_GAME_Q1?256.0f:1.0f;
+    double sample=fmod(trunc(seconds*10.0),(double)length);
+    if (sample<0)sample+=(double)length;
+    int value=(int)(unsigned char)pattern[(size_t)sample]-'a';
+    return family==QA_GAME_Q1?(float)(value*22):(float)value/12.0f;
+}
+
 static bool number(const qa_cvars *registry, const char *name, float *out, qa_error *error)
 {
     const qa_cvar_view *row = qa_cvars_find(registry, name);

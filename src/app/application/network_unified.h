@@ -5,6 +5,8 @@
 #include "qa/network_unified_session.h"
 #include "qa/executable_recipe.h"
 
+struct qa_unified_world_frame;
+
 /* Borrows the installed Source, not an actor's selected CHARACTER. The receipt
  * expires at the next application publication or Source frame. */
 typedef struct application_unified_source {
@@ -72,6 +74,7 @@ bool application_unified_server_offer(application_unified_server *, uint32_t epo
     const qa_recipe_sidecar *, size_t, qa_unified_document **owned_offer, qa_error *);
 bool application_unified_server_pre_frame(application_unified_server *, qa_error *);
 bool application_unified_server_publish(application_unified_server *,
+    struct qa_unified_world_frame *borrowed_world,
     const struct application_unified_output_external *, qa_error *);
 bool application_unified_server_publication_complete(const application_unified_server *);
 bool application_unified_server_source_drop(application_unified_server *,qa_actor_owner,

@@ -34,6 +34,7 @@ bool frontend_remote_unified_prediction_merged_q3(frontend_remote_unified_predic
  * Close this child before retiring either owner. It never owns a GAME source. */
 bool frontend_remote_unified_prediction_create(frontend_remote_unified *,
     frontend_remote_unified_prediction **, qa_error *);
+/* Reads the actual whole typed FRAME; no child prediction document is built. */
 bool frontend_remote_unified_prediction_receive(frontend_remote_unified_prediction *,
     const qa_unified_document *, qa_error *);
 /* Raw input stays absolute and unmodified. Time is the input producer's actual

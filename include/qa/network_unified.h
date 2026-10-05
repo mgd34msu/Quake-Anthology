@@ -101,27 +101,19 @@ bool qa_unified_composition_create(qa_bytes json, qa_unified_composition *, qa_e
 void qa_unified_composition_free(qa_unified_composition *);
 bool qa_unified_value_canonical(qa_bytes json, qa_buffer *, qa_error *);
 
-/* Checkpoint envelopes retain every schema field, including tagged bytes,
- * bigint, non-finite numbers and negative zero. Documents own their source and
- * index. Owners use the JSON reader plus these tagged-value readers; resolving
- * identities and publishing world state belongs to the admitted session. */
+/* Documents own immutable typed gameplay records or setup/checkpoint JSON.
+ * Actor resolution and publication belong to the admitted session. */
 typedef struct qa_unified_document qa_unified_document;
 typedef enum qa_unified_document_kind {
     QA_UNIFIED_CHECKPOINT, QA_UNIFIED_CONTROL_DOCUMENT,
     QA_UNIFIED_INPUT_DOCUMENT, QA_UNIFIED_HANDSHAKE_DOCUMENT,
-    QA_UNIFIED_FRAME_DOCUMENT, QA_UNIFIED_PREDICTION_DOCUMENT,
-    QA_UNIFIED_EVENTS_DOCUMENT
+    QA_UNIFIED_FRAME_DOCUMENT
 } qa_unified_document_kind;
-/* Create reads an uncompressed checkpoint JSON value, including for frames.
- * Decode reads typed binary frames and applies wire byte limits. Standalone
- * frame encode/decode uses the same delta codec with no retained baseline.
- * These functions validate the envelope and core schema. Rich presentation,
- * resource, component ABI and event owners validate their records through
- * document_validate before any gameplay or presentation state is published. */
+/* Create reads setup/checkpoint JSON. Typed gameplay constructors transfer
+ * real records directly. Decode admits typed binary gameplay and setup JSON;
+ * standalone frames use the same delta codec with no retained baseline. */
 bool qa_unified_document_create(qa_unified_document_kind, qa_bytes checkpoint_json,
                                  qa_unified_document **, qa_error *);
-bool qa_unified_document_child(const qa_unified_document *, qa_json_id, qa_unified_document_kind,
-    qa_unified_document **, qa_error *);
 bool qa_unified_document_decode(qa_unified_document_kind, qa_bytes,
                                  qa_unified_document **, qa_error *);
 typedef bool (*qa_unified_document_validator)(void *, const qa_unified_document *, qa_error *);
@@ -129,7 +121,9 @@ bool qa_unified_document_validate(const qa_unified_document *,
                                    qa_unified_document_validator, void *, qa_error *);
 qa_unified_document_kind qa_unified_document_type(const qa_unified_document *);
 bool qa_unified_document_encode(const qa_unified_document *, qa_buffer *, qa_error *);
-/* Retain shares the immutable source and JSON index. Each custody is released
+size_t qa_unified_document_memory(const qa_unified_document *);
+bool qa_unified_document_equal(const qa_unified_document *, const qa_unified_document *);
+/* Retain shares the immutable record. Each custody is released
  * by destroy; retain/destroy stay on the owning session/frontend thread. */
 bool qa_unified_document_retain(const qa_unified_document *, qa_unified_document **, qa_error *);
 void qa_unified_document_destroy(qa_unified_document *);

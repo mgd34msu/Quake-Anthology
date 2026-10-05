@@ -31,6 +31,7 @@ typedef struct component_game_row {
     uint64_t services;
     char *presentation_runtime;
     qa_unified_document *identity;
+    qa_unified_mod_identity module;
     component_scene_row *scenes;
     bool attached,initialized,initializing,activated,registered,destroying;
     qa_source_frame retirement_clock;

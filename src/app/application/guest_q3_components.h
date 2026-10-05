@@ -46,6 +46,7 @@ typedef struct application_q3_component_publication {
     qa_qvm_abi abi;
     const char *presentation_runtime;
     const qa_unified_document *identity;
+    const qa_unified_mod_identity *module;
 } application_q3_component_publication;
 typedef struct application_q3_component_item_metadata {
     application_q3_component_publication source;

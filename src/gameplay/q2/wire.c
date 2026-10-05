@@ -221,6 +221,11 @@ bool qa_q2_wire_linked(qa_q2_game *g, const qa_linked_body *linked, qa_error *er
     return true;
 }
 
+bool qa_q2_wire_lightstyle_revision(const qa_q2_game *g, uint64_t *out, qa_error *error) {
+    if (!out || !idle(g, error)) return false;
+    *out = g->wire_lightstyle_revision;
+    return true;
+}
 bool qa_q2_wire_lightstyle_read(const qa_q2_game *g, uint32_t style,
     qa_string_id *out, qa_error *error)
 {

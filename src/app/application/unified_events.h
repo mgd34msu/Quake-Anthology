@@ -2,6 +2,7 @@
 #define QA_APPLICATION_UNIFIED_EVENTS_H
 
 #include "network_unified.h"
+#include "qa/unified_frame_events.h"
 
 typedef enum application_event_queue {
     APPLICATION_EVENT_BUILTIN, APPLICATION_EVENT_Q2_MAP,
@@ -20,9 +21,11 @@ typedef struct application_event_journal_record {
 } application_event_journal_record;
 
 typedef struct application_unified_event_record {
-    qa_bytes presentation, simulation;
+    qa_unified_presentation_payload *presentation;
+    qa_unified_simulation_payload *simulation;
     uint64_t order, presentation_sequence, simulation_sequence, time_ns, simulation_time_ns;
     qa_clock_kind clock, presentation_clock;
+    qa_game_family family;
     qa_actor_id recipient, simulation_recipient;
     qa_saved_actor_id recipient_saved, simulation_recipient_saved;
     qa_net_client_id client;
@@ -71,7 +74,7 @@ bool application_unified_event_source_read(qa_application *, qa_actor_owner,
 
 typedef struct application_unified_persistent_event {
     application_unified_event_record event;
-    qa_buffer key, payload;
+    qa_buffer key;
 } application_unified_persistent_event;
 
 bool application_unified_persistent_key(qa_application *,
@@ -147,15 +150,19 @@ typedef struct application_unified_world_text {
 bool application_unified_world_text_emit(qa_application *, qa_actor_owner,
     const qa_q2_map_event *, qa_error *);
 
-/* Payloads are real SourcePresentationEvent / SimulationEventPayload values,
- * without their sequence/time envelopes. The actual emitter supplies the
- * source slot and recipient; absent payloads do not allocate that stream's
- * sequence. JSON is copied before returning. */
+/* Actual Source records are cloned once into the journal before returning.
+ * Absent records do not allocate that stream's sequence. */
 bool application_unified_event_emit(qa_application *, qa_actor_owner,
-    qa_bytes presentation, qa_bytes simulation, qa_actor_id recipient,
+    const qa_unified_presentation_payload *presentation,
+    const qa_unified_simulation_payload *simulation, qa_actor_id recipient,
     qa_actor_id simulation_recipient, uint64_t time_ns, int32_t source_entity,
     bool has_source_entity, bool link_presentation, qa_error *);
-bool application_unified_event_payload_valid(qa_bytes, bool presentation, bool link_presentation, qa_error *);
+void application_unified_event_record_dispose(application_unified_event_record *);
+void application_unified_events_clear(qa_application *);
+bool application_unified_builtin_read(qa_application *, const qa_builtin_event *, qa_unified_builtin_event *, qa_error *);
+void application_unified_builtin_read_dispose(qa_unified_builtin_event *);
+bool application_unified_world_text_read(qa_application *, const application_unified_source *,
+    qa_unified_frame_lease *, qa_unified_frame_visuals *, qa_error *);
 bool application_unified_event_actors_valid(qa_application *, const application_unified_event_record *, qa_error *);
 bool application_unified_event_recipient(qa_application *, const application_unified_event_record *,
     bool simulation, qa_actor_id *, qa_error *);
@@ -166,8 +173,6 @@ void application_event_journal_append(qa_application *, application_event_queue,
     size_t index, qa_actor_owner);
 
 typedef struct application_unified_events {
-    qa_unified_document *simulation;
-    qa_unified_document *world_text;
     qa_unified_document **controls;
     size_t control_count;
     qa_application *application;

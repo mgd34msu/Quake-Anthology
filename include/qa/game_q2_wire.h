@@ -4,6 +4,8 @@
 #include "qa/game_q2_player.h"
 #include "qa/movement.h"
 
+bool qa_q2_wire_lightstyle_revision(const qa_q2_game *, uint64_t *, qa_error *);
+
 typedef struct qa_q2_wire_binding {
     qa_actor_id actor;
     qa_actor_owner source_owner;

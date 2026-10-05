@@ -3,6 +3,7 @@
 #include "remote_unified_media.h"
 #include "qa/ui.h"
 #include "qa/q3_source_scene_bank.h"
+#include "qa/unified_frame_events.h"
 
 typedef struct frontend_unified_components frontend_unified_components;
 typedef struct frontend_unified_component_frame frontend_unified_component_frame;
@@ -26,9 +27,9 @@ bool frontend_unified_components_events_bind(frontend_unified_components *,struc
 bool frontend_unified_components_create(qa_frontend *,frontend_remote_unified *,frontend_unified_media *,
     frontend_unified_components **,qa_error *);
 bool frontend_unified_components_control(frontend_unified_components *,const qa_unified_document *,qa_error *);
-bool frontend_unified_components_player_event(frontend_unified_components *,const qa_unified_document *,qa_json_id,
+bool frontend_unified_components_player_event(frontend_unified_components *,const qa_unified_presentation_event *,
     bool *handled,qa_error *);
-bool frontend_unified_components_player_event_validate(frontend_unified_components *,const qa_unified_document *,qa_json_id,
+bool frontend_unified_components_player_event_validate(frontend_unified_components *,const qa_unified_presentation_event *,
     bool *handled,qa_error *);
 bool frontend_unified_components_checkpoint_ready(const frontend_unified_components *);
 bool frontend_unified_components_frame_prepare(frontend_unified_components *,const qa_unified_document *,

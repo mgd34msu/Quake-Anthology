@@ -1,8 +1,11 @@
 #include "remote_unified_save.h"
 #include "remote_unified_private.h"
+#include "remote_unified_metadata.h"
 #include "../application/unified_save_internal.h"
 #include "qa/executable_recipe_save.h"
 #include "qa/network_unified_save.h"
+#include "qa/unified_frame_player.h"
+#include "qa/unified_frame_prediction.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -142,31 +145,15 @@ static bool metadata(qa_source_save_io *io, frontend_remote_unified *owner)
     }
     return true;
 }
-static bool wire_actor(const qa_json_document *json, qa_json_id node, qa_saved_actor_id *out, qa_error *e)
+static bool frame_valid(const frontend_remote_unified *owner,const qa_unified_document *document,
+    uint64_t *number,qa_error *e)
 {
-    uint64_t slot;
-    return qa_json_u64(json, qa_json_get(json, node, "slot"), &slot, e) && slot <= UINT32_MAX &&
-        qa_json_u64(json, qa_json_get(json, node, "generation"), &out->generation, e) &&
-        (out->slot = (uint32_t)slot, true);
-}
-static bool document_equal(const qa_unified_document *a, const qa_unified_document *b)
-{
-    if (!a || !b) return a == b;
-    qa_bytes x = qa_json_source(qa_unified_document_json(a), qa_unified_document_root(a));
-    qa_bytes y = qa_json_source(qa_unified_document_json(b), qa_unified_document_root(b));
-    return qa_unified_document_type(a) == qa_unified_document_type(b) && x.size == y.size &&
-        (!x.size || !memcmp(x.data, y.data, x.size));
-}
-static bool frame_valid(const frontend_remote_unified *owner, const qa_unified_document *frame,
-    uint64_t *number, qa_error *e)
-{
-    const qa_json_document *json = qa_unified_document_json(frame);
-    qa_json_id root = qa_unified_document_root(frame);
-    qa_saved_actor_id actor; uint64_t epoch;
-    return qa_json_u64(json, qa_json_get(json, root, "epoch"), &epoch, e) && epoch == owner->epoch &&
-        wire_actor(json, qa_json_get(json, qa_json_get(json, root, "player"), "actor"), &actor, e) &&
-        pair_equal(actor, owner->wire_player) && qa_json_u64(json, qa_json_get(json, qa_json_get(json,
-            qa_json_get(json, qa_json_get(json, root, "output"), "snapshot"), "frame"), "frame"), number, e);
+    const qa_unified_frame *frame=qa_unified_document_frame(document);
+    qa_actor_id actual;
+    if(!frame||!frame->world||!frame->player||frame->epoch!=owner->epoch||
+        !frontend_remote_unified_source_actor((frontend_remote_unified *)owner,frame,frame->player->actor,true,&actual,e)||
+        !qa_actor_id_equal(actual,owner->player))return false;
+    *number=frame->world->source.number;return true;
 }
 static bool retained_valid(const frontend_remote_unified *owner, const qa_net_client *peer, qa_error *e)
 {
@@ -178,9 +165,15 @@ static bool retained_valid(const frontend_remote_unified *owner, const qa_net_cl
         (owner->preparing_recipe && !owner->offer) || (owner->frame_obsolete && !owner->prepared_frame) ||
         (owner->admitted && (!owner->recipe || !owner->epoch || !qa_actors_get(owner->actors, owner->player))) ||
         (!owner->recipe && (owner->epoch || owner->frame || owner->admitted)) ||
-        (owner->frame && !owner->admitted) || (owner->prepared_frame && (!owner->admitted || !owner->prediction)) ||
-        (!owner->prepared_frame && (owner->prediction || owner->metadata || owner->metadata_count)) ||
+        (owner->frame && !owner->admitted) || (owner->prepared_frame && !owner->admitted) ||
+        (!owner->prepared_frame && (owner->metadata || owner->metadata_count)) ||
         (!owner->frame && owner->frame_number)) return bad(e, "Invalid retained Unified replica lifecycle");
+    const qa_unified_frame_metadata *retained=frontend_remote_unified_metadata(owner);
+    if(owner->source_metadata&&(!owner->admitted||!retained))
+        return bad(e,"Unified replica metadata differs from its admitted Source epoch");
+    for(size_t i=0;retained&&i<retained->configuration_count;++i)
+        if(retained->configurations[i].actor.registry!=owner->wire_player.registry)
+            return bad(e,"Unified replica metadata changed its admitted Source registry");
     const qa_executable_recipe *recipes[] = {owner->recipe, owner->preparing_recipe, owner->retiring_recipe};
     for (size_t i = 0; i < 3; ++i) if (recipes[i] && !qa_executable_recipe_current(recipes[i], owner->options.domain.catalog))
         return bad(e, "Unified replica recipe belongs to another catalog graph");
@@ -208,7 +201,8 @@ static bool retained_valid(const frontend_remote_unified *owner, const qa_net_cl
     }
     if (owner->admitted) {
         qa_saved_actor_id wire;
-        if (!frontend_remote_unified_wire_actor(owner, owner->player, &wire) || !pair_equal(wire, owner->wire_player))
+        if (!owner->wire_player.registry || !frontend_remote_unified_wire_actor(owner, owner->player, &wire) ||
+            wire.slot != owner->wire_player.slot || wire.generation != owner->wire_player.generation)
             return bad(e, "Unified replica player lost its exact private identity mapping");
     }
     uint64_t number;
@@ -216,37 +210,20 @@ static bool retained_valid(const frontend_remote_unified *owner, const qa_net_cl
         return bad(e, "Unified replica published frame changes its Source clock or player");
     if (owner->prepared_frame) {
         if (!frame_valid(owner, owner->prepared_frame, &number, e)) return false;
-        qa_unified_document *prediction = NULL;
-        const qa_json_document *json = qa_unified_document_json(owner->prepared_frame);
-        bool okay = qa_unified_document_child(owner->prepared_frame, qa_json_get(json,
-            qa_unified_document_root(owner->prepared_frame), "prediction"), QA_UNIFIED_PREDICTION_DOCUMENT,
-            &prediction, e) && document_equal(prediction, owner->prediction);
-        if (okay) {
-            const qa_json_document *predicted_json = qa_unified_document_json(prediction);
-            qa_json_id root = qa_unified_document_root(prediction);
-            qa_saved_actor_id predicted;
-            int64_t sequence, acknowledged;
-            okay = wire_actor(predicted_json, qa_json_get(predicted_json, root, "actor"), &predicted, e) &&
-                pair_equal(predicted, owner->wire_player) &&
-                qa_json_i64(predicted_json, qa_json_get(predicted_json, root, "sequence"), &sequence, e) &&
-                qa_json_i64(json, qa_json_get(json, qa_unified_document_root(owner->prepared_frame),
-                    "acknowledgedInput"), &acknowledged, e) && sequence == acknowledged;
-        }
-        qa_unified_document_destroy(prediction);
-        if (!okay) return bad(e, "Unified replica pending prediction differs from its received frame");
-        if (owner->metadata) {
-            qa_json_id rows = qa_json_get(json, qa_json_get(json, qa_json_get(json,
-                qa_unified_document_root(owner->prepared_frame), "output"), "snapshot"), "actors");
-            if (qa_json_size(json, rows) != owner->metadata_count) return false;
-            for (size_t i = 0; i < owner->metadata_count; ++i) {
-                const frontend_unified_metadata *pending = owner->metadata + i;
-                qa_json_id row = qa_json_at(json, rows, i); qa_saved_actor_id wire, mapped;
-                const char *source = qa_strings_cstr(owner->strings, pending->owner);
-                const char *definition = qa_strings_cstr(owner->strings, pending->definition);
-                if (!wire_actor(json, qa_json_get(json, row, "id"), &wire, e) ||
-                    !frontend_remote_unified_wire_actor(owner, pending->actor, &mapped) || !pair_equal(wire, mapped) ||
-                    !source || !definition || !qa_json_string_equal(json, qa_json_get(json, row, "owner"), source) ||
-                    !qa_json_string_equal(json, qa_json_get(json, row, "definition"), definition)) return false;
+        const qa_unified_frame *frame=qa_unified_document_frame(owner->prepared_frame);
+        if(!frame->prediction||!qa_actor_id_equal(frame->prediction->actor,frame->player->actor)||
+            frame->prediction->sequence!=frame->acknowledged_input)
+            return bad(e,"Unified replica pending prediction differs from its received frame");
+        if(owner->metadata){
+            if(frame->world->actor_count!=owner->metadata_count)return false;
+            for(size_t i=0;i<owner->metadata_count;++i){
+                const frontend_unified_metadata *pending=owner->metadata+i;
+                const qa_unified_actor_state *row=frame->world->actors+i;qa_actor_id actual;
+                const char *source=qa_strings_cstr(owner->strings,pending->owner);
+                const char *definition=qa_strings_cstr(owner->strings,pending->definition);
+                if(!frontend_remote_unified_source_actor((frontend_remote_unified *)owner,frame,row->actor,true,&actual,e)||
+                    !qa_actor_id_equal(actual,pending->actor)||!source||!definition||
+                    strcmp(row->owner,source)||strcmp(row->definition,definition))return false;
             }
         }
     }
@@ -273,10 +250,12 @@ static bool fields(qa_source_save_io *io, frontend_remote_unified *owner,
         !recipe(io, graph, &owner->recipe) || !recipe(io, graph, &owner->preparing_recipe) ||
         !recipe(io, graph, &owner->retiring_recipe) ||
         !application_unified_save_document(io, &owner->offer, QA_UNIFIED_CONTROL_DOCUMENT) ||
+        !application_unified_save_document(io, &owner->source_metadata, QA_UNIFIED_CONTROL_DOCUMENT) ||
         !application_unified_save_document(io, &owner->frame, QA_UNIFIED_FRAME_DOCUMENT) ||
         !application_unified_save_document(io, &owner->prepared_frame, QA_UNIFIED_FRAME_DOCUMENT) ||
-        !application_unified_save_document(io, &owner->prediction, QA_UNIFIED_PREDICTION_DOCUMENT) ||
-        !metadata(io, owner) || !actor_pair(io, &owner->wire_player) || !actor_pair(io, &owner->wire_client) ||
+        !metadata(io, owner) || !qa_source_save_u64(io, &owner->wire_player.registry) ||
+        !qa_source_save_u64(io, &owner->wire_player.generation) || !qa_source_save_u32(io, &owner->wire_player.slot) ||
+        !actor_pair(io, &owner->wire_client) ||
         !actor_reference(io, owner->actors, &owner->player) || !qa_source_save_u32(io, &owner->epoch) ||
         !qa_source_save_u32(io, &owner->source_entity) || !qa_source_save_u64(io, &owner->frame_number) ||
         !qa_source_save_bool(io, &owner->frame_obsolete) || !qa_source_save_bool(io, &owner->bound) ||

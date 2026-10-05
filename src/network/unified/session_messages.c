@@ -1,8 +1,12 @@
 #include "session_internal.h"
+#include "qa/network_unified_frame.h"
+#include "qa/unified_frame_events.h"
+#include "qa/unified_frame_metadata.h"
 #include "channel_internal.h"
 #include "value_internal.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 qa_json_id qa_unified_session_value(const qa_unified_document *d)
 {
@@ -13,6 +17,8 @@ qa_json_id qa_unified_session_value(const qa_unified_document *d)
 
 bool qa_unified_session_kind(const qa_unified_document *d, const char *kind)
 {
+    if (qa_unified_document_events(d)) return !strcmp(kind, "events");
+    if (qa_unified_document_metadata(d)) return !strcmp(kind, "metadata");
     return d && qa_unified_document_type(d) == QA_UNIFIED_CONTROL_DOCUMENT &&
         qa_json_string_equal(qa_unified_document_json(d),
             qa_json_get(qa_unified_document_json(d), qa_unified_session_value(d), "kind"), kind);
@@ -20,8 +26,14 @@ bool qa_unified_session_kind(const qa_unified_document *d, const char *kind)
 
 bool qa_unified_session_document_epoch(const qa_unified_document *d, uint32_t *out, qa_error *e)
 {
+    if (!d || !out) return false;
+    const qa_unified_frame *frame=qa_unified_document_frame(d);
+    const qa_unified_input_batch *inputs=qa_unified_document_inputs(d);
+    const qa_unified_frame_events *events=qa_unified_document_events(d);
+    const qa_unified_frame_metadata *metadata=qa_unified_document_metadata(d);
+    if (frame || inputs || events || metadata) { *out=frame?frame->epoch:inputs?inputs->epoch:events?events->epoch:metadata->epoch; return *out!=0; }
     double epoch;
-    if (!d || !out || !qa_unified_document_number(d,
+    if ( !qa_unified_document_number(d,
         qa_json_get(qa_unified_document_json(d), qa_unified_session_value(d), "epoch"), &epoch, e)) return false;
     if (epoch < 1 || epoch > UINT32_MAX)
         return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Production epoch exceeds the control namespace");
@@ -32,7 +44,7 @@ static bool server_control(const qa_unified_document *d)
 {
     return qa_unified_session_kind(d, "offer") || qa_unified_session_kind(d, "admitted") ||
         qa_unified_session_kind(d, "resources") || qa_unified_session_kind(d, "components") ||
-        qa_unified_session_kind(d, "events");
+        qa_unified_session_kind(d, "events") || qa_unified_session_kind(d, "metadata");
 }
 
 static bool client_control(const qa_unified_document *d)
@@ -95,7 +107,7 @@ bool qa_unified_session_queue_control(qa_unified_session *s, const qa_unified_do
 {
     bool offer, disconnect; uint32_t epoch;
     if (!outgoing_control(s, d, &epoch, &offer, &disconnect, e)) return false;
-    qa_buffer encoded = {0};
+    qa_buffer encoded={0};
     if (!qa_unified_document_encode(d, &encoded, e)) return false;
     uint32_t sequence;
     bool ok = qa_unified_channel_reliable(s->channel, (qa_bytes){encoded.data, encoded.size}, &sequence, e);
@@ -126,20 +138,18 @@ bool qa_unified_session_frame(qa_unified_session *s, const qa_unified_document *
     uint32_t epoch;
     if (!qa_unified_session_document_epoch(d, &epoch, e)) return false;
     if (epoch != s->epoch) return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production frame belongs to another epoch");
-    double acknowledged;
-    if (!qa_unified_document_number(d, qa_json_get(qa_unified_document_json(d),
-        qa_unified_document_root(d), "acknowledgedInput"), &acknowledged, e)) return false;
-    if (acknowledged < (double)s->acknowledged)
+    const qa_unified_frame *frame=qa_unified_document_frame(d);
+    if (!frame) return false;
+    int64_t acknowledged=frame->acknowledged_input;
+    if (acknowledged < s->acknowledged)
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production frame acknowledgement regressed");
-    qa_buffer encoded = {0};
     uint32_t baseline_sequence = s->channel->frame_acknowledged;
     const qa_unified_document *baseline = qa_unified_session_frame_find(s, baseline_sequence);
     if (!baseline) baseline_sequence = 0;
-    if (!qa_unified_frame_encode(d, baseline, baseline_sequence, s->limits.message_bytes, &encoded, e)) return false;
+    if (!qa_unified_frame_write(d,baseline,baseline_sequence,s->limits.message_bytes,&s->frame_wire,e)) return false;
     uint32_t sequence = (uint32_t)s->channel->next_frame;
     uint32_t discarded = s->channel->pending_frame ? s->channel->pending_frame->sequence : 0;
-    bool ok = qa_unified_channel_frame(s->channel, (qa_bytes){encoded.data, encoded.size}, s->required, e);
-    qa_buffer_free(&encoded);
+    bool ok = qa_unified_channel_frame(s->channel, (qa_bytes){s->frame_wire.data,s->frame_wire.size}, s->required, e);
     if (ok) {
         qa_unified_session_frame_forget(s, discarded);
         s->acknowledged = (int64_t)acknowledged;
@@ -203,8 +213,11 @@ static void commit_free(qa_unified_session_commit *commit)
 void qa_unified_session_delivery_free(qa_unified_held *held)
 {
     if (!held) return;
+    qa_unified_frame_lease *lease=held->lease;
     commit_free(&held->commit);
-    qa_unified_document_destroy(held->document); qa_buffer_free(&held->wire); free(held);
+    qa_unified_document_destroy(held->document);
+    if (lease) qa_unified_frame_lease_release(lease);
+    else { qa_buffer_free(&held->wire); free(held); }
 }
 
 static bool process_control(qa_unified_session *s, qa_unified_held *held, bool *waiting, qa_error *e)
@@ -271,10 +284,10 @@ static bool process_frame(qa_unified_session *s, qa_unified_held *held, bool *wa
     uint32_t epoch;
     if (!qa_unified_session_document_epoch(d, &epoch, e)) return false;
     if (!held->source_finished && (epoch != s->epoch || !s->admitted)) return true;
-    double wire_ack;
-    if (!qa_unified_document_number(d, qa_json_get(qa_unified_document_json(d),
-        qa_unified_document_root(d), "acknowledgedInput"), &wire_ack, e)) return false;
-    if (!held->source_finished && wire_ack < (double)s->acknowledged) return true;
+    const qa_unified_frame *frame=qa_unified_document_frame(d);
+    if (!frame) return false;
+    int64_t wire_ack=frame->acknowledged_input;
+    if (!held->source_finished && wire_ack < s->acknowledged) return true;
     if (!held->source_finished) {
         qa_unified_session_commit commit = {.acknowledged_input = -1};
         bool ok = s->hooks.frame(s->hooks.context, s->runtime, s->id, d, &commit, e);
@@ -298,17 +311,11 @@ static bool process_frame(qa_unified_session *s, qa_unified_held *held, bool *wa
 
 static bool process_input(qa_unified_session *s, const qa_unified_document *d, qa_error *e)
 {
-    qa_unified_input_batch batch = {0};
+    const qa_unified_input_batch *batch = qa_unified_document_inputs(d);
     qa_error rejected = {0};
-    if (!qa_unified_inputs_read(d, &batch, &rejected)) {
-        if (rejected.code != QA_ERROR_MEMORY)
-            return qa_unified_session_close(s, rejected.message[0] ? rejected.message : "Invalid Unified input", e);
-        if (e) *e = rejected;
-        return false;
-    }
-    bool ok = batch.epoch != s->epoch || !s->admitted ||
-        s->hooks.input(s->hooks.context, s->runtime, s->id, &batch, &rejected);
-    qa_unified_inputs_free(&batch);
+    if (!batch) return qa_unified_session_close(s, "Invalid typed Unified input", e);
+    bool ok = batch->epoch != s->epoch || !s->admitted ||
+        s->hooks.input(s->hooks.context, s->runtime, s->id, batch, &rejected);
     if (!ok && rejected.code != QA_ERROR_MEMORY)
         ok = qa_unified_session_close(s, rejected.message[0] ? rejected.message : "Invalid Unified input", e);
     else if (!ok && e) *e = rejected;

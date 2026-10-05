@@ -8,6 +8,7 @@
 
 struct application_unified_output_capture {
     qa_application *application;
+    qa_unified_frame_lease *lease;
     application_unified_source source;
     qa_net_client_id recipient;
     qa_unified_session_player player;
@@ -16,10 +17,12 @@ struct application_unified_output_capture {
     uint64_t actors_revision;
     application_unified_presentations visuals;
     application_unified_events events;
+    application_unified_metadata_receipt metadata_receipt;
+    qa_unified_document *metadata;
     application_unified_component_capture *components;
     application_unified_q3_sources *q3_sources;
     bool sealed;
-    qa_unified_document *prediction, *player_values, *presentation, *frame_events;
+    qa_unified_frame *owned;
     application_unified_output output;
 };
 

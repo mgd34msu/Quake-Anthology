@@ -27,6 +27,7 @@ bool application_unified_components_capture_checkpoint(const application_unified
     qa_buffer *, qa_error *);
 bool application_unified_components_capture_restore(qa_bytes,
     application_unified_component_publisher *, const application_unified_source *,
-    const qa_unified_session_player *, application_unified_component_capture **, qa_error *);
+    const qa_unified_session_player *, const qa_unified_document *frame,
+    application_unified_component_capture **, qa_error *);
 
 #endif

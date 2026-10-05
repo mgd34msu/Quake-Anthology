@@ -130,14 +130,14 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
     if(!frontend_unified_components_current(o)||!frontend_unified_components_idle(o)||!d||!o->events)
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component update requires its returned actual collection");
     const qa_json_document *j=qa_unified_document_json(d); qa_json_id root=qa_unified_document_root(d);
-    qa_json_id update=qa_json_get(j,root,"components");
+    qa_json_id update=qa_json_get(j,qa_json_get(j,root,"value"),"update");
+    if(update==QA_JSON_NONE) update=qa_json_get(j,root,"components");
     if(update==QA_JSON_NONE) update=root;
-    qa_json_id sources=qa_json_get(j,update,"sources"),native=qa_json_get(j,update,"native");
+    qa_json_id sources=qa_json_get(j,update,"sources");
     uint64_t revision=0;
     if(!qa_json_u64(j,qa_json_get(j,update,"revision"),&revision,e)||o->revision==QA_UNIFIED_SAFE_INTEGER||revision!=o->revision+1||
         qa_json_type(j,sources)!=QA_JSON_ARRAY||qa_json_size(j,sources)>256)
         return q3remote_component_fail(e,QA_ERROR_FORMAT,"Remote component reliable revision is not consecutive");
-    if(qa_json_size(j,native)) return q3remote_component_fail(e,QA_ERROR_UNSUPPORTED,"Remote native components require their actual native presentation consumer");
     size_t count=qa_json_size(j,sources);
     remote_component **next=count?calloc(count,sizeof(*next)):NULL;
     remote_component_state *states=count?calloc(count,sizeof(*states)):NULL;
@@ -223,17 +223,15 @@ bool frontend_unified_components_frame_prepare(frontend_unified_components *o,co
     if(!o||!out||*out||!ready||!d||!frontend_unified_components_current(o)||!frontend_unified_components_idle(o))
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote frame preparation requires its returned component roster");
     *ready=false;
-    const qa_json_document *j=qa_unified_document_json(d); qa_json_id root=qa_unified_document_root(d);
-    qa_json_id frames=qa_json_get(j,root,"components");
-    if(frames==QA_JSON_NONE||qa_json_type(j,frames)==QA_JSON_NULL) {
-        if(o->count) return q3remote_component_fail(e,QA_ERROR_FORMAT,"Remote frame omitted its admitted component roster");
-    }
-    uint64_t revision=0;
-    if(frames!=QA_JSON_NONE&&qa_json_type(j,frames)!=QA_JSON_NULL&&!qa_json_u64(j,qa_json_get(j,frames,"revision"),&revision,e)) return false;
+    const qa_unified_frame *frame=qa_unified_document_frame(d);
+    if(!frame) return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component preparation requires a typed FRAME");
+    const qa_unified_frame_components *frames=frame->components;
+    if(!frames&&o->count) return q3remote_component_fail(e,QA_ERROR_FORMAT,"Remote frame omitted its admitted component roster");
+    uint64_t revision=frames?frames->revision:0;
     if(revision<o->revision) return true;
-    qa_json_id sources=qa_json_get(j,frames,"sources"),native=qa_json_get(j,frames,"native");
-    size_t count=qa_json_size(j,sources);
-    if(revision!=o->revision||count!=o->count||qa_json_size(j,native)) return q3remote_component_fail(e,QA_ERROR_FORMAT,"Remote component frame lacks reliable admission");
+    size_t count=frames?frames->source_count:0;
+    if(revision!=o->revision||count!=o->count)
+        return q3remote_component_fail(e,QA_ERROR_FORMAT,"Remote component frame lacks reliable admission");
     frontend_unified_component_frame *candidate=calloc(1,sizeof(*candidate));
     if(!candidate) return q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining actual component frame candidate");
     candidate->owner=o; candidate->input=d; candidate->count=count; candidate->rows=count?calloc(count,sizeof(*candidate->rows)):NULL;
@@ -241,10 +239,10 @@ bool frontend_unified_components_frame_prepare(frontend_unified_components *o,co
     if(count&&!candidate->rows) return q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining received component frame rows");
     bool ok=true;
     for(size_t i=0;ok&&i<count;++i) {
-        qa_json_id frame=qa_json_at(j,sources,i),owner=qa_json_get(j,frame,"owner"); remote_component *row=NULL; size_t index=0;
-        for(;index<o->count;++index) if(qa_json_string_equal(j,qa_json_get(j,owner,"provider"),o->rows[index]->state.provider)) { row=o->rows[index]; break; }
+        const qa_unified_component_source *source=frames->sources+i; remote_component *row=NULL; size_t index=0;
+        for(;index<o->count;++index) if(!strcmp(source->owner.provider,o->rows[index]->state.provider)) { row=o->rows[index]; break; }
         if(!row||candidate->rows[index]) ok=q3remote_component_fail(e,QA_ERROR_FORMAT,"Received component frame duplicated or changed its provider");
-        else ok=q3remote_component_frame_read(o,row,d,frame,candidate->rows+index,e);
+        else ok=q3remote_component_frame_read(o,row,d,source,candidate->rows+index,e);
     }
     if(ok) *ready=true;
     return ok;
@@ -256,9 +254,7 @@ bool frontend_unified_components_frame_ready(const frontend_unified_component_fr
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component token lost its exact returned frame candidate");
     if(c->input!=d) {
         if(!c->owned_input) return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component frame token belongs to another live invocation");
-        qa_bytes a=qa_json_source(qa_unified_document_json(c->input),qa_unified_document_root(c->input));
-        qa_bytes b=qa_json_source(qa_unified_document_json(d),qa_unified_document_root(d));
-        if(qa_unified_document_type(c->input)!=qa_unified_document_type(d)||a.size!=b.size||memcmp(a.data,b.data,a.size))
+        if(!frontend_unified_document_equal(c->input,d))
             return q3remote_component_fail(e,QA_ERROR_FORMAT,"Restored component token changed its retained immutable frame");
     }
     for(size_t i=0;i<c->count;++i) if(!c->rows[i]||!qa_actors_get(frontend_remote_unified_registry(c->owner->replica),c->rows[i]->viewer))

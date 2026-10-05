@@ -40,7 +40,7 @@ static bool fields(qa_source_save_io *io,saved_prediction *s)
         s->discarded < -1 || s->discarded>(int64_t)QA_UNIFIED_SAFE_INTEGER) return false;
     if(!s->received) return s->discarded==-1;
     if(!qa_source_save_u64(io,&s->authoritative_frame)||s->authoritative_frame>QA_UNIFIED_SAFE_INTEGER) return false;
-    if(!document(io,QA_UNIFIED_PREDICTION_DOCUMENT,&s->snapshot)) return false;
+    if(!document(io,QA_UNIFIED_FRAME_DOCUMENT,&s->snapshot)) return false;
     qa_unified_document *commands=NULL;
     bool read=io->direction==QA_SOURCE_SAVE_READ;
     bool ok=read || qa_unified_inputs_document(s->epoch,s->commands.commands,s->commands.count,&commands,io->error);

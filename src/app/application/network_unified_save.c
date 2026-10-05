@@ -302,6 +302,8 @@ bool application_unified_server_restore(qa_bytes bytes, qa_application *app, qa_
     if (!owner) return application_fail(e, QA_ERROR_MEMORY, "Restoring actual Unified Source continuation");
     *owner = (application_unified_server){.application = app, .runtime = runtime,
         .client = peer->id, .seat = peer->seats[0].seat, .offered = source, .restore_pending = true};
+    owner->recipient_pool = qa_unified_frame_pool_create(0, e);
+    if (!owner->recipient_pool) { free(owner); return false; }
     qa_source_save_io io = {0};
     bool okay = qa_source_save_reader(&io, source.session, bytes, e) && fields(&io, owner, &source, peer) &&
         qa_source_save_finish(&io, NULL);

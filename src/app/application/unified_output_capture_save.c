@@ -7,34 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-static bool field_equal(const qa_json_document *json, qa_json_id value,
-    const qa_unified_document *actual)
-{
-    if (!actual) return value == QA_JSON_NONE;
-    qa_bytes a = qa_json_source(json, value);
-    qa_bytes b = qa_json_source(qa_unified_document_json(actual), qa_unified_document_root(actual));
-    return value != QA_JSON_NONE && a.size == b.size && (!a.size || !memcmp(a.data, b.data, a.size));
-}
 static bool component_output(const application_unified_output_capture *capture)
 {
     if (!capture->components) return true;
-    const qa_json_document *json = qa_unified_document_json(capture->output.frame);
-    qa_json_id root = qa_unified_document_root(capture->output.frame);
-    if (!field_equal(json, qa_json_get(json, root, "components"),
-            application_unified_components_frame(capture->components))) return false;
-    const qa_unified_document *camera = application_unified_components_camera(capture->components);
-    if (camera && !field_equal(json, qa_json_get(json, root, "nativeCamera"), camera)) return false;
-    const qa_unified_document *control = application_unified_components_control(capture->components);
-    size_t found = 0;
-    for (size_t i = 0; i < capture->output.control_count; ++i) {
-        const qa_unified_document *item = capture->output.controls[i];
-        const qa_json_document *j = qa_unified_document_json(item);
-        qa_json_id value = qa_json_get(j, qa_unified_document_root(item), "value");
-        if (!qa_json_string_equal(j, qa_json_get(j, value, "kind"), "components")) continue;
-        if (!control || !field_equal(j, qa_unified_document_root(item), control)) return false;
-        ++found;
-    }
-    return found == (control ? 1u : 0u);
+    const qa_unified_frame *frame = qa_unified_document_frame(capture->output.frame);
+    return frame && frame->components == application_unified_components_frame(capture->components);
 }
 
 static bool fields(qa_source_save_io *io, application_unified_output_capture *capture,
@@ -57,7 +34,7 @@ static bool fields(qa_source_save_io *io, application_unified_output_capture *ca
             &saved, io->error);
         if (okay) okay = application_unified_save_blob(io, &saved) && saved.size;
         if (okay && !writing) okay = application_unified_components_capture_restore(
-            (qa_bytes){saved.data, saved.size}, publisher, source, player, &capture->components, io->error);
+            (qa_bytes){saved.data, saved.size}, publisher, source, player, capture->output.frame, &capture->components, io->error);
         qa_buffer_free(&saved);
         if (!okay) return false;
     }

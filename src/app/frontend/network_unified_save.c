@@ -9,7 +9,6 @@
 #include "network_unified_client.h"
 #include "remote_unified_save.h"
 #include "remote_unified_presentation.h"
-#include "remote_unified_presentation_save.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -295,7 +294,11 @@ bool frontend_network_unified_restore_prepare(const frontend_network_unified_opt
     frontend_network_unified *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(e, QA_ERROR_MEMORY, "Decoding actual Unified host continuation");
     owner->options = *options; owner->options.runtime = NULL; owner->options.sidecars = NULL; owner->options.sidecar_count = 0;
-    if (options->server) owner->source = source;
+    if (options->server) {
+        owner->source = source;
+        owner->world_frames = qa_unified_frame_pool_create(0, e);
+        if (!owner->world_frames) { free(owner); return false; }
+    }
     owner->options.client.domain.runtime = NULL; owner->options.client_service = NULL; owner->restore_pending = true;
     qa_source_save_io io = {0};
     bool okay = qa_source_save_reader(&io, qa_application_session(options->frontend->application), bytes, e) &&
@@ -444,9 +447,7 @@ bool frontend_network_unified_restore_finish(frontend_network_unified *owner, qa
             unified_peer *peer = owner->peers + i;
             if (!peer->occupied) continue;
             if (frontend_remote_unified_restore_pending(peer->remote) &&
-                (!frontend_remote_unified_presentation_restore_ready(peer->remote, e) ||
-                 !frontend_remote_unified_restore_bind(peer->remote, peer->session, e))) return false;
-            if (!frontend_remote_unified_presentation_restore_activate(peer->remote, e)) return false;
+                !frontend_remote_unified_restore_bind(peer->remote, peer->session, e)) return false;
             if (!frontend_remote_unified_qualified(peer->remote, runtime,
                 qa_net_connections_get(qa_network_connections(runtime), peer->client), e)) return false;
         }
@@ -566,6 +567,7 @@ bool frontend_network_unified_restore_dispose(frontend_network_unified **slot, q
         qa_buffer_free(&peer->source_import);
     }
     qa_unified_bootstrap_destroy(owner->bootstrap);
+    qa_unified_frame_pool_destroy(&owner->world_frames);
     qa_buffer_free(&owner->bootstrap_import);
     free(owner->restored_sidecars); free(owner); *slot = NULL; return true;
 }

@@ -303,6 +303,7 @@ bool q2_map_event(qa_q2_game *g, const qa_q2_map_event *event, qa_error *e) {
             qa_error_set(e, QA_ERROR_FORMAT, 0, "Q2 lightstyle emission leaves its actual Source table");
             return false;
         }
+        if (g->wire_lightstyles[event->style] != event->text) ++g->wire_lightstyle_revision;
         g->wire_lightstyles[event->style] = event->text;
     } else if (event->kind == QA_Q2_MAP_MUSIC) {
         qa_string_id music = event->resource ? event->resource : event->text;

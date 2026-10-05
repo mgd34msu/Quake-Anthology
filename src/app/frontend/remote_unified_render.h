@@ -4,6 +4,7 @@
 #include "qa/hud.h"
 #include "remote_unified_prediction.h"
 typedef struct frontend_unified_render frontend_unified_render;
+bool frontend_unified_render_pending_current(const frontend_unified_render *);
 typedef struct frontend_unified_render_equipment {
     qa_actor_id actor;
     uint32_t provider;

@@ -78,6 +78,7 @@ extern const qa_unified_record_layout qa_unified_frame_layout;
 extern const qa_unified_record_layout qa_unified_inputs_layout;
 extern const qa_unified_record_layout qa_unified_events_layout;
 extern const qa_unified_record_layout qa_unified_metadata_layout;
+extern const qa_unified_record_layout qa_unified_q3_configuration_layout;
 extern const qa_unified_record_layout qa_unified_presentation_payload_layout;
 extern const qa_unified_record_layout qa_unified_simulation_payload_layout;
 extern const qa_unified_record_layout qa_unified_presentation_event_layout;

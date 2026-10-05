@@ -66,15 +66,8 @@ bool frontend_remote_unified_presentation_q3_row_read(const frontend_remote_unif
     frontend_unified_presentation_q3_row *,qa_error *);
 bool frontend_remote_unified_presentation_source_command_current(const frontend_remote_unified *,
     const char *instance,uint64_t publication,uint64_t map_revision,const qa_command_context *,qa_error *);
-/* Transfer the actual detached media owners after the replica recipe prefix
- * imports. Shared dictionaries and family continuations still finish later. */
-bool frontend_remote_unified_presentation_restore_media(frontend_remote_unified *,
-    frontend_unified_media **installed,frontend_unified_media **pending,qa_error *);
 bool frontend_remote_unified_presentation_children_read(const frontend_remote_unified *,
     frontend_unified_presentation_children *,qa_error *);
-size_t frontend_remote_unified_presentation_audio_count(const frontend_remote_unified *);
-bool frontend_remote_unified_presentation_audio_read(const frontend_remote_unified *,size_t,
-    qa_actor_id *,uint64_t *);
 bool frontend_remote_unified_presentation_trace(const frontend_remote_unified *,
     const qa_trace_query *,qa_trace_result *,qa_error *);
 bool frontend_remote_unified_presentation_body(const frontend_remote_unified *,

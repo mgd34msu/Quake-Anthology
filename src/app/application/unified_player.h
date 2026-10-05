@@ -3,6 +3,7 @@
 
 #include "network_unified.h"
 #include "qa/application_qc_presentation.h"
+#include "qa/unified_frame_player.h"
 
 typedef struct application_unified_player_camera {
     qa_application_qc_message_source source;
@@ -28,13 +29,12 @@ typedef struct application_unified_player_external {
     bool has_qc_ammo;
 } application_unified_player_external;
 
-/* Owned CHECKPOINT {view,ui}, observed for the exact physical Source recipient.
- * The caller retains the real Source frame while assembling its parent output.
- * Failure leaves *out unchanged. */
+/* Typed view/UI observation for the exact physical Source recipient.
+ * Allocations belong to the completed frame owner. */
 bool application_unified_player_values(qa_application *,
     const application_unified_source *, qa_net_client_id,
     const qa_unified_session_player *, const application_unified_player_external *,
-    qa_unified_document **out, qa_error *);
+    qa_unified_frame *, const qa_inventory_entry *, size_t, qa_error *);
 
 typedef struct application_unified_player_selection {
     qa_actor_id actor;

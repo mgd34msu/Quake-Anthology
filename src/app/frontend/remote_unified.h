@@ -4,6 +4,7 @@
 #include "qa/frontend.h"
 #include "qa/executable_recipe.h"
 #include "qa/network_unified_session.h"
+#include "qa/network_unified_frame.h"
 #include "qa/persistence_content.h"
 #include "qa/audio.h"
 #include "qa/scene.h"
@@ -41,7 +42,7 @@ typedef struct frontend_remote_unified_consumers {
     bool (*offer_ready)(void *, frontend_remote_unified *, qa_executable_recipe *, qa_error *);
     bool (*control)(void *, frontend_remote_unified *, const qa_unified_document *, qa_error *);
     bool (*frame)(void *, frontend_remote_unified *, const qa_unified_document *,
-        const qa_unified_document *prediction, frontend_unified_frame_preparation *, qa_error *);
+        frontend_unified_frame_preparation *, qa_error *);
     bool (*publish)(void *, frontend_remote_unified *, const qa_unified_document *, qa_error *);
     bool (*input)(void *, frontend_remote_unified *, const qa_unified_input *, double command_time_ms, qa_error *);
     bool (*physical_ready)(void *, frontend_remote_unified *, uint64_t *completed_sequence,
@@ -110,6 +111,10 @@ bool frontend_remote_unified_actor(frontend_remote_unified *, uint32_t wire_slot
  * It never creates an actor or grants live Source authority. */
 bool frontend_remote_unified_actor_retained(const frontend_remote_unified *,uint32_t,
     uint64_t,qa_actor_id *,qa_error *);
+/* Qualify the complete Source identity before resolving its private alias.
+ * A zero identity denotes an explicitly absent optional Source actor. */
+bool frontend_remote_unified_source_actor(frontend_remote_unified *,
+    const qa_unified_frame *, qa_actor_id, bool retained, qa_actor_id *, qa_error *);
 bool frontend_remote_unified_actor_present(const frontend_remote_unified *, uint32_t wire_slot,
     uint64_t wire_generation);
 bool frontend_remote_unified_actor_published(const frontend_remote_unified *,uint32_t,

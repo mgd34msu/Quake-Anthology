@@ -1869,6 +1869,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/remote_q3_compiled_video.c
     src/app/frontend/remote_unified_components_save.c
     src/app/frontend/remote_unified_save.c
+    src/app/frontend/remote_unified_metadata.c
     src/app/frontend/source_renderer_runtime.c
     src/app/frontend/unified_media_inventory.c
     src/app/frontend/unified_q3_client.c

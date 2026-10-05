@@ -28,10 +28,17 @@ bool qa_q3_configstring_revision(const qa_q3_game *game, uint32_t index,
     *out = game->configstring_revisions[index];
     return true;
 }
+bool qa_q3_configstring_table_revision(const qa_q3_game *game, uint64_t *out, qa_error *error) {
+    if (!game || !out)
+        return q3_fail(error, "invalid Q3 source configstring table revision query");
+    *out = game->configstring_table_revision;
+    return true;
+}
 static bool write_value(qa_q3_game *game, uint32_t index, const char *text,
                          const qa_q3_map_event *event, qa_error *error) {
     const char *prior = game->configstrings[index];
     if (prior && !strcmp(prior, text)) return true;
+    bool changed = strcmp(prior ? prior : "", text) != 0;
     if (game->configstring_revisions[index] == UINT64_MAX)
         return q3_fail(error, "Q3 configstring mutation identity exhausted");
     char *copy = copy_text(text, error);
@@ -44,6 +51,7 @@ static bool write_value(qa_q3_game *game, uint32_t index, const char *text,
     free(game->configstrings[index]);
     game->configstrings[index] = copy;
     uint64_t revision = ++game->configstring_revisions[index];
+    if (changed) ++game->configstring_table_revision;
     bool okay = !notice || game->options.hooks.configstring_changed(
         game->options.hooks.context, index, notice, error);
     free(notice);
@@ -116,12 +124,20 @@ bool qa_q3_model_index(qa_q3_game *game, const char *name, int32_t *out, qa_erro
 bool qa_q3_sound_index(qa_q3_game *game, const char *name, int32_t *out, qa_error *error) {
     return find_index(game, name, 288, out, error);
 }
-void q3_configstrings_clear(qa_q3_game *game) {
+static void replace_table(qa_q3_game *game, char **table) {
+    bool changed = false;
     for (uint32_t i = 0; i < QA_Q3_NATIVE_CONFIGSTRINGS; ++i) {
+        const char *prior = game->configstrings[i] ? game->configstrings[i] : "";
+        const char *next = table && table[i] ? table[i] : "";
+        if (strcmp(prior, next)) changed = true;
         free(game->configstrings[i]);
-        game->configstrings[i] = NULL;
+        game->configstrings[i] = table ? table[i] : NULL;
         game->configstring_revisions[i] = 0;
     }
+    if (changed) ++game->configstring_table_revision;
+}
+void q3_configstrings_clear(qa_q3_game *game) {
+    replace_table(game, NULL);
 }
 bool q3_configstrings_capture(const qa_q3_game *game, qa_q3_checkpoint *saved, qa_error *error) {
     for (uint32_t i = 0; i < QA_Q3_NATIVE_CONFIGSTRINGS; ++i)
@@ -169,7 +185,6 @@ bool q3_configstrings_prepare(const qa_q3_checkpoint *saved, char ***out, qa_err
     return true;
 }
 void q3_configstrings_commit(qa_q3_game *game, char **table) {
-    q3_configstrings_clear(game);
-    memcpy(game->configstrings, table, sizeof(game->configstrings));
+    replace_table(game, table);
     free(table);
 }

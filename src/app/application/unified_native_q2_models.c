@@ -1,15 +1,8 @@
 #include "unified_native_q2_models.h"
 #include "native_q2_appearance.h"
-#include "unified_output_json.h"
+#include "unified_frame_private.h"
 #include "internal.h"
 #include "map_players_private.h"
-
-static bool text(application_unified_json *j, const char *s, qa_error *e)
-{ return application_unified_json_text(j, s, e); }
-static bool number(application_unified_json *j, double n, qa_error *e)
-{ return application_unified_json_number(j, n, e); }
-static bool vector(application_unified_json *j, const float v[3], qa_error *e)
-{ return application_unified_json_vector(j, qa_v3(v[0], v[1], v[2]), e); }
 
 static bool replacement_arsenal(qa_application *app, qa_actor_id actor,
     qa_actor_owner source, bool *out, qa_error *error)
@@ -29,48 +22,37 @@ static bool replacement_arsenal(qa_application *app, qa_actor_id actor,
     return true;
 }
 
-static bool model(application_unified_json *j, bool *first,
+static bool model(qa_unified_frame_lease *lease, qa_unified_frame_visuals *out,
     const application_native_q2_appearance *view, unsigned index,
     const char *content, bool held, qa_error *error)
 {
     const qa_q2_entity *state = &view->entity.state;
     bool rerelease = view->source.edition == QA_Q2_RERELEASE;
-    double scale = rerelease && state->scale != 0 ? state->scale : 1;
-    double alpha = rerelease ? state->alpha != 0 ? state->alpha : (state->renderfx & 32u) ? .3 : 1 : 1;
-    bool ok = (*first || text(j, ",", error)) && text(j, "{\"actor\":", error) &&
-        application_unified_json_actor(j, view->entity.binding.actor, error) &&
-        text(j, ",\"content\":", error) && application_unified_json_string(j, content, error) &&
-        text(j, ",\"family\":\"q2\",\"path\":", error) &&
-        application_unified_json_string(j, view->models[index], error) &&
-        text(j, ",\"frame\":", error) && number(j, state->frame, error) &&
-        text(j, ",\"oldFrame\":", error) && number(j, rerelease ? state->old_frame : state->frame, error) &&
-        text(j, ",\"skin\":", error) && number(j, index ? 0 : view->skin, error) &&
-        text(j, ",\"skinPath\":", error) &&
-        (!index && view->skin_path ? application_unified_json_string(j, view->skin_path, error) : text(j, "null", error)) &&
-        text(j, ",\"effects\":", error) && application_unified_json_natural(j, state->effects, error) &&
-        text(j, ",\"renderFlags\":", error) && number(j, state->renderfx, error) &&
-        text(j, ",\"origin\":", error) && vector(j, state->origin, error) &&
-        text(j, ",\"previousOrigin\":", error) && vector(j, state->old_origin, error) &&
-        text(j, ",\"angles\":", error) && vector(j, state->angles, error) &&
-        text(j, ",\"scale\":", error) && number(j, scale, error) &&
-        text(j, ",\"alpha\":", error) && number(j, alpha, error) &&
-        text(j, ",\"visible\":true,\"viewWeapon\":false", error);
-    if (ok && held) ok = text(j, ",\"nativeHeldWeapon\":true", error);
-    if (ok) ok = text(j, "}", error);
-    if (ok) *first = false;
-    return ok;
+    qa_unified_model_state *row = out->models + out->model_count++;
+    *row = (qa_unified_model_state){.actor = view->entity.binding.actor, .family = QA_GAME_Q2,
+        .frame = state->frame, .old_frame = rerelease ? state->old_frame : state->frame,
+        .skin = index ? 0 : view->skin, .effects = state->effects, .render_flags = state->renderfx,
+        .origin = qa_v3(state->origin[0], state->origin[1], state->origin[2]),
+        .previous_origin = qa_v3(state->old_origin[0], state->old_origin[1], state->old_origin[2]),
+        .angles = qa_v3(state->angles[0], state->angles[1], state->angles[2]),
+        .scale = rerelease && state->scale != 0 ? state->scale : 1,
+        .alpha = rerelease ? state->alpha != 0 ? state->alpha : (state->renderfx & 32u) ? .3f : 1 : 1,
+        .has_previous_origin = true, .has_alpha = true, .visible = true, .native_held_weapon = held};
+    return application_unified_frame_string(lease, &row->content, content, error) &&
+        application_unified_frame_string(lease, &row->path, view->models[index], error) &&
+        application_unified_frame_string(lease, &row->skin_path, index ? NULL : view->skin_path, error);
 }
 
 bool application_unified_native_q2_models(qa_application *app,
-    const application_unified_source *source, qa_unified_document **out, qa_error *error)
+    const application_unified_source *source, qa_unified_frame *target,
+    qa_unified_frame_visuals *out, qa_error *error)
 {
-    if (!out || *out || !source || !application_unified_source_current(app, source))
+    if (!target || !target->lease || !out || (out->model_count && !out->models) ||
+        !source || !application_unified_source_current(app, source))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified Q2 models require their actual returned Source");
-    application_unified_json json = {0};
-    bool first = true, ok = text(&json, "[", error);
     qa_application_native_q2_presentation cut;
     bool found = false;
-    if (ok) ok = qa_application_native_q2_presentation_selected(app, &cut, &found, error);
+    bool ok = qa_application_native_q2_presentation_selected(app, &cut, &found, error);
     uint64_t actors = qa_actors_revision(qa_session_actors(source->session));
     if (ok && found && cut.kind == QA_APPLICATION_NATIVE_Q2_ORIGINAL) {
         const qa_product *product = qa_catalog_product(qa_launch_snapshot_catalog(source->launch), cut.content_product);
@@ -78,6 +60,21 @@ bool application_unified_native_q2_models(qa_application *app,
         if (cut.source_owner != source->owner || !product || !product->identity)
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified Q2 models lost their physical content owner");
         if (ok) ok = qa_native_host_q2_wire_count((qa_native_host *)cut.source.original.host, &count, error);
+        if (ok && count > 1) {
+            size_t extra = (size_t)(count - 1) * 4;
+            if (extra / 4 != count - 1 || extra > SIZE_MAX - out->model_count ||
+                out->model_count + extra > SIZE_MAX / sizeof(*out->models))
+                ok = application_fail(error, QA_ERROR_MEMORY, "Unified Q2 model roster exceeds allocation extent");
+            else {
+                qa_unified_model_state *models = qa_unified_frame_lease_alloc(target->lease,
+                    out->model_count + extra, sizeof(*models), _Alignof(qa_unified_model_state), error);
+                if (!models) ok = application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 model roster");
+                else {
+                    if (out->model_count) memcpy(models, out->models, out->model_count * sizeof(*models));
+                    out->models = models;
+                }
+            }
+        }
         for (uint32_t slot = 1; ok && slot < count; ++slot) {
             qa_native_host_q2_entity row;
             if (!qa_native_host_q2_wire_entity((qa_native_host *)cut.source.original.host, slot, &row, error)) { ok = false; break; }
@@ -94,7 +91,7 @@ bool application_unified_native_q2_models(qa_application *app,
             if (ok) ok = replacement_arsenal(app, row.binding.actor, source->owner, &replacement, error);
             for (unsigned i = 0; ok && i < 4; ++i)
                 if (appearance.models[i] && appearance.models[i][0])
-                    ok = model(&json, &first, &appearance, i, product->identity, i == 1 && replacement, error);
+                    ok = model(target->lease, out, &appearance, i, product->identity, i == 1 && replacement, error);
             if (ok && !application_native_q2_appearance_current(app, &appearance))
                 ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified Q2 appearance changed while serializing");
             application_native_q2_appearance_dispose(&appearance);
@@ -105,8 +102,5 @@ bool application_unified_native_q2_models(qa_application *app,
     if (ok && (!application_unified_source_current(app, source) ||
         qa_actors_revision(qa_session_actors(source->session)) != actors))
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified Q2 model Source or actor roster changed");
-    if (ok) ok = text(&json, "]", error) && qa_unified_document_create(QA_UNIFIED_CHECKPOINT,
-        (qa_bytes){json.bytes.data, json.bytes.size}, out, error);
-    application_unified_json_dispose(&json);
     return ok;
 }

@@ -1,12 +1,10 @@
 #include "unified_q3_events.h"
 #include "unified_events.h"
-#include "unified_output_json.h"
 #include "native_q3_console.h"
 #include "guest_q3_components.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
 #include "qa/source_save.h"
-#include "qa/q3_abi.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -46,168 +44,82 @@ bool application_unified_q3_attack_providers(void *context, qa_actor_id attacker
     return true;
 }
 
-bool application_unified_q3_source_emit(application_provider *p, qa_bytes event,
+bool application_unified_q3_source_emit(application_provider *p, const qa_unified_q3_event *event,
     qa_actor_id recipient, int32_t slot, bool has_slot, uint64_t ns, qa_error *e)
 {
-    if (!source(p, e)) return false;
-    application_unified_json j = {0};
-    bool ok = application_unified_json_text(&j, "{\"kind\":\"q3-source\",\"event\":", e) &&
-        application_unified_json_append(&j, event, e) && application_unified_json_text(&j, "}", e) &&
-        application_unified_event_emit(p->application, p->owner,
-            (qa_bytes){j.bytes.data, j.bytes.size}, (qa_bytes){0}, recipient,
-            (qa_actor_id){0}, ns, slot, has_slot, false, e);
-    application_unified_json_dispose(&j);
-    return ok;
+    if (!event || !source(p, e)) return false;
+    qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_Q3, .value.q3 = *event};
+    return application_unified_event_emit(p->application, p->owner, &payload, NULL,
+        recipient, (qa_actor_id){0}, ns, slot, has_slot, false, e);
 }
 
 static bool component_emit(qa_application *app, const application_q3_component_publication *p,
-    application_unified_json *event, qa_actor_id recipient, int32_t time, qa_error *e)
+    const qa_unified_q3_event *event, qa_actor_id recipient, int32_t time, qa_error *e)
 {
     if (!app || !p || !p->owner || !p->descriptor || !p->content || !p->game || !p->source ||
         !p->identity || !p->metadata || !p->generation)
         return application_fail(e, QA_ERROR_ARGUMENT, "Q3 component event lost its admitted physical Source");
-    application_unified_json payload = {0};
-    bool ok = application_unified_json_text(&payload, "{\"kind\":\"q3-source\",\"event\":", e) &&
-        application_unified_json_append(&payload, (qa_bytes){event->bytes.data,event->bytes.size}, e) &&
-        application_unified_json_text(&payload, "}", e) && application_unified_event_emit(app, p->owner,
-            (qa_bytes){payload.bytes.data,payload.bytes.size}, (qa_bytes){0}, recipient,
-            (qa_actor_id){0}, (uint64_t)(uint32_t)time * UINT64_C(1000000), 0, false, false, e);
-    application_unified_json_dispose(&payload);
-    return ok;
+    qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_Q3, .value.q3 = *event};
+    return application_unified_event_emit(app, p->owner, &payload, NULL, recipient,
+        (qa_actor_id){0}, (uint64_t)(uint32_t)time * UINT64_C(1000000), 0, false, false, e);
 }
 
-static bool player_record_write(void *context,size_t offset,qa_bytes value,qa_error *e)
+bool application_unified_q3_component_player(qa_application *app, const application_q3_component_publication *p,
+    const application_q3_scene_player_event *event, qa_error *e)
 {
-    qa_buffer *bytes=context;
-    if(offset>bytes->size||value.size>bytes->size-offset) return application_fail(e,QA_ERROR_ARGUMENT,"Original player event leaves its Source ABI record");
-    if(value.size) memcpy(bytes->data+offset,value.data,value.size);
-    return true;
-}
-bool application_unified_q3_component_player(qa_application *app,const application_q3_component_publication *p,
-    const application_q3_scene_player_event *event,qa_error *e)
-{
-    if(!app||!p||!event||event->time_ms<0||!event->actor.registry)
-        return application_fail(e,QA_ERROR_ARGUMENT,"Original player event lost its actual component delivery");
-    uint8_t player[468]={0}; qa_buffer bytes={player,qa_qvm_player_bytes(QA_QVM_Q3_MODERN)};
-    qa_q3_abi_record record={.abi=QA_QVM_Q3_MODERN,.bytes={player,bytes.size},.context=&bytes,.write=player_record_write};
-    application_unified_json j={0};
-    const qa_json_document *identity=qa_unified_document_json(p->identity);
-    qa_json_id module=qa_json_at(identity,qa_json_get(identity,qa_unified_document_root(p->identity),"modules"),0);
-    qa_bytes raw=qa_json_source(identity,module);
-    bool ok=module!=QA_JSON_NONE&&qa_q3_abi_write_player(&record,0,true,false,&event->player,e)&&
-        application_unified_json_text(&j,"{\"kind\":\"player-event\",\"actor\":",e)&&application_unified_json_actor(&j,event->actor,e)&&
-        application_unified_json_text(&j,",\"source\":{\"module\":",e)&&application_unified_json_append(&j,raw,e)&&
-        application_unified_json_text(&j,",\"abiProfile\":",e)&&application_unified_json_string(&j,p->abi==QA_QVM_Q3_MODERN?"q3-modern":"q3-1.16n-base",e)&&
-        application_unified_json_text(&j,"},\"playerState\":[",e);
-    for(size_t i=0;ok&&i<bytes.size;++i) ok=(!i||application_unified_json_text(&j,",",e))&&application_unified_json_natural(&j,player[i],e);
-    if(ok) ok=application_unified_json_text(&j,"]",e)&&
-        application_unified_json_text(&j,",\"event\":",e)&&application_unified_json_number(&j,event->event,e)&&
-        application_unified_json_text(&j,",\"parameter\":",e)&&application_unified_json_number(&j,event->parameter,e)&&
-        application_unified_json_text(&j,event->external?",\"sequence\":{\"kind\":\"external\",\"time\":" : ",\"sequence\":{\"kind\":\"predictable\",\"sequence\":",e)&&
-        application_unified_json_number(&j,event->source_sequence,e)&&application_unified_json_text(&j,"},\"origin\":",e)&&
-        application_unified_json_vector(&j,event->origin,e)&&application_unified_json_text(&j,",\"time\":",e)&&
-        application_unified_json_number(&j,event->time_ms,e)&&application_unified_json_text(&j,"}",e)&&
-        component_emit(app,p,&j,(qa_actor_id){0},event->time_ms,e);
-    application_unified_json_dispose(&j); return ok;
+    if (!app || !p || !event || event->time_ms < 0 || !event->actor.registry || !p->product || !p->metadata)
+        return application_fail(e, QA_ERROR_ARGUMENT, "Original player event lost its actual component delivery");
+    if (!p->module || !p->module->id || !p->module->artifact_path || !p->module->digest || !p->module->revision)
+        return application_fail(e, QA_ERROR_ARGUMENT, "Original player event lost its admitted module identity owner");
+    qa_unified_q3_event value = {.kind = QA_UNIFIED_Q3_PLAYER_EVENT, .actor = event->actor,
+        .player = event->player, .event = event->event, .parameter = event->parameter,
+        .external = event->external, .source_sequence = event->source_sequence,
+        .origin = event->origin, .time_ms = event->time_ms, .abi = p->abi,
+        .module = *p->module};
+    return component_emit(app, p, &value, (qa_actor_id){0}, event->time_ms, e);
 }
 
 bool application_unified_q3_component_command(qa_application *app,
     const application_q3_component_publication *p, qa_actor_id recipient, const char *value,
     int32_t time, qa_error *e)
 {
-    if (!value)
-        return application_fail(e, QA_ERROR_ARGUMENT, "Q3 component command lost its actual lexical client/text");
-    application_unified_json j = {0};
-    bool ok = application_unified_json_text(&j, "{\"kind\":\"server-command\",\"client\":-1,\"text\":", e) &&
-        application_unified_json_string(&j, value, e) && application_unified_json_text(&j, "}", e) &&
-        component_emit(app, p, &j, recipient, time, e);
-    application_unified_json_dispose(&j);
-    return ok;
-}
-
-static bool scalar(application_unified_json *j, const char *name, int32_t n, qa_error *e)
-{
-    return application_unified_json_text(j, ",", e) && application_unified_json_string(j, name, e) &&
-        application_unified_json_text(j, ":", e) && application_unified_json_number(j, n, e);
+    if (!value) return application_fail(e, QA_ERROR_ARGUMENT, "Q3 component command lost its actual lexical client/text");
+    qa_unified_q3_event event = {.kind = QA_UNIFIED_Q3_SERVER_COMMAND, .client = -1, .text = (char *)value};
+    return component_emit(app, p, &event, recipient, time, e);
 }
 
 bool application_unified_q3_text(application_provider *p, application_unified_q3_text_kind kind,
     int32_t client, const char *value, qa_error *e)
 {
-    static const char *const names[] = {"print", "log", "server-command", "drop-client"};
-    if ((unsigned)kind >= sizeof(names) / sizeof(names[0]) || !value || !source(p, e))
+    if ((unsigned)kind > APPLICATION_Q3_SOURCE_DROP || !value || !source(p, e))
         return application_fail(e, QA_ERROR_ARGUMENT, "Q3 engine event lost its authored text");
-    application_unified_json j = {0}; int32_t time;
-    bool ok = qa_q3_source_clock(p->state.q3, &time, e) &&
-        application_unified_json_text(&j, "{\"kind\":", e) && application_unified_json_string(&j, names[kind], e);
-    if (ok && (kind == APPLICATION_Q3_SOURCE_COMMAND || kind == APPLICATION_Q3_SOURCE_DROP))
-        ok = scalar(&j, "client", client, e);
-    if (ok) ok = application_unified_json_text(&j,
-        kind == APPLICATION_Q3_SOURCE_DROP ? ",\"reason\":" : ",\"text\":", e) &&
-        application_unified_json_string(&j, value, e) && application_unified_json_text(&j, "}", e) &&
-        application_unified_q3_source_emit(p, (qa_bytes){j.bytes.data, j.bytes.size}, (qa_actor_id){0},
-            0, false, (uint64_t)(uint32_t)time * UINT64_C(1000000), e);
-    application_unified_json_dispose(&j);
-    return ok;
+    static const qa_unified_q3_event_kind kinds[] = {QA_UNIFIED_Q3_PRINT, QA_UNIFIED_Q3_LOG,
+        QA_UNIFIED_Q3_SERVER_COMMAND, QA_UNIFIED_Q3_DROP_CLIENT};
+    int32_t time;
+    if (!qa_q3_source_clock(p->state.q3, &time, e)) return false;
+    qa_unified_q3_event event = {.kind = kinds[kind], .client = client, .text = (char *)value};
+    return application_unified_q3_source_emit(p, &event, (qa_actor_id){0}, 0, false,
+        (uint64_t)(uint32_t)time * UINT64_C(1000000), e);
 }
 
 bool application_unified_q3_configstring(application_provider *p, uint32_t index, const char *value, qa_error *e)
 {
     if (index >= QA_Q3_CONFIGSTRINGS || !value || !source(p, e))
         return application_fail(e, QA_ERROR_ARGUMENT, "Q3 source configstring has no authored slot");
-    application_unified_json j = {0}; int32_t time;
-    bool ok = qa_q3_source_clock(p->state.q3, &time, e) &&
-        application_unified_json_text(&j, "{\"kind\":\"configstring\",\"index\":", e) &&
-        application_unified_json_natural(&j, index, e) && application_unified_json_text(&j, ",\"value\":", e) &&
-        application_unified_json_string(&j, value, e) && application_unified_json_text(&j, "}", e) &&
-        application_unified_q3_source_emit(p, (qa_bytes){j.bytes.data, j.bytes.size}, (qa_actor_id){0},
-            0, false, (uint64_t)(uint32_t)time * UINT64_C(1000000), e);
-    application_unified_json_dispose(&j);
-    return ok;
-}
-static bool vector(application_unified_json *j, const char *name, const float v[3], qa_error *e)
-{
-    return application_unified_json_text(j, ",", e) && application_unified_json_string(j, name, e) &&
-        application_unified_json_text(j, ":", e) && application_unified_json_vector(j, qa_v3(v[0], v[1], v[2]), e);
-}
-static bool trajectory(application_unified_json *j, const char *name, const qa_q3_trajectory *t, qa_error *e)
-{
-    return application_unified_json_text(j, ",", e) && application_unified_json_string(j, name, e) &&
-        application_unified_json_text(j, ":{\"type\":", e) && application_unified_json_number(j, t->type, e) &&
-        scalar(j, "time", t->time, e) && scalar(j, "duration", t->duration, e) &&
-        vector(j, "base", t->base, e) && vector(j, "delta", t->delta, e) &&
-        application_unified_json_text(j, "}", e);
-}
-static bool state(application_unified_json *j, const qa_q3_entity *s, qa_error *e)
-{
-    if (!application_unified_json_text(j, "{\"number\":", e) ||
-        !application_unified_json_number(j, s->number, e) ||
-        !scalar(j, "eType", s->eType, e) || !scalar(j, "eFlags", s->eFlags, e) ||
-        !trajectory(j, "pos", &s->pos, e) || !trajectory(j, "apos", &s->apos, e) ||
-        !scalar(j, "time", s->time, e) || !scalar(j, "time2", s->time2, e) ||
-        !vector(j, "origin", s->origin, e) || !vector(j, "origin2", s->origin2, e) ||
-        !vector(j, "angles", s->angles, e) || !vector(j, "angles2", s->angles2, e)) return false;
-#define FIELD(name) if (!scalar(j, #name, s->name, e)) return false
-    FIELD(otherEntityNum); FIELD(otherEntityNum2); FIELD(groundEntityNum); FIELD(constantLight);
-    FIELD(loopSound); FIELD(modelindex); FIELD(modelindex2); FIELD(clientNum); FIELD(frame); FIELD(solid);
-    FIELD(event); FIELD(eventParm); FIELD(powerups); FIELD(weapon); FIELD(legsAnim); FIELD(torsoAnim); FIELD(generic1);
-#undef FIELD
-    return application_unified_json_text(j, "}", e);
+    int32_t time;
+    if (!qa_q3_source_clock(p->state.q3, &time, e)) return false;
+    qa_unified_q3_event event = {.kind = QA_UNIFIED_Q3_CONFIGSTRING, .index = index, .text = (char *)value};
+    return application_unified_q3_source_emit(p, &event, (qa_actor_id){0}, 0, false,
+        (uint64_t)(uint32_t)time * UINT64_C(1000000), e);
 }
 
 static bool entity_event(application_provider *p, uint32_t slot, qa_actor_id actor,
     bool physical, const qa_q3_entity *s, qa_vec3 origin, int32_t now, qa_error *e)
 {
-    application_unified_json j = {0};
-    bool ok = application_unified_json_text(&j, "{\"kind\":\"entity-event\",\"actor\":", e) &&
-        application_unified_json_actor(&j, actor, e) && application_unified_json_text(&j, ",\"state\":", e) &&
-        state(&j, s, e) && application_unified_json_text(&j, ",\"origin\":", e) &&
-        application_unified_json_vector(&j, origin, e) && scalar(&j, "time", now, e) &&
-        application_unified_json_text(&j, "}", e) &&
-        application_unified_q3_source_emit(p, (qa_bytes){j.bytes.data, j.bytes.size},
-            (qa_actor_id){0}, (int32_t)slot, physical, (uint64_t)(uint32_t)now * UINT64_C(1000000), e);
-    application_unified_json_dispose(&j);
-    return ok;
+    qa_unified_q3_event event = {.kind = QA_UNIFIED_Q3_ENTITY_EVENT, .actor = actor,
+        .entity = *s, .origin = origin, .time_ms = now};
+    return application_unified_q3_source_emit(p, &event, (qa_actor_id){0}, (int32_t)slot,
+        physical, (uint64_t)(uint32_t)now * UINT64_C(1000000), e);
 }
 
 bool application_unified_q3_participant(void *context, qa_actor_id actor, int32_t code,
@@ -221,20 +133,14 @@ bool application_unified_q3_participant(void *context, qa_actor_id actor, int32_
     return entity_event(p, 0, actor, false, &authored, origin, now, e);
 }
 
-bool application_unified_q3_console(application_provider *p, bool execute_now,
-    const char *value, qa_error *e)
+bool application_unified_q3_console(application_provider *p, bool execute_now, const char *value, qa_error *e)
 {
-    if (!value || !source(p, e)) return false;
-    application_unified_json j = {0}; int32_t now;
-    bool ok = qa_q3_source_clock(p->state.q3, &now, e) &&
-        application_unified_json_text(&j, "{\"kind\":\"console-command\",\"execution\":", e) &&
-        application_unified_json_string(&j, execute_now ? "now" : "append", e) &&
-        application_unified_json_text(&j, ",\"text\":", e) &&
-        application_unified_json_string(&j, value, e) && application_unified_json_text(&j, "}", e) &&
-        application_unified_q3_source_emit(p, (qa_bytes){j.bytes.data, j.bytes.size},
-            (qa_actor_id){0}, 0, false, (uint64_t)(uint32_t)now * UINT64_C(1000000), e);
-    application_unified_json_dispose(&j);
-    return ok;
+    if (!value || !source(p, e)) return application_fail(e, QA_ERROR_ARGUMENT, "Q3 engine event lost its authored text");
+    int32_t now;
+    if (!qa_q3_source_clock(p->state.q3, &now, e)) return false;
+    qa_unified_q3_event event = {.kind = QA_UNIFIED_Q3_CONSOLE_COMMAND, .execute_now = execute_now, .text = (char *)value};
+    return application_unified_q3_source_emit(p, &event, (qa_actor_id){0}, 0, false,
+        (uint64_t)(uint32_t)now * UINT64_C(1000000), e);
 }
 
 bool application_unified_q3_events_publish(application_provider *p, const qa_source_frame *frame, qa_error *e)

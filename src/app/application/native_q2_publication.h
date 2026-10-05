@@ -22,6 +22,9 @@ typedef struct application_native_q2_publication_view {
     bool camera;
 } application_native_q2_publication_view;
 
+bool application_native_q2_component_identity_create(const qa_catalog_mod *,const qa_product *,
+    const char *instance,qa_unified_document **,qa_error *);
+
 /* Factory owns this child of an actually admitted native GAME. No selected
  * component declaration means no registration, including stock native GAME. */
 bool application_native_q2_publication_create(struct application_native_q2 *,

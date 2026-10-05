@@ -20,13 +20,15 @@ struct frontend_remote_unified {
     frontend_remote_unified_options options;
     qa_unified_session *session;
     qa_executable_recipe *recipe, *preparing_recipe, *retiring_recipe;
-    qa_unified_document *offer, *frame, *prepared_frame, *prediction;
+    qa_unified_document *offer, *frame, *prepared_frame;
+    qa_unified_document *source_metadata;
     qa_actor_registry *actors;
     qa_strings *strings;
     frontend_unified_metadata *metadata;
+    qa_unified_frame_lease *metadata_lease;
     size_t metadata_count;
     frontend_unified_identity *identities;
-    qa_saved_actor_id wire_player;
+    qa_actor_id wire_player;
     qa_saved_actor_id wire_client;
     qa_actor_id player;
     uint32_t epoch, source_entity;

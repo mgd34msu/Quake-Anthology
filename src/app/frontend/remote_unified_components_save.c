@@ -24,16 +24,22 @@ static bool blob(qa_source_save_io *io,qa_buffer *value)
 static bool document(qa_source_save_io *io,qa_unified_document **value,qa_unified_document_kind kind)
 {
     qa_buffer bytes={0};
+    bool frame=kind==QA_UNIFIED_FRAME_DOCUMENT;
     if(io->direction==QA_SOURCE_SAVE_WRITE) {
         if(!*value||qa_unified_document_type(*value)!=kind) return fail(io,"Component checkpoint document has another semantic domain");
-        qa_bytes source=qa_json_source(qa_unified_document_json(*value),qa_unified_document_root(*value));
-        bytes=(qa_buffer){(uint8_t *)source.data,source.size};
+        if(frame) {
+            if(!qa_unified_document_encode(*value,&bytes,io->error)) return false;
+        } else {
+            qa_bytes source=qa_json_source(qa_unified_document_json(*value),qa_unified_document_root(*value));
+            bytes=(qa_buffer){(uint8_t *)source.data,source.size};
+        }
     }
     bool ok=blob(io,&bytes);
     if(io->direction==QA_SOURCE_SAVE_READ) {
-        if(ok) ok=qa_unified_document_create(kind,(qa_bytes){bytes.data,bytes.size},value,io->error);
-        qa_buffer_free(&bytes);
+        if(ok) ok=frame?qa_unified_document_decode(kind,(qa_bytes){bytes.data,bytes.size},value,io->error):
+            qa_unified_document_create(kind,(qa_bytes){bytes.data,bytes.size},value,io->error);
     }
+    if(frame||io->direction==QA_SOURCE_SAVE_READ) qa_buffer_free(&bytes);
     return ok;
 }
 static bool actor(qa_source_save_io *io,frontend_unified_components *owner,qa_actor_id *value)
