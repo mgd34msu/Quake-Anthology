@@ -176,7 +176,7 @@ bool application_guest_q3_client_console_prepare(struct application_q3_guest *en
         .release_script = release_script, .script_complete = complete, .allow_command = allowed,
         .source_command = dispatch};
     if (row->cvars) row->console = qa_console_create(&options, error);
-    if (!row->console || (!engine->restore_pending && !application_startup_seed_source(engine->provider, row->cvars, error))) {
+    if (!row->console || !application_startup_seed_source(engine->provider, row->cvars, error)) {
         qa_console_destroy(row->console); qa_cvars_destroy(row->cvars);
         (void)globals_close(row,NULL); free(row); return false;
     }
@@ -248,30 +248,6 @@ bool application_guest_q3_client_console_globals(struct application_q3_guest *en
         qa_script_defines_memory(row->script_globals)->context!=row->script_memory)
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT parser globals lost their physical console owner");
     *out = row->script_globals; *owner = row->script_globals_owner; return true;
-}
-bool application_guest_q3_client_console_globals_capture(struct application_q3_guest *engine,uint32_t seat,
-    qa_string_id *owner,qa_buffer *memory,qa_buffer *definitions,qa_error *error)
-{
-    qa_script_defines *globals=NULL;
-    if(!memory||!definitions||!application_guest_q3_client_console_globals(engine,seat,&globals,owner,error)) return false;
-    struct application_guest_q3_client_console *row=find(engine,seat);
-    if(engine->calls||row->calls||!qa_console_idle(row->console)||!qa_bot_memory_idle(row->script_memory))
-        return application_fail(error,QA_ERROR_ARGUMENT,"CLIENT parser capture requires its returned shared MEMORY owner");
-    return qa_bot_memory_capture(row->script_memory,memory,error)&&qa_script_defines_save_capture(globals,definitions,error);
-}
-
-bool application_guest_q3_client_console_globals_restore(struct application_q3_guest *engine, uint32_t seat,
-    qa_qvm_role kind, qa_string_id owner, qa_bytes memory,qa_bytes bytes, qa_error *error)
-{
-    struct application_guest_q3_client_console *row = find(engine, seat);
-    if (!row || !available(row) || row->kind != kind || row->script_globals_owner != owner ||
-        !engine->restore_pending || engine->provider->application->operation != APPLICATION_PERSISTING ||
-        engine->calls || row->calls || !qa_console_idle(row->console))
-        return application_fail(error, QA_ERROR_FORMAT, "Restored CLIENT globals changed their actual physical namespace");
-    for (const q3g_role *role = engine->roles; role; role = role->next)
-        if (role->kind != QA_QVM_GAME && role->seat == seat && role->host)
-            return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT globals import must precede every shared host");
-    return qa_bot_memory_restore(row->script_memory,memory,error)&&qa_script_defines_save_restore_into(row->script_globals, bytes, error);
 }
 bool application_guest_q3_client_console_idle(const struct application_q3_guest *engine)
 {

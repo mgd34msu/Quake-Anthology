@@ -4,8 +4,8 @@
 #include "guest_q3_private.h"
 #include "qa/save.h"
 
-/* Actual application-side Q3 client/server continuation. This nested owner
- * does not replace the role executors, host handles or shared services. */
+/* Authoritative Q3 GAME state. CLIENT/CGAME/UI are constructed from the
+ * selected configuration and current GAME state. */
 bool application_guest_q3_state_capture(application_provider *, qa_buffer *, qa_error *);
 bool application_guest_q3_state_restore(application_provider *, qa_bytes, qa_error *);
 struct qa_application_native_resource_refs;
@@ -23,7 +23,7 @@ bool application_guest_q3_save_actor_client(application_provider *, qa_actor_id,
 bool application_guest_q3_save_prepare(application_provider *, qa_world *, const qa_product *,
     const qa_launch_choices *, const qa_save_record *, qa_error *);
 /* After WORLD/session, roster/control/modes/bots, primary lease promotion and
- * frontend service restoration. This also requires collective portal admission
+ * shared service restoration. This also requires collective portal admission
  * and rechecks the complete private owner bytes before allowing guest entry. */
 bool application_guest_q3_save_finish(application_provider *, qa_error *);
 

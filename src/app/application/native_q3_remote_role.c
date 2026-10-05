@@ -251,7 +251,7 @@ static bool prepare_seat(application_provider *provider, const qa_launch_choices
     if (row->cvars) row->console = qa_console_create(&options, error);
     if (!row->console || !qa_strings_intern_cstr(qa_session_strings(provider->application->session), name,
         &row->service_owner, error) ||
-        (provider->application->operation != APPLICATION_PERSISTING && !engine_defaults(row, choices, seat, error))) {
+        !engine_defaults(row, choices, seat, error)) {
         qa_console_destroy(row->console); qa_cvars_destroy(row->cvars); free(row); return false;
     }
     struct application_native_q3_remote_role **tail = &provider->native_q3_remote_roles;
@@ -303,7 +303,7 @@ bool application_native_q3_remote_roles_preinit(application_provider *provider, 
         if (!application_native_q3_remote_role_source_at(provider, i, &source, &found, error)) return false;
         if (!found) return true;
         if (!application_startup_tuple_preinit(provider, &source, error) ||
-            (provider->application->operation != APPLICATION_PERSISTING && !qa_cvars_apply_latched(source.cvars, NULL, error))) return false;
+            !qa_cvars_apply_latched(source.cvars, NULL, error)) return false;
     }
 }
 static bool replace_ready(const struct application_native_q3_remote_role *row)

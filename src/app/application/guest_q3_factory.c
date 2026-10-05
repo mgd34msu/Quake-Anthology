@@ -5,7 +5,6 @@
 #include "qa/application_q3_factory.h"
 #include "native_q3_console.h"
 #include "native_q3_remote_role.h"
-#include "native_q3_remote_role_save.h"
 #include "qa/application_native_q3_client_modules.h"
 #include "q3_product.h"
 #include "qa/network_q3.h"
@@ -643,18 +642,12 @@ bool qa_application_q3_content_visit(const qa_application *app,
     if (!app || !visitor || !visitor->catalog || !visitor->view)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 content visitor requires actual retained owners");
     for (size_t i = 0; i < app->provider_count; ++i) {
-        if (app->providers[i]->kind == APPLICATION_PROVIDER_Q3 &&
-            !application_native_q3_remote_roles_content_visit(app->providers[i], visitor, error)) return false;
         struct application_q3_guest *engine = q3g_engine(app->providers[i]);
         if (!engine) continue;
         if (engine->client_candidate || engine->calls)
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 content source has an unfinished replacement");
-        if (engine->client_descriptor) {
-            const qa_launch_instance *descriptor = qa_launch_instance_lease_view(engine->client_descriptor);
-            if (!visitor->catalog(visitor->context, qa_launch_instance_catalog(descriptor), error) ||
-                !visitor->view(visitor->context, descriptor->content, error)) return false;
-        }
         for (q3g_artifact *artifact = engine->artifacts; artifact; artifact = artifact->next) {
+            if (artifact->kind != QA_QVM_GAME) continue;
             const qa_launch_instance *descriptor = qa_launch_instance_lease_view(artifact->descriptor);
             if (!descriptor || descriptor->content != artifact->view || !artifact->resource ||
                 artifact->acquisition.resource_id != qa_resource_id(artifact->resource) ||

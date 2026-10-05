@@ -1,6 +1,5 @@
 #include "internal.h"
 #include "qa/ui_saves.h"
-#include "qa/source_save.h"
 #include <stdio.h>
 #include <time.h>
 
@@ -184,39 +183,4 @@ bool qa_ui_saves_destroy(qa_ui_saves **slot,double time_ms,qa_error *e) {
     qa_ui_saves *o=slot?*slot:NULL;if(!o)return true;
     while(o->registered) { if(!qa_ui_unregister(o->ui,o->pages[o->registered-1].id,time_ms,e))return false;--o->registered; }
     free(o->overwrite_id);free(o);*slot=NULL;return true;
-}
-static bool saved_text(qa_source_save_io *io,char *value,size_t capacity) {
-    size_t length=io->direction==QA_SOURCE_SAVE_WRITE?strlen(value):0;
-    if(!qa_source_save_count(io,&length,capacity-1) || !qa_source_save_bytes(io,value,length) ||
-        memchr(value,0,length))return false;
-    value[length]=0;return true;
-}
-static bool saved_fields(qa_source_save_io *io,qa_ui_saves *saved,const qa_ui_saves *owner) {
-    uint8_t magic[4]={'Q','S','M','S'};uint32_t seat=owner->ui->options.seat;
-    qa_ui_id ids[4]={owner->menus.load,owner->menus.save,owner->menus.name,owner->menus.overwrite};
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QSMS",4) ||
-        !qa_source_save_u32(io,&seat) || seat!=owner->ui->options.seat)return false;
-    for(size_t i=0;i<4;++i) { uint64_t id=ids[i];if(!qa_source_save_u64(io,&id) || id!=ids[i])return false; }
-    return qa_source_save_count(io,&saved->page,SIZE_MAX/5) &&
-        saved_text(io,saved->draft,sizeof(saved->draft)) &&
-        saved_text(io,saved->message,sizeof(saved->message)) &&
-        qa_source_save_owned_text(io,&saved->overwrite_id) && (!saved->overwrite_id || *saved->overwrite_id);
-}
-bool qa_ui_saves_checkpoint(const qa_ui_saves *owner,qa_buffer *out,qa_error *e) {
-    if(!owner || !out || out->data || out->size || !qa_ui_idle(owner->ui) || owner->busy)
-        return ui_fail(e,"Saved game checkpoint requires its idle menu owner");
-    qa_ui_saves saved=*owner;qa_source_save_io io={0};
-    bool ok=qa_source_save_writer(&io,NULL,e) && saved_fields(&io,&saved,owner) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io);
-    if(!ok && e && e->code==QA_OK)qa_error_set(e,QA_ERROR_FORMAT,0,"Saved game page leaves its actual menu owner");
-    return ok;
-}
-bool qa_ui_saves_restore(qa_ui_saves *owner,qa_bytes bytes,qa_error *e) {
-    if(!owner || !qa_ui_idle(owner->ui) || owner->busy)return ui_fail(e,"Saved game restore requires its idle menu owner");
-    qa_ui_saves saved={0};qa_source_save_io io={0};
-    bool ok=qa_source_save_reader(&io,NULL,bytes,e) && saved_fields(&io,&saved,owner) && qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io);
-    if(!ok) { free(saved.overwrite_id);if(e && e->code==QA_OK)qa_error_set(e,QA_ERROR_FORMAT,0,"Saved game page leaves its actual menu owner");return false; }
-    owner->page=saved.page;memcpy(owner->draft,saved.draft,sizeof(owner->draft));memcpy(owner->message,saved.message,sizeof(owner->message));
-    free(owner->overwrite_id);owner->overwrite_id=saved.overwrite_id;owner->lines[0][0]=owner->lines[1][0]=0;return true;
 }

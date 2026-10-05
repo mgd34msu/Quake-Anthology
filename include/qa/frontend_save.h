@@ -4,8 +4,8 @@
 #include "qa/persistence_application.h"
 #include "qa/q1_save.h"
 /* Backend and filesystem resolvers remain borrowed throughout the operation.
- * The concrete frontend supplies all seven external owner records. Capture
- * requires a completed driver boundary, after every callback has returned. */
+ * Capture stores application state and requires a completed driver boundary.
+ * Restore rebuilds presentation through the normal frontend constructors. */
 bool qa_frontend_persistence_capture(qa_frontend *, const qa_application_persistence_ops *,
     qa_save_purpose, qa_save_image **, qa_error *);
 /* active/displaced stay unchanged on failure. A failed candidate whose actual

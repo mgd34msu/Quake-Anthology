@@ -1,6 +1,5 @@
 #include "host_menu.h"
 #include "qa/network_q1.h"
-#include "qa/source_save.h"
 #include "qa/text.h"
 #include <math.h>
 #include <stdio.h>
@@ -62,58 +61,6 @@ const char *frontend_host_menu_label(void *context)
 {
     const frontend_host_menu *menu=context;
     return menu && menu->applied.kind!=FRONTEND_HOST_OFFLINE?"Network: hosting":"Network: local only";
-}
-static bool settings_fields(qa_source_save_io *io,frontend_host_settings *settings)
-{
-    uint32_t kind=settings->kind,protocol=settings->q1_protocol.kind;
-    if(!qa_source_save_u32(io,&kind) || kind>FRONTEND_HOST_UNIFIED ||
-       !qa_source_save_u16(io,&settings->port) || !settings->port ||
-       !qa_source_save_u32(io,&protocol) || protocol>QA_NET_RMQ999 ||
-       !qa_source_save_u32(io,&settings->q1_protocol.revision) ||
-       !qa_source_save_u32(io,&settings->q1_protocol.flags))return false;
-    settings->kind=(frontend_host_kind)kind;
-    settings->q1_protocol.kind=(qa_net_protocol)protocol;
-    return qa_net_protocol_valid(settings->q1_protocol,io->error);
-}
-static bool text_field(qa_source_save_io *io,char *text,size_t capacity)
-{
-    size_t count=io->direction==QA_SOURCE_SAVE_WRITE?strlen(text):0;
-    if(!qa_source_save_count(io,&count,capacity-1) || !qa_source_save_bytes(io,text,count))return false;
-    if(io->direction==QA_SOURCE_SAVE_READ) {
-        if(memchr(text,0,count))return false;
-        text[count]=0;
-    }
-    return qa_utf8_valid((qa_bytes){(const uint8_t *)text,count});
-}
-static bool fields(qa_source_save_io *io,const frontend_host_menu *menu,frontend_host_menu *state)
-{
-    uint32_t physical=menu->seat->id; uint64_t id=menu->id;
-    return qa_source_save_u32(io,&physical) && physical==menu->seat->id &&
-        qa_source_save_u64(io,&id) && id==menu->id &&
-        settings_fields(io,&state->applied) && settings_fields(io,&state->draft) &&
-        text_field(io,state->port,sizeof(state->port)) && text_field(io,state->status,sizeof(state->status));
-}
-bool frontend_host_menu_checkpoint(const frontend_host_menu *menu,qa_buffer *out,qa_error *error)
-{
-    if(!bound(menu) || menu->busy || menu->retiring || !menu->registered || !out || out->data || out->size)
-        return fail(error,QA_ERROR_ARGUMENT,"Host capture requires its returned registered physical child");
-    frontend_host_menu state=*menu; qa_source_save_io io={0};
-    bool okay=qa_source_save_writer(&io,NULL,error) && fields(&io,menu,&state) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); return okay;
-}
-bool frontend_host_menu_restore(frontend_host_menu *menu,qa_bytes bytes,qa_error *error)
-{
-    if(!bound(menu) || menu->busy || menu->retiring || !menu->registered ||
-       !menu->seat->frontend->source_restoring || menu->seat->frontend->capture)
-        return fail(error,QA_ERROR_ARGUMENT,"Host import requires its actual returned restoring seat");
-    frontend_host_menu state={0}; qa_source_save_io io={0};
-    bool okay=qa_source_save_reader(&io,NULL,bytes,error) && fields(&io,menu,&state) && qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io);
-    if(okay) {
-        menu->applied=state.applied; menu->draft=state.draft;
-        memcpy(menu->port,state.port,sizeof(menu->port)); memcpy(menu->status,state.status,sizeof(menu->status));
-    } else if(!error || error->code==QA_OK)fail(error,QA_ERROR_FORMAT,"Invalid host menu private choices");
-    return okay;
 }
 static bool opened(void *context,uint32_t seat,qa_error *error)
 {

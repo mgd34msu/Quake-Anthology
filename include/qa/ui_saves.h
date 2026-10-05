@@ -21,8 +21,4 @@ typedef struct qa_ui_saves_service {
 typedef struct qa_ui_saves_menus { qa_ui_id load, save, name, overwrite; } qa_ui_saves_menus;
 bool qa_ui_saves_create(qa_ui *, qa_ui_saves_menus, const qa_ui_saves_service *, qa_ui_saves **, qa_error *);
 bool qa_ui_saves_destroy(qa_ui_saves **, double time_ms, qa_error *);
-bool qa_ui_saves_checkpoint(const qa_ui_saves *, qa_buffer *, qa_error *);
-/* Restores mutable page state atomically on its idle registered controller.
- * Service rows and pending operations remain owned by their real backends. */
-bool qa_ui_saves_restore(qa_ui_saves *, qa_bytes, qa_error *);
 #endif

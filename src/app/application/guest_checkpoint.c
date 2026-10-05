@@ -30,7 +30,7 @@ static bool checkpoint_owner(application_provider *provider, qa_error *error)
         return application_q3_guest_idle(provider) ||
             application_fail(error, QA_ERROR_ARGUMENT, "Q3 continuation has an active source/input scope");
     return application_fail(error, QA_ERROR_UNSUPPORTED,
-        "Q3 guest checkpoint requires coupled role, client and shared bot continuation");
+        "Q3 guest checkpoint requires its actual GAME and shared bot continuation");
 }
 
 bool application_guest_checkpoint_capture(application_provider *provider,

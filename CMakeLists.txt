@@ -1294,7 +1294,6 @@ add_library(qa_application STATIC
     src/app/application/native_q3_client.c
     src/app/application/native_q3_remote_role.c
     src/app/application/native_q3_remote_lifecycle.c
-    src/app/application/native_q3_remote_role_save.c
     src/app/application/native_q3_remote_character.c
     src/app/application/native_q3_remote_content.c
     src/app/application/native_q3_remote_client.c
@@ -1722,7 +1721,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/material_movies_save.c
     src/app/frontend/music_sources.c
     src/app/frontend/music_sources_save.c
-    src/app/frontend/player_inventory.c
     src/app/frontend/q3_inventory.c
     src/app/frontend/q3_render_policy.c
     src/app/frontend/native_q2.c

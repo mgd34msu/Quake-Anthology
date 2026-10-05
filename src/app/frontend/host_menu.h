@@ -26,6 +26,4 @@ bool frontend_host_menu_read(const frontend_host_menu *,const qa_launch_draft *,
 const char *frontend_host_menu_label(void *);
 /* Private menu choices use the existing Source save owner; import never applies
  * a mode or starts a transport. */
-bool frontend_host_menu_checkpoint(const frontend_host_menu *,qa_buffer *,qa_error *);
-bool frontend_host_menu_restore(frontend_host_menu *,qa_bytes,qa_error *);
 #endif
