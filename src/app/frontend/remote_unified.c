@@ -337,11 +337,10 @@ static bool prepare_frame(frontend_remote_unified *owner, const qa_unified_docum
     if (owner->prepared_frame && !frontend_unified_document_equal(owner->prepared_frame, document))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified frame preparation changed its retained source bytes");
     if (!owner->prepared_frame) {
-        qa_buffer bytes = {0}; qa_unified_document *prediction = NULL, *copy = NULL;
-        bool okay = qa_unified_document_bytes(document, qa_json_get(json, root, "prediction"), &bytes, error) &&
-            qa_unified_document_decode(QA_UNIFIED_PREDICTION_DOCUMENT, (qa_bytes){bytes.data, bytes.size}, &prediction, error) &&
+        qa_unified_document *prediction = NULL, *copy = NULL;
+        bool okay = qa_unified_document_child(document, qa_json_get(json, root, "prediction"),
+            QA_UNIFIED_PREDICTION_DOCUMENT, &prediction, error) &&
             qa_unified_document_retain(document, &copy, error);
-        qa_buffer_free(&bytes);
         if (!okay) { qa_unified_document_destroy(prediction); qa_unified_document_destroy(copy); return false; }
         const qa_json_document *p = qa_unified_document_json(prediction);
         qa_saved_actor_id predicted; int64_t sequence, acknowledged;

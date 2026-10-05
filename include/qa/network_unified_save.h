@@ -9,6 +9,7 @@ bool qa_unified_channel_descriptor(const qa_unified_channel *, qa_unified_token 
 typedef struct qa_unified_progress {
     uint64_t next_reliable, next_frame;
     uint32_t reliable_received, reliable_acknowledged, frame_received, newest_frame;
+    uint32_t frame_admitted, frame_acknowledged;
     uint64_t time_ceiling;
 } qa_unified_progress;
 bool qa_unified_channel_progress_read(const qa_unified_channel *, qa_unified_progress *, qa_error *);

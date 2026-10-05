@@ -82,10 +82,13 @@ bool qa_unified_channel_checkpoint(const qa_unified_channel *c, qa_buffer *out, 
         qa_net_write_u64(&w, c->next_reliable) && qa_net_write_u64(&w, c->next_frame) &&
         qa_net_write_u32(&w, c->reliable_received) && qa_net_write_u32(&w, c->reliable_acknowledged) &&
         qa_net_write_u32(&w, c->frame_received) && qa_net_write_u32(&w, c->newest_frame) &&
+        qa_net_write_u32(&w, c->frame_admitted) && qa_net_write_u32(&w, c->frame_acknowledged) &&
+        qa_net_write_u32(&w, c->frame_transmitted) &&
         qa_net_write_u32(&w, c->reliable_count) && qa_net_write_u32(&w, c->reliable_cursor) &&
         qa_net_write_u64(&w, (uint64_t)c->queued_bytes) && qa_net_write_u64(&w, (uint64_t)c->received_bytes) &&
         qa_net_write_u32(&w, c->cumulative_sequence) && qa_net_write_u16(&w, c->cumulative_fragment) &&
-        qa_net_write_u8(&w, c->cumulative_pending) && qa_net_write_u8(&w, c->closed) && qa_net_write_u8(&w, (uint8_t)c->lane) &&
+        qa_net_write_u8(&w, c->cumulative_pending) && qa_net_write_u8(&w, c->frame_ack_pending) &&
+        qa_net_write_u8(&w, c->closed) && qa_net_write_u8(&w, (uint8_t)c->lane) &&
         qa_net_write_data(&w, c->packet, c->limits.datagram_bytes);
     for (const outgoing *m = c->reliable; ok && m; m = m->next) ok = outgoing_write(&w, m, true);
     ok = ok && outgoing_write(&w, c->frame, false) && outgoing_write(&w, c->pending_frame, false);
@@ -169,12 +172,14 @@ bool qa_unified_channel_restore(qa_bytes bytes, qa_unified_channel **out, qa_err
     c->next_reliable = qa_net_read_u64(&r); c->next_frame = qa_net_read_u64(&r);
     c->reliable_received = qa_net_read_u32(&r); c->reliable_acknowledged = qa_net_read_u32(&r);
     c->frame_received = qa_net_read_u32(&r); c->newest_frame = qa_net_read_u32(&r);
+    c->frame_admitted = qa_net_read_u32(&r); c->frame_acknowledged = qa_net_read_u32(&r);
+    c->frame_transmitted = qa_net_read_u32(&r);
     c->reliable_count = qa_net_read_u32(&r); c->reliable_cursor = qa_net_read_u32(&r);
     uint64_t queued = qa_net_read_u64(&r), received = qa_net_read_u64(&r);
     c->cumulative_sequence = qa_net_read_u32(&r); c->cumulative_fragment = qa_net_read_u16(&r);
     bool ok = queued <= SIZE_MAX && received <= SIZE_MAX && c->reliable_count <= limits.queued_reliable_messages;
     c->queued_bytes = (size_t)queued; c->received_bytes = (size_t)received;
-    ok = ok && flag(&r, &c->cumulative_pending) && flag(&r, &c->closed);
+    ok = ok && flag(&r, &c->cumulative_pending) && flag(&r, &c->frame_ack_pending) && flag(&r, &c->closed);
     c->lane = qa_net_read_u8(&r);
     ok = ok && qa_net_read_data(&r, c->packet, limits.datagram_bytes);
     size_t queued_budget = 0, received_budget = 0;

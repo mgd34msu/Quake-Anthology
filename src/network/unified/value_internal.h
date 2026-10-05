@@ -9,5 +9,10 @@ bool qa_unified_number_text(double, char out[32], qa_error *);
 bool qa_unified_canonical(const qa_json_document *, qa_json_id, qa_unified_builder *, unsigned, qa_error *);
 bool qa_unified_tag_check(const qa_json_document *, qa_json_id, unsigned, qa_error *);
 bool qa_unified_schema_check(qa_unified_document_kind, const qa_json_document *, qa_error *);
+bool qa_unified_frame_encode(const qa_unified_document *, const qa_unified_document *,
+    uint32_t baseline_sequence, size_t maximum_bytes, qa_buffer *, qa_error *);
+bool qa_unified_frame_baseline(qa_bytes, uint32_t *, qa_error *);
+bool qa_unified_frame_decode(qa_bytes, const qa_unified_document *, uint32_t baseline_sequence,
+    qa_unified_document **, qa_error *);
 
 #endif

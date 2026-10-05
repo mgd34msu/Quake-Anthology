@@ -324,16 +324,13 @@ bool application_unified_output_build(qa_application *app, const application_uni
     if (!application_unified_output_snapshot(app, source, recipient, player, epoch, &snapshot, error)) return false;
     application_unified_output candidate = {0};
     application_unified_json j = {0};
-    qa_buffer encoded_prediction = {0}, tagged_prediction = {0};
     const qa_json_document *presentation = qa_unified_document_json(children->presentation);
     qa_json_id p = qa_unified_document_root(children->presentation);
     qa_json_id presented_player = qa_json_get(presentation, p, "player");
-    bool ok = qa_unified_document_encode(children->prediction, &encoded_prediction, error) &&
-        qa_unified_checkpoint_bytes((qa_bytes){encoded_prediction.data, encoded_prediction.size}, &tagged_prediction, error) &&
-        text(&j, "{\"schema\":\"qts-unified-frame\",\"version\":9,\"epoch\":", error) &&
+    bool ok = text(&j, "{\"schema\":\"qts-unified-frame\",\"epoch\":", error) &&
         application_unified_json_natural(&j, epoch, error) && text(&j, ",\"acknowledgedInput\":", error) &&
         number(&j, (double)acknowledged, error) && text(&j, ",\"prediction\":", error) &&
-        application_unified_json_append(&j, (qa_bytes){tagged_prediction.data, tagged_prediction.size}, error) &&
+        application_unified_json_document(&j, children->prediction, error) &&
         text(&j, ",\"output\":{\"snapshot\":", error) && application_unified_json_document(&j, snapshot.snapshot, error) &&
         text(&j, ",\"events\":", error) && application_unified_json_document(&j, children->simulation_events, error) &&
         text(&j, "},\"models\":", error) && child_field(&j, children->presentation, p, "models", QA_JSON_ARRAY, error) &&
@@ -378,8 +375,6 @@ bool application_unified_output_build(qa_application *app, const application_uni
         if (ok) ++candidate.control_count;
     }
     if (ok) ok = children_current(app, source, recipient, player, children, error);
-    qa_buffer_free(&encoded_prediction);
-    qa_buffer_free(&tagged_prediction);
     application_unified_json_dispose(&j);
     application_unified_snapshot_dispose(&snapshot);
     if (!ok) { application_unified_output_dispose(&candidate); return false; }

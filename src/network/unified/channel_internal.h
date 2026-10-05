@@ -27,6 +27,7 @@ struct qa_unified_channel {
     qa_unified_limits limits;
     uint64_t next_reliable, next_frame;
     uint32_t reliable_received, reliable_acknowledged, frame_received, newest_frame;
+    uint32_t frame_admitted, frame_acknowledged, frame_transmitted;
     outgoing *reliable, *tail, *frame, *pending_frame;
     uint32_t reliable_count, reliable_cursor;
     size_t queued_bytes, received_bytes;
@@ -35,7 +36,7 @@ struct qa_unified_channel {
     uint16_t cumulative_fragment;
     uint8_t *packet;
     unsigned lane;
-    bool cumulative_pending, closed, busy;
+    bool cumulative_pending, frame_ack_pending, closed, busy;
 };
 bool qa_unified_channel_valid(const qa_unified_channel *, qa_error *);
 typedef bool (*qa_unified_admit_delivery_fn)(void *, const qa_unified_delivery *);
@@ -49,4 +50,5 @@ bool qa_unified_channel_reliable_ready(const qa_unified_channel *, const qa_byte
     bool *, qa_error *);
 bool qa_unified_channel_reliable_batch(qa_unified_channel *, const qa_bytes *, size_t,
     uint32_t *first, uint32_t *last, qa_error *);
+bool qa_unified_channel_frame_applied(qa_unified_channel *, uint32_t, qa_error *);
 #endif

@@ -2,6 +2,14 @@
 #define QA_UNIFIED_SESSION_INTERNAL_H
 #include "qa/network_unified_session.h"
 
+#define QA_UNIFIED_FRAME_BACKUP 32u
+#define QA_UNIFIED_FRAME_HISTORY_BYTES (64u * 1024u * 1024u)
+typedef struct qa_unified_frame_receipt {
+    qa_unified_document *document;
+    size_t bytes;
+    uint32_t sequence;
+} qa_unified_frame_receipt;
+
 typedef struct qa_unified_held {
     struct qa_unified_held *next;
     qa_unified_document *document;
@@ -25,6 +33,8 @@ struct qa_unified_session {
     qa_unified_held *timeout_delivery;
     size_t held_bytes, held_count;
     qa_unified_input_batch inputs;
+    qa_unified_frame_receipt frames[QA_UNIFIED_FRAME_BACKUP];
+    size_t frame_bytes;
     uint32_t epoch, required;
     uint32_t reliable_applied, frame_applied;
     uint8_t close_cause; /* 0 none, 1 actual timeout, 2 actual Source request. */
@@ -33,6 +43,12 @@ struct qa_unified_session {
     bool server, admitted, disconnected, closing, timeout_pending, bound_source, entered, processing;
 };
 bool qa_unified_session_fail(qa_error *, qa_status, const char *);
+void qa_unified_session_frames_clear(qa_unified_session *);
+void qa_unified_session_frame_forget(qa_unified_session *, uint32_t);
+const qa_unified_document *qa_unified_session_frame_find(const qa_unified_session *, uint32_t);
+bool qa_unified_session_frame_retain(qa_unified_session *, uint32_t, const qa_unified_document *, qa_error *);
+bool qa_unified_session_frame_decode(const qa_unified_session *, qa_bytes, qa_unified_document **,
+    bool *missing_baseline, qa_error *);
 bool qa_unified_session_queue_control(qa_unified_session *, const qa_unified_document *, qa_error *);
 bool qa_unified_session_command(void *, const qa_network_command *, qa_error *);
 bool qa_unified_session_queue_inputs(qa_unified_session *, qa_error *);

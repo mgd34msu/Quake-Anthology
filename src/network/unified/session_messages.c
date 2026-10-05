@@ -1,5 +1,6 @@
 #include "session_internal.h"
 #include "channel_internal.h"
+#include "value_internal.h"
 
 #include <stdlib.h>
 
@@ -103,6 +104,7 @@ bool qa_unified_session_queue_control(qa_unified_session *s, const qa_unified_do
     s->required = sequence;
     if (offer) {
         s->epoch = epoch; s->admitted = false; s->acknowledged = -1;
+        qa_unified_session_frames_clear(s);
         qa_unified_inputs_free(&s->inputs);
     }
     if (disconnect) { s->closing = true; s->admitted = false; s->closing_ns = s->now_ns; }
@@ -130,10 +132,19 @@ bool qa_unified_session_frame(qa_unified_session *s, const qa_unified_document *
     if (acknowledged < (double)s->acknowledged)
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production frame acknowledgement regressed");
     qa_buffer encoded = {0};
-    if (!qa_unified_document_encode(d, &encoded, e)) return false;
+    uint32_t baseline_sequence = s->channel->frame_acknowledged;
+    const qa_unified_document *baseline = qa_unified_session_frame_find(s, baseline_sequence);
+    if (!baseline) baseline_sequence = 0;
+    if (!qa_unified_frame_encode(d, baseline, baseline_sequence, s->limits.message_bytes, &encoded, e)) return false;
+    uint32_t sequence = (uint32_t)s->channel->next_frame;
+    uint32_t discarded = s->channel->pending_frame ? s->channel->pending_frame->sequence : 0;
     bool ok = qa_unified_channel_frame(s->channel, (qa_bytes){encoded.data, encoded.size}, s->required, e);
     qa_buffer_free(&encoded);
-    if (ok) s->acknowledged = (int64_t)acknowledged;
+    if (ok) {
+        qa_unified_session_frame_forget(s, discarded);
+        s->acknowledged = (int64_t)acknowledged;
+        ok = qa_unified_session_frame_retain(s, sequence, d, e);
+    }
     return ok;
 }
 
@@ -223,6 +234,7 @@ static bool process_control(qa_unified_session *s, qa_unified_held *held, bool *
         held->commit = commit; held->source_finished = true;
         if (commit.applied && offer) {
             s->epoch = epoch; s->admitted = false; s->acknowledged = -1;
+            qa_unified_session_frames_clear(s);
             qa_unified_inputs_free(&s->inputs);
         }
         if (commit.applied && disconnect) s->admitted = false;
@@ -276,7 +288,11 @@ static bool process_frame(qa_unified_session *s, qa_unified_held *held, bool *wa
     bool ok = commit_queue(s, held, waiting, e);
     if (!ok || *waiting) return ok;
     if (ok && !s->closing && held->commit.applied) ok = phase(s, QA_NET_ACTIVE, e);
-    if (ok && held->commit.applied) qa_unified_session_ack(s, held->commit.acknowledged_input);
+    if (ok && held->commit.applied) {
+        ok = qa_unified_session_frame_retain(s, held->sequence, d, e) &&
+            qa_unified_channel_frame_applied(s->channel, held->sequence, e);
+        if (ok) qa_unified_session_ack(s, held->commit.acknowledged_input);
+    }
     return ok;
 }
 

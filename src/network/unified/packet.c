@@ -34,7 +34,8 @@ void qa_unified_token_format(qa_unified_token token, char out[33]) {
 }
 
 static bool valid(const qa_unified_packet *p, qa_error *error) {
-    if (!p || p->sequence == 0 || (unsigned)p->kind > (unsigned)QA_UNIFIED_FRAME)
+    if (!p || (p->sequence == 0 && (p->kind != QA_UNIFIED_ACK || !p->acknowledged_frame || p->fragment)) ||
+        (unsigned)p->kind > (unsigned)QA_UNIFIED_FRAME)
         return invalid(error, "invalid unified packet kind or sequence");
     if (p->kind == QA_UNIFIED_ACK) {
         if (p->required_reliable || p->total_bytes || p->fragment_bytes || p->fragments || p->payload.size)
@@ -71,6 +72,7 @@ bool qa_unified_packet_decode(qa_bytes bytes, qa_unified_packet *out, qa_error *
     p.fragment_bytes = qa_load_u32le(b + 40);
     p.fragment = qa_load_u16le(b + 44);
     p.fragments = qa_load_u16le(b + 46);
+    p.acknowledged_frame = qa_load_u32le(b + 48);
     p.payload = (qa_bytes){b + QA_UNIFIED_HEADER_BYTES, bytes.size - QA_UNIFIED_HEADER_BYTES};
     if (!valid(&p, error)) return false;
     *out = p;
@@ -95,6 +97,7 @@ bool qa_unified_packet_encode(const qa_unified_packet *p, void *buffer, size_t c
     qa_store_u32le(b + 40, p->fragment_bytes);
     qa_store_u16le(b + 44, p->fragment);
     qa_store_u16le(b + 46, p->fragments);
+    qa_store_u32le(b + 48, p->acknowledged_frame);
     *written = QA_UNIFIED_HEADER_BYTES + p->payload.size;
     return true;
 }

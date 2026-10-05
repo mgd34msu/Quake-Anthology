@@ -216,12 +216,11 @@ static bool retained_valid(const frontend_remote_unified *owner, const qa_net_cl
         return bad(e, "Unified replica published frame changes its Source clock or player");
     if (owner->prepared_frame) {
         if (!frame_valid(owner, owner->prepared_frame, &number, e)) return false;
-        qa_buffer bytes = {0}; qa_unified_document *prediction = NULL;
+        qa_unified_document *prediction = NULL;
         const qa_json_document *json = qa_unified_document_json(owner->prepared_frame);
-        bool okay = qa_unified_document_bytes(owner->prepared_frame, qa_json_get(json,
-            qa_unified_document_root(owner->prepared_frame), "prediction"), &bytes, e) &&
-            qa_unified_document_decode(QA_UNIFIED_PREDICTION_DOCUMENT,
-                (qa_bytes){bytes.data, bytes.size}, &prediction, e) && document_equal(prediction, owner->prediction);
+        bool okay = qa_unified_document_child(owner->prepared_frame, qa_json_get(json,
+            qa_unified_document_root(owner->prepared_frame), "prediction"), QA_UNIFIED_PREDICTION_DOCUMENT,
+            &prediction, e) && document_equal(prediction, owner->prediction);
         if (okay) {
             const qa_json_document *predicted_json = qa_unified_document_json(prediction);
             qa_json_id root = qa_unified_document_root(prediction);
@@ -233,7 +232,7 @@ static bool retained_valid(const frontend_remote_unified *owner, const qa_net_cl
                 qa_json_i64(json, qa_json_get(json, qa_unified_document_root(owner->prepared_frame),
                     "acknowledgedInput"), &acknowledged, e) && sequence == acknowledged;
         }
-        qa_buffer_free(&bytes); qa_unified_document_destroy(prediction);
+        qa_unified_document_destroy(prediction);
         if (!okay) return bad(e, "Unified replica pending prediction differs from its received frame");
         if (owner->metadata) {
             qa_json_id rows = qa_json_get(json, qa_json_get(json, qa_json_get(json,

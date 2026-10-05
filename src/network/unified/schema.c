@@ -412,8 +412,8 @@ static bool component_header(reader r) {
 }
 static bool frame(reader r) {
     reader output=field(r,"output"),snapshot=field(output,"snapshot"),player=field(r,"player");
-    return literal(field(r,"schema"),"qts-unified-frame") && integer(field(r,"version"),2,9) && integer(field(r,"epoch"),1,(double)QA_UNIFIED_SAFE_INTEGER) &&
-        integer(field(r,"acknowledgedInput"),-1,(double)QA_UNIFIED_SAFE_INTEGER) && bytes(field(r,"prediction")) &&
+    return literal(field(r,"schema"),"qts-unified-frame") && integer(field(r,"epoch"),1,(double)QA_UNIFIED_SAFE_INTEGER) &&
+        integer(field(r,"acknowledgedInput"),-1,(double)QA_UNIFIED_SAFE_INTEGER) && prediction(field(r,"prediction")) &&
         frame_context(field(snapshot,"frame")) && list(field(snapshot,"actors"),0,SIZE_MAX,actor_record) && list(field(snapshot,"bodies"),0,SIZE_MAX,actor_body) &&
         list(field(snapshot,"inventories"),0,SIZE_MAX,actor_inventory) && list(field(snapshot,"configurations"),0,SIZE_MAX,actor_configuration) && scene(field(snapshot,"scene")) &&
         list(field(output,"events"),0,65536,simulation_event) && list(field(r,"models"),0,SIZE_MAX,model) && list(field(r,"characters"),0,SIZE_MAX,character) &&

@@ -66,6 +66,9 @@ bool qa_unified_channel_valid(const qa_unified_channel *c, qa_error *e)
         !c->limits.retry_ns || !c->limits.assembly_ns || !c->next_reliable || !c->next_frame ||
         c->next_reliable > (uint64_t)UINT32_MAX + 1 || c->next_frame > (uint64_t)UINT32_MAX + 1 ||
         c->reliable_acknowledged >= c->next_reliable || c->frame_received > c->newest_frame ||
+        c->frame_transmitted >= c->next_frame || c->frame_acknowledged > c->frame_transmitted ||
+        c->frame_admitted > c->frame_received ||
+        (c->frame_ack_pending && !c->frame_admitted) ||
         c->lane >= 3 || c->reliable_cursor >= channel_window(c) ||
         (c->cumulative_sequence ? (c->cumulative_sequence > c->reliable_received || c->cumulative_fragment >= c->limits.fragments) :
             (c->cumulative_fragment || c->cumulative_pending)))
@@ -111,7 +114,7 @@ bool qa_unified_channel_valid(const qa_unified_channel *c, qa_error *e)
         (c->frame_assembly && c->frame_assembly->sequence == c->waiting_frame->sequence)))
         return fail(e, "Invalid unified reliable-dependent waiting frame");
     if (c->closed && (c->reliable || c->tail || c->frame || c->pending_frame || received || c->frame_assembly ||
-        c->waiting_frame || c->cumulative_pending)) return fail(e, "Closed unified channel retains live queues");
+        c->waiting_frame || c->cumulative_pending || c->frame_ack_pending)) return fail(e, "Closed unified channel retains live queues");
     if (c->closed) for (size_t i = 0; i < 64; ++i) if (c->assemblies[i]) return fail(e, "Closed unified channel retains an assembly");
     return true;
 }
@@ -125,8 +128,10 @@ bool qa_unified_channel_descriptor(const qa_unified_channel *c, qa_unified_token
 bool qa_unified_channel_progress_read(const qa_unified_channel *c, qa_unified_progress *out, qa_error *e)
 {
     if (!out || !qa_unified_channel_idle(c) || !qa_unified_channel_valid(c, e)) return fail(e, "Unified progress requires the actual idle channel");
-    *out = (qa_unified_progress){c->next_reliable, c->next_frame, c->reliable_received,
-        c->reliable_acknowledged, c->frame_received, c->newest_frame, 0};
+    *out = (qa_unified_progress){.next_reliable=c->next_reliable, .next_frame=c->next_frame,
+        .reliable_received=c->reliable_received, .reliable_acknowledged=c->reliable_acknowledged,
+        .frame_received=c->frame_received, .newest_frame=c->newest_frame,
+        .frame_admitted=c->frame_admitted, .frame_acknowledged=c->frame_acknowledged};
     for (const outgoing *m = c->reliable; m; m = m->next)
         for (uint32_t i = 0; i < m->fragments; ++i)
             if (m->sent[i].at > out->time_ceiling) out->time_ceiling = m->sent[i].at;

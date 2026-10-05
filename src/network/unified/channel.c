@@ -45,7 +45,7 @@ static void close_channel(qa_unified_channel *c) {
     for (size_t i=0;i<64;++i) { assembly_free(c->assemblies[i]); c->assemblies[i]=NULL; }
     assembly_free(c->frame_assembly); c->frame_assembly=NULL;
     assembly_free(c->waiting_frame); c->waiting_frame=NULL;
-    c->received_bytes=0; c->cumulative_pending=false;
+    c->received_bytes=0; c->cumulative_pending=false; c->frame_ack_pending=false;
 }
 
 void qa_unified_channel_close(qa_unified_channel *c) { if (c && !c->busy) close_channel(c); }
@@ -82,6 +82,12 @@ static bool open_channel(const qa_unified_channel *c, qa_error *error) {
     if (!writable_channel(c,error)) return false;
     if (c->busy) return error_message(error,QA_ERROR_ARGUMENT,"unified channel callback reentry");
     return true;
+}
+
+bool qa_unified_channel_frame_applied(qa_unified_channel *c, uint32_t sequence, qa_error *error) {
+    if (!open_channel(c,error) || !sequence || sequence<c->frame_admitted || sequence>c->frame_received)
+        return error_message(error,QA_ERROR_ARGUMENT,"Unified frame acknowledgement lacks its applied receive receipt");
+    c->frame_admitted=sequence; c->frame_ack_pending=true; return true;
 }
 
 static outgoing *outgoing_create(const qa_unified_channel *c, qa_bytes payload,
@@ -239,6 +245,8 @@ static void cumulative_ack(qa_unified_channel *c, uint32_t sequence, uint16_t fr
 }
 
 static void accept_ack(qa_unified_channel *c, const qa_unified_packet *p) {
+    if (p->acknowledged_frame>c->frame_acknowledged && p->acknowledged_frame<=c->frame_transmitted)
+        c->frame_acknowledged=p->acknowledged_frame;
     outgoing *message=c->reliable;
     uint32_t prefix=0;
     while (message && prefix<window(c)) {
@@ -381,7 +389,8 @@ static bool send_packet(qa_unified_channel *c, const qa_unified_packet *p,
 
 static bool send_ack(qa_unified_channel *c, qa_unified_send_fn send, void *context,
                       bool *progress, qa_error *error) {
-    qa_unified_packet p={.kind=QA_UNIFIED_ACK,.token=c->token,.acknowledged_reliable=c->reliable_received};
+    qa_unified_packet p={.kind=QA_UNIFIED_ACK,.token=c->token,.acknowledged_reliable=c->reliable_received,
+        .acknowledged_frame=c->frame_admitted};
     if (c->cumulative_pending) {
         p.sequence=c->cumulative_sequence; p.fragment=c->cumulative_fragment;
         if (!send_packet(c,&p,send,context,error)) return false;
@@ -396,7 +405,11 @@ static bool send_ack(qa_unified_channel *c, qa_unified_send_fn send, void *conte
             selected=a; selected_fragment=(uint16_t)f; break;
         }
     }
-    if (!selected) return true;
+    if (!selected) {
+        if (!c->frame_ack_pending) return true;
+        if (!send_packet(c,&p,send,context,error)) return false;
+        c->frame_ack_pending=false; *progress=true; return true;
+    }
     p.sequence=selected->sequence; p.fragment=selected_fragment;
     if (!send_packet(c,&p,send,context,error)) return false;
     selected->pending_ack[selected_fragment]=0; *progress=true; return true;
@@ -411,6 +424,7 @@ static qa_unified_packet data_packet(qa_unified_channel *c, outgoing *message,
     return (qa_unified_packet){
         .kind=kind,.token=c->token,.sequence=message->sequence,
         .acknowledged_reliable=c->reliable_received,.required_reliable=message->required,
+        .acknowledged_frame=c->frame_admitted,
         .total_bytes=(uint32_t)message->payload.size,.fragment_bytes=fragment_bytes,
         .fragment=fragment,.fragments=message->fragments,
         .payload={message->payload.data+offset,size}
@@ -458,6 +472,7 @@ static bool send_frame(qa_unified_channel *c, qa_unified_send_fn send, void *con
     qa_unified_packet p=data_packet(c,message,QA_UNIFIED_FRAME,(uint16_t)message->next_fragment);
     if (!send_packet(c,&p,send,context,error)) return false;
     if (++message->next_fragment==message->fragments) {
+        c->frame_transmitted=message->sequence;
         c->frame=c->pending_frame; c->pending_frame=NULL; outgoing_free(message);
     }
     *progress=true; return true;

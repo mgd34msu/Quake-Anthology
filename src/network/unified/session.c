@@ -1,5 +1,6 @@
 #include "session_internal.h"
 #include "channel_internal.h"
+#include "value_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +34,63 @@ bool qa_unified_session_active(const qa_unified_session *s)
 uint32_t qa_unified_session_epoch(const qa_unified_session *s) { return s ? s->epoch : 0; }
 int64_t qa_unified_session_acknowledged(const qa_unified_session *s) { return s ? s->acknowledged : -1; }
 
+static void frame_release(qa_unified_session *s, qa_unified_frame_receipt *frame)
+{
+    s->frame_bytes -= frame->bytes;
+    qa_unified_document_destroy(frame->document);
+    *frame = (qa_unified_frame_receipt){0};
+}
+
+void qa_unified_session_frames_clear(qa_unified_session *s)
+{
+    for (size_t i = 0; i < QA_UNIFIED_FRAME_BACKUP; ++i) frame_release(s, s->frames + i);
+    s->frame_bytes = 0;
+}
+
+void qa_unified_session_frame_forget(qa_unified_session *s, uint32_t sequence)
+{
+    qa_unified_frame_receipt *frame = s->frames + sequence % QA_UNIFIED_FRAME_BACKUP;
+    if (sequence && frame->sequence == sequence) frame_release(s, frame);
+}
+
+const qa_unified_document *qa_unified_session_frame_find(const qa_unified_session *s, uint32_t sequence)
+{
+    const qa_unified_frame_receipt *frame = s->frames + sequence % QA_UNIFIED_FRAME_BACKUP;
+    return sequence && frame->sequence == sequence ? frame->document : NULL;
+}
+
+bool qa_unified_session_frame_retain(qa_unified_session *s, uint32_t sequence,
+    const qa_unified_document *document, qa_error *e)
+{
+    qa_unified_document *retained = NULL;
+    if (!sequence || !document || qa_unified_document_type(document) != QA_UNIFIED_FRAME_DOCUMENT)
+        return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Retaining a Unified baseline requires its actual frame receipt");
+    size_t bytes = qa_json_source(qa_unified_document_json(document), qa_unified_document_root(document)).size;
+    if (!qa_unified_document_retain(document, &retained, e)) return false;
+    qa_unified_frame_receipt *slot = s->frames + sequence % QA_UNIFIED_FRAME_BACKUP;
+    frame_release(s, slot);
+    while (bytes > QA_UNIFIED_FRAME_HISTORY_BYTES - s->frame_bytes) {
+        qa_unified_frame_receipt *oldest = NULL;
+        for (size_t i = 0; i < QA_UNIFIED_FRAME_BACKUP; ++i)
+            if (s->frames[i].document && (!oldest || s->frames[i].sequence < oldest->sequence)) oldest = s->frames + i;
+        if (!oldest) { qa_unified_document_destroy(retained); return true; }
+        frame_release(s, oldest);
+    }
+    *slot = (qa_unified_frame_receipt){retained, bytes, sequence}; s->frame_bytes += bytes;
+    return true;
+}
+
+bool qa_unified_session_frame_decode(const qa_unified_session *s, qa_bytes bytes,
+    qa_unified_document **out, bool *missing, qa_error *e)
+{
+    uint32_t sequence;
+    *missing = false;
+    if (!qa_unified_frame_baseline(bytes, &sequence, e)) return false;
+    const qa_unified_document *baseline = qa_unified_session_frame_find(s, sequence);
+    if (sequence && !baseline) { *missing = true; return true; }
+    return qa_unified_frame_decode(bytes, baseline, sequence, out, e);
+}
+
 void qa_unified_session_release(qa_unified_session *s)
 {
     if (!s) return;
@@ -41,6 +99,7 @@ void qa_unified_session_release(qa_unified_session *s)
         qa_unified_session_delivery_free(s->held); s->held = next;
     }
     qa_unified_session_delivery_free(s->timeout_delivery);
+    qa_unified_session_frames_clear(s);
     qa_unified_inputs_free(&s->inputs);
     qa_unified_channel_destroy(s->channel);
     free(s);
@@ -80,9 +139,18 @@ static bool hold_delivery(void *context, const qa_unified_delivery *delivery, qa
     if (!held->wire.data) { free(held); return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Retaining complete production delivery bytes"); }
     held->wire.size = delivery->payload.size;
     if (held->wire.size) memcpy(held->wire.data, delivery->payload.data, held->wire.size);
-    if (!s->server && !qa_unified_document_decode(kind,
-        (qa_bytes){held->wire.data, held->wire.size}, &held->document, e)) {
-        qa_buffer_free(&held->wire); free(held); return false;
+    if (!s->server) {
+        bool missing = false;
+        bool okay = kind == QA_UNIFIED_FRAME_DOCUMENT ? qa_unified_session_frame_decode(s,
+            (qa_bytes){held->wire.data, held->wire.size}, &held->document, &missing, e) :
+            qa_unified_document_decode(kind, (qa_bytes){held->wire.data, held->wire.size}, &held->document, e);
+        if (!okay || missing) {
+            if (missing) {
+                s->frame_applied = delivery->sequence;
+                s->channel->frame_ack_pending = s->channel->frame_admitted != 0;
+            }
+            qa_unified_session_delivery_free(held); return okay;
+        }
     }
     held->bytes = delivery->payload.size; held->sequence = delivery->sequence; held->required = delivery->required_reliable;
     if (s->tail) s->tail->next = held; else s->held = held;

@@ -5,7 +5,7 @@
 #include "qa/json.h"
 #include "qa/movement.h"
 
-#define QA_UNIFIED_HEADER_BYTES 48u
+#define QA_UNIFIED_HEADER_BYTES 52u
 #define QA_UNIFIED_MAX_DATAGRAM 65507u
 #define QA_UNIFIED_SAFE_INTEGER UINT64_C(9007199254740991)
 
@@ -19,6 +19,7 @@ typedef struct qa_unified_packet {
     qa_unified_packet_kind kind;
     qa_unified_token token;
     uint32_t sequence, acknowledged_reliable, required_reliable;
+    uint32_t acknowledged_frame;
     uint32_t total_bytes, fragment_bytes;
     uint16_t fragment, fragments;
     qa_bytes payload;
@@ -112,12 +113,15 @@ typedef enum qa_unified_document_kind {
     QA_UNIFIED_EVENTS_DOCUMENT
 } qa_unified_document_kind;
 /* Create reads an uncompressed checkpoint JSON value, including for frames.
- * Decode additionally applies the wire compression and wire byte limits.
+ * Decode reads typed binary frames and applies wire byte limits. Standalone
+ * frame encode/decode uses the same delta codec with no retained baseline.
  * These functions validate the envelope and core schema. Rich presentation,
  * resource, component ABI and event owners validate their records through
  * document_validate before any gameplay or presentation state is published. */
 bool qa_unified_document_create(qa_unified_document_kind, qa_bytes checkpoint_json,
                                  qa_unified_document **, qa_error *);
+bool qa_unified_document_child(const qa_unified_document *, qa_json_id, qa_unified_document_kind,
+    qa_unified_document **, qa_error *);
 bool qa_unified_document_decode(qa_unified_document_kind, qa_bytes,
                                  qa_unified_document **, qa_error *);
 typedef bool (*qa_unified_document_validator)(void *, const qa_unified_document *, qa_error *);
