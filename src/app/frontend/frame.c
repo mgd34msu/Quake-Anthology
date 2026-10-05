@@ -136,6 +136,8 @@ static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvar
 {
     const qa_cvars *cvars=NULL;
     bool present=false;
+    if(!frontend_network_q1_frame_time(frontend,&cvars,out,&present,error)) return false;
+    if(present) { *owner=cvars; *application_ns=supplied; return true; }
     if (!frontend_network_client_time_cvars_read(frontend,&cvars,&present,error)) return false;
     bool remote=present || frontend->options.network_connect!=NULL;
     if (!present) cvars=NULL;
@@ -297,6 +299,12 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
         if (q1_owned && q2_owned)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Two remote protocols own the same physical input");
         if (q1_owned || q2_owned) {
+            if(q1_owned) {
+                bool accepted; uint64_t source_ns,wall_ns;
+                if(!frontend_network_q1_input_prepare(frontend,i,&accepted,&source_ns,&wall_ns,error)) return false;
+                if(!accepted) continue;
+                duration=(double)source_ns/1000000.0; wall_duration=(double)wall_ns/1000000.0;
+            }
             if (seat->sequence==UINT64_MAX)
                 return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 physical sample sequence overflow");
             qa_seat_input_sample sample;

@@ -39,6 +39,10 @@ bool frontend_network_q1_client_tick(frontend_network_q1_client *, uint64_t now_
 bool frontend_network_q1_client_disconnect(frontend_network_q1_client *, const char *reason, qa_error *);
 /* Physical ownership is also returned while connecting/loading. Only a real
  * active received player produces a command; no local GAME actor is read. */
+bool frontend_network_q1_client_frame_time(frontend_network_q1_client *,
+    const qa_cvars **,uint64_t *source_ns,bool *handled,qa_error *);
+bool frontend_network_q1_client_input_prepare(const frontend_network_q1_client *,uint32_t physical_seat,
+    bool *accepted,uint64_t *source_ns,uint64_t *wall_ns,qa_error *);
 bool frontend_network_q1_client_input(frontend_network_q1_client *,uint32_t physical_seat,
     const qa_seat_input_sample *,uint64_t physical_sequence,double source_frame_ms,bool *handled,qa_error *);
 bool frontend_network_q1_client_admit(frontend_network_q1_client *, const qa_net_connect *,

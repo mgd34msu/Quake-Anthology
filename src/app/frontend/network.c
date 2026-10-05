@@ -7048,6 +7048,28 @@ bool frontend_network_q1_input_owned(const qa_frontend *f,uint32_t physical)
     return f && physical<f->options.seats && f->network &&
         frontend_network_q1_client_owns_input(f->network->q1_client_owner,physical);
 }
+bool frontend_network_q1_frame_time(qa_frontend *f,const qa_cvars **cvars,
+    uint64_t *source_ns,bool *handled,qa_error *error)
+{
+    if(!f || !cvars || !source_ns || !handled)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 clock requires its actual frontend and output");
+    *cvars=NULL; *source_ns=0; *handled=false;
+    qa_frontend_network *n=f->network;
+    if(!n || !n->q1_client_owner) return true;
+    if(n->busy || n->detached_transport || !qa_network_callbacks_idle(n->runtime))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 clock requires its returned live transport");
+    return frontend_network_q1_client_frame_time(n->q1_client_owner,cvars,source_ns,handled,error);
+}
+bool frontend_network_q1_input_prepare(const qa_frontend *f,uint32_t physical,
+    bool *accepted,uint64_t *source_ns,uint64_t *wall_ns,qa_error *error)
+{
+    if(!f || physical>=f->options.seats || !f->network || !f->network->q1_client_owner)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 input admission lost its actual physical CLIENT");
+    const qa_frontend_network *n=f->network;
+    if(n->busy || n->detached_transport || !qa_network_callbacks_idle(n->runtime))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 input admission requires its returned live transport");
+    return frontend_network_q1_client_input_prepare(n->q1_client_owner,physical,accepted,source_ns,wall_ns,error);
+}
 bool frontend_network_q1_input(qa_frontend *f,uint32_t physical,const qa_seat_input_sample *sample,
     uint64_t sequence,double source_frame_ms,bool *handled,qa_error *error)
 {

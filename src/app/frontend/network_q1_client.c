@@ -7,6 +7,7 @@
 #include "qa/application_network.h"
 #include "qa/ui_language.h"
 #include "qa/q1_chat_commands.h"
+#include "qa/source_frame_time.h"
 #include <math.h>
 #include <limits.h>
 #include <stdio.h>
@@ -27,6 +28,7 @@ struct frontend_network_q1_client {
     qa_net_connect attachment;
     qa_net_client_id client;
     uint64_t epoch, now_ns;
+    uint64_t input_clock_ns, input_frame_ns, input_wall_frame_ns;
     qa_input_command_builder input;
     uint64_t input_sequence, input_sample;
     unsigned calls;
@@ -515,6 +517,7 @@ bool frontend_network_q1_client_create(const frontend_network_q1_client_options 
     frontend_network_q1_client *o=calloc(1,sizeof(*o));
     if(!o) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining Q1 CLIENT factory");
     *out=o; o->options=*options; o->demo_forced_track=-1;
+    o->input_clock_ns=options->frontend->wall_time_ns;
     if(!retain_policy(o,error)) return false;
     o->input.kind=qa_q1_is_qw(options->protocol)?QA_MOVEMENT_QUAKEWORLD:QA_MOVEMENT_NETQUAKE;
     o->binding=(qa_net_seat_binding){{QA_NETWORK_COMMAND_OWNER,options->physical_seat},0};
@@ -904,6 +907,42 @@ bool frontend_network_q1_client_demo_playback(frontend_network_q1_client *o,
     *out = (frontend_demo_playback_source){.owner = o, .current = demo_playback_current,
         .advance = demo_advance, .release = demo_playback_release}; return true;
 }
+bool frontend_network_q1_client_frame_time(frontend_network_q1_client *o,
+    const qa_cvars **cvars,uint64_t *source_ns,bool *handled,qa_error *error)
+{
+    if(!cvars || !source_ns || !handled) return false;
+    *cvars=NULL; *source_ns=0; *handled=false;
+    if(!o || o->options.demo_playback || o->retired) return true;
+    qa_frontend *f=o->options.frontend;
+    if(o->calls || o->admitting || o->importing || f->capture || f->resource_inventory || f->source_restoring ||
+        !qa_network_callbacks_idle(o->options.runtime) || !parent(o)) return false;
+    o->input_frame_ns=o->input_wall_frame_ns=0;
+    if(!o->configured) { o->input_clock_ns=f->wall_time_ns; return true; }
+    frontend_client_source_view physical;
+    if(!frontend_client_source_read(o->physical,&physical,error)) return false;
+    if(!physical.ready) { o->input_clock_ns=f->wall_time_ns; return true; }
+    if(!frontend_client_source_current(&physical) || f->wall_time_ns<o->input_clock_ns)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT clock lost its actual physical Source or host boundary");
+    uint64_t pending=f->wall_time_ns-o->input_clock_ns,frame;
+    bool accepted;
+    if(!qa_source_frame_time_admit(physical.source.context.cvars,pending,false,&accepted,&frame,error)) return false;
+    if(accepted) {
+        o->input_clock_ns=f->wall_time_ns;
+        o->input_frame_ns=frame; o->input_wall_frame_ns=pending;
+    }
+    *cvars=physical.source.context.cvars; *source_ns=frame; *handled=true; return true;
+}
+bool frontend_network_q1_client_input_prepare(const frontend_network_q1_client *o,uint32_t physical,
+    bool *accepted,uint64_t *source_ns,uint64_t *wall_ns,qa_error *error)
+{
+    if(!o || physical!=o->options.physical_seat || !accepted || !source_ns || !wall_ns ||
+        !parent(o) || !frontend_network_q1_client_idle(o) || o->importing ||
+        o->options.frontend->capture || o->options.frontend->resource_inventory ||
+        o->options.frontend->source_restoring || !qa_network_callbacks_idle(o->options.runtime))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 input admission requires its returned physical CLIENT");
+    *accepted=o->input_wall_frame_ns!=0;
+    *source_ns=o->input_frame_ns; *wall_ns=o->input_wall_frame_ns; return true;
+}
 bool frontend_network_q1_client_input(frontend_network_q1_client *o,uint32_t physical,
     const qa_seat_input_sample *sample,uint64_t sequence,double source_frame_ms,bool *handled,qa_error *error)
 {
@@ -1096,6 +1135,7 @@ bool frontend_network_q1_client_restore_prepare(const frontend_network_q1_client
     frontend_network_q1_client *o=calloc(1,sizeof(*o));
     if(!o) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining restored Q1 CLIENT factory");
     *out=o; o->options=*options; o->importing=true;
+    o->input_clock_ns=options->frontend->wall_time_ns;
     if(!retain_policy(o,error)) return false;
     o->binding=(qa_net_seat_binding){{QA_NETWORK_COMMAND_OWNER,options->physical_seat},0};
     o->attachment=(qa_net_connect){.attachment=QA_NET_REMOTE,.protocol=options->protocol,.seats=&o->binding,.seat_count=1};
@@ -1214,4 +1254,10 @@ bool frontend_network_q1_client_publication_ready(const frontend_network_q1_clie
         frontend_network_q1_client_qualified(o,o->options.runtime,true,error));
 }
 void frontend_network_q1_client_publish(frontend_network_q1_client *o)
-{ if(o) o->importing=false; }
+{
+    if(o) {
+        o->input_clock_ns=o->options.frontend->wall_time_ns;
+        o->input_frame_ns=o->input_wall_frame_ns=0;
+        o->importing=false;
+    }
+}

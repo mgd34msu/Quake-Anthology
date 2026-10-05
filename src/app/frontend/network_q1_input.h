@@ -2,6 +2,9 @@
 #define QA_FRONTEND_NETWORK_Q1_INPUT_H
 #include "qa/frontend.h"
 #include "qa/input.h"
+bool frontend_network_q1_frame_time(qa_frontend *,const qa_cvars **,uint64_t *source_ns,bool *handled,qa_error *);
+bool frontend_network_q1_input_prepare(const qa_frontend *,uint32_t physical_seat,
+    bool *accepted,uint64_t *source_ns,uint64_t *wall_ns,qa_error *);
 bool frontend_network_q1_input(qa_frontend *,uint32_t physical_seat,
     const qa_seat_input_sample *,uint64_t sequence,double source_frame_ms,bool *handled,qa_error *);
 bool frontend_network_q1_input_owned(const qa_frontend *,uint32_t physical_seat);
