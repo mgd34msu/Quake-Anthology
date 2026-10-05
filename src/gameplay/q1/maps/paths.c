@@ -21,6 +21,8 @@ bool qa_q1_game_path_read(const qa_q1_game *g, qa_actor_id actor, qa_q1_path_sta
         out->path = m->path;
         out->pause_until = m->pause_until;
         out->follow_until = m->follow_until;
+        const qa_authored_monster *row = g->maps ? qa_targets_monster(g->maps->options.targets, actor) : NULL;
+        if (row) out->follow_until = (double)row->follow_until_ns / 1e9;
         out->monster = true;
     }
     return true;
@@ -95,7 +97,11 @@ bool qa_q1_game_path_change(qa_q1_game *g, qa_actor_id actor, const qa_q1_path_c
     case QA_Q1_PATH_FOLLOW_UNTIL:
         if (!isfinite(change->follow_until) || fabs(change->follow_until) > FLT_MAX)
             return q1_map_fail(error, "invalid Q1 follow cooldown deadline");
-        m->follow_until = (float)change->follow_until;
+        {
+            qa_authored_monster *row = g->maps ? qa_targets_monster(g->maps->options.targets, actor) : NULL;
+            if (row) row->follow_until_ns = (uint64_t)(change->follow_until * 1e9);
+            else m->follow_until = (float)change->follow_until;
+        }
         return true;
     case QA_Q1_PATH_FOUND:
         return !q1_alive(g, change->reference) ||

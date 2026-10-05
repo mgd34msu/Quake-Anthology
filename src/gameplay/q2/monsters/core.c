@@ -1218,6 +1218,16 @@ bool qa_q2_monster_route_advance(qa_q2_game *game, qa_actor_id id, qa_actor_id g
     context.monster->definition->stand_move : context.monster->definition->walk_move, false, error);
 }
 
+bool qa_q2_monster_follow_begin(qa_q2_game *game, qa_actor_id id,
+    qa_actor_id previous_enemy, qa_error *error) {
+  q2m_context context;
+  if (!public_monster_context(game, id, &context, error)) return false;
+  if (!context.actor) return true;
+  context.monster->old_enemy = previous_enemy;
+  context.monster->enemy = context.actor->physics.enemy = (qa_actor_id){0};
+  return q2m_set_move(&context, context.monster->definition->walk_move, false, error);
+}
+
 bool qa_q2_monster_route_contact(const qa_q2_game *game, qa_actor_id id,
                                  qa_actor_id corner, bool combat_point,
                                  bool *eligible) {

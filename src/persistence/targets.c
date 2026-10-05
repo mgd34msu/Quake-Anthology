@@ -84,6 +84,7 @@ static bool monster_record(qa_source_save_io *io, qa_authored_monster *row) {
         !qa_source_save_bool(io, &row->stand_ground) || !qa_source_save_bool(io, &row->counted_spawn) ||
         !qa_source_save_bool(io, &row->counted_death) || !qa_source_save_u32(io, &activation) ||
         activation > QA_MONSTER_SCHEDULED || !qa_source_save_u64(io, &row->activation_ns) ||
+        !qa_source_save_u64(io, &row->follow_until_ns) ||
         !qa_source_save_u32(io, &placement) || placement > QA_MONSTER_TELEPORT ||
         !qa_source_save_vec3(io, &row->authored_origin) || !qa_source_save_vec3(io, &row->placement_origin)) return false;
     if (!qa_source_save_count(io, &row->barrier_count, qa_actors_capacity(qa_session_actors(io->session)))) return false;

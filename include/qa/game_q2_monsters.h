@@ -182,6 +182,7 @@ typedef struct qa_q2_monster_route_state {
 bool qa_q2_monster_route_read(const qa_q2_game *, qa_actor_id, qa_q2_monster_route_state *);
 bool qa_q2_monster_route_advance(qa_q2_game *, qa_actor_id, qa_actor_id goal,
     uint64_t pause_until_ns, bool hold, qa_error *);
+bool qa_q2_monster_follow_begin(qa_q2_game *, qa_actor_id, qa_actor_id previous_enemy, qa_error *);
 bool qa_q2_monster_route_contact(const qa_q2_game *, qa_actor_id monster,
                                  qa_actor_id corner, bool combat_point,
                                  bool *eligible);

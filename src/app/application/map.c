@@ -1628,6 +1628,7 @@ static bool monster_path_read(application_provider *map, qa_actor_id actor, qa_q
     out->path = row->route;
     out->move_target = row->combat_goal.registry ? row->combat_goal : row->route_goal;
     out->previous_corner = row->previous_corner;
+    out->follow_until = (double)row->follow_until_ns / 1e9;
     return true;
 }
 static bool monster_path_change(application_provider *map, qa_actor_id actor,
@@ -1637,6 +1638,7 @@ static bool monster_path_change(application_provider *map, qa_actor_id actor,
     application_provider *behavior = monster_behavior(map, actor);
     if (!row || !behavior) return application_fail(error, QA_ERROR_NOT_FOUND, "Selected path has no creature Source");
     if (change->kind == QA_Q1_PATH_VISIT) row->previous_corner = change->reference;
+    if (change->kind == QA_Q1_PATH_FOLLOW_UNTIL) row->follow_until_ns = (uint64_t)(change->follow_until * 1e9);
     if (change->kind == QA_Q1_PATH_DESTINATION)
         qa_targets_monster_route(map->application->targets, actor, change->reference.registry ? change->target : 0, change->reference);
     if (behavior->kind == APPLICATION_PROVIDER_Q1) {
@@ -1664,8 +1666,9 @@ static bool monster_path_change(application_provider *map, qa_actor_id actor,
     case QA_Q1_PATH_FOUND:
         return qa_q2_monster_action(behavior->state.q2, actor, QA_Q2_MONSTER_FOUND_TARGET, change->reference, 0, error);
     case QA_Q1_PATH_FOLLOW_BEGIN:
+        return qa_q2_monster_follow_begin(behavior->state.q2, actor, change->reference, error);
     case QA_Q1_PATH_FOLLOW_UNTIL:
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Q1 addon follow command has no selected Q2 continuation");
+        return true;
     }
     return false;
 }

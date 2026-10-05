@@ -27,7 +27,7 @@ typedef struct qa_authored_monster {
     qa_actor_id route_goal, combat_goal, activator, previous_corner;
     bool route_resolved, stand_ground, counted_spawn, counted_death;
     qa_monster_activation_kind activation;
-    uint64_t activation_ns;
+    uint64_t activation_ns, follow_until_ns;
     qa_monster_placement_kind placement;
     qa_vec3 authored_origin, placement_origin;
     qa_monster_barrier *barriers;
