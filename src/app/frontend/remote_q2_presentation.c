@@ -42,6 +42,11 @@ static const qa_q2_frame_player *frame_player(const frontend_remote_q2 *row, con
     if (!frontend_remote_q2_wire_seat(row, &index, &error)) return NULL;
     return frame->valid && index < frame->player_count ? &frame->players[index] : NULL;
 }
+static int32_t client_time(const frontend_remote_q2 *row)
+{
+    uint32_t bits = (uint32_t)(int64_t)(((double)row->frame.server_frame - 1 + row->fraction) * row->frame_ms);
+    int32_t milliseconds; memcpy(&milliseconds, &bits, sizeof(milliseconds)); return milliseconds;
+}
 bool frontend_remote_q2_initial_clear(qa_frontend *frontend, uint32_t seat,
     bool *active, bool *clear, qa_error *error)
 {
@@ -393,7 +398,7 @@ bool frontend_remote_q2_input(qa_frontend *f, uint32_t seat, const qa_seat_input
         if (!qa_input_command_angles(&row->input, qa_vec_sub(vector(frame->player.viewangles), delta), error)) return false;
     }
     qa_input_command_frame basis = {.kind = kind, .sequence = sequence, .server_frame = row->frame.server_frame,
-        .server_time_ms = (int32_t)(((double)row->frame.server_frame - 1 + row->fraction) * row->frame_ms),
+        .server_time_ms = client_time(row),
         .acknowledged_server_seconds = (double)row->frame.server_frame * row->frame_ms * 0.001,
         .delta_angles = delta, .sensitivity = 1, .attack_allowed = true};
     qa_movement_command command;
@@ -556,6 +561,9 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     qa_vec3 viewer_origin = origin;
     origin = qa_vec_add(origin, offset);
     double time = ((double)row->frame.server_frame - 1 + row->fraction) * row->frame_ms;
+    int32_t milliseconds = client_time(row), doubled;
+    uint32_t time_bits = (uint32_t)milliseconds * 2u; memcpy(&doubled, &time_bits, sizeof(doubled));
+    uint32_t auto_frame = (uint32_t)(remote_q2_rerelease_presentation(row) ? milliseconds / 500 : doubled / 1000);
     if (remote_q2_float_movement(row)) {
         float height = (float)frame->player.pmove.viewheight;
         if (!row->height_set) { row->height_previous = row->height_current = height; row->height_changed_ms = time; row->height_set = true; }
@@ -641,11 +649,10 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
             qa_vec_lerp(vector(prior->origin), vector(current->origin), row->fraction) : vector(current->origin);
         qa_vec3 direction = prior ? angles_lerp(prior->angles, current->angles, row->fraction) : vector(current->angles);
         qa_q2_entity packet = *current;
-        uint32_t auto_frame = (uint32_t)fmod(floor(fmax(0, time * .002)), 4294967296.0);
         if (current->effects & (UINT64_C(1) << 10)) packet.frame = auto_frame & 1;
         else if (current->effects & (UINT64_C(1) << 11)) packet.frame = 2 + (auto_frame & 1);
         else if (current->effects & (UINT64_C(1) << 12)) packet.frame = auto_frame;
-        else if (current->effects & (UINT64_C(1) << 13)) packet.frame = (uint32_t)fmod(floor(fmax(0, time * .01)), 4294967296.0);
+        else if (current->effects & (UINT64_C(1) << 13)) packet.frame = (uint32_t)(milliseconds / 100);
         if (current->effects & 1) direction = qa_v3(0, (float)fmod(time * .1, 360), 0);
         else if (current->effects & (UINT64_C(1) << 23)) direction = qa_v3(0, (float)fmod(time * .5, 360) + current->angles[1], 180);
         uint32_t shell_flags = packet.renderfx;

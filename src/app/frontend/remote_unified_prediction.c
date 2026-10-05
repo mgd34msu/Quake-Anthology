@@ -1,5 +1,6 @@
 #include "remote_unified_prediction_private.h"
 #include "remote_unified_save.h"
+#include "qa/text.h"
 #include <fenv.h>
 #include <float.h>
 #include <math.h>
@@ -655,12 +656,6 @@ const qa_unified_document *frontend_remote_unified_prediction_document(
     qa_error e={0};
     return p && !p->busy && p->received && current(p,&e)?p->snapshot_document:NULL;
 }
-static int32_t q3_integer(double value)
-{
-    double word=fmod(trunc(value),4294967296.0);
-    if(word<0) word+=4294967296.0;
-    return (int32_t)(word>=2147483648.0?word-4294967296.0:word);
-}
 static bool q3_ground_number(const frontend_unified_q3_prediction_source *source,
     qa_movement_ground ground,int32_t *out,qa_error *e)
 {
@@ -688,15 +683,21 @@ bool frontend_remote_unified_prediction_merged_q3(frontend_remote_unified_predic
     merged.origin[0]=origin.x;merged.origin[1]=origin.y;merged.origin[2]=origin.z;
     merged.velocity[0]=velocity.x;merged.velocity[1]=velocity.y;merged.velocity[2]=velocity.z;
     merged.viewangles[0]=predicted.view_angles.x;merged.viewangles[1]=predicted.view_angles.y;merged.viewangles[2]=predicted.view_angles.z;
-    merged.viewheight=q3_integer(predicted.view_height);merged.commandTime=q3_integer(predicted.command_time_ms);
+    merged.viewheight=qa_source_float_to_i32(predicted.view_height);
+    if(!isfinite(predicted.command_time_ms)||predicted.command_time_ms < -0x1p63||predicted.command_time_ms >= 0x1p63)
+        return fail(e,QA_ERROR_FORMAT,"Q3 prediction clock exceeds native millisecond storage");
+    uint32_t clock=(uint32_t)(int64_t)predicted.command_time_ms;
+    memcpy(&merged.commandTime,&clock,sizeof(clock));
     if(!q3_ground_number(source,predicted.ground,&merged.groundEntityNum,e)) return false;
     if(predicted.state.kind==QA_MOVEMENT_Q3) {
         const qa_q3_movement_state *state=&predicted.state.data.q3;
         merged.commandTime=state->command_time_ms;merged.pmType=state->movement_type;
-        merged.pmFlags=q3_integer(state->movement_flags);merged.pmTime=state->movement_time_ms;merged.bobCycle=state->bob_cycle;
+        memcpy(&merged.pmFlags,&state->movement_flags,sizeof(merged.pmFlags));
+        merged.pmTime=state->movement_time_ms;merged.bobCycle=state->bob_cycle;
         for(unsigned i=0;i<3;++i) merged.deltaAngles[i]=state->delta_angle_words[i];
         if(!q3_ground_number(source,state->ground,&merged.groundEntityNum,e)) return false;
-        merged.movementDir=state->movement_direction;merged.eFlags=q3_integer(state->flags);
+        merged.movementDir=state->movement_direction;
+        memcpy(&merged.eFlags,&state->flags,sizeof(merged.eFlags));
         merged.pmoveFramecount=state->movement_frame;merged.jumppadFrame=state->jump_pad_frame;merged.jumppadEnt=0;
         if(state->jump_pad.registry) {
             uint32_t number=0;bool present=false;

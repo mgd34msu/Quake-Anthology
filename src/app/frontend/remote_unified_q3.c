@@ -131,13 +131,18 @@ static bool word(const qa_unified_document *d,qa_json_id row,uint32_t *out,qa_er
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified Q3 word exceeds its actual Source storage");
     *out=n<0?(uint32_t)(int32_t)n:(uint32_t)n;return true;
 }
+static bool source_time(double value,int32_t *out,qa_error *e)
+{
+    if(!isfinite(value)||value < -0x1p63||value >= 0x1p63) {
+        (void)frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified Q3 clock exceeds native millisecond storage");
+        return false;
+    }
+    uint32_t bits=(uint32_t)(int64_t)value;memcpy(out,&bits,sizeof(bits));return true;
+}
 static bool clock_integer(const qa_unified_document *d,qa_json_id row,int32_t *out,qa_error *e)
 {
     double value;
-    if(!number(d,row,&value,e))return false;
-    double wrapped=fmod(trunc(value),4294967296.0);
-    if(wrapped<0)wrapped+=4294967296.0;
-    uint32_t bits=(uint32_t)wrapped;memcpy(out,&bits,sizeof(bits));return true;
+    return number(d,row,&value,e) && source_time(value,out,e);
 }
 static bool vector(const qa_unified_document *d, qa_json_id row, qa_vec3 *v, qa_error *e)
 {
@@ -337,8 +342,7 @@ static bool frame_read(frontend_unified_q3 *o, const qa_unified_document *d, int
     if (qa_json_string_equal(j,field(j,t,"kind"),"seconds")) n*=1000;
     else if (!qa_json_string_equal(j,field(j,t,"kind"),"milliseconds"))
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified Q3 clock has no Source time domain");
-    double reduced=fmod(trunc(n),4294967296.0); if (reduced<0) reduced+=4294967296.0;
-    uint32_t bits=(uint32_t)reduced; memcpy(time,&bits,sizeof(bits)); return true;
+    return source_time(n,time,e);
 }
 bool frontend_unified_q3_create(qa_frontend *f, frontend_remote_unified *r,
     frontend_unified_media *m, frontend_unified_q3 **out, qa_error *e)

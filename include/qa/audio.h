@@ -455,6 +455,9 @@ bool qa_audio_engine_gains_ready(const qa_audio_engine_gains *, qa_error *);
 void qa_audio_engine_gains_publish(qa_audio_engine_gains *);
 void qa_audio_engine_gains_abort(qa_audio_engine_gains *);
 void qa_audio_engine_doppler(qa_audio_engine *engine, bool enabled);
+/* Source clocks retain full milliseconds; the legacy mixer uses their signed
+ * low integer word. Conversion rejects clocks outside native int64 storage. */
+bool qa_audio_source_milliseconds(double milliseconds, int32_t *out, qa_error *error);
 bool qa_audio_engine_play(qa_audio_engine *engine, const qa_audio_play *sound, int32_t milliseconds,
                           qa_error *error);
 bool qa_audio_engine_loop(qa_audio_engine *engine, const qa_audio_loop *loop, qa_error *error);

@@ -880,6 +880,15 @@ void qa_audio_engine_update(qa_audio_engine *engine, double milliseconds) {
     if (!enter(engine, true, NULL)) return;
     update_impl(engine, milliseconds); leave(engine);
 }
+bool qa_audio_source_milliseconds(double milliseconds, int32_t *out, qa_error *error) {
+    if (!out || !isfinite(milliseconds) || milliseconds < -0x1p63 || milliseconds >= 0x1p63) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source audio clock exceeds native millisecond storage");
+        return false;
+    }
+    uint32_t bits = (uint32_t)(int64_t)milliseconds;
+    memcpy(out, &bits, sizeof(bits));
+    return true;
+}
 bool qa_audio_engine_play(qa_audio_engine *engine, const qa_audio_play *sound, int32_t milliseconds,
                           qa_error *error) {
     if (!enter(engine, false, error))

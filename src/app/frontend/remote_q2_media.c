@@ -10,6 +10,7 @@
 #include "qa/scene_model_save.h"
 #include "qa/network_q2_materials.h"
 #include <math.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -218,12 +219,11 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
 bool remote_q2_map_validate(const frontend_remote_q2 *row, const qa_resource *resource, qa_bsp_view *bsp, qa_error *error)
 {
     const char *checksum = frontend_remote_q2_config(row, row->layout.checksum);
-    char *end = NULL; double value = strtod(checksum, &end);
+    char *end = NULL; errno = 0; long long value = strtoll(checksum, &end, 10);
     while (end && (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')) ++end;
-    if (!*checksum || !end || *end || !isfinite(value))
-        return remote_q2_fail(error, QA_ERROR_FORMAT, "Remote Q2 map checksum is not a complete number");
-    double reduced = fmod(trunc(value), 4294967296.0); if (reduced < 0) reduced += 4294967296.0;
-    if ((uint32_t)reduced != qa_block_checksum(qa_resource_bytes(resource)))
+    if (end == checksum || !end || *end || errno == ERANGE || value < INT32_MIN || value > UINT32_MAX)
+        return remote_q2_fail(error, QA_ERROR_FORMAT, "Remote Q2 map checksum is not a complete native integer");
+    if ((uint32_t)value != qa_block_checksum(qa_resource_bytes(resource)))
         return remote_q2_fail(error, QA_ERROR_FORMAT, "Remote Q2 map checksum differs from retained mounted content");
     if (!qa_bsp_open(qa_resource_bytes(resource), bsp, error) || bsp->family != QA_BSP_Q2 || !qa_bsp_validate(bsp, error))
         return remote_q2_fail(error, QA_ERROR_FORMAT, "Remote Q2 requires its actual Q2 BSP map");

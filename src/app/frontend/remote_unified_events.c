@@ -512,11 +512,9 @@ static bool sound(frontend_unified_events *o,const qa_unified_document *d,qa_jso
         .actor=audio,.owner=o->options.audio_owner,.audience=domain->physical_seat,.origin_kind=QA_AUDIO_FIXED,
         .origin=origin,.channel=(int32_t)channel,.volume=volume,.attenuation=attenuation,
         .has_server_time=true,.server_milliseconds=ms};
-    /* The engine takes its actual PCM reference. Source time remains binary64;
-     * the wrapping integer is only the legacy mixer tick argument. */
-    double tick=fmod(trunc(ms),4294967296.0); if (tick<0) tick+=4294967296.0;
-    uint32_t raw=(uint32_t)tick; int32_t signed_tick; memcpy(&signed_tick,&raw,sizeof(raw));
-    return current(o,e) && qa_audio_engine_play(o->frontend->audio,&play,signed_tick,e);
+    int32_t signed_tick;
+    return qa_audio_source_milliseconds(ms,&signed_tick,e) && current(o,e) &&
+        qa_audio_engine_play(o->frontend->audio,&play,signed_tick,e);
 }
 static bool apply_presentation(frontend_unified_events *o,const qa_unified_document *d,qa_json_id row,
     bool *mirrors,qa_error *e)
@@ -896,14 +894,14 @@ bool frontend_unified_events_sound_path(frontend_unified_events *o,const char *c
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
     if (okay && !o->frontend->audio) okay=frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified CLIENT sound has no output engine");
     if (okay) {
-        double tick=fmod(trunc(ms),4294967296.0); if (tick<0) tick+=4294967296.0;
-        uint32_t raw=(uint32_t)tick; int32_t signed_tick; memcpy(&signed_tick,&raw,sizeof(raw));
+        int32_t signed_tick;
         qa_audio_play play={.sample=qa_audio_asset_sample(asset),.asset=asset,
             .resource_id=qa_resource_id(qa_audio_asset_resource(asset)),.name=path,.family=family,
             .actor=audio,.owner=o->options.audio_owner,.audience=d->physical_seat,.origin_kind=QA_AUDIO_FIXED,
             .origin=origin,.channel=channel,.volume=volume,.attenuation=attenuation,.delay_seconds=delay,
             .has_server_time=true,.server_milliseconds=ms};
-        okay=qa_audio_engine_play(o->frontend->audio,&play,signed_tick,e);
+        okay=qa_audio_source_milliseconds(ms,&signed_tick,e) &&
+            qa_audio_engine_play(o->frontend->audio,&play,signed_tick,e);
     }
     qa_audio_asset_release(asset); return okay;
 }

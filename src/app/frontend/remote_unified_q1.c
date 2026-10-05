@@ -759,8 +759,9 @@ bool frontend_unified_q1_sound_presentation(frontend_unified_q1 *o,const qa_unif
                 .name=(char *)p.text.data,.family=QA_AUDIO_Q1,.actor=audio,.owner=o->options.audio_owner,.audience=domain->physical_seat,
                 .origin_kind=p.flag?QA_AUDIO_FIXED:QA_AUDIO_ACTOR,.origin=p.origin,.channel=c,.volume=(float)p.a,.attenuation=(float)p.b,
                 .server_milliseconds=p.seconds*1000,.has_server_time=true};
-            double tick=fmod(trunc(p.seconds*1000),4294967296.0);if(tick<0)tick+=4294967296.0;uint32_t raw=(uint32_t)tick;int32_t signed_tick;memcpy(&signed_tick,&raw,sizeof(raw));
-            ok=qa_audio_engine_play(o->frontend->audio,&play,signed_tick,e);
+            int32_t signed_tick;
+            ok=qa_audio_source_milliseconds(play.server_milliseconds,&signed_tick,e) &&
+                qa_audio_engine_play(o->frontend->audio,&play,signed_tick,e);
         }
         qa_audio_asset_release(asset);
     }
