@@ -9,7 +9,7 @@
 #include <stddef.h>
 
 typedef enum original_storage {
-    ORIGINAL_FLOAT, ORIGINAL_DOUBLE, ORIGINAL_I32, ORIGINAL_U32,
+    ORIGINAL_FLOAT, ORIGINAL_DOUBLE, ORIGINAL_I32, ORIGINAL_U32, ORIGINAL_I16,
     ORIGINAL_U16, ORIGINAL_U8, ORIGINAL_BOOL, ORIGINAL_VECTOR,
     ORIGINAL_STRING, ORIGINAL_ACTOR, ORIGINAL_REF
 } original_storage;
@@ -131,6 +131,9 @@ static const original_field monster_fields[] = {
     FIELD(q1_monster, in_pain, "inpain", U8),
     FIELD(q1_monster, counter, "cnt", U32)
 };
+static const original_field eel_fields[] = {
+    FIELD(q1_monster, source.eel.pitch, "weapon", I16)
+};
 static const original_field map_fields[] = {
     FIELD(q1_map_state, map, "map", STRING),
     FIELD(q1_map_state, noise[0], "noise", STRING),
@@ -214,6 +217,7 @@ static bool fields(qa_q1_wire_receipt *receipt, qa_q1_save_record *record,
         case ORIGINAL_FLOAT: okay = number(record, field->name, *(const float *)p, false, error); break;
         case ORIGINAL_DOUBLE: okay = number(record, field->name, *(const double *)p, false, error); break;
         case ORIGINAL_I32: okay = number(record, field->name, *(const int32_t *)p, false, error); break;
+        case ORIGINAL_I16: okay = number(record, field->name, *(const int16_t *)p, false, error); break;
         case ORIGINAL_U32: okay = number(record, field->name, *(const uint32_t *)p, false, error); break;
         case ORIGINAL_U16: okay = number(record, field->name, *(const uint16_t *)p, false, error); break;
         case ORIGINAL_U8: okay = number(record, field->name, *p, false, error); break;
@@ -384,13 +388,17 @@ static bool monster_functions(const q1_monster *monster, qa_q1_save_record *reco
     const q1_species *species = monster->species;
     static const char *const pain[] = {"army_pain", "dog_pain", "knight_pain", "enf_pain",
         "demon1_pain", "ogre_pain", "hknight_pain", "sham_pain", "Wiz_Pain", "shalrath_pain",
-        NULL, "fish_pain", "zombie_pain", NULL, "nopain"};
+        NULL, "fish_pain", "zombie_pain", NULL, "nopain",
+        [QA_Q1_EEL] = "eel_pain1", [QA_Q1_MUMMY] = "mummy_pain"};
     static const char *const die[] = {"army_die", "dog_die", "knight_die", "enf_die", "demon_die",
         "ogre_die", "hknight_die", "sham_die", "wiz_die", "shalrath_die", "tbaby_die1",
-        "f_death1", "zombie_die", NULL, "finale_1"};
+        "f_death1", "zombie_die", NULL, "finale_1",
+        [QA_Q1_EEL] = "eel_death", [QA_Q1_MUMMY] = "mummy_die"};
     static const char *const melee[] = {NULL, "dog_atta1", "knight_atk1", NULL, "Demon_MeleeAttack",
-        "ogre_melee", "hknight_melee", "sham_melee", NULL, NULL, "tbaby_jump1", "f_attack1"};
-    if (!species || species->species > QA_Q1_OLDONE)
+        "ogre_melee", "hknight_melee", "sham_melee", NULL, NULL, "tbaby_jump1", "f_attack1",
+        [QA_Q1_EEL] = "eel_attack1"};
+    if (!species || (species->species > QA_Q1_OLDONE &&
+        species->species != QA_Q1_EEL && species->species != QA_Q1_MUMMY))
         return fail(error, "Original native expansion monster callbacks require their Source projection");
     unsigned index = (unsigned)species->species;
     if (species->species == QA_Q1_BOSS) return callback(record,"use","boss_awake",error);
@@ -405,10 +413,13 @@ static bool monster_functions(const q1_monster *monster, qa_q1_save_record *reco
             species->species == QA_Q1_TARBABY ? "Tar_JumpTouch" : NULL;
         if (!touch) return fail(error, "Original monster contact has no compiled Source callback");
     }
-    return callback(record, "th_stand", species->stand, error) && callback(record, "th_walk", species->walk, error) &&
-        callback(record, "th_run", species->run, error) && callback(record, "th_missile", missile, error) &&
+    bool sleeping = species->species == QA_Q1_MUMMY && monster->source.mummy.asleep;
+    return callback(record, "th_stand", sleeping ? "mummy_sleep" : species->stand, error) &&
+        callback(record, "th_walk", sleeping ? "mummy_wake" : species->walk, error) &&
+        callback(record, "th_run", sleeping ? "mummy_wake" : species->run, error) &&
+        callback(record, "th_missile", sleeping ? "mummy_wake" : missile, error) &&
         callback(record, "th_melee", index < sizeof(melee) / sizeof(*melee) ? melee[index] : NULL, error) &&
-        callback(record, "th_pain", pain[index], error) && callback(record, "th_die", die[index], error) &&
+        callback(record, "th_pain", sleeping ? "mummy_wake" : pain[index], error) && callback(record, "th_die", die[index], error) &&
         callback(record, "touch", touch, error) &&
         callback(record, "use", q1_ref_present(monster->enemy) || monster->dead ? "SUB_Null" : "monster_use", error);
 }
@@ -659,6 +670,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         qa_builtin_actor_traits traits;
         if (!game->services.actor_traits || !game->services.actor_traits(game->services.context,entity->id,&traits) ||
             !vector(record,"view_ofs",qa_v3(0,0,traits.view_height),error)) return false;
+        if (entity->state.monster.species->species == QA_Q1_EEL &&
+            !FIELDS(receipt, record, &entity->state.monster, eel_fields, error)) return false;
         return FIELDS(receipt, record, &entity->state.monster, monster_fields, error) &&
             monster_functions(&entity->state.monster, record, error);
     }
@@ -820,6 +833,10 @@ static bool restore_fields(qa_q1_game *game, const qa_q1_save_record *record,
         switch (field->storage) {
         case ORIGINAL_FLOAT: *(float *)p = number; break;
         case ORIGINAL_DOUBLE: *(double *)p = number; break;
+        case ORIGINAL_I16:
+            if (!isfinite(number) || number < INT16_MIN || number > INT16_MAX)
+                return fail(error, "Original signed field exceeds its native Source domain");
+            *(int16_t *)p = (int16_t)number; break;
         case ORIGINAL_I32:
             if (!isfinite(number) || number < INT32_MIN || number >= 2147483648.0)
                 return fail(error, "Original integer field exceeds its native Source domain");
@@ -1136,6 +1153,12 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
             !strcmp(touch,"Demon_JumpTouch") || !strcmp(touch,"Tar_JumpTouch"));
         monster->current_frame = UINT16_MAX;
         if (!monster->species) return fail(error, "Original monster lacks its actual Source species");
+        if (monster->species->species == QA_Q1_EEL &&
+            !RESTORE_FIELDS(game,record,monster,eel_fields,slots,count,error)) return false;
+        if (monster->species->species == QA_Q1_MUMMY) {
+            const char *stand = saved(record,"th_stand");
+            monster->source.mummy.asleep = stand && !strcmp(stand,"mummy_sleep");
+        }
         const char *target = qa_strings_cstr(qa_session_strings(game->services.session), entity->target);
         if (target && !qa_strings_intern_cstr(qa_session_strings(game->services.session), target, &monster->path, error)) return false;
     }
