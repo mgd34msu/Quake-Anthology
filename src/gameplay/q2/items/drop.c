@@ -57,7 +57,9 @@ bool q2_item_drop_definition(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_
     }
     q2_item_state *item = a->item;
     item->definition = d;
-    item->owner = owner;
+    const qa_actor_record *reference = qa_actors_get(qa_session_actors(g->services.session), owner);
+    item->owner = reference && reference->owner == g->options.owner && reference->has_source ?
+        qa_actor_reference_source(reference->owner, reference->source_slot) : qa_actor_reference_lifetime(owner);
     item->spawn.classname = d->classname;
     item->spawn.count = count;
     item->spawn.spawnflags = options->player_death ? 0x20000 : 0x10000;

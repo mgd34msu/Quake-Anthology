@@ -55,7 +55,7 @@ bool q2_item_eligible(qa_q2_game *g, q2_actor *actor, qa_actor_id recipient,
     q2_item_state *item = actor->item;
     *allowed = false;
     if (!live(call) || !item->visible || !item->touchable ||
-        (item->temporary && qa_actor_id_equal(item->owner, call->player)))
+        (item->temporary && qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(g->services.session), item->owner), call->player)))
         return true;
     qa_builtin_actor_traits traits;
     if (!g->services.actor_traits ||

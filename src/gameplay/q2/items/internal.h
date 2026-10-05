@@ -23,7 +23,7 @@ typedef enum q2_companion_kind {
 typedef struct q2_item_state {
     const qa_q2_item_definition *definition;
     qa_q2_item_spawn spawn;
-    qa_actor_id owner;
+    qa_actor_reference owner;
     uint64_t due_ns, expires_ns;
     q2_item_think think;
     bool targets_used, retained, visible, touchable, temporary, dispatching;
@@ -45,7 +45,7 @@ typedef struct q2_power_state {
 } q2_power_state;
 typedef struct q2_companion {
     q2_companion_kind kind;
-    qa_actor_id owner, enemy, child, credit;
+    qa_actor_reference owner, enemy, child, credit;
     uint64_t expires_ns, attack_ns, next_ns, turn_ns;
     qa_vec3 goal;
     int frame;

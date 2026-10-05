@@ -676,7 +676,7 @@ bool qa_q2_wire_entity_read(qa_q2_game *g, uint32_t slot,
         value.loop_sound = a->monster->weapon_sound;
     } else if (a->item) {
         value.classname = a->item->definition ? a->item->definition->classname_id : 0;
-        value.owner = a->item->owner;
+        value.owner = qa_actor_reference_resolve(qa_session_actors(g->services.session), a->item->owner);
         if (a->item->companion) value.loop_sound = a->item->companion->loop_sound;
     } else if (a->entity) {
         value.classname = a->entity->classname; value.owner = a->entity->owner;

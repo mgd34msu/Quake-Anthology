@@ -88,14 +88,10 @@ bool q2_item_change_collision(qa_q2_game *g, q2_actor *a, qa_physics_solid solid
         return false;
     a->physics_bound = true;
     a->physics.solid = solid;
-    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), a->item->owner);
-    qa_actor_reference owner_reference = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
-        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
-        qa_actor_reference_lifetime(a->item->owner);
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = 1,
-                                    .owner = owner_reference,
+                                    .owner = a->item->owner,
                                     .role = solid == QA_PHYSICS_TRIGGER ? QA_COLLISION_TRIGGER
                                                                         : QA_COLLISION_SOLID};
     return qa_world_set_collision(g->services.world, a->id,
@@ -283,7 +279,9 @@ bool q2_item_finish(qa_q2_game *g, q2_actor *a, qa_actor_id player, qa_error *e)
         return true;
     }
     if (d->kind == QA_Q2_ITEM_HEALTH && d->timed) {
-        item->owner = player;
+        const qa_actor_record *reference = qa_actors_get(qa_session_actors(g->services.session), player);
+        item->owner = reference && reference->owner == g->options.owner && reference->has_source ?
+            qa_actor_reference_source(reference->owner, reference->source_slot) : qa_actor_reference_lifetime(player);
         return q2_item_hide(g, a, Q2_ITEM_MEGA, q2_deadline(g->now_ns, 5 * Q2_NS), e);
     }
     if (!dropped && g->options.deathmatch) {
@@ -441,15 +439,16 @@ bool q2_item_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         }
         return true;
     case Q2_ITEM_MEGA: {
-        if (q2_actor_live(g, item->owner)) {
+        qa_actor_id owner = qa_actor_reference_resolve(qa_session_actors(g->services.session), item->owner);
+        if (q2_actor_live(g, owner)) {
             qa_combat_state state;
-            if (!qa_combat_read(g->services.combat, item->owner, &state, e))
+            if (!qa_combat_read(g->services.combat, owner, &state, e))
                 return false;
-            q2_power_state *power = q2_powers(g, item->owner, e);
+            q2_power_state *power = q2_powers(g, owner, e);
             if (!power)
                 return false;
             if (state.health > power->maximum_health) {
-                if (!qa_combat_set_health(g->services.combat, item->owner, state.health - 1, e))
+                if (!qa_combat_set_health(g->services.combat, owner, state.health - 1, e))
                     return false;
                 if (q2_actor_live(g, a->id)) {
                     item->think = Q2_ITEM_MEGA;

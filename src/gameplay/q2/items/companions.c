@@ -59,15 +59,15 @@ static bool expire(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
-    if (c->camera && q2_actor_live(g, c->owner)) {
-        if (!q2_client_sphere_camera(g, c->owner, (qa_actor_id){0}, body.origin, body.angles, e))
+    if (c->camera && q2_actor_live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner))) {
+        if (!q2_client_sphere_camera(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner), (qa_actor_id){0}, body.origin, body.angles, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
     }
-    if (q2_actor_live(g, c->child)) {
-        q2_actor *child = companion_actor(g, c->child);
-        if (child ? !expire(g, child, e) : !qa_session_release(g->services.session, c->child, e))
+    if (q2_actor_live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->child))) {
+        q2_actor *child = companion_actor(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->child));
+        if (child ? !expire(g, child, e) : !qa_session_release(g->services.session, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->child), e))
             return false;
     }
     if (!q2_actor_live(g, a->id))
@@ -135,13 +135,19 @@ static bool launch(qa_q2_game *g, qa_actor_id owner, q2_companion_kind kind, boo
     a->item->companion = calloc(1, sizeof(*a->item->companion));
     if (!a->item->companion)
         goto memory;
+    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner);
+    qa_actor_reference owner_reference = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
+        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) : qa_actor_reference_lifetime(owner);
+    const qa_actor_record *reference_credit = qa_actors_get(qa_session_actors(g->services.session), credit);
+    qa_actor_reference credit_reference = reference_credit && reference_credit->owner == g->options.owner && reference_credit->has_source ?
+        qa_actor_reference_source(reference_credit->owner, reference_credit->source_slot) : qa_actor_reference_lifetime(credit);
     *a->item->companion = (q2_companion){.kind = kind,
-                                         .owner = decoy ? (qa_actor_id){0} : owner,
-                                         .credit = credit,
+                                         .owner = decoy ? (qa_actor_reference){0} : owner_reference,
+                                         .credit = credit_reference,
                                          .decoy = decoy,
                                          .expires_ns = q2_deadline(g->now_ns, 30 * Q2_NS),
                                          .next_ns = q2_deadline(g->now_ns, 100 * Q2_MS)};
-    a->item->owner = decoy ? credit : owner;
+    a->item->owner = decoy ? credit_reference : owner_reference;
     a->item->visible = true;
     a->item->visual = (qa_q2_visual){
         .scale = 1, .alpha = 1, .visible = true, .old_frame = -1, .render_flags = 8 | 0x8000};
@@ -189,23 +195,26 @@ static bool pain(qa_q2_game *g, q2_actor *a, qa_actor_id attacker, qa_error *e) 
     q2_companion *c = a->item->companion;
     if (!q2_actor_live(g, attacker))
         return true;
+    const qa_actor_record *reference_attacker = qa_actors_get(qa_session_actors(g->services.session), attacker);
+    qa_actor_reference attacker_reference = reference_attacker && reference_attacker->owner == g->options.owner && reference_attacker->has_source ?
+        qa_actor_reference_source(reference_attacker->owner, reference_attacker->source_slot) : qa_actor_reference_lifetime(attacker);
     if (c->kind == Q2_SPHERE_DEFENDER) {
-        if (!qa_actor_id_equal(attacker, c->owner))
-            c->enemy = attacker;
+        if (!qa_actor_id_equal(attacker, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner)))
+            c->enemy = attacker_reference;
         return true;
     }
     if (c->active)
         return true;
     qa_combat_state owner = {0};
-    bool live_owner = q2_actor_live(g, c->owner);
-    if (live_owner && !qa_combat_read(g->services.combat, c->owner, &owner, e))
+    bool live_owner = q2_actor_live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner));
+    if (live_owner && !qa_combat_read(g->services.combat, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner), &owner, e))
         return false;
     if (!c->decoy && ((c->kind == Q2_SPHERE_VENGEANCE && owner.health >= 25) ||
                       (c->kind == Q2_SPHERE_HUNTER && owner.health > 0) ||
-                      qa_actor_id_equal(attacker, c->owner)))
+                      qa_actor_id_equal(attacker, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner))))
         return true;
     c->active = true;
-    c->enemy = attacker;
+    c->enemy = attacker_reference;
     uint64_t until = q2_deadline(g->now_ns, 15 * Q2_NS);
     if (c->expires_ns < until)
         c->expires_ns = until;
@@ -219,14 +228,14 @@ static bool pain(qa_q2_game *g, q2_actor *a, qa_actor_id attacker, qa_error *e) 
         qa_body_state self, target, player;
         if (!qa_world_body_read(g->services.world, a->id, &self, e) ||
             !qa_world_body_read(g->services.world, attacker, &target, e) ||
-            !qa_world_body_read(g->services.world, c->owner, &player, e))
+            !qa_world_body_read(g->services.world, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner), &player, e))
             return false;
         if (qa_vec_length(qa_vec_sub(target.origin, self.origin)) >= 192) {
             self.origin = qa_vec_add(player.origin, qa_v3(0, 0, 22));
             if (!set_body(g, a, &self, e))
                 return false;
             c->camera = true;
-            return q2_client_sphere_camera(g, c->owner, a->id, self.origin, self.angles, e);
+            return q2_client_sphere_camera(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner), a->id, self.origin, self.angles, e);
         }
     }
     return true;
@@ -281,12 +290,15 @@ static bool decoy(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definition 
     a->item->companion = calloc(1, sizeof(*a->item->companion));
     if (!a->item->companion)
         goto memory;
+    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner);
+    qa_actor_reference owner_reference = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
+        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) : qa_actor_reference_lifetime(owner);
     *a->item->companion = (q2_companion){.kind = Q2_DOPPLEGANGER,
-                                         .owner = owner,
-                                         .credit = owner,
+                                         .owner = owner_reference,
+                                         .credit = owner_reference,
                                          .next_ns = q2_deadline(g->now_ns, 30 * Q2_NS),
                                          .expires_ns = q2_deadline(g->now_ns, 30 * Q2_NS)};
-    a->item->owner = owner;
+    a->item->owner = owner_reference;
     a->item->visible = false;
     a->item->visual = (qa_q2_visual){.render_flags = 0x8000, .scale = 1, .alpha = 1};
     a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
@@ -317,8 +329,11 @@ static bool decoy(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definition 
     child->item->companion = calloc(1, sizeof(*child->item->companion));
     if (!child->item->companion)
         goto memory;
+    const qa_actor_record *reference_base = qa_actors_get(qa_session_actors(g->services.session), id);
+    qa_actor_reference base_reference = reference_base && reference_base->owner == g->options.owner && reference_base->has_source ?
+        qa_actor_reference_source(reference_base->owner, reference_base->source_slot) : qa_actor_reference_lifetime(id);
     *child->item->companion = (q2_companion){.kind = Q2_DOPPLEGANGER_BODY,
-                                             .owner = id,
+                                             .owner = base_reference,
                                              .next_ns = q2_deadline(g->now_ns, g->frame_ns),
                                              .attack_ns = q2_deadline(g->now_ns, 100 * Q2_MS),
                                              .expires_ns = q2_deadline(g->now_ns, 30 * Q2_NS)};
@@ -326,7 +341,9 @@ static bool decoy(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definition 
     if (!qa_q2_entity_visual(g, owner, &child->item->visual, e))
         goto fail;
     child->item->visual.visible = true;
-    a->item->companion->child = child_id;
+    const qa_actor_record *reference_child = qa_actors_get(qa_session_actors(g->services.session), child_id);
+    a->item->companion->child = reference_child && reference_child->owner == g->options.owner && reference_child->has_source ?
+        qa_actor_reference_source(reference_child->owner, reference_child->source_slot) : qa_actor_reference_lifetime(child_id);
     if (!q2_item_visual(g, child, e))
         goto fail;
     *used = true;
@@ -402,35 +419,35 @@ bool q2_companion_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         }
         return set_body(g, a, &body, e) && (!q2_actor_live(g, a->id) || q2_item_visual(g, a, e));
     }
-    bool owner_live = q2_actor_live(g, c->owner);
+    bool owner_live = q2_actor_live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner));
     qa_body_state owner;
     if (!owner_live && !c->decoy)
         return qa_session_release(g->services.session, a->id, e);
-    if (owner_live && !qa_world_body_read(g->services.world, c->owner, &owner, e))
+    if (owner_live && !qa_world_body_read(g->services.world, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner), &owner, e))
         return false;
     if (c->kind == Q2_SPHERE_DEFENDER) {
         qa_combat_state state;
-        if (!owner_live || !qa_combat_read(g->services.combat, c->owner, &state, e))
+        if (!owner_live || !qa_combat_read(g->services.combat, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner), &state, e))
             return false;
         if (state.health <= 0)
             return expire(g, a, e);
         a->item->visual.frame = (a->item->visual.frame + 1) % 20;
-        if (q2_actor_live(g, c->enemy)) {
+        if (q2_actor_live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->enemy))) {
             qa_combat_state enemy;
-            if (!qa_combat_read(g->services.combat, c->enemy, &enemy, e))
+            if (!qa_combat_read(g->services.combat, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->enemy), &enemy, e))
                 return false;
             if (enemy.health <= 0)
-                c->enemy = (qa_actor_id){0};
+                c->enemy = (qa_actor_reference){0};
             else if (g->now_ns >= c->attack_ns) {
                 bool visible;
-                if (!sight(g, a, c->enemy, &visible, e))
+                if (!sight(g, a, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->enemy), &visible, e))
                     return false;
                 if (visible) {
                     qa_body_state target;
-                    if (!qa_world_body_read(g->services.world, c->enemy, &target, e))
+                    if (!qa_world_body_read(g->services.world, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->enemy), &target, e))
                         return false;
                     if (!q2_fire_actor_bolt(
-                            g, c->owner, c->owner, qa_vec_add(body.origin, qa_v3(0, 0, 2)),
+                            g, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner), qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner), qa_vec_add(body.origin, qa_v3(0, 0, 2)),
                             qa_vec_normalize(qa_vec_sub(target.origin, body.origin)), 10, 1000, 8,
                             50, true, e))
                         return false;
@@ -442,23 +459,23 @@ bool q2_companion_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!q2_actor_live(g, a->id))
         return true;
     if (c->active) {
-        if (!q2_actor_live(g, c->enemy))
+        if (!q2_actor_live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->enemy)))
             return expire(g, a, e);
         qa_combat_state enemy;
         qa_body_state target;
-        if (!qa_combat_read(g->services.combat, c->enemy, &enemy, e) ||
-            !qa_world_body_read(g->services.world, c->enemy, &target, e))
+        if (!qa_combat_read(g->services.combat, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->enemy), &enemy, e) ||
+            !qa_world_body_read(g->services.world, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->enemy), &target, e))
             return false;
         if (enemy.health < 1)
             return expire(g, a, e);
         qa_builtin_actor_traits traits = {0};
         if (g->services.actor_traits)
-            g->services.actor_traits(g->services.context, c->enemy, &traits);
+            g->services.actor_traits(g->services.context, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->enemy), &traits);
         if (!q2_actor_live(g, a->id))
             return true;
         target.origin.z += traits.player ? traits.view_height : 0;
         bool visible = c->kind == Q2_SPHERE_VENGEANCE;
-        if (!visible && !sight(g, a, c->enemy, &visible, e))
+        if (!visible && !sight(g, a, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->enemy), &visible, e))
             return false;
         qa_vec3 direction;
         float speed;
@@ -490,7 +507,7 @@ bool q2_companion_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         qa_vec3 destination = qa_vec_add(owner.origin, qa_v3(0, 0, owner.bounds.maxs.z + 4));
         if (g->now_ns % Q2_NS == 0) {
             bool visible;
-            if (!sight(g, a, c->owner, &visible, e))
+            if (!sight(g, a, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner), &visible, e))
                 return false;
             if (!visible)
                 body.origin = destination;
@@ -506,7 +523,7 @@ bool q2_companion_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!q2_actor_live(g, a->id))
         return true;
     if (c->camera && owner_live &&
-        !q2_client_sphere_camera(g, c->owner, a->id, body.origin, body.angles, e))
+        !q2_client_sphere_camera(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner), a->id, body.origin, body.angles, e))
         return false;
     return !q2_actor_live(g, a->id) || q2_item_visual(g, a, e);
 }
@@ -517,7 +534,8 @@ bool q2_companion_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error
     q2_companion *c = a->item->companion;
     if (!c->active || c->kind == Q2_SPHERE_DEFENDER || c->kind >= Q2_DOPPLEGANGER)
         return true;
-    qa_actor_id credited = c->decoy ? c->credit : c->owner;
+    qa_actor_reference credit = c->decoy ? c->credit : c->owner;
+    qa_actor_id credited = qa_actor_reference_resolve(qa_session_actors(g->services.session), credit);
     if (qa_actor_id_equal(contact->other, credited))
         return true;
     if (!c->decoy) {
@@ -538,10 +556,7 @@ bool q2_companion_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
     int mod = c->kind == Q2_SPHERE_HUNTER ? (c->decoy ? 55 : 49) : (c->decoy ? 54 : 48);
-    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), credited);
-    q2_projectile attack_state = {.owner = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
-        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
-        qa_actor_reference_lifetime(credited)};
+    q2_projectile attack_state = {.owner = credit};
     qa_attack attack = q2_projectile_attack(g, a->id, &attack_state, mod, 64);
     if (q2_target_damageable(g, contact->other)) {
         if (!q2_damage(g, &attack, contact->other, 10000, 1, body.velocity, body.origin,
@@ -558,18 +573,22 @@ bool q2_companion_reaction(qa_q2_game *g, const qa_damage_outcome *outcome, qa_e
         return true;
     q2_companion *c = a->item->companion;
     if (c->kind == Q2_DOPPLEGANGER) {
-        if (outcome->result.reaction == QA_REACTION_PAIN)
-            c->enemy = outcome->request.attack.attacker;
+        if (outcome->result.reaction == QA_REACTION_PAIN) {
+            qa_actor_id attacker = outcome->request.attack.attacker;
+            const qa_actor_record *reference = qa_actors_get(qa_session_actors(g->services.session), attacker);
+            c->enemy = reference && reference->owner == g->options.owner && reference->has_source ?
+                qa_actor_reference_source(reference->owner, reference->source_slot) : qa_actor_reference_lifetime(attacker);
+        }
         if (outcome->result.reaction != QA_REACTION_DEATH)
             return true;
-        if (q2_actor_live(g, c->enemy) && !qa_actor_id_equal(c->enemy, c->owner)) {
+        if (q2_actor_live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->enemy)) && !qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(g->services.session), c->enemy), qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner))) {
             qa_body_state target, self;
-            if (!qa_world_body_read(g->services.world, c->enemy, &target, e) ||
+            if (!qa_world_body_read(g->services.world, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->enemy), &target, e) ||
                 !qa_world_body_read(g->services.world, a->id, &self, e))
                 return false;
             qa_actor_id sphere;
             bool distant = qa_vec_length(qa_vec_sub(target.origin, self.origin)) > 768;
-            if (!launch(g, a->id, distant ? Q2_SPHERE_HUNTER : Q2_SPHERE_VENGEANCE, true, c->owner,
+            if (!launch(g, a->id, distant ? Q2_SPHERE_HUNTER : Q2_SPHERE_VENGEANCE, true, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner),
                         &sphere, e))
                 return false;
             q2_actor *child = companion_actor(g, sphere);
@@ -610,7 +629,7 @@ bool q2_item_traits(qa_q2_game *g, qa_actor_id id, qa_builtin_actor_traits *out)
     *out = (qa_builtin_actor_traits){
         .classname =
             a->item->definition ? q2_item_classname(g, a->item->definition) : record->definition,
-        .owner = a->item->owner,
+        .owner = qa_actor_reference_resolve(qa_session_actors(g->services.session), a->item->owner),
         .damageable_target = a->item->companion && a->item->companion->kind == Q2_DOPPLEGANGER};
     return true;
 }

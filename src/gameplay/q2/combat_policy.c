@@ -41,7 +41,7 @@ bool qa_q2_combat_actor_read(const qa_q2_game *game, qa_actor_id actor,
         const q2_actor *sphere = game->actors[state->powers->sphere.slot];
         if (sphere && qa_actor_id_equal(sphere->id, state->powers->sphere) && sphere->item &&
             sphere->item->companion &&
-            qa_actor_id_equal(sphere->item->companion->owner, actor))
+            qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(game->services.session), sphere->item->companion->owner), actor))
             view.defender_sphere = sphere->item->companion->kind == Q2_SPHERE_DEFENDER;
     }
     *out = view;

@@ -123,7 +123,7 @@ bool qa_q2_items_publish_visibility(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_pickups_rebind(qa_q2_game *, qa_error *);
 typedef struct qa_q2_companion_checkpoint {
     uint32_t kind;
-    qa_q2_saved_reference owner, enemy, child, credit;
+    qa_actor_reference owner, enemy, child, credit;
     uint64_t expires_ns, attack_ns, next_ns, turn_ns;
     qa_vec3 goal;
     int frame;
@@ -134,7 +134,8 @@ typedef struct qa_q2_item_checkpoint {
     bool present, powers_present;
     qa_string_id definition;
     qa_q2_item_spawn spawn;
-    qa_q2_saved_reference owner, team_master, team_next, sphere;
+    qa_actor_reference owner;
+    qa_q2_saved_reference team_master, team_next, sphere;
     uint64_t due_ns, expires_ns;
     uint32_t think;
     bool targets_used, retained, visible, touchable, temporary;

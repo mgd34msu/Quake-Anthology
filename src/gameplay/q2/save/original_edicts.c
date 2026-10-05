@@ -259,10 +259,10 @@ static q2_actor *appearance_player(qa_q2_game *game, q2_actor *actor)
     qa_actor_id owner = actor->entity ? actor->entity->owner : (qa_actor_id){0};
     if (actor->item && actor->item->companion) {
         q2_companion *companion = actor->item->companion;
-        owner = companion->credit;
+        owner = qa_actor_reference_resolve(qa_session_actors(game->services.session), companion->credit);
         if (!owner.registry) {
-            q2_actor *base = q2_actor_get(game, companion->owner, false, NULL);
-            if (base && base->item && base->item->companion) owner = base->item->companion->owner;
+            q2_actor *base = q2_actor_get(game, qa_actor_reference_resolve(qa_session_actors(game->services.session), companion->owner), false, NULL);
+            if (base && base->item && base->item->companion) owner = qa_actor_reference_resolve(qa_session_actors(game->services.session), base->item->companion->owner);
         }
     }
     q2_actor *player = q2_actor_get(game, owner, false, NULL);

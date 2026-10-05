@@ -127,15 +127,15 @@ static bool companion_record(qa_q2_game *game, q2_original_record_io *io,
         if (!io->references_only &&
             !q2_original_scalar(io, "spawnflags", Q2_ORIGINAL_U32, 284, 284, 284, &flags)) return false;
         if (io->reading && !io->references_only) companion->decoy = (flags & 256u) != 0;
-        qa_actor_id credit = io->reading || companion->decoy ? companion->credit : (qa_actor_id){0};
-        if (!q2_original_reference(game, io, "owner", 256, &companion->owner) ||
-            !q2_original_reference(game, io, "teammaster", 564, &credit) ||
-            !q2_original_reference(game, io, "enemy", 540, &companion->enemy)) return false;
+        qa_actor_reference credit = io->reading || companion->decoy ? companion->credit : (qa_actor_reference){0};
+        if (!q2_original_source_reference(game, io, "owner", 256, &companion->owner) ||
+            !q2_original_source_reference(game, io, "teammaster", 564, &credit) ||
+            !q2_original_source_reference(game, io, "enemy", 540, &companion->enemy)) return false;
         if (io->reading) {
-            companion->active = kind != Q2_SPHERE_DEFENDER && companion->enemy.registry != 0;
+            companion->active = kind != Q2_SPHERE_DEFENDER && qa_actor_reference_present(companion->enemy);
             companion->credit = companion->decoy ? credit : companion->owner;
             actor->item->owner = companion->decoy ? companion->credit : companion->owner;
-            q2_actor *owner = q2_actor_get(game, companion->owner, false, NULL);
+            q2_actor *owner = q2_actor_get(game, qa_actor_reference_resolve(qa_session_actors(game->services.session), companion->owner), false, NULL);
             if (owner && owner->client) {
                 if (owner->powers) owner->powers->sphere = actor->id;
                 companion->camera = kind == Q2_SPHERE_HUNTER && owner->client->sphere_vehicle;
@@ -156,29 +156,29 @@ static bool companion_record(qa_q2_game *game, q2_original_record_io *io,
             !companion_callback(game, io, "touch", 444, companion->active ?
                 kind == Q2_SPHERE_HUNTER ? "hunter_touch" : "vengeance_touch" : NULL)) return false;
     } else {
-        if (!q2_original_reference(game, io, "teammaster", 564, &companion->owner)) return false;
+        if (!q2_original_source_reference(game, io, "teammaster", 564, &companion->owner)) return false;
         if (kind == Q2_DOPPLEGANGER) {
-            if (!q2_original_reference(game, io, "enemy", 540, &companion->enemy) ||
-                !q2_original_reference(game, io, "teamchain", 560, &companion->child)) return false;
+            if (!q2_original_source_reference(game, io, "enemy", 540, &companion->enemy) ||
+                !q2_original_source_reference(game, io, "teamchain", 560, &companion->child)) return false;
             if (io->reading) { companion->credit = companion->owner; actor->item->owner = companion->owner; }
             if (io->references_only) return true;
             if (!companion_callback(game, io, "pain", 452, "doppleganger_pain") ||
                 !companion_callback(game, io, "die", 456, "doppleganger_die")) return false;
         } else {
-            qa_actor_id credit = companion->credit;
-            if (!io->reading && io->edition == QA_Q2_RERELEASE && !credit.registry) {
-                q2_actor *base = q2_actor_get(game, companion->owner, false, NULL);
+            qa_actor_reference credit = companion->credit;
+            if (!io->reading && io->edition == QA_Q2_RERELEASE && !qa_actor_reference_present(credit)) {
+                q2_actor *base = q2_actor_get(game, qa_actor_reference_resolve(qa_session_actors(game->services.session), companion->owner), false, NULL);
                 if (base && base->item && base->item->companion) credit = base->item->companion->owner;
             }
             if (io->edition == QA_Q2_RERELEASE &&
-                !q2_original_reference(game, io, "owner", 256, &credit)) return false;
+                !q2_original_source_reference(game, io, "owner", 256, &credit)) return false;
             if (io->reading) companion->credit = credit;
             if (io->references_only) return true;
             if (!q2_original_scalar(io, "timestamp", Q2_ORIGINAL_TIME,
                 288, 288, 288, &companion->turn_ns)) return false;
             if (io->reading) {
                 companion->goal.y = actor->physics.ideal_yaw;
-                q2_actor *base = q2_actor_get(game, companion->owner, false, NULL);
+                q2_actor *base = q2_actor_get(game, qa_actor_reference_resolve(qa_session_actors(game->services.session), companion->owner), false, NULL);
                 companion->expires_ns = base && base->item && base->item->companion ?
                     base->item->companion->expires_ns : UINT64_MAX;
             }
@@ -218,7 +218,7 @@ bool q2_original_item_record(qa_q2_game *game, q2_original_record_io *io,
         if (!qa_q2_item_restore(game, actor->id, &saved, error)) return false;
     }
     q2_item_state *state = actor->item;
-    if (!q2_original_reference(game, io, "owner", 256, &state->owner) ||
+    if (!q2_original_source_reference(game, io, "owner", 256, &state->owner) ||
         !q2_original_reference(game, io, "teammaster", 564, &state->spawn.team_master) ||
         !q2_original_reference(game, io, "teamchain", 560, &state->spawn.team_next)) return false;
     if (io->references_only) return true;

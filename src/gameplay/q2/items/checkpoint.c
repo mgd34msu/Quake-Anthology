@@ -46,8 +46,8 @@ bool qa_q2_item_capture(qa_q2_game *g, qa_actor_id id, qa_q2_item_checkpoint *ou
         if (!q2_saved_array(v->picked_slots, v->picked_count, sizeof(*v->picked_slots), &copy, e))
             return false;
         s.picked_slots = copy;
-        if (!q2_save_reference(g, v->owner, &s.owner, e) ||
-            !q2_save_reference(g, v->spawn.team_master, &s.team_master, e) ||
+        s.owner = v->owner;
+        if (!q2_save_reference(g, v->spawn.team_master, &s.team_master, e) ||
             !q2_save_reference(g, v->spawn.team_next, &s.team_next, e))
             goto fail;
         if (v->companion) {
@@ -63,11 +63,10 @@ bool qa_q2_item_capture(qa_q2_game *g, qa_actor_id id, qa_q2_item_checkpoint *ou
                                                        .active = c->active,
                                                        .decoy = c->decoy,
                                                        .camera = c->camera};
-            if (!q2_save_reference(g, c->owner, &s.companion.owner, e) ||
-                !q2_save_reference(g, c->enemy, &s.companion.enemy, e) ||
-                !q2_save_reference(g, c->child, &s.companion.child, e) ||
-                !q2_save_reference(g, c->credit, &s.companion.credit, e))
-                goto fail;
+            s.companion.owner = c->owner;
+            s.companion.enemy = c->enemy;
+            s.companion.child = c->child;
+            s.companion.credit = c->credit;
         }
     }
     if (a->powers) {
@@ -160,8 +159,8 @@ bool qa_q2_item_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_item_checkpoi
         if (!q2_saved_array(s->picked_slots, s->picked_count, sizeof(*s->picked_slots), &copy, e))
             goto fail;
         v->picked_slots = copy;
-        if (!q2_resolve_reference(g, s->owner, &v->owner, e) ||
-            !q2_resolve_reference(g, s->team_master, &v->spawn.team_master, e) ||
+        v->owner = s->owner;
+        if (!q2_resolve_reference(g, s->team_master, &v->spawn.team_master, e) ||
             !q2_resolve_reference(g, s->team_next, &v->spawn.team_next, e))
             goto fail;
         if (s->companion.kind != Q2_COMPANION_NONE) {
@@ -181,11 +180,10 @@ bool qa_q2_item_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_item_checkpoi
                                 .active = saved->active,
                                 .decoy = saved->decoy,
                                 .camera = saved->camera};
-            if (!q2_resolve_reference(g, saved->owner, &c->owner, e) ||
-                !q2_resolve_reference(g, saved->enemy, &c->enemy, e) ||
-                !q2_resolve_reference(g, saved->child, &c->child, e) ||
-                !q2_resolve_reference(g, saved->credit, &c->credit, e))
-                goto fail;
+            c->owner = saved->owner;
+            c->enemy = saved->enemy;
+            c->child = saved->child;
+            c->credit = saved->credit;
         }
     }
     if (s->powers_present) {
