@@ -154,12 +154,10 @@ static bool image_policy_rows(const qa_cvar_view *const rows[3], qa_scene_image_
 {
     for (unsigned i = 0; i < 3; ++i)
         if (!rows[i]) return policy_fail(error, "Image policy lacks an actual shared ENGINE declaration");
-    double level = rows[0]->number, mask = rows[1]->number;
+    double level = rows[0]->number;
     int32_t priority = level > 1 ? 2 : level >= 1 ? 1 : 0;
-    double bits = isfinite(mask) && mask != 0 ? fmod(trunc(mask), 4294967296.0) : 0;
-    if (bits < 0) bits += 4294967296.0;
     qa_scene_image_policy policy;
-    if (!qa_scene_image_policy_controls(priority, (uint32_t)bits, rows[2]->value, &policy, error)) return false;
+    if (!qa_scene_image_policy_controls(priority, (uint32_t)rows[1]->integer, rows[2]->value, &policy, error)) return false;
     for (unsigned i = 0; i < 3; ++i) out[i] = policy;
     return true;
 }

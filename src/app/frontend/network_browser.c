@@ -125,13 +125,12 @@ static int32_t integer(const char *text)
     if (end == text) return 0;
     return n > INT32_MAX ? INT32_MAX : n < INT32_MIN ? INT32_MIN : (int32_t)n;
 }
-static int32_t word(double value)
+static int32_t word(uint32_t bits)
 {
-    double n = fmod(trunc(value), 4294967296.0); if (n < 0) n += 4294967296.0;
-    uint32_t bits = (uint32_t)n; int32_t result; memcpy(&result, &bits, sizeof(result)); return result;
+    int32_t result; memcpy(&result, &bits, sizeof(result)); return result;
 }
-static double elapsed(uint64_t now, uint64_t then)
-{ return trunc((double)now / 1000000.0 - (double)then / 1000000.0); }
+static int32_t elapsed(uint64_t now, uint64_t then)
+{ return word((uint32_t)(now / UINT64_C(1000000)) - (uint32_t)(then / UINT64_C(1000000))); }
 static void rule(const char *info, const char *key, char *out, size_t capacity)
 {
     out[0] = 0; const char *p = info; if (*p == '\\') ++p;
@@ -228,7 +227,7 @@ static bool server_ping(void *ctx, int32_t source, int32_t index, int32_t *out, 
 {
     frontend_q3_browser_access *a = ctx; browser_row *row;
     if (!out || !access_current(ctx, e) || !row_read(a->browser, source, index, &row, e)) return false;
-    *out = row ? word(row->ping) : -1; return true;
+    *out = row ? (int32_t)row->ping : -1; return true;
 }
 static bool server_visible(void *ctx, int32_t source, int32_t index, int32_t *out, qa_error *e)
 {
@@ -361,7 +360,7 @@ static bool ping_time(frontend_q3_browser *b, browser_ping *slot, double *out, q
         return fail(e, "Info_SetValueForKey: oversize infostring");
     strcpy(info, result->entry.rules);
     if (!numeric(b, info, "nettype", 1, e)) return false;
-    strcpy(slot->info, info); *out = elapsed(result->completed_ns, result->sent_ns) + 1; return true;
+    strcpy(slot->info, info); *out = word((uint32_t)elapsed(result->completed_ns, result->sent_ns) + 1); return true;
 }
 static bool publish_ping(frontend_q3_browser *b, const qa_net_address *address, double ping, qa_error *e)
 {
@@ -383,10 +382,10 @@ static bool get_ping(void *ctx, int32_t index, int32_t capacity,
     if (!qa_net_address_format(&slot->address, address, sizeof(address), e) ||
         !writer->write(writer->context, address, e) || !access_current(ctx, e)) return false;
     double measured; if (!ping_time(a->browser, slot, &measured, e) || !access_current(ctx, e)) return false;
-    double duration = elapsed(a->browser->options.now_ns(a->browser->options.context), slot->start);
+    int32_t duration = elapsed(a->browser->options.now_ns(a->browser->options.context), slot->start);
     const qa_cvar_view *maximum = qa_cvars_find(a->cvars, "cl_maxPing");
-    double threshold = maximum && maximum->number > 100 ? maximum->number : 100;
-    *out = word(measured != 0 ? measured : duration < threshold ? 0 : duration);
+    int32_t threshold = maximum && maximum->integer > 100 ? maximum->integer : 100;
+    *out = measured != 0 ? (int32_t)measured : duration < threshold ? 0 : duration;
     return publish_ping(a->browser, &slot->address, measured, e);
 }
 static bool ping_info(void *ctx, int32_t index, int32_t capacity,
@@ -681,6 +680,7 @@ static bool view_valid(frontend_q3_browser *b, qa_error *e)
         for (uint32_t i = 0; i < list->capacity; ++i) {
             const browser_row *row = &list->rows[i];
             if (!memchr(row->name, 0, sizeof(row->name)) || !isfinite(row->ping) || trunc(row->ping) != row->ping ||
+                row->ping < INT32_MIN || row->ping > INT32_MAX ||
                 (row->addressed && !address_valid(&row->address)) ||
                 (i < list->count && !row->addressed)) return false;
             if (i < list->count) for (uint32_t j = 0; j < i; ++j)

@@ -2,6 +2,7 @@
 #include "qa/application_network.h"
 #include "qa/launch_identity.h"
 #include "qa/network_save.h"
+#include "qa/text.h"
 #include <float.h>
 #include <limits.h>
 #include <math.h>
@@ -188,10 +189,7 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
         if (!isfinite(v->source_frags) || (v->present && (!i || !v->name || (v->colors & 15) > 13 || (v->colors >> 4) > 13)) ||
             (!v->present && (v->name || v->frags || v->source_frags != 0 || v->colors)))
             return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake source status cache has invalid native ownership");
-        double wrapped = fmod(trunc((double)v->source_frags), 4294967296.0);
-        if (wrapped < 0) wrapped += 4294967296.0;
-        uint32_t bits = (uint32_t)wrapped;
-        int32_t frags = bits <= INT32_MAX ? (int32_t)bits : -1 - (int32_t)(UINT32_MAX - bits);
+        int32_t frags = qa_source_float_to_i32(v->source_frags);
         if (v->frags != frags) return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake cache score differs from its actual source value");
     }
     return true;

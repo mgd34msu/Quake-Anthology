@@ -13,6 +13,7 @@
 #include "resource_bindings.h"
 #include "shared_resource_policy.h"
 #include "q1_sky.h"
+#include "qa/text.h"
 #include <stdio.h>
 
 enum { FRONTEND_STYLES = 256 };
@@ -661,8 +662,8 @@ static bool q1_effects(qa_frontend *frontend, frontend_event_state *state, qa_er
 }
 static float fog_fraction(float value)
 {
-    double byte = fmod(trunc((double)(value * 255)), 256);
-    return (float)(byte < 0 ? byte + 256 : byte) / 255;
+    uint8_t byte = (uint8_t)(uint32_t)qa_source_float_to_i32(value * 255.0f);
+    return (float)byte / 255;
 }
 static qa_vec3 fog_color(qa_vec3 color)
 {
@@ -672,12 +673,8 @@ static qa_q2_fog fog_source(qa_q2_fog fog)
 {
     fog.color = fog_color(fog.color); fog.start_color = fog_color(fog.start_color);
     fog.end_color = fog_color(fog.end_color); fog.sky_factor = fog_fraction(fog.sky_factor);
-    double start = fmod(trunc((double)fog.start_distance), 4294967296.0);
-    double end = fmod(trunc((double)fog.end_distance), 4294967296.0);
-    if (start < 0) start += 4294967296.0;
-    if (end < 0) end += 4294967296.0;
-    fog.start_distance = (float)(start >= 2147483648.0 ? start - 4294967296.0 : start);
-    fog.end_distance = (float)(end >= 2147483648.0 ? end - 4294967296.0 : end);
+    fog.start_distance = (float)qa_source_float_to_i32(fog.start_distance);
+    fog.end_distance = (float)qa_source_float_to_i32(fog.end_distance);
     return fog;
 }
 bool frontend_map_events(qa_frontend *frontend, qa_error *error)

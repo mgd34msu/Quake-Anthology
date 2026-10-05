@@ -672,17 +672,11 @@ static uint32_t counter(double value) {
     return value <= 0 ? 0 : value >= UINT32_MAX ? UINT32_MAX : (uint32_t)trunc(value);
 }
 static uint8_t source_byte(double value) {
-    return (uint8_t)(uint32_t)(fmod(trunc(value), 256.0) + 256.0);
+    return (uint8_t)(uint32_t)qa_source_float_to_i32((float)value);
 }
 static int16_t source_short(double value) {
-    uint16_t bits = (uint16_t)(uint32_t)(fmod(trunc(value), 65536.0) + 65536.0);
+    uint16_t bits = (uint16_t)(uint32_t)qa_source_float_to_i32((float)value);
     int16_t result; memcpy(&result, &bits, sizeof(result)); return result;
-}
-static int32_t source_integer(double value) {
-    double wrapped = fmod(trunc(value), 4294967296.0);
-    if (wrapped < 0) wrapped += 4294967296.0;
-    uint32_t bits = (uint32_t)wrapped;
-    int32_t result; memcpy(&result, &bits, sizeof(result)); return result;
 }
 static float particle_direction(float value) {
     double scaled = trunc((double)value * 16);
@@ -754,7 +748,7 @@ bool application_native_q1_wire_status(qa_application *app, qa_actor_owner owner
             okay = application_fail(error, QA_ERROR_FORMAT, "Native Q1 source client lost its actual roster binding"); break;
         }
         float score = view.frags;
-        int32_t frags = source_integer(score);
+        int32_t frags = qa_source_float_to_i32(score);
         players[count++] = (qa_application_network_q1_status_player){.actor = actor,
             .source_slot = slot + 1, .name = view.name, .source_frags = score, .frags = frags,
             .colors = (uint8_t)((view.shirt << 4) | view.pants),

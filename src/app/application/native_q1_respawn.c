@@ -8,6 +8,7 @@
 #include "qa/game_q1_bots.h"
 #include "qa/game_q1_maps.h"
 #include "qa/horde.h"
+#include "qa/text.h"
 
 #include <math.h>
 #include <string.h>
@@ -292,10 +293,7 @@ bool application_native_q1_mode_score(void *opaque, qa_mode_id mode, qa_actor_id
         if (!qa_q1_source_client_read(call.provider->state.q1, actor, &client))
             okay = application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 score lost its actual client record");
         if (okay) {
-            double number = isfinite(client.frags) ? fmod(trunc(client.frags), 4294967296.0) : 0;
-            if (number < 0) number += 4294967296.0;
-            uint32_t bits = (uint32_t)number;
-            memcpy(out, &bits, sizeof(*out));
+            *out = qa_source_float_to_i32(client.frags);
             okay = current(&call, error);
         }
     }
