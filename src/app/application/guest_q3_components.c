@@ -273,10 +273,8 @@ bool application_q3_components_destroy(application_q3_components **slot,qa_error
         qa_catalog_write_resolver_destroy(row->write_resolver); row->write_resolver=NULL;
         qa_launch_instance_lease_release(row->metadata_lease); row->metadata_lease=NULL;
         free(row->presentation_runtime); row->presentation_runtime=NULL;
-        qa_unified_document_destroy(row->identity); row->identity=NULL;
-        free(row->module.id); free(row->module.artifact_path);
-        free(row->module.digest); free(row->module.revision);
-        row->module=(qa_unified_mod_identity){0}; row->publication.module=NULL;
+        qa_unified_component_identity_dispose(&row->identity);
+        row->publication.identity=NULL; row->publication.module=NULL;
         free(row); owner->rows[i]=NULL;
     }
     if(owner->owns_clients&&!application_q3_component_client_adapter_destroy(&owner->clients_adapter,e)) return false;

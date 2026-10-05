@@ -21,26 +21,18 @@ static bool blob(qa_source_save_io *io,qa_buffer *value)
     }
     return qa_source_save_bytes(io,value->data,size);
 }
-static bool document(qa_source_save_io *io,qa_unified_document **value,qa_unified_document_kind kind)
+static bool document(qa_source_save_io *io,qa_unified_document **value)
 {
     qa_buffer bytes={0};
-    bool frame=kind==QA_UNIFIED_FRAME_DOCUMENT;
     if(io->direction==QA_SOURCE_SAVE_WRITE) {
-        if(!*value||qa_unified_document_type(*value)!=kind) return fail(io,"Component checkpoint document has another semantic domain");
-        if(frame) {
-            if(!qa_unified_document_encode(*value,&bytes,io->error)) return false;
-        } else {
-            qa_bytes source=qa_json_source(qa_unified_document_json(*value),qa_unified_document_root(*value));
-            bytes=(qa_buffer){(uint8_t *)source.data,source.size};
-        }
+        if(!*value||qa_unified_document_type(*value)!=QA_UNIFIED_FRAME_DOCUMENT)
+            return fail(io,"Component checkpoint document has another semantic domain");
+        if(!qa_unified_document_encode(*value,&bytes,io->error)) return false;
     }
     bool ok=blob(io,&bytes);
-    if(io->direction==QA_SOURCE_SAVE_READ) {
-        if(ok) ok=frame?qa_unified_document_decode(kind,(qa_bytes){bytes.data,bytes.size},value,io->error):
-            qa_unified_document_create(kind,(qa_bytes){bytes.data,bytes.size},value,io->error);
-    }
-    if(frame||io->direction==QA_SOURCE_SAVE_READ) qa_buffer_free(&bytes);
-    return ok;
+    if(ok&&io->direction==QA_SOURCE_SAVE_READ)
+        ok=qa_unified_document_decode(QA_UNIFIED_FRAME_DOCUMENT,(qa_bytes){bytes.data,bytes.size},value,io->error);
+    qa_buffer_free(&bytes); return ok;
 }
 static bool actor(qa_source_save_io *io,frontend_unified_components *owner,qa_actor_id *value)
 {
@@ -93,12 +85,16 @@ static bool arguments(qa_source_save_io *io,qa_command_tokens *value)
     }
     const char *tail=io->direction==QA_SOURCE_SAVE_WRITE?value->args_text:NULL;
     if(!qa_source_save_text(io,&tail)||!tail) return fail(io,"Saved component command has no literal args");
-    if(io->direction==QA_SOURCE_SAVE_READ) value->args_text=(char *)tail;
+    if(io->direction==QA_SOURCE_SAVE_READ) {
+        qa_command_tokens borrowed=*value,owned={0}; borrowed.args_text=(char *)tail;
+        if(!qa_command_tokens_copy(&borrowed,&owned,io->error)) return false;
+        free(value->values); *value=owned;
+    }
     return true;
 }
 static bool source(qa_source_save_io *io,remote_component_state *state)
 {
-    if(!qa_source_save_u64(io,&state->game_state_revision)||state->game_state_revision>QA_UNIFIED_SAFE_INTEGER||
+    if(!qa_source_save_i64(io,&state->game_state_revision)||state->game_state_revision<0||
         !qa_source_save_i32(io,&state->command_sequence)||state->command_sequence<0||
         !game_state(io,state->abi,&state->game_state)||!qa_source_save_count(io,&state->command_count,64)) return false;
     if(state->command_count>(size_t)state->command_sequence) return fail(io,"Saved component command history exceeds its reached sequence");
@@ -112,15 +108,23 @@ static bool source(qa_source_save_io *io,remote_component_state *state)
     }
     return true;
 }
+static bool identity(qa_source_save_io *io,qa_unified_component_identity *value)
+{
+    qa_buffer bytes={0}; bool writing=io->direction==QA_SOURCE_SAVE_WRITE;
+    bool okay=(!writing || qa_unified_component_identity_write(value,&bytes,io->error)) && blob(io,&bytes);
+    if (okay && !writing) okay=qa_unified_component_identity_read((qa_bytes){bytes.data,bytes.size},value,io->error);
+    qa_buffer_free(&bytes); return okay;
+}
 static bool state(qa_source_save_io *io,frontend_unified_components *owner,remote_component_state *value)
 {
     uint32_t abi=(uint32_t)value->abi;
     if(!qa_source_save_owned_text(io,&value->provider)||!value->provider||
-        !qa_source_save_u64(io,&value->owner_generation)||!value->owner_generation||value->owner_generation>QA_UNIFIED_SAFE_INTEGER||
-        !qa_source_save_u64(io,&value->generation)||value->generation>QA_UNIFIED_SAFE_INTEGER||
+        !qa_source_save_u64(io,&value->owner_generation)||!value->owner_generation||
+        !qa_source_save_u64(io,&value->generation)||
         !qa_source_save_u32(io,&abi)||(abi!=QA_QVM_Q3_MODERN&&abi!=QA_QVM_Q3_116N)||!qa_source_save_bool(io,&value->player_events)||
-        !document(io,&value->identity,QA_UNIFIED_CHECKPOINT)||!document(io,&value->presentation_owner,QA_UNIFIED_CHECKPOINT)) return false;
+        !identity(io,&value->identity)) return false;
     value->abi=(qa_qvm_abi)abi;
+    value->presentation_owner=(qa_unified_component_owner){value->provider,value->owner_generation};
     if(!source(io,value)) return false;
     return io->direction==QA_SOURCE_SAVE_WRITE||q3remote_component_state_qualify(owner,value,io->error);
 }
@@ -159,7 +163,7 @@ static bool frame(qa_source_save_io *io,remote_component *row,remote_component_f
     remote_component_frame *value=*slot; application_q3_scene_context *c=&value->context;
     if(!actor(io,row->parent,&value->viewer)||!value->viewer.registry||
         !qa_source_save_u64(io,&c->generation)||c->generation!=row->state.generation||
-        !qa_source_save_i64(io,&c->revision)||c->revision<0||(uint64_t)c->revision>QA_UNIFIED_SAFE_INTEGER||
+        !qa_source_save_i64(io,&c->revision)||c->revision<0||
         !qa_source_save_i64(io,&c->game_state_revision)||c->game_state_revision<0||
         !qa_source_save_i32(io,&c->time_ms)||c->time_ms<0||
         !qa_source_save_i32(io,&c->frame_ms)||c->frame_ms<0||
@@ -184,7 +188,7 @@ static bool frame(qa_source_save_io *io,remote_component *row,remote_component_f
     value->source.abi=row->state.abi;
     if(!viewer||!source(io,&value->source)||!snapshot(io,row->state.abi,&value->snapshot)||
         value->snapshot.server_time!=c->time_ms||value->snapshot.server_command_number!=value->source.command_sequence||
-        value->source.game_state_revision!=(uint64_t)c->game_state_revision||
+        value->source.game_state_revision!=c->game_state_revision||
         value->source.command_sequence>row->state.command_sequence||value->source.game_state_revision>row->state.game_state_revision)
         return fail(io,"Saved component frame lost its Source history");
     c->game_state=&value->source.game_state; c->commands=value->source.commands; c->command_count=value->source.command_count;
@@ -272,7 +276,7 @@ static bool admissions(qa_source_save_io *io,remote_component *row)
 static bool row_fields(qa_source_save_io *io,remote_component *row,const frontend_unified_components_refs *refs)
 {
     if(!state(io,row->parent,&row->state)) return false;
-    if(!qa_source_save_bool(io,&row->event_present)||!qa_source_save_u64(io,&row->event_sequence)||row->event_sequence>QA_UNIFIED_SAFE_INTEGER||
+    if(!qa_source_save_bool(io,&row->event_present)||!qa_source_save_u64(io,&row->event_sequence)||
         (!row->event_present&&row->event_sequence)) return false;
     size_t event_count=0;
     if(io->direction==QA_SOURCE_SAVE_WRITE) for(remote_component_event *event=row->events;event;event=event->next) ++event_count;
@@ -350,7 +354,7 @@ static bool fields(qa_source_save_io *io,frontend_unified_components *owner,cons
 {
     uint8_t magic[4]={'Q','U','C','P'}; uint32_t epoch=frontend_remote_unified_epoch(owner->replica);
     if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"QUCP",4)||!qa_source_save_u32(io,&epoch)||epoch!=frontend_remote_unified_epoch(owner->replica)||
-        !qa_source_save_u64(io,&owner->revision)||owner->revision>QA_UNIFIED_SAFE_INTEGER||
+        !qa_source_save_u64(io,&owner->revision)||
         !qa_source_save_count(io,&owner->count,256)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ) {
         owner->rows=owner->count?calloc(owner->count,sizeof(*owner->rows)):NULL;
@@ -399,7 +403,7 @@ static bool fields(qa_source_save_io *io,frontend_unified_components *owner,cons
         if(owner->count&&!owner->prepared->rows) return q3remote_component_fail(io->error,QA_ERROR_MEMORY,"Retaining actual prepared component frame rows");
     }
     qa_unified_document *input=io->direction==QA_SOURCE_SAVE_WRITE?(qa_unified_document *)owner->prepared->input:NULL;
-    if(!document(io,&input,QA_UNIFIED_FRAME_DOCUMENT)) return false;
+    if(!document(io,&input)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ) { owner->prepared->owned_input=input; owner->prepared->input=input; }
     for(size_t i=0;i<owner->count;++i) if(!frame(io,owner->rows[i],owner->prepared->rows+i)||!owner->prepared->rows[i]) return false;
     return true;

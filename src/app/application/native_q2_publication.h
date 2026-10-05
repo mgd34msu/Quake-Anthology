@@ -2,6 +2,7 @@
 #define QA_APPLICATION_NATIVE_Q2_PUBLICATION_H
 
 #include "network_unified.h"
+#include "unified_components_identity.h"
 
 struct application_native_q2;
 typedef struct application_native_q2_publication application_native_q2_publication;
@@ -15,15 +16,12 @@ typedef struct application_native_q2_publication_view {
     const application_native_q2_publication *registration;
     const qa_launch_instance *descriptor;
     const qa_catalog_mod *metadata;
-    const qa_unified_document *identity;
+    const qa_unified_component_identity *identity;
     qa_actor_owner owner, source_owner;
     uint64_t activation_generation, generation;
     application_native_q2_hud_mode hud;
     bool camera;
 } application_native_q2_publication_view;
-
-bool application_native_q2_component_identity_create(const qa_catalog_mod *,const qa_product *,
-    const char *instance,qa_unified_document **,qa_error *);
 
 /* Factory owns this child of an actually admitted native GAME. No selected
  * component declaration means no registration, including stock native GAME. */

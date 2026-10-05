@@ -17,23 +17,6 @@ bool q3scene_current(const application_q3_scene *s)
 }
 static bool argument(const qa_qvm_call *call, size_t i, int32_t *v, qa_error *e)
 { return qa_qvm_call_argument(call, i + 1, v, e); }
-static bool tokens_copy(const qa_command_tokens *from, qa_command_tokens *to, qa_error *e)
-{
-    size_t size = from->args_text ? strlen(from->args_text) + 1 : 1;
-    for (size_t i = 0; i < from->count; ++i) {
-        size_t n = strlen(from->values[i]) + 1;
-        if (n > SIZE_MAX - size) return q3scene_fail(e, QA_ERROR_MEMORY, "Component arguments overflow");
-        size += n;
-    }
-    qa_command_tokens value = {.count = from->count};
-    value.storage = malloc(size); value.values = from->count ? calloc(from->count, sizeof(*value.values)) : NULL;
-    if (!value.storage || (from->count && !value.values)) { qa_command_tokens_free(&value); return q3scene_fail(e, QA_ERROR_MEMORY, "Retaining component arguments"); }
-    char *at = value.storage;
-    for (size_t i = 0; i < from->count; ++i) {
-        size_t n = strlen(from->values[i]) + 1; value.values[i] = at; memcpy(at, from->values[i], n); at += n;
-    }
-    value.args_text = at; strcpy(at, from->args_text ? from->args_text : ""); *to = value; return true;
-}
 static bool store(application_q3_scene *s, uint32_t at, int32_t v, qa_error *e)
 { uint8_t b[4]; qa_store_u32le(b, (uint32_t)v); return qa_qvm_write(s->vm, at, (qa_bytes){b, 4}, e); }
 static bool words(application_q3_scene *s, uint32_t at, const float *values, size_t count, qa_error *e)
@@ -110,7 +93,7 @@ static bool syscall(void *context, const qa_qvm_call *call, int32_t trap, int32_
         q3scene_command *row = seq >= 0 ? s->commands + (uint32_t)seq % 64 : NULL;
         if (!row || row->sequence != seq) return q3scene_fail(e, QA_ERROR_FORMAT, "Component requested an unavailable source command");
         qa_command_tokens_free(&s->reached);
-        if (!tokens_copy(&row->tokens, &s->reached, e)) return false;
+        if (!qa_command_tokens_copy(&row->tokens, &s->reached, e)) return false;
         *result = s->reached.count != 0; return true;
     }
     if (code >= 7 && code <= 9) {
@@ -324,7 +307,7 @@ static bool accept(application_q3_scene *s, bool baseline, bool *changed, qa_err
         if ((int64_t)command->sequence<=(int64_t)latest-64) continue;
         qa_command_tokens t={0};
         if (command->addressed&&command->arguments) {
-            if(!tokens_copy(command->arguments,&t,e)) return false;
+            if(!qa_command_tokens_copy(command->arguments,&t,e)) return false;
         } else if (!qa_command_tokenize(command->addressed?command->text:"",QA_CONSOLE_Q3,false,&t,e)) return false;
         q3scene_command *row=s->commands+(uint32_t)command->sequence%64;
         qa_command_tokens_free(&row->tokens); *row=(q3scene_command){command->sequence,t};

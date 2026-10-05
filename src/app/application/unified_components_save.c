@@ -1,3 +1,4 @@
+#include "qa/network_unified_control.h"
 #include "unified_components_save.h"
 #include "unified_components_internal.h"
 #include "network_unified_private.h"
@@ -55,8 +56,8 @@ static bool cursor_fields(qa_source_save_io *io, component_cursor *row)
         !qa_source_save_i64(io, &row->game_state_revision) || !qa_source_save_i32(io, &row->sequence) ||
         !qa_source_save_u32(io, &abi) || !qa_source_save_bool(io, &row->scene)) return false;
     row->abi = (qa_qvm_abi)abi;
-    return row->owner && row->generation && row->generation <= QA_UNIFIED_SAFE_INTEGER &&
-        row->game_state_revision >= 0 && row->game_state_revision <= (int64_t)QA_UNIFIED_SAFE_INTEGER &&
+    return row->owner && row->generation &&
+        row->game_state_revision >= 0 &&
         row->sequence >= 0 && (row->scene || !row->sequence) &&
         (row->abi == QA_QVM_Q3_MODERN || row->abi == QA_QVM_Q3_116N);
 }
@@ -86,8 +87,7 @@ static bool native_fields(qa_source_save_io *io, native_cursor *row)
         qa_source_save_u64(io, &row->configuration_revision) &&
         qa_source_save_u64(io, &row->layout_revision) && qa_source_save_u64(io, &row->inventory_revision) &&
         qa_source_save_u32(io, &row->source_slot) && row->source_slot && row->source_slot <= 256 &&
-        row->owner && row->activation &&
-        row->activation <= QA_UNIFIED_SAFE_INTEGER && row->generation <= QA_UNIFIED_SAFE_INTEGER;
+        row->owner && row->activation;
 }
 
 static bool owners_valid(qa_application *app, const application_unified_source *source,
@@ -132,7 +132,6 @@ static bool publisher_fields(qa_source_save_io *io, application_unified_componen
     return magic(io, "QUCP") && recipient_fields(io, p->recipient, p->actor) &&
         qa_source_save_u32(io, &p->epoch) && qa_source_save_u64(io, &p->revision) &&
         qa_source_save_u64(io, &p->serial) && rows_fields(io, &p->rows, &p->count, NULL) && native_fields(io, &p->native) &&
-        p->revision <= QA_UNIFIED_SAFE_INTEGER &&
         (p->epoch ? p->serial && ((!p->count && !p->native.present) || p->revision) :
             (!p->revision && !p->serial && !p->count && !p->native.present));
 }
@@ -261,45 +260,6 @@ bool application_unified_components_restore_dropped(qa_bytes bytes, const applic
         &drop->admitted_player, drop, out, e);
 }
 
-static bool owner_json(const qa_json_document *json, qa_json_id value, qa_session *session,
-    qa_actor_owner owner, uint64_t generation, qa_error *e)
-{
-    uint64_t saved;
-    const char *name = qa_strings_cstr(qa_session_strings(session), owner);
-    return name && qa_json_string_equal(json, qa_json_get(json, value, "provider"), name) &&
-        qa_json_u64(json, qa_json_get(json, value, "generation"), &saved, e) && saved == generation;
-}
-
-static bool json_equal(const qa_json_document *a, qa_json_id av,
-    const qa_json_document *b, qa_json_id bv, qa_error *e)
-{
-    qa_buffer x = {0}, y = {0};
-    bool ok = qa_unified_value_canonical(qa_json_source(a, av), &x, e) &&
-        qa_unified_value_canonical(qa_json_source(b, bv), &y, e) &&
-        x.size == y.size && (!x.size || !memcmp(x.data, y.data, x.size));
-    qa_buffer_free(&x); qa_buffer_free(&y);
-    return ok;
-}
-
-static bool game_state_json(const qa_unified_document *doc, qa_json_id value, qa_error *e)
-{
-    const qa_json_document *json = qa_unified_document_json(doc);
-    qa_json_id offsets = qa_json_get(json, value, "stringOffsets"); uint64_t count;
-    qa_buffer bytes = {0};
-    bool ok = qa_json_type(json, value) == QA_JSON_OBJECT &&
-        qa_json_type(json, offsets) == QA_JSON_ARRAY && qa_json_size(json, offsets) == QA_Q3_CONFIGSTRINGS &&
-        qa_json_u64(json, qa_json_get(json, value, "dataCount"), &count, e) &&
-        count && count <= QA_Q3_GAMESTATE_CHARS && qa_unified_document_bytes(doc,
-            qa_json_get(json, value, "stringData"), &bytes, e) && bytes.size == QA_Q3_GAMESTATE_CHARS && !bytes.data[0];
-    for (size_t i = 0; ok && i < QA_Q3_CONFIGSTRINGS; ++i) {
-        uint64_t offset;
-        ok = qa_json_u64(json, qa_json_at(json, offsets, i), &offset, e) && offset < count &&
-            memchr(bytes.data + offset, 0, (size_t)(count - offset)) != NULL;
-    }
-    qa_buffer_free(&bytes);
-    return ok;
-}
-
 static const component_cursor *previous_row(const application_unified_component_capture *v,
     const component_cursor *row)
 {
@@ -333,73 +293,47 @@ static bool candidate_valid(const application_unified_component_capture *v, qa_e
     }
     uint64_t revision = p->epoch == v->epoch ? p->revision : 0;
     if (changed) {
-        if (revision == QA_UNIFIED_SAFE_INTEGER) return bad(e, "Sealed component revision is exhausted");
+        if (revision == UINT64_MAX) return bad(e, "Sealed component revision is exhausted");
         ++revision;
     }
     return (revision == v->revision && changed == (v->control != NULL)) ||
         bad(e, "Sealed component update does not follow its committed cursor");
 }
 
-static bool roster_control(const qa_unified_document *doc, qa_json_id root,
-    const application_unified_component_capture *v, qa_error *e)
+static bool control_owner(const qa_unified_component_owner *owner,qa_session *session,
+    qa_actor_owner provider,uint64_t generation)
 {
-    const qa_json_document *json = qa_unified_document_json(doc);
-    uint64_t revision;
-    if (!qa_json_u64(json, qa_json_get(json, root, "revision"), &revision, e) || revision != v->revision) return false;
-    qa_json_id sources = qa_json_get(json, root, "sources"), native = qa_json_get(json, root, "native");
-    if (qa_json_type(json, sources) != QA_JSON_ARRAY || qa_json_size(json, sources) != v->count ||
-        qa_json_type(json, native) != QA_JSON_ARRAY || qa_json_size(json, native) != (v->native.present ? 1u : 0u)) return false;
-    for (size_t i = 0; i < v->count; ++i) {
-        const component_cursor *row = v->rows + i;
-        qa_json_id item = qa_json_at(json, sources, i);
-        int64_t gs; uint64_t generation;
-        if (!owner_json(json, qa_json_get(json, item, "owner"), v->source.session, row->owner, row->generation, e) ||
-            !qa_json_u64(json, qa_json_get(json, item, "generation"), &generation, e) || generation != row->generation ||
-            !qa_json_i64(json, qa_json_get(json, item, "gameStateRevision"), &gs, e) || gs != row->game_state_revision ||
-            !qa_json_string_equal(json, qa_json_get(json, item, "abi"),
-                row->abi == QA_QVM_Q3_MODERN ? "q3-modern" : "q3-1.16n-base") ||
-            !qa_json_string_equal(json, qa_json_get(json, item, "runtime"),
-                row->scene ? "qvm-scene" : "qvm-player-events")) return false;
-        int64_t base;
-        const component_cursor *old = previous_row(v, row);
-        int32_t expected_base = old ? old->sequence : row->sequence;
-        qa_json_id commands = qa_json_get(json, item, "commands");
-        application_q3_component_publication publication = {0}; bool found;
-        if (!application_q3_components_checkpoint_publication_read(v->owner->application, row->owner, &publication, &found, e) ||
-            !found || publication.generation != row->generation ||
-            !json_equal(json, qa_json_get(json, item, "identity"), qa_unified_document_json(publication.identity),
-                qa_unified_document_root(publication.identity), e) ||
-            !qa_json_i64(json, qa_json_get(json, item, "commandBase"), &base, e) || base != expected_base ||
-            qa_json_type(json, commands) != QA_JSON_ARRAY || qa_json_size(json, commands) > 64) return false;
-        for (size_t c = 0; c < qa_json_size(json, commands); ++c) {
-            qa_json_id command = qa_json_at(json, commands, c); int64_t sequence;
-            qa_json_id arguments = qa_json_get(json, command, "arguments");
-            if (!qa_json_i64(json, qa_json_get(json, command, "sequence"), &sequence, e) ||
-                base == INT32_MAX || sequence != ++base || sequence > row->sequence ||
-                qa_json_type(json, arguments) != QA_JSON_ARRAY || qa_json_size(json, arguments) > 128) return false;
-            for (size_t a = 0; a < qa_json_size(json, arguments); ++a) {
-                qa_buffer argument = {0};
-                if (!qa_json_string(json, qa_json_at(json, arguments, a), &argument, e)) return false;
-                bool valid = argument.size <= 8192 && !memchr(argument.data, 0, argument.size);
-                qa_buffer_free(&argument);
-                if (!valid) return false;
-            }
+    const char *name=qa_strings_cstr(qa_session_strings(session),provider);
+    return name && owner->provider && !strcmp(name,owner->provider) && owner->generation==generation;
+}
+static bool roster_control(const qa_unified_components_control *update,
+    const application_unified_component_capture *v,qa_error *e)
+{
+    if (!update || update->revision!=v->revision || update->source_count!=v->count ||
+        update->native_count!=(v->native.present?1u:0u)) return false;
+    for (size_t i=0;i<v->count;++i) {
+        const component_cursor *row=v->rows+i,*old=previous_row(v,row);
+        const qa_unified_component_q3 *item=update->sources+i;
+        application_q3_component_publication publication={0}; bool found;
+        if (!control_owner(&item->owner,v->source.session,row->owner,row->generation) || item->generation!=row->generation ||
+            item->game_state_revision!=row->game_state_revision || item->abi!=row->abi || item->scene!=row->scene ||
+            !application_q3_components_checkpoint_publication_read(v->owner->application,row->owner,&publication,&found,e) ||
+            !found || publication.generation!=row->generation ||
+            !qa_unified_component_identity_equal(&item->identity,publication.identity) ||
+            item->command_base!=(old?old->sequence:row->sequence)) return false;
+        int32_t through=item->command_base;
+        for (size_t k=0;k<item->command_count;++k) {
+            if (through==INT32_MAX || item->commands[k].sequence!=++through || through>row->sequence) return false;
         }
-        if (base != row->sequence) return false;
-        qa_json_id state = qa_json_get(json, item, "gameState");
-        bool game_changed = !old || old->game_state_revision != row->game_state_revision;
-        if (game_changed ? !game_state_json(doc, state, e) : qa_json_type(json, state) != QA_JSON_NULL) return false;
+        if (through!=row->sequence || (item->game_state!=NULL)!=(!old || old->game_state_revision!=row->game_state_revision)) return false;
     }
     if (v->native.present) {
-        qa_json_id item = qa_json_at(json, native, 0); uint64_t generation;
-        if (!owner_json(json, qa_json_get(json, item, "owner"), v->source.session, v->native.owner, v->native.activation, e) ||
-            !qa_json_u64(json, qa_json_get(json, item, "generation"), &generation, e) || generation != v->native.generation) return false;
-        application_native_q2_publication_view publication = {0}; bool found;
-        if (!application_native_q2_publication_checkpoint_read(v->owner->application, &v->source, &publication, &found, e) ||
-            !found || publication.owner != v->native.owner || publication.activation_generation != v->native.activation ||
-            publication.generation != v->native.generation ||
-            !json_equal(json, qa_json_get(json, item, "identity"), qa_unified_document_json(publication.identity),
-                qa_unified_document_root(publication.identity), e)) return false;
+        const qa_unified_component_q2 *item=update->native;
+        application_native_q2_publication_view publication={0}; bool found;
+        if (!control_owner(&item->owner,v->source.session,v->native.owner,v->native.activation) || item->generation!=v->native.generation ||
+            !application_native_q2_publication_checkpoint_read(v->owner->application,&v->source,&publication,&found,e) ||
+            !found || publication.owner!=v->native.owner || publication.activation_generation!=v->native.activation ||
+            publication.generation!=v->native.generation || !qa_unified_component_identity_equal(&item->identity,publication.identity)) return false;
     }
     return true;
 }
@@ -438,14 +372,10 @@ static bool capture_documents(const application_unified_component_capture *v, qa
     if (!roster_frame(v))
         return bad(e, "Component queue frame differs from its retained cursor");
     if (v->control) {
-        const qa_json_document *json = qa_unified_document_json(v->control);
-        qa_json_id value = qa_json_get(json, qa_unified_document_root(v->control), "value");
-        uint64_t epoch;
-        if (qa_unified_document_type(v->control) != QA_UNIFIED_CONTROL_DOCUMENT ||
-            !qa_json_string_equal(json, qa_json_get(json, value, "kind"), "components") ||
-            !qa_json_u64(json, qa_json_get(json, value, "epoch"), &epoch, e) || epoch != v->epoch ||
-            !roster_control(v->control, qa_json_get(json, value, "update"), v, e))
-            return bad(e, "Component reliable update differs from its immutable queue token");
+        const qa_unified_control *control=qa_unified_document_control(v->control);
+        if (!control || control->kind!=QA_UNIFIED_CONTROL_COMPONENTS || control->epoch!=v->epoch ||
+            !roster_control(&control->value.components,v,e))
+            return bad(e,"Component reliable update differs from its immutable queue token");
     }
     return true;
 }
@@ -458,7 +388,7 @@ static bool capture_fields(qa_source_save_io *io, application_unified_component_
         qa_source_save_u64(io, &v->revision) && qa_source_save_u64(io, &v->serial) &&
         rows_fields(io, &v->rows, &v->count, v->lease) && native_fields(io, &v->native) &&
         application_unified_save_document(io, &v->control, QA_UNIFIED_CONTROL_DOCUMENT) &&
-        v->epoch && v->revision <= QA_UNIFIED_SAFE_INTEGER && v->serial == v->owner->serial && v->serial != UINT64_MAX;
+        v->epoch && v->serial == v->owner->serial && v->serial != UINT64_MAX;
 }
 
 bool application_unified_components_capture_checkpoint(const application_unified_component_capture *v,

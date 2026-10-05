@@ -10,7 +10,6 @@ typedef bool (*check_fn)(reader);
 static reader field(reader r, const char *name) { r.id=qa_json_get(r.json,r.id,name); return r; }
 static bool fail(reader r, const char *why) { qa_error_set(r.error,QA_ERROR_FORMAT,0,"unified schema: %s",why); return false; }
 static bool type(reader r, qa_json_kind kind) { return qa_json_type(r.json,r.id)==kind || fail(r,"wrong field type"); }
-static bool absent(reader r) { return r.id==QA_JSON_NONE; }
 static bool record(reader r) {
     return type(r,QA_JSON_OBJECT) && (qa_json_get(r.json,r.id,"$qts")==QA_JSON_NONE || fail(r,"tagged value is not a record"));
 }
@@ -33,17 +32,6 @@ static bool integer(reader r, double low, double high) {
     double value;
     return number(r,&value) && ((isfinite(value) && floor(value)==value && value>=low && value<=high) || fail(r,"integer outside range"));
 }
-static bool natural(reader r) { return integer(r,0,(double)QA_UNIFIED_SAFE_INTEGER); }
-static bool list(reader r, size_t minimum, size_t maximum, check_fn check) {
-    if (!type(r,QA_JSON_ARRAY)) return false;
-    size_t count=qa_json_size(r.json,r.id);
-    if (count<minimum || count>maximum) return fail(r,"list extent outside range");
-    for (size_t i=0;i<count;++i) {
-        reader element={r.json,qa_json_at(r.json,r.id,i),r.error};
-        if (check && !check(element)) return false;
-    }
-    return true;
-}
 static bool choices(reader r, const char *values) {
     while (*values) {
         const char *end=strchr(values,' '); size_t count=end?(size_t)(end-values):strlen(values);
@@ -56,16 +44,10 @@ static bool choices(reader r, const char *values) {
     }
     return fail(r,"unknown variant");
 }
-static bool component_header(reader r) {
-    reader sources=field(r,"sources"),native=field(r,"native");
-    return record(r) && natural(field(r,"revision")) && list(sources,0,256,record) && (absent(native) || list(native,0,256,record)) &&
-        (qa_json_size(r.json,sources.id)+qa_json_size(r.json,native.id)<=256 || fail(r,"too many component owners"));
-}
 static bool control(reader r) {
     reader kind=field(r,"kind");
     if (!integer(field(r,"epoch"),1,4294967295.0)) return false;
     if (is(kind,"offer")) return record(field(r,"composition")) && choices(field(r,"mode"),"singleplayer coop deathmatch") && integer(field(r,"maxClients"),1,256);
-    if (is(kind,"components")) return component_header(field(r,"update")) && integer(field(field(r,"update"),"revision"),1,(double)QA_UNIFIED_SAFE_INTEGER);
     return fail(r,"unknown control variant");
 }
 

@@ -2111,6 +2111,77 @@ static const qa_unified_field control_arguments_fields[] = {
     QA_UNIFIED_ARRAY(qa_unified_control_arguments, values, count, control_string_layout, 128),
 };
 static const qa_unified_record_layout control_arguments_layout = QA_UNIFIED_LAYOUT(qa_unified_control_arguments, control_arguments_fields);
+static const qa_unified_field component_identity_fields[] = {
+    QA_UNIFIED_FIELD(qa_unified_component_identity, runtime, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_unified_component_identity, product, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_component_identity, id, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_component_identity, provider, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_component_identity, content, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_RAW(qa_unified_component_identity, declaration_digest),
+    QA_UNIFIED_RECORD(qa_unified_component_identity, module, qa_unified_mod_identity_layout),
+};
+static const qa_unified_record_layout component_identity_layout = QA_UNIFIED_LAYOUT(qa_unified_component_identity, component_identity_fields);
+static const qa_unified_field component_command_fields[] = {
+    QA_UNIFIED_FIELD(qa_unified_component_command, sequence, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_RECORD(qa_unified_component_command, arguments, control_arguments_layout),
+};
+static const qa_unified_record_layout component_command_layout = QA_UNIFIED_LAYOUT(qa_unified_component_command, component_command_fields);
+static const qa_unified_field component_q3_fields[] = {
+    QA_UNIFIED_RECORD(qa_unified_component_q3, owner, qa_unified_component_owner_layout),
+    QA_UNIFIED_RECORD(qa_unified_component_q3, identity, component_identity_layout),
+    QA_UNIFIED_FIELD(qa_unified_component_q3, generation, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_unified_component_q3, abi, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_unified_component_q3, scene, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_unified_component_q3, game_state_revision, QA_UNIFIED_FIELD_I64),
+    QA_UNIFIED_POINTER(qa_unified_component_q3, game_state, qa_q3_gamestate_layout),
+    QA_UNIFIED_FIELD(qa_unified_component_q3, command_base, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_ARRAY(qa_unified_component_q3, commands, command_count, component_command_layout, 64),
+};
+static const qa_unified_record_layout component_q3_layout = QA_UNIFIED_LAYOUT(qa_unified_component_q3, component_q3_fields);
+static const qa_unified_field component_configstring_fields[] = {
+    QA_UNIFIED_FIELD(qa_unified_component_configstring, index, QA_UNIFIED_FIELD_U32),
+    {QA_UNIFIED_FIELD_STRING, offsetof(qa_unified_component_configstring, value), NULL, 0, 8192, NULL},
+};
+static const qa_unified_record_layout component_configstring_layout = QA_UNIFIED_LAYOUT(qa_unified_component_configstring, component_configstring_fields);
+static const qa_unified_field component_protocol_fields[] = {
+    QA_UNIFIED_FIELD(qa_net_protocol_id, kind, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_net_protocol_id, flags, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_net_protocol_id, revision, QA_UNIFIED_FIELD_U32),
+};
+static const qa_unified_record_layout component_protocol_layout = QA_UNIFIED_LAYOUT(qa_net_protocol_id, component_protocol_fields);
+static const qa_unified_field component_q2_fields[] = {
+    QA_UNIFIED_RECORD(qa_unified_component_q2, owner, qa_unified_component_owner_layout),
+    QA_UNIFIED_RECORD(qa_unified_component_q2, identity, component_identity_layout),
+    QA_UNIFIED_FIELD(qa_unified_component_q2, generation, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_unified_component_q2, hud, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_RECORD(qa_unified_component_q2, protocol, component_protocol_layout),
+    QA_UNIFIED_FIELD(qa_unified_component_q2, replace_configstrings, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_ARRAY(qa_unified_component_q2, configstrings, configstring_count, component_configstring_layout, 16384),
+    {QA_UNIFIED_FIELD_STRING, offsetof(qa_unified_component_q2, layout), NULL, 0, 65536, NULL},
+    QA_UNIFIED_FIXED(qa_unified_component_q2, inventory, int16_t_layout, 256),
+    QA_UNIFIED_FIELD(qa_unified_component_q2, player_number, QA_UNIFIED_FIELD_I32),
+};
+static const qa_unified_record_layout component_q2_layout = QA_UNIFIED_LAYOUT(qa_unified_component_q2, component_q2_fields);
+static const qa_unified_field control_components_fields[] = {
+    QA_UNIFIED_FIELD(qa_unified_components_control, revision, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_ARRAY(qa_unified_components_control, sources, source_count, component_q3_layout, 256),
+    QA_UNIFIED_ARRAY(qa_unified_components_control, native, native_count, component_q2_layout, 256),
+};
+static const qa_unified_record_layout control_components_layout = QA_UNIFIED_LAYOUT(qa_unified_components_control, control_components_fields);
+
+bool qa_unified_component_identity_clone(const qa_unified_component_identity *source,
+    qa_unified_component_identity *out, qa_error *error)
+{ return source && out && qa_unified_record_clone(&component_identity_layout,source,out,error); }
+bool qa_unified_component_identity_equal(const qa_unified_component_identity *a,const qa_unified_component_identity *b)
+{ return a && b && qa_unified_record_equal(&component_identity_layout,a,b); }
+void qa_unified_component_identity_dispose(qa_unified_component_identity *value)
+{ if (value) { qa_unified_record_dispose(&component_identity_layout,value); memset(value,0,sizeof(*value)); } }
+bool qa_unified_component_identity_write(const qa_unified_component_identity *value,qa_buffer *out,qa_error *error)
+{ return value && out && !out->data && !out->size &&
+    qa_unified_record_delta_encode(&component_identity_layout,value,NULL,32u * 1024u * 1024u,out,error); }
+bool qa_unified_component_identity_read(qa_bytes bytes,qa_unified_component_identity *out,qa_error *error)
+{ return out && qa_unified_record_delta_decode(&component_identity_layout,bytes,NULL,out,NULL,error); }
+
 static const qa_unified_field control_ready_fields[] = {
     QA_UNIFIED_RAW(qa_unified_ready_control, composition),
     {QA_UNIFIED_FIELD_STRING, offsetof(qa_unified_ready_control, userinfo), NULL, 0, 8192, NULL},
@@ -2159,7 +2230,7 @@ static const qa_unified_record_layout control_disconnect_layout = {sizeof(char *
 static const qa_unified_record_layout *const control_variants[] = {
     &control_ready_layout, &control_admitted_layout, &control_resources_layout,
     &control_string_layout, &control_command_layout, &control_source_command_layout,
-    &control_disconnect_layout, NULL, NULL, &control_component_command_layout,
+    &control_disconnect_layout, NULL, &control_components_layout, &control_component_command_layout,
 };
 static const qa_unified_field control_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_control, kind, QA_UNIFIED_FIELD_U32),
@@ -2176,9 +2247,59 @@ static bool control_arguments_check(const qa_unified_control_arguments *args, bo
         if (!args->values[i]) return frame_bad(error,"Unified control has an absent lexical argument");
     return true;
 }
+static bool component_identity_check(const qa_unified_component_identity *identity)
+{
+    return (identity->runtime==QA_PROGRAM_QVM || identity->runtime==QA_PROGRAM_NATIVE) &&
+        identity->product && *identity->product && identity->id && *identity->id &&
+        identity->provider && *identity->provider && identity->content && *identity->content &&
+        identity->module.id && *identity->module.id && identity->module.artifact_path && *identity->module.artifact_path &&
+        identity->module.digest && *identity->module.digest && identity->module.revision && *identity->module.revision;
+}
+static bool control_components_check(const qa_unified_components_control *update,qa_error *error)
+{
+    if (!update->revision || update->source_count+update->native_count>256)
+        return frame_bad(error,"Unified component update has no actual reliable revision or owner extent");
+    for (size_t i=0;i<update->source_count;++i) {
+        const qa_unified_component_q3 *row=update->sources+i;
+        if (!row->owner.provider || !*row->owner.provider || !row->owner.generation ||
+            row->generation!=row->owner.generation || !component_identity_check(&row->identity) ||
+            row->identity.runtime!=QA_PROGRAM_QVM || (row->abi!=QA_QVM_Q3_MODERN && row->abi!=QA_QVM_Q3_116N) ||
+            row->game_state_revision<0 || row->command_base<0 ||
+            (row->game_state && !q3_gamestate_check(row->game_state,error)) ||
+            (uint64_t)row->command_base+row->command_count>INT32_MAX || (!row->scene && row->command_count))
+            return frame_bad(error,"Unified Q3 component lost its actual identity, ABI or reliable state");
+        for (size_t k=0;k<i;++k) if (!strcmp(row->owner.provider,update->sources[k].owner.provider))
+            return frame_bad(error,"Unified component update repeats its actual Source owner");
+        for (size_t k=0;k<row->command_count;++k)
+            if (row->commands[k].sequence!=(int32_t)((uint64_t)row->command_base+k+1) ||
+                !control_arguments_check(&row->commands[k].arguments,false,error))
+                return frame_bad(error,"Unified component reliable commands are not consecutive");
+    }
+    for (size_t i=0;i<update->native_count;++i) {
+        const qa_unified_component_q2 *row=update->native+i;
+        qa_q2_config_layout layout; qa_q2_codec codec={.protocol=row->protocol};
+        if (!row->owner.provider || !*row->owner.provider || !row->owner.generation ||
+            !component_identity_check(&row->identity) || row->identity.runtime!=QA_PROGRAM_NATIVE ||
+            (unsigned)row->hud>QA_UNIFIED_COMPONENT_HUD_REPLACE ||
+            (row->hud!=QA_UNIFIED_COMPONENT_HUD_NONE && (!row->layout || row->player_number<0 || row->player_number>=256 ||
+                !qa_q2_config_layout_read(&codec,&layout,error))) ||
+            (!row->replace_configstrings && row->configstring_count))
+            return frame_bad(error,"Unified native component lost its real HUD or declared identity");
+        for (size_t k=0;k<update->source_count;++k) if (!strcmp(row->owner.provider,update->sources[k].owner.provider))
+            return frame_bad(error,"Unified native and QVM component owners alias");
+        for (size_t k=0;k<i;++k) if (!strcmp(row->owner.provider,update->native[k].owner.provider))
+            return frame_bad(error,"Unified native component owner is repeated");
+        for (size_t k=0;k<row->configstring_count;++k) {
+            if (row->hud==QA_UNIFIED_COMPONENT_HUD_NONE || row->configstrings[k].index>=layout.max_configs || !row->configstrings[k].value ||
+                (k && row->configstrings[k-1].index>=row->configstrings[k].index))
+                return frame_bad(error,"Unified Q2 configstrings exceed their actual ordered Source table");
+        }
+    }
+    return true;
+}
 bool qa_unified_control_check(const qa_unified_control *v, size_t *bytes, qa_error *error)
 {
-    if (!v || !bytes || ((unsigned)v->kind>QA_UNIFIED_CONTROL_DISCONNECT && v->kind!=QA_UNIFIED_CONTROL_COMPONENT_COMMAND) ||
+    if (!v || !bytes || ((unsigned)v->kind>QA_UNIFIED_CONTROL_DISCONNECT && v->kind!=QA_UNIFIED_CONTROL_COMPONENT_COMMAND && v->kind!=QA_UNIFIED_CONTROL_COMPONENTS) ||
         (v->kind!=QA_UNIFIED_CONTROL_DISCONNECT && !v->epoch) ||
         !qa_unified_record_measure(&qa_unified_control_layout,v,bytes,error))
         return frame_bad(error,"Unified control requires its actual typed kind and epoch");
@@ -2225,6 +2346,7 @@ bool qa_unified_control_check(const qa_unified_control *v, size_t *bytes, qa_err
             frame_bad(error,"Unified Source command has no actual activation");
     case QA_UNIFIED_CONTROL_DISCONNECT:
         return v->value.disconnect || frame_bad(error,"Unified disconnect has no actual reason");
+    case QA_UNIFIED_CONTROL_COMPONENTS: return control_components_check(&v->value.components,error);
     case QA_UNIFIED_CONTROL_COMPONENT_COMMAND: {
         const qa_unified_component_command_control *command=&v->value.component_command;
         const char *colon=command->owner.provider?strchr(command->owner.provider,':'):NULL;

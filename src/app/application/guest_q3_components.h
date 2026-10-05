@@ -6,6 +6,7 @@
 #include "guest_q3_component_scene_factory.h"
 #include "qa/network_unified.h"
 #include "qa/unified_frame_components.h"
+#include "unified_components_identity.h"
 
 typedef struct application_q3_components application_q3_components;
 /* MEDIA creates the actual private registry owners before dictionary import.
@@ -46,7 +47,7 @@ typedef struct application_q3_component_publication {
     const qa_resource *program,*declaration;
     qa_qvm_abi abi;
     const char *presentation_runtime;
-    const qa_unified_document *identity;
+    const qa_unified_component_identity *identity;
     const qa_unified_mod_identity *module;
 } application_q3_component_publication;
 typedef struct application_q3_component_item_metadata {
@@ -60,7 +61,6 @@ bool application_q3_components_item_read(qa_application *,qa_actor_id,qa_actor_o
 /* The actual launch selection creates this roster before any Init. Every
  * entry owns a separate physical GAME executor and admitted SOURCE clock. */
 bool application_q3_components_create(const application_q3_components_options *,application_q3_components **,qa_error *);
-bool application_q3_component_identity_create(const qa_catalog_mod *,const qa_product *,const char *,qa_unified_document **,qa_error *);
 bool application_q3_components_prepare(application_q3_components *,qa_error *);
 bool application_q3_components_commit(application_q3_components *,qa_error *);
 bool application_q3_components_initialize(application_q3_components *,qa_error *);

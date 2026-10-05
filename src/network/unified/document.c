@@ -301,7 +301,6 @@ qa_unified_control_kind qa_unified_document_control_type(const qa_unified_docume
     qa_json_id value=qa_json_get(d->json,qa_json_root(d->json),"value");
     qa_json_id kind=qa_json_get(d->json,value,"kind");
     if (qa_json_string_equal(d->json,kind,"offer")) return QA_UNIFIED_CONTROL_OFFER;
-    if (qa_json_string_equal(d->json,kind,"components")) return QA_UNIFIED_CONTROL_COMPONENTS;
     return QA_UNIFIED_CONTROL_INVALID;
 }
 bool qa_unified_document_epoch(const qa_unified_document *d, uint32_t *out, qa_error *error)

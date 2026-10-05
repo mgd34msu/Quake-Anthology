@@ -3,6 +3,7 @@
 #include "remote_unified_media.h"
 #include "qa/source_save.h"
 #include "qa/unified_frame_events.h"
+#include "qa/unified_frame_components.h"
 
 typedef struct frontend_unified_events frontend_unified_events;
 typedef struct frontend_unified_event_refs {
@@ -29,11 +30,11 @@ bool frontend_unified_events_create(qa_frontend *, frontend_remote_unified *,
 bool frontend_unified_events_control(frontend_unified_events *, const qa_unified_document *, qa_error *);
 /* Literal reliable component metadata is retained independently of the live
  * component VM. Retired tokens remain available to pending historical events. */
-bool frontend_unified_events_component_admit(frontend_unified_events *, const qa_unified_document *, const char *content, qa_error *);
-bool frontend_unified_events_component_admit_created(frontend_unified_events *, const qa_unified_document *, const char *content, bool *created, qa_error *);
-bool frontend_unified_events_component_cancel(frontend_unified_events *, const qa_unified_document *, qa_error *);
-bool frontend_unified_events_component_retire(frontend_unified_events *, const qa_unified_document *, qa_error *);
-bool frontend_unified_events_component_current(const frontend_unified_events *, const qa_unified_document *, const char *content, bool *active, qa_error *);
+bool frontend_unified_events_component_admit(frontend_unified_events *, const qa_unified_component_owner *, const char *content, qa_error *);
+bool frontend_unified_events_component_admit_created(frontend_unified_events *, const qa_unified_component_owner *, const char *content, bool *created, qa_error *);
+bool frontend_unified_events_component_cancel(frontend_unified_events *, const qa_unified_component_owner *, qa_error *);
+bool frontend_unified_events_component_retire(frontend_unified_events *, const qa_unified_component_owner *, qa_error *);
+bool frontend_unified_events_component_current(const frontend_unified_events *, const qa_unified_component_owner *, const char *content, bool *active, qa_error *);
 bool frontend_unified_events_frame_prepare(frontend_unified_events *, const qa_unified_document *, qa_error *);
 bool frontend_unified_events_frame_ready(frontend_unified_events *, const qa_unified_document *, qa_error *);
 void frontend_unified_events_frame_commit(frontend_unified_events *);

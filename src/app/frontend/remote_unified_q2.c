@@ -1,3 +1,4 @@
+#include "qa/network_unified_control.h"
 #include "remote_unified_private.h"
 #include "remote_unified_q2.h"
 #include "remote_unified_q2_hud.h"
@@ -98,7 +99,8 @@ struct q2_native_picture {
 };
 typedef struct q2_native {
     q2_bank *bank;
-    qa_unified_document *identity,*presentation_owner;
+    qa_unified_component_identity identity;
+    qa_unified_component_owner presentation_owner;
     char *provider,*layout;
     uint64_t owner_generation,generation;
     qa_net_protocol_id protocol;
@@ -175,25 +177,6 @@ struct frontend_unified_q2 {
 };
 static qa_json_id get(const qa_json_document *j,qa_json_id row,const char *name)
 { return qa_json_get(j,row,name); }
-static bool number(const qa_unified_document *d,qa_json_id row,double *out,qa_error *e)
-{
-    return (qa_unified_document_number(d,row,out,e) && isfinite(*out)) ||
-        frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified Q2 scalar is not finite");
-}
-static bool integer(const qa_unified_document *d,qa_json_id row,int32_t *out,qa_error *e)
-{
-    double n; if (!number(d,row,&n,e)) return false;
-    if (n<INT32_MIN || n>INT32_MAX || trunc(n)!=n)
-        return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified Q2 integer exceeds its source word");
-    *out=(int32_t)n; return true;
-}
-
-static bool string(const qa_unified_document *d,qa_json_id row,qa_buffer *out,qa_error *e)
-{
-    if (!qa_json_string(qa_unified_document_json(d),row,out,e)) return false;
-    if (!memchr(out->data,0,out->size)) return true;
-    qa_buffer_free(out); return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified Q2 text contains NUL");
-}
 static char *text_copy(const char *text)
 {
     if (!text) return NULL;
@@ -778,17 +761,18 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
 }
 static void native_clear(q2_native *v)
 {
-    qa_unified_document_destroy(v->identity); qa_unified_document_destroy(v->presentation_owner);
+    qa_unified_component_identity_dispose(&v->identity);
     free(v->provider); free(v->layout);
     for (size_t i=0;i<v->config_count;++i) free(v->configs[i]);
     free(v->configs);
     *v=(q2_native){0};
 }
-static bool native_text(const qa_unified_document *d,qa_json_id id,char **out,qa_error *e)
+static bool native_text(const char *text,char **out,qa_error *e)
 {
-    qa_buffer value={0};
-    if (!string(d,id,&value,e)) { qa_buffer_free(&value); return false; }
-    *out=(char *)value.data; return true;
+    if (!text) return false;
+    size_t size=strlen(text)+1; *out=malloc(size);
+    if (!*out) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining native Q2 Source text");
+    memcpy(*out,text,size); return true;
 }
 static const char *native_config(void *context,int32_t index)
 {
@@ -821,92 +805,80 @@ static const qa_scene_image *native_picture(void *context,const char *name,qa_er
     if (!p->name) { qa_scene_image_release(p->image); free(p); return NULL; }
     memcpy(p->name,name,length+1); p->next=v->bank->native_pictures; v->bank->native_pictures=p; return p->image;
 }
-static bool native_configs(const qa_unified_document *d,qa_json_id id,const q2_native *old,q2_native *v,qa_error *e)
+static bool native_configs(const qa_unified_component_q2 *row,const q2_native *old,q2_native *v,qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(d);
     qa_q2_config_layout layout; qa_q2_codec codec={.protocol=v->protocol};
     if (!qa_q2_config_layout_read(&codec,&layout,e)) return false;
-    v->config_count=layout.max_configs;
-    v->configs=calloc(v->config_count,sizeof(*v->configs));
+    v->config_count=layout.max_configs; v->configs=calloc(v->config_count,sizeof(*v->configs));
     if (!v->configs) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining native Q2 configstrings");
-    if (qa_json_type(j,id)==QA_JSON_NULL) {
+    if (!row->replace_configstrings) {
         if (!old || old->config_count!=v->config_count) return false;
-        for (size_t i=0;i<v->config_count;++i) if (old->configs[i]) {
-            size_t n=strlen(old->configs[i])+1; v->configs[i]=malloc(n);
-            if (!v->configs[i]) return false;
-            memcpy(v->configs[i],old->configs[i],n);
-        }
+        for (size_t i=0;i<v->config_count;++i) if (old->configs[i] && !native_text(old->configs[i],v->configs+i,e)) return false;
         return true;
     }
-    if (qa_json_type(j,id)!=QA_JSON_ARRAY) return false;
-    for (size_t i=0;i<qa_json_size(j,id);++i) {
-        qa_json_id row=qa_json_at(j,id,i); uint64_t index;
-        if (!qa_json_u64(j,get(j,row,"index"),&index,e) || index>=v->config_count || v->configs[index] ||
-            !native_text(d,get(j,row,"value"),v->configs+index,e)) return false;
+    for (size_t i=0;i<row->configstring_count;++i) {
+        const qa_unified_component_configstring *config=row->configstrings+i;
+        if (config->index>=v->config_count || v->configs[config->index] || !native_text(config->value,v->configs+config->index,e)) return false;
     }
     return true;
 }
-static bool native_read(frontend_unified_q2 *o,const qa_unified_document *d,qa_json_id row,
+static bool native_read(frontend_unified_q2 *o,const qa_unified_component_q2 *row,
     const q2_native *old,q2_native *v,qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(d);
-    qa_json_id owner=get(j,row,"owner"),identity=get(j,row,"identity"),source=get(j,identity,"source");
-    bool okay=native_text(d,get(j,owner,"provider"),&v->provider,e) && *v->provider &&
-        qa_json_u64(j,get(j,owner,"generation"),&v->owner_generation,e) && v->owner_generation &&
-        qa_json_u64(j,get(j,row,"generation"),&v->generation,e) &&
-        qa_unified_document_create(QA_UNIFIED_CHECKPOINT,qa_json_source(j,identity),&v->identity,e) &&
-        qa_unified_document_create(QA_UNIFIED_CHECKPOINT,qa_json_source(j,owner),&v->presentation_owner,e);
+    bool okay=native_text(row->owner.provider,&v->provider,e) && qa_unified_component_identity_clone(&row->identity,&v->identity,e);
     if (!okay) return false;
-    qa_executable_recipe *recipe=frontend_remote_unified_recipe(o->replica);
-    const qa_recipe_provider *admitted=NULL; const qa_catalog_mod *mod=NULL; const qa_product *product=NULL;
-    for (size_t i=0;!admitted && i<qa_executable_recipe_provider_count(recipe);++i) {
-        const qa_recipe_provider *p=qa_executable_recipe_provider(recipe,i);
-        if (p->selection.runtime!=QA_PROGRAM_NATIVE || !p->selection.component || !p->declaration ||
-            !qa_json_string_equal(j,get(j,source,"provider"),p->selection.instance)) continue;
-        const qa_catalog_mod *m=qa_catalog_mod_find(qa_executable_recipe_catalog(recipe),p->selection.component);
-        const qa_product *content=m?qa_catalog_product(qa_executable_recipe_catalog(recipe),m->product):NULL;
-        if (!m || m->unavailable || !content || content->family!=QA_GAME_Q2 ||
-            (content->edition!=QA_EDITION_CLASSIC && content->edition!=QA_EDITION_RERELEASE)) continue;
-        qa_unified_document *expected=NULL;
-        okay=application_native_q2_component_identity_create(m,content,p->selection.instance,&expected,e) &&
-            frontend_unified_document_equal(v->identity,expected);
-        qa_unified_document_destroy(expected);
-        if (okay) { admitted=p; mod=m; product=content; }
-    }
-    if (!admitted || !mod || !product) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Native Q2 component differs from its admitted recipe identity");
-    qa_json_document *declaration=NULL;
-    if (!qa_json_parse(qa_resource_bytes(admitted->declaration),&declaration,e)) return false;
-    qa_json_id policy=get(declaration,qa_json_root(declaration),"clientPresentation");
-    qa_json_id hud=get(j,row,"hud");
-    bool has_hud=qa_json_type(j,hud)!=QA_JSON_NULL;
-    const char *mode=qa_json_string_equal(declaration,get(declaration,policy,"hud"),"replace-status")?"replace-status":
-        qa_json_string_equal(declaration,get(declaration,policy,"hud"),"layout-overlay")?"layout-overlay":NULL;
-    v->camera=qa_json_string_equal(declaration,get(declaration,policy,"view"),"playerstate");
-    okay=has_hud==(mode!=NULL) && (!has_hud || qa_json_string_equal(j,get(j,hud,"mode"),mode));
-    v->hud=has_hud; v->replace_status=mode && !strcmp(mode,"replace-status");
-    qa_json_destroy(declaration);
+    v->owner_generation=row->owner.generation; v->generation=row->generation;
+    v->presentation_owner=(qa_unified_component_owner){v->provider,v->owner_generation};
     if (old && (old->owner_generation!=v->owner_generation || old->generation!=v->generation)) old=NULL;
-    if (old && (!frontend_unified_document_equal(v->identity,old->identity) || v->hud!=old->hud ||
-        v->replace_status!=old->replace_status || v->camera!=old->camera)) okay=false;
-    if (!okay) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Native Q2 component changed its qualified presentation policy");
-    v->protocol=(qa_net_protocol_id){.kind=product->edition==QA_EDITION_CLASSIC?QA_NET_Q2_34:QA_NET_Q2KEX_2023};
-    if (!bank(o,product->identity,NULL,admitted->selection.instance,
-        product->edition==QA_EDITION_CLASSIC?FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC:FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE,false,&v->bank,e)) return false;
-    if (!has_hud) return true;
-    qa_json_id frame=get(j,hud,"frame"),protocol=get(j,frame,"protocol"),inventory=get(j,frame,"inventory");
-    uint64_t version,number_id;
-    okay=qa_json_string_equal(j,get(j,protocol,"kind"),product->edition==QA_EDITION_CLASSIC?"q2-classic":"q2-rerelease") &&
-        qa_json_u64(j,get(j,protocol,"version"),&version,e) && version==(product->edition==QA_EDITION_CLASSIC?34u:1038u) &&
-        native_configs(d,get(j,frame,"configstrings"),old,v,e) && native_text(d,get(j,frame,"layout"),&v->layout,e) &&
-        qa_json_u64(j,get(j,frame,"playerNumber"),&number_id,e) && number_id<256 &&
-        qa_json_type(j,inventory)==QA_JSON_ARRAY && qa_json_size(j,inventory)<=256;
-    v->player_number=okay?(int32_t)number_id:0;
-    for (size_t i=0;okay && i<qa_json_size(j,inventory);++i) okay=integer(d,qa_json_at(j,inventory,i),v->inventory+i,e);
+    if (old) {
+        if (!qa_unified_component_identity_equal(&v->identity,&old->identity))
+            return frontend_unified_fail(e,QA_ERROR_FORMAT,"Native Q2 activation changed its qualified module identity");
+        v->hud=old->hud; v->replace_status=old->replace_status; v->camera=old->camera;
+        v->protocol=old->protocol; v->bank=old->bank;
+    } else {
+        qa_executable_recipe *recipe=frontend_remote_unified_recipe(o->replica);
+        const qa_recipe_provider *admitted=NULL; const qa_catalog_mod *mod=NULL; const qa_product *product=NULL;
+        for (size_t i=0;!admitted && i<qa_executable_recipe_provider_count(recipe);++i) {
+            const qa_recipe_provider *provider=qa_executable_recipe_provider(recipe,i);
+            if (provider->selection.runtime!=QA_PROGRAM_NATIVE || !provider->selection.component || !provider->declaration ||
+                strcmp(row->identity.provider,provider->selection.instance)) continue;
+            const qa_catalog_mod *metadata=qa_catalog_mod_find(qa_executable_recipe_catalog(recipe),provider->selection.component);
+            const qa_product *content=metadata?qa_catalog_product(qa_executable_recipe_catalog(recipe),metadata->product):NULL;
+            if (!metadata || metadata->unavailable || !content || content->family!=QA_GAME_Q2 ||
+                (content->edition!=QA_EDITION_CLASSIC && content->edition!=QA_EDITION_RERELEASE)) continue;
+            qa_unified_component_identity expected={0};
+            okay=application_unified_component_identity_create(metadata,content,provider->selection.instance,&expected,e);
+            bool matches=okay && qa_unified_component_identity_equal(&v->identity,&expected);
+            qa_unified_component_identity_dispose(&expected);
+            if (!okay) return false;
+            if (matches) { admitted=provider; mod=metadata; product=content; }
+        }
+        if (!admitted || !mod || !product) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Native Q2 component differs from its admitted recipe identity");
+        qa_json_document *declaration=NULL;
+        if (!qa_json_parse(qa_resource_bytes(admitted->declaration),&declaration,e)) return false;
+        qa_json_id policy=get(declaration,qa_json_root(declaration),"clientPresentation");
+        qa_unified_component_hud hud=qa_json_string_equal(declaration,get(declaration,policy,"hud"),"replace-status")?QA_UNIFIED_COMPONENT_HUD_REPLACE:
+            qa_json_string_equal(declaration,get(declaration,policy,"hud"),"layout-overlay")?QA_UNIFIED_COMPONENT_HUD_OVERLAY:QA_UNIFIED_COMPONENT_HUD_NONE;
+        v->camera=qa_json_string_equal(declaration,get(declaration,policy,"view"),"playerstate");
+        v->hud=hud!=QA_UNIFIED_COMPONENT_HUD_NONE; v->replace_status=hud==QA_UNIFIED_COMPONENT_HUD_REPLACE;
+        qa_json_destroy(declaration);
+        v->protocol=(qa_net_protocol_id){.kind=product->edition==QA_EDITION_CLASSIC?QA_NET_Q2_34:QA_NET_Q2KEX_2023};
+        if (!bank(o,product->identity,NULL,admitted->selection.instance,
+            product->edition==QA_EDITION_CLASSIC?FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC:FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE,false,&v->bank,e)) return false;
+    }
+    qa_unified_component_hud hud=!v->hud?QA_UNIFIED_COMPONENT_HUD_NONE:
+        v->replace_status?QA_UNIFIED_COMPONENT_HUD_REPLACE:QA_UNIFIED_COMPONENT_HUD_OVERLAY;
+    if (row->hud!=hud) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Native Q2 component changed its qualified presentation policy");
+    if (!v->hud) return true;
+    okay=row->protocol.kind==v->protocol.kind && row->protocol.flags==v->protocol.flags && row->protocol.revision==v->protocol.revision &&
+        native_configs(row,old,v,e) && native_text(row->layout,&v->layout,e);
+    v->player_number=row->player_number;
+    for (size_t i=0;i<256;++i) v->inventory[i]=row->inventory[i];
     if (!okay) return false;
     if (!v->bank->native_font) {
         qa_font_library *fonts;qa_scene_resources *images;qa_material_library *materials;qa_audio_bank *sounds;
         const qa_scene_image *conchars=native_picture(v,"conchars",e);
-        if (!conchars || !frontend_unified_media_bank(o->media,product->identity,&images,&materials,&fonts,&sounds,e) ||
+        if (!conchars || !frontend_unified_media_bank(o->media,v->bank->content,&images,&materials,&fonts,&sounds,e) ||
             !qa_font_classic_create(fonts,"unified-native-q2:conchars",conchars,QA_FONT_BAKED_COLOR,&v->bank->native_font,e))return false;
     }
     v->font=v->bank->native_font;return true;
@@ -914,27 +886,24 @@ static bool native_read(frontend_unified_q2 *o,const qa_unified_document *d,qa_j
 bool frontend_unified_q2_components_control(frontend_unified_q2 *o,const qa_unified_document *d,qa_error *e)
 {
     if (!o || o->busy || o->prepared_frame || !d || !current(o,e)) return false;
-    const qa_json_document *j=qa_unified_document_json(d); qa_json_id root=qa_unified_document_root(d);
-    qa_json_id value=get(j,root,"value"),update=get(j,value,"update");
-    if (update==QA_JSON_NONE) update=get(j,root,"components");
-    if (update==QA_JSON_NONE) update=root;
-    qa_json_id native=get(j,update,"native"); uint64_t revision;
-    if (!qa_json_u64(j,get(j,update,"revision"),&revision,e) || revision!=o->native_revision+1 ||
-        (native!=QA_JSON_NONE && qa_json_type(j,native)!=QA_JSON_ARRAY) || qa_json_size(j,native)>256) return false;
-    size_t count=qa_json_size(j,native); q2_native *next=count?calloc(count,sizeof(*next)):NULL;
+    const qa_unified_control *control=qa_unified_document_control(d);
+    const qa_unified_components_control *update=control&&control->kind==QA_UNIFIED_CONTROL_COMPONENTS?&control->value.components:NULL;
+    if (!update || o->native_revision==UINT64_MAX || update->revision!=o->native_revision+1) return false;
+    uint64_t revision=update->revision; size_t count=update->native_count;
+    q2_native *next=count?calloc(count,sizeof(*next)):NULL;
     if (count && !next) return false;
     bool okay=true;
     for (size_t i=0;okay && i<count;++i) {
-        qa_json_id row=qa_json_at(j,native,i); const q2_native *old=NULL;
-        for (size_t k=0;k<o->native_count;++k) if (qa_json_string_equal(j,get(j,get(j,row,"owner"),"provider"),o->native[k].provider)) old=o->native+k;
-        okay=native_read(o,d,row,old,next+i,e);
+        const qa_unified_component_q2 *row=update->native+i; const q2_native *old=NULL;
+        for (size_t k=0;k<o->native_count;++k) if (!strcmp(row->owner.provider,o->native[k].provider)) old=o->native+k;
+        okay=native_read(o,row,old,next+i,e);
         for (size_t k=0;okay && k<i;++k) okay=strcmp(next[k].provider,next[i].provider)!=0;
     }
-    for (size_t i=0;okay && i<count;++i) okay=frontend_unified_events_component_admit(o->events,next[i].presentation_owner,next[i].bank->content,e);
+    for (size_t i=0;okay && i<count;++i) okay=frontend_unified_events_component_admit(o->events,&next[i].presentation_owner,next[i].bank->content,e);
     for (size_t i=0;okay && i<o->native_count;++i) {
         bool retained=false;
         for (size_t k=0;k<count;++k) if (!strcmp(next[k].provider,o->native[i].provider) && next[k].owner_generation==o->native[i].owner_generation) retained=true;
-        if (!retained) okay=frontend_unified_events_component_retire(o->events,o->native[i].presentation_owner,e);
+        if (!retained) okay=frontend_unified_events_component_retire(o->events,&o->native[i].presentation_owner,e);
     }
     if (okay) {
         for (size_t i=0;i<o->native_count;++i) native_clear(o->native+i);

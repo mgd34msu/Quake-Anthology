@@ -1,6 +1,6 @@
 #include "unified_components_internal.h"
 #include "unified_frame_private.h"
-#include "unified_output_json.h"
+#include "qa/network_unified_control.h"
 #include "guest_q3_components.h"
 #include "native_q2_publication.h"
 #include "unified_q2_components.h"
@@ -8,30 +8,6 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
-
-static bool text(application_unified_json *j, const char *s, qa_error *e)
-{ return application_unified_json_text(j, s, e); }
-static bool number(application_unified_json *j, double n, qa_error *e)
-{ return application_unified_json_number(j, n, e); }
-static bool string(application_unified_json *j, const char *s, qa_error *e)
-{ return application_unified_json_string(j, s, e); }
-
-static bool bytes(application_unified_json *j, qa_bytes value, qa_error *e)
-{
-    qa_buffer encoded = {0};
-    bool ok = qa_unified_checkpoint_bytes(value, &encoded, e) &&
-        application_unified_json_append(j, (qa_bytes){encoded.data, encoded.size}, e);
-    qa_buffer_free(&encoded);
-    return ok;
-}
-
-static bool owner_write(application_unified_json *j, const application_unified_component_capture *v,
-    const component_cursor *row, qa_error *e)
-{
-    const char *id = qa_strings_cstr(qa_session_strings(v->source.session), row->owner);
-    return text(j, "{\"provider\":", e) && string(j, id, e) && text(j, ",\"generation\":", e) &&
-        application_unified_json_natural(j, row->generation, e) && text(j, "}", e);
-}
 
 static bool native_same(const application_unified_component_capture *v)
 {
@@ -71,47 +47,33 @@ static bool native_prepare(application_unified_component_capture *v, bool *chang
     return true;
 }
 
-static bool game_state(application_unified_json *j, const qa_q3_gamestate *gs, qa_error *e)
+static bool commands(application_unified_component_capture *capture,qa_unified_component_q3 *target,
+    const application_q3_scene_context *context,int32_t base,int32_t through,qa_error *e)
 {
-    if (!gs || gs->string_bytes > QA_Q3_GAMESTATE_CHARS || gs->strings[0])
-        return application_fail(e, QA_ERROR_FORMAT, "Component gameState lost its actual source extent");
-    if (!text(j, "{\"stringOffsets\":[", e)) return false;
-    for (size_t i = 0; i < QA_Q3_CONFIGSTRINGS; ++i)
-        if ((i && !text(j, ",", e)) || !number(j, gs->config_offsets[i], e)) return false;
-    return text(j, "],\"stringData\":", e) &&
-        bytes(j, (qa_bytes){(const uint8_t *)gs->strings, QA_Q3_GAMESTATE_CHARS}, e) &&
-        text(j, ",\"dataCount\":", e) && application_unified_json_natural(j, gs->string_bytes, e) && text(j, "}", e);
-}
-
-static bool commands(application_unified_json *j, const application_q3_scene_context *context,
-    int32_t base, int32_t through, qa_error *e)
-{
-    int32_t previous = base;
-    bool first = true;
-    if (!text(j, "[", e)) return false;
-    for (size_t i = 0; i < context->command_count; ++i) {
-        const application_q3_scene_command *row = context->commands + i;
-        if (row->sequence <= base) continue;
-        if (previous == INT32_MAX || row->sequence != previous + 1 || row->sequence > through)
-            return application_fail(e, QA_ERROR_FORMAT, "Component reliable commands exceeded their retained window");
-        qa_q3_tokens tokens = {0};
-        if (row->addressed && !qa_q3_tokenize(row->text, &tokens, e)) return false;
-        if (tokens.truncated || tokens.count > 128)
-            return application_fail(e, QA_ERROR_FORMAT, "Component command exceeds its authentic argument extent");
-        if ((!first && !text(j, ",", e)) || !text(j, "{\"sequence\":", e) || !number(j, row->sequence, e) ||
-            !text(j, ",\"arguments\":[", e)) return false;
-        for (size_t a = 0; a < tokens.count; ++a) {
-            const char *argument = qa_q3_token(&tokens, a);
-            if (strlen(argument) > 8192)
-                return application_fail(e, QA_ERROR_FORMAT, "Component command argument exceeds its wire extent");
-            if ((a && !text(j, ",", e)) || !string(j, argument, e)) return false;
-        }
-        if (!text(j, "]}", e)) return false;
-        previous = row->sequence; first = false;
+    target->command_base=base;
+    target->commands=qa_unified_frame_lease_alloc(capture->lease,context->command_count,
+        sizeof(*target->commands),_Alignof(qa_unified_component_command),e);
+    if (context->command_count && !target->commands) return false;
+    int32_t previous=base;
+    for (size_t i=0;i<context->command_count;++i) {
+        const application_q3_scene_command *source=context->commands+i;
+        if (source->sequence<=base) continue;
+        if (previous==INT32_MAX || source->sequence!=previous+1 || source->sequence>through)
+            return application_fail(e,QA_ERROR_FORMAT,"Component reliable commands exceeded their retained window");
+        qa_q3_tokens tokens={0};
+        if (source->addressed && !qa_q3_tokenize(source->text,&tokens,e)) return false;
+        if (tokens.truncated || tokens.count>128)
+            return application_fail(e,QA_ERROR_FORMAT,"Component command exceeds its authentic argument extent");
+        qa_unified_component_command *row=target->commands+target->command_count++;
+        row->sequence=source->sequence; row->arguments.count=tokens.count;
+        row->arguments.values=qa_unified_frame_lease_alloc(capture->lease,tokens.count,
+            sizeof(*row->arguments.values),_Alignof(char *),e);
+        if (tokens.count && !row->arguments.values) return false;
+        for (size_t k=0;k<tokens.count;++k)
+            if (!application_unified_frame_string(capture->lease,row->arguments.values+k,qa_q3_token(&tokens,k),e)) return false;
+        previous=source->sequence;
     }
-    if (previous != through)
-        return application_fail(e, QA_ERROR_FORMAT, "Component reliable command tail is not retained");
-    return text(j, "]", e);
+    return previous==through || application_fail(e,QA_ERROR_FORMAT,"Component reliable command tail is not retained");
 }
 
 static bool frame_source(qa_unified_component_source *out, const application_unified_component_capture *v,
@@ -120,7 +82,6 @@ static bool frame_source(qa_unified_component_source *out, const application_uni
     const qa_q3_snapshot *snap = context->snapshot;
     if (!snap || !context->has_weapon_presented || context->actor_count > QA_Q3_ENTITIES ||
         snap->entity_count > 256 || snap->server_time < 0 || context->revision < 0 ||
-        context->revision > (int64_t)QA_UNIFIED_SAFE_INTEGER ||
         context->client_number < 0 || context->client_number >= QA_Q3_ENTITIES)
         return application_fail(e, QA_ERROR_FORMAT, "Component frame lacks its real receiver snapshot or weapon policy");
     const char *provider = qa_strings_cstr(qa_session_strings(v->source.session), row->owner);
@@ -278,7 +239,7 @@ bool application_unified_components_prepare(application_unified_component_publis
             if (p->rows[i].owner == row->owner && p->rows[i].generation == row->generation) old = p->rows + i;
         if (ok && old && (old->abi != row->abi || old->scene != row->scene))
             ok = application_fail(e, QA_ERROR_FORMAT, "Component activation changed its actual identity or runtime");
-        if (ok && (row->game_state_revision < 0 || row->game_state_revision > (int64_t)QA_UNIFIED_SAFE_INTEGER ||
+        if (ok && (row->game_state_revision < 0 ||
             row->sequence < 0 || (old && (row->game_state_revision < old->game_state_revision || row->sequence < old->sequence))))
             ok = application_fail(e, QA_ERROR_FORMAT, "Component Source continuation moved backward");
         bool game_changed = !old || old->game_state_revision != row->game_state_revision;
@@ -295,40 +256,37 @@ bool application_unified_components_prepare(application_unified_component_publis
     for (size_t i = 0; i < v->count && !changed; ++i)
         changed = v->rows[i].owner != p->rows[i].owner || v->rows[i].generation != p->rows[i].generation;
     if (ok && changed) {
-        if (v->revision == QA_UNIFIED_SAFE_INTEGER) ok = application_fail(e, QA_ERROR_FORMAT, "Component publication revision is exhausted");
+        if (v->revision == UINT64_MAX) ok = application_fail(e, QA_ERROR_FORMAT, "Component publication revision is exhausted");
         else ++v->revision;
     }
     if (ok) v->frame->revision = v->revision;
-    application_unified_json document = {0};
     if (ok && changed) {
-        ok = text(&document, "{\"schema\":\"qts-control\",\"version\":1,\"value\":{\"kind\":\"components\",\"epoch\":", e) &&
-            number(&document, epoch, e) && text(&document, ",\"update\":{\"revision\":", e) &&
-            application_unified_json_natural(&document, v->revision, e) && text(&document, ",\"native\":[", e);
-        if (ok && v->native.present) ok = application_unified_q2_component_state_write(&document, p->application,
-            &v->native_documents, !native_same(v) || p->native.configuration_revision != v->native.configuration_revision, e);
-        if (ok) ok = text(&document, "],\"sources\":[", e);
-        for (size_t at = 0; ok && at < v->count; ++at) {
-            const component_cursor *row = v->rows + at, *old = NULL;
-            const application_q3_component_publication *publication = publications + at;
-            const application_q3_scene_context *context = contexts + at;
-            if (p->epoch == epoch) for (size_t i = 0; i < p->count; ++i)
-                if (p->rows[i].owner == row->owner && p->rows[i].generation == row->generation) old = p->rows + i;
-            bool game_changed = !old || old->game_state_revision != row->game_state_revision;
-            int32_t base = old ? old->sequence : row->sequence;
-            ok = (!at || text(&document, ",", e)) && text(&document, "{\"owner\":", e) && owner_write(&document, v, row, e) &&
-                text(&document, ",\"identity\":", e) && application_unified_json_document(&document, publication->identity, e) &&
-                text(&document, ",\"generation\":", e) && application_unified_json_natural(&document, row->generation, e) &&
-                text(&document, ",\"abi\":", e) && string(&document, row->abi == QA_QVM_Q3_MODERN ? "q3-modern" : "q3-1.16n-base", e) &&
-                text(&document, ",\"runtime\":", e) && string(&document, publication->presentation_runtime, e) &&
-                text(&document, ",\"gameStateRevision\":", e) && number(&document, (double)row->game_state_revision, e) &&
-                text(&document, ",\"gameState\":", e) && (game_changed ? game_state(&document, context->game_state, e) : text(&document, "null", e)) &&
-                text(&document, ",\"commandBase\":", e) && number(&document, base, e) && text(&document, ",\"commands\":", e) &&
-                (row->scene ? commands(&document, context, base, row->sequence, e) : text(&document, "[]", e)) && text(&document, "}", e);
+        qa_unified_control document={.kind=QA_UNIFIED_CONTROL_COMPONENTS,.epoch=epoch};
+        qa_unified_components_control *update=&document.value.components;
+        update->revision=v->revision; update->source_count=v->count;
+        update->sources=qa_unified_frame_lease_alloc(v->lease,v->count,sizeof(*update->sources),_Alignof(qa_unified_component_q3),e);
+        update->native_count=v->native.present?1u:0u;
+        update->native=qa_unified_frame_lease_alloc(v->lease,update->native_count,sizeof(*update->native),_Alignof(qa_unified_component_q2),e);
+        ok=(!v->count || update->sources) && (!update->native_count || update->native);
+        if (ok && v->native.present) ok=application_unified_q2_component_state(p->application,&v->native_documents,
+            v->lease,!native_same(v) || p->native.configuration_revision!=v->native.configuration_revision,update->native,e);
+        for (size_t at=0;ok && at<v->count;++at) {
+            const component_cursor *row=v->rows+at,*old=NULL;
+            const application_q3_component_publication *publication=publications+at;
+            const application_q3_scene_context *context=contexts+at;
+            if (p->epoch==epoch) for (size_t i=0;i<p->count;++i)
+                if (p->rows[i].owner==row->owner && p->rows[i].generation==row->generation) old=p->rows+i;
+            const char *provider=qa_strings_cstr(qa_session_strings(v->source.session),row->owner);
+            if (!provider || !publication->identity) { ok=false; break; }
+            qa_unified_component_q3 *source_row=update->sources+at;
+            *source_row=(qa_unified_component_q3){.owner={(char *)provider,row->generation},.identity=*publication->identity,
+                .generation=row->generation,.abi=row->abi,.scene=row->scene,.game_state_revision=row->game_state_revision,
+                .game_state=!old || old->game_state_revision!=row->game_state_revision?(qa_q3_gamestate *)context->game_state:NULL,
+                .command_base=old?old->sequence:row->sequence};
+            if (row->scene) ok=commands(v,source_row,context,source_row->command_base,row->sequence,e);
         }
-        if (ok) ok = text(&document, "]}}}", e) && qa_unified_document_create(QA_UNIFIED_CONTROL_DOCUMENT,
-            (qa_bytes){document.bytes.data, document.bytes.size}, &v->control, e);
+        if (ok) ok=qa_unified_document_create_control(&document,&v->control,e);
     }
-    application_unified_json_dispose(&document);
     if (ok && !application_unified_components_current(v)) ok = application_fail(e, QA_ERROR_ARGUMENT, "Component Source retired while its output was assembled");
     if (!ok) { application_unified_components_dispose(v); return false; }
     *out = v; return true;

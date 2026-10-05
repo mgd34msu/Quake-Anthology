@@ -6,13 +6,14 @@
 #include "qa/q3_abi.h"
 #include "remote_unified_events.h"
 #include "component_scene.h"
-#include "qa/unified_frame_components.h"
+#include "qa/network_unified_control.h"
 
 typedef struct remote_component_state {
-    qa_unified_document *identity,*presentation_owner;
+    qa_unified_component_identity identity;
+    qa_unified_component_owner presentation_owner;
     char *provider;
-    qa_unified_mod_identity module;
-    uint64_t owner_generation,generation,game_state_revision;
+    uint64_t owner_generation,generation;
+    int64_t game_state_revision;
     int32_t command_sequence;
     qa_qvm_abi abi;
     bool player_events;
@@ -119,7 +120,7 @@ bool q3remote_component_fail(qa_error *,qa_status,const char *);
 bool q3remote_component_player_finite(const qa_q3_player *);
 void q3remote_component_state_free(remote_component_state *);
 void q3remote_component_frame_free(remote_component_frame *);
-bool q3remote_component_state_read(frontend_unified_components *,const qa_unified_document *,qa_json_id,
+bool q3remote_component_state_read(frontend_unified_components *,const qa_unified_component_q3 *,
     const remote_component *,remote_component_state *,qa_error *);
 bool q3remote_component_frame_read(frontend_unified_components *,remote_component *,const qa_unified_document *,const qa_unified_component_source *,
     remote_component_frame **,qa_error *);

@@ -41,7 +41,7 @@ bool frontend_unified_components_events_bind(frontend_unified_components *o,fron
         remote_component *row=o->rows[i]; if(!row) continue;
         const qa_product *product=qa_catalog_product(qa_executable_recipe_catalog(o->recipe),row->state.mod->product);
         bool active=false;
-        if(!product||!frontend_unified_events_component_current(events,row->state.presentation_owner,product->identity,&active,e)||!active)
+        if(!product||!frontend_unified_events_component_current(events,&row->state.presentation_owner,product->identity,&active,e)||!active)
             return e&&e->code!=QA_OK?false:q3remote_component_fail(e,QA_ERROR_FORMAT,"Component event token has no genuine active reliable admission");
     }
     o->events=events; return true;
@@ -129,16 +129,11 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
 {
     if(!frontend_unified_components_current(o)||!frontend_unified_components_idle(o)||!d||!o->events)
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component update requires its returned actual collection");
-    const qa_json_document *j=qa_unified_document_json(d); qa_json_id root=qa_unified_document_root(d);
-    qa_json_id update=qa_json_get(j,qa_json_get(j,root,"value"),"update");
-    if(update==QA_JSON_NONE) update=qa_json_get(j,root,"components");
-    if(update==QA_JSON_NONE) update=root;
-    qa_json_id sources=qa_json_get(j,update,"sources");
-    uint64_t revision=0;
-    if(!qa_json_u64(j,qa_json_get(j,update,"revision"),&revision,e)||o->revision==QA_UNIFIED_SAFE_INTEGER||revision!=o->revision+1||
-        qa_json_type(j,sources)!=QA_JSON_ARRAY||qa_json_size(j,sources)>256)
+    const qa_unified_control *control=qa_unified_document_control(d);
+    const qa_unified_components_control *update=control&&control->kind==QA_UNIFIED_CONTROL_COMPONENTS?&control->value.components:NULL;
+    if(!update||o->revision==UINT64_MAX||update->revision!=o->revision+1)
         return q3remote_component_fail(e,QA_ERROR_FORMAT,"Remote component reliable revision is not consecutive");
-    size_t count=qa_json_size(j,sources);
+    uint64_t revision=update->revision; size_t count=update->source_count;
     remote_component **next=count?calloc(count,sizeof(*next)):NULL;
     remote_component_state *states=count?calloc(count,sizeof(*states)):NULL;
     bool *created=count?calloc(count,sizeof(*created)):NULL;
@@ -146,14 +141,10 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
     if(count&&(!next||!states||!created||!admitted)) { free(next); free(states); free(created); free(admitted); return q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining genuine reliable component candidate"); }
     bool ok=true;
     for(size_t i=0;ok&&i<count;++i) {
-        qa_json_id row=qa_json_at(j,sources,i),owner=qa_json_get(j,row,"owner"); qa_buffer provider={0};
-        ok=qa_json_string(j,qa_json_get(j,owner,"provider"),&provider,e)&&!memchr(provider.data,0,provider.size);
-        remote_component *previous=ok?find(o,(const char *)provider.data):NULL;
-        uint64_t owner_generation=0,generation=0;
-        if(ok) ok=qa_json_u64(j,qa_json_get(j,owner,"generation"),&owner_generation,e)&&qa_json_u64(j,qa_json_get(j,row,"generation"),&generation,e);
-        if(previous&&(previous->state.owner_generation!=owner_generation||previous->state.generation!=generation)) previous=NULL;
-        if(ok) ok=q3remote_component_state_read(o,d,row,previous,states+i,e);
-        qa_buffer_free(&provider);
+        const qa_unified_component_q3 *row=update->sources+i;
+        remote_component *previous=find(o,row->owner.provider);
+        if(previous&&(previous->state.owner_generation!=row->owner.generation||previous->state.generation!=row->generation)) previous=NULL;
+        ok=q3remote_component_state_read(o,row,previous,states+i,e);
         for(size_t k=0;ok&&k<i;++k) if(!strcmp(states[k].provider,states[i].provider)) ok=q3remote_component_fail(e,QA_ERROR_FORMAT,"Reliable components duplicate a genuine provider");
         if(!ok) break;
         if(previous) next[i]=previous;
@@ -167,7 +158,7 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
     bool publishing=false;
     for(size_t i=0;ok&&i<count;++i) {
         const qa_product *product=qa_catalog_product(qa_executable_recipe_catalog(o->recipe),states[i].mod->product);
-        ok=product&&frontend_unified_events_component_admit_created(o->events,states[i].presentation_owner,product->identity,admitted+i,e);
+        ok=product&&frontend_unified_events_component_admit_created(o->events,&states[i].presentation_owner,product->identity,admitted+i,e);
     }
     publishing=ok;
     /* Retire old physical clients before replacing their activation metadata.
@@ -178,7 +169,7 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
             bool retire=false;
             for(size_t k=0;k<count;++k) if(!strcmp(states[k].provider,o->rows[i]->state.provider))
                 retire=states[k].owner_generation!=o->rows[i]->state.owner_generation;
-            if(retire) ok=frontend_unified_events_component_retire(o->events,o->rows[i]->state.presentation_owner,e);
+            if(retire) ok=frontend_unified_events_component_retire(o->events,&o->rows[i]->state.presentation_owner,e);
             if(ok) {
                 remote_component *row=o->rows[i];
                 ok=q3remote_component_retire(row,e);
@@ -200,7 +191,7 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
         qa_error original={0}; if(e) original=*e;
         for(size_t i=0;i<count;++i) if(admitted[i]) {
             qa_error cleanup={0};
-            if(!frontend_unified_events_component_cancel(o->events,states[i].presentation_owner,&cleanup)) o->failed=true;
+            if(!frontend_unified_events_component_cancel(o->events,&states[i].presentation_owner,&cleanup)) o->failed=true;
         }
         if(e) *e=original;
         for(size_t i=0;i<count;++i) if(created[i]) { free(next[i]); next[i]=NULL; }

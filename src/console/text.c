@@ -240,6 +240,39 @@ void qa_command_tokens_free(qa_command_tokens *tokens)
     *tokens = (qa_command_tokens){0};
 }
 
+bool qa_command_tokens_copy(const qa_command_tokens *from, qa_command_tokens *out, qa_error *error)
+{
+    if (!from || !out || (from->count && !from->values)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid literal command token copy");
+        return false;
+    }
+    size_t size = 0;
+    for (size_t i = 0; i < from->count; ++i) {
+        size_t length = strlen(from->values[i]) + 1;
+        if (length > SIZE_MAX - size) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Literal command storage overflows");
+            return false;
+        }
+        size += length;
+    }
+    qa_command_tokens copy = {.count = from->count};
+    copy.values = from->count ? calloc(from->count, sizeof(*copy.values)) : NULL;
+    copy.storage = size ? malloc(size) : NULL;
+    const char *args = from->args_text ? from->args_text : "";
+    copy.args_text = malloc(strlen(args) + 1);
+    if ((from->count && !copy.values) || (size && !copy.storage) || !copy.args_text) {
+        qa_command_tokens_free(&copy);
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining literal command tokens");
+        return false;
+    }
+    char *at = copy.storage;
+    for (size_t i = 0; i < from->count; ++i) {
+        size_t length = strlen(from->values[i]) + 1;
+        copy.values[i] = at; memcpy(at, from->values[i], length); at += length;
+    }
+    strcpy(copy.args_text, args); *out = copy; return true;
+}
+
 int32_t qac_integer(const char *text)
 {
     while ((unsigned char)*text == ' ' || (*text >= '\t' && *text <= '\r')) ++text;

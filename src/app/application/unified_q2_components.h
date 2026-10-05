@@ -6,7 +6,7 @@
 #include "qa/application_native_q2_presentation.h"
 #include "qa/network_q2.h"
 #include "native_q2_publication.h"
-#include "unified_output_json.h"
+#include "qa/network_unified_components.h"
 
 typedef struct application_unified_q2_source_documents {
     application_unified_source source;
@@ -46,7 +46,8 @@ bool application_unified_q2_component_documents_build(qa_application *,
     qa_unified_frame *target, application_unified_q2_component_documents *, qa_error *);
 bool application_unified_q2_component_documents_current(qa_application *,
     const application_unified_q2_component_documents *);
-bool application_unified_q2_component_state_write(application_unified_json *, qa_application *,
-    const application_unified_q2_component_documents *, bool configs, qa_error *);
+bool application_unified_q2_component_state(qa_application *,
+    const application_unified_q2_component_documents *,qa_unified_frame_lease *,
+    bool configs,qa_unified_component_q2 *,qa_error *);
 
 #endif

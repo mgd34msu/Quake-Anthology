@@ -3,6 +3,7 @@
 
 #include "qa/network_unified_frame.h"
 #include "qa/unified_frame_components.h"
+#include "qa/network_unified_components.h"
 
 typedef enum qa_unified_control_kind {
     QA_UNIFIED_CONTROL_READY, QA_UNIFIED_CONTROL_ADMITTED,
@@ -19,10 +20,6 @@ typedef struct qa_unified_resource_declaration {
     char *identity;
     qa_unified_resource_state resource;
 } qa_unified_resource_declaration;
-typedef struct qa_unified_control_arguments {
-    char **values;
-    size_t count;
-} qa_unified_control_arguments;
 typedef struct qa_unified_ready_control {
     qa_sha256_digest composition;
     char *userinfo;
@@ -60,6 +57,7 @@ typedef struct qa_unified_control {
         qa_unified_command_control command;
         qa_unified_source_command_control source_command;
         qa_unified_component_command_control component_command;
+        qa_unified_components_control components;
         char *disconnect;
     } value;
 } qa_unified_control;

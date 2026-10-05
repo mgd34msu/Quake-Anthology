@@ -1,24 +1,11 @@
 #include "unified_q2_components.h"
 #include "unified_frame_private.h"
-#include "unified_output_json.h"
 #include "guest_native_q2_private.h"
 #include "qa/native_host_q2_wire.h"
 
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
-
-static bool text(application_unified_json *j, const char *s, qa_error *e)
-{ return application_unified_json_text(j, s, e); }
-static bool number(application_unified_json *j, double n, qa_error *e)
-{ return application_unified_json_number(j, n, e); }
-static bool integers(application_unified_json *j, const int16_t *values, size_t count, qa_error *e)
-{
-    if (!text(j, "[", e)) return false;
-    for (size_t i = 0; i < count; ++i)
-        if ((i && !text(j, ",", e)) || !number(j, values[i], e)) return false;
-    return text(j, "]", e);
-}
 
 static struct application_native_q2 *engine(qa_application *app,
     const application_unified_q2_source_documents *v)
@@ -91,26 +78,6 @@ bool application_unified_q2_source_documents_current(qa_application *app,
         native->clients[v->player.source_slot].layout_revision == v->layout_revision &&
         native->clients[v->player.source_slot].inventory_revision == v->inventory_revision &&
         state_equal(&state, &v->player_state);
-}
-
-static bool hud_state(application_unified_json *j, const struct application_native_q2 *native,
-    const application_unified_q2_source_documents *v, bool configs, qa_error *e)
-{
-    bool classic = v->physical.edition == QA_Q2_CLASSIC;
-    if (!text(j, classic ? "{\"protocol\":{\"kind\":\"q2-classic\",\"version\":34},\"configstrings\":" :
-        "{\"protocol\":{\"kind\":\"q2-rerelease\",\"version\":1038},\"configstrings\":", e)) return false;
-    if (!text(j, configs ? "[" : "null", e)) return false;
-    bool first = true;
-    for (uint32_t i = 0; configs && i < native->configstring_count; ++i) {
-        if (!native->configstrings[i]) continue;
-        if ((!first && !text(j, ",", e)) || !text(j, "{\"index\":", e) || !number(j, i, e) ||
-            !text(j, ",\"value\":", e) || !application_unified_json_string(j, native->configstrings[i], e) ||
-            !text(j, "}", e)) return false;
-        first = false;
-    }
-    return (!configs || text(j, "]", e)) && text(j, ",\"layout\":", e) && application_unified_json_string(j, v->layout, e) &&
-        text(j, ",\"inventory\":", e) && integers(j, v->inventory, 256, e) &&
-        text(j, ",\"playerNumber\":", e) && number(j, v->player.source_slot - 1, e) && text(j, "}", e);
 }
 
 static bool hud_frame(application_unified_q2_source_documents *v, qa_error *e)
@@ -187,14 +154,7 @@ bool application_unified_q2_source_documents_build(qa_application *app,
     return true;
 }
 
-static bool publication_owner(application_unified_json *j,
-    const application_unified_q2_component_documents *v, qa_error *e)
-{
-    const char *name = qa_strings_cstr(qa_session_strings(v->source.source.session), v->publication.owner);
-    return name && text(j, "{\"provider\":", e) && application_unified_json_string(j, name, e) &&
-        text(j, ",\"generation\":", e) && application_unified_json_natural(j, v->publication.activation_generation, e) &&
-        text(j, "}", e);
-}
+
 
 bool application_unified_q2_component_documents_build(qa_application *app,
     const application_unified_source *source, qa_net_client_id recipient,
@@ -267,19 +227,29 @@ bool application_unified_q2_component_documents_current(qa_application *app,
         &v->source.source, &v->publication);
 }
 
-bool application_unified_q2_component_state_write(application_unified_json *state, qa_application *app,
-    const application_unified_q2_component_documents *v, bool configs, qa_error *e)
+bool application_unified_q2_component_state(qa_application *app,
+    const application_unified_q2_component_documents *v,qa_unified_frame_lease *lease,
+    bool configs,qa_unified_component_q2 *state,qa_error *e)
 {
-    if (!state || !v || !v->present || !application_unified_q2_component_documents_current(app, v))
-        return application_fail(e, QA_ERROR_ARGUMENT, "Native reliable setup requires its actual component observation");
-    struct application_native_q2 *native = engine(app, &v->source);
-    bool ok = text(state, "{\"owner\":", e) && publication_owner(state, v, e) &&
-        text(state, ",\"identity\":", e) && application_unified_json_document(state, v->publication.identity, e) &&
-        text(state, ",\"generation\":", e) && application_unified_json_natural(state, v->publication.generation, e) &&
-        text(state, ",\"hud\":", e);
-    if (ok && v->publication.hud == APPLICATION_NATIVE_Q2_HUD_NONE) ok = text(state, "null", e);
-    else if (ok) ok = text(state, v->publication.hud == APPLICATION_NATIVE_Q2_HUD_OVERLAY ?
-        "{\"mode\":\"layout-overlay\",\"frame\":" : "{\"mode\":\"replace-status\",\"frame\":", e) &&
-        hud_state(state, native, &v->source, configs, e) && text(state, "}", e);
-    return ok && text(state, "}", e) && application_unified_q2_component_documents_current(app, v);
+    if (!state || !lease || !v || !v->present || !application_unified_q2_component_documents_current(app,v))
+        return application_fail(e,QA_ERROR_ARGUMENT,"Native reliable setup requires its actual component observation");
+    const char *name=qa_strings_cstr(qa_session_strings(v->source.source.session),v->publication.owner);
+    if (!name || !v->publication.identity) return false;
+    *state=(qa_unified_component_q2){.owner={(char *)name,v->publication.activation_generation},
+        .identity=*v->publication.identity,.generation=v->publication.generation,
+        .hud=(qa_unified_component_hud)v->publication.hud,
+        .protocol={.kind=v->source.physical.edition==QA_Q2_CLASSIC?QA_NET_Q2_34:QA_NET_Q2KEX_2023}};
+    if (state->hud==QA_UNIFIED_COMPONENT_HUD_NONE) return true;
+    struct application_native_q2 *native=engine(app,&v->source);
+    state->replace_configstrings=configs; state->layout=(char *)v->source.layout;
+    state->player_number=(int32_t)v->source.player.source_slot-1;
+    memcpy(state->inventory,v->source.inventory,sizeof(state->inventory));
+    if (configs) {
+        state->configstrings=qa_unified_frame_lease_alloc(lease,native->configstring_count,
+            sizeof(*state->configstrings),_Alignof(qa_unified_component_configstring),e);
+        if (native->configstring_count && !state->configstrings) return false;
+        for (uint32_t i=0;i<native->configstring_count;++i) if (native->configstrings[i])
+            state->configstrings[state->configstring_count++]=(qa_unified_component_configstring){i,native->configstrings[i]};
+    }
+    return application_unified_q2_component_documents_current(app,v);
 }

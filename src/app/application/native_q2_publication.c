@@ -8,8 +8,7 @@ struct application_native_q2_publication {
     struct application_native_q2 *engine;
     qa_launch_instance_lease *lease;
     const qa_catalog_mod *metadata;
-    qa_unified_document *identity;
-    qa_sha256_digest identity_digest;
+    qa_unified_component_identity identity;
     qa_actor_owner owner;
     uint64_t activation_generation, generation;
     application_native_q2_hud_mode hud;
@@ -30,43 +29,16 @@ static bool storage(const application_native_q2_publication *p)
     return n && v && v->state.native.q2_engine == n && held && v->launch &&
         held->storage == v->launch->storage && n->declaration && v->state.native.module &&
         held->artifact == v->launch->artifact && held->declaration == v->launch->declaration &&
-        p->metadata && p->identity &&
+        p->metadata && p->identity.module.id &&
         qa_sha256_equal(qa_resource_digest(held->artifact), &p->metadata->program_digest) &&
         qa_sha256_equal(qa_resource_digest(held->declaration), &p->metadata->declaration_digest);
-}
-
-bool application_native_q2_component_identity_create(const qa_catalog_mod *m,
-    const qa_product *product,const char *instance,qa_unified_document **out,qa_error *e)
-{
-    if (!m || !product || !product->key || !product->identity || !m->id || !instance || !out || *out)
-        return application_fail(e, QA_ERROR_ARGUMENT, "Native component lost its discovered identity");
-    application_unified_json module = {0}, j = {0};
-    char declaration[72] = "sha256:", program[72] = "sha256:";
-    qa_sha256_hex(&m->declaration_digest, declaration + 7); qa_sha256_hex(&m->program_digest, program + 7);
-    bool ok = application_unified_json_text(&module, "mod:", e) && application_unified_json_percent_encoded(&module, product->key, e) &&
-        application_unified_json_text(&module, "%2F", e) && application_unified_json_percent_encoded(&module, m->id, e) &&
-        application_unified_json_append(&module, (qa_bytes){(const uint8_t *)"", 1}, e);
-#define TEXT(s) application_unified_json_text(&j, (s), e)
-#define STRING(s) application_unified_json_string(&j, (s), e)
-    if (ok) ok = TEXT("{\"selection\":{\"product\":") && STRING(product->key) && TEXT(",\"id\":") && STRING(m->id) &&
-        TEXT("},\"source\":{\"content\":") && STRING(product->identity) && TEXT(",\"provider\":") && STRING(instance) &&
-        TEXT("},\"declarationDigest\":") && STRING(declaration) && TEXT(",\"modules\":[{\"id\":") && STRING((char *)module.bytes.data) &&
-        TEXT(",\"artifactPath\":") && STRING(m->program_path) && TEXT(",\"digest\":") && STRING(program) &&
-        TEXT(",\"revision\":") && STRING(program) && TEXT("}],\"providers\":[{\"provider\":") && STRING((char *)module.bytes.data) &&
-        TEXT(",\"schema\":\"native:mod\",\"version\":1}]}") &&
-        qa_unified_document_create(QA_UNIFIED_CHECKPOINT, (qa_bytes){j.bytes.data, j.bytes.size}, out, e);
-#undef TEXT
-#undef STRING
-    application_unified_json_dispose(&module); application_unified_json_dispose(&j);
-    return ok;
 }
 
 static bool identity(application_native_q2_publication *p,qa_error *e)
 {
     const qa_launch_instance *d=qa_launch_instance_lease_view(p->lease);
     const qa_product *product=qa_catalog_product(qa_launch_instance_catalog(d),p->metadata->product);
-    if (!application_native_q2_component_identity_create(p->metadata,product,d->selection.instance,&p->identity,e)) return false;
-    qa_sha256(qa_json_source(qa_unified_document_json(p->identity),qa_unified_document_root(p->identity)),&p->identity_digest);
+    if (!application_unified_component_identity_create(p->metadata,product,d->selection.instance,&p->identity,e)) return false;
     return true;
 }
 
@@ -117,7 +89,7 @@ bool application_native_q2_publication_create(struct application_native_q2 *n,
     if (!ok) return application_fail(e, QA_ERROR_FORMAT, "Native component has an invalid client presentation admission");
     if (n->provider->application->operation == APPLICATION_PERSISTING) return true;
     qa_strings *strings = qa_session_strings(n->provider->application->session);
-    for (uint64_t generation = 1; generation <= QA_UNIFIED_SAFE_INTEGER; ++generation) {
+    for (uint64_t generation = 1;; ++generation) {
         application_unified_json name = {0};
         ok = namespace_text(p, generation, &name, e);
         if (ok && !qa_strings_find(strings, (qa_bytes){name.bytes.data, name.bytes.size})) {
@@ -126,6 +98,7 @@ bool application_native_q2_publication_create(struct application_native_q2 *n,
         }
         application_unified_json_dispose(&name);
         if (!ok || p->owner) return ok;
+        if (generation == UINT64_MAX) break;
     }
     return application_fail(e, QA_ERROR_FORMAT, "Native component registration generations are exhausted");
 }
@@ -143,7 +116,7 @@ bool application_native_q2_publication_activate(application_native_q2_publicatio
 bool application_native_q2_publication_retire(application_native_q2_publication *p, qa_error *e)
 {
     if (!p || !p->active) return true;
-    if (p->generation == QA_UNIFIED_SAFE_INTEGER)
+    if (p->generation == UINT64_MAX)
         return application_fail(e, QA_ERROR_FORMAT, "Native component presentation generation is exhausted");
     ++p->generation; p->active = false;
     return true;
@@ -152,7 +125,7 @@ void application_native_q2_publication_destroy(application_native_q2_publication
 {
     if (!out || !*out) return;
     application_native_q2_publication *p = *out;
-    qa_unified_document_destroy(p->identity); qa_launch_instance_lease_release(p->lease); free(p); *out = NULL;
+    qa_unified_component_identity_dispose(&p->identity); qa_launch_instance_lease_release(p->lease); free(p); *out = NULL;
 }
 
 bool application_native_q2_publication_read(qa_application *app, const application_unified_source *source,
@@ -174,7 +147,7 @@ bool application_native_q2_publication_read(qa_application *app, const applicati
         cut.launch != v->launch || !qa_application_native_q2_presentation_current(app, &cut))
         return application_fail(e, QA_ERROR_ARGUMENT, "Native component lost its registered physical GAME activation");
     *out = (application_native_q2_publication_view){.registration = p,
-        .descriptor = qa_launch_instance_lease_view(p->lease), .metadata = p->metadata, .identity = p->identity,
+        .descriptor = qa_launch_instance_lease_view(p->lease), .metadata = p->metadata, .identity = &p->identity,
         .owner = p->owner, .source_owner = v->owner, .activation_generation = p->activation_generation,
         .generation = p->generation, .hud = p->hud, .camera = p->camera};
     *found = true;
@@ -203,11 +176,10 @@ bool application_native_q2_publication_checkpoint_read(qa_application *app, cons
     *found = false;
     if (!p || (!p->camera && p->hud == APPLICATION_NATIVE_Q2_HUD_NONE)) return true;
     if (v->owner != source->owner || n->provider != v || !n->initialized || !n->map_ready ||
-        n->calls || n->shutting_down || !storage(p) || !p->active || !p->owner || !p->activation_generation ||
-        p->activation_generation > QA_UNIFIED_SAFE_INTEGER || p->generation > QA_UNIFIED_SAFE_INTEGER)
+        n->calls || n->shutting_down || !storage(p) || !p->active || !p->owner || !p->activation_generation)
         return application_fail(e, QA_ERROR_ARGUMENT, "Native checkpoint lost its imported component registration");
     *out = (application_native_q2_publication_view){.registration = p,
-        .descriptor = qa_launch_instance_lease_view(p->lease), .metadata = p->metadata, .identity = p->identity,
+        .descriptor = qa_launch_instance_lease_view(p->lease), .metadata = p->metadata, .identity = &p->identity,
         .owner = p->owner, .source_owner = v->owner, .activation_generation = p->activation_generation,
         .generation = p->generation, .hud = p->hud, .camera = p->camera};
     *found = true;
@@ -218,7 +190,6 @@ bool application_native_q2_publication_capture(struct application_native_q2 *n, 
 {
     application_native_q2_publication *p = n ? n->publication : NULL;
     if (!n || !out || (p && (!storage(p) || !p->owner || !p->activation_generation ||
-        p->activation_generation > QA_UNIFIED_SAFE_INTEGER || p->generation > QA_UNIFIED_SAFE_INTEGER ||
         p->active != n->map_ready)))
         return application_fail(e, QA_ERROR_ARGUMENT, "Native publication capture lost its registration");
     const char *name = p ? qa_strings_cstr(qa_session_strings(n->provider->application->session), p->owner) : "";
@@ -226,26 +197,25 @@ bool application_native_q2_publication_capture(struct application_native_q2 *n, 
         return application_fail(e, QA_ERROR_ARGUMENT, "Native publication lost its actual namespace string");
     size_t length = name ? strlen(name) : 0;
     if (length > 65535) return application_fail(e, QA_ERROR_FORMAT, "Native registration namespace is too long");
-    qa_buffer bytes = {.data = calloc(1, 92 + length), .size = 92 + length};
+    qa_buffer bytes = {.data = calloc(1, 60 + length), .size = 60 + length};
     if (!bytes.data) return application_fail(e, QA_ERROR_MEMORY, "Retaining native publication continuation");
     memcpy(bytes.data, "NQ2P", 4); bytes.data[4] = p != NULL;
     bytes.data[5] = p && p->active;
     if (p) {
         qa_store_u64le(bytes.data + 8, p->activation_generation); qa_store_u64le(bytes.data + 16, p->generation);
-        memcpy(bytes.data + 24, p->identity_digest.bytes, 32);
-        memcpy(bytes.data + 56, qa_launch_instance_lease_view(p->lease)->identity.bytes, 32);
+        memcpy(bytes.data + 24, qa_launch_instance_lease_view(p->lease)->identity.bytes, 32);
     }
-    qa_store_u32le(bytes.data + 88, (uint32_t)length); if (length) memcpy(bytes.data + 92, name, length);
+    qa_store_u32le(bytes.data + 56, (uint32_t)length); if (length) memcpy(bytes.data + 60, name, length);
     *out = bytes;
     return true;
 }
 bool application_native_q2_publication_restore_prepare(struct application_native_q2 *n, qa_bytes bytes, bool map_ready,
     application_native_q2_publication_restore **out, qa_error *e)
 {
-    if (!n || !out || *out || !bytes.data || bytes.size < 92 || memcmp(bytes.data, "NQ2P", 4) ||
+    if (!n || !out || *out || !bytes.data || bytes.size < 60 || memcmp(bytes.data, "NQ2P", 4) ||
         bytes.data[4] > 1 || bytes.data[5] > 1 ||
-        bytes.data[6] || bytes.data[7] || qa_load_u32le(bytes.data + 88) != bytes.size - 92 ||
-        bytes.size - 92 > 65535 || memchr(bytes.data + 92, 0, bytes.size - 92) ||
+        bytes.data[6] || bytes.data[7] || qa_load_u32le(bytes.data + 56) != bytes.size - 60 ||
+        bytes.size - 60 > 65535 || memchr(bytes.data + 60, 0, bytes.size - 60) ||
         (bytes.data[4] != 0) != (n->publication != NULL))
         return application_fail(e, QA_ERROR_FORMAT, "Native publication continuation differs from its declared owner");
     application_native_q2_publication *p = n->publication;
@@ -255,13 +225,12 @@ bool application_native_q2_publication_restore_prepare(struct application_native
     qa_actor_owner namespace = 0;
     if (p) {
         application_unified_json expected = {0};
-        bool ok = activation && activation <= QA_UNIFIED_SAFE_INTEGER && generation <= QA_UNIFIED_SAFE_INTEGER && storage(p) &&
-            !memcmp(bytes.data + 24, p->identity_digest.bytes, 32) &&
-            !memcmp(bytes.data + 56, qa_launch_instance_lease_view(p->lease)->identity.bytes, 32) &&
-            namespace_text(p, activation, &expected, e) && expected.bytes.size == bytes.size - 92 &&
-            !memcmp(expected.bytes.data, bytes.data + 92, expected.bytes.size);
+        bool ok = activation && storage(p) &&
+            !memcmp(bytes.data + 24, qa_launch_instance_lease_view(p->lease)->identity.bytes, 32) &&
+            namespace_text(p, activation, &expected, e) && expected.bytes.size == bytes.size - 60 &&
+            !memcmp(expected.bytes.data, bytes.data + 60, expected.bytes.size);
         if (ok) namespace = qa_strings_find(qa_session_strings(n->provider->application->session),
-            (qa_bytes){bytes.data + 92, bytes.size - 92});
+            (qa_bytes){bytes.data + 60, bytes.size - 60});
         application_unified_json_dispose(&expected);
         if (!ok || !namespace) return application_fail(e, QA_ERROR_FORMAT, "Native publication lost its saved registration namespace");
     } else {
