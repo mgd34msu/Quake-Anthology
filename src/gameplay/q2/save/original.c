@@ -323,7 +323,7 @@ bool q2_original_record(q2_original_record_io *io, q2_original_record_kind kind,
     return true;
 }
 
-static bool scalar(q2_original_record_io *io, const char *name,
+bool q2_original_scalar(q2_original_record_io *io, const char *name,
     q2_original_field_kind kind, uint16_t base, uint16_t xatrix, uint16_t rogue, void *value)
 {
     const q2_original_field field = {name, 0, 1, kind, {base, xatrix, rogue}};
@@ -368,7 +368,7 @@ static bool item_field(qa_q2_game *g, q2_original_record_io *io, const char *nam
         if (!io->reading && definition &&
             !q2_original_symbol_encode(Q2_ORIGINAL_ITEM, g->options.product,
                 definition->classname, &index, io->error)) return false;
-        if (!scalar(io, name, Q2_ORIGINAL_I32, base, xatrix, rogue, &index)) return false;
+        if (!q2_original_scalar(io, name, Q2_ORIGINAL_I32, base, xatrix, rogue, &index)) return false;
         if (io->reading) {
             if (index == -1 || index == 0) { *item = 0; return true; }
             const char *classname = q2_original_symbol_next(Q2_ORIGINAL_ITEM,
@@ -438,7 +438,7 @@ static bool inventory_record(qa_q2_game *g, q2_original_record_io *io,
             for (int32_t ordinal = 0; ordinal < 256; ++ordinal) {
                 uint16_t offset = (uint16_t)(740 + ordinal * 4);
                 int32_t value = 0;
-                if (!scalar(io, "inventory", Q2_ORIGINAL_I32, offset, offset, offset, &value))
+                if (!q2_original_scalar(io, "inventory", Q2_ORIGINAL_I32, offset, offset, offset, &value))
                     return false;
                 const char *name = q2_original_symbol_next(Q2_ORIGINAL_ITEM,
                     g->options.product, ordinal, NULL);
@@ -499,7 +499,7 @@ static bool inventory_record(qa_q2_game *g, q2_original_record_io *io,
                 }
                 if (ordinal < 0 || ordinal >= 256) return fail(io, i, "Invalid original Q2 item ordinal");
                 uint16_t offset = (uint16_t)(740 + ordinal * 4);
-                if (!scalar(io, definition->classname, Q2_ORIGINAL_I32, offset, offset, offset, &count))
+                if (!q2_original_scalar(io, definition->classname, Q2_ORIGINAL_I32, offset, offset, offset, &count))
                     return false;
                 if (io->reading) entry->count = count;
             } else if (count) {
@@ -533,7 +533,7 @@ static bool inventory_record(qa_q2_game *g, q2_original_record_io *io,
         if (io->edition == QA_Q2_CLASSIC) {
             uint16_t offset = field->offsets[io->product];
             if (offset == UINT16_MAX) continue;
-            if (!scalar(io, field->classname, Q2_ORIGINAL_I32, offset, offset, offset, &maximum)) return false;
+            if (!q2_original_scalar(io, field->classname, Q2_ORIGINAL_I32, offset, offset, offset, &maximum)) return false;
         } else if (io->reading) {
             int64_t value = 0;
             if (maxima != QA_JSON_NONE &&
@@ -575,7 +575,7 @@ static bool original_weapon(qa_q2_game *g, q2_original_record_io *io, const char
                 definition->classname, &ordinal, io->error)) return false;
             pointer = library->item_list + (uint32_t)ordinal * 76;
         }
-        if (!scalar(io, name, Q2_ORIGINAL_U32, base, xatrix, rogue, &pointer)) return false;
+        if (!q2_original_scalar(io, name, Q2_ORIGINAL_U32, base, xatrix, rogue, &pointer)) return false;
         if (io->reading && pointer) {
             if (!library || pointer < library->item_list ||
                 (pointer - library->item_list) % 76)
@@ -599,7 +599,7 @@ static bool original_weapon(qa_q2_game *g, q2_original_record_io *io, const char
     return true;
 }
 
-static bool resource_field(qa_q2_game *g, q2_original_record_io *io,
+bool q2_original_resource(qa_q2_game *g, q2_original_record_io *io,
     const qa_q2_save_level *level, const char *name, uint16_t base, uint16_t xatrix,
     uint16_t rogue, uint32_t table_base, qa_string_id *resource)
 {
@@ -614,7 +614,7 @@ static bool resource_field(qa_q2_game *g, q2_original_record_io *io,
             }
         if (!index) return fail(io, *resource, "Q2 Source resource was not captured in its engine table");
     }
-    if (!scalar(io, name, Q2_ORIGINAL_I32, base, xatrix, rogue, &index)) return false;
+    if (!q2_original_scalar(io, name, Q2_ORIGINAL_I32, base, xatrix, rogue, &index)) return false;
     if (io->reading) {
         if (index < 0 || index >= 256) return fail(io, (size_t)(uint32_t)index,
             "Original Q2 resource exceeds its engine table");
@@ -642,10 +642,10 @@ static bool persistent_record(qa_q2_game *g, q2_original_record_io *io,
         health = (int32_t)carry->health;
         maximum_health = (int32_t)carry->maximum_health;
     }
-    if (!scalar(io, "health", Q2_ORIGINAL_I32, 724, 724, 724, &health) ||
-        !scalar(io, "max_health", Q2_ORIGINAL_I32, 728, 728, 728, &maximum_health) ||
-        !scalar(io, "savedFlags", Q2_ORIGINAL_U32, 732, 732, 732, &carry->flags) ||
-        !scalar(io, "power_cubes", Q2_ORIGINAL_U32, 1796, 1804, 1812, &carry->power_cubes) ||
+    if (!q2_original_scalar(io, "health", Q2_ORIGINAL_I32, 724, 724, 724, &health) ||
+        !q2_original_scalar(io, "max_health", Q2_ORIGINAL_I32, 728, 728, 728, &maximum_health) ||
+        !q2_original_scalar(io, "savedFlags", Q2_ORIGINAL_U32, 732, 732, 732, &carry->flags) ||
+        !q2_original_scalar(io, "power_cubes", Q2_ORIGINAL_U32, 1796, 1804, 1812, &carry->power_cubes) ||
         !item_field(g, io, "selected_item", 736, 736, 736, &carry->selected_item) ||
         !original_weapon(g, io, "weapon", 1788, 1796, 1804, coop, &carry->weapon) ||
         !original_weapon(g, io, "lastweapon", 1792, 1800, 1808, coop, last_weapon) ||
@@ -704,14 +704,14 @@ static bool movement_record(q2_original_record_io *io, qa_q2_wire_movement *move
         }
         qa_q2r_movement_state *state = &movement->state.data.q2r;
         int32_t gravity = state->gravity;
-        bool okay = scalar(io, "pm_type", Q2_ORIGINAL_I32, 0, 0, 0, &state->type) &&
-            scalar(io, "origin", Q2_ORIGINAL_VECTOR, 0, 0, 0, &state->origin) &&
-            scalar(io, "velocity", Q2_ORIGINAL_VECTOR, 0, 0, 0, &state->velocity) &&
-            scalar(io, "pm_flags", Q2_ORIGINAL_U32, 0, 0, 0, &state->flags) &&
-            scalar(io, "pm_time", Q2_ORIGINAL_U32, 0, 0, 0, &state->time_ms) &&
-            scalar(io, "gravity", Q2_ORIGINAL_I32, 0, 0, 0, &gravity) &&
-            scalar(io, "delta_angles", Q2_ORIGINAL_VECTOR, 0, 0, 0, &state->delta_angles) &&
-            scalar(io, "viewheight", Q2_ORIGINAL_F32, 0, 0, 0, &state->view_height);
+        bool okay = q2_original_scalar(io, "pm_type", Q2_ORIGINAL_I32, 0, 0, 0, &state->type) &&
+            q2_original_scalar(io, "origin", Q2_ORIGINAL_VECTOR, 0, 0, 0, &state->origin) &&
+            q2_original_scalar(io, "velocity", Q2_ORIGINAL_VECTOR, 0, 0, 0, &state->velocity) &&
+            q2_original_scalar(io, "pm_flags", Q2_ORIGINAL_U32, 0, 0, 0, &state->flags) &&
+            q2_original_scalar(io, "pm_time", Q2_ORIGINAL_U32, 0, 0, 0, &state->time_ms) &&
+            q2_original_scalar(io, "gravity", Q2_ORIGINAL_I32, 0, 0, 0, &gravity) &&
+            q2_original_scalar(io, "delta_angles", Q2_ORIGINAL_VECTOR, 0, 0, 0, &state->delta_angles) &&
+            q2_original_scalar(io, "viewheight", Q2_ORIGINAL_F32, 0, 0, 0, &state->view_height);
         if (okay && (gravity < INT16_MIN || gravity > INT16_MAX))
             okay = fail(io, 0, "Original rerelease Pmove gravity exceeds its Source short");
         if (okay && io->reading) {
@@ -726,20 +726,20 @@ static bool movement_record(q2_original_record_io *io, qa_q2_wire_movement *move
     qa_q2_movement_state *state = &movement->state.data.q2;
     int32_t gravity = state->gravity;
     uint32_t flags = state->flags, time = state->time_eight_ms;
-    if (!scalar(io, "pm_type", Q2_ORIGINAL_I32, 0, 0, 0, &state->type) ||
-        !scalar(io, "pm_flags", Q2_ORIGINAL_U8, 16, 16, 16, &flags) ||
-        !scalar(io, "pm_time", Q2_ORIGINAL_U8, 17, 17, 17, &time) ||
-        !scalar(io, "gravity", Q2_ORIGINAL_I16, 18, 18, 18, &gravity)) return false;
+    if (!q2_original_scalar(io, "pm_type", Q2_ORIGINAL_I32, 0, 0, 0, &state->type) ||
+        !q2_original_scalar(io, "pm_flags", Q2_ORIGINAL_U8, 16, 16, 16, &flags) ||
+        !q2_original_scalar(io, "pm_time", Q2_ORIGINAL_U8, 17, 17, 17, &time) ||
+        !q2_original_scalar(io, "gravity", Q2_ORIGINAL_I16, 18, 18, 18, &gravity)) return false;
     for (unsigned axis = 0; axis < 3; ++axis) {
         int32_t origin = qa_q2_movement_coordinate(state, false, axis);
         int32_t velocity = qa_q2_movement_coordinate(state, true, axis);
         int32_t angle = state->delta_angle_shorts[axis];
         uint16_t offset = (uint16_t)(4 + axis * 2);
-        if (!scalar(io, "origin", Q2_ORIGINAL_I16, offset, offset, offset, &origin)) return false;
+        if (!q2_original_scalar(io, "origin", Q2_ORIGINAL_I16, offset, offset, offset, &origin)) return false;
         offset = (uint16_t)(10 + axis * 2);
-        if (!scalar(io, "velocity", Q2_ORIGINAL_I16, offset, offset, offset, &velocity)) return false;
+        if (!q2_original_scalar(io, "velocity", Q2_ORIGINAL_I16, offset, offset, offset, &velocity)) return false;
         offset = (uint16_t)(20 + axis * 2);
-        if (!scalar(io, "delta_angles", Q2_ORIGINAL_I16, offset, offset, offset, &angle)) return false;
+        if (!q2_original_scalar(io, "delta_angles", Q2_ORIGINAL_I16, offset, offset, offset, &angle)) return false;
         if (io->reading) {
             qa_q2_movement_coordinate_set(state, false, axis, origin);
             qa_q2_movement_coordinate_set(state, true, axis, velocity);
@@ -755,7 +755,7 @@ static bool movement_record(q2_original_record_io *io, qa_q2_wire_movement *move
     return true;
 }
 
-static bool object_begin(q2_original_record_io *parent, const char *name,
+bool q2_original_object_begin(q2_original_record_io *parent, const char *name,
     q2_original_record_io *child, bool *present)
 {
     *child = *parent;
@@ -773,7 +773,7 @@ static bool object_begin(q2_original_record_io *parent, const char *name,
     return written(parent);
 }
 
-static bool object_end(q2_original_record_io *parent)
+bool q2_original_object_end(q2_original_record_io *parent)
 {
     if (parent->edition == QA_Q2_RERELEASE && !parent->reading) {
         qa_json_writer_end(parent->writer);
@@ -787,19 +787,19 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
 {
     q2_original_record_io child;
     bool present;
-    if (!object_begin(io, "ps", &child, &present)) return false;
+    if (!q2_original_object_begin(io, "ps", &child, &present)) return false;
     bool ps_present = present;
     if (present && (!movement_record(&child, &state->movement) ||
         !q2_original_record(&child, Q2_ORIGINAL_VIEW, &state->view) ||
-        !resource_field(g, &child, level, "gunindex", 88, 88, 88, 32, &state->weapon.view_model) ||
-        !scalar(&child, "gunframe", Q2_ORIGINAL_I32, 92, 92, 92, &state->weapon.frame) ||
+        !q2_original_resource(g, &child, level, "gunindex", 88, 88, 88, 32, &state->weapon.view_model) ||
+        !q2_original_scalar(&child, "gunframe", Q2_ORIGINAL_I32, 92, 92, 92, &state->weapon.frame) ||
         (io->edition == QA_Q2_RERELEASE &&
-         !scalar(&child, "gunskin", Q2_ORIGINAL_I32, 65535, 65535, 65535, &state->weapon.view_skin))))
+         !q2_original_scalar(&child, "gunskin", Q2_ORIGINAL_I32, 65535, 65535, 65535, &state->weapon.view_skin))))
         return false;
-    if (!object_end(io) || !object_begin(io, "pers", &child, &present)) return false;
+    if (!q2_original_object_end(io) || !q2_original_object_begin(io, "pers", &child, &present)) return false;
     if (present && !persistent_record(g, &child, &state->player, &state->persistent,
         false, &state->weapon.last_weapon)) return false;
-    if (!object_end(io) || !object_begin(io, "resp.coop_respawn", &child, &present)) return false;
+    if (!q2_original_object_end(io) || !q2_original_object_begin(io, "resp.coop_respawn", &child, &present)) return false;
     if (io->edition == QA_Q2_CLASSIC) {
         static const size_t shifts[] = {1628, 1636, 1644};
         size_t shift = shifts[io->product];
@@ -820,24 +820,24 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
         if (!persistent_record(g, &child, &coop, &state->player.coop, true, &last_weapon)) return false;
         if (io->reading) state->player.has_coop = true;
     }
-    if (!object_end(io) || !q2_original_record(io, Q2_ORIGINAL_CLIENT, &state->player) ||
+    if (!q2_original_object_end(io) || !q2_original_record(io, Q2_ORIGINAL_CLIENT, &state->player) ||
         !q2_original_record(io, Q2_ORIGINAL_WEAPON, &state->weapon) ||
         !q2_original_record(io, Q2_ORIGINAL_POWERS, &state->powers) ||
         !original_weapon(g, io, "newweapon", 3532, 3548, 3564, false, &state->weapon.pending) ||
-        !scalar(io, "v_angle", Q2_ORIGINAL_VECTOR, 3636, 3652, 3668, &state->movement.view_angles) ||
-        !scalar(io, "resp.cmd_angles", Q2_ORIGINAL_VECTOR, 3452, 3468, 3484,
+        !q2_original_scalar(io, "v_angle", Q2_ORIGINAL_VECTOR, 3636, 3652, 3668, &state->movement.view_angles) ||
+        !q2_original_scalar(io, "resp.cmd_angles", Q2_ORIGINAL_VECTOR, 3452, 3468, 3484,
             &state->movement.command_angles) ||
-        !scalar(io, "silencer_shots", Q2_ORIGINAL_I32, 3732, 3752, 3764, &state->silencer) ||
-        !resource_field(g, io, level, "weapon_sound", 3736, 3756, 3768, 288, &state->weapon.loop_sound))
+        !q2_original_scalar(io, "silencer_shots", Q2_ORIGINAL_I32, 3732, 3752, 3764, &state->silencer) ||
+        !q2_original_resource(g, io, level, "weapon_sound", 3736, 3756, 3768, 288, &state->weapon.loop_sound))
         return false;
     if (io->edition == QA_Q2_CLASSIC) {
-        if (!scalar(io, "connected", Q2_ORIGINAL_BOOL, 720, 720, 720, &state->player.info.connected) ||
-            !scalar(io, "showscores", Q2_ORIGINAL_BOOL, 3496, 3512, 3528, &state->player.show_scores) ||
-            !scalar(io, "showinventory", Q2_ORIGINAL_BOOL, 3500, 3516, 3532, &state->player.show_inventory) ||
-            !scalar(io, "showhelp", Q2_ORIGINAL_BOOL, 3504, 3520, 3536, &state->player.show_help) ||
-            !scalar(io, "buttons", Q2_ORIGINAL_U32, 3516, 3532, 3548, &state->player.buttons) ||
-            !scalar(io, "latched_buttons", Q2_ORIGINAL_U32, 3524, 3540, 3556, &state->player.latched_buttons) ||
-            !scalar(io, "weapon_thunk", Q2_ORIGINAL_BOOL, 3528, 3544, 3560, &state->player.weapon_thunk))
+        if (!q2_original_scalar(io, "connected", Q2_ORIGINAL_BOOL, 720, 720, 720, &state->player.info.connected) ||
+            !q2_original_scalar(io, "showscores", Q2_ORIGINAL_BOOL, 3496, 3512, 3528, &state->player.show_scores) ||
+            !q2_original_scalar(io, "showinventory", Q2_ORIGINAL_BOOL, 3500, 3516, 3532, &state->player.show_inventory) ||
+            !q2_original_scalar(io, "showhelp", Q2_ORIGINAL_BOOL, 3504, 3520, 3536, &state->player.show_help) ||
+            !q2_original_scalar(io, "buttons", Q2_ORIGINAL_U32, 3516, 3532, 3548, &state->player.buttons) ||
+            !q2_original_scalar(io, "latched_buttons", Q2_ORIGINAL_U32, 3524, 3540, 3556, &state->player.latched_buttons) ||
+            !q2_original_scalar(io, "weapon_thunk", Q2_ORIGINAL_BOOL, 3528, 3544, 3560, &state->player.weapon_thunk))
             return false;
         const struct {const char *name; uint16_t offsets[3]; float *value;} damage[] = {
             {"damage_armor", {3536, 3552, 3568}, &state->player.damage_armor},
@@ -847,11 +847,11 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
         };
         for (size_t i = 0; i < sizeof(damage) / sizeof(damage[0]); ++i) {
             int32_t value = io->reading ? 0 : qa_source_float_to_i32(*damage[i].value);
-            if (!scalar(io, damage[i].name, Q2_ORIGINAL_I32, damage[i].offsets[0],
+            if (!q2_original_scalar(io, damage[i].name, Q2_ORIGINAL_I32, damage[i].offsets[0],
                 damage[i].offsets[1], damage[i].offsets[2], &value)) return false;
             if (io->reading) *damage[i].value = (float)value;
         }
-        if (!scalar(io, "damage_from", Q2_ORIGINAL_VECTOR, 3552, 3568, 3584,
+        if (!q2_original_scalar(io, "damage_from", Q2_ORIGINAL_VECTOR, 3552, 3568, 3584,
             &state->player.damage_from)) return false;
     }
     if (io->reading) {
@@ -874,7 +874,7 @@ void q2_original_client_free(q2_original_client_state *state)
     *state = (q2_original_client_state){0};
 }
 
-static bool original_game_open(qa_q2_game *g, qa_bytes bytes,
+bool q2_original_game_open(qa_q2_game *g, qa_bytes bytes,
     qa_json_document **document, q2_original_record_io *io,
     q2_original_game_state *state, qa_error *error)
 {
@@ -949,12 +949,12 @@ static bool campaign_record(qa_q2_game *g, q2_original_record_io *io,
         }
         if (!source_text(&row, g, "map_name", &level->map, 64) ||
             !source_text(&row, g, "pretty_name", &level->name, 64) ||
-            !scalar(&row, "total_secrets", Q2_ORIGINAL_U32, 0, 0, 0, &level->total_secrets) ||
-            !scalar(&row, "found_secrets", Q2_ORIGINAL_U32, 0, 0, 0, &level->found_secrets) ||
-            !scalar(&row, "total_monsters", Q2_ORIGINAL_U32, 0, 0, 0, &level->total_monsters) ||
-            !scalar(&row, "killed_monsters", Q2_ORIGINAL_U32, 0, 0, 0, &level->killed_monsters) ||
-            !scalar(&row, "visit_order", Q2_ORIGINAL_U32, 0, 0, 0, &level->visit_order) ||
-            !scalar(&row, "time", Q2_ORIGINAL_TIME, 0, 0, 0, &time)) return false;
+            !q2_original_scalar(&row, "total_secrets", Q2_ORIGINAL_U32, 0, 0, 0, &level->total_secrets) ||
+            !q2_original_scalar(&row, "found_secrets", Q2_ORIGINAL_U32, 0, 0, 0, &level->found_secrets) ||
+            !q2_original_scalar(&row, "total_monsters", Q2_ORIGINAL_U32, 0, 0, 0, &level->total_monsters) ||
+            !q2_original_scalar(&row, "killed_monsters", Q2_ORIGINAL_U32, 0, 0, 0, &level->killed_monsters) ||
+            !q2_original_scalar(&row, "visit_order", Q2_ORIGINAL_U32, 0, 0, 0, &level->visit_order) ||
+            !q2_original_scalar(&row, "time", Q2_ORIGINAL_TIME, 0, 0, 0, &time)) return false;
         if (io->reading) {
             level->time_seconds = (double)time / (double)Q2_NS;
             if (level->map) extent = i + 1;
@@ -977,7 +977,7 @@ bool qa_q2_game_original_read_game(qa_q2_game *g, qa_bytes bytes, qa_error *erro
     q2_original_game_state state = {0};
     qa_q2_campaign_level levels[QA_Q2_CAMPAIGN_LEVEL_LIMIT] = {0};
     uint32_t level_count = 0;
-    bool okay = original_game_open(g, bytes, &document, &io, &state, error) &&
+    bool okay = q2_original_game_open(g, bytes, &document, &io, &state, error) &&
         campaign_record(g, &io, levels, &level_count);
     qa_string_id primary = 0, secondary = 0;
     if (okay) okay = qa_strings_intern_cstr(qa_session_strings(g->services.session), state.help[0],
@@ -1019,7 +1019,7 @@ bool qa_q2_game_original_read_game(qa_q2_game *g, qa_bytes bytes, qa_error *erro
     return okay;
 }
 
-static bool original_client_capture(qa_q2_game *g, q2_actor *actor,
+bool q2_original_client_capture(qa_q2_game *g, q2_actor *actor,
     q2_original_client_state *state, qa_error *error)
 {
     *state = (q2_original_client_state){.weapon.phase = QA_Q2_READY};
@@ -1140,7 +1140,7 @@ bool q2_original_write_game(qa_q2_game *g, bool autosave,
     for (uint32_t slot = 0; okay && slot < state.clients; ++slot) {
         q2_actor *actor = q2_actor_get(g, g->wire_actors[slot + 1], false, NULL);
         q2_original_client_state client = {0};
-        okay = original_client_capture(g, actor, &client, error);
+        okay = q2_original_client_capture(g, actor, &client, error);
         if (io.edition == QA_Q2_CLASSIC) {
             size_t stride = q2_original_client_size(g->options.product);
             io.output = (qa_buffer){encoded.data + 16 + 1564 + (size_t)slot * stride, stride};

@@ -16,7 +16,8 @@ typedef enum q2_original_record_kind {
     Q2_ORIGINAL_POWERS,
     Q2_ORIGINAL_ENTITY,
     Q2_ORIGINAL_MOVER,
-    Q2_ORIGINAL_GAME
+    Q2_ORIGINAL_GAME,
+    Q2_ORIGINAL_LEVEL
 } q2_original_record_kind;
 
 typedef enum q2_original_field_kind {
@@ -71,12 +72,50 @@ typedef struct q2_original_client_state {
     int32_t silencer;
 } q2_original_client_state;
 
+typedef struct q2_original_level_state {
+    uint32_t frame;
+    uint64_t time_ns, intermission_ns;
+    char name[64], map[64], next_map[64];
+    qa_vec3 intermission_origin, intermission_angles;
+    bool exit_intermission, intermission_clear;
+    int32_t health_image, total_secrets, found_secrets, total_goals, found_goals;
+    uint32_t total_monsters, killed_monsters, body_queue, power_cubes;
+    uint64_t disguise_ns, restart_ns, autosave_ns;
+} q2_original_level_state;
+
+typedef struct q2_original_edict_row {
+    uint32_t number;
+    qa_bytes fields, strings;
+    qa_json_id object;
+} q2_original_edict_row;
+
+typedef struct q2_original_level_file {
+    qa_json_document *document;
+    q2_original_level_state state;
+    qa_bytes level_fields, level_strings;
+    qa_json_id level_object;
+    q2_original_edict_row *rows;
+    size_t count;
+} q2_original_level_file;
+
+bool q2_original_scalar(q2_original_record_io *, const char *, q2_original_field_kind,
+    uint16_t, uint16_t, uint16_t, void *);
+bool q2_original_resource(qa_q2_game *, q2_original_record_io *, const qa_q2_save_level *,
+    const char *, uint16_t, uint16_t, uint16_t, uint32_t, qa_string_id *);
+bool q2_original_object_begin(q2_original_record_io *, const char *, q2_original_record_io *, bool *);
+bool q2_original_object_end(q2_original_record_io *);
+bool q2_original_game_open(qa_q2_game *, qa_bytes, qa_json_document **,
+    q2_original_record_io *, q2_original_game_state *, qa_error *);
+bool q2_original_client_capture(qa_q2_game *, q2_actor *, q2_original_client_state *, qa_error *);
 bool q2_original_value(q2_original_record_io *, const q2_original_field *, void *);
 bool q2_original_record(q2_original_record_io *, q2_original_record_kind, void *);
 bool q2_original_client_record(qa_q2_game *, q2_original_record_io *,
     const qa_q2_save_level *, q2_original_client_state *);
 void q2_original_client_free(q2_original_client_state *);
 bool q2_original_write_game(qa_q2_game *, bool, const qa_q2_save_level *, qa_buffer *, qa_error *);
+bool q2_original_level_open(qa_q2_game *, qa_bytes, q2_original_level_file *, qa_error *);
+void q2_original_level_close(q2_original_level_file *);
+const q2_original_edict_row *q2_original_level_actor(const q2_original_level_file *, uint32_t);
 const q2_original_layout *q2_original_layout_for(q2_original_record_kind);
 size_t q2_original_client_size(qa_q2_product);
 size_t q2_original_entity_size(qa_q2_product);

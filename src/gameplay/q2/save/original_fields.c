@@ -126,6 +126,29 @@ static const q2_original_field game_fields[] = {
     {"autosaved", MEMBER(q2_original_game_state, autosave), 1, Q2_ORIGINAL_BOOL, {1560, 1560, 1560}},
 };
 
+static const q2_original_field level_fields[] = {
+    {"time", MEMBER(q2_original_level_state, time_ns), 1, Q2_ORIGINAL_TIME, {4, 4, 4}},
+    {"level_name", MEMBER(q2_original_level_state, name), 64, Q2_ORIGINAL_TEXT, {8, 8, 8}},
+    {"mapname", MEMBER(q2_original_level_state, map), 64, Q2_ORIGINAL_TEXT, {72, 72, 72}},
+    {"nextmap", MEMBER(q2_original_level_state, next_map), 64, Q2_ORIGINAL_TEXT, {136, 136, 136}},
+    {"intermissiontime", MEMBER(q2_original_level_state, intermission_ns), 1, Q2_ORIGINAL_TIME, {200, 200, 200}},
+    {"exitintermission", MEMBER(q2_original_level_state, exit_intermission), 1, Q2_ORIGINAL_BOOL, {208, 208, 208}},
+    {"intermission_clear", MEMBER(q2_original_level_state, intermission_clear), 1, Q2_ORIGINAL_BOOL, {65535, 65535, 65535}},
+    {"intermission_origin", MEMBER(q2_original_level_state, intermission_origin), 1, Q2_ORIGINAL_VECTOR, {212, 212, 212}},
+    {"intermission_angle", MEMBER(q2_original_level_state, intermission_angles), 1, Q2_ORIGINAL_VECTOR, {224, 224, 224}},
+    {"total_secrets", MEMBER(q2_original_level_state, total_secrets), 1, Q2_ORIGINAL_I32, {268, 268, 268}},
+    {"found_secrets", MEMBER(q2_original_level_state, found_secrets), 1, Q2_ORIGINAL_I32, {272, 272, 272}},
+    {"total_goals", MEMBER(q2_original_level_state, total_goals), 1, Q2_ORIGINAL_I32, {276, 276, 276}},
+    {"found_goals", MEMBER(q2_original_level_state, found_goals), 1, Q2_ORIGINAL_I32, {280, 280, 280}},
+    {"total_monsters", MEMBER(q2_original_level_state, total_monsters), 1, Q2_ORIGINAL_U32, {284, 284, 284}},
+    {"killed_monsters", MEMBER(q2_original_level_state, killed_monsters), 1, Q2_ORIGINAL_U32, {288, 288, 288}},
+    {"body_que", MEMBER(q2_original_level_state, body_queue), 1, Q2_ORIGINAL_U32, {296, 296, 296}},
+    {"power_cubes", MEMBER(q2_original_level_state, power_cubes), 1, Q2_ORIGINAL_U32, {300, 300, 300}},
+    {"disguise_violation_time", MEMBER(q2_original_level_state, disguise_ns), 1, Q2_ORIGINAL_FRAME_INDEX, {65535, 65535, 308}},
+    {"coop_level_restart_time", MEMBER(q2_original_level_state, restart_ns), 1, Q2_ORIGINAL_TIME, {65535, 65535, 65535}},
+    {"next_auto_save", MEMBER(q2_original_level_state, autosave_ns), 1, Q2_ORIGINAL_TIME, {65535, 65535, 65535}},
+};
+
 static const q2_original_layout layouts[] = {
     {sizeof(qa_q2_player_state), persistent_fields, sizeof(persistent_fields) / sizeof(persistent_fields[0])},
     {sizeof(qa_q2_player_view), view_fields, sizeof(view_fields) / sizeof(view_fields[0])},
@@ -135,6 +158,7 @@ static const q2_original_layout layouts[] = {
     {sizeof(qa_q2_entity_state), entity_fields, sizeof(entity_fields) / sizeof(entity_fields[0])},
     {sizeof(q2_mover), mover_fields, sizeof(mover_fields) / sizeof(mover_fields[0])},
     {sizeof(q2_original_game_state), game_fields, sizeof(game_fields) / sizeof(game_fields[0])},
+    {sizeof(q2_original_level_state), level_fields, sizeof(level_fields) / sizeof(level_fields[0])},
 };
 
 const q2_original_layout *q2_original_layout_for(q2_original_record_kind kind)
