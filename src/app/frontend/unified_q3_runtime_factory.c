@@ -26,10 +26,8 @@ struct frontend_unified_q3_runtime_factory {
     qa_audio_music *music;
     char *intro,*loop;
     qa_audio_listener listener;
-    qa_buffer import_bytes;
-    unsigned imported_children;
     size_t movie_references,calls;
-    bool has_listener,looping,retiring,cleanup_entered,restoring,restored,passive,codec_busy,binding,runtime_bound;
+    bool has_listener,looping,retiring,cleanup_entered;
     bool reset_constructor;
 };
 static bool fail(qa_error *e,const char *text)
@@ -38,7 +36,7 @@ static char *copy_text(const char *text)
 { if(!text)return NULL;size_t n=strlen(text)+1;char *out=malloc(n);if(out)memcpy(out,text,n);return out; }
 bool frontend_unified_q3_runtime_factory_current(const frontend_unified_q3_runtime_factory *o)
 {
-    return o && !o->retiring && !o->codec_busy && (!o->restoring || o->binding) && o->options.current(o->options.context,&o->options,false) &&
+    return o && !o->retiring && o->options.current(o->options.context,&o->options,false) &&
         frontend_remote_unified_current(o->options.replica,NULL) &&
         frontend_unified_q3_client_current(o->options.client) && frontend_unified_media_current(o->options.media);
 }
@@ -243,7 +241,7 @@ static bool initialize_stage(void *context,const q3n_frame *f,q3n_command_init_s
 }
 static bool movie_parent(frontend_unified_q3_runtime_factory *o,q3n_compiled_source_view *out)
 {
-    bool cold=o && ((o->restoring && o->options.frontend->source_restoring) || o->options.frontend->capture);
+    bool cold=o && o->options.frontend->capture;
     return o && (!o->retiring || cold) && o->movies && o->options.current(o->options.context,&o->options,cold) &&
         (cold?q3n_compiled_source_checkpoint_read(frontend_unified_q3_client_source(o->options.client),out,NULL):
             q3n_compiled_source_read(frontend_unified_q3_client_source(o->options.client),out,NULL)) &&
@@ -258,7 +256,7 @@ static bool movie_current(void *context,const frontend_system_cinematic_source *
     if(!view || !o || !o->movie_references || !movie_parent(o,&source) ||
         !frontend_unified_q3_runtime_factory_cinematic_read(o,&cinematics,NULL) || !cinematics)return false;
     const frontend_system_cinematic_identity *id=&view->identity;
-    qa_cvars *vars=o->restoring || o->options.frontend->capture?frontend_unified_q3_client_checkpoint_stage_cvars(o->options.client,
+    qa_cvars *vars=o->options.frontend->capture?frontend_unified_q3_client_checkpoint_stage_cvars(o->options.client,
         frontend_unified_q3_runtime_rebind_frame(o->runtime)):
         frontend_unified_q3_client_cvars(o->options.client);
     return view->context==o && view->files==o->options.source.files && view->movies==o->movies && view->cvars==vars &&
@@ -274,7 +272,7 @@ static bool movie_append(void *context,const char *text,qa_error *e)
     frontend_unified_q3_runtime_factory *o=context;q3n_compiled_source_view source;
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->options.replica);
     const qa_command_context *base=frontend_unified_q3_client_context(o->options.client);
-    if(!text || !d || !base || !o->movie_references || o->calls==SIZE_MAX || o->restoring || o->codec_busy ||
+    if(!text || !d || !base || !o->movie_references || o->calls==SIZE_MAX ||
        !movie_parent(o,&source))return fail(e,"Compiled movie completion lost its actual CLIENT namespace");
     qa_command_context command=*base;command.script="q3-system-movie";command.direct=false;command.console_text=false;
     ++o->calls;bool okay=qa_console_append(d->console,&command,text,e) && movie_parent(o,&source);--o->calls;return okay;
@@ -284,8 +282,7 @@ static frontend_system_cinematic_source movie_source(frontend_unified_q3_runtime
 { return (frontend_system_cinematic_source){.identity={o->options.receiver,o->options.audio_owner,o->options.audio_owner,
         o->options.receiver,QA_QVM_CGAME,source->basis.physical_seat,source->basis.seat},
     .files=o->options.source.files,.movies=o->movies,.cinematics=o->cinematics,
-    .cvars=o->restoring?frontend_unified_q3_client_checkpoint_stage_cvars(o->options.client,
-        frontend_unified_q3_runtime_rebind_frame(o->runtime)):frontend_unified_q3_client_cvars(o->options.client),
+    .cvars=frontend_unified_q3_client_cvars(o->options.client),
     .context=o,.current=movie_current,.append=movie_append,.release=movie_release}; }
 
 static bool system_movie(void *context,const qa_q3_movie_request *request,qa_q3_system_movie *out,qa_error *e)
@@ -293,7 +290,7 @@ static bool system_movie(void *context,const qa_q3_movie_request *request,qa_q3_
     frontend_unified_q3_runtime_factory *o=context;const q3n_compiled_frame *frame=entered(o);
     q3n_compiled_source_view source;
     if(!request || !out || !frame || !q3n_compiled_frame_current(frame) || !movie_parent(o,&source) ||
-       o->restoring || o->codec_busy || o->calls==SIZE_MAX || o->movie_references==SIZE_MAX)return fail(e,"Compiled system movie requires its actual entered CG role");
+       o->calls==SIZE_MAX || o->movie_references==SIZE_MAX)return fail(e,"Compiled system movie requires its actual entered CG role");
     frontend_system_cinematic_source value=movie_source(o,&source);++o->movie_references;++o->calls;
     bool okay=frontend_system_cinematic_open(o->options.frontend,&value,request,out,e);
     if(!okay)--o->movie_references;
@@ -302,17 +299,17 @@ static bool system_movie(void *context,const qa_q3_movie_request *request,qa_q3_
 static bool video_shutdown(void *context,qa_error *e)
 { frontend_unified_q3_runtime_factory *o=context;return frontend_unified_q3_commands_video_reset(o->commands,e); }
 
-static bool create(const frontend_unified_q3_runtime_factory_options *options,bool restoring,
+bool frontend_unified_q3_runtime_factory_create(const frontend_unified_q3_runtime_factory_options *options,
     frontend_unified_q3_runtime_factory **out,qa_error *e)
 {
     if(!options || !out || *out || !options->current || !options->retirement_current || !options->send_client || !options->frontend || !options->replica ||
         !options->media || !options->client || !options->input_read || !options->prediction || !options->events ||
         !options->receiver || !options->audio_owner || !options->audio_actor ||
         !options->source.instance || !options->source.content || !options->source.provider || !options->composition.body_hidden || !options->composition.body_submit ||
-        !options->composition.player_weapon || options->frontend->source_restoring!=restoring ||
-        !options->current(options->context,options,restoring))return fail(e,"Compiled factory requires its real retained Source services");
+        !options->composition.player_weapon || options->frontend->source_restoring ||
+        !options->current(options->context,options,false))return fail(e,"Compiled factory requires its real retained Source services");
     frontend_unified_q3_runtime_factory *o=calloc(1,sizeof(*o));if(!o)return frontend_fail(e,QA_ERROR_MEMORY,"Retaining compiled CG factory");
-    o->options=*options;o->restoring=restoring;*out=o;
+    o->options=*options;*out=o;
     o->options.source.instance=NULL;o->options.source.content=NULL;
     o->options.source.source=NULL;o->options.source.entities=NULL;o->options.source.players=NULL;
     o->options.source.game_state=NULL;o->options.source.configstring_revisions=NULL;
@@ -355,31 +352,22 @@ static bool create(const frontend_unified_q3_runtime_factory_options *options,bo
         .audio_context=options->audio_context,.audio_actor=options->audio_actor,.entered_frame=entered,
         .checkpoint_frame=checkpoint_frame,.operations=operations};
     frontend_unified_q3_runtime_options actual;
-    if(!(restoring?frontend_unified_q3_runtime_services_create_restored(&services,&o->services,e):
-            frontend_unified_q3_runtime_services_create(&services,&o->services,e)) ||
-        !(restoring?frontend_unified_q3_runtime_services_read_restored(o->services,&actual,e):
-            frontend_unified_q3_runtime_services_read(o->services,&actual,e)) ||
-        !(restoring?frontend_unified_q3_runtime_create_restored(&actual,&o->runtime,e):
-            frontend_unified_q3_runtime_create(&actual,&o->runtime,e)))return false;
+    if(!frontend_unified_q3_runtime_services_create(&services,&o->services,e) ||
+        !frontend_unified_q3_runtime_services_read(o->services,&actual,e) ||
+        !frontend_unified_q3_runtime_create(&actual,&o->runtime,e))return false;
     frontend_unified_q3_commands_options commands={.frontend=options->frontend,.replica=options->replica,.client=options->client,
         .runtime=o->runtime,.context=o,.current=command_current,.send_client=send_client};
-    bool okay=restoring?frontend_unified_q3_commands_create_restored(&commands,&o->commands,e):
-        frontend_unified_q3_commands_create(&commands,&o->commands,e);
+    bool okay=frontend_unified_q3_commands_create(&commands,&o->commands,e);
     /* Only the actual CLIENT retains observed state/history. These immutable
      * names identify the factory's activation without borrowing a FRAME row. */
     return okay;
 }
-bool frontend_unified_q3_runtime_factory_create(const frontend_unified_q3_runtime_factory_options *options,
-    frontend_unified_q3_runtime_factory **out,qa_error *e)
-{ return create(options,false,out,e); }
-bool frontend_unified_q3_runtime_factory_create_restored(const frontend_unified_q3_runtime_factory_options *options,
-    frontend_unified_q3_runtime_factory **out,qa_error *e)
-{ return create(options,true,out,e); }
+
 bool frontend_unified_q3_runtime_factory_idle(const frontend_unified_q3_runtime_factory *o)
-{ return !o || (!o->codec_busy && !o->binding && !o->calls && frontend_unified_q3_runtime_idle(o->runtime) && frontend_unified_q3_commands_idle(o->commands) && (!o->music || qa_audio_music_idle(o->music))); }
+{ return !o || (!o->calls && frontend_unified_q3_runtime_idle(o->runtime) && frontend_unified_q3_commands_idle(o->commands) && (!o->music || qa_audio_music_idle(o->music))); }
 static bool checkpoint_returned(const frontend_unified_q3_runtime_factory *o)
 {
-    return o && !o->codec_busy && !o->binding && !o->calls &&
+    return o && !o->calls &&
         (!o->runtime || frontend_unified_q3_runtime_checkpoint_current(o->runtime)) &&
         frontend_unified_q3_commands_idle(o->commands) && (!o->music || qa_audio_music_idle(o->music)) &&
         frontend_unified_q3_client_checkpoint_stage_current(o->options.client,
@@ -414,13 +402,13 @@ bool frontend_unified_q3_runtime_factory_destroy(frontend_unified_q3_runtime_fac
     if(!frontend_unified_q3_runtime_services_destroy(&o->services,e))return false;
     if(o->reset_constructor && !frontend_unified_q3_client_constructor_reset(o->options.client,o,constructor_closed,e))return false;
     qa_audio_music_release(o->music);free(o->intro);free(o->loop);
-    qa_buffer_free(&o->import_bytes);free(o->source_instance);free(o->source_content);free(o);*out=NULL;return true;
+    free(o->source_instance);free(o->source_content);free(o);*out=NULL;return true;
 }
 bool frontend_unified_q3_runtime_factory_constructor_abort(frontend_unified_q3_runtime_factory **out,qa_error *e)
 {
     if(!out || !*out)return true;
     frontend_unified_q3_runtime_factory *o=*out;q3n_compiled_source_view source;
-    if(o->restoring || !frontend_unified_q3_runtime_factory_idle(o) ||
+    if(!frontend_unified_q3_runtime_factory_idle(o) ||
        !o->options.current(o->options.context,&o->options,false) ||
        !q3n_compiled_source_read(frontend_unified_q3_client_source(o->options.client),&source,e) || source.basis.initialized)
         return fail(e,"Compiled constructor abort requires its actual failed fresh CLIENT Init");
@@ -447,23 +435,7 @@ bool frontend_unified_q3_runtime_factory_cinematic_read(const frontend_unified_q
     }
     *out=o->cinematics; return true;
 }
-bool frontend_unified_q3_runtime_factory_topology_read(const frontend_unified_q3_runtime_factory *o,
-    frontend_unified_q3_runtime_factory_topology *out,qa_error *e)
-{
-    if(!out || !o || ((!o->services || !o->runtime || !o->commands) && !o->retiring) ||
-       !checkpoint_returned(o) ||
-       !o->options.current(o->options.context,&o->options,true) ||
-       !frontend_unified_q3_client_checkpoint_stage_current(o->options.client,
-            frontend_unified_q3_runtime_rebind_frame(o->runtime)))
-        return fail(e,"Compiled topology requires its actual returned Source capture parent");
-    frontend_unified_q3_runtime_factory_topology value={.services=o->services,.commands=o->commands,
-        .music=o->music,.cinematics=o->cinematics,.receiver=o->options.receiver,.audio_owner=o->options.audio_owner};
-    if(o->runtime) {
-        if(!frontend_unified_q3_runtime_owners_read(o->runtime,&value.children,e))return false;
-    } else if(o->services && !frontend_unified_q3_runtime_services_caches(o->services,
-        &value.children.media,&value.children.clients,e))return false;
-    *out=value;return true;
-}
+
 bool frontend_unified_q3_runtime_factory_initialize(frontend_unified_q3_runtime_factory *o,qa_error *e)
 { return o && frontend_unified_q3_runtime_initialize(o->runtime,e); }
 bool frontend_unified_q3_runtime_factory_rebind_prepare(frontend_unified_q3_runtime_factory *o,const frontend_unified_q3_client_frame *f,qa_error *e)
@@ -474,12 +446,7 @@ bool frontend_unified_q3_runtime_factory_rebind_checkpoint_ready(const frontend_
     const frontend_unified_q3_client_frame *f)
 { return o && checkpoint_returned(o) && o->options.current(o->options.context,&o->options,true) &&
     frontend_unified_q3_runtime_rebind_checkpoint_ready(o->runtime,f); }
-bool frontend_unified_q3_runtime_factory_rebind_restore(frontend_unified_q3_runtime_factory *o,
-    const frontend_unified_q3_client_frame *f,qa_error *e)
-{
-    return o && o->restoring && o->restored && o->options.current(o->options.context,&o->options,true) &&
-        frontend_unified_q3_runtime_rebind_restore(o->runtime,f,e);
-}
+
 void frontend_unified_q3_runtime_factory_rebind_commit(frontend_unified_q3_runtime_factory *o,const frontend_unified_q3_client_frame *f)
 { if(o)frontend_unified_q3_runtime_rebind_commit(o->runtime,f); }
 void frontend_unified_q3_runtime_factory_rebind_abort(frontend_unified_q3_runtime_factory *o,const frontend_unified_q3_client_frame *f)
@@ -499,8 +466,7 @@ bool frontend_unified_q3_runtime_factory_camera_prepare(frontend_unified_q3_runt
 { return o && frontend_unified_q3_runtime_camera_prepare(o->runtime,out,active,e); }
 bool frontend_unified_q3_runtime_factory_scene_camera(frontend_unified_q3_runtime_factory *o,const qa_scene_view *view,qa_error *e)
 { return o && frontend_unified_q3_runtime_scene_camera(o->runtime,view,e); }
-bool frontend_unified_q3_runtime_factory_draw(frontend_unified_q3_runtime_factory *o,bool *rendered,qa_error *e)
-{ return o && frontend_unified_q3_runtime_draw(o->runtime,rendered,e); }
+
 bool frontend_unified_q3_runtime_factory_scene_prepare(frontend_unified_q3_runtime_factory *o,
     qa_q3_source_scene_bank *bank,bool *active,qa_error *e)
 { return o && frontend_unified_q3_runtime_scene_prepare(o->runtime,bank,active,e); }
@@ -525,5 +491,3 @@ bool frontend_unified_q3_runtime_factory_listener(const frontend_unified_q3_runt
     if(!out || !present || !frontend_unified_q3_runtime_factory_idle(o) || !frontend_unified_q3_runtime_factory_current(o))
         return fail(e,"Compiled listener read requires its returned actual factory");
     *present=o->has_listener;if(*present)*out=o->listener;return true; }
-qa_command_result frontend_unified_q3_runtime_factory_command(frontend_unified_q3_runtime_factory *o,const qa_command_invocation *call,qa_error *e)
-{ return o?frontend_unified_q3_commands_execute(o->commands,call,e):QA_COMMAND_UNHANDLED; }

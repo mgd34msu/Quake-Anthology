@@ -40,8 +40,6 @@ typedef struct frontend_unified_q3_runtime_factory_options {
 
 bool frontend_unified_q3_runtime_factory_create(const frontend_unified_q3_runtime_factory_options *,
     frontend_unified_q3_runtime_factory **,qa_error *);
-bool frontend_unified_q3_runtime_factory_create_restored(const frontend_unified_q3_runtime_factory_options *,
-    frontend_unified_q3_runtime_factory **,qa_error *);
 bool frontend_unified_q3_runtime_factory_current(const frontend_unified_q3_runtime_factory *);
 bool frontend_unified_q3_runtime_factory_idle(const frontend_unified_q3_runtime_factory *);
 bool frontend_unified_q3_runtime_factory_destroy(frontend_unified_q3_runtime_factory **,qa_error *);
@@ -49,18 +47,6 @@ bool frontend_unified_q3_runtime_factory_destroy(frontend_unified_q3_runtime_fac
  * retained CLIENT constructor cache. Transport history remains owned. */
 bool frontend_unified_q3_runtime_factory_constructor_abort(frontend_unified_q3_runtime_factory **,qa_error *);
 frontend_unified_q3_runtime *frontend_unified_q3_runtime_factory_runtime(const frontend_unified_q3_runtime_factory *);
-typedef struct frontend_unified_q3_runtime_factory_topology {
-    frontend_unified_q3_runtime_services *services;
-    frontend_unified_q3_runtime_owners children;
-    frontend_unified_q3_commands *commands;
-    qa_audio_music *music;
-    qa_q3_cinematic_source *cinematics;
-    uint64_t receiver,audio_owner;
-} frontend_unified_q3_runtime_factory_topology;
-/* Literal owned children for the genuine capture resource graph. No resource
- * registration, Source replay or callback entry occurs. */
-bool frontend_unified_q3_runtime_factory_topology_read(const frontend_unified_q3_runtime_factory *,
-    frontend_unified_q3_runtime_factory_topology *,qa_error *);
 bool frontend_unified_q3_runtime_factory_cinematic_read(const frontend_unified_q3_runtime_factory *,
     qa_q3_cinematic_source **,qa_error *);
 bool frontend_unified_q3_runtime_factory_initialize(frontend_unified_q3_runtime_factory *,qa_error *);
@@ -68,8 +54,6 @@ bool frontend_unified_q3_runtime_factory_rebind_prepare(frontend_unified_q3_runt
     const frontend_unified_q3_client_frame *,qa_error *);
 bool frontend_unified_q3_runtime_factory_rebind_ready(const frontend_unified_q3_runtime_factory *,
     const frontend_unified_q3_client_frame *);
-bool frontend_unified_q3_runtime_factory_rebind_restore(frontend_unified_q3_runtime_factory *,
-    const frontend_unified_q3_client_frame *,qa_error *);
 bool frontend_unified_q3_runtime_factory_rebind_checkpoint_ready(const frontend_unified_q3_runtime_factory *,
     const frontend_unified_q3_client_frame *);
 void frontend_unified_q3_runtime_factory_rebind_commit(frontend_unified_q3_runtime_factory *,
@@ -85,7 +69,6 @@ bool frontend_unified_q3_runtime_factory_prediction(frontend_unified_q3_runtime_
 bool frontend_unified_q3_runtime_factory_camera_prepare(frontend_unified_q3_runtime_factory *,
     frontend_unified_q3_runtime_camera *,bool *active,qa_error *);
 bool frontend_unified_q3_runtime_factory_scene_camera(frontend_unified_q3_runtime_factory *,const qa_scene_view *,qa_error *);
-bool frontend_unified_q3_runtime_factory_draw(frontend_unified_q3_runtime_factory *,bool *rendered,qa_error *);
 bool frontend_unified_q3_runtime_factory_scene_prepare(frontend_unified_q3_runtime_factory *,
     struct qa_q3_source_scene_bank *,bool *active,qa_error *);
 bool frontend_unified_q3_runtime_factory_scene_lights(const frontend_unified_q3_runtime_factory *,
@@ -99,6 +82,5 @@ bool frontend_unified_q3_runtime_factory_scene_submit(frontend_unified_q3_runtim
 bool frontend_unified_q3_runtime_factory_hud(frontend_unified_q3_runtime_factory *,bool *rendered,qa_error *);
 bool frontend_unified_q3_runtime_factory_frame_end(frontend_unified_q3_runtime_factory *,bool completed,qa_error *);
 bool frontend_unified_q3_runtime_factory_listener(const frontend_unified_q3_runtime_factory *,qa_audio_listener *,bool *present,qa_error *);
-qa_command_result frontend_unified_q3_runtime_factory_command(frontend_unified_q3_runtime_factory *,const qa_command_invocation *,qa_error *);
 
 #endif
