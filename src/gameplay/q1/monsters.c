@@ -814,17 +814,6 @@ bool q1_monster_mission_turn(qa_q1_game *g, q1_actor *entity, bool *active, qa_e
 }
 bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_monster *m = &entity->state.monster;
-    if (m->addon.boss != Q1_BOSS_FINAL && q1_health(g, entity->id) > 0 && q1_ref_present(m->enemy) &&
-        !eligible(g, q1_ref_actor(g, m->enemy)) &&
-        !(m->species->species == QA_Q1_GREMLIN && m->source.gremlin.gorging)) {
-        m->enemy = eligible(g, q1_ref_actor(g, m->old_enemy)) ? m->old_enemy : (q1_ref){0};
-        m->old_enemy = (q1_ref){0};
-        m->attack_state = 0;
-        const char *next = q1_ref_present(m->enemy)                      ? m->species->run
-                           : q1_monster_route(g, entity).registry ? m->species->walk
-                                                                  : m->species->stand;
-        m->next_frame = q1_frame_index(next);
-    }
     if (m->next_frame >= q1_frame_count) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Q1 monster frame outside table");
         return false;

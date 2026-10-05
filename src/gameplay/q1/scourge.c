@@ -4,8 +4,9 @@ static bool locomotion_sound(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_monster *monster = &entity->state.monster;
     if (!monster->source.scourge.initialized) {
         q1_actor *trigger;
-        if (!q1_create(g, "scourge_trigger", Q1_TIMER, entity->id, &trigger, error))
+        if (!q1_create(g, "scourge_trigger", Q1_TIMER, (qa_actor_id){0}, &trigger, error))
             return false;
+        trigger->activator = q1_ref_from(g, entity->id);
         monster->source.scourge.trigger = q1_ref_from(g, trigger->id);
         monster->source.scourge.initialized = true;
         trigger->physics.solid = QA_PHYSICS_TRIGGER;
@@ -101,7 +102,7 @@ static bool tail(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return q1_meat_spray(g, entity, origin, velocity, error);
 }
 bool q1_scourge_trigger(qa_q1_game *g, q1_actor *trigger, qa_actor_id actor, qa_error *error) {
-    q1_actor *owner = q1_entity(g, q1_ref_actor(g, trigger->owner));
+    q1_actor *owner = q1_entity(g, q1_ref_actor(g, trigger->activator));
     if (!owner || owner->kind != Q1_MONSTER || q1_health(g, owner->id) <= 0)
         return q1_remove(g, trigger, error);
     qa_body_state body, source;

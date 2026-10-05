@@ -134,6 +134,13 @@ static const original_field monster_fields[] = {
 static const original_field eel_fields[] = {
     FIELD(q1_monster, source.eel.pitch, "weapon", I16)
 };
+static const original_field scourge_fields[] = {
+    FIELD(q1_monster, source.scourge.trigger, "lastvictim", REF),
+    FIELD(q1_monster, source.scourge.dodge_until, "duration", DOUBLE),
+    FIELD(q1_monster, source.scourge.initialized, "state", BOOL),
+    FIELD(q1_monster, source.scourge.silent, "spawnsilent", BOOL),
+    FIELD(q1_monster, source.scourge.previous_silent, "spawnmulti", BOOL)
+};
 static const original_field map_fields[] = {
     FIELD(q1_map_state, map, "map", STRING),
     FIELD(q1_map_state, noise[0], "noise", STRING),
@@ -273,7 +280,7 @@ static const original_think_callback think_callbacks[] = {
     {Q1_THINK_DEATH_BUBBLES, "DeathBubblesSpawn"}, {Q1_THINK_BUBBLE, "bubble_bob"},
     {Q1_THINK_HIP_LASER, "HIP_LaserThink"}, {Q1_THINK_PROX_WATCH, "ProximityBomb"},
     {Q1_THINK_PROX_EXPLODE, "ProximityExplode"},
-    {Q1_THINK_WRATH_HOME, "WrathHome"},
+    {Q1_THINK_WRATH_HOME, "WrathHome"}, {Q1_THINK_SCOURGE_TRIGGER, "ScourgeTriggerThink"},
     {Q1_THINK_MULTI_SPLIT, "MultiGrenadeThink"}, {Q1_THINK_MINI_EXPLODE, "MiniGrenadeExplode"},
     {Q1_THINK_MULTI_EXPLODE, "MultiGrenadeExplode"}, {Q1_THINK_MULTI_ACQUIRE, "MultiRocketThink"},
     {Q1_THINK_MULTI_HOME, "MultiRocketThink"}, {Q1_THINK_PLASMA_LAUNCH, "PlasmaThink"},
@@ -391,20 +398,22 @@ static bool monster_functions(const q1_monster *monster, qa_q1_save_record *reco
         "demon1_pain", "ogre_pain", "hknight_pain", "sham_pain", "Wiz_Pain", "shalrath_pain",
         NULL, "fish_pain", "zombie_pain", NULL, "nopain",
         [QA_Q1_EEL] = "eel_pain1", [QA_Q1_SWORD] = "sword_pain", [QA_Q1_WRATH] = "wrath_pain",
-        [QA_Q1_SUPER_WRATH] = "overlord_pain", [QA_Q1_MUMMY] = "mummy_pain"};
+        [QA_Q1_SUPER_WRATH] = "overlord_pain", [QA_Q1_MUMMY] = "mummy_pain",
+        [QA_Q1_SCOURGE] = "scourge_pain"};
     static const char *const die[] = {"army_die", "dog_die", "knight_die", "enf_die", "demon_die",
         "ogre_die", "hknight_die", "sham_die", "wiz_die", "shalrath_die", "tbaby_die1",
         "f_death1", "zombie_die", NULL, "finale_1",
         [QA_Q1_EEL] = "eel_death", [QA_Q1_SWORD] = "sword_die", [QA_Q1_WRATH] = "wrath_die02",
-        [QA_Q1_SUPER_WRATH] = "overlord_die02", [QA_Q1_MUMMY] = "mummy_die"};
+        [QA_Q1_SUPER_WRATH] = "overlord_die02", [QA_Q1_MUMMY] = "mummy_die",
+        [QA_Q1_SCOURGE] = "scourge_die"};
     static const char *const melee[] = {NULL, "dog_atta1", "knight_atk1", NULL, "Demon_MeleeAttack",
         "ogre_melee", "hknight_melee", "sham_melee", NULL, NULL, "tbaby_jump1", "f_attack1",
         [QA_Q1_EEL] = "eel_attack1", [QA_Q1_SWORD] = "sword_atk1",
-        [QA_Q1_SUPER_WRATH] = "overlord_melee"};
+        [QA_Q1_SUPER_WRATH] = "overlord_melee", [QA_Q1_SCOURGE] = "scourge_melee"};
     if (!species || (species->species > QA_Q1_OLDONE &&
         species->species != QA_Q1_EEL && species->species != QA_Q1_SWORD &&
         species->species != QA_Q1_WRATH && species->species != QA_Q1_SUPER_WRATH &&
-        species->species != QA_Q1_MUMMY))
+        species->species != QA_Q1_MUMMY && species->species != QA_Q1_SCOURGE))
         return fail(error, "Original native expansion monster callbacks require their Source projection");
     unsigned index = (unsigned)species->species;
     if (species->species == QA_Q1_BOSS) return callback(record,"use","boss_awake",error);
@@ -591,9 +600,10 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
     if (entity) {
         source_entity = *entity;
         if (entity->kind == Q1_PROJECTILE || entity->think == Q1_THINK_WIZARD ||
-            entity->think == Q1_THINK_DEATH_BUBBLES ||
+            entity->think == Q1_THINK_DEATH_BUBBLES || entity->think == Q1_THINK_SCOURGE_TRIGGER ||
             ((entity->think == Q1_THINK_SPRITE || sprite_remove(game,entity)) && !entity->map)) source_entity.classname = 0;
         if (entity->think == Q1_THINK_BUBBLE || entity->think == Q1_THINK_DEATH_BUBBLES) source_entity.count = 0;
+        if (entity->think == Q1_THINK_SCOURGE_TRIGGER) source_entity.delay = 0;
     }
     if ((entity && !FIELDS(receipt, record, &source_entity, entity_fields, error)) ||
         !FIELDS(receipt, record, &body, body_fields, error) || !FIELDS(receipt, record, &physics, physics_fields, error)) return false;
@@ -693,6 +703,10 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
     if (entity->think == Q1_THINK_BUBBLE && !number(record,"cnt",entity->count,false,error)) return false;
     if (entity->think == Q1_THINK_DEATH_BUBBLES &&
         !number(record,"bubble_count",entity->count,false,error)) return false;
+    if (entity->think == Q1_THINK_SCOURGE_TRIGGER &&
+        (!actor(receipt,record,"lastvictim",entity->activator,false,error) ||
+         !number(record,"duration",entity->delay,false,error) ||
+         !callback(record,"touch",entity->touch_disabled ? NULL : "ScourgeTriggerTouch",error))) return false;
     if (entity->kind == Q1_PROJECTILE && !projectile_fields(receipt, entity, record, error)) return false;
     if (entity->kind == Q1_PICKUP && !pickup_fields(receipt, entity, record, error)) return false;
     if (entity->kind == Q1_MONSTER) {
@@ -701,6 +715,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
             !vector(record,"view_ofs",qa_v3(0,0,traits.view_height),error)) return false;
         if (entity->state.monster.species->species == QA_Q1_EEL &&
             !FIELDS(receipt, record, &entity->state.monster, eel_fields, error)) return false;
+        if (entity->state.monster.species->species == QA_Q1_SCOURGE &&
+            !FIELDS(receipt,record,&entity->state.monster,scourge_fields,error)) return false;
         return FIELDS(receipt, record, &entity->state.monster, monster_fields, error) &&
             monster_functions(&entity->state.monster, record, error);
     }
@@ -1064,7 +1080,7 @@ static bool create_original(qa_q1_game *game, const qa_q1_save_record *record,
     q1_entity_kind kind = species ? Q1_MONSTER : projectile ? Q1_PROJECTILE :
         map != Q1_MAP_FIELDS ? Q1_MAP : Q1_ENTITY;
     if (think && (!strcmp(think,"Wiz_FastFire") || !strcmp(think,"DeathBubblesSpawn") ||
-        !strcmp(think,"bubble_bob") || !strncmp(think,"s_explode",9))) kind = Q1_TIMER;
+        !strcmp(think,"bubble_bob") || !strcmp(think,"ScourgeTriggerThink") || !strncmp(think,"s_explode",9))) kind = Q1_TIMER;
     if (explosion) kind = Q1_TIMER;
     if (touch && (!strcmp(touch,"health_touch") || !strcmp(touch,"armor_touch") ||
         !strcmp(touch,"ammo_touch") || !strcmp(touch,"weapon_touch") || !strcmp(touch,"key_touch") ||
@@ -1075,6 +1091,7 @@ static bool create_original(qa_q1_game *game, const qa_q1_save_record *record,
         else if (think && !strcmp(think,"bubble_bob")) name = "bubble";
         else if (think && !strcmp(think,"DeathBubblesSpawn")) name = "death_bubbles";
         else if (think && !strcmp(think,"Wiz_FastFire")) name = "wizard_fastfire";
+        else if (think && !strcmp(think,"ScourgeTriggerThink")) name = "scourge_trigger";
         else if (explosion || (think && !strncmp(think,"s_explode",9))) name = "explosion";
         else if (think && !strcmp(think,"DelayThink")) { name = "delayed_use"; map = Q1_MAP_DELAY; kind = Q1_MAP; }
         else if (think && !strcmp(think,"SUB_Remove")) name = "gib";
@@ -1178,6 +1195,10 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
     if (source_think && !strcmp(source_think,"Wiz_FastFire") &&
         (!saved_ref(game,saved(record,"enemy"),count,&entity->state.projectile.enemy,error) ||
          !saved_vector(saved(record,"movedir"),&entity->state.projectile.right,error))) return false;
+    if (source_think && !strcmp(source_think,"ScourgeTriggerThink")) {
+        if (!saved_ref(game,saved(record,"lastvictim"),count,&entity->activator,error)) return false;
+        entity->delay = saved_number(record,"duration");
+    }
     if (source_think && !strcmp(source_think,"bubble_bob")) entity->count = saved_number(record,"cnt");
     if (source_think && !strcmp(source_think,"DeathBubblesSpawn"))
         entity->count = saved_number(record,"bubble_count") - saved_number(record,"air_finished");
@@ -1192,6 +1213,8 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         if (!monster->species) return fail(error, "Original monster lacks its actual Source species");
         if (monster->species->species == QA_Q1_EEL &&
             !RESTORE_FIELDS(game,record,monster,eel_fields,slots,count,error)) return false;
+        if (monster->species->species == QA_Q1_SCOURGE &&
+            !RESTORE_FIELDS(game,record,monster,scourge_fields,slots,count,error)) return false;
         if (monster->species->species == QA_Q1_SWORD) {
             const char *run = saved(record,"th_run"), *pain = saved(record,"th_pain");
             monster->source.sword.awakened = run && !strcmp(run,"sword_run1");
