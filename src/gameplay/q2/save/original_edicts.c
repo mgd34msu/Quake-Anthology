@@ -23,9 +23,14 @@ bool q2_original_seconds(q2_original_record_io *io, const char *name,
     float value = io->reading ? 0 : (float)((double)*time / (double)Q2_NS);
     if (!q2_original_scalar(io, name, Q2_ORIGINAL_F32, offset, offset, offset, &value)) return false;
     if (io->reading) {
-        if (!isfinite(value) || value < 0 || (double)value * (double)Q2_NS >= (double)UINT64_MAX)
+        /* Rerelease gtime_t::from_sec(float) truncates the float product to
+         * integer milliseconds. Classic game DLLs retain float seconds. */
+        uint64_t unit = io->edition == QA_Q2_RERELEASE ? Q2_MS : 1;
+        double ticks = io->edition == QA_Q2_RERELEASE ? (double)(value * 1000.0f) :
+            (double)value * (double)Q2_NS;
+        if (!isfinite(ticks) || ticks < 0 || ticks >= (double)UINT64_MAX / (double)unit)
             return malformed(io, offset, "Original Q2 float-second deadline is invalid");
-        *time = (uint64_t)((double)value * (double)Q2_NS);
+        *time = (uint64_t)ticks * unit;
     }
     return true;
 }
