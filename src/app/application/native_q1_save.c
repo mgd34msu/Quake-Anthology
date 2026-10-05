@@ -2,6 +2,7 @@
 #include "map_players_private.h"
 #include "qa/game_q1_checkpoint.h"
 #include "native_q1_wire.h"
+#include "native_q1_console.h"
 
 static application_player_record *local_player(qa_application *app,
     application_provider *provider, qa_error *error) {
@@ -37,6 +38,15 @@ bool application_q1_native_save_capture(qa_application *app, application_provide
     qa_q1_save_data *save, qa_error *error) {
     const application_player_record *player = local_player(app, provider, error);
     if (!player || !save) return false;
+    qa_cvars *cvars = application_native_q1_console_registry(provider);
+    const qa_cvar_view *skill = cvars ? qa_cvars_find(cvars, "skill") : NULL;
+    if (!skill || !isfinite(skill->number))
+        return application_fail(error, QA_ERROR_FORMAT, "Original native save lost its live skill setting");
+    save->skill = (int32_t)fmaxf(0, fminf(3, floorf((float)skill->number)));
+    qa_combat_state combat;
+    if (!qa_combat_read(app->combat, player->actor, &combat, error)) return false;
+    if (!(combat.health > 0))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Cannot save a dead original Quake player");
     qa_application_control_view control;
     if (!qa_application_control_read(app, player->actor, &control) || control.state.kind != QA_MOVEMENT_NETQUAKE)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original native save lost its actual NetQuake movement");

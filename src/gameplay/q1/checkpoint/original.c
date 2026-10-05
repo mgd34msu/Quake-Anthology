@@ -104,7 +104,8 @@ static const original_field monster_fields[] = {
     FIELD(q1_monster, hostile_until, "show_hostile", DOUBLE),
     FIELD(q1_monster, attack_state, "attack_state", U8),
     FIELD(q1_monster, lefty, "lefty", BOOL),
-    FIELD(q1_monster, in_pain, "inpain", U8)
+    FIELD(q1_monster, in_pain, "inpain", U8),
+    FIELD(q1_monster, counter, "cnt", U32)
 };
 static const original_field map_fields[] = {
     FIELD(q1_map_state, map, "map", STRING),
@@ -373,10 +374,18 @@ static bool monster_functions(const q1_monster *monster, qa_q1_save_record *reco
         return callback(record,"th_pain","nopain",error) && callback(record,"th_die","finale_1",error);
     const char *missile = species->species == QA_Q1_WIZARD ? "Wiz_Missile" :
         species->species == QA_Q1_ZOMBIE ? "zombie_missile" : species->missile;
+    const char *touch = NULL;
+    if (monster->jump_touch) {
+        touch = species->species == QA_Q1_DOG ? "Dog_JumpTouch" :
+            species->species == QA_Q1_DEMON ? "Demon_JumpTouch" :
+            species->species == QA_Q1_TARBABY ? "Tar_JumpTouch" : NULL;
+        if (!touch) return fail(error, "Original monster contact has no compiled Source callback");
+    }
     return callback(record, "th_stand", species->stand, error) && callback(record, "th_walk", species->walk, error) &&
         callback(record, "th_run", species->run, error) && callback(record, "th_missile", missile, error) &&
         callback(record, "th_melee", index < sizeof(melee) / sizeof(*melee) ? melee[index] : NULL, error) &&
         callback(record, "th_pain", pain[index], error) && callback(record, "th_die", die[index], error) &&
+        callback(record, "touch", touch, error) &&
         callback(record, "use", q1_ref_present(monster->enemy) || monster->dead ? "SUB_Null" : "monster_use", error);
 }
 
@@ -620,6 +629,8 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
         !game->wire || game->wire->loading || !game->maps ||
         !qa_session_safe(game->services.session) || !qa_world_idle(game->services.world))
         return fail(error, "Original native capture requires its idle single-player Source");
+    if (game->maps->finale_started || qa_q1_level_read(game->maps->options.level)->intermission)
+        return fail(error, "Cannot save an original Quake game in intermission");
     qa_q1_wire_receipt receipt = {0};
     if (!qa_q1_wire_read_begin(game, &receipt, error)) return false;
     save->time = (float)game->time;
@@ -1018,6 +1029,7 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
     entity->physics = physics; entity->source_movement_flags = flags;
     entity->aimed_damage = saved_number(record, "takedamage") == 2;
     entity->touch_disabled = !saved(record,"touch");
+    if (!restore_think(game, entity, record, error)) return false;
     const char *source_think = saved(record,"think");
     if (source_think && !strcmp(source_think,"Wiz_FastFire") &&
         (!saved_ref(game,saved(record,"enemy"),count,&entity->state.projectile.enemy,error) ||
@@ -1029,6 +1041,9 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         q1_monster *monster = &entity->state.monster;
         if (!RESTORE_FIELDS(game, record, monster, monster_fields, slots, count, error)) return false;
         monster->dead = combat.health <= 0; monster->counted_death = monster->dead;
+        const char *touch = saved(record,"touch");
+        monster->jump_touch = touch && (!strcmp(touch,"Dog_JumpTouch") ||
+            !strcmp(touch,"Demon_JumpTouch") || !strcmp(touch,"Tar_JumpTouch"));
         monster->current_frame = UINT16_MAX;
         if (!monster->species) return fail(error, "Original monster lacks its actual Source species");
         const char *target = qa_strings_cstr(qa_session_strings(game->services.session), entity->target);
@@ -1087,7 +1102,7 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         if (!qa_attack_next(&game->attack_sequence,&p->attack,error)) return false;
         p->remove_touch = saved(record,"touch") && !strcmp(saved(record,"touch"),"SUB_Remove");
     }
-    return restore_think(game, entity, record, error) && q1_map_bind_target(game, entity, error);
+    return q1_map_bind_target(game, entity, error);
 }
 static bool restore_groups(qa_q1_game *game, const qa_q1_save_data *save,
     const qa_actor_id *slots, qa_error *error) {
