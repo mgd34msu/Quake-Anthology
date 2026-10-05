@@ -1,9 +1,7 @@
 #include "network_q1_client.h"
 #include "internal.h"
 #include "network_q1_skin_commands.h"
-#include "save_private.h"
 #include "neutral_config.h"
-#include "qa/input_command_save.h"
 #include "qa/application_network.h"
 #include "qa/ui_language.h"
 #include "qa/q1_chat_commands.h"
@@ -32,7 +30,7 @@ struct frontend_network_q1_client {
     qa_input_command_builder input;
     uint64_t input_sequence, input_sample;
     unsigned calls;
-    bool configured, admitting, retired, closing, importing, restore_finished, configuration_released, input_center;
+    bool configured, admitting, retired, closing, configuration_released, input_center;
     char *pending_allskins, *userinfo, *userinfo_pending, *signon_name, *spawn_parameters;
     char *declared_name, *declared_parameters;
     size_t userinfo_next;
@@ -307,6 +305,19 @@ static bool chat_command(void *context,const qa_command_invocation *call,qa_erro
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Chat requires its actual admitted Q1 CLIENT command");
     return forward(o,call,error)==QA_COMMAND_HANDLED && pending_invocation(o,call,error);
 }
+static bool bonus_command(void *context,const qa_command_invocation *call,qa_error *error)
+{
+    frontend_network_q1_client *o=context;
+    if (!parent(o) || !call || !qa_console_invocation_current(call->console,call) ||
+        !pending_invocation(o,call,error))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 bonus lost its actual entered CLIENT command");
+    /* Serverinfo clears CL state before the first received world. An early
+     * startup command has no retained receiver or scene to flash yet. */
+    if (!o->source) return true;
+    frontend_remote_q1_source_view source;
+    return frontend_remote_q1_source_read(o->source,&source,error) &&
+        frontend_remote_q1_bonus(source.receiver,error) && pending_invocation(o,call,error);
+}
 static bool network_command(void *context,const qa_command_invocation *call,qa_error *error)
 {
     frontend_network_q1_client *o=context;
@@ -328,6 +339,8 @@ static bool install(void *context,const qa_application_client_source *source,boo
     frontend_network_q1_client *o=context;
     if(!qa_console_register_owned(source->context.console,"centerview","Center the actual CLIENT view",
         source->context.receiver,source->context.receiver,true,center_command,o,error)) return false;
+    if(!qa_console_register_owned(source->context.console,"bf","Flash the actual CLIENT bonus palette",
+        source->context.receiver,source->context.receiver,true,bonus_command,o,error)) return false;
     if(o->options.configuration.install && !o->options.configuration.install(
         o->options.configuration.context,source,restoring,error)) return false;
     for (qa_q1_chat_mode mode=QA_Q1_CHAT_ALL;mode<QA_Q1_CHAT_UNKNOWN;++mode) {
@@ -644,7 +657,7 @@ static bool attach(frontend_network_q1_client *o,qa_error *error)
 bool frontend_network_q1_client_receive(frontend_network_q1_client *o,const qa_net_datagram *packet,
     bool *recognized,qa_error *error)
 {
-    if(!recognized || !packet || !parent(o) || o->calls || o->importing ||
+    if(!recognized || !packet || !parent(o) || o->calls ||
         o->options.frontend->capture || o->options.frontend->resource_inventory ||
         o->options.frontend->source_restoring) return false;
     *recognized=false;
@@ -699,13 +712,13 @@ static bool tick(frontend_network_q1_client *o,uint64_t now,qa_error *error)
 }
 bool frontend_network_q1_client_tick(frontend_network_q1_client *o,uint64_t now,qa_error *error)
 {
-    if(!parent(o) || o->calls || o->importing || o->options.frontend->capture || o->options.frontend->resource_inventory ||
+    if(!parent(o) || o->calls || o->options.frontend->capture || o->options.frontend->resource_inventory ||
         o->options.frontend->source_restoring || !qa_network_callbacks_idle(o->options.runtime)) return false;
     ++o->calls; bool ok=tick(o,now,error); --o->calls; return ok;
 }
 bool frontend_network_q1_client_disconnect(frontend_network_q1_client *o,const char *reason,qa_error *error)
 {
-    if (!parent(o) || !reason || o->importing || o->options.frontend->capture ||
+    if (!parent(o) || !reason || o->options.frontend->capture ||
         o->options.frontend->resource_inventory || o->options.frontend->source_restoring ||
         !frontend_network_q1_client_idle(o) || !qa_network_callbacks_idle(o->options.runtime))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 disconnect requires its returned current CLIENT owner");
@@ -728,13 +741,8 @@ bool frontend_network_q1_client_destroy(frontend_network_q1_client **owned,qa_er
     frontend_network_q1_client *o=owned?*owned:NULL; if(!o) return true;
     if(o->demo_follow.append || o->options.frontend->capture || o->options.frontend->resource_inventory ||
         !frontend_network_q1_client_idle(o) || !qa_network_callbacks_idle(o->options.runtime)) return false;
-    if(o->client.owner && qa_net_connections_get(qa_network_connections(o->options.runtime),o->client)) {
-        if(o->importing) {
-            bool incomplete=qa_network_connection_incomplete(o->options.runtime,o->client);
-            if(incomplete?!qa_network_discard_incomplete(o->options.runtime,o->client,error):
-                !qa_network_detach(o->options.runtime,o->client,"Q1 candidate closed",error)) return false;
-        } else if(!qa_network_q1_client_disconnect(o->options.runtime,o->client,"Q1 CLIENT closed",error)) return false;
-    }
+    if(o->client.owner && qa_net_connections_get(qa_network_connections(o->options.runtime),o->client) &&
+        !qa_network_q1_client_disconnect(o->options.runtime,o->client,"Q1 CLIENT closed",error)) return false;
     if(!frontend_remote_q1_source_destroy(&o->source,error) || !frontend_client_source_destroy(&o->physical,error)) return false;
     if(!o->configuration_released) {
         if(o->options.configuration.retire && !o->options.configuration.retire(
@@ -755,7 +763,7 @@ bool frontend_network_q1_client_source_read(const frontend_network_q1_client *o,
 static bool demo_record_current(const void *context)
 {
     const frontend_network_q1_client *o = context;
-    return parent(o) && o->configured && !o->retired && !o->options.demo_playback && o->source && !o->importing;
+    return parent(o) && o->configured && !o->retired && !o->options.demo_playback && o->source;
 }
 static bool demo_seed(void *context, const frontend_demo_sink *sink, qa_error *error)
 {
@@ -777,7 +785,7 @@ bool frontend_network_q1_client_demo_follow(frontend_network_q1_client *o,
     const frontend_demo_sink *sink, bool *attached, qa_error *error)
 {
     if (!o || !sink || !sink->owner || !sink->append || !attached || !parent(o) ||
-        o->retired || o->options.demo_playback || o->importing || !frontend_network_q1_client_idle(o) ||
+        o->retired || o->options.demo_playback || !frontend_network_q1_client_idle(o) ||
         !qa_network_callbacks_idle(o->options.runtime) || o->demo_follow.append) return false;
     if (o->client.owner) return demo_attach(o, sink, attached, error);
     frontend_client_source_view physical;
@@ -821,7 +829,7 @@ bool frontend_network_q1_client_demo_record(frontend_network_q1_client *o,
 static bool demo_playback_current(const void *context)
 {
     const frontend_network_q1_client *o = context;
-    return parent(o) && o->options.demo_playback && !o->importing && !o->closing;
+    return parent(o) && o->options.demo_playback && !o->closing;
 }
 static bool demo_playback_release(void **owner, qa_error *error)
 {
@@ -914,7 +922,7 @@ bool frontend_network_q1_client_frame_time(frontend_network_q1_client *o,
     *cvars=NULL; *source_ns=0; *handled=false;
     if(!o || o->options.demo_playback || o->retired) return true;
     qa_frontend *f=o->options.frontend;
-    if(o->calls || o->admitting || o->importing || f->capture || f->resource_inventory || f->source_restoring ||
+    if(o->calls || o->admitting || f->capture || f->resource_inventory || f->source_restoring ||
         !qa_network_callbacks_idle(o->options.runtime) || !parent(o)) return false;
     o->input_frame_ns=o->input_wall_frame_ns=0;
     if(!o->configured) { o->input_clock_ns=f->wall_time_ns; return true; }
@@ -936,7 +944,7 @@ bool frontend_network_q1_client_input_prepare(const frontend_network_q1_client *
     bool *accepted,uint64_t *source_ns,uint64_t *wall_ns,qa_error *error)
 {
     if(!o || physical!=o->options.physical_seat || !accepted || !source_ns || !wall_ns ||
-        !parent(o) || !frontend_network_q1_client_idle(o) || o->importing ||
+        !parent(o) || !frontend_network_q1_client_idle(o) ||
         o->options.frontend->capture || o->options.frontend->resource_inventory ||
         o->options.frontend->source_restoring || !qa_network_callbacks_idle(o->options.runtime))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 input admission requires its returned physical CLIENT");
@@ -950,7 +958,7 @@ bool frontend_network_q1_client_input(frontend_network_q1_client *o,uint32_t phy
     *handled=o && physical==o->options.physical_seat;
     if(!*handled) return true;
     qa_frontend *f=o->options.frontend;
-    if(o->calls || o->admitting || o->importing || f->capture || f->resource_inventory || f->source_restoring ||
+    if(o->calls || o->admitting || f->capture || f->resource_inventory || f->source_restoring ||
         !qa_network_callbacks_idle(o->options.runtime) || !parent(o)) return false;
     if(o->options.demo_playback || o->retired || !o->source || !o->client.owner || sequence<=o->input_sample) return true;
     qa_network_q1_client_state transport;
@@ -1020,200 +1028,11 @@ bool frontend_network_q1_client_content_visit(const frontend_network_q1_client *
         (!o->content_files || (visitor->pool(visitor->context,qa_vfs_resources(o->content_files),error) &&
         visitor->view(visitor->context,o->content_files,error)));
 }
-static bool address_fields(qa_source_save_io *io,qa_net_address *address)
-{
-    uint32_t kind=address->kind;
-    if(!qa_source_save_u32(io,&kind) || kind>QA_NET_IPX || !qa_source_save_u16(io,&address->port)) return false;
-    if(io->direction==QA_SOURCE_SAVE_READ) address->kind=(qa_net_address_kind)kind;
-    switch(address->kind) {
-    case QA_NET_IPV4: return qa_source_save_bytes(io,address->host.ipv4,4);
-    case QA_NET_IPV6: return qa_source_save_bytes(io,address->host.ipv6.bytes,16) &&
-        qa_source_save_u32(io,&address->host.ipv6.scope);
-    case QA_NET_LOOPBACK: return qa_source_save_bytes(io,address->host.loopback,sizeof(address->host.loopback)) &&
-        memchr(address->host.loopback,0,sizeof(address->host.loopback));
-    case QA_NET_IPX: return qa_source_save_u32(io,&address->host.ipx.network) &&
-        qa_source_save_bytes(io,address->host.ipx.node,6);
-    }
-    return false;
-}
-static bool controller_fields(frontend_network_q1_client *o,const frontend_remote_q1_restore_refs *refs,
-    qa_source_save_io *io)
-{
-    bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','1','N','C'}; uint64_t catalog=0,files=0,skins=0;
-    if(!reading) {
-        if(o->content_catalog) catalog=qa_application_content_catalog_id(refs->content,o->content_catalog);
-        if(o->content_files) files=qa_application_content_view_id(refs->content,o->content_files);
-        if(o->skin_files) skins=qa_application_content_view_id(refs->content,o->skin_files);
-        if((o->content_catalog && !catalog) || (o->content_files && !files) || (o->skin_files && !skins)) return false;
-    }
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q1NC",4) || !qa_source_save_bool(io,&o->configured) || !qa_source_save_bool(io,&o->retired) ||
-        !qa_source_save_u64(io,&o->client.owner) || !qa_source_save_u64(io,&o->client.generation) ||
-        !qa_source_save_u32(io,&o->client.slot) || !qa_source_save_u64(io,&o->epoch) ||
-        !qa_source_save_u64(io,&o->now_ns) || !address_fields(io,&o->attachment.endpoint) ||
-        !qa_source_save_bytes(io,o->attachment.composition.bytes,sizeof(o->attachment.composition.bytes)) ||
-        !qa_source_save_u64(io,&catalog) || !qa_source_save_u64(io,&files) || !qa_source_save_u64(io,&skins) ||
-        !qa_source_save_u32(io,&o->content_product) || !qa_source_save_owned_text(io,&o->pending_allskins) ||
-        !qa_source_save_owned_text(io,&o->userinfo) || !qa_source_save_owned_text(io,&o->userinfo_pending) ||
-        !qa_source_save_count(io,&o->userinfo_next,1024) || !qa_source_save_owned_text(io,&o->signon_name) ||
-        !qa_source_save_owned_text(io,&o->spawn_parameters) || !qa_source_save_u8(io,&o->signon_color) ||
-        !qa_source_save_bytes(io,o->reason,sizeof(o->reason)) || !memchr(o->reason,0,sizeof(o->reason)) ||
-        !qa_source_save_u64(io,&o->input_sequence) || !qa_source_save_u64(io,&o->input_sample) ||
-        !qa_source_save_bool(io,&o->input_center)) return false;
-    qa_buffer input={0}; size_t input_size=0;
-    if(!reading) {
-        if(!qa_input_command_checkpoint(&o->input,&input,io->error)) return false;
-        input_size=input.size;
-    }
-    bool input_ok=qa_source_save_count(io,&input_size,128);
-    if(input_ok && reading) {
-        input_ok=io->offset<=io->input.size && input_size<=io->input.size-io->offset &&
-            qa_input_command_restore(&o->input,(qa_bytes){io->input.data+io->offset,input_size},io->error);
-        if(input_ok) io->offset+=input_size;
-    } else if(input_ok) input_ok=qa_source_save_bytes(io,input.data,input_size);
-    qa_buffer_free(&input);
-    if(!input_ok || o->input.kind!=(qa_q1_is_qw(o->options.protocol)?QA_MOVEMENT_QUAKEWORLD:QA_MOVEMENT_NETQUAKE) ||
-        (o->input_sequence && (!o->input_sample || !o->client.owner))) return false;
-    if(!!o->client.owner!=!!o->client.generation || !!o->client.owner!=!!o->epoch ||
-        (!o->client.owner && o->client.slot) || (o->client.owner && !o->configured) ||
-        !!catalog!=!!files || (!catalog && o->content_product) ||
-        (o->configured && qa_q1_is_qw(o->options.protocol)? !skins || !o->userinfo : skins || o->userinfo) ||
-        (!o->userinfo_pending && o->userinfo_next) || (o->userinfo_pending && (!o->userinfo ||
-            !qa_q1_is_qw(o->options.protocol) || strlen(o->userinfo_pending)>=512 ||
-            strpbrk(o->userinfo_pending,"\"\r\n"))) ||
-        (o->userinfo && (strlen(o->userinfo)>=512 || strpbrk(o->userinfo,"\"\r\n"))) ||
-        (o->client.owner && !qa_q1_is_qw(o->options.protocol) && (!o->signon_name || !o->spawn_parameters))) return false;
-    if(reading) {
-        if((catalog && !qa_application_content_retain_catalog(refs->content,catalog,&o->content_catalog,io->error)) ||
-            (files && !qa_application_content_claim_view(refs->content,files,&o->content_files,io->error)) ||
-            (skins && !qa_application_content_claim_view(refs->content,skins,&o->skin_files,io->error))) return false;
-    }
-    if(o->content_catalog) {
-        const qa_product *product=qa_catalog_product(o->content_catalog,o->content_product);
-        if(!product || product->family!=QA_GAME_Q1 ||
-            (product->edition==QA_EDITION_QUAKEWORLD)!=qa_q1_is_qw(o->options.protocol)) return false;
-    }
-    return true;
-}
-void frontend_network_q1_client_state_free(frontend_network_q1_client_state *state)
-{
-    if(!state) return;
-    qa_buffer_free(&state->physical); qa_buffer_free(&state->receiver);
-    qa_buffer_free(&state->handshake); qa_buffer_free(&state->controller); *state=(frontend_network_q1_client_state){0};
-}
-bool frontend_network_q1_client_capture(frontend_network_q1_client *o,
-    const frontend_remote_q1_restore_refs *refs,frontend_network_q1_client_state *out,qa_error *error)
-{
-    if (o && o->options.demo_playback)
-        return frontend_fail(error, QA_ERROR_UNSUPPORTED, "Native demo playback cannot become a CLIENT checkpoint");
-    if(!o || !out || out->physical.data || out->receiver.data || out->handshake.data || out->controller.data ||
-        !refs || !refs->content || !o->options.frontend->capture ||
-        (o->importing && (!o->restore_finished ||
-            !frontend_network_q1_client_qualified(o,o->options.runtime,true,error))) ||
-        !frontend_network_q1_client_idle(o) || !o->physical) return false;
-    frontend_network_q1_client_state state={0}; qa_source_save_io io;
-    if(!qa_source_save_writer(&io,qa_application_session(o->options.frontend->application),error)) return false;
-    bool ok=controller_fields(o,refs,&io) && qa_source_save_finish(&io,&state.controller);
-    qa_source_save_dispose(&io);
-    if(ok) ok=frontend_client_source_checkpoint(o->physical,refs->content,&state.physical,error);
-    if(ok && o->configured) ok=frontend_remote_q1_source_checkpoint(o->source,refs,&state.receiver,error) &&
-        (o->qw?qa_qw_connect_checkpoint(o->qw,&state.handshake,error):qa_nq_connect_checkpoint(o->nq,&state.handshake,error));
-    if(!ok) { frontend_network_q1_client_state_free(&state); return false; }
-    *out=state; return true;
-}
-bool frontend_network_q1_client_restore_prepare(const frontend_network_q1_client_options *options,
-    const frontend_remote_q1_restore_refs *refs,const qa_console_save_resolvers *resolvers,
-    const frontend_network_q1_client_state *saved,frontend_network_q1_client **out,qa_error *error)
-{
-    if(!options || !refs || !refs->content || !resolvers || !saved || !out || *out || !options->frontend ||
-        !options->frontend->source_restoring || !options->runtime || !options->current ||
-        options->frontend->capture || options->frontend->resource_inventory ||
-        options->physical_seat>=options->frontend->options.seats ||
-        !options->configuration.configure || !options->service || !qa_q1_profile_valid(options->protocol,error) ||
-        !saved->physical.size || !saved->controller.size ||
-        (qa_q1_is_qw(options->protocol) && (!options->downloads || !options->download_nonce))) return false;
-    frontend_network_q1_client *o=calloc(1,sizeof(*o));
-    if(!o) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining restored Q1 CLIENT factory");
-    *out=o; o->options=*options; o->importing=true;
-    o->input_clock_ns=options->frontend->wall_time_ns;
-    if(!retain_policy(o,error)) return false;
-    o->binding=(qa_net_seat_binding){{QA_NETWORK_COMMAND_OWNER,options->physical_seat},0};
-    o->attachment=(qa_net_connect){.attachment=QA_NET_REMOTE,.protocol=options->protocol,.seats=&o->binding,.seat_count=1};
-    qa_source_save_io io;
-    if(!qa_source_save_reader(&io,qa_application_session(options->frontend->application),
-        (qa_bytes){saved->controller.data,saved->controller.size},error)) return false;
-    bool ok=controller_fields(o,refs,&io) && qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io); if(!ok) return false;
-    if(o->configured != (saved->receiver.size!=0) || o->configured != (saved->handshake.size!=0)) return false;
-    frontend_client_source_prefix prefix={0};
-    if(!frontend_client_source_prefix_read(options->frontend,refs->content,
-        (qa_bytes){saved->physical.data,saved->physical.size},&prefix,error)) return false;
-    const qa_product *profile=qa_catalog_product(prefix.recipe.catalog,prefix.recipe.profile);
-    frontend_client_source_options physical=physical_options(o); physical.metadata=prefix.recipe;
-    physical.input_origin=options->configuration.input_origin;
-    physical.input_origin.owner=0; physical.input_origin.actor=(qa_actor_id){0}; physical.input_origin.client=0;
-    physical.input_origin.registry=physical.input_origin.generation=0; physical.input_origin.script=false;
-    physical.input_origin.dialect=qa_q1_is_qw(options->protocol)?QA_CONSOLE_QW:QA_CONSOLE_Q1;
-    ok=profile && profile->id==options->profile && profile->family==QA_GAME_Q1 &&
-        (profile->edition==QA_EDITION_QUAKEWORLD)==qa_q1_is_qw(options->protocol) &&
-        qa_net_client_id_equal(prefix.state.application.client,o->client) &&
-        prefix.state.application.connection_epoch==o->epoch &&
-        (o->client.owner?prefix.state.application.network_seat.owner==o->binding.seat.owner &&
-            prefix.state.application.network_seat.index==o->binding.seat.index:!prefix.state.application.network_seat.owner);
-    ok=ok && frontend_client_source_restore_prefix(options->frontend,&physical,refs->content,resolvers,
-        (qa_bytes){saved->physical.data,saved->physical.size},&o->physical,error);
-    frontend_client_source_prefix_free(&prefix);
-    if(!ok) return false;
-    if(!o->configured) return true;
-    frontend_client_source_view actual;
-    if(!frontend_client_source_metadata_read(o->physical,&actual,error) || !actual.ready ||
-        !qa_sha256_equal(&actual.source.descriptor->identity,&o->attachment.composition)) return false;
-    if(qa_q1_is_qw(options->protocol)) {
-        const qa_product *base=qa_catalog_find(qa_launch_instance_catalog(actual.source.descriptor),"q1-quakeworld");
-        qa_fs_root *root=base?qa_catalog_product_write_root(qa_launch_instance_catalog(actual.source.descriptor),base->id):NULL;
-        if(!root) return false;
-        o->skins=(frontend_remote_q1_skin_bindings){.files=o->skin_files,.root=root,.maximum_bytes=64u*1024u*1024u,
-            .context=o,.current=skin_current,.permission=download_permission,.nonce=nonce,.reliable=reliable,.print=skin_print};
-    }
-    frontend_remote_q1_source_options receiver=receiver_options(o);
-    return frontend_remote_q1_source_restore_prepare(options->frontend,&receiver,refs,
-        (qa_bytes){saved->receiver.data,saved->receiver.size},&o->source,error) &&
-        (qa_q1_is_qw(options->protocol)?qa_qw_connect_restore_checkpoint(
-            (qa_bytes){saved->handshake.data,saved->handshake.size},options->qport,o->userinfo,&o->qw,error):
-            qa_nq_connect_restore_checkpoint((qa_bytes){saved->handshake.data,saved->handshake.size},&o->nq,error));
-}
-bool frontend_network_q1_client_restore_hooks(frontend_network_q1_client *o,const qa_net_client *client,
-    qa_network_q1_client_policy *policy,qa_network_q1_client_hooks *hooks,qa_error *error)
-{
-    if(!o || !o->importing || !client || !policy || !hooks || !o->configured || !o->source ||
-        !qa_net_client_id_equal(client->id,o->client) || client->attachment!=QA_NET_REMOTE ||
-        !same_protocol(client->protocol,o->options.protocol) || client->seat_count!=1 ||
-        client->seats[0].seat.owner!=o->binding.seat.owner || client->seats[0].seat.index!=o->binding.seat.index ||
-        client->seats[0].remote_index || !qa_net_address_equal(&client->endpoint,&o->attachment.endpoint,true) ||
-        !qa_sha256_equal(&client->composition,&o->attachment.composition)) return false;
-    *policy=o->options.policy; policy->qport=o->options.qport;
-    if(!qa_q1_is_qw(o->options.protocol)) {
-        policy->nq_identity.name=o->signon_name; policy->nq_identity.spawn_parameters=o->spawn_parameters;
-        policy->nq_identity.color=o->signon_color;
-    }
-    return frontend_remote_q1_source_hooks(o->source,hooks,error);
-}
-bool frontend_network_q1_client_restore_finish(frontend_network_q1_client *o,
-    const frontend_remote_q1_restore_refs *refs,qa_error *error)
-{
-    if(!o || !o->importing || !frontend_network_q1_client_idle(o)) return false;
-    if(o->restore_finished) return true;
-    if(o->configured && !frontend_remote_q1_source_restore_finish(o->source,refs,error)) return false;
-    o->restore_finished=true; return true;
-}
-bool frontend_network_q1_client_importing(const frontend_network_q1_client *o)
-{ return o && o->importing && (o->options.frontend->source_restoring || o->restore_finished); }
 bool frontend_network_q1_client_qualified(const frontend_network_q1_client *o,const qa_network_runtime *runtime,
     bool complete,qa_error *error)
 {
     frontend_client_source_view physical;
     if(!parent(o) || runtime!=o->options.runtime || !frontend_network_q1_client_idle(o) ||
-        (complete && o->importing && !o->restore_finished) ||
         !frontend_client_source_metadata_read(o->physical,&physical,error) ||
         physical.source.runtime!=runtime || physical.source.context.physical_seat!=o->options.physical_seat ||
         !qa_net_client_id_equal(physical.source.client,o->client) || physical.source.connection_epoch!=o->epoch ||
@@ -1250,14 +1069,12 @@ bool frontend_network_q1_client_qualified(const frontend_network_q1_client *o,co
 }
 bool frontend_network_q1_client_publication_ready(const frontend_network_q1_client *o,qa_error *error)
 {
-    return !o || (o->importing && o->restore_finished &&
-        frontend_network_q1_client_qualified(o,o->options.runtime,true,error));
+    return !o || frontend_network_q1_client_qualified(o,o->options.runtime,true,error);
 }
 void frontend_network_q1_client_publish(frontend_network_q1_client *o)
 {
     if(o) {
         o->input_clock_ns=o->options.frontend->wall_time_ns;
         o->input_frame_ns=o->input_wall_frame_ns=0;
-        o->importing=false;
     }
 }

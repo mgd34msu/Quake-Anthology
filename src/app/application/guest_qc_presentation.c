@@ -179,6 +179,26 @@ bool qa_application_qc_message_signon_at(qa_application *app,const qa_applicatio
     return qa_application_qc_message_source_current(app,view) &&
         application_q1_signon_at(app,view->provider,index,out,error);
 }
+bool qa_application_qc_message_model_read(qa_application *app,const qa_application_qc_message_source *view,
+    uint32_t index,qa_application_qc_message_model *out,qa_error *error)
+{
+    if(!out || !index || !qa_application_qc_message_source_current(app,view))
+        return application_fail(error,QA_ERROR_ARGUMENT,"QC model lost its current Source precache receipt");
+    application_provider *p=owner(app,view->provider);
+    const application_qc_resource *found=NULL;
+    for(size_t i=0;i<p->state.qc.engine->resource_count;++i) {
+        const application_qc_resource *entry=&p->state.qc.engine->resources[i];
+        if(entry->kind!=QA_QC_RESOURCE_MODEL || entry->value.index!=index) continue;
+        if(found) return application_fail(error,QA_ERROR_FORMAT,"QC MODEL index has ambiguous installed resources");
+        found=entry;
+    }
+    if(!found || !found->name || !*found->name || (!found->has_inline_model && !found->source))
+        return application_fail(error,QA_ERROR_NOT_FOUND,"QC MODEL index has no retained precache resource");
+    *out=(qa_application_qc_message_model){.path=found->name,.resource=found->source,
+        .opening=found->source?&found->acquisition:NULL,.inline_model=found->inline_model,
+        .has_inline_model=found->has_inline_model};
+    return true;
+}
 bool qa_application_qc_message_receives(qa_application *app,const qa_application_qc_message_source *view,
     qa_actor_id recipient,const qa_application_protocol_event *event,bool *out,qa_error *error)
 {

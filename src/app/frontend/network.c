@@ -383,7 +383,7 @@ static bool q1_client_current(void *context,const frontend_network_q1_client *cl
 {
     qa_frontend_network *n=context;
     return n && n->frontend && n->frontend->network==n && n->q1_client_owner==client &&
-        (!n->detached_transport || frontend_network_q1_client_importing(client));
+        !n->detached_transport;
 }
 static bool q1_downloads(void *context,bool *allowed,bool *recording,bool *playback,qa_error *error)
 {

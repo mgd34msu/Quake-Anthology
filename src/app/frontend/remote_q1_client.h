@@ -127,6 +127,7 @@ bool frontend_remote_q1_receive_qw(frontend_remote_q1 *, const qa_qw_service *, 
 bool frontend_remote_q1_receive_end(frontend_remote_q1 *, uint64_t received_ns, qa_error *);
 bool frontend_remote_q1_disconnected(frontend_remote_q1 *, const char *reason, qa_error *);
 bool frontend_remote_q1_sample(frontend_remote_q1 *, uint64_t now_ns, qa_error *);
+bool frontend_remote_q1_bonus(frontend_remote_q1 *, qa_error *);
 bool frontend_remote_q1_metadata_read(const frontend_remote_q1 *, frontend_remote_q1_view *, qa_error *);
 bool frontend_remote_q1_read(const frontend_remote_q1 *, frontend_remote_q1_view *, qa_error *);
 bool frontend_remote_q1_current(const frontend_remote_q1_view *);

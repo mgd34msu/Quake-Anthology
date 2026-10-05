@@ -3,7 +3,7 @@
 #include "remote_q1_source.h"
 #include "remote_q1_skins.h"
 #include "qa/input.h"
-#include "qa/network_q1_connection_save.h"
+#include "qa/network_q1_channel.h"
 
 typedef struct frontend_network_q1_client frontend_network_q1_client;
 typedef struct frontend_network_q1_client_options {
@@ -84,20 +84,6 @@ bool frontend_network_q1_client_metadata_read(const frontend_network_q1_client *
     frontend_network_q1_client_view *, qa_error *);
 bool frontend_network_q1_client_content_visit(const frontend_network_q1_client *,
     const qa_application_content_visitor *, qa_error *);
-typedef struct frontend_network_q1_client_state {
-    qa_buffer physical, receiver, handshake, controller;
-} frontend_network_q1_client_state;
-bool frontend_network_q1_client_capture(frontend_network_q1_client *,
-    const frontend_remote_q1_restore_refs *, frontend_network_q1_client_state *, qa_error *);
-void frontend_network_q1_client_state_free(frontend_network_q1_client_state *);
-bool frontend_network_q1_client_restore_prepare(const frontend_network_q1_client_options *,
-    const frontend_remote_q1_restore_refs *, const qa_console_save_resolvers *,
-    const frontend_network_q1_client_state *, frontend_network_q1_client **, qa_error *);
-bool frontend_network_q1_client_restore_hooks(frontend_network_q1_client *,
-    const qa_net_client *, qa_network_q1_client_policy *, qa_network_q1_client_hooks *, qa_error *);
-bool frontend_network_q1_client_restore_finish(frontend_network_q1_client *,
-    const frontend_remote_q1_restore_refs *, qa_error *);
-bool frontend_network_q1_client_importing(const frontend_network_q1_client *);
 bool frontend_network_q1_client_qualified(const frontend_network_q1_client *,const qa_network_runtime *,
     bool complete,qa_error *);
 bool frontend_network_q1_client_publication_ready(const frontend_network_q1_client *,qa_error *);

@@ -442,6 +442,13 @@ bool frontend_remote_q1_receive_nq(frontend_remote_q1 *row, const qa_nq_message 
         row->protocol, message, row->seconds, row->next_event++, error); }
     --row->busy; return ok && remote_q1_live(row, error);
 }
+bool frontend_remote_q1_bonus(frontend_remote_q1 *row, qa_error *error)
+{
+    if (!remote_q1_mutable(row) || row->busy || !remote_q1_live(row, error))
+        return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 bonus requires its returned actual CLIENT receiver");
+    frontend_view_q1_bonus(&row->view_motion);
+    return remote_q1_live(row, error);
+}
 bool frontend_remote_q1_sample(frontend_remote_q1 *row, uint64_t now, qa_error *error)
 {
     if (!remote_q1_mutable(row) || row->busy || !remote_q1_live(row, error)) return false;

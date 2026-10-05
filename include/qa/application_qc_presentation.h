@@ -52,6 +52,17 @@ bool qa_application_qc_message_signon_count(qa_application *,const qa_applicatio
     size_t *,qa_error *);
 bool qa_application_qc_message_signon_at(qa_application *,const qa_application_qc_message_source *,
     size_t,qa_application_protocol_event *,qa_error *);
+/* Borrow an installed MODEL precache row by its actual Source index. Inline
+ * numbers come from resource admission; resources/openings remain source-owned. */
+typedef struct qa_application_qc_message_model {
+    const char *path;
+    const qa_resource *resource;
+    const qa_vfs_acquisition *opening;
+    uint32_t inline_model;
+    bool has_inline_model;
+} qa_application_qc_message_model;
+bool qa_application_qc_message_model_read(qa_application *,const qa_application_qc_message_source *,
+    uint32_t,qa_application_qc_message_model *,qa_error *);
 /* Route a genuine source packet to its admitted recipient, including QW's
  * actual PVS/PHS multicast policy. No physical ENTITIES owner is substituted. */
 bool qa_application_qc_message_receives(qa_application *,const qa_application_qc_message_source *,
