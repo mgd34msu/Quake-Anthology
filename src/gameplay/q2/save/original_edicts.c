@@ -514,8 +514,10 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
         if (actor->entity && actor->entity->scenery == Q2S_BARREL) flags |= UINT64_C(1) << 32;
         if (kind == Q2_BOLT || kind == Q2_GREEN_BOLT || kind == Q2_BLUE_BOLT || kind == Q2_ROCKET ||
             kind == Q2_HEAT_ROCKET || kind == Q2_GRENADE || kind == Q2_BFG_BALL || kind == Q2_ION ||
-            kind == Q2_PLASMA || kind == Q2_FLECHETTE || kind == Q2_TRACKER || kind == Q2_PROX) svflags |= 128u;
+            kind == Q2_PLASMA || kind == Q2_FLECHETTE || kind == Q2_TRACKER || kind == Q2_PROBOSCIS ||
+            (kind == Q2_PROX && actor->projectile.phase == 0)) svflags |= 128u;
     } else if (!io->reading) {
+        if (actor->projectile.kind == Q2_BOLT) svflags |= 2u;
         if (actor->projectile.kind == Q2_PROX || actor->projectile.kind == Q2_TESLA) flags |= 8192u;
         if (actor->projectile.kind == Q2_PROX || actor->projectile.kind == Q2_TESLA || actor->projectile.kind == Q2_NUKE) svflags |= 16u;
     }

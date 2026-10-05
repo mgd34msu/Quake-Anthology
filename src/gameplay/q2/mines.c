@@ -151,6 +151,8 @@ static bool field(qa_q2_game *g, q2_actor *mine, q2_projectile_kind kind, qa_bou
         return false;
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
+                                    .contents = qa_collision_q2_source_contents(1, 0,
+                                        g->options.edition == QA_Q2_RERELEASE),
                                     .role = QA_COLLISION_TRIGGER,
                                     .owner = qa_actor_reference_source(g->options.owner, mine->wire_slot)};
     qa_builtin_spawn spawn = {.owner = g->options.owner,
@@ -803,8 +805,15 @@ bool q2_mine_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
         return false;
     p->phase = MINE_OPENING;
     p->next_ns = q2_deadline(g->now_ns, g->options.edition == QA_Q2_RERELEASE ? 0 : 50 * Q2_MS);
-    if (g->options.edition == QA_Q2_RERELEASE)
+    if (g->options.edition == QA_Q2_RERELEASE) {
         p->dodgeable = false;
+        qa_actor_collision collision;
+        if (!qa_world_get_collision(g->services.world, a->id, &collision, e))
+            return false;
+        collision.contents = qa_collision_q2_source_contents(2, 0, true);
+        if (!qa_world_set_collision(g->services.world, a->id, &collision, e))
+            return false;
+    }
     return true;
 }
 qa_vec3 q2_mine_velocity(qa_vec3 direction, float speed, float lift, float side) {
@@ -852,7 +861,8 @@ bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, c->actor->id);
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
-                                    .contents = 2,
+                                    .contents = qa_collision_q2_source_contents(2,
+                                        c->rerelease && kind == Q2_PROX ? 128u : 0u, c->rerelease),
                                     .owner = owner_reference,
                                     .role = QA_COLLISION_SOLID};
     qa_combat_state combat = {.can_take_damage =
@@ -1024,6 +1034,8 @@ bool qa_q2_spawn_bad_area(qa_q2_game *g, qa_bounds absolute, uint64_t lifespan, 
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner);
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
+                                    .contents = qa_collision_q2_source_contents(1, 0,
+                                        g->options.edition == QA_Q2_RERELEASE),
                                     .role = QA_COLLISION_TRIGGER,
                                     .owner = owner_reference};
     qa_builtin_spawn spawn = {

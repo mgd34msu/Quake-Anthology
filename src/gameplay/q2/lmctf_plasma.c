@@ -71,7 +71,7 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
         qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, c->actor->id);
         qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                         .shape = QA_SHAPE_BOX,
-                                        .contents = 2,
+                                        .contents = qa_collision_q2_source_contents(2, 2, c->rerelease),
                                         .owner = owner_reference,
                                         .role = QA_COLLISION_SOLID};
         qa_builtin_spawn spawn = {.owner = g->options.owner,

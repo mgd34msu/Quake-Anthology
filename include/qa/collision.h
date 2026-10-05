@@ -73,6 +73,10 @@ typedef struct qa_leaf_list {
 typedef struct qa_collision_geometry qa_collision_geometry;
 struct qa_resource;
 
+/* Source Q2 solid and svflags select the temporary box contents; BSP models
+ * retain their authored brushes. Rerelease adds player/projectile masks. */
+int32_t qa_collision_q2_source_contents(uint32_t solid, uint32_t svflags, bool rerelease);
+
 /* Retains the BSP view and derived collision data; source bytes must outlive it.
  * One geometry serves every gameplay policy. Calls have one thread owner. */
 bool qa_collision_create(const qa_bsp_view *, qa_collision_geometry **out, qa_error *);

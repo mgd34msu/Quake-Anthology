@@ -1841,7 +1841,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   qa_actor_collision collision = {
       .family = QA_COLLISION_Q2,
       .shape = QA_SHAPE_BOX,
-      .contents = (int32_t)UINT32_C(0x02000000),
+      .contents = qa_collision_q2_source_contents(2, 4, game->options.edition == QA_Q2_RERELEASE),
       .role = QA_COLLISION_SOLID,
       .monster = true,
   };

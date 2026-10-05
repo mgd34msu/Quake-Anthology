@@ -740,14 +740,7 @@ static bool level_links(qa_q2_game *g, const q2_original_level_file *file,
         qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
             .role = actor->physics.solid == QA_PHYSICS_TRIGGER ? QA_COLLISION_TRIGGER : QA_COLLISION_SOLID,
             .monster = (actor->physics.flags & QA_PHYSICS_MONSTER) != 0,
-            .dead_monster = (actor->physics.flags & QA_PHYSICS_DEAD) != 0,
-            .contents = actor->physics.flags & QA_PHYSICS_MONSTER ? UINT32_C(0x02000000) :
-                actor->physics.flags & QA_PHYSICS_DEAD ? UINT32_C(0x04000000) : 1};
-        if (actor->entity) {
-            collision = actor->entity->collision;
-            collision.family = QA_COLLISION_Q2;
-            collision.role = actor->physics.solid == QA_PHYSICS_TRIGGER ? QA_COLLISION_TRIGGER : QA_COLLISION_SOLID;
-        }
+            .dead_monster = (actor->physics.flags & QA_PHYSICS_DEAD) != 0};
         if (actor->physics.solid == QA_PHYSICS_BRUSH) {
             qa_q2_visual visual = {0};
             (void)qa_q2_presentation_read(g, actor->id, &visual);
@@ -762,15 +755,21 @@ static bool level_links(qa_q2_game *g, const q2_original_level_file *file,
                     return level_error(error, row->number, "Original Q2 brush has an invalid inline model");
                 number = number * 10 + digit;
             }
-            collision.inline_model = true; collision.model = number; collision.contents = 1;
-            if (actor->entity) { actor->entity->has_inline = true; actor->entity->collision = collision; }
+            collision.inline_model = true; collision.model = number;
+            if (actor->entity) actor->entity->has_inline = true;
         }
         q2_original_record_io io = edict_reader(g, file, row, error);
-        uint32_t links = 0;
+        uint32_t links = 0, svflags = 0;
+        if (!q2_original_scalar(&io, "svflags", Q2_ORIGINAL_U32, 184, 184, 184, &svflags)) return false;
+        uint32_t solid = actor->physics.solid == QA_PHYSICS_BRUSH ? 3u :
+            actor->physics.solid == QA_PHYSICS_TRIGGER ? 1u :
+            actor->physics.solid == QA_PHYSICS_NOT_SOLID ? 0u : 2u;
+        collision.contents = qa_collision_q2_source_contents(solid, svflags, g->options.edition == QA_Q2_RERELEASE);
         if (!q2_original_source_reference(g, &io, "owner", 256, &collision.owner) ||
             !q2_original_scalar(&io, "linkcount", Q2_ORIGINAL_U32, 92, 92, 92, &links) ||
             !qa_world_set_collision(g->services.world, actor->id,
                 actor->physics.solid == QA_PHYSICS_NOT_SOLID ? NULL : &collision, error)) return false;
+        if (actor->entity) actor->entity->collision = collision;
         actor->wire_lifetime.link_count = links;
         qa_body_link_state link = {.link_count = links};
         if (!qa_world_restore_link_state(g->services.world, actor->id, &link, error) ||

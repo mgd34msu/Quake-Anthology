@@ -336,7 +336,7 @@ static bool create_part(q2m_context *context, bool segment, qa_vec3 from, qa_vec
         return false;
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(game->services.session), game->options.owner, owner);
     qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
-                                    .contents = 2, .owner = owner_reference, .role = QA_COLLISION_SOLID};
+                                    .contents = qa_collision_q2_source_contents(2, 128, true), .owner = owner_reference, .role = QA_COLLISION_SOLID};
     qa_combat_state combat = {.can_take_damage = true, .no_knockback = true};
     qa_builtin_spawn spawn = {.owner = game->options.owner, .definition = classname,
         .body = {.origin = from, .angles = q2m_vector_angles(direction),

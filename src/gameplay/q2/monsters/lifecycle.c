@@ -300,7 +300,8 @@ static bool activate_body(q2m_context *context, qa_error *error) {
     context->actor->physics.solid = QA_PHYSICS_BOX;
     context->actor->physics.motion = QA_PHYSICS_STEP;
     qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
-        .contents = (int32_t)UINT32_C(0x02000000), .role = QA_COLLISION_SOLID, .monster = true};
+        .contents = qa_collision_q2_source_contents(2, 4, context->game->options.edition == QA_Q2_RERELEASE),
+        .role = QA_COLLISION_SOLID, .monster = true};
     return q2m_damageable(context, true, error) && (!q2m_alive(context) ||
         (qa_world_set_collision(context->game->services.world, context->actor->id, &collision, error) &&
         q2m_link(context, error)));

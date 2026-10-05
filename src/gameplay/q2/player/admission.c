@@ -396,7 +396,8 @@ bool qa_q2_player_admit(qa_q2_game *g, qa_actor_id id, const qa_q2_player_admiss
 bool q2_player_collision(qa_q2_game *g, q2_actor *a, bool solid, qa_error *e) {
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
-                                    .contents = Q2_PLAYER_CONTENTS,
+                                    .contents = qa_collision_q2_source_contents(2,
+                                        8u | (a->client->info.dead ? 2u : 0u), g->options.edition == QA_Q2_RERELEASE),
                                     .role = QA_COLLISION_SOLID,
                                     .dead_monster = a->client->info.dead};
     return qa_world_set_collision(g->services.world, a->id, solid ? &collision : NULL, e);

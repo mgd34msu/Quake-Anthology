@@ -710,12 +710,8 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
         .shape = QA_SHAPE_BOX,
         .inline_model = solid == 3,
         .model = inline_model,
-        .contents = solid == 3 ? 1 : solid == 0 ||
-            (solid == 1 && host->profile == QA_NATIVE_Q2_GAME_API3) ? 0
-            : (flags & 2u) ? 0x04000000
-            : host->profile == QA_NATIVE_Q2_GAME_API2023 && (flags & 8u) ? 0x40000000
-            : host->profile == QA_NATIVE_Q2_GAME_API2023 && (flags & 128u) ? INT32_MIN
-            : 0x02000000,
+        .contents = qa_collision_q2_source_contents((uint32_t)solid, flags,
+            host->profile == QA_NATIVE_Q2_GAME_API2023),
         .owner = owner_reference,
         .role = solid == 1 ? QA_COLLISION_TRIGGER : QA_COLLISION_SOLID,
         .monster = (flags & 4u) != 0,

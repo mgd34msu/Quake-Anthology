@@ -282,6 +282,8 @@ static bool attach(qa_q2_game *g, q2_actor *hook, qa_actor_id target, q2_anchor 
     }
     if (has_collision) {
         collision.role = QA_COLLISION_TRIGGER;
+        collision.contents = qa_collision_q2_source_contents(1, 0,
+            g->options.edition == QA_Q2_RERELEASE);
         if (!qa_world_set_collision(g->services.world, hook->id, &collision, e))
             return false;
     } else if (!lm && !qa_world_set_collision(g->services.world, hook->id, NULL, e))
@@ -449,7 +451,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner->id);
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
-                                    .contents = 2,
+                                    .contents = qa_collision_q2_source_contents(2, 0, rr),
                                     .owner = owner_reference,
                                     .role = QA_COLLISION_SOLID};
     qa_combat_state combat = {

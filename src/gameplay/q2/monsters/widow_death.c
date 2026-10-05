@@ -80,7 +80,8 @@ static bool gib(qa_q2_game *game, qa_actor_id source, const char *model,
   qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(game->services.session), game->options.owner, source);
   qa_combat_state combat = {.can_take_damage = true, .no_knockback = true};
   qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
-      .contents = 2, .owner = owner_reference, .role = QA_COLLISION_SOLID};
+      .contents = qa_collision_q2_source_contents(2, 0,
+          game->options.edition == QA_Q2_RERELEASE), .owner = owner_reference, .role = QA_COLLISION_SOLID};
   qa_builtin_spawn spawn = {.owner = game->options.owner, .definition = definition,
       .body = {.origin = origin, .velocity = velocity, .bounds = bounds}, .combat = &combat,
       .collision = sized ? &collision : NULL};

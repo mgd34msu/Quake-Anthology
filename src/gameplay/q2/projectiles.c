@@ -1047,7 +1047,10 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner);
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
-                                    .contents = 2,
+                                    .contents = qa_collision_q2_source_contents(2,
+                                        c->rerelease ? (kind == Q2_LOOGIE ? 0u : 128u)
+                                                     : source_kind == Q2_BOLT ? 2u : 0u,
+                                        c->rerelease),
                                     .owner = owner_reference,
                                     .role = QA_COLLISION_SOLID};
     qa_builtin_spawn spawn = {

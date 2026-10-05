@@ -945,7 +945,8 @@ bool q2m_medic_callback(q2m_context *c, q2m_callback_id name, bool *handled,
       return true;
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                      .shape = QA_SHAPE_BOX,
-                                     .contents = (int32_t)UINT32_C(0x04000000),
+                                     .contents = qa_collision_q2_source_contents(2, 2,
+                                         c->game->options.edition == QA_Q2_RERELEASE),
                                      .role = QA_COLLISION_SOLID,
                                      .dead_monster = true};
     if (!qa_world_set_collision(c->game->services.world, c->actor->id, &collision, error))

@@ -90,7 +90,9 @@ bool q2_item_change_collision(qa_q2_game *g, q2_actor *a, qa_physics_solid solid
     a->physics.solid = solid;
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
-                                    .contents = 1,
+                                    .contents = qa_collision_q2_source_contents(
+                                        (uint32_t)(solid == QA_PHYSICS_CORPSE ? QA_PHYSICS_BOX : solid),
+                                        0, g->options.edition == QA_Q2_RERELEASE),
                                     .owner = a->item->owner,
                                     .role = solid == QA_PHYSICS_TRIGGER ? QA_COLLISION_TRIGGER
                                                                         : QA_COLLISION_SOLID};

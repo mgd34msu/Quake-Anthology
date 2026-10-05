@@ -387,9 +387,12 @@ bool q2_entity_solid(qa_q2_game *g, q2_actor *a, qa_physics_solid solid, qa_erro
     s->collision.family = QA_COLLISION_Q2;
     s->collision.shape = QA_SHAPE_BOX;
     s->collision.role = solid == QA_PHYSICS_TRIGGER ? QA_COLLISION_TRIGGER : QA_COLLISION_SOLID;
-    s->collision.inline_model = s->has_inline;
-    if (!s->collision.contents)
-        s->collision.contents = 1;
+    s->collision.inline_model = solid == QA_PHYSICS_BRUSH;
+    s->collision.monster = (a->physics.flags & QA_PHYSICS_MONSTER) != 0;
+    s->collision.dead_monster = (a->physics.flags & QA_PHYSICS_DEAD) != 0;
+    s->collision.contents = qa_collision_q2_source_contents(
+        (uint32_t)(solid == QA_PHYSICS_CORPSE ? QA_PHYSICS_BOX : solid),
+        s->collision.dead_monster ? 2u : 0u, g->options.edition == QA_Q2_RERELEASE);
     return qa_world_set_collision(g->services.world, a->id,
                                   solid == QA_PHYSICS_NOT_SOLID ? NULL : &s->collision, e) &&
            (!q2_actor_live(g, a->id) || qa_world_link(g->services.world, a->id, NULL, e));

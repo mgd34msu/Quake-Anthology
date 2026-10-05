@@ -39,7 +39,8 @@ static bool client_head(qa_q2_game *g, q2_actor *a, float damage, qa_error *e) {
     if (!qa_world_body_write(g->services.world, a->id, &body, e)) return false;
     if (!q2_actor_live(g, a->id)) return true;
     qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
-        .contents = Q2_PLAYER_CONTENTS, .role = QA_COLLISION_TRIGGER, .dead_monster = true};
+        .contents = qa_collision_q2_source_contents(1, 2u | 8u, rr),
+        .role = QA_COLLISION_TRIGGER, .dead_monster = true};
     return qa_world_set_collision(g->services.world, a->id, rr ? &collision : NULL, e);
 }
 static bool throw_gibs(qa_q2_game *g, q2_actor *a, float damage, qa_error *e) {

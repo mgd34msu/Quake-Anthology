@@ -312,7 +312,7 @@ bool q2_fire_nuke(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 direc
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .role = QA_COLLISION_SOLID,
-                                    .contents = 2,
+                                    .contents = qa_collision_q2_source_contents(2, 0, g->options.edition == QA_Q2_RERELEASE),
                                     .owner = owner_reference};
     qa_combat_state combat = {.health = 10000, .can_take_damage = true};
     qa_builtin_spawn spawn = {

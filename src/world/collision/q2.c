@@ -6,6 +6,16 @@
 #define Q2_DISTANCE_EPSILON 0.03125f
 #define Q2_POSITION_LEAF_LIMIT 1024u
 
+int32_t qa_collision_q2_source_contents(uint32_t solid, uint32_t svflags, bool rerelease)
+{
+    if (solid == 3) return 1;
+    if (!solid || (solid == 1 && !rerelease)) return 0;
+    if (svflags & 2u) return INT32_C(0x04000000);
+    if (rerelease && (svflags & 8u)) return INT32_C(0x40000000);
+    if (rerelease && (svflags & 128u)) return INT32_MIN;
+    return INT32_C(0x02000000);
+}
+
 typedef struct q2_leaf {
     int32_t stored, merged;
     qa_bsp_range brushes;
