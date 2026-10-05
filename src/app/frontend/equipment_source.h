@@ -72,8 +72,5 @@ bool frontend_equipment_source_submit(frontend_equipment_source *,
     const qa_q3_scene_options *, qa_scene_frame *, qa_error *);
 /* Retains the actual last Draw HUD observation. The caller supplies its fully
  * qualified restored client tuple; decode invokes no constructor or service. */
-bool frontend_equipment_source_checkpoint(const frontend_equipment_source *, qa_buffer *, qa_error *);
-bool frontend_equipment_source_restore(frontend_equipment_source *,
-    const qa_application_q3_client_context *, qa_bytes, qa_error *);
 
 #endif

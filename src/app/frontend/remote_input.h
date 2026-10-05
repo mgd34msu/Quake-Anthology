@@ -47,7 +47,5 @@ bool frontend_remote_input_build(frontend_remote_input *, const qa_seat_input_sa
     double source_frame_ms, qa_movement_command *, bool *present, qa_error *);
 /* Exact logical builder continuation; no source read, clock or callback. The
  * enclosing network codec reconstructs its actual candidate bindings. */
-bool frontend_remote_input_checkpoint(const frontend_remote_input *, qa_buffer *, qa_error *);
-bool frontend_remote_input_restore(frontend_remote_input *, qa_bytes, qa_error *);
 
 #endif

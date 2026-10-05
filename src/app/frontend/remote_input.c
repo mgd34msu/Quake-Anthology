@@ -1,6 +1,4 @@
 #include "remote_input.h"
-#include "qa/input_command_save.h"
-#include "qa/source_save.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -74,58 +72,5 @@ bool frontend_remote_input_build(frontend_remote_input *input, const qa_seat_inp
     input->angles_ready = true;
     *out = command;
     *present = true;
-    return true;
-}
-static bool builder_valid(const qa_input_command_builder *builder, bool angles_ready)
-{
-    if (builder->kind != QA_MOVEMENT_Q3 || !qa_vec_finite(builder->angles) ||
-        !isfinite(builder->mouse.previous.x) || !isfinite(builder->mouse.previous.y) ||
-        builder->drift.drifting || builder->drift.velocity != 0 || builder->drift.moving_seconds != 0) return false;
-    return angles_ready || (builder->angles.x == 0 && builder->angles.y == 0 && builder->angles.z == 0 &&
-        builder->mouse.previous.x == 0 && builder->mouse.previous.y == 0 && !builder->previous_mouse_look);
-}
-bool frontend_remote_input_checkpoint(const frontend_remote_input *input, qa_buffer *out, qa_error *error)
-{
-    if (!input || !out || out->data || out->size || !builder_valid(&input->builder, input->angles_ready))
-        return fail(error, QA_ERROR_ARGUMENT, "Remote Q3 builder capture requires its actual logical continuation");
-    qa_buffer builder = {0};
-    if (!qa_input_command_checkpoint(&input->builder, &builder, error)) return false;
-    qa_source_save_io io = {0};
-    uint8_t magic[4] = {'Q','R','I','N'};
-    bool ready = input->angles_ready;
-    size_t size = builder.size;
-    bool ok = qa_source_save_writer(&io, NULL, error) && qa_source_save_bytes(&io, magic, sizeof(magic)) &&
-        qa_source_save_bool(&io, &ready) &&
-        qa_source_save_count(&io, &size, SIZE_MAX) && qa_source_save_bytes(&io, builder.data, size) &&
-        qa_source_save_finish(&io, out);
-    qa_buffer_free(&builder);
-    qa_source_save_dispose(&io);
-    return ok;
-}
-bool frontend_remote_input_restore(frontend_remote_input *input, qa_bytes bytes, qa_error *error)
-{
-    if (!input) return fail(error, QA_ERROR_ARGUMENT, "Remote Q3 builder restore needs its actual candidate owner");
-    qa_source_save_io io = {0};
-    uint8_t magic[4];
-    bool ready = false;
-    size_t size = 0;
-    qa_input_command_builder builder = {0};
-    bool ok = qa_source_save_reader(&io, NULL, bytes, error) &&
-        qa_source_save_bytes(&io, magic, sizeof(magic)) && !memcmp(magic, "QRIN", sizeof(magic)) &&
-        qa_source_save_bool(&io, &ready) &&
-        qa_source_save_count(&io, &size, bytes.size) && size <= io.input.size - io.offset;
-    if (ok) {
-        qa_bytes cut = {io.input.data + io.offset, size};
-        io.offset += size;
-        ok = qa_source_save_finish(&io, NULL) && qa_input_command_restore(&builder, cut, error) &&
-            builder_valid(&builder, ready);
-    }
-    qa_source_save_dispose(&io);
-    if (!ok) {
-        if (!error || error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Invalid remote Q3 input continuation");
-        return false;
-    }
-    input->builder = builder;
-    input->angles_ready = ready;
     return true;
 }
