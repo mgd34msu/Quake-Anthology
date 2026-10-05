@@ -89,10 +89,18 @@ bool frontend_remote_q2_effects_current(const frontend_remote_q2_effects *owner,
 }
 bool q2fx_model_admit(frontend_remote_q2_effects *owner, q2fx_model model, qa_error *error)
 {
-    if (owner->model_admitted[model]) return true;
-    qa_scene_model *scene = NULL;
-    if (!owner->source.model(owner->source.context, q2fx_model_paths[model], true, &scene, error) ||
-        !q2fx_source_current(owner, error)) return false;
+    if (owner->model_admitted[model] && owner->models[model]) return true;
+    qa_scene_model *scene = owner->models[model];
+    if (!owner->model_admitted[model] &&
+        (!owner->source.model(owner->source.context, q2fx_model_paths[model], true, &scene, error) ||
+         !q2fx_source_current(owner, error))) return false;
+    if (!scene) {
+        if (error) {
+            error->code=QA_ERROR_NOT_FOUND;
+            snprintf(error->message,sizeof(error->message),"Q2 effect requires model: %s",q2fx_model_paths[model]);
+        }
+        return false;
+    }
     owner->models[model] = scene; owner->model_admitted[model] = true; return true;
 }
 bool frontend_remote_q2_effects_create(const frontend_remote_q2_effects_source *source,
@@ -117,8 +125,9 @@ bool frontend_remote_q2_effects_create(const frontend_remote_q2_effects_source *
     if (!q2fx_source_current(owner, error) || !qa_scene_particle_image(source->images, QA_SCENE_Q2, &image, error)) return false;
     owner->particle_image = image;
     if (!qa_scene_resources_palette(source->images, QA_SCENE_Q2, &palette, error)) return false;
-    size_t models=source->profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE?Q2FX_MODEL_COUNT:Q2FX_MUZZLE_MACHINE;
-    for (size_t i = 0; i < models; ++i)
+    /* Expansion beams/explosions and rerelease muzzle models are admitted by
+     * the effect that actually needs them, in this same retained media cache. */
+    for (size_t i = 0; i < Q2FX_LIGHTNING; ++i)
         if (!q2fx_model_admit(owner, (q2fx_model)i, error)) return false;
     return q2fx_source_current(owner, error);
 }
@@ -408,6 +417,7 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         bool player=t->type==QA_Q2_TE_HEATBEAM || t->type==QA_Q2_TE_MONSTER_HEATBEAM || t->type==QA_Q2_TE_GRAPPLE_CABLE_2 || t->type==QA_Q2_TE_LIGHTNING_BEAM;
         bool heat=t->type==QA_Q2_TE_HEATBEAM || t->type==QA_Q2_TE_MONSTER_HEATBEAM;
         q2fx_model model=heat?Q2FX_HEAT:t->type==QA_Q2_TE_LIGHTNING || t->type==QA_Q2_TE_LIGHTNING_BEAM?Q2FX_LIGHTNING:t->type==QA_Q2_TE_GRAPPLE_CABLE || t->type==QA_Q2_TE_GRAPPLE_CABLE_2?Q2FX_CABLE:Q2FX_PARASITE;
+        if (!q2fx_model_admit(o,model,e)) return false;
         if (t->type==QA_Q2_TE_HEATBEAM) offset=qa_v3(2,7,-3);
         if (t->type==QA_Q2_TE_GRAPPLE_CABLE_2) offset=qa_v3(9,12,-3);
         if (t->type==QA_Q2_TE_LIGHTNING_BEAM) offset=qa_v3(0,12,-12);
@@ -432,7 +442,9 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         if (grenade) base=30;
         bool only_light=(grenade_weapon && (controls.disable_explosions&1)) || (rocket_weapon && (controls.disable_explosions&2));
         float radius=unlit?0:((grenade_weapon || rocket_weapon) && (controls.dlight_hacks&2))?200:350;
-        explosion(o,only_light?5:3,big && !rerelease?Q2FX_BIG:Q2FX_ROCKET,pos,server-interval,grenade?19:15,base,8,0,radius,
+        q2fx_model model=big && !rerelease?Q2FX_BIG:Q2FX_ROCKET;
+        if (!only_light && !q2fx_model_admit(o,model,e)) return false;
+        explosion(o,only_light?5:3,model,pos,server-interval,grenade?19:15,base,8,0,radius,
             qa_v3(1,.5f,.5f),angles,big && rerelease?2:1);
         if (!big && t->type!=QA_Q2_TE_EXPLOSION1_NP && t->type!=QA_Q2_TE_PLAIN_EXPLOSION &&
             !(grenade_weapon && (controls.disable_particles&1)) && !(rocket_weapon && (controls.disable_particles&4)))
@@ -517,12 +529,16 @@ bool frontend_remote_q2_effects_named_beam(frontend_remote_q2_effects *o,
         }
         if (!strcmp(name,"bfg-zap")) bfg_explosion(o,end,time,interval);
     } else if (!strcmp(name,"bfg-lightning")) {
-        for (size_t i=0;i<Q2FX_POOL;++i) if (!o->beams[i].active || o->beams[i].die<time) {
-            o->beams[i]=(q2fx_beam){.active=true,.unkeyed=!actor_id.registry,.model=Q2FX_LIGHTNING,.actor=actor_id,
-                .start=start,.end=end,.die=die}; break;
+        if (!q2fx_model_admit(o,Q2FX_LIGHTNING,e)) ok=false;
+        else {
+            for (size_t i=0;i<Q2FX_POOL;++i) if (!o->beams[i].active || o->beams[i].die<time) {
+                o->beams[i]=(q2fx_beam){.active=true,.unkeyed=!actor_id.registry,.model=Q2FX_LIGHTNING,.actor=actor_id,
+                    .start=start,.end=end,.die=die}; break;
+            }
         }
     } else if (!strcmp(name,"heatbeam") || !strcmp(name,"monster-heatbeam")) {
         if (!actor_id.registry) ok=q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized player beam lost its full actor");
+        else if (!q2fx_model_admit(o,Q2FX_HEAT,e)) ok=false;
         else {
             bool monster=!strcmp(name,"monster-heatbeam");
             beam(o,actor_id,(qa_actor_id){0},start,end,monster?qa_v3(0,0,0):qa_v3(2,7,-3),time,Q2FX_HEAT,true,monster);
@@ -640,12 +656,11 @@ static bool monster_muzzle_at(frontend_remote_q2_effects *o, qa_actor_id actor_i
         else if (profile>=102 && profile<=118) muzzle_scale=22;
         else if (flash==74 || flash==134) muzzle_scale=12;
         else if (flash==227) muzzle_scale=16;
-        if (o->models[model]) {
-            qa_vec3 axis[3]; axes(*angles,axis);
-            qa_vec3 flash_origin=qa_vec_add(origin,qa_vec_scale(axis[0],4*scale)), rotation=*angles;
-            if (model!=Q2FX_MUZZLE_BOOMER) rotation.z=(float)(random_word(o)%360);
-            explosion(o,4,model,flash_origin,server-interval,2,0,8|32|8192,skin,0,qa_v3(0,0,0),rotation,muzzle_scale*scale);
-        }
+        if (!q2fx_model_admit(o,model,e)) return false;
+        qa_vec3 axis[3]; axes(*angles,axis);
+        qa_vec3 flash_origin=qa_vec_add(origin,qa_vec_scale(axis[0],4*scale)), rotation=*angles;
+        if (model!=Q2FX_MUZZLE_BOOMER) rotation.z=(float)(random_word(o)%360);
+        explosion(o,4,model,flash_origin,server-interval,2,0,8|32|8192,skin,0,qa_v3(0,0,0),rotation,muzzle_scale*scale);
     }
     return true;
 }
@@ -689,7 +704,7 @@ static bool weapon_muzzle(frontend_remote_q2_effects *o, qa_actor_id actor_id, u
     case 35: model=Q2FX_MUZZLE_DIST; offset=qa_v3(18,6,-6.5f); scale=10; break;
     default: return true;
     }
-    if (!o->models[model]) return true;
+    if (!q2fx_model_admit(o,model,e)) return false;
     float roll=model==Q2FX_MUZZLE_MACHINE || model==Q2FX_MUZZLE_BEAM?(float)(random_word(o)%360):0;
     o->weapon_muzzle=(q2fx_weapon_muzzle){.active=true,.model=(uint8_t)model,.actor=actor_id,
         .offset=offset,.scale=scale,.roll=roll,.start=server-interval};
@@ -844,7 +859,7 @@ void q2fx_sampled_light(frontend_remote_q2_effects *o, qa_vec3 origin, float rad
 static bool model_draw(frontend_remote_q2_effects *o, q2fx_model model, qa_vec3 origin, qa_vec3 angles,
     int32_t frame, int32_t old_frame, float back_lerp, int32_t skin, uint32_t flags, float alpha, float scale, qa_error *e)
 {
-    if (!o->models[model]) return true;
+    if (!q2fx_model_admit(o,model,e)) return false;
     if (o->draw_count==o->draw_capacity) {
         size_t capacity=o->draw_capacity?o->draw_capacity*2:64;
         if (capacity<o->draw_capacity || capacity>SIZE_MAX/sizeof(*o->draws)) return q2fx_fail(e,QA_ERROR_MEMORY,"Q2 transient model draw capacity overflow");
