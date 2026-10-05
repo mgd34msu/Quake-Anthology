@@ -31,8 +31,6 @@ typedef struct frontend_remote_q3_initial_view {
  * leaves that exact owner reachable for checked disposal. */
 bool frontend_remote_q3_initial_create(qa_frontend *,const frontend_network_client_attempt *,
     frontend_remote_q3_initial **,qa_error *);
-bool frontend_remote_q3_initial_prepare_restored(qa_frontend *,const frontend_network_client_attempt *,
-    uint64_t identity,uint32_t physical_seat,qa_vfs **claimed_mounts,frontend_remote_q3_initial **,qa_error *);
 bool frontend_remote_q3_initial_import_read(const frontend_remote_q3_initial *,frontend_remote_q3_initial_view *,qa_error *);
 bool frontend_remote_q3_initial_import_current(const frontend_remote_q3_initial_view *);
 bool frontend_remote_q3_initial_finish_import(frontend_remote_q3_initial *,qa_error *);

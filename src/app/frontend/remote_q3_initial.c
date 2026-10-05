@@ -306,58 +306,7 @@ bool frontend_remote_q3_initial_current(const frontend_remote_q3_initial_view *v
     return v && v->owner && public_attempt_current(v->owner,&v->attempt) &&
         initial_fields_current(v);
 }
-bool frontend_remote_q3_initial_prepare_restored(qa_frontend *f,const frontend_network_client_attempt *attempt,
-    uint64_t identity,uint32_t physical_seat,qa_vfs **mounts,frontend_remote_q3_initial **out,qa_error *error)
-{
-    if(!f || !f->application || !f->source_restoring || f->capture || f->resource_inventory ||
-        f->stepping || f->round || !f->seats || !attempt || !mounts || !*mounts || !out || *out ||
-        identity<=QA_FRONTEND_COMMAND_OWNER || identity-QA_FRONTEND_COMMAND_OWNER>f->next_source_id ||
-        frontend_source_identity_used(f,identity) || !frontend_network_client_restore_attempt_current(f,attempt) ||
-        qa_vfs_resources(*mounts)!=qa_vfs_resources(attempt->source.descriptor->content))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Initial UI import requires its genuine absent-gamestate graph recipe");
-    uint32_t ordinal;
-    if(!qa_application_constructor_seat_ordinal(f->application,attempt->source.receiver.receiver,
-        attempt->source.receiver.seat,&ordinal,error)) return false;
-    if(ordinal!=physical_seat || ordinal>=f->options.seats || attempt->configuration.physical_seat!=ordinal ||
-        !f->seats[ordinal].input || f->seats[ordinal].frontend!=f || f->seats[ordinal].id!=ordinal)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Restored initial UI changed its real physical input recipient");
-    for(size_t i=0;i<frontend_remote_q3_count(f);++i) {
-        frontend_remote_q3_resources existing;
-        if(!frontend_remote_q3_resources_read(frontend_remote_q3_at(f,i),&existing,error)) return false;
-        if(existing.identity==identity)
-            return frontend_fail(error,QA_ERROR_FORMAT,"Restored initial UI identity is already retained");
-    }
-    frontend_remote_q3_initial *owner=calloc(1,sizeof(*owner));
-    if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining restored initial UI resource parent");
-    owner->frontend=f; owner->application=f->application;
-    owner->next=f->initial_resources; f->initial_resources=owner; owner->constructing=true; owner->importing=true;
-    owner->view=(frontend_remote_q3_initial_view){.owner=owner,.attempt=*attempt,.identity=identity,
-        .physical_seat=ordinal,.input=f->seats[ordinal].input};
-    *out=owner;
-    frontend_remote_q3_initial_view *v=&owner->view; v->mounts=*mounts; *mounts=NULL;
-    bool ok=qa_launch_instance_retain_metadata(attempt->source.descriptor,&owner->descriptor,error);
-    if(ok) {
-        v->descriptor=qa_launch_instance_lease_view(owner->descriptor); v->attempt.source.descriptor=v->descriptor;
-        ok=qa_native_q3_remote_client_product_read(owner->application,&v->attempt.source,&v->product,error) &&
-            frontend_client_registry_acquire(f,v->descriptor,attempt->source.receiver.seat,&v->registry,error) &&
-            frontend_client_registry_cvars(v->registry)==attempt->source.receiver.cvars;
-    }
-    if(ok) {
-        v->images=qa_scene_resources_create_detached(v->mounts,error);
-        v->materials=v->images?qa_material_library_create_detached(v->images,error):NULL;
-        v->fonts=v->images?qa_font_library_create(v->mounts,v->images,error):NULL;
-        v->movies=v->images?qa_media_library_create(v->images,error):NULL;
-        ok=v->images && v->materials && v->fonts && v->movies && qa_audio_bank_create(v->mounts,&v->sounds,error);
-    }
-    qa_q3_presentation_asset_options assets={.provider={v->mounts,v->images,v->materials,QA_SCENE_Q3},
-        .sounds=v->sounds,.movies=v->movies,.context=owner,.model_initialize=model_initialize};
-    if(ok) ok=qa_q3_presentation_assets_create(&assets,&v->assets,error) &&
-        frontend_network_client_restore_attempt_current(f,attempt);
-    owner->constructing=false; owner->ready=ok;
-    if(!ok && (!error || error->code==QA_OK))
-        return frontend_fail(error,QA_ERROR_FORMAT,"Restored initial UI graph changed its retained namespace");
-    return ok;
-}
+
 bool frontend_remote_q3_initial_import_current(const frontend_remote_q3_initial_view *view)
 {
     const frontend_remote_q3_initial *owner=view?view->owner:NULL;
