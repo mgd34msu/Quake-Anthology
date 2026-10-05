@@ -125,13 +125,6 @@ bool frontend_remote_q3_initial_movie_source_read(frontend_remote_q3_initial *ow
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Movie binding lacks its retained Initial provider");
     *out=view; return true;
 }
-bool frontend_remote_q3_initial_movies_restore(frontend_remote_q3_initial *owner,const frontend_material_movies_refs *refs,qa_bytes bytes,qa_error *error)
-{
-    frontend_material_movie_source view;
-    return owner && owner->importing && frontend_remote_q3_initial_movie_source_read(owner,&view,error) ?
-        frontend_material_movies_restore(&view,refs,bytes,&owner->shader_movies,error) :
-        frontend_fail(error,QA_ERROR_ARGUMENT,"Movie import requires its actual Initial candidate");
-}
 static bool build_media(frontend_remote_q3_initial *owner,qa_error *error);
 static bool build(frontend_remote_q3_initial *owner,qa_error *error)
 {

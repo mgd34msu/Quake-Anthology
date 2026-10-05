@@ -15,7 +15,5 @@ bool frontend_unified_material_movie_at(const frontend_unified_media *, size_t f
     size_t *bank_ordinal);
 bool frontend_unified_material_movie_source_read(frontend_unified_media *, size_t bank,
     frontend_material_movie_source *, qa_error *);
-bool frontend_unified_material_movies_restore(frontend_unified_media *, size_t bank,
-    const frontend_material_movies_refs *, qa_bytes, qa_error *);
 bool frontend_unified_material_movies_restore_ready(frontend_unified_media *, qa_error *);
 #endif

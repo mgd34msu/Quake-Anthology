@@ -2,7 +2,7 @@
 #define QA_FRONTEND_RENDERER_MATERIALS_H
 #include "internal.h"
 #include "qa/persistence_content.h"
-#include "material_movies_save.h"
+#include "material_movies.h"
 typedef struct frontend_renderer_materials frontend_renderer_materials;
 typedef struct frontend_renderer_materials_view {
     qa_material_library *library;
@@ -22,7 +22,6 @@ bool frontend_renderer_materials_count(const qa_frontend *,size_t *,qa_error *);
 bool frontend_renderer_materials_read_at(const qa_frontend *,size_t,frontend_renderer_materials_view *,qa_error *);
 bool frontend_renderer_materials_movie_count(const qa_frontend *,size_t *,qa_error *);
 bool frontend_renderer_materials_movie_source_at(qa_frontend *,size_t,frontend_material_movie_source *,qa_error *);
-bool frontend_renderer_materials_movies_restore_at(qa_frontend *,size_t,const frontend_material_movies_refs *,qa_bytes,qa_error *);
 bool frontend_renderer_materials_prune(qa_frontend *,qa_error *);
 bool frontend_renderer_materials_destroy(frontend_renderer_materials **,qa_error *);
 bool frontend_renderer_materials_idle(const frontend_renderer_materials *);

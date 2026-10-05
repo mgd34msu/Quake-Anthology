@@ -432,18 +432,6 @@ bool frontend_renderer_materials_movie_source_at(qa_frontend *f,size_t ordinal,f
     return owner->frontend==f && owner->application==f->application && out->files && out->images &&
         ((f->source_restoring && !owner->view.movies) || movie_current(owner,out));
 }
-bool frontend_renderer_materials_movies_restore_at(qa_frontend *f,size_t ordinal,const frontend_material_movies_refs *refs,
-    qa_bytes bytes,qa_error *error)
-{
-    frontend_material_movie_source source;
-    frontend_renderer_materials *owner=movie_at(f,ordinal,error);
-    uint32_t seat=0; uint64_t bus=0; bool present=false;
-    return f && f->source_restoring && owner && frontend_renderer_materials_movie_source_at(f,ordinal,&source,error) &&
-        frontend_material_movies_restore(&source,refs,bytes,&owner->view.movies,error) &&
-        frontend_material_movies_cinematic_namespace_read(owner->view.movies,&seat,&bus,&present,error) &&
-        present==owner->view.has_cinematics && (!present ||
-            (seat==owner->view.cinematic_seat && bus==owner->view.cinematic_bus));
-}
 static bool row_destroy(frontend_renderer_materials **slot,qa_error *error)
 {
     frontend_renderer_materials *owner=*slot;

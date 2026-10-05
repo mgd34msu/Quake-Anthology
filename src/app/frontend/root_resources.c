@@ -112,12 +112,6 @@ bool frontend_root_resources_prepare_restored(qa_frontend *f,qa_error *error)
     owner->media=qa_media_library_create(owner->images,error);
     return owner->media!=NULL;
 }
-bool frontend_root_movies_restore(qa_frontend *f,const frontend_material_movies_refs *refs,qa_bytes bytes,qa_error *error)
-{
-    frontend_material_movie_source source;
-    return f && f->source_restoring && frontend_root_movie_source_read(f,&source,error) &&
-        frontend_material_movies_restore(&source,refs,bytes,&f->root_resources->movies,error);
-}
 bool frontend_root_sidecars_bind_restored(qa_frontend *f,qa_error *error)
 {
     frontend_root_resources *owner=f?f->root_resources:NULL;

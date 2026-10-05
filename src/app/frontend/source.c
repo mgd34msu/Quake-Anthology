@@ -1337,19 +1337,6 @@ bool frontend_source_movie_source_read(qa_frontend *f,size_t index,frontend_mate
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Movie binding lacks its retained Source provider");
     *out=view; return true;
 }
-bool frontend_source_movies_restore(qa_frontend *f,size_t index,const frontend_material_movies_refs *refs,qa_bytes bytes,qa_error *error)
-{
-    size_t ordinal=index;
-    frontend_source *source=f?f->sources:NULL;
-    while (source && index--) source=source->next;
-    frontend_material_movie_source view;
-    if (!source || !f->source_restoring || !frontend_source_movie_source_read(f,ordinal,&view,error))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Movie import requires its actual Source candidate");
-    qa_q3_cinematic_source *cinematics=NULL;
-    return frontend_material_movies_restore(&view,refs,bytes,&source->shader_movies,error) &&
-        frontend_material_movies_cinematic_read(source->shader_movies,&cinematics,error) &&
-        (!cinematics || qa_q3_presentation_cinematics_bind(source->presentation,cinematics,error));
-}
 static bool construct_source(frontend_source *source, const qa_q3_host_options *host,
     frontend_key_profile *profile,bool restoring, qa_error *error)
 {

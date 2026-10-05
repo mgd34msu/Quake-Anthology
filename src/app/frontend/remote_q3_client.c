@@ -96,16 +96,6 @@ bool frontend_remote_q3_movie_source_read(frontend_remote_q3 *row,frontend_mater
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Movie binding lacks its retained remote provider");
     *out=view; return true;
 }
-bool frontend_remote_q3_movies_restore(frontend_remote_q3 *row,const frontend_material_movies_refs *refs,qa_bytes bytes,qa_error *error)
-{
-    frontend_material_movie_source view;
-    if (!row || !row->importing || !frontend_remote_q3_movie_source_read(row,&view,error))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Movie import requires its actual remote candidate");
-    qa_q3_cinematic_source *cinematics=NULL;
-    return frontend_material_movies_restore(&view,refs,bytes,&row->shader_movies,error) &&
-        frontend_material_movies_cinematic_read(row->shader_movies,&cinematics,error) &&
-        (!cinematics || !row->runtime || frontend_remote_q3_runtime_cinematics_restore(row->runtime,cinematics,error));
-}
 static bool build_resources(frontend_remote_q3 *,frontend_remote_config *,qa_error *);
 bool frontend_remote_q3_resources_prepare_restored(qa_frontend *f,const frontend_network_client_domain *domain,
     uint64_t identity,uint32_t physical_seat,qa_vfs **mounts,qa_bytes portals,

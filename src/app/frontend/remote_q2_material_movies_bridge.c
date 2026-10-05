@@ -91,15 +91,6 @@ bool remote_q2_material_movies_prepare_restored(frontend_remote_q2 *row, qa_erro
     row->media = qa_media_library_create(view.images, error);
     return row->media != NULL;
 }
-bool frontend_remote_q2_movies_restore(frontend_remote_q2 *row,
-    const frontend_material_movies_refs *refs, qa_bytes bytes, qa_error *error)
-{
-    frontend_material_movie_source source;
-    if (!row || !row->importing || !row->frontend->source_restoring || row->shader_movies ||
-        !frontend_remote_q2_movie_source_read(row, &source, error))
-        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 movie playback import requires its actual cold CLIENT owner");
-    return frontend_material_movies_restore(&source, refs, bytes, &row->shader_movies, error);
-}
 bool remote_q2_material_movies_idle(const frontend_remote_q2 *row)
 {
     return row && (!row->shader_movies || frontend_material_movies_idle(row->shader_movies)) &&

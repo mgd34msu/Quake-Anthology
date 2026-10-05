@@ -2,7 +2,7 @@
 #define QA_FRONTEND_VISUAL_RESTORE_H
 #include "internal.h"
 #include "model_inventory.h"
-#include "material_movies_save.h"
+#include "material_movies.h"
 typedef struct frontend_visual_owner_view {
     qa_actor_owner owner;
     qa_scene_family family;
@@ -26,10 +26,6 @@ typedef struct frontend_visual_brush_view {
 size_t frontend_visual_owner_count(const qa_frontend *);
 bool frontend_visual_owner_read(const qa_frontend *, size_t, frontend_visual_owner_view *);
 bool frontend_visual_movie_source_read(qa_frontend *, size_t, frontend_material_movie_source *, qa_error *);
-/* After actual material/image/media import; binds the saved owner without
- * registration, content acquisition, playback tick or global frame mutation. */
-bool frontend_visual_movies_restore(qa_frontend *, size_t, const frontend_material_movies_refs *,
-    qa_bytes, qa_error *);
 size_t frontend_visual_model_count(const qa_frontend *, size_t owner);
 bool frontend_visual_model_read(const qa_frontend *, size_t owner, size_t ordinal, frontend_visual_model_view *);
 size_t frontend_visual_brush_count(const qa_frontend *, size_t owner);

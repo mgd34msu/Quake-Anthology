@@ -95,16 +95,6 @@ bool frontend_unified_material_movies_prepare_restored(frontend_unified_media *o
     row->media = qa_media_library_create(row->images, error);
     return row->media != NULL;
 }
-bool frontend_unified_material_movies_restore(frontend_unified_media *owner, size_t ordinal,
-    const frontend_material_movies_refs *refs, qa_bytes bytes, qa_error *error)
-{
-    unified_media_bank *row = bank_at(owner, ordinal);
-    frontend_material_movie_source source;
-    if (!owner || !owner->frontend || !owner->importing || !owner->frontend->source_restoring ||
-        !row || row->shader_movies || !frontend_unified_material_movie_source_read(owner, ordinal, &source, error))
-        return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified playback import requires its genuine cold recipe bank");
-    return frontend_material_movies_restore(&source, refs, bytes, &row->shader_movies, error);
-}
 bool frontend_unified_material_movies_restore_ready(frontend_unified_media *owner, qa_error *error)
 {
     if (!owner || !owner->frontend || !owner->importing || !owner->frontend->source_restoring)

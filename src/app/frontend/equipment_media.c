@@ -670,14 +670,3 @@ bool frontend_equipment_movie_source_read(qa_frontend *f,size_t ordinal,
     return (f->source_restoring&&row->restoring&&!row->movies)||
         (row->movies&&frontend_material_movies_current(row->movies));
 }
-bool frontend_equipment_movies_restore(qa_frontend *f,size_t ordinal,
-    const frontend_material_movies_refs *refs,qa_bytes bytes,qa_error *error)
-{
-    frontend_equipment_media *row=f&&f->equipment?f->equipment->media:NULL;
-    size_t at=ordinal;
-    while(row&&at){row=row->next;--at;}
-    frontend_material_movie_source source;
-    return f&&f->source_restoring&&row&&row->restoring&&!row->movies&&
-        frontend_equipment_movie_source_read(f,ordinal,&source,error)&&
-        frontend_material_movies_restore(&source,refs,bytes,&row->movies,error);
-}

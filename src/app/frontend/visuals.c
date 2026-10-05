@@ -14,7 +14,6 @@
 #include "qa/scene_effects.h"
 #include "legacy_render_policy.h"
 #include "material_movies.h"
-#include "material_movies_save.h"
 #include "renderer_materials.h"
 #include "config_store.h"
 #include "qa/application_equipment.h"
@@ -214,16 +213,6 @@ bool frontend_visual_movie_source_read(qa_frontend *frontend, size_t index,
     if (!visual_movie_current(owner, &source))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Visual shader movies lost their genuine provider namespace");
     *out = source; return true;
-}
-bool frontend_visual_movies_restore(qa_frontend *frontend, size_t index,
-    const frontend_material_movies_refs *refs, qa_bytes bytes, qa_error *error)
-{
-    frontend_visual_owner *owner = (frontend_visual_owner *)owner_at(frontend, index);
-    frontend_material_movie_source source;
-    if (!owner || owner->shader_movies || !frontend->source_restoring)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Visual movie import requires its actual empty isolated owner");
-    if (!frontend_visual_movie_source_read(frontend, index, &source, error)) return false;
-    return frontend_material_movies_restore(&source, refs, bytes, &owner->shader_movies, error);
 }
 size_t frontend_visual_model_count(const qa_frontend *frontend, size_t index)
 {

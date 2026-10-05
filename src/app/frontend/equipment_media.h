@@ -4,7 +4,7 @@
 #include "visual_access.h"
 #include "equipment_held.h"
 #include "qa/application_equipment.h"
-#include "material_movies_save.h"
+#include "material_movies.h"
 
 typedef struct frontend_equipment_media frontend_equipment_media;
 typedef struct frontend_equipment_media_view {
@@ -67,7 +67,5 @@ size_t frontend_equipment_movie_count(const qa_frontend *);
 bool frontend_equipment_movie_at(const qa_frontend *,size_t,size_t *physical_ordinal);
 bool frontend_equipment_movie_source_read(qa_frontend *,size_t,
     frontend_material_movie_source *,qa_error *);
-bool frontend_equipment_movies_restore(qa_frontend *,size_t,
-    const frontend_material_movies_refs *,qa_bytes,qa_error *);
 
 #endif
