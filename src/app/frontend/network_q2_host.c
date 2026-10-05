@@ -8,6 +8,7 @@
 #include <stdio.h>
 
 static bool demo_publish(frontend_network_q2_host *, qa_error *);
+static bool refresh_source(frontend_network_q2_host *, qa_error *);
 
 static bool local_player(void *context,qa_net_seat_id seat,qa_network_local_player *out,qa_error *error)
 {
@@ -50,7 +51,7 @@ static bool current(frontend_network_q2_host *host,qa_error *error)
 bool frontend_network_q2_host_configs(frontend_network_q2_host *host,
     const qa_q2_config_entry **entries,size_t *count,qa_error *error)
 {
-    return host && !host->calls && current(host,error) &&
+    return host && !host->calls && refresh_source(host,error) && current(host,error) &&
         qa_application_network_q2_configs(host->discovery,entries,count,error);
 }
 static bool drop(void *context,qa_net_client_id id,const char *reason,qa_error *error)

@@ -1653,9 +1653,13 @@ qa_save_authority frontend_network_save_authority(const qa_frontend *f)
 bool frontend_network_q2_configs(qa_frontend *f,const qa_q2_config_entry **entries,
     size_t *count,qa_error *error)
 {
+    if (f && !f->network && !frontend_network_create(f,error)) return false;
     qa_frontend_network *n=f?f->network:NULL;
-    if (!n || n->frontend!=f || !n->q2_host)
+    if (!n || n->frontend!=f)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Original Quake II save requires its actual Source configstrings");
+    if (!q2_local_groups_prepare(n,error)) return false;
+    if (!n->q2_host)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Original Quake II save has no local Source host");
     return frontend_network_q2_host_configs(n->q2_host,entries,count,error);
 }
 bool frontend_network_remote(const qa_frontend *f)
