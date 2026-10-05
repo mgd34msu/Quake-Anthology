@@ -79,7 +79,7 @@ bool q2m_parasite_interrupt(q2m_context *context, bool death, qa_error *error) {
 static bool show(qa_q2_game *game, q2_actor *actor, qa_error *error) {
     q2_projectile *p = &actor->projectile;
     qa_q2_visual visual = {.models = {p->model}, .render_flags = p->render_flags,
-                           .scale = 1, .alpha = 1, .visible = true};
+                           .scale = p->scale, .alpha = 1, .visible = true};
     return q2_publish_visual(game, actor->id, &visual, error);
 }
 
@@ -351,7 +351,7 @@ static bool create_part(q2m_context *context, bool segment, qa_vec3 from, qa_vec
         return false;
     }
     actor->projectile = (q2_projectile){.kind = segment ? Q2_PROBOSCIS_SEGMENT : Q2_PROBOSCIS,
-        .owner = owner_reference, .model = model, .classname = classname, .scale = 1, .visible = true,
+        .owner = owner_reference, .model = model, .classname = classname, .visible = true,
         .speed = segment ? 0 : 1250, .next_ns = q2_deadline(game->now_ns, game->frame_ns),
         .expire_ns = UINT64_MAX, .render_flags = segment ? 128 : 0,
         .attack = {.attacker = owner, .weapon_provider = game->options.owner,

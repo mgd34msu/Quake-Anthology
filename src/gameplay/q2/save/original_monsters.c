@@ -978,7 +978,7 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
         m->definition = definition;
         m->move_set = q2m_move_set_for(game, definition);
         m->classname = actor->entity->classname;
-        m->entity_scale = 1;
+        m->entity_scale = io->edition == QA_Q2_CLASSIC ? 1 : 0;
         m->health_scaling = 1;
         m->animation_scale = definition->scale;
         m->normal_height = definition->bounds.maxs.z;
@@ -1090,8 +1090,9 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
         m->death_notified = m->dead;
         m->old_frame = m->frame;
         m->corpse = m->dead && (actor->physics.flags & QA_PHYSICS_DEAD) != 0;
-        if (!(m->entity_scale > 0)) m->entity_scale = 1;
-        if (!(m->animation_scale > 0)) m->animation_scale = definition->scale * m->entity_scale;
+        if (io->edition == QA_Q2_CLASSIC) m->entity_scale = 1;
+        if (!(m->animation_scale > 0)) m->animation_scale = definition->scale *
+            (m->entity_scale != 0 ? m->entity_scale : 1);
         if (io->edition == QA_Q2_CLASSIC) m->base_health = m->max_health;
     }
     if (okay) okay = monster_callbacks_record(game, io, m, bindings) && schedule_record(game, io, actor, m) &&

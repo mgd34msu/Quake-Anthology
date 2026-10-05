@@ -129,7 +129,7 @@ static bool toss_makron(q2m_context *context, qa_error *error) {
 
   qa_q2_monster_spawn_options options = {
       .classname = "monster_makron",
-      .scale = 1.0f,
+      .scale = context->game->options.edition == QA_Q2_RERELEASE ? 0 : 1,
       .health_multiplier = 1.0f,
       .enemy = enemy,
   };
@@ -560,7 +560,8 @@ static bool project_flash_angles(q2m_context *context, int flash,
   qa_vec3 offset;
   if (!q2m_muzzle_offset(context, flash, &offset, error))
     return false;
-  float scale = context->game->options.edition == QA_Q2_RERELEASE
+  float scale = context->game->options.edition == QA_Q2_RERELEASE &&
+                        context->monster->entity_scale != 0
                     ? context->monster->entity_scale
                     : 1.0f;
   qa_vec3 forward, right;
@@ -3140,7 +3141,7 @@ static bool boss2_rocket64(q2m_context *context, qa_error *error) {
     return false;
   qa_vec3 right;
   qa_builtin_angle_vectors(context->body.angles, NULL, &right, NULL);
-  float scale = context->monster->entity_scale;
+  float scale = context->monster->entity_scale != 0 ? context->monster->entity_scale : 1;
   unsigned barrel = (unsigned)context->monster->count++ % 4u;
   start.z += 10.0f * scale;
   start = qa_vec_sub(

@@ -901,7 +901,7 @@ bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa
         .effects = kind == Q2_TRAP ? 0 : 32,
         .render_flags = kind == Q2_TRAP ? 0 : 0x8000,
         .visible = true,
-        .scale = 1,
+        .scale = c->rerelease ? 0 : 1,
         .dodgeable = true,
         .expire_ns = q2_deadline(c->now_ns, kind == Q2_PROX ? mine_life(damage / 90) : 30 * Q2_NS),
         .next_ns =

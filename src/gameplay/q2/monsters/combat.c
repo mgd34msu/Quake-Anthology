@@ -219,7 +219,8 @@ static float monster_bfg_radius(const q2m_context *context) {
 qa_vec3 q2m_project_offset(const q2m_context *context, qa_vec3 offset) {
   qa_vec3 forward, right;
   qa_builtin_angle_vectors(context->body.angles, &forward, &right, NULL);
-  float scale = context->game->options.edition == QA_Q2_RERELEASE
+  float scale = context->game->options.edition == QA_Q2_RERELEASE &&
+                        context->monster->entity_scale != 0
                     ? context->monster->entity_scale
                     : 1.0f;
   return qa_vec_add(context->body.origin,
@@ -2249,7 +2250,7 @@ static bool spawn_gib_recipe(q2m_context *context,
                              float damage, qa_error *error) {
   const qa_actor_id source = context->actor->id;
   const int skin = context->monster->skin;
-  const float scale = context->monster->entity_scale;
+  const float scale = context->monster->entity_scale != 0 ? context->monster->entity_scale : 1;
   for (size_t piece_index = 0; piece_index < piece_count; ++piece_index) {
     const q2m_gib_piece *piece = &pieces[piece_index];
     for (uint8_t copy = 0; copy < piece->count; ++copy)

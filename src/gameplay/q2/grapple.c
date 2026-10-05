@@ -488,7 +488,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
                                        .damage = spec.damage,
                                        .speed = speed,
                                        .visible = true,
-                                       .scale = 1,
+                                       .scale = rr ? 0 : 1,
                                        .born_ns = g->now_ns,
                                        .expire_ns = UINT64_MAX,
                                        .next_ns = lm ? q2_deadline(g->now_ns, Q2_NS) : UINT64_MAX};

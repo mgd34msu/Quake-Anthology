@@ -421,7 +421,7 @@ bool q2_entity_native_spawn(qa_q2_game *g, const char *name, const qa_body_state
     a->entity->classname = classname;
     a->entity_game = g;
     a->entity->kind = kind;
-    a->entity->visual.scale = 1;
+    a->entity->visual.scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1;
     a->entity->visual.alpha = 1;
     a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
     a->physics.q2_rerelease = g->options.edition == QA_Q2_RERELEASE;

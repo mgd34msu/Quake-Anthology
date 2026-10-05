@@ -146,7 +146,7 @@ static bool launch(qa_q2_game *g, qa_actor_id owner, q2_companion_kind kind, boo
     a->item->owner = decoy ? credit_reference : owner_reference;
     a->item->visible = true;
     a->item->visual = (qa_q2_visual){
-        .scale = 1, .alpha = 1, .visible = true, .old_frame = -1, .render_flags = 8 | 0x8000};
+        .scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1, .alpha = 1, .visible = true, .old_frame = -1, .render_flags = 8 | 0x8000};
     const char *model = kind == Q2_SPHERE_DEFENDER ? "models/items/defender/tris.md2"
                         : kind == Q2_SPHERE_HUNTER ? "models/items/hunter/tris.md2"
                                                    : "models/items/vengnce/tris.md2";
@@ -292,7 +292,7 @@ static bool decoy(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definition 
                                          .expires_ns = q2_deadline(g->now_ns, 30 * Q2_NS)};
     a->item->owner = owner_reference;
     a->item->visible = false;
-    a->item->visual = (qa_q2_visual){.render_flags = 0x8000, .scale = 1, .alpha = 1};
+    a->item->visual = (qa_q2_visual){.render_flags = 0x8000, .scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1, .alpha = 1};
     a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
     a->physics_bound = true;
     a->physics.motion = QA_PHYSICS_TOSS;

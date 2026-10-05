@@ -349,7 +349,7 @@ bool q2_fire_nuke(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 direc
                                     .splash_mod = 47,
                                     .effects = 32,
                                     .render_flags = 0x8000,
-                                    .scale = 1,
+                                    .scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1,
                                     .visible = true,
                                     .dodgeable = true,
                                     .born_ns = g->now_ns,

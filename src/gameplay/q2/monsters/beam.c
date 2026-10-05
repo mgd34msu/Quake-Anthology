@@ -748,7 +748,7 @@ static bool makron_spawn_tick(qa_q2_game *game, q2_actor *actor,
   free(controller);
   qa_q2_monster_spawn_options options = {
       .classname = "monster_makron",
-      .scale = 1.0f,
+      .scale = game->options.edition == QA_Q2_RERELEASE ? 0 : 1,
       .health_multiplier = 1.0f,
   };
   if (!qa_q2_monster_spawn(game, child, &options, error)) {

@@ -85,7 +85,8 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
     s->style = integer(q2_field_float(g, s, "style", 0));
     s->volume = q2_field_float(g, s, "volume", 0);
     s->attenuation = q2_field_float(g, s, "attenuation", 0);
-    s->visual = (qa_q2_visual){.scale = q2_field_float(g, s, "scale", 1),
+    s->visual = (qa_q2_visual){.scale = q2_field_float(g, s, "scale",
+            g->options.edition == QA_Q2_RERELEASE ? 0 : 1),
                                .alpha = q2_field_float(g, s, "alpha", 1),
                                .old_frame = -1};
     s->visual.models[0] = q2_field_id(g, s, "model");

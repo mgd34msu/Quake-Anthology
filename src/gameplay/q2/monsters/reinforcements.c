@@ -535,14 +535,14 @@ static bool medic_positions_pass(q2m_context *context, q2m_summon_state *state, 
             return !q2m_alive(context);
         q2m_reinforcement reinforcement = state->chosen[i];
         qa_vec3 offset = medic_positions[i];
-        if (rerelease && stage == MEDIC_DETERMINE)
+        if (rerelease && context->monster->entity_scale != 0 && stage == MEDIC_DETERMINE)
             offset = qa_vec_scale(offset, context->monster->entity_scale);
         if (behind) {
             offset.x = -offset.x;
             offset.y = -offset.y;
         }
         qa_vec3 point = q2m_project_offset(context, offset);
-        point.z += rerelease && !behind ? 10 * context->monster->entity_scale : 10;
+        point.z += rerelease && !behind ? 10 * (context->monster->entity_scale != 0 ? context->monster->entity_scale : 1) : 10;
         bool found;
         bool ok = rerelease
                       ? q2m_rerelease_find_spawn_point(context->game, point, reinforcement.bounds,

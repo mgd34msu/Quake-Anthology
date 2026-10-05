@@ -65,7 +65,7 @@ bool q2_item_drop_definition(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_
     item->visible = true;
     item->touchable = true;
     item->temporary = !options->immediate_touch;
-    item->visual = (qa_q2_visual){.scale = 1,
+    item->visual = (qa_q2_visual){.scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1,
                                   .alpha = 1,
                                   .old_frame = -1,
                                   .visible = true,

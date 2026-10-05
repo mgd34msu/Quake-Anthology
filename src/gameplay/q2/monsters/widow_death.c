@@ -94,7 +94,7 @@ static bool gib(qa_q2_game *game, qa_actor_id source, const char *model,
   if (!actor) return release_failed(game, id, error);
   actor->projectile = (q2_projectile){.kind = Q2_GIB,
       .owner = sized ? owner_reference : (qa_actor_reference){0}, .classname = classname,
-      .effects = 2, .render_flags = 32768, .scale = 1, .alpha = 1,
+      .effects = 2, .render_flags = 32768, .scale = game->options.edition == QA_Q2_RERELEASE ? 0 : 1, .alpha = 1,
       .armed = game->options.edition == QA_Q2_RERELEASE && !sized,
       .visible = true, .expire_ns = q2_deadline(game->now_ns, q2_duration(lifetime)),
       .gib_flags = Q2_GIB_WIDOW | (organic ? 0 : Q2_GIB_METALLIC) |
@@ -145,7 +145,9 @@ static bool spawn_legs(q2m_context *context, qa_error *error) {
   q2_actor *actor = q2_actor_get(context->game, id, true, error);
   if (!actor) return release_failed(context->game, id, error);
   actor->projectile = (q2_projectile){.kind = Q2_GIB, .classname = definition,
-      .render_flags = 32768, .scale = 1, .alpha = 1, .visible = true,
+      .render_flags = 32768,
+      .scale = context->game->options.edition == QA_Q2_RERELEASE ? 0 : 1,
+      .alpha = 1, .visible = true,
       .gib_flags = Q2_GIB_WIDOW_LEGS,
       .next_ns = q2_deadline(context->game->now_ns, 100 * Q2_MS), .expire_ns = UINT64_MAX};
   actor->physics_bound = true;

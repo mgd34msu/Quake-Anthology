@@ -121,7 +121,8 @@ bool q2m_emit(q2m_context *context, qa_builtin_event_kind kind,
       return true;
     event.has_muzzle_pose = true;
     event.muzzle_angles = body.angles;
-    event.muzzle_scale = context->game->options.edition == QA_Q2_RERELEASE
+    event.muzzle_scale = context->game->options.edition == QA_Q2_RERELEASE &&
+                                 context->monster->entity_scale != 0
                              ? context->monster->entity_scale
                              : 1.0f;
   }
@@ -1028,7 +1029,7 @@ bool qa_q2_monster_turret_admit(qa_q2_game *game, qa_actor_id id,
   if (actor->monster == NULL) {
     qa_q2_monster_spawn_options options = {
         .classname = "turret_driver",
-        .scale = 1.0f,
+        .scale = game->options.edition == QA_Q2_RERELEASE ? 0 : 1,
         .health_multiplier = 1.0f,
     };
     if (!qa_q2_monster_spawn(game, id, &options, error))
@@ -1403,7 +1404,7 @@ static bool initialize_body(qa_q2_game *game, q2_actor *actor,
     return false;
   if (!q2m_alive(&context))
     return true;
-  float scale = monster->entity_scale;
+  float scale = monster->entity_scale != 0 ? monster->entity_scale : 1;
   qa_bounds bounds = monster_bounds(game, monster->definition);
   body.bounds.mins = qa_vec_scale(bounds.mins, scale);
   body.bounds.maxs = qa_vec_scale(bounds.maxs, scale);
@@ -1518,7 +1519,8 @@ static bool initialize_combat(qa_q2_game *game, q2_actor *actor,
   q2m_context context = {.game = game, .actor = actor, .monster = monster};
   qa_combat_state combat = {
       .health = monster->base_health,
-      .mass = monster->definition->mass * monster->entity_scale,
+      .mass = monster->definition->mass *
+          (monster->entity_scale != 0 ? monster->entity_scale : 1),
       .can_take_damage = true,
   };
   if (monster->definition->flags & Q2M_POWER_SCREEN) {
@@ -1631,12 +1633,19 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   monster->spawnflags = selected ? mission.ambush ? 1u : 0 : options->spawnflags;
   monster->old_frame = -1;
   monster->render_flags = game->options.edition == QA_Q2_CLASSIC ? 64u : 32768u;
-  monster->entity_scale = options->scale > 0.0f ? options->scale : 1.0f;
-  if (definition->species == Q2M_GUN_COMMANDER && options->scale == 0.0f)
+  monster->entity_scale = options->scale > 0.0f ? options->scale
+      : game->options.edition == QA_Q2_RERELEASE ? 0 : 1;
+  if (definition->species == Q2M_GUN_COMMANDER &&
+      (game->options.edition == QA_Q2_RERELEASE || options->scale == 0.0f))
     monster->entity_scale = 1.25f;
+  if (game->options.edition == QA_Q2_RERELEASE &&
+      (definition->species == Q2M_TANK || definition->species == Q2M_TANK_COMMANDER) &&
+      (monster->spawnflags & 8u) && monster->entity_scale == 0)
+    monster->entity_scale = 1.5f;
   if (definition->species == Q2M_TANK_STAND && options->scale == 0.0f)
     monster->entity_scale = 1.5f;
-  monster->animation_scale = definition->scale * monster->entity_scale;
+  monster->animation_scale = definition->scale *
+      (monster->entity_scale != 0 ? monster->entity_scale : 1);
   monster->health_scaling =
       options->health_multiplier > 0.0f ? options->health_multiplier : 1.0f;
   monster->base_health = definition->health * monster->health_scaling;

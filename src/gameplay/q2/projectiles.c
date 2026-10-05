@@ -474,7 +474,7 @@ static bool bfg_laser_spawn(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_er
         .owner = owner, .movedir = trace.end, .frame = 3, .render_flags = 128u | 512u,
         .next_ns = q2_deadline(g->now_ns, Q2_MS),
         .expire_ns = q2_deadline(g->now_ns, 300 * Q2_MS),
-        .scale = 1, .alpha = 1, .visible = true};
+        .alpha = 1, .visible = true};
     uint32_t skin = UINT32_C(0xd0d0d0d0);
     memcpy(&laser->projectile.skin, &skin, sizeof(skin));
     laser->physics_bound = true;
@@ -1089,7 +1089,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
         .splash_mod = splash_mod,
         .hand = hand,
         .held = held,
-        .scale = 1,
+        .scale = c->rerelease ? 0 : 1,
         .dodgeable = kind != Q2_BFG_BALL && kind != Q2_LOOGIE &&
                      (c->rerelease || kind == Q2_ION || kind == Q2_PLASMA || kind == Q2_FLECHETTE ||
                       kind == Q2_TRACKER || source_kind == Q2_GREEN_BOLT)};

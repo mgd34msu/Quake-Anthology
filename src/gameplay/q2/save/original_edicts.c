@@ -373,7 +373,7 @@ static bool visual_record(qa_q2_game *game, q2_original_record_io *io,
             UINT16_MAX, UINT16_MAX, UINT16_MAX, &visual->scale)) return false;
         if (io->reading) {
             if (qa_json_get(io->document, io->object, "s.alpha") == QA_JSON_NONE) visual->alpha = 1;
-            if (qa_json_get(io->document, io->object, "s.scale") == QA_JSON_NONE) visual->scale = 1;
+            if (qa_json_get(io->document, io->object, "s.scale") == QA_JSON_NONE) visual->scale = 0;
         }
     }
     return true;

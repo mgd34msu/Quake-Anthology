@@ -436,7 +436,9 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
       !valid_name(saved->next_move, sizeof(saved->next_move), true) ||
       saved->attack_state > Q2M_BLIND || saved->spawned_by > Q2M_SPAWN_WIDOW ||
       (!controller &&
-       (saved->entity_scale <= 0.0f || saved->animation_scale <= 0.0f ||
+       (saved->entity_scale < 0.0f ||
+        (game->options.edition != QA_Q2_RERELEASE && saved->entity_scale == 0.0f) ||
+        saved->animation_scale <= 0.0f ||
         saved->health_scaling <= 0.0f || saved->normal_height < 0.0f ||
         saved->fly_min_distance < 0.0f ||
         saved->fly_max_distance < saved->fly_min_distance ||

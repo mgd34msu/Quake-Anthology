@@ -323,7 +323,7 @@ static bool player_admit(void *context, qa_actor_id id, qa_error *e) {
     s->drown_damage = 2;
     s->animation_end = 39;
     s->auto_shield = -1;
-    s->visual = (qa_q2_visual){.old_frame = -1, .scale = 1, .alpha = 1, .visible = true};
+    s->visual = (qa_q2_visual){.old_frame = -1, .scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1, .alpha = 1, .visible = true};
     snprintf(s->social_id, sizeof(s->social_id), "%s",
              admission->social_id ? admission->social_id : "");
     if (g->options.cooperative && g->player_runtime->rules.coop_lives)

@@ -691,9 +691,12 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         if (!strcmp(name, "misc_bigviper"))
             return model(g, a, "models/ships/bigviper/tris.md2",
                          (qa_bounds){{-176, -120, -24}, {176, 120, 72}}, QA_PHYSICS_BOX, e);
-        if (!strcmp(name, "misc_teleporter_dest"))
+        if (!strcmp(name, "misc_teleporter_dest")) {
+            if (g->options.edition == QA_Q2_RERELEASE)
+                s->visual.scale = .75f;
             return model(g, a, "models/objects/dmspot/tris.md2",
                          (qa_bounds){{-32, -32, -24}, {32, 32, -16}}, QA_PHYSICS_BOX, e);
+        }
         if (!qa_builtin_resource(&g->services,
                                  !strcmp(name, "light_mine1")
                                      ? "models/objects/minelite/light1/tris.md2"
