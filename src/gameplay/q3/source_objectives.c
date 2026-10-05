@@ -17,14 +17,9 @@ static int32_t multiply(int32_t left, int32_t right)
     return result;
 }
 
-static int32_t health_word(float value)
+static int32_t health_word(double value)
 {
-    double remainder = fmod(trunc((double)value), 4294967296.0);
-    if (remainder < 0) remainder += 4294967296.0;
-    uint32_t bits = (uint32_t)remainder;
-    int32_t result;
-    memcpy(&result, &bits, sizeof(result));
-    return result;
+    return value >= -2147483648.0 && value < 2147483648.0 ? (int32_t)value : INT32_MIN;
 }
 
 static int32_t ratio(int32_t numerator, int32_t denominator)
@@ -251,8 +246,8 @@ bool q3_obelisk_step(qa_q3_game *game, qa_actor_id actor, qa_error *error)
     bool replaced;
     if (!q3_postgame_think_override(game, actor, &replaced, error)) return false;
     if (replaced) return true;
-    volatile float think_time = (float)entry->state.obelisk.next_think_ms;
-    if (think_time <= 0 || (double)think_time > (double)game->now_ms) return true;
+    int32_t think_time = entry->state.obelisk.next_think_ms;
+    if (think_time <= 0 || think_time > game->now_ms) return true;
     qa_q3_obelisk_think think = entry->state.obelisk.think;
     entry->state.obelisk.next_think_ms = 0;
     qa_q3_obelisk_settings current;

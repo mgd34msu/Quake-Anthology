@@ -1,4 +1,5 @@
 #include "native_q2_records_private.h"
+#include "qa/text.h"
 
 bool nqr_applies(application_native_q2_records *o,const nqr_actor *actor,const nqr_record *record,const nqr_field *field)
 {
@@ -88,19 +89,31 @@ static bool pose(application_native_q2_records *o,nqr_actor *actor,qa_error *e)
     qa_native_address height_base,crouch_base;
     if(!nqr_address(o,actor,o->records+o->view_height.record,&height_base,e)||
         !nqr_address(o,actor,o->records+o->crouch.record,&crouch_base,e)) return false;
-    uint8_t raw[8]; double flags;
+    uint8_t raw[8], flag_raw[8];
     size_t flag_bytes=nqr_scalar_size(o->crouch.encoding),height_bytes=nqr_scalar_size(o->view_height.encoding);
-    if(!qa_native_read(o->options.instance,crouch_base+o->crouch.offset,raw,flag_bytes,e)||
-        !nqr_scalar_decode(raw,o->crouch.encoding,&flags,e)) return false;
-    double wrapped=fmod(trunc(flags),4294967296.0); if(wrapped<0) wrapped+=4294967296.0;
-    uint32_t bits=(uint32_t)wrapped;
-    if(crouched) bits|=o->crouch_mask; else bits&=~o->crouch_mask;
-    int32_t signed_bits; memcpy(&signed_bits,&bits,4);
+    if(!qa_native_read(o->options.instance,crouch_base+o->crouch.offset,flag_raw,flag_bytes,e)) return false;
+    if(o->crouch.encoding==QA_NATIVE_F32||o->crouch.encoding==QA_NATIVE_F64) {
+        double flags;
+        if(!nqr_scalar_decode(flag_raw,o->crouch.encoding,&flags,e)) return false;
+        int32_t integer=o->crouch.encoding==QA_NATIVE_F32?qa_source_float_to_i32((float)flags):
+            flags>=-2147483648.0&&flags<2147483648.0?(int32_t)flags:INT32_MIN;
+        uint32_t bits=(uint32_t)integer;
+        if(crouched) bits|=o->crouch_mask; else bits&=~o->crouch_mask;
+        memcpy(&integer,&bits,sizeof(integer));
+        if(!nqr_scalar_encode(integer,o->crouch.encoding,flag_raw,e)) return false;
+    } else {
+        uint64_t bits=flag_bytes==1?flag_raw[0]:flag_bytes==2?qa_load_u16le(flag_raw):
+            flag_bytes==4?qa_load_u32le(flag_raw):qa_load_u64le(flag_raw);
+        if(crouched) bits|=o->crouch_mask; else bits&=~(uint64_t)o->crouch_mask;
+        if(flag_bytes==1) flag_raw[0]=(uint8_t)bits;
+        else if(flag_bytes==2) qa_store_u16le(flag_raw,(uint16_t)bits);
+        else if(flag_bytes==4) qa_store_u32le(flag_raw,(uint32_t)bits);
+        else qa_store_u64le(flag_raw,bits);
+    }
     if(o->view_height.encoding!=QA_NATIVE_F32&&o->view_height.encoding!=QA_NATIVE_F64) height=trunc(height);
     if(!nqr_scalar_encode(height,o->view_height.encoding,raw,e)||
         !qa_native_write(o->options.instance,height_base+o->view_height.offset,(qa_bytes){raw,height_bytes},e)||
-        !nqr_scalar_encode(signed_bits,o->crouch.encoding,raw,e)||
-        !qa_native_write(o->options.instance,crouch_base+o->crouch.offset,(qa_bytes){raw,flag_bytes},e)) return false;
+        !qa_native_write(o->options.instance,crouch_base+o->crouch.offset,(qa_bytes){flag_raw,flag_bytes},e)) return false;
     if(o->options.pose_publish) {
         uint64_t slot=(uint64_t)o->records[o->entity_record].first+actor->index;
         if(slot>UINT32_MAX||!o->options.pose_publish(o->options.context,(uint32_t)slot,height,e)) return false;

@@ -228,13 +228,13 @@ static void pending(application_native_q2_inventory_scanner *o, inventory_restor
 }
 static double source_count(const application_native_q2_inventory_row *r)
 { return r->presence_only ? r->count != 0 ? 1 : 0 : r->count; }
-static int32_t count_word(const application_native_q2_inventory_row *r)
+static bool count_write(application_native_q2_inventory_scanner *o, qa_native_address address,
+    const application_native_q2_inventory_row *r, qa_error *e)
 {
     double n = source_count(r);
-    if (!isfinite(n) || n == 0) return 0;
-    n = fmod(trunc(n), 4294967296.0);
-    if (n < 0) n += 4294967296.0;
-    return n >= 2147483648.0 ? (int32_t)(n - 4294967296.0) : (int32_t)n;
+    if (!isfinite(n) || n <= -2147483649.0 || n >= 2147483648.0)
+        return application_fail(e, QA_ERROR_ARGUMENT, "Projected inventory count exceeds original signed storage");
+    return write_word(o, address, (int32_t)n, e);
 }
 static bool evaluate(application_native_q2_inventory_scanner *o, qa_actor_id actor,
     const application_native_q2_inventory_row *r, int direction, int32_t flags,
@@ -252,7 +252,7 @@ static bool evaluate(application_native_q2_inventory_scanner *o, qa_actor_id act
     if (!zero) { discard(&inventory); discard(&writes); return application_fail(e, QA_ERROR_MEMORY, "Projecting original inventory scanner"); }
     ++o->evaluating;
     bool ok = qa_native_write(instance(o), s.client + o->inventory, (qa_bytes){zero, (size_t)o->count * 4}, e) &&
-        write_word(o, s.client + o->inventory + (uint64_t)r->source_index * 4, count_word(r), e) &&
+        count_write(o, s.client + o->inventory + (uint64_t)r->source_index * 4, r, e) &&
         write_word(o, s.client + o->cursor, 0, e);
     free(zero);
     inventory_entry *entry = &o->entries[direction > 0 ? 0 : 1];
@@ -326,8 +326,8 @@ static bool entry_call(void *opaque, qa_native_instance *actual, qa_native_entry
             application_native_q2_inventory_source s;
             ok = source(o, frame.actor, &s, e) && save_bytes(o, &s,
                 o->inventory + r.rows[chosen].source_index * 4, 4, &frame.restore, e) &&
-                write_word(o, s.client + o->inventory + (uint64_t)r.rows[chosen].source_index * 4,
-                    count_word(r.rows + chosen), e);
+                count_write(o, s.client + o->inventory + (uint64_t)r.rows[chosen].source_index * 4,
+                    r.rows + chosen, e);
         }
         application_native_q2_inventory_readout_free(&r);
     }
@@ -439,7 +439,7 @@ static bool region_call(void *opaque, qa_native_instance *actual, const qa_nativ
             if (ok) ok = source(o, frame->actor, &s, e) && qa_native_rva(instance(o),
                 (uint64_t)o->item_table + (uint64_t)index * o->item_stride, o->item_stride, &descriptor, e) &&
                 save_bytes(o, &s, o->inventory + index * 4, 4, &frame->restore, e) &&
-                write_word(o, s.client + o->inventory + (uint64_t)index * 4, count_word(r.rows + chosen), e);
+                count_write(o, s.client + o->inventory + (uint64_t)index * 4, r.rows + chosen, e);
             if (ok) {
                 frame->named_row = r.rows[chosen]; frame->named_row.label = NULL;
                 frame->named_row.presentation = (application_native_q2_inventory_presentation){0}; frame->has_named_row = true;

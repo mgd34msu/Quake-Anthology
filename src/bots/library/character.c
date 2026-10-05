@@ -2,6 +2,7 @@
 #include "character_load.h"
 #include "character_source.h"
 #include "character_reader.h"
+#include "qa/text.h"
 
 static const char default_path[] = "bots/default_c.c";
 void qa_bot_character_retain(qa_bot_character *c) {
@@ -396,7 +397,7 @@ static bool load_source(qa_bot_library *library, const char *path, float skill,
         if (lower_kind == QA_BOT_CHARACTER_FLOAT && upper_kind == QA_BOT_CHARACTER_FLOAT) {
             if (!bot_character_value(first, i, &lower, e) || !bot_character_value(second, i, &upper, e)) { ok = false; break; }
             float delta = upper.data.number - lower.data.number;
-            volatile float product = delta * scale;
+            float product = delta * scale;
             lower.data.number += product;
             ok = bot_character_write(c, i, lower, false, e);
         } else if (lower_kind == QA_BOT_CHARACTER_INTEGER || lower_kind == QA_BOT_CHARACTER_STRING)
@@ -483,12 +484,7 @@ bool qa_bot_character_integer(const qa_bot_character *c, uint32_t index, int32_t
     if (v->kind == QA_BOT_CHARACTER_INTEGER)
         *out = v->data.integer;
     else if (v->kind == QA_BOT_CHARACTER_FLOAT) {
-        double number =
-            isfinite(v->data.number) ? fmod(trunc((double)v->data.number), 4294967296.0) : 0;
-        if (number < 0)
-            number += 4294967296.0;
-        uint32_t word = (uint32_t)number;
-        memcpy(out, &word, sizeof(word));
+        *out = qa_source_float_to_i32(v->data.number);
     } else {
         qa_error_set(e, QA_ERROR_FORMAT, index,
                      "Character characteristic cannot convert to signed integer");

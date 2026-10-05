@@ -183,11 +183,13 @@ static bool pointer_read(application_native_q2_weapon_stage *o,qa_native_address
     uint8_t bytes[8]; if(!qa_native_read(instance(o),at,bytes,o->pointer_bytes,e)) return false;
     *out=o->pointer_bytes==4?qa_load_u32le(bytes):qa_load_u64le(bytes); return true;
 }
-static uint32_t bits(double value)
+static bool bits(double value,uint32_t *out,qa_error *e)
 {
-    if(!isfinite(value)||value==0) return 0;
-    double reduced=fmod(trunc(value),4294967296.0); if(reduced<0) reduced+=4294967296.0;
-    return (uint32_t)reduced;
+    if(!isfinite(value)||value < -0x1p63||value >= 0x1p63) {
+        (void)fail(e,QA_ERROR_FORMAT,"Native weapon mask exceeds its integer representation");
+        return false;
+    }
+    *out=(uint32_t)(int64_t)value; return true;
 }
 static bool test_number(stage_actor *a,const application_native_q2_field *field,double *out,qa_error *e)
 {
@@ -231,7 +233,7 @@ static bool test(stage_actor *a,const stage_test *t,bool *out,qa_error *e)
     }
     double value;
     if(!test_number(a,&t->field,&value,e)) return false;
-    if(t->masked) { uint32_t u=bits(value)&t->mask; int32_t s; memcpy(&s,&u,4); value=s; }
+    if(t->masked) { uint32_t u; if(!bits(value,&u,e)) return false; u&=t->mask; int32_t s; memcpy(&s,&u,4); value=s; }
     *out=t->at_most?value<=t->expected:value==t->expected;
     return true;
 }
@@ -281,11 +283,12 @@ static bool projection_restore(application_native_q2_weapon_stage *o,stage_proje
     stage_actor *a=find(o,p->actor);
     for(size_t i=p->count;i>0;--i) {
         stage_saved *saved=p->fields+i-1; if(!saved->written) continue;
-        qa_native_address address; double value;
+        qa_native_address address; double value; uint32_t current_bits;
         if(!source_current(a,e)||!application_native_q2_field_address(o->options.callbacks,p->actor,&saved->field->field,&address,e)||
             address!=saved->address||!application_native_q2_field_read(o->options.callbacks,p->actor,&saved->field->field,&value,e)||
+            !bits(value,&current_bits,e)||
             !application_native_q2_field_write(o->options.callbacks,p->actor,&saved->field->field,
-                stored_bits(saved->field->field.encoding,(bits(value)&~saved->field->mask)|(saved->original&saved->field->mask)),e)) return false;
+                stored_bits(saved->field->field.encoding,(current_bits&~saved->field->mask)|(saved->original&saved->field->mask)),e)) return false;
         saved->written=false;
     }
     *head=p->next; free(p->fields); free(p); return true;
@@ -313,8 +316,9 @@ static bool region_call(void *context,qa_native_instance *native,const qa_native
     for(size_t i=0;i<region->count;++i) {
         stage_saved *saved=p->fields+i; double value; saved->field=region->fields+i;
         if(!application_native_q2_field_address(o->options.callbacks,a->actor,&saved->field->field,&saved->address,e)||
-            !application_native_q2_field_read(o->options.callbacks,a->actor,&saved->field->field,&value,e)) return false;
-        saved->original=bits(value); ++p->count;
+            !application_native_q2_field_read(o->options.callbacks,a->actor,&saved->field->field,&value,e)||
+            !bits(value,&saved->original,e)) return false;
+        ++p->count;
     }
     for(size_t i=0;i<p->count;++i) {
         stage_saved *saved=p->fields+i;
@@ -559,7 +563,7 @@ static bool tests_prepare(application_native_q2_weapon_stage *o,qa_json_id rows,
                 qa_json_id mask=qa_json_get(d,t,"mask");
                 if(qa_json_type(d,mask)!=QA_JSON_NULL&&(!qa_json_number(d,mask,&value,e)||value!=trunc(value)||value<INT32_MIN||value>UINT32_MAX)) return fail(e,QA_ERROR_FORMAT,"Native weapon test mask exceeds its bitwise word");
                 test_row->masked=qa_json_type(d,mask)!=QA_JSON_NULL;
-                if(test_row->masked) test_row->mask=bits(value);
+                if(test_row->masked) test_row->mask=(uint32_t)(int64_t)value;
                 if(!qa_json_string_equal(d,qa_json_get(d,t,"comparison"),"equals")&&!qa_json_string_equal(d,qa_json_get(d,t,"comparison"),"at-most")) return fail(e,QA_ERROR_FORMAT,"Native weapon test comparison is invalid");
                 test_row->at_most=qa_json_string_equal(d,qa_json_get(d,t,"comparison"),"at-most");
             } else return fail(e,QA_ERROR_FORMAT,"Native weapon test kind is invalid");
