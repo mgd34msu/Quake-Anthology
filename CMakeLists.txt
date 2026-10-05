@@ -800,7 +800,6 @@ add_library(qa_scene STATIC
     src/render/scene/resources.c
     src/render/scene/geometry_save.c
     src/render/scene/resources_save.c
-    src/render/scene/resources_state_save.c
     src/render/scene/sort.c
     src/render/scene/models.c
     src/render/scene/models/draw.c
@@ -1546,7 +1545,6 @@ add_library(qa_q3_native_presentation STATIC
     src/presentation/q3_native/authored_menu_save.c
     src/presentation/q3_native/native.c
     src/presentation/q3_native/entity_save.c
-    src/presentation/q3_native/native_save.c
     src/presentation/q3_native/compiled_frame.c
     src/presentation/q3_native/compiled_source.c
 )

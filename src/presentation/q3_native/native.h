@@ -105,12 +105,4 @@ bool q3n_native_reload_client(q3n_native *, uint32_t physical_client,
     const q3n_client_settings *, qa_error *);
 bool q3n_native_round(q3n_native *, qa_error *);
 
-/* The outer aggregate imports client-service registries/leases, real assets,
- * parsed models/scenes/materials/audio and animation resources first. It holds
- * the genuine asset capture lease across these codecs. Client service cache,
- * backend scene/movie state and frontend namespaces have their own owners. */
-bool q3n_native_checkpoint(const q3n_native *, const q3n_client_refs *, qa_buffer *, qa_error *);
-bool q3n_native_restore(const q3n_native_options *, const q3n_client_refs *,
-    qa_bytes, q3n_native **, qa_error *);
-
 #endif
