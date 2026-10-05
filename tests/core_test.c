@@ -322,6 +322,7 @@ static qa_save_image *recovery_image(uint64_t elapsed, uint8_t value)
         switch (kind) {
         case QA_SAVE_CAMPAIGN: case QA_SAVE_CONNECTIONS: case QA_SAVE_PREDICTION:
         case QA_SAVE_PRESENTATION: case QA_SAVE_AUDIO: case QA_SAVE_INPUT: case QA_SAVE_MEDIA:
+        case QA_SAVE_COMMANDS:
             continue;
         default: break;
         }
