@@ -16,7 +16,6 @@
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
 #include "qa/text.h"
-#include "qa/source_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -375,11 +374,11 @@ static bool source_set_score(application_q3_component_client_adapter *a,qa_actor
     application_provider *source=a->source;
     if(!isfinite(score)) return application_fail(e,QA_ERROR_ARGUMENT,"Component Source score must be finite");
     if(source->kind==APPLICATION_PROVIDER_Q1)
-        return qa_q1_source_client_set_score(source->state.q1,actor,(float)qa_source_fround(score),e);
+        return qa_q1_source_client_set_score(source->state.q1,actor,(float)(float)(score),e);
     if(source->kind==APPLICATION_PROVIDER_QC) {
         int32_t reference;struct application_qc_state *engine=source->state.qc.engine;
         return application_qc_reference(engine,actor,&reference,e)&&
-            application_qc_set_float(engine,reference,"frags",(float)qa_source_fround(score),e);
+            application_qc_set_float(engine,reference,"frags",(float)(float)(score),e);
     }
     if(trunc(score)!=score||score<INT32_MIN||score>INT32_MAX)
         return application_fail(e,QA_ERROR_ARGUMENT,"Component Source score requires an int32");

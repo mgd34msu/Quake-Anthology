@@ -1,5 +1,4 @@
 #include "maps/internal.h"
-#include "qa/source_number.h"
 #include "qa/text.h"
 
 static bool fail(qa_error *error, qa_actor_id actor, const char *message) {
@@ -28,7 +27,7 @@ static bool write(qa_q1_game *g, q1_actor *e, unsigned field, double value, qa_e
     char text[32];
     qa_string_id id;
     qa_actor_id actor = e->id;
-    if (!qa_format_ecmascript_number(qa_source_fround(value), text, error) ||
+    if (!qa_format_ecmascript_number((float)(value), text, error) ||
         !qa_strings_intern_cstr(qa_session_strings(g->services.session), text, &id, error) ||
         !current(g, actor, e, error)) return false;
     e->state.rogue_flag.words[field] = id;

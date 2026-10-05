@@ -13,7 +13,6 @@
 #include "qa/game_q1_source_entities.h"
 #include "qa/game_q1_source_obituary.h"
 #include "qa/game_q1_source_rogue_runes.h"
-#include "qa/source_number.h"
 #include "map_players_private.h"
 #include "qa/application_qc_presentation.h"
 
@@ -116,7 +115,7 @@ static bool policy(rogue_call *call, const char *name, double *out, qa_error *er
     const qa_cvar_view *value = cvars ? qa_cvars_find(cvars, name) : NULL;
     if (!value || value->owner != call->source->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Rogue callback lost its actual GAME policy");
-    *out = qa_source_fround(value->number);
+    *out = (float)(value->number);
     return true;
 }
 
@@ -815,7 +814,7 @@ bool application_native_q1_rogue_attack_delay(application_provider *source,
         okay = qa_q1_source_rogue_runes_read(call.operation.game, actor, &rune, &found, error) &&
             player_required(&call, actor, error);
         if (okay && found && (rune & 4))
-            *delay = (float)qa_source_fround(qa_source_fround((double)*delay * 2) / 3);
+            *delay = (float)(float)((float)((double)*delay * 2) / 3);
     } else if (okay) okay = qa_q1_source_rogue_runes_attack_delay(call.operation.game, actor, delay, error) &&
         player_required(&call, actor, error);
     qa_q1_game_operation_end(&call.operation);

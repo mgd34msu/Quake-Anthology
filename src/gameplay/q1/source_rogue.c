@@ -1,5 +1,4 @@
 #include "maps/internal.h"
-#include "qa/source_number.h"
 #include "qa/text.h"
 #include <math.h>
 
@@ -172,7 +171,7 @@ bool q1_source_number_read(qa_bytes text, double *out, qa_error *error) {
     double value;
     if (!qa_parse_ecmascript_number((qa_bytes){text.data + start, end - start}, &value, error))
         return false;
-    *out = isfinite(value) ? qa_source_fround(value) : 0;
+    *out = isfinite(value) ? (float)(value) : 0;
     return true;
 }
 bool qa_q1_rogue_number_read(qa_q1_game *game, qa_actor_id state,
@@ -185,7 +184,7 @@ bool qa_q1_rogue_number_read(qa_q1_game *game, qa_actor_id state,
 bool qa_q1_rogue_number_write(qa_q1_game *game, qa_actor_id state,
     qa_q1_rogue_field field, double value, qa_error *error) {
     char text[32];
-    return qa_format_ecmascript_number(qa_source_fround(value), text, error) &&
+    return qa_format_ecmascript_number((float)(value), text, error) &&
         qa_q1_rogue_field_write(game, state, field,
             (qa_bytes){(const uint8_t *)text, strlen(text)}, error);
 }
@@ -213,7 +212,7 @@ bool qa_q1_rogue_world_update_write(qa_q1_game *game, double value, qa_error *er
     q1_actor *actor = world(game, error);
     char text[32];
     qa_string_id word;
-    bool okay = actor && qa_format_ecmascript_number(qa_source_fround(value), text, error) &&
+    bool okay = actor && qa_format_ecmascript_number((float)(value), text, error) &&
         qa_strings_intern_cstr(qa_session_strings(game->services.session), text, &word, error) &&
         qa_q1_game_operation_live(&operation) && world(game, error) == actor;
     if (okay) actor->rogue_next_update = word;

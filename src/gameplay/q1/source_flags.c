@@ -1,5 +1,4 @@
 #include "maps/internal.h"
-#include "qa/source_number.h"
 #include "qa/text.h"
 
 static bool fail(qa_error *error, qa_actor_id actor, const char *message) {
@@ -37,12 +36,12 @@ bool qa_q1_source_capture_words_write(qa_q1_game *game, double seconds, double t
     q1_actor *world = capture_world(game, error);
     char text[32];
     qa_string_id word;
-    bool okay = world && qa_format_ecmascript_number(qa_source_fround(seconds), text, error) &&
+    bool okay = world && qa_format_ecmascript_number((float)(seconds), text, error) &&
         qa_strings_intern_cstr(qa_session_strings(game->services.session), text, &word, error) &&
         qa_q1_game_operation_live(&operation) && capture_world(game, error) == world;
     if (okay) {
         world->ctf_last_capture = word;
-        okay = qa_format_ecmascript_number(qa_source_fround(team), text, error) &&
+        okay = qa_format_ecmascript_number((float)(team), text, error) &&
             qa_strings_intern_cstr(qa_session_strings(game->services.session), text, &word, error) &&
             qa_q1_game_operation_live(&operation) && capture_world(game, error) == world;
     }
@@ -184,7 +183,7 @@ bool qa_q1_source_flag_drop(qa_q1_game *game, qa_actor_id actor, qa_actor_id pla
         entity->physics.solid = QA_PHYSICS_TRIGGER;
         entity->state.source_flag.movement_flags = UINT32_C(256) | UINT32_C(131072);
         char text[32];
-        okay = qa_format_ecmascript_number(qa_source_fround(game->time + 15), text, error) &&
+        okay = qa_format_ecmascript_number((float)(game->time + 15), text, error) &&
             qa_strings_intern_cstr(qa_session_strings(game->services.session), text,
                 &entity->state.source_flag.return_word, error) &&
             qa_world_body_read(game->services.world, player, &carrier, error) &&

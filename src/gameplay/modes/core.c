@@ -1,6 +1,5 @@
 #include "internal.h"
 #include <float.h>
-#include "qa/source_number.h"
 
 bool mode_fail(qa_error *error, const char *text) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", text);
@@ -496,7 +495,7 @@ bool qa_modes_q1_source_write(qa_modes *m, qa_mode_id id, qa_actor_id actor,
                 (uint32_t)(number - QA_Q1_ROGUE_STEAM), value, e)) &&
             rogue_current(m, id, actor, p, e);
     }
-    p->q1.numbers[number] = qa_source_fround(value);
+    p->q1.numbers[number] = (float)(value);
     return true;
 }
 bool qa_modes_q1_rogue_initialize(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_error *e) {
@@ -664,9 +663,9 @@ bool qa_modes_ctf_restore_player(qa_modes *m, qa_mode_id id, qa_actor_id actor,
         if (!mode_q1_source_current(m, v, actor, &observer, e)) return false;
         p = mode_member_get(m, v, actor);
         if (!p) return mode_fail(e, "ThreeWave source continuation retired during restore");
-        p->q1.numbers[QA_Q1_CTF_LAST_TEAM] = v->value.rules.start_map ? 1 : qa_source_fround(last_team);
-        p->q1.numbers[QA_Q1_CTF_STATUS] = qa_source_fround(status);
-        p->q1.numbers[QA_Q1_CTF_ACCESS] = qa_source_fround(access);
+        p->q1.numbers[QA_Q1_CTF_LAST_TEAM] = v->value.rules.start_map ? 1 : (float)(last_team);
+        p->q1.numbers[QA_Q1_CTF_STATUS] = (float)(status);
+        p->q1.numbers[QA_Q1_CTF_ACCESS] = (float)(access);
         return true;
     }
     if (!isfinite(last_team) || last_team < INT32_MIN || last_team > INT32_MAX ||

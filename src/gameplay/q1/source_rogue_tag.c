@@ -1,5 +1,4 @@
 #include "maps/internal.h"
-#include "qa/source_number.h"
 #include "qa/text.h"
 
 static bool fail(qa_error *error, qa_actor_id actor, const char *message) {
@@ -37,7 +36,7 @@ static bool write_word(qa_q1_game *game, q1_actor *source, bool frags,
     qa_actor_id actor = source->id;
     char text[32];
     qa_string_id value;
-    if (!qa_format_ecmascript_number(qa_source_fround(number), text, error) ||
+    if (!qa_format_ecmascript_number((float)(number), text, error) ||
         !qa_strings_intern_cstr(qa_session_strings(game->services.session), text, &value, error) ||
         !current(game, actor, source, error)) return false;
     if (frags) source->state.source_tag.frags = value;

@@ -19,7 +19,6 @@
 #include "qa/game_q3_clients.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q3_wire.h"
-#include "qa/source_number.h"
 #include "qa/text.h"
 
 #include <limits.h>
@@ -811,9 +810,9 @@ static bool component_input_set(application_control_mod_input *scope, applicatio
             (double)angles->y - scope->aim.y, (double)angles->z - scope->aim.z};
         if (next.kind == QA_MOVEMENT_NETQUAKE) next.angles = *angles;
         else if (next.kind == QA_MOVEMENT_QUAKEWORLD || next.kind == QA_MOVEMENT_Q2_RERELEASE) {
-            next.angles = qa_v3((float)qa_source_fround((double)next.angles.x + difference[0]),
-                (float)qa_source_fround((double)next.angles.y + difference[1]),
-                (float)qa_source_fround((double)next.angles.z + difference[2]));
+            next.angles = qa_v3((float)(float)((double)next.angles.x + difference[0]),
+                (float)(float)((double)next.angles.y + difference[1]),
+                (float)(float)((double)next.angles.z + difference[2]));
             if (!qa_vec_finite(next.angles))
                 return application_fail(error, QA_ERROR_ARGUMENT, "Component aim exceeds its command fields");
         } else {
@@ -849,7 +848,7 @@ static bool component_input_set(application_control_mod_input *scope, applicatio
             }
             double scaled = value * component_move_scale(next.kind);
             if (next.kind == QA_MOVEMENT_Q2_RERELEASE) {
-                if (!isfinite(scaled) || !isfinite(qa_source_fround(scaled)))
+                if (!isfinite(scaled) || !isfinite((float)(scaled)))
                     return application_fail(error, QA_ERROR_ARGUMENT, "Component movement exceeds its float command fields");
             } else {
                 double minimum = next.kind == QA_MOVEMENT_Q3 ? -127 : -32768;
@@ -858,7 +857,7 @@ static bool component_input_set(application_control_mod_input *scope, applicatio
                     return application_fail(error, QA_ERROR_ARGUMENT, "Component movement exceeds its command fields");
                 scaled = trunc(scaled);
             }
-            float published = (float)qa_source_fround(scaled);
+            float published = (float)(float)(scaled);
             if (input == Q3_MOD_FORWARD) next.forward_move = published;
             else if (input == Q3_MOD_SIDE) next.side_move = published;
             else next.up_move = published;

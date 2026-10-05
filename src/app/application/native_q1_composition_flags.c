@@ -10,7 +10,6 @@
 #include "native_q1_console.h"
 #include "qa/modes_q1_source.h"
 #include "qa/application_qc_presentation.h"
-#include "qa/source_number.h"
 #include "qa/text.h"
 
 #include <stdlib.h>
@@ -473,7 +472,7 @@ static bool source_cvar(flag_call *call, const char *name, double *out, qa_error
     const qa_cvar_view *value = cvars ? qa_cvars_find(cvars, name) : NULL;
     if (!value || value->owner != call->source->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "CTF rune lost its genuine GAME policy");
-    *out = qa_source_fround(value->number);
+    *out = (float)(value->number);
     return true;
 }
 
@@ -682,11 +681,11 @@ bool application_native_q1_ctf_damage_effect(application_provider *source,
         if (request->attack.attacker.registry) {
             okay = optional_rune(&call, request->attack.attacker, &rune, &found, error);
             if (okay && found && rune == QA_Q1_RUNE_STRENGTH)
-                effect->amount = (float)qa_source_fround((double)effect->amount * 2);
+                effect->amount = (float)(float)((double)effect->amount * 2);
         }
         if (okay) okay = optional_rune(&call, request->target, &rune, &found, error);
         if (okay && found && rune == QA_Q1_RUNE_RESISTANCE) {
-            effect->amount = (float)qa_source_fround((double)effect->amount / 2);
+            effect->amount = (float)(float)((double)effect->amount / 2);
             double due, time;
             okay = number(&call, request->target, QA_Q1_CTF_RESISTANCE_SOUND, &due, error) &&
                 seconds(&call, &time, error);

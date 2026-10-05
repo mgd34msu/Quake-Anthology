@@ -1,5 +1,4 @@
 #include "maps/internal.h"
-#include "qa/source_number.h"
 
 static const char *const rune_names[QA_Q1_RUNE_COUNT] = {
     "resistance", "strength", "haste", "regeneration"};

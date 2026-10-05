@@ -4,7 +4,6 @@
 #include "map_players_private.h"
 #include "qa/cvars_save.h"
 #include "qa/console_cvars_prepare.h"
-#include "qa/source_number.h"
 #include "qa/network_q1_qw.h"
 #include "qa/source_save.h"
 #include "qa/game_q1_source_obituary.h"
@@ -1126,7 +1125,7 @@ bool application_native_q1_cvar(void *opaque, qa_string_id name, float *out, qa_
     const qa_cvar_view *value = qa_cvars_find(cvars, text);
     if (value && value->owner && value->owner != provider->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q1 cvar belongs to another source");
-    *out = value ? (float)qa_source_fround(value->number) : 0;
+    *out = value ? (float)(float)(value->number) : 0;
     return true;
 }
 

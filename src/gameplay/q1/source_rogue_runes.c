@@ -1,5 +1,4 @@
 #include "maps/internal.h"
-#include "qa/source_number.h"
 #include "qa/text.h"
 #include <stdio.h>
 
@@ -124,7 +123,7 @@ static bool spawn(qa_q1_game *g, uint32_t rune, qa_vec3 origin, qa_error *error)
         (qa_actor_id){0}, &e, error)) return false;
     qa_actor_id actor = e->id;
     char word[32];
-    if (!qa_format_ecmascript_number(qa_source_fround(rune), word, error) ||
+    if (!qa_format_ecmascript_number((float)(rune), word, error) ||
         !qa_strings_intern_cstr(qa_session_strings(g->services.session), word, &e->state.rogue_rune, error) ||
         !entity_current(g, actor, e, error)) return false;
     e->source_movement_flags = 256;
@@ -275,15 +274,15 @@ static bool adjust(qa_q1_game *g, qa_actor_id actor, float *amount,
     bool okay = row != NULL;
     float value = *amount;
     if (okay && (row->rune & (kind == 0 ? 2u : kind == 1 ? 1u : 4u))) {
-        if (kind == 0) value = (float)qa_source_fround((double)value * 2);
+        if (kind == 0) value = (float)(float)((double)value * 2);
         else {
             double *stamp = kind == 1 ? &row->earth_noise : &row->hell_noise;
             if (*stamp < g->time) {
                 okay = noise(g, actor, row, kind == 1 ? 1 : 3, error);
                 if (okay) *stamp = g->time + 1;
             }
-            if (okay) value = (float)(kind == 1 ? qa_source_fround((double)value / 2) :
-                qa_source_fround(qa_source_fround((double)value * 2) / 3));
+            if (okay) value = (float)(kind == 1 ? (float)((double)value / 2) :
+                (float)((float)((double)value * 2) / 3));
         }
     }
     if (okay) *amount = value;

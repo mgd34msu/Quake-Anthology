@@ -1,6 +1,5 @@
 #include "map_players_private.h"
 #include "client_events.h"
-#include "qa/source_number.h"
 #include "qa/text.h"
 #include "guest_projection_private.h"
 #include "guest_q3_combat.h"
@@ -1147,7 +1146,7 @@ static bool spawn_pose(qa_application *application, size_t ordinal, bool force,
             if (!teamplay || teamplay->owner != roster->map_provider->owner)
                 return application_fail(error, QA_ERROR_ARGUMENT,
                     "Rogue spawn lost its genuine source team policy");
-            double source_teamplay = qa_source_fround(teamplay->number);
+            double source_teamplay = (float)(teamplay->number);
             rogue = source_teamplay == 4 || source_teamplay == 5 || source_teamplay == 6;
         }
         if ((threewave || rogue) && !source_options.coop && source_options.deathmatch) {

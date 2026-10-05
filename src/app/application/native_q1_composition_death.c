@@ -10,7 +10,6 @@
 #include "qa/game_q2_bots.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q1_source_rogue_runes.h"
-#include "qa/source_number.h"
 
 #include <math.h>
 
@@ -193,7 +192,7 @@ static bool source_policy(death_call *call, const char *name, double *out, qa_er
     const qa_cvar_view *value = cvars ? qa_cvars_find(cvars, name) : NULL;
     if (!value || value->owner != call->source->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source obituary lost its actual GAME cvar");
-    *out = qa_source_fround(value->number);
+    *out = (float)(value->number);
     return true;
 }
 

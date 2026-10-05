@@ -6,7 +6,6 @@
 #include "qa/game_q1_source_birth.h"
 #include "qa/game_q1_source_entities.h"
 #include "qa/modes_q1_source.h"
-#include "qa/source_number.h"
 #include "qa/game_q1_source_observer.h"
 #include "native_q1_composition_flags.h"
 #include "native_q1_composition_rogue.h"
@@ -64,7 +63,7 @@ static bool source_cvar(source_birth *call, const char *name, double *out, qa_er
     const qa_cvar_view *value = cvars ? qa_cvars_find(cvars, name) : NULL;
     if (!value || value->owner != call->source->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 birth lost its actual GAME policy cvar");
-    *out = qa_source_fround(value->number);
+    *out = (float)(value->number);
     return true;
 }
 

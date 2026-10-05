@@ -1,7 +1,6 @@
 #include "native_q1_powers.h"
 #include "map_players_private.h"
 #include "qa/game_q1_bots.h"
-#include "qa/source_number.h"
 
 #include <math.h>
 
@@ -111,7 +110,7 @@ bool application_native_q1_console_power(void *opaque, qa_actor_id actor,
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(source->state.q1, &operation, error)) return false;
     bool okay = qa_q1_player_power(operation.game, actor, power,
-        qa_source_fround(expires), error) && qa_q1_game_operation_live(&operation) &&
+        (float)(expires), error) && qa_q1_game_operation_live(&operation) &&
         source->state.q1 == operation.game && current(&binding, error);
     if (!okay && error && error->code == QA_OK)
         application_fail(error, QA_ERROR_ARGUMENT, "Q1 power cheat lost its physical Source");
