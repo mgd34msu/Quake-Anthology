@@ -51,7 +51,6 @@ bool qa_audio_resample_source(const qa_audio_sample *sample, uint32_t output_rat
                               qa_audio_family family, qa_audio_sample **out, qa_error *error);
 
 typedef struct qa_audio_stream qa_audio_stream;
-typedef struct qa_audio_checkpoint_refs qa_audio_checkpoint_refs;
 /* Open from bytes borrows the input until close; callers retain mount
  * resources. read writes caller-owned PCM; zero frames denotes EOF, errors
  * return false. */
@@ -78,8 +77,6 @@ bool qa_audio_stream_seek(qa_audio_stream *stream, uint64_t frame, qa_error *err
 void qa_audio_stream_close(qa_audio_stream *stream);
 /* Stream state contains only the decoded frame cursor and installed content
  * reference. A standalone byte or PCM stream cannot be saved. */
-bool qa_audio_stream_checkpoint(const qa_audio_stream *, const qa_audio_checkpoint_refs *, qa_buffer *, qa_error *);
-bool qa_audio_stream_restore(qa_bytes, const qa_audio_checkpoint_refs *, qa_audio_stream **, qa_error *);
 
 typedef struct qa_audio_bank qa_audio_bank;
 typedef struct qa_audio_asset qa_audio_asset;
@@ -163,8 +160,6 @@ uint32_t qa_audio_music_rate(const qa_audio_music *music);
 /* Pure format qualification; the serialized caller retains the music holder. */
 bool qa_audio_music_profile_is(const qa_audio_music *, uint32_t rate,
                               qa_audio_family family, bool source_volume);
-bool qa_audio_music_checkpoint(const qa_audio_music *, const qa_audio_checkpoint_refs *, qa_buffer *, qa_error *);
-bool qa_audio_music_restore(qa_bytes, const qa_audio_checkpoint_refs *, qa_audio_music **, qa_error *);
 uint64_t qa_audio_music_completions(const qa_audio_music *music);
 bool qa_audio_music_remap(qa_audio_music *music, const uint8_t *tracks, size_t count,
                           qa_error *error);

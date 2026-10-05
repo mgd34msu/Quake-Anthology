@@ -37,8 +37,6 @@ unsigned qa_audio_music_controls_mapped_track(const qa_audio_music_controls *, u
 bool qa_audio_music_controls_enable(qa_audio_music_controls *, bool, qa_error *);
 bool qa_audio_music_controls_remap(qa_audio_music_controls *, const uint8_t *, size_t, qa_error *);
 bool qa_audio_music_controls_reset(qa_audio_music_controls *, qa_error *);
-bool qa_audio_music_controls_checkpoint(const qa_audio_music_controls *, qa_buffer *, qa_error *);
-bool qa_audio_music_controls_restore(qa_bytes, qa_audio_music_controls **, qa_error *);
 typedef enum qa_audio_music_selection_kind {
     QA_AUDIO_MUSIC_KEEP, QA_AUDIO_MUSIC_START, QA_AUDIO_MUSIC_STOP
 } qa_audio_music_selection_kind;

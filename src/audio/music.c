@@ -1,6 +1,4 @@
 #include "music_internal.h"
-#include "qa/binary.h"
-#include <float.h>
 
 #include <math.h>
 #include <stdio.h>
@@ -14,9 +12,6 @@ struct qa_audio_music_controls {
     uint8_t remap[MUSIC_REMAP_TRACKS];
     bool enabled;
 };
-
-_Static_assert(sizeof(float) == 4 && FLT_RADIX == 2 && FLT_MANT_DIG == 24 && FLT_MAX_EXP == 128,
-               "Music checkpoints require binary32 floats");
 
 struct qa_audio_music {
     size_t references;
@@ -75,110 +70,6 @@ static bool controls_mutation(qa_audio_music_controls *controls, qa_error *error
     }
     if (!current) qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Shared CD controls retain a prepared player operation");
     return current;
-}
-
-bool qa_audio_music_checkpoint(const qa_audio_music *music, const qa_audio_checkpoint_refs *refs,
-                               qa_buffer *out, qa_error *error) {
-    if (!music || !out || !qa_audio_music_idle(music)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Music checkpoint requires its live owner"); return false;
-    }
-    qa_buffer parts[3] = {0};
-    bool same = music->stream && music->stream == music->loop;
-    bool ok = (!music->stream || qa_audio_stream_checkpoint(music->stream, refs, &parts[0], error)) &&
-        (!music->loop || same || qa_audio_stream_checkpoint(music->loop, refs, &parts[1], error)) &&
-        qa_audio_raw_checkpoint(music->pcm, &parts[2], error);
-    size_t size = 76 + MUSIC_REMAP_TRACKS;
-    for (size_t i = 0; ok && i < 3; ++i) {
-        if (parts[i].size > SIZE_MAX - size) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Music checkpoint extent overflows storage"); ok = false;
-        } else size += parts[i].size;
-    }
-    qa_buffer buffer = {0};
-    if (ok) {
-        buffer = (qa_buffer){.data = calloc(1, size), .size = size};
-        if (!buffer.data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining music checkpoint"); ok = false; }
-    }
-    if (ok) {
-        uint8_t *data = buffer.data;
-        memcpy(data, "QAMU", 4);
-        qa_store_u32le(data + 4, music->output_rate); qa_store_u32le(data + 8, music->family);
-        uint32_t flags = (uint32_t)(music->source_volume | music->paused << 1 |
-            (!music->external_controls && music->controls->enabled) << 2 |
-            music->reset_pcm << 3 | (music->stream != NULL) << 4 | (music->loop != NULL) << 5 | same << 6 |
-            music->external_controls << 7);
-        qa_store_u32le(data + 12, flags);
-        uint32_t bits; memcpy(&bits, &music->target_volume, sizeof(bits)); qa_store_u32le(data + 20, bits);
-        memcpy(&bits, &music->smoothed_volume, sizeof(bits)); qa_store_u32le(data + 24, bits);
-        qa_store_u64le(data + 28, music->completions); qa_store_u64le(data + 36, music->request);
-        qa_store_u32le(data + 44, music->cd_track);
-        if (!music->external_controls) memcpy(data + 76, music->controls->remap, MUSIC_REMAP_TRACKS);
-        size_t offset = 76 + MUSIC_REMAP_TRACKS;
-        for (size_t i = 0; i < 3; ++i) {
-            qa_store_u64le(data + 52 + i * 8, parts[i].size);
-            if (parts[i].size) memcpy(data + offset, parts[i].data, parts[i].size);
-            offset += parts[i].size;
-        }
-        *out = buffer;
-    }
-    for (size_t i = 0; i < 3; ++i) qa_buffer_free(&parts[i]);
-    return ok;
-}
-
-bool qa_audio_music_restore(qa_bytes bytes, const qa_audio_checkpoint_refs *refs,
-                            qa_audio_music **out, qa_error *error) {
-    const size_t header = 76 + MUSIC_REMAP_TRACKS;
-    if (!out || !bytes.data || bytes.size < header || memcmp(bytes.data, "QAMU", 4) ||
-        qa_load_u32le(bytes.data + 16) ||
-        qa_load_u32le(bytes.data + 48)) {
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid music checkpoint header"); return false;
-    }
-    const uint8_t *data = bytes.data;
-    uint32_t rate = qa_load_u32le(data + 4), family = qa_load_u32le(data + 8);
-    uint32_t flags = qa_load_u32le(data + 12), cd = qa_load_u32le(data + 44);
-    bool stream_present = (flags & 16) != 0, loop_present = (flags & 32) != 0, same = (flags & 64) != 0;
-    float target = qa_load_f32le(data + 20), smooth = qa_load_f32le(data + 24);
-    bool external = (flags & 128) != 0;
-    bool bad_controls = external && (flags & 4);
-    for (size_t i = 0; external && i < MUSIC_REMAP_TRACKS; ++i) bad_controls |= data[76 + i] != 0;
-    if (!rate || family > QA_AUDIO_Q3 || (flags & ~255u) || bad_controls || cd > 255 ||
-        !isfinite(target) || target < 0 || !isfinite(smooth) || smooth < 0 ||
-        (same && (!stream_present || !loop_present))) {
-        qa_error_set(error, QA_ERROR_FORMAT, 4, "Invalid music checkpoint state"); return false;
-    }
-    qa_bytes parts[3]; size_t offset = header;
-    for (size_t i = 0; i < 3; ++i) {
-        uint64_t size = qa_load_u64le(data + 52 + i * 8);
-        if (size > bytes.size - offset) {
-            qa_error_set(error, QA_ERROR_FORMAT, offset, "Truncated music checkpoint record"); return false;
-        }
-        parts[i] = (qa_bytes){data + offset, (size_t)size}; offset += (size_t)size;
-    }
-    if (offset != bytes.size || stream_present != (parts[0].size != 0) ||
-        (loop_present && !same) != (parts[1].size != 0) || !parts[2].size) {
-        qa_error_set(error, QA_ERROR_FORMAT, offset, "Music checkpoint record set differs"); return false;
-    }
-    qa_audio_music *music = NULL;
-    if (!qa_audio_music_create(rate, (qa_audio_family)family, (flags & 1) != 0, &music, error)) return false;
-    qa_audio_raw_stream *pcm = NULL;
-    bool ok = (!stream_present || qa_audio_stream_restore(parts[0], refs, &music->stream, error)) &&
-        (!loop_present || same || qa_audio_stream_restore(parts[1], refs, &music->loop, error)) &&
-        qa_audio_raw_restore(parts[2], rate, &pcm, error);
-    if (same) music->loop = music->stream;
-    if (!ok) { qa_audio_raw_destroy(pcm); qa_audio_music_destroy(music); return false; }
-    qa_audio_raw_destroy(music->pcm); music->pcm = pcm;
-    music->target_volume = target; music->smoothed_volume = smooth;
-    music->completions = qa_load_u64le(data + 28); music->request = qa_load_u64le(data + 36);
-    music->cd_track = cd;
-    if (external) {
-        qa_audio_music_controls *controls = music->controls;
-        controls->players = NULL; music->controls = NULL; qa_audio_music_controls_release(controls);
-        music->external_controls = true;
-    } else {
-        memcpy(music->controls->remap, data + 76, MUSIC_REMAP_TRACKS);
-        music->controls->enabled = (flags & 4) != 0;
-    }
-    music->paused = (flags & 2) != 0; music->reset_pcm = (flags & 8) != 0;
-    *out = music; return true;
 }
 
 static void music_identity_remap(qa_audio_music_controls *controls) {
@@ -738,24 +629,4 @@ bool qa_audio_music_controls_remap(qa_audio_music_controls *controls, const uint
 bool qa_audio_music_controls_reset(qa_audio_music_controls *controls, qa_error *error) {
     if (!controls_mutation(controls, error)) return false;
     controls->enabled = true; music_identity_remap(controls); return true;
-}
-bool qa_audio_music_controls_checkpoint(const qa_audio_music_controls *controls, qa_buffer *out, qa_error *error) {
-    if (!controls || !controls->references || !out || out->data || out->size) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "CD controls capture requires its genuine idle owner"); return false;
-    }
-    for (const qa_audio_music *p = controls->players; p; p = p->controls_next) if (!qa_audio_music_idle(p)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "CD controls capture retains a prepared player"); return false;
-    }
-    uint8_t *data = malloc(105);
-    if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining shared CD control continuation"); return false; }
-    memcpy(data, "QAMC", 4); data[4] = controls->enabled;
-    memcpy(data + 5, controls->remap, MUSIC_REMAP_TRACKS); *out = (qa_buffer){data, 105}; return true;
-}
-bool qa_audio_music_controls_restore(qa_bytes bytes, qa_audio_music_controls **out, qa_error *error) {
-    if (!out || *out || !bytes.data || bytes.size != 105 || memcmp(bytes.data, "QAMC", 4) ||
-        bytes.data[4] > 1 || bytes.data[5] != 0) {
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid shared CD control continuation"); return false;
-    }
-    if (!qa_audio_music_controls_create(out, error)) return false;
-    (*out)->enabled = bytes.data[4] != 0; memcpy((*out)->remap, bytes.data + 5, MUSIC_REMAP_TRACKS); return true;
 }

@@ -1,6 +1,4 @@
 #include "codec_internal.h"
-#include "qa/audio_save.h"
-#include "qa/source_save.h"
 #include <stdio.h>
 
 #define OV_EXCLUDE_STATIC_CALLBACKS
@@ -580,77 +578,6 @@ bool qa_audio_decode(qa_bytes bytes, qa_audio_wav_policy policy, qa_audio_sample
     return true;
 }
 
-typedef struct stream_saved {
-    uint32_t kind, policy, failed, resource;
-    uint64_t frames, position, size;
-} stream_saved;
-
-static bool stream_fields(qa_source_save_io *io, stream_saved *saved) {
-    uint8_t magic[4] = {'Q', 'A', 'S', 'T'};
-    return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAST", 4) &&
-        qa_source_save_u32(io, &saved->kind) && saved->kind <= STREAM_VORBIS &&
-        qa_source_save_u32(io, &saved->policy) && saved->policy <= QA_WAV_Q3 &&
-        qa_source_save_u32(io, &saved->failed) && saved->failed <= 1 &&
-        (!saved->failed || saved->kind == STREAM_VORBIS) &&
-        qa_source_save_u32(io, &saved->resource) && saved->resource == 1 &&
-        saved->kind != STREAM_SAMPLE &&
-        qa_source_save_u64(io, &saved->frames) && qa_source_save_u64(io, &saved->position) &&
-        saved->position <= saved->frames && qa_source_save_u64(io, &saved->size) &&
-        saved->size == 16;
-}
-
-bool qa_audio_stream_checkpoint(const qa_audio_stream *stream,
-                               const qa_audio_checkpoint_refs *refs, qa_buffer *out, qa_error *error) {
-    if (!stream || !out || stream->position > stream->frames)
-        return qa_audio_codec_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid stream checkpoint owner");
-    if (!stream->resource || stream->kind == STREAM_SAMPLE)
-        return qa_audio_codec_fail(error, QA_ERROR_UNSUPPORTED, 0,
-                                   "Stream state requires installed content");
-    stream_saved saved = {.kind = stream->kind, .policy = stream->policy,
-        .failed = stream->kind == STREAM_VORBIS && stream->source.vorbis.failed,
-        .resource = 1, .frames = stream->frames, .position = stream->position, .size = 16};
-    uint64_t pool = 0, version = 0;
-    bool ok = refs && refs->resource_encode &&
-        refs->resource_encode(refs->context, stream->resource, &pool, &version, error) && pool && version;
-    qa_source_save_io io = {0};
-    if (ok) ok = qa_source_save_writer(&io, NULL, error) && stream_fields(&io, &saved) &&
-        qa_source_save_u64(&io, &pool) && qa_source_save_u64(&io, &version) && qa_source_save_finish(&io, out);
-    qa_source_save_dispose(&io);
-    if (!ok && (!error || error->code == QA_OK))
-        qa_audio_codec_fail(error, QA_ERROR_FORMAT, 0, "Stream checkpoint lost its content resource");
-    return ok;
-}
-
-bool qa_audio_stream_restore(qa_bytes bytes, const qa_audio_checkpoint_refs *refs,
-                            qa_audio_stream **out, qa_error *error) {
-    if (!out)
-        return qa_audio_codec_fail(error, QA_ERROR_ARGUMENT, 0, "Missing stream checkpoint output");
-    qa_source_save_io io = {0}; stream_saved saved = {0}; qa_bytes source = {0};
-    bool valid = qa_source_save_reader(&io, NULL, bytes, error) && stream_fields(&io, &saved) &&
-        qa_source_save_span(&io, (size_t)saved.size, &source) && qa_source_save_finish(&io, NULL);
-    qa_source_save_dispose(&io);
-    if (!valid)
-        return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 0, "Invalid stream checkpoint format or cursor");
-    qa_audio_stream *stream = NULL;
-    uint64_t pool = qa_load_u64le(source.data), version = qa_load_u64le(source.data + 8);
-    const qa_resource *resource = NULL;
-    if (!pool || !version || !refs || !refs->resource_decode ||
-        !refs->resource_decode(refs->context, pool, version, &resource, error) || !resource)
-        return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 44, "Stream checkpoint lost its content resource");
-    qa_resource_retain((qa_resource *)resource);
-    if (!qa_audio_stream_open_resource((qa_resource *)resource, (qa_audio_wav_policy)saved.policy,
-                                       &stream, error)) {
-        qa_resource_release((qa_resource *)resource); return false;
-    }
-    if (stream->kind != (stream_kind)saved.kind || stream->frames != saved.frames) {
-        qa_audio_stream_close(stream);
-        return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 20, "Stream checkpoint source format differs");
-    }
-    if (!qa_audio_stream_seek(stream, saved.position, error)) { qa_audio_stream_close(stream); return false; }
-    if (saved.kind == STREAM_VORBIS) stream->source.vorbis.failed = saved.failed != 0;
-    *out = stream; return true;
-}
-
 bool qa_audio_source_layout_compute(const qa_audio_sample *sample, uint32_t output_rate,
                                     qa_audio_family family, qa_audio_source_layout *out,
                                     qa_error *error) {
@@ -704,7 +631,6 @@ bool qa_audio_resample_source(const qa_audio_sample *sample, uint32_t output_rat
     *out = result;
     return true;
 }
-
 
 static const int adpcm_index[16] = {-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8};
 static const int adpcm_step[89] = {

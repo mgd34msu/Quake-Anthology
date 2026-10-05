@@ -71,66 +71,12 @@ static inline bool qa_ac_getblob(qa_source_save_io *r, qa_bytes *out) {
     if (count > SIZE_MAX) return qa_ac_bad(r, "Audio checkpoint field exceeds address space");
     return qa_ac_read(r, (size_t)count, out);
 }
-static inline bool qa_ac_ref(qa_source_save_io *w, const qa_audio_checkpoint_refs *refs,
-                            qa_audio_reference_kind kind, uint64_t id) {
-    if (!id || id == UINT64_MAX) return qa_ac_u32(w, id ? 1 : 0);
-    qa_buffer bytes = {0};
-    if (!refs || !refs->encode || !refs->encode(refs->context, kind, id, &bytes, w->error)) {
-        if (!refs || !refs->encode) qa_error_set(w->error, QA_ERROR_ARGUMENT, 0, "Audio portable reference encoder is absent");
-        qa_buffer_free(&bytes); w->failed = true; return false;
-    }
-    bool ok = qa_ac_u32(w, 2) && qa_ac_blob(w, (qa_bytes){bytes.data, bytes.size});
-    qa_buffer_free(&bytes); return ok;
-}
-static inline uint64_t qa_ac_getref(qa_source_save_io *r, const qa_audio_checkpoint_refs *refs,
-                                    qa_audio_reference_kind kind) {
-    uint32_t type = qa_ac_get32(r); if (type < 2) return type ? UINT64_MAX : 0;
-    if (type != 2) { qa_ac_bad(r, "Invalid audio portable reference tag"); return 0; }
-    qa_bytes bytes; uint64_t id = 0;
-    if (!qa_ac_getblob(r, &bytes)) return 0;
-    if (!refs || !refs->decode || !refs->decode(refs->context, kind, bytes, &id, r->error)) {
-        if (!refs || !refs->decode) qa_error_set(r->error, QA_ERROR_ARGUMENT, r->offset, "Audio portable reference decoder is absent");
-        r->failed = true; return 0;
-    }
-    if (!id || id == UINT64_MAX) qa_ac_bad(r, "Audio portable reference resolved to an empty identity");
-    return id;
-}
-static inline bool qa_ac_put_listener(qa_source_save_io *w, const qa_audio_checkpoint_refs *refs,
-                                      const qa_audio_listener *v) {
-    bool ok = qa_ac_u32(w, v->seat) && qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_ACTOR, v->actor) &&
-        qa_ac_vec(w, v->origin);
-    for (size_t i = 0; ok && i < 3; ++i) ok = qa_ac_vec(w, v->axis[i]);
-    return ok && qa_ac_float(w, v->gain) && qa_ac_u32(w, v->underwater);
-}
-static inline void qa_ac_get_listener(qa_source_save_io *r, const qa_audio_checkpoint_refs *refs,
-                                      qa_audio_listener *v, const char *invalid) {
-    v->seat = qa_ac_get32(r); v->actor = qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_ACTOR);
-    v->origin = qa_ac_getvec(r);
-    for (size_t i = 0; i < 3; ++i) v->axis[i] = qa_ac_getvec(r);
-    v->gain = qa_ac_getfloat(r); v->underwater = qa_ac_bool(r);
-    if (v->seat == QA_AUDIO_WORLD || v->gain < 0) qa_ac_bad(r, invalid);
-}
-static inline bool qa_ac_put_play(qa_source_save_io *w, const qa_audio_checkpoint_refs *refs, const qa_audio_play *v) {
-    return qa_ac_u32(w, v->family) && qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_ACTOR, v->actor) &&
-        qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_OWNER, v->owner) &&
-        qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_RESOURCE, v->resource_id) && qa_ac_u32(w, v->audience) &&
-        qa_ac_u32(w, v->origin_kind) && qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_ACTOR, v->origin_actor) &&
-        qa_ac_vec(w, v->origin) && qa_ac_u32(w, (uint32_t)v->channel) && qa_ac_float(w, v->volume) &&
-        qa_ac_float(w, v->attenuation) && qa_ac_double(w, v->delay_seconds) &&
-        qa_ac_double(w, v->server_milliseconds) && qa_ac_u32(w, v->has_server_time);
-}
-static inline void qa_ac_get_play(qa_source_save_io *r, const qa_audio_checkpoint_refs *refs, qa_audio_play *v) {
-    v->family = (qa_audio_family)qa_ac_get32(r); v->actor = qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_ACTOR);
-    v->owner = qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_OWNER);
-    v->resource_id = qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_RESOURCE); v->audience = qa_ac_get32(r);
-    v->origin_kind = (qa_audio_origin_kind)qa_ac_get32(r);
-    v->origin_actor = qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_ACTOR); v->origin = qa_ac_getvec(r);
-    v->channel = qa_ac_geti32(r); v->volume = qa_ac_getfloat(r); v->attenuation = qa_ac_getfloat(r);
-    v->delay_seconds = qa_ac_getdouble(r); v->server_milliseconds = qa_ac_getdouble(r); v->has_server_time = qa_ac_bool(r);
-    if ((unsigned)v->family > QA_AUDIO_Q3 || (unsigned)v->origin_kind > QA_AUDIO_ACTOR ||
-        v->volume < 0 || v->volume > 1 || v->attenuation < 0 ||
-        (v->channel < 0 && !(v->family == QA_AUDIO_Q1 && v->channel == -1))) qa_ac_bad(r, "Invalid saved audio play policy");
-}
+
+
+
+
+
+
 static inline bool qa_ac_finish(qa_source_save_io *writer, qa_buffer *out) {
     bool ok = qa_source_save_finish(writer, out);
     qa_source_save_dispose(writer);

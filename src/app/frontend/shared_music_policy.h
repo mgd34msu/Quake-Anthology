@@ -76,14 +76,6 @@ size_t frontend_music_policy_track_count(const frontend_music_policy *);
 const char *frontend_music_policy_track_at(const frontend_music_policy *, size_t);
 bool frontend_music_policy_content_visit(const frontend_music_policy *,
     const qa_application_content_visitor *, qa_error *);
-bool frontend_music_policy_checkpoint(const frontend_music_policy *, const qa_application_content_graph *,
-    const qa_audio_checkpoint_refs *, qa_buffer *, qa_error *);
-/* Pure metadata preparation precedes the actual audio bank/engine import.
- * Finish binds that restored bus; neither stage lists, opens or plays music. */
-bool frontend_music_policy_restore_prepare(qa_frontend *, qa_application_content_graph *,
-    const qa_audio_checkpoint_refs *, qa_bytes,
-    frontend_music_policy **, qa_error *);
-bool frontend_music_policy_restore_finish(frontend_music_policy *, qa_error *);
 bool frontend_music_policy_restore_player(frontend_music_policy *, qa_audio_music *, qa_error *);
 bool frontend_music_policy_source_is(const frontend_music_policy *, const frontend_music_content *);
 /* Pure automatic WORLD binding to the actual retained declaration mounts and
