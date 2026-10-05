@@ -153,7 +153,7 @@ bool qa_q3_checkpoint_capture(const qa_q3_game *game, qa_q3_checkpoint *out, qa_
         game->memory.allocated_bytes % 32 ||
         !qa_combat_idle(game->options.services.combat))
         return q3_fail(error, "Q3 checkpoint requires a session safe point");
-    qa_q3_checkpoint saved = {.memory = game->memory,
+    qa_q3_checkpoint saved = {.memory = {.allocated_bytes = game->memory.allocated_bytes},
                               .max_clients = game->options.max_clients,
                               .source_count = game->source_count,
                               .new_session = game->new_session,
@@ -176,6 +176,7 @@ bool qa_q3_checkpoint_capture(const qa_q3_game *game, qa_q3_checkpoint *out, qa_
                                               .attacker = game->ranking_hit.attacker,
                                               .method = game->ranking_hit.method,
                                               .valid = game->ranking_hit.valid}};
+    memcpy(saved.memory.pool, game->memory.pool, saved.memory.allocated_bytes);
     memcpy(saved.body_queue, game->body_queue, sizeof(saved.body_queue));
     memcpy(saved.podium_players, game->podium_players, sizeof(saved.podium_players));
     memcpy(saved.source_entities, game->source_entities, sizeof(saved.source_entities));
@@ -371,7 +372,10 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
     game->actors = actors;
     game->kamikaze_cooldowns = cooldowns;
     game->rng = saved->random_state;
-    game->memory = saved->memory;
+    game->memory.allocated_bytes = saved->memory.allocated_bytes;
+    memcpy(game->memory.pool, saved->memory.pool, saved->memory.allocated_bytes);
+    memset(game->memory.pool + saved->memory.allocated_bytes, 0,
+           sizeof(game->memory.pool) - saved->memory.allocated_bytes);
     game->options.max_clients = saved->max_clients;
     q3_source_commit(game, saved, source_numbers);
     game->new_session = saved->new_session;

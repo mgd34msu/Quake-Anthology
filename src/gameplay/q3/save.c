@@ -296,7 +296,7 @@ static bool checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_checkpoint
     FIELD(u32, p->memory.allocated_bytes);
     if (p->memory.allocated_bytes > QA_Q3_SOURCE_MEMORY_BYTES || p->memory.allocated_bytes % 32)
         return save_fail(io, "invalid Q3 GAME memory allocation point");
-    if (!qa_source_save_bytes(io, p->memory.pool, sizeof(p->memory.pool))) return false;
+    if (!qa_source_save_bytes(io, p->memory.pool, p->memory.allocated_bytes)) return false;
     FIELD(bool, p->new_session); FIELD(i32, p->fry_sound_index);
     FIELD(i32, p->portal_sequence);
     FIELD(i32, p->last_team_location_time);
@@ -321,8 +321,12 @@ static bool checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_checkpoint
         return save_fail(io, "invalid Q3 saved fry sound index");
     if (p->source_count < QA_Q3_SOURCE_CLIENTS || p->source_count > QA_Q3_SOURCE_WORLD)
         return save_fail(io, "invalid Q3 physical entity extent");
-    for (size_t i = 0; i < QA_Q3_SOURCE_ENTITIES; ++i) {
-        qa_q3_source_binding *binding = &p->source_entities[i];
+    if (io->direction == QA_SOURCE_SAVE_READ)
+        for (size_t i = 0; i < QA_Q3_SOURCE_ENTITIES; ++i)
+            p->source_entities[i].client_slot = i < p->max_clients ? (int32_t)i : -1;
+    for (size_t i = 0; i <= p->source_count; ++i) {
+        size_t slot = i == p->source_count ? QA_Q3_SOURCE_WORLD : i;
+        qa_q3_source_binding *binding = &p->source_entities[slot];
         FIELD(actor, binding->actor); FIELD(string, binding->classname);
         FIELD(i32, binding->free_time_ms);
         FIELD(i32, binding->number); FIELD(i32, binding->owner_number);
@@ -330,8 +334,21 @@ static bool checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_checkpoint
         FIELD(u32, binding->server_flags); FIELD(bool, binding->in_use);
         FIELD(bool, binding->never_free);
     }
+    const qa_q3_native_client empty_client = {.source_model_shape = QA_SHAPE_BOX};
+    const q3_actor empty_actor = {.kind = Q3_ACTOR_PLAYER, .alpha = 1};
     for (size_t i = 0; i < QA_Q3_NATIVE_CLIENTS; ++i) {
         qa_q3_native_client *client = &p->clients[i];
+        bool retained = io->direction == QA_SOURCE_SAVE_WRITE &&
+            (memcmp(client, &empty_client, sizeof(*client)) ||
+             memcmp(&p->source_clients[i], &empty_actor, sizeof(empty_actor)));
+        FIELD(bool, retained);
+        if (!retained) {
+            if (io->direction == QA_SOURCE_SAVE_READ) {
+                *client = empty_client;
+                p->source_clients[i] = empty_actor;
+            }
+            continue;
+        }
         ENUM(client->connected, QA_Q3_CLIENT_CONNECTED);
         FIELD(i32, client->command.serverTime);
         FIELD(i32, client->session.team); FIELD(i32, client->session.spectator_time_ms);

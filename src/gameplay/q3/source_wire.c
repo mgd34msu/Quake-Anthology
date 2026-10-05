@@ -1725,6 +1725,13 @@ static bool save_owner(qa_source_save_io *io, q3_wire_state *state) {
         return q3_fail(io->error, "invalid Q3 source wire continuation schema");
     for (uint32_t i = 0; i < QA_Q3_SOURCE_ENTITIES; ++i) {
         q3_wire_row *p = &state->rows[i];
+        const q3_wire_row empty = {.initialized = i < QA_Q3_SOURCE_CLIENTS};
+        bool retained = io->direction == QA_SOURCE_SAVE_WRITE && memcmp(p, &empty, sizeof(*p));
+        WIRE_FIELD(bool, retained);
+        if (!retained) {
+            if (io->direction == QA_SOURCE_SAVE_READ) *p = empty;
+            continue;
+        }
         WIRE_FIELD(actor, p->actor);
         if (!save_entity(io, &p->source)) return false;
         WIRE_FIELD(i32, p->event_time_ms);
@@ -1735,8 +1742,16 @@ static bool save_owner(qa_source_save_io *io, q3_wire_state *state) {
             (!save_trajectory(io, &p->player_position) ||
              !save_trajectory(io, &p->player_angles))) return false;
     }
+    const q3_wire_client empty_client = {.foreign_policy_written = true};
     for (uint32_t i = 0; i < QA_Q3_SOURCE_CLIENTS; ++i) {
         q3_wire_client *p = &state->clients[i];
+        bool retained = io->direction == QA_SOURCE_SAVE_WRITE &&
+            memcmp(p, &empty_client, sizeof(*p));
+        WIRE_FIELD(bool, retained);
+        if (!retained) {
+            if (io->direction == QA_SOURCE_SAVE_READ) *p = empty_client;
+            continue;
+        }
         if (!save_policy(io, &p->foreign_policy)) return false;
         WIRE_FIELD(bool, p->foreign_policy_written);
         WIRE_FIELD(bool, p->movement_detached);

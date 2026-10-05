@@ -1809,6 +1809,23 @@ static bool text_fields(qa_source_save_io *io, char **text)
          fields_failure(io, "Native Q3 saved userinfo terminator is invalid"));
 }
 
+static bool fixed_text_fields(qa_source_save_io *io, char *text, size_t capacity)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    size_t length = 0;
+    if (!reading) {
+        const char *end = memchr(text, 0, capacity);
+        if (!end) return fields_failure(io, "Native Q3 retained text has no terminator");
+        length = (size_t)(end - text);
+    }
+    if (!qa_source_save_count(io, &length, capacity - 1) ||
+        !qa_source_save_bytes(io, text, length)) return false;
+    if (memchr(text, 0, length))
+        return fields_failure(io, "Native Q3 retained text has an embedded terminator");
+    if (reading) memset(text + length, 0, capacity - length);
+    return true;
+}
+
 static bool write_record(void *context, size_t offset, qa_bytes bytes, qa_error *error)
 {
     (void)error;
@@ -2000,7 +2017,7 @@ static bool gamestate_fields(qa_source_save_io *io, qa_q3_gamestate **owned)
         !qa_source_save_i32(io, &value->client_number) ||
         !qa_source_save_i32(io, &value->checksum_feed) ||
         !qa_source_save_count(io, &value->string_bytes, QA_Q3_GAMESTATE_CHARS) ||
-        !qa_source_save_bytes(io, value->strings, sizeof(value->strings))) return false;
+        !qa_source_save_bytes(io, value->strings, value->string_bytes)) return false;
     if (!value->string_bytes || value->strings[0])
         return fields_failure(io, "Native Q3 saved gamestate string storage is invalid");
     for (size_t i = 0; i < QA_Q3_CONFIGSTRINGS; ++i) {
@@ -2012,8 +2029,8 @@ static bool gamestate_fields(qa_source_save_io *io, qa_q3_gamestate **owned)
     }
     for (size_t i = 0; i < QA_Q3_ENTITIES; ++i)
         if (!qa_source_save_bool(io, &value->baseline_present[i]) ||
-            !entity_fields(io, &value->baselines[i]) ||
-            (value->baseline_present[i] && value->baselines[i].number != (int32_t)i))
+            (value->baseline_present[i] && (!entity_fields(io, &value->baselines[i]) ||
+             value->baselines[i].number != (int32_t)i)))
             return fields_failure(io, "Native Q3 saved baseline has no physical source number");
     return true;
 }
@@ -2022,25 +2039,27 @@ static bool snapshot_fields(qa_source_save_io *io, native_q3_wire_snapshot *slot
     size_t ordinal)
 {
     qa_q3_snapshot *value = &slot->value;
-    if (!qa_source_save_bool(io, &value->valid) ||
-        !qa_source_save_i32(io, &value->message_number) ||
+    if (!qa_source_save_bool(io, &value->valid)) return false;
+    if (!value->valid) return true;
+    if (!qa_source_save_i32(io, &value->message_number) ||
         !qa_source_save_i32(io, &value->server_time) ||
         !qa_source_save_i32(io, &value->delta_number) ||
         !qa_source_save_i32(io, &value->server_command_number) ||
         !qa_source_save_u64(io, &value->parse_entities_number) ||
         !qa_source_save_u8(io, &value->flags) || !qa_source_save_u8(io, &value->area_bytes) ||
-        !qa_source_save_bytes(io, value->area_mask, sizeof(value->area_mask)) ||
+        value->area_bytes > sizeof(value->area_mask) ||
+        !qa_source_save_bytes(io, value->area_mask, value->area_bytes) ||
         !player_fields(io, &value->player) ||
         !qa_source_save_count(io, &value->entity_count, 256) ||
-        !qa_source_save_count(io, &slot->capacity, 256) ||
         !qa_source_save_i32(io, &slot->ping)) return false;
-    if (value->entity_count > slot->capacity || value->area_bytes > sizeof(value->area_mask) ||
+    if ((io->direction == QA_SOURCE_SAVE_WRITE && value->entity_count > slot->capacity) ||
         (value->valid && (value->message_number < 1 ||
          ((uint32_t)value->message_number & (QA_Q3_PACKET_BACKUP - 1)) != ordinal ||
          (value->flags != 0 && value->flags != 4) ||
          value->parse_entities_number > UINT32_MAX)))
         return fields_failure(io, "Native Q3 saved snapshot storage or ring identity is invalid");
     if (io->direction == QA_SOURCE_SAVE_READ) {
+        slot->capacity = value->entity_count;
         if (io->offset > io->input.size ||
             slot->capacity > (io->input.size - io->offset) / 208)
             return fields_failure(io, "Native Q3 saved snapshot entities are truncated");
@@ -2054,13 +2073,11 @@ static bool snapshot_fields(qa_source_save_io *io, native_q3_wire_snapshot *slot
         return fields_failure(io, "Native Q3 saved snapshot entity allocation differs");
     }
     int32_t previous = -1;
-    for (size_t i = 0; i < slot->capacity; ++i) {
+    for (size_t i = 0; i < value->entity_count; ++i) {
         if (!entity_fields(io, &slot->entities[i])) return false;
-        if (i < value->entity_count) {
-            if (slot->entities[i].number <= previous || slot->entities[i].number >= QA_Q3_ENTITY_WORLD)
-                return fields_failure(io, "Native Q3 saved snapshot entity order is invalid");
-            previous = slot->entities[i].number;
-        }
+        if (slot->entities[i].number <= previous || slot->entities[i].number >= QA_Q3_ENTITY_WORLD)
+            return fields_failure(io, "Native Q3 saved snapshot entity order is invalid");
+        previous = slot->entities[i].number;
     }
     return true;
 }
@@ -2122,7 +2139,7 @@ static bool client_fields(qa_source_save_io *io, native_q3_wire_client *client, 
         !qa_source_save_bool(io, &client->drop_delivered) ||
         !qa_source_save_u32(io, &failure_code) ||
         !qa_source_save_u64(io, &failure_offset) ||
-        !qa_source_save_bytes(io, client->drop_failure.message, sizeof(client->drop_failure.message)) ||
+        !fixed_text_fields(io, client->drop_failure.message, sizeof(client->drop_failure.message)) ||
         !qa_source_save_bool(io, &client->begun) || !qa_source_save_bool(io, &client->bot) ||
         !qa_source_save_bool(io, &client->command_received) ||
         !command_fields(io, &client->command) ||
@@ -2151,23 +2168,33 @@ static bool client_fields(qa_source_save_io *io, native_q3_wire_client *client, 
         (client->bot_snapshot_ready && (!client->admitted || !client->bot || !client->begun)))
         return fields_failure(io, "Native Q3 saved bot visibility has no actual source client");
     int32_t previous_bot = -1;
-    for (uint32_t i = 0; i < 256; ++i) {
+    for (uint32_t i = 0; i < client->bot_entity_count; ++i) {
         if (!qa_source_save_i32(io, &client->bot_entities[i])) return false;
-        if (i < client->bot_entity_count) {
-            if (client->bot_entities[i] <= previous_bot || client->bot_entities[i] >= QA_Q3_ENTITY_WORLD)
-                return fields_failure(io, "Native Q3 saved bot visibility has an invalid physical entity order");
-            previous_bot = client->bot_entities[i];
-        } else if (client->bot_entities[i])
-            return fields_failure(io, "Native Q3 saved bot visibility retains an unproduced entity tail");
+        if (client->bot_entities[i] <= previous_bot || client->bot_entities[i] >= QA_Q3_ENTITY_WORLD)
+            return fields_failure(io, "Native Q3 saved bot visibility has an invalid physical entity order");
+        previous_bot = client->bot_entities[i];
     }
-    for (size_t i = 0; i < QA_Q3_SOURCE_ENTITIES; ++i)
-        if (!actor_fields(io, &client->source_actors[i], checkpoint) ||
-            (!client->admitted && client->source_actors[i].registry))
+    size_t source_count = 0;
+    if (io->direction == QA_SOURCE_SAVE_WRITE)
+        for (size_t i = 0; i < QA_Q3_SOURCE_ENTITIES; ++i)
+            if (client->source_actors[i].registry) ++source_count;
+    if (!qa_source_save_count(io, &source_count, QA_Q3_SOURCE_ENTITIES)) return false;
+    uint32_t previous_source = 0;
+    for (size_t row = 0, cursor = 0; row < source_count; ++row) {
+        uint32_t index = 0;
+        if (io->direction == QA_SOURCE_SAVE_WRITE) {
+            while (cursor < QA_Q3_SOURCE_ENTITIES && !client->source_actors[cursor].registry) ++cursor;
+            index = (uint32_t)cursor++;
+        }
+        if (!qa_source_save_u32(io, &index) || index >= QA_Q3_SOURCE_ENTITIES ||
+            (row && index <= previous_source) || !client->admitted ||
+            !actor_fields(io, &client->source_actors[index], checkpoint) ||
+            !client->source_actors[index].registry)
             return fields_failure(io, "Native Q3 saved source namespace has no engine admission");
+        previous_source = index;
+    }
     for (size_t i = 0; i < QA_Q3_RELIABLE; ++i)
-        if (!qa_source_save_bytes(io, client->reliable.text[i], QA_Q3_COMMAND_CHARS) ||
-            !memchr(client->reliable.text[i], 0, QA_Q3_COMMAND_CHARS))
-            return fields_failure(io, "Native Q3 saved reliable text has no terminator");
+        if (!fixed_text_fields(io, client->reliable.text[i], QA_Q3_COMMAND_CHARS)) return false;
     if (!gamestate_fields(io, &client->gamestate) ||
         !qa_source_save_i32(io, &client->initial_server_command) ||
         client->initial_server_command < 0 ||
@@ -2234,7 +2261,14 @@ static bool wire_fields(qa_source_save_io *io, struct application_native_q3_wire
         return fields_failure(io, "Native Q3 private wire record or source owner differs");
     if (io->direction == QA_SOURCE_SAVE_READ) wire->max_clients = maximum;
     for (uint32_t slot = 0; slot < QA_Q3_SOURCE_CLIENTS; ++slot) {
-        if (!client_fields(io, &wire->clients[slot], checkpoint)) return false;
+        native_q3_wire_client *client = &wire->clients[slot];
+        /* Disconnect retains userinfo; the never-admitted constructor has no
+         * client continuation. Rebuild that constructor instead of its arrays. */
+        bool retained = io->direction == QA_SOURCE_SAVE_WRITE &&
+            (client->admitted || client->userinfo != NULL);
+        if (!qa_source_save_bool(io, &retained)) return false;
+        if (!retained) continue;
+        if (!client_fields(io, client, checkpoint)) return false;
         if (slot >= maximum && wire->clients[slot].admitted)
             return fields_failure(io, "Native Q3 saved client exceeds source capacity");
         if (wire->clients[slot].gamestate &&
