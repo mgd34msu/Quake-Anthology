@@ -567,20 +567,21 @@ static bool headnode_visible(qa_collision_geometry *geometry, const q2_recipient
 }
 
 static bool source_visible(qa_application_network_q2 *owner, const q2_recipient *recipient,
-    const qa_q2_entity *state, uint32_t *leaves, size_t leaf_capacity,
-    bool novis, bool *out, bool *owned, qa_error *error)
+    const qa_q2_entity *state, bool novis, bool *out, bool *owned, qa_error *error)
 {
     qa_collision_geometry *geometry = owner->app->geometry;
     bool builtin = owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN;
     bool sdk = false;
     bool rr = owner->host.source.edition == QA_Q2_RERELEASE;
     qa_bounds bounds;
+    qa_actor_id visibility_actor;
     uint32_t flags;
     qa_native_host_q2_entity original = {0};
     if (builtin) {
         qa_q2_wire_source_entity source;
         if (!qa_q2_wire_entity_read((qa_q2_game *)owner->host.source.source.game, state->number, &source, error)) return false;
         if (!source.binding.in_use) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 entity retired during recipient visibility");
+        visibility_actor = source.binding.actor;
         flags = source.server_flags; *owned = qa_actor_id_equal(source.owner, recipient->actor);
         qa_linked_body linked;
         if (qa_world_linked(owner->app->world, source.binding.actor, &linked)) bounds = linked.absolute_bounds;
@@ -592,6 +593,7 @@ static bool source_visible(qa_application_network_q2 *owner, const q2_recipient 
             return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 visibility lost its Engine namespace");
         const application_native_q2_wire_row *binding = &engine->wire_engine->rows[state->number];
         if (!binding->occupied) return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 Engine actor retired during visibility");
+        visibility_actor = binding->actor;
         sdk = binding->original;
         if (sdk) {
             if (!qa_native_host_q2_wire_entity(engine->provider->state.native.host, binding->source_slot, &original, error)) return false;
@@ -623,6 +625,7 @@ static bool source_visible(qa_application_network_q2 *owner, const q2_recipient 
     bool beam = (state->renderfx & 128) != 0, shadow = rr && (state->renderfx & 16384) != 0;
     bool phs = beam || (rr && (shadow || state->sound));
     bool area = false, visible = false;
+    qa_world_leaf_membership membership = {0};
     if (sdk && !rr) {
         if (!qa_collision_areas_connected(geometry, (int32_t)recipient->leaf.area, original.areas[0], &area, error)) return false;
         if (!area && original.areas[1] &&
@@ -635,21 +638,20 @@ static bool source_visible(qa_application_network_q2 *owner, const q2_recipient 
         } else for (int32_t i = 0; !visible && i < original.cluster_count; ++i)
             if (!cluster_visible(geometry, recipient, original.clusters[i], false, &visible, error)) return false;
     } else {
-        qa_leaf_list list;
-        if (!qa_collision_box_leaves(geometry, bounds, leaves, leaf_capacity, &list, error) || list.overflow)
-            return application_fail(error, QA_ERROR_FORMAT, "Q2 source entity leaf membership exceeds its geometry");
-        for (size_t i = 0; i < list.count; ++i) {
-            qa_collision_leaf leaf;
+        if (!qa_world_link_membership(owner->app->world, visibility_actor, &bounds,
+                QA_WORLD_LEAVES_BOX, &membership, error)) return false;
+        for (size_t i = 0; i < membership.count; ++i) {
+            const qa_collision_leaf *leaf = &membership.leaves[i];
             bool connected, seen;
-            if (!qa_collision_leaf_at(geometry, leaves[i], &leaf, error) ||
-                !qa_collision_areas_connected(geometry, (int32_t)recipient->leaf.area, (int32_t)leaf.area, &connected, error)) return false;
+            if (!qa_collision_areas_connected(geometry, (int32_t)recipient->leaf.area,
+                (int32_t)leaf->area, &connected, error)) return false;
             area |= connected;
             if (builtin && beam && !rr) {
                 seen = false;
                 if (!i && !qa_collision_cluster_visible(geometry,
-                    (int32_t)recipient->leaf.cluster, (int32_t)leaf.cluster,
+                    (int32_t)recipient->leaf.cluster, (int32_t)leaf->cluster,
                     true, &seen, error)) return false;
-            } else if (!cluster_visible(geometry, recipient, (int32_t)leaf.cluster, phs, &seen, error)) return false;
+            } else if (!cluster_visible(geometry, recipient, (int32_t)leaf->cluster, phs, &seen, error)) return false;
             visible |= seen;
         }
         if (!area) return true;
@@ -664,13 +666,9 @@ static bool source_visible(qa_application_network_q2 *owner, const q2_recipient 
         if (!state->modelindex) return true;
         if (!beam) {
             visible = false;
-            qa_leaf_list list;
-            if (!qa_collision_box_leaves(geometry, bounds, leaves, leaf_capacity, &list, error)) return false;
-            for (size_t i = 0; !visible && i < list.count; ++i) {
-                qa_collision_leaf leaf;
-                if (!qa_collision_leaf_at(geometry, leaves[i], &leaf, error) ||
-                    !cluster_visible(geometry, recipient, (int32_t)leaf.cluster, false, &visible, error)) return false;
-            }
+            for (size_t i = 0; !visible && i < membership.count; ++i)
+                if (!cluster_visible(geometry, recipient, (int32_t)membership.leaves[i].cluster,
+                    false, &visible, error)) return false;
         }
         *out = beam || visible; return true;
     }
@@ -687,14 +685,6 @@ bool qa_application_network_q2_frame(qa_application_network_q2 *owner, const qa_
     const qa_bsp_view *map = qa_collision_bsp(owner->app->geometry);
     if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_ORIGINAL && map->family != QA_BSP_Q2)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Original Q2 frame requires its actual Q2 portal geometry");
-    size_t leaf_capacity = qa_bsp_record_count(map, QA_BSP_LEAVES);
-    if (!leaf_capacity || leaf_capacity > SIZE_MAX / sizeof(uint32_t))
-        return application_fail(error, QA_ERROR_FORMAT, "Q2 publication has no bounded geometry leaves");
-    if (leaf_capacity > owner->leaf_capacity) {
-        uint32_t *leaves = realloc(owner->leaves, leaf_capacity * sizeof(*leaves));
-        if (!leaves) return application_fail(error, QA_ERROR_MEMORY, "Observing actual Q2 recipient leaves");
-        owner->leaves = leaves; owner->leaf_capacity = leaf_capacity;
-    }
     const qa_cvar_view *novis = qa_cvars_find(owner->host.cvars, "sv_novis");
     bool no_visibility = novis && novis->number != 0;
     qa_q2_wire_frame value = {.valid = true, .delta_frame = -1, .player_count = seats};
@@ -739,8 +729,7 @@ bool qa_application_network_q2_frame(qa_application_network_q2 *owner, const qa_
         uint32_t hidden = 0;
         for (size_t j = 0; ok && j < seats; ++j) {
             bool seen = false, own = false;
-            ok = source_visible(owner, &recipients[j], &state, owner->leaves, leaf_capacity,
-                no_visibility, &seen, &own, error);
+            ok = source_visible(owner, &recipients[j], &state, no_visibility, &seen, &own, error);
             visible |= seen; owned |= own;
             if (!seen) hidden |= UINT32_C(1) << j;
         }

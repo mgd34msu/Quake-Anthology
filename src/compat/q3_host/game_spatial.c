@@ -125,12 +125,6 @@ static bool area_entities(q3_call *call, int32_t *result, qa_error *error)
     *result = (int32_t)count; return true;
 }
 
-static int compare_cluster(const void *a, const void *b)
-{
-    int64_t first = ((const qa_collision_leaf *)a)->cluster, second = ((const qa_collision_leaf *)b)->cluster;
-    return (first > second) - (first < second);
-}
-
 static uint32_t solid_byte(float value)
 {
     if (isnan(value)) return 0;
@@ -174,38 +168,15 @@ bool qa_q3_host_link(qa_q3_host *host, uint32_t number, qa_error *error)
         !source_slot(&call, number, &record, &shared, error)) return q3_game_end(&call, false);
     bounds = shared.absolute_bounds;
     qa_collision_geometry *geometry = qa_world_geometry(host->options.world);
-    bool native = qa_collision_geometry_family(geometry) == QA_COLLISION_Q3;
-    size_t capacity = native ? 128 : qa_bsp_record_count(qa_collision_bsp(geometry), QA_BSP_LEAVES);
-    uint32_t *leaves = capacity ? qa_arena_alloc(&host->scratch, capacity * sizeof(*leaves), _Alignof(uint32_t), error) : NULL;
-    if (capacity && !leaves) return q3_game_end(&call, false);
-    qa_leaf_list list;
-    if (!qa_collision_box_leaves(geometry, bounds, leaves, capacity, &list, error)) return q3_game_end(&call, false);
-    qa_collision_leaf *metadata = list.count ? qa_arena_alloc(&host->scratch,
-        list.count * sizeof(*metadata), _Alignof(qa_collision_leaf), error) : NULL;
-    if (list.count && !metadata) return q3_game_end(&call, false);
-    int32_t area = -1, area2 = -1;
-    for (size_t i = 0; i < list.count; ++i) {
-        if (!qa_collision_leaf_at(geometry, leaves[i], metadata + i, error)) return q3_game_end(&call, false);
-        int32_t current = (int32_t)metadata[i].area;
-        if (current == -1) continue;
-        if (area != -1 && area != current) area2 = current;
-        else area = current;
-    }
-    if (!native && list.count > 1) qsort(metadata, list.count, sizeof(*metadata), compare_cluster);
-    slot->has_visibility = true; slot->area = area; slot->area2 = area2;
-    slot->last_cluster = 0; slot->cluster_count = 0;
-    for (size_t i = 0; i < list.count; ++i) {
-        if (metadata[i].cluster == -1) continue;
-        slot->clusters[slot->cluster_count++] = (int32_t)metadata[i].cluster;
-        if (slot->cluster_count == 16) {
-            qa_collision_leaf last;
-            if (native) {
-                if (!qa_collision_leaf_at(geometry, list.last_leaf, &last, error)) return q3_game_end(&call, false);
-            } else last = metadata[list.count - 1];
-            slot->last_cluster = (int32_t)last.cluster; break;
-        }
-    }
-    if (!list.count) return q3_game_end(&call, true);
+    qa_world_leaf_membership membership;
+    if (!qa_world_link_membership(host->options.world, actor, &bounds,
+        QA_WORLD_LEAVES_BOX, &membership, error)) return q3_game_end(&call, false);
+    qa_q3_visibility_entity visibility = {0};
+    if (!qa_q3_leaf_visibility(geometry, &membership, &visibility, slot->clusters, error))
+        return q3_game_end(&call, false);
+    slot->has_visibility = true; slot->area = visibility.area; slot->area2 = visibility.area2;
+    slot->last_cluster = visibility.last_cluster; slot->cluster_count = (uint32_t)visibility.cluster_count;
+    if (!membership.count) return q3_game_end(&call, true);
     if ((!slot->borrowed && !qa_world_link_bounds(host->options.world, actor, &bounds, error)) ||
         !same_actor(&call, number, actor, error) ||
         !source_slot(&call, number, &record, &shared, error)) return q3_game_end(&call, false);

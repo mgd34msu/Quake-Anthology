@@ -50,6 +50,19 @@ typedef struct qa_world_hooks {
     void (*unlinked)(void *, qa_actor_id);
 } qa_world_hooks;
 typedef struct qa_body_link_state { uint64_t link_count; bool linked; qa_body_state state; qa_bounds absolute_bounds; } qa_body_link_state;
+typedef enum qa_world_leaf_policy { QA_WORLD_LEAVES_BOX, QA_WORLD_LEAVES_Q1_TOUCHED } qa_world_leaf_policy;
+typedef struct qa_world_leaf_membership {
+    const qa_collision_leaf *leaves;
+    size_t count;
+    int32_t topnode;
+    uint32_t last_leaf;
+} qa_world_leaf_membership;
+/* Borrowed until this body's next membership preparation, replacement or
+ * release. NULL bounds reads its published link; explicit bounds prepare the
+ * same derived owner before Source link publication. Q1_TOUCHED preserves
+ * original Q1 visibility classification and solid-leaf exclusion. */
+bool qa_world_link_membership(qa_world *, qa_actor_id, const qa_bounds *,
+    qa_world_leaf_policy, qa_world_leaf_membership *, qa_error *);
 
 /* The session owns actors and geometry. World borrows both; destruction never
  * clears/releases the registry. Calls and callbacks have one thread owner.

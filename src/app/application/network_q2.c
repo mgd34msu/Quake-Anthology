@@ -436,7 +436,6 @@ void qa_application_network_q2_destroy(qa_application_network_q2 *owner)
     application_network_q2_free_tables(owner);
     application_network_q2_resources_free(owner);
     free(owner->entities); free(owner->source_entities); free(owner->baselines); free(owner->status_players); free(owner->status_names);
-    free(owner->leaves);
     free(owner->motion_rows);
     free(owner->event_actors); free(owner->events);
     free(owner->source_instance); free(owner->source_map);

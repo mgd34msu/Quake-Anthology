@@ -175,18 +175,13 @@ static bool source_visibility(qa_unified_q3_source *out, application_unified_q3_
     if (!recipient) return true;
     qa_collision_geometry *geometry = qa_world_geometry(v->source.world);
     if (!geometry) return application_fail(e,QA_ERROR_ARGUMENT,"Compiled Q3 visibility lost its actual shared geometry");
-    size_t leaf_capacity = qa_bsp_record_count(qa_collision_bsp(geometry),QA_BSP_LEAVES);
-    if (leaf_capacity > SIZE_MAX / sizeof(uint32_t))
-        return application_fail(e,QA_ERROR_MEMORY,"Compiled Q3 visibility leaf roster overflows");
-    uint32_t *leaves = qa_unified_frame_lease_alloc(v->lease, leaf_capacity, sizeof(*leaves),
-        _Alignof(uint32_t), e);
     qa_q3_entity *states = qa_unified_frame_lease_alloc(v->lease, r->entities, sizeof(*states),
         _Alignof(qa_q3_entity), e);
     qa_q3_visibility_entity *entities = qa_unified_frame_lease_alloc(v->lease, r->entities, sizeof(*entities),
         _Alignof(qa_q3_visibility_entity), e);
     int32_t (*clusters)[16] = qa_unified_frame_lease_alloc(v->lease, r->entities, sizeof(*clusters),
         _Alignof(int32_t[16]), e);
-    bool ok = (!leaf_capacity || leaves) && states && entities && clusters;
+    bool ok = states && entities && clusters;
     if (!ok) application_fail(e,QA_ERROR_MEMORY,"Retaining actual compiled Q3 visibility observations");
     qa_q3_player player;
     if (ok) ok = qa_q3_wire_player_read(r->game,client_number,&player,e) && stable(v,r,e);
@@ -202,15 +197,13 @@ static bool source_visibility(qa_unified_q3_source *out, application_unified_q3_
         *entity = (qa_q3_visibility_entity){.state=states+i,.linked=raw.linked,.flags=raw.server_flags,
             .single_client=raw.single_client,.area=-1,.area2=-1,.clusters=clusters[i]};
         if (!raw.linked) continue;
-        qa_body_link_state link; qa_leaf_list list;
-        ok = qa_world_link_state(v->source.world,binding.actor,&link) && link.linked &&
-            qa_collision_box_leaves(geometry,link.absolute_bounds,leaves,leaf_capacity,&list,e) &&
-            !list.overflow && binding_current(v,r,i,&binding,e);
-        size_t count = ok && list.count < 128 ? list.count : 128;
+        qa_world_leaf_membership membership;
+        ok = qa_world_link_membership(v->source.world,binding.actor,NULL,
+            QA_WORLD_LEAVES_BOX,&membership,e) && binding_current(v,r,i,&binding,e);
+        size_t count = ok && membership.count < 128 ? membership.count : 128;
         for (size_t k = 0; ok && k < count; ++k) {
-            qa_collision_leaf leaf;
-            ok = qa_collision_leaf_at(geometry,leaves[k],&leaf,e);
-            if (ok && (leaf.area < -1 || leaf.area > INT32_MAX || leaf.cluster < -1 || leaf.cluster > INT32_MAX))
+            qa_collision_leaf leaf = membership.leaves[k];
+            if (leaf.area < -1 || leaf.area > INT32_MAX || leaf.cluster < -1 || leaf.cluster > INT32_MAX)
                 ok = application_fail(e,QA_ERROR_FORMAT,"Compiled Q3 linked leaf exceeds its Source index");
             if (!ok) break;
             int32_t area = (int32_t)leaf.area;
@@ -220,13 +213,12 @@ static bool source_visibility(qa_unified_q3_source *out, application_unified_q3_
             }
         }
         for (size_t k = 0; ok && k < count; ++k) {
-            qa_collision_leaf leaf;
-            ok = qa_collision_leaf_at(geometry,leaves[k],&leaf,e);
-            if (!ok || leaf.cluster == -1) continue;
+            qa_collision_leaf leaf = membership.leaves[k];
+            if (leaf.cluster == -1) continue;
             clusters[i][entity->cluster_count++] = (int32_t)leaf.cluster;
             if (entity->cluster_count == 16) {
-                ok = list.count && qa_collision_leaf_at(geometry,leaves[list.count-1],&leaf,e);
-                if (ok && (leaf.cluster < -1 || leaf.cluster > INT32_MAX))
+                leaf = membership.leaves[membership.count-1];
+                if (leaf.cluster < -1 || leaf.cluster > INT32_MAX)
                     ok = application_fail(e,QA_ERROR_FORMAT,"Compiled Q3 last leaf exceeds its Source cluster");
                 if (ok) entity->last_cluster = (int32_t)leaf.cluster;
                 break;

@@ -563,22 +563,19 @@ static qa_bounds source_absolute_bounds(qa_vec3 origin, qa_vec3 angles, qa_bound
     return absolute;
 }
 
-static bool source_link_metadata(qa_native_host *host, qa_bounds bounds,
+static bool source_link_metadata(qa_native_host *host, qa_actor_id actor, qa_bounds bounds,
                                  qa_native_host_link_metadata *metadata,
                                  qa_error *error)
 {
-    uint32_t leaves[128];
-    qa_leaf_list list;
-    qa_collision_geometry *geometry = qa_world_geometry(host->world.world);
-    if (!qa_collision_box_leaves(geometry, bounds, leaves,
-                                 sizeof(leaves) / sizeof(leaves[0]), &list, error))
+    qa_world_leaf_membership membership;
+    if (!qa_world_link_membership(host->world.world, actor, &bounds,
+        QA_WORLD_LEAVES_BOX, &membership, error))
         return false;
-    metadata->headnode = list.topnode;
-    metadata->cluster_count = list.overflow || list.count >= 128 ? -1 : 0;
-    for (size_t index = 0; index < list.count; ++index) {
-        qa_collision_leaf leaf;
-        if (!qa_collision_leaf_at(geometry, leaves[index], &leaf, error))
-            return false;
+    metadata->headnode = membership.topnode;
+    metadata->cluster_count = membership.count >= 128 ? -1 : 0;
+    size_t count = membership.count < 128 ? membership.count : 128;
+    for (size_t index = 0; index < count; ++index) {
+        qa_collision_leaf leaf = membership.leaves[index];
         if (leaf.area != 0) {
             if (metadata->area != 0 && leaf.area != metadata->area)
                 metadata->secondary_area = (int32_t)leaf.area;
@@ -732,7 +729,7 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
     qa_vec3 dimensions = {maximum.x - minimum.x, maximum.y - minimum.y,
                           maximum.z - minimum.z};
     qa_native_host_link_metadata metadata = {0};
-    if (!source_link_metadata(host, absolute, &metadata, error))
+    if (!source_link_metadata(host, actor, absolute, &metadata, error))
         return false;
     metadata.network_solid = solid == 3 ? 31u
                                         : solid == 2 && !(flags & 2u)

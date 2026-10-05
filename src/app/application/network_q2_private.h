@@ -105,8 +105,6 @@ struct qa_application_network_q2 {
     size_t entity_count, baseline_count, entity_capacity;
     size_t source_entity_count;
     uint64_t source_frame, source_application_frame, source_mutation, source_actors_revision;
-    uint32_t *leaves;
-    size_t leaf_capacity;
     bool source_entities_ready;
     uint8_t area_bits[QA_Q2_MAX_SEATS][QA_Q2_MAX_AREABITS];
     qa_q2_status_player *status_players;

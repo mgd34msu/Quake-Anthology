@@ -74,7 +74,11 @@ bool qa_world_destroy(qa_world *world, qa_error *error)
     if(world->geometry_admission!=NULL)
         return fail(error,QA_ERROR_ARGUMENT,"Abort geometry admission before world destruction");
     qa_spatial_dispose(world);
-    for(uint32_t page=0;page<world->page_count;++page) free(world->pages[page]);
+    for(uint32_t page=0;page<world->page_count;++page) {
+        if(world->pages[page])
+            for(size_t slot=0;slot<QA_BODY_PAGE_SIZE;++slot) free(world->pages[page][slot].leaves);
+        free(world->pages[page]);
+    }
     free(world->pages); free(world); return true;
 }
 
@@ -182,6 +186,7 @@ bool qa_world_actor_released(qa_world *world,qa_actor_record released,qa_error *
     if(body!=NULL && body->present && qa_actor_id_equal(body->actor,released.id)) {
         bool linked=body->linked;
         qa_spatial_remove(world,body);
+        free(body->leaves);
         memset(body,0,sizeof(*body));
         if(linked) notify_unlink(world,released.id);
     }
@@ -418,6 +423,11 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
         return fail(error,QA_ERROR_NOT_FOUND,"Body storage changed during collision link read");
     if(body->link_count!=previous_count || body->linked!=previous_linked || body->member!=previous_member)
         return fail(error,QA_ERROR_ARGUMENT,"Body link changed during collision link read");
+    if(body->leaves_ready || body->leaves) {
+        qa_world_leaf_membership membership;
+        if(!qa_world_link_membership(world,linked->actor,&linked->absolute_bounds,
+            body->leaf_policy,&membership,error)) return false;
+    }
     qa_spatial_member *member=qa_spatial_prepare(world,linked,&collision,error);
     if(member==NULL) return false;
     body->linked=true; body->link=*linked; body->link_count=linked->link_count;
@@ -432,6 +442,48 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
         && body->link_count==copy.link_count && world->hooks.linked!=NULL) {
         ++world->callback_depth; world->hooks.linked(world->hooks.context,&copy); --world->callback_depth;
     }
+    return true;
+}
+
+static qa_leaf_visit membership_leaf(void *context,const qa_collision_leaf *leaf,qa_error *error)
+{
+    qa_world_body *body=context;
+    if(body->leaf_count==body->leaf_capacity) {
+        size_t capacity=body->leaf_capacity?body->leaf_capacity*2:8;
+        if(capacity<body->leaf_capacity || capacity>SIZE_MAX/sizeof(*body->leaves)) {
+            fail(error,QA_ERROR_MEMORY,"Linked leaf membership extent overflow"); return QA_LEAF_FAILED;
+        }
+        qa_collision_leaf *leaves=realloc(body->leaves,capacity*sizeof(*leaves));
+        if(!leaves) { fail(error,QA_ERROR_MEMORY,"Retaining linked leaf membership"); return QA_LEAF_FAILED; }
+        body->leaves=leaves; body->leaf_capacity=capacity;
+    }
+    body->leaves[body->leaf_count++]=*leaf;
+    return QA_LEAF_CONTINUE;
+}
+
+bool qa_world_link_membership(qa_world *world,qa_actor_id actor,const qa_bounds *explicit_bounds,
+    qa_world_leaf_policy policy,qa_world_leaf_membership *out,qa_error *error)
+{
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(!body || !out || (unsigned)policy>QA_WORLD_LEAVES_Q1_TOUCHED ||
+        (!explicit_bounds && !body->linked))
+        return fail(error,QA_ERROR_ARGUMENT,"Leaf membership requires its actual body and bounds");
+    qa_bounds bounds=explicit_bounds?*explicit_bounds:body->link.absolute_bounds;
+    if(!qa_bounds_valid(bounds) || !world->geometry ||
+        (policy==QA_WORLD_LEAVES_Q1_TOUCHED && qa_collision_geometry_family(world->geometry)!=QA_COLLISION_Q1))
+        return fail(error,QA_ERROR_ARGUMENT,"Leaf membership lost its actual geometry or Source policy");
+    if(!body->leaves_ready || body->leaf_geometry!=world->geometry ||
+        body->leaf_storage!=body->storage_serial || body->leaf_policy!=policy ||
+        memcmp(&body->leaf_bounds,&bounds,sizeof(bounds))) {
+        body->leaves_ready=false; body->leaf_count=0;
+        qa_leaf_list list;
+        if(!qa_collision_walk_leaves(world->geometry,bounds,policy==QA_WORLD_LEAVES_Q1_TOUCHED,
+            membership_leaf,body,&list,error)) return false;
+        body->leaf_bounds=bounds; body->leaf_geometry=world->geometry;
+        body->leaf_storage=body->storage_serial; body->leaf_policy=policy;
+        body->leaf_topnode=list.topnode; body->leaf_last=list.last_leaf; body->leaves_ready=true;
+    }
+    *out=(qa_world_leaf_membership){body->leaves,body->leaf_count,body->leaf_topnode,body->leaf_last};
     return true;
 }
 

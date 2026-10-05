@@ -463,16 +463,17 @@ bool qa_collision_point_leaf(const qa_collision_geometry *geometry, qa_vec3 poin
     return true;
 }
 
-static unsigned box_side(const qa_collision_geometry *geometry, qa_bounds bounds, const qa_collision_plane *plane)
+static unsigned box_side(const qa_collision_geometry *geometry, qa_bounds bounds,
+    const qa_collision_plane *plane, bool q1_touched)
 {
-    if (geometry->family == QA_COLLISION_Q1) {
+    if (geometry->family == QA_COLLISION_Q1 && !q1_touched) {
         qa_vec3 center = qa_vec_scale(qa_vec_add(bounds.mins, bounds.maxs), 0.5f);
         qa_vec3 extents = qa_vec_scale(qa_vec_sub(bounds.maxs, bounds.mins), 0.5f);
         float distance = qa_vec_dot(center, plane->normal) - plane->distance;
         float radius = fabsf(plane->normal.x) * extents.x + fabsf(plane->normal.y) * extents.y + fabsf(plane->normal.z) * extents.z;
         return distance >= radius ? 1u : distance < -radius ? 2u : 3u;
     }
-    if (geometry->family == QA_COLLISION_Q3 && plane->type < 3) {
+    if ((q1_touched || geometry->family == QA_COLLISION_Q3) && plane->type < 3) {
         unsigned axis = (unsigned)plane->type;
         return plane->distance <= qa_vec_component(bounds.mins, axis) ? 1u
             : plane->distance >= qa_vec_component(bounds.maxs, axis) ? 2u : 3u;
@@ -488,13 +489,11 @@ static unsigned box_side(const qa_collision_geometry *geometry, qa_bounds bounds
         | (qa_vec_dot(near_corner, normal) < plane->distance ? 2u : 0u);
 }
 
-bool qa_collision_box_leaves(const qa_collision_geometry *geometry, qa_bounds bounds, uint32_t *leaves,
-                             size_t capacity, qa_leaf_list *out, qa_error *error)
+bool qa_collision_walk_leaves(const qa_collision_geometry *geometry, qa_bounds bounds, bool q1_touched,
+    qa_leaf_visit_fn visit, void *context, qa_leaf_list *out, qa_error *error)
 {
-    if (geometry == NULL || out == NULL || (capacity != 0 && leaves == NULL) || !qa_bounds_valid(bounds))
-        return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid box-leaf query");
     geometry_scratch *scratch = geometry->scratch;
-    if (geometry->family == QA_COLLISION_Q1 && ++scratch->stamp == 0) {
+    if (!q1_touched && geometry->family == QA_COLLISION_Q1 && ++scratch->stamp == 0) {
         memset(scratch->leaf_stamps, 0, geometry->leaf_count * sizeof(*scratch->leaf_stamps));
         scratch->stamp = 1;
     }
@@ -505,18 +504,22 @@ bool qa_collision_box_leaves(const qa_collision_geometry *geometry, qa_bounds bo
         int32_t child = scratch->nodes[--count];
         if (child < 0) {
             size_t leaf = leaf_index(child);
-            if (geometry->family == QA_COLLISION_Q1) {
+            if (q1_touched) {
+                if (geometry->leaves[leaf].contents == -2) continue;
+            } else if (geometry->family == QA_COLLISION_Q1) {
                 if (leaf == 0 || scratch->leaf_stamps[leaf] == scratch->stamp) continue;
                 scratch->leaf_stamps[leaf] = scratch->stamp;
             }
             if (geometry->family == QA_COLLISION_Q3 && geometry->leaves[leaf].cluster != -1)
                 result.last_leaf = (uint32_t)leaf;
-            if (result.count < capacity) leaves[result.count++] = (uint32_t)leaf;
-            else result.overflow = true;
+            ++result.count;
+            qa_leaf_visit next = visit(context, &geometry->leaves[leaf], error);
+            if (next == QA_LEAF_FAILED) return false;
+            if (next == QA_LEAF_STOP) break;
             continue;
         }
         const qa_collision_node *node = &geometry->nodes[(size_t)child];
-        unsigned side = box_side(geometry, bounds, &geometry->planes[node->plane]);
+        unsigned side = box_side(geometry, bounds, &geometry->planes[node->plane], q1_touched);
         if ((side == 3 || (geometry->family == QA_COLLISION_Q3 && side == 0)) && result.topnode == -1) result.topnode = child;
         if (geometry->family == QA_COLLISION_Q3) {
             if (side != 1) scratch->nodes[count++] = node->children[1];
@@ -527,6 +530,30 @@ bool qa_collision_box_leaves(const qa_collision_geometry *geometry, qa_bounds bo
         }
     }
     *out = result;
+    return true;
+}
+
+typedef struct leaf_output { uint32_t *leaves; size_t capacity, count; } leaf_output;
+static qa_leaf_visit output_leaf(void *context, const qa_collision_leaf *leaf, qa_error *error)
+{
+    leaf_output *out = context;
+    (void)error;
+    if (out->count < out->capacity) out->leaves[out->count] = leaf->leaf;
+    ++out->count;
+    return QA_LEAF_CONTINUE;
+}
+
+bool qa_collision_box_leaves(const qa_collision_geometry *geometry, qa_bounds bounds, uint32_t *leaves,
+                             size_t capacity, qa_leaf_list *out, qa_error *error)
+{
+    if (!geometry || !out || (capacity && !leaves) || !qa_bounds_valid(bounds))
+        return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid box-leaf query");
+    leaf_output output = {leaves, capacity, 0};
+    qa_leaf_list value;
+    if (!qa_collision_walk_leaves(geometry, bounds, false, output_leaf, &output, &value, error)) return false;
+    value.count = output.count < capacity ? output.count : capacity;
+    value.overflow = output.count > capacity;
+    *out = value;
     return true;
 }
 
@@ -600,43 +627,28 @@ bool qa_collision_q1_fat_pvs(const qa_collision_geometry *geometry, qa_vec3 eye,
     return true;
 }
 
+typedef struct q1_visibility_leaves { qa_bytes pvs; size_t touched; bool visible; } q1_visibility_leaves;
+static qa_leaf_visit q1_visible_leaf(void *context, const qa_collision_leaf *leaf, qa_error *error)
+{
+    q1_visibility_leaves *owner = context;
+    (void)error;
+    if (leaf->leaf && bit_test(owner->pvs, leaf->leaf - 1)) {
+        owner->visible = true; return QA_LEAF_STOP;
+    }
+    return ++owner->touched == 16 ? QA_LEAF_STOP : QA_LEAF_CONTINUE;
+}
+
 bool qa_collision_q1_bounds_visible(const qa_collision_geometry *geometry, qa_bytes pvs,
     qa_bounds bounds, bool *out, qa_error *error)
 {
     if (!geometry || geometry->family != QA_COLLISION_Q1 || !out ||
         !qa_bounds_valid(bounds) || pvs.size != geometry->visibility_bytes || (pvs.size && !pvs.data))
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Q1 entity visibility requires its actual fat-PVS and source bounds");
+    q1_visibility_leaves visible = {.pvs = pvs};
+    qa_leaf_list list;
     *out = false;
-    size_t count = 1, touched = 0; geometry->scratch->nodes[0] = geometry->root;
-    while (count) {
-        int32_t child = geometry->scratch->nodes[--count];
-        if (child < 0) {
-            size_t leaf = leaf_index(child);
-            if (geometry->leaves[leaf].contents != -2) {
-                if (leaf && bit_test(pvs, leaf - 1)) { *out = true; return true; }
-                if (++touched == 16) return true;
-            }
-            continue;
-        }
-        const qa_collision_node *node = &geometry->nodes[(size_t)child];
-        const qa_collision_plane *plane = &geometry->planes[node->plane];
-        unsigned side;
-        if (plane->type < 3) {
-            unsigned axis = (unsigned)plane->type;
-            side = plane->distance <= qa_vec_component(bounds.mins, axis) ? 1u :
-                plane->distance >= qa_vec_component(bounds.maxs, axis) ? 2u : 3u;
-        } else {
-            qa_vec3 n = plane->normal;
-            qa_vec3 far = qa_v3(n.x < 0 ? bounds.mins.x : bounds.maxs.x,
-                n.y < 0 ? bounds.mins.y : bounds.maxs.y, n.z < 0 ? bounds.mins.z : bounds.maxs.z);
-            qa_vec3 near = qa_v3(n.x < 0 ? bounds.maxs.x : bounds.mins.x,
-                n.y < 0 ? bounds.maxs.y : bounds.mins.y, n.z < 0 ? bounds.maxs.z : bounds.mins.z);
-            side = (qa_vec_dot(far, n) >= plane->distance ? 1u : 0u) |
-                (qa_vec_dot(near, n) < plane->distance ? 2u : 0u);
-        }
-        if (side & 2u) geometry->scratch->nodes[count++] = node->children[1];
-        if (side & 1u) geometry->scratch->nodes[count++] = node->children[0];
-    }
+    if (!qa_collision_walk_leaves(geometry, bounds, true, q1_visible_leaf, &visible, &list, error)) return false;
+    *out = visible.visible;
     return true;
 }
 

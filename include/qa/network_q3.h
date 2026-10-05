@@ -2,6 +2,7 @@
 #define QA_NETWORK_Q3_H
 #include "qa/network.h"
 #include "qa/game_q3_product.h"
+#include "qa/world.h"
 
 #define QA_Q3_PROTOCOL 68
 #define QA_Q3_MESSAGE_BYTES 16384
@@ -532,6 +533,10 @@ typedef struct qa_q3_visibility_entity {
     const int32_t *clusters;
     size_t cluster_count;
 } qa_q3_visibility_entity;
+/* Original Source link projection: native ordered 128 leaves/16 clusters,
+ * foreign sorted 16 clusters, and the original area/overflow ordering. */
+bool qa_q3_leaf_visibility(qa_collision_geometry *, const qa_world_leaf_membership *,
+    qa_q3_visibility_entity *, int32_t clusters[16], qa_error *);
 typedef struct qa_q3_visibility_world {
     void *context;
     bool (*point)(void *, const float origin[3], int32_t *area, int32_t *cluster, qa_error *);
