@@ -498,6 +498,7 @@ bool application_native_q2_inventory_admit(struct application_native_q2 *engine,
     application_native_q2_client *client = &engine->clients[slot];
     if (engine->primary_inventory && !resolve(engine, error)) return false;
     if (application_provider_for(engine->provider->application, client->actor, QA_ROLE_INVENTORY, NULL) != engine->provider) return true;
+    if (!engine->primary_inventory && application_native_q2_whole_source(engine, client->actor)) return true;
     if (!engine->primary_inventory) return application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q2 primary inventory requires its artifact-qualified world profile");
     if (!resolve(engine, error)) return false;
     client->inventory_engine = engine; client->inventory_slot = slot;

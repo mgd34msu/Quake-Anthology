@@ -5,6 +5,7 @@
 #include "guest_q3_combat.h"
 #include "guest_q3_weapons_services.h"
 #include "guest_native_q2_private.h"
+#include "guest_native_q2_input.h"
 #include "guest_qc_profile.h"
 #include "guest_qc_combat.h"
 #include "guest_qc_item_weapons.h"
@@ -3010,6 +3011,26 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         if (map_source->kind == APPLICATION_PROVIDER_Q2 &&
             !qa_q2_player_start_items(map_source->state.q2, actor, error)) return false;
         if (!qa_world_body_read(application->world, actor, &body, error)) return false;
+        if (map_source->kind == APPLICATION_PROVIDER_NATIVE &&
+            application_native_q2_whole_source(map_source->state.native.q2_engine, actor) &&
+            application_native_q2_source_client(map_source, actor)) {
+            qa_q2_wire_movement physical;
+            if (!application_native_q2_input_read(map_source, actor, &physical, error)) return false;
+            if (actor.slot >= application->control_capacity)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 spawn has no admitted control");
+            application_control_record *control = application->controls + actor.slot;
+            if (!control->active || control->retired || !qa_actor_id_equal(control->actor, actor) ||
+                control->state.kind != physical.state.kind)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 spawn changed its Source control");
+            control->state = physical.state;
+            control->bounds = physical.bounds;
+            control->ground = physical.ground;
+            control->view_angles = physical.view_angles;
+            control->view_offset = physical.view_offset;
+            control->view_height = physical.view_height;
+            return phase == PLAYER_ADMISSION_BEGIN || record->source_begin_pending || record->deferred ||
+                admit_components(application, actor, error);
+        }
         body.bounds = qa_movement_input_default(map_source->kind == APPLICATION_PROVIDER_Q1
             ? character->component.clock.kind == QA_CLOCK_Q3 ? QA_MOVEMENT_Q3 : QA_MOVEMENT_NETQUAKE
             : movement_kind, actor).standing.bounds;

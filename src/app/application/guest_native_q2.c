@@ -19,6 +19,48 @@
 #include "native_q2_inventory_rows.h"
 
 static bool load_host(struct application_native_q2 *, qa_error *);
+
+static const uint64_t whole_source_roles = QA_ROLE_BIT(QA_ROLE_ENTITIES) |
+    QA_ROLE_BIT(QA_ROLE_MOVEMENT) | QA_ROLE_BIT(QA_ROLE_CHARACTER) |
+    QA_ROLE_BIT(QA_ROLE_ARSENAL) |
+    QA_ROLE_BIT(QA_ROLE_COMBAT) | QA_ROLE_BIT(QA_ROLE_INVENTORY) |
+    QA_ROLE_BIT(QA_ROLE_PICKUPS) | QA_ROLE_BIT(QA_ROLE_MONSTERS);
+
+bool application_native_q2_whole_source(const struct application_native_q2 *engine,
+    qa_actor_id actor)
+{
+    application_provider *provider = engine ? engine->provider : NULL;
+    qa_application *app = provider ? provider->application : NULL;
+    if (!app || engine->declaration || engine->profile == QA_NATIVE_Q2_CGAME_API2023 ||
+        provider->state.native.q2_engine != engine ||
+        application_world_provider(app, QA_ROLE_ENTITIES, "") != provider) return false;
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), actor);
+    if (!record || record->owner != provider->owner) return false;
+    for (unsigned role = 0; role < QA_ROLE_COUNT; ++role)
+        if ((whole_source_roles & QA_ROLE_BIT(role)) &&
+            application_provider_for(app, actor, (qa_launch_role)role, "") != provider) return false;
+    return true;
+}
+
+static bool whole_source_choices(const struct application_native_q2 *engine,
+    const qa_launch_choices *choices, qa_error *error)
+{
+    const char *instance = engine->provider->launch->selection.instance;
+    const qa_launch_binding *entities = qa_launch_binding_for(choices,
+        (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "");
+    if (!entities || strcmp(entities->instance, instance))
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Original Q2 without a composition declaration must own the whole GAME");
+    for (size_t i = 0; i < choices->binding_count; ++i) {
+        const qa_launch_binding *binding = choices->bindings + i;
+        if ((whole_source_roles & QA_ROLE_BIT(binding->role)) &&
+            strcmp(binding->instance, instance))
+            return application_fail(error, QA_ERROR_UNSUPPORTED,
+                "Independent Q2 gameplay providers require a mod-supplied composition declaration");
+    }
+    return true;
+}
+
 static bool command_actor(void *state,qa_session *session,qa_actor_id actor)
 {
     struct application_native_q2 *engine=state;
@@ -267,6 +309,7 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     if (provider->launch->declaration && !qa_native_declaration_load(
             qa_resource_bytes(provider->launch->declaration), provider->launch->selection.artifact,
             provider->state.native.module, &engine->declaration, error)) return false;
+    if (!cgame && !engine->declaration && !whole_source_choices(engine, choices, error)) return false;
     if (!application_native_q2_callbacks_prepare(engine, error) ||
         !application_native_q2_declared_input_prepare(engine,error)) return false;
     if (!application_native_q2_publication_create(engine, &engine->publication, error)) return false;

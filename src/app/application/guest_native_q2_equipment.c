@@ -54,7 +54,8 @@ bool application_q2_guest_equipment_read(application_provider *provider, qa_acto
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 equipment source binding changed its full actor");
     qa_application_native_q2_equipment_view view = {.actor = actor, .provider = provider->owner,
         .profile = engine->profile, .source_slot = slot};
-    if (!application_native_q2_attack_weapon_read(engine, slot, actor, &view.item, error)) return false;
+    if (!application_native_q2_whole_source(engine, actor) &&
+        !application_native_q2_attack_weapon_read(engine, slot, actor, &view.item, error)) return false;
     qa_buffer player = {0};
     if (!qa_native_host_q2_player_state(provider->state.native.host, slot, &player, error)) return false;
     bool rerelease = engine->profile == QA_NATIVE_Q2_GAME_API2023;

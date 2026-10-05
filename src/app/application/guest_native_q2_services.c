@@ -413,15 +413,20 @@ static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_addre
     if (!qa_actors_get(qa_session_actors(app->session), actor) ||
         (!raw && application_provider_for(app, actor, QA_ROLE_MOVEMENT, NULL) != engine->provider))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q2 Pmove cannot replace another selected movement owner");
-    qa_body_state body; qa_combat_state combat;
-    if (!qa_world_body_read(engine->world, actor, &body, error) ||
-        !qa_combat_read_traits(app->combat, actor, &combat, error)) return false;
+    qa_body_state body;
+    if (!qa_world_body_read(engine->world, actor, &body, error)) return false;
+    /* Whole GAME already chose its public pm_type. Private health is only
+     * needed when another gameplay provider supplies movement overrides. */
+    if (!application_native_q2_whole_source(engine, actor)) {
+        qa_combat_state combat;
+        if (!qa_combat_read_traits(app->combat, actor, &combat, error)) return false;
+        input->environment.health = combat.health;
+    }
     input->actor = actor;
     input->command.sequence = engine->current_command_sequence;
     input->time_ns = raw ? raw->time_ns : stage ? application_control_time(&stage->source)
         : application_control_time(control_source);
     input->elapsed_ns = (uint64_t)input->command.milliseconds * UINT64_C(1000000);
-    input->environment.health = combat.health;
     const qa_cvar_view *air = qa_cvars_find(engine->cvars, "sv_airaccelerate");
     if (!air || !isfinite(air->number))
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 Pmove lost its physical Source air acceleration");

@@ -642,6 +642,7 @@ bool application_native_q2_combat_admit(struct application_native_q2 *engine, ui
 {
     struct application_native_q2_combat *p = engine->source_combat;
     if (application_provider_for(engine->provider->application, actor, QA_ROLE_COMBAT, NULL) != engine->provider) return true;
+    if (!p && application_native_q2_whole_source(engine, actor)) return true;
     if (!p || !p->active) return application_fail(error, QA_ERROR_UNSUPPORTED, "Native primary combat has no active original producer");
     combat_record *record = record_for(p, actor);
     if (record && record->bound && !qa_combat_primary_current(shared(p), actor, record->serial, record))

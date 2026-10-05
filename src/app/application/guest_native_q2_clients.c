@@ -187,7 +187,7 @@ static bool physical_input_read(application_provider *provider, qa_actor_id acto
     if(!qa_vec_finite(qa_movement_origin(&state))||!qa_vec_finite(qa_movement_velocity(&state))||
         !qa_vec_finite(out->view_angles)||!qa_vec_finite(out->view_offset))
         return application_fail(error,QA_ERROR_FORMAT,"Native Q2 physical input contains nonfinite SDK motion");
-    if(engine->callbacks) return true;
+    if(engine->callbacks || application_native_q2_whole_source(engine, actor)) return true;
     if(!application_native_q2_attack_input_fields(engine,slot,actor,out,error)) return false;
     /* The profile publishes Source waterlevel; watertype is a genuine current
      * shared-world sample in that Source collision dialect. */
