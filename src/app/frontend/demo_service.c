@@ -41,7 +41,8 @@ struct frontend_demo_service {
     frontend_demo_playback_source playback;
     qa_command_context playback_context;
     char *playback_path, *playback_script;
-    bool timedemo;
+    bool timedemo, playback_attract, completion_pending;
+    frontend_demo_end completion_end;
 };
 
 static bool fail(qa_error *error, qa_status status, const char *message) {
@@ -428,6 +429,7 @@ static bool playback_close(frontend_demo_service *s,qa_error *error) {
     s->reader=NULL;
     free(s->playback_path);s->playback_path=NULL;
     free(s->playback_script);s->playback_script=NULL;
+    s->playback_attract=false;s->completion_pending=false;
     return true;
 }
 static bool record_failed(frontend_demo_service *,demo_recording **,qa_error *);
@@ -598,7 +600,7 @@ static bool play_begin(frontend_demo_service *s,const frontend_demo_request *req
         s->playback_script=copy_text(request->source.script,error);
         if(request->source.script&&!s->playback_script)okay=false;
         s->playback_context=request->source;s->playback_context.script=s->playback_script;
-        s->playback_path=path;path=NULL;s->timedemo=request->timedemo;
+        s->playback_path=path;path=NULL;s->timedemo=request->timedemo;s->playback_attract=request->attract;
     }
     if(okay)okay=reader_create(&bytes,format,&s->reader,error);
     if(okay)okay=s->options.playback_source(s->options.context,&request->source,format,protocol,
@@ -639,7 +641,14 @@ static bool execute_request(frontend_demo_service *s,const frontend_demo_request
     bool okay=s->options.current(s->options.context,&request->source,error);
     if(okay)switch(request->action) {
     case FRONTEND_DEMO_PLAY:okay=play_begin(s,request,error);break;
-    case FRONTEND_DEMO_STOP_PLAY:okay=playback_close(s,error);break;
+    case FRONTEND_DEMO_STOP_PLAY: {
+        bool active=s->playback.owner!=NULL,attract=s->playback_attract;
+        frontend_demo_format format=s->reader?s->reader->format:request->fallback;
+        okay=playback_close(s,error);
+        if(okay&&active&&s->options.completed)
+            okay=s->options.completed(s->options.context,&request->source,format,FRONTEND_DEMO_CLOSED,attract,error);
+        break;
+    }
     case FRONTEND_DEMO_RECORD:case FRONTEND_DEMO_RERECORD:
     case FRONTEND_DEMO_SERVER_RECORD:case FRONTEND_DEMO_MVD_RECORD:okay=record_begin(s,request,error);break;
     case FRONTEND_DEMO_STOP_RECORD:okay=record_finish(s,&s->recording,false,error);break;
@@ -695,17 +704,24 @@ bool frontend_demo_advance(frontend_demo_service *s,uint64_t elapsed,uint64_t fr
     s->busy=true;
     bool okay=sources_returned(s,error);
     if(okay&&s->playback.owner) {
-        if(!s->playback.current(s->playback.owner))okay=fail(error,QA_ERROR_ARGUMENT,"Demo lost its actual CLIENT receiver");
-        frontend_demo_end end=FRONTEND_DEMO_RUNNING;
-        if(okay)okay=s->playback.advance(s->playback.owner,s->reader,elapsed,frame,s->timedemo,&end,error);
+        frontend_demo_end end=s->completion_pending?s->completion_end:FRONTEND_DEMO_RUNNING;
+        if(!s->completion_pending) {
+            if(!s->playback.current(s->playback.owner))okay=fail(error,QA_ERROR_ARGUMENT,"Demo lost its actual CLIENT receiver");
+            if(okay)okay=s->playback.advance(s->playback.owner,s->reader,elapsed,frame,s->timedemo,&end,error);
+        }
         if(okay&&end!=FRONTEND_DEMO_RUNNING) {
             qa_command_context source=s->playback_context;
             char *script=copy_text(source.script,error);
             if(source.script&&!script)okay=false;
             source.script=script;
             frontend_demo_format format=s->reader->format;
+            bool attract=s->playback_attract;
+            if(okay&&!s->completion_pending) {
+                if(s->options.completing)okay=s->options.completing(s->options.context,&source,format,end,attract,error);
+                if(okay){s->completion_pending=true;s->completion_end=end;}
+            }
             if(okay)okay=playback_close(s,error);
-            if(okay&&s->options.completed)okay=s->options.completed(s->options.context,&source,format,end,error);
+            if(okay&&s->options.completed)okay=s->options.completed(s->options.context,&source,format,end,attract,error);
             free(script);
         }
     }
@@ -730,6 +746,10 @@ bool frontend_demo_service_stop(frontend_demo_service *s,qa_error *error) {
     s->busy=true;
     bool okay=record_close(&s->preparing,false,error)&&record_close(&s->recording,true,error)&&
         record_close(&s->server,true,error)&&playback_close(s,error);
+    if(okay)for(size_t kind=0;kind<DEMO_PENDING_COUNT;++kind) {
+        free(s->pending_name[kind]);free(s->pending_script[kind]);
+        s->pending_name[kind]=s->pending_script[kind]=NULL;s->queued[kind]=false;
+    }
     s->busy=false;return okay;
 }
 bool frontend_demo_service_destroy(frontend_demo_service **owner,qa_error *error) {
@@ -740,4 +760,14 @@ bool frontend_demo_service_destroy(frontend_demo_service **owner,qa_error *error
         free(s->pending_name[kind]);free(s->pending_script[kind]);
     }
     free(s);*owner=NULL;return true;
+}
+
+bool frontend_demo_playback_attract(const frontend_demo_service *s) {
+    return s&&s->playback_attract;
+}
+void frontend_demo_cancel_attract(frontend_demo_service *s) {
+    if(!s||!s->queued[DEMO_PENDING_PLAY]||!s->pending[DEMO_PENDING_PLAY].attract)return;
+    free(s->pending_name[DEMO_PENDING_PLAY]);free(s->pending_script[DEMO_PENDING_PLAY]);
+    s->pending_name[DEMO_PENDING_PLAY]=s->pending_script[DEMO_PENDING_PLAY]=NULL;
+    s->queued[DEMO_PENDING_PLAY]=false;
 }

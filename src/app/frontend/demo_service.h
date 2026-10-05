@@ -80,7 +80,7 @@ typedef struct frontend_demo_request {
     qa_command_context source;
     const char *name;
     frontend_demo_format fallback;
-    bool timedemo;
+    bool timedemo, attract;
 } frontend_demo_request;
 typedef struct frontend_demo_service_options {
     void *context;
@@ -96,8 +96,12 @@ typedef struct frontend_demo_service_options {
         uint32_t recorded_protocol, frontend_demo_reader *,
         frontend_demo_playback_source *, qa_error *);
     void (*print)(void *, const char *);
+    /* Read completion commands while their genuine CLIENT still exists. The
+     * returned notification follows its checked receiver/file release. */
+    bool (*completing)(void *, const qa_command_context *, frontend_demo_format,
+        frontend_demo_end, bool attract, qa_error *);
     bool (*completed)(void *, const qa_command_context *, frontend_demo_format,
-        frontend_demo_end, qa_error *);
+        frontend_demo_end, bool attract, qa_error *);
 } frontend_demo_service_options;
 typedef struct frontend_demo_service frontend_demo_service;
 bool frontend_demo_service_create(const frontend_demo_service_options *, frontend_demo_service **, qa_error *);
@@ -111,6 +115,9 @@ bool frontend_demo_sources_returned(frontend_demo_service *,qa_error *);
 bool frontend_demo_service_idle(const frontend_demo_service *);
 bool frontend_demo_service_pending(const frontend_demo_service *);
 bool frontend_demo_service_active(const frontend_demo_service *);
+bool frontend_demo_playback_attract(const frontend_demo_service *);
+/* Cancels only the real queued attract request; manual Library requests stay. */
+void frontend_demo_cancel_attract(frontend_demo_service *);
 const char *frontend_demo_recording_path(const frontend_demo_service *);
 const char *frontend_demo_server_recording_path(const frontend_demo_service *);
 const char *frontend_demo_playback_path(const frontend_demo_service *);

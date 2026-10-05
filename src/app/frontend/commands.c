@@ -103,6 +103,7 @@ bool frontend_commands_source(qa_frontend *f,const qa_application_startup_source
         bool queued=qa_application_queue_travel(f->application,&(qa_application_travel_request){
             .provider=source->scope.provider,.cause=call->context.actor,.expression=destination,
             .new_unit=map,.carry_players=!map && !stopping && !parked},error);
+        if (queued) frontend_demo_dispatch_manual_game(f->demos);
         if (queued && stopping) f->server_stop_follow_map=true;
         return queued;
     }

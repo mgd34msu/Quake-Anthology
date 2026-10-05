@@ -259,6 +259,7 @@ bool frontend_startup_launch_drain(qa_frontend *f, qa_error *error)
         frontend_seats_resize(f, local, &complete, &failure);
     if (ok && !complete) return true;
     if (!ok && f->input_settings) { if (error) *error = failure; return false; }
+    if (ok) frontend_demo_dispatch_manual_game(f->demos);
     if (ok) ok = frontend_demo_dispatch_stop(f->demos, &failure) && frontend_network_destroy(f, &failure);
     if (ok) ok = frontend_input_profile_bind_product(f,qa_launch_draft_catalog(request->draft),
         selected->world.preset,&failure);

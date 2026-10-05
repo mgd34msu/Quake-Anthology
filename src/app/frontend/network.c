@@ -8474,8 +8474,10 @@ bool frontend_network_menu_connect(qa_frontend *f, const frontend_network_menu_v
     if(!actual.available || !connection->available ||
         !qa_net_address_equal(&actual.endpoint,&connection->endpoint,true))
         return frontend_fail(error,QA_ERROR_ARGUMENT,actual.reason[0]?actual.reason:"Connection endpoint changed during preparation");
-    return menu_preferences_direct(f->network,actual.protocol,actual.remote,&actual.endpoint,error) &&
+    bool queued = menu_preferences_direct(f->network,actual.protocol,actual.remote,&actual.endpoint,error) &&
         menu_admitted(f,view,error) && client_attempt_enqueue(f->network,actual.remote,false,error) && menu_admitted(f,view,error);
+    if (queued) frontend_demo_dispatch_manual_game(f->demos);
+    return queued;
 }
 bool frontend_network_menu_download_begin(qa_frontend *f, const frontend_network_menu_view *view,
     const qa_download_request *request, const char *url, qa_download_id *id, qa_error *error)
