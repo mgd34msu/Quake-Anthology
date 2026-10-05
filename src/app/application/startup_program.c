@@ -1,5 +1,6 @@
 #include "startup_program.h"
 #include "guest_q3_factory.h"
+#include "map_players_private.h"
 #include "q3_product.h"
 #include "qa/application_players.h"
 #include "qa/console_program.h"
@@ -375,7 +376,12 @@ bool application_startup_program_adopt(application_startup_program **slot, qa_er
     if (!qa_console_program_adopt(owner->program, error)) return false;
     application_startup_program_queue_publish(owner->application, &ordinal_source, &owner->target,
         owner->previous_generation);
-    *slot = NULL; dispose(owner); return true;
+    qa_application *application=owner->application;
+    qa_console *console=owner->target.console;
+    bool q2=owner->target.scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
+        owner->target.scope.kind==QA_APPLICATION_CONSOLE_NATIVE_Q2;
+    *slot = NULL; dispose(owner);
+    return !q2 || application_players_q2_commands_resume(application,console,error);
 }
 bool application_startup_program_abort(application_startup_program **slot, qa_error *error)
 {

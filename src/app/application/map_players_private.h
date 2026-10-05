@@ -122,5 +122,6 @@ bool application_players_native_q1_spawn_pose(qa_application *, application_prov
 bool application_players_selected_character_respawn(void *, qa_actor_id, qa_error *);
 bool application_players_source_spawned(void *, qa_actor_id, qa_error *);
 bool application_players_declared_clients_admit(qa_application *, qa_error *);
+bool application_players_q2_commands_resume(qa_application *, qa_console *, qa_error *);
 
 #endif

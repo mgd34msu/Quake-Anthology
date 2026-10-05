@@ -35,6 +35,7 @@
 #include "bot_world.h"
 #include "supplies.h"
 #include "character_selection.h"
+#include "startup_flow.h"
 #include "network_unified.h"
 #include "qa/game_q3_client.h"
 #include "qa/game_q3_clients.h"
@@ -4994,6 +4995,32 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
     return true;
 }
 
+bool application_players_q2_commands_resume(qa_application *application, qa_console *console,
+                                            qa_error *error)
+{
+    struct application_player_roster *roster=application->players;
+    application_provider *provider=roster?roster->map_provider:NULL;
+    if (!provider || (provider->kind!=APPLICATION_PROVIDER_Q2 &&
+        !(provider->kind==APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine))) return true;
+    bool begun=false;
+    for (size_t i=0;i<roster->count;++i) {
+        const application_player_record *record=roster->records+i;
+        if (!record->retiring && !record->deferred && !record->source_begin_pending &&
+            qa_actors_get(qa_session_actors(application->session),record->actor)) { begun=true; break; }
+    }
+    if (!begun) return true;
+    for (size_t i=0;;++i) {
+        qa_application_startup_source source;
+        bool present;
+        if (!application_provider_startup_source_at(provider,i,&source,&present,error)) return false;
+        if (!present) break;
+        if ((source.scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
+             source.scope.kind==QA_APPLICATION_CONSOLE_NATIVE_Q2) &&
+            (!console || console==source.console) && !qa_console_resume(source.console,error)) return false;
+    }
+    return true;
+}
+
 bool qa_application_remote_player_begin(qa_application *application, qa_net_client_id client,
                                          qa_net_seat_id seat, qa_error *error)
 {
@@ -5085,5 +5112,5 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
     if (!admit_components(application, actor, error)) {
         application_fault(application, error); return false;
     }
-    return true;
+    return application_players_q2_commands_resume(application,NULL,error);
 }
