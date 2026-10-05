@@ -1,7 +1,6 @@
 /* Compiled Unified CLIENT cg_consolecmds, id Software 1999-2005, GPL-2.0-or-later. */
 #include "unified_q3_commands.h"
 #include "internal.h"
-#include "qa/source_save.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/text.h"
 #include <limits.h>
@@ -434,42 +433,4 @@ bool frontend_unified_q3_commands_destroy(frontend_unified_q3_commands **owned,q
         --o->installed;
     }
     free(o); *owned=NULL; return true;
-}
-static bool fields(qa_source_save_io *io,frontend_unified_q3_commands *o)
-{
-    uint8_t magic[4]={'Q','U','C','C'}; if(!(qa_source_save_bytes(io,magic,sizeof(magic)) && !memcmp(magic,"QUCC",sizeof(magic)) &&
-        q3n_compiled_source_fields(io,frontend_unified_q3_client_source(o->options.client)) &&
-        qa_source_save_bool(io,&o->registered) && qa_source_save_bool(io,&o->closed) && (!o->closed || o->registered) &&
-        qa_source_save_count(io,&o->installed,command_count(o->product))))return false;
-    if(!qa_source_save_bool(io,&o->retiring) || !qa_source_save_bool(io,&o->resetting))return false;
-    return (o->retiring || o->resetting)?(o->registered || o->installed<command_count(o->product)):
-        o->registered==(o->installed==command_count(o->product));
-}
-bool frontend_unified_q3_commands_checkpoint(const frontend_unified_q3_commands *o,qa_buffer *out,qa_error *e)
-{
-    if(!o || o->busy || !out || out->data || out->size || !qa_console_idle(o->console) ||
-        !current(o,true,NULL,e) || !bindings_current(o))return false;
-    frontend_unified_q3_commands copy=*o; qa_source_save_io io={0};
-    bool okay=qa_source_save_writer(&io,NULL,e) && fields(&io,&copy) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); return okay;
-}
-bool frontend_unified_q3_commands_restore(frontend_unified_q3_commands *o,qa_bytes bytes,qa_error *e)
-{
-    if(!o || o->busy || !o->options.frontend->source_restoring || !qa_console_idle(o->console) || !current(o,true,NULL,e))return false;
-    frontend_unified_q3_commands candidate=*o; qa_source_save_io io={0};
-    bool okay=qa_source_save_reader(&io,NULL,bytes,e) && fields(&io,&candidate) && qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io);
-    if(!okay)return fail(e,QA_ERROR_FORMAT,"Invalid compiled Unified console continuation");
-    if(o->registered || o->closed || o->retiring || o->resetting || o->installed>candidate.installed)
-        return o->registered==candidate.registered && o->closed==candidate.closed &&
-            o->retiring==candidate.retiring && o->resetting==candidate.resetting &&
-            o->installed==candidate.installed && bindings_current(o) ? true :
-            fail(e,QA_ERROR_FORMAT,"Unified console import contradicts its actual registration prefix");
-    o->busy=true; okay=bind(o,candidate.installed,e);
-    if(okay) {
-        o->registered=candidate.registered; o->closed=candidate.closed;
-        o->retiring=candidate.retiring; o->resetting=candidate.resetting;
-        okay=bindings_current(o) && current(o,true,NULL,e);
-    }
-    o->busy=false; return okay;
 }

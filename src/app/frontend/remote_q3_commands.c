@@ -1,7 +1,6 @@
 /* Received CLIENT cg_consolecmds, id Software 1999-2005, GPL-2.0-or-later. */
 #include "remote_q3_commands.h"
 #include "remote_q3_runtime.h"
-#include "qa/source_save.h"
 #include "qa/text.h"
 #include <limits.h>
 #include <stdio.h>
@@ -416,44 +415,4 @@ bool frontend_remote_q3_commands_destroy(frontend_remote_q3_commands **owned,qa_
     while(*link && *link!=o)link=&(*link)->next;
     if(!*link)return fail(e,QA_ERROR_ARGUMENT,"Remote console lost its retained namespace membership");
     *link=o->next; if(!d->owners)free(d); free(o); *owned=NULL; return true;
-}
-static bool fields(qa_source_save_io *io,frontend_remote_q3_commands *o,size_t *installed)
-{
-    uint8_t magic[4]={'Q','R','C','C'}; uint32_t product=o->dispatch->product;
-    uint64_t identity=o->identity; uint32_t seat=o->seat;
-    return qa_source_save_bytes(io,magic,sizeof(magic)) && !memcmp(magic,"QRCC",sizeof(magic)) &&
-        qa_source_save_u32(io,&product) && product==(uint32_t)o->dispatch->product &&
-        qa_source_save_u64(io,&identity) && identity==o->identity && qa_source_save_u32(io,&seat) && seat==o->seat &&
-        qa_source_save_bool(io,&o->registered) && qa_source_save_bool(io,&o->closed) && (!o->closed || o->registered) &&
-        qa_source_save_count(io,installed,command_count(o->dispatch->product)) &&
-        qa_source_save_count(io,&o->contributed,*installed) &&
-        o->registered==(o->contributed==command_count(o->dispatch->product)) &&
-        (!o->registered || *installed==o->contributed);
-}
-bool frontend_remote_q3_commands_checkpoint(const frontend_remote_q3_commands *o,qa_buffer *out,qa_error *e)
-{
-    if(!o || o->busy || o->retiring || !out || out->data || out->size ||
-       !qa_console_idle(o->dispatch->console) || !current(o,NULL,e))return false;
-    frontend_remote_q3_commands copy=*o; qa_source_save_io io={0}; size_t installed=o->dispatch->installed;
-    bool okay=qa_source_save_writer(&io,NULL,e) && fields(&io,&copy,&installed) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); return okay;
-}
-bool frontend_remote_q3_commands_restore(frontend_remote_q3_commands *o,qa_bytes bytes,qa_error *e)
-{
-    if(!o || o->busy || o->retiring || !qa_console_idle(o->dispatch->console) || !current(o,NULL,e))return false;
-    qa_frontend *f=frontend_remote_q3_frontend(o->row);
-    if(!f || !f->source_restoring)return fail(e,QA_ERROR_ARGUMENT,"Remote console import requires its actual restoring frontend");
-    frontend_remote_q3_commands candidate=*o; qa_source_save_io io={0}; size_t installed=o->dispatch->installed;
-    bool okay=qa_source_save_reader(&io,NULL,bytes,e) && fields(&io,&candidate,&installed) && qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io);
-    if(!okay)return fail(e,QA_ERROR_FORMAT,"Invalid remote CLIENT console continuation");
-    if(o->registered || o->closed)
-        return o->contributed==candidate.contributed && o->dispatch->installed==installed &&
-            o->registered==candidate.registered && o->closed==candidate.closed ? true :
-            fail(e,QA_ERROR_FORMAT,"Remote console continuation differs from its actual registration prefix");
-    if(o->contributed>candidate.contributed || o->dispatch->installed>installed)
-        return fail(e,QA_ERROR_FORMAT,"Remote console import contradicts its actual retained namespace prefix");
-    o->busy=true; okay=bind(o,installed,candidate.contributed,e);
-    if(okay) { o->registered=candidate.registered; o->closed=candidate.closed; okay=current(o,NULL,e); }
-    o->busy=false; return okay;
 }

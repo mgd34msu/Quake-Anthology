@@ -19,8 +19,5 @@ qa_command_result frontend_remote_q3_commands_execute(frontend_remote_q3_command
     const qa_command_invocation *,qa_error *);
 bool frontend_remote_q3_commands_idle(const frontend_remote_q3_commands *);
 bool frontend_remote_q3_commands_destroy(frontend_remote_q3_commands **,qa_error *);
-bool frontend_remote_q3_commands_checkpoint(const frontend_remote_q3_commands *,qa_buffer *,qa_error *);
-/* Imports command receipts without replaying Init or command dispatch. */
-bool frontend_remote_q3_commands_restore(frontend_remote_q3_commands *,qa_bytes,qa_error *);
 
 #endif

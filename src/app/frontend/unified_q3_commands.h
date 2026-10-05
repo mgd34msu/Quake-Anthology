@@ -26,6 +26,4 @@ bool frontend_unified_q3_commands_current(const frontend_unified_q3_commands *);
  * retains the child and remaining rows for checked retry or destruction. */
 bool frontend_unified_q3_commands_video_reset(frontend_unified_q3_commands *,qa_error *);
 bool frontend_unified_q3_commands_destroy(frontend_unified_q3_commands **,qa_error *);
-bool frontend_unified_q3_commands_checkpoint(const frontend_unified_q3_commands *,qa_buffer *,qa_error *);
-bool frontend_unified_q3_commands_restore(frontend_unified_q3_commands *,qa_bytes,qa_error *);
 #endif
