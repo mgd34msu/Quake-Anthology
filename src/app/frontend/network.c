@@ -4346,7 +4346,9 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
         if(!unified_tick(n,error)) goto failed;
     }
     if (!client_drain(n, false, error)) goto failed;
-    if (!frontend_config_store_admin_adopt(f->config_store,error)) goto failed;
+    /* Detached candidates acquire the live socket at publication. The ordinary
+     * network pump then adopts pending Source administration on that socket. */
+    if (!n->detached_transport && !frontend_config_store_admin_adopt(f->config_store,error)) goto failed;
     return true;
 failed:
     (void)frontend_network_destroy(f, NULL); return false;
