@@ -89,6 +89,9 @@ bool qa_actors_allocate(qa_actor_registry *registry, qa_actor_owner owner,
 bool qa_actors_allocate_source(qa_actor_registry *registry, qa_actor_owner owner,
                                uint32_t source_slot, qa_actor_definition definition,
                                qa_actor_id *out, qa_error *error);
+/* First Source admission preserves an existing actor's lifetime identity.
+ * An already bound actor accepts only the same physical slot. */
+bool qa_actors_bind_source(qa_actor_registry *, qa_actor_id, uint32_t source_slot, qa_error *);
 bool qa_actors_release(qa_actor_registry *registry, qa_actor_id actor,
                        qa_error *error);
 /* Changes only descriptive metadata on the same live identity. Source-bound

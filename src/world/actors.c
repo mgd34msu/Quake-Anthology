@@ -307,6 +307,28 @@ bool qa_actors_set_metadata(qa_actor_registry *registry, qa_actor_id actor,
     return true;
 }
 
+bool qa_actors_bind_source(qa_actor_registry *registry, qa_actor_id actor,
+                          uint32_t source_slot, qa_error *error)
+{
+    const qa_actor_record *record = qa_actors_get(registry, actor);
+    if (!record || registry->clearing)
+        return fail(error, QA_ERROR_ARGUMENT, "Source admission requires its live actor");
+    if (record->has_source)
+        return record->source_slot == source_slot ||
+            fail(error, QA_ERROR_ARGUMENT, "Source admission cannot change a physical slot");
+    if (source_find(registry, record->owner, source_slot))
+        return fail(error, QA_ERROR_ARGUMENT, "Actor source slot is occupied");
+    if (registry->revision == UINT64_MAX)
+        return fail(error, QA_ERROR_MEMORY, "Actor metadata revision exhausted");
+    if (!source_reserve(registry, error)) return false;
+    actor_slot *slot = slot_at(registry, actor.slot);
+    source_insert(registry, record->owner, source_slot, actor.slot);
+    slot->record.source_slot = source_slot;
+    slot->record.has_source = true;
+    ++registry->revision;
+    return true;
+}
+
 bool qa_actors_release(qa_actor_registry *registry, qa_actor_id actor, qa_error *error)
 {
     if (qa_actors_get(registry, actor) == NULL)
