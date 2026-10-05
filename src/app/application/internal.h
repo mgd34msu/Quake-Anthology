@@ -61,6 +61,7 @@ typedef struct application_provider {
     struct application_native_q3_settings *native_q3_settings;
     struct application_native_q3_ipfilters *native_q3_ipfilters;
     struct application_native_q3_wire *native_q3_wire;
+    struct application_q3_wire_capture *q3_wire_capture;
     struct application_native_q3_votes *native_q3_votes;
     struct application_native_q3_team_status *native_q3_team_status;
     struct qa_application *application;

@@ -414,6 +414,7 @@ static bool userinfo_changed(application_provider *provider,
         !qa_q3_client_session_slot_read(provider->state.q3, slot, &sess, error) ||
         !qa_q3_client_slot_read(provider->state.q3, slot, &before, error) ||
         !application_native_q3_wire_source_userinfo_read(provider, slot, &retained, error)) return false;
+    application_snapshot_mutated(provider->application);
     char info[1024];
     size_t count = strlen(retained);
     if (count >= sizeof(info)) count = sizeof(info) - 1;
@@ -503,6 +504,7 @@ bool application_native_q3_client_connect(application_provider *provider, qa_act
     uint32_t slot, flags;
     if (!userinfo || !accepted || !denial || !source(provider, actor, &slot, error) ||
         !application_native_q3_console_borrow(provider, error)) return false;
+    application_snapshot_mutated(provider->application);
     *accepted = false; *denial = NULL;
     char info[1024], address[1024], supplied[1024];
     size_t length = strlen(userinfo);
@@ -627,6 +629,7 @@ bool application_native_q3_client_spawn(application_provider *provider, qa_actor
     uint32_t slot;
     if (!source(provider, actor, &slot, error) ||
         !application_native_q3_console_borrow(provider, error)) return false;
+    application_snapshot_mutated(provider->application);
     bool ok = client_spawn(provider, actor, spawn, command, error) && source(provider, actor, &slot, error);
     if (ok) {
         application_native_q3_wire_client_view wire;
@@ -650,6 +653,7 @@ bool application_native_q3_client_begin(application_provider *provider, qa_actor
     if (!source(provider, actor, &slot, error) ||
         !client_mode(provider,&mode,error)||!native_rules(provider,mode,&rules,&q3_rules,error)||
         !application_native_q3_console_borrow(provider, error)) return false;
+    application_snapshot_mutated(provider->application);
     qa_application *app = provider->application;
     bool ok = qa_world_unlink(app->world, actor, error) &&
         qa_q3_client_begin_state(provider->state.q3, actor, error) &&
@@ -757,6 +761,7 @@ static bool client_disconnect(application_provider *provider,
         application_world_provider(app, QA_ROLE_ENTITIES, "") == provider;
     if (!source(provider, actor, &slot, error) ||
         !application_native_q3_console_borrow(provider, error)) return false;
+    application_snapshot_mutated(provider->application);
     bool ok = (!primary || application_bots_catalog_remove_begin(app, slot, error)) &&
         source(provider, actor, &slot, error) &&
         (!primary || application_rankings_disconnect(app, actor, error)) &&
@@ -1089,6 +1094,7 @@ bool application_native_q3_client_set_team(application_provider *provider, qa_ac
     uint32_t slot;
     if (!source(provider, actor, &slot, error) ||
         !application_native_q3_console_borrow(provider, error)) return false;
+    application_snapshot_mutated(provider->application);
     bool ok = set_team(provider, actor, request, NULL, NULL, error) && source(provider, actor, &slot, error);
     application_native_q3_console_release(provider);
     return ok;
@@ -1101,6 +1107,7 @@ bool application_native_q3_client_stop_following_slot(application_provider *prov
     qa_q3_client_session sess;
     if (!slot_source(provider, slot, &actor, error) ||
         !qa_q3_client_session_slot_read(provider->state.q3, slot, &sess, error)) return false;
+    application_snapshot_mutated(provider->application);
     sess.team = 3;
     sess.spectator_state = QA_Q3_SPECTATOR_FREE;
     return qa_q3_client_persistent_team(provider->state.q3, slot, 3, error) &&
@@ -1341,6 +1348,7 @@ bool application_native_q3_client_command(application_provider *provider, qa_act
         if (!command->argv[i]) return application_fail(error, QA_ERROR_ARGUMENT, "missing Q3 client command argument");
     *handled = true;
     if (!application_native_q3_console_borrow(provider, error)) return false;
+    application_snapshot_mutated(provider->application);
     qa_application *app = provider->application;
     bool chat_handled = false;
     bool ok = application_native_q3_chat_command(app, provider, actor, command, &chat_handled, error);

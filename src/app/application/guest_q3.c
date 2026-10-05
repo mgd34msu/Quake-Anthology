@@ -69,6 +69,8 @@ bool q3g_call(q3g_role *role, int32_t command, const int32_t *arguments, size_t 
     }
     bool init = command == (role->kind == QA_QVM_UI ? 1 : 0);
     if (init) role->init_succeeded = false;
+    if (role->kind == QA_QVM_GAME)
+        application_snapshot_mutated(role->engine->provider->application);
     bool ok;
     if (role->native) {
         ok = qa_native_host_q3_vm_call(role->native, command, arguments, count, result, error);

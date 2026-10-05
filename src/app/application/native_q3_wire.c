@@ -90,14 +90,134 @@ bool application_native_q3_wire_bind_sources(application_provider *provider, qa_
 
 typedef struct q3_wire_visibility {
     qa_collision_geometry *geometry;
-    qa_cvars *native_cvars;
+    bool native_areas, ignore_areas;
     qa_error failure;
 } q3_wire_visibility;
 
 typedef struct q3_wire_entity {
     qa_q3_entity state;
-    qa_q3_host_visibility visibility;
+    int32_t clusters[128];
 } q3_wire_entity;
+
+struct application_q3_wire_capture {
+    q3_wire_entity *records;
+    qa_q3_visibility_entity *entities;
+    size_t capacity;
+    uint32_t count, stride;
+    uint64_t address, application_frame, mutation, actors_revision;
+    uint64_t publication, map_revision, source_frame, source_time, elapsed, debt;
+    const void *source;
+    qa_session *session;
+    qa_world *world;
+    qa_collision_geometry *geometry;
+    bool ready, paused;
+    qa_application_network_q3_frame candidate;
+};
+
+void application_q3_wire_capture_dispose(application_provider *provider)
+{
+    struct application_q3_wire_capture *capture = provider->q3_wire_capture;
+    if (!capture) return;
+    free(capture->records); free(capture->entities); free(capture);
+    provider->q3_wire_capture = NULL;
+}
+
+static struct application_q3_wire_capture *capture_workspace(application_provider *provider,
+    qa_error *error)
+{
+    if (!provider->q3_wire_capture) {
+        provider->q3_wire_capture = calloc(1, sizeof(*provider->q3_wire_capture));
+        if (!provider->q3_wire_capture)
+            application_fail(error, QA_ERROR_MEMORY, "Retaining Q3 source snapshot workspace");
+    }
+    return provider->q3_wire_capture;
+}
+
+static bool capture_entities(application_provider *provider, qa_q3_game *game,
+    qa_q3_host *host, const qa_q3_host_game_data *data, uint32_t count,
+    bool original_words, struct application_q3_wire_capture **out, qa_error *error)
+{
+    qa_application *app = provider->application;
+    qa_clock_state clock = {0};
+    bool clock_present = qa_session_clock(app->session, provider->owner, &clock);
+    uint64_t frame = application_frame_revision(app);
+    uint64_t actors = qa_actors_revision(qa_session_actors(app->session));
+    qa_collision_geometry *geometry = qa_world_geometry(app->world);
+    const void *source = game ? (const void *)game : (const void *)host;
+    uint64_t address = data ? data->entities_address : 0;
+    uint32_t stride = data ? data->entity_stride : 0;
+    struct application_q3_wire_capture *capture = capture_workspace(provider, error);
+    if (!capture) return false;
+    *out = capture;
+    if (clock_present && capture->ready && capture->source == source && capture->session == app->session &&
+        capture->world == app->world && capture->geometry == geometry &&
+        capture->count == count && capture->address == address && capture->stride == stride &&
+        capture->application_frame == frame && capture->mutation == app->snapshot_mutation &&
+        capture->actors_revision == actors && capture->publication == app->publication_generation &&
+        capture->map_revision == app->map_revision && capture->source_frame == clock.frame.number &&
+        capture->source_time == clock.frame.time_ns && capture->elapsed == clock.elapsed_ns &&
+        capture->debt == clock.debt_ns && capture->paused == clock.paused) return true;
+    capture->ready = false;
+    if (count > capture->capacity) {
+        q3_wire_entity *records = malloc((size_t)count * sizeof(*records));
+        qa_q3_visibility_entity *entities = malloc((size_t)count * sizeof(*entities));
+        if (!records || !entities) {
+            free(records); free(entities);
+            return application_fail(error, QA_ERROR_MEMORY, "Growing Q3 source snapshot workspace");
+        }
+        free(capture->records); free(capture->entities);
+        capture->records = records; capture->entities = entities; capture->capacity = count;
+    }
+    if (count) memset(capture->entities, 0, (size_t)count * sizeof(*capture->entities));
+    uint64_t mutation = app->snapshot_mutation;
+    qa_world *world = app->world;
+    for (uint32_t i = 0; i < count; ++i) {
+        q3_wire_entity *record = &capture->records[i];
+        qa_q3_visibility_entity *entity = &capture->entities[i];
+        if (game) {
+            qa_q3_source_binding binding;
+            if (!qa_q3_source_binding_read(game, i, &binding, error)) return false;
+            if (!binding.in_use) continue;
+            qa_q3_wire_visibility link;
+            qa_q3_wire_native_visibility visibility;
+            if (!qa_q3_wire_entity_read(game, i, &record->state, &link, error) ||
+                !qa_q3_wire_native_visibility_read(game, i, &visibility, error)) return false;
+            if (visibility.cluster_count > 128)
+                return application_fail(error, QA_ERROR_FORMAT, "Native Q3 source visibility cluster extent is invalid");
+            memcpy(record->clusters, visibility.clusters, visibility.cluster_count * sizeof(*record->clusters));
+            *entity = (qa_q3_visibility_entity){.state = &record->state,
+                .linked = visibility.present && visibility.linked, .flags = visibility.server_flags,
+                .single_client = visibility.single_client, .area = visibility.area, .area2 = visibility.area2,
+                .last_cluster = visibility.last_cluster, .clusters = record->clusters,
+                .cluster_count = visibility.cluster_count};
+        } else {
+            qa_qvm_entity_shared shared;
+            qa_q3_host_visibility visibility;
+            bool present;
+            bool ok = original_words ? qa_q3_host_source_entity(host, i, &record->state, &shared, error) :
+                qa_q3_host_entity(host, i, &record->state, &shared, error);
+            if (!ok || !qa_q3_host_visibility_read(host, i, &visibility, &present, error)) return false;
+            if (visibility.cluster_count > 16)
+                return application_fail(error, QA_ERROR_FORMAT, "Q3 source visibility cluster storage is invalid");
+            memcpy(record->clusters, visibility.clusters, visibility.cluster_count * sizeof(*record->clusters));
+            *entity = (qa_q3_visibility_entity){.state = &record->state, .linked = shared.linked && present,
+                .flags = (uint32_t)shared.server_flags, .single_client = shared.single_client,
+                .area = visibility.area, .area2 = visibility.area2, .last_cluster = visibility.last_cluster,
+                .clusters = record->clusters, .cluster_count = visibility.cluster_count};
+        }
+    }
+    if (app->snapshot_mutation != mutation || app->world != world)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 entity capture changed its returned Source boundary");
+    capture->source = source; capture->session = app->session;
+    capture->world = world; capture->geometry = geometry; capture->count = count;
+    capture->address = address; capture->stride = stride; capture->application_frame = frame;
+    capture->mutation = mutation; capture->actors_revision = actors;
+    capture->publication = app->publication_generation; capture->map_revision = app->map_revision;
+    capture->source_frame = clock.frame.number; capture->source_time = clock.frame.time_ns;
+    capture->elapsed = clock.elapsed_ns; capture->debt = clock.debt_ns; capture->paused = clock.paused;
+    capture->ready = clock_present;
+    return true;
+}
 
 bool application_q3_wire_time(const application_provider *provider, int32_t *out,
     qa_error *error)
@@ -144,12 +264,8 @@ static bool wire_area_bits(void *context, int32_t area, uint8_t accumulator[32],
 static bool wire_connected(void *context, int32_t first, int32_t second)
 {
     q3_wire_visibility *owner = context;
-    if (owner->native_cvars) {
-        const qa_cvar_view *policy = qa_cvars_find(owner->native_cvars, "cm_noAreas");
-        if (!policy)
-            return application_fail(&owner->failure, QA_ERROR_NOT_FOUND,
-                                    "Native Q3 area policy lost its actual source cvar");
-        if (policy->number != 0) return true;
+    if (owner->native_areas) {
+        if (owner->ignore_areas) return true;
         if (first < 0 || second < 0) return false;
     }
     bool value = false;
@@ -224,44 +340,21 @@ bool application_native_q3_wire_current_view(application_provider *provider, uin
     qa_world *source_world = app->world;
     qa_collision_geometry *geometry = qa_world_geometry(source_world);
     qa_cvars *cvars = application_native_q3_console_registry(provider);
-    if (!geometry || !cvars || !qa_cvars_find(cvars, "cm_noAreas"))
+    const qa_cvar_view *areas = cvars ? qa_cvars_find(cvars, "cm_noAreas") : NULL;
+    if (!geometry || !cvars || !areas)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 view has no actual collision world");
-    size_t extent = count ? count : 1;
-    qa_q3_entity *records = calloc(extent, sizeof(*records));
-    qa_q3_wire_native_visibility *visibility = calloc(extent, sizeof(*visibility));
-    qa_q3_visibility_entity *entities = calloc(extent, sizeof(*entities));
-    qa_q3_visible_entities *candidate = calloc(1, sizeof(*candidate));
-    if (!records || !visibility || !entities || !candidate) {
-        free(records); free(visibility); free(entities); free(candidate);
-        return application_fail(error, QA_ERROR_MEMORY, "Observing native Q3 source visibility");
-    }
+    struct application_q3_wire_capture *capture = capture_workspace(provider, error);
+    if (!capture) return false;
     qa_q3_player player;
-    bool ok = qa_q3_wire_player_read(game, slot, &player, error);
-    for (uint32_t number = 0; ok && number < count; ++number) {
-        qa_q3_source_binding binding;
-        ok = qa_q3_source_binding_read(game, number, &binding, error);
-        if (!ok || !binding.in_use) continue;
-        qa_q3_wire_visibility source_link;
-        ok = qa_q3_wire_entity_read(game, number, &records[number], &source_link, error) &&
-             qa_q3_wire_native_visibility_read(game, number, &visibility[number], error);
-        if (!ok) break;
-        if (visibility[number].cluster_count > 128) {
-            ok = application_fail(error, QA_ERROR_FORMAT, "Native Q3 source visibility cluster extent is invalid");
-            break;
-        }
-        entities[number] = (qa_q3_visibility_entity){.state = &records[number],
-            .linked = visibility[number].present && visibility[number].linked,
-            .flags = visibility[number].server_flags, .single_client = visibility[number].single_client,
-            .area = visibility[number].area, .area2 = visibility[number].area2,
-            .last_cluster = visibility[number].last_cluster, .clusters = visibility[number].clusters,
-            .cluster_count = visibility[number].cluster_count};
-    }
-    q3_wire_visibility owner = {.geometry = geometry, .native_cvars = cvars};
+    bool ok = qa_q3_wire_player_read(game, slot, &player, error) &&
+        capture_entities(provider, game, NULL, NULL, count, false, &capture, error);
+    q3_wire_visibility owner = {.geometry = geometry, .native_areas = true,
+        .ignore_areas = areas->number != 0};
     qa_q3_visibility_world world = {.context = &owner, .point = wire_point,
         .area_bits = wire_area_bits, .areas_connected = wire_connected,
         .cluster_visible = wire_cluster_visible};
     if (ok) ok = qa_q3_select_snapshot_entities(&player,
-        entities, count, &world, false, candidate, error);
+        capture->entities, count, &world, false, &capture->candidate.visible, error);
     if (ok && owner.failure.code) {
         if (error) *error = owner.failure;
         ok = false;
@@ -272,8 +365,7 @@ bool application_native_q3_wire_current_view(application_provider *provider, uin
         !application_native_q3_wire_client_admission_read(provider, slot, &actual, &current, error) ||
         !current || !qa_actor_id_equal(actual.actor, client.actor)))
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 view changed its source during observation");
-    if (ok) { *player_out = player; *visible_out = *candidate; }
-    free(records); free(visibility); free(entities); free(candidate);
+    if (ok) { *player_out = player; *visible_out = capture->candidate.visible; }
     return ok;
 }
 
@@ -284,9 +376,10 @@ static bool native_snapshot(application_provider *provider, uint32_t slot,
     int32_t milliseconds;
     if (!out || message < 0 || commands < 0 || !native_ready(provider, error) ||
         !application_q3_wire_time(provider, &milliseconds, error)) return false;
-    qa_application_network_q3_frame *candidate = calloc(1, sizeof(*candidate));
-    if (!candidate)
-        return application_fail(error, QA_ERROR_MEMORY, "Observing native Q3 source snapshot");
+    struct application_q3_wire_capture *capture = capture_workspace(provider, error);
+    if (!capture) return false;
+    qa_application_network_q3_frame *candidate = &capture->candidate;
+    candidate->snapshot = (qa_q3_snapshot){0};
     bool ok = application_native_q3_wire_current_view(provider, slot,
         &candidate->snapshot.player, &candidate->visible, error);
     if (ok) {
@@ -302,7 +395,6 @@ static bool native_snapshot(application_provider *provider, uint32_t slot,
         *out = *candidate;
         out->snapshot.entities = out->visible.entities;
     }
-    free(candidate);
     return ok;
 }
 
@@ -383,47 +475,23 @@ bool application_q3_wire_host_snapshot(application_provider *provider, uint32_t 
         data.entity_count > QA_Q3_ENTITIES || slot >= data.client_count)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Q3 snapshot source records or collision geometry are absent");
-    size_t count = data.entity_count ? data.entity_count : 1;
-    q3_wire_entity *records = calloc(count, sizeof(*records));
-    qa_q3_visibility_entity *entities = calloc(count, sizeof(*entities));
-    qa_application_network_q3_frame *candidate = calloc(1, sizeof(*candidate));
-    if (!records || !entities || !candidate) {
-        free(records); free(entities); free(candidate);
-        return application_fail(error, QA_ERROR_MEMORY, "Allocating Q3 source snapshot");
-    }
+    struct application_q3_wire_capture *capture = capture_workspace(provider, error);
+    if (!capture) return false;
+    qa_application_network_q3_frame *candidate = &capture->candidate;
+    candidate->snapshot = (qa_q3_snapshot){0};
     bool original_words = engine->game->abi == QA_QVM_Q3_MODERN;
     bool ok = original_words ?
         qa_q3_host_source_player(engine->game->host, slot, &candidate->snapshot.player, error) :
         qa_q3_host_player(engine->game->host, slot, &candidate->snapshot.player, error);
     if (ok) candidate->snapshot.player.product = engine->product;
-    for (uint32_t i = 0; ok && i < data.entity_count; ++i) {
-        qa_qvm_entity_shared shared;
-        bool present;
-        ok = original_words ?
-            qa_q3_host_source_entity(engine->game->host, i, &records[i].state, &shared, error) :
-            qa_q3_host_entity(engine->game->host, i, &records[i].state, &shared, error);
-        if (ok) ok = qa_q3_host_visibility_read(engine->game->host, i,
-                                               &records[i].visibility, &present, error);
-        if (!ok) break;
-        if (records[i].visibility.cluster_count > 16) {
-            ok = application_fail(error, QA_ERROR_FORMAT,
-                                  "Q3 source visibility cluster storage is invalid");
-            break;
-        }
-        entities[i] = (qa_q3_visibility_entity){
-            .state = &records[i].state, .linked = shared.linked && present,
-            .flags = (uint32_t)shared.server_flags, .single_client = shared.single_client,
-            .area = records[i].visibility.area, .area2 = records[i].visibility.area2,
-            .last_cluster = records[i].visibility.last_cluster,
-            .clusters = records[i].visibility.clusters,
-            .cluster_count = records[i].visibility.cluster_count};
-    }
+    if (ok) ok = capture_entities(provider, NULL, engine->game->host, &data,
+        data.entity_count, original_words, &capture, error);
     q3_wire_visibility owner = {.geometry = geometry};
     qa_q3_visibility_world world = {.context = &owner, .point = wire_point,
         .area_bits = wire_area_bits, .areas_connected = wire_connected,
         .cluster_visible = wire_cluster_visible};
     if (ok) ok = qa_q3_select_snapshot_entities(&candidate->snapshot.player,
-        entities, data.entity_count, &world, false, &candidate->visible, error);
+        capture->entities, data.entity_count, &world, false, &candidate->visible, error);
     if (ok && owner.failure.code) {
         if (error) *error = owner.failure;
         ok = false;
@@ -442,6 +510,5 @@ bool application_q3_wire_host_snapshot(application_provider *provider, uint32_t 
         *out = *candidate;
         out->snapshot.entities = out->visible.entities;
     }
-    free(records); free(entities); free(candidate);
     return ok;
 }
