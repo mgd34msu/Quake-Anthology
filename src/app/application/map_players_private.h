@@ -97,7 +97,7 @@ bool application_players_guest_detach(qa_application *, application_provider *, 
 
 bool application_players_checkpoint_capture(qa_application *, qa_buffer *, qa_error *);
 bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes, qa_error *);
-bool application_players_campaign_prepare(qa_application *, const qa_q2_landmark *,
+bool application_players_campaign_prepare(qa_application *, bool carry_players, const qa_q2_landmark *,
     application_player_travel **, qa_error *);
 bool application_players_campaign_consume(qa_application *, application_publication *,
     application_player_travel **, qa_error *);

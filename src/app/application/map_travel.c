@@ -2,6 +2,7 @@
 #include "qa/source_save.h"
 #include "rankings.h"
 #include "qa/application_startup_prepare.h"
+#include "qa/application_native_q2_presentation.h"
 #include "map_players_private.h"
 #include "save_private.h"
 #include "qa/save.h"
@@ -81,6 +82,33 @@ static bool campaign_location(qa_application *application, qa_product_id geometr
     return ok;
 }
 
+static bool campaign_q2_policy(qa_application *application, bool *retain,
+    bool *reload, qa_error *error)
+{
+    *retain=false; *reload=false;
+    application_provider *source=application_world_provider(application,QA_ROLE_ENTITIES,"");
+    if (!source || !source->product || source->product->family!=QA_GAME_Q2) return true;
+    qa_q2_edition edition=QA_Q2_CLASSIC;
+    bool found=false;
+    if (!qa_application_native_q2_source_profile_read(application,source->owner,&edition,&found,error)) return false;
+    if (!found) return application_fail(error,QA_ERROR_UNSUPPORTED,
+        "Campaign travel requires its selected Q2 GAME profile");
+    qa_console *console=NULL; qa_cvars *cvars=NULL; qa_command_context command;
+    if (!qa_application_startup_source_read(application,qa_application_launch(application),
+        source->launch,&console,&cvars,&command,error)) return false;
+    const qa_cvar_view *deathmatch=qa_cvars_find(cvars,"deathmatch");
+    const qa_cvar_view *noreload=qa_cvars_find(cvars,"sv_noreload");
+    if (!deathmatch) return application_fail(error,QA_ERROR_FORMAT,
+        "Campaign travel lost its selected Q2 deathmatch setting");
+    bool competitive=edition==QA_Q2_CLASSIC ? deathmatch->number!=0 : deathmatch->integer!=0;
+    bool fresh=noreload && (edition==QA_Q2_CLASSIC ? noreload->number!=0 : noreload->integer!=0);
+    /* Classic SV_GameMap_f writes every non-* departure. The enhanced
+     * rerelease host omits deathmatch saves; neither host reloads them. */
+    *retain=edition==QA_Q2_CLASSIC || !competitive;
+    *reload=!competitive && !fresh;
+    return true;
+}
+
 static bool campaign_level_entry(qa_application *application, qa_error *error)
 {
     if (!application->campaign_unit) {
@@ -100,7 +128,7 @@ static bool campaign_level_entry(qa_application *application, qa_error *error)
     if (!new_unit && qa_campaign_unit_current(application->campaign_unit,&current) &&
         qa_campaign_location_equal(current,destination)) return true;
     qa_campaign_visit *visit=NULL;
-    bool ok=qa_campaign_unit_stage(application->campaign_unit,destination,new_unit,NULL,&visit,error) &&
+    bool ok=qa_campaign_unit_stage(application->campaign_unit,destination,new_unit,false,NULL,&visit,error) &&
         qa_campaign_visit_commit(visit,error);
     qa_campaign_visit_destroy(visit);
     if (ok && application->map_state) application->map_state->load_new_unit=false;
@@ -476,19 +504,18 @@ bool qa_application_campaign_depart(qa_application *application, uint64_t revisi
     }
     const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(application));
     const qa_travel_target *target=state->route.targets+state->cursor;
-    const qa_product *geometry=choices?qa_catalog_product(application->catalog,choices->world.geometry):NULL;
-    qa_mode_view mode;
-    if (!choices || !choices->world.campaign || !state->carry_players || target->new_unit ||
-        target->kind!=QA_TRAVEL_MAP || !geometry || geometry->family!=QA_GAME_Q2 ||
+    if (!choices || target->new_unit || target->kind!=QA_TRAVEL_MAP ||
         (state->geometry && state->geometry!=choices->world.geometry)) return true;
-    if (!qa_modes_read(application->modes,application->primary_mode,&mode,error)) return false;
-    if (mode.rules.kind!=QA_MODE_SINGLE_PLAYER && mode.rules.kind!=QA_MODE_COOPERATIVE) return true;
+    bool retain, reload;
+    if (!campaign_q2_policy(application,&retain,&reload,error)) return false;
+    if (!retain) return true;
     application_campaign_travel *travel=calloc(1,sizeof(*travel));
     if (!travel) return application_fail(error,QA_ERROR_MEMORY,"Retaining campaign departure");
     bool ok=qa_application_travel_read(application,&travel->request) &&
         campaign_location(application,choices->world.geometry,choices->world.map,&travel->source,error) &&
         campaign_location(application,choices->world.geometry,target->name,&travel->destination,error) &&
-        application_players_campaign_prepare(application,state->has_landmark?&state->landmark:NULL,
+        application_players_campaign_prepare(application,state->carry_players,
+            state->has_landmark?&state->landmark:NULL,
             &travel->players,error);
     if (!ok) { application_players_dispose(travel->players); free(travel); return false; }
     application->campaign_travel=travel;
@@ -506,9 +533,11 @@ bool qa_application_campaign_stage(qa_application *application, const qa_save_im
         metadata->purpose!=QA_SAVE_TRANSITION || metadata->world_generation!=application->map_revision)
         return application_fail(error,QA_ERROR_ARGUMENT,"Campaign stage requires its actual departed state image");
     qa_buffer bytes={0}; qa_campaign_world *departure=NULL;
-    bool ok=qa_save_image_encode(image,&bytes,error) &&
+    bool retain, reload;
+    bool ok=campaign_q2_policy(application,&retain,&reload,error) &&
+        qa_save_image_encode(image,&bytes,error) &&
         qa_campaign_world_take(travel->source,&bytes,&departure,error) &&
-        qa_campaign_unit_stage(application->campaign_unit,travel->destination,false,departure,&travel->visit,error);
+        qa_campaign_unit_stage(application->campaign_unit,travel->destination,false,reload,departure,&travel->visit,error);
     qa_campaign_world_release(departure); qa_buffer_free(&bytes);
     return ok;
 }

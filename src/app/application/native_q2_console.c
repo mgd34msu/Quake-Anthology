@@ -22,6 +22,7 @@ typedef struct q2_source_cvar {
  * Rerelease GAME may separately register it through its actual imports. */
 static const q2_source_cvar engine_cvars[] = {
     {"sv_airaccelerate", "0", 0},
+    {"sv_noreload", "0", 0},
 };
 
 bool application_native_q2_engine_cvars(qa_cvars *cvars, uint64_t owner, qa_error *error) {

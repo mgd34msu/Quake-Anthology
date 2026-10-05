@@ -4204,7 +4204,7 @@ bool qa_application_remote_player_detach(qa_application *application,
 }
 
 bool application_players_campaign_prepare(qa_application *application,
-    const qa_q2_landmark *landmark, application_player_travel **out, qa_error *error)
+    bool carry_players, const qa_q2_landmark *landmark, application_player_travel **out, qa_error *error)
 {
     if (!player_detach_ready(application,error)) return false;
     const qa_launch_snapshot *snapshot=qa_application_launch(application);
@@ -4212,7 +4212,7 @@ bool application_players_campaign_prepare(qa_application *application,
         .next=application->providers,.next_count=application->provider_count,
         .map_provider=application->players->map_provider,
         .map={.family=application->players->family}};
-    return application_players_prepare(application,&publication,true,false,landmark,out,error);
+    return application_players_prepare(application,&publication,carry_players,false,landmark,out,error);
 }
 
 bool application_players_campaign_exclude(qa_application *application, qa_error *error)

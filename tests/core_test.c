@@ -4,6 +4,7 @@
 
 #include "qa/arena.h"
 #include "qa/binary.h"
+#include "qa/campaign.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -223,6 +224,93 @@ static void test_files(void)
     CHECK(rmdir(directory) == 0);
 }
 
+static void test_campaign_unit(void)
+{
+    qa_error error={0};
+    qa_strings *strings=NULL;
+    qa_string_id content, other_content;
+    CHECK(qa_strings_create(&strings,&error));
+    CHECK(qa_strings_intern_cstr(strings,"q2-classic-baseq2",&content,&error));
+    CHECK(qa_strings_intern_cstr(strings,"q2-rerelease-baseq2",&other_content,&error));
+    qa_campaign_location base1, base2, other;
+    CHECK(qa_campaign_location_make(strings,content,
+        (qa_bytes){(const uint8_t *)"maps/base1.bsp",14},&base1,&error));
+    CHECK(qa_campaign_location_make(strings,content,
+        (qa_bytes){(const uint8_t *)"base2",5},&base2,&error));
+    CHECK(qa_campaign_location_make(strings,other_content,
+        (qa_bytes){(const uint8_t *)"base1",5},&other,&error));
+    qa_campaign_unit *unit=qa_campaign_unit_create(strings,&error);
+    CHECK(unit);
+    qa_campaign_visit *visit=NULL;
+    CHECK(qa_campaign_unit_stage(unit,base1,true,true,NULL,&visit,&error));
+    CHECK(!qa_campaign_visit_restore(visit));
+    CHECK(qa_campaign_visit_commit(visit,&error));
+    qa_campaign_visit_destroy(visit);
+
+    /* SV_GameMap_f retains the departed level with client actors excluded.
+     * This kernel checks ownership and routing of that encoded image. */
+    qa_buffer first={.data=malloc(1),.size=1}, second={.data=malloc(1),.size=1};
+    CHECK(first.data && second.data);
+    first.data[0]=1; second.data[0]=2;
+    const uint8_t *first_bytes=first.data, *second_bytes=second.data;
+    qa_campaign_world *first_world=NULL, *second_world=NULL;
+    CHECK(qa_campaign_world_take(base1,&first,&first_world,&error));
+    CHECK(!first.data && !first.size);
+    CHECK(qa_campaign_world_take(base2,&second,&second_world,&error));
+    CHECK(!second.data && !second.size);
+    CHECK(qa_campaign_unit_stage(unit,base2,false,true,first_world,&visit,&error));
+    CHECK(!qa_campaign_visit_restore(visit));
+    CHECK(qa_campaign_visit_commit(visit,&error));
+    qa_campaign_visit_destroy(visit);
+
+    CHECK(qa_campaign_unit_stage(unit,base1,false,true,second_world,&visit,&error));
+    CHECK(qa_campaign_visit_restore(visit)==first_world);
+    CHECK(qa_campaign_world_bytes(qa_campaign_visit_restore(visit)).data==first_bytes);
+    qa_campaign_visit_destroy(visit);
+    qa_campaign_location current;
+    CHECK(qa_campaign_unit_current(unit,&current) && qa_campaign_location_equal(current,base2));
+    CHECK(qa_campaign_unit_stage(unit,base1,false,true,second_world,&visit,&error));
+    CHECK(qa_campaign_visit_restore(visit)==first_world);
+    CHECK(qa_campaign_visit_commit(visit,&error));
+    qa_campaign_visit_destroy(visit);
+    qa_campaign_unit_checkpoint checkpoint={0};
+    CHECK(qa_campaign_unit_capture(unit,&checkpoint,&error));
+    CHECK(checkpoint.count==1 && checkpoint.worlds[0]==second_world);
+    CHECK(qa_campaign_world_bytes(checkpoint.worlds[0]).data==second_bytes);
+    qa_campaign_unit_checkpoint_free(&checkpoint);
+
+    /* SV_CheckForSavegame skips reloading for deathmatch or sv_noreload,
+     * while classic SV_GameMap_f still retains other departed levels. */
+    CHECK(qa_campaign_unit_stage(unit,base2,false,false,first_world,&visit,&error));
+    CHECK(!qa_campaign_visit_restore(visit));
+    CHECK(qa_campaign_visit_commit(visit,&error));
+    qa_campaign_visit_destroy(visit);
+    CHECK(qa_campaign_unit_capture(unit,&checkpoint,&error));
+    CHECK(checkpoint.count==1 && checkpoint.worlds[0]==first_world);
+    qa_campaign_unit_checkpoint_free(&checkpoint);
+
+    CHECK(qa_campaign_unit_stage(unit,other,false,true,second_world,&visit,&error));
+    CHECK(!qa_campaign_visit_restore(visit));
+    CHECK(qa_campaign_visit_commit(visit,&error));
+    qa_campaign_visit_destroy(visit);
+    CHECK(qa_campaign_unit_capture(unit,&checkpoint,&error) && checkpoint.count==0);
+    qa_campaign_unit_checkpoint_free(&checkpoint);
+    CHECK(qa_campaign_unit_stage(unit,base1,false,true,NULL,&visit,&error));
+    CHECK(qa_campaign_visit_commit(visit,&error));
+    qa_campaign_visit_destroy(visit);
+    CHECK(qa_campaign_unit_stage(unit,base2,false,true,first_world,&visit,&error));
+    CHECK(qa_campaign_visit_commit(visit,&error));
+    qa_campaign_visit_destroy(visit);
+    CHECK(qa_campaign_unit_stage(unit,base1,true,true,second_world,&visit,&error));
+    CHECK(!qa_campaign_visit_restore(visit));
+    CHECK(qa_campaign_visit_commit(visit,&error));
+    qa_campaign_visit_destroy(visit);
+    CHECK(qa_campaign_unit_capture(unit,&checkpoint,&error) && checkpoint.count==0);
+    qa_campaign_unit_checkpoint_free(&checkpoint);
+    qa_campaign_world_release(first_world); qa_campaign_world_release(second_world);
+    qa_campaign_unit_destroy(unit); qa_strings_destroy(strings);
+}
+
 void test_q1_gameplay(void);
 void test_guest(void);
 
@@ -233,6 +321,7 @@ int main(void)
     test_spans();
     test_arena();
     test_files();
+    test_campaign_unit();
     test_q1_gameplay();
     test_guest();
     puts("core tests passed");

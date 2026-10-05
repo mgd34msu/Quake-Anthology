@@ -167,7 +167,7 @@ bool qa_campaign_unit_capture(const qa_campaign_unit *unit, qa_campaign_unit_che
     return checkpoint_retain(&unit->state,out,error);
 }
 bool qa_campaign_unit_stage(qa_campaign_unit *unit, qa_campaign_location destination, bool new_unit,
-                            qa_campaign_world *departure, qa_campaign_visit **out,
+                            bool load_cached_world, qa_campaign_world *departure, qa_campaign_visit **out,
                             qa_error *error) {
     if (!unit || !out || !valid_location(unit->strings, destination) ||
         (departure &&
@@ -199,19 +199,27 @@ bool qa_campaign_unit_stage(qa_campaign_unit *unit, qa_campaign_location destina
             qa_campaign_world *world = unit->state.worlds[i];
             if (departure && qa_campaign_location_equal(world->location, departure->location))
                 continue;
-            qa_campaign_world_retain(world);
-            if (qa_campaign_location_equal(world->location, destination))
-                visit->restore = world;
-            else
+            if (qa_campaign_location_equal(world->location, destination)) {
+                if (load_cached_world) {
+                    qa_campaign_world_retain(world);
+                    visit->restore = world;
+                }
+            } else {
+                qa_campaign_world_retain(world);
                 visit->candidate.worlds[visit->candidate.count++] = world;
+            }
         }
         if (departure) {
-            qa_campaign_world_retain(departure);
             if (qa_campaign_location_equal(departure->location, destination)) {
-                qa_campaign_world_release(visit->restore);
-                visit->restore = departure;
-            } else
+                if (load_cached_world) {
+                    qa_campaign_world_retain(departure);
+                    qa_campaign_world_release(visit->restore);
+                    visit->restore = departure;
+                }
+            } else {
+                qa_campaign_world_retain(departure);
                 visit->candidate.worlds[visit->candidate.count++] = departure;
+            }
         }
     }
     *out = visit;

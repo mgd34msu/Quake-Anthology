@@ -55,9 +55,12 @@ qa_campaign_unit *qa_campaign_unit_create(qa_strings *, qa_error *);
 void qa_campaign_unit_destroy(qa_campaign_unit *);
 bool qa_campaign_unit_current(const qa_campaign_unit *, qa_campaign_location *);
 /* Unit and strings outlive every visit. The candidate retains snapshot handles,
- * not duplicate world bytes; the active world is never kept in its world cache. */
+ * not duplicate world bytes; the active world is never kept in its world cache.
+ * load_cached_world follows the selected GAME's revisit policy; a fresh visit
+ * drops the destination's old image while retaining other departed worlds. */
 bool qa_campaign_unit_stage(qa_campaign_unit *, qa_campaign_location destination, bool new_unit,
-                            qa_campaign_world *departure, qa_campaign_visit **out, qa_error *);
+                            bool load_cached_world, qa_campaign_world *departure,
+                            qa_campaign_visit **out, qa_error *);
 const qa_campaign_world *qa_campaign_visit_restore(const qa_campaign_visit *);
 bool qa_campaign_visit_capture(const qa_campaign_visit *, qa_campaign_unit_checkpoint *, qa_error *);
 bool qa_campaign_visit_commit(qa_campaign_visit *, qa_error *);
