@@ -154,6 +154,7 @@ typedef struct application_actor_routes {
     qa_actor_id actor;
     qa_actor_owner owner;
     qa_actor_definition definition;
+    application_provider *source;
     application_provider *providers[QA_ROLE_COUNT];
     const qa_launch_instance *instances[QA_ROLE_COUNT];
     bool ready, resolving;

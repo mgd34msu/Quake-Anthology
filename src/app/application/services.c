@@ -233,13 +233,6 @@ static const qa_launch_binding *selected_binding(qa_application *application,
     return bindings[role];
 }
 
-static application_provider *actor_source_provider(qa_application *application, qa_actor_id actor)
-{
-    const qa_actor_record *record =
-        qa_actors_get(qa_session_actors(application->session), actor);
-    return record == NULL ? NULL : provider_owned(application, record->owner);
-}
-
 void application_actor_routes_clear(qa_application *application)
 {
     if (application->actor_routes != NULL)
@@ -294,11 +287,13 @@ static const application_actor_routes *actor_routes(qa_application *application,
     const qa_launch_binding *bindings[QA_ROLE_COUNT] = {0};
     selected_bindings(application, qa_launch_snapshot_choices(snapshot), actor, "",
                       (QA_ROLE_BIT(QA_ROLE_COUNT) - 1u), bindings);
-    application_provider *source = actor_source_provider(application, actor);
+    const qa_actor_record *source_record =
+        qa_actors_get(qa_session_actors(application->session), actor);
+    application_provider *source = source_record ? provider_owned(application, source_record->owner) : NULL;
     const qa_launch_instance *source_instance = source && source->launch ?
         qa_launch_snapshot_find(snapshot, source->launch->selection.instance) : NULL;
     application_actor_routes prepared = {.actor = actor,
-        .owner = routes->owner, .definition = routes->definition, .ready = true};
+        .owner = routes->owner, .definition = routes->definition, .source = source, .ready = true};
     for (unsigned role = 0; role < QA_ROLE_COUNT; ++role) {
         prepared.providers[role] = bindings[role] ?
             provider_named(application, bindings[role]->instance) : source;
@@ -316,6 +311,17 @@ static const application_actor_routes *actor_routes(qa_application *application,
     }
     *routes = prepared;
     return routes;
+}
+
+static application_provider *actor_source_provider(qa_application *application, qa_actor_id actor)
+{
+    const application_actor_routes *routes = actor_routes(application,
+        qa_application_launch(application), actor, "");
+    if (routes && routes->source && routes->source->attached && routes->source->owner == routes->owner)
+        return routes->source;
+    const qa_actor_record *record =
+        qa_actors_get(qa_session_actors(application->session), actor);
+    return record == NULL ? NULL : provider_owned(application, record->owner);
 }
 
 void application_actor_routes_bind(qa_application *application, qa_actor_id actor)
