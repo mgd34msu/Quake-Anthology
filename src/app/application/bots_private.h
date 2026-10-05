@@ -117,6 +117,7 @@ bool application_bot_weapon_apply(qa_application *,qa_actor_id,qa_actor_owner,qa
 bool application_bot_navigation_bind(application_bots *,application_bot_seat *,qa_error *);
 bool application_bot_navigation_prepare(application_bots *,qa_error *);
 qa_navigation_services application_bot_navigation_services(application_bots *);
+bool application_bot_navigation_rebuild(application_bots *,application_bot_graph *,qa_error *);
 bool application_bot_navigation_restore_binding(application_bots *,qa_navigation *,qa_actor_id,
                                                  qa_bot_navigation **,qa_error *);
 bool application_bots_construct_restored(application_bots *,qa_error *);

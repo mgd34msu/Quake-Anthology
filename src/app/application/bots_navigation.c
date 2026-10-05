@@ -511,10 +511,8 @@ static bool entity(void *opaque,const qa_nav_binding *binding,qa_nav_entity_stat
     }
     return true;
 }
-static bool asset_graph(application_bots *bots,const qa_nav_map *map,const qa_nav_profile *profile,
-                         const qa_navigation_services *services,qa_nav_graph **out,
-                         qa_resource **saved_resource,qa_vfs_acquisition *saved_acquisition,bool *found,qa_error *error) {
-    *found=false;
+static bool navigation_resource(application_bots *bots,qa_resource **saved_resource,
+                                qa_vfs_acquisition *saved_acquisition,qa_error *error) {
     qa_launch_resource_origin origin;
     if(!qa_application_map_origin_read(bots->application,&origin) || !origin.catalog ||
        !origin.content || !origin.acquisition ||
@@ -568,54 +566,56 @@ static bool asset_graph(application_bots *bots,const qa_nav_map *map,const qa_na
                 qa_resource_release(resource);qa_vfs_acquisition_dispose(&acquisition);continue;
             }
         }
+        *saved_resource=resource;*saved_acquisition=acquisition;
+        break;
+    }
+    free(path);return ok;
+}
+bool application_bot_navigation_rebuild(application_bots *bots,application_bot_graph *graph,qa_error *error) {
+    qa_nav_profile profile={.movement=graph->profile,.shape={QA_SHAPE_BOX,graph->bounds},
+        .crouched_shape={QA_SHAPE_BOX,graph->bounds},.has_crouched_shape=true,
+        .capabilities=QA_NAV_CAPABILITY(QA_NAV_WALK)|QA_NAV_CAPABILITY(QA_NAV_CROUCH)|
+        QA_NAV_CAPABILITY(QA_NAV_JUMP)|QA_NAV_CAPABILITY(QA_NAV_DROP)|QA_NAV_CAPABILITY(QA_NAV_SWIM)|
+        QA_NAV_CAPABILITY(QA_NAV_WATER_JUMP)|QA_NAV_CAPABILITY(QA_NAV_LADDER)|QA_NAV_CAPABILITY(QA_NAV_TELEPORT)|
+        QA_NAV_CAPABILITY(QA_NAV_MOVER)|QA_NAV_CAPABILITY(QA_NAV_JUMP_PAD)|
+        QA_NAV_CAPABILITY(QA_NAV_ROCKET_JUMP)|QA_NAV_CAPABILITY(QA_NAV_BFG_JUMP)|QA_NAV_CAPABILITY(QA_NAV_GRAPPLE),
+        .maximum_step=18,.minimum_floor_normal=.7f,.maximum_drop=400};
+    profile.crouched_shape.bounds.maxs.z=fminf(graph->bounds.maxs.z,16);
+    profile.policy=(qa_trace_policy){.family=graph->profile.kind==QA_MOVEMENT_Q3?QA_COLLISION_Q3:
+        graph->profile.kind==QA_MOVEMENT_NETQUAKE || graph->profile.kind==QA_MOVEMENT_QUAKEWORLD?QA_COLLISION_Q1:QA_COLLISION_Q2,
+        .contents_mask=0x2010001,.q1_hull=-1,.curves=true,.player_curve_clip=true};
+    qa_nav_map map={.name=bots->application->current_map,.format=bots->geometry.format};
+    qa_navigation_services services=application_bot_navigation_services(bots);
+    services.topology_geometry_only=true;
+    bool ok;
+    if(graph->asset_resource) {
         qa_nav_asset *asset=NULL;
         uint32_t checksum_word=qa_block_checksum(bots->geometry.source);int32_t checksum;
         memcpy(&checksum,&checksum_word,sizeof(checksum));
-        ok=qa_nav_asset_read(qa_resource_bytes(resource),aas?&checksum:NULL,&asset,error);
-        if(ok) ok=qa_nav_graph_from_asset(map,asset,profile,services,out,error);
+        ok=qa_nav_asset_read(qa_resource_bytes(graph->asset_resource),&checksum,&asset,error);
+        if(ok) ok=qa_nav_graph_from_asset(&map,asset,&profile,&services,&graph->graph,error);
         qa_nav_asset_release(asset);
-        if(!ok) {qa_resource_release(resource);qa_vfs_acquisition_dispose(&acquisition);break;}
-        *saved_resource=resource;*saved_acquisition=acquisition;
-        *found=true;break;
+    } else {
+        qa_nav_construction construction={.geometry=&bots->geometry,.map=map,.profile=profile};
+        ok=qa_nav_graph_construct(&construction,&services,&graph->graph,error);
     }
-    free(path);return ok;
+    services.topology_geometry_only=false;
+    return ok && qa_navigation_create(graph->graph,&services,&graph->navigation,error);
 }
 static bool navigation_graph(application_bots *bots,application_provider *movement,
                               const qa_movement_profile *movement_profile,qa_bounds bounds,
                               application_bot_graph **out,qa_error *error) {
-    qa_application *application=bots->application;
     application_bot_graph *shared=bots->graphs;
     while(shared && (shared->movement!=movement || memcmp(&shared->bounds,&bounds,sizeof(bounds)) ||
                     memcmp(&shared->profile,movement_profile,sizeof(*movement_profile)))) shared=shared->next;
     if(!shared) {
         shared=calloc(1,sizeof(*shared));
         if(!shared) return application_fail(error,QA_ERROR_MEMORY,"allocating shared bot navigation graph owner");
-        qa_nav_profile profile={.movement=*movement_profile,.shape={QA_SHAPE_BOX,bounds},
-            .crouched_shape={QA_SHAPE_BOX,bounds},.has_crouched_shape=true,
-            .capabilities=QA_NAV_CAPABILITY(QA_NAV_WALK)|QA_NAV_CAPABILITY(QA_NAV_CROUCH)|
-                QA_NAV_CAPABILITY(QA_NAV_JUMP)|QA_NAV_CAPABILITY(QA_NAV_DROP)|QA_NAV_CAPABILITY(QA_NAV_SWIM)|
-                QA_NAV_CAPABILITY(QA_NAV_WATER_JUMP)|QA_NAV_CAPABILITY(QA_NAV_LADDER)|QA_NAV_CAPABILITY(QA_NAV_TELEPORT)|
-                QA_NAV_CAPABILITY(QA_NAV_MOVER)|QA_NAV_CAPABILITY(QA_NAV_JUMP_PAD)|
-                QA_NAV_CAPABILITY(QA_NAV_ROCKET_JUMP)|QA_NAV_CAPABILITY(QA_NAV_BFG_JUMP)|QA_NAV_CAPABILITY(QA_NAV_GRAPPLE),
-            .maximum_step=18,.minimum_floor_normal=.7f,.maximum_drop=400};
-        profile.crouched_shape.bounds.maxs.z=fminf(bounds.maxs.z,16);
-        profile.policy=(qa_trace_policy){.family=movement_profile->kind==QA_MOVEMENT_Q3?QA_COLLISION_Q3:
-            movement_profile->kind==QA_MOVEMENT_NETQUAKE || movement_profile->kind==QA_MOVEMENT_QUAKEWORLD?QA_COLLISION_Q1:QA_COLLISION_Q2,
-            .contents_mask=0x2010001,.q1_hull=-1,.curves=true,.player_curve_clip=true};
-        qa_nav_map map={.name=application->current_map,.format=bots->geometry.format};
-        qa_navigation_services services={.context=bots,.world=application->world,.revision=revision,
-            .entity=entity,.movement_input=application_bot_movement_input};
-        bool found;
-        bool ok=asset_graph(bots,&map,&profile,&services,&shared->graph,
-                            &shared->asset_resource,&shared->asset_acquisition,&found,error);
-        if(ok && !found) {
-            qa_nav_construction construction={.geometry=&bots->geometry,.map=map,.profile=profile};
-            ok=qa_nav_graph_construct(&construction,&services,&shared->graph,error);
-        }
-        if(ok) ok=qa_navigation_create(shared->graph,&services,&shared->navigation,error);
+        shared->movement=movement;shared->bounds=bounds;shared->profile=*movement_profile;
+        bool ok=navigation_resource(bots,&shared->asset_resource,&shared->asset_acquisition,error) &&
+            application_bot_navigation_rebuild(bots,shared,error);
         if(!ok) {qa_nav_graph_release(shared->graph);qa_resource_release(shared->asset_resource);
             qa_vfs_acquisition_dispose(&shared->asset_acquisition);free(shared);return false;}
-        shared->movement=movement;shared->bounds=bounds;shared->profile=*movement_profile;
         shared->next=bots->graphs;bots->graphs=shared;
     }
     *out=shared;return true;

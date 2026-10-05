@@ -43,6 +43,7 @@ void application_npc_owner_free(application_bots_npc *);
 bool application_npc_current(const application_bots_npc *,qa_error *);
 bool application_npc_physics_read(application_provider *,qa_actor_id,qa_physics_properties *,bool *found,qa_error *);
 qa_navigation_services application_npc_services(application_bots_npc *);
+bool application_npc_graph_rebuild(application_bots_npc *,npc_graph *,qa_error *);
 bool application_npc_actor_create(application_bots_npc *,qa_actor_id,npc_graph *,npc_actor **,qa_error *);
 void application_npc_actor_free(npc_actor *);
 #endif

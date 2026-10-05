@@ -1,6 +1,5 @@
 #include "bots_npc_private.h"
 #include "bots_save_private.h"
-#include "qa/navigation_graph_save.h"
 #include "qa/persistence_navigation.h"
 #include "qa/persistence_fields.h"
 #include "qa/hash.h"
@@ -52,24 +51,8 @@ static bool graph_fields(qa_source_save_io *io,application_bots_npc *owner,npc_g
        !application_bot_resource_field(io,owner->source->application,owner->files,
             &graph->asset,&graph->acquisition,io->direction==QA_SOURCE_SAVE_READ))
         return fail(io,"Invalid monster graph profile");
-    qa_buffer encoded={0};qa_nav_asset *asset=NULL;
-    bool okay=true;
-    if(io->direction==QA_SOURCE_SAVE_WRITE)
-        okay=qa_navigation_graph_save_capture(io->session,graph->graph,&encoded,io->error);
-    if(okay) okay=bytes(io,&encoded);
-    if(okay && io->direction==QA_SOURCE_SAVE_READ) {
-        if(graph->asset) {
-            uint32_t word=qa_block_checksum(owner->geometry.source);int32_t checksum;
-            memcpy(&checksum,&word,sizeof(checksum));
-            qa_bytes raw=qa_resource_bytes(graph->asset);
-            bool aas=raw.size>=4 && qa_load_u32le(raw.data)==UINT32_C(0x53414145);
-            okay=qa_nav_asset_read(raw,aas?&checksum:NULL,&asset,io->error);
-        }
-        if(okay) okay=qa_navigation_graph_save_restore(io->session,
-            (qa_bytes){encoded.data,encoded.size},&owner->map,asset,&graph->graph,io->error);
-    }
-    qa_nav_asset_release(asset);qa_buffer_free(&encoded);
-    if(!okay) return false;
+    if(io->direction==QA_SOURCE_SAVE_READ && !application_npc_graph_rebuild(owner,graph,io->error))
+        return false;
     const qa_nav_graph_view *view=qa_nav_graph_read(graph->graph);
     if(!view || !view->profile.monster || view->profile.movement.kind!=owner->movement.kind ||
        memcmp(&view->profile.shape.bounds,&graph->bounds,sizeof(graph->bounds)) ||

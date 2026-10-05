@@ -3,7 +3,6 @@
 #include "guest_q3_private.h"
 #include "qa/bot_runtime_save.h"
 #include "qa/bots_population_save.h"
-#include "qa/navigation_graph_save.h"
 #include "qa/persistence_navigation.h"
 #include "qa/persistence_fields.h"
 #include "../../bots/save_fields.h"
@@ -375,7 +374,6 @@ static bool navigation_fields(qa_source_save_io *io,application_bots *bots,bool 
     if(io->direction==QA_SOURCE_SAVE_READ && prepare && count>(io->input.size-io->offset)/50)
         return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated application navigation graph inventory");
     application_bot_graph **tail=&bots->graphs,*g=bots->graphs;
-    qa_nav_map map={.name=bots->application->current_map,.format=bots->geometry.format};
     for(size_t i=0;i<count;++i) {
         if(io->direction==QA_SOURCE_SAVE_READ && prepare) {
             g=calloc(1,sizeof(*g));
@@ -387,29 +385,17 @@ static bool navigation_fields(qa_source_save_io *io,application_bots *bots,bool 
             !qa_persistence_movement_profile(io,&g->profile) || !qa_persistence_bounds(io,&g->bounds) ||
             !application_bot_resource_field(io,bots->application,bots->navigation_files,
                 &g->asset_resource,&g->asset_acquisition,prepare)) return false;
-        qa_buffer graph={0},state={0};qa_bytes graph_bytes={0},state_bytes={0};bool ok=true;
+        qa_buffer state={0};qa_bytes state_bytes={0};bool ok=true;
         if(io->direction==QA_SOURCE_SAVE_WRITE) {
-            ok=qa_navigation_graph_save_capture(bots->application->session,g->graph,&graph,io->error) &&
-                qa_persistence_navigation_capture(bots->application->session,g->navigation,&state,io->error);
-            graph_bytes=(qa_bytes){graph.data,graph.size};state_bytes=(qa_bytes){state.data,state.size};
+            ok=qa_persistence_navigation_capture(bots->application->session,g->navigation,&state,io->error);
+            state_bytes=(qa_bytes){state.data,state.size};
         }
-        ok=ok && section(io,&graph_bytes) && graph_bytes.size && section(io,&state_bytes) && state_bytes.size;
-        if(ok && io->direction==QA_SOURCE_SAVE_READ && prepare) {
-            qa_nav_asset *asset=NULL;
-            if(g->asset_resource) {
-                uint32_t checksum_word=qa_block_checksum(bots->geometry.source);int32_t checksum;
-                memcpy(&checksum,&checksum_word,sizeof(checksum));
-                /* Native NAV2/NAV3 ignore the optional AAS checksum argument. */
-                ok=qa_nav_asset_read(qa_resource_bytes(g->asset_resource),&checksum,&asset,io->error);
-            }
-            if(ok) ok=qa_navigation_graph_save_restore(bots->application->session,graph_bytes,&map,asset,&g->graph,io->error);
-            qa_nav_asset_release(asset);
-            qa_navigation_services services=application_bot_navigation_services(bots);
-            if(ok) ok=qa_navigation_create(g->graph,&services,&g->navigation,io->error);
-        } else if(ok && io->direction==QA_SOURCE_SAVE_READ && restore) {
+        ok=ok && section(io,&state_bytes) && state_bytes.size;
+        if(ok && io->direction==QA_SOURCE_SAVE_READ && prepare)
+            ok=application_bot_navigation_rebuild(bots,g,io->error);
+        else if(ok && io->direction==QA_SOURCE_SAVE_READ && restore)
             ok=qa_persistence_navigation_restore(bots->application->session,g->navigation,state_bytes,io->error);
-        }
-        qa_buffer_free(&graph);qa_buffer_free(&state);
+        qa_buffer_free(&state);
         if(!ok || !graph_policy(g,io->error)) return false;
         g=g->next;
     }

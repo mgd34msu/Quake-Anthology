@@ -217,10 +217,8 @@ bool application_npc_owner_create(application_provider *source,bool prepared,app
     if(!okay) {application_npc_owner_free(owner);return false;}
     *out=owner;return true;
 }
-static bool graph_asset(application_bots_npc *owner,const qa_nav_profile *profile,npc_graph *graph,
-    bool *found,qa_error *error)
+static bool graph_resource(application_bots_npc *owner,npc_graph *graph,qa_error *error)
 {
-    *found=false;
     qa_launch_resource_origin origin;
     if(!qa_application_map_origin_read(owner->source->application,&origin) ||
        !origin.catalog || !origin.content || !origin.acquisition ||
@@ -271,20 +269,28 @@ static bool graph_asset(application_bots_npc *owner,const qa_nav_profile *profil
             }
             if(product!=origin.product) {qa_resource_release(resource);qa_vfs_acquisition_dispose(&acquisition);continue;}
         }
-        qa_bytes bytes=qa_resource_bytes(resource);qa_nav_asset *asset=NULL;
-        uint32_t word=qa_block_checksum(owner->geometry.source);int32_t checksum;
-        memcpy(&checksum,&word,sizeof(checksum));
-        qa_navigation_services services=application_npc_services(owner);
-        services.topology_geometry_only=true;
-        okay=qa_nav_asset_read(bytes,aas?&checksum:NULL,&asset,error) &&
-            qa_nav_graph_from_asset(&owner->map,asset,profile,&services,&graph->graph,error);
-        if(okay) {
-            graph->asset=resource;resource=NULL;
-            graph->acquisition=acquisition;acquisition=(qa_vfs_acquisition){0};*found=true;
-        }
-        qa_nav_asset_release(asset);qa_resource_release(resource);qa_vfs_acquisition_dispose(&acquisition);break;
+        graph->asset=resource;graph->acquisition=acquisition;break;
     }
     free(name);return okay;
+}
+bool application_npc_graph_rebuild(application_bots_npc *owner,npc_graph *graph,qa_error *error)
+{
+    qa_nav_profile profile={.movement=owner->movement,.shape={QA_SHAPE_BOX,graph->bounds},
+        .policy={.family=QA_COLLISION_Q1,.q1_hull=-1},.maximum_step=18,.minimum_floor_normal=.7f,
+        .maximum_drop=18,.monster=true,.capabilities=QA_NAV_CAPABILITY(QA_NAV_WALK)|
+            QA_NAV_CAPABILITY(QA_NAV_DROP)|QA_NAV_CAPABILITY(QA_NAV_SWIM)};
+    qa_navigation_services services=application_npc_services(owner);
+    services.topology_geometry_only=true;
+    if(graph->asset) {
+        uint32_t word=qa_block_checksum(owner->geometry.source);int32_t checksum;
+        memcpy(&checksum,&word,sizeof(checksum));
+        qa_nav_asset *asset=NULL;
+        bool okay=qa_nav_asset_read(qa_resource_bytes(graph->asset),&checksum,&asset,error);
+        if(okay) okay=qa_nav_graph_from_asset(&owner->map,asset,&profile,&services,&graph->graph,error);
+        qa_nav_asset_release(asset);return okay;
+    }
+    qa_nav_construction construction={.geometry=&owner->geometry,.map=owner->map,.profile=profile};
+    return qa_nav_graph_construct(&construction,&services,&graph->graph,error);
 }
 static bool graph_for(application_bots_npc *owner,qa_bounds bounds,uint32_t flags,npc_graph **out,qa_error *error)
 {
@@ -296,20 +302,11 @@ static bool graph_for(application_bots_npc *owner,qa_bounds bounds,uint32_t flag
         application_fail(error,QA_ERROR_MEMORY,"Retaining monster navigation graph");
         return false;
     }
-    qa_nav_profile profile={.movement=owner->movement,.shape={QA_SHAPE_BOX,bounds},
-        .policy={.family=QA_COLLISION_Q1,.q1_hull=-1},.maximum_step=18,.minimum_floor_normal=.7f,
-        .maximum_drop=18,.monster=true,.capabilities=QA_NAV_CAPABILITY(QA_NAV_WALK)|
-            QA_NAV_CAPABILITY(QA_NAV_DROP)|QA_NAV_CAPABILITY(QA_NAV_SWIM)};
-    bool found;bool okay=graph_asset(owner,&profile,graph,&found,error);
-    if(okay && !found) {
-        qa_nav_construction construction={.geometry=&owner->geometry,.map=owner->map,.profile=profile};
-        qa_navigation_services services=application_npc_services(owner);
-        services.topology_geometry_only=true;
-        okay=qa_nav_graph_construct(&construction,&services,&graph->graph,error);
-    }
+    graph->bounds=bounds;graph->flags=flags;
+    bool okay=graph_resource(owner,graph,error) && application_npc_graph_rebuild(owner,graph,error);
     if(!okay) {qa_nav_graph_release(graph->graph);qa_resource_release(graph->asset);
         qa_vfs_acquisition_dispose(&graph->acquisition);free(graph);return false;}
-    graph->bounds=bounds;graph->flags=flags;graph->next=owner->graphs;owner->graphs=graph;
+    graph->next=owner->graphs;owner->graphs=graph;
     *out=graph;return true;
 }
 bool application_npc_actor_create(application_bots_npc *owner,qa_actor_id id,npc_graph *graph,
