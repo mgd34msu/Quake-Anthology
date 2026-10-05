@@ -253,19 +253,23 @@ static bool debug_entity(struct application_qc_state *engine, qa_qc_instance *vm
 }
 static bool static_entity(struct application_qc_state *engine, qa_qc_instance *vm, qa_error *error)
 {
-    int32_t reference; qa_actor_id actor; qa_vec3 origin, angles; float model, frame, color, skin;
+    int32_t reference, model_string; qa_actor_id actor; qa_vec3 origin, angles; float frame, color, skin;
+    const qa_qc_definition *model_field = application_qc_field(engine, "model", QA_QC_STRING, error);
+    const char *model_path; qa_qc_game_resource model;
     if (!qa_qc_arg_int(vm, 0, &reference, error) || !qa_qc_reference_actor(vm, reference, &actor, error) ||
         !vector_field(engine, reference, "origin", &origin, error) || !vector_field(engine, reference, "angles", &angles, error) ||
-        !application_qc_float(engine, reference, "modelindex", &model, error) ||
+        !model_field || !qa_qc_entity_int(vm, reference, model_field->offset, &model_string, error) ||
+        !qa_qc_string(vm, model_string, &model_path, error) ||
+        !application_qc_resource_lookup(engine, QA_QC_RESOURCE_MODEL, model_path, false, &model, error) ||
         !application_qc_float(engine, reference, "frame", &frame, error) ||
         !application_qc_float(engine, reference, "colormap", &color, error) ||
         !application_qc_float(engine, reference, "skin", &skin, error)) return false;
-    if (!isfinite(model) || model < 0 || model > 255 || !isfinite(frame) || frame < 0 || frame > 255 ||
+    if (model.index > 255 || !isfinite(frame) || frame < 0 || frame > 255 ||
         !isfinite(color) || color < 0 || color > 255 || !isfinite(skin) || skin < 0 || skin > 255)
         return application_fail(error, QA_ERROR_FORMAT, "QuakeC static model exceeds source protocol range");
     uint8_t bytes[64]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     qa_q1_entity entity; qa_q1_entity_init(&entity);
-    entity.model = (uint32_t)model; entity.frame = (uint32_t)frame;
+    entity.model = model.index; entity.frame = (uint32_t)frame;
     entity.colormap = (uint32_t)color; entity.skin = (uint32_t)skin;
     entity.origin[0] = origin.x; entity.origin[1] = origin.y; entity.origin[2] = origin.z;
     entity.angles[0] = angles.x; entity.angles[1] = angles.y; entity.angles[2] = angles.z;
