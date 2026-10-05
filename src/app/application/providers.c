@@ -51,6 +51,7 @@
 #include "rankings.h"
 #include "q3_world_restart.h"
 #include "control_frame.h"
+#include "arsenal_profile.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -258,7 +259,7 @@ static void profile_word(qa_sha256_context *hash, uint64_t value)
     qa_sha256_update(hash, (qa_bytes){encoded, sizeof(encoded)});
 }
 
-static bool q2_selected_options(const qa_launch_instance *, const qa_product *,
+static bool q2_selected_options(const qa_launch_provider *, uint64_t, const qa_product *,
     const qa_launch_choices *, qa_q2_options *, qa_error *);
 
 bool application_instance_configuration(void *opaque,
@@ -297,7 +298,7 @@ bool application_instance_configuration(void *opaque,
             const qa_product *product = catalog
                 ? qa_catalog_product(catalog, launch->selection.product) : NULL;
             qa_q2_options selected = {0};
-            if (!q2_selected_options(launch, product, choices, &selected, error))
+            if (!q2_selected_options(&launch->selection, launch->roles, product, choices, &selected, error))
                 return false;
             profile_word(&hash, selected.arsenal_rules);
             profile_word(&hash, selected.native_hook);
@@ -622,16 +623,16 @@ static qa_q2_product q2_product(const char *campaign)
     return QA_Q2_BASE;
 }
 
-static bool q2_selected_options(const qa_launch_instance *instance, const qa_product *product,
+static bool q2_selected_options(const qa_launch_provider *selection, uint64_t roles, const qa_product *product,
     const qa_launch_choices *choices, qa_q2_options *options, qa_error *error)
 {
-    if (!instance || !options || !product || product->family != QA_GAME_Q2 || !choices)
+    if (!selection || !options || !product || product->family != QA_GAME_Q2 || !choices)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 arsenal registration needs its actual native source");
     qa_q2_weapon_rules selected = QA_Q2_WEAPON_RULES_BASE;
-    if (instance->roles & QA_ROLE_BIT(QA_ROLE_ARSENAL))
+    if (roles & QA_ROLE_BIT(QA_ROLE_ARSENAL))
         for (size_t i = 0; i < choices->mode_count; ++i) {
             const qa_launch_mode *mode = choices->modes + i;
-            if (!mode->rules.enabled || strcmp(mode->instance, instance->selection.instance)) continue;
+            if (!mode->rules.enabled || strcmp(mode->instance, selection->instance)) continue;
             qa_q2_weapon_rules rules = mode->rules.source == QA_MODE_Q2_CTF ? QA_Q2_WEAPON_RULES_CTF
                 : mode->rules.source == QA_MODE_LMCTF ? QA_Q2_WEAPON_RULES_LMCTF : QA_Q2_WEAPON_RULES_BASE;
             if (rules == QA_Q2_WEAPON_RULES_BASE) continue;
@@ -650,7 +651,7 @@ static bool q2_selected_options(const qa_launch_instance *instance, const qa_pro
                 ? QA_Q2_WEAPON_RULES_LMCTF : QA_Q2_WEAPON_RULES_BASE;
         if (equipment->selection.binding != QA_EQUIPMENT_WEAPON_SLOT ||
             rules == QA_Q2_WEAPON_RULES_BASE ||
-            strcmp(equipment->grapple_source, instance->selection.instance)) continue;
+            strcmp(equipment->grapple_source, selection->instance)) continue;
         qa_q2_edition edition = rules == QA_Q2_WEAPON_RULES_CTF &&
             product->edition == QA_EDITION_RERELEASE ? QA_Q2_RERELEASE : QA_Q2_CLASSIC;
         if (equipment_rules != QA_Q2_WEAPON_RULES_BASE &&
@@ -660,7 +661,7 @@ static bool q2_selected_options(const qa_launch_instance *instance, const qa_pro
         equipment_edition = edition;
         if (selected != rules) continue;
         const qa_launch_binding *arsenal = qa_launch_binding_for(choices, equipment->scope, QA_ROLE_ARSENAL, "");
-        if (!arsenal || strcmp(arsenal->instance, instance->selection.instance)) continue;
+        if (!arsenal || strcmp(arsenal->instance, selection->instance)) continue;
         native_hook = true;
         hook_edition = edition;
     }
@@ -682,31 +683,91 @@ static bool q2_arsenal_options(application_provider *provider,
     const qa_launch_instance *instance = qa_launch_snapshot_find(snapshot, provider->launch->selection.instance);
     if (!instance || instance->state != provider)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 arsenal registration lost its actual selected source");
-    return q2_selected_options(instance, provider->product, choices, options, error);
+    return q2_selected_options(&instance->selection, instance->roles, provider->product, choices, options, error);
 }
 
-static bool startup_arsenal(qa_application *app, const qa_launch_snapshot *snapshot,
-    qa_launch_scope scope, application_provider_kind kind, qa_game_family family,
-    const qa_launch_instance **instance, const qa_product **physical, qa_error *error)
+static bool arsenal_profile(const qa_launch_provider *selection, uint64_t roles,
+    const qa_product *product, const qa_launch_choices *choices,
+    application_arsenal_profile *out, qa_error *error)
 {
-    *instance = NULL; *physical = NULL;
-    if (!app || !snapshot ||
-        (snapshot != qa_configuration_current(app->configuration) && snapshot != app->routing_snapshot &&
-         snapshot != qa_application_startup_candidate(app)) ||
+    *out = (application_arsenal_profile){.family = product->family};
+    switch (product->family) {
+    case QA_GAME_Q1:
+        out->source.q1 = application_q1_program(product->campaign);
+        return true;
+    case QA_GAME_Q2:
+        out->source.q2 = (qa_q2_options){
+            .edition = product->edition == QA_EDITION_RERELEASE ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
+            .product = q2_product(product->campaign)};
+        return q2_selected_options(selection, roles, product, choices, &out->source.q2, error);
+    case QA_GAME_Q3:
+        out->source.q3 = !strcmp(product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
+        return true;
+    }
+    return application_fail(error, QA_ERROR_ARGUMENT, "Selected arsenal has no product family");
+}
+
+static bool arsenal_scope(const qa_launch_choices *choices, qa_launch_scope scope, qa_error *error)
+{
+    if (!choices ||
         (scope.kind != QA_SCOPE_DEFAULT_PLAYER && scope.kind != QA_SCOPE_SEAT))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Boot arsenal requires its retained default or authored seat scope");
-    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+        return application_fail(error, QA_ERROR_ARGUMENT, "Selected arsenal requires its default or authored seat scope");
     if (scope.kind == QA_SCOPE_SEAT) {
         bool authored = false;
-        for (size_t i = 0; choices && i < choices->seat_count; ++i)
+        for (size_t i = 0; i < choices->seat_count; ++i)
             if (choices->seats[i].id == scope.seat) { authored = true; break; }
         if (!authored)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Boot arsenal has no actual authored seat");
+            return application_fail(error, QA_ERROR_ARGUMENT, "Selected arsenal has no authored seat");
     }
+    return true;
+}
+
+bool application_draft_arsenal_profile(const qa_launch_draft *draft, qa_launch_scope scope,
+    application_arsenal_profile *out, bool *found, qa_error *error)
+{
+    if (!draft || !out || !found)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Draft arsenal needs its selection and output");
+    *out = (application_arsenal_profile){0}; *found = false;
+    const qa_launch_choices *choices = qa_launch_draft_choices(draft);
+    if (!arsenal_scope(choices, scope, error)) return false;
+    const qa_launch_binding *binding = qa_launch_binding_for(choices, scope, QA_ROLE_ARSENAL, "");
+    if (!binding) return true;
+    const qa_launch_provider *selected = NULL;
+    for (size_t i = 0; i < choices->provider_count; ++i)
+        if (!strcmp(choices->providers[i].instance, binding->instance)) {
+            selected = choices->providers + i; break;
+        }
+    const qa_product *product = selected ?
+        qa_catalog_product(qa_launch_draft_catalog(draft), selected->product) : NULL;
+    if (!product)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Draft arsenal lost its selected product");
+    if (!arsenal_profile(selected, QA_ROLE_BIT(QA_ROLE_ARSENAL), product, choices, out, error)) return false;
+    *found = true;
+    return true;
+}
+
+bool application_startup_arsenal_profile(qa_application *app, const qa_launch_snapshot *snapshot,
+    qa_launch_scope scope, application_arsenal_profile *out, qa_actor_owner *owner,
+    bool *found, qa_error *error)
+{
+    if (!app || !snapshot || !out || !owner || !found ||
+        (snapshot != qa_configuration_current(app->configuration) && snapshot != app->routing_snapshot &&
+         snapshot != qa_application_startup_candidate(app)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Boot arsenal requires its retained launch snapshot");
+    *out = (application_arsenal_profile){0}; *owner = 0; *found = false;
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    if (!arsenal_scope(choices, scope, error)) return false;
     const qa_launch_binding *binding = qa_launch_binding_for(choices, scope, QA_ROLE_ARSENAL, "");
     const qa_launch_instance *selected = binding ? qa_launch_snapshot_find(snapshot, binding->instance) : NULL;
     application_provider *provider = selected ? selected->state : NULL;
-    if (!provider || provider->kind != kind) return true;
+    if (!provider) return true;
+    qa_game_family family;
+    switch (provider->kind) {
+    case APPLICATION_PROVIDER_Q1: family = QA_GAME_Q1; break;
+    case APPLICATION_PROVIDER_Q2: family = QA_GAME_Q2; break;
+    case APPLICATION_PROVIDER_Q3: family = QA_GAME_Q3; break;
+    default: return true;
+    }
     if (provider->application != app || provider->owner == 0 || !provider->launch ||
         provider->launch->storage != selected->storage)
         return application_fail(error, QA_ERROR_ARGUMENT, "Boot arsenal lost its actual native provider descriptor");
@@ -715,57 +776,10 @@ static bool startup_arsenal(qa_application *app, const qa_launch_snapshot *snaps
     const qa_product *product = qa_catalog_product(catalog, selected->selection.product);
     if (!product || product->family != family)
         return application_fail(error, QA_ERROR_ARGUMENT, "Boot arsenal lost its physical native product");
-    *instance = selected; *physical = product; return true;
-}
-
-bool qa_application_startup_q2_arsenal_options(qa_application *app, const qa_launch_snapshot *snapshot,
-    qa_launch_scope scope, qa_q2_options *out, bool *found, qa_error *error)
-{
-    if (!out || !found) return application_fail(error, QA_ERROR_ARGUMENT, "Boot Q2 arsenal needs output storage");
-    *out = (qa_q2_options){0}; *found = false;
-    const qa_launch_instance *selected;
-    const qa_product *product;
-    if (!startup_arsenal(app, snapshot, scope, APPLICATION_PROVIDER_Q2, QA_GAME_Q2,
-        &selected, &product, error)) return false;
-    if (!selected) return true;
-    application_provider *provider = selected->state;
-    *out = (qa_q2_options){.owner = provider->owner,
-        .edition = product->edition == QA_EDITION_RERELEASE ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
-        .product = q2_product(product->campaign)};
-    if (!q2_selected_options(selected, product, qa_launch_snapshot_choices(snapshot), out, error)) return false;
-    *found = true; return true;
-}
-
-bool qa_application_startup_q1_arsenal_program(qa_application *app, const qa_launch_snapshot *snapshot,
-    qa_launch_scope scope, qa_q1_program *out, qa_actor_owner *owner, bool *found, qa_error *error)
-{
-    if (!out || !owner || !found) return application_fail(error, QA_ERROR_ARGUMENT, "Boot Q1 arsenal needs output storage");
-    *out = QA_Q1_ID1; *owner = 0; *found = false;
-    const qa_launch_instance *selected;
-    const qa_product *product;
-    if (!startup_arsenal(app, snapshot, scope, APPLICATION_PROVIDER_Q1, QA_GAME_Q1,
-        &selected, &product, error)) return false;
-    if (selected) {
-        *out = application_q1_program(product->campaign);
-        *owner = ((application_provider *)selected->state)->owner; *found = true;
-    }
-    return true;
-}
-
-bool qa_application_startup_q3_arsenal_product(qa_application *app, const qa_launch_snapshot *snapshot,
-    qa_launch_scope scope, qa_q3_product *out, qa_actor_owner *owner, bool *found, qa_error *error)
-{
-    if (!out || !owner || !found) return application_fail(error, QA_ERROR_ARGUMENT, "Boot Q3 arsenal needs output storage");
-    *out = QA_Q3_ARENA; *owner = 0; *found = false;
-    const qa_launch_instance *selected;
-    const qa_product *product;
-    if (!startup_arsenal(app, snapshot, scope, APPLICATION_PROVIDER_Q3, QA_GAME_Q3,
-        &selected, &product, error)) return false;
-    if (selected) {
-        *out = !strcmp(product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
-        *owner = ((application_provider *)selected->state)->owner;
-        *found = true;
-    }
+    if (!arsenal_profile(&selected->selection, selected->roles, product, choices, out, error)) return false;
+    *owner = provider->owner;
+    if (family == QA_GAME_Q2) out->source.q2.owner = *owner;
+    *found = true;
     return true;
 }
 

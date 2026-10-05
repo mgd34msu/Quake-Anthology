@@ -209,10 +209,4 @@ bool qa_application_startup_replay_variables(qa_application *, qa_console *,
 bool qa_application_startup_console_primary(qa_application *, qa_console *, bool *primary, qa_error *);
 bool qa_application_startup_q3_safe_mode(qa_application *, const qa_launch_instance *,
     qa_console *, bool *safe, qa_error *);
-bool qa_application_startup_q2_arsenal_options(qa_application *, const qa_launch_snapshot *,
-    qa_launch_scope, qa_q2_options *, bool *found, qa_error *);
-bool qa_application_startup_q1_arsenal_program(qa_application *, const qa_launch_snapshot *,
-    qa_launch_scope, qa_q1_program *, qa_actor_owner *, bool *found, qa_error *);
-bool qa_application_startup_q3_arsenal_product(qa_application *, const qa_launch_snapshot *,
-    qa_launch_scope, qa_q3_product *, qa_actor_owner *, bool *found, qa_error *);
 #endif
