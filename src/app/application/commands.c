@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "guest_native_q2_private.h"
+#include "guest_qc_profile.h"
 #include "match_intents.h"
 #include "native_q3_clients.h"
 #include "native_q3_ipfilters.h"
@@ -410,6 +411,9 @@ static qa_command_result command_dispatch(qa_application *application,
         ? command_owner(application, command.context.owner)
         : application_provider_for(application, actor, command_role(command.argv[0]), "");
     if (!provider_command(provider, &command, &handled, error))
+        return QA_COMMAND_FAILED;
+    if (!handled && provider && provider->kind == APPLICATION_PROVIDER_QC &&
+        !application_qc_host_command(provider, invocation, &handled, error))
         return QA_COMMAND_FAILED;
     return handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
 }

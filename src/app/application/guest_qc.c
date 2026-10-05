@@ -181,6 +181,10 @@ static qa_command_result server_command(void *opaque, const qa_command_invocatio
     qa_command_result common = application_startup_common_command(engine->provider,
         engine->console, engine->cvars, command, error);
     if (common != QA_COMMAND_UNHANDLED) return common;
+    bool handled = false;
+    if (!application_qc_host_command(engine->provider, command, &handled, error))
+        return QA_COMMAND_FAILED;
+    if (handled) return QA_COMMAND_HANDLED;
     if (!command->argc ||
         (!application_qc_command_name_equal(command->argv[0], "map") &&
          !application_qc_command_name_equal(command->argv[0], "gamemap") &&

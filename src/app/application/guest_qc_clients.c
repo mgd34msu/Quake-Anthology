@@ -5,6 +5,7 @@
 #include "guest_qc_protection.h"
 #include "qa/application_network_qw.h"
 #include "guest_qc_rerelease.h"
+#include "qa/text.h"
 #include <stdio.h>
 
 static bool classic_qw(const struct application_qc_state *engine)
@@ -132,6 +133,135 @@ static bool qw_name(struct application_qc_state *engine, uint32_t slot,
     int32_t string;
     return field && qw_name_value(engine, slot, name, &string, error) &&
         qa_qc_set_entity_int(engine->provider->state.qc.instance, reference, field->offset, string, error);
+}
+
+static bool host_give(struct application_qc_state *engine, int32_t reference,
+    const qa_command_invocation *command, qa_error *error)
+{
+    const char *item = command->argc > 1 ? command->argv[1] : "";
+    float amount = (float)atoi(command->argc > 2 ? command->argv[2] : "");
+    const char *campaign = engine->provider->product->campaign;
+    bool hipnotic = engine->profile != QA_QC_QUAKEWORLD && !strcmp(campaign, "hipnotic");
+    bool rogue = engine->profile != QA_QC_QUAKEWORLD && !strcmp(campaign, "rogue");
+    uint32_t weapon = 0;
+    if (*item >= '0' && *item <= '9') {
+        if (hipnotic && *item == '6') weapon = item[1] == 'a' ? UINT32_C(1) << 16 : 16;
+        else if (hipnotic && *item == '9') weapon = UINT32_C(1) << 23;
+        else if (hipnotic && *item == '0') weapon = 128;
+        else if (*item >= '2') weapon = UINT32_C(1) << (*item - '2');
+        if (!weapon) return true;
+        float items;
+        return application_qc_float(engine, reference, "items", &items, error) &&
+            application_qc_set_float(engine, reference, "items",
+                (float)(qa_source_float_to_i32(items) | (int32_t)weapon), error);
+    }
+    const char *field = NULL, *alternate = NULL;
+    bool extra = false;
+    switch (*item) {
+    case 'h': field = "health"; break;
+    case 's': field = "ammo_shells"; alternate = "ammo_shells1"; break;
+    case 'n': field = "ammo_nails"; alternate = "ammo_nails1"; break;
+    case 'r': field = "ammo_rockets"; alternate = "ammo_rockets1"; break;
+    case 'c': field = "ammo_cells"; alternate = "ammo_cells1"; break;
+    case 'l': field = "ammo_nails"; alternate = "ammo_lava_nails"; extra = true; break;
+    case 'm': field = "ammo_rockets"; alternate = "ammo_multi_rockets"; extra = true; break;
+    case 'p': field = "ammo_cells"; alternate = "ammo_plasma"; extra = true; break;
+    default: return true;
+    }
+    if (!rogue) return extra || application_qc_set_float(engine, reference, field, amount, error);
+    if (alternate) {
+        const qa_qc_definition *definition = qa_qc_program_find_field(engine->provider->state.qc.program, alternate);
+        if (definition) {
+            if (definition->type != QA_QC_FLOAT)
+                return application_fail(error, QA_ERROR_FORMAT, "QC Host give field differs from its Source float");
+            if (!qa_qc_set_entity_float(engine->provider->state.qc.instance, reference,
+                definition->offset, amount, error)) return false;
+        }
+        /* Host_Give_f always updates shells; the other Rogue ammo counters
+         * update the shared counter only when that actual source field exists. */
+        if (*item != 's') {
+            if (!definition) return true;
+            float selected;
+            if (!application_qc_float(engine, reference, "weapon", &selected, error)) return false;
+            if ((selected > 64) != extra) return true;
+        }
+    }
+    return application_qc_set_float(engine, reference, field, amount, error);
+}
+
+bool application_qc_host_command(application_provider *provider,
+    const qa_command_invocation *command, bool *handled, qa_error *error)
+{
+    if (!provider || provider->kind != APPLICATION_PROVIDER_QC || !command || !handled)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC Host command requires its Source owner and invocation");
+    *handled = false;
+    if (!command->argc) return true;
+    const char *name = command->argv[0];
+    bool god = application_qc_command_name_equal(name, "god");
+    bool notarget = application_qc_command_name_equal(name, "notarget");
+    bool noclip = application_qc_command_name_equal(name, "noclip");
+    bool fly = application_qc_command_name_equal(name, "fly");
+    bool give = application_qc_command_name_equal(name, "give");
+    struct application_qc_state *engine = provider->state.qc.engine;
+    if ((!god && !notarget && !noclip && !fly && !give) || !engine ||
+        (engine->profile == QA_QC_QUAKEWORLD && (notarget || fly))) return true;
+    if (!qa_console_invocation_current(command->console, command) ||
+        !engine->initialized || !qa_qc_idle(provider->state.qc.instance) ||
+        !application_qc_input_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC Host command lost its entered returned Source");
+    qa_command_context context;
+    if (!qa_application_capture_command_context(provider->application, &command->context, &context, error)) return false;
+    if (!context.actor.registry) return true;
+    bool member;
+    if (!application_qc_control_source_client(provider, context.actor, &member, error)) return false;
+    if (!member || (context.owner && context.owner != provider->owner))
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC Host command has no genuine receiving Source client");
+    *handled = true;
+    bool allowed;
+    if (engine->profile == QA_QC_QUAKEWORLD) {
+        const qa_cvar_view *cheats = qa_cvars_find(engine->cvars, "sv_cheats");
+        allowed = cheats && cheats->number != 0;
+    } else {
+        const qa_qc_definition *deathmatch = qa_qc_program_find_global(provider->state.qc.program, "deathmatch");
+        float value;
+        if (!deathmatch || deathmatch->type != QA_QC_FLOAT ||
+            !qa_qc_global_float(provider->state.qc.instance, deathmatch->offset, &value, error))
+            return application_fail(error, QA_ERROR_FORMAT, "QC Host command lost its actual deathmatch global");
+        allowed = value == 0;
+    }
+    if (!allowed) {
+        if (engine->profile == QA_QC_QUAKEWORLD)
+            application_console_print(provider->application, &context,
+                "You must run the server with -cheats to enable this command.\n");
+        return true;
+    }
+    int32_t reference;
+    if (!qa_qc_actor_reference(provider->state.qc.instance, context.actor, false, &reference, error)) return false;
+    if (give) return host_give(engine, reference, command, error);
+    bool enabled;
+    if (god || notarget) {
+        float flags;
+        if (!application_qc_float(engine, reference, "flags", &flags, error)) return false;
+        int32_t bit = god ? 64 : 128, next = qa_source_float_to_i32(flags) ^ bit;
+        enabled = (next & bit) != 0;
+        if (!application_qc_set_float(engine, reference, "flags", (float)next, error)) return false;
+    } else {
+        bool spectator = false;
+        for (uint32_t i = 1; i <= engine->max_clients; ++i)
+            if (qa_actor_id_equal(engine->clients[i].actor, context.actor)) {
+                spectator = engine->clients[i].spectator; break;
+            }
+        if (!application_control_toggle_motion(provider->application, context.actor,
+            fly ? QA_PHYSICS_FLY : QA_PHYSICS_NOCLIP, spectator, &enabled, error) ||
+            !application_qc_set_float(engine, reference, "movetype", enabled ? fly ? 5 : 8 : 3, error)) return false;
+    }
+    if (!application_qc_control_source_client(provider, context.actor, &member, error) || !member)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC Host command retired its actual client during a Source store");
+    char text[32];
+    snprintf(text, sizeof(text), "%s %s\n", god ? "godmode" : notarget ? "notarget" :
+        fly ? "flymode" : "noclip", enabled ? "ON" : "OFF");
+    application_console_print(provider->application, &context, text);
+    return true;
 }
 
 bool application_qc_console_command(application_provider *provider, qa_actor_id actor,

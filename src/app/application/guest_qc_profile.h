@@ -157,6 +157,8 @@ bool application_qc_run_call(struct application_qc_state *, const application_qc
 bool application_qc_run_calls(struct application_qc_state *, const application_qc_calls *,
                                 const application_qc_inputs *, qa_error *);
 bool application_qc_command_name_equal(const char *, const char *);
+bool application_qc_host_command(application_provider *, const qa_command_invocation *,
+    bool *handled, qa_error *);
 bool application_qc_declared_command(void *, const qa_command_invocation *, qa_error *);
 bool application_qc_callbacks_register(application_provider *, qa_error *);
 bool application_qc_callbacks_suspend(application_provider *, qa_error *);
