@@ -785,10 +785,9 @@ add_library(qa_media STATIC
     src/media/cinematic_presentation_save.c
     src/media/library.c
     src/media/library_prepare.c
-    src/media/library_save.c
     src/media/material_movies.c
     src/media/material_movies_prepare.c
-    src/media/material_movies_save.c)
+    )
 target_link_libraries(qa_media PUBLIC qa_content qa_audio qa_scene qa_persistence
     PRIVATE PkgConfig::OGG PkgConfig::THEORADEC)
 

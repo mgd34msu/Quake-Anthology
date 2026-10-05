@@ -1,10 +1,26 @@
 #include "library_internal.h"
 #include "qa/media_resource.h"
 #include "qa/media_library_prepare.h"
+#include "qa/media_library_save.h"
 #include "qa/binary.h"
 
 #include <stdlib.h>
 #include <string.h>
+
+size_t qa_media_library_record_count(const qa_media_library *library)
+{
+    size_t count=0;
+    if (library) for (const qa_cinematic_asset *asset=library->assets;asset;asset=asset->next) ++count;
+    return count;
+}
+const qa_cinematic_asset *qa_media_library_record_at(const qa_media_library *library, size_t index)
+{
+    const qa_cinematic_asset *asset=library?library->assets:NULL;
+    while (asset && index--) asset=asset->next;
+    return asset;
+}
+qa_scene_resources *qa_media_library_resource_owner(const qa_media_library *library)
+{ return library?library->resources:NULL; }
 
 qa_media_library *qa_media_library_create(qa_scene_resources *resources, qa_error *error) {
     if (!resources) {

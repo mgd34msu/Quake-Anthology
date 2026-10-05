@@ -6,6 +6,36 @@
 #include <stdlib.h>
 #include <string.h>
 
+bool qa_material_movies_idle(const qa_material_movies *movies)
+{ return movies && !movies->busy && !movies->pending && !movies->stage_sealed; }
+size_t qa_material_movies_count(const qa_material_movies *movies)
+{ return movies ? movies->count : 0; }
+qa_scene_resources *qa_material_movies_resource_owner(const qa_material_movies *movies)
+{ return movies ? movies->resources : NULL; }
+bool qa_material_movies_read(const qa_material_movies *movies, size_t index, qa_material_movie_record *out)
+{
+    if (!movies || !out || index >= movies->count) return false;
+    const material_movie *row = movies->movies + index;
+    *out = (qa_material_movie_record){row->initial, row->playback, row->enabled}; return true;
+}
+static bool movie_valid(const qa_cinematic *movie, bool cold)
+{
+    return movie && !movie->busy && !movie->faulted && movie->restore_pending == cold &&
+        movie->options.target.kind == QA_CINEMATIC_MATERIAL && movie->options.target.id.material;
+}
+static bool returned(const qa_material_movies *owner, bool cold, qa_error *error)
+{
+    if (!qa_material_movies_idle(owner) || owner->restore_pending != cold)
+        return cinematic_fail(error, cold ? "Material movie publication requires its unadopted registry" :
+            "Material movie completion requires its adopted registry");
+    for (size_t i = 0; i < owner->count; ++i)
+        if (!movie_valid(owner->movies[i].playback, cold))
+            return cinematic_fail(error, cold ? "Cold material movie lost its qualified decoder" :
+                "Completed material movie lost its qualified decoder");
+    return true;
+}
+bool qa_material_movies_completed_ready(const qa_material_movies *owner, qa_error *error)
+{ return returned(owner, false, error); }
 qa_material_movies *qa_material_movies_create(qa_scene_resources *resources, qa_error *error) {
     if (!resources) {
         cinematic_fail(error, "Material movies require shared scene resources");
