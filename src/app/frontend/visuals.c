@@ -19,6 +19,7 @@
 #include "config_store.h"
 #include "qa/application_equipment.h"
 #include "qa/application_network.h"
+#include "qa/application_network_qw.h"
 #include "view_settings.h"
 #include "remote_q1_client.h"
 #include "remote_q2_client.h"
@@ -131,6 +132,21 @@ static bool model_translation_equal(const qa_scene_model *first, const qa_scene_
     return a && b && a->translation.size == b->translation.size &&
         (!a->translation.size || !memcmp(a->translation.data, b->translation.data, a->translation.size));
 }
+typedef struct frontend_static_model {
+    struct frontend_static_model *next;
+    frontend_model *model;
+    frontend_brush *brush;
+    qa_model_transform transform;
+    qa_q1_entity baseline;
+    uint32_t inline_model;
+    bool is_inline;
+} frontend_static_model;
+static void static_models_free(frontend_static_model **models)
+{
+    while (*models) {
+        frontend_static_model *row = *models; *models = row->next; free(row);
+    }
+}
 struct frontend_visual_owner {
     frontend_visual_owner *next;
     qa_actor_owner owner;
@@ -143,6 +159,11 @@ struct frontend_visual_owner {
     frontend_material_movies *shader_movies;
     frontend_model *models;
     frontend_brush *brushes;
+    frontend_static_model *statics, *static_tail;
+    qa_nq_decoder *static_nq;
+    qa_qw_decoder *static_qw;
+    uint64_t static_revision;
+    size_t static_signon;
     visual_model_recipe *recipes;
     visual_model_recipe *brush_recipes;
     size_t recipe_count, attached;
@@ -522,6 +543,8 @@ void frontend_visuals_destroy(qa_frontend *frontend)
         }
         if (!frontend_material_movies_destroy(&owner->shader_movies, NULL)) return;
         frontend->visuals = owner->next;
+        static_models_free(&owner->statics);
+        qa_nq_decoder_destroy(owner->static_nq); qa_qw_decoder_destroy(owner->static_qw);
         while (owner->models) {
             frontend_model *model = owner->models; owner->models = model->next;
             qa_scene_model_destroy(model->scene); qa_model_free(&model->owned_model);
@@ -1411,6 +1434,131 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
         qa_scene_model_submit(model.scene, &input, frame, error);
 }
 
+/* CL_ParseStatic owns derived render poses, not live edicts. The source
+ * retains the signon bytes; this cache is rebuilt from them on map change. */
+static bool static_model_prepare(qa_frontend *frontend, frontend_visual_owner *owner,
+    const qa_q1_entity *baseline, const char *const names[255], size_t count, qa_error *error)
+{
+    if (!baseline->model) return true;
+    if (baseline->model > count || !names[baseline->model - 1] || !*names[baseline->model - 1])
+        return frontend_fail(error, QA_ERROR_FORMAT, "Q1 static model left its genuine source precache");
+    const char *path = names[baseline->model - 1];
+    frontend_static_model *row = calloc(1, sizeof(*row));
+    if (!row) return frontend_fail(error, QA_ERROR_MEMORY, "Preparing source static model pose");
+    row->baseline = *baseline;
+    qa_model_transform_identity(&row->transform);
+    qa_vec3 axes[3];
+    frontend_camera_axes(qa_v3(baseline->angles[0], baseline->angles[1], baseline->angles[2]), axes);
+    for (unsigned i = 0; i < 3; ++i) {
+        row->transform.origin[i] = baseline->origin[i];
+        row->transform.axes[i][0] = axes[i].x;
+        row->transform.axes[i][1] = axes[i].y;
+        row->transform.axes[i][2] = axes[i].z;
+    }
+    bool okay = true;
+    if (path[0] == '*') {
+        char *end; unsigned long index = strtoul(path + 1, &end, 10);
+        okay = end != path + 1 && !*end && index <= UINT32_MAX;
+        if (okay) { row->is_inline = true; row->inline_model = (uint32_t)index; }
+        else frontend_fail(error, QA_ERROR_FORMAT, "Q1 static brush has no source inline model index");
+    } else if (brush_path(path)) okay = brush_read(owner, path, NULL, &row->brush, error);
+    else okay = model_read(frontend, owner, path, NULL, NULL, false, 0, &row->model, error);
+    if (!okay) { free(row); return false; }
+    if (owner->static_tail) owner->static_tail->next = row;
+    else owner->statics = row;
+    owner->static_tail = row; return true;
+}
+static bool static_models_submit(qa_frontend *frontend, qa_actor_owner exclude,
+    const qa_scene_world_input *world, qa_scene_frame *frame, qa_error *error)
+{
+    const qa_launch_snapshot *launch = qa_application_launch(frontend->application);
+    const qa_launch_choices *choices = launch ? qa_launch_snapshot_choices(launch) : NULL;
+    const qa_launch_binding *binding = choices ? qa_launch_binding_for(choices,
+        (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "") : NULL;
+    const qa_launch_instance *source = binding ? qa_launch_snapshot_find(launch, binding->instance) : NULL;
+    const qa_product *product = source ? qa_catalog_product(qa_application_catalog(frontend->application),
+        source->selection.product) : NULL;
+    if (!product || product->family != QA_GAME_Q1 || product->program_kind != QA_PROGRAM_BUILTIN ||
+        (source->selection.clock.kind != QA_CLOCK_NETQUAKE && source->selection.clock.kind != QA_CLOCK_QUAKEWORLD)) return true;
+    qa_actor_owner provider;
+    if (!qa_application_provider_owner(frontend->application, source->selection.instance, &provider))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 static presentation lost its actual source owner");
+    if (provider == exclude) return true;
+    bool qw = source->selection.clock.kind == QA_CLOCK_QUAKEWORLD;
+    size_t count;
+    if (!(qw ? qa_application_network_qw_signon_count(frontend->application, &count, error) :
+        qa_application_network_q1_signon_count(frontend->application, provider, &count, error))) return false;
+    if (!count) return true;
+    frontend_visual_owner *owner;
+    qa_application_visual_view view = {.provider = provider, .family = QA_GAME_Q1};
+    if (!visual_owner(frontend, &view, &owner, error)) return false;
+    if (owner->static_revision != frontend->map_revision || count < owner->static_signon) {
+        static_models_free(&owner->statics); owner->static_tail = NULL; owner->static_signon = 0;
+        qa_nq_decoder_destroy(owner->static_nq); owner->static_nq = NULL;
+        qa_qw_decoder_destroy(owner->static_qw); owner->static_qw = NULL;
+        owner->static_revision = frontend->map_revision;
+    }
+    if (!owner->static_nq && !owner->static_qw) {
+        if (qw) {
+            qa_application_network_qw_world clock;
+            if (!qa_application_network_qw_world_read(frontend->application, &clock, error) ||
+                !(owner->static_qw = qa_qw_decoder_create(clock.protocol, error))) return false;
+        } else {
+            qa_application_network_q1_world clock;
+            if (!qa_application_network_q1_world_read(frontend->application, provider, &clock, error) ||
+                !qa_nq_decoder_create(clock.protocol, (qa_nq_options){.standard_quake = clock.standard_quake},
+                    &owner->static_nq, error)) return false;
+        }
+    }
+    if (owner->static_signon < count) {
+        const char *names[255]; size_t name_count;
+        if (!(qw ? qa_application_network_qw_precache(frontend->application, true, names, &name_count, error) :
+            qa_application_network_q1_precache(frontend->application, provider, true, names, &name_count, error))) return false;
+        while (owner->static_signon < count) {
+            qa_application_protocol_event event;
+            if (!(qw ? qa_application_network_qw_signon_at(frontend->application, owner->static_signon, &event, error) :
+                qa_application_network_q1_signon_at(frontend->application, provider, owner->static_signon, &event, error))) return false;
+            qa_net_reader reader; qa_net_reader_init(&reader, event.payload, error);
+            while (qa_net_reader_remaining(&reader)) {
+                if (qw) {
+                    qa_qw_service message;
+                    if (!qa_qw_service_read(&reader, owner->static_qw, 0, &message)) return false;
+                    if (message.kind == QA_QW_STATIC &&
+                        !static_model_prepare(frontend, owner, &message.data.baseline, names, name_count, error)) return false;
+                } else {
+                    qa_nq_message message;
+                    if (!qa_nq_read(owner->static_nq, &reader, &message)) return false;
+                    if (message.op == QA_NQ_STATIC &&
+                        !static_model_prepare(frontend, owner, &message.data.entity, names, name_count, error)) return false;
+                }
+            }
+            if (!qa_net_reader_finish(&reader)) return false;
+            ++owner->static_signon;
+        }
+    }
+    if (owner->shader_movies && !frontend_material_movies_frame(owner->shader_movies, frame, error)) return false;
+    for (const frontend_static_model *row = owner->statics; row; row = row->next) {
+        if (row->is_inline || row->brush) {
+            if (!qa_scene_world_submit_model(row->is_inline ? frontend->scene_world : row->brush->world,
+                row->is_inline ? row->inline_model : 0, &row->transform, world, 0,
+                (qa_scene_vec4){1, 1, 1, 1}, frame, error)) return false;
+            continue;
+        }
+        qa_vec3 origin = qa_v3(row->baseline.origin[0], row->baseline.origin[1], row->baseline.origin[2]);
+        qa_scene_model_input input = {.view = world->view, .transform = row->transform, .previous_origin = origin,
+            .color = {1, 1, 1, 1}, .family = QA_SCENE_Q1, .frame = row->baseline.frame,
+            .old_frame = row->baseline.frame, .skin = row->baseline.skin,
+            .identity_light = world->identity_light, .seconds = world->seconds,
+            .ambient = {1, 1, 1}, .fog = world->fog, .source_path = row->model->path,
+            .video_frame = frontend_material_movies_frontend_resolve, .video_context = frontend};
+        if (!qa_scene_world_sample_light_input(frontend->scene_world, world, origin,
+            &input.ambient, &input.directed, &input.light_direction, error) ||
+            !frontend_legacy_model_input(frontend->scene_world, world, &input, error) ||
+            !qa_scene_model_submit(row->model->scene, &input, frame, error)) return false;
+    }
+    return true;
+}
+
 bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owner exclude,
     const qa_scene_world_input *world, qa_scene_frame *frame, qa_error *error)
 {
@@ -1478,5 +1626,6 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
             if (!qa_scene_model_submit(model->scene, &input, frame, error)) return false;
         }
     }
-    return exclude || local_legacy_view_weapon(frontend, seat, local, world, frame, error);
+    return static_models_submit(frontend, exclude, world, frame, error) &&
+        (exclude || local_legacy_view_weapon(frontend, seat, local, world, frame, error));
 }
