@@ -10,7 +10,6 @@
 #include "network_initial_graph.h"
 #include "remote_q2_restore.h"
 #include "unified_media_inventory.h"
-#include "ui_features_private.h"
 
 typedef struct font_owner {
     qa_font_library *library;
@@ -18,12 +17,6 @@ typedef struct font_owner {
     uint32_t kind;
     uint64_t ordinal, identity, view, pool;
 } font_owner;
-typedef struct font_scope {
-    frontend_scene_namespace *space;
-    qa_application_content_graph *graph;
-    const font_owner *owner;
-} font_scope;
-
 static bool append(font_owner *owners, size_t *count, qa_application_content_graph *graph,
     qa_font_library *library, qa_scene_resources *images, const qa_vfs *files,
     uint32_t kind, uint64_t ordinal, uint64_t identity, qa_error *error)
@@ -176,122 +169,4 @@ bool frontend_font_decode(void *context, uint64_t key, const qa_font **out, qa_e
     if (ok) ok=font_decode(owners,count,key,out,error);
     else frontend_fail(error,QA_ERROR_FORMAT,"Saved font row is absent from restored actual libraries");
     free(owners); return ok;
-}
-static bool image_encode(void *context, const qa_scene_image *image, uint64_t *out, qa_error *error)
-{ return frontend_scene_image_encode(((font_scope *)context)->space,image,out,error); }
-static bool image_decode(void *context, uint64_t key, const qa_scene_image **out, qa_error *error)
-{ return frontend_scene_image_decode(((font_scope *)context)->space,key,out,error); }
-static bool resource_encode(void *context, const qa_resource *resource, uint64_t *out, qa_error *error)
-{
-    font_scope *scope=context; uint64_t pool=0, version=0;
-    if (!out || !qa_application_content_resource_id(scope->graph,resource,&pool,&version) || pool!=scope->owner->pool)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Font source is outside its actual qualified content pool");
-    *out=version; return true;
-}
-static bool resource_decode(void *context, uint64_t key, const qa_resource **out, qa_error *error)
-{
-    font_scope *scope=context;
-    const qa_resource *resource=qa_application_content_resource(scope->graph,scope->owner->pool,key);
-    if (!out || !resource) return frontend_fail(error,QA_ERROR_FORMAT,"Saved font source is absent from its qualified pool");
-    *out=resource; return true;
-}
-static bool metadata(qa_source_save_io *io, const font_owner *owner)
-{
-    font_owner saved=*owner;
-    return qa_source_save_u32(io,&saved.kind) && qa_source_save_u64(io,&saved.ordinal) &&
-        qa_source_save_u64(io,&saved.identity) && qa_source_save_u64(io,&saved.view) && qa_source_save_u64(io,&saved.pool) &&
-        saved.kind==owner->kind && saved.ordinal==owner->ordinal && saved.identity==owner->identity &&
-        saved.view==owner->view && saved.pool==owner->pool;
-}
-static bool root_font(const qa_font_library *library, const qa_font *font)
-{
-    if (!library) return font==NULL;
-    for (size_t i=0;i<qa_font_library_record_count(library);++i)
-        if (qa_font_library_record_at(library,i)==font) return true;
-    return false;
-}
-static bool fields(qa_source_save_io *io, qa_frontend *frontend, frontend_scene_namespace *space,
-    const font_owner *owners, size_t count)
-{
-    bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','F','F','O'}; size_t saved_count=count;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFFO",4) || !qa_source_save_count(io,&saved_count,SIZE_MAX) || saved_count!=count) return false;
-    qa_application_content_graph *graph=qa_application_content_graph_read(frontend->application);
-    for (size_t i=0;i<count;++i) {
-        if (!metadata(io,owners+i)) return false;
-        font_scope scope={space,graph,owners+i};
-        qa_font_checkpoint_refs refs={&scope,image_encode,image_decode,resource_encode,resource_decode};
-        qa_buffer saved={0}; size_t size=0;
-        bool ok=reading || qa_font_library_checkpoint(owners[i].library,&refs,&saved,io->error);
-        if (!reading) size=saved.size;
-        ok=ok && qa_source_save_count(io,&size,reading?io->input.size-io->offset:SIZE_MAX);
-        if (ok && reading) {
-            if (size>io->input.size-io->offset) ok=false;
-            else {
-                qa_bytes bytes={io->input.data+io->offset,size}; io->offset+=size;
-                ok=qa_font_library_restore(owners[i].library,bytes,&refs,io->error);
-            }
-        } else if (ok) ok=qa_source_save_bytes(io,saved.data,size);
-        qa_buffer_free(&saved); if (!ok) return false;
-    }
-    uint64_t classic=0, primary=0;
-    if (!reading && (!root_font(frontend->fonts,frontend->classic) || !root_font(frontend->fonts,frontend->primary))) return false;
-    if (!reading && (!font_encode(owners,count,frontend->classic,&classic,io->error) ||
-        !font_encode(owners,count,frontend->primary,&primary,io->error))) return false;
-    if (!qa_source_save_u64(io,&classic) || !qa_source_save_u64(io,&primary) ||
-        (frontend->fonts!=NULL)!=(classic!=0) || (frontend->fonts!=NULL)!=(primary!=0)) return false;
-    if (reading && (!font_decode(owners,count,classic,&frontend->classic,io->error) ||
-        !font_decode(owners,count,primary,&frontend->primary,io->error))) return false;
-    if (!root_font(frontend->fonts,frontend->classic) || !root_font(frontend->fonts,frontend->primary) || !frontend->ui_features) return false;
-    frontend_ui_features *features=frontend->ui_features;
-    uint64_t bold=0,console=0;
-    if (!reading && (!root_font(frontend->fonts,features->bold) ||
-        (features->console && !root_font(frontend->fonts,features->console)) ||
-        !font_encode(owners,count,features->bold,&bold,io->error) ||
-        !font_encode(owners,count,features->console,&console,io->error))) return false;
-    if (!qa_source_save_u64(io,&bold) || !qa_source_save_u64(io,&console) || (frontend->fonts!=NULL)!=(bold!=0)) return false;
-    if (reading && (!font_decode(owners,count,bold,&features->bold,io->error) ||
-        !font_decode(owners,count,console,&features->console,io->error))) return false;
-    size_t fallbacks=features->fallback_count,capacity=features->fallback_capacity;
-    if (!qa_source_save_count(io,&fallbacks,SIZE_MAX/sizeof(*features->fallbacks)) ||
-        !qa_source_save_count(io,&capacity,SIZE_MAX/sizeof(*features->fallbacks)) || capacity<fallbacks) return false;
-    for (size_t i=0;i<capacity;++i) { uint8_t zero=0; if (!qa_source_save_u8(io,&zero) || zero) return false; }
-    if (reading) {
-        if (features->fallbacks || features->fallback_count || features->fallback_capacity) return false;
-        features->fallbacks=capacity?calloc(capacity,sizeof(*features->fallbacks)):NULL;
-        if (capacity && !features->fallbacks) return frontend_fail(io->error,QA_ERROR_MEMORY,"Restoring actual menu font fallback roots");
-        features->fallback_capacity=capacity;
-    }
-    if (fallbacks && !features->fallbacks) return false;
-    for (size_t i=0;i<fallbacks;++i) {
-        uint64_t key=0;
-        if (!reading && !font_encode(owners,count,features->fallbacks[i],&key,io->error)) return false;
-        if (!qa_source_save_u64(io,&key) || !key) return false;
-        if (reading && !font_decode(owners,count,key,features->fallbacks+i,io->error)) return false;
-        if (!root_font(frontend->fonts,features->fallbacks[i])) return false;
-        for (size_t j=0;j<i;++j) if (features->fallbacks[j]==features->fallbacks[i]) return false;
-        if (reading) ++features->fallback_count;
-    }
-    return root_font(frontend->fonts,features->bold) && (!features->console || root_font(frontend->fonts,features->console));
-}
-bool frontend_fonts_checkpoint(qa_frontend *frontend, frontend_scene_namespace *space, qa_buffer *out, qa_error *error)
-{
-    if (!space || !out || out->data || out->size)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Font capture requires shared scene inventory and empty output");
-    font_owner *owners=NULL; size_t count=0; qa_source_save_io io={0};
-    bool ok=collect(frontend,&owners,&count,error) && qa_source_save_writer(&io,NULL,error) &&
-        fields(&io,frontend,space,owners,count) && qa_source_save_finish(&io,out);
-    free(owners); qa_source_save_dispose(&io);
-    if (!ok && error && error->code==QA_OK) frontend_fail(error,QA_ERROR_FORMAT,"Invalid genuine frontend font owner");
-    return ok;
-}
-bool frontend_fonts_restore(qa_frontend *frontend, frontend_scene_namespace *space, qa_bytes bytes, qa_error *error)
-{
-    if (!space) return frontend_fail(error,QA_ERROR_ARGUMENT,"Font restore requires the imported shared scene inventory");
-    font_owner *owners=NULL; size_t count=0; qa_source_save_io io={0};
-    bool ok=collect(frontend,&owners,&count,error) && qa_source_save_reader(&io,NULL,bytes,error) &&
-        fields(&io,frontend,space,owners,count) && qa_source_save_finish(&io,NULL);
-    free(owners); qa_source_save_dispose(&io);
-    if (!ok && error && error->code==QA_OK) frontend_fail(error,QA_ERROR_FORMAT,"Invalid saved frontend font ownership");
-    return ok;
 }

@@ -1,5 +1,4 @@
 #include "image_inventory.h"
-#include "menu_art.h"
 #include "component_scene.h"
 #include "equipment_media.h"
 #include "save_private.h"
@@ -130,51 +129,6 @@ static bool collect(qa_frontend *f, image_inventory *inventory, qa_error *error)
     }
     return ok;
 }
-static bool header(qa_source_save_io *io, const image_inventory *inventory)
-{
-    uint8_t magic[4] = {'Q','F','I','M'}; size_t count = inventory->count;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFIM", 4) ||
-        !qa_source_save_count(io, &count, SIZE_MAX / sizeof(image_owner)) || count != inventory->count) return false;
-    for (size_t i = 0; i < count; ++i) {
-        image_owner saved = inventory->entries[i];
-        if (!qa_source_save_u32(io, &saved.kind) || !qa_source_save_u64(io, &saved.ordinal) ||
-            !qa_source_save_u64(io, &saved.identity) || !qa_source_save_u64(io, &saved.view) ||
-            saved.kind != inventory->entries[i].kind || saved.ordinal != inventory->entries[i].ordinal ||
-            saved.identity != inventory->entries[i].identity || saved.view != inventory->entries[i].view) return false;
-    }
-    return true;
-}
-bool frontend_images_checkpoint(qa_frontend *f, qa_buffer *out, qa_error *error)
-{
-    if (!out || out->data || out->size) return frontend_fail(error, QA_ERROR_ARGUMENT, "image capture requires empty output");
-    image_inventory inventory = {0}; qa_buffer images = {0}; qa_source_save_io io = {0};
-    bool ok = collect(f, &inventory, error) &&
-        (!inventory.count || qa_scene_images_checkpoint((const qa_scene_resources *const *)inventory.owners, inventory.count, &images, error)) &&
-        qa_source_save_writer(&io, qa_application_session(f->application), error) && header(&io, &inventory);
-    size_t count = images.size;
-    ok = ok && qa_source_save_count(&io, &count, SIZE_MAX) && qa_source_save_bytes(&io, images.data, count) && qa_source_save_finish(&io, out);
-    qa_source_save_dispose(&io); qa_buffer_free(&images); dispose(&inventory);
-    if (!ok && error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "image owner topology is not completely qualified");
-    return ok;
-}
-bool frontend_images_restore(qa_frontend *f, qa_bytes bytes, const qa_q3_image_upload_options *upload,
-    qa_scene_image_set **out, qa_error *error)
-{
-    if (!out || *out) return frontend_fail(error, QA_ERROR_ARGUMENT, "image restore requires empty construction-reference output");
-    image_inventory inventory = {0}; qa_source_save_io io = {0}; size_t size = 0;
-    bool ok = collect(f, &inventory, error) && qa_source_save_reader(&io, qa_application_session(f->application), bytes, error) &&
-        header(&io, &inventory) && qa_source_save_count(&io, &size, bytes.size);
-    qa_bytes images = {0};
-    if (ok) {
-        if (io.offset > bytes.size || size > bytes.size - io.offset) ok = false;
-        else { images = (qa_bytes){bytes.data + io.offset, size}; io.offset += size; }
-    }
-    ok = ok && qa_source_save_finish(&io, NULL) && frontend_menu_art_bind(f, error) && (inventory.count ?
-        qa_scene_images_restore(inventory.owners, inventory.count, images, upload, out, error) : images.size == 0);
-    qa_source_save_dispose(&io); dispose(&inventory);
-    if (!ok && error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "saved image topology differs from prepared actual owners");
-    return ok;
-}
 bool frontend_image_index(qa_frontend *f, const qa_scene_image *image, uint64_t *out, qa_error *error)
 {
     if (!image || !out) return frontend_fail(error, QA_ERROR_ARGUMENT, "image reference requires an actual version and output");
@@ -184,83 +138,5 @@ bool frontend_image_index(qa_frontend *f, const qa_scene_image *image, uint64_t 
     if (ok) *out = index;
     dispose(&inventory);
     if (!ok && error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "retained image is outside the actual frontend owner graph");
-    return ok;
-}
-typedef struct image_state_scope {
-    frontend_scene_namespace *space;
-    qa_application_content_graph *content;
-    const image_owner *owner;
-} image_state_scope;
-static bool state_image_encode(void *context,const qa_scene_image *image,uint64_t *key,qa_error *error)
-{ return frontend_scene_image_encode(((image_state_scope *)context)->space,image,key,error); }
-static bool state_image_decode(void *context,uint64_t key,const qa_scene_image **image,qa_error *error)
-{ return frontend_scene_image_decode(((image_state_scope *)context)->space,key,image,error); }
-static bool state_resource_encode(void *context,const qa_resource *resource,uint64_t *pool,uint64_t *version,qa_error *error)
-{
-    image_state_scope *scope=context;
-    if (!pool || !version || pool==version || !resource ||
-        qa_resource_pool_find(qa_vfs_resources(qa_scene_resources_files(scope->owner->images)),qa_resource_id(resource))!=resource ||
-        !qa_application_content_resource_id(scope->content,resource,pool,version))
-        return frontend_fail(error,QA_ERROR_FORMAT,"Image cache source leaves its actual resource owner pool");
-    return true;
-}
-static bool state_resource_decode(void *context,uint64_t pool,uint64_t version,const qa_resource **out,qa_error *error)
-{
-    image_state_scope *scope=context; const qa_resource *resource=qa_application_content_resource(scope->content,pool,version);
-    if (!out || !resource ||
-        qa_resource_pool_find(qa_vfs_resources(qa_scene_resources_files(scope->owner->images)),qa_resource_id(resource))!=resource)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Saved image cache source has no genuine restored pool owner");
-    *out=resource; return true;
-}
-static qa_scene_resource_checkpoint_refs state_refs(image_state_scope *scope)
-{
-    return (qa_scene_resource_checkpoint_refs){scope,state_image_encode,state_image_decode,state_resource_encode,state_resource_decode};
-}
-static bool owners_header(qa_source_save_io *io,const image_inventory *inventory)
-{
-    uint8_t magic[4]={'Q','F','I','S'}; return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFIS",4) &&
-        header(io,inventory);
-}
-bool frontend_image_owners_checkpoint(qa_frontend *f,frontend_scene_namespace *space,qa_buffer *out,qa_error *error)
-{
-    if (!f || !f->capture || f->source_restoring || !space || !out || out->data || out->size)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Image owner capture requires its retained frontend and shared namespace");
-    image_inventory inventory={0}; qa_source_save_io io={0};
-    bool ok=collect(f,&inventory,error) && qa_source_save_writer(&io,NULL,error) && owners_header(&io,&inventory);
-    for (size_t i=0;ok && i<inventory.count;++i) {
-        image_state_scope scope={space,qa_application_content_graph_read(f->application),inventory.entries+i};
-        qa_scene_resource_checkpoint_refs refs=state_refs(&scope); qa_buffer state={0};
-        ok=qa_scene_resources_checkpoint(inventory.owners[i],&refs,&state,error) &&
-            qa_source_save_count(&io,&state.size,SIZE_MAX) && qa_source_save_bytes(&io,state.data,state.size);
-        qa_buffer_free(&state);
-    }
-    ok=ok && qa_source_save_finish(&io,out); qa_source_save_dispose(&io); dispose(&inventory);
-    if (!ok && error && error->code==QA_OK) frontend_fail(error,QA_ERROR_FORMAT,"Image owner private continuation has invalid actual resource references");
-    return ok;
-}
-bool frontend_image_owners_restore(qa_frontend *f,frontend_scene_namespace *space,qa_bytes bytes,qa_error *error)
-{
-    if (!f || !f->source_restoring || f->capture || !space)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Image owner import requires its isolated actual frontend and namespace");
-    image_inventory inventory={0}; qa_source_save_io io={0}; qa_bytes *states=NULL;
-    bool ok=collect(f,&inventory,error) && inventory.count<=SIZE_MAX/sizeof(*states);
-    if (ok && inventory.count) {
-        states=calloc(inventory.count,sizeof(*states));
-        if (!states) ok=frontend_fail(error,QA_ERROR_MEMORY,"Retaining complete image owner section inventory");
-    }
-    ok=ok && qa_source_save_reader(&io,NULL,bytes,error) && owners_header(&io,&inventory);
-    for (size_t i=0;ok && i<inventory.count;++i) {
-        size_t count=0;
-        ok=qa_source_save_count(&io,&count,bytes.size-io.offset) && count<=bytes.size-io.offset;
-        if (ok) { states[i]=(qa_bytes){bytes.data+io.offset,count}; io.offset+=count; }
-    }
-    ok=ok && qa_source_save_finish(&io,NULL); qa_source_save_dispose(&io);
-    for (size_t i=0;ok && i<inventory.count;++i) {
-        image_state_scope scope={space,qa_application_content_graph_read(f->application),inventory.entries+i};
-        qa_scene_resource_checkpoint_refs refs=state_refs(&scope);
-        ok=qa_scene_resources_restore(inventory.owners[i],states[i],&refs,error);
-    }
-    free(states); dispose(&inventory);
-    if (!ok && error && error->code==QA_OK) frontend_fail(error,QA_ERROR_FORMAT,"Saved image owner envelope differs from its prepared real topology");
     return ok;
 }
