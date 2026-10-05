@@ -128,6 +128,21 @@ static bool identity(void *context, qa_console_program_identity kind, uint64_t s
     *out = source; return true;
 }
 
+static bool carried_player_seat(const application_startup_program *owner, qa_actor_id actor,
+    uint32_t *seat)
+{
+    if (qa_application_player_seat(owner->previous_application, actor, seat)) return true;
+    const application_campaign_travel *campaign = owner->restoring
+        ? owner->previous_application->campaign_travel : NULL;
+    const application_player_travel *players = campaign ? campaign->players : NULL;
+    for (size_t i = 0; players && i < players->count; ++i)
+        if (qa_actor_id_equal(players->carry[i].previous_actor, actor)) {
+            *seat = players->seats[i].id;
+            return true;
+        }
+    return false;
+}
+
 static bool command_context(void *context, const qa_command_context *source,
     qa_command_context *out, qa_error *error)
 {
@@ -138,7 +153,7 @@ static bool command_context(void *context, const qa_command_context *source,
         !identity(owner, QA_CONSOLE_PROGRAM_CLIENT, source->client, &target.client, error)) return false;
     if (source->actor.registry) {
         uint32_t seat;
-        if (qa_application_player_seat(owner->previous_application, source->actor, &seat)) {
+        if (carried_player_seat(owner, source->actor, &seat)) {
             program_actor *row = owner->actors;
             while (row && !qa_actor_id_equal(row->source, source->actor)) row = row->next;
             if (!row) {
@@ -161,7 +176,7 @@ static bool context_retained(void *context, const qa_command_context *source,
     if (owner->restoring && source->actor.registry) {
         uint32_t seat;
         qa_actor_id carried;
-        *retained = qa_application_player_seat(owner->previous_application, source->actor, &seat) &&
+        *retained = carried_player_seat(owner, source->actor, &seat) &&
             qa_application_player_actor(owner->application, seat, &carried);
     }
     return true;

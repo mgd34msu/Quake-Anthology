@@ -654,7 +654,6 @@ static bool q3_replacement_client(qa_application *application,
     record->client_slot = previous->client_slot;
     record->source_slot = previous->source_slot;
     carry->q3_client = true;
-    carry->q3_previous_actor = previous->actor;
     return true;
 }
 
@@ -808,6 +807,7 @@ bool application_players_prepare(qa_application *application,
         qa_actor_id previous = {0};
         const application_player_record *old = NULL;
         bool had_player = qa_application_player_actor(application, seat->id, &previous);
+        if (had_player) travel->carry[i].previous_actor = previous;
         if (q3_replacement && had_player) {
             for (size_t j = 0; j < application->players->count; ++j)
                 if (qa_actor_id_equal(application->players->records[j].actor, previous)) {

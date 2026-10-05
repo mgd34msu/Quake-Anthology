@@ -277,7 +277,7 @@ bool application_q3_world_restart_guest_handoff(qa_application *app,
             if (error) *error = current;
             return false;
         }
-        if (!qa_actor_id_equal(actor, carry->q3_previous_actor))
+        if (!qa_actor_id_equal(actor, carry->previous_actor))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 shutdown changed a retained physical client generation");
         char *text = copy_text(userinfo, error);
         if (!text) return false;
@@ -305,7 +305,7 @@ bool application_q3_world_restart_guest_handoff(qa_application *app,
         for (size_t i = 0; i < travel->count; ++i)
             retained |= !travel->roster->records[i].retiring &&
                 travel->roster->records[i].client_slot == slot &&
-                qa_actor_id_equal(travel->carry[i].q3_previous_actor, actor);
+                qa_actor_id_equal(travel->carry[i].previous_actor, actor);
         if (!retained)
             return application_fail(error, QA_ERROR_UNSUPPORTED,
                 "Q3 Shutdown admitted a new client outside its prepared canonical roster");
@@ -654,7 +654,7 @@ static bool reconcile_native_clients(application_provider *source,
             record->retiring = true;
             continue;
         }
-        if (record->retiring || !qa_actor_id_equal(client.actor, travel->carry[index].q3_previous_actor))
+        if (record->retiring || !qa_actor_id_equal(client.actor, travel->carry[index].previous_actor))
             return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 shutdown changed a retained physical client generation");
         char *userinfo = copy_text(client.userinfo, error);
         if (!userinfo) return false;
