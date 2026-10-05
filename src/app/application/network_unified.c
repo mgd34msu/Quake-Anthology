@@ -741,7 +741,7 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
 }
 
 bool application_unified_component_command(qa_application *app, qa_net_client_id client,
-    qa_net_seat_id seat, const qa_unified_document *owner, uint64_t generation,
+    qa_net_seat_id seat, const qa_unified_component_owner *owner,
     const char *const *arguments, size_t count, qa_error *error)
 {
     qa_unified_session_player player;
@@ -768,7 +768,7 @@ bool application_unified_component_command(qa_application *app, qa_net_client_id
         .actor = player.actor, .seat = row->seat, .dialect = QA_CONSOLE_Q3}};
     bool handled = false;
     bool okay = qa_application_capture_command_context(app, &command.context, &command.context, error) &&
-        application_q3_components_command(app, player.actor, owner, generation, &command, &handled, error);
+        application_q3_components_command(app, player.actor, owner, &command, &handled, error);
     free(tail);
     if (okay && !handled)
         return application_fail(error, QA_ERROR_ARGUMENT, "Component command names no admitted recipient handler");

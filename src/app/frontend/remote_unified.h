@@ -5,6 +5,7 @@
 #include "qa/executable_recipe.h"
 #include "qa/network_unified_session.h"
 #include "qa/network_unified_frame.h"
+#include "qa/unified_frame_components.h"
 #include "qa/persistence_content.h"
 #include "qa/audio.h"
 #include "qa/scene.h"
@@ -131,7 +132,7 @@ bool frontend_remote_unified_command(frontend_remote_unified *, const char *,
 bool frontend_remote_unified_command_text(frontend_remote_unified *,const char *,qa_error *);
 bool frontend_remote_unified_source_disconnect(frontend_remote_unified *,const char *,qa_error *);
 bool frontend_remote_unified_component_command(frontend_remote_unified *,
-    const qa_unified_document *owner, uint64_t generation, const char *const *, size_t, qa_error *);
+    const qa_unified_component_owner *owner, const char *const *, size_t, qa_error *);
 bool frontend_remote_unified_sample(qa_frontend *, uint64_t now_ns, qa_error *);
 bool frontend_remote_unified_begin_frame(qa_frontend *,uint64_t wall_now_ns,uint64_t wall_elapsed_ns,qa_error *);
 bool frontend_remote_unified_clock_read(const frontend_remote_unified *,frontend_unified_recipient_clock *,qa_error *);

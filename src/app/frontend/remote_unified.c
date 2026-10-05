@@ -576,28 +576,23 @@ bool frontend_remote_unified_submit(frontend_remote_unified *owner, const qa_uni
 }
 
 static bool command_document(frontend_remote_unified *owner, const char *name,
-    const qa_unified_document *component, uint64_t generation, const char *const *args, size_t count, qa_error *error)
+    const qa_unified_component_owner *component, const char *const *args, size_t count, qa_error *error)
 {
     if (!owner || owner->busy || !owner->admitted || !owner->session || (count && !args) || count > 128 ||
         !qa_unified_session_idle(owner->session) || !frontend_remote_unified_current(owner, error)) return false;
-    if (!component) {
-        qa_unified_control value={.kind=QA_UNIFIED_CONTROL_COMMAND,.epoch=owner->epoch,
-            .value.command={.name=(char *)name,.arguments={.values=(char **)args,.count=count}}};
-        qa_unified_document *document=NULL;
-        bool okay=qa_unified_document_create_control(&value,&document,error) && qa_unified_session_control(owner->session,document,error);
-        qa_unified_document_destroy(document); return okay;
+    qa_unified_control value={.epoch=owner->epoch};
+    if (component) {
+        value.kind=QA_UNIFIED_CONTROL_COMPONENT_COMMAND;
+        value.value.component_command=(qa_unified_component_command_control){.owner=*component,
+            .arguments={.values=(char **)args,.count=count}};
+    } else {
+        value.kind=QA_UNIFIED_CONTROL_COMMAND;
+        value.value.command=(qa_unified_command_control){.name=(char *)name,
+            .arguments={.values=(char **)args,.count=count}};
     }
-    application_unified_json json={0}; qa_unified_document *document=NULL;
-    bool okay=application_unified_json_text(&json,"{\"schema\":\"qts-control\",\"version\":1,\"value\":{\"kind\":\"component-command\",\"epoch\":",error) &&
-        application_unified_json_natural(&json,owner->epoch,error) && application_unified_json_text(&json,",\"owner\":",error) &&
-        application_unified_json_document(&json,component,error) && application_unified_json_text(&json,",\"generation\":",error) &&
-        application_unified_json_natural(&json,generation,error) && application_unified_json_text(&json,",\"args\":[",error);
-    for (size_t i=0;okay && i<count;++i) okay=args[i] && (!i || application_unified_json_text(&json,",",error)) &&
-        application_unified_json_string(&json,args[i],error);
-    if (okay) okay=application_unified_json_text(&json,"]}}",error) && qa_unified_document_create(QA_UNIFIED_CONTROL_DOCUMENT,
-        (qa_bytes){json.bytes.data,json.bytes.size},&document,error) && qa_unified_session_control(owner->session,document,error);
-    qa_unified_document_destroy(document); application_unified_json_dispose(&json); return okay;
-
+    qa_unified_document *document=NULL;
+    bool okay=qa_unified_document_create_control(&value,&document,error) && qa_unified_session_control(owner->session,document,error);
+    qa_unified_document_destroy(document); return okay;
 }
 bool frontend_remote_unified_source_disconnect(frontend_remote_unified *owner,const char *reason,qa_error *error)
 {
@@ -616,10 +611,10 @@ bool frontend_remote_unified_command_text(frontend_remote_unified *owner,const c
 
 bool frontend_remote_unified_command(frontend_remote_unified *owner, const char *name,
     const char *const *args, size_t count, qa_error *error)
-{ return command_document(owner, name, NULL, 0, args, count, error); }
+{ return command_document(owner, name, NULL, args, count, error); }
 bool frontend_remote_unified_component_command(frontend_remote_unified *owner,
-    const qa_unified_document *component, uint64_t generation, const char *const *args, size_t count, qa_error *error)
-{ return component && command_document(owner, NULL, component, generation, args, count, error); }
+    const qa_unified_component_owner *component, const char *const *args, size_t count, qa_error *error)
+{ return component && command_document(owner, NULL, component, args, count, error); }
 
 bool frontend_remote_unified_begin_frame(qa_frontend *frontend,uint64_t now,uint64_t elapsed,qa_error *error)
 {

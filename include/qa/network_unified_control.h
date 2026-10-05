@@ -2,6 +2,7 @@
 #define QA_NETWORK_UNIFIED_CONTROL_H
 
 #include "qa/network_unified_frame.h"
+#include "qa/unified_frame_components.h"
 
 typedef enum qa_unified_control_kind {
     QA_UNIFIED_CONTROL_READY, QA_UNIFIED_CONTROL_ADMITTED,
@@ -44,6 +45,10 @@ typedef struct qa_unified_source_command_control {
     uint64_t publication, map_revision;
     qa_unified_control_arguments arguments;
 } qa_unified_source_command_control;
+typedef struct qa_unified_component_command_control {
+    qa_unified_component_owner owner;
+    qa_unified_control_arguments arguments;
+} qa_unified_component_command_control;
 typedef struct qa_unified_control {
     qa_unified_control_kind kind;
     uint32_t epoch;
@@ -54,6 +59,7 @@ typedef struct qa_unified_control {
         char *userinfo;
         qa_unified_command_control command;
         qa_unified_source_command_control source_command;
+        qa_unified_component_command_control component_command;
         char *disconnect;
     } value;
 } qa_unified_control;

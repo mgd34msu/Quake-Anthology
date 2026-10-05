@@ -171,8 +171,13 @@ static qa_command_result console_command(void *context,const qa_command_invocati
     bool handled=false;
     if(!application_q3_scene_console(r->scene,&tokens,&handled,e)) return QA_COMMAND_FAILED;
     if(handled) return QA_COMMAND_HANDLED;
-    return frontend_remote_unified_component_command(r->parent->replica,r->state.presentation_owner,
-        r->state.generation,command->argv,command->argc,e)?QA_COMMAND_HANDLED:QA_COMMAND_FAILED;
+    if (r->state.owner_generation!=r->state.generation) {
+        q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component command changed its actual publication generation");
+        return QA_COMMAND_FAILED;
+    }
+    qa_unified_component_owner owner={r->state.provider,r->state.owner_generation};
+    return frontend_remote_unified_component_command(r->parent->replica,&owner,
+        command->argv,command->argc,e)?QA_COMMAND_HANDLED:QA_COMMAND_FAILED;
 }
 bool q3remote_component_open(remote_component *r,qa_error *e)
 {

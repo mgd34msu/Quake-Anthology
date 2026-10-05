@@ -56,28 +56,6 @@ static bool choices(reader r, const char *values) {
     }
     return fail(r,"unknown variant");
 }
-static bool bounded_string(reader r, size_t maximum, bool no_zero) {
-    qa_buffer text={0};
-    if (!qa_json_string(r.json,r.id,&text,r.error)) return false;
-    /* The donor counts UTF-16 code units. */
-    size_t units=0;
-    for (size_t i=0;i<text.size;++i) {
-        uint8_t c=text.data[i];
-        if ((c&0xc0u)!=0x80u) units+=c>=0xf0u?2u:1u;
-    }
-    bool ok=units<=maximum && (!no_zero || !memchr(text.data,0,text.size));
-    qa_buffer_free(&text);
-    return ok || fail(r,"invalid protocol string");
-}
-static bool protocol_string(reader r) { return bounded_string(r,8192,true); }
-static bool namespaced(reader r) {
-    qa_buffer text={0};
-    if (!qa_json_string(r.json,r.id,&text,r.error)) return false;
-    const uint8_t *colon=memchr(text.data,':',text.size);
-    bool ok=colon && colon!=text.data && colon!=text.data+text.size-1;
-    qa_buffer_free(&text); return ok || fail(r,"invalid namespaced identity");
-}
-static bool owner(reader r) { return record(r) && namespaced(field(r,"provider")) && integer(field(r,"generation"),1,(double)QA_UNIFIED_SAFE_INTEGER); }
 static bool component_header(reader r) {
     reader sources=field(r,"sources"),native=field(r,"native");
     return record(r) && natural(field(r,"revision")) && list(sources,0,256,record) && (absent(native) || list(native,0,256,record)) &&
@@ -88,7 +66,7 @@ static bool control(reader r) {
     if (!integer(field(r,"epoch"),1,4294967295.0)) return false;
     if (is(kind,"offer")) return record(field(r,"composition")) && choices(field(r,"mode"),"singleplayer coop deathmatch") && integer(field(r,"maxClients"),1,256);
     if (is(kind,"components")) return component_header(field(r,"update")) && integer(field(field(r,"update"),"revision"),1,(double)QA_UNIFIED_SAFE_INTEGER);
-    return literal(kind,"component-command") && owner(field(r,"owner")) && natural(field(r,"generation")) && list(field(r,"args"),1,128,protocol_string);
+    return fail(r,"unknown control variant");
 }
 
 bool qa_unified_schema_check(qa_unified_document_kind kind, const qa_json_document *json, qa_error *error) {

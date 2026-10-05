@@ -332,25 +332,12 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
         commit->applied=okay; return okay;
     }
     if (type==QA_UNIFIED_CONTROL_COMPONENT_COMMAND) {
-        const qa_json_document *json=qa_unified_document_json(document);
-        qa_json_id value=control_value(document);
-        qa_json_id arguments = qa_json_get(json, value, "args");
-        size_t count = qa_json_size(json, arguments); uint64_t generation;
-        if (!owner->admitted || !count || count > 128)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Component command has no admitted physical Source recipient");
-        qa_buffer retained[128] = {0}; const char *words[128];
-        qa_unified_document *component = NULL;
-        bool okay = qa_json_u64(json, qa_json_get(json, value, "generation"), &generation, error) &&
-            qa_unified_document_create(QA_UNIFIED_CHECKPOINT,
-                qa_json_source(json, qa_json_get(json, value, "owner")), &component, error);
-        for (size_t i = 0; okay && i < count; ++i) {
-            okay = qa_json_string(json, qa_json_at(json, arguments, i), retained + i, error);
-            if (okay) words[i] = (const char *)retained[i].data;
-        }
-        if (okay) okay = application_unified_component_command(owner->application, client, owner->seat,
-            component, generation, words, count, error);
-        for (size_t i = 0; i < count; ++i) qa_buffer_free(retained + i);
-        qa_unified_document_destroy(component); commit->applied = okay; return okay;
+        if (!owner->admitted)
+            return application_fail(error,QA_ERROR_ARGUMENT,"Component command has no admitted physical Source recipient");
+        const qa_unified_component_command_control *command=&packet->value.component_command;
+        bool okay=application_unified_component_command(owner->application,client,owner->seat,
+            &command->owner,(const char *const *)command->arguments.values,command->arguments.count,error);
+        commit->applied=okay; return okay;
     }
     if (type==QA_UNIFIED_CONTROL_DISCONNECT) {
         if ((owner->inputs && owner->inputs->advancing) ||

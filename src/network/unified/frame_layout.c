@@ -2149,12 +2149,17 @@ static const qa_unified_field control_source_command_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_source_command_control, arguments, control_arguments_layout),
 };
 static const qa_unified_record_layout control_source_command_layout = QA_UNIFIED_LAYOUT(qa_unified_source_command_control, control_source_command_fields);
+static const qa_unified_field control_component_command_fields[] = {
+    QA_UNIFIED_RECORD(qa_unified_component_command_control, owner, qa_unified_component_owner_layout),
+    QA_UNIFIED_RECORD(qa_unified_component_command_control, arguments, control_arguments_layout),
+};
+static const qa_unified_record_layout control_component_command_layout = QA_UNIFIED_LAYOUT(qa_unified_component_command_control, control_component_command_fields);
 static const qa_unified_field control_disconnect_fields[] = {{QA_UNIFIED_FIELD_STRING, 0, NULL, 0, 4096, NULL}};
 static const qa_unified_record_layout control_disconnect_layout = {sizeof(char *), control_disconnect_fields, 1, SIZE_MAX, QA_UNIFIED_KEY_NONE};
 static const qa_unified_record_layout *const control_variants[] = {
     &control_ready_layout, &control_admitted_layout, &control_resources_layout,
     &control_string_layout, &control_command_layout, &control_source_command_layout,
-    &control_disconnect_layout,
+    &control_disconnect_layout, NULL, NULL, &control_component_command_layout,
 };
 static const qa_unified_field control_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_control, kind, QA_UNIFIED_FIELD_U32),
@@ -2173,7 +2178,7 @@ static bool control_arguments_check(const qa_unified_control_arguments *args, bo
 }
 bool qa_unified_control_check(const qa_unified_control *v, size_t *bytes, qa_error *error)
 {
-    if (!v || !bytes || (unsigned)v->kind>QA_UNIFIED_CONTROL_DISCONNECT ||
+    if (!v || !bytes || ((unsigned)v->kind>QA_UNIFIED_CONTROL_DISCONNECT && v->kind!=QA_UNIFIED_CONTROL_COMPONENT_COMMAND) ||
         (v->kind!=QA_UNIFIED_CONTROL_DISCONNECT && !v->epoch) ||
         !qa_unified_record_measure(&qa_unified_control_layout,v,bytes,error))
         return frame_bad(error,"Unified control requires its actual typed kind and epoch");
@@ -2220,6 +2225,13 @@ bool qa_unified_control_check(const qa_unified_control *v, size_t *bytes, qa_err
             frame_bad(error,"Unified Source command has no actual activation");
     case QA_UNIFIED_CONTROL_DISCONNECT:
         return v->value.disconnect || frame_bad(error,"Unified disconnect has no actual reason");
+    case QA_UNIFIED_CONTROL_COMPONENT_COMMAND: {
+        const qa_unified_component_command_control *command=&v->value.component_command;
+        const char *colon=command->owner.provider?strchr(command->owner.provider,':'):NULL;
+        return (colon && colon!=command->owner.provider && colon[1] &&
+            command->owner.generation && control_arguments_check(&command->arguments,true,error)) ||
+            frame_bad(error,"Unified component command has no actual provider activation");
+    }
     default: return false;
     }
 }

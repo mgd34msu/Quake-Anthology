@@ -4,6 +4,7 @@
 #include "qa/application_players.h"
 #include "qa/network_unified_session.h"
 #include "qa/executable_recipe.h"
+#include "qa/unified_frame_components.h"
 
 struct qa_unified_world_frame;
 
@@ -41,7 +42,7 @@ bool application_unified_player_userinfo(qa_application *, qa_net_client_id, qa_
 bool application_unified_player_command(qa_application *, qa_net_client_id, qa_net_seat_id,
     const char *name, const char *const *arguments, size_t count, qa_error *);
 bool application_unified_component_command(qa_application *, qa_net_client_id, qa_net_seat_id,
-    const qa_unified_document *owner, uint64_t generation, const char *const *arguments,
+    const qa_unified_component_owner *owner, const char *const *arguments,
     size_t count, qa_error *);
 bool application_unified_source_command(qa_application *,qa_net_client_id,qa_net_seat_id,
     const qa_unified_source_command *,qa_error *);
