@@ -1329,8 +1329,9 @@ qa_input_seat *frontend_config_store_candidate_input(const frontend_config_store
     const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
     const qa_launch_binding *entities=qa_launch_binding_for(choices,(qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
     const qa_launch_instance *selected=entities?qa_launch_snapshot_find(candidate,entities->instance):NULL;
+    uint32_t logical;
     if (!manager || !application || !selected || ordinal>=manager->frontend->options.seats ||
-        !choices || ordinal>=choices->seat_count) return NULL;
+        !frontend_local_seat_read(choices,ordinal,&logical)) return NULL;
     if (manager->input_prepared && manager->input_application==application &&
         manager->input_candidate==candidate && ordinal<manager->input_count &&
         manager->input_source && manager->input_source->published) {
@@ -1338,17 +1339,17 @@ qa_input_seat *frontend_config_store_candidate_input(const frontend_config_store
         const config_seat *seat=manager->input_seats+ordinal;
         qa_console_dialect movement;
         if (held && held->storage==selected->storage && held->state==selected->state &&
-            seat->logical==choices->seats[ordinal].id && seat->input &&
+            seat->logical==logical && seat->input &&
             seat_movement(candidate,seat->logical,&movement,NULL) && movement==seat->movement_dialect &&
             qa_input_seat_context(seat->input).dialect==movement)
             return seat->input;
     }
     for (frontend_config_source *source=manager->sources;source;source=source->next) {
         const qa_launch_instance *retained=instance(source);
-        size_t index=seat_index(source,choices->seats[ordinal].id);
+        size_t index=seat_index(source,logical);
         if (source->application!=application || !source->primary || !retained ||
             retained->storage!=selected->storage || retained->state!=selected->state ||
-            index>=source->seat_count || !choices->seats[ordinal].local || choices->seats[ordinal].bot) continue;
+            index>=source->seat_count) continue;
         if (source->published) {
             if (qa_application_startup_candidate(application)!=candidate || source->imported ||
                 !source->configured || !source->released || source->running || source->phase) continue;
@@ -1382,10 +1383,10 @@ bool frontend_config_store_input_configuration(const frontend_config_store *mana
             return fail(error,QA_ERROR_ARGUMENT,"Bootstrap input lost its actual source-free physical ENGINE seat");
         *out=physical->input; return true;
     }
+    uint32_t logical;
     if (!f || !out || !application || f->application!=application || !candidate ||
         qa_application_startup_candidate(application)!=candidate || !f->seats ||
-        ordinal>=f->options.seats || !choices || ordinal>=choices->seat_count ||
-        !choices->seats[ordinal].local || choices->seats[ordinal].bot)
+        ordinal>=f->options.seats || !frontend_local_seat_read(choices,ordinal,&logical))
         return fail(error,QA_ERROR_ARGUMENT,"Input configuration lost its actual candidate physical seat");
     const frontend_seat *physical=f->seats+ordinal;
     if (physical->frontend!=f || physical->id!=ordinal || !physical->input || !physical->console ||
@@ -1399,9 +1400,8 @@ bool frontend_config_store_input_configuration(const frontend_config_store *mana
     }
     const qa_launch_snapshot *published=qa_application_launch(application);
     const qa_launch_choices *old=qa_launch_snapshot_choices(published);
-    uint32_t logical=choices->seats[ordinal].id;
-    if (old && (ordinal>=old->seat_count || old->seats[ordinal].id!=logical ||
-        !old->seats[ordinal].local || old->seats[ordinal].bot))
+    uint32_t previous_logical;
+    if (old && (!frontend_local_seat_read(old,ordinal,&previous_logical) || previous_logical!=logical))
         return fail(error,QA_ERROR_ARGUMENT,"Unchanged input changed its published authored seat");
     bool unchanged=false;
     if (frontend_network_remote(f)) {
@@ -2386,7 +2386,7 @@ static bool carry(frontend_config_store *manager,qa_application *application,
             registry_carry(source,old_seat->mouse,0,&seat->mouse,error) &&
             frontend_authored_bindings_clone(old_seat->authored,&seat->authored,error);
         qa_input_seat *active=frontend_config_source_input(previous,seat->logical);
-        ok=ok && active && seat_input_create(source,seat,active,(unsigned)i,error);
+        ok=ok && active && seat_input_create(source,seat,active,(unsigned)(source->seat_count-1),error);
         qa_buffer settings={0};
         if (ok && old_seat->found) ok=qa_seat_settings_encode(&old_seat->settings,&settings,error) &&
             qa_seat_settings_parse((qa_bytes){settings.data,settings.size},&seat->settings,error);
@@ -2630,11 +2630,13 @@ static bool prepare_retained_input(frontend_config_store *manager,qa_application
     qa_frontend *f=manager->frontend;
     const qa_launch_snapshot *previous=qa_application_launch(application);
     const qa_launch_choices *old_choices=qa_launch_snapshot_choices(previous);
+    unsigned count=frontend_local_seat_count(choices);
     bool changed=source!=published_primary(manager,application) || !old_choices ||
-        choices->seat_count!=old_choices->seat_count;
-    for (size_t i=0;i<choices->seat_count;++i) {
-        uint32_t logical=choices->seats[i].id;
-        if (!old_choices || i>=old_choices->seat_count || old_choices->seats[i].id!=logical ||
+        count!=frontend_local_seat_count(old_choices);
+    for (unsigned i=0;i<count;++i) {
+        uint32_t logical,old_logical;
+        (void)frontend_local_seat_read(choices,i,&logical);
+        if (!frontend_local_seat_read(old_choices,i,&old_logical) || old_logical!=logical ||
             !same_input_role(previous,candidate,logical,QA_ROLE_MOVEMENT) ||
             !same_input_role(previous,candidate,logical,QA_ROLE_ARSENAL)) changed=true;
         size_t index=seat_index(source,logical);
@@ -2648,14 +2650,16 @@ static bool prepare_retained_input(frontend_config_store *manager,qa_application
     }
     if (manager->restoring || manager->running || !source->configured || !source->released ||
         source->imported || source->running || source->phase || !qa_console_idle(source->console) ||
-        !choices || choices->seat_count>QA_INPUT_LOCAL_SEATS || choices->seat_count!=f->options.seats || !f->seats ||
+        !choices || count>QA_INPUT_LOCAL_SEATS || count!=f->options.seats || !f->seats ||
         qa_application_startup_candidate(application)!=candidate ||
         !qa_application_startup_resource_phase(application,candidate))
         return fail(error,QA_ERROR_ARGUMENT,"Retained input staging requires its actual reused primary source and release phase");
     manager->input_source=source; manager->input_candidate=candidate; manager->input_application=application;
-    for (size_t i=0;i<choices->seat_count;++i) {
-        size_t index=seat_index(source,choices->seats[i].id);
-        if (!choices->seats[i].local || choices->seats[i].bot || index>=source->seat_count)
+    for (unsigned i=0;i<count;++i) {
+        uint32_t logical;
+        (void)frontend_local_seat_read(choices,i,&logical);
+        size_t index=seat_index(source,logical);
+        if (index>=source->seat_count)
             return fail(error,QA_ERROR_ARGUMENT,"Retained input staging lacks its actual authored local profile");
         const config_seat *old=source->seats+index;
         config_seat *seat=manager->input_seats+manager->input_count++;
@@ -2878,9 +2882,10 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
             qa_settings_load_cvars(input_store(source),fallback_owner,2,command->dialect,&source->fallback_archive,error);
     }
     for (unsigned i=0;ok && source->primary && !f->options.dedicated && i<f->options.seats;++i) {
-        if (i>=choices->seat_count) { ok=fail(error,QA_ERROR_ARGUMENT,"Configuration source lacks its actual authored local seat"); break; }
+        uint32_t logical;
+        if (!frontend_local_seat_read(choices,i,&logical)) { ok=fail(error,QA_ERROR_ARGUMENT,"Configuration source lacks its actual authored local seat"); break; }
         config_seat *seat=source->seats+source->seat_count++;
-        ok=seat_create(source,candidate,seat,choices->seats[i].id,i,error);
+        ok=seat_create(source,candidate,seat,logical,i,error);
     }
     if (ok) ok=install_commands(source,error);
     if (ok && source->primary) ok=phase_create(source,error);

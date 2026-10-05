@@ -382,17 +382,16 @@ static bool player_sources(void *context,uint32_t id,qa_ui_menu *out,qa_error *e
     static const qa_launch_role roles[]={QA_ROLE_MOVEMENT,QA_ROLE_CHARACTER,QA_ROLE_ARSENAL};
     static const char *const names[]={"movement","character","arsenal"};
     size_t count=0;
-    for (uint32_t physical=0;choices && physical<f->options.seats && physical<choices->seat_count;++physical) {
-        const qa_launch_seat *player=choices->seats+physical;
-        if (!player->local || player->bot) continue;
-        uint32_t logical; qa_actor_id actor;
+    for (uint32_t physical=0;physical<f->options.seats;++physical) {
+        uint32_t player,logical; qa_actor_id actor;
+        if (!frontend_local_seat_read(choices,physical,&player)) continue;
         bool pending=f->player_source_draft || qa_application_startup_pending(f->application);
         bool enabled=!frontend_network_remote(f) && (pending ||
-            (frontend_seat_launch_id_read(f,physical,&logical) && logical==player->id &&
+            (frontend_seat_launch_id_read(f,physical,&logical) && logical==player &&
              qa_application_player_actor(f->application,logical,&actor)));
         for (size_t role=0;role<3;++role) {
             const qa_launch_binding *binding=qa_launch_binding_for(choices,
-                (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=player->id},roles[role],"");
+                (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=player},roles[role],"");
             const qa_launch_instance *selected=binding?qa_launch_snapshot_find(publication,binding->instance):NULL;
             size_t index=SIZE_MAX;
             for (size_t i=0;selected && i<seat->player_source_count;++i)
@@ -418,7 +417,8 @@ static bool seat_services_create(frontend_seat *seat, bool restoring, qa_error *
     unsigned i = seat->id;
     qa_cvars *cvars = qa_application_cvars(frontend->application);
     qa_command_context command = {.seat = i, .origin = QA_COMMAND_SEAT, .dialect = QA_CONSOLE_Q1, .direct = true};
-    (void)frontend_seat_launch_id_read(frontend,i,&command.seat);
+    if (!frontend_startup_launch_seat_read(frontend,i,&command.seat))
+        (void)frontend_seat_launch_id_read(frontend,i,&command.seat);
     qa_input_seat_options input = {.seat=i,.context = command, .console = qa_application_console(frontend->application),
         .cvars = cvars, .gamepad = qa_gamepad_defaults(), .ui = input_handler, .ui_user = seat,
         .before_ui = source_input, .before_ui_user = seat,
@@ -600,7 +600,7 @@ static bool seats_create(qa_frontend *frontend, unsigned first, const bool *mods
             !qa_hud_create(&(qa_hud_options){.ui = seat->ui, .application = frontend->application, .seat = i,
                 .context = seat, .read = hud_data, .video_frame = hud_video_frame,
                 .video_context = seat}, &seat->hud, error) || !frontend_wheel_create(seat, error)) return false;
-        if (restoring && !qa_ui_llm_create(seat->ui, frontend_tools_llm(frontend),
+        if ((restoring || frontend->tools) && !qa_ui_llm_create(seat->ui, frontend_tools_llm(frontend),
             FRONTEND_ASSISTANCE, &seat->assistance, error)) return false;
         if (restoring && mods[i] && !qa_ui_mods_create_restored(seat->ui, frontend->application,
             FRONTEND_MODS, &seat->mods, error)) return false;
@@ -643,6 +643,8 @@ bool frontend_seats_destroy_range(qa_frontend *frontend, unsigned first, unsigne
         seat->library = NULL;
         if (!qa_ui_rankings_destroy(seat->rankings, 0, error)) return false;
         seat->rankings = NULL;
+        if (!qa_ui_llm_destroy(seat->assistance,(double)frontend->time_ns/1000000.0,error)) return false;
+        seat->assistance=NULL;
         if (!qa_ui_destroy(seat->ui, 0, error)) return false;
         seat->ui = NULL;
         seat->player_sources_registered=false;
@@ -654,7 +656,7 @@ bool frontend_seats_destroy_range(qa_frontend *frontend, unsigned first, unsigne
         seat->player_source_titles=NULL; seat->player_source_products=NULL;
         SDL_free(seat->clipboard); seat->clipboard = NULL;
         free(seat->wheel_items); free(seat->wheel_definitions); free(seat->wheel_labels);
-        seat->wheel_items = NULL; seat->wheel_definitions = NULL; seat->wheel_labels = NULL;
+        *seat=(frontend_seat){.frontend=frontend,.id=i};
     }
     return true;
 }

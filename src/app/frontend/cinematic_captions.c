@@ -29,7 +29,7 @@ bool frontend_ui_cinematic_idle(const qa_frontend *f)
     const frontend_cinematic_captions *owner=f && f->ui_features?f->ui_features->cinematic_captions:NULL;
     if (!owner) return true;
     if (owner->frontend!=f) return false;
-    for (unsigned i=0;i<f->options.seats;++i)
+    for (unsigned i=0;i<QA_INPUT_LOCAL_SEATS;++i)
         if (owner->seats[i].language_ticket ||
             (owner->seats[i].captions && !qa_media_captions_idle(owner->seats[i].captions))) return false;
     return true;
@@ -37,7 +37,7 @@ bool frontend_ui_cinematic_idle(const qa_frontend *f)
 void frontend_ui_cinematic_clear(qa_frontend *f,uint32_t seat)
 {
     frontend_cinematic_captions *owner=f && f->ui_features?f->ui_features->cinematic_captions:NULL;
-    if (!owner || seat>=f->options.seats || owner->seats[seat].language_ticket ||
+    if (!owner || seat>=QA_INPUT_LOCAL_SEATS || owner->seats[seat].language_ticket ||
         (owner->seats[seat].captions && !qa_media_captions_idle(owner->seats[seat].captions))) return;
     cinematic_caption_seat *state=owner->seats+seat;
     qa_media_captions_clear(state->captions); qa_vfs_destroy(state->view);
@@ -50,7 +50,7 @@ void frontend_ui_cinematic_destroy(qa_frontend *f)
     frontend_cinematic_captions *owner=f && f->ui_features?f->ui_features->cinematic_captions:NULL;
     if (!owner) return;
     if (!frontend_ui_cinematic_idle(f)) return;
-    for (unsigned i=0;i<f->options.seats;++i) {
+    for (unsigned i=0;i<QA_INPUT_LOCAL_SEATS;++i) {
         frontend_ui_cinematic_clear(f,i); qa_media_captions_destroy(owner->seats[i].captions);
     }
     free(owner); f->ui_features->cinematic_captions=NULL;
@@ -67,7 +67,7 @@ bool frontend_ui_cinematic_init(qa_frontend *f,qa_error *error)
     frontend_cinematic_captions *owner=calloc(1,sizeof(*owner));
     if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Creating actual cinematic subtitle owner");
     owner->frontend=f; f->ui_features->cinematic_captions=owner;
-    for (unsigned i=0;i<f->options.seats;++i) {
+    for (unsigned i=0;i<QA_INPUT_LOCAL_SEATS;++i) {
         qa_media_caption_options options=caption_options(f,i);
         owner->seats[i].captions=qa_media_captions_create(&options,error);
         if (!owner->seats[i].captions) return false;

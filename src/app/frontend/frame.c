@@ -485,6 +485,7 @@ bool frontend_startup_advance(qa_frontend *frontend,bool *complete,qa_error *err
     bool prepared=qa_application_startup_advance(frontend->application,complete,error);
     frontend->preparing=false;
     if (!prepared || !*complete) return prepared;
+    if (!frontend_startup_launch_complete(frontend,error)) return false;
     if (!qa_application_launch(frontend->application)) {
         if (frontend->options.game) {
             if (!frontend_launch(frontend,error)) return false;
@@ -695,6 +696,8 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         frontend->stepping=false;
         return true;
     }
+    if (ok && !qa_application_startup_pending(frontend->application))
+        ok=qa_application_clients_drain(frontend->application,error);
     if (ok && !qa_application_should_stop(frontend->application) && frontend_cinematic_running(frontend)) {
         bool rendered=false;
         /* Playback owns its separate media clock. A console fallback may

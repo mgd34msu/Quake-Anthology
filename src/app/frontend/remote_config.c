@@ -3,6 +3,7 @@
 #include "config_weapon_defaults.h"
 #include "config_userinfo.h"
 #include "input_profile.h"
+#include "startup_menus.h"
 #include "qa/source_frame_time.h"
 #include "network_config.h"
 #include "save_private.h"
@@ -174,11 +175,9 @@ bool frontend_remote_config_current(const frontend_remote_config *row,const fron
 }
 static bool local_route(const frontend_remote_config *row,const qa_launch_choices *choices,uint32_t *physical)
 {
-    for (size_t i=0;choices && i<choices->seat_count;++i)
-        if (choices->seats[i].id==row->scope.seat && choices->seats[i].local && !choices->seats[i].bot) {
-            *physical=(uint32_t)i; return row->physical_seat!=*physical;
-        }
-    return false;
+    unsigned slot;
+    if (!frontend_local_seat_ordinal_read(choices,row->scope.seat,&slot)) return false;
+    *physical=slot; return row->physical_seat!=*physical;
 }
 bool frontend_remote_configs_local_routes(frontend_remote_configs *owner,qa_application *application,qa_error *error)
 {
@@ -280,10 +279,12 @@ qa_input_seat *frontend_remote_configs_candidate_input(const frontend_remote_con
     const qa_launch_snapshot *candidate,unsigned ordinal)
 {
     const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
-    if (!owner || !application || !choices || ordinal>=choices->seat_count || ordinal>=owner->frontend->options.seats) return NULL;
+    uint32_t logical;
+    if (!owner || !application || !frontend_local_seat_read(choices,ordinal,&logical) ||
+        ordinal>=owner->frontend->options.seats) return NULL;
     for (const remote_input *input=owner->inputs;input;input=input->next)
         if (input->application==application && input->candidate==candidate && input->physical_seat==ordinal &&
-            input->logical_seat==choices->seats[ordinal].id) return input->input;
+            input->logical_seat==logical) return input->input;
     return NULL;
 }
 bool frontend_remote_configs_fresh_input(const frontend_remote_configs *owner,qa_application *application,
@@ -461,14 +462,15 @@ static bool previous_seat(const frontend_remote_config *fresh,frontend_remote_co
     }
     const qa_launch_snapshot *published=qa_application_launch(fresh->application);
     const qa_launch_choices *choices=qa_launch_snapshot_choices(published);
-    if (!choices || !choices->seat_count || fresh->scope.seat!=choices->seats[0].id) return true;
+    uint32_t logical;
+    if (!frontend_local_seat_read(choices,0,&logical) || fresh->scope.seat!=logical) return true;
     frontend_remote_config_view view; bool present=false;
-    if (!frontend_network_client_previous_configuration_read(f,choices->seats[0].id,&view,&present,error)) return false;
+    if (!frontend_network_client_previous_configuration_read(f,logical,&view,&present,error)) return false;
     if (!present) return true;
     frontend_remote_config *old=fresh->owner->rows;
     while (old && old!=view.owner) old=old->next;
     if (!old || old==fresh || old->application!=fresh->application || old->hosted ||
-        view.physical_seat!=fresh->physical_seat || view.scope.seat!=choices->seats[0].id ||
+        view.physical_seat!=fresh->physical_seat || view.scope.seat!=logical ||
         !view.ready || !view.published || !frontend_remote_config_current(old,&view) ||
         !old->authored || !frontend_authored_bindings_completed(old->authored) ||
         !f->seats || !f->seats[fresh->physical_seat].input)
@@ -563,10 +565,11 @@ static frontend_remote_config *previous(const frontend_remote_configs *owner,qa_
     if (!old || !frontend_config_store_same_profile(old,fresh->descriptor)) return NULL;
     for (frontend_remote_config *row=owner->rows;row;row=row->next) {
         const qa_launch_instance *held=descriptor(row);
+        uint32_t logical;
         if (row->application!=app || !row->published || row->imported || !row->configured || !row->released ||
             row->running || row->phase || !held || held->storage!=old->storage || held->state!=old->state ||
-            !scope_equal(row->scope,fresh->scope) || !choices || row->physical_seat>=choices->seat_count ||
-            choices->seats[row->physical_seat].id!=row->scope.seat) continue;
+            !scope_equal(row->scope,fresh->scope) ||
+            !frontend_local_seat_read(choices,row->physical_seat,&logical) || logical!=row->scope.seat) continue;
         const qa_launch_binding *binding=qa_launch_binding_for(choices,
             (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=row->scope.seat},QA_ROLE_MOVEMENT,"");
         const qa_launch_instance *movement=binding?qa_launch_snapshot_find(candidate,binding->instance):NULL;
@@ -611,10 +614,10 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
         frontend_remote_config_find(owner,source->console))
         return fail(error,QA_ERROR_ARGUMENT,"CLIENT preparation needs its fresh physical receiver tuple");
     const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
-    size_t ordinal=0;
-    while (choices && ordinal<choices->seat_count && choices->seats[ordinal].id!=source->scope.seat) ++ordinal;
+    unsigned ordinal;
     qa_frontend *f=owner->frontend;
-    if (!choices || ordinal>=choices->seat_count || ordinal>=f->options.seats || !f->seats || f->options.dedicated)
+    if (!frontend_local_seat_ordinal_read(choices,source->scope.seat,&ordinal) ||
+        ordinal>=f->options.seats || !f->seats || f->options.dedicated)
         return fail(error,QA_ERROR_ARGUMENT,"CLIENT preparation lacks its actual graphical authored seat");
     frontend_remote_config *row=calloc(1,sizeof(*row));
     if (!row) return fail(error,QA_ERROR_MEMORY,"Retaining actual CLIENT configuration");
@@ -970,12 +973,11 @@ bool frontend_remote_config_bind_hosted(frontend_remote_configs *owner,qa_applic
     const qa_launch_instance *receiver=qa_launch_snapshot_find(candidate,target->descriptor->selection.instance);
     const qa_launch_instance *parent=qa_launch_snapshot_find(candidate,backing->descriptor->selection.instance);
     const qa_launch_binding *entities=qa_launch_binding_for(choices,(qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
-    size_t ordinal=0;
-    while (choices && ordinal<choices->seat_count && choices->seats[ordinal].id!=target->scope.seat) ++ordinal;
+    unsigned ordinal;
     qa_frontend *f=owner->frontend;
     if (!receiver || receiver->storage!=target->descriptor->storage || !parent ||
         parent->storage!=backing->descriptor->storage || !entities || strcmp(entities->instance,parent->selection.instance) ||
-        !choices || ordinal>=choices->seat_count || ordinal>=f->options.seats || !f->seats ||
+        !frontend_local_seat_ordinal_read(choices,target->scope.seat,&ordinal) || ordinal>=f->options.seats || !f->seats ||
         !f->seats[ordinal].input || (target->scope.kind!=QA_APPLICATION_CONSOLE_Q3_CGAME && target->scope.kind!=QA_APPLICATION_CONSOLE_Q3_UI))
         return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT binding changed its genuine receiver or authored seat");
     frontend_remote_config *row=frontend_remote_config_find(owner,target->console);
@@ -1288,7 +1290,8 @@ bool frontend_remote_config_bind_restored(frontend_remote_configs *owner,qa_appl
     const qa_launch_binding *binding=qa_launch_binding_for(choices,
         (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=row->scope.seat},QA_ROLE_MOVEMENT,"");
     const qa_launch_instance *movement_source=binding?qa_launch_snapshot_find(candidate,binding->instance):NULL;
-    if (!choices || row->physical_seat>=choices->seat_count || choices->seats[row->physical_seat].id!=row->scope.seat ||
+    uint32_t logical;
+    if (!frontend_local_seat_read(choices,row->physical_seat,&logical) || logical!=row->scope.seat ||
         !movement_source || (movement=(qa_movement_kind)movement_source->selection.clock.kind)!=row->movement)
         return fail(error,QA_ERROR_FORMAT,"Decoded CLIENT changed its real physical seat or movement selection");
     const qa_product *actual=qa_catalog_product(qa_launch_instance_catalog(source->descriptor),source->descriptor->selection.product);

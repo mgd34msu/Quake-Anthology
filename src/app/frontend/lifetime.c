@@ -721,10 +721,6 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
      * their seats, scene registry, device or SDL handles. */
     qa_input_platform_destroy(frontend->input); frontend->input = NULL;
     qa_input_console_destroy(frontend->input_commands); frontend->input_commands = NULL;
-    for (unsigned i = 0; i < frontend->options.seats; ++i) {
-        if (!qa_ui_llm_destroy(frontend->seats[i].assistance, (double)frontend->time_ns / 1000000, error)) return false;
-        frontend->seats[i].assistance = NULL;
-    }
     if (!frontend_qc_messages_destroy(&frontend->qc_messages,error) ||
         !frontend_q1_sky_destroy(&frontend->q1_sky,error) ||
         !frontend_music_sources_destroy(&frontend->music_sources,error)) return false;
@@ -736,10 +732,11 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
          !frontend_config_store_parked_release(frontend->config_store,error) ||
          !qa_application_retire_sources(frontend->application, error) ||
          !frontend_config_store_restore_abort_unbound(frontend->config_store,frontend->application,error))) return false;
-    if (!frontend_network_destroy(frontend, error) || !frontend_tools_destroy(frontend, error)) return false;
+    if (!frontend_network_destroy(frontend, error)) return false;
     frontend_qc_rerelease_destroy(frontend);
     if (frontend->config_store && !frontend_config_store_retired_ready(frontend->config_store,error)) return false;
-    if (!frontend_ui_features_destroy(frontend,error) || !frontend_seats_destroy(frontend,error)) return false;
+    if (!frontend_ui_features_destroy(frontend,error) || !frontend_seats_destroy(frontend,error) ||
+        !frontend_tools_destroy(frontend,error)) return false;
     if (frontend->view_settings && !(frontend->engine_shutdown?
         frontend_view_settings_shutdown(&frontend->view_settings,frontend->engine_shutdown,error):
         frontend_view_settings_destroy(&frontend->view_settings,error))) return false;

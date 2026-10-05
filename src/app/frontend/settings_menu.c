@@ -1,5 +1,6 @@
 #include "settings_menu.h"
 #include "settings_devices.h"
+#include "startup_menus.h"
 #include "config_store.h"
 #include "neutral_config.h"
 #include "accessibility.h"
@@ -20,7 +21,7 @@ typedef enum setting_operation {
     SET_CONTROLLER, SET_AUDIO_DEVICE, SET_GYRO_ENABLE, SET_GYRO_CALIBRATE,
     SET_GYRO_CANCEL, SET_GYRO_RESET, SET_LANGUAGE, SET_DOPPLER, SET_ENVIRONMENT,
     SET_PACKED_COLOR, SET_PREFERENCE, SET_PREFERENCES_RESET, SET_GAMEPLAY_RESET,
-    SET_MATCH_SELECT, SET_MATCH_TEXT, SET_MATCH_COMMAND
+    SET_MATCH_SELECT, SET_MATCH_TEXT, SET_MATCH_COMMAND, SET_LOCAL_JOIN, SET_LOCAL_DROP
 } setting_operation;
 typedef enum match_operation {
     MATCH_JOIN, MATCH_FOLLOW, MATCH_CALL_VOTE, MATCH_YES, MATCH_NO, MATCH_ADD, MATCH_REMOVE
@@ -175,6 +176,10 @@ static bool action(void *context,uint32_t id,qa_ui_id control,const qa_ui_action
     double value=event->kind==QA_UI_CHANGE_NUMBER?event->value.number:0;
     qa_gamepad_tuning *live=qa_input_seat_gamepad_tuning(seat->input), tuning=*live;
     switch(binding->operation) {
+    case SET_LOCAL_JOIN:
+        return event->kind!=QA_UI_ACTIVATE || frontend_startup_local_join_stage(seat,error);
+    case SET_LOCAL_DROP:
+        return event->kind!=QA_UI_ACTIVATE || frontend_startup_local_drop_stage(seat,error);
     case SET_MATCH_SELECT:
         if(event->kind==QA_UI_SELECT) *(size_t *)((char *)seat->settings_menu+binding->offset)=event->value.row;
         return true;
@@ -755,8 +760,10 @@ static bool controls(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
     }
     if(!device_input_controls(seat)) return finish(seat,FRONTEND_CONTROLS,"Controls",out,error,false);
     if(live) {
-        qa_ui_control *item=button(seat,"Add local player",SET_CLOSE); if(item) item->enabled=false;
-        item=button(seat,"Remove this player",SET_CLOSE); if(item) item->enabled=false;
+        bool join,drop;
+        if(!frontend_startup_local_players_read(seat,&join,&drop,error)) return false;
+        qa_ui_control *item=button(seat,"Add local player",SET_LOCAL_JOIN); if(item) item->enabled=join;
+        item=button(seat,"Remove this player",SET_LOCAL_DROP); if(item) item->enabled=drop;
         if(!primary_input_controls(seat)) return finish(seat,FRONTEND_CONTROLS,"Controls",out,error,false);
     }
     if(!gamepad_controls(seat)) return finish(seat,FRONTEND_CONTROLS,"Controls",out,error,false);

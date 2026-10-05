@@ -415,6 +415,9 @@ bool qa_application_q1_paused(const qa_application *);
  * output work and before draining map/restart intents. Source simulation or
  * restart settlement steps do not publish this revision. */
 bool qa_application_complete_frame(qa_application *, qa_error *);
+/* Consume pending client drops after command and transport callbacks return,
+ * before sampling host slots. This does not advance simulation or Source time. */
+bool qa_application_clients_drain(qa_application *, qa_error *);
 /* Drain due source intents at the actual idle driver boundary, before any
  * controls, source stepping, or presentation owners begin their next frame. */
 bool qa_application_prepare_frame(qa_application *, qa_error *);

@@ -2,6 +2,7 @@
 #include "capture.h"
 #include "music_sources.h"
 #include "view_bindings.h"
+#include "startup_menus.h"
 #include "qa/application_character_selection.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/application_client.h"
@@ -24,8 +25,7 @@ bool frontend_seat_launch_id_read(const qa_frontend *f,uint32_t ordinal,uint32_t
         }
     }
     const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(f->application));
-    if (!choices || ordinal>=choices->seat_count) return false;
-    *out=choices->seats[ordinal].id; return true;
+    return frontend_local_seat_read(choices,ordinal,out);
 }
 bool frontend_seat_ordinal_read(const qa_frontend *f,uint32_t launch_seat,uint32_t *out)
 {
@@ -65,11 +65,12 @@ bool frontend_command_seat_read(const qa_frontend *f,const qa_command_context *c
         *out=command->seat; return true;
     }
     bool scoped=command->origin==QA_COMMAND_SEAT || command->actor.registry!=0;
-    for (size_t i=0;i<choices->seat_count && i<f->options.seats;++i) {
-        if (!choices->seats[i].local || (scoped && choices->seats[i].id!=command->seat)) continue;
+    for (uint32_t i=0;i<f->options.seats;++i) {
+        uint32_t logical;
+        if (!frontend_local_seat_read(choices,i,&logical) || (scoped && logical!=command->seat)) continue;
         if (command->actor.registry) {
             qa_actor_id actor;
-            if (!qa_application_player_actor(f->application,choices->seats[i].id,&actor) ||
+            if (!qa_application_player_actor(f->application,logical,&actor) ||
                 !qa_actor_id_equal(actor,command->actor)) return false;
         }
         *out=(uint32_t)i; return true;
@@ -79,8 +80,8 @@ bool frontend_command_seat_read(const qa_frontend *f,const qa_command_context *c
 static bool context_seat(const qa_launch_snapshot *snapshot,uint32_t ordinal,uint32_t logical)
 {
     const qa_launch_choices *choices=qa_launch_snapshot_choices(snapshot);
-    return choices && ordinal<choices->seat_count && choices->seats[ordinal].id==logical &&
-        choices->seats[ordinal].local && !choices->seats[ordinal].bot;
+    uint32_t actual;
+    return frontend_local_seat_read(choices,ordinal,&actual) && actual==logical;
 }
 bool frontend_seat_context_ready(void *context,uint32_t ordinal,const qa_command_context *command,qa_error *error)
 {
@@ -123,7 +124,9 @@ bool frontend_seat_context_ready(void *context,uint32_t ordinal,const qa_command
         return true;
     }
     const qa_launch_snapshot *candidate=qa_application_startup_candidate(f->application);
+    uint32_t queued;
     if (context_seat(candidate,ordinal,command->seat) || context_seat(publication,ordinal,command->seat) ||
+        (frontend_startup_launch_seat_read(f,ordinal,&queued) && queued==command->seat) ||
         (!candidate && !publication && command->seat==ordinal)) return true;
     return frontend_fail(error,QA_ERROR_ARGUMENT,"Input template has no actual candidate or published launch seat");
 }
@@ -182,10 +185,10 @@ bool frontend_player_source_select(qa_frontend *frontend,uint32_t physical,qa_la
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Player source selection requires its published local seat");
     const qa_launch_snapshot *publication=qa_application_launch(frontend->application);
     const qa_launch_choices *choices=qa_launch_snapshot_choices(publication);
-    qa_actor_id actor; uint32_t logical;
+    qa_actor_id actor; uint32_t logical,projected;
     qa_catalog *catalog=qa_application_catalog(frontend->application);
-    if (!choices || physical>=choices->seat_count || !choices->seats[physical].local || choices->seats[physical].bot ||
-        !frontend_seat_launch_id_read(frontend,physical,&logical) || logical!=choices->seats[physical].id ||
+    if (!frontend_local_seat_read(choices,physical,&projected) ||
+        !frontend_seat_launch_id_read(frontend,physical,&logical) || logical!=projected ||
         !qa_application_player_actor(frontend->application,logical,&actor) ||
         !product || qa_catalog_product(catalog,product->id)!=product || !product->builtin ||
         product->program_kind!=QA_PROGRAM_BUILTIN || product->availability!=QA_CONTENT_INSTALLED ||
@@ -208,7 +211,9 @@ bool frontend_player_source_select(qa_frontend *frontend,uint32_t physical,qa_la
         qa_native_q3_character_declaration declaration;
         ok=qa_native_q3_character_default_declaration(product->family,&declaration,error);
         if (ok) {
-            qa_launch_seat seat=choices->seats[physical];
+            const qa_launch_seat *actual=NULL;
+            for (size_t i=0;i<choices->seat_count;++i) if (choices->seats[i].id==logical) actual=choices->seats+i;
+            qa_launch_seat seat=*actual;
             seat.character_model=declaration.model; seat.character_skin=declaration.skin;
             seat.character_head_model=declaration.head_model; seat.character_head_skin=declaration.head_skin;
             ok=qa_launch_set_seat(draft,&seat,error);
