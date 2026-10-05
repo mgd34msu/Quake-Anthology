@@ -16,7 +16,7 @@ static size_t get_index(qa_source_save_io *r, size_t count) {
 }
 static bool put_prepared(qa_source_save_io *w, const qa_audio_checkpoint_refs *refs, const qa_mixer_prepared *p) {
     if (!qa_ac_u32(w, p != NULL) || !p) return !w->failed;
-    bool ok = qa_ac_u32(w, p->layout.q3) && qa_ac_u32(w, p->doppler_sums != NULL) && qa_ac_u32(w, p->asset != NULL);
+    bool ok = qa_ac_u32(w, p->q3) && qa_ac_u32(w, p->doppler_sums != NULL) && qa_ac_u32(w, p->asset != NULL);
     if (ok && p->asset) {
         qa_buffer descriptor = {0};
         if (ok && (!refs || !refs->asset_encode || !refs->asset_encode(refs->context, p->asset, &descriptor, w->error))) {
@@ -33,21 +33,6 @@ static bool put_prepared(qa_source_save_io *w, const qa_audio_checkpoint_refs *r
         ok = qa_ac_blob(w, (qa_bytes){sample.data, sample.size}); qa_buffer_free(&sample);
     }
     return ok;
-}
-static bool make_doppler(qa_mixer_prepared *p, qa_source_save_io *r) {
-    if (p->layout.frames > SIZE_MAX - QA_MIXER_CHUNK_FRAMES) return qa_ac_bad(r, "Saved Doppler period overflows storage");
-    size_t period = ((size_t)p->layout.frames + QA_MIXER_CHUNK_FRAMES - 1) / QA_MIXER_CHUNK_FRAMES * QA_MIXER_CHUNK_FRAMES;
-    if (period >= SIZE_MAX / sizeof(double)) return qa_ac_bad(r, "Saved Doppler sums overflow storage");
-    p->doppler_sums = malloc((period + 1) * sizeof(*p->doppler_sums));
-    if (!p->doppler_sums) { qa_error_set(r->error, QA_ERROR_MEMORY, r->offset, "Restoring Doppler sample sums"); r->failed = true; return false; }
-    p->doppler_period = period; p->doppler_sums[0] = 0;
-    for (size_t i = 0; i < period; ++i) {
-        uint64_t source; int16_t value = 0;
-        if (i < p->layout.frames && qa_audio_source_index(&p->layout, i, &source) && source < p->sample->frame_count)
-            value = p->sample->samples[source];
-        p->doppler_sums[i + 1] = p->doppler_sums[i] + value;
-    }
-    return true;
 }
 static void get_prepared(qa_source_save_io *r, const qa_audio_checkpoint_refs *refs, qa_audio_mixer *m, size_t slot) {
     if (!qa_ac_bool(r) || r->failed) return;
@@ -72,13 +57,14 @@ static void get_prepared(qa_source_save_io *r, const qa_audio_checkpoint_refs *r
     if (!p->sample->frame_count || p->sample->channels != 1) {
         qa_ac_bad(r, "Saved prepared sound is not nonempty mono PCM"); return;
     }
-    if (!qa_audio_source_layout_compute(p->sample, m->options.sample_rate, q3 ? QA_AUDIO_Q3 : QA_AUDIO_Q1, &p->layout, r->error)) {
+    p->q3 = q3;
+    if (!qa_audio_resample_source(p->sample, m->options.sample_rate, q3 ? QA_AUDIO_Q3 : QA_AUDIO_Q1, &p->pcm, r->error)) {
         r->failed = true; return;
     }
-    if ((!q3 && !p->layout.frames) || p->layout.frames > INT64_MAX) {
+    if ((!q3 && !p->pcm->frame_count) || p->pcm->frame_count > INT64_MAX) {
         qa_ac_bad(r, "Saved prepared sound leaves the mixer frame range"); return;
     }
-    if (doppler) (void)make_doppler(p, r);
+    if (doppler && !qa_mixer_prepared_doppler(p, r->error)) r->failed = true;
 }
 static qa_mixer_prepared *get_prepared_ref(qa_source_save_io *r, qa_audio_mixer *m) {
     size_t slot = get_index(r, m->prepared_count);
@@ -147,7 +133,7 @@ static void discard_mixer(qa_audio_mixer *m) {
     if (!m) return;
     for (size_t i = 0; i < m->prepared_count; ++i) {
         qa_mixer_prepared *p = m->prepared[i]; if (!p) continue;
-        qa_audio_sample_release(p->sample); qa_audio_asset_release(p->asset); free(p->doppler_sums); free(p);
+        qa_audio_sample_release(p->sample); qa_audio_sample_release(p->pcm); qa_audio_asset_release(p->asset); free(p->doppler_sums); free(p);
     }
     free(m->prepared); free(m->voices); free(m->loops); free(m->loop_mixes); free(m->positions);
     free(m->transmissions); free(m->events); free(m->diagnostic_message); free(m);
@@ -265,7 +251,7 @@ bool qa_audio_mixer_restore(qa_bytes bytes, const qa_audio_mixer_options *option
         if ((unsigned)v->role > QA_MIXER_AMBIENT || (unsigned)v->notification > QA_MIXER_FINISHED ||
             (v->role == QA_MIXER_EFFECT && !v->id) ||
             v->volume < 0 || v->attenuation < 0 || v->gain.left < 0 || v->gain.right < 0 ||
-            (v->prepared && v->loop_start != QA_AUDIO_NO_LOOP && v->loop_start >= v->prepared->layout.frames))
+            (v->prepared && v->loop_start != QA_AUDIO_NO_LOOP && v->loop_start >= v->prepared->pcm->frame_count))
             qa_ac_bad(&r, "Invalid saved voice continuation");
     }
     for (size_t i = 0; !r.failed && i < m->loop_count; ++i) {

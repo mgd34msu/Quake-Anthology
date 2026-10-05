@@ -32,8 +32,9 @@ static qa_audio_asset_inventory *create(qa_audio_bank *const *banks, size_t coun
         fail(error, QA_ERROR_ARGUMENT, "Audio bank graph storage is invalid"); return NULL;
     }
     for (size_t i = 0; i < count; ++i) {
+        if (empty && banks[i] && banks[i]->count) { fail(error, QA_ERROR_ARGUMENT, "Audio graph destination bank is occupied"); return NULL; }
+        qa_audio_bank_sync(banks[i]);
         if (!qa_bank_cache_valid(banks[i], error)) return NULL;
-        if (empty && banks[i]->count) { fail(error, QA_ERROR_ARGUMENT, "Audio graph destination bank is occupied"); return NULL; }
         for (size_t j = 0; j < i; ++j) if (banks[i] == banks[j]) {
             fail(error, QA_ERROR_ARGUMENT, "Audio bank graph repeats a destructor owner"); return NULL;
         }
@@ -204,7 +205,8 @@ bool qa_audio_bank_graph_restore(qa_audio_bank *const *banks, size_t count,
             refs->view_decode(refs->context, view, &resolved, error) && resolved == banks[i]->view &&
             qa_bank_read_extent(&r, capacity, entries);
         if (!ok) break;
-        decoded[i] = (qa_audio_bank){.view = banks[i]->view, .registration = registration, .capacity = (size_t)capacity};
+        decoded[i] = (qa_audio_bank){.view = banks[i]->view, .registration = registration, .capacity = (size_t)capacity,
+            .lookup_generation = qa_vfs_lookup_generation(banks[i]->view)};
         decoded[i].entries = capacity ? calloc((size_t)capacity, sizeof(*decoded[i].entries)) : NULL;
         if (capacity && !decoded[i].entries) { ok = fail(error, QA_ERROR_MEMORY, "Restoring global audio bank entries"); break; }
         for (size_t j = 0; ok && j < entries; ++j) {
@@ -223,7 +225,7 @@ bool qa_audio_bank_graph_restore(qa_audio_bank *const *banks, size_t count,
     ok = ok && !r.failed && r.offset == bytes.size;
     if (ok) {
         for (size_t i = 0; i < count; ++i) {
-            free(banks[i]->entries); *banks[i] = decoded[i]; decoded[i].entries = NULL; decoded[i].count = 0;
+            free(banks[i]->entries); free(banks[i]->names); *banks[i] = decoded[i]; decoded[i].entries = NULL; decoded[i].count = 0;
         }
         *out = inventory; inventory = NULL;
     }

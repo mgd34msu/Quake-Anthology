@@ -92,6 +92,7 @@ struct qa_vfs {
     mount **mounts;
     size_t count;
     qa_mount_id next_mount;
+    uint64_t lookup_generation;
     uint64_t next_temporary;
     prefix_order *prefixes;
     resource_link *links;
@@ -109,6 +110,9 @@ struct qa_vfs {
     size_t history_count, history_capacity, history_bucket_count;
     bool q3_demo;
 };
+static inline void vfs_lookup_changed(qa_vfs *vfs) {
+    vfs->lookup_generation = vfs->lookup_generation == UINT64_MAX ? 1 : vfs->lookup_generation + 1;
+}
 struct qa_vfs_file {
     qa_fs_stream *stream;
     char *path;

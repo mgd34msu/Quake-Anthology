@@ -38,6 +38,9 @@ qa_vfs *qa_vfs_clone(const qa_vfs *vfs, qa_error *error);
  * and allocation counters do not affect this comparison. No native I/O,
  * loading or mutation occurs. */
 bool qa_vfs_lookup_equal(const qa_vfs *, const qa_vfs *);
+/* View-local lookup policy token. Mount, order, overlay, link and purity
+ * changes advance it; reads and accounting do not. Derived, never encoded. */
+uint64_t qa_vfs_lookup_generation(const qa_vfs *);
 void qa_vfs_destroy(qa_vfs *vfs);
 bool qa_vfs_retain(qa_vfs *vfs, qa_error *error);
 

@@ -148,6 +148,7 @@ static void prepared_release(qa_audio_mixer *mixer, qa_mixer_prepared *prepared)
     if (--prepared->references == 0) {
         mixer->prepared[prepared->slot] = NULL;
         qa_audio_sample_release(prepared->sample);
+        qa_audio_sample_release(prepared->pcm);
         qa_audio_asset_release(prepared->asset);
         free(prepared->doppler_sums);
         free(prepared);
@@ -172,29 +173,33 @@ static qa_mixer_prepared *prepare(qa_audio_mixer *mixer, qa_audio_sample *sample
                 slot = i;
             continue;
         }
-        if (prepared->sample == sample && prepared->asset == asset && prepared->layout.q3 == q3)
+        if (prepared->sample == sample && prepared->asset == asset && prepared->q3 == q3)
             return prepared_retain(prepared);
     }
-    qa_audio_source_layout layout;
-    if (!qa_audio_source_layout_compute(sample, mixer->options.sample_rate,
-                                        q3 ? QA_AUDIO_Q3 : QA_AUDIO_Q1, &layout, error))
+    qa_audio_sample *pcm = NULL;
+    if (!qa_audio_resample_source(sample, mixer->options.sample_rate,
+                                  q3 ? QA_AUDIO_Q3 : QA_AUDIO_Q1, &pcm, error))
         return NULL;
-    if ((!q3 && !layout.frames) || layout.frames > INT64_MAX) {
+    if ((!q3 && !pcm->frame_count) || pcm->frame_count > INT64_MAX) {
+        qa_audio_sample_release(pcm);
         mixer_error(error, QA_ERROR_ARGUMENT, "Resampled effect length is outside the audio clock");
         return NULL;
     }
     qa_mixer_prepared *prepared = calloc(1, sizeof(*prepared));
     if (!prepared) {
+        qa_audio_sample_release(pcm);
         mixer_error(error, QA_ERROR_MEMORY, "Cannot allocate prepared effect");
         return NULL;
     }
     if (!qa_audio_sample_retain(sample)) {
+        qa_audio_sample_release(pcm);
         free(prepared);
         mixer_error(error, QA_ERROR_MEMORY, "Audio sample reference count is exhausted");
         return NULL;
     }
     if (asset && !qa_audio_asset_retain(asset)) {
         qa_audio_sample_release(sample);
+        qa_audio_sample_release(pcm);
         free(prepared);
         mixer_error(error, QA_ERROR_MEMORY, "Audio asset reference count is exhausted");
         return NULL;
@@ -203,6 +208,7 @@ static qa_mixer_prepared *prepare(qa_audio_mixer *mixer, qa_audio_sample *sample
         if (mixer->prepared_count == SIZE_MAX) {
             qa_audio_asset_release(asset);
             qa_audio_sample_release(sample);
+            qa_audio_sample_release(pcm);
             free(prepared);
             mixer_error(error, QA_ERROR_MEMORY, "Too many prepared effects");
             return NULL;
@@ -212,6 +218,7 @@ static qa_mixer_prepared *prepare(qa_audio_mixer *mixer, qa_audio_sample *sample
         if (!items) {
             qa_audio_asset_release(asset);
             qa_audio_sample_release(sample);
+            qa_audio_sample_release(pcm);
             free(prepared);
             return NULL;
         }
@@ -219,27 +226,24 @@ static qa_mixer_prepared *prepare(qa_audio_mixer *mixer, qa_audio_sample *sample
         slot = mixer->prepared_count++;
     }
     prepared->sample = sample;
+    prepared->pcm = pcm;
     prepared->asset = asset;
-    prepared->layout = layout;
+    prepared->q3 = q3;
     prepared->slot = slot;
     mixer->prepared[slot] = prepared;
     return prepared_retain(prepared);
 }
 
 static int16_t effect_sample(const qa_mixer_prepared *prepared, uint64_t frame) {
-    uint64_t index;
-    if (!qa_audio_source_index(&prepared->layout, frame, &index) ||
-        index >= prepared->sample->frame_count)
-        return 0;
-    return prepared->sample->samples[(size_t)index];
+    return frame < prepared->pcm->frame_count ? prepared->pcm->samples[(size_t)frame] : 0;
 }
 
-static bool prepare_doppler(qa_mixer_prepared *prepared, qa_error *error) {
+bool qa_mixer_prepared_doppler(qa_mixer_prepared *prepared, qa_error *error) {
     if (prepared->doppler_sums)
         return true;
-    if (prepared->layout.frames > SIZE_MAX - QA_MIXER_CHUNK_FRAMES)
+    if (prepared->pcm->frame_count > SIZE_MAX - QA_MIXER_CHUNK_FRAMES)
         return mixer_error(error, QA_ERROR_MEMORY, "Doppler sample period overflows storage");
-    size_t period = ((size_t)prepared->layout.frames + QA_MIXER_CHUNK_FRAMES - 1) /
+    size_t period = ((size_t)prepared->pcm->frame_count + QA_MIXER_CHUNK_FRAMES - 1) /
                     QA_MIXER_CHUNK_FRAMES * QA_MIXER_CHUNK_FRAMES;
     if (period >= SIZE_MAX / sizeof(double))
         return mixer_error(error, QA_ERROR_MEMORY, "Doppler sample sums overflow storage");
@@ -248,7 +252,7 @@ static bool prepare_doppler(qa_mixer_prepared *prepared, qa_error *error) {
         return mixer_error(error, QA_ERROR_MEMORY, "Cannot allocate Doppler sample sums");
     sums[0] = 0;
     for (size_t i = 0; i < period; i++)
-        sums[i + 1] = sums[i] + (i < prepared->layout.frames ? effect_sample(prepared, i) : 0);
+        sums[i + 1] = sums[i] + (i < prepared->pcm->frame_count ? effect_sample(prepared, i) : 0);
     prepared->doppler_sums = sums;
     prepared->doppler_period = period;
     return true;
@@ -378,7 +382,7 @@ static bool spatialize_voice(qa_audio_mixer *mixer, const qa_mixer_voice *voice,
         *out = voice->gain;
         return true;
     }
-    if (voice->prepared->layout.q3) {
+    if (voice->prepared->q3) {
         if (voice->sound.origin_kind == QA_AUDIO_LOCAL ||
             (voice->sound.actor != QA_AUDIO_NO_ACTOR &&
              voice->sound.actor == mixer->listener.actor))
@@ -809,7 +813,7 @@ bool qa_audio_mixer_play(qa_audio_mixer *mixer, const qa_audio_play *sound, int3
         for (size_t i = 0; i < mixer->voice_count; i++) {
             const qa_mixer_voice *voice = &mixer->voices[i];
             if (voice->state == QA_MIXER_FREE || voice->role != QA_MIXER_EFFECT ||
-                !voice->prepared->layout.q3 || voice->sound.actor != actor ||
+                !voice->prepared->q3 || voice->sound.actor != actor ||
                 voice->sound.owner != sound->owner || voice->prepared->sample != sound->sample)
                 continue;
             uint32_t difference = (uint32_t)allocated_at - (uint32_t)voice->allocated_at;
@@ -842,7 +846,7 @@ bool qa_audio_mixer_play(qa_audio_mixer *mixer, const qa_audio_play *sound, int3
         .prepared = prepared,
         .sound = *sound,
         .channel = channel_name(sound->family, sound->channel),
-        .loop_start = prepared->layout.loop_start,
+        .loop_start = prepared->pcm->loop_start,
         .allocated_at = allocated_at,
         .start = mixer->paint_time,
         .volume = trunc((double)sound->volume * (sound->family == QA_AUDIO_Q3 ? 127 : 255)),
@@ -859,14 +863,14 @@ bool qa_audio_mixer_play(qa_audio_mixer *mixer, const qa_audio_play *sound, int3
         for (size_t i = 0; i < mixer->voice_count; i++) {
             const qa_mixer_voice *other = &mixer->voices[i];
             if (other->state == QA_MIXER_STARTED && other->role == QA_MIXER_EFFECT &&
-                !other->prepared->layout.q3 && other->prepared->sample == sound->sample &&
+                !other->prepared->q3 && other->prepared->sample == sound->sample &&
                 other->start == mixer->paint_time) {
                 uint64_t range = mixer->options.sample_rate / 10;
                 if (!range)
                     range = 1;
                 uint64_t offset = random_value(mixer) % range;
-                if (offset >= prepared->layout.frames)
-                    offset = prepared->layout.frames - 1;
+                if (offset >= prepared->pcm->frame_count)
+                    offset = prepared->pcm->frame_count - 1;
                 if (offset > (uint64_t)mixer->paint_time - (uint64_t)INT64_MIN) {
                     prepared_release(mixer, prepared);
                     return mixer_error(error, QA_ERROR_ARGUMENT,
@@ -961,7 +965,7 @@ bool qa_audio_mixer_loop(qa_audio_mixer *mixer, const qa_audio_loop *request, qa
                                           request->sound.family == QA_AUDIO_Q3, error);
     if (!prepared)
         return false;
-    if (!prepared->layout.frames) {
+    if (!prepared->pcm->frame_count) {
         prepared_release(mixer, prepared);
         return mixer_error(error, QA_ERROR_ARGUMENT, "Loop sound resamples to zero frames");
     }
@@ -994,7 +998,7 @@ bool qa_audio_mixer_loop(qa_audio_mixer *mixer, const qa_audio_loop *request, qa
         if (!isfinite(loop.doppler_scale))
             loop.doppler_scale = 1;
         loop.doppler = loop.doppler_scale > 1;
-        if (loop.doppler_scale > QA_MIXER_CHUNK_FRAMES && !prepare_doppler(prepared, error)) {
+        if (loop.doppler_scale > QA_MIXER_CHUNK_FRAMES && !qa_mixer_prepared_doppler(prepared, error)) {
             prepared_release(mixer, prepared);
             return false;
         }
@@ -1271,7 +1275,7 @@ static bool mixer_static(qa_audio_mixer *mixer, uint64_t key, qa_audio_sample *s
                                       .origin_kind = QA_AUDIO_FIXED,
                                       .origin = origin},
                             .key = key,
-                            .loop_start = prepared->layout.loop_start,
+                            .loop_start = prepared->pcm->loop_start,
                             .start = mixer->paint_time,
                             .volume = trunc((double)volume / 255 * 255),
                             .attenuation = (double)attenuation / 64000,
@@ -1498,9 +1502,9 @@ static bool voice_ended(const qa_mixer_voice *voice, int64_t time, int64_t *end)
         time < voice->start)
         return false;
     uint64_t elapsed = (uint64_t)time - (uint64_t)voice->start;
-    if (elapsed < voice->prepared->layout.frames)
+    if (elapsed < voice->prepared->pcm->frame_count)
         return false;
-    *end = voice->start + (int64_t)voice->prepared->layout.frames;
+    *end = voice->start + (int64_t)voice->prepared->pcm->frame_count;
     return true;
 }
 
@@ -1568,19 +1572,26 @@ static void paint_voice(qa_audio_mixer *mixer, const qa_mixer_voice *voice, size
                         double effects) {
     if (voice->state != QA_MIXER_STARTED || (voice->gain.left == 0 && voice->gain.right == 0))
         return;
-    for (size_t frame = 0; frame < count; frame++) {
-        int64_t absolute = mixer->paint_time + (int64_t)frame;
-        if (absolute < voice->start)
-            continue;
-        uint64_t offset = (uint64_t)absolute - (uint64_t)voice->start;
-        if (offset >= voice->prepared->layout.frames) {
-            if (voice->loop_start == QA_AUDIO_NO_LOOP)
-                continue;
-            offset = voice->loop_start + (offset - voice->prepared->layout.frames) %
-                                             (voice->prepared->layout.frames - voice->loop_start);
+    size_t frame = 0;
+    if (voice->start > mixer->paint_time) {
+        uint64_t delay = (uint64_t)voice->start - (uint64_t)mixer->paint_time;
+        if (delay >= count) return;
+        frame = (size_t)delay;
+    }
+    uint64_t offset = (uint64_t)mixer->paint_time + frame - (uint64_t)voice->start;
+    uint64_t length = voice->prepared->pcm->frame_count;
+    while (frame < count) {
+        if (offset >= length) {
+            if (voice->loop_start == QA_AUDIO_NO_LOOP) return;
+            offset = voice->loop_start + (offset - length) % (length - voice->loop_start);
         }
-        paint_effect(mixer->paint, frame, effect_sample(voice->prepared, offset), voice->gain,
-                     effects);
+        size_t span = count - frame;
+        if (length - offset < span) span = (size_t)(length - offset);
+        const int16_t *samples = voice->prepared->pcm->samples + (size_t)offset;
+        for (size_t i = 0; i < span; ++i)
+            paint_effect(mixer->paint, frame + i, samples[i], voice->gain, effects);
+        frame += span;
+        offset += span;
     }
 }
 
@@ -1613,7 +1624,7 @@ static void paint_doppler(qa_audio_mixer *mixer, const qa_mixer_loop_mix *loop, 
         return;
     }
     const qa_mixer_prepared *prepared = loop->prepared;
-    uint64_t chunks = (prepared->layout.frames + QA_MIXER_CHUNK_FRAMES - 1) / QA_MIXER_CHUNK_FRAMES;
+    uint64_t chunks = (prepared->pcm->frame_count + QA_MIXER_CHUNK_FRAMES - 1) / QA_MIXER_CHUNK_FRAMES;
     uint64_t scaled = (uint64_t)((float)source * loop->old_doppler_scale);
     uint64_t chunk = (scaled / QA_MIXER_CHUNK_FRAMES) % chunks;
     float offset = (float)(scaled % QA_MIXER_CHUNK_FRAMES);
@@ -1630,7 +1641,7 @@ static void paint_doppler(qa_audio_mixer *mixer, const qa_mixer_loop_mix *loop, 
             }
             uint64_t position =
                 chunk * QA_MIXER_CHUNK_FRAMES + (current & (QA_MIXER_CHUNK_FRAMES - 1));
-            total += position < prepared->layout.frames ? effect_sample(prepared, position) : 0;
+            total += position < prepared->pcm->frame_count ? effect_sample(prepared, position) : 0;
         }
         float divisor = (float)(256u * (last - first));
         float lvalue = total * left, rvalue = total * right;
@@ -1656,10 +1667,10 @@ static void paint_loop(qa_audio_mixer *mixer, const qa_mixer_loop_mix *loop, siz
             output++;
             continue;
         }
-        uint64_t source = positive_modulo(absolute, loop->prepared->layout.frames);
+        uint64_t source = positive_modulo(absolute, loop->prepared->pcm->frame_count);
         size_t count = frames - output;
-        if (loop->prepared->layout.frames - source < count)
-            count = (size_t)(loop->prepared->layout.frames - source);
+        if (loop->prepared->pcm->frame_count - source < count)
+            count = (size_t)(loop->prepared->pcm->frame_count - source);
         if (mixer->doppler_enabled && loop->doppler && loop->doppler_scale != 1)
             paint_doppler(mixer, loop, output, count, source, effects);
         else

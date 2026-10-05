@@ -575,6 +575,8 @@ bool qa_vfs_restore(qa_vfs *vfs, const qa_vfs_checkpoint_refs *refs, qa_bytes by
     }
     qa_vfs *candidate = NULL;
     if (!qa_vfs_create_restored(vfs->pool, refs, bytes, &candidate, error)) return false;
+    candidate->lookup_generation = vfs->lookup_generation;
+    if (!qa_vfs_lookup_equal(vfs, candidate)) vfs_lookup_changed(candidate);
     qa_vfs displaced = *vfs;
     *vfs = *candidate;
     *candidate = displaced;

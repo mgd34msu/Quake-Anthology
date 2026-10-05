@@ -724,19 +724,16 @@ bool qa_audio_source_layout_compute(const qa_audio_sample *sample, uint32_t outp
     if (!sample_valid(sample, error))
         return false;
     bool q3 = family == QA_AUDIO_Q3;
-    double ratio = (double)sample->sample_rate / output_rate;
-    double count = q3 ? truncf((float)sample->frame_count / (float)ratio)
-                      : trunc((double)sample->frame_count / ratio);
+    float ratio = (float)sample->sample_rate / (float)output_rate;
+    double count = truncf((float)sample->frame_count / ratio);
     if (!(count >= 0 && count < 0x1p64))
         return qa_audio_codec_fail(error, QA_ERROR_ARGUMENT, 0,
                                    "Resampled length exceeds frame space");
     qa_audio_source_layout layout = {.frames = (uint64_t)count,
                                      .loop_start = QA_AUDIO_NO_LOOP,
-                                     .step256 =
-                                         q3 ? trunc((double)(float)ratio * 256) : ratio * 256,
-                                     .q3 = q3};
+                                     .step256 = (uint64_t)(ratio * 256.0f)};
     if (!q3 && sample->loop_start != QA_AUDIO_NO_LOOP) {
-        double loop = trunc((double)sample->loop_start / ratio);
+        double loop = truncf((float)sample->loop_start / ratio);
         if (!(loop >= 0 && loop < 0x1p64) || (uint64_t)loop >= layout.frames)
             return qa_audio_codec_fail(error, QA_ERROR_ARGUMENT, 0,
                                        "Resampled loop is outside PCM data");

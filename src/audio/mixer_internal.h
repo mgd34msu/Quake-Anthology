@@ -12,13 +12,14 @@ typedef struct qa_mixer_gain {
     double left, right;
 } qa_mixer_gain;
 typedef struct qa_mixer_prepared {
-    qa_audio_sample *sample;
+    qa_audio_sample *sample, *pcm;
     qa_audio_asset *asset;
-    qa_audio_source_layout layout;
+    bool q3;
     size_t references, slot;
     double *doppler_sums;
     size_t doppler_period;
 } qa_mixer_prepared;
+bool qa_mixer_prepared_doppler(qa_mixer_prepared *, qa_error *);
 
 typedef enum qa_mixer_voice_state {
     QA_MIXER_FREE,

@@ -347,9 +347,13 @@ qa_vfs *qa_vfs_create(qa_resource_pool *pool, qa_error *error)
     vfs->references = 1;
     vfs->next_mount = 1;
     vfs->read_generation = 1;
+    vfs->lookup_generation = 1;
     pool->references++;
     return vfs;
 }
+
+uint64_t qa_vfs_lookup_generation(const qa_vfs *vfs)
+{ return vfs ? vfs->lookup_generation : 0; }
 
 size_t qa_vfs_mount_count(const qa_vfs *vfs)
 {
@@ -757,6 +761,7 @@ qa_vfs *qa_vfs_clone(const qa_vfs *vfs, qa_error *error)
     if (copy == NULL) return NULL;
     copy->next_mount = vfs->next_mount;
     copy->next_temporary = vfs->next_temporary;
+    copy->lookup_generation = vfs->lookup_generation;
     if (vfs->count != 0) copy->mounts = calloc(vfs->count, sizeof(*copy->mounts));
     if (vfs->count != 0 && copy->mounts == NULL) goto memory_failure;
     for (size_t i = 0; i < vfs->count; i++) {
@@ -1007,6 +1012,7 @@ static bool add_mount(qa_vfs *vfs, mount *source, qa_mount_id *out, qa_error *er
     for (prefix_order *prefix = vfs->prefixes; prefix != NULL; prefix = prefix->next)
         prioritize_ids(vfs, prefix->order);
     *out = source->id;
+    vfs_lookup_changed(vfs);
     return true;
 }
 
@@ -1353,6 +1359,10 @@ bool qa_vfs_set_restrictions(qa_vfs *vfs, const qa_fs_identity *archives,
             if (archive != NULL && !vfs_demo_package_allowed(archive, error)) return false;
         }
     }
+    bool same = vfs->pure_count == count && vfs->q3_demo == q3_demo;
+    for (size_t i = 0; same && i < count; ++i)
+        same = qa_fs_identity_equal(vfs->pure + i, archives + i);
+    if (same) return true;
     qa_fs_identity *copy = count == 0 ? NULL : malloc(count * sizeof(*copy));
     if (count != 0 && copy == NULL) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate pure archive policy");
@@ -1366,6 +1376,7 @@ bool qa_vfs_set_restrictions(qa_vfs *vfs, const qa_fs_identity *archives,
     prioritize_mounts(vfs, vfs->mounts);
     for (prefix_order *prefix = vfs->prefixes; prefix != NULL; prefix = prefix->next)
         prioritize_ids(vfs, prefix->order);
+    vfs_lookup_changed(vfs);
     return true;
 }
 
@@ -1385,7 +1396,10 @@ bool qa_vfs_set_mount_q3_demo(qa_vfs *vfs, qa_mount_id id, bool enabled, qa_erro
         return false;
     }
     if (enabled && source->archive && !vfs_demo_package_allowed(source->archive, error)) return false;
-    source->q3_demo = enabled;
+    if (source->q3_demo != enabled) {
+        source->q3_demo = enabled;
+        vfs_lookup_changed(vfs);
+    }
     return true;
 }
 
@@ -1475,6 +1489,7 @@ bool qa_vfs_unmount(qa_vfs *vfs, qa_mount_id id, qa_error *error)
                 free(removed);
             } else link = &(*link)->next;
         }
+        vfs_lookup_changed(vfs);
         return true;
     }
     qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "unknown mount: %" PRIu64, id);
@@ -1516,9 +1531,13 @@ bool qa_vfs_set_order(qa_vfs *vfs, const qa_mount_id *order, size_t count, qa_er
         return false;
     }
     for (size_t i = 0; i < count; i++) sorted[i] = find_mount(vfs, order[i]);
+    prioritize_mounts(vfs, sorted);
+    bool same = true;
+    for (size_t i = 0; same && i < count; ++i) same = sorted[i] == vfs->mounts[i];
+    if (same) { free(sorted); return true; }
     free(vfs->mounts);
     vfs->mounts = sorted;
-    prioritize_mounts(vfs, vfs->mounts);
+    vfs_lookup_changed(vfs);
     return true;
 }
 
@@ -1544,6 +1563,7 @@ bool qa_vfs_set_prefix_order(qa_vfs *vfs, const char *path,
             free(previous->prefix);
             free(previous->order);
             free(previous);
+            vfs_lookup_changed(vfs);
         }
         return true;
     }
@@ -1553,6 +1573,7 @@ bool qa_vfs_set_prefix_order(qa_vfs *vfs, const char *path,
     }
     qa_mount_id *copy = count == 0 ? NULL : malloc(count * sizeof(*copy));
     prefix_order *rule = *position;
+    bool existing = rule != NULL;
     if ((count != 0 && copy == NULL) || (rule == NULL && (rule = calloc(1, sizeof(*rule))) == NULL)) {
         free(copy);
         free(normalized);
@@ -1560,12 +1581,16 @@ bool qa_vfs_set_prefix_order(qa_vfs *vfs, const char *path,
         return false;
     }
     if (count != 0) memcpy(copy, order, count * sizeof(*copy));
+    prioritize_ids(vfs, copy);
+    if (existing && (!count || !memcmp(rule->order, copy, count * sizeof(*copy)))) {
+        free(copy); free(normalized); return true;
+    }
     free(rule->prefix);
     free(rule->order);
     rule->prefix = normalized;
     rule->order = copy;
     *position = rule;
-    prioritize_ids(vfs, rule->order);
+    vfs_lookup_changed(vfs);
     return true;
 }
 
@@ -1576,7 +1601,10 @@ bool qa_vfs_set_user_overlay(qa_vfs *vfs, qa_mount_id id, bool enabled, qa_error
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "user overlay requires a loose mount");
         return false;
     }
-    source->user_overlay = enabled;
+    if (source->user_overlay != enabled) {
+        source->user_overlay = enabled;
+        vfs_lookup_changed(vfs);
+    }
     return true;
 }
 
@@ -1632,6 +1660,7 @@ bool qa_vfs_set_link(qa_vfs *vfs, const char *source_prefix, qa_mount_id id,
             free(removed->source);
             free(removed->target);
             free(removed);
+            vfs_lookup_changed(vfs);
         }
         return true;
     }
@@ -1647,6 +1676,9 @@ bool qa_vfs_set_link(qa_vfs *vfs, const char *source_prefix, qa_mount_id id,
         return false;
     }
     resource_link *link = *position;
+    if (link && link->mount == id && !strcmp(link->target, target)) {
+        free(source); free(target); return true;
+    }
     if (link == NULL) link = calloc(1, sizeof(*link));
     if (link == NULL) {
         free(source);
@@ -1660,6 +1692,7 @@ bool qa_vfs_set_link(qa_vfs *vfs, const char *source_prefix, qa_mount_id id,
     link->target = target;
     link->mount = id;
     *position = link;
+    vfs_lookup_changed(vfs);
     return true;
 }
 
