@@ -1122,6 +1122,26 @@ qa_target_options application_target_options(qa_application *application)
                                .remap_shader = target_remap_shader};
 }
 
+/* Authored objects retain their actual execution owner's physics even when
+ * the launch chooses a different player movement service. Controlled players
+ * are handled first by that selected service and never enter this fallback. */
+static application_provider *entity_physics_owner(qa_application *app,qa_actor_id actor,
+    qa_physics_properties *out)
+{
+    application_provider *source=actor_source_provider(app,actor);
+    if(!source||!source->constructed||!source->attached||source->close_pending)return NULL;
+    bool owned=false;
+    switch(source->kind) {
+    case APPLICATION_PROVIDER_Q1:owned=qa_q1_game_physics_read(source->state.q1,actor,out);break;
+    case APPLICATION_PROVIDER_Q2:owned=qa_q2_physics_read(source->state.q2,actor,out);break;
+    case APPLICATION_PROVIDER_QC:owned=application_qc_physics_read(source,actor,out);break;
+    case APPLICATION_PROVIDER_Q3:
+    case APPLICATION_PROVIDER_QVM:
+    case APPLICATION_PROVIDER_NATIVE:break;
+    }
+    return owned&&(out->flags&QA_PHYSICS_PLAYER)==0?source:NULL;
+}
+
 static bool physics_read(void *opaque, qa_actor_id actor,
                          qa_physics_properties *out)
 {
@@ -1141,8 +1161,9 @@ static bool physics_read(void *opaque, qa_actor_id actor,
     }
     if (application_control_physics_read(application, actor, out))
         return true;
-    return application->modes != NULL &&
-           qa_modes_physics(application->modes, actor, out);
+    if (application->modes != NULL && qa_modes_physics(application->modes, actor, out))
+        return true;
+    return entity_physics_owner(application, actor, out) != NULL;
 }
 
 static bool physics_write(void *opaque, qa_actor_id actor,
@@ -1175,6 +1196,16 @@ static bool physics_write(void *opaque, qa_actor_id actor,
         qa_modes_physics(application->modes, actor,
                          &(qa_physics_properties){0}))
         return qa_modes_physics_write(application->modes, actor, value, error);
+    qa_physics_properties physical;
+    application_provider *source=entity_physics_owner(application,actor,&physical);
+    if(source)switch(source->kind) {
+    case APPLICATION_PROVIDER_Q1:return qa_q1_game_physics_write(source->state.q1,actor,value,error);
+    case APPLICATION_PROVIDER_Q2:return qa_q2_physics_write(source->state.q2,actor,value,error);
+    case APPLICATION_PROVIDER_QC:return application_qc_physics_write(source,actor,value,error);
+    case APPLICATION_PROVIDER_Q3:
+    case APPLICATION_PROVIDER_QVM:
+    case APPLICATION_PROVIDER_NATIVE:break;
+    }
     return application_fail(error, QA_ERROR_NOT_FOUND,
                             "actor has no selected physics owner");
 }
