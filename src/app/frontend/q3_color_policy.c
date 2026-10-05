@@ -198,7 +198,7 @@ static bool profile_device_current(frontend_q3_color *owner,qa_display *display,
     qa_q3_color_device device; uint32_t maximum;
     if (!device_read(owner,display,&device,&maximum,error)) return false;
     if (device.hardware_gamma!=profile->color.device.hardware_gamma ||
-        device.fullscreen!=profile->color.device.fullscreen ||
+        (device.hardware_gamma && device.fullscreen!=profile->color.device.fullscreen) ||
         device.color_bits!=profile->color.device.color_bits || maximum!=profile->maximum_texture_size ||
         (device.hardware_gamma && !qa_display_gamma_applied_is(display)))
         return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Source output capability changed and requires an actual renderer restart");
