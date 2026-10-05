@@ -369,22 +369,70 @@ static bool prompt_field(qa_source_save_io *io, event_store *store, qa_builtin_e
     return true;
 }
 
+enum {
+    BUILTIN_PROVIDER = 1u, BUILTIN_ACTOR = 2u, BUILTIN_OTHER = 4u, BUILTIN_RESOURCE = 8u,
+    BUILTIN_TEXT = 16u, BUILTIN_ORIGIN = 32u, BUILTIN_END = 64u, BUILTIN_DIRECTION = 128u,
+    BUILTIN_VOLUME = 256u, BUILTIN_ATTENUATION = 512u, BUILTIN_VALUE = 1024u, BUILTIN_CODE = 2048u,
+    BUILTIN_CHANNEL = 4096u, BUILTIN_COUNT = 8192u, BUILTIN_FRAME = 16384u, BUILTIN_FLAGS = 32768u,
+    BUILTIN_ARGUMENTS = 65536u
+};
+
+static bool float_present(float value)
+{
+    uint32_t bits; memcpy(&bits, &value, sizeof(bits));
+    return bits != 0;
+}
+
+static bool vector_present(qa_vec3 value)
+{ return float_present(value.x) || float_present(value.y) || float_present(value.z); }
+
+static bool builtin_common(qa_source_save_io *io, event_store *store, qa_builtin_event *event)
+{
+    uint32_t fields = 0;
+    if (io->direction == QA_SOURCE_SAVE_WRITE) {
+        if ((!event->actor.registry && (event->actor.generation || event->actor.slot)) ||
+            (!event->other.registry && (event->other.generation || event->other.slot)))
+            return event_fail(io, QA_ERROR_FORMAT, "Absent application event actor has provenance");
+        fields = (event->provider ? BUILTIN_PROVIDER : 0u) | (event->actor.registry ? BUILTIN_ACTOR : 0u) |
+            (event->other.registry ? BUILTIN_OTHER : 0u) | (event->resource ? BUILTIN_RESOURCE : 0u) |
+            (event->text ? BUILTIN_TEXT : 0u) | (vector_present(event->origin) ? BUILTIN_ORIGIN : 0u) |
+            (vector_present(event->end) ? BUILTIN_END : 0u) | (vector_present(event->direction) ? BUILTIN_DIRECTION : 0u) |
+            (float_present(event->volume) ? BUILTIN_VOLUME : 0u) |
+            (float_present(event->attenuation) ? BUILTIN_ATTENUATION : 0u) |
+            (float_present(event->value) ? BUILTIN_VALUE : 0u) | (event->code ? BUILTIN_CODE : 0u) |
+            (event->channel ? BUILTIN_CHANNEL : 0u) | (event->count ? BUILTIN_COUNT : 0u) |
+            (event->frame ? BUILTIN_FRAME : 0u) | (event->flags ? BUILTIN_FLAGS : 0u) |
+            (event->argument_count ? BUILTIN_ARGUMENTS : 0u);
+    }
+    if (!qa_source_save_u32(io, &fields) || (fields & ~UINT32_C(131071)))
+        return event_fail(io, QA_ERROR_FORMAT, "Unknown application event fields");
+    return (!(fields & BUILTIN_PROVIDER) || provider_field(io, &event->provider, false)) &&
+        (!(fields & BUILTIN_ACTOR) || actor_field(io, &event->actor)) &&
+        (!(fields & BUILTIN_OTHER) || actor_field(io, &event->other)) &&
+        (!(fields & BUILTIN_RESOURCE) || qa_source_save_string(io, &event->resource)) &&
+        (!(fields & BUILTIN_TEXT) || qa_source_save_string(io, &event->text)) &&
+        (!(fields & BUILTIN_ORIGIN) || vector_field(io, &event->origin)) &&
+        (!(fields & BUILTIN_END) || vector_field(io, &event->end)) &&
+        (!(fields & BUILTIN_DIRECTION) || vector_field(io, &event->direction)) &&
+        (!(fields & BUILTIN_VOLUME) || finite_field(io, &event->volume)) &&
+        (!(fields & BUILTIN_ATTENUATION) || finite_field(io, &event->attenuation)) &&
+        (!(fields & BUILTIN_VALUE) || finite_field(io, &event->value)) &&
+        (!(fields & BUILTIN_CODE) || qa_source_save_i32(io, &event->code)) &&
+        (!(fields & BUILTIN_CHANNEL) || qa_source_save_i32(io, &event->channel)) &&
+        (!(fields & BUILTIN_COUNT) || qa_source_save_i32(io, &event->count)) &&
+        (!(fields & BUILTIN_FRAME) || qa_source_save_i32(io, &event->frame)) &&
+        (!(fields & BUILTIN_FLAGS) || qa_source_save_u32(io, &event->flags)) &&
+        (!(fields & BUILTIN_ARGUMENTS) || arguments_field(io, store, &event->arguments, &event->argument_count));
+}
+
 static bool builtin_field(qa_source_save_io *io, event_store *store, application_event_record *record)
 {
     qa_builtin_event *event=&record->event;
+    if (io->direction == QA_SOURCE_SAVE_READ) *event = (qa_builtin_event){0};
     uint32_t kind = event->kind, family = event->family;
     if (!enum_field(io, &kind, QA_BUILTIN_Q2_ENTITY_EVENT) || !enum_field(io, &family, QA_GAME_Q3) ||
-        !provider_field(io, &event->provider, false) ||
-        !actor_field(io, &event->actor) || !actor_field(io, &event->other) ||
         !qa_source_save_u64(io, &event->time_ns) ||
-        !qa_source_save_string(io, &event->resource) || !qa_source_save_string(io, &event->text) ||
-        !vector_field(io, &event->origin) || !vector_field(io, &event->end) ||
-        !vector_field(io, &event->direction) || !finite_field(io, &event->volume) ||
-        !finite_field(io, &event->attenuation) || !finite_field(io, &event->value) ||
-        !qa_source_save_i32(io, &event->code) || !qa_source_save_i32(io, &event->channel) ||
-        !qa_source_save_i32(io, &event->count) || !qa_source_save_i32(io, &event->frame) ||
-        !qa_source_save_u32(io, &event->flags) ||
-        !arguments_field(io, store, &event->arguments, &event->argument_count)) return false;
+        !builtin_common(io, store, event)) return false;
     event->kind = (qa_builtin_event_kind)kind;
     event->family = (qa_game_family)family;
     if (family == QA_GAME_Q2 && kind == QA_BUILTIN_MUZZLE) {
