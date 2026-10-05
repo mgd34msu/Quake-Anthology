@@ -1341,13 +1341,13 @@ static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
   bool source_pipeline=input->source_arrays || input->source_retain_depth_range || input->source_direct!=QA_SOURCE_DIRECT_NONE;
   for (size_t i = 0; i < resolved.texture_count; ++i) {
     size_t unit=source_pipeline && !input->source_arrays && i==0?renderer->controls.attributes.texture_unit:i;
-    if (source_pipeline && input->textures[i]) qa_render_source_image_used(&renderer->controls,input->textures[i]);
+    if (source_pipeline && input->textures[i]) cpu_source_image_used(renderer,input->textures[i]);
     if (resolved.retain_texture[i]) resolved.textures[i] = renderer->bound[unit];
     else if (!input->source_arrays && input->textures[i] && renderer->bound[unit]!=input->textures[i]) {
       qa_scene_image_retain(input->textures[i]);
       qa_scene_image_release(renderer->bound[unit]);
       renderer->bound[unit]=input->textures[i];
-      if (source_pipeline) qa_render_source_image_used(&renderer->controls,input->textures[i]);
+      if (source_pipeline) cpu_source_image_used(renderer,input->textures[i]);
       renderer->controls.attributes.actual_empty[unit]=false;
     }
   }

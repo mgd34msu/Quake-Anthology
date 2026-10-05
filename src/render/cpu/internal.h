@@ -63,6 +63,7 @@ struct qa_cpu_renderer {
 typedef struct cpu_derivative {
   double dudx, dvdx, dudy, dvdy;
 } cpu_derivative;
+void cpu_source_image_used(qa_cpu_renderer *, const qa_scene_image *);
 typedef struct cpu_sampler {
   const qa_scene_image *image;
   const cpu_framebuffer *target;

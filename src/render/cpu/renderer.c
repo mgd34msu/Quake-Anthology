@@ -883,6 +883,11 @@ static cpu_source_image *cpu_source_object(qa_cpu_renderer *renderer,const qa_sc
   qa_scene_resources *owner=image && image->source_q3?qa_scene_image_resource_owner(image):NULL;
   return owner ? render_resource_get(&renderer->source_image_index, image->identity, 0, owner) : NULL;
 }
+void cpu_source_image_used(qa_cpu_renderer *renderer, const qa_scene_image *image)
+{
+  const cpu_source_image *row = cpu_source_object(renderer, image);
+  if (row) renderer->controls.image_used[(size_t)(row - renderer->source_images)] = true;
+}
 bool qa_cpu_source_texture_upload(qa_render_controls *controls,const qa_scene_image *slot,
     const qa_scene_image *image,const qa_scene_image *binding,bool redefine,bool dirty,qa_error *error)
 {
