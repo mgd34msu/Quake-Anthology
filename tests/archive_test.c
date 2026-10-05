@@ -417,7 +417,8 @@ static void test_corruption(void)
     stored.bytes[stored.members[0].data] ^= 1;
     archive = open_zip(&stored);
     CHECK(!qa_archive_read(archive, 0, &data, &error));
-    CHECK(error.code == QA_ERROR_FORMAT && strstr(error.message, "CRC32") != NULL);
+    CHECK(error.code == QA_ERROR_FORMAT && error.offset == stored.members[0].data &&
+          data.owned.data == NULL && data.owned.size == 0 && data.bytes.data == NULL && data.bytes.size == 0);
     qa_archive_close(archive);
     const size_t crc_offsets[] = {good.central + 16, good.members[0].descriptor + 4};
     for (size_t i = 0; i < sizeof(crc_offsets) / sizeof(crc_offsets[0]); ++i)

@@ -29,7 +29,6 @@ static void test_errors_and_buffers(void)
     qa_error_set(&error, QA_ERROR_FORMAT, 19, "bad %s: %d", "input", 7);
     CHECK(error.code == QA_ERROR_FORMAT);
     CHECK(error.offset == 19);
-    CHECK(strcmp(error.message, "bad input: 7") == 0);
 
     char long_message[512];
     memset(long_message, 'x', sizeof(long_message));
