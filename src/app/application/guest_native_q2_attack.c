@@ -212,22 +212,10 @@ bool application_native_q2_attack_prepare(struct application_native_q2 *engine, 
         p->item_flags > p->item_stride || p->item_stride - p->item_flags < 4)
         return application_fail(error, QA_ERROR_FORMAT, "Native attack producer differs from its source descriptors");
     qa_json_id provenance = qa_json_get(doc, weapons, "provenance");
-    if (qa_json_type(doc, provenance) == QA_JSON_OBJECT) {
-        if (!word(doc, provenance, "weaponThink", &p->weapon_think, error)) return false;
-    } else {
-        qa_sha256_digest classic, kex;
-        if (!qa_sha256_parse("8187df3fd5b4d435d8227434d3351aad2b47e546236403e52adcd4d275810c45", &classic, error) ||
-            !qa_sha256_parse("045d49c53722d9b922caf14f168dd28a97d4c514a6e443a3140560f8668baccd", &kex, error)) return false;
-        /* Exact original gitem prefix, not an inferred private mod layout:
-         * classic classname/pickup/use/drop/weaponthink; KEX id then those. */
-        if (engine->profile == QA_NATIVE_Q2_GAME_API3 && p->pointer_bytes == 4 &&
-            qa_sha256_equal(&info.image.digest, &classic) && p->item_classname == 0 && p->item_stride == 76)
-            p->weapon_think = 16;
-        else if (engine->profile == QA_NATIVE_Q2_GAME_API2023 && p->pointer_bytes == 8 &&
-            qa_sha256_equal(&info.image.digest, &kex) && p->item_classname == 8 && p->item_stride == 192)
-            p->weapon_think = 40;
-        else return application_fail(error, QA_ERROR_UNSUPPORTED, "Native source weapon callback requires artifact-qualified member metadata");
-    }
+    if (qa_json_type(doc, provenance) != QA_JSON_OBJECT)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Native source weapon callback requires artifact-qualified member metadata");
+    if (!word(doc, provenance, "weaponThink", &p->weapon_think, error)) return false;
     if (p->weapon_think > p->item_stride || p->pointer_bytes > p->item_stride - p->weapon_think ||
         p->weapon_think == p->item_classname)
         return application_fail(error, QA_ERROR_FORMAT, "Native weapon callback exceeds its qualified descriptor");

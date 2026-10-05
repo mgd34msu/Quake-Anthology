@@ -54,27 +54,15 @@ static bool layout_read(struct application_native_q2 *engine, qa_launch_role rol
     if (!doc) return fail(error, QA_ERROR_ARGUMENT,
         "Native Q2 prediction requires its prepared original declaration index");
     qa_json_id root = qa_json_root(doc), weapons = qa_json_get(doc, root, "weapons");
+    bool classic = engine->profile == QA_NATIVE_Q2_GAME_API3;
     prediction_layout p = {.pointer_bytes = info.image.target.pointer_bytes,
-        .boolean_bytes = engine->profile == QA_NATIVE_Q2_GAME_API3 ? 4 : 1};
+        .boolean_bytes = classic ? 4 : 1};
     bool ok = word(doc, qa_json_get(doc, weapons, "entity"), "client", &p.client_pointer, error) &&
         word(doc, qa_json_get(doc, weapons, "client"), "byteLength", &p.client_bytes, error);
-    if (ok && engine->profile == QA_NATIVE_Q2_GAME_API3) {
-        qa_sha256_digest artifact;
-        ok = qa_sha256_parse("8187df3fd5b4d435d8227434d3351aad2b47e546236403e52adcd4d275810c45", &artifact, error);
-        if (ok && (p.pointer_bytes != 4 || p.client_pointer != 84 || p.client_bytes != 3832 ||
-            !qa_sha256_equal(&artifact, &info.image.digest)))
-            ok = fail(error, QA_ERROR_UNSUPPORTED,
-                "Classic Q2 prediction requires its exact original Xatrix client layout");
-        /* Artifact-matched i686 gclient_t. The animation members and newweapon
-         * are declared by the original weapon/drop profiles. SDK g_local.h
-         * places machinegun_shots immediately before anim_end and the two
-         * grenade members after the four original powerup float timers. */
-        p.state = 0xe00; p.pending = 0xddc; p.shots = 0xe78;
-        p.end = 0xe7c; p.priority = 0xe80; p.duck = 0xe84; p.run = 0xe88;
-        p.blew_up = 0xe9c; p.grenade = 0xea0;
-    } else if (ok) {
-        if (p.pointer_bytes != 8 || p.client_pointer != 120)
-            ok = fail(error, QA_ERROR_FORMAT, "Rerelease Q2 prediction changes the actual client pointer ABI");
+    if (ok) {
+        uint32_t expected = classic ? p.pointer_bytes == 4 ? 84u : 88u : 120u;
+        if ((!classic && p.pointer_bytes != 8) || p.client_pointer != expected)
+            ok = fail(error, QA_ERROR_FORMAT, "Native Q2 prediction changes the actual client pointer ABI");
         qa_json_id layouts = qa_json_get(doc, qa_json_get(doc,
             qa_json_get(doc, root, "continuation"), "private"), "layouts"), client = 0;
         bool found = false;
@@ -83,22 +71,26 @@ static bool layout_read(struct application_native_q2 *engine, qa_launch_role rol
             if (!qa_json_string_equal(doc, qa_json_get(doc, candidate, "domain"), "client")) continue;
             uint32_t extent;
             if (found || !word(doc, candidate, "byteLength", &extent, error) || extent != p.client_bytes)
-                ok = fail(error, QA_ERROR_FORMAT, "Rerelease Q2 prediction repeats or changes its client layout");
+                ok = fail(error, QA_ERROR_FORMAT, "Native Q2 prediction repeats or changes its client layout");
             client = candidate; found = true;
         }
         if (ok && !found) ok = fail(error, QA_ERROR_UNSUPPORTED,
-            "Rerelease Q2 prediction lacks the real declared private client");
+            "Native Q2 prediction lacks the real declared private client");
         if (ok && role == QA_ROLE_ARSENAL)
             ok = member(doc, client, "weaponstate", "int32", 4, p.client_bytes, &p.state, error) &&
-                member(doc, client, "newweapon", "pointer", 8, p.client_bytes, &p.pending, error) &&
+                member(doc, client, "newweapon", "pointer", p.pointer_bytes, p.client_bytes, &p.pending, error) &&
                 member(doc, client, "machinegun_shots", "int32", 4, p.client_bytes, &p.shots, error) &&
-                member(doc, client, "grenade_time", "int64", 8, p.client_bytes, &p.grenade, error) &&
-                member(doc, client, "grenade_blew_up", "bool8", 1, p.client_bytes, &p.blew_up, error);
+                member(doc, client, "grenade_time", classic ? "float32" : "int64",
+                    classic ? 4u : 8u, p.client_bytes, &p.grenade, error) &&
+                member(doc, client, "grenade_blew_up", classic ? "int32" : "bool8",
+                    p.boolean_bytes, p.client_bytes, &p.blew_up, error);
         if (ok && role == QA_ROLE_CHARACTER)
             ok = member(doc, client, "anim_end", "int32", 4, p.client_bytes, &p.end, error) &&
                 member(doc, client, "anim_priority", "int32", 4, p.client_bytes, &p.priority, error) &&
-                member(doc, client, "anim_duck", "bool8", 1, p.client_bytes, &p.duck, error) &&
-                member(doc, client, "anim_run", "bool8", 1, p.client_bytes, &p.run, error);
+                member(doc, client, "anim_duck", classic ? "int32" : "bool8",
+                    p.boolean_bytes, p.client_bytes, &p.duck, error) &&
+                member(doc, client, "anim_run", classic ? "int32" : "bool8",
+                    p.boolean_bytes, p.client_bytes, &p.run, error);
     }
     if (ok) *out = p;
     return ok;
