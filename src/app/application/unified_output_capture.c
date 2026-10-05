@@ -45,7 +45,7 @@ static bool children_current(void *context, qa_application *app,
 bool application_unified_output_acquire(qa_application *app, const application_unified_source *source,
     qa_unified_world_frame *world,
     qa_unified_frame_pool *pool, const application_unified_metadata_receipt *committed_metadata,
-    const qa_unified_document *committed_q3_metadata,
+    const qa_unified_document *committed_source_metadata,
     qa_net_client_id recipient, const qa_unified_session_player *player, uint32_t epoch,
     int64_t acknowledged, uint64_t after, application_unified_component_publisher *publisher,
     const application_unified_output_external *external,
@@ -85,7 +85,7 @@ bool application_unified_output_acquire(qa_application *app, const application_u
     if (ok && publisher) ok = application_unified_components_prepare(publisher, source, player,
         epoch, v->owned, v->owned->player, &v->components, e);
     if (ok) ok = application_unified_output_metadata(app, source, v->q3_sources, epoch, committed_metadata,
-        committed_q3_metadata, &v->metadata_receipt, &v->metadata, e);
+        committed_source_metadata, &v->metadata_receipt, &v->metadata, e);
     if (ok) {
         v->owned->q3 = application_unified_q3_sources_take(v->q3_sources);
         if (v->components) v->owned->components = application_unified_components_take(v->components);
@@ -130,11 +130,8 @@ uint64_t application_unified_output_capture_events_through(const application_uni
 { return v ? v->events.through : 0; }
 const application_unified_metadata_receipt *application_unified_output_capture_metadata(const application_unified_output_capture *v)
 { return v ? &v->metadata_receipt : NULL; }
-const qa_unified_document *application_unified_output_capture_q3_metadata(const application_unified_output_capture *v)
-{
-    const qa_unified_frame_metadata *metadata = v ? qa_unified_document_metadata(v->metadata) : NULL;
-    return metadata && metadata->replace_q3 ? v->metadata : NULL;
-}
+const qa_unified_document *application_unified_output_capture_metadata_document(const application_unified_output_capture *v)
+{ return v ? v->metadata : NULL; }
 bool application_unified_output_capture_seal(application_unified_output_capture *v, qa_error *e)
 {
     if (!application_unified_output_capture_current(v))

@@ -2050,18 +2050,29 @@ static const qa_unified_field q3_configuration_fields[] = {
     QA_UNIFIED_FIXED(qa_unified_q3_configuration, config_revisions, uint64_t_layout, QA_Q3_CONFIGSTRINGS),
 };
 const qa_unified_record_layout qa_unified_q3_configuration_layout = QA_UNIFIED_LAYOUT(qa_unified_q3_configuration, q3_configuration_fields);
+static const qa_unified_field q1_world_fields[] = {
+    QA_UNIFIED_FIELD(qa_unified_q1_world_state, level, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_q1_world_state, total_secrets, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_unified_q1_world_state, total_monsters, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_unified_q1_world_state, found_secrets, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_unified_q1_world_state, killed_monsters, QA_UNIFIED_FIELD_I32),
+};
+static const qa_unified_record_layout q1_world_layout = QA_UNIFIED_LAYOUT(qa_unified_q1_world_state, q1_world_fields);
 static const qa_unified_field metadata_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_frame_metadata, epoch, QA_UNIFIED_FIELD_U32),
     QA_UNIFIED_FIELD(qa_unified_frame_metadata, frame, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_frame_metadata, configuration_revision, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_frame_metadata, roster_revision, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_frame_metadata, style_revision, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_unified_frame_metadata, q1_revision, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_frame_metadata, replace_configurations, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_frame_metadata, replace_styles, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_frame_metadata, replace_q3, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_unified_frame_metadata, replace_q1, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_ARRAY(qa_unified_frame_metadata, configurations, configuration_count, qa_unified_configuration_state_layout, 65536),
     QA_UNIFIED_ARRAY(qa_unified_frame_metadata, styles, style_count, style_pattern_layout, 320),
     QA_UNIFIED_ARRAY(qa_unified_frame_metadata, q3_configurations, q3_configuration_count, qa_unified_q3_configuration_layout, 256),
+    QA_UNIFIED_POINTER(qa_unified_frame_metadata, q1, q1_world_layout),
 };
 const qa_unified_record_layout qa_unified_metadata_layout = QA_UNIFIED_LAYOUT(qa_unified_frame_metadata, metadata_fields);
 void qa_unified_frame_metadata_destroy(qa_unified_frame_metadata *value)
@@ -2072,6 +2083,8 @@ bool qa_unified_metadata_check(const qa_unified_frame_metadata *value, size_t *b
     if (!value || !value->epoch || (!value->replace_configurations && value->configuration_count) ||
         (!value->replace_styles && value->style_count) ||
         (!value->replace_q3 && value->q3_configuration_count) ||
+        (!value->replace_q1 && value->q1) ||
+        (value->q1 && !value->q1->level) ||
         !qa_unified_record_measure(&qa_unified_metadata_layout,value,bytes,error))
         return frame_bad(error,"Unified metadata lost its explicit replacement domains");
     uint64_t registry=value->configuration_count?value->configurations[0].actor.registry:0;

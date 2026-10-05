@@ -435,20 +435,22 @@ bool qa_unified_metadata_apply(const qa_unified_document *previous, const qa_uni
     const qa_unified_frame_metadata *old=qa_unified_document_metadata(previous);
     const qa_unified_frame_metadata *next=qa_unified_document_metadata(update);
     if (!out || *out || !next || (previous && !old) ||
-        (!old && (!next->replace_configurations || !next->replace_styles || !next->replace_q3)) ||
-        (old && (old->epoch!=next->epoch || !old->replace_configurations || !old->replace_styles || !old->replace_q3 ||
+        (!old && (!next->replace_configurations || !next->replace_styles || !next->replace_q3 || !next->replace_q1)) ||
+        (old && (old->epoch!=next->epoch || !old->replace_configurations || !old->replace_styles || !old->replace_q3 || !old->replace_q1 ||
             next->frame<old->frame || next->configuration_revision<old->configuration_revision ||
-            next->roster_revision<old->roster_revision || next->style_revision<old->style_revision ||
+            next->roster_revision<old->roster_revision || next->style_revision<old->style_revision || next->q1_revision<old->q1_revision ||
             (!next->replace_configurations && (next->configuration_revision!=old->configuration_revision ||
                 next->roster_revision!=old->roster_revision)) ||
-            (!next->replace_styles && next->style_revision!=old->style_revision))))
+            (!next->replace_styles && next->style_revision!=old->style_revision) ||
+            (!next->replace_q1 && next->q1_revision!=old->q1_revision))))
         return bad(error,"Unified metadata update lost its actual retained revision domains");
     qa_unified_frame_metadata merged=*next;
-    merged.replace_configurations=true; merged.replace_styles=true; merged.replace_q3=true;
+    merged.replace_configurations=true; merged.replace_styles=true; merged.replace_q3=true; merged.replace_q1=true;
     if (old) {
         if (!next->replace_configurations) { merged.configurations=old->configurations; merged.configuration_count=old->configuration_count; }
         if (!next->replace_styles) { merged.styles=old->styles; merged.style_count=old->style_count; }
         if (!next->replace_q3) { merged.q3_configurations=old->q3_configurations; merged.q3_configuration_count=old->q3_configuration_count; }
+        if (!next->replace_q1) merged.q1=old->q1;
         qa_unified_frame_metadata same=*old; same.frame=next->frame;
         if (next->replace_configurations && next->configuration_revision==old->configuration_revision &&
             next->roster_revision==old->roster_revision) {
@@ -462,6 +464,11 @@ bool qa_unified_metadata_apply(const qa_unified_document *previous, const qa_uni
             compared.styles=next->styles; compared.style_count=next->style_count;
             if (!qa_unified_record_equal(&qa_unified_metadata_layout,&same,&compared))
                 return bad(error,"Unified lightstyle changed without its actual Source revision");
+        }
+        if (next->replace_q1 && next->q1_revision==old->q1_revision) {
+            qa_unified_frame_metadata compared=same; compared.q1=next->q1;
+            if (!qa_unified_record_equal(&qa_unified_metadata_layout,&same,&compared))
+                return bad(error,"Unified Q1 world changed without its actual Source revision");
         }
         if (next->replace_q3) {
             for (size_t i=0;i<next->q3_configuration_count;++i) {
@@ -478,7 +485,7 @@ bool qa_unified_metadata_apply(const qa_unified_document *previous, const qa_uni
             }
         }
     }
-    if (next->replace_configurations && next->replace_styles && next->replace_q3)
+    if (next->replace_configurations && next->replace_styles && next->replace_q3 && next->replace_q1)
         return qa_unified_document_retain(update,out,error);
     qa_unified_frame_metadata *owned=calloc(1,sizeof(*owned));
     if (!owned) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining complete Unified metadata"); return false; }

@@ -1,5 +1,6 @@
 #include "remote_unified_q1.h"
 #include "remote_unified_private.h"
+#include "remote_unified_metadata.h"
 #include "remote_unified_save.h"
 #include "selected_effects_particles.h"
 #include "legacy_render_policy.h"
@@ -153,6 +154,13 @@ static void retained_free(qa_unified_presentation_event *row)
 { if (row) { qa_unified_presentation_event_dispose(row); free(row); } }
 static bool same_wire(qa_actor_id a,qa_actor_id b)
 { return qa_actor_id_equal(a,b); }
+const qa_unified_q1_world_state *frontend_unified_q1_world_read(const frontend_remote_unified *replica)
+{
+    const qa_unified_frame *frame=qa_unified_document_frame(frontend_remote_unified_frame(replica));
+    const qa_unified_frame_metadata *metadata=frontend_remote_unified_metadata(replica);
+    return frontend_remote_unified_current(replica,NULL) && frame && frame->world && metadata &&
+        metadata->epoch==frame->epoch && metadata->frame<=frame->world->source.number ? metadata->q1 : NULL;
+}
 static uint64_t ns(double value)
 { return value<=0?0:value>=18446744073.709551615?UINT64_MAX:(uint64_t)(value*1e9); }
 static void event_free(q1_event *p)
@@ -431,8 +439,11 @@ static bool hud_read(void *context,const qa_hud_frame *frame,qa_hud_data *out,qa
     if(!o->busy || !d || frame->seat!=d->physical_seat) return fail(e,"Q1 HUD changed its actual CLIENT seat");
     size_t count=0;for(size_t i=0;i<Q1_POWERS;++i) if(o->powers[i]>o->seconds) o->timers[count++]=(qa_hud_timer){.label=powers[i],.until_ns=ns(o->powers[i])};
     size_t bars=0;if(o->ctf_present){memcpy(o->display_bars,o->ctf,sizeof(o->ctf));bars=4;}
-    if(o->monsters_present)o->display_bars[bars++]=(qa_hud_value){.label="Monsters",.value=o->monsters};
-    if(o->secrets_present)o->display_bars[bars++]=(qa_hud_value){.label="Secrets",.value=o->secrets};
+    const qa_unified_q1_world_state *world=frontend_unified_q1_world_read(o->replica);
+    if(world || o->monsters_present)o->display_bars[bars++]=(qa_hud_value){.label="Monsters",
+        .value=world?world->killed_monsters:o->monsters,.maximum=world?world->total_monsters:o->total_monsters};
+    if(world || o->secrets_present)o->display_bars[bars++]=(qa_hud_value){.label="Secrets",
+        .value=world?world->found_secrets:o->secrets,.maximum=world?world->total_secrets:o->total_secrets};
     *out=(qa_hud_data){.source_vitals=true,.bars=o->display_bars,.bar_count=bars,.timers=o->timers,.timer_count=count,.scores=o->scores,.score_count=o->score_count,
         .help_title=o->prompt_title,.help_lines=(const char *const *)o->prompt_lines,.help_count=o->prompt_count};return true;
 }

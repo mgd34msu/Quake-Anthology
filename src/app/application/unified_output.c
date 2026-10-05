@@ -8,6 +8,7 @@
 #include "qa/unified_frame_prediction.h"
 #include "qa/unified_frame_player.h"
 #include "qa/application_native_q2_presentation.h"
+#include "qa/application_network.h"
 #include "qa/game_q1_wire.h"
 #include "qa/game_q2_wire.h"
 
@@ -138,30 +139,66 @@ static bool styles(qa_application *app, const application_unified_source *source
     return true;
 }
 
+static bool q1_world_equal(const qa_unified_q1_world_state *saved, const qa_application_network_q1_world *actual)
+{
+    return (!saved && !actual) || (saved && actual && saved->level && actual->level &&
+        !strcmp(saved->level, actual->level) && saved->total_secrets == actual->total_secrets &&
+        saved->total_monsters == actual->total_monsters && saved->found_secrets == actual->found_secrets &&
+        saved->killed_monsters == actual->killed_monsters);
+}
+
+static bool q1_world_metadata(const qa_application_network_q1_world *world,
+    qa_unified_frame_metadata *metadata, qa_error *error)
+{
+    if (!world) return true;
+    metadata->q1 = calloc(1, sizeof(*metadata->q1));
+    if (!metadata->q1) return application_fail(error, QA_ERROR_MEMORY, "Retaining changed Q1 world metadata");
+    *metadata->q1 = (qa_unified_q1_world_state){.total_secrets = world->total_secrets,
+        .total_monsters = world->total_monsters, .found_secrets = world->found_secrets,
+        .killed_monsters = world->killed_monsters};
+    return application_unified_frame_string(NULL, &metadata->q1->level, world->level, error);
+}
+
 bool application_unified_output_metadata(qa_application *app, const application_unified_source *source,
     const application_unified_q3_sources *q3_sources, uint32_t epoch, const application_unified_metadata_receipt *committed,
-    const qa_unified_document *committed_q3_metadata, application_unified_metadata_receipt *proposed, qa_unified_document **out, qa_error *error)
+    const qa_unified_document *committed_source_metadata, application_unified_metadata_receipt *proposed, qa_unified_document **out, qa_error *error)
 {
     if (!app || !source || !epoch || !proposed || !out || *out || !application_unified_source_current(app, source))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified metadata requires its completed Source and recipient epoch");
     application_unified_metadata_receipt value;
     if (!metadata_revision(app, source, epoch, &value, error)) return false;
+    qa_application_network_q1_world q1_world;
+    const qa_application_network_q1_world *q1 = NULL;
+    if (source->family == QA_GAME_Q1) {
+        if (!qa_application_network_q1_world_read(app, source->owner, &q1_world, error)) return false;
+        q1 = &q1_world;
+    }
+    const qa_unified_frame_metadata *previous = qa_unified_document_metadata(committed_source_metadata);
     bool initial = !committed || committed->epoch != epoch || committed->map_revision != value.map_revision;
     bool configuration_changed = initial || committed->publication_revision != value.publication_revision ||
         committed->roster_revision != value.roster_revision;
     bool styles_changed = initial || committed->style_source != value.style_source || committed->style_revision != value.style_revision;
-    bool q3_changed = initial || !application_unified_q3_sources_metadata_current(q3_sources, committed_q3_metadata);
-    if (!configuration_changed && !styles_changed && !q3_changed) { *proposed = value; return true; }
+    bool q3_changed = initial || !application_unified_q3_sources_metadata_current(q3_sources, committed_source_metadata);
+    bool q1_changed = initial || !q1_world_equal(previous ? previous->q1 : NULL, q1);
+    value.q1_revision = committed && committed->epoch == epoch ? committed->q1_revision : 0;
+    if (q1_changed) {
+        if (value.q1_revision == UINT64_MAX) return application_fail(error, QA_ERROR_ARGUMENT, "Q1 world metadata revision exhausted");
+        ++value.q1_revision;
+    }
+    if (!configuration_changed && !styles_changed && !q3_changed && !q1_changed) { *proposed = value; return true; }
     qa_unified_frame_metadata *metadata = calloc(1, sizeof(*metadata));
     if (!metadata) return application_fail(error, QA_ERROR_MEMORY, "Retaining changed Unified Source metadata");
     metadata->epoch = epoch; metadata->frame = source->frame.number;
     metadata->configuration_revision = value.publication_revision; metadata->roster_revision = value.roster_revision;
     metadata->style_revision = value.style_revision;
+    metadata->q1_revision = value.q1_revision;
     metadata->replace_configurations = configuration_changed; metadata->replace_styles = styles_changed;
     metadata->replace_q3 = q3_changed;
+    metadata->replace_q1 = q1_changed;
     bool ok = (!configuration_changed || configurations(app, metadata, error)) &&
         (!styles_changed || styles(app, source, metadata, error)) &&
-        (!q3_changed || application_unified_q3_sources_metadata(q3_sources, metadata, error));
+        (!q3_changed || application_unified_q3_sources_metadata(q3_sources, metadata, error)) &&
+        (!q1_changed || q1_world_metadata(q1, metadata, error));
     application_unified_metadata_receipt after;
     if (ok) ok = metadata_revision(app, source, epoch, &after, error) &&
         after.publication_revision == value.publication_revision && after.roster_revision == value.roster_revision &&

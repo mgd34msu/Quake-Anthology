@@ -134,7 +134,7 @@ bool frontend_remote_q1_bonus(frontend_remote_q1 *, qa_error *);
 bool frontend_remote_q1_metadata_read(const frontend_remote_q1 *, frontend_remote_q1_view *, qa_error *);
 bool frontend_remote_q1_read(const frontend_remote_q1 *, frontend_remote_q1_view *, qa_error *);
 bool frontend_remote_q1_current(const frontend_remote_q1_view *);
-bool frontend_remote_q1_save_client_read(const qa_frontend *,uint32_t physical_seat,
+bool frontend_q1_save_client_read(const qa_frontend *,uint32_t physical_seat,
     qa_q1_save_client *,qa_error *);
 size_t frontend_remote_q1_entity_count(const frontend_remote_q1 *);
 bool frontend_remote_q1_entity_at(frontend_remote_q1 *, size_t, frontend_remote_q1_entity_view *, qa_error *);

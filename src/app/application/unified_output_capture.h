@@ -20,7 +20,7 @@ typedef struct application_unified_output_external {
 bool application_unified_output_acquire(qa_application *, const application_unified_source *,
     qa_unified_world_frame *borrowed_world,
     qa_unified_frame_pool *recipient_pool, const application_unified_metadata_receipt *committed_metadata,
-    const qa_unified_document *committed_q3_metadata,
+    const qa_unified_document *committed_source_metadata,
     qa_net_client_id, const qa_unified_session_player *, uint32_t epoch,
     int64_t acknowledged_input, uint64_t events_after,
     application_unified_component_publisher *, const application_unified_output_external *,
@@ -28,7 +28,7 @@ bool application_unified_output_acquire(qa_application *, const application_unif
 const application_unified_output *application_unified_output_capture_value(const application_unified_output_capture *);
 uint64_t application_unified_output_capture_events_through(const application_unified_output_capture *);
 const application_unified_metadata_receipt *application_unified_output_capture_metadata(const application_unified_output_capture *);
-const qa_unified_document *application_unified_output_capture_q3_metadata(const application_unified_output_capture *);
+const qa_unified_document *application_unified_output_capture_metadata_document(const application_unified_output_capture *);
 bool application_unified_output_capture_current(const application_unified_output_capture *);
 bool application_unified_output_capture_seal(application_unified_output_capture *, qa_error *);
 void application_unified_output_capture_commit(application_unified_output_capture *);

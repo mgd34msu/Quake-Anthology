@@ -73,7 +73,7 @@ static bool observation(qa_frontend *f,qa_buffer *source,const char *directory,
         !qa_application_control_read(f->application,actor,&control)) return false;
     qa_q1_save_data *data=NULL;double health=0;bool god=false;
     qa_q1_save_client client;
-    bool okay=frontend_remote_q1_save_client_read(f,0,&client,error) &&
+    bool okay=frontend_q1_save_client_read(f,0,&client,error) &&
         qa_application_q1_save_capture(f->application,&client,&data,error) &&
         source_health(data,&health,&god,error);
     if (!okay) { qa_q1_save_destroy(data);return false; }
@@ -205,7 +205,7 @@ static int recovery_run(const char *root,const char *binary,const char *user_roo
         if (!command(f,"give h 13",&error)) goto done;
         qa_q1_save_data *tail=NULL;double tail_health=0;bool tail_god=false;
         qa_q1_save_client client;
-        bool tail_okay=frontend_remote_q1_save_client_read(f,0,&client,&error) &&
+        bool tail_okay=frontend_q1_save_client_read(f,0,&client,&error) &&
             qa_application_q1_save_capture(f->application,&client,&tail,&error) &&
             source_health(tail,&tail_health,&tail_god,&error);
         qa_q1_save_destroy(tail);

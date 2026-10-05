@@ -4,8 +4,10 @@
 #include "qa/hud.h"
 #include "remote_unified_events.h"
 #include "qa/unified_frame_events.h"
+#include "qa/unified_frame_metadata.h"
 
 typedef struct frontend_unified_q1 frontend_unified_q1;
+const qa_unified_q1_world_state *frontend_unified_q1_world_read(const frontend_remote_unified *);
 typedef struct frontend_unified_q1_options {
     uint64_t audio_owner;
     void *context;

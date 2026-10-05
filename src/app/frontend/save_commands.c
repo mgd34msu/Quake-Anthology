@@ -794,7 +794,7 @@ static bool write_game(qa_frontend *f,qa_fs_root *root,const char *name,
         if (!frontend_cinematic_capture_ready(f))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Cannot save during standalone cinematic playback");
         qa_q1_save_client client;
-        written=frontend_remote_q1_save_client_read(f,0,&client,error) &&
+        written=frontend_q1_save_client_read(f,0,&client,error) &&
             qa_application_q1_save_capture(f->application,&client,source,error) &&
             qa_q1_save_write(root,name,*source,nonce,error);
     }

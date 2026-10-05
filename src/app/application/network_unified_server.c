@@ -19,8 +19,8 @@ static qa_json_id control_value(const qa_unified_document *document)
 
 static void metadata_clear(application_unified_server *owner)
 {
-    qa_unified_document_destroy(owner->committed_q3_metadata);
-    owner->committed_q3_metadata = NULL;
+    qa_unified_document_destroy(owner->committed_source_metadata);
+    owner->committed_source_metadata = NULL;
     owner->committed_metadata = (application_unified_metadata_receipt){0};
 }
 
@@ -575,7 +575,7 @@ bool application_unified_server_publish(application_unified_server *owner, qa_un
         int64_t acknowledged = application_unified_inputs_submitted(owner->inputs);
         application_unified_output_capture *capture = NULL;
         if (!application_unified_output_acquire(owner->application, &source, borrowed_world,
-            owner->recipient_pool, &owner->committed_metadata, owner->committed_q3_metadata, owner->client,
+            owner->recipient_pool, &owner->committed_metadata, owner->committed_source_metadata, owner->client,
             &actual, owner->epoch, acknowledged, owner->events_after, owner->components, external, &capture, error)) return false;
         const application_unified_output *observed = application_unified_output_capture_value(capture);
         const qa_unified_frame *frame = qa_unified_document_frame(observed->frame);
@@ -629,18 +629,18 @@ bool application_unified_server_publish(application_unified_server *owner, qa_un
             ++owner->control_cursor;
         }
     }
-    qa_unified_document *q3_metadata = NULL;
-    const qa_unified_document *proposed_q3 = application_unified_output_capture_q3_metadata(owner->pending_capture);
-    if (okay && proposed_q3) okay = qa_unified_document_retain(proposed_q3, &q3_metadata, error);
+    qa_unified_document *source_metadata = NULL;
+    const qa_unified_document *proposed = application_unified_output_capture_metadata_document(owner->pending_capture);
+    if (okay && proposed) okay = qa_unified_metadata_apply(owner->committed_source_metadata, proposed, &source_metadata, error);
     if (okay) okay = qa_unified_session_frame(owner->session, owner->pending.frame, error);
     owner->entered = false;
     if (okay) {
         application_unified_output_capture_commit(owner->pending_capture);
         owner->committed_metadata = *application_unified_output_capture_metadata(owner->pending_capture);
-        if (q3_metadata) {
-            qa_unified_document_destroy(owner->committed_q3_metadata);
-            owner->committed_q3_metadata = q3_metadata;
-            q3_metadata = NULL;
+        if (source_metadata) {
+            qa_unified_document_destroy(owner->committed_source_metadata);
+            owner->committed_source_metadata = source_metadata;
+            source_metadata = NULL;
         }
         application_unified_output_capture_dispose(owner->pending_capture); owner->pending_capture = NULL;
         owner->events_after = owner->pending_events_through;
@@ -649,7 +649,7 @@ bool application_unified_server_publish(application_unified_server *owner, qa_un
         owner->pending_first=owner->pending_last=0;
         owner->preparing_frame = false;
     }
-    qa_unified_document_destroy(q3_metadata);
+    qa_unified_document_destroy(source_metadata);
     return okay;
 }
 

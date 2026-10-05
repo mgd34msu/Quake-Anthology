@@ -11,12 +11,12 @@ typedef struct application_unified_q3_sources application_unified_q3_sources;
 typedef struct application_unified_metadata_receipt {
     uint32_t epoch;
     qa_actor_owner style_source;
-    uint64_t publication_revision, roster_revision, style_revision, map_revision;
+    uint64_t publication_revision, roster_revision, style_revision, map_revision, q1_revision;
 } application_unified_metadata_receipt;
 
 bool application_unified_output_metadata(qa_application *, const application_unified_source *,
     const application_unified_q3_sources *, uint32_t epoch, const application_unified_metadata_receipt *committed,
-    const qa_unified_document *committed_q3_metadata,
+    const qa_unified_document *committed_source_metadata,
     application_unified_metadata_receipt *proposed, qa_unified_document **, qa_error *);
 
 /* Owned wire values observed from one returned Source frame. Resource controls

@@ -33,7 +33,7 @@ struct application_unified_server {
     application_unified_output_capture *pending_capture;
     qa_unified_frame_pool *recipient_pool;
     application_unified_metadata_receipt committed_metadata;
-    qa_unified_document *committed_q3_metadata;
+    qa_unified_document *committed_source_metadata;
     application_unified_source offered;
     qa_unified_session_player admitted_player;
     qa_buffer admitted_arsenal;

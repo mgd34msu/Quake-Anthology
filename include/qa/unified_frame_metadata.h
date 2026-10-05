@@ -15,17 +15,22 @@ typedef struct qa_unified_q3_configuration {
     qa_q3_gamestate *game_state;
     uint64_t config_revisions[QA_Q3_CONFIGSTRINGS];
 } qa_unified_q3_configuration;
+typedef struct qa_unified_q1_world_state {
+    char *level;
+    int32_t total_secrets, total_monsters, found_secrets, killed_monsters;
+} qa_unified_q1_world_state;
 typedef struct qa_unified_frame_metadata {
     uint32_t epoch;
     uint64_t frame;
-    uint64_t configuration_revision, roster_revision, style_revision;
-    bool replace_configurations, replace_styles, replace_q3;
+    uint64_t configuration_revision, roster_revision, style_revision, q1_revision;
+    bool replace_configurations, replace_styles, replace_q3, replace_q1;
     qa_unified_configuration_state *configurations;
     size_t configuration_count;
     qa_unified_style_pattern *styles;
     size_t style_count;
     qa_unified_q3_configuration *q3_configurations;
     size_t q3_configuration_count;
+    qa_unified_q1_world_state *q1;
 } qa_unified_frame_metadata;
 
 void qa_unified_frame_metadata_destroy(qa_unified_frame_metadata *);
