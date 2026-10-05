@@ -32,6 +32,15 @@ bool qa_source_save_span(qa_source_save_io *, size_t, qa_bytes *);
  * without applying it. The pristine span may be shorter than the extent. */
 bool qa_source_save_memory_delta(qa_source_save_io *, uint8_t *memory,
     size_t extent, qa_bytes pristine);
+/* A positioned baseline read fills the requested extent, including zero tail.
+ * Its borrowed owner remains current throughout this synchronous operation. */
+typedef struct qa_source_save_memory_source {
+    qa_bytes bytes;
+    bool (*read)(void *, size_t offset, void *, size_t bytes, qa_error *);
+    void *context;
+} qa_source_save_memory_source;
+bool qa_source_save_memory_delta_source(qa_source_save_io *, uint8_t *memory,
+    size_t extent, const qa_source_save_memory_source *);
 bool qa_source_save_bool(qa_source_save_io *, bool *);
 bool qa_source_save_u8(qa_source_save_io *, uint8_t *);
 bool qa_source_save_u16(qa_source_save_io *, uint16_t *);

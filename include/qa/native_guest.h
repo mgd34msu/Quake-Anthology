@@ -2,6 +2,7 @@
 #define QA_NATIVE_GUEST_H
 
 #include "qa/native.h"
+#include "qa/source_save.h"
 
 typedef struct qa_native_guest qa_native_guest;
 typedef struct guest_profile_guard_launch guest_profile_guard_launch;
@@ -55,10 +56,11 @@ typedef struct qa_native_guest_mapping {
 
 /* A private file view owns its snapshot. The final partial file page is
  * accessible and zero padded; whole pages beyond EOF always fault, including
- * through aliases and after protection changes. No host file is reopened. */
+ * through aliases and after protection changes. Execution uses owned mapped
+ * pages; cold reconstruction borrows the actual resource owner's baseline. */
 typedef struct qa_native_guest_file {
     qa_sha256_digest digest;
-    uint64_t bytes, offset, accessible_bytes;
+    uint64_t bytes, offset, accessible_bytes, capability;
 } qa_native_guest_file;
 typedef enum qa_native_guest_fault_kind {
     QA_NATIVE_GUEST_FAULT_UNMAPPED, QA_NATIVE_GUEST_FAULT_PROTECTION,
@@ -120,6 +122,9 @@ bool qa_native_guest_map(qa_native_guest *, uint64_t, size_t, uint32_t, qa_bytes
     qa_native_guest_mapping *, qa_error *);
 bool qa_native_guest_map_file(qa_native_guest *, uint64_t, size_t, uint32_t,
     qa_bytes, uint64_t, qa_native_guest_mapping *, qa_error *);
+bool qa_native_guest_map_file_source(qa_native_guest *, uint64_t, size_t, uint32_t,
+    const qa_source_save_memory_source *, size_t file_bytes, uint64_t offset,
+    uint64_t capability, qa_native_guest_mapping *, qa_error *);
 bool qa_native_guest_file_backing(const qa_native_guest *, uint64_t,
     qa_native_guest_file *, qa_error *);
 /* Read the real CPU access fault even on a terminal owner. False means this
@@ -196,9 +201,14 @@ bool qa_native_guest_run_program(qa_native_guest *, uint64_t, uint64_t, size_t,
 /* Borrow the installed loader baseline for an actual backing. Non-image RAM
  * has an empty span and an implicit zero tail. File pages require their real
  * installed or opened-resource baseline, never a saved copy of file bytes. */
+typedef struct qa_native_guest_pristine {
+    qa_source_save_memory_source memory;
+    /* Called with memory.context after delta I/O, including failed reads. */
+    bool (*release)(void *, qa_error *);
+} qa_native_guest_pristine;
 typedef struct qa_native_guest_baseline {
     bool (*read)(void *, uint64_t backing, size_t extent,
-        const qa_native_guest_file *, qa_bytes *, qa_error *);
+        const qa_native_guest_file *, qa_native_guest_pristine *, qa_error *);
     void *context;
 } qa_native_guest_baseline;
 bool qa_native_guest_checkpoint(qa_native_guest *, const qa_native_guest_baseline *,

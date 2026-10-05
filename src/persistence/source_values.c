@@ -183,39 +183,81 @@ static bool memory_delta_read(qa_source_save_io *io, uint8_t *memory, size_t ext
     }
 }
 
-bool qa_source_save_memory_delta(qa_source_save_io *io, uint8_t *memory,
-    size_t extent, qa_bytes pristine)
+static bool memory_delta_span(qa_source_save_io *io, uint8_t *memory,
+    size_t begin, size_t end, bool zero)
+{
+    uint64_t start = begin, length = end - begin;
+    return qa_source_save_u64(io, &start) && qa_source_save_u64(io, &length) &&
+        qa_source_save_bool(io, &zero) &&
+        (zero || qa_source_save_bytes(io, memory + begin, end - begin));
+}
+
+static bool memory_source_read(qa_source_save_io *io,
+    const qa_source_save_memory_source *source, size_t offset, void *out, size_t size)
+{
+    if (source->read(source->context, offset, out, size, io->error)) return true;
+    io->failed = true;
+    if (!io->error || io->error->code != QA_OK) return false;
+    return persistence_io_fail(io, QA_ERROR_IO, "reading actual source memory baseline");
+}
+
+bool qa_source_save_memory_delta_source(qa_source_save_io *io, uint8_t *memory,
+    size_t extent, const qa_source_save_memory_source *source)
 {
     if (!io || io->failed) return false;
-    if (pristine.size > extent || (pristine.size && !pristine.data))
+    if (!source || source->bytes.size > extent ||
+        (source->bytes.size && !source->bytes.data))
         return persistence_io_fail(io, QA_ERROR_ARGUMENT, "invalid pristine source memory extent");
     if (io->direction == QA_SOURCE_SAVE_READ) {
         size_t begin = io->offset;
         if (!memory_delta_read(io, NULL, extent)) return false;
         if (!memory) return true;
-        if (pristine.size) memmove(memory, pristine.data, pristine.size);
-        if (extent > pristine.size) memset(memory + pristine.size, 0, extent - pristine.size);
+        if (source->read) {
+            for (size_t offset = 0; offset < extent;) {
+                size_t size = extent - offset;
+                if (size > 65536) size = 65536;
+                if (!memory_source_read(io, source, offset, memory + offset, size)) return false;
+                offset += size;
+            }
+        } else {
+            if (source->bytes.size) memmove(memory, source->bytes.data, source->bytes.size);
+            if (extent > source->bytes.size)
+                memset(memory + source->bytes.size, 0, extent - source->bytes.size);
+        }
         io->offset = begin;
         return memory_delta_read(io, memory, extent);
     }
     if (io->direction != QA_SOURCE_SAVE_WRITE || (extent && !memory))
         return persistence_io_fail(io, QA_ERROR_ARGUMENT, "source memory delta requires actual memory");
-    size_t at = 0;
-    while (at < extent) {
-        uint8_t original = at < pristine.size ? pristine.data[at] : 0;
-        if (memory[at] == original) { ++at; continue; }
-        size_t begin = at;
-        bool zero = memory[at] == 0;
-        do {
-            ++at;
-            if (at == extent) break;
-            original = at < pristine.size ? pristine.data[at] : 0;
-        } while (memory[at] != original && (memory[at] == 0) == zero);
-        uint64_t start = begin, length = at - begin;
-        if (!qa_source_save_u64(io, &start) || !qa_source_save_u64(io, &length) ||
-            !qa_source_save_bool(io, &zero) ||
-            (!zero && !qa_source_save_bytes(io, memory + begin, at - begin))) return false;
+    uint8_t scratch[65536];
+    size_t begin = 0;
+    bool active = false, zero = false;
+    for (size_t offset = 0; offset < extent;) {
+        size_t size = extent - offset;
+        if (size > sizeof(scratch)) size = sizeof(scratch);
+        if (source->read && !memory_source_read(io, source, offset, scratch, size)) return false;
+        for (size_t i = 0; i < size; ++i) {
+            size_t at = offset + i;
+            uint8_t original = source->read ? scratch[i] :
+                at < source->bytes.size ? source->bytes.data[at] : 0;
+            bool changed = memory[at] != original;
+            bool next_zero = memory[at] == 0;
+            if (active && (!changed || next_zero != zero)) {
+                if (!memory_delta_span(io, memory, begin, at, zero)) return false;
+                active = false;
+            }
+            if (changed && !active) { begin = at; zero = next_zero; active = true; }
+        }
+        offset += size;
     }
+    if (active && !memory_delta_span(io, memory, begin, extent, zero)) return false;
     uint64_t end = extent;
     return qa_source_save_u64(io, &end);
+}
+
+bool qa_source_save_memory_delta(qa_source_save_io *io, uint8_t *memory,
+    size_t extent, qa_bytes pristine)
+{
+    const qa_source_save_memory_source source = {.bytes = pristine};
+    return qa_source_save_memory_delta_source(io, memory, extent, &source);
 }

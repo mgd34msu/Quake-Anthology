@@ -12,26 +12,23 @@ typedef struct saved_process_image {
 
 typedef struct sysv_baseline {
     qa_native_sysv_process *owner;
-    const qa_buffer *loaded;
-    const saved_process_image *records;
+    guest_elf_memory *const *prepared;
 } sysv_baseline;
 
 static bool pristine(void *context, uint64_t backing, size_t extent,
-    const qa_native_guest_file *file, qa_bytes *out, qa_error *error)
+    const qa_native_guest_file *file, qa_native_guest_pristine *out, qa_error *error)
 {
     sysv_baseline *source = context;
     bool found = false;
-    *out = (qa_bytes){0};
+    *out = (qa_native_guest_pristine){0};
     for (size_t i = 0; i < source->owner->image_count; ++i) {
-        qa_bytes loaded = source->records ? source->records[i].loaded :
-            (qa_bytes){source->loaded[i].data, source->loaded[i].size};
-        qa_bytes attachment = {0}, bytes = {0}; bool matched = false;
-        if (!guest_elf_loaded_memory_record(loaded, &attachment, error) ||
-            !guest_elf_memory_pristine(source->owner->images[i].artifact, attachment,
-                backing, extent, file, &matched, &bytes, error)) return false;
+        const guest_elf_memory *memory = source->prepared ? source->prepared[i] :
+            guest_elf_loaded_memory(source->owner->images[i].loaded);
+        qa_bytes bytes = {0}; bool matched = false;
+        if (!guest_elf_memory_pristine(memory, backing, extent, file, &matched, &bytes, error)) return false;
         if (!matched) continue;
         if (found) return guest_fail(error, QA_ERROR_FORMAT, backing, "ELF backing has conflicting actual source ownership");
-        found = true; *out = bytes;
+        found = true; out->memory.bytes = bytes;
     }
     return found || !file || guest_fail(error, QA_ERROR_UNSUPPORTED, backing,
         "Linux file pages require their actual resource baseline");
@@ -169,7 +166,7 @@ bool qa_native_sysv_process_checkpoint(qa_native_sysv_process *owner, qa_buffer 
     qa_buffer runtime = {0}, resources = {0}, guest = {0}, profile = {0};
     qa_buffer *loaded = calloc(owner->image_count, sizeof(*loaded));
     if (!loaded) { owner->busy = false; return guest_fail(error, QA_ERROR_MEMORY, 0, "owning System V attachment records"); }
-    sysv_baseline source = {owner, loaded, NULL};
+    sysv_baseline source = {owner, NULL};
     qa_native_guest_baseline baseline = {pristine, &source};
     bool okay = sysv_process_current(owner, error) && runtime_matches(owner, error) &&
         allocations_match(owner, error) && streams_match(owner, error) &&
@@ -342,9 +339,19 @@ bool qa_native_sysv_process_restore(qa_bytes encoded,
         okay = guest_runtime_resources_rebind(owner->resources, resolve_file, &resolver, error);
         rebound = okay;
     }
+    guest_elf_memory **prepared = NULL;
+    if (okay) {
+        prepared = calloc(count, sizeof(*prepared));
+        if (!prepared) okay = guest_fail(error, QA_ERROR_MEMORY, count, "owning prepared ELF attachment rows");
+    }
+    for (size_t i = 0; okay && i < count; ++i) {
+        qa_bytes memory = {0};
+        okay = guest_elf_loaded_memory_record(records[i].loaded, &memory, error) &&
+            guest_elf_memory_restore_prepare(owner->images[i].artifact, memory, prepared + i, error);
+    }
     if (okay) {
         callback_resolver resolver = {owner->runtime, bindings};
-        sysv_baseline source = {owner, NULL, records};
+        sysv_baseline source = {owner, prepared};
         qa_native_guest_baseline baseline = {pristine, &source};
         okay = qa_native_guest_restore(guest, &owner->options.guest,
             resolve_callback, &resolver, &baseline, &owner->guest, error);
@@ -352,10 +359,12 @@ bool qa_native_sysv_process_restore(qa_bytes encoded,
     if (okay) okay = allocations_match(owner, error) && guest_sysv_attach(owner->runtime, owner->guest, error);
     for (size_t i = 0; okay && i < owner->image_count; ++i) {
         okay = guest_elf_loaded_adopt(owner->images[i].artifact, owner->runtime,
-            records[i].loaded, &owner->images[i].loaded, error);
+            records[i].loaded, prepared + i, &owner->images[i].loaded, error);
         if (okay && guest_elf_loaded_provider(owner->images[i].loaded) != owner->images[i].provider)
             okay = guest_fail(error, QA_ERROR_FORMAT, i, "System V cold loaded image changed its actual provider identity");
     }
+    for (size_t i = 0; prepared && i < count; ++i) guest_elf_memory_abandon(prepared + i);
+    free(prepared);
     free(records);
     owner->options.artifact_count = owner->image_count;
     owner->options.file_count = guest_runtime_resources_count(owner->resources);

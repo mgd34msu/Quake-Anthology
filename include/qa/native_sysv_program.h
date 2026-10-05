@@ -20,6 +20,11 @@ typedef struct qa_native_sysv_program_services {
     bool (*open_file)(void *, const char *, uint32_t, uint32_t,
         qa_native_sysv_file *, bool *, qa_error *);
     bool (*resolve_file)(void *, uint64_t, qa_native_sysv_file *, qa_error *);
+    /* Rebuild private mapped pages from the same contained resource name even
+     * after its source descriptor closed. The result owns its temporary read
+     * lease until pristine.release, independently of descriptor close state. */
+    bool (*file_baseline)(void *, uint64_t, const qa_native_guest_file *,
+        qa_native_guest_pristine *, qa_error *);
     bool (*file_status)(void *, uint64_t, qa_fs_posix_status *, qa_error *);
     /* Actual native status flags/current position at acquisition. ESPIPE is a
      * successful nonseekable receipt; cold keeps its named logical position. */

@@ -243,6 +243,31 @@ static bool hole(qa_native_sysv_program *owner, uint64_t hint, size_t bytes, uin
         base = next;
     }
 }
+typedef struct mapping_file {
+    const qa_native_sysv_file *file;
+    bool malformed;
+} mapping_file;
+static bool mapping_read(void *context, size_t offset, void *out, size_t bytes,
+    qa_error *error)
+{
+    mapping_file *source = context;
+    size_t position = 0;
+    while (position < bytes) {
+        size_t done = 0;
+        bool okay = source->file->read(source->file->context, offset + position,
+            (uint8_t *)out + position, bytes - position, &done, error);
+        if (done > bytes - position) {
+            source->malformed = true;
+            return guest_fail(error, QA_ERROR_FORMAT, offset,
+                "Linux mapping read reported impossible completion");
+        }
+        position += done;
+        if (!okay) return false;
+        if (!done) return guest_fail(error, QA_ERROR_IO, offset + position, "Linux mapping read ended before its actual file extent");
+    }
+    return true;
+}
+
 static bool mmap_file(qa_native_sysv_program *owner, const uint64_t a[6], int64_t *result, qa_error *error)
 {
     if (!a[1] || a[1] > SIZE_MAX - 4095 || a[2] > 7 || a[5] % 4096 ||
@@ -259,36 +284,31 @@ static bool mmap_file(qa_native_sysv_program *owner, const uint64_t a[6], int64_
             qa_native_guest_mapping *row = owner->guest->mappings + i;
             if (base < row->base + row->bytes && row->base < base + bytes) { *result = -K_EEXIST; return true; }
         }
-    qa_buffer snapshot = {0};
+    qa_error actual = {0}; bool okay = true;
+    uint32_t rights = (uint32_t)a[2];
+    if (owner->options.read_implies_execute && (rights & QA_NATIVE_GUEST_READ)) rights |= QA_NATIVE_GUEST_EXECUTE;
+    guest_backing prepared = {0}; mapping_file file_source = {0};
     if (!(a[3] & 32u)) {
         program_file *entry = file(owner, a[4]);
         if (!entry || !(entry->capability.mode & 1u)) { *result = -K_EBADF; return true; }
-        uint64_t size; qa_error actual = {0};
+        uint64_t size;
         if (!entry->capability.size(entry->capability.context, &size, &actual)) { *result = failure(owner, &actual); return true; }
         if (size > SIZE_MAX || size > owner->options.guest.maximum_backing_bytes) { *result = -K_ENOMEM; return true; }
-        snapshot.size = (size_t)size; snapshot.data = size ? malloc((size_t)size) : NULL;
-        if (size && !snapshot.data) { *result = -K_ENOMEM; return true; }
-        size_t offset = 0;
-        while (offset < snapshot.size) {
-            size_t done = 0;
-            bool okay = entry->capability.read(entry->capability.context, offset, snapshot.data + offset,
-                snapshot.size - offset, &done, &actual);
-            if (done > snapshot.size - offset) { qa_buffer_free(&snapshot); return guest_fail(error, QA_ERROR_FORMAT, a[4], "Linux mapping read reported impossible completion"); }
-            offset += done;
-            if (!okay || !done) { *result = okay ? -K_EIO : failure(owner, &actual); qa_buffer_free(&snapshot); return true; }
-        }
+        file_source.file = &entry->capability;
+        const qa_source_save_memory_source source = {.read = mapping_read, .context = &file_source};
+        okay = guest_file_prepare(owner->guest, base, bytes, rights, &source,
+            (size_t)size, a[5], entry->capability.capability, &prepared, &actual);
     }
-    qa_error actual = {0}; bool okay = true;
-    if (fixed && !(a[3] & 1048576u)) okay = remove_pages(owner, base, bytes, &actual);
+    if (okay && fixed && !(a[3] & 1048576u)) okay = remove_pages(owner, base, bytes, &actual);
     qa_native_guest_mapping mapped;
-    uint32_t rights = (uint32_t)a[2];
-    if (owner->options.read_implies_execute && (rights & QA_NATIVE_GUEST_READ)) rights |= QA_NATIVE_GUEST_EXECUTE;
-    if (okay) okay = a[3] & 32u ? qa_native_guest_map(owner->guest, base, bytes, rights, (qa_bytes){0}, &mapped, &actual) :
-        qa_native_guest_map_file(owner->guest, base, bytes, rights, (qa_bytes){snapshot.data, snapshot.size}, a[5], &mapped, &actual);
-    qa_buffer_free(&snapshot);
+    if (okay) okay = a[3] & 32u ?
+        qa_native_guest_map(owner->guest, base, bytes, rights, (qa_bytes){0}, &mapped, &actual) :
+        guest_file_publish(owner->guest, base, rights, &prepared, &mapped, &actual);
+    free(prepared.data);
+    if (file_source.malformed) { if (error) *error = actual; return false; }
     if (!okay && owner->guest->failed) { if (error) *error = actual; return false; }
     if (okay && !fixed) owner->mapping_cursor = base + bytes;
-    *result = okay ? (int64_t)base : framework_failure(&actual); return true;
+    *result = okay ? (int64_t)base : failure(owner, &actual); return true;
 }
 static bool stat_file(qa_native_sysv_program *owner, uint64_t number, uint64_t address,
     int64_t *result, qa_error *error)

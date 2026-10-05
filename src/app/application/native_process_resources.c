@@ -30,6 +30,8 @@ typedef struct process_file {
     size_t root;
     char *name;
     qa_fs_opened_file *file;
+    qa_fs_opened_file *baseline;
+    uint64_t baseline_offset, baseline_bytes;
     qa_fs_opened_reference reference;
     bool ready, closed;
 } process_file;
@@ -258,11 +260,116 @@ static bool file_flush(void *context, qa_error *error)
     if (okay) okay = qa_native_process_resources_current(row->owner, error);
     --row->owner->busy; return okay;
 }
+static bool baseline_release(void *context, qa_error *error)
+{
+    process_file *row = context;
+    resource_native_begin(row ? row->owner : NULL);
+    if (!row || !row->owner || row->owner->busy)
+        return fail(error, QA_ERROR_ARGUMENT, "Native mapped-file baseline is inside actual I/O");
+    bool okay = qa_fs_opened_file_close(&row->baseline, error);
+    resource_native_filesystem(row->owner);
+    if (!row->baseline) row->baseline_offset = row->baseline_bytes = 0;
+    return okay;
+}
+static bool baseline_read(void *context, size_t offset, void *out, size_t bytes,
+    qa_error *error)
+{
+    process_file *row = context;
+    resource_native_begin(row ? row->owner : NULL);
+    if (!row || !row->baseline ||
+        !qa_native_process_resources_current(row->owner, error)) return false;
+    uint64_t position = offset > UINT64_MAX - row->baseline_offset ? UINT64_MAX :
+        row->baseline_offset + offset;
+    size_t amount = bytes;
+    if (position >= row->baseline_bytes) amount = 0;
+    else if (amount > row->baseline_bytes - position) amount = (size_t)(row->baseline_bytes - position);
+    ++row->owner->busy;
+    bool okay = qa_fs_opened_file_current(row->baseline, error);
+    size_t completed = 0;
+    while (okay && completed < amount) {
+        size_t done = 0;
+        okay = qa_fs_opened_file_read(row->baseline, position + completed,
+            (uint8_t *)out + completed, amount - completed, &done, error);
+        if (done > amount - completed) {
+            okay = fail(error, QA_ERROR_FORMAT, "Native baseline read reported impossible completion"); break;
+        }
+        completed += done;
+        if (okay && !done) okay = fail(error, QA_ERROR_IO, "Native mapped-file baseline changed its actual extent");
+    }
+    if (okay && amount < bytes) memset((uint8_t *)out + amount, 0, bytes - amount);
+    if (okay) okay = qa_fs_opened_file_current(row->baseline, error) &&
+        qa_native_process_resources_current(row->owner, error);
+    resource_native_filesystem(row->owner);
+    --row->owner->busy;
+    return okay;
+}
+static bool program_file_baseline(void *context, uint64_t id,
+    const qa_native_guest_file *expected, qa_native_guest_pristine *out, qa_error *error)
+{
+    qa_native_process_resources *owner = context;
+    resource_native_begin(owner);
+    if (!expected || !out || !qa_native_process_resources_current(owner, error)) return false;
+    *out = (qa_native_guest_pristine){0};
+    process_file *row = NULL;
+    for (size_t i = 0; i < owner->file_count; ++i)
+        if (owner->files[i]->id == id) { row = owner->files[i]; break; }
+    if (!row || !row->ready || row->baseline || row->root >= owner->root_count ||
+        expected->capability != id)
+        return fail(error, QA_ERROR_NOT_FOUND, "Mapped file lost its actual contained resource name");
+    const process_root *root = owner->roots + row->root;
+    size_t prefix = strlen(root->prefix);
+    if (!root->active || !(root->mode & QA_FS_OPENED_READ) || strncmp(row->name, root->prefix, prefix))
+        return fail(error, QA_ERROR_FORMAT, "Mapped file differs from its actual current root namespace");
+    char *path = text_copy(row->name + prefix);
+    if (!path) return fail(error, QA_ERROR_MEMORY, "Owning contained mapped-file spelling");
+    if (owner->artifacts[owner->options.primary].image.target.os == QA_NATIVE_OS_WINDOWS)
+        for (char *at = path; *at; ++at) if (*at == '\\') *at = '/';
+    bool opened = false;
+    ++owner->busy;
+    bool okay = qa_fs_root_opened_file(root->root, path, QA_FS_OPENED_READ,
+        QA_FS_OPEN_EXISTING, &row->baseline, &opened, error);
+    free(path);
+    uint64_t bytes = 0;
+    if (okay) okay = opened && qa_fs_opened_file_size(row->baseline, &bytes, error);
+    if (okay && bytes != expected->bytes)
+        okay = fail(error, QA_ERROR_FORMAT, "Mapped-file baseline differs from its original source length");
+    qa_sha256_context hash;
+    qa_sha256_init(&hash);
+    uint8_t scratch[65536];
+    for (uint64_t offset = 0; okay && offset < bytes;) {
+        size_t amount = bytes - offset > sizeof(scratch) ? sizeof(scratch) : (size_t)(bytes - offset);
+        size_t completed = 0;
+        while (okay && completed < amount) {
+            size_t done = 0;
+            okay = qa_fs_opened_file_read(row->baseline, offset + completed,
+                scratch + completed, amount - completed, &done, error);
+            if (done > amount - completed) { okay = fail(error, QA_ERROR_FORMAT, "Mapped-file baseline read reported impossible completion"); break; }
+            completed += done;
+            if (okay && !done) okay = fail(error, QA_ERROR_IO, "Mapped-file baseline ended before its actual extent");
+        }
+        if (okay) qa_sha256_update(&hash, (qa_bytes){scratch, amount});
+        offset += amount;
+    }
+    qa_sha256_digest digest;
+    qa_sha256_final(&hash, &digest);
+    if (okay && !qa_sha256_equal(&digest, &expected->digest))
+        okay = fail(error, QA_ERROR_FORMAT, "Mapped-file baseline differs from its original source bytes");
+    if (okay) okay = qa_fs_opened_file_current(row->baseline, error) &&
+        qa_native_process_resources_current(owner, error);
+    resource_native_filesystem(owner);
+    --owner->busy;
+    if (!okay) { qa_error cleanup = {0}; (void)baseline_release(row, &cleanup); return false; }
+    row->baseline_offset = expected->offset; row->baseline_bytes = expected->bytes;
+    *out = (qa_native_guest_pristine){
+        .memory = {.read = baseline_read, .context = row}, .release = baseline_release};
+    return true;
+}
 static bool file_close(void *context, qa_error *error)
 {
     process_file *row = context;
     resource_native_begin(row ? row->owner : NULL);
     if (!row || !row->owner || row->owner->busy) return fail(error, QA_ERROR_ARGUMENT, "Native file owner is inside I/O");
+    if (row->baseline && !baseline_release(row, error)) return false;
     if (row->closed) return true;
     bool okay = qa_fs_opened_file_close(&row->file, error);
     resource_native_filesystem(row->owner);
@@ -782,7 +889,7 @@ bool qa_native_process_resources_program_create(const qa_native_process_resource
         .random = {owner->program_random, 16}, .auxiliary = owner->program_auxiliary,
         .auxiliary_count = program->auxiliary_count, .process_id = program->process_id, .thread_id = program->thread_id,
         .services = {.id = options->service_owner, .current = current_callback, .open_file = sysv_open,
-            .resolve_file = sysv_resolve, .file_status = program_status,
+            .resolve_file = sysv_resolve, .file_baseline = program_file_baseline, .file_status = program_status,
             .descriptor_status = program_descriptor, .descriptor_flags = program_descriptor_flags,
             .identity = program_identity,
             .entropy = platform_entropy, .clock = program_clock, .native_error = program_native_error, .context = owner}};
@@ -892,17 +999,11 @@ static bool resource_text(qa_source_save_io *io,const char *expected,char **impo
 }
 static bool match_text(qa_source_save_io *io,const char *text)
 { return resource_text(io,text,NULL); }
-static bool match_object(qa_source_save_io *io, const qa_fs_object_reference *reference)
-{
-    return match_u32(io, reference->platform) && match_u64(io, reference->words[0]) &&
-        match_u64(io, reference->words[1]) && match_u64(io, reference->words[2]);
-}
 static bool resource_file_fields(qa_source_save_io *io,const process_file *row,process_file *imported)
 {
     if (!imported) return match_u64(io,row->id) && match_u64(io,row->root) && match_text(io,row->name) &&
         match_bool(io,row->ready) && match_bool(io,row->closed) &&
-        match_u32(io,row->reference.mode) && match_u32(io,row->reference.creation) &&
-        (!row->ready || (match_object(io,&row->reference.root) && match_object(io,&row->reference.object)));
+        match_u32(io,row->reference.mode) && match_u32(io,row->reference.creation);
     uint64_t root=0; bool closed=true;
     if (!qa_source_save_u64(io,&imported->id) || !qa_source_save_u64(io,&root) || root>SIZE_MAX ||
         !resource_text(io,NULL,&imported->name) || !qa_source_save_bool(io,&imported->ready) ||
@@ -912,15 +1013,7 @@ static bool resource_file_fields(qa_source_save_io *io,const process_file *row,p
     if (!imported->name || !*imported->name || root>=imported->owner->root_count ||
         (imported->reference.mode & ~3u) || imported->reference.creation<1 || imported->reference.creation>5 ||
         (!imported->ready && !closed)) return false;
-    if (imported->ready) {
-        qa_fs_object_reference *references[2]={&imported->reference.root,&imported->reference.object};
-        for (size_t i=0;i<2;++i)
-            if (!qa_source_save_u32(io,&references[i]->platform) ||
-                !qa_source_save_u64(io,&references[i]->words[0]) || !qa_source_save_u64(io,&references[i]->words[1]) ||
-                !qa_source_save_u64(io,&references[i]->words[2])) return false;
-        if (!object_equal(&imported->reference.root,&imported->owner->roots[imported->root].reference) ||
-            imported->reference.object.platform!=imported->reference.root.platform) return false;
-    }
+    imported->reference.root=imported->owner->roots[imported->root].reference;
     if (!closed) {
         const process_root *authority=&imported->owner->roots[imported->root];
         size_t prefix=strlen(authority->prefix);
@@ -936,9 +1029,8 @@ static bool resource_file_fields(qa_source_save_io *io,const process_file *row,p
         if (imported->file) imported->closed=false;
         qa_fs_opened_reference actual={0};
         if (!ok || !opened || !qa_fs_opened_file_reference_read(imported->file,&actual) ||
-            !object_equal(&actual.root,&imported->reference.root) ||
-            !object_equal(&actual.object,&imported->reference.object)) return false;
-        imported->reference.path=actual.path;
+            !object_equal(&actual.root,&imported->reference.root)) return false;
+        imported->reference.object=actual.object; imported->reference.path=actual.path;
     }
     return true;
 }
@@ -978,8 +1070,7 @@ static bool resource_fields(qa_source_save_io *io, const qa_native_process_resou
     if (!match_u64(io, owner->root_count)) return false;
     for (size_t i = 0; i < owner->root_count; ++i) {
         const process_root *row = owner->roots + i;
-        if (!match_text(io, row->prefix) || !match_object(io, &row->reference) ||
-            !match_u32(io, row->mode)) return false;
+        if (!match_text(io, row->prefix) || !match_u32(io, row->mode)) return false;
         if (imported) {
             if (!qa_source_save_bool(io,&imported->roots[i].active)) return false;
         } else if (!match_bool(io,row->active)) return false;
@@ -1117,7 +1208,9 @@ static bool resource_copy(const qa_native_process_resources *source,
     }
     copy->file_capacity = source->file_count;
     for (size_t i = 0; i < source->file_count; ++i) {
-        const process_file *old = source->files[i]; process_file *row = calloc(1, sizeof(*row));
+        const process_file *old = source->files[i];
+        if (old->baseline) return fail(error, QA_ERROR_ARGUMENT, "Native resource capture retains an unfinished mapped-file read lease");
+        process_file *row = calloc(1, sizeof(*row));
         if (!row) return fail(error, QA_ERROR_MEMORY, "Retaining actual opened native file row");
         *row = *old; row->owner = copy; row->name = text_copy(old->name);
         qa_fs_opened_file_retain(row->file); copy->files[copy->file_count++] = row;

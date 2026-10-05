@@ -82,6 +82,11 @@ guest_backing *guest_backing_at(const qa_native_guest *, uint64_t);
 qa_native_guest_mapping *guest_mapping(const qa_native_guest *, uint64_t);
 bool guest_range(const qa_native_guest *, uint64_t, size_t, uint32_t, qa_error *);
 bool guest_install_mapping(qa_native_guest *, const qa_native_guest_mapping *, qa_error *);
+bool guest_file_prepare(qa_native_guest *, uint64_t, size_t, uint32_t,
+    const qa_source_save_memory_source *, size_t, uint64_t, uint64_t,
+    guest_backing *, qa_error *);
+bool guest_file_publish(qa_native_guest *, uint64_t, uint32_t, guest_backing *,
+    qa_native_guest_mapping *, qa_error *);
 bool guest_backend_map(qa_native_guest *, const qa_native_guest_mapping *, qa_error *);
 bool guest_backend_change(qa_native_guest *, const qa_native_guest_mapping *, uint32_t, bool, qa_error *);
 bool guest_file_access(const qa_native_guest *, const qa_native_guest_mapping *,

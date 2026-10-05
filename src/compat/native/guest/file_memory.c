@@ -79,44 +79,103 @@ bool qa_native_guest_last_fault(const qa_native_guest *guest,
     return true;
 }
 
-bool qa_native_guest_map_file(qa_native_guest *guest, uint64_t base, size_t bytes,
-    uint32_t permissions, qa_bytes file, uint64_t offset,
-    qa_native_guest_mapping *out, qa_error *error)
+bool guest_file_prepare(qa_native_guest *guest, uint64_t base, size_t bytes,
+    uint32_t permissions, const qa_source_save_memory_source *file, size_t file_bytes,
+    uint64_t offset, uint64_t capability, guest_backing *out, qa_error *error)
 {
     if (!guest_mutable(guest, error)) return false;
-    if (!out || (!file.data && file.size) || !bytes ||
+    if (!file || !out || out->data || (!file->read &&
+        (file->bytes.size != file_bytes || (!file->bytes.data && file_bytes))) || !bytes ||
         bytes % QA_NATIVE_GUEST_PAGE || base % QA_NATIVE_GUEST_PAGE ||
         offset % QA_NATIVE_GUEST_PAGE || permissions > 7 ||
-        bytes > guest->options.maximum_backing_bytes - guest->backing_bytes ||
+        bytes > guest->options.maximum_backing_bytes ||
         guest->next_mapping == UINT64_MAX || guest->next_backing == UINT64_MAX)
         return guest_fail(error, QA_ERROR_ARGUMENT, base, "native private file view requires bounded aligned pages");
-    if (!guest_grow((void **)&guest->backings, &guest->backing_capacity,
-        guest->backing_count + 1, sizeof(*guest->backings), error)) return false;
     uint8_t *data = calloc(1, bytes);
     if (!data) return guest_fail(error, QA_ERROR_MEMORY, base, "owning native private file pages");
-    uint64_t available = offset < file.size ? file.size - offset : 0;
+    uint64_t available = offset < file_bytes ? file_bytes - offset : 0;
     size_t copied = available > bytes ? bytes : (size_t)available;
-    if (copied) memcpy(data, file.data + (size_t)offset, copied);
+    qa_sha256_digest digest;
+    if (file->read) {
+        uint8_t scratch[65536]; qa_sha256_context hash;
+        qa_sha256_init(&hash);
+        for (size_t position = 0; position < file_bytes;) {
+            size_t amount = file_bytes - position;
+            if (amount > sizeof(scratch)) amount = sizeof(scratch);
+            if (!file->read(file->context, position, scratch, amount, error)) {
+                free(data); return false;
+            }
+            qa_sha256_update(&hash, (qa_bytes){scratch, amount});
+            uint64_t first = position > offset ? position : offset;
+            uint64_t end = position + amount;
+            if (end > offset && end - offset > copied) end = offset + copied;
+            if (first < end) memcpy(data + (size_t)(first - offset),
+                scratch + (size_t)(first - position), (size_t)(end - first));
+            position += amount;
+        }
+        qa_sha256_final(&hash, &digest);
+    } else {
+        if (copied) memcpy(data, file->bytes.data + (size_t)offset, copied);
+        qa_sha256(file->bytes, &digest);
+    }
     size_t admitted = copied;
     if (admitted % QA_NATIVE_GUEST_PAGE)
         admitted += QA_NATIVE_GUEST_PAGE - admitted % QA_NATIVE_GUEST_PAGE;
-    guest_backing backing = {.id = guest->next_backing, .data = data,
-        .bytes = bytes, .file = true,
-        .source = {.bytes = file.size, .offset = offset, .accessible_bytes = admitted}};
-    qa_sha256(file, &backing.source.digest);
+    *out = (guest_backing){.data = data, .bytes = bytes, .file = true,
+        .source = {.digest = digest, .bytes = file_bytes, .offset = offset,
+            .accessible_bytes = admitted, .capability = capability}};
+    return true;
+}
+
+bool guest_file_publish(qa_native_guest *guest, uint64_t base, uint32_t permissions,
+    guest_backing *prepared, qa_native_guest_mapping *out, qa_error *error)
+{
+    if (!guest_mutable(guest, error)) return false;
+    if (!prepared || !prepared->data || !out ||
+        prepared->bytes > guest->options.maximum_backing_bytes - guest->backing_bytes ||
+        guest->next_mapping == UINT64_MAX || guest->next_backing == UINT64_MAX)
+        return guest_fail(error, QA_ERROR_ARGUMENT, base, "native file publication requires its prepared backing");
+    if (!guest_grow((void **)&guest->backings, &guest->backing_capacity,
+        guest->backing_count + 1, sizeof(*guest->backings), error)) return false;
+    prepared->id = guest->next_backing;
+    guest_backing backing = *prepared;
     guest->backings[guest->backing_count++] = backing;
-    guest->backing_bytes += bytes;
-    qa_native_guest_mapping mapping = {guest->next_mapping, base, bytes,
+    guest->backing_bytes += backing.bytes;
+    *prepared = (guest_backing){0};
+    qa_native_guest_mapping mapping = {guest->next_mapping, base, backing.bytes,
         backing.id, 0, permissions};
     if (!guest_install_mapping(guest, &mapping, error)) {
-        /* A prefix may already be registered with the real CPU. Keep every
-         * borrowed buffer until whole terminal CPU destruction completes. */
+        /* A prefix may already belong to the real CPU. Keep its buffer until
+         * whole terminal CPU destruction completes. */
         if (!guest->failed) {
-            --guest->backing_count; guest->backing_bytes -= bytes; free(data);
+            --guest->backing_count; guest->backing_bytes -= backing.bytes; free(backing.data);
         }
         return false;
     }
     ++guest->next_mapping; ++guest->next_backing;
     *out = mapping;
     return true;
+}
+
+bool qa_native_guest_map_file_source(qa_native_guest *guest, uint64_t base, size_t bytes,
+    uint32_t permissions, const qa_source_save_memory_source *file, size_t file_bytes,
+    uint64_t offset, uint64_t capability, qa_native_guest_mapping *out, qa_error *error)
+{
+    if (!out || !guest || bytes > guest->options.maximum_backing_bytes - guest->backing_bytes)
+        return guest_fail(error, QA_ERROR_ARGUMENT, base, "native file view requires its actual output and remaining backing budget");
+    guest_backing prepared = {0};
+    bool okay = guest_file_prepare(guest, base, bytes, permissions, file, file_bytes,
+        offset, capability, &prepared, error) &&
+        guest_file_publish(guest, base, permissions, &prepared, out, error);
+    free(prepared.data);
+    return okay;
+}
+
+bool qa_native_guest_map_file(qa_native_guest *guest, uint64_t base, size_t bytes,
+    uint32_t permissions, qa_bytes file, uint64_t offset,
+    qa_native_guest_mapping *out, qa_error *error)
+{
+    const qa_source_save_memory_source source = {.bytes = file};
+    return qa_native_guest_map_file_source(guest, base, bytes, permissions, &source,
+        file.size, offset, 0, out, error);
 }

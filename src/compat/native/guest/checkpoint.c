@@ -11,13 +11,27 @@ static bool count(qa_source_save_io *io, size_t *value, size_t minimum_bytes)
 }
 
 static bool baseline_read(const qa_native_guest_baseline *baseline, uint64_t backing,
-    size_t extent, const qa_native_guest_file *file, qa_bytes *out, qa_error *error)
+    size_t extent, const qa_native_guest_file *file, qa_native_guest_pristine *out, qa_error *error)
 {
-    *out = (qa_bytes){0};
+    *out = (qa_native_guest_pristine){0};
     if (baseline && baseline->read)
         return baseline->read(baseline->context, backing, extent, file, out, error);
     return !file || guest_fail(error, QA_ERROR_UNSUPPORTED, backing,
         "native file pages require their actual resource baseline");
+}
+
+static bool backing_delta(qa_source_save_io *io, uint8_t *memory, uint64_t backing,
+    size_t extent, const qa_native_guest_file *file, const qa_native_guest_baseline *baseline)
+{
+    qa_native_guest_pristine pristine = {0};
+    bool okay = baseline_read(baseline, backing, extent, file, &pristine, io->error);
+    if (okay) okay = qa_source_save_memory_delta_source(io, memory, extent, &pristine.memory);
+    if (pristine.release) {
+        qa_error cleanup = {0};
+        bool released = pristine.release(pristine.memory.context, okay ? io->error : &cleanup);
+        okay = okay && released;
+    }
+    return okay;
 }
 
 static bool image(qa_source_save_io *io, qa_native_image_info *saved)
@@ -143,11 +157,10 @@ bool qa_native_guest_checkpoint(qa_native_guest *guest, const qa_native_guest_ba
         okay = qa_source_save_u64(&io, &backing->id) && qa_source_save_u64(&io, &length) && qa_source_save_u32(&io, &file);
         if (okay && file) okay = qa_source_save_bytes(&io, backing->source.digest.bytes, 32) &&
             qa_source_save_u64(&io, &backing->source.bytes) && qa_source_save_u64(&io, &backing->source.offset) &&
-            qa_source_save_u64(&io, &backing->source.accessible_bytes);
-        qa_bytes pristine = {0};
-        if (okay) okay = baseline_read(baseline, backing->id, backing->bytes,
-            file ? &backing->source : NULL, &pristine, error) &&
-            qa_source_save_memory_delta(&io, backing->data, backing->bytes, pristine);
+            qa_source_save_u64(&io, &backing->source.accessible_bytes) &&
+            qa_source_save_u64(&io, &backing->source.capability);
+        if (okay) okay = backing_delta(&io, backing->data, backing->id, backing->bytes,
+            file ? &backing->source : NULL, baseline);
     }
     total = guest->mapping_count;
     if (okay) okay = count(&io, &total, 44);
@@ -180,7 +193,8 @@ static bool restore_backings(qa_source_save_io *io, qa_native_guest *guest,
         qa_native_guest_file source = {0};
         if (!qa_source_save_u64(io, &id) || !qa_source_save_u64(io, &length) || !qa_source_save_u32(io, &file) || file > 1) return false;
         if (file && (!qa_source_save_bytes(io, source.digest.bytes, 32) || !qa_source_save_u64(io, &source.bytes) ||
-            !qa_source_save_u64(io, &source.offset) || !qa_source_save_u64(io, &source.accessible_bytes))) return false;
+            !qa_source_save_u64(io, &source.offset) || !qa_source_save_u64(io, &source.accessible_bytes) ||
+            !qa_source_save_u64(io, &source.capability))) return false;
         if (!id || id >= guest->next_backing || guest_backing_at(guest, id) ||
             !length || length > SIZE_MAX || length % QA_NATIVE_GUEST_PAGE ||
             length > guest->options.maximum_backing_bytes - guest->backing_bytes)
@@ -196,10 +210,7 @@ static bool restore_backings(qa_source_save_io *io, qa_native_guest *guest,
         }
         uint8_t *data = malloc((size_t)length);
         if (!data) return guest_fail(io->error, QA_ERROR_MEMORY, io->offset, "restoring native guest backing");
-        qa_bytes pristine = {0};
-        if (!baseline_read(baseline, id, (size_t)length, file ? &source : NULL,
-            &pristine, io->error) ||
-            !qa_source_save_memory_delta(io, data, (size_t)length, pristine)) {
+        if (!backing_delta(io, data, id, (size_t)length, file ? &source : NULL, baseline)) {
             free(data); return false;
         }
         guest->backings[guest->backing_count++] = (guest_backing){.id = id, .data = data,

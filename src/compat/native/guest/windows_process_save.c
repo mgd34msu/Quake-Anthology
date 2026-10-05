@@ -17,11 +17,11 @@ typedef struct windows_baseline {
 } windows_baseline;
 
 static bool pristine(void *context, uint64_t backing, size_t extent,
-    const qa_native_guest_file *file, qa_bytes *out, qa_error *error)
+    const qa_native_guest_file *file, qa_native_guest_pristine *out, qa_error *error)
 {
     windows_baseline *source = context;
     bool found = false;
-    *out = (qa_bytes){0};
+    *out = (qa_native_guest_pristine){0};
     for (size_t i = 0; i < source->owner->image_count; ++i) {
         qa_bytes attachment = source->records ? source->records[i].attachment :
             (qa_bytes){source->attachments[i].data, source->attachments[i].size};
@@ -31,7 +31,7 @@ static bool pristine(void *context, uint64_t backing, size_t extent,
         if (!matched) continue;
         if (found || file)
             return guest_fail(error, QA_ERROR_FORMAT, backing, "Windows backing has conflicting actual image ownership");
-        found = true; *out = bytes;
+        found = true; out->memory.bytes = bytes;
     }
     return !file || guest_fail(error, QA_ERROR_UNSUPPORTED, backing,
         "Windows file pages require their actual resource baseline");

@@ -231,18 +231,20 @@ bool guest_elf_loaded_memory_record(qa_bytes encoded, qa_bytes *out, qa_error *e
 }
 
 bool guest_elf_loaded_adopt(const guest_elf *artifact, guest_sysv_runtime *runtime,
-    qa_bytes encoded, guest_elf_loaded **out, qa_error *error)
+    qa_bytes encoded, guest_elf_memory **prepared, guest_elf_loaded **out, qa_error *error)
 {
     qa_bytes memory = {0};
-    if (!guest_elf_describe(artifact) || !guest_sysv_idle(runtime) || !out || *out ||
+    if (!guest_elf_describe(artifact) || !guest_sysv_idle(runtime) || !out || *out || !prepared || !*prepared ||
         !guest_elf_loaded_memory_record(encoded, &memory, error)) return false;
     guest_elf_loaded *owner = calloc(1, sizeof(*owner));
     if (!owner) return guest_fail(error, QA_ERROR_MEMORY, 0, "owning ELF cold loaded image");
     owner->image = artifact; owner->runtime = runtime; owner->provider = qa_load_u64le(encoded.data + 4);
     size_t memory_bytes = memory.size;
     size_t unwind_bytes = (size_t)qa_load_u64le(encoded.data + 28);
-    bool okay = provider_retained(owner, error) && guest_elf_memory_adopt(artifact,
-        guest_sysv_guest(runtime), memory, &owner->memory, error) &&
+    bool okay = provider_retained(owner, error) &&
+        guest_elf_memory_restore_attach(*prepared, guest_sysv_guest(runtime), error);
+    if (okay) { owner->memory = *prepared; *prepared = NULL; }
+    okay = okay &&
         guest_elf_unwind_restore(artifact, guest_sysv_guest(runtime),
             (qa_bytes){encoded.data + ELF_LOADED_HEADER + memory_bytes, unwind_bytes},
             unwind_bytes, &owner->unwind, error);
