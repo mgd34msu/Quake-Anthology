@@ -143,13 +143,14 @@ bool qa_ui_open(qa_ui *, qa_ui_id, double time_ms, qa_error *);
 bool qa_ui_close(qa_ui *, double time_ms, qa_error *);
 bool qa_ui_close_all(qa_ui *, double time_ms, qa_error *);
 bool qa_ui_state_read(qa_ui *, qa_ui_state *, qa_error *);
+bool qa_ui_menu_opened(const qa_ui *, qa_ui_id);
 bool qa_ui_input(qa_ui *, const qa_input_event *, bool *, qa_error *);
 bool qa_ui_tick(qa_ui *, double time_ms, qa_error *);
 bool qa_ui_capture_binding(qa_ui *, bool, qa_error *);
 /* Viewport is in display pixels; controls use an aspect-preserving 640x480
  * canvas. Drawing uses shared font/scene resources and frame scratch memory. */
 bool qa_ui_draw(qa_ui *, qa_scene_frame *, qa_scene_rect viewport, float scale,
-                 bool high_contrast, qa_error *);
+                 bool high_contrast, bool startup, qa_error *);
 /* Authored 640x480 text, using the active menu transform, palette and typography.
  * Only call from a live UI draw callback; text and style are borrowed for this call.
  * Explicit startup text scales follow menuScale independently of body textScale. */

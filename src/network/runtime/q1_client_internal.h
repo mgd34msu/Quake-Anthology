@@ -43,7 +43,9 @@ typedef struct q1_runtime_client {
     size_t record_count, cursor;
     uint64_t received_ns;
     uint32_t sequence, acknowledged, moves, last_frame;
-    bool held, has_delta, active, retiring, busy, started, waiting_skins;
+    uint8_t demo_wire_prefix[8];
+    bool demo_wire_prefix_present;
+    bool held, has_delta, active, retiring, busy, started, waiting_skins, demo;
 } q1_runtime_client;
 
 extern const qa_network_peer_ops qa_network_q1_client_ops;

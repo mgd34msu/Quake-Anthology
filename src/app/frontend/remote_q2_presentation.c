@@ -361,6 +361,8 @@ bool frontend_remote_q2_sample(qa_frontend *f, uint64_t now, qa_error *error)
             (double)(now - row->sample_ns) / 1000000000.0 : 0;
         row->sample_ns = now;
         double elapsed = now >= row->received_ns ? (double)(now - row->received_ns) / 1000000.0 : 0;
+        if (row->options.demo && row->frame.valid)
+            elapsed = row->demo_ms - ((double)row->frame.server_frame - 1) * row->frame_ms;
         row->fraction = (float)fmin(1, fmax(0, elapsed / row->frame_ms));
         ++row->busy; bool ok = remote_q2_hit_marker_sample(row, error) && loops(row, error); --row->busy;
         if (!ok || !remote_q2_live(row, error)) return false;
@@ -375,7 +377,7 @@ bool frontend_remote_q2_input(qa_frontend *f, uint32_t seat, const qa_seat_input
     frontend_remote_q2 *row = seat_owner(f, seat, error);
     if (!row) return !error || error->code == QA_OK;
     *handled = true;
-    if (!row->bound) return true;
+    if (!row->bound || row->options.demo) return true;
     const qa_q2_frame_player *frame = frame_player(row, &row->frame);
     if (!remote_q2_live(row, error)) return false;
     if (!row->media_ready || !frame) return true;

@@ -5,6 +5,7 @@
 #include "internal.h"
 #include "startup_server_browser.h"
 #include "startup_downloads.h"
+#include "startup_menus.h"
 #include "qa/ui_menu_save.h"
 #include "qa/ui_save.h"
 #include "qa/binary.h"
@@ -14,6 +15,9 @@
 #include "accessibility.h"
 #include "save_menu.h"
 #include "menu_fonts.h"
+#include "settings_menu.h"
+#include "startup_menus.h"
+#include "qa/ui_library.h"
 #include "ui_features.h"
 #include "campaign_menu.h"
 #include "campaign_cinematic.h"
@@ -79,6 +83,9 @@ static bool source_input(void *context, qa_input_seat *input, const qa_input_eve
 {
     frontend_seat *seat = context;
     if (!frontend_cinematic_input(seat->frontend,seat->id,qa_input_seat_focus(input),event,consumed,error)) return false;
+    if (*consumed) return true;
+    if (seat->library && qa_input_seat_focus(input) == QA_INPUT_UI &&
+        !qa_ui_library_input(seat->library, event, consumed, error)) return false;
     if (*consumed) return true;
     if (!frontend_source_prompt_input(seat->source_prompt,event,consumed,error)) return false;
     if (*consumed) return true;
@@ -234,38 +241,50 @@ static bool menu_action(void *context, uint32_t id, qa_ui_id control, const qa_u
             seat->player_source_products[action->value.row]);
         return frontend_player_source_select(frontend,physical,roles[(control-1)%3],product,error);
     }
-    if (state.menu == FRONTEND_SETTINGS) {
-        if (control==5 && action->kind==QA_UI_ACTIVATE)
-            return frontend_menu_open(seat,FRONTEND_PLAYER_SOURCES,error);
-        qa_cvars *cvars = qa_application_cvars(frontend->application);
-        if (control == 1 && (action->kind == QA_UI_SELECT || action->kind == QA_UI_ROW_ACTIVATE)) {
-            seat->selected_setting = action->value.row;
-            const qa_cvar_view *setting = qa_cvars_at(cvars, seat->selected_setting);
-            snprintf(seat->setting_value, sizeof(seat->setting_value), "%s", setting ? setting->value : "");
-        } else if (control == 2 && action->kind == QA_UI_CHANGE_TEXT) {
-            snprintf(seat->setting_value, sizeof(seat->setting_value), "%s", action->value.text ? action->value.text : "");
-        } else if ((control == 3 && action->kind == QA_UI_ACTIVATE) || (control == 2 && action->kind == QA_UI_SUBMIT)) {
-            const qa_cvar_view *setting = qa_cvars_at(cvars, seat->selected_setting);
-            if (!setting) return frontend_fail(error, QA_ERROR_ARGUMENT, "selected setting was removed");
-            return qa_cvars_set_console(cvars, setting->name, seat->setting_value, error);
+    if (state.menu == FRONTEND_OPTIONS) {
+        if (action->kind != QA_UI_ACTIVATE) return true;
+        switch (control) {
+        case 1: return frontend_menu_open(seat, FRONTEND_DISPLAY, error);
+        case 2: return frontend_menu_open(seat, FRONTEND_SOUND, error);
+        case 3: return frontend_menu_open(seat, FRONTEND_CONTROLS, error);
+        case 4: return frontend_menu_open(seat, FRONTEND_ACCESSIBILITY, error);
+        case 5: return frontend_menu_open(seat, FRONTEND_ALL_OPTIONS, error);
+        case 6: return frontend_menu_open(seat, FRONTEND_ASSISTANCE, error);
+        case 7: return qa_ui_close(seat->ui, now_ms(seat), error);
+        default: return true;
         }
-        return true;
+    }
+    if(state.menu==FRONTEND_HOME &&
+        (qa_application_launch(frontend->application) || frontend_network_remote(frontend))) {
+        if(action->kind!=QA_UI_ACTIVATE) return true;
+        switch(control) {
+        case 16: return qa_ui_close_all(seat->ui,now_ms(seat),error);
+        case 17: return frontend_menu_open(seat,FRONTEND_SAVE,error);
+        case 10: return frontend_menu_open(seat,FRONTEND_LOAD,error);
+        case 18: return frontend_menu_open(seat,FRONTEND_ALL_OPTIONS,error);
+        case 19: return qa_ui_close_all(seat->ui,now_ms(seat),error) &&
+            qa_seat_console_toggle(seat->console,false,false,error);
+        case 11: return frontend_menu_open(seat,FRONTEND_ARENA_PROGRESS,error);
+        case 20: return frontend_startup_end_stage(seat,error);
+        default: return true;
+        }
     }
     if (action->kind != QA_UI_ACTIVATE) return true;
     switch (control) {
     case 1: return frontend_menu_open(seat, FRONTEND_LIBRARY, error);
     case 2: return frontend_menu_open(seat, FRONTEND_MODS, error);
-    case 3: return frontend_menu_open(seat, FRONTEND_SETTINGS, error);
+    case 3: return frontend_menu_open(seat, FRONTEND_OPTIONS, error);
     case 4: return frontend_menu_open(seat, FRONTEND_RANKINGS, error);
     case 5: return qa_ui_close_all(seat->ui, now_ms(seat), error);
     case 6: qa_application_request_stop(frontend->application); return true;
     case 7: return frontend_menu_open(seat, FRONTEND_ASSISTANCE, error);
     case 8: return frontend_menu_open(seat, FRONTEND_BINDINGS, error);
     case 9: return frontend_menu_open(seat, FRONTEND_ACCESSIBILITY, error);
-    case 10: return frontend_menu_open(seat, FRONTEND_SAVES, error);
+    case 10: return frontend_menu_open(seat, FRONTEND_LOAD, error);
     case 11: return frontend_menu_open(seat, FRONTEND_ARENA_PROGRESS, error);
     case 12: return frontend_startup_server_browser_open(seat->server_browser,error);
     case 13: return frontend_startup_rotation_open(seat->rotation_menu,error);
+    case 14: return frontend_menu_open(seat, FRONTEND_CONTENT_LIBRARY, error);
     default: return true;
     }
 }
@@ -277,58 +296,58 @@ static qa_ui_control button(frontend_seat *seat, qa_ui_id id, const char *label,
 }
 static bool home(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
 {
-    frontend_seat *seat = context; (void)id; (void)error;
-    const char *labels[] = {"Play a game", "Mods", "Settings", "Ranking account", "Resume", "Quit", "Assistance", "Controls", "Accessibility", "Save / load", "Arena progress", "Servers", "Map rotation"};
-    for (size_t i = 0; i < 13; ++i) seat->controls[i] = button(seat, i + 1, labels[i], 64 + (float)i * 34);
-    bool live = qa_application_launch(seat->frontend->application) != NULL;
-    seat->controls[1].enabled = live; seat->controls[4].enabled = live;
-    bool campaign=false;
-    if (!frontend_campaign_menu_available(seat,&campaign,error)) return false;
-    seat->controls[10].enabled=campaign;
-    *out = (qa_ui_menu){.id = FRONTEND_HOME, .title = "Quake Anthology", .controls = seat->controls,
-        .count = 13, .fullscreen = !live};
+    frontend_seat *seat = context; (void)id;
+    bool live=qa_application_launch(seat->frontend->application)!=NULL || frontend_network_remote(seat->frontend);
+    if(live) {
+        static const char *const labels[]={"Resume game","Save game","Load game","Options","Console"};
+        static const qa_ui_id controls[]={16,17,10,18,19};
+        size_t count=0;
+        for(size_t i=0;i<5;++i) {
+            seat->controls[count]=button(seat,controls[i],labels[i],92+(float)(i+1)*28);
+            seat->controls[count++].rect=(qa_scene_rect_f){64,92+(float)(i+1)*28,512,28};
+        }
+        bool arena=false;
+        if(!frontend_campaign_menu_available(seat,&arena,error)) return false;
+        if(arena) {
+            seat->controls[count]=button(seat,11,"Arena progress",260);
+            seat->controls[count++].rect=(qa_scene_rect_f){64,260,512,28};
+        }
+        if(qa_input_seat_context(seat->input).dialect==QA_CONSOLE_Q3) {
+            seat->controls[count]=button(seat,21,"Match controls",288);
+            seat->controls[count].rect=(qa_scene_rect_f){64,288,512,28};
+            seat->controls[count++].enabled=false;
+        }
+        seat->controls[count]=button(seat,20,"End game",316);
+        seat->controls[count++].rect=(qa_scene_rect_f){64,316,512,28};
+        *out=(qa_ui_menu){.id=FRONTEND_HOME,.title="Paused",.controls=seat->controls,
+            .count=count,.fullscreen=true}; return true;
+    }
+    const char *labels[] = {"Play a game", "Load Game", "Options", "Library", "Quit"};
+    const qa_ui_id controls[] = {1, 10, 3, 14, 6};
+    for (size_t i = 0; i < 5; ++i) {
+        seat->controls[i] = button(seat, controls[i], labels[i], 118 + (float)i * 34);
+        seat->controls[i].rect.x = 64;
+        seat->controls[i].rect.width = 224;
+        seat->controls[i].rect.height = 30;
+    }
+    *out = (qa_ui_menu){.id = FRONTEND_HOME, .title = "QUAKE", .controls = seat->controls,
+        .count = 5, .fullscreen = true, .narrow = true};
     return true;
 }
 static bool settings_open(void *context, uint32_t id, qa_error *error)
-{
-    frontend_seat *seat = context; (void)id; (void)error;
-    const qa_cvar_view *setting = qa_cvars_at(qa_application_cvars(seat->frontend->application), seat->selected_setting);
-    snprintf(seat->setting_value, sizeof(seat->setting_value), "%s", setting ? setting->value : "");
-    return true;
-}
+{ (void)context; (void)id; (void)error; return true; }
 static bool settings(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
 {
-    frontend_seat *seat = context; (void)id;
-    qa_cvars *cvars = qa_application_cvars(seat->frontend->application);
-    size_t count = qa_cvars_count(cvars);
-    if (count > seat->settings_capacity) {
-        if (count > SIZE_MAX / sizeof(*seat->settings_rows)) return frontend_fail(error, QA_ERROR_MEMORY, "settings list overflow");
-        qa_ui_row *rows = realloc(seat->settings_rows, count * sizeof(*rows));
-        if (!rows) return frontend_fail(error, QA_ERROR_MEMORY, "allocating settings list");
-        seat->settings_rows = rows; seat->settings_capacity = count; ++seat->settings_revision;
+    frontend_seat *seat = context; (void)id; (void)error;
+    const char *labels[] = {"Display", "Sound", "Controls", "Accessibility", "All options", "LLM options", "Back"};
+    size_t count = frontend_tools_llm(seat->frontend) ? 6 : 5;
+    for (size_t i = 0; i < count; ++i) {
+        seat->controls[i] = button(seat, i + 1, labels[i], 118 + (float)i * 34);
+        seat->controls[i].rect = (qa_scene_rect_f){64, 118 + (float)i * 34, 512, 30};
     }
-    const qa_cvar_view *setting = qa_cvars_next(cvars, NULL);
-    for (size_t i = 0; i < count; ++i, setting = qa_cvars_next(cvars, setting)) {
-        seat->settings_rows[i] = (qa_ui_row){.key = setting->name, .label = setting->name,
-            .detail = setting->value, .enabled = true};
-    }
-    for (size_t i = 0; i < 4; ++i) seat->controls[i] = button(seat, i + 1, "", 100 + (float)i * 40);
-    seat->controls[0].kind = QA_UI_LIST; seat->controls[0].rect = (qa_scene_rect_f){40, 88, 560, 240};
-    seat->controls[0].value.list.rows = seat->settings_rows; seat->controls[0].value.list.count = count;
-    seat->controls[0].value.list.selected = seat->selected_setting;
-    seat->controls[0].value.list.row_height = 24; seat->controls[0].value.list.revision = seat->settings_revision;
-    seat->controls[0].enabled = count != 0;
-    const qa_cvar_view *selected = qa_cvars_at(cvars, seat->selected_setting);
-    seat->controls[1].kind = QA_UI_FIELD; seat->controls[1].label = "Value";
-    seat->controls[1].rect = (qa_scene_rect_f){40, 340, 420, 30};
-    seat->controls[1].value.field.text = seat->setting_value; seat->controls[1].value.field.maximum = 255;
-    seat->controls[2].label = "Apply"; seat->controls[2].rect = (qa_scene_rect_f){480, 340, 120, 30};
-    seat->controls[3].label = selected && selected->description ? selected->description : "Select a setting to inspect or edit";
-    seat->controls[3].rect = (qa_scene_rect_f){40, 392, 560, 60}; seat->controls[3].enabled = false;
-    seat->controls[4]=button(seat,5,"Player sources",432);
-    seat->controls[4].enabled=qa_application_launch(seat->frontend->application)!=NULL &&
-        !frontend_network_remote(seat->frontend);
-    *out = (qa_ui_menu){.id = FRONTEND_SETTINGS, .title = "Settings", .controls = seat->controls, .count = 5, .fullscreen = true};
+    seat->controls[count] = button(seat, 7, "Back", 424);
+    seat->controls[count].rect = (qa_scene_rect_f){64, 424, 512, 30};
+    *out = (qa_ui_menu){.id = FRONTEND_OPTIONS, .title = "Options", .controls = seat->controls, .count = count + 1};
     return true;
 }
 static bool player_sources(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
@@ -527,13 +546,13 @@ bool frontend_seats_prepare_restored(qa_frontend *frontend, qa_error *error)
     }
     return true;
 }
-static bool seats_create(qa_frontend *frontend, const bool *mods, const qa_bytes *saved_ui, bool restoring, qa_error *error)
+static bool seats_create(qa_frontend *frontend, unsigned first, const bool *mods, const qa_bytes *saved_ui, bool restoring, qa_error *error)
 {
     if (!frontend || !frontend->application || !frontend->seats || !frontend->classic ||
         !frontend->primary || !frontend->ui_images || frontend->stepping ||
         (restoring && (!mods || !saved_ui)))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "seat construction requires actual restored resource owners");
-    for (unsigned i = 0; i < frontend->options.seats; ++i)
+    for (unsigned i = first; i < frontend->options.seats; ++i)
         if (frontend->seats[i].ui || (restoring ?
             (!frontend->seats[i].input || !frontend->seats[i].console || frontend->seats[i].frontend != frontend || frontend->seats[i].id != i) :
             (frontend->seats[i].input != NULL || frontend->seats[i].console != NULL)))
@@ -547,20 +566,23 @@ static bool seats_create(qa_frontend *frontend, const bool *mods, const qa_bytes
         snprintf(player_names[i], sizeof(player_names[i]), "Player %u", i + 1);
         players[i] = (qa_launch_seat){.id = i, .name = player_names[i], .local = true, .input_device = i};
     }
-    for (unsigned i = 0; i < frontend->options.seats; ++i) {
+    for (unsigned i = first; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i]; seat->frontend = frontend; seat->id = i;
         if (!restoring && !seat_services_create(seat, false, error)) return false;
         qa_ui_preferences preferences;
         if (!seat->console || !qa_ui_preferences_read(qa_application_cvars(frontend->application), i, &preferences, error) ||
             !frontend_menu_font_selection(frontend, i, preferences.typeface == QA_UI_TYPEFACE_BOLD, &seat->fonts, error)) return false;
         qa_ui_options ui = {.seat = i, .input = seat->input, .fonts = seat->fonts,
+            .art = frontend->menu_art,
             .white = qa_scene_white(frontend->ui_images), .context = seat, .clipboard = ui_clipboard, .localize = frontend_ui_localize,
             .binding = frontend_binding_capture, .binding_cancel = frontend_binding_cancel,
             .input_now_ms=input_now_ms};
+        if (!frontend_menu_font_selection(frontend, i, true, &ui.title_fonts, error)) return false;
         if (!qa_ui_create(&ui, &seat->ui, error) || !qa_ui_register(seat->ui,
             &(qa_ui_menu_registration){.id = FRONTEND_HOME, .context = seat, .factory = home}, error) ||
-            !qa_ui_register(seat->ui, &(qa_ui_menu_registration){.id = FRONTEND_SETTINGS,
-                .context = seat, .factory = settings, .open = settings_open}, error)) return false;
+            !qa_ui_register(seat->ui, &(qa_ui_menu_registration){.id = FRONTEND_OPTIONS,
+                .context = seat, .factory = settings, .open = settings_open}, error) ||
+            !frontend_settings_create(seat, error)) return false;
         frontend_startup_server_browser_menus browser={200,201,202};
         if (!frontend_startup_server_browser_create(seat,&browser,&seat->server_browser,error) ||
             !frontend_startup_downloads_create(seat,203,204,&seat->downloads_menu,error) ||
@@ -572,7 +594,7 @@ static bool seats_create(qa_frontend *frontend, const bool *mods, const qa_bytes
             FRONTEND_LIBRARY, &seat->library, error) :
             qa_ui_library_create(seat->ui, frontend->application, FRONTEND_LIBRARY,
                 players, frontend->options.seats, &seat->library, error);
-        if (!library ||
+        if (!library || !frontend_startup_menus_create(seat, error) ||
             !qa_ui_rankings_create(seat->ui, frontend->application, FRONTEND_RANKINGS, -1, &seat->rankings, error) ||
             !qa_hud_create(&(qa_hud_options){.ui = seat->ui, .application = frontend->application, .seat = i,
                 .context = seat, .read = hud_data, .video_frame = hud_video_frame,
@@ -590,17 +612,22 @@ static bool seats_create(qa_frontend *frontend, const bool *mods, const qa_bytes
     return true;
 }
 bool frontend_seats_create(qa_frontend *frontend, qa_error *error)
-{ return seats_create(frontend, NULL, NULL, false, error); }
+{ return seats_create(frontend, 0, NULL, NULL, false, error); }
+bool frontend_seats_create_range(qa_frontend *frontend, unsigned first, qa_error *error)
+{ return seats_create(frontend, first, NULL, NULL, false, error); }
 bool frontend_seats_create_restored(qa_frontend *frontend, const bool *mods, qa_bytes presentation, qa_error *error)
 {
     qa_bytes saved_ui[QA_INPUT_LOCAL_SEATS]={0};
     return frontend_seats_saved_ui(frontend,presentation,saved_ui,error) &&
-        seats_create(frontend,mods,saved_ui,true,error);
+        seats_create(frontend,0,mods,saved_ui,true,error) && frontend_startup_menus_bind(frontend,error);
 }
-bool frontend_seats_destroy(qa_frontend *frontend, qa_error *error)
+bool frontend_seats_destroy_range(qa_frontend *frontend, unsigned first, unsigned last, qa_error *error)
 {
-    for (unsigned i = 0; i < frontend->options.seats; ++i) {
+    for (unsigned i = first; i < last; ++i) {
         frontend_seat *seat = &frontend->seats[i];
+        if (!frontend_startup_menus_destroy(seat,error) ||
+            !frontend_save_menu_destroy(seat,error)) return false;
+        frontend_settings_destroy(seat);
         if (!frontend_source_prompt_destroy(&seat->source_prompt,error) ||
             !frontend_startup_rotation_destroy(&seat->rotation_menu,error) ||
             !frontend_startup_downloads_destroy(&seat->downloads_menu,error) ||
@@ -622,7 +649,6 @@ bool frontend_seats_destroy(qa_frontend *frontend, qa_error *error)
         qa_input_seat_destroy(seat->input); seat->input = NULL;
         frontend_player_retire(seat);
         frontend_bindings_destroy(seat);
-        free(seat->settings_rows); seat->settings_rows = NULL;
         free(seat->player_source_titles); free(seat->player_source_products);
         seat->player_source_titles=NULL; seat->player_source_products=NULL;
         SDL_free(seat->clipboard); seat->clipboard = NULL;
@@ -631,6 +657,8 @@ bool frontend_seats_destroy(qa_frontend *frontend, qa_error *error)
     }
     return true;
 }
+bool frontend_seats_destroy(qa_frontend *frontend, qa_error *error)
+{ return frontend_seats_destroy_range(frontend, 0, QA_INPUT_LOCAL_SEATS, error); }
 void frontend_seats_rebind(qa_frontend *owned, qa_frontend *destination)
 {
     for (unsigned i = 0; i < owned->options.seats; ++i) owned->seats[i].frontend = destination;

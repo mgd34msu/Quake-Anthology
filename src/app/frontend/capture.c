@@ -1,4 +1,9 @@
 #include "capture.h"
+#include "settings_devices.h"
+#include "startup_menus.h"
+#include "content_library_services.h"
+#include "host_menu.h"
+#include "demo_dispatch.h"
 #include "seat_save.h"
 #include "q3_color_policy.h"
 #include "visual_restore.h"
@@ -181,6 +186,8 @@ bool frontend_seat_callbacks_returned(const qa_frontend *f)
             (seat->wheel && !qa_hud_wheel_round_ready(seat->wheel)) ||
             !frontend_startup_server_browser_idle(seat->server_browser) ||
             !frontend_startup_downloads_idle(seat->downloads_menu) ||
+            !frontend_content_library_services_idle(seat->library_services) ||
+            !frontend_host_menu_idle(seat->host_menu) ||
             (seat->source_prompt && !frontend_source_prompt_idle(seat->source_prompt))) return false;
     }
     return true;
@@ -1201,6 +1208,8 @@ bool frontend_capture_begin(qa_frontend *f, frontend_capture **out, qa_error *er
     if(f && (!frontend_cinematic_roles_prune(f,error) || !frontend_renderer_worlds_prune(f,error) || !frontend_renderer_materials_prune(f,error))) return false;
     if (!f || !out || *out || f->stepping || f->preparing || f->round || f->shutdown || f->source_restoring ||
         f->player_source_draft ||
+        f->startup_launch || frontend_settings_devices_pending(f) ||
+        !frontend_demo_dispatch_capture_ready(f->demos,error) ||
         !f->application || qa_application_client_prepare_active(f->application) ||
         !frontend_owners_checkpoint_ready(f) || !frontend_seat_callbacks_checkpoint_ready(f,error) ||
         !frontend_save_commands_capture_ready(f) || !frontend_cinematic_capture_ready(f))

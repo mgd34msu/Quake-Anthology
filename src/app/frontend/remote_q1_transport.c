@@ -111,6 +111,7 @@ static bool qw(void *context, qa_net_client_id id, qa_net_protocol_id protocol,
 {
     frontend_remote_q1 *row = context;
     if (!service || !negotiated(row, id, protocol, error)) return false;
+    if (service->kind == QA_QW_SERVER_DATA) remote_q1_demo_clear(row);
     return service->kind == QA_QW_SERVER_DATA ? frontend_remote_q1_serverdata_qw(row, &service->data.server, error) :
         frontend_remote_q1_receive_qw(row, service, received, error);
 }
@@ -133,8 +134,19 @@ static bool sent(void *context, qa_net_client_id id, uint32_t sequence, const qa
     const qa_qw_command *qw_command_value, uint64_t ns, qa_error *error)
 {
     frontend_remote_q1 *row = context; (void)nq_command_value;
-    return current(row, id, error) && (!qa_q1_is_qw(row->options.domain.protocol) ||
+    bool ok = current(row, id, error) && (!qa_q1_is_qw(row->options.domain.protocol) ||
         (qw_command_value && remote_q1_prediction_sent(row, sequence, qw_command_value, ns, error)));
+    if (ok && qw_command_value && row->demo_sink.append) {
+        frontend_demo_packet packet = {.format = FRONTEND_DEMO_QW, .value.qw = {
+            .kind = QA_QW_DEMO_COMMAND, .seconds = (float)((double)(ns >= row->demo_record_start ?
+                ns - row->demo_record_start : 0) / 1e9)}};
+        packet.value.qw.data.input.command = *qw_command_value;
+        packet.value.qw.data.input.angles[0] = row->view_angles.x;
+        packet.value.qw.data.input.angles[1] = row->view_angles.y;
+        packet.value.qw.data.input.angles[2] = row->view_angles.z;
+        qa_error recording = {0}; (void)row->demo_sink.append(row->demo_sink.owner, &packet, &recording);
+    }
+    return ok;
 }
 static bool acknowledged(void *context, qa_net_client_id id, uint32_t sequence, uint64_t ns, qa_error *error)
 {
@@ -149,6 +161,14 @@ static bool drop(void *context, qa_net_client_id id, const char *reason, qa_erro
     frontend_remote_q1 *row = context;
     return row && qa_net_client_id_equal(id, row->options.domain.client) && frontend_remote_q1_disconnected(row, reason, error);
 }
+static bool batch(void *context, qa_net_client_id id, qa_net_protocol_id protocol,
+    qa_bytes bytes, qa_bytes prefix, uint32_t sequence, uint32_t acknowledged, uint64_t received, qa_error *error)
+{
+    frontend_remote_q1 *row = context;
+    return current(row, id, error) && row->protocol.kind == protocol.kind &&
+        row->protocol.revision == protocol.revision && row->protocol.flags == protocol.flags &&
+        remote_q1_demo_batch(row, bytes, prefix, sequence, acknowledged, received, error);
+}
 bool frontend_remote_q1_hooks(frontend_remote_q1 *row, qa_network_q1_client_hooks *out, qa_error *error)
 {
     if (!row || !out || row->busy || row->retired ||
@@ -156,7 +176,7 @@ bool frontend_remote_q1_hooks(frontend_remote_q1 *row, qa_network_q1_client_hook
         return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 hooks require their genuine pending or importing CLIENT owner");
     *out = (qa_network_q1_client_hooks){.context = row, .nq = nq, .qw = qw, .qw_game_state = game_state,
         .qw_skins = skins, .end = end, .command_nq = nq_command, .command_qw = qw_command, .qw_teleport = teleport,
-        .qw_loss = loss, .sent = sent, .acknowledged = acknowledged, .drop = drop}; return true;
+        .qw_loss = loss, .sent = sent, .acknowledged = acknowledged, .drop = drop, .batch = batch}; return true;
 }
 bool frontend_remote_q1_player_command(frontend_remote_q1 *row, qa_actor_id actor,
     const char *name, const char *const *args, size_t count, qa_error *error)

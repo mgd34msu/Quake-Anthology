@@ -157,7 +157,7 @@ bool qa_network_accept_nq_source_command(qa_network_runtime *runtime,
         !isfinite(command->command.angles[1]) || !isfinite(command->command.angles[2]))
         return qa_network_fail(error, "NetQuake source command requires its genuine raw command consumer");
     const qa_net_client *client = qa_net_connections_get(runtime->connections, command->client);
-    if (!client || client->protocol.kind != QA_NET_NQ15 || client->protocol.flags || client->protocol.revision)
+    if (!client || client->protocol.kind > QA_NET_RMQ999 || !qa_q1_profile_valid(client->protocol, error))
         return qa_network_fail(error, "NetQuake source command changes its admitted source dialect");
     qa_network_peer *peer; qa_network_seat *seat;
     if (!authority_identity(runtime, command->client, command->seat, command->actor,

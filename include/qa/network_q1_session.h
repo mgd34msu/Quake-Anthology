@@ -12,10 +12,6 @@ typedef struct qa_nq_signon {
 bool qa_nq_signon_receive(qa_nq_signon *, uint8_t stage, qa_net_writer *);
 void qa_nq_signon_first_entity(qa_nq_signon *);
 
-/* emit borrows its bytes only for the call. A false return means the message
- * was not queued. The owner closes a failed connection before retrying a
- * multi-message command whose earlier emissions may already be queued. */
-typedef bool (*qa_q1_emit_fn)(void *, qa_bytes, qa_error *);
 typedef struct qa_qw_download {
     void *state;
     uint64_t size;

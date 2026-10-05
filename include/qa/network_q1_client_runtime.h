@@ -37,6 +37,10 @@ typedef struct qa_network_q1_client_hooks {
         const qa_qw_command *, uint64_t sent_ns, qa_error *);
     bool (*acknowledged)(void *, qa_net_client_id, uint32_t sequence, uint64_t received_ns, qa_error *);
     bool (*drop)(void *, qa_net_client_id, const char *, qa_error *);
+    /* Complete accepted native service bytes, after their real Source callbacks.
+     * Recording failures are handled by the recording owner independently. */
+    bool (*batch)(void *, qa_net_client_id, qa_net_protocol_id, qa_bytes, qa_bytes wire_prefix,
+        uint32_t sequence, uint32_t acknowledged, uint64_t received_ns, qa_error *);
 } qa_network_q1_client_hooks;
 typedef struct qa_network_q1_client_state {
     qa_net_protocol_id protocol, admitted_protocol, before_protocol;
@@ -51,6 +55,18 @@ typedef struct qa_network_q1_client_state {
 bool qa_network_attach_q1_client(qa_network_runtime *, const qa_net_connect *,
     const qa_network_q1_client_policy *, const qa_network_q1_client_hooks *,
     uint64_t now_ns, qa_net_client_id *, qa_error *);
+/* Same retained CLIENT, attached to its real local seat without UDP traffic. */
+bool qa_network_attach_q1_demo(qa_network_runtime *, const qa_net_connect *,
+    const qa_network_q1_client_policy *, const qa_network_q1_client_hooks *,
+    uint64_t now_ns, qa_net_client_id *, qa_error *);
+bool qa_network_q1_demo_packet(qa_network_runtime *, qa_net_client_id, qa_bytes,
+    uint64_t received_ns, qa_error *);
+bool qa_network_q1_demo_sequences(qa_network_runtime *, qa_net_client_id,
+    uint32_t outgoing, uint32_t incoming, qa_error *);
+bool qa_network_q1_demo_command(qa_network_runtime *, qa_net_client_id,
+    const qa_qw_command *, uint64_t sent_ns, qa_error *);
+bool qa_network_q1_client_sequences(qa_network_runtime *, qa_net_client_id,
+    uint32_t *outgoing, uint32_t *incoming, qa_error *);
 bool qa_network_q1_client_start(qa_network_runtime *, qa_net_client_id, qa_error *);
 bool qa_network_q1_client_disconnect(qa_network_runtime *, qa_net_client_id,
     const char *reason, qa_error *);

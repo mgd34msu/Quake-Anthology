@@ -17,6 +17,17 @@ typedef struct qa_network_q3_client_policy {
 bool qa_network_attach_q3_client(qa_network_runtime *, const qa_net_connect *,
     qa_q3_product, int32_t challenge, uint16_t qport, const qa_q3_client_hooks *,
     const qa_network_q3_client_policy *, uint64_t now_ns, qa_net_client_id *, qa_error *);
+/* Native demo playback retains the same physical CLIENT peer and histories,
+ * with a genuine local seat and no network channel or datagram sends. */
+bool qa_network_attach_q3_demo(qa_network_runtime *, const qa_net_connect *,
+    qa_q3_product, const qa_q3_client_hooks *, const qa_network_q3_client_policy *,
+    uint64_t now_ns, qa_net_client_id *, qa_error *);
+bool qa_network_q3_client_demo_sequence(qa_network_runtime *, qa_net_client_id,
+    int32_t sequence, qa_error *);
+bool qa_network_q3_client_demo_message(qa_network_runtime *, qa_net_client_id,
+    int32_t sequence, qa_bytes, int32_t real_time, qa_error *);
+bool qa_network_q3_client_record_seed(qa_network_runtime *, qa_net_client_id,
+    qa_q3_writer *, int32_t *sequence, qa_error *);
 const qa_q3_client_peer *qa_network_q3_client_view(qa_network_runtime *, qa_net_client_id);
 /* Pure observation of the generation-qualified native connection lifetime. */
 bool qa_network_q3_client_live(qa_network_runtime *, qa_net_client_id);

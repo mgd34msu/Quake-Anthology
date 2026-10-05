@@ -849,6 +849,17 @@ static bool aliases_fields(qa_source_save_io *io, qa_frontend *f, frontend_scene
         if (image) qa_scene_image_retain(image);
         f->console_background=(qa_scene_image *)image;
     }
+    const qa_scene_image **art[] = {&f->menu_art.background, &f->menu_art.main_background,
+        &f->menu_art.panel, &f->menu_art.focus};
+    for (size_t i = 0; i < sizeof(art) / sizeof(art[0]); ++i) {
+        uint64_t key = 0;
+        if (!reading && *art[i] && !frontend_scene_image_encode(space, *art[i], &key, io->error)) return false;
+        if (!qa_source_save_u64(io, &key) || (f->options.dedicated ? key != 0 : key == 0)) return false;
+        if (reading) {
+            if (*art[i] || (key && !frontend_scene_image_decode(space, key, art[i], io->error))) return false;
+            qa_scene_image_retain(*art[i]);
+        }
+    }
     return true;
 }
 static bool aliases_checkpoint(qa_frontend *f, frontend_scene_namespace *space, qa_buffer *out, qa_error *error)

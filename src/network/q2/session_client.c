@@ -55,6 +55,7 @@ static bool retire_client(q2_session *session, const char *reason, bool notice, 
         session->retiring = true; session->active = false;
     }
     bool classic = session->codec.protocol.kind == QA_NET_Q2_34;
+    if (client->policy.messages.demo) client->drop_notice = false;
     if (client->drop_notice && classic && !client->drop_sent) {
         uint8_t bytes[32];
         qa_q2_client_event disconnect = {.kind = QA_Q2_CLC_COMMAND, .data.text = "disconnect"};
@@ -121,6 +122,7 @@ bool qa_network_q2_client_control(qa_network_runtime *runtime, qa_net_client_id 
 {
     q2_session *session = q2_get(runtime, id, false, error);
     if (!session || !event || seat >= session->seats) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 control lacks its admitted seat");
+    if (session->state.client.policy.messages.demo) return true;
     qa_q2_channel_status status; qa_q2_channel_get_status(session->channel, &status);
     uint8_t *data = malloc(status.capacity);
     if (!data) return q2_fail(error, QA_ERROR_MEMORY, "Allocating Q2 client control");
@@ -211,7 +213,10 @@ static bool server_command(q2_session *session, uint8_t source_seat, const char 
                 free(command);
             }
         } else if (ok && !strcmp(name, "precache")) {
-            const char *number = tokens.count > 1 ? tokens.values[1] : "", *digits = number;
+            char saved_count[32];
+            snprintf(saved_count, sizeof(saved_count), "%d", client->server_data.servercount);
+            const char *number = tokens.count > 1 ? tokens.values[1] :
+                client->policy.messages.demo ? saved_count : "", *digits = number;
             if (*digits == '-') ++digits;
             bool valid = *digits != 0;
             for (const char *p = digits; *p; ++p) if (*p < '0' || *p > '9') valid = false;
@@ -237,8 +242,47 @@ bool q2_client_receive(q2_session *session, qa_bytes bytes, uint32_t acknowledge
     q2_records records = {.received_ns = now};
     if (!qa_q2_messages_read(client->messages, bytes, q2_record_retain, &records, error)) { q2_records_free(&records); return false; }
     session->codec = *qa_q2_messages_codec(client->messages);
+    if (client->recording.append) {
+        bool full_frame = false;
+        for (size_t i = 0; i < records.count; ++i)
+            if (records.records[i].event.kind == QA_Q2_SVC_FRAME &&
+                records.records[i].event.data.frame->valid && records.records[i].event.data.frame->delta_frame <= 0)
+                full_frame = true;
+        if (!client->recording.append(client->recording.context, bytes, full_frame, error)) {
+            q2_records_free(&records); return false;
+        }
+    }
     client->batch = records; client->acknowledged = acknowledged;
     client->receive_held = true; client->acknowledgement_held = true; return true;
+}
+bool qa_network_q2_client_record(qa_network_runtime *runtime, qa_net_client_id id,
+    const qa_q2_packet_sink *sink, bool attach, qa_error *error)
+{
+    qa_network_peer *peer = qa_network_peer_get(runtime, id, error);
+    q2_session *session = qa_network_q2_peer(peer) ? peer->state : NULL;
+    if (!session || session->server || !sink || !sink->append ||
+        !qa_network_callbacks_idle(runtime) || session->busy || (attach && session->retiring))
+        return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 recording requires its returned payload owner");
+    qa_q2_packet_sink *held = &session->state.client.recording;
+    if (attach) {
+        if (held->append || session->state.client.policy.messages.demo)
+            return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 payload recording is already owned or playing a demo");
+        *held = *sink;
+    } else {
+        if (held->context != sink->context || held->append != sink->append)
+            return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 recording detach differs from its actual sink");
+        *held = (qa_q2_packet_sink){0};
+    }
+    return true;
+}
+bool qa_network_q2_client_demo_receive(qa_network_runtime *runtime, qa_net_client_id id,
+    qa_bytes bytes, uint64_t now, qa_error *error)
+{
+    q2_session *session = q2_get(runtime, id, false, error);
+    if (!session || !session->state.client.policy.messages.demo ||
+        !qa_network_callbacks_idle(runtime) || session->busy)
+        return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 demo requires its returned retained CLIENT receiver");
+    return qa_network_received(runtime, id, now, error) && q2_client_receive(session, bytes, 0, now, error);
 }
 bool qa_network_q2_client_continue(qa_network_runtime *runtime, qa_net_client_id id, qa_error *error)
 {
@@ -249,8 +293,8 @@ bool qa_network_q2_client_continue(qa_network_runtime *runtime, qa_net_client_id
     bool ok = sent_continue(session, error), waiting = false, download_retry = false;
     if (ok && client->acknowledgement_held) {
         client->acknowledgement_held = false;
-        ok = current(session, error) && client->hooks.acknowledged(client->hooks.context, id,
-            client->acknowledged, client->batch.received_ns, error) && current(session, error);
+        ok = client->policy.messages.demo || (current(session, error) && client->hooks.acknowledged(client->hooks.context, id,
+            client->acknowledged, client->batch.received_ns, error) && current(session, error));
     }
     if (ok && (client->selecting_server_data || client->preparing_game_state)) ok = prepare(session, &waiting, error);
     while (ok && !waiting && !session->retiring && client->batch.cursor < client->batch.count) {
@@ -343,6 +387,7 @@ bool q2_client_submit(q2_session *session, const qa_network_command *command, qa
 bool q2_client_send(q2_session *session, uint64_t now, qa_error *error)
 {
     q2_client *client = &session->state.client;
+    if (client->policy.messages.demo) return true;
     if (!sent_continue(session, error)) return false;
     if (client->receive_held || client->preparation_held)
         return !qa_q2_channel_should_update(session->channel, now) ||

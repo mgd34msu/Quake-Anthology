@@ -179,6 +179,8 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         qa_actor_id actor = {0}; qa_application_camera_view camera;
         uint32_t launch_seat;
         bool published=frontend_seat_launch_id_read(frontend,i,&launch_seat);
+        if (published || frontend_network_remote(frontend)) ui.fullscreen = false;
+        bool game_focus = qa_input_seat_focus(seat->input) == QA_INPUT_GAME;
         bool live = published && qa_application_player_actor(frontend->application, launch_seat, &actor) && qa_application_control_camera(frontend->application, actor, &camera);
         bool qc_status=false;
         if (live && frontend->qc_messages) {
@@ -314,13 +316,14 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
             .weapon_only=native_rendered && !qc_status,.source_status_native=component_status,
             .time_ns = frontend->time_ns, .viewport = rect, .safe_area = rect,
             .scale = preferences.hud_scale, .show_scores = seat->scores || (seat->q2_view_ready && !seat->q2_help && (seat->q2_view.layouts & 1)),
-            .show_inventory = seat->q2_inventory, .visible = !ui.fullscreen}, &frontend->frame, error)) return false;
-        if (live && !ui.fullscreen && !qa_hud_wheel_draw(seat->wheel,
+            .show_inventory = seat->q2_inventory, .visible = !ui.fullscreen && game_focus}, &frontend->frame, error)) return false;
+        if (live && !ui.fullscreen && game_focus && !qa_hud_wheel_draw(seat->wheel,
             &(qa_hud_wheel_draw_options){.viewport = rect, .fonts = seat->fonts,
                 .white = qa_scene_white(frontend->ui_images), .text = {1, 1, 1, 1},
                 .accent = {.9f, .7f, .3f, 1}, .disabled = {.4f, .4f, .4f, 1},
                 .panel = {.05f, .05f, .05f, .85f}, .scale = preferences.hud_scale}, &frontend->frame, error)) return false;
-        if (!qa_ui_draw(seat->ui, &frontend->frame, rect, preferences.menu_scale, preferences.high_contrast, error)) return false;
+        if (!qa_ui_draw(seat->ui, &frontend->frame, rect, preferences.menu_scale,
+            preferences.high_contrast, !(live || native_rendered || remote_rendered || source.source_world), error)) return false;
         if (qa_input_seat_focus(seat->input) == QA_INPUT_CONSOLE) {
             qa_font_selection console_fonts;
             if (!frontend_console_font_selection(frontend, i, &console_fonts, error)) return false;

@@ -7,6 +7,7 @@
 #include "qa/network_q2_kex.h"
 #include "qa/network_local.h"
 #include "qa/network_kex_transport.h"
+#include "demo_service.h"
 typedef struct frontend_network_q2_host frontend_network_q2_host;
 typedef struct frontend_network_q2_host_options {
     qa_frontend *frontend;
@@ -26,6 +27,8 @@ bool frontend_network_q2_host_receive(frontend_network_q2_host *,const qa_net_da
 bool frontend_network_q2_host_admit(frontend_network_q2_host *,const qa_net_connect *,bool *,qa_error *);
 bool frontend_network_q2_host_tick(frontend_network_q2_host *,uint64_t,qa_error *);
 bool frontend_network_q2_host_publish(frontend_network_q2_host *,uint64_t,qa_error *);
+bool frontend_network_q2_host_demo_record(frontend_network_q2_host *, qa_actor_id,
+    qa_fs_root *, frontend_demo_record_source *, qa_error *);
 void frontend_network_q2_host_disconnected(frontend_network_q2_host *,qa_net_client_id);
 bool frontend_network_q2_host_idle(const frontend_network_q2_host *);
 bool frontend_network_q2_host_capture_current(const frontend_network_q2_host *,qa_error *);

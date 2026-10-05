@@ -69,6 +69,12 @@ bool qa_nq_decoder_restore(qa_net_reader *, qa_nq_decoder *);
  * services ignore baseline. The writer is sticky; discard failed packets. */
 bool qa_nq_write(qa_net_writer *, qa_net_protocol_id, qa_nq_options,
                   const qa_nq_message *, const qa_q1_entity *baseline, float server_time);
+/* Converts original Source15 services at the foreign wire boundary. Sorted
+ * baselines borrow the actual source peer; writer scratch emits one complete
+ * service at a time, and no decoder lifetime is retained. */
+bool qa_nq_transcode_original(qa_net_reader *, qa_net_writer *, qa_net_protocol_id destination,
+    qa_nq_options, const qa_q1_entity *baselines, size_t baseline_count, float source_time,
+    qa_q1_emit_fn, void *context);
 bool qa_nq_write_entity(qa_net_writer *, qa_net_protocol_id, const qa_q1_entity *,
                          const qa_q1_entity *baseline, float server_time);
 bool qa_nq_write_clientdata(qa_net_writer *, qa_net_protocol_id, const qa_q1_clientdata *, bool standard_quake);

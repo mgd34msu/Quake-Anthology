@@ -221,6 +221,11 @@ qa_qw_channel_stats qa_qw_channel_get_stats(const qa_qw_channel *channel) {
         channel->rate.bytes_per_second};
 }
 
+bool qa_qw_channel_demo_sequences(qa_qw_channel *channel, uint32_t outgoing,
+    uint32_t incoming, qa_error *error) {
+    return channel && channel->side == QA_Q1_CHANNEL_CLIENT &&
+        qa_net_toggle_demo_sequences(channel->reliable, outgoing, incoming, error);
+}
 bool qa_q1_peer_send(qa_q1_peer *peer, qa_bytes bytes, qa_error *error) {
     return peer ? qa_net_transport_send(peer->transport, &peer->remote, bytes, error) : invalid(error, "Missing Quake peer");
 }

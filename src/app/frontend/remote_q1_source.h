@@ -17,6 +17,8 @@ typedef struct frontend_remote_q1_source_options {
     bool (*service)(void *, const qa_application_client_source *, qa_net_protocol_id,
         const qa_nq_message *, double, uint64_t, qa_error *);
     bool (*disconnected)(void *, const qa_application_client_source *, const char *, qa_error *);
+    bool (*sample_seconds)(void *, const qa_application_client_source *, double *, qa_error *);
+    int32_t demo_forced_track;
     const struct frontend_remote_q1_skin_bindings *skin_bindings;
 } frontend_remote_q1_source_options;
 typedef struct frontend_remote_q1_source_view {

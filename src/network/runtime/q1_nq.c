@@ -121,10 +121,11 @@ static bool receive(void *context, qa_network_runtime *runtime, qa_net_client_id
     if (!qa_q1_peer_receive(&peer->native, &packet->from, packet->payload, packet->received_ns, &delivery, error) ||
         !qa_network_received(runtime, id, packet->received_ns, error)) return false;
     if (!delivery.present || peer->retiring) return true;
+    const qa_net_client *client = qa_net_connections_get(runtime->connections, id);
     qa_net_reader reader; qa_net_reader_init(&reader, delivery.payload, error); bool moved = false;
     while (qa_net_reader_remaining(&reader)) {
         qa_q1_client_message message;
-        if (!qa_q1_client_read(&reader, (qa_net_protocol_id){.kind = QA_NET_NQ15}, delivery.sequence, &moved, &message)) return false;
+        if (!qa_q1_client_read(&reader, client->protocol, delivery.sequence, &moved, &message)) return false;
         switch (message.op) {
         case QA_Q1_CLC_NOP: break;
         case QA_Q1_CLC_DISCONNECT: return retire(peer, "client disconnected", false, error);
@@ -132,7 +133,6 @@ static bool receive(void *context, qa_network_runtime *runtime, qa_net_client_id
             if (!peer->started) return qa_network_fail(error, "NetQuake command precedes original server signon");
             if (!string_command(peer, message.data.text, error)) return false;
             if (peer->stage == 2) {
-                const qa_net_client *client = qa_net_connections_get(runtime->connections, id);
                 if (client->phase == QA_NET_CONNECTED && !qa_network_phase(runtime, id, QA_NET_PRIMED, error)) return false;
             }
             break;
@@ -192,8 +192,8 @@ bool qa_network_attach_nq_server(qa_network_runtime *runtime, const qa_net_conne
     const qa_network_nq_server_policy *policy, const qa_network_nq_server_hooks *hooks,
     uint64_t now, qa_net_client_id *out, qa_error *error)
 {
-    if (!runtime || !request || !policy || !hooks || !out || request->protocol.kind != QA_NET_NQ15 ||
-        request->protocol.revision || request->protocol.flags || request->seat_count != 1 ||
+    if (!runtime || !request || !policy || !hooks || !out || request->protocol.kind > QA_NET_RMQ999 ||
+        !qa_q1_profile_valid(request->protocol, error) || request->seat_count != 1 ||
         !hooks->signon || !hooks->begin || !hooks->command || !hooks->input || !hooks->drop ||
         !policy->message_bytes || policy->message_bytes > 65527 || !policy->fragment_bytes ||
         policy->fragment_bytes > policy->message_bytes || policy->queued_bytes < policy->message_bytes ||
@@ -279,7 +279,7 @@ static bool continuation_valid(const nq_server *peer, const qa_net_client *clien
         peer->retirement.packet.data[0] != 0 || peer->retirement.packet.data[1] != 16 ||
         peer->retirement.packet.data[2] != 0 || peer->retirement.packet.data[3] != 9))
         return qa_network_fail(error, "Invalid retained NetQuake disconnect packet");
-    if (!client || client->protocol.kind != QA_NET_NQ15 || client->protocol.revision || client->protocol.flags ||
+    if (!client || client->protocol.kind > QA_NET_RMQ999 || !qa_q1_profile_valid(client->protocol, error) ||
         client->seat_count != 1 || peer->signon_active || peer->stage > 4 ||
         peer->started != (peer->stage != 0) ||
         (!peer->retiring && client->phase != (peer->stage < 2 ? QA_NET_CONNECTED :

@@ -1,5 +1,5 @@
 #include "startup_server_browser.h"
-#include "startup_downloads.h"
+#include "menu_fonts.h"
 #include "qa/source_save.h"
 #include "qa/text.h"
 #include "qa/ui_preferences.h"
@@ -50,6 +50,8 @@ struct frontend_startup_server_browser {
     size_t detail_count, detail_capacity;
     uint32_t registered;
     bool busy, retiring;
+    const void *status_network;
+    uint64_t status_receipt;
 };
 static bool fail(qa_error *e,qa_status code,const char *message)
 { frontend_fail(e,code,message); return false; }
@@ -443,7 +445,16 @@ static bool refresh(frontend_startup_server_browser *o,const frontend_network_me
     }
     qa_buffer_free(&filter);
     if(okay)okay=sort_rows(o,used,e) && frontend_network_menu_current(o->seat->frontend,view);
-    if(okay) { o->unfiltered_count=o->row_count; o->filtered_count=used; }
+    if(okay) {
+        frontend_network_menu_status status;
+        okay=frontend_network_menu_status_read(o->seat->frontend,view,family_protocol(o->draft.family),&status,e);
+        if(okay) {
+            if(status.receipt && (o->status_network!=view->network || status.receipt!=o->status_receipt))
+                snprintf(o->draft.status,sizeof(o->draft.status),"%s",status.text);
+            o->status_network=view->network; o->status_receipt=status.receipt;
+            o->unfiltered_count=o->row_count; o->filtered_count=used;
+        }
+    }
     return okay;
 }
 static bool select_row(frontend_startup_server_browser *o,const frontend_network_menu_view *view,size_t index,qa_error *e)
@@ -566,9 +577,14 @@ static bool execute(browser_menu_context *context,const frontend_network_menu_vi
         }
         if(event->kind!=QA_UI_ACTIVATE)return true;
         switch(control) {
-        case 4:
+        case 4: {
+            qa_error kex_failure={0};
+            if(d->family==BROWSER_Q2)
+                (void)frontend_network_menu_scan(f,view,(qa_net_protocol_id){.kind=QA_NET_Q2KEX_2023},&kex_failure);
             if(!frontend_network_menu_scan(f,view,protocol,e))return false;
-            snprintf(d->status,sizeof(d->status),"Searching local network..."); return true;
+            snprintf(d->status,sizeof(d->status),"%s",kex_failure.code!=QA_OK?kex_failure.message:"Searching local network...");
+            return true;
+        }
         case 5: {
             char remote[256]; bool added;
             if(!trim_copy(d->addresses[d->family],remote,sizeof(remote),e))return false;
@@ -594,7 +610,7 @@ static bool execute(browser_menu_context *context,const frontend_network_menu_vi
             if(!frontend_network_menu_connect(f,view,&connection,e))return false;
             snprintf(d->status,sizeof(d->status),"Connecting..."); return true;
         }
-        case 14:d->details_page=0; return qa_ui_open(o->ui,o->menus.details,now(o),e);
+        case 14:d->page=d->details_page=0; return qa_ui_open(o->ui,o->menus.details,now(o),e);
         case 15:return qa_ui_close(o->ui,now(o),e);
         default:return true;
         }
@@ -617,14 +633,13 @@ static bool execute(browser_menu_context *context,const frontend_network_menu_vi
                !frontend_network_menu_master(f,view,protocol,remote,e))return false;
             snprintf(d->status,sizeof(d->status),"Querying master..."); return true;
         }
-        if(control==7 && event->kind==QA_UI_ACTIVATE)return frontend_startup_downloads_open(o->seat->downloads_menu,e);
         return control!=6 || event->kind!=QA_UI_ACTIVATE || qa_ui_close(o->ui,now(o),e);
     }
     if(context->id==o->menus.details && event->kind==QA_UI_ACTIVATE) {
         if(control==9) {
             size_t pages=o->detail_count/8+(o->detail_count%8!=0);
             if(!pages)pages=1;
-            d->details_page=(d->details_page+1)%pages; return true;
+            d->page=d->details_page=(d->details_page+1)%pages; return true;
         }
         if(control==10)return qa_ui_close(o->ui,now(o),e);
     }
@@ -640,6 +655,9 @@ static bool action(void *user,uint32_t seat,qa_ui_id control,const qa_ui_action 
     if(!bound(o) || !frontend_network_menu_current(o->seat->frontend,&view))
         return fail(e,QA_ERROR_ARGUMENT,"Server browser action expired its actual Network owner");
     if(!okay)snprintf(o->draft.status,sizeof(o->draft.status),"%s",failure.message[0]?failure.message:"Server operation failed");
+    frontend_network_menu_status status;
+    if(!frontend_network_menu_status_read(o->seat->frontend,&view,family_protocol(o->draft.family),&status,e))return false;
+    o->status_network=view.network; o->status_receipt=status.receipt;
     return true;
 }
 static qa_ui_control button(browser_menu_context *context,qa_ui_id id,const char *label,
@@ -654,17 +672,19 @@ static qa_ui_control field(browser_menu_context *context,qa_ui_id id,const char 
     qa_ui_control control=button(context,id,label,x,y,width,true); control.kind=QA_UI_FIELD;
     control.value.field.text=text; control.value.field.maximum=maximum; return control;
 }
-static bool fit(frontend_startup_server_browser *o,char *text,size_t capacity,float width,qa_error *e)
+static bool fit(frontend_startup_server_browser *o,char *text,size_t capacity,float width,float scale,qa_error *e)
 {
     qa_ui_preferences preferences;
     if(!qa_ui_preferences_read(qa_application_cvars(o->seat->frontend->application),o->seat->id,&preferences,e))return false;
-    qa_font_layout_options options={.scale=preferences.text_scale,.color={1,1,1,1},
-        .color_codes=QA_FONT_COLOR_Q3,.alignment=QA_FONT_ALIGN_LEFT};
+    qa_font_selection fonts;
+    if(!frontend_menu_font_selection(o->seat->frontend,o->seat->id,preferences.typeface==QA_UI_TYPEFACE_BOLD,&fonts,e))return false;
+    qa_font_layout_options options={.scale=scale*preferences.text_scale,.color={1,1,1,1},
+        .color_codes=QA_FONT_COLOR_LITERAL,.alignment=QA_FONT_ALIGN_LEFT};
     size_t length=strlen(text),end=length;
     for(;;) {
         qa_arena_reset(&o->measurements); qa_font_layout layout;
         options.text=(qa_bytes){(const uint8_t *)text,strlen(text)};
-        if(!qa_font_layout_build(&o->seat->fonts,&options,&o->measurements,&layout,e))return false;
+        if(!qa_font_layout_build(&fonts,&options,&o->measurements,&layout,e))return false;
         if(layout.width<=width || !end)return true;
         --end;
         while(end && ((unsigned char)text[end]&0xc0)==0x80)--end;
@@ -689,9 +709,8 @@ static bool options_factory(void *user,uint32_t seat,qa_ui_menu *out,qa_error *e
     o->controls[2].value.checked=o->draft.hide_full;
     o->controls[3]=field(context,4,"Master address or HTTP list",o->draft.masters[o->draft.family],2048,64,226,512);
     o->controls[4]=button(context,5,"Find Internet servers",64,288,512,true);
-    o->controls[5]=button(context,7,"Downloads",64,322,512,true);
-    o->controls[6]=button(context,6,"Back",64,390,512,true);
-    *out=(qa_ui_menu){.id=context->id,.title="Server filters",.controls=o->controls,.count=7};
+    o->controls[5]=button(context,6,"Back",64,356,512,true);
+    *out=(qa_ui_menu){.id=context->id,.title="Server filters",.source_title=true,.controls=o->controls,.count=6};
     bool okay=frontend_network_menu_current(o->seat->frontend,&view); o->busy=was_busy; return okay;
 }
 static bool browser_factory(void *user,uint32_t seat,qa_ui_menu *out,qa_error *e)
@@ -723,7 +742,7 @@ static bool browser_factory(void *user,uint32_t seat,qa_ui_menu *out,qa_error *e
         else ping[0]=0;
         snprintf(o->labels[i],sizeof(o->labels[i]),"%s%s  %s  %s",row->entry.sources&QA_SERVER_FAVORITE?"* ":"",
             row->entry.available && row->entry.name[0]?row->entry.name:row->address,players,ping);
-        if(!fit(o,o->labels[i],sizeof(o->labels[i]),490,e)) { o->busy=was_busy; return false; }
+        if(!fit(o,o->labels[i],sizeof(o->labels[i]),490,2.6f,e)) { o->busy=was_busy; return false; }
         o->controls[count++]=button(context,8+i,o->labels[i],64,252+(float)i*34,512,true);
     }
     snprintf(o->labels[3],sizeof(o->labels[3]),"Page %zu/%zu",o->draft.page+1,pages);
@@ -732,11 +751,20 @@ static bool browser_factory(void *user,uint32_t seat,qa_ui_menu *out,qa_error *e
     o->controls[count++]=button(context,13,"Connect",64,396,160,true);
     o->controls[count++]=button(context,14,"Details",240,396,160,true);
     o->controls[count++]=button(context,15,"Back",416,396,160,true);
-    snprintf(o->labels[5],sizeof(o->labels[5]),"%s",o->draft.status[0]?o->draft.status:o->filtered_count?"":
-        o->unfiltered_count?"No servers match these filters.":"No servers yet. Enter an address or find LAN.");
-    if(!fit(o,o->labels[5],sizeof(o->labels[5]),490,e)) { o->busy=was_busy; return false; }
-    o->controls[count++]=button(context,16,o->labels[5],64,440,512,false);
-    *out=(qa_ui_menu){.id=context->id,.title="Find servers",.controls=o->controls,.count=count};
+    if(!o->filtered_count) {
+        o->controls[count++]=(qa_ui_control){.id=16,.kind=QA_UI_TEXT,.label=o->unfiltered_count?
+            "No servers match these filters.":"No servers yet. Enter an address or find LAN.",
+            .rect={64,430,512,0},.visible=true,.value.text={.scale=1.5f,.source=true}};
+    }
+    const browser_row *selection=NULL;
+    for(size_t i=0;i<o->filtered_count;++i)
+        if(selected(&o->draft,o->rows+o->order[i])) { selection=o->rows+o->order[i]; break; }
+    if(selection && selection->entry.available)
+        snprintf(o->labels[5],sizeof(o->labels[5]),"%s — %s",selection->entry.map,o->draft.status);
+    else snprintf(o->labels[5],sizeof(o->labels[5]),"%s",o->draft.status);
+    o->controls[count++]=(qa_ui_control){.id=17,.kind=QA_UI_TEXT,.label=o->labels[5],
+        .rect={64,450,512,0},.visible=true,.value.text={.scale=1.8f,.fit_width=512,.source=true}};
+    *out=(qa_ui_menu){.id=context->id,.title="Find servers",.source_title=true,.controls=o->controls,.count=count};
     bool okay=frontend_network_menu_current(o->seat->frontend,&view); o->busy=was_busy; return okay;
 }
 static bool details_factory(void *user,uint32_t seat,qa_ui_menu *out,qa_error *e)
@@ -748,12 +776,13 @@ static bool details_factory(void *user,uint32_t seat,qa_ui_menu *out,qa_error *e
     if(!build_details(o,&view,e)) { o->busy=was_busy; return false; }
     size_t pages=o->detail_count/8+(o->detail_count%8!=0); if(!pages)pages=1;
     if(o->draft.details_page>=pages)o->draft.details_page=pages-1;
+    o->draft.page=o->draft.details_page;
     size_t count=0,start=o->draft.details_page*8;
     for(size_t i=0;i<8 && i<o->detail_count-start;++i)
         o->controls[count++]=button(context,i+1,o->details[start+i],64,118+(float)i*34,512,false);
     snprintf(o->labels[4],sizeof(o->labels[4]),"Page %zu/%zu",o->draft.details_page+1,pages);
     o->controls[count++]=button(context,9,o->labels[4],64,390,512,true);
     o->controls[count++]=button(context,10,"Back",64,424,512,true);
-    *out=(qa_ui_menu){.id=context->id,.title="Server details",.controls=o->controls,.count=count};
+    *out=(qa_ui_menu){.id=context->id,.title="Server details",.source_title=true,.controls=o->controls,.count=count};
     bool okay=frontend_network_menu_current(o->seat->frontend,&view); o->busy=was_busy; return okay;
 }

@@ -133,6 +133,12 @@ static bool disconnected(void *context, const frontend_remote_q1_domain *expecte
     bool ok = owner->options.disconnected(owner->options.context, &view.source, reason, error);
     --owner->calls; return ok;
 }
+static bool sample_seconds(void *context, const frontend_remote_q1_domain *expected, double *out, qa_error *error)
+{
+    frontend_remote_q1_source *owner = context; frontend_client_source_view view;
+    return out && physical(owner, expected, &view, error) && owner->options.sample_seconds &&
+        owner->options.sample_seconds(owner->options.context, &view.source, out, error);
+}
 static bool create(qa_frontend *f, const frontend_remote_q1_source_options *options,
     const frontend_remote_q1_restore_refs *refs, qa_bytes bytes, frontend_remote_q1_source **out, qa_error *error)
 {
@@ -156,7 +162,9 @@ static bool create(qa_frontend *f, const frontend_remote_q1_source_options *opti
     frontend_remote_q1_options receiver = {.domain = domain(owner, &view.source), .context = owner,
         .current = current, .load_content = load, .service = service, .disconnected = disconnected,
         .skin_bindings = options->skin_bindings,.application_read=application_read,
-        .application_metadata_read=application_metadata_read};
+        .application_metadata_read=application_metadata_read,
+        .sample_seconds=options->sample_seconds ? sample_seconds : NULL,
+        .demo_forced_track=options->sample_seconds ? options->demo_forced_track : -1};
     return refs ? frontend_remote_q1_restore_prepare(f, &receiver, refs, bytes, &owner->receiver, error) :
         frontend_remote_q1_create(f, &receiver, &owner->receiver, error);
 }

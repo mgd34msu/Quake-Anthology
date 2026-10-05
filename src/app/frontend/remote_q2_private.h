@@ -76,7 +76,7 @@ struct frontend_remote_q2 {
     size_t baseline_count;
     qa_q2_wire_frame frame, previous;
     float fraction, frame_ms, height_previous, height_current;
-    double sample_frame_seconds;
+    double sample_frame_seconds, demo_ms;
     double height_changed_ms;
     bool height_set;
     bool gun_set;

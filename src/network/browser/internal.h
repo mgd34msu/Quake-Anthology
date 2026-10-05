@@ -51,7 +51,7 @@ struct qa_server_browser {
 };
 bool qa_browser_fail(qa_error *, const char *);
 browser_record *qa_browser_find(qa_server_browser *, const qa_net_address *, qa_net_protocol_id);
-void qa_browser_changed(qa_server_browser *, const qa_server_entry *);
+void qa_browser_changed(qa_server_browser *, const qa_server_entry *, qa_browser_change);
 bool qa_browser_restore_http(qa_server_browser *, qa_error *);
 bool qa_browser_http_valid(const qa_server_browser *, qa_error *);
 bool qa_browser_query_encode(qa_net_protocol_id, uint64_t challenge, qa_net_writer *);

@@ -103,6 +103,7 @@ add_library(qa_content STATIC
     src/formats/image/q3_color.c
     src/formats/image/q3_upload.c
     src/content/map_sidecars.c
+    src/content/monster_catalog.c
     src/content/map_sidecars_save.c
 )
 target_link_libraries(qa_content PUBLIC qa_core PRIVATE
@@ -877,6 +878,7 @@ add_library(qa_input STATIC
 target_link_libraries(qa_input PUBLIC qa_movement qa_console qa_content qa_display qa_persistence SDL2::SDL2)
 
 add_library(qa_settings STATIC
+    src/settings/server_profile.c
     src/settings/ui_language.c
     src/settings/codec.c
     src/settings/store.c
@@ -1549,6 +1551,7 @@ add_library(qa_ui STATIC
     src/ui/input.c
     src/ui/library.c
     src/ui/library_save.c
+    src/ui/saves.c
     src/ui/llm.c
     src/ui/mods.c
     src/ui/mods_save.c
@@ -1607,7 +1610,42 @@ add_library(qa_persistence STATIC
     src/persistence/world.c)
 target_link_libraries(qa_persistence PUBLIC qa_session qa_content qa_gameplay qa_movement qa_network qa_campaign qa_console qa_navigation qa_native)
 
+set(QA_MENU_ASSET_NAMES menu-background main-menu-background menu-panel menu-focus)
+set(QA_MENU_ASSET_SYMBOLS qa_menu_background qa_menu_main_background qa_menu_panel qa_menu_focus)
+set(QA_MENU_ASSET_SOURCES)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/menu-assets")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/menu-assets/menu-art-embedded.h" "#include \"qa/common.h\"\n")
+foreach(index RANGE 0 3)
+    list(GET QA_MENU_ASSET_NAMES ${index} name)
+    list(GET QA_MENU_ASSET_SYMBOLS ${index} symbol)
+    set(source "${CMAKE_CURRENT_BINARY_DIR}/menu-assets/${name}.c")
+    file(SIZE "${CMAKE_CURRENT_SOURCE_DIR}/assets/ui/${name}.png" size)
+    file(APPEND "${CMAKE_CURRENT_BINARY_DIR}/menu-assets/menu-art-embedded.h"
+        "extern const uint8_t ${symbol}_data[${size}];\n")
+    add_custom_command(OUTPUT "${source}"
+        COMMAND ${CMAKE_COMMAND}
+            "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/assets/ui/${name}.png"
+            "-DOUTPUT=${source}" "-DSYMBOL=${symbol}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedAsset.cmake"
+        DEPENDS "assets/ui/${name}.png" "cmake/EmbedAsset.cmake"
+        VERBATIM)
+    list(APPEND QA_MENU_ASSET_SOURCES "${source}")
+endforeach()
 add_library(qa_frontend STATIC
+    src/app/frontend/startup_menus.c
+    src/app/frontend/startup_server_profile.c
+    src/app/frontend/seats_resize.c
+    src/app/frontend/demo_service.c
+    src/app/frontend/demo_dispatch.c
+    ${QA_MENU_ASSET_SOURCES}
+    src/app/frontend/menu_art.c
+    src/app/frontend/settings_menu.c
+    src/app/frontend/settings_devices.c
+    src/app/frontend/host_menu.c
+    src/app/frontend/startup_selection.c
+    src/app/frontend/startup_arena.c
+    src/app/frontend/content_library_menu.c
+    src/app/frontend/content_library_services.c
     src/platform/native_runtime.c
     src/app/frontend/accessibility.c
     src/app/frontend/campaign.c
@@ -1886,6 +1924,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/cinematic_roles.c
 )
 target_link_libraries(qa_frontend PUBLIC qa_application qa_ui qa_tools qa_display qa_render_cpu qa_render_gl qa_render_controls qa_input qa_settings qa_audio qa_q3_presentation qa_q3_native_presentation qa_network PRIVATE SDL2::SDL2 ICU::i18n)
+target_include_directories(qa_frontend PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/menu-assets")
 get_filename_component(QA_NATIVE_RUNTIME_FULL_ROOT "${QA_NATIVE_RUNTIME_INSTALL_ROOT}"
     ABSOLUTE BASE_DIR "${CMAKE_INSTALL_PREFIX}")
 file(RELATIVE_PATH QA_NATIVE_RUNTIME_RELATIVE_ROOT

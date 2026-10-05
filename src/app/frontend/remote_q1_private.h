@@ -22,6 +22,12 @@ typedef struct remote_q1_model {
 typedef struct remote_q1_entities { qa_q1_entity *rows; size_t count, capacity; } remote_q1_entities;
 typedef struct remote_q1_actor { uint32_t number; qa_actor_id id; } remote_q1_actor;
 typedef struct remote_q1_pending { qa_nq_message message; char *text; } remote_q1_pending;
+typedef struct remote_q1_demo_seed {
+    struct remote_q1_demo_seed *next;
+    qa_buffer bytes;
+    uint32_t sequence, acknowledged;
+    uint8_t wire_prefix[8];
+} remote_q1_demo_seed;
 typedef struct remote_q1_client {
     char *name, *social, *player_info, *userinfo;
     int32_t frags, ping;
@@ -78,6 +84,11 @@ struct frontend_remote_q1 {
     qa_vec3 qw_intermission_origin, qw_intermission_angles;
     remote_q1_pending *qw_pending;
     size_t qw_pending_count, qw_pending_capacity, qw_pending_cursor;
+    remote_q1_demo_seed *demo_seed, *demo_seed_last;
+    size_t demo_seed_bytes;
+    frontend_demo_sink demo_sink;
+    uint64_t demo_record_start;
+    bool demo_seed_complete;
 };
 bool remote_q1_fail(qa_error *, qa_status, const char *);
 bool remote_q1_live(const frontend_remote_q1 *, qa_error *);
@@ -98,5 +109,7 @@ bool remote_q1_model_read(frontend_remote_q1 *, const frontend_remote_q1_entity_
 bool remote_q1_effects_service(frontend_remote_q1 *, const qa_nq_message *, qa_error *);
 bool remote_q1_effects_clear(frontend_remote_q1 *, qa_error *);
 bool remote_q1_effects_draw(frontend_remote_q1 *, const qa_scene_view *, const qa_scene_world_input *, qa_error *);
+void remote_q1_demo_clear(frontend_remote_q1 *);
+bool remote_q1_demo_batch(frontend_remote_q1 *, qa_bytes, qa_bytes, uint32_t, uint32_t, uint64_t, qa_error *);
 bool remote_q1_effects_scene(frontend_remote_q1 *, double, const qa_scene_light **, size_t *, qa_error *);
 #endif

@@ -33,7 +33,12 @@ static inline bool frontend_profiler_end(qa_profiler *profiler, bool ok, qa_erro
     return ok && retired;
 }
 
-enum { FRONTEND_HOME = 1, FRONTEND_LIBRARY, FRONTEND_MODS, FRONTEND_SETTINGS, FRONTEND_RANKINGS, FRONTEND_ASSISTANCE, FRONTEND_BINDINGS, FRONTEND_PLAYER_SOURCES };
+enum { FRONTEND_HOME = 1, FRONTEND_LIBRARY, FRONTEND_MODS, FRONTEND_SETTINGS,
+    FRONTEND_RANKINGS, FRONTEND_ASSISTANCE, FRONTEND_BINDINGS, FRONTEND_PLAYER_SOURCES,
+    FRONTEND_OPTIONS = 210, FRONTEND_CONTENT_LIBRARY, FRONTEND_DISPLAY, FRONTEND_SOUND,
+    FRONTEND_CONTROLS, FRONTEND_ALL_OPTIONS, FRONTEND_GRAPHICS, FRONTEND_NETWORK_OPTIONS,
+    FRONTEND_LANGUAGE, FRONTEND_BINDINGS_CONFLICT, FRONTEND_BINDINGS_RESET, FRONTEND_LOAD,
+    FRONTEND_SAVE, FRONTEND_SAVE_NAME, FRONTEND_SAVE_OVERWRITE };
 typedef struct qa_frontend_tools qa_frontend_tools;
 typedef struct qa_frontend_network qa_frontend_network;
 bool frontend_network_content_visit(const qa_frontend *,const qa_application *,const qa_application_content_visitor *,qa_error *);
@@ -56,6 +61,9 @@ typedef struct frontend_resource_inventory frontend_resource_inventory;
 typedef struct frontend_save_commands frontend_save_commands;
 typedef struct frontend_campaign frontend_campaign;
 typedef struct frontend_ui_features frontend_ui_features;
+typedef struct frontend_settings_menu frontend_settings_menu;
+typedef struct frontend_save_menu frontend_save_menu;
+typedef struct frontend_content_library_menu frontend_content_library_menu;
 typedef struct frontend_keys frontend_keys;
 typedef struct frontend_restart frontend_restart;
 typedef struct frontend_input_settings frontend_input_settings;
@@ -99,6 +107,11 @@ typedef struct frontend_seat {
     char *wheel_labels;
     size_t wheel_label_capacity;
     qa_ui_library *library;
+    struct frontend_startup_selection *startup_selection;
+    struct frontend_startup_arena *startup_arena;
+    struct frontend_host_menu *host_menu;
+    char *server_profile_path;
+    struct frontend_content_library_services *library_services;
     qa_ui_mods *mods;
     struct frontend_startup_server_browser *server_browser;
     struct frontend_startup_rotation *rotation_menu;
@@ -106,26 +119,35 @@ typedef struct frontend_seat {
     struct frontend_source_prompt *source_prompt;
     qa_ui_rankings *rankings;
     qa_ui_llm *assistance;
+    frontend_save_menu *save_menu;
+    frontend_content_library_menu *content_library;
+    frontend_settings_menu *settings_menu;
     char *clipboard;
     qa_font_selection fonts;
     qa_input_command_builder builder;
     qa_actor_id actor;
     uint64_t sequence;
-    qa_ui_control controls[24];
+    qa_ui_control controls[96];
     qa_ui_row *binding_rows;
     char *binding_labels, *binding_command;
     size_t binding_capacity, binding_label_capacity, selected_binding;
     qa_physical_input pending_binding;
     bool binding_conflict;
+    char binding_query[321];
+    char *binding_selected;
+    bool binding_reassign;
+    qa_physical_input binding_previous;
     char binding_status[256];
-    qa_ui_row *settings_rows;
-    size_t settings_capacity, selected_setting;
+    qa_display_backend menu_renderer;
+    char menu_width[5], menu_height[5];
+    bool menu_display_initialized;
+    uint32_t menu_controller_seat;
+    size_t selected_setting;
     const char **player_source_titles;
     qa_product_id *player_source_products;
     size_t player_source_capacity, player_source_count;
     char player_source_labels[QA_INPUT_LOCAL_SEATS][3][32];
     char setting_value[1024];
-    uint64_t settings_revision;
     qa_actor_id q2_actor;
     qa_q2_player_view q2_view;
     qa_hud_value q2_vitals[3];
@@ -190,6 +212,9 @@ struct qa_frontend {
     frontend_keys *keys;
     frontend_restart *restart;
     frontend_input_settings *input_settings;
+    struct frontend_settings_devices *settings_devices;
+    struct frontend_startup_launch *startup_launch;
+    struct frontend_demo_dispatch *demos;
     frontend_input_shutdown *input_shutdown;
     frontend_shutdown *shutdown;
     struct frontend_constructor *constructor;
@@ -233,6 +258,7 @@ struct qa_frontend {
     char *default_user_root;
     qa_scene_resources *ui_images, *images;
     qa_scene_image *console_background;
+    qa_ui_art menu_art;
     qa_font_library *fonts;
     const qa_font *classic, *primary;
     qa_material_order *order;
@@ -262,6 +288,8 @@ bool frontend_clipboard_write(qa_frontend *, const char *, qa_error *);
 bool frontend_tools_create_diagnostics(qa_frontend *, qa_vfs *, qa_error *);
 bool frontend_protocol(const char *, qa_net_protocol_id *, qa_error *);
 bool frontend_launch(qa_frontend *, qa_error *);
+bool frontend_launch_overlay(qa_launch_draft *, const char *, uint64_t, const char *,
+    qa_launch_scope, qa_error *);
 bool frontend_player_source_select(qa_frontend *, uint32_t physical_seat,
     qa_launch_role, const qa_product *, qa_error *);
 bool frontend_player_sources_drain(qa_frontend *, qa_error *);
@@ -280,6 +308,8 @@ bool frontend_source_remap(qa_frontend *, const char *, const char *, float, qa_
 bool frontend_visuals_remap(qa_frontend *, const char *, const char *, float, qa_error *);
 bool frontend_resources(qa_frontend *, qa_error *);
 bool frontend_seats_create(qa_frontend *, qa_error *);
+bool frontend_seats_create_range(qa_frontend *, unsigned first, qa_error *);
+bool frontend_seats_destroy_range(qa_frontend *, unsigned first, unsigned last, qa_error *);
 /* Early stable input/console bindings precede provider factories. */
 bool frontend_seats_prepare_restored(qa_frontend *, qa_error *);
 /* Late completion requires restored fonts/images and exact mods presence. */

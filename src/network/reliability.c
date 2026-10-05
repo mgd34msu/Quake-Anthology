@@ -124,6 +124,14 @@ bool qa_net_toggle_advance(qa_net_toggle *channel, uint32_t sequence, qa_error *
     channel->outgoing = sequence;
     return true;
 }
+bool qa_net_toggle_demo_sequences(qa_net_toggle *channel, uint32_t outgoing,
+    uint32_t incoming, qa_error *error)
+{
+    if (!channel || qa_net_toggle_pending(channel) || outgoing > INT32_MAX || incoming > INT32_MAX)
+        return invalid(error, "Demo sequences require an empty native reliable channel");
+    channel->outgoing = outgoing; channel->incoming = incoming;
+    return true;
+}
 
 struct qa_net_stopwait {
     uint8_t *send, *receive;

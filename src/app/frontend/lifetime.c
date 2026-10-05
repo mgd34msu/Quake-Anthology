@@ -21,6 +21,11 @@
 #include "network_local_groups.h"
 #include "network_player_drop.h"
 #include "internal.h"
+#include "settings_devices.h"
+#include "startup_menus.h"
+#include "demo_dispatch.h"
+#include "content_library_services.h"
+#include "menu_art.h"
 #include "source_restore.h"
 #include "view_bindings.h"
 #include "view_settings.h"
@@ -488,8 +493,10 @@ static bool outputs_create(qa_frontend *frontend,frontend_shared_settings *prepa
         qa_controller_selection controllers[4] = {0};
         for (unsigned i = 0; i < options->seats; ++i) seats[i] = frontend->seats[i].input;
         double now=(double)frontend->wall_time_ns/1000000;
-        bool routed=prepared?qa_input_platform_routes_prepared(frontend->input,seats,controllers,0,now,edit,&input_settings,error):
-            qa_input_platform_routes(frontend->input,seats,controllers,0,now,error);
+        int keyboard = 0;
+        if (!frontend_settings_keyboard_initial(frontend, &keyboard, error)) return false;
+        bool routed=prepared?qa_input_platform_routes_prepared(frontend->input,seats,controllers,keyboard,now,edit,&input_settings,error):
+            qa_input_platform_routes(frontend->input,seats,controllers,keyboard,now,error);
         bool window=routed && (prepared?qa_input_platform_window_prepared(frontend->input,frontend->display,now,edit,&input_settings,error):
             qa_input_platform_window(frontend->input,frontend->display,now,error));
         if (!window) return false;
@@ -512,6 +519,7 @@ static bool outputs_create(qa_frontend *frontend,frontend_shared_settings *prepa
         !frontend_tools_create(frontend, error) || !frontend_save_commands_create(frontend,error) ||
         !frontend_input_profile_bind(frontend,error) ||
         !frontend_tools_sync(frontend, error)) return false;
+    if (!frontend_startup_menus_bind(frontend,error)) return false;
     if (!frontend_restart_binding_create(frontend,error)) return false;
     if (!options->dedicated) for (unsigned i = 0; i < options->seats; ++i)
         if (!qa_ui_llm_create(frontend->seats[i].ui, frontend_tools_llm(frontend),
@@ -565,7 +573,7 @@ bool qa_frontend_create(const qa_frontend_options *options, qa_frontend **out, q
     qa_frontend *frontend = calloc(1, sizeof(*frontend));
     if (!frontend) return frontend_fail(error, QA_ERROR_MEMORY, "allocating frontend owner");
     frontend->options = *options;
-    frontend->seats = calloc(options->seats, sizeof(*frontend->seats));
+    frontend->seats = calloc(QA_INPUT_LOCAL_SEATS, sizeof(*frontend->seats));
     if (!frontend->seats) {
         free(frontend); return frontend_fail(error, QA_ERROR_MEMORY, "allocating stable local seat contexts");
     }
@@ -679,6 +687,7 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
             !frontend_restart_binding_destroy(frontend,error)) return false;
     }
     if (!shutdown_admitted(frontend,error)) return false;
+    if (!frontend->input_settings && !frontend_settings_devices_destroy(frontend,error)) return false;
     frontend_player_sources_discard(frontend);
     if (!qa_save_image_destroy_checked(&frontend->save_image_pending,error)) return false;
     if (!qa_native_resource_inventory_release(&frontend->native_resource_inventory_pending,error)) return false;
@@ -689,6 +698,11 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
         frontend->archive_saved=true;
     }
     if (!shutdown_inputs(frontend,error)) return false;
+    if (!frontend_settings_devices_destroy(frontend,error)) return false;
+    frontend_startup_launch_discard(frontend);
+    if (frontend->seats) for (unsigned i = 0; i < QA_INPUT_LOCAL_SEATS; ++i)
+        if (!frontend_startup_menus_destroy(&frontend->seats[i],error)) return false;
+    if (!frontend_demo_dispatch_destroy(&frontend->demos,error)) return false;
     if (!frontend_restart_binding_destroy(frontend,error)) return false;
     if (frontend->audio && !qa_audio_engine_acoustics_release(frontend->audio,error)) return false;
     if (!frontend_network_close_client(frontend,error) || !frontend_cinematic_destroy(frontend,error) || !frontend_save_commands_destroy(frontend,error) ||
@@ -767,6 +781,7 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     qa_vfs_destroy(frontend->mounts);
     qa_font_library_destroy(frontend->fonts);
     qa_scene_image_release(frontend->console_background);
+    frontend_menu_art_destroy(frontend);
     qa_scene_resources_destroy(frontend->ui_images);
     qa_vfs_destroy(frontend->ui_mounts);
     qa_material_order_destroy(frontend->order);

@@ -14,6 +14,7 @@
 #include "remote_q2_material_movies_bridge.h"
 #include "qa/media_library_save.h"
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -326,8 +327,8 @@ static bool hook_frame(void *context, qa_net_client_id id, const qa_q2_wire_fram
     bool ok = remote_q2_player_fog_receive(row, error);
     if (ok && row->options.entities_changed) ok = row->options.entities_changed(row->options.context,
         &row->options.domain, error);
-    if (ok) remote_q2_prediction_receive(row);
-    if (ok) ok = remote_q2_prediction_replay(row, error);
+    if (ok && !row->options.demo) remote_q2_prediction_receive(row);
+    if (ok && !row->options.demo) ok = remote_q2_prediction_replay(row, error);
     if (ok) ok = remote_q2_effects_frame(row, error);
     --row->busy;
     return ok && remote_q2_live(row, error);
@@ -340,7 +341,7 @@ static bool hook_records(void *context, qa_net_client_id id, const qa_q2_server_
     ++row->busy; bool ok = remote_q2_records(row, records, count, error);
     if (ok) ok = row->options.records(row->options.context, &row->options.domain, records, count, error);
     --row->busy;
-    return ok && remote_q2_prediction_replay(row, error) && remote_q2_live(row, error);
+    return ok && (row->options.demo || remote_q2_prediction_replay(row, error)) && remote_q2_live(row, error);
 }
 static bool hook_download(void *context, qa_net_client_id id, const qa_q2_server_event *event,
     bool *complete, qa_error *error)
@@ -654,3 +655,75 @@ bool frontend_remote_q2_rebind_ready(const frontend_remote_q2 *row, qa_frontend 
 }
 void frontend_remote_q2_rebind(frontend_remote_q2 *row, qa_frontend *f, const frontend_remote_q2_options *options)
 { if (row && f && options) { row->frontend = f; row->options = *options; } }
+
+static bool demo_append(qa_net_writer *writer, const frontend_demo_sink *sink, qa_error *error)
+{
+    frontend_demo_packet packet = {.format = FRONTEND_DEMO_Q2,
+        .value.message = {writer->data, qa_net_writer_size(writer)}};
+    return !writer->failed && sink->append(sink->owner, &packet, error);
+}
+bool frontend_remote_q2_demo_seed(qa_q2_codec *codec, const qa_q2_game_state *state,
+    const qa_q2_wire_frame *frame, const frontend_demo_sink *sink, qa_error *error)
+{
+    if (!codec || !state || !sink || !sink->append)
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 demo seed lacks its actual wire state");
+    uint8_t *bytes = malloc(65535);
+    if (!bytes) return remote_q2_fail(error, QA_ERROR_MEMORY, "Allocating Q2 demo signon packet");
+    qa_net_writer writer;
+    qa_net_writer_init(&writer, bytes, 65535, error);
+    qa_q2_serverdata data = state->data;
+    data.attractloop = true;
+    bool ok = qa_q2_write_serverdata(codec, &writer, &data) && demo_append(&writer, sink, error);
+    for (size_t i = 0; ok && i < state->config_count; ++i) {
+        qa_net_writer_init(&writer, bytes, 65535, error);
+        qa_q2_server_event event = {.kind = QA_Q2_SVC_CONFIGSTRING, .data.config = {state->configs[i].index, state->configs[i].value}};
+        ok = qa_q2_server_event_write(codec, &writer, &event) && demo_append(&writer, sink, error);
+    }
+    for (size_t i = 0; ok && i < state->baselines.count; ++i) {
+        qa_net_writer_init(&writer, bytes, 65535, error);
+        qa_q2_server_event event = {.kind = QA_Q2_SVC_BASELINE, .data.baseline = state->baselines.data[i]};
+        ok = qa_q2_server_event_write(codec, &writer, &event) && demo_append(&writer, sink, error);
+    }
+    if (ok) {
+        char command[64]; snprintf(command, sizeof(command), "precache %d\n", data.servercount);
+        qa_q2_server_event event = {.kind = QA_Q2_SVC_COMMAND, .data.print.text = command};
+        qa_net_writer_init(&writer, bytes, 65535, error);
+        ok = qa_q2_server_event_write(codec, &writer, &event) && demo_append(&writer, sink, error);
+    }
+    if (ok && frame && frame->valid) {
+        qa_net_writer_init(&writer, bytes, 65535, error);
+        ok = qa_q2_frame_write(codec, &writer, frame, NULL, state->baselines, 0) && demo_append(&writer, sink, error);
+    }
+    free(bytes);
+    return ok;
+}
+bool frontend_remote_q2_demo_record_seed(frontend_remote_q2 *row,
+    const frontend_demo_sink *sink, qa_error *error)
+{
+    if (!remote_q2_live(row, error) || row->busy || !row->media_ready || !row->frame.valid)
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 recording requires its admitted frame and media");
+    qa_q2_config_entry *configs = malloc(row->layout.max_configs * sizeof(*configs));
+    if (!configs) return remote_q2_fail(error, QA_ERROR_MEMORY, "Collecting Q2 demo configstrings");
+    size_t count = 0;
+    for (size_t i = 0; i < row->layout.max_configs; ++i)
+        if (row->configs[i]) configs[count++] = (qa_q2_config_entry){(uint16_t)i, row->configs[i]};
+    qa_q2_game_state state = {.data = row->data, .configs = configs, .config_count = count,
+        .baselines = {row->baselines, row->baseline_count}};
+    const qa_q2_messages *messages = qa_network_q2_client_messages(row->options.domain.runtime, row->options.domain.client);
+    qa_q2_codec codec;
+    bool ok = messages && qa_q2_codec_init(&codec, row->options.domain.protocol, error);
+    if (ok) {
+        /* Preserve the actual negotiated serverdata/codec flags. */
+        codec.wire_flags = row->data.wire_flags;
+        ok = frontend_remote_q2_demo_seed(&codec, &state, NULL, sink, error);
+    }
+    free(configs);
+    return ok;
+}
+bool frontend_remote_q2_demo_clock(frontend_remote_q2 *row, double milliseconds, qa_error *error)
+{
+    if (!row || !row->options.demo || !isfinite(milliseconds) || !remote_q2_live(row, error) || row->busy)
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 demo clock requires its real CLIENT");
+    row->demo_ms = milliseconds;
+    return true;
+}

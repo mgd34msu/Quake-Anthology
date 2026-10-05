@@ -8,6 +8,7 @@
 #include "config_weapon_defaults.h"
 #include "remote_config.h"
 #include "neutral_config.h"
+#include "startup_menus.h"
 #include "legacy_render_policy.h"
 #include "qa/source_frame_time.h"
 #include "qa/application_players.h"
@@ -794,6 +795,40 @@ frontend_config_source *frontend_config_store_named_source(const frontend_config
         if (selected && name && !strcmp(selected->selection.instance,name) && !source->imported) return source;
     }
     return NULL;
+}
+static bool source_archive_load(frontend_config_files *files,const qa_product *product,
+    const qa_launch_provider *selected,qa_console_dialect dialect,qa_cvar_archive *out,qa_error *error)
+{
+    const char *owner[3]={"source",product->key,selected->implementation};
+    return qa_settings_load_cvars(frontend_config_files_store(files,false),owner,3,dialect,out,error);
+}
+bool frontend_config_store_draft_archive(frontend_config_store *manager,const qa_launch_draft *draft,
+    qa_cvar_archive *out,qa_error *error)
+{
+    const qa_launch_choices *choices=qa_launch_draft_choices(draft);
+    const qa_launch_binding *binding=choices?qa_launch_binding_for(choices,
+        (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,""):NULL;
+    const qa_launch_provider *selected=NULL;
+    for (size_t i=0;binding && i<choices->provider_count;++i)
+        if (!strcmp(choices->providers[i].instance,binding->instance)) {
+            selected=choices->providers+i; break;
+        }
+    qa_catalog *catalog=qa_launch_draft_catalog(draft);
+    const qa_product *product=selected?qa_catalog_product(catalog,selected->product):NULL;
+    if (!manager || !manager->frontend || !product || !out || out->entries || out->count ||
+        selected->clock.kind>QA_CLOCK_Q3)
+        return fail(error,QA_ERROR_ARGUMENT,"Startup archive requires its selected Source profile and empty output");
+    qa_frontend *f=manager->frontend;
+    frontend_config_files *files=frontend_config_files_create(catalog,product->id,
+        frontend_global_settings_storage_user_store(f->global_settings_storage),
+        frontend_global_settings_storage_device_store(f->global_settings_storage),error);
+    if (!files) return false;
+    bool ok=source_archive_load(files,product,selected,(qa_console_dialect)selected->clock.kind,out,error);
+    qa_error first=error?*error:(qa_error){0},cleanup={0};
+    if (!frontend_config_files_destroy(files,&cleanup)) { if (ok && error) *error=cleanup; ok=false; }
+    else if (!ok && error) *error=first;
+    if (!ok) qa_cvar_archive_free(out);
+    return ok;
 }
 bool frontend_config_source_clone_bindings(const frontend_config_source *source,uint32_t logical,
     frontend_authored_bindings **out,qa_error *error)
@@ -1724,7 +1759,11 @@ static bool archive(void *context,qa_error *error)
 static bool launch(void *context,qa_error *error)
 {
     frontend_config_source *source=context;
-    (void)error;
+    qa_application_startup_source tuple={instance(source),source->scope,source->console,source->cvars,
+        source->command,source->declaration_owner};
+    qa_cvars *client=source->seat_count?source->seats[source->seat_index].cvars:NULL;
+    if (!frontend_startup_launch_settings(source->manager->frontend,source->candidate,&tuple,
+        client,source->seat_index==0,error)) return false;
     source->configured=true;
     return true;
 }
@@ -2624,10 +2663,9 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
     if (ok) source->fallback=source->movement_dialect==command->dialect?source->movement:registry(source,command->dialect,error);
     ok=ok && source->movement && source->fallback;
     qa_settings_store store=source->files?frontend_config_files_store(source->files,false):(qa_settings_store){0};
-    const char *source_owner[3]={"source",product?product->key:NULL,selected->selection.implementation};
     const char *dialects[]={"q1-netquake","q1-quakeworld","q2-classic","q2-rerelease","q3"};
     if (ok && source->primary)
-        ok=qa_settings_load_cvars(store,source_owner,3,command->dialect,&source->source_archive,error);
+        ok=source_archive_load(source->files,product,&selected->selection,command->dialect,&source->source_archive,error);
     if (ok && source->primary && !f->options.dedicated) {
         const char *movement_owner[2]={"movement",dialects[source->movement_dialect]};
         const char *fallback_owner[2]={"fallback",dialects[command->dialect]};

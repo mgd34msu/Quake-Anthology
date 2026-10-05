@@ -1,4 +1,5 @@
 #include "image_inventory.h"
+#include "menu_art.h"
 #include "component_scene.h"
 #include "equipment_media.h"
 #include "save_private.h"
@@ -167,7 +168,7 @@ bool frontend_images_restore(qa_frontend *f, qa_bytes bytes, qa_scene_image_set 
         if (io.offset > bytes.size || size > bytes.size - io.offset) ok = false;
         else { images = (qa_bytes){bytes.data + io.offset, size}; io.offset += size; }
     }
-    ok = ok && qa_source_save_finish(&io, NULL) && (inventory.count ?
+    ok = ok && qa_source_save_finish(&io, NULL) && frontend_menu_art_bind(f, error) && (inventory.count ?
         qa_scene_images_restore(inventory.owners, inventory.count, images, out, error) : images.size == 0);
     qa_source_save_dispose(&io); dispose(&inventory);
     if (!ok && error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "saved image topology differs from prepared actual owners");

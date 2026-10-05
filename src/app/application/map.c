@@ -1532,7 +1532,7 @@ static application_provider *active_provider_named(qa_application *application,
     return NULL;
 }
 
-static bool q2_monster_route(application_provider *map_provider,
+static bool monster_route(application_provider *map_provider,
                              const qa_launch_choices *choices,
                              const char *authored,
                              application_provider **provider_out,
@@ -1542,10 +1542,14 @@ static bool q2_monster_route(application_provider *map_provider,
     *provider_out = map_provider;
     *classname_out = authored;
     *monster_out = strncmp(authored, "monster_", 8) == 0;
+    const qa_launch_monster *selection = NULL, *fallback = NULL;
     for (size_t index = 0; index < choices->monster_count; ++index) {
-        const qa_launch_monster *selection = &choices->monsters[index];
-        if (strcmp(selection->authored_classname, authored) != 0)
-            continue;
+        const qa_launch_monster *candidate = &choices->monsters[index];
+        if (!*candidate->authored_classname) fallback = candidate;
+        if (!strcmp(candidate->authored_classname, authored)) { selection = candidate; break; }
+    }
+    if (!selection && *monster_out) selection = fallback;
+    if (selection && !selection->map_defined) {
         application_provider *selected = active_provider_named(
             map_provider->application, selection->instance);
         if (selected == NULL)
@@ -1554,11 +1558,19 @@ static bool q2_monster_route(application_provider *map_provider,
         *provider_out = selected;
         *classname_out = selection->classname;
         *monster_out = true;
-        break;
     }
     if (*classname_out == NULL || (*classname_out)[0] == '\0')
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "selected monster classname is empty");
+    return true;
+}
+
+static bool q2_monster_route(application_provider *map_provider,
+    const qa_launch_choices *choices, const char *authored,
+    application_provider **provider_out, const char **classname_out,
+    bool *monster_out, qa_error *error)
+{
+    if (!monster_route(map_provider, choices, authored, provider_out, classname_out, monster_out, error)) return false;
     if (*monster_out && (*provider_out)->kind != APPLICATION_PROVIDER_Q2)
         return application_fail(error, QA_ERROR_UNSUPPORTED,
                                 "selected monster provider has no Q2 authored adapter");

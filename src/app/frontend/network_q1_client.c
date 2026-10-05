@@ -36,6 +36,11 @@ struct frontend_network_q1_client {
     size_t userinfo_next;
     uint8_t signon_color;
     char reason[1024];
+    frontend_demo_packet demo_pending;
+    double demo_seconds;
+    int32_t demo_forced_track;
+    bool demo_has_pending, demo_clock_started;
+    frontend_demo_sink demo_follow;
 };
 static bool retain_policy(frontend_network_q1_client *o,qa_error *error)
 {
@@ -424,10 +429,18 @@ static bool disconnected(void *context,const qa_application_client_source *sourc
     print(o,&source->context.command,reason); snprintf(o->reason,sizeof(o->reason),"%s",reason);
     o->retired=true; return true;
 }
+static bool demo_sample_seconds(void *context, const qa_application_client_source *source, double *out, qa_error *error)
+{
+    frontend_network_q1_client *o = context; (void)error;
+    if (!out || !o->options.demo_playback || !connection(o, source)) return false;
+    *out = o->demo_seconds; return true;
+}
 static frontend_remote_q1_source_options receiver_options(frontend_network_q1_client *o)
 { return (frontend_remote_q1_source_options){.physical=o->physical,.protocol=o->options.protocol,.context=o,
     .load_content=load_content,.service=received,.disconnected=disconnected,
-    .skin_bindings=qa_q1_is_qw(o->options.protocol)?&o->skins:NULL}; }
+    .skin_bindings=qa_q1_is_qw(o->options.protocol)?&o->skins:NULL,
+    .sample_seconds=o->options.demo_playback ? demo_sample_seconds : NULL,
+    .demo_forced_track=o->demo_forced_track}; }
 static bool current_userinfo(frontend_network_q1_client *o,
     const frontend_client_source_view *physical,qa_buffer *out,qa_error *error)
 {
@@ -474,8 +487,9 @@ static bool complete_configuration(frontend_network_q1_client *o,qa_error *error
         }
         qa_buffer_free(&info); if(!ok) return false;
     } else if(!qa_nq_connect_create(&o->nq,error)) return false;
-    o->attachment=(qa_net_connect){.attachment=QA_NET_REMOTE,.endpoint=o->options.remote,
+    o->attachment=(qa_net_connect){.attachment=o->options.demo_playback ? QA_NET_LOCAL_SEAT : QA_NET_REMOTE,.endpoint=o->options.remote,
         .protocol=o->options.protocol,.seats=&o->binding,.seat_count=1,.composition=physical.source.descriptor->identity};
+    if (o->options.demo_playback) o->attachment.endpoint = (qa_net_address){.kind=QA_NET_LOOPBACK};
     o->configured=true; return true;
 }
 bool frontend_network_q1_client_create(const frontend_network_q1_client_options *options,
@@ -494,7 +508,7 @@ bool frontend_network_q1_client_create(const frontend_network_q1_client_options 
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT requires its genuine selected execution profile");
     frontend_network_q1_client *o=calloc(1,sizeof(*o));
     if(!o) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining Q1 CLIENT factory");
-    *out=o; o->options=*options;
+    *out=o; o->options=*options; o->demo_forced_track=-1;
     if(!retain_policy(o,error)) return false;
     o->input.kind=qa_q1_is_qw(options->protocol)?QA_MOVEMENT_QUAKEWORLD:QA_MOVEMENT_NETQUAKE;
     o->binding=(qa_net_seat_binding){{QA_NETWORK_COMMAND_OWNER,options->physical_seat},0};
@@ -562,7 +576,8 @@ bool frontend_network_q1_client_admit(frontend_network_q1_client *o,const qa_net
     if(!recognized) return false;
     *recognized=o && request && same_protocol(request->protocol,o->options.protocol);
     if(!*recognized) return true;
-    return (parent(o) && o->admitting && request->attachment==QA_NET_REMOTE && request->seats &&
+    return (parent(o) && o->admitting &&
+        request->attachment==(o->options.demo_playback ? QA_NET_LOCAL_SEAT : QA_NET_REMOTE) && request->seats &&
         request->seat_count==1 && request->seats[0].seat.owner==o->binding.seat.owner &&
         request->seats[0].seat.index==o->binding.seat.index && !request->seats[0].remote_index &&
         qa_net_address_equal(&request->endpoint,&o->attachment.endpoint,true) &&
@@ -571,7 +586,7 @@ bool frontend_network_q1_client_admit(frontend_network_q1_client *o,const qa_net
 }
 static bool attach(frontend_network_q1_client *o,qa_error *error)
 {
-    if(o->client.owner || handshake(o).phase!=QA_Q1_CONNECT_CONNECTED ||
+    if(o->client.owner || (!o->options.demo_playback && handshake(o).phase!=QA_Q1_CONNECT_CONNECTED) ||
         !qa_network_callbacks_idle(o->options.runtime)) return false;
     frontend_remote_q1_source_view view; qa_network_q1_client_hooks hooks;
     if(!frontend_remote_q1_source_read(o->source,&view,error) ||
@@ -591,16 +606,24 @@ static bool attach(frontend_network_q1_client *o,qa_error *error)
         policy.nq_identity.name=o->signon_name;
         policy.nq_identity.spawn_parameters=o->spawn_parameters;
         o->signon_color=(uint8_t)((uint32_t)color->integer&255u); policy.nq_identity.color=o->signon_color;
-        o->attachment.endpoint.port=handshake(o).port;
+        if (!o->options.demo_playback) o->attachment.endpoint.port=handshake(o).port;
     }
     policy.qport=o->options.qport;
     o->admitting=true;
-    bool ok=qa_network_attach_q1_client(o->options.runtime,&o->attachment,&policy,&hooks,o->now_ns,&o->client,error);
+    bool ok=o->options.demo_playback ?
+        qa_network_attach_q1_demo(o->options.runtime,&o->attachment,&policy,&hooks,0,&o->client,error) :
+        qa_network_attach_q1_client(o->options.runtime,&o->attachment,&policy,&hooks,o->now_ns,&o->client,error);
     o->admitting=false;
     if(!ok) return false;
     o->epoch=qa_network_epoch(o->options.runtime,o->client);
-    if(!o->epoch || !frontend_remote_q1_source_bind(o->source,o->client,o->binding.seat,o->epoch,error) ||
-        !qa_network_q1_client_start(o->options.runtime,o->client,error)) return false;
+    if(!o->epoch || !frontend_remote_q1_source_bind(o->source,o->client,o->binding.seat,o->epoch,error)) return false;
+    if (o->demo_follow.append) {
+        frontend_remote_q1_source_view source; bool followed = false;
+        if (!frontend_remote_q1_source_read(o->source, &source, error) ||
+            !frontend_remote_q1_demo_attach(source.receiver, &o->demo_follow, &followed, error) || !followed) return false;
+        o->demo_follow = (frontend_demo_sink){0};
+    }
+    if (!qa_network_q1_client_start(o->options.runtime,o->client,error)) return false;
     if(o->pending_allskins) {
         frontend_remote_q1_source_view bound; bool ready=false;
         if(!frontend_remote_q1_source_read(o->source,&bound,error) ||
@@ -645,7 +668,7 @@ static bool tick(frontend_network_q1_client *o,uint64_t now,qa_error *error)
     }
     if(!o->configured && !complete_configuration(o,error)) return false;
     if(!o->configured) return true;
-    if(!userinfo_sync(o,error)) return false;
+    if(!o->options.demo_playback && !userinfo_sync(o,error)) return false;
     if(o->client.owner) {
         size_t executed=0;
         return qa_network_q1_client_continue(o->options.runtime,o->client,error) &&
@@ -653,7 +676,7 @@ static bool tick(frontend_network_q1_client *o,uint64_t now,qa_error *error)
     }
     size_t executed=0;
     if(!frontend_client_source_drain(o->physical,1024,&executed,error)) return false;
-    if(handshake(o).phase==QA_Q1_CONNECT_CONNECTED) return attach(o,error);
+    if(o->options.demo_playback || handshake(o).phase==QA_Q1_CONNECT_CONNECTED) return attach(o,error);
     uint8_t data[65535]; qa_net_writer writer; qa_net_writer_init(&writer,data,sizeof(data),error);
     bool present=false;
     bool ok=o->qw?qa_qw_connect_next(o->qw,now,&present,&writer,error):qa_nq_connect_next(o->nq,now,&present,&writer,error);
@@ -694,7 +717,7 @@ bool frontend_network_q1_client_idle(const frontend_network_q1_client *o)
 bool frontend_network_q1_client_destroy(frontend_network_q1_client **owned,qa_error *error)
 {
     frontend_network_q1_client *o=owned?*owned:NULL; if(!o) return true;
-    if(o->options.frontend->capture || o->options.frontend->resource_inventory ||
+    if(o->demo_follow.append || o->options.frontend->capture || o->options.frontend->resource_inventory ||
         !frontend_network_q1_client_idle(o) || !qa_network_callbacks_idle(o->options.runtime)) return false;
     if(o->client.owner && qa_net_connections_get(qa_network_connections(o->options.runtime),o->client)) {
         if(o->importing) {
@@ -720,6 +743,161 @@ bool frontend_network_q1_client_destroy(frontend_network_q1_client **owned,qa_er
 bool frontend_network_q1_client_source_read(const frontend_network_q1_client *o,
     frontend_remote_q1_source_view *out,qa_error *error)
 { return parent(o) && o->source && frontend_remote_q1_source_read(o->source,out,error); }
+static bool demo_record_current(const void *context)
+{
+    const frontend_network_q1_client *o = context;
+    return parent(o) && o->configured && !o->retired && !o->options.demo_playback && o->source && !o->importing;
+}
+static bool demo_seed(void *context, const frontend_demo_sink *sink, qa_error *error)
+{
+    frontend_network_q1_client *o = context; frontend_remote_q1_source_view source;
+    return demo_record_current(o) && frontend_network_q1_client_source_read(o, &source, error) &&
+        frontend_remote_q1_demo_seed(source.receiver, sink, o->options.policy.nq_options, error);
+}
+static bool demo_attach(void *context, const frontend_demo_sink *sink, bool *attached, qa_error *error)
+{
+    frontend_network_q1_client *o = context; frontend_remote_q1_source_view source;
+    return demo_record_current(o) && frontend_network_q1_client_source_read(o, &source, error) &&
+        frontend_remote_q1_demo_attach(source.receiver, sink, attached, error);
+}
+static bool demo_detach(void *context, const frontend_demo_sink *sink, qa_error *error)
+{
+    return frontend_network_q1_client_demo_unfollow(context, sink, error);
+}
+bool frontend_network_q1_client_demo_follow(frontend_network_q1_client *o,
+    const frontend_demo_sink *sink, bool *attached, qa_error *error)
+{
+    if (!o || !sink || !sink->owner || !sink->append || !attached || !parent(o) ||
+        o->retired || o->options.demo_playback || o->importing || !frontend_network_q1_client_idle(o) ||
+        !qa_network_callbacks_idle(o->options.runtime) || o->demo_follow.append) return false;
+    if (o->client.owner) return demo_attach(o, sink, attached, error);
+    frontend_client_source_view physical;
+    if (!frontend_client_source_metadata_read(o->physical, &physical, error) ||
+        physical.source.context.physical_seat != o->options.physical_seat) return false;
+    o->demo_follow = *sink; *attached = true; return true;
+}
+bool frontend_network_q1_client_demo_unfollow(frontend_network_q1_client *o,
+    const frontend_demo_sink *sink, qa_error *error)
+{
+    if (!o || !sink || o->closing || !frontend_network_q1_client_idle(o)) return false;
+    if (o->demo_follow.append) {
+        if (o->demo_follow.owner != sink->owner || o->demo_follow.append != sink->append)
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Pending QW recorder differs from its actual sink");
+        o->demo_follow = (frontend_demo_sink){0};
+    }
+    if (!o->source) return true;
+    frontend_remote_q1_source_view source;
+    return frontend_remote_q1_source_metadata_read(o->source, &source, error) &&
+        frontend_remote_q1_demo_detach(source.receiver, sink, error);
+}
+static bool demo_record_release(void **owner, qa_error *error)
+{
+    (void)error;
+    if (!owner) return false;
+    *owner = NULL; return true;
+}
+bool frontend_network_q1_client_demo_record(frontend_network_q1_client *o,
+    frontend_demo_record_source *out, qa_error *error)
+{
+    frontend_remote_q1_source_view source;
+    if (!out || !demo_record_current(o) || !frontend_network_q1_client_source_read(o, &source, error)) return false;
+    qa_fs_root *root = qa_catalog_product_write_root(source.domain.catalog, source.domain.product);
+    if (!root) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 recording lacks its actual selected write directory");
+    *out = (frontend_demo_record_source){.owner = o, .format = qa_q1_is_qw(o->options.protocol) ? FRONTEND_DEMO_QW : FRONTEND_DEMO_NQ,
+        .protocol = o->options.protocol, .root = root, .forced_track = -1,
+        .current = demo_record_current, .seed = demo_seed, .attach = demo_attach, .detach = demo_detach,
+        .release = demo_record_release};
+    return true;
+}
+static bool demo_playback_current(const void *context)
+{
+    const frontend_network_q1_client *o = context;
+    return parent(o) && o->options.demo_playback && !o->importing && !o->closing;
+}
+static bool demo_playback_release(void **owner, qa_error *error)
+{
+    frontend_network_q1_client *o = owner ? *owner : NULL;
+    if (!o) return true;
+    if (!frontend_network_q1_client_disconnect(o, "Demo playback completed", error)) return false;
+    *owner = NULL; return true;
+}
+static bool demo_advance(void *context, frontend_demo_reader *reader, uint64_t elapsed,
+    uint64_t frame_number, bool timedemo, frontend_demo_end *end, qa_error *error)
+{
+    frontend_network_q1_client *o = context; (void)frame_number;
+    if (!reader || !end || !demo_playback_current(o) || !frontend_network_q1_client_idle(o) ||
+        !qa_network_callbacks_idle(o->options.runtime)) return false;
+    *end = FRONTEND_DEMO_RUNNING;
+    if (o->retired) { *end = FRONTEND_DEMO_DISCONNECTED; return true; }
+    if (!frontend_network_q1_client_tick(o, o->options.frontend->wall_time_ns, error)) return false;
+    if (!o->client.owner) return true;
+    frontend_remote_q1_source_view source;
+    qa_network_q1_client_state state;
+    if (!frontend_network_q1_client_source_read(o, &source, error) ||
+        !qa_network_q1_client_state_read(o->options.runtime, o->client, &state, error)) return false;
+    if (o->demo_clock_started) o->demo_seconds += (double)elapsed / 1e9;
+    size_t consumed = 0;
+    bool packet_received = false;
+    while (consumed < o->options.policy.service_limit) {
+        if (!o->demo_has_pending) {
+            bool present = false;
+            if (!frontend_demo_read_next(reader, NULL, NULL, &o->demo_pending, &present, end, error)) return false;
+            if (!present) return true;
+            o->demo_has_pending = true;
+        }
+        const frontend_demo_packet *packet = &o->demo_pending;
+        const bool qw = qa_q1_is_qw(o->options.protocol);
+        if (packet->format != (qw ? FRONTEND_DEMO_QW : FRONTEND_DEMO_NQ))
+            return frontend_fail(error, QA_ERROR_FORMAT, "Native Q1 playback record differs from its CLIENT protocol");
+        frontend_remote_q1_view view;
+        if (!frontend_remote_q1_read(source.receiver, &view, error)) return false;
+        if (state.active && !o->demo_clock_started) {
+            o->demo_seconds = qw ? packet->value.qw.seconds : view.seconds;
+            o->demo_clock_started = true;
+        }
+        if (state.active && !timedemo && (qw ? packet->value.qw.seconds > o->demo_seconds : view.seconds > o->demo_seconds)) break;
+        if (state.active && timedemo && packet_received) break;
+        if (!qw) {
+            if (!frontend_remote_q1_demo_angles(source.receiver, packet->value.nq.angles, error) ||
+                !qa_network_q1_demo_packet(o->options.runtime, o->client, packet->value.nq.message,
+                    o->options.frontend->wall_time_ns, error)) return false;
+            packet_received = true;
+        } else {
+            const qa_qw_demo_record *record = &packet->value.qw;
+            if (record->seconds < 0 || (double)record->seconds > (double)UINT64_MAX / 1e9)
+                return frontend_fail(error, QA_ERROR_FORMAT, "QWD time exceeds its CLIENT clock");
+            uint64_t ns = (uint64_t)((double)record->seconds * 1e9);
+            switch (record->kind) {
+            case QA_QW_DEMO_PACKET:
+                if (!qa_network_q1_demo_packet(o->options.runtime, o->client, record->data.packet, ns, error)) return false;
+                packet_received = true;
+                break;
+            case QA_QW_DEMO_SEQUENCES:
+                if (!qa_network_q1_demo_sequences(o->options.runtime, o->client,
+                    record->data.sequences.outgoing, record->data.sequences.incoming, error)) return false;
+                break;
+            case QA_QW_DEMO_COMMAND:
+                if (!frontend_remote_q1_demo_angles(source.receiver, record->data.input.angles, error) ||
+                    !qa_network_q1_demo_command(o->options.runtime, o->client, &record->data.input.command, ns, error)) return false;
+                break;
+            default: return frontend_fail(error, QA_ERROR_FORMAT, "Unknown native QWD record");
+            }
+        }
+        o->demo_has_pending = false; ++consumed;
+        if (o->retired) { *end = FRONTEND_DEMO_DISCONNECTED; return true; }
+        if (!qa_network_q1_client_state_read(o->options.runtime, o->client, &state, error)) return false;
+    }
+    return frontend_remote_q1_sample(source.receiver, o->options.frontend->wall_time_ns, error);
+}
+bool frontend_network_q1_client_demo_playback(frontend_network_q1_client *o,
+    frontend_demo_reader *reader, frontend_demo_playback_source *out, qa_error *error)
+{
+    if (!reader || !out || !demo_playback_current(o) || !frontend_network_q1_client_idle(o) || o->configured)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Demo playback requires its actual pending physical Q1 CLIENT");
+    o->demo_forced_track = frontend_demo_forced_track(reader);
+    *out = (frontend_demo_playback_source){.owner = o, .current = demo_playback_current,
+        .advance = demo_advance, .release = demo_playback_release}; return true;
+}
 bool frontend_network_q1_client_input(frontend_network_q1_client *o,uint32_t physical,
     const qa_seat_input_sample *sample,uint64_t sequence,double source_frame_ms,bool *handled,qa_error *error)
 {
@@ -729,7 +907,7 @@ bool frontend_network_q1_client_input(frontend_network_q1_client *o,uint32_t phy
     qa_frontend *f=o->options.frontend;
     if(o->calls || o->admitting || o->importing || f->capture || f->resource_inventory || f->source_restoring ||
         !qa_network_callbacks_idle(o->options.runtime) || !parent(o)) return false;
-    if(o->retired || !o->source || !o->client.owner || sequence<=o->input_sample) return true;
+    if(o->options.demo_playback || o->retired || !o->source || !o->client.owner || sequence<=o->input_sample) return true;
     qa_network_q1_client_state transport;
     if(!qa_network_q1_client_state_read(o->options.runtime,o->client,&transport,error)) return false;
     if(!transport.active) return true;
@@ -881,6 +1059,8 @@ void frontend_network_q1_client_state_free(frontend_network_q1_client_state *sta
 bool frontend_network_q1_client_capture(frontend_network_q1_client *o,
     const frontend_remote_q1_restore_refs *refs,frontend_network_q1_client_state *out,qa_error *error)
 {
+    if (o && o->options.demo_playback)
+        return frontend_fail(error, QA_ERROR_UNSUPPORTED, "Native demo playback cannot become a CLIENT checkpoint");
     if(!o || !out || out->physical.data || out->receiver.data || out->handshake.data || out->controller.data ||
         !refs || !refs->content || !o->options.frontend->capture ||
         (o->importing && (!o->restore_finished ||

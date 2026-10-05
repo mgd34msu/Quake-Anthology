@@ -464,6 +464,6 @@ bool qa_browser_q3_receive(qa_server_browser *b, const qa_net_datagram *packet, 
         break;
     }
     if (match) { decoded->kind = match->result.kind; match->result = *decoded; }
-    if (b->hooks.changed) { b->callback = true; b->hooks.changed(b->hooks.context, &decoded->entry); b->callback = false; }
+    qa_browser_changed(b, &decoded->entry, QA_BROWSER_STATUS_RECEIVED);
     free(decoded); *recognized = true; return true;
 }

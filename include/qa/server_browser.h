@@ -16,14 +16,24 @@ typedef struct qa_server_entry {
     bool available, pending, timed_out, has_ping;
     char name[1025], map[1025], rules[8193];
 } qa_server_entry;
+typedef enum qa_browser_change {
+    QA_BROWSER_MEMBERSHIP_CHANGED, QA_BROWSER_STATUS_RECEIVED, QA_BROWSER_QUERY_EXPIRED
+} qa_browser_change;
+typedef struct qa_browser_master_result {
+    qa_net_protocol_id protocol;
+    size_t found;
+    bool http, complete;
+} qa_browser_master_result;
 typedef struct qa_browser_hooks {
     void *context;
     bool (*send)(void *, const qa_net_address *, qa_bytes, qa_error *);
     /* Required for broadcast discovery. Interface/subnet authority belongs to
      * the transport owner; private address ranges alone do not prove locality. */
     bool (*local)(void *, const qa_net_address *);
-    void (*changed)(void *, const qa_server_entry *);
-    void (*master_complete)(void *, const qa_error *);
+    void (*changed)(void *, const qa_server_entry *, qa_browser_change);
+    /* Actual decoded master result; found counts admitted addresses in this
+     * result, and complete distinguishes multipart UDP replies. */
+    void (*master_complete)(void *, const qa_error *, const qa_browser_master_result *);
 } qa_browser_hooks;
 /* Borrows HTTP. The application routes connectionless datagrams here through
  * its one receive owner. Selected protocol remains explicit for every entry. */

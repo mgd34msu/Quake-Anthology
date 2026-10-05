@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "demo_dispatch.h"
 #include "commands.h"
 #include "save_commands.h"
 #include "campaign_cinematic.h"
@@ -11,12 +12,15 @@
 
 static const char *const client_menus[]={"toggleconsole","menu","messagemode","messagemode2",
     "menu_anthology","library","mods","settings","rankings","assistance","controls","quit"};
+static const qa_ui_id menu_destinations[] = {FRONTEND_HOME, FRONTEND_LIBRARY, FRONTEND_MODS,
+    FRONTEND_OPTIONS, FRONTEND_RANKINGS, FRONTEND_ASSISTANCE, FRONTEND_CONTROLS};
 struct frontend_client_commands {
     qa_frontend *frontend;
     qa_console *console;
     qa_cvars *cvars;
     const void *lifetime;
     qa_actor_owner receiver;
+    uint64_t command_owner;
     uint32_t seat,physical;
     size_t registered;
 };
@@ -37,6 +41,8 @@ bool frontend_commands_source(qa_frontend *f,const qa_application_startup_source
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Common command requires its entered Source invocation");
     *handled=false;
     const char *name=call->argv[0];
+    if (f->demos && !frontend_demo_dispatch_command(f->demos,call,handled,error)) return false;
+    if (*handled) return true;
     if (qa_console_find(source->console,&call->context,name) || qa_cvars_find(source->cvars,name)) return true;
     for (size_t i=0;;++i) {
         const qa_console_entry *alias=qa_console_alias_at(source->console,call->context.owner,i);
@@ -136,8 +142,8 @@ static bool client_menu_command(void *context,const qa_command_invocation *comma
     if (kind==0) return qa_seat_console_toggle(seat->console,false,false,error);
     if (kind==1) return frontend_game_menu(seat,error);
     if (kind==2 || kind==3) return qa_seat_console_message(seat->console,kind==3,false,0,error);
-    if (kind<sizeof(client_menus)/sizeof(*client_menus)) return frontend_menu_open(seat,
-        (qa_ui_id)(FRONTEND_HOME+kind-4),error);
+    if (kind >= 4 && kind - 4 < sizeof(menu_destinations)/sizeof(*menu_destinations))
+        return frontend_menu_open(seat, menu_destinations[kind-4], error);
     return frontend_fail(error,QA_ERROR_ARGUMENT,"Unknown registered CLIENT menu command");
 }
 bool frontend_commands_client_unbind(frontend_client_commands **slot,qa_error *error)
@@ -146,6 +152,8 @@ bool frontend_commands_client_unbind(frontend_client_commands **slot,qa_error *e
     if (!owner) return true;
     if (!qa_console_cvar_returned(owner->console))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT menu handler has not returned");
+    if (!frontend_demo_dispatch_unregister(owner->frontend->demos,owner->console,
+        owner->command_owner,owner->receiver,error)) return false;
     for (size_t i=0;i<owner->registered;++i) qa_console_unregister(owner->console,client_menus[i],owner->receiver);
     free(owner); *slot=NULL; return true;
 }
@@ -161,6 +169,7 @@ bool frontend_commands_client_bind(qa_frontend *f,const qa_application_client_so
     if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Owning CLIENT menu command handlers");
     *owner=(frontend_client_commands){.frontend=f,.console=source->context.console,.cvars=source->context.cvars,
         .lifetime=source->context.lifetime,.receiver=source->context.receiver,
+        .command_owner=source->context.command.owner,
         .seat=source->context.seat,.physical=source->context.physical_seat};
     *out=owner;
     for (size_t i=0;i<sizeof(client_menus)/sizeof(*client_menus);++i) {
@@ -172,6 +181,13 @@ bool frontend_commands_client_bind(qa_frontend *f,const qa_application_client_so
             return false;
         }
         ++owner->registered;
+    }
+    if (f->demos && !frontend_demo_dispatch_register(f->demos,owner->console,owner->command_owner,
+        owner->receiver,error)) {
+        qa_error original=error?*error:(qa_error){0};
+        if (!frontend_commands_client_unbind(out,error)) return false;
+        if (error) *error=original;
+        return false;
     }
     return true;
 }
@@ -239,7 +255,7 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
     if (!strcmp(name, "menu")) return frontend_game_menu(seat, error);
     const char *menus[] = {"menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls"};
     for (unsigned i = 0; i < sizeof(menus) / sizeof(*menus); ++i)
-        if (!strcmp(name, menus[i])) return frontend_menu_open(seat, FRONTEND_HOME + i, error);
+        if (!strcmp(name, menus[i])) return frontend_menu_open(seat, menu_destinations[i], error);
     if (!strcmp(name, "weapnext") || !strcmp(name, "weapprev"))
         return qa_hud_wheel_cycle(seat->wheel, !strcmp(name, "weapnext") ? 1 : -1, frontend->time_ns, error);
     if (!strcmp(name, "messagemode") || !strcmp(name, "messagemode2"))

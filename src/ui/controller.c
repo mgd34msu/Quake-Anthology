@@ -301,6 +301,11 @@ bool qa_ui_close_all(qa_ui *ui, double time, qa_error *error) {
             return false;
     return true;
 }
+bool qa_ui_menu_opened(const qa_ui *ui, qa_ui_id id) {
+    for (size_t i = 0; ui && i < ui->depth; ++i)
+        if (ui->stack[i].menu == id) return true;
+    return false;
+}
 bool qa_ui_unregister(qa_ui *ui, qa_ui_id id, double time, qa_error *error) {
     if (!ui || ui->drawing || !ui_registration(ui, id))
         return ui_fail(error, "unknown UI menu");

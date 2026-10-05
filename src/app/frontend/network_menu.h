@@ -7,6 +7,13 @@
 #include "qa/downloads.h"
 #include "qa/input.h"
 #include "qa/console_seat.h"
+#include "demo_service.h"
+
+frontend_demo_format frontend_network_demo_format(const qa_frontend *,const qa_command_context *);
+bool frontend_network_demo_record(qa_frontend *,const qa_command_context *,frontend_demo_action,
+    frontend_demo_record_source *,qa_error *);
+bool frontend_network_demo_playback(qa_frontend *,const qa_command_context *,frontend_demo_format,
+    uint32_t recorded_protocol,frontend_demo_reader *,frontend_demo_playback_source *,qa_error *);
 
 typedef struct frontend_network_menu_view {
     const void *network;
@@ -27,6 +34,14 @@ typedef struct frontend_network_menu_view {
 bool frontend_network_menu_read(const qa_frontend *, uint32_t physical_seat,
     frontend_network_menu_view *, qa_error *);
 bool frontend_network_menu_current(const qa_frontend *, const frontend_network_menu_view *);
+typedef struct frontend_network_menu_status {
+    uint64_t receipt;
+    char text[512];
+} frontend_network_menu_status;
+/* Receipts follow actual receive/expiry/master callbacks. Expiry applies to
+ * the selected protocol family; response and master status are shared. */
+bool frontend_network_menu_status_read(const qa_frontend *,const frontend_network_menu_view *,
+    qa_net_protocol_id,frontend_network_menu_status *,qa_error *);
 bool frontend_network_menu_rows(const qa_frontend *, const frontend_network_menu_view *,
     qa_net_protocol_id, qa_server_entry *, size_t capacity, size_t *count, qa_error *);
 bool frontend_network_menu_details_read(const qa_frontend *, const frontend_network_menu_view *,

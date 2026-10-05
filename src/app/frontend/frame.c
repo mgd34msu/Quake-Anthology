@@ -21,6 +21,9 @@
 #include "source_acoustics.h"
 #include "view_bindings.h"
 #include "constructor.h"
+#include "settings_devices.h"
+#include "startup_menus.h"
+#include "demo_dispatch.h"
 #include "remote_q2_client.h"
 #include "network_prediction.h"
 #include "network_predictor.h"
@@ -42,6 +45,19 @@ static qa_console_dialect dialect(qa_movement_kind kind)
     case QA_MOVEMENT_Q3: return QA_CONSOLE_Q3;
     }
     return QA_CONSOLE_Q1;
+}
+static bool menu_paused(const qa_frontend *f)
+{
+    const qa_launch_snapshot *snapshot = qa_application_launch(f->application);
+    if (!snapshot || f->options.dedicated || frontend_network_remote(f) || f->options.network_host) return false;
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    bool singleplayer = false;
+    for (size_t i = 0; i < choices->mode_count; ++i)
+        if (choices->modes[i].primary_score) singleplayer = choices->modes[i].rules.kind == QA_MODE_SINGLE_PLAYER;
+    if (!singleplayer) return false;
+    for (unsigned i = 0; i < f->options.seats; ++i)
+        if (qa_ui_menu_opened(f->seats[i].ui, FRONTEND_HOME)) return true;
+    return false;
 }
 static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvars **owner,
     uint64_t *out,qa_error *error)
@@ -490,6 +506,20 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         bool complete=false;
         return frontend_constructor_advance(frontend,elapsed_ns,&complete,error);
     }
+    if (frontend->startup_launch) {
+        if (!frontend_startup_launch_drain(frontend,error)) return false;
+        if (frontend->startup_launch && !qa_application_startup_pending(frontend->application)) {
+            frontend->wall_time_ns += elapsed_ns;
+            return true;
+        }
+    }
+    if (frontend_settings_devices_pending(frontend)) {
+        bool complete = false;
+        frontend->wall_time_ns += elapsed_ns;
+        return frontend_settings_devices_drain(frontend, &complete, error);
+    }
+    if (!frontend_demo_dispatch_execute(frontend->demos,error) ||
+        !frontend_demo_dispatch_advance(frontend->demos,elapsed_ns,frontend->frame_number,error)) return false;
     if (!frontend_network_client_attempts_advance(frontend,error)) return false;
     qa_application_client_preparation *client=frontend_config_store_client_preparation(frontend->config_store);
     if (client) {
@@ -545,7 +575,8 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     frontend->stepping = true;
     uint64_t raw_elapsed=elapsed_ns;
     if (!wall_advanced) frontend->wall_time_ns+=raw_elapsed;
-    bool ok = frontend_tools_pump(frontend, error) && input_events(frontend, error);
+    bool ok = frontend_tools_pump(frontend, error) &&
+        frontend_startup_menus_pump(frontend,error) && input_events(frontend, error);
     if (ok && qa_application_should_stop(frontend->application)) {
         frontend->stepping=false;
         return true;
@@ -616,7 +647,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     const qa_cvars *time_owner;
     if (ok) ok=source_elapsed(frontend,raw_elapsed,&time_owner,&source_duration,error) &&
         frontend_tools_capture_clock(frontend,time_owner,source_duration,&adjusted,error);
-    bool paused=!client_only && qa_application_q1_paused(frontend->application);
+    bool paused=!client_only && (qa_application_q1_paused(frontend->application) || menu_paused(frontend));
     if (ok && !paused && adjusted>UINT64_MAX-frontend->time_ns)
         ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Source frame duration overflow");
     if (ok) { elapsed_ns=adjusted; if (!paused) frontend->time_ns+=elapsed_ns; }
@@ -638,8 +669,8 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         if (ok && !retiring_map && !qa_application_startup_pending(frontend->application) &&
             (client_only || qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING)) {
             bool source_ready=false;
-            ok = frontend_network_tick(frontend, elapsed_ns, retiring_map, &source_ready, error);
-            if (ok && source_ready && !client_only) {
+            ok = frontend_network_tick(frontend, paused ? 0 : elapsed_ns, retiring_map, &source_ready, error);
+            if (ok && source_ready && !client_only && !paused) {
                 ok=qa_profiler_push(profiler, "application", error);
                 if (ok) ok=frontend_profiler_end(profiler, qa_application_advance(frontend->application, elapsed_ns, error), error);
             }

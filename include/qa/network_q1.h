@@ -11,6 +11,11 @@ enum {
     QA_Q1_ALPHA_DEFAULT = 0, QA_Q1_SCALE_DEFAULT = 16,
     QA_QW_UPDATE_BACKUP = 64, QA_QW_MAX_PACKET_ENTITIES = 64
 };
+/* emit borrows its bytes only for the call. A false return means the message
+ * was not queued. The owner closes a failed connection before retrying a
+ * multi-message command whose earlier emissions may already be queued. */
+typedef bool (*qa_q1_emit_fn)(void *, qa_bytes, qa_error *);
+
 typedef struct qa_q1_entity {
     uint32_t number, model, frame, colormap, skin, effects;
     float origin[3], angles[3];

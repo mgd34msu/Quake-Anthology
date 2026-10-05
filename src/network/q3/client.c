@@ -10,7 +10,7 @@ static int32_t atoi32(const char *text) {
     if (end == text) return 0;
     return n > INT32_MAX ? INT32_MAX : n < INT32_MIN ? INT32_MIN : (int32_t)n;
 }
-static bool current(qa_q3_client_peer *p, qa_error *e) {
+static bool current(const qa_q3_client_peer *p, qa_error *e) {
     if (p->hooks.generation(p->hooks.context) != p->generation) return fail(e, QA_ERROR_FORMAT, "Q3 client callback belongs to a retired session");
     return true;
 }
@@ -191,7 +191,43 @@ bool qa_q3_client_peer_message(qa_q3_client_peer *p, int32_t sequence, qa_bytes 
     if (!qa_q3_server_cursor_init(&p->receive_cursor,
         (qa_bytes){p->receive_packet, p->receive_size}, e)) return false;
     p->server_message_sequence = sequence; p->receive_time = now;
-    return receive_continue(p, !p->hooks.defer_source, e);
+    bool okay = receive_continue(p, !p->hooks.defer_source, e);
+    if (okay && p->hooks.accepted_message) {
+        p->receive_running = true;
+        okay = p->hooks.accepted_message(p->hooks.context, sequence, plaintext,
+            !p->demo_waiting, e) && current(p, e);
+        p->receive_running = false;
+    }
+    return okay;
+}
+bool qa_q3_client_peer_demo_sequence(qa_q3_client_peer *p, int32_t sequence, qa_error *e) {
+    if (!p || !p->demo || p->disconnected || p->disconnect_started ||
+        p->receive_size || p->receive_running)
+        return fail(e, QA_ERROR_ARGUMENT, "Demo sequence requires its idle actual Q3 receiver");
+    if (!current(p, e)) return false;
+    p->server_message_sequence = sequence;
+    return true;
+}
+bool qa_q3_client_peer_record_seed(qa_q3_client_peer *p, qa_q3_writer *writer,
+    int32_t *sequence, qa_error *e) {
+    if (!p || !writer || !sequence || p->demo || p->disconnected || p->disconnect_started ||
+        p->receive_size || p->receive_running || p->server_message_sequence < 1 ||
+        p->gamestate.string_bytes <= 1)
+        return fail(e, QA_ERROR_ARGUMENT, "Recording seed requires its idle received Q3 gamestate");
+    if (!current(p, e)) return false;
+    qa_q3_gamestate *state = malloc(sizeof(*state));
+    if (!state) return fail(e, QA_ERROR_MEMORY, "Retaining actual Q3 recording signon");
+    *state = p->gamestate;
+    state->command_sequence = p->server_command_sequence;
+    bool okay = qa_q3_server_begin(writer, p->reliable.sequence) &&
+        qa_q3_server_gamestate(writer, state) && qa_q3_server_end(writer);
+    free(state);
+    if (okay && current(p, e)) {
+        p->demo_waiting = true;
+        *sequence = p->server_message_sequence - 1;
+        return true;
+    }
+    return false;
 }
 bool qa_q3_client_peer_receive(qa_q3_client_peer *p, qa_bytes datagram, int32_t now, qa_q3_receive_kind *kind, qa_error *e) {
     if (!p || !kind || p->disconnected || p->demo || p->receive_size || p->receive_running)

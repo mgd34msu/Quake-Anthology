@@ -8,6 +8,7 @@
 #include "qa/network_q1_client_runtime.h"
 #include "qa/scene.h"
 #include "qa/audio.h"
+#include "demo_service.h"
 
 typedef struct frontend_remote_q1 frontend_remote_q1;
 struct frontend_remote_q1_skin_bindings;
@@ -50,6 +51,8 @@ typedef struct frontend_remote_q1_options {
     bool (*disconnected)(void *, const frontend_remote_q1_domain *, const char *, qa_error *);
     bool (*application_read)(void *, const frontend_remote_q1_domain *, qa_application_client_source *, qa_error *);
     bool (*application_metadata_read)(void *, const frontend_remote_q1_domain *, qa_application_client_source *, qa_error *);
+    bool (*sample_seconds)(void *, const frontend_remote_q1_domain *, double *, qa_error *);
+    int32_t demo_forced_track;
     const struct frontend_remote_q1_skin_bindings *skin_bindings;
 } frontend_remote_q1_options;
 typedef struct frontend_remote_q1_client_row {
@@ -150,6 +153,10 @@ frontend_remote_q1 *frontend_remote_q1_at(const qa_frontend *, size_t);
 bool frontend_remote_q1_sample_all(qa_frontend *, uint64_t, qa_error *);
 bool frontend_remote_q1_destroy_all(qa_frontend *, qa_error *);
 bool frontend_remote_q1_hooks(frontend_remote_q1 *, qa_network_q1_client_hooks *, qa_error *);
+bool frontend_remote_q1_demo_seed(frontend_remote_q1 *, const frontend_demo_sink *, qa_nq_options, qa_error *);
+bool frontend_remote_q1_demo_attach(frontend_remote_q1 *, const frontend_demo_sink *, bool *attached, qa_error *);
+bool frontend_remote_q1_demo_detach(frontend_remote_q1 *, const frontend_demo_sink *, qa_error *);
+bool frontend_remote_q1_demo_angles(frontend_remote_q1 *, const float angles[3], qa_error *);
 struct frontend_remote_q1_skins *frontend_remote_q1_skins_owner(const frontend_remote_q1 *);
 bool frontend_remote_q1_player_command(frontend_remote_q1 *, qa_actor_id, const char *,
     const char *const *, size_t, qa_error *);

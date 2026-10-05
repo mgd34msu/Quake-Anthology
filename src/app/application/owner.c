@@ -946,7 +946,7 @@ static bool retire_control_inputs(qa_application *application, qa_error *error)
     return okay;
 }
 
-static bool retire_sources(qa_application *application, bool server, qa_error *error)
+static bool retire_sources(qa_application *application, bool server, bool restarting, qa_error *error)
 {
     if (application == NULL)
         return true;
@@ -970,7 +970,7 @@ static bool retire_sources(qa_application *application, bool server, qa_error *e
     if (application->world_change_ready != NULL &&
         !application->world_change_ready(application->guest_context, application, error))
         return false;
-    if (server && !application_map_stop_prepare(application, error)) return false;
+    if (restarting && !application_map_stop_prepare(application, error)) return false;
     application->operation = APPLICATION_DESTROYING;
     if (!server) application->state = QA_APPLICATION_STOPPING;
     bool ok = application_rankings_close(application, error) &&
@@ -986,12 +986,21 @@ static bool retire_sources(qa_application *application, bool server, qa_error *e
                                 "source retirement still has retained provider owners");
     if (server) {
         application_players_close(application);
+        if (!restarting) application_map_dispose(application);
         application->state = QA_APPLICATION_READY;
     }
     return true;
 }
 bool qa_application_retire_sources(qa_application *application, qa_error *error)
-{ return retire_sources(application, false, error); }
+{ return retire_sources(application, false, false, error); }
+
+bool qa_application_end_game(qa_application *application, qa_error *error)
+{
+    if (!application || application->state == QA_APPLICATION_STOPPING ||
+        application->state == QA_APPLICATION_FAULTED)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Ending a game requires its live engine");
+    return retire_sources(application, true, false, error);
+}
 
 bool qa_application_stop_server(qa_application *application, qa_actor_owner owner, qa_error *error)
 {
@@ -1004,7 +1013,7 @@ bool qa_application_stop_server(qa_application *application, qa_actor_owner owne
         (source->kind != APPLICATION_PROVIDER_Q2 &&
          !(source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Server shutdown lost its actual Q2 primary source");
-    return retire_sources(application, true, error);
+    return retire_sources(application, true, true, error);
 }
 
 bool qa_application_destroy(qa_application *application, qa_error *error)

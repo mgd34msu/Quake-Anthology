@@ -146,7 +146,7 @@ const qa_product *frontend_product_selection(qa_catalog *catalog, const char *na
     }
     return NULL;
 }
-static bool overlay(qa_launch_draft *draft, const char *name, uint64_t roles, const char *instance,
+bool frontend_launch_overlay(qa_launch_draft *draft, const char *name, uint64_t roles, const char *instance,
     qa_launch_scope scope, qa_error *error)
 {
     qa_catalog *catalog = qa_launch_draft_catalog(draft);
@@ -203,7 +203,7 @@ bool frontend_player_source_select(qa_frontend *frontend,uint32_t physical,qa_la
     uint64_t roles=QA_ROLE_BIT(role);
     if (role==QA_ROLE_CHARACTER)
         roles|=QA_ROLE_BIT(QA_ROLE_BODY)|QA_ROLE_BIT(QA_ROLE_SKIN)|QA_ROLE_BIT(QA_ROLE_VOICE);
-    bool ok=overlay(draft,product->key,roles,instance_name,scope,error);
+    bool ok=frontend_launch_overlay(draft,product->key,roles,instance_name,scope,error);
     if (ok && role==QA_ROLE_CHARACTER) {
         qa_native_q3_character_declaration declaration;
         ok=qa_native_q3_character_default_declaration(product->family,&declaration,error);
@@ -338,9 +338,9 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
         else { world.geometry = geometry->id; world.start_command = NULL; }
     }
     if (ok) ok = qa_launch_set_world(draft, &world, error);
-    if (ok && frontend->options.movement) ok = overlay(draft, frontend->options.movement,
+    if (ok && frontend->options.movement) ok = frontend_launch_overlay(draft, frontend->options.movement,
         QA_ROLE_BIT(QA_ROLE_MOVEMENT), "frontend:movement", (qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER}, error);
-    if (ok && frontend->options.character) ok = overlay(draft, frontend->options.character,
+    if (ok && frontend->options.character) ok = frontend_launch_overlay(draft, frontend->options.character,
         QA_ROLE_BIT(QA_ROLE_CHARACTER) | QA_ROLE_BIT(QA_ROLE_BODY) | QA_ROLE_BIT(QA_ROLE_SKIN) | QA_ROLE_BIT(QA_ROLE_VOICE), "frontend:character",
         (qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER}, error);
     for (size_t i = 0; i < frontend->options.mod_count && ok; ++i) {

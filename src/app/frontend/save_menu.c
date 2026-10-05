@@ -5,6 +5,8 @@
 #include "qa/application_q1_save.h"
 #include "qa/q1_save_product.h"
 #include "qa/text.h"
+#include "qa/ui_saves.h"
+#include "qa/source_save.h"
 #include <stdio.h>
 
 static char *copy(const char *text,qa_error *error)
@@ -115,11 +117,11 @@ static bool refresh(frontend_seat *seat, qa_error *error)
     qa_fs_root *root = frontend_save_commands_root(seat->frontend);
     qa_save_slot_listing listing = {0};
     if (!state || !root || !qa_save_slots_list(root, "saves", &listing, error)) return false;
-    if (listing.count > SIZE_MAX / sizeof(qa_ui_row) || listing.count > SIZE_MAX / 128 || listing.count>SIZE_MAX/sizeof(qa_error)) {
+    if (listing.count > SIZE_MAX / sizeof(qa_ui_row) || listing.count > SIZE_MAX / 256 || listing.count>SIZE_MAX/sizeof(qa_error)) {
         qa_save_slot_listing_free(&listing); return frontend_fail(error, QA_ERROR_MEMORY, "Save menu inventory exceeds memory extent");
     }
     qa_ui_row *rows = listing.count ? calloc(listing.count, sizeof(*rows)) : NULL;
-    char *details = listing.count ? calloc(listing.count, 128) : NULL;
+    char *details = listing.count ? calloc(listing.count, 256) : NULL;
     qa_error *qualifications=listing.count?calloc(listing.count,sizeof(*qualifications)):NULL;
     if (listing.count && (!rows || !details || !qualifications)) {
         free(rows); free(details); free(qualifications); qa_save_slot_listing_free(&listing);
@@ -129,6 +131,7 @@ static bool refresh(frontend_seat *seat, qa_error *error)
         qa_q1_save_data *source=NULL; char *path=NULL; const qa_product *product=NULL;
         bool ok=source_read(seat,listing.entries+i,&source,&path,qualifications+i) &&
             select_product(seat,source,path,NULL,&product,qualifications+i);
+        if(ok)snprintf(details+listing.count*128+i*128,128,"%s",product->title && *product->title?product->title:product->key);
         qa_q1_save_destroy(source); free(path);
         if (!ok && qualifications[i].code==QA_ERROR_MEMORY) {
             if (error) *error=qualifications[i];
@@ -143,8 +146,6 @@ static bool refresh(frontend_seat *seat, qa_error *error)
     if (state->selected_save >= listing.count) state->selected_save = 0;
     state->overwrite = false; state->save_error[0] = 0; return products(seat,error);
 }
-static bool open_menu(void *context, uint32_t id, qa_error *error)
-{ (void)id; return refresh(context, error); }
 static bool queue(frontend_seat *seat, bool load, bool overwrite, qa_error *error)
 {
     frontend_ui_seat_features *state = frontend_ui_features_seat(seat);
@@ -175,7 +176,7 @@ static bool queue(frontend_seat *seat, bool load, bool overwrite, qa_error *erro
         free(path);
         if (!ok) return false;
         if (kind != QA_FS_MISSING) {
-            state->overwrite = true; return true;
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"This save exists. Select it from Save game to confirm overwrite.");
         }
     }
     const char *argv[] = {load ? "load" : "save", name,product_key};
@@ -187,91 +188,162 @@ static bool queue(frontend_seat *seat, bool load, bool overwrite, qa_error *erro
     if (ok) { state->overwrite = false; state->save_error[0] = 0; }
     return ok;
 }
-static bool action(void *context, uint32_t id, qa_ui_id control, const qa_ui_action *event, qa_error *error)
+struct frontend_save_menu {
+    frontend_seat *seat;
+    qa_ui_saves *menus;
+    qa_ui_save_entry *entries;
+    int64_t *saved_at;
+    size_t count;
+    char policy[256],listing_error[256];
+};
+static int newest_first(const void *left,const void *right)
 {
-    frontend_seat *seat = context; frontend_ui_seat_features *state = frontend_ui_features_seat(seat);
-    if (!state || id != seat->id) return frontend_fail(error, QA_ERROR_ARGUMENT, "Save menu lost its physical seat owner");
-    if (control == 1 && (event->kind == QA_UI_SELECT || event->kind == QA_UI_ROW_ACTIVATE)) {
-        if (event->value.row >= state->saves.count) return frontend_fail(error, QA_ERROR_ARGUMENT, "Save row is outside its actual inventory");
-        state->selected_save = event->value.row; state->overwrite = false;
-        if (!products(seat,error)) return false;
-        if (event->kind != QA_UI_ROW_ACTIVATE) return true;
-    } else if (control==9 && event->kind==QA_UI_SELECT) {
-        if (event->value.row>=state->save_product_count)
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source save product is outside its actual choices");
-        state->selected_product=event->value.row; state->save_error[0]=0;
-        qa_save_slot_entry *entry=state->saves.entries+state->selected_save;
-        qa_q1_save_data *source=NULL; char *path=NULL; const qa_product *product=NULL; qa_error local={0};
-        bool ok=source_read(seat,entry,&source,&path,&local) &&
-            select_product(seat,source,path,
-                state->save_product_keys[state->selected_product],&product,&local);
-        qa_q1_save_destroy(source); free(path);
-        if (!ok && local.code==QA_ERROR_MEMORY) { if (error) *error=local; return false; }
-        state->save_qualification[state->selected_save]=ok?(qa_error){0}:local; return true;
-    } else if (control == 2 && event->kind == QA_UI_CHANGE_TEXT) {
-        const char *text = event->value.text ? event->value.text : "";
-        size_t size = strlen(text) + 1; char *copy = malloc(size);
-        if (!copy) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining save name draft");
-        memcpy(copy, text, size); free(state->save_name); state->save_name = copy;
-        state->overwrite = false; state->save_error[0] = 0; return true;
-    } else if (event->kind != QA_UI_ACTIVATE && !(control == 2 && event->kind == QA_UI_SUBMIT)) return true;
-    qa_error local = {0}; bool ok = true;
-    if (control == 1 || control == 4) ok = queue(seat, true, false, &local);
-    else if (control == 2 || control == 3) ok = queue(seat, false, false, &local);
-    else if (control == 5) ok = refresh(seat, &local);
-    else if (control == 6 && state->overwrite) ok = queue(seat, false, true, &local);
-    else if (control == 7) state->overwrite = false;
-    if (!ok) snprintf(state->save_error, sizeof(state->save_error), "%s", local.message);
+    const qa_ui_save_entry *a=left,*b=right;
+    if(a->saved_at_ms!=b->saved_at_ms)return a->saved_at_ms>b->saved_at_ms?-1:1;
+    return strcmp(a->id,b->id);
+}
+static bool read_entries(void *context,const qa_ui_save_entry **entries,size_t *count,const char **message,qa_error *error)
+{
+    frontend_save_menu *owner=context;(void)error;
+    *entries=owner->entries;*count=owner->count;*message=owner->listing_error;return true;
+}
+static bool rebuild_entries(frontend_save_menu *owner,int64_t *saved_at,bool inspect_time,qa_error *error)
+{
+    frontend_ui_seat_features *state=frontend_ui_features_seat(owner->seat);
+    qa_ui_save_entry *rows=state->saves.count?calloc(state->saves.count,sizeof(*rows)):NULL;
+    if(state->saves.count && !rows)return frontend_fail(error,QA_ERROR_MEMORY,"Retaining saved game menu entries");
+    for(size_t i=0;i<state->saves.count;++i) {
+        qa_save_slot_entry *entry=state->saves.entries+i;
+        char *label=state->save_details+i*128;
+        const char *name=entry->name+6;size_t length=strlen(name);
+        if(length>=4 && !strcmp(name+length-4,".sav"))length-=4;
+        snprintf(label,128,"%.*s",(int)(length>127?127:length),name);
+        if(!strcmp(label,"autosave"))snprintf(label,128,"Autosave");
+        else if(!strcmp(label,"quicksave"))snprintf(label,128,"Quicksave");
+        else for(char *part=label;*part;++part)if(*part=='_')*part=' ';
+        rows[i]=(qa_ui_save_entry){.id=entry->name,.label=label,
+            .map=entry->format==QA_SAVE_SLOT_SHARED?entry->metadata.map:entry->source.map?entry->source.map:"",
+            .game=entry->format==QA_SAVE_SLOT_SHARED?entry->metadata.game:state->save_details+state->saves.count*128+i*128,
+            .unavailable=entry->error.code!=QA_OK?entry->error.message:state->save_qualification[i].code!=QA_OK?state->save_qualification[i].message:NULL,
+            .requires_product=entry->error.code==QA_OK && entry->format!=QA_SAVE_SLOT_SHARED && state->save_qualification[i].code!=QA_OK};
+        qa_fs_entry_kind kind;qa_fs_identity identity;qa_fs_timestamp stamp;qa_error timestamp_error={0};
+        if(inspect_time && qa_fs_root_status(frontend_save_commands_root(owner->seat->frontend),entry->name,&kind,&identity,&timestamp_error) &&
+            kind==QA_FS_REGULAR && qa_fs_identity_modified_time(&identity,&stamp) &&
+            stamp.seconds>=0 && stamp.seconds<=(INT64_MAX-(int64_t)(stamp.nanoseconds/1000000))/1000)
+            saved_at[i]=stamp.seconds*1000+(int64_t)(stamp.nanoseconds/1000000);
+        rows[i].saved_at_ms=saved_at[i];
+    }
+    free(owner->entries);free(owner->saved_at);owner->entries=rows;owner->saved_at=saved_at;owner->count=state->saves.count;
+    if(owner->count)qsort(owner->entries,owner->count,sizeof(*owner->entries),newest_first);
     return true;
 }
-static bool menu(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
+static bool refresh_entries(void *context,qa_error *error)
 {
-    frontend_seat *seat = context; frontend_ui_seat_features *state = frontend_ui_features_seat(seat); (void)id;
-    if (!state || (state->saves.count && (!state->save_rows || !state->save_details || !state->save_qualification)))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Save menu has no actual retained inventory");
-    bool pending = frontend_save_commands_pending(seat->frontend);
-    for (size_t i = 0; i < state->saves.count; ++i) {
-        qa_save_slot_entry *entry = &state->saves.entries[i]; char *detail = state->save_details + i * 128;
-        if (entry->error.code != QA_OK) snprintf(detail, 128, "Unreadable save");
-        else if (entry->format==QA_SAVE_SLOT_SHARED) snprintf(detail, 128, "%llu:%02llu elapsed", (unsigned long long)(entry->metadata.elapsed_ns / UINT64_C(60000000000)),
-            (unsigned long long)(entry->metadata.elapsed_ns / UINT64_C(1000000000) % 60));
-        else if (state->save_qualification[i].code!=QA_OK) snprintf(detail,128,"%.127s",state->save_qualification[i].message);
-        else { char time[32]; if (!qa_format_number(entry->source.time,time,error)) return false;
-            snprintf(detail,128,"%s · %ss · kills %s/%s · secrets %s/%s",entry->source.map,time,
-                entry->source.killed_monsters?entry->source.killed_monsters:"?",
-                entry->source.total_monsters?entry->source.total_monsters:"?",
-                entry->source.found_secrets?entry->source.found_secrets:"?",
-                entry->source.total_secrets?entry->source.total_secrets:"?"); }
-        const char *label=entry->format!=QA_SAVE_SLOT_SHARED && entry->source.comment && *entry->source.comment?entry->source.comment:entry->name+6;
-        state->save_rows[i] = (qa_ui_row){.key = entry->name, .label = label, .detail = detail, .enabled = entry->error.code == QA_OK};
+    frontend_save_menu *owner=context;frontend_ui_seat_features *state=frontend_ui_features_seat(owner->seat);qa_error local={0};
+    if(!refresh(owner->seat,&local)) {
+        snprintf(owner->listing_error,sizeof(owner->listing_error),"%s",local.message);
+        if(local.code==QA_ERROR_MEMORY) { if(error)*error=local;return false; }return true;
     }
-    const char *labels[] = {"", "Save name", "Save", "Load selected", "Refresh", "Confirm overwrite", "Cancel overwrite",
-        *state->save_error ? state->save_error : state->overwrite ? "This slot exists. Confirm overwrite to replace it." : pending ? "Save/load request pending" : "Choose a save to load, or enter a name to save."};
-    for (unsigned i = 0; i < 8; ++i) seat->controls[i] = (qa_ui_control){.id = i + 1, .kind = QA_UI_BUTTON,
-        .label = labels[i], .rect = {40 + (float)(i % 2) * 280, 292 + (float)(i / 2) * 34, 270, 28},
-        .enabled = !pending, .visible = true, .context = seat, .action = action};
-    seat->controls[0].kind = QA_UI_LIST; seat->controls[0].rect = (qa_scene_rect_f){40, 80, 560, 200};
-    seat->controls[0].value.list.rows = state->save_rows; seat->controls[0].value.list.count = state->saves.count;
-    seat->controls[0].value.list.selected = state->selected_save; seat->controls[0].value.list.row_height = 24;
-    seat->controls[0].value.list.revision = state->save_revision;
-    seat->controls[1].kind = QA_UI_FIELD; seat->controls[1].rect = (qa_scene_rect_f){40, 288, 560, 28};
-    seat->controls[1].value.field.text = state->save_name ? state->save_name : ""; seat->controls[1].value.field.maximum = 255;
-    seat->controls[2].rect = (qa_scene_rect_f){40, 326, 170, 28}; seat->controls[3].rect = (qa_scene_rect_f){225, 326, 190, 28};
-    seat->controls[4].rect = (qa_scene_rect_f){430, 326, 170, 28};
-    seat->controls[3].enabled = !pending && state->selected_save < state->saves.count &&
-        state->saves.entries[state->selected_save].error.code == QA_OK && state->save_qualification[state->selected_save].code==QA_OK;
-    seat->controls[5].visible = seat->controls[6].visible = state->overwrite;
-    seat->controls[5].rect=(qa_scene_rect_f){40,370,270,28};
-    seat->controls[6].rect=(qa_scene_rect_f){330,370,270,28};
-    seat->controls[7].enabled = false; seat->controls[7].rect = (qa_scene_rect_f){40, 412, 560, 40};
-    seat->controls[8]=(qa_ui_control){.id=9,.kind=QA_UI_CHOICE,.label="Source game",.rect={40,370,560,28},
-        .enabled=!pending && state->save_product_count>1,.visible=!state->overwrite && state->save_product_count>1,.context=seat,.action=action};
-    seat->controls[8].value.choice.labels=(const char *const *)state->save_product_labels;
-    seat->controls[8].value.choice.count=state->save_product_count; seat->controls[8].value.choice.selected=state->selected_product;
-    *out = (qa_ui_menu){.id = FRONTEND_SAVES, .title = "Save / load", .controls = seat->controls, .count = 9, .fullscreen = true}; return true;
+    free(owner->entries);free(owner->saved_at);owner->entries=NULL;owner->saved_at=NULL;owner->count=0;
+    int64_t *saved_at=state->saves.count?calloc(state->saves.count,sizeof(*saved_at)):NULL;
+    if(state->saves.count && !saved_at)return frontend_fail(error,QA_ERROR_MEMORY,"Retaining save file timestamps");
+    if(!rebuild_entries(owner,saved_at,true,error)) { free(saved_at);return false; }
+    owner->listing_error[0]=0;return true;
 }
-bool frontend_save_menu_create(frontend_seat *seat, qa_error *error)
+static const char *unavailable(void *context,bool saving)
 {
-    return seat && qa_ui_register(seat->ui, &(qa_ui_menu_registration){.id = FRONTEND_SAVES,
-        .context = seat, .factory = menu, .open = open_menu}, error);
+    frontend_save_menu *owner=context;frontend_seat *seat=owner->seat;qa_error local={0};
+    bool ok=qa_application_save_policy(seat->frontend->application,frontend_network_save_authority(seat->frontend),
+        seat->frontend->options.dedicated,!saving,QA_SAVE_MANUAL,&local);
+    snprintf(owner->policy,sizeof(owner->policy),"%s",ok?"":local.message);return ok?NULL:owner->policy;
+}
+static bool pending(void *context)
+{ return frontend_save_commands_pending(((frontend_save_menu *)context)->seat->frontend); }
+static bool write_save(void *context,const char *name,const char *overwrite,qa_error *error)
+{
+    frontend_save_menu *owner=context;frontend_ui_seat_features *state=frontend_ui_features_seat(owner->seat);
+    if(overwrite) {
+        size_t i=0;while(i<state->saves.count && strcmp(overwrite,state->saves.entries[i].name))++i;
+        if(i==state->saves.count)return frontend_fail(error,QA_ERROR_ARGUMENT,"Selected saved game is no longer listed");
+        name=state->saves.entries[i].name+6;
+    }
+    char *draft=copy(name,error);if(!draft)return false;
+    free(state->save_name);state->save_name=draft;
+    return queue(owner->seat,false,overwrite!=NULL,error);
+}
+static bool load_save(void *context,const char *id,qa_error *error)
+{
+    frontend_save_menu *owner=context;frontend_ui_seat_features *state=frontend_ui_features_seat(owner->seat);
+    size_t i=0;while(i<state->saves.count && strcmp(id,state->saves.entries[i].name))++i;
+    if(i==state->saves.count)return frontend_fail(error,QA_ERROR_ARGUMENT,"Selected saved game is no longer listed");
+    state->selected_save=i;if(!products(owner->seat,error))return false;
+    return queue(owner->seat,true,false,error);
+}
+static bool product_action(void *context,uint32_t seat,qa_ui_id control,const qa_ui_action *event,qa_error *error)
+{
+    frontend_save_menu *owner=context;frontend_ui_seat_features *state=frontend_ui_features_seat(owner->seat);
+    (void)seat;(void)control;
+    if(event->kind!=QA_UI_SELECT)return true;
+    if(event->value.row>=state->save_product_count)return frontend_fail(error,QA_ERROR_ARGUMENT,"Source game leaves actual saved game choices");
+    state->selected_product=event->value.row;qa_error local={0};
+    if(!queue(owner->seat,true,false,&local)) {
+        snprintf(owner->listing_error,sizeof(owner->listing_error),"%s",local.message);
+        if(local.code==QA_ERROR_MEMORY) { if(error)*error=local;return false; }
+    }
+    return true;
+}
+static bool load_choice(void *context,qa_ui_control *control,bool *present,qa_error *error)
+{
+    frontend_save_menu *owner=context;frontend_ui_seat_features *state=frontend_ui_features_seat(owner->seat);(void)error;
+    *present=state->save_product_count>1 && state->selected_save<state->saves.count;
+    if(!*present)return true;
+    *control=(qa_ui_control){.id=100,.kind=QA_UI_CHOICE,.label="Source game",.rect={64,346,512,28},
+        .enabled=!pending(owner),.visible=true,.context=owner,.action=product_action};
+    control->value.choice.labels=(const char *const *)state->save_product_labels;
+    control->value.choice.count=state->save_product_count;control->value.choice.selected=state->selected_product;return true;
+}
+bool frontend_save_menu_create(frontend_seat *seat,qa_error *error)
+{
+    if(!seat || seat->save_menu)return frontend_fail(error,QA_ERROR_ARGUMENT,"Saved game menus require their physical seat owner");
+    frontend_save_menu *owner=calloc(1,sizeof(*owner));if(!owner)return frontend_fail(error,QA_ERROR_MEMORY,"Retaining saved game menu service");
+    owner->seat=seat;seat->save_menu=owner;
+    qa_ui_saves_service service={.context=owner,.list=read_entries,.refresh=refresh_entries,.unavailable=unavailable,
+        .busy=pending,.save=write_save,.load=load_save,.load_choice=load_choice};
+    return qa_ui_saves_create(seat->ui,(qa_ui_saves_menus){.load=FRONTEND_LOAD,.save=FRONTEND_SAVE,
+        .name=FRONTEND_SAVE_NAME,.overwrite=FRONTEND_SAVE_OVERWRITE},&service,&owner->menus,error);
+}
+bool frontend_save_menu_destroy(frontend_seat *seat,qa_error *error)
+{
+    frontend_save_menu *owner=seat?seat->save_menu:NULL;if(!owner)return true;
+    if(!qa_ui_saves_destroy(&owner->menus,(double)seat->frontend->time_ns/1000000.0,error))return false;
+    free(owner->entries);free(owner->saved_at);free(owner);seat->save_menu=NULL;return true;
+}
+static bool menu_fields(qa_source_save_io *io,frontend_save_menu *owner)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;qa_buffer compiled={0};qa_bytes input={0};
+    bool ok=reading || qa_ui_saves_checkpoint(owner->menus,&compiled,io->error);
+    size_t size=compiled.size,count=owner->count;
+    ok=ok && qa_source_save_count(io,&size,reading?io->input.size-io->offset:SIZE_MAX);
+    if(ok)ok=reading?qa_source_save_span(io,size,&input):qa_source_save_bytes(io,compiled.data,size);
+    qa_buffer_free(&compiled);
+    frontend_ui_seat_features *state=frontend_ui_features_seat(owner->seat);
+    if(!ok || !qa_source_save_count(io,&count,SIZE_MAX/sizeof(int64_t)) || count!=state->saves.count)return false;
+    int64_t *saved_at=reading?(count?calloc(count,sizeof(*saved_at)):NULL):owner->saved_at;
+    if(count && !saved_at)return frontend_fail(io->error,QA_ERROR_MEMORY,"Restoring save file timestamps");
+    for(size_t i=0;ok && i<count;++i) { int64_t value=reading?0:saved_at[i];ok=qa_source_save_i64(io,&value) && value>=0;if(reading && ok)saved_at[i]=value; }
+    if(ok && reading)ok=qa_ui_saves_restore(owner->menus,input,io->error) && rebuild_entries(owner,saved_at,false,io->error);
+    if(reading && !ok)free(saved_at);
+    return ok;
+}
+bool frontend_save_menu_checkpoint(frontend_seat *seat,qa_buffer *out,qa_error *error)
+{
+    if(!seat || !seat->save_menu || !out || out->data || out->size)return frontend_fail(error,QA_ERROR_ARGUMENT,"Save menu capture requires its actual owner");
+    qa_source_save_io io={0};bool ok=qa_source_save_writer(&io,NULL,error) && menu_fields(&io,seat->save_menu) && qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io);return ok;
+}
+bool frontend_save_menu_restore(frontend_seat *seat,qa_bytes bytes,qa_error *error)
+{
+    if(!seat || !seat->save_menu)return frontend_fail(error,QA_ERROR_ARGUMENT,"Save menu restore requires its actual owner");
+    qa_source_save_io io={0};bool ok=qa_source_save_reader(&io,NULL,bytes,error) && menu_fields(&io,seat->save_menu) && qa_source_save_finish(&io,NULL);
+    qa_source_save_dispose(&io);return ok;
 }

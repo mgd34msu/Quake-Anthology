@@ -49,6 +49,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 typedef struct application_saved_console {
     qa_application_console_scope scope;
@@ -1416,6 +1417,25 @@ static bool persistence_begin(void *opaque, qa_save_purpose purpose, qa_save_met
     if (!ok) { persistence_end(operation); return false; }
     *metadata = (qa_save_metadata){.purpose = purpose, .elapsed_ns = qa_session_elapsed(app->session),
         .configuration_generation = checkpoint.generation, .world_generation = app->map_revision};
+    qa_application_map_view map;
+    if (qa_application_map_read(app, &map)) {
+        const qa_launch_snapshot *launch = qa_application_launch(app);
+        const qa_launch_binding *entities = qa_launch_binding_for(qa_launch_snapshot_choices(launch),
+            (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "");
+        const qa_launch_instance *source = entities ? qa_launch_snapshot_find(launch, entities->instance) : NULL;
+        const qa_product *product = source ? qa_catalog_product(qa_application_catalog(app), source->selection.product) : NULL;
+        const char *title = product ? product->title && *product->title ? product->title : product->key : "";
+        static const char *const editions[] = {"classic", "rerelease", "quakeworld", "demo"};
+        const char *edition = product && (unsigned)product->edition < sizeof(editions)/sizeof(*editions) ? editions[product->edition] : "";
+        int map_length = snprintf(metadata->map, sizeof(metadata->map), "%s", map.name ? map.name : "");
+        int game_length = snprintf(metadata->game, sizeof(metadata->game), "%s%s%s%s", title,
+            *edition ? " (" : "", edition, *edition ? ")" : "");
+        if (map_length < 0 || (size_t)map_length >= sizeof(metadata->map) ||
+            game_length < 0 || (size_t)game_length >= sizeof(metadata->game)) {
+            persistence_end(operation);
+            return application_fail(error, QA_ERROR_UNSUPPORTED, "Archived map or game title exceeds save summary extent");
+        }
+    }
     *owners = operation->owners; *count = operation->owner_count;
     return true;
 }

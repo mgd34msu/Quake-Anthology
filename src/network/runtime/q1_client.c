@@ -21,6 +21,7 @@ bool q1_client_queue(q1_runtime_client *c, qa_bytes bytes, qa_error *e)
         bytes.size > c->policy.queued_bytes - c->queued_bytes)
         return qa_network_fail(e, "Q1 CLIENT reliable FIFO exceeds its admitted capacity");
     if (!bytes.size) return true;
+    if (c->demo) return true;
     q1_client_pending *p = calloc(1, sizeof(*p));
     if (p) p->bytes.data = malloc(bytes.size);
     if (!p || !p->bytes.data) {
@@ -44,6 +45,7 @@ void q1_client_batch_clear(q1_runtime_client *c)
     free(c->records); c->records = NULL; c->record_count = c->cursor = 0;
     qa_buffer_free(&c->payload); qa_buffer_free(&c->before_decoder);
     c->before_protocol = (qa_net_protocol_id){0}; c->held = false;
+    c->demo_wire_prefix_present = false;
 }
 static bool names(q1_client_record *record, const char *const *a, size_t an,
     const char *const *b, size_t bn, qa_error *e)
@@ -121,12 +123,18 @@ static bool receive(void *context, qa_network_runtime *runtime, qa_net_client_id
     const qa_net_datagram *packet, qa_error *e)
 {
     q1_runtime_client *c = context;
+    if (c->demo) return true;
     if (c->held || c->busy) return qa_network_fail(e, "Q1 CLIENT has an unconsumed source batch");
     qa_q1_delivery delivery;
     if (!qa_q1_peer_receive(&c->native, &packet->from, packet->payload, packet->received_ns, &delivery, e)) return false;
     if (!delivery.present || c->retiring) return true;
-    return qa_network_received(runtime, id, packet->received_ns, e) &&
+    bool ok = qa_network_received(runtime, id, packet->received_ns, e) &&
         q1_client_decode_batch(c, delivery.payload, delivery.sequence, delivery.acknowledged, packet->received_ns, e);
+    if (ok && c->qw && packet->payload.size >= sizeof(c->demo_wire_prefix)) {
+        memcpy(c->demo_wire_prefix, packet->payload.data, sizeof(c->demo_wire_prefix));
+        c->demo_wire_prefix_present = true;
+    }
+    return ok;
 }
 static bool queue_next(q1_runtime_client *c, qa_error *e)
 {
@@ -147,6 +155,7 @@ static bool transmit(q1_runtime_client *c, qa_bytes bytes, uint64_t now, qa_erro
 }
 static bool retire_client(q1_runtime_client *c, const char *reason, bool notify, qa_error *e)
 {
+    if (c->demo) notify = false;
     q1_client_retirement *r = &c->retirement;
     if (!r->reason) {
         if (!q1_client_retirement_start(r, reason, notify, c->policy.message_bytes + 10, e)) return false;
@@ -194,6 +203,7 @@ static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id i
         c->busy = false; c->runtime->callback = previous; return ok;
     }
     if (c->held) return true;
+    if (c->demo) return true;
     if (!queue_next(c, e)) return false;
     if (!c->qw) {
         bool present; qa_bytes packet;
@@ -385,6 +395,21 @@ bool qa_network_attach_q1_client(qa_network_runtime *runtime, const qa_net_conne
     if (!qa_network_attach(runtime, request, &qa_network_q1_client_ops, c, now, &c->id, e)) { q1_client_close(c); return false; }
     *out = c->id; return true;
 }
+bool qa_network_attach_q1_demo(qa_network_runtime *runtime, const qa_net_connect *request,
+    const qa_network_q1_client_policy *policy, const qa_network_q1_client_hooks *hooks,
+    uint64_t now, qa_net_client_id *out, qa_error *e)
+{
+    if (!request || !out || request->attachment != QA_NET_LOCAL_SEAT ||
+        request->endpoint.kind != QA_NET_LOOPBACK)
+        return qa_network_fail(e, "Q1 demo requires its genuine local seat endpoint");
+    q1_runtime_client *c = NULL;
+    if (!q1_client_create(runtime, request, policy, hooks, &c, e)) return false;
+    c->demo = true;
+    if (!qa_network_attach(runtime, request, &qa_network_q1_client_ops, c, now, &c->id, e)) {
+        q1_client_close(c); return false;
+    }
+    *out = c->id; return true;
+}
 static bool source_loading(q1_runtime_client *c, qa_error *e)
 {
     const qa_net_client *client = qa_net_connections_get(c->runtime->connections, c->id);
@@ -500,6 +525,10 @@ bool qa_network_q1_client_continue(qa_network_runtime *runtime, qa_net_client_id
         if (ok) ++c->cursor;
     }
     if (ok) ok = c->hooks.end(c->hooks.context, id, c->received_ns, e);
+    if (ok && !c->demo && c->hooks.batch) ok = c->hooks.batch(c->hooks.context, id, c->protocol,
+        (qa_bytes){c->payload.data, c->payload.size}, c->demo_wire_prefix_present ?
+            (qa_bytes){c->demo_wire_prefix, sizeof(c->demo_wire_prefix)} : (qa_bytes){0},
+        c->sequence, c->acknowledged, c->received_ns, e);
     if (ok && !c->retiring) ok = current(c, e);
     if (ok && !c->retiring && skins_requested) {
         bool ready=false;
@@ -553,6 +582,60 @@ bool qa_network_q1_client_start(qa_network_runtime *runtime, qa_net_client_id id
         return qa_network_fail(e, "Q1 CLIENT start requires its freshly bound actual Source");
     if (c->qw && !qa_network_q1_client_command(runtime, id, "new", e)) return false;
     c->started = true; return true;
+}
+bool qa_network_q1_client_sequences(qa_network_runtime *runtime, qa_net_client_id id,
+    uint32_t *outgoing, uint32_t *incoming, qa_error *e)
+{
+    q1_runtime_client *c = q1_client_get(runtime, id, e);
+    if (!c || !c->qw || !outgoing || !incoming || !current(c, e)) return false;
+    qa_qw_channel_stats stats = qa_qw_channel_get_stats(c->native.channel.qw);
+    *outgoing = stats.outgoing_sequence; *incoming = stats.incoming_sequence; return true;
+}
+bool qa_network_q1_demo_sequences(qa_network_runtime *runtime, qa_net_client_id id,
+    uint32_t outgoing, uint32_t incoming, qa_error *e)
+{
+    q1_runtime_client *c = q1_client_get(runtime, id, e);
+    return c && c->demo && c->qw && !c->busy && !c->held &&
+        qa_network_callbacks_idle(runtime) && current(c, e) &&
+        qa_qw_channel_demo_sequences(c->native.channel.qw, outgoing, incoming, e);
+}
+bool qa_network_q1_demo_packet(qa_network_runtime *runtime, qa_net_client_id id,
+    qa_bytes bytes, uint64_t received, qa_error *e)
+{
+    q1_runtime_client *c = q1_client_get(runtime, id, e);
+    if (!c || !c->demo || c->busy || c->held || !qa_network_callbacks_idle(runtime) || !current(c, e))
+        return qa_network_fail(e, "Native demo packet requires its returned actual CLIENT");
+    uint32_t sequence = 0, acknowledged = 0;
+    if (c->qw) {
+        qa_net_reader reader; qa_net_reader_init(&reader, bytes, e);
+        sequence = qa_net_read_u32(&reader) & INT32_MAX;
+        acknowledged = qa_net_read_u32(&reader) & INT32_MAX;
+        qa_bytes payload;
+        if (!qa_net_read_bytes(&reader, qa_net_reader_remaining(&reader), &payload)) return false;
+        qa_qw_channel_stats stats = qa_qw_channel_get_stats(c->native.channel.qw);
+        if (!qa_qw_channel_demo_sequences(c->native.channel.qw, stats.outgoing_sequence, sequence, e)) return false;
+        bytes = payload;
+    }
+    return qa_network_received(runtime, id, received, e) &&
+        q1_client_decode_batch(c, bytes, sequence, acknowledged, received, e) &&
+        qa_network_q1_client_continue(runtime, id, e);
+}
+bool qa_network_q1_demo_command(qa_network_runtime *runtime, qa_net_client_id id,
+    const qa_qw_command *move, uint64_t sent, qa_error *e)
+{
+    q1_runtime_client *c = q1_client_get(runtime, id, e);
+    if (!c || !c->demo || !c->qw || !move || c->busy || c->held ||
+        !qa_network_callbacks_idle(runtime) || !current(c, e)) return false;
+    qa_qw_channel_stats stats = qa_qw_channel_get_stats(c->native.channel.qw);
+    if (stats.outgoing_sequence == INT32_MAX)
+        return qa_network_fail(e, "QWD command sequence is exhausted");
+    runtime->callback = true; c->busy = true;
+    bool ok = qa_qw_history_record(&c->history, stats.outgoing_sequence, (double)sent / 1e9, move, e) &&
+        c->hooks.sent(c->hooks.context, id, stats.outgoing_sequence, NULL, move, sent, e) && current(c, e);
+    if (ok) qa_qw_decoder_delta_request(c->qw, stats.outgoing_sequence, c->has_delta, c->last_frame);
+    c->busy = false; runtime->callback = false;
+    return ok && qa_qw_channel_demo_sequences(c->native.channel.qw,
+        stats.outgoing_sequence + 1, stats.incoming_sequence, e);
 }
 bool qa_network_q1_client_disconnect(qa_network_runtime *runtime, qa_net_client_id id,
     const char *reason, qa_error *e)

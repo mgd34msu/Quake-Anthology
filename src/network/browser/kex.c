@@ -82,7 +82,7 @@ bool qa_server_browser_receive_kex_discovery(qa_server_browser *b,
     decoded.ping_ns = packet->received_ns - sent_ns;
     decoded.has_ping = true;
     record->entry = decoded;
-    qa_browser_changed(b, &record->entry);
+    qa_browser_changed(b, &record->entry, QA_BROWSER_STATUS_RECEIVED);
     *recognized = true;
     return true;
 }

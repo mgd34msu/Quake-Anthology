@@ -16,10 +16,10 @@ browser_record *qa_browser_find(qa_server_browser *browser, const qa_net_address
             qa_net_address_equal(&browser->records[i].entry.address, address, true)) return &browser->records[i];
     return NULL;
 }
-void qa_browser_changed(qa_server_browser *browser, const qa_server_entry *entry) {
+void qa_browser_changed(qa_server_browser *browser, const qa_server_entry *entry, qa_browser_change change) {
     if (browser->hooks.changed) {
         bool previous = browser->callback; browser->callback = true;
-        browser->hooks.changed(browser->hooks.context, entry); browser->callback = previous;
+        browser->hooks.changed(browser->hooks.context, entry, change); browser->callback = previous;
     }
 }
 bool qa_server_browser_create(qa_http *http, uint32_t capacity, const qa_browser_hooks *hooks,
@@ -71,7 +71,7 @@ bool qa_server_browser_add(qa_server_browser *browser, const qa_net_address *add
         if (fresh) memset(record, 0, sizeof(*record));
         return false;
     }
-    record->entry.sources |= sources; qa_browser_changed(browser, &record->entry); return true;
+    record->entry.sources |= sources; qa_browser_changed(browser, &record->entry, QA_BROWSER_MEMBERSHIP_CHANGED); return true;
 }
 bool qa_server_browser_remove_source(qa_server_browser *browser, const qa_net_address *address,
                                       qa_net_protocol_id protocol, uint32_t source, qa_error *error) {
@@ -85,7 +85,7 @@ bool qa_server_browser_remove_source(qa_server_browser *browser, const qa_net_ad
         qa_buffer_free(&record->q3_response); qa_buffer_free(&record->status_response);
         memset(record, 0, sizeof(*record));
     }
-    qa_browser_changed(browser, &previous); return true;
+    qa_browser_changed(browser, &previous, QA_BROWSER_MEMBERSHIP_CHANGED); return true;
 }
 bool qa_server_browser_query(qa_server_browser *browser, const qa_net_address *address,
                               qa_net_protocol_id protocol, bool broadcast, uint64_t now, uint64_t timeout, qa_error *error) {
@@ -126,7 +126,7 @@ void qa_server_browser_expire(qa_server_browser *browser, uint64_t now) {
         browser_record *record = &browser->records[i];
         if (record->occupied && record->entry.pending && now >= record->sent_ns &&
             now - record->sent_ns >= record->timeout_ns) {
-            record->entry.pending = false; record->entry.timed_out = true; qa_browser_changed(browser, &record->entry);
+            record->entry.pending = false; record->entry.timed_out = true; qa_browser_changed(browser, &record->entry, QA_BROWSER_QUERY_EXPIRED);
         }
     }
     if (browser->broadcasting && now >= browser->broadcast_sent && now - browser->broadcast_sent >= browser->broadcast_timeout)
@@ -144,7 +144,7 @@ bool qa_server_browser_receive(qa_server_browser *browser, const qa_net_datagram
         if (qa_browser_master_decode(packet->payload, browser->master_protocol, addresses, 256, &count, &complete, &ignored)) {
             uint32_t source = browser->master_protocol.kind == QA_NET_Q3_68 && browser->q3->master_source >= 0 ?
                 qa_browser_q3_source_bit(browser->q3->master_source) : QA_SERVER_MASTER;
-            bool malformed = false;
+            bool malformed = false; size_t found = 0;
             for (size_t i = 0; i < count; ++i) {
                 if (!addresses[i].port) {
                     if (browser->master_protocol.kind == QA_NET_Q3_68 && browser->q3->master_source >= 0) { malformed = true; break; }
@@ -155,10 +155,20 @@ bool qa_server_browser_receive(qa_server_browser *browser, const qa_net_datagram
                     (browser->q3->master_source == 2 ? 8192u : 128u)) break;
                 if (!qa_server_browser_add(browser, &addresses[i], browser->master_protocol, source, error)) return false;
                 if (!qa_browser_status_enqueue(browser, &addresses[i], browser->master_protocol, error)) return false;
+                ++found;
             }
             if (!malformed) {
                 browser->q3->master_received = true;
                 if (complete) browser->master_pending = false;
+            }
+            if (browser->hooks.master_complete) {
+                qa_error failure = {0};
+                if (malformed) qa_browser_fail(&failure,"Malformed master reply");
+                browser->callback = true;
+                qa_browser_master_result result = {.protocol = browser->master_protocol,
+                    .found = found, .complete = complete && !malformed};
+                browser->hooks.master_complete(browser->hooks.context,malformed?&failure:NULL,&result);
+                browser->callback = false;
             }
             *recognized = true; return true;
         }
@@ -193,7 +203,7 @@ bool qa_server_browser_receive(qa_server_browser *browser, const qa_net_datagram
     if (protocol.kind == QA_NET_Q3_68 && !qa_browser_q3_store_response(target, packet->payload, error)) return false;
     if (protocol.kind != QA_NET_Q3_68 && !qa_browser_status_store_response(target, packet->payload, error)) return false;
     decoded.available = true; decoded.has_ping = true; target->entry = decoded;
-    qa_browser_changed(browser, &target->entry); *recognized = true; return true;
+    qa_browser_changed(browser, &target->entry, QA_BROWSER_STATUS_RECEIVED); *recognized = true; return true;
 }
 bool qa_server_browser_master_udp(qa_server_browser *browser, const qa_net_address *address,
                                    qa_net_protocol_id protocol, uint64_t now, uint64_t timeout, qa_error *error) {
@@ -232,6 +242,7 @@ static bool http_body(void *context, qa_http_request_id id, const qa_http_respon
 static void http_complete(void *context, qa_http_request_id id, const qa_http_response *response, const qa_error *failure) {
     qa_server_browser *browser = context; (void)id; browser->http_master = 0;
     qa_error error = {0}; if (failure) error = *failure;
+    size_t found = 0;
     if (error.code == QA_OK && response->status != 200) qa_browser_fail(&error, "HTTP master did not complete");
     if (error.code == QA_OK && browser->master_body.size) {
         char *cursor = (char *)browser->master_body.data;
@@ -254,6 +265,7 @@ static void http_complete(void *context, qa_http_request_id id, const qa_http_re
                 if (!qa_net_address_resolve(start, port, 0, &address, &error) ||
                     !qa_server_browser_add(browser, &address, browser->master_protocol, QA_SERVER_MASTER, &error) ||
                     !qa_browser_status_enqueue(browser, &address, browser->master_protocol, &error)) break;
+                ++found;
             }
         }
     }
@@ -261,7 +273,9 @@ static void http_complete(void *context, qa_http_request_id id, const qa_http_re
     free(browser->master_url); browser->master_url = NULL;
     if (browser->hooks.master_complete) {
         browser->callback = true;
-        browser->hooks.master_complete(browser->hooks.context, error.code == QA_OK ? NULL : &error);
+        qa_browser_master_result result = {.protocol = browser->master_protocol,
+            .found = found, .http = true, .complete = true};
+        browser->hooks.master_complete(browser->hooks.context, error.code == QA_OK ? NULL : &error,&result);
         browser->callback = false;
     }
 }

@@ -54,6 +54,7 @@ typedef struct q2_client {
     qa_network_q2_client_hooks hooks;
     qa_network_q2_client_policy policy;
     qa_q2_messages *messages;
+    qa_q2_packet_sink recording;
     q2_records batch;
     q2_game_state preparing;
     qa_q2_serverdata server_data;

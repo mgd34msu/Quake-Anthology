@@ -15,6 +15,7 @@ typedef struct frontend_network_q2_client_options {
     uint16_t qport;
     uint32_t physical_seat;
     qa_kex_lan *lobby;
+    bool demo;
     void *context;
     bool (*current)(void *, const frontend_network_q2_client *);
     bool (*download_stage)(void *, qa_fs_root *, const char *, qa_fs_stage **, uint64_t *, qa_error *);
@@ -25,6 +26,11 @@ typedef struct frontend_network_q2_client_options {
 } frontend_network_q2_client_options;
 bool frontend_network_q2_client_create(const frontend_network_q2_client_options *,
     frontend_network_q2_client **, qa_error *);
+bool frontend_network_q2_demo_protocol(const frontend_demo_reader *, qa_net_protocol_id *, qa_error *);
+bool frontend_network_q2_client_demo_record(frontend_network_q2_client *,
+    frontend_demo_record_source *, qa_error *);
+bool frontend_network_q2_client_demo_playback(frontend_network_q2_client *,
+    frontend_demo_playback_source *, qa_error *);
 bool frontend_network_q2_client_receive(frontend_network_q2_client *,
     const qa_net_datagram *, bool *, qa_error *);
 bool frontend_network_q2_client_tick(frontend_network_q2_client *, uint64_t, qa_error *);

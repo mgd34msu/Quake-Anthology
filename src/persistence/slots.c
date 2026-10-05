@@ -28,6 +28,16 @@ bool qa_save_slot_inspect(qa_fs_root *root, const char *name,
 {
     if (!format || !out || !original)
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Missing save slot metadata output");
+    if (!root || !qa_save_slot_name(name, error)) return false;
+    qa_fs_file *file = NULL; qa_fs_identity identity; qa_save_metadata summary = {0}; bool is_shared = false;
+    bool inspected = qa_fs_root_file_open(root, name, &file, &identity, error) &&
+        qa_save_image_metadata_read(file, &identity, &summary, &is_shared, error);
+    qa_fs_file_close(file);
+    if (!inspected) return false;
+    if (is_shared) {
+        *format = QA_SAVE_SLOT_SHARED; *out = summary; *original = (qa_q1_save_slot_metadata){0};
+        return true;
+    }
     qa_save_image *image = NULL; qa_q1_save_data *save = NULL;
     if (!qa_saved_game_read(root, name, &image, &save, error))
         return false;

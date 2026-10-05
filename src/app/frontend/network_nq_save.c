@@ -107,8 +107,8 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
 {
     if (!host || !host->frontend || !host->frontend->application || !host->runtime || host->busy ||
         !host->frontend->options.network_host || host->frontend->options.network_connect ||
-        host->frontend->options.network_protocol.kind != QA_NET_NQ15 || host->frontend->options.network_protocol.flags ||
-        host->frontend->options.network_protocol.revision || !host->owner ||
+        host->frontend->options.network_protocol.kind > QA_NET_RMQ999 ||
+        !qa_q1_profile_valid(host->frontend->options.network_protocol, error) || !host->owner ||
         host->generation != qa_application_configuration_generation(host->frontend->application) ||
         host->submillisecond_ns >= UINT64_C(1000000) || host->pending_count > NQ_PENDING || !host->next_admission_order)
         return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake host lacks its actual source generation and idle policy");

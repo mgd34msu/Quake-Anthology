@@ -2,17 +2,6 @@
 #include "qa/ui_menu_save.h"
 #include "qa/source_save.h"
 
-static bool blob(qa_source_save_io *io, qa_buffer *value)
-{
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    size_t maximum = reading ? io->input.size - io->offset : SIZE_MAX;
-    if (!qa_source_save_count(io, &value->size, maximum)) return false;
-    if (reading && value->size) {
-        value->data = malloc(value->size);
-        if (!value->data) { qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "allocating library query"); return false; }
-    }
-    return qa_source_save_bytes(io, value->data, value->size);
-}
 static bool text(qa_source_save_io *io, char **owned)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
@@ -83,166 +72,72 @@ static bool profiles(qa_source_save_io *io, qa_ui_library *saved)
     }
     return own_seat;
 }
-static bool same_text(const char *a, const char *b)
-{
-    return a && b ? !strcmp(a, b) : a == b;
-}
-static bool same_row(const qa_ui_row *a, const qa_ui_row *b)
-{
-    return same_text(a->key, b->key) && same_text(a->label, b->label) &&
-        same_text(a->detail, b->detail) && a->enabled == b->enabled && !a->image;
-}
-static qa_ui_row product_row(const qa_product *p)
-{
-    return (qa_ui_row){.key = p->identity, .label = p->title,
-        .detail = p->availability == QA_CONTENT_INSTALLED ? p->campaign : "Not installed",
-        .enabled = p->availability == QA_CONTENT_INSTALLED};
-}
-static qa_ui_row map_row(bool authored, const qa_catalog_start *starts,
-                         const qa_catalog_map *maps, size_t index)
-{
-    return (qa_ui_row){.key = authored ? starts[index].path : maps[index].path,
-        .label = authored ? starts[index].title : maps[index].path,
-        .detail = authored ? starts[index].episode : NULL, .enabled = true};
-}
-static bool cache(qa_source_save_io *io, qa_ui_library *saved)
-{
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    /* Refresh/search/failed factories invalidate borrowed row spans. Every
-     * action/draw obtains the real factory, which rebuilds them before use. */
-    if (saved->dirty) return true;
-    size_t count = saved->product_count;
-    size_t maximum = reading ? (io->input.size - io->offset) / 4 : SIZE_MAX / sizeof(qa_ui_row);
-    if (maximum > SIZE_MAX / sizeof(qa_ui_row)) maximum = SIZE_MAX / sizeof(qa_ui_row);
-    if (maximum > SIZE_MAX / sizeof(qa_product_id)) maximum = SIZE_MAX / sizeof(qa_product_id);
-    if (!qa_source_save_count(io, &count, maximum)) return false;
-    if (reading && count) {
-        saved->products = calloc(count, sizeof(*saved->products));
-        saved->product_ids = calloc(count, sizeof(*saved->product_ids));
-        if (!saved->products || !saved->product_ids) {
-            qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "allocating library product cache"); return false;
-        }
-        saved->product_capacity = saved->id_capacity = count;
-    }
-    if (reading) saved->product_count = count;
-    for (size_t i = 0; i < count; ++i) {
-        uint32_t id = reading ? 0 : saved->product_ids[i];
-        if (!qa_source_save_u32(io, &id)) return false;
-        const qa_product *product = qa_catalog_product(saved->catalog, id);
-        if (!product) return false;
-        qa_ui_row row = product_row(product);
-        if (reading) { saved->product_ids[i] = id; saved->products[i] = row; }
-        else if (!same_row(&saved->products[i], &row)) return false;
-    }
-    size_t expected_count = 0;
-    for (size_t i = 0; i < qa_catalog_count(saved->catalog); ++i) {
-        const qa_product *p = qa_catalog_at(saved->catalog, i);
-        bool matched;
-        if (!ui_search(p->title, p->key, p->campaign,
-            (qa_bytes){saved->query_lower.data, saved->query_lower.size}, &matched, io->error)) return false;
-        if (!matched) continue;
-        if (expected_count >= count || saved->product_ids[expected_count++] != p->id) return false;
-    }
-    if (expected_count != count) return false;
-    size_t selected_product = count;
-    for (size_t i = 0; i < count; ++i)
-        if (saved->product_ids[i] == saved->product) selected_product = i;
-    if (selected_product != saved->selected_product) return false;
-
-    count = saved->map_count;
-    maximum = reading ? (io->input.size - io->offset) / 8 : SIZE_MAX / sizeof(qa_ui_row);
-    if (maximum > SIZE_MAX / sizeof(qa_ui_row)) maximum = SIZE_MAX / sizeof(qa_ui_row);
-    if (maximum > SIZE_MAX / sizeof(size_t)) maximum = SIZE_MAX / sizeof(size_t);
-    if (!qa_source_save_count(io, &count, maximum)) return false;
-    size_t actual_count = 0;
-    const qa_catalog_start *starts = NULL;
-    const qa_catalog_map *maps = NULL;
-    if (saved->product && selected_product < saved->product_count) {
-        if (saved->starts) starts = qa_catalog_starts(saved->catalog, saved->product, NULL, &actual_count);
-        else maps = qa_catalog_maps(saved->catalog, saved->product, &actual_count);
-    }
-    if (count != actual_count) return false;
-    if (reading && count) {
-        saved->maps = calloc(count, sizeof(*saved->maps));
-        saved->map_indices = calloc(count, sizeof(*saved->map_indices));
-        if (!saved->maps || !saved->map_indices) {
-            qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "allocating library map cache"); return false;
-        }
-        saved->map_capacity = saved->index_capacity = count;
-    }
-    if (reading) saved->map_count = count;
-    for (size_t i = 0; i < count; ++i) {
-        size_t index = reading ? 0 : saved->map_indices[i];
-        if (!qa_source_save_count(io, &index, SIZE_MAX) || index != i) return false;
-        qa_ui_row row = map_row(saved->starts, starts, maps, index);
-        if (reading) { saved->map_indices[i] = index; saved->maps[i] = row; }
-        else if (!same_row(&saved->maps[i], &row)) return false;
-    }
-    return true;
-}
-static bool fields(qa_source_save_io *io, qa_ui_library *saved,
-                    const qa_ui_library *qualified, const qa_ui_menu_checkpoint_refs *refs)
-{
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','L','I','B'};
-    uint32_t seat = qualified->ui->options.seat;
-    uint64_t menu = qualified->menu, catalog = 0;
-    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QLIB", 4) ||
-        !qa_source_save_u32(io, &seat) || seat != qualified->ui->options.seat ||
-        !qa_source_save_u64(io, &menu) || menu != qualified->menu) return false;
-    if (!reading && !refs->catalog_encode(refs->context, saved->catalog, &catalog, io->error)) return false;
-    if (!qa_source_save_u64(io, &catalog)) return false;
+static bool draft(qa_source_save_io *io,qa_ui_library *saved) {
+    bool reading=io->direction==QA_SOURCE_SAVE_READ,present=saved->draft!=NULL;
+    if (!qa_source_save_bool(io,&present)) return false;
+    if (!present) return true;
+    const qa_actor_registry *actors=qa_session_actors(qa_application_session(saved->application));
+    qa_buffer bytes={0}; size_t size=0; bool ok;
     if (reading) {
-        qa_catalog *actual = NULL;
-        if (!refs->catalog_decode(refs->context, catalog, &actual, io->error) || !actual) return false;
-        qa_catalog_retain(actual); saved->catalog = actual;
+        qa_bytes view={0};
+        return qa_source_save_count(io,&size,io->input.size-io->offset) && qa_source_save_span(io,size,&view) &&
+            qa_launch_draft_restore(saved->catalog,actors,view,&saved->draft,io->error);
     }
-    if (!profiles(io, saved) || !qa_source_save_u32(io, &saved->product) ||
-        (saved->product && !qa_catalog_product(saved->catalog, saved->product)) ||
-        !qa_source_save_count(io, &saved->selected_product, SIZE_MAX) ||
-        !qa_source_save_count(io, &saved->selected_map, SIZE_MAX) ||
-        !qa_source_save_i32(io, &saved->skill) || !qa_source_save_bool(io, &saved->starts) ||
-        !qa_source_save_bool(io, &saved->original) || !optional_text(io, &saved->game_type) ||
-        !qa_source_save_bool(io, &saved->dirty) || !qa_source_save_u64(io, &saved->revision) ||
-        !qa_source_save_bytes(io, saved->query, sizeof(saved->query)) || !memchr(saved->query, 0, sizeof(saved->query)) ||
-        !qa_source_save_bytes(io, saved->status, sizeof(saved->status)) || !memchr(saved->status, 0, sizeof(saved->status)) ||
-        !blob(io, &saved->query_lower)) return false;
-    if (saved->game_type) {
-        const qa_catalog_mod *mod = qa_catalog_mod_find(saved->catalog, saved->game_type);
-        if (saved->original || !mod || mod->product != saved->product ||
-            mod->purpose != QA_MOD_GAME_TYPE || mod->unavailable) return false;
-    }
-    return cache(io, saved);
+    if (!qa_launch_draft_checkpoint(saved->draft,actors,&bytes,io->error)) return false;
+    size=bytes.size; ok=qa_source_save_count(io,&size,SIZE_MAX) && qa_source_save_bytes(io,bytes.data,size);
+    qa_buffer_free(&bytes); return ok;
 }
-bool qa_ui_library_checkpoint(const qa_ui_library *menu, const qa_ui_menu_checkpoint_refs *refs,
-                               qa_buffer *out, qa_error *error)
-{
+static bool fields(qa_source_save_io *io,qa_ui_library *saved,const qa_ui_library *qualified,const qa_ui_menu_checkpoint_refs *refs) {
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    uint8_t magic[4]={'Q','S','E','L'}; uint32_t seat=qualified->ui->options.seat;
+    uint64_t menu=qualified->menu,catalog=0;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QSEL",4) ||
+        !qa_source_save_u32(io,&seat) || seat!=qualified->ui->options.seat ||
+        !qa_source_save_u64(io,&menu) || menu!=qualified->menu) return false;
+    if (!reading && !refs->catalog_encode(refs->context,saved->catalog,&catalog,io->error)) return false;
+    if (!qa_source_save_u64(io,&catalog)) return false;
+    if (reading) {
+        qa_catalog *actual=NULL; if (!refs->catalog_decode(refs->context,catalog,&actual,io->error) || !actual) return false;
+        qa_catalog_retain(actual); saved->catalog=actual;
+    }
+    uint32_t family=saved->family,edition=saved->edition,group=saved->group,field=saved->field,mode=saved->mode_preference;
+    if (!profiles(io,saved) || !draft(io,saved) ||
+        !qa_source_save_u32(io,&mode) ||
+        (mode!=QA_MODE_SINGLE_PLAYER && mode!=QA_MODE_COOPERATIVE && mode!=QA_MODE_FFA) ||
+        !qa_source_save_u32(io,&family) || family>QA_GAME_Q3 ||
+        !qa_source_save_u32(io,&edition) || edition>QA_EDITION_DEMO ||
+        !qa_source_save_u32(io,&saved->native_product) ||
+        (saved->native_product && !qa_catalog_product(saved->catalog,saved->native_product)) ||
+        !qa_source_save_i32(io,&saved->native_skill) || saved->native_skill<0 || saved->native_skill>5 ||
+        !qa_source_save_i32(io,&saved->arena_number) || !qa_source_save_i32(io,&saved->arena_tier) ||
+        !qa_source_save_u32(io,&group) || group>3 ||
+        !qa_source_save_u32(io,&field) || field>QA_UI_LIBRARY_DOPPLER ||
+        !qa_source_save_count(io,&saved->page,SIZE_MAX) || !qa_source_save_count(io,&saved->roster_page,SIZE_MAX) ||
+        !optional_text(io,&saved->monster_classname) || !qa_source_save_bool(io,&saved->last_authored) ||
+        !qa_source_save_bytes(io,saved->status,sizeof(saved->status)) || !memchr(saved->status,0,sizeof(saved->status))) return false;
+    saved->family=(qa_game_family)family; saved->edition=(qa_product_edition)edition;
+    saved->group=group; saved->field=(qa_ui_library_field)field; saved->mode_preference=(qa_mode_kind)mode; return true;
+}
+bool qa_ui_library_checkpoint(const qa_ui_library *menu,const qa_ui_menu_checkpoint_refs *refs,qa_buffer *out,qa_error *error) {
     if (!menu || !refs || !refs->catalog_encode || !out || out->data || out->size ||
         menu->ui->handling || menu->ui->drawing || !menu->catalog || !menu->local_player_count)
-        return ui_fail(error, "library capture requires idle catalog and roster owners");
-    qa_ui_library saved = *menu;
-    qa_source_save_io io = {0};
-    bool success = qa_source_save_writer(&io, NULL, error) && fields(&io, &saved, menu, refs) &&
-        qa_source_save_finish(&io, out);
+        return ui_fail(error,"selection capture requires idle catalog and roster owners");
+    qa_ui_library saved=*menu; qa_source_save_io io={0};
+    bool ok=qa_source_save_writer(&io,NULL,error) && fields(&io,&saved,menu,refs) && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);
-    if (!success && error && error->code == QA_OK)
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "library continuation leaves its actual owner domains");
-    return success;
+    if (!ok && error && error->code==QA_OK) qa_error_set(error,QA_ERROR_FORMAT,0,"selection continuation leaves its owner domains");
+    return ok;
 }
-bool qa_ui_library_restore(qa_ui_library *menu, const qa_ui_menu_checkpoint_refs *refs,
-                            qa_bytes bytes, qa_error *error)
-{
+bool qa_ui_library_restore(qa_ui_library *menu,const qa_ui_menu_checkpoint_refs *refs,qa_bytes bytes,qa_error *error) {
     if (!menu || !refs || !refs->catalog_decode || menu->ui->handling || menu->ui->drawing)
-        return ui_fail(error, "library restore requires its idle controller and catalog resolver");
-    qa_ui_library saved = {.ui = menu->ui, .application = menu->application, .menu = menu->menu};
-    qa_source_save_io io = {0};
-    bool success = qa_source_save_reader(&io, NULL, bytes, error) && fields(&io, &saved, menu, refs) &&
-        qa_source_save_finish(&io, NULL);
+        return ui_fail(error,"selection restore requires its idle controller and catalog resolver");
+    qa_ui_library saved={.ui=menu->ui,.application=menu->application,.menu=menu->menu,.services=menu->services};
+    memcpy(saved.pages,menu->pages,sizeof(saved.pages));
+    qa_source_save_io io={0};
+    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && fields(&io,&saved,menu,refs) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
-    if (!success) {
-        ui_library_clear(&saved);
-        if (error && error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "unqualified library continuation");
-        return false;
+    if (!ok) {
+        ui_library_clear(&saved); if (error && error->code==QA_OK) qa_error_set(error,QA_ERROR_FORMAT,0,"unqualified startup selection continuation"); return false;
     }
-    qa_ui_library displaced = *menu; *menu = saved; ui_library_clear(&displaced); return true;
+    qa_ui_library displaced=*menu; *menu=saved; ui_library_clear(&displaced); return true;
 }

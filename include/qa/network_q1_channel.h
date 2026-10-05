@@ -44,6 +44,7 @@ typedef struct qa_qw_channel_stats {
     uint32_t bytes_per_second;
 } qa_qw_channel_stats;
 qa_qw_channel_stats qa_qw_channel_get_stats(const qa_qw_channel *);
+bool qa_qw_channel_demo_sequences(qa_qw_channel *, uint32_t outgoing, uint32_t incoming, qa_error *);
 
 typedef enum qa_q1_peer_kind { QA_Q1_PEER_NETQUAKE, QA_Q1_PEER_QUAKEWORLD } qa_q1_peer_kind;
 /* Peer borrows its transport and channel. Each belongs to a single caller. */

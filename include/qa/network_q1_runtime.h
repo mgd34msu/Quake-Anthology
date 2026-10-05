@@ -27,7 +27,8 @@ typedef struct qa_network_nq_server_state {
     uint8_t stage;
     bool started, retiring;
 } qa_network_nq_server_state;
-/* Original single-seat NQ15 server. Native channel and FIFO transfer into the
+/* Single-seat NetQuake server for protocols 15, 666 and 999. The original
+ * source remains canonical; native channel and FIFO transfer into the
  * shared runtime; its transport remains the sole receive owner. Start only
  * after the real application has reserved the source client. */
 bool qa_network_attach_nq_server(qa_network_runtime *, const qa_net_connect *,

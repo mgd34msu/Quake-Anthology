@@ -400,7 +400,7 @@ static bool slider_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
             control->rect.y + 8, 6, 12}, color, error);
 }
 static bool draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport, float scale,
-                  bool contrast, qa_error *error) {
+                  bool contrast, bool startup, qa_error *error) {
     if (!ui || !frame || !viewport.width || !viewport.height || !isfinite(scale) || scale <= 0 ||
         (double)viewport.x + viewport.width > INT32_MAX ||
         (double)viewport.y + viewport.height > INT32_MAX)
@@ -419,7 +419,7 @@ static bool draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport, float
     if (!ui_active(ui, &menu, error)) return false;
     if (!ui->depth) return true;
     menu_colors colors = menu_palette(ui, contrast, menu.narrow);
-    if (!menu_backdrop(ui, frame, viewport, error) ||
+    if ((startup && !menu_backdrop(ui, frame, viewport, error)) ||
         !menu_panel(ui, frame, viewport, menu.narrow, colors.panel, error) ||
         !menu_title(ui, frame, viewport, &menu, error) ||
         !ui_fill(ui, frame, viewport, (qa_scene_rect_f){64, 104, menu.narrow ? 224 : 512, 1},
@@ -478,11 +478,11 @@ static bool draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport, float
         "Press key/button. Esc cancels.", colors.accent, UI_MENU_FONT_SCALE, QA_FONT_ALIGN_CENTER, error);
 }
 bool qa_ui_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport, float scale,
-                 bool contrast, qa_error *error) {
+                 bool contrast, bool startup, qa_error *error) {
     if (!ui || ui->handling) return ui_fail(error, "UI callback is active");
     ui->handling = true;
     ui->drawing = true;
-    bool ok = draw(ui, frame, viewport, scale, contrast, error);
+    bool ok = draw(ui, frame, viewport, scale, contrast, startup, error);
     ui->handling = false;
     ui->drawing = false;
     return ok;

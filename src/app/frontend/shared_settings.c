@@ -97,15 +97,17 @@ bool frontend_shared_settings_refresh(frontend_shared_settings *owner,
         frontend_shared_settings_current(owner,owner->frontend,owner->application,owner->candidate) &&
         frontend_shared_values_refresh(owner->values,source,error);
 }
-static bool project(const frontend_shared_settings *owner,qa_input_platform_settings *out,qa_error *error)
+bool frontend_shared_settings_input_project(qa_cvars *registry,const qa_cvars_edit *edit,
+    bool restart_requested,qa_input_platform_settings *out,qa_error *error)
 {
+    if (!registry || !out || (edit && qa_cvars_edit_registry(edit)!=registry))
+        return fail(error,"Input projection requires its actual canonical registry");
     static const char *const names[]={"in_mouse","in_nograb","in_joystick","in_joystickProfile",
         "in_midi","in_joystickSeat","in_midiseat","in_mididevice","in_midichannel",
         "joy_threshold","in_joyBallScale"};
-    const qa_cvars_edit *edit=frontend_shared_values_prepared(owner->values);
     const qa_cvar_view *row[sizeof(names)/sizeof(*names)];
     for (size_t i=0;i<sizeof(names)/sizeof(*names);++i) {
-        row[i]=qa_cvars_edit_find(edit,names[i]);
+        row[i]=edit?qa_cvars_edit_find(edit,names[i]):qa_cvars_find(registry,names[i]);
         if (!row[i]) return fail(error,"Input settings lack an actual canonical declaration");
     }
     if (strcmp(row[3]->value,"linux") && strcmp(row[3]->value,"windows"))
@@ -117,8 +119,14 @@ static bool project(const frontend_shared_settings *owner,qa_input_platform_sett
         .midi_enabled=row[4]->integer!=0,.joystick_seat=row[5]->integer,.midi_seat=row[6]->integer,
         .midi_device=row[7]->integer,.midi_channel=row[8]->integer,
         .joystick_threshold=row[9]->number,.joystick_ball_scale=row[10]->number,
-        .restart_requested=frontend_shared_values_input_restart_pending(owner->values)};
+        .restart_requested=restart_requested};
     return true;
+}
+static bool project(const frontend_shared_settings *owner,qa_input_platform_settings *out,qa_error *error)
+{
+    return frontend_shared_settings_input_project(frontend_shared_values_registry(owner->values),
+        frontend_shared_values_prepared(owner->values),
+        frontend_shared_values_input_restart_pending(owner->values),out,error);
 }
 bool frontend_shared_settings_constructor_settings(frontend_shared_settings *owner,
     qa_display_options *display,int *swap_interval,float *gamma,qa_audio_output_format *output,

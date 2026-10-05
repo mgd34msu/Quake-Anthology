@@ -38,6 +38,9 @@ typedef struct qa_save_owner {
 typedef struct qa_save_metadata {
     qa_save_purpose purpose;
     uint64_t elapsed_ns, configuration_generation, world_generation;
+    /* Archived source summary for saved-game menus, independent of the
+     * currently running product and world. Empty before a map exists. */
+    char map[256], game[128];
 } qa_save_metadata;
 
 typedef struct qa_save_record {
@@ -55,6 +58,11 @@ bool qa_save_image_create(const qa_save_metadata *, const qa_save_record *, size
                            qa_save_image **, qa_error *);
 bool qa_save_image_decode(qa_bytes, qa_save_image **, qa_error *);
 bool qa_save_image_encode(const qa_save_image *, qa_buffer *, qa_error *);
+/* Reads only the bounded header of an admitted file. Foreign formats return
+ * shared=false; shared payload owners are validated when actually loaded.
+ * Metadata output remains unchanged on failure or a foreign format. */
+bool qa_save_image_metadata_read(qa_fs_file *, const qa_fs_identity *,
+    qa_save_metadata *, bool *shared, qa_error *);
 /* Checked release consumes the image only after all attached native references
  * close successfully. A refusal retains *image for retry; that retiring image
  * can no longer be encoded or used as an active capability graph. */

@@ -27,6 +27,8 @@ struct qa_nq_decoder {
     qa_q1_entity *baselines;
     uint8_t *present;
     const char **models, **sounds;
+    const qa_q1_entity *source_baselines;
+    size_t source_baseline_count;
 };
 static bool nq_profile(qa_net_protocol_id p)
 {
@@ -63,7 +65,15 @@ qa_net_protocol_id qa_nq_decoder_protocol(const qa_nq_decoder *d) { return d ? d
 float qa_nq_decoder_time(const qa_nq_decoder *d) { return d?d->time:0; }
 const qa_q1_entity *qa_nq_decoder_baseline(const qa_nq_decoder *d, uint32_t number)
 {
-    return d && number<65536 && d->present[number] ? &d->baselines[number] : NULL;
+    if (!d || number >= 65536) return NULL;
+    if (d->present) return d->present[number] ? &d->baselines[number] : NULL;
+    size_t first = 0, end = d->source_baseline_count;
+    while (first < end) {
+        size_t middle = first + (end - first) / 2;
+        if (d->source_baselines[middle].number < number) first = middle + 1; else end = middle;
+    }
+    return first < d->source_baseline_count && d->source_baselines[first].number == number ?
+        d->source_baselines + first : NULL;
 }
 bool qa_nq_decoder_set_baseline(qa_nq_decoder *d, const qa_q1_entity *s, qa_error *e)
 {
@@ -211,7 +221,8 @@ bool qa_nq_read(qa_nq_decoder *d, qa_net_reader *r, qa_nq_message *out)
     case 3: m.data.indexed.index=qa_net_read_u8(r); m.data.indexed.value=qa_net_read_i32(r); break;
     case 4: {
         uint32_t version=qa_net_read_u32(r);
-        if (!qa_q1_profile(version,version==999?p.flags:0,&p,NULL) || qa_q1_is_qw(p))
+        if (!qa_q1_profile(version,version==999?p.flags:0,&p,NULL) || qa_q1_is_qw(p) ||
+            (!d->present && p.kind != QA_NET_NQ15))
             return qa_net_reader_fail(r,"Unexpected NetQuake protocol version");
         m.data.value=version; break;
     }
@@ -234,6 +245,7 @@ bool qa_nq_read(qa_nq_decoder *d, qa_net_reader *r, qa_nq_message *out)
     case 11: {
         qa_nq_serverinfo *s=&m.data.serverinfo;
         if (!qa_q1_read_protocol(r,false,&p)) return false;
+        if (!d->present && p.kind != QA_NET_NQ15) return qa_net_reader_fail(r,"Original source changes its NetQuake dialect");
         s->protocol=p; s->max_clients=qa_net_read_u8(r); s->game_type=qa_net_read_u8(r);
         qa_q1_read_cstring(r,&s->level);
         size_t limit=p.kind==QA_NET_NQ15?256:8192;
@@ -291,14 +303,14 @@ bool qa_nq_read(qa_nq_decoder *d, qa_net_reader *r, qa_nq_message *out)
     default: return qa_net_reader_fail(r,"Unknown NetQuake service");
     }
     if (r->failed) return false;
-    if (op==4) {
+    if (op==4 && d->present) {
         for (uint32_t i=0;i<65536;++i) {
             if (d->present[i] && !entity_valid(p,&d->baselines[i]))
                 return qa_net_reader_fail(r,"Protocol change cannot represent retained baseline");
         }
     }
-    if (op==11) memset(d->present,0,65536);
-    if (m.op==QA_NQ_BASELINE) { d->baselines[m.data.entity.number]=m.data.entity; d->present[m.data.entity.number]=1; }
+    if (op==11 && d->present) memset(d->present,0,65536);
+    if (m.op==QA_NQ_BASELINE && d->present) { d->baselines[m.data.entity.number]=m.data.entity; d->present[m.data.entity.number]=1; }
     if (op==7) d->time=m.data.seconds;
     d->protocol=p; *out=m; return true;
 }
@@ -604,6 +616,34 @@ bool qa_nq_write(qa_net_writer *w, qa_net_protocol_id p, qa_nq_options options,
     }
     return !w->failed;
 }
+bool qa_nq_transcode_original(qa_net_reader *reader, qa_net_writer *writer,
+    qa_net_protocol_id destination, qa_nq_options options, const qa_q1_entity *baselines,
+    size_t baseline_count, float source_time, qa_q1_emit_fn emit, void *context)
+{
+    if (!reader || !writer || !emit || !nq_profile(destination) || (baseline_count && !baselines) || !isfinite(source_time))
+        return qa_net_writer_fail(writer,"Invalid original NetQuake wire conversion");
+    const char *models[256], *sounds[256];
+    qa_nq_decoder source = {.protocol = {.kind = QA_NET_NQ15}, .options = options,
+        .time = source_time, .models = models, .sounds = sounds,
+        .source_baselines = baselines, .source_baseline_count = baseline_count};
+    while (qa_net_reader_remaining(reader)) {
+        qa_nq_message message;
+        if (!qa_nq_read(&source, reader, &message)) return false;
+        if (message.op == QA_NQ_SERVERINFO) message.data.serverinfo.protocol = destination;
+        else if (message.op == QA_NQ_VERSION) message.data.value = qa_q1_version(destination);
+        const qa_q1_entity *saved = message.op == QA_NQ_ENTITY ?
+            qa_nq_decoder_baseline(&source, message.data.entity.number) : NULL;
+        qa_q1_entity empty;
+        if (message.op == QA_NQ_ENTITY && !saved) {
+            qa_q1_entity_init(&empty); empty.number = message.data.entity.number; saved = &empty;
+        }
+        if (!qa_nq_write(writer, destination, options, &message, saved, source.time) ||
+            !emit(context, (qa_bytes){writer->data, qa_net_writer_size(writer)}, writer->error)) return false;
+        qa_net_writer_init(writer, writer->data, writer->capacity, writer->error);
+    }
+    return qa_net_reader_finish(reader);
+}
+
 bool qa_nq_move_send(uint32_t *count, bool demo, qa_net_writer *w,
                       qa_net_protocol_id p, const qa_q1_command *c, bool *present)
 {

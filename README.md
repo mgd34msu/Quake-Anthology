@@ -153,7 +153,7 @@ Connect to an Anthology server with `--connect ADDRESS --port PORT`. For an orig
 ./build/quake-anthology --game q2-classic-baseq2 --connect 192.0.2.10 --port 27910 --protocol q2-34
 ```
 
-Protocol names include `nq15`, `fitz666`, `rmq999`, `qw28`, `qw29`, `q2-34`, `r1q2-35`, `q2pro-36`, `q2repro-1038`, `q2kex-2023`, `q3-68` and `unified-1`. Match the server's game, protocol and required content.
+Protocol names include `nq15`, `fitz666`, `rmq999`, `qw28`, `qw29`, `q2-34`, `r1q2-35`, `q2pro-36`, `q2repro-1038`, `q2kex-2023`, `q3-68` and `unified-1`. Match the server's game, protocol and required content. For native Quake hosting, select NetQuake (15), FitzQuake (666), or RMQ (999) under Network → Quake protocol.
 
 ## Troubleshooting
 

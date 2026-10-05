@@ -200,6 +200,16 @@ bool qa_network_q2_server_download(qa_network_runtime *, qa_net_client_id,
 /* The decoder retains complete owned records before invoking the actual
  * application outside the pump. Waiting preparation holds the receiver and
  * blocks subsequent polling until continue has consumed its retained batch. */
+/* Demo playback uses the same retained decoder and Source delivery, without a
+ * channel or outbound commands. Accepted live payloads borrow decoder input. */
+typedef struct qa_q2_packet_sink {
+    void *context;
+    bool (*append)(void *, qa_bytes, bool full_frame, qa_error *);
+} qa_q2_packet_sink;
+bool qa_network_q2_client_record(qa_network_runtime *, qa_net_client_id,
+    const qa_q2_packet_sink *, bool attach, qa_error *);
+bool qa_network_q2_client_demo_receive(qa_network_runtime *, qa_net_client_id,
+    qa_bytes, uint64_t now_ns, qa_error *);
 bool qa_network_q2_client_continue(qa_network_runtime *, qa_net_client_id, qa_error *);
 bool qa_network_q2_client_command(qa_network_runtime *, qa_net_client_id,
     const char *, uint8_t wire_seat, qa_error *);

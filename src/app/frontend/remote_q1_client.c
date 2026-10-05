@@ -17,6 +17,177 @@ bool remote_q1_string(char **out, const char *text, qa_error *error)
     if (!value) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining Q1 service string");
     memcpy(value, text, size); free(*out); *out = value; return true;
 }
+void remote_q1_demo_clear(frontend_remote_q1 *row)
+{
+    while (row->demo_seed) {
+        remote_q1_demo_seed *next = row->demo_seed->next;
+        qa_buffer_free(&row->demo_seed->bytes); free(row->demo_seed); row->demo_seed = next;
+    }
+    row->demo_seed_last = NULL; row->demo_seed_bytes = 0; row->demo_seed_complete = false;
+}
+static bool demo_packet(frontend_remote_q1 *row, const frontend_demo_sink *sink,
+    qa_bytes bytes, qa_bytes prefix, uint32_t sequence, uint32_t acknowledged, float seconds, qa_error *error)
+{
+    frontend_demo_packet packet = {.format = qa_q1_is_qw(row->protocol) ? FRONTEND_DEMO_QW : FRONTEND_DEMO_NQ};
+    if (packet.format == FRONTEND_DEMO_NQ) {
+        packet.value.nq.message = bytes;
+        packet.value.nq.angles[0] = row->view_angles.x; packet.value.nq.angles[1] = row->view_angles.y;
+        packet.value.nq.angles[2] = row->view_angles.z;
+        return sink->append(sink->owner, &packet, error);
+    }
+    if (bytes.size > 1450 - 8) return remote_q1_fail(error, QA_ERROR_FORMAT, "QWD source packet exceeds its native framing");
+    uint8_t data[1450]; qa_net_writer writer; qa_net_writer_init(&writer, data, sizeof(data), error);
+    if (!(prefix.size ? (prefix.size == 8 && qa_net_write_data(&writer, prefix.data, prefix.size)) :
+            qa_net_write_u32(&writer, sequence) && qa_net_write_u32(&writer, acknowledged)) ||
+        !qa_net_write_data(&writer, bytes.data, bytes.size)) return false;
+    packet.value.qw = (qa_qw_demo_record){.seconds = seconds, .kind = QA_QW_DEMO_PACKET,
+        .data.packet = {data, qa_net_writer_size(&writer)}};
+    return sink->append(sink->owner, &packet, error);
+}
+bool remote_q1_demo_batch(frontend_remote_q1 *row, qa_bytes bytes, qa_bytes prefix, uint32_t sequence,
+    uint32_t acknowledged, uint64_t received, qa_error *error)
+{
+    (void)error;
+    if (!row->demo_seed_complete) {
+        remote_q1_demo_seed *held = NULL;
+        if ((!qa_q1_is_qw(row->protocol) || prefix.size == 8) &&
+            bytes.size <= 64u * 1024u * 1024u - row->demo_seed_bytes) held = calloc(1, sizeof(*held));
+        if (held && bytes.size) held->bytes.data = malloc(bytes.size);
+        if (!held || (bytes.size && !held->bytes.data)) {
+            free(held); remote_q1_demo_clear(row); row->demo_seed_complete = true;
+        } else {
+            if (bytes.size) memcpy(held->bytes.data, bytes.data, bytes.size);
+            if (prefix.size == 8) memcpy(held->wire_prefix, prefix.data, prefix.size);
+            held->bytes.size = bytes.size; held->sequence = sequence; held->acknowledged = acknowledged;
+            if (row->demo_seed_last) row->demo_seed_last->next = held; else row->demo_seed = held;
+            row->demo_seed_last = held; row->demo_seed_bytes += bytes.size;
+            qa_network_q1_client_state state;
+            row->demo_seed_complete = qa_network_q1_client_state_read(row->options.domain.runtime,
+                row->options.domain.client, &state, NULL) && state.active;
+        }
+    }
+    if (row->demo_sink.append) {
+        qa_error recording = {0};
+        float seconds = (float)((double)(received >= row->demo_record_start ? received - row->demo_record_start : 0) / 1e9);
+        (void)demo_packet(row, &row->demo_sink, bytes, prefix, sequence, acknowledged, seconds, &recording);
+    }
+    return true;
+}
+bool frontend_remote_q1_demo_attach(frontend_remote_q1 *row, const frontend_demo_sink *sink,
+    bool *attached, qa_error *error)
+{
+    if (!attached || !sink || !sink->owner || !sink->append || !row || row->busy ||
+        row->demo_sink.append || !remote_q1_live(row, error)) return false;
+    row->demo_sink = *sink; row->demo_record_start = row->received_ns; *attached = true; return true;
+}
+bool frontend_remote_q1_demo_detach(frontend_remote_q1 *row, const frontend_demo_sink *sink, qa_error *error)
+{
+    if (!row || !sink || row->busy) return false;
+    if (!row->demo_sink.append) return true;
+    if (row->demo_sink.owner != sink->owner || row->demo_sink.append != sink->append)
+        return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 recording detach differs from its retained sink");
+    row->demo_sink = (frontend_demo_sink){0}; return true;
+}
+bool frontend_remote_q1_demo_angles(frontend_remote_q1 *row, const float angles[3], qa_error *error)
+{
+    if (!row || !angles || row->busy || !remote_q1_live(row, error) ||
+        !isfinite(angles[0]) || !isfinite(angles[1]) || !isfinite(angles[2]) || row->revision == UINT64_MAX) return false;
+    row->view_angles = qa_v3(angles[0], angles[1], angles[2]); ++row->revision; return true;
+}
+static bool demo_nq_message(frontend_remote_q1 *row, const frontend_demo_sink *sink,
+    const qa_nq_message *message, qa_nq_options options, const qa_nq_decoder *decoder, qa_error *error)
+{
+    uint8_t data[64000]; qa_net_writer writer; qa_net_writer_init(&writer, data, sizeof(data), error);
+    const qa_q1_entity *baseline = message->op == QA_NQ_ENTITY ? qa_nq_decoder_baseline(decoder, message->data.entity.number) : NULL;
+    return qa_nq_write(&writer, row->protocol, options, message, baseline, (float)row->seconds) &&
+        demo_packet(row, sink, (qa_bytes){data, qa_net_writer_size(&writer)}, (qa_bytes){0}, 0, 0, 0, error);
+}
+static bool demo_qw_message(frontend_remote_q1 *row, const frontend_demo_sink *sink,
+    const qa_qw_service *message, const qa_qw_decoder *decoder, uint32_t incoming, uint32_t outgoing, qa_error *error)
+{
+    uint8_t data[1450 - 8]; qa_net_writer writer; qa_net_writer_init(&writer, data, sizeof(data), error);
+    return qa_qw_service_write(&writer, row->protocol, message, decoder) &&
+        demo_packet(row, sink, (qa_bytes){data, qa_net_writer_size(&writer)}, (qa_bytes){0}, incoming,
+            outgoing ? outgoing - 1 : 0, 0, error);
+}
+bool frontend_remote_q1_demo_seed(frontend_remote_q1 *row, const frontend_demo_sink *sink,
+    qa_nq_options options, qa_error *error)
+{
+    if (!row || !sink || !sink->owner || !sink->append || row->busy || !remote_q1_live(row, error) ||
+        !row->demo_seed || !row->demo_seed_complete)
+        return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Recording requires the actual received Q1 signon seed");
+    uint32_t outgoing = 0, incoming = 0;
+    const bool qw = qa_q1_is_qw(row->protocol);
+    if (qw) {
+        if (!qa_network_q1_client_sequences(row->options.domain.runtime, row->options.domain.client,
+            &outgoing, &incoming, error)) return false;
+        frontend_demo_packet packet = {.format = FRONTEND_DEMO_QW, .value.qw = {
+            .kind = QA_QW_DEMO_SEQUENCES, .data.sequences = {outgoing, incoming}}};
+        if (!sink->append(sink->owner, &packet, error)) return false;
+    }
+    for (const remote_q1_demo_seed *seed = row->demo_seed; seed; seed = seed->next)
+        if (!demo_packet(row, sink, (qa_bytes){seed->bytes.data, seed->bytes.size},
+            qw ? (qa_bytes){seed->wire_prefix, sizeof(seed->wire_prefix)} : (qa_bytes){0},
+            seed->sequence, seed->acknowledged, 0, error)) return false;
+    if (qw) {
+        const qa_qw_decoder *decoder = qa_network_q1_client_qw_decoder(row->options.domain.runtime, row->options.domain.client);
+        qa_network_q1_client_state state;
+        if (!decoder || !qa_network_q1_client_state_read(row->options.domain.runtime, row->options.domain.client, &state, error)) return false;
+        const qa_qw_frame *frame = qa_qw_decoder_frame(decoder, state.last_frame);
+        if (!frame) return remote_q1_fail(error, QA_ERROR_ARGUMENT, "QWD seed lacks its actual complete entity frame");
+        qa_qw_service service = {.kind = QA_QW_PACKET_ENTITIES, .data.packet = {.frame = *frame}};
+        if (!demo_qw_message(row, sink, &service, decoder, incoming, outgoing, error)) return false;
+        for (size_t i = 0; i < 32; ++i) if (row->qw_player_valid[i]) {
+            service = (qa_qw_service){.kind = QA_QW_PLAYER, .data.player = row->qw_players[i]};
+            if (!demo_qw_message(row, sink, &service, decoder, incoming, outgoing, error)) return false;
+        }
+        for (size_t i = 0; i < 256; ++i) {
+            service = (qa_qw_service){.kind = QA_QW_STAT, .data.stat = {(uint8_t)i, row->qw_stats[i]}};
+            if (!demo_qw_message(row, sink, &service, decoder, incoming, outgoing, error)) return false;
+        }
+        for (size_t i = 0; i < 32; ++i) if (row->clients[i].userinfo) {
+            qa_qw_info info = {0};
+            if (!qa_qw_info_parse(row->clients[i].userinfo, &info, error)) return false;
+            bool ok = true;
+            for (size_t j = 0; ok && j < info.count; ++j) {
+                service = (qa_qw_service){.kind = QA_QW_SET_INFO,
+                    .data.info = {(uint8_t)i, info.rules[j].name, info.rules[j].value}};
+                ok = demo_qw_message(row, sink, &service, decoder, incoming, outgoing, error);
+            }
+            qa_qw_info_free(&info); if (!ok) return false;
+            service = (qa_qw_service){.kind = QA_QW_FRAGS, .data.score = {(uint8_t)i, (int16_t)row->clients[i].frags}};
+            if (!demo_qw_message(row, sink, &service, decoder, incoming, outgoing, error)) return false;
+        }
+        for (size_t i = 0; i < 256; ++i) if (row->styles[i]) {
+            service = (qa_qw_service){.kind = QA_QW_LIGHT_STYLE, .data.light_style = {(uint8_t)i, row->styles[i]}};
+            if (!demo_qw_message(row, sink, &service, decoder, incoming, outgoing, error)) return false;
+        }
+    } else {
+        const qa_nq_decoder *decoder = qa_network_q1_client_nq_decoder(row->options.domain.runtime, row->options.domain.client);
+        if (!decoder) return false;
+        qa_nq_message message = {.op = QA_NQ_TIME, .data.seconds = (float)row->seconds};
+        if (!demo_nq_message(row, sink, &message, options, decoder, error)) return false;
+        for (size_t i = 0; i < row->current.count; ++i) {
+            message = (qa_nq_message){.op = QA_NQ_ENTITY, .data.entity = row->current.rows[i]};
+            if (!demo_nq_message(row, sink, &message, options, decoder, error)) return false;
+        }
+        message = (qa_nq_message){.op = QA_NQ_CLIENTDATA, .data.clientdata = row->data};
+        if (!demo_nq_message(row, sink, &message, options, decoder, error)) return false;
+        for (size_t i = 0; i < 256; ++i) if (row->styles[i]) {
+            message = (qa_nq_message){.op = QA_NQ_LIGHTSTYLE, .data.indexed_text = {(uint8_t)i, row->styles[i]}};
+            if (!demo_nq_message(row, sink, &message, options, decoder, error)) return false;
+        }
+        for (size_t i = 0; i < row->max_clients; ++i) if (row->clients[i].present) {
+            message = (qa_nq_message){.op = QA_NQ_NAME, .data.indexed_text = {(uint8_t)i, row->clients[i].name ? row->clients[i].name : ""}};
+            if (!demo_nq_message(row, sink, &message, options, decoder, error)) return false;
+            message = (qa_nq_message){.op = QA_NQ_FRAGS, .data.indexed = {(uint8_t)i, row->clients[i].frags}};
+            if (!demo_nq_message(row, sink, &message, options, decoder, error)) return false;
+            message = (qa_nq_message){.op = QA_NQ_COLORS, .data.indexed = {(uint8_t)i, row->clients[i].colors}};
+            if (!demo_nq_message(row, sink, &message, options, decoder, error)) return false;
+        }
+    }
+    return remote_q1_live(row, error);
+}
 bool remote_q1_domain_equal(const frontend_remote_q1_domain *a, const frontend_remote_q1_domain *b)
 {
     return a && b && a->application == b->application && a->runtime == b->runtime &&
@@ -92,6 +263,7 @@ static bool names_copy(char ***out, size_t *count, const char *const *names, siz
 }
 void remote_q1_clear(frontend_remote_q1 *row)
 {
+    if (!qa_q1_is_qw(row->options.domain.protocol)) remote_q1_demo_clear(row);
     row->actor_count = 0;
     remote_q1_camera_reset(row);
     remote_q1_prediction_clear(row);
@@ -251,6 +423,13 @@ bool frontend_remote_q1_receive_nq(frontend_remote_q1 *row, const qa_nq_message 
     case QA_NQ_STUFFTEXT: ok=reconnect(row,message->data.text,error); break;
     default: break;
     }
+    qa_nq_message presented;
+    if (message->op == QA_NQ_CDTRACK && row->options.sample_seconds &&
+        row->options.demo_forced_track >= 0 && row->options.demo_forced_track <= UINT8_MAX) {
+        presented = *message;
+        presented.data.cd.track = presented.data.cd.loop = (uint8_t)row->options.demo_forced_track;
+        message = &presented;
+    }
     if (ok) ok = remote_q1_effects_service(row, message, error);
     if (ok) { ++row->revision; ok = row->options.service(row->options.context, &row->options.domain,
         row->protocol, message, row->seconds, row->next_event++, error); }
@@ -264,7 +443,11 @@ bool frontend_remote_q1_sample(frontend_remote_q1 *row, uint64_t now, qa_error *
         !frontend_remote_q1_skins_prepare(row->skins,error))) return false;
     if (row->seconds - row->previous_seconds > .1) row->previous_seconds = row->seconds - .1;
     double duration = fmax(0, row->seconds - row->previous_seconds);
-    row->fraction = duration == 0 ? 1 : fmin(1, fmax(0, now >= row->received_ns ?
+    if (row->options.sample_seconds) {
+        double seconds;
+        if (!row->options.sample_seconds(row->options.context, &row->options.domain, &seconds, error) || !isfinite(seconds)) return false;
+        row->fraction = duration == 0 ? 1 : fmin(1, fmax(0, (seconds - row->previous_seconds) / duration));
+    } else row->fraction = duration == 0 ? 1 : fmin(1, fmax(0, now >= row->received_ns ?
         (double)(now - row->received_ns) / (duration * 1000000000.0) : 0));
     remote_q1_publication_update(row); ++row->revision; return true;
 }
@@ -310,7 +493,7 @@ struct frontend_remote_q1_skins *frontend_remote_q1_skins_owner(const frontend_r
 bool frontend_remote_q1_destroy(frontend_remote_q1 **owned, qa_error *error)
 {
     frontend_remote_q1 *row = owned ? *owned : NULL; if (!row) return true;
-    if (row->busy || row->sky_policy || row->frontend->capture || row->frontend->resource_inventory)
+    if (row->busy || row->sky_policy || row->demo_sink.append || row->frontend->capture || row->frontend->resource_inventory)
         return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 presentation destruction overlaps its actual parent lease");
     if (!frontend_remote_q1_skins_destroy(&row->skins,error)) return false;
     frontend_remote_q1 **link = &row->frontend->remote_q1;
@@ -318,7 +501,8 @@ bool frontend_remote_q1_destroy(frontend_remote_q1 **owned, qa_error *error)
     if (*link != row) return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 owner is outside its real frontend parent list");
     ++row->busy; bool ok = remote_q1_effects_clear(row, error); --row->busy;
     if (!ok) return false;
-    remote_q1_clear(row); free(row->current.rows); free(row->previous.rows); free(row->statics.rows);
+    remote_q1_clear(row); remote_q1_demo_clear(row);
+    free(row->current.rows); free(row->previous.rows); free(row->statics.rows);
     free(row->qw_entities.rows); free(row->qw_nails.rows); free(row->qw_batch_players.rows); free(row->qw_pending); free(row->actors);
     *link = row->next;
     free(row->qw_directory); free(row->qw_level); qa_catalog_release(row->options.domain.catalog); free(row); *owned = NULL; return true;

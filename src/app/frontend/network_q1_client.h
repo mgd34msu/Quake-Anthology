@@ -14,6 +14,7 @@ typedef struct frontend_network_q1_client_options {
     qa_product_id profile;
     uint32_t physical_seat;
     uint16_t qport;
+    bool demo_playback;
     qa_network_q1_client_policy policy;
     /* The actual configuration owner supplies programme completion and its
      * canonical routing. Metadata, physical identity and declarations are
@@ -49,6 +50,12 @@ bool frontend_network_q1_client_retired(const frontend_network_q1_client *);
 bool frontend_network_q1_client_destroy(frontend_network_q1_client **, qa_error *);
 bool frontend_network_q1_client_source_read(const frontend_network_q1_client *,
     frontend_remote_q1_source_view *, qa_error *);
+bool frontend_network_q1_client_demo_record(frontend_network_q1_client *, frontend_demo_record_source *, qa_error *);
+/* The genuine reconnect constructor retains this exact recording sink until
+ * its physical Source is configured and bound to the newly admitted CLIENT. */
+bool frontend_network_q1_client_demo_follow(frontend_network_q1_client *, const frontend_demo_sink *, bool *attached, qa_error *);
+bool frontend_network_q1_client_demo_unfollow(frontend_network_q1_client *, const frontend_demo_sink *, qa_error *);
+bool frontend_network_q1_client_demo_playback(frontend_network_q1_client *, frontend_demo_reader *, frontend_demo_playback_source *, qa_error *);
 typedef struct frontend_network_q1_client_view {
     const frontend_network_q1_client *owner;
     frontend_client_source_view physical;

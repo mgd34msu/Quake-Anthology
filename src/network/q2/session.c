@@ -87,6 +87,7 @@ bool qa_network_q2_peer_matches(const qa_network_peer *peer, const qa_net_datagr
     const q2_session *session = peer->state;
     const qa_net_client *client = qa_net_connections_get(session->runtime->connections, session->id);
     if (!client) return false;
+    if (!session->server && session->state.client.policy.messages.demo) return false;
     if (qa_net_address_equal(&client->endpoint, &packet->from, true)) return true;
     const qa_q2_channel_options *options = session->server ? &session->state.server.policy.channel : &session->state.client.policy.channel;
     if (!session->server || options->protocol.kind == QA_NET_Q2KEX_2023 ||
@@ -140,6 +141,8 @@ bool q2_queue_event(q2_session *session, const qa_q2_server_event *event, uint8_
 static bool receive(void *state, qa_network_runtime *runtime, qa_net_client_id id, const qa_net_datagram *packet, qa_error *error)
 {
     q2_session *session = state;
+    if (!session->server && session->state.client.policy.messages.demo)
+        return q2_fail(error, QA_ERROR_ARGUMENT, "Recorded Q2 CLIENT accepts only its demo file receiver");
     qa_q2_received received;
     if (!qa_q2_channel_receive(session->channel, packet->payload, packet->received_ns, &received, error)) return false;
     if (received.kind == QA_Q2_REJECTED) return true;
@@ -174,13 +177,13 @@ static bool flush(void *state, qa_network_runtime *runtime, qa_net_client_id id,
             return q2_client_drop_progress(session, NULL, error);
         return true;
     }
-    if (!session->server) return q2_client_send(session, now, error);
+    if (!session->server) return session->state.client.policy.messages.demo || q2_client_send(session, now, error);
     return !qa_q2_channel_should_update(session->channel, now) || q2_send(session, (qa_bytes){0}, now, NULL, error);
 }
 static bool command(void *state, const qa_network_command *command, qa_error *error)
 {
     q2_session *session = state;
-    return !session->server ? q2_client_submit(session, command, error) :
+    return !session->server ? (session->state.client.policy.messages.demo || q2_client_submit(session, command, error)) :
         q2_fail(error, QA_ERROR_ARGUMENT, "Host Q2 input belongs to the actual Source player owner");
 }
 static bool restart(void *state, uint64_t epoch, const qa_sha256_digest *composition, qa_error *error)
@@ -220,11 +223,13 @@ static bool attach(qa_network_runtime *runtime, const qa_net_connect *request, q
     if (!runtime || !request || !out || !qa_network_callbacks_idle(runtime) || !request->seat_count ||
         request->seat_count > QA_NETWORK_MAX_SEATS || request->protocol.kind != channel->protocol.kind ||
         request->protocol.revision != channel->protocol.revision || request->protocol.flags != channel->protocol.flags ||
-        (request->seat_count != 1 && channel->protocol.kind != QA_NET_Q2KEX_2023))
+        (request->seat_count != 1 && channel->protocol.kind != QA_NET_Q2KEX_2023 &&
+            channel->protocol.kind != QA_NET_Q2KEX_DEMO_2022))
         return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 attachment does not match the admitted dialect and seats");
     session->runtime = runtime; session->seats = request->seat_count;
     if (!qa_q2_codec_init(&session->codec, request->protocol, error) ||
-        !qa_q2_channel_create(channel, &session->channel, error)) return false;
+        ((session->server || !session->state.client.policy.messages.demo) &&
+            !qa_q2_channel_create(channel, &session->channel, error))) return false;
     if (!qa_network_attach(runtime, request, &qa_network_q2_peer_ops, session, now, out, error)) return false;
     session->id = *out; return true;
 }
@@ -252,7 +257,9 @@ bool qa_network_attach_q2_client(qa_network_runtime *runtime, const qa_net_conne
     const qa_network_q2_client_policy *policy, const qa_network_q2_client_hooks *hooks,
     uint64_t now, qa_net_client_id *out, qa_error *error)
 {
-    if (!policy || !q2_client_hooks_valid(hooks) || policy->channel.server || !policy->pending_commands)
+    if (!policy || !q2_client_hooks_valid(hooks) || policy->channel.server || !policy->pending_commands ||
+        (policy->messages.demo && (!request || request->attachment != QA_NET_LOCAL_SEAT ||
+            request->endpoint.kind != QA_NET_LOOPBACK)))
         return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 client lacks its actual Source and content consumers");
     q2_session *session = calloc(1, sizeof(*session));
     if (!session) return q2_fail(error, QA_ERROR_MEMORY, "Allocating Q2 client session");
@@ -261,7 +268,7 @@ bool qa_network_attach_q2_client(qa_network_runtime *runtime, const qa_net_conne
     bool ok = request && qa_q2_messages_create(request->protocol, &policy->messages, &session->state.client.messages, error) &&
         attach(runtime, request, session, &policy->channel, now, out, error);
     if (!ok) { close_session(session); return false; }
-    if (!qa_network_q2_client_command(runtime, *out, "new", 0, error)) {
+    if (!policy->messages.demo && !qa_network_q2_client_command(runtime, *out, "new", 0, error)) {
         qa_network_detach(runtime, *out, "Q2 initial signon failed", NULL); return false;
     }
     return true;
@@ -306,5 +313,6 @@ bool qa_network_q2_state_read(qa_network_runtime *runtime, qa_net_client_id id,
         out->acknowledged_frame = client->last_frame; out->loading_generation = client->loading_generation;
         out->pending_commands = client->command_count; out->pending_records = client->batch.count - client->batch.cursor;
         out->preparing = client->selecting_server_data || client->preparing_game_state; }
-    return qa_q2_channel_get_status(session->channel, &out->channel);
+    return !session->server && session->state.client.policy.messages.demo ? true :
+        qa_q2_channel_get_status(session->channel, &out->channel);
 }

@@ -17,7 +17,6 @@ typedef struct frontend_ui_seat_features {
     qa_sound_captions *captions;
     qa_localization *localization;
     char *language;
-    char *accessibility_language;
     char localized[1024]; /* Immediate draw result, never a retained label. */
     qa_save_slot_listing saves;
     qa_ui_row *save_rows;

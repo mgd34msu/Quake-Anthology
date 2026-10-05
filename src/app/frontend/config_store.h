@@ -86,6 +86,10 @@ bool frontend_config_store_stage_input(frontend_config_store *,const qa_console 
 bool frontend_config_store_apply_archive(frontend_config_store *,qa_application *,const qa_launch_snapshot *,
     const qa_application_startup_source *,qa_cvars *,const qa_cvar_archive *,bool shared,qa_error *);
 frontend_config_source *frontend_config_store_named_source(const frontend_config_store *,const char *);
+/* Read the selected WORLD ENTITIES profile before physical Source startup.
+ * Uses the same retained product/global roots and archive namespace as prepare. */
+bool frontend_config_store_draft_archive(frontend_config_store *,const qa_launch_draft *,
+    qa_cvar_archive *,qa_error *);
 bool frontend_config_source_clone_bindings(const frontend_config_source *,uint32_t,frontend_authored_bindings **,qa_error *);
 qa_settings_store frontend_config_store_input_store(const frontend_config_store *);
 bool frontend_config_store_same_profile(const qa_launch_instance *,const qa_launch_instance *);

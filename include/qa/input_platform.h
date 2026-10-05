@@ -57,6 +57,7 @@ bool qa_input_platform_routes(qa_input_platform *, qa_input_seat *const seats[4]
 bool qa_input_platform_retain(qa_input_platform *, unsigned retained_mask, int keyboard_slot,
                               double time_ms, qa_error *);
 bool qa_input_platform_keyboard(qa_input_platform *, int slot, double time_ms, qa_error *);
+bool qa_input_platform_keyboard_read(const qa_input_platform *, int *slot);
 /* Pass NULL before destroying a window. The new display can then be attached.
  */
 bool qa_input_platform_window(qa_input_platform *, const qa_display *, double time_ms, qa_error *);

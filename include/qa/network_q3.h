@@ -437,6 +437,11 @@ typedef struct qa_q3_client_hooks {
     bool (*level_shot)(void *, qa_error *);
     bool (*local_server_running)(void *);
     qa_q3_send_fn send;
+    /* Plaintext from one accepted physical message, after native decoding.
+     * Recording starts only after the real non-delta snapshot clears waiting.
+     * The callback borrows the entered receiver; it cannot feed another message. */
+    bool (*accepted_message)(void *, int32_t sequence, qa_bytes,
+        bool recording_ready, qa_error *);
     /* The actual runtime resumes source operations outside its pump. */
     bool defer_source;
 } qa_q3_client_hooks;
@@ -498,6 +503,14 @@ int32_t qa_q3_client_peer_server_command_sequence(const qa_q3_client_peer *);
 bool qa_q3_client_peer_receive(qa_q3_client_peer *, qa_bytes, int32_t real_time, qa_q3_receive_kind *, qa_error *);
 /* Demo records supply plaintext protocol messages without a netchannel. */
 bool qa_q3_client_peer_message(qa_q3_client_peer *, int32_t sequence, qa_bytes, int32_t real_time, qa_error *);
+/* CL_ReadDemoMessage publishes this word before reading the packet length,
+ * including a genuine terminal or truncated record. No packet is decoded. */
+bool qa_q3_client_peer_demo_sequence(qa_q3_client_peer *, int32_t, qa_error *);
+/* CL_Record_f seeds the actual received configstrings/baselines and current
+ * reliable cursors through the ordinary server-message writer, then requests
+ * the genuine next full snapshot through the existing waiting state. */
+bool qa_q3_client_peer_record_seed(qa_q3_client_peer *, qa_q3_writer *,
+    int32_t *sequence, qa_error *);
 bool qa_q3_client_peer_receive_pending(const qa_q3_client_peer *);
 bool qa_q3_client_peer_continue(qa_q3_client_peer *, qa_error *);
 bool qa_q3_client_peer_execute(qa_q3_client_peer *, int32_t server_command_sequence, bool demo, qa_error *);

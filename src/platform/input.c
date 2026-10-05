@@ -220,14 +220,36 @@ static bool discover(qa_input_platform *p, int index, qa_error *error) {
     }
     return true;
 }
+static bool same_selection(const qa_controller_selection *a,const qa_controller_selection *b) {
+    return a->kind == b->kind && a->ordinal == b->ordinal &&
+        !memcmp(a->guid, b->guid, sizeof(a->guid)) &&
+        ((!a->serial && !b->serial) || (a->serial && b->serial && !strcmp(a->serial,b->serial)));
+}
+static bool selection_matches(const qa_controller_selection *s,const qa_controller_info *d) {
+    return s->kind == QA_CONTROLLER_AUTO ||
+        ((s->kind == QA_CONTROLLER_GUID || s->kind == QA_CONTROLLER_SERIAL) &&
+         !strcmp(s->guid,d->guid) && (s->kind == QA_CONTROLLER_GUID ? s->ordinal == d->ordinal :
+            d->serial && !strcmp(s->serial,d->serial)));
+}
 static void resolve_routes(const qa_input_platform *p, const struct seat_route routes[4],
-                           int32_t assignments[4]) {
+                           const int32_t retained[4], int32_t assignments[4]) {
     for (unsigned slot = 0; slot < 4; ++slot) assignments[slot] = -1;
+    if (retained)
+        for (unsigned slot = 0; slot < 4; ++slot) {
+            const struct seat_route *r = &routes[slot];
+            if (!r->seat || retained[slot] < 0) continue;
+            for (size_t i = 0; i < p->device_count; ++i)
+                if (p->devices[i].info.instance == retained[slot] &&
+                    selection_matches(&r->selection,&p->devices[i].info)) {
+                    assignments[slot] = retained[slot];
+                    break;
+                }
+        }
     for (unsigned pass = 0; pass < 2; ++pass)
         for (unsigned slot = 0; slot < 4; ++slot) {
             const struct seat_route *r = &routes[slot];
             const qa_controller_selection *s = &r->selection;
-            if (!r->seat || s->kind == QA_CONTROLLER_NONE ||
+            if (!r->seat || assignments[slot] >= 0 || s->kind == QA_CONTROLLER_NONE ||
                 (s->kind == QA_CONTROLLER_AUTO) != (pass == 1))
                 continue;
             const struct device *match = NULL;
@@ -242,12 +264,7 @@ static void resolve_routes(const qa_input_platform *p, const struct seat_route r
                     }
                 if (used)
                     continue;
-                if (s->kind != QA_CONTROLLER_AUTO &&
-                    (strcmp(s->guid, d->info.guid) != 0 ||
-                     (s->kind == QA_CONTROLLER_GUID
-                          ? s->ordinal != d->info.ordinal
-                          : !d->info.serial || strcmp(s->serial, d->info.serial) != 0)))
-                    continue;
+                if (!selection_matches(s,&d->info)) continue;
                 match = d;
                 ++matches;
                 if (s->kind == QA_CONTROLLER_AUTO)
@@ -257,9 +274,19 @@ static void resolve_routes(const qa_input_platform *p, const struct seat_route r
                 assignments[slot] = match->info.instance;
         }
 }
-static bool resolve(qa_input_platform *p, double time, qa_error *error) {
+static int source_route(const struct seat_route routes[4],int preferred,int32_t instance) {
+    if (instance >= 0)
+        for (unsigned slot = 0; slot < 4; ++slot)
+            if (routes[slot].seat && routes[slot].instance == instance &&
+                (routes[slot].selection.kind == QA_CONTROLLER_GUID ||
+                 routes[slot].selection.kind == QA_CONTROLLER_SERIAL))
+                return (int)slot;
+    return preferred >= 1 && preferred <= 4 && routes[preferred-1].seat &&
+        routes[preferred-1].selection.kind == QA_CONTROLLER_AUTO ? preferred-1 : -1;
+}
+static bool resolve(qa_input_platform *p, double time, const int32_t retained[4], qa_error *error) {
     int32_t assignments[4];
-    resolve_routes(p, p->seats, assignments);
+    resolve_routes(p, p->seats, retained, assignments);
     bool ok = true;
     for (unsigned slot = 0; slot < 4; ++slot) {
         struct seat_route *r = &p->seats[slot];
@@ -585,6 +612,10 @@ bool qa_input_platform_routes(qa_input_platform *p, qa_input_seat *const seats[4
     if (!native_owner(p, error)) return false;
     qa_controller_selection copied[4] = {0};
     if (!copy_routes(seats, selections, keyboard, time, copied, error)) return false;
+    int32_t retained[4] = {-1,-1,-1,-1};
+    for (unsigned i = 0; i < 4; ++i)
+        if (p->seats[i].seat == seats[i] && same_selection(&p->seats[i].selection,&copied[i]))
+            retained[i] = p->seats[i].instance;
     bool ok = release_all(p, time, error);
     for (unsigned i = 0; i < 4; ++i) {
         if (!stop_device(p, p->seats[i].instance, error))
@@ -597,10 +628,10 @@ bool qa_input_platform_routes(qa_input_platform *p, qa_input_seat *const seats[4
     }
     p->keyboard = keyboard;
     int source = integer(p, "in_joystickSeat", 1), midi = integer(p, "in_midiseat", 1);
-    p->source_slot = source >= 1 && source <= 4 && seats[source - 1] ? source - 1 : -1;
     p->midi_slot = midi >= 1 && midi <= 4 && seats[midi - 1] ? midi - 1 : -1;
-    if (!resolve(p, time, error))
+    if (!resolve(p, time, retained, error))
         ok = false;
+    p->source_slot = source_route(p->seats, source, p->joystick_instance);
     if (!capture(p, error))
         ok = false;
     return ok;
@@ -777,7 +808,7 @@ static bool disconnect(qa_input_platform *p, int32_t instance, double time, qa_e
         }
     if (p->options.device_changed)
         p->options.device_changed(p->options.user, instance, false);
-    if (!resolve(p, time, error))
+    if (!resolve(p, time, NULL, error))
         ok = false;
     return ok;
 }
@@ -796,14 +827,14 @@ bool qa_input_platform_event(qa_input_platform *p, const SDL_Event *event, doubl
                                       integer(p, "in_subframe", 1) != 0);
     switch (event->type) {
     case SDL_CONTROLLERDEVICEADDED:
-        return discover(p, event->cdevice.which, error) && resolve(p, time, error);
+        return discover(p, event->cdevice.which, error) && resolve(p, time, NULL, error);
     case SDL_CONTROLLERDEVICEREMOVED:
         return disconnect(p, event->cdevice.which, time, error);
     case SDL_CONTROLLERDEVICEREMAPPED: {
         struct device *d = device(p, event->cdevice.which);
         if (d)
             describe(d);
-        return resolve(p, time, error);
+        return resolve(p, time, NULL, error);
     }
     case SDL_CONTROLLERAXISMOTION:
     case SDL_CONTROLLERBUTTONDOWN:
@@ -1609,7 +1640,7 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
     if (selections) {
         int32_t assignments[4];
         for (unsigned slot = 0; slot < 4; ++slot) t->next_routes[slot].selection = copied[slot];
-        resolve_routes(p, t->next_routes, assignments);
+        resolve_routes(p, t->next_routes, NULL, assignments);
         for (unsigned slot = 0; slot < 4; ++slot) t->next_routes[slot].instance = assignments[slot];
     }
     for (unsigned slot = 0; slot < 4; ++slot) {
@@ -1633,8 +1664,7 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings lost the retained native window");
         return false;
     }
-    int source = desired->joystick_seat, midi = desired->midi_seat;
-    source = source >= 1 && source <= 4 && p->seats[source - 1].seat ? source - 1 : -1;
+    int source, midi = desired->midi_seat;
     midi = midi >= 1 && midi <= 4 && p->seats[midi - 1].seat ? midi - 1 : -1;
     bool enabled = p->joystick_enabled;
     bool acquire_source = desired->joystick_enabled &&
@@ -1655,6 +1685,7 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
     } else if (!desired->joystick_enabled) {
         t->joystick = NULL; t->joystick_instance = -1;
     }
+    source = source_route(t->next_routes, desired->joystick_seat, t->joystick_instance);
     bool midi_enabled = p->midi_enabled;
     bool acquire_midi = desired->midi_enabled &&
         (retry_midi || desired->restart_requested || !midi_enabled || desired->midi_device != p->requested_midi_device);
@@ -1678,12 +1709,8 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
         .joystick_instance = p->joystick_instance, .next_joystick_instance = t->joystick_instance};
     if (selections) for (unsigned slot = 0; slot < 4; ++slot) {
         const struct seat_route *a = &t->routes[slot], *b = &t->next_routes[slot];
-        bool same_selection = a->selection.kind == b->selection.kind &&
-            a->selection.ordinal == b->selection.ordinal &&
-            !memcmp(a->selection.guid, b->selection.guid, sizeof(a->selection.guid)) &&
-            ((!a->selection.serial && !b->selection.serial) ||
-             (a->selection.serial && b->selection.serial && !strcmp(a->selection.serial, b->selection.serial)));
-        if (a->seat && (!same_selection || a->instance != b->instance)) r->controller_routes |= 1u << slot;
+        if (a->seat && (!same_selection(&a->selection,&b->selection) || a->instance != b->instance))
+            r->controller_routes |= 1u << slot;
         if (a->seat && b->instance >= 0 && a->instance != b->instance) {
             if (t->configuration[slot] == a->seat) {
                 qa_input_seat *copy = NULL;
@@ -2447,7 +2474,7 @@ static bool initialize_native(qa_input_platform *p, double time, qa_error *error
     if (success) {
         SDL_GameControllerEventState(SDL_ENABLE);
         SDL_JoystickEventState(SDL_ENABLE);
-        success = restart_devices(p, time, error) && resolve(p, time, error);
+        success = restart_devices(p, time, error) && resolve(p, time, NULL, error);
     }
     SDL_Window *window = p->window ? SDL_GetWindowFromID(p->window) : NULL;
     bool focused = window && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
@@ -2509,7 +2536,7 @@ bool qa_input_platform_frame(qa_input_platform *p, double now, qa_error *error) 
     if (!initialize_native(p, now, error)) return false;
     p->now = now;
     int source = integer(p, "in_joystickSeat", 1), midi = integer(p, "in_midiseat", 1);
-    source = source >= 1 && source <= 4 && p->seats[source - 1].seat ? source - 1 : -1;
+    source = source_route(p->seats, source, p->joystick_instance);
     midi = midi >= 1 && midi <= 4 && p->seats[midi - 1].seat ? midi - 1 : -1;
     if (source != p->source_slot) {
         if (!source_device_release(p, now, error))
@@ -2664,13 +2691,18 @@ bool qa_input_platform_selection(const qa_input_platform *p, unsigned slot, qa_c
     *out = p->seats[slot].selection;
     return true;
 }
+bool qa_input_platform_keyboard_read(const qa_input_platform *p, int *slot) {
+    if (!p || !slot) return false;
+    *slot = p->keyboard;
+    return true;
+}
 bool qa_input_platform_mapping(qa_input_platform *p, const char *mapping, qa_error *error) {
     if (!native_owner(p, error)) return false;
     if (!mapping || SDL_GameControllerAddMapping(mapping) < 0)
         return failed(error, "Adding controller mapping");
     for (size_t i = 0; i < p->device_count; ++i)
         describe(&p->devices[i]);
-    return discover(p, -1, error) && resolve(p, p->now, error);
+    return discover(p, -1, error) && resolve(p, p->now, NULL, error);
 }
 static struct device *required_device(qa_input_platform *p, int32_t instance, qa_error *error) {
     struct device *d = device(p, instance);

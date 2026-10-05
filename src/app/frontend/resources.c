@@ -2,6 +2,7 @@
 #include "ui_features.h"
 #include "ui_features_private.h"
 #include "menu_fonts.h"
+#include "menu_art.h"
 #include "shared_resource_policy.h"
 #include <stdio.h>
 
@@ -48,6 +49,7 @@ bool frontend_resources(qa_frontend *frontend, qa_error *error)
     }
     frontend->ui_images = qa_scene_resources_create(frontend->ui_mounts, error);
     if (!frontend->ui_images || !frontend_image_policy_initialize(frontend,frontend->ui_images,error)) return false;
+    if (!frontend_menu_art_create(frontend, error)) return false;
     const uint8_t background[] = {8, 8, 12, 235};
     qa_scene_image_level pixel = {1, 1, background, sizeof(background)};
     if (!qa_scene_image_create(frontend->ui_images, "frontend:console-background", QA_SCENE_RGBA8,

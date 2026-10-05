@@ -18,6 +18,8 @@ bool frontend_shared_settings_refresh(frontend_shared_settings *,
 bool frontend_shared_settings_current(const frontend_shared_settings *,const qa_frontend *,
     const qa_application *,const qa_launch_snapshot *);
 frontend_shared_values *frontend_shared_settings_values(const frontend_shared_settings *);
+bool frontend_shared_settings_input_project(qa_cvars *, const qa_cvars_edit *,
+    bool restart_requested, qa_input_platform_settings *, qa_error *);
 /* After the real bootstrap images programme returns, project its actual
  * edit for first native constructors. Caller display hardware/placement
  * options remain authoritative; no native owner is created or published. */

@@ -34,7 +34,7 @@ bool frontend_ui_features_prepare(qa_frontend *f, qa_error *error)
     owner->frontend = f; f->ui_features = owner;
     owner->tracks = qa_caption_library_create(error); owner->catalogs = qa_localization_pool_create(error);
     if (!owner->tracks || !owner->catalogs) return false;
-    for (unsigned i = 0; !f->options.dedicated && i < f->options.seats; ++i) {
+    for (unsigned i = 0; !f->options.dedicated && i < QA_INPUT_LOCAL_SEATS; ++i) {
         qa_sound_caption_options options = {.captions = {.seat = i, .kind = QA_CAPTION_SOUND,
             .tracks = owner->tracks, .catalogs = owner->catalogs,
             .localization = {.profile = QA_LOCALIZATION_Q1_RERELEASE}}, .context = f, .content_view = sound_view};
@@ -65,7 +65,6 @@ bool frontend_ui_features_destroy(qa_frontend *f, qa_error *error)
     for (unsigned i = 0; i < QA_INPUT_LOCAL_SEATS; ++i) {
         qa_sound_captions_destroy(owner->seats[i].captions);
         qa_localization_release(owner->seats[i].localization); free(owner->seats[i].language);
-        free(owner->seats[i].accessibility_language);
         qa_save_slot_listing_free(&owner->seats[i].saves);
         for (size_t j=0;j<owner->seats[i].save_product_count;++j) {
             free(owner->seats[i].save_product_keys?owner->seats[i].save_product_keys[j]:NULL);

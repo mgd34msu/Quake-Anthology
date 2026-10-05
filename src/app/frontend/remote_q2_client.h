@@ -9,6 +9,7 @@
 #include "qa/collision.h"
 #include "qa/persistence_content.h"
 #include "qa/application_client.h"
+#include "demo_service.h"
 
 typedef struct frontend_remote_q2 frontend_remote_q2;
 /* The enclosing Source factory supplies its actual authenticated CLIENT
@@ -35,7 +36,7 @@ typedef struct frontend_remote_q2_content {
 } frontend_remote_q2_content;
 typedef struct frontend_remote_q2_options {
     frontend_remote_q2_domain domain;
-    bool material_scripts;
+    bool material_scripts, demo;
     void *context;
     bool (*current)(void *, const frontend_remote_q2_domain *, qa_error *);
     bool (*retirement_current)(void *, const frontend_remote_q2_domain *, qa_error *);
@@ -94,6 +95,11 @@ bool frontend_remote_q2_create(qa_frontend *, const frontend_remote_q2_options *
 /* Commit the real attach result. Pending constructors own no connection ID. */
 bool frontend_remote_q2_bind(frontend_remote_q2 *, const frontend_remote_q2_domain *, qa_error *);
 bool frontend_remote_q2_hooks(frontend_remote_q2 *, qa_network_q2_client_hooks *, qa_error *);
+/* Both native HOST and retained CLIENT seeds use the actual Q2 wire encoder. */
+bool frontend_remote_q2_demo_seed(qa_q2_codec *, const qa_q2_game_state *,
+    const qa_q2_wire_frame *, const frontend_demo_sink *, qa_error *);
+bool frontend_remote_q2_demo_record_seed(frontend_remote_q2 *, const frontend_demo_sink *, qa_error *);
+bool frontend_remote_q2_demo_clock(frontend_remote_q2 *, double milliseconds, qa_error *);
 bool frontend_remote_q2_read(const frontend_remote_q2 *, frontend_remote_q2_view *, qa_error *);
 bool frontend_remote_q2_current(const frontend_remote_q2_view *);
 bool frontend_remote_q2_metadata_read(const frontend_remote_q2 *, frontend_remote_q2_view *, qa_error *);

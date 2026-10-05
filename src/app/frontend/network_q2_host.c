@@ -7,6 +7,8 @@
 #include "qa/launch_identity.h"
 #include <stdio.h>
 
+static bool demo_publish(frontend_network_q2_host *, qa_error *);
+
 static bool local_player(void *context,qa_net_seat_id seat,qa_network_local_player *out,qa_error *error)
 {
     q2_local_peer *local=context; qa_actor_id actor;
@@ -598,27 +600,39 @@ bool frontend_network_q2_host_tick(frontend_network_q2_host *host,uint64_t now,q
     bool ok=qa_network_q2_bootstrap_continue(host->bootstrap,now,error) && qa_network_q2_bootstrap_tick(host->bootstrap,now,error);
     --host->calls; return ok;
 }
-static bool publish_configs(q2_host_peer *peer,qa_error *error)
+typedef bool (*config_emit_fn)(void *, const qa_q2_server_event *, qa_error *);
+static bool configs_publish(qa_application_network_q2 *source, char **values, size_t capacity,
+    config_emit_fn emit, void *context, qa_error *error)
 {
     const qa_q2_config_entry *entries=NULL; size_t count=0;
-    if(!peer->configs || !qa_application_network_q2_configs(peer->source,&entries,&count,error)) return false;
+    if(!values || !qa_application_network_q2_configs(source,&entries,&count,error)) return false;
     for(size_t i=0;i<count;++i)
-        if(entries[i].index>=peer->config_count || !entries[i].value ||
+        if(entries[i].index>=capacity || !entries[i].value ||
             (i && entries[i-1].index>=entries[i].index))
             return frontend_fail(error,QA_ERROR_FORMAT,"Q2 config publication lost its ordered Source namespace");
     bool ok=true; size_t entry=0;
-    for(size_t c=0;ok && c<peer->config_count;++c) {
+    for(size_t c=0;ok && c<capacity;++c) {
         const char *next=entry<count && entries[entry].index==c?entries[entry++].value:"";
-        const char *old=peer->configs[c]?peer->configs[c]:"";
+        const char *old=values[c]?values[c]:"";
         if(!strcmp(next,old)) continue;
         char *copy=NULL;
         if(!config_copy(&copy,next,error)) { ok=false; break; }
         qa_q2_server_event event={.kind=QA_Q2_SVC_CONFIGSTRING,.data.config={(uint16_t)c,next}};
-        ok=qa_network_q2_server_event(peer->host->options.runtime,peer->client,&event,0,true,error);
-        if(ok) { free(peer->configs[c]); peer->configs[c]=copy; } else free(copy);
+        ok=emit(context,&event,error);
+        if(ok) { free(values[c]); values[c]=copy; } else free(copy);
     }
     return ok;
 }
+static bool config_transport(void *context, const qa_q2_server_event *event, qa_error *error)
+{
+    q2_host_peer *peer=context;
+    return qa_network_q2_server_event(peer->host->options.runtime,peer->client,event,0,true,error);
+}
+static bool publish_configs(q2_host_peer *peer,qa_error *error)
+{
+    return configs_publish(peer->source,peer->configs,peer->config_count,config_transport,peer,error);
+}
+
 static bool publish_event_packet(q2_host_peer *peer,qa_error *error)
 {
     if(!publish_configs(peer,error) ||
@@ -722,7 +736,7 @@ bool frontend_network_q2_host_publish(frontend_network_q2_host *host,uint64_t no
         }
         if(!current(host,error)) return false;
     }
-    return true;
+    return demo_publish(host,error);
 }
 void frontend_network_q2_host_disconnected(frontend_network_q2_host *host,qa_net_client_id id)
 {
@@ -837,7 +851,7 @@ bool frontend_network_q2_host_destroy(frontend_network_q2_host **owned,qa_error 
 {
     frontend_network_q2_host *host=owned?*owned:NULL;
     if(!host) return true;
-    if(host->calls || !qa_network_callbacks_idle(host->options.runtime)) return false;
+    if(host->calls || host->demo_held || !qa_network_callbacks_idle(host->options.runtime)) return false;
     for(size_t i=0;host->locals && i<host->local_count;++i) {
         q2_local_peer *local=&host->locals[i];
         if(local->client.owner && qa_net_connections_get(qa_network_connections(host->options.runtime),local->client) &&
@@ -856,4 +870,158 @@ bool frontend_network_q2_host_destroy(frontend_network_q2_host **owned,qa_error 
     qa_application_network_q2_destroy(host->import_discovery);
     qa_q2_unicast_cache_destroy(host->unicast);
     free(host->peers); free(host->locals); free(host); *owned=NULL; return true;
+}
+
+static const qa_net_client *demo_client(frontend_network_q2_host *host, qa_error *error)
+{
+    for(size_t i=0;i<host->local_count;++i) {
+        q2_local_peer *local=&host->locals[i];
+        qa_network_local_player player;
+        if(!qa_actor_id_equal(local->player.actor,host->demo_actor)) continue;
+        if(!local_player(local,local->binding.seat,&player,error)) return NULL;
+        const qa_net_client *client=qa_net_connections_get(qa_network_connections(host->options.runtime),local->client);
+        if(client && client->phase==QA_NET_ACTIVE) return client;
+    }
+    frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 demo lost its genuine local player connection");
+    return NULL;
+}
+static bool demo_host_current(const void *context)
+{
+    frontend_network_q2_host *host=(frontend_network_q2_host *)context; qa_error error={0};
+    return host && host->demo_held && !host->calls && !host->importing && current(host,&error) && demo_client(host,&error);
+}
+static bool demo_host_packet(frontend_network_q2_host *host, qa_bytes bytes, qa_error *error)
+{
+    frontend_demo_packet packet={.format=FRONTEND_DEMO_Q2,.value.message=bytes};
+    (void)error;
+    qa_error write_error={0};
+    if(bytes.size) (void)host->demo_sink.append(host->demo_sink.owner,&packet,&write_error);
+    return true;
+}
+static bool demo_host_seed(void *context,const frontend_demo_sink *sink,qa_error *error)
+{
+    frontend_network_q2_host *host=context;
+    if(!demo_host_current(host) || !sink || !sink->append) return false;
+    qa_q2_game_state state; qa_q2_wire_frame frame;
+    if(!qa_application_network_q2_game_state(host->discovery,&host->demo_actor,1,&state,error) ||
+        !qa_application_network_q2_frame(host->discovery,&host->demo_actor,1,&frame,error) ||
+        !qa_q2_codec_init(&host->demo_codec,host->options.protocol,error)) return false;
+    qa_q2_config_layout layout;
+    if(!qa_q2_config_layout_read(&host->demo_codec,&layout,error)) return false;
+    size_t config_count=layout.max_configs;
+    char **configs=calloc(config_count,sizeof(*configs));
+    if(!configs) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining Q2 demo config beforeimages");
+    bool ok=true;
+    for(size_t i=0;ok && i<state.config_count;++i)
+        ok=state.configs[i].index<layout.max_configs && config_copy(&configs[state.configs[i].index],state.configs[i].value,error);
+    if(ok) ok=frontend_remote_q2_demo_seed(&host->demo_codec,&state,&frame,sink,error);
+    if(!ok) { configs_dispose(&configs,&config_count); return false; }
+    configs_dispose(&host->demo_configs,&host->demo_config_count);
+    host->demo_configs=configs; host->demo_config_count=config_count;
+    host->demo_map_revision=host->source.source.map_revision;
+    host->demo_frame=(uint32_t)frame.server_frame; host->demo_frame_set=true;
+    host->demo_event_generation=qa_application_protocol_events_generation(host->options.frontend->application);
+    host->demo_event_cursor=qa_application_protocol_event_count(host->options.frontend->application);
+    host->demo_player_event_cursor=qa_application_q2_player_event_count(host->options.frontend->application);
+    return true;
+}
+static bool demo_host_attach(void *context,const frontend_demo_sink *sink,bool *attached,qa_error *error)
+{
+    frontend_network_q2_host *host=context;
+    if(!attached || !sink || !sink->append || !demo_host_current(host) || host->demo_sink.append || !host->demo_configs)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 HOST demo sink lacks its actual seeded source");
+    host->demo_sink=*sink; *attached=true;
+    return true;
+}
+static bool demo_host_detach(void *context,const frontend_demo_sink *sink,qa_error *error)
+{
+    frontend_network_q2_host *host=context;
+    if(!host || !sink || host->calls || host->demo_sink.owner!=sink->owner || host->demo_sink.append!=sink->append)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 HOST demo detach differs from its actual sink");
+    host->demo_sink=(frontend_demo_sink){0};
+    return true;
+}
+static bool demo_host_release(void **context,qa_error *error)
+{
+    frontend_network_q2_host *host=context?*context:NULL;
+    if(!host) return true;
+    if(host->calls || !host->demo_held || host->demo_sink.append)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 HOST demo still owns entered or attached work");
+    configs_dispose(&host->demo_configs,&host->demo_config_count);
+    host->demo_held=false; host->demo_frame_set=false; host->demo_actor=(qa_actor_id){0};
+    *context=NULL;
+    return true;
+}
+bool frontend_network_q2_host_demo_record(frontend_network_q2_host *host,qa_actor_id actor,
+    qa_fs_root *root,frontend_demo_record_source *out,qa_error *error)
+{
+    qa_network_q2_player player;
+    if(!out || !root || !host || host->calls || host->demo_held || !current(host,error) ||
+        !qa_application_network_q2_player(host->discovery,actor,&player,error))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 native recording requires its real local player and writable content");
+    host->demo_actor=actor;
+    if(!demo_client(host,error)) { host->demo_actor=(qa_actor_id){0}; return false; }
+    host->demo_held=true;
+    *out=(frontend_demo_record_source){.owner=host,.format=FRONTEND_DEMO_Q2,.protocol=host->options.protocol,
+        .root=root,.current=demo_host_current,.seed=demo_host_seed,.attach=demo_host_attach,
+        .detach=demo_host_detach,.release=demo_host_release};
+    return true;
+}
+static bool demo_host_config(void *context,const qa_q2_server_event *event,qa_error *error)
+{
+    frontend_network_q2_host *host=context;
+    uint8_t bytes[65535]; qa_net_writer writer;
+    qa_net_writer_init(&writer,bytes,sizeof(bytes),error);
+    return qa_q2_server_event_write(&host->demo_codec,&writer,event) &&
+        demo_host_packet(host,(qa_bytes){bytes,qa_net_writer_size(&writer)},error);
+}
+static bool demo_publish(frontend_network_q2_host *host,qa_error *error)
+{
+    if(!host->demo_sink.append) return true;
+    if(!demo_host_current(host)) return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 native demo left its real Source publication");
+    if(host->demo_map_revision!=host->source.source.map_revision)
+        return demo_host_seed(host,&host->demo_sink,error);
+    qa_application_network_q2_host actual;
+    if(!qa_application_network_q2_host_source(host->options.frontend->application,host->options.protocol,&actual,error)) return false;
+    uint64_t source_frame=actual.source.clock.frame_number;
+    if(host->demo_frame_set && host->demo_frame==source_frame) return true;
+    const qa_net_client *client=demo_client(host,error);
+    if(!client || !configs_publish(host->discovery,host->demo_configs,host->demo_config_count,demo_host_config,host,error)) return false;
+    qa_application *app=host->options.frontend->application;
+    uint64_t generation=qa_application_protocol_events_generation(app);
+    if(host->demo_event_generation!=generation) {
+        host->demo_event_generation=generation; host->demo_event_cursor=0; host->demo_player_event_cursor=0;
+    }
+    size_t count=qa_application_protocol_event_count(app);
+    while(host->demo_event_cursor<count) {
+        qa_application_protocol_event event; qa_application_q2_protocol_delivery delivery; qa_buffer bytes={0};
+        if(!qa_application_protocol_event_at(app,host->demo_event_cursor,&event) ||
+            !qa_application_protocol_q2_delivery_at(app,host->demo_event_cursor,&delivery)) return false;
+        bool ok=event.signon || !delivery.original ||
+            (frontend_network_q2_event_packet(host->discovery,host->source.source.source_owner,&event,&delivery,
+                client,qa_network_epoch(host->options.runtime,client->id),&host->demo_codec,65535,&bytes,error) &&
+                demo_host_packet(host,(qa_bytes){bytes.data,bytes.size},error));
+        qa_buffer_free(&bytes); if(!ok) return false;
+        ++host->demo_event_cursor;
+    }
+    count=qa_application_q2_player_event_count(app);
+    while(host->demo_player_event_cursor<count) {
+        qa_application_q2_player_event event; qa_buffer bytes={0};
+        if(!qa_application_q2_player_event_at(app,host->demo_player_event_cursor,&event)) return false;
+        bool ok=event.event.kind!=QA_Q2_PLAYER_PRINT ||
+            (frontend_network_q2_print_packet(&event,client,qa_network_epoch(host->options.runtime,client->id),
+                &host->demo_codec,65535,&bytes,error) && demo_host_packet(host,(qa_bytes){bytes.data,bytes.size},error));
+        qa_buffer_free(&bytes); if(!ok) return false;
+        ++host->demo_player_event_cursor;
+    }
+    qa_q2_wire_frame frame;
+    if(!qa_application_network_q2_frame(host->discovery,&host->demo_actor,1,&frame,error)) return false;
+    uint8_t *bytes=malloc(65535);
+    if(!bytes) return frontend_fail(error,QA_ERROR_MEMORY,"Encoding Q2 native demo frame");
+    qa_net_writer writer; qa_net_writer_init(&writer,bytes,65535,error);
+    bool ok=qa_q2_frame_write(&host->demo_codec,&writer,&frame,NULL,(qa_q2_entity_span){0},host->source.client_slots) &&
+        demo_host_packet(host,(qa_bytes){bytes,qa_net_writer_size(&writer)},error);
+    free(bytes);
+    if(ok) { host->demo_frame=source_frame; host->demo_frame_set=true; }
+    return ok && generation==qa_application_protocol_events_generation(app);
 }

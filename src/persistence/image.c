@@ -1,7 +1,7 @@
 #include "internal.h"
 #include "qa/source_save.h"
 
-#define SAVE_HEADER 56u
+#define SAVE_HEADER 72u
 #define SAVE_RECORD_HEADER 20u
 
 static bool text_valid(const char *text, bool empty)
@@ -84,7 +84,7 @@ static char *text_copy(const char *text)
 static void image_free(qa_save_image *image)
 {
     if (!image) return;
-    for (size_t i = 0; i < image->count; ++i) {
+    for (size_t i = 0; image->records && i < image->count; ++i) {
         free((void *)image->records[i].owner.instance);
         free((void *)image->records[i].owner.schema);
         free((void *)image->records[i].owner.backend);
@@ -123,7 +123,9 @@ const qa_native_resource_inventory *qa_save_image_native_read(const qa_save_imag
 static bool image_create(const qa_save_metadata *metadata, const qa_save_record *records,
                          size_t count, bool adopt, qa_save_image **out, qa_error *error)
 {
-    if (!metadata || !out || (unsigned)metadata->purpose > QA_SAVE_DEMO_KEYFRAME)
+    if (!metadata || !out || (unsigned)metadata->purpose > QA_SAVE_DEMO_KEYFRAME ||
+        !memchr(metadata->map, 0, sizeof(metadata->map)) ||
+        !memchr(metadata->game, 0, sizeof(metadata->game)))
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid save image metadata/output");
     if (!persistence_owner_set(records, count, error)) return false;
     qa_save_image *image = calloc(1, sizeof(*image));
@@ -247,11 +249,21 @@ static bool record_fields(qa_source_save_io *io, qa_save_record *record)
     return qa_source_save_bytes(io, (void *)record->payload.data, (size_t)payload_size);
 }
 
-static bool image_fields(qa_source_save_io *io, qa_save_image *image, uint64_t extent)
+static bool summary_text(qa_source_save_io *io, char *text, size_t capacity)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    size_t length = reading ? 0 : strlen(text);
+    if (!qa_source_save_count(io, &length, capacity - 1) ||
+        !qa_source_save_bytes(io, text, length)) return false;
+    if (memchr(text, 0, length)) return codec_fail(io, QA_ERROR_FORMAT, "Save summary contains embedded NUL");
+    text[length] = 0; return true;
+}
+static bool header_fields(qa_source_save_io *io, qa_save_image *image, uint64_t extent)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     uint8_t magic[8] = {'Q','A','S','V','\r','\n',26,'\n'};
-    uint32_t reserved = 0, header_size = SAVE_HEADER;
+    uint32_t reserved = 0, header_size = reading ? 0 :
+        SAVE_HEADER + (uint32_t)strlen(image->metadata.map) + (uint32_t)strlen(image->metadata.game);
     uint64_t saved_extent = extent;
     uint32_t purpose = reading ? 0 : (uint32_t)image->metadata.purpose;
     uint32_t count = reading ? 0 : (uint32_t)image->count;
@@ -263,21 +275,49 @@ static bool image_fields(qa_source_save_io *io, qa_save_image *image, uint64_t e
         !qa_source_save_u32(io, &count) ||
         !qa_source_save_u64(io, &image->metadata.elapsed_ns) ||
         !qa_source_save_u64(io, &image->metadata.configuration_generation) ||
-        !qa_source_save_u64(io, &image->metadata.world_generation)) return false;
+        !qa_source_save_u64(io, &image->metadata.world_generation) ||
+        !summary_text(io, image->metadata.map, sizeof(image->metadata.map)) ||
+        !summary_text(io, image->metadata.game, sizeof(image->metadata.game))) return false;
     if (memcmp(magic, "QASV\r\n\032\n", sizeof(magic)))
         return codec_fail(io, QA_ERROR_FORMAT, "Invalid shared save signature");
-    if (header_size != SAVE_HEADER || saved_extent != extent)
+    if (header_size != io->offset || saved_extent != extent || io->offset > extent)
         return codec_fail(io, QA_ERROR_FORMAT, "Invalid save image extent");
     if (purpose > QA_SAVE_DEMO_KEYFRAME || count < QA_SAVE_PROVIDER - 1u ||
-        count > QA_SAVE_OWNER_LIMIT || (reading &&
-        count > (io->input.size - io->offset) / SAVE_RECORD_HEADER))
+        count > QA_SAVE_OWNER_LIMIT ||
+        count > (extent - io->offset) / SAVE_RECORD_HEADER)
         return codec_fail(io, QA_ERROR_FORMAT, "Invalid save record inventory");
     image->metadata.purpose = (qa_save_purpose)purpose;
+    image->count = count;
+    return true;
+}
+
+bool qa_save_image_metadata_read(qa_fs_file *file, const qa_fs_identity *identity,
+    qa_save_metadata *out, bool *shared, qa_error *error)
+{
+    if (!file || !identity || !out || !shared)
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Save summary requires its admitted file and outputs");
+    qa_save_image image = {0};
+    uint8_t prefix[SAVE_HEADER + sizeof(image.metadata.map) + sizeof(image.metadata.game) - 2];
+    size_t received = 0;
+    if (!qa_fs_file_read_prefix(file, identity, prefix, sizeof(prefix), &received, error)) return false;
+    if (received < 2 || prefix[0] != 'Q' || prefix[1] != 'A') { *shared = false; return true; }
+    qa_source_save_io io = {0};
+    bool ok = qa_source_save_reader(&io, NULL, (qa_bytes){prefix, received}, error) &&
+        header_fields(&io, &image, qa_fs_identity_size(identity));
+    qa_source_save_dispose(&io);
+    if (!ok) return false;
+    *out = image.metadata; *shared = true;
+    return true;
+}
+
+static bool image_fields(qa_source_save_io *io, qa_save_image *image, uint64_t extent)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    if (!header_fields(io, image, extent)) return false;
     if (reading) {
-        image->records = calloc(count, sizeof(*image->records));
+        image->records = calloc(image->count, sizeof(*image->records));
         if (!image->records)
             return codec_fail(io, QA_ERROR_MEMORY, "Allocating decoded save records");
-        image->count = count;
     }
     for (size_t i = 0; i < image->count; ++i) {
         qa_save_record copy = image->records[i];
@@ -290,7 +330,7 @@ bool qa_save_image_encode(const qa_save_image *image, qa_buffer *out, qa_error *
 {
     if (!image || image->retiring || !out)
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid or retiring save encode owner");
-    size_t size = SAVE_HEADER;
+    size_t size = SAVE_HEADER + strlen(image->metadata.map) + strlen(image->metadata.game);
     for (size_t i = 0; i < image->count; ++i) {
         const qa_save_record *record = image->records + i;
         if (!size_add(&size, SAVE_RECORD_HEADER, error) ||

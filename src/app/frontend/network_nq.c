@@ -53,7 +53,7 @@ static bool batch_bytes(nq_batch *batch, qa_bytes bytes, qa_error *error)
 static bool batch_message(nq_batch *batch, const qa_nq_message *message, qa_nq_options options, qa_error *error)
 {
     uint8_t bytes[NQ_MESSAGE]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
-    if (!qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15}, options, message, NULL, 0)) return false;
+    if (!qa_nq_write(&writer, batch->host->frontend->options.network_protocol, options, message, NULL, 0)) return false;
     char *name = NULL;
     if (batch->host && message->op == QA_NQ_NAME) {
         name = copy_text(message->data.indexed_text.text, error);
@@ -66,6 +66,18 @@ static bool batch_message(nq_batch *batch, const qa_nq_message *message, qa_nq_o
         batch->host->published_names[index] = name;
     } else free(name);
     return ok;
+}
+static bool batch_source_emit(void *context, qa_bytes bytes, qa_error *error)
+{ return batch_bytes(context, bytes, error); }
+static bool source_convert(nq_frontend_peer *peer, qa_bytes bytes, qa_nq_options options,
+    qa_q1_emit_fn emit, void *context, qa_error *error)
+{
+    qa_net_protocol_id protocol = peer->host->frontend->options.network_protocol;
+    if (protocol.kind == QA_NET_NQ15) return emit(context, bytes, error);
+    uint8_t scratch[NQ_MESSAGE]; qa_net_writer writer; qa_net_reader reader;
+    qa_net_writer_init(&writer, scratch, sizeof(scratch), error); qa_net_reader_init(&reader, bytes, error);
+    return qa_nq_transcode_original(&reader, &writer, protocol, options, peer->baselines,
+        peer->baseline_count, (float)((double)peer->host->published_source_time_ns / 1e9), emit, context);
 }
 static int32_t wire_frags(int32_t value)
 {
@@ -137,7 +149,7 @@ static bool source_signon(void *context, qa_net_client_id id, uint8_t stage,
         if (!capture_baselines(peer, actor, &world, error) ||
             !qa_application_network_q1_precache(host->frontend->application, host->owner, true, models, &model_count, error) ||
             !qa_application_network_q1_precache(host->frontend->application, host->owner, false, sounds, &sound_count, error)) return false;
-        message = (qa_nq_message){.op = QA_NQ_SERVERINFO, .data.serverinfo = {.protocol = world.protocol,
+        message = (qa_nq_message){.op = QA_NQ_SERVERINFO, .data.serverinfo = {.protocol = host->frontend->options.network_protocol,
             .max_clients = (uint8_t)world.max_clients, .game_type = world.deathmatch ? 1 : 0, .level = world.level,
             .models = models, .sounds = sounds, .model_count = model_count, .sound_count = sound_count}};
         if (!batch_message(&batch, &message, options, error)) return false;
@@ -149,7 +161,7 @@ static bool source_signon(void *context, qa_net_client_id id, uint8_t stage,
         for (size_t i = 0; i < count; ++i) {
             qa_application_protocol_event event;
             if (!qa_application_network_q1_signon_at(host->frontend->application, host->owner, i, &event, error) ||
-                !batch_bytes(&batch, event.payload, error)) return false;
+                !source_convert(peer, event.payload, options, batch_source_emit, &batch, error)) return false;
         }
         for (size_t i = 0; i < peer->baseline_count; ++i) {
             message = (qa_nq_message){.op = QA_NQ_BASELINE, .data.entity = peer->baselines[i]};
@@ -281,7 +293,7 @@ static bool source_chat(nq_frontend_peer *sender, qa_actor_id actor, bool team_o
     memcpy(text + offset, body, used); offset += used; text[offset++] = '\n'; text[offset] = 0;
     uint8_t bytes[NQ_MESSAGE]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = text};
-    if (!qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15},
+    if (!qa_nq_write(&writer, host->frontend->options.network_protocol,
         (qa_nq_options){.standard_quake = true}, &message, NULL, 0)) return false;
     qa_net_client_id selected[NQ_CLIENTS]; size_t selected_count = 0;
     for (size_t i = 0; i < NQ_CLIENTS; ++i) {
@@ -336,7 +348,7 @@ static bool source_ping(nq_frontend_peer *sender, qa_error *error)
     }
     uint8_t bytes[NQ_MESSAGE]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = text};
-    return qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15},
+    return qa_nq_write(&writer, host->frontend->options.network_protocol,
         (qa_nq_options){.standard_quake = true}, &message, NULL, 0) &&
         qa_network_nq_server_reliable(host->runtime, sender->client,
             (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
@@ -366,14 +378,14 @@ static bool source_status(nq_frontend_peer *sender, qa_error *error)
     }
     uint8_t bytes[NQ_MESSAGE]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = text};
-    return qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15},
+    return qa_nq_write(&writer, host->frontend->options.network_protocol,
         (qa_nq_options){.standard_quake = true}, &message, NULL, 0) &&
         qa_network_nq_server_reliable(host->runtime, sender->client,
             (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
 }
 static bool source_command(void *context, qa_net_client_id id, const char *text, qa_error *error)
 {
-    nq_frontend_peer *peer = context; qa_actor_id actor;
+    nq_frontend_peer *peer = context; frontend_nq_host *host = peer->host; qa_actor_id actor;
     if (!qa_net_client_id_equal(id, peer->client) || !peer_actor(peer, &actor, error)) return false;
     const char *cursor = text; char command[32], first[1024], second[1024]; bool present;
     if (!qa_q1_token(&cursor, true, command, sizeof(command), &present, error)) return false;
@@ -390,7 +402,7 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
         if (!qa_application_network_q1_pause(peer->host->frontend->application, actor, &pause_text, &changed, error)) return false;
         uint8_t bytes[NQ_MESSAGE]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
         qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = (const char *)pause_text.data};
-        bool ok = qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15},
+        bool ok = qa_nq_write(&writer, host->frontend->options.network_protocol,
             (qa_nq_options){.standard_quake = true}, &message, NULL, 0);
         qa_buffer_free(&pause_text);
         for (size_t i = 0; ok && i < NQ_CLIENTS; ++i) {
@@ -418,7 +430,7 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
         if (!strcmp(command, allowed[i])) return qa_application_actor_command(peer->host->frontend->application, actor, text, error);
     uint8_t bytes[96]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = "Unknown client command\n"};
-    return qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15}, (qa_nq_options){.standard_quake = true}, &message, NULL, 0) &&
+    return qa_nq_write(&writer, host->frontend->options.network_protocol, (qa_nq_options){.standard_quake = true}, &message, NULL, 0) &&
         qa_network_nq_server_reliable(peer->host->runtime, id, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
 }
 bool frontend_nq_source_hooks(frontend_nq_host *host, const qa_net_client *client,
@@ -429,8 +441,10 @@ bool frontend_nq_source_hooks(frontend_nq_host *host, const qa_net_client *clien
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Missing retained NetQuake source binding");
     for (size_t i = 0; i < NQ_CLIENTS; ++i)
         if (host->peers[i].occupied && qa_net_client_id_equal(host->peers[i].client, client->id)) peer = host->peers + i;
-    if (!peer || peer->host != host || client->attachment != QA_NET_REMOTE || client->protocol.kind != QA_NET_NQ15 ||
-        client->protocol.flags || client->protocol.revision || client->seat_count != 1 || client->seats[0].remote_index ||
+    if (!peer || peer->host != host || client->attachment != QA_NET_REMOTE ||
+        client->protocol.kind != host->frontend->options.network_protocol.kind ||
+        client->protocol.flags != host->frontend->options.network_protocol.flags ||
+        client->protocol.revision != host->frontend->options.network_protocol.revision || client->seat_count != 1 || client->seats[0].remote_index ||
         client->seats[0].seat.owner != peer->seat.owner || client->seats[0].seat.index != peer->seat.index ||
         !qa_sha256_equal(&client->composition, &host->composition))
         return frontend_fail(error, QA_ERROR_FORMAT, "Restored NetQuake source is not its declared native connection seat");
@@ -545,7 +559,7 @@ static bool connect_source(void *context, const qa_net_address *address, uint64_
         .seat = {QA_NETWORK_COMMAND_OWNER, 128u + slot}};
     qa_net_seat_binding seat = {peer->seat, 0};
     qa_net_connect request = {.attachment = QA_NET_REMOTE, .endpoint = *address,
-        .protocol = {.kind = QA_NET_NQ15}, .seats = &seat, .seat_count = 1, .composition = host->composition};
+        .protocol = host->frontend->options.network_protocol, .seats = &seat, .seat_count = 1, .composition = host->composition};
     qa_network_nq_server_policy policy = {.message_bytes = NQ_MESSAGE, .fragment_bytes = 1024,
         .queued_bytes = 16u * NQ_MESSAGE};
     qa_network_nq_server_hooks hooks = {.context = peer, .signon = source_signon, .begin = source_begin,
@@ -569,8 +583,8 @@ bool frontend_nq_create(qa_frontend *frontend, qa_network_runtime *runtime,
     const qa_sha256_digest *composition, frontend_nq_host **out, qa_error *error)
 {
     if (!frontend || !runtime || !composition || !out || *out || !frontend->application ||
-        frontend->options.network_protocol.kind != QA_NET_NQ15 || frontend->options.network_protocol.flags ||
-        frontend->options.network_protocol.revision || frontend->options.network_connect)
+        frontend->options.network_protocol.kind > QA_NET_RMQ999 ||
+        !qa_q1_profile_valid(frontend->options.network_protocol, error) || frontend->options.network_connect)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "NetQuake host requires its actual frontend and sole runtime");
     frontend_nq_host *host = calloc(1, sizeof(*host));
     if (!host) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating NetQuake frontend source owner");
@@ -811,9 +825,24 @@ static const qa_q1_entity *baseline(const nq_frontend_peer *peer, uint32_t numbe
     }
     return first < peer->baseline_count && peer->baselines[first].number == number ? peer->baselines + first : NULL;
 }
-static bool source_events(nq_frontend_peer *peer, qa_actor_id actor, qa_net_writer *datagram, qa_error *error)
+typedef struct nq_source_datagram {
+    uint8_t bytes[NQ_DATAGRAM];
+    size_t size;
+    bool full;
+} nq_source_datagram;
+static bool source_datagram_emit(void *context, qa_bytes bytes, qa_error *error)
 {
-    frontend_nq_host *host = peer->host; nq_batch reliable = {.emit = reliable_emit, .context = peer};
+    nq_source_datagram *source = context; (void)error;
+    if (!source->full) {
+        if (bytes.size > sizeof(source->bytes) - source->size) source->full = true;
+        else { memcpy(source->bytes + source->size, bytes.data, bytes.size); source->size += bytes.size; }
+    }
+    return true;
+}
+static bool source_events(nq_frontend_peer *peer, qa_actor_id actor, qa_net_writer *datagram,
+    const qa_application_network_q1_world *world, qa_error *error)
+{
+    frontend_nq_host *host = peer->host; nq_batch reliable = {.emit = reliable_emit, .context = peer, .host = host};
     qa_application *app = host->frontend->application;
     uint64_t generation = qa_application_protocol_events_generation(app);
     size_t count = qa_application_protocol_event_count(app);
@@ -824,6 +853,7 @@ static bool source_events(nq_frontend_peer *peer, qa_actor_id actor, qa_net_writ
     if (peer->protocol_cursor > count)
         return frontend_fail(error, QA_ERROR_FORMAT, "NetQuake protocol cursor exceeds its actual retained event generation");
     uint8_t source[NQ_DATAGRAM]; size_t source_size = 0; bool source_full = false;
+    qa_nq_options options = {.standard_quake = world->standard_quake};
     for (size_t i = peer->protocol_cursor; i < count; ++i) {
         qa_application_protocol_event event;
         if (!qa_application_protocol_event_at(app, i, &event))
@@ -834,12 +864,20 @@ static bool source_events(nq_frontend_peer *peer, qa_actor_id actor, qa_net_writ
             return frontend_fail(error, QA_ERROR_UNSUPPORTED, "NetQuake source event lacks its complete native destination contract");
         if (event.recipient.registry && !qa_actor_id_equal(event.recipient, actor)) continue;
         if (event.reliable) {
-            if (!batch_bytes(&reliable, event.payload, error)) return false;
-        } else if (!source_full) {
+            if (!source_convert(peer, event.payload, options, batch_source_emit, &reliable, error)) return false;
+        } else if (!source_full && host->frontend->options.network_protocol.kind == QA_NET_NQ15) {
             if (event.payload.size > sizeof(source) - source_size) source_full = true;
             else {
                 if (event.payload.size) memcpy(source + source_size, event.payload.data, event.payload.size);
                 source_size += event.payload.size;
+            }
+        } else if (!source_full) {
+            nq_source_datagram converted = {0};
+            if (!source_convert(peer, event.payload, options, source_datagram_emit, &converted, error)) return false;
+            if (converted.full || converted.size > sizeof(source) - source_size) source_full = true;
+            else {
+                memcpy(source + source_size, converted.bytes, converted.size);
+                source_size += converted.size;
             }
         }
     }
@@ -856,13 +894,22 @@ static bool publish_peer(nq_frontend_peer *peer, const qa_application_network_q1
     qa_network_nq_server_state state;
     if (!qa_network_nq_server_state_read(host->runtime, peer->client, &state, error)) return false;
     uint8_t bytes[NQ_DATAGRAM]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
-    if (state.stage != 4) return source_events(peer, actor, &writer, error);
-    qa_nq_options options = {.standard_quake = world->standard_quake}; qa_net_protocol_id protocol = {.kind = QA_NET_NQ15};
+    if (state.stage != 4) return source_events(peer, actor, &writer, world, error);
+    qa_nq_options options = {.standard_quake = world->standard_quake}; qa_net_protocol_id protocol = host->frontend->options.network_protocol;
     qa_nq_message message = {.op = QA_NQ_TIME, .data.seconds = world->seconds};
     if (!qa_nq_write(&writer, protocol, options, &message, NULL, 0)) return false;
     qa_application_network_q1_feedback feedback;
     if (!qa_application_network_q1_consume_feedback(host->frontend->application, actor, &feedback, error)) return false;
-    if (feedback.damage && !qa_nq_write_damage(&writer, feedback.armor, feedback.blood, feedback.origin)) return false;
+    if (feedback.damage) {
+        if (protocol.kind == QA_NET_NQ15) {
+            if (!qa_nq_write_damage(&writer, feedback.armor, feedback.blood, feedback.origin)) return false;
+        } else {
+            message = (qa_nq_message){.op = QA_NQ_DAMAGE,
+                .data.damage = {.armor = feedback.armor, .blood = feedback.blood}};
+            for (size_t i = 0; i < 3; ++i) message.data.damage.origin[i] = (float)feedback.origin[i];
+            if (!qa_nq_write(&writer, protocol, options, &message, NULL, 0)) return false;
+        }
+    }
     if (feedback.set_angle) {
         message.op = QA_NQ_SETANGLE; memcpy(message.data.angles, feedback.angles, sizeof(feedback.angles));
         if (!qa_nq_write(&writer, protocol, options, &message, NULL, 0)) return false;
@@ -900,7 +947,7 @@ static bool publish_peer(nq_frontend_peer *peer, const qa_application_network_q1
         ok = qa_net_write_data(&writer, encoded, size);
     }
     free(pvs);
-    return ok && source_events(peer, actor, &writer, error) &&
+    return ok && source_events(peer, actor, &writer, world, error) &&
         qa_network_nq_server_frame(host->runtime, peer->client, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
 }
 bool frontend_nq_publish(frontend_nq_host *host, qa_error *error)
@@ -922,7 +969,7 @@ bool frontend_nq_publish(frontend_nq_host *host, qa_error *error)
     if (paused != host->previous_pause) {
         uint8_t bytes[2]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
         qa_nq_message message = {.op = QA_NQ_PAUSE, .data.value = paused};
-        ok = qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15},
+        ok = qa_nq_write(&writer, host->frontend->options.network_protocol,
             (qa_nq_options){.standard_quake = true}, &message, NULL, 0) &&
             broadcast_emit(host, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
         if (ok) host->previous_pause = paused;

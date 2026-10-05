@@ -65,6 +65,13 @@ struct frontend_network_q2_host {
     uint64_t import_map_revision;
     qa_network_runtime *import_runtime;
     qa_buffer import_bootstrap,import_unicast;
+    frontend_demo_sink demo_sink;
+    qa_actor_id demo_actor;
+    qa_q2_codec demo_codec;
+    char **demo_configs;
+    size_t demo_config_count, demo_event_cursor, demo_player_event_cursor;
+    uint64_t demo_event_generation, demo_map_revision, demo_frame;
+    bool demo_held, demo_frame_set;
 };
 
 bool frontend_network_q2_host_bind_publisher(frontend_network_q2_host *,qa_application_network_q2 *,

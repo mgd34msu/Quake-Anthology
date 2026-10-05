@@ -197,6 +197,8 @@ bool qa_net_toggle_pending(const qa_net_toggle *);
 uint32_t qa_net_toggle_incoming(const qa_net_toggle *);
 uint32_t qa_net_toggle_outgoing(const qa_net_toggle *);
 bool qa_net_toggle_advance(qa_net_toggle *, uint32_t, qa_error *);
+/* Native demo sequence records apply only to a channel without reliable work. */
+bool qa_net_toggle_demo_sequences(qa_net_toggle *, uint32_t outgoing, uint32_t incoming, qa_error *);
 
 typedef struct qa_net_stopwait qa_net_stopwait;
 typedef struct qa_net_reliable_fragment {

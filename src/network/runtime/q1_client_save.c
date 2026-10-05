@@ -130,6 +130,7 @@ bool qa_network_q1_client_checkpoint_peer(const qa_network_peer *peer, qa_buffer
 {
     if (!qa_network_q1_client_peer(peer) || !out) return qa_network_fail(e, "Missing Q1 CLIENT checkpoint owner/output");
     q1_runtime_client *c = peer->state;
+    if (c->demo) return qa_network_fail(e, "Native demo playback has a live file cursor, not a CLIENT checkpoint");
     const qa_net_client *client = qa_net_connections_get(c->runtime->connections, c->id);
     if (!qa_network_callbacks_idle(c->runtime) || !valid(c, client, e)) return false;
     qa_buffer parts[Q1_CLIENT_PARTS] = {0};

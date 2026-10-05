@@ -396,6 +396,9 @@ bool qa_application_retire_sources(qa_application *, qa_error *);
 /* Retire the actual Q2 primary server at a returned source boundary, retaining
  * the engine, configuration owner and frontend services for another launch. */
 bool qa_application_stop_server(qa_application *, qa_actor_owner, qa_error *);
+/* Return to the startup menu while retaining the engine and its installed
+ * content, settings and platform services. */
+bool qa_application_end_game(qa_application *, qa_error *);
 /* A queued post-shutdown route retains its original selected launch until
  * the existing map owner has consumed that transient restart continuation. */
 bool qa_application_server_restart_pending(const qa_application *);
