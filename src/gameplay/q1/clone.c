@@ -1,4 +1,115 @@
 #include "internal.h"
+#include "qa/game_q1_source_birth.h"
+
+const char *q1_body_queue_classname(const qa_q1_game *g) {
+    return g->options.edition == QA_Q1_RERELEASE &&
+        (g->options.program == QA_Q1_ID1 || g->options.program == QA_Q1_CTF)
+        ? "bodyqueue" : "bodyque";
+}
+
+bool q1_body_queue_initialize(qa_q1_game *g, qa_error *error) {
+    if (q1_ref_present(g->body_queue_head)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 body queue is already initialized");
+        return false;
+    }
+    q1_actor *bodies[4] = {0};
+    size_t count = 0;
+    for (; count < 4; ++count) {
+        if (!q1_create(g, q1_body_queue_classname(g), Q1_BODY, (qa_actor_id){0},
+            &bodies[count], error)) goto fail;
+        bodies[count]->physics.water_type = 0;
+        bodies[count]->physics.yaw_speed = 0;
+    }
+    for (size_t i = 0; i < 4; ++i)
+        bodies[i]->owner = q1_ref_from(g, bodies[(i + 1) % 4]->id);
+    g->body_queue_head = q1_ref_from(g, bodies[0]->id);
+    return true;
+fail:
+    for (size_t i = 0; i < count; ++i)
+        (void)qa_session_release(g->services.session, bodies[i]->id, NULL);
+    return false;
+}
+
+bool q1_body_queue_ring_valid(q1_ref head, const q1_ref nodes[4], const q1_ref links[4]) {
+    if (!q1_ref_present(head)) return false;
+    bool visited[4] = {false};
+    q1_ref current = head;
+    for (size_t i = 0; i < 4; ++i) {
+        size_t index = 0;
+        while (index < 4 && !q1_ref_equal(nodes[index], current)) ++index;
+        if (index == 4 || visited[index]) return false;
+        visited[index] = true;
+        current = links[index];
+    }
+    return q1_ref_equal(current, head);
+}
+
+bool q1_body_queue_validate(const qa_q1_game *g, qa_error *error) {
+    size_t count = 0;
+    q1_ref nodes[4], links[4];
+    for (uint32_t slot = 0; slot < g->capacity; ++slot) {
+        const q1_actor *body = g->actors[slot];
+        if (!body || body->kind != Q1_BODY) continue;
+        if (count == 4) goto invalid;
+        const char *classname = qa_strings_cstr(qa_session_strings(g->services.session),
+            body->classname);
+        if (q1_entity_const(g, body->id) != body || !body->native || body->map ||
+            !classname || strcmp(classname, q1_body_queue_classname(g))) goto invalid;
+        nodes[count] = q1_ref_from(g, body->id);
+        if (g->wire && (nodes[count].kind != QA_ACTOR_REFERENCE_SOURCE ||
+            nodes[count].value.source.owner != g->options.provider)) goto invalid;
+        links[count] = body->owner;
+        ++count;
+    }
+    if (!q1_ref_present(g->body_queue_head) && !count) return true;
+    if (count == 4 && q1_body_queue_ring_valid(g->body_queue_head, nodes, links)) return true;
+invalid:
+    qa_error_set(error, QA_ERROR_FORMAT, 0, "Q1 body queue lacks its four actual linked edicts");
+    return false;
+}
+
+bool qa_q1_source_copy_body(qa_q1_game *g, qa_actor_id actor,
+    const qa_q1_presentation *visual, qa_physics_motion motion, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
+    q1_player *player = q1_player_get(g, actor);
+    q1_actor *corpse = q1_entity(g, q1_ref_actor(g, g->body_queue_head));
+    bool okay = visual && player && player->source_client &&
+        player->client_slot < g->options.max_clients && corpse && corpse->kind == Q1_BODY &&
+        qa_actor_id_equal(visual->actor, actor);
+    if (!okay) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+            "Q1 body copy requires its actual Source client and initialized queue");
+        goto finish;
+    }
+    qa_body_state source, body;
+    if (!qa_world_body_read(g->services.world, actor, &source, error) ||
+        !qa_world_body_read(g->services.world, corpse->id, &body, error)) {
+        okay = false; goto finish;
+    }
+    corpse->model = visual->model;
+    corpse->frame = visual->frame;
+    corpse->state.body.color_map = (int32_t)player->client_slot + 1;
+    if (g->options.program == QA_Q1_ROGUE) corpse->skin = visual->skin;
+    corpse->physics.motion = motion;
+    corpse->physics.flags = 0;
+    corpse->source_movement_flags = 0;
+    body.angles = source.angles;
+    body.velocity = source.velocity;
+    body.origin = source.origin;
+    body.bounds = source.bounds;
+    qa_actor_id id = corpse->id;
+    q1_ref next = corpse->owner;
+    okay = qa_world_body_write(g->services.world, id, &body, error) && q1_link(g, corpse, error);
+    if (okay && (!qa_q1_game_operation_live(&operation) || !q1_entity(g, id))) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, id.slot, "Q1 body retired during Source copying");
+        okay = false;
+    }
+    if (okay) g->body_queue_head = next;
+finish:
+    qa_q1_game_operation_end(&operation);
+    return okay;
+}
 
 bool qa_q1_game_clone(qa_q1_game *g, qa_actor_id actor, qa_actor_id *out, qa_error *error) {
     q1_actor *source = g ? q1_entity(g, actor) : NULL;

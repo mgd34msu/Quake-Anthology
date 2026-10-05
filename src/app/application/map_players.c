@@ -2444,6 +2444,26 @@ bool application_players_native_q1_respawn(qa_application *app,
     if (!spawn_pose(app, ordinal, force, &body, &found, &point, error) ||
         !q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
     if (!found) return true;
+    qa_application_visual_view visual;
+    qa_physics_properties physics;
+    if (!qa_application_visual_read(app, actor, &visual, error)) return false;
+    if (!app->physics->services.read(app->physics->services.context, actor, &physics))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 body copy lost its selected player pose");
+    if (!q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
+    if (character->kind == APPLICATION_PROVIDER_Q1) {
+        qa_q1_character_view pose;
+        if (!qa_q1_character_read(character->state.q1, actor, &pose))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 body copy lost its actual Source character");
+        physics.motion = pose.motion;
+    }
+    qa_string_id model = visual.models[0] ? qa_strings_find(qa_session_strings(app->session),
+        (qa_bytes){(const uint8_t *)visual.models[0], strlen(visual.models[0])}) : 0;
+    if (visual.models[0] && !model)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 body copy model lost its real content identity");
+    qa_q1_presentation corpse = {.actor = actor, .model = model,
+        .frame = visual.frame, .skin = visual.skin};
+    if (!qa_q1_source_copy_body(source->state.q1, actor, &corpse, physics.motion, error) ||
+        !q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
     body.bounds = qa_movement_input_default(character->component.clock.kind == QA_CLOCK_Q3
         ? QA_MOVEMENT_Q3 : QA_MOVEMENT_NETQUAKE, actor).standing.bounds;
     body.ground = (qa_actor_reference){0};

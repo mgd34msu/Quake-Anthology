@@ -345,6 +345,7 @@ static bool payload(q1_save_io *io, qa_q1_game *g) {
                 ok = q1_save_fail(io, "Duplicate Rogue player state continuation");
         }
     }
+    if (ok) ok = q1_body_queue_validate(g, io->values.error);
     free(index);
     return ok;
 }

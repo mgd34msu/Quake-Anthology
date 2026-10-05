@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "guest_qc_visual.h"
 #include "qa/game_q2_wire.h"
+#include "qa/game_q1_bots.h"
 #include <math.h>
 #include <string.h>
 
@@ -37,6 +38,7 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
             out->models[0] = resource_text(application, source.model);
             out->frame = source.frame;
             out->skin = source.skin;
+            out->colormap = source.color_map;
             out->effects = source.effects;
             out->alpha = source.alpha;
             out->scale = source.scale;
@@ -48,6 +50,18 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
             out->frame = character.frame;
             out->visible = character.model != QA_STRING_NONE;
             found = true;
+        }
+        qa_q1_source_client_view client;
+        qa_actor_id colored;
+        if (qa_q1_source_client_read(provider->state.q1, actor, &client)) {
+            out->colormap = (int32_t)client.slot + 1;
+            out->player_colors = (uint8_t)((client.shirt << 4) | client.pants);
+            out->has_player_colors = true;
+        } else if (out->colormap > 0 && qa_q1_source_client_actor(provider->state.q1,
+            (uint32_t)out->colormap - 1, &colored) &&
+            qa_q1_source_client_read(provider->state.q1, colored, &client)) {
+            out->player_colors = (uint8_t)((client.shirt << 4) | client.pants);
+            out->has_player_colors = true;
         }
         return found;
     }

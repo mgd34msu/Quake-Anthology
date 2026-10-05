@@ -164,19 +164,32 @@ q1_ref q1_ref_from(const qa_q1_game *g, qa_actor_id actor) {
     }
     return qa_actor_reference_lifetime(actor);
 }
+static const q1_player *source_client_at(const qa_q1_game *g, uint32_t slot) {
+    if (slot >= g->options.max_clients) return NULL;
+    const qa_actor_record *physical = qa_actors_at_source(qa_session_actors(g->services.session),
+        g->options.provider, slot + 1);
+    if (physical && physical->id.slot < g->capacity) {
+        const q1_player *player = g->players[physical->id.slot];
+        if (player && player->active && player->source_client && player->client_slot == slot &&
+            qa_actor_id_equal(player->id, physical->id)) return player;
+    }
+    /* Borrowed characters retain their real provider/Source slot. The actual
+     * player owner list also supports lifetime-only component clients. */
+    for (const q1_player *player = g->allocated_players; player; player = player->allocation_next)
+        if (player->active && player->source_client && player->client_slot == slot &&
+            player->id.slot < g->capacity && g->players[player->id.slot] == player &&
+            qa_actors_get(qa_session_actors(g->services.session), player->id)) return player;
+    return NULL;
+}
+
 qa_actor_id q1_ref_actor(const qa_q1_game *g, q1_ref reference) {
     qa_actor_id actor = qa_actor_reference_resolve(qa_session_actors(g->services.session), reference);
     if (actor.registry) return actor;
     if (reference.kind == QA_ACTOR_REFERENCE_SOURCE &&
         reference.value.source.owner == g->options.provider &&
         reference.value.source.slot && reference.value.source.slot <= g->options.max_clients) {
-        uint32_t slot = reference.value.source.slot - 1;
-        for (uint32_t i = 0; i < g->capacity; ++i) {
-            const q1_player *player = g->players[i];
-            if (player && player->active && player->source_client && player->client_slot == slot &&
-                qa_actors_get(qa_session_actors(g->services.session), player->id)) return player->id;
-        }
-        return (qa_actor_id){0};
+        const q1_player *player = source_client_at(g, reference.value.source.slot - 1);
+        return player ? player->id : (qa_actor_id){0};
     }
     return actor;
 }
@@ -215,15 +228,10 @@ bool qa_q1_source_client_actor(const qa_q1_game *g, uint32_t slot, qa_actor_id *
     if (!g || !out || g->destroy_pending || g->continuation_pending ||
         slot >= g->options.max_clients)
         return false;
-    for (uint32_t i = 0; i < g->capacity; ++i) {
-        const q1_player *player = g->players[i];
-        if (player && player->source_client && player->client_slot == slot &&
-            qa_q1_player_source_present(g, player->id)) {
-            *out = player->id;
-            return true;
-        }
-    }
-    return false;
+    const q1_player *player = source_client_at(g, slot);
+    if (!player) return false;
+    *out = player->id;
+    return true;
 }
 q1_player *q1_player_get(qa_q1_game *g, qa_actor_id actor) {
     if (!g || g->destroy_pending || actor.slot >= g->capacity ||
@@ -1744,7 +1752,8 @@ bool qa_q1_game_presentation(const qa_q1_game *g, qa_actor_id actor, qa_q1_prese
                                 .targetname = entity->targetname,
                                 .frame = entity->frame,
                                 .skin = entity->skin,
-                                .color_map = entity->map ? entity->map->color_map : 0,
+                                .color_map = entity->map ? entity->map->color_map :
+                                    entity->kind == Q1_BODY ? entity->state.body.color_map : 0,
                                 .effects = entity->effects,
                                 .alpha = entity->alpha,
                                 .scale = entity->scale};

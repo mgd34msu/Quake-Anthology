@@ -36,7 +36,8 @@ typedef enum q1_entity_kind {
     Q1_SOURCE_ROGUE_FLAG,
     Q1_SOURCE_ROGUE_FLAG_BASE,
     Q1_SOURCE_ROGUE_RUNE,
-    Q1_SOURCE_ROGUE_RUNE_TIMER
+    Q1_SOURCE_ROGUE_RUNE_TIMER,
+    Q1_BODY
 } q1_entity_kind;
 typedef enum q1_think_kind {
     Q1_THINK_NONE,
@@ -349,6 +350,7 @@ typedef struct q1_actor {
         q1_pickup pickup;
         q1_timed_effect effect;
         q1_boss_child boss_child;
+        struct { int32_t color_map; } body;
         float rogue_fields[QA_Q1_ROGUE_FIELDS];
         struct { float frags, message_time; } source_tag;
         float rogue_rune;
@@ -462,7 +464,7 @@ struct qa_q1_game {
     uint32_t capacity, total_monsters, killed_monsters, hellknight_melee;
     uint32_t authored_gremlins, spawned_gremlins;
     qa_builtin_random random;
-    q1_ref sight_actor, horn_charmer, rogue_runes_world;
+    q1_ref sight_actor, horn_charmer, rogue_runes_world, body_queue_head;
     double time, elapsed, sight_time;
     double finale_last_poll;
     bool finale_polled, finale_acknowledged;
@@ -619,6 +621,10 @@ bool q1_create(qa_q1_game *, const char *, q1_entity_kind, qa_actor_id owner, q1
                qa_error *);
 bool q1_create_source(qa_q1_game *, const char *, q1_entity_kind, uint32_t source_slot,
     q1_actor **, qa_error *);
+const char *q1_body_queue_classname(const qa_q1_game *);
+bool q1_body_queue_initialize(qa_q1_game *, qa_error *);
+bool q1_body_queue_ring_valid(q1_ref head, const q1_ref nodes[4], const q1_ref links[4]);
+bool q1_body_queue_validate(const qa_q1_game *, qa_error *);
 bool q1_remove(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_schedule(qa_q1_game *, q1_actor *, double, q1_think_kind, qa_error *);
 bool q1_current_ammo_select(qa_q1_game *, q1_player *, qa_error *);

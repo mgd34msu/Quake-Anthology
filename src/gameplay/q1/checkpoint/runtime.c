@@ -58,6 +58,7 @@ bool q1_save_runtime(q1_save_io *io, qa_q1_game *g) {
         return q1_save_fail(io, "Invalid Q1 random continuation");
     Q1_SAVE(io, ref, g->sight_actor);
     Q1_SAVE(io, ref, g->horn_charmer);
+    Q1_SAVE(io, ref, g->body_queue_head);
     Q1_SAVE(io, ref, g->rogue_runes_world);
     Q1_SAVE(io, bool, g->rogue_runes_started);
     if (g->rogue_runes_started != (q1_ref_present(g->rogue_runes_world) != 0) ||

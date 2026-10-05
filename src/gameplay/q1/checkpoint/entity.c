@@ -187,7 +187,7 @@ bool q1_save_entity(q1_save_io *io, q1_actor *a) {
     Q1_SAVE(io, vector, a->initial_angles);
     if (!q1_save_physics(io, &a->physics))
         return false;
-    Q1_SAVE_ENUM(io, a->kind, Q1_SOURCE_ROGUE_RUNE_TIMER);
+    Q1_SAVE_ENUM(io, a->kind, Q1_BODY);
     Q1_SAVE_ENUM(io, a->think, Q1_THINK_SOURCE_ROGUE_RUNE_RESPAWN);
     Q1_SAVE(io, double, a->next_think);
     Q1_SAVE_ENUM(io, a->frozen.think, Q1_THINK_SOURCE_ROGUE_RUNE_RESPAWN);
@@ -224,6 +224,9 @@ bool q1_save_entity(q1_save_io *io, q1_actor *a) {
     if ((io->values.direction == QA_SOURCE_SAVE_READ) && observation)
         a->pickup_observation = (qa_pickup_lease){.actor = a->id, .serial = observation};
     switch (a->kind) {
+    case Q1_BODY:
+        Q1_SAVE(io, i32, a->state.body.color_map);
+        break;
     case Q1_SOURCE_ROGUE_RUNE:
         Q1_SAVE(io, float, a->state.rogue_rune);
         break;

@@ -49,6 +49,9 @@ static const original_field entity_fields[] = {
     FIELD(q1_actor, source_netname, "netname", STRING),
     FIELD(q1_actor, source_death_type, "deathtype", STRING)
 };
+static const original_field body_queue_fields[] = {
+    FIELD(q1_actor, state.body.color_map, "colormap", I32)
+};
 static const original_field combat_fields[] = {
     FIELD(qa_combat_state, health, "health", FLOAT),
     FIELD(qa_combat_state, armor.regular.points, "armorvalue", DOUBLE),
@@ -196,6 +199,10 @@ static const original_field enemy_globals[] = {
 };
 static const original_field server_globals[] = {{"serverflags", ORIGINAL_U32, 0}};
 #undef FIELD
+static original_field body_queue_global(const qa_q1_game *game,char name[32]) {
+    snprintf(name,32,"%s_head",q1_body_queue_classname(game));
+    return (original_field){name,ORIGINAL_REF,offsetof(qa_q1_game,body_queue_head)};
+}
 static bool fail(qa_error *error, const char *text) {
     qa_error_set(error, QA_ERROR_FORMAT, 0, "%s", text); return false;
 }
@@ -744,6 +751,7 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         (!actor(receipt,record,"lastvictim",entity->activator,false,error) ||
          !number(record,"duration",entity->delay,false,error) ||
          !callback(record,"touch",entity->touch_disabled ? NULL : "ScourgeTriggerTouch",error))) return false;
+    if (entity->kind == Q1_BODY && !FIELDS(receipt,record,entity,body_queue_fields,error)) return false;
     if (entity->kind == Q1_PROJECTILE && !projectile_fields(receipt, entity, record, error)) return false;
     if (entity->kind == Q1_PICKUP && !pickup_fields(receipt, entity, record, error)) return false;
     if (entity->kind == Q1_MONSTER) {
@@ -792,6 +800,7 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
         !game->wire || game->wire->loading || !game->maps ||
         !qa_session_safe(game->services.session) || !qa_world_idle(game->services.world))
         return fail(error, "Original native capture requires its idle single-player Source");
+    if (!q1_body_queue_validate(game,error)) return false;
     if (game->maps->finale_started || qa_q1_level_read(game->maps->options.level)->intermission)
         return fail(error, "Cannot save an original Quake game in intermission");
     qa_q1_wire_receipt receipt = {0};
@@ -820,6 +829,8 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
         GLOBAL_FIELDS(&receipt, globals, game->maps, map_globals, error) &&
         GLOBAL_FIELDS(&receipt, globals, game->maps->options.server_flags, server_globals, error) &&
         fields(&receipt, globals, game, enemy_globals + (game->options.edition == QA_Q1_RERELEASE), 1, true, error);
+    char queue_name[32];original_field queue_global=body_queue_global(game,queue_name);
+    if (okay) okay=fields(&receipt,globals,game,&queue_global,1,true,error);
     uint32_t eyes = 0, model_player = 0;
     if (okay) okay = qa_q1_wire_index(&receipt, true, game->eyes_model, &eyes) &&
         qa_q1_wire_index(&receipt, true, game->player_model, &model_player) &&
@@ -1111,7 +1122,8 @@ static bool original_classify(const qa_q1_save_record *record, original_class *o
     if (think && !strcmp(think,"DelayThink")) map = Q1_MAP_DELAY;
     if (think && !strcmp(think,"barrel_explode")) map = Q1_MAP_BARREL;
     if (think && !strcmp(think,"fire_fly")) map = Q1_MAP_FIREBALL;
-    q1_entity_kind kind = species ? Q1_MONSTER : projectile ? Q1_PROJECTILE :
+    bool body=name && (!strcmp(name,"bodyque") || !strcmp(name,"bodyqueue"));
+    q1_entity_kind kind = body ? Q1_BODY : species ? Q1_MONSTER : projectile ? Q1_PROJECTILE :
         map != Q1_MAP_FIELDS ? Q1_MAP : Q1_ENTITY;
     if (think && (!strcmp(think,"Wiz_FastFire") || !strcmp(think,"DeathBubblesSpawn") ||
         !strcmp(think,"bubble_bob") || !strcmp(think,"ScourgeTriggerThink") || !strncmp(think,"s_explode",9))) kind = Q1_TIMER;
@@ -1268,8 +1280,11 @@ static bool admit_complete(const original_admission *admission,qa_error *error) 
     return true;
 }
 static bool admit_globals(original_admission *admission,const qa_qc_program *program,
-    qa_q1_edition edition,const qa_q1_save_data *save,qa_error *error) {
-    qa_q1_game game={0};q1_map_runtime maps={0};uint32_t flags=0;
+    qa_q1_program native_program,qa_q1_edition edition,const qa_q1_save_data *save,qa_error *error) {
+    qa_q1_game game={.options={.program=native_program,.edition=edition}};
+    q1_map_runtime maps={0};uint32_t flags=0;
+    char queue_name[32];original_field queue_global=body_queue_global(&game,queue_name);
+    if (!admit_fields(admission,&game,&queue_global,1,error)) return false;
     if (!ADMIT_FIELDS(admission,&game,game_globals,error) ||
         !ADMIT_FIELDS(admission,&maps,map_globals,error) ||
         !ADMIT_FIELDS(admission,&flags,server_globals,error) ||
@@ -1399,6 +1414,12 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
             if (source.species->species==QA_Q1_SCOURGE && !ADMIT_FIELDS(admission,monster,scourge_fields,error)) goto done;
             if (!restore_monster_callbacks(monster,record,error)) goto done;
             if (!monster_functions(monster,&callbacks,error)) goto done;
+        } else if (entity.kind==Q1_BODY) {
+            if (!ADMIT_FIELDS(admission,&entity,body_queue_fields,error) ||
+                entity.think!=Q1_THINK_NONE || entity.next_think!=0 || physics.solid!=QA_PHYSICS_NOT_SOLID ||
+                saved_number(record,"movetype")==3) {
+                unsupported(error,"Source body continuation differs from its persistent native queue");goto done;
+            }
         } else if (entity.map) {
             if (slot || !admit_text(admission,"classname","worldspawn",error) ||
                 !ADMIT_FIELDS(admission,&map,map_fields,error) || !admit_number(admission,"worldtype",0,error) ||
@@ -1417,6 +1438,30 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
 done:
     qa_q1_save_record_destroy(&callbacks);return okay;
 }
+static bool admit_body_queue(qa_q1_program program,qa_q1_edition edition,
+    const qa_q1_save_data *save,qa_error *error) {
+    qa_q1_game options={.options={.program=program,.edition=edition}};
+    char name[32];original_field global=body_queue_global(&options,name);
+    const char *classname=q1_body_queue_classname(&options);
+    q1_ref nodes[4],links[4],head;size_t count=0;
+    original_admission admission={.source=1,.slots=save->entity_count,.record=&save->globals};
+    uint32_t slot;
+    if (!qa_q1_save_entity_decode(saved(admission.record,global.name),&slot,error) || slot>=save->entity_count)
+        return unsupported(error,"Source body head leaves its physical edicts");
+    head=qa_actor_reference_source(admission.source,slot);
+    for (size_t i=2;i<save->entity_count;++i) {
+        const char *body=saved(save->entities+i,"classname");
+        if (!body || strcmp(body,classname)) continue;
+        if (count==4 || !qa_q1_save_entity_decode(saved(save->entities+i,"owner"),&slot,error) || slot>=save->entity_count)
+            return unsupported(error,"Source body queue lacks its four physical links");
+        nodes[count]=qa_actor_reference_source(admission.source,(uint32_t)i);
+        links[count++]=qa_actor_reference_source(admission.source,slot);
+    }
+    if (count!=4 || !q1_body_queue_ring_valid(head,nodes,links))
+        return unsupported(error,"Source body queue lacks its four linked physical edicts");
+    return true;
+}
+
 bool qa_q1_game_original_admit(qa_q1_program native_program,qa_q1_edition edition,
     const qa_qc_program *program,const qa_q1_save_data *save,bool *supported,qa_error *error) {
     if (!supported || !program || !save || native_program>QA_Q1_CTF || edition>QA_Q1_RERELEASE)
@@ -1430,7 +1475,8 @@ bool qa_q1_game_original_admit(qa_q1_program native_program,qa_q1_edition editio
     if (count && !consumed) {qa_error_set(error,QA_ERROR_MEMORY,0,"Reading original native state domains");return false;}
     if (!qa_strings_create(&strings,error)) {free(consumed);return false;}
     original_admission admission={strings,1,save->entity_count,&save->globals,consumed};qa_error local={0};
-    bool okay=admit_globals(&admission,program,edition,save,&local);
+    bool okay=admit_globals(&admission,program,native_program,edition,save,&local) &&
+        admit_body_queue(native_program,edition,save,&local);
     for (size_t slot=0;okay && slot<save->entity_count;++slot) {
         if (!save->entities[slot].count) continue;
         memset(consumed,0,count);admission.record=save->entities+slot;
@@ -1570,6 +1616,8 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
             map->pending.delayed.dialect = QA_CLOCK_NETQUAKE;
         }
     }
+    if (entity->kind==Q1_BODY &&
+        !RESTORE_FIELDS(game,record,entity,body_queue_fields,slots,count,error)) return false;
     if (entity->kind == Q1_PICKUP) {
         q1_pickup *item = &entity->state.pickup;
         item->hidden = !entity->model; item->holder = entity->owner;
@@ -1678,7 +1726,10 @@ bool qa_q1_game_original_restore(qa_q1_game *game, const qa_qc_program *program,
     if (okay) {
         game->time = (float)save->time; game->elapsed = 0;
         game->time_ns = (uint64_t)ceil((double)(float)save->time*1e9);
-        okay = RESTORE_FIELDS(game, &save->globals, game, game_globals, slots, save->entity_count, error) &&
+        char queue_name[32];original_field queue_global=body_queue_global(game,queue_name);
+        okay=restore_fields(qa_session_strings(game->services.session),game->options.provider,&save->globals,
+            game,&queue_global,1,slots,save->entity_count,error);
+        if (okay) okay = RESTORE_FIELDS(game, &save->globals, game, game_globals, slots, save->entity_count, error) &&
             RESTORE_FIELDS(game, &save->globals, game->maps, map_globals, slots, save->entity_count, error) &&
             RESTORE_FIELDS(game, &save->globals, game->maps->options.server_flags, server_globals, slots, save->entity_count, error) &&
             restore_fields(qa_session_strings(game->services.session), game->options.provider, &save->globals,
@@ -1691,6 +1742,7 @@ bool qa_q1_game_original_restore(qa_q1_game *game, const qa_qc_program *program,
         qa_scheduler_cancel(qa_session_scheduler(game->services.session),slots[slot]);
         okay = restore_entity(game,entity,player,save->entities+slot,slots,save->entity_count,movement,error);
     }
+    if (okay) okay=q1_body_queue_validate(game,error);
     if (okay) okay=restore_groups(game,save,slots,error);
     for (size_t slot=0; okay && slot<save->entity_count; ++slot) {
         if (!save->entities[slot].count) continue;

@@ -145,7 +145,7 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
     g->source_captures[0] = g->source_captures[1] = 0;
     g->qw_rj = g->options.quakeworld ? 1 : 0;
     g->sight_actor = g->horn_charmer = (q1_ref){0};
-    g->rogue_runes_world = (q1_ref){0};
+    g->rogue_runes_world = g->body_queue_head = (q1_ref){0};
     g->rogue_runes_started = false;
     g->time_ns = Q1_SOURCE_INITIAL_TIME_NS;
     g->time = (double)g->time_ns / 1000000000.0;
@@ -1276,6 +1276,7 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     switch (kind) {
     case Q1_MAP_WORLD: {
         g->maps->world_actor = entity->id;
+        if (!q1_body_queue_initialize(g, error)) return false;
         static const char *const styles[] = {"m",
                                              "mmnmmommommnonmmonqnmmo",
                                              "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba",

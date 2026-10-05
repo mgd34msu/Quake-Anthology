@@ -112,7 +112,7 @@ static bool entity(application_native_q1_wire_source *source,qa_actor_id actor,
     uint32_t client_slot;
     bool player=qa_q1_native_client_slot(source->provider->state.q1,actor,&client_slot,NULL);
     qa_application_network_qw_entity value={.number=slot,.model=index,.frame=trunc((double)visual.frame),
-        .colormap=player?slot:0,.skin=trunc((double)visual.skin),.effects=trunc((double)visual.effects)};
+        .colormap=player?slot:(double)visual.colormap,.skin=trunc((double)visual.skin),.effects=trunc((double)visual.effects)};
     vector(value.origin,visual.body.origin); vector(value.angles,visual.body.angles);
     uint32_t current;
     if (!qa_q1_wire_receipt_current(&source->receipt) ||

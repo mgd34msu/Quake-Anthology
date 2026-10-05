@@ -3,6 +3,12 @@
 
 #include "qa/game_q1.h"
 
+/* CopyToBodyQue runs before PutClientInServer changes the physical player.
+ * The selected character supplies its genuine model/frame/skin and motion;
+ * the Source client supplies the colormap and the shared world supplies pose. */
+bool qa_q1_source_copy_body(qa_q1_game *, qa_actor_id,
+    const qa_q1_presentation *, qa_physics_motion, qa_error *);
+
 /* Select a foundation weapon on the genuine physical source client, even
  * when another arsenal controls the player's selected weapon. An unowned
  * weapon leaves the source continuation unchanged and reports selected=false. */
