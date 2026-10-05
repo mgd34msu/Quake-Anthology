@@ -223,6 +223,9 @@ static void test_files(void)
     CHECK(rmdir(directory) == 0);
 }
 
+void test_q1_gameplay(void);
+void test_guest(void);
+
 int main(void)
 {
     test_errors_and_buffers();
@@ -230,6 +233,8 @@ int main(void)
     test_spans();
     test_arena();
     test_files();
+    test_q1_gameplay();
+    test_guest();
     puts("core tests passed");
     return EXIT_SUCCESS;
 }

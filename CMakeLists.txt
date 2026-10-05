@@ -1919,8 +1919,8 @@ target_compile_definitions(quake-anthology PRIVATE QA_VERSION="${PROJECT_VERSION
 include(CTest)
 if(BUILD_TESTING)
     if(UNIX)
-        add_executable(core_test tests/core_test.c)
-        target_link_libraries(core_test PRIVATE qa_core)
+        add_executable(core_test tests/core_test.c tests/q1_gameplay_test.c tests/guest_test.c)
+        target_link_libraries(core_test PRIVATE qa_core qa_game_q1 qa_qc)
         add_test(NAME core COMMAND core_test)
 
         add_executable(archive_test tests/archive_test.c)
