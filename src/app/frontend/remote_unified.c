@@ -127,7 +127,8 @@ static const qa_recipe_provider *frame_provider(const frontend_remote_unified *o
     const qa_unified_document *document, qa_launch_role role, const char *selector)
 {
     const qa_unified_frame *frame = qa_unified_document_frame(document);
-    const qa_unified_frame_metadata *metadata=frontend_remote_unified_metadata(owner);
+    const qa_unified_frame_metadata *metadata=qa_unified_document_metadata(
+        frontend_remote_unified_metadata_document(owner,frame));
     if (!owner || !owner->admitted || !owner->recipe || (selector && *selector) || !frame || !frame->world ||
         !metadata || metadata->epoch!=frame->epoch || metadata->frame>frame->world->source.number) return NULL;
     for (size_t i = 0; i < metadata->configuration_count; ++i) {
@@ -331,20 +332,19 @@ static bool prepare_frame(frontend_remote_unified *owner, const qa_unified_docum
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified frame precedes actual world and player admission");
     const qa_unified_frame *frame = qa_unified_document_frame(document);
     const qa_unified_frame *published = qa_unified_document_frame(owner->frame);
-    const qa_unified_frame_metadata *metadata=frontend_remote_unified_metadata(owner);
     if (!frame || !frame->world || !frame->player || !frame->prediction || frame->epoch != owner->epoch ||
         frame->player->actor.slot != owner->wire_player.slot || frame->player->actor.generation != owner->wire_player.generation ||
         !qa_actor_id_equal(frame->prediction->actor, frame->player->actor) ||
         frame->prediction->sequence != frame->acknowledged_input ||
         frame->player->actor.registry != owner->wire_player.registry ||
-        (published && frame->player->actor.registry != published->player->actor.registry) ||
-        !metadata || metadata->epoch!=frame->epoch || metadata->frame>frame->world->source.number)
+        (published && frame->player->actor.registry != published->player->actor.registry))
         return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified frame changes its actual Source player or acknowledgement");
     if (owner->prepared_frame && !frontend_unified_document_equal(owner->prepared_frame, document))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified frame preparation changed its retained Source state");
     if (!owner->prepared_frame && !qa_unified_document_retain(document, &owner->prepared_frame, error)) return false;
     uint64_t number = frame->world->source.number;
     if (owner->frame && number <= owner->frame_number) { *ready = true; return true; }
+    if (!frontend_remote_unified_metadata_prepare(owner,frame,error)) return false;
     if (!owner->metadata && !stage_metadata(owner, error)) return false;
     frontend_unified_frame_preparation state = FRONTEND_UNIFIED_FRAME_WAIT;
     if (!owner->options.consumers.frame(owner->options.consumers.context, owner,
@@ -527,6 +527,7 @@ static bool frame(void *context, qa_network_runtime *runtime, qa_net_client_id c
     owner->busy = true; bool okay = true;
     if (owner->frame_obsolete) {
         qa_unified_document_destroy(owner->prepared_frame); owner->prepared_frame=NULL;
+        frontend_remote_unified_metadata_abort(owner);
         staged_metadata_clear(owner);
         owner->frame_obsolete=false; commit->applied=false; owner->busy=false; return true;
     }
@@ -537,9 +538,12 @@ static bool frame(void *context, qa_network_runtime *runtime, qa_net_client_id c
         }
     }
     if (okay) {
-        if (!owner->frame || number > owner->frame_number) { qa_unified_document_destroy(owner->frame);
+        if (!owner->frame || number > owner->frame_number) {
+            frontend_remote_unified_metadata_commit(owner,received);
+            qa_unified_document_destroy(owner->frame);
             owner->frame = owner->prepared_frame; owner->prepared_frame = NULL; owner->frame_number = number; }
-        else { qa_unified_document_destroy(owner->prepared_frame); owner->prepared_frame = NULL; }
+        else { qa_unified_document_destroy(owner->prepared_frame); owner->prepared_frame = NULL;
+            frontend_remote_unified_metadata_abort(owner); }
         staged_metadata_clear(owner);
         commit->applied = true; commit->acknowledged_input = acknowledged;
     }
@@ -698,7 +702,8 @@ bool frontend_remote_unified_checkpoint_returned(const qa_frontend *frontend)
 {
     if(!frontend)return true;
     for(const frontend_remote_unified *owner=frontend->remote_unified;owner;owner=owner->next)
-        if(owner->busy || !owner->options.consumers.checkpoint_returned ||
+        if(owner->busy || !frontend_remote_unified_metadata_returned(owner,NULL) ||
+            !owner->options.consumers.checkpoint_returned ||
             !owner->options.consumers.checkpoint_returned(owner->options.consumers.context,owner))return false;
     return true;
 }

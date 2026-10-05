@@ -84,7 +84,8 @@ bool frontend_unified_q3_sources_create(frontend_remote_unified *replica, fronte
 static bool source_configuration(frontend_unified_q3_sources *o, const qa_unified_frame *frame,
     const qa_unified_q3_source *source, received_source *r, qa_error *e)
 {
-    const qa_unified_frame_metadata *metadata = frontend_remote_unified_metadata(o->replica);
+    const qa_unified_document *document=frontend_remote_unified_metadata_document(o->replica,frame);
+    const qa_unified_frame_metadata *metadata = qa_unified_document_metadata(document);
     if (!metadata || metadata->epoch != frame->epoch || metadata->frame > frame->world->source.number)
         return fail(e,QA_ERROR_FORMAT,"Compiled Q3 Source precedes its actual reliable configuration");
     for (size_t i = 0; i < metadata->q3_configuration_count; ++i) {
@@ -93,7 +94,7 @@ static bool source_configuration(frontend_unified_q3_sources *o, const qa_unifie
             configuration->configuration_revision != source->configuration_revision ||
             strcmp(configuration->provider_name,source->provider_name) || strcmp(configuration->instance,source->instance) ||
             strcmp(configuration->content,source->content)) continue;
-        if (!qa_unified_document_retain(o->replica->source_metadata,&r->metadata,e)) return false;
+        if (!qa_unified_document_retain(document,&r->metadata,e)) return false;
         r->view.game_state = configuration->game_state;
         r->view.configstring_revisions = configuration->config_revisions;
         return true;

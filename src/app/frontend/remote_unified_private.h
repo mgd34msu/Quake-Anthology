@@ -14,6 +14,10 @@ typedef struct frontend_unified_metadata {
     qa_actor_owner owner, old_owner;
     qa_actor_definition definition, old_definition;
 } frontend_unified_metadata;
+typedef struct frontend_unified_metadata_cut {
+    struct frontend_unified_metadata_cut *next;
+    qa_unified_document *document;
+} frontend_unified_metadata_cut;
 struct frontend_remote_unified {
     frontend_remote_unified *next;
     qa_frontend *frontend;
@@ -22,6 +26,9 @@ struct frontend_remote_unified {
     qa_executable_recipe *recipe, *preparing_recipe, *retiring_recipe;
     qa_unified_document *offer, *frame, *prepared_frame;
     qa_unified_document *source_metadata;
+    qa_unified_document *prepared_source_metadata;
+    frontend_unified_metadata_cut *metadata_head, *metadata_tail;
+    size_t pending_metadata_bytes;
     qa_actor_registry *actors;
     qa_strings *strings;
     frontend_unified_metadata *metadata;

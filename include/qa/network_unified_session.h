@@ -58,6 +58,7 @@ typedef struct qa_unified_session_hooks {
     void (*closed)(void *, qa_net_client_id);
 } qa_unified_session_hooks;
 typedef struct qa_unified_session qa_unified_session;
+const qa_unified_limits *qa_unified_session_limits(const qa_unified_session *);
 /* Borrows the sole generic runtime and transfers the peer/channel on attach.
  * Returned control borrows until runtime detach/destroy. One real local seat
  * belongs to each production Anthology peer, independently of wire actors. */

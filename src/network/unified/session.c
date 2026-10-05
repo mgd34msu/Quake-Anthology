@@ -12,6 +12,9 @@ bool qa_unified_session_fail(qa_error *e, qa_status status, const char *message)
     qa_error_set(e, status, 0, "%s", message); return false;
 }
 
+const qa_unified_limits *qa_unified_session_limits(const qa_unified_session *s)
+{ return s?&s->limits:NULL; }
+
 bool qa_unified_session_idle(const qa_unified_session *s)
 {
     return s && !s->entered && !s->processing && qa_network_callbacks_idle(s->runtime);

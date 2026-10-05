@@ -157,6 +157,8 @@ static bool frame_valid(const frontend_remote_unified *owner,const qa_unified_do
 }
 static bool retained_valid(const frontend_remote_unified *owner, const qa_net_client *peer, qa_error *e)
 {
+    if((owner->frontend->capture||owner->frontend->source_restoring)&&
+        !frontend_remote_unified_metadata_returned(owner,e))return false;
     if (!owner->bound || !peer || peer->protocol.kind != QA_NET_UNIFIED_1 || peer->protocol.flags || peer->protocol.revision ||
         peer->seat_count != 1 || !peer->seats || !qa_net_client_id_equal(peer->id, owner->options.domain.client) ||
         !qa_net_client_owns_seat(peer, owner->options.domain.seat) || peer->seats[0].remote_index ||
@@ -269,6 +271,7 @@ static bool fields(qa_source_save_io *io, frontend_remote_unified *owner,
 bool frontend_remote_unified_checkpoint(const frontend_remote_unified *owner,
     qa_application_content_graph *graph, qa_buffer *out, qa_error *e)
 {
+    if(owner&&!frontend_remote_unified_metadata_returned(owner,e))return false;
     const qa_net_client *peer = owner ? qa_net_connections_get(
         qa_network_connections(owner->options.domain.runtime), owner->options.domain.client) : NULL;
     qa_unified_session *installed = NULL;
