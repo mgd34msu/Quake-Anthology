@@ -9,7 +9,7 @@ typedef enum qa_console_save_identity {
 } qa_console_save_identity;
 typedef struct qa_console_save_resolvers {
     void *context;
-    /* Mutable aliases and queued commands retain their real Source owner.
+    /* Queued commands retain their real Source owner.
      * Zero remains the engine/absent identity. */
     bool (*identity)(void *, qa_console_save_identity, uint64_t saved,
                      uint64_t *restored, qa_error *);
@@ -26,8 +26,8 @@ bool qa_console_save_capture(const qa_console *, qa_session *, qa_buffer *, qa_e
 uint64_t qa_console_save_context_registry(qa_session *, uint64_t registry, uint64_t captured_registry);
 bool qa_console_save_capture_in_registry(const qa_console *, qa_session *, uint64_t captured_registry,
                                          bool releases, qa_buffer *, qa_error *);
-/* Restore mutable aliases and queued commands. Ordinary constructors retain
- * ownership of callbacks, options and process-local lifetime exclusions. */
+/* Restore queued Source execution only. Current aliases and ordinary
+ * constructor callbacks/options remain owned by the receiving console. */
 bool qa_console_save_restore(qa_console *, qa_session *, const qa_console_save_resolvers *,
                              qa_bytes, qa_error *);
 /* Capture/import the actual returned release roster, its active queue and

@@ -62,7 +62,7 @@ bool qa_save_restore(void *context, const qa_save_restore_ops *ops,
         QA_SAVE_WORLD, QA_SAVE_COMBAT, QA_SAVE_INVENTORY,
         QA_SAVE_PICKUPS, QA_SAVE_TARGETS,
         QA_SAVE_PROGRESSION,
-        QA_SAVE_CONTROLS, QA_SAVE_CVARS, QA_SAVE_COMMANDS, QA_SAVE_EVENTS,
+        QA_SAVE_CONTROLS, QA_SAVE_CVARS, QA_SAVE_EVENTS,
         QA_SAVE_NAVIGATION, QA_SAVE_BOTS, QA_SAVE_APPLICATION
     };
     bool ok = true;

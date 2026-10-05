@@ -4030,24 +4030,6 @@ bool frontend_config_store_visit(const frontend_config_store *manager,
         (!manager->storage || (manager->storage_seeded && shared_storage_current(manager) &&
             frontend_shared_storage_visit(manager->storage,visitor,error)));
 }
-bool frontend_config_store_commands_restored(frontend_config_store *manager,
-    qa_application *application,qa_console *console,qa_error *error)
-{
-    frontend_config_source *source=manager?frontend_config_store_source(manager,console):NULL;
-    if (!source) return true;
-    if (!source->configured || !source->released || source->application!=application || source->imported ||
-        source->scope.provider!=source->command.owner || qa_console_cvars(console)!=source->cvars)
-        return fail(error,QA_ERROR_ARGUMENT,"Restored callbacks lost their physical Source custody");
-    uint64_t lifetime=0; qa_command_handler actual=NULL,expected=NULL; void *user=NULL,*binding=NULL;
-    bool frag=qa_console_registration_read(console,fraglog_declaration.name,source->command.owner,
-        &lifetime,&actual,&user);
-    if (frag && (!source_callback_binding(source,fraglog_declaration.name,&expected,&binding) ||
-        lifetime!=source->command.owner || actual!=expected || user!=binding))
-        return fail(error,QA_ERROR_FORMAT,"Restored frag callback has another Source lifetime");
-    if (!frontend_network_source_admin_adopt(manager->frontend,console,source->command.owner,
-        &source->admin_registered,error)) return false;
-    source->frag_registered=frag; return true;
-}
 static bool restore_source(void *context,qa_application *application,const qa_launch_snapshot *candidate,
     const qa_application_startup_source *authority,qa_error *error)
 {

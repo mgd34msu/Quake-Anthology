@@ -19,13 +19,6 @@ static bool remap_identity(const qa_console_save_resolvers *resolve,
     *out = restored; return true;
 }
 
-static bool identity(qa_source_save_io *io, const qa_console_save_resolvers *resolve,
-                     qa_console_save_identity kind, uint64_t *value)
-{
-    if (!qa_source_save_u64(io, value)) return false;
-    return io->direction != QA_SOURCE_SAVE_READ || remap_identity(resolve, kind, *value, value, io->error);
-}
-
 static bool context_fields(qa_source_save_io *io, qa_command_context *context,
                             const qa_console_save_resolvers *resolve, uint64_t captured_registry)
 {
@@ -62,36 +55,6 @@ static bool context_fields(qa_source_save_io *io, qa_command_context *context,
         restored.owner != owner || restored.client != client)
         return invalid(io->error, "Console context resolver changed command semantics");
     *context = restored; return true;
-}
-
-static bool aliases_fields(qa_source_save_io *io, qa_console *state,
-                            const qa_console_save_resolvers *resolve)
-{
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    size_t count = 0;
-    if (!reading) for (alias_entry *entry = state->aliases; entry; entry = entry->next) ++count;
-    if (!qa_source_save_count(io, &count, SIZE_MAX / sizeof(alias_entry))) return false;
-    if (reading && count > io->input.size - io->offset) return invalid(io->error, "Invalid console alias extent");
-    alias_entry **tail = &state->aliases;
-    for (size_t i = 0; i < count; ++i) {
-        if (reading) {
-            *tail = calloc(1, sizeof(**tail));
-            if (!*tail) return qac_fail(io->error, QA_ERROR_MEMORY, "Retaining restored alias");
-        }
-        alias_entry *entry = *tail;
-        uint32_t dialect = entry->dialect;
-        if (!qac_save_text(io, &entry->view.name) || !entry->view.name || !*entry->view.name || strlen(entry->view.name) >= 32 ||
-            !qac_save_text(io, &entry->view.alias_text) || !entry->view.alias_text ||
-            !identity(io, resolve, QA_CONSOLE_SAVE_OWNER, &entry->view.owner) ||
-            !qa_source_save_u32(io, &dialect) || !qac_dialect_valid((qa_console_dialect)dialect) || dialect == QA_CONSOLE_Q3 ||
-            !qa_source_save_bool(io, &entry->console_text)) return false;
-        entry->dialect = (qa_console_dialect)dialect;
-        for (alias_entry *prior = state->aliases; prior != entry; prior = prior->next)
-            if (prior->view.owner == entry->view.owner && !strcmp(prior->view.name, entry->view.name))
-                return invalid(io->error, "Duplicate restored alias");
-        tail = &entry->next;
-    }
-    return true;
 }
 
 static bool chunks_fields(qa_source_save_io *io, command_chunk **head, command_chunk **last,
@@ -162,8 +125,6 @@ static bool queue_valid(const qa_console *state, const command_chunk *head, size
 
 static bool state_valid(const qa_console *state, const qa_console *candidate, qa_error *error)
 {
-    for (const alias_entry *entry = state->aliases; entry; entry = entry->next)
-        if (is_retired(candidate->owners, entry->view.owner)) return invalid(error, "Console alias owner retired");
     if (state->wait && (state->wait_context.session != candidate->options.context.session ||
         is_retired(candidate->owners, state->wait_context.owner) ||
         (state->wait_context.client && is_retired(candidate->clients, state->wait_context.client))))
@@ -180,18 +141,17 @@ static bool fields(qa_source_save_io *io, qa_console *state, qa_console *candida
         qa_source_save_u64(io, &captured_registry) && captured_registry &&
         qa_source_save_i32(io, &state->wait) &&
         (!state->wait || context_fields(io, &state->wait_context, resolve, captured_registry)) &&
-        qa_source_save_count(io, &state->alias_count, SIZE_MAX) && aliases_fields(io, state, resolve) &&
+        qa_source_save_count(io, &state->alias_count, SIZE_MAX) &&
         chunks_fields(io, &state->head, &state->tail, &state->queued_bytes, resolve, captured_registry) &&
         chunks_fields(io, &state->deferred, &state->deferred_tail, &state->deferred_bytes, resolve, captured_registry) &&
         state_valid(state, candidate, io->error);
 }
 
-/* Keep ordinary constructor callbacks, options and process-local lifetime
- * exclusions. Only mutable Source command state belongs to the save. */
+/* Keep current aliases, callbacks and options. Only queued Source execution
+ * and its wait/recursion state belong to this continuation. */
 static void state_exchange(qa_console *console, qa_console *state)
 {
     qa_console old = *console;
-    console->aliases = state->aliases; state->aliases = old.aliases;
     console->head = state->head; state->head = old.head;
     console->tail = state->tail; state->tail = old.tail;
     console->deferred = state->deferred; state->deferred = old.deferred;

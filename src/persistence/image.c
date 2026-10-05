@@ -10,9 +10,10 @@ bool qa_save_shared_state_kind(qa_save_owner_kind kind, qa_save_purpose purpose)
     switch (kind) {
     case QA_SAVE_CAMPAIGN: case QA_SAVE_CONNECTIONS: case QA_SAVE_PREDICTION:
     case QA_SAVE_PRESENTATION: case QA_SAVE_AUDIO: case QA_SAVE_INPUT: case QA_SAVE_MEDIA:
+    case QA_SAVE_COMMANDS:
         return false;
     case QA_SAVE_RESOURCES: case QA_SAVE_CONFIGURATION: case QA_SAVE_ROSTER:
-    case QA_SAVE_PROGRESSION: case QA_SAVE_CVARS: case QA_SAVE_COMMANDS:
+    case QA_SAVE_PROGRESSION: case QA_SAVE_CVARS:
         return purpose != QA_SAVE_TRANSITION;
     default: return true;
     }

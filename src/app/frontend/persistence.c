@@ -143,13 +143,6 @@ static bool ranking_capture(void *context,qa_application_ranking_effect_fn insta
     qa_application_ranking_checkpoint_refs refs=frontend_ranking_refs(f);
     return refs.capture(refs.context,installed,binding,out,error);
 }
-static bool commands_restored(void *context,qa_application *application,qa_console *console,qa_error *error)
-{
-    frontend_persistence *operation=context; qa_frontend *f=operation->candidate;
-    if (!f || f->application!=application)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Command custody has no actual isolated frontend owner");
-    return frontend_config_store_commands_restored(f->config_store,application,console,error);
-}
 static bool ranking_resolve(void *context,qa_bytes bytes,qa_application_ranking_effect_fn *installed,
     void **binding,qa_error *error)
 {
@@ -297,7 +290,7 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
         .rankings=services?services->rankings:NULL,.progress=services?services->progress:NULL,.ranking_source=&operation->ranking,
         .rankings_handoff=services && services->rankings_handoff?ranking_handoff:NULL,
         .prepare_services=prepare_services,.prepare_native_baseline=native_baseline,.prepare_content=prepare_content,
-        .commands_restored=commands_restored,.reconnect=reconnect,
+        .reconnect=reconnect,
         .complete_state=complete_state,.validate=validate,.publish_ready=publish_ready,.publish=publish,
         .replay=operation->replay || (services && services->replay)?replay:NULL,
         .discard_services=discard_services};

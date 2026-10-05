@@ -4,18 +4,7 @@
 #include "qa/save.h"
 #include "qa/persistence_application.h"
 #include "qa/persistence_gameplay.h"
-#include "qa/console_save.h"
 #include "qa/source_save.h"
-
-typedef struct application_save_console_context {
-    qa_application *application;
-    uint64_t saved_command_generation;
-    const qa_application_persistence_ops *ops;
-} application_save_console_context;
-bool application_save_console_resolvers(const application_save_console_context *,
-                                        qa_console_save_resolvers *, qa_error *);
-bool application_save_console_context_from_image(qa_application *, const qa_save_image *,
-    application_save_console_context *, qa_error *);
 
 typedef struct application_save_foundation {
     qa_strings *strings;
