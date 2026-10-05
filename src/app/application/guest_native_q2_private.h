@@ -101,6 +101,7 @@ bool application_native_q2_frames_exit(void *,qa_session *,const qa_source_frame
 bool application_guest_native_q2_console_prepare(qa_application *, application_provider *, qa_world *,
     const qa_product *, const qa_launch_choices *, qa_console **, qa_cvars **,
     qa_command_context *, qa_error *);
+bool application_native_q2_entity_text(const qa_bsp_view *, char **, qa_error *);
 bool application_native_q2_spawn_map(application_provider *, const qa_bsp_view *,
                                       const qa_entities *, qa_string_id, qa_string_id, qa_error *);
 bool application_native_q2_retire_map(application_provider *, qa_error *);
@@ -114,6 +115,7 @@ bool application_native_q2_activate(struct application_native_q2 *, qa_error *);
 bool application_native_q2_client_admit(application_provider *, uint32_t, qa_actor_id,
     const char *, const char *, bool, bool *, qa_error *);
 bool application_native_q2_client_begin(application_provider *, uint32_t, qa_error *);
+bool application_native_q2_clients_reconnect(application_provider *, qa_error *);
 bool application_native_q2_client_userinfo(application_provider *, uint32_t, const char *, qa_error *);
 bool application_native_q2_client_disconnect(application_provider *, uint32_t, qa_error *);
 bool application_native_q2_actor_disconnect(application_provider *, qa_actor_id, qa_error *);

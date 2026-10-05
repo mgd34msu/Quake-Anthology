@@ -511,18 +511,6 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
     if (!application_native_process_prepare(provider->application, provider->launch,
         provider->owner, provider->owner, &artifact, 1, 0, &module.image,
         process_current, engine, capture, lower_recipe, &engine->process, error)) return false;
-    qa_native_checkpoint cold = {0};
-    if (provider->application->native_restore_image && engine->profile != QA_NATIVE_Q2_CGAME_API2023) {
-        const qa_save_record *saved = qa_save_image_find(provider->application->native_restore_image,
-            QA_SAVE_PROVIDER, provider->launch->selection.instance);
-        if (!saved || !application_native_q2_save_checkpoint(saved, &cold, error)) return false;
-        if (cold.has_process && !qa_native_process_resources_restore_read(engine->process.resources,
-            (qa_bytes){cold.process.data, cold.process.size}, NULL, &engine->process.process, error)) {
-            qa_native_checkpoint_free(&cold);
-            return false;
-        }
-        engine->process.process.defer_host_restore = cold.has_process;
-    }
     instance.process = &engine->process.process;
     bool ok;
     ++engine->calls;
@@ -559,10 +547,6 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
     }
     engine->host_constructing = false;
     --engine->calls;
-    /* The constructor copied the actual capsule and its deferred HOST bytes.
-     * No enclosing recipe keeps this temporary snapshot storage borrowed. */
-    engine->process.process.continuation = (qa_bytes){0};
-    qa_native_checkpoint_free(&cold);
     if(ok&&engine->primary_inventory&&!engine->inventory_scanner) {
         ok=application_native_q2_inventory_rows_create(engine,&engine->inventory_rows,error);
         if(ok) {
@@ -651,6 +635,18 @@ bool application_native_q2_initialize_supplemental(application_provider *provide
         application_native_q2_publication_activate(engine->publication,error);
 }
 
+bool application_native_q2_entity_text(const qa_bsp_view *map, char **out, qa_error *error)
+{
+    qa_bytes text = map->lumps[QA_BSP_ENTITIES].bytes;
+    if (text.size == SIZE_MAX) return application_fail(error, QA_ERROR_MEMORY, "Native Q2 entity text extent overflow");
+    char *copy = malloc(text.size + 1);
+    if (!copy) return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 entity text");
+    if (text.size) memcpy(copy, text.data, text.size);
+    copy[text.size] = 0;
+    *out = copy;
+    return true;
+}
+
 bool application_native_q2_spawn_map(application_provider *provider, const qa_bsp_view *map,
     const qa_entities *entities, qa_string_id name, qa_string_id spawn, qa_error *error)
 {
@@ -658,12 +654,8 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine || !map || engine->profile == QA_NATIVE_Q2_CGAME_API2023 || !application_native_q2_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 map publication requires an idle game owner");
-    qa_bytes text = map->lumps[QA_BSP_ENTITIES].bytes;
-    if (text.size == SIZE_MAX) return application_fail(error, QA_ERROR_MEMORY, "Native Q2 entity text extent overflow");
-    char *copy = malloc(text.size + 1);
-    if (!copy) return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 entity text");
-    if (text.size) memcpy(copy, text.data, text.size);
-    copy[text.size] = 0;
+    char *copy = NULL;
+    if (!application_native_q2_entity_text(map, &copy, error)) return false;
     if (!engine->world_actor.registry && !qa_session_allocate(provider->application->session,
             provider->owner, engine->definition, true, 0, &engine->world_actor, error)) { free(copy); return false; }
     free(engine->entity_text); engine->entity_text = copy;

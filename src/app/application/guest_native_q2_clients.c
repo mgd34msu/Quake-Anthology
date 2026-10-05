@@ -603,6 +603,31 @@ bool application_native_q2_client_begin(application_provider *provider, uint32_t
             engine, slot, engine->clients[slot].actor, false, error);
 }
 
+bool application_native_q2_clients_reconnect(application_provider *provider, qa_error *error)
+{
+    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    if (!engine || !engine->initialized || !engine->map_ready ||
+        engine->profile == QA_NATIVE_Q2_CGAME_API2023 || !application_native_q2_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 reconnect requires its restored GAME and LEVEL owner");
+    for (uint32_t slot = 1; slot < 257; ++slot) {
+        application_native_q2_client *client = &engine->clients[slot];
+        if (!client->connected) continue;
+        qa_actor_id actor = client->actor;
+        bool begun = client->begun, bot = client->bot;
+        char userinfo[sizeof(client->userinfo)];
+        memcpy(userinfo, client->userinfo, sizeof(userinfo));
+        /* ReadLevel clears the module's connected state. Use the same public
+         * admission path as a returning client, preserving its loaded edict. */
+        client->connected = client->begun = false;
+        bool accepted = false;
+        if (!application_native_q2_client_admit(provider, slot, actor, userinfo, "", bot, &accepted, error)) return false;
+        if (!accepted)
+            return application_fail(error, QA_ERROR_FORMAT, "Native Q2 GAME rejected its saved client during reconnect");
+        if (begun && !application_native_q2_client_begin(provider, slot, error)) return false;
+    }
+    return true;
+}
+
 bool application_native_q2_client_userinfo(application_provider *provider, uint32_t slot,
     const char *userinfo, qa_error *error)
 {

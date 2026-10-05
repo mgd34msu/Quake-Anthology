@@ -1669,19 +1669,6 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
     if (ok) ok = qa_configuration_commit_restored(transaction, error);
     if (!ok && transaction) (void)qa_configuration_abort(transaction, NULL);
     if (ok) ok = persistence_restore_provider_clocks(operation, candidate, error);
-    for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
-        application_provider *provider = candidate->providers[i];
-        if (provider->kind != APPLICATION_PROVIDER_NATIVE || !provider->state.native.q2_engine ||
-            provider->state.native.q2_engine->profile == QA_NATIVE_Q2_CGAME_API2023 ||
-            !provider->state.native.host ||
-            !qa_native_process_restore_pending(qa_native_host_instance(provider->state.native.host)))
-            continue;
-        const qa_save_record *saved = qa_save_image_find(image, QA_SAVE_PROVIDER,
-                                                        provider->launch->selection.instance);
-        ok = saved && provider_restore(operation, provider, saved->payload, error);
-        if (!saved)
-            application_fail(error, QA_ERROR_FORMAT, "Missing declared native Q2 restoration record");
-    }
     if (ok) ok = persistence_inventory(operation, candidate, image, error);
     if (ok) ok = application_save_resolvers(candidate, &operation->resolvers, error);
     if (!ok) {

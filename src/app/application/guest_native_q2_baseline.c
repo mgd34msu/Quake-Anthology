@@ -59,13 +59,14 @@ bool application_native_q2_baseline_begin(application_provider *target, applicat
         return application_fail(error, QA_ERROR_ARGUMENT, "Native baseline requires two isolated prepared matching application owners");
     *out = NULL;
     if (!fresh(baseline, error)) return false;
-    /* Exact module and declaration bytes qualify the service/ABI exchange;
-     * the full save producer separately qualifies private continuation. */
+    /* The actual module and paired optional declaration qualify the same
+     * public ABI while SpawnEntities uses isolated baseline services. */
     qa_native_module_info target_info = qa_native_module_describe(target->state.native.module);
     qa_native_module_info baseline_info = qa_native_module_describe(baseline->state.native.module);
     if (!qa_sha256_equal(&target_info.image.digest, &baseline_info.image.digest) ||
-        !target->launch->declaration || !baseline->launch->declaration ||
-        !qa_sha256_equal(qa_resource_digest(target->launch->declaration), qa_resource_digest(baseline->launch->declaration)))
+        (target->launch->declaration != NULL) != (baseline->launch->declaration != NULL) ||
+        (target->launch->declaration && !qa_sha256_equal(qa_resource_digest(target->launch->declaration),
+            qa_resource_digest(baseline->launch->declaration))))
         return application_fail(error, QA_ERROR_FORMAT, "Native baseline artifact or declaration differs from the target owner");
     if (!application_native_q2_prepare_restore(target, error) ||
         !application_native_q2_prepare_restore(baseline, error)) return false;

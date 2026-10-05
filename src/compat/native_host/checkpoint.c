@@ -96,12 +96,15 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
         if (slot < host->retained_capacity && host->retained_clients[slot])
             ++retained_count;
     }
-    native_host_memory_state objects={host->strings,host->cvar_shadows};
-    qa_source_save_io objects_io={0};
-    bool captured=(!host->cvars || qa_cvars_save_capture(host->cvars,&registry,error)) &&
-        qa_source_save_writer(&objects_io,NULL,error) && native_host_memory_fields(&objects_io,host,&objects,true) &&
-        qa_source_save_finish(&objects_io,&memory);
-    qa_source_save_dispose(&objects_io);
+    bool captured = !host->cvars || qa_cvars_save_capture(host->cvars, &registry, error);
+    if (captured && host->kind != NATIVE_HOST_Q2_GAME) {
+        native_host_memory_state objects = {host->strings, host->cvar_shadows};
+        qa_source_save_io objects_io = {0};
+        captured = qa_source_save_writer(&objects_io, NULL, error) &&
+            native_host_memory_fields(&objects_io, host, &objects, true) &&
+            qa_source_save_finish(&objects_io, &memory);
+        qa_source_save_dispose(&objects_io);
+    }
     if (!captured) {
         qa_buffer_free(&engine); qa_buffer_free(&bridge); qa_buffer_free(&registry); qa_buffer_free(&memory); return false;
     }
@@ -348,11 +351,20 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     qa_bytes registry, objects;
     if (!qa_source_save_span(&io, registry_extent, &registry) ||
         !qa_source_save_span(&io, memory_extent, &objects)) goto truncated;
-    bool bind_memory=!cvars_only && qa_native_process_restore_pending(host->instance);
-    qa_source_save_io objects_io={0};
-    bool prepared=qa_source_save_reader(&objects_io,NULL,objects,error) &&
-        native_host_memory_fields(&objects_io,host,&memory,bind_memory) && qa_source_save_finish(&objects_io,NULL);
-    qa_source_save_dispose(&objects_io);
+    bool bind_memory = host->kind != NATIVE_HOST_Q2_GAME && !cvars_only &&
+        qa_native_process_restore_pending(host->instance);
+    bool prepared = true;
+    if (host->kind == NATIVE_HOST_Q2_GAME) {
+        if (objects.size)
+            prepared = native_host_fail(error, QA_ERROR_FORMAT, 0,
+                "Q2 GAME files do not restore process-local string addresses");
+    } else {
+        qa_source_save_io objects_io = {0};
+        prepared = qa_source_save_reader(&objects_io, NULL, objects, error) &&
+            native_host_memory_fields(&objects_io, host, &memory, bind_memory) &&
+            qa_source_save_finish(&objects_io, NULL);
+        qa_source_save_dispose(&objects_io);
+    }
     if (prepared && registry.size) prepared=qa_cvars_save_prepare(host->cvars,registry,&cvars,error);
     if (!prepared) {
         free(slots); free(retained); native_host_memory_dispose(&memory); return false;

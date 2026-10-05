@@ -101,6 +101,7 @@ bool application_native_q2_restore_finish(application_provider *provider, qa_err
          !application_native_q2_inventory_scanner_finish_restore(engine->inventory_scanner,error)||
          !application_native_q2_inventory_scanner_activate(engine->inventory_scanner,error))) return false;
     bool ok=application_native_q2_inventory_finish(provider, error) &&
+        (!engine->restore_record.data || application_native_q2_clients_reconnect(provider, error)) &&
         (!engine->map_ready || (application_native_q2_callbacks_validate(engine,error) &&
         application_native_q2_stages_prepare(engine,error) &&
         application_native_q2_client_outputs_finish_restore(engine,error) &&
@@ -120,10 +121,9 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
     qa_application *app = engine->provider->application;
     const char *map = engine->map_name ? qa_strings_cstr(qa_session_strings(app->session), engine->map_name) : "";
     const char *spawn = engine->spawn_point ? qa_strings_cstr(qa_session_strings(app->session), engine->spawn_point) : "";
-    const char *entities = engine->entity_text ? engine->entity_text : "";
-    size_t size = 124u + 257u * 3680u + engine->configstring_count * 4u;
-    const char *texts[] = {map, spawn, entities};
-    for (size_t i = 0; i < 3; ++i) {
+    size_t size = 120u + 257u * 3680u + engine->configstring_count * 4u;
+    const char *texts[] = {map, spawn};
+    for (size_t i = 0; i < 2; ++i) {
         if (!texts[i] || strlen(texts[i]) > 64u * 1024u * 1024u - size)
             return application_fail(error, QA_ERROR_MEMORY, "Native Q2 continuation text exceeds its storage budget");
         size += strlen(texts[i]);
@@ -191,7 +191,7 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
         qa_net_write_u64(&writer, engine->frame.number) && qa_net_write_u64(&writer, engine->frame.start_ns) &&
         qa_net_write_u64(&writer, engine->frame.elapsed_ns) && qa_net_write_u64(&writer, engine->frame.time_ns) &&
         qa_net_write_u32(&writer, (uint32_t)engine->frame.phase) &&
-        write_text(&writer, map) && write_text(&writer, spawn) && write_text(&writer, entities);
+        write_text(&writer, map) && write_text(&writer, spawn);
     for (uint32_t i = 0; ok && i < engine->configstring_count; ++i)
         ok = write_text(&writer, engine->configstrings[i]);
     for (uint32_t i = 0; ok && i < 257; ++i) {
@@ -268,12 +268,12 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
     frame.phase = (qa_frame_phase)qa_net_read_u32(&reader);
     if (reader.failed || (unsigned)frame.phase > QA_FRAME_EXIT || frame.time_ns < frame.start_ns)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation source clock is invalid");
-    char *map = NULL, *spawn = NULL, *entities = NULL;
+    char *map = NULL, *spawn = NULL;
     char **config = calloc(engine->configstring_count, sizeof(*config));
     application_native_q2_client *clients = calloc(257, sizeof(*clients));
     bool ok = config && clients;
     if (!ok) application_fail(error, QA_ERROR_MEMORY, "Preparing native Q2 continuation restore");
-    if (ok) ok = read_text(&reader, &map, error) && read_text(&reader, &spawn, error) && read_text(&reader, &entities, error);
+    if (ok) ok = read_text(&reader, &map, error) && read_text(&reader, &spawn, error);
     for (uint32_t i = 0; ok && i < engine->configstring_count; ++i)
         ok = read_text(&reader, &config[i], error);
     for (uint32_t i = 0; ok && i < 257; ++i) {
@@ -382,7 +382,6 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         for (uint32_t i = 0; i < engine->configstring_count; ++i) free(engine->configstrings[i]);
         free(engine->configstrings); engine->configstrings = config; config = NULL;
         memcpy(engine->clients, clients, sizeof(engine->clients));
-        free(engine->entity_text); engine->entity_text = entities; entities = NULL;
         engine->world_actor = world; engine->frame = frame; engine->map_name = map_id; engine->spawn_point = spawn_id;
         engine->initialized = initialized != 0; engine->map_ready = engine->provider->map_bound = map_ready != 0;
         qa_cvars_set_server_active(engine->cvars, engine->map_ready);
@@ -390,7 +389,7 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         engine->hud_source_owner = 0;
     }
     if (config) { for (uint32_t i = 0; i < engine->configstring_count; ++i) free(config[i]); free(config); }
-    free(clients); free(map); free(spawn); free(entities);
+    free(clients); free(map); free(spawn);
     application_native_q2_attack_restore_abort(attack);
     application_native_q2_combat_restore_abort(combat);
     application_native_q2_publication_restore_abort(publication);
