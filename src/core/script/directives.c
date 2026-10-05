@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <stdio.h>
 
 static bool current_condition(qa_script *s, qa_script_location location, script_condition *out,
                               qa_error *e) {
@@ -103,89 +104,6 @@ bool script_evaluate_stream(qa_script *s, qa_script_location location, bool inte
     }
     return script_debug_value(s,dollar?"$eval result: ":"eval result: ",integer_mode,*out,e);
 }
-static size_t decimal_word(uint32_t value, char *out, unsigned width) {
-    char digits[10];
-    size_t count = 0;
-    do {
-        digits[count++] = (char)('0' + value % 10);
-        value /= 10;
-    } while (value != 0);
-    size_t at = 0;
-    while (count + at < width)
-        out[at++] = '0';
-    while (count != 0)
-        out[at++] = digits[--count];
-    return at;
-}
-/* Fixed two decimals from the binary value, with nearest-even rounding and no
- * locale or intermediate decimal conversion. The largest double needs 35 limbs. */
-static bool fixed_decimal(double value, char out[320], size_t *length) {
-    if (!isfinite(value)) {
-        const char *text = isnan(value) ? "nan" : "inf";
-        memcpy(out, text, 4);
-        *length = 3;
-        return true;
-    }
-    uint64_t bits;
-    memcpy(&bits, &value, sizeof(bits));
-    unsigned exponent = (unsigned)((bits >> 52) & 2047);
-    uint64_t significand = bits & UINT64_C(0xfffffffffffff);
-    if (exponent != 0)
-        significand |= UINT64_C(0x10000000000000);
-    int shift = exponent == 0 ? -1074 : (int)exponent - 1075;
-    uint64_t scaled = significand * 100;
-    if (shift < 0) {
-        unsigned down = (unsigned)-shift;
-        if (down >= 64)
-            scaled = 0;
-        else {
-            uint64_t lower = scaled >> down, mask = (UINT64_C(1) << down) - 1;
-            uint64_t remainder = scaled & mask, half = UINT64_C(1) << (down - 1);
-            scaled = lower + (remainder > half || (remainder == half && (lower & 1) != 0));
-        }
-    }
-    uint32_t limbs[36] = {0};
-    size_t count = 0;
-    do {
-        limbs[count++] = (uint32_t)(scaled % UINT64_C(1000000000));
-        scaled /= UINT64_C(1000000000);
-    } while (scaled != 0);
-    for (int bit = 0; bit < shift; ++bit) {
-        uint64_t carry = 0;
-        for (size_t i = 0; i < count; ++i) {
-            uint64_t doubled = (uint64_t)limbs[i] * 2 + carry;
-            limbs[i] = (uint32_t)(doubled % UINT64_C(1000000000));
-            carry = doubled / UINT64_C(1000000000);
-        }
-        if (carry != 0) {
-            if (count == 36)
-                return false;
-            limbs[count++] = (uint32_t)carry;
-        }
-    }
-    char digits[318];
-    size_t size = decimal_word(limbs[count - 1], digits, 0);
-    for (size_t i = count - 1; i != 0; --i)
-        size += decimal_word(limbs[i - 1], digits + size, 9);
-    size_t at = 0;
-    if (size <= 2) {
-        out[at++] = '0';
-        out[at++] = '.';
-        if (size == 1)
-            out[at++] = '0';
-        memcpy(out + at, digits, size);
-        at += size;
-    } else {
-        memcpy(out, digits, size - 2);
-        at = size - 2;
-        out[at++] = '.';
-        out[at++] = digits[size - 2];
-        out[at++] = digits[size - 1];
-    }
-    out[at] = 0;
-    *length = at;
-    return true;
-}
 bool script_eval_directive(qa_script *s, qa_script_location location, bool integer_mode,
                            bool dollar, qa_error *e) {
     script_eval_value value;
@@ -195,11 +113,12 @@ bool script_eval_directive(qa_script *s, qa_script_location location, bool integ
     char text[320];
     size_t size;
     if (integer_mode) {
-        if (!qa_format_number(magnitude, text, e))
-            return false;
-        size = strlen(text);
-    } else if (!fixed_decimal(magnitude, text, &size))
-        return script_fail(s, location, "Evaluation output overflow", e);
+        uint32_t word=value.integer<0?0u-(uint32_t)value.integer:(uint32_t)value.integer;
+        int32_t absolute; memcpy(&absolute,&word,sizeof(absolute));
+        (void)snprintf(text,sizeof(text),"%d",absolute);
+    } else if (!qa_format_fixed(magnitude,2,text,sizeof(text),e))
+        return false;
+    size = strlen(text);
     if (size >= s->options.token_limit)
         return script_fail(s, location, "Evaluation output exceeds token limit", e);
     char *stored = script_string(&s->arena, text, size, e);
@@ -212,7 +131,13 @@ bool script_eval_directive(qa_script *s, qa_script_location location, bool integ
                              .number = dollar ? number : magnitude,
                              .text = {(const uint8_t *)stored, size},
                              .location = qa_script_position(s)};
-    token.integer=qa_number_to_i32(token.number);
+    if (integer_mode) token.integer=value.integer;
+    else {
+        if (!isfinite(token.number) || token.number<=-4294967297.0 || token.number>=4294967296.0)
+            return script_fail(s,location,"Evaluation exceeds its native token word",e);
+        uint32_t word=(uint32_t)(int64_t)token.number;
+        memcpy(&token.integer,&word,sizeof(word));
+    }
     const char *unsupported=dollar?NULL:"#eval and #evalfloat leave numeric fields uninitialized";
     if (!script_push(s, (script_queued_token){.token=token,.unsupported=unsupported}, e))
         return false;

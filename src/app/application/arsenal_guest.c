@@ -497,8 +497,8 @@ static bool equipment_admit(application_guest_input *input, guest_client_scope *
     uint32_t bits;
     if (!source_word(input, scope->player + 52, &bits, error)) return false;
     int32_t speed; memcpy(&speed, &bits, sizeof(speed));
-    double value = (float)((double)speed * scope->equipment.speed_multiplier);
-    uint8_t bytes[4]; qa_store_u32le(bytes, (uint32_t)qa_number_to_i32(value));
+    float value = (float)((double)speed * scope->equipment.speed_multiplier);
+    uint8_t bytes[4]; qa_store_u32le(bytes, (uint32_t)qa_source_float_to_i32(value));
     if (!qa_qvm_write(input->role->vm, scope->player + 52, (qa_bytes){bytes, sizeof(bytes)}, error)) return false;
     scope->equipment_active = true;
     return true;

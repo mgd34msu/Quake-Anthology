@@ -1481,7 +1481,7 @@ add_library(qa_application STATIC
     src/app/application/guest_q3_component_player_events.c
     src/app/application/guest_q3_mod_pickups.c
 )
-target_link_libraries(qa_application PUBLIC qa_persistence qa_configuration qa_game_q1 qa_game_q2 qa_game_q3 qa_campaign qa_modes qa_player_services qa_qc_host qa_q3_host qa_text qa_settings)
+target_link_libraries(qa_application PUBLIC qa_persistence qa_configuration qa_game_q1 qa_game_q2 qa_game_q3 qa_campaign qa_modes qa_player_services qa_qc_host qa_q3_host qa_text qa_settings PRIVATE qa_tools)
 if(WIN32)
     target_link_libraries(qa_application PRIVATE bcrypt)
 endif()

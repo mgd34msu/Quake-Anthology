@@ -1857,7 +1857,12 @@ bool application_supplies_q3_ammo_regeneration(void *opaque, qa_actor_id actor,
         if (resource.count >= timer_maximum[timer.weapon]) total = 0;
         if (total >= period) {
             total %= period;
-            int32_t next = qa_number_to_i32(resource.count + timer_increment[timer.weapon]);
+            double incremented=resource.count+timer_increment[timer.weapon];
+            if (incremented<=-2147483649.0 || incremented>=2147483648.0) {
+                ok=application_fail(error,QA_ERROR_ARGUMENT,"Ammo regeneration exceeds its native counter");
+                break;
+            }
+            int32_t next=(int32_t)incremented;
             resource.count = next > timer_maximum[timer.weapon] ? timer_maximum[timer.weapon] : next;
             ok = qa_inventory_configure(owner->inventory, actor, &resource, NULL, NULL, error) &&
                 supply_current(pair, actor, error) && actor_find(owner, pair, actor) == entry;

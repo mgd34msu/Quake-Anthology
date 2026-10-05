@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "qa/source_frame_time.h"
+#include "qa/tools.h"
 #include "q3_campaign_launch.h"
 #include "network_q1_signon.h"
 #include "network_q2_private.h"
@@ -1306,6 +1308,62 @@ static bool construct_q3(qa_application *application,
                                error);
 }
 
+static bool provider_clock_admit(void *context, uint64_t host_ns, uint64_t pending_ns,
+    uint64_t *pending_after_ns, uint64_t *frame_ns, qa_error *error)
+{
+    application_provider *provider = context;
+    qa_console *console; qa_cvars *cvars;
+    if (!application_guest_console_at(provider, 0, &console, &cvars, NULL) || !cvars)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source clock lost its actual GAME registry");
+    const qa_cvar_view *setting = qa_cvars_find(cvars, "dedicated");
+    bool dedicated = setting ? setting->number != 0 : provider->application->dedicated;
+    qa_console_dialect dialect = qa_cvars_dialect(cvars);
+    *frame_ns = 0;
+    if (dialect == QA_CONSOLE_Q1 || dialect == QA_CONSOLE_QW) {
+        if (pending_ns > UINT64_MAX - host_ns)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Source host interval exhausted");
+        *pending_after_ns = pending_ns + host_ns;
+        bool accepted;
+        return qa_source_frame_time_admit(cvars, *pending_after_ns, dedicated, &accepted, frame_ns, error);
+    }
+    if (!host_ns) { *pending_after_ns = pending_ns; return true; }
+    qa_source_frame_time_controls controls;
+    double milliseconds;
+    if (!qa_source_frame_time_controls_read(cvars, &controls, error) ||
+        !qa_source_frame_time_transform(dialect, (double)host_ns / 1000000,
+            &controls, dedicated, true, &milliseconds, error)) return false;
+    const qa_cvar_view *fps = qa_cvars_find(cvars, "cl_avidemo");
+    if (dialect == QA_CONSOLE_Q3 && !dedicated && fps && fps->number > 0 && milliseconds > 0 &&
+        application_world_provider(provider->application, QA_ROLE_ENTITIES, "") == provider) {
+        qa_capture_clock capture;
+        if (!qa_capture_frame_time(milliseconds, fps->number, (float)controls.timescale,
+            provider->application->state == QA_APPLICATION_RUNNING, false, &capture, error)) return false;
+        milliseconds = capture.milliseconds;
+    }
+    uint64_t prior = pending_ns;
+    double ns;
+    if (dialect == QA_CONSOLE_Q2_RERELEASE && controls.fixedtime == 0 && controls.timescale > 0) {
+        uint64_t fraction_ns = pending_ns % UINT64_C(1000000);
+        float fraction = (float)((double)fraction_ns / 1000000);
+        float product = (float)milliseconds;
+        float total = fraction + product;
+        double whole = trunc((double)total);
+        float remainder = total - (float)whole;
+        ns = whole * 1000000 + (double)remainder * 1000000;
+        prior -= fraction_ns;
+    } else ns = milliseconds * 1000000;
+    if (!isfinite(ns) || ns < 0 || ns >= 18446744073709551616.0 || prior > UINT64_MAX - (uint64_t)ns)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source frame duration exceeds the native elapsed range");
+    *pending_after_ns = prior + (uint64_t)ns;
+    return true;
+}
+
+static void provider_clock_bind(application_provider *provider)
+{
+    provider->component.clock_admit = provider_clock_admit;
+    provider->component.clock_context = provider;
+}
+
 bool application_provider_construct(qa_application *application,
                                     application_provider *provider,
                                     qa_world *world,
@@ -1365,6 +1423,7 @@ bool application_provider_construct(qa_application *application,
         (void)application_provider_deconstruct(provider, &ignored);
         return false;
     }
+    provider_clock_bind(provider);
     return true;
 }
 
@@ -1391,6 +1450,7 @@ bool application_provider_construct_q3_restored(qa_application *application,
         (void)application_provider_deconstruct(provider, &ignored);
         return false;
     }
+    provider_clock_bind(provider);
     return true;
 }
 

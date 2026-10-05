@@ -314,6 +314,7 @@ void frontend_application_options(qa_frontend *frontend, qa_application_options 
     application->startup_command_count=frontend->options.startup_count;
     application->initial_product_key=frontend->options.game;
     application->startup_hooks=frontend_config_store_hooks(frontend->config_store);
+    application->dedicated=frontend->options.dedicated;
     application->guest_context = frontend;
     application->model_admission=frontend_visual_model_admission;
     application->console_print = frontend_console_print;

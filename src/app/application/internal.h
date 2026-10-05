@@ -235,6 +235,7 @@ struct qa_application {
     struct qa_application_engine_shutdown *engine_shutdown;
     application_provider *engine_shutdown_provider;
     const struct qa_application_startup_hooks *startup_hooks;
+    bool dedicated;
     struct application_startup *startup;
     qa_q3_product_policy q3_product;
     const qa_q3_product_policy *q3_product_preparing;

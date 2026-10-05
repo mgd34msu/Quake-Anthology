@@ -155,8 +155,8 @@ static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_
             return true;
         player = &entry->state.player;
     }
-    float count = fminf(255, (float)qa_number_to_i32(
-        (double)player->damage_blood + (double)player->damage_armor));
+    float count = fminf(255, (float)qa_source_float_to_i32(
+        player->damage_blood + player->damage_armor));
     if (!dead && count != 0) {
         if (player->damage_from_world) {
             player->damage_pitch = 255;
@@ -190,7 +190,7 @@ static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_
         player = &entry->state.player;
         if (game->now_ms > player->pain_after && !combat.invulnerable) {
             player->pain_after = q3_add_time(game->now_ms, 700);
-            if (!feedback_event(game, actor, 56, qa_number_to_i32(combat.health), error))
+            if (!feedback_event(game, actor, 56, qa_source_float_to_i32((float)combat.health), error))
                 return false;
             entry = q3_actor_get(game, actor);
             if (!entry)

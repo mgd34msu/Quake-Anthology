@@ -15,7 +15,7 @@ typedef struct qa_clock_config {
     uint64_t maximum_frame_ns;
     /* Initial source lead, such as Q2's first tick ahead of host time. */
     uint64_t initial_lead_ns;
-    /* Zero is unlimited. Unprocessed debt always survives a bounded advance. */
+    /* Zero is unlimited. Q2's original host-call backlog clamps still apply. */
     uint32_t maximum_steps;
 } qa_clock_config;
 
@@ -37,6 +37,11 @@ typedef bool (*qa_component_command_fn)(void *, qa_session *, const qa_source_co
 typedef bool (*qa_component_command_actor_fn)(void *, qa_session *, qa_actor_id);
 typedef void (*qa_component_release_fn)(void *state, qa_session *session,
                                         qa_actor_record released);
+/* Pure Source-local host admission. Fixed clocks transform the incoming delta;
+ * variable clocks also return the accepted simulation frame (zero while waiting).
+ * Pending time remains in the existing clock debt, owned by the session. */
+typedef bool (*qa_component_clock_fn)(void *context, uint64_t host_ns,
+    uint64_t pending_ns, uint64_t *pending_after_ns, uint64_t *frame_ns, qa_error *);
 
 typedef struct qa_component {
     /* Intern this name in qa_session_strings before registration. */
@@ -52,6 +57,8 @@ typedef struct qa_component {
     qa_component_release_fn actor_released;
     /* Pure qualification of a full actor's actual physical source-client binding. */
     qa_component_command_actor_fn command_actor;
+    qa_component_clock_fn clock_admit;
+    void *clock_context;
 } qa_component;
 
 typedef enum qa_invocation_kind {
@@ -134,6 +141,10 @@ bool qa_session_active_frame(const qa_session *, qa_actor_owner, qa_source_frame
 bool qa_session_frame_host_time(const qa_session *, uint64_t *);
 bool qa_session_advance_interval(const qa_session *, uint64_t *);
 bool qa_session_frame_pending(const qa_session *, qa_actor_owner);
+/* Inspect one Source's next frame after this host delta, without consuming its
+ * clock or preventing independently selected Sources from advancing. */
+bool qa_session_pending_frame(const qa_session *, qa_actor_owner, uint64_t host_ns,
+    bool *accepted, uint64_t *duration_ns, uint64_t *source_host_ns, qa_error *);
 bool qa_session_active_command(const qa_session *, qa_actor_owner, qa_source_command *);
 /* Admit the real source usercmd at its literal current time. Safe idle entry
  * and source boundary hooks are supported, including a separate command
@@ -146,11 +157,6 @@ bool qa_session_restore_clock(qa_session *session, qa_actor_owner owner,
 /* Elapsed time is explicit. The engine never reads wall time here. A callback
  * failure faults the session after already committed mutations; it is not retried. */
 bool qa_session_advance(qa_session *session, uint64_t elapsed_ns, qa_error *error);
-/* Pure qualification of components whose fixed turns follow this physical
- * source's admitted map end, rather than the independent host clock. */
-typedef bool (*qa_session_source_dependency_fn)(void *, qa_actor_owner);
-bool qa_session_advance_source(qa_session *, qa_actor_owner,
-    qa_session_source_dependency_fn, void *, uint64_t elapsed_ns, qa_error *);
 /* Run the real prepare/run/end command boundary at the current host time.
  * Source frames, clock debt and elapsed time remain unconsumed. */
 bool qa_session_command_turn(qa_session *session, qa_error *error);

@@ -866,9 +866,9 @@ static const char *original_q3_warning(player_observation *o)
         if (w->weapon < QA_Q3_W_MACHINEGUN ||
             (o->q3_product == QA_Q3_ARENA && w->weapon > QA_Q3_W_GRAPPLE) || count(o, w->item) <= 0) continue;
         double value = w->ammo ? count(o, w->ammo) : -1;
-        /* Math.imul lowers the authentic counter to its unsigned word before
-         * multiplication; the aggregate wraps after each weapon. */
-        uint32_t word = (uint32_t)qa_number_to_i32(value);
+        /* Actual Q3 ammo counters are signed words; the aggregate retains
+         * the original integer multiplication and addition widths. */
+        uint32_t word = (uint32_t)(int32_t)value;
         bool slow = w->weapon == QA_Q3_W_ROCKET || w->weapon == QA_Q3_W_GRENADE ||
             w->weapon == QA_Q3_W_RAIL || w->weapon == QA_Q3_W_SHOTGUN ||
             (o->q3_product == QA_Q3_TEAM_ARENA && w->weapon == QA_Q3_W_PROX);
@@ -889,7 +889,7 @@ static const char *arsenal_warning(player_observation *o)
             if (count(o, weapon) <= 0) continue;
             qa_item_id ammo = qa_q3_weapon_item(o->arsenal->state.q3, w, true);
             double value = ammo ? count(o, ammo) : -1;
-            uint32_t word = (uint32_t)qa_number_to_i32(value);
+            uint32_t word = (uint32_t)(int32_t)value;
             bool slow = w == QA_Q3_W_ROCKET || w == QA_Q3_W_GRENADE || w == QA_Q3_W_RAIL ||
                 w == QA_Q3_W_SHOTGUN || (o->q3_product == QA_Q3_TEAM_ARENA && w == QA_Q3_W_PROX);
             total += word * (slow ? 1000u : 200u);

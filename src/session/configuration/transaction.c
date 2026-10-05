@@ -1113,7 +1113,7 @@ static bool source_clock_policy(qa_launch_draft *draft, qa_error *error)
             ? QA_CLOCK_Q2_RERELEASE : QA_CLOCK_Q2_CLASSIC;
         if (selection->clock.kind != kind || !selection->clock.interval_ns)
             return error_message(error, "Compiled Q2 source needs its actual edition clock");
-        selection->clock.initial_lead_ns = entities &&
+        selection->clock.initial_lead_ns = kind == QA_CLOCK_Q2_CLASSIC && entities &&
             !strcmp(entities->instance, selection->instance) ? selection->clock.interval_ns : 0;
         if (selection->clock.initial_time_ns > UINT64_MAX - selection->clock.initial_lead_ns)
             return error_message(error, "Compiled Q2 source lead exhausts its actual clock");

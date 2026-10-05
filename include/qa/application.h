@@ -362,6 +362,8 @@ typedef struct qa_application_options {
     void (*console_print)(void *, const qa_command_context *, const char *);
     bool discover_mods;
     bool mixed_source_order;
+    /* Actual host mode when a Source has no dedicated cvar (QW GAME). */
+    bool dedicated;
     const struct qa_application_startup_hooks *startup_hooks;
     /* Actual connected recipient capability, borrowed with its backend.
      * An absent callback retains the source's unsupported-prompt behavior. */
@@ -563,6 +565,10 @@ bool qa_application_q3_input_values_read(qa_application *, uint32_t seat, qa_act
     uint8_t *weapon, float *sensitivity, bool *present, qa_error *);
 bool qa_application_control_read(const qa_application *, qa_actor_id,
                                  qa_application_control_view *);
+/* Actual selected command recipient: physical Source-client admission precedes
+ * actor execution ownership, including mixed character/movement selections. */
+bool qa_application_control_source_read(qa_application *, qa_actor_id,
+    qa_actor_owner *, const qa_cvars **, qa_error *);
 bool qa_application_control_prediction_read(qa_application *, qa_actor_id,
     qa_application_control_prediction_configuration *, qa_error *);
 bool qa_application_control_camera(const qa_application *, qa_actor_id,

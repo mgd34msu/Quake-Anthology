@@ -50,18 +50,6 @@ static bool ready(qa_error *error) {
     return true;
 }
 
-int32_t qa_number_to_i32(double value) {
-    if (!isfinite(value) || value == 0.0)
-        return 0;
-    double reduced = fmod(trunc(value), 4294967296.0);
-    if (reduced < 0.0)
-        reduced += 4294967296.0;
-    uint32_t bits = (uint32_t)reduced;
-    int32_t result;
-    memcpy(&result, &bits, sizeof(result));
-    return result;
-}
-
 int32_t qa_source_float_to_i32(float value) {
     return value >= -2147483648.0f && value < 2147483648.0f
         ? (int32_t)value : INT32_MIN;

@@ -32,10 +32,7 @@ static uint32_t random_word(void *opaque) {
     application_bots *bots=opaque;return qa_builtin_random_integer(&bots->application->random);
 }
 static int32_t source_milliseconds(const qa_source_frame *frame) {
-    uint32_t word;
-    if(frame->kind==QA_CLOCK_NETQUAKE || frame->kind==QA_CLOCK_QUAKEWORLD)
-        return qa_number_to_i32(((double)frame->time_ns/1e9)*1000.0);
-    else word=(uint32_t)(frame->time_ns/1000000);
+    uint32_t word=(uint32_t)(frame->time_ns/UINT64_C(1000000));
     int32_t value;memcpy(&value,&word,sizeof(value));return value;
 }
 static bool acquire_script_file(application_bots *bots,const qa_script_include *request,

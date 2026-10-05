@@ -167,6 +167,7 @@ static bool create_application(const qa_application_options *options,
     application->prompt_context = options->prompt_context;
     application->prompt_supported = options->prompt_supported;
     application->startup_hooks = options->startup_hooks;
+    application->dedicated = options->dedicated;
     application->q3_services = options->q3_services;
     application->q3_client_prepare = options->q3_client_prepare;
     application->q3_component_scene_prepare = options->q3_component_scene_prepare;
@@ -852,30 +853,6 @@ bool application_q1_pause_set(qa_application *application, application_provider 
     return true;
 }
 
-static bool q2_source_dependency(void *context, qa_actor_owner owner)
-{
-    qa_application *app = context;
-    const qa_launch_snapshot *snapshot = qa_configuration_current(app->configuration);
-    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
-    if (!choices) return false;
-    for (size_t i = 0; i < app->provider_count; ++i) {
-        const application_provider *provider = app->providers[i];
-        if (provider->owner != owner || provider->kind != APPLICATION_PROVIDER_Q2 ||
-            !provider->constructed || !provider->attached || provider->close_pending) continue;
-        const char *instance = provider->launch->selection.instance;
-        for (size_t j = 0; j < choices->binding_count; ++j) {
-            const qa_launch_binding *binding = &choices->bindings[j];
-            if ((binding->role == QA_ROLE_ARSENAL || binding->role == QA_ROLE_MONSTERS) &&
-                !strcmp(binding->instance, instance)) return true;
-        }
-        for (size_t j = 0; j < choices->monster_count; ++j)
-            if (!choices->monsters[j].map_defined &&
-                !strcmp(choices->monsters[j].instance, instance)) return true;
-        return false;
-    }
-    return false;
-}
-
 bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
                             qa_error *error)
 {
@@ -891,17 +868,12 @@ bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
                                 "frame advance requires an idle running application");
     if (application->q1_paused) return true;
     application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
-    bool compiled_source = source && (source->kind == APPLICATION_PROVIDER_Q1 ||
-        source->kind == APPLICATION_PROVIDER_Q2 || source->kind == APPLICATION_PROVIDER_Q3);
     bool command_only = elapsed_ns == 0 && source &&
         source->kind == APPLICATION_PROVIDER_Q2;
     application->operation = APPLICATION_ADVANCING;
     bool ok = command_only
         ? qa_session_command_turn(application->session, error)
-        : compiled_source && elapsed_ns != 0
-            ? qa_session_advance_source(application->session, source->owner,
-                q2_source_dependency, application, elapsed_ns, error)
-            : qa_session_advance(application->session, elapsed_ns, error);
+        : qa_session_advance(application->session, elapsed_ns, error);
     if (!ok) {
         qa_error cleanup = {0};
         (void)application_control_frames_abort(application, &cleanup);

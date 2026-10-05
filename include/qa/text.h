@@ -38,9 +38,6 @@ typedef enum qa_quake_number_policy {
     QA_QUAKE_NUMBER_SIGNED_QUOTE = 2    /* Interpret quoted bytes as int8. */
 } qa_quake_number_policy;
 double qa_parse_quake_number(const char *, qa_quake_number_policy);
-/* Truncate finite binary64 modulo 2^32 and reinterpret the resulting signed
- * word. Zero and nonfinite input produce zero. */
-int32_t qa_number_to_i32(double value);
 /* Original QC/x86 truncation, with INT32_MIN for nonfinite or out-of-range
  * binary32 operands. This is not a wrapping word conversion. */
 int32_t qa_source_float_to_i32(float value);

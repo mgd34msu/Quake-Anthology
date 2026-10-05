@@ -827,7 +827,8 @@ static bool component_input_set(application_control_mod_input *scope, applicatio
                 return application_fail(error, QA_ERROR_ARGUMENT, "Component aim exceeds its command fields");
         } else {
             for (unsigned i = 0; i < 3; ++i) {
-                uint32_t wrapped = (uint32_t)qa_number_to_i32(difference[i] * 65536.0 / 360.0);
+                double angle_word = fmod(difference[i],360.0) * 65536.0 / 360.0;
+                uint32_t wrapped = (uint32_t)(int32_t)angle_word;
                 wrapped += (uint32_t)next.angle_words[i];
                 memcpy(&next.angle_words[i], &wrapped, sizeof(wrapped));
             }

@@ -2139,10 +2139,14 @@ static bool q1_selected_q3_pose(void *opaque, qa_actor_id actor,
         !strcmp(team, "5") || source_team_name(team, "q3:1") || source_team_name(team, "q2:1") ? 1 :
         source_team_name(team, "team:blue") || source_team_name(team, "blue") || !strcmp(team, "14") ||
         source_team_name(team, "q3:2") || source_team_name(team, "q2:2") ? 2 : 0;
+    double quad_time=qa_q1_game_power_expires(source->state.q1, actor, QA_Q1_QUAD)*1000.0;
+    if (!isfinite(quad_time) || quad_time< -0x1p63 || quad_time>=0x1p63)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Selected Q3 powerup exceeds its actual source clock domain");
+    uint32_t quad_word=(uint32_t)(int64_t)quad_time;
+    int32_t quad_until;memcpy(&quad_until,&quad_word,sizeof(quad_until));
     *out = (qa_q3_selected_source_pose){.view_angles = control.view_angles,
-        .view_height = control.view_height, .max_health = qa_number_to_i32(physical_max_health),
-        .team = source_team, .quad_until_ms = qa_number_to_i32(
-            qa_q1_game_power_expires(source->state.q1, actor, QA_Q1_QUAD) * 1000)};
+        .view_height = control.view_height, .max_health = qa_source_float_to_i32(physical_max_health),
+        .team = source_team, .quad_until_ms = quad_until};
     return true;
 }
 
@@ -4340,7 +4344,7 @@ bool application_players_guest_attach(qa_application *application,
             (selected == application_provider_for(application, actor, QA_ROLE_EFFECTS, "") ? QA_Q3_EFFECTS : 0u) |
             (selected == application_provider_for(application, actor, QA_ROLE_COMBAT, "") ? QA_Q3_COMBAT : 0u) |
             (selected == application_provider_for(application, actor, QA_ROLE_EQUIPMENT, "") ? QA_Q3_EQUIPMENT : 0u);
-        if (roles && (!qa_q3_bind_player(selected->state.q3, actor, roles, qa_number_to_i32(combat.health), error) ||
+        if (roles && (!qa_q3_bind_player(selected->state.q3, actor, roles, qa_source_float_to_i32((float)combat.health), error) ||
             !qa_q3_spawn_player(selected->state.q3, actor, &body, combat.team, error))) goto failed;
     }
     if (!application_guest_actor_admit(provider, actor, error)) goto failed;

@@ -14,12 +14,11 @@ typedef struct component_state {
     bool retiring;
     bool in_frame;
     bool in_command;
-    bool source_driven;
-    bool source_blocked;
     qa_source_command command;
     qa_component_admission *reservation;
 } component_state;
-static bool next_frame(const component_state *, uint64_t *, uint64_t *);
+static bool next_frame(const component_state *, uint64_t *, uint64_t *, bool *, qa_error *);
+static bool pending_clock(const component_state *, uint64_t, uint64_t, component_state *, qa_error *);
 
 struct qa_component_admission {
     qa_session *session;
@@ -183,16 +182,16 @@ qa_clock_config qa_clock_defaults(qa_clock_kind kind)
     qa_clock_config result = {.kind = kind};
     switch (kind) {
     case QA_CLOCK_NETQUAKE: case QA_CLOCK_QUAKEWORLD:
-        result.minimum_frame_ns = UINT64_C(1000000);
-        result.maximum_frame_ns = UINT64_C(100000000);
+        result.minimum_frame_ns = UINT64_C(13888889);
+        result.maximum_frame_ns = kind == QA_CLOCK_QUAKEWORLD ? UINT64_C(200000000) : UINT64_C(100000000);
         break;
     case QA_CLOCK_Q2_CLASSIC:
         result.interval_ns = UINT64_C(100000000);
-        result.maximum_steps = 2;
+        result.maximum_steps = 1;
         break;
     case QA_CLOCK_Q2_RERELEASE:
         result.interval_ns = UINT64_C(25000000);
-        result.maximum_steps = 8;
+        result.maximum_steps = 1;
         break;
     case QA_CLOCK_Q3:
         result.interval_ns = UINT64_C(50000000);
@@ -646,7 +645,33 @@ bool qa_session_frame_pending(const qa_session *session, qa_actor_owner owner)
 {
     if (!session || !session->stepping || !session->advancing) return false;
     component_state *entry = component(session, owner); uint64_t duration, deadline;
-    return entry && next_frame(entry, &duration, &deadline);
+    bool available = false;
+    return entry && next_frame(entry, &duration, &deadline, &available, NULL) && available;
+}
+
+bool qa_session_pending_frame(const qa_session *session, qa_actor_owner owner, uint64_t host_ns,
+    bool *accepted, uint64_t *duration_ns, uint64_t *source_host_ns, qa_error *error)
+{
+    component_state *entry = session ? component(session, owner) : NULL;
+    if (!entry || !accepted || !duration_ns || session->elapsed_ns > UINT64_MAX - host_ns)
+        return fail(error, QA_ERROR_ARGUMENT, "Pending frame requires its actual Source clock and host interval");
+    component_state projected;
+    if (!pending_clock(entry, host_ns, session->elapsed_ns + host_ns, &projected, error)) return false;
+    uint64_t deadline;
+    *duration_ns = 0;
+    if (!next_frame(&projected, duration_ns, &deadline, accepted, error)) return false;
+    if (source_host_ns) {
+        if (!entry->component.clock.interval_ns) *source_host_ns = *accepted ? *duration_ns : 0;
+        else {
+            uint64_t before = entry->clock.debt_ns, after = projected.clock.debt_ns;
+            if (entry->component.clock.kind == QA_CLOCK_Q2_RERELEASE) {
+                before -= before % UINT64_C(1000000);
+                after -= after % UINT64_C(1000000);
+            }
+            *source_host_ns = after >= before ? after - before : 0;
+        }
+    }
+    return true;
 }
 
 bool qa_session_active_command(const qa_session *session, qa_actor_owner owner, qa_source_command *out)
@@ -722,7 +747,8 @@ bool qa_session_restore_clock(qa_session *session, qa_actor_owner owner,
         || state->frame.start_ns > UINT64_MAX - state->frame.elapsed_ns
         || state->frame.time_ns != state->frame.start_ns + state->frame.elapsed_ns
         || state->frame.time_ns != entry->component.clock.initial_time_ns + state->elapsed_ns
-        || state->elapsed_ns > UINT64_MAX - state->debt_ns)
+        || (entry->component.clock.interval_ns && state->elapsed_ns > UINT64_MAX - state->debt_ns)
+        || (!entry->component.clock.interval_ns && state->host_origin_ns > UINT64_MAX - state->debt_ns))
         return fail(error, QA_ERROR_FORMAT, "Invalid provider clock checkpoint");
     entry->clock = *state;
     return true;
@@ -920,22 +946,103 @@ static bool actor_frames(qa_session *session, qa_error *error)
     }
 }
 
+static bool pending_clock(const component_state *entry, uint64_t host_ns, uint64_t host_boundary,
+    component_state *projected, qa_error *error)
+{
+    *projected = *entry;
+    if (entry->clock.paused) {
+        if (entry->clock.host_origin_ns > UINT64_MAX - host_ns)
+            return fail(error, QA_ERROR_ARGUMENT, "Paused provider clock exhausted");
+        projected->clock.host_origin_ns += host_ns;
+        return true;
+    }
+    uint64_t frame = 0;
+    if (entry->component.clock_admit) {
+        if (!entry->component.clock_admit(entry->component.clock_context, host_ns, entry->clock.debt_ns,
+            &projected->clock.debt_ns, &frame, error)) return false;
+        if (entry->component.clock.interval_ns) projected->clock.host_origin_ns = host_boundary;
+    } else {
+        if (entry->clock.debt_ns > UINT64_MAX - host_ns)
+            return fail(error, QA_ERROR_ARGUMENT, "Provider clock exhausted");
+        projected->clock.debt_ns += host_ns;
+    }
+    if (entry->clock.elapsed_ns > UINT64_MAX - frame ||
+        entry->component.clock.initial_time_ns > UINT64_MAX - entry->clock.elapsed_ns - frame ||
+        (entry->component.clock.interval_ns && (entry->clock.elapsed_ns > UINT64_MAX - projected->clock.debt_ns ||
+         entry->component.clock.initial_time_ns > UINT64_MAX - entry->clock.elapsed_ns - projected->clock.debt_ns)))
+        return fail(error, QA_ERROR_ARGUMENT, "Provider Source clock exhausted");
+    return true;
+}
+
 /* A provider's lead changes host eligibility, never source callback time. */
-static bool next_frame(const component_state *entry, uint64_t *duration, uint64_t *deadline)
+static bool next_frame(const component_state *entry, uint64_t *duration, uint64_t *deadline,
+    bool *available, qa_error *error)
 {
     const qa_clock_config *config = &entry->component.clock;
-    if (!entry->active || entry->retiring || entry->clock.paused || entry->source_blocked) return false;
+    *available = false;
+    if (!entry->active || entry->retiring || entry->clock.paused) return true;
     uint64_t step = config->interval_ns;
     if (step == 0) {
-        if (entry->clock.debt_ns < config->minimum_frame_ns) return false;
-        step = entry->clock.debt_ns < config->maximum_frame_ns ? entry->clock.debt_ns : config->maximum_frame_ns;
+        if (entry->component.clock_admit) {
+            uint64_t pending;
+            if (!entry->component.clock_admit(entry->component.clock_context, 0, entry->clock.debt_ns,
+                &pending, &step, error)) return false;
+            if (!step) return true;
+        } else {
+            if (entry->clock.debt_ns < config->minimum_frame_ns) return true;
+            step = entry->clock.debt_ns < config->maximum_frame_ns ? entry->clock.debt_ns : config->maximum_frame_ns;
+        }
+        if (entry->clock.host_origin_ns > UINT64_MAX - entry->clock.debt_ns)
+            return fail(error, QA_ERROR_ARGUMENT, "Provider host deadline exhausted");
+        if (entry->clock.elapsed_ns > UINT64_MAX - step ||
+            config->initial_time_ns > UINT64_MAX - entry->clock.elapsed_ns - step)
+            return fail(error, QA_ERROR_ARGUMENT, "Provider Source clock exhausted");
+        *duration = step;
+        *deadline = entry->clock.host_origin_ns + entry->clock.debt_ns;
+        *available = true;
+        return true;
     }
-    if (entry->clock.debt_ns < step) return false;
+    if (entry->clock.debt_ns < step) return true;
     uint64_t elapsed = entry->clock.elapsed_ns + step;
     uint64_t relative = elapsed >= config->initial_lead_ns ? elapsed - config->initial_lead_ns : 0;
     *duration = step;
-    *deadline = entry->clock.host_origin_ns + relative;
+    *deadline = entry->component.clock_admit ? entry->clock.host_origin_ns : entry->clock.host_origin_ns + relative;
+    *available = true;
     return true;
+}
+
+static bool q2_clock(const component_state *entry)
+{
+    return entry->component.clock.kind == QA_CLOCK_Q2_CLASSIC ||
+        entry->component.clock.kind == QA_CLOCK_Q2_RERELEASE;
+}
+
+static bool frame_limit(const component_state *entry)
+{
+    if (q2_clock(entry)) return entry->steps != 0;
+    return entry->component.clock.maximum_steps &&
+        entry->steps >= entry->component.clock.maximum_steps;
+}
+
+static void consume_frame(component_state *entry, uint64_t step)
+{
+    entry->clock.elapsed_ns += step;
+    if (!entry->component.clock.interval_ns) {
+        entry->clock.host_origin_ns += entry->clock.debt_ns;
+        entry->clock.debt_ns = 0;
+    } else {
+        entry->clock.debt_ns -= step;
+        uint64_t retained = entry->clock.debt_ns;
+        if (entry->component.clock.kind == QA_CLOCK_Q2_CLASSIC &&
+            retained > entry->component.clock.initial_lead_ns)
+            retained = entry->component.clock.initial_lead_ns;
+        else if (entry->component.clock.kind == QA_CLOCK_Q2_RERELEASE &&
+            retained > UINT64_C(250000000))
+            retained = UINT64_C(100000000) + retained % UINT64_C(1000000);
+        if (!entry->component.clock_admit) entry->clock.host_origin_ns += entry->clock.debt_ns - retained;
+        entry->clock.debt_ns = retained;
+    }
+    ++entry->steps;
 }
 
 static component_state *ordered_component(qa_session *session, uint64_t after, bool first)
@@ -985,89 +1092,32 @@ bool qa_session_command_turn(qa_session *session, qa_error *error)
     return ok;
 }
 
-static bool advance_session(qa_session *session, uint64_t elapsed_ns,
-    qa_actor_owner source_owner, qa_session_source_dependency_fn dependency,
-    void *context, qa_error *error)
+bool qa_session_advance(qa_session *session, uint64_t elapsed_ns, qa_error *error)
 {
     if (!qa_session_safe(session) || session->faulted)
         return fail(error, QA_ERROR_ARGUMENT, "Session advance requires an idle, healthy session");
     if (session->elapsed_ns > UINT64_MAX - elapsed_ns)
         return fail(error, QA_ERROR_ARGUMENT, "Session clock exhausted");
-    component_state *source = source_owner ? component(session, source_owner) : NULL;
-    if (source_owner && (!source || source->retiring || !dependency))
-        return fail(error, QA_ERROR_ARGUMENT, "Source advance needs its admitted physical clock");
     for (uint32_t i = 0; i < session->options.component_capacity; ++i) {
         component_state *entry = &session->components[i];
         if (!entry->active) continue;
-        bool driven = source && entry != source && dependency(context, entry->component.owner);
-        if (driven && (entry->clock.elapsed_ns > UINT64_MAX - entry->component.clock.initial_time_ns ||
-            entry->clock.debt_ns > UINT64_MAX - entry->clock.elapsed_ns - entry->component.clock.initial_time_ns))
-            return fail(error, QA_ERROR_ARGUMENT, "Dependent source clock exhausted");
-        if (entry->clock.paused) {
-            if (entry->clock.host_origin_ns > UINT64_MAX - elapsed_ns)
-                return fail(error, QA_ERROR_ARGUMENT, "Paused provider clock exhausted");
-            continue;
-        }
-        if (driven) continue;
-        if (entry->clock.debt_ns > UINT64_MAX - elapsed_ns
-            || entry->clock.elapsed_ns > UINT64_MAX - entry->clock.debt_ns - elapsed_ns
-            || entry->component.clock.initial_time_ns > UINT64_MAX - entry->clock.elapsed_ns - entry->clock.debt_ns - elapsed_ns)
-            return fail(error, QA_ERROR_ARGUMENT, "Provider clock exhausted");
-        uint64_t admitted = entry->clock.elapsed_ns + entry->clock.debt_ns + elapsed_ns;
+        component_state projected;
+        if (!pending_clock(entry, elapsed_ns, session->elapsed_ns + elapsed_ns, &projected, error)) return false;
+        if (entry->clock.paused || entry->component.clock.interval_ns == 0 || entry->component.clock_admit) continue;
+        uint64_t admitted = projected.clock.elapsed_ns + projected.clock.debt_ns;
         uint64_t relative = admitted >= entry->component.clock.initial_lead_ns
             ? admitted - entry->component.clock.initial_lead_ns : 0;
         if (entry->clock.host_origin_ns > UINT64_MAX - relative)
             return fail(error, QA_ERROR_ARGUMENT, "Provider host deadline exhausted");
     }
-    uint64_t horizon = 0, source_origin = 0;
-    bool source_runs = false;
-    if (source) {
-        component_state projected = *source;
-        projected.steps = 0;
-        if (!projected.clock.paused) projected.clock.debt_ns += elapsed_ns;
-        uint64_t step, due;
-        while (next_frame(&projected, &step, &due) &&
-            (!projected.component.clock.maximum_steps ||
-             projected.steps < projected.component.clock.maximum_steps)) {
-            projected.clock.elapsed_ns += step;
-            projected.clock.debt_ns -= step;
-            ++projected.steps;
-        }
-        horizon = source->component.clock.initial_time_ns + projected.clock.elapsed_ns;
-        source_runs = projected.steps != 0;
-        source_origin = source->clock.host_origin_ns + (source->clock.paused ? elapsed_ns : 0);
-        if (source_origin > UINT64_MAX - projected.clock.elapsed_ns)
-            return fail(error, QA_ERROR_ARGUMENT, "Physical source boundary exhausted");
-        for (uint32_t i = 0; i < session->options.component_capacity; ++i) {
-            component_state *entry = &session->components[i];
-            if (!entry->active || entry == source || !dependency(context, entry->component.owner)) continue;
-            if ((entry->component.clock.kind != QA_CLOCK_Q2_CLASSIC &&
-                 entry->component.clock.kind != QA_CLOCK_Q2_RERELEASE) ||
-                entry->component.clock.initial_lead_ns)
-                return fail(error, QA_ERROR_ARGUMENT, "Dependent Q2 turns need their exact unled source clock");
-            uint64_t now = entry->component.clock.initial_time_ns + entry->clock.elapsed_ns;
-            uint64_t admitted = now > horizon ? now : horizon;
-            uint64_t relative = admitted > source->component.clock.initial_time_ns
-                ? admitted - source->component.clock.initial_time_ns : 0;
-            if (source_origin > UINT64_MAX - relative)
-                return fail(error, QA_ERROR_ARGUMENT, "Dependent source deadline exhausted");
-        }
-    }
     session->elapsed_ns += elapsed_ns;
     for (uint32_t i = 0; i < session->options.component_capacity; ++i) {
         component_state *entry = &session->components[i];
         entry->steps = 0;
-        entry->source_driven = source && entry != source && entry->active &&
-            dependency(context, entry->component.owner);
-        entry->source_blocked = entry->source_driven && !source_runs;
         if (!entry->active) continue;
-        if (entry->clock.paused) entry->clock.host_origin_ns += elapsed_ns;
-        else if (entry->source_driven) {
-            uint64_t now = entry->component.clock.initial_time_ns + entry->clock.elapsed_ns;
-            entry->clock.debt_ns = horizon > now ? horizon - now : 0;
-            entry->clock.host_origin_ns = source_origin;
-        }
-        else entry->clock.debt_ns += elapsed_ns;
+        component_state projected;
+        if (!pending_clock(entry, elapsed_ns, session->elapsed_ns, &projected, error)) return false;
+        entry->clock = projected.clock;
     }
     session->advance_elapsed_ns = elapsed_ns;
     session->advancing = true;
@@ -1079,28 +1129,21 @@ static bool advance_session(qa_session *session, uint64_t elapsed_ns,
         for (uint32_t i = 0; i < session->options.component_capacity; ++i) {
             uint64_t step, due;
             component_state *candidate = &session->components[i];
-            if (!next_frame(candidate, &step, &due)) continue;
-            if (source && (candidate == source || candidate->source_driven)) {
-                uint64_t time = candidate->component.clock.initial_time_ns + candidate->clock.elapsed_ns + step;
-                due = source_origin + (time > source->component.clock.initial_time_ns
-                    ? time - source->component.clock.initial_time_ns : 0);
-            }
-            bool at_limit = !candidate->source_driven && candidate->component.clock.maximum_steps != 0
-                && candidate->steps >= candidate->component.clock.maximum_steps;
+            bool available;
+            if (!next_frame(candidate, &step, &due, &available, error)) { ok = false; break; }
+            if (!available || (q2_clock(candidate) && frame_limit(candidate))) continue;
+            bool at_limit = frame_limit(candidate);
             if (!found || due < deadline) { found = true; deadline = due; limited = at_limit; }
             else if (due == deadline && at_limit) limited = true;
         }
         /* No provider may pass an earlier, deferred boundary in the same world. */
-        if (!found || limited) break;
+        if (!ok || !found || limited) break;
         for (uint32_t i = 0; i < session->options.component_capacity; ++i) {
             component_state *entry = &session->components[i];
             uint64_t step, due;
-            bool available = next_frame(entry, &step, &due);
-            if (available && source && (entry == source || entry->source_driven)) {
-                uint64_t time = entry->component.clock.initial_time_ns + entry->clock.elapsed_ns + step;
-                due = source_origin + (time > source->component.clock.initial_time_ns
-                    ? time - source->component.clock.initial_time_ns : 0);
-            }
+            bool available;
+            if (!next_frame(entry, &step, &due, &available, error)) { ok = false; break; }
+            available = available && !frame_limit(entry);
             entry->in_frame = available && due == deadline;
             if (!entry->in_frame) continue;
             if (entry->clock.frame_number == UINT64_MAX) { ok = fail(error, QA_ERROR_ARGUMENT, "Provider frame counter exhausted"); break; }
@@ -1109,14 +1152,11 @@ static bool advance_session(qa_session *session, uint64_t elapsed_ns,
                                                   QA_FRAME_ENTRY, ++entry->clock.frame_number, start, step, start};
             if (entry->component.clock.kind != QA_CLOCK_NETQUAKE && entry->component.clock.kind != QA_CLOCK_QUAKEWORLD)
                 entry->clock.frame.time_ns += step;
-            entry->clock.elapsed_ns += step;
-            entry->clock.debt_ns -= step;
-            ++entry->steps;
+            consume_frame(entry, step);
         }
         if (!ok) break;
-        bool commands = !source || source->in_frame;
-        completed_boundary = completed_boundary || commands;
-        uint64_t host_boundary = source ? session->elapsed_ns : deadline;
+        completed_boundary = true;
+        uint64_t host_boundary = deadline;
         session->frame_host_ns = host_boundary;
         component_state *entry = ordered_component(session, 0, true);
         while (entry != NULL) {
@@ -1126,7 +1166,7 @@ static bool advance_session(qa_session *session, uint64_t elapsed_ns,
             entry = ordered_component(session, entry->order, false);
         }
         size_t frame_count = collect_active_frames(session);
-        if (ok && !session->faulted && commands && session->options.prepare_commands != NULL)
+        if (ok && !session->faulted && session->options.prepare_commands != NULL)
             ok = session->options.prepare_commands(session->options.release_context, session,
                 session->active_frames, frame_count, host_boundary, error);
         if (!ok || session->faulted) { ok = false; break; }
@@ -1139,7 +1179,7 @@ static bool advance_session(qa_session *session, uint64_t elapsed_ns,
         }
         if (!ok || session->faulted) { ok = false; break; }
         frame_count = collect_active_frames(session);
-        if (commands && session->options.run_commands != NULL &&
+        if (session->options.run_commands != NULL &&
             !session->options.run_commands(session->options.release_context, session,
                 session->active_frames, frame_count, host_boundary, error)) { ok = false; break; }
         if (!qa_scheduler_advance(session->scheduler, session->active_frames, frame_count,
@@ -1161,7 +1201,7 @@ static bool advance_session(qa_session *session, uint64_t elapsed_ns,
         }
         if (!ok || session->faulted) { ok = false; break; }
         frame_count = collect_active_frames(session);
-        if (commands && session->options.end_commands != NULL &&
+        if (session->options.end_commands != NULL &&
             !session->options.end_commands(session->options.release_context, session,
                 session->active_frames, frame_count, host_boundary, error)) { ok = false; break; }
         if (session->faulted) { ok = false; break; }
@@ -1186,24 +1226,10 @@ static bool advance_session(qa_session *session, uint64_t elapsed_ns,
     session->advance_elapsed_ns = 0;
     for (uint32_t i = 0; i < session->options.component_capacity; ++i) {
         session->components[i].in_frame = false;
-        session->components[i].source_driven = false;
-        session->components[i].source_blocked = false;
     }
     if (!ok) fault(session, error);
     if (session->faulted && error != NULL) *error = session->error;
     return ok;
-}
-
-bool qa_session_advance(qa_session *session, uint64_t elapsed_ns, qa_error *error)
-{
-    return advance_session(session, elapsed_ns, 0, NULL, NULL, error);
-}
-
-bool qa_session_advance_source(qa_session *session, qa_actor_owner source,
-    qa_session_source_dependency_fn dependency, void *context, uint64_t elapsed_ns, qa_error *error)
-{
-    if (!source) return fail(error, QA_ERROR_ARGUMENT, "Source advance needs its physical owner");
-    return advance_session(session, elapsed_ns, source, dependency, context, error);
 }
 
 static bool retire_world(qa_session *session, qa_error *error)

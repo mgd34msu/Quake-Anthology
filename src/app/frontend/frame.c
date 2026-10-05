@@ -132,7 +132,7 @@ static bool menu_paused(qa_frontend *f,bool *out,qa_error *error)
     return true;
 }
 static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvars **owner,
-    uint64_t *out,qa_error *error)
+    uint64_t *out,uint64_t *application_ns,qa_error *error)
 {
     const qa_cvars *cvars=NULL;
     bool present=false;
@@ -149,6 +149,13 @@ static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvar
             if (!qa_application_startup_source_read(frontend->application,publication,source,
                 &console,&actual,&command,error)) return false;
             cvars=actual;
+            bool accepted; uint64_t frame; qa_actor_owner provider;
+            if (!qa_application_provider_owner(frontend->application, source->selection.instance, &provider))
+                return frontend_fail(error, QA_ERROR_ARGUMENT, "Source time lost its actual registered provider");
+            if (!qa_session_pending_frame(qa_application_session(frontend->application), provider,
+                supplied, &accepted, &frame, out, error)) return false;
+            *owner=cvars; *application_ns=supplied;
+            return true;
         }
     }
     double milliseconds=(double)supplied/1000000.0;
@@ -159,7 +166,8 @@ static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvar
         frontend_fail(error,QA_ERROR_ARGUMENT,"Source frame duration exceeds the native elapsed range");
         return false;
     }
-    *owner=cvars; *out=cvars?(uint64_t)duration:supplied; return true;
+    *owner=cvars; *out=cvars?(uint64_t)duration:supplied;
+    *application_ns=remote?*out:supplied; return true;
 }
 static bool control_binding(qa_frontend *frontend,frontend_seat *seat,qa_actor_id actor,
     const qa_application_control_view *state,bool remote,qa_error *error)
@@ -236,13 +244,14 @@ static bool wheel_sample(frontend_seat *seat,uint64_t time,qa_seat_input_sample 
 static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_elapsed_ns,qa_error *error)
 {
     double now=(double)frontend->wall_time_ns/1000000.0;
-    double duration=(double)elapsed_ns/1000000.0;
-    double wall_duration=(double)wall_elapsed_ns/1000000.0;
-    if (wall_duration<=0) return true;
+    double default_duration=(double)elapsed_ns/1000000.0;
+    double default_wall_duration=(double)wall_elapsed_ns/1000000.0;
+    if (default_wall_duration<=0) return true;
     bool remote=frontend_network_remote(frontend);
     bool client_only=frontend_network_client_only(frontend);
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i];
+        double duration=default_duration, wall_duration=default_wall_duration;
         bool unified_owned=false,sample_needed=false;
         if (!frontend_remote_unified_input_prepare(frontend,i,&seat->sequence,&unified_owned,&sample_needed,error)) return false;
         if (unified_owned) {
@@ -315,6 +324,22 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
         qa_application_control_view state;
         if (!qa_application_control_read(frontend->application, actor, &state))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "local player lacks its application control continuation");
+        uint64_t source_duration=elapsed_ns;
+        if (!remote) {
+            qa_actor_owner source_owner; const qa_cvars *source_cvars;
+            qa_clock_state clock; qa_clock_config recipe; uint64_t order, frame;
+            bool accepted;
+            qa_session *session=qa_application_session(frontend->application);
+            if (!qa_application_control_source_read(frontend->application,actor,&source_owner,&source_cvars,error) ||
+                !qa_session_clock(session,source_owner,&clock) ||
+                !qa_session_component_recipe(session,source_owner,&recipe,&order) ||
+                !qa_session_pending_frame(session,source_owner,wall_elapsed_ns,&accepted,&frame,&source_duration,error)) return false;
+            if (!recipe.interval_ns) {
+                if (!accepted) continue;
+                wall_duration=(double)(clock.debt_ns+wall_elapsed_ns)/1000000.0;
+            }
+            duration=(double)source_duration/1000000.0;
+        }
         qa_movement_kind kind = state.profile.kind;
         if (!control_binding(frontend,seat,actor,&state,remote,error)) return false;
         /* Q3 client angles survive commands that do not advance server movement. */
@@ -346,12 +371,15 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             if (!present || !qa_session_clock(qa_application_session(frontend->application),source.scope.provider,&clock))
                 return frontend_fail(error,QA_ERROR_ARGUMENT,"Local Q3 input has no actual GAME clock");
             command_time=clock.frame.time_ns;
-            if (clock.debt_ns>UINT64_MAX-command_time || elapsed_ns>UINT64_MAX-command_time-clock.debt_ns)
+            if (clock.debt_ns>UINT64_MAX-command_time || source_duration>UINT64_MAX-command_time-clock.debt_ns)
                 return frontend_fail(error,QA_ERROR_ARGUMENT,"Local Q3 command clock exhausted");
-            command_time+=clock.debt_ns+elapsed_ns;
+            command_time+=clock.debt_ns+source_duration;
         }
+        uint32_t server_time_word=(uint32_t)(command_time / UINT64_C(1000000));
+        int32_t server_time_ms;
+        memcpy(&server_time_ms,&server_time_word,sizeof(server_time_ms));
         qa_input_command_frame frame = {.kind = kind, .sequence = ++seat->sequence,
-            .server_time_ms = qa_number_to_i32((double)(command_time / UINT64_C(1000000))),
+            .server_time_ms = server_time_ms,
             .sensitivity = 1, .attack_allowed = true, .grounded = state.ground.hit != QA_TRACE_HIT_NONE};
         if (!remote && kind==QA_MOVEMENT_Q3) {
             bool present;
@@ -736,9 +764,9 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         if (ok) ++frontend->frame_number;
         return ok;
     }
-    uint64_t source_duration,adjusted;
-    const qa_cvars *time_owner;
-    if (ok) ok=source_elapsed(frontend,raw_elapsed,&time_owner,&source_duration,error) &&
+    uint64_t source_duration=raw_elapsed,adjusted=raw_elapsed,application_duration=raw_elapsed;
+    const qa_cvars *time_owner=NULL;
+    if (ok) ok=source_elapsed(frontend,raw_elapsed,&time_owner,&source_duration,&application_duration,error) &&
         frontend_tools_capture_clock(frontend,time_owner,source_duration,&adjusted,error);
     bool menu_pause=false;
     if (ok) ok=menu_paused(frontend,&menu_pause,error);
@@ -767,7 +795,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
             ok = frontend_network_tick(frontend, elapsed_ns, retiring_map, &source_ready, error);
             if (ok && source_ready && !client_only && !paused) {
                 ok=qa_profiler_push(profiler, "application", error);
-                if (ok) ok=frontend_profiler_end(profiler, qa_application_advance(frontend->application, elapsed_ns, error), error);
+                if (ok) ok=frontend_profiler_end(profiler, qa_application_advance(frontend->application, application_duration, error), error);
             }
         }
         if (ok) {
