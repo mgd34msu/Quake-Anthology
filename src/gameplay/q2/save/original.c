@@ -405,22 +405,35 @@ bool q2_original_source_text(q2_original_record_io *io, qa_q2_game *g, const cha
     return okay;
 }
 
+static const char *original_item_name(qa_q2_edition edition,
+    const qa_q2_item_definition *definition)
+{
+    if (edition == QA_Q2_CLASSIC &&
+        (definition->kind == QA_Q2_ITEM_HEALTH || definition->kind == QA_Q2_ITEM_FOOD))
+        return "item_health";
+    return definition->classname;
+}
+
 bool q2_original_item(qa_q2_game *g, q2_original_record_io *io, const char *name,
     uint16_t base, uint16_t xatrix, uint16_t rogue, qa_item_id *item)
 {
-    const qa_q2_item_definition *definition = !io->reading && *item ? q2_item_by_id(g, *item) : NULL;
+    const qa_q2_item_definition *definition = *item ? q2_item_by_id(g, *item) : NULL;
     if (!io->reading && *item && !definition)
         return fail(io, *item, "Q2 original item has no actual GAME definition");
     if (io->edition == QA_Q2_CLASSIC) {
         int32_t index = -1;
         if (!io->reading && definition &&
             !q2_original_symbol_encode(Q2_ORIGINAL_ITEM, g->options.product,
-                definition->classname, &index, io->error)) return false;
+                original_item_name(io->edition, definition), &index, io->error)) return false;
         if (!q2_original_scalar(io, name, Q2_ORIGINAL_I32, base, xatrix, rogue, &index)) return false;
         if (io->reading) {
             if (index == -1 || index == 0) { *item = 0; return true; }
             const char *classname = q2_original_symbol_next(Q2_ORIGINAL_ITEM,
                 g->options.product, index, NULL);
+            if (definition && classname && !strcmp(classname, original_item_name(io->edition, definition))) {
+                *item = definition->item;
+                return true;
+            }
             definition = classname ? qa_q2_item_lookup(g, classname) : NULL;
             if (!definition) return fail(io, (size_t)(uint32_t)index,
                 "Original Q2 item index has no actual GAME definition");
@@ -519,11 +532,53 @@ static bool inventory_record(qa_q2_game *g, q2_original_record_io *io,
                 entry->count = (double)count;
             }
         }
-    } else {
-        if (io->edition == QA_Q2_RERELEASE) {
-            qa_json_writer_key(io->writer, "inventory");
-            qa_json_writer_object(io->writer);
+    } else if (io->edition == QA_Q2_CLASSIC) {
+        int32_t values[256] = {0};
+        bool present[256] = {0};
+        for (size_t i = 0; i < carry->count; ++i) {
+            qa_inventory_entry *entry = carry->inventory + i;
+            const qa_q2_item_definition *definition = q2_item_by_id(g, entry->item);
+            if (!definition) {
+                if (entry->count != 0) return fail(io, entry->item,
+                    "Q2 Source inventory item cannot be represented by the original GAME");
+                continue;
+            }
+            const char *classname = original_item_name(io->edition, definition);
+            if (io->reading && strcmp(classname, definition->classname)) continue;
+            if (!isfinite(entry->count) || trunc(entry->count) != entry->count ||
+                entry->count < INT32_MIN || entry->count > INT32_MAX)
+                return fail(io, i, "Q2 Source inventory exceeds its original signed count");
+            int32_t ordinal;
+            qa_error unmapped = {0};
+            if (!q2_original_symbol_encode(Q2_ORIGINAL_ITEM, g->options.product,
+                classname, &ordinal, &unmapped)) {
+                if (entry->count == 0) continue;
+                if (io->error) *io->error = unmapped;
+                return false;
+            }
+            if (ordinal < 0 || ordinal >= 256) return fail(io, i, "Invalid original Q2 item ordinal");
+            if (io->reading) {
+                uint16_t offset = (uint16_t)(740 + ordinal * 4);
+                int32_t count = 0;
+                if (!q2_original_scalar(io, classname, Q2_ORIGINAL_I32, offset, offset, offset, &count)) return false;
+                entry->count = count;
+            } else {
+                int64_t sum = (int64_t)values[ordinal] + (int32_t)entry->count;
+                if (sum < INT32_MIN || sum > INT32_MAX)
+                    return fail(io, i, "Q2 Source inventory exceeds its original signed count");
+                values[ordinal] = (int32_t)sum;
+                present[ordinal] = true;
+            }
         }
+        for (int32_t ordinal = 0; !io->reading && ordinal < 256; ++ordinal) {
+            if (!present[ordinal]) continue;
+            uint16_t offset = (uint16_t)(740 + ordinal * 4);
+            if (!q2_original_scalar(io, "inventory", Q2_ORIGINAL_I32, offset, offset, offset,
+                values + ordinal)) return false;
+        }
+    } else {
+        qa_json_writer_key(io->writer, "inventory");
+        qa_json_writer_object(io->writer);
         for (size_t i = 0; i < carry->count; ++i) {
             qa_inventory_entry *entry = carry->inventory + i;
             const qa_q2_item_definition *definition = q2_item_by_id(g, entry->item);
@@ -535,30 +590,13 @@ static bool inventory_record(qa_q2_game *g, q2_original_record_io *io,
             if (!isfinite(entry->count) || trunc(entry->count) != entry->count ||
                 entry->count < INT32_MIN || entry->count > INT32_MAX)
                 return fail(io, i, "Q2 Source inventory exceeds its original signed count");
-            int32_t count = (int32_t)entry->count;
-            if (io->edition == QA_Q2_CLASSIC) {
-                int32_t ordinal;
-                qa_error unmapped = {0};
-                if (!q2_original_symbol_encode(Q2_ORIGINAL_ITEM, g->options.product,
-                    definition->classname, &ordinal, &unmapped)) {
-                    if (!count) continue;
-                    if (io->error) *io->error = unmapped;
-                    return false;
-                }
-                if (ordinal < 0 || ordinal >= 256) return fail(io, i, "Invalid original Q2 item ordinal");
-                uint16_t offset = (uint16_t)(740 + ordinal * 4);
-                if (!q2_original_scalar(io, definition->classname, Q2_ORIGINAL_I32, offset, offset, offset, &count))
-                    return false;
-                if (io->reading) entry->count = count;
-            } else if (count) {
+            if (entry->count != 0) {
                 qa_json_writer_key(io->writer, definition->classname);
-                qa_json_writer_number(io->writer, count);
+                qa_json_writer_number(io->writer, entry->count);
             }
         }
-        if (io->edition == QA_Q2_RERELEASE) {
-            qa_json_writer_end(io->writer);
-            if (!written(io)) return false;
-        }
+        qa_json_writer_end(io->writer);
+        if (!written(io)) return false;
     }
     qa_json_id maxima = io->reading && io->edition == QA_Q2_RERELEASE ?
         qa_json_get(io->document, io->object, "max_ammo") : QA_JSON_NONE;
@@ -620,7 +658,7 @@ static bool original_weapon(qa_q2_game *g, q2_original_record_io *io, const char
             if (!definition || !library)
                 return fail(io, item, "Original coop item pointer has no known module identity");
             if (!q2_original_symbol_encode(Q2_ORIGINAL_ITEM, g->options.product,
-                definition->classname, &ordinal, io->error)) return false;
+                original_item_name(io->edition, definition), &ordinal, io->error)) return false;
             pointer = library->item_list + (uint32_t)ordinal * 76;
         }
         if (!q2_original_scalar(io, name, Q2_ORIGINAL_U32, base, xatrix, rogue, &pointer)) return false;

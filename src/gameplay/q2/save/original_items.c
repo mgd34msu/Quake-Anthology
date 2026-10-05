@@ -202,6 +202,7 @@ bool q2_original_item_record(qa_q2_game *game, q2_original_record_io *io,
     bool companion;
     if (!companion_record(game, io, actor, classname, &companion, error)) return false;
     if (companion) return true;
+    if (classname && !strcmp(classname, "foodcube")) classname = "item_foodcube";
     const qa_q2_item_definition *definition = actor->item ? actor->item->definition :
         io->reading && classname ? qa_q2_item_lookup(game, classname) : NULL;
     if (!definition) return true;
@@ -223,12 +224,26 @@ bool q2_original_item_record(qa_q2_game *game, q2_original_record_io *io,
         !q2_original_reference(game, io, "teamchain", 560, &state->spawn.team_next)) return false;
     if (io->references_only) return true;
     if (!picked_slots(io, state, game->wire_clients)) return false;
+    int32_t count = state->spawn.count;
+    bool health = definition->kind == QA_Q2_ITEM_HEALTH || definition->kind == QA_Q2_ITEM_FOOD;
+    if (!io->reading && definition->kind == QA_Q2_ITEM_HEALTH && !count)
+        count = definition->quantity;
+    int32_t style = health ? (definition->ignore_maximum || definition->kind == QA_Q2_ITEM_FOOD ? 1 : 0) |
+        (definition->timed ? 2 : 0) : 0;
+    int32_t expected_style = style;
     uint32_t flags = state->spawn.spawnflags | (state->targets_used ? UINT32_C(0x40000) : 0);
     if (!q2_original_scalar(io, "spawnflags", Q2_ORIGINAL_U32, 284, 284, 284, &flags) ||
-        !q2_original_scalar(io, "count", Q2_ORIGINAL_I32, 532, 532, 532, &state->spawn.count) ||
+        !q2_original_scalar(io, "count", Q2_ORIGINAL_I32, 532, 532, 532, &count) ||
+        !q2_original_scalar(io, "style", Q2_ORIGINAL_I32, 644, 644, 644, &style) ||
         !q2_original_scalar(io, "delay", Q2_ORIGINAL_F32, 596, 596, 596, &state->spawn.delay) ||
         !q2_original_scalar(io, "nextthink", Q2_ORIGINAL_TIME, 428, 428, 428, &state->due_ns)) return false;
     if (io->reading) {
+        if (health && style != expected_style &&
+            !(io->edition == QA_Q2_RERELEASE && style == 0))
+            return item_error(error, 644, "Original Q2 health style differs from its actual native behavior");
+        if (io->edition == QA_Q2_CLASSIC && definition->kind == QA_Q2_ITEM_HEALTH && count == 0)
+            return item_error(error, 532, "Original Q2 zero-count health has no native zero-grant behavior");
+        state->spawn.count = count;
         state->spawn.spawnflags = flags;
         state->targets_used = (flags & UINT32_C(0x40000)) != 0;
         if (!q2_original_string(game, io, "target", 296, &state->spawn.target) ||
