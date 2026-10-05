@@ -220,8 +220,7 @@ static bool client_sample(qa_frontend *frontend, uint64_t *sample, uint64_t *ser
     }
     qa_application_native_q2_presentation source;
     bool found;
-    if (state->client_pending || state->client_frame != frontend->frame_number ||
-        state->client_host_ns != frontend->time_ns ||
+    if (state->client_pending ||
         !qa_application_native_q2_presentation_selected(frontend->application, &source, &found, error) ||
         !found || !state->client_interval_ns || source.clock_config.interval_ns!=state->client_interval_ns ||
         source.source_owner != state->clock_source ||
