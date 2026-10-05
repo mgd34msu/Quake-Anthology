@@ -389,16 +389,16 @@ static bool monster_functions(const q1_monster *monster, qa_q1_save_record *reco
     static const char *const pain[] = {"army_pain", "dog_pain", "knight_pain", "enf_pain",
         "demon1_pain", "ogre_pain", "hknight_pain", "sham_pain", "Wiz_Pain", "shalrath_pain",
         NULL, "fish_pain", "zombie_pain", NULL, "nopain",
-        [QA_Q1_EEL] = "eel_pain1", [QA_Q1_MUMMY] = "mummy_pain"};
+        [QA_Q1_EEL] = "eel_pain1", [QA_Q1_SWORD] = "sword_pain", [QA_Q1_MUMMY] = "mummy_pain"};
     static const char *const die[] = {"army_die", "dog_die", "knight_die", "enf_die", "demon_die",
         "ogre_die", "hknight_die", "sham_die", "wiz_die", "shalrath_die", "tbaby_die1",
         "f_death1", "zombie_die", NULL, "finale_1",
-        [QA_Q1_EEL] = "eel_death", [QA_Q1_MUMMY] = "mummy_die"};
+        [QA_Q1_EEL] = "eel_death", [QA_Q1_SWORD] = "sword_die", [QA_Q1_MUMMY] = "mummy_die"};
     static const char *const melee[] = {NULL, "dog_atta1", "knight_atk1", NULL, "Demon_MeleeAttack",
         "ogre_melee", "hknight_melee", "sham_melee", NULL, NULL, "tbaby_jump1", "f_attack1",
-        [QA_Q1_EEL] = "eel_attack1"};
+        [QA_Q1_EEL] = "eel_attack1", [QA_Q1_SWORD] = "sword_atk1"};
     if (!species || (species->species > QA_Q1_OLDONE &&
-        species->species != QA_Q1_EEL && species->species != QA_Q1_MUMMY))
+        species->species != QA_Q1_EEL && species->species != QA_Q1_SWORD && species->species != QA_Q1_MUMMY))
         return fail(error, "Original native expansion monster callbacks require their Source projection");
     unsigned index = (unsigned)species->species;
     if (species->species == QA_Q1_BOSS) return callback(record,"use","boss_awake",error);
@@ -414,12 +414,16 @@ static bool monster_functions(const q1_monster *monster, qa_q1_save_record *reco
         if (!touch) return fail(error, "Original monster contact has no compiled Source callback");
     }
     bool sleeping = species->species == QA_Q1_MUMMY && monster->source.mummy.asleep;
+    const char *run = species->species == QA_Q1_SWORD && !monster->source.sword.awakened ?
+        "sword_pause" : species->run;
+    const char *hurt = species->species == QA_Q1_SWORD && monster->source.sword.pain_disabled ?
+        "SUB_Null" : pain[index];
     return callback(record, "th_stand", sleeping ? "mummy_sleep" : species->stand, error) &&
         callback(record, "th_walk", sleeping ? "mummy_wake" : species->walk, error) &&
-        callback(record, "th_run", sleeping ? "mummy_wake" : species->run, error) &&
+        callback(record, "th_run", sleeping ? "mummy_wake" : run, error) &&
         callback(record, "th_missile", sleeping ? "mummy_wake" : missile, error) &&
         callback(record, "th_melee", index < sizeof(melee) / sizeof(*melee) ? melee[index] : NULL, error) &&
-        callback(record, "th_pain", sleeping ? "mummy_wake" : pain[index], error) && callback(record, "th_die", die[index], error) &&
+        callback(record, "th_pain", sleeping ? "mummy_wake" : hurt, error) && callback(record, "th_die", die[index], error) &&
         callback(record, "touch", touch, error) &&
         callback(record, "use", q1_ref_present(monster->enemy) || monster->dead ? "SUB_Null" : "monster_use", error);
 }
@@ -1159,6 +1163,11 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         if (!monster->species) return fail(error, "Original monster lacks its actual Source species");
         if (monster->species->species == QA_Q1_EEL &&
             !RESTORE_FIELDS(game,record,monster,eel_fields,slots,count,error)) return false;
+        if (monster->species->species == QA_Q1_SWORD) {
+            const char *run = saved(record,"th_run"), *pain = saved(record,"th_pain");
+            monster->source.sword.awakened = run && !strcmp(run,"sword_run1");
+            monster->source.sword.pain_disabled = pain && !strcmp(pain,"SUB_Null");
+        }
         if (monster->species->species == QA_Q1_MUMMY) {
             const char *stand = saved(record,"th_stand");
             monster->source.mummy.asleep = stand && !strcmp(stand,"mummy_sleep");
