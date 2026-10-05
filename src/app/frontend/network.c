@@ -8680,6 +8680,21 @@ bool frontend_network_client_restore_abort_ready(const qa_frontend *f,
     return frontend_client_sources_restore_abort_ready(f,source,error);
 }
 
+static bool demo_local_format(const qa_frontend *f,frontend_demo_format *out,qa_error *error)
+{
+    qa_application_startup_source source;bool present=false;
+    if(!f||!f->config_store||!out||
+        !frontend_config_store_primary_server_read(f->config_store,&source,&present,error))return false;
+    if(!present||!source.descriptor)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Local recording requires its actual primary Source configuration");
+    switch(source.descriptor->selection.clock.kind) {
+    case QA_CLOCK_NETQUAKE:*out=FRONTEND_DEMO_NQ;return true;
+    case QA_CLOCK_QUAKEWORLD:*out=FRONTEND_DEMO_QW;return true;
+    case QA_CLOCK_Q2_CLASSIC:case QA_CLOCK_Q2_RERELEASE:*out=FRONTEND_DEMO_Q2;return true;
+    case QA_CLOCK_Q3:*out=FRONTEND_DEMO_Q3;return true;
+    }
+    return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Selected local Source has no native demo format");
+}
 frontend_demo_format frontend_network_demo_format(const qa_frontend *f,const qa_command_context *source)
 {
     const qa_frontend_network *n=f?f->network:NULL;
@@ -8690,8 +8705,13 @@ frontend_demo_format frontend_network_demo_format(const qa_frontend *f,const qa_
             return qa_q1_is_qw(view.protocol)?FRONTEND_DEMO_QW:FRONTEND_DEMO_NQ;
     }
     if(n&&(n->q2_client_owner||n->q2_host)) return FRONTEND_DEMO_Q2;
+    if(n&&n->q3_client_attached) return FRONTEND_DEMO_Q3;
+    frontend_demo_format format;
+    if(demo_local_format(f,&format,NULL))return format;
     if(source&&source->dialect==QA_CONSOLE_Q3) return FRONTEND_DEMO_Q3;
     if(source&&(source->dialect==QA_CONSOLE_Q2||source->dialect==QA_CONSOLE_Q2_RERELEASE)) return FRONTEND_DEMO_Q2;
+    if(source&&source->dialect==QA_CONSOLE_QW) return FRONTEND_DEMO_QW;
+    if(source&&source->dialect==QA_CONSOLE_Q1) return FRONTEND_DEMO_NQ;
     return f&&qa_q1_is_qw(f->options.network_protocol)?FRONTEND_DEMO_QW:FRONTEND_DEMO_NQ;
 }
 static bool demo_network_current(const qa_frontend_network *n)
@@ -8806,7 +8826,7 @@ typedef struct local_q3_demo_source {
     qa_actor_id actor;
     qa_actor_owner provider;
     uint32_t seat,slot;
-    uint64_t generation,last_frame;
+    uint64_t map_revision,last_frame;
     qa_q3_gamestate *state;
     int32_t sequence,commands;
     frontend_demo_sink sink;
@@ -8817,7 +8837,6 @@ static bool local_q3_demo_current(const void *context)
     const local_q3_demo_source *source=context;qa_actor_id actor;uint32_t slot;qa_q3_product product;
     int32_t sequence;
     return source&&source->frontend&&source->frontend->application&&
-        source->generation==qa_application_configuration_generation(source->frontend->application)&&
         qa_application_player_actor(source->frontend->application,source->seat,&actor)&&qa_actor_id_equal(actor,source->actor)&&
         qa_application_network_q3_client_bound(source->frontend->application,source->provider,actor,source->slot)&&
         qa_application_network_q3_source(source->frontend->application,actor,&slot,&product,NULL)&&slot==source->slot&&
@@ -8825,14 +8844,20 @@ static bool local_q3_demo_current(const void *context)
 }
 static bool local_q3_demo_seed(void *context,const frontend_demo_sink *sink,qa_error *error)
 {
-    local_q3_demo_source *source=context;
-    if(!local_q3_demo_current(source)||!qa_application_network_q3_record_read(source->frontend->application,
+    local_q3_demo_source *source=context;qa_application_map_view map;
+    if(!local_q3_demo_current(source)||!qa_application_map_read(source->frontend->application,&map)||
+        !qa_application_network_q3_record_read(source->frontend->application,
         source->actor,source->state,&source->commands,error))return false;
+    if(source->sequence==INT32_MAX)return frontend_fail(error,QA_ERROR_FORMAT,"Local Q3 demo message ordinal exhausted");
     uint8_t bytes[65536];qa_q3_writer writer;qa_q3_writer_init(&writer,bytes,sizeof(bytes),false,error);
     if(!qa_q3_server_begin(&writer,0)||!qa_q3_server_gamestate(&writer,source->state)||!qa_q3_server_end(&writer))return false;
     frontend_demo_packet packet={.format=FRONTEND_DEMO_Q3,.value.q3={source->sequence,{bytes,qa_q3_writer_size(&writer)}}};
-    if(!sink->append(sink->owner,&packet,error))return false;
-    ++source->sequence;return true;
+    qa_error write_error={0};
+    if(!sink->append(sink->owner,&packet,&write_error)&&!source->sink.append) {
+        if(error)*error=write_error;
+        return false;
+    }
+    ++source->sequence;source->map_revision=map.revision;source->published=false;return true;
 }
 static bool local_q3_demo_attach(void *context,const frontend_demo_sink *sink,bool *attached,qa_error *error)
 {
@@ -8851,10 +8876,13 @@ static bool local_q3_demo_detach(void *context,const frontend_demo_sink *sink,qa
 static bool local_q3_demo_publish(void *context,qa_error *error)
 {
     local_q3_demo_source *source=context;qa_application *app=source->frontend->application;qa_clock_state clock;
+    qa_application_map_view map;
     if(!local_q3_demo_current(source)||!source->sink.append||
+        !qa_application_map_read(app,&map)||
         !qa_session_clock(qa_application_session(app),source->provider,&clock)||
         clock.frame.provider!=source->provider||clock.frame.kind!=QA_CLOCK_Q3||clock.frame.phase!=QA_FRAME_EXIT)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Local Q3 recording requires its completed Source frame");
+    if(source->map_revision!=map.revision)return local_q3_demo_seed(source,&source->sink,error);
     if(source->sequence==INT32_MAX)return frontend_fail(error,QA_ERROR_FORMAT,"Local Q3 demo message ordinal exhausted");
     int32_t commands;
     if(!qa_application_network_q3_record_read(app,source->actor,NULL,&commands,error))return false;
@@ -8888,7 +8916,7 @@ static bool local_q3_demo_record(qa_frontend *f,qa_actor_id actor,qa_fs_root *ro
     if(!source)return frontend_fail(error,QA_ERROR_MEMORY,"Retaining local Q3 demo Source");
     source->state=malloc(sizeof(*source->state));
     if(!source->state){free(source);return frontend_fail(error,QA_ERROR_MEMORY,"Retaining local Q3 demo baselines");}
-    source->frontend=f;source->actor=actor;source->generation=qa_application_configuration_generation(f->application);
+    source->frontend=f;source->actor=actor;
     qa_q3_product product;int32_t sequence;
     if(!qa_application_player_seat(f->application,actor,&source->seat)||
         !qa_application_network_q3_owner(f->application,&source->provider,&product,error)||
@@ -8931,8 +8959,7 @@ bool frontend_network_demo_record(qa_frontend *f,const qa_command_context *sourc
     if(n->q2_client_owner)return frontend_network_q2_client_demo_record(n->q2_client_owner,out,error);
     if(n->q2_host) {
         qa_actor_id actor;qa_fs_root *root=NULL;
-        qa_command_context seat=qa_input_seat_context(f->seats[physical].input);
-        if(!qa_application_player_actor(f->application,seat.seat,&actor))
+        if(!frontend_seat_actor_read(f,physical,&actor))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 recording requires its actual controlled player");
         if(!frontend_content_library_demo_root(f,source,&root,error))return false;
         return frontend_network_q2_host_demo_record(n->q2_host,actor,root,out,error);
@@ -8948,12 +8975,13 @@ bool frontend_network_demo_record(qa_frontend *f,const qa_command_context *sourc
             .detach=demo_q3_detach,.release=demo_q3_record_release};return true;
     }
     qa_actor_id actor;qa_fs_root *root=NULL;
-    qa_command_context seat=qa_input_seat_context(f->seats[physical].input);
-    if(!qa_application_player_actor(f->application,seat.seat,&actor))
+    if(!frontend_seat_actor_read(f,physical,&actor))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Local recording requires its actual controlled player");
     if(!frontend_content_library_demo_root(f,source,&root,error))return false;
-    if(source->dialect==QA_CONSOLE_Q3)return local_q3_demo_record(f,actor,root,out,error);
-    if(source->dialect==QA_CONSOLE_Q1)return frontend_nq_demo_record(f,n->runtime,actor,root,out,error);
+    frontend_demo_format format;
+    if(!demo_local_format(f,&format,error))return false;
+    if(format==FRONTEND_DEMO_Q3)return local_q3_demo_record(f,actor,root,out,error);
+    if(format==FRONTEND_DEMO_NQ)return frontend_nq_demo_record(f,n->runtime,actor,root,out,error);
     return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Selected local Source has no native recording feed");
 }
 static bool demo_playback_current(const void *context)
