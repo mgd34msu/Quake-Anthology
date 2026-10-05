@@ -22,6 +22,15 @@
 #include <stdio.h>
 #include <time.h>
 
+void frontend_remote_modules_saved_dispose(remote_module_saved *roles, size_t count)
+{
+    for (size_t i = 0; roles && i < count; ++i) {
+        qa_buffer_free(&roles[i].scene); qa_buffer_free(&roles[i].media);
+        qa_buffer_free(&roles[i].equipment); qa_buffer_free(&roles[i].music);
+        free(roles[i].music_intro); free(roles[i].music_loop);
+    }
+    free(roles);
+}
 const qa_application_q3_remote_source *frontend_remote_modules_source(const frontend_remote_q3_modules *owner)
 { return owner->kind == REMOTE_MODULE_INITIAL ? &owner->basis.initial.view.attempt.source : &owner->basis.decoded.view.domain.source; }
 static const qa_application_q3_remote_source *source(const frontend_remote_q3_modules *owner)

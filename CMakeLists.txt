@@ -1774,7 +1774,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/global_settings_storage.c
     src/app/frontend/view_bindings.c
     src/app/frontend/startup_rotation.c
-    src/app/frontend/remote_q3_modules_save.c
     src/app/frontend/remote_q2_client.c
     src/app/frontend/remote_q2_media.c
     src/app/frontend/remote_q2_download.c
