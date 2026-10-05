@@ -116,7 +116,9 @@ bool qa_bot_observations_capture(qa_session *session, const qa_bot_runtime *runt
         qa_source_save_u32(&io, &profile) && qa_source_save_count(&io, &count, SIZE_MAX);
     for (size_t i = 0; ok && i < count; ++i) {
         qa_bot_entity_info info = runtime->entities[i];
-        ok = entity_fields(&io, &info);
+        const qa_bot_entity_info empty = {.number = (int32_t)i};
+        bool retained = memcmp(&info, &empty, sizeof(info)) != 0;
+        ok = qa_source_save_bool(&io, &retained) && (!retained || entity_fields(&io, &info));
     }
     if (profile == QA_BOT_OBSERVATION_MODULE) {
         size_t head = runtime->observation_head, tail = runtime->observation_tail, free_head = runtime->observation_free;
@@ -147,7 +149,7 @@ bool qa_bot_observations_restore(qa_session *session, qa_bot_runtime *runtime,
     uint32_t profile = 0;
     bool ok = qa_source_save_reader(&io, session, bytes, error) && bot_save_signature(&io, magic) &&
         qa_source_save_u32(&io, &profile) && profile == (uint32_t)runtime->options.observations &&
-        qa_source_save_count(&io, &scratch.entity_capacity, bytes.size / 138);
+        qa_source_save_count(&io, &scratch.entity_capacity, bytes.size);
     scratch.options.observations = (qa_bot_observation_profile)profile;
     size_t count = scratch.entity_capacity;
     if (ok && (count > SIZE_MAX / sizeof(*scratch.entities) || count > SIZE_MAX / sizeof(*scratch.goal_entities) ||
@@ -164,8 +166,12 @@ bool qa_bot_observations_restore(qa_session *session, qa_bot_runtime *runtime,
             (profile == QA_BOT_OBSERVATION_MODULE && (!scratch.observation_links || !scratch.observation_buckets)))
             ok = bot_save_fail(&io, QA_ERROR_MEMORY, "Restoring bot observation slots");
     }
-    for (size_t i = 0; ok && i < count; ++i)
-        ok = entity_fields(&io, &scratch.entities[i]);
+    for (size_t i = 0; ok && i < count; ++i) {
+        bool retained = false;
+        scratch.entities[i].number = (int32_t)i;
+        ok = qa_source_save_bool(&io, &retained) &&
+            (!retained || entity_fields(&io, &scratch.entities[i]));
+    }
     if (profile == QA_BOT_OBSERVATION_MODULE) {
         ok = ok && qa_source_save_count(&io, &scratch.observation_head, count) &&
             qa_source_save_count(&io, &scratch.observation_tail, count) &&
