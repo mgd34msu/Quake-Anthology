@@ -135,7 +135,7 @@ static void discard_mixer(qa_audio_mixer *m) {
         qa_mixer_prepared *p = m->prepared[i]; if (!p) continue;
         qa_audio_sample_release(p->sample); qa_audio_sample_release(p->pcm); qa_audio_asset_release(p->asset); free(p->doppler_sums); free(p);
     }
-    free(m->prepared); free(m->voices); free(m->loops); free(m->loop_mixes); free(m->positions);
+    free(m->prepared); free(m->prepared_index); free(m->voices); free(m->loops); free(m->loop_mixes); free(m->positions);
     free(m->transmissions); free(m->events); free(m->diagnostic_message); free(m);
 }
 static bool allocate_table(qa_source_save_io *r, uint64_t count, size_t size, size_t minimum, void **out) {
@@ -290,6 +290,7 @@ bool qa_audio_mixer_restore(qa_bytes bytes, const qa_audio_mixer_options *option
     for (size_t i = 0; !r.failed && i < m->prepared_count; ++i)
         if (m->prepared[i] && !m->prepared[i]->references) qa_ac_bad(&r, "Saved prepared sound has no holder");
     if (r.failed) { discard_mixer(m); return false; }
+    if (!qa_mixer_prepared_index(m, error)) { discard_mixer(m); return false; }
     m->options = *options;
     m->transmission = refs ? refs->geometry : NULL; m->transmission_user = refs ? refs->geometry_context : NULL;
     m->transmission_checked = refs ? refs->geometry_checked : NULL;

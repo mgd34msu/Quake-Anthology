@@ -12,6 +12,7 @@ typedef struct qa_mixer_gain {
     double left, right;
 } qa_mixer_gain;
 typedef struct qa_mixer_prepared {
+    struct qa_mixer_prepared *next;
     qa_audio_sample *sample, *pcm;
     qa_audio_asset *asset;
     bool q3;
@@ -20,6 +21,7 @@ typedef struct qa_mixer_prepared {
     size_t doppler_period;
 } qa_mixer_prepared;
 bool qa_mixer_prepared_doppler(qa_mixer_prepared *, qa_error *);
+bool qa_mixer_prepared_index(qa_audio_mixer *, qa_error *);
 
 typedef enum qa_mixer_voice_state {
     QA_MIXER_FREE,
@@ -90,6 +92,8 @@ struct qa_audio_mixer {
     size_t voice_count, voice_capacity, free_head;
     qa_mixer_prepared **prepared;
     size_t prepared_count, prepared_capacity;
+    qa_mixer_prepared **prepared_index;
+    size_t prepared_index_capacity;
     qa_mixer_loop *loops;
     size_t loop_count, loop_capacity;
     qa_mixer_loop_mix *loop_mixes;
