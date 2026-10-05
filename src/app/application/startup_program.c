@@ -436,7 +436,7 @@ bool application_startup_program_restore_prepare(qa_application *candidate, qa_a
 {
     if (!candidate || !previous || candidate == previous || !out || *out ||
         previous->operation != APPLICATION_PERSISTING || candidate->operation != APPLICATION_IDLE ||
-        !qa_application_launch(candidate) || !qa_application_launch(previous))
+        !qa_application_launch(candidate))
         return application_fail(error, QA_ERROR_ARGUMENT, "Live unit commands require their completed restored GAME and current source");
     size_t previous_count=qa_application_console_count(previous);
     for (size_t i=0,count=qa_application_console_count(candidate);i<count;++i) {

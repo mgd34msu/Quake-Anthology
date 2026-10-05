@@ -4314,17 +4314,25 @@ bool application_players_campaign_reenter(qa_application *candidate,
     qa_application *previous, application_player_travel *travel,
     const char *spawn_point, qa_error *error)
 {
-    if (!candidate || !previous || !travel || !travel->roster || !candidate->players ||
+    if (!candidate || !previous || !travel || !travel->roster ||
         !qa_session_safe(candidate->session) || !qa_world_idle(candidate->world))
         return application_fail(error,QA_ERROR_ARGUMENT,"Campaign reentry requires its restored world and retained players");
-    struct application_player_roster *destination=candidate->players;
-    for (size_t i=0;i<destination->count;++i)
-        if (qa_actors_get(qa_session_actors(candidate->session),destination->records[i].actor))
-            return application_fail(error,QA_ERROR_FORMAT,"Departed world retained an active client");
+    if (candidate->players)
+        for (size_t i=0;i<candidate->players->count;++i)
+            if (qa_actors_get(qa_session_actors(candidate->session),candidate->players->records[i].actor))
+                return application_fail(error,QA_ERROR_FORMAT,"Departed world retained an active client");
+    struct application_player_roster *roster=travel->roster;
+    free(roster->points); roster->points=NULL; roster->point_count=0;
+    travel->point_capacity=0;
+    free(roster->q1_points); roster->q1_points=NULL; roster->q1_point_count=0;
+    qa_q1_spawn_selector_destroy(roster->q1_selector); roster->q1_selector=NULL;
+    if (!application_map_restore_points(candidate,travel,error)) return false;
+    if (roster->map_provider->kind==APPLICATION_PROVIDER_Q1 && roster->point_count>1)
+        qsort(roster->points,roster->point_count,sizeof(*roster->points),q1_point_order);
     const qa_launch_snapshot *snapshot=qa_application_launch(candidate);
     const qa_launch_choices *choices=qa_launch_snapshot_choices(snapshot);
     application_publication publication={.candidate=snapshot,.next=candidate->providers,
-        .next_count=candidate->provider_count,.map_provider=destination->map_provider};
+        .next_count=candidate->provider_count,.map_provider=roster->map_provider};
     for (size_t i=0;i<travel->count;++i) {
         application_player_record *record=travel->roster->records+i;
         application_player_carry *carry=travel->carry+i;
@@ -4364,18 +4372,6 @@ bool application_players_campaign_reenter(qa_application *candidate,
         travel->seats[i].bot_definition=record->bot_definition;
         travel->seats[i].actor=record->configured_actor;
     }
-    struct application_player_roster *roster=travel->roster;
-    roster->map_provider=destination->map_provider; roster->family=destination->family;
-    roster->world_type=destination->world_type;
-    free(roster->points); roster->points=destination->points; destination->points=NULL;
-    roster->point_count=destination->point_count; destination->point_count=0;
-    free(roster->q1_points); roster->q1_points=destination->q1_points; destination->q1_points=NULL;
-    roster->q1_point_count=destination->q1_point_count; destination->q1_point_count=0;
-    qa_q1_spawn_selector_destroy(roster->q1_selector);
-    roster->q1_selector=destination->q1_selector; destination->q1_selector=NULL;
-    /* Respawn rebuilds the ordinary selector from the retained authored points. */
-    free(roster->q1_points); roster->q1_points=NULL; roster->q1_point_count=0;
-    qa_q1_spawn_selector_destroy(roster->q1_selector); roster->q1_selector=NULL;
     roster->spawn_point=QA_STRING_NONE;
     if (spawn_point && *spawn_point && !qa_strings_intern(qa_session_strings(candidate->session),
         (qa_bytes){(const uint8_t *)spawn_point,strlen(spawn_point)},&roster->spawn_point,error)) return false;

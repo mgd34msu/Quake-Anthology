@@ -261,6 +261,15 @@ bool application_map_prepare(qa_application *application,
     return true;
 }
 
+static bool player_point_class(qa_bytes name)
+{
+    return (name.size >= 12 && !memcmp(name.data, "info_player_", 12)) ||
+        (name.size >= 8 && !memcmp(name.data, "team_CTF", 8)) ||
+        (name.size >= 13 && !memcmp(name.data, "dm_dball_team", 13)) ||
+        (name.size == 15 && !memcmp(name.data, "testplayerstart", 15)) ||
+        (name.size == 21 && !memcmp(name.data, "info_vote_destination", 21));
+}
+
 bool application_map_prepare_points(qa_application *application,
                                      application_publication *publication,
                                      qa_error *error)
@@ -288,12 +297,7 @@ bool application_map_prepare_points(qa_application *application,
         qa_bytes name;
         if (!qa_entity_value(&publication->entities, i, "classname", &name))
             continue;
-        bool player_point = (name.size >= 12 && !memcmp(name.data, "info_player_", 12)) ||
-                            (name.size >= 8 && !memcmp(name.data, "team_CTF", 8)) ||
-                            (name.size >= 13 && !memcmp(name.data, "dm_dball_team", 13)) ||
-                            (name.size == 15 && !memcmp(name.data, "testplayerstart", 15)) ||
-                            (name.size == 21 && !memcmp(name.data, "info_vote_destination", 21));
-        if (!player_point)
+        if (!player_point_class(name))
             continue;
         if (publication->map_provider->kind == APPLICATION_PROVIDER_Q3) {
             if (i > UINT32_MAX)
@@ -340,6 +344,70 @@ bool application_map_prepare_points(qa_application *application,
             return false;
     }
     return true;
+}
+
+bool application_map_restore_points(qa_application *application,
+    application_player_travel *travel, qa_error *error)
+{
+    application_publication publication = {
+        .candidate = qa_application_launch(application),
+        .next = application->providers, .next_count = application->provider_count,
+        .players = travel};
+    if (!application->map_resource || !travel || !travel->roster ||
+        !qa_bsp_open(qa_resource_bytes(application->map_resource), &publication.map, error) ||
+        !application_map_prepare_content(application, &publication, error))
+        return false;
+    struct application_player_roster *roster = travel->roster;
+    application_provider *source = publication.map_provider;
+    roster->map_provider = source;
+    roster->family = publication.map.family;
+    bool ok = true;
+    if (source->kind == APPLICATION_PROVIDER_Q1) {
+        qa_q1_options options;
+        double seconds;
+        ok = qa_q1_source_respawn_options_read(source->state.q1, &options, &seconds, error);
+        if (ok) roster->world_type = options.world_type;
+    }
+    if (source->kind == APPLICATION_PROVIDER_Q1 || source->kind == APPLICATION_PROVIDER_Q2) {
+        const qa_actor_registry *actors = qa_session_actors(application->session);
+        uint32_t cursor = 0;
+        const qa_actor_record *actor;
+        while (ok && qa_actors_next(actors, &cursor, &actor)) {
+            if (actor->owner != source->owner || !actor->has_source) continue;
+            qa_mode_spawnpoint point = {.actor = actor->id};
+            qa_string_id target = QA_STRING_NONE;
+            if (source->kind == APPLICATION_PROVIDER_Q1) {
+                qa_q1_presentation view;
+                if (!qa_q1_game_presentation(source->state.q1, actor->id, &view)) continue;
+                point.classname = view.classname;
+                target = view.targetname;
+            } else {
+                qa_q2_wire_source_entity view;
+                ok = qa_q2_wire_entity_read(source->state.q2, actor->source_slot, &view, error);
+                if (!ok) break;
+                point.classname = view.classname;
+                point.flags = view.spawn_flags;
+                if (!player_point_class(qa_strings_text(qa_session_strings(application->session),
+                        point.classname))) continue;
+                qa_authored_target authored;
+                if (qa_q2_entity_authored(source->state.q2, actor->id, &authored))
+                    target = authored.targetname;
+            }
+            if (!player_point_class(qa_strings_text(qa_session_strings(application->session),
+                    point.classname))) continue;
+            qa_body_state body;
+            ok = qa_world_body_read(application->world, actor->id, &body, error);
+            if (ok) {
+                point.origin = body.origin;
+                point.angles = body.angles;
+                ok = application_players_point(travel, point, target, actor->source_slot, error);
+            }
+        }
+    } else if (ok) {
+        ok = application_map_prepare_points(application, &publication, error);
+    }
+    qa_entities_free(&publication.entities);
+    return ok;
 }
 
 static bool emit_map_event(application_provider *provider,
