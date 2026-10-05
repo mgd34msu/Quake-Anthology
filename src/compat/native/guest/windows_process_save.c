@@ -273,12 +273,11 @@ bool qa_native_windows_process_restore(qa_bytes encoded,
         const qa_native_windows_artifact *source = NULL;
         for (size_t j = 0; okay && j < bindings->artifact_count; ++j) {
             const qa_native_windows_artifact *actual = bindings->artifacts + j;
-            if (actual->id != record->id) continue;
-            if (source || actual->load_base != record->base ||
+            if (!actual->id || actual->load_base != record->base ||
                 !windows_process_same_image(&actual->image, &record->image) ||
-                record->maximum > actual->maximum_image_bytes || !actual->path ||
-                strlen(actual->path) != record->path.size ||
-                memcmp(actual->path, record->path.data, record->path.size)) {
+                !actual->path || strlen(actual->path) != record->path.size ||
+                memcmp(actual->path, record->path.data, record->path.size)) continue;
+            if (source || record->maximum > actual->maximum_image_bytes) {
                 okay = guest_fail(error, QA_ERROR_FORMAT, i, "Windows saved image differs from its installed source");
                 break;
             }

@@ -299,10 +299,10 @@ bool qa_native_sysv_process_restore(qa_bytes encoded,
         const qa_native_sysv_artifact *source = NULL;
         for (size_t j = 0; okay && j < bindings->artifact_count; ++j) {
             const qa_native_sysv_artifact *actual = bindings->artifacts + j;
-            if (actual->provider != record->provider) continue;
-            if (source || actual->load_bias != record->bias || (uint32_t)actual->role != record->role ||
-                !qa_sha256_equal(&actual->image.digest, &record->image.digest) ||
-                record->maximum > actual->maximum_image_bytes) {
+            if (!actual->provider || actual->load_bias != record->bias ||
+                (uint32_t)actual->role != record->role ||
+                !qa_sha256_equal(&actual->image.digest, &record->image.digest)) continue;
+            if (source || record->maximum > actual->maximum_image_bytes) {
                 okay = guest_fail(error, QA_ERROR_FORMAT, i, "System V saved image differs from its installed source");
                 break;
             }

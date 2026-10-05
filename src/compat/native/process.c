@@ -535,7 +535,7 @@ bool native_process_restore(qa_native_instance *instance, const qa_native_proces
     if (!qa_source_save_reader(&io, NULL, options->continuation, error)) return false;
     qa_bytes process = {0}, host = {0}; size_t count = 0;
     bool okay = capsule_fields(&io, instance);
-    if (okay && (instance->process_kind != options->kind || instance->source_id != options->source_id ||
+    if (okay && (instance->process_kind != options->kind ||
         instance->first_callback != options->first_callback))
         okay = native_fail(error, QA_ERROR_FORMAT, io.offset, "native capsule differs from its prepared source namespace");
     if (okay) okay = capsule_blob(&io, &process) && capsule_blob(&io, &host);

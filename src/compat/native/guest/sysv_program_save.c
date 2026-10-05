@@ -217,7 +217,7 @@ bool qa_native_sysv_program_restore(qa_bytes bytes, const qa_native_sysv_program
         row->role = QA_NATIVE_SYSV_PROGRAM;
         okay = qa_source_save_u64(&io, &row->provider) && qa_source_save_u64(&io, &row->load_bias) &&
             image_fields(&io, &row->image) && qa_source_save_count(&io, &row->maximum_image_bytes, bindings->maximum_image_bytes);
-        if (okay && (!row->provider || !row->maximum_image_bytes || row->provider != source->provider ||
+        if (okay && (!row->provider || !row->maximum_image_bytes ||
             row->load_bias != source->load_bias || source->role != QA_NATIVE_SYSV_PROGRAM ||
             !qa_sha256_equal(&row->image.digest, &source->image.digest) ||
             row->maximum_image_bytes > source->maximum_image_bytes))
