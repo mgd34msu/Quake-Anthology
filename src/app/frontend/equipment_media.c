@@ -482,14 +482,10 @@ bool frontend_equipment_media_native_icon_read(qa_frontend *f,
     char key[192], declaration[256]; bool present;
     if (!out || *out || !native_icon_declaration(f, view, key, declaration, &present, error)) return false;
     if (!present) return true;
-    qa_vfs *files = qa_application_provider_files(f->application, view->provider);
-    for (size_t i = 0; i < frontend_visual_owner_count(f); ++i) {
-        frontend_visual_owner_view media;
-        if (!frontend_visual_owner_read(f, i, &media) || media.owner != view->provider ||
-            !qa_vfs_lookup_equal(files, media.mounts)) continue;
-        *out = qa_material_find(media.materials, key);
-        if (*out) return true;
-    }
+    frontend_visual_owner_view media;
+    if (!frontend_visual_media_read(f, view->provider, view->family, &media, error)) return false;
+    *out = qa_material_find(media.materials, key);
+    if (*out) return true;
     return frontend_fail(error, QA_ERROR_ARGUMENT, "Native HUD icon has not completed its actual media preparation");
 }
 

@@ -1198,6 +1198,29 @@ bool frontend_visual_media_acquire(qa_frontend *frontend, qa_actor_owner provide
         owner->media, owner->shader_movies};
     return true;
 }
+bool frontend_visual_media_read(const qa_frontend *frontend, qa_actor_owner provider,
+    qa_game_family family, frontend_visual_owner_view *out, qa_error *error)
+{
+    if (!frontend || !frontend->application || !provider || !out ||
+        (family != QA_GAME_Q1 && family != QA_GAME_Q2 && family != QA_GAME_Q3) ||
+        !qa_application_provider_instance(frontend->application, provider))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Media read requires its actual selected provider");
+    const qa_vfs *files = qa_application_provider_files(frontend->application, provider);
+    qa_scene_family expected = family == QA_GAME_Q1 ? QA_SCENE_Q1 :
+        family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3;
+    for (const frontend_visual_owner *owner = frontend->visuals; owner; owner = owner->next) {
+        if (owner->owner != provider || owner->family != expected || !files ||
+            !qa_vfs_lookup_equal(files, owner->mounts)) continue;
+        if (owner->construction_failed || !owner->images || !owner->materials || !owner->media ||
+            qa_scene_resources_files(owner->images) != owner->mounts ||
+            qa_material_library_resource_owner(owner->materials) != owner->images)
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Media read lost its complete physical resource owner");
+        *out = (frontend_visual_owner_view){owner->owner, owner->family, owner->mounts,
+            owner->images, owner->materials, owner->media, owner->shader_movies};
+        return true;
+    }
+    return frontend_fail(error, QA_ERROR_ARGUMENT, "Media read has no previously admitted source owner");
+}
 bool frontend_visual_model_acquire(qa_frontend *frontend, qa_actor_owner provider,
     qa_game_family family, const char *path, const qa_resource *source,
     frontend_visual_model_view *out, qa_error *error)
