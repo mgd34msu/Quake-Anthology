@@ -99,6 +99,8 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
         .scale = selected_visual ? selected.scale : visual.scale,
         .loop_volume = source.volume, .loop_attenuation = source.attenuation, .event = source.event};
     vector(value.origin, source.body.origin); vector(value.old_origin, source.body.origin);
+    if (value.renderfx & 128u)
+        vector(value.old_origin, selected_visual ? selected.previous_origin : source.previous_origin);
     vector(value.angles, source.body.angles);
     uint32_t *models[] = {&value.modelindex, &value.modelindex2, &value.modelindex3, &value.modelindex4};
     for (unsigned i = 0; !flare && i < 4; ++i) {
@@ -218,6 +220,7 @@ static bool original_entity(qa_application_network_q2 *owner, uint32_t number,
     if (selected && visual.provider != owner->host.source.source_owner) {
         if (!visual.visible) return true;
         vector(value.origin, visual.body.origin); vector(value.old_origin, visual.body.origin);
+        if (visual.render_flags & 128u) vector(value.old_origin, visual.previous_origin);
         vector(value.angles, visual.body.angles);
         value.frame = (uint32_t)visual.frame; value.old_frame = visual.old_frame >= 0 ? (uint32_t)visual.old_frame : 0;
         value.skinnum = (uint32_t)visual.skin; value.effects = visual.effects;

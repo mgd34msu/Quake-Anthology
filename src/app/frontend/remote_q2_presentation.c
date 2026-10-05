@@ -5,6 +5,7 @@
 #include "legacy_render_policy.h"
 #include "qa/material.h"
 #include "qa/scene_effects.h"
+#include "qa/game_q2.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -450,7 +451,10 @@ static bool submit_model(frontend_remote_q2 *row, const char *path, const char *
     }
     const qa_scene_image_options *model_options = qa_scene_model_image_options(model->scene);
     qa_scene_model_input input = {.view = *view, .transform = transform,
-        .previous_origin = current->renderfx & 64 ? vector(current->old_origin) : origin,
+        .previous_origin = current->renderfx & (64u | 128u) ? vector(current->old_origin) : origin,
+        .model_beam = qa_q2_model_beam(remote_q2_rerelease_presentation(row) ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
+            current->renderfx, current->modelindex > 1),
+        .beam_segment_length = (float)current->frame,
         .color = color, .family = QA_SCENE_Q2,
         .frame = current->frame, .old_frame = previous ? previous->frame : current->frame,
         .skin = current->modelindex == 255 ? 0 : current->skinnum, .flags = flags,
@@ -613,6 +617,16 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
             continue;
         }
         if (current->renderfx & 128) {
+            if (qa_q2_model_beam(remote_q2_rerelease_presentation(row) ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
+                current->renderfx, current->modelindex > 1)) {
+                if (current->modelindex < row->layout.max_models) {
+                    const char *path = frontend_remote_q2_config(row,
+                        (uint16_t)(row->layout.models + current->modelindex));
+                    ok = submit_model(row, path, NULL, &view, &world, current, NULL, false,
+                        vector(current->origin), vector(current->angles), error);
+                }
+                continue;
+            }
             if (current->frame > INT32_MAX) { ok = remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 beam width leaves its native integer range"); break; }
             ok = frontend_remote_q2_effects_entity_beam(row->effects, &view, vector(current->origin),
                 vector(current->old_origin), current->skinnum, (int32_t)current->frame, &f->frame, error);

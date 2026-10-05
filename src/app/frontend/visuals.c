@@ -1464,7 +1464,8 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
             if (!model_read(frontend, owner, path, view.model_resources[part], view.model_openings[part],
                 view.family == QA_GAME_Q1 && view.has_player_colors, view.player_colors, &model, error)) return false;
             qa_scene_model_input input = {.view = world->view, .transform = placement,
-                .previous_origin = view.body.origin, .color = color, .family = owner->family,
+                .previous_origin = view.previous_origin, .color = color, .family = owner->family,
+                .model_beam = view.model_beam, .beam_segment_length = (float)view.frame,
                 .frame = view.frame >= 0 ? (uint32_t)view.frame : 0,
                 .old_frame = view.old_frame >= 0 ? (uint32_t)view.old_frame : view.frame >= 0 ? (uint32_t)view.frame : 0,
                 .skin = view.skin >= 0 ? (uint32_t)view.skin : 0, .flags = view.render_flags,

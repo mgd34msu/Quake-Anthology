@@ -54,6 +54,7 @@ typedef struct qa_application_visual_view {
     qa_product_id content, character_content;
     qa_game_family family;
     qa_body_state body;
+    qa_vec3 previous_origin;
     const char *models[4], *skin_path;
     const qa_resource *model_resources[4];
     /* Borrowed acquired-source receipts share the retained precache lifetime. */
@@ -65,7 +66,7 @@ typedef struct qa_application_visual_view {
     uint64_t effects;
     uint32_t render_flags, source_flags, powerups, inline_model, q1_effects;
     float alpha, scale;
-    bool visible, has_inline_model;
+    bool visible, has_inline_model, model_beam;
     qa_q3_entity source_entity;
     int32_t source_number, source_client;
     bool has_source_entity;

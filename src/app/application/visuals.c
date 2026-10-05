@@ -66,12 +66,15 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
         out->alpha = source.alpha;
         out->scale = source.scale;
         out->visible = source.visible;
-        if (source.render_flags & 0x200000) {
+        if (source.render_flags & (0x200000u | 128u)) {
             qa_q2_wire_binding binding;
             qa_q2_wire_source_entity entity;
             if (!qa_q2_wire_actor(provider->state.q2, actor, &binding, error) ||
                 !qa_q2_wire_entity_read(provider->state.q2, binding.source_slot, &entity, error))
                 return false;
+            out->previous_origin = entity.previous_origin;
+            out->model_beam = entity.model_beam;
+            if (!(source.render_flags & 0x200000u)) return true;
             if (!entity.flare || !isfinite(entity.flare_start) || !isfinite(entity.flare_end) ||
                 !isfinite(source.scale))
                 return application_fail(error, QA_ERROR_FORMAT, "Q2 flare lost its authored Source fields");
@@ -139,6 +142,7 @@ bool qa_application_visual_read(qa_application *application, qa_actor_id actor,
         if (!qa_world_body_read(application->world, actor, &view.body, error) ||
             !visual_collision(application, actor, &view, error))
             return false;
+        view.previous_origin = view.body.origin;
         if (!qa_actors_get(qa_session_actors(application->session), actor))
             return application_fail(error, QA_ERROR_NOT_FOUND,
                                     "Mode object retired during visual observation");
@@ -158,6 +162,7 @@ bool qa_application_visual_read(qa_application *application, qa_actor_id actor,
         .old_frame = -1, .alpha = 1, .scale = 1, .source_number = -1, .source_client = -1};
     if (!qa_world_body_read(application->world, actor, &view.body, error))
         return false;
+    view.previous_origin = view.body.origin;
     qa_error observed = {0};
     if (!native_visual(body, actor, &view, &observed)) {
         if (observed.code != QA_OK) {

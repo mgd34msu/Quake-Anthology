@@ -7,6 +7,7 @@
 #include "remote_unified_material_movies_bridge.h"
 #include "save_private.h"
 #include "material_movies.h"
+#include "qa/game_q2.h"
 
 #include <float.h>
 #include <math.h>
@@ -191,6 +192,15 @@ static bool player_blend_read(frontend_unified_render *r,qa_error *e)
     }
     return true;
 }
+static bool model_beam_read(unified_render_model *m, qa_error *e)
+{
+    m->input.model_beam = m->input.family == QA_SCENE_Q2 &&
+        qa_q2_model_beam(m->product->edition == QA_EDITION_RERELEASE ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
+            m->input.flags, m->media.scene != NULL);
+    m->input.beam_segment_length = (float)m->input.frame;
+    return !m->input.model_beam || m->has_previous_origin ||
+        frontend_unified_fail(e, QA_ERROR_FORMAT, "Q2 model beam lost its actual Source endpoint");
+}
 static bool model_read(frontend_unified_render *r, qa_json_id id, unified_render_model *m, qa_error *e)
 {
     const qa_unified_document *d=r->frame;
@@ -257,6 +267,7 @@ static bool model_read(frontend_unified_render *r, qa_json_id id, unified_render
         if (okay && custom!=QA_JSON_NONE) { qa_buffer name={0};
             okay=qa_json_string(j,custom,&name,e) && qa_material_register(materials,(const char *)name.data,&images,
                 false,&m->input.custom_material,e); qa_buffer_free(&name); }
+        if (okay) okay=model_beam_read(m,e);
     }
     qa_buffer_free(&content); qa_buffer_free(&path); return okay;
 }
@@ -698,7 +709,8 @@ static bool render_fields(frontend_unified_render *r,const frontend_unified_rend
                 qa_json_string_equal(j,qa_json_get(j,row,"content"),m->product->identity) &&
                 qa_json_string_equal(j,qa_json_get(j,row,"path"),m->path) &&
                 model_source_read(r,row,m,io->error) && model_equipment_read(r,row,m,io->error) &&
-                qa_json_bool(j,qa_json_get(j,row,"viewWeapon"),&view_model,io->error) && view_model==m->input.view_model;
+                qa_json_bool(j,qa_json_get(j,row,"viewWeapon"),&view_model,io->error) && view_model==m->input.view_model &&
+                model_beam_read(m,io->error);
         }
     }
     return okay && render_blob(io,hud);

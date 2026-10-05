@@ -61,6 +61,8 @@ static bool model(application_unified_json *j, bool *first,
         text(j, ",\"scale\":", error) && number(j, v->scale, error) &&
         text(j, v->visible ? ",\"visible\":true" : ",\"visible\":false", error) &&
         text(j, view_weapon ? ",\"viewWeapon\":true" : ",\"viewWeapon\":false", error);
+    if (ok && (v->render_flags & 128u) && v->family == QA_GAME_Q2)
+        ok = text(j, ",\"previousOrigin\":", error) && vector(j, v->previous_origin, error);
     if (ok && render_source) {
         if(!render_source->owner || !render_source->launch || !render_source->launch->selection.instance)
             return application_fail(error,QA_ERROR_ARGUMENT,"Unified model lost its emitting Source namespace");

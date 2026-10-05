@@ -55,6 +55,7 @@ typedef struct qa_q2_wire_source_entity {
     qa_q2_wire_binding binding;
     qa_q2_visual visual;
     qa_body_state body;
+    qa_vec3 previous_origin;
     qa_actor_id owner;
     qa_string_id classname, loop_sound, flare_image;
     qa_q2_weapon_state weapon;
@@ -64,7 +65,7 @@ typedef struct qa_q2_wire_source_entity {
     qa_physics_solid solid;
     float volume, attenuation;
     float flare_start, flare_end;
-    bool has_visual, has_weapon, flare;
+    bool has_visual, has_weapon, flare, model_beam;
 } qa_q2_wire_source_entity;
 
 /* Source construction reserves its genuine client edicts before authored or

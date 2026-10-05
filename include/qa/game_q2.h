@@ -14,6 +14,13 @@ typedef bool (*qa_q2_actor_fn)(void *, qa_actor_id, qa_error *);
 qa_actor_id qa_q2_current_actor(const qa_q2_game *);
 bool qa_q2_run_actor(qa_q2_game *, qa_actor_id, qa_q2_actor_fn, void *, qa_error *);
 typedef enum qa_q2_edition { QA_Q2_CLASSIC, QA_Q2_RERELEASE } qa_q2_edition;
+/* RF_BEAM uses model segments only in the rerelease and only when its Source
+ * model is an actual alias model, rather than MODELINDEX_WORLD or no model. */
+static inline bool qa_q2_model_beam(qa_q2_edition edition, uint32_t render_flags,
+    bool model_resource)
+{
+    return edition == QA_Q2_RERELEASE && (render_flags & 128u) && model_resource;
+}
 typedef enum qa_q2_product { QA_Q2_BASE, QA_Q2_XATRIX, QA_Q2_ROGUE, QA_Q2_N64 } qa_q2_product;
 typedef enum qa_q2_classic_cause_profile {
     QA_Q2_NATIVE_BASE,

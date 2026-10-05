@@ -630,6 +630,10 @@ bool qa_q2_wire_entity_read(qa_q2_game *g, uint32_t slot,
     value.has_visual = qa_q2_presentation_read(g, a->id, &value.visual);
     value.body_serial = qa_world_body_storage_serial(g->services.world, a->id);
     if (!value.body_serial || !qa_world_body_read(g->services.world, a->id, &value.body, error)) return false;
+    value.previous_origin = a->entity && (value.visual.render_flags & 128u)
+        ? a->entity->beam_end : value.body.origin;
+    value.model_beam = qa_q2_model_beam(g->options.edition, value.visual.render_flags,
+        value.visual.models[0] != QA_STRING_NONE);
     value.solid = a->physics_bound ? a->physics.solid : QA_PHYSICS_NOT_SOLID;
     qa_actor_collision collision;
     qa_error collision_error = {0};
