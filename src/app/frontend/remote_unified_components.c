@@ -22,7 +22,7 @@ remote_component *q3remote_component_physical_at(const frontend_unified_componen
 
 bool frontend_unified_components_current(const frontend_unified_components *o)
 {
-    return o&&!o->closing&&!o->restoring&&!o->failed&&frontend_unified_media_current(o->media)&&
+    return o&&!o->closing&&!o->failed&&frontend_unified_media_current(o->media)&&
         o->recipe==frontend_remote_unified_recipe(o->replica)&&frontend_remote_unified_current(o->replica,NULL);
 }
 bool frontend_unified_components_retained_current(const frontend_unified_components *o)

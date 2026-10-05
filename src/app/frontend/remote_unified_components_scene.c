@@ -35,7 +35,7 @@ static bool retained(void *context)
 static bool published(void *context)
 {
     remote_component *r=context;
-    if(!retained(r)||r->retired||(!r->parent->restoring&&!frontend_unified_components_current(r->parent))) return false;
+    if(!retained(r)||r->retired||!frontend_unified_components_current(r->parent)) return false;
     for(size_t i=0;i<r->parent->count;++i) if(r->parent->rows[i]==r) return true;
     return false;
 }
@@ -118,17 +118,6 @@ static bool source_live(void *context,qa_actor_id actor)
     for(size_t i=0;i<r->frame->context.actor_count;++i) if(qa_actor_id_equal(r->frame->actors[i].actor,actor)) return true;
     return false;
 }
-static bool actor_encode(void *context,qa_actor_id actor,qa_saved_actor_id *out,qa_error *e)
-{
-    remote_component *r=context;
-    return frontend_remote_unified_wire_actor(r->parent->replica,actor,out)||
-        q3remote_component_fail(e,QA_ERROR_FORMAT,"Component actor is absent from its actual replica identity ledger");
-}
-static bool actor_decode(void *context,qa_saved_actor_id actor,qa_actor_id *out,qa_error *e)
-{
-    remote_component *r=context;
-    return frontend_remote_unified_actor_retained(r->parent->replica,actor.slot,actor.generation,out,e);
-}
 static bool weapon_presented(void *context,qa_actor_id actor,bool *out,qa_error *e)
 {
     remote_component *r=context;
@@ -181,7 +170,7 @@ static qa_command_result console_command(void *context,const qa_command_invocati
 }
 bool q3remote_component_open(remote_component *r,qa_error *e)
 {
-    if(r->scene) return r->initialized||r->restore_pending||q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component retains an incomplete CG constructor");
+    if(r->scene) return r->initialized||q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component retains an incomplete CG constructor");
     frontend_unified_components *o=r->parent; const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     const qa_product *product=qa_catalog_product(qa_executable_recipe_catalog(o->recipe),r->state.mod->product);
     qa_vfs *files=NULL;
@@ -221,7 +210,7 @@ bool q3remote_component_open(remote_component *r,qa_error *e)
         .common={.context=r,.print=print}};
     application_q3_scene_source source={r,acquire,source_current,source_actor,source_live,release,weapon_presented};
     application_q3_component_scene_preparation request={.origin=APPLICATION_Q3_COMPONENT_SCENE_REMOTE,.component=r->state.mod,
-        .restoring=r->restore_pending,.retired=r->retired,.frontend_identity=r->frontend_identity,
+        .retired=r->retired,.frontend_identity=r->frontend_identity,
         .recipe=o->recipe,.recipe_provider=r->state.provider_row,.catalog=qa_executable_recipe_catalog(o->recipe),
         .owner=r->owner,.generation=r->state.generation,.service_owner=r->services,.physical_seat=domain->physical_seat,.viewer=r->frame->viewer,
         .content=files,.artifact=r->artifact,.acquisition=&r->acquisition,.profile=r->profile,.source=source,.host=&r->host,.assets=&r->assets,
@@ -236,10 +225,9 @@ bool q3remote_component_open(remote_component *r,qa_error *e)
         return true;
     }
     application_q3_scene_options create={.profile=r->profile,.host=r->host,.assets=r->assets,.viewer=r->frame->viewer,.source=source,
-        .output_context=r->frontend.owner,.finish_output=r->frontend.finish,.actor_codec_context=r,.actor_encode=actor_encode,.actor_decode=actor_decode};
-    bool created=application_q3_scene_create(&create,r->restore_pending,&r->scene,e); r->host_entered=r->scene!=NULL;
+        .output_context=r->frontend.owner,.finish_output=r->frontend.finish};
+    bool created=application_q3_scene_create(&create,&r->scene,e); r->host_entered=r->scene!=NULL;
     if(!created) return false;
-    if(r->restore_pending) return true;
     if(!r->frontend.begin(r->frontend.owner,0,e)||!application_q3_scene_initialize(r->scene,e)) return false;
     r->initialized=true; return true;
 }
@@ -272,7 +260,6 @@ bool q3remote_component_close(remote_component **slot,qa_error *e)
     qa_resource_release(r->artifact); qa_resource_release(r->gameplay); qa_vfs_acquisition_dispose(&r->acquisition); qa_vfs_acquisition_dispose(&r->gameplay_acquisition);
     if(r->frame!=r->baseline) q3remote_component_frame_free(r->frame);
     q3remote_component_frame_free(r->baseline); q3remote_component_state_free(&r->state);
-    qa_buffer_free(&r->saved_scene); qa_buffer_free(&r->saved_cvars); qa_buffer_free(&r->saved_console);
     q3remote_component_admissions_clear(r);
     while(r->events) { remote_component_event *next=r->events->next; free(r->events); r->events=next; }
     free(r); *slot=NULL; return true;

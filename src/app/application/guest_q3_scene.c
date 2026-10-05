@@ -127,7 +127,7 @@ static bool host_restore(void *context, qa_bytes bytes, qa_error *e)
 bool application_q3_scene_idle(const application_q3_scene *s)
 { return s && !s->busy && !s->acquired && !s->lexical && (!s->vm || qa_qvm_can_destroy(s->vm)) &&
     (!s->host || qa_q3_host_destroy_ready(s->host)) && (!s->body || application_q3_component_body_idle(s->body)); }
-bool application_q3_scene_create(const application_q3_scene_options *options, bool restoring,
+bool application_q3_scene_create(const application_q3_scene_options *options,
     application_q3_scene **out, qa_error *e)
 {
     if (!options || !out || *out || !options->profile || !options->assets ||
@@ -137,7 +137,7 @@ bool application_q3_scene_create(const application_q3_scene_options *options, bo
         return q3scene_fail(e, QA_ERROR_ARGUMENT, "Component CGAME requires its actual profile, assets and retained source");
     application_q3_scene *s = calloc(1, sizeof(*s));
     if (!s) return q3scene_fail(e, QA_ERROR_MEMORY, "Retaining external component CGAME executor");
-    s->options = *options; s->restoring = restoring; s->revision = s->scene_revision = -1;
+    s->options = *options; s->revision = s->scene_revision = -1;
     for (size_t i = 0; i < 64; ++i) s->commands[i].sequence = -1;
     *out = s;
     s->game_state = calloc(1, sizeof(*s->game_state));
@@ -327,7 +327,7 @@ static bool accept(application_q3_scene *s, bool baseline, bool *changed, qa_err
 }
 bool application_q3_scene_initialize(application_q3_scene *s, qa_error *e)
 {
-    if (!application_q3_scene_idle(s) || s->initialized || s->restoring || s->failed)
+    if (!application_q3_scene_idle(s) || s->initialized || s->failed)
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component Init requires its fresh real executor");
     const application_q3_scene_profile *p=s->options.profile;
     s->busy=true; bool ok=acquire(s,!p->player_events,e);
@@ -351,7 +351,7 @@ bool application_q3_scene_initialize(application_q3_scene *s, qa_error *e)
 }
 bool application_q3_scene_advance(application_q3_scene *s, uint64_t sequence, qa_error *e)
 {
-    if (!application_q3_scene_idle(s)||!s->initialized||s->failed||s->restoring)
+    if (!application_q3_scene_idle(s)||!s->initialized||s->failed)
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component advance requires its initialized unborrowed executor");
     if (s->frame_present&&sequence<=s->frame) return true;
     s->busy=true; s->frame=sequence; s->frame_present=true;
@@ -370,7 +370,7 @@ bool application_q3_scene_advance(application_q3_scene *s, uint64_t sequence, qa
 }
 bool application_q3_scene_consume(application_q3_scene *s,const application_q3_scene_player_event *event,uint64_t sequence,qa_error *e)
 {
-    if(!s||!event||!s->options.profile->player_events||!s->initialized||s->failed||!application_q3_scene_idle(s)||s->restoring)
+    if(!s||!event||!s->options.profile->player_events||!s->initialized||s->failed||!application_q3_scene_idle(s))
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Original player event requires its initialized returned CG owner");
     if(s->event_present&&sequence<=s->event_sequence) return true;
     const application_q3_scene_profile *p=s->options.profile; int32_t slot=event->player.clientNum;
@@ -425,13 +425,6 @@ bool application_q3_scene_console(application_q3_scene *s,const qa_command_token
     ok=finish_output(s,ok,e);
     if (!ok) s->failed=true; else *handled=result!=0;
     release(s); s->busy=false; return ok;
-}
-bool q3scene_descriptors(const application_q3_scene *s,qa_qvm_saved_function out[3],qa_error *e)
-{
-    if(!application_q3_scene_idle(s)) return false;
-    if(s->options.profile->player_events) { memset(out,0,3*sizeof(*out)); return true; }
-    if(!application_q3_component_body_descriptors(s->body,out,e)) return false;
-    out[2]=(qa_qvm_saved_function){s->event_binding,s->options.profile->event_entry,true,event_hook,(void *)s}; return true;
 }
 void q3scene_history_clear(application_q3_scene *s)
 {

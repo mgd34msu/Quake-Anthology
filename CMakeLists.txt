@@ -1367,7 +1367,6 @@ add_library(qa_application STATIC
     src/app/application/guest_q3_combat.c
     src/app/application/guest_q3_scene_profile.c
     src/app/application/guest_q3_scene.c
-    src/app/application/guest_q3_scene_save.c
     src/app/application/guest_q3_mod_input.c
     src/app/application/guest_q3_mod_protection.c
     src/app/application/guest_q3_mod_callbacks.c

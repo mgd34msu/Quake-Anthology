@@ -53,12 +53,9 @@ typedef struct application_q3_scene_options {
     application_q3_scene_source source;
     void *output_context;
     bool (*finish_output)(void *,bool,qa_error *);
-    void *actor_codec_context;
-    bool (*actor_encode)(void *,qa_actor_id,qa_saved_actor_id *,qa_error *);
-    bool (*actor_decode)(void *,qa_saved_actor_id,qa_actor_id *,qa_error *);
 } application_q3_scene_options;
 
-bool application_q3_scene_create(const application_q3_scene_options *, bool restoring,
+bool application_q3_scene_create(const application_q3_scene_options *,
     application_q3_scene **, qa_error *);
 bool application_q3_scene_initialize(application_q3_scene *, qa_error *);
 bool application_q3_scene_advance(application_q3_scene *, uint64_t sequence, qa_error *);
@@ -70,10 +67,5 @@ bool application_q3_scene_destroy(application_q3_scene **, qa_error *);
 application_q3_component_body *application_q3_scene_bodies(application_q3_scene *);
 bool application_q3_scene_entered_context(const application_q3_scene *,application_q3_scene_context *);
 bool application_q3_scene_retained_context(const application_q3_scene *,application_q3_scene_context *);
-bool application_q3_scene_checkpoint(application_q3_scene *, qa_buffer *, qa_error *);
-bool application_q3_scene_restore(application_q3_scene *, qa_bytes, qa_error *);
-/* After the candidate's actual source, cvar namespaces and world graph have
- * been installed, publish the host continuation without Init or source calls. */
-bool application_q3_scene_finish_restore(application_q3_scene *, qa_error *);
 
 #endif

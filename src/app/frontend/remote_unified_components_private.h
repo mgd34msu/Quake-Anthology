@@ -90,8 +90,6 @@ typedef struct remote_component {
     size_t admission_count;
     bool admissions_ready;
     uint64_t frontend_identity;
-    qa_buffer saved_scene,saved_cvars,saved_console;
-    bool restore_pending,restore_imported,restore_frontend,restore_consoles;
     bool acquired,host_entered,initialized,advanced,submitted,retired;
 } remote_component;
 struct frontend_unified_components {
@@ -107,7 +105,7 @@ struct frontend_unified_components {
     qa_scene_light *lights;
     size_t light_count;
     struct frontend_unified_component_frame *prepared;
-    bool busy,closing,restoring,failed;
+    bool busy,closing,failed;
 };
 struct frontend_unified_component_frame {
     frontend_unified_components *owner;

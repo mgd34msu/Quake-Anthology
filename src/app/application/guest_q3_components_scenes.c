@@ -144,7 +144,7 @@ static bool open_scene(component_scene_row *row,qa_error *e)
         return application_fail(e,QA_ERROR_ARGUMENT,"Component scene factory omitted its actual physical identity");
     application_q3_scene_options create={.profile=row->profile,.host=row->host,.assets=row->assets,.viewer=row->viewer,.source=row->source,
         .output_context=row->frontend.owner,.finish_output=row->frontend.finish};
-    bool created=application_q3_scene_create(&create,false,&row->scene,e);
+    bool created=application_q3_scene_create(&create,&row->scene,e);
     row->host_entered=row->scene!=NULL;
     if(!created) return false;
     if(!row->frontend.begin(row->frontend.owner,0,e)||!application_q3_scene_initialize(row->scene,e)) return false;
