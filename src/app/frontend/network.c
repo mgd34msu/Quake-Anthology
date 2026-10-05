@@ -3448,7 +3448,9 @@ bool frontend_network_client_forward(qa_frontend *f, const qa_command_invocation
 {
     qa_frontend_network *n = f ? f->network : NULL;
     qa_application_q3_client_context role; qa_command_context actual;
-    if (!n || !call || !call->argc || !call->argv || !call->argv[0] || !call->args_text || !call->raw ||
+    const char *text;bool explicit_command;
+    if(!qa_console_forward_text(call,&text,&explicit_command,error))return false;
+    if (!n ||
         !qa_application_q3_remote_context_read(f->application, n->q3_cgame_owner, n->q3_client_launch_seat, &role, error) ||
         !qa_application_q3_remote_context_current(f->application, &role) || call->console != role.console ||
         !qa_application_capture_command_context(f->application, &role.command_context, &actual, error) ||
@@ -3460,14 +3462,11 @@ bool frontend_network_client_forward(qa_frontend *f, const qa_command_invocation
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Console forwarding lost its actual CLIENT invocation");
     const qa_q3_client_peer *peer = remote_view(f);
     bool demo = peer && qa_q3_client_peer_demo(peer);
-    const char *name = call->argv[0];
-    bool explicit_command = (name[0] == 'c' || name[0] == 'C') &&
-        (name[1] == 'm' || name[1] == 'M') && (name[2] == 'd' || name[2] == 'D') && !name[3];
     if (explicit_command) {
         if (!n->q3_client_active || n->q3_client_closed || n->q3_client_retiring || demo) {
             frontend_console_print(f, &call->context, "Not connected to a server.\n"); return true;
         }
-        return call->argc == 1 || frontend_network_client_reliable(f, &call->context, call->args_text, error);
+        return call->argc == 1 || frontend_network_client_reliable(f, &call->context, text, error);
     }
     if (call->argv[0][0] == '-') return true;
     if (demo || n->q3_client_admission.phase != QA_Q3_ADMITTED || !n->q3_client_attached ||
@@ -3480,7 +3479,7 @@ bool frontend_network_client_forward(qa_frontend *f, const qa_command_invocation
         snprintf(message, length + sizeof("Unknown command \"\"\n"), "Unknown command \"%s\"\n", call->argv[0]);
         frontend_console_print(f, &call->context, message); free(message); return true;
     }
-    return frontend_network_client_reliable(f, &call->context, call->argc > 1 ? call->raw : call->argv[0], error);
+    return frontend_network_client_reliable(f, &call->context, text, error);
 }
 bool frontend_network_client_command(qa_frontend *f, const char *text, qa_error *error)
 { return frontend_network_client_command_seat(f, 0, text, error); }

@@ -163,6 +163,17 @@ bool qa_console_invocation_current(const qa_console *console,const qa_command_in
     return console && command && command->console==console && console->frame &&
         console->frame->invocation==command;
 }
+bool qa_console_forward_text(const qa_command_invocation *command,const char **text,
+    bool *explicit_command,qa_error *error)
+{
+    if(!command||!text||!explicit_command||!command->argc||!command->argv||
+        !command->argv[0]||!command->raw||!command->args_text||
+        !qa_console_invocation_current(command->console,command))
+        return qac_fail(error,QA_ERROR_ARGUMENT,"Forwarded text requires its actual entered console invocation");
+    *explicit_command=qac_equal(command->argv[0],"cmd");
+    *text=*explicit_command?command->args_text:command->argc>1?command->raw:command->argv[0];
+    return true;
+}
 
 bool qa_console_output_redirected(const qa_console *console)
 {

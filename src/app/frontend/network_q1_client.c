@@ -169,7 +169,13 @@ static qa_command_result forward(void *context,const qa_command_invocation *comm
         return frontend_remote_q1_player_command(view.receiver,player.actor,name,command->argv+1,
             command->argc-1,error)?QA_COMMAND_HANDLED:QA_COMMAND_FAILED;
     }
-    return qa_network_q1_client_command(o->options.runtime,o->client,command->raw,error)?
+    const char *text;bool explicit_command;
+    if(!qa_console_forward_text(command,&text,&explicit_command,error))return QA_COMMAND_FAILED;
+    if(explicit_command&&command->argc==1) {
+        if(qa_q1_is_qw(o->options.protocol))return QA_COMMAND_HANDLED;
+        text="\n";
+    }
+    return qa_network_q1_client_command(o->options.runtime,o->client,text,error)?
         QA_COMMAND_HANDLED:QA_COMMAND_FAILED;
 }
 static qa_command_result command(void *context,const qa_command_invocation *invocation,qa_error *error)

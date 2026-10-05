@@ -396,6 +396,10 @@ void qa_console_emit(qa_console *, const qa_command_context *, const char *);
 bool qa_console_idle(const qa_console *);
 /* Pure exact innermost invocation identity, including post-dispatch receipt. */
 bool qa_console_invocation_current(const qa_console *,const qa_command_invocation *);
+/* Borrow the original wire text of an entered invocation. Explicit cmd uses
+ * its untouched argument tail; each Source retains its own admission policy. */
+bool qa_console_forward_text(const qa_command_invocation *,const char **text,
+    bool *explicit_command,qa_error *);
 bool qa_console_output_redirected(const qa_console *);
 /* One frame of queued work, respecting wait. Zero budget is unlimited. */
 bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_error *error);

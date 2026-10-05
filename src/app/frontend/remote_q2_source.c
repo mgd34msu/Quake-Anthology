@@ -266,7 +266,10 @@ static qa_command_result forward(void *context, const qa_command_invocation *inv
         return QA_COMMAND_UNHANDLED;
     uint32_t remote_index;
     if (!frontend_remote_q2_wire_seat(source->receiver, &remote_index, error)) return QA_COMMAND_FAILED;
-    return qa_network_q2_client_command(source->domain.runtime, source->domain.client, invocation->raw,
+    const char *text;bool explicit_command;
+    if(!qa_console_forward_text(invocation,&text,&explicit_command,error))return QA_COMMAND_FAILED;
+    if(explicit_command&&invocation->argc==1)return QA_COMMAND_HANDLED;
+    return qa_network_q2_client_command(source->domain.runtime, source->domain.client, text,
         (uint8_t)remote_index, error) ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
 }
 static bool allowed(void *context, const char *path, bool *result, qa_error *error)
