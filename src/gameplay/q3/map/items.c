@@ -97,6 +97,7 @@ static bool finish_item(qa_q3_game *game, qa_q3_map_actor_state *state,
     if (!state)
         return true;
     state->item_bound = true;
+    state->touchable = true;
     qa_body_state body;
     if (!qa_world_body_read(game->options.services.world, actor, &body, error))
         return false;

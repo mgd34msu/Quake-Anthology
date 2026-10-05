@@ -3,6 +3,8 @@
 
 #include "internal.h"
 
+void application_native_q3_name_key(const char *,char *,size_t);
+
 /* Source level vote state is separate from pers, sess and PS, which retain
  * their existing native GAME client owners. Init clears this level owner;
  * restore imports it without issuing commands or configstring writes. */

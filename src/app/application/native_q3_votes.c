@@ -285,12 +285,13 @@ static bool call_vote(vote_scope *scope, const qa_command_invocation *command, q
         config_integer(scope, 10, vote->yes, error) && config_integer(scope, 11, vote->no, error);
 }
 
-static void clean_name(const char *text, char out[36])
+void application_native_q3_name_key(const char *text,char *out,size_t capacity)
 {
+    if (!capacity) return;
     size_t used = 0;
-    for (size_t index = 0; index < 35 && text[index]; ++index) {
+    for (size_t index = 0; index < capacity-1 && text[index]; ++index) {
         unsigned char byte = (unsigned char)text[index];
-        if (byte == '^' && index + 1 < 35 && text[index + 1] && text[index + 1] != '^') ++index;
+        if (byte == '^' && index + 1 < capacity-1 && text[index + 1] && text[index + 1] != '^') ++index;
         else if (byte >= 32 && byte <= 126) {
             if (byte >= 'A' && byte <= 'Z') byte += 'a' - 'A';
             out[used++] = (char)byte;
@@ -364,14 +365,14 @@ static bool call_team_vote(vote_scope *scope, const qa_command_invocation *comma
             }
         } else {
             char wanted[36];
-            clean_name(parameter, wanted);
+            application_native_q3_name_key(parameter,wanted,sizeof(wanted));
             for (target = 0; (uint32_t)target < scope->maximum; ++target) {
                 qa_q3_native_client other;
                 qa_q3_client_session other_session;
                 char cleaned[36];
                 if (!client(scope, (uint32_t)target, &other, &other_session, error)) return false;
                 if (other.connected == QA_Q3_CLIENT_DISCONNECTED || other_session.team != sess.team) continue;
-                clean_name(other.netname, cleaned);
+                application_native_q3_name_key(other.netname,cleaned,sizeof(cleaned));
                 if (!strcmp(wanted, cleaned)) break;
             }
             if ((uint32_t)target >= scope->maximum) {

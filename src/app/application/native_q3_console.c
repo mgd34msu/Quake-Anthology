@@ -3,12 +3,15 @@
 #include "startup_flow.h"
 #include "engine_shutdown.h"
 #include "native_q3_wire_state.h"
+#include "native_q3_votes.h"
+#include "bots_catalog.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
 #include "qa/cvars_save.h"
 
 #include <stdlib.h>
 #include <ctype.h>
+#include <stdio.h>
 #include <string.h>
 
 typedef struct q3_engine_cvar {
@@ -395,6 +398,63 @@ static qa_command_result command(void *context, const qa_command_invocation *inv
     --owner->calls;
     return result;
 }
+static bool operator_kick(void *context,const qa_command_invocation *call,qa_error *error)
+{
+    struct application_native_q3_console *owner=context;
+    application_provider *provider=owner->provider; qa_application *app=provider->application;
+    if (!call || call->console!=owner->console || call->context.owner!=provider->owner ||
+        call->context.dialect!=QA_CONSOLE_Q3 || call->context.origin==QA_COMMAND_REMOTE ||
+        call->context.actor.registry || !qa_console_invocation_current(owner->console,call) ||
+        !qa_application_command_context_active(app,&call->context))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q3 kick requires its actual entered Source operator");
+    if (qa_application_get_state(app)!=QA_APPLICATION_RUNNING ||
+        application_world_provider(app,QA_ROLE_ENTITIES,"")!=provider) {
+        qa_console_emit(owner->console,&call->context,"Server is not running.\n"); return true;
+    }
+    if (call->argc!=2) {
+        qa_console_emit(owner->console,&call->context,"Usage: kick <player name|slot|all|allbots>\n"); return true;
+    }
+    if (!application_native_q3_console_borrow(provider,error)) return false;
+    uint32_t maximum; bool ok=qa_q3_source_max_clients(provider->state.q3,&maximum,error),matched=false;
+    const char *target=call->argv[1]; char wanted[1024];
+    application_native_q3_name_key(target,wanted,sizeof(wanted));
+    bool all=strlen(target)==3 && !strcmp(wanted,"all"),
+        allbots=strlen(target)==7 && !strcmp(wanted,"allbots");
+    for (uint32_t slot=0;ok && slot<maximum;++slot) {
+        qa_actor_id dropping; const char *reason; bool pending;
+        ok=application_native_q3_wire_drop_client_read(provider,slot,&dropping,&reason,&pending,error);
+        if (!ok || pending) continue;
+        application_native_q3_wire_client_view wire; bool admitted;
+        qa_q3_native_client client;
+        ok=application_native_q3_wire_client_admission_read(provider,slot,&wire,&admitted,error);
+        if (!ok || !admitted) continue;
+        ok=qa_q3_client_read(provider->state.q3,wire.actor,&client,error);
+        if (!ok) break;
+        char number[16],name[QA_Q3_NATIVE_NETNAME];
+        snprintf(number,sizeof(number),"%u",slot);
+        application_native_q3_name_key(client.netname,name,sizeof(name));
+        if (!(all || (allbots && wire.bot) || (!allbots &&
+            (!strcmp(target,number) || !strcmp(wanted,name))))) continue;
+        if (wire.seat!=UINT32_MAX) {
+            if (!all && !allbots) {
+                qa_console_emit(owner->console,&call->context,"Cannot kick host player\n"); matched=true;
+            }
+            continue;
+        }
+        matched=true;
+        ok=(!wire.bot || application_bots_catalog_remove_begin(app,slot,error)) &&
+            application_native_q3_wire_drop(provider,slot,"was kicked",error) &&
+            qa_application_command_context_active(app,&call->context);
+        if (!ok && (!error || !error->code))
+            application_fail(error,QA_ERROR_ARGUMENT,"Q3 kick changed its retained Source operator");
+    }
+    if (ok && !matched && !all && !allbots) {
+        char text[1152]; snprintf(text,sizeof(text),"Player %.1023s is not on the server\n",target);
+        qa_console_emit(owner->console,&call->context,text);
+    }
+    application_native_q3_console_release(provider);
+    return ok;
+}
 
 bool application_native_q3_console_at(application_provider *provider, qa_console **console,
                                        qa_cvars **cvars, qa_command_context *context)
@@ -489,6 +549,16 @@ bool application_native_q3_console_create(application_provider *provider,
         return false;
     }
     provider->native_q3_console = owner;
+    qa_application *application=provider->application;
+    application_provider *previous=application->startup_preinit_provider;
+    if (application->operation==APPLICATION_PERSISTING) application->startup_preinit_provider=provider;
+    bool registered=qa_console_register(owner->console,"kick","Kick a Q3 player by name, slot, all or allbots",
+        provider->owner,true,operator_kick,owner,error);
+    application->startup_preinit_provider=previous;
+    if (!registered) {
+        application_native_q3_console_destroy(provider,NULL);
+        return false;
+    }
     return true;
 }
 
