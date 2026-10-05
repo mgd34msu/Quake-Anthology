@@ -1697,7 +1697,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/ui_features.c
     src/app/frontend/audio_identity.c
     src/app/frontend/audio_identity_save.c
-    src/app/frontend/audio_restore.c
     src/app/frontend/bindings_ui.c
     src/app/frontend/capture.c
     src/app/frontend/commands.c
