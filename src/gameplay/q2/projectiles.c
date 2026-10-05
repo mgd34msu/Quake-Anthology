@@ -1381,6 +1381,7 @@ bool q2_projectile_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
             }
         }
     } else if (p.kind != Q2_PROX && p.kind != Q2_TESLA && p.kind != Q2_TRAP && p.kind != Q2_NUKE &&
+               !((p.kind == Q2_GIB || p.kind == Q2_DEBRIS) && !p.expire_ns) &&
                !(p.kind == Q2_GIB && p.phase == 1) && p.expire_ns <= g->now_ns) {
         if (p.kind == Q2_ION) {
             qa_builtin_event event = {.kind = QA_BUILTIN_IMPACT,

@@ -53,7 +53,7 @@ static bool identify(qa_q2_game *g, q2_original_record_io *io,
         {"prox_field", Q2_PROX_FIELD}, {"tesla", Q2_TESLA}, {"tesla_mine", Q2_TESLA},
         {"tesla trigger", Q2_TESLA_FIELD}, {"bad_area", Q2_BAD_AREA},
         {"htrap", Q2_TRAP}, {"food_cube_trap", Q2_TRAP}, {"nuke", Q2_NUKE},
-        {"gib", Q2_GIB}, {"debris", Q2_DEBRIS}, {"spawngro", Q2_SPAWN_GROWTH},
+        {"gib", Q2_GIB}, {"widowlegs", Q2_GIB}, {"debris", Q2_DEBRIS}, {"spawngro", Q2_SPAWN_GROWTH},
         {"loogie", Q2_LOOGIE}
     };
     *kind = Q2_PROJECTILE_NONE;
@@ -66,6 +66,10 @@ static bool identify(qa_q2_game *g, q2_original_record_io *io,
     if (found) { *kind = Q2_TRAP_ORBIT_GIB; return true; }
     if (!matches(g, io, "think", 436, "bfg_laser_update", &found)) return false;
     if (found) { *kind = Q2_BFG_LASER; return true; }
+    if (!matches(g, io, "think", 436, "widowlegs_think", &found)) return false;
+    if (found) { *kind = Q2_GIB; return true; }
+    if (!matches(g, io, "touch", 444, "widow_gib_touch", &found)) return false;
+    if (found) { *kind = Q2_GIB; return true; }
     if (*kind == Q2_PROJECTILE_NONE) {
         bool debris, gib;
         if (!matches(g, io, "die", 456, "debris_die", &debris) ||
@@ -147,9 +151,18 @@ static bool read_phase(qa_q2_game *g, q2_original_record_io *io, q2_projectile *
         break;
     case Q2_GIB:
         if (!matches(g, io, "think", 436, "gib_think", &first) ||
-            !matches(g, io, "touch", 444, NULL, &second)) return false;
+            !matches(g, io, "touch", 444, NULL, &second) ||
+            !matches(g, io, "think", 436, "widowlegs_think", &third)) return false;
         p->phase = first ? 1 : 0;
         p->armed = second;
+        if (third) {
+            p->gib_flags = Q2_GIB_WIDOW_LEGS;
+            p->armed = false;
+            if (!scalar(io, "count", Q2_ORIGINAL_I32, 532, &p->phase)) return false;
+        } else {
+            if (!matches(g, io, "touch", 444, "widow_gib_touch", &third)) return false;
+            if (third) p->gib_flags = Q2_GIB_WIDOW | Q2_GIB_WIDOW_SIZED;
+        }
         break;
     case Q2_NUKE:
         if (!matches(g, io, "think", 436, "Nuke_Quake", &first)) return false;
@@ -215,10 +228,13 @@ static bool callbacks(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
         touch = p->gib_flags & Q2_GIB_UPRIGHT ? "gib_touch" : NULL; break;
     case Q2_TRAP_GIB: break;
     case Q2_GIB:
-        if (p->gib_flags & (Q2_GIB_WIDOW | Q2_GIB_WIDOW_SIZED | Q2_GIB_WIDOW_LEGS))
-            return unsupported(io, 436, "Original Q2 widow gib requires its Source continuation");
+        if (p->gib_flags & Q2_GIB_WIDOW_LEGS) {
+            think = "widowlegs_think";
+            break;
+        }
         think = !rr && p->phase == 1 ? "gib_think" : "G_FreeEdict";
-        touch = rr ? (p->gib_flags & Q2_GIB_UPRIGHT ? "gib_touch" : NULL) :
+        touch = p->gib_flags & Q2_GIB_WIDOW_SIZED ? (!p->armed ? "widow_gib_touch" : NULL) :
+            rr ? (p->gib_flags & Q2_GIB_UPRIGHT ? "gib_touch" : NULL) :
             !p->armed && !(p->gib_flags & Q2_GIB_METALLIC) ? "gib_touch" : NULL;
         die = "gib_die"; break;
     case Q2_DEBRIS: die = rr ? "gib_die" : "debris_die"; break;
@@ -246,7 +262,8 @@ static bool references(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
             qa_actor_collision collision;
             owner = qa_world_get_collision(g->services.world, a->id, &collision, NULL) ?
                 collision.owner : (qa_actor_reference){0};
-        } else if (p->kind == Q2_GIB || p->kind == Q2_DEBRIS || p->kind == Q2_TRAP_GIB)
+        } else if ((p->kind == Q2_GIB && !(p->gib_flags & Q2_GIB_WIDOW_SIZED)) ||
+            p->kind == Q2_DEBRIS || p->kind == Q2_TRAP_GIB)
             owner = (qa_actor_reference){0};
     }
     if (!q2_original_source_reference(g, io, "owner", 256, &owner) ||
@@ -293,7 +310,7 @@ static bool deadlines(q2_original_record_io *io, q2_projectile *p)
         p->kind == Q2_TRAP_GIB || p->kind == Q2_BAD_AREA ||
         (p->kind == Q2_GRENADE && !(rr && p->armed)) ||
         (p->kind == Q2_TRACKER && !p->armed && !qa_actor_reference_present(p->enemy)) ||
-        (p->kind == Q2_GIB && p->phase != 1) ||
+        (p->kind == Q2_GIB && p->phase != 1 && !(p->gib_flags & Q2_GIB_WIDOW_LEGS)) ||
         (p->kind == Q2_TRAP && p->phase == FINISHED) ||
         (p->kind == Q2_PROX && !rr && p->phase == FLIGHT);
     if (!io->reading && expiry_think) next = p->expire_ns;
@@ -339,6 +356,13 @@ static bool deadlines(q2_original_record_io *io, q2_projectile *p)
             !scalar(io, "timestamp", Q2_ORIGINAL_TIME, 288, &p->effect_ns)) return false;
     }
     if (p->kind == Q2_SPAWN_GROWTH && !q2_original_seconds(io, "wait", 592, &p->effect_ns)) return false;
+    if (p->kind == Q2_GIB && (p->gib_flags & Q2_GIB_WIDOW_LEGS)) {
+        if (!scalar(io, "wait", Q2_ORIGINAL_F32, 592, &p->delay)) return false;
+        if (!isfinite(p->delay) || p->delay < 0 ||
+            (double)p->delay * (double)Q2_NS >= (double)UINT64_MAX)
+            return unsupported(io, 592, "Original Q2 Widow legs wait exceeds the native clock");
+        if (!io->reading && !scalar(io, "count", Q2_ORIGINAL_I32, 532, &p->phase)) return false;
+    }
     return true;
 }
 
@@ -412,6 +436,12 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
         return unsupported(io, 436, "Q2 projectile does not belong to the selected original game");
     if (!references(g, io, a)) return false;
     if (io->references_only) return true;
+    if (io->reading && p->kind == Q2_GIB && !(p->gib_flags & Q2_GIB_WIDOW_LEGS) &&
+        qa_actor_reference_present(p->owner) && a->physics.gravity_scale == .25f)
+        p->gib_flags |= Q2_GIB_WIDOW | Q2_GIB_WIDOW_SIZED;
+    if (io->edition == QA_Q2_CLASSIC && io->product != QA_Q2_ROGUE &&
+        (p->gib_flags & (Q2_GIB_WIDOW | Q2_GIB_WIDOW_SIZED | Q2_GIB_WIDOW_LEGS)))
+        return unsupported(io, 436, "Q2 widow gib does not belong to the selected original game");
     uint32_t flags = p->kind == Q2_GRENADE ? (p->hand ? 1u : 0) | (p->held ? 2u : 0) :
         p->kind == Q2_TRAP && io->edition == QA_Q2_CLASSIC ? 1u | (p->held ? 2u : 0) :
         (p->kind == Q2_BOLT || p->kind == Q2_BLUE_BOLT) && p->direct_mod == 10 ? 1u : 0;
@@ -459,8 +489,24 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
             p->gekk = name && !strcmp(name, "monster_gekk");
         }
     }
-    if (io->reading && (p->kind == Q2_GIB || p->kind == Q2_DEBRIS || p->kind == Q2_TRAP_ORBIT_GIB)) {
-        p->gib_flags = a->physics.motion == QA_PHYSICS_BOUNCE ? Q2_GIB_METALLIC : 0;
+    if (p->kind == Q2_GIB && (p->gib_flags & Q2_GIB_WIDOW_SIZED)) {
+        qa_string_id sound = 0;
+        if (!io->reading && (p->gib_flags & Q2_GIB_WIDOW_HIT_SOUND) &&
+            !qa_strings_intern_cstr(qa_session_strings(g->services.session), "misc/fhit3.wav",
+                &sound, io->error)) return false;
+        if (!q2_original_resource(g, io, engine,
+            io->edition == QA_Q2_RERELEASE ? "style" : "plat2flags",
+            UINT16_MAX, UINT16_MAX, 992, 288, &sound)) return false;
+        if (io->reading && sound) {
+            const char *path = qa_strings_cstr(qa_session_strings(g->services.session), sound);
+            if (!path || strcmp(path, "misc/fhit3.wav"))
+                return unsupported(io, 992, "Original Q2 Widow impact sound differs from Source");
+            p->gib_flags |= Q2_GIB_WIDOW_HIT_SOUND;
+        }
+    }
+    if (io->reading && (p->kind == Q2_GIB || p->kind == Q2_DEBRIS || p->kind == Q2_TRAP_ORBIT_GIB) &&
+        !(p->gib_flags & Q2_GIB_WIDOW_LEGS)) {
+        p->gib_flags |= a->physics.motion == QA_PHYSICS_BOUNCE ? Q2_GIB_METALLIC : 0;
         if (io->edition == QA_Q2_RERELEASE) {
             uint64_t source_flags = 0;
             if (!scalar(io, "flags", Q2_ORIGINAL_U64, 264, &source_flags)) return false;

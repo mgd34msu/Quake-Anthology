@@ -241,7 +241,9 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
         ((p->gib_flags & Q2_GIB_WIDOW_LEGS) != 0 &&
          (p->kind != Q2_GIB || p->frame < 0 || p->frame > 23 ||
           p->phase < 0 || p->phase > 1 || p->expire_ns != UINT64_MAX ||
-          (p->phase == 1 && (p->frame != 23 || p->effect_ns == 0)) ||
+          !isfinite(p->delay) || p->delay < 0 ||
+          (double)p->delay * (double)Q2_NS >= (double)UINT64_MAX ||
+          (p->phase == 1 && (p->frame != 23 || p->delay == 0)) ||
           p->gib_flags != Q2_GIB_WIDOW_LEGS)) ||
         ((p->gib_flags & (Q2_GIB_WIDOW | Q2_GIB_WIDOW_SIZED | Q2_GIB_WIDOW_HIT_SOUND)) != 0 &&
          (p->kind != Q2_GIB || (p->gib_flags & Q2_GIB_WIDOW) == 0 ||

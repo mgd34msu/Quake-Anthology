@@ -275,7 +275,7 @@ bool q2_gib_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     return qa_q2_run_actor(g, contact->self, gib_contact, &call, e);
 }
 bool q2_gib_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcome, qa_error *e) {
-    if ((a->projectile.gib_flags & Q2_GIB_WIDOW) != 0 || g->options.edition == QA_Q2_CLASSIC ||
+    if (g->options.edition == QA_Q2_CLASSIC ||
         (outcome->request.attack.cause.kind == QA_CAUSE_Q2 &&
          outcome->request.attack.cause.source.q2.means_of_death == 20))
         return qa_session_release(g->services.session, a->id, e);

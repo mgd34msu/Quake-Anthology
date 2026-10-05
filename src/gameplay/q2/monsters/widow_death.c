@@ -62,7 +62,7 @@ static bool gib(qa_q2_game *game, qa_actor_id source, const char *model,
   qa_vec3 angular;
   angular.x = q2_random(game) * (sized ? 400 : 600);
   angular.y = q2_random(game) * (sized ? 400 : 600);
-  angular.z = q2_random(game) * (sized ? 200 : 600);
+  angular.z = q2_random(game) * (sized ? game->options.edition == QA_Q2_RERELEASE ? 400 : 200 : 600);
   velocity.x *= 2; velocity.y *= 2;
   qa_bounds bounds = {0};
   if (sized) {
@@ -73,13 +73,15 @@ static bool gib(qa_q2_game *game, qa_actor_id source, const char *model,
     bounds = (qa_bounds){.mins = {-size, -size, 0}, .maxs = {size, size, size}};
   }
   qa_actor_definition definition;
-  if (!qa_builtin_resource(&game->services, "gib", &definition, error)) return false;
+  qa_string_id classname;
+  if (!qa_builtin_resource(&game->services, "gib", &definition, error) ||
+      !qa_builtin_resource(&game->services, "noclass", &classname, error)) return false;
   if (!q2_actor_live(game, source)) return true;
   const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(game->services.session), source);
   qa_actor_reference owner_reference = reference_owner && reference_owner->owner == game->options.owner && reference_owner->has_source ?
       qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
       qa_actor_reference_lifetime(source);
-  qa_combat_state combat = {.can_take_damage = true};
+  qa_combat_state combat = {.can_take_damage = true, .no_knockback = true};
   qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
       .contents = 2, .owner = owner_reference, .role = QA_COLLISION_SOLID};
   qa_builtin_spawn spawn = {.owner = game->options.owner, .definition = definition,
@@ -93,8 +95,9 @@ static bool gib(qa_q2_game *game, qa_actor_id source, const char *model,
   q2_actor *actor = q2_actor_get(game, id, true, error);
   if (!actor) return release_failed(game, id, error);
   actor->projectile = (q2_projectile){.kind = Q2_GIB,
-      .owner = sized ? owner_reference : (qa_actor_reference){0}, .classname = definition,
+      .owner = sized ? owner_reference : (qa_actor_reference){0}, .classname = classname,
       .effects = 2, .render_flags = 32768, .scale = 1, .alpha = 1,
+      .armed = game->options.edition == QA_Q2_RERELEASE && !sized,
       .visible = true, .expire_ns = q2_deadline(game->now_ns, q2_duration(lifetime)),
       .gib_flags = Q2_GIB_WIDOW | (organic ? 0 : Q2_GIB_METALLIC) |
                    (sized ? Q2_GIB_WIDOW_SIZED : 0) |
@@ -163,7 +166,7 @@ static bool spawn_legs(q2m_context *context, qa_error *error) {
 
 bool q2_widow_legs_think(qa_q2_game *game, q2_actor *actor, qa_error *error) {
   qa_actor_id id = actor->id;
-  if (game->now_ns < actor->projectile.next_ns) return true;
+  if (!actor->projectile.next_ns || game->now_ns < actor->projectile.next_ns) return true;
   qa_body_state body;
   if (!qa_world_body_read(game->services.world, id, &body, error)) return false;
   if (!q2_actor_live(game, id)) return true;
@@ -182,9 +185,16 @@ bool q2_widow_legs_think(qa_q2_game *game, q2_actor *actor, qa_error *error) {
         .origin = body.origin, .end = body.angles};
     return qa_builtin_emit(&game->services, &event, error);
   }
-  if (!actor->projectile.effect_ns)
-    actor->projectile.effect_ns = q2_deadline(game->now_ns, Q2_NS);
-  if (game->now_ns > actor->projectile.effect_ns) {
+  bool rr = game->options.edition == QA_Q2_RERELEASE;
+  if (actor->projectile.delay == 0)
+    actor->projectile.delay = rr ?
+        (float)(q2_deadline(game->now_ns, Q2_NS) / Q2_MS) / 1000.0f :
+        (float)((double)game->now_ns / (double)Q2_NS) + 1.0f;
+  float wait = actor->projectile.delay;
+  float classic_time = (float)((double)game->now_ns / (double)Q2_NS);
+  bool expired = rr ? game->now_ns / Q2_MS > (uint64_t)(wait * 1000.0f) :
+      classic_time > wait;
+  if (expired) {
     const qa_vec3 offsets[] = {{-65.6f, -8.44f, 28.59f}, {-1.04f, -51.18f, 7.04f}};
     const char *const models[] = {"models/monsters/blackwidow/gib1/tris.md2",
         "models/monsters/blackwidow/gib2/tris.md2", "models/monsters/blackwidow/gib3/tris.md2"};
@@ -201,8 +211,10 @@ bool q2_widow_legs_think(qa_q2_game *game, q2_actor *actor, qa_error *error) {
     }
     return !q2_actor_live(game, id) || qa_session_release(game->services.session, id, error);
   }
-  if (!actor->projectile.phase &&
-      game->now_ns > actor->projectile.effect_ns - 500 * Q2_MS) {
+  float warning = wait - .5f;
+  bool warning_due = rr ? warning < 0 ||
+      game->now_ns / Q2_MS > (uint64_t)(warning * 1000.0f) : classic_time > warning;
+  if (!actor->projectile.phase && warning_due) {
     actor->projectile.phase = 1;
     if (!effect(game, id, project(&body, qa_v3(31, -88.7f, 10.96f)), "q2:explosion1", 1, error) ||
         !effect(game, id, project(&body, qa_v3(-12.67f, -4.39f, 15.68f)), "q2:explosion1", 1, error)) return false;
