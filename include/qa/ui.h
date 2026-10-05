@@ -6,6 +6,13 @@
 #include "qa/input.h"
 
 typedef struct qa_ui qa_ui;
+typedef struct qa_ui_input_binding {
+    qa_input_seat *seat;
+    qa_input_ui_handler handler;
+    void *context;
+    qa_input_ui_token token;
+} qa_ui_input_binding;
+bool qa_ui_input_binding_read(const qa_ui *, qa_ui_input_binding *);
 typedef struct qa_ui_mods qa_ui_mods;
 typedef struct qa_ui_rankings qa_ui_rankings;
 typedef struct qa_ui_library qa_ui_library;

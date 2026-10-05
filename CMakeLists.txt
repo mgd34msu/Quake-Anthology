@@ -1527,16 +1527,13 @@ target_link_libraries(qa_q3_native_presentation PUBLIC qa_application qa_q3_pres
 add_library(qa_ui STATIC
     src/ui/controller.c
     src/ui/preferences.c
-    src/ui/save.c
     src/ui/draw.c
     src/ui/hud.c
     src/ui/input.c
     src/ui/library.c
-    src/ui/library_save.c
     src/ui/saves.c
     src/ui/llm.c
     src/ui/mods.c
-    src/ui/mods_save.c
     src/ui/q2_layout.c
     src/ui/rankings.c
     src/ui/search.c

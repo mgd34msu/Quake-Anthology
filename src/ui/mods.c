@@ -1,5 +1,4 @@
 #include "mods_internal.h"
-#include "qa/ui_menu_save.h"
 #include <stdio.h>
 
 void ui_mods_cache_release(qa_ui_mods *mods) {
@@ -10,7 +9,7 @@ void ui_mods_cache_release(qa_ui_mods *mods) {
     }
     mods->count = 0;
 }
-const qa_catalog *qa_ui_mods_catalog(const qa_ui_mods *mods) { return mods ? mods->catalog : NULL; }
+
 enum { MOD_SEARCH = 1, MOD_LIST, MOD_TOGGLE, MOD_APPLY, MOD_CANCEL, MOD_REFRESH, MOD_STATUS };
 bool qa_ui_mods_cancel(qa_ui_mods *mods, qa_error *error) {
     if (!mods || mods->ui->drawing) return ui_fail(error, "invalid mod menu edit");
@@ -191,28 +190,21 @@ static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *err
                         .count = 7, .fullscreen = true};
     return true;
 }
-static bool create_owner(qa_ui *ui, qa_application *application, qa_ui_id menu,
-                       bool restored, qa_ui_mods **out, qa_error *error) {
+bool qa_ui_mods_create(qa_ui *ui, qa_application *application, qa_ui_id menu,
+                       qa_ui_mods **out, qa_error *error) {
     if (!ui || !application || !menu || !out) return ui_fail(error, "invalid mod menu owner");
     qa_ui_mods *mods = calloc(1, sizeof(*mods));
     if (!mods) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating mod menu"); return false; }
     mods->ui = ui; mods->application = application; mods->menu = menu;
-    if ((!restored && !qa_ui_mods_cancel(mods, error)) || !qa_ui_register(ui,
+    if (!qa_ui_mods_cancel(mods, error) || !qa_ui_register(ui,
         &(qa_ui_menu_registration){.id = menu, .context = mods, .factory = factory}, error)) {
         qa_launch_draft_destroy(mods->draft); qa_catalog_release(mods->catalog); free(mods); return false;
     }
     *out = mods;
     return true;
 }
-bool qa_ui_mods_create(qa_ui *ui, qa_application *application, qa_ui_id menu,
-                       qa_ui_mods **out, qa_error *error) {
-    return create_owner(ui, application, menu, false, out, error);
-}
-bool qa_ui_mods_create_restored(qa_ui *ui, qa_application *application, qa_ui_id menu,
-                       qa_ui_mods **out, qa_error *error) {
-    if (!out || *out) return ui_fail(error, "restored mod menu requires empty output");
-    return create_owner(ui, application, menu, true, out, error);
-}
+
+
 bool qa_ui_mods_destroy(qa_ui_mods *mods, double time, qa_error *error) {
     if (!mods) return true;
     if (mods->ui->handling) return ui_fail(error, "mod menu callback is active");

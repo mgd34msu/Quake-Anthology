@@ -1,5 +1,4 @@
 #include "internal.h"
-#include "qa/ui_save.h"
 #include "qa/ui_presentation_prepare.h"
 
 bool qa_ui_idle(const qa_ui *ui) { return ui && !ui->handling && !ui->drawing; }

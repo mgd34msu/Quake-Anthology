@@ -1,5 +1,4 @@
 #include "library_internal.h"
-#include "qa/ui_menu_save.h"
 #include "qa/application_character_selection.h"
 #include <stdio.h>
 
@@ -652,13 +651,7 @@ bool qa_ui_library_refresh(qa_ui_library *m,qa_error *error) {
     qa_catalog_retain(catalog); qa_launch_draft_destroy(m->draft); qa_catalog_release(m->catalog);
     m->catalog=catalog; m->draft=draft; choices_clear(m); return true;
 }
-bool qa_ui_library_create_restored(qa_ui *ui,qa_application *application,qa_ui_id id,qa_ui_library **out,qa_error *error) {
-    if (!ui || !application || !id || !out || *out || ui->handling || ui->drawing) return ui_fail(error,"selection restore requires an idle controller and empty output");
-    qa_ui_library *m=calloc(1,sizeof(*m));
-    if (!m) { qa_error_set(error,QA_ERROR_MEMORY,0,"allocating restored startup selection"); return false; }
-    m->ui=ui; m->application=application; m->menu=id;
-    if (!register_pages(m,error)) { free(m); return false; } *out=m; return true;
-}
+
 bool qa_ui_library_create(qa_ui *ui, qa_application *application, qa_ui_id id,
                           const qa_launch_seat *local_players, size_t local_player_count,
                           qa_ui_library **out, qa_error *error) {
