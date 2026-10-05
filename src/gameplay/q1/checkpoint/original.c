@@ -18,6 +18,14 @@ typedef struct original_field {
     original_storage storage;
     size_t offset;
 } original_field;
+static const char *const ammo_fields[QA_Q1_AMMO_COUNT] = {
+    "ammo_shells", "ammo_nails", "ammo_rockets", "ammo_cells",
+    "ammo_lava_nails", "ammo_multi_rockets", "ammo_plasma"
+};
+static const char *ammo_field(const qa_q1_game *game, unsigned index) {
+    static const char *const rogue_base[] = {"ammo_shells1", "ammo_nails1", "ammo_rockets1", "ammo_cells1"};
+    return game->options.program == QA_Q1_ROGUE && index < 4 ? rogue_base[index] : ammo_fields[index];
+}
 #define FIELD(type, member, name, storage) {name, ORIGINAL_##storage, offsetof(type, member)}
 static const original_field entity_fields[] = {
     FIELD(q1_actor, classname, "classname", STRING),
@@ -54,6 +62,7 @@ static const original_field physics_fields[] = {
     FIELD(qa_physics_properties, water_type, "watertype", I32),
     FIELD(qa_physics_properties, ideal_yaw, "ideal_yaw", FLOAT),
     FIELD(qa_physics_properties, yaw_speed, "yaw_speed", FLOAT),
+    FIELD(qa_physics_properties, gravity_scale, "gravity", FLOAT),
     FIELD(qa_physics_properties, enemy, "enemy", REF),
     FIELD(qa_physics_properties, goal, "goalentity", REF),
     FIELD(qa_physics_properties, q1_pusher.local_seconds, "ltime", DOUBLE)
@@ -72,6 +81,8 @@ static const original_field player_fields[] = {
     FIELD(q1_player, input.teleport_until, "teleport_time", FLOAT),
     FIELD(q1_player, attack_finished, "attack_finished", DOUBLE),
     FIELD(q1_player, hostile_until, "show_hostile", DOUBLE),
+    FIELD(q1_player, lightning_sound_at, "t_width", DOUBLE),
+    FIELD(q1_player, mega_rot_at, "healthrot_nextcheck", DOUBLE),
     FIELD(q1_player, air_finished, "air_finished", DOUBLE),
     FIELD(q1_player, drown_damage, "dmg", FLOAT),
     FIELD(q1_player, hazard_at, "dmgtime", DOUBLE),
@@ -79,10 +90,23 @@ static const original_field player_fields[] = {
     FIELD(q1_player, power_expires[QA_Q1_INVULNERABILITY], "invincible_finished", DOUBLE),
     FIELD(q1_player, power_expires[QA_Q1_INVISIBILITY], "invisible_finished", DOUBLE),
     FIELD(q1_player, power_expires[QA_Q1_SUIT], "radsuit_finished", DOUBLE),
+    FIELD(q1_player, power_expires[QA_Q1_WETSUIT], "wetsuit_finished", DOUBLE),
+    FIELD(q1_player, power_expires[QA_Q1_EMPATHY], "empathy_finished", DOUBLE),
+    FIELD(q1_player, power_expires[QA_Q1_SHIELD], "shield_finished", DOUBLE),
+    FIELD(q1_player, power_expires[QA_Q1_ANTIGRAV], "antigrav_finished", DOUBLE),
+    FIELD(q1_player, power_expires[QA_Q1_LAVA_SUIT], "lavasuit_finished", DOUBLE),
     FIELD(q1_player, power_flash[QA_Q1_QUAD], "super_time", DOUBLE),
     FIELD(q1_player, power_flash[QA_Q1_INVULNERABILITY], "invincible_time", DOUBLE),
     FIELD(q1_player, power_flash[QA_Q1_INVISIBILITY], "invisible_time", DOUBLE),
-    FIELD(q1_player, power_flash[QA_Q1_SUIT], "rad_time", DOUBLE)
+    FIELD(q1_player, power_flash[QA_Q1_SUIT], "rad_time", DOUBLE),
+    FIELD(q1_player, power_flash[QA_Q1_WETSUIT], "wetsuit_time", DOUBLE),
+    FIELD(q1_player, power_flash[QA_Q1_EMPATHY], "empathy_time", DOUBLE),
+    FIELD(q1_player, power_flash[QA_Q1_SHIELD], "shield_time", DOUBLE),
+    FIELD(q1_player, power_flash[QA_Q1_ANTIGRAV], "antigrav_time", DOUBLE),
+    FIELD(q1_player, power_flash[QA_Q1_LAVA_SUIT], "lavasuit_time", DOUBLE),
+    FIELD(q1_player, scuba_at, "swim_flag", DOUBLE),
+    FIELD(q1_player, shield_until, "shield_death_time", DOUBLE),
+    FIELD(q1_player, shield_sound_at, "shieldSoundTime", DOUBLE)
 };
 static const original_field character_fields[] = {
     FIELD(q1_character, frame, "frame", I32),
@@ -489,15 +513,14 @@ static bool pickup_fields(qa_q1_wire_receipt *receipt, const q1_actor *entity,
     if (p->kind == 0 && !number(record,"healtype",p->mega?2:p->count==25?1:0,false,error)) return false;
     if (q1_ref_present(p->holder) && !actor(receipt,record,"owner",p->holder,false,error)) return false;
     if (p->kind == 6) {
-        static const char *const ammo[] = {"ammo_shells","ammo_nails","ammo_rockets","ammo_cells"};
         uint32_t bit = 0;
         for (unsigned i = 0; i < 32; ++i) { qa_q1_weapon weapon;
             if (qa_q1_weapon_source(receipt->operation.game->options.program, UINT32_C(1) << i, &weapon) &&
                 weapon == p->weapon) bit = UINT32_C(1) << i;
         }
         if (!number(record, "items", bit, false, error)) return false;
-        for (unsigned i = 0; i < 4; ++i)
-            if (!number(record, ammo[i], p->ammo[i], false, error)) return false;
+        for (unsigned i = 0; i < QA_Q1_AMMO_COUNT; ++i)
+            if (!number(record, ammo_field(receipt->operation.game,i), p->ammo[i], false, error)) return false;
     }
     return true;
 }
@@ -562,10 +585,16 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         !vector(record, "size", qa_vec_sub(body.bounds.maxs, body.bounds.mins), error)) return false;
     if (player) {
         qa_q1_wire_player wire;
+        q1_player source_player = *player;
+        source_player.mega_rot_at = fmax(0, source_player.mega_rot_at);
+        for (unsigned i=0; i<QA_Q1_POWER_COUNT; ++i)
+            if (player->power_order[i] && player->power_expires[i] != 0 &&
+                player->power_flash[i] == 0 && !(player->power_warned & (1u << i)))
+                source_player.power_flash[i] = 1;
         q1_character source_character = player->character_state;
         source_character.model = visible.model; source_character.frame = visible.frame;
         source_character.pain_until = fmax(source_character.pain_until,player->drown_at);
-        if (!FIELDS(receipt, record, player, player_fields, error) ||
+        if (!FIELDS(receipt, record, &source_player, player_fields, error) ||
             !FIELDS(receipt, record, &source_character, character_fields, error) ||
             !qa_q1_wire_player_read(receipt, player->id, &wire, error)) return false;
         if (!text(record, "classname", "player", QA_Q1_SAVE_STRING, error) ||
@@ -585,9 +614,28 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         if (combat.armor.regular.points > 0 && game->options.program != QA_Q1_ROGUE)
             items |= combat.armor.regular.protection.q1_absorption >= .8f ? 32768u :
                 combat.armor.regular.protection.q1_absorption >= .6f ? 16384u : 8192u;
-        if (!number(record, "items", items, false, error) || !number(record, "weapon", wire.weapon, false, error) ||
-            !number(record, "ammo_shells", wire.shells, false, error) || !number(record, "ammo_nails", wire.nails, false, error) ||
-            !number(record, "ammo_rockets", wire.rockets, false, error) || !number(record, "ammo_cells", wire.cells, false, error) ||
+        uint32_t extra_items = wire.extra_items >> 23;
+        if (game->options.program == QA_Q1_ROGUE) {
+            if (combat.armor.regular.points > 0)
+                extra_items |= combat.armor.regular.protection.q1_absorption >= .8f ? 4u :
+                    combat.armor.regular.protection.q1_absorption >= .6f ? 2u : 1u;
+            if (player->power_expires[QA_Q1_ANTIGRAV] > game->time) extra_items |= 128u;
+        } else if (game->options.program == QA_Q1_ID1 &&
+                   game->options.edition == QA_Q1_RERELEASE && player->mega_rot_at >= 0)
+            items |= 65536u;
+        double ammo[QA_Q1_AMMO_COUNT] = {0};
+        unsigned ammo_count = game->options.program == QA_Q1_ROGUE ? QA_Q1_AMMO_COUNT : 4;
+        for (unsigned i=0; i<ammo_count; ++i) {
+            if (!qa_inventory_count_read(game->services.inventory,player->id,game->ammo[i],ammo+i,error) ||
+                !number(record,ammo_field(game,i),ammo[i],false,error)) return false;
+        }
+        if (game->options.program == QA_Q1_ROGUE) {
+            static const unsigned powered[] = {0,QA_Q1_LAVA_NAILS,QA_Q1_MULTI_ROCKETS,QA_Q1_PLASMA_CELLS};
+            for (unsigned i=0; i<4; ++i)
+                if (!number(record,ammo_fields[i],ammo[wire.weapon>=4096u?powered[i]:i],false,error)) return false;
+        }
+        if (!number(record, "items", items, false, error) || !number(record,"items2",extra_items,false,error) ||
+            !number(record, "weapon", wire.weapon, false, error) ||
             !text(record, "weaponmodel", qa_strings_cstr(qa_session_strings(game->services.session), wire.weapon_model),
                 QA_Q1_SAVE_STRING, error)) return false;
         if (!text(record,"netname",qa_strings_cstr(qa_session_strings(game->services.session),game->wire->board[player->client_slot].name),QA_Q1_SAVE_STRING,error)) return false;
@@ -843,6 +891,7 @@ static bool restore_physics(const qa_q1_save_record *record, qa_physics_properti
     if (*source_flags & 32) physics->flags |= QA_PHYSICS_MONSTER;
     if (*source_flags & 512) physics->flags |= QA_PHYSICS_ONGROUND;
     if (*source_flags & 1024) physics->flags |= QA_PHYSICS_PARTIAL_GROUND;
+    if (physics->gravity_scale == 0) physics->gravity_scale = 1;
     return true;
 }
 static bool restore_think(qa_q1_game *game, q1_actor *entity,
@@ -886,8 +935,6 @@ static bool restore_inventory(qa_q1_game *game, q1_player *player,
     qa_inventory_entry *entries = count ? calloc(count, sizeof(*entries)) : NULL;
     if (count && !entries) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring Source inventory"); return false; }
     bool okay = qa_inventory_entries(game->services.inventory, player->id, entries, count, &written, error);
-    static const char *const ammo[] = {"ammo_shells","ammo_nails","ammo_rockets","ammo_cells",
-        "ammo_lava_nails","ammo_multi_rockets","ammo_plasma"};
     for (size_t i = 0; okay && i < written; ++i) {
         qa_inventory_entry *entry = entries + i; bool matched = false;
         for (unsigned shift = 0; shift < 32; ++shift) {
@@ -897,7 +944,7 @@ static bool restore_inventory(qa_q1_game *game, q1_player *player,
             }
         }
         for (unsigned j = 0; j < QA_Q1_AMMO_COUNT; ++j)
-            if (entry->item == game->ammo[j]) { entry->count = saved_number(record, ammo[j]); matched = true; }
+            if (entry->item == game->ammo[j]) { entry->count = saved_number(record, ammo_field(game,j)); matched = true; }
         const char *name = qa_strings_cstr(qa_session_strings(game->services.session), entry->item);
         if (name && !strcmp(name, "q1:key/silver")) { entry->count = (bits & 131072u) != 0; matched = true; }
         if (name && !strcmp(name, "q1:key/gold")) { entry->count = (bits & 262144u) != 0; matched = true; }
@@ -1024,9 +1071,22 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         !qa_combat_set_health(game->services.combat, id, combat.health, error) ||
         !qa_combat_set_armor(game->services.combat, id, &combat.armor, error)) return false;
     if (player) {
+        q1_powers_forget(player);
         if (!RESTORE_FIELDS(game, record, player, player_fields, slots, count, error) ||
             !RESTORE_FIELDS(game, record, &player->character_state, character_fields, slots, count, error) ||
             !restore_inventory(game, player, record, error)) return false;
+        player->source_god_mode = (flags & 64u) != 0;
+        player->source_no_target = (flags & 128u) != 0;
+        if (game->options.program != QA_Q1_ID1 || game->options.edition != QA_Q1_RERELEASE ||
+            !((uint32_t)saved_number(record, "items") & 65536u)) player->mega_rot_at = -1;
+        player->power_sequence = 0;
+        player->power_warned = player->power_lost = 0;
+        for (unsigned i=0; i<QA_Q1_POWER_COUNT; ++i) {
+            double expires = player->power_expires[i];
+            if (!q1_power_assign(game,id,(qa_q1_power)i,expires,expires != 0,error)) return false;
+            if (expires != 0 && player->power_flash[i] != 1)
+                player->power_warned |= (uint16_t)(1u << i);
+        }
         player->max_health = saved_number(record, "max_health");
         player->character_state.input.water_level = (uint8_t)physics.water_level;
         player->character_state.input.water_type = physics.water_type;
@@ -1116,9 +1176,8 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         item->hidden = !entity->model; item->holder = entity->owner;
         if (item->kind == 0 && saved(record,"healamount")) item->count = saved_number(record,"healamount");
         if (item->kind == 2 && saved(record,"aflag")) item->count = saved_number(record,"aflag");
-        static const char *const names[] = {"ammo_shells","ammo_nails","ammo_rockets","ammo_cells"};
         if (item->kind == 6) {
-            for (unsigned i = 0; i < 4; ++i) item->ammo[i] = saved_number(record,names[i]);
+            for (unsigned i = 0; i < QA_Q1_AMMO_COUNT; ++i) item->ammo[i] = saved_number(record,ammo_field(game,i));
             uint32_t bits = (uint32_t)saved_number(record,"items");
             item->weapon = QA_Q1_WEAPON_COUNT;
             (void)qa_q1_weapon_source(game->options.program,bits,&item->weapon);
