@@ -58,6 +58,7 @@ static const shared_declaration declarations[]={
     {"r_railSegmentLength","32","Rail ring spacing",QA_CVAR_ARCHIVE,ANY},
     {"r_drawworld","1","Draw the source world",QA_CVAR_CHEAT,ANY},
     {"r_drawentities","1","Draw source entities",QA_CVAR_CHEAT,ANY},
+    {"r_drawviewmodel","1","Draw the Quake first-person weapon",0,FINITE},
     {"r_nocull","0","Disable source frustum culling",QA_CVAR_CHEAT,ANY},
     {"r_novis","0","Disable source visibility culling",QA_CVAR_CHEAT,ANY},
     {"r_nocurves","0","Disable source curves",QA_CVAR_CHEAT,ANY},

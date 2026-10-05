@@ -64,6 +64,35 @@ void frontend_camera_axes(qa_vec3 angles, qa_vec3 axis[3])
     axis[1] = qa_v3(sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, sr * cp);
     axis[2] = qa_v3(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp);
 }
+static qa_scene_rect q1_view_rectangle(qa_scene_rect viewport,
+    const frontend_q1_view_settings *settings, bool intermission)
+{
+    double size = intermission ? 120 : settings->size;
+    uint32_t lines = size >= 120 ? 0 : size >= 110 ? 24 : 48;
+    uint32_t reserved = settings->overlay_status && size >= 100 ? 0 : lines;
+    uint32_t available = viewport.height > reserved ? viewport.height - reserved : 1;
+    double fraction = fmin(size, 100) / 100;
+    uint32_t width = (uint32_t)fmax(96, trunc(viewport.width * fraction));
+    if (width > viewport.width) width = viewport.width;
+    uint32_t height = (uint32_t)fmax(1, trunc(viewport.height * fraction));
+    if (height > available) height = available;
+    viewport.x += (int32_t)((viewport.width - width) / 2);
+    if (size < 100) viewport.y += (int32_t)((available - height) / 2);
+    viewport.width = width; viewport.height = height;
+    return viewport;
+}
+static bool q1_view_projection(qa_frontend *frontend, qa_scene_view *view,
+    double fov, qa_error *error)
+{
+    const qa_cvar_view *far_clip = qa_cvars_find(qa_application_cvars(frontend->application), "gl_farclip");
+    if (!far_clip || !isfinite(far_clip->number) || far_clip->number <= 4)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 CLIENT camera lost its actual far clip declaration");
+    float horizontal = (float)fov;
+    float vertical = 2 * atanf(tanf(horizontal * .008726646259971648f) *
+        (float)view->viewport.height / (float)view->viewport.width) * 57.29577951308232f;
+    view->projection = qa_scene_projection(horizontal, vertical, 4, far_clip->number);
+    return true;
+}
 static bool remote_q1_present(qa_frontend *f,unsigned seat,const qa_scene_view *fallback,
     qa_audio_listener *listener,bool *rendered,bool *hud_drawn,const qa_ui_preferences *preferences,bool visible,qa_error *error)
 {
@@ -99,25 +128,8 @@ static bool remote_q1_present(qa_frontend *f,unsigned seat,const qa_scene_view *
         !frontend_remote_q1_chase_camera(selected,&settings,view.origin,player.angles,
             &view.origin,&angles,error)) return false;
     frontend_camera_axes(angles,view.axis);
-    double size=player.intermission?120:settings.size;
-    uint32_t lines=size>=120?0:size>=110?24:48;
-    uint32_t reserved=settings.overlay_status && size>=100?0:lines;
-    uint32_t available=view.viewport.height>reserved?view.viewport.height-reserved:1;
-    double fraction=fmin(size,100)/100;
-    uint32_t width=(uint32_t)fmax(96,trunc(view.viewport.width*fraction));
-    if (width>view.viewport.width) width=view.viewport.width;
-    uint32_t height=(uint32_t)fmax(1,trunc(view.viewport.height*fraction));
-    if (height>available) height=available;
-    view.viewport.x+=(int32_t)((view.viewport.width-width)/2);
-    if (size<100) view.viewport.y+=(int32_t)((available-height)/2);
-    view.viewport.width=width; view.viewport.height=height;
-    const qa_cvar_view *far_clip=qa_cvars_find(qa_application_cvars(f->application),"gl_farclip");
-    if (!far_clip || !isfinite(far_clip->number) || far_clip->number<=4)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT camera lost its actual far clip declaration");
-    float horizontal=(float)fov;
-    float vertical=2*atanf(tanf(horizontal*.008726646259971648f)*
-        (float)view.viewport.height/(float)view.viewport.width)*57.29577951308232f;
-    view.projection=qa_scene_projection(horizontal,vertical,4,far_clip->number);
+    view.viewport = q1_view_rectangle(view.viewport, &settings, player.intermission);
+    if (!q1_view_projection(f, &view, fov, error)) return false;
     if (!frontend_remote_q1_draw(selected,&view,listener,rendered,error)) return false;
     frontend_seat *physical=&f->seats[seat];
     bool component_status=false;
@@ -231,10 +243,24 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
             frontend_camera_axes(angles, view.axis);
         }
         else { view.axis[0] = qa_v3(1, 0, 0); view.axis[1] = qa_v3(0, 1, 0); view.axis[2] = qa_v3(0, 0, 1); }
+        double ordinary_fov; bool explicit_override;
+        if (!frontend_view_settings_read(frontend->view_settings, &ordinary_fov, &explicit_override))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Local camera lost its actual published view preference");
+        (void)explicit_override;
         float fov_x = live && !source.source_world && seat->q2_view_ready &&
-            qa_actor_id_equal(actor, seat->q2_actor) ? seat->q2_view.fov : 90;
+            qa_actor_id_equal(actor, seat->q2_actor) ? seat->q2_view.fov : (float)ordinary_fov;
         float fov_y = 2 * atanf(tanf(fov_x * .008726646259971648f) * (float)rect.height / (float)rect.width) * 57.29577951308232f;
         view.projection = qa_scene_projection(fov_x, fov_y, 4, 16384);
+        const qa_product *local_product = live && native_ready && !source.source_world ?
+            qa_catalog_product(qa_application_catalog(frontend->application), native_map.presentation) : NULL;
+        if (local_product && local_product->family == QA_GAME_Q1) {
+            frontend_q1_view_settings settings;
+            if (!frontend_view_settings_q1_sample(frontend->view_settings,
+                local_product->edition == QA_EDITION_QUAKEWORLD ? QA_CONSOLE_QW : QA_CONSOLE_Q1,
+                &settings, error)) return false;
+            view.viewport = q1_view_rectangle(rect, &settings, camera.cutscene);
+            if (!q1_view_projection(frontend, &view, ordinary_fov, error)) return false;
+        }
         if (!frontend_tools_camera(frontend, i, false, &view, error)) return false;
         qa_scene_command begin = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = view};
         if (!qa_scene_frame_emit(&frontend->frame, &begin, error)) return false;

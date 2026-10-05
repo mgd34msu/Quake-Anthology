@@ -15,6 +15,7 @@ typedef struct qa_scene_model_saved_identity {
 typedef struct qa_scene_model_content_lease {
     void *context;
     void (*release)(void *);
+    const qa_resource *resource;
 } qa_scene_model_content_lease;
 typedef enum qa_scene_model_content_kind {
     QA_SCENE_MODEL_CONTENT_SOURCE,

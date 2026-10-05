@@ -95,6 +95,7 @@ bool frontend_legacy_source_register(qa_cvars *registry, qa_console_dialect dial
     static const struct { const char *name, *value; uint32_t flags; } shared[] = {
         {"r_fullbright", "0", 0}, {"gl_polyblend", "1", 0}, {"gl_cull", "1", 0}, {"gl_clear", "0", 0}};
     static const struct { const char *name, *value; uint32_t flags; } quake[] = {
+        {"r_drawviewmodel", "1", 0},
         {"r_lightmap", "0", 0}, {"r_dynamic", "1", 0}, {"r_shadows", "0", 0},
         {"r_mirroralpha", "1", 0}, {"gl_texsort", "1", 0}, {"gl_flashblend", "1", 0}};
     static const struct { const char *name, *value; uint32_t flags; } quake2[] = {
@@ -129,7 +130,7 @@ bool frontend_legacy_source_owns(const qa_cvars *registry, const char *name)
     const qa_cvar_view *row = qa_cvars_find(registry, name);
     if (!row || !row->owner || row->console_created) return false;
     const char *shared[] = {"r_fullbright", "gl_polyblend", "gl_cull", "gl_clear"};
-    const char *quake[] = {"r_lightmap", "r_dynamic", "r_shadows", "r_mirroralpha", "gl_texsort", "gl_flashblend", "gl_doubleeys"};
+    const char *quake[] = {"r_lightmap", "r_dynamic", "r_shadows", "r_mirroralpha", "gl_texsort", "gl_flashblend", "gl_doubleeys", "r_drawviewmodel"};
     const char *quake2[] = {"gl_lightmap", "gl_dynamic", "gl_shadows", "gl_modulate", "gl_monolightmap", "gl_saturatelighting", "cl_flares", "gl_flashblend"};
     for (size_t i = 0; i < sizeof(shared) / sizeof(*shared); ++i)
         if (!strcmp(name, shared[i])) return true;

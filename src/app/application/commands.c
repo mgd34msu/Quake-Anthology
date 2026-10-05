@@ -149,6 +149,15 @@ bool application_command_active(void *opaque, const qa_command_context *context)
     return qa_application_command_context_active(opaque, context);
 }
 
+qa_vfs *qa_application_provider_files(qa_application *application,qa_actor_owner owner)
+{
+    if(!application||!application->session||!owner||application->destroy_requested||
+        application->state==QA_APPLICATION_FAULTED)return NULL;
+    application_provider *provider=command_owner(application,owner);
+    if(!provider)provider=application_startup_flow_provider(application,owner);
+    return provider&&provider->launch?provider->launch->content:NULL;
+}
+
 qa_vfs *qa_application_context_files(qa_application *application,
                                       const qa_command_context *context, qa_mount_id *write_mount)
 {
@@ -158,9 +167,7 @@ qa_vfs *qa_application_context_files(qa_application *application,
         return NULL;
     qa_vfs *files;
     if (context->owner != 0) {
-        application_provider *provider = command_owner(application, context->owner);
-        if (!provider) provider = application_startup_flow_provider(application, context->owner);
-        files = provider == NULL || provider->launch == NULL ? NULL : provider->launch->content;
+        files = qa_application_provider_files(application,(qa_actor_owner)context->owner);
     } else {
         const qa_launch_snapshot *snapshot = application->routing_snapshot;
         if (snapshot == NULL)

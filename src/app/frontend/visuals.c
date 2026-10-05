@@ -18,6 +18,8 @@
 #include "renderer_materials.h"
 #include "config_store.h"
 #include "qa/application_equipment.h"
+#include "qa/application_network.h"
+#include "view_settings.h"
 #include "remote_q1_client.h"
 #include "remote_q2_client.h"
 #include "qa/media_library_save.h"
@@ -46,7 +48,8 @@ static bool visual_content_lease(frontend_visual_content *content, bool animatio
     if (!content || !out || out->context || out->release || content->references == SIZE_MAX)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Visual content lease requires its actual retained holder");
     ++content->references;
-    *out = (qa_scene_model_content_lease){content, animation ? visual_animation_release : visual_content_release};
+    *out = (qa_scene_model_content_lease){content, animation ? visual_animation_release : visual_content_release,
+        animation ? content->animation_resource : content->resource};
     return true;
 }
 bool frontend_visual_scene_model_source_read(const qa_scene_model *scene, qa_scene_model_content_kind kind,
@@ -136,7 +139,6 @@ struct frontend_visual_owner {
     qa_scene_resources *images;
     qa_material_library *materials;
     qa_frontend *frontend;
-    qa_command_context command;
     qa_media_library *media;
     frontend_material_movies *shader_movies;
     frontend_model *models;
@@ -152,9 +154,8 @@ static bool visual_movie_current(void *context, const frontend_material_movie_so
     const frontend_visual_owner *owner = context;
     if (!owner || owner->construction_failed || !source || source->frontend != owner->frontend || source->files != owner->mounts ||
         source->images != owner->images || source->materials != owner->materials || source->media != owner->media ||
-        !owner->frontend || !owner->frontend->application || owner->command.owner != owner->owner ||
-        !qa_application_command_context_active(owner->frontend->application, &owner->command)) return false;
-    const qa_vfs *files = qa_application_context_files(owner->frontend->application, &owner->command, NULL);
+        !owner->frontend || !owner->frontend->application) return false;
+    const qa_vfs *files = qa_application_provider_files(owner->frontend->application,owner->owner);
     return files && qa_vfs_lookup_equal(files, owner->mounts);
 }
 static const frontend_visual_owner *owner_at(const qa_frontend *frontend, size_t index)
@@ -186,12 +187,6 @@ bool frontend_visual_movie_source_read(qa_frontend *frontend, size_t index,
     frontend_visual_owner *owner = (frontend_visual_owner *)owner_at(frontend, index);
     if (!owner || !out || owner->construction_failed || !owner->media)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Visual movie source requires its actual complete owner");
-    if (!owner->command.registry) {
-        qa_command_context command = {.owner = owner->owner, .origin = QA_COMMAND_SERVER,
-            .dialect = owner->family == QA_SCENE_Q2 ? QA_CONSOLE_Q2 :
-                owner->family == QA_SCENE_Q3 ? QA_CONSOLE_Q3 : QA_CONSOLE_Q1};
-        if (!qa_application_capture_command_context(frontend->application, &command, &owner->command, error)) return false;
-    }
     frontend_material_movie_source source = {.frontend = frontend, .files = owner->mounts,
         .images = owner->images, .materials = owner->materials, .media = owner->media,
         .context = owner, .current = visual_movie_current};
@@ -550,11 +545,7 @@ static bool visual_owner(qa_frontend *frontend, const qa_application_visual_view
 {
     if (frontend->resource_inventory)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Visual admission is held by the actual resource transaction");
-    qa_command_context source = {.owner = view->provider, .origin = QA_COMMAND_SERVER,
-        .dialect = view->family == QA_GAME_Q2 ? QA_CONSOLE_Q2 : view->family == QA_GAME_Q3 ? QA_CONSOLE_Q3 : QA_CONSOLE_Q1};
-    qa_command_context captured;
-    if (!qa_application_capture_command_context(frontend->application, &source, &captured, error)) return false;
-    qa_vfs *files = qa_application_context_files(frontend->application, &captured, NULL);
+    qa_vfs *files = qa_application_provider_files(frontend->application,view->provider);
     if (!files) return frontend_fail(error, QA_ERROR_NOT_FOUND, "appearance owner has no active content view");
     qa_scene_family family = view->family == QA_GAME_Q2 ? QA_SCENE_Q2 : view->family == QA_GAME_Q3 ? QA_SCENE_Q3 : QA_SCENE_Q1;
     for (frontend_visual_owner *owner = frontend->visuals; owner; owner = owner->next)
@@ -566,7 +557,7 @@ static bool visual_owner(qa_frontend *frontend, const qa_application_visual_view
     frontend_visual_owner *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "allocating appearance resources");
     owner->owner = view->provider;
-    owner->frontend = frontend; owner->command = captured;
+    owner->frontend = frontend;
     owner->family = family;
     owner->mounts = qa_vfs_clone(files, error);
     owner->images = owner->mounts ? qa_scene_resources_create(owner->mounts, error) : NULL;
@@ -707,11 +698,7 @@ static bool replacement_read(const qa_model *native, const char *requested, int6
 static bool retained_source_rank(qa_frontend *frontend, frontend_visual_owner *owner, const char *path,
     const qa_resource *source, const qa_vfs_acquisition *receipt, int64_t *out, qa_error *error)
 {
-    qa_command_context request = {.owner = owner->owner, .origin = QA_COMMAND_SERVER,
-        .dialect = owner->family == QA_SCENE_Q2 ? QA_CONSOLE_Q2 : owner->family == QA_SCENE_Q3 ? QA_CONSOLE_Q3 : QA_CONSOLE_Q1};
-    qa_command_context captured;
-    if (!qa_application_capture_command_context(frontend->application, &request, &captured, error)) return false;
-    qa_vfs *files = qa_application_context_files(frontend->application, &captured, NULL);
+    qa_vfs *files = qa_application_provider_files(frontend->application,owner->owner);
     if (!files || !qa_vfs_lookup_equal(files, owner->mounts))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Held model source differs from its actual provider lookup");
     char *normalized = qa_vfs_normalize_path(path, error);
@@ -1313,44 +1300,67 @@ static bool visual_flare(qa_frontend *frontend, const qa_application_visual_view
     qa_scene_image_release(image);
     return ok;
 }
-static bool local_q2_view_weapon(qa_frontend *frontend, uint32_t seat, qa_actor_id actor,
+static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_actor_id actor,
     const qa_scene_world_input *world, qa_scene_frame *frame, qa_error *error)
 {
     frontend_seat *recipient = &frontend->seats[seat];
-    if (!actor.registry || world->view.clip_enabled || !recipient->q2_view_ready ||
-        !qa_actor_id_equal(actor, recipient->q2_actor) || recipient->q2_view.spectator ||
-        recipient->q2_view.health <= 0) return true;
+    if (!actor.registry || world->view.clip_enabled) return true;
     qa_application_equipment_view weapon;
     if (!qa_application_equipment_read(frontend->application, actor, &weapon, error)) return false;
-    if (weapon.selected || weapon.provider != weapon.primary || weapon.family != QA_GAME_Q2 ||
+    if (weapon.selected || weapon.provider != weapon.primary ||
+        (weapon.family != QA_GAME_Q1 && weapon.family != QA_GAME_Q2) ||
         !weapon.visible || !weapon.view_model || !weapon.view_model[0]) return true;
     qa_application_camera_view camera;
     if (!qa_application_control_camera(frontend->application, actor, &camera))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 view weapon lost its actual local camera");
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy view weapon lost its actual local camera");
     if (camera.cutscene) return true;
     uint32_t authored;
     frontend_config_legacy_view source;
     bool present = false;
     if (!frontend_seat_launch_id_read(frontend, seat, &authored))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 view weapon lost its authored seat");
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy view weapon lost its authored seat");
     if (!frontend_config_store_primary_legacy_read(frontend->config_store, authored, &source, &present, error))
         return false;
-    if (!present || source.product->family != QA_GAME_Q2) return true;
-    const qa_cvar_view *gun = qa_cvars_find(source.registry, "cl_gun");
-    const qa_cvar_view *hand = qa_cvars_find(source.registry, "hand");
-    if (!gun || !hand)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 view weapon lost its retained CLIENT settings");
-    if (gun->number == 0 || hand->number == 2 ||
-        (source.product->edition == QA_EDITION_CLASSIC && recipient->q2_view.fov > 90)) return true;
+    if (!present || source.product->family != weapon.family) return true;
+    qa_vec3 origin, angles;
+    uint8_t left_hand = 0;
+    if (weapon.family == QA_GAME_Q1) {
+        const qa_cvar_view *gun = qa_cvars_find(source.registry, "r_drawviewmodel");
+        const qa_cvar_view *entities = qa_cvars_find(qa_application_cvars(frontend->application), "r_drawentities");
+        if (!gun || !entities)
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view weapon lost its retained draw settings");
+        frontend_q1_view_settings settings;
+        if (!frontend_view_settings_q1_sample(frontend->view_settings,
+            source.product->edition == QA_EDITION_QUAKEWORLD ? QA_CONSOLE_QW : QA_CONSOLE_Q1,
+            &settings, error)) return false;
+        if (gun->number == 0 || entities->number == 0 || settings.chase) return true;
+        qa_q1_clientdata player;
+        if (!qa_application_network_q1_clientdata(frontend->application, actor, &player, error)) return false;
+        if (player.health <= 0 || (player.items & 524288u)) return true;
+        origin = world->view.origin; angles = camera.angles;
+        if (settings.size == 110 || settings.size == 90) origin.z += 1;
+        else if (settings.size == 100) origin.z += 2;
+        else if (settings.size == 80) origin.z += .5f;
+    } else {
+        if (!recipient->q2_view_ready || !qa_actor_id_equal(actor, recipient->q2_actor) ||
+            recipient->q2_view.spectator || recipient->q2_view.health <= 0) return true;
+        const qa_cvar_view *gun = qa_cvars_find(source.registry, "cl_gun");
+        const qa_cvar_view *hand = qa_cvars_find(source.registry, "hand");
+        if (!gun || !hand)
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 view weapon lost its retained CLIENT settings");
+        if (gun->number == 0 || hand->number == 2 ||
+            (source.product->edition == QA_EDITION_CLASSIC && recipient->q2_view.fov > 90)) return true;
+        if (hand->number >= 0 && hand->number <= 2) left_hand = (uint8_t)hand->number;
+        origin = qa_vec_add(world->view.origin, recipient->q2_view.gun_offset);
+        angles = qa_vec_add(qa_vec_add(recipient->q2_view.angles,
+            recipient->q2_view.kick_angles), recipient->q2_view.gun_angles);
+    }
     frontend_visual_owner_view media;
     frontend_visual_model_view model;
     if (!frontend_visual_media_acquire(frontend, weapon.provider, weapon.family, &media, error) ||
         !frontend_visual_model_acquire(frontend, weapon.provider, weapon.family,
             weapon.view_model, weapon.view_source, &model, error)) return false;
     if (media.shader_movies && !frontend_material_movies_frame(media.shader_movies, frame, error)) return false;
-    qa_vec3 origin = qa_vec_add(world->view.origin, recipient->q2_view.gun_offset);
-    qa_vec3 angles = qa_vec_add(qa_vec_add(recipient->q2_view.angles,
-        recipient->q2_view.kick_angles), recipient->q2_view.gun_angles);
     qa_vec3 axes[3]; frontend_camera_axes(angles, axes);
     qa_model_transform placement; qa_model_transform_identity(&placement);
     placement.origin[0] = origin.x; placement.origin[1] = origin.y; placement.origin[2] = origin.z;
@@ -1359,20 +1369,22 @@ static bool local_q2_view_weapon(qa_frontend *frontend, uint32_t seat, qa_actor_
     }
     uint32_t model_frame = weapon.frame >= 0 ? (uint32_t)weapon.frame : 0;
     qa_scene_model_input input = {.view = world->view, .transform = placement,
-        .previous_origin = origin, .color = {1, 1, 1, 1}, .family = QA_SCENE_Q2,
-        .view_model = true, .flags = 1 | 4 | 16, .frame = model_frame, .old_frame = model_frame,
+        .previous_origin = origin, .color = {1, 1, 1, 1},
+        .family = weapon.family == QA_GAME_Q1 ? QA_SCENE_Q1 : QA_SCENE_Q2,
+        .view_model = true, .flags = weapon.family == QA_GAME_Q2 ? 1 | 4 | 16 : 0,
+        .frame = model_frame, .old_frame = model_frame,
         .skin = weapon.has_skin ? (uint32_t)weapon.skin : 0, .entity = actor.slot,
         .identity_light = world->identity_light, .seconds = world->seconds, .ambient = {1, 1, 1},
         .fog = world->fog, .source_path = model.path,
         .video_frame = frontend_material_movies_frontend_resolve, .video_context = frontend};
-    if (hand->number >= 0 && hand->number <= 2) input.left_hand = (uint8_t)hand->number;
+    input.left_hand = left_hand;
     qa_vec3 directed;
     if (!qa_scene_world_sample_light_input(frontend->scene_world, world, origin,
         &input.ambient, &directed, &input.light_direction, error)) return false;
     input.ambient = qa_vec_add(input.ambient, directed);
     if (!frontend_config_store_primary_legacy_current(frontend->config_store, &source) ||
         !qa_application_equipment_current(frontend->application, &weapon))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 view weapon changed its retained player or CLIENT settings");
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy view weapon changed its retained player or CLIENT settings");
     return frontend_legacy_model_input(frontend->scene_world, world, &input, error) &&
         qa_scene_model_submit(model.scene, &input, frame, error);
 }
@@ -1441,5 +1453,5 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
             if (!qa_scene_model_submit(model->scene, &input, frame, error)) return false;
         }
     }
-    return exclude || local_q2_view_weapon(frontend, seat, local, world, frame, error);
+    return exclude || local_legacy_view_weapon(frontend, seat, local, world, frame, error);
 }

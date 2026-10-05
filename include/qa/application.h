@@ -453,6 +453,9 @@ bool qa_application_guest_input(qa_application *, uint32_t seat,
 bool qa_application_capture_command_context(qa_application *, const qa_command_context *,
                                               qa_command_context *, qa_error *);
 bool qa_application_command_context_active(const qa_application *, const qa_command_context *);
+/* Borrow actual live/constructor provider content independently of console
+ * command generations. The provider retains this view until retirement. */
+qa_vfs *qa_application_provider_files(qa_application *,qa_actor_owner);
 qa_vfs *qa_application_context_files(qa_application *, const qa_command_context *, qa_mount_id *);
 bool qa_application_source_command(qa_application *, const qa_command_invocation *, qa_error *);
 bool qa_application_actor_command(qa_application *, qa_actor_id, const char *, qa_error *);
