@@ -11,7 +11,7 @@
 #include <stdio.h>
 
 static const char *const client_menus[]={"toggleconsole","menu","messagemode","messagemode2",
-    "menu_anthology","library","mods","settings","rankings","assistance","controls","quit"};
+    "menu_anthology","library","mods","settings","rankings","assistance","controls","quit","togglemenu"};
 static const qa_ui_id menu_destinations[] = {FRONTEND_HOME, FRONTEND_LIBRARY, FRONTEND_MODS,
     FRONTEND_OPTIONS, FRONTEND_RANKINGS, FRONTEND_ASSISTANCE, FRONTEND_CONTROLS};
 struct frontend_client_commands {
@@ -140,7 +140,7 @@ static bool client_menu_command(void *context,const qa_command_invocation *comma
     size_t kind=0;
     while (kind<sizeof(client_menus)/sizeof(*client_menus) && !client_name(command->argv[0],client_menus[kind])) ++kind;
     if (kind==0) return qa_seat_console_toggle(seat->console,false,false,error);
-    if (kind==1) return frontend_game_menu(seat,error);
+    if (kind==1 || client_name(command->argv[0],"togglemenu")) return frontend_game_menu(seat,error);
     if (kind==2 || kind==3) return qa_seat_console_message(seat->console,kind==3,false,0,error);
     if (kind >= 4 && kind - 4 < sizeof(menu_destinations)/sizeof(*menu_destinations))
         return frontend_menu_open(seat, menu_destinations[kind-4], error);
@@ -252,7 +252,7 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
         return frontend_fail(error, QA_ERROR_ARGUMENT, "command requires a local player");
     frontend_seat *seat = &frontend->seats[slot];
     if (!strcmp(name, "toggleconsole")) return qa_seat_console_toggle(seat->console, false, false, error);
-    if (!strcmp(name, "menu")) return frontend_game_menu(seat, error);
+    if (!strcmp(name, "menu") || !strcmp(name,"togglemenu")) return frontend_game_menu(seat, error);
     const char *menus[] = {"menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls"};
     for (unsigned i = 0; i < sizeof(menus) / sizeof(*menus); ++i)
         if (!strcmp(name, menus[i])) return frontend_menu_open(seat, menu_destinations[i], error);
@@ -265,7 +265,7 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
 bool frontend_commands(qa_frontend *frontend, qa_error *error)
 {
     qa_console *console = qa_application_console(frontend->application);
-    const char *names[] = {"quit", "toggleconsole", "menu", "messagemode", "messagemode2", "weapnext", "weapprev",
+    const char *names[] = {"quit", "toggleconsole", "menu", "togglemenu", "messagemode", "messagemode2", "weapnext", "weapprev",
         "menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls", "save", "load",
         "cinematic", "cinematicpause", "stopcinematic", "cd", "music", "sky", "actualimagegrid"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
