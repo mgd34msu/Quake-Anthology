@@ -411,14 +411,15 @@ static bool initialize(void *context,const qa_launch_instance *selected,qa_cvars
             qa_native_q3_cvar_definition value;
             if (!qa_native_q3_cvar_definition_at(q3,i,&value))
                 return fail(e,QA_ERROR_FORMAT,"Native Q3 CLIENT definition inventory changed during declaration");
-            if (!qa_cvars_register(client,value.name,value.reset,value.flags,command->owner,NULL,e)) return false;
+            if (!qa_cvars_register(client,value.name,value.reset,value.flags,command->owner,NULL,e) ||
+                !qa_cvars_declare_save_policy(client,value.name,QA_CVAR_SAVE_SETTING,e)) return false;
         }
     }
     row->files=frontend_config_files_create(catalog,product->id,
         frontend_global_settings_storage_user_store(f->global_settings_storage),
         frontend_global_settings_storage_device_store(f->global_settings_storage),e);
     if (!row->files) return false;
-    qa_cvar_options options={.dialect=row->dialect};
+    qa_cvar_options options={.dialect=row->dialect,.default_save_policy=QA_CVAR_SAVE_SETTING};
     row->mouse=qa_cvars_create(&options,e);
     if ((qa_console_dialect)row->kind==row->dialect) row->movement=client;
     else { options.dialect=(qa_console_dialect)row->kind; row->movement=qa_cvars_create(&options,e); }
@@ -895,7 +896,7 @@ bool frontend_neutral_config_movement_adopt(frontend_neutral_configs *owner,cons
             return fail(e,QA_ERROR_ARGUMENT,"Movement replacement retains an entered physical CLIENT namespace");
         qa_cvars *next=row->client;
         if ((qa_console_dialect)movement!=row->dialect) {
-            next=qa_cvars_create(&(qa_cvar_options){.dialect=(qa_console_dialect)movement},e);
+            next=qa_cvars_create(&(qa_cvar_options){.dialect=(qa_console_dialect)movement,.default_save_policy=QA_CVAR_SAVE_SETTING},e);
             if (!next) return false;
         }
         qa_cvar_archive archive={0};

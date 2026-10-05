@@ -3,12 +3,10 @@
 #include "qa/console.h"
 
 typedef struct qa_cvars_restore qa_cvars_restore;
-/* Exact registry order, handles, ownership, values, latches and metadata.
- * Callback addresses are rebuilt from the isolated candidate registry.
- * Candidate bindings must already exist with matching names and owners.
- * A registry must outlive its outstanding tickets. Capture is callback-free;
- * prepare may call candidate binding validators and owns all allocations.
- * Commit consumes a validated ticket without allocation or notifications. */
+/* Gameplay name/value/latch state only. The current factory supplies declarations,
+ * aliases, handles and callbacks. Prepare merges into its existing edit kernel;
+ * commit publishes and delivers current notifications. Successful commit consumes
+ * the ticket; failure leaves it available for checked abort. */
 bool qa_cvars_save_capture(const qa_cvars *, qa_buffer *, qa_error *);
 bool qa_cvars_save_prepare(qa_cvars *, qa_bytes, qa_cvars_restore **, qa_error *);
 bool qa_cvars_save_validate(const qa_cvars_restore *, qa_error *);

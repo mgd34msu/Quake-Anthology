@@ -11,6 +11,7 @@ typedef struct setting_definition {
     const char *name, *value;
     uint32_t flags;
     bool track, team_shader;
+    qa_cvar_save_policy save_policy;
 } setting_definition;
 
 #define A QA_CVAR_ARCHIVE
@@ -20,69 +21,69 @@ typedef struct setting_definition {
 #define R QA_CVAR_READONLY
 #define N QA_CVAR_NO_RESTART
 #define Y QA_CVAR_SYSTEMINFO
-#define CV(name, value, flags, track, shader) {name, value, flags, track, shader}
+#define CV(name, value, flags, track, shader, policy) {name, value, flags, track, shader, policy}
 /* Q3GameSettings definitions preserve the source registration/update order. */
 static const setting_definition common_settings[] = {
-    CV("sv_cheats", "", 0, false, false),
-    CV("g_restarted", "0", R, false, false),
-    CV("g_gametype", "0", S | U | L, false, false),
-    CV("sv_maxclients", "8", S | L | A, false, false),
-    CV("g_maxGameClients", "0", S | L | A, false, false),
-    CV("dmflags", "0", S | A, true, false),
-    CV("fraglimit", "20", S | A | N, true, false),
-    CV("timelimit", "0", S | A | N, true, false),
-    CV("capturelimit", "8", S | A | N, true, false),
-    CV("g_synchronousClients", "0", Y, false, false),
-    CV("g_friendlyFire", "0", A, true, false),
-    CV("g_teamAutoJoin", "0", A, false, false),
-    CV("g_teamForceBalance", "0", A, false, false),
-    CV("g_warmup", "20", A, true, false),
-    CV("g_doWarmup", "0", 0, true, false),
-    CV("g_log", "games.log", A, false, false),
-    CV("g_logSync", "0", A, false, false),
-    CV("g_password", "", U, false, false),
-    CV("g_banIPs", "", A, false, false),
-    CV("g_filterBan", "1", A, false, false),
-    CV("g_needpass", "0", S | R, false, false),
-    CV("dedicated", "0", 0, false, false),
-    CV("g_speed", "320", 0, true, false),
-    CV("g_gravity", "800", 0, true, false),
-    CV("g_knockback", "1000", 0, true, false),
-    CV("g_quadfactor", "3", 0, true, false),
-    CV("g_weaponrespawn", "5", 0, true, false),
-    CV("g_weaponTeamRespawn", "30", 0, true, false),
-    CV("g_forcerespawn", "20", 0, true, false),
-    CV("g_inactivity", "0", 0, true, false),
-    CV("g_debugMove", "0", 0, false, false),
-    CV("g_debugDamage", "0", 0, false, false),
-    CV("g_debugAlloc", "0", 0, false, false),
-    CV("g_motd", "", 0, false, false),
-    CV("com_blood", "1", 0, false, false),
-    CV("g_podiumDist", "80", 0, false, false),
-    CV("g_podiumDrop", "70", 0, false, false),
-    CV("g_allowVote", "1", A, false, false),
-    CV("g_listEntity", "0", 0, false, false)
+    CV("sv_cheats", "", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV("g_restarted", "0", R, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_gametype", "0", S | U | L, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("sv_maxclients", "8", S | L | A, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_maxGameClients", "0", S | L | A, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("dmflags", "0", S | A, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("fraglimit", "20", S | A | N, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("timelimit", "0", S | A | N, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("capturelimit", "8", S | A | N, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_synchronousClients", "0", Y, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_friendlyFire", "0", A, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_teamAutoJoin", "0", A, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_teamForceBalance", "0", A, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_warmup", "20", A, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_doWarmup", "0", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_log", "games.log", A, false, false, QA_CVAR_SAVE_SETTING),
+    CV("g_logSync", "0", A, false, false, QA_CVAR_SAVE_SETTING),
+    CV("g_password", "", U, false, false, QA_CVAR_SAVE_SETTING),
+    CV("g_banIPs", "", A, false, false, QA_CVAR_SAVE_SETTING),
+    CV("g_filterBan", "1", A, false, false, QA_CVAR_SAVE_SETTING),
+    CV("g_needpass", "0", S | R, false, false, QA_CVAR_SAVE_SETTING),
+    CV("dedicated", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV("g_speed", "320", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_gravity", "800", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_knockback", "1000", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_quadfactor", "3", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_weaponrespawn", "5", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_weaponTeamRespawn", "30", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_forcerespawn", "20", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_inactivity", "0", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_debugMove", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV("g_debugDamage", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV("g_debugAlloc", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV("g_motd", "", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV("com_blood", "1", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV("g_podiumDist", "80", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV("g_podiumDrop", "70", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV("g_allowVote", "1", A, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_listEntity", "0", 0, false, false, QA_CVAR_SAVE_SETTING)
 };
 static const setting_definition missionpack_settings[] = {
-    CV("g_obeliskHealth", "2500", 0, false, false),
-    CV("g_obeliskRegenPeriod", "1", 0, false, false),
-    CV("g_obeliskRegenAmount", "15", 0, false, false),
-    CV("g_obeliskRespawnDelay", "10", S, false, false),
-    CV("g_cubeTimeout", "30", 0, false, false),
-    CV("g_redteam", "Stroggs", A | S | U, true, true),
-    CV("g_blueteam", "Pagans", A | S | U, true, true),
-    CV("ui_singlePlayerActive", "", 0, false, false),
-    CV("g_enableDust", "0", S, true, false),
-    CV("g_enableBreath", "0", S, true, false),
-    CV("g_proxMineTimeout", "20000", 0, false, false)
+    CV("g_obeliskHealth", "2500", 0, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_obeliskRegenPeriod", "1", 0, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_obeliskRegenAmount", "15", 0, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_obeliskRespawnDelay", "10", S, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_cubeTimeout", "30", 0, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_redteam", "Stroggs", A | S | U, true, true, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_blueteam", "Pagans", A | S | U, true, true, QA_CVAR_SAVE_GAMEPLAY),
+    CV("ui_singlePlayerActive", "", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV("g_enableDust", "0", S, true, false, QA_CVAR_SAVE_SETTING),
+    CV("g_enableBreath", "0", S, true, false, QA_CVAR_SAVE_SETTING),
+    CV("g_proxMineTimeout", "20000", 0, false, false, QA_CVAR_SAVE_GAMEPLAY)
 };
 static const setting_definition final_settings[] = {
-    CV("g_smoothClients", "1", 0, false, false),
-    CV("pmove_fixed", "0", Y, false, false),
-    CV("pmove_msec", "8", Y, false, false),
-    CV("g_rankings", "0", 0, false, false),
-    CV("sv_enableRankings", "0", 0, false, false),
-    CV("sv_rankingsActive", "0", R, false, false)
+    CV("g_smoothClients", "1", 0, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("pmove_fixed", "0", Y, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("pmove_msec", "8", Y, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV("g_rankings", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV("sv_enableRankings", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV("sv_rankingsActive", "0", R, false, false, QA_CVAR_SAVE_SETTING)
 };
 #undef CV
 #undef A
@@ -142,9 +143,10 @@ static bool prepare_table(application_provider *provider, const setting_definiti
         uint64_t owner = !strcmp(definition->name, "sv_cheats") ? 0 : provider->owner;
         bool ok = registry == qa_application_cvars(provider->application)
             ? application_startup_root_register(provider, definition->name, definition->value,
-                definition->flags, owner, error)
+                definition->flags, owner, definition->save_policy, error)
             : qa_cvars_register(registry, definition->name, definition->value, definition->flags,
-                owner, NULL, error);
+                owner, NULL, error) &&
+                qa_cvars_declare_save_policy(registry, definition->name, definition->save_policy, error);
         if (!ok) return false;
     }
     return true;
@@ -321,7 +323,8 @@ static bool register_cache(application_provider *provider, const char *build_dat
                 qa_cvars_register(registry, "gamedate", build_date, QA_CVAR_READONLY,
                     provider->owner, NULL, error);
         if (okay) okay = qa_cvars_register(registry, definition->name, definition->value,
-            definition->flags, !strcmp(definition->name, "sv_cheats") ? 0 : provider->owner, NULL, error);
+            definition->flags, !strcmp(definition->name, "sv_cheats") ? 0 : provider->owner, NULL, error) &&
+            qa_cvars_declare_save_policy(registry, definition->name, definition->save_policy, error);
         if (okay && !owner_live(owner))
             okay = application_fail(error, QA_ERROR_ARGUMENT, "native Q3 settings source retired during registration");
         const qa_cvar_view *current = okay ? qa_cvars_find(registry, definition->name) : NULL;

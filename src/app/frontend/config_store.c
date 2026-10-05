@@ -191,7 +191,8 @@ static bool cheats_allowed(void *context)
 }
 static qa_cvar_options registry_options(frontend_config_source *source,qa_console_dialect dialect)
 {
-    return (qa_cvar_options){.dialect=dialect,.user=source,.print=print,.cheats_allowed=cheats_allowed};
+    return (qa_cvar_options){.dialect=dialect,.user=source,.print=print,.cheats_allowed=cheats_allowed,
+        .default_save_policy=QA_CVAR_SAVE_SETTING};
 }
 static qa_cvars *registry(frontend_config_source *source,qa_console_dialect dialect,qa_error *error)
 {
@@ -2059,13 +2060,8 @@ static bool registry_carry(frontend_config_source *source,const qa_cvars *previo
 {
     if (declaration_owner && !source->declaration_owner)
         return fail(error,QA_ERROR_ARGUMENT,"Carried CLIENT declarations lost their actual new Source owner");
-    qa_buffer bytes={0}; qa_cvars_restore *ticket=NULL;
     *out=registry(source,qa_cvars_dialect(previous),error);
-    bool ok=*out && qa_cvars_save_capture(previous,&bytes,error) &&
-        qa_cvars_save_prepare(*out,(qa_bytes){bytes.data,bytes.size},&ticket,error) &&
-        qa_cvars_save_commit(ticket,error);
-    if (!ok) qa_cvars_save_abort(ticket);
-    qa_buffer_free(&bytes);
+    bool ok=*out && qa_cvars_copy(*out,previous,error);
     if (ok && declaration_owner) {
         size_t count=qa_cvars_count(*out);
         qa_cvar_record_state *records=count && count<=SIZE_MAX/sizeof(*records)?malloc(count*sizeof(*records)):NULL;
@@ -2275,7 +2271,9 @@ bool frontend_config_store_carry_variables(frontend_config_store *manager,qa_app
         uint64_t owner=value->owner==previous->command.owner?authority->command.owner:
             value->owner?cvar_owner:0;
         if (!qa_cvars_register(cvars,value->name,value->reset_value,value->flags,owner,value->description,error) ||
-            !qa_cvars_set(cvars,value->name,value->latched_value?value->latched_value:value->value,true,error)) {
+            !qa_cvars_set(cvars,value->name,value->latched_value?value->latched_value:value->value,true,error) ||
+            (value->save_policy!=QA_CVAR_SAVE_UNCLASSIFIED &&
+             !qa_cvars_declare_save_policy(cvars,value->name,value->save_policy,error))) {
             free(receipt); return false;
         }
     }
@@ -2507,13 +2505,7 @@ static bool parked_seal(frontend_config_store *manager,frontend_config_source *s
         if (!qa_console_program_abort(manager->parked_program,error)) return false;
         manager->parked_program=NULL;
     }
-    qa_buffer bytes={0}; qa_cvars_restore *values=NULL;
-    bool ok=qa_cvars_save_capture(source->cvars,&bytes,error) &&
-        qa_cvars_save_prepare(manager->parked_cvars,(qa_bytes){bytes.data,bytes.size},&values,error);
-    if (ok) ok=qa_cvars_save_commit(values,error);
-    if (!ok) qa_cvars_save_abort(values);
-    qa_buffer_free(&bytes);
-    if (!ok) return false;
+    if (!qa_cvars_copy(manager->parked_cvars,source->cvars,error)) return false;
     qa_console_program_resolvers resolve={.context=manager,.identity=park_identity,
         .command_context=park_context,.published_context=park_published_context,
         .published_candidate_context=park_context,.current=park_current,.published=park_published};

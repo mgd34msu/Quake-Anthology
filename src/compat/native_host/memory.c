@@ -298,6 +298,12 @@ bool native_host_cvar(qa_native_host *host, const char *name, const char *value,
     if (!view && !qa_cvars_register(host->cvars, name, value ? value : "", flags, owner,
                                     NULL, error))
         return false;
+    view = qa_cvars_find(host->cvars, name);
+    if (view && view->save_policy == QA_CVAR_SAVE_UNCLASSIFIED &&
+        !qa_cvars_declare_save_policy(host->cvars, name,
+            host->kind == NATIVE_HOST_Q2_GAME ||
+                (host->kind == NATIVE_HOST_Q3 && host->q3_role == QA_QVM_GAME)
+                ? QA_CVAR_SAVE_GAMEPLAY : QA_CVAR_SAVE_SETTING, error)) return false;
     if (set && !qa_cvars_set(host->cvars, name, value ? value : "", flags != 0, error))
         return false;
     if (!native_host_refresh_cvars(host, error))

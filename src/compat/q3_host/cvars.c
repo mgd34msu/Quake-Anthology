@@ -282,10 +282,24 @@ static bool apply(q3_call *call,q3_cvar_access access,const qa_cvars_edit_comman
     case QA_CVARS_EDIT_RESET: return qa_cvars_reset(access.registry,command->name,command->force,error);
     case QA_CVARS_EDIT_SET_NUMBER: return qa_cvars_set_number(access.registry,command->name,command->number,error);
     case QA_CVARS_EDIT_REGISTER: return qa_cvars_register(access.registry,command->name,command->value,
-        command->flags,command->owner,command->description,error);
+        command->flags,command->owner,command->description,error) &&
+        (command->save_policy == QA_CVAR_SAVE_UNCLASSIFIED ||
+         qa_cvars_declare_save_policy(access.registry,command->name,command->save_policy,error));
+    case QA_CVARS_EDIT_SAVE_POLICY:
+        return qa_cvars_declare_save_policy(access.registry,command->name,command->save_policy,error);
     case QA_CVARS_EDIT_RETAIN_SHARED: return qa_cvars_retain_shared(access.registry,command->name,error);
     default: return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 named cvar operation is unbound");
     }
+}
+static bool classify(q3_call *call,q3_cvar_access access,const char *name,
+    const qa_cvar_view **actual,qa_error *error)
+{
+    if (!*actual || (*actual)->save_policy!=QA_CVAR_SAVE_UNCLASSIFIED) return true;
+    if (!apply(call,access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SAVE_POLICY,.name=name,
+        .save_policy=call->host->options.role==QA_QVM_GAME?
+            QA_CVAR_SAVE_GAMEPLAY:QA_CVAR_SAVE_SETTING},error)) return false;
+    *actual=find(access,name);
+    return true;
 }
 static bool declare(q3_call *call,q3_cvar_access access,const char *name,const char *value,
     uint32_t flags,qa_error *error)
@@ -294,12 +308,16 @@ static bool declare(q3_call *call,q3_cvar_access access,const char *name,const c
         const char *canonical=qa_cvars_canonical_name(access.registry,name);
         if (strcmp(canonical,name) && (flags&(QA_CVAR_USERINFO|QA_CVAR_SERVERINFO|QA_CVAR_SYSTEMINFO)))
             return q3_fail(error,QA_ERROR_ARGUMENT,0,"Guest alias requires its canonical protocol info-key mapping");
-        return find(access,name)!=NULL ||
-            q3_fail(error,QA_ERROR_NOT_FOUND,0,"Unknown guest cvar requires its actual Q3 seat owner");
+        const qa_cvar_view *actual=find(access,name);
+        return (actual!=NULL ||
+            q3_fail(error,QA_ERROR_NOT_FOUND,0,"Unknown guest cvar requires its actual Q3 seat owner")) &&
+            classify(call,access,name,&actual,error);
     }
-    return apply(call,access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_REGISTER,.name=name,
+    if (!apply(call,access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_REGISTER,.name=name,
         .value=value,.flags=flags,.owner=access.registry==call->host->options.cvars?
-            call->host->options.service_owner:0},error);
+            call->host->options.service_owner:0},error)) return false;
+    const qa_cvar_view *actual=find(access,name);
+    return classify(call,access,name,&actual,error);
 }
 
 static bool bind_routed(q3_call *call,q3_cvar_access access,size_t handle,
@@ -552,6 +570,7 @@ static bool register_vm(q3_call *call, qa_error *error)
         qa_cvars_vm_bind(access.registry,(const char *)name.data,(const char *)value.data,
             (uint32_t)call->arguments[3],owner,&handle,error);
     if (ok) view=access.edit?qa_cvars_edit_handle(access.edit,handle):qa_cvars_handle(access.registry,handle);
+    if (ok) ok=classify(call,access,(const char *)name.data,&view,error);
     if (ok && !view) ok=q3_fail(error,QA_ERROR_NOT_FOUND,0,"Q3 VM registration lacks its actual admitted handle");
     if (ok && !engine && access.registry==call->host->options.cvars)
         ok=apply(call,access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_RETAIN_SHARED,.name=view->name},error);
@@ -657,13 +676,15 @@ static q3_service_result cvars_selected(q3_call *call, int32_t *result, qa_error
     if (!access_name(call,key,&access,error)) { qa_buffer_free(&name); return Q3_FAILED; }
     cvars=access.registry;
     const qa_cvar_view *view=find(access,key);
-    bool ok = true;
+    bool ok = classify(call,access,key,&view,error);
+    if (!ok) { qa_buffer_free(&name); return Q3_FAILED; }
     if (trap == (ui ? 3 : 5)) {
         ok = call->arguments[1] ?
                  q3_string(call, call->arguments[1], &value, error) &&
                  apply(call,access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET,
                     .name=key,.value=(const char *)value.data,.force=true},error) :
                  apply(call,access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_RESET,.name=key,.force=true},error);
+        if (ok) { view=find(access,key); ok=classify(call,access,key,&view,error); }
     } else if (trap == (ui ? 5 : game ? 7 : 6)) {
         qa_cvar_view effective;
         if (view && !effective_status(call,view,&effective,error)) ok=false;

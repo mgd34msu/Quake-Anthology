@@ -332,7 +332,8 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
         }
     } else if (!qa_application_client_provider_command(f->application, s->receiver, options->metadata.seat,
         &options->input_origin, &s->command, &s->configuration_generation, error)) goto done;
-    qa_cvar_options variables = {.dialect = s->command.dialect, .user = s, .print = cvar_print};
+    qa_cvar_options variables = {.dialect = s->command.dialect, .user = s, .print = cvar_print,
+        .default_save_policy = QA_CVAR_SAVE_SETTING};
     s->pending_cvars = qa_cvars_create(&variables, error);
     if (!s->pending_cvars) goto done;
     if (!state) {

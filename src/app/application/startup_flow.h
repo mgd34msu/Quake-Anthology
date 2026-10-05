@@ -63,7 +63,7 @@ bool application_startup_console_cvar_edit(qa_application *, qa_console *,
 bool application_startup_cvar_edit(application_provider *, qa_console *,
     const qa_command_context *, qa_cvars *, qa_cvars_edit **, qa_error *);
 bool application_startup_root_register(application_provider *, const char *, const char *,
-    uint32_t, uint64_t, qa_error *);
+    uint32_t, uint64_t, qa_cvar_save_policy, qa_error *);
 bool application_startup_visible_cvars(application_provider *, qa_console *,
     const qa_command_context *, size_t, qa_cvars **);
 bool application_startup_source_scripts(const application_provider *);

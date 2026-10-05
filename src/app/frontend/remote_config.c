@@ -117,7 +117,8 @@ static bool cheats(void *context)
 }
 static qa_cvars *settings_registry(frontend_remote_config *row,qa_console_dialect dialect,qa_error *error)
 {
-    qa_cvar_options options={.dialect=dialect,.user=row,.print=print,.cheats_allowed=cheats};
+    qa_cvar_options options={.dialect=dialect,.user=row,.print=print,.cheats_allowed=cheats,
+        .default_save_policy=QA_CVAR_SAVE_SETTING};
     return qa_cvars_create(&options,error);
 }
 static bool retain_context(void *context,qa_error *error)
@@ -597,11 +598,7 @@ bool frontend_remote_config_program_source(const frontend_remote_configs *owner,
 }
 static bool copy_registry(qa_cvars *destination,const qa_cvars *source,qa_error *error)
 {
-    qa_buffer bytes={0}; qa_cvars_restore *ticket=NULL;
-    bool ok=qa_cvars_save_capture(source,&bytes,error) &&
-        qa_cvars_save_prepare(destination,(qa_bytes){bytes.data,bytes.size},&ticket,error) && qa_cvars_save_commit(ticket,error);
-    if (!ok) qa_cvars_save_abort(ticket);
-    qa_buffer_free(&bytes); return ok;
+    return qa_cvars_copy(destination,source,error);
 }
 bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_application *application,
     const qa_launch_snapshot *candidate,const qa_application_startup_source *source,void **out,qa_error *error)

@@ -810,6 +810,7 @@ static bool clone_source(application_provider *provider, qa_cvars *destination,
                          bool *cloned, qa_error *error)
 {
     *cloned = false;
+    if (provider->application->operation == APPLICATION_PERSISTING) return true;
     struct application_native_q1_console *owner = provider->native_q1_console;
     for (application_provider *previous = provider->application->live_providers; previous;
          previous = previous->next_live) {
@@ -842,14 +843,8 @@ static bool clone_source(application_provider *provider, qa_cvars *destination,
             previous->owner != provider->owner) continue;
         qa_cvars *source = application_native_q1_console_registry(previous);
         if (!source || qa_cvars_dialect(source) != qa_cvars_dialect(destination)) continue;
-        qa_buffer bytes = {0};
-        qa_cvars_restore *ticket = NULL;
         bool okay = application_native_q1_console_idle(previous) &&
-            qa_cvars_save_capture(source, &bytes, error) &&
-            qa_cvars_save_prepare(destination, (qa_bytes){bytes.data, bytes.size}, &ticket, error) &&
-            qa_cvars_save_commit(ticket, error);
-        if (!okay) qa_cvars_save_abort(ticket);
-        qa_buffer_free(&bytes);
+            qa_cvars_copy(destination, source, error);
         if (okay) *cloned = true;
         return okay;
     }
@@ -870,11 +865,28 @@ bool application_native_q1_console_create(application_provider *provider,
         okay = qa_cvars_register(cvars, startup->name,
             startup->latched_value ? startup->latched_value : startup->value,
             startup->flags & (QA_CVAR_ARCHIVE | QA_CVAR_USERINFO | QA_CVAR_SERVERINFO),
-            provider->owner, startup->description, error);
+            provider->owner, startup->description, error) &&
+            (startup->save_policy == QA_CVAR_SAVE_UNCLASSIFIED ||
+             qa_cvars_declare_save_policy(cvars, startup->name, startup->save_policy, error));
     }
-    static const char *const names[] = {"skill", "deathmatch", "coop", "teamplay", "sv_gravity",
-        "sv_maxspeed", "samelevel", "timelimit", "fraglimit", "gamecfg", "sv_cheats", "footsteps",
-        "maxclients", "registered", "developer", "sv_aim", "hostname"};
+    static const struct { const char *name; qa_cvar_save_policy policy; } names[] = {
+        {"skill", QA_CVAR_SAVE_GAMEPLAY},
+        {"deathmatch", QA_CVAR_SAVE_GAMEPLAY},
+        {"coop", QA_CVAR_SAVE_GAMEPLAY},
+        {"teamplay", QA_CVAR_SAVE_GAMEPLAY},
+        {"sv_gravity", QA_CVAR_SAVE_GAMEPLAY},
+        {"sv_maxspeed", QA_CVAR_SAVE_GAMEPLAY},
+        {"samelevel", QA_CVAR_SAVE_GAMEPLAY},
+        {"timelimit", QA_CVAR_SAVE_GAMEPLAY},
+        {"fraglimit", QA_CVAR_SAVE_GAMEPLAY},
+        {"gamecfg", QA_CVAR_SAVE_GAMEPLAY},
+        {"sv_cheats", QA_CVAR_SAVE_SETTING},
+        {"footsteps", QA_CVAR_SAVE_SETTING},
+        {"maxclients", QA_CVAR_SAVE_GAMEPLAY},
+        {"registered", QA_CVAR_SAVE_SETTING},
+        {"developer", QA_CVAR_SAVE_SETTING},
+        {"sv_aim", QA_CVAR_SAVE_GAMEPLAY},
+        {"hostname", QA_CVAR_SAVE_SETTING}};
     char skill[16], deathmatch[16], coop[2], teamplay[16], gravity[32], gamecfg[16], maximum[16], aim[32];
     snprintf(skill, sizeof(skill), "%u", rules->skill);
     snprintf(deathmatch, sizeof(deathmatch), "%d", rules->deathmatch);
@@ -887,29 +899,45 @@ bool application_native_q1_console_create(application_provider *provider,
     const char *values[] = {skill, deathmatch, coop, teamplay, gravity, "320", "0", "0", "0", gamecfg,
         "0", "1", maximum, "1", "0", aim, rules->quakeworld ? "unnamed" : "UNNAMED"};
     for (size_t i = 0; okay && i < sizeof(names) / sizeof(*names); ++i) {
-        if (!qa_cvars_find(cvars, names[i]))
-            okay = qa_cvars_register(cvars, names[i], values[i], 0, provider->owner, NULL, error);
-        const qa_cvar_view *startup = !cloned ? qa_cvars_find(provider->application->cvars, names[i]) : NULL;
+        if (!qa_cvars_find(cvars, names[i].name))
+            okay = qa_cvars_register(cvars, names[i].name, values[i], 0, provider->owner, NULL, error);
+        if (okay) okay = qa_cvars_declare_save_policy(cvars, names[i].name, names[i].policy, error);
+        const qa_cvar_view *startup = !cloned ? qa_cvars_find(provider->application->cvars, names[i].name) : NULL;
         if (okay && startup && (!startup->owner || startup->owner == provider->owner))
-            okay = qa_cvars_set(cvars, names[i], startup->latched_value ? startup->latched_value : startup->value,
+            okay = qa_cvars_set(cvars, names[i].name, startup->latched_value ? startup->latched_value : startup->value,
                 true, error);
     }
     if (rules->quakeworld) {
-        static const char *const qw_names[] = {"sv_maxvelocity", "sv_stopspeed",
-            "sv_spectatormaxspeed", "sv_accelerate", "sv_airaccelerate",
-            "sv_wateraccelerate", "sv_friction", "sv_waterfriction",
-            "maxspectators", "pausable", "sv_spectalk", "sv_mapcheck",
-            "spawn", "watervis", "sv_phs", "password", "spectator_password", "sv_highchars"};
+        static const struct { const char *name; qa_cvar_save_policy policy; } qw_names[] = {
+            {"sv_maxvelocity", QA_CVAR_SAVE_GAMEPLAY},
+            {"sv_stopspeed", QA_CVAR_SAVE_GAMEPLAY},
+            {"sv_spectatormaxspeed", QA_CVAR_SAVE_GAMEPLAY},
+            {"sv_accelerate", QA_CVAR_SAVE_GAMEPLAY},
+            {"sv_airaccelerate", QA_CVAR_SAVE_GAMEPLAY},
+            {"sv_wateraccelerate", QA_CVAR_SAVE_GAMEPLAY},
+            {"sv_friction", QA_CVAR_SAVE_GAMEPLAY},
+            {"sv_waterfriction", QA_CVAR_SAVE_GAMEPLAY},
+            {"maxspectators", QA_CVAR_SAVE_SETTING},
+            {"pausable", QA_CVAR_SAVE_GAMEPLAY},
+            {"sv_spectalk", QA_CVAR_SAVE_SETTING},
+            {"sv_mapcheck", QA_CVAR_SAVE_SETTING},
+            {"spawn", QA_CVAR_SAVE_GAMEPLAY},
+            {"watervis", QA_CVAR_SAVE_GAMEPLAY},
+            {"sv_phs", QA_CVAR_SAVE_SETTING},
+            {"password", QA_CVAR_SAVE_SETTING},
+            {"spectator_password", QA_CVAR_SAVE_SETTING},
+            {"sv_highchars", QA_CVAR_SAVE_SETTING}};
         static const char *const qw_values[] = {"2000", "100", "500", "10", "0.7",
             "10", "4", "4", "8", "1", "1", "1", "0", "0", "1", "", "", "1"};
         for (size_t i = 0; okay && i < sizeof(qw_names) / sizeof(*qw_names); ++i) {
-            if (!qa_cvars_find(cvars, qw_names[i]))
-                okay = qa_cvars_register(cvars, qw_names[i], qw_values[i], 0,
+            if (!qa_cvars_find(cvars, qw_names[i].name))
+                okay = qa_cvars_register(cvars, qw_names[i].name, qw_values[i], 0,
                     provider->owner, NULL, error);
+            if (okay) okay = qa_cvars_declare_save_policy(cvars, qw_names[i].name, qw_names[i].policy, error);
             const qa_cvar_view *startup = !cloned
-                ? qa_cvars_find(provider->application->cvars, qw_names[i]) : NULL;
+                ? qa_cvars_find(provider->application->cvars, qw_names[i].name) : NULL;
             if (okay && startup && (!startup->owner || startup->owner == provider->owner))
-                okay = qa_cvars_set(cvars, qw_names[i],
+                okay = qa_cvars_set(cvars, qw_names[i].name,
                     startup->latched_value ? startup->latched_value : startup->value, true, error);
         }
         static const char *const info_names[] = {"fraglimit", "timelimit", "teamplay",

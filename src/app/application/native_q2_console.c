@@ -16,13 +16,14 @@
 typedef struct q2_source_cvar {
     const char *name, *value;
     uint32_t flags;
+    qa_cvar_save_policy save_policy;
 } q2_source_cvar;
 
 /* The Source settings owner declares this ENGINE value in both Q2 dialects.
  * Rerelease GAME may separately register it through its actual imports. */
 static const q2_source_cvar engine_cvars[] = {
-    {"sv_airaccelerate", "0", 0},
-    {"sv_noreload", "0", 0},
+    {"sv_airaccelerate", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"sv_noreload", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
 };
 
 bool application_native_q2_engine_cvars(qa_cvars *cvars, uint64_t owner, qa_error *error) {
@@ -31,65 +32,67 @@ bool application_native_q2_engine_cvars(qa_cvars *cvars, uint64_t owner, qa_erro
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 ENGINE declarations require their physical Source registry");
     for (size_t i = 0; i < sizeof(engine_cvars) / sizeof(*engine_cvars); ++i)
         if (!qa_cvars_register(cvars, engine_cvars[i].name, engine_cvars[i].value,
-            engine_cvars[i].flags, owner, NULL, error)) return false;
+            engine_cvars[i].flags, owner, NULL, error) ||
+            !qa_cvars_declare_save_policy(cvars, engine_cvars[i].name,
+                engine_cvars[i].save_policy, error)) return false;
     return true;
 }
 
 /* Original InitGame and the TypeScript Q2 source settings owner. Q2 flags
  * retain their source word; GAME belongs only to rerelease GAME registrations. */
 static const q2_source_cvar common[] = {
-    {"gun_x", "0", 0}, {"gun_y", "0", 0}, {"gun_z", "0", 0},
-    {"sv_rollspeed", "200", 0}, {"sv_rollangle", "2", 0},
-    {"sv_maxvelocity", "2000", 0}, {"sv_gravity", "800", 0},
-    {"dedicated", "0", QA_Q2_CVAR_NOSET},
-    {"cheats", "0", (uint32_t)QA_CVAR_SERVERINFO | (uint32_t)QA_Q2_CVAR_LATCH},
-    {"maxclients", "4", (uint32_t)QA_CVAR_SERVERINFO | (uint32_t)QA_Q2_CVAR_LATCH},
-    {"maxspectators", "4", QA_CVAR_SERVERINFO},
-    {"deathmatch", "0", QA_Q2_CVAR_LATCH}, {"coop", "0", QA_Q2_CVAR_LATCH},
-    {"skill", "1", QA_Q2_CVAR_LATCH}, {"maxentities", "1024", QA_Q2_CVAR_LATCH},
-    {"dmflags", "0", QA_CVAR_SERVERINFO}, {"fraglimit", "0", QA_CVAR_SERVERINFO},
-    {"timelimit", "0", QA_CVAR_SERVERINFO}, {"password", "", QA_CVAR_USERINFO},
-    {"spectator_password", "", QA_CVAR_USERINFO}, {"needpass", "0", QA_CVAR_SERVERINFO},
-    {"filterban", "1", 0}, {"g_select_empty", "0", QA_CVAR_ARCHIVE},
-    {"run_pitch", "0.002", 0}, {"run_roll", "0.005", 0},
-    {"bob_up", "0.005", 0}, {"bob_pitch", "0.002", 0}, {"bob_roll", "0.002", 0},
-    {"flood_msgs", "4", 0}, {"flood_persecond", "4", 0}, {"flood_waitdelay", "10", 0},
+    {"gun_x", "0", 0, QA_CVAR_SAVE_SETTING}, {"gun_y", "0", 0, QA_CVAR_SAVE_SETTING}, {"gun_z", "0", 0, QA_CVAR_SAVE_SETTING},
+    {"sv_rollspeed", "200", 0, QA_CVAR_SAVE_SETTING}, {"sv_rollangle", "2", 0, QA_CVAR_SAVE_SETTING},
+    {"sv_maxvelocity", "2000", 0, QA_CVAR_SAVE_GAMEPLAY}, {"sv_gravity", "800", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"dedicated", "0", QA_Q2_CVAR_NOSET, QA_CVAR_SAVE_SETTING},
+    {"cheats", "0", (uint32_t)QA_CVAR_SERVERINFO | (uint32_t)QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_SETTING},
+    {"maxclients", "4", (uint32_t)QA_CVAR_SERVERINFO | (uint32_t)QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
+    {"maxspectators", "4", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_SETTING},
+    {"deathmatch", "0", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY}, {"coop", "0", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
+    {"skill", "1", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY}, {"maxentities", "1024", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
+    {"dmflags", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY}, {"fraglimit", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY},
+    {"timelimit", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY}, {"password", "", QA_CVAR_USERINFO, QA_CVAR_SAVE_SETTING},
+    {"spectator_password", "", QA_CVAR_USERINFO, QA_CVAR_SAVE_SETTING}, {"needpass", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_SETTING},
+    {"filterban", "1", 0, QA_CVAR_SAVE_SETTING}, {"g_select_empty", "0", QA_CVAR_ARCHIVE, QA_CVAR_SAVE_SETTING},
+    {"run_pitch", "0.002", 0, QA_CVAR_SAVE_SETTING}, {"run_roll", "0.005", 0, QA_CVAR_SAVE_SETTING},
+    {"bob_up", "0.005", 0, QA_CVAR_SAVE_SETTING}, {"bob_pitch", "0.002", 0, QA_CVAR_SAVE_SETTING}, {"bob_roll", "0.002", 0, QA_CVAR_SAVE_SETTING},
+    {"flood_msgs", "4", 0, QA_CVAR_SAVE_SETTING}, {"flood_persecond", "4", 0, QA_CVAR_SAVE_SETTING}, {"flood_waitdelay", "10", 0, QA_CVAR_SAVE_SETTING},
 };
 static const q2_source_cvar rerelease[] = {
-    {"sv_stopspeed", "100", 0},
-    {"teamplay", "0", QA_Q2_CVAR_LATCH}, {"huntercam", "1", (uint32_t)QA_CVAR_SERVERINFO | (uint32_t)QA_Q2_CVAR_LATCH},
-    {"g_coop_player_collision", "0", QA_Q2_CVAR_LATCH},
-    {"g_coop_squad_respawn", "1", QA_Q2_CVAR_LATCH},
-    {"g_coop_enable_lives", "0", QA_Q2_CVAR_LATCH},
-    {"g_coop_num_lives", "2", QA_Q2_CVAR_LATCH},
-    {"g_coop_instanced_items", "1", QA_Q2_CVAR_LATCH},
-    {"capturelimit", "0", QA_CVAR_SERVERINFO},
-    {"g_quick_weapon_switch", "1", QA_Q2_CVAR_LATCH},
-    {"g_instant_weapon_switch", "0", QA_Q2_CVAR_LATCH},
-    {"g_infinite_ammo", "0", QA_Q2_CVAR_LATCH},
-    {"g_weapon_respawn_time", "30", 0}, {"g_dm_weapons_stay", "0", 0},
-    {"g_dm_instant_items", "1", 0}, {"g_dm_same_level", "0", 0},
-    {"g_no_health", "0", 0}, {"g_no_items", "0", 0}, {"g_no_armor", "0", 0},
-    {"g_friendly_fire", "0", 0},
-    {"g_instagib", "0", 0}, {"g_damage_scale", "1", 0}, {"ai_damage_scale", "1", 0},
-    {"g_teamplay_armor_protect", "0", 0},
-    {"g_no_mines", "0", 0}, {"g_no_nukes", "0", 0}, {"g_no_spheres", "0", 0},
-    {"g_dm_random_items", "0", 0}, {"g_dm_no_quadfire_drop", "0", 0},
-    {"g_dm_no_quad_drop", "0", 0}, {"g_dm_no_stack_double", "0", 0},
-    {"g_dm_strong_mines", "0", 0}, {"g_dm_force_respawn", "0", 0},
-    {"g_dm_force_respawn_time", "0", 0}, {"g_dm_no_fall_damage", "0", 0},
-    {"g_dm_spawn_farthest", "1", 0}, {"g_dm_allow_exit", "0", 0},
-    {"g_start_items", "", QA_Q2_CVAR_LATCH}, {"g_map_list", "", 0},
-    {"g_map_list_shuffle", "0", 0},
+    {"sv_stopspeed", "100", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"teamplay", "0", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY}, {"huntercam", "1", (uint32_t)QA_CVAR_SERVERINFO | (uint32_t)QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_coop_player_collision", "0", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_coop_squad_respawn", "1", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_coop_enable_lives", "0", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_coop_num_lives", "2", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_coop_instanced_items", "1", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
+    {"capturelimit", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_quick_weapon_switch", "1", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_instant_weapon_switch", "0", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_infinite_ammo", "0", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_weapon_respawn_time", "30", 0, QA_CVAR_SAVE_GAMEPLAY}, {"g_dm_weapons_stay", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_dm_instant_items", "1", 0, QA_CVAR_SAVE_GAMEPLAY}, {"g_dm_same_level", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_no_health", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"g_no_items", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"g_no_armor", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_friendly_fire", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_instagib", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"g_damage_scale", "1", 0, QA_CVAR_SAVE_GAMEPLAY}, {"ai_damage_scale", "1", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_teamplay_armor_protect", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_no_mines", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"g_no_nukes", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"g_no_spheres", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_dm_random_items", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"g_dm_no_quadfire_drop", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_dm_no_quad_drop", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"g_dm_no_stack_double", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_dm_strong_mines", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"g_dm_force_respawn", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_dm_force_respawn_time", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"g_dm_no_fall_damage", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_dm_spawn_farthest", "1", 0, QA_CVAR_SAVE_GAMEPLAY}, {"g_dm_allow_exit", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_start_items", "", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY}, {"g_map_list", "", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"g_map_list_shuffle", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
 };
 static const q2_source_cvar rogue[] = {
-    {"sv_stopspeed", "100", 0}, {"huntercam", "1", (uint32_t)QA_CVAR_SERVERINFO | (uint32_t)QA_Q2_CVAR_LATCH},
-    {"strong_mines", "0", 0}, {"randomrespawn", "0", 0}, {"gamerules", "0", QA_Q2_CVAR_LATCH},
+    {"sv_stopspeed", "100", 0, QA_CVAR_SAVE_GAMEPLAY}, {"huntercam", "1", (uint32_t)QA_CVAR_SERVERINFO | (uint32_t)QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
+    {"strong_mines", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"randomrespawn", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"gamerules", "0", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
 };
 static const q2_source_cvar lmctf[] = {
-    {"ctfflags", "0", QA_CVAR_SERVERINFO}, {"refset", "0", QA_CVAR_SERVERINFO},
-    {"runes", "15", QA_CVAR_SERVERINFO}, {"countdown_time", "15", 0}, {"autolock", "0", 0},
-    {"fastswitch", "0", 0}, {"disabled_weps", "0", 0},
+    {"ctfflags", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY}, {"refset", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY},
+    {"runes", "15", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY}, {"countdown_time", "15", 0, QA_CVAR_SAVE_GAMEPLAY}, {"autolock", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"fastswitch", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"disabled_weps", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
 };
 
 struct application_native_q2_console {
@@ -402,6 +405,7 @@ static bool observe(struct application_native_q2_console *owner, qa_error *error
 }
 static bool clone(application_provider *provider, qa_cvars *destination, bool *cloned, qa_error *error) {
     *cloned = false;
+    if (provider->application->operation == APPLICATION_PERSISTING) return true;
     if (provider->application->startup_hooks) {
         struct application_native_q2_console *owner = provider->native_q2_console;
         qa_application_startup_source source = {
@@ -419,14 +423,8 @@ static bool clone(application_provider *provider, qa_cvars *destination, bool *c
             strcmp(previous->launch->selection.instance, provider->launch->selection.instance)) continue;
         qa_cvars *source = application_native_q2_console_registry(previous);
         if (!source || qa_cvars_dialect(source) != qa_cvars_dialect(destination)) continue;
-        qa_buffer bytes = {0};
-        qa_cvars_restore *ticket = NULL;
         bool okay = application_native_q2_console_idle(previous) &&
-            qa_cvars_save_capture(source, &bytes, error) &&
-            qa_cvars_save_prepare(destination, (qa_bytes){bytes.data, bytes.size}, &ticket, error) &&
-            qa_cvars_save_commit(ticket, error);
-        if (!okay) qa_cvars_save_abort(ticket);
-        qa_buffer_free(&bytes);
+            qa_cvars_copy(destination, source, error);
         if (okay) *cloned = true;
         return okay;
     }
@@ -444,7 +442,8 @@ static bool definitions(application_provider *provider, const q2_source_cvar *ta
         if (!game && !strcmp(provider->product->campaign, "xatrix") &&
             !strcmp(table[i].name, "spectator_password")) flags = 0;
         if (!qa_cvars_register(cvars, table[i].name, value, flags,
-                provider->owner, NULL, error)) return false;
+                provider->owner, NULL, error) ||
+            !qa_cvars_declare_save_policy(cvars, table[i].name, table[i].save_policy, error)) return false;
     }
     return true;
 }
@@ -452,7 +451,9 @@ static bool missing_definitions(application_provider *provider, const q2_source_
                                 size_t count, qa_error *error) {
     qa_cvars *cvars = application_native_q2_console_registry(provider);
     for (size_t i = 0; i < count; ++i)
-        if (!qa_cvars_find(cvars, table[i].name) && !definitions(provider, table + i, 1, error)) return false;
+        if (!qa_cvars_find(cvars, table[i].name)) {
+            if (!definitions(provider, table + i, 1, error)) return false;
+        } else if (!qa_cvars_declare_save_policy(cvars, table[i].name, table[i].save_policy, error)) return false;
     return true;
 }
 bool application_native_q2_console_prepare(application_provider *provider, const qa_q2_options *rules,
@@ -479,7 +480,8 @@ bool application_native_q2_console_prepare(application_provider *provider, const
     free(dedicated_value);
     bool rr = dialect(provider) == QA_CONSOLE_Q2_RERELEASE;
     if (okay && !cloned) okay = rr ? definitions(provider, rerelease, sizeof(rerelease) / sizeof(*rerelease), error) :
-        qa_cvars_register(cvars, "sv_maplist", "", 0, provider->owner, NULL, error);
+        (qa_cvars_register(cvars, "sv_maplist", "", 0, provider->owner, NULL, error) &&
+         qa_cvars_declare_save_policy(cvars, "sv_maplist", QA_CVAR_SAVE_GAMEPLAY, error));
     if (okay && classic_rogue(provider))
         okay = missing_definitions(provider, rogue, sizeof(rogue) / sizeof(*rogue), error);
     for (size_t i = 0; okay && i < choices->mode_count; ++i) {

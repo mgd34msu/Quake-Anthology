@@ -54,6 +54,7 @@ bool qa_server_admin_declarations(qa_cvars *cvars, uint64_t owner, qa_error *err
         if (v && !v->console_created) {
             if (!qa_cvars_add_flags(cvars,names[i],flags[i],error)) return false;
         } else if (!qa_cvars_register(cvars,names[i],values[i],flags[i],owner,NULL,error)) return false;
+        if (!qa_cvars_declare_save_policy(cvars,names[i],QA_CVAR_SAVE_SETTING,error)) return false;
     }
     for (unsigned i=1;dialect==QA_CONSOLE_Q3 && i<=5;++i) {
         char name[16]; snprintf(name,sizeof(name),"sv_master%u",i);
@@ -61,6 +62,7 @@ bool qa_server_admin_declarations(qa_cvars *cvars, uint64_t owner, qa_error *err
         if (v && !v->console_created) {
             if (!qa_cvars_add_flags(cvars,name,master_flags,error)) return false;
         } else if (!qa_cvars_register(cvars,name,i==1?"master.quake3arena.com":"",master_flags,owner,NULL,error)) return false;
+        if (!qa_cvars_declare_save_policy(cvars,name,QA_CVAR_SAVE_SETTING,error)) return false;
     }
     return true;
 }

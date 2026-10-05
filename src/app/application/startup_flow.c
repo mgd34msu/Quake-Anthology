@@ -142,14 +142,15 @@ bool qa_application_startup_root_definition_phase(const qa_application *app,
 }
 
 bool application_startup_root_register(application_provider *provider, const char *name,
-    const char *value, uint32_t flags, uint64_t owner, qa_error *error)
+    const char *value, uint32_t flags, uint64_t owner, qa_cvar_save_policy policy, qa_error *error)
 {
     qa_application *app = provider ? provider->application : NULL;
     struct application_startup_flow *flow = app ? app->startup_flow : NULL;
     if (!app || !app->cvars)
         return application_fail(error, QA_ERROR_ARGUMENT, "Shared definition lost its actual ENGINE registry");
     if (!flow || !flow->hooks.prepare_root)
-        return qa_cvars_register(app->cvars, name, value, flags, owner, NULL, error);
+        return qa_cvars_register(app->cvars, name, value, flags, owner, NULL, error) &&
+            qa_cvars_declare_save_policy(app->cvars, name, policy, error);
     if (flow->root_definition_provider)
         return application_fail(error, QA_ERROR_ARGUMENT, "Shared definition already has an entered source owner");
     flow->root_definition_provider = provider;
@@ -165,8 +166,9 @@ bool application_startup_root_register(application_provider *provider, const cha
                 ok = application_fail(error, QA_ERROR_ARGUMENT, "Shared definition received another canonical edit");
             else ok = qa_cvars_edit_apply(edit,
                 &(qa_cvars_edit_command){.kind = QA_CVARS_EDIT_REGISTER,
-                    .name = name, .value = value, .flags = flags, .owner = owner}, error);
-        } else ok = qa_cvars_register(flow->cvars, name, value, flags, owner, NULL, error);
+                    .name = name, .value = value, .flags = flags, .owner = owner, .save_policy = policy}, error);
+        } else ok = qa_cvars_register(flow->cvars, name, value, flags, owner, NULL, error) &&
+            qa_cvars_declare_save_policy(flow->cvars, name, policy, error);
     }
     flow->root_definition_provider = NULL;
     return ok;

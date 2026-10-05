@@ -83,6 +83,11 @@ typedef struct qa_console_documentation {
     size_t allowed_count;
     bool has_allowed_values;
 } qa_console_documentation;
+typedef enum qa_cvar_save_policy {
+    QA_CVAR_SAVE_UNCLASSIFIED,
+    QA_CVAR_SAVE_GAMEPLAY,
+    QA_CVAR_SAVE_SETTING
+} qa_cvar_save_policy;
 typedef struct qa_cvar_view {
     const char *name;
     const char *value;
@@ -98,6 +103,7 @@ typedef struct qa_cvar_view {
     bool console_created;
     size_t handle;
     const qa_console_documentation *documentation;
+    qa_cvar_save_policy save_policy;
 } qa_cvar_view;
 
 typedef enum qa_cvar_effect_kind {
@@ -114,6 +120,7 @@ typedef struct qa_cvar_options {
     bool (*command_exists)(void *user, const char *name);
     bool (*cheats_allowed)(void *user);
     void (*effect)(void *user, qa_cvar_effect_kind kind, const qa_cvar_view *variable);
+    qa_cvar_save_policy default_save_policy;
 } qa_cvar_options;
 
 typedef struct qa_cvar_binding {
@@ -147,6 +154,11 @@ bool qa_cvars_register(qa_cvars *registry, const char *name, const char *default
 /* Adds declaration flags to the existing physical record, preserving its
  * value, reset, latch, owner, handle and value modification count. */
 bool qa_cvars_add_flags(qa_cvars *,const char *name,uint32_t flags,qa_error *);
+/* Source declaration metadata; this does not alter native flags or values. */
+bool qa_cvars_declare_save_policy(qa_cvars *,const char *,qa_cvar_save_policy,qa_error *);
+/* Same-process scalar/declaration carry. Current destination callbacks stay
+ * with their owner; no callback or saved registry identity is transplanted. */
+bool qa_cvars_copy(qa_cvars *destination,const qa_cvars *source,qa_error *);
 bool qa_cvars_document(qa_cvars *, const char *name, uint64_t owner,
                        const qa_console_documentation *, qa_error *);
 /* Bindings validate before publication and observe committed values. They use

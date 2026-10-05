@@ -215,13 +215,21 @@ bool qc_game_builtin(void *context, qa_qc_instance *vm, qa_qc_builtin builtin,
         const char *text;
         if (!qa_qc_arg_string(vm, 0, &text, error)) return false;
         const qa_cvar_view *value = qa_cvars_find(game->options.cvars, text);
+        if (value && value->save_policy == QA_CVAR_SAVE_UNCLASSIFIED) {
+            if (!qa_cvars_declare_save_policy(game->options.cvars, text, QA_CVAR_SAVE_GAMEPLAY, error)) return false;
+            value = qa_cvars_find(game->options.cvars, text);
+        }
         return qa_qc_return_float(vm, value ? value->number : 0, error);
     }
     case QA_QC_BUILTIN_CVAR_SET: {
         const char *key, *value;
         if (!qa_qc_arg_string(vm, 0, &key, error) || !qa_qc_arg_string(vm, 1, &value, error)) return false;
-        if (qa_cvars_find(game->options.cvars, key))
+        const qa_cvar_view *actual = qa_cvars_find(game->options.cvars, key);
+        if (actual) {
+            if (actual->save_policy == QA_CVAR_SAVE_UNCLASSIFIED &&
+                !qa_cvars_declare_save_policy(game->options.cvars, key, QA_CVAR_SAVE_GAMEPLAY, error)) return false;
             return qa_cvars_set(game->options.cvars, key, value, false, error);
+        }
         static const char prefix[] = "Cvar_Set: variable ", suffix[] = " not found\n";
         size_t length = strlen(key);
         if (length > SIZE_MAX - sizeof(prefix) - sizeof(suffix))

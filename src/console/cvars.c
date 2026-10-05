@@ -677,7 +677,9 @@ static bool cheats_allowed(cvar_target target)
 
 qa_cvars *qa_cvars_create(const qa_cvar_options *options, qa_error *error)
 {
-    if (options == NULL || !qac_dialect_valid(options->dialect)) {
+    if (options == NULL || !qac_dialect_valid(options->dialect) ||
+        options->default_save_policy < QA_CVAR_SAVE_UNCLASSIFIED ||
+        options->default_save_policy > QA_CVAR_SAVE_SETTING) {
         qac_fail(error, QA_ERROR_ARGUMENT, "invalid cvar registry options");
         return NULL;
     }
@@ -914,6 +916,7 @@ static bool register_variable(cvar_target target, const char *name, const char *
     }
     entry->view.flags = q2 && (flags & q2_no_archive) != 0 ? flags & ~UINT32_C(1) : flags;
     entry->view.owner = owner;
+    entry->view.save_policy = registry->options.default_save_policy;
     entry->view.modified = true;
     entry->view.modification_count = 1;
     entry->view.handle = target.values->next_handle++;
@@ -1268,6 +1271,24 @@ bool qa_cvars_add_flags(qa_cvars *registry,const char *name,uint32_t flags,qa_er
     return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_ADD_FLAGS,
         .name=name,.flags=flags},error);
 }
+static bool declare_save_policy(cvar_target target,const char *name,
+    qa_cvar_save_policy policy,qa_error *error)
+{
+    if (policy!=QA_CVAR_SAVE_GAMEPLAY && policy!=QA_CVAR_SAVE_SETTING)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"cvar Source save policy is not declared");
+    if (!target_touch(target,error)) return false;
+    cvar *entry=name?qac_cvars_find_values(target.registry,target.values,
+        canonical_name(target.registry,target.values,name)):NULL;
+    if (!entry) return qac_fail(error,QA_ERROR_NOT_FOUND,"cvar save policy needs its actual Source declaration");
+    entry->view.save_policy=policy;
+    return true;
+}
+bool qa_cvars_declare_save_policy(qa_cvars *registry,const char *name,
+    qa_cvar_save_policy policy,qa_error *error)
+{
+    return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SAVE_POLICY,
+        .name=name,.save_policy=policy},error);
+}
 static bool vm_bind_variable(cvar_target target,const char *name,const char *default_value,
     uint32_t flags,uint64_t owner,size_t *handle,qa_error *error)
 {
@@ -1515,12 +1536,16 @@ static bool apply_operation(cvar_target target,const qa_cvars_edit_command *comm
     switch (command->kind) {
     case QA_CVARS_EDIT_REGISTER:
         return register_variable(target,command->name,command->value,command->flags,
-            command->owner,command->description,error);
+            command->owner,command->description,error) &&
+            (command->save_policy == QA_CVAR_SAVE_UNCLASSIFIED ||
+             declare_save_policy(target,command->name,command->save_policy,error));
     case QA_CVARS_EDIT_SET:
         return set_variable(target,command->name,command->value,command->force,error);
     case QA_CVARS_EDIT_ASSIGN:
         return command->force ? assign_variable(target,command->name,command->value,command->source_dialect,error) :
             qac_fail(error,QA_ERROR_ARGUMENT,"direct cvar assignment requires explicit force");
+    case QA_CVARS_EDIT_SAVE_POLICY:
+        return declare_save_policy(target,command->name,command->save_policy,error);
     case QA_CVARS_EDIT_SET_CONSOLE:
         return set_console_variable(target,command->name,command->value,error);
     case QA_CVARS_EDIT_SET_FLAGS:
@@ -1676,6 +1701,70 @@ void qa_cvars_edit_abort(qa_cvars_edit *edit)
     }
     qac_cvars_values_free(&edit->values);
     registry->ready_edit=NULL; free(edit->bindings); free(edit);
+}
+
+bool qa_cvars_copy(qa_cvars *destination,const qa_cvars *source,qa_error *error)
+{
+    if (!qa_cvars_observer_idle(source) || !qa_cvars_observer_idle(destination) ||
+        source->options.dialect!=destination->options.dialect)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"cvar carry needs its idle same-dialect registries");
+    if (source==destination) return true;
+    uint64_t revision=source->mutation_revision;
+    qa_cvars_edit *edit=NULL;
+    if (!qa_cvars_edit_prepare(destination,&edit,error)) return false;
+    bool okay=true;
+    for (const cvar *row=source->values.first;okay && row;row=row->next) {
+        if (find_alias(destination,&edit->values,row->view.name)) {
+            okay=qac_fail(error,QA_ERROR_ARGUMENT,"carried physical cvar conflicts with a current alias");
+            break;
+        }
+        cvar *actual=qac_cvars_find_values(destination,&edit->values,row->view.name);
+        if (!actual) {
+            okay=qa_cvars_edit_apply(edit,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_REGISTER,
+                .name=row->view.name,.value=row->view.reset_value,.flags=row->view.flags,
+                .owner=row->view.owner,.description=row->view.description},error);
+            actual=okay?qac_cvars_find_values(destination,&edit->values,row->view.name):NULL;
+            if (okay) okay=actual && qac_document_replace(&actual->view.documentation,row->view.documentation,error);
+        }
+        if (okay) okay=qa_cvars_edit_apply(edit,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET,
+            .name=row->view.name,.value=row->view.value,.force=true},error);
+        if (okay && (row->view.latched_value || actual->view.latched_value))
+            okay=qa_cvars_edit_apply(edit,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_STAGE,
+                .name=row->view.name,.value=row->view.latched_value ? row->view.latched_value : row->view.value},error);
+        if (okay && actual->view.save_policy==QA_CVAR_SAVE_UNCLASSIFIED)
+            actual->view.save_policy=row->view.save_policy;
+    }
+    for (const cvar_alias *row=source->values.aliases;okay && row;row=row->next) {
+        const cvar_alias *actual=find_alias(destination,&edit->values,row->name);
+        if (actual) {
+            if (strcmp(actual->target,row->target) || actual->conversion!=row->conversion)
+                okay=qac_fail(error,QA_ERROR_ARGUMENT,"carried alias conflicts with its current declaration");
+            continue;
+        }
+        if (qac_cvars_find_values(destination,&edit->values,row->name) ||
+            !qac_cvars_find_values(destination,&edit->values,row->target)) {
+            okay=qac_fail(error,QA_ERROR_ARGUMENT,"carried alias lacks its actual canonical target");
+            break;
+        }
+        if (edit->values.alias_count >= SIZE_MAX-edit->values.count) {
+            okay=qac_fail(error,QA_ERROR_MEMORY,"carried aliases exceed native index capacity"); break;
+        }
+        if (!qac_cvars_index_reserve(destination,&edit->values,
+            edit->values.count+edit->values.alias_count+1,error)) { okay=false; break; }
+        cvar_alias *copy=qac_cvars_alias_copy(row,error);
+        if (!copy) { okay=false; break; }
+        copy->vm_bound=false; copy->handle=0;
+        if (edit->values.last_alias) edit->values.last_alias->next=copy;
+        else edit->values.aliases=copy;
+        edit->values.last_alias=copy; ++edit->values.alias_count;
+        qac_cvars_index_alias(destination,&edit->values,copy);
+    }
+    if (okay && source->mutation_revision!=revision)
+        okay=qac_fail(error,QA_ERROR_ARGUMENT,"cvar carry changed its actual source registry");
+    if (okay) okay=qa_cvars_edit_ready(edit,error);
+    if (!okay) { qa_cvars_edit_abort(edit); return false; }
+    qa_cvars_edit_publish(edit);
+    return qa_cvars_edit_finish(destination,error);
 }
 
 void qa_cvars_set_server_active(qa_cvars *registry, bool active) { if (qac_cvars_touch(registry, NULL)) registry->values.server_active = active; }

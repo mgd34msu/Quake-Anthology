@@ -536,18 +536,18 @@ static bool construct_q1(qa_application *application,
     application_native_profile profile;
     if (!native_profile(provider->launch, choices, &profile, error)) return false;
     qa_q1_options options = q1_initial_options(provider, product, profile);
-    bool console_created = provider->native_q1_console || (application->operation == APPLICATION_PERSISTING
-        ? application_native_q1_console_create_restored(provider, error)
-        : application_native_q1_console_create(provider, &options, error));
+    bool console_created = provider->native_q1_console ||
+        application_native_q1_console_create(provider, &options, error);
     if (!console_created || !native_console_preinit(provider, error)) return false;
     if (application->operation != APPLICATION_PERSISTING &&
         !q1_final_options(provider, choices, &options, error)) return false;
-    for (size_t i = 0; application->operation != APPLICATION_PERSISTING && i < choices->mode_count; ++i)
+    for (size_t i = 0; i < choices->mode_count; ++i)
         if (choices->modes[i].rules.enabled && choices->modes[i].rules.source == QA_MODE_Q1_HORDE &&
             !strcmp(choices->modes[i].instance, provider->launch->selection.instance)) {
             qa_cvars *cvars = application_native_q1_console_registry(provider);
             if ((!qa_cvars_find(cvars, "horde") &&
                  !qa_cvars_register(cvars, "horde", "0", 0, provider->owner, NULL, error)) ||
+                !qa_cvars_declare_save_policy(cvars, "horde", QA_CVAR_SAVE_GAMEPLAY, error) ||
                 !qa_cvars_set(cvars, "horde", "1", true, error)) return false;
         }
     if (!application_native_q1_wire_create(provider, error)) return false;
@@ -824,9 +824,8 @@ static bool construct_q2(qa_application *application,
     };
     qa_builtin_services services = application_builtin_services(
         application, world, application->physics);
-    bool console_ready = provider->native_q2_console || (application->operation == APPLICATION_PERSISTING
-        ? application_native_q2_console_create_restored(provider, error)
-        : application_native_q2_console_prepare(provider, &options, choices, error));
+    bool console_ready = provider->native_q2_console ||
+        application_native_q2_console_prepare(provider, &options, choices, error);
     if (!console_ready || !native_console_preinit(provider, error) ||
         (application->operation != APPLICATION_PERSISTING &&
         !application_native_q2_console_finalize(provider, &options, choices, error))) return false;
@@ -1179,7 +1178,9 @@ static bool construct_q3(qa_application *application,
     rules.friendly_fire = profile.friendly_fire;
     if (!provider->native_q3_console &&
         !(application->operation == APPLICATION_PERSISTING
-            ? application_native_q3_console_create(provider, choices->world.map, error)
+            ? (application_native_q3_console_create(provider, choices->world.map, error) &&
+               application_native_q3_settings_prepare_definitions(provider,
+                   !strcmp(provider->product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA, error))
             : q3_console_prepare(provider, choices, profile, error)))
         return false;
     if (!native_console_preinit(provider, error)) return false;

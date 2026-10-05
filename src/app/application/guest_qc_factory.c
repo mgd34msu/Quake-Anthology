@@ -55,24 +55,42 @@ bool application_qc_console_prepare(qa_application *app, application_provider *p
     if (app->operation != APPLICATION_PERSISTING &&
         !application_startup_source_carry(provider, &source, &carried, error)) return false;
     char maximum[16]; snprintf(maximum, sizeof(maximum), "%u", engine->max_clients);
-    static const char *const names[] = {"skill", "deathmatch", "coop", "teamplay", "sv_gravity", "sv_aim", "sv_maxspeed",
-        "maxclients", "registered", "developer", "sv_cheats", "samelevel", "timelimit", "fraglimit", "gamecfg"};
+    static const struct { const char *name; qa_cvar_save_policy policy; } names[] = {
+        {"skill", QA_CVAR_SAVE_GAMEPLAY},
+        {"deathmatch", QA_CVAR_SAVE_GAMEPLAY},
+        {"coop", QA_CVAR_SAVE_GAMEPLAY},
+        {"teamplay", QA_CVAR_SAVE_GAMEPLAY},
+        {"sv_gravity", QA_CVAR_SAVE_GAMEPLAY},
+        {"sv_aim", QA_CVAR_SAVE_GAMEPLAY},
+        {"sv_maxspeed", QA_CVAR_SAVE_GAMEPLAY},
+        {"maxclients", QA_CVAR_SAVE_GAMEPLAY},
+        {"registered", QA_CVAR_SAVE_SETTING},
+        {"developer", QA_CVAR_SAVE_SETTING},
+        {"sv_cheats", QA_CVAR_SAVE_SETTING},
+        {"samelevel", QA_CVAR_SAVE_GAMEPLAY},
+        {"timelimit", QA_CVAR_SAVE_GAMEPLAY},
+        {"fraglimit", QA_CVAR_SAVE_GAMEPLAY},
+        {"gamecfg", QA_CVAR_SAVE_GAMEPLAY}};
     const char *values[] = {"1", "0", "0", "0", "800", selected == QA_QC_QUAKEWORLD ? "2" : "0.93", "320",
         maximum, "1", "0", "0", "0", "0", "0", "0"};
     for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i)
-        if (!qa_cvars_register(engine->cvars, names[i], values[i], 0, provider->owner, NULL, error)) return false;
+        if (!qa_cvars_register(engine->cvars, names[i].name, values[i], 0, provider->owner, NULL, error) ||
+            !qa_cvars_declare_save_policy(engine->cvars, names[i].name, names[i].policy, error)) return false;
     if (selected == QA_QC_QUAKEWORLD) {
         static const char *const qw_names[] = {"sv_phs", "sv_stopspeed", "sv_spectatormaxspeed", "sv_accelerate",
             "sv_airaccelerate", "sv_wateraccelerate", "sv_friction", "sv_waterfriction"};
         static const char *const qw_values[] = {"1", "100", "500", "10", "0.7", "10", "4", "4"};
         size_t count = profile ? 1 : sizeof(qw_names) / sizeof(*qw_names);
         for (size_t i = 0; i < count; ++i)
-            if (!qa_cvars_register(engine->cvars, qw_names[i], qw_values[i], 0, provider->owner, NULL, error)) return false;
+            if (!qa_cvars_register(engine->cvars, qw_names[i], qw_values[i], 0, provider->owner, NULL, error) ||
+                !qa_cvars_declare_save_policy(engine->cvars, qw_names[i],
+                    i ? QA_CVAR_SAVE_GAMEPLAY : QA_CVAR_SAVE_SETTING, error)) return false;
         static const char *const policy_names[] = {"password", "spectator_password", "sv_highchars", "maxspectators"};
         static const char *const policy_values[] = {"", "", "1", "8"};
         for (size_t i = 0; i < sizeof(policy_names) / sizeof(*policy_names); ++i)
             if (!qa_cvars_register(engine->cvars, policy_names[i], policy_values[i],
-                i == 3 ? QA_CVAR_SERVERINFO : 0, provider->owner, NULL, error)) return false;
+                i == 3 ? QA_CVAR_SERVERINFO : 0, provider->owner, NULL, error) ||
+                !qa_cvars_declare_save_policy(engine->cvars, policy_names[i], QA_CVAR_SAVE_SETTING, error)) return false;
     }
     if (!carried && !qa_cvars_set_number(engine->cvars, "skill", (float)choices->world.skill, error)) return false;
     if (!carried && choices->mode_count) {
@@ -90,6 +108,9 @@ bool application_qc_console_prepare(qa_application *app, application_provider *p
         if (qa_cvars_find(engine->cvars, entry->name)) {
             if (!carried && !qa_cvars_set(engine->cvars, entry->name, entry->value, true, error)) return false;
         } else if (!qa_cvars_register(engine->cvars, entry->name, entry->value, 0, provider->owner, NULL, error)) return false;
+        const qa_cvar_view *actual = qa_cvars_find(engine->cvars, entry->name);
+        if (actual->save_policy == QA_CVAR_SAVE_UNCLASSIFIED &&
+            !qa_cvars_declare_save_policy(engine->cvars, entry->name, QA_CVAR_SAVE_GAMEPLAY, error)) return false;
     }
     if (engine->max_clients == UINT32_MAX || engine->max_clients + 1 >= engine->actor_capacity)
         return application_fail(error, QA_ERROR_FORMAT, "QC reserved clients exceed the actual source entity capacity");

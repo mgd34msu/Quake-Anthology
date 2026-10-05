@@ -2,7 +2,6 @@
 #include "rankings.h"
 #include "q3_product.h"
 #include "startup_flow.h"
-#include "qa/cvars_save.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +16,7 @@ struct application_q3_campaign_launch {
     application_provider *candidate;
     qa_cvars *candidate_cvars;
     uint64_t candidate_cvar_owner, previous_cvar_owner;
-    qa_buffer final_cvars;
+    qa_cvars *final_cvars;
     bool original;
     qa_application_q3_setting *settings;
     size_t count;
@@ -59,7 +58,7 @@ bool application_q3_campaign_launch_finish(qa_application *app,
     if (!okay) application_fault(app, error);
     app->q3_campaign_launch = NULL;
     qa_launch_snapshot_release(state->previous);
-    qa_buffer_free(&state->final_cvars);
+    qa_cvars_destroy(state->final_cvars);
     for (size_t i = 0; i < state->count; ++i) {
         free((void *)state->settings[i].name);
         free((void *)state->settings[i].value);
@@ -96,7 +95,9 @@ bool application_q3_campaign_launch_cvars(application_provider *provider,
                 owner, value->description, error) ||
             !qa_cvars_set(cvars, value->name,
                 value->latched_value ? value->latched_value : value->value,
-                true, error)) return false;
+                true, error) ||
+            (value->save_policy != QA_CVAR_SAVE_UNCLASSIFIED &&
+             !qa_cvars_declare_save_policy(cvars, value->name, value->save_policy, error))) return false;
     }
     for (size_t i = 0; i < state->count; ++i) {
         if (named(state->settings[i].name, "sv_cheats")) continue;
@@ -117,10 +118,11 @@ bool application_q3_campaign_launch_guest_handoff(application_provider *provider
     if (!state || provider->owner != state->previous_owner) return true;
     if (!state->original || app->operation != APPLICATION_CONFIGURING ||
         !provider->attached || !provider->constructed || provider->close_pending ||
-        cvars != state->previous_cvars || !cvar_owner || state->final_cvars.data)
+        cvars != state->previous_cvars || !cvar_owner || state->final_cvars)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Campaign Shutdown carry lost its actual previous GAME registry");
-    if (!qa_cvars_save_capture(cvars, &state->final_cvars, error)) return false;
+    state->final_cvars = qa_cvars_create(&(qa_cvar_options){.dialect = QA_CONSOLE_Q3}, error);
+    if (!state->final_cvars || !qa_cvars_copy(state->final_cvars, cvars, error)) return false;
     state->previous_cvar_owner = cvar_owner;
     state->previous_cvars = NULL;
     return true;
@@ -137,7 +139,7 @@ bool application_q3_campaign_launch_admitted(qa_application *app,
     const qa_cvar_view *capacity = qa_cvars_find(cvars, "sv_maxclients");
     if (app->operation != APPLICATION_CONFIGURING || !publication ||
         !publication->published || provider != state->candidate ||
-        !provider->attached || !provider->constructed || !state->final_cvars.data ||
+        !provider->attached || !provider->constructed || !state->final_cvars ||
         !map || !capacity || !state->candidate_cvar_owner)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Campaign admission lacks its genuine final Shutdown carry");
@@ -154,11 +156,7 @@ bool application_q3_campaign_launch_admitted(qa_application *app,
             "Retaining campaign physical client capacity");
     }
     memcpy(max_clients, capacity->value, capacity_length + 1);
-    qa_cvars_restore *ticket = NULL;
-    bool okay = qa_cvars_save_prepare(cvars,
-        (qa_bytes){state->final_cvars.data, state->final_cvars.size}, &ticket, error);
-    if (okay) okay = qa_cvars_save_commit(ticket, error);
-    if (!okay) qa_cvars_save_abort(ticket);
+    bool okay = qa_cvars_copy(cvars, state->final_cvars, error);
     size_t count = okay ? qa_cvars_count(cvars) : 0;
     qa_cvar_record_state *rows = NULL;
     if (okay && count > SIZE_MAX / sizeof(*rows))
