@@ -852,15 +852,17 @@ static q1_actor *allocate_state(qa_q1_game *g, qa_actor_id actor, qa_error *erro
     g->actors[actor.slot] = entity;
     return entity;
 }
-bool q1_create(qa_q1_game *g, const char *classname, q1_entity_kind kind, qa_actor_id owner,
-               q1_actor **out, qa_error *error) {
+static bool create_state(qa_q1_game *g, const char *classname, q1_entity_kind kind, qa_actor_id owner,
+    const uint32_t *source_slot, q1_actor **out, qa_error *error) {
     qa_string_id name;
     if (!qa_builtin_resource(&g->services, classname, &name, error))
         return false;
     qa_combat_state combat = {.mass = 100};
     qa_builtin_spawn spawn = {.owner = g->options.provider, .definition = name, .combat = &combat};
-    if (!q1_wire_allocate_slot(g, &spawn.has_source, &spawn.source_slot, error))
-        return false;
+    if (source_slot) {
+        spawn.has_source = true; spawn.source_slot = *source_slot;
+        if (!q1_wire_spawn_slot_valid(g, *source_slot)) return false;
+    } else if (!q1_wire_allocate_slot(g, &spawn.has_source, &spawn.source_slot, error)) return false;
     qa_actor_id actor;
     if (!qa_builtin_spawn_actor(&g->services, &spawn, &actor, error))
         return false;
@@ -880,6 +882,14 @@ bool q1_create(qa_q1_game *g, const char *classname, q1_entity_kind kind, qa_act
     }
     *out = entity;
     return true;
+}
+bool q1_create(qa_q1_game *g, const char *classname, q1_entity_kind kind, qa_actor_id owner,
+    q1_actor **out, qa_error *error) {
+    return create_state(g, classname, kind, owner, NULL, out, error);
+}
+bool q1_create_source(qa_q1_game *g, const char *classname, q1_entity_kind kind, uint32_t slot,
+    q1_actor **out, qa_error *error) {
+    return create_state(g, classname, kind, (qa_actor_id){0}, &slot, out, error);
 }
 bool q1_remove(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return !q1_alive(g, entity->id) || qa_session_release(g->services.session, entity->id, error);

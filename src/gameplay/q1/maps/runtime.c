@@ -878,7 +878,7 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
     }
     return true;
 }
-static q1_map_kind classify(const char *name) {
+q1_map_kind q1_map_classify(const char *name) {
     static const struct {
         const char *name;
         q1_map_kind kind;
@@ -1098,7 +1098,7 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         *handled = true;
         return q1_remove(g, entity, error);
     }
-    q1_map_kind kind = classify(spawn->classname);
+    q1_map_kind kind = q1_map_classify(spawn->classname);
     if (g->options.program == QA_Q1_ROGUE) {
         bool wall = !strcmp(spawn->classname, "func_ctf_wall");
         bool teleport = !strcmp(spawn->classname, "trigger_teleport") && (spawn->spawnflags & 4u);

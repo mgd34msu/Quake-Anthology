@@ -367,7 +367,7 @@ static uint32_t upgrade_flag(qa_q1_game *g) {
             return 1u << i;
     return 0;
 }
-static bool define_item(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+bool q1_pickup_define(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_pickup *item = &entity->state.pickup;
     const char *model = NULL, *sound = NULL, *id = NULL;
     char model_buffer[96], id_buffer[128];
@@ -701,7 +701,7 @@ bool q1_pickup_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (g->options.deathmatch == 0 &&
         (item_name(g, entity, "item_sphere") || item_name(g, entity, "item_random_powerup")))
         return q1_remove(g, entity, error);
-    if (!define_item(g, entity, error))
+    if (!q1_pickup_define(g, entity, error))
         return false;
     entity->physics.solid = QA_PHYSICS_NOT_SOLID;
     entity->physics.motion = QA_PHYSICS_STATIONARY;
@@ -1227,7 +1227,7 @@ static bool spawn_external(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_bod
     entity->spawnflags = spawn->spawnflags;
     entity->source_movement_flags = spawn->source_movement_flags;
     entity->count = spawn->count;
-    if (!define_item(g, entity, error))
+    if (!q1_pickup_define(g, entity, error))
         goto fail;
     entity->state.pickup.external = true;
     entity->state.pickup.respawn = -1;
@@ -1299,7 +1299,7 @@ bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return g->options.deathmatch != 1 || q1_schedule(g, entity, 20, Q1_THINK_RESPAWN, error);
     }
     if (kind == Q1_THINK_RESPAWN) {
-        if (item->random && !define_item(g, entity, error))
+        if (item->random && !q1_pickup_define(g, entity, error))
             return false;
         entity->model = item->original_model;
         entity->physics.solid = QA_PHYSICS_TRIGGER;

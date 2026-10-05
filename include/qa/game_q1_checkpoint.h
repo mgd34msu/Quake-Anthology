@@ -2,8 +2,17 @@
 #define QA_GAME_Q1_CHECKPOINT_H
 
 #include "qa/game_q1.h"
+#include "qa/q1_save.h"
+#include "qa/qc.h"
 
 typedef struct qa_q1_restore qa_q1_restore;
+
+/* Original ED_Write fields from the actual compiled Source; record positions
+ * retain the physical edict namespace, including free rows. */
+bool qa_q1_game_original_capture(qa_q1_game *, const qa_qc_program *,
+    const qa_movement_state *, qa_q1_save_data *, qa_error *);
+bool qa_q1_game_original_restore(qa_q1_game *, const qa_qc_program *,
+    const qa_q1_save_data *, qa_movement_state *, qa_error *);
 
 /* The owned byte stream contains native continuation only. Shared actor,
  * body, inventory, combat, campaign and scheduler state belongs to its owner.

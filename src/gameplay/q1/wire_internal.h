@@ -24,6 +24,7 @@ typedef struct q1_wire_client {
 typedef struct q1_wire_edict {
     float freetime;
     bool free;
+    qa_actor_id released;
 } q1_wire_edict;
 typedef struct q1_qw_fraglog {
     uint8_t buffers[2][1450];

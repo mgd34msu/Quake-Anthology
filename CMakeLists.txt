@@ -256,6 +256,7 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/character.c
     src/gameplay/q1/charm.c
     src/gameplay/q1/checkpoint/codec.c
+    src/gameplay/q1/checkpoint/original.c
     src/gameplay/q1/checkpoint/entity.c
     src/gameplay/q1/checkpoint/io.c
     src/gameplay/q1/checkpoint/map.c
@@ -354,7 +355,7 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/source_rogue_runes.c
     src/gameplay/q1/player_ui.c
 )
-target_link_libraries(qa_game_q1 PUBLIC qa_builtin qa_campaign qa_persistence)
+target_link_libraries(qa_game_q1 PUBLIC qa_builtin qa_campaign qa_persistence qa_qc)
 
 add_library(qa_game_q2 STATIC
     src/gameplay/q2/bot_source.c
@@ -1163,6 +1164,7 @@ add_library(qa_application STATIC
     src/app/application/engine_shutdown.c
     src/app/application/save_policy.c
     src/app/application/native_q1_console.c
+    src/app/application/native_q1_save.c
     src/app/application/native_q1_composition.c
     src/app/application/native_q1_composition_player.c
     src/app/application/native_q1_composition_birth.c

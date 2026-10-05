@@ -618,6 +618,8 @@ bool q1_effect(qa_q1_game *, qa_builtin_event_kind, qa_actor_id, qa_vec3, float,
                qa_error *);
 bool q1_create(qa_q1_game *, const char *, q1_entity_kind, qa_actor_id owner, q1_actor **,
                qa_error *);
+bool q1_create_source(qa_q1_game *, const char *, q1_entity_kind, uint32_t source_slot,
+    q1_actor **, qa_error *);
 bool q1_remove(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_schedule(qa_q1_game *, q1_actor *, double, q1_think_kind, qa_error *);
 bool q1_current_ammo_select(qa_q1_game *, q1_player *, qa_error *);
@@ -784,6 +786,7 @@ bool q1_charmed_walk(qa_q1_game *, q1_actor *, float, qa_error *);
 bool q1_monster_visible(qa_q1_game *, q1_actor *, qa_actor_id, bool *, qa_error *);
 bool q1_monster_melee(qa_q1_game *, q1_actor *, float range, float scale, unsigned rolls,
                       bool visible, qa_error *);
+bool q1_pickup_define(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_pickup_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_pickup_supply_create(qa_q1_game *, qa_error *);
 bool q1_pickup_observe(qa_q1_game *, q1_actor *, qa_error *);

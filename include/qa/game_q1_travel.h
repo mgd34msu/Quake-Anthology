@@ -27,6 +27,11 @@ bool qa_q1_travel_admit(qa_q1_game *, qa_actor_id, qa_q1_travel_state *,
 /* Pure retained-source compatibility, including its actual session aliases
  * and expansion program; this does not prove live admission or run callbacks. */
 bool qa_q1_travel_source_valid(const qa_q1_game *, const qa_q1_travel_state *, qa_error *);
+/* Host_Savegame writes the retained map-entry SetNewParms/SetChangeParms cut. */
+bool qa_q1_travel_original_parameters(const qa_q1_game *, const qa_q1_travel_state *,
+    double [16], qa_error *);
+bool qa_q1_travel_original_parameters_restore(qa_q1_game *, qa_actor_id,
+    const double parameters[16], qa_q1_travel_state **, qa_error *);
 bool qa_q1_travel_retain(qa_q1_travel_state *, qa_error *);
 void qa_q1_travel_destroy(qa_q1_travel_state *);
 bool qa_q1_travel_encode(qa_session *, const qa_q1_travel_state *, qa_buffer *, qa_error *);

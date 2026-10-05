@@ -44,6 +44,7 @@ void q1_wire_actor_released(qa_q1_game *g, qa_actor_record released) {
         (!released.source_slot || released.source_slot > g->options.max_clients)) {
         wire->edicts[released.source_slot].free = true;
         wire->edicts[released.source_slot].freetime = (float)g->time;
+        wire->edicts[released.source_slot].released = actor;
         q1_wire_changed(wire);
     }
     for (size_t i = 0; wire && i < wire->damage_count;)
@@ -218,7 +219,10 @@ bool q1_wire_allocate_slot(qa_q1_game *g, bool *has_source, uint32_t *slot, qa_e
     if (physical == UINT32_MAX)
         return fail(error, "Q1 physical source entity extent exhausted");
     if (physical == wire->next_dynamic) ++wire->next_dynamic;
-    if (wire->edict_limit) wire->edicts[physical].free = false;
+    if (wire->edict_limit) {
+        wire->edicts[physical].free = false;
+        wire->edicts[physical].released = (qa_actor_id){0};
+    }
     *slot = physical;
     q1_wire_changed(wire);
     return true;

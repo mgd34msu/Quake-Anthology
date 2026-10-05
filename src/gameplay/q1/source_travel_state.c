@@ -294,6 +294,93 @@ bool qa_q1_travel_source_valid(const qa_q1_game *game,
         return fail(error, "Q1 travel extension has no actual receiving source owner");
     return true;
 }
+static double original_count(const qa_q1_travel_state *state, qa_item_id item) {
+    for (size_t i = 0; i < state->count; ++i)
+        if (state->inventory[i].item == item) return state->inventory[i].count;
+    return 0;
+}
+bool qa_q1_travel_original_parameters(const qa_q1_game *game,
+    const qa_q1_travel_state *state, double out[16], qa_error *error) {
+    if (!out || !qa_q1_travel_source_valid(game, state, error)) return false;
+    if (state->extension != TRAVEL_NONE)
+        return fail(error, "Original spawn parameters require their stock Source travel domain");
+    memset(out, 0, 16 * sizeof(*out));
+    uint32_t items = 0, weapon = 0;
+    for (unsigned shift = 0; shift < 32; ++shift) {
+        qa_q1_weapon selected;
+        uint32_t bit = UINT32_C(1) << shift;
+        if (!qa_q1_weapon_source(game->options.program, bit, &selected)) continue;
+        if (original_count(state, game->weapons[selected]) != 0) items |= bit;
+        if (selected == state->weapon) weapon = bit;
+    }
+    if (!weapon) return fail(error, "Original spawn weapon has no actual Source bit");
+    static const char *const keys[] = {"q1:key/silver", "q1:key/gold"};
+    for (unsigned i = 0; i < 2; ++i) {
+        qa_string_id key = qa_strings_find(state->strings,
+            (qa_bytes){(const uint8_t *)keys[i], strlen(keys[i])});
+        if (key && original_count(state, key) != 0) items |= UINT32_C(131072) << i;
+    }
+    float absorption = state->armor.regular.protection.q1_absorption;
+    uint32_t armor = state->armor.regular.points <= 0 ? 0 :
+        absorption >= .8f ? 32768u : absorption >= .6f ? 16384u : 8192u;
+    if (game->options.program == QA_Q1_ROGUE) out[9] = armor ? armor / 8192u : 0;
+    else items |= armor;
+    out[0] = (float)items;
+    out[1] = state->health;
+    out[2] = (float)state->armor.regular.points;
+    for (unsigned i = 0; i < 4; ++i)
+        out[3 + i] = (float)original_count(state, game->ammo[i]);
+    out[7] = (float)weapon;
+    out[8] = absorption * 100.0f;
+    if (game->options.program == QA_Q1_ROGUE) {
+        for (unsigned i = 0; i < 3; ++i)
+            out[10 + i] = (float)original_count(state, game->ammo[QA_Q1_LAVA_NAILS + i]);
+        out[13] = -1; /* Single-player SetNewParms has no selected CTF team. */
+    }
+    return true;
+}
+bool qa_q1_travel_original_parameters_restore(qa_q1_game *game, qa_actor_id actor,
+    const double parameters[16], qa_q1_travel_state **out, qa_error *error) {
+    if (!parameters || !out) return fail(error, "Original travel requires actual header parameters");
+    *out = NULL;
+    for (unsigned i = 0; i < 16; ++i)
+        if (!isfinite(parameters[i]) || !isfinite((float)parameters[i]))
+            return fail(error, "Original travel has nonfinite Source parameters");
+    float source_items = (float)parameters[0], source_weapon = (float)parameters[7];
+    if (source_items < 0 || source_items >= 4294967296.0 || source_weapon <= 0 || source_weapon >= 4294967296.0)
+        return fail(error, "Original travel has invalid Source inventory bits");
+    qa_q1_weapon weapon;
+    if (!qa_q1_weapon_source(game->options.program, (uint32_t)source_weapon, &weapon))
+        return fail(error, "Original travel has no actual Source weapon");
+    qa_q1_travel_state *state = NULL;
+    if (!qa_q1_travel_new(game, actor, NULL, &state, error)) return false;
+    if (state->extension != TRAVEL_NONE) {
+        qa_q1_travel_destroy(state);
+        return fail(error, "Original spawn parameters require their stock Source travel domain");
+    }
+    state->health = (float)parameters[1]; state->weapon = weapon;
+    state->armor.regular.kind = QA_ARMOR_Q1;
+    state->armor.regular.points = (float)parameters[2];
+    state->armor.regular.protection.q1_absorption = (float)parameters[8] * .01f;
+    uint32_t bits = (uint32_t)source_items;
+    for (size_t i = 0; i < state->count; ++i) {
+        qa_inventory_entry *entry = state->inventory + i;
+        for (unsigned shift = 0; shift < 32; ++shift) {
+            qa_q1_weapon selected; uint32_t bit = UINT32_C(1) << shift;
+            if (qa_q1_weapon_source(game->options.program, bit, &selected) && entry->item == game->weapons[selected])
+                entry->count = (bits & bit) != 0;
+        }
+        for (unsigned j = 0; j < QA_Q1_AMMO_COUNT; ++j)
+            if (entry->item == game->ammo[j]) entry->count = (float)parameters[j < 4 ? 3+j : 6+j];
+        const char *name = qa_strings_cstr(state->strings, entry->item);
+        if (name && !strcmp(name, "q1:key/silver")) entry->count = (bits & 131072u) != 0;
+        if (name && !strcmp(name, "q1:key/gold")) entry->count = (bits & 262144u) != 0;
+    }
+    bool okay = qa_q1_travel_source_valid(game, state, error);
+    if (okay) *out = state; else qa_q1_travel_destroy(state);
+    return okay;
+}
+
 static bool cvar(travel_call *call, const char *name, float *out, qa_error *error) {
     qa_q1_game *game = call->operation.game;
     qa_string_id id;
