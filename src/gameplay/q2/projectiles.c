@@ -84,6 +84,7 @@ qa_attack q2_projectile_attack(qa_q2_game *g, qa_actor_id id, const q2_projectil
     attack.time_ns = g->now_ns;
     attack.inflictor = id;
     attack.projectile = id;
+    attack.attacker = qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner);
     qa_q2_edition edition = p->kind == Q2_LMCTF_HOOK ? QA_Q2_CLASSIC : g->options.edition;
     attack.cause = qa_q2_damage_cause(edition, g->options.product, mod, flags);
     if (p->kind == Q2_GREEN_BOLT)
@@ -125,7 +126,7 @@ bool q2_projectile_loop(qa_q2_game *g, q2_actor *a, const char *path, bool stop_
     return qa_builtin_emit(&g->services, &event, e);
 }
 bool q2_projectile_noise(qa_q2_game *g, const q2_projectile *p, qa_vec3 origin, qa_error *e) {
-    return !live(g, p->owner) || q2_noise_for_actor(g, p->owner, origin, true, e);
+    return !live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)) || q2_noise_for_actor(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), origin, true, e);
 }
 static bool check_dodge(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float speed,
                         qa_error *e) {
@@ -251,7 +252,7 @@ static bool bfg_effect_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p
         if (!live(g, id))
             return true;
         qa_actor_id target = targets->ids[i];
-        if (qa_actor_id_equal(target, id) || qa_actor_id_equal(target, p->owner) ||
+        if (qa_actor_id_equal(target, id) || qa_actor_id_equal(target, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)) ||
             !q2_target_damageable(g, target))
             continue;
         if (g->options.edition == QA_Q2_RERELEASE) {
@@ -276,11 +277,11 @@ static bool bfg_effect_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p
             return false;
         if (!visible)
             continue;
-        if (live(g, p->owner)) {
+        if (live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner))) {
             qa_body_state owner;
             qa_error read_error = {0};
-            if (qa_world_body_read(g->services.world, p->owner, &owner, &read_error)) {
-                if (!qa_builtin_can_damage(&g->services, owner.origin, target, p->owner, policy,
+            if (qa_world_body_read(g->services.world, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), &owner, &read_error)) {
+                if (!qa_builtin_can_damage(&g->services, owner.origin, target, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), policy,
                                            false, &visible, e))
                     return false;
                 if (!visible)
@@ -292,7 +293,7 @@ static bool bfg_effect_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p
             }
         }
         if (g->options.edition == QA_Q2_RERELEASE && g->hooks.can_target != NULL &&
-            !g->hooks.can_target(g->hooks.context, p->owner, target))
+            !g->hooks.can_target(g->hooks.context, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), target))
             continue;
         float damage = truncf(p->damage * (1 - sqrtf(distance / p->radius)));
         qa_attack attack = q2_projectile_attack(g, id, p, 14, 4);
@@ -337,7 +338,7 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
         if (!live(g, id))
             return true;
         qa_actor_id target = targets->ids[i];
-        if (qa_actor_id_equal(target, id) || qa_actor_id_equal(target, p->owner) ||
+        if (qa_actor_id_equal(target, id) || qa_actor_id_equal(target, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)) ||
             !q2_target_damageable(g, target))
             continue;
         bool eligible;
@@ -346,7 +347,7 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
         if (!eligible)
             continue;
         if (g->hooks.can_target != NULL && g->options.edition == QA_Q2_RERELEASE &&
-            !g->hooks.can_target(g->hooks.context, p->owner, target))
+            !g->hooks.can_target(g->hooks.context, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), target))
             continue;
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, target, &body, e))
@@ -382,7 +383,7 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
             bool immune = g->services.actor_traits != NULL &&
                           g->services.actor_traits(g->services.context, hit, &hit_traits) &&
                           hit_traits.laser_immune;
-            if (!qa_actor_id_equal(hit, p->owner) && !immune && q2_target_damageable(g, hit)) {
+            if (!qa_actor_id_equal(hit, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)) && !immune && q2_target_damageable(g, hit)) {
                 qa_attack attack = q2_projectile_attack(g, id, p, 12, 4);
                 if (!q2_damage(g, &attack, hit, g->options.deathmatch ? 5 : 10, 1, direction,
                                trace.end, qa_v3(0, 0, 0), false, e))
@@ -462,7 +463,7 @@ static bool bfg_ambient(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_error 
     return qa_builtin_resource(&g->services, "q2:bfg-lightning", &event.resource, e) &&
            qa_builtin_emit(&g->services, &event, e);
 }
-static bool tracker_daemon(qa_q2_game *g, const q2_projectile *p, qa_actor_id target, qa_error *e) {
+static bool tracker_daemon(qa_q2_game *g, const q2_projectile *p, qa_actor_reference target, qa_error *e) {
     qa_actor_definition definition;
     if (!qa_builtin_resource(&g->services, "pain daemon", &definition, e))
         return false;
@@ -495,6 +496,10 @@ static bool tracker_daemon(qa_q2_game *g, const q2_projectile *p, qa_actor_id ta
 }
 static bool tracker_touch(qa_q2_game *g, qa_actor_id id, const q2_projectile *p,
                           const qa_touch_contact *contact, const qa_body_state *body, qa_error *e) {
+    const qa_actor_record *reference_target = qa_actors_get(qa_session_actors(g->services.session), contact->other);
+    qa_actor_reference target_reference = reference_target && reference_target->owner == g->options.owner && reference_target->has_source ?
+            qa_actor_reference_source(reference_target->owner, reference_target->source_slot) :
+            qa_actor_reference_lifetime(contact->other);
     if (q2_target_damageable(g, contact->other)) {
         qa_combat_state health;
         if (!qa_combat_read(g->services.combat, contact->other, &health, e))
@@ -526,7 +531,7 @@ static bool tracker_touch(qa_q2_game *g, qa_actor_id id, const q2_projectile *p,
                 if (!qa_world_body_write(g->services.world, contact->other, &target, e))
                     return false;
             }
-            if (!tracker_daemon(g, p, contact->other, e))
+            if (!tracker_daemon(g, p, target_reference, e))
                 return false;
         }
     }
@@ -545,17 +550,17 @@ static bool tracker_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_body_state target, body;
     qa_error ignored;
     bool valid =
-        live(g, p.enemy) && qa_combat_read(g->services.combat, p.enemy, &health, &ignored) &&
-        health.health > 0 && qa_world_body_read(g->services.world, p.enemy, &target, &ignored);
+        live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy)) && qa_combat_read(g->services.combat, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy), &health, &ignored) &&
+        health.health > 0 && qa_world_body_read(g->services.world, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy), &target, &ignored);
     if (!qa_world_body_read(g->services.world, id, &body, e))
         return false;
     if (!valid || (p.kind == Q2_TRACKER_DAEMON && g->now_ns > p.expire_ns)) {
-        if (p.kind == Q2_TRACKER_DAEMON && live(g, p.enemy) && p.enemy.slot < g->capacity) {
-            q2_actor *victim = g->actors[p.enemy.slot];
+        if (p.kind == Q2_TRACKER_DAEMON && live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy)) && qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy).slot < g->capacity) {
+            q2_actor *victim = g->actors[qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy).slot];
             bool player = false;
-            if (!q2_target_creature(g, p.enemy, NULL, &player, e))
+            if (!q2_target_creature(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy), NULL, &player, e))
                 return false;
-            if (live(g, p.enemy) && victim != NULL && qa_actor_id_equal(victim->id, p.enemy) && victim->physics_bound &&
+            if (live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy)) && victim != NULL && qa_actor_id_equal(victim->id, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy)) && victim->physics_bound &&
                 !player)
                 victim->extra_effects &= ~UINT64_C(0x80000000);
         }
@@ -566,7 +571,7 @@ static bool tracker_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return qa_session_release(g->services.session, id, e);
     }
     bool player;
-    if (!q2_target_creature(g, p.enemy, NULL, &player, e))
+    if (!q2_target_creature(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy), NULL, &player, e))
         return false;
     qa_vec3 center = qa_vec_add(
         target.origin, qa_vec_scale(qa_vec_add(target.bounds.mins, target.bounds.maxs), 0.5f));
@@ -574,32 +579,32 @@ static bool tracker_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         uint64_t interval = g->options.edition == QA_Q2_RERELEASE ? 100 * Q2_MS : g->frame_ns;
         qa_vec3 point = g->options.edition == QA_Q2_RERELEASE ? center : target.origin;
         qa_attack attack = q2_projectile_attack(g, id, &p, 51, 268);
-        if (!q2_damage(g, &attack, p.enemy, p.damage, 0, qa_v3(0, 0, 0), point, qa_v3(0, 0, 1),
+        if (!q2_damage(g, &attack, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy), p.damage, 0, qa_v3(0, 0, 0), point, qa_v3(0, 0, 1),
                        false, e))
             return false;
         if (!live(g, id))
             return true;
-        if (live(g, p.enemy) && qa_combat_read(g->services.combat, p.enemy, &health, &ignored) &&
+        if (live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy)) && qa_combat_read(g->services.combat, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy), &health, &ignored) &&
             health.health < 1) {
             qa_builtin_actor_traits traits = {0};
-            q2_monster_traits(g, p.enemy, &traits);
+            q2_monster_traits(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy), &traits);
             qa_attack gib_attack = q2_projectile_attack(g, id, &p, 51, 268);
-            if (!q2_damage(g, &gib_attack, p.enemy,
+            if (!q2_damage(g, &gib_attack, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy),
                            traits.gib_health == 0 ? 500 : -traits.gib_health, 0, qa_v3(0, 0, 0),
                            point, qa_v3(0, 0, 1), false, e))
                 return false;
         }
         if (!live(g, id))
             return true;
-        if (player && live(g, p.enemy)) {
+        if (player && live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy))) {
             uint64_t until = q2_deadline(g->now_ns, interval);
-            if (!q2_player_tracker_pain(g, p.enemy, until, e) ||
+            if (!q2_player_tracker_pain(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy), until, e) ||
                 (g->hooks.tracker_pain != NULL &&
-                 !g->hooks.tracker_pain(g->hooks.context, p.enemy, until, e)))
+                 !g->hooks.tracker_pain(g->hooks.context, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy), until, e)))
                 return false;
-        } else if (live(g, p.enemy) && p.enemy.slot < g->capacity) {
-            q2_actor *victim = g->actors[p.enemy.slot];
-            if (victim != NULL && qa_actor_id_equal(victim->id, p.enemy) && victim->physics_bound)
+        } else if (live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy)) && qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy).slot < g->capacity) {
+            q2_actor *victim = g->actors[qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy).slot];
+            if (victim != NULL && qa_actor_id_equal(victim->id, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy)) && victim->physics_bound)
                 victim->extra_effects |= UINT64_C(0x80000000);
         }
         a->projectile.next_ns = q2_deadline(g->now_ns, interval);
@@ -611,7 +616,7 @@ static bool tracker_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         }
         qa_builtin_actor_traits traits = {.view_height = 22};
         if (g->services.actor_traits != NULL)
-            g->services.actor_traits(g->services.context, p.enemy, &traits);
+            g->services.actor_traits(g->services.context, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy), &traits);
         qa_bounds bounds = qa_bounds_translate(target.bounds, target.origin);
         qa_vec3 destination = player ? qa_vec_add(target.origin, qa_v3(0, 0, traits.view_height))
                               : qa_vec_length(bounds.mins) == 0 || qa_vec_length(bounds.maxs) == 0
@@ -658,6 +663,10 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
         !qa_actor_id_equal(g->actors[id.slot]->id, id))
         return true;
     q2_projectile p = g->actors[id.slot]->projectile;
+    const qa_actor_record *reference_other = qa_actors_get(qa_session_actors(g->services.session), contact->other);
+    qa_actor_reference other_reference = reference_other && reference_other->owner == g->options.owner && reference_other->has_source ?
+            qa_actor_reference_source(reference_other->owner, reference_other->source_slot) :
+            qa_actor_reference_lifetime(contact->other);
     if (p.kind == Q2_PROBOSCIS || p.kind == Q2_PROBOSCIS_SEGMENT)
         return q2_proboscis_touch(g, contact, e);
     if (p.kind == Q2_BFG_BALL && p.armed)
@@ -695,7 +704,7 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
                                                        : "weapons/hgrenb2a.wav",
                                    2, body.origin, body.origin, e);
     }
-    if (qa_actor_id_equal(contact->other, p.owner))
+    if (qa_actor_id_equal(contact->other, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.owner)))
         return true;
     if (contact->has_surface && (contact->surface.flags & 4) != 0)
         return qa_session_release(g->services.session, id, e);
@@ -783,7 +792,7 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
         a->projectile.armed = true;
         a->projectile.frame = 0;
         a->projectile.next_ns = q2_deadline(g->now_ns, 100 * Q2_MS);
-        a->projectile.enemy = contact->other;
+        a->projectile.enemy = other_reference;
         a->projectile.loop_sound = 0;
         a->projectile.effects &= ~UINT64_C(8192);
         a->physics.motion = QA_PHYSICS_STATIONARY;
@@ -908,12 +917,12 @@ bool q2_launch_behavior(qa_q2_game *g, q2_actor *a, qa_builtin_projectile_role r
     if (changed != NULL)
         *changed = false;
     bool player;
-    if (!q2_target_creature(g, a->projectile.owner, NULL, &player, e))
+    if (!q2_target_creature(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), a->projectile.owner), NULL, &player, e))
         return false;
     if (!player || !live(g, a->id))
         return true;
     qa_builtin_weapon_launch launch = {.projectile = a->id,
-                                       .shooter = a->projectile.owner,
+                                       .shooter = qa_actor_reference_resolve(qa_session_actors(g->services.session), a->projectile.owner),
                                        .weapon = a->projectile.attack.weapon,
                                        .provider = g->options.owner,
                                        .role = role,
@@ -1024,10 +1033,13 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     q2_actor *a = q2_actor_get(g, id, true, e);
     if (a == NULL)
         return false;
+    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner);
     a->projectile = (q2_projectile){
         .kind = source_kind,
         .attack = q2_attack(c, direct_mod, 0),
-        .owner = owner,
+        .owner = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
+            qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
+            qa_actor_reference_lifetime(owner),
         .movedir = direction,
         .damage = damage,
         .kick = kick,
@@ -1088,11 +1100,14 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
                                                  : Q2_PROJECTILE_MASK & ~Q2_PLAYER_CONTENTS)
                      : Q2_SHOT_MASK;
     if (kind == Q2_TRACKER) {
-        if (c->has_projectile_enemy)
-            a->projectile.enemy = c->projectile_enemy;
-        else if (!q2_tracker_target(c, start, direction, &a->projectile.enemy, e))
+        qa_actor_id enemy = c->projectile_enemy;
+        if (!c->has_projectile_enemy && !q2_tracker_target(c, start, direction, &enemy, e))
             return false;
-        if (a->projectile.enemy.registry != 0) {
+        const qa_actor_record *reference_enemy = qa_actors_get(qa_session_actors(g->services.session), enemy);
+        a->projectile.enemy = reference_enemy && reference_enemy->owner == g->options.owner && reference_enemy->has_source ?
+            qa_actor_reference_source(reference_enemy->owner, reference_enemy->source_slot) :
+            qa_actor_reference_lifetime(enemy);
+        if (qa_actor_reference_present(a->projectile.enemy) != 0) {
             a->projectile.next_ns = q2_deadline(c->now_ns, 100 * Q2_MS);
             a->projectile.expire_ns = UINT64_MAX;
         }
@@ -1280,7 +1295,7 @@ bool q2_projectile_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
             return true;
         p = a->projectile;
     }
-    if (p.kind == Q2_TRACKER_DAEMON || (p.kind == Q2_TRACKER && p.enemy.registry != 0)) {
+    if (p.kind == Q2_TRACKER_DAEMON || (p.kind == Q2_TRACKER && qa_actor_reference_present(p.enemy) != 0)) {
         if (!tracker_think(g, a, e))
             return false;
         if (!live(g, id) || p.kind == Q2_TRACKER_DAEMON)

@@ -2167,8 +2167,9 @@ static bool check_dodge_projectiles(q2m_context *context, qa_error *error) {
     if (projectile->kind == Q2_PROJECTILE_NONE || !projectile->dodgeable ||
         !shot_actor->physics_bound ||
         shot_actor->physics.solid == QA_PHYSICS_NOT_SOLID ||
-        projectile->owner.registry == 0 ||
-        !q2_actor_live(context->game, projectile->owner))
+        !qa_actor_reference_present(projectile->owner) ||
+        !q2_actor_live(context->game, qa_actor_reference_resolve(
+            qa_session_actors(context->game->services.session), projectile->owner)))
       continue;
 
     qa_body_state shot;
@@ -2207,7 +2208,8 @@ static bool check_dodge_projectiles(q2m_context *context, qa_error *error) {
                    shot_actor->physics.motion == QA_PHYSICS_TOSS;
     float eta = qa_vec_length(qa_vec_sub(trace.end, shot.origin)) / speed;
     return q2_monster_dodge(context->game, context->actor->id,
-                            projectile->owner, eta, &trace, gravity, error);
+                            qa_actor_reference_resolve(qa_session_actors(context->game->services.session),
+                                projectile->owner), eta, &trace, gravity, error);
   }
   return true;
 }

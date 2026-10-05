@@ -29,7 +29,7 @@ static bool show_beam(qa_q2_game *game, q2_actor *actor, qa_vec3 origin, bool vi
 }
 
 static bool beam_tick(qa_q2_game *game, q2_actor *beam, qa_error *error) {
-    q2_actor *owner = q2_actor_get(game, beam->projectile.owner, false, NULL);
+    q2_actor *owner = q2_actor_get(game, qa_actor_reference_resolve(qa_session_actors(game->services.session), beam->projectile.owner), false, NULL);
     if (!owner || owner->projectile.kind != Q2_RERELEASE_SPAWN_GROWTH)
         return qa_session_release(game->services.session, beam->id, error);
     qa_actor_id id = beam->id, owner_id = owner->id;
@@ -61,7 +61,7 @@ bool q2m_rerelease_growth_tick(qa_q2_game *game, q2_actor *actor, qa_error *erro
         return beam_tick(game, actor, error);
     qa_actor_id id = actor->id;
     if (game->now_ns >= actor->projectile.expire_ns) {
-        q2_actor *beam = q2_actor_get(game, actor->projectile.child, false, NULL);
+        q2_actor *beam = q2_actor_get(game, qa_actor_reference_resolve(qa_session_actors(game->services.session), actor->projectile.child), false, NULL);
         if (beam) {
             qa_actor_id beam_id = beam->id;
             qa_body_state body;
@@ -168,9 +168,9 @@ bool q2m_rerelease_spawn_growth(qa_q2_game *game, qa_vec3 origin, float radius, 
         goto failed;
     if (!q2_actor_live(game, id))
         return qa_session_release(game->services.session, beam->id, error);
-    p->child = beam->id;
+    p->child = qa_actor_reference_source(game->options.owner, beam->wire_slot);
     beam->projectile.kind = Q2_RERELEASE_SPAWN_BEAM;
-    beam->projectile.owner = id;
+    beam->projectile.owner = qa_actor_reference_source(game->options.owner, growth->wire_slot);
     beam->projectile.frame = 1;
     beam->projectile.skin = 0x30303030;
     beam->projectile.render_flags = 128 | 512 | 64;

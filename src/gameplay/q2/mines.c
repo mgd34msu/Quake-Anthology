@@ -95,7 +95,7 @@ static bool remove_children(qa_q2_game *g, qa_actor_id first, qa_error *e) {
         q2_actor *a = q2_actor_get(g, child, false, e);
         if (a == NULL)
             return false;
-        qa_actor_id next = a->projectile.child;
+        qa_actor_id next = qa_actor_reference_resolve(qa_session_actors(g->services.session), a->projectile.child);
         if (!qa_session_release(g->services.session, child, e))
             return false;
         child = next;
@@ -106,7 +106,7 @@ static bool explode(qa_q2_game *g, q2_actor *a, bool blow, qa_error *e) {
     qa_actor_id id = a->id;
     q2_projectile p = a->projectile;
     qa_body_state body;
-    if (!qa_world_body_read(g->services.world, id, &body, e) || !remove_children(g, p.child, e) ||
+    if (!qa_world_body_read(g->services.world, id, &body, e) || !remove_children(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.child), e) ||
         !disarm(g, id, e))
         return false;
     if (!q2_actor_live(g, id))
@@ -164,12 +164,13 @@ static bool field(qa_q2_game *g, q2_actor *mine, q2_projectile_kind kind, qa_bou
     q2_actor *child = q2_actor_get(g, id, true, e);
     if (child == NULL)
         return false;
-    child->projectile = (q2_projectile){.kind = kind, .owner = mine->id};
+    child->projectile = (q2_projectile){.kind = kind,
+        .owner = qa_actor_reference_source(g->options.owner, mine->wire_slot)};
     child->physics_bound = true;
     child->physics = qa_physics_properties_default(QA_COLLISION_Q2);
     child->physics.motion = QA_PHYSICS_STATIONARY;
     child->physics.solid = QA_PHYSICS_TRIGGER;
-    mine->projectile.child = id;
+    mine->projectile.child = qa_actor_reference_source(g->options.owner, child->wire_slot);
     return true;
 }
 static bool clear_collision_owner(qa_q2_game *g, q2_actor *a, qa_error *e) {
@@ -198,6 +199,9 @@ static bool prox_open(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sna
         !clear_collision_owner(g, a, e))
         return false;
     p->armed = true;
+    q2_actor *trigger = q2_actor_get(g, qa_actor_reference_resolve(
+        qa_session_actors(g->services.session), p->child), false, NULL);
+    if (trigger) trigger->projectile.armed = true;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
@@ -224,7 +228,7 @@ static bool prox_open(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sna
             if (player && !g->options.deathmatch)
                 living = false;
             if (g->hooks.can_target != NULL &&
-                !g->hooks.can_target(g->hooks.context, p->owner, target))
+                !g->hooks.can_target(g->hooks.context, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), target))
                 continue;
         }
         if (!living && !(g->options.deathmatch && player_start(g, target)))
@@ -295,7 +299,7 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
         return explode(g, a, false, e);
     qa_body_state mine, trigger;
     if (!qa_world_body_read(g->services.world, id, &mine, e) ||
-        !qa_world_body_read(g->services.world, p.child, &trigger, e))
+        !qa_world_body_read(g->services.world, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.child), &trigger, e))
         return false;
     qa_bounds bounds = qa_bounds_translate(trigger.bounds, trigger.origin);
     qa_vec3 start = qa_vec_add(mine.origin, qa_v3(0, 0, 16));
@@ -318,7 +322,7 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
         if (player && !g->options.deathmatch)
             continue;
         if (g->options.edition == QA_Q2_RERELEASE && player && g->hooks.can_target != NULL &&
-            !g->hooks.can_target(g->hooks.context, p.owner, target))
+            !g->hooks.can_target(g->hooks.context, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.owner), target))
             continue;
         qa_builtin_actor_traits traits = {0};
         if (g->services.actor_traits != NULL)
@@ -499,8 +503,8 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
         if (!is_creature || (rerelease && player && !g->options.deathmatch) ||
             !qa_combat_read(g->services.combat, target, &combat, &ignored) || combat.health <= 0)
             continue;
-        if (rerelease && !qa_actor_id_equal(target, p->owner) && g->hooks.can_target != NULL &&
-            !g->hooks.can_target(g->hooks.context, p->owner, target))
+        if (rerelease && !qa_actor_id_equal(target, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)) && g->hooks.can_target != NULL &&
+            !g->hooks.can_target(g->hooks.context, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), target))
             continue;
         if (!visible(g, id, body.origin, target, e, &seen))
             return false;
@@ -595,13 +599,17 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
             if (rerelease &&
                 (!disarm(g, id, e) || !qa_world_set_collision(g->services.world, id, NULL, e)))
                 return false;
+            const qa_actor_record *reference_target = qa_actors_get(qa_session_actors(g->services.session), best);
+            qa_actor_reference target_reference = reference_target && reference_target->owner == g->options.owner && reference_target->has_source ?
+            qa_actor_reference_source(reference_target->owner, reference_target->source_slot) :
+            qa_actor_reference_lifetime(best);
             qa_attack attack = q2_projectile_attack(g, id, p, 39, 0);
             if (!q2_damage(g, &attack, best, q2_trap_capture_damage(), 1, qa_v3(0, 0, 0), target.origin,
                            qa_v3(0, 0, 0), false, e))
                 return false;
             if (!q2_actor_live(g, id))
                 return true;
-            p->enemy = best;
+            p->enemy = target_reference;
             p->wait = 64;
             p->expire_ns = q2_deadline(g->now_ns, 30 * Q2_NS);
             p->captured_mass = mass;
@@ -627,7 +635,7 @@ static bool mine_scan(qa_q2_game *g, q2_actor *a,
 bool q2_mine_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_projectile *p = &a->projectile;
     if (p->kind == Q2_PROX_FIELD || p->kind == Q2_TESLA_FIELD || p->kind == Q2_BAD_AREA) {
-        if ((p->kind != Q2_BAD_AREA && !q2_actor_live(g, p->owner)) ||
+        if ((p->kind != Q2_BAD_AREA && !q2_actor_live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner))) ||
             (p->expire_ns != 0 && g->now_ns >= p->expire_ns))
             return qa_session_release(g->services.session, a->id, e);
         return true;
@@ -678,8 +686,8 @@ bool q2_mine_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
             p->phase = MINE_OPENING;
         }
         if (p->frame == 10) {
-            if (q2_actor_live(g, p->owner) &&
-                !q2_noise_for_actor(g, p->owner, body.origin, false, e))
+            if (q2_actor_live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)) &&
+                !q2_noise_for_actor(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), body.origin, false, e))
                 return false;
             p->skin = 1;
         } else if (p->frame == 12)
@@ -699,24 +707,26 @@ bool q2_mine_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
     if (p->kind == Q2_BAD_AREA || p->kind == Q2_TESLA_FIELD || p->kind == Q2_TRAP)
         return true;
     if (p->kind == Q2_PROX_FIELD) {
+        if (!p->armed) return true;
         bool creature, player;
         if (!q2_target_creature(g, contact->other, &creature, &player, e))
             return false;
         if (!creature)
             return true;
-        if (!q2_actor_live(g, p->owner))
+        if (!q2_actor_live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)))
             return qa_session_release(g->services.session, a->id, e);
-        q2_actor *mine = q2_actor_get(g, p->owner, false, e);
+        q2_actor *mine = q2_actor_get(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), false, e);
         if (mine == NULL)
             return false;
-        if (!mine->projectile.armed || mine->projectile.phase == MINE_WARNING)
+        if (mine->projectile.kind == Q2_PROX && (mine->projectile.phase == MINE_WARNING ||
+            (g->options.edition == QA_Q2_CLASSIC && mine->projectile.phase == MINE_FLIGHT)))
             return true;
-        if (!qa_actor_id_equal(mine->projectile.child, a->id))
+        if (!qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(g->services.session), mine->projectile.child), a->id))
             return qa_session_release(g->services.session, a->id, e);
         if (g->options.edition == QA_Q2_RERELEASE &&
             ((player && !g->options.deathmatch) ||
              (g->hooks.can_target != NULL &&
-              !g->hooks.can_target(g->hooks.context, mine->projectile.owner, contact->other))))
+              !g->hooks.can_target(g->hooks.context, qa_actor_reference_resolve(qa_session_actors(g->services.session), mine->projectile.owner), contact->other))))
             return true;
         mine->projectile.phase = MINE_WARNING;
         mine->projectile.next_ns = q2_deadline(g->now_ns, 500 * Q2_MS);
@@ -755,7 +765,7 @@ bool q2_mine_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
     if (!q2_target_creature(g, contact->other, &creature, NULL, e))
         return false;
     if (creature || traits.damageable_target)
-        return qa_actor_id_equal(contact->other, p->owner) || explode(g, a, false, e);
+        return qa_actor_id_equal(contact->other, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)) || explode(g, a, false, e);
     qa_physics_motion motion = QA_PHYSICS_STATIONARY;
     if (contact->other.registry != 0 &&
         (g->services.physics == NULL ||
@@ -866,10 +876,13 @@ bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa
     if (a == NULL)
         return false;
     int mod = kind == Q2_PROX ? 46 : kind == Q2_TESLA ? 45 : 39;
+    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), c->actor->id);
     a->projectile = (q2_projectile){
         .kind = kind,
         .attack = q2_attack(c, mod, 0),
-        .owner = c->actor->id,
+        .owner = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
+            qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
+            qa_actor_reference_lifetime(c->actor->id),
         .damage = damage,
         .radius = range,
         .radius_damage = splash,
@@ -1030,9 +1043,12 @@ bool qa_q2_spawn_bad_area(qa_q2_game *g, qa_bounds absolute, uint64_t lifespan, 
     q2_actor *a = q2_actor_get(g, id, true, e);
     if (a == NULL)
         return false;
+    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner);
     a->projectile =
         (q2_projectile){.kind = Q2_BAD_AREA,
-                        .owner = owner,
+                        .owner = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
+            qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
+            qa_actor_reference_lifetime(owner),
                         .expire_ns = lifespan == 0 ? 0 : q2_deadline(g->now_ns, lifespan)};
     a->physics_bound = true;
     a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
@@ -1054,8 +1070,8 @@ bool qa_q2_mark_tesla_area(qa_q2_game *g, qa_actor_id observer, qa_actor_id tesl
     if (mine == NULL || mine->projectile.kind != Q2_TESLA)
         return true;
     q2_actor *tail = mine, *trigger = NULL;
-    while (q2_actor_live(g, tail->projectile.child)) {
-        q2_actor *next = q2_actor_get(g, tail->projectile.child, false, e);
+    while (q2_actor_live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), tail->projectile.child))) {
+        q2_actor *next = q2_actor_get(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), tail->projectile.child), false, e);
         if (next == NULL)
             return false;
         if (next->projectile.kind == Q2_BAD_AREA)
@@ -1076,7 +1092,9 @@ bool qa_q2_mark_tesla_area(qa_q2_game *g, qa_actor_id observer, qa_actor_id tesl
     qa_actor_id area;
     if (!qa_q2_spawn_bad_area(g, bounds, lifespan, tesla, &area, e))
         return false;
-    tail->projectile.child = area;
+    q2_actor *child = q2_actor_get(g, area, false, e);
+    if (!child) return false;
+    tail->projectile.child = qa_actor_reference_source(g->options.owner, child->wire_slot);
     *created = true;
     return true;
 }

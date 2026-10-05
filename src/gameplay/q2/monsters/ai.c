@@ -1046,7 +1046,7 @@ bool qa_q2_accept_ground(qa_q2_game *game, qa_actor_id id, qa_vec3 origin,
   q2_actor *area = q2_actor_get(game, area_id, false, NULL);
   if (!area || area->projectile.kind != Q2_BAD_AREA)
     return true;
-  qa_actor_id owner = area->projectile.owner;
+  qa_actor_id owner = qa_actor_reference_resolve(qa_session_actors(game->services.session), area->projectile.owner);
   qa_builtin_actor_traits owner_traits, enemy_traits;
   if (!actor_traits(&context, owner, &owner_traits, error))
     return false;

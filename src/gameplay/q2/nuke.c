@@ -339,8 +339,11 @@ bool q2_fire_nuke(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 direc
                         .powerup_applied = true,
                         .powerup_owner = g->options.owner,
                         .cause = qa_q2_damage_cause(g->options.edition, g->options.product, 47, 1)};
+    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner);
     a->projectile = (q2_projectile){.kind = Q2_NUKE,
-                                    .owner = owner,
+                                    .owner = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
+            qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
+            qa_actor_reference_lifetime(owner),
                                     .attack = attack,
                                     .damage = 400 * multiplier,
                                     .radius = multiplier == 1 ? 512 : 512 + 128 * multiplier,

@@ -33,7 +33,7 @@ bool q2_green_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contact,
             .distance_scale = 0.5f,
             .self_scale = 1,
             .knockback_scale = 1,
-            .ignore = p.owner,
+            .ignore = qa_actor_reference_resolve(qa_session_actors(g->services.session), p.owner),
             .visibility_pass = id,
             .distance = QA_RADIUS_CENTER,
             .check_visibility = true,
@@ -49,7 +49,7 @@ bool q2_green_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contact,
     }
     if (hurt && q2_actor_live(g, contact->other)) {
         bool player;
-        if (!q2_target_creature(g, p.owner, NULL, &player, e))
+        if (!q2_target_creature(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.owner), NULL, &player, e))
             return false;
         qa_attack attack = q2_projectile_attack(g, id, &p, player ? 50 : 43, 4);
         if (!q2_damage(g, &attack, contact->other, p.damage, 1, body.velocity, body.origin,
@@ -159,7 +159,7 @@ static bool heat_rocket_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapsho
         bool player;
         if (!q2_target_creature(g, target, NULL, &player, e))
             return false;
-        if (!player || qa_actor_id_equal(target, p->owner))
+        if (!player || qa_actor_id_equal(target, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)))
             continue;
         qa_combat_state health;
         qa_error ignored;
@@ -196,7 +196,7 @@ static bool heat_rocket_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapsho
                       g->services.controls_trajectory(g->services.context, a->id);
     qa_vec3 movedir = p->movedir;
     if (rr && best.registry == 0)
-        p->enemy = (qa_actor_id){0};
+        p->enemy = (qa_actor_reference){0};
     if (best.registry != 0) {
         if (!controlled) {
             qa_vec3 desired = qa_vec_normalize(qa_vec_sub(target_origin, body.origin));
@@ -218,7 +218,7 @@ static bool heat_rocket_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapsho
                 qa_v3(-atan2f(movedir.z, hypotf(movedir.x, movedir.y)) * 57.29577951308232f,
                       atan2f(movedir.y, movedir.x) * 57.29577951308232f, 0);
         }
-        if (rr && p->enemy.registry == 0) {
+        if (rr && qa_actor_reference_present(p->enemy) == 0) {
             qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
                                       .family = QA_GAME_Q2,
                                       .provider = g->options.owner,
@@ -234,8 +234,12 @@ static bool heat_rocket_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapsho
             if (!q2_actor_live(g, a->id))
                 return true;
         }
-        if (!rr || p->enemy.registry == 0)
-            p->enemy = best;
+        if (!rr || !qa_actor_reference_present(p->enemy)) {
+            const qa_actor_record *reference_enemy = qa_actors_get(qa_session_actors(g->services.session), best);
+            p->enemy = reference_enemy && reference_enemy->owner == g->options.owner && reference_enemy->has_source ?
+            qa_actor_reference_source(reference_enemy->owner, reference_enemy->source_slot) :
+            qa_actor_reference_lifetime(best);
+        }
     }
     if (!controlled && (rr || best.registry != 0)) {
         p->movedir = movedir;

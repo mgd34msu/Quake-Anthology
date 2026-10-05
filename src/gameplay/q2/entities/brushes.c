@@ -181,7 +181,7 @@ static bool platform_finished(qa_q2_game *g, q2_actor *a, bool top, qa_error *e)
         for (q2_actor *area = g->first_actor; area;) {
             q2_actor *next = area->live_next;
             if (area->projectile.kind == Q2_BAD_AREA &&
-                qa_actor_id_equal(area->projectile.owner, a->id) &&
+                qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(g->services.session), area->projectile.owner), a->id) &&
                 !qa_session_release(g->services.session, area->id, e))
                 return false;
             if (!q2_actor_live(g, a->id))

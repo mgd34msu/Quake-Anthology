@@ -87,10 +87,13 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
         q2_actor *a = q2_actor_get(g, id, true, e);
         if (a == NULL)
             return false;
+        const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), c->actor->id);
         a->projectile =
             (q2_projectile){.kind = bounce ? Q2_LMCTF_PLASMA_BOUNCE : Q2_LMCTF_PLASMA_SPREAD,
                             .attack = q2_attack(c, 34, 0),
-                            .owner = c->actor->id,
+                            .owner = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
+            qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
+            qa_actor_reference_lifetime(c->actor->id),
                             .damage = bounce ? 39 : 1,
                             .speed = spec.speed,
                             .born_ns = c->now_ns,
@@ -231,7 +234,7 @@ bool q2_lmctf_plasma_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_er
     q2_lmctf_plasma_spec(bounce, &spec);
     float damage = spec.damage * (g->lmctf_plasma_quad ? 4.0f : 1.0f);
     bool hurt = q2_target_damageable(g, contact->other), player = false;
-    if (!q2_target_creature(g, p.owner, NULL, &player, e))
+    if (!q2_target_creature(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.owner), NULL, &player, e))
         return false;
     if (player && !q2_projectile_noise(g, &p, body.origin, e))
         return false;

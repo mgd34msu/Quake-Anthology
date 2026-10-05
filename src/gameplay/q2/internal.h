@@ -69,7 +69,7 @@ typedef struct q2_monsters_runtime q2_monsters_runtime;
 typedef struct q2_projectile {
     q2_projectile_kind kind;
     qa_attack attack;
-    qa_actor_id owner, enemy, child;
+    qa_actor_reference owner, enemy, child;
     qa_vec3 movedir;
     float damage, kick, radius_damage, radius, gravity, speed;
     uint64_t born_ns, expire_ns, next_ns, effect_ns;

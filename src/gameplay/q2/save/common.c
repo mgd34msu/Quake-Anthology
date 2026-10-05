@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/source_save.h"
 
 bool q2_save_attack(q2_save_io *io, qa_attack *s) {
     Q2T(sequence); Q2T(time_ns); Q2N(weapon);
@@ -91,7 +92,16 @@ static bool hand(q2_save_io *io, qa_q2_hand_grenade_state *s) {
 static bool projectile(q2_save_io *io, qa_q2_projectile_checkpoint *s) {
     Q2U(kind);
     if (!q2_save_attack(io, &s->attack)) return false;
-    Q2R(attacker); Q2R(inflictor); Q2R(projectile); Q2R(owner); Q2R(enemy); Q2R(child);
+    Q2R(attacker); Q2R(inflictor); Q2R(projectile);
+    qa_source_save_io pointers = {.session = io->game->services.session,
+        .direction = io->reading ? QA_SOURCE_SAVE_READ : QA_SOURCE_SAVE_WRITE,
+        .input = io->input, .output = io->output, .offset = io->offset,
+        .capacity = io->capacity, .error = io->error};
+    bool okay = qa_source_save_actor_reference(&pointers, &s->owner) &&
+        qa_source_save_actor_reference(&pointers, &s->enemy) &&
+        qa_source_save_actor_reference(&pointers, &s->child);
+    io->output = pointers.output; io->offset = pointers.offset; io->capacity = pointers.capacity;
+    if (!okay) return false;
     Q2V(movedir); Q2F(damage); Q2F(kick); Q2F(radius_damage); Q2F(radius);
     Q2F(gravity); Q2F(speed); Q2F(delay); Q2F(captured_mass); Q2F(turn_fraction);
     Q2T(born_ns); Q2T(expire_ns); Q2T(next_ns); Q2T(effect_ns); Q2T(effects);

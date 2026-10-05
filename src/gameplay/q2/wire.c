@@ -663,7 +663,7 @@ bool qa_q2_wire_entity_read(qa_q2_game *g, uint32_t slot,
     if (value.has_weapon) value.weapon = a->weapon;
     if (a->projectile.kind != Q2_PROJECTILE_NONE) {
         value.classname = a->projectile.classname; value.loop_sound = a->projectile.loop_sound;
-        value.owner = a->projectile.owner;
+        value.owner = qa_actor_reference_resolve(qa_session_actors(g->services.session), a->projectile.owner);
     } else if (a->client) {
         value.classname = a->entity ? a->entity->classname : 0;
         value.loop_sound = a->client->loop_sound;

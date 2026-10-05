@@ -408,7 +408,8 @@ typedef struct qa_q2_runtime_checkpoint {
 typedef struct qa_q2_projectile_checkpoint {
     uint32_t kind;
     qa_attack attack;
-    qa_q2_saved_reference attacker, inflictor, projectile, owner, enemy, child;
+    qa_q2_saved_reference attacker, inflictor, projectile;
+    qa_actor_reference owner, enemy, child;
     qa_vec3 movedir;
     float damage, kick, radius_damage, radius, gravity, speed, delay, captured_mass, turn_fraction;
     uint64_t born_ns, expire_ns, next_ns, effect_ns, effects;

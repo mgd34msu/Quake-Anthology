@@ -157,7 +157,7 @@ bool qa_q2_clear_trackers(qa_q2_game *g, qa_actor_id target, qa_error *e) {
         /* Retired nodes keep their successors until the next source frame. */
         q2_actor *next = a->live_next;
         if (q2_actor_live(g, a->id) && a->projectile.kind == Q2_TRACKER_DAEMON &&
-            qa_actor_id_equal(a->projectile.enemy, target) &&
+            qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(g->services.session), a->projectile.enemy), target) &&
             !qa_session_release(g->services.session, a->id, e))
             return false;
         a = next;
@@ -465,7 +465,7 @@ bool qa_q2_actor_traits(qa_q2_game *g, qa_actor_id id, qa_builtin_actor_traits *
     const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), id);
     *out = (qa_builtin_actor_traits){
         .classname = a->projectile.classname != 0 ? a->projectile.classname : record->definition,
-        .owner = a->projectile.owner};
+        .owner = qa_actor_reference_resolve(qa_session_actors(g->services.session), a->projectile.owner)};
     out->damageable_target =
         a->projectile.kind == Q2_PROX || a->projectile.kind == Q2_TESLA ||
         a->projectile.kind == Q2_NUKE || a->projectile.kind == Q2_LMCTF_HOOK ||

@@ -133,6 +133,7 @@ bool qa_q2_actor_capture(qa_q2_game *g, qa_actor_id id, qa_q2_actor_checkpoint *
                                        .physics = a->physics,
                                        .projectile = {.kind = (uint32_t)p->kind,
                                                       .attack = p->attack,
+                                                      .owner = p->owner, .enemy = p->enemy, .child = p->child,
                                                       .movedir = p->movedir,
                                                       .damage = p->damage,
                                                       .kick = p->kick,
@@ -171,9 +172,6 @@ bool qa_q2_actor_capture(qa_q2_game *g, qa_actor_id id, qa_q2_actor_checkpoint *
     if (!q2_save_reference(g, p->attack.attacker, &saved->attacker, e) ||
         !q2_save_reference(g, p->attack.inflictor, &saved->inflictor, e) ||
         !q2_save_reference(g, p->attack.projectile, &saved->projectile, e) ||
-        !q2_save_reference(g, p->owner, &saved->owner, e) ||
-        !q2_save_reference(g, p->enemy, &saved->enemy, e) ||
-        !q2_save_reference(g, p->child, &saved->child, e) ||
         !q2_save_reference(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), a->physics.enemy), &snapshot.physics_enemy, e) ||
         !q2_save_reference(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), a->physics.goal), &snapshot.physics_goal, e))
         return false;
@@ -268,6 +266,7 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
     if (!q2_checkpoint_idle(g, e))
         return false;
     q2_projectile restored = {.kind = (q2_projectile_kind)p->kind,
+                              .owner = p->owner, .enemy = p->enemy, .child = p->child,
                               .attack = p->attack,
                               .movedir = p->movedir,
                               .damage = p->damage,
@@ -308,9 +307,6 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
     if (!q2_resolve_reference(g, p->attacker, &restored.attack.attacker, e) ||
         !q2_resolve_reference(g, p->inflictor, &restored.attack.inflictor, e) ||
         !q2_resolve_reference(g, p->projectile, &restored.attack.projectile, e) ||
-        !q2_resolve_reference(g, p->owner, &restored.owner, e) ||
-        !q2_resolve_reference(g, p->enemy, &restored.enemy, e) ||
-        !q2_resolve_reference(g, p->child, &restored.child, e) ||
         !q2_resolve_reference(g, s->physics_enemy, &physics_enemy, e) ||
         !q2_resolve_reference(g, s->physics_goal, &physics_goal, e))
         return false;

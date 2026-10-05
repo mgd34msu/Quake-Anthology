@@ -208,7 +208,7 @@ bool qa_q2_grapple_reset(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_kind kind,
         return false;
     if (!q2_actor_live(g, hook_id))
         return true;
-    hook->projectile.enemy = (qa_actor_id){0};
+    hook->projectile.enemy = (qa_actor_reference){0};
     return qa_world_detach(g->services.world, hook_id, e) &&
            qa_session_release(g->services.session, hook_id, e);
 }
@@ -233,7 +233,7 @@ bool q2_grapple_released(qa_q2_game *g, q2_actor *a, qa_error *e) {
         }
     }
     if (a->projectile.kind == Q2_CTF_HOOK || a->projectile.kind == Q2_LMCTF_HOOK) {
-        q2_actor *owner = find(g, a->projectile.owner);
+        q2_actor *owner = find(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), a->projectile.owner));
         qa_q2_grapple_kind kind = kind_of(a);
         if (owner != NULL && qa_actor_id_equal(owner->grapples[kind].hook, a->id)) {
             qa_error local = {0};
@@ -247,7 +247,7 @@ bool q2_grapple_released(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return ok;
 }
 static bool reset_hook(qa_q2_game *g, q2_actor *hook, qa_error *e) {
-    q2_actor *owner = find(g, hook->projectile.owner);
+    q2_actor *owner = find(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), hook->projectile.owner));
     return owner == NULL ? qa_session_release(g->services.session, hook->id, e)
                          : qa_q2_grapple_reset(g, owner->id, kind_of(hook), e);
 }
@@ -269,7 +269,10 @@ static bool attach(qa_q2_game *g, q2_actor *hook, qa_actor_id target, q2_anchor 
         attachment.follow = QA_BODY_FOLLOW_TRANSLATION;
         attachment.offset = qa_vec_sub(body.origin, other.origin);
     }
-    hook->projectile.enemy = target;
+    const qa_actor_record *reference_enemy = qa_actors_get(qa_session_actors(g->services.session), target);
+    hook->projectile.enemy = reference_enemy && reference_enemy->owner == g->options.owner && reference_enemy->has_source ?
+            qa_actor_reference_source(reference_enemy->owner, reference_enemy->source_slot) :
+            qa_actor_reference_lifetime(target);
     hook->physics.solid = lm ? QA_PHYSICS_TRIGGER : QA_PHYSICS_NOT_SOLID;
     qa_actor_collision collision;
     qa_error observed = {0};
@@ -292,7 +295,7 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
     q2_actor *hook = find(g, contact->self);
     if (hook == NULL)
         return true;
-    qa_actor_id owner_id = hook->projectile.owner, hook_id = hook->id;
+    qa_actor_id owner_id = qa_actor_reference_resolve(qa_session_actors(g->services.session), hook->projectile.owner), hook_id = hook->id;
     q2_actor *owner = find(g, owner_id);
     if (owner == NULL)
         return reset_hook(g, hook, e);
@@ -300,8 +303,8 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
     qa_q2_grapple_state *s = &owner->grapples[kind];
     bool lm = kind == QA_Q2_LMCTF_GRAPPLE;
     if (qa_actor_id_equal(contact->other, owner_id) || (!lm && s->phase != QA_Q2_GRAPPLE_FLY) ||
-        (lm && hook->projectile.enemy.registry != 0 &&
-         !qa_actor_id_equal(hook->projectile.enemy, contact->other)))
+        (lm && qa_actor_reference_present(hook->projectile.enemy) != 0 &&
+         !qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(g->services.session), hook->projectile.enemy), contact->other)))
         return true;
     qa_error observed = {0};
     q2_anchor classification = anchor(g, contact->other, kind, &observed);
@@ -362,7 +365,7 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
             g->hooks.grapple_can_damage(g->hooks.context, owner_id, contact->other, kind)) {
             uint64_t frame =
                 g->now_ns / (100 * Q2_MS) + (g->now_ns % (100 * Q2_MS) >= 50 * Q2_MS ? 1u : 0u);
-            bool repeated = qa_actor_id_equal(hook->projectile.enemy, contact->other);
+            bool repeated = qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(g->services.session), hook->projectile.enemy), contact->other);
             if (!repeated || (frame % 7 == 0 && frame != hook->projectile.effect_ns)) {
                 bool player = false;
                 if (!q2_target_creature(g, contact->other, NULL, &player, e))
@@ -394,7 +397,7 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
         }
         if (dead(g, contact->other))
             return reset_hook(g, hook, e);
-        if (hook->projectile.enemy.registry == 0 &&
+        if (qa_actor_reference_present(hook->projectile.enemy) == 0 &&
             !attach(g, hook, contact->other, classification, e))
             return false;
     }
@@ -479,8 +482,11 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
                            .now_ns = g->now_ns,
                            .frame_ns = g->frame_ns,
                            .rerelease = rr};
+    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner->id);
     hook->projectile = (q2_projectile){.kind = lm ? Q2_LMCTF_HOOK : Q2_CTF_HOOK,
-                                       .owner = owner->id,
+                                       .owner = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
+            qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
+            qa_actor_reference_lifetime(owner->id),
                                        .attack = q2_attack(&call, lm ? 60 : 56, lm ? 4 : 0),
                                        .damage = spec.damage,
                                        .speed = speed,
@@ -705,7 +711,7 @@ static bool pull_ctf(qa_q2_game *g, q2_actor *a, bool damage_pulse, qa_error *e)
         !qa_world_body_read(g->services.world, hook_id, &hook_body, e))
         return false;
     bool rr = g->options.edition == QA_Q2_RERELEASE;
-    qa_actor_id target = hook->projectile.enemy;
+    qa_actor_id target = qa_actor_reference_resolve(qa_session_actors(g->services.session), hook->projectile.enemy);
     if (target.registry != 0) {
         qa_error observed = {0};
         q2_anchor classification = anchor(g, target, QA_Q2_CTF_GRAPPLE, &observed);
@@ -813,13 +819,13 @@ static bool pull_ctf(qa_q2_game *g, q2_actor *a, bool damage_pulse, qa_error *e)
 bool q2_grapple_think(qa_q2_game *g, q2_actor *hook, qa_error *e) {
     if (hook->projectile.kind != Q2_LMCTF_HOOK || hook->projectile.next_ns > g->now_ns)
         return true;
-    q2_actor *owner = find(g, hook->projectile.owner);
+    q2_actor *owner = find(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), hook->projectile.owner));
     if (owner == NULL)
         return qa_session_release(g->services.session, hook->id, e);
     hook->projectile.next_ns = UINT64_MAX;
     if (owner->grapples[QA_Q2_LMCTF_GRAPPLE].hook_length <= 126)
         return true;
-    bool flying = hook->projectile.enemy.registry == 0;
+    bool flying = qa_actor_reference_present(hook->projectile.enemy) == 0;
     if (!sound(g, hook->id, owner->id,
                flying ? "weapons/grapple/gflyair.wav" : "weapons/grapple/gpulling.wav", 0, 1, false,
                e))

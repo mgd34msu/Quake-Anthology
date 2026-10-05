@@ -106,10 +106,13 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float da
         if (!qa_combat_create_actor(g->services.combat, id, &combat, e))
             return false;
     }
+    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), source);
     a->projectile = (q2_projectile){
         .kind = Q2_GIB,
         .classname = rr || !head ? definition : 0,
-        .owner = source,
+        .owner = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
+            qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
+            qa_actor_reference_lifetime(source),
         .effects = 2,
         .render_flags = rr ? ((1u << 24) | (1u << 13) | (1u << 15)) : 0,
         .skin = (flags & Q2_GIB_SKINNED) != 0 ? skin : 0,
@@ -250,8 +253,7 @@ bool q2_gib_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     return qa_q2_run_actor(g, contact->self, gib_contact, &call, e);
 }
 bool q2_gib_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcome, qa_error *e) {
-    if (a->projectile.kind == Q2_DEBRIS ||
-        (a->projectile.gib_flags & Q2_GIB_WIDOW) != 0 || g->options.edition == QA_Q2_CLASSIC ||
+    if ((a->projectile.gib_flags & Q2_GIB_WIDOW) != 0 || g->options.edition == QA_Q2_CLASSIC ||
         (outcome->request.attack.cause.kind == QA_CAUSE_Q2 &&
          outcome->request.attack.cause.source.q2.means_of_death == 20))
         return qa_session_release(g->services.session, a->id, e);
@@ -281,9 +283,9 @@ bool q2_gib_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return qa_world_link(g->services.world, a->id, NULL, e) && show_frame(g, a, e);
     }
     if (p->kind == Q2_TRAP_ORBIT_GIB) {
-        if (!q2_actor_live(g, p->owner))
+        if (!q2_actor_live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)))
             return qa_session_release(g->services.session, a->id, e);
-        q2_actor *trap = q2_actor_get(g, p->owner, false, e);
+        q2_actor *trap = q2_actor_get(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), false, e);
         if (trap == NULL)
             return false;
         if (trap->projectile.kind != Q2_TRAP || trap->projectile.frame != 5)
@@ -292,7 +294,7 @@ bool q2_gib_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
             return true;
         qa_body_state body, owner;
         if (!qa_world_body_read(g->services.world, a->id, &body, e) ||
-            !qa_world_body_read(g->services.world, p->owner, &owner, e))
+            !qa_world_body_read(g->services.world, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), &owner, e))
             return false;
         qa_vec3 up;
         qa_builtin_angle_vectors(owner.angles, NULL, NULL, &up);
@@ -386,7 +388,7 @@ static bool trap_capture_run(qa_q2_game *g, q2_actor *trap,
         if (a == NULL)
             return false;
         a->projectile.kind = Q2_TRAP_ORBIT_GIB;
-        a->projectile.owner = trap->id;
+        a->projectile.owner = qa_actor_reference_source(g->options.owner, trap->wire_slot);
         a->projectile.next_ns = g->now_ns;
         a->physics.motion = QA_PHYSICS_STATIONARY;
         if (!q2_gib_think(g, a, e))

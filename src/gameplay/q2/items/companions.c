@@ -529,7 +529,10 @@ bool q2_companion_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
     int mod = c->kind == Q2_SPHERE_HUNTER ? (c->decoy ? 55 : 49) : (c->decoy ? 54 : 48);
-    q2_projectile attack_state = {.owner = credited};
+    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), credited);
+    q2_projectile attack_state = {.owner = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
+        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
+        qa_actor_reference_lifetime(credited)};
     qa_attack attack = q2_projectile_attack(g, a->id, &attack_state, mod, 64);
     if (q2_target_damageable(g, contact->other)) {
         if (!q2_damage(g, &attack, contact->other, 10000, 1, body.velocity, body.origin,

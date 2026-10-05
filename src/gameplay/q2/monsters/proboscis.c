@@ -29,7 +29,7 @@ static qa_vec3 mouth(const q2m_context *owner) {
 }
 
 static bool owner_context(qa_q2_game *game, const q2_actor *tip, q2m_context *out) {
-    q2_actor *owner = q2_actor_get(game, tip->projectile.owner, false, NULL);
+    q2_actor *owner = q2_actor_get(game, qa_actor_reference_resolve(qa_session_actors(game->services.session), tip->projectile.owner), false, NULL);
     if (!owner || !owner->monster || !owner->monster->definition)
         return false;
     *out = (q2m_context){.game = game, .actor = owner, .monster = owner->monster};
@@ -42,7 +42,7 @@ static bool move_part(qa_q2_game *game, qa_actor_id id, const qa_body_state *bod
 }
 
 static bool reset(qa_q2_game *game, q2_actor *tip, qa_error *error) {
-    qa_actor_id id = tip->id, segment = tip->projectile.child;
+    qa_actor_id id = tip->id, segment = qa_actor_reference_resolve(qa_session_actors(game->services.session), tip->projectile.child);
     q2m_context owner;
     if (owner_context(game, tip, &owner))
         owner.monster->proboscis = (qa_actor_id){0};
@@ -85,7 +85,7 @@ static bool show(qa_q2_game *game, q2_actor *actor, qa_error *error) {
 
 static bool draw(qa_q2_game *game, q2_actor *segment, const qa_vec3 *launch_origin,
                    qa_error *error) {
-    q2_actor *tip = q2_actor_get(game, segment->projectile.owner, false, NULL);
+    q2_actor *tip = q2_actor_get(game, qa_actor_reference_resolve(qa_session_actors(game->services.session), segment->projectile.owner), false, NULL);
     q2m_context owner;
     if (!tip || !owner_context(game, tip, &owner))
         return true;
@@ -135,7 +135,10 @@ static bool hit(qa_q2_game *game, q2_actor *tip, qa_actor_id other, qa_vec3 poin
         owner.monster->next_frame = DRAIN_HIT;
         tip->projectile.phase = Q2_PROBOSCIS_ATTACHED;
         tip->projectile.movedir = qa_vec_sub(position, target.origin);
-        tip->projectile.enemy = other;
+        const qa_actor_record *reference_enemy = qa_actors_get(qa_session_actors(game->services.session), other);
+        tip->projectile.enemy = reference_enemy && reference_enemy->owner == game->options.owner && reference_enemy->has_source ?
+            qa_actor_reference_source(reference_enemy->owner, reference_enemy->source_slot) :
+            qa_actor_reference_lifetime(other);
         tip->projectile.render_flags |= 32;
         if (!stop(game, tip, error) ||
             !q2_projectile_event(game, id, QA_BUILTIN_SOUND, "parasite/paratck3.wav", 1,
@@ -234,8 +237,8 @@ static bool think(qa_q2_game *game, q2_actor *tip, qa_error *error) {
             body.origin = qa_vec_sub(body.origin, qa_vec_scale(qa_vec_normalize(direction), step));
         return move_part(game, id, &body, error);
     }
-    if (p->phase == Q2_PROBOSCIS_ATTACHED && p->enemy.registry) {
-        qa_actor_id enemy = p->enemy;
+    if (p->phase == Q2_PROBOSCIS_ATTACHED && qa_actor_reference_present(p->enemy)) {
+        qa_actor_id enemy = qa_actor_reference_resolve(qa_session_actors(game->services.session), p->enemy);
         qa_body_state target;
         qa_combat_state combat;
         qa_error missing = {0};
@@ -349,8 +352,11 @@ static bool create_part(q2m_context *context, bool segment, qa_vec3 from, qa_vec
         qa_session_release(game->services.session, id, NULL);
         return false;
     }
+    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(game->services.session), owner);
     actor->projectile = (q2_projectile){.kind = segment ? Q2_PROBOSCIS_SEGMENT : Q2_PROBOSCIS,
-        .owner = owner, .model = model, .classname = classname, .scale = 1, .visible = true,
+        .owner = reference_owner && reference_owner->owner == game->options.owner && reference_owner->has_source ?
+            qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
+            qa_actor_reference_lifetime(owner), .model = model, .classname = classname, .scale = 1, .visible = true,
         .speed = segment ? 0 : 1250, .next_ns = q2_deadline(game->now_ns, game->frame_ns),
         .expire_ns = UINT64_MAX, .render_flags = segment ? 128 : 0,
         .attack = {.attacker = owner, .weapon_provider = game->options.owner,
@@ -394,7 +400,7 @@ static bool fire(q2m_context *context, qa_error *error) {
         qa_session_release(game->services.session, tip->id, NULL);
         return false;
     }
-    tip->projectile.child = segment->id;
+    tip->projectile.child = qa_actor_reference_source(game->options.owner, segment->wire_slot);
     if (!q2m_alive(context) || !q2_actor_live(game, tip->id) ||
         !q2_actor_live(game, segment->id))
         return reset(game, tip, error);
@@ -429,7 +435,7 @@ bool q2m_parasite_charge(q2m_context *context, float distance, qa_error *error) 
     if (!q2m_alive(context))
         return true;
     q2_actor *tip = q2_actor_get(context->game, context->monster->proboscis, false, NULL);
-    q2_actor *segment = tip ? q2_actor_get(context->game, tip->projectile.child, false, NULL) : NULL;
+    q2_actor *segment = tip ? q2_actor_get(context->game, qa_actor_reference_resolve(qa_session_actors(context->game->services.session), tip->projectile.child), false, NULL) : NULL;
     return !segment || draw(context->game, segment, NULL, error);
 }
 
