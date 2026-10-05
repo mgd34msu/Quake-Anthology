@@ -85,9 +85,10 @@ bool qa_application_network_qw_client_read(qa_application *, qa_actor_id,
 /* Connected physical rows, including local or borrowed source clients. */
 bool qa_application_network_qw_client_next(qa_application *, uint32_t *cursor,
     bool *present, qa_application_network_qw_client *, qa_error *);
-/* Source-eye fat PVS against the target's retained source link envelope. */
+/* The recipient frame supplies its one Source-eye fat PVS; target checks
+ * borrow that row against each retained source link envelope. */
 bool qa_application_network_qw_visible(qa_application *, qa_actor_id viewer,
-    qa_actor_id target, bool *, qa_error *);
+    qa_actor_id target, qa_bytes pvs, bool *, qa_error *);
 bool qa_application_network_qw_receives(qa_application *, qa_actor_id,
     const qa_application_protocol_event *, bool *, qa_error *);
 /* Actual source actions run at the installed completed-frame command cut. */

@@ -12,7 +12,7 @@ bool application_native_q1_qw_world(qa_application *, qa_application_network_qw_
 bool application_native_q1_qw_client(qa_application *, qa_actor_id, qa_application_network_qw_client *, qa_error *);
 bool application_native_q1_qw_client_next(qa_application *, uint32_t *, bool *, qa_application_network_qw_client *, qa_error *);
 bool application_native_q1_qw_entity_next(qa_application *, uint32_t *, bool *, qa_actor_id *, qa_application_network_qw_entity *, qa_error *);
-bool application_native_q1_qw_visible(qa_application *, qa_actor_id, qa_actor_id, bool *, qa_error *);
+bool application_native_q1_qw_visible(qa_application *, qa_actor_id, qa_actor_id, qa_bytes, bool *, qa_error *);
 bool application_native_q1_qw_receives(qa_application *, qa_actor_id, const qa_application_protocol_event *, bool *, qa_error *);
 bool application_native_q1_qw_prepare(qa_application *, qa_actor_id, qa_error *);
 bool application_native_q1_qw_commands(qa_application *, const qa_network_command_group *, qa_error *);

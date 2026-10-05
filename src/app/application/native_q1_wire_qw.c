@@ -259,11 +259,11 @@ bool application_native_q1_qw_entity_next(qa_application *app,uint32_t *cursor,b
 }
 
 bool application_native_q1_qw_visible(qa_application *app,qa_actor_id viewer,qa_actor_id target,
-    bool *out,qa_error *error) {
+    qa_bytes pvs,bool *out,qa_error *error) {
     if (!out) return application_fail(error,QA_ERROR_ARGUMENT,"Missing native QuakeWorld visibility output");
     application_native_q1_wire_source source={0};
     if (!application_native_q1_wire_qw_begin(app,&source,error)) return false;
-    uint32_t slot;const application_player_record *row;qa_body_state body;
+    uint32_t slot;const application_player_record *row;
     bool okay=binding(&source,viewer,&slot,&row,error) && qa_actors_get(qa_session_actors(app->session),target);
     qa_q1_source_client_view client;
     if (okay) okay=qa_q1_source_client_read(source.provider->state.q1,viewer,&client);
@@ -274,18 +274,7 @@ bool application_native_q1_qw_visible(qa_application *app,qa_actor_id viewer,qa_
     else if (okay) {
         qa_linked_body linked;
         if (!qa_world_linked(app->world,target,&linked)) *out=false;
-        else {
-            qa_application_control_view control;
-            okay=qa_world_body_read(app->world,viewer,&body,error) && qa_application_control_read(app,viewer,&control);
-            if (okay) {
-                qa_collision_geometry *geometry=qa_world_geometry(app->world);
-                size_t size=qa_collision_q1_pvs_bytes(geometry);uint8_t *pvs=size?malloc(size):NULL;
-                if (size && !pvs) okay=application_fail(error,QA_ERROR_MEMORY,"Observing native QuakeWorld fat PVS");
-                else okay=qa_collision_q1_fat_pvs(geometry,qa_vec_add(body.origin,control.view_offset),pvs,size,error) &&
-                    qa_world_q1_visible(app->world,target,&linked.absolute_bounds,(qa_bytes){pvs,size},out,error);
-                free(pvs);
-            }
-        }
+        else okay=qa_world_q1_visible(app->world,target,&linked.absolute_bounds,pvs,out,error);
     }
     if (!okay && error && error->code==QA_OK) application_fail(error,QA_ERROR_NOT_FOUND,"Native QuakeWorld visibility lost its source actor");
     application_native_q1_wire_end(&source);return okay;

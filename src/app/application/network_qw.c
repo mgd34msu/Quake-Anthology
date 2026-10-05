@@ -401,9 +401,9 @@ bool qa_application_network_qw_client_next(qa_application *app, uint32_t *cursor
 }
 
 bool qa_application_network_qw_visible(qa_application *app, qa_actor_id viewer,
-    qa_actor_id target, bool *out, qa_error *error)
+    qa_actor_id target, qa_bytes pvs, bool *out, qa_error *error)
 {
-    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_visible(app, viewer, target, out, error);
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_visible(app, viewer, target, pvs, out, error);
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld source visibility output");
     struct application_qc_state *engine = qw_source(app, NULL, error);
     uint32_t slot;
@@ -412,21 +412,7 @@ bool qa_application_network_qw_visible(qa_application *app, qa_actor_id viewer,
     if (qa_actor_id_equal(viewer, target)) { *out = true; return true; }
     qa_linked_body linked;
     if (!qa_world_linked(app->world, target, &linked)) { *out = false; return true; }
-    int32_t reference;
-    float origin[3], offset[3];
-    if (!qa_qc_slot_reference(engine->provider->state.qc.instance, slot, &reference, error) ||
-        !qw_vector(engine, reference, "origin", origin, error) ||
-        !qw_vector(engine, reference, "view_ofs", offset, error)) return false;
-    qa_vec3 eye = qa_v3(origin[0] + offset[0], origin[1] + offset[1], origin[2] + offset[2]);
-    qa_collision_geometry *geometry = qa_world_geometry(app->world);
-    if (!qa_vec_finite(eye))
-        return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld source eye exceeds finite spatial range");
-    size_t size = qa_collision_q1_pvs_bytes(geometry);
-    uint8_t *pvs = size ? malloc(size) : NULL;
-    if (size && !pvs) return application_fail(error, QA_ERROR_MEMORY, "Observing QuakeWorld source fat PVS");
-    bool ok = qa_collision_q1_fat_pvs(geometry, eye, pvs, size, error) &&
-        qa_world_q1_visible(app->world, target, &linked.absolute_bounds, (qa_bytes){pvs, size}, out, error);
-    free(pvs); return ok;
+    return qa_world_q1_visible(app->world, target, &linked.absolute_bounds, pvs, out, error);
 }
 
 bool qa_application_network_qw_receives(qa_application *app, qa_actor_id actor,

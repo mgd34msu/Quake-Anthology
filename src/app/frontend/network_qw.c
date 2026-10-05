@@ -905,6 +905,42 @@ static qa_qw_source_player source_player(const qa_application_network_qw_client 
     if (client->health <= 0) { player.command.angles[0] = 0; player.command.angles[1] = client->entity.angles[1]; }
     return player;
 }
+static bool publish_entities(qw_frontend_peer *peer, const qw_physical_frame *physical,
+    const qa_application_network_qw_client *viewer, qa_bytes pvs, qa_net_writer *writer, qa_error *error)
+{
+    frontend_qw_host *host = peer->host; qa_actor_id actor = viewer->actor;
+    for (size_t i = 0; i < physical->client_count; ++i) {
+        const qa_application_network_qw_client *client = physical->clients + i;
+        if (!client->begun || (client->spectator && !qa_actor_id_equal(client->actor, actor) &&
+            !qa_actor_id_equal(viewer->spectator_track,client->actor))) continue;
+        bool visible;
+        if (!qa_application_network_qw_visible(host->frontend->application, actor, client->actor, pvs, &visible, error)) return false;
+        if (visible) {
+            qa_qw_source_player player = source_player(client, viewer, host->player_model, physical->source.source_time_ns);
+            if (!qa_qw_source_write_player(writer, &player)) return false;
+        }
+    }
+    qa_qw_source_frame frame = {0}; qa_qw_nail nails[32]; size_t nail_count = 0;
+    for (size_t i = 0; i < physical->entity_count; ++i) {
+        const qa_application_network_qw_entity *entity = physical->entities + i; bool visible;
+        if (!qa_application_network_qw_visible(host->frontend->application, actor, physical->actors[i], pvs, &visible, error)) return false;
+        if (!visible) continue;
+        if ((host->nail_model && entity->model == host->nail_model) || (host->supernail_model && entity->model == host->supernail_model)) {
+            if (nail_count < 32) {
+                qa_qw_nail *nail = nails + nail_count++;
+                memcpy(nail->origin, entity->origin, sizeof(nail->origin)); nail->pitch = entity->angles[0]; nail->yaw = entity->angles[1];
+            }
+        } else if (frame.count < QA_QW_MAX_PACKET_ENTITIES) {
+            qa_qw_source_entity *state = frame.entities + frame.count++;
+            *state = (qa_qw_source_entity){.number = entity->number, .model = entity->model, .frame = entity->frame,
+                .colormap = entity->colormap, .skin = entity->skin, .effects = entity->effects};
+            memcpy(state->origin, entity->origin, sizeof(state->origin)); memcpy(state->angles, entity->angles, sizeof(state->angles));
+        }
+    }
+    if (nail_count && !qa_qw_source_write_nails(writer, nails, nail_count)) return false;
+    return qa_network_qw_server_frame(host->runtime, peer->client,
+        (qa_bytes){writer->data, qa_net_writer_size(writer)}, &frame, error);
+}
 static bool publish_peer(qw_frontend_peer *peer, const qw_physical_frame *physical, qa_error *error)
 {
     frontend_qw_host *host = peer->host; qa_actor_id actor;
@@ -921,37 +957,17 @@ static bool publish_peer(qw_frontend_peer *peer, const qw_physical_frame *physic
             !qa_network_qw_server_reliable(host->runtime, peer->client, (qa_bytes){bytes, qa_net_writer_size(&stat)}, error)) return false;
         peer->stats[i] = viewer->stats[i]; peer->stat_mask |= UINT16_C(1) << i;
     }
-    for (size_t i = 0; i < physical->client_count; ++i) {
-        const qa_application_network_qw_client *client = physical->clients + i;
-        if (!client->begun || (client->spectator && !qa_actor_id_equal(client->actor, actor) &&
-            !qa_actor_id_equal(viewer->spectator_track,client->actor))) continue;
-        bool visible;
-        if (!qa_application_network_qw_visible(host->frontend->application, actor, client->actor, &visible, error)) return false;
-        if (visible) {
-            qa_qw_source_player player = source_player(client, viewer, host->player_model, physical->source.source_time_ns);
-            if (!qa_qw_source_write_player(&writer, &player)) return false;
-        }
-    }
-    qa_qw_source_frame frame = {0}; qa_qw_nail nails[32]; size_t nail_count = 0;
-    for (size_t i = 0; i < physical->entity_count; ++i) {
-        const qa_application_network_qw_entity *entity = physical->entities + i; bool visible;
-        if (!qa_application_network_qw_visible(host->frontend->application, actor, physical->actors[i], &visible, error)) return false;
-        if (!visible) continue;
-        if ((host->nail_model && entity->model == host->nail_model) || (host->supernail_model && entity->model == host->supernail_model)) {
-            if (nail_count < 32) {
-                qa_qw_nail *nail = nails + nail_count++;
-                memcpy(nail->origin, entity->origin, sizeof(nail->origin)); nail->pitch = entity->angles[0]; nail->yaw = entity->angles[1];
-            }
-        } else if (frame.count < QA_QW_MAX_PACKET_ENTITIES) {
-            qa_qw_source_entity *state = frame.entities + frame.count++;
-            *state = (qa_qw_source_entity){.number = entity->number, .model = entity->model, .frame = entity->frame,
-                .colormap = entity->colormap, .skin = entity->skin, .effects = entity->effects};
-            memcpy(state->origin, entity->origin, sizeof(state->origin)); memcpy(state->angles, entity->angles, sizeof(state->angles));
-        }
-    }
-    if (nail_count && !qa_qw_source_write_nails(&writer, nails, nail_count)) return false;
-    return qa_network_qw_server_frame(host->runtime, peer->client,
-        (qa_bytes){services, qa_net_writer_size(&writer)}, &frame, error);
+    qa_vec3 eye = qa_v3(viewer->entity.origin[0] + viewer->view_offset[0],
+        viewer->entity.origin[1] + viewer->view_offset[1], viewer->entity.origin[2] + viewer->view_offset[2]);
+    if (!qa_vec_finite(eye)) return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld source eye exceeds finite spatial range");
+    qa_collision_geometry *geometry = qa_world_geometry(qa_application_world(host->frontend->application));
+    size_t extent = qa_collision_q1_pvs_bytes(geometry);
+    uint8_t *bytes = extent ? malloc(extent) : NULL;
+    if (extent && !bytes) return frontend_fail(error, QA_ERROR_MEMORY, "Observing QuakeWorld source fat PVS");
+    bool ok = qa_collision_q1_fat_pvs(geometry, eye, bytes, extent, error) &&
+        publish_entities(peer, physical, viewer, (qa_bytes){bytes, extent}, &writer, error);
+    free(bytes);
+    return ok;
 }
 bool frontend_qw_publish(frontend_qw_host *host, qa_error *error)
 {
