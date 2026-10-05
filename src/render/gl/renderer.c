@@ -780,6 +780,11 @@ static void draw_source_strips(qa_gl_renderer *renderer, const qa_scene_draw *dr
 static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
                        qa_error *error)
 {
+    qa_scene_draw base, lightmap;
+    /* Hardware framebuffer conversion is not the CPU's byte conversion;
+     * preserve the original intermediate native color and blend operations. */
+    if (qa_scene_draw_lightmap_split(source, &base, &lightmap))
+        return draw_scene(renderer, &base, error) && draw_scene(renderer, &lightmap, error);
     qa_scene_draw draw = *source;
     const gl_mesh_entry *resident = NULL;
     qa_render_source_direct_state(&draw.state,&renderer->pipeline,source);

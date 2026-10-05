@@ -256,7 +256,7 @@ bool cpu_image_valid(const qa_scene_image *image, qa_error *error) {
 static bool draw_valid(const qa_scene_draw *draw, qa_error *error) {
   const qa_scene_state *s = &draw->state;
   if (draw->texture_count > 2 ||
-      (unsigned)draw->environment > QA_TEXTURE_REPLACE ||
+      (unsigned)draw->environment > QA_TEXTURE_LIGHTMAP_INVERT_ALPHA ||
       (unsigned)draw->lighting > QA_LIGHT_Q2_MODEL_SHADOW ||
       (unsigned)draw->light_pass > QA_LIGHT_PASS_MODEL ||
       (unsigned)draw->mesh.primitive > QA_SCENE_LINES ||
@@ -1316,6 +1316,11 @@ static bool raster_queue(cpu_raster_job *job) {
 }
 static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
                          qa_error *error, bool queued) {
+  qa_scene_draw base, lightmap;
+  bool fused = qa_scene_draw_lightmap_split(input, &base, &lightmap);
+  if (fused && (renderer->overdraw || renderer->preblend_gamma || !renderer->current->color))
+    return cpu_draw_impl(renderer, &base, error, queued) &&
+           cpu_draw_impl(renderer, &lightmap, error, queued);
   bool batchable = queued && renderer->raster_pool &&
       !renderer->controls.source.issuing && !input->source_arrays &&
       !input->source_retain_depth_range &&
@@ -1338,7 +1343,7 @@ static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
     size_t unit=source_pipeline && !input->source_arrays && i==0?renderer->controls.attributes.texture_unit:i;
     if (source_pipeline && input->textures[i]) cpu_source_image_used(renderer,input->textures[i]);
     if (resolved.retain_texture[i]) resolved.textures[i] = renderer->bound[unit];
-    else if (!input->source_arrays && input->textures[i] && renderer->bound[unit]!=input->textures[i]) {
+    else if (!(fused && i == 1) && !input->source_arrays && input->textures[i] && renderer->bound[unit]!=input->textures[i]) {
       qa_scene_image_retain(input->textures[i]);
       qa_scene_image_release(renderer->bound[unit]);
       renderer->bound[unit]=input->textures[i];
@@ -1347,8 +1352,11 @@ static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
     }
   }
   const qa_scene_draw *draw = &resolved;
-  if (!draw_valid(draw, error))
+  if (!draw_valid(draw, error)) {
+    if (fused) return cpu_draw_impl(renderer, &base, error, queued) &&
+                      cpu_draw_impl(renderer, &lightmap, error, queued);
     return false;
+  }
   if (draw->state.stencil_enabled && !renderer->current->stencil) {
     qa_error_set(error, QA_ERROR_UNSUPPORTED, 0,
                  "CPU stencil draw requires stencil storage");
@@ -1400,6 +1408,14 @@ static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
   if (draw->source_direct==QA_SOURCE_DIRECT_SHADOW_FINISH) renderer->pipeline.stencil_enabled=false;
   if (draw->source_direct==QA_SOURCE_DIRECT_SHADOW_VOLUME_END) renderer->pipeline.color_write=true;
   qa_render_source_attributes_finish(&renderer->controls,draw,mode);
+  if (fused) {
+    renderer->pipeline = lightmap.state;
+    if (renderer->bound[0] != lightmap.textures[0]) {
+      qa_scene_image_retain(lightmap.textures[0]);
+      qa_scene_image_release(renderer->bound[0]);
+      renderer->bound[0] = lightmap.textures[0];
+    }
+  }
   return true;
 }
 bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,

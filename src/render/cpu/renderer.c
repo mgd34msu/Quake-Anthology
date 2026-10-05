@@ -672,6 +672,20 @@ bool qa_cpu_read_overdraw(const qa_cpu_renderer *renderer, uint8_t *destination,
   }
   return true;
 }
+static bool execute_draw(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
+                         size_t ordinal, qa_error *error) {
+  qa_scene_draw base, lightmap;
+  if (renderer->preblend_gamma && qa_scene_draw_lightmap_split(draw, &base, &lightmap))
+    return execute_draw(renderer, &base, ordinal, error) &&
+           execute_draw(renderer, &lightmap, ordinal + 1, error);
+  if (renderer->preblend_gamma &&
+      (draw->lighting != QA_LIGHT_VERTEX || draw->shadow_atlas)) {
+    qa_error_set(error, QA_ERROR_ARGUMENT, ordinal,
+                 "Generic overlay gamma requires an unlit primitive");
+    return false;
+  }
+  return renderer->opacity_skip || cpu_draw_queued(renderer, draw, error);
+}
 static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
                     size_t first, bool begin, bool finish, qa_error *error) {
   if (!renderer || !frame || frame->owner != renderer->options.owner ||
@@ -760,12 +774,7 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
       }
       break;
     case QA_SCENE_COMMAND_DRAW:
-      if (renderer->preblend_gamma &&
-          (command->data.draw.lighting!=QA_LIGHT_VERTEX || command->data.draw.shadow_atlas)) {
-        qa_error_set(error,QA_ERROR_ARGUMENT,i,"Generic overlay gamma requires an unlit primitive");
-        ok=false;
-      } else if (!renderer->opacity_skip)
-        ok = cpu_draw_queued(renderer, &command->data.draw, error);
+      ok = execute_draw(renderer, &command->data.draw, i, error);
       break;
     case QA_SCENE_COMMAND_TARGET:
       ok = select_target(renderer, command->data.target.image, error);

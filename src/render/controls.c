@@ -834,7 +834,8 @@ bool qa_render_source_attributes_resolve(qa_render_controls *controls,qa_scene_d
         attributes->texture_enabled[1]=draw->texture_count>1;
         attributes->color_array=true; attributes->coordinate_array[0]=true;
         attributes->coordinate_array[1]=draw->texture_count>1;
-        attributes->environment[1]=draw->environment;
+        attributes->environment[1]=draw->environment>=QA_TEXTURE_LIGHTMAP_MODULATE?
+            QA_TEXTURE_MODULATE:draw->environment;
         return true;
     }
     if (source_draw_attributes(draw)) {
@@ -914,7 +915,9 @@ void qa_render_source_attributes_finish(qa_render_controls *controls,const qa_sc
     if (mode==QA_RENDER_PRIMITIVES_INDEXED) {
         if (!source || attributes->color_array) attributes->color_known=false;
         for (size_t unit=0;unit<2;++unit)
-                if (source?attributes->coordinate_array[unit]:unit<draw->texture_count) attributes->coordinates_known[unit]=false;
+                if (source?attributes->coordinate_array[unit]:
+                    unit<(draw->environment>=QA_TEXTURE_LIGHTMAP_MODULATE?1:draw->texture_count))
+                    attributes->coordinates_known[unit]=false;
         if (!source) {
             attributes->texture_unit=0; attributes->texture_enabled[1]=false; attributes->coordinate_array[1]=false;
         }

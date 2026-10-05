@@ -125,6 +125,87 @@ bool qa_scene_frame_geometry(qa_scene_frame *frame, const qa_scene_geometry *geo
     return true;
 }
 
+bool qa_scene_draw_lightmap_split(const qa_scene_draw *draw, qa_scene_draw *base,
+                                 qa_scene_draw *lightmap)
+{
+    if (draw->environment < QA_TEXTURE_LIGHTMAP_MODULATE ||
+        draw->environment > QA_TEXTURE_LIGHTMAP_INVERT_ALPHA) return false;
+    if (base) {
+        *base = *draw;
+        base->texture_count = 1;
+        base->textures[1] = NULL;
+        base->environment = QA_TEXTURE_MODULATE;
+        base->lighting = QA_LIGHT_VERTEX;
+        base->light_pass = QA_LIGHT_PASS_TEXTURE;
+        base->lights = NULL; base->light_count = 0; base->shadow_atlas = NULL;
+        base->shadow_near = 0; base->shade_scale = 0; base->model_shade_scale = false;
+    }
+    if (lightmap) {
+        *lightmap = *draw;
+        lightmap->texture_count = 1;
+        lightmap->textures[0] = draw->textures[1];
+        lightmap->textures[1] = NULL;
+        lightmap->environment = QA_TEXTURE_MODULATE;
+        lightmap->vertex_inputs = (qa_scene_vertex_inputs){.constant_color = true,
+            .swap_uv = true, .color = {1, 1, 1, 1}};
+        bool direct = draw->environment == QA_TEXTURE_LIGHTMAP_MODULATE;
+        lightmap->state.blend_source = direct ? QA_BLEND_DST_COLOR : QA_BLEND_ZERO;
+        lightmap->state.blend_destination = direct ? QA_BLEND_ZERO :
+            draw->environment == QA_TEXTURE_LIGHTMAP_INVERT_ALPHA
+                ? QA_BLEND_ONE_MINUS_SRC_ALPHA : QA_BLEND_ONE_MINUS_SRC_COLOR;
+        lightmap->state.depth_test = QA_DEPTH_EQUAL;
+        lightmap->state.depth_write = false;
+        lightmap->fog = (qa_scene_fog){0};
+    }
+    return true;
+}
+
+static bool lightmap_fold(qa_scene_frame *frame, const qa_scene_draw *lightmap)
+{
+    if (frame->source_pending || !frame->command_count ||
+        frame->commands[frame->command_count - 1].kind != QA_SCENE_COMMAND_DRAW)
+        return false;
+    qa_scene_draw *base = &frame->commands[frame->command_count - 1].data.draw;
+    if (base->texture_count != 1 || lightmap->texture_count != 1 ||
+        !base->textures[0] || !lightmap->textures[0] ||
+        base->lighting != QA_LIGHT_VERTEX ||
+        lightmap->light_pass != QA_LIGHT_PASS_LIGHTMAP || lightmap->light_count ||
+        (lightmap->lighting != QA_LIGHT_VERTEX && lightmap->lighting != QA_LIGHT_Q2_WORLD) ||
+        base->mesh.primitive != QA_SCENE_TRIANGLES || !base->single_coverage ||
+        base->state.blend_source != QA_BLEND_ONE || base->state.blend_destination != QA_BLEND_ZERO ||
+        base->state.depth_test != QA_DEPTH_LEQUAL || !base->state.depth_write ||
+        !base->state.color_write || base->state.alpha_test != QA_ALPHA_NONE ||
+        base->state.stencil_enabled || base->state.polygon_offset || base->state.wireframe ||
+        (base->fog.kind != QA_FOG_NONE && base->fog.kind != QA_FOG_Q2) ||
+        base->luminance_alpha || base->source_primitives || base->source_direct ||
+        base->source_stage_state || base->source_arrays || base->source_retain_depth_range ||
+        base->source_retain_polygon_offset || base->retain_texture[0]) return false;
+    qa_scene_texture_environment environment;
+    if (lightmap->state.blend_source == QA_BLEND_DST_COLOR &&
+        lightmap->state.blend_destination == QA_BLEND_ZERO)
+        environment = QA_TEXTURE_LIGHTMAP_MODULATE;
+    else if (lightmap->state.blend_source == QA_BLEND_ZERO &&
+             lightmap->state.blend_destination == QA_BLEND_ONE_MINUS_SRC_COLOR)
+        environment = QA_TEXTURE_LIGHTMAP_INVERT_COLOR;
+    else if (lightmap->state.blend_source == QA_BLEND_ZERO &&
+             lightmap->state.blend_destination == QA_BLEND_ONE_MINUS_SRC_ALPHA)
+        environment = QA_TEXTURE_LIGHTMAP_INVERT_ALPHA;
+    else return false;
+    qa_scene_draw fused = *base;
+    fused.environment = environment;
+    fused.texture_count = 2; fused.textures[1] = lightmap->textures[0];
+    fused.lighting = lightmap->lighting; fused.light_pass = lightmap->light_pass;
+    fused.lights = lightmap->lights; fused.light_count = lightmap->light_count;
+    fused.shadow_atlas = lightmap->shadow_atlas; fused.shadow_near = lightmap->shadow_near;
+    qa_scene_draw first, second;
+    (void)qa_scene_draw_lightmap_split(&fused, &first, &second);
+    /* Replaying this projection must recover both admitted commands exactly;
+     * otherwise preserve the original independent passes. */
+    if (memcmp(base, &first, sizeof(first)) || memcmp(lightmap, &second, sizeof(second))) return false;
+    *base = fused;
+    return true;
+}
+
 bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command, qa_error *error)
 {
     if (frame == NULL || command == NULL || command->kind < QA_SCENE_COMMAND_VIEW ||
@@ -203,6 +284,7 @@ bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command,
         }
         if (!pin(frame, copied.data.target.image, error)) return false;
     }
+    if (copied.kind == QA_SCENE_COMMAND_DRAW && lightmap_fold(frame, &copied.data.draw)) return true;
     frame->commands[frame->command_count++] = copied;
     return !frame->source_pending || qa_material_source_issue_emitted(frame->source_pending, frame, error);
 }

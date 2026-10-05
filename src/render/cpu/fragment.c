@@ -240,10 +240,29 @@ static void sample_fragment_texture(const cpu_sampler *sampler,
   }
   cpu_sample_texture(sampler, uv[0], uv[1], rho, out);
 }
+static inline void lightmap_color(const qa_scene_draw *draw,
+    const cpu_sampler samplers[2], const cpu_fragment *fragment,
+    qa_scene_texture_environment environment, double color[4]) {
+  double base[4], light[4];
+  sample_fragment_texture(&samplers[0], &fragment->derivative[0], fragment->uv[0], base);
+  sample_fragment_texture(&samplers[1], &fragment->derivative[1], fragment->uv[1], light);
+  vertex_shade(fragment, base, color);
+  if (draw->lighting == QA_LIGHT_Q2_WORLD) light[3] = 1;
+  for (size_t c = 0; c < 4; ++c) {
+    double first = cpu_byte(color[c]) / 255.0;
+    double factor = environment == QA_TEXTURE_LIGHTMAP_INVERT_ALPHA ? 1 - cpu_clamp(light[3]) :
+        environment == QA_TEXTURE_LIGHTMAP_INVERT_COLOR ? 1 - cpu_clamp(light[c]) : cpu_clamp(light[c]);
+    color[c] = first * factor;
+  }
+}
 static inline bool fragment_color(const qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     const cpu_sampler samplers[2], const cpu_fragment *fragment, bool vertex_opaque,
     size_t texture_count, double color[4]) {
   const qa_scene_state *state = &draw->state;
+  if (draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE) {
+    lightmap_color(draw, samplers, fragment, draw->environment, color);
+    return true;
+  }
   double texel[4] = {1, 1, 1, 1};
   if (texture_count && draw->textures[0]) {
     sample_fragment_texture(&samplers[0], &fragment->derivative[0],
@@ -400,8 +419,33 @@ OPAQUE_KERNEL(opaque_lightmap, 2, false)
 OPAQUE_KERNEL(opaque_lightmap_depth, 2, true)
 #undef OPAQUE_KERNEL
 
+#define LIGHTMAP_KERNEL(name, environment, write_depth) \
+  static void name(qa_cpu_renderer *renderer, const qa_scene_draw *draw, \
+      const cpu_sampler samplers[2], const cpu_fragment *fragment, cpu_fragment_admission admission) { \
+    if (!admission.depth_passed) return; \
+    double color[4]; \
+    lightmap_color(draw, samplers, fragment, environment, color); \
+    replace_color(renderer->current, admission.index, color); \
+    if (write_depth) renderer->current->depth[admission.index] = fragment->depth; \
+  }
+LIGHTMAP_KERNEL(lightmap_modulate, QA_TEXTURE_LIGHTMAP_MODULATE, false)
+LIGHTMAP_KERNEL(lightmap_modulate_depth, QA_TEXTURE_LIGHTMAP_MODULATE, true)
+LIGHTMAP_KERNEL(lightmap_invert_color, QA_TEXTURE_LIGHTMAP_INVERT_COLOR, false)
+LIGHTMAP_KERNEL(lightmap_invert_color_depth, QA_TEXTURE_LIGHTMAP_INVERT_COLOR, true)
+LIGHTMAP_KERNEL(lightmap_invert_alpha, QA_TEXTURE_LIGHTMAP_INVERT_ALPHA, false)
+LIGHTMAP_KERNEL(lightmap_invert_alpha_depth, QA_TEXTURE_LIGHTMAP_INVERT_ALPHA, true)
+#undef LIGHTMAP_KERNEL
+
 cpu_fragment_kernel cpu_fragment_select(const qa_cpu_renderer *renderer, const qa_scene_draw *draw) {
   const qa_scene_state *state = &draw->state;
+  if (draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE) {
+    static const cpu_fragment_kernel lightmaps[3][2] = {
+        {lightmap_modulate, lightmap_modulate_depth},
+        {lightmap_invert_color, lightmap_invert_color_depth},
+        {lightmap_invert_alpha, lightmap_invert_alpha_depth}};
+    return lightmaps[draw->environment - QA_TEXTURE_LIGHTMAP_MODULATE]
+                    [state->depth_write && state->depth_test != QA_DEPTH_DISABLED];
+  }
   if (draw->lighting != QA_LIGHT_VERTEX || draw->fog.kind == QA_FOG_CONSTANT ||
       draw->fog.kind == QA_FOG_EXP2 || state->alpha_test != QA_ALPHA_NONE ||
       draw->luminance_alpha || (renderer->preblend_gamma && renderer->gamma_enabled) ||

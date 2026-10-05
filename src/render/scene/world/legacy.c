@@ -471,6 +471,7 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
     }
     qa_scene_draw draw;
     draw_state(&draw, context, &mesh);
+    draw.single_coverage = !legacy->warp && !legacy->flowing;
     draw.vertex_inputs = (qa_scene_vertex_inputs){.constant_color = true,
         .color = {context->entity_color.x * intensity, context->entity_color.y * intensity,
                   context->entity_color.z * intensity, alpha}};

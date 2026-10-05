@@ -439,7 +439,13 @@ typedef struct qa_scene_state {
     uint32_t stencil_reference, stencil_compare_mask, stencil_write_mask;
     qa_scene_stencil_op stencil_fail, stencil_depth_fail, stencil_depth_pass;
 } qa_scene_state;
-typedef enum qa_scene_texture_environment { QA_TEXTURE_MODULATE, QA_TEXTURE_ADD, QA_TEXTURE_REPLACE } qa_scene_texture_environment;
+typedef enum qa_scene_texture_environment {
+    QA_TEXTURE_MODULATE, QA_TEXTURE_ADD, QA_TEXTURE_REPLACE,
+    /* Opaque framebuffer base pass, then the original EQUAL-depth lightmap
+     * blend. The base color is quantized to RGBA8 before this secondary pass. */
+    QA_TEXTURE_LIGHTMAP_MODULATE, QA_TEXTURE_LIGHTMAP_INVERT_COLOR,
+    QA_TEXTURE_LIGHTMAP_INVERT_ALPHA
+} qa_scene_texture_environment;
 typedef enum qa_scene_fog_kind { QA_FOG_NONE, QA_FOG_CONSTANT, QA_FOG_EXP2, QA_FOG_Q2 } qa_scene_fog_kind;
 typedef enum qa_scene_fog_effect { QA_FOG_COLOR, QA_FOG_RGB, QA_FOG_ALPHA, QA_FOG_RGBA, QA_FOG_OVERLAY, QA_FOG_NO_EFFECT } qa_scene_fog_effect;
 typedef struct qa_scene_fog {
@@ -498,6 +504,8 @@ typedef struct qa_scene_draw {
     bool luminance_alpha;
     /* Reached Q3 Source stage submission, independent of queue grouping. */
     bool source_primitives;
+    /* Producer-owned convex polygon: its triangles cover each sample once. */
+    bool single_coverage;
     qa_scene_source_direct source_direct;
     bool source_retain_depth_range;
     bool source_retain_polygon_offset;
@@ -509,6 +517,10 @@ typedef struct qa_scene_draw {
     uint64_t sort_key;
     uint32_t entity, fog_index, light_mask;
 } qa_scene_draw;
+/* Recover the original pair for incompatible targets and final binding/state
+ * publication after a fused draw. Returns false for ordinary environments. */
+bool qa_scene_draw_lightmap_split(const qa_scene_draw *, qa_scene_draw *base,
+                                 qa_scene_draw *lightmap);
 typedef struct qa_scene_view {
     /* Every viewport, including a depth target, uses top-left pixel origin. */
     qa_scene_rect viewport;
