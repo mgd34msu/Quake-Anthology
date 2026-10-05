@@ -1713,7 +1713,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/legacy_render_policy.c
     src/app/frontend/map_events.c
     src/app/frontend/model_inventory.c
-    src/app/frontend/material_inventory.c
     src/app/frontend/material_movies.c
     src/app/frontend/material_movies_prepare.c
     src/app/frontend/material_movies_save.c

@@ -3,7 +3,6 @@
 #include "remote_unified_private.h"
 #include "remote_unified_material_movies_bridge.h"
 #include "save_private.h"
-#include "material_inventory.h"
 #include "scene_refs.h"
 #include "qa/scene_resource_save.h"
 #include "qa/material_library_save.h"

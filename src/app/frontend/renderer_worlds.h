@@ -12,10 +12,6 @@ typedef struct frontend_renderer_worlds_view {
 } frontend_renderer_worlds_view;
 bool frontend_renderer_worlds_count(const qa_frontend *,size_t *,qa_error *);
 bool frontend_renderer_worlds_read_at(const qa_frontend *,size_t,frontend_renderer_worlds_view *,qa_error *);
-bool frontend_renderer_worlds_checkpoint(qa_frontend *,const frontend_world_inventory *,qa_buffer *,qa_error *);
-bool frontend_renderer_worlds_prepare_restored(qa_frontend *,qa_bytes,qa_error *);
-bool frontend_renderer_worlds_attach_restored(qa_frontend *,frontend_world_inventory *,qa_error *);
-bool frontend_renderer_worlds_bind_restored(qa_frontend *,qa_error *);
 bool frontend_renderer_worlds_prune(qa_frontend *,qa_error *);
 bool frontend_renderer_worlds_destroy(frontend_renderer_worlds **,qa_error *);
 bool frontend_renderer_worlds_idle(const frontend_renderer_worlds *);
