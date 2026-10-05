@@ -7,7 +7,7 @@
 struct qa_demo_recorder {
     qa_fs_stream *stream;
     uint64_t time_ns, sequence, position;
-    bool faulted, ended;
+    bool faulted, ended, buffered, dirty;
 };
 struct qa_demo {
     qa_buffer storage;
@@ -76,10 +76,34 @@ bool qa_demo_record_append(qa_demo_recorder *recorder, qa_demo_record_kind kind,
     qa_net_write_u32(&w, protocol.revision); qa_net_write_u32(&w, protocol.flags);
     if (w.failed || !write_part(recorder, (qa_bytes){header, sizeof(header)}, error) ||
         !write_part(recorder, payload, error)) return false;
-    if (!qa_fs_stream_sync(recorder->stream, error)) { recorder->faulted = true; return false; }
+    recorder->dirty = true;
+    if ((!recorder->buffered || kind == QA_DEMO_KEYFRAME || kind == QA_DEMO_END) &&
+        !qa_demo_record_flush(recorder, error)) return false;
     ++recorder->sequence;
     recorder->time_ns += elapsed_ns;
     recorder->ended = kind == QA_DEMO_END;
+    return true;
+}
+
+bool qa_demo_record_flush(qa_demo_recorder *recorder, qa_error *error)
+{
+    if (!recorder || recorder->faulted)
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Absent or faulted demo recorder");
+    if (!recorder->dirty) return true;
+    if (!qa_fs_stream_sync(recorder->stream, error)) {
+        recorder->faulted = true;
+        return false;
+    }
+    recorder->dirty = false;
+    return true;
+}
+
+bool qa_demo_record_buffered(qa_demo_recorder *recorder, bool buffered, qa_error *error)
+{
+    if (!recorder || recorder->faulted || recorder->ended)
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Buffering requires an active demo recorder");
+    if (!buffered && !qa_demo_record_flush(recorder, error)) return false;
+    recorder->buffered = buffered;
     return true;
 }
 

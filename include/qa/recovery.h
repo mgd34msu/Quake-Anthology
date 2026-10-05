@@ -2,6 +2,7 @@
 #define QA_RECOVERY_H
 
 #include "qa/demo.h"
+#include "qa/movement.h"
 #include "qa/gameplay.h"
 
 typedef enum qa_save_authority { QA_SAVE_OFFLINE, QA_SAVE_SERVER, QA_SAVE_REMOTE } qa_save_authority;
@@ -28,6 +29,17 @@ bool qa_autosave_write(qa_autosave_state *, qa_fs_root *, const qa_save_image *,
                         uint64_t nonce, qa_error *);
 
 typedef struct qa_recovery qa_recovery;
+/* Logical player identity and the actual accepted movement command. Device
+ * state, input bindings and presentation are reconstructed normally. */
+typedef struct qa_recovery_input {
+    uint32_t seat;
+    qa_movement_command command;
+} qa_recovery_input;
+bool qa_recovery_input_encode(const qa_recovery_input *, qa_buffer *, qa_error *);
+bool qa_recovery_input_decode(qa_bytes, qa_recovery_input *, qa_error *);
+/* Missing and cleanly closed journals are not recovery candidates. A corrupt
+ * complete record is an error; only an incomplete final block is discarded. */
+bool qa_recovery_available(qa_fs_root *, const char *, bool *, qa_error *);
 /* Recovery uses one shared checkpoint plus typed demo/journal records. Only
  * committed input/frame effects belong in the log. A record failure faults
  * recording and the valid prefix remains recoverable; it is never replayed
@@ -39,6 +51,7 @@ bool qa_recovery_begin(qa_fs_root *, const char *relative_name, const qa_save_im
 bool qa_recovery_append(qa_recovery *, qa_demo_record_kind, uint64_t elapsed_ns,
                          qa_net_protocol_id, qa_bytes, qa_error *);
 bool qa_recovery_checkpoint(qa_recovery *, const qa_save_image *, qa_error *);
+bool qa_recovery_flush(qa_recovery *, qa_error *);
 bool qa_recovery_close_clean(qa_recovery *, qa_error *);
 void qa_recovery_destroy(qa_recovery *);
 bool qa_recovery_restore(qa_fs_root *, const char *, void *, const qa_demo_seek_ops *,
