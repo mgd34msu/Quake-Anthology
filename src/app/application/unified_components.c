@@ -33,83 +33,42 @@ static bool owner_write(application_unified_json *j, const application_unified_c
         application_unified_json_natural(j, row->generation, e) && text(j, "}", e);
 }
 
-static bool identity_hash(const qa_unified_document *identity, qa_sha256_digest *out, qa_error *e)
+static bool native_same(const application_unified_component_capture *v)
 {
-    if (!identity || qa_unified_document_type(identity) != QA_UNIFIED_CHECKPOINT)
-        return application_fail(e, QA_ERROR_ARGUMENT, "Component has no admitted immutable ModIdentity");
-    qa_buffer canonical = {0};
-    bool ok = qa_unified_value_canonical(qa_json_source(qa_unified_document_json(identity),
-        qa_unified_document_root(identity)), &canonical, e);
-    if (ok) qa_sha256((qa_bytes){canonical.data, canonical.size}, out);
-    qa_buffer_free(&canonical);
-    return ok;
+    const native_cursor *old = &v->owner->native, *row = &v->native;
+    return v->owner->epoch == v->epoch && old->present && row->present &&
+        old->owner == row->owner && old->activation == row->activation &&
+        old->generation == row->generation && old->source_slot == row->source_slot;
 }
 
-static bool json_hash(const qa_json_document *j, qa_json_id value, qa_sha256_digest *out, qa_error *e)
-{
-    qa_buffer canonical = {0};
-    bool ok = qa_unified_value_canonical(qa_json_source(j, value), &canonical, e);
-    if (ok) qa_sha256((qa_bytes){canonical.data, canonical.size}, out);
-    qa_buffer_free(&canonical);
-    return ok;
-}
-
-static bool native_states(application_unified_json *j, const application_unified_component_capture *v,
-    bool configs, qa_error *e)
-{
-    if (configs || v->native_documents.publication.hud == APPLICATION_NATIVE_Q2_HUD_NONE)
-        return application_unified_json_document(j, v->native_documents.state, e);
-    const qa_json_document *json = qa_unified_document_json(v->native_documents.state);
-    qa_json_id root = qa_unified_document_root(v->native_documents.state);
-    qa_json_id hud = qa_json_get(json, root, "hud"), frame = qa_json_get(json, hud, "frame");
-    static const char *const fields[] = {"owner", "identity", "generation"};
-    bool ok = text(j, "{", e);
-    for (size_t i = 0; ok && i < sizeof(fields) / sizeof(fields[0]); ++i)
-        ok = (!i || text(j, ",", e)) && string(j, fields[i], e) && text(j, ":", e) &&
-            application_unified_json_append(j, qa_json_source(json, qa_json_get(json, root, fields[i])), e);
-    if (ok) ok = text(j, ",\"hud\":{\"mode\":", e) && application_unified_json_append(j,
-        qa_json_source(json, qa_json_get(json, hud, "mode")), e) && text(j, ",\"frame\":{\"configstrings\":null", e);
-    static const char *const frame_fields[] = {"protocol", "layout", "inventory", "playerNumber"};
-    for (size_t i = 0; ok && i < sizeof(frame_fields) / sizeof(frame_fields[0]); ++i)
-        ok = text(j, ",", e) && string(j, frame_fields[i], e) && text(j, ":", e) &&
-            application_unified_json_append(j, qa_json_source(json, qa_json_get(json, frame, frame_fields[i])), e);
-    return ok && text(j, "}}}", e);
-}
-
-static bool native_prepare(application_unified_component_capture *v, application_unified_json *states, bool *changed, qa_error *e)
+static bool native_prepare(application_unified_component_capture *v, bool *changed, qa_error *e)
 {
     qa_application *app = v->owner->application;
     if (!application_unified_q2_component_documents_build(app, &v->source, v->owner->recipient,
         &v->player, v->target, &v->native_documents, e)) return false;
-    const native_cursor *old = v->owner->epoch == v->epoch ? &v->owner->native : NULL;
-    if (!v->native_documents.present) { *changed |= v->owner->native.present; return text(states, "[]", e); }
+    if (!v->native_documents.present) { *changed |= v->owner->native.present; return true; }
     const application_native_q2_publication_view *p = &v->native_documents.publication;
+    const application_unified_q2_source_documents *source = &v->native_documents.source;
     v->native = (native_cursor){.owner=p->owner, .activation=p->activation_generation,
-        .generation=p->generation, .present=true};
+        .generation=p->generation, .source_slot=source->player.source_slot,
+        .configuration_revision=source->config_revision, .layout_revision=source->layout_revision,
+        .inventory_revision=source->inventory_revision, .present=true};
+    if (p->hud == APPLICATION_NATIVE_Q2_HUD_NONE) {
+        v->native.configuration_revision = 0; v->native.layout_revision = 0; v->native.inventory_revision = 0;
+    }
     for (size_t i = 0; i < v->count; ++i)
         if (v->rows[i].owner == p->owner)
             return application_fail(e, QA_ERROR_FORMAT, "Native and original components alias one presentation owner");
     if (v->count >= 256)
         return application_fail(e, QA_ERROR_FORMAT, "Combined components exceed their wire owner extent");
-    if (!identity_hash(p->identity, &v->native.identity, e)) return false;
-    bool same = old && old->present && old->owner == p->owner && old->activation == p->activation_generation &&
-        old->generation == p->generation;
-    if (same && !qa_sha256_equal(&old->identity, &v->native.identity))
-        return application_fail(e, QA_ERROR_FORMAT, "Native component activation changed its actual identity");
-    const qa_json_document *json = qa_unified_document_json(v->native_documents.source.hud_state);
-    qa_json_id root = qa_unified_document_root(v->native_documents.source.hud_state);
-    if (!json_hash(json, qa_json_get(json, root, "configstrings"), &v->native.configs, e)) return false;
-    if (!identity_hash(v->native_documents.state, &v->native.state, e)) return false;
-    *changed |= !same || !qa_sha256_equal(&old->state, &v->native.state);
-    bool ok = text(states, "[", e) && native_states(states, v,
-        !same || !qa_sha256_equal(&old->configs, &v->native.configs), e) && text(states, "]", e);
-    if (ok) {
-        v->frame->native = v->native_documents.frame->native;
-        v->frame->native_count = v->native_documents.frame->native_count;
-        v->native_documents.frame->native = NULL;
-        v->native_documents.frame->native_count = 0;
-    }
-    return ok;
+    const native_cursor *old = &v->owner->native;
+    *changed |= !native_same(v) || old->configuration_revision != v->native.configuration_revision ||
+        old->layout_revision != v->native.layout_revision || old->inventory_revision != v->native.inventory_revision;
+    v->frame->native = v->native_documents.frame->native;
+    v->frame->native_count = v->native_documents.frame->native_count;
+    v->native_documents.frame->native = NULL;
+    v->native_documents.frame->native_count = 0;
+    return true;
 }
 
 static bool game_state(application_unified_json *j, const qa_q3_gamestate *gs, qa_error *e)
@@ -280,8 +239,11 @@ bool application_unified_components_prepare(application_unified_component_publis
         _Alignof(qa_unified_component_source), e);
     if (!v->frame || (capacity && !v->frame->sources))
         ok = application_fail(e, QA_ERROR_MEMORY, "Retaining typed component frame rows");
-    application_unified_json states = {0};
-    if (ok) ok = text(&states, "[", e);
+    application_q3_component_publication *publications = qa_unified_frame_lease_alloc(v->lease,
+        capacity, sizeof(*publications), _Alignof(application_q3_component_publication), e);
+    application_q3_scene_context *contexts = qa_unified_frame_lease_alloc(v->lease,
+        capacity, sizeof(*contexts), _Alignof(application_q3_scene_context), e);
+    if (capacity && (!publications || !contexts)) ok = false;
     bool changed = p->epoch != epoch && p->count != 0;
     for (size_t index = 0; ok && index < capacity; ++index) {
         application_q3_component_publication publication;
@@ -311,11 +273,10 @@ bool application_unified_components_prepare(application_unified_component_publis
         for (size_t i = 0; ok && i < at; ++i)
             if (v->rows[i].owner == row->owner)
                 ok = application_fail(e, QA_ERROR_FORMAT, "Component publication aliases an actual owner");
-        if (ok) ok = identity_hash(publication.identity, &row->identity, e);
         const component_cursor *old = NULL;
         if (p->epoch == epoch) for (size_t i = 0; i < p->count; ++i)
             if (p->rows[i].owner == row->owner && p->rows[i].generation == row->generation) old = p->rows + i;
-        if (ok && old && (old->abi != row->abi || old->scene != row->scene || !qa_sha256_equal(&old->identity, &row->identity)))
+        if (ok && old && (old->abi != row->abi || old->scene != row->scene))
             ok = application_fail(e, QA_ERROR_FORMAT, "Component activation changed its actual identity or runtime");
         if (ok && (row->game_state_revision < 0 || row->game_state_revision > (int64_t)QA_UNIFIED_SAFE_INTEGER ||
             row->sequence < 0 || (old && (row->game_state_revision < old->game_state_revision || row->sequence < old->sequence))))
@@ -327,18 +288,9 @@ bool application_unified_components_prepare(application_unified_component_publis
             v->frame->source_count = at + 1;
             ok = frame_source(v->frame->sources + at, v, row, &context, e);
         }
-        if (ok) ok = (!at || text(&states, ",", e)) && text(&states, "{\"owner\":", e) && owner_write(&states, v, row, e) &&
-            text(&states, ",\"identity\":", e) && application_unified_json_document(&states, publication.identity, e) &&
-            text(&states, ",\"generation\":", e) && application_unified_json_natural(&states, row->generation, e) &&
-            text(&states, ",\"abi\":", e) && string(&states, row->abi == QA_QVM_Q3_MODERN ? "q3-modern" : "q3-1.16n-base", e) &&
-            text(&states, ",\"runtime\":", e) && string(&states, publication.presentation_runtime, e) &&
-            text(&states, ",\"gameStateRevision\":", e) && number(&states, (double)row->game_state_revision, e) &&
-            text(&states, ",\"gameState\":", e) && (game_changed ? game_state(&states, context.game_state, e) : text(&states, "null", e)) &&
-            text(&states, ",\"commandBase\":", e) && number(&states, base, e) && text(&states, ",\"commands\":", e) &&
-            (scene ? commands(&states, &context, base, row->sequence, e) : text(&states, "[]", e)) && text(&states, "}", e);
+        if (ok) { publications[at] = publication; contexts[at] = context; }
     }
-    application_unified_json native_states_json = {0};
-    if (ok) ok = native_prepare(v, &native_states_json, &changed, e);
+    if (ok) ok = native_prepare(v, &changed, e);
     changed |= v->count != p->count;
     for (size_t i = 0; i < v->count && !changed; ++i)
         changed = v->rows[i].owner != p->rows[i].owner || v->rows[i].generation != p->rows[i].generation;
@@ -346,17 +298,37 @@ bool application_unified_components_prepare(application_unified_component_publis
         if (v->revision == QA_UNIFIED_SAFE_INTEGER) ok = application_fail(e, QA_ERROR_FORMAT, "Component publication revision is exhausted");
         else ++v->revision;
     }
-    if (ok) { v->frame->revision = v->revision; ok = text(&states, "]", e); }
+    if (ok) v->frame->revision = v->revision;
     application_unified_json document = {0};
-    if (ok && changed) ok = text(&document, "{\"schema\":\"qts-control\",\"version\":1,\"value\":{\"kind\":\"components\",\"epoch\":", e) &&
-        number(&document, epoch, e) && text(&document, ",\"update\":{\"revision\":", e) &&
-        application_unified_json_natural(&document, v->revision, e) && text(&document, ",\"native\":", e) &&
-        application_unified_json_append(&document, (qa_bytes){native_states_json.bytes.data, native_states_json.bytes.size}, e) &&
-        text(&document, ",\"sources\":", e) &&
-        application_unified_json_append(&document, (qa_bytes){states.bytes.data, states.bytes.size}, e) && text(&document, "}}}", e) &&
-        qa_unified_document_create(QA_UNIFIED_CONTROL_DOCUMENT, (qa_bytes){document.bytes.data, document.bytes.size}, &v->control, e);
-    application_unified_json_dispose(&document); application_unified_json_dispose(&states);
-    application_unified_json_dispose(&native_states_json);
+    if (ok && changed) {
+        ok = text(&document, "{\"schema\":\"qts-control\",\"version\":1,\"value\":{\"kind\":\"components\",\"epoch\":", e) &&
+            number(&document, epoch, e) && text(&document, ",\"update\":{\"revision\":", e) &&
+            application_unified_json_natural(&document, v->revision, e) && text(&document, ",\"native\":[", e);
+        if (ok && v->native.present) ok = application_unified_q2_component_state_write(&document, p->application,
+            &v->native_documents, !native_same(v) || p->native.configuration_revision != v->native.configuration_revision, e);
+        if (ok) ok = text(&document, "],\"sources\":[", e);
+        for (size_t at = 0; ok && at < v->count; ++at) {
+            const component_cursor *row = v->rows + at, *old = NULL;
+            const application_q3_component_publication *publication = publications + at;
+            const application_q3_scene_context *context = contexts + at;
+            if (p->epoch == epoch) for (size_t i = 0; i < p->count; ++i)
+                if (p->rows[i].owner == row->owner && p->rows[i].generation == row->generation) old = p->rows + i;
+            bool game_changed = !old || old->game_state_revision != row->game_state_revision;
+            int32_t base = old ? old->sequence : row->sequence;
+            ok = (!at || text(&document, ",", e)) && text(&document, "{\"owner\":", e) && owner_write(&document, v, row, e) &&
+                text(&document, ",\"identity\":", e) && application_unified_json_document(&document, publication->identity, e) &&
+                text(&document, ",\"generation\":", e) && application_unified_json_natural(&document, row->generation, e) &&
+                text(&document, ",\"abi\":", e) && string(&document, row->abi == QA_QVM_Q3_MODERN ? "q3-modern" : "q3-1.16n-base", e) &&
+                text(&document, ",\"runtime\":", e) && string(&document, publication->presentation_runtime, e) &&
+                text(&document, ",\"gameStateRevision\":", e) && number(&document, (double)row->game_state_revision, e) &&
+                text(&document, ",\"gameState\":", e) && (game_changed ? game_state(&document, context->game_state, e) : text(&document, "null", e)) &&
+                text(&document, ",\"commandBase\":", e) && number(&document, base, e) && text(&document, ",\"commands\":", e) &&
+                (row->scene ? commands(&document, context, base, row->sequence, e) : text(&document, "[]", e)) && text(&document, "}", e);
+        }
+        if (ok) ok = text(&document, "]}}}", e) && qa_unified_document_create(QA_UNIFIED_CONTROL_DOCUMENT,
+            (qa_bytes){document.bytes.data, document.bytes.size}, &v->control, e);
+    }
+    application_unified_json_dispose(&document);
     if (ok && !application_unified_components_current(v)) ok = application_fail(e, QA_ERROR_ARGUMENT, "Component Source retired while its output was assembled");
     if (!ok) { application_unified_components_dispose(v); return false; }
     *out = v; return true;
@@ -410,6 +382,5 @@ void application_unified_components_dispose(application_unified_component_captur
     qa_unified_frame_lease *lease = v->lease;
     qa_unified_document_destroy(v->frame_document);
     qa_unified_document_destroy(v->control);
-    application_unified_q2_component_documents_dispose(&v->native_documents);
     qa_unified_frame_lease_release(lease);
 }

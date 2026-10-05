@@ -6,17 +6,17 @@
 #include "qa/application_native_q2_presentation.h"
 #include "qa/network_q2.h"
 #include "native_q2_publication.h"
+#include "unified_output_json.h"
 
 typedef struct application_unified_q2_source_documents {
     application_unified_source source;
     qa_application_native_q2_presentation physical;
     qa_net_client_id recipient;
     qa_unified_session_player player;
-    uint64_t actors_revision, config_revision;
+    uint64_t actors_revision, config_revision, layout_revision, inventory_revision;
     qa_q2_player player_state;
-    char layout[1024];
-    int16_t inventory[256];
-    qa_unified_document *hud_state;
+    const char *layout;
+    const int16_t *inventory;
     qa_unified_native_hud hud_frame;
     qa_unified_native_camera camera;
     bool present;
@@ -31,12 +31,10 @@ bool application_unified_q2_source_documents_build(qa_application *,
     application_unified_q2_source_documents *, qa_error *);
 bool application_unified_q2_source_documents_current(qa_application *,
     const application_unified_q2_source_documents *);
-void application_unified_q2_source_documents_dispose(application_unified_q2_source_documents *);
 
 typedef struct application_unified_q2_component_documents {
     application_unified_q2_source_documents source;
     application_native_q2_publication_view publication;
-    qa_unified_document *state;
     qa_unified_frame_components *frame;
     bool present;
 } application_unified_q2_component_documents;
@@ -48,6 +46,7 @@ bool application_unified_q2_component_documents_build(qa_application *,
     qa_unified_frame *target, application_unified_q2_component_documents *, qa_error *);
 bool application_unified_q2_component_documents_current(qa_application *,
     const application_unified_q2_component_documents *);
-void application_unified_q2_component_documents_dispose(application_unified_q2_component_documents *);
+bool application_unified_q2_component_state_write(application_unified_json *, qa_application *,
+    const application_unified_q2_component_documents *, bool configs, qa_error *);
 
 #endif

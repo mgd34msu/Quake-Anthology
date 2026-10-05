@@ -523,6 +523,9 @@ bool application_native_q2_client_admit(application_provider *provider, uint32_t
     if (client->connected || (client->actor.registry && !qa_actor_id_equal(client->actor, actor)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 source client slot is occupied");
     client->actor = actor; client->bot = bot; client->disconnect_started = false;
+    if (client->layout[0]) ++client->layout_revision;
+    for (size_t i = 0; i < sizeof(client->inventory) / sizeof(*client->inventory); ++i)
+        if (client->inventory[i]) { ++client->inventory_revision; break; }
     memset(client->layout, 0, sizeof(client->layout));
     memset(client->inventory, 0, sizeof(client->inventory));
     client->protocol_fog = (qa_q2_wire_fog){0};

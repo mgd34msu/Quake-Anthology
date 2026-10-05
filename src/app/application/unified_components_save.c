@@ -53,8 +53,7 @@ static bool cursor_fields(qa_source_save_io *io, component_cursor *row)
     uint32_t abi = (uint32_t)row->abi;
     if (!qa_source_save_string(io, &row->owner) || !qa_source_save_u64(io, &row->generation) ||
         !qa_source_save_i64(io, &row->game_state_revision) || !qa_source_save_i32(io, &row->sequence) ||
-        !qa_source_save_u32(io, &abi) || !qa_source_save_bool(io, &row->scene) ||
-        !qa_source_save_bytes(io, &row->identity, sizeof(row->identity))) return false;
+        !qa_source_save_u32(io, &abi) || !qa_source_save_bool(io, &row->scene)) return false;
     row->abi = (qa_qvm_abi)abi;
     return row->owner && row->generation && row->generation <= QA_UNIFIED_SAFE_INTEGER &&
         row->game_state_revision >= 0 && row->game_state_revision <= (int64_t)QA_UNIFIED_SAFE_INTEGER &&
@@ -84,30 +83,11 @@ static bool native_fields(qa_source_save_io *io, native_cursor *row)
     if (!row->present) return true;
     return qa_source_save_string(io, &row->owner) && qa_source_save_u64(io, &row->activation) &&
         qa_source_save_u64(io, &row->generation) &&
-        qa_source_save_bytes(io, &row->identity, sizeof(row->identity)) &&
-        qa_source_save_bytes(io, &row->state, sizeof(row->state)) &&
-        qa_source_save_bytes(io, &row->configs, sizeof(row->configs)) && row->owner && row->activation &&
+        qa_source_save_u64(io, &row->configuration_revision) &&
+        qa_source_save_u64(io, &row->layout_revision) && qa_source_save_u64(io, &row->inventory_revision) &&
+        qa_source_save_u32(io, &row->source_slot) && row->source_slot && row->source_slot <= 256 &&
+        row->owner && row->activation &&
         row->activation <= QA_UNIFIED_SAFE_INTEGER && row->generation <= QA_UNIFIED_SAFE_INTEGER;
-}
-
-static bool hash_document(const qa_unified_document *doc, qa_sha256_digest *digest, qa_error *e)
-{
-    if (!doc) return bad(e, "Component cursor has no immutable identity");
-    qa_buffer canonical = {0};
-    bool ok = qa_unified_value_canonical(qa_json_source(qa_unified_document_json(doc),
-        qa_unified_document_root(doc)), &canonical, e);
-    if (ok) qa_sha256((qa_bytes){canonical.data, canonical.size}, digest);
-    qa_buffer_free(&canonical);
-    return ok;
-}
-
-static bool hash_json(const qa_json_document *json, qa_json_id value, qa_sha256_digest *digest, qa_error *e)
-{
-    qa_buffer canonical = {0};
-    bool ok = qa_unified_value_canonical(qa_json_source(json, value), &canonical, e);
-    if (ok) qa_sha256((qa_bytes){canonical.data, canonical.size}, digest);
-    qa_buffer_free(&canonical);
-    return ok;
 }
 
 static bool owners_valid(qa_application *app, const application_unified_source *source,
@@ -125,11 +105,10 @@ static bool owners_valid(qa_application *app, const application_unified_source *
             if (pending) return bad(e, "Pending component cursor has no imported activation");
             continue;
         }
-        qa_sha256_digest identity;
         int64_t gs, revision; int32_t sequence;
-        if (!publication.presentation_runtime || !hash_document(publication.identity, &identity, e) ||
+        if (!publication.presentation_runtime ||
             !application_q3_component_source_continuation_read(publication.source, &gs, &sequence, &revision, e)) return false;
-        if (publication.abi != rows[i].abi || !qa_sha256_equal(&identity, &rows[i].identity) ||
+        if (publication.abi != rows[i].abi ||
             rows[i].scene != !strcmp(publication.presentation_runtime, "qvm-scene") ||
             rows[i].game_state_revision > gs || rows[i].sequence > sequence)
             return bad(e, "Component cursor differs from its genuine imported activation");
@@ -141,9 +120,7 @@ static bool owners_valid(qa_application *app, const application_unified_source *
             publication.activation_generation != native->activation || publication.generation != native->generation))
             return bad(e, "Pending native component has no imported registration");
         if (found && publication.owner == native->owner && publication.activation_generation == native->activation) {
-            qa_sha256_digest identity;
-            if (!hash_document(publication.identity, &identity, e)) return false;
-            if (native->generation > publication.generation || !qa_sha256_equal(&identity, &native->identity))
+            if (native->generation > publication.generation)
                 return bad(e, "Native component cursor differs from its imported registration");
         }
     }
@@ -296,8 +273,12 @@ static bool owner_json(const qa_json_document *json, qa_json_id value, qa_sessio
 static bool json_equal(const qa_json_document *a, qa_json_id av,
     const qa_json_document *b, qa_json_id bv, qa_error *e)
 {
-    qa_sha256_digest x, y;
-    return hash_json(a, av, &x, e) && hash_json(b, bv, &y, e) && qa_sha256_equal(&x, &y);
+    qa_buffer x = {0}, y = {0};
+    bool ok = qa_unified_value_canonical(qa_json_source(a, av), &x, e) &&
+        qa_unified_value_canonical(qa_json_source(b, bv), &y, e) &&
+        x.size == y.size && (!x.size || !memcmp(x.data, y.data, x.size));
+    qa_buffer_free(&x); qa_buffer_free(&y);
+    return ok;
 }
 
 static bool game_state_json(const qa_unified_document *doc, qa_json_id value, qa_error *e)
@@ -336,7 +317,7 @@ static bool candidate_valid(const application_unified_component_capture *v, qa_e
     for (size_t i = 0; i < v->count; ++i) {
         const component_cursor *row = v->rows + i, *old = previous_row(v, row);
         if (old && (old->abi != row->abi || old->scene != row->scene ||
-            !qa_sha256_equal(&old->identity, &row->identity) || row->game_state_revision < old->game_state_revision ||
+            row->game_state_revision < old->game_state_revision ||
             row->sequence < old->sequence)) return bad(e, "Sealed component cursor moved behind its committed activation");
         changed |= !old || old->game_state_revision != row->game_state_revision || old->sequence != row->sequence;
         if (i < p->count) changed |= row->owner != p->rows[i].owner || row->generation != p->rows[i].generation;
@@ -345,10 +326,10 @@ static bool candidate_valid(const application_unified_component_capture *v, qa_e
     if (!native->present) changed |= old->present;
     else {
         bool same = p->epoch == v->epoch && old->present && old->owner == native->owner &&
-            old->activation == native->activation && old->generation == native->generation;
-        if (same && !qa_sha256_equal(&old->identity, &native->identity))
-            return bad(e, "Sealed native component changed its activation identity");
-        changed |= !same || !qa_sha256_equal(&old->state, &native->state);
+            old->activation == native->activation && old->generation == native->generation &&
+            old->source_slot == native->source_slot;
+        changed |= !same || old->configuration_revision != native->configuration_revision ||
+            old->layout_revision != native->layout_revision || old->inventory_revision != native->inventory_revision;
     }
     uint64_t revision = p->epoch == v->epoch ? p->revision : 0;
     if (changed) {
@@ -379,12 +360,15 @@ static bool roster_control(const qa_unified_document *doc, qa_json_id root,
                 row->abi == QA_QVM_Q3_MODERN ? "q3-modern" : "q3-1.16n-base") ||
             !qa_json_string_equal(json, qa_json_get(json, item, "runtime"),
                 row->scene ? "qvm-scene" : "qvm-player-events")) return false;
-        qa_sha256_digest identity; int64_t base;
+        int64_t base;
         const component_cursor *old = previous_row(v, row);
         int32_t expected_base = old ? old->sequence : row->sequence;
         qa_json_id commands = qa_json_get(json, item, "commands");
-        if (!hash_json(json, qa_json_get(json, item, "identity"), &identity, e) ||
-            !qa_sha256_equal(&identity, &row->identity) ||
+        application_q3_component_publication publication = {0}; bool found;
+        if (!application_q3_components_checkpoint_publication_read(v->owner->application, row->owner, &publication, &found, e) ||
+            !found || publication.generation != row->generation ||
+            !json_equal(json, qa_json_get(json, item, "identity"), qa_unified_document_json(publication.identity),
+                qa_unified_document_root(publication.identity), e) ||
             !qa_json_i64(json, qa_json_get(json, item, "commandBase"), &base, e) || base != expected_base ||
             qa_json_type(json, commands) != QA_JSON_ARRAY || qa_json_size(json, commands) > 64) return false;
         for (size_t c = 0; c < qa_json_size(json, commands); ++c) {
@@ -410,6 +394,12 @@ static bool roster_control(const qa_unified_document *doc, qa_json_id root,
         qa_json_id item = qa_json_at(json, native, 0); uint64_t generation;
         if (!owner_json(json, qa_json_get(json, item, "owner"), v->source.session, v->native.owner, v->native.activation, e) ||
             !qa_json_u64(json, qa_json_get(json, item, "generation"), &generation, e) || generation != v->native.generation) return false;
+        application_native_q2_publication_view publication = {0}; bool found;
+        if (!application_native_q2_publication_checkpoint_read(v->owner->application, &v->source, &publication, &found, e) ||
+            !found || publication.owner != v->native.owner || publication.activation_generation != v->native.activation ||
+            publication.generation != v->native.generation ||
+            !json_equal(json, qa_json_get(json, item, "identity"), qa_unified_document_json(publication.identity),
+                qa_unified_document_root(publication.identity), e)) return false;
     }
     return true;
 }
@@ -457,54 +447,6 @@ static bool capture_documents(const application_unified_component_capture *v, qa
             !roster_control(v->control, qa_json_get(json, value, "update"), v, e))
             return bad(e, "Component reliable update differs from its immutable queue token");
     }
-    if (v->native.present) {
-        qa_sha256_digest state, identity, configs;
-        const qa_unified_document *full = v->native_documents.state;
-        const qa_unified_document *source = v->native_documents.source.hud_state;
-        if (!full || !source || !hash_document(full, &state, e) || !qa_sha256_equal(&state, &v->native.state))
-            return bad(e, "Sealed native component lost its complete reliable state");
-        const qa_json_document *json = qa_unified_document_json(full);
-        if (!hash_json(json, qa_json_get(json, qa_unified_document_root(full), "identity"), &identity, e) ||
-            !qa_sha256_equal(&identity, &v->native.identity)) return bad(e, "Sealed native identity differs from its cursor");
-        json = qa_unified_document_json(source);
-        if (!hash_json(json, qa_json_get(json, qa_unified_document_root(source), "configstrings"), &configs, e) ||
-            !qa_sha256_equal(&configs, &v->native.configs)) return bad(e, "Sealed native config table differs from its cursor");
-        const qa_json_document *full_json = qa_unified_document_json(full);
-        qa_json_id full_root = qa_unified_document_root(full);
-        uint64_t full_generation;
-        if (!owner_json(full_json, qa_json_get(full_json, full_root, "owner"), v->source.session,
-            v->native.owner, v->native.activation, e) ||
-            !qa_json_u64(full_json, qa_json_get(full_json, full_root, "generation"), &full_generation, e) ||
-            full_generation != v->native.generation) return bad(e, "Sealed full native state has another owner");
-        if (v->control) {
-            const qa_json_document *control = qa_unified_document_json(v->control);
-            qa_json_id update = qa_json_get(control, qa_json_get(control, qa_unified_document_root(v->control), "value"), "update");
-            qa_json_id row = qa_json_at(control, qa_json_get(control, update, "native"), 0);
-            qa_json_id hud = qa_json_get(control, row, "hud"), full_hud = qa_json_get(full_json, full_root, "hud");
-            if (!json_equal(control, qa_json_get(control, row, "identity"), full_json,
-                qa_json_get(full_json, full_root, "identity"), e)) return bad(e, "Reliable native identity differs from its full state");
-            if (qa_json_type(full_json, full_hud) == QA_JSON_NULL) {
-                if (qa_json_type(control, hud) != QA_JSON_NULL) return bad(e, "Reliable native update invented a HUD owner");
-            } else {
-                qa_json_id frame = qa_json_get(control, hud, "frame"), full_frame = qa_json_get(full_json, full_hud, "frame");
-                static const char *const fields[] = {"protocol", "layout", "inventory", "playerNumber"};
-                if (!json_equal(control, qa_json_get(control, hud, "mode"), full_json,
-                    qa_json_get(full_json, full_hud, "mode"), e)) return bad(e, "Reliable native HUD changed mode");
-                for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i)
-                    if (!json_equal(control, qa_json_get(control, frame, fields[i]), full_json,
-                        qa_json_get(full_json, full_frame, fields[i]), e)) return bad(e, "Reliable native HUD differs from its full state");
-                const native_cursor *old = &v->owner->native;
-                bool same = v->owner->epoch == v->epoch && old->present && old->owner == v->native.owner &&
-                    old->activation == v->native.activation && old->generation == v->native.generation;
-                bool omitted = same && qa_sha256_equal(&old->configs, &v->native.configs);
-                qa_json_id values = qa_json_get(control, frame, "configstrings");
-                if (omitted ? qa_json_type(control, values) != QA_JSON_NULL :
-                    !json_equal(control, values, full_json, qa_json_get(full_json, full_frame, "configstrings"), e))
-                    return bad(e, "Reliable native config delta differs from its committed cursor");
-            }
-        }
-    } else if (v->native_documents.state || v->native_documents.source.hud_state)
-        return bad(e, "Absent native component retains reliable state");
     return true;
 }
 
@@ -516,8 +458,6 @@ static bool capture_fields(qa_source_save_io *io, application_unified_component_
         qa_source_save_u64(io, &v->revision) && qa_source_save_u64(io, &v->serial) &&
         rows_fields(io, &v->rows, &v->count, v->lease) && native_fields(io, &v->native) &&
         application_unified_save_document(io, &v->control, QA_UNIFIED_CONTROL_DOCUMENT) &&
-        application_unified_save_document(io, &v->native_documents.state, QA_UNIFIED_CHECKPOINT) &&
-        application_unified_save_document(io, &v->native_documents.source.hud_state, QA_UNIFIED_CHECKPOINT) &&
         v->epoch && v->revision <= QA_UNIFIED_SAFE_INTEGER && v->serial == v->owner->serial && v->serial != UINT64_MAX;
 }
 
@@ -527,7 +467,7 @@ bool application_unified_components_capture_checkpoint(const application_unified
     if (!v || !v->sealed || !out || out->data || out->size || !application_unified_components_current(v) || v->leases ||
         !source_current(v->owner->application, &v->source, v->owner->recipient, &v->player))
         return application_fail(e, QA_ERROR_ARGUMENT, "Component token checkpoint requires its sealed returned Source");
-    if (v->count > 256 || (v->count && !v->rows) || !capture_documents(v, e) ||
+    if (v->count > 256 || (v->count && !v->rows) ||
         !owners_valid(v->owner->application, &v->source, v->rows, v->count, &v->native, true, false, e)) return false;
     application_unified_component_capture copy = *v; component_cursor rows[256];
     if (v->count) memcpy(rows, v->rows, v->count * sizeof(*rows));

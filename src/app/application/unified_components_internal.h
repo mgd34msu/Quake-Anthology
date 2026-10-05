@@ -12,12 +12,12 @@ typedef struct component_cursor {
     int32_t sequence;
     qa_qvm_abi abi;
     bool scene;
-    qa_sha256_digest identity;
 } component_cursor;
 typedef struct native_cursor {
     qa_actor_owner owner;
     uint64_t activation, generation;
-    qa_sha256_digest identity, state, configs;
+    uint64_t configuration_revision, layout_revision, inventory_revision;
+    uint32_t source_slot;
     bool present;
 } native_cursor;
 struct application_unified_component_publisher {
