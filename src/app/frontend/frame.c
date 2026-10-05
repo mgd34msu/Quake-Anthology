@@ -28,11 +28,13 @@
 #include "network_prediction.h"
 #include "network_predictor.h"
 #include "network_config.h"
+#include "network_q3_restart.h"
 #include "equipment_events.h"
 #include "particle_clock.h"
 #include "round.h"
 #include "qa/source_frame_time.h"
 #include "qa/application_startup_prepare.h"
+#include "qa/application_network.h"
 #include <stdio.h>
 
 static qa_console_dialect dialect(qa_movement_kind kind)
@@ -46,18 +48,87 @@ static qa_console_dialect dialect(qa_movement_kind kind)
     }
     return QA_CONSOLE_Q1;
 }
-static bool menu_paused(const qa_frontend *f)
+static bool pause_flag(qa_cvars *cvars,uint64_t owner,const char *name,bool paused,qa_error *error)
 {
+    const qa_cvar_view *value=qa_cvars_find(cvars,name);
+    if (!value) {
+        if (!qa_cvars_register(cvars,name,"0",QA_CVAR_READONLY,owner,"Q3 pause state",error)) return false;
+    } else if (!(value->flags&QA_CVAR_READONLY) &&
+        !qa_cvars_add_flags(cvars,name,QA_CVAR_READONLY,error)) return false;
+    return qa_cvars_set(cvars,name,paused?"1":"0",true,error);
+}
+static bool pause_client_current(qa_frontend *f,const qa_application_q3_client_context *client,bool remote,
+    qa_error *error)
+{
+    bool current=remote?frontend_network_q3_client_context_current(f,client):
+        qa_application_q3_client_context_current(f->application,client);
+    return current || frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 pause lost its actual physical CLIENT custody");
+}
+static bool menu_paused(qa_frontend *f,bool *out,qa_error *error)
+{
+    *out=false;
     const qa_launch_snapshot *snapshot = qa_application_launch(f->application);
-    if (!snapshot || f->options.dedicated || frontend_network_remote(f) || f->options.network_host) return false;
+    if (!snapshot || qa_application_startup_pending(f->application)) return true;
+    bool remote=frontend_network_remote(f),menu=false;
+    for (uint32_t i=0;i<f->options.seats && !f->options.dedicated;++i)
+        menu|=qa_ui_menu_opened(f->seats[i].ui,FRONTEND_HOME);
+    qa_application_startup_source source; bool present=false;
+    if (!frontend_config_store_primary_server_read(f->config_store,&source,&present,error)) return false;
+    bool q3=present && source.scope.kind==QA_APPLICATION_CONSOLE_Q3_GAME && !remote &&
+        !frontend_network_client_only(f) && qa_application_get_state(f->application)==QA_APPLICATION_RUNNING;
+    qa_application_q3_client_context clients[QA_INPUT_LOCAL_SEATS];
+    uint64_t owners[QA_INPUT_LOCAL_SEATS];
+    size_t count=0;
+    bool requested=menu;
+    for (uint32_t i=0;i<f->options.seats && !f->options.dedicated;++i) {
+        qa_actor_owner receiver=0; uint32_t seat;
+        if (!frontend_seat_launch_id_read(f,i,&seat)) continue;
+        if (remote) {
+            frontend_remote_config_view configuration; bool installed=false;
+            if (!frontend_network_client_configuration_read(f,seat,&configuration,&installed,error)) return false;
+            if (!installed) continue;
+            receiver=configuration.scope.provider;
+        } else {
+            if (!q3) continue;
+            if (!frontend_source_cgame_recipient(f,i,&receiver,error)) return false;
+            if (!receiver) continue;
+        }
+        qa_application_q3_client_context client;
+        qa_application_startup_source configuration;
+        if (!(remote?frontend_network_q3_client_context_read(f,receiver,seat,&client,error):
+            qa_application_q3_client_context_read(f->application,receiver,seat,&client,error)) ||
+            !qa_application_q3_client_configuration_read(f->application,receiver,seat,&configuration,error)) return false;
+        if (client.cvars!=configuration.cvars || client.console!=configuration.console ||
+            !configuration.declaration_owner || (q3 && (client.source_owner!=source.scope.provider ||
+            client.source_cvars!=source.cvars)) || !pause_client_current(f,&client,remote,error))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 pause lost its actual physical CLIENT and primary Source");
+        bool opened=qa_ui_menu_opened(f->seats[i].ui,FRONTEND_HOME);
+        if (!pause_flag(client.cvars,configuration.declaration_owner,"cl_paused",opened,error) ||
+            !pause_client_current(f,&client,remote,error)) return false;
+        const qa_cvar_view *value=qa_cvars_find(client.cvars,"cl_paused");
+        requested|=value && value->number!=0;
+        clients[count]=client; owners[count++]=configuration.declaration_owner;
+    }
+    if (q3) {
+        qa_application_network_q3_host_slot slots[64];
+        if (!qa_application_network_q3_host_slots(f->application,source.scope.provider,slots,error)) return false;
+        size_t humans=0;
+        for (size_t i=0;i<64;++i) humans+=slots[i].occupied && !slots[i].bot;
+        *out=requested && humans<=1;
+        if (!pause_flag(source.cvars,source.declaration_owner,"sv_paused",*out,error)) return false;
+    }
+    for (size_t i=0;i<count;++i)
+        if (!pause_client_current(f,&clients[i],remote,error) ||
+            !pause_flag(clients[i].cvars,owners[i],"sv_paused",*out,error) ||
+            !pause_client_current(f,&clients[i],remote,error)) return false;
+    if (q3 || remote || f->options.dedicated ||
+        frontend_network_save_authority(f)!=QA_SAVE_OFFLINE) return true;
     const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
     bool singleplayer = false;
     for (size_t i = 0; i < choices->mode_count; ++i)
         if (choices->modes[i].primary_score) singleplayer = choices->modes[i].rules.kind == QA_MODE_SINGLE_PLAYER;
-    if (!singleplayer) return false;
-    for (unsigned i = 0; i < f->options.seats; ++i)
-        if (qa_ui_menu_opened(f->seats[i].ui, FRONTEND_HOME)) return true;
-    return false;
+    *out=singleplayer && menu;
+    return true;
 }
 static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvars **owner,
     uint64_t *out,qa_error *error)
@@ -647,10 +718,12 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     const qa_cvars *time_owner;
     if (ok) ok=source_elapsed(frontend,raw_elapsed,&time_owner,&source_duration,error) &&
         frontend_tools_capture_clock(frontend,time_owner,source_duration,&adjusted,error);
-    bool paused=!client_only && (qa_application_q1_paused(frontend->application) || menu_paused(frontend));
+    bool menu_pause=false;
+    if (ok) ok=menu_paused(frontend,&menu_pause,error);
+    bool paused=!client_only && (qa_application_q1_paused(frontend->application) || menu_pause);
     if (ok && !paused && adjusted>UINT64_MAX-frontend->time_ns)
         ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Source frame duration overflow");
-    if (ok) { elapsed_ns=adjusted; if (!paused) frontend->time_ns+=elapsed_ns; }
+    if (ok) { elapsed_ns=paused?0:adjusted; frontend->time_ns+=elapsed_ns; }
     if (ok && frontend->recipient_begin_generation==UINT64_MAX)
         ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Recipient frame begin generation overflow");
     if (ok) {
@@ -669,7 +742,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         if (ok && !retiring_map && !qa_application_startup_pending(frontend->application) &&
             (client_only || qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING)) {
             bool source_ready=false;
-            ok = frontend_network_tick(frontend, paused ? 0 : elapsed_ns, retiring_map, &source_ready, error);
+            ok = frontend_network_tick(frontend, elapsed_ns, retiring_map, &source_ready, error);
             if (ok && source_ready && !client_only && !paused) {
                 ok=qa_profiler_push(profiler, "application", error);
                 if (ok) ok=frontend_profiler_end(profiler, qa_application_advance(frontend->application, elapsed_ns, error), error);
@@ -716,7 +789,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
                 if (ok) qa_audio_engine_update(frontend->audio, (double)frontend->time_ns / 1000000);
                 if (ok) ok = audio_positions(frontend, error) && frontend_event_audio(frontend, error) &&
                      qa_audio_engine_q3_publish(frontend->audio, error) && qa_audio_engine_end_loop_frame(frontend->audio, error) &&
-                     audio_output(frontend, elapsed_ns, error);
+                     audio_output(frontend, adjusted, error);
                 ok = frontend_profiler_end(profiler, ok, error);
             }
         }
