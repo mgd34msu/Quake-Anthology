@@ -2882,6 +2882,12 @@ static bool control_move(qa_application *application,
     end_q1_operations(&move);
     if (retain) {
         prepared->move = move; prepared->input = input;
+        /* Physics_Client continues the state produced by ClientThink, including
+         * v_angle and the jump latch, rather than its pre-think input copy. */
+        prepared->input.state = record->result.state;
+        prepared->input.shape.bounds = record->result.bounds;
+        if (prepared->input.has_current_bounds)
+            prepared->input.current_bounds = record->result.bounds;
         prepared->move.input = &prepared->input;
         component_input_retarget(&prepared->move.qc_command, &prepared->input.state, &prepared->input.command, true);
         component_input_retarget(&prepared->move.qc_slice, &prepared->input.state, &prepared->input.command, true);
