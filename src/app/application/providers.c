@@ -238,7 +238,7 @@ static bool native_profile(const qa_launch_instance *launch,
                                   : choices->world.skill;
         profile.teamplay = has_mode ? mode.teamplay : 0;
         profile.maximum_clients = launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD
-            ? 32u : 1u;
+            ? 32u : cooperative || deathmatch ? 16u : 1u;
         for (size_t index = 0; index < choices->mode_count; ++index)
             if (choices->modes[index].rules.enabled &&
                 choices->modes[index].rules.source == QA_MODE_ROGUE &&
