@@ -157,6 +157,8 @@ static bool original_create(qa_frontend *active,const qa_frontend_original_save 
         if (!qa_ui_llm_create(f->seats[0].ui,frontend_tools_llm(f),FRONTEND_ASSISTANCE,
             &f->seats[0].assistance,error)) return false;
     }
+    if (!frontend_input_profile_bind_product(f,qa_application_catalog(f->application),
+        selected->id,error)) return false;
     return save->family==QA_GAME_Q1?qa_application_q1_save_import(f->application,save->state.q1,product,error):
         qa_application_q2_save_import(f->application,save->state.q2,product,error);
 }
