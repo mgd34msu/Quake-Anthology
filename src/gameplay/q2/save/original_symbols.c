@@ -34,6 +34,7 @@ static const original_symbol item_symbols[] = {
     {"item_doppleganger", {0, 0, 48}, 4},
     {"item_double", {0, 0, 43}, 4},
     {"item_enviro", {27, 32, 37}, 7},
+    {"item_health", {41, 47, 61}, 7},
     {"item_invulnerability", {24, 29, 34}, 7},
     {"item_ir_goggles", {0, 0, 42}, 4},
     {"item_pack", {31, 36, 41}, 7},
