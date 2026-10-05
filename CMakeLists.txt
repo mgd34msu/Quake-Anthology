@@ -372,6 +372,8 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/save/entities.c
     src/gameplay/q2/save/monsters.c
     src/gameplay/q2/save/game.c
+    src/gameplay/q2/save/original.c
+    src/gameplay/q2/save/original_fields.c
     src/gameplay/q2/definitions.c
     src/gameplay/q2/entities/brushes.c
     src/gameplay/q2/entities/checkpoint.c
