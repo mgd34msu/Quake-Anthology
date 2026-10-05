@@ -4,6 +4,7 @@
 #include "qa/game_q1_bots.h"
 #include "qa/game_q1_supply.h"
 #include "qa/game_q1_wire.h"
+#include "qa/game_q1_source_rogue_runes.h"
 #include <float.h>
 #include <stdio.h>
 
@@ -961,7 +962,8 @@ static bool item_complete(void *context, const qa_pickup_offer *offer, bool take
         touch->leave = item->kind == Q1_ITEM_WEAPON ? weapon_leave(g)
                                                     : item->kind == Q1_ITEM_KEY && g->options.coop;
     q1_player *player = q1_player_get(g, touch->recipient);
-    if (g->options.edition == QA_Q1_RERELEASE && item->mega && player)
+    bool player_rot = g->options.program == QA_Q1_ID1 && g->options.edition == QA_Q1_RERELEASE;
+    if (player_rot && item->mega && player)
         player->mega_rot_at = g->time + 5;
     qa_builtin_event sound = {
         .kind = QA_BUILTIN_SOUND,
@@ -1053,7 +1055,14 @@ static bool item_complete(void *context, const qa_pickup_offer *offer, bool take
     if (mission && g->options.edition == QA_Q1_CLASSIC && g->options.deathmatch != 1 &&
         (item->kind == Q1_ITEM_WEAPON || item->kind == Q1_ITEM_AMMO || item->kind == Q1_ITEM_ARMOR))
         respawns = false;
-    if (item->mega && g->options.edition == QA_Q1_CLASSIC) {
+    bool item_rot = item->mega && !player_rot;
+    if (item_rot && g->options.program == QA_Q1_ROGUE) {
+        uint32_t rune;
+        bool found;
+        if (!qa_q1_source_rogue_runes_read(g, touch->recipient, &rune, &found, error)) return false;
+        item_rot = !(rune & 8u);
+    }
+    if (item_rot) {
         item->holder = q1_ref_from(g, touch->recipient);
         if (!q1_schedule(g, entity, 5, Q1_THINK_MEGA_ROT, error))
             return false;
@@ -1291,12 +1300,19 @@ bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return q1_schedule(g, entity, 0.2, Q1_THINK_ITEM_PLACE, error);
     }
     if (kind == Q1_THINK_MEGA_ROT) {
-        q1_player *player = q1_player_get(g, q1_ref_actor(g, item->holder));
-        float health = q1_health(g, q1_ref_actor(g, item->holder));
-        if (player && health > player->max_health)
-            return qa_combat_set_health(g->services.combat, q1_ref_actor(g, item->holder), health - 1, error) &&
+        qa_actor_id holder = q1_ref_actor(g, item->holder);
+        q1_player *player = q1_player_get(g, holder);
+        qa_builtin_actor_traits traits;
+        float max_health = player ? player->max_health : 0;
+        if (!player && g->services.actor_traits &&
+            g->services.actor_traits(g->services.context, holder, &traits)) max_health = traits.max_health;
+        float health = q1_health(g, holder);
+        if (health > max_health)
+            return qa_combat_set_health(g->services.combat, holder, health - 1, error) &&
                    q1_schedule(g, entity, 1, Q1_THINK_MEGA_ROT, error);
-        return g->options.deathmatch != 1 || q1_schedule(g, entity, 20, Q1_THINK_RESPAWN, error);
+        bool respawn = g->options.edition == QA_Q1_CLASSIC ? g->options.deathmatch == 1 :
+            g->options.deathmatch != 0 && g->options.deathmatch != 2;
+        return !respawn || q1_schedule(g, entity, 20, Q1_THINK_RESPAWN, error);
     }
     if (kind == Q1_THINK_RESPAWN) {
         if (item->random && !q1_pickup_define(g, entity, error))

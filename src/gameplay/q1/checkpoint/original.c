@@ -265,7 +265,7 @@ static const original_think_callback think_callbacks[] = {
     {Q1_THINK_REMOVE, "SUB_Remove"}, {Q1_THINK_EXPLODE, "GrenadeExplode"},
     {Q1_THINK_VORE, "ShalHome"}, {Q1_THINK_SPRITE, "s_explode1"},
     {Q1_THINK_WIZARD, "Wiz_FastFire"}, {Q1_THINK_RESPAWN, "SUB_regen"},
-    {Q1_THINK_MEGA_ROT, "MegaHealthRot"}, {Q1_THINK_ITEM_PLACE, "PlaceItem"},
+    {Q1_THINK_MEGA_ROT, "item_megahealth_rot"}, {Q1_THINK_ITEM_PLACE, "PlaceItem"},
     {Q1_THINK_DEATH_BUBBLES, "DeathBubblesSpawn"}, {Q1_THINK_BUBBLE, "bubble_bob"},
     {Q1_THINK_HIP_LASER, "HIP_LaserThink"}, {Q1_THINK_PROX_WATCH, "ProximityBomb"},
     {Q1_THINK_PROX_EXPLODE, "ProximityExplode"},

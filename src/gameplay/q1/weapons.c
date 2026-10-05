@@ -728,7 +728,8 @@ static bool player_prethink(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     player = q1_player_get(g, actor);
     if (!player)
         return true;
-    if (player->mega_rot_at >= 0 && player->mega_rot_at <= g->time) {
+    if (g->options.program == QA_Q1_ID1 && g->options.edition == QA_Q1_RERELEASE &&
+        player->mega_rot_at >= 0 && player->mega_rot_at <= g->time) {
         float health = q1_health(g, actor);
         if (!q1_alive(g, actor))
             return true;
