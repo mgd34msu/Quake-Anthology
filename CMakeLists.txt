@@ -1758,7 +1758,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/install_locations.c
     src/app/frontend/particle_events.c
     src/app/frontend/persistence.c
-    src/app/frontend/root_restore.c
     src/app/frontend/save_commands.c
     src/app/frontend/save_fields.c
     src/app/frontend/player_events.c
