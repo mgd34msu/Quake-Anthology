@@ -6,6 +6,16 @@
 #include "qa/qc.h"
 
 typedef struct qa_qc_game qa_qc_game;
+#define QA_QC_GAME_FIELD_LIST(X) \
+    X(movetype) X(solid) X(flags) X(health) X(waterlevel) X(watertype) \
+    X(ltime) X(nextthink) X(gravity) X(ideal_yaw) X(yaw_speed) X(avelocity) \
+    X(enemy) X(goalentity) X(owner) X(modelindex) X(model) \
+    X(origin) X(angles) X(velocity) X(mins) X(maxs) X(size)
+typedef struct qa_qc_game_fields {
+#define QA_QC_GAME_FIELD(name) const qa_qc_definition *name;
+    QA_QC_GAME_FIELD_LIST(QA_QC_GAME_FIELD)
+#undef QA_QC_GAME_FIELD
+} qa_qc_game_fields;
 typedef enum qa_qc_game_value_kind {
     QA_QC_GAME_FLOAT, QA_QC_GAME_VECTOR, QA_QC_GAME_STRING,
     QA_QC_GAME_ACTOR, QA_QC_GAME_INTEGER, QA_QC_GAME_FUNCTION, QA_QC_GAME_FIELD
@@ -46,6 +56,9 @@ bool qa_qc_game_create(const qa_qc_program *, const qa_qc_game_options *, qa_qc_
 bool qa_qc_game_destroy(qa_qc_game *, qa_error *);
 bool qa_qc_game_idle(const qa_qc_game *);
 qa_qc_instance *qa_qc_game_instance(qa_qc_game *);
+/* Definitions are resolved once at game creation and borrowed from its
+ * immutable program. Missing optional fields retain their source fallback. */
+const qa_qc_game_fields *qa_qc_game_resolved_fields(const qa_qc_game *);
 bool qa_qc_game_bind_client(qa_qc_game *, uint32_t client, qa_actor_id, qa_error *);
 void qa_qc_game_actor_released(qa_qc_game *, qa_actor_record);
 bool qa_qc_game_set_time(qa_qc_game *, double seconds, double frame_seconds, qa_error *);

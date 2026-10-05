@@ -20,14 +20,16 @@ static bool collision_read(void *opaque, qa_actor_collision *out, qa_error *erro
     qa_actor_id expected = row->actor, current;
     if (!qa_qc_reference_actor(vm, row->reference, &current, error) || !qa_actor_id_equal(current, expected))
         return application_fail(error, QA_ERROR_NOT_FOUND, "QuakeC collision binding lost its actor generation");
+    const qa_qc_game_fields *fields = qa_qc_game_resolved_fields(engine->provider->state.qc.game);
+    if (!fields || !fields->solid || fields->solid->type != QA_QC_FLOAT ||
+        !fields->flags || fields->flags->type != QA_QC_FLOAT ||
+        !fields->owner || fields->owner->type != QA_QC_ENTITY)
+        return application_fail(error, QA_ERROR_FORMAT, "QuakeC engine field is missing or has a different type");
     float solid, flags;
-    const qa_qc_definition *model_field = application_qc_field(engine, "model", QA_QC_STRING, error);
-    const qa_qc_definition *owner_field = application_qc_field(engine, "owner", QA_QC_ENTITY, error);
-    int32_t model, owner; const char *name;
-    if (!application_qc_float(engine, row->reference, "solid", &solid, error) ||
-        !application_qc_float(engine, row->reference, "flags", &flags, error) || model_field == NULL || owner_field == NULL ||
-        !qa_qc_entity_int(vm, row->reference, model_field->offset, &model, error) || !qa_qc_string(vm, model, &name, error) ||
-        !qa_qc_entity_int(vm, row->reference, owner_field->offset, &owner, error)) return false;
+    int32_t owner;
+    if (!qa_qc_entity_float(vm, row->reference, fields->solid->offset, &solid, error) ||
+        !qa_qc_entity_float(vm, row->reference, fields->flags->offset, &flags, error) ||
+        !qa_qc_entity_int(vm, row->reference, fields->owner->offset, &owner, error)) return false;
     if (!isfinite(solid) || !isfinite(flags) || (double)flags < INT32_MIN || (double)flags > INT32_MAX)
         return application_fail(error, QA_ERROR_FORMAT, "Invalid QuakeC collision flags");
     uint32_t bits = (uint32_t)(int32_t)flags;
@@ -36,11 +38,21 @@ static bool collision_read(void *opaque, qa_actor_collision *out, qa_error *erro
         .role = solid == 1 ? QA_COLLISION_TRIGGER : QA_COLLISION_SOLID,
         .monster = (bits & 32u) != 0, .q1_corpse = solid == 5 && engine->profile == QA_QC_RERELEASE};
     if (solid == 4) {
-        double number;
-        if (*name != '*' || !qa_parse_number((qa_bytes){(const uint8_t *)name + 1, strlen(name + 1)}, &number, error) ||
-            !isfinite(number) || number < 0 || number > UINT32_MAX || trunc(number) != number)
-            return application_fail(error, QA_ERROR_FORMAT, "QuakeC brush solid has no inline model");
-        value.inline_model = true; value.model = (uint32_t)number;
+        float model;
+        if (!fields->modelindex || fields->modelindex->type != QA_QC_FLOAT)
+            return application_fail(error, QA_ERROR_FORMAT, "QuakeC engine field is missing or has a different type");
+        if (!qa_qc_entity_float(vm, row->reference, fields->modelindex->offset, &model, error)) return false;
+        int32_t index = qa_source_float_to_i32(model);
+        const application_qc_resource *resource = NULL;
+        if (isfinite(model) && index > 0)
+            for (size_t i = 0; i < engine->resource_count; ++i)
+                if (engine->resources[i].kind == QA_QC_RESOURCE_MODEL &&
+                    engine->resources[i].value.index == (uint32_t)index) {
+                    resource = &engine->resources[i]; break;
+                }
+        if (!resource || !resource->has_inline_model)
+            return application_fail(error, QA_ERROR_FORMAT, "QuakeC brush solid has no retained inline model");
+        value.inline_model = true; value.model = resource->inline_model;
     }
     if (owner && !qa_qc_reference_actor(vm, owner, &value.owner, error)) return false;
     if (!qa_qc_reference_actor(vm, row->reference, &current, error) || !qa_actor_id_equal(current, expected))
@@ -77,9 +89,12 @@ bool application_qc_project_body_store(struct application_qc_state *engine, qa_q
     qa_qc_slot_binding binding;
     if (!qa_qc_slot(vm, (uint32_t)event->entity_reference / layout.stride_bytes, &binding)) return false;
     if (binding.kind != QA_QC_SLOT_BORROWED || !controls_body(engine, actor)) return true;
-    static const char *names[] = {"origin", "angles", "velocity"};
-    for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
-        const qa_qc_definition *def = qa_qc_program_find_field(engine->provider->state.qc.program, names[i]);
+    const qa_qc_game_fields *fields = qa_qc_game_resolved_fields(engine->provider->state.qc.game);
+    if (!fields)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "QuakeC body store lost its retained game fields");
+    const qa_qc_definition *vectors[] = {fields->origin, fields->angles, fields->velocity};
+    for (unsigned i = 0; i < sizeof(vectors) / sizeof(vectors[0]); ++i) {
+        const qa_qc_definition *def = vectors[i];
         if (def == NULL || def->type != QA_QC_VECTOR || def->offset >= event->word + event->count || (uint32_t)def->offset + 3u <= event->word) continue;
         qa_body_state body;
         if (!qa_world_body_read(engine->world, actor, &body, error)) return false;

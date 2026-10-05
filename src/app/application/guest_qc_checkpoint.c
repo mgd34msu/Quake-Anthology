@@ -59,28 +59,25 @@ static bool resource_ready(struct application_qc_state *engine,const application
         return application_fail(error,QA_ERROR_FORMAT,"Invalid source precache metadata");
     if (entry->source) {
         qa_vfs *files=engine->provider->launch->content;
-        if (entry->world_model || (entry->kind==QA_QC_RESOURCE_MODEL && *entry->name=='*') ||
+        if (entry->world_model || entry->has_inline_model || (entry->kind==QA_QC_RESOURCE_MODEL && *entry->name=='*') ||
             qa_resource_pool_find(qa_vfs_resources(files),entry->acquisition.resource_id)!=entry->source ||
             entry->acquisition.resource_id!=qa_resource_id(entry->source) || !resource_path_matches(entry))
             return application_fail(error,QA_ERROR_FORMAT,"Source precache differs from its immutable resource receipt");
         return qa_vfs_acquisition_retained(files,&entry->acquisition,error);
     }
-    if (entry->kind!=QA_QC_RESOURCE_MODEL || entry->acquisition.mount || entry->acquisition.resource_id ||
+    if (entry->kind!=QA_QC_RESOURCE_MODEL || !entry->has_inline_model || entry->acquisition.mount || entry->acquisition.resource_id ||
         entry->acquisition.path || entry->acquisition.lookup_path || entry->acquisition.link_source || entry->acquisition.link_target)
         return application_fail(error,QA_ERROR_FORMAT,"Source precache lacks its actual immutable resource");
-    uint32_t model=0;
+    uint32_t model=entry->inline_model;
     if (entry->world_model) {
         const qa_application *app=engine->provider->application;
         const qa_launch_snapshot *snapshot=app->routing_snapshot?app->routing_snapshot:qa_application_launch(app);
         const qa_launch_choices *choices=snapshot?qa_launch_snapshot_choices(snapshot):NULL;
-        if (ordinal || entry->value.index!=1 || !choices || !choices->world.map || strcmp(entry->name,choices->world.map))
+        if (model || ordinal || entry->value.index!=1 || !choices || !choices->world.map || strcmp(entry->name,choices->world.map))
             return application_fail(error,QA_ERROR_FORMAT,"World precache differs from its actual requested map");
     } else {
-        double number;
-        if (*entry->name!='*' || !qa_parse_number((qa_bytes){(const uint8_t *)entry->name+1,strlen(entry->name+1)},&number,error) ||
-            !isfinite(number) || number<0 || number>UINT32_MAX || trunc(number)!=number)
+        if (*entry->name!='*')
             return application_fail(error,QA_ERROR_FORMAT,"Inline precache has no genuine physical model");
-        model=(uint32_t)number;
     }
     qa_bounds actual;
     bool ok;
@@ -179,6 +176,7 @@ static bool read_resource(qa_net_reader *reader,struct application_qc_state *eng
     const qa_sha256_digest *actual=qa_resource_digest(entry->source);
     return ok && !reader->failed && !memcmp(digest,actual?actual->bytes:empty,sizeof(digest)) &&
         opening_restore(reader,engine,entry,error) &&
+        application_qc_resource_resolve_inline(entry,error) &&
         resource_ready(engine,entry,ordinal,error);
 }
 static bool write_actor(qa_net_writer *writer, const qa_actor_registry *actors, qa_actor_id actor)

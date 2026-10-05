@@ -1,8 +1,7 @@
 #include "internal.h"
 
-static bool field(qa_qc_game *game, int32_t entity, const char *name, qa_qc_value_type type,
+static bool field(qa_qc_game *game, int32_t entity, const qa_qc_definition *def, qa_qc_value_type type,
                   const uint32_t words[3], qa_error *error) {
-    const qa_qc_definition *def = qa_qc_program_find_field(game->program, name);
     if (!def || def->type != type) return qc_game_fail(error, QA_ERROR_FORMAT, "Required QC engine field is missing");
     if (type == QA_QC_VECTOR) {
         float v[3]; memcpy(v, words, sizeof(v));
@@ -11,13 +10,13 @@ static bool field(qa_qc_game *game, int32_t entity, const char *name, qa_qc_valu
     int32_t value; memcpy(&value, words, sizeof(value));
     return qa_qc_set_entity_int(game->vm, entity, def->offset, value, error);
 }
-static bool vector_field(qa_qc_game *game, int32_t entity, const char *name, qa_vec3 vector, qa_error *error) {
+static bool vector_field(qa_qc_game *game, int32_t entity, const qa_qc_definition *def, qa_vec3 vector, qa_error *error) {
     float v[3] = {vector.x, vector.y, vector.z}; uint32_t words[3]; memcpy(words, v, sizeof(words));
-    return field(game, entity, name, QA_QC_VECTOR, words, error);
+    return field(game, entity, def, QA_QC_VECTOR, words, error);
 }
-static bool float_field(qa_qc_game *game, int32_t entity, const char *name, float value, qa_error *error) {
+static bool float_field(qa_qc_game *game, int32_t entity, const qa_qc_definition *def, float value, qa_error *error) {
     uint32_t words[3] = {0}; memcpy(words, &value, sizeof(value));
-    return field(game, entity, name, QA_QC_FLOAT, words, error);
+    return field(game, entity, def, QA_QC_FLOAT, words, error);
 }
 static bool self_reference(qa_qc_game *game, int32_t *out, qa_error *error) {
     const qa_qc_definition *self = qa_qc_program_find_global(game->program, "self");
@@ -89,15 +88,15 @@ static bool setmodel(qa_qc_game *game, qa_error *error) {
     if (!allowed || !same_model_actor(game, entity, actor, error))
         return qc_game_fail(error, QA_ERROR_ARGUMENT, "QC model cannot alter another movement owner");
     uint32_t words[3] = {(uint32_t)model, 0, 0};
-    if (!field(game, entity, "model", QA_QC_STRING, words, error) ||
+    if (!field(game, entity, game->fields.model, QA_QC_STRING, words, error) ||
         !same_model_actor(game, entity, actor, error) ||
-        !float_field(game, entity, "modelindex", (float)cached.index, error) ||
+        !float_field(game, entity, game->fields.modelindex, (float)cached.index, error) ||
         !same_model_actor(game, entity, actor, error) ||
-        !vector_field(game, entity, "mins", cached.bounds.mins, error) ||
+        !vector_field(game, entity, game->fields.mins, cached.bounds.mins, error) ||
         !same_model_actor(game, entity, actor, error) ||
-        !vector_field(game, entity, "maxs", cached.bounds.maxs, error) ||
+        !vector_field(game, entity, game->fields.maxs, cached.bounds.maxs, error) ||
         !same_model_actor(game, entity, actor, error) ||
-        !vector_field(game, entity, "size", qa_vec_sub(cached.bounds.maxs, cached.bounds.mins), error)) return false;
+        !vector_field(game, entity, game->fields.size, qa_vec_sub(cached.bounds.maxs, cached.bounds.mins), error)) return false;
     if (!entity) return true;
     if (!qa_qc_reference_actor(game->vm, entity, &current, error) || !qa_actor_id_equal(current, actor))
         return qc_game_fail(error, QA_ERROR_NOT_FOUND, "QC model actor changed during field publication");
@@ -189,7 +188,7 @@ static bool movement(qa_qc_game *game, qa_qc_builtin builtin, qa_error *error) {
     float distance;
     if (!(properties.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING | QA_PHYSICS_ONGROUND)))
         return true;
-    const qa_qc_definition *goal = qa_qc_program_find_field(game->program, "goalentity");
+    const qa_qc_definition *goal = game->fields.goalentity;
     int32_t goal_reference; qa_actor_id target;
     if (!goal || goal->type != QA_QC_ENTITY)
         return qc_game_fail(error, QA_ERROR_FORMAT, "Missing QC goalentity field");

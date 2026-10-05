@@ -83,6 +83,9 @@ bool qa_qc_game_create(const qa_qc_program *program, const qa_qc_game_options *o
     qa_qc_game *game = calloc(1, sizeof(*game));
     if (!game) return qc_game_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC game host");
     game->options = *options; game->program = program; game->loading = true;
+#define QC_GAME_RESOLVE_FIELD(name) game->fields.name = qa_qc_program_find_field(program, #name);
+    QA_QC_GAME_FIELD_LIST(QC_GAME_RESOLVE_FIELD)
+#undef QC_GAME_RESOLVE_FIELD
     game->bindings = malloc((options->vm.host.builtin_count + n) * sizeof(*game->bindings));
     if (!game->bindings) { free(game); return qc_game_fail(error, QA_ERROR_MEMORY, "Allocating QC engine imports"); }
     size_t count = options->vm.host.builtin_count;
@@ -125,6 +128,7 @@ bool qa_qc_game_destroy(qa_qc_game *game, qa_error *error) {
 }
 bool qa_qc_game_idle(const qa_qc_game *game) { return game && !game->calls && qa_qc_idle(game->vm); }
 qa_qc_instance *qa_qc_game_instance(qa_qc_game *game) { return game ? game->vm : NULL; }
+const qa_qc_game_fields *qa_qc_game_resolved_fields(const qa_qc_game *game) { return game ? &game->fields : NULL; }
 bool qa_qc_game_bind_client(qa_qc_game *game, uint32_t client, qa_actor_id actor, qa_error *error) {
     if (!game || !client || client > game->options.max_clients)
         return qc_game_fail(error, QA_ERROR_ARGUMENT, "QC client slot is outside reservation");

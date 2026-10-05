@@ -19,7 +19,8 @@ typedef struct application_qc_resource {
     qa_vfs_acquisition acquisition;
     qa_qc_game_resource value;
     qa_qc_resource_kind kind;
-    bool world_model;
+    uint32_t inline_model;
+    bool world_model, has_inline_model;
 } application_qc_resource;
 typedef struct application_qc_client {
     qa_actor_id actor;
@@ -109,6 +110,7 @@ bool application_qc_write_message(struct application_qc_state *, qa_qc_instance 
 bool application_qc_multicast(struct application_qc_state *, qa_qc_instance *, qa_error *);
 bool application_qc_resource_lookup(void *, qa_qc_resource_kind, const char *, bool,
                                     qa_qc_game_resource *, qa_error *);
+bool application_qc_resource_resolve_inline(application_qc_resource *, qa_error *);
 const qa_qc_definition *application_qc_field(struct application_qc_state *, const char *, qa_qc_value_type, qa_error *);
 bool application_qc_float(struct application_qc_state *, int32_t, const char *, float *, qa_error *);
 bool application_qc_set_float(struct application_qc_state *, int32_t, const char *, float, qa_error *);

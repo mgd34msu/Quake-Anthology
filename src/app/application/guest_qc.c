@@ -82,6 +82,21 @@ static char *copy_text(const char *text, qa_error *error)
     else application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC resource name");
     return copy;
 }
+bool application_qc_resource_resolve_inline(application_qc_resource *entry, qa_error *error)
+{
+    entry->has_inline_model = false; entry->inline_model = 0;
+    if (entry->kind != QA_QC_RESOURCE_MODEL || entry->source) return true;
+    if (!entry->world_model) {
+        double model;
+        if (!entry->name || *entry->name != '*' ||
+            !qa_parse_number((qa_bytes){(const uint8_t *)entry->name + 1, strlen(entry->name + 1)}, &model, error) ||
+            !isfinite(model) || model < 0 || model > UINT32_MAX || trunc(model) != model)
+            return application_fail(error, QA_ERROR_FORMAT, "Invalid QuakeC inline model number");
+        entry->inline_model = (uint32_t)model;
+    }
+    entry->has_inline_model = true;
+    return true;
+}
 bool application_qc_resource_lookup(void *opaque, qa_qc_resource_kind kind,
                                       const char *name, bool precache,
                                       qa_qc_game_resource *out, qa_error *error)
@@ -106,11 +121,8 @@ bool application_qc_resource_lookup(void *opaque, qa_qc_resource_kind kind,
     if (entry.name == NULL) return false;
     bool ok = true;
     if (kind == QA_QC_RESOURCE_MODEL && *name == '*') {
-        double model;
-        ok = qa_parse_number((qa_bytes){(const uint8_t *)name + 1, strlen(name + 1)}, &model, error);
-        if (ok && (!isfinite(model) || model < 0 || model > UINT32_MAX || trunc(model) != model))
-            ok = application_fail(error, QA_ERROR_FORMAT, "Invalid QuakeC inline model number");
-        if (ok) ok = qa_collision_model_bounds(qa_world_geometry(engine->world), (uint32_t)model, &entry.value.bounds, error);
+        ok = application_qc_resource_resolve_inline(&entry, error) &&
+            qa_collision_model_bounds(qa_world_geometry(engine->world), entry.inline_model, &entry.value.bounds, error);
     } else {
         char *sound_path=NULL;
         if (kind==QA_QC_RESOURCE_SOUND) {
@@ -1330,7 +1342,8 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
     char *world_name = copy_text(world_path, error);
     if (world_name == NULL) return false;
     engine->resources[engine->resource_count++] = (application_qc_resource){.name = world_name,
-        .kind = QA_QC_RESOURCE_MODEL, .world_model = true, .value = {.index = 1, .bounds = {world_model.bounds.min, world_model.bounds.max}}};
+        .kind = QA_QC_RESOURCE_MODEL, .world_model = true, .has_inline_model = true,
+        .value = {.index = 1, .bounds = {world_model.bounds.min, world_model.bounds.max}}};
     size_t model_count = qa_bsp_record_count(bsp, QA_BSP_MODELS);
     for (size_t i = 1; i < model_count; ++i) {
         char inline_name[32]; qa_qc_game_resource resource;
