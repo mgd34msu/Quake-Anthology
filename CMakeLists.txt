@@ -1712,8 +1712,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/remote_snapshots.c
     src/app/frontend/remote_q3_client.c
     src/app/frontend/remote_q3_commands.c
-    src/app/frontend/remote_q3_graph.c
-    src/app/frontend/remote_q3_graph_save.c
     src/app/frontend/remote_q3_frame.c
     src/app/frontend/remote_q3_runtime.c
     src/app/frontend/remote_q3_session.c

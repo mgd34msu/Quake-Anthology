@@ -37,17 +37,10 @@ typedef struct frontend_remote_q3_resources {
  * construction retains *out for checked cleanup; it never reports CG_Init. */
 bool frontend_remote_q3_resources_create(qa_frontend *,const frontend_network_client_domain *,
     frontend_remote_q3 **,qa_error *);
-/* The claimed graph view transfers only after the partial parent is retained.
- * This creates detached empty heaps and immutable map collision, then imports
- * saved portals. The world dictionary supplies its decoded owned root later. */
-bool frontend_remote_q3_resources_prepare_restored(qa_frontend *,const frontend_network_client_domain *,
-    uint64_t identity,uint32_t physical_seat,qa_vfs **claimed_mounts,qa_bytes portals,
-    frontend_remote_q3 **,qa_error *);
 bool frontend_remote_q3_resources_import_read(const frontend_remote_q3 *,frontend_remote_q3_resources *,qa_error *);
 bool frontend_remote_q3_resources_import_current(const frontend_remote_q3_resources *);
 bool frontend_remote_q3_resources_world_adopt_ready(frontend_remote_q3 *,qa_scene_world *,qa_error *);
 void frontend_remote_q3_resources_world_adopt(frontend_remote_q3 *,qa_scene_world *);
-bool frontend_remote_q3_resources_finish_import(frontend_remote_q3 *,qa_error *);
 bool frontend_remote_q3_resources_read(const frontend_remote_q3 *,frontend_remote_q3_resources *,qa_error *);
 bool frontend_remote_q3_resources_current(const frontend_remote_q3_resources *);
 /* Pure structural observations for the installed metadata inventory only;

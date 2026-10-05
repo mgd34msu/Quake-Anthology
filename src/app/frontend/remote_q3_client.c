@@ -19,7 +19,6 @@
 #include "material_movie_bindings.h"
 #include "network_restore.h"
 #include "network_q3_restart.h"
-#include "remote_q3_graph.h"
 #include "source_restore.h"
 #include "capture.h"
 #include "qa/application_character_selection.h"
@@ -97,70 +96,7 @@ bool frontend_remote_q3_movie_source_read(frontend_remote_q3 *row,frontend_mater
     *out=view; return true;
 }
 static bool build_resources(frontend_remote_q3 *,frontend_remote_config *,qa_error *);
-bool frontend_remote_q3_resources_prepare_restored(qa_frontend *f,const frontend_network_client_domain *domain,
-    uint64_t identity,uint32_t physical_seat,qa_vfs **mounts,qa_bytes portals,
-    frontend_remote_q3 **out,qa_error *error)
-{
-    if(!f || !f->application || !f->source_restoring || f->capture || f->resource_inventory ||
-        f->stepping || f->round || !f->seats || !domain || !out || *out || !mounts || !*mounts ||
-        !portals.data || !portals.size || identity<=QA_FRONTEND_COMMAND_OWNER ||
-        identity-QA_FRONTEND_COMMAND_OWNER>f->next_source_id || frontend_source_identity_used(f,identity) ||
-        !frontend_network_client_restore_domain_current(f,domain) ||
-        domain->source.descriptor->selection.runtime!=QA_PROGRAM_BUILTIN || domain->source.descriptor->artifact ||
-        !domain->source.receiver.native_source || !domain->map ||
-        qa_resource_pool_find(qa_vfs_resources(*mounts),qa_resource_id(domain->map))!=domain->map)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Restored remote resources require their actual staged graph and map recipe");
-    uint32_t ordinal;
-    if(!qa_application_constructor_seat_ordinal(f->application,domain->source.receiver.receiver,
-        domain->source.receiver.seat,&ordinal,error)) return false;
-    if(ordinal!=physical_seat || ordinal>=f->options.seats || !f->seats[ordinal].input ||
-        f->seats[ordinal].frontend!=f || f->seats[ordinal].id!=ordinal)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Restored remote resources changed their physical input recipient");
-    for(const frontend_remote_q3 *p=f->remote_q3;p;p=p->next)
-        if(p->resources.identity==identity ||
-            (p->resources.domain.source.receiver.receiver==domain->source.receiver.receiver &&
-             p->resources.domain.source.receiver.seat==domain->source.receiver.seat))
-            return frontend_fail(error,QA_ERROR_FORMAT,"Restored remote resource identity is already retained");
-    frontend_remote_q3 *row=calloc(1,sizeof(*row));
-    if(!row) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining restored remote resource parent");
-    row->frontend=f; row->application=f->application; row->importing=true; row->constructing=true;
-    row->resources=(frontend_remote_q3_resources){.owner=row,.domain=*domain,.identity=identity,
-        .physical_seat=ordinal,.input=f->seats[ordinal].input,.map=domain->map};
-    row->next=f->remote_q3; f->remote_q3=row; *out=row;
-    frontend_remote_q3_resources *v=&row->resources;
-    v->mounts=*mounts; *mounts=NULL;
-    bool ok=qa_launch_instance_retain_metadata(domain->source.descriptor,&row->descriptor,error);
-    if(ok) {
-        v->descriptor=qa_launch_instance_lease_view(row->descriptor);
-        v->domain.source.descriptor=v->descriptor;
-        ok=frontend_client_registry_acquire(f,v->descriptor,domain->source.receiver.seat,&v->registry,error) &&
-            frontend_client_registry_cvars(v->registry)==domain->source.receiver.cvars;
-    }
-    row->map=(qa_resource *)domain->map; qa_resource_retain(row->map);
-    if(ok) {
-        v->images=qa_scene_resources_create_detached(v->mounts,error);
-        v->materials=v->images?qa_material_library_create_detached(v->images,error):NULL;
-        v->fonts=v->images?qa_font_library_create(v->mounts,v->images,error):NULL;
-        v->movies=v->images?qa_media_library_create(v->images,error):NULL;
-        ok=v->images && v->materials && v->fonts && v->movies &&
-            qa_audio_bank_create(v->mounts,&v->sounds,error);
-    }
-    qa_bsp_view bsp;
-    if(ok) ok=qa_bsp_open(qa_resource_bytes(row->map),&bsp,error);
-    if(ok && bsp.family!=QA_BSP_Q3)
-        ok=frontend_fail(error,QA_ERROR_FORMAT,"Restored remote resources require their saved Q3 BSP");
-    if(ok) ok=qa_collision_create(&bsp,&v->geometry,error) &&
-        qa_collision_bind_resource(v->geometry,row->map,error) &&
-        frontend_remote_q3_graph_geometry_restore(v->geometry,portals,error);
-    qa_q3_presentation_asset_options assets={.provider={v->mounts,v->images,v->materials,QA_SCENE_Q3},
-        .sounds=v->sounds,.movies=v->movies,.context=row,.model_initialize=model_initialize};
-    if(ok) ok=qa_q3_presentation_assets_create(&assets,&v->assets,error) &&
-        frontend_network_client_restore_domain_current(f,domain);
-    row->constructing=false; row->resources_ready=ok;
-    if(!ok && (!error || error->code==QA_OK))
-        return frontend_fail(error,QA_ERROR_FORMAT,"Restored remote resource graph changed its retained namespace");
-    return ok;
-}
+
 bool frontend_remote_q3_resources_create(qa_frontend *f,const frontend_network_client_domain *domain,
     frontend_remote_q3 **out,qa_error *error)
 {
@@ -416,18 +352,7 @@ bool frontend_remote_q3_resources_world_adopt_ready(frontend_remote_q3 *row,qa_s
 }
 void frontend_remote_q3_resources_world_adopt(frontend_remote_q3 *row,qa_scene_world *world)
 { row->resources.world=world; }
-bool frontend_remote_q3_resources_finish_import(frontend_remote_q3 *row,qa_error *error)
-{
-    frontend_network_client_domain domain;
-    if(!row || !linked(row) || !row->importing || row->retiring || row->frontend->capture ||
-        row->frontend->resource_inventory || !row->resources.world || !resources_idle(row) ||
-        !frontend_network_client_domain_read(row->frontend,&domain,error))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Remote graph completion requires its returned published CLIENT domain");
-    frontend_remote_q3_resources view=row->resources; view.domain=domain;
-    if(!resources_fields_current(&view) || !frontend_network_client_domain_current(row->frontend,&domain))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Restored remote graph changed before public admission");
-    row->resources.domain=domain; row->importing=false; return true;
-}
+
 bool frontend_remote_q3_resources_metadata_current(const frontend_remote_q3_resources *v)
 {
     const frontend_remote_q3 *row=v?v->owner:NULL;
@@ -652,14 +577,5 @@ bool frontend_remote_q3_content_visit(const qa_frontend *f,const qa_application_
             !visitor->view(visitor->context,v.mounts,error) ||
             !visitor->pool(visitor->context,qa_vfs_resources(v.mounts),error)) return false;
     }
-    return true;
-}
-
-bool frontend_remote_q3_material_bindings_restore(qa_frontend *f,qa_error *error)
-{
-    if (!f || !f->source_restoring || f->capture || f->resource_inventory)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source material rebinding requires its genuine imported physical banks");
-    for (frontend_remote_q3 *row=f->remote_q3;row;row=row->next)
-        if (row->resources.materials && !frontend_q3_material_source_bind(f,row->resources.materials,error)) return false;
     return true;
 }
