@@ -52,7 +52,7 @@ static bool chosen_modes_current(qa_application *app, qa_error *error)
     const qa_launch_snapshot *snapshot = app->routing_snapshot;
     if (!snapshot && app->configuration) snapshot = qa_configuration_current(app->configuration);
     const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
-    if (!app->modes || !choices || choices->mode_count != app->mode_count ||
+    if (!app->modes || !choices || application_mode_choice(app, app->mode_count) ||
         (app->mode_count && !app->mode_ids))
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Q1 composition lost its actual chosen-rule roster");
@@ -60,10 +60,11 @@ static bool chosen_modes_current(qa_application *app, qa_error *error)
     for (size_t i = 0; i < app->mode_count; ++i) {
         qa_mode_id id = app->mode_ids[i];
         qa_mode_view view;
+        const qa_launch_mode *choice = application_mode_choice(app, i);
         if (!qa_modes_read(app->modes, id, &view, error)) return false;
-        if (view.origin != QA_MODE_CHOSEN_RULE || view.source_owner ||
-            view.rules.source != choices->modes[i].rules.source ||
-            view.rules.kind != choices->modes[i].rules.kind)
+        if (!choice || view.origin != QA_MODE_CHOSEN_RULE || view.source_owner ||
+            view.rules.source != choice->rules.source ||
+            view.rules.kind != choice->rules.kind)
             return application_fail(error, QA_ERROR_ARGUMENT,
                 "chosen-rule identity names a different mode continuation");
         for (size_t j = 0; j < i; ++j)

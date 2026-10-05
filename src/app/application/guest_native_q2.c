@@ -58,6 +58,10 @@ static bool whole_source_choices(const struct application_native_q2 *engine,
             return application_fail(error, QA_ERROR_UNSUPPORTED,
                 "Independent Q2 gameplay providers require a mod-supplied composition declaration");
     }
+    for (size_t i = 0; i < choices->mode_count; ++i)
+        if (strcmp(choices->modes[i].instance, instance))
+            return application_fail(error, QA_ERROR_UNSUPPORTED,
+                "Independent Q2 modes require a mod-supplied composition declaration");
     return true;
 }
 

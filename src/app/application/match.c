@@ -14,6 +14,7 @@
 #include "guest_q3_weapons_services.h"
 #include "guest_qc_items.h"
 #include "guest_qc_item_weapons.h"
+#include "guest_native_q2_private.h"
 #include "qa/application_qc_presentation.h"
 #include "qa/game_q2_bots.h"
 #include "qa/game_q2_combat.h"
@@ -387,6 +388,15 @@ static bool equipment_resume(void *opaque, qa_actor_id actor, qa_error *error)
                             "selected arsenal has no equipment resume adapter");
 }
 
+bool application_match_mode_source_owned(const application_provider *provider)
+{
+    const struct application_native_q2 *engine =
+        provider && provider->kind == APPLICATION_PROVIDER_NATIVE
+            ? provider->state.native.q2_engine : NULL;
+    return engine && engine->prepared && !engine->declaration &&
+        engine->profile != QA_NATIVE_Q2_CGAME_API2023;
+}
+
 bool application_match_prepare_modes(qa_application *application,
                                application_publication *publication,
                                qa_error *error)
@@ -427,9 +437,11 @@ bool application_match_prepare_modes(qa_application *application,
                                 "cannot retain selected mode identities");
     for (size_t index = 0; !publication->restoring &&
                            index < choices->mode_count; ++index) {
+        application_provider *source = named(publication, choices->modes[index].instance);
+        if (application_match_mode_source_owned(source))
+            continue;
         qa_mode_rules rules = choices->modes[index].rules;
         if (rules.source == QA_MODE_ROGUE) {
-            application_provider *source = named(publication, choices->modes[index].instance);
             int32_t deathmatch;
             uint32_t gamecfg;
             if (source == NULL || source->kind != APPLICATION_PROVIDER_Q1 ||

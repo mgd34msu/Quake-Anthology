@@ -68,10 +68,12 @@ bool qa_application_save_policy(qa_application *app,qa_save_authority authority,
     if(purpose==QA_SAVE_TRANSITION || purpose==QA_SAVE_RECOVERY || purpose==QA_SAVE_DEMO_KEYFRAME)
         return qa_save_eligible(&eligibility,purpose,error);
     if(authority!=QA_SAVE_OFFLINE) return qa_save_eligible(&eligibility,purpose,error);
-    qa_mode_view mode;
-    if(!app->modes || !app->primary_mode_ready || !qa_modes_read(app->modes,app->primary_mode,&mode,error))
-        return application_fail(error,QA_ERROR_NOT_FOUND,"Save policy has no actual chosen primary match owner");
-    eligibility.deathmatch=mode.rules.kind!=QA_MODE_SINGLE_PLAYER && mode.rules.kind!=QA_MODE_COOPERATIVE;
+    if(!application_match_mode_source_owned(source)) {
+        qa_mode_view mode;
+        if(!app->modes || !app->primary_mode_ready || !qa_modes_read(app->modes,app->primary_mode,&mode,error))
+            return application_fail(error,QA_ERROR_NOT_FOUND,"Save policy has no actual chosen primary match owner");
+        eligibility.deathmatch=mode.rules.kind!=QA_MODE_SINGLE_PLAYER && mode.rules.kind!=QA_MODE_COOPERATIVE;
+    }
     if(source->kind==APPLICATION_PROVIDER_Q1 || source->kind==APPLICATION_PROVIDER_Q2 ||
        source->kind==APPLICATION_PROVIDER_Q3 ||
        (source->kind==APPLICATION_PROVIDER_QC && source->product->family==QA_GAME_Q1)) {

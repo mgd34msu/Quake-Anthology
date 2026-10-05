@@ -40,6 +40,32 @@ static bool q2_armor(void *opaque, qa_actor_id actor, qa_error *error) {
     return qa_q2_item_give(opaque, actor, "item_armor_body", 0, &accepted, error);
 }
 
+static application_provider *mode_provider_named(const qa_application *app, const char *name) {
+    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
+    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
+    for (size_t i = 0; i < count; ++i) {
+        application_provider *p = providers[i];
+        if (p && p->constructed && p->attached && !p->close_pending && p->launch &&
+            !strcmp(p->launch->selection.instance, name)) return p;
+    }
+    return NULL;
+}
+
+const qa_launch_mode *application_mode_choice(const qa_application *app, size_t ordinal) {
+    const qa_launch_snapshot *snapshot = app->routing_snapshot;
+    if (!snapshot && app->configuration) snapshot = qa_configuration_current(app->configuration);
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    if (!choices) return NULL;
+    for (size_t i = 0; i < choices->mode_count; ++i) {
+        const qa_launch_mode *choice = choices->modes + i;
+        application_provider *source = mode_provider_named(app, choice->instance);
+        if (application_match_mode_source_owned(source)) continue;
+        if (!ordinal) return choice;
+        --ordinal;
+    }
+    return NULL;
+}
+
 application_provider *application_mode_provider(qa_application *app, qa_mode_id mode) {
     qa_mode_view view;
     if (!app->modes || !qa_modes_read(app->modes, mode, &view, NULL)) return NULL;
@@ -48,22 +74,13 @@ application_provider *application_mode_provider(qa_application *app, qa_mode_id 
         return source && application_native_q1_composition_current(app, view.source_owner,
             view.rules.source, NULL) ? source : NULL;
     }
-    const qa_launch_snapshot *snapshot = app->routing_snapshot;
-    if (!snapshot && app->configuration) snapshot = qa_configuration_current(app->configuration);
-    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
     size_t index = 0;
     while (index < app->mode_count &&
            (app->mode_ids[index].slot != mode.slot ||
             app->mode_ids[index].generation != mode.generation)) ++index;
-    if (!choices || index >= app->mode_count || index >= choices->mode_count) return NULL;
-    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
-    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
-    for (size_t i = 0; i < count; ++i) {
-        application_provider *p = providers[i];
-        if (p && p->constructed && p->attached && !p->close_pending && p->launch &&
-            !strcmp(p->launch->selection.instance, choices->modes[index].instance)) return p;
-    }
-    return NULL;
+    const qa_launch_mode *choice = index < app->mode_count ? application_mode_choice(app, index) : NULL;
+    if (!choice) return NULL;
+    return mode_provider_named(app, choice->instance);
 }
 
 bool application_native_q3_source_mode(application_provider *provider, qa_mode_id *out,
@@ -308,15 +325,18 @@ static bool q3_initial_rules(application_provider *p, qa_mode_rules *out, bool *
     *found = false;
     bool primary = false;
     if (!choices) return application_fail(e, QA_ERROR_ARGUMENT, "Q3 settings have no actual configuration");
-    for (size_t i = 0; i < app->mode_count && i < choices->mode_count; ++i) {
+    for (size_t i = 0; i < app->mode_count; ++i) {
         if (!native_q3_mode(p, app->mode_ids[i])) continue;
-        const qa_launch_mode *choice = &choices->modes[i];
+        const qa_launch_mode *choice = application_mode_choice(app, i);
+        if (!choice) return application_fail(e, QA_ERROR_ARGUMENT, "Q3 settings lost their actual mode selection");
         if (choice->primary_score) { *out = choice->rules; *found = true; primary = true; break; }
     }
     if (primary) return true;
-    for (size_t i = 0; i < app->mode_count && i < choices->mode_count; ++i) {
+    for (size_t i = 0; i < app->mode_count; ++i) {
         if (!native_q3_mode(p, app->mode_ids[i])) continue;
-        const qa_mode_rules *rules = &choices->modes[i].rules;
+        const qa_launch_mode *choice = application_mode_choice(app, i);
+        if (!choice) return application_fail(e, QA_ERROR_ARGUMENT, "Q3 settings lost their actual mode selection");
+        const qa_mode_rules *rules = &choice->rules;
         if (*found && (out->warmup_seconds != rules->warmup_seconds || out->frag_limit != rules->frag_limit ||
             out->capture_limit != rules->capture_limit || out->time_limit_minutes != rules->time_limit_minutes))
             return application_fail(e, QA_ERROR_ARGUMENT, "Q3 source modes have conflicting initial settings");
