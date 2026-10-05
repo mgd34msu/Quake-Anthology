@@ -81,11 +81,7 @@ bool q1_wrath_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa
         return false;
     }
 }
-bool q1_wrath_think(qa_q1_game *g, q1_actor *shot, q1_think_kind kind, qa_error *error) {
-    if (kind == Q1_THINK_WRATH_EXPLODE) {
-        ++shot->frame;
-        return shot->frame > 5 ? q1_remove(g, shot, error) : q1_schedule(g, shot, 0.1, kind, error);
-    }
+bool q1_wrath_think(qa_q1_game *g, q1_actor *shot, qa_error *error) {
     qa_actor_id enemy = q1_ref_actor(g, shot->state.projectile.enemy);
     if (!q1_alive(g, enemy) || q1_health(g, enemy) < 1)
         return q1_remove(g, shot, error);
@@ -103,7 +99,7 @@ bool q1_wrath_think(qa_q1_game *g, q1_actor *shot, q1_think_kind kind, qa_error 
         if (!qa_world_body_write(g->services.world, shot->id, &body, error))
             return false;
     }
-    return q1_schedule(g, shot, 0.1, kind, error);
+    return q1_schedule(g, shot, 0.1, Q1_THINK_WRATH_HOME, error);
 }
 bool q1_wrath_touch(qa_q1_game *g, q1_actor *shot, qa_actor_id other, qa_error *error) {
     if (shot->physics.solid == QA_PHYSICS_NOT_SOLID)
@@ -130,8 +126,9 @@ bool q1_wrath_touch(qa_q1_game *g, q1_actor *shot, qa_actor_id other, qa_error *
         return true;
     body.velocity = qa_v3(0, 0, 0);
     shot->physics.solid = QA_PHYSICS_NOT_SOLID;
+    shot->touch_disabled = true;
     shot->frame = 0;
     return q1_model(g, shot, "progs/s_explod.spr", error) &&
            qa_world_body_write(g->services.world, shot->id, &body, error) &&
-           q1_link(g, shot, error) && q1_schedule(g, shot, 0.1, Q1_THINK_WRATH_EXPLODE, error);
+           q1_link(g, shot, error) && q1_schedule(g, shot, 0.1, Q1_THINK_SPRITE, error);
 }

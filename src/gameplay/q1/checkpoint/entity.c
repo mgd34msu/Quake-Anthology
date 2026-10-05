@@ -127,7 +127,6 @@ static bool continuation(q1_save_io *io, const q1_actor *a, q1_think_kind think)
     case Q1_THINK_HOOK_TRACK:
     case Q1_THINK_HOOK_RESET:
     case Q1_THINK_WRATH_HOME:
-    case Q1_THINK_WRATH_EXPLODE:
     case Q1_THINK_DEMODOG_EXPLODE:
     case Q1_THINK_HOMING_FLAME:
         valid = a->kind == Q1_PROJECTILE;

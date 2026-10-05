@@ -1144,8 +1144,7 @@ bool q1_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     case Q1_THINK_TELEPORT_FOG:
         return q1_teleport_fog_think(g, entity, error);
     case Q1_THINK_WRATH_HOME:
-    case Q1_THINK_WRATH_EXPLODE:
-        return q1_wrath_think(g, entity, kind, error);
+        return q1_wrath_think(g, entity, error);
     case Q1_THINK_AXE:
         return q1_axe_strike(g, entity, error);
     case Q1_THINK_EXPLODE:

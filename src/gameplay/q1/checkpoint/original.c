@@ -273,6 +273,7 @@ static const original_think_callback think_callbacks[] = {
     {Q1_THINK_DEATH_BUBBLES, "DeathBubblesSpawn"}, {Q1_THINK_BUBBLE, "bubble_bob"},
     {Q1_THINK_HIP_LASER, "HIP_LaserThink"}, {Q1_THINK_PROX_WATCH, "ProximityBomb"},
     {Q1_THINK_PROX_EXPLODE, "ProximityExplode"},
+    {Q1_THINK_WRATH_HOME, "WrathHome"},
     {Q1_THINK_MULTI_SPLIT, "MultiGrenadeThink"}, {Q1_THINK_MINI_EXPLODE, "MiniGrenadeExplode"},
     {Q1_THINK_MULTI_EXPLODE, "MultiGrenadeExplode"}, {Q1_THINK_MULTI_ACQUIRE, "MultiRocketThink"},
     {Q1_THINK_MULTI_HOME, "MultiRocketThink"}, {Q1_THINK_PLASMA_LAUNCH, "PlasmaThink"},
@@ -389,16 +390,21 @@ static bool monster_functions(const q1_monster *monster, qa_q1_save_record *reco
     static const char *const pain[] = {"army_pain", "dog_pain", "knight_pain", "enf_pain",
         "demon1_pain", "ogre_pain", "hknight_pain", "sham_pain", "Wiz_Pain", "shalrath_pain",
         NULL, "fish_pain", "zombie_pain", NULL, "nopain",
-        [QA_Q1_EEL] = "eel_pain1", [QA_Q1_SWORD] = "sword_pain", [QA_Q1_MUMMY] = "mummy_pain"};
+        [QA_Q1_EEL] = "eel_pain1", [QA_Q1_SWORD] = "sword_pain", [QA_Q1_WRATH] = "wrath_pain",
+        [QA_Q1_SUPER_WRATH] = "overlord_pain", [QA_Q1_MUMMY] = "mummy_pain"};
     static const char *const die[] = {"army_die", "dog_die", "knight_die", "enf_die", "demon_die",
         "ogre_die", "hknight_die", "sham_die", "wiz_die", "shalrath_die", "tbaby_die1",
         "f_death1", "zombie_die", NULL, "finale_1",
-        [QA_Q1_EEL] = "eel_death", [QA_Q1_SWORD] = "sword_die", [QA_Q1_MUMMY] = "mummy_die"};
+        [QA_Q1_EEL] = "eel_death", [QA_Q1_SWORD] = "sword_die", [QA_Q1_WRATH] = "wrath_die02",
+        [QA_Q1_SUPER_WRATH] = "overlord_die02", [QA_Q1_MUMMY] = "mummy_die"};
     static const char *const melee[] = {NULL, "dog_atta1", "knight_atk1", NULL, "Demon_MeleeAttack",
         "ogre_melee", "hknight_melee", "sham_melee", NULL, NULL, "tbaby_jump1", "f_attack1",
-        [QA_Q1_EEL] = "eel_attack1", [QA_Q1_SWORD] = "sword_atk1"};
+        [QA_Q1_EEL] = "eel_attack1", [QA_Q1_SWORD] = "sword_atk1",
+        [QA_Q1_SUPER_WRATH] = "overlord_melee"};
     if (!species || (species->species > QA_Q1_OLDONE &&
-        species->species != QA_Q1_EEL && species->species != QA_Q1_SWORD && species->species != QA_Q1_MUMMY))
+        species->species != QA_Q1_EEL && species->species != QA_Q1_SWORD &&
+        species->species != QA_Q1_WRATH && species->species != QA_Q1_SUPER_WRATH &&
+        species->species != QA_Q1_MUMMY))
         return fail(error, "Original native expansion monster callbacks require their Source projection");
     unsigned index = (unsigned)species->species;
     if (species->species == QA_Q1_BOSS) return callback(record,"use","boss_awake",error);
@@ -493,7 +499,8 @@ static const original_projectile projectiles[] = {
     {Q1_VORE_BALL,"","ShalMissileTouch",QA_Q1_WEAPON_COUNT,"vore_ball"},
     {Q1_LAVA_BALL,"","T_MissileTouch",QA_Q1_WEAPON_COUNT,"chthon_lavaball"},
     {Q1_HIP_LASER,"hiplaser","HIP_LaserTouch",QA_Q1_LASER,"hiplaser"},
-    {Q1_PROXIMITY,"proximity_grenade","ProximityGrenadeTouch",QA_Q1_PROXIMITY,"proximity_grenade"}
+    {Q1_PROXIMITY,"proximity_grenade","ProximityGrenadeTouch",QA_Q1_PROXIMITY,"proximity_grenade"},
+    {Q1_WRATH_MISSILE,"","WrathMissileTouch",QA_Q1_WEAPON_COUNT,"wrath_missile"}
 };
 static bool projectile_fields(qa_q1_wire_receipt *receipt, const q1_actor *entity,
     qa_q1_save_record *record, qa_error *error) {
@@ -508,7 +515,8 @@ static bool projectile_fields(qa_q1_wire_receipt *receipt, const q1_actor *entit
          !callback(record,"th_die","ProximityGrenadeExplode",error) ||
          (p->detonating && !text(record,"deathtype","exploding",QA_Q1_SAVE_STRING,error)))) return false;
     return text(record, "classname", source->classname, QA_Q1_SAVE_STRING, error) &&
-        callback(record, "touch", entity->touch_disabled ? NULL : p->remove_touch ? "SUB_Remove" : source->touch, error) &&
+        callback(record, "touch", entity->think == Q1_THINK_SPRITE ? "SUB_Null" :
+            entity->touch_disabled ? NULL : p->remove_touch ? "SUB_Remove" : source->touch, error) &&
         actor(receipt, record, "enemy", p->enemy, false, error) &&
         actor(receipt, record, "owner", entity->owner, false, error);
 }
@@ -556,6 +564,11 @@ static bool mover_sounds(const q1_actor *entity, qa_q1_save_record *record, qa_e
     default: return true;
     }
 }
+static bool sprite_remove(const qa_q1_game *game, const q1_actor *entity) {
+    if (entity->kind != Q1_TIMER || entity->think != Q1_THINK_REMOVE) return false;
+    const char *model = qa_strings_cstr(qa_session_strings(game->services.session), entity->model);
+    return model && !strcmp(model,"progs/s_explod.spr");
+}
 static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
     q1_player *player, const qa_movement_state *movement, qa_q1_save_record *record, qa_error *error) {
     qa_q1_game *game = receipt->operation.game; qa_body_state body; qa_combat_state combat;
@@ -572,7 +585,7 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         source_entity = *entity;
         if (entity->kind == Q1_PROJECTILE || entity->think == Q1_THINK_WIZARD ||
             entity->think == Q1_THINK_DEATH_BUBBLES ||
-            (entity->think == Q1_THINK_SPRITE && !entity->map)) source_entity.classname = 0;
+            ((entity->think == Q1_THINK_SPRITE || sprite_remove(game,entity)) && !entity->map)) source_entity.classname = 0;
         if (entity->think == Q1_THINK_BUBBLE || entity->think == Q1_THINK_DEATH_BUBBLES) source_entity.count = 0;
     }
     if ((entity && !FIELDS(receipt, record, &source_entity, entity_fields, error)) ||
@@ -662,6 +675,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
     if (entity->think != Q1_THINK_NONE && !think)
         return fail(error, "Original native think has no exact Source callback projection");
     if (!callback(record, "think", think, error) || !number(record, "nextthink", entity->next_think, false, error)) return false;
+    if ((entity->think == Q1_THINK_SPRITE || sprite_remove(game,entity)) && entity->kind != Q1_PROJECTILE &&
+        !callback(record,"touch","SUB_Null",error)) return false;
     if (entity->think == Q1_THINK_WIZARD &&
         (!actor(receipt,record,"enemy",entity->state.projectile.enemy,false,error) ||
          !vector(record,"movedir",entity->state.projectile.right,error))) return false;
@@ -1026,6 +1041,8 @@ static bool create_original(qa_q1_game *game, const qa_q1_save_record *record,
     const char *name = saved(record, "classname");
     const char *think = saved(record, "think");
     const char *touch = saved(record, "touch");
+    const char *model = saved(record, "model");
+    bool explosion = think && !strcmp(think,"SUB_Remove") && model && !strcmp(model,"progs/s_explod.spr");
     const q1_species *species = name ? q1_species_find(name) : NULL;
     const original_projectile *projectile = saved_projectile(record);
     q1_map_kind map = name ? q1_map_classify(name) : Q1_MAP_FIELDS;
@@ -1038,6 +1055,7 @@ static bool create_original(qa_q1_game *game, const qa_q1_save_record *record,
         map != Q1_MAP_FIELDS ? Q1_MAP : Q1_ENTITY;
     if (think && (!strcmp(think,"Wiz_FastFire") || !strcmp(think,"DeathBubblesSpawn") ||
         !strcmp(think,"bubble_bob") || !strncmp(think,"s_explode",9))) kind = Q1_TIMER;
+    if (explosion) kind = Q1_TIMER;
     if (touch && (!strcmp(touch,"health_touch") || !strcmp(touch,"armor_touch") ||
         !strcmp(touch,"ammo_touch") || !strcmp(touch,"weapon_touch") || !strcmp(touch,"key_touch") ||
         !strcmp(touch,"powerup_touch") || !strcmp(touch,"BackpackTouch"))) kind = Q1_PICKUP;
@@ -1047,7 +1065,7 @@ static bool create_original(qa_q1_game *game, const qa_q1_save_record *record,
         else if (think && !strcmp(think,"bubble_bob")) name = "bubble";
         else if (think && !strcmp(think,"DeathBubblesSpawn")) name = "death_bubbles";
         else if (think && !strcmp(think,"Wiz_FastFire")) name = "wizard_fastfire";
-        else if (think && !strncmp(think,"s_explode",9)) name = "explosion";
+        else if (explosion || (think && !strncmp(think,"s_explode",9))) name = "explosion";
         else if (think && !strcmp(think,"DelayThink")) { name = "delayed_use"; map = Q1_MAP_DELAY; kind = Q1_MAP; }
         else if (think && !strcmp(think,"SUB_Remove")) name = "gib";
         else return fail(error, "Original anonymous edict has no actual Source discriminator");
@@ -1143,7 +1161,8 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
     if (!entity->classname) entity->classname = native_classname;
     entity->physics = physics; entity->source_movement_flags = flags;
     entity->aimed_damage = saved_number(record, "takedamage") == 2;
-    entity->touch_disabled = !saved(record,"touch");
+    const char *source_touch = saved(record,"touch");
+    entity->touch_disabled = !source_touch || !strcmp(source_touch,"SUB_Null");
     if (!restore_think(game, entity, record, error)) return false;
     const char *source_think = saved(record,"think");
     if (source_think && !strcmp(source_think,"Wiz_FastFire") &&

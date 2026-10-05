@@ -74,7 +74,6 @@ typedef enum q1_think_kind {
     Q1_THINK_HOOK_LINK,
     Q1_THINK_SCOURGE_TRIGGER,
     Q1_THINK_WRATH_HOME,
-    Q1_THINK_WRATH_EXPLODE,
     Q1_THINK_TELEPORT_FOG,
     Q1_THINK_ARMAGON_BODY,
     Q1_THINK_ARMAGON_EXPLOSION,
@@ -719,7 +718,7 @@ bool q1_mission_monster_die(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_scourge_action(qa_q1_game *, q1_actor *, q1_frame_action, qa_error *);
 bool q1_scourge_trigger(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_wrath_action(qa_q1_game *, q1_actor *, q1_frame_action, qa_error *);
-bool q1_wrath_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
+bool q1_wrath_think(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_wrath_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_wrath_launch(qa_q1_game *, q1_actor *, unsigned attack, qa_error *);
 bool q1_overlord_action(qa_q1_game *, q1_actor *, q1_frame_action, qa_error *);
