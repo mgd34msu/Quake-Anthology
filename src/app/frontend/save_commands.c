@@ -413,7 +413,7 @@ static char *slot_name(frontend_save_commands *owner, const char *input, bool lo
     }
     memcpy(path, "saves/", 6); memcpy(path + 6, name, name_length + 1);
     free(resolved); free(directory);
-    if (!qa_save_slot_name(path, error)) { free(path); return NULL; }
+    if (!load && !qa_save_slot_name(path, error)) { free(path); return NULL; }
     return path;
 }
 char *frontend_save_commands_slot_path(const qa_frontend *f, const char *name, qa_error *error)
