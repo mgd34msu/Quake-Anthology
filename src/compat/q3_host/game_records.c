@@ -186,12 +186,9 @@ static bool control_word(const player_control_write *write, size_t offset, uint3
 static bool control_vector(const player_control_write *write, size_t offset, qa_vec3 value,
                              qa_error *error)
 {
-    const float components[] = {value.x, value.y, value.z};
-    for (size_t i = 0; i < 3; ++i) {
-        uint32_t bits; memcpy(&bits, &components[i], sizeof(bits));
-        if (!control_word(write, offset + i * 4u, bits, error)) return false;
-    }
-    return true;
+    return control_current(write, error) &&
+        q3_write_vector(write->call, write->address + offset, value, error) &&
+        control_current(write, error);
 }
 
 bool qa_q3_host_player_cutscene(qa_q3_host *host, qa_actor_id actor, qa_vec3 origin,
@@ -270,25 +267,34 @@ static qa_actor_id ground_reference(qa_q3_host *host, int32_t number)
     return reference(host, number);
 }
 
+static qa_vec3 body_vector(const uint8_t *bytes, size_t offset)
+{
+    return qa_v3(qa_load_f32le(bytes + offset), qa_load_f32le(bytes + offset + 4),
+        qa_load_f32le(bytes + offset + 8));
+}
+
 static bool body_read(void *context, qa_body_state *out, qa_error *error)
 {
     q3_entity_slot *slot = context; q3_call call;
     if (!current(slot, error) || !q3_game_begin(slot->host, &call, error)) return false;
-    q3_record record; qa_qvm_entity_shared shared;
-    bool ok = q3_game_entity_record(&call, slot->number, &record, error) &&
-              qa_q3_abi_read_shared_entity(&record.abi, 0, &shared, error);
+    q3_record record;
+    bool ok = q3_game_entity_record(&call, slot->number, &record, error);
     if (ok) {
         const uint8_t *entity = record.abi.bytes.data;
-        qa_body_state body = {.origin = shared.origin, .angles = shared.angles, .bounds = shared.local_bounds,
-            .velocity = qa_v3(qa_load_f32le(entity + 36), qa_load_f32le(entity + 40), qa_load_f32le(entity + 44)),
+        qa_qvm_abi abi = slot->host->options.abi;
+        qa_body_state body = {.origin = body_vector(entity, q3_shared_offset(abi, 488)),
+            .angles = body_vector(entity, q3_shared_offset(abi, 500)),
+            .bounds = {body_vector(entity, q3_shared_offset(abi, 436)),
+                body_vector(entity, q3_shared_offset(abi, 448))},
+            .velocity = body_vector(entity, 36),
             .ground = ground_reference(slot->host, qa_load_i32le(entity + 148))};
         if (slot->number < slot->host->options.server.maximum_clients) {
             ok = q3_game_player_record(&call, slot->number, &record, error);
             if (ok) {
                 const uint8_t *player = record.abi.bytes.data;
-                body.velocity = qa_v3(qa_load_f32le(player + 32), qa_load_f32le(player + 36), qa_load_f32le(player + 40));
+                body.velocity = body_vector(player, 32);
                 if (slot->input_motion)
-                    body.origin = qa_v3(qa_load_f32le(player + 20), qa_load_f32le(player + 24), qa_load_f32le(player + 28));
+                    body.origin = body_vector(player, 20);
             }
         }
         if (ok) *out = body;
@@ -330,12 +336,8 @@ static bool body_record_write(void *context, size_t offset, qa_bytes bytes, qa_e
 static bool body_vector_write(const body_write_scope *scope, uint64_t address,
                                 qa_vec3 vector, qa_error *error)
 {
-    const float values[] = {vector.x, vector.y, vector.z};
-    for (size_t i = 0; i < 3; ++i) {
-        uint8_t bytes[4]; qa_store_u32le(bytes, (uint32_t)q3_float_bits(values[i]));
-        if (!body_write_bytes(scope, address + i * 4u, (qa_bytes){bytes, sizeof(bytes)}, error)) return false;
-    }
-    return true;
+    return body_write_current(scope, error) && q3_write_vector(scope->call, address, vector, error) &&
+        body_write_current(scope, error);
 }
 
 static bool body_write(void *context, const qa_body_state *body, qa_error *error)
@@ -390,15 +392,20 @@ bool q3_game_collision(void *context, qa_actor_collision *out, qa_error *error)
 {
     q3_entity_slot *slot = context; q3_call call;
     if (!current(slot, error) || !q3_game_begin(slot->host, &call, error)) return false;
-    q3_record record; qa_qvm_entity_shared shared;
-    bool ok = q3_game_entity_record(&call, slot->number, &record, error) &&
-              qa_q3_abi_read_shared_entity(&record.abi, 0, &shared, error);
-    if (ok) *out = (qa_actor_collision){.family = QA_COLLISION_Q3,
-        .shape = (shared.server_flags & 1024) ? QA_SHAPE_CAPSULE : QA_SHAPE_BOX,
-        .inline_model = shared.inline_model, .model = qa_load_u32le(record.abi.bytes.data + 160),
-        .contents = shared.contents, .owner = reference(slot->host, shared.owner_number),
-        .role = QA_COLLISION_SOLID, .has_q3_owner = true,
-        .q3_entity_number = (int32_t)slot->number, .q3_owner_number = shared.owner_number};
+    q3_record record;
+    bool ok = q3_game_entity_record(&call, slot->number, &record, error);
+    if (ok) {
+        const uint8_t *entity = record.abi.bytes.data;
+        qa_qvm_abi abi = slot->host->options.abi;
+        int32_t owner = qa_load_i32le(entity + q3_shared_offset(abi, 512));
+        *out = (qa_actor_collision){.family = QA_COLLISION_Q3,
+            .shape = (qa_load_i32le(entity + q3_shared_offset(abi, 424)) & 1024) ? QA_SHAPE_CAPSULE : QA_SHAPE_BOX,
+            .inline_model = qa_load_i32le(entity + q3_shared_offset(abi, 432)) != 0,
+            .model = qa_load_u32le(entity + 160),
+            .contents = qa_load_i32le(entity + q3_shared_offset(abi, 460)),
+            .owner = reference(slot->host, owner), .role = QA_COLLISION_SOLID, .has_q3_owner = true,
+            .q3_entity_number = (int32_t)slot->number, .q3_owner_number = owner};
+    }
     return q3_game_end(&call, ok);
 }
 

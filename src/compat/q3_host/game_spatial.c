@@ -24,11 +24,7 @@ static bool actor_word(q3_call *call, uint32_t number, qa_actor_id actor,
 static bool actor_vector(q3_call *call, uint32_t number, qa_actor_id actor,
                            uint64_t address, qa_vec3 vector, qa_error *error)
 {
-    const float values[] = {vector.x, vector.y, vector.z};
-    for (size_t i = 0; i < 3; ++i)
-        if (!actor_word(call, number, actor, address + i * 4,
-                        (uint32_t)q3_float_bits(values[i]), error)) return false;
-    return true;
+    return q3_write_vector(call, address, vector, error) && same_actor(call, number, actor, error);
 }
 
 static qa_trace_policy policy(qa_q3_host *host, uint32_t contents)

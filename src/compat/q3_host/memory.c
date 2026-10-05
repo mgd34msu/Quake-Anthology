@@ -94,12 +94,11 @@ bool q3_vector(const q3_call *call, uint64_t address, qa_vec3 *out, qa_error *er
 
 bool q3_write_vector(const q3_call *call, uint64_t address, qa_vec3 value, qa_error *error)
 {
-    const float values[] = {value.x, value.y, value.z};
-    for (size_t i = 0; i < 3; ++i) {
-        uint32_t bits; memcpy(&bits, &values[i], sizeof(bits));
-        if (!q3_write_word(call, address + i * 4, bits, error)) return false;
-    }
-    return true;
+    uint8_t bytes[12];
+    qa_store_f32le(bytes, value.x);
+    qa_store_f32le(bytes + 4, value.y);
+    qa_store_f32le(bytes + 8, value.z);
+    return q3_write(call, address, (qa_bytes){bytes, sizeof(bytes)}, error);
 }
 
 static bool record_write(void *context, size_t offset, qa_bytes bytes, qa_error *error)
