@@ -991,6 +991,9 @@ add_library(qa_network STATIC
     src/network/unified/channel.c
     src/network/unified/composition.c
     src/network/unified/document.c
+    src/network/unified/frame.c
+    src/network/unified/frame_layout.c
+    src/network/unified/frame_pool.c
     src/network/unified/packet.c
     src/network/unified/schema.c
     src/network/q2/bootstrap_save.c
