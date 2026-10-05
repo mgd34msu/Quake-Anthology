@@ -143,33 +143,36 @@ const char *qa_cvars_canonical_name(const qa_cvars *registry, const char *name)
 static bool alias_info_flags(const qa_cvars *registry,uint32_t flags)
 { return (flags&(QA_CVAR_USERINFO|QA_CVAR_SERVERINFO|
     (registry->options.dialect==QA_CONSOLE_Q3?QA_CVAR_SYSTEMINFO:0)))!=0; }
-static bool alias_number(const char *value,double *out,bool allow_empty)
+static bool format_number(qa_console_dialect dialect,float value,char out[32],
+    bool *truncated,qa_error *error)
 {
-    if (!value) return false;
-    qa_bytes input={(const uint8_t *)value,strlen(value)};
-    if (!allow_empty) {
-        size_t cursor=0; uint32_t scalar; bool present=false;
-        while (qa_utf8_next(input,&cursor,&scalar))
-            if (!qa_unicode_whitespace(scalar)) { present=true; break; }
-        if (!present) return false;
+    char text[64];
+    if (!qac_q1(dialect) && value>=-2147483648.0f &&
+        value<2147483648.0f && truncf(value)==value)
+        (void)snprintf(text,sizeof(text),"%d",(int32_t)value);
+    else if (!qa_format_fixed(value,6,text,sizeof(text),error)) return false;
+    size_t length=strlen(text);
+    if (truncated) *truncated=length>=32;
+    if (length>=32) {
+        if (qac_q1(dialect))
+            return qac_fail(error,QA_ERROR_FORMAT,"numeric cvar exceeds source value buffer");
+        length=31;
     }
-    return qa_parse_ecmascript_number(input,out,NULL);
+    memcpy(out,text,length); out[length]='\0'; return true;
 }
-static const char *alias_read(const cvar_alias *alias,const char *source,char out[32])
+static const char *alias_read(qa_console_dialect dialect,const cvar_alias *alias,
+    const char *source,char out[32])
 {
     if (!source || alias->conversion==QA_CVAR_ALIAS_IDENTITY) return source;
+    float number=qac_number(source,dialect);
     if (alias->conversion==QA_CVAR_ALIAS_KILOHERTZ) {
-        if (!strcmp(source,"11025")) return "11";
-        if (!strcmp(source,"22050")) return "22";
-        if (!strcmp(source,"44100")) return "44";
-        if (!strcmp(source,"48000")) return "48";
-    }
-    double number=0;
-    if (!alias_number(source,&number,true)) number=NAN;
-    number=alias->conversion==QA_CVAR_ALIAS_RECIPROCAL_GAMMA?1/number:number/1000;
-    if (isnan(number)) return "NaN";
-    if (isinf(number)) return signbit(number)?"-Infinity":"Infinity";
-    return qa_format_ecmascript_number(number,out,NULL)?out:NULL;
+        if (number==11025) number=11;
+        else if (number==22050) number=22;
+        else if (number==44100) number=44;
+        else if (number==48000) number=48;
+        else number/=1000;
+    } else number=1/number;
+    return format_number(dialect,number,out,NULL,NULL)?out:NULL;
 }
 static const qa_cvar_view *alias_view(const qa_cvars *registry,const cvar_values *values,cvar_alias *alias)
 {
@@ -179,9 +182,9 @@ static const qa_cvar_view *alias_view(const qa_cvars *registry,const cvar_values
     alias->projection.name=alias->name;
     alias->projection.description=alias->description;
     alias->projection.documentation=alias->documentation;
-    alias->projection.value=alias_read(alias,target->view.value,alias->value);
-    alias->projection.reset_value=alias_read(alias,target->view.reset_value,alias->reset);
-    alias->projection.latched_value=alias_read(alias,target->view.latched_value,alias->latched);
+    alias->projection.value=alias_read(registry->options.dialect,alias,target->view.value,alias->value);
+    alias->projection.reset_value=alias_read(registry->options.dialect,alias,target->view.reset_value,alias->reset);
+    alias->projection.latched_value=alias_read(registry->options.dialect,alias,target->view.latched_value,alias->latched);
     if (!alias->projection.value || !alias->projection.reset_value) return NULL;
     alias->projection.number=qac_number(alias->projection.value,registry->options.dialect);
     alias->projection.integer=qac_integer(alias->projection.value);
@@ -810,18 +813,21 @@ static const char *alias_write(cvar_target target,const cvar_alias *alias,const 
     char converted[32],qa_error *error)
 {
     if (alias->conversion==QA_CVAR_ALIAS_IDENTITY) return value;
-    double number;
-    bool valid=alias_number(value,&number,false) && isfinite(number);
+    float number=qac_number(value,target.registry->options.dialect);
+    bool valid=isfinite(number);
     if (alias->conversion==QA_CVAR_ALIAS_RECIPROCAL_GAMMA) {
-        if (valid && number>=1.0/3.0 && number<=2)
-            return qa_format_ecmascript_number(1/number,converted,error)?converted:NULL;
+        if (valid && number>=1.0f/3.0f && number<=2)
+            return format_number(target.registry->options.dialect,1/number,converted,NULL,error)?converted:NULL;
         print_message(target,alias->name,": Gamma must be between 1/3 and 2\n");
     } else {
         if (valid) {
-            if (number==11) return "11025";
-            if (number==22) return "22050";
-            if (number==44) return "44100";
-            if (number==48) return "48000";
+            if (number==11) number=11025;
+            else if (number==22) number=22050;
+            else if (number==44) number=44100;
+            else if (number==48) number=48000;
+            else valid=false;
+            if (valid)
+                return format_number(target.registry->options.dialect,number,converted,NULL,error)?converted:NULL;
         }
         print_message(target,alias->name,": Use s_khz 11, 22, 44 or 48\n");
     }
@@ -1054,17 +1060,10 @@ static bool set_number_variable(cvar_target target, const char *name, float valu
     if (!target_touch(target, error)) return false;
     if (registry == NULL || !isfinite(value))
         return qac_fail(error, QA_ERROR_ARGUMENT, "cvar numeric set requires a finite float");
-    char text[64];
-    if (!qac_q1(registry->options.dialect) && value >= -2147483648.0f &&
-        value < 2147483648.0f && truncf(value) == value)
-        (void)snprintf(text, sizeof(text), "%d", (int32_t)value);
-    else if (!qa_format_fixed(value, 6, text, sizeof(text), error)) return false;
-    if (strlen(text) >= 32) {
-        if (qac_q1(registry->options.dialect))
-            return qac_fail(error, QA_ERROR_FORMAT, "numeric cvar exceeds source value buffer");
+    char text[32]; bool truncated=false;
+    if (!format_number(registry->options.dialect,value,text,&truncated,error)) return false;
+    if (truncated)
         print_message(target, NULL, "numeric cvar truncated to source value buffer\n");
-        text[31] = '\0';
-    }
     return set_variable(target, name, text, registry->options.dialect == QA_CONSOLE_Q3, error);
 }
 

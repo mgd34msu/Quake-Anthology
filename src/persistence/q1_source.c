@@ -2,7 +2,7 @@
 #include "qa/q1_save.h"
 #include "qa/text.h"
 #include "qa/source_save.h"
-#include <float.h>
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,7 +10,7 @@
 
 typedef struct scanner { qa_bytes bytes; size_t offset; qa_error *error; } scanner;
 typedef qa_source_save_io writer;
-static bool js_space(uint8_t c) { return c==32 || c==160 || (c>=9 && c<=13); }
+static bool header_space(uint8_t c) { return c==32 || (c>=9 && c<=13); }
 static bool fail(qa_error *error,size_t offset,const char *message)
 { qa_error_set(error,QA_ERROR_FORMAT,offset,"%s",message); return false; }
 static char *copy(qa_bytes bytes,qa_error *error)
@@ -60,44 +60,38 @@ static bool token(scanner *s,qa_bytes *out)
             s->bytes.data[s->offset]!='{' && s->bytes.data[s->offset]!='}') ++s->offset;
     *out=(qa_bytes){s->bytes.data+start,s->offset-start}; return true;
 }
+static bool header_read(scanner *s,qa_bytes *out)
+{
+    while (s->offset<s->bytes.size && header_space(s->bytes.data[s->offset])) ++s->offset;
+    size_t start=s->offset;
+    while (s->offset<s->bytes.size && !header_space(s->bytes.data[s->offset])) ++s->offset;
+    if (start==s->offset) return fail(s->error,start,"Truncated source header");
+    *out=(qa_bytes){s->bytes.data+start,s->offset-start}; return true;
+}
 static bool text_token(scanner *s,char **out)
-{ qa_bytes bytes; if (!token(s,&bytes)) return false; *out=copy(bytes,s->error); return *out!=NULL; }
+{ qa_bytes bytes; if (!header_read(s,&bytes)) return false; *out=copy(bytes,s->error); return *out!=NULL; }
 static bool is_token(qa_bytes bytes,char value)
 { return bytes.size==1 && bytes.data[0]==(uint8_t)value; }
+static bool integer(scanner *s,int32_t *out)
+{
+    qa_bytes bytes; if (!header_read(s,&bytes)) return false;
+    char *text=copy(bytes,s->error); if (!text) return false;
+    char *end; int previous_errno=errno; errno=0;
+    long value=strtol(text,&end,0);
+    bool valid=end==text+bytes.size && errno!=ERANGE && value>=INT32_MIN && value<=INT32_MAX;
+    errno=previous_errno; free(text);
+    if (!valid) return fail(s->error,s->offset,"Invalid source header integer");
+    *out=(int32_t)value; return true;
+}
 static bool number(scanner *s,double *out)
 {
-    qa_bytes bytes; if (!token(s,&bytes)) return false;
-    while (bytes.size && js_space(bytes.data[0])) { ++bytes.data; --bytes.size; }
-    while (bytes.size && js_space(bytes.data[bytes.size-1])) --bytes.size;
-    double value=0;
-    if (bytes.size>=2 && bytes.data[0]=='0' && (bytes.data[1]=='b' || bytes.data[1]=='B' || bytes.data[1]=='o' || bytes.data[1]=='O' || bytes.data[1]=='x' || bytes.data[1]=='X')) {
-        unsigned base=bytes.data[1]=='b'||bytes.data[1]=='B'?2:bytes.data[1]=='o'||bytes.data[1]=='O'?8:16;
-        if (bytes.size==2) return fail(s->error,s->offset,"Invalid source header number");
-        for (size_t i=2;i<bytes.size;++i) {
-            uint8_t c=bytes.data[i];
-            unsigned digit=c>='0' && c<='9'?c-'0':c>='a' && c<='f'?c-'a'+10:c>='A' && c<='F'?c-'A'+10:16;
-            if (digit>=base) return fail(s->error,s->offset,"Invalid source header number");
-            value=value*base+digit;
-        }
-    } else if (bytes.size) {
-        size_t p=0,digits=0;
-        if (bytes.data[p]=='+' || bytes.data[p]=='-') ++p;
-        while (p<bytes.size && bytes.data[p]>='0' && bytes.data[p]<='9') { ++p; ++digits; }
-        if (p<bytes.size && bytes.data[p]=='.') {
-            ++p;
-            while (p<bytes.size && bytes.data[p]>='0' && bytes.data[p]<='9') { ++p; ++digits; }
-        }
-        if (!digits) return fail(s->error,s->offset,"Invalid source header number");
-        if (p<bytes.size && (bytes.data[p]=='e' || bytes.data[p]=='E')) {
-            ++p; size_t exponent_digits=0;
-            if (p<bytes.size && (bytes.data[p]=='+' || bytes.data[p]=='-')) ++p;
-            while (p<bytes.size && bytes.data[p]>='0' && bytes.data[p]<='9') { ++p; ++exponent_digits; }
-            if (!exponent_digits) return fail(s->error,s->offset,"Invalid source header number");
-        }
-        if (p!=bytes.size || !qa_parse_number(bytes,&value,s->error))
-            return fail(s->error,s->offset,"Invalid source header number");
-    }
-    if (!isfinite(value)) return fail(s->error,s->offset,"Nonfinite source header number");
+    qa_bytes bytes; if (!header_read(s,&bytes)) return false;
+    char *text=copy(bytes,s->error); if (!text) return false;
+    double parsed; size_t consumed; bool range_error; float value;
+    bool valid=qa_parse_strtod(text,&parsed,&consumed,&range_error,s->error) &&
+        consumed==bytes.size && qa_parse_atof_float(text,&value,s->error) && isfinite(value);
+    free(text);
+    if (!valid) return fail(s->error,s->offset,"Invalid source header float");
     *out=value; return true;
 }
 static bool record(scanner *s,qa_q1_save_record *out)
@@ -123,9 +117,9 @@ bool qa_q1_save_decode(qa_bytes bytes,qa_q1_save_data **out,qa_error *error)
         return fail(error,0,"Source save requires nonempty byte text and an empty output");
     qa_q1_save_data *save=calloc(1,sizeof(*save));
     if (!save) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating source save"); return false; }
-    scanner s={bytes,0,error}; double value=0;
-    bool ok=number(&s,&value) && (value==5 || value==6);
-    if (ok) save->version=(uint32_t)value;
+    scanner s={bytes,0,error}; double value=0; int32_t version=0;
+    bool ok=integer(&s,&version) && (version==5 || version==6);
+    if (ok) save->version=(uint32_t)version;
     else if (error && error->code==QA_OK) fail(error,s.offset,"Unsupported source save version");
     if (ok && save->version==6) ok=text_token(&s,&save->game_directories);
     if (ok) ok=text_token(&s,&save->comment);
@@ -167,127 +161,18 @@ static bool header_token(writer *w,const char *text)
 {
     if (!text || !*text) return fail(w->error,w->offset,"Empty source header token");
     for (const unsigned char *p=(const unsigned char *)text;*p;++p)
-        if (js_space(*p) || *p=='"') return fail(w->error,w->offset,"Invalid source header token");
+        if (header_space(*p) || *p=='"') return fail(w->error,w->offset,"Invalid source header token");
     return line(w,text);
 }
-/* Binary64 header numbers follow Number.toFixed, while QC FIELD values retain
- * the separate source C %f formatter. The largest binary64 integer needs 1024
- * bits. Two spare words cover the adjacent decimal candidates. */
-typedef struct header_integer { uint32_t words[34]; } header_integer;
-static header_integer integer_u64(uint64_t value)
-{ header_integer n={{(uint32_t)value,(uint32_t)(value>>32)}}; return n; }
-static void integer_multiply(header_integer *n,uint32_t factor)
-{
-    uint64_t carry=0;
-    for (size_t i=0;i<34;++i) { uint64_t v=(uint64_t)n->words[i]*factor+carry; n->words[i]=(uint32_t)v; carry=v>>32; }
-}
-static int integer_compare(const header_integer *a,const header_integer *b)
-{
-    for (size_t i=34;i>0;--i) if (a->words[i-1]!=b->words[i-1]) return a->words[i-1]<b->words[i-1]?-1:1;
-    return 0;
-}
-static header_integer integer_distance(const header_integer *a,const header_integer *b)
-{
-    if (integer_compare(a,b)<0) { const header_integer *swap=a; a=b; b=swap; }
-    header_integer result={{0}}; uint64_t borrow=0;
-    for (size_t i=0;i<34;++i) {
-        uint64_t right=(uint64_t)b->words[i]+borrow,left=a->words[i];
-        result.words[i]=(uint32_t)(left-right); borrow=left<right;
-    }
-    return result;
-}
-static header_integer integer_shift(const header_integer *n,int shift)
-{
-    header_integer result={{0}};
-    for (int bit=0;bit<1088;++bit) if ((n->words[bit/32]>>(bit%32))&1u) {
-        int target=bit+shift;
-        if (target>=0 && target<1088) result.words[target/32]|=UINT32_C(1)<<(target%32);
-    }
-    return result;
-}
-static void integer_increment(header_integer *n)
-{ for (size_t i=0;i<34;++i) if (++n->words[i]) break; }
-static uint32_t integer_divide10(header_integer *n)
-{
-    uint64_t remainder=0;
-    for (size_t i=34;i>0;--i) {
-        uint64_t value=(remainder<<32)|n->words[i-1];
-        n->words[i-1]=(uint32_t)(value/10); remainder=value%10;
-    }
-    return (uint32_t)remainder;
-}
-static bool scientific(uint64_t coefficient,int exponent,bool negative,char text[384])
-{
-    char digits[32]; int count=snprintf(digits,sizeof(digits),"%llu",(unsigned long long)coefficient);
-    if (count<1 || (size_t)count>=sizeof(digits)) return false;
-    int exp=exponent+count-1;
-    while (count>1 && digits[count-1]=='0') --count;
-    size_t used=0;
-    if (negative) text[used++]='-';
-    text[used++]=digits[0];
-    if (count>1) { text[used++]='.'; memcpy(text+used,digits+1,(size_t)count-1); used+=(size_t)count-1; }
-    int tail=snprintf(text+used,384-used,"e+%d",exp);
-    return tail>0 && (size_t)tail<384-used;
-}
-static bool shortest_header(double value,const header_integer *actual,char text[384],qa_error *error)
-{
-    char initial[32]; double magnitude=fabs(value);
-    if (!qa_format_number(magnitude,initial,error)) return false;
-    const char *e=strchr(initial,'e'); if (!e) e=strchr(initial,'E');
-    if (!e) return fail(error,0,"Large source number has no scientific representation");
-    int exponent=0; const char *p=e+1; if (*p=='+') ++p;
-    for (;*p;++p) { if (*p<'0' || *p>'9') return fail(error,0,"Invalid numeric exponent"); exponent=exponent*10+*p-'0'; }
-    uint64_t full=0; size_t total=0;
-    for (p=initial;p<e;++p) if (*p!='.') { full=full*10+(unsigned)(*p-'0'); ++total; }
-    uint64_t divisor=1;
-    for (size_t i=1;i<total;++i) divisor*=10;
-    for (size_t precision=1;precision<=total;++precision,divisor/=10) {
-        uint64_t floor=full/divisor,best=0; header_integer distance={{0}}; bool found=false;
-        int power=exponent-(int)precision+1;
-        for (int delta=-1;delta<=1;++delta) {
-            uint64_t candidate=delta<0?floor-1:floor+(unsigned)delta;
-            if (!candidate || !scientific(candidate,power,value<0,text)) continue;
-            double parsed=0;
-            qa_error candidate_error={0};
-            if (!qa_parse_number((qa_bytes){(const uint8_t *)text,strlen(text)},&parsed,&candidate_error)) continue;
-            if (parsed!=value) continue;
-            header_integer decimal=integer_u64(candidate);
-            for (int i=0;i<power;++i) integer_multiply(&decimal,10);
-            header_integer difference=integer_distance(actual,&decimal);
-            int order=found?integer_compare(&difference,&distance):-1;
-            if (!found || order<0 || (!order && !(candidate&1u))) { found=true; best=candidate; distance=difference; }
-        }
-        if (found) return scientific(best,power,value<0,text);
-    }
-    return fail(error,0,"Cannot serialize source header number");
-}
-static bool decimal(writer *w,double value,unsigned digits)
+static bool decimal(writer *w,double value)
 {
     if (!isfinite(value)) return fail(w->error,w->offset,"Nonfinite source header number");
-    if (!digits) { char integer[384]; return qa_format_fixed(value,0,integer,sizeof(integer),w->error) && line(w,integer); }
-    _Static_assert(sizeof(double)==8 && FLT_RADIX==2 && DBL_MANT_DIG==53 && DBL_MAX_EXP==1024,
-        "Source header codec requires binary64 numbers");
-    uint64_t bits=0; memcpy(&bits,&value,8);
-    uint32_t exponent=(uint32_t)((bits>>52)&2047u);
-    uint64_t mantissa=bits&UINT64_C(0xfffffffffffff);
-    if (exponent) mantissa|=UINT64_C(1)<<52;
-    int shift=exponent?(int)exponent-1075:-1074;
-    header_integer exact=integer_u64(mantissa); char text[384];
-    if (fabs(value)>=1e21) {
-        exact=integer_shift(&exact,shift);
-        return shortest_header(value,&exact,text,w->error) && line(w,text);
-    }
-    integer_multiply(&exact,1000000);
-    header_integer rounded=integer_shift(&exact,shift);
-    int half=-shift-1;
-    if (shift<0 && half<1088 && ((exact.words[half/32]>>(half%32))&1u)) integer_increment(&rounded);
-    char reverse[384]; size_t count=0; header_integer zero={{0}};
-    do { reverse[count++]=(char)('0'+integer_divide10(&rounded)); } while (integer_compare(&rounded,&zero));
-    while (count<=6) reverse[count++]='0';
-    size_t used=0;
-    if (value<0) text[used++]='-';
-    for (size_t i=count;i>0;--i) { if (i==6) text[used++]='.'; text[used++]=reverse[i-1]; }
-    text[used]=0; return line(w,text);
+    char text[384];
+    return qa_format_fixed(value,6,text,sizeof(text),w->error) && line(w,text);
+}
+static bool integer_line(writer *w,int32_t value)
+{
+    char text[12]; (void)snprintf(text,sizeof(text),"%d",value); return line(w,text);
 }
 static bool put_record(writer *w,const qa_q1_save_record *record)
 {
@@ -309,8 +194,8 @@ bool qa_q1_save_encode(const qa_q1_save_data *save,qa_buffer *out,qa_error *erro
     writer w={0}; bool ok=qa_source_save_writer(&w,NULL,error) && line(&w,save->version==5?"5":"6");
     if (ok && save->version==6) ok=header_token(&w,save->game_directories);
     if (ok) ok=header_token(&w,save->comment);
-    for (size_t i=0;ok && i<16;++i) ok=decimal(&w,save->spawn_parameters[i],6);
-    if (ok) ok=decimal(&w,save->skill,0) && header_token(&w,save->map) && decimal(&w,save->time,6);
+    for (size_t i=0;ok && i<16;++i) ok=decimal(&w,(float)save->spawn_parameters[i]);
+    if (ok) ok=integer_line(&w,save->skill) && header_token(&w,save->map) && decimal(&w,save->time);
     for (size_t i=0;ok && i<64;++i) ok=header_token(&w,save->lightstyles[i] && *save->lightstyles[i]?save->lightstyles[i]:"m");
     if (ok) ok=put_record(&w,&save->globals);
     for (size_t i=0;ok && i<save->entity_count;++i) ok=put_record(&w,save->entities+i);
