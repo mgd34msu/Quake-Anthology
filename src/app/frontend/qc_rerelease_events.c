@@ -1,8 +1,6 @@
 #include "internal.h"
 #include "qc_rerelease_events.h"
-#include "save_private.h"
 #include "qa/qc.h"
-#include "qa/font_world_save.h"
 
 typedef struct qc_debug_line {
     qa_debug_line value;
@@ -69,11 +67,6 @@ static void prune(qc_debug_source *source,uint64_t now,uint64_t frame)
         source->lines[kept++]=line;
     }
     source->count=kept;
-}
-static bool line_valid(const qa_debug_line *line)
-{
-    return qa_vec_finite(line->start) && qa_vec_finite(line->end) && isfinite(line->color.x) &&
-        isfinite(line->color.y) && isfinite(line->color.z) && isfinite(line->color.w);
 }
 static bool append(qc_debug_source *source,const qa_debug_line *lines,size_t count,
     uint64_t now,double lifetime,uint64_t frame,qa_error *error)
@@ -194,92 +187,4 @@ bool frontend_qc_rerelease_draw(qa_frontend *f,uint32_t seat,const qa_scene_view
             (texts.count && !qa_font_world_draw(&f->frame,view,&texts,&f->seats[seat].fonts,0,false,error))) return false;
     }
     return true;
-}
-static bool text_content(void *context,uint64_t content,uint64_t *out,qa_error *error)
-{
-    (void)context;
-    if (!out || content) return frontend_fail(error,QA_ERROR_FORMAT,"QC debug text changes its actual seat font authority");
-    *out=0; return true;
-}
-static bool fields(qa_source_save_io *io,qa_frontend *f,frontend_qc_rerelease **owner)
-{
-    bool reading=io->direction==QA_SOURCE_SAVE_READ,present=!reading && *owner;
-    uint8_t magic[4]={'Q','F','Q','D'}; size_t count=0;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFQD",4) ||
-        !qa_source_save_bool(io,&present)) return false;
-    if (!present) return true;
-    if (!reading) for (qc_debug_source *source=(*owner)->sources;source;source=source->next) ++count;
-    if (!qa_source_save_count(io,&count,reading?io->input.size-io->offset:SIZE_MAX)) return false;
-    if (reading) {
-        *owner=calloc(1,sizeof(**owner));
-        if (!*owner) return frontend_fail(io->error,QA_ERROR_MEMORY,"Restoring actual QC debug owner");
-    }
-    qc_debug_source **link=&(*owner)->sources;
-    qa_font_world_checkpoint_refs refs={.content_encode=text_content,.content_decode=text_content};
-    for (size_t i=0;i<count;++i) {
-        if (reading) {
-            *link=calloc(1,sizeof(**link));
-            if (!*link) return frontend_fail(io->error,QA_ERROR_MEMORY,"Restoring actual QC debug source");
-            (*link)->texts=qa_font_world_store_create(io->error);
-            if (!(*link)->texts) return false;
-        }
-        qc_debug_source *source=*link;
-        if (!source || !frontend_save_provider(io,f->application,&source->provider) || !source->provider ||
-            !qa_source_save_count(io,&source->capacity,SIZE_MAX/sizeof(*source->lines)) ||
-            !qa_source_save_count(io,&source->count,source->capacity) ||
-            (reading && source->count>(io->input.size-io->offset)/59)) return false;
-        for (qc_debug_source *previous=(*owner)->sources;previous!=source;previous=previous->next)
-            if (previous->provider==source->provider) return false;
-        if (reading && source->capacity) {
-            source->lines=calloc(source->capacity,sizeof(*source->lines));
-            if (!source->lines) return frontend_fail(io->error,QA_ERROR_MEMORY,"Restoring retained QC debug geometry");
-        }
-        if (source->count && !source->lines) return false;
-        for (size_t j=0;j<source->count;++j) {
-            qc_debug_line *line=source->lines+j; qa_scene_vec4 *color=&line->value.color;
-            if (!qa_source_save_vec3(io,&line->value.start) || !qa_source_save_vec3(io,&line->value.end) ||
-                !qa_source_save_f32(io,&color->x) || !qa_source_save_f32(io,&color->y) ||
-                !qa_source_save_f32(io,&color->z) || !qa_source_save_f32(io,&color->w) ||
-                !qa_source_save_bool(io,&line->value.depth_test) || !qa_source_save_u64(io,&line->expires) ||
-                !qa_source_save_u64(io,&line->first_frame) || !qa_source_save_bool(io,&line->instant) ||
-                !qa_source_save_bool(io,&line->observed) || !line_valid(&line->value) ||
-                (line->instant && line->expires) || (!line->observed && line->first_frame)) return false;
-        }
-        qa_buffer blob={0}; size_t size=0;
-        bool ok=reading || qa_font_world_store_checkpoint(source->texts,&refs,&blob,io->error);
-        if (!reading) size=blob.size;
-        ok=ok && qa_source_save_count(io,&size,reading?io->input.size-io->offset:SIZE_MAX);
-        if (ok && reading) {
-            qa_bytes bytes={io->input.data+io->offset,size}; io->offset+=size;
-            ok=qa_font_world_store_restore(source->texts,bytes,&refs,io->error);
-        } else if (ok) ok=qa_source_save_bytes(io,blob.data,size);
-        qa_buffer_free(&blob); if (!ok) return false;
-        link=&source->next;
-    }
-    return true;
-}
-bool frontend_qc_rerelease_checkpoint(qa_frontend *f,qa_buffer *out,qa_error *error)
-{
-    if (!f || !f->application || !out || out->data || out->size || f->stepping ||
-        (f->qc_rerelease && f->qc_rerelease->handling))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"QC debug checkpoint requires its idle actual owner");
-    qa_source_save_io io={0};
-    bool ok=qa_source_save_writer(&io,qa_application_session(f->application),error) &&
-        fields(&io,f,&f->qc_rerelease) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io);
-    if (!ok && error && error->code==QA_OK) frontend_fail(error,QA_ERROR_FORMAT,"Invalid actual QC debug continuation");
-    return ok;
-}
-bool frontend_qc_rerelease_restore(qa_frontend *f,qa_bytes bytes,qa_error *error)
-{
-    if (!f || !f->application || !f->source_restoring || f->stepping || f->qc_rerelease)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"QC debug import requires its isolated empty candidate owner");
-    frontend_qc_rerelease *candidate=NULL; qa_source_save_io io={0};
-    bool ok=qa_source_save_reader(&io,qa_application_session(f->application),bytes,error) &&
-        fields(&io,f,&candidate) && qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io);
-    f->qc_rerelease=candidate;
-    if (!ok) frontend_qc_rerelease_destroy(f);
-    if (!ok && error && error->code==QA_OK) frontend_fail(error,QA_ERROR_FORMAT,"Invalid saved QC debug continuation");
-    return ok;
 }

@@ -16,13 +16,6 @@ typedef struct frontend_native_q2_owner_view {
     qa_font_library *fonts;
     bool prepared;
 } frontend_native_q2_owner_view;
-/* Physical saved lease order includes GAME leases whose resource heaps have
- * not been created. Native factories consume exact owner/profile/provider-view
- * rows while the enclosing frontend constructor policy is active. */
-bool frontend_native_q2_topology_checkpoint(const qa_frontend *, qa_buffer *, qa_error *);
-bool frontend_native_q2_prepare_restored(qa_frontend *, qa_bytes, qa_error *);
-bool frontend_native_q2_topology_ready(const qa_frontend *, qa_error *);
-void frontend_native_q2_topology_finish(qa_frontend *);
 /* Retire real application leases first. Pending constructors and consumed
  * application leases retain their real views/heaps while a child is busy;
  * this destructor retries those actual unbound rows before unlinking them. */
@@ -39,10 +32,4 @@ bool frontend_native_q2_children_idle(const qa_frontend *);
 /* A Q3 cut requires Q3 character ownership. Original Q2 cgame imports require
  * a native KEX character producer, so installed cgame leases cannot join it. */
 bool frontend_native_q2_q3_round_ready(const qa_frontend *, qa_error *);
-/* Global image/font/audio families restore the actual heaps exposed above.
- * This section then imports true GAME lease clocks, classic-font selection and
- * retained world text. CGAME guest allocations/catalogs need a qualified full
- * original module producer and are explicitly unadmitted here. */
-bool frontend_native_q2_private_checkpoint(const qa_frontend *, qa_buffer *, qa_error *);
-bool frontend_native_q2_private_restore(qa_frontend *, qa_bytes, qa_error *);
 #endif

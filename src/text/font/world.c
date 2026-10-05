@@ -1,7 +1,5 @@
 #include "internal.h"
 #include "qa/text.h"
-#include "qa/font_world_save.h"
-#include "qa/source_save.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -19,95 +17,6 @@ struct qa_font_world_store {
     stored_text *entries;
     size_t count, capacity;
 };
-
-static bool world_save_fields(qa_source_save_io *io, stored_text *entry,
-    const qa_font_world_checkpoint_refs *refs)
-{
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    qa_font_world_text *text = &entry->value;
-    uint32_t orientation = text->orientation, font = text->font;
-    uint64_t content = 0;
-    if (!reading && !refs->content_encode(refs->context, text->content, &content, io->error)) return false;
-    if (!qa_source_save_u32(io, &orientation) || orientation > QA_FONT_WORLD_FIXED ||
-        !qa_source_save_u32(io, &font) || font > QA_FONT_WORLD_SELECTED ||
-        !qa_source_save_vec3(io, &text->origin) || !qa_source_save_vec3(io, &text->angles) ||
-        !qa_source_save_f32(io, &text->color.x) || !qa_source_save_f32(io, &text->color.y) ||
-        !qa_source_save_f32(io, &text->color.z) || !qa_source_save_f32(io, &text->color.w) ||
-        !qa_source_save_f32(io, &text->cell_size) || !qa_source_save_f32(io, &text->distance_cull_factor) ||
-        !qa_source_save_bool(io, &text->depth_test) || !qa_source_save_bool(io, &text->has_distance_cull) ||
-        !qa_source_save_u64(io, &content) || !qa_source_save_f64(io, &entry->expires) ||
-        !qa_source_save_u64(io, &entry->first_frame) || !qa_source_save_bool(io, &entry->one_frame) ||
-        !qa_source_save_bool(io, &entry->observed)) return false;
-    if (reading) {
-        text->orientation = (qa_font_world_orientation)orientation;
-        text->font = (qa_font_world_source)font;
-        if (!refs->content_decode(refs->context, content, &text->content, io->error)) return false;
-    }
-    if (!qa_vec_finite(text->origin) || (orientation == QA_FONT_WORLD_FIXED && !qa_vec_finite(text->angles)) ||
-        !isfinite(text->color.x) || !isfinite(text->color.y) || !isfinite(text->color.z) || !isfinite(text->color.w) ||
-        !isfinite(text->cell_size) || text->cell_size <= 0 ||
-        (text->has_distance_cull && !isfinite(text->distance_cull_factor)) || !isfinite(entry->expires))
-        return qa_font_fail(io->error, QA_ERROR_FORMAT, io->offset, "Saved world text changes actual submission fields");
-    size_t length = reading ? 0 : text->text.size;
-    if (!qa_source_save_count(io, &length, reading ? io->input.size - io->offset : SIZE_MAX)) return false;
-    if (reading && length) {
-        entry->bytes = malloc(length);
-        if (!entry->bytes) return qa_font_fail(io->error, QA_ERROR_MEMORY, io->offset, "Retaining saved world text bytes");
-    }
-    if (!qa_source_save_bytes(io, reading ? entry->bytes : (void *)text->text.data, length)) return false;
-    if (reading) text->text = (qa_bytes){entry->bytes, length};
-    return true;
-}
-static bool world_save_header(qa_source_save_io *io, size_t *count)
-{
-    uint8_t magic[4] = {'Q','W','T','X'};
-    size_t maximum = SIZE_MAX / sizeof(stored_text);
-    if (io->direction == QA_SOURCE_SAVE_READ && io->input.size / 91 < maximum) maximum = io->input.size / 91;
-    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QWTX", 4) &&
-        qa_source_save_count(io, count, maximum);
-}
-bool qa_font_world_store_checkpoint(const qa_font_world_store *store,
-    const qa_font_world_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
-{
-    if (!store || !refs || !refs->content_encode || !out || out->data || out->size ||
-        store->count > store->capacity || (store->count && !store->entries))
-        return qa_font_fail(error, QA_ERROR_ARGUMENT, 0, "World text checkpoint requires actual retained rows and empty output");
-    qa_source_save_io io = {0}; size_t count = store->count;
-    bool ok = qa_source_save_writer(&io, NULL, error) && world_save_header(&io, &count);
-    for (size_t i = 0; ok && i < count; ++i) {
-        stored_text entry = store->entries[i];
-        if ((entry.value.text.size && !entry.value.text.data) || entry.value.text.data != entry.bytes) {
-            ok = qa_font_fail(error, QA_ERROR_FORMAT, i, "World text checkpoint lacks its actual owned text");
-            break;
-        }
-        ok = world_save_fields(&io, &entry, refs);
-    }
-    ok = ok && qa_source_save_finish(&io, out); qa_source_save_dispose(&io);
-    if (!ok && (!error || error->code == QA_OK)) qa_font_fail(error, QA_ERROR_FORMAT, 0, "World text checkpoint is invalid");
-    return ok;
-}
-bool qa_font_world_store_restore(qa_font_world_store *store, qa_bytes bytes,
-    const qa_font_world_checkpoint_refs *refs, qa_error *error)
-{
-    if (!store || !refs || !refs->content_decode)
-        return qa_font_fail(error, QA_ERROR_ARGUMENT, 0, "World text restore requires actual qualified content owners");
-    qa_font_world_store candidate = {0}; qa_source_save_io io = {0};
-    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && world_save_header(&io, &candidate.count);
-    candidate.capacity = candidate.count;
-    if (ok && candidate.count) {
-        candidate.entries = calloc(candidate.count, sizeof(*candidate.entries));
-        if (!candidate.entries) ok = qa_font_fail(error, QA_ERROR_MEMORY, 0, "Preparing world text continuation rows");
-    }
-    for (size_t i = 0; ok && i < candidate.count; ++i) ok = world_save_fields(&io, candidate.entries + i, refs);
-    ok = ok && qa_source_save_finish(&io, NULL); qa_source_save_dispose(&io);
-    if (ok) {
-        qa_font_world_store previous = *store; *store = candidate; candidate = previous;
-    }
-    if (candidate.entries) for (size_t i = 0; i < candidate.count; ++i) free(candidate.entries[i].bytes);
-    free(candidate.entries);
-    if (!ok && (!error || error->code == QA_OK)) qa_font_fail(error, QA_ERROR_FORMAT, 0, "Saved world text continuation is invalid");
-    return ok;
-}
 
 static bool finite_color(qa_scene_vec4 value) {
     return isfinite(value.x) && isfinite(value.y) && isfinite(value.z) && isfinite(value.w);
