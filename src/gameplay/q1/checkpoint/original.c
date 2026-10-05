@@ -243,8 +243,8 @@ static const original_think_callback think_callbacks[] = {
     {Q1_THINK_WIZARD, "Wiz_FastFire"}, {Q1_THINK_RESPAWN, "SUB_regen"},
     {Q1_THINK_MEGA_ROT, "MegaHealthRot"}, {Q1_THINK_ITEM_PLACE, "PlaceItem"},
     {Q1_THINK_DEATH_BUBBLES, "DeathBubblesSpawn"}, {Q1_THINK_BUBBLE, "bubble_bob"},
-    {Q1_THINK_HIP_LASER, "LaserThink"}, {Q1_THINK_PROX_WATCH, "ProximityThink"},
-    {Q1_THINK_PROX_EXPLODE, "ProximityGrenadeExplode"},
+    {Q1_THINK_HIP_LASER, "HIP_LaserThink"}, {Q1_THINK_PROX_WATCH, "ProximityBomb"},
+    {Q1_THINK_PROX_EXPLODE, "ProximityExplode"},
     {Q1_THINK_MULTI_SPLIT, "MultiGrenadeThink"}, {Q1_THINK_MINI_EXPLODE, "MiniGrenadeExplode"},
     {Q1_THINK_MULTI_EXPLODE, "MultiGrenadeExplode"}, {Q1_THINK_MULTI_ACQUIRE, "MultiRocketThink"},
     {Q1_THINK_MULTI_HOME, "MultiRocketThink"}, {Q1_THINK_PLASMA_LAUNCH, "PlasmaThink"},
@@ -428,6 +428,19 @@ typedef struct original_projectile {
     qa_q1_weapon weapon;
     const char *native_classname;
 } original_projectile;
+static const original_field hip_laser_fields[] = {
+    {"lastvictim", ORIGINAL_REF, offsetof(q1_projectile, activator)},
+    {"old_velocity", ORIGINAL_VECTOR, offsetof(q1_projectile, movedir)},
+    {"attack_finished", ORIGINAL_DOUBLE, offsetof(q1_projectile, expires)},
+    {"cnt", ORIGINAL_U32, offsetof(q1_projectile, count)},
+    {"dmg", ORIGINAL_FLOAT, offsetof(q1_projectile, damage)}
+};
+static const original_field proximity_fields[] = {
+    {"lastvictim", ORIGINAL_REF, offsetof(q1_projectile, activator)},
+    {"spawnmaster", ORIGINAL_REF, offsetof(q1_projectile, surface)},
+    {"delay", ORIGINAL_DOUBLE, offsetof(q1_projectile, expires)},
+    {"state", ORIGINAL_U32, offsetof(q1_projectile, count)}
+};
 static const original_projectile projectiles[] = {
     {Q1_SPIKE,"spike","spike_touch",QA_Q1_NAILGUN,"spike"},
     {Q1_SUPERSPIKE,"spike","superspike_touch",QA_Q1_SUPER_NAILGUN,"superspike"},
@@ -439,7 +452,9 @@ static const original_projectile projectiles[] = {
     {Q1_OGRE_GRENADE,"","OgreGrenadeTouch",QA_Q1_WEAPON_COUNT,"ogre_grenade"},
     {Q1_ZOMBIE_GRENADE,"","ZombieGrenadeTouch",QA_Q1_WEAPON_COUNT,"zombie_grenade"},
     {Q1_VORE_BALL,"","ShalMissileTouch",QA_Q1_WEAPON_COUNT,"vore_ball"},
-    {Q1_LAVA_BALL,"","T_MissileTouch",QA_Q1_WEAPON_COUNT,"chthon_lavaball"}
+    {Q1_LAVA_BALL,"","T_MissileTouch",QA_Q1_WEAPON_COUNT,"chthon_lavaball"},
+    {Q1_HIP_LASER,"hiplaser","HIP_LaserTouch",QA_Q1_LASER,"hiplaser"},
+    {Q1_PROXIMITY,"proximity_grenade","ProximityGrenadeTouch",QA_Q1_PROXIMITY,"proximity_grenade"}
 };
 static bool projectile_fields(qa_q1_wire_receipt *receipt, const q1_actor *entity,
     qa_q1_save_record *record, qa_error *error) {
@@ -448,6 +463,11 @@ static bool projectile_fields(qa_q1_wire_receipt *receipt, const q1_actor *entit
     for (size_t i = 0; i < sizeof(projectiles) / sizeof(*projectiles); ++i)
         if (projectiles[i].kind == p->kind) source = projectiles + i;
     if (!source) return fail(error, "Original projectile requires its actual Source callback projection");
+    if (p->kind == Q1_HIP_LASER && !FIELDS(receipt,record,p,hip_laser_fields,error)) return false;
+    if (p->kind == Q1_PROXIMITY &&
+        (!FIELDS(receipt,record,p,proximity_fields,error) ||
+         !callback(record,"th_die","ProximityGrenadeExplode",error) ||
+         (p->detonating && !text(record,"deathtype","exploding",QA_Q1_SAVE_STRING,error)))) return false;
     return text(record, "classname", source->classname, QA_Q1_SAVE_STRING, error) &&
         callback(record, "touch", entity->touch_disabled ? NULL : p->remove_touch ? "SUB_Remove" : source->touch, error) &&
         actor(receipt, record, "enemy", p->enemy, false, error) &&
@@ -679,6 +699,16 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
     }
     if (okay) okay = actor(&receipt, globals, "le1", game->maps->electrodes[0], true, error) &&
         actor(&receipt, globals, "le2", game->maps->electrodes[1], true, error);
+    if (okay && game->options.program == QA_Q1_HIPNOTIC) {
+        uint32_t mines = 0;
+        for (uint32_t i=0; i<game->capacity; ++i) {
+            const q1_actor *entity = game->actors[i];
+            if (entity && entity->active && entity->kind == Q1_PROJECTILE &&
+                entity->state.projectile.kind == Q1_PROXIMITY && !entity->state.projectile.detonating)
+                ++mines;
+        }
+        okay = number(globals,"NumProximityGrenades",mines,true,error);
+    }
     if (okay) okay = source_order(program, globals, true, error);
     for (uint32_t slot = 0; okay && slot < save->entity_count; ++slot) {
         qa_actor_id id;
@@ -1097,7 +1127,14 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
     if (entity->kind == Q1_PROJECTILE) {
         q1_projectile *p = &entity->state.projectile;
         if (!saved_ref(game,saved(record,"enemy"),count,&p->enemy,error)) return false;
-        p->activator = entity->owner; p->attack = q1_attack(game,q1_ref_actor(game,entity->owner),id,p->weapon);
+        p->activator = entity->owner;
+        if (p->kind == Q1_HIP_LASER &&
+            !RESTORE_FIELDS(game,record,p,hip_laser_fields,slots,count,error)) return false;
+        if (p->kind == Q1_PROXIMITY) {
+            if (!RESTORE_FIELDS(game,record,p,proximity_fields,slots,count,error)) return false;
+            p->detonating = entity->think == Q1_THINK_PROX_EXPLODE;
+        }
+        p->attack = q1_attack(game,q1_ref_actor(game,p->activator),id,p->weapon);
         p->attack.projectile = id;
         if (!qa_attack_next(&game->attack_sequence,&p->attack,error)) return false;
         p->remove_touch = saved(record,"touch") && !strcmp(saved(record,"touch"),"SUB_Remove");
