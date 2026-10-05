@@ -95,7 +95,7 @@ bool frontend_event_audio_view(const qa_frontend *,const qa_audio_asset *,qa_vfs
 typedef struct frontend_q1_view_motion {
     double seconds, bob_seconds, face_until;
     float bob, old_z, damage_time, damage_roll, damage_pitch;
-    int32_t damage_percent;
+    int32_t damage_percent, bonus_percent;
     qa_vec3 damage_color;
     bool initialized;
 } frontend_q1_view_motion;

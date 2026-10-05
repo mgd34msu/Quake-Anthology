@@ -267,15 +267,60 @@ void frontend_view_q1_damage(const frontend_q1_motion_settings *settings, qa_vec
     state->damage_pitch = count * qa_vec_dot(from, axes[0]) * settings->kick_pitch;
     state->damage_time = settings->kick_time;
 }
+void frontend_view_q1_bonus(frontend_q1_view_motion *state)
+{ state->bonus_percent = 50; }
+bool frontend_view_q1_bonus_commands(frontend_q1_view_motion *state, const char *text, qa_error *error)
+{
+    if (!state || !text) return fail(error, "Q1 bonus command lost its actual client text");
+    for (const char *at = text; *at;) {
+        size_t length = strlen(at), size = qa_command_separator(at, length, QA_CONSOLE_Q1);
+        char *line = malloc(size + 1);
+        if (!line) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining received Q1 client command");
+        memcpy(line, at, size); line[size] = 0;
+        qa_command_tokens tokens = {0};
+        bool okay = qa_command_tokenize(line, QA_CONSOLE_Q1, false, &tokens, error);
+        if (okay && tokens.count && strlen(tokens.values[0]) == 2 &&
+            (tokens.values[0][0] == 'b' || tokens.values[0][0] == 'B') &&
+            (tokens.values[0][1] == 'f' || tokens.values[0][1] == 'F'))
+            frontend_view_q1_bonus(state);
+        qa_command_tokens_free(&tokens); free(line);
+        if (!okay) return false;
+        at += size < length ? size + 1 : size;
+    }
+    return true;
+}
+static bool local_bonus(qa_frontend *f, qa_actor_id actor, const char *commands, qa_error *error)
+{
+    for (unsigned physical = 0; physical < f->options.seats && !f->options.dedicated; ++physical) {
+        uint32_t logical; qa_actor_id admitted;
+        if (!frontend_seat_launch_id_read(f, physical, &logical) ||
+            !qa_application_player_actor(f->application, logical, &admitted) ||
+            !qa_actor_id_equal(actor, admitted)) continue;
+        frontend_config_legacy_view source; bool present;
+        if (!frontend_config_store_primary_legacy_read(f->config_store, logical, &source, &present, error)) return false;
+        if (!present || source.product->family != QA_GAME_Q1) return true;
+        frontend_seat *seat = f->seats + physical;
+        if (!qa_actor_id_equal(seat->q1_view_actor, actor)) {
+            seat->q1_view_motion = (frontend_q1_view_motion){0}; seat->q1_view_actor = actor;
+        }
+        if (commands) return frontend_view_q1_bonus_commands(&seat->q1_view_motion, commands, error);
+        frontend_view_q1_bonus(&seat->q1_view_motion); return true;
+    }
+    return true;
+}
+bool frontend_view_q1_local_bonus(qa_frontend *f, qa_actor_id actor, qa_error *error)
+{ return local_bonus(f, actor, NULL, error); }
+bool frontend_view_q1_local_bonus_commands(qa_frontend *f, qa_actor_id actor, const char *commands, qa_error *error)
+{ return local_bonus(f, actor, commands, error); }
 qa_scene_vec4 frontend_view_q1_blend(const frontend_q1_motion_settings *settings,
     const frontend_q1_view_motion *state, int32_t contents, bool quakeworld, uint32_t items)
 {
-    qa_vec3 colors[3] = {{0,0,0}, state->damage_color, {0,0,0}};
-    int32_t percents[3] = {0, state->damage_percent, 0};
-    if (items & 4194304u) { colors[2] = qa_v3(0,0,255); percents[2] = 30; }
-    else if (items & 2097152u) { colors[2] = qa_v3(0,255,0); percents[2] = 20; }
-    else if (items & 524288u) { colors[2] = qa_v3(100,100,100); percents[2] = 100; }
-    else if (items & 1048576u) { colors[2] = qa_v3(255,255,0); percents[2] = 30; }
+    qa_vec3 colors[4] = {{0,0,0}, state->damage_color, {215,186,69}, {0,0,0}};
+    int32_t percents[4] = {0, state->damage_percent, state->bonus_percent, 0};
+    if (items & 4194304u) { colors[3] = qa_v3(0,0,255); percents[3] = 30; }
+    else if (items & 2097152u) { colors[3] = qa_v3(0,255,0); percents[3] = 20; }
+    else if (items & 524288u) { colors[3] = qa_v3(100,100,100); percents[3] = 100; }
+    else if (items & 1048576u) { colors[3] = qa_v3(255,255,0); percents[3] = 30; }
     if (settings->contents_blend && contents != -1 && (quakeworld || contents != -2)) {
         if (contents == -5) { colors[0] = qa_v3(255,80,0); percents[0] = 150; }
         else if (contents == -4 || (quakeworld && contents == -2)) {
@@ -283,7 +328,7 @@ qa_scene_vec4 frontend_view_q1_blend(const frontend_q1_motion_settings *settings
         } else { colors[0] = qa_v3(130,80,50); percents[0] = 128; }
     }
     qa_vec3 color = {0}; float alpha = 0;
-    for (unsigned i = 0; i < 3; ++i) {
+    for (unsigned i = 0; i < 4; ++i) {
         if (settings->cshift_percent == 0) continue;
         float weight = (float)(((float)percents[i] * settings->cshift_percent / 100.0) / 255.0);
         if (weight == 0) continue;
@@ -394,6 +439,8 @@ void frontend_view_q1_motion(const frontend_q1_motion_settings *settings,
     state->seconds = input->seconds; state->initialized = true;
     double remaining = state->damage_percent - elapsed * 150;
     state->damage_percent = remaining <= 0 ? 0 : (int32_t)remaining;
+    remaining = state->bonus_percent - elapsed * 100;
+    state->bonus_percent = remaining <= 0 ? 0 : (int32_t)remaining;
     float idle_scale = input->intermission ? 1 : settings->idle_scale;
     double idle[3] = {
         idle_scale * sin(input->seconds * settings->idle_cycle.x) * settings->idle_level.x,

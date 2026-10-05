@@ -6,6 +6,7 @@
 #include "save_private.h"
 #include "qa/network_q1_decoder_save.h"
 #include "qa/application_network_qw.h"
+#include "qa/application_network.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -15,6 +16,7 @@ typedef struct qc_recipient {
     frontend_qc_camera_receipt camera;
     qc_decoder decoder;
     qa_net_protocol_id native_protocol;
+    qa_nq_options native_options;
     qa_actor_owner native_provider;
     qa_actor_id native_actor;
     uint64_t native_map_revision;
@@ -39,6 +41,8 @@ static void decoder_free(qa_net_protocol_id protocol,qc_decoder decoder)
 { if(qa_q1_is_qw(protocol))qa_qw_decoder_destroy(decoder.qw); else qa_nq_decoder_destroy(decoder.nq); }
 static qa_net_protocol_id row_protocol(const qc_recipient *row)
 { return row->native ? row->native_protocol : row->camera.source.protocol; }
+static qa_nq_options row_options(const qc_recipient *row)
+{ return row->native ? row->native_options : row->camera.source.options; }
 static qa_actor_owner row_provider(const qc_recipient *row)
 { return row->native ? row->native_provider : row->camera.source.provider; }
 static qa_actor_id row_actor(const qc_recipient *row)
@@ -73,44 +77,67 @@ static bool row_current(const frontend_qc_messages *owner, const qc_recipient *r
 {
     if (!row->native) return recipient_current(owner, &row->camera);
     frontend_config_legacy_view source; bool present=false; qa_actor_id actor;
-    qa_application_network_qw_source physical;
-    return current(owner) && owner->frontend->map_revision == row->native_map_revision &&
-        qa_application_player_actor(owner->application,row->native_seat,&actor) && qa_actor_id_equal(actor,row->native_actor) &&
-        frontend_config_store_primary_legacy_read(owner->frontend->config_store,row->native_seat,&source,&present,NULL) && present &&
-        source.product->family == QA_GAME_Q1 && source.product->edition == QA_EDITION_QUAKEWORLD &&
-        source.product->program_kind == QA_PROGRAM_BUILTIN &&
-        qa_application_network_qw_source_read(owner->application,&physical,NULL) && physical.owner == row->native_provider;
+    if (!current(owner) || owner->frontend->map_revision != row->native_map_revision ||
+        !qa_application_player_actor(owner->application,row->native_seat,&actor) || !qa_actor_id_equal(actor,row->native_actor) ||
+        !frontend_config_store_primary_legacy_read(owner->frontend->config_store,row->native_seat,&source,&present,NULL) || !present ||
+        source.product->family != QA_GAME_Q1 || source.product->program_kind != QA_PROGRAM_BUILTIN) return false;
+    if (qa_q1_is_qw(row->native_protocol)) {
+        qa_application_network_qw_source physical;
+        return source.descriptor->selection.clock.kind == QA_CLOCK_QUAKEWORLD &&
+            qa_application_network_qw_source_read(owner->application,&physical,NULL) && physical.owner == row->native_provider;
+    }
+    qa_actor_owner provider; uint32_t slot; qa_net_protocol_id protocol;
+    return source.descriptor->selection.clock.kind == QA_CLOCK_NETQUAKE &&
+        qa_application_network_q1_source(owner->application,actor,&provider,&slot,&protocol,NULL) &&
+        provider == row->native_provider && protocol.kind == row->native_protocol.kind &&
+        protocol.revision == row->native_protocol.revision && protocol.flags == row->native_protocol.flags;
 }
 static bool native_rows(frontend_qc_messages *owner, qa_error *error)
 {
     if (qa_application_get_state(owner->application)!=QA_APPLICATION_RUNNING ||
         qa_application_startup_pending(owner->application)) return true;
-    bool admitted=false;
+    bool admitted_qw=false;
     for (unsigned seat=0;seat<owner->frontend->options.seats && !owner->frontend->options.dedicated;++seat) {
         uint32_t logical; qa_actor_id actor; frontend_config_legacy_view source; bool present;
         if (!frontend_seat_launch_id_read(owner->frontend,seat,&logical) ||
             !qa_application_player_actor(owner->application,logical,&actor)) continue;
         if (!frontend_config_store_primary_legacy_read(owner->frontend->config_store,logical,&source,&present,error)) return false;
-        if (!present || source.product->family != QA_GAME_Q1 || source.product->edition != QA_EDITION_QUAKEWORLD ||
-            source.product->program_kind != QA_PROGRAM_BUILTIN) continue;
-        admitted=true;
+        if (!present || source.product->family != QA_GAME_Q1 || source.product->program_kind != QA_PROGRAM_BUILTIN ||
+            (source.descriptor->selection.clock.kind != QA_CLOCK_NETQUAKE &&
+             source.descriptor->selection.clock.kind != QA_CLOCK_QUAKEWORLD)) continue;
+        bool qw=source.descriptor->selection.clock.kind == QA_CLOCK_QUAKEWORLD;
+        admitted_qw=admitted_qw || qw;
         bool retained=false;
         for (qc_recipient *row=owner->recipients;row;row=row->next)
             if (row->native && row->native_seat==logical && qa_actor_id_equal(row->native_actor,actor)) { retained=true;break; }
         if (retained) continue;
-        qa_application_network_qw_world world;
-        if (!qa_application_network_qw_world_read(owner->application,&world,error)) return false;
         qc_recipient *row=calloc(1,sizeof(*row));
-        if (!row) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining native QW local service recipient");
-        row->native=true;row->native_protocol=world.protocol;row->native_provider=world.source.owner;
-        row->native_actor=actor;row->native_seat=logical;row->native_map_revision=owner->frontend->map_revision;
-        row->decoder.qw=qa_qw_decoder_create(world.protocol,error);
-        if (!row->decoder.qw) { free(row);return false; }
+        if (!row) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining native Q1 local service recipient");
+        row->native=true;row->native_actor=actor;row->native_seat=logical;
+        row->native_map_revision=owner->frontend->map_revision;
+        bool okay;
+        if (qw) {
+            qa_application_network_qw_world world;
+            okay=qa_application_network_qw_world_read(owner->application,&world,error);
+            if (okay) {
+                row->native_protocol=world.protocol;row->native_provider=world.source.owner;
+                row->decoder.qw=qa_qw_decoder_create(world.protocol,error);okay=row->decoder.qw!=NULL;
+            }
+        } else {
+            qa_application_network_q1_world world; uint32_t slot;
+            okay=qa_application_network_q1_source(owner->application,actor,&row->native_provider,&slot,&row->native_protocol,error) &&
+                qa_application_network_q1_world_read(owner->application,row->native_provider,&world,error);
+            if (okay) {
+                row->native_options.standard_quake=world.standard_quake;
+                okay=qa_nq_decoder_create(row->native_protocol,row->native_options,&row->decoder.nq,error);
+            }
+        }
+        if (!okay) { row_free(row);return false; }
         row->next=owner->recipients;owner->recipients=row;
     }
-    /* The actual native Source consumes damage once into its real QW
-     * service packets even when this local CLIENT has no remote transport. */
-    return !admitted || qa_application_network_qw_flush(owner->application,error);
+    /* QW consumes damage into its actual protocol packets. Native NQ keeps
+     * the existing direct feedback consumption at returned presentation. */
+    return !admitted_qw || qa_application_network_qw_flush(owner->application,error);
 }
 static bool clone_decoder(const qc_recipient *,qc_decoder *,qa_error *);
 static bool row_get(frontend_qc_messages *owner,const qa_application_qc_message_source *source,
@@ -145,7 +172,7 @@ static qa_net_protocol_id decoder_protocol(const qc_recipient *row)
 { return qa_q1_is_qw(row_protocol(row))?qa_qw_decoder_protocol(row->decoder.qw):qa_nq_decoder_protocol(row->decoder.nq); }
 static bool decoder_checkpoint(const qc_recipient *row,qa_net_protocol_id protocol,qa_buffer *out,qa_error *error)
 { return qa_q1_is_qw(protocol)?qa_qw_decoder_checkpoint(row->decoder.qw,protocol,out,error):
-    qa_nq_decoder_checkpoint(row->decoder.nq,protocol,row->camera.source.options,out,error); }
+    qa_nq_decoder_checkpoint(row->decoder.nq,protocol,row_options(row),out,error); }
 static bool decoder_restore(qa_net_protocol_id protocol,qa_nq_options options,qa_bytes bytes,qc_decoder *out,qa_error *error)
 { return qa_q1_is_qw(protocol)?qa_qw_decoder_restore_checkpoint(bytes,protocol,&out->qw,error):
     qa_nq_decoder_restore_checkpoint(bytes,protocol,options,&out->nq,error); }
@@ -153,7 +180,7 @@ static bool clone_decoder(const qc_recipient *row,qc_decoder *out,qa_error *erro
 {
     qa_buffer bytes={0}; qa_net_protocol_id protocol=decoder_protocol(row);
     bool okay=decoder_checkpoint(row,protocol,&bytes,error) &&
-        decoder_restore(protocol,row->camera.source.options,(qa_bytes){bytes.data,bytes.size},out,error);
+        decoder_restore(protocol,row_options(row),(qa_bytes){bytes.data,bytes.size},out,error);
     qa_buffer_free(&bytes); return okay;
 }
 static bool read_message(qa_net_protocol_id protocol,qc_decoder decoder,qa_net_reader *reader,qa_nq_message *out)
@@ -163,6 +190,7 @@ static bool read_message(qa_net_protocol_id protocol,qc_decoder decoder,qa_net_r
     if(!qa_qw_service_read(reader,decoder.qw,0,&source))return false;
     *out=(qa_nq_message){.op=QA_NQ_NOP};
     switch(source.kind) {
+    case QA_QW_STUFFTEXT:out->op=QA_NQ_STUFFTEXT;out->data.text=source.data.text.value;break;
     case QA_QW_DAMAGE:out->op=QA_NQ_DAMAGE;out->data.damage.armor=source.data.damage.armor;out->data.damage.blood=source.data.damage.blood;
         memcpy(out->data.damage.origin,source.data.damage.origin,sizeof(out->data.damage.origin));break;
     case QA_QW_STAT:out->op=QA_NQ_STAT;out->data.indexed.index=source.data.stat.index;out->data.indexed.value=source.data.stat.value;break;
@@ -192,12 +220,17 @@ static bool captured_target(const qa_nq_message *message,const qa_application_pr
 static bool project(frontend_qc_messages *owner,qc_recipient *row,const qa_nq_message *message,
     const qa_application_protocol_event *event,size_t start,qa_error *error)
 {
+    if(message->op==QA_NQ_STUFFTEXT)
+        return frontend_view_q1_local_bonus_commands(owner->frontend,row_actor(row),message->data.text,error);
+    if(message->op==QA_NQ_BONUSFLASH)
+        return frontend_view_q1_local_bonus(owner->frontend,row_actor(row),error);
     if(message->op==QA_NQ_DAMAGE) {
+        if(row->native && !qa_q1_is_qw(row_protocol(row))) return true;
         return frontend_view_q1_local_damage(owner->frontend,row_actor(row),message->data.damage.armor,message->data.damage.blood,
             qa_v3(message->data.damage.origin[0],message->data.damage.origin[1],message->data.damage.origin[2]),error);
     }
-    /* Native control/stats already belong to their Source owners. Only the
-     * actor-qualified damage view consumes this derived local decoder. */
+    /* Native control/stats remain with their Source owners; this decoder
+     * delivers only the actor-qualified transient view effects. */
     if(row->native) return true;
     if(message->op==QA_NQ_STAT) {
         if(message->data.indexed.index>=32)
@@ -280,9 +313,9 @@ static bool event(frontend_qc_messages *owner,qc_recipient *row,size_t index,
     if(index!=row->event_index) return false;
     if(event->provider==row_provider(row) && !event->signon) {
         bool receives=!event->recipient.registry || qa_actor_id_equal(event->recipient,row_actor(row));
-        if(row->native) {
+        if(row->native && qa_q1_is_qw(row_protocol(row))) {
             if(!qa_application_network_qw_receives(owner->application,row->native_actor,event,&receives,error))return false;
-        } else if(row->camera.recipient.registry) {
+        } else if(!row->native && row->camera.recipient.registry) {
             if(!qa_application_qc_message_receives(owner->application,&row->camera.source,row->camera.recipient,event,&receives,error))return false;
         } else if(event->multicast)receives=event->destination==0 || event->destination==3;
         if(receives && !packet(owner,row,event,&row->event_offset,error))return false;

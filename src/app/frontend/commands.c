@@ -4,6 +4,7 @@
 #include "save_commands.h"
 #include "campaign_cinematic.h"
 #include "config_store.h"
+#include "view_settings.h"
 #include "system_cinematic.h"
 #include "music_sources.h"
 #include "q1_sky.h"
@@ -48,6 +49,13 @@ bool frontend_commands_source(qa_frontend *f,const qa_application_startup_source
         const qa_console_entry *alias=qa_console_alias_at(source->console,call->context.owner,i);
         if (!alias) break;
         if (client_name(name,alias->name)) return true;
+    }
+    if ((call->context.dialect==QA_CONSOLE_Q1 || call->context.dialect==QA_CONSOLE_QW) && client_name(name,"bf")) {
+        *handled=true;
+        uint32_t physical; qa_actor_id actor;
+        if (!frontend_command_seat_read(f,&call->context,&physical) ||
+            !frontend_seat_actor_read(f,physical,&actor)) return true;
+        return frontend_view_q1_local_bonus(f,actor,error);
     }
     bool parked=frontend_config_store_parked_current(f->config_store,source);
     bool q2=parked || source->scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
