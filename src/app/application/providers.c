@@ -41,8 +41,8 @@
 #include "native_q3_ipfilters.h"
 #include "native_q3_log.h"
 #include "native_q3_postgame.h"
-#include "unified_q3_events.h"
 #include "unified_q1_events.h"
+#include "unified_q3_events.h"
 #include "unified_events.h"
 #include "native_q3_team_combat.h"
 #include "qa/game_q3_clients.h"
@@ -1492,7 +1492,6 @@ static bool deconstruct_provider(application_provider *provider, qa_error *error
             return application_native_q2_console_destroy(provider, error);
         if (provider->kind == APPLICATION_PROVIDER_Q3)
             return application_native_q3_remote_roles_destroy(provider, error) &&
-                application_unified_q3_events_destroy(provider, error) &&
                 application_native_q3_settings_destroy(provider, error) &&
                 application_native_q3_console_destroy(provider, error);
         if (provider->kind == APPLICATION_PROVIDER_QC)
@@ -1541,11 +1540,8 @@ static bool deconstruct_provider(application_provider *provider, qa_error *error
         break;
     case APPLICATION_PROVIDER_Q3:
         if (!application_native_q3_remote_roles_destroy(provider, error)) return false;
-        if (!application_unified_q3_events_idle(provider))
-            return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 Source event publication is entered");
         if (provider->state.q3 == NULL) {
-            ok = application_unified_q3_events_destroy(provider, error) &&
-                application_native_q3_console_destroy(provider, error);
+            ok = application_native_q3_console_destroy(provider, error);
             break;
         }
         if (!application_native_q3_console_idle(provider) ||
@@ -1567,8 +1563,7 @@ static bool deconstruct_provider(application_provider *provider, qa_error *error
              qa_q3_destroy(provider->state.q3, error);
         if (ok) {
             provider->state.q3 = NULL;
-            ok = application_unified_q3_events_destroy(provider, error) &&
-                application_native_q3_console_destroy(provider, error);
+            ok = application_native_q3_console_destroy(provider, error);
         }
         break;
     case APPLICATION_PROVIDER_QC:

@@ -41,7 +41,6 @@
 #include "native_q3_votes.h"
 #include "native_q3_wire_state.h"
 #include "native_q3_checkpoint.h"
-#include "unified_q3_events.h"
 #include "q3_product.h"
 #include "qa/map_sidecars.h"
 #include "guest_q3_components.h"
@@ -1049,7 +1048,7 @@ static bool application_restore(qa_application *app, qa_bytes bytes, qa_error *e
 }
 
 typedef struct native_q3_record {
-    qa_bytes game, wire, settings, ipfilters, votes, published_events, registry;
+    qa_bytes game, wire, settings, ipfilters, votes, registry;
     bool game_present;
     bool console_present, wire_present, settings_bound;
     bool settings_present, settings_initialized;
@@ -1061,7 +1060,7 @@ static bool native_q3_record_read(qa_bytes bytes, native_q3_record *out, qa_erro
 {
     native_q3_record value={0};
     qa_bytes *parts[]={&value.game,&value.wire,&value.settings,&value.ipfilters,&value.votes,
-        &value.published_events,&value.registry};
+        &value.registry};
     const size_t count=sizeof(parts)/sizeof(parts[0]);
     const size_t header=12+count*8;
     if (!bytes.data || bytes.size<header || memcmp(bytes.data,"QAN3",4) ||
@@ -1078,7 +1077,7 @@ static bool native_q3_record_read(qa_bytes bytes, native_q3_record *out, qa_erro
     }
     if (offset!=bytes.size ||
         ((flags&1u)!=0)!=(value.registry.size!=0) ||
-        ((flags&1024u)!=0)!=(value.game.size!=0) || (!(flags&1024u) && ((flags&1023u) || value.published_events.size)) ||
+        ((flags&1024u)!=0)!=(value.game.size!=0) || (!(flags&1024u) && (flags&1023u)) ||
         ((flags&2u)!=0)!=(value.wire.size!=0) || ((flags&16u)!=0)!=(value.settings.size!=0) ||
         ((flags&32u)!=0)!=(value.ipfilters.size!=0) || ((flags&32u)!=0 && !(flags&1u)) ||
         ((flags&64u)!=0 && (flags&48u)!=48u) ||
@@ -1146,8 +1145,8 @@ bool application_native_q3_checkpoint_prepare(application_provider *provider,
 
 static bool native_q3_capture(application_provider *provider, qa_buffer *out, qa_error *error)
 {
-    qa_buffer game={0}, wire={0}, settings={0}, ipfilters={0}, votes={0}, published_events={0}, registry={0};
-    qa_buffer *parts[]={&game,&wire,&settings,&ipfilters,&votes,&published_events,&registry};
+    qa_buffer game={0}, wire={0}, settings={0}, ipfilters={0}, votes={0}, registry={0};
+    qa_buffer *parts[]={&game,&wire,&settings,&ipfilters,&votes,&registry};
     const size_t count=sizeof(parts)/sizeof(parts[0]);
     const size_t header=12+count*8;
     bool game_present=provider->state.q3!=NULL;
@@ -1161,7 +1160,7 @@ static bool native_q3_capture(application_provider *provider, qa_buffer *out, qa
     bool voting=provider->native_q3_votes!=NULL;
     bool team=provider->native_q3_team_status!=NULL;
     bool team_bound=application_native_q3_team_status_bound(provider);
-    bool ok=application_unified_q3_events_idle(provider) && application_native_q3_console_idle(provider) &&
+    bool ok=application_native_q3_console_idle(provider) &&
         application_native_q3_settings_idle(provider) &&
         application_native_q3_ipfilters_idle(provider) &&
         application_native_q3_votes_idle(provider) &&
@@ -1172,7 +1171,6 @@ static bool native_q3_capture(application_provider *provider, qa_buffer *out, qa
     if (ok && initialized) ok=application_native_q3_settings_capture(provider,&settings,error) && settings.size;
     if (ok && filters) ok=application_native_q3_ipfilters_capture(provider,&ipfilters,error) && ipfilters.size;
     if (ok && voting) ok=application_native_q3_votes_capture(provider,&votes,error) && votes.size;
-    if (ok) ok=application_unified_q3_events_capture(provider,&published_events,error);
     if (ok && ((game_present && !game.size) ||
         (!game_present && (console || present || bound || cached || initialized || filters || voting || team)) ||
         (cached && !console) || (filters && !console) ||
@@ -1204,7 +1202,6 @@ static bool native_q3_capture(application_provider *provider, qa_buffer *out, qa
         }
     }
     qa_buffer_free(&game); qa_buffer_free(&wire); qa_buffer_free(&settings); qa_buffer_free(&ipfilters); qa_buffer_free(&votes);
-    qa_buffer_free(&published_events);
     qa_buffer_free(&registry);
     if (!ok && error && error->code==QA_OK)
         application_fail(error,QA_ERROR_ARGUMENT,"Native Q3 owner bundle is borrowed or incomplete");
@@ -1231,8 +1228,7 @@ static bool native_q3_restore(application_provider *provider, qa_bytes bytes, qa
         (!record.settings_initialized || application_native_q3_settings_restore(provider,record.settings,error)) &&
         (!record.ipfilters_present || application_native_q3_ipfilters_restore(provider,record.ipfilters,error)) &&
         (!record.votes_present || application_native_q3_votes_restore(provider,record.votes,error)) &&
-        (!record.wire_present || application_native_q3_wire_restore(provider,record.wire,error)) &&
-        application_unified_q3_events_restore(provider,record.published_events,error);
+        (!record.wire_present || application_native_q3_wire_restore(provider,record.wire,error));
     if (ok && record.ipfilters_initialized!=application_native_q3_ipfilters_initialized(provider))
         return application_fail(error,QA_ERROR_FORMAT,"Native Q3 filters differ from their imported source state");
     return ok;

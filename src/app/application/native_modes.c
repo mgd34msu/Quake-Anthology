@@ -10,7 +10,6 @@
 #include "native_q3_team_status.h"
 #include "native_q3_match.h"
 #include "native_q3_session.h"
-#include "unified_q3_events.h"
 #include "q3_restart.h"
 #include "guest_q3_restart.h"
 #include "native_q1_respawn.h"
@@ -563,8 +562,7 @@ bool application_native_q3_source_end_frame(void *opaque,
          !application_native_q3_team_status(p, error) ||
          !application_native_q3_votes_frame(p, error))) return false;
     return application_native_q3_settings_check_cvars(p, error) &&
-        q3_list_entities(p, error) && q3_source_info(p, error) &&
-        application_unified_q3_events_publish(p, frame, error);
+        q3_list_entities(p, error) && q3_source_info(p, error);
 }
 
 bool application_native_mode_emit(void *opaque, qa_mode_id mode,
