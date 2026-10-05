@@ -1080,7 +1080,6 @@ add_library(qa_q3_presentation STATIC
     src/presentation/q3/core.c
     src/presentation/q3/models.c
     src/presentation/q3/media_save.c
-    src/presentation/q3/scene_save.c
     src/presentation/q3/picture.c
     src/presentation/q3/render.c
     src/presentation/q3/scene.c
