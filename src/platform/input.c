@@ -357,7 +357,8 @@ static bool capture(qa_input_platform *p, qa_error *error) {
     if (!window)
         return true;
     qa_input_seat *s = p->keyboard >= 0 ? p->seats[p->keyboard].seat : NULL;
-    bool game = s && qa_input_seat_focused(s) && qa_input_seat_focus(s) == QA_INPUT_GAME;
+    bool focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    bool game = focused && s && qa_input_seat_focused(s) && qa_input_seat_focus(s) == QA_INPUT_GAME;
     bool desired = game && p->mouse_available && integer(p, "in_nograb", 0) == 0;
     if (desired != p->capture) {
         if (SDL_SetRelativeMouseMode(desired ? SDL_TRUE : SDL_FALSE) < 0)
@@ -365,7 +366,7 @@ static bool capture(qa_input_platform *p, qa_error *error) {
         SDL_SetWindowGrab(window, desired ? SDL_TRUE : SDL_FALSE);
         p->capture = desired;
     }
-    bool text = s && qa_input_seat_focused(s) &&
+    bool text = focused && s && qa_input_seat_focused(s) &&
                 (qa_input_seat_focus(s) == QA_INPUT_CONSOLE ||
                  qa_input_seat_focus(s) == QA_INPUT_CHAT || qa_input_seat_focus(s) == QA_INPUT_UI);
     if (text && !SDL_IsTextInputActive())
@@ -812,6 +813,17 @@ static bool disconnect(qa_input_platform *p, int32_t instance, double time, qa_e
         ok = false;
     return ok;
 }
+static bool window_focus(qa_input_platform *p, bool focused, double time, qa_error *error) {
+    bool ok = true;
+    if (!focused && !release_all(p, time, error)) ok = false;
+    for (unsigned i = 0; i < 4; ++i)
+        if (p->seats[i].seat) {
+            qa_input_event translated = {
+                .kind = QA_INPUT_EVENT_FOCUS, .time_ms = time, .down = focused};
+            if (!qa_input_seat_event(p->seats[i].seat, &translated, NULL, error)) ok = false;
+        }
+    return capture(p, error) && finish_calibration(p, error) && ok;
+}
 bool qa_input_platform_event(qa_input_platform *p, const SDL_Event *event, double now,
                              bool *handled, qa_error *error) {
     if (!native_owner(p, error)) return false;
@@ -985,17 +997,7 @@ bool qa_input_platform_event(qa_input_platform *p, const SDL_Event *event, doubl
                 *handled = false;
             return true;
         }
-        bool focused = event->window.event == SDL_WINDOWEVENT_FOCUS_GAINED, ok = true;
-        if (!focused && !release_all(p, time, error))
-            ok = false;
-        for (unsigned i = 0; i < 4; ++i)
-            if (p->seats[i].seat) {
-                qa_input_event translated = {
-                    .kind = QA_INPUT_EVENT_FOCUS, .time_ms = time, .down = focused};
-                if (!qa_input_seat_event(p->seats[i].seat, &translated, NULL, error))
-                    ok = false;
-            }
-        return capture(p, error) && finish_calibration(p, error) && ok;
+        return window_focus(p, event->window.event == SDL_WINDOWEVENT_FOCUS_GAINED, time, error);
     }
     if (p->keyboard < 0 || !p->seats[p->keyboard].seat) {
         if (handled)
@@ -2004,14 +2006,6 @@ static bool settings_endpoints_ready(const qa_input_platform_settings_ticket *t,
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input candidate window has not completed native preparation");
         return false;
     }
-    if (t->surface) {
-        bool focused = (SDL_GetWindowFlags(t->candidate_window) & SDL_WINDOW_INPUT_FOCUS) != 0;
-        for (unsigned slot = 0; slot < 4; ++slot) if (t->routes[slot].seat &&
-            qa_input_seat_focused(t->routes[slot].seat) != focused) {
-            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Prepared candidate window lost its physical input focus association");
-            return false;
-        }
-    }
     if (!settings_devices_ready(t, error)) return false;
     SDL_Window *window = t->surface ? t->candidate_window : t->window;
     return !window || (SDL_GetRelativeMouseMode() == (t->relative ? SDL_TRUE : SDL_FALSE) &&
@@ -2061,11 +2055,6 @@ bool qa_input_platform_settings_window_stage(qa_input_platform_settings_ticket *
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input replacement requires its actual retained active and candidate display windows");
         return false;
     }
-    for (unsigned slot = 0; slot < 4; ++slot) if (t->routes[slot].seat &&
-        qa_input_seat_focused(t->routes[slot].seat) != next.focused) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Candidate native focus differs from the retained physical input focus");
-        return false;
-    }
     t->surface = surface; t->active_display = active; t->candidate_display = candidate;
     t->candidate_window = window; t->candidate_window_id = next.window_id;
     t->candidate_grab = settings_requested_grab(window);
@@ -2074,6 +2063,8 @@ bool qa_input_platform_settings_window_stage(qa_input_platform_settings_ticket *
      * no effective grab. SDL focus determines the candidate's effective grab. */
     t->capture_attempted = true;
     SDL_SetWindowGrab(t->window, t->platform->old_grab ? SDL_TRUE : SDL_FALSE);
+    t->relative = t->relative && next.focused;
+    t->text = t->text && next.focused;
     if (!input_platform_modes_apply(window, t->relative, t->relative, t->text, error)) return false;
     t->window_prepared = true;
     return settings_current(t, error) && settings_endpoints_ready(t, error);
@@ -2535,6 +2526,13 @@ bool qa_input_platform_frame(qa_input_platform *p, double now, qa_error *error) 
     }
     if (!initialize_native(p, now, error)) return false;
     p->now = now;
+    SDL_Window *window = p->window ? SDL_GetWindowFromID(p->window) : NULL;
+    bool focused = window && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    for (unsigned slot = 0; window && slot < 4; ++slot)
+        if (p->seats[slot].seat && qa_input_seat_focused(p->seats[slot].seat) != focused) {
+            if (!window_focus(p, focused, now, error)) return false;
+            break;
+        }
     int source = integer(p, "in_joystickSeat", 1), midi = integer(p, "in_midiseat", 1);
     source = source_route(p->seats, source, p->joystick_instance);
     midi = midi >= 1 && midi <= 4 && p->seats[midi - 1].seat ? midi - 1 : -1;
