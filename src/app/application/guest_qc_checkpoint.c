@@ -5,6 +5,7 @@
 #include "guest_qc_rerelease.h"
 #include "control_frame.h"
 #include "startup_flow.h"
+#include "save_private.h"
 
 #define QC_ENGINE_LIMIT (64u * 1024u * 1024u)
 static bool add_size(size_t *total, size_t amount, qa_error *error)
@@ -293,7 +294,9 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
             openings_free(openings,engine->resource_count); qa_buffer_free(&rerelease); return false;
         }
     qa_buffer registry = {0};
-    bool registry_ok = qa_cvars_save_capture(engine->cvars, &registry, error);
+    bool level_only=engine->provider->application->operation==APPLICATION_PERSISTING &&
+        engine->provider->application->capture_purpose==QA_SAVE_TRANSITION;
+    bool registry_ok = level_only || qa_cvars_save_capture(engine->cvars, &registry, error);
     if (registry_ok && registry.size > QC_ENGINE_LIMIT - 4)
         registry_ok = application_fail(error, QA_ERROR_MEMORY, "QuakeC cvar registry exceeds its checkpoint limit");
     if (registry_ok) registry_ok = add_size(&capacity, registry.size + 4, error);
@@ -392,6 +395,11 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         memcmp(saved_declaration, declaration ? declaration->bytes : empty_digest, sizeof(saved_declaration)) ||
         qa_net_read_u64(&reader) != qa_collision_map_identity(qa_world_geometry(engine->world)))
         return application_fail(error, QA_ERROR_FORMAT, "QuakeC engine checkpoint identity differs");
+    application_provider *current=application_save_current_provider(engine->provider);
+    struct application_qc_state *unit=current && current->kind==APPLICATION_PROVIDER_QC
+        ? current->state.qc.engine : NULL;
+    if (current && !unit)
+        return application_fail(error,QA_ERROR_FORMAT,"QuakeC level restore lacks its current unit Source");
     struct application_qc_state candidate = {.provider = engine->provider, .world = engine->world,
         .services = engine->services, .profile = engine->profile, .protocol = engine->protocol,
         .max_clients = engine->max_clients, .loading = true};
@@ -476,7 +484,8 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     }
     qa_bytes registry = {0};
     uint32_t registry_size = ok ? qa_net_read_u32(&reader) : 0;
-    if (ok) ok = registry_size && qa_net_read_bytes(&reader, registry_size, &registry);
+    if (ok) ok = (unit ? registry_size==0 : registry_size!=0) &&
+        qa_net_read_bytes(&reader, registry_size, &registry);
     for (size_t i = 0; ok && i < 64; ++i) { candidate.lightstyles[i] = read_text(&reader); ok = candidate.lightstyles[i] != NULL; }
     uint32_t extension=ok?qa_net_read_u32(&reader):0;
     if (ok && (reader.failed || extension>qa_net_reader_remaining(&reader)))
@@ -539,6 +548,15 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
                 ok = qa_net_reader_fail(&reader, "Duplicate QuakeC saved message destination");
     }
     if (ok) ok = qa_net_reader_finish(&reader);
+    qa_buffer settings={0};
+    if (ok && unit) {
+        ok=qa_cvars_save_capture(unit->cvars,&settings,error);
+        if (ok) {
+            registry=(qa_bytes){settings.data,settings.size};
+            candidate.random=unit->random;
+            candidate.serverflags=unit->serverflags;
+        }
+    }
     qa_cvars_restore *cvars = NULL;
     if (ok) ok = qa_cvars_save_prepare(engine->cvars, registry, &cvars, error) &&
         qa_cvars_save_validate(cvars, error);
@@ -559,6 +577,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         }
     }
     qa_cvars_save_abort(cvars);
+    qa_buffer_free(&settings);
     if (ok) {
         for (size_t i = 0; i < engine->resource_count; ++i) {
             qa_vfs_acquisition_dispose(&engine->resources[i].acquisition);

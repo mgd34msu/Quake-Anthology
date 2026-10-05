@@ -1283,6 +1283,22 @@ bool application_construct_qc(qa_application *app, application_provider *provide
         provider->component.clock.initial_time_ns = UINT64_C(1000000000);
     return true;
 }
+bool application_qc_source_globals(application_provider *provider, qa_error *error)
+{
+    struct application_qc_state *engine=provider->state.qc.engine;
+    qa_qc_instance *vm=provider->state.qc.instance;
+    static const char *globals[] = {"skill", "deathmatch", "coop", "teamplay"};
+    for (size_t i = 0; i < sizeof(globals) / sizeof(globals[0]); ++i) {
+        const qa_qc_definition *def = qa_qc_program_find_global(provider->state.qc.program, globals[i]);
+        const qa_cvar_view *value = qa_cvars_find(engine->cvars, globals[i]);
+        if (def != NULL && (def->type != QA_QC_FLOAT || !qa_qc_set_global_float(vm, def->offset, value->number, error))) return false;
+    }
+    const qa_qc_definition *serverflags = qa_qc_program_find_global(provider->state.qc.program, "serverflags");
+    if (serverflags != NULL && (serverflags->type != QA_QC_FLOAT ||
+        !qa_qc_set_global_float(vm, serverflags->offset, engine->serverflags, error))) return false;
+    return true;
+}
+
 static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
                        const qa_entities *entities, qa_string_id map_id,
                        qa_string_id spawn_id, bool authored_entities, qa_error *error)
@@ -1368,15 +1384,7 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
     bool ok = mapname != NULL && mapname->type == QA_QC_STRING && qa_qc_string_allocate(vm, map, &name, error) &&
               qa_qc_set_global_int(vm, mapname->offset, name, error);
     if (!ok) return application_fail(error, QA_ERROR_FORMAT, "QuakeC mapname global is unavailable");
-    static const char *globals[] = {"skill", "deathmatch", "coop", "teamplay"};
-    for (size_t i = 0; i < sizeof(globals) / sizeof(globals[0]); ++i) {
-        const qa_qc_definition *def = qa_qc_program_find_global(provider->state.qc.program, globals[i]);
-        const qa_cvar_view *value = qa_cvars_find(engine->cvars, globals[i]);
-        if (def != NULL && (def->type != QA_QC_FLOAT || !qa_qc_set_global_float(vm, def->offset, value->number, error))) return false;
-    }
-    const qa_qc_definition *serverflags = qa_qc_program_find_global(provider->state.qc.program, "serverflags");
-    if (serverflags != NULL && (serverflags->type != QA_QC_FLOAT ||
-        !qa_qc_set_global_float(vm, serverflags->offset, engine->serverflags, error))) return false;
+    if (!application_qc_source_globals(provider,error)) return false;
     const qa_qc_definition *model = application_qc_field(engine, "model", QA_QC_STRING, error);
     if (model == NULL || !qa_qc_string_allocate(vm, world_path, &name, error) ||
         !qa_qc_set_entity_int(vm, 0, model->offset, name, error) ||

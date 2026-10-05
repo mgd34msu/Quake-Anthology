@@ -602,6 +602,7 @@ static void persistence_end(void *opaque)
     }
     free(operation->owners); operation->owners = NULL;
     if (operation->leased) {
+        operation->active->capture_purpose = QA_SAVE_MANUAL;
         operation->active->operation = APPLICATION_IDLE;
         operation->leased = false;
     }
@@ -655,6 +656,14 @@ static application_provider *saved_provider(qa_application *app, const char *ins
         if (app->providers[i] && app->providers[i]->launch &&
             !strcmp(app->providers[i]->launch->selection.instance, instance)) return app->providers[i];
     return NULL;
+}
+
+application_provider *application_save_current_provider(const application_provider *provider)
+{
+    const qa_save_image *image = provider->application->native_restore_image;
+    qa_application *unit = provider->application->native_restore_current;
+    return unit && image && qa_save_image_metadata(image)->purpose == QA_SAVE_TRANSITION
+        ? saved_provider(unit, provider->launch->selection.instance) : NULL;
 }
 
 static bool same_owner(const qa_save_owner *a, const qa_save_owner *b)
@@ -929,7 +938,7 @@ typedef struct native_q3_record {
     bool votes_present, team_present, team_bound;
 } native_q3_record;
 
-static bool native_q3_record_read(qa_bytes bytes, native_q3_record *out, qa_error *error)
+static bool native_q3_record_read(qa_bytes bytes, bool level_only, native_q3_record *out, qa_error *error)
 {
     native_q3_record value={0};
     qa_bytes *parts[]={&value.game,&value.wire,&value.settings,&value.ipfilters,&value.votes,
@@ -949,10 +958,10 @@ static bool native_q3_record_read(qa_bytes bytes, native_q3_record *out, qa_erro
         *parts[i]=(qa_bytes){length ? bytes.data+offset : NULL,(size_t)length}; offset+=(size_t)length;
     }
     if (offset!=bytes.size ||
-        ((flags&1u)!=0)!=(value.registry.size!=0) ||
+        ((!level_only && (flags&1u))!=0)!=(value.registry.size!=0) ||
         ((flags&1024u)!=0)!=(value.game.size!=0) || (!(flags&1024u) && (flags&1023u)) ||
-        ((flags&2u)!=0)!=(value.wire.size!=0) || ((flags&16u)!=0)!=(value.settings.size!=0) ||
-        ((flags&32u)!=0)!=(value.ipfilters.size!=0) || ((flags&32u)!=0 && !(flags&1u)) ||
+        ((flags&2u)!=0)!=(value.wire.size!=0) || ((!level_only && (flags&16u))!=0)!=(value.settings.size!=0) ||
+        ((!level_only && (flags&32u))!=0)!=(value.ipfilters.size!=0) || ((flags&32u)!=0 && !(flags&1u)) ||
         ((flags&64u)!=0 && (flags&48u)!=48u) ||
         ((flags&128u)!=0)!=(value.votes.size!=0) || ((flags&128u)!=0 && !(flags&1u)) ||
         ((flags&256u)!=0 && !(flags&1u)) || ((flags&512u)!=0 && (flags&260u)!=260u) ||
@@ -981,7 +990,8 @@ static bool native_q3_saved_record(application_provider *provider,
         qa_load_u32le(bytes.data+4)!=APPLICATION_PROVIDER_Q3 ||
         qa_load_u64le(bytes.data+20)!=bytes.size-28)
         return application_fail(error,QA_ERROR_FORMAT,"Missing actual native Q3 provider record");
-    return native_q3_record_read((qa_bytes){bytes.data+28,bytes.size-28},out,error);
+    return native_q3_record_read((qa_bytes){bytes.data+28,bytes.size-28},
+        qa_save_image_metadata(image)->purpose==QA_SAVE_TRANSITION,out,error);
 }
 
 bool application_native_q3_checkpoint_prepare(application_provider *provider,
@@ -999,15 +1009,22 @@ bool application_native_q3_checkpoint_prepare(application_provider *provider,
         qa_load_u32le(bytes.data+4)!=APPLICATION_PROVIDER_Q3 ||
         qa_load_u32le(bytes.data+8)>1 || qa_load_u64le(bytes.data+20)!=bytes.size-28)
         return application_fail(error,QA_ERROR_FORMAT,"Missing actual native Q3 GAME constructor record");
+    application_provider *current=application_save_current_provider(provider);
     native_q3_record record={0};
-    if (!native_q3_record_read((qa_bytes){bytes.data+28,bytes.size-28},&record,error)) return false;
+    if (!native_q3_record_read((qa_bytes){bytes.data+28,bytes.size-28},current!=NULL,&record,error)) return false;
     if (record.game_present!=(provider->state.q3!=NULL))
         return application_fail(error,QA_ERROR_FORMAT,"Saved Q3 GAME presence differs from its selected compiled roles");
     if (record.console_present) {
         qa_console *console = NULL;
         qa_cvars *cvars = NULL;
         qa_command_context command;
-        if (!application_native_q3_console_restore(provider,record.registry,error)) return false;
+        qa_buffer registry={0};
+        bool okay=!current || (current->kind==APPLICATION_PROVIDER_Q3 &&
+            application_native_q3_console_capture(current,&registry,error));
+        if (okay && current) record.registry=(qa_bytes){registry.data,registry.size};
+        okay=okay && application_native_q3_console_restore(provider,record.registry,error);
+        qa_buffer_free(&registry);
+        if (!okay) return false;
         if (!application_native_q3_console_at(provider, &console, &cvars, &command))
             return application_fail(error, QA_ERROR_ARGUMENT,
                 "Restored native Q3 console lost its physical Source owner");
@@ -1016,12 +1033,13 @@ bool application_native_q3_checkpoint_prepare(application_provider *provider,
     return true;
 }
 
-static bool native_q3_capture(application_provider *provider, qa_buffer *out, qa_error *error)
+static bool native_q3_capture(application_provider *provider, qa_save_purpose purpose, qa_buffer *out, qa_error *error)
 {
     qa_buffer game={0}, wire={0}, settings={0}, ipfilters={0}, votes={0}, registry={0};
     qa_buffer *parts[]={&game,&wire,&settings,&ipfilters,&votes,&registry};
     const size_t count=sizeof(parts)/sizeof(parts[0]);
     const size_t header=12+count*8;
+    bool level_only=purpose==QA_SAVE_TRANSITION;
     bool game_present=provider->state.q3!=NULL;
     bool present=provider->native_q3_wire!=NULL;
     bool console=provider->native_q3_console!=NULL;
@@ -1040,9 +1058,9 @@ static bool native_q3_capture(application_provider *provider, qa_buffer *out, qa
         application_native_q3_team_status_idle(provider);
     if (ok && game_present) ok=qa_q3_game_capture(provider->state.q3,&game,error);
     if (ok && present) ok=application_native_q3_wire_capture(provider,&wire,error) && wire.size;
-    if (ok && console) ok=application_native_q3_console_capture(provider,&registry,error) && registry.size;
-    if (ok && initialized) ok=application_native_q3_settings_capture(provider,&settings,error) && settings.size;
-    if (ok && filters) ok=application_native_q3_ipfilters_capture(provider,&ipfilters,error) && ipfilters.size;
+    if (ok && console && !level_only) ok=application_native_q3_console_capture(provider,&registry,error) && registry.size;
+    if (ok && initialized && !level_only) ok=application_native_q3_settings_capture(provider,&settings,error) && settings.size;
+    if (ok && filters && !level_only) ok=application_native_q3_ipfilters_capture(provider,&ipfilters,error) && ipfilters.size;
     if (ok && voting) ok=application_native_q3_votes_capture(provider,&votes,error) && votes.size;
     if (ok && ((game_present && !game.size) ||
         (!game_present && (console || present || bound || cached || initialized || filters || voting || team)) ||
@@ -1083,8 +1101,9 @@ static bool native_q3_capture(application_provider *provider, qa_buffer *out, qa
 
 static bool native_q3_restore(application_provider *provider, qa_bytes bytes, qa_error *error)
 {
+    application_provider *current=application_save_current_provider(provider);
     native_q3_record record={0};
-    if (!native_q3_record_read(bytes,&record,error)) return false;
+    if (!native_q3_record_read(bytes,current!=NULL,&record,error)) return false;
     if (record.game_present!=(provider->state.q3!=NULL) ||
         record.console_present!=(provider->native_q3_console!=NULL) ||
         record.wire_present!=(provider->native_q3_wire!=NULL) ||
@@ -1097,23 +1116,32 @@ static bool native_q3_restore(application_provider *provider, qa_bytes bytes, qa
         application_native_q3_ipfilters_initialized(provider) ||
         application_native_q3_team_status_bound(provider))
         return application_fail(error,QA_ERROR_FORMAT,"Native Q3 bundle differs from its actual empty candidate services");
-    bool ok=(!record.game_present || qa_q3_game_restore(provider->state.q3,record.game,error)) &&
+    qa_buffer settings={0}, ipfilters={0};
+    bool ok=!current || (current->kind==APPLICATION_PROVIDER_Q3 &&
+        (!record.settings_initialized || application_native_q3_settings_capture(current,&settings,error)) &&
+        (!record.ipfilters_present || application_native_q3_ipfilters_capture(current,&ipfilters,error)));
+    if (ok && current) {
+        record.settings=(qa_bytes){settings.data,settings.size};
+        record.ipfilters=(qa_bytes){ipfilters.data,ipfilters.size};
+    }
+    ok=ok && (!record.game_present || qa_q3_game_restore(provider->state.q3,record.game,error)) &&
         (!record.settings_initialized || application_native_q3_settings_restore(provider,record.settings,error)) &&
         (!record.ipfilters_present || application_native_q3_ipfilters_restore(provider,record.ipfilters,error)) &&
         (!record.votes_present || application_native_q3_votes_restore(provider,record.votes,error)) &&
         (!record.wire_present || application_native_q3_wire_restore(provider,record.wire,error));
     if (ok && record.ipfilters_initialized!=application_native_q3_ipfilters_initialized(provider))
-        return application_fail(error,QA_ERROR_FORMAT,"Native Q3 filters differ from their imported source state");
+        ok=application_fail(error,QA_ERROR_FORMAT,"Native Q3 filters differ from their imported source state");
+    qa_buffer_free(&settings); qa_buffer_free(&ipfilters);
     return ok;
 }
 
-static bool native_q1_capture(application_provider *provider, qa_buffer *out, qa_error *error)
+static bool native_q1_capture(application_provider *provider, qa_save_purpose purpose, qa_buffer *out, qa_error *error)
 {
     qa_buffer game = {0}, cvars = {0}, npc = {0};
     bool ok = qa_q1_game_capture(provider->state.q1, &game, error) &&
-        application_native_q1_console_capture(provider, &cvars, error) &&
+        (purpose==QA_SAVE_TRANSITION || application_native_q1_console_capture(provider, &cvars, error)) &&
         application_bots_npc_capture(provider, &npc, error);
-    if (ok && (!game.size || !cvars.size || !npc.size || game.size > SIZE_MAX - 28 ||
+    if (ok && (!game.size || (purpose!=QA_SAVE_TRANSITION && !cvars.size) || !npc.size || game.size > SIZE_MAX - 28 ||
         cvars.size > SIZE_MAX - 28 - game.size || npc.size > SIZE_MAX - 28 - game.size - cvars.size))
         ok = application_fail(error, QA_ERROR_FORMAT, "Invalid native Q1 source owner extent");
     if (ok) {
@@ -1128,7 +1156,7 @@ static bool native_q1_capture(application_provider *provider, qa_buffer *out, qa
         memcpy(out->data, "QAN1", 4); qa_store_u64le(out->data + 4, game.size); qa_store_u64le(out->data + 12, cvars.size);
         qa_store_u64le(out->data + 20, npc.size);
         memcpy(out->data + 28, game.data, game.size);
-        memcpy(out->data + 28 + game.size, cvars.data, cvars.size);
+        if (cvars.size) memcpy(out->data + 28 + game.size, cvars.data, cvars.size);
         memcpy(out->data + 28 + game.size + cvars.size, npc.data, npc.size);
     }
     qa_buffer_free(&game); qa_buffer_free(&cvars); qa_buffer_free(&npc);
@@ -1139,19 +1167,27 @@ static bool native_q1_restore(application_provider *provider, qa_bytes bytes, qa
 {
     if (!bytes.data || bytes.size < 28 || memcmp(bytes.data, "QAN1", 4))
         return application_fail(error, QA_ERROR_FORMAT, "Invalid native Q1 source owner bundle");
+    application_provider *current=application_save_current_provider(provider);
     uint64_t game_size = qa_load_u64le(bytes.data + 4), cvars_size = qa_load_u64le(bytes.data + 12);
     uint64_t npc_size = qa_load_u64le(bytes.data + 20);
-    if (!game_size || game_size > bytes.size - 28 || !cvars_size ||
+    if (!game_size || game_size > bytes.size - 28 || (!current && !cvars_size) ||
+        (current && cvars_size) ||
         cvars_size > bytes.size - 28 - (size_t)game_size || !npc_size ||
         npc_size != bytes.size - 28 - (size_t)game_size - (size_t)cvars_size)
         return application_fail(error, QA_ERROR_FORMAT, "Invalid native Q1 source owner lengths");
+    qa_buffer settings={0};
+    qa_bytes registry={bytes.data + 28 + (size_t)game_size, (size_t)cvars_size};
+    bool ok=!current || (current->kind==APPLICATION_PROVIDER_Q1 &&
+        application_native_q1_console_capture(current,&settings,error));
+    if (ok && current) registry=(qa_bytes){settings.data,settings.size};
     qa_q1_restore *ticket = NULL;
-    bool ok = application_native_q1_console_restore(provider,
-        (qa_bytes){bytes.data + 28 + (size_t)game_size, (size_t)cvars_size}, error) &&
+    ok = ok && application_native_q1_console_restore(provider,registry,error) &&
         qa_q1_game_restore_prepare_source(provider->state.q1,
-            (qa_bytes){bytes.data + 28, (size_t)game_size}, &ticket, error) &&
+            (qa_bytes){bytes.data + 28, (size_t)game_size}, current?current->state.q1:NULL,
+            &ticket, error) &&
         qa_q1_game_restore_commit(ticket, error);
     if (!ok) qa_q1_game_restore_abort(ticket);
+    qa_buffer_free(&settings);
     if (ok) ok = application_bots_npc_restore(provider,
         (qa_bytes){bytes.data + 28 + (size_t)game_size + (size_t)cvars_size, (size_t)npc_size}, error);
     return ok;
@@ -1164,11 +1200,11 @@ static bool provider_capture(application_provider *provider, qa_save_purpose pur
     qa_buffer state = {0};
     bool ok;
     if (provider->kind == APPLICATION_PROVIDER_Q1)
-        ok = native_q1_capture(provider, &state, error);
+        ok = native_q1_capture(provider, purpose, &state, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q2)
         ok = application_native_q2_checkpoint_capture(provider, purpose, &state, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q3)
-        ok = native_q3_capture(provider, &state, error);
+        ok = native_q3_capture(provider, purpose, &state, error);
     else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
         ok = application_native_q2_save_capture(provider, purpose, resources, &state, error);
     else ok = application_guest_checkpoint_capture(provider, resources, &state, error);
@@ -1218,6 +1254,8 @@ static bool provider_restore(application_persistence *operation,
     else ok = application_guest_q3_save_declarations(provider,
         operation->options, operation->ops, error) &&
         application_guest_checkpoint_restore(provider, state, error);
+    if (ok && provider->kind==APPLICATION_PROVIDER_QC && application_save_current_provider(provider))
+        ok=application_qc_source_globals(provider,error);
     if (!ok) return false;
     provider->map_bound = qa_load_u32le(bytes.data + 8) != 0;
     provider->q1_server_flags = qa_load_u32le(bytes.data + 12);
@@ -1309,6 +1347,7 @@ static bool persistence_begin(void *opaque, qa_save_purpose purpose, qa_save_met
     if (!persistence_lease(operation, error)) return false;
     operation->purpose = purpose;
     qa_application *app = operation->active;
+    app->capture_purpose = purpose;
     bool ok = persistence_inventory(operation, app, NULL, error) &&
         application_save_foundation_capture(app, operation->foundation, error) &&
         (purpose==QA_SAVE_TRANSITION || configuration_capture(app, &operation->configuration, error)) &&

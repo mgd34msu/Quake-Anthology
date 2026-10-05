@@ -481,11 +481,25 @@ fail:
     qa_q1_game_restore_abort(ticket);
     return false;
 }
-bool qa_q1_game_restore_prepare_source(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **out,
-                                       qa_error *error) {
+bool qa_q1_game_restore_prepare_source(qa_q1_game *g, qa_bytes bytes, const qa_q1_game *unit,
+                                       qa_q1_restore **out, qa_error *error) {
     if (!qa_q1_game_restore_prepare(g, bytes, out, error))
         return false;
-    (*out)->candidate.continuation_pending = true;
+    qa_q1_game *candidate=&(*out)->candidate;
+    if (unit) {
+        /* Host rand() and gameplay cvars persist across SV_SpawnServer;
+         * worldtype and authored map globals belong to the visited level. */
+        candidate->options.coop=unit->options.coop;
+        candidate->options.skill=unit->options.skill;
+        candidate->options.deathmatch=unit->options.deathmatch;
+        candidate->options.teamplay=unit->options.teamplay;
+        candidate->options.gravity=unit->options.gravity;
+        candidate->options.aim_threshold=unit->options.aim_threshold;
+        candidate->options.random_seed=unit->options.random_seed;
+        candidate->options.gamecfg=unit->options.gamecfg;
+        candidate->random=unit->random;
+    }
+    candidate->continuation_pending = true;
     return true;
 }
 bool qa_q1_game_restore_finish(qa_q1_game *g, qa_error *error) {

@@ -25,7 +25,8 @@ bool qa_q1_game_capture(qa_q1_game *, qa_buffer *, qa_error *);
 bool qa_q1_game_restore_prepare(qa_q1_game *, qa_bytes, qa_q1_restore **, qa_error *);
 /* The coordinator publishes private state before importing shared stores.
  * Source turns remain blocked until finish validates the imported bindings. */
-bool qa_q1_game_restore_prepare_source(qa_q1_game *, qa_bytes, qa_q1_restore **, qa_error *);
+bool qa_q1_game_restore_prepare_source(qa_q1_game *, qa_bytes,
+    const qa_q1_game *current_unit, qa_q1_restore **, qa_error *);
 bool qa_q1_game_restore_finish(qa_q1_game *, qa_error *);
 bool qa_q1_game_restore_validate(const qa_q1_restore *, qa_error *);
 bool qa_q1_game_restore_commit(qa_q1_restore *, qa_error *);

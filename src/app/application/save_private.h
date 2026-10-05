@@ -30,6 +30,8 @@ bool application_save_resolvers(qa_application *, qa_persistence_gameplay_resolv
 bool application_save_foundation_finish(qa_application *candidate,
                                         const application_save_foundation *, qa_error *);
 
+application_provider *application_save_current_provider(const application_provider *);
+
 bool application_save_metadata_capture(qa_application *, qa_buffer *, qa_error *);
 bool application_save_metadata_restore(qa_application *candidate, qa_bytes, qa_error *);
 bool application_save_q3_product_decode(const qa_save_image *, qa_q3_product_policy *, qa_error *);

@@ -23,6 +23,7 @@
 #include "qa/qc_host.h"
 #include "qa/qvm.h"
 #include "qa/persistence_content.h"
+#include "qa/save.h"
 #include "unified_events.h"
 
 typedef enum application_operation {
@@ -308,6 +309,7 @@ struct qa_application {
     qa_catalog *catalog;
     qa_application_content_graph *content_graph;
     qa_application_content_graph *capture_content_graph;
+    qa_save_purpose capture_purpose;
     const struct qa_application_native_resource_refs *native_restore_resources;
     const struct qa_save_image *native_restore_image;
     /* Borrowed only while rebuilding a visited level from its current unit. */

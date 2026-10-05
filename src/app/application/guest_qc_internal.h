@@ -111,6 +111,7 @@ static inline bool application_qc_restore_pending(const struct application_qc_st
 bool application_qc_import(void *, qa_qc_instance *, qa_qc_builtin, const char *, qa_error *);
 bool application_qc_capture_engine(void *, qa_buffer *, qa_error *);
 bool application_qc_restore_engine(void *, qa_bytes, qa_error *);
+bool application_qc_source_globals(application_provider *, qa_error *);
 bool application_qc_npc_restore_finish(application_provider *, qa_error *);
 bool application_qc_flush(struct application_qc_state *, qa_error *);
 bool application_qc_write_message(struct application_qc_state *, qa_qc_instance *, qa_qc_builtin, qa_error *);
