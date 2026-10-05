@@ -45,7 +45,6 @@ typedef struct q3n_compiled_source_options {
     bool (*checkpoint_current)(void *, const q3n_compiled_source_basis *);
 } q3n_compiled_source_options;
 bool q3n_compiled_source_create(const q3n_compiled_source_options *, q3n_compiled_source **, qa_error *);
-bool q3n_compiled_source_create_restored(const q3n_compiled_source_options *, q3n_compiled_source **, qa_error *);
 bool q3n_compiled_source_destroy(q3n_compiled_source **, qa_error *);
 bool q3n_compiled_source_read(const q3n_compiled_source *, q3n_compiled_source_view *, qa_error *);
 bool q3n_compiled_source_current(const q3n_compiled_source_view *);
@@ -60,8 +59,6 @@ bool q3n_compiled_source_rebind_prepare(q3n_compiled_source *, const q3n_compile
     const q3n_compiled_source_basis *, q3n_compiled_source_rebind_ticket **, qa_error *);
 bool q3n_compiled_source_rebind_ready(const q3n_compiled_source_rebind_ticket *);
 bool q3n_compiled_source_rebind_checkpoint_current(const q3n_compiled_source_rebind_ticket *);
-bool q3n_compiled_source_rebind_restore(q3n_compiled_source *, const q3n_compiled_source_basis *,
-    q3n_compiled_source_rebind_ticket **, qa_error *);
 bool q3n_compiled_source_rebind_context_is(const q3n_compiled_source_rebind_ticket *,
     const q3n_compiled_source *, const qa_command_context *, const qa_command_context *);
 bool q3n_compiled_source_rebind_checkpoint_context_is(const q3n_compiled_source_rebind_ticket *,

@@ -35,24 +35,18 @@ static bool identity(const q3n_compiled_source_basis *a, const q3n_compiled_sour
         qa_actor_id_equal(a->viewer, b->viewer) && a->seat == b->seat && a->physical_seat == b->physical_seat &&
         a->client_number == b->client_number && a->initial_command==b->initial_command && a->snapshot_bit==b->snapshot_bit;
 }
-static bool create(const q3n_compiled_source_options *o,bool restored,q3n_compiled_source **out,qa_error *e)
+bool q3n_compiled_source_create(const q3n_compiled_source_options *o,q3n_compiled_source **out,qa_error *e)
 {
     if (!o || !o->context || !o->read || !o->current || !o->configstring || !o->idle || !o->client_actor || !o->actor_known || !out || *out ||
-        (o->checkpoint_read==NULL)!=(o->checkpoint_current==NULL) || (restored&&!o->checkpoint_read))
+        (o->checkpoint_read==NULL)!=(o->checkpoint_current==NULL))
         return fail(e, "Compiled Q3 CLIENT requires its retained receiver callbacks");
     q3n_compiled_source_basis basis = {0};
-    if (!(restored?o->checkpoint_read(o->context,&basis,e):o->read(o->context,&basis,e)) ||
-        !(restored?shape_fields(&basis)&&o->actor_known(o->context,basis.viewer):shape(&basis)) ||
-        !(restored?o->checkpoint_current(o->context,&basis):o->current(o->context,&basis)))
+    if (!o->read(o->context,&basis,e) || !shape(&basis) || !o->current(o->context,&basis))
         return fail(e, "Compiled Q3 CLIENT constructor has no current source declaration");
     q3n_compiled_source *s = calloc(1, sizeof(*s));
     if (!s) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining compiled Q3 CLIENT source"); return false; }
     s->options = *o; s->constructor = basis; *out = s; return true;
 }
-bool q3n_compiled_source_create(const q3n_compiled_source_options *o,q3n_compiled_source **out,qa_error *e)
-{ return create(o,false,out,e); }
-bool q3n_compiled_source_create_restored(const q3n_compiled_source_options *o,q3n_compiled_source **out,qa_error *e)
-{ return create(o,true,out,e); }
 bool q3n_compiled_source_idle(const q3n_compiled_source *s)
 { return s && !s->prepared && s->options.idle(s->options.context); }
 bool q3n_compiled_source_destroy(q3n_compiled_source **slot, qa_error *e)
@@ -143,20 +137,6 @@ bool q3n_compiled_source_rebind_checkpoint_current(const q3n_compiled_source_reb
         actual.reached_command == t->before.basis.reached_command && actual.initialized == t->before.basis.initialized &&
         s->options.checkpoint_current(s->options.context,&t->before.basis) &&
         s->options.checkpoint_current(s->options.context,&t->candidate);
-}
-bool q3n_compiled_source_rebind_restore(q3n_compiled_source *s,const q3n_compiled_source_basis *candidate,
-    q3n_compiled_source_rebind_ticket **out,qa_error *e)
-{
-    if (!s || s->prepared || !candidate || !out || *out)
-        return fail(e,"Compiled rebind import requires an empty actual Source adapter");
-    q3n_compiled_source_view before;
-    if (!q3n_compiled_source_checkpoint_read(s,&before,e)) return false;
-    q3n_compiled_source_rebind_ticket *t = calloc(1,sizeof(*t));
-    if (!t) { qa_error_set(e,QA_ERROR_MEMORY,0,"Restoring compiled round rebind"); return false; }
-    t->source = s; t->before = before; t->candidate = *candidate; s->prepared = t;
-    if (!q3n_compiled_source_rebind_checkpoint_current(t)) { s->prepared = NULL; free(t);
-        return fail(e,"Compiled rebind import disagrees with its actual cold Source receipts"); }
-    *out = t; return true;
 }
 bool q3n_compiled_source_rebind_ready(const q3n_compiled_source_rebind_ticket *t)
 {

@@ -2,7 +2,6 @@
 #include "../application/native_q3_client_settings.h"
 #include "remote_unified_save.h"
 #include "video_guests.h"
-#include "qa/network_q3_fields_save.h"
 #include "qa/application_native_q3_cvars.h"
 #include "qa/application_native_q3_client.h"
 
@@ -341,16 +340,6 @@ static bool configstring(void *context, uint32_t index, const char **out, uint64
     *out = qa_q3_configstring(&c->history->reached,index); *revision = c->history->string_revisions[index]; return true;
 }
 static bool source_idle(void *context) { return frontend_unified_q3_client_idle(context); }
-bool frontend_unified_q3_client_actor_fields(frontend_unified_q3_client *c, qa_source_save_io *io, qa_actor_id *actor)
-{
-    if (!c || !io || !actor) return false;
-    bool present = actor->registry != 0; qa_saved_actor_id wire = {0};
-    if (!qa_source_save_bool(io,&present)) return false;
-    if (!present) { if (io->direction == QA_SOURCE_SAVE_READ) *actor = (qa_actor_id){0}; return true; }
-    if (io->direction == QA_SOURCE_SAVE_WRITE && !frontend_remote_unified_wire_actor(c->replica,*actor,&wire)) return false;
-    return qa_source_save_u32(io,&wire.slot) && qa_source_save_u64(io,&wire.generation) &&
-        (io->direction != QA_SOURCE_SAVE_READ || frontend_remote_unified_actor_retained(c->replica,wire.slot,wire.generation,actor,io->error));
-}
 static bool actor_known(void *context,qa_actor_id actor)
 {
     frontend_unified_q3_client *c = context; qa_saved_actor_id wire;
@@ -369,21 +358,19 @@ static bool client_actor(void *context, uint32_t slot, qa_actor_id *actor, bool 
         }
     return frontend_unified_q3_source_current(&v);
 }
-static bool create_source(frontend_unified_q3_client *c,bool restoring,qa_error *e)
+static bool create_source(frontend_unified_q3_client *c,qa_error *e)
 {
     q3n_compiled_source_options options = {.context=c,.read=source_read,.current=source_current,
         .configstring=configstring,.idle=source_idle,.client_actor=client_actor,.actor_known=actor_known,
         .checkpoint_read=checkpoint_read,.checkpoint_current=checkpoint_current};
-    return restoring ? q3n_compiled_source_create_restored(&options,&c->source,e) :
-        q3n_compiled_source_create(&options,&c->source,e);
+    return q3n_compiled_source_create(&options,&c->source,e);
 }
-static bool create(frontend_remote_unified *replica, frontend_unified_q3_sources *sources,
-    const frontend_unified_q3_source_view *v, uint64_t receiver,bool restoring,
-    frontend_unified_q3_source_retirement *retirement,frontend_unified_q3_client **out, qa_error *e)
+bool frontend_unified_q3_client_create(frontend_remote_unified *replica, frontend_unified_q3_sources *sources,
+    const frontend_unified_q3_source_view *v, uint64_t receiver,
+    frontend_unified_q3_client **out, qa_error *e)
 {
     if (!replica || !sources || !v || v->owner != sources || !v->has_client || !receiver || !out || *out ||
-        !(restoring ? retirement ? frontend_unified_q3_source_retirement_checkpoint_current(retirement) :
-            frontend_unified_q3_source_checkpoint_current(v) : frontend_unified_q3_source_current(v)))
+        !frontend_unified_q3_source_current(v))
         return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT requires its real bound Source and receiver namespace");
     frontend_unified_q3_client *c = calloc(1,sizeof(*c));
     if (!c) return fail(e,QA_ERROR_MEMORY,"Retaining compiled CLIENT transport");
@@ -394,14 +381,11 @@ static bool create(frontend_remote_unified *replica, frontend_unified_q3_sources
         c->command_context.registry = v->viewer.registry; c->command_context.generation = v->publication;
         c->command_context.dialect = QA_CONSOLE_Q3; }
     c->provider_name = copy(v->provider_name); c->instance = copy(v->instance); c->history = calloc(1,sizeof(*c->history));
-    bool ok = c->domain && c->provider_name && c->instance && c->history && (!retirement || frontend_unified_q3_client_retirement_bind(c,retirement,e)) &&
-        (restoring || (receive(c->history,v,true,false,e) && create_source(c,false,e)));
+    bool ok = c->domain && c->provider_name && c->instance && c->history &&
+        receive(c->history,v,true,false,e) && create_source(c,e);
     if (!ok) { frontend_unified_q3_client_destroy(&c,NULL); return e && e->code ? false : fail(e,QA_ERROR_MEMORY,"Retaining compiled CLIENT source declaration"); }
     *out = c; return true;
 }
-bool frontend_unified_q3_client_create(frontend_remote_unified *replica,frontend_unified_q3_sources *sources,
-    const frontend_unified_q3_source_view *v,uint64_t receiver,frontend_unified_q3_client **out,qa_error *e)
-{ return create(replica,sources,v,receiver,false,NULL,out,e); }
 bool frontend_unified_q3_client_prepare(frontend_unified_q3_client *c, const frontend_unified_q3_source_view *v,
     frontend_unified_q3_client_frame **out, qa_error *e)
 {
@@ -723,125 +707,6 @@ bool frontend_unified_q3_client_local_server_read(const frontend_unified_q3_clie
         return fail(e,QA_ERROR_ARGUMENT,"Compiled local-server observation requires its actual CG constructor");
     *out = c->local_server; return true;
 }
-static bool saved_text(qa_source_save_io *io, char **text, size_t maximum)
-{
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    size_t size = reading ? 0 : strlen(*text ? *text : "");
-    if (!qa_source_save_count(io,&size,maximum)) return false;
-    if (reading) {
-        char *value = malloc(size+1);
-        if (!value) return fail(io->error,QA_ERROR_MEMORY,"Restoring compiled CLIENT text");
-        bool ok = qa_source_save_bytes(io,value,size) && !memchr(value,0,size);
-        if (!ok) { free(value); return false; }
-        value[size] = 0; *text = value; return true;
-    }
-    return qa_source_save_bytes(io,*text,size);
-}
-static bool saved_record(qa_source_save_io *io, void *record, int kind, qa_q3_product product)
-{
-    size_t capacity = kind == 2 ? 512u*1024u : 4096u;
-    uint8_t *data = malloc(capacity); size_t size = 0;
-    if (!data) return fail(io->error,QA_ERROR_MEMORY,"Retaining compiled CLIENT cold record");
-    bool reading = io->direction == QA_SOURCE_SAVE_READ, ok = true;
-    if (!reading) {
-        qa_net_writer writer; qa_net_writer_init(&writer,data,capacity,io->error);
-        ok = kind == 0 ? qa_q3_save_entity_fields(&writer,record) : kind == 1 ?
-            qa_q3_save_player_fields(&writer,record) : qa_q3_save_gamestate_fields(&writer,record);
-        if (ok) size = qa_net_writer_size(&writer);
-    }
-    if (ok) ok = qa_source_save_count(io,&size,capacity) && qa_source_save_bytes(io,data,size);
-    if (ok && reading) {
-        qa_net_reader reader; qa_net_reader_init(&reader,(qa_bytes){data,size},io->error);
-        ok = (kind == 0 ? qa_q3_restore_entity_fields(&reader,record) : kind == 1 ?
-            qa_q3_restore_player_fields(&reader,record,product) : qa_q3_restore_gamestate_fields(&reader,record)) && qa_net_reader_finish(&reader);
-    }
-    free(data); return ok;
-}
-static bool history_fields(frontend_unified_q3_client *c, qa_source_save_io *io, client_history *h)
-{
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    qa_q3_product product = c->constructor.product;
-    bool ok = qa_source_save_i32(io,&h->number) && h->number > 0 && qa_source_save_i32(io,&h->time) &&
-        qa_source_save_i32(io,&h->reliable) && h->reliable >= 0 && qa_source_save_i32(io,&h->command_sequence) &&
-        h->command_sequence >= 0 && h->command_sequence <= h->reliable &&
-        qa_source_save_bool(io,&h->has_event_sequence) && qa_source_save_u64(io,&h->event_sequence) &&
-        qa_source_save_bool(io,&h->unsealed_snapshot) &&
-        saved_record(io,&h->authority,2,product) && saved_record(io,&h->reached,2,product);
-    for (uint32_t i = 0; ok && i < QA_Q3_CONFIGSTRINGS; ++i) ok = qa_source_save_u64(io,h->string_revisions+i);
-    for (uint32_t i = 0; ok && i < QA_Q3_ENTITIES; ++i) ok = frontend_unified_q3_client_actor_fields(c,io,h->actors+i);
-    for (size_t i = 0; ok && i < 64; ++i) {
-        client_command *row = h->commands+i; size_t count = row->arguments.count;
-        ok = qa_source_save_i32(io,&row->sequence) && row->sequence >= 0 && row->sequence <= h->reliable &&
-            (!row->sequence || ((uint32_t)row->sequence&63u) == i) && qa_source_save_count(io,&count,1024);
-        char **values = reading && count ? calloc(count,sizeof(*values)) : NULL;
-        if (reading && count && !values) ok = fail(io->error,QA_ERROR_MEMORY,"Restoring compiled command argument list");
-        for (size_t k = 0; ok && k < count; ++k) {
-            char *value = reading ? NULL : row->arguments.values[k];
-            ok = saved_text(io,&value,1024u*1024u);
-            if (reading && values) values[k] = value;
-        }
-        char *tail = reading ? NULL : row->arguments.args_text;
-        if (ok) ok = saved_text(io,&tail,1024u*1024u);
-        if (ok && reading) {
-            ok = arguments((const char *const *)values,count,&row->arguments,io->error);
-            if (ok) { free(row->arguments.args_text); row->arguments.args_text = tail; tail = NULL; }
-        }
-        if (reading) { for (size_t k = 0; k < count; ++k) free(values ? values[k] : NULL); free(values); free(tail); }
-    }
-    for (size_t i = 0; ok && i < 32; ++i) {
-        client_snapshot *row = h->snapshots+i; qa_q3_snapshot *s = &row->value;
-        ok = qa_source_save_bool(io,&s->valid); if (!ok || !s->valid) continue;
-        ok = qa_source_save_i32(io,&s->message_number) && s->message_number > 0 && s->message_number <= h->number &&
-            (int64_t)s->message_number > (int64_t)h->number-32 && ((uint32_t)s->message_number&31u) == i &&
-            qa_source_save_i32(io,&s->server_time) && s->server_time <= h->time && qa_source_save_i32(io,&s->delta_number) &&
-            s->delta_number == (s->message_number == 1 ? -1 : s->message_number-1) &&
-            qa_source_save_i32(io,&s->server_command_number) && s->server_command_number >= 0 && s->server_command_number <= h->reliable &&
-            qa_source_save_u8(io,&s->flags) && !(s->flags & ~4u) && qa_source_save_u8(io,&s->area_bytes) && s->area_bytes == 32 &&
-            qa_source_save_bytes(io,s->area_mask,sizeof(s->area_mask)) && saved_record(io,&s->player,1,product) &&
-            frontend_unified_q3_client_actor_fields(c,io,&row->player_actor) && qa_source_save_count(io,&s->entity_count,256);
-        for (size_t k = 0; ok && k < QA_Q3_ENTITIES; ++k)
-            ok = frontend_unified_q3_client_actor_fields(c,io,row->bindings+k);
-        s->entities = row->entities;
-        for (size_t k = 0; ok && k < s->entity_count; ++k) {
-            ok = saved_record(io,row->entities+k,0,product) && row->entities[k].number >= 0 && row->entities[k].number < QA_Q3_ENTITY_NONE &&
-                (!k || row->entities[k].number > row->entities[k-1].number) && frontend_unified_q3_client_actor_fields(c,io,row->actors+k);
-        }
-    }
-    const qa_q3_snapshot *latest = &h->snapshots[(uint32_t)h->number&31u].value;
-    return ok && latest->valid && latest->message_number == h->number && latest->server_time == h->time;
-}
-static bool client_fields(frontend_unified_q3_client *c, qa_source_save_io *io)
-{
-    char magic[4] = {'Q','3','C','T'}; uint32_t epoch = c->constructor.epoch;
-    uint64_t publication = c->constructor.publication, map = c->constructor.map_revision, receiver = c->receiver;
-    uint32_t client = c->constructor.client_number; qa_actor_id viewer = c->constructor.viewer;
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    bool ok = qa_source_save_bytes(io,magic,4) && !memcmp(magic,"Q3CT",4) && qa_source_save_u32(io,&epoch) && epoch == c->constructor.epoch && qa_source_save_u64(io,&publication) && publication == c->constructor.publication &&
-        qa_source_save_u64(io,&map) && map == c->constructor.map_revision && qa_source_save_u64(io,&receiver) && receiver == c->receiver &&
-        qa_source_save_u32(io,&client) && client == c->constructor.client_number &&
-        frontend_unified_q3_client_actor_fields(c,io,&viewer) && qa_actor_id_equal(viewer,c->constructor.viewer) &&
-        qa_source_save_u64(io,&c->revision) && c->revision && qa_source_save_bool(io,&c->registered) && qa_source_save_bool(io,&c->initialized) &&
-        (!c->initialized || c->registered) && qa_source_save_i32(io,&c->local_server) && history_fields(c,io,c->history);
-    size_t count = c->registered ? qa_native_q3_cvar_definition_count(c->constructor.product) : 0;
-    if (ok) ok = qa_source_save_count(io,&count,128) && count == (c->registered ? qa_native_q3_cvar_definition_count(c->constructor.product) : 0);
-    if (ok && reading && count) { c->cvar_cache = calloc(count,sizeof(*c->cvar_cache)); if (!c->cvar_cache) ok = false; }
-    if (ok) c->cvar_count = count;
-    for (size_t i = 0; ok && i < count; ++i) {
-        qa_native_q3_client_cvar *value = c->cvar_cache+i;
-        ok = qa_source_save_bytes(io,value->value,sizeof(value->value)) && memchr(value->value,0,sizeof(value->value)) &&
-            qa_source_save_f32(io,&value->number) && qa_source_save_i32(io,&value->integer) && qa_source_save_u64(io,&value->modification_count);
-    }
-    return ok;
-}
-bool frontend_unified_q3_client_checkpoint(const frontend_unified_q3_client *c, qa_buffer *out, qa_error *e)
-{
-    if (!out || out->data || !frontend_unified_q3_client_checkpoint_current(c))
-        return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT cold capture requires its actual returned history");
-    qa_source_save_io io = {0};
-    bool ok = qa_source_save_writer(&io,NULL,e) && client_fields((frontend_unified_q3_client *)c,&io) &&
-        frontend_unified_q3_client_checkpoint_current(c) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); return ok;
-}
 static bool frame_history_current(const frontend_unified_q3_client_frame *t)
 {
     const client_history *base = t->owner->history, *next = t->history;
@@ -861,117 +726,9 @@ bool frontend_unified_q3_client_checkpoint_stage_current(const frontend_unified_
             ((t->rebind != NULL) == (t->source.snapshot_bit != c->constructor.snapshot_bit)) &&
             (!t->rebind || q3n_compiled_source_rebind_checkpoint_current(t->rebind))));
 }
-bool frontend_unified_q3_client_checkpoint_stage(const frontend_unified_q3_client *c,
-    const frontend_unified_q3_client_frame *t,const frontend_unified_q3_source_frame *source,
-    qa_buffer *out,qa_error *e)
-{
-    if (!out || out->data || !frontend_unified_q3_client_checkpoint_stage_current(c,t))
-        return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT staged capture requires its exact returned frame cohort");
-    bool found = c->retirement && frontend_unified_q3_source_retirement_checkpoint_current(c->retirement);
-    for (size_t i = 0; !found && i < frontend_unified_q3_source_frame_count(source); ++i) {
-        frontend_unified_q3_source_view v;
-        if (!frontend_unified_q3_sources_checkpoint_stage_read(c->sources,source,true,i,&v,e)) return false;
-        found = t ? v.source == t->source.source && v.revision == t->source.revision : identity(c,&v);
-    }
-    for (size_t i = 0; !found && i < frontend_unified_q3_sources_committed_count(c->sources); ++i) {
-        frontend_unified_q3_source_view v;
-        if (!frontend_unified_q3_sources_checkpoint_stage_read(c->sources,source,false,i,&v,e)) return false;
-        found = identity(c,&v);
-    }
-    if (!found) return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT is outside the actual Source frame cohort");
-    qa_source_save_io io = {0};
-    bool ok = qa_source_save_writer(&io,NULL,e) && client_fields((frontend_unified_q3_client *)c,&io) &&
-        frontend_unified_q3_client_checkpoint_stage_current(c,t) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); return ok;
-}
 const qa_command_context *frontend_unified_q3_client_checkpoint_stage_context(
     const frontend_unified_q3_client *c,const frontend_unified_q3_client_frame *t)
 { return frontend_unified_q3_client_checkpoint_stage_current(c,t) ? &c->command_context : NULL; }
 qa_cvars *frontend_unified_q3_client_checkpoint_stage_cvars(
     const frontend_unified_q3_client *c,const frontend_unified_q3_client_frame *t)
 { return frontend_unified_q3_client_checkpoint_stage_current(c,t) ? c->domain->cvars : NULL; }
-static bool frame_fields(frontend_unified_q3_client_frame *t,qa_source_save_io *io)
-{
-    frontend_unified_q3_client *c = t->owner;
-    char magic[4] = {'Q','3','C','F'}; uint32_t epoch = t->source.epoch;
-    uint64_t receiver = c->receiver,publication = t->source.publication,map = t->source.map_revision;
-    uint64_t source_revision = t->source.revision,base_revision = c->revision;
-    uint8_t bit = t->source.snapshot_bit; int32_t time = t->source.time; qa_actor_id viewer = t->source.viewer;
-    bool round = t->source.snapshot_bit != c->constructor.snapshot_bit;
-    bool ok = qa_source_save_bytes(io,magic,4) && !memcmp(magic,"Q3CF",4) &&
-        qa_source_save_u32(io,&epoch) && epoch == t->source.epoch &&
-        qa_source_save_u64(io,&receiver) && receiver == c->receiver &&
-        qa_source_save_u64(io,&publication) && publication == t->source.publication &&
-        qa_source_save_u64(io,&map) && map == t->source.map_revision &&
-        qa_source_save_u64(io,&source_revision) && source_revision == t->source.revision &&
-        qa_source_save_u64(io,&base_revision) && base_revision == c->revision &&
-        qa_source_save_u64(io,&t->revision) && c->revision != UINT64_MAX && t->revision == c->revision+1 &&
-        qa_source_save_u8(io,&bit) && bit == t->source.snapshot_bit &&
-        qa_source_save_i32(io,&time) && time == t->source.time &&
-        frontend_unified_q3_client_actor_fields(c,io,&viewer) && qa_actor_id_equal(viewer,t->source.viewer) &&
-        qa_source_save_bool(io,&round) && round == (t->source.snapshot_bit != c->constructor.snapshot_bit) &&
-        history_fields(c,io,t->history) && frame_history_current(t);
-    return ok;
-}
-bool frontend_unified_q3_client_frame_checkpoint(const frontend_unified_q3_client_frame *t,
-    qa_buffer *out,qa_error *e)
-{
-    if (!t || !out || out->data || !frontend_unified_q3_client_checkpoint_stage_current(t->owner,t) ||
-        ((t->rebind != NULL) != (t->source.snapshot_bit != t->owner->constructor.snapshot_bit)))
-        return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT frame capture requires its genuine staged history and rebind");
-    qa_source_save_io io = {0};
-    bool ok = qa_source_save_writer(&io,NULL,e) && frame_fields((frontend_unified_q3_client_frame *)t,&io) &&
-        frontend_unified_q3_client_checkpoint_stage_current(t->owner,t) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); return ok;
-}
-bool frontend_unified_q3_client_frame_restore(frontend_unified_q3_client *c,
-    const frontend_unified_q3_source_view *v,qa_bytes bytes,frontend_unified_q3_client_frame **out,qa_error *e)
-{
-    if (!c || !v || !out || *out || !frontend_unified_q3_client_checkpoint_current(c) ||
-        c->revision == UINT64_MAX || !activation(c,v) || !frontend_unified_q3_source_staged_checkpoint_current(v) ||
-        (!qa_actor_id_equal(v->viewer,c->constructor.viewer) && v->snapshot_bit == c->constructor.snapshot_bit))
-        return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT pending import requires its actual restored Source candidate");
-    frontend_unified_q3_client_frame *t = calloc(1,sizeof(*t)); qa_source_save_io io = {0};
-    if (!t) return fail(e,QA_ERROR_MEMORY,"Restoring compiled CLIENT frame");
-    t->owner = c; t->source = *v; t->revision = c->revision+1;
-    t->command_context = c->command_context; t->command_context.actor = v->viewer;
-    t->history = calloc(1,sizeof(*t->history));
-    bool ok = t->history && qa_source_save_reader(&io,NULL,bytes,e) && frame_fields(t,&io) && io.offset == io.input.size;
-    if (ok) {
-        c->prepared = t;
-        if (v->snapshot_bit != c->constructor.snapshot_bit)
-            ok = source_basis(c,v,t->history,t->revision,&t->candidate,e) &&
-                q3n_compiled_source_rebind_restore(c->source,&t->candidate,&t->rebind,e);
-        if (ok) ok = frontend_unified_q3_client_checkpoint_stage_current(c,t);
-    }
-    if (ok) *out = t;
-    else { q3n_compiled_source_rebind_abort(&t->rebind); if (c->prepared == t) c->prepared = NULL;
-        history_free(t->history); free(t); }
-    qa_source_save_dispose(&io);
-    return ok || (e && e->code ? false : fail(e,QA_ERROR_FORMAT,"Compiled CLIENT staged history is invalid"));
-}
-static bool restore(frontend_remote_unified *replica, frontend_unified_q3_sources *sources,
-    const frontend_unified_q3_source_view *view, uint64_t receiver, qa_bytes bytes,
-    frontend_unified_q3_source_retirement *retirement,frontend_unified_q3_client **out, qa_error *e)
-{
-    if (!out || *out) return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT cold restore requires an empty isolated child");
-    frontend_unified_q3_client *c = NULL; qa_source_save_io io = {0};
-    bool ok = create(replica,sources,view,receiver,true,retirement,&c,e);
-    if (ok) ok = qa_source_save_reader(&io,NULL,bytes,e) && client_fields(c,&io) && io.offset == io.input.size &&
-        c->history->time <= view->time && frontend_unified_q3_client_checkpoint_current(c) && create_source(c,true,e);
-    if (ok) *out = c; else frontend_unified_q3_client_destroy(&c,NULL);
-    qa_source_save_dispose(&io);
-    return ok || (e && e->code ? false : fail(e,QA_ERROR_FORMAT,"Compiled CLIENT cold continuation is invalid"));
-}
-bool frontend_unified_q3_client_restore(frontend_remote_unified *replica,frontend_unified_q3_sources *sources,
-    const frontend_unified_q3_source_view *view,uint64_t receiver,qa_bytes bytes,frontend_unified_q3_client **out,qa_error *e)
-{ return restore(replica,sources,view,receiver,bytes,NULL,out,e); }
-bool frontend_unified_q3_client_restore_retired(frontend_remote_unified *replica,frontend_unified_q3_sources *sources,
-    frontend_unified_q3_source_retirement *t,uint64_t receiver,qa_bytes bytes,frontend_unified_q3_client **out,qa_error *e)
-{
-    frontend_unified_q3_source_view view;
-    if (!frontend_unified_q3_source_retirement_checkpoint_current(t) ||
-        !frontend_unified_q3_source_retirement_read(t,&view,e) || view.owner != sources)
-        return fail(e,QA_ERROR_ARGUMENT,"Compiled retired CLIENT import requires its actual cold Source custody");
-    return restore(replica,sources,&view,receiver,bytes,t,out,e);
-}
