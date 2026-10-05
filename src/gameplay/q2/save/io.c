@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/source_save.h"
 
 bool q2_save_fail(q2_save_io *io, const char *message) {
     qa_error_set(io->error, QA_ERROR_FORMAT, io->offset, "%s", message);
@@ -123,6 +124,15 @@ bool q2_save_text(q2_save_io *io, char *text, size_t capacity) {
     if (memchr(text, 0, size)) return q2_save_fail(io, "Embedded NUL in Q2 text field");
     if (io->reading) text[size] = 0;
     return true;
+}
+bool q2_save_actor_pointer(q2_save_io *io, qa_actor_reference *reference) {
+    qa_source_save_io values = {.session = io->game->services.session,
+        .direction = io->reading ? QA_SOURCE_SAVE_READ : QA_SOURCE_SAVE_WRITE,
+        .input = io->input, .output = io->output, .offset = io->offset,
+        .capacity = io->capacity, .error = io->error};
+    bool okay = qa_source_save_actor_reference(&values, reference);
+    io->output = values.output; io->offset = values.offset; io->capacity = values.capacity;
+    return okay;
 }
 bool q2_save_ref(q2_save_io *io, qa_q2_saved_reference *s) {
     Q2B(present);

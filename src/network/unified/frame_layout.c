@@ -78,6 +78,7 @@ static const qa_unified_record_layout qa_unified_player_view_layout;
 const qa_unified_record_layout qa_unified_prediction_layout;
 static const qa_unified_record_layout qa_spatial_actor_layout;
 static const qa_unified_record_layout qa_actor_collision_layout;
+static const qa_unified_record_layout reference_layout;
 static const qa_unified_record_layout qa_linked_body_layout;
 const qa_unified_record_layout qa_unified_body_layout;
 static const qa_unified_record_layout qa_movement_ground_layout;
@@ -725,7 +726,7 @@ static const qa_unified_field qa_actor_collision_fields[] = {
     QA_UNIFIED_FIELD(qa_actor_collision, inline_model, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_actor_collision, model, QA_UNIFIED_FIELD_U32),
     QA_UNIFIED_FIELD(qa_actor_collision, contents, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_RECORD(qa_actor_collision, owner, qa_unified_actor_layout),
+    QA_UNIFIED_RECORD(qa_actor_collision, owner, reference_layout),
     QA_UNIFIED_FIELD(qa_actor_collision, role, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_actor_collision, monster, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_actor_collision, dead_monster, QA_UNIFIED_FIELD_BOOL),

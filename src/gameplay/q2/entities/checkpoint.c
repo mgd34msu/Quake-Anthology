@@ -58,13 +58,11 @@ bool qa_q2_entity_capture(qa_q2_game *g, qa_actor_id id, qa_q2_entity_checkpoint
         !q2_save_reference(g, s->enemy, &saved.enemy, e) ||
         !q2_save_reference(g, s->goal, &saved.goal, e) ||
         !q2_save_reference(g, s->team_master, &saved.master, e) ||
-        !q2_save_reference(g, s->team_next, &saved.next, e) ||
-        !q2_save_reference(g, s->collision.owner, &saved.collision_owner, e))
+        !q2_save_reference(g, s->team_next, &saved.next, e))
         goto fail;
     saved.value.activator = saved.value.owner = saved.value.enemy = saved.value.goal =
         (qa_actor_id){0};
     saved.value.team_master = saved.value.team_next = (qa_actor_id){0};
-    saved.value.collision.owner = (qa_actor_id){0};
     if (s->mover) {
         if (!q2_save_reference(g, s->mover->destination, &saved.destination, e))
             goto fail;
@@ -105,7 +103,7 @@ static bool valid_state(qa_q2_game *g, const q2_entity_state *s, qa_error *e) {
     if ((unsigned)s->kind > Q2E_DELAYED_USE || (unsigned)s->think > Q2ET_DELAYED_USE ||
         (unsigned)s->scenery > Q2S_MAL_LASER || s->dispatching || s->activator.registry ||
         s->owner.registry || s->enemy.registry || s->goal.registry || s->team_master.registry ||
-        s->team_next.registry || s->collision.owner.registry ||
+        s->team_next.registry || (unsigned)s->collision.owner.kind > QA_ACTOR_REFERENCE_SOURCE ||
         (unsigned)s->collision.role > QA_COLLISION_BOTH ||
         (unsigned)s->collision.shape > QA_SHAPE_CAPSULE ||
         (s->collision.family && s->collision.family != QA_COLLISION_Q2) || !s->classname ||
@@ -196,8 +194,7 @@ bool qa_q2_entity_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_entity_chec
         !q2_resolve_reference(g, saved->enemy, &s->enemy, e) ||
         !q2_resolve_reference(g, saved->goal, &s->goal, e) ||
         !q2_resolve_reference(g, saved->master, &s->team_master, e) ||
-        !q2_resolve_reference(g, saved->next, &s->team_next, e) ||
-        !q2_resolve_reference(g, saved->collision_owner, &s->collision.owner, e))
+        !q2_resolve_reference(g, saved->next, &s->team_next, e))
         goto fail;
     if (s->mover && !q2_resolve_reference(g, saved->destination, &s->mover->destination, e))
         goto fail;

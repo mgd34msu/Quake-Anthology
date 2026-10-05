@@ -337,8 +337,12 @@ static bool create_part(q2m_context *context, bool segment, qa_vec3 from, qa_vec
     if (!qa_builtin_resource(&game->services, segment ? "parasite_proboscis_segment" : "parasite_proboscis", &classname, error) ||
         !qa_builtin_resource(&game->services, segment ? "models/monsters/parasite/segment/tris.md2" : "models/monsters/parasite/tip/tris.md2", &model, error))
         return false;
+    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(game->services.session), owner);
+    qa_actor_reference owner_reference = reference_owner && reference_owner->owner == game->options.owner && reference_owner->has_source ?
+        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
+        qa_actor_reference_lifetime(owner);
     qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
-                                    .contents = 2, .owner = owner, .role = QA_COLLISION_SOLID};
+                                    .contents = 2, .owner = owner_reference, .role = QA_COLLISION_SOLID};
     qa_combat_state combat = {.can_take_damage = true, .no_knockback = true};
     qa_builtin_spawn spawn = {.owner = game->options.owner, .definition = classname,
         .body = {.origin = from, .angles = q2m_vector_angles(direction),
@@ -352,11 +356,8 @@ static bool create_part(q2m_context *context, bool segment, qa_vec3 from, qa_vec
         qa_session_release(game->services.session, id, NULL);
         return false;
     }
-    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(game->services.session), owner);
     actor->projectile = (q2_projectile){.kind = segment ? Q2_PROBOSCIS_SEGMENT : Q2_PROBOSCIS,
-        .owner = reference_owner && reference_owner->owner == game->options.owner && reference_owner->has_source ?
-            qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
-            qa_actor_reference_lifetime(owner), .model = model, .classname = classname, .scale = 1, .visible = true,
+        .owner = owner_reference, .model = model, .classname = classname, .scale = 1, .visible = true,
         .speed = segment ? 0 : 1250, .next_ns = q2_deadline(game->now_ns, game->frame_ns),
         .expire_ns = UINT64_MAX, .render_flags = segment ? 128 : 0,
         .attack = {.attacker = owner, .weapon_provider = game->options.owner,

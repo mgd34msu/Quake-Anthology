@@ -24,7 +24,7 @@ typedef struct qa_actor_collision {
     bool inline_model;
     uint32_t model;
     int32_t contents;
-    qa_actor_id owner;
+    qa_actor_reference owner;
     qa_collision_role role;
     bool monster, dead_monster, q1_corpse;
     bool has_q3_owner;
@@ -139,6 +139,8 @@ typedef struct qa_world_body_checkpoint {
                       stored_collision_owner, retained_collision_owner, anchor;
     qa_actor_reference_kind ground_kind, stored_ground_kind, linked_ground_kind;
     qa_actor_owner ground_owner, stored_ground_owner, linked_ground_owner;
+    qa_actor_reference_kind collision_owner_kind, stored_collision_owner_kind, retained_collision_owner_kind;
+    qa_actor_owner collision_owner_owner, stored_collision_owner_owner, retained_collision_owner_owner;
     qa_body_state state, stored_state;
     qa_body_link_state link;
     qa_actor_collision collision, stored_collision, retained_collision;

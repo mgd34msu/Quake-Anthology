@@ -354,7 +354,7 @@ typedef struct q2_wind_time {
 typedef struct qa_q2_entity_checkpoint {
     bool present;
     qa_q2_entity_state value;
-    qa_q2_saved_reference activator, owner, enemy, goal, collision_owner;
+    qa_q2_saved_reference activator, owner, enemy, goal;
     qa_q2_saved_reference master, next, destination, turret_breach;
 } qa_q2_entity_checkpoint;
 typedef struct qa_q2_wind_checkpoint {

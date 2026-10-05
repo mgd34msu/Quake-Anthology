@@ -244,7 +244,7 @@ static bool references(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
         if (mine) {
             qa_actor_collision collision;
             owner = qa_world_get_collision(g->services.world, a->id, &collision, NULL) ?
-                qa_actor_reference_lifetime(collision.owner) : (qa_actor_reference){0};
+                collision.owner : (qa_actor_reference){0};
         } else if (p->kind == Q2_GIB || p->kind == Q2_DEBRIS || p->kind == Q2_TRAP_GIB)
             owner = (qa_actor_reference){0};
     }
@@ -275,7 +275,7 @@ static bool references(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
         p->attack.inflictor = p->attack.projectile = a->id;
         qa_actor_collision collision;
         if (qa_world_get_collision(g->services.world, a->id, &collision, NULL)) {
-            collision.owner = qa_actor_reference_resolve(qa_session_actors(g->services.session), owner);
+            collision.owner = owner;
             if (!qa_world_set_collision(g->services.world, a->id, &collision, io->error)) return false;
         }
     }

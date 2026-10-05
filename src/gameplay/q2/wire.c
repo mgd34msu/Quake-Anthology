@@ -652,7 +652,7 @@ bool qa_q2_wire_entity_read(qa_q2_game *g, uint32_t slot,
         return false;
     }
     if (has_collision) {
-        value.owner = collision.owner;
+        value.owner = qa_actor_reference_resolve(qa_session_actors(g->services.session), collision.owner);
         if (collision.monster) value.server_flags |= 4;
         if (collision.dead_monster) value.server_flags |= 2;
         if (!a->physics_bound)

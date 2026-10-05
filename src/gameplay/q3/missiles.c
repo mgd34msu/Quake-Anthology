@@ -156,9 +156,11 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
     qa_vec3 velocity = weapon == QA_Q3_W_NAIL ? qa_v3(0, 0, 0)
                                              : qa_vec_scale(direction, speed);
     velocity = qa_physics_q3_snap(velocity);
+    const qa_actor_record *owner_record = qa_actors_get(qa_session_actors(game->options.services.session), owner);
     qa_actor_collision collision = {.family = QA_COLLISION_Q3,
                                     .shape = QA_SHAPE_BOX,
-                                    .owner = owner,
+                                    .owner = owner_record && owner_record->owner == game->options.owner && owner_record->has_source ?
+                                        qa_actor_reference_source(owner_record->owner, owner_record->source_slot) : qa_actor_reference_lifetime(owner),
                                     .role = QA_COLLISION_SOLID};
     qa_string_id definition;
     if (!qa_builtin_resource(&game->options.services, classname, &definition, error)) return false;

@@ -3,7 +3,8 @@
 static bool collision(q2_save_io *io, qa_actor_collision *s) {
     Q2U(family); Q2U(shape); Q2B(inline_model); Q2U(model); Q2I(contents); Q2U(role);
     Q2B(monster); Q2B(dead_monster); Q2B(q1_corpse); Q2B(has_q3_owner);
-    Q2I(q3_entity_number); Q2I(q3_owner_number); return true;
+    Q2I(q3_entity_number); Q2I(q3_owner_number);
+    return q2_save_actor_pointer(io, &s->owner);
 }
 static bool mover(q2_save_io *io, q2_mover *s) {
     Q2V(start); Q2V(end); Q2V(intermediate); Q2V(safe_direction);
@@ -71,7 +72,7 @@ static bool state(q2_save_io *io, qa_q2_entity_state *s) {
 bool q2_save_entity(q2_save_io *io, qa_q2_entity_checkpoint *s) {
     Q2B(present);
     if (s->present && !state(io, &s->value)) return false;
-    Q2R(activator); Q2R(owner); Q2R(enemy); Q2R(goal); Q2R(collision_owner);
+    Q2R(activator); Q2R(owner); Q2R(enemy); Q2R(goal);
     Q2R(master); Q2R(next); Q2R(destination); Q2R(turret_breach); return true;
 }
 static bool campaign_level(q2_save_io *io, qa_q2_campaign_level *s) {

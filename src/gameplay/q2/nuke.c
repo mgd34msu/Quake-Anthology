@@ -247,7 +247,7 @@ bool q2_nuke_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
             return false;
         }
         if (has_collision) {
-            collision.owner = (qa_actor_id){0};
+            collision.owner = (qa_actor_reference){0};
             if (!qa_world_set_collision(g->services.world, a->id, &collision, e))
                 return false;
         }
@@ -308,11 +308,15 @@ bool q2_fire_nuke(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 direc
             right, up;
     qa_builtin_angle_vectors(angles, NULL, &right, &up);
     float lift = 200 + q2_crandom(g) * 10, side = q2_crandom(g) * 10;
+    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner);
+    qa_actor_reference owner_reference = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
+        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
+        qa_actor_reference_lifetime(owner);
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .role = QA_COLLISION_SOLID,
                                     .contents = 2,
-                                    .owner = owner};
+                                    .owner = owner_reference};
     qa_combat_state combat = {.health = 10000, .can_take_damage = true};
     qa_builtin_spawn spawn = {
         .owner = g->options.owner,
@@ -339,11 +343,8 @@ bool q2_fire_nuke(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 direc
                         .powerup_applied = true,
                         .powerup_owner = g->options.owner,
                         .cause = qa_q2_damage_cause(g->options.edition, g->options.product, 47, 1)};
-    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner);
     a->projectile = (q2_projectile){.kind = Q2_NUKE,
-                                    .owner = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
-            qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
-            qa_actor_reference_lifetime(owner),
+                                    .owner = owner_reference,
                                     .attack = attack,
                                     .damage = 400 * multiplier,
                                     .radius = multiplier == 1 ? 512 : 512 + 128 * multiplier,

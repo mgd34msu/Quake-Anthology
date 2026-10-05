@@ -766,7 +766,8 @@ static bool level_links(qa_q2_game *g, const q2_original_level_file *file,
         }
         q2_original_record_io io = edict_reader(g, file, row, error);
         uint32_t links = 0;
-        if (!q2_original_scalar(&io, "linkcount", Q2_ORIGINAL_U32, 92, 92, 92, &links) ||
+        if (!q2_original_source_reference(g, &io, "owner", 256, &collision.owner) ||
+            !q2_original_scalar(&io, "linkcount", Q2_ORIGINAL_U32, 92, 92, 92, &links) ||
             !qa_world_set_collision(g->services.world, actor->id,
                 actor->physics.solid == QA_PHYSICS_NOT_SOLID ? NULL : &collision, error)) return false;
         actor->wire_lifetime.link_count = links;

@@ -250,14 +250,7 @@ static bool current(const q3_entity_slot *slot, qa_error *error)
         q3_fail(error, QA_ERROR_ARGUMENT, slot->number, "Q3 source actor generation is retired");
 }
 
-static qa_actor_id reference(qa_q3_host *host, int32_t number)
-{
-    if (number < 0 || number >= 1022) return (qa_actor_id){0};
-    qa_actor_id id = host->game->slots[number].actor;
-    return qa_actors_get(qa_session_actors(host->options.session), id) ? id : (qa_actor_id){0};
-}
-
-static qa_actor_reference ground_reference(qa_q3_host *host, int32_t number)
+static qa_actor_reference physical_reference(qa_q3_host *host, int32_t number)
 {
     if (number < 0 || number >= 1023) return (qa_actor_reference){0};
     if (number == 1022) {
@@ -293,7 +286,7 @@ static bool body_read(void *context, qa_body_state *out, qa_error *error)
             .bounds = {body_vector(entity, q3_shared_offset(abi, 436)),
                 body_vector(entity, q3_shared_offset(abi, 448))},
             .velocity = body_vector(entity, 36),
-            .ground = ground_reference(slot->host, qa_load_i32le(entity + 148))};
+            .ground = physical_reference(slot->host, qa_load_i32le(entity + 148))};
         if (slot->number < slot->host->options.server.maximum_clients) {
             ok = q3_game_player_record(&call, slot->number, &record, error);
             if (ok) {
@@ -413,7 +406,7 @@ bool q3_game_collision(void *context, qa_actor_collision *out, qa_error *error)
             .inline_model = qa_load_i32le(entity + q3_shared_offset(abi, 432)) != 0,
             .model = qa_load_u32le(entity + 160),
             .contents = qa_load_i32le(entity + q3_shared_offset(abi, 460)),
-            .owner = reference(slot->host, owner), .role = QA_COLLISION_SOLID, .has_q3_owner = true,
+            .owner = physical_reference(slot->host, owner), .role = QA_COLLISION_SOLID, .has_q3_owner = true,
             .q3_entity_number = (int32_t)slot->number, .q3_owner_number = owner};
     }
     return q3_game_end(&call, ok);

@@ -465,11 +465,13 @@ bool q3_copy_corpse(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
+    const qa_actor_record *owner_record = qa_actors_get(qa_session_actors(game->options.services.session), actor);
     qa_actor_collision collision = {.family = QA_COLLISION_Q3,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = INT32_C(0x04000000),
                                     .role = QA_COLLISION_SOLID,
-                                    .owner = actor};
+                                    .owner = owner_record && owner_record->owner == game->options.owner && owner_record->has_source ?
+                                        qa_actor_reference_source(owner_record->owner, owner_record->source_slot) : qa_actor_reference_lifetime(actor)};
     combat.can_take_damage = combat.health > -40;
     combat.armor = (qa_armor){0};
     if (!qa_world_body_write(game->options.services.world, corpse, &body, error) ||

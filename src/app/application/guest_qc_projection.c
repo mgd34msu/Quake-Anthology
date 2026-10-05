@@ -58,7 +58,18 @@ static bool collision_read(void *opaque, qa_actor_collision *out, qa_error *erro
             return application_fail(error, QA_ERROR_FORMAT, "QuakeC brush solid has no retained inline model");
         if (!pending) { value.inline_model = true; value.model = resource->inline_model; }
     }
-    if (owner && !qa_qc_reference_actor(vm, owner, &value.owner, error)) return false;
+    uint32_t owner_slot = 0;
+    if (owner) {
+        int32_t stride;
+        if (owner < 0 || !qa_qc_slot_reference(vm, 1, &stride, error) || stride <= 0 || owner % stride)
+            return application_fail(error, QA_ERROR_FORMAT, "QuakeC collision owner is not a physical entity row");
+        owner_slot = (uint32_t)(owner / stride);
+    }
+    qa_qc_slot_binding owner_binding;
+    if (!qa_qc_slot(vm, owner_slot, &owner_binding))
+        return application_fail(error, QA_ERROR_FORMAT, "QuakeC collision owner leaves its physical entity table");
+    value.owner = owner_binding.kind == QA_QC_SLOT_BORROWED ?
+        qa_actor_reference_lifetime(owner_binding.actor) : qa_actor_reference_source(engine->provider->owner, owner_slot);
     if (!qa_qc_reference_actor(vm, row->reference, &current, error) || !qa_actor_id_equal(current, expected))
         return application_fail(error, QA_ERROR_NOT_FOUND, "QuakeC collision actor changed during projection");
     *out = value; return true;

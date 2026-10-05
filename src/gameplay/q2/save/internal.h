@@ -27,6 +27,7 @@ bool q2_save_vec(q2_save_io *, qa_vec3 *);
 bool q2_save_string(q2_save_io *, qa_string_id *);
 bool q2_save_text(q2_save_io *, char *, size_t);
 bool q2_save_ref(q2_save_io *, qa_q2_saved_reference *);
+bool q2_save_actor_pointer(q2_save_io *, qa_actor_reference *);
 bool q2_save_count(q2_save_io *, size_t *, size_t minimum, size_t element_size, void **);
 bool q2_save_attack(q2_save_io *, qa_attack *);
 bool q2_save_visual(q2_save_io *, qa_q2_visual *);

@@ -134,11 +134,9 @@ bool qa_native_host_source_body_read(qa_native_host *host,uint32_t slot,uint32_t
         return native_host_fail(error,QA_ERROR_FORMAT,slot,"Native source body has invalid authored vectors or bounds");
     qa_native_address at=host->pointer_bytes==4?qa_load_u32le(pointer):qa_load_u64le(pointer);
     if(at) {
-        uint32_t other;qa_native_slot_binding target;qa_native_entity_table table;
-        if(!qa_native_entity_table_get(host->instance,&table,error)||!qa_native_entity_slot(host->instance,at,&other,error)||
+        uint32_t other;qa_native_slot_binding target;
+        if(!qa_native_entity_slot(host->instance,at,&other,error)||
             !qa_native_slot(host->instance,other,&target,error)) return false;
-        if(other>=table.count)
-            return native_host_fail(error,QA_ERROR_ARGUMENT,other,"Native source ground exceeds physical entity extent");
         body.ground=target.kind==QA_NATIVE_SLOT_BORROWED ? qa_actor_reference_lifetime(target.actor) :
             qa_actor_reference_source(host->world.owner,other);
     }
@@ -153,10 +151,7 @@ bool qa_native_host_source_body_write(qa_native_host *host,uint32_t slot,uint32_
         !qa_bounds_valid(body->bounds)) return native_host_fail(error,QA_ERROR_ARGUMENT,slot,"Native body write has invalid canonical vectors or bounds");
     if(!source_body_address(host,slot,velocity,ground,&address,&binding,error)) return false;
     if(body->ground.kind==QA_ACTOR_REFERENCE_SOURCE&&body->ground.value.source.owner==host->world.owner) {
-        qa_native_entity_table table;
-        if(!qa_native_entity_table_get(host->instance,&table,error)||body->ground.value.source.slot>=table.count)
-            return native_host_fail(error,QA_ERROR_ARGUMENT,slot,"Native ground exceeds physical entity extent");
-        target=table.base+(qa_native_address)body->ground.value.source.slot*table.stride;
+        if(!qa_native_entity_address(host->instance,body->ground.value.source.slot,&target,error)) return false;
     } else if(qa_actor_reference_present(body->ground)&&!native_host_address_for_actor(host,
         qa_actor_reference_resolve(qa_session_actors(host->world.session),body->ground),&target,error)) return false;
     qa_native_address current_address;qa_native_slot_binding current_binding;
@@ -685,12 +680,17 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
         return false;
     }
     qa_native_address owner_pointer = 0;
-    qa_actor_id owner_actor = {0};
+    qa_actor_reference owner_reference = {0};
     if (!read_pointer(host, address + layout->owner, &owner_pointer, error))
         return false;
-    if (owner_pointer &&
-        !native_host_actor_for_address(host, owner_pointer, false, &owner_actor, NULL, error))
-        return false;
+    if (owner_pointer) {
+        uint32_t owner_slot;
+        qa_native_slot_binding owner_binding;
+        if (!qa_native_entity_slot(host->instance, owner_pointer, &owner_slot, error) ||
+            !qa_native_slot(host->instance, owner_slot, &owner_binding, error)) return false;
+        owner_reference = owner_binding.kind == QA_NATIVE_SLOT_BORROWED ?
+            qa_actor_reference_lifetime(owner_binding.actor) : qa_actor_reference_source(host->world.owner, owner_slot);
+    }
     int32_t model_index;
     if (!native_host_read_i32(host, address + 40, &model_index, error))
         return false;
@@ -716,7 +716,7 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
             : host->profile == QA_NATIVE_Q2_GAME_API2023 && (flags & 8u) ? 0x40000000
             : host->profile == QA_NATIVE_Q2_GAME_API2023 && (flags & 128u) ? INT32_MIN
             : 0x02000000,
-        .owner = owner_actor,
+        .owner = owner_reference,
         .role = solid == 1 ? QA_COLLISION_TRIGGER : QA_COLLISION_SOLID,
         .monster = (flags & 4u) != 0,
         .dead_monster = (flags & 2u) != 0};

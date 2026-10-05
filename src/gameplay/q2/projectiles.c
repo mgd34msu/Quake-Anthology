@@ -1010,10 +1010,14 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     qa_actor_definition definition;
     if (!qa_builtin_resource(&g->services, name, &definition, e))
         return false;
+    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner);
+    qa_actor_reference owner_reference = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
+        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
+        qa_actor_reference_lifetime(owner);
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = 2,
-                                    .owner = owner,
+                                    .owner = owner_reference,
                                     .role = QA_COLLISION_SOLID};
     qa_builtin_spawn spawn = {
         .owner = g->options.owner,
@@ -1033,13 +1037,10 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     q2_actor *a = q2_actor_get(g, id, true, e);
     if (a == NULL)
         return false;
-    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner);
     a->projectile = (q2_projectile){
         .kind = source_kind,
         .attack = q2_attack(c, direct_mod, 0),
-        .owner = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
-            qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
-            qa_actor_reference_lifetime(owner),
+        .owner = owner_reference,
         .movedir = direction,
         .damage = damage,
         .kick = kick,

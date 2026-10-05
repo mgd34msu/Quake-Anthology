@@ -68,10 +68,14 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
             qa_builtin_angle_vectors(shot, &forward, NULL, NULL);
         }
         qa_vec3 velocity = qa_vec_scale(forward, spec.speed);
+        const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), c->actor->id);
+        qa_actor_reference owner_reference = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
+            qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
+            qa_actor_reference_lifetime(c->actor->id);
         qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                         .shape = QA_SHAPE_BOX,
                                         .contents = 2,
-                                        .owner = c->actor->id,
+                                        .owner = owner_reference,
                                         .role = QA_COLLISION_SOLID};
         qa_builtin_spawn spawn = {.owner = g->options.owner,
                                   .definition = classname,
@@ -87,13 +91,10 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
         q2_actor *a = q2_actor_get(g, id, true, e);
         if (a == NULL)
             return false;
-        const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), c->actor->id);
         a->projectile =
             (q2_projectile){.kind = bounce ? Q2_LMCTF_PLASMA_BOUNCE : Q2_LMCTF_PLASMA_SPREAD,
                             .attack = q2_attack(c, 34, 0),
-                            .owner = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
-            qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
-            qa_actor_reference_lifetime(c->actor->id),
+                            .owner = owner_reference,
                             .damage = bounce ? 39 : 1,
                             .speed = spec.speed,
                             .born_ns = c->now_ns,

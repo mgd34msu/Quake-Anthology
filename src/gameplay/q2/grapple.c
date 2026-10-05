@@ -449,10 +449,14 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
     if (!qa_builtin_resource(&g->services, lm ? "noclass" : "grapple", &definition, e))
         return false;
     direction = qa_vec_normalize(direction);
+    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner->id);
+    qa_actor_reference owner_reference = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
+        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
+        qa_actor_reference_lifetime(owner->id);
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = 2,
-                                    .owner = owner->id,
+                                    .owner = owner_reference,
                                     .role = QA_COLLISION_SOLID};
     qa_combat_state combat = {
         .health = lm ? 59 : 0, .can_take_damage = lm || rr, .no_knockback = rr};
@@ -482,11 +486,8 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
                            .now_ns = g->now_ns,
                            .frame_ns = g->frame_ns,
                            .rerelease = rr};
-    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner->id);
     hook->projectile = (q2_projectile){.kind = lm ? Q2_LMCTF_HOOK : Q2_CTF_HOOK,
-                                       .owner = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
-            qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
-            qa_actor_reference_lifetime(owner->id),
+                                       .owner = owner_reference,
                                        .attack = q2_attack(&call, lm ? 60 : 56, lm ? 4 : 0),
                                        .damage = spec.damage,
                                        .speed = speed,

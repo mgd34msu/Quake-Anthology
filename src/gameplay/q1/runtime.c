@@ -933,7 +933,7 @@ bool q1_link(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_actor_collision collision = {.family = QA_COLLISION_Q1,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = -2,
-                                    .owner = q1_ref_actor(g, entity->owner),
+                                    .owner = entity->owner,
                                     .monster = (entity->physics.flags & QA_PHYSICS_MONSTER) != 0,
                                     .q1_corpse = entity->physics.solid == QA_PHYSICS_CORPSE,
                                     .role = entity->physics.solid == QA_PHYSICS_TRIGGER

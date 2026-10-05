@@ -691,8 +691,14 @@ static bool source_visible(qa_application_network_q2 *owner, const q2_recipient 
             qa_error collision_error = {0};
             if (!qa_world_linked(owner->app->world, binding->actor, &linked)) { *out = false; *owned = false; return true; }
             bounds = linked.absolute_bounds; flags = 0; *owned = false;
-            if (qa_world_get_collision(owner->app->world, binding->actor, &collision, &collision_error))
-                *owned = qa_actor_id_equal(collision.owner, recipient->actor);
+            if (qa_world_get_collision(owner->app->world, binding->actor, &collision, &collision_error)) {
+                const qa_actor_record *recipient_actor = qa_actors_get(qa_session_actors(owner->app->session), recipient->actor);
+                *owned = collision.owner.kind == QA_ACTOR_REFERENCE_SOURCE ?
+                    recipient_actor && recipient_actor->has_source &&
+                    recipient_actor->owner == collision.owner.value.source.owner &&
+                    recipient_actor->source_slot == collision.owner.value.source.slot :
+                    collision.owner.kind == QA_ACTOR_REFERENCE_LIFETIME && qa_actor_id_equal(collision.owner.value.actor, recipient->actor);
+            }
             else if (collision_error.code != QA_OK) { if (error) *error = collision_error; return false; }
         }
     }

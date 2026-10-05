@@ -88,10 +88,14 @@ bool q2_item_change_collision(qa_q2_game *g, q2_actor *a, qa_physics_solid solid
         return false;
     a->physics_bound = true;
     a->physics.solid = solid;
+    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), a->item->owner);
+    qa_actor_reference owner_reference = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
+        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
+        qa_actor_reference_lifetime(a->item->owner);
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = 1,
-                                    .owner = a->item->owner,
+                                    .owner = owner_reference,
                                     .role = solid == QA_PHYSICS_TRIGGER ? QA_COLLISION_TRIGGER
                                                                         : QA_COLLISION_SOLID};
     return qa_world_set_collision(g->services.world, a->id,

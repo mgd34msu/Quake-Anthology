@@ -271,6 +271,9 @@ static bool valid_collision(qa_world *world,const qa_actor_collision *collision,
 {
     if(collision!=NULL && (collision->family<QA_COLLISION_Q1 || collision->family>QA_COLLISION_Q3
         || (!collision->inline_model && (collision->shape<QA_SHAPE_BOX || collision->shape>QA_SHAPE_CAPSULE))
+        || collision->owner.kind<QA_ACTOR_REFERENCE_NONE || collision->owner.kind>QA_ACTOR_REFERENCE_SOURCE
+        || (collision->owner.kind==QA_ACTOR_REFERENCE_LIFETIME &&
+            (!qa_actor_reference_present(collision->owner) || collision->owner.value.actor.registry!=qa_actors_identity(world->actors)))
         || collision->role<QA_COLLISION_SOLID || collision->role>QA_COLLISION_BOTH))
         return fail(error,code,"Invalid actor collision policy");
     if(collision!=NULL && collision->inline_model && collision->model>=qa_collision_model_count(world->geometry))

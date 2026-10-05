@@ -78,6 +78,26 @@ static bool has_volume(qa_trace_shape shape)
         || shape.bounds.mins.y!=shape.bounds.maxs.y || shape.bounds.mins.z!=shape.bounds.maxs.z);
 }
 
+static bool owner_matches_actor(const qa_actor_registry *actors,qa_actor_reference owner,qa_actor_id actor)
+{
+    if(owner.kind==QA_ACTOR_REFERENCE_LIFETIME) return qa_actor_id_equal(owner.value.actor,actor);
+    if(owner.kind!=QA_ACTOR_REFERENCE_SOURCE) return false;
+    const qa_actor_record *record=qa_actors_get(actors,actor);
+    return record!=NULL && record->has_source && owner.value.source.owner==record->owner &&
+        owner.value.source.slot==record->source_slot;
+}
+
+static bool owners_match(const qa_actor_registry *actors,qa_actor_reference left,qa_actor_reference right)
+{
+    if(!qa_actor_reference_present(left) || !qa_actor_reference_present(right)) return false;
+    if(qa_actor_reference_equal(left,right)) return true;
+    if(left.kind==QA_ACTOR_REFERENCE_LIFETIME)
+        return owner_matches_actor(actors,right,left.value.actor);
+    if(right.kind==QA_ACTOR_REFERENCE_LIFETIME)
+        return owner_matches_actor(actors,left,right.value.actor);
+    return false;
+}
+
 static bool skip_owner(const qa_world *world,const qa_trace_query *query,const qa_actor_collision *candidate,
                        qa_actor_id id,const qa_actor_collision *pass)
 {
@@ -92,10 +112,10 @@ static bool skip_owner(const qa_world *world,const qa_trace_query *query,const q
             return candidate->q3_owner_number==pass->q3_entity_number || candidate->q3_owner_number==owner;
         }
     }
-    if(candidate->owner.registry!=0 && qa_actor_id_equal(actor,candidate->owner)) return true;
-    if(pass==NULL || pass->owner.registry==0) return false;
+    if(owner_matches_actor(world->actors,candidate->owner,actor)) return true;
+    if(pass==NULL || !qa_actor_reference_present(pass->owner)) return false;
     return query->policy.family==QA_COLLISION_Q3?
-        candidate->owner.registry!=0 && qa_actor_id_equal(pass->owner,candidate->owner):qa_actor_id_equal(pass->owner,id);
+        owners_match(world->actors,pass->owner,candidate->owner):owner_matches_actor(world->actors,pass->owner,id);
 }
 
 bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const qa_actor_id *excluded,

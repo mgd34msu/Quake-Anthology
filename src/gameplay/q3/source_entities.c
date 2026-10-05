@@ -455,8 +455,10 @@ bool q3_spawn_actor(qa_q3_game *game, const qa_builtin_spawn *input,
     if (!q3_spawn_raw_actor(game, spawn.definition, &actor, error)) return false;
     uint32_t slot = game->source_numbers[actor.slot];
     if (spawn.definition) game->source_entities[slot].classname = spawn.definition;
-    if (spawn.collision && spawn.collision->owner.registry)
-        game->source_entities[slot].owner_number = q3_entity_number(game, spawn.collision->owner);
+    if (spawn.collision && qa_actor_reference_present(spawn.collision->owner))
+        game->source_entities[slot].owner_number = spawn.collision->owner.kind == QA_ACTOR_REFERENCE_SOURCE &&
+            spawn.collision->owner.value.source.owner == game->options.owner ? (int32_t)spawn.collision->owner.value.source.slot :
+            q3_entity_number(game, qa_actor_reference_resolve(qa_session_actors(game->options.services.session), spawn.collision->owner));
     const qa_builtin_services *s = &game->options.services;
     for (size_t i = 0; i < spawn.inventory_count; ++i)
         if (!qa_inventory_configure(s->inventory, actor, &spawn.inventory[i], NULL, NULL, error))
