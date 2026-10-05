@@ -110,83 +110,27 @@ finish:
     qa_q1_game_operation_end(&operation);
     return okay;
 }
-bool qa_q1_rogue_field_read(const qa_q1_game *game, qa_actor_id actor,
-    qa_q1_rogue_field field, qa_bytes *out, qa_error *error) {
+bool qa_q1_rogue_number_read(qa_q1_game *game, qa_actor_id actor,
+    qa_q1_rogue_field field, double *out, qa_error *error) {
     if (!out || field < QA_Q1_ROGUE_FIELD_STEAM || field >= QA_Q1_ROGUE_FIELDS)
-        return fail(error, actor, "Invalid Rogue source field read");
+        return fail(error, actor, "Invalid Rogue source number read");
     const q1_actor *state = state_const(game, actor, error);
     if (!state) return false;
-    qa_string_id word = state->state.rogue_fields[field];
-    *out = word ? qa_strings_text(qa_session_strings(game->services.session), word) : (qa_bytes){0};
+    *out = state->state.rogue_fields[field];
     return true;
 }
-bool qa_q1_rogue_field_write(qa_q1_game *game, qa_actor_id actor,
-    qa_q1_rogue_field field, qa_bytes text, qa_error *error) {
-    if (field < QA_Q1_ROGUE_FIELD_STEAM || field >= QA_Q1_ROGUE_FIELDS ||
-        (text.size && !text.data)) return fail(error, actor, "Invalid Rogue source field write");
+bool qa_q1_rogue_number_write(qa_q1_game *game, qa_actor_id actor,
+    qa_q1_rogue_field field, double value, qa_error *error) {
+    float number = (float)value;
+    if (field < QA_Q1_ROGUE_FIELD_STEAM || field >= QA_Q1_ROGUE_FIELDS || !isfinite(number))
+        return fail(error, actor, "Invalid Rogue source number write");
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(game, &operation, error)) return false;
-    const q1_actor *before = state_const(game, actor, error);
-    qa_string_id word;
-    bool okay = before && qa_strings_intern(qa_session_strings(game->services.session),
-        text, &word, error) && qa_q1_game_operation_live(&operation) &&
-        state_const(game, actor, error) == before;
-    if (okay) ((q1_actor *)before)->state.rogue_fields[field] = word;
+    q1_actor *state = (q1_actor *)state_const(game, actor, error);
+    bool okay = state != NULL;
+    if (okay) state->state.rogue_fields[field] = number;
     qa_q1_game_operation_end(&operation);
     return okay;
-}
-/* Number.parseFloat admits a decimal prefix, not strtod's hexadecimal or
- * case-insensitive infinity grammar. The entity then checks binary64 finite
- * before publishing Math.fround; a finite huge decimal can consequently read
- * as Infinity even though a literal stored Infinity reads as zero. */
-bool q1_source_number_read(qa_bytes text, double *out, qa_error *error) {
-    size_t cursor = 0;
-    while (cursor < text.size) {
-        size_t begin = cursor;
-        uint32_t scalar;
-        if (!qa_utf8_next(text, &cursor, &scalar)) break;
-        if (!qa_unicode_whitespace(scalar)) { cursor = begin; break; }
-    }
-    size_t start = cursor;
-    if (cursor < text.size && (text.data[cursor] == '+' || text.data[cursor] == '-')) ++cursor;
-    size_t digits = 0;
-    while (cursor < text.size && text.data[cursor] >= '0' && text.data[cursor] <= '9') {
-        ++cursor; ++digits;
-    }
-    if (cursor < text.size && text.data[cursor] == '.') {
-        ++cursor;
-        while (cursor < text.size && text.data[cursor] >= '0' && text.data[cursor] <= '9') {
-            ++cursor; ++digits;
-        }
-    }
-    if (!digits) { *out = 0; return true; }
-    size_t end = cursor;
-    if (cursor < text.size && (text.data[cursor] == 'e' || text.data[cursor] == 'E')) {
-        ++cursor;
-        if (cursor < text.size && (text.data[cursor] == '+' || text.data[cursor] == '-')) ++cursor;
-        size_t exponent = cursor;
-        while (cursor < text.size && text.data[cursor] >= '0' && text.data[cursor] <= '9') ++cursor;
-        if (cursor != exponent) end = cursor;
-    }
-    double value;
-    if (!qa_parse_ecmascript_number((qa_bytes){text.data + start, end - start}, &value, error))
-        return false;
-    *out = isfinite(value) ? (float)(value) : 0;
-    return true;
-}
-bool qa_q1_rogue_number_read(qa_q1_game *game, qa_actor_id state,
-    qa_q1_rogue_field field, double *out, qa_error *error) {
-    if (!out) return fail(error, state, "Rogue number requires an output");
-    qa_bytes text;
-    return qa_q1_rogue_field_read(game, state, field, &text, error) &&
-        q1_source_number_read(text, out, error);
-}
-bool qa_q1_rogue_number_write(qa_q1_game *game, qa_actor_id state,
-    qa_q1_rogue_field field, double value, qa_error *error) {
-    char text[32];
-    return qa_format_ecmascript_number((float)(value), text, error) &&
-        qa_q1_rogue_field_write(game, state, field,
-            (qa_bytes){(const uint8_t *)text, strlen(text)}, error);
 }
 static q1_actor *world(qa_q1_game *game, qa_error *error) {
     if (!rogue(game, error)) return NULL;
@@ -201,21 +145,17 @@ static q1_actor *world(qa_q1_game *game, qa_error *error) {
 bool qa_q1_rogue_world_update_read(qa_q1_game *game, double *out, qa_error *error) {
     q1_actor *actor = world(game, error);
     if (!actor || !out) return false;
-    qa_bytes text = actor->rogue_next_update ?
-        qa_strings_text(qa_session_strings(game->services.session), actor->rogue_next_update) :
-        (qa_bytes){0};
-    return q1_source_number_read(text, out, error);
+    *out = actor->rogue_next_update;
+    return true;
 }
 bool qa_q1_rogue_world_update_write(qa_q1_game *game, double value, qa_error *error) {
+    float number = (float)value;
+    if (!isfinite(number)) return fail(error, (qa_actor_id){0}, "Invalid Rogue update time");
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(game, &operation, error)) return false;
     q1_actor *actor = world(game, error);
-    char text[32];
-    qa_string_id word;
-    bool okay = actor && qa_format_ecmascript_number((float)(value), text, error) &&
-        qa_strings_intern_cstr(qa_session_strings(game->services.session), text, &word, error) &&
-        qa_q1_game_operation_live(&operation) && world(game, error) == actor;
-    if (okay) actor->rogue_next_update = word;
+    bool okay = actor != NULL;
+    if (okay) actor->rogue_next_update = number;
     qa_q1_game_operation_end(&operation);
     return okay;
 }

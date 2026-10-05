@@ -22,11 +22,9 @@ bool qa_q1_source_capture_words_read(qa_q1_game *game, double *seconds, double *
     qa_error *error) {
     q1_actor *world = capture_world(game, error);
     if (!world || !seconds || !team) return false;
-    qa_strings *strings = qa_session_strings(game->services.session);
-    qa_bytes time_word = world->ctf_last_capture ? qa_strings_text(strings, world->ctf_last_capture) : (qa_bytes){0};
-    qa_bytes team_word = world->ctf_last_capture_team ? qa_strings_text(strings, world->ctf_last_capture_team) : (qa_bytes){0};
-    return q1_source_number_read(time_word, seconds, error) &&
-        q1_source_number_read(team_word, team, error);
+    *seconds = world->ctf_last_capture;
+    *team = world->ctf_last_capture_team;
+    return true;
 }
 
 bool qa_q1_source_capture_words_write(qa_q1_game *game, double seconds, double team,
@@ -34,18 +32,12 @@ bool qa_q1_source_capture_words_write(qa_q1_game *game, double seconds, double t
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(game, &operation, error)) return false;
     q1_actor *world = capture_world(game, error);
-    char text[32];
-    qa_string_id word;
-    bool okay = world && qa_format_ecmascript_number((float)(seconds), text, error) &&
-        qa_strings_intern_cstr(qa_session_strings(game->services.session), text, &word, error) &&
-        qa_q1_game_operation_live(&operation) && capture_world(game, error) == world;
+    float time_value = (float)seconds, team_value = (float)team;
+    bool okay = world && isfinite(time_value) && isfinite(team_value);
     if (okay) {
-        world->ctf_last_capture = word;
-        okay = qa_format_ecmascript_number((float)(team), text, error) &&
-            qa_strings_intern_cstr(qa_session_strings(game->services.session), text, &word, error) &&
-            qa_q1_game_operation_live(&operation) && capture_world(game, error) == world;
-    }
-    if (okay) world->ctf_last_capture_team = word;
+        world->ctf_last_capture = time_value;
+        world->ctf_last_capture_team = team_value;
+    } else if (world) fail(error, world->id, "Invalid CTF capture values");
     qa_q1_game_operation_end(&operation);
     return okay;
 }
@@ -182,11 +174,8 @@ bool qa_q1_source_flag_drop(qa_q1_game *game, qa_actor_id actor, qa_actor_id pla
         entity->physics.motion = QA_PHYSICS_TOSS;
         entity->physics.solid = QA_PHYSICS_TRIGGER;
         entity->state.source_flag.movement_flags = UINT32_C(256) | UINT32_C(131072);
-        char text[32];
-        okay = qa_format_ecmascript_number((float)(game->time + 15), text, error) &&
-            qa_strings_intern_cstr(qa_session_strings(game->services.session), text,
-                &entity->state.source_flag.return_word, error) &&
-            qa_world_body_read(game->services.world, player, &carrier, error) &&
+        entity->state.source_flag.return_time = (float)(game->time + 15);
+        okay = qa_world_body_read(game->services.world, player, &carrier, error) &&
             qa_world_body_read(game->services.world, actor, &body, error) &&
             current(game, actor, entity, error) &&
             qa_q1_native_client_slot(game, player, &slot, error);
@@ -280,10 +269,7 @@ bool q1_source_flag_think(qa_q1_game *game, q1_actor *entity, q1_think_kind kind
         !current(game, actor, entity, error)) return false;
     if (entity->count == 0) return true;
     if (entity->count == 2) {
-        qa_bytes word = qa_strings_text(qa_session_strings(game->services.session),
-            entity->state.source_flag.return_word);
-        double due;
-        if (!q1_source_number_read(word, &due, error)) return false;
+        double due = entity->state.source_flag.return_time;
         if (game->time - due > 15 &&
             (!game->source_flags.return_flag(game->source_flags.context, actor, error) ||
              !current(game, actor, entity, error))) return false;

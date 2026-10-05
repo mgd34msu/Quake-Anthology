@@ -1,6 +1,7 @@
 #include "maps/internal.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q1_source_obituary.h"
+#include "qa/text.h"
 
 static double remaining(const q1_player *player, qa_q1_power power, double seconds)
 {
@@ -62,8 +63,12 @@ bool qa_q1_source_obituary_read(const qa_q1_game *game, qa_actor_id actor,
         .brush = entity && entity->physics.solid == QA_PHYSICS_BRUSH,
         .horde_source_die = entity && entity->kind == Q1_MONSTER && entity->state.monster.horde
     };
-    if (entity && !has_client && !q1_source_number_read(
-        qa_strings_text(strings, entity->source_team), &result.team, error)) return false;
+    if (entity && !has_client) {
+        double team = 0;
+        const char *text = qa_strings_cstr(strings, entity->source_team);
+        if (text && !qa_parse_atof(text, &team, error)) return false;
+        result.team = (float)team;
+    }
     *out = result;
     return true;
 }

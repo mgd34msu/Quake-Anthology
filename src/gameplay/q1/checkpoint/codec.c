@@ -320,12 +320,12 @@ static bool payload(q1_save_io *io, qa_q1_game *g) {
     for (uint32_t i = 0; ok && i < g->capacity; ++i) {
         const q1_actor *actor = g->actors[i];
         if (!actor) continue;
-        if ((actor->rogue_next_update || actor->rogue_tag_owner.registry ||
-             actor->rogue_runes_spawned || actor->rogue_rune_spawn.registry) &&
+        if ((actor->rogue_next_update != 0 || actor->rogue_tag_owner.registry ||
+             actor->rogue_runes_spawned != 0 || actor->rogue_rune_spawn.registry) &&
             (!g->maps || !qa_actor_id_equal(g->maps->world_actor, actor->id)))
             ok = q1_save_fail(io, "Rogue timer word differs from the actual source world");
-        if ((actor->ctf_last_capture || actor->ctf_last_capture_team ||
-             actor->ctf_runes_spawned || actor->ctf_rune_spawn.registry) &&
+        if ((actor->ctf_last_capture != 0 || actor->ctf_last_capture_team != 0 ||
+             actor->ctf_runes_spawned != 0 || actor->ctf_rune_spawn.registry) &&
             (!g->maps || !qa_actor_id_equal(g->maps->world_actor, actor->id)))
             ok = q1_save_fail(io, "CTF words differ from the actual source world");
         if (actor->kind != Q1_ROGUE_TEAM_STATE) continue;

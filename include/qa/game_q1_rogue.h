@@ -17,8 +17,8 @@ typedef enum qa_q1_rogue_field {
 } qa_q1_rogue_field;
 
 /* State is a genuine source actor, created lazily for the full physical client.
- * Lookup/current never allocates or replays source callbacks. Its raw words
- * belong to the native actor checkpoint, including nonnumeric authored text. */
+ * Lookup/current never allocates or replays source callbacks. Numeric fields
+ * are native floats owned by the actor and its checkpoint. */
 bool qa_q1_rogue_state(qa_q1_game *, qa_actor_id player, qa_actor_id *state, qa_error *);
 bool qa_q1_rogue_state_find(const qa_q1_game *, qa_actor_id player,
     qa_actor_id *state, bool *found, qa_error *);
@@ -28,10 +28,6 @@ bool qa_q1_rogue_number_read(qa_q1_game *, qa_actor_id state,
     qa_q1_rogue_field, double *, qa_error *);
 bool qa_q1_rogue_number_write(qa_q1_game *, qa_actor_id state,
     qa_q1_rogue_field, double, qa_error *);
-bool qa_q1_rogue_field_read(const qa_q1_game *, qa_actor_id state,
-    qa_q1_rogue_field, qa_bytes *, qa_error *);
-bool qa_q1_rogue_field_write(qa_q1_game *, qa_actor_id state,
-    qa_q1_rogue_field, qa_bytes, qa_error *);
 bool qa_q1_rogue_world_update_read(qa_q1_game *, double *, qa_error *);
 bool qa_q1_rogue_world_update_write(qa_q1_game *, double, qa_error *);
 

@@ -123,9 +123,8 @@ static bool spawn(qa_q1_game *g, uint32_t rune, qa_vec3 origin, qa_error *error)
         (qa_actor_id){0}, &e, error)) return false;
     qa_actor_id actor = e->id;
     char word[32];
-    if (!qa_format_ecmascript_number((float)(rune), word, error) ||
-        !qa_strings_intern_cstr(qa_session_strings(g->services.session), word, &e->state.rogue_rune, error) ||
-        !entity_current(g, actor, e, error)) return false;
+    e->state.rogue_rune = (float)rune;
+    if (!entity_current(g, actor, e, error)) return false;
     e->source_movement_flags = 256;
     e->physics.solid = QA_PHYSICS_TRIGGER;
     e->physics.motion = QA_PHYSICS_TOSS;
@@ -166,9 +165,7 @@ bool q1_source_rogue_rune_touch(qa_q1_game *g, q1_actor *e, qa_actor_id actor, q
         row->notice = g->time + 5;
         return true;
     }
-    double value;
-    if (!q1_source_number_read(qa_strings_text(qa_session_strings(g->services.session), e->state.rogue_rune),
-        &value, error)) return false;
+    float value = e->state.rogue_rune;
     uint32_t rune = value == 1 ? 1 : value == 2 ? 2 : value == 4 ? 4 : value == 8 ? 8 : 0;
     if (!rune) return fail(error, item, "Rogue rune lost its authored source number");
     row->rune |= rune;
@@ -211,13 +208,8 @@ static bool frame(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
             !g->services.cvar(q1_cvar_context(g), name, &cfg, error) || !current(g, error) ||
             world(g, error) != owner) return false;
         uint32_t integer = (uint32_t)qa_number_to_i32(cfg);
-        double started = 0;
-        if ((integer & 1) &&
-            (!q1_source_number_read(qa_strings_text(qa_session_strings(g->services.session), owner->rogue_runes_spawned),
-                &started, error))) return false;
-        if ((integer & 1) && started == 0) {
-            if (!qa_strings_intern_cstr(qa_session_strings(g->services.session), "1", &owner->rogue_runes_spawned, error) ||
-                !current(g, error) || world(g, error) != owner) return false;
+        if ((integer & 1) && owner->rogue_runes_spawned == 0) {
+            owner->rogue_runes_spawned = 1;
             q1_actor *timer;
             if (!q1_create(g, "rogue_rune_spawner", Q1_SOURCE_ROGUE_RUNE_TIMER,
                 (qa_actor_id){0}, &timer, error) || !current(g, error) ||

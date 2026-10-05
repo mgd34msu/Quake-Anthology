@@ -177,29 +177,29 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
             "ctf_lastfraggedcarrier", "ctf_lastreturnedflag", "ctf_flagsince", "fly_sound"};
         for (size_t i = 0; i < QA_Q1_ROGUE_FIELDS; ++i)
             if (!strcmp(key, names[i])) {
-                *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
-                    .value.text = entity->state.rogue_fields[i]};
+                *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                    .value.number = entity->state.rogue_fields[i]};
                 return true;
             }
     }
     if (g->maps && qa_actor_id_equal(actor, g->maps->world_actor) &&
         !strcmp(key, "rogue:nextteamupdtime")) {
-        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
-            .value.text = entity->rogue_next_update};
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+            .value.number = entity->rogue_next_update};
         return true;
     }
     if (g->maps && g->options.program == QA_Q1_CTF &&
         qa_actor_id_equal(actor, g->maps->world_actor) &&
         (!strcmp(key, "ctf.lastCapture") || !strcmp(key, "ctf.lastCaptureTeam"))) {
-        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
-            .value.text = !strcmp(key, "ctf.lastCapture") ?
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+            .value.number = !strcmp(key, "ctf.lastCapture") ?
                 entity->ctf_last_capture : entity->ctf_last_capture_team};
         return true;
     }
     if (entity->kind == Q1_SOURCE_CTF_FLAG) {
         if (!strcmp(key, "ctf.return")) {
-            *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
-                .value.text = entity->state.source_flag.return_word};
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                .value.number = entity->state.source_flag.return_time};
             return true;
         }
         if (!strcmp(key, "ctf.base")) {
@@ -215,24 +215,24 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
     }
     if (entity->kind == Q1_SOURCE_ROGUE_TAG &&
         (!strcmp(key, "tag_frags") || !strcmp(key, "tag_message_time"))) {
-        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
-            .value.text = !strcmp(key, "tag_frags") ? entity->state.source_tag.frags :
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+            .value.number = !strcmp(key, "tag_frags") ? entity->state.source_tag.frags :
                 entity->state.source_tag.message_time};
         return true;
     }
     if (entity->kind == Q1_SOURCE_ROGUE_RUNE && !strcmp(key, "rune")) {
-        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = entity->state.rogue_rune};
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = entity->state.rogue_rune};
         return true;
     }
     if (g->maps && qa_actor_id_equal(actor, g->maps->world_actor) && !strcmp(key, "rogue:runes_spawned")) {
-        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = entity->rogue_runes_spawned};
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = entity->rogue_runes_spawned};
         return true;
     }
     if (entity->kind == Q1_SOURCE_ROGUE_FLAG || entity->kind == Q1_SOURCE_ROGUE_FLAG_BASE) {
         const char *const names[] = {"team", "cnt", "super_time"};
         for (size_t i = 0; i < 3; ++i) if (!strcmp(key, names[i])) {
-            *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
-                .value.text = entity->state.rogue_flag.words[i]};
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                .value.number = entity->state.rogue_flag.values[i]};
             return true;
         }
         if (!strcmp(key, "oldorigin") || !strcmp(key, "mangle")) {
@@ -249,8 +249,8 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
     }
     if (g->maps && g->options.program == QA_Q1_CTF &&
         qa_actor_id_equal(actor, g->maps->world_actor) && !strcmp(key, "ctf.runesSpawned")) {
-        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
-            .value.text = entity->ctf_runes_spawned};
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+            .value.number = entity->ctf_runes_spawned};
         return true;
     }
     if (entity->map && q1_map_is_fog(entity->map->kind)) {

@@ -160,13 +160,8 @@ bool q1_source_runes_start(qa_q1_game *game, qa_error *error) {
     qa_strings *strings = qa_session_strings(game->services.session);
     qa_bytes map = qa_strings_text(strings, game->maps->options.current_map);
     if (map.size == 5 && !memcmp(map.data, "start", 5)) return true;
-    double started;
-    qa_bytes word = owner->ctf_runes_spawned ? qa_strings_text(strings, owner->ctf_runes_spawned) : (qa_bytes){0};
-    if (!q1_source_number_read(word, &started, error)) return false;
-    if (started != 0) return true;
-    qa_string_id one;
-    if (!qa_strings_intern_cstr(strings, "1", &one, error) || world(game, error) != owner) return false;
-    owner->ctf_runes_spawned = one;
+    if (owner->ctf_runes_spawned != 0) return true;
+    owner->ctf_runes_spawned = 1;
     q1_actor *timer;
     if (!q1_create(game, "ctf_rune_spawn", Q1_SOURCE_CTF_RUNE_TIMER, (qa_actor_id){0},
         &timer, error)) return false;

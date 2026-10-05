@@ -319,12 +319,12 @@ typedef struct q1_actor {
     qa_actor_id id, owner, activator;
     qa_string_id classname, model, target, targetname, killtarget, message;
     qa_string_id source_netname, source_kill_string, source_death_type, source_team;
-    qa_string_id rogue_next_update;
+    float rogue_next_update;
     qa_actor_id rogue_tag_owner;
-    qa_string_id rogue_runes_spawned;
+    float rogue_runes_spawned;
     qa_actor_id rogue_rune_spawn;
-    qa_string_id ctf_last_capture, ctf_last_capture_team;
-    qa_string_id ctf_runes_spawned;
+    float ctf_last_capture, ctf_last_capture_team;
+    float ctf_runes_spawned;
     qa_actor_id ctf_rune_spawn;
     qa_vec3 initial_angles;
     qa_physics_properties physics;
@@ -349,17 +349,17 @@ typedef struct q1_actor {
         q1_pickup pickup;
         q1_timed_effect effect;
         q1_boss_child boss_child;
-        qa_string_id rogue_fields[QA_Q1_ROGUE_FIELDS];
-        struct { qa_string_id frags, message_time; } source_tag;
-        qa_string_id rogue_rune;
+        float rogue_fields[QA_Q1_ROGUE_FIELDS];
+        struct { float frags, message_time; } source_tag;
+        float rogue_rune;
         struct {
-            qa_string_id words[3]; /* team, cnt, super_time */
+            float values[3]; /* team, cnt, super_time */
             qa_vec3 origin, angles;
             bool placed;
         } rogue_flag;
         struct {
             qa_vec3 base, angles;
-            qa_string_id return_word;
+            float return_time;
             uint32_t movement_flags;
             bool placed;
         } source_flag;
@@ -495,7 +495,6 @@ struct qa_q1_game {
     bool enemy_visible;
 };
 void q1_source_client_clear(q1_player *);
-bool q1_source_number_read(qa_bytes, double *, qa_error *);
 bool q1_source_flag_spawn(qa_q1_game *, q1_actor *, bool *, qa_error *);
 bool q1_source_flag_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
 bool q1_source_flag_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);

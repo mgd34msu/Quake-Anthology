@@ -20,17 +20,11 @@ static bool current(qa_q1_game *g, qa_actor_id actor, const q1_actor *e, qa_erro
         !g->source_rogue_flags.current(g->source_rogue_flags.context, g, error)) return false;
     return flag(g, actor, error) == e || fail(error, actor, "Rogue flag changed during source callback");
 }
-static bool word(qa_q1_game *g, qa_string_id id, double *out, qa_error *error) {
-    return q1_source_number_read(qa_strings_text(qa_session_strings(g->services.session), id), out, error);
-}
 static bool write(qa_q1_game *g, q1_actor *e, unsigned field, double value, qa_error *error) {
-    char text[32];
-    qa_string_id id;
-    qa_actor_id actor = e->id;
-    if (!qa_format_ecmascript_number((float)(value), text, error) ||
-        !qa_strings_intern_cstr(qa_session_strings(g->services.session), text, &id, error) ||
-        !current(g, actor, e, error)) return false;
-    e->state.rogue_flag.words[field] = id;
+    float number = (float)value;
+    if (!isfinite(number)) return fail(error, e->id, "Invalid Rogue flag value");
+    if (!current(g, e->id, e, error)) return false;
+    e->state.rogue_flag.values[field] = number;
     return true;
 }
 static bool floor_drop(qa_q1_game *g, q1_actor *e, bool *placed, qa_error *error) {
@@ -69,8 +63,9 @@ bool qa_q1_source_rogue_flag_read(qa_q1_game *g, qa_actor_id actor,
     qa_q1_source_rogue_flag_view *out, qa_error *error) {
     q1_actor *e = flag(g, actor, error);
     qa_q1_source_rogue_flag_view value = {.actor = actor};
-    if (!e || !out || !word(g, e->state.rogue_flag.words[0], &value.team, error) ||
-        !word(g, e->state.rogue_flag.words[1], &value.count, error)) return false;
+    if (!e || !out) return false;
+    value.team = e->state.rogue_flag.values[0];
+    value.count = e->state.rogue_flag.values[1];
     value.owner = e->owner;
     value.base = e->kind == Q1_SOURCE_ROGUE_FLAG_BASE;
     value.placed = e->state.rogue_flag.placed;
@@ -197,11 +192,8 @@ bool q1_source_rogue_flag_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_er
     if (red || blue ? deathmatch == 0 || !ctf : mode != 5) return q1_remove(g, e, error);
     e->kind = Q1_SOURCE_ROGUE_FLAG;
     e->skin = red ? 0 : blue ? 1 : 2;
-    char team_text[32];
-    qa_string_id team;
-    if (!qa_format_ecmascript_number(red ? 5 : blue ? 14 : 0, team_text, error) ||
-        !qa_strings_intern_cstr(qa_session_strings(g->services.session), team_text, &team, error)) return false;
-    e->state.rogue_flag.words[0] = team;
+    float team = red ? 5 : blue ? 14 : 0;
+    e->state.rogue_flag.values[0] = team;
     q1_actor *base;
     if (!q1_create(g, red ? "item_flagbase_team1" : blue ? "item_flagbase_team2" : "item_flagbase",
         Q1_SOURCE_ROGUE_FLAG_BASE, (qa_actor_id){0}, &base, error) || q1_entity(g, actor) != e) return false;
@@ -209,7 +201,7 @@ bool q1_source_rogue_flag_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_er
     if (!base) return fail(error, base_actor, "Rogue base retired during native creation");
     base->kind = Q1_SOURCE_ROGUE_FLAG_BASE;
     base->skin = e->skin;
-    base->state.rogue_flag.words[0] = team;
+    base->state.rogue_flag.values[0] = team;
     base->source_movement_flags = 256;
     base->physics.motion = QA_PHYSICS_TOSS;
     base->physics.solid = mode == 5 || mode == 6 ? QA_PHYSICS_TRIGGER : QA_PHYSICS_NOT_SOLID;
@@ -277,11 +269,10 @@ bool q1_source_rogue_flag_think(qa_q1_game *g, q1_actor *e,
         return q1_schedule(g, e, .1, Q1_THINK_SOURCE_ROGUE_FLAG, error);
     }
     if (!q1_schedule(g, e, .1, Q1_THINK_SOURCE_ROGUE_FLAG, error)) return false;
-    double count, deadline;
-    if (!word(g, e->state.rogue_flag.words[1], &count, error)) return false;
+    double count = e->state.rogue_flag.values[1];
     if (count == 0) return true;
     if (count == 2) {
-        if (!word(g, e->state.rogue_flag.words[2], &deadline, error)) return false;
+        double deadline = e->state.rogue_flag.values[2];
         return g->time - deadline <= 40 ||
             (g->source_rogue_flags.return_flag(g->source_rogue_flags.context, actor, error) &&
              current(g, actor, e, error));

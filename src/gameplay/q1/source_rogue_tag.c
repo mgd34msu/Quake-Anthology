@@ -31,22 +31,14 @@ static bool current(qa_q1_game *game, qa_actor_id actor, const q1_actor *expecte
         token(game, actor, error) == expected) ||
         fail(error, actor, "Rogue token changed during a source callback");
 }
-static bool write_word(qa_q1_game *game, q1_actor *source, bool frags,
+static bool write_value(qa_q1_game *game, q1_actor *source, bool frags,
     double number, qa_error *error) {
-    qa_actor_id actor = source->id;
-    char text[32];
-    qa_string_id value;
-    if (!qa_format_ecmascript_number((float)(number), text, error) ||
-        !qa_strings_intern_cstr(qa_session_strings(game->services.session), text, &value, error) ||
-        !current(game, actor, source, error)) return false;
+    float value = (float)number;
+    if (!isfinite(value)) return fail(error, source->id, "Invalid Rogue token value");
+    if (!current(game, source->id, source, error)) return false;
     if (frags) source->state.source_tag.frags = value;
     else source->state.source_tag.message_time = value;
     return true;
-}
-static bool read_word(qa_q1_game *game, const q1_actor *source, bool frags,
-    double *out, qa_error *error) {
-    qa_string_id value = frags ? source->state.source_tag.frags : source->state.source_tag.message_time;
-    return q1_source_number_read(qa_strings_text(qa_session_strings(game->services.session), value), out, error);
 }
 static bool announce(qa_q1_game *game, q1_actor *source, const char *text,
     qa_actor_id player, qa_error *error) {
@@ -81,8 +73,8 @@ static bool take(qa_q1_game *game, q1_actor *source, qa_actor_id player,
     if (!actual_world || !current(game, source->id, source, error)) return false;
     actual_world->rogue_tag_owner = player;
     source->owner = player;
-    if (!write_word(game, source, true, 0, error) ||
-        !write_word(game, source, false, game->time + delay, error)) return false;
+    if (!write_value(game, source, true, 0, error) ||
+        !write_value(game, source, false, game->time + delay, error)) return false;
     source->physics.solid = QA_PHYSICS_NOT_SOLID;
     source->touch_disabled = true;
     return q1_link(game, source, error) && current(game, source->id, source, error) &&
@@ -108,7 +100,7 @@ static bool respawn(qa_q1_game *game, q1_actor *source, qa_error *error) {
     source->touch_disabled = false;
     source->think = Q1_THINK_NONE;
     source->next_think = 0;
-    if (!write_word(game, source, true, 0, error) || !q1_link(game, source, error) ||
+    if (!write_value(game, source, true, 0, error) || !q1_link(game, source, error) ||
         !current(game, actor, source, error)) return false;
     bool placed;
     return drop_floor(game, source, &placed, error);
@@ -178,7 +170,7 @@ bool q1_source_rogue_tag_think(qa_q1_game *game, q1_actor *source,
     }
     if (kind == Q1_THINK_SOURCE_ROGUE_TAG_FALL) {
         bool placed;
-        return write_word(game, source, true, 0, error) &&
+        return write_value(game, source, true, 0, error) &&
             drop_floor(game, source, &placed, error) &&
             q1_schedule(game, source, 30, Q1_THINK_SOURCE_ROGUE_TAG_RESPAWN, error);
     }
@@ -188,11 +180,10 @@ bool q1_source_rogue_tag_think(qa_q1_game *game, q1_actor *source,
         (!qa_combat_read(game->services.combat, owner, &combat, error) ||
          !current(game, actor, source, error))) return false;
     if (owner.registry && combat.health > 0) {
-        double message_time;
-        if (!read_word(game, source, false, &message_time, error)) return false;
+        double message_time = source->state.source_tag.message_time;
         if (message_time < game->time &&
             (!announce(game, source, "$qc_has_token", owner, error) ||
-             !write_word(game, source, false, game->time + 30, error))) return false;
+             !write_value(game, source, false, game->time + 30, error))) return false;
         qa_body_state body, carrier;
         if (!qa_world_body_read(game->services.world, actor, &body, error) ||
             !qa_world_body_read(game->services.world, owner, &carrier, error) ||
@@ -203,7 +194,7 @@ bool q1_source_rogue_tag_think(qa_q1_game *game, q1_actor *source,
             q1_schedule(game, source, .1, Q1_THINK_SOURCE_ROGUE_TAG, error);
     }
     if (owner.registry && !announce(game, source, "$qc_lost_token", owner, error)) return false;
-    if (!write_word(game, source, true, 0, error)) return false;
+    if (!write_value(game, source, true, 0, error)) return false;
     source->physics.solid = QA_PHYSICS_TRIGGER;
     source->touch_disabled = false;
     source->owner = (qa_actor_id){0};
@@ -234,10 +225,8 @@ bool qa_q1_source_rogue_tag_score(qa_q1_game *game, qa_actor_id victim,
     if (!okay) goto finish;
     qa_actor_id owner = world(game, error)->rogue_tag_owner;
     if (owner.registry && qa_actor_id_equal(attacker, owner)) {
-        double frags;
-        okay = read_word(game, source, true, &frags, error) &&
-            write_word(game, source, true, frags + 1, error) &&
-            read_word(game, source, true, &frags, error);
+        okay = write_value(game, source, true, source->state.source_tag.frags + 1, error);
+        double frags = source->state.source_tag.frags;
         if (okay && frags == 5 && q1_player_get(game, attacker)) {
             qa_string_id text = 0;
             okay = qa_strings_intern_cstr(qa_session_strings(game->services.session), "$qc_got_quad", &text, error);

@@ -177,13 +177,13 @@ bool q1_save_entity(q1_save_io *io, q1_actor *a) {
     Q1_SAVE(io, string, a->source_kill_string);
     Q1_SAVE(io, string, a->source_death_type);
     Q1_SAVE(io, string, a->source_team);
-    Q1_SAVE(io, string, a->rogue_next_update);
+    Q1_SAVE(io, float, a->rogue_next_update);
     Q1_SAVE(io, actor, a->rogue_tag_owner);
-    Q1_SAVE(io, string, a->rogue_runes_spawned);
+    Q1_SAVE(io, float, a->rogue_runes_spawned);
     Q1_SAVE(io, actor, a->rogue_rune_spawn);
-    Q1_SAVE(io, string, a->ctf_last_capture);
-    Q1_SAVE(io, string, a->ctf_last_capture_team);
-    Q1_SAVE(io, string, a->ctf_runes_spawned);
+    Q1_SAVE(io, float, a->ctf_last_capture);
+    Q1_SAVE(io, float, a->ctf_last_capture_team);
+    Q1_SAVE(io, float, a->ctf_runes_spawned);
     Q1_SAVE(io, actor, a->ctf_rune_spawn);
     Q1_SAVE(io, vector, a->initial_angles);
     if (!q1_save_physics(io, &a->physics))
@@ -226,20 +226,20 @@ bool q1_save_entity(q1_save_io *io, q1_actor *a) {
         a->pickup_observation = (qa_pickup_lease){.actor = a->id, .serial = observation};
     switch (a->kind) {
     case Q1_SOURCE_ROGUE_RUNE:
-        Q1_SAVE(io, string, a->state.rogue_rune);
+        Q1_SAVE(io, float, a->state.rogue_rune);
         break;
     case Q1_SOURCE_ROGUE_RUNE_TIMER:
         break;
     case Q1_SOURCE_ROGUE_FLAG:
     case Q1_SOURCE_ROGUE_FLAG_BASE:
-        for (size_t i = 0; i < 3; ++i) Q1_SAVE(io, string, a->state.rogue_flag.words[i]);
+        for (size_t i = 0; i < 3; ++i) Q1_SAVE(io, float, a->state.rogue_flag.values[i]);
         Q1_SAVE(io, vector, a->state.rogue_flag.origin);
         Q1_SAVE(io, vector, a->state.rogue_flag.angles);
         Q1_SAVE(io, bool, a->state.rogue_flag.placed);
         break;
     case Q1_SOURCE_ROGUE_TAG:
-        Q1_SAVE(io, string, a->state.source_tag.frags);
-        Q1_SAVE(io, string, a->state.source_tag.message_time);
+        Q1_SAVE(io, float, a->state.source_tag.frags);
+        Q1_SAVE(io, float, a->state.source_tag.message_time);
         break;
     case Q1_SOURCE_CTF_RUNE:
         Q1_SAVE(io, string, a->state.source_rune.rune);
@@ -250,13 +250,13 @@ bool q1_save_entity(q1_save_io *io, q1_actor *a) {
     case Q1_SOURCE_CTF_FLAG:
         Q1_SAVE(io, vector, a->state.source_flag.base);
         Q1_SAVE(io, vector, a->state.source_flag.angles);
-        Q1_SAVE(io, string, a->state.source_flag.return_word);
+        Q1_SAVE(io, float, a->state.source_flag.return_time);
         Q1_SAVE(io, u32, a->state.source_flag.movement_flags);
         Q1_SAVE(io, bool, a->state.source_flag.placed);
         break;
     case Q1_ROGUE_TEAM_STATE:
         for (size_t i = 0; i < QA_Q1_ROGUE_FIELDS; ++i)
-            Q1_SAVE(io, string, a->state.rogue_fields[i]);
+            Q1_SAVE(io, float, a->state.rogue_fields[i]);
         break;
     case Q1_MONSTER:
         if (!q1_save_monster(io, &a->state.monster))
@@ -299,8 +299,8 @@ bool q1_save_entity(q1_save_io *io, q1_actor *a) {
             classname.size != strlen(name) || memcmp(classname.data, name, classname.size))
             return q1_save_fail(io, "Invalid native Rogue rune source actor");
         if (a->kind == Q1_SOURCE_ROGUE_RUNE) {
-            qa_bytes rune = qa_strings_text(qa_session_strings(io->game->services.session), a->state.rogue_rune);
-            if (rune.size != 1 || (rune.data[0] != '1' && rune.data[0] != '2' && rune.data[0] != '4' && rune.data[0] != '8'))
+            float rune = a->state.rogue_rune;
+            if (rune != 1 && rune != 2 && rune != 4 && rune != 8)
                 return q1_save_fail(io, "Invalid native Rogue rune number");
         }
     }
@@ -351,12 +351,12 @@ bool q1_save_entity(q1_save_io *io, q1_actor *a) {
          memcmp(classname.data, "rogue_team_state", classname.size) ||
          a->think != Q1_THINK_NONE || a->frozen.active || a->map))
         return q1_save_fail(io, "Invalid Rogue team-state source actor");
-    if ((a->rogue_next_update || a->rogue_tag_owner.registry || a->rogue_runes_spawned || a->rogue_rune_spawn.registry) &&
+    if ((a->rogue_next_update != 0 || a->rogue_tag_owner.registry || a->rogue_runes_spawned != 0 || a->rogue_rune_spawn.registry) &&
         (io->game->options.program != QA_Q1_ROGUE || !a->native ||
          classname.size != sizeof("worldspawn") - 1 ||
          memcmp(classname.data, "worldspawn", classname.size)))
         return q1_save_fail(io, "Rogue update word has no actual source world");
-    if ((a->ctf_last_capture || a->ctf_last_capture_team || a->ctf_runes_spawned ||
+    if ((a->ctf_last_capture != 0 || a->ctf_last_capture_team != 0 || a->ctf_runes_spawned != 0 ||
          a->ctf_rune_spawn.registry) &&
         (io->game->options.program != QA_Q1_CTF || !a->native ||
          classname.size != sizeof("worldspawn") - 1 ||
