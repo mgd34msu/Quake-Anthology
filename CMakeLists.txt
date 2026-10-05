@@ -829,8 +829,6 @@ add_library(qa_scene STATIC
     src/render/material/coordinates.c
     src/render/material/deform.c
     src/render/material/library.c
-    src/render/material/library_save.c
-    src/render/material/record_save.c
     src/render/material/math.c
     src/render/material/order.c
     src/render/material/parser.c

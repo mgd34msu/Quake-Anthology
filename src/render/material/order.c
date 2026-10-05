@@ -1,5 +1,4 @@
 #include "library_internal.h"
-#include "library_save_private.h"
 #include "qa/material_save.h"
 #include "qa/source_save.h"
 #include "source_scratch_private.h"

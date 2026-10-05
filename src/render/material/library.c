@@ -6,6 +6,46 @@
 #include <stdlib.h>
 #include <string.h>
 
+const qa_material *qa_material_library_record_at(const qa_material_library *library, size_t index)
+{ return library && index < library->count ? &library->ordered[index]->material : NULL; }
+size_t qa_material_library_record_count(const qa_material_library *library)
+{ return library ? library->count : 0; }
+size_t qa_material_library_video_receipt_count(const qa_material_library *library, size_t record)
+{
+    if (!library || record >= library->count) return 0;
+    size_t count = 0;
+    for (const qa_material_video_receipt *receipt = library->ordered[record]->videos;
+        receipt; receipt = receipt->next) ++count;
+    return count;
+}
+bool qa_material_library_video_receipt_read(const qa_material_library *library,
+    size_t record, size_t index, const char **source, const qa_scene_image **image)
+{
+    if (!library || record >= library->count || !source || !image) return false;
+    const qa_material_video_receipt *receipt = library->ordered[record]->videos;
+    while (receipt && index) { receipt = receipt->next; --index; }
+    if (!receipt) return false;
+    *source = receipt->source; *image = receipt->image; return true;
+}
+bool qa_material_library_record_read(const qa_material_library *library, size_t index, qa_material_library_record_view *out)
+{
+    if (!library || !out || index >= library->count) return false;
+    const qa_material_record *r = library->ordered[index];
+    *out = (qa_material_library_record_view){&r->material, &r->options, r->kind, r->world_identity,
+        r->lightmap_index, r->base_name, r->base_image};
+    return true;
+}
+qa_scene_resources *qa_material_library_resource_owner(const qa_material_library *library)
+{ return library ? library->resources : NULL; }
+const qa_material_order *qa_material_library_order_owner(const qa_material_library *library)
+{ return library ? library->order : NULL; }
+bool qa_material_library_order_ready(const qa_material_library *library)
+{
+    if (!library || !library->order) return false;
+    for (size_t i = 0; i < library->count; ++i)
+        if (!qa_material_order_has_record(library->order, &library->ordered[i]->material)) return false;
+    return true;
+}
 static bool mutation_begin(qa_material_library *library, qa_error *error)
 {
     if (!qa_material_library_idle(library)) {
