@@ -325,37 +325,9 @@ bool qa_command_filter(const char *pattern, const char *name, bool case_sensitiv
 
 float qac_number(const char *text, qa_console_dialect dialect)
 {
-    if (!qac_q1(dialect)) {
-        float value = 0;
-        (void)qa_parse_atof_float(text, &value, NULL);
-        return value;
-    }
-    bool negative = *text == '-';
-    if (negative) ++text;
-    double value = 0;
-    if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
-        text += 2;
-        for (;;) {
-            unsigned char c = (unsigned char)*text++;
-            unsigned digit;
-            if (c >= '0' && c <= '9') digit = (unsigned)(c - '0');
-            else if (c >= 'a' && c <= 'f') digit = (unsigned)(c - 'a') + 10;
-            else if (c >= 'A' && c <= 'F') digit = (unsigned)(c - 'A') + 10;
-            else break;
-            value = value * 16 + digit;
-        }
-    } else if (*text == '\'') {
-        value = (unsigned char)text[1];
-    } else {
-        size_t fractional = 0;
-        bool decimal = false;
-        for (; *text != '\0'; ++text) {
-            if (*text == '.') { decimal = true; fractional = 0; continue; }
-            if (*text < '0' || *text > '9') break;
-            value = value * 10 + (*text - '0');
-            if (decimal) ++fractional;
-        }
-        while (fractional-- != 0) value /= 10;
-    }
-    return (float)(negative ? -value : value);
+    if (qac_q1(dialect))
+        return (float)qa_parse_quake_number(text,QA_QUAKE_NUMBER_SIGNED_QUOTE);
+    double value=0;
+    (void)qa_parse_atof(text,&value,NULL);
+    return (float)value;
 }
