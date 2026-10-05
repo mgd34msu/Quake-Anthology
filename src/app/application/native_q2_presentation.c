@@ -49,7 +49,7 @@ bool qa_application_native_q2_source_profile_read(qa_application *app, qa_actor_
 static bool ready(const qa_application *app, bool retained)
 {
     return app && app->session && app->world && !app->destroy_requested &&
-        app->state == QA_APPLICATION_RUNNING && app->map_view_ready &&
+        (app->state == QA_APPLICATION_RUNNING || app->state == QA_APPLICATION_STOPPING) && app->map_view_ready &&
         !app->q3_round_active && !app->q3_world_restart && !app->routing_snapshot &&
         !app->frame_preparing &&
         (app->operation == APPLICATION_IDLE || app->operation == APPLICATION_ADVANCING ||
