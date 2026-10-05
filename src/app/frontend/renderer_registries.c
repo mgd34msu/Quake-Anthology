@@ -112,27 +112,3 @@ bool frontend_renderer_registries_at(const qa_frontend *f,size_t ordinal,qa_q3_p
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Retained registry ordinal has no actual allocation");
     *out=owner->rows[ordinal]; return true;
 }
-bool frontend_renderer_registries_restore_prefix(qa_frontend *f,size_t count,qa_error *error)
-{
-    if (!f || !f->source_restoring || f->capture || f->resource_inventory || f->renderer_registries ||
-        count>SIZE_MAX/sizeof(qa_q3_presentation_assets *))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Registry prefix requires its isolated empty custody owner");
-    frontend_renderer_registries *owner=calloc(1,sizeof(*owner));
-    if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Allocating restored registry custody");
-    owner->frontend=f; f->renderer_registries=owner;
-    if (count) {
-        owner->rows=calloc(count,sizeof(*owner->rows));
-        if (!owner->rows) return frontend_fail(error,QA_ERROR_MEMORY,"Allocating genuine registry import destinations");
-    }
-    owner->count=owner->capacity=count; return true;
-}
-bool frontend_renderer_registries_restore_adopt(qa_frontend *f,size_t ordinal,
-    qa_q3_presentation_assets **owned,qa_error *error)
-{
-    frontend_renderer_registries *owner=f?f->renderer_registries:NULL;
-    if (!f || !f->source_restoring || f->capture || f->resource_inventory || !owner || owner->frontend!=f ||
-        ordinal>=owner->count || owner->rows[ordinal] || !owned || !*owned ||
-        !qa_q3_assets_idle(*owned) || contains(owner,*owned))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Registry import must transfer its exact genuine created allocation");
-    owner->rows[ordinal]=*owned; *owned=NULL; return true;
-}

@@ -1,5 +1,4 @@
 #include "internal.h"
-#include "content_inventory.h"
 #include "tools_restore.h"
 #include "save_private.h"
 #include "qa/http_save.h"
@@ -26,26 +25,6 @@ struct qa_frontend_tools {
     double profiler_offset, profiler_anchor;
     bool profiler_reanchor;
 };
-bool frontend_tools_content_visit(const qa_frontend *frontend,
-    const qa_application_content_visitor *visitor, qa_error *error) {
-    if (!frontend || !visitor || !visitor->pool || !visitor->view || frontend->stepping)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "tools content inventory requires idle actual owners");
-    const qa_frontend_tools *tools = frontend->tools;
-    if (!tools) return true;
-    if (tools->frontend != frontend ||
-        (tools->settings && qa_vfs_resources(tools->settings) != tools->private_resources))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "tools content graph has foreign ownership");
-    if (tools->private_resources && !visitor->pool(visitor->context, tools->private_resources, error)) return false;
-    const qa_vfs *views[] = {tools->settings, tools->files};
-    for (size_t i = 0; i < sizeof(views) / sizeof(*views); ++i) {
-        if (!views[i]) continue;
-        qa_resource_pool *pool = qa_vfs_resources(views[i]);
-        if (!pool) return frontend_fail(error, QA_ERROR_ARGUMENT, "tools content view lacks its pool");
-        if (!visitor->pool(visitor->context, pool, error) ||
-            !visitor->view(visitor->context, views[i], error)) return false;
-    }
-    return true;
-}
 static double milliseconds(void *context) { qa_frontend *f = context; return (double)f->time_ns / 1000000.0; }
 static double profiler_milliseconds(void *context) {
     qa_frontend *f = context;

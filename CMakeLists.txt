@@ -1703,7 +1703,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/bindings_ui.c
     src/app/frontend/capture.c
     src/app/frontend/commands.c
-    src/app/frontend/content_inventory.c
     src/app/frontend/content_refs.c
     src/app/frontend/frame.c
     src/app/frontend/font_inventory.c
@@ -1749,7 +1748,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/remote_q3_modules.c
     src/app/frontend/native_q3_client.c
     src/app/frontend/native_q3_client_save.c
-    src/app/frontend/native_q3_topology.c
     src/app/frontend/native_q3_commands.c
     src/app/frontend/network_nq.c
     src/app/frontend/network_nq_save.c
@@ -1898,7 +1896,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/remote_unified_material_movies_bridge.c
     src/app/frontend/remote_unified_q2_hud.c
     src/app/frontend/renderer_registries.c
-    src/app/frontend/renderer_registries_save.c
     src/app/frontend/source_cinematics.c
     src/app/frontend/source_companion_legacy.c
     src/app/frontend/unified_q3_commands.c
