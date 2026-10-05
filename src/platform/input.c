@@ -615,7 +615,8 @@ bool qa_input_platform_routes(qa_input_platform *p, qa_input_seat *const seats[4
     if (!copy_routes(seats, selections, keyboard, time, copied, error)) return false;
     int32_t retained[4] = {-1,-1,-1,-1};
     for (unsigned i = 0; i < 4; ++i)
-        if (p->seats[i].seat == seats[i] && same_selection(&p->seats[i].selection,&copied[i]))
+        if ((!p->seats[i].seat || p->seats[i].seat == seats[i]) &&
+            same_selection(&p->seats[i].selection,&copied[i]))
             retained[i] = p->seats[i].instance;
     bool ok = release_all(p, time, error);
     for (unsigned i = 0; i < 4; ++i) {
@@ -636,6 +637,45 @@ bool qa_input_platform_routes(qa_input_platform *p, qa_input_seat *const seats[4
     if (!capture(p, error))
         ok = false;
     return ok;
+}
+bool qa_input_platform_routes_reindex(qa_input_platform *p,const int old_slots[4],
+    unsigned count,int keyboard,double time,qa_error *error) {
+    if (!native_owner(p,error)) return false;
+    if (!old_slots || !count || count>4 || keyboard < -1 || keyboard >= (int)count ||
+        !isfinite(time) || time<0) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid dense input route mapping"); return false;
+    }
+    unsigned retained=0;
+    for (unsigned i=0;i<count;++i) {
+        int old=old_slots[i];
+        if (old < -1 || old >= 4 || (old>=0 &&
+            (!p->seats[old].seat || (retained & (1u<<(unsigned)old))))) {
+            qa_error_set(error,QA_ERROR_ARGUMENT,0,"Input route mapping repeats or loses an actual player");
+            return false;
+        }
+        if (old>=0) retained |= 1u<<(unsigned)old;
+    }
+    if (!release_all(p,time,error)) return false;
+    for (unsigned i=0;i<4;++i)
+        if (!stop_device(p,p->seats[i].instance,error)) return false;
+    qa_controller_selection selections[4]; int32_t instances[4]; qa_input_seat *inputs[4];
+    for (unsigned i=0;i<4;++i) {
+        selections[i]=p->seats[i].selection; instances[i]=p->seats[i].instance;
+        inputs[i]=p->seats[i].seat;
+    }
+    for (unsigned i=0;i<4;++i) {
+        int old=i<count?old_slots[i]:-1;
+        p->seats[i].selection=old>=0?selections[old]:
+            (qa_controller_selection){.kind=i<count?QA_CONTROLLER_AUTO:QA_CONTROLLER_NONE};
+        p->seats[i].instance=old>=0?instances[old]:-1;
+        p->seats[i].seat=old==(int)i?inputs[i]:NULL;
+        p->seats[i].calibration_sensor=false;
+    }
+    for (unsigned i=0;i<4;++i)
+        if (!(retained & (1u<<i))) free((void *)selections[i].serial);
+    memset(p->keys,0,sizeof(p->keys)); p->keyboard=keyboard;
+    p->source_slot=-1; p->midi_slot=-1;
+    return capture(p,error);
 }
 bool qa_input_platform_retain(qa_input_platform *p, unsigned mask, int keyboard, double time,
                               qa_error *error) {

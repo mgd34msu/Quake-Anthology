@@ -54,6 +54,11 @@ void qa_input_platform_destroy(qa_input_platform *);
 bool qa_input_platform_routes(qa_input_platform *, qa_input_seat *const seats[4],
                               const qa_controller_selection selections[4], int keyboard_slot,
                               double time_ms, qa_error *);
+/* Reindex real assignments before replacing dense physical seat services.
+ * old_slots maps new slots to existing slots; -1 requests a new AUTO player.
+ * Changed input endpoints are detached until routes installs their new owners. */
+bool qa_input_platform_routes_reindex(qa_input_platform *, const int old_slots[4],
+                                     unsigned count, int keyboard_slot, double time_ms, qa_error *);
 bool qa_input_platform_retain(qa_input_platform *, unsigned retained_mask, int keyboard_slot,
                               double time_ms, qa_error *);
 bool qa_input_platform_keyboard(qa_input_platform *, int slot, double time_ms, qa_error *);
