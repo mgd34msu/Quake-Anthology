@@ -108,17 +108,8 @@ bool frontend_model_policy_select(const frontend_model_policy *policy, qa_scene_
 }
 double frontend_model_policy_distance(const frontend_model_policy *policy, const qa_model *model)
 { return policy->source_distance ? model->format == QA_MODEL_MDL ? 0 : policy->q2_distance : policy->distance; }
-bool frontend_model_policy_sync(qa_frontend *f, qa_error *error)
+static bool model_policy_sync(qa_frontend *f, const frontend_model_policy *policy, qa_error *error)
 {
-    if (!f || !f->application || f->stepping || f->preparing || f->round || f->capture ||
-        f->source_restoring || f->resource_inventory)
-        return policy_fail(error, "Model use refresh requires its returned frontend parent");
-    if (f->options.dedicated || qa_application_startup_pending(f->application) ||
-        frontend_config_store_shared_pending(f->config_store)) return true;
-    if (!qa_cvars_observer_idle(qa_application_cvars(f->application)))
-        return policy_fail(error, "Model use refresh requires returned ENGINE publications");
-    frontend_model_policy policy;
-    if (!frontend_model_policy_read(f, &policy, error)) return false;
     frontend_resource_inventory *inventory = NULL;
     if (!frontend_resource_inventory_collect(f, f->application, NULL, &inventory, error)) return false;
     bool ok = true;
@@ -136,8 +127,8 @@ bool frontend_model_policy_sync(qa_frontend *f, qa_error *error)
             ok = policy_fail(error, "Model use refresh lost its actual replacement root"); break;
         }
         if (!configured || !selected) continue;
-        bool next_enabled = frontend_model_policy_select(&policy, options->family, source, 0, true);
-        double next_distance = frontend_model_policy_distance(&policy, source);
+        bool next_enabled = frontend_model_policy_select(policy, options->family, source, 0, true);
+        double next_distance = frontend_model_policy_distance(policy, source);
         if (enabled != next_enabled || !(distance == next_distance || (isnan(distance) && isnan(next_distance))))
             ok = qa_scene_model_replacement_policy_update((qa_scene_model *)model, next_enabled, next_distance, error);
     }
@@ -222,6 +213,8 @@ struct frontend_live_resource_policy {
     frontend_shared_resource_policy *pending;
     policy_scalar applied[POLICY_VALUES];
     size_t applied_count;
+    frontend_model_policy model_use;
+    bool model_use_ready;
     bool busy;
 };
 static bool live_owner(qa_frontend *f, qa_error *error)
@@ -807,6 +800,7 @@ static void policy_publish(frontend_shared_resource_policy *ticket)
         owner->applied[i] = ticket->scalars[i]; ticket->scalars[i] = (policy_scalar){0};
     }
     owner->applied_count = ticket->scalar_count;
+    owner->model_use_ready = false;
 }
 void frontend_shared_resource_policy_publish(frontend_shared_resource_policy *ticket)
 {
@@ -902,7 +896,20 @@ bool frontend_shared_resource_policy_live_sync(qa_frontend *f, qa_error *error)
     struct frontend_live_resource_policy *owner = f->live_resource_policy;
     bool changed;
     if (!live_recipe_changed(owner, &changed, error)) return false;
-    if (!changed) return frontend_model_policy_sync(f, error);
+    if (!changed) {
+        frontend_model_policy policy;
+        if (!frontend_model_policy_read(f, &policy, error)) return false;
+        const frontend_model_policy *previous = &owner->model_use;
+        if (owner->model_use_ready && previous->q1_enhanced == policy.q1_enhanced &&
+            previous->q2_load == policy.q2_load && previous->q2_use == policy.q2_use &&
+            previous->source_distance == policy.source_distance && previous->distance == policy.distance &&
+            (previous->q2_distance == policy.q2_distance ||
+             (isnan(previous->q2_distance) && isnan(policy.q2_distance)))) return true;
+        if (!model_policy_sync(f, &policy, error)) return false;
+        owner->model_use = policy;
+        owner->model_use_ready = true;
+        return true;
+    }
     owner->busy = true;
     bool ok = policy_committed_prepare(f, NULL, &owner->pending, error) &&
         frontend_shared_resource_policy_ready(owner->pending, error);
