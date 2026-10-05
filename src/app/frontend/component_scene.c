@@ -750,82 +750,6 @@ bool frontend_component_scene_pictures_finish(qa_frontend *f,uint32_t physical,b
     }
     return true;
 }
-static struct frontend_component_scene *import_owner(qa_frontend *f,uint64_t identity,qa_error *e)
-{
-    if (f && f->source_restoring && !f->capture && !f->resource_inventory)
-        for (struct frontend_component_scene *row=f->component_scenes;row;row=row->next)
-            if (row->identity==identity && row->request.restoring && row->ready && idle(row) && retained(row)) return row;
-    frontend_fail(e,QA_ERROR_ARGUMENT,"Component import lost its actual detached private renderer"); return NULL;
-}
-bool frontend_component_scene_restore_picture(qa_frontend *f,uint64_t identity,const qa_q3_picture_receipt *receipt,qa_error *e)
-{
-    struct frontend_component_scene *owner=import_owner(f,identity,e);
-    return owner && owner->begun && picture_append(owner,receipt,e);
-}
-bool frontend_component_scene_restore_picture_cursor(qa_frontend *f,uint64_t identity,
-    bool valid,uint64_t frame,size_t cursor,qa_error *e)
-{
-    struct frontend_component_scene *owner=import_owner(f,identity,e);
-    if (!owner || cursor>owner->picture_count || (!valid && cursor))
-        return frontend_fail(e,QA_ERROR_FORMAT,"Component picture cursor differs from its actual imported output");
-    owner->picture_frame_valid=valid; owner->picture_frame=frame; owner->picture_cursor=cursor; return true;
-}
-bool frontend_component_scene_restore_output(qa_frontend *f,uint64_t identity,uint64_t sequence,bool begun,
-    qa_bytes bytes,const qa_scene_frame_checkpoint_refs *refs,qa_error *e)
-{
-    struct frontend_component_scene *owner=import_owner(f,identity,e);
-    if (!owner || !refs || !qa_scene_frame_restore(&owner->frame,bytes,refs,e)) return false;
-    if (owner->frame.sequence!=sequence)
-        return frontend_fail(e,QA_ERROR_FORMAT,"Component output sequence differs from its actual saved frame");
-    packets_clear(owner); pictures_clear(owner); owner->sequence=sequence; owner->begun=begun; return true;
-}
-bool frontend_component_scene_restore_packet(qa_frontend *f,uint64_t identity,
-    const frontend_component_scene_packet *view,qa_error *e)
-{
-    struct frontend_component_scene *owner=import_owner(f,identity,e);
-    if (!owner || !view || !owner->begun)
-        return frontend_fail(e,QA_ERROR_FORMAT,"Component packet lacks its imported output sequence");
-    qa_q3_scene_options options=view->options;
-    options.world.source_scratch=NULL;
-    options.world.source_diagnostics_read=diagnostics; options.world.source_diagnostics_context=owner;
-    options.world.video_frame=frontend_material_movies_frontend_resolve; options.world.video_context=f;
-    options.world.flare=NULL; options.world.flare_context=NULL;
-    if (!frontend_q3_source_recipient(f,&options.world,e)) return false;
-    return packet_copy(owner,&view->definition,&options,view->entities,view->entity_count,
-        view->polygons,view->polygon_count,view->vertices,view->vertex_count,view->lights,view->light_count,e);
-}
-bool frontend_component_scene_restore_music(qa_frontend *f,uint64_t identity,qa_audio_music **player,
-    bool attached,const char *intro,const char *loop,bool looping,bool pending,qa_error *e)
-{
-    struct frontend_component_scene *owner=import_owner(f,identity,e);
-    if (!owner || !player || owner->music || owner->music_intro || owner->music_loop ||
-        (attached && (!*player || qa_audio_engine_bus_music(f->audio,identity)!=*player)) ||
-        (!attached && qa_audio_engine_bus_music(f->audio,identity)) || (!*player && (intro || loop || looping || pending)))
-        return frontend_fail(e,QA_ERROR_FORMAT,"Component music import differs from its actual bus and player owners");
-    char *saved_intro=intro?malloc(strlen(intro)+1):NULL,*saved_loop=loop?malloc(strlen(loop)+1):NULL;
-    if ((intro && !saved_intro) || (loop && !saved_loop)) {
-        free(saved_intro); free(saved_loop); return frontend_fail(e,QA_ERROR_MEMORY,"Retaining imported component cue names");
-    }
-    if (saved_intro) memcpy(saved_intro,intro,strlen(intro)+1);
-    if (saved_loop) memcpy(saved_loop,loop,strlen(loop)+1);
-    if (*player && !qa_audio_music_controls_bind(*player,frontend_music_sources_controls(f->music_sources),e)) {
-        free(saved_intro); free(saved_loop); return false;
-    }
-    owner->music=*player; *player=NULL; owner->music_intro=saved_intro; owner->music_loop=saved_loop;
-    owner->music_looping=looping; owner->music_pending=pending; return true;
-}
-bool frontend_component_scene_restore_movies(qa_frontend *f,uint64_t identity,
-    const frontend_material_movies_refs *refs,qa_bytes bytes,qa_error *e)
-{
-    struct frontend_component_scene *owner=import_owner(f,identity,e);
-    if (!owner || owner->movies || !refs) return false;
-    frontend_material_movie_source source={.frontend=f,.files=owner->files,.images=owner->images,
-        .materials=owner->materials,.media=owner->media,.context=owner,.current=movie_current};
-    qa_q3_cinematic_source *cinematics=NULL;
-    return frontend_material_movies_restore(&source,refs,bytes,&owner->movies,e) &&
-        frontend_material_movies_cinematic_read(owner->movies,&cinematics,e) &&
-        (!cinematics || qa_q3_presentation_cinematics_bind(owner->presentation,cinematics,e));
-}
 bool frontend_component_scene_movie_source_read(const qa_frontend *f,uint64_t identity,
     frontend_material_movie_source *out,qa_error *e)
 {
@@ -838,55 +762,6 @@ bool frontend_component_scene_movie_source_read(const qa_frontend *f,uint64_t id
             return true;
         }
     return frontend_fail(e,QA_ERROR_ARGUMENT,"Component movie source leaves its genuine private owner roster");
-}
-bool frontend_component_scenes_bind_restored(qa_frontend *f,qa_error *e)
-{
-    if (!f || !f->source_restoring || f->capture || f->resource_inventory) return false;
-    for (struct frontend_component_scene *owner=f->component_scenes;owner;owner=owner->next)
-        if (!owner->ready || !retained(owner) || !frontend_q3_material_source_bind(f,owner->materials,e)) return false;
-    return true;
-}
-bool frontend_component_scenes_restore_order(qa_frontend *f,const uint64_t *identities,size_t count,qa_error *e)
-{
-    if (!f || !f->source_restoring || f->capture || f->resource_inventory || (count && !identities) ||
-        count!=frontend_component_scene_count(f) || count>SIZE_MAX/sizeof(struct frontend_component_scene *))
-        return frontend_fail(e,QA_ERROR_FORMAT,"Component restore order differs from its genuine physical roster");
-    struct frontend_component_scene **ordered=count?calloc(count,sizeof(*ordered)):NULL;
-    if (count && !ordered) return frontend_fail(e,QA_ERROR_MEMORY,"Preparing actual component restore chronology");
-    bool ok=true;
-    for (size_t i=0;ok && i<count;++i) {
-        for (struct frontend_component_scene *row=f->component_scenes;row;row=row->next)
-            if (row->identity==identities[i]) { ordered[i]=row; break; }
-        if (!ordered[i] || !ordered[i]->ready || ordered[i]->frontend!=f || !idle(ordered[i])) ok=false;
-        for (size_t j=0;ok && j<i;++j) if (ordered[i]==ordered[j]) ok=false;
-    }
-    if (ok) {
-        for (size_t i=0;i<count;++i) ordered[i]->next=i+1<count?ordered[i+1]:NULL;
-        f->component_scenes=count?ordered[0]:NULL;
-    }
-    free(ordered);
-    return ok || frontend_fail(e,QA_ERROR_FORMAT,"Component restore order names duplicate or absent physical owners");
-}
-bool frontend_component_scene_restore_frame_bind(qa_frontend *f,uint64_t identity,
-    frontend_scene_namespace *space,uint64_t ordinal,qa_error *e)
-{
-    struct frontend_component_scene *owner=import_owner(f,identity,e);
-    return owner && space && frontend_scene_namespace_bind_frame(space,ordinal,&owner->frame,e);
-}
-bool frontend_component_scenes_finish_restore(qa_frontend *f,qa_error *e)
-{
-    if (!f || !f->source_restoring || f->component_scene_restores)
-        return frontend_fail(e,QA_ERROR_FORMAT,"Component restoration retains an unclaimed graph prefix");
-    for (struct frontend_component_scene *owner=f->component_scenes;owner;owner=owner->next) {
-        if (!owner->ready || !retained(owner) || !idle(owner))
-            return frontend_fail(e,QA_ERROR_ARGUMENT,"Component restoration retains an incomplete private parent");
-        if (owner->music) {
-            frontend_music_origin origin=music_origin(owner);
-            if (frontend_music_sources_restore_origin_matches(f->music_sources,&origin) &&
-                !frontend_music_sources_restore_origin(f->music_sources,&origin,e)) return false;
-        }
-    }
-    return true;
 }
 bool frontend_component_scene_prepare(void *context,const application_q3_component_scene_preparation *request,qa_error *e)
 {

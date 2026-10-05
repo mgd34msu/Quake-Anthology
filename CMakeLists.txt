@@ -1080,7 +1080,6 @@ add_library(qa_q3_presentation STATIC
     src/presentation/q3/cinematic_handles.c
     src/presentation/q3/cinematic_handles_prepare.c
     src/presentation/q3/cinematic_handles_save.c
-    src/presentation/q3/scene_packet_save.c
 )
 target_link_libraries(qa_q3_presentation PUBLIC qa_scene qa_audio qa_media qa_text qa_input)
 
