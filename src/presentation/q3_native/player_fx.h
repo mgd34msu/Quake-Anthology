@@ -2,7 +2,6 @@
 #define QA_Q3_NATIVE_PLAYER_FX_H
 
 #include "body.h"
-#include "qa/source_save.h"
 
 typedef struct q3n_frame q3n_frame;
 typedef struct q3n_entity q3n_entity;
@@ -75,8 +74,5 @@ bool q3n_player_fx_submit_remote(const q3n_frame *, const q3n_remote_entity *,
 bool q3n_player_fx_submit_compiled(const q3n_frame *, const q3n_compiled_entity *,
     const q3n_client_info *, q3n_player_body *, const q3n_player_fx_settings *,
     const q3n_player_fx_compiled_backend *, qa_error *);
-/* Primitive-only aggregate field codec. No media acquisition, callbacks or
- * source writes; the entity aggregate owns field custody and actor admission. */
-bool q3n_player_fx_codec(qa_source_save_io *, q3n_player_fx_state *);
 
 #endif

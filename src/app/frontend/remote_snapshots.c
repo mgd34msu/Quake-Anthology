@@ -2,7 +2,6 @@
  * Copyright (C) 1999-2005 Id Software, Inc., GPL-2.0-or-later. */
 #include "remote_snapshots.h"
 #include "../../presentation/q3_native/trajectory.h"
-#include "../../presentation/q3_native/entity_save.h"
 #include "qa/network_q3_fields_save.h"
 #include <limits.h>
 #include <stdio.h>

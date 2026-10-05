@@ -1501,7 +1501,6 @@ add_library(qa_q3_native_presentation STATIC
     src/presentation/q3_native/marks.c
     src/presentation/q3_native/particles.c
     src/presentation/q3_native/player_fx.c
-    src/presentation/q3_native/player_fx_save.c
     src/presentation/q3_native/player_state.c
     src/presentation/q3_native/view.c
     src/presentation/q3_native/hud.c
@@ -1518,7 +1517,6 @@ add_library(qa_q3_native_presentation STATIC
     src/presentation/q3_native/authored_menu_context.c
     src/presentation/q3_native/authored_menu_shared.c
     src/presentation/q3_native/native.c
-    src/presentation/q3_native/entity_save.c
     src/presentation/q3_native/compiled_frame.c
     src/presentation/q3_native/compiled_source.c
 )
