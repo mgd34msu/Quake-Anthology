@@ -195,9 +195,9 @@ static bool in_pvs(const team_combat_scope *scope, qa_vec3 first, qa_vec3 second
 
 static float distance(qa_vec3 first, qa_vec3 second)
 {
-    volatile float x = first.x - second.x, y = first.y - second.y, z = first.z - second.z;
-    volatile float xx = x * x, yy = y * y, zz = z * z;
-    volatile float xy = xx + yy, sum = xy + zz;
+    float x = first.x - second.x, y = first.y - second.y, z = first.z - second.z;
+    float xx = x * x, yy = y * y, zz = z * z;
+    float xy = xx + yy, sum = xy + zz;
     return (float)sqrt((double)sum);
 }
 
@@ -352,7 +352,7 @@ static bool frag_bonuses(const team_combat_scope *scope, qa_actor_id target,
     }
     qa_q3_source_player_team_state target_team;
     if (!qa_q3_client_team_state_read(scope->game, target_slot, &target_team, error)) return false;
-    volatile float now = (float)scope->time, since_hurt = now - target_team.last_hurt_carrier_ms;
+    float now = (float)scope->time, since_hurt = now - target_team.last_hurt_carrier_ms;
     if (target_team.last_hurt_carrier_ms != 0 && since_hurt < 8000) {
         if (!points(scope, attacker, attacker_slot, target_origin, scope->missionpack ? 5 : 2, error))
             return false;

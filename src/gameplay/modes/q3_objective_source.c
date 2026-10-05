@@ -331,8 +331,8 @@ static bool capture(const team_call *call, const mode_q3_source_item *item,
         if (!after(call, call->source->player_team_read(call->source->context,
                 teammate.actor, &player_team, error), error)) return false;
         float now = (float)call->source->time_ms;
-        volatile float returned = player_team.last_returned_flag_ms + 10000.0f;
-        volatile float fragged = player_team.last_fragged_carrier_ms + 10000.0f;
+        float returned = player_team.last_returned_flag_ms + 10000.0f;
+        float fragged = player_team.last_fragged_carrier_ms + 10000.0f;
         int32_t bonus = returned > now ? call->source->missionpack ? 10 : 1 :
             fragged > now ? call->source->missionpack ? 10 : 2 : -1;
         if (bonus < 0) continue;

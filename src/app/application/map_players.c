@@ -1327,12 +1327,6 @@ bool application_q3_guest_selected_respawn(application_provider *source,
     return true;
 }
 
-static float q3_pose_float(float value)
-{
-    volatile float rounded = value;
-    return rounded;
-}
-
 static bool q3_pose_name_equal(const char *left, const char *right)
 {
     while (*left && *right) {
@@ -1347,21 +1341,18 @@ static bool q3_pose_name_equal(const char *left, const char *right)
 
 static qa_vec3 q3_pose_angles(qa_vec3 direction)
 {
-    const float pi = 3.14159265358979323846f;
+    const double pi = 3.14159265358979323846;
     float yaw, pitch;
     if (direction.y == 0 && direction.x == 0) {
         yaw = 0;
         pitch = direction.z > 0 ? 90 : 270;
     } else {
         yaw = direction.x == 0 ? direction.y > 0 ? 90 : 270
-            : q3_pose_float(q3_pose_float((float)atan2(direction.y, direction.x)) * 180);
-        if (direction.x != 0) yaw = q3_pose_float(yaw / pi);
-        if (yaw < 0) yaw = q3_pose_float(yaw + 360);
-        float forward = q3_pose_float((float)sqrt(q3_pose_float(
-            q3_pose_float(direction.x * direction.x) + q3_pose_float(direction.y * direction.y))));
-        pitch = q3_pose_float(q3_pose_float((float)atan2(direction.z, forward)) * 180);
-        pitch = q3_pose_float(pitch / pi);
-        if (pitch < 0) pitch = q3_pose_float(pitch + 360);
+            : (float)(atan2(direction.y, direction.x) * 180.0 / pi);
+        if (yaw < 0) yaw += 360.0f;
+        float forward = (float)sqrt(direction.x * direction.x + direction.y * direction.y);
+        pitch = (float)(atan2(direction.z, forward) * 180.0 / pi);
+        if (pitch < 0) pitch += 360.0f;
     }
     return qa_v3(-pitch, yaw, 0);
 }
@@ -1420,10 +1411,9 @@ static bool q3_pose_fallback(application_provider *provider, uint32_t count,
         if (!q3_pose_read(provider, slot, &position, &facing, error) ||
             !q3_pose_telefrag(provider, position, &blocked, error)) return false;
         if (blocked) continue;
-        float squared = q3_pose_float(q3_pose_float(position.x * position.x) +
-            q3_pose_float(position.y * position.y));
-        squared = q3_pose_float(squared + q3_pose_float(position.z * position.z));
-        float distance = q3_pose_float((float)sqrt(squared));
+        float squared = position.x * position.x + position.y * position.y;
+        squared += position.z * position.z;
+        float distance = (float)sqrt(squared);
         size_t insertion = 0;
         while (insertion < selected && !(distance > points[insertion].distance)) ++insertion;
         if (insertion == 64) continue;
@@ -1437,13 +1427,13 @@ static bool q3_pose_fallback(application_provider *provider, uint32_t count,
     if (selected) {
         float random;
         if (!qa_q3_game_random(provider->state.q3, &random, error)) return false;
-        size_t index = (size_t)q3_pose_float(random * (float)(selected / 2));
+        size_t index = (size_t)(random * (float)(selected / 2));
         slot = points[index].slot;
     }
     if (slot == QA_Q3_SOURCE_NONE)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Couldn't find a spawn point");
     if (!q3_pose_read(provider, slot, origin, angles, error)) return false;
-    origin->z = q3_pose_float(origin->z + 9);
+    origin->z += 9.0f;
     return true;
 }
 

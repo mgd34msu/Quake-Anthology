@@ -1139,26 +1139,6 @@ bool application_bots_native_q3_initialize(application_provider *provider,qa_err
     return application_bots_source_initialize(bots,error);
 }
 
-static float bot_source_atof(const char *text) {
-    size_t cursor=0;
-    while(text[cursor] && ((unsigned char)text[cursor]>=128 || (unsigned char)text[cursor]<=32)) ++cursor;
-    int sign=1;
-    if(text[cursor]=='+' || text[cursor]=='-') {sign=text[cursor]=='-'?-1:1;++cursor;}
-    volatile float value=0;
-    while(text[cursor]>='0' && text[cursor]<='9') {
-        volatile float product=value*10.0f;
-        value=product+(float)(text[cursor++]-'0');
-    }
-    if(text[cursor]=='.') {
-        ++cursor;
-        volatile float fraction=.1f;
-        while(text[cursor]>='0' && text[cursor]<='9') {
-            volatile float product=(float)(text[cursor++]-'0')*fraction;
-            value=value+product;fraction=fraction*.1f;
-        }
-    }
-    return value*(float)sign;
-}
 bool application_bots_shared_connect(application_bots *bots,uint32_t client,bool restart,bool *accepted,qa_error *error) {
     if(!bots || !bots->shared_world || !bots->population || !accepted || bots->restoring || bots->calls || bots->producing)
         return application_fail(error,QA_ERROR_ARGUMENT,"shared G_BotConnect requires its actual initialized population");
@@ -1175,7 +1155,9 @@ bool application_bots_shared_connect(application_bots *bots,uint32_t client,bool
     qa_q3_client_info_value(info,"team",team,sizeof(team));
     qa_q3_client_info_value(info,"skill",skill_text,sizeof(skill_text));
     qa_q3_client_info_value(info,"name",name,sizeof(name));
-    float skill=bot_source_atof(skill_text);
+    double parsed;
+    if(!qa_parse_atof(skill_text,&parsed,error)) return false;
+    float skill=(float)parsed;
     if(!isfinite(skill)) return application_fail(error,QA_ERROR_FORMAT,"shared bot skill is outside its finite source domain");
     qa_bot_admission admission={.actor=actor,.client=seat->library_client,.entity=(int32_t)client,
         .character_file=character,.name=name,.team=team,.skill=skill,.mode=bots->application->primary_mode,.restart=restart};
@@ -1244,7 +1226,9 @@ bool application_bots_native_q3_connect(application_provider *provider,qa_actor_
     qa_q3_client_info_value(info,"team",team,sizeof(team));
     qa_q3_client_info_value(info,"skill",skill_text,sizeof(skill_text));
     qa_q3_client_info_value(info,"name",name,sizeof(name));
-    float skill=bot_source_atof(skill_text);
+    double parsed;
+    if(!qa_parse_atof(skill_text,&parsed,error)) return false;
+    float skill=(float)parsed;
     if(!isfinite(skill)) return application_fail(error,QA_ERROR_FORMAT,"bot source skill is outside its finite character domain");
     application_bot_seat *seat=NULL;
     uint32_t round_seat=0,library_client=actor.slot;bool retained=false;
