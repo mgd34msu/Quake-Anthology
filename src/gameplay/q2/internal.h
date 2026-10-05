@@ -389,7 +389,7 @@ qa_builtin_snapshot_frame *q2_player_roster(qa_q2_game *, qa_error *);
 enum {
     Q2_GIB_HEAD = 1u, Q2_GIB_METALLIC = 2u, Q2_GIB_SKINNED = 4u, Q2_GIB_UPRIGHT = 8u,
     Q2_GIB_WIDOW = 16u, Q2_GIB_WIDOW_SIZED = 32u, Q2_GIB_WIDOW_HIT_SOUND = 64u,
-    Q2_GIB_WIDOW_LEGS = 128u
+    Q2_GIB_WIDOW_LEGS = 128u, Q2_GIB_DEBRIS = 256u
 };
 bool q2_widow_legs_think(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_widow_gib_touch(qa_q2_game *, const qa_touch_contact *, qa_error *);

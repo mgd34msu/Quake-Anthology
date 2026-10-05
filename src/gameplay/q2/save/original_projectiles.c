@@ -465,6 +465,10 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
             uint64_t source_flags = 0;
             if (!scalar(io, "flags", Q2_ORIGINAL_U64, 264, &source_flags)) return false;
             p->gib_flags |= source_flags & UINT64_C(0x10000000) ? Q2_GIB_UPRIGHT : 0;
+            uint64_t effects = 0;
+            if (!scalar(io, "s.effects", Q2_ORIGINAL_U64, 64, &effects)) return false;
+            if (p->kind == Q2_GIB && !(effects & (UINT64_C(2) | (UINT64_C(1) << 21))))
+                p->gib_flags |= Q2_GIB_DEBRIS;
         }
     }
     return callbacks(g, io, a);

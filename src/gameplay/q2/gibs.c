@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "qa/game_q2_source.h"
+#include "qa/text.h"
 
 static qa_vec3 angles_for(qa_vec3 direction) {
     return qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f,
@@ -23,18 +25,19 @@ static qa_vec3 growth_angles(qa_q2_game *g) {
     }
     return angles;
 }
-static bool solid_point(qa_q2_game *g, qa_vec3 point, bool *solid, qa_error *e) {
+static bool gib_contents(qa_q2_game *g, qa_vec3 point, int32_t *contents, qa_error *e) {
     qa_point_query query = {.point = point, .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
     qa_point_contents result;
     if (!qa_world_point_contents(g->services.world, &query, &result, e))
         return false;
-    *solid = ((uint32_t)result.contents & 3u) != 0;
+    *contents = result.contents;
     return true;
 }
 bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float damage,
                   uint32_t flags, int skin, float scale, qa_error *e) {
     bool head = (flags & Q2_GIB_HEAD) != 0, metal = (flags & Q2_GIB_METALLIC) != 0,
-         rr = g->options.edition == QA_Q2_RERELEASE;
+         rr = g->options.edition == QA_Q2_RERELEASE,
+         debris = rr && (flags & Q2_GIB_DEBRIS) != 0;
     qa_body_state source_body;
     if (!qa_world_body_read(g->services.world, source, &source_body, e))
         return false;
@@ -63,8 +66,11 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float da
             offset.y = q2_crandom(g) * half.y;
             offset.z = q2_crandom(g) * half.z;
             origin = qa_vec_add(center, offset);
-            if (rr && !solid_point(g, origin, &solid, e))
-                return false;
+            if (rr) {
+                int32_t contents;
+                if (!gib_contents(g, origin, &contents, e)) return false;
+                solid = ((uint32_t)contents & 3u) != 0;
+            }
             if (!solid)
                 break;
         }
@@ -74,12 +80,15 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float da
     qa_vec3 impulse;
     impulse.x = 100 * q2_crandom(g);
     impulse.y = 100 * q2_crandom(g);
-    impulse.z = 200 + 100 * q2_random(g);
-    float factor = (damage < 50 ? 0.7f : 1.2f) * (metal ? 1 : 0.5f);
+    impulse.z = debris ? 100 + 100 * q2_crandom(g) : 200 + 100 * q2_random(g);
+    float factor = debris ? (float)qa_source_float_to_i32(damage) :
+        (damage < 50 ? 0.7f : 1.2f) * (metal ? 1 : 0.5f);
     qa_vec3 velocity = qa_vec_add(source_body.velocity, qa_vec_scale(impulse, factor));
-    velocity.x = fmaxf(-300, fminf(300, velocity.x));
-    velocity.y = fmaxf(-300, fminf(300, velocity.y));
-    velocity.z = fmaxf(200, fminf(500, velocity.z));
+    if (!debris) {
+        velocity.x = fmaxf(-300, fminf(300, velocity.x));
+        velocity.y = fmaxf(-300, fminf(300, velocity.y));
+        velocity.z = fmaxf(200, fminf(500, velocity.z));
+    }
     qa_vec3 angular = a->physics.angular_velocity;
     if (head && !rr)
         angular.y = q2_crandom(g) * 600;
@@ -106,6 +115,14 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float da
         if (!qa_combat_create_actor(g->services.combat, id, &combat, e))
             return false;
     }
+    uint64_t lifetime;
+    if (rr) {
+        float instagib;
+        if (!qa_q2_source_value(g, "g_instagib", 0, &instagib, e)) return false;
+        bool instant = qa_source_float_to_i32(instagib) != 0;
+        lifetime = (uint64_t)((instant ? 1000u : 10000u) +
+            q2_random_bounded(g, instant ? 4001u : 10001u)) * Q2_MS;
+    } else lifetime = (uint64_t)((10 + q2_random(g) * 10) * 1e9);
     const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), source);
     a->projectile = (q2_projectile){
         .kind = Q2_GIB,
@@ -113,13 +130,13 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float da
         .owner = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
             qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
             qa_actor_reference_lifetime(source),
-        .effects = 2,
-        .render_flags = rr ? ((1u << 24) | (1u << 13) | (1u << 15)) : 0,
+        .effects = debris ? 0 : 2,
+        .render_flags = rr ? ((1u << 24) | (1u << 13) | (debris ? 0 : 1u << 15)) : 0,
         .skin = (flags & Q2_GIB_SKINNED) != 0 ? skin : 0,
         .scale = rr ? scale : 1,
         .gib_flags = flags,
         .visible = true,
-        .expire_ns = q2_deadline(g->now_ns, (uint64_t)((10 + q2_random(g) * 10) * 1e9))};
+        .expire_ns = q2_deadline(g->now_ns, lifetime)};
     a->character_no_damage_effects = rr;
     a->physics_bound = true;
     a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
@@ -128,11 +145,16 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float da
     a->physics.solid = QA_PHYSICS_NOT_SOLID;
     a->physics.clip_mask = 3;
     a->physics.angular_velocity = angular;
+    if (rr) a->physics.flags = QA_PHYSICS_DEAD | ((flags & Q2_GIB_UPRIGHT) ? QA_PHYSICS_ALWAYS_TOUCH : 0);
     qa_body_state body = {.origin = origin, .velocity = velocity, .angles = angles};
-    return qa_world_body_write(g->services.world, id, &body, e) &&
-           qa_world_set_collision(g->services.world, id, NULL, e) &&
-           qa_world_link(g->services.world, id, NULL, e) &&
-           q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, model, 0, origin, angles, e);
+    if (!qa_world_body_write(g->services.world, id, &body, e) ||
+        !qa_world_set_collision(g->services.world, id, NULL, e) ||
+        !qa_world_link(g->services.world, id, NULL, e)) return false;
+    if (rr) {
+        if (!gib_contents(g, origin, &a->physics.water_type, e)) return false;
+        a->physics.water_level = ((uint32_t)a->physics.water_type & (8u | 16u | 32u)) ? 1 : 0;
+    }
+    return q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, model, 0, origin, angles, e);
 }
 static bool debris(qa_q2_game *g, qa_body_state body, const char *model, float speed,
                    qa_vec3 origin, qa_error *e) {

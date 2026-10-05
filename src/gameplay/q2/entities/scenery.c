@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/text.h"
 
 static bool model(qa_q2_game *g, q2_actor *a, const char *name, qa_bounds bounds,
                   qa_physics_solid solid, qa_error *e) {
@@ -59,9 +60,11 @@ static bool break_apart(qa_q2_game *g, q2_actor *a, qa_actor_id inflictor, qa_ac
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
     qa_vec3 size = qa_vec_scale(qa_vec_sub(body.bounds.maxs, body.bounds.mins), .5f);
-    body.origin = qa_vec_add(qa_vec_add(body.origin, body.bounds.mins), size);
-    if (!q2_entity_body(g, a, &body, false, e))
-        return false;
+    bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+    if (!rerelease) {
+        body.origin = qa_vec_add(qa_vec_add(body.origin, body.bounds.mins), size);
+        if (!q2_entity_body(g, a, &body, false, e)) return false;
+    }
     if (q2_target_damageable(g, a->id) && !damageable(g, a, false, e))
         return false;
     if (s->damage != 0 && !q2_entity_radius(g, a, attacker, s->damage, s->damage + 40, 25, e))
@@ -71,31 +74,53 @@ static bool break_apart(qa_q2_game *g, q2_actor *a, qa_actor_id inflictor, qa_ac
     qa_body_state from = body;
     if (q2_actor_live(g, inflictor) && !qa_world_body_read(g->services.world, inflictor, &from, e))
         return false;
-    body.velocity = qa_vec_scale(qa_vec_normalize(qa_vec_sub(body.origin, from.origin)), 150);
+    body.velocity = qa_vec_scale(qa_vec_normalize(rerelease ?
+        qa_vec_sub(from.origin, body.origin) : qa_vec_sub(body.origin, from.origin)), 150);
     if (!q2_entity_body(g, a, &body, false, e))
         return false;
     float mass = q2_field_float(g, s, "mass", 75);
+    if (qa_combat_has(g->services.combat, a->id)) {
+        qa_combat_state combat;
+        if (!qa_combat_read_traits(g->services.combat, a->id, &combat, e)) return false;
+        mass = combat.mass;
+    }
     if (mass == 0)
         mass = 75;
     int large = (int)q2_clamp(truncf(mass / 100), 0, 8),
         small = (int)q2_clamp(truncf(mass / 25), 0, 16);
     size = qa_vec_scale(size, .5f);
     for (int i = 0; i < large; i++) {
-        qa_vec3 point = random_point(g, body.origin, size);
-        if (!q2_spawn_model_debris(g, a->id, "models/objects/debris1/tris.md2", 1, point, e))
-            return false;
+        if (rerelease) {
+            if (!q2_spawn_gib(g, a->id, "models/objects/debris1/tris.md2", 1,
+                Q2_GIB_METALLIC | Q2_GIB_DEBRIS, 0, s->visual.scale != 0 ? s->visual.scale : 1, e)) return false;
+        } else {
+            qa_vec3 point = random_point(g, body.origin, size);
+            if (!q2_spawn_model_debris(g, a->id, "models/objects/debris1/tris.md2", 1, point, e)) return false;
+        }
         if (!q2_actor_live(g, a->id))
             return true;
     }
     for (int i = 0; i < small; i++) {
-        qa_vec3 point = random_point(g, body.origin, size);
-        if (!q2_spawn_model_debris(g, a->id, "models/objects/debris2/tris.md2", 2, point, e))
-            return false;
+        if (rerelease) {
+            if (!q2_spawn_gib(g, a->id, "models/objects/debris2/tris.md2", 2,
+                Q2_GIB_METALLIC | Q2_GIB_DEBRIS, 0, s->visual.scale != 0 ? s->visual.scale : 1, e)) return false;
+        } else {
+            qa_vec3 point = random_point(g, body.origin, size);
+            if (!q2_spawn_model_debris(g, a->id, "models/objects/debris2/tris.md2", 2, point, e)) return false;
+        }
         if (!q2_actor_live(g, a->id))
             return true;
     }
     if (!q2_entity_targets(g, a, attacker, false, e))
         return false;
+    if (rerelease && q2_actor_live(g, a->id)) {
+        if (!qa_world_body_read(g->services.world, a->id, &body, e)) return false;
+        body.origin = qa_vec_add(body.origin,
+            qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), .5f));
+        if (!q2_entity_body(g, a, &body, false, e)) return false;
+        if (s->noise && !q2_entity_sound(g, a,
+            qa_strings_cstr(qa_session_strings(g->services.session), s->noise), 0, 1, 1, 0, e)) return false;
+    }
     return !q2_actor_live(g, a->id) ||
            (s->damage != 0 ? explode(g, a, 1, e) : qa_session_release(g->services.session, a->id, e));
 }
@@ -110,6 +135,21 @@ static bool barrel_blast(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
+    if (g->options.edition == QA_Q2_RERELEASE) {
+        static const struct { const char *model; unsigned count; } pieces[] = {
+            {"models/objects/debris1/tris.md2", 2},
+            {"models/objects/debris3/tris.md2", 4},
+            {"models/objects/debris2/tris.md2", 8}
+        };
+        float speed = (float)qa_source_float_to_i32(1.5f * s->damage / 200);
+        for (size_t piece = 0; piece < sizeof(pieces) / sizeof(*pieces); ++piece)
+            for (unsigned copy = 0; copy < pieces[piece].count; ++copy) {
+                if (!q2_spawn_gib(g, a->id, pieces[piece].model, speed,
+                    Q2_GIB_METALLIC | Q2_GIB_DEBRIS, 0, s->visual.scale != 0 ? s->visual.scale : 1, e)) return false;
+                if (!q2_actor_live(g, a->id)) return true;
+            }
+        return explode(g, a, qa_actor_reference_present(body.ground) ? 2 : 1, e);
+    }
     qa_vec3 size = qa_vec_sub(body.bounds.maxs, body.bounds.mins),
             low = qa_vec_add(body.origin, body.bounds.mins),
             center = qa_vec_add(low, qa_vec_scale(size, .5f));
