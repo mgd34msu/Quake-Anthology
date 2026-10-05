@@ -1440,11 +1440,10 @@ static bool persistence_begin(void *opaque, qa_save_purpose purpose, qa_save_met
     return true;
 }
 
-static bool buffer_copy(qa_bytes bytes, qa_buffer *out, qa_error *error)
+static bool buffer_move(qa_buffer *buffer, qa_buffer *out)
 {
-    qa_buffer copy = {.data = malloc(bytes.size), .size = bytes.size};
-    if (!copy.data) return application_fail(error, QA_ERROR_MEMORY, "copying captured owner continuation");
-    memcpy(copy.data, bytes.data, bytes.size); *out = copy;
+    *out = *buffer;
+    *buffer = (qa_buffer){0};
     return true;
 }
 
@@ -1459,8 +1458,8 @@ static bool persistence_capture_owner(void *opaque, const qa_save_owner *owner,
     case QA_SAVE_ACTORS: index = 1; break;
     case QA_SAVE_SESSION: index = 2; break;
     case QA_SAVE_WORLD: index = 3; break;
-    case QA_SAVE_RESOURCES: return buffer_copy((qa_bytes){operation->resources.data, operation->resources.size}, out, error);
-    case QA_SAVE_CONFIGURATION: return buffer_copy((qa_bytes){operation->configuration.data, operation->configuration.size}, out, error);
+    case QA_SAVE_RESOURCES: return buffer_move(&operation->resources, out);
+    case QA_SAVE_CONFIGURATION: return buffer_move(&operation->configuration, out);
     case QA_SAVE_ROSTER: return application_players_checkpoint_capture(app, out, error);
     case QA_SAVE_CVARS: return qa_cvars_save_capture(app->cvars, out, error);
     case QA_SAVE_APPLICATION: return application_capture(app, out, error);
@@ -1489,7 +1488,7 @@ static bool persistence_capture_owner(void *opaque, const qa_save_owner *owner,
     }
     }
     qa_buffer *buffer = operation->foundation + index;
-    return buffer_copy((qa_bytes){buffer->data, buffer->size}, out, error);
+    return buffer_move(buffer, out);
 }
 
 static bool persistence_capture_validate(void *opaque, const qa_save_image *image, qa_error *error)
