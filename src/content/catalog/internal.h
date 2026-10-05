@@ -83,6 +83,9 @@ bool catalog_index_maps(qa_catalog *, catalog_product *, bool archives_only, qa_
 bool catalog_read_mods(qa_catalog *, catalog_product *, qa_error *);
 bool catalog_read_starts(qa_catalog *, catalog_product *, qa_error *);
 bool catalog_read_behaviors(qa_catalog *, catalog_product *, qa_error *);
+bool catalog_read_components(qa_catalog *, catalog_product *, qa_error *);
+bool catalog_product_issue(qa_catalog *, catalog_product *, size_t first_mod,
+    size_t first_behavior, const qa_error *issue, qa_error *);
 bool catalog_optional_resource(qa_vfs *, const char *, qa_resource **, qa_error *);
 bool catalog_view(const qa_catalog *, const qa_mount_id *, size_t, qa_vfs **, qa_error *);
 const qa_catalog_mount *catalog_mount(const qa_catalog *, qa_mount_id);

@@ -247,47 +247,54 @@ static bool products(qa_source_save_io *io, qa_catalog *catalog)
     }
     return true;
 }
-static bool payload(qa_source_save_io *io, qa_bytes *value)
+static bool skip_payload(qa_source_save_io *io)
 {
-    qa_buffer bytes = {(uint8_t *)value->data, value->size};
-    bool ok = blob(io, &bytes);
-    if (io->direction == QA_SOURCE_SAVE_READ) *value = (qa_bytes){bytes.data, bytes.size};
-    return ok;
+    size_t size = 0;
+    size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? io->input.size - io->offset : 0;
+    if (!qa_source_save_count(io, &size, maximum)) return false;
+    qa_bytes ignored;
+    return !size || qa_source_save_span(io, size, &ignored);
+}
+static bool mod_fields(qa_source_save_io *io, qa_catalog *catalog, qa_catalog_mod *mod)
+{
+    FIELD(u32, mod, product);
+    if (!text(io, catalog, &mod->key) || !text(io, catalog, &mod->id) ||
+        !text(io, catalog, &mod->title)) return false;
+    ENUM(mod, purpose, QA_MOD_GAME_TYPE); ENUM(mod, runtime, QA_PROGRAM_NATIVE);
+    return strings(io, catalog, (const char ***)&mod->requires, &mod->requires_count) &&
+        strings(io, catalog, (const char ***)&mod->conflicts, &mod->conflicts_count) &&
+        text(io, catalog, &mod->declaration_path) && text(io, catalog, &mod->program_path) &&
+        qa_source_save_bytes(io, &mod->declaration_digest, sizeof(mod->declaration_digest)) &&
+        qa_source_save_bytes(io, &mod->program_digest, sizeof(mod->program_digest)) &&
+        skip_payload(io) && text(io, catalog, &mod->unavailable);
 }
 static bool mods(qa_source_save_io *io, qa_catalog *catalog)
 {
-    ARRAY(catalog, mods, mod_count, 103);
-    for (size_t i = 0; i < catalog->mod_count; ++i) {
-        qa_catalog_mod *mod = &catalog->mods[i]; FIELD(u32, mod, product);
-        if (!mod->product || mod->product > catalog->product_count ||
-            !text(io, catalog, &mod->key) || !mod->key || !qa_catalog_mod_key(mod->key) ||
-            !text(io, catalog, &mod->id) || !mod->id || !text(io, catalog, &mod->title) || !mod->title) return false;
-        ENUM(mod, purpose, QA_MOD_GAME_TYPE); ENUM(mod, runtime, QA_PROGRAM_NATIVE);
-        if (!strings(io, catalog, (const char ***)&mod->requires, &mod->requires_count) ||
-            !strings(io, catalog, (const char ***)&mod->conflicts, &mod->conflicts_count) ||
-            !text(io, catalog, &mod->declaration_path) || !text(io, catalog, &mod->program_path) ||
-            !qa_source_save_bytes(io, &mod->declaration_digest, sizeof(mod->declaration_digest)) ||
-            !qa_source_save_bytes(io, &mod->program_digest, sizeof(mod->program_digest)) ||
-            !payload(io, &mod->declaration) || !text(io, catalog, &mod->unavailable)) return false;
-        for (size_t j = 0; j < i; ++j) if (!strcmp(catalog->mods[j].key, mod->key)) return false;
+    size_t count = 0;
+    size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? (io->input.size - io->offset) / 103 : 0;
+    if (!qa_source_save_count(io, &count, maximum)) return false;
+    for (size_t i = 0; i < count; ++i) {
+        qa_catalog_mod mod = {0};
+        bool ok = mod_fields(io, catalog, &mod);
+        free((void *)mod.requires); free((void *)mod.conflicts);
+        if (!ok) return false;
     }
     return true;
 }
 static bool behaviors(qa_source_save_io *io, qa_catalog *catalog)
 {
-    ARRAY(catalog, behaviors, behavior_count, 92);
-    for (size_t i = 0; i < catalog->behavior_count; ++i) {
-        qa_catalog_weapon_behavior *behavior = &catalog->behaviors[i]; FIELD(u32, behavior, product);
-        if (!behavior->product || behavior->product > catalog->product_count ||
-            !text(io, catalog, &behavior->id) || !behavior->id || !*behavior->id ||
-            !text(io, catalog, &behavior->title) || !behavior->title || !text(io, catalog, &behavior->artifact_path)) return false;
-        ENUM(behavior, runtime, QA_PROGRAM_NATIVE); ENUM(behavior, role, QA_BUILTIN_GRAPPLE);
-        if (!text(io, catalog, &behavior->declaration_path) ||
-            !qa_source_save_bytes(io, &behavior->declaration_digest, sizeof(behavior->declaration_digest)) ||
-            !qa_source_save_bytes(io, &behavior->artifact_digest, sizeof(behavior->artifact_digest)) ||
-            !payload(io, &behavior->entry) || !text(io, catalog, &behavior->unavailable)) return false;
-        for (size_t j = 0; j < i; ++j)
-            if (catalog->behaviors[j].product == behavior->product && !strcmp(catalog->behaviors[j].id, behavior->id)) return false;
+    size_t count = 0;
+    size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? (io->input.size - io->offset) / 92 : 0;
+    if (!qa_source_save_count(io, &count, maximum)) return false;
+    for (size_t i = 0; i < count; ++i) {
+        qa_catalog_weapon_behavior behavior = {0}; FIELD(u32, &behavior, product);
+        if (!text(io, catalog, &behavior.id) || !text(io, catalog, &behavior.title) ||
+            !text(io, catalog, &behavior.artifact_path)) return false;
+        ENUM(&behavior, runtime, QA_PROGRAM_NATIVE); ENUM(&behavior, role, QA_BUILTIN_GRAPPLE);
+        if (!text(io, catalog, &behavior.declaration_path) ||
+            !qa_source_save_bytes(io, &behavior.declaration_digest, sizeof(behavior.declaration_digest)) ||
+            !qa_source_save_bytes(io, &behavior.artifact_digest, sizeof(behavior.artifact_digest)) ||
+            !skip_payload(io) || !text(io, catalog, &behavior.unavailable)) return false;
     }
     return true;
 }
@@ -335,6 +342,9 @@ static bool fields(qa_source_save_io *io, qa_catalog *catalog, qa_buffer *files,
         (!refs->files_decode(refs->context, catalog->resources, (qa_bytes){files->data, files->size},
             &catalog->mounts, io->error) || !catalog->mounts)) return false;
     if (!physical(io, catalog) || !products(io, catalog) || !mods(io, catalog) || !behaviors(io, catalog)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ)
+        for (size_t i = 0; i < catalog->product_count; ++i)
+            if (!catalog_read_components(catalog, &catalog->products[i], io->error)) return false;
     if (catalog->corpus_mount) {
         const qa_catalog_mount *root = catalog_mount(catalog, catalog->corpus_mount);
         if (!root || root->format != QA_ARCHIVE_AUTO || root->writable) return false;

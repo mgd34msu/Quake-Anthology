@@ -119,6 +119,18 @@ bool catalog_add_product(qa_catalog *catalog, const qa_product *view,
     return true;
 }
 
+bool catalog_product_issue(qa_catalog *catalog, catalog_product *product,
+    size_t first_mod, size_t first_behavior, const qa_error *issue, qa_error *error)
+{
+    if (issue->code == QA_ERROR_MEMORY) { if (error) *error = *issue; return false; }
+    if (!catalog_requirement(catalog, product, issue->message, error)) return false;
+    product->view.availability = QA_CONTENT_INVALID;
+    const char *reason = product->view.requirements[product->view.requirement_count - 1];
+    for (size_t i = first_mod; i < catalog->mod_count; ++i) catalog->mods[i].unavailable = reason;
+    for (size_t i = first_behavior; i < catalog->behavior_count; ++i) catalog->behaviors[i].unavailable = reason;
+    return true;
+}
+
 static bool discover(const qa_catalog_options *options, const char *remote_base,
     const char *directory, qa_product_id *selected, qa_catalog **out, qa_error *error)
 {
@@ -156,16 +168,9 @@ static bool discover(const qa_catalog_options *options, const char *remote_base,
         catalog_product *p = &catalog->products[i];
         size_t first_mod = catalog->mod_count, first_behavior = catalog->behavior_count;
         qa_error issue = {0};
-        if (!catalog_index_product(catalog, p, &issue) ||
-            !catalog_read_starts(catalog, p, &issue) || !catalog_read_mods(catalog, p, &issue) ||
-            !catalog_read_behaviors(catalog, p, &issue)) {
-            if (issue.code == QA_ERROR_MEMORY) { if (error) *error = issue; goto fail; }
-            if (!catalog_requirement(catalog, p, issue.message, error)) goto fail;
-            p->view.availability = QA_CONTENT_INVALID;
-            const char *reason = p->view.requirements[p->view.requirement_count - 1];
-            for (size_t j = first_mod; j < catalog->mod_count; ++j) catalog->mods[j].unavailable = reason;
-            for (size_t j = first_behavior; j < catalog->behavior_count; ++j) catalog->behaviors[j].unavailable = reason;
-        }
+        if (!catalog_index_product(catalog, p, &issue) || !catalog_read_starts(catalog, p, &issue)) {
+            if (!catalog_product_issue(catalog, p, first_mod, first_behavior, &issue, error)) goto fail;
+        } else if (!catalog_read_components(catalog, p, error)) goto fail;
         qa_resource_pool_trim(catalog->resources);
     }
     *out = catalog;

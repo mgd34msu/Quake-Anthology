@@ -32,8 +32,6 @@ typedef struct content_instance {
     qa_product_id product;
     content_resource *interfaces;
     qa_launch_resource *interface_values;
-    uint64_t *behaviors;
-    const qa_catalog_weapon_behavior **behavior_values;
     qa_buffer options;
     qa_vfs_acquisition artifact_acquisition;
     bool artifact_retained, declaration_retained;
@@ -188,30 +186,20 @@ static bool instance_collect(qa_application_content_graph *g, const qa_launch_in
     }
     if (value->artifact) { qa_resource_retain((qa_resource *)value->artifact); row->artifact_retained = true; }
     if (value->declaration) { qa_resource_retain((qa_resource *)value->declaration); row->declaration_retained = true; }
-    if (source->interface_count > SIZE_MAX / sizeof(*row->interfaces) ||
-        source->behavior_count > SIZE_MAX / sizeof(*row->behaviors)) return fail(error, QA_ERROR_MEMORY, "Provider metadata extent is exhausted");
+    if (source->interface_count > SIZE_MAX / sizeof(*row->interfaces))
+        return fail(error, QA_ERROR_MEMORY, "Provider interface extent is exhausted");
     row->interfaces = source->interface_count ? calloc(source->interface_count, sizeof(*row->interfaces)) : NULL;
-    row->behaviors = source->behavior_count ? calloc(source->behavior_count, sizeof(*row->behaviors)) : NULL;
-    if ((source->interface_count && !row->interfaces) || (source->behavior_count && !row->behaviors))
-        return fail(error, QA_ERROR_MEMORY, "Retaining actual provider interface and behavior order");
-    value->interface_count = source->interface_count; value->behavior_count = source->behavior_count;
+    if (source->interface_count && !row->interfaces)
+        return fail(error, QA_ERROR_MEMORY, "Retaining actual provider interface order");
+    value->interface_count = source->interface_count;
     for (size_t i = 0; i < source->interface_count; ++i)
         if (!copy_resource(g, pool, &source->interfaces[i], &row->interfaces[i], error)) return false;
-    for (size_t i = 0; i < source->behavior_count; ++i) {
-        size_t ordinal = 0;
-        while (ordinal < qa_catalog_weapon_behavior_count(catalog) &&
-            qa_catalog_weapon_behavior_at(catalog, ordinal) != source->behaviors[i]) ++ordinal;
-        if (ordinal == qa_catalog_weapon_behavior_count(catalog)) return fail(error, QA_ERROR_FORMAT, "Provider behavior is outside its actual catalog");
-        row->behaviors[i] = ordinal + 1;
-    }
     row->value.product_catalog = provider->product_catalog; row->value.product = provider->product;
     row->interface_values = value->interface_count ? calloc(value->interface_count, sizeof(*row->interface_values)) : NULL;
-    row->behavior_values = value->behavior_count ? calloc(value->behavior_count, sizeof(*row->behavior_values)) : NULL;
-    if ((value->interface_count && !row->interface_values) || (value->behavior_count && !row->behavior_values))
-        return fail(error, QA_ERROR_MEMORY, "Retaining provider descriptor arrays");
+    if (value->interface_count && !row->interface_values)
+        return fail(error, QA_ERROR_MEMORY, "Retaining provider interface descriptors");
     for (size_t i = 0; i < value->interface_count; ++i) row->interface_values[i] = row->interfaces[i].value;
-    for (size_t i = 0; i < value->behavior_count; ++i) row->behavior_values[i] = source->behaviors[i];
-    value->interfaces = row->interface_values; value->behaviors = row->behavior_values;
+    value->interfaces = row->interface_values;
     return true;
 }
 
@@ -342,7 +330,7 @@ void application_save_content_destroy(qa_application_content_graph *g)
         if (row->artifact_retained) qa_resource_release((qa_resource *)v->artifact);
         if (row->declaration_retained) qa_resource_release((qa_resource *)v->declaration);
         qa_vfs_acquisition_dispose(&row->artifact_acquisition);
-        free(row->interfaces); free(row->interface_values); free(row->behaviors); free(row->behavior_values);
+        free(row->interfaces); free(row->interface_values);
         qa_buffer_free(&row->options);
     }
     for (size_t i = 0; g->resources && i < g->resource_count; ++i) {
@@ -622,8 +610,15 @@ static bool instance_fields(qa_source_save_io *io, content_instance *row)
     if (!qa_source_save_bytes(io, &v->identity, sizeof(v->identity)) ||
         !table_field(io, (void **)&row->interfaces, &v->interface_count, sizeof(*row->interfaces), 28)) return false;
     for (size_t i = 0; i < v->interface_count; ++i) if (!resource_fields(io, &row->interfaces[i])) return false;
-    if (!table_field(io, (void **)&row->behaviors, &v->behavior_count, sizeof(*row->behaviors), 8)) return false;
-    for (size_t i = 0; i < v->behavior_count; ++i) if (!qa_source_save_u64(io, &row->behaviors[i])) return false;
+    /* Selected trajectory identities live in the canonical launch draft.
+     * The normal provider constructor derives this list after restoration. */
+    size_t count = 0;
+    size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? (io->input.size - io->offset) / 8 : 0;
+    if (!qa_source_save_count(io, &count, maximum)) return false;
+    for (size_t i = 0; i < count; ++i) {
+        uint64_t ignored = 0;
+        if (!qa_source_save_u64(io, &ignored)) return false;
+    }
     return true;
 }
 static bool graph_fields(qa_source_save_io *io, qa_application_content_graph *g)
@@ -712,11 +707,6 @@ static bool structure(const qa_application_content_graph *g, qa_error *error)
             for (size_t k = 0; k < j; ++k) if (!strcmp(f->value.path, r->interfaces[k].value.path))
                 return fail(error, QA_ERROR_FORMAT, "Saved provider interface path is duplicated");
         }
-        for (size_t j = 0; j < v->behavior_count; ++j) {
-            if (!r->behaviors[j]) return fail(error, QA_ERROR_FORMAT, "Saved behavior lacks catalog authority");
-            for (size_t k = 0; k < j; ++k) if (r->behaviors[k] == r->behaviors[j])
-                return fail(error, QA_ERROR_FORMAT, "Saved provider behavior is duplicated");
-        }
     }
     for (size_t i = 0; i < g->resource_count; ++i) {
         const content_resource *r = &g->resources[i];
@@ -804,19 +794,13 @@ static bool resolve(qa_application_content_graph *g, qa_error *error)
         if (v->artifact && !r->artifact_retained) { qa_resource_retain((qa_resource *)v->artifact); r->artifact_retained = true; }
         if (v->declaration && !r->declaration_retained) { qa_resource_retain((qa_resource *)v->declaration); r->declaration_retained = true; }
         if (!r->interface_values && v->interface_count) r->interface_values = calloc(v->interface_count, sizeof(*r->interface_values));
-        if (!r->behavior_values && v->behavior_count) r->behavior_values = calloc(v->behavior_count, sizeof(*r->behavior_values));
-        if ((v->interface_count && !r->interface_values) || (v->behavior_count && !r->behavior_values))
+        if (v->interface_count && !r->interface_values)
             return fail(error, QA_ERROR_MEMORY, "Resolving saved provider descriptor arrays");
         for (size_t j = 0; j < v->interface_count; ++j) {
             if (!resource_resolve(g, &r->interfaces[j], error)) return false;
             r->interface_values[j] = r->interfaces[j].value;
         }
-        for (size_t j = 0; j < v->behavior_count; ++j) {
-            if (r->behaviors[j] > qa_catalog_weapon_behavior_count(v->catalog))
-                return fail(error, QA_ERROR_FORMAT, "Saved behavior is outside its retained catalog");
-            r->behavior_values[j] = qa_catalog_weapon_behavior_at(v->catalog, r->behaviors[j] - 1);
-        }
-        v->interfaces = r->interface_values; v->behaviors = r->behavior_values;
+        v->interfaces = r->interface_values;
     }
     qa_catalog *launch = qa_application_content_catalog(g, g->launch_catalog);
     for (size_t i = 0; i < g->resource_count; ++i) {

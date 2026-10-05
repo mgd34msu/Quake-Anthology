@@ -449,15 +449,11 @@ static bool restored_instance_content(qa_configuration_transaction *transaction,
     }
     qa_launch_resource *interfaces = calloc(saved.interface_count ? saved.interface_count : 1,
                                              sizeof(*interfaces));
-    const qa_catalog_weapon_behavior **behaviors = calloc(saved.behavior_count ? saved.behavior_count : 1,
-                                                           sizeof(*behaviors));
-    if (!interfaces || !behaviors) {
-        free(interfaces); free(behaviors);
+    if (!interfaces) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain saved provider content identities");
         return false;
     }
     owner->view.interfaces = interfaces;
-    owner->view.behaviors = behaviors;
     for (size_t i = 0; i < saved.interface_count; ++i) {
         const qa_launch_resource *value = saved.interfaces + i;
         if (!value->path || !value->resource || value->product != saved.selection.product)
@@ -467,13 +463,7 @@ static bool restored_instance_content(qa_configuration_transaction *transaction,
         interfaces[owner->view.interface_count++] = (qa_launch_resource){value->product, path, value->resource};
         qa_resource_retain((qa_resource *)value->resource);
     }
-    for (size_t i = 0; i < saved.behavior_count; ++i) {
-        const qa_catalog_weapon_behavior *value = saved.behaviors[i];
-        if (!value || qa_catalog_weapon_behavior_find(saved.catalog,
-            saved.selection.product, value->id) != value)
-            return error_message(error, "saved provider trajectory has an invalid retained catalog");
-        behaviors[owner->view.behavior_count++] = value;
-    }
+    if (!selected_behaviors(owner, &transaction->candidate->draft->choices, error)) return false;
     if (!instance_identity(owner, &transaction->candidate->draft->choices, error)) return false;
     return qa_sha256_equal(&owner->view.identity, &saved.identity) ||
         error_message(error, "saved provider implementation identity disagrees with retained content");

@@ -217,3 +217,12 @@ bool catalog_read_starts(qa_catalog *c, catalog_product *p, qa_error *error)
 done:
     qa_json_destroy(doc); qa_resource_release(resource); return ok;
 }
+
+/* Installed declarations are rebuilt by the same discovery path after load. */
+bool catalog_read_components(qa_catalog *catalog, catalog_product *product, qa_error *error)
+{
+    size_t first_mod = catalog->mod_count, first_behavior = catalog->behavior_count;
+    qa_error issue = {0};
+    if (catalog_read_mods(catalog, product, &issue) && catalog_read_behaviors(catalog, product, &issue)) return true;
+    return catalog_product_issue(catalog, product, first_mod, first_behavior, &issue, error);
+}
