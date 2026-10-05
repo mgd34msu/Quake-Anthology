@@ -1230,15 +1230,6 @@ struct qa_display_restore_guard {
 };
 static bool display_save_error(qa_error *error,qa_status status,const char *message)
 { qa_error_set(error,status,0,"%s",message); return false; }
-bool qa_display_restore_info(const qa_display_restore_guard *guard,const qa_display *candidate,qa_display_info *out)
-{
-    if (!guard || !candidate || !out || guard->transferred || guard->candidate!=candidate ||
-        !guard->active || guard->active->destroy_pending || candidate->destroy_pending ||
-        !candidate->native_borrowed || candidate->window!=guard->window ||
-        guard->active->window!=guard->window || !candidate->lease || candidate->lease!=guard->active->lease) return false;
-    *out=guard->baseline.info;
-    return true;
-}
 static void display_saved_free(display_saved *saved)
 { free(saved->title); }
 static bool display_observe(qa_display *display,display_saved *saved,qa_error *error)

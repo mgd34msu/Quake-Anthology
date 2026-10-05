@@ -3,7 +3,6 @@
 #include "internal.h"
 #include "qa/media_captions.h"
 #include "qa/persistence_content.h"
-#include "qa/audio_bank_graph_save.h"
 bool frontend_ui_features_prepare(qa_frontend *, qa_error *);
 bool frontend_ui_features_destroy(qa_frontend *, qa_error *);
 /* Strict retained-child admission, distinct from returned draw callbacks. */
@@ -12,12 +11,10 @@ bool frontend_ui_features_sync(qa_frontend *, qa_error *);
 void frontend_ui_audio_event(void *, const qa_audio_voice_event *);
 bool frontend_ui_features_assets_read(const qa_frontend *, qa_audio_asset ***, size_t *, qa_error *);
 bool frontend_ui_features_content_visit(const qa_frontend *, const qa_application_content_visitor *, qa_error *);
-bool frontend_ui_features_checkpoint(qa_frontend *, const qa_audio_asset_inventory *, qa_buffer *, qa_error *);
-bool frontend_ui_features_restore(qa_frontend *, const qa_audio_asset_inventory *, qa_bytes, qa_error *);
 bool frontend_ui_features_captions(frontend_seat *, const qa_active_caption **, size_t *, qa_error *);
 const char *frontend_ui_localize(void *, const char *);
 /* Formatted source events are delivered immediately; output is caller-owned
- * scratch. Compiled catalogs enter the actual feature pool and its codec. */
+ * scratch. Compiled catalogs enter the actual feature pool. */
 bool frontend_ui_source_message(qa_frontend *, uint32_t, const qa_builtin_event *,
     char output[1024], const char **, qa_error *);
 bool frontend_ui_source_prompt_text(qa_frontend *, uint32_t, const qa_builtin_event *,

@@ -2,7 +2,6 @@
 #include <limits.h>
 #include <stdio.h>
 #include <SDL_timer.h>
-#include "qa/render_save.h"
 #include "qa/display.h"
 #include "qa/q3_source_scene_bank.h"
 
@@ -1234,37 +1233,20 @@ bool qa_cpu_execute(qa_cpu_renderer *renderer,const qa_scene_frame *frame,qa_err
   bool ok=cpu_execute_range(renderer,frame,0,true,true,error);
   renderer->executing=false; return ok;
 }
-static bool cpu_checkpoint_idle(const qa_cpu_renderer *renderer,qa_error *error)
+static bool cpu_settings_idle(const qa_cpu_renderer *renderer,qa_error *error)
 {
   if (!cpu_surface_idle(renderer,error)) return false;
   if (!renderer || renderer->executing || renderer->presenting || renderer->capturing ||
       renderer->opacity_active || renderer->opacity_parent) {
-    qa_error_set(error,QA_ERROR_ARGUMENT,0,"CPU continuation requires its completed idle renderer owner"); return false;
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"CPU settings require their completed idle renderer owner"); return false;
   }
-  return true;
-}
-bool qa_cpu_checkpoint_resources(const qa_cpu_renderer *renderer,qa_render_resource_visit_fn visit,void *context,qa_error *error)
-{
-  if (!visit || !cpu_checkpoint_idle(renderer,error)) return false;
-  size_t ordinal=0;
-  for (size_t i=0;i<2;++i,++ordinal)
-    if (renderer->bound[i] && !visit(context,renderer->bound[i],NULL,ordinal,error)) return false;
-  for (const cpu_target *target=renderer->targets;target;target=target->next,++ordinal)
-    if (!visit(context,target->image,NULL,ordinal,error)) return false;
-  if (renderer->controls.source.lightmap &&
-      !visit(context,renderer->controls.source.lightmap,NULL,ordinal++,error)) return false;
-  for (uint32_t i=0;i<renderer->source_image_count;++i,++ordinal)
-    if (!visit(context,renderer->source_images[i].image,NULL,ordinal,error)) return false;
-  size_t texture_levels=qa_cpu_source_texture_metadata_count(&renderer->controls);
-  for (size_t i=0;i<texture_levels;++i,++ordinal)
-    if (!visit(context,qa_cpu_source_texture_metadata_at(&renderer->controls,i),NULL,ordinal,error)) return false;
   return true;
 }
 static bool cpu_surface_prepare(qa_cpu_renderer *renderer,uint32_t width,uint32_t height,float gamma,
     qa_cpu_present present,void *context,bool present_candidate,qa_cpu_surface_ticket **out,qa_error *error)
 {
   size_t count=0;
-  if (!out || *out || !cpu_checkpoint_idle(renderer,error) || renderer->destroy_pending ||
+  if (!out || *out || !cpu_settings_idle(renderer,error) || renderer->destroy_pending ||
       renderer->current!=&renderer->display || renderer->opacity_active ||
       !isfinite(gamma) || gamma<0.5f || gamma>3 || present!=renderer->options.present ||
       !dimensions(width,height,&count,error)) {

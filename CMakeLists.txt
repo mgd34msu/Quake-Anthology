@@ -850,9 +850,7 @@ add_library(qa_render_gl STATIC
     src/render/gl/renderer.c)
 target_link_libraries(qa_render_gl PUBLIC qa_scene qa_display PRIVATE SDL2::SDL2)
 
-add_library(qa_render_controls STATIC
-    src/render/controls.c
-    src/render/controls_save.c)
+add_library(qa_render_controls STATIC src/render/controls.c)
 target_link_libraries(qa_render_controls PUBLIC qa_render_cpu qa_render_gl qa_persistence qa_q3_presentation)
 target_link_libraries(qa_render_cpu PRIVATE qa_render_controls)
 target_link_libraries(qa_render_gl PRIVATE qa_render_controls)
@@ -1701,7 +1699,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/qc_rerelease_events.c
     src/app/frontend/save_menu.c
     src/app/frontend/ui_features.c
-    src/app/frontend/ui_features_save.c
     src/app/frontend/audio_identity.c
     src/app/frontend/audio_identity_save.c
     src/app/frontend/audio_restore.c
@@ -1819,7 +1816,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/remote_q1_qw.c
     src/app/frontend/q1_sky.c
     src/app/frontend/q1_sky_prepare.c
-    src/app/frontend/q1_sky_save.c
     src/app/frontend/material_movie_inventory.c
     src/app/frontend/q3_color_policy.c
     src/app/frontend/qc_messages.c

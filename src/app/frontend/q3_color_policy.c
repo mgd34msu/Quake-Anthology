@@ -6,7 +6,6 @@
 #include "qa/display_settings.h"
 #include "qa/material_library_save.h"
 #include "qa/material_source_scratch.h"
-#include "qa/source_save.h"
 #include <limits.h>
 #include <math.h>
 
@@ -495,72 +494,4 @@ bool frontend_q3_source_color_publication_finish(qa_frontend *f,qa_error *error)
     if (owner->ticket->deferred_abort) return frontend_q3_source_color_abort(&owner->ticket,error);
     if (!owner->ticket->deferred_finish) return true;
     return frontend_q3_source_color_finish(&owner->ticket,error);
-}
-
-static bool saved_fields(qa_source_save_io *io, bool *present)
-{
-    uint8_t magic[4]={'Q','F','C','G'};
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCG",4) &&
-        qa_source_save_bool(io,present);
-}
-static bool saved_read(qa_bytes bytes,bool *present,qa_error *error)
-{
-    qa_source_save_io io={0};
-    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && saved_fields(&io,present) &&
-        qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io); return ok;
-}
-bool frontend_q3_source_color_checkpoint(const qa_frontend *f,qa_buffer *out,qa_error *error)
-{
-    if (!f || !out || out->data || out->size)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Invalid Source color continuation output");
-    const frontend_q3_color *owner=f->source_color;
-    if (owner && (!owner->initialized || owner->initializing || owner->ticket || !current(owner,error))) return false;
-    bool present=owner!=NULL;
-    qa_source_save_io io={0};
-    bool ok=qa_source_save_writer(&io,NULL,error) && saved_fields(&io,&present) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); return ok;
-}
-bool frontend_q3_source_color_restore_native(qa_frontend *f,qa_display *active,
-    qa_bytes bytes,qa_error *error)
-{
-    if (!f || !f->application || f->source_color)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color native restore requires its empty candidate owner");
-    bool present=false;
-    bool ok=saved_read(bytes,&present,error);
-    if (!ok || !present) return ok;
-    frontend_q3_color *owner=calloc(1,sizeof(*owner));
-    if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining restored Source color native parent");
-    owner->frontend=f; owner->application=f->application;
-    f->source_color=owner;
-    return gamma_acquire(owner,NULL,active,error);
-}
-bool frontend_q3_source_color_restore(qa_frontend *f,const qa_display_restore_guard *display_guard,
-    qa_bytes bytes,qa_q3_image_upload_options *upload,qa_error *error)
-{
-    if (!f || !f->application || !upload)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color restore requires its actual candidate owner and upload output");
-    bool present=false;
-    if (!saved_read(bytes,&present,error)) return false;
-    if (!present) return !f->source_color ||
-        frontend_fail(error,QA_ERROR_ARGUMENT,"Absent Source color import retains a candidate color owner");
-    frontend_q3_color *owner=f->source_color;
-    if (!owner || owner->frontend!=f || owner->application!=f->application ||
-        owner->initialized || owner->initializing || owner->ticket)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color import lacks its actual native preparation");
-    qa_display_info info;
-    qa_display_gamma *gamma=qa_display_gamma_borrow(f->display);
-    if (!f->display || (!!f->gl==!!f->cpu) ||
-        !qa_display_restore_info(display_guard,f->display,&info) ||
-        info.backend!=(f->gl?QA_DISPLAY_OPENGL:QA_DISPLAY_CPU))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color import lacks its actual display and single renderer");
-    if (!gamma || gamma!=owner->gamma)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color import lost its actual prepared gamma capability");
-    owner->display=f->display; owner->gl=f->gl; owner->cpu=f->cpu; owner->gamma=gamma;
-    if (!profile_read(owner,NULL,f->display,&owner->upload,error) ||
-        !qa_q3_color_lighting_read(&owner->upload.color.device,
-            owner->upload.color.requested_overbright_bits,&owner->lighting,error)) return false;
-    owner->lighting_ready=owner->initialized=true;
-    *upload=owner->upload;
-    return true;
 }

@@ -6,7 +6,6 @@
 #include "qa/q1_save_product.h"
 #include "qa/text.h"
 #include "qa/ui_saves.h"
-#include "qa/source_save.h"
 #include <stdio.h>
 
 static char *copy(const char *text,qa_error *error)
@@ -317,33 +316,4 @@ bool frontend_save_menu_destroy(frontend_seat *seat,qa_error *error)
     frontend_save_menu *owner=seat?seat->save_menu:NULL;if(!owner)return true;
     if(!qa_ui_saves_destroy(&owner->menus,(double)seat->frontend->time_ns/1000000.0,error))return false;
     free(owner->entries);free(owner->saved_at);free(owner);seat->save_menu=NULL;return true;
-}
-static bool menu_fields(qa_source_save_io *io,frontend_save_menu *owner)
-{
-    bool reading=io->direction==QA_SOURCE_SAVE_READ;qa_buffer compiled={0};qa_bytes input={0};
-    bool ok=reading || qa_ui_saves_checkpoint(owner->menus,&compiled,io->error);
-    size_t size=compiled.size,count=owner->count;
-    ok=ok && qa_source_save_count(io,&size,reading?io->input.size-io->offset:SIZE_MAX);
-    if(ok)ok=reading?qa_source_save_span(io,size,&input):qa_source_save_bytes(io,compiled.data,size);
-    qa_buffer_free(&compiled);
-    frontend_ui_seat_features *state=frontend_ui_features_seat(owner->seat);
-    if(!ok || !qa_source_save_count(io,&count,SIZE_MAX/sizeof(int64_t)) || count!=state->saves.count)return false;
-    int64_t *saved_at=reading?(count?calloc(count,sizeof(*saved_at)):NULL):owner->saved_at;
-    if(count && !saved_at)return frontend_fail(io->error,QA_ERROR_MEMORY,"Restoring save file timestamps");
-    for(size_t i=0;ok && i<count;++i) { int64_t value=reading?0:saved_at[i];ok=qa_source_save_i64(io,&value) && value>=0;if(reading && ok)saved_at[i]=value; }
-    if(ok && reading)ok=qa_ui_saves_restore(owner->menus,input,io->error) && rebuild_entries(owner,saved_at,false,io->error);
-    if(reading && !ok)free(saved_at);
-    return ok;
-}
-bool frontend_save_menu_checkpoint(frontend_seat *seat,qa_buffer *out,qa_error *error)
-{
-    if(!seat || !seat->save_menu || !out || out->data || out->size)return frontend_fail(error,QA_ERROR_ARGUMENT,"Save menu capture requires its actual owner");
-    qa_source_save_io io={0};bool ok=qa_source_save_writer(&io,NULL,error) && menu_fields(&io,seat->save_menu) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io);return ok;
-}
-bool frontend_save_menu_restore(frontend_seat *seat,qa_bytes bytes,qa_error *error)
-{
-    if(!seat || !seat->save_menu)return frontend_fail(error,QA_ERROR_ARGUMENT,"Save menu restore requires its actual owner");
-    qa_source_save_io io={0};bool ok=qa_source_save_reader(&io,NULL,bytes,error) && menu_fields(&io,seat->save_menu) && qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io);return ok;
 }

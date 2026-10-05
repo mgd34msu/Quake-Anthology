@@ -1,5 +1,4 @@
 #include "internal.h"
-#include "../save_fields.h"
 #include "qa/render_gl_save.h"
 #include "qa/display_settings.h"
 #include "qa/q3_source_scene_bank.h"
@@ -1300,50 +1299,10 @@ bool qa_gl_execute(qa_gl_renderer *renderer,const qa_scene_frame *frame,qa_error
     renderer->executing=true; bool ok=gl_execute_range(renderer,frame,0,true,true,error);
     renderer->executing=false; return ok;
 }
-bool qa_gl_checkpoint_resources(const qa_gl_renderer *renderer,qa_render_resource_visit_fn visit,void *context,qa_error *error)
-{
-    if (!gl_surface_idle(renderer,error)) return false;
-    if (!renderer || !visit || renderer->closed || renderer->executing || renderer->capturing || renderer->preparing || renderer->opacity.active) {
-        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL resource observation requires its idle actual renderer owner"); return false;
-    }
-    size_t ordinal=0;
-    for (const gl_texture_entry *entry=renderer->textures;entry;entry=entry->next,++ordinal)
-        if (!visit(context,entry->image,NULL,ordinal,error)) return false;
-    for (size_t i=0;i<2;++i,++ordinal)
-        if (renderer->bound[i] && !visit(context,renderer->bound[i],NULL,ordinal,error)) return false;
-    if (renderer->target && !visit(context,renderer->target,NULL,ordinal,error)) return false;
-    ++ordinal;
-    if (renderer->controls.source.lightmap &&
-        !visit(context,renderer->controls.source.lightmap,NULL,ordinal,error)) return false;
-    ++ordinal;
-    size_t texture_levels=qa_gl_source_texture_metadata_count(&renderer->controls);
-    for (size_t i=0;i<texture_levels;++i,++ordinal)
-        if (!visit(context,qa_gl_source_texture_metadata_at(&renderer->controls,i),NULL,ordinal,error)) return false;
-    ordinal=0;
-    for (const gl_mesh_entry *entry=renderer->meshes;entry;entry=entry->next,++ordinal)
-        if (!entry->geometry || (qa_scene_geometry_active(entry->geometry) &&
-            !visit(context,NULL,entry->geometry,ordinal,error))) return false;
-    return true;
-}
 size_t qa_gl_source_images_metadata_count(const qa_render_controls *controls)
 { return controls->owner.gl->source_image_count; }
 const qa_scene_image *qa_gl_source_image_metadata_at(const qa_render_controls *controls,size_t ordinal)
 { return controls->owner.gl->source_images[ordinal]->image; }
-bool qa_gl_checkpoint_meshes(const qa_gl_renderer *renderer,qa_gl_mesh_visit_fn visit,void *context,qa_error *error)
-{
-    if (!gl_surface_idle(renderer,error)) return false;
-    if (!renderer || !visit || renderer->closed || renderer->executing || renderer->capturing || renderer->preparing || renderer->opacity.active) {
-        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL mesh observation requires its idle actual cache owner"); return false;
-    }
-    size_t ordinal=0;
-    for (const gl_mesh_entry *entry=renderer->meshes;entry;entry=entry->next,++ordinal) {
-        if (!entry->geometry) { qa_error_set(error,QA_ERROR_FORMAT,0,"OpenGL cache row has no retained geometry descriptor"); return false; }
-        if (qa_scene_geometry_active(entry->geometry) &&
-            !visit(context,entry->identity,entry->revision,entry->geometry,ordinal,error)) return false;
-    }
-    return true;
-}
-
 bool qa_gl_finish(qa_gl_renderer *renderer, qa_error *error)
 {
     if (!gl_surface_idle(renderer,error)) return false;
