@@ -81,7 +81,5 @@ bool q3n_events_finish(const q3n_frame *, qa_error *);
 void q3n_events_round(q3n_events *);
 /* Aggregate imports the same real asset registry first and holds its capture
  * lease. Codecs preserve every pool slot, linked order, RNG and audio cursor. */
-bool q3n_events_checkpoint(const q3n_events *, qa_buffer *, qa_error *);
-bool q3n_events_restore(q3n_events *, qa_bytes, qa_error *);
 
 #endif

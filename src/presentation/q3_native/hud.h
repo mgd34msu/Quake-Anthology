@@ -79,6 +79,4 @@ void q3n_hud_frame_sample(q3n_hud *, int32_t offset);
 void q3n_hud_snapshot_sample(q3n_hud *, bool dropped, int32_t ping, int32_t flags);
 void q3n_hud_disconnect_command(q3n_hud *, int32_t oldest_command_time);
 void q3n_hud_round(q3n_hud *);
-bool q3n_hud_checkpoint(const q3n_hud *, qa_buffer *, qa_error *);
-bool q3n_hud_restore(q3n_hud *, qa_bytes, qa_error *);
 #endif

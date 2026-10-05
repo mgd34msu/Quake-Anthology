@@ -60,7 +60,5 @@ void q3n_view_test_clear(q3n_view *);
 void q3n_view_test_step(q3n_view *, bool skin, int32_t delta);
 bool q3n_view_test_submit(q3n_view *, const q3n_frame *, const q3n_view_settings *, qa_error *);
 void q3n_view_round(q3n_view *);
-bool q3n_view_checkpoint(const q3n_view *, qa_buffer *, qa_error *);
-bool q3n_view_restore(q3n_view *, qa_bytes, qa_error *);
 
 #endif

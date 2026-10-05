@@ -68,7 +68,5 @@ bool q3n_player_state_changed_events(q3n_player_state *, const q3n_frame *, bool
 /* DrawReward owns queue advancement; actual sounds remain backend handles. */
 bool q3n_player_state_reward(q3n_player_state *, const q3n_frame *, q3n_reward *, float *alpha, bool *visible, qa_error *);
 void q3n_player_state_round(q3n_player_state *);
-bool q3n_player_state_checkpoint(const q3n_player_state *, qa_buffer *, qa_error *);
-bool q3n_player_state_restore(q3n_player_state *, qa_bytes, qa_error *);
 
 #endif

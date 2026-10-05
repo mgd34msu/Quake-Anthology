@@ -78,5 +78,4 @@ bool q3ne_current(const q3n_frame *, qa_error *);
 bool q3ne_sound(const q3n_frame *, int32_t sound, const qa_vec3 *, int32_t entity, int32_t channel, bool local, qa_error *);
 void q3ne_local_free(q3n_events *, int32_t index);
 void q3ne_local_reset(q3n_events *);
-bool q3ne_codec_fields(qa_source_save_io *, q3n_events *);
 #endif

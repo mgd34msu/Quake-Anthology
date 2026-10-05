@@ -1505,24 +1505,19 @@ add_library(qa_q3_native_presentation STATIC
     src/presentation/q3_native/client_info.c
     src/presentation/q3_native/client_info_save.c
     src/presentation/q3_native/events.c
-    src/presentation/q3_native/events_save.c
     src/presentation/q3_native/effects.c
     src/presentation/q3_native/local_entities.c
     src/presentation/q3_native/marks.c
     src/presentation/q3_native/particles.c
-    src/presentation/q3_native/particles_save.c
     src/presentation/q3_native/player_fx.c
     src/presentation/q3_native/player_fx_save.c
     src/presentation/q3_native/player_state.c
-    src/presentation/q3_native/player_state_save.c
     src/presentation/q3_native/view.c
-    src/presentation/q3_native/view_save.c
     src/presentation/q3_native/hud.c
     src/presentation/q3_native/hud_draw.c
     src/presentation/q3_native/hud_preferences.c
     src/presentation/q3_native/hud_corners.c
     src/presentation/q3_native/hud_scoreboard.c
-    src/presentation/q3_native/hud_save.c
     src/presentation/q3_native/server_commands.c
     src/presentation/q3_native/server_commands_save.c
     src/presentation/q3_native/voice.c

@@ -24,7 +24,5 @@ bool q3n_particles_weapon_explosion(void *, const q3n_frame *, const char *,
     qa_vec3, qa_vec3, int32_t, float, float, qa_error *);
 /* Actual frame calls after marks and before local entities/buffered audio. */
 bool q3n_particles_add(const q3n_frame *, qa_error *);
-bool q3n_particles_checkpoint(const q3n_particles *, qa_buffer *, qa_error *);
-bool q3n_particles_restore(q3n_particles *, qa_bytes, qa_error *);
 
 #endif

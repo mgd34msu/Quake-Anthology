@@ -27,5 +27,4 @@ struct q3n_particles {
     bool initialized, busy;
 };
 bool q3np_fail(qa_error *, qa_status, const char *);
-bool q3np_codec_fields(qa_source_save_io *, q3n_particles *);
 #endif
