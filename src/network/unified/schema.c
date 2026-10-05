@@ -106,13 +106,6 @@ static bool digest(reader r) {
     for (size_t i=7;ok && i<text.size;++i) ok=(text.data[i]>='0' && text.data[i]<='9') || (text.data[i]>='a' && text.data[i]<='f');
     qa_buffer_free(&text); return ok || fail(r,"invalid content digest");
 }
-static bool token(reader r) {
-    qa_buffer text={0};
-    if (!qa_json_string(r.json,r.id,&text,r.error)) return false;
-    bool ok=text.size==32;
-    for (size_t i=0;ok && i<text.size;++i) ok=(text.data[i]>='0' && text.data[i]<='9') || (text.data[i]>='a' && text.data[i]<='f');
-    qa_buffer_free(&text); return ok || fail(r,"invalid lowercase connection token");
-}
 static bool actor(reader r) { return fields(r,"slot generation",natural); }
 static bool connection_actor(reader r) { return actor(r) && integer(field(r,"slot"),0,1048575); }
 static bool source_registry(reader r) {
@@ -173,12 +166,8 @@ static bool control(reader r) {
 bool qa_unified_schema_check(qa_unified_document_kind kind, const qa_json_document *json, qa_error *error) {
     reader r={json,qa_json_root(json),error};
     if (kind==QA_UNIFIED_CHECKPOINT) return true;
-    if (kind!=QA_UNIFIED_CONTROL_DOCUMENT && kind!=QA_UNIFIED_HANDSHAKE_DOCUMENT)
-        return fail(r,"typed gameplay documents do not accept JSON");
-    const char *schema=kind==QA_UNIFIED_CONTROL_DOCUMENT?"qts-control":"qts-connect";
-    if (!literal(field(r,"schema"),schema) || !integer(field(r,"version"),1,1)) return false;
-    r=field(r,"value");
-    if (kind==QA_UNIFIED_CONTROL_DOCUMENT) return control(r);
-    reader variant=field(r,"kind");
-    return choices(variant,"hello challenge connect") && token(field(r,"nonce")) && (is(variant,"hello") || token(field(r,"token")));
+    if (kind!=QA_UNIFIED_CONTROL_DOCUMENT)
+        return fail(r,"typed records do not accept JSON");
+    if (!literal(field(r,"schema"),"qts-control") || !integer(field(r,"version"),1,1)) return false;
+    return control(field(r,"value"));
 }

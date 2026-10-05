@@ -22,6 +22,7 @@ struct qa_unified_document {
     qa_unified_input_batch *inputs;
     qa_unified_frame_events *events;
     qa_unified_frame_metadata *metadata;
+    qa_unified_handshake handshake;
     size_t bytes;
 };
 
@@ -117,7 +118,7 @@ static bool create_document(qa_unified_document_kind kind, qa_buffer source,
 
 bool qa_unified_document_create(qa_unified_document_kind kind, qa_bytes bytes,
                                  qa_unified_document **out, qa_error *error) {
-    if (kind==QA_UNIFIED_FRAME_DOCUMENT || kind==QA_UNIFIED_INPUT_DOCUMENT)
+    if (kind==QA_UNIFIED_FRAME_DOCUMENT || kind==QA_UNIFIED_INPUT_DOCUMENT || kind==QA_UNIFIED_HANDSHAKE_DOCUMENT)
         return bad(error,"Typed Source records require their actual record constructor");
     size_t maximum=wire_limit(kind);
     if (!out || !maximum || !bytes.data || !bytes.size || bytes.size>maximum)
@@ -134,7 +135,7 @@ bool qa_unified_document_decode(qa_unified_document_kind kind, qa_bytes bytes,
     if (!out || !maximum || !bytes.data || !bytes.size || bytes.size>maximum)
         return bad(error,"invalid unified document kind or byte extent");
     if (kind==QA_UNIFIED_FRAME_DOCUMENT) return qa_unified_frame_decode(bytes,NULL,0,NULL,out,error);
-    if (kind==QA_UNIFIED_INPUT_DOCUMENT || (kind==QA_UNIFIED_CONTROL_DOCUMENT && bytes.size>=4 &&
+    if (kind==QA_UNIFIED_HANDSHAKE_DOCUMENT || kind==QA_UNIFIED_INPUT_DOCUMENT || (kind==QA_UNIFIED_CONTROL_DOCUMENT && bytes.size>=4 &&
         (!memcmp(bytes.data,"QUEV",4) || !memcmp(bytes.data,"QUMD",4))))
         return typed_decode(kind,bytes,out,error);
     return qa_unified_document_create(kind,bytes,out,error);
@@ -149,7 +150,7 @@ bool qa_unified_document_validate(const qa_unified_document *d,
 
 bool qa_unified_document_encode(const qa_unified_document *d, qa_buffer *out, qa_error *error) {
     if (!d || !out) return bad(error,"invalid unified document output");
-    if (d->inputs || d->events || d->metadata) return typed_encode(d,out,error);
+    if (d->kind==QA_UNIFIED_HANDSHAKE_DOCUMENT || d->inputs || d->events || d->metadata) return typed_encode(d,out,error);
     if (d->kind!=QA_UNIFIED_FRAME_DOCUMENT) {
         uint8_t *data=malloc(d->source.size?d->source.size:1);
         if (!data) { qa_error_set(error,QA_ERROR_MEMORY,0,"copying unified document"); return false; }
@@ -287,6 +288,8 @@ const qa_unified_frame_events *qa_unified_document_events(const qa_unified_docum
 { return d ? d->events : NULL; }
 const qa_unified_frame_metadata *qa_unified_document_metadata(const qa_unified_document *d)
 { return d ? d->metadata : NULL; }
+const qa_unified_handshake *qa_unified_document_handshake(const qa_unified_document *d)
+{ return d && d->kind==QA_UNIFIED_HANDSHAKE_DOCUMENT ? &d->handshake : NULL; }
 size_t qa_unified_document_memory(const qa_unified_document *d)
 {
     if (!d) return 0;
@@ -308,6 +311,7 @@ bool qa_unified_document_equal(const qa_unified_document *a, const qa_unified_do
     if (a->inputs || b->inputs) return a->inputs && b->inputs && qa_unified_record_equal(&qa_unified_inputs_layout,a->inputs,b->inputs);
     if (a->events || b->events) return a->events && b->events && qa_unified_record_equal(&qa_unified_events_layout,a->events,b->events);
     if (a->metadata || b->metadata) return a->metadata && b->metadata && qa_unified_record_equal(&qa_unified_metadata_layout,a->metadata,b->metadata);
+    if (a->kind==QA_UNIFIED_HANDSHAKE_DOCUMENT) return qa_unified_record_equal(&qa_unified_handshake_layout,&a->handshake,&b->handshake);
     return a->source.size==b->source.size && (!a->source.size || !memcmp(a->source.data,b->source.data,a->source.size));
 }
 static qa_unified_document *typed_document(qa_unified_document_kind kind, size_t bytes,
@@ -316,6 +320,17 @@ static qa_unified_document *typed_document(qa_unified_document_kind kind, size_t
     qa_unified_document *d=lease ? qa_unified_frame_lease_alloc(lease,1,sizeof(*d),_Alignof(qa_unified_document),error) : calloc(1,sizeof(*d));
     if (!d) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating actual typed Unified document"); return NULL; }
     d->references=1; d->kind=kind; d->bytes=bytes; return d;
+}
+bool qa_unified_document_create_handshake(const qa_unified_handshake *value,
+    qa_unified_document **out, qa_error *error)
+{
+    if (!value || !out || *out || (unsigned)value->kind>QA_UNIFIED_CONNECT)
+        return bad(error,"Unified handshake requires its actual native kind and tokens");
+    qa_unified_document *d=typed_document(QA_UNIFIED_HANDSHAKE_DOCUMENT,sizeof(*value),NULL,error);
+    if (!d) return false;
+    d->handshake=*value;
+    if (value->kind==QA_UNIFIED_HELLO) memset(&d->handshake.token,0,sizeof(d->handshake.token));
+    *out=d; return true;
 }
 bool qa_unified_document_create_frame(qa_unified_frame **owned, qa_unified_document **out, qa_error *error)
 {
@@ -436,6 +451,8 @@ static bool record_encode(const char magic[4], const qa_unified_record_layout *l
 }
 static bool typed_encode(const qa_unified_document *d, qa_buffer *out, qa_error *error)
 {
+    if (d->kind==QA_UNIFIED_HANDSHAKE_DOCUMENT)
+        return record_encode("QUHS",&qa_unified_handshake_layout,&d->handshake,NULL,false,0,512,out,error);
     if (d->inputs) {
         qa_unified_builder builder={0};
         if (!qa_unified_inputs_write(d->inputs,65536,&builder,error)) { free(builder.data); return false; }
@@ -455,6 +472,13 @@ bool qa_unified_inputs_write(const qa_unified_input_batch *batch, size_t maximum
 }
 static bool typed_decode(qa_unified_document_kind kind, qa_bytes bytes, qa_unified_document **out, qa_error *error)
 {
+    if (kind==QA_UNIFIED_HANDSHAKE_DOCUMENT) {
+        if (bytes.size<5 || memcmp(bytes.data,"QUHS",4)) return bad(error,"Unified handshake has the wrong external envelope");
+        qa_unified_handshake value={0};
+        return qa_unified_record_delta_decode(&qa_unified_handshake_layout,
+            (qa_bytes){bytes.data+4,bytes.size-4},NULL,&value,NULL,error) &&
+            qa_unified_document_create_handshake(&value,out,error);
+    }
     bool input=kind==QA_UNIFIED_INPUT_DOCUMENT;
     bool metadata=!input && bytes.size>=4 && !memcmp(bytes.data,"QUMD",4);
     if (bytes.size<5 || memcmp(bytes.data,input?"QUIN":metadata?"QUMD":"QUEV",4)) return bad(error,"Typed Unified record has the wrong external envelope");

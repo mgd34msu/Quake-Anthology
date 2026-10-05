@@ -76,6 +76,7 @@ extern const qa_unified_record_layout qa_unified_q3_frame_layout;
 extern const qa_unified_record_layout qa_unified_component_frame_layout;
 extern const qa_unified_record_layout qa_unified_frame_layout;
 extern const qa_unified_record_layout qa_unified_inputs_layout;
+extern const qa_unified_record_layout qa_unified_handshake_layout;
 extern const qa_unified_record_layout qa_unified_events_layout;
 extern const qa_unified_record_layout qa_unified_metadata_layout;
 extern const qa_unified_record_layout qa_unified_q3_configuration_layout;
@@ -102,5 +103,7 @@ struct qa_unified_frame_events;
 bool qa_unified_events_check(const struct qa_unified_frame_events *, size_t *, qa_error *);
 struct qa_unified_frame_metadata;
 bool qa_unified_metadata_check(const struct qa_unified_frame_metadata *, size_t *, qa_error *);
+bool qa_unified_document_create_handshake(const qa_unified_handshake *, qa_unified_document **, qa_error *);
+const qa_unified_handshake *qa_unified_document_handshake(const qa_unified_document *);
 
 #endif

@@ -11,6 +11,19 @@
 #include <math.h>
 #include <string.h>
 
+static const qa_unified_record_layout handshake_hello_layout = {sizeof(qa_unified_token), NULL, 0, SIZE_MAX, QA_UNIFIED_KEY_NONE};
+static const qa_unified_field handshake_token_fields[] = {QA_UNIFIED_RAW(qa_unified_token, bytes)};
+static const qa_unified_record_layout handshake_token_layout = QA_UNIFIED_LAYOUT(qa_unified_token, handshake_token_fields);
+static const qa_unified_record_layout *const handshake_variants[] = {
+    &handshake_hello_layout, &handshake_token_layout, &handshake_token_layout,
+};
+static const qa_unified_field handshake_fields[] = {
+    QA_UNIFIED_FIELD(qa_unified_handshake, kind, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_RAW(qa_unified_handshake, nonce),
+    QA_UNIFIED_VARIANT(qa_unified_handshake, token, kind, handshake_variants),
+};
+const qa_unified_record_layout qa_unified_handshake_layout = QA_UNIFIED_LAYOUT(qa_unified_handshake, handshake_fields);
+
 const qa_unified_record_layout qa_unified_component_frame_layout;
 static const qa_unified_record_layout qa_unified_component_source_layout;
 static const qa_unified_record_layout qa_unified_component_binding_layout;

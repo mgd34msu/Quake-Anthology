@@ -109,8 +109,9 @@ typedef enum qa_unified_document_kind {
     QA_UNIFIED_INPUT_DOCUMENT, QA_UNIFIED_HANDSHAKE_DOCUMENT,
     QA_UNIFIED_FRAME_DOCUMENT
 } qa_unified_document_kind;
-/* Create reads setup/checkpoint JSON. Typed gameplay constructors transfer
- * real records directly. Decode admits typed binary gameplay and setup JSON;
+/* Create reads control setup/checkpoint JSON. Typed gameplay and handshake
+ * constructors retain real records directly. Decode admits binary handshake
+ * and gameplay records plus control setup JSON;
  * standalone frames use the same delta codec with no retained baseline. */
 bool qa_unified_document_create(qa_unified_document_kind, qa_bytes checkpoint_json,
                                  qa_unified_document **, qa_error *);
