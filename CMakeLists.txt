@@ -1730,7 +1730,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/remote_q3_client.c
     src/app/frontend/remote_q3_commands.c
     src/app/frontend/remote_q3_graph.c
-    src/app/frontend/remote_q3_graph_children.c
     src/app/frontend/remote_q3_graph_save.c
     src/app/frontend/remote_q3_frame.c
     src/app/frontend/remote_q3_runtime.c
@@ -1784,7 +1783,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/view_bindings.c
     src/app/frontend/startup_rotation.c
     src/app/frontend/remote_q3_modules_save.c
-    src/app/frontend/remote_q3_graph_roster.c
     src/app/frontend/remote_q2_client.c
     src/app/frontend/remote_q2_media.c
     src/app/frontend/remote_q2_download.c
