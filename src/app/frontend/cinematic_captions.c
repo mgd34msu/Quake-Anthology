@@ -283,36 +283,3 @@ bool frontend_ui_cinematic_content_visit(const qa_frontend *f,const qa_applicati
         if (owner->seats[i].view && !visitor->view(visitor->context,owner->seats[i].view,error)) return false;
     return true;
 }
-bool frontend_ui_cinematic_fields(qa_source_save_io *io,qa_frontend *f)
-{
-    frontend_cinematic_captions *owner=f->ui_features->cinematic_captions;
-    if (f->options.dedicated) return owner==NULL;
-    if (!owner || !frontend_ui_cinematic_idle(f)) return false;
-    bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    for (unsigned i=0;i<f->options.seats;++i) {
-        cinematic_caption_seat *state=owner->seats+i;
-        if (reading && (state->view || state->path || state->language || state->origin || state->failed_language)) return false;
-        uint64_t view=reading || !state->view?0:qa_application_content_view_id(qa_application_content_graph_read(f->application),state->view);
-        if ((!reading && state->view && !view) || !qa_source_save_u64(io,&view) ||
-            !qa_source_save_owned_text(io,&state->path) || !qa_source_save_owned_text(io,&state->language) ||
-            !qa_source_save_owned_text(io,&state->failed_language) ||
-            ((view!=0)!=(state->path!=NULL)) || ((view!=0)!=(state->language!=NULL))) return false;
-        if (state->failed_language) {
-            if (!view || !*state->failed_language || !strcmp(state->failed_language,state->language)) return false;
-            for (const char *p=state->failed_language;*p;++p) if (*p<'a' || *p>'z') return false;
-        }
-        if (reading && view && !qa_application_content_claim_view(qa_application_content_graph_read(f->application),view,&state->view,io->error)) return false;
-        qa_buffer saved={0}; size_t size=0;
-        bool ok=reading || qa_media_captions_checkpoint(state->captions,state->view,state->path,&saved,io->error);
-        if (!reading) size=saved.size;
-        ok=ok && qa_source_save_count(io,&size,reading?io->input.size-io->offset:SIZE_MAX);
-        if (ok && reading) {
-            if (size>io->input.size-io->offset) { qa_buffer_free(&saved); return false; }
-            qa_bytes bytes={io->input.data+io->offset,size}; io->offset+=size;
-            ok=qa_media_captions_restore(state->captions,state->view,state->path,bytes,io->error);
-        } else if (ok) ok=qa_source_save_bytes(io,saved.data,size);
-        ok=ok && qa_media_captions_prepared_is(state->captions,state->view,state->path,state->language);
-        qa_buffer_free(&saved); if (!ok) return false;
-    }
-    return true;
-}
