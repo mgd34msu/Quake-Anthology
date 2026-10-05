@@ -99,15 +99,40 @@ static char *text_copy(const char *text)
     return copy;
 }
 
+static void record_free(qa_save_record *record)
+{
+    free((void *)record->owner.instance);
+    free((void *)record->owner.schema);
+    free((void *)record->owner.backend);
+    free((void *)record->payload.data);
+    *record = (qa_save_record){0};
+}
+
+static void image_level_records(qa_save_image *image)
+{
+    if (image->metadata.purpose != QA_SAVE_TRANSITION) return;
+    size_t retained = 0;
+    for (size_t i = 0; i < image->count; ++i) {
+        qa_save_record *record = image->records + i;
+        if (record->owner.kind != QA_SAVE_PROVIDER &&
+            !qa_save_shared_state_kind(record->owner.kind, image->metadata.purpose)) {
+            record_free(record);
+            continue;
+        }
+        if (retained != i) {
+            image->records[retained] = *record;
+            *record = (qa_save_record){0};
+        }
+        ++retained;
+    }
+    image->count = retained;
+}
+
 static void image_free(qa_save_image *image)
 {
     if (!image) return;
-    for (size_t i = 0; image->records && i < image->count; ++i) {
-        free((void *)image->records[i].owner.instance);
-        free((void *)image->records[i].owner.schema);
-        free((void *)image->records[i].owner.backend);
-        free((void *)image->records[i].payload.data);
-    }
+    for (size_t i = 0; image->records && i < image->count; ++i)
+        record_free(image->records + i);
     free(image->records);
     if (image->encoded) qa_buffer_free(image->encoded);
     free(image);
@@ -179,6 +204,7 @@ static bool image_create(const qa_save_metadata *metadata, const qa_save_record 
         if (!adopt) memcpy(payload, records[i].payload.data, records[i].payload.size);
     }
     if (adopt) for (size_t i = 0; i < count; ++i) image->records[i].payload = records[i].payload;
+    image_level_records(image);
     *out = image;
     return true;
 }
@@ -399,6 +425,7 @@ bool qa_save_image_decode(qa_bytes bytes, qa_save_image **out, qa_error *error)
         persistence_owner_set(image->records, image->count, image->metadata.purpose, error);
     qa_source_save_dispose(&io);
     if (!ok) { image_free(image); return false; }
+    image_level_records(image);
     *out = image;
     return true;
 }

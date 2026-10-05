@@ -781,8 +781,14 @@ bool application_campaign_fields(qa_source_save_io *io, qa_application *app, boo
             size_t size=bytes.size;
             ok=qa_source_save_count(io,&size,SIZE_MAX);
             if (ok && reading) {
-                ok=qa_source_save_span(io,size,&bytes);
-                if (ok) ok=qa_campaign_world_create(location,bytes,checkpoint.worlds+i,io->error);
+                qa_save_image *level=NULL;
+                qa_bytes retained={0};
+                ok=qa_source_save_span(io,size,&bytes) && qa_save_image_decode(bytes,&level,io->error);
+                if (ok && qa_save_image_metadata(level)->purpose!=QA_SAVE_TRANSITION)
+                    ok=application_fail(io->error,QA_ERROR_FORMAT,"Campaign world is not a departed level image");
+                if (ok) ok=qa_save_image_encode(level,&retained,io->error) &&
+                    qa_campaign_world_create(location,retained,checkpoint.worlds+i,io->error);
+                if (!qa_save_image_destroy_checked(&level,io->error)) ok=false;
             } else if (ok) ok=qa_source_save_bytes(io,(void *)bytes.data,size);
         } else if (ok) ok=application_fail(io->error,QA_ERROR_FORMAT,"Unknown campaign departed world kind");
     }
