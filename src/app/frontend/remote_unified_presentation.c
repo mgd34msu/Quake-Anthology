@@ -145,7 +145,8 @@ static bool presentation(void *context,const qa_unified_presentation_event *row,
     }
     if (row->family==QA_GAME_Q1) {
         if (row->payload.kind==QA_UNIFIED_PRESENTATION_BUILTIN &&
-            row->payload.value.builtin.kind==QA_BUILTIN_SOUND) {
+            row->payload.value.builtin.kind==QA_BUILTIN_SOUND &&
+            !(row->payload.value.builtin.flags & 1u)) {
             bool paired=false; *mirrored=false;
             return frontend_unified_events_sound_mirrored(p->events,row,&paired,error) &&
                 frontend_unified_q1_sound_presentation(p->q1,row,paired,error);
