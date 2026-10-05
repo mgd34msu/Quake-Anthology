@@ -1,6 +1,5 @@
 #include "remote_frame.h"
 #include "frame.h"
-#include "qa/source_save.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -196,90 +195,6 @@ bool q3n_remote_source_command(q3n_remote_source *s, int32_t sequence, q3n_remot
     s->busy = false;
     if (ok) *out = command;
     return ok;
-}
-
-static bool same_u64(qa_source_save_io *io, uint64_t expected)
-{ uint64_t value = expected; return qa_source_save_u64(io, &value) && value == expected; }
-static bool same_u32(qa_source_save_io *io, uint32_t expected)
-{ uint32_t value = expected; return qa_source_save_u32(io, &value) && value == expected; }
-static bool same_i32(qa_source_save_io *io, int32_t expected)
-{ int32_t value = expected; return qa_source_save_i32(io, &value) && value == expected; }
-static bool map_fields(qa_source_save_io *io, const qa_resource *map)
-{
-    const char *path = qa_resource_path(map);
-    const qa_sha256_digest *expected = qa_resource_digest(map);
-    if (!path || !expected) return false;
-    qa_sha256_digest digest = *expected;
-    size_t size = strlen(path), saved = size;
-    if (!qa_source_save_bytes(io, digest.bytes, sizeof(digest.bytes)) ||
-        !qa_sha256_equal(&digest, expected) || !qa_source_save_count(io, &saved, SIZE_MAX) || saved != size) return false;
-    for (size_t i = 0; i < size; ++i) {
-        uint8_t value = (uint8_t)path[i];
-        if (!qa_source_save_u8(io, &value) || value != (uint8_t)path[i]) return false;
-    }
-    return true;
-}
-static bool identity_fields(qa_source_save_io *io, const q3n_remote_source_view *view)
-{
-    const qa_native_q3_remote_client_basis *b = &view->basis;
-    return same_u32(io, (uint32_t)b->product) && same_u32(io, b->content_product) &&
-        same_u64(io, b->connection.owner) && same_u64(io, b->connection.generation) &&
-        same_u32(io, b->connection.slot) && same_u64(io, b->epoch) &&
-        same_u64(io, b->restart_generation) && same_u64(io, b->publication_generation) &&
-        same_u64(io, b->configuration_generation) && same_u64(io, b->client.receiver) &&
-        same_u64(io, b->client.service_owner) && same_u32(io, b->client.seat) &&
-        same_u32(io, b->client.source_client) &&
-        same_u32(io, b->physical_client) && same_i32(io, b->initial_message) &&
-        same_i32(io, b->initial_command) && same_i32(io, view->publication.executed_command) &&
-        same_u32(io, view->publication.demo_playback ? 1u : 0u) && map_fields(io, b->map);
-}
-static bool codec(qa_source_save_io *io, q3n_remote_source *s, const q3n_remote_source_view *view)
-{
-    uint8_t magic[4] = {'Q','R','F','S'};
-    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QRFS", sizeof(magic)) ||
-        !identity_fields(io, view) ||
-        !qa_source_save_i32(io, &s->reached_command) || !reached_valid(s->reached_command, &view->publication))
-        return false;
-    for (uint32_t i = 0; i < QA_Q3_CONFIGSTRINGS; ++i)
-        if (!qa_source_save_i32(io, &s->config_commands[i]) || s->config_commands[i] < s->initial_command ||
-            s->config_commands[i] > s->reached_command) return false;
-    return true;
-}
-bool q3n_remote_source_checkpoint(const q3n_remote_source *s, qa_buffer *out, qa_error *e)
-{
-    q3n_remote_source_view view;
-    if (!s || !out || out->data || out->size || s->busy ||
-        !qa_native_q3_remote_client_idle(s->options.client) || !s->options.idle(s->options.context) ||
-        !q3n_remote_source_read(s, &view, e))
-        return fail(e, QA_ERROR_ARGUMENT, "Remote source capture requires its idle actual reached continuation");
-    q3n_remote_source copy = *s; qa_source_save_io io = {0};
-    bool ok = qa_source_save_writer(&io, view.basis.session, e) && codec(&io, &copy, &view) &&
-        qa_source_save_finish(&io, out);
-    qa_source_save_dispose(&io); return ok;
-}
-bool q3n_remote_source_restore(const q3n_remote_source_options *o, qa_bytes bytes,
-    q3n_remote_source **out, qa_error *e)
-{
-    if (!o || !o->client || !o->context || !o->publication_read || !o->publication_current ||
-        !o->command_read || !o->command_current || !o->idle || !out || *out ||
-        !qa_native_q3_remote_client_idle(o->client) || !o->idle(o->context))
-        return fail(e, QA_ERROR_ARGUMENT, "Remote source import requires its actual restored idle Network services");
-    q3n_remote_source *s = calloc(1, sizeof(*s));
-    if (!s) return fail(e, QA_ERROR_MEMORY, "Restoring remote reached configstring continuation");
-    s->options = *o;
-    q3n_remote_source_view view = {.owner = s};
-    bool ok = qa_native_q3_remote_client_basis_read(o->client, &s->basis, e);
-    if (ok) {
-        s->initial_message = s->basis.initial_message; s->initial_command = s->basis.initial_command;
-        ok = observe(s, &view.basis, &view.publication, e);
-    }
-    qa_source_save_io io = {0};
-    if (ok) ok = qa_source_save_reader(&io, view.basis.session, bytes, e) && codec(&io, s, &view) &&
-        io.offset == io.input.size;
-    qa_source_save_dispose(&io);
-    if (ok) ok = q3n_remote_source_read(s, &view, e);
-    if (!ok) { free(s); return fail(e, QA_ERROR_FORMAT, "Invalid complete remote source continuation for the installed Network graph"); }
-    *out = s; return true;
 }
 
 static bool frame_shape(const q3n_remote_frame *f)

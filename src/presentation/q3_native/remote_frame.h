@@ -60,8 +60,6 @@ bool q3n_remote_source_configstring(const q3n_remote_source *, uint32_t,
 bool q3n_remote_source_reached(q3n_remote_source *, const q3n_remote_command *, qa_error *);
 bool q3n_remote_source_command(q3n_remote_source *, int32_t, q3n_remote_command *, qa_error *);
 bool q3n_remote_command_current(const q3n_remote_source *, const q3n_remote_command *);
-bool q3n_remote_source_checkpoint(const q3n_remote_source *, qa_buffer *, qa_error *);
-bool q3n_remote_source_restore(const q3n_remote_source_options *, qa_bytes, q3n_remote_source **, qa_error *);
 
 typedef enum q3n_remote_frame_stage {
     Q3N_REMOTE_INITIALIZATION,
