@@ -59,7 +59,7 @@ typedef struct qa_q2_wire_source_entity {
     qa_body_state body;
     qa_vec3 previous_origin;
     qa_actor_id owner;
-    qa_string_id classname, loop_sound, flare_image;
+    qa_string_id classname, loop_sound, precache_sound, flare_image;
     qa_q2_weapon_state weapon;
     qa_q2_wire_lifetime lifetime;
     uint64_t body_serial;

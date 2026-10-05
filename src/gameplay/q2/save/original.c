@@ -698,7 +698,11 @@ bool q2_original_resource(qa_q2_game *g, q2_original_record_io *io,
                 index = (int32_t)i;
                 break;
             }
-        if (!index) return fail(io, *resource, "Q2 Source resource was not captured in its engine table");
+        if (!index) {
+            qa_error_set(io->error, QA_ERROR_UNSUPPORTED, *resource,
+                "Q2 Source %s resource '%s' is absent from engine table %u", name, text, table_base);
+            return false;
+        }
     }
     if (!q2_original_scalar(io, name, Q2_ORIGINAL_I32, base, xatrix, rogue, &index)) return false;
     if (io->reading) {

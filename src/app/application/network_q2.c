@@ -448,7 +448,8 @@ bool qa_application_network_q2_configs(qa_application_network_q2 *owner,
     const qa_q2_config_entry **out, size_t *count, qa_error *error)
 {
     if (!out || !count || !application_network_q2_current(owner, error) ||
-        !application_network_q2_observe(owner, error)) return false;
+        !application_network_q2_observe(owner, error) ||
+        !application_network_q2_source_resources(owner, error)) return false;
     size_t found = 0;
     for (uint32_t i = 0; i < owner->config_count; ++i)
         if (owner->configs[i]) owner->entries[found++] = (qa_q2_config_entry){(uint16_t)i, owner->configs[i]};
@@ -461,6 +462,7 @@ bool qa_application_network_q2_game_state(qa_application_network_q2 *owner,
     if (!out || !actors || !seats || seats > QA_Q2_MAX_SEATS ||
         (seats > 1 && owner && owner->host.protocol.kind != QA_NET_Q2KEX_2023) ||
         !application_network_q2_current(owner, error) || !application_network_q2_observe(owner, error) ||
+        !application_network_q2_source_resources(owner, error) ||
         !application_network_q2_entities(owner, error)) return false;
     qa_q2_game_state value = {.data = {.servercount = owner->server_count,
         .client_count = seats, .server_state = 2}};
@@ -622,20 +624,7 @@ static bool initialize_builtin(qa_application_network_q2 *owner, qa_error *error
     qa_q2_entity_checkpoint_free(&state);
     uint32_t ignored;
     if (ok) ok = application_network_q2_resource(owner, 0, qa_resource_path(owner->app->map_resource), &ignored, error);
-    uint64_t order = 0;
-    bool found = true;
-    while (ok && found) {
-        qa_q2_wire_binding binding;
-        ok = qa_q2_wire_next(game, &order, &binding, &found, error);
-        if (!ok || !found) break;
-        qa_q2_wire_source_entity entity;
-        ok = qa_q2_wire_entity_read(game, binding.source_slot, &entity, error);
-        for (unsigned i = 0; ok && !entity.flare && i < 4; ++i)
-            ok = application_network_q2_resource(owner, 0, source_text(owner, entity.visual.models[i]), &ignored, error);
-        if (ok && entity.flare && (entity.visual.render_flags & 256))
-            ok = application_network_q2_resource(owner, 2, source_text(owner, entity.flare_image), &ignored, error);
-        if (ok) ok = application_network_q2_resource(owner, 1, source_text(owner, entity.loop_sound), &ignored, error);
-    }
+    if (ok) ok = application_network_q2_source_resources(owner, error);
     uint32_t weapons = 0;
     if (ok) ok = qa_q2_bot_arsenal_definition_count(game, &weapons, error);
     for (uint32_t i = 0; ok && i < weapons; ++i) {

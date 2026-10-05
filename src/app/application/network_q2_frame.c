@@ -82,7 +82,7 @@ struct application_q2_wire_capture {
     qa_application_native_q2_presentation source;
     qa_world *world;
     qa_collision_geometry *geometry;
-    uint64_t application_frame, mutation, actors_revision;
+    uint64_t application_frame, mutation, actors_revision, revision;
     bool ready;
 };
 
@@ -136,7 +136,7 @@ static bool capture_source(qa_application_network_q2 *owner,
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 capture changed its completed physical Source boundary");
     capture->count = count; capture->source = owner->host.source;
     capture->application_frame = frame; capture->mutation = mutation; capture->actors_revision = actors;
-    capture->world = app->world; capture->geometry = app->geometry; capture->ready = true;
+    capture->world = app->world; capture->geometry = app->geometry; ++capture->revision; capture->ready = true;
     return true;
 }
 
@@ -328,6 +328,30 @@ static bool original_entity(qa_application_network_q2 *owner, uint32_t number,
     if (row->original && !application_network_q2_source_resource(owner, 1, value.sound, &value.sound, error)) return false;
     entity_profile(owner, &value);
     *out = value; *present = visible_state(&value); return true;
+}
+
+bool application_network_q2_source_resources(qa_application_network_q2 *owner, qa_error *error)
+{
+    if (owner->host.source.kind != QA_APPLICATION_NATIVE_Q2_BUILTIN) return true;
+    struct application_q2_wire_capture *capture;
+    if (!capture_source(owner, &capture, error)) return false;
+    if (owner->source_resource_revision == capture->revision) return true;
+    uint32_t ignored;
+    for (uint32_t slot = 1; slot < capture->count; ++slot) {
+        const qa_q2_wire_source_entity *source = &capture->rows[slot].source.builtin;
+        if (!source->binding.in_use) continue;
+        for (unsigned i = 0; !source->flare && i < 4; ++i)
+            if (!application_network_q2_resource(owner, 0, text(owner, source->visual.models[i]),
+                &ignored, error)) return false;
+        if (source->flare && (source->visual.render_flags & 256) &&
+            !application_network_q2_resource(owner, 2, text(owner, source->flare_image), &ignored, error)) return false;
+        if (!application_network_q2_resource(owner, 1, text(owner, source->loop_sound), &ignored, error) ||
+            !application_network_q2_resource(owner, 1, text(owner, source->precache_sound), &ignored, error) ||
+            (source->has_weapon && !application_network_q2_resource(owner, 1,
+                text(owner, source->weapon.loop_sound), &ignored, error))) return false;
+    }
+    owner->source_resource_revision = capture->revision;
+    return true;
 }
 
 bool application_network_q2_entities(qa_application_network_q2 *owner, qa_error *error)

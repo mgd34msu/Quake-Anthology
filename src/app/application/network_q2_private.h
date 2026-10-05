@@ -105,6 +105,7 @@ struct qa_application_network_q2 {
     size_t entity_count, baseline_count, entity_capacity;
     size_t source_entity_count;
     uint64_t source_frame, source_application_frame, source_mutation, source_actors_revision;
+    uint64_t source_resource_revision;
     bool source_entities_ready;
     uint8_t area_bits[QA_Q2_MAX_SEATS][QA_Q2_MAX_AREABITS];
     qa_q2_status_player *status_players;
@@ -134,6 +135,7 @@ bool application_network_q2_source_resource(qa_application_network_q2 *, unsigne
 bool application_network_q2_source_config(qa_application_network_q2 *, uint32_t,
     uint32_t *, qa_error *);
 bool application_network_q2_observe(qa_application_network_q2 *, qa_error *);
+bool application_network_q2_source_resources(qa_application_network_q2 *, qa_error *);
 bool application_network_q2_entities(qa_application_network_q2 *, qa_error *);
 void application_network_q2_capture_dispose(application_provider *);
 bool application_network_q2_player_state(qa_application_network_q2 *, qa_actor_id,
