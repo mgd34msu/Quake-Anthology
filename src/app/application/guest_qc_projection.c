@@ -63,13 +63,10 @@ static bool collision_read(void *opaque, qa_actor_collision *out, qa_error *erro
         return application_fail(error, QA_ERROR_NOT_FOUND, "QuakeC collision actor changed during projection");
     *out = value; return true;
 }
-bool application_qc_prepare_entity(void *opaque, qa_qc_instance *vm,
-                                     const qa_qc_entity_access *access, qa_error *error)
+static bool bind_entity(struct application_qc_state *engine, qa_qc_instance *vm,
+                          const qa_qc_entity_access *access, qa_error *error)
 {
-    struct application_qc_state *engine = opaque;
-    if (engine->projecting || access->binding.kind == QA_QC_SLOT_WORLD || access->binding.kind == QA_QC_SLOT_FREE) return true;
-    if (access->kind != QA_QC_ENTITY_BIND)
-        return application_qc_project_declared(engine, vm, access, error);
+    if (engine->projecting) return true;
     qa_actor_id actor = access->binding.actor;
     if (actor.slot >= engine->actor_capacity)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC projected actor exceeds application capacity");
@@ -83,6 +80,35 @@ bool application_qc_prepare_entity(void *opaque, qa_qc_instance *vm,
         }
     }
     return application_qc_combat_bind(engine, vm, access, error);
+}
+bool application_qc_prepare_entity(void *opaque, qa_qc_instance *vm,
+                                     const qa_qc_entity_access *access, qa_error *error)
+{
+    struct application_qc_state *engine = opaque;
+    if (engine->projecting || access->binding.kind == QA_QC_SLOT_WORLD || access->binding.kind == QA_QC_SLOT_FREE) return true;
+    if (access->kind != QA_QC_ENTITY_BIND)
+        return application_qc_project_declared(engine, vm, access, error);
+    if (application_qc_restore_pending(engine)) return true;
+    return bind_entity(engine, vm, access, error);
+}
+bool application_qc_bind_entities(application_provider *provider, qa_error *error)
+{
+    struct application_qc_state *engine = provider && provider->kind == APPLICATION_PROVIDER_QC
+        ? provider->state.qc.engine : NULL;
+    if (!engine || !engine->initialized || engine->loading) return true;
+    qa_qc_instance *vm = provider->state.qc.instance;
+    for (uint32_t slot = 1; slot < qa_qc_entity_count(vm); ++slot) {
+        qa_qc_slot_binding binding;
+        if (!qa_qc_slot(vm, slot, &binding) || (binding.kind != QA_QC_SLOT_OWNED &&
+            binding.kind != QA_QC_SLOT_BORROWED)) continue;
+        int32_t reference; qa_actor_id actor;
+        if (!qa_qc_slot_reference(vm, slot, &reference, error) ||
+            !qa_qc_reference_actor(vm, reference, &actor, error)) return false;
+        qa_qc_entity_access access = {.kind = QA_QC_ENTITY_BIND,
+            .binding = binding, .reference = reference};
+        if (!bind_entity(engine, vm, &access, error)) return false;
+    }
+    return true;
 }
 bool application_qc_project_body_store(struct application_qc_state *engine, qa_qc_instance *vm,
                                          const qa_qc_store_event *event, qa_error *error)

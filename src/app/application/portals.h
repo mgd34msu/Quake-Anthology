@@ -10,6 +10,9 @@ bool application_portals_close(qa_application *, qa_actor_owner, qa_error *);
 void application_portals_destroy(qa_application *);
 bool application_portals_capture(qa_application *, qa_buffer *, qa_error *);
 bool application_portals_restore(qa_application *, qa_bytes, qa_error *);
+/* Rebuild shared counts from all restored native/guest claims and reflood.
+ * Primary portal booleans and no-areas policy are preserved. */
+bool application_portals_reconnect(qa_application *, qa_error *);
 /* Sum actual native and guest owners against every shared contribution. */
 bool application_portals_validate(qa_application *, qa_error *);
 #endif

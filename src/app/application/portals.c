@@ -235,14 +235,11 @@ static bool add_host(const qa_collision_portal_checkpoint *shared, uint32_t *sum
     return true;
 }
 
-bool application_portals_validate(qa_application *app, qa_error *error)
+static bool collect(qa_application *app,
+                    const qa_collision_portal_checkpoint *shared,
+                    uint32_t **out, qa_error *error)
 {
-    if (!app || !app->geometry)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Portal qualification requires actual shared geometry");
-    qa_collision_portal_checkpoint shared = {0};
-    if (!qa_collision_capture_portals(app->geometry, &shared, error))
-        return false;
-    size_t count = shared.family == QA_COLLISION_Q2 ? shared.portal_count : shared.area_pair_count;
+    size_t count = shared->family == QA_COLLISION_Q2 ? shared->portal_count : shared->area_pair_count;
     uint32_t *sums = count ? calloc(count, sizeof(*sums)) : NULL;
     bool ok = !count || sums != NULL;
     if (!ok)
@@ -250,27 +247,62 @@ bool application_portals_validate(qa_application *app, qa_error *error)
     for (size_t i = 0; ok && app->portals && i < app->portals->count; ++i) {
         const application_portal_claim *c = app->portals->claims + i;
         qa_q3_host_portal_claim claim = shared_claim(c);
-        ok = claim_valid(app, c, error) && add_claim(&shared, sums, &claim, error);
+        ok = claim_valid(app, c, error) && add_claim(shared, sums, &claim, error);
     }
     for (application_provider *p = app->live_providers; ok && p; p = p->next_live) {
         struct application_q3_guest *engine = q3g_engine(p);
         if (engine) {
             for (q3g_role *role = engine->roles; ok && role; role = role->next)
-                ok = add_host(&shared, sums, role->host, error);
+                ok = add_host(shared, sums, role->host, error);
         } else if (p->kind == APPLICATION_PROVIDER_NATIVE && p->state.native.q3_host) {
-            ok = add_host(&shared, sums, p->state.native.q3_host, error);
+            ok = add_host(shared, sums, p->state.native.q3_host, error);
         }
     }
+    if (!ok) {
+        free(sums);
+        return false;
+    }
+    *out = sums;
+    return true;
+}
+
+static bool shared_state(qa_application *app, bool reconnect, qa_error *error)
+{
+    if (!app || !app->geometry)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Portal qualification requires actual shared geometry");
+    qa_collision_portal_checkpoint shared = {0};
+    if (!qa_collision_capture_portals(app->geometry, &shared, error))
+        return false;
+    uint32_t *sums = NULL;
+    bool ok = collect(app, &shared, &sums, error);
+    size_t count = shared.family == QA_COLLISION_Q2 ? shared.portal_count : shared.area_pair_count;
     for (size_t i = 0; ok && i < count; ++i) {
-        uint32_t actual = shared.family == QA_COLLISION_Q2
-            ? shared.portals[i].contributions : shared.area_pairs[i];
-        if (sums[i] != actual)
+        uint32_t *actual = shared.family == QA_COLLISION_Q2
+            ? &shared.portals[i].contributions : shared.area_pairs + i;
+        if (reconnect)
+            *actual = sums[i];
+        else if (sums[i] != *actual)
             ok = application_fail(error, QA_ERROR_FORMAT,
                                   "Shared portal count differs from collective actual source owners");
     }
+    /* Original Q2 SV_ReadLevelFile/CM_ReadPortalState refloods after restore.
+     * Counts derive from the restored native and guest owners; primary portal
+     * booleans and no-areas policy remain their actual shared mutable state. */
+    if (ok && reconnect)
+        ok = qa_collision_restore_portals(app->geometry, &shared, error);
     free(sums);
     qa_collision_portal_checkpoint_free(&shared);
     return ok;
+}
+
+bool application_portals_validate(qa_application *app, qa_error *error)
+{
+    return shared_state(app, false, error);
+}
+
+bool application_portals_reconnect(qa_application *app, qa_error *error)
+{
+    return shared_state(app, true, error);
 }
 
 static bool row_fields(qa_source_save_io *io, qa_application *app,

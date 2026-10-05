@@ -158,11 +158,15 @@ typedef struct qa_world_checkpoint {
 } qa_world_checkpoint;
 /* Capture keeps live state distinct from retained link/collision snapshots and
  * captures suspended membership. Callback addresses never enter this value.
- * Restore requires an isolated candidate after providers recreate bindings.
+ * Restore requires an isolated candidate after providers recreate body bindings.
+ * The optional binding callback runs after saved bodies are reconstructed and
+ * before collision ownership is validated. It may bind existing actors only.
  * Failure may leave that candidate partially restored; discard it. External
  * binding kind and effective authoritative state must match the saved owner. */
 bool qa_world_checkpoint_capture(qa_world *, qa_world_checkpoint *, qa_error *);
-bool qa_world_checkpoint_restore(qa_world *, const qa_world_checkpoint *, qa_error *);
+typedef bool (*qa_world_restore_bindings_fn)(void *, qa_error *);
+bool qa_world_checkpoint_restore(qa_world *, const qa_world_checkpoint *,
+                                 qa_world_restore_bindings_fn, void *, qa_error *);
 void qa_world_checkpoint_free(qa_world_checkpoint *);
 
 typedef enum qa_spatial_visit { QA_SPATIAL_CONTINUE, QA_SPATIAL_STOP_SECTOR, QA_SPATIAL_STOP } qa_spatial_visit;

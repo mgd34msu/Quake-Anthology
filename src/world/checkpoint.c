@@ -125,7 +125,9 @@ typedef struct checkpoint_slot {
     bool seen;
 } checkpoint_slot;
 
-bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *value, qa_error *error)
+bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *value,
+                                  qa_world_restore_bindings_fn bindings, void *context,
+                                  qa_error *error)
 {
     if (!qa_world_idle(world) || world->geometry_admission || !value ||
         (value->body_count && !value->bodies) || (value->spatial_count && !value->spatial) ||
@@ -194,15 +196,12 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
             if (!ok) break;
             body = qa_world_find_body(world, actor->id);
         }
-        if (body->external != record->external_body ||
-            (body->collision_binding.read != NULL) != record->external_collision) {
-            ok = checkpoint_fail(error, QA_ERROR_FORMAT, "Candidate body/collision owner differs from snapshot"); break;
+        if (body->external != record->external_body) {
+            ok = checkpoint_fail(error, QA_ERROR_FORMAT, "Candidate body owner differs from snapshot"); break;
         }
         if (record->external_body && !qa_world_body_write(world, actor->id, &state, error)) { ok = false; break; }
         body->state = stored_state;
         if (!body->external) body->state = state;
-        body->storage_serial = record->storage_serial;
-        body->collision_serial = record->collision_serial;
         body->has_collision = record->has_collision;
         body->collision = stored_collision;
         body->attached = record->attached;
@@ -215,6 +214,26 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
             body->has_collision = true;
             body->collision = collision;
         }
+    }
+    if (ok && bindings) {
+        uint64_t revision = qa_actors_revision(world->actors);
+        ok = bindings(context, error);
+        if (ok && (qa_actors_revision(world->actors) != revision ||
+                   !qa_world_idle(world) || world->geometry_admission))
+            ok = checkpoint_fail(error, QA_ERROR_ARGUMENT,
+                                 "World restore binding changed its candidate owner");
+    }
+    for (size_t i = 0; ok && i < value->body_count; ++i) {
+        const qa_world_body_checkpoint *record = value->bodies + i;
+        const qa_actor_record *actor = qa_actors_resolve_saved(world->actors, record->actor);
+        qa_world_body *body = actor ? qa_world_find_body(world, actor->id) : NULL;
+        if (!body || body->external != record->external_body ||
+            (body->collision_binding.read != NULL) != record->external_collision) {
+            ok = checkpoint_fail(error, QA_ERROR_FORMAT,
+                                 "Candidate body/collision owner differs from snapshot"); break;
+        }
+        body->storage_serial = record->storage_serial;
+        body->collision_serial = record->collision_serial;
     }
     for (uint32_t slot = 0; ok && slot < world->capacity; ++slot) {
         qa_world_body *body = qa_world_raw_body(world, slot);

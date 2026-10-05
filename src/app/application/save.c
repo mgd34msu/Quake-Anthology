@@ -449,13 +449,25 @@ static bool restore_think(void *context, qa_actor_owner owner, qa_actor_id actor
     return application_fail(error, QA_ERROR_FORMAT, "saved scheduler callback names an absent selected provider");
 }
 
+static bool restore_qc_bindings(void *context, qa_error *error)
+{
+    qa_application *candidate = context;
+    for (size_t i = 0; i < candidate->provider_count; ++i) {
+        application_provider *provider = candidate->providers[i];
+        if (provider->kind == APPLICATION_PROVIDER_QC &&
+            !application_qc_bind_entities(provider, error)) return false;
+    }
+    return true;
+}
+
 bool application_save_foundation_finish(qa_application *candidate,
     const application_save_foundation *value, qa_error *error)
 {
     if (candidate == NULL || value == NULL || candidate->world == NULL ||
         candidate->session == NULL || !qa_session_safe(candidate->session))
         return application_fail(error, QA_ERROR_ARGUMENT, "foundation restore requires an isolated prepared candidate");
-    if (!qa_world_checkpoint_restore(candidate->world, &value->world, error) ||
+    if (!qa_world_checkpoint_restore(candidate->world, &value->world,
+            restore_qc_bindings, candidate, error) ||
         !qa_session_checkpoint_restore(candidate->session, &value->session, restore_think, candidate, error))
         return false;
     return true;
@@ -1806,7 +1818,7 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
             ok = qa_q3_game_reconnect(provider->state.q3, error);
     }
     if (ok) ok = application_native_q1_wire_reconnect(candidate, error);
-    if (ok) ok = application_portals_validate(candidate, error);
+    if (ok) ok = application_portals_reconnect(candidate, error);
     if (ok) ok = application_bots_save_finish(candidate, error);
     if (ok && candidate->match_intents)
         ok = application_match_intents_reconnect(candidate->match_intents, candidate, error);

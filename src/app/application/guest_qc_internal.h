@@ -103,6 +103,11 @@ static inline bool application_qc_has_source_admission(const struct application_
     return qa_session_active_frame(engine->services.session, engine->provider->owner, &frame) ||
         qa_session_active_command(engine->services.session, engine->provider->owner, &command);
 }
+static inline bool application_qc_restore_pending(const struct application_qc_state *engine)
+{
+    const qa_application *application = engine->provider->application;
+    return application->operation == APPLICATION_PERSISTING && application->native_restore_image;
+}
 bool application_qc_import(void *, qa_qc_instance *, qa_qc_builtin, const char *, qa_error *);
 bool application_qc_capture_engine(void *, qa_buffer *, qa_error *);
 bool application_qc_restore_engine(void *, qa_bytes, qa_error *);
@@ -122,6 +127,7 @@ bool application_qc_water_transition(application_provider *, qa_actor_id, qa_err
 bool application_qc_spectator_callback(struct application_qc_state *, const char *, qa_actor_id, qa_error *);
 bool application_qc_create_console(struct application_qc_state *, qa_cvars *, qa_console **, qa_error *);
 bool application_qc_prepare_entity(void *, qa_qc_instance *, const qa_qc_entity_access *, qa_error *);
+bool application_qc_bind_entities(application_provider *, qa_error *);
 bool application_qc_may_move(void *, qa_actor_id);
 bool application_qc_input_idle(const application_provider *);
 bool application_qc_console_command(application_provider *, qa_actor_id, const char *,

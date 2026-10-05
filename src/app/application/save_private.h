@@ -36,7 +36,7 @@ bool application_create_restored(const qa_application_options *, const qa_save_i
     qa_application_content_graph **, qa_application **, qa_error *);
 bool application_save_prepare_content(qa_application *, const qa_launch_snapshot *, const qa_save_image *, qa_error *);
 bool application_save_resolvers(qa_application *, qa_persistence_gameplay_resolvers *, qa_error *);
-/* Providers and source body/collision bindings must already be reconstructed.
+/* Providers and source body bindings must already be reconstructed.
  * This is a candidate-only operation. Any failure requires candidate disposal. */
 bool application_save_foundation_finish(qa_application *candidate,
                                         const application_save_foundation *, qa_error *);
