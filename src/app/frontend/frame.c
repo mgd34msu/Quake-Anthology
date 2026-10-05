@@ -430,13 +430,6 @@ static bool input_events(qa_frontend *frontend, qa_error *error)
     while (!qa_application_should_stop(frontend->application) && SDL_PollEvent(&event)) {
         if (event.type == SDL_QUIT) { qa_application_request_stop(frontend->application); return true; }
         if (frontend->options.dedicated) continue;
-        if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_BACKQUOTE) {
-            qa_display_info display;
-            if (!qa_display_info_get(frontend->display, &display, error)) return false;
-            if (event.key.windowID == display.window_id &&
-                !qa_seat_console_toggle(frontend->seats[0].console, true, event.key.repeat != 0, error)) return false;
-            continue;
-        }
         bool handled;
         if (!qa_input_platform_event(frontend->input, &event, now, &handled, error)) return false;
         if (qa_application_should_stop(frontend->application)) return true;

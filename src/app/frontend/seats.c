@@ -84,6 +84,13 @@ static bool chat(void *context, const char *text, bool team, bool targeted, int3
 static bool source_input(void *context, qa_input_seat *input, const qa_input_event *event, bool *consumed, qa_error *error)
 {
     frontend_seat *seat = context;
+    if (event->kind == QA_INPUT_EVENT_KEY &&
+        (event->input.code == '`' || event->input.code == '~')) {
+        *consumed = true;
+        return !event->down ||
+            ((event->repeat || qa_ui_close_all(seat->ui, now_ms(seat), error)) &&
+             qa_seat_console_toggle(seat->console, true, event->repeat, error));
+    }
     if (!frontend_cinematic_input(seat->frontend,seat->id,qa_input_seat_focus(input),event,consumed,error)) return false;
     if (*consumed) return true;
     if (seat->library && qa_input_seat_focus(input) == QA_INPUT_UI &&
