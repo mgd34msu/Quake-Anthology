@@ -103,8 +103,8 @@ static bool set_size(frontend_seat *seat, uint32_t width, uint32_t height, qa_er
     if (!qa_cvars_set_console(cvars,"r_customwidth",w,error) ||
         !qa_cvars_set_console(cvars,"r_customheight",h,error) ||
         !queue_restart(seat,"vid_restart\n",error)) return false;
-    snprintf(seat->menu_width,sizeof(seat->menu_width),"%s",w);
-    snprintf(seat->menu_height,sizeof(seat->menu_height),"%s",h); return true;
+    snprintf(seat->menu_width,sizeof(seat->menu_width),"%.4s",w);
+    snprintf(seat->menu_height,sizeof(seat->menu_height),"%.4s",h); return true;
 }
 static bool action(void *context,uint32_t id,qa_ui_id control,const qa_ui_action *event,qa_error *error)
 {
