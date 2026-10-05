@@ -159,18 +159,6 @@ void qa_cin_decoder_rewind(qa_cin_decoder *decoder) {
 }
 const uint8_t *qa_cin_decoder_palette(const qa_cin_decoder *decoder) { return decoder->palette; }
 uint64_t qa_cin_decoder_index(const qa_cin_decoder *decoder) { return decoder->index; }
-bool qa_cin_decoder_capture(qa_cin_decoder *decoder, qa_cin_checkpoint *out, qa_error *error) {
-    if (!decoder || !out) return fail(error, "Missing CIN checkpoint output");
-    qa_cin_checkpoint result = {.input_size = qa_media_input_size(decoder->asset->input),
-        .offset = decoder->offset, .next_frame = decoder->index, .ended = decoder->ended};
-    memcpy(result.palette, decoder->palette, sizeof(result.palette)); *out = result; return true;
-}
-bool qa_cin_decoder_restore(qa_cin_decoder *decoder, const qa_cin_checkpoint *saved, qa_error *error) {
-    if (!decoder || !saved || saved->input_size != qa_media_input_size(decoder->asset->input) ||
-        saved->offset < CIN_HEADER_BYTES || saved->offset > saved->input_size) return fail(error, "Invalid CIN checkpoint position");
-    decoder->offset = saved->offset; decoder->index = saved->next_frame; decoder->ended = saved->ended;
-    memcpy(decoder->palette, saved->palette, sizeof(decoder->palette)); return true;
-}
 bool qa_cin_rgba(qa_bytes pixels, qa_bytes palette, void *rgba, size_t capacity, qa_error *error) {
     if ((pixels.size && (!pixels.data || !rgba)) || !palette.data || palette.size != 768 ||
         pixels.size > capacity / 4) return fail(error, "Invalid CIN palette or RGBA destination");

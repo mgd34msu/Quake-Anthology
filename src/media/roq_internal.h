@@ -14,10 +14,17 @@ struct qa_roq_scratch {
     qa_roq_codebooks books;
     uint8_t frames[ROQ_FRAME_BYTES];
 };
+typedef struct roq_stream_state {
+    uint64_t position, played, buffer_offset;
+    uint32_t chunk_offset, buffered_length, next_size;
+    uint16_t next_id, next_flags, packet_remaining;
+    uint8_t header[8];
+    bool has_next, invalid, retained_eof, buffered_next;
+} roq_stream_state;
 typedef struct roq_stream {
     qa_media_input *input;
     uint8_t *file;
-    qa_roq_stream_checkpoint state;
+    roq_stream_state state;
     qa_roq_end_policy policy;
     bool pending;
 } roq_stream;

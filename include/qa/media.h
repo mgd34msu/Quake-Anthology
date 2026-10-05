@@ -31,11 +31,6 @@ typedef struct qa_cin_frame {
     qa_bytes audio;
     qa_cin_info info;
 } qa_cin_frame;
-typedef struct qa_cin_checkpoint {
-    uint64_t input_size, offset, next_frame;
-    uint8_t palette[768];
-    bool ended;
-} qa_cin_checkpoint;
 /* Codebooks and source are shared by independent decoders. */
 bool qa_cin_asset_load(qa_media_input *, qa_cin_asset **out, qa_error *);
 void qa_cin_asset_retain(qa_cin_asset *);
@@ -50,8 +45,6 @@ bool qa_cin_decoder_next(qa_cin_decoder *, qa_cin_frame *out, qa_error *);
 void qa_cin_decoder_rewind(qa_cin_decoder *);
 const uint8_t *qa_cin_decoder_palette(const qa_cin_decoder *);
 uint64_t qa_cin_decoder_index(const qa_cin_decoder *);
-bool qa_cin_decoder_capture(qa_cin_decoder *, qa_cin_checkpoint *, qa_error *);
-bool qa_cin_decoder_restore(qa_cin_decoder *, const qa_cin_checkpoint *, qa_error *);
 bool qa_cin_sample_range(uint64_t frame, uint32_t rate, uint64_t *start, uint64_t *end, qa_error *);
 /* RGBA output permits the Q2 playback owner to display retained old indices
  * with the palette updated by a prefetched frame. */
@@ -90,19 +83,6 @@ typedef struct qa_cin_playback_options {
     bool (*audio)(void *, const qa_media_audio *, qa_error *);
     void (*dropped_frame)(void *, uint64_t requested, uint64_t decoded);
 } qa_cin_playback_options;
-typedef struct qa_cin_picture_checkpoint {
-    qa_buffer pixels;
-    uint64_t index;
-    bool present;
-} qa_cin_picture_checkpoint;
-typedef struct qa_cin_playback_checkpoint {
-    qa_cin_checkpoint decoder;
-    qa_cin_picture_checkpoint picture, pending;
-    double epoch_ms;
-    uint64_t loop;
-    qa_media_status status;
-    bool repeat, hold, silent;
-} qa_cin_playback_checkpoint;
 bool qa_cin_playback_create(qa_cin_asset *, const qa_cin_playback_options *, double now_ms,
                             qa_cin_playback **out, qa_error *);
 void qa_cin_playback_destroy(qa_cin_playback *);
@@ -111,9 +91,6 @@ bool qa_cin_playback_tick(qa_cin_playback *, double now_ms, bool game_focus,
                           qa_media_tick *out, qa_error *);
 /* Borrowed until the next playback operation. */
 const qa_media_frame *qa_cin_playback_frame(qa_cin_playback *);
-bool qa_cin_playback_capture(qa_cin_playback *, qa_cin_playback_checkpoint *, qa_error *);
-void qa_cin_playback_checkpoint_free(qa_cin_playback_checkpoint *);
-bool qa_cin_playback_restore(qa_cin_playback *, const qa_cin_playback_checkpoint *, qa_error *);
 
 typedef enum qa_roq_book_mode { QA_ROQ_BOOK_NORMAL, QA_ROQ_BOOK_HALF, QA_ROQ_BOOK_DOUBLE } qa_roq_book_mode;
 /* Zero initialize per movie. All pixel profiles share the same backing bytes,
@@ -160,24 +137,6 @@ typedef struct qa_roq_decode_hooks {
     bool (*info)(void *, uint32_t width, uint32_t height, qa_error *);
     bool (*audio)(void *, const qa_roq_event *, qa_error *);
 } qa_roq_decode_hooks;
-typedef struct qa_roq_stream_checkpoint {
-    uint64_t position, played, buffer_offset;
-    uint32_t chunk_offset, buffered_length, next_size;
-    uint16_t next_id, next_flags, packet_remaining;
-    uint8_t header[8];
-    bool has_next, invalid, retained_eof, buffered_next;
-} qa_roq_stream_checkpoint;
-typedef struct qa_roq_checkpoint {
-    uint64_t input_size;
-    qa_roq_stream_checkpoint stream;
-    qa_buffer scratch;
-    uint32_t width, height;
-    uint16_t rate;
-    int64_t next_frame;
-    qa_roq_end_policy end_policy;
-    uint8_t unknown_chunk;
-    bool silent;
-} qa_roq_checkpoint;
 bool qa_roq_scratch_create(qa_roq_scratch **out, qa_error *);
 void qa_roq_scratch_retain(qa_roq_scratch *);
 void qa_roq_scratch_release(qa_roq_scratch *);
@@ -204,9 +163,6 @@ bool qa_roq_decoder_reset_after_run(const qa_roq_decoder *);
 /* Original uploads can address the retained physical image allocation beyond
  * the currently published frame. The returned range is always bounds checked. */
 bool qa_roq_decoder_view(const qa_roq_decoder *, size_t offset, size_t length, qa_bytes *, qa_error *);
-bool qa_roq_decoder_capture(qa_roq_decoder *, qa_roq_checkpoint *, qa_error *);
-bool qa_roq_decoder_restore(qa_roq_decoder *, const qa_roq_checkpoint *, qa_error *);
-void qa_roq_checkpoint_free(qa_roq_checkpoint *);
 
 typedef struct qa_media_clock {
     void *context;
@@ -223,17 +179,6 @@ typedef struct qa_roq_playback_options {
     bool (*frame)(void *, const qa_media_frame *, size_t physical_offset, qa_error *);
     void (*diagnostic)(void *, const char *);
 } qa_roq_playback_options;
-typedef struct qa_roq_playback_checkpoint {
-    qa_roq_checkpoint decoder;
-    uint32_t epoch_ms, last_ms;
-    int64_t decoded_frames;
-    uint64_t source_sample, loop;
-    qa_media_status status;
-    qa_media_frame frame;
-    qa_buffer pixels;
-    size_t physical_offset;
-    bool has_frame, pending_loop, repeat, hold, silent, shader;
-} qa_roq_playback_checkpoint;
 bool qa_roq_playback_create(qa_media_input *, const qa_roq_playback_options *, qa_media_clock,
                             qa_roq_playback **out, qa_error *);
 void qa_roq_playback_destroy(qa_roq_playback *);
@@ -247,8 +192,5 @@ const qa_media_frame *qa_roq_playback_frame(const qa_roq_playback *);
  * The image is borrowed until the next playback operation. */
 bool qa_roq_playback_image(qa_roq_playback *, bool shader, uint32_t draw_width,
                            uint32_t draw_height, bool dirty, qa_media_frame *, qa_error *);
-bool qa_roq_playback_capture(qa_roq_playback *, qa_roq_playback_checkpoint *, qa_error *);
-bool qa_roq_playback_restore(qa_roq_playback *, const qa_roq_playback_checkpoint *, qa_error *);
-void qa_roq_playback_checkpoint_free(qa_roq_playback_checkpoint *);
 
 #endif

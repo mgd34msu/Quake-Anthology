@@ -28,7 +28,7 @@ static bool read_file(roq_stream *stream, size_t wanted, size_t *count, qa_error
 }
 bool roq_stream_init(roq_stream *stream, bool reset, qa_error *error) {
     uint16_t remaining = reset ? stream->state.packet_remaining : 0;
-    stream->state = (qa_roq_stream_checkpoint){.played = 24, .packet_remaining = remaining};
+    stream->state = (roq_stream_state){.played = 24, .packet_remaining = remaining};
     stream->pending = false;
     size_t count;
     if (!read_file(stream, 16, &count, error))
@@ -48,7 +48,7 @@ bool roq_stream_init(roq_stream *stream, bool reset, qa_error *error) {
     return true;
 }
 bool roq_stream_next(roq_stream *stream, roq_chunk *out, qa_error *error) {
-    qa_roq_stream_checkpoint *state = &stream->state;
+    roq_stream_state *state = &stream->state;
     if (stream->pending)
         return roq_fail(error, "RoQ dispatch is already pending");
     if (state->invalid || !state->has_next) {
@@ -101,7 +101,7 @@ bool roq_stream_next(roq_stream *stream, roq_chunk *out, qa_error *error) {
     return true;
 }
 bool roq_stream_complete(roq_stream *stream, bool ended, qa_error *error) {
-    qa_roq_stream_checkpoint *state = &stream->state;
+    roq_stream_state *state = &stream->state;
     if (!stream->pending)
         return roq_fail(error, "RoQ has no pending dispatch");
     if (state->next_id == 0x1030)
