@@ -52,7 +52,6 @@ bool frontend_scene_namespace_capture_renderer_mesh(frontend_scene_namespace *,
 bool frontend_scene_namespace_qualify_renderer_mesh(frontend_scene_namespace *,
     uint64_t owner, size_t ordinal, uint64_t identity, qa_error *);
 bool frontend_scene_namespace_seal(frontend_scene_namespace *, qa_error *);
-bool frontend_scene_namespace_checkpoint(const frontend_scene_namespace *, qa_buffer *, qa_error *);
 bool frontend_scene_world_saved(void *, qa_scene_world_identity_kind, size_t ordinal,
     uint64_t installed, uint64_t *saved, qa_error *);
 bool frontend_scene_model_saved(void *, qa_scene_model_identity_kind, size_t node,
@@ -62,13 +61,6 @@ bool frontend_scene_light_saved(frontend_scene_identity_scope *, size_t ordinal,
 bool frontend_scene_static_audio_saved(frontend_scene_identity_scope *, size_t ordinal,
     uint64_t installed, uint64_t *saved, qa_error *);
 
-/* Imports the complete shared prefix and immutable geometry allocations.
- * The genuine restored image inventory must have the same physical order.
- * Numeric scene IDs are reserved here, before any resolver runs. Geometry and
- * image construction references belong to this dictionary until consumers
- * retain them. Materials and frames borrow the aggregate's actual owners. */
-bool frontend_scene_namespace_restore(qa_bytes, const qa_scene_image_set *,
-    frontend_scene_namespace **, qa_error *);
 bool frontend_scene_namespace_bind_library(frontend_scene_namespace *, uint64_t owner,
     const qa_material_library *, qa_error *);
 bool frontend_scene_namespace_bind_frame(frontend_scene_namespace *, uint64_t owner,

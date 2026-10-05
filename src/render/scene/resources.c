@@ -33,6 +33,21 @@ qa_scene_image_kind scene_resource_q3_image_kind(qa_q3_texture_format format)
     return format == QA_Q3_TEXTURE_RGBA || format == QA_Q3_TEXTURE_RGBA4 || format == QA_Q3_TEXTURE_RGBA8
         ? QA_SCENE_RGBA8 : QA_SCENE_RGB8;
 }
+bool qa_scene_image_owner_index(const qa_scene_resources *const *owners, size_t count,
+    const qa_scene_image *image, size_t *index)
+{
+    if (!owners || !image || !index) return false;
+    size_t at = 0;
+    for (size_t owner = 0; owner < count; ++owner) {
+        if (!owners[owner]) return false;
+        for (const owned_image *entry = owners[owner]->names->images; entry; entry = entry->next) {
+            if (&entry->image == image) { *index = at; return true; }
+            if (at == SIZE_MAX) return false;
+            ++at;
+        }
+    }
+    return false;
+}
 bool qa_scene_resources_idle(const qa_scene_resources *owner)
 { return owner && !owner->capture && !owner->continuation_active && !owner->policy_pending; }
 static bool admission_ready(const qa_scene_resources *owner, qa_error *error)
@@ -192,15 +207,6 @@ bool qa_scene_geometry_active(const qa_scene_geometry *geometry)
 {
     return geometry != NULL && atomic_load_explicit(&geometry->active, memory_order_acquire) != 0;
 }
-bool qa_scene_geometry_restore_retired(qa_scene_geometry **out,qa_error *error)
-{
-    if (!out || *out) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Retired geometry descriptor requires an empty cache owner"); return false; }
-    qa_scene_geometry *geometry=calloc(1,sizeof(*geometry));
-    if (!geometry) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating genuine renderer geometry retirement descriptor"); return false; }
-    atomic_init(&geometry->active,0); atomic_init(&geometry->references,1);
-    *out=geometry; return true;
-}
-
 static void policy_add_format(qa_scene_image_policy *policy, qa_scene_image_format format)
 {
     for (size_t i = 0; i < policy->format_count; ++i)
