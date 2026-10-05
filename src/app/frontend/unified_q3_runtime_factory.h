@@ -43,22 +43,6 @@ bool frontend_unified_q3_runtime_factory_create(const frontend_unified_q3_runtim
     frontend_unified_q3_runtime_factory **,qa_error *);
 bool frontend_unified_q3_runtime_factory_create_restored(const frontend_unified_q3_runtime_factory_options *,
     frontend_unified_q3_runtime_factory **,qa_error *);
-typedef struct frontend_unified_q3_runtime_factory_refs {
-    q3n_client_refs clients;
-    qa_q3_movie_checkpoint_refs movies;
-    qa_audio_checkpoint_refs audio;
-} frontend_unified_q3_runtime_factory_refs;
-bool frontend_unified_q3_runtime_factory_checkpoint(frontend_unified_q3_runtime_factory *,
-    const frontend_unified_q3_runtime_factory_refs *,qa_buffer *,qa_error *);
-/* Failed imports retain the exact payload and completed child prefix. Retry
- * uses the same candidate reference resolvers and resumes the first unfinished child. */
-bool frontend_unified_q3_runtime_factory_restore(frontend_unified_q3_runtime_factory *,
-    const frontend_unified_q3_runtime_factory_refs *,qa_bytes,qa_error *);
-/* Checks the imported graph without enabling live CG callbacks. Bind follows
- * the enclosing replica's real session installation. */
-bool frontend_unified_q3_runtime_factory_restore_ready(const frontend_unified_q3_runtime_factory *,qa_error *);
-bool frontend_unified_q3_runtime_factory_restore_passive_finish(frontend_unified_q3_runtime_factory *,qa_error *);
-bool frontend_unified_q3_runtime_factory_restore_bind(frontend_unified_q3_runtime_factory *,qa_error *);
 bool frontend_unified_q3_runtime_factory_current(const frontend_unified_q3_runtime_factory *);
 bool frontend_unified_q3_runtime_factory_idle(const frontend_unified_q3_runtime_factory *);
 bool frontend_unified_q3_runtime_factory_destroy(frontend_unified_q3_runtime_factory **,qa_error *);
