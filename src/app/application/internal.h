@@ -150,6 +150,15 @@ typedef struct application_motion_record {
     bool active, force_view_angles, apply_angular_kick;
 } application_motion_record;
 
+typedef struct application_actor_routes {
+    qa_actor_id actor;
+    qa_actor_owner owner;
+    qa_actor_definition definition;
+    application_provider *providers[QA_ROLE_COUNT];
+    const qa_launch_instance *instances[QA_ROLE_COUNT];
+    bool ready, resolving;
+} application_actor_routes;
+
 typedef struct application_control_record {
     struct qa_application *application;
     application_provider *cutscene_character;
@@ -359,6 +368,9 @@ struct qa_application {
     qa_arena event_arena;
     application_motion_record *motion;
     uint32_t motion_capacity;
+    application_actor_routes *actor_routes;
+    uint32_t actor_route_capacity;
+    const qa_launch_snapshot *actor_route_snapshot;
     application_control_record *controls;
     struct application_control_frames *control_frames;
     struct application_native_q2_scratch *native_baselines;
@@ -653,6 +665,9 @@ application_provider *application_world_provider(qa_application *, qa_launch_rol
                                                   const char *);
 application_provider *application_provider_for(qa_application *, qa_actor_id,
                                                qa_launch_role, const char *selector);
+void application_actor_routes_clear(qa_application *);
+void application_actor_routes_invalidate(qa_application *, qa_actor_id);
+void application_actor_routes_bind(qa_application *, qa_actor_id);
 bool application_composition_create(qa_application *, qa_error *);
 bool application_composition_destroy(qa_application *, qa_error *);
 bool application_apply(qa_application *, const qa_launch_draft *, qa_error *);

@@ -1475,6 +1475,7 @@ static bool publish_travel(qa_application *application,
 bool application_publication_retire(qa_application *application,
                                     qa_error *error)
 {
+    application_actor_routes_clear(application);
     if (!application_q3_components_drain(application->components,error) ||
         !application_q3_components_destroy(&application->components,error)) return false;
     if (!close_equipment(&application->equipment, &application->equipment_runtime, error))
@@ -1528,6 +1529,7 @@ void application_publication_publish(qa_application *application,
                                      void *ticket)
 {
     (void)previous;
+    application_actor_routes_clear(application);
     application->publication_started = true;
     if (candidate == NULL) {
         if (application->command_generation != UINT64_MAX)

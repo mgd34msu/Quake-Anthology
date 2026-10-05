@@ -302,6 +302,7 @@ static void roster_free(struct application_player_roster *roster)
 
 void application_players_close(qa_application *application)
 {
+    application_actor_routes_clear(application);
     roster_free(application->players);
     application->players = NULL;
 }
@@ -2555,6 +2556,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 return false;
         }
         record->actor = source_actor;
+        application_actor_routes_bind(application, source_actor);
         qa_actor_id actor = record->actor;
         application_provider *map_source = application->players->map_provider;
         bool qw_spectator = application_player_qw_spectator(map_source, record);
@@ -3607,6 +3609,7 @@ static bool retire_player(qa_application *app,application_provider *source,
         (!application_native_q1_check_client_retire(source,actor,error)||
          (source->component.clock.kind==QA_CLOCK_QUAKEWORLD&&
           !application_native_q1_qw_retire_capture(source,actor,error)))) return false;
+    application_actor_routes_invalidate(app, actor);
     found->retiring=true;
     if(qa_actors_get(qa_session_actors(app->session),actor)&&!qa_session_release(app->session,actor,error)) return false;
     /* Release callbacks can grow or consume the real roster. */
@@ -3772,6 +3775,7 @@ static bool record_append(qa_application *application, application_player_record
         if (roster->records[i].dynamic && roster->records[i].actor.registry == 0 &&
             roster->records[i].character == NULL) {
             roster->records[i] = record;
+            application_actor_routes_bind(application, record.actor);
             *out = i;
             return true;
         }
@@ -3779,6 +3783,7 @@ static bool record_append(qa_application *application, application_player_record
         return application_fail(error, QA_ERROR_MEMORY, "canonical player roster capacity is exhausted");
     *out = roster->count;
     roster->records[roster->count++] = record;
+    application_actor_routes_bind(application, record.actor);
     return true;
 }
 
@@ -3878,6 +3883,7 @@ bool application_players_bot_allocate(qa_application *app,
     size_t index;
     if (pending != SIZE_MAX) {
         index = pending;
+        application_actor_routes_invalidate(app, app->players->records[index].actor);
         record_free(&app->players->records[index]);
         app->players->records[index] = record;
     } else if (!record_append(app, record, &index, error)) { record_free(&record); return false; }
@@ -4555,6 +4561,7 @@ bool application_players_guest_detach(qa_application *application,
             memmove(binding, binding + 1, (record->guest_count - j - 1) * sizeof(*binding));
             --record->guest_count;
             if (record->dynamic && !record->remote && record->character == provider && record->guest_count == 0) {
+                application_actor_routes_invalidate(application, actor);
                 record_free(record);
                 record->dynamic = true;
             }

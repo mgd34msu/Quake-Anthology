@@ -44,22 +44,37 @@ static bool same_scope(qa_launch_scope left, qa_launch_scope right)
     return true;
 }
 
-static const qa_launch_binding *exact_binding(const qa_launch_choices *choices,
-                                              qa_launch_scope scope,
-                                              qa_launch_role role,
-                                              const char *selector)
+static uint64_t scoped_bindings(const qa_launch_choices *choices,
+    qa_launch_scope scope, const char *selector, uint64_t roles,
+    const qa_launch_binding *out[QA_ROLE_COUNT])
 {
     if (choices == NULL)
-        return NULL;
+        return roles;
     if (selector == NULL)
         selector = "";
     for (size_t index = 0; index < choices->binding_count; ++index) {
         const qa_launch_binding *binding = &choices->bindings[index];
-        if (binding->role == role && same_scope(binding->scope, scope) &&
-            strcmp(binding->selector, selector) == 0)
-            return binding;
+        if ((unsigned)binding->role >= QA_ROLE_COUNT)
+            continue;
+        uint64_t bit = QA_ROLE_BIT(binding->role);
+        if ((roles & bit) && same_scope(binding->scope, scope) &&
+            strcmp(binding->selector, selector) == 0) {
+            out[binding->role] = binding;
+            roles &= ~bit;
+            if (roles == 0)
+                break;
+        }
     }
-    return NULL;
+    return roles;
+}
+
+static const qa_launch_binding *exact_binding(const qa_launch_choices *choices,
+    qa_launch_scope scope, qa_launch_role role, const char *selector)
+{
+    const qa_launch_binding *bindings[QA_ROLE_COUNT] = {0};
+    if ((unsigned)role < QA_ROLE_COUNT)
+        (void)scoped_bindings(choices, scope, selector, QA_ROLE_BIT(role), bindings);
+    return (unsigned)role < QA_ROLE_COUNT ? bindings[role] : NULL;
 }
 
 static application_provider *provider_named(qa_application *application,
@@ -163,32 +178,32 @@ application_provider *application_world_provider(qa_application *application,
     return binding == NULL ? NULL : provider_named(application, binding->instance);
 }
 
-static const qa_launch_binding *selected_binding(qa_application *application,
-    const qa_launch_choices *choices, qa_actor_id actor, qa_launch_role role, const char *selector)
+static void selected_bindings(qa_application *application,
+    const qa_launch_choices *choices, qa_actor_id actor, const char *selector,
+    uint64_t roles, const qa_launch_binding *out[QA_ROLE_COUNT])
 {
-    const qa_launch_binding *binding =
-        exact_binding(choices, (qa_launch_scope){.kind = QA_SCOPE_ACTOR,
-                                                 .actor = actor},
-                      role, selector);
-    if (binding != NULL)
-        return binding;
+    roles = scoped_bindings(choices,
+        (qa_launch_scope){.kind = QA_SCOPE_ACTOR, .actor = actor},
+        selector, roles, out);
+    if (roles == 0)
+        return;
 
     qa_actor_id configured;
     if (application_player_source_actor(application, actor, &configured)) {
-        binding = exact_binding(choices,
-                                (qa_launch_scope){.kind = QA_SCOPE_ACTOR,
-                                                  .actor = configured},
-                                role, selector);
-        if (binding != NULL)
-            return binding;
+        roles = scoped_bindings(choices,
+            (qa_launch_scope){.kind = QA_SCOPE_ACTOR, .actor = configured},
+            selector, roles, out);
+        if (roles == 0)
+            return;
     }
 
     uint32_t live_seat;
     if (qa_application_player_seat(application, actor, &live_seat)) {
-        binding = exact_binding(choices,
-            (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = live_seat}, role, selector);
-        if (binding != NULL)
-            return binding;
+        roles = scoped_bindings(choices,
+            (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = live_seat},
+            selector, roles, out);
+        if (roles == 0)
+            return;
     }
 
     if (choices != NULL)
@@ -198,24 +213,24 @@ static const qa_launch_binding *selected_binding(qa_application *application,
                 !(qa_application_player_actor(application, choices->seats[index].id, &live) &&
                   qa_actor_id_equal(live, actor)))
                 continue;
-            binding = exact_binding(
-                choices,
-                (qa_launch_scope){.kind = QA_SCOPE_SEAT,
-                                  .seat = choices->seats[index].id},
-                role, selector);
-            if (binding != NULL)
-                return binding;
+            roles = scoped_bindings(choices,
+                (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = choices->seats[index].id},
+                selector, roles, out);
+            if (roles == 0)
+                return;
         }
 
-    if (actor_is_player(application, actor, choices)) {
-        binding = exact_binding(
-            choices, (qa_launch_scope){.kind = QA_SCOPE_DEFAULT_PLAYER}, role,
-            selector);
-        if (binding != NULL)
-            return binding;
-    }
+    if (actor_is_player(application, actor, choices))
+        (void)scoped_bindings(choices,
+            (qa_launch_scope){.kind = QA_SCOPE_DEFAULT_PLAYER}, selector, roles, out);
+}
 
-    return NULL;
+static const qa_launch_binding *selected_binding(qa_application *application,
+    const qa_launch_choices *choices, qa_actor_id actor, qa_launch_role role, const char *selector)
+{
+    const qa_launch_binding *bindings[QA_ROLE_COUNT] = {0};
+    selected_bindings(application, choices, actor, selector, QA_ROLE_BIT(role), bindings);
+    return bindings[role];
 }
 
 static application_provider *actor_source_provider(qa_application *application, qa_actor_id actor)
@@ -225,10 +240,97 @@ static application_provider *actor_source_provider(qa_application *application, 
     return record == NULL ? NULL : provider_owned(application, record->owner);
 }
 
+void application_actor_routes_clear(qa_application *application)
+{
+    if (application->actor_routes != NULL)
+        memset(application->actor_routes, 0,
+               application->actor_route_capacity * sizeof(*application->actor_routes));
+    application->actor_route_snapshot = NULL;
+}
+
+void application_actor_routes_invalidate(qa_application *application, qa_actor_id actor)
+{
+    if (actor.slot < application->actor_route_capacity &&
+        qa_actor_id_equal(application->actor_routes[actor.slot].actor, actor))
+        application->actor_routes[actor.slot] = (application_actor_routes){0};
+}
+
+static bool published_routing(const qa_application *application,
+    const qa_launch_snapshot *snapshot)
+{
+    return snapshot != NULL && qa_application_launch(application) == snapshot &&
+        application->routing_snapshot == NULL && application->routing_providers == NULL &&
+        !application->publication_started &&
+        (application->operation == APPLICATION_IDLE ||
+         application->operation == APPLICATION_ADVANCING);
+}
+
+static const application_actor_routes *actor_routes(qa_application *application,
+    const qa_launch_snapshot *snapshot, qa_actor_id actor, const char *selector)
+{
+    if ((selector != NULL && *selector != '\0') ||
+        !published_routing(application, snapshot) ||
+        actor.slot >= application->actor_route_capacity)
+        return NULL;
+    const qa_actor_record *record =
+        qa_actors_get(qa_session_actors(application->session), actor);
+    if (record == NULL)
+        return NULL;
+    if (application->actor_route_snapshot != snapshot) {
+        application_actor_routes_clear(application);
+        application->actor_route_snapshot = snapshot;
+    }
+    application_actor_routes *routes = &application->actor_routes[actor.slot];
+    if (!qa_actor_id_equal(routes->actor, actor) || routes->owner != record->owner ||
+        routes->definition != record->definition)
+        *routes = (application_actor_routes){.actor = actor,
+            .owner = record->owner, .definition = record->definition};
+    if (routes->ready)
+        return routes;
+    if (routes->resolving)
+        return NULL;
+
+    routes->resolving = true;
+    const qa_launch_binding *bindings[QA_ROLE_COUNT] = {0};
+    selected_bindings(application, qa_launch_snapshot_choices(snapshot), actor, "",
+                      (QA_ROLE_BIT(QA_ROLE_COUNT) - 1u), bindings);
+    application_provider *source = actor_source_provider(application, actor);
+    const qa_launch_instance *source_instance = source && source->launch ?
+        qa_launch_snapshot_find(snapshot, source->launch->selection.instance) : NULL;
+    application_actor_routes prepared = {.actor = actor,
+        .owner = routes->owner, .definition = routes->definition, .ready = true};
+    for (unsigned role = 0; role < QA_ROLE_COUNT; ++role) {
+        prepared.providers[role] = bindings[role] ?
+            provider_named(application, bindings[role]->instance) : source;
+        prepared.instances[role] = bindings[role] ?
+            qa_launch_snapshot_find(snapshot, bindings[role]->instance) : source_instance;
+    }
+    record = qa_actors_get(qa_session_actors(application->session), actor);
+    if (!published_routing(application, snapshot) ||
+        application->actor_route_snapshot != snapshot ||
+        !qa_actor_id_equal(routes->actor, actor) || !routes->resolving ||
+        record == NULL || record->owner != prepared.owner ||
+        record->definition != prepared.definition) {
+        application_actor_routes_invalidate(application, actor);
+        return NULL;
+    }
+    *routes = prepared;
+    return routes;
+}
+
+void application_actor_routes_bind(qa_application *application, qa_actor_id actor)
+{
+    application_actor_routes_invalidate(application, actor);
+    (void)actor_routes(application, qa_application_launch(application), actor, "");
+}
+
 const qa_launch_instance *qa_application_selected_instance(qa_application *application,
     const qa_launch_snapshot *snapshot, qa_actor_id actor, qa_launch_role role, const char *selector)
 {
     if (!application || !snapshot || (unsigned)role >= QA_ROLE_COUNT) return NULL;
+    const application_actor_routes *routes = actor_routes(application, snapshot, actor, selector);
+    if (routes != NULL)
+        return routes->instances[role];
     const qa_launch_binding *binding = selected_binding(application,
         qa_launch_snapshot_choices(snapshot), actor, role, selector);
     if (binding) return qa_launch_snapshot_find(snapshot, binding->instance);
@@ -244,6 +346,10 @@ application_provider *application_provider_for(qa_application *application,
 {
     if (application == NULL || (unsigned)role >= QA_ROLE_COUNT)
         return NULL;
+    const application_actor_routes *routes = actor_routes(application,
+        qa_application_launch(application), actor, selector);
+    if (routes != NULL)
+        return routes->providers[role];
     const qa_launch_binding *binding = selected_binding(application,
         active_choices(application), actor, role, selector);
     return binding ? provider_named(application, binding->instance) :
@@ -305,6 +411,8 @@ bool application_actor_released(void *opaque, qa_session *session,
     if (application == NULL || session != application->session)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "actor release reached the wrong application");
+
+    application_actor_routes_invalidate(application, released.id);
 
     application_supplies_actor_released(application->supplies, released);
     application_native_q1_wire_actor_released(application, released.id);
