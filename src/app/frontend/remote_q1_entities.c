@@ -15,6 +15,44 @@ static qa_q1_entity sampled(const frontend_remote_q1 *row, qa_q1_entity value)
     }
     return value;
 }
+bool remote_q1_view_damage(frontend_remote_q1 *row, const qa_nq_message *message, qa_error *error)
+{
+    bool qw = qa_q1_is_qw(row->options.domain.protocol);
+    qa_vec3 origin, angles;
+    if (row->view_entity_pose_number == row->view_entity && row->view_entity) {
+        origin = row->view_entity_origin; angles = row->view_entity_angles;
+    } else if (qw) {
+        /* A new service frame is staged before queued svc_damage projects;
+         * its current entity table is not published yet. The predictor and
+         * real playerinfo remain the actual CL simulated/source owners. */
+        qa_qw_movement_state predicted; float height; bool present;
+        if (!remote_q1_prediction_read(row,&predicted,&height,&present)) return false;
+        if (present) origin = qa_qw_origin_to_vec3(predicted.origin);
+        else {
+            if (!row->qw_player_valid[row->qw.player_slot])
+                return remote_q1_fail(error,QA_ERROR_FORMAT,"QW damage has no actual simulated player");
+            const qa_qw_player *player=row->qw_players+row->qw.player_slot;
+            origin=qa_v3(player->origin[0],player->origin[1],player->origin[2]);
+        }
+        angles=row->view_angles;
+    } else {
+        /* svc_time starts a new table before svc_damage; the Source entity
+         * still belongs to the preceding frame until its actual update. */
+        const qa_q1_entity *entity = NULL;
+        const remote_q1_entities *tables[] = {&row->current, &row->previous};
+        for (size_t table = 0; !entity && table < 2; ++table)
+            for (size_t i = 0; i < tables[table]->count; ++i)
+                if (tables[table]->rows[i].number == row->view_entity) { entity = tables[table]->rows + i; break; }
+        if (!entity) return remote_q1_fail(error, QA_ERROR_FORMAT, "NQ damage has no actual received view entity");
+        origin = qa_v3(entity->origin[0], entity->origin[1], entity->origin[2]);
+        angles = qa_v3(entity->angles[0], entity->angles[1], entity->angles[2]);
+    }
+    frontend_q1_motion_settings settings;
+    if (!frontend_view_settings_q1_motion_sample(row->options.domain.cvars, qw, &settings, error)) return false;
+    frontend_view_q1_damage(&settings, origin, angles, message->data.damage.armor, message->data.damage.blood,
+        qa_v3(message->data.damage.origin[0], message->data.damage.origin[1], message->data.damage.origin[2]), &row->view_motion);
+    return remote_q1_live(row, error);
+}
 bool remote_q1_view_sample(frontend_remote_q1 *row, qa_error *error)
 {
     row->view_pose_ready = false;
@@ -30,7 +68,13 @@ bool remote_q1_view_sample(frontend_remote_q1 *row, qa_error *error)
     qa_vec3 entity_angles = player.angles;
     for (size_t i = 0; i < row->current.count; ++i) if (row->current.rows[i].number == row->view_entity) {
         qa_q1_entity entity = sampled(row, row->current.rows[i]);
-        entity_angles = qa_v3(entity.angles[0], entity.angles[1], entity.angles[2]); break;
+        entity_angles = qa_v3(entity.angles[0], entity.angles[1], entity.angles[2]);
+        row->view_entity_origin = qa_v3(entity.origin[0], entity.origin[1], entity.origin[2]);
+        row->view_entity_angles = entity_angles; row->view_entity_pose_number = entity.number; break;
+    }
+    if (qw) {
+        row->view_entity_origin = player.origin; row->view_entity_angles = row->view_angles;
+        row->view_entity_pose_number = row->view_entity;
     }
     frontend_q1_motion_input input = {.origin = player.origin, .angles = player.angles,
         .entity_angles = qa_v3(-player.angles.x, player.angles.y, entity_angles.z),

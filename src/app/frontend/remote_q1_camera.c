@@ -178,7 +178,6 @@ void remote_q1_camera_reset(frontend_remote_q1 *row)
 {
     if (!row) return;
     remote_q1_camera old=row->camera;
-    qa_collision_destroy(old.geometry); qa_resource_release(old.map);
     row->camera=(remote_q1_camera){.desired=old.desired,.last_view_seconds=old.last_view_seconds};
 }
 bool frontend_remote_q1_chase_camera(frontend_remote_q1 *row,const frontend_q1_view_settings *settings,
@@ -188,41 +187,10 @@ bool frontend_remote_q1_chase_camera(frontend_remote_q1 *row,const frontend_q1_v
         !remote_q1_live(row,error) || !row->loaded || qa_q1_is_qw(row->protocol) || !settings->chase ||
         !qa_vec_finite(eye) || !qa_vec_finite(aim_angles) || !isfinite(settings->back) ||
         !isfinite(settings->right) || !isfinite(settings->up)) return false;
-    remote_q1_camera *c=&row->camera;
-    if (!c->geometry) {
-        qa_bsp_view bsp;
-        if (!qa_bsp_open(qa_resource_bytes(row->map),&bsp,error) || bsp.family!=QA_BSP_Q1 ||
-            !qa_bsp_validate(&bsp,error) || !qa_collision_create(&bsp,&c->geometry,error)) return false;
-        qa_resource_retain(row->map); c->map=row->map;
-        if(!qa_collision_bind_resource(c->geometry,c->map,error)) {
-            qa_collision_destroy(c->geometry); c->geometry=NULL;
-            qa_resource_release(c->map); c->map=NULL; return false;
-        }
-    }
-    if (c->map!=row->map) return false;
-    double yaw=aim_angles.y*0.017453292519943295,pitch=aim_angles.x*0.017453292519943295;
-    double roll=aim_angles.z*0.017453292519943295;
-    double sy=sin(yaw),cy=cos(yaw),sp=sin(pitch),cp=cos(pitch),sr=sin(roll),cr=cos(roll);
-    qa_vec3 forward=qa_v3((float)(cp*cy),(float)(cp*sy),(float)-sp);
-    qa_vec3 right=qa_v3((float)(-sr*sp*cy+cr*sy),(float)(-sr*sp*sy-cr*cy),(float)(-sr*cp));
-    qa_vec3 desired=qa_v3((float)((double)eye.x-forward.x*settings->back-right.x*settings->right),
-        (float)((double)eye.y-forward.y*settings->back-right.y*settings->right),(float)(eye.z+settings->up));
-    qa_trace_query query={.start=eye,.end=desired,.shape={.kind=QA_SHAPE_BOX,
-        .bounds={qa_v3(-4,-4,-4),qa_v3(4,4,4)}},.policy=qa_collision_default_policy(QA_COLLISION_Q1)};
-    query.policy.q1_hull=-1; query.policy.q1_move=QA_Q1_MOVE_NORMAL;
-    qa_trace_result rear,aim;
-    if (!qa_collision_trace(c->geometry,&query,&rear,error)) return false;
-    *origin=rear.start_solid || rear.all_solid?eye:rear.end;
-    qa_vec3 far=qa_v3((float)((double)eye.x+forward.x*4096.0),(float)((double)eye.y+forward.y*4096.0),
-        (float)((double)eye.z+forward.z*4096.0));
-    query.end=far; query.shape=(qa_trace_shape){.kind=QA_SHAPE_POINT};
-    if (!qa_collision_trace(c->geometry,&query,&aim,error)) return false;
-    qa_vec3 target=aim.fraction==1 || aim.start_solid || aim.all_solid?far:aim.end;
-    double x=(double)target.x-origin->x,y=(double)target.y-origin->y,z=(double)target.z-origin->z;
-    double horizontal=hypot(x,y);
-    *out_angles=qa_v3((float)(-atan2(z,horizontal)*57.29577951308232),
-        horizontal==0?aim_angles.y:(float)(atan2(y,x)*57.29577951308232),aim_angles.z);
-    return remote_q1_live(row,error);
+    qa_collision_geometry *geometry;
+    return remote_q1_collision_acquire(row,&geometry,error) &&
+        frontend_view_q1_chase(settings,geometry,eye,aim_angles,origin,out_angles,error) &&
+        remote_q1_live(row,error);
 }
 bool remote_q1_camera_take_teleport(frontend_remote_q1 *row, qa_vec3 *out, bool *present, qa_error *error)
 {

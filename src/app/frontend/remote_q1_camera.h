@@ -15,8 +15,6 @@ typedef struct remote_q1_camera {
     qa_vec3 desired, teleport, self_origin;
     double last_view_seconds;
     remote_q1_camera_view view;
-    struct qa_collision_geometry *geometry;
-    qa_resource *map;
 } remote_q1_camera;
 bool remote_q1_camera_command(frontend_remote_q1 *, qa_qw_command *, uint64_t now_ns, qa_error *);
 const remote_q1_camera_view *remote_q1_camera_read(const frontend_remote_q1 *);

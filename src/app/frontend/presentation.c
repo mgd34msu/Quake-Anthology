@@ -202,6 +202,16 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
     if (!qa_actor_id_equal(seat->q1_view_actor, actor)) {
         seat->q1_view_motion = (frontend_q1_view_motion){0}; seat->q1_view_actor = actor;
     }
+    if (!qw && source.product->program_kind == QA_PROGRAM_BUILTIN) {
+        qa_application_network_q1_feedback feedback;
+        if (!qa_application_network_q1_consume_feedback(f->application, actor, &feedback, error)) return false;
+        if (feedback.damage) {
+            qa_vec3 from;
+            if (!frontend_view_q1_damage_origin(feedback.armor,feedback.blood,feedback.origin,&from,error)) return false;
+            frontend_view_q1_damage(&settings, body.origin, body.angles,
+                feedback.armor, feedback.blood, from, &seat->q1_view_motion);
+        }
+    }
     frontend_q1_motion_input input = {.origin = camera->origin, .angles = camera->angles,
         .entity_angles = qa_v3(-camera->angles.x, camera->angles.y, body.angles.z),
         .velocity = body.velocity, .punch = equipment.kick_angles, .seconds = seconds,
@@ -212,7 +222,12 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
     if (!frontend_config_store_primary_legacy_current(f->config_store, &source))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view changed its retained CLIENT settings");
     seat->q1_view_ready = true;
-    scene->origin = seat->q1_view_pose.origin; frontend_camera_axes(seat->q1_view_pose.angles, scene->axis);
+    scene->origin = seat->q1_view_pose.origin; qa_vec3 angles = seat->q1_view_pose.angles;
+    seat->q1_chase = !qw && view->chase && !camera->cutscene;
+    if (seat->q1_chase && !frontend_view_q1_chase(view,
+        qa_world_geometry(qa_application_world(f->application)),scene->origin,camera->angles,
+        &scene->origin,&angles,error)) return false;
+    frontend_camera_axes(angles, scene->axis);
     return true;
 }
 static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
@@ -240,7 +255,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (!qa_scene_frame_output_domain(&frontend->frame,rect,false,error)) return false;
         qa_ui_state ui;
         if (!frontend_source_prompt_prepare(seat->source_prompt,error) || !qa_ui_tick(seat->ui, (double)frontend->time_ns / 1000000, error) || !qa_ui_state_read(seat->ui, &ui, error)) return false;
-        seat->q1_view_ready = false;
+        seat->q1_view_ready = false; seat->q1_chase = false;
         qa_actor_id actor = {0}; qa_application_camera_view camera;
         uint32_t launch_seat;
         bool published=frontend_seat_launch_id_read(frontend,i,&launch_seat);

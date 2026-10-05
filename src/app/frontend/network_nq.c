@@ -1,4 +1,5 @@
 #include "network_nq_private.h"
+#include "view_settings.h"
 #include "qa/application_network.h"
 #include "qa/collision.h"
 #include "qa/launch_identity.h"
@@ -930,6 +931,11 @@ static bool frame_payload(frontend_nq_host *host,qa_actor_id actor,qa_net_protoc
             for (size_t i = 0; i < 3; ++i) message.data.damage.origin[i] = (float)feedback.origin[i];
             if (!qa_nq_write(writer, protocol, options, &message, NULL, 0)) return false;
         }
+        /* Local demo recording owns this real feedback consumption before
+         * presentation. Project that same receipt for its admitted seat. */
+        qa_vec3 from;
+        if (!frontend_view_q1_damage_origin(feedback.armor,feedback.blood,feedback.origin,&from,error) ||
+            !frontend_view_q1_local_damage(host->frontend,actor,feedback.armor,feedback.blood,from,error)) return false;
     }
     if (feedback.set_angle) {
         message.op = QA_NQ_SETANGLE; memcpy(message.data.angles, feedback.angles, sizeof(feedback.angles));

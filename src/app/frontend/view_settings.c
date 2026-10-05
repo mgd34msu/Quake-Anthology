@@ -3,6 +3,8 @@
 #include "qa/console_cvar_observer.h"
 #include "qa/cvars_alias.h"
 #include "qa/text.h"
+#include "config_store.h"
+#include "qa/network_q1_nq.h"
 #include <math.h>
 
 struct frontend_view_settings {
@@ -181,6 +183,7 @@ bool frontend_view_settings_q1_sample(frontend_view_settings *owner,qa_console_d
 static const struct { const char *name, *initial; bool offset; } motion_declarations[] = {
     {"cl_bob", "0.02", false}, {"cl_bobcycle", "0.6", false}, {"cl_bobup", "0.5", false},
     {"cl_rollspeed", "200", false}, {"cl_rollangle", "2.0", false},
+    {"v_kicktime", "0.5", false}, {"v_kickroll", "0.6", false}, {"v_kickpitch", "0.6", false},
     {"v_idlescale", "0", false}, {"v_ipitch_cycle", "1", false},
     {"v_iyaw_cycle", "2", false}, {"v_iroll_cycle", "0.5", false},
     {"v_ipitch_level", "0.3", false}, {"v_iyaw_level", "0.3", false}, {"v_iroll_level", "0.1", false},
@@ -219,6 +222,9 @@ bool frontend_view_settings_q1_motion_sample(const qa_cvars *registry, bool quak
         !motion_setting(registry, "cl_bobup", &value.bob_up, error) ||
         !motion_setting(registry, "cl_rollspeed", &value.roll_speed, error) ||
         !motion_setting(registry, "cl_rollangle", &value.roll_angle, error) ||
+        !motion_setting(registry, "v_kicktime", &value.kick_time, error) ||
+        !motion_setting(registry, "v_kickroll", &value.kick_roll, error) ||
+        !motion_setting(registry, "v_kickpitch", &value.kick_pitch, error) ||
         !motion_setting(registry, "v_idlescale", &value.idle_scale, error) ||
         !motion_setting(registry, "v_ipitch_cycle", &value.idle_cycle.x, error) ||
         !motion_setting(registry, "v_iyaw_cycle", &value.idle_cycle.y, error) ||
@@ -233,11 +239,88 @@ bool frontend_view_settings_q1_motion_sample(const qa_cvars *registry, bool quak
         return fail(error, "Q1 bob requires a positive cycle and an up fraction between zero and one");
     *out = value; return true;
 }
+void frontend_view_q1_damage(const frontend_q1_motion_settings *settings, qa_vec3 origin, qa_vec3 angles,
+    uint8_t armor, uint8_t blood, qa_vec3 from, frontend_q1_view_motion *state)
+{
+    float count = (float)(blood * .5 + armor * .5);
+    if (count < 10) count = 10;
+    from = qa_vec_sub(from, origin);
+    float length = (float)sqrt(qa_vec_dot(from, from));
+    if (length != 0) from = qa_vec_scale(from, 1 / length);
+    qa_vec3 axes[3]; frontend_camera_axes(angles, axes);
+    state->damage_roll = count * -qa_vec_dot(from, axes[1]) * settings->kick_roll;
+    state->damage_pitch = count * qa_vec_dot(from, axes[0]) * settings->kick_pitch;
+    state->damage_time = settings->kick_time;
+}
+bool frontend_view_q1_damage_origin(uint8_t armor, uint8_t blood, const double from[3], qa_vec3 *out, qa_error *error)
+{
+    /* Local feedback traverses the same original fixed-coordinate kernel
+     * as the actual svc_damage written to remote peers and demos. */
+    uint8_t bytes[9]; qa_net_writer writer;
+    qa_net_writer_init(&writer,bytes,sizeof(bytes),error);
+    if (!qa_nq_write_damage(&writer,armor,blood,from)) return false;
+    qa_net_reader reader; qa_net_reader_init(&reader,(qa_bytes){bytes+3,qa_net_writer_size(&writer)-3},error);
+    qa_net_protocol_id protocol={.kind=QA_NET_NQ15};
+    float x=qa_q1_read_coord(&reader,protocol),y=qa_q1_read_coord(&reader,protocol),z=qa_q1_read_coord(&reader,protocol);
+    if (!qa_net_reader_finish(&reader)) return false;
+    *out=qa_v3(x,y,z); return true;
+}
+bool frontend_view_q1_local_damage(qa_frontend *f, qa_actor_id actor, uint8_t armor, uint8_t blood,
+    qa_vec3 from, qa_error *error)
+{
+    for (unsigned physical = 0; physical < f->options.seats && !f->options.dedicated; ++physical) {
+        uint32_t logical; qa_actor_id admitted;
+        if (!frontend_seat_launch_id_read(f, physical, &logical) ||
+            !qa_application_player_actor(f->application, logical, &admitted) ||
+            !qa_actor_id_equal(actor, admitted)) continue;
+        frontend_config_legacy_view source; bool present;
+        if (!frontend_config_store_primary_legacy_read(f->config_store, logical, &source, &present, error)) return false;
+        if (!present || source.product->family != QA_GAME_Q1) return true;
+        qa_body_state body; qa_application_camera_view camera;
+        if (!qa_world_body_read(qa_application_world(f->application), actor, &body, error)) return false;
+        if (!qa_application_control_camera(f->application, actor, &camera))
+            return fail(error, "Q1 damage lost its actual selected player camera");
+        bool qw = source.product->edition == QA_EDITION_QUAKEWORLD;
+        frontend_q1_motion_settings settings;
+        if (!frontend_view_settings_q1_motion_sample(source.registry, qw, &settings, error)) return false;
+        frontend_seat *seat = f->seats + physical;
+        if (!qa_actor_id_equal(seat->q1_view_actor, actor)) {
+            seat->q1_view_motion = (frontend_q1_view_motion){0}; seat->q1_view_actor = actor;
+        }
+        frontend_view_q1_damage(&settings, body.origin, qw ? camera.angles : body.angles,
+            armor, blood, from, &seat->q1_view_motion);
+        return frontend_config_store_primary_legacy_current(f->config_store, &source) ||
+            fail(error, "Q1 damage changed its retained CLIENT settings");
+    }
+    return true;
+}
+bool frontend_view_q1_chase(const frontend_q1_view_settings *settings, qa_collision_geometry *geometry,
+    qa_vec3 eye, qa_vec3 aim_angles, qa_vec3 *origin, qa_vec3 *angles, qa_error *error)
+{
+    if (!settings || !geometry || !origin || !angles)
+        return fail(error, "Q1 chase requires its actual world hull and view");
+    qa_vec3 axes[3]; frontend_camera_axes(aim_angles, axes);
+    qa_vec3 destination = qa_v3(eye.x - axes[0].x * (float)settings->back + axes[1].x * (float)settings->right,
+        eye.y - axes[0].y * (float)settings->back + axes[1].y * (float)settings->right, eye.z);
+    destination.z = eye.z + (float)settings->up;
+    qa_trace_query query = {.start=eye,.end=qa_vec_add(eye,qa_vec_scale(axes[0],4096)),
+        .shape={.kind=QA_SHAPE_POINT},.policy=qa_collision_default_policy(QA_COLLISION_Q1)};
+    query.policy.q1_hull=0;
+    qa_trace_result hit;
+    if (!qa_collision_trace(geometry, &query, &hit, error)) return false;
+    qa_vec3 stop = qa_vec_sub(hit.end, eye);
+    float distance = qa_vec_dot(stop, axes[0]);
+    if (distance < 1) distance = 1;
+    *origin = destination;
+    angles->x = (float)(-atan(stop.z / distance) / 3.14159265358979323846 * 180);
+    return true;
+}
 void frontend_view_q1_motion(const frontend_q1_motion_settings *settings,
     const frontend_q1_motion_input *input, frontend_q1_view_motion *state, frontend_q1_view_pose *out)
 {
-    if (!state->initialized || input->seconds < state->seconds)
-        *state = (frontend_q1_view_motion){.old_z = input->origin.z};
+    if (state->initialized && input->seconds < state->seconds)
+        *state = (frontend_q1_view_motion){0};
+    if (!state->initialized) state->old_z = input->origin.z;
     double elapsed = state->initialized ? input->seconds - state->seconds : 0;
     if (elapsed < 0) elapsed = 0;
     state->seconds = input->seconds; state->initialized = true;
@@ -277,6 +360,11 @@ void frontend_view_q1_motion(const frontend_q1_motion_settings *settings,
     else side = settings->roll_angle;
     qa_vec3 camera_angles = input->angles;
     camera_angles.z += side * sign;
+    if (state->damage_time > 0) {
+        camera_angles.z += state->damage_time / settings->kick_time * state->damage_roll;
+        camera_angles.x += state->damage_time / settings->kick_time * state->damage_pitch;
+        state->damage_time -= (float)elapsed;
+    }
     if (!input->quakeworld && input->dead) camera_angles.z = 80;
     camera_angles.x = (float)(camera_angles.x + idle[0]);
     camera_angles.y = (float)(camera_angles.y + idle[1]);

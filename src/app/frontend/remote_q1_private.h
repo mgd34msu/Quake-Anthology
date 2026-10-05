@@ -42,8 +42,11 @@ struct frontend_remote_q1 {
     struct frontend_remote_q1_skins *skins;
     struct frontend_remote_q1_sky_policy *sky_policy;
     remote_q1_camera camera;
+    qa_collision_geometry *collision;
     frontend_q1_view_motion view_motion;
     frontend_q1_view_pose view_pose;
+    qa_vec3 view_entity_origin, view_entity_angles;
+    uint32_t view_entity_pose_number;
     bool view_pose_ready;
     qa_frontend *frontend;
     frontend_remote_q1_options options;
@@ -105,6 +108,7 @@ bool remote_q1_actor_read(frontend_remote_q1 *, uint32_t, qa_actor_id *, qa_erro
 void remote_q1_clear(frontend_remote_q1 *);
 void remote_q1_media_clear(frontend_remote_q1 *);
 bool remote_q1_view_sample(frontend_remote_q1 *,qa_error *);
+bool remote_q1_view_damage(frontend_remote_q1 *,const qa_nq_message *,qa_error *);
 void remote_q1_time_advance(frontend_remote_q1 *, double, uint64_t);
 void remote_q1_publication_update(frontend_remote_q1 *);
 bool remote_q1_media_prepare(frontend_remote_q1 *, qa_error *);

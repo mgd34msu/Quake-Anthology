@@ -267,6 +267,7 @@ void remote_q1_clear(frontend_remote_q1 *row)
     row->actor_count = 0;
     remote_q1_camera_reset(row);
     row->view_motion = (frontend_q1_view_motion){0};
+    row->view_entity_pose_number = 0;
     row->view_pose_ready = false;
     remote_q1_prediction_clear(row);
     remote_q1_media_clear(row);
@@ -388,6 +389,7 @@ bool frontend_remote_q1_receive_nq(frontend_remote_q1 *row, const qa_nq_message 
         row->revision == UINT64_MAX || row->next_event == UINT64_MAX ||
         (message->op == QA_NQ_TIME && row->frame_number == UINT64_MAX))
         return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 service requires its actual returned CLIENT receiver");
+    if (message->op == QA_NQ_DAMAGE && !remote_q1_view_damage(row, message, error)) return false;
     ++row->busy; bool ok = true;
     switch (message->op) {
     case QA_NQ_SERVERINFO: ok = serverinfo(row, &message->data.serverinfo, error); break;

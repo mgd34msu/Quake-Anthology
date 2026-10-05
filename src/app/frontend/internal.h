@@ -94,7 +94,7 @@ bool frontend_source_audio_view(const qa_frontend *,const qa_audio_asset *,qa_vf
 bool frontend_event_audio_view(const qa_frontend *,const qa_audio_asset *,qa_vfs **);
 typedef struct frontend_q1_view_motion {
     double seconds, bob_seconds;
-    float bob, old_z;
+    float bob, old_z, damage_time, damage_roll, damage_pitch;
     bool initialized;
 } frontend_q1_view_motion;
 typedef struct frontend_q1_view_pose {
@@ -159,7 +159,7 @@ typedef struct frontend_seat {
     frontend_q1_view_motion q1_view_motion;
     frontend_q1_view_pose q1_view_pose;
     qa_actor_id q1_view_actor;
-    bool q1_view_ready;
+    bool q1_view_ready, q1_chase;
     qa_actor_id q2_actor;
     qa_q2_player_view q2_view;
     qa_hud_value q2_vitals[3];

@@ -1424,7 +1424,9 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
         qa_actor_id actor = record->id;
         if (frontend_native_q3_actor_admitted(frontend, seat, actor)) continue;
         if (qa_actor_id_equal(actor, local) && !world->view.clip_enabled &&
-            !qa_scene_world_q1_mirror_scope(frontend->scene_world, world, frame)) continue;
+            !qa_scene_world_q1_mirror_scope(frontend->scene_world, world, frame)) {
+            if (!frontend->seats[seat].q1_chase) continue;
+        }
         qa_application_visual_view view; qa_error observed = {0};
         if (!qa_application_visual_read(frontend->application, actor, &view, &observed)) {
             if (observed.code == QA_ERROR_NOT_FOUND) continue;

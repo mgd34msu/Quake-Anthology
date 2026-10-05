@@ -17,8 +17,6 @@ typedef struct packet_receipt {
     bool invalid;
 } packet_receipt;
 struct frontend_remote_q1_prediction {
-    qa_resource *map;
-    qa_collision_geometry *geometry;
     qa_qw_movement_state received, predicted;
     sent_command history[64];
     packet_receipt packets[64];
@@ -37,22 +35,28 @@ static bool retain(frontend_remote_q1 *row,qa_error *error)
 }
 void remote_q1_prediction_clear(frontend_remote_q1 *row)
 {
-    if(!row || !row->prediction) return;
-    qa_collision_destroy(row->prediction->geometry);
-    qa_resource_release(row->prediction->map);
-    free(row->prediction); row->prediction=NULL;
+    if (!row) return;
+    qa_collision_destroy(row->collision); row->collision = NULL;
+    free(row->prediction); row->prediction = NULL;
+}
+bool remote_q1_collision_acquire(frontend_remote_q1 *row, qa_collision_geometry **out, qa_error *error)
+{
+    if (!row || !out || !remote_q1_mutable(row) || !remote_q1_live(row,error) || !row->loaded || !row->map)
+        return remote_q1_fail(error,QA_ERROR_ARGUMENT,"Q1 collision requires its actual received map owner");
+    if (!row->collision) {
+        qa_bsp_view bsp;
+        if (!qa_bsp_open(qa_resource_bytes(row->map),&bsp,error) || bsp.family!=QA_BSP_Q1 ||
+            !qa_bsp_validate(&bsp,error) || !qa_collision_create(&bsp,&row->collision,error)) return false;
+        if (!qa_collision_bind_resource(row->collision,row->map,error)) {
+            qa_collision_destroy(row->collision); row->collision=NULL; return false;
+        }
+    }
+    *out=row->collision; return true;
 }
 static bool geometry(frontend_remote_q1 *row,qa_error *error)
 {
-    frontend_remote_q1_prediction *p=row->prediction;
-    if(p->geometry) return p->map==row->map || remote_q1_fail(error,QA_ERROR_ARGUMENT,"QW prediction belongs to another received map");
-    qa_bsp_view bsp;
-    if(!row->map || !qa_bsp_open(qa_resource_bytes(row->map),&bsp,error) || bsp.family!=QA_BSP_Q1 ||
-        !qa_bsp_validate(&bsp,error) || !qa_collision_create(&bsp,&p->geometry,error)) return false;
-    if(!qa_collision_bind_resource(p->geometry,row->map,error)){
-        qa_collision_destroy(p->geometry);p->geometry=NULL;return false;
-    }
-    qa_resource_retain(row->map); p->map=row->map; return true;
+    qa_collision_geometry *actual;
+    return remote_q1_collision_acquire(row,&actual,error);
 }
 static void merge(qa_trace_result *out,qa_trace_result hit)
 {
@@ -64,7 +68,7 @@ static bool trace(void *context,const qa_trace_query *query,qa_trace_result *out
 {
     frontend_remote_q1 *row=context;
     qa_trace_query q=*query; q.target=(qa_collision_target){0};
-    if(!qa_collision_trace(row->prediction->geometry,&q,out,error)) return false;
+    if(!qa_collision_trace(row->collision,&q,out,error)) return false;
     for(size_t i=0;i<row->current.count;++i) {
         const qa_q1_entity *entity=row->current.rows+i;
         if(entity->number==row->view_entity || !entity->model || entity->model>row->model_count) continue;
@@ -72,10 +76,10 @@ static bool trace(void *context,const qa_trace_query *query,qa_trace_result *out
         qa_trace_result hit; bool brush=path && path[0]=='*';
         if(brush) {
             char *end; unsigned long model=strtoul(path+1,&end,10);
-            if(end==path+1 || *end || !model || model>=qa_collision_model_count(row->prediction->geometry))
+            if(end==path+1 || *end || !model || model>=qa_collision_model_count(row->collision))
                 return remote_q1_fail(error,QA_ERROR_FORMAT,"Received QW brush has no actual collision model");
             q=*query; q.target=(qa_collision_target){.inline_model=true,.model=(uint32_t)model,.origin=vector(entity->origin)};
-            if(!qa_collision_trace(row->prediction->geometry,&q,&hit,error)) return false;
+            if(!qa_collision_trace(row->collision,&q,&hit,error)) return false;
         } else {
             if(query->policy.q1_move==QA_Q1_MOVE_NO_MONSTERS) continue;
             if(!entity->number || entity->number>32 || !row->qw_player_valid[entity->number-1] ||
@@ -112,7 +116,7 @@ static bool contents(void *context,const qa_point_query *query,qa_point_contents
 {
     frontend_remote_q1 *row=context;
     qa_point_query q=*query; q.target=(qa_collision_target){0};
-    return qa_collision_point_contents(row->prediction->geometry,&q,out,error);
+    return qa_collision_point_contents(row->collision,&q,out,error);
 }
 static bool is_brush(void *context,const qa_trace_result *hit,bool *out,qa_error *error)
 {

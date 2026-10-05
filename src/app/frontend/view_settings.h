@@ -28,7 +28,7 @@ typedef struct frontend_q1_view_settings {
 } frontend_q1_view_settings;
 typedef struct frontend_q1_motion_settings {
     float bob, bob_cycle, bob_up, roll_speed, roll_angle;
-    float idle_scale;
+    float idle_scale, kick_time, kick_roll, kick_pitch;
     qa_vec3 idle_cycle, idle_level, offset;
 } frontend_q1_motion_settings;
 typedef struct frontend_q1_motion_input {
@@ -41,6 +41,13 @@ bool frontend_view_settings_q1_motion_register(qa_cvars *,uint64_t owner,bool qu
 bool frontend_view_settings_q1_motion_owns(const char *,bool quakeworld);
 bool frontend_view_settings_q1_motion_sample(const qa_cvars *,bool quakeworld,
     frontend_q1_motion_settings *,qa_error *);
+void frontend_view_q1_damage(const frontend_q1_motion_settings *,qa_vec3 origin,qa_vec3 angles,
+    uint8_t armor,uint8_t blood,qa_vec3 from,frontend_q1_view_motion *);
+bool frontend_view_q1_damage_origin(uint8_t armor,uint8_t blood,const double from[3],qa_vec3 *,qa_error *);
+bool frontend_view_q1_local_damage(qa_frontend *,qa_actor_id,uint8_t armor,uint8_t blood,
+    qa_vec3 from,qa_error *);
+bool frontend_view_q1_chase(const frontend_q1_view_settings *,qa_collision_geometry *,
+    qa_vec3 eye,qa_vec3 aim_angles,qa_vec3 *origin,qa_vec3 *angles,qa_error *);
 /* One original Q1/QW refdef kernel; history belongs to the actual CLIENT seat
  * or received source and is rebuilt by fresh/load constructors. */
 void frontend_view_q1_motion(const frontend_q1_motion_settings *,const frontend_q1_motion_input *,
