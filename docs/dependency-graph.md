@@ -1,6 +1,6 @@
-# Implementation dependency graph
+# Historical implementation dependency graph
 
-This view records all 41 tasks in [dependencies.json](dependencies.json), originally published as vibecheck-jev plan revision 6. The current ledger policy is revision 7; the feature criteria and dependencies remain unchanged. The ledger owns current work claims. Reports recorded before judgment recovery are unverified; see [the recovery audit](audit/README.md). Local task status fields retain the published snapshot and are not a live completion report. The [source status table](implementation/source-status-20260929.md) gives a dated subsystem estimate.
+This page preserves the original 41-task plan in [dependencies.json](dependencies.json), published as plan revision 6. The diagram and task table record that historical planning snapshot. The [source status table](implementation/source-status-20260929.md) gives a dated subsystem estimate.
 
 ```mermaid
 flowchart LR
@@ -12,11 +12,9 @@ flowchart LR
     P03 --> RELEASE["RELEASE: full-project qualification"]
 ```
 
-No build, test, sanitizer, benchmark, or executable runs occur before the BASELINE source-completion gate.
+The diagram summarizes the original phase plan. The table below records its original direct prerequisites.
 
-The grouped diagram shows phase order. The table below records every direct prerequisite, including the full baseline gate. Code can be written concurrently against agreed interfaces. A task can be accepted only after its prerequisites are complete.
-
-## Exact prerequisites
+## Original prerequisites
 
 | Task | Work | Direct prerequisites |
 |---|---|---|
@@ -62,6 +60,6 @@ The grouped diagram shows phase order. The table below records every direct prer
 | `P03` | Enhancement and polish | `P02` |
 | `RELEASE` | Final full-project qualification | `P03` |
 
-## Scope and completion
+## Original scope
 
 [source-map.json](source-map.json) assigns all 23 functional targets and the donor's 27 top-level source directories to the relevant C tasks. One donor directory can contribute to several C modules. Shared implementations retain intentional policies and private state. These assignments account for scope and do not establish implementation or runtime coverage.
