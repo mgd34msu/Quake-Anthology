@@ -68,6 +68,7 @@ struct qa_display_gamma_ticket {
 };
 static qa_display_gamma *native_gamma_owner;
 static bool gamma_target_owned(const qa_display_gamma_ticket *, bool);
+static qa_display *display_gamma_parent(qa_display *);
 
 struct qa_display_surface_ticket {
     qa_display *active, *candidate;
@@ -960,9 +961,13 @@ static bool gamma_restore(qa_display_gamma *owner, qa_error *error)
 bool qa_display_gamma_begin(qa_display *display, bool ignore_hardware,
     qa_display_gamma **out, qa_error *error)
 {
+    qa_display *requested=display;
+    display=display_gamma_parent(display);
+    bool detached=display && requested!=display;
     if (!display || !out || *out || native_gamma_owner || display->gamma || display->destroy_pending ||
         display->capturing || display->surface_ticket || display->native_borrowed ||
-        !display->lease || display->lease->references != 1 || display->window != display->lease->window) {
+        !display->lease || (!detached && display->lease->references != 1) ||
+        display->window != display->lease->window) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Native gamma requires its exclusive actual display owner");
         return false;
     }
@@ -1318,6 +1323,12 @@ static bool display_guard_owned(const qa_display_restore_guard *guard,bool retir
             guard->candidate->native.gl.context!=guard->context))
         return display_save_error(error,QA_ERROR_ARGUMENT,"Display handoff lost its genuine native window/context owner");
     return true;
+}
+static qa_display *display_gamma_parent(qa_display *display)
+{
+    if (!display || !display->native_borrowed) return display;
+    const qa_display_restore_guard *guard=display->restore_guard;
+    return guard && guard->candidate==display && display_guard_owned(guard,false,NULL)?guard->active:NULL;
 }
 static bool display_guard_ready(const qa_display_restore_guard *guard,qa_error *error)
 {

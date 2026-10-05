@@ -16,7 +16,6 @@ struct frontend_q3_color {
     qa_gl_renderer *gl;
     qa_cpu_renderer *cpu;
     qa_display_gamma *gamma;
-    qa_display *acquired_gamma_display;
     qa_q3_image_upload_options upload;
     qa_q3_color_lighting lighting;
     frontend_q3_color_ticket *ticket;
@@ -64,7 +63,6 @@ static bool gamma_acquire(frontend_q3_color *owner, const qa_cvars_edit *edit,
     owner->gamma = qa_display_gamma_borrow(display);
     if (owner->gamma) return true;
     if (!qa_display_gamma_begin(display, ignore->integer != 0, &owner->gamma, error)) return false;
-    owner->acquired_gamma_display = display;
     return true;
 }
 
@@ -161,7 +159,8 @@ bool frontend_q3_source_color_ensure(qa_frontend *f, qa_error *error)
     if (ok) owner->lighting_ready = true;
     if (ok) ok = frontend_source_color_clamp(f, edit, error) &&
         profile_read(owner, edit, owner->display, &owner->upload, error);
-    if (ok && owner->upload.color.device.hardware_gamma)
+    if (ok && owner->upload.color.device.hardware_gamma &&
+        qa_display_gamma_parent_is(owner->gamma,owner->display))
         ok = qa_display_gamma_apply(owner->gamma, owner->upload.color.gamma, error);
     owner->initializing = false;
     owner->initialized = ok;
@@ -339,8 +338,7 @@ bool frontend_q3_source_color_retire(qa_frontend *f, qa_error *error)
     if (!frontend_q3_source_color_publication_finish(f,error)) return false;
     if (owner->initializing || owner->ticket)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source color retirement is entered");
-    if (owner->gamma && (qa_display_gamma_parent_is(owner->gamma, owner->display) ||
-        (owner->acquired_gamma_display && qa_display_gamma_parent_is(owner->gamma, owner->acquired_gamma_display))) &&
+    if (owner->gamma && qa_display_gamma_parent_is(owner->gamma, owner->display) &&
         !qa_display_gamma_release(&owner->gamma, error)) return false;
     free(owner); f->source_color = NULL;
     return true;
@@ -443,7 +441,6 @@ void frontend_q3_source_color_publish(frontend_q3_color_ticket *ticket)
     if (f->display != ticket->target || qa_display_gamma_borrow(f->display) != ticket->owner->gamma) return;
     if (ticket->native) qa_display_gamma_publish(ticket->native);
     ticket->owner->display = f->display;
-    ticket->owner->acquired_gamma_display = NULL;
     ticket->owner->upload = ticket->upload; ticket->owner->lighting = ticket->lighting;
     ticket->ready = false; ticket->published = true;
 }
