@@ -75,6 +75,10 @@ bool qa_application_q3_client_configuration_take_cvars(qa_application *,
     const qa_application_startup_source *, qa_cvars **, qa_error *);
 bool qa_application_q3_client_configuration_bind_cvars(qa_application *,
     const qa_application_startup_source *, qa_cvars *, qa_error *);
+/* The exact retained native CLIENT has returned its service, transport,
+ * acquired modules and synchronous callbacks. Its configuration stays owned. */
+bool qa_application_q3_client_configuration_unborrowed(qa_application *,
+    const qa_application_startup_source *);
 /* Exact held child identity, only inside checked hosted CLIENT retirement. */
 bool qa_application_q3_client_configuration_retiring(const qa_application *,
     const qa_application_startup_source *);

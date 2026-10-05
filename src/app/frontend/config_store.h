@@ -122,6 +122,15 @@ bool frontend_config_store_primary_legacy_current(const frontend_config_store *,
 bool frontend_config_store_select_bindings(frontend_config_store *,uint32_t authored_seat,
     qa_strings *,const qa_item_definition *,size_t,int32_t controller,qa_error *);
 bool frontend_config_store_reset_bindings(frontend_config_store *,uint32_t authored_seat,int32_t controller,qa_error *);
+/* Called at the returned live-player boundary after releasing held input and
+ * before replacing any physical seat services. The retained GAME owns these
+ * dictionaries until its actual candidate publishes or is cancelled. */
+bool frontend_config_store_local_seats_capture(frontend_config_store *,qa_error *);
+bool frontend_config_store_local_seat_prepare(frontend_config_store *,const qa_launch_seat *,unsigned physical_slot,qa_error *);
+bool frontend_config_store_local_seats_route(frontend_config_store *,qa_error *);
+/* Release omitted logical profiles only after their genuine CLIENT leases and
+ * physical input services have returned. Also consumes captured dictionaries. */
+bool frontend_config_store_local_seats_retire(frontend_config_store *,qa_error *);
 /* Only isolated input from this exact pending primary source is exposed. */
 qa_input_seat *frontend_config_store_candidate_input(const frontend_config_store *,qa_application *,
     const qa_launch_snapshot *,unsigned physical_ordinal);

@@ -20,6 +20,16 @@ bool qa_application_remote_player_actor(const qa_application *, qa_net_client_id
                                          qa_actor_id *);
 bool qa_application_remote_player_begin(qa_application *, qa_net_client_id, qa_net_seat_id, qa_error *);
 bool qa_application_remote_player_detach(qa_application *, qa_net_client_id, qa_net_seat_id, qa_error *);
+/* The local seat must already exist in the current launch metadata. Admission
+ * and retirement share the same real Source slot, role and actor lifecycle as
+ * remote players, without a network peer or a map replacement. */
+bool qa_application_local_player_available(qa_application *, uint32_t logical_seat, bool *, qa_error *);
+bool qa_application_local_player_attach(qa_application *, uint32_t logical_seat,
+    const char *userinfo, const char *skin, qa_actor_id *, qa_error *);
+bool qa_application_local_player_detach(qa_application *, uint32_t logical_seat, qa_error *);
+/* After the removed physical services are destroyed and launch metadata is
+ * published, release only the original CLIENT rows for omitted seats. */
+bool qa_application_local_player_clients_retire(qa_application *, qa_error *);
 bool qa_application_player_seat(const qa_application *, qa_actor_id, uint32_t *);
 
 #endif

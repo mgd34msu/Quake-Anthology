@@ -940,8 +940,7 @@ bool application_native_q1_console_create(application_provider *provider,
     }
     if (okay) okay = qa_cvars_set(cvars, "skill", skill, true, error) &&
         qa_cvars_set(cvars, "deathmatch", deathmatch, true, error) &&
-        qa_cvars_set(cvars, "coop", coop, true, error) &&
-        (rules->quakeworld || qa_cvars_set(cvars, "maxclients", maximum, true, error));
+        qa_cvars_set(cvars, "coop", coop, true, error);
     if (!okay) application_native_q1_console_destroy(provider, NULL);
     return okay;
 }

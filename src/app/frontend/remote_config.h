@@ -24,6 +24,9 @@ frontend_remote_config *frontend_remote_config_find(const frontend_remote_config
 bool frontend_remote_config_phase(const frontend_remote_configs *,const void *);
 bool frontend_remote_config_read(const frontend_remote_config *,frontend_remote_config_view *);
 bool frontend_remote_config_current(const frontend_remote_config *,const frontend_remote_config_view *);
+/* After physical CLIENT leases return, project retained local logical clients
+ * onto the currently published dense physical seat order. */
+bool frontend_remote_configs_local_routes(frontend_remote_configs *,qa_application *,qa_error *);
 bool frontend_remote_config_pending(const frontend_remote_config *,qa_application *,const qa_launch_snapshot *,
     const qa_application_startup_source *);
 bool frontend_remote_config_tuple(const frontend_remote_config *,qa_application_startup_source *);

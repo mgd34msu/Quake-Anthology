@@ -236,7 +236,7 @@ static bool native_profile(const qa_launch_instance *launch,
                                   : choices->world.skill;
         profile.teamplay = has_mode ? mode.teamplay : 0;
         profile.maximum_clients = launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD
-            ? 32u : (uint32_t)choices->seat_count;
+            ? 32u : 1u;
         for (size_t index = 0; index < choices->mode_count; ++index)
             if (choices->modes[index].rules.enabled &&
                 choices->modes[index].rules.source == QA_MODE_ROGUE &&
@@ -284,7 +284,6 @@ bool application_instance_configuration(void *opaque,
     case QA_GAME_Q1:
         profile_word(&hash, (uint32_t)profile.skill);
         profile_word(&hash, (uint32_t)profile.teamplay);
-        profile_word(&hash, profile.maximum_clients);
         profile_word(&hash, profile.cooperative);
         profile_word(&hash, profile.deathmatch);
         profile_word(&hash, profile.gamecfg);
@@ -310,9 +309,6 @@ bool application_instance_configuration(void *opaque,
     case QA_GAME_Q3:
         profile_word(&hash, profile.mode_kind);
         profile_word(&hash, profile.friendly_fire);
-        if (launch->selection.runtime == QA_PROGRAM_BUILTIN &&
-            !application_native_q3_remote_roles_identity(launch, choices, &hash, error))
-            return false;
         break;
     }
     qa_sha256_final(&hash, out);

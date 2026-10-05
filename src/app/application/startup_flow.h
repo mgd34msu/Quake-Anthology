@@ -17,6 +17,7 @@ bool application_startup_flow_consume_publication(qa_application *, application_
     const qa_launch_snapshot *, qa_error *);
 bool application_startup_flow_cleanup_publication(qa_application *, application_publication *, qa_error *);
 bool application_startup_flow_release_provider(application_provider *, qa_error *);
+bool application_startup_flow_release_console(application_provider *, const qa_console *, qa_error *);
 bool application_startup_script_read(application_provider *, const qa_command_context *,
     const char *, qa_bytes *, void **, qa_error *);
 void application_startup_script_release(application_provider *, void *);

@@ -78,6 +78,14 @@ static application_provider *configuration_owner(qa_application *app,
     return receiver_provider(app, source->scope.provider);
 }
 
+bool qa_application_q3_client_configuration_unborrowed(qa_application *app,
+    const qa_application_startup_source *source)
+{
+    application_provider *provider=configuration_owner(app,source,NULL);
+    return provider && provider->kind==APPLICATION_PROVIDER_Q3 &&
+        application_native_q3_remote_role_unborrowed(provider,source->scope.seat);
+}
+
 bool qa_application_q3_client_configuration_take_cvars(qa_application *app,
     const qa_application_startup_source *source, qa_cvars **out, qa_error *error)
 {

@@ -468,9 +468,9 @@ bool application_native_q2_console_prepare(application_provider *provider, const
         if (!dedicated_value) okay = application_fail(error, QA_ERROR_MEMORY, "Retaining Q2 engine startup mode");
         else memcpy(dedicated_value, dedicated->value, size);
     }
-    const char *names[] = {"skill", "deathmatch", "coop", "maxclients"};
-    bool present[4];
-    for (size_t i = 0; i < 4; ++i) present[i] = qa_cvars_find(cvars, names[i]) != NULL;
+    const char *names[] = {"skill", "deathmatch", "coop"};
+    bool present[3];
+    for (size_t i = 0; i < 3; ++i) present[i] = qa_cvars_find(cvars, names[i]) != NULL;
     if (okay && !cloned) okay = definitions(provider, common, sizeof(common) / sizeof(*common), error);
     if (okay && !cloned) okay = application_native_q2_engine_cvars(cvars, provider->owner, error);
     if (okay) okay = qa_server_admin_declarations(cvars,provider->owner,error);
@@ -489,11 +489,10 @@ bool application_native_q2_console_prepare(application_provider *provider, const
         if (mode->rules.source == QA_MODE_Q2_DEATHBALL && !qa_cvars_find(cvars, "goallimit"))
             okay = qa_cvars_register(cvars, "goallimit", "0", 0, provider->owner, NULL, error);
     }
-    char skill[16], maximum[sizeof(size_t) * CHAR_BIT + 1];
+    char skill[16];
     snprintf(skill, sizeof(skill), "%d", rules->skill);
-    snprintf(maximum, sizeof(maximum), "%zu", choices->seat_count ? choices->seat_count : 1);
-    const char *values[] = {skill, rules->deathmatch ? "1" : "0", rules->cooperative ? "1" : "0", maximum};
-    for (size_t i = 0; okay && !cloned && i < 4; ++i)
+    const char *values[] = {skill, rules->deathmatch ? "1" : "0", rules->cooperative ? "1" : "0"};
+    for (size_t i = 0; okay && !cloned && i < 3; ++i)
         if (!present[i]) okay = qa_cvars_set(cvars, names[i], values[i], true, error);
     if (okay) {
         qa_cvars_set_server_active(cvars, false);

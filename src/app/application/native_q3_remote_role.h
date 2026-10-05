@@ -10,14 +10,17 @@ typedef struct qa_native_q3_remote_client_transport qa_native_q3_remote_client_t
 typedef struct application_native_q3_client_modules application_native_q3_client_modules;
 
 bool application_native_q3_remote_roles_prepare(application_provider *, const qa_launch_choices *, qa_error *);
-bool application_native_q3_remote_roles_identity(const qa_launch_instance *, const qa_launch_choices *,
-    qa_sha256_context *, qa_error *);
+bool application_native_q3_remote_role_selected(const qa_launch_instance *, const qa_launch_choices *, uint32_t seat);
+/* Call only after the physical services for omitted seats have returned. */
+bool application_native_q3_remote_roles_retain(application_provider *, const qa_launch_choices *, qa_error *);
+bool application_native_q3_remote_role_retirement(application_provider *, const qa_application_startup_source *);
 bool application_native_q3_remote_roles_preinit(application_provider *, qa_error *);
 bool application_native_q3_remote_role_source_at(application_provider *, size_t,
     qa_application_startup_source *, bool *, qa_error *);
 bool application_native_q3_remote_role_configuration(application_provider *, uint32_t,
     qa_application_startup_source *, qa_error *);
 bool application_native_q3_remote_role_take(application_provider *, uint32_t, qa_cvars **, qa_error *);
+bool application_native_q3_remote_role_unborrowed(application_provider *,uint32_t);
 bool application_native_q3_remote_role_bind(application_provider *, uint32_t, qa_cvars *, qa_error *);
 bool application_native_q3_remote_role_context(application_provider *, uint32_t,
     qa_application_q3_client_context *, qa_error *);

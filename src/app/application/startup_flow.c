@@ -5,6 +5,7 @@
 #include "native_q2_console.h"
 #include "native_q1_console.h"
 #include "native_q3_console.h"
+#include "native_q3_remote_role.h"
 #include "startup_program.h"
 #include "engine_shutdown.h"
 #include "rankings.h"
@@ -396,25 +397,32 @@ static bool source_consoles_idle(const struct application_startup_flow *flow)
     return true;
 }
 
-bool application_startup_flow_release_provider(application_provider *provider, qa_error *error)
+static bool release_sources(application_provider *provider, const qa_console *console, qa_error *error)
 {
     struct application_startup_flow *flow = provider && provider->application
         ? provider->application->startup_flow : NULL;
     if (!flow) return true;
     for (size_t i = flow->count; i-- > 0;) {
         startup_source *source = flow->sources + i;
-        if (source->provider != provider) continue;
+        if (source->provider != provider || (console && source->owner.console!=console)) continue;
         if (source->phase)
             return application_fail(error, QA_ERROR_ARGUMENT, "Source teardown requires its returned configuration phase");
         if (!application_startup_program_abort(&source->program, error)) return false;
     }
     for (size_t i = 0; i < flow->count; ++i)
-        if (flow->sources[i].provider == provider) {
+        if (flow->sources[i].provider == provider && (!console || flow->sources[i].owner.console==console)) {
             flow->sources[i].owner.console = NULL;
             flow->sources[i].owner.cvars = NULL;
         }
     return true;
 }
+
+bool application_startup_flow_release_provider(application_provider *provider, qa_error *error)
+{ return release_sources(provider,NULL,error); }
+
+bool application_startup_flow_release_console(application_provider *provider,
+    const qa_console *console, qa_error *error)
+{ return release_sources(provider,console,error); }
 
 static void finish_candidate(qa_application *app, struct application_startup_flow *flow,
     const qa_launch_snapshot *candidate, bool published)
@@ -769,6 +777,14 @@ bool qa_application_startup_abort(qa_application *app, qa_error *error)
         free(flow);
         return true;
     }
+    /* Added CLIENT rows belong to the retained candidate until their actual
+     * configuration children have retired. The running GAME remains attached. */
+    for (size_t i=0; i<qa_launch_snapshot_instance_count(flow->candidate); ++i) {
+        application_provider *provider=qa_launch_snapshot_instance(flow->candidate,i)->state;
+        if (provider && provider->attached && provider->kind==APPLICATION_PROVIDER_Q3 &&
+            !application_native_q3_remote_roles_retain(provider,
+                qa_launch_snapshot_choices(flow->previous),error)) goto fail;
+    }
     /* Instances must release their hosts before the detached world is freed. */
     for (size_t i = 0; i < qa_launch_snapshot_instance_count(flow->candidate); ++i) {
         application_provider *provider = qa_launch_snapshot_instance(flow->candidate, i)->state;
@@ -877,6 +893,48 @@ bool qa_application_startup_bootstrap(qa_application *app, qa_error *error)
     return ok;
 }
 
+static bool prepare_physical_source(qa_application *app, struct application_startup_flow *flow,
+    application_provider *provider, const qa_application_startup_source *physical, qa_error *error)
+{
+    const qa_launch_instance *selected=qa_launch_snapshot_find(flow->candidate,
+        physical->descriptor->selection.instance);
+    bool ok=true, found=false;
+    startup_source *source = append_source(flow, error);
+    if (!source) return false;
+    source->provider = provider; source->owner = *physical;
+    if (flow->hooks.program_source) {
+        qa_application_startup_source previous;
+        bool inherited = false;
+        ok = flow->hooks.program_source(flow->hooks.context, app, flow->candidate,
+            &source->owner, &previous, &inherited, error);
+        if (ok && inherited)
+            ok = application_startup_program_prepare(app, flow->candidate, &previous,
+                &source->owner, &source->program, error);
+    }
+    ok = ok && qa_application_capture_command_context(app, &source->owner.command, &source->owner.command, error) &&
+        flow->hooks.prepare_source(flow->hooks.context, app, flow->candidate,
+            &source->owner, &source->phase, error);
+    if (ok && !source->phase)
+        ok = application_fail(error, QA_ERROR_ARGUMENT, "Startup factory returned no retained phase");
+    if (ok) {
+        qa_application_startup_source refreshed;
+        for (size_t index=0; ok; ++index) {
+            ok=application_provider_startup_source_at(provider,index,&refreshed,&found,error);
+            if (!ok || !found || refreshed.console==physical->console) break;
+        }
+        if (ok && (!found || refreshed.console != physical->console ||
+            refreshed.descriptor->storage != selected->storage ||
+            refreshed.scope.provider != physical->scope.provider || refreshed.scope.kind != physical->scope.kind ||
+            refreshed.scope.seat != physical->scope.seat || !refreshed.cvars))
+            ok = application_fail(error, QA_ERROR_ARGUMENT, "Startup configuration replaced its physical console authority");
+        if (ok) {
+            source->owner.cvars = refreshed.cvars;
+            if (source->program) ok = application_startup_program_refresh(source->program, &source->owner, error);
+        }
+    }
+    return ok;
+}
+
 static bool begin(qa_application *app, const qa_launch_draft *draft,
     bool replacing, qa_error *error)
 {
@@ -936,7 +994,9 @@ static bool begin(qa_application *app, const qa_launch_draft *draft,
         size_t i = ordinal == 0 ? primary : ordinal <= primary ? ordinal - 1 : ordinal;
         application_provider *provider = flow->publication->next[i];
         if (provider->constructed && provider->attached) {
-            for (size_t index = 0; ok && flow->hooks.program_source; ++index) {
+            if (provider->kind==APPLICATION_PROVIDER_Q3)
+                ok=application_native_q3_remote_roles_prepare(provider,choices,error);
+            for (size_t index = 0; ok; ++index) {
                 qa_application_startup_source target, previous;
                 bool found, inherited = false;
                 ok = application_provider_startup_source_at(provider, index, &target, &found, error);
@@ -948,6 +1008,19 @@ static bool begin(qa_application *app, const qa_launch_draft *draft,
                     break;
                 }
                 target.descriptor = selected;
+                if (provider->kind==APPLICATION_PROVIDER_Q3 &&
+                    target.scope.kind==QA_APPLICATION_CONSOLE_Q3_CGAME &&
+                    !application_native_q3_remote_role_selected(selected,choices,target.scope.seat))
+                    continue;
+                bool new_client=provider->kind==APPLICATION_PROVIDER_Q3 &&
+                    target.scope.kind==QA_APPLICATION_CONSOLE_Q3_CGAME &&
+                    !application_native_q3_remote_role_selected(selected,
+                        qa_launch_snapshot_choices(flow->previous),target.scope.seat);
+                if (new_client) {
+                    ok=prepare_physical_source(app,flow,provider,&target,error);
+                    continue;
+                }
+                if (!flow->hooks.program_source) continue;
                 ok = flow->hooks.program_source(flow->hooks.context, app, flow->candidate,
                     &target, &previous, &inherited, error);
                 if (!ok || !inherited) continue;
@@ -989,36 +1062,7 @@ static bool begin(qa_application *app, const qa_launch_draft *draft,
                 break;
             }
             physical.descriptor = selected;
-            startup_source *source = append_source(flow, error);
-            if (!source) { ok = false; break; }
-            source->provider = provider; source->owner = physical;
-            if (flow->hooks.program_source) {
-                qa_application_startup_source previous;
-                bool inherited = false;
-                ok = flow->hooks.program_source(flow->hooks.context, app, flow->candidate,
-                    &source->owner, &previous, &inherited, error);
-                if (ok && inherited)
-                    ok = application_startup_program_prepare(app, flow->candidate, &previous,
-                        &source->owner, &source->program, error);
-            }
-            ok = ok && qa_application_capture_command_context(app, &source->owner.command, &source->owner.command, error) &&
-                flow->hooks.prepare_source(flow->hooks.context, app, flow->candidate,
-                    &source->owner, &source->phase, error);
-            if (ok && !source->phase)
-                ok = application_fail(error, QA_ERROR_ARGUMENT, "Startup factory returned no retained phase");
-            if (ok) {
-                qa_application_startup_source refreshed;
-                ok = application_provider_startup_source_at(provider, source_index, &refreshed, &found, error);
-                if (ok && (!found || refreshed.console != physical.console ||
-                    refreshed.descriptor->storage != selected->storage ||
-                    refreshed.scope.provider != physical.scope.provider || refreshed.scope.kind != physical.scope.kind ||
-                    refreshed.scope.seat != physical.scope.seat || !refreshed.cvars))
-                    ok = application_fail(error, QA_ERROR_ARGUMENT, "Startup configuration replaced its physical console authority");
-                if (ok) {
-                    source->owner.cvars = refreshed.cvars;
-                    if (source->program) ok = application_startup_program_refresh(source->program, &source->owner, error);
-                }
-            }
+            ok=prepare_physical_source(app,flow,provider,&physical,error);
         }
     }
     app->routing_snapshot = routing;
@@ -1198,6 +1242,15 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
                 if (flow->sources[i].phase && flow->sources[i].provider->kind == APPLICATION_PROVIDER_Q2)
                     ok = application_native_q2_console_scripts(flow->sources[i].provider, NULL, error);
             if (ok) ok = release_phases(flow, error);
+            for (size_t i=0; ok && i<flow->count; ++i) {
+                startup_source *source=flow->sources+i;
+                if (source->provider->kind==APPLICATION_PROVIDER_Q3 && source->provider->attached &&
+                    source->owner.scope.kind==QA_APPLICATION_CONSOLE_Q3_CGAME &&
+                    !application_native_q3_remote_role_selected(source->owner.descriptor,
+                        qa_launch_snapshot_choices(flow->previous),source->owner.scope.seat))
+                    ok=flow->hooks.preinit_source(flow->hooks.context,app,flow->candidate,
+                        &source->owner,error) && qa_cvars_apply_latched(source->owner.cvars,NULL,error);
+            }
             if (ok) ok = qa_configuration_validate(flow->transaction, error);
             if (ok) flow->validated = true;
         }

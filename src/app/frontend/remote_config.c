@@ -7,6 +7,8 @@
 #include "network_config.h"
 #include "save_private.h"
 #include "source_restore.h"
+#include "native_q3_client.h"
+#include "capture.h"
 #include "shared_storage.h"
 #include "global_settings_storage.h"
 #include "qa/cvars_save.h"
@@ -169,6 +171,49 @@ bool frontend_remote_config_current(const frontend_remote_config *row,const fron
         current.q3_mouse==view->q3_mouse && current.q3_view==view->q3_view && current.movement_mouse==view->movement_mouse &&
         current.physical_seat==view->physical_seat && current.movement==view->movement &&
         current.ready==view->ready && current.published==view->published;
+}
+static bool local_route(const frontend_remote_config *row,const qa_launch_choices *choices,uint32_t *physical)
+{
+    for (size_t i=0;choices && i<choices->seat_count;++i)
+        if (choices->seats[i].id==row->scope.seat && choices->seats[i].local && !choices->seats[i].bot) {
+            *physical=(uint32_t)i; return row->physical_seat!=*physical;
+        }
+    return false;
+}
+bool frontend_remote_configs_local_routes(frontend_remote_configs *owner,qa_application *application,qa_error *error)
+{
+    qa_frontend *f=owner?owner->frontend:NULL;
+    if (!f || f->application!=application || f->options.dedicated || frontend_network_remote(f) ||
+        f->capture || f->source_restoring || owner->restoring || !frontend_seat_callbacks_returned(f) ||
+        qa_application_startup_pending(application))
+        return fail(error,QA_ERROR_ARGUMENT,"Local CLIENT routing requires its returned published frontend boundary");
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(application));
+    for (frontend_remote_config *row=owner->rows;row;row=row->next) {
+        uint32_t physical;
+        if (row->application!=application || !row->published || !local_route(row,choices,&physical)) continue;
+        qa_application_startup_source actual;
+        if (row->running || row->imported || row->retargeting || !row->configured || !row->released ||
+            row->phase || row->input || row->staging || physical>=f->options.seats || !f->seats ||
+            !f->seats[physical].input || !f->seats[physical].console ||
+            qa_input_seat_ordinal(f->seats[physical].input)!=physical ||
+            !qa_application_q3_client_configuration_read(application,row->scope.provider,row->scope.seat,&actual,error) ||
+            actual.console!=row->console || actual.cvars!=row->cvars || !scope_equal(actual.scope,row->scope) ||
+            !descriptor(row) || actual.descriptor->storage!=descriptor(row)->storage ||
+            !qa_application_q3_client_configuration_unborrowed(application,&actual))
+            return fail(error,QA_ERROR_ARGUMENT,"Local CLIENT routing retains another configuration or actual frontend lease");
+        for (size_t i=0;i<frontend_native_q3_count(f);++i) {
+            frontend_native_q3_view view;
+            if (!frontend_native_q3_read(f,i,&view,error)) return false;
+            if (view.receiver==row->scope.provider && view.launch_seat==row->scope.seat)
+                return fail(error,QA_ERROR_ARGUMENT,"Local CLIENT routing retains its actual native frontend service");
+        }
+    }
+    for (frontend_remote_config *row=owner->rows;row;row=row->next) {
+        uint32_t physical;
+        if (row->application==application && row->published && local_route(row,choices,&physical))
+            row->physical_seat=physical;
+    }
+    return true;
 }
 bool frontend_remote_config_pending(const frontend_remote_config *row,qa_application *application,
     const qa_launch_snapshot *candidate,const qa_application_startup_source *source)

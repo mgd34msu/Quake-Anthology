@@ -145,6 +145,8 @@ static bool images_prepare(frontend_config_store *,const qa_application_startup_
 static bool shared_storage_prepare(frontend_config_store *,qa_error *);
 static bool prepare_retained_input(frontend_config_store *,qa_application *,const qa_launch_snapshot *,qa_error *);
 static void discard_retained_input(frontend_config_store *);
+static bool prepare_input_publication(qa_frontend *,config_seat *,size_t,qa_error *);
+static void publish_input(config_seat *);
 static bool equal(const char *left,const char *right)
 {
     for (;;++left,++right) {
@@ -241,6 +243,12 @@ static size_t seat_index(const frontend_config_source *source,uint32_t logical)
     for (size_t i=0;i<source->seat_count;++i) if (source->seats[i].logical==logical) return i;
     return source->seat_count;
 }
+static bool local_seat_present(const qa_launch_choices *choices,uint32_t logical)
+{
+    for (size_t i=0;choices && i<choices->seat_count;++i)
+        if (choices->seats[i].id==logical) return choices->seats[i].local && !choices->seats[i].bot;
+    return false;
+}
 static bool seat_movement(const qa_launch_snapshot *snapshot,uint32_t logical,
     qa_console_dialect *dialect,qa_error *error)
 {
@@ -255,21 +263,51 @@ static bool same_command(const qa_command_context *,const qa_command_context *);
 static bool input_context(void *context,uint32_t ordinal,const qa_command_context *command,qa_error *error)
 {
     frontend_config_source *source=context;
-    if (!source || !command || ordinal>=source->seat_count || command->origin!=QA_COMMAND_SEAT ||
-        command->seat!=source->seats[ordinal].logical)
+    size_t index=source && command?seat_index(source,command->seat):0;
+    if (!source || !command || index>=source->seat_count || command->origin!=QA_COMMAND_SEAT)
         return fail(error,QA_ERROR_ARGUMENT,"Prepared input context leaves its actual source and authored seat");
     if (source_context(source,command)) return true;
-    const config_seat *seat=source->seats+ordinal;
-    if (seat->input && qa_input_seat_ordinal(seat->input)==ordinal &&
-        command->dialect==seat->movement_dialect && command->owner==source->command.owner &&
+    const config_seat *seat=source->seats+index;
+    qa_input_seat *input=seat->input;
+    qa_console_dialect movement=seat->movement_dialect;
+    frontend_config_store *manager=source->manager;
+    if (manager->input_source==source)
+        for (size_t i=0;i<manager->input_count;++i)
+            if (manager->input_seats[i].logical==command->seat && manager->input_seats[i].input &&
+                qa_input_seat_ordinal(manager->input_seats[i].input)==ordinal) {
+                input=manager->input_seats[i].input; movement=manager->input_seats[i].movement_dialect;
+            }
+    if (input && qa_input_seat_ordinal(input)==ordinal &&
+        command->dialect==movement && command->owner==source->command.owner &&
         command->session==source->command.session && command->client==source->command.client &&
         command->direct==source->command.direct && !command->script && !command->console_text &&
-        command->registry==source->command.registry && command->generation==source->command.generation &&
         qa_application_command_context_active(source->application,command)) {
-        qa_command_context actual=qa_input_seat_context(seat->input);
+        qa_command_context actual=qa_input_seat_context(input);
         if (same_command(command,&actual)) return true;
     }
     return fail(error,QA_ERROR_ARGUMENT,"Prepared input context leaves its actual source and authored seat");
+}
+static bool seat_input_create(frontend_config_source *source,config_seat *seat,
+    const qa_input_seat *active,unsigned physical,qa_error *error)
+{
+    qa_command_context command;
+    if (!current_command(source,&command,error) ||
+        !capture_seat_command(source->application,&command,seat->logical,&command,error)) return false;
+    qa_input_seat_options options={.context=command,.console=source->console,.cvars=seat->mouse,
+        .gamepad=active?*qa_input_seat_gamepad_tuning((qa_input_seat *)active):qa_gamepad_defaults(),
+        .seat=physical,.context_ready=input_context,.context_user=source};
+    seat->input=qa_input_seat_create(&options,error);
+    if (!seat->input || !qa_input_seat_profile(seat->input,seat->movement_dialect,error) ||
+        !qa_input_settings_register(seat->mouse,(qa_movement_kind)seat->movement_dialect,error)) return false;
+    if (!active) return true;
+    size_t count=qa_input_seat_binding_count(active);
+    if (count>SIZE_MAX/sizeof(qa_input_binding))
+        return fail(error,QA_ERROR_MEMORY,"Retaining actual carried logical bindings");
+    qa_input_binding *bindings=count?malloc(count*sizeof(*bindings)):NULL;
+    if (count && !bindings) return fail(error,QA_ERROR_MEMORY,"Retaining actual carried logical bindings");
+    for (size_t i=0;i<count;++i) bindings[i]=*qa_input_seat_binding_at(active,i);
+    bool ok=qa_input_seat_replace_bindings(seat->input,bindings,count,error);
+    free(bindings); return ok;
 }
 frontend_config_source *frontend_config_store_source(const frontend_config_store *owner,const qa_console *console)
 {
@@ -753,6 +791,20 @@ bool frontend_config_store_stage_input(frontend_config_store *manager,const qa_c
     if (ok) *staged=true;
     return ok;
 }
+static bool apply_archive(qa_cvars *registry,const qa_cvar_archive *archive,
+    const qa_cvars_edit *edit,const qa_cvars *engine,frontend_shared_values *values,bool shared,qa_error *error)
+{
+    for (size_t i=0;i<archive->count;++i) {
+        const qa_cvar_archive_entry *entry=archive->entries+i;
+        if (!entry->name || !entry->value)
+            return fail(error,QA_ERROR_FORMAT,"Archive entry lacks its retained scalar bytes");
+        qa_cvar_archive one={.entries=(qa_cvar_archive_entry *)entry,.count=1};
+        if (edit?qa_cvars_edit_find(edit,entry->name):qa_cvars_find(engine,entry->name)) {
+            if (shared && !frontend_shared_values_archive(values,&one,error)) return false;
+        } else if (!qa_cvar_archive_apply(registry,&one,error)) return false;
+    }
+    return true;
+}
 bool frontend_config_store_apply_archive(frontend_config_store *manager,qa_application *application,
     const qa_launch_snapshot *candidate,const qa_application_startup_source *source,qa_cvars *registry,
     const qa_cvar_archive *archive,bool shared,qa_error *error)
@@ -764,16 +816,7 @@ bool frontend_config_store_apply_archive(frontend_config_store *manager,qa_appli
     frontend_shared_values *values=frontend_shared_settings_values(manager->shared);
     const qa_cvars_edit *edit=frontend_shared_values_prepared(values);
     if (!edit) return fail(error,QA_ERROR_ARGUMENT,"Archive application lost its actual canonical edit");
-    for (size_t i=0;i<archive->count;++i) {
-        const qa_cvar_archive_entry *entry=archive->entries+i;
-        if (!entry->name || !entry->value)
-            return fail(error,QA_ERROR_FORMAT,"Archive entry lacks its retained scalar bytes");
-        qa_cvar_archive one={.entries=(qa_cvar_archive_entry *)entry,.count=1};
-        if (qa_cvars_edit_find(edit,entry->name)) {
-            if (shared && !frontend_shared_values_archive(values,&one,error)) return false;
-        } else if (!qa_cvar_archive_apply(registry,&one,error)) return false;
-    }
-    return true;
+    return apply_archive(registry,archive,edit,NULL,values,shared,error);
 }
 bool frontend_config_store_apply_shared_archive(frontend_config_store *manager,qa_application *application,
     const qa_launch_snapshot *candidate,const qa_application_startup_source *source,qa_error *error)
@@ -867,7 +910,10 @@ qa_input_seat *frontend_config_source_input(const frontend_config_source *source
     if (!source) return NULL;
     size_t index=seat_index(source,seat); if (index>=source->seat_count) return NULL;
     qa_frontend *f=source->manager->frontend;
-    return source->published?f->seats && index<f->options.seats?f->seats[index].input:NULL:source->seats[index].input;
+    if (source->seats[index].input) return source->seats[index].input;
+    uint32_t physical;
+    return source->published && f->seats && frontend_seat_ordinal_read(f,seat,&physical)?
+        f->seats[physical].input:NULL;
 }
 qa_cvars *frontend_config_source_seat_cvars(const frontend_config_source *source,uint32_t seat)
 { size_t index=source?seat_index(source,seat):0; return source && index<source->seat_count?source->seats[index].cvars:NULL; }
@@ -1299,11 +1345,16 @@ qa_input_seat *frontend_config_store_candidate_input(const frontend_config_store
     }
     for (frontend_config_source *source=manager->sources;source;source=source->next) {
         const qa_launch_instance *retained=instance(source);
-        if (source->application!=application || source->published || !source->primary ||
-            source->candidate!=candidate || !retained || retained->storage!=selected->storage ||
-            retained->state!=selected->state || ordinal>=source->seat_count ||
-            source->seats[ordinal].logical!=choices->seats[ordinal].id) continue;
-        return source->seats[ordinal].input;
+        size_t index=seat_index(source,choices->seats[ordinal].id);
+        if (source->application!=application || !source->primary || !retained ||
+            retained->storage!=selected->storage || retained->state!=selected->state ||
+            index>=source->seat_count || !choices->seats[ordinal].local || choices->seats[ordinal].bot) continue;
+        if (source->published) {
+            if (qa_application_startup_candidate(application)!=candidate || source->imported ||
+                !source->configured || !source->released || source->running || source->phase) continue;
+        } else if (source->candidate!=candidate) continue;
+        qa_input_seat *input=source->seats[index].input;
+        if (input && qa_input_seat_ordinal(input)==ordinal) return input;
     }
     return NULL;
 }
@@ -1369,12 +1420,12 @@ bool frontend_config_store_input_configuration(const frontend_config_store *mana
         const qa_launch_instance *selected=binding?qa_launch_snapshot_find(candidate,binding->instance):NULL;
         frontend_config_source *source=published_primary(manager,application);
         const qa_launch_instance *held=source?instance(source):NULL;
+        size_t index=source?seat_index(source,logical):0;
         qa_console_dialect movement;
         unchanged=source && held && selected && held->storage==selected->storage &&
             held->state==selected->state && source->configured && source->released &&
-            !source->imported && !source->running && ordinal<source->seat_count &&
-            source->seats[ordinal].logical==logical && seat_movement(candidate,logical,&movement,error) &&
-            movement==source->seats[ordinal].movement_dialect;
+            !source->imported && !source->running && index<source->seat_count &&
+            seat_movement(candidate,logical,&movement,error) && movement==source->seats[index].movement_dialect;
         if (!binding && !qa_launch_binding_for(old,(qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"")) {
             qa_command_context command=qa_seat_console_context_read(physical->console);
             unchanged=command.origin==QA_COMMAND_SEAT && !command.owner && command.seat==logical &&
@@ -1405,11 +1456,7 @@ static qa_input_seat *binding_seat(void *context,const qa_command_context *comma
     if (!source_context(source,command)) return NULL;
     size_t seat=command->origin==QA_COMMAND_SEAT?seat_index(source,command->seat):0;
     if (!source->primary || seat>=source->seat_count) return NULL;
-    if (source->published) {
-        qa_frontend *f=source->manager->frontend;
-        return seat<f->options.seats && f->seats?f->seats[seat].input:NULL;
-    }
-    return source->seats[seat].input;
+    return frontend_config_source_input(source,source->seats[seat].logical);
 }
 qa_cvars *frontend_config_store_cvar_owner(const frontend_config_store *manager,const qa_console *console,
     const qa_command_context *command,const char *name)
@@ -1643,9 +1690,10 @@ bool frontend_config_host_bindings(void *context,const qa_input_seat *physical,q
     frontend_remote_config *client=frontend_config_store_client(owner->manager,owner->source.console);
     if (client) return frontend_remote_config_bindings(client,owner->application,&owner->source,physical,out,error);
     frontend_config_source *game=namespace_game(owner->manager,owner->application,&owner->parent_game,error);
-    size_t ordinal=game?seat_index(game,owner->source.scope.seat):0;
+    size_t index=game?seat_index(game,owner->source.scope.seat):0;
+    uint32_t ordinal=qa_input_seat_ordinal(physical);
     qa_frontend *f=owner->manager->frontend;
-    if (!game || ordinal>=game->seat_count || !f->seats || ordinal>=f->options.seats ||
+    if (!game || index>=game->seat_count || !f->seats || ordinal>=f->options.seats ||
         f->seats[ordinal].input!=physical || qa_input_seat_ordinal(physical)!=ordinal)
         return fail(error,QA_ERROR_ARGUMENT,"Supplemental CLIENT bindings lost their stable physical seat");
     qa_input_seat *input=frontend_config_source_input(game,owner->source.scope.seat);
@@ -1707,11 +1755,27 @@ static bool selected_defaults(frontend_config_source *source,config_seat *seat,b
 {
     qa_strings *strings=qa_session_strings(qa_application_session(source->application));
     frontend_config_weapon_catalog catalog;
-    if (!frontend_config_weapon_defaults(source->application,source->candidate,
-        (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=seat->logical},strings,&catalog,error)) return false;
+    const qa_launch_snapshot *snapshot=source->candidate?source->candidate:qa_application_launch(source->application);
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(snapshot);
+    qa_launch_scope scope={.kind=QA_SCOPE_DEFAULT_PLAYER};
+    for (size_t i=0;choices && i<choices->seat_count;++i)
+        if (choices->seats[i].id==seat->logical) scope=(qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=seat->logical};
+    if (!frontend_config_weapon_defaults(source->application,snapshot,scope,strings,&catalog,error)) return false;
     return seed?frontend_authored_bindings_seed(seat->authored,seat->movement_dialect,strings,
         catalog.items,catalog.count,error):frontend_authored_bindings_select(seat->authored,seat->input,
         seat->movement_dialect,strings,catalog.items,catalog.count,0,error);
+}
+static bool seat_settings_apply(config_seat *seat,qa_error *error)
+{
+    if (seat->found) {
+        if (!qa_input_seat_replace_bindings(seat->input,seat->settings.bindings,seat->settings.binding_count,error) ||
+            !qa_input_mouse_settings_write(seat->mouse,&seat->settings.mouse,error)) return false;
+        frontend_authored_bindings_profile(seat->authored);
+        *qa_input_seat_gamepad_tuning(seat->input)=seat->settings.gamepad;
+        if (seat->settings.has_always_run && !qa_cvars_set_flags(seat->mouse,"cl_run",
+            seat->settings.always_run?"1":"0",QA_CVAR_ARCHIVE,error)) return false;
+    }
+    return true;
 }
 static bool archive(void *context,qa_error *error)
 {
@@ -1733,17 +1797,10 @@ static bool archive(void *context,qa_error *error)
         seat->cvars,&seat->client_archive,!source->seat_index,error) ||
         !frontend_config_store_apply_archive(source->manager,source->application,source->candidate,&tuple,
         seat->mouse,&seat->mouse_archive,!source->seat_index,error)) return false;
-    if (seat->found) {
-        if (!qa_input_seat_replace_bindings(seat->input,seat->settings.bindings,seat->settings.binding_count,error) ||
-            !qa_input_mouse_settings_write(seat->mouse,&seat->settings.mouse,error)) return false;
-        frontend_authored_bindings_profile(seat->authored);
-        *qa_input_seat_gamepad_tuning(seat->input)=seat->settings.gamepad;
-        if (seat->settings.has_always_run && !qa_cvars_set_flags(seat->mouse,"cl_run",
-            seat->settings.always_run?"1":"0",QA_CVAR_ARCHIVE,error)) return false;
-    }
+    if (!seat_settings_apply(seat,error)) return false;
     frontend_config_source *previous=published_primary(source->manager,source->application);
     size_t old=previous?seat_index(previous,seat->logical):0;
-    if (previous && source!=previous && old<previous->seat_count && old==source->seat_index) {
+    if (previous && source!=previous && old<previous->seat_count) {
         qa_input_seat *live=frontend_config_source_input(previous,seat->logical);
         qa_input_command_tuning tuning;
         if (!live || !frontend_authored_bindings_restore_previous(seat->authored,
@@ -1834,8 +1891,9 @@ static bool config_command(void *context,const qa_command_invocation *command,qa
     if (equal(name,"condump")) {
         if (command->argc!=2) { print(source,"condump <filename>\n"); return true; }
         qa_frontend *f=source->manager->frontend;
-        size_t seat=command->context.origin==QA_COMMAND_SEAT?seat_index(source,command->context.seat):0;
-        if (!f->seats || seat>=f->options.seats || !f->seats[seat].console)
+        uint32_t seat;
+        if (!frontend_command_seat_read(f,&command->context,&seat) || !f->seats ||
+            seat>=f->options.seats || !f->seats[seat].console)
             return fail(error,QA_ERROR_UNSUPPORTED,"Console dump requires its actual local console buffer");
         return frontend_config_files_dump(source->files,command->argv[1],&command->context,
             qa_seat_console_buffer(f->seats[seat].console),error);
@@ -1865,6 +1923,32 @@ bool frontend_config_store_write_source_text(frontend_config_store *manager,
         if (source->console==command->console && source_context(source,&command->context))
             return frontend_config_files_write_config_text(source->files,path,&command->context,text,error);
     return fail(error,QA_ERROR_ARGUMENT,"Source file write has no genuine configured source owner");
+}
+static void seat_values_destroy(config_seat *seat)
+{
+    qa_input_seat_destroy(seat->input);
+    frontend_authored_bindings_destroy(seat->authored);
+    if (!seat->cvars_transferred) qa_cvars_destroy(seat->cvars);
+    qa_cvars_destroy(seat->mouse);
+    qa_seat_settings_free(&seat->settings);
+    qa_cvar_archive_free(&seat->client_archive); qa_cvar_archive_free(&seat->mouse_archive);
+    free(seat->registry_instance);
+    *seat=(config_seat){0};
+}
+static bool seat_retire(config_seat *seat,qa_error *error)
+{
+    if ((seat->input && (qa_input_seat_has_held(seat->input) || qa_input_seat_release_read(seat->input))) ||
+        (seat->mouse && !qa_cvars_observer_idle(seat->mouse)) ||
+        (seat->cvars && !qa_cvars_observer_idle(seat->cvars)) ||
+        (seat->registry && !frontend_client_registry_release_ready(seat->registry,error)))
+        return fail(error,QA_ERROR_ARGUMENT,"Local input profile retains its actual release, registry or client borrower");
+    if (seat->registry) {
+        if (!frontend_client_registry_release(&seat->registry,error)) {
+            seat->cvars=frontend_client_registry_cvars(seat->registry); return false;
+        }
+        seat->cvars=NULL;
+    }
+    seat_values_destroy(seat); return true;
 }
 static bool source_destroy(frontend_config_source *source,qa_error *error)
 {
@@ -1916,15 +2000,7 @@ static bool source_destroy(frontend_config_source *source,qa_error *error)
             !frontend_key_profile_release(source->keys,error)) return false;
         source->keys=NULL; source->files=NULL;
     } else if (!frontend_config_files_destroy(source->files,error)) return false;
-    for (size_t i=0;i<source->seat_count;++i) {
-        config_seat *seat=source->seats+i;
-        qa_input_seat_destroy(seat->input);
-        frontend_authored_bindings_destroy(seat->authored);
-        if (!seat->cvars_transferred) qa_cvars_destroy(seat->cvars);
-        qa_cvars_destroy(seat->mouse);
-        qa_seat_settings_free(&seat->settings); qa_cvar_archive_free(&seat->client_archive); qa_cvar_archive_free(&seat->mouse_archive);
-        free(seat->registry_instance);
-    }
+    for (size_t i=0;i<source->seat_count;++i) seat_values_destroy(source->seats+i);
     if (source->fallback!=source->movement) qa_cvars_destroy(source->fallback);
     qa_cvars_destroy(source->movement);
     qa_cvar_archive_free(&source->source_archive); qa_cvar_archive_free(&source->movement_archive); qa_cvar_archive_free(&source->fallback_archive);
@@ -2107,18 +2183,19 @@ static frontend_config_source *previous_source(frontend_config_store *manager,qa
             retained->storage!=old->storage || retained->state!=old->state ||
             source->primary!=primary_source(candidate,selected)) continue;
         const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
-        if (source->primary && !manager->frontend->options.dedicated &&
-            (!choices || choices->seat_count!=source->seat_count)) return NULL;
+        if (source->primary && !manager->frontend->options.dedicated && !choices) return NULL;
         const qa_launch_binding *movement=qa_launch_binding_for(choices,
             (qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER},QA_ROLE_MOVEMENT,"");
         const qa_launch_instance *movement_source=movement?qa_launch_snapshot_find(candidate,movement->instance):selected;
         if (!movement_source || (qa_console_dialect)movement_source->selection.clock.kind!=source->movement_dialect)
             return NULL;
-        for (size_t i=0;i<source->seat_count;++i) {
+        for (size_t i=0;source->seat_count && choices && i<choices->seat_count;++i) {
+            if (!choices->seats[i].local || choices->seats[i].bot) continue;
+            size_t index=seat_index(source,choices->seats[i].id);
             qa_console_dialect seat_dialect;
-            if (!choices || i>=choices->seat_count || choices->seats[i].id!=source->seats[i].logical ||
-                !seat_movement(candidate,source->seats[i].logical,&seat_dialect,NULL) ||
-                seat_dialect!=source->seats[i].movement_dialect) return NULL;
+            if (index>=source->seat_count ||
+                !seat_movement(candidate,source->seats[index].logical,&seat_dialect,NULL) ||
+                seat_dialect!=source->seats[index].movement_dialect) return NULL;
         }
         return source;
     }
@@ -2296,31 +2373,20 @@ static bool carry(frontend_config_store *manager,qa_application *application,
                 QA_APPLICATION_CONSOLE_Q3_GAME,0},cvars,error);
     }
     const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
-    for (size_t i=0;ok && i<previous->seat_count;++i) {
-        if (!choices || i>=choices->seat_count || choices->seats[i].id!=previous->seats[i].logical) {
+    for (size_t i=0;ok && previous->seat_count && choices && i<choices->seat_count;++i) {
+        if (!choices->seats[i].local || choices->seats[i].bot) continue;
+        size_t index=seat_index(previous,choices->seats[i].id);
+        if (index>=previous->seat_count) {
             ok=fail(error,QA_ERROR_ARGUMENT,"Source carry changed its actual authored seat profile"); break;
         }
-        const config_seat *old_seat=previous->seats+i;
+        const config_seat *old_seat=previous->seats+index;
         config_seat *seat=source->seats+source->seat_count++; seat->logical=old_seat->logical;
         if (!seat_movement(candidate,seat->logical,&seat->movement_dialect,error)) { ok=false; break; }
         ok=registry_carry(source,old_seat->cvars,previous->declaration_owner,&seat->cvars,error) &&
             registry_carry(source,old_seat->mouse,0,&seat->mouse,error) &&
             frontend_authored_bindings_clone(old_seat->authored,&seat->authored,error);
         qa_input_seat *active=frontend_config_source_input(previous,seat->logical);
-        qa_command_context seat_command=*command;
-        ok=ok && active && capture_seat_command(application,command,seat->logical,&seat_command,error);
-        qa_input_seat_options options={.context=seat_command,.console=console,.cvars=seat->mouse,
-            .gamepad=active?*qa_input_seat_gamepad_tuning(active):qa_gamepad_defaults(),
-            .seat=(uint32_t)i,.context_ready=input_context,.context_user=source};
-        if (ok) { seat->input=qa_input_seat_create(&options,error); ok=seat->input!=NULL; }
-        if (ok) ok=qa_input_seat_profile(seat->input,seat->movement_dialect,error) &&
-            qa_input_settings_register(seat->mouse,(qa_movement_kind)seat->movement_dialect,error);
-        size_t count=active?qa_input_seat_binding_count(active):0;
-        qa_input_binding *bindings=ok && count<=SIZE_MAX/sizeof(*bindings)?malloc(count?count*sizeof(*bindings):1):NULL;
-        if (ok && !bindings) ok=fail(error,QA_ERROR_MEMORY,"Retaining actual carried logical bindings");
-        for (size_t n=0;ok && n<count;++n) bindings[n]=*qa_input_seat_binding_at(active,n);
-        if (ok) ok=qa_input_seat_replace_bindings(seat->input,bindings,count,error);
-        free(bindings);
+        ok=ok && active && seat_input_create(source,seat,active,(unsigned)i,error);
         qa_buffer settings={0};
         if (ok && old_seat->found) ok=qa_seat_settings_encode(&old_seat->settings,&settings,error) &&
             qa_seat_settings_parse((qa_bytes){settings.data,settings.size},&seat->settings,error);
@@ -2563,11 +2629,16 @@ static bool prepare_retained_input(frontend_config_store *manager,qa_application
     if (!source) return true;
     qa_frontend *f=manager->frontend;
     const qa_launch_snapshot *previous=qa_application_launch(application);
-    bool changed=source!=published_primary(manager,application);
-    for (size_t i=0;i<source->seat_count;++i) {
-        uint32_t logical=source->seats[i].logical;
-        if (!same_input_role(previous,candidate,logical,QA_ROLE_MOVEMENT) ||
+    const qa_launch_choices *old_choices=qa_launch_snapshot_choices(previous);
+    bool changed=source!=published_primary(manager,application) || !old_choices ||
+        choices->seat_count!=old_choices->seat_count;
+    for (size_t i=0;i<choices->seat_count;++i) {
+        uint32_t logical=choices->seats[i].id;
+        if (!old_choices || i>=old_choices->seat_count || old_choices->seats[i].id!=logical ||
+            !same_input_role(previous,candidate,logical,QA_ROLE_MOVEMENT) ||
             !same_input_role(previous,candidate,logical,QA_ROLE_ARSENAL)) changed=true;
+        size_t index=seat_index(source,logical);
+        if (index<source->seat_count && source->seats[index].input) changed=true;
     }
     if (!changed && !manager->input_source) return true;
     if (manager->input_source) {
@@ -2577,28 +2648,24 @@ static bool prepare_retained_input(frontend_config_store *manager,qa_application
     }
     if (manager->restoring || manager->running || !source->configured || !source->released ||
         source->imported || source->running || source->phase || !qa_console_idle(source->console) ||
-        !choices || choices->seat_count<source->seat_count || source->seat_count!=f->options.seats || !f->seats ||
+        !choices || choices->seat_count>QA_INPUT_LOCAL_SEATS || choices->seat_count!=f->options.seats || !f->seats ||
         qa_application_startup_candidate(application)!=candidate ||
         !qa_application_startup_resource_phase(application,candidate))
         return fail(error,QA_ERROR_ARGUMENT,"Retained input staging requires its actual reused primary source and release phase");
     manager->input_source=source; manager->input_candidate=candidate; manager->input_application=application;
-    for (size_t i=0;i<source->seat_count;++i) {
-        const config_seat *old=source->seats+i;
+    for (size_t i=0;i<choices->seat_count;++i) {
+        size_t index=seat_index(source,choices->seats[i].id);
+        if (!choices->seats[i].local || choices->seats[i].bot || index>=source->seat_count)
+            return fail(error,QA_ERROR_ARGUMENT,"Retained input staging lacks its actual authored local profile");
+        const config_seat *old=source->seats+index;
         config_seat *seat=manager->input_seats+manager->input_count++;
-        qa_input_seat *active=f->seats[i].input;
-        if (!choices->seats[i].local || choices->seats[i].bot || choices->seats[i].id!=old->logical ||
-            !active || qa_input_seat_ordinal(active)!=i)
-            return fail(error,QA_ERROR_ARGUMENT,"Retained input staging changed its actual authored physical seat");
-        seat->logical=old->logical;
+        qa_input_seat *active=old->input?old->input:frontend_config_source_input(source,old->logical);
+        if (!active || qa_input_seat_has_held(active) || qa_input_seat_release_read(active))
+            return fail(error,QA_ERROR_ARGUMENT,"Retained input staging requires its returned actual logical dictionary");
+        seat->logical=old->logical; seat->mouse=old->mouse;
         if (!seat_movement(candidate,seat->logical,&seat->movement_dialect,error) ||
-            !qa_input_seat_configuration_clone(active,&seat->input,error) ||
-            !qa_input_seat_profile(seat->input,seat->movement_dialect,error) ||
+            !seat_input_create(source,seat,active,(unsigned)i,error) ||
             !frontend_authored_bindings_clone(old->authored,&seat->authored,error)) return false;
-        qa_command_context command=qa_input_seat_context(active);
-        command.registry=command.generation=0; command.actor=(qa_actor_id){0};
-        command.dialect=seat->movement_dialect;
-        if (!qa_input_seat_context_ready(seat->input,&command,error)) return false;
-        qa_input_seat_context_publish(seat->input,&command);
         frontend_config_weapon_catalog catalog;
         qa_strings *strings=qa_session_strings(qa_application_session(application));
         int32_t controller=f->input?qa_input_platform_controller(f->input,(unsigned)i):-1;
@@ -2609,6 +2676,145 @@ static bool prepare_retained_input(frontend_config_store *manager,qa_application
     }
     manager->input_prepared=true; return true;
 }
+static bool seat_create(frontend_config_source *source, const qa_launch_snapshot *candidate,
+    config_seat *seat, uint32_t logical, unsigned physical, qa_error *error)
+{
+    qa_frontend *f=source->manager->frontend;
+    qa_application *application=source->application;
+    const qa_launch_instance *selected=instance(source);
+    qa_catalog *catalog=qa_launch_instance_catalog(selected);
+    const qa_product *product=qa_catalog_product(catalog,selected->selection.product);
+    const qa_command_context *command=&source->command;
+    qa_settings_store store=frontend_config_files_store(source->files,false);
+    const char *dialects[]={"q1-netquake","q1-quakeworld","q2-classic","q2-rerelease","q3"};
+    bool ok=true;
+    seat->logical=logical;
+    seat->authored=frontend_authored_bindings_create(error);
+    if (!seat->authored) return false;
+    if (!seat_movement(candidate,seat->logical,&seat->movement_dialect,error)) return false;
+    if (!selected_defaults(source,seat,true,error)) return false;
+    seat->cvars=registry(source,command->dialect,error); seat->mouse=registry(source,command->dialect,error);
+    if (seat->cvars && command->dialect==QA_CONSOLE_Q3) {
+        qa_q3_product_policy policy;
+        ok=qa_application_q3_product_policy_read(application,&policy) &&
+            qa_q3_product_policy_register_source(&policy,seat->cvars,0,error);
+        if (!ok && (!error || error->code==QA_OK))
+            fail(error,QA_ERROR_ARGUMENT,"Prepared client lost its resolved immutable Q3 product policy");
+    }
+    qa_command_context seat_command;
+    ok=ok && current_command(source,&seat_command,error) &&
+        capture_seat_command(application,&seat_command,seat->logical,&seat_command,error);
+    if (ok && seat->cvars && seat->mouse) ok=seat_input_create(source,seat,NULL,physical,error);
+    char index[16],path[64]; snprintf(index,sizeof(index),"%" PRIu32,seat->logical);
+    snprintf(path,sizeof(path),"input/seat-%" PRIu64 ".json",(uint64_t)seat->logical+1);
+    const char *client_owner[4]={"client",product->key,selected->selection.implementation,index};
+    const char *mouse_owner[3]={"input",dialects[command->dialect],index};
+    const char *model=command->dialect==QA_CONSOLE_Q3?
+        f->options.character_model?f->options.character_model:"sarge":
+        f->options.character_model && (!f->options.character || !strcmp(f->options.character,"q2"))?
+        f->options.character_model:"male";
+    ok=ok && seat->input && frontend_config_userinfo_register(seat->cvars,seat->logical,model,error) &&
+        qa_settings_load_seat(input_store(source),path,&seat->settings,&seat->found,error) &&
+        qa_settings_load_cvars(store,client_owner,4,command->dialect,&seat->client_archive,error) &&
+        qa_settings_load_cvars(input_store(source),mouse_owner,3,command->dialect,&seat->mouse_archive,error);
+    if (ok && product->builtin && product->program_kind==QA_PROGRAM_BUILTIN &&
+        product->family==QA_GAME_Q2)
+        ok=frontend_source_q2_settings_register(selected,seat->cvars,&seat_command,error);
+    else if (ok && product->builtin && product->program_kind==QA_PROGRAM_BUILTIN &&
+        product->family==QA_GAME_Q1)
+        ok=frontend_legacy_source_register(seat->cvars,command->dialect,source->declaration_owner,error);
+    return ok;
+}
+static frontend_config_source *local_source(frontend_config_store *manager,qa_error *error)
+{
+    qa_frontend *f=manager?manager->frontend:NULL;
+    frontend_config_source *source=f?published_primary(manager,f->application):NULL;
+    if (!source || f->options.dedicated || frontend_network_remote(f) || manager->running || manager->restoring ||
+        manager->input_source || manager->prepared || manager->shared || qa_application_startup_pending(f->application) ||
+        source->imported || source->running || !source->configured || !source->released || source->phase ||
+        !qa_console_idle(source->console)) {
+        fail(error,QA_ERROR_ARGUMENT,"Local profile transition requires its returned retained GAME configuration");
+        return NULL;
+    }
+    return source;
+}
+bool frontend_config_store_local_seats_capture(frontend_config_store *manager,qa_error *error)
+{
+    frontend_config_source *source=local_source(manager,error);
+    if (!source) return false;
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(source->application));
+    for (size_t i=0;i<source->seat_count;++i) {
+        config_seat *seat=source->seats+i;
+        if (!local_seat_present(choices,seat->logical) || seat->input) continue;
+        qa_input_seat *active=frontend_config_source_input(source,seat->logical);
+        if (!active || qa_input_seat_has_held(active) || qa_input_seat_release_read(active))
+            return fail(error,QA_ERROR_ARGUMENT,"Local profile capture requires its genuinely released physical input");
+        if (!seat_input_create(source,seat,active,qa_input_seat_ordinal(active),error)) return false;
+    }
+    return true;
+}
+bool frontend_config_store_local_seat_prepare(frontend_config_store *manager,const qa_launch_seat *local,
+    unsigned physical,qa_error *error)
+{
+    frontend_config_source *source=local_source(manager,error);
+    qa_frontend *f=manager?manager->frontend:NULL;
+    if (!source) return false;
+    if (!local || !local->local || local->bot || !f->seats || physical>=f->options.seats ||
+        !f->seats[physical].input || !f->seats[physical].console)
+        return fail(error,QA_ERROR_ARGUMENT,"Local profile preparation lacks its genuine authored and physical seat");
+    size_t index=seat_index(source,local->id);
+    if (index<source->seat_count)
+        return (source->seats[index].input && frontend_authored_bindings_completed(source->seats[index].authored)) ||
+            fail(error,QA_ERROR_ARGUMENT,"Local profile preparation retains an incomplete actual constructor");
+    if (source->seat_count>=QA_INPUT_LOCAL_SEATS)
+        return fail(error,QA_ERROR_MEMORY,"Local profile capacity is exhausted");
+    config_seat *seat=source->seats+source->seat_count++;
+    const qa_launch_snapshot *published=qa_application_launch(source->application);
+    qa_cvars *engine=qa_application_cvars(source->application);
+    bool ok=seat_create(source,published,seat,local->id,physical,error) &&
+        frontend_authored_bindings_defaults(seat->authored,seat->input,seat->movement_dialect,error) &&
+        apply_archive(seat->cvars,&seat->client_archive,NULL,engine,NULL,false,error) &&
+        apply_archive(seat->mouse,&seat->mouse_archive,NULL,engine,NULL,false,error) &&
+        seat_settings_apply(seat,error);
+    if (ok) frontend_authored_bindings_finish(seat->authored);
+    return ok;
+}
+bool frontend_config_store_local_seats_route(frontend_config_store *manager,qa_error *error)
+{
+    return manager && frontend_remote_configs_local_routes(manager->clients,manager->frontend->application,error);
+}
+bool frontend_config_store_local_seats_retire(frontend_config_store *manager,qa_error *error)
+{
+    frontend_config_source *source=local_source(manager,error);
+    if (!source) return false;
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(source->application));
+    for (size_t i=0;i<source->seat_count;) {
+        config_seat *seat=source->seats+i;
+        if (local_seat_present(choices,seat->logical)) {
+            if (seat->input && (qa_input_seat_has_held(seat->input) || qa_input_seat_release_read(seat->input)))
+                return fail(error,QA_ERROR_ARGUMENT,"Captured local profile retains an actual input release");
+            if (seat->input) {
+                uint32_t physical;
+                if (!frontend_seat_ordinal_read(manager->frontend,seat->logical,&physical))
+                    return fail(error,QA_ERROR_ARGUMENT,"Captured local profile lost its actual published physical seat");
+                qa_input_seat *captured=seat->input; seat->input=NULL;
+                bool ok=seat_input_create(source,seat,captured,physical,error) &&
+                    prepare_input_publication(manager->frontend,seat,physical,error);
+                if (ok) publish_input(seat);
+                qa_input_seat_destroy(seat->input); seat->input=NULL;
+                seat->publication_input=NULL; seat->publication_console=NULL;
+                if (!ok) { seat->input=captured; return false; }
+                qa_input_seat_destroy(captured);
+            }
+            ++i; continue;
+        }
+        if (!seat_retire(seat,error)) return false;
+        for (size_t next=i+1;next<source->seat_count;++next) source->seats[next-1]=source->seats[next];
+        source->seats[--source->seat_count]=(config_seat){0};
+    }
+    return true;
+}
+
 static bool prepare(void *context,qa_application *application,const qa_launch_snapshot *candidate,
     const qa_application_startup_source *authority,void **phase,qa_error *error)
 {
@@ -2662,7 +2868,6 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
     if (ok) source->movement=registry(source,source->movement_dialect,error);
     if (ok) source->fallback=source->movement_dialect==command->dialect?source->movement:registry(source,command->dialect,error);
     ok=ok && source->movement && source->fallback;
-    qa_settings_store store=source->files?frontend_config_files_store(source->files,false):(qa_settings_store){0};
     const char *dialects[]={"q1-netquake","q1-quakeworld","q2-classic","q2-rerelease","q3"};
     if (ok && source->primary)
         ok=source_archive_load(source->files,product,&selected->selection,command->dialect,&source->source_archive,error);
@@ -2675,44 +2880,7 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
     for (unsigned i=0;ok && source->primary && !f->options.dedicated && i<f->options.seats;++i) {
         if (i>=choices->seat_count) { ok=fail(error,QA_ERROR_ARGUMENT,"Configuration source lacks its actual authored local seat"); break; }
         config_seat *seat=source->seats+source->seat_count++;
-        seat->logical=choices->seats[i].id;
-        seat->authored=frontend_authored_bindings_create(error);
-        if (!seat->authored) { ok=false; break; }
-        if (!seat_movement(candidate,seat->logical,&seat->movement_dialect,error)) { ok=false; break; }
-        if (!selected_defaults(source,seat,true,error)) { ok=false; break; }
-        seat->cvars=registry(source,command->dialect,error); seat->mouse=registry(source,command->dialect,error);
-        if (seat->cvars && command->dialect==QA_CONSOLE_Q3) {
-            qa_q3_product_policy policy;
-            ok=qa_application_q3_product_policy_read(application,&policy) &&
-                qa_q3_product_policy_register_source(&policy,seat->cvars,0,error);
-            if (!ok && (!error || error->code==QA_OK))
-                fail(error,QA_ERROR_ARGUMENT,"Prepared client lost its resolved immutable Q3 product policy");
-        }
-        qa_command_context seat_command=*command;
-        ok=ok && capture_seat_command(application,command,seat->logical,&seat_command,error);
-        qa_input_seat_options options={.context=seat_command,.console=console,.cvars=seat->mouse,.gamepad=qa_gamepad_defaults(),
-            .seat=i,.context_ready=input_context,.context_user=source};
-        if (ok && seat->cvars && seat->mouse) seat->input=qa_input_seat_create(&options,error);
-        char index[16],path[64]; snprintf(index,sizeof(index),"%" PRIu32,seat->logical);
-        snprintf(path,sizeof(path),"input/seat-%" PRIu64 ".json",(uint64_t)seat->logical+1);
-        const char *client_owner[4]={"client",product->key,selected->selection.implementation,index};
-        const char *mouse_owner[3]={"input",dialects[command->dialect],index};
-        const char *model=command->dialect==QA_CONSOLE_Q3?
-            f->options.character_model?f->options.character_model:"sarge":
-            f->options.character_model && (!f->options.character || !strcmp(f->options.character,"q2"))?
-                f->options.character_model:"male";
-        ok=seat->input && frontend_config_userinfo_register(seat->cvars,seat->logical,model,error) &&
-            qa_input_seat_profile(seat->input,seat->movement_dialect,error) &&
-            qa_input_settings_register(seat->mouse,(qa_movement_kind)seat->movement_dialect,error) &&
-            qa_settings_load_seat(input_store(source),path,&seat->settings,&seat->found,error) &&
-            qa_settings_load_cvars(store,client_owner,4,command->dialect,&seat->client_archive,error) &&
-            qa_settings_load_cvars(input_store(source),mouse_owner,3,command->dialect,&seat->mouse_archive,error);
-        if (ok && product->builtin && product->program_kind==QA_PROGRAM_BUILTIN &&
-            product->family==QA_GAME_Q2)
-            ok=frontend_source_q2_settings_register(selected,seat->cvars,&seat_command,error);
-        else if (ok && product->builtin && product->program_kind==QA_PROGRAM_BUILTIN &&
-            product->family==QA_GAME_Q1)
-            ok=frontend_legacy_source_register(seat->cvars,command->dialect,source->declaration_owner,error);
+        ok=seat_create(source,candidate,seat,choices->seats[i].id,i,error);
     }
     if (ok) ok=install_commands(source,error);
     if (ok && source->primary) ok=phase_create(source,error);
@@ -3034,11 +3202,13 @@ static void finish(void *context,qa_application *application,const qa_launch_sna
     if (published) {
         if (manager->input_source) {
             for (size_t i=0;i<manager->input_count;++i) {
-                config_seat *seat=manager->input_seats+i,*stable=manager->input_source->seats+i;
+                config_seat *seat=manager->input_seats+i;
+                config_seat *stable=manager->input_source->seats+seat_index(manager->input_source,seat->logical);
                 publish_input(seat);
                 frontend_authored_bindings *authored=stable->authored;
                 stable->authored=seat->authored; seat->authored=authored;
                 stable->movement_dialect=seat->movement_dialect;
+                qa_input_seat_destroy(stable->input); stable->input=NULL;
             }
         }
         for (frontend_config_source *source=manager->sources;source;source=source->next) {
@@ -3458,8 +3628,7 @@ bool frontend_config_store_save(frontend_config_store *manager,qa_error *error)
             snprintf(path,sizeof(path),"input/seat-%" PRIu64 ".json",(uint64_t)seat->logical+1);
             const char *client_owner[4]={"client",product->key,selected->selection.implementation,index};
             const char *mouse_owner[3]={"input",dialects[source->command.dialect],index};
-            qa_input_seat *active=manager->frontend->seats && i<manager->frontend->options.seats?
-                manager->frontend->seats[i].input:NULL;
+            qa_input_seat *active=frontend_config_source_input(source,seat->logical);
             if (!active) return fail(error,QA_ERROR_ARGUMENT,"Source input archive lost its actual published seat");
             size_t count=qa_input_seat_binding_count(active);
             if (count>SIZE_MAX/sizeof(qa_input_binding)) return fail(error,QA_ERROR_MEMORY,"Source input archive exceeds binding storage");
@@ -3470,7 +3639,12 @@ bool frontend_config_store_save(frontend_config_store *manager,qa_error *error)
                 if (bindings[n].input.kind==QA_PHYSICAL_BUTTON || bindings[n].input.kind==QA_PHYSICAL_AXIS)
                     bindings[n].input.device=0;
             }
-            qa_console_history *history=qa_seat_console_history(manager->frontend->seats[i].console);
+            uint32_t physical=qa_input_seat_ordinal(active);
+            if (!manager->frontend->seats || physical>=manager->frontend->options.seats ||
+                !manager->frontend->seats[physical].console) {
+                free(bindings); return fail(error,QA_ERROR_ARGUMENT,"Source settings archive lost its actual physical console");
+            }
+            qa_console_history *history=qa_seat_console_history(manager->frontend->seats[physical].console);
             size_t history_count=qa_console_history_count(history);
             char **lines=history_count<=SIZE_MAX/sizeof(*lines)?malloc(history_count?history_count*sizeof(*lines):1):NULL;
             if (!lines) { free(bindings); return fail(error,QA_ERROR_MEMORY,"Retaining actual console history for settings archive"); }
@@ -4201,7 +4375,7 @@ static bool restore_source(void *context,qa_application *application,const qa_la
     if (source->seat_count!=physical_seats || !choices || choices->seat_count<source->seat_count)
         return fail(error,QA_ERROR_FORMAT,"Decoded configuration lacks its actual authored seat roster");
     for (size_t i=0;i<source->seat_count;++i) {
-        if (!choices || i>=choices->seat_count || source->seats[i].logical!=choices->seats[i].id)
+        if (!local_seat_present(choices,source->seats[i].logical))
             return fail(error,QA_ERROR_FORMAT,"Decoded input profile changed its physical-to-authored seat mapping");
         qa_console_dialect movement;
         if (!seat_movement(candidate,source->seats[i].logical,&movement,error) ||

@@ -17,6 +17,7 @@
 #include "native_q3_clients.h"
 #include "native_q3_wire_state.h"
 #include "native_q3_console.h"
+#include "native_q3_remote_role.h"
 #include "native_q2_console.h"
 #include "native_q2_arsenal.h"
 #include "native_q2_combat_policy.h"
@@ -3911,43 +3912,20 @@ bool application_players_bot_begin(qa_application *app, uint32_t physical, qa_er
     return true;
 }
 
-bool qa_application_remote_player_attach(qa_application *application,
-    const qa_application_remote_player_request *request, qa_actor_id *out, qa_error *error)
+typedef struct player_admission_request {
+    const qa_launch_seat *seat;
+    uint32_t source_slot;
+    const char *userinfo, *skin;
+    qa_net_client_id client;
+    qa_net_seat_id network_seat;
+    bool remote, defer_source_begin;
+} player_admission_request;
+
+static bool player_source_slot(qa_application *application, application_provider *source,
+    application_provider *character, uint32_t requested, uint32_t *out,
+    bool *available, qa_error *error)
 {
-    if (application == NULL || request == NULL || out == NULL || request->name == NULL ||
-        application->players == NULL || application->operation != APPLICATION_IDLE ||
-        application->q3_round_active || application->frame_preparing || application->q3_world_restart ||
-        !application_rankings_idle(application) ||
-        application->session == NULL || !qa_session_safe(application->session) ||
-        application->state == QA_APPLICATION_FAULTED || application->state == QA_APPLICATION_STOPPING)
-        return application_fail(error, QA_ERROR_ARGUMENT, "remote admission requires an idle active player roster");
-    *out = (qa_actor_id){0};
-    for (size_t i = 0; i < application->players->count; ++i) {
-        const application_player_record *record = &application->players->records[i];
-        if (record->retiring) continue;
-        if (record->seat == request->application_seat || (record->remote &&
-            qa_net_client_id_equal(record->remote_client, request->client) && (record->remote_seat.owner == request->seat.owner && record->remote_seat.index == request->seat.index)))
-            return application_fail(error, QA_ERROR_ARGUMENT, "remote player seat is already admitted");
-    }
-    qa_launch_seat seat = {.id = request->application_seat, .name = request->name,
-        .team = request->team, .spectator = request->spectator, .bot = request->bot};
-    application_provider *character = current_seat_provider(application, &seat, QA_ROLE_CHARACTER);
-    application_provider *movement = current_seat_provider(application, &seat, QA_ROLE_MOVEMENT);
-    application_provider *arsenal = current_seat_provider(application, &seat, QA_ROLE_ARSENAL);
-    if (!player_adapter_available(character) || !player_adapter_available(movement) ||
-        !player_adapter_available(arsenal))
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "remote player selected roles lack an admission adapter");
-    application_provider *source = application->players->map_provider;
-    if (source == NULL)
-        return application_fail(error, QA_ERROR_ARGUMENT, "remote admission requires its actual game source");
-    if (source->kind == APPLICATION_PROVIDER_Q1 &&
-        source->component.clock.kind == QA_CLOCK_QUAKEWORLD) {
-        bool allowed;
-        if (!application_native_q1_qw_admission(application, request->spectator, &allowed, error))
-            return false;
-        if (!allowed)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Server is full");
-    }
+    *available=false;
     uint32_t source_offset = source->component.clock.kind == QA_CLOCK_Q3 ? 0u : 1u;
     uint32_t character_offset = character->component.clock.kind == QA_CLOCK_Q3 ? 0u : 1u;
     application_unified_source source_receipt;
@@ -3957,11 +3935,11 @@ bool qa_application_remote_player_attach(qa_application *application,
     if (qw_reserved_character(character) && character->state.qc.engine->max_clients < capacity)
         capacity = character->state.qc.engine->max_clients;
     uint32_t client_slot;
-    if (request->source_slot == UINT32_MAX) {
+    if (requested == UINT32_MAX) {
         client_slot = 0;
         for (;;) {
             if (client_slot >= capacity)
-                return application_fail(error, QA_ERROR_MEMORY, "remote player source client capacity is exhausted");
+                return true;
             bool occupied;
             bool source_occupied;
             if (!application_unified_source_slot_occupied(application, client_slot, &source_occupied, error) ||
@@ -3975,12 +3953,12 @@ bool qa_application_remote_player_attach(qa_application *application,
             ++client_slot;
         }
     } else {
-        if (request->source_slot < source_offset)
-            return application_fail(error, QA_ERROR_ARGUMENT, "remote game source slot is unavailable");
-        client_slot = request->source_slot - source_offset;
+        if (requested < source_offset)
+            return application_fail(error, QA_ERROR_ARGUMENT, "game source slot is unavailable");
+        client_slot = requested - source_offset;
     }
     if (client_slot >= capacity)
-        return application_fail(error, QA_ERROR_ARGUMENT, "remote character source slot is unavailable");
+        return application_fail(error, QA_ERROR_ARGUMENT, "character source slot is unavailable");
     uint32_t source_slot = client_slot + character_offset;
     bool occupied;
     bool source_occupied;
@@ -3988,15 +3966,63 @@ bool qa_application_remote_player_attach(qa_application *application,
         !remote_character_slot_occupied(application, character, source_slot, &occupied, error)) return false;
     occupied |= source_occupied;
     if (occupied)
-        return application_fail(error, QA_ERROR_ARGUMENT, "remote source slot is unavailable");
+        return application_fail(error, QA_ERROR_ARGUMENT, "source slot is unavailable");
     for (size_t i = 0; i < application->players->count; ++i)
         if (!application->players->records[i].retiring && application->players->records[i].client_slot == client_slot)
-            return application_fail(error, QA_ERROR_ARGUMENT, "remote client slot collides with an admitted player");
-    application_player_record record = {.seat = seat.id, .client_slot = client_slot,
+            return application_fail(error, QA_ERROR_ARGUMENT, "client slot collides with an admitted player");
+    *out=client_slot;
+    *available=true;
+    return true;
+}
+
+static bool player_attach(qa_application *application,
+    const player_admission_request *request, qa_actor_id *out, qa_error *error)
+{
+    if (application == NULL || request == NULL || out == NULL || request->seat == NULL || request->seat->name == NULL ||
+        application->players == NULL || application->operation != APPLICATION_IDLE ||
+        application->q3_round_active || application->frame_preparing || application->q3_world_restart ||
+        !application_rankings_idle(application) ||
+        application->session == NULL || !qa_session_safe(application->session) ||
+        application->state == QA_APPLICATION_FAULTED || application->state == QA_APPLICATION_STOPPING)
+        return application_fail(error, QA_ERROR_ARGUMENT, "player admission requires an idle active player roster");
+    *out = (qa_actor_id){0};
+    for (size_t i = 0; i < application->players->count; ++i) {
+        const application_player_record *record = &application->players->records[i];
+        if (record->retiring) continue;
+        if (record->seat == request->seat->id || (request->remote && record->remote &&
+            qa_net_client_id_equal(record->remote_client, request->client) && (record->remote_seat.owner == request->network_seat.owner && record->remote_seat.index == request->network_seat.index)))
+            return application_fail(error, QA_ERROR_ARGUMENT, "player seat is already admitted");
+    }
+    const qa_launch_seat *seat = request->seat;
+    application_provider *character = current_seat_provider(application, seat, QA_ROLE_CHARACTER);
+    application_provider *movement = current_seat_provider(application, seat, QA_ROLE_MOVEMENT);
+    application_provider *arsenal = current_seat_provider(application, seat, QA_ROLE_ARSENAL);
+    if (!player_adapter_available(character) || !player_adapter_available(movement) ||
+        !player_adapter_available(arsenal))
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "player selected roles lack an admission adapter");
+    application_provider *source = application->players->map_provider;
+    if (source == NULL)
+        return application_fail(error, QA_ERROR_ARGUMENT, "player admission requires its actual game source");
+    if (source->kind == APPLICATION_PROVIDER_Q1 &&
+        source->component.clock.kind == QA_CLOCK_QUAKEWORLD) {
+        bool allowed;
+        if (!application_native_q1_qw_admission(application, seat->spectator, &allowed, error))
+            return false;
+        if (!allowed)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Server is full");
+    }
+    uint32_t client_slot;
+    bool available;
+    if (!player_source_slot(application,source,character,request->source_slot,&client_slot,&available,error))
+        return false;
+    if (!available)
+        return application_fail(error,QA_ERROR_MEMORY,"player source client capacity is exhausted");
+    uint32_t source_slot=client_slot+(character->component.clock.kind==QA_CLOCK_Q3?0u:1u);
+    application_player_record record = {.seat = seat->id, .configured_actor = seat->actor, .client_slot = client_slot,
         .source_slot = source_slot, .character = character, .remote_client = request->client,
-        .remote_seat = request->seat, .remote = true, .dynamic = true,
-        .spectator = request->spectator, .bot = request->bot};
-    if (!record_text(&record, request->name, request->team, request->skin, request->userinfo, error)) return false;
+        .remote_seat = request->network_seat, .remote = request->remote, .dynamic = request->remote,
+        .spectator = seat->spectator, .bot = seat->bot};
+    if (!record_text(&record, seat->name, seat->team, request->skin, request->userinfo, error)) return false;
     size_t index;
     if (!record_append(application, record, &index, error)) { record_free(&record); return false; }
     application->operation = APPLICATION_CONFIGURING;
@@ -4004,7 +4030,7 @@ bool qa_application_remote_player_attach(qa_application *application,
     bool accepted;
     const char *denial;
     bool ok = publish_player(application, qa_launch_snapshot_choices(qa_application_launch(application)),
-                              &seat, &application->players->records[index], &carry, index,
+                              seat, &application->players->records[index], &carry, index,
                               false, false, NULL, request->defer_source_begin,
                               request->defer_source_begin && source->kind == APPLICATION_PROVIDER_Q1 &&
                                   source->component.clock.kind == QA_CLOCK_QUAKEWORLD
@@ -4024,26 +4050,76 @@ bool qa_application_remote_player_attach(qa_application *application,
     return true;
 }
 
-bool qa_application_remote_player_detach(qa_application *application,
-    qa_net_client_id client, qa_net_seat_id seat, qa_error *error)
+bool qa_application_remote_player_attach(qa_application *application,
+    const qa_application_remote_player_request *request, qa_actor_id *out, qa_error *error)
 {
-    if (application == NULL || application->players == NULL || application->session == NULL ||
-        application->operation != APPLICATION_IDLE || application->q3_round_active ||
-        !application_rankings_idle(application) ||
-        application->frame_preparing || application->q3_world_restart || !qa_session_safe(application->session))
-        return application_fail(error, QA_ERROR_ARGUMENT, "remote detach requires an idle active roster");
-    size_t index;
-    for (index = 0; index < application->players->count; ++index) {
-        application_player_record *record = &application->players->records[index];
-        if (record->remote && qa_net_client_id_equal(record->remote_client, client) && (record->remote_seat.owner == seat.owner && record->remote_seat.index == seat.index)) break;
+    if (!request)
+        return application_fail(error, QA_ERROR_ARGUMENT, "remote admission needs its actual request");
+    qa_launch_seat seat = {.id=request->application_seat, .name=request->name,
+        .team=request->team, .spectator=request->spectator, .bot=request->bot};
+    player_admission_request admission = {.seat=&seat, .source_slot=request->source_slot,
+        .userinfo=request->userinfo, .skin=request->skin, .client=request->client,
+        .network_seat=request->seat, .remote=true, .defer_source_begin=request->defer_source_begin};
+    return player_attach(application, &admission, out, error);
+}
+
+bool qa_application_local_player_available(qa_application *application, uint32_t logical_seat,
+    bool *available, qa_error *error)
+{
+    if (!application || !application->players || !available)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Local admission availability requires its actual roster");
+    *available=false;
+    qa_launch_seat seat={.id=logical_seat,.local=true};
+    application_provider *character=current_seat_provider(application,&seat,QA_ROLE_CHARACTER);
+    application_provider *movement=current_seat_provider(application,&seat,QA_ROLE_MOVEMENT);
+    application_provider *arsenal=current_seat_provider(application,&seat,QA_ROLE_ARSENAL);
+    if (!player_adapter_available(character) || !player_adapter_available(movement) ||
+        !player_adapter_available(arsenal)) return true;
+    application_provider *source=application->players->map_provider;
+    if (!source)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Local admission availability lost its actual Source");
+    if (source->kind==APPLICATION_PROVIDER_Q1 && source->component.clock.kind==QA_CLOCK_QUAKEWORLD) {
+        bool allowed;
+        if (!application_native_q1_qw_admission(application,false,&allowed,error)) return false;
+        if (!allowed) return true;
     }
-    if (index == application->players->count) return true;
+    uint32_t slot;
+    return player_source_slot(application,source,character,UINT32_MAX,&slot,available,error);
+}
+
+bool qa_application_local_player_attach(qa_application *application, uint32_t logical_seat,
+    const char *userinfo, const char *skin, qa_actor_id *out, qa_error *error)
+{
+    const qa_launch_choices *choices = application
+        ? qa_launch_snapshot_choices(qa_application_launch(application)) : NULL;
+    const qa_launch_seat *seat = NULL;
+    for (size_t i=0; choices && i<choices->seat_count; ++i)
+        if (choices->seats[i].id==logical_seat) seat=choices->seats+i;
+    if (!seat || !seat->local || seat->bot)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "local admission requires its published physical player seat");
+    player_admission_request admission = {.seat=seat, .source_slot=UINT32_MAX,
+        .userinfo=userinfo, .skin=skin};
+    return player_attach(application, &admission, out, error);
+}
+
+static bool player_detach_ready(qa_application *application, qa_error *error)
+{
+    return (application && application->players && application->session &&
+        application->operation==APPLICATION_IDLE && !application->q3_round_active &&
+        application_rankings_idle(application) && !application->frame_preparing &&
+        !application->q3_world_restart && qa_session_safe(application->session)) ||
+        application_fail(error, QA_ERROR_ARGUMENT, "player detach requires an idle active roster");
+}
+
+static bool player_detach(qa_application *application, size_t index, qa_error *error)
+{
     application_player_record *record = &application->players->records[index];
     application->operation = APPLICATION_CONFIGURING;
     qa_actor_id actor = record->actor;
     application_provider *source = application->players->map_provider;
     bool ok = source != NULL || application_fail(error, QA_ERROR_ARGUMENT,
-        "Remote detach lost its actual Source owner");
+        "Player detach lost its actual Source owner");
     if (ok && (source->kind == APPLICATION_PROVIDER_Q1 || source->kind == APPLICATION_PROVIDER_Q3))
         ok = application_players_source_disconnect(application, source, actor, error);
     if (ok && source->kind != APPLICATION_PROVIDER_Q3)
@@ -4056,6 +4132,57 @@ bool qa_application_remote_player_detach(qa_application *application,
     application->operation = APPLICATION_IDLE;
     if (!ok) { application_fault(application, error); return false; }
     return true;
+}
+
+bool qa_application_remote_player_detach(qa_application *application,
+    qa_net_client_id client, qa_net_seat_id seat, qa_error *error)
+{
+    if (!player_detach_ready(application, error)) return false;
+    for (size_t i=0; i<application->players->count; ++i) {
+        const application_player_record *record=application->players->records+i;
+        if (record->remote && qa_net_client_id_equal(record->remote_client, client) &&
+            record->remote_seat.owner==seat.owner && record->remote_seat.index==seat.index)
+            return player_detach(application, i, error);
+    }
+    return true;
+}
+
+bool qa_application_local_player_clients_retire(qa_application *application, qa_error *error)
+{
+    if (!player_detach_ready(application,error) || qa_application_startup_pending(application))
+        return application_fail(error,QA_ERROR_ARGUMENT,
+            "Local CLIENT retirement requires its completed physical publication");
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(application));
+    for (size_t i=0; i<application->provider_count; ++i) {
+        application_provider *provider=application->providers[i];
+        if (provider->kind==APPLICATION_PROVIDER_Q3 &&
+            !application_native_q3_remote_roles_retain(provider,choices,error)) return false;
+    }
+    return true;
+}
+
+bool qa_application_local_player_detach(qa_application *application, uint32_t logical_seat,
+    qa_error *error)
+{
+    if (!player_detach_ready(application, error)) return false;
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(application));
+    size_t index=SIZE_MAX, local_count=0;
+    for (size_t i=0; choices && i<choices->seat_count; ++i) {
+        const qa_launch_seat *seat=choices->seats+i;
+        if (!seat->local || seat->bot) continue;
+        for (size_t j=0; j<application->players->count; ++j) {
+            const application_player_record *record=application->players->records+j;
+            if (record->retiring || record->remote || record->bot || record->seat!=seat->id ||
+                !qa_actors_get(qa_session_actors(application->session), record->actor)) continue;
+            ++local_count;
+            if (seat->id==logical_seat) index=j;
+        }
+    }
+    if (index==SIZE_MAX)
+        return application_fail(error, QA_ERROR_ARGUMENT, "local detach requires its admitted physical player");
+    if (local_count<2)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Keep at least one local player in the world");
+    return player_detach(application, index, error);
 }
 
 bool application_players_bot_detach(qa_application *application,qa_actor_id actor,qa_error *error)

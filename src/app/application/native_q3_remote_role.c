@@ -183,25 +183,15 @@ static bool selected_seat(const qa_launch_instance *launch, const qa_launch_choi
     const qa_launch_binding *binding = hud_binding(choices, seat);
     return seat->local && !seat->bot && binding && !strcmp(binding->instance, launch->selection.instance);
 }
-bool application_native_q3_remote_roles_identity(const qa_launch_instance *launch, const qa_launch_choices *choices,
-    qa_sha256_context *hash, qa_error *error)
+bool application_native_q3_remote_role_selected(const qa_launch_instance *launch,
+    const qa_launch_choices *choices, uint32_t seat)
 {
-    if (!launch || !choices || !hash || launch->selection.runtime != QA_PROGRAM_BUILTIN ||
-        launch->selection.clock.kind != QA_CLOCK_Q3)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT roster identity requires its actual builtin Q3 selection");
-    static const uint8_t domain[] = "native-q3-client-roster-v1";
-    qa_sha256_update(hash, (qa_bytes){domain, sizeof(domain) - 1});
-    size_t count = 0;
-    for (size_t i = 0; i < choices->seat_count; ++i) count += selected_seat(launch, choices, choices->seats + i);
-    uint8_t encoded[8];
-    for (size_t i = 0; i < sizeof(encoded); ++i) encoded[i] = (uint8_t)((uint64_t)count >> (i * 8));
-    qa_sha256_update(hash, (qa_bytes){encoded, sizeof(encoded)});
-    for (size_t i = 0; i < choices->seat_count; ++i) if (selected_seat(launch, choices, choices->seats + i)) {
-        for (size_t j = 0; j < sizeof(encoded); ++j) encoded[j] = (uint8_t)((uint64_t)choices->seats[i].id >> (j * 8));
-        qa_sha256_update(hash, (qa_bytes){encoded, sizeof(encoded)});
-    }
-    return true;
+    for (size_t i=0; choices && i<choices->seat_count; ++i)
+        if (choices->seats[i].id==seat)
+            return selected_seat(launch, choices, choices->seats+i);
+    return false;
 }
+
 static bool engine_defaults(struct application_native_q3_remote_role *row, const qa_launch_choices *choices,
     const qa_launch_seat *seat, qa_error *error)
 {
@@ -321,6 +311,8 @@ static bool replace_ready(const struct application_native_q3_remote_role *row)
     return row && !row->retiring && !row->service && !row->transport && !row->modules && !row->calls && qa_console_idle(row->console) &&
         qa_cvars_observer_idle(row->cvars);
 }
+bool application_native_q3_remote_role_unborrowed(application_provider *provider,uint32_t seat)
+{ return replace_ready(find(provider,seat)); }
 bool application_native_q3_remote_role_take(application_provider *provider, uint32_t seat, qa_cvars **out, qa_error *error)
 {
     struct application_native_q3_remote_role *row = find(provider, seat);
@@ -711,22 +703,61 @@ bool application_native_q3_remote_roles_idle(const application_provider *provide
             (!row->retiring && !qa_cvars_observer_idle(row->cvars))) return false;
     return true;
 }
+bool application_native_q3_remote_role_retirement(application_provider *provider,
+    const qa_application_startup_source *source)
+{
+    struct application_native_q3_remote_role *row=source?find(provider,source->scope.seat):NULL;
+    return native_receiver(provider) && row && row->retiring && !row->modules && !row->service &&
+        !row->transport && !row->calls && qa_console_idle(row->console) && source->descriptor &&
+        source->descriptor->storage==provider->launch->storage && source->scope.provider==provider->owner &&
+        source->scope.kind==QA_APPLICATION_CONSOLE_Q3_CGAME && source->console==row->console &&
+        source->cvars==row->cvars && source->declaration_owner==provider->owner;
+}
+
+static bool role_destroy(application_provider *provider,
+    struct application_native_q3_remote_role **link, qa_error *error)
+{
+    struct application_native_q3_remote_role *row=*link;
+    if (row->modules || row->service || row->transport || row->calls ||
+        !qa_console_idle(row->console) || (!row->retiring && !qa_cvars_observer_idle(row->cvars)))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Native CLIENT teardown retains its actual modules, services or callbacks");
+    qa_application_startup_source source;
+    bool found=false;
+    for (size_t i=0;;++i) {
+        if (!application_native_q3_remote_role_source_at(provider,i,&source,&found,error)) return false;
+        if (!found)
+            return application_fail(error,QA_ERROR_ARGUMENT,"Native CLIENT teardown lost its physical console");
+        if (source.console==row->console) break;
+    }
+    row->retiring=true;
+    bool retired=provider->attached
+        ? application_startup_tuple_retire_client(provider,&source,error)
+        : application_startup_tuple_retire(provider,&source,error);
+    if (!retired || !application_startup_flow_release_console(provider,row->console,error)) return false;
+    *link=row->next;
+    qa_console_destroy(row->console);
+    if (row->owns_cvars) qa_cvars_destroy(row->cvars);
+    qa_command_tokens_free(&row->arguments); qa_buffer_free(&row->modules_restore);
+    qa_launch_instance_lease_release(row->descriptor); free(row->system_info); free(row);
+    return true;
+}
+
+bool application_native_q3_remote_roles_retain(application_provider *provider,
+    const qa_launch_choices *choices, qa_error *error)
+{
+    struct application_native_q3_remote_role **link=&provider->native_q3_remote_roles;
+    while (*link) {
+        if (application_native_q3_remote_role_selected(provider->launch,choices,(*link)->seat))
+            link=&(*link)->next;
+        else if (!role_destroy(provider,link,error)) return false;
+    }
+    return true;
+}
+
 bool application_native_q3_remote_roles_destroy(application_provider *provider, qa_error *error)
 {
     if (!application_native_q3_remote_roles_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT consoles retain actual service leases");
-    while (provider && provider->native_q3_remote_roles) {
-        struct application_native_q3_remote_role *row = provider->native_q3_remote_roles;
-        if (row->modules || row->service || row->transport)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT teardown retains its actual client modules or frontend service/transport");
-        qa_application_startup_source source; bool found;
-        if (!application_native_q3_remote_role_source_at(provider, 0, &source, &found, error) || !found) return false;
-        row->retiring = true;
-        if (!application_startup_tuple_retire(provider, &source, error)) return false;
-        provider->native_q3_remote_roles = row->next;
-        qa_console_destroy(row->console); if (row->owns_cvars) qa_cvars_destroy(row->cvars);
-        qa_command_tokens_free(&row->arguments); qa_buffer_free(&row->modules_restore);
-        qa_launch_instance_lease_release(row->descriptor); free(row->system_info); free(row);
-    }
-    return true;
+    return !provider || application_native_q3_remote_roles_retain(provider,NULL,error);
 }

@@ -2,6 +2,7 @@
 #include "native_q1_console.h"
 #include "native_q2_console.h"
 #include "native_q3_console.h"
+#include "native_q3_remote_role.h"
 #include "guest_q3_client_console.h"
 #include "startup_program.h"
 #include "engine_shutdown.h"
@@ -304,18 +305,22 @@ bool application_startup_tuple_retire(application_provider *provider,
 bool application_startup_tuple_retire_client(application_provider *provider,
     const qa_application_startup_source *source, qa_error *error)
 {
-    if (!provider || !provider->application ||
-        !application_guest_q3_client_console_retirement(provider, source) ||
-        provider->application->startup_retiring_provider)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Hosted CLIENT retirement still has actual role or source leases");
-    const qa_application_startup_hooks *hooks = hooks_for(provider);
+    if (!provider || !provider->application)
+        return application_fail(error,QA_ERROR_ARGUMENT,"CLIENT retirement lost its actual provider");
+    bool hosted=application_guest_q3_client_console_retirement(provider,source);
+    bool native=application_native_q3_remote_role_retirement(provider,source);
+    if ((!hosted && !native) || provider->application->startup_retiring_provider)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "CLIENT retirement still has actual role or source leases");
+    const qa_application_startup_hooks *hooks=hooks_for(provider);
     if (!hooks) return true;
-    if (!hooks->retire_hosted_configuration)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Hosted CLIENT retirement has no checked configuration owner");
-    qa_application *app = provider->application;
-    app->startup_retiring_provider = provider;
-    bool ok = hooks->retire_hosted_configuration(hooks->context, app, source, error);
-    app->startup_retiring_provider = NULL;
+    if ((hosted && !hooks->retire_hosted_configuration) || (native && !hooks->retire_source))
+        return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT retirement has no checked configuration owner");
+    qa_application *app=provider->application;
+    app->startup_retiring_provider=provider;
+    bool ok=hosted ? hooks->retire_hosted_configuration(hooks->context,app,source,error)
+        : hooks->retire_source(hooks->context,app,source,error);
+    app->startup_retiring_provider=NULL;
     return ok;
 }
 

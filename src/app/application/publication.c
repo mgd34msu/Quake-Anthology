@@ -108,15 +108,25 @@ static bool player_admission_binding(const qa_launch_binding *binding)
     }
 }
 
+static bool retained_player_admission_binding(const qa_launch_binding *binding,
+    const qa_launch_choices *other)
+{
+    if (!player_admission_binding(binding)) return false;
+    if (binding->scope.kind!=QA_SCOPE_SEAT) return true;
+    for (size_t i=0; i<other->seat_count; ++i)
+        if (other->seats[i].id==binding->scope.seat) return true;
+    return false;
+}
+
 static bool same_player_admission_bindings(const qa_launch_choices *left,
                                            const qa_launch_choices *right)
 {
     size_t left_count = 0, right_count = 0;
     for (size_t i = 0; i < right->binding_count; ++i)
-        right_count += player_admission_binding(right->bindings + i);
+        right_count += retained_player_admission_binding(right->bindings + i, left);
     for (size_t i = 0; i < left->binding_count; ++i) {
         const qa_launch_binding *a = left->bindings + i;
-        if (!player_admission_binding(a)) continue;
+        if (!retained_player_admission_binding(a, right)) continue;
         ++left_count;
         bool found = false;
         for (size_t j = 0; j < right->binding_count; ++j) {
