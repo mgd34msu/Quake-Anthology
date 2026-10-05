@@ -90,24 +90,13 @@ bool frontend_unified_q3_source_retirement_client_drop(frontend_unified_q3_sourc
 bool frontend_unified_q3_source_retirement_read(const frontend_unified_q3_source_retirement *,
     frontend_unified_q3_source_view *,qa_error *);
 bool frontend_unified_q3_source_retirement_return(frontend_unified_q3_source_retirement **,qa_error *);
-bool frontend_unified_q3_source_retirement_checkpoint(const frontend_unified_q3_source_retirement *,qa_buffer *,qa_error *);
-bool frontend_unified_q3_source_retirement_restore(frontend_unified_q3_sources *,qa_bytes,
-    frontend_unified_q3_source_retirement **,qa_error *);
 bool frontend_unified_q3_sources_checkpoint_read(const frontend_unified_q3_sources *, size_t,
     frontend_unified_q3_source_view *, qa_error *);
 bool frontend_unified_q3_sources_idle(const frontend_unified_q3_sources *);
 bool frontend_unified_q3_sources_destroy(frontend_unified_q3_sources **, qa_error *);
-bool frontend_unified_q3_sources_checkpoint(const frontend_unified_q3_sources *, qa_buffer *, qa_error *);
-bool frontend_unified_q3_sources_checkpoint_stage(const frontend_unified_q3_sources *,
-    const frontend_unified_q3_source_frame *, qa_buffer *, qa_error *);
-bool frontend_unified_q3_source_frame_checkpoint(const frontend_unified_q3_source_frame *, qa_buffer *, qa_error *);
 bool frontend_unified_q3_source_frame_checkpoint_ready(const frontend_unified_q3_source_frame *);
-bool frontend_unified_q3_sources_restore_prepared(frontend_unified_q3_sources *, qa_bytes,
-    const qa_unified_document *, frontend_unified_q3_source_frame **, qa_error *);
 bool frontend_unified_q3_sources_checkpoint_stage_read(const frontend_unified_q3_sources *,
     const frontend_unified_q3_source_frame *, bool staged, size_t,
     frontend_unified_q3_source_view *, qa_error *);
-bool frontend_unified_q3_sources_restore(frontend_remote_unified *, frontend_unified_media *,
-    qa_bytes, frontend_unified_q3_sources **, qa_error *);
 
 #endif
