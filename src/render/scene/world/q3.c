@@ -1,4 +1,5 @@
 #include "q3/internal.h"
+#include "../resources_internal.h"
 #include "qa/scene_effects.h"
 #include "qa/scene_world_save.h"
 #include "qa/material_library_save.h"
@@ -11,15 +12,6 @@
 
 enum { Q3_LIGHTMAP_EDGE = 128, Q3_LIGHTMAP_BYTES = 128 * 128 * 3,
        Q3_LIGHTMAP_PIXELS = 128 * 128, Q3_LIGHTMAP_IMAGE_BYTES = 128 * 128 * 4 };
-
-void qaw_q3_shift_color(const uint8_t input[3], uint32_t shift, uint8_t output[3]) {
-    uint32_t r = (uint32_t)input[0] << shift, g = (uint32_t)input[1] << shift;
-    uint32_t b = (uint32_t)input[2] << shift;
-    uint32_t maximum = r > g ? r : g;
-    if (b > maximum) maximum = b;
-    if (maximum > 255) { r = r * 255 / maximum; g = g * 255 / maximum; b = b * 255 / maximum; }
-    output[0] = (uint8_t)r; output[1] = (uint8_t)g; output[2] = (uint8_t)b;
-}
 
 static qa_scene_vertex vertex(const qa_bsp_vertex *source, uint32_t shift) {
     uint8_t color[3]; qaw_q3_shift_color(source->color, shift, color);
@@ -64,6 +56,12 @@ static bool load_lightmaps(qa_scene_world *world, q3_data *data, qa_error *error
         if (!qa_scene_image_create(world->resources, name, QA_SCENE_RGB8, &level, 1,
                                   QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_scene_vec4){0},
                                   data->lightmaps + i, error)) { free(pixels); return false; }
+        image_asset_recipe recipe = {.kind = 2, .level_count = 1,
+            .offsets = {(uint64_t)(bytes.data + i * Q3_LIGHTMAP_BYTES - world->bytes.data)},
+            .widths = {Q3_LIGHTMAP_EDGE}, .heights = {Q3_LIGHTMAP_EDGE},
+            .overbright = world->options.q3_overbright,
+            .options = {.family = QA_SCENE_Q3, .wrap = QA_SCENE_CLAMP, .filter = QA_SCENE_LINEAR}};
+        if (!scene_image_asset_copy(data->lightmaps[i], &recipe, error)) { free(pixels); return false; }
         if (source) {
             data->lightmaps[i]->source_mipmap=false;
             data->lightmaps[i]->source_format=QA_Q3_TEXTURE_RGB;

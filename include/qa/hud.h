@@ -67,6 +67,8 @@ typedef struct qa_hud_options {
     uint32_t seat;
     void *context;
     bool (*read)(void *, const qa_hud_frame *, qa_hud_data *, qa_error *);
+    /* Borrowed seat typography/preferences for this draw; menu presentation survives. */
+    bool (*presentation)(void *, qa_ui_presentation *, qa_error *);
     bool (*source_draw)(void *, const qa_hud_frame *, qa_scene_frame *, qa_error *);
     const qa_scene_image *(*video_frame)(void *, uint64_t, double, qa_error *);
     void *video_context;

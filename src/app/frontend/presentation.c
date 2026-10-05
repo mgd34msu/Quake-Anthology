@@ -211,6 +211,10 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
             if (source_weapon_status) {
                 frontend_equipment_media *media=NULL; const qa_material *icon=NULL;
                 if (!frontend_equipment_media_prepare_source_icon(frontend,&equipped,&media,&icon,error)) return false;
+            } else if (!present) {
+                const qa_material *icon = NULL;
+                if (!qa_application_equipment_read(frontend->application, actor, &equipped, error) ||
+                    !frontend_equipment_media_native_icon_prepare(frontend, &equipped, &icon, error)) return false;
             }
         }
         qa_scene_view view = {.viewport = rect, .seat = i, .clear_color = true, .clear_depth = true,

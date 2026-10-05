@@ -139,28 +139,13 @@ static bool upload_indexed(qa_scene_model *model, const char *name, const qa_ind
     qa_palette_options options = {.transparent_index = sprite ? 255 : -1,
         .fullbright_first = (int)first_fullbright, .fullbright_last = sprite ? 254 : 255,
         .translation = model->options.translation.size ? model->translation : NULL, .layer = layer};
-    qa_image image = {0};
-    if (!qa_image_expand_indexed(indices, model->options.palette_rgb, &options, &image, error)) return false;
-    qa_mip_chain chain = {0};
-    if (model->options.mipmap && !sprite && !qa_image_mip_chain(&image, QA_MIP_BOX, &chain, error)) {
-        qa_image_free(&image); return false;
-    }
-    qa_scene_image_level *levels = calloc(chain.count + 1, sizeof(*levels));
-    if (!levels) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "model skin mip descriptors allocation failed");
-        qa_mip_chain_free(&chain); qa_image_free(&image); return false;
-    }
-    levels[0] = (qa_scene_image_level){image.width, image.height, image.rgba.data, image.rgba.size};
-    for (size_t i = 0; i < chain.count; ++i)
-        levels[i + 1] = (qa_scene_image_level){chain.levels[i].width, chain.levels[i].height,
-                                              chain.levels[i].rgba.data, chain.levels[i].rgba.size};
-    bool ok = qa_scene_image_create(model->resources, name, QA_SCENE_RGBA8, levels, chain.count + 1,
-        model->options.wrap, model->options.filter, (qa_scene_vec4){0}, out, error);
+    qa_scene_image_options image_options = model->options;
+    bool ok = scene_resource_indexed_image(model->resources, name, indices, 1, &image_options, &options,
+        model->options.mipmap && !sprite, (qa_scene_vec4){0}, out, error);
     if (ok) {
         (*out)->recipient_upload_pixels = true;
         (*out)->recipient_mipmap = model->options.mipmap && !sprite;
     }
-    free(levels); qa_mip_chain_free(&chain); qa_image_free(&image);
     return ok;
 }
 
@@ -196,6 +181,20 @@ bool scene_model_indexed(qa_scene_model *model, const char *name, qa_bytes pixel
             ok = upload_indexed(model, bright_name, &indices, sprite, QA_PALETTE_FULLBRIGHT, &bright, error);
             free(bright_name);
         }
+    }
+    uintptr_t source_begin = (uintptr_t)model->source->source.data, pixel_begin = (uintptr_t)pixels.data;
+    if (ok && pixel_begin >= source_begin && pixel_begin - source_begin <= model->source->source.size &&
+        pixels.size <= model->source->source.size - (pixel_begin - source_begin)) {
+        image_asset_recipe recipe = {.kind = 1, .level_count = 1,
+            .source = (qa_resource *)model->source_lease.resource,
+            .offsets = {pixel_begin - source_begin}, .widths = {width}, .heights = {height},
+            .fullbright_first = first_fullbright, .fullbright_last = sprite ? 254 : 255,
+            .flood_skin = !sprite, .generate_mips = model->options.mipmap && !sprite,
+            .layer = QA_PALETTE_COMBINED};
+        scene_image_asset_palette(model->resources, &recipe, &model->options);
+        recipe.options.transparent = sprite; recipe.options.transparent_index = sprite ? 255 : -1;
+        ok = scene_image_asset_copy(base, &recipe, error);
+        if (ok && bright) { recipe.layer = QA_PALETTE_FULLBRIGHT; ok = scene_image_asset_copy(bright, &recipe, error); }
     }
     qa_buffer_free(&indices.indices);
     if (!ok) {

@@ -11,6 +11,22 @@ typedef struct recipient_image_binding {
     struct recipient_image_binding *next;
     const qa_scene_image *source;
 } recipient_image_binding;
+typedef struct image_asset_recipe {
+    qa_resource *source, *palette_source;
+    char *path;
+    qa_scene_image_options options;
+    uint8_t palette[768], translation[256];
+    uint32_t fullbright_first, gif_frame;
+    bool palette_attempted, generic_upload, recipient;
+    qa_status palette_error;
+    qa_q3_image_upload_options recipient_upload;
+    uint8_t kind, level_count, sky_layer;
+    uint64_t offsets[4];
+    uint32_t widths[4], heights[4], overbright;
+    bool flood_skin, generate_mips, quake64, post_upload, post_mipmap;
+    qa_palette_layer layer;
+    int32_t fullbright_last;
+} image_asset_recipe;
 struct owned_image {
     qa_scene_image image;
     bool embedded_png;
@@ -25,6 +41,7 @@ struct owned_image {
     bool recipient_first_upload;
     recipient_image_binding *recipient_bindings;
     qa_image recipient_source;
+    image_asset_recipe *asset;
     qa_scene_resources *source_variant_owner;
     qa_q3_image_upload_options source_variant_upload;
     owned_image *variant_next;
@@ -94,4 +111,15 @@ qa_scene_image_kind scene_resource_q3_image_kind(qa_q3_texture_format);
 void scene_image_dlight_pixels(uint8_t [16 * 16 * 4]);
 void scene_image_fog_pixels(uint8_t [256 * 32 * 4]);
 void scene_image_skin_flood(uint8_t *, uint32_t, uint32_t, uint8_t, uint8_t, size_t *);
+bool scene_resource_image_decode(qa_scene_resources *, const char *, const image_asset_recipe *,
+                                 qa_scene_image **, qa_error *);
+void scene_image_asset_palette(qa_scene_resources *, image_asset_recipe *, const qa_scene_image_options *);
+bool scene_image_asset_copy(qa_scene_image *, const image_asset_recipe *, qa_error *);
+bool scene_image_asset_source_bind(qa_scene_image *, const qa_resource *, qa_error *);
+bool scene_resource_indexed_image(qa_scene_resources *, const char *, const qa_indexed_level *, size_t,
+    const qa_scene_image_options *, const qa_palette_options *, bool, qa_scene_vec4,
+    qa_scene_image **, qa_error *);
+bool scene_resource_sky_layer(qa_scene_resources *, const char *, const qa_scene_image *, qa_bytes,
+    bool, bool, qa_scene_image **, qa_error *);
+void qaw_q3_shift_color(const uint8_t [3], uint32_t, uint8_t [3]);
 #endif

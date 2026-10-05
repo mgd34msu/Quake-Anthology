@@ -226,6 +226,7 @@ bool frontend_unified_media_model(frontend_unified_media *owner, const char *con
             qa_scene_world_source_resource_bind(row->world, row->resource, error);
     } else if (okay) okay = qa_model_load(qa_resource_bytes(row->resource), &row->decoded, error) &&
         qa_scene_model_create(&row->decoded, files->images, files->materials, &row->options, &row->scene, error) &&
+        qa_scene_model_source_resource_bind(row->scene, row->resource, error) &&
         frontend_visual_model_opening_initialize(owner->frontend, family, files->files, row->resource,
             &row->opening, &row->decoded, row->scene, error);
     owner->busy = false;

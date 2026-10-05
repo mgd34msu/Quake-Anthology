@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../../resources_internal.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -15,14 +16,6 @@ static bool load_optional(qa_scene_world *world, const char *name, const qa_scen
     return false;
 }
 
-static bool create_image(qa_scene_world *world, const char *name, uint32_t width, uint32_t height,
-                         const uint8_t *pixels, qa_scene_wrap wrap, qa_scene_image **image, qa_error *error)
-{
-    qa_scene_image_level level = {width, height, pixels, (size_t)width * height * 4};
-    return qa_scene_image_create(world->resources, name, QA_SCENE_RGBA8, &level, 1, wrap,
-                                 QA_SCENE_LINEAR, (qa_scene_vec4){0, 0, 0, 0}, image, error);
-}
-
 static bool embedded_texture(qa_scene_world *world, qawl_texture *texture,
                              const qa_bsp_texture *source, qa_error *error)
 {
@@ -35,91 +28,62 @@ static bool embedded_texture(qa_scene_world *world, qawl_texture *texture,
     }
     unsigned first_fullbright = qa_scene_resources_fullbright_first(world->resources);
     bool fullbright = first_fullbright < 256 && strncmp(texture->name, "sky", 3) != 0 && texture->name[0] != '*';
-    qa_image images[4] = {0}, bright[4] = {0};
-    qa_scene_image_level levels[4], bright_levels[4];
-    size_t count = 0;
-    bool result = false, fence = texture->name[0] == '{';
-    qa_palette_options options = {.transparent_index = fence ? 255 : -1,
-        .fullbright_first = first_fullbright < 256 ? (int)first_fullbright : -1,
-        .fullbright_last = 255, .layer = QA_PALETTE_COMBINED,
-        .translation = world->options.images.translation.size == 256 ? world->options.images.translation.data : NULL};
+    qa_indexed_level levels[4] = {0}; size_t count = 0;
+    image_asset_recipe recipe = {.kind = 1, .fullbright_first = first_fullbright,
+        .fullbright_last = 255, .layer = QA_PALETTE_COMBINED};
+    scene_image_asset_palette(world->resources, &recipe, &world->options.images);
+    recipe.options.wrap = QA_SCENE_REPEAT;
+    recipe.options.transparent = texture->name[0] == '{'; recipe.options.transparent_index = 255;
     for (size_t mip = 0; mip < 4; ++mip) {
         uint32_t width = source->width >> mip, height = source->height >> mip;
         if (!source->levels[mip].size || !width || !height) break;
-        qa_indexed_level indexed = {.width = width, .height = height,
-            .indices = {(uint8_t *)source->levels[mip].data, source->levels[mip].size}};
-        options.layer = QA_PALETTE_COMBINED;
-        if (!qa_image_expand_indexed(&indexed, palette, &options, &images[mip], error)) goto done;
-        levels[mip] = (qa_scene_image_level){width, height, images[mip].rgba.data, images[mip].rgba.size};
-        if (fullbright) {
-            options.layer = QA_PALETTE_FULLBRIGHT;
-            if (!qa_image_expand_indexed(&indexed, palette, &options, &bright[mip], error)) goto done;
-            bright_levels[mip] = (qa_scene_image_level){width, height, bright[mip].rgba.data, bright[mip].rgba.size};
-        }
-        ++count;
+        levels[mip] = (qa_indexed_level){width, height,
+            {(uint8_t *)source->levels[mip].data, source->levels[mip].size}};
+        recipe.offsets[mip] = (uint64_t)(source->levels[mip].data - world->bytes.data);
+        recipe.widths[mip] = width; recipe.heights[mip] = height; ++count;
     }
-    if (!count) { qa_error_set(error, QA_ERROR_FORMAT, 0, "Embedded brush texture has no pixels"); goto done; }
-    if (!qa_scene_image_create(world->resources, texture->name, QA_SCENE_RGBA8, levels, count, QA_SCENE_REPEAT,
-                               world->options.images.filter, (qa_scene_vec4){0,0,0,1}, &texture->image, error)) goto done;
-    if (fullbright && !qa_scene_image_create(world->resources, texture->name, QA_SCENE_RGBA8, bright_levels, count,
-                                            QA_SCENE_REPEAT, world->options.images.filter,
-                                            (qa_scene_vec4){0,0,0,0}, &texture->fullbright, error)) goto done;
+    if (!count) { qa_error_set(error, QA_ERROR_FORMAT, 0, "Embedded brush texture has no pixels"); return false; }
+    recipe.level_count = (uint8_t)count;
+    qa_palette_options options = {.transparent_index = recipe.options.transparent ? 255 : -1,
+        .fullbright_first = first_fullbright < 256 ? (int)first_fullbright : -1,
+        .fullbright_last = 255, .layer = QA_PALETTE_COMBINED,
+        .translation = world->options.images.translation.size == 256 ? world->options.images.translation.data : NULL};
+    qa_scene_image_options upload = world->options.images; upload.wrap = QA_SCENE_REPEAT;
+    if (!scene_resource_indexed_image(world->resources, texture->name, levels, count, &upload,
+        &options, false, (qa_scene_vec4){0,0,0,1}, &texture->image, error) ||
+        !scene_image_asset_copy(texture->image, &recipe, error)) return false;
+    if (fullbright) {
+        options.layer = QA_PALETTE_FULLBRIGHT; recipe.layer = QA_PALETTE_FULLBRIGHT;
+        if (!scene_resource_indexed_image(world->resources, texture->name, levels, count, &upload,
+            &options, false, (qa_scene_vec4){0}, &texture->fullbright, error) ||
+            !scene_image_asset_copy(texture->fullbright, &recipe, error)) return false;
+    }
     texture->image->recipient_upload_pixels = true;
     texture->image->recipient_mipmap = world->options.images.mipmap;
     if (texture->fullbright) {
-        ((qa_scene_image *)texture->fullbright)->recipient_upload_pixels = true;
-        ((qa_scene_image *)texture->fullbright)->recipient_mipmap = world->options.images.mipmap;
+        texture->fullbright->recipient_upload_pixels = true;
+        texture->fullbright->recipient_mipmap = world->options.images.mipmap;
     }
-    result = true;
-done:
-    for (size_t i = 0; i < 4; ++i) { qa_image_free(&images[i]); qa_image_free(&bright[i]); }
-    return result;
+    return true;
 }
 
 static bool split_sky(qa_scene_world *world, qawl_texture *texture, const qa_bsp_texture *source,
                       bool embedded, qa_error *error)
 {
-    const qa_scene_image_level *image = &texture->image->levels[0];
     bool q64 = world->bsp.format == QA_BSP_QUAKE64;
-    if ((!q64 && (image->width != 256 || image->height != 128)) ||
-        (q64 && (image->height < 2 || image->height % 2))) {
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid classic sky layer dimensions");
-        return false;
-    }
-    if (texture->image->kind != QA_SCENE_RGBA8 && texture->image->kind != QA_SCENE_RGB8) {
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "Classic sky requires color image pixels");
-        return false;
-    }
-    uint32_t width = q64 ? image->width : 128, height = q64 ? image->height / 2 : 128;
-    if ((uint64_t)width * height > SIZE_MAX / 4) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Sky image is too large"); return false;
-    }
-    size_t count = (size_t)width * height;
-    uint8_t *solid = malloc(count * 4), *overlay = malloc(count * 4);
-    if (!solid || !overlay) {
-        free(solid); free(overlay);
-        qa_error_set(error, QA_ERROR_MEMORY, count, "Cannot allocate classic sky layers"); return false;
-    }
-    const uint8_t *pixels = image->pixels;
-    uint64_t sum[3] = {0};
-    for (size_t i = 0; i < count; ++i) {
-        size_t front = q64 ? i : (i / width) * image->width + i % width;
-        size_t back = q64 ? count + i : front + 128;
-        for (size_t c = 0; c < 3; ++c) {
-            solid[i * 4 + c] = pixels[back * 4 + c];
-            overlay[i * 4 + c] = pixels[front * 4 + c];
-            sum[c] += solid[i * 4 + c];
+    qa_bytes indices = embedded ? source->levels[0] : (qa_bytes){0};
+    if (!scene_resource_sky_layer(world->resources, texture->name, texture->image, indices, q64, false,
+        &texture->sky[0], error) || !scene_resource_sky_layer(world->resources, texture->name, texture->image,
+        indices, q64, true, &texture->sky[1], error)) return false;
+    const image_asset_recipe *original = ((const owned_image *)texture->image)->asset;
+    if (original) {
+        image_asset_recipe recipe = *original; recipe.quake64 = q64;
+        for (size_t i = 0; i < 2; ++i) {
+            recipe.sky_layer = (uint8_t)(i + 1);
+            if (!scene_image_asset_copy(texture->sky[i], &recipe, error)) return false;
         }
-        solid[i * 4 + 3] = 255;
-        overlay[i * 4 + 3] = q64 ? 128 : embedded && source->levels[0].data[front] == 0 ? 0 :
-            texture->image->kind == QA_SCENE_RGBA8 ? pixels[front * 4 + 3] : 255;
     }
-    if (!q64) for (size_t i = 0; i < count; ++i) if (!overlay[i * 4 + 3])
-        for (size_t c = 0; c < 3; ++c) overlay[i * 4 + c] = (uint8_t)(sum[c] / count);
-    bool result = create_image(world, texture->name, width, height, solid, QA_SCENE_REPEAT, &texture->sky[0], error) &&
-                  create_image(world, texture->name, width, height, overlay, QA_SCENE_REPEAT, &texture->sky[1], error);
-    free(solid); free(overlay);
-    return result;
+    return true;
 }
 
 static bool animations(qawl_world *data, qa_error *error)

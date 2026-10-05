@@ -422,6 +422,93 @@ static bool weapon_picture(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect tar
     }
     return true;
 }
+typedef struct hud_status_layout {
+    qa_scene_rect_f rect;
+    float cap, top, text_scale, scale, label_top;
+    bool compact;
+} hud_status_layout;
+static bool status_layout(qa_hud *hud, const qa_hud_frame *frame, size_t count,
+    size_t index, bool native, hud_status_layout *out, qa_error *error)
+{
+    qa_ui *ui = hud->options.ui; qa_font_info font;
+    if (!qa_font_describe(ui->options.fonts.primary ? ui->options.fonts.primary : ui->options.fonts.classic, &font))
+        return ui_fail(error, "Status HUD lost its retained font metrics");
+    float cap = font.has_cap_ink ? font.cap_height : 8, top = font.has_cap_ink ? font.cap_top : 0;
+    if (!isfinite(cap) || cap <= 0 || !isfinite(top))
+        return ui_fail(error, "Status HUD has invalid retained cap metrics");
+    float text_scale = ui->text_scale * 1.5f, group = frame->scale;
+    float fit = ui->scale / group, label_top = fmaxf(25, 8 + cap * text_scale * 1.5f);
+    float height = fmaxf(42, ceilf(label_top + cap * text_scale * .9f + 4));
+    float width = fminf(600 / group / (float)(count ? count : 1), 160);
+    qa_scene_rect_f rect = {320 - width * (float)count * .5f + (float)index * width,
+        476 - height, width - 4, height};
+    float scale = ui->scale;
+    float bias_x = (float)frame->safe_area.x + ((float)frame->safe_area.width - 640 * fit) * .5f + 320 * fit * (1 - group);
+    float bias_y = (float)frame->safe_area.y + ((float)frame->safe_area.height - 480 * fit) * .5f + 480 * fit * (1 - group);
+    bool compact = !native && scale * text_scale * cap < 8;
+    if (native) {
+        rect = (qa_scene_rect_f){8, 476 - height, 152, height};
+        bias_x = (float)frame->safe_area.x + ((float)frame->safe_area.width - 640 * fit) * .5f;
+    }
+    if (compact) {
+        width = fminf(180, ((float)frame->safe_area.width - 8) / (float)(count ? count : 1));
+        rect = (qa_scene_rect_f){(float)frame->safe_area.x + ((float)frame->safe_area.width - width * (float)count) * .5f + (float)index * width,
+            (float)frame->safe_area.y + (float)frame->safe_area.height - 36, width - 4, 32};
+        scale = 1; bias_x = bias_y = 0; text_scale = 8 / cap;
+    }
+    *out = (hud_status_layout){.rect = {bias_x + rect.x * scale, bias_y + rect.y * scale,
+            rect.width * scale, rect.height * scale}, .cap = cap, .top = top,
+        .text_scale = text_scale * scale, .scale = scale, .label_top = label_top * scale, .compact = compact};
+    return true;
+}
+static bool status_vital(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_value *vital,
+    size_t count, size_t index, qa_scene_frame *scene, qa_error *error)
+{
+    hud_status_layout layout;
+    if (!status_layout(hud, frame, count, index, false, &layout, error)) return false;
+    qa_scene_rect_f rect = layout.rect;
+    if (rect.width <= 8 || rect.height <= 8) return true;
+    if (!qa_scene_frame_picture_f(scene, hud->options.ui->options.white, frame->safe_area, rect,
+        (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){.055f, .06f, .065f, .94f}, error)) return false;
+    if (vital->icon && !qa_scene_frame_picture_f(scene, vital->icon, frame->safe_area,
+        (qa_scene_rect_f){rect.x + 6 * layout.scale, rect.y + 8 * layout.scale,
+            24 * layout.scale, 24 * layout.scale}, (qa_scene_vec4){0, 0, 1, 1},
+        (qa_scene_vec4){1, 1, 1, 1}, error)) return false;
+    char value[32];
+    if (!qa_format_number(vital->value, value, error)) return false;
+    const char *label = vital->label ? vital->label : "";
+    float left = (vital->icon ? 34 : 4) * layout.scale;
+    float available = rect.width - left - 4 * layout.scale;
+    qa_scene_vec4 color = vital->warning ? (qa_scene_vec4){1, .65f, .22f, 1} : (qa_scene_vec4){.92f, .88f, .78f, 1};
+    if (layout.compact) {
+        size_t size = strlen(label) + strlen(value) + 2;
+        char *combined = qa_arena_alloc(&scene->storage, size, 1, error);
+        if (!combined) return false;
+        snprintf(combined, size, "%s %s", label, value);
+        qa_font_layout measured;
+        if (!weapon_layout(hud, scene, combined, layout.text_scale, 0, color, &measured, error)) return false;
+        if (measured.width <= available)
+            return weapon_text(hud, scene, frame->safe_area, combined, rect.x + left,
+                rect.y + 4 - layout.top * layout.text_scale, layout.text_scale, available,
+                24, layout.cap, color, true, error);
+        return weapon_text(hud, scene, frame->safe_area, label, rect.x + left,
+                rect.y + 4 - layout.top * layout.text_scale, layout.text_scale, available,
+                14, layout.cap, color, true, error) &&
+            weapon_text(hud, scene, frame->safe_area, value, rect.x + left,
+                rect.y + 18 - layout.top * layout.text_scale, layout.text_scale, available,
+                14, layout.cap, color, true, error);
+    }
+    qa_font_layout measured;
+    if (!weapon_layout(hud, scene, value, 1, 0, color, &measured, error)) return false;
+    float numeric_scale = fminf(layout.text_scale * 1.5f, available / fmaxf(1, measured.width));
+    float label_scale = layout.text_scale * .8f;
+    return weapon_text(hud, scene, frame->safe_area, value, rect.x + left,
+            rect.y + 4 * layout.scale - layout.top * numeric_scale, numeric_scale, available,
+            rect.height, layout.cap, color, true, error) &&
+        weapon_text(hud, scene, frame->safe_area, label, rect.x + left,
+            rect.y + layout.label_top - layout.top * label_scale, label_scale, available,
+            rect.height - layout.label_top, layout.cap, color, true, error);
+}
 static bool weapon_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_data *data,
     qa_scene_frame *scene, qa_error *error)
 {
@@ -429,41 +516,23 @@ static bool weapon_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_dat
     if (!weapon->present) return true;
     if (!weapon->label || (weapon->finite_ammo && !isfinite(weapon->ammo_count)))
         return ui_fail(error, "Weapon HUD lost its actual source status");
-    qa_ui *ui = hud->options.ui; qa_font_info font;
-    if (!qa_font_describe(ui->options.fonts.primary ? ui->options.fonts.primary : ui->options.fonts.classic, &font))
-        return ui_fail(error, "Weapon HUD lost its retained font metrics");
-    float cap = font.has_cap_ink ? font.cap_height : 8, top = font.has_cap_ink ? font.cap_top : 0;
-    if (!isfinite(cap) || cap <= 0 || !isfinite(top))
-        return ui_fail(error, "Weapon HUD has invalid retained cap metrics");
-    float text_scale = ui->text_scale * 1.5f, group = frame->scale;
-    float fit = ui->scale / group, label_top = fmaxf(25, 8 + cap * text_scale * 1.5f);
-    float panel_height = fmaxf(42, ceilf(label_top + cap * text_scale * .9f + 4));
+    qa_ui *ui = hud->options.ui;
     size_t vitals = data->source_vitals ? data->vital_count : 2;
-    float count = (float)vitals + 1, width = fminf(600 / group / count, 160);
-    float x = 320 - width * count * .5f + (float)vitals * width;
-    qa_scene_rect_f rect = {x, 476 - panel_height, width - 4, panel_height};
-    float scale = ui->scale;
-    float bias_x = (float)frame->safe_area.x + ((float)frame->safe_area.width - 640 * fit) * .5f + 320 * fit * (1 - group);
-    float bias_y = (float)frame->safe_area.y + ((float)frame->safe_area.height - 480 * fit) * .5f + 480 * fit * (1 - group);
-    bool compact = !weapon->native_status && scale * text_scale * cap < 8;
-    if (weapon->native_status) {
-        rect = (qa_scene_rect_f){8, 476 - panel_height, 152, panel_height};
-        bias_x = (float)frame->safe_area.x + ((float)frame->safe_area.width - 640 * fit) * .5f;
-    }
-    if (compact) {
-        width = fminf(180, ((float)frame->safe_area.width - 8) / count);
-        rect = (qa_scene_rect_f){(float)frame->safe_area.x + ((float)frame->safe_area.width - width * count) * .5f + (float)vitals * width,
-            (float)frame->safe_area.y + (float)frame->safe_area.height - 36, width - 4, 32};
-        scale = 1; bias_x = bias_y = 0; text_scale = 8 / cap;
-    }
-    qa_scene_rect_f pixels = {bias_x + rect.x * scale, bias_y + rect.y * scale, rect.width * scale, rect.height * scale};
+    size_t count = vitals + (weapon->native_status ? 0 : 1);
+    hud_status_layout layout;
+    if (!status_layout(hud, frame, count, vitals, weapon->native_status, &layout, error)) return false;
+    float cap = layout.cap, top = layout.top, scale = layout.scale;
+    float text_scale = layout.text_scale / scale, label_top = layout.label_top / scale;
+    bool compact = layout.compact;
+    qa_scene_rect_f pixels = layout.rect;
+    qa_scene_rect_f rect = {0, 0, pixels.width / scale, pixels.height / scale};
     if (rect.width <= 8 || rect.height <= 8) return true;
     if (!qa_scene_frame_picture_f(scene, ui->options.white, frame->safe_area, pixels,
-        (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){.05f, .05f, .05f, .85f}, error)) return false;
+        (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){.055f, .06f, .065f, .94f}, error)) return false;
     bool unavailable = weapon->finite_ammo && !weapon->has_ammo_to_start;
     const char *warning = weapon->aggregate_empty ? "OUT OF AMMO" : weapon->aggregate_low ? "LOW AMMO WARNING" :
         weapon->suppress_active_warning ? NULL : unavailable ? "NO AMMO" : weapon->finite_ammo && weapon->low_ammo ? "LOW AMMO" : NULL;
-    qa_scene_vec4 color = warning || unavailable ? (qa_scene_vec4){.9f, .7f, .3f, 1} : (qa_scene_vec4){1, 1, 1, 1};
+    qa_scene_vec4 color = warning || unavailable ? (qa_scene_vec4){1, .65f, .22f, 1} : (qa_scene_vec4){.92f, .88f, .78f, 1};
     char numeric[32] = "";
     if (weapon->finite_ammo && !qa_format_number(weapon->ammo_count, numeric, error)) return false;
     qa_font_layout measured;
@@ -646,14 +715,17 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
     qa_combat_state combat;
     if (frame->actor.registry && !data.source_vitals && !qa_combat_read(qa_application_combat(hud->options.application),
         frame->actor, &combat, error)) return false;
+    qa_hud_value canonical[2];
     if (frame->actor.registry && !data.source_vitals) {
-        if (!number(hud, scene, target, 160, 434, "Health", combat.health, combat.health <= 25, error) ||
-            !number(hud, scene, target, 320, 434, "Armor", combat.armor.regular.points, false, error)) return false;
+        canonical[0] = (qa_hud_value){.label = "Health", .value = combat.health, .warning = combat.health <= 25};
+        canonical[1] = (qa_hud_value){.label = "Armor", .value = combat.armor.regular.points};
+        data.vitals = canonical; data.vital_count = 2;
     }
     qa_inventory *inventory = qa_application_inventory(hud->options.application);
     qa_item_definition *definitions = NULL;
     size_t definition_count = 0;
-    if (frame->actor.registry && (data.selected_weapon || frame->show_inventory)) {
+    if (frame->actor.registry && (frame->show_inventory ||
+        (data.selected_weapon && !data.source_vitals && !data.weapon.present))) {
         if (!qa_inventory_item_definitions(inventory, frame->actor, NULL, 0, &definition_count, error)) return false;
         if (definition_count > SIZE_MAX / sizeof(*definitions)) return ui_fail(error, "HUD item definition overflow");
         if (definition_count) {
@@ -672,22 +744,19 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
     }
     if (frame->actor.registry && data.selected_weapon && !data.source_vitals && !data.weapon.present) {
         for (size_t i = 0; i < definition_count; ++i) {
-            const qa_item_definition *weapon = &definitions[i];
+            const qa_item_definition *weapon = definitions + i;
             if (weapon->item != data.selected_weapon || !weapon->ammo) continue;
             qa_inventory_entry ammo;
-            if (!qa_inventory_entry_read(inventory, frame->actor, weapon->ammo, &ammo, error) ||
-                !number(hud, scene, target, 480, 434, weapon->label, ammo.count, ammo.count <= 0, error)) return false;
+            if (!qa_inventory_entry_read(inventory, frame->actor, weapon->ammo, &ammo, error)) return false;
+            data.weapon = (qa_hud_weapon){.present = true, .label = weapon->label,
+                .ammo_count = ammo.count, .finite_ammo = true, .has_ammo_to_start = ammo.count > 0};
             break;
         }
     }
     if (!weapon_draw(hud, frame, &data, scene, error)) return false;
-    for (size_t i = 0; i < data.vital_count; ++i) {
-        float x = 80 + (float)i * 110;
-        if (!icon(hud, scene, target, data.vitals[i].icon, (qa_scene_rect_f){x - 12, 374, 24, 24},
-                    (qa_scene_vec4){1, 1, 1, 1}, error) ||
-            !number(hud, scene, target, x, 398, data.vitals[i].label,
-                    data.vitals[i].value, data.vitals[i].warning, error)) return false;
-    }
+    size_t status_count = data.vital_count + (data.weapon.present && !data.weapon.native_status ? 1 : 0);
+    for (size_t i = 0; i < data.vital_count; ++i)
+        if (!status_vital(hud, frame, data.vitals + i, status_count, i, scene, error)) return false;
     for (size_t i = 0; i < data.bar_count; ++i) {
         const qa_hud_value *bar = &data.bars[i];
         float width = bar->maximum > 0 ? (float)fmax(0, fmin(1, bar->value / bar->maximum)) * 240 : 0;
@@ -801,13 +870,27 @@ bool qa_hud_draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
     if (!frame->visible) return true;
     qa_ui *ui = hud->options.ui;
     float scale = ui->scale, x = ui->bias_x, y = ui->bias_y;
+    qa_ui_presentation prior = {.fonts = ui->options.fonts, .text_scale = ui->text_scale, .color_mode = ui->color_mode};
     hud->drawing = true;
     ui->handling = true;
     ui->drawing = true;
-    bool ok = draw(hud, frame, scene, error);
+    bool ok = true;
+    if (hud->options.presentation) {
+        qa_ui_presentation presentation;
+        ok = hud->options.presentation(hud->options.context, &presentation, error);
+        if (ok && (presentation.fonts.seat != frame->seat || !presentation.fonts.classic ||
+            !isfinite(presentation.text_scale) || presentation.text_scale <= 0))
+            ok = ui_fail(error, "HUD presentation lost its actual seat fonts or text scale");
+        if (ok) {
+            ui->options.fonts = presentation.fonts; ui->text_scale = presentation.text_scale;
+            ui->color_mode = presentation.color_mode;
+        }
+    }
+    if (ok) ok = draw(hud, frame, scene, error);
     hud->drawing = false;
     ui->handling = false;
     ui->drawing = false;
     ui->scale = scale; ui->bias_x = x; ui->bias_y = y;
+    ui->options.fonts = prior.fonts; ui->text_scale = prior.text_scale; ui->color_mode = prior.color_mode;
     return ok;
 }

@@ -224,7 +224,8 @@ static bool held_model(qa_frontend *frontend, frontend_equipment_media *row, qa_
     const qa_scene_image_options *options = qa_scene_model_image_options(row->held_parent.scene);
     if (!options) return frontend_fail(error, QA_ERROR_FORMAT, "Held parent has no actual scene image policy");
     return qa_scene_model_create(row->held.model, row->owner.images, row->owner.materials,
-        options, &row->held_scene, error);
+        options, &row->held_scene, error) &&
+        qa_scene_model_source_resource_bind(row->held_scene, row->held_parent.resource, error);
 }
 
 static bool prepare_media(qa_frontend *frontend, const qa_application_equipment_view *view,
@@ -361,7 +362,8 @@ static bool source_media_prepare(qa_frontend *f,const qa_application_equipment_v
             else memcpy(row->saved_parent_path,path,length);}
         row->held_parent.path=row->saved_parent_path;row->held_parent.model=row->source_model;
         if(ok)ok=frontend_held_model_prepare(&row->declaration,resource,row->source_model,&row->held,error)&&
-            qa_scene_model_create(row->held.model,row->owner.images,row->owner.materials,&images,&row->held_scene,error);
+            qa_scene_model_create(row->held.model,row->owner.images,row->owner.materials,&images,&row->held_scene,error)&&
+            qa_scene_model_source_resource_bind(row->held_scene,resource,error);
     }
     if(ok)ok=qa_application_equipment_current(f->application,view)&&frontend_equipment_media_namespace_current(f,row);
     f->equipment->admitting=false;
@@ -390,6 +392,105 @@ bool frontend_equipment_media_prepare_source_icon(qa_frontend *f,const qa_applic
     bool present=false;
     if(!icon||*icon||!source_media_prepare(f,view,out,&present,error))return false;
     *icon=present?(*out)->icon:NULL;return true;
+}
+
+typedef struct q1_hud_picture {
+    const char *item, *classic, *wheel, *ammo;
+} q1_hud_picture;
+/* Anthology's common HUD uses actual id1/mission-pack Sbar and wwheel assets. */
+static const q1_hud_picture q1_hud_pictures[] = {
+    {"q1:weapon/axe", NULL, "axe", NULL},
+    {"q1:weapon/shotgun", "shotgun", "shotgun1", "sb_shells"},
+    {"q1:weapon/supershotgun", "sshotgun", "shotgun2", "sb_shells"},
+    {"q1:weapon/nailgun", "nailgun", "nail1", "sb_nails"},
+    {"q1:weapon/supernailgun", "snailgun", "nail2", "sb_nails"},
+    {"q1:weapon/grenadelauncher", "rlaunch", "rocket1", "sb_rocket"},
+    {"q1:weapon/rocketlauncher", "srlaunch", "rocket2", "sb_rocket"},
+    {"q1:weapon/lightning", "lightng", "light", "sb_cells"},
+    {"q1:weapon/hipnotic:laser", "laser", "ui_h_weapon_laser", "sb_cells"},
+    {"q1:weapon/hipnotic:mjolnir", "mjolnir", "ui_h_weapon_mjolnir", "sb_cells"},
+    {"q1:weapon/hipnotic:proximity", "prox", "ui_h_weapon_gren", "sb_rocket"},
+    {"q1:weapon/rogue:lava-nailgun", "r_lava", "ui_r_weapon_lava", "r_ammolava"},
+    {"q1:weapon/rogue:lava-supernailgun", "r_superlava", "ui_r_weapon_superlava", "r_ammolava"},
+    {"q1:weapon/rogue:multi-grenade", "r_gren", "ui_r_weapon_gren", "r_ammomulti"},
+    {"q1:weapon/rogue:multi-rocket", "r_multirock", "ui_r_weapon_multirock", "r_ammomulti"},
+    {"q1:weapon/rogue:plasma", "r_plasma", "ui_r_weapon_plasma", "r_ammoplasma"},
+    {"q1:weapon/mg3:laser", "laser", "ui_h_weapon_laser", "sb_cells"},
+    {"q1:weapon/mg3:mjolnir", NULL, "axe", "sb_cells"}
+};
+static bool native_icon_declaration(qa_frontend *f,
+    const qa_application_equipment_view *view, char key[192], char declaration[256], bool *present, qa_error *error)
+{
+    *present = false;
+    if (!f || !view || view->source_slot ||
+        !qa_application_equipment_current(f->application, view))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native HUD icon requires its actual equipment source");
+    if (view->family != QA_GAME_Q1 || !view->item) return true;
+    const char *name = qa_strings_cstr(qa_session_strings(qa_application_session(f->application)), view->item);
+    const q1_hud_picture *picture = NULL;
+    for (size_t i = 0; name && i < sizeof(q1_hud_pictures) / sizeof(*q1_hud_pictures); ++i)
+        if (!strcmp(name, q1_hud_pictures[i].item)) { picture = q1_hud_pictures + i; break; }
+    if (!picture) return true;
+    const qa_launch_snapshot *launch = qa_application_launch(f->application);
+    const char *instance = qa_application_provider_instance(f->application, view->provider);
+    const qa_launch_instance *source = instance ? qa_launch_snapshot_find(launch, instance) : NULL;
+    const qa_product *product = source ? qa_catalog_product(qa_launch_snapshot_catalog(launch), source->selection.product) : NULL;
+    if (!product || product->family != view->family)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native HUD icon lost its actual product declaration");
+    char path[128], lump[64] = "";
+    if (product->edition == QA_EDITION_RERELEASE) {
+        snprintf(path, sizeof(path), "gfx/weapons/%s%s_2.lmp",
+            !strncmp(picture->wheel, "ui_", 3) ? "" : "ww_", picture->wheel);
+    } else {
+        const char *icon = picture->classic ? picture->classic : picture->ammo;
+        if (!icon) return true;
+        snprintf(path, sizeof(path), "%s", "gfx.wad");
+        snprintf(lump, sizeof(lump), "%s%s", picture->classic && strncmp(icon, "r_", 2) ? "inv2_" : "", icon);
+    }
+    snprintf(key, 192, "%s%s%s", path, lump[0] ? "#" : "", lump);
+    int size = lump[0] ? snprintf(declaration, 256,
+            "{\"kind\":\"wad-picture\",\"path\":\"%s\",\"lump\":\"%s\"}", path, lump) :
+            snprintf(declaration, 256, "{\"kind\":\"image\",\"path\":\"%s\"}", path);
+    if (size < 0 || size >= 256)
+        return frontend_fail(error, QA_ERROR_MEMORY, "Native HUD icon declaration exceeds its actual extent");
+    *present = true; return true;
+}
+bool frontend_equipment_media_native_icon_prepare(qa_frontend *f,
+    const qa_application_equipment_view *view, const qa_material **out, qa_error *error)
+{
+    char key[192], declaration[256]; bool present;
+    if (!out || *out || !native_icon_declaration(f, view, key, declaration, &present, error)) return false;
+    if (!present) return true;
+    frontend_visual_owner_view media;
+    if (!frontend_visual_media_acquire(f, view->provider, view->family, &media, error)) return false;
+    const qa_material *material = qa_material_find(media.materials, key);
+    if (!material) {
+        qa_resource *resource = NULL;
+        bool okay = frontend_equipment_icon_load((qa_bytes){(const uint8_t *)declaration, strlen(declaration)},
+            media.family, media.mounts, media.images, media.materials, &material, &resource, error);
+        qa_resource_release(resource);
+        if (!okay) return false;
+    }
+    if (!qa_application_equipment_current(f->application, view) ||
+        !qa_vfs_lookup_equal(qa_application_provider_files(f->application, view->provider), media.mounts))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native HUD icon changed its actual equipment or media owner");
+    *out = material; return true;
+}
+bool frontend_equipment_media_native_icon_read(qa_frontend *f,
+    const qa_application_equipment_view *view, const qa_material **out, qa_error *error)
+{
+    char key[192], declaration[256]; bool present;
+    if (!out || *out || !native_icon_declaration(f, view, key, declaration, &present, error)) return false;
+    if (!present) return true;
+    qa_vfs *files = qa_application_provider_files(f->application, view->provider);
+    for (size_t i = 0; i < frontend_visual_owner_count(f); ++i) {
+        frontend_visual_owner_view media;
+        if (!frontend_visual_owner_read(f, i, &media) || media.owner != view->provider ||
+            !qa_vfs_lookup_equal(files, media.mounts)) continue;
+        *out = qa_material_find(media.materials, key);
+        if (*out) return true;
+    }
+    return frontend_fail(error, QA_ERROR_ARGUMENT, "Native HUD icon has not completed its actual media preparation");
 }
 
 bool frontend_equipment_media_source_icon_read(const qa_frontend *f,

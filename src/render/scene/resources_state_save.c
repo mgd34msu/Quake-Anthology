@@ -281,6 +281,10 @@ static bool palette_source_fields(qa_source_save_io *io, qa_scene_resources *own
     if (!content_field(io, owner, refs, resource, &opening->mount)) return false;
     if (!*resource) return !opening->resource_id && !opening->path && !opening->opening_present;
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    if (reading) {
+        state->palettes[family] = (qa_buffer){malloc(768), 768};
+        if (!state->palettes[family].data) return fail(io->error, QA_ERROR_MEMORY, "Restoring installed resource palette");
+    }
     if (state->palettes[family].size != 768) return false;
     if (reading) opening->resource_id = qa_resource_id(*resource);
     else if (opening->resource_id != qa_resource_id(*resource)) return false;
@@ -294,39 +298,24 @@ static bool palette_source_fields(qa_source_save_io *io, qa_scene_resources *own
     if (strcmp(opening->path, family == QA_SCENE_Q1 ? "gfx/palette.lmp" : "pics/colormap.pcx") ||
         !qa_vfs_acquisition_opening_codec(io, owner->vfs, opening) || !opening->opening_present) return false;
     qa_bytes bytes = qa_resource_bytes(*resource);
-    if (family == QA_SCENE_Q1)
-        return bytes.size == 768 && !memcmp(bytes.data, state->palettes[family].data, 768);
+    if (family == QA_SCENE_Q1) {
+        if (bytes.size != 768) return false;
+        if (reading) memcpy(state->palettes[family].data, bytes.data, 768);
+        return reading || !memcmp(bytes.data, state->palettes[family].data, 768);
+    }
     qa_image image = {0};
     bool ok = qa_image_decode_pcx(bytes, QA_IMAGE_FORMAT, &image, io->error) && image.palette.size >= 1024;
-    for (size_t i = 0; ok && i < 256; ++i)
-        ok = !memcmp(image.palette.data + i * 4, state->palettes[family].data + i * 3, 3);
+    for (size_t i = 0; ok && i < 256; ++i) {
+        if (reading) memcpy(state->palettes[family].data + i * 3, image.palette.data + i * 4, 3);
+        else ok = !memcmp(image.palette.data + i * 4, state->palettes[family].data + i * 3, 3);
+    }
     qa_image_free(&image); return ok;
 }
 
 static bool cache_options(qa_source_save_io *io, image_cache *entry)
 {
-    qa_scene_image_options *options = &entry->options;
-    uint32_t family = options->family, wrap = options->wrap, filter = options->filter, usage = options->usage;
-    int32_t transparent_index = options->transparent_index;
-    size_t palette = options->palette_rgb.size, translation = options->translation.size;
-    bool ok = qa_source_save_u32(io, &family) && family <= QA_SCENE_Q3 &&
-        qa_source_save_u32(io, &wrap) && wrap <= QA_SCENE_CLAMP &&
-        qa_source_save_u32(io, &filter) && filter <= QA_SCENE_LINEAR_MIPMAP_LINEAR &&
-        qa_source_save_u32(io, &usage) && usage <= QA_IMAGE_USAGE_SKY &&
-        qa_source_save_bool(io, &options->mipmap) && qa_source_save_bool(io, &options->transparent) &&
-        qa_source_save_bool(io, &options->fullbright_only) && qa_source_save_i32(io, &transparent_index) &&
-        qa_source_save_count(io, &palette, 768) && (!palette || palette == 768) &&
-        qa_source_save_count(io, &translation, 256) && (!translation || translation == 256) &&
-        qa_source_save_bytes(io, entry->palette, palette) && qa_source_save_bytes(io, entry->translation, translation);
-    if (ok) ok = qa_source_save_bool(io, &entry->exact_file);
-    if (ok) {
-        options->family = (qa_scene_family)family; options->wrap = (qa_scene_wrap)wrap;
-        options->filter = (qa_scene_filter)filter; options->usage = (qa_scene_image_usage)usage;
-        options->transparent_index = transparent_index;
-        options->palette_rgb = (qa_bytes){NULL, palette}; options->translation = (qa_bytes){NULL, translation};
-    }
-    if (ok) ok = qa_scene_source_upload_precision_fields(io, options);
-    return ok;
+    return qa_scene_image_options_fields(io, &entry->options, entry->palette, entry->translation,
+                                         &entry->exact_file);
 }
 static bool acquisition_fields(qa_source_save_io *io, qa_scene_resources *owner,
     const qa_resource *resource, qa_mount_id mount, qa_vfs_acquisition *opening)
@@ -670,13 +659,15 @@ static bool resource_fields(qa_source_save_io *io, qa_scene_resources *owner, qa
             for (size_t j = 0; j < i; ++j) if (policy->formats[j] == (qa_scene_image_format)format) return false;
             policy->formats[i] = (qa_scene_image_format)format;
         }
-        if (!qa_source_save_count(io, &palette, 768) || (palette && palette != 768)) return false;
-        if (reading && palette) {
-            state->palettes[family] = (qa_buffer){malloc(palette), palette};
-            if (!state->palettes[family].data) return fail(io->error, QA_ERROR_MEMORY, "allocating saved resource palette");
-        }
-        if (!qa_source_save_bytes(io, state->palettes[family].data, palette)) return false;
         if (!palette_source_fields(io, owner, state, family, refs)) return false;
+        if (!state->palette_resources[family]) {
+            if (!qa_source_save_count(io, &palette, 768) || (palette && palette != 768)) return false;
+            if (reading && palette) {
+                state->palettes[family] = (qa_buffer){malloc(palette), palette};
+                if (!state->palettes[family].data) return fail(io->error, QA_ERROR_MEMORY, "Restoring generated resource palette");
+            }
+            if (!qa_source_save_bytes(io, state->palettes[family].data, palette)) return false;
+        }
     }
     if (!aliases_fields(io, owner, state, refs)) return false;
     size_t count = state->cache_count, capacity = state->cache_capacity;

@@ -541,12 +541,24 @@ static bool world_source_qualify(void *context,qa_bytes bytes,const qa_scene_wor
     }
     return true;
 }
+static bool world_source_options(void *context, qa_scene_world_options *out, qa_error *error)
+{
+    (void)error;
+    world_scope *scope = context;
+    *out = scope->row->policy.options;
+    out->external_lit = scope->row->policy.spans[0];
+    out->images.palette_rgb = scope->row->policy.spans[1];
+    out->images.translation = scope->row->policy.spans[2];
+    out->external_entities = scope->row->policy.spans[3];
+    out->q2_sky = scope->row->policy.sky;
+    return true;
+}
 static qa_scene_world_owner_refs world_refs(world_scope *scope)
 {
     return (qa_scene_world_owner_refs){.state={.images={scope,image_encode,image_decode},.context=scope,
         .material_encode=material_encode,.material_decode=material_decode,.frame_encode=frame_encode,.frame_decode=frame_decode},
         .context=scope,.geometry_encode=geometry_encode,.geometry_decode=geometry_decode,
-        .source_qualify=world_source_qualify,.identity_decode=identity_decode,.identity_encode=identity_encode};
+        .source_qualify=world_source_qualify,.source_options=world_source_options,.identity_decode=identity_decode,.identity_encode=identity_encode};
 }
 void frontend_world_inventory_destroy(frontend_world_inventory *inventory)
 {
@@ -649,8 +661,25 @@ static bool heap_fields(qa_source_save_io *io,frontend_world_inventory *inventor
         (io->direction==QA_SOURCE_SAVE_WRITE && actual!=*resource)) return false;
     *resource=actual; return true;
 }
-static bool policy_fields(qa_source_save_io *io,world_policy *policy)
+static const qa_resource *policy_resource(const world_row *row, size_t span)
 {
+    if (span != 0 && span != 3) return NULL;
+    qa_bytes bytes = row->policy.spans[span];
+    if ((!bytes.size && span == 0) || (span == 3 && !row->policy.options.has_external_entities)) return NULL;
+    const char *extension = span == 0 ? ".lit" : ".ent";
+    size_t count = qa_vfs_resource_count(row->source.files);
+    for (size_t i = 0; i < count; ++i) {
+        const qa_resource *resource = qa_vfs_resource_at(row->source.files, i, NULL);
+        const char *path = qa_resource_path(resource); size_t length = strlen(path);
+        qa_bytes source = qa_resource_bytes(resource);
+        if (length >= 4 && !strcmp(path + length - 4, extension) && source.size == bytes.size &&
+            (!bytes.size || !memcmp(source.data, bytes.data, bytes.size))) return resource;
+    }
+    return NULL;
+}
+static bool policy_fields(qa_source_save_io *io,world_row *row)
+{
+    world_policy *policy = &row->policy;
     qa_scene_world_options *o=&policy->options; qa_scene_image_options *image=&o->images;
     uint32_t family=image->family,wrap=image->wrap,filter=image->filter,usage=image->usage,encoding=o->q1_lightmap_encoding;
     int32_t transparent_index=image->transparent_index;
@@ -665,14 +694,32 @@ static bool policy_fields(qa_source_save_io *io,world_policy *policy)
     image->family=(qa_scene_family)family; image->wrap=(qa_scene_wrap)wrap;
     image->filter=(qa_scene_filter)filter; image->usage=(qa_scene_image_usage)usage;
     image->transparent_index=transparent_index; o->q1_lightmap_encoding=(qa_scene_q1_lightmap_encoding)encoding;
-    for (size_t i=0;i<4;++i) {
-        size_t count=policy->spans[i].size;
-        if (!qa_source_save_count(io,&count,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)) return false;
-        if (io->direction==QA_SOURCE_SAVE_WRITE) {
-            if (!qa_source_save_bytes(io,(void *)policy->spans[i].data,count)) return false;
+    for (size_t i = 0; i < 4; ++i) {
+        bool reading = io->direction == QA_SOURCE_SAVE_READ;
+        const qa_resource *resource = !reading ? policy_resource(row, i) : NULL;
+        qa_bytes palette = {0};
+        bool installed_palette = i == 1 && qa_scene_resources_palette_read(row->source.images, image->family, &palette) &&
+            palette.size == policy->spans[i].size && (!palette.size || !memcmp(palette.data, policy->spans[i].data, palette.size));
+        uint8_t storage = reading ? 0 : resource ? 1 : installed_palette ? 2 : 0;
+        if (!qa_source_save_u8(io, &storage) || storage > 2) return false;
+        if (storage == 1) {
+            uint64_t id = reading ? 0 : qa_resource_id(resource);
+            if (!qa_source_save_u64(io, &id) || !id) return false;
+            if (reading) resource = qa_resource_pool_find(qa_vfs_resources(row->source.files), id);
+            if (!resource) return frontend_fail(io->error, QA_ERROR_FORMAT, "Saved world sidecar resource is unavailable");
+            policy->spans[i] = qa_resource_bytes(resource);
+        } else if (storage == 2) {
+            if (i != 1 || !qa_scene_resources_palette_read(row->source.images, image->family, &palette)) return false;
+            policy->spans[i] = palette;
         } else {
-            if (count>io->input.size-io->offset) return false;
-            policy->spans[i]=(qa_bytes){io->input.data+io->offset,count}; io->offset+=count;
+            size_t count = policy->spans[i].size;
+            if (!qa_source_save_count(io, &count, reading ? io->input.size - io->offset : SIZE_MAX)) return false;
+            if (!reading) {
+                if (!qa_source_save_bytes(io, (void *)policy->spans[i].data, count)) return false;
+            } else {
+                if (count > io->input.size - io->offset) return false;
+                policy->spans[i] = (qa_bytes){io->input.data + io->offset, count}; io->offset += count;
+            }
         }
     }
     return o->has_external_entities || policy->spans[3].size==0;
@@ -691,7 +738,7 @@ static bool rows_fields(qa_source_save_io *io,frontend_world_inventory *inventor
         world_row *row=inventory->worlds+i;
         if (!owner_fields(io,&row->owner,true) || !heap_fields(io,inventory,&row->heap,&row->pool,&row->resource,
             &row->source.files,&row->source.images,&row->source.materials,&row->source.resource) ||
-            !policy_fields(io,&row->policy) || !blob(io,&row->state)) return false;
+            !policy_fields(io,row) || !blob(io,&row->state)) return false;
         for (size_t j=0;j<i;++j)
             if (row->owner.kind==inventory->worlds[j].owner.kind && row->owner.owner==inventory->worlds[j].owner.owner &&
                 row->owner.row==inventory->worlds[j].owner.row) return false;

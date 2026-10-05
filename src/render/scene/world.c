@@ -1,5 +1,7 @@
 #include "world/internal.h"
 #include "world/legacy/internal.h"
+#include "world/q3/internal.h"
+#include "resources_internal.h"
 #include "qa/scene_effects.h"
 #include "qa/scene_world_save.h"
 #include "qa/material_library_save.h"
@@ -58,6 +60,20 @@ bool qa_scene_world_source_resource_bind(qa_scene_world *world, const qa_resourc
     if (bytes.size != world->bytes.size || (bytes.size &&
         (!bytes.data || memcmp(bytes.data, world->bytes.data, bytes.size))))
         return world_error(error, QA_ERROR_ARGUMENT, "World source resource differs from its immutable BSP bytes");
+    if (world->bsp.family == QA_BSP_Q1 && world->legacy_data) {
+        qawl_world *legacy = world->legacy_data;
+        for (size_t i = 0; i < legacy->texture_count; ++i) {
+            qawl_texture *texture = legacy->textures + i;
+            if (!scene_image_asset_source_bind(texture->image, resource, error) ||
+                !scene_image_asset_source_bind(texture->fullbright, resource, error) ||
+                !scene_image_asset_source_bind(texture->sky[0], resource, error) ||
+                !scene_image_asset_source_bind(texture->sky[1], resource, error)) return false;
+        }
+    } else if (world->bsp.family == QA_BSP_Q3 && world->q3_data) {
+        q3_data *data = world->q3_data;
+        for (size_t i = 0; i < data->lightmap_count; ++i)
+            if (!scene_image_asset_source_bind(data->lightmaps[i], resource, error)) return false;
+    }
     if (!world->source_resource) {
         qa_resource_retain((qa_resource *)resource);
         world->source_resource = resource;

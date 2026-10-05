@@ -2,6 +2,7 @@
 #include "ui_features_private.h"
 #include "qa/image.h"
 #include "qa/text.h"
+#include "../../render/scene/resources_internal.h"
 
 bool frontend_menu_font_view(qa_frontend *f, const qa_product **selected, const qa_product **typography, qa_error *error)
 {
@@ -63,6 +64,15 @@ bool frontend_menu_charset(qa_frontend *f, const qa_product *product, qa_error *
         if (ok) ok = qa_scene_image_create(f->ui_images, "frontend:source-conchars", QA_SCENE_RGBA8,
             &(qa_scene_image_level){128, 128, expanded.rgba.data, expanded.rgba.size}, 1, QA_SCENE_CLAMP,
             QA_SCENE_NEAREST, (qa_scene_vec4){0}, &image, error);
+        if (ok) {
+            image_asset_recipe recipe = {.kind = 1, .level_count = 1, .source = wad_source,
+                .palette_source = palette, .palette_attempted = true,
+                .offsets = {chars->offset}, .widths = {128}, .heights = {128},
+                .fullbright_first = 256, .fullbright_last = -1, .layer = QA_PALETTE_COMBINED,
+                .options = {.family = QA_SCENE_Q1, .wrap = QA_SCENE_CLAMP, .filter = QA_SCENE_NEAREST,
+                    .usage = QA_IMAGE_USAGE_PICTURE, .transparent = true, .transparent_index = 0}};
+            ok = scene_image_asset_copy(image, &recipe, error);
+        }
         qa_image_free(&expanded); qa_wad_free(&wad); qa_resource_release(palette); qa_resource_release(wad_source);
     } else {
         qa_scene_image_options options = {.family = product->family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3,

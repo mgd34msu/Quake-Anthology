@@ -40,6 +40,12 @@ bool frontend_equipment_media_prepare_source_held(qa_frontend *,const qa_applica
     frontend_equipment_media **,bool *authored,qa_error *);
 bool frontend_equipment_media_prepare_source_icon(qa_frontend *,const qa_application_equipment_view *,
     frontend_equipment_media **,const qa_material **,qa_error *);
+/* Ordinary native HUD pictures borrow the actual selected provider's material
+ * owner; installed image/resource recipes retain their existing custody. */
+bool frontend_equipment_media_native_icon_prepare(qa_frontend *,const qa_application_equipment_view *,
+    const qa_material **,qa_error *);
+bool frontend_equipment_media_native_icon_read(qa_frontend *,const qa_application_equipment_view *,
+    const qa_material **,qa_error *);
 bool frontend_equipment_media_source_icon_read(const qa_frontend *,const qa_application_equipment_view *,
     const qa_material **,qa_error *);
 bool frontend_equipment_media_read(const frontend_equipment_media *, frontend_equipment_media_view *);

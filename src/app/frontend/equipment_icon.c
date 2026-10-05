@@ -1,6 +1,7 @@
 #include "equipment_icon.h"
 #include "qa/json.h"
 #include "qa/image.h"
+#include "../../render/scene/resources_internal.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -63,7 +64,16 @@ bool frontend_equipment_icon_load(qa_bytes declaration,qa_scene_family family,qa
         }
         qa_scene_image_level pixels={rgba.width,rgba.height,rgba.rgba.data,rgba.rgba.size};
         if(okay)okay=qa_scene_image_create(images,name,QA_SCENE_RGBA8,&pixels,1,QA_SCENE_CLAMP,QA_SCENE_LINEAR,
-            (qa_scene_vec4){0},&image,error)&&qa_material_register_generated_picture(library,name,image,&material,error);
+            (qa_scene_vec4){0},&image,error);
+        if(okay) {
+            image_asset_recipe recipe={.kind=1,.level_count=1,.source=resource,
+                .offsets={(uint64_t)(bytes.data-qa_resource_bytes(resource).data)+8},
+                .widths={indexed.width},.heights={indexed.height},.fullbright_first=256,
+                .fullbright_last=-1,.layer=QA_PALETTE_COMBINED};
+            options.palette_rgb=palette;scene_image_asset_palette(images,&recipe,&options);
+            okay=scene_image_asset_copy(image,&recipe,error)&&
+                qa_material_register_generated_picture(library,name,image,&material,error);
+        }
         qa_image_free(&indexed);qa_image_free(&rgba);qa_wad_free(&directory);
     }
     if(okay){*out=material;*source=resource;resource=NULL;}

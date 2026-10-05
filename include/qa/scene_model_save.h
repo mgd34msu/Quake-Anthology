@@ -12,6 +12,8 @@ typedef struct qa_scene_model_saved_identity {
     size_t node, ordinal;
     uint64_t saved;
 } qa_scene_model_saved_identity;
+bool qa_scene_model_source_resource_bind(qa_scene_model *, const qa_resource *, qa_error *);
+
 typedef struct qa_scene_model_content_lease {
     void *context;
     void (*release)(void *);

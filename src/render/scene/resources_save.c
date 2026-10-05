@@ -1,6 +1,7 @@
 #include "resources_internal.h"
 #include "qa/scene_save.h"
 #include "qa/source_save.h"
+#include "image_options_save.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,12 +38,85 @@ static bool name_field(qa_source_save_io *io, const char **name, char **owned)
     if (!qa_source_save_bytes(io, text, size) || memchr(text, 0, size)) return false;
     text[size] = 0; *name = text; return true;
 }
-static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const qa_scene_image *source,
+static bool asset_resource_fields(qa_source_save_io *io, const qa_scene_resources *const *owners,
+    size_t count, qa_resource **resource)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint64_t id = reading ? 0 : qa_resource_id(*resource);
+    if (!qa_source_save_u64(io, &id)) return false;
+    if (!id) { if (reading) *resource = NULL; return true; }
+    size_t scope = 0;
+    if (!reading) {
+        for (; scope < count; ++scope)
+            if (owners[scope]->vfs && qa_resource_pool_find(qa_vfs_resources(owners[scope]->vfs), id) == *resource) break;
+        if (scope == count) return fail(io->error, "Installed image source is outside its saved resource owners");
+    }
+    if (!qa_source_save_count(io, &scope, count - 1)) return false;
+    if (reading) {
+        *resource = owners[scope]->vfs ? (qa_resource *)qa_resource_pool_find(qa_vfs_resources(owners[scope]->vfs), id) : NULL;
+        if (!*resource) return fail(io->error, "Saved installed image resource is unavailable");
+    }
+    return true;
+}
+static bool asset_fields(qa_source_save_io *io, const qa_scene_resources *const *owners,
+    size_t count, image_asset_recipe *recipe)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint32_t palette_error = (uint32_t)recipe->palette_error;
+    const char *path = reading ? NULL : recipe->path; char *owned_path = NULL;
+    bool exact = false;
+    bool ok = asset_resource_fields(io, owners, count, &recipe->source) && recipe->source &&
+        asset_resource_fields(io, owners, count, &recipe->palette_source) &&
+        qa_source_save_u8(io, &recipe->kind) && recipe->kind <= 2;
+    if (ok && !recipe->kind) ok = name_field(io, &path, &owned_path);
+    if (ok && recipe->kind) {
+        ok = qa_source_save_u8(io, &recipe->level_count) && recipe->level_count && recipe->level_count <= 4;
+        for (size_t i = 0; ok && i < recipe->level_count; ++i)
+            ok = qa_source_save_u64(io, recipe->offsets + i) && qa_source_save_u32(io, recipe->widths + i) &&
+                recipe->widths[i] && qa_source_save_u32(io, recipe->heights + i) && recipe->heights[i] &&
+                (uint64_t)recipe->widths[i] * recipe->heights[i] <= SIZE_MAX / 4;
+        uint32_t layer = recipe->layer;
+        ok = ok && qa_source_save_u32(io, &layer) && layer <= QA_PALETTE_FULLBRIGHT &&
+            qa_source_save_i32(io, &recipe->fullbright_last) &&
+            qa_source_save_bool(io, &recipe->flood_skin) && qa_source_save_bool(io, &recipe->generate_mips) &&
+            qa_source_save_u32(io, &recipe->overbright) && recipe->overbright <= 15;
+        recipe->layer = (qa_palette_layer)layer;
+    }
+    ok = ok &&
+        qa_scene_image_options_fields(io, &recipe->options, recipe->palette, recipe->translation, &exact) && !exact &&
+        qa_source_save_u32(io, &recipe->fullbright_first) && recipe->fullbright_first <= 256 &&
+        qa_source_save_u32(io, &recipe->gif_frame) &&
+        qa_source_save_bool(io, &recipe->palette_attempted) && qa_source_save_u32(io, &palette_error) &&
+        qa_source_save_bool(io, &recipe->generic_upload) && qa_source_save_bool(io, &recipe->recipient);
+    if (ok && recipe->recipient) ok = qa_q3_image_upload_options_precision_codec(io, &recipe->recipient_upload);
+    if (ok) ok = qa_source_save_u8(io, &recipe->sky_layer) && recipe->sky_layer <= 2 &&
+        qa_source_save_bool(io, &recipe->quake64) && qa_source_save_bool(io, &recipe->post_upload) &&
+        qa_source_save_bool(io, &recipe->post_mipmap);
+    if (reading) {
+        recipe->path = owned_path; recipe->palette_error = (qa_status)palette_error;
+    }
+    if (!ok && (!io->error || io->error->code == QA_OK))
+        fail(io->error, "Saved installed image resource is unavailable");
+    return ok;
+}
+static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner,
+    const qa_scene_resources *const *owners, size_t owner_count, const qa_scene_image *source,
     qa_scene_image **out, uint64_t *lineage_revision)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    bool embedded = reading ? false : ((const owned_image *)source)->embedded_png;
-    if (!qa_source_save_bool(io, &embedded)) return false;
+    const image_asset_recipe *asset = reading ? NULL : ((const owned_image *)source)->asset;
+    const owned_image *parent = reading ? NULL : (const owned_image *)source;
+    const qa_resource *asset_source = asset ? asset->source : NULL;
+    while (asset && !asset_source && parent) {
+        const qa_scene_image *next = parent->sampling_source ? parent->sampling_source : parent->source_variant_source;
+        parent = next ? (const owned_image *)next : NULL;
+        if (parent && parent->asset) asset_source = parent->asset->source;
+    }
+    uint8_t storage = reading ? 0 : ((const owned_image *)source)->embedded_png ? 1 : asset_source ? 2 : 0;
+    if (!qa_source_save_u8(io, &storage) || storage > 2) return false;
+    bool embedded = storage == 1, installed = storage == 2;
+    image_asset_recipe recipe = asset ? *asset : (image_asset_recipe){0};
+    if (asset_source) recipe.source = (qa_resource *)asset_source;
     const char *name = reading ? NULL : source->name;
     char *owned_name = NULL; uint32_t kind = reading ? 0 : source->kind, wrap = reading ? 0 : source->wrap, filter = reading ? 0 : source->filter;
     uint64_t revision = reading ? 0 : source->revision;
@@ -85,9 +159,10 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
         (source_after_upload_border || (source_upload_border.x == 0.0f && source_upload_border.y == 0.0f &&
          source_upload_border.z == 0.0f && source_upload_border.w == 0.0f));
     if (ok && embedded) ok = kind == QA_SCENE_RGBA8 && levels == 1 && !recipient.rgba.size;
-    qa_scene_image_level *decoded = reading && ok && !embedded ? calloc(levels, sizeof(*decoded)) : NULL;
-    if (reading && ok && !embedded && !decoded) { qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "Allocating saved mip levels"); ok = false; }
-    for (size_t i = 0; ok && !embedded && i < levels; ++i) {
+    if (ok && installed) ok = asset_fields(io, owners, owner_count, &recipe);
+    qa_scene_image_level *decoded = reading && ok && !embedded && !installed ? calloc(levels, sizeof(*decoded)) : NULL;
+    if (reading && ok && !embedded && !installed && !decoded) { qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "Allocating saved mip levels"); ok = false; }
+    for (size_t i = 0; ok && !embedded && !installed && i < levels; ++i) {
         qa_scene_image_level level = reading ? (qa_scene_image_level){0} : source->levels[i];
         uint64_t bytes = level.bytes;
         ok = qa_source_save_u32(io, &level.width) && level.width && qa_source_save_u32(io, &level.height) && level.height &&
@@ -108,7 +183,7 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
             }
         } else ok = qa_source_save_bytes(io, (void *)level.pixels, level.bytes);
     }
-    if (ok) {
+    if (ok && !installed) {
         bool present = recipient.rgba.size != 0;
         ok = qa_source_save_bool(io, &present) && (!present || (source_q3 && !embedded));
         if (ok && present) {
@@ -128,11 +203,22 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
         }
     }
     if (reading && ok) {
-        ok = embedded ? qa_scene_image_load_embedded(owner, name, (qa_scene_wrap)wrap,
+        ok = installed ? scene_resource_image_decode(owner, name, &recipe, out, io->error) :
+            embedded ? qa_scene_image_load_embedded(owner, name, (qa_scene_wrap)wrap,
             (qa_scene_filter)filter, border, out, io->error) :
             qa_scene_image_create(owner, name, (qa_scene_image_kind)kind, decoded, levels,
                 (qa_scene_wrap)wrap, (qa_scene_filter)filter, border, out, io->error);
+        if (ok && installed) {
+            owned_image *image = (owned_image *)*out;
+            if (image->image.level_count < levels) { ok = fail(io->error, "Installed image lacks its saved mip levels"); }
+            else {
+                for (size_t i = levels; i < image->image.level_count; ++i) free((void *)image->levels[i].pixels);
+                image->image.level_count = levels;
+            }
+        }
         if (ok) {
+            (*out)->kind = (qa_scene_image_kind)kind; (*out)->wrap = (qa_scene_wrap)wrap;
+            (*out)->filter = (qa_scene_filter)filter; (*out)->border = border;
             (*out)->revision = revision; (*out)->logical_width = logical_width; (*out)->logical_height = logical_height;
             (*out)->source_q3 = source_q3; (*out)->source_mipmap = source_mipmap;
             (*out)->source_format = source_q3 ? (qa_q3_texture_format)source_format : QA_Q3_TEXTURE_RGB;
@@ -143,11 +229,12 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
             (*out)->recipient_upload_pixels = recipient_upload_pixels;
             (*out)->recipient_mipmap = recipient_mipmap;
             ((owned_image *)*out)->lineage->revision = *lineage_revision;
-            ((owned_image *)*out)->recipient_source = recipient; recipient = (qa_image){0};
+            if (!installed) { ((owned_image *)*out)->recipient_source = recipient; recipient = (qa_image){0}; }
         }
     }
     if (decoded) for (size_t i = 0; i < levels; ++i) free((void *)decoded[i].pixels);
     if (reading) qa_image_free(&recipient);
+    if (reading) free(recipe.path);
     free(decoded); free(owned_name); return ok;
 }
 static bool signature(qa_source_save_io *io)
@@ -178,7 +265,7 @@ bool qa_scene_images_checkpoint(const qa_scene_resources *const *owners, size_t 
         for (size_t i = 0; i < at; ++i) if (images[i]->lineage == entry->lineage) { group = i; break; }
         uint64_t latest = entry->lineage->revision;
         ok = qa_source_save_count(&io, &scope, SIZE_MAX) && qa_source_save_count(&io, &group, SIZE_MAX) &&
-            image_fields(&io, NULL, &entry->image, NULL, &latest) && qa_source_save_count(&io, &animation, SIZE_MAX);
+            image_fields(&io, (qa_scene_resources *)owners[owner], owners, count, &entry->image, NULL, &latest) && qa_source_save_count(&io, &animation, SIZE_MAX);
         for (size_t i = 0; ok && i < animation; ++i) {
             uint64_t index = UINT64_MAX;
             const qa_scene_image *frame = entry->image.animation ? entry->image.animation[i] : NULL;
@@ -247,7 +334,7 @@ bool qa_scene_images_restore(qa_scene_resources *const *owners, size_t count, qa
     for (size_t i = 0; ok && i < total; ++i) {
         size_t scope = 0, group = 0; uint64_t latest = 0;
         ok = qa_source_save_count(&io, &scope, count - 1) && qa_source_save_count(&io, &group, i) &&
-            image_fields(&io, owners[scope], NULL, &set->images[i], &latest);
+            image_fields(&io, owners[scope], (const qa_scene_resources *const *)owners, count, NULL, &set->images[i], &latest);
         if (!ok) break;
         owned_image *image = (owned_image *)set->images[i];
         if (group != i) {

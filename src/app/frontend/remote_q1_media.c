@@ -4,6 +4,7 @@
 #include "visual_access.h"
 #include "qa/material.h"
 #include "qa/scene_world_save.h"
+#include "qa/scene_model_save.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -116,6 +117,7 @@ bool remote_q1_model_read(frontend_remote_q1 *row, const frontend_remote_q1_enti
             qa_scene_world_source_resource_bind(m->world, m->resource, error);
     } else if (ok) ok = qa_model_load(qa_resource_bytes(m->resource), &m->decoded, error) &&
         qa_scene_model_create(&m->decoded, row->images, row->materials, &options, &m->scene, error) &&
+        qa_scene_model_source_resource_bind(m->scene, m->resource, error) &&
         frontend_visual_model_opening_initialize(row->frontend, QA_SCENE_Q1, row->content.mounts,
             m->resource, &m->opening, &m->decoded, m->scene, error);
     if (!ok) {

@@ -104,6 +104,7 @@ bool remote_q2_model_read(frontend_remote_q2 *row, const char *path, remote_q2_m
         model_scope_acquire(row, m, &scope, &options, error);
     if (ok && m->decoded.format == QA_MODEL_MD3) options.family = QA_SCENE_Q3;
     if (ok) ok = qa_scene_model_create(&m->decoded, row->images, row->materials, &options, &m->scene, error) &&
+        qa_scene_model_source_resource_bind(m->scene, m->resource, error) &&
         frontend_visual_model_opening_initialize(row->frontend, options.family, row->content.mounts,
             m->resource, &m->opening, &m->decoded, m->scene, error);
     if (ok) ok = remote_q2_model_scope_current(row, m, error);

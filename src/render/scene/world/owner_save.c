@@ -56,16 +56,43 @@ static bool palette(qa_source_save_io *io, qa_scene_world *world)
     return world->options.images.palette_rgb.data==installed.data &&
         qa_source_save_bytes(io,(void *)installed.data,installed.size);
 }
+static bool source_buffer_copy(qa_buffer *out, qa_bytes bytes, qa_error *error)
+{
+    if (!bytes.size) return true;
+    out->data = malloc(bytes.size);
+    if (!out->data) return fail(error, QA_ERROR_MEMORY, "Restoring installed world source view");
+    memcpy(out->data, bytes.data, bytes.size); out->size = bytes.size; return true;
+}
 static bool source(qa_source_save_io *io, qa_scene_world *world, const qa_scene_world_owner_refs *refs, const qa_bsp_view *expected)
 {
     uint32_t family=world->bsp.family, format=world->bsp.format;
     qa_scene_world_options *options=&world->options; qa_scene_image_options *image=&options->images;
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    if (!qa_source_save_u32(io,&family) || !qa_source_save_u32(io,&format) ||
-        !buffer(io,&world->bytes) || !buffer(io,&world->lit_bytes) || !buffer(io,&world->palette_bytes) ||
-        !buffer(io,&world->translation_bytes) || !text(io,&world->sky_name) ||
-        !qa_source_save_bool(io,&options->has_external_entities) || !buffer(io,&world->entity_bytes) ||
-        (options->has_external_entities ? family!=QA_BSP_Q1 : world->entity_bytes.size!=0)) return false;
+    qa_buffer installed = {0};
+    bool shared_policy = !reading && refs->source_options != NULL;
+    if (!qa_source_save_u32(io, &family) || !qa_source_save_u32(io, &format) ||
+        !buffer(io, !reading && world->source_resource ? &installed : &world->bytes) ||
+        !qa_source_save_bool(io, &shared_policy)) return false;
+    if (shared_policy) {
+        qa_scene_world_options policy = {0};
+        if (!refs->source_options || !refs->source_options(refs->context, &policy, io->error)) return false;
+        if (reading && (!source_buffer_copy(&world->lit_bytes, policy.external_lit, io->error) ||
+            !source_buffer_copy(&world->palette_bytes, policy.images.palette_rgb, io->error) ||
+            !source_buffer_copy(&world->translation_bytes, policy.images.translation, io->error) ||
+            !source_buffer_copy(&world->entity_bytes, policy.external_entities, io->error))) return false;
+        if (reading && policy.q2_sky) {
+            size_t size = strlen(policy.q2_sky);
+            world->sky_name = malloc(size + 1);
+            if (!world->sky_name) return fail(io->error, QA_ERROR_MEMORY, "Restoring world sky policy");
+            memcpy(world->sky_name, policy.q2_sky, size + 1);
+        }
+        if (reading) options->has_external_entities = policy.has_external_entities;
+    } else if (!buffer(io, &world->lit_bytes) || !buffer(io, &world->palette_bytes) ||
+        !buffer(io, &world->translation_bytes) || !text(io, &world->sky_name) ||
+        !qa_source_save_bool(io, &options->has_external_entities) || !buffer(io, &world->entity_bytes)) return false;
+    if (options->has_external_entities ? family != QA_BSP_Q1 : world->entity_bytes.size != 0) return false;
+    if (reading && !world->bytes.size && (!expected ||
+        !source_buffer_copy(&world->bytes, expected->source, io->error))) return false;
     if (reading) {
         if (!qa_bsp_open((qa_bytes){world->bytes.data,world->bytes.size},&world->bsp,io->error) ||
             !qa_bsp_validate(&world->bsp,io->error) || world->bsp.family!=family || world->bsp.format!=format) return false;
@@ -74,6 +101,7 @@ static bool source(qa_source_save_io *io, qa_scene_world *world, const qa_scene_
         if (options->has_external_entities) world->bsp.lumps[QA_BSP_ENTITIES] =
             (qa_bsp_lump){.bytes = options->external_entities, .present = true};
         options->images.translation=(qa_bytes){world->translation_bytes.data,world->translation_bytes.size};
+        if (shared_policy) options->images.palette_rgb=(qa_bytes){world->palette_bytes.data,world->palette_bytes.size};
         options->q2_sky=world->sky_name;
     } else if (options->external_lit.data!=world->lit_bytes.data || options->external_lit.size!=world->lit_bytes.size ||
         options->external_entities.data!=world->entity_bytes.data || options->external_entities.size!=world->entity_bytes.size ||
@@ -98,7 +126,7 @@ static bool source(qa_source_save_io *io, qa_scene_world *world, const qa_scene_
     F(bool,options,source_fullbright);
     if (!qa_source_save_u32(io,&encoding)) return false;
     if (reading) options->q1_lightmap_encoding=(qa_scene_q1_lightmap_encoding)encoding;
-    if (!palette(io,world) || !refs->source_qualify(refs->context,(qa_bytes){world->bytes.data,world->bytes.size},options,io->error)) return false;
+    if ((!shared_policy && !palette(io,world)) || !refs->source_qualify(refs->context,(qa_bytes){world->bytes.data,world->bytes.size},options,io->error)) return false;
     if (family==QA_BSP_Q3) return options->q3_overbright<=15;
     if (!isfinite(options->q1_water_alpha) || !isfinite(options->q2_light_modulate) ||
         (family==QA_BSP_Q1 && encoding>QA_Q1_LIGHTMAP_INVERTED_ALPHA)) return false;

@@ -48,6 +48,8 @@ typedef struct qa_scene_world_owner_refs {
     /* Readonly qualification of actual immutable map/content inputs, including
      * external lighting and palette/translation policy. No acquisition. */
     bool (*source_qualify)(void *, qa_bytes, const qa_scene_world_options *, qa_error *);
+    /* Reuses the enclosing world's single restored constructor policy. */
+    bool (*source_options)(void *, qa_scene_world_options *, qa_error *);
     /* Resolve the actual preallocated scene namespace. Material/frame imports
      * use these same identities. It must not mint IDs or execute source code. */
     bool (*identity_decode)(void *, qa_scene_world_identity_kind, size_t ordinal,

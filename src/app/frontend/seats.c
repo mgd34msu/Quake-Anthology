@@ -128,6 +128,17 @@ bool frontend_game_menu(frontend_seat *seat, qa_error *error)
         !qa_application_guest_menu_set(seat->frontend->application, launch_seat, menu, &handled, error)) return false;
     return handled ? qa_ui_close_all(seat->ui, now_ms(seat), error) : frontend_menu_open(seat, FRONTEND_HOME, error);
 }
+static bool hud_presentation(void *context, qa_ui_presentation *out, qa_error *error)
+{
+    frontend_seat *seat = context;
+    qa_ui_preferences preferences;
+    if (!qa_ui_preferences_read(qa_application_cvars(seat->frontend->application), seat->id,
+            &preferences, error) || !frontend_menu_font_selection(seat->frontend, seat->id,
+            preferences.typeface == QA_UI_TYPEFACE_BOLD, &out->fonts, error)) return false;
+    if (preferences.typeface != QA_UI_TYPEFACE_BOLD) out->fonts.primary = NULL;
+    out->text_scale = preferences.text_scale; out->color_mode = preferences.color_mode;
+    return true;
+}
 static bool hud_weapon_data(frontend_seat *seat, const qa_hud_frame *frame, qa_hud_data *out,
     bool native_status, bool aggregate, bool *source_slot, qa_error *error)
 {
@@ -135,11 +146,18 @@ static bool hud_weapon_data(frontend_seat *seat, const qa_hud_frame *frame, qa_h
     if (!frame->actor.registry) return true;
     qa_application_equipment_view equipment = {0};
     if (!qa_application_equipment_source_read(seat->frontend->application, frame->actor, &equipment, source_slot, error)) return false;
-    if (!*source_slot) return true;
+    if (!*source_slot) {
+        uint32_t logical; qa_actor_id local;
+        if (!frontend_seat_launch_id_read(seat->frontend, seat->id, &logical) ||
+            !qa_application_player_actor(seat->frontend->application, logical, &local) ||
+            !qa_actor_id_equal(local, frame->actor)) return true;
+        if (!qa_application_equipment_read(seat->frontend->application, frame->actor, &equipment, error)) return false;
+    }
     out->selected_weapon = equipment.item;
     if (!equipment.has_weapon_status || frame->source_status_native || qa_input_seat_focus(seat->input) != QA_INPUT_GAME) return true;
     const qa_material *picture = NULL;
-    if (!frontend_equipment_media_source_icon_read(seat->frontend, &equipment, &picture, error)) return false;
+    if (*source_slot ? !frontend_equipment_media_source_icon_read(seat->frontend, &equipment, &picture, error) :
+        !frontend_equipment_media_native_icon_read(seat->frontend, &equipment, &picture, error)) return false;
     qa_bytes provider = qa_strings_text(qa_session_strings(qa_application_session(seat->frontend->application)), equipment.provider);
     out->weapon = (qa_hud_weapon){.present = true, .label = equipment.label, .icon = picture,
         .ammo_count = equipment.ammo_count, .finite_ammo = equipment.finite_ammo,
@@ -598,7 +616,7 @@ static bool seats_create(qa_frontend *frontend, unsigned first, const bool *mods
         if (!library || !frontend_startup_menus_create(seat, error) ||
             !qa_ui_rankings_create(seat->ui, frontend->application, FRONTEND_RANKINGS, -1, &seat->rankings, error) ||
             !qa_hud_create(&(qa_hud_options){.ui = seat->ui, .application = frontend->application, .seat = i,
-                .context = seat, .read = hud_data, .video_frame = hud_video_frame,
+                .context = seat, .read = hud_data, .presentation = hud_presentation, .video_frame = hud_video_frame,
                 .video_context = seat}, &seat->hud, error) || !frontend_wheel_create(seat, error)) return false;
         if ((restoring || frontend->tools) && !qa_ui_llm_create(seat->ui, frontend_tools_llm(frontend),
             FRONTEND_ASSISTANCE, &seat->assistance, error)) return false;
@@ -929,6 +947,6 @@ bool frontend_seat_hud_options(frontend_seat *seat, qa_hud_options *out, qa_erro
     if (!saved_seat_ready(seat) || !seat->ui || !out)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"HUD restore lacks its actual prepared frontend seat");
     *out=(qa_hud_options){.ui=seat->ui,.application=seat->frontend->application,
-        .seat=seat->id,.context=seat,.read=hud_data,.video_frame=hud_video_frame,.video_context=seat};
+        .seat=seat->id,.context=seat,.read=hud_data,.presentation=hud_presentation,.video_frame=hud_video_frame,.video_context=seat};
     return true;
 }

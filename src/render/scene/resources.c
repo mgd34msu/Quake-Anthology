@@ -364,6 +364,10 @@ void qa_scene_image_release(const qa_scene_image *image)
     }
     qa_scene_resources *parent_owner = owned->source_variant_owner;
     qa_image_free(&owned->recipient_source);
+    if (owned->asset) {
+        qa_resource_release(owned->asset->source); qa_resource_release(owned->asset->palette_source);
+        free(owned->asset->path); free(owned->asset);
+    }
     for (size_t i = 0; i < image->level_count; ++i) free((void *)owned->levels[i].pixels);
     free(owned->levels);
     if (--owned->lineage->references == 0) free(owned->lineage);
@@ -604,6 +608,10 @@ bool qa_scene_image_sample(qa_scene_resources *resources, const qa_scene_image *
     image->recipient_mipmap = source->recipient_mipmap && mipmap;
     image->recipient_upload_pixels = source->recipient_upload_pixels;
     qa_scene_image_retain(source);
+    if (((const owned_image *)source)->asset &&
+        !scene_image_asset_copy(image, ((const owned_image *)source)->asset, error)) {
+        qa_scene_image_release(image); return false;
+    }
     if (source->animation_count > 1) {
         if (source->animation_count > (size_t)PTRDIFF_MAX / sizeof(qa_scene_image *)) {
             qa_scene_image_release(image);
@@ -636,6 +644,10 @@ bool qa_scene_image_sample(qa_scene_resources *resources, const qa_scene_image *
             owned->sampling_source = frame; owned->sampling_mipmap = mipmap;
             qa_scene_image_retain(frame);
             frames[i] = sampled;
+            if (((const owned_image *)frame)->asset &&
+                !scene_image_asset_copy(sampled, ((const owned_image *)frame)->asset, error)) {
+                qa_scene_image_release(image); return false;
+            }
         }
     }
     *out = image; return true;
@@ -1672,6 +1684,7 @@ static bool flood_skin(qa_image *image, qa_bytes palette, qa_error *error)
 typedef struct image_decode_context {
     qa_scene_image_load_receipt *observation;
     const image_alias *alias;
+    const qa_resource *source;
     bool generic_upload;
 } image_decode_context;
 static bool decode_palette(qa_scene_resources *resources, qa_scene_family family,
@@ -1761,7 +1774,7 @@ static bool indexed_rgba(qa_scene_resources *resources, qa_image *image,
     return true;
 }
 
-static bool decode_asset_upload(qa_scene_resources *resources, const char *request, const char *path,
+static bool decode_asset_pixels(qa_scene_resources *resources, const char *request, const char *path,
                           qa_bytes bytes, const qa_scene_image_options *options,
                           const qa_q3_image_upload_options *recipient,
                           const image_decode_context *context,
@@ -1853,6 +1866,268 @@ static bool decode_asset_upload(qa_scene_resources *resources, const char *reque
     if (!recipient && suffix_equal(path, ".lmp") && options->family != QA_SCENE_Q2 && !options->source_q3) upload.mipmap = false;
     if (ok) ok = image_from_rgba(resources, image_name, &decoded, &upload, out, error);
     qa_image_free(&decoded);
+    return ok;
+}
+void qaw_q3_shift_color(const uint8_t input[3], uint32_t shift, uint8_t output[3]) {
+    uint32_t r = (uint32_t)input[0] << shift, g = (uint32_t)input[1] << shift;
+    uint32_t b = (uint32_t)input[2] << shift;
+    uint32_t maximum = r > g ? r : g;
+    if (b > maximum) maximum = b;
+    if (maximum > 255) { r = r * 255 / maximum; g = g * 255 / maximum; b = b * 255 / maximum; }
+    output[0] = (uint8_t)r; output[1] = (uint8_t)g; output[2] = (uint8_t)b;
+}
+
+void scene_image_asset_palette(qa_scene_resources *resources, image_asset_recipe *recipe,
+    const qa_scene_image_options *options)
+{
+    recipe->options = *options;
+    size_t family = (size_t)options->family;
+    if (options->palette_rgb.size == 768) {
+        if (family < 3 && resources->palette_resources[family] && resources->palettes[family].size == 768 &&
+            !memcmp(options->palette_rgb.data, resources->palettes[family].data, 768)) {
+            recipe->palette_source = resources->palette_resources[family];
+            recipe->palette_attempted = true; recipe->palette_error = QA_OK;
+            recipe->options.palette_rgb = (qa_bytes){0};
+        } else {
+            memcpy(recipe->palette, options->palette_rgb.data, 768);
+            recipe->options.palette_rgb.data = recipe->palette;
+        }
+    }
+    if (options->translation.size == 256) {
+        memcpy(recipe->translation, options->translation.data, 256);
+        recipe->options.translation.data = recipe->translation;
+    }
+}
+bool scene_image_asset_copy(qa_scene_image *image, const image_asset_recipe *source, qa_error *error)
+{
+    owned_image *owned = (owned_image *)image;
+    image_asset_recipe *recipe = malloc(sizeof(*recipe));
+    if (!recipe) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining installed image recipe"); return false; }
+    *recipe = *source;
+    recipe->path = NULL;
+    if (source->path) {
+        size_t length = strlen(source->path);
+        recipe->path = malloc(length + 1);
+        if (!recipe->path) { free(recipe); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining image source path"); return false; }
+        memcpy(recipe->path, source->path, length + 1);
+    }
+    if (recipe->options.palette_rgb.size) recipe->options.palette_rgb.data = recipe->palette;
+    if (recipe->options.translation.size) recipe->options.translation.data = recipe->translation;
+    qa_resource_retain(recipe->source); qa_resource_retain(recipe->palette_source);
+    if (owned->asset) {
+        qa_resource_release(owned->asset->source); qa_resource_release(owned->asset->palette_source);
+        free(owned->asset->path); free(owned->asset);
+    }
+    owned->asset = recipe;
+    return true;
+}
+bool scene_image_asset_source_bind(qa_scene_image *image, const qa_resource *source, qa_error *error)
+{
+    image_asset_recipe *recipe = image ? ((owned_image *)image)->asset : NULL;
+    if (!recipe || !recipe->kind || recipe->source) return true;
+    qa_bytes bytes = qa_resource_bytes(source);
+    for (size_t i = 0; i < recipe->level_count; ++i) {
+        uint64_t size = (uint64_t)recipe->widths[i] * recipe->heights[i] * (recipe->kind == 2 ? 3 : 1);
+        if (recipe->offsets[i] > bytes.size || size > bytes.size - recipe->offsets[i]) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Installed image slice exceeds its actual source"); return false;
+        }
+    }
+    recipe->source = (qa_resource *)source; qa_resource_retain(recipe->source);
+    return true;
+}
+bool scene_resource_indexed_image(qa_scene_resources *resources, const char *name,
+    const qa_indexed_level *indices, size_t count, const qa_scene_image_options *options,
+    const qa_palette_options *colors, bool generate_mips, qa_scene_vec4 border,
+    qa_scene_image **out, qa_error *error)
+{
+    qa_image expanded[4] = {0}; qa_scene_image_level levels[4]; qa_mip_chain chain = {0};
+    bool ok = count && count <= 4;
+    for (size_t i = 0; ok && i < count; ++i) {
+        ok = qa_image_expand_indexed(indices + i, options->palette_rgb, colors, expanded + i, error);
+        if (ok) levels[i] = (qa_scene_image_level){expanded[i].width, expanded[i].height,
+            expanded[i].rgba.data, expanded[i].rgba.size};
+    }
+    qa_scene_image_level *generated = NULL;
+    if (ok && generate_mips) {
+        ok = count == 1 && qa_image_mip_chain(expanded, QA_MIP_BOX, &chain, error);
+        if (ok) generated = calloc(chain.count + 1, sizeof(*generated));
+        if (ok && !generated) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating model skin mip descriptors"); ok = false; }
+        if (ok) {
+            generated[0] = levels[0];
+            for (size_t i = 0; i < chain.count; ++i) generated[i + 1] = (qa_scene_image_level){
+                chain.levels[i].width, chain.levels[i].height, chain.levels[i].rgba.data, chain.levels[i].rgba.size};
+        }
+    }
+    if (ok) ok = qa_scene_image_create(resources, name, QA_SCENE_RGBA8, generated ? generated : levels,
+        generated ? chain.count + 1 : count, options->wrap, options->filter, border, out, error);
+    free(generated); qa_mip_chain_free(&chain);
+    for (size_t i = 0; i < 4; ++i) qa_image_free(expanded + i);
+    return ok;
+}
+bool scene_resource_sky_layer(qa_scene_resources *resources, const char *name,
+    const qa_scene_image *source, qa_bytes indexed, bool quake64, bool overlay,
+    qa_scene_image **out, qa_error *error)
+{
+    const qa_scene_image_level *image = source->levels;
+    if ((!quake64 && (image->width != 256 || image->height != 128)) ||
+        (quake64 && (image->height < 2 || image->height % 2)) ||
+        (source->kind != QA_SCENE_RGBA8 && source->kind != QA_SCENE_RGB8)) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid classic sky image"); return false;
+    }
+    uint32_t width = quake64 ? image->width : 128, height = quake64 ? image->height / 2 : 128;
+    if ((uint64_t)width * height > SIZE_MAX / 4) return false;
+    size_t count = (size_t)width * height;
+    uint8_t *pixels = malloc(count * 4);
+    if (!pixels) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Decoding classic sky layer"); return false; }
+    const uint8_t *rgba = image->pixels; uint64_t sum[3] = {0};
+    for (size_t i = 0; i < count; ++i) {
+        size_t front = quake64 ? i : (i / width) * image->width + i % width;
+        size_t back = quake64 ? count + i : front + 128;
+        for (size_t c = 0; c < 3; ++c) {
+            pixels[i * 4 + c] = rgba[(overlay ? front : back) * 4 + c];
+            sum[c] += rgba[back * 4 + c];
+        }
+        pixels[i * 4 + 3] = !overlay ? 255 : quake64 ? 128 : indexed.size && indexed.data[front] == 0 ? 0 :
+            source->kind == QA_SCENE_RGBA8 ? rgba[front * 4 + 3] : 255;
+    }
+    if (overlay && !quake64) for (size_t i = 0; i < count; ++i) if (!pixels[i * 4 + 3])
+        for (size_t c = 0; c < 3; ++c) pixels[i * 4 + c] = (uint8_t)(sum[c] / count);
+    qa_scene_image_level level = {width, height, pixels, count * 4};
+    bool ok = qa_scene_image_create(resources, name, QA_SCENE_RGBA8, &level, 1, QA_SCENE_REPEAT,
+        QA_SCENE_LINEAR, (qa_scene_vec4){0}, out, error);
+    free(pixels); return ok;
+}
+static bool image_slice_decode(qa_scene_resources *resources, const char *name,
+    const image_asset_recipe *recipe, const image_decode_context *context, qa_scene_image **out, qa_error *error)
+{
+    qa_bytes bytes = qa_resource_bytes(recipe->source);
+    if (!recipe->level_count || recipe->level_count > 4) return false;
+    for (size_t i = 0; i < recipe->level_count; ++i) {
+        uint64_t size = (uint64_t)recipe->widths[i] * recipe->heights[i] * (recipe->kind == 2 ? 3 : 1);
+        if (!recipe->widths[i] || !recipe->heights[i] || recipe->offsets[i] > bytes.size || size > bytes.size - recipe->offsets[i]) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Installed image slice exceeds its actual source"); return false;
+        }
+    }
+    if (recipe->kind == 2) {
+        if (recipe->level_count != 1 || recipe->overbright > 15) return false;
+        size_t count = (size_t)recipe->widths[0] * recipe->heights[0];
+        uint8_t *pixels = malloc(count * 4);
+        if (!pixels) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Decoding installed RGB image"); return false; }
+        for (size_t i = 0; i < count; ++i) {
+            qaw_q3_shift_color(bytes.data + recipe->offsets[0] + i * 3, recipe->overbright, pixels + i * 4);
+            pixels[i * 4 + 3] = 255;
+        }
+        qa_scene_image_level level = {recipe->widths[0], recipe->heights[0], pixels, count * 4};
+        bool ok = qa_scene_image_create(resources, name, QA_SCENE_RGB8, &level, 1, recipe->options.wrap,
+            recipe->options.filter, (qa_scene_vec4){0}, out, error);
+        free(pixels); return ok;
+    }
+    qa_scene_image_options options = recipe->options;
+    uint8_t palette[768];
+    if (!options.palette_rgb.size && !decode_palette(resources, options.family, context, palette, &options.palette_rgb, error)) return false;
+    qa_indexed_level indexed[4] = {0}; qa_buffer flooded = {0};
+    for (size_t i = 0; i < recipe->level_count; ++i) indexed[i] = (qa_indexed_level){recipe->widths[i], recipe->heights[i],
+        {(uint8_t *)bytes.data + recipe->offsets[i], (size_t)recipe->widths[i] * recipe->heights[i]}};
+    if (recipe->flood_skin) {
+        size_t size = indexed[0].indices.size;
+        flooded = (qa_buffer){malloc(size), size};
+        if (!flooded.data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Decoding installed skin flood"); return false; }
+        memcpy(flooded.data, indexed[0].indices.data, size);
+        qa_image image = {.width = indexed[0].width, .height = indexed[0].height, .indices = flooded};
+        bool ok = flood_skin(&image, options.palette_rgb, error);
+        if (!ok) { qa_buffer_free(&flooded); return false; }
+        indexed[0].indices = flooded;
+    }
+    qa_palette_options colors = {.transparent_index = options.transparent ? options.transparent_index : -1,
+        .fullbright_first = recipe->fullbright_first < 256 ? (int)recipe->fullbright_first : -1,
+        .fullbright_last = recipe->fullbright_last, .translation = options.translation.size ? options.translation.data : NULL,
+        .layer = recipe->layer};
+    bool ok = scene_resource_indexed_image(resources, name, indexed, recipe->level_count, &options, &colors,
+        recipe->generate_mips, (qa_scene_vec4){0}, out, error);
+    qa_buffer_free(&flooded); return ok;
+}
+static bool image_asset_bind(qa_scene_resources *resources, qa_scene_image *image, const char *path,
+    const qa_scene_image_options *options, const qa_q3_image_upload_options *recipient,
+    const image_decode_context *context, uint32_t gif_frame, qa_error *error)
+{
+    const image_alias *alias = context ? context->alias : NULL;
+    const qa_scene_image_load_receipt *receipt = context ? context->observation : NULL;
+    const qa_resource *source = alias ? alias->source : context && context->source ? context->source :
+        receipt ? receipt->source : NULL;
+    if (!source) return true;
+    image_asset_recipe recipe = {.path = (char *)path, .source = (qa_resource *)source,
+        .palette_source = alias ? alias->palette_source : receipt ? receipt->palette_source : NULL,
+        .palette_attempted = alias ? alias->palette_attempted : receipt && receipt->palette_attempted,
+        .palette_error = alias ? alias->palette_error : receipt ? receipt->palette_error : QA_OK,
+        .fullbright_first = resources->fullbright_first, .gif_frame = gif_frame,
+        .generic_upload = context && context->generic_upload, .recipient = recipient != NULL};
+    scene_image_asset_palette(resources, &recipe, options);
+    if (recipe.generic_upload && recipe.options.source_q3)
+        recipe.options.source_upload.mipmap = recipe.options.mipmap;
+    if (recipient) recipe.recipient_upload = *recipient;
+    return scene_image_asset_copy(image, &recipe, error);
+}
+static bool decode_asset_upload(qa_scene_resources *resources, const char *request, const char *path,
+    qa_bytes bytes, const qa_scene_image_options *options, const qa_q3_image_upload_options *recipient,
+    const image_decode_context *context, qa_scene_image **out, qa_error *error)
+{
+    if (!decode_asset_pixels(resources, request, path, bytes, options, recipient, context, out, error)) return false;
+    bool ok = image_asset_bind(resources, *out, path, options, recipient, context, 0, error);
+    for (size_t i = 1; ok && i < (*out)->animation_count; ++i)
+        ok = i <= UINT32_MAX && image_asset_bind(resources, (qa_scene_image *)(*out)->animation[i], path,
+            options, recipient, context, (uint32_t)i, error);
+    if (!ok) { qa_scene_image_release(*out); *out = NULL; }
+    return ok;
+}
+bool scene_resource_image_decode(qa_scene_resources *resources, const char *name,
+    const image_asset_recipe *recipe, qa_scene_image **out, qa_error *error)
+{
+    image_alias alias = {.name = (char *)name, .source = recipe->source, .source_path = recipe->path,
+        .palette_source = recipe->palette_source, .palette_attempted = recipe->palette_attempted,
+        .palette_error = recipe->palette_error};
+    image_decode_context context = {.alias = &alias, .generic_upload = recipe->generic_upload};
+    unsigned previous_fullbright = resources->fullbright_first;
+    resources->fullbright_first = recipe->fullbright_first;
+    bool ok;
+    if (recipe->kind) {
+        ok = image_slice_decode(resources, name, recipe, &context, out, error);
+    } else if (suffix_equal(recipe->path, ".gif")) {
+        qa_gif gif = {0};
+        ok = qa_image_decode_gif(qa_resource_bytes(recipe->source), &gif, error);
+        if (ok && recipe->gif_frame >= gif.frame_count) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Installed GIF frame is unavailable"); ok = false;
+        }
+        qa_scene_image_options upload = recipe->options;
+        if (recipe->generic_upload) { upload.source_q3 = false; upload.source_upload = (qa_q3_image_upload_options){0}; }
+        if (recipe->recipient && !recipe->post_upload) { upload.source_q3 = true; upload.source_upload = recipe->recipient_upload; upload.mipmap = upload.source_upload.mipmap; }
+        if (ok) ok = image_from_rgba(resources, name, &gif.frames[recipe->gif_frame].image, &upload, out, error) &&
+            image_asset_bind(resources, *out, recipe->path, &recipe->options,
+                recipe->recipient && !recipe->post_upload ? &recipe->recipient_upload : NULL, &context, recipe->gif_frame, error);
+        qa_gif_free(&gif);
+    } else ok = !recipe->gif_frame && decode_asset_upload(resources, name, recipe->path,
+        qa_resource_bytes(recipe->source), &recipe->options, recipe->recipient && !recipe->post_upload ? &recipe->recipient_upload : NULL,
+        &context, out, error);
+    if (ok && recipe->sky_layer) {
+        qa_scene_image *base = *out, *sky = NULL;
+        qa_bytes indices = recipe->kind == 1 ? (qa_bytes){qa_resource_bytes(recipe->source).data + recipe->offsets[0],
+            (size_t)recipe->widths[0] * recipe->heights[0]} : (qa_bytes){0};
+        ok = scene_resource_sky_layer(resources, name, base, indices, recipe->quake64,
+            recipe->sky_layer == 2, &sky, error);
+        qa_scene_image_release(base); *out = sky;
+    }
+    if (ok && recipe->post_upload) {
+        qa_scene_image *base = *out, *uploaded = NULL;
+        qa_image pixels = {.width = base->levels[0].width, .height = base->levels[0].height,
+            .rgba = {(uint8_t *)base->levels[0].pixels, base->levels[0].bytes}};
+        qa_scene_image_options options = {.family = QA_SCENE_Q3, .wrap = base->wrap,
+            .filter = base->filter, .mipmap = recipe->post_mipmap,
+            .source_q3 = recipe->recipient, .source_upload = recipe->recipient_upload};
+        ok = image_from_rgba(resources, name, &pixels, &options, &uploaded, error);
+        qa_scene_image_release(base); *out = uploaded;
+    }
+    if (ok) ok = scene_image_asset_copy(*out, recipe, error);
+    resources->fullbright_first = previous_fullbright;
+    if (!ok && *out) { qa_scene_image_release(*out); *out = NULL; }
     return ok;
 }
 static bool decode_asset(qa_scene_resources *resources, const char *request, const char *path,
@@ -2044,7 +2319,8 @@ bool qa_scene_image_source_q3_variant(qa_scene_resources *resources, const qa_sc
                     qa_scene_resources_palette_read(source_owner, request.options.family, &palette))
                     request.options.palette_rgb = palette;
                 if (!decode_asset_upload(resources, request.name, qa_resource_path(request.source),
-                    qa_resource_bytes(request.source), &request.options, profile, NULL, out, error)) return false;
+                    qa_resource_bytes(request.source), &request.options, profile,
+                    &(image_decode_context){.source = request.source}, out, error)) return false;
             }
         } else {
             if (!source->recipient_upload_pixels || source->kind == QA_SCENE_DEPTH32F) {
@@ -2055,6 +2331,12 @@ bool qa_scene_image_source_q3_variant(qa_scene_resources *resources, const qa_sc
             qa_scene_image_options sampling = {.wrap = source->wrap, .filter = source->filter,
                 .source_q3 = true, .source_upload = *profile};
             if (!image_from_rgba(resources, source->name, &pixels, &sampling, out, error)) return false;
+            if (original->asset) {
+                image_asset_recipe asset = *original->asset;
+                asset.recipient = true; asset.recipient_upload = *profile;
+                asset.post_upload = true; asset.post_mipmap = profile->mipmap;
+                if (!scene_image_asset_copy(*out, &asset, error)) { qa_scene_image_release(*out); *out = NULL; return false; }
+            }
         }
     }
     (*out)->logical_width = source->logical_width; (*out)->logical_height = source->logical_height;
@@ -2187,6 +2469,7 @@ bool qa_scene_image_generic_variant(qa_scene_resources *resources, const qa_scen
         for (const image_alias *row = source_owner->aliases; row; row = row->next)
             if (!strcmp(row->name, name)) { alias = row; break; }
         image_alias retained = {.name = (char *)source->name, .request = (char *)name,
+            .source = recipe->source_record,
             .source_path = (char *)qa_resource_path(recipe->source_record),
             .palette_source = recipe->palette_source, .palette_attempted = recipe->palette_attempted,
             .palette_error = recipe->palette_error};
@@ -2207,6 +2490,16 @@ bool qa_scene_image_generic_variant(qa_scene_resources *resources, const qa_scen
             .filter = !mipmap && source->filter >= QA_SCENE_NEAREST_MIPMAP_NEAREST ? QA_SCENE_LINEAR : source->filter,
             .mipmap = mipmap};
         if (!image_from_rgba(resources, source->name, &original->recipient_source, &options, out, error)) return false;
+        if (original->asset) {
+            image_asset_recipe asset = *original->asset;
+            asset.generic_upload = true; asset.recipient = false;
+            if (asset.post_upload) asset.post_mipmap = mipmap;
+            else {
+                asset.options.mipmap = mipmap; asset.options.filter = options.filter;
+                if (asset.options.source_q3) asset.options.source_upload.mipmap = mipmap;
+            }
+            if (!scene_image_asset_copy(*out, &asset, error)) { qa_scene_image_release(*out); *out = NULL; return false; }
+        }
     } else {
         /* Live cinematic images have no immutable decoder recipe. Their actual
          * publisher continues to own the reached image version. */
@@ -2672,7 +2965,7 @@ static bool image_load(qa_scene_resources *resources, const char *name,
             }
         }
         if (image != NULL) { *out = image; result = true; goto image_done; }
-        image_decode_context context = {.observation = receipt ? receipt : &palette_observation};
+        image_decode_context context = {.observation = receipt ? receipt : &palette_observation, .source = resource};
         if (!decode_asset_upload(resources, name, path, qa_resource_bytes(resource), options, NULL, &context, &image, error)) {
             failed = true; goto image_done;
         }

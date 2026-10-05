@@ -1,4 +1,5 @@
 #include "models/internal.h"
+#include "resources_internal.h"
 #include "../controls_private.h"
 #include "qa/scene_model_save.h"
 #include <limits.h>
@@ -238,6 +239,26 @@ static bool content_leases_valid(const qa_scene_model_content_lease *mesh,
     return mesh && mesh->context && mesh->release && source && source->context && source->release &&
         animation && animation->context && animation->release && mesh != source && mesh != animation && source != animation;
 }
+static bool model_image_sources_bind(qa_scene_model *model, const qa_resource *resource, qa_error *error)
+{
+    if (!resource) return true;
+    for (scene_model_image *image = model->images; image; image = image->next)
+        if (!scene_image_asset_source_bind((qa_scene_image *)image->base, resource, error) ||
+            !scene_image_asset_source_bind((qa_scene_image *)image->fullbright, resource, error)) return false;
+    return true;
+}
+bool qa_scene_model_source_resource_bind(qa_scene_model *model, const qa_resource *resource, qa_error *error)
+{
+    if (!model || !qa_scene_model_idle(model) || !resource) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Model source binding requires its actual idle owner and resource"); return false;
+    }
+    qa_bytes bytes = qa_resource_bytes(resource);
+    if (bytes.size != model->source->source.size || (bytes.size &&
+        memcmp(bytes.data, model->source->source.data, bytes.size))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Model source resource differs from its immutable source bytes"); return false;
+    }
+    return model_image_sources_bind(model, resource, error);
+}
 static void replacement_leases(qa_scene_model *model, qa_scene_model_content_lease *mesh,
     qa_scene_model_content_lease *source, qa_scene_model_content_lease *animation)
 {
@@ -300,6 +321,7 @@ bool qa_scene_model_source_bind(qa_scene_model *model, qa_scene_model_content_le
         !lease || !lease->context || !lease->release) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source binding requires its actual idle model and owning lease"); return false;
     }
+    if (lease->resource && !qa_scene_model_source_resource_bind(model, lease->resource, error)) return false;
     model->source_lease = *lease; *lease = (qa_scene_model_content_lease){0}; return true;
 }
 bool qa_scene_model_replacement_prepare(qa_scene_model *model, const qa_model_replacement *description,
