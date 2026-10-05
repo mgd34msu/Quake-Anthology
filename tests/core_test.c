@@ -6,6 +6,7 @@
 #include "qa/binary.h"
 #include "qa/campaign.h"
 #include "qa/recovery.h"
+#include "qa/q1_save.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -398,6 +399,61 @@ static void test_recovery_rotation(void)
     CHECK(unlink(path) == 0 && rmdir(directory) == 0);
 }
 
+static void test_q1_original_codec(void)
+{
+    qa_error error={0};qa_buffer bytes={0};qa_q1_save_data *decoded=NULL;
+    qa_q1_save_data save={.version=5,.map="start",.skill=1,.time=2,.entity_count=600};
+    save.entities=calloc(601,sizeof(*save.entities));CHECK(save.entities);
+    qa_q1_save_value value={.kind=QA_Q1_SAVE_STRING,.value.text="worldspawn"};
+    CHECK(qa_q1_save_record_value(save.entities,"classname",&value,&error));
+    value.value.text="a\\n/b\nline";
+    CHECK(qa_q1_save_record_value(save.entities,"message",&value,&error));
+    value.value.text="player";
+    CHECK(qa_q1_save_record_value(save.entities+1,"classname",&value,&error));
+    value=(qa_q1_save_value){.kind=QA_Q1_SAVE_FLOAT,.value.number=100};
+    CHECK(qa_q1_save_record_value(save.entities+1,"health",&value,&error));
+    CHECK(qa_q1_save_comment(&save,"A level",7,23,&error));
+    CHECK(strlen(save.comment)==39 && !memcmp(save.comment,"A_level",7));
+    CHECK(!strcmp(save.comment+22,"kills:__7/_23____"));
+    static const uint8_t trailer[]="/* FTE extension */";
+    save.extension=(qa_buffer){.data=(uint8_t *)trailer,.size=sizeof(trailer)-1};
+    CHECK(qa_q1_save_encode(&save,&bytes,&error));
+    CHECK(qa_q1_save_decode((qa_bytes){bytes.data,bytes.size},&decoded,&error));
+    CHECK(decoded->version==5 && decoded->entity_count==600 && !decoded->entities[599].count);
+    CHECK(!decoded->extension.size && !strcmp(decoded->comment,save.comment));
+    CHECK(!strcmp(decoded->entities[1].pairs[1].value,"100.000000"));
+    char *text=NULL;
+    CHECK(qa_q1_save_string_decode(decoded->entities[0].pairs[1].value,&text,&error));
+    CHECK(!strcmp(text,"a\\n/b\nline"));free(text);
+    qa_q1_save_destroy(decoded);qa_buffer_free(&bytes);
+    qa_vec3 vector;uint32_t entity;
+    CHECK(qa_q1_save_vector_decode("1e2 -2.5 3junk",&vector,&error));
+    CHECK(vector.x==100 && vector.y==-2.5f && vector.z==3);
+    CHECK(qa_q1_save_entity_decode(" +3junk",&entity,&error) && entity==3);
+    CHECK(qa_q1_save_entity_decode("0x10",&entity,&error) && entity==0);
+    save.entity_count=601;
+    CHECK(!qa_q1_save_encode(&save,&bytes,&error) && error.code==QA_ERROR_UNSUPPORTED && !bytes.data);
+    save.entity_count=600;
+    char *message=save.entities[0].pairs[1].value;
+    char long_value[1025];memset(long_value,'x',sizeof(long_value));long_value[1023]=0;
+    save.entities[0].pairs[1].value=long_value;
+    CHECK(qa_q1_save_encode(&save,&bytes,&error));qa_buffer_free(&bytes);
+    long_value[1023]='x';long_value[1024]=0;
+    CHECK(!qa_q1_save_encode(&save,&bytes,&error) && error.code==QA_ERROR_UNSUPPORTED && !bytes.data);
+    save.entities[0].pairs[1].value="closing}brace";
+    CHECK(!qa_q1_save_encode(&save,&bytes,&error) && error.code==QA_ERROR_UNSUPPORTED && !bytes.data);
+    save.entities[0].pairs[1].value="quoted\"value";
+    CHECK(!qa_q1_save_encode(&save,&bytes,&error) && error.code==QA_ERROR_UNSUPPORTED && !bytes.data);
+    save.entities[0].pairs[1].value=message;
+    long_value[1000]=0;
+    value=(qa_q1_save_value){.kind=QA_Q1_SAVE_STRING,.value.text=long_value};
+    for (unsigned i=0;i<33;++i)
+        CHECK(qa_q1_save_record_value(save.entities+2,"message",&value,&error));
+    CHECK(!qa_q1_save_encode(&save,&bytes,&error) && error.code==QA_ERROR_UNSUPPORTED && !bytes.data);
+    for (size_t i=0;i<601;++i) qa_q1_save_record_destroy(save.entities+i);
+    free(save.entities);free(save.comment);
+}
+
 void test_q1_gameplay(void);
 void test_guest(void);
 bool test_recovery_child(int, char **, int *);
@@ -414,6 +470,7 @@ int main(int argc, char **argv)
     test_files();
     test_campaign_unit();
     test_recovery_rotation();
+    test_q1_original_codec();
     test_q1_gameplay();
     test_guest();
     test_recovery(argv[0]);

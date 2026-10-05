@@ -174,17 +174,134 @@ static bool integer_line(writer *w,int32_t value)
 {
     char text[12]; (void)snprintf(text,sizeof(text),"%d",value); return line(w,text);
 }
-static bool put_record(writer *w,const qa_q1_save_record *record)
+bool qa_q1_save_string_value(const char *text,char **out,qa_error *error)
 {
+    if (!text || !out || *out) return fail(error,0,"Source string requires an empty output");
+    size_t size=strlen(text),slashes=0;
+    for (size_t i=0;i<size;++i) if (text[i]=='\\') ++slashes;
+    if (size==SIZE_MAX || slashes>SIZE_MAX-size-1) return fail(error,0,"Source string extent overflows");
+    char *value=malloc(size+slashes+1);
+    if (!value) { qa_error_set(error,QA_ERROR_MEMORY,0,"Encoding source string"); return false; }
+    size_t used=0;
+    for (size_t i=0;i<size;++i) {
+        value[used++]=text[i];
+        if (text[i]=='\\') value[used++]='\\';
+    }
+    value[used]=0; *out=value; return true;
+}
+bool qa_q1_save_string_decode(const char *text,char **out,qa_error *error)
+{
+    if (!text || !out || *out) return fail(error,0,"Source string requires an empty output");
+    char *decoded=copy((qa_bytes){(const uint8_t *)text,strlen(text)},error);
+    if (!decoded) return false;
+    size_t used=0;
+    for (size_t i=0;text[i];++i) {
+        if (text[i]=='\\') {
+            ++i;decoded[used++]=text[i]=='n'?'\n':'\\';
+            if (!text[i]) break;
+        } else decoded[used++]=text[i];
+    }
+    decoded[used]=0;*out=decoded;return true;
+}
+bool qa_q1_save_vector_decode(const char *text,qa_vec3 *out,qa_error *error)
+{
+    if (!text || !out) return fail(error,0,"Source vector requires actual text and output");
+    char *owned=copy((qa_bytes){(const uint8_t *)text,strlen(text)},error);
+    if (!owned) return false;
+    char *start=owned;float values[3]={0};bool okay=true;
+    for (size_t i=0;okay && i<3;++i) {
+        char *end=strchr(start,' ');
+        if (end) *end=0;
+        double value=0;okay=qa_parse_atof(start,&value,error);values[i]=(float)value;
+        start=end?end+1:start+strlen(start);
+    }
+    free(owned);
+    if (okay) *out=qa_v3(values[0],values[1],values[2]);
+    return okay;
+}
+bool qa_q1_save_entity_decode(const char *text,uint32_t *out,qa_error *error)
+{
+    if (!text || !out) return fail(error,0,"Source entity requires actual text and output");
+    int previous_errno=errno;errno=0;
+    long value=strtol(text,NULL,10);bool valid=errno!=ERANGE && value>=0 && (uint64_t)value<=UINT32_MAX;
+    errno=previous_errno;
+    if (!valid) return fail(error,0,"Saved entity reference exceeds its physical source extent");
+    *out=(uint32_t)value;return true;
+}
+bool qa_q1_save_record_value(qa_q1_save_record *record,const char *key,
+    const qa_q1_save_value *source,qa_error *error)
+{
+    if (!record || !key || !source || record->count>=SIZE_MAX/sizeof(*record->pairs))
+        return fail(error,0,"Source value requires its actual record and field name");
+    char buffer[192],*escaped=NULL; const char *text=buffer;
+    switch (source->kind) {
+    case QA_Q1_SAVE_STRING:
+        if (!qa_q1_save_string_value(source->value.text,&escaped,error)) return false;
+        text=escaped; break;
+    case QA_Q1_SAVE_FLOAT:
+        if (!isfinite(source->value.number) ||
+            !qa_format_fixed(source->value.number,6,buffer,sizeof(buffer),error))
+            return fail(error,0,"Nonfinite source text float");
+        break;
+    case QA_Q1_SAVE_VECTOR: {
+        const float values[3]={source->value.vector.x,source->value.vector.y,source->value.vector.z};
+        char components[3][64];
+        for (size_t i=0;i<3;++i)
+            if (!isfinite(values[i]) || !qa_format_fixed(values[i],6,components[i],sizeof(components[i]),error))
+                return fail(error,0,"Nonfinite source text vector");
+        (void)snprintf(buffer,sizeof(buffer),"%s %s %s",components[0],components[1],components[2]); break;
+    }
+    case QA_Q1_SAVE_ENTITY: (void)snprintf(buffer,sizeof(buffer),"%u",source->value.entity); break;
+    case QA_Q1_SAVE_FUNCTION: case QA_Q1_SAVE_FIELD: text=source->value.text; break;
+    case QA_Q1_SAVE_VOID: text="void"; break;
+    default: return fail(error,0,"Unknown source text value kind");
+    }
+    if (!text) return fail(error,0,"Source symbolic value has no actual name");
+    qa_q1_save_pair pair={copy((qa_bytes){(const uint8_t *)key,strlen(key)},error),NULL};
+    if (pair.key) pair.value=copy((qa_bytes){(const uint8_t *)text,strlen(text)},error);
+    free(escaped);
+    if (!pair.key || !pair.value) { free(pair.key); free(pair.value); return false; }
+    qa_q1_save_pair *next=realloc(record->pairs,(record->count+1)*sizeof(*next));
+    if (!next) {
+        free(pair.key); free(pair.value);
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating source fields"); return false;
+    }
+    record->pairs=next; next[record->count++]=pair; return true;
+}
+bool qa_q1_save_comment(qa_q1_save_data *save,const char *level,int32_t killed,int32_t total,qa_error *error)
+{
+    if (!save || !level) return fail(error,0,"Source comment requires its actual level and client statistics");
+    char comment[40],kills[40]; memset(comment,' ',39);comment[39]=0;
+    size_t length=strlen(level); if (length>22) length=22;
+    memcpy(comment,level,length);
+    (void)snprintf(kills,sizeof(kills),"kills:%3i/%3i",killed,total);
+    length=strlen(kills); if (length>17) length=17;
+    memcpy(comment+22,kills,length);
+    for (size_t i=0;i<39;++i) if (comment[i]==' ') comment[i]='_';
+    char *value=copy((qa_bytes){(const uint8_t *)comment,39},error);
+    if (!value) return false;
+    free(save->comment);save->comment=value;return true;
+}
+static bool unrepresentable(writer *w,const char *message)
+{ qa_error_set(w->error,QA_ERROR_UNSUPPORTED,w->offset,"%s",message); return false; }
+static bool put_record(writer *w,const qa_q1_save_record *record,bool classic)
+{
+    size_t start=w->offset;
     if (!record || (record->count && !record->pairs) || !line(w,"{")) return false;
     for (size_t i=0;i<record->count;++i) {
         const qa_q1_save_pair *pair=record->pairs+i;
-        if (!pair->key || !pair->value || strchr(pair->key,'"') || strchr(pair->value,'"'))
-            return fail(w->error,w->offset,"Source fields cannot contain quotes");
+        if (!pair->key || !pair->value) return fail(w->error,w->offset,"Missing source field text");
+        if (strchr(pair->key,'"') || strchr(pair->value,'"') ||
+            strchr(pair->key,'}') || strchr(pair->value,'}'))
+            return unrepresentable(w,"Original Quake saves cannot represent quotes or closing braces in fields");
+        if (classic && (strlen(pair->key)>=1024 || strlen(pair->value)>=1024))
+            return unrepresentable(w,"Original Quake save field exceeds its 1023-byte token limit");
         if (!append(w,"\"",1) || !append(w,pair->key,strlen(pair->key)) || !append(w,"\" \"",3) ||
             !append(w,pair->value,strlen(pair->value)) || !line(w,"\"")) return false;
     }
-    return line(w,"}");
+    if (!line(w,"}")) return false;
+    return !classic || w->offset-start<32768 ||
+        unrepresentable(w,"Original Quake save record exceeds its 32767-byte block limit");
 }
 bool qa_q1_save_encode(const qa_q1_save_data *save,qa_buffer *out,qa_error *error)
 {
@@ -192,16 +309,15 @@ bool qa_q1_save_encode(const qa_q1_save_data *save,qa_buffer *out,qa_error *erro
         (save->entity_count && !save->entities) || (save->extension.size && !save->extension.data))
         return fail(error,0,"Invalid source save/output");
     writer w={0}; bool ok=qa_source_save_writer(&w,NULL,error) && line(&w,save->version==5?"5":"6");
+    if (ok && save->version==5 && save->entity_count>600)
+        ok=unrepresentable(&w,"Original Quake save exceeds its 600-edict limit");
     if (ok && save->version==6) ok=header_token(&w,save->game_directories);
     if (ok) ok=header_token(&w,save->comment);
     for (size_t i=0;ok && i<16;++i) ok=decimal(&w,(float)save->spawn_parameters[i]);
     if (ok) ok=integer_line(&w,save->skill) && header_token(&w,save->map) && decimal(&w,save->time);
     for (size_t i=0;ok && i<64;++i) ok=header_token(&w,save->lightstyles[i] && *save->lightstyles[i]?save->lightstyles[i]:"m");
-    if (ok) ok=put_record(&w,&save->globals);
-    for (size_t i=0;ok && i<save->entity_count;++i) ok=put_record(&w,save->entities+i);
-    if (ok && save->extension.size && memchr(save->extension.data,0,save->extension.size))
-        ok=fail(error,w.offset,"NUL in source extension text");
-    if (ok) ok=append(&w,save->extension.data,save->extension.size);
+    if (ok) ok=put_record(&w,&save->globals,save->version==5);
+    for (size_t i=0;ok && i<save->entity_count;++i) ok=put_record(&w,save->entities+i,save->version==5);
     if (ok) ok=qa_source_save_finish(&w,out);
     qa_source_save_dispose(&w); return ok;
 }

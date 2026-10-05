@@ -10,17 +10,6 @@ static bool text_idle(const qa_qc_instance *vm,qa_error *error)
     return vm && qa_qc_idle(vm) && vm->program->info.api==QA_QC_API_NETQUAKE ? true :
         qc_fail(error,QA_ERROR_ARGUMENT,0,"Original text fields require an idle NetQuake instance");
 }
-static bool add_pair(qa_q1_save_record *record,const char *key,const char *value,qa_error *error)
-{
-    if (record->count>=SIZE_MAX/sizeof(*record->pairs))
-        return qc_fail(error,QA_ERROR_MEMORY,0,"Source field count overflows");
-    qa_q1_save_pair pair={qc_strdup(key,error),NULL};
-    if (pair.key) pair.value=qc_strdup(value,error);
-    if (!pair.key || !pair.value) { free(pair.key); free(pair.value); return false; }
-    qa_q1_save_pair *next=realloc(record->pairs,(record->count+1)*sizeof(*next));
-    if (!next) { free(pair.key); free(pair.value); return qc_fail(error,QA_ERROR_MEMORY,0,"Allocating source fields"); }
-    record->pairs=next; next[record->count++]=pair; return true;
-}
 static bool raw_vector(const qa_qc_instance *vm,uint32_t slot,const char *name,
     qa_vec3 *out,qa_error *error)
 {
@@ -73,46 +62,38 @@ bool qa_qc_text_body_read(const qa_qc_instance *vm,uint32_t slot,qa_body_state *
 static bool saved_value(const qa_qc_instance *vm,const uint8_t *words,
     const qa_qc_definition *definition,qa_q1_save_record *out,qa_error *error)
 {
-    char buffer[192]; const char *value=buffer; int32_t raw=qc_load_int(words,definition->offset);
+    qa_q1_save_value value={0}; int32_t raw=qc_load_int(words,definition->offset);
     switch (definition->type) {
     case QA_QC_STRING:
-        if (!qa_qc_string(vm,raw,&value,error)) return false;
+        value.kind=QA_Q1_SAVE_STRING;
+        if (!qa_qc_string(vm,raw,&value.value.text,error)) return false;
         break;
     case QA_QC_FLOAT:
-        if (!isfinite(qc_load_float(words,definition->offset)) ||
-            !qa_format_fixed(qc_load_float(words,definition->offset),6,buffer,sizeof(buffer),error))
-            return qc_fail(error,QA_ERROR_FORMAT,definition->offset,"Nonfinite source text float");
+        value.kind=QA_Q1_SAVE_FLOAT; value.value.number=qc_load_float(words,definition->offset); break;
+    case QA_QC_VECTOR:
+        value.kind=QA_Q1_SAVE_VECTOR;
+        value.value.vector=qa_v3(qc_load_float(words,definition->offset),
+            qc_load_float(words,definition->offset+1),qc_load_float(words,definition->offset+2)); break;
+    case QA_QC_ENTITY:
+        value.kind=QA_Q1_SAVE_ENTITY;
+        if (!qc_entity_slot(vm,raw,&value.value.entity,error)) return false;
         break;
-    case QA_QC_VECTOR: {
-        char component[3][64];
-        for (uint32_t i=0;i<3;++i) {
-            float f=qc_load_float(words,definition->offset+i);
-            if (!isfinite(f) || !qa_format_fixed(f,6,component[i],sizeof(component[i]),error))
-                return qc_fail(error,QA_ERROR_FORMAT,definition->offset+i,"Nonfinite source text vector");
-        }
-        (void)snprintf(buffer,sizeof(buffer),"%s %s %s",component[0],component[1],component[2]); break;
-    }
-    case QA_QC_ENTITY: {
-        uint32_t slot;
-        if (!qc_entity_slot(vm,raw,&slot,error)) return false;
-        (void)snprintf(buffer,sizeof(buffer),"%u",slot); break;
-    }
     case QA_QC_FUNCTION: {
         const qa_qc_function *function=raw>=0?qa_qc_program_function(vm->program,(uint32_t)raw):NULL;
         if (!function) return qc_fail(error,QA_ERROR_FORMAT,definition->offset,"Cannot save unknown QC function");
-        value=function->name; break;
+        value.kind=QA_Q1_SAVE_FUNCTION; value.value.text=function->name; break;
     }
     case QA_QC_FIELD: {
         const qa_qc_definition *field=NULL;
         for (uint32_t i=0;i<vm->program->info.field_count;++i)
             if ((int32_t)vm->program->fields[i].offset==raw) { field=vm->program->fields+i; break; }
         if (!field) return qc_fail(error,QA_ERROR_FORMAT,definition->offset,"Cannot save unknown QC field offset");
-        value=field->name; break;
+        value.kind=QA_Q1_SAVE_FIELD; value.value.text=field->name; break;
     }
-    case QA_QC_VOID: value="void"; break;
-    default: return qc_fail(error,QA_ERROR_UNSUPPORTED,definition->offset,"QC type requires raw checkpoint storage");
+    case QA_QC_VOID: value.kind=QA_Q1_SAVE_VOID; break;
+    default: return qc_fail(error,QA_ERROR_UNSUPPORTED,definition->offset,"QC type requires shared state storage");
     }
-    return add_pair(out,definition->name,value,error);
+    return qa_q1_save_record_value(out,definition->name,&value,error);
 }
 bool qa_qc_text_capture(const qa_qc_instance *vm,qa_q1_save_record *globals,
     qa_q1_save_record **entities,size_t *count,qa_error *error)
@@ -157,39 +138,30 @@ static bool parse_value(qa_qc_instance *vm,uint8_t *words,
     uint32_t offset=d->offset;
     switch (d->type) {
     case QA_QC_STRING: {
-        size_t size=strlen(text); char *decoded=malloc(size+1);
-        if (!decoded) return qc_fail(error,QA_ERROR_MEMORY,offset,"Decoding QC source string");
-        size_t used=0;
-        for (size_t i=0;i<size;++i) {
-            if (text[i]=='\\') { ++i; decoded[used++]=i<size && text[i]=='n'?'\n':'\\'; }
-            else decoded[used++]=text[i];
-        }
-        decoded[used]=0; int32_t id;
+        char *decoded=NULL;
+        if (!qa_q1_save_string_decode(text,&decoded,error)) return false;
+        int32_t id;
         bool ok=qa_qc_string_allocate(vm,decoded,&id,error); free(decoded);
         if (!ok) return false;
         qc_store_word(words,offset,(uint32_t)id); break;
     }
-    case QA_QC_FLOAT:
-        qc_store_float(words,offset,(float)qa_parse_quake_number(text,
-            QA_QUAKE_NUMBER_ASCII_UNSIGNED)); break;
+    case QA_QC_FLOAT: {
+        double value;
+        if (!qa_parse_atof(text,&value,error)) return false;
+        qc_store_float(words,offset,(float)value);break;
+    }
     case QA_QC_VECTOR: {
-        const char *start=text;
-        for (uint32_t i=0;i<3;++i) {
-            const char *end=strchr(start,' '); size_t size=end?(size_t)(end-start):strlen(start);
-            char *part=malloc(size+1);
-            if (!part) return qc_fail(error,QA_ERROR_MEMORY,offset,"Decoding QC source vector");
-            memcpy(part,start,size); part[size]=0;
-            qc_store_float(words,offset+i,(float)qa_parse_quake_number(part,
-                QA_QUAKE_NUMBER_ASCII_UNSIGNED)); free(part);
-            start=end?end+1:start+size;
-        }
-        break;
+        qa_vec3 value;
+        if (!qa_q1_save_vector_decode(text,&value,error)) return false;
+        qc_store_float(words,offset,value.x);qc_store_float(words,offset+1,value.y);
+        qc_store_float(words,offset+2,value.z);break;
     }
     case QA_QC_ENTITY: {
-        double slot=trunc(qa_parse_quake_number(text, QA_QUAKE_NUMBER_ASCII_UNSIGNED));
-        if (!isfinite(slot) || slot<0 || slot>=vm->entity_count)
+        uint32_t slot;
+        if (!qa_q1_save_entity_decode(text,&slot,error)) return false;
+        if (slot>=vm->entity_count)
             return qc_fail(error,QA_ERROR_FORMAT,offset,"Saved entity reference exceeds source count");
-        qc_store_word(words,offset,(uint32_t)((uint64_t)slot*vm->layout.stride_bytes)); break;
+        qc_store_word(words,offset,(uint32_t)((uint64_t)slot*vm->layout.stride_bytes));break;
     }
     case QA_QC_FUNCTION: {
         uint32_t index;
@@ -208,24 +180,77 @@ static bool parse_value(qa_qc_instance *vm,uint8_t *words,
     }
     return true;
 }
+static const qa_qc_definition *saved_definition(const qa_qc_program *program,
+    const char *name,bool entity,bool *angle,qa_error *error)
+{
+    *angle=entity && !strcmp(name,"angle");
+    const char *key=*angle?"angles":entity && !strcmp(name,"light")?"light_lev":name;
+    char *normalized=NULL;
+    if (entity) {
+        size_t size=strlen(key); while (size && key[size-1]==' ') --size;
+        normalized=malloc(size+1);
+        if (!normalized) { qc_fail(error,QA_ERROR_MEMORY,0,"Normalizing source field name"); return NULL; }
+        memcpy(normalized,key,size); normalized[size]=0; key=normalized;
+    }
+    const qa_qc_definition *definition=entity?(*key=='_'?NULL:qa_qc_program_find_field(program,key)):
+        qa_qc_program_find_global(program,key);
+    free(normalized);return definition;
+}
+static bool record_ready(const qa_qc_program *program,const qa_q1_save_record *record,
+    bool entity,qa_error *error)
+{
+    if (!record || (record->count && !record->pairs))
+        return qc_fail(error,QA_ERROR_FORMAT,0,"Missing source field pairs");
+    for (size_t i=0;i<record->count;++i) {
+        const qa_q1_save_pair *pair=record->pairs+i;
+        if (!pair->key || !pair->value) return qc_fail(error,QA_ERROR_FORMAT,i,"Missing source field text");
+        if (entity && *pair->key=='_') continue;
+        bool angle=false; qa_error local={0};
+        const qa_qc_definition *d=saved_definition(program,pair->key,entity,&angle,&local);
+        if (!d) {
+            if (local.code!=QA_OK) { if (error) *error=local;return false; }
+            qa_error_set(error,QA_ERROR_FORMAT,i,"Saved %s '%s' is absent from this original program",
+                entity?"field":"global",pair->key);return false;
+        }
+        if (d->type==QA_QC_FUNCTION && !qa_qc_program_find_function(program,pair->value,NULL))
+            return qc_fail(error,QA_ERROR_FORMAT,i,"Saved function is absent from this original program");
+        if (d->type==QA_QC_FIELD && !qa_qc_program_find_field(program,pair->value))
+            return qc_fail(error,QA_ERROR_FORMAT,i,"Saved field reference is absent from this original program");
+    }
+    return true;
+}
+bool qa_qc_text_program_ready(const qa_qc_program *program,const qa_q1_save_data *save,qa_error *error)
+{
+    if (!program || !save || (save->entity_count && !save->entities) ||
+        qa_qc_program_describe(program).api!=QA_QC_API_NETQUAKE)
+        return qc_fail(error,QA_ERROR_ARGUMENT,0,"Original save requires its actual NetQuake program");
+    if (!record_ready(program,&save->globals,false,error)) return false;
+    qa_qc_program_info info=qa_qc_program_describe(program);
+    for (uint32_t i=0;i<info.global_count;++i) {
+        const qa_qc_definition *definition=qa_qc_program_global(program,i);
+        if (!definition->save || (definition->type!=QA_QC_STRING && definition->type!=QA_QC_FLOAT &&
+            definition->type!=QA_QC_ENTITY)) continue;
+        bool present=false;
+        for (size_t j=0;j<save->globals.count;++j)
+            if (!strcmp(save->globals.pairs[j].key,definition->name)) { present=true;break; }
+        if (!present) {
+            qa_error_set(error,QA_ERROR_FORMAT,i,"Original save lacks this program's saved global '%s'",definition->name);
+            return false;
+        }
+    }
+    for (size_t i=0;i<save->entity_count;++i)
+        if (!record_ready(program,save->entities+i,true,error)) return false;
+    return true;
+}
 static bool pairs(qa_qc_instance *vm,uint8_t *words,const qa_q1_save_record *record,bool entity,qa_error *error)
 {
     if (record->count && !record->pairs) return qc_fail(error,QA_ERROR_FORMAT,0,"Missing source field pairs");
     for (size_t i=0;i<record->count;++i) {
         const qa_q1_save_pair *pair=record->pairs+i;
         if (!pair->key || !pair->value) return qc_fail(error,QA_ERROR_FORMAT,i,"Missing source field text");
-        bool angle=entity && !strcmp(pair->key,"angle");
-        const char *key=angle?"angles":entity && !strcmp(pair->key,"light")?"light_lev":pair->key;
-        char *normalized=NULL;
-        if (entity) {
-            size_t size=strlen(key); while (size && key[size-1]==' ') --size;
-            normalized=malloc(size+1);
-            if (!normalized) return qc_fail(error,QA_ERROR_MEMORY,i,"Normalizing source field name");
-            memcpy(normalized,key,size); normalized[size]=0; key=normalized;
-        }
-        const qa_qc_definition *d=entity?(*key=='_'?NULL:qa_qc_program_find_field(vm->program,key)):
-            qa_qc_program_find_global(vm->program,key);
-        free(normalized);
+        bool angle=false; qa_error local={0};
+        const qa_qc_definition *d=saved_definition(vm->program,pair->key,entity,&angle,&local);
+        if (local.code!=QA_OK) { if (error) *error=local;return false; }
         if (!d) continue;
         uint32_t width=d->type==QA_QC_VECTOR?3:1;
         if (entity ? (uint32_t)d->offset+width>vm->layout.field_words : !qc_global_range(vm,d->offset,width,error))
@@ -245,7 +270,7 @@ static bool pairs(qa_qc_instance *vm,uint8_t *words,const qa_q1_save_record *rec
 }
 bool qa_qc_text_import(qa_qc_instance *vm,const qa_q1_save_data *save,qa_error *error)
 {
-    if (!text_idle(vm,error)) return false;
+    if (!text_idle(vm,error) || !qa_qc_text_program_ready(vm->program,save,error)) return false;
     if (!save || !save->entities || save->entity_count<vm->options.first_dynamic_slot || save->entity_count>vm->options.entity_capacity ||
         !isfinite(save->time) || save->time<0)
         return qc_fail(error,QA_ERROR_FORMAT,0,"Saved source count/time exceeds candidate admission");
@@ -263,7 +288,7 @@ bool qa_qc_text_import(qa_qc_instance *vm,const qa_q1_save_data *save,qa_error *
         bool free_row=save->entities[slot].count==0;
         uint8_t *edict=vm->entities+(size_t)slot*vm->layout.stride_bytes;
         qa_store_u32le(edict,free_row?1:0);
-        qc_store_float(edict,vm->layout.variables_offset_bytes/4-1,free_row?(float)save->time:0);
+        qc_store_float(edict,vm->layout.variables_offset_bytes/4-1,0);
         if (!pairs(vm,words,save->entities+slot,true,error)) return false;
     }
     return true;
