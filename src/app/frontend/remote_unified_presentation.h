@@ -41,9 +41,6 @@ typedef struct frontend_unified_presentation_children {
  * supplies the retained readonly world, frame, prediction and event children. */
 bool frontend_remote_unified_presentation_create(qa_frontend *,
     const frontend_remote_unified_options *, frontend_remote_unified **, qa_error *);
-bool frontend_remote_unified_presentation_restore_prefix(qa_frontend *,
-    const frontend_remote_unified_options *, const qa_net_client *,
-    qa_application_content_graph *, qa_bytes, frontend_remote_unified **, qa_error *);
 bool frontend_remote_unified_presentation_time(const frontend_remote_unified *, double *, qa_error *);
 bool frontend_remote_unified_presentation_media(const frontend_remote_unified *,
     frontend_unified_media **installed, frontend_unified_media **pending, qa_error *);

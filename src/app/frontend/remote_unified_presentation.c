@@ -1240,27 +1240,7 @@ bool frontend_remote_unified_presentation_create(qa_frontend *frontend,
     if (!frontend_remote_unified_create(frontend,&options,out,error)) { free(p); return false; }
     p->replica = *out; return true;
 }
-bool frontend_remote_unified_presentation_restore_prefix(qa_frontend *frontend,
-    const frontend_remote_unified_options *source,const qa_net_client *peer,
-    qa_application_content_graph *graph,qa_bytes bytes,frontend_remote_unified **out,qa_error *error)
-{
-    if (!frontend || !source || !peer || !graph || !out || *out || !frontend->source_restoring)
-        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified factory import requires its actual cold CLIENT prefix");
-    unified_presentation *p=calloc(1,sizeof(*p));
-    if (!p) return frontend_unified_fail(error,QA_ERROR_MEMORY,"Importing readonly unified presentation owner");
-    p->frontend=frontend;
-    frontend_remote_unified_options options=*source;
-    options.consumers=consumers(p);
-    bool okay=frontend_remote_unified_restore_prefix(frontend,&options,peer,graph,bytes,out,error);
-    if (*out) {
-        p->replica=*out;
-        /* The imported factory itself owns checked cleanup, including a
-         * decoder failure before any saved child-presence field is reached. */
-        (*out)->consumers_live=true;
-    }
-    else free(p);
-    return okay;
-}
+
 bool frontend_remote_unified_presentation_time(const frontend_remote_unified *replica, double *out, qa_error *error)
 {
     if (!replica || replica->options.consumers.input != input)
