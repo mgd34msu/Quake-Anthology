@@ -12,7 +12,9 @@ static bool mover(q2_save_io *io, q2_mover *s) {
     Q2V(motion.direction); Q2V(motion.destination); Q2V(motion.reference);
     Q2F(motion.remaining); Q2F(motion.current_speed); Q2F(motion.move_speed);
     Q2F(motion.next_speed); Q2F(motion.decel_distance); Q2F(motion.curve_from);
-    Q2F(motion.curve_to); Q2F(motion.curve_distance); Q2T(motion.curve_time_ns);
+    Q2F(motion.curve_to); Q2F(motion.curve_distance);
+    Q2U(motion.curve_frame); Q2U8(motion.curve_subframe); Q2U8(motion.curve_subframes);
+    Q2T(motion.curve_frames_done);
     Q2U(motion.done); Q2B(motion.angular); Q2B(motion.accelerated);
     Q2B(motion.curve); Q2B(motion.final_sample); return true;
 }

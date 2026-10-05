@@ -266,7 +266,9 @@ typedef struct q2_motion {
     qa_vec3 direction, destination, reference;
     float remaining, current_speed, move_speed, next_speed, decel_distance;
     float curve_from, curve_to, curve_distance;
-    uint64_t curve_time_ns;
+    uint32_t curve_frame;
+    uint8_t curve_subframe, curve_subframes;
+    uint64_t curve_frames_done;
     q2_move_done done;
     bool angular, accelerated, curve, final_sample;
 } q2_motion;

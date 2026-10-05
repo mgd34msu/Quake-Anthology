@@ -78,6 +78,11 @@ bool q2_mover_reaction(qa_q2_game *, q2_actor *, const qa_damage_outcome *, qa_e
 bool q2_move_start(qa_q2_game *, q2_actor *, qa_vec3, bool, q2_move_done, qa_error *);
 q2_mover *q2_mover_state(q2_actor *, qa_error *);
 bool q2_move_tick(qa_q2_game *, q2_actor *, q2_entity_think, qa_error *);
+typedef bool (*q2_move_sample_fn)(void *, float, qa_error *);
+bool q2_move_curve_samples(const q2_entity_state *, const q2_motion *, q2_move_sample_fn, void *,
+                          qa_error *);
+bool q2_move_curve_restore(q2_motion *, const q2_entity_state *, qa_vec3, uint32_t, uint32_t,
+                          uint32_t, uint64_t, qa_error *);
 bool q2_move_finished(qa_q2_game *, q2_actor *, q2_move_done, qa_error *);
 bool q2_mover_portals(qa_q2_game *, q2_actor *, bool, qa_error *);
 bool q2_door_down(qa_q2_game *, q2_actor *, qa_error *);
