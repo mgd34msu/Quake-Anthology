@@ -4019,10 +4019,15 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
         !q1_client_create(n,&q2_remote,error)) goto failed;
     if(f->options.network_connect && f->options.network_protocol.kind==QA_NET_UNIFIED_1) {
         const qa_product *selected=frontend_product_selection(qa_application_catalog(f->application),f->options.game);
+        if(!selected) {
+            frontend_fail(error,QA_ERROR_ARGUMENT,
+                "Unified connection requires --game PRODUCT selecting an installed local client profile");
+            goto failed;
+        }
         frontend_network_unified_client_options client_options={.frontend=f,.runtime=n->runtime,.remote=q2_remote,
             .physical_seat=0,.seat={QA_NETWORK_COMMAND_OWNER,0},.context=n,.current=unified_client_current,
             .disconnected=unified_client_disconnected};
-        if(!selected || !frontend_config_store_client_profile(f->config_store,selected->family,&client_options.profile,error) ||
+        if(!frontend_config_store_client_profile(f->config_store,selected->family,&client_options.profile,error) ||
             !frontend_config_store_neutral_pending_options(f->config_store,0,&client_options.configuration,error)) goto failed;
         if(!frontend_network_unified_client_create(&client_options,&n->unified_client_service,error)) {
             if(!n->unified_client_service)

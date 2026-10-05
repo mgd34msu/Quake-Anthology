@@ -147,7 +147,13 @@ Anthology sessions use `unified-1` by default. To run a dedicated server with a 
 ./build/quake-anthology --game q2-classic-baseq2 --map base1 --dedicated --host 0.0.0.0 --port 27910
 ```
 
-Connect to an Anthology server with `--connect ADDRESS --port PORT`. For an original game server, explicitly choose its protocol, for example:
+Connect to an Anthology server with an installed local client profile:
+
+```sh
+./build/quake-anthology --game q1-classic-id1 --connect 192.0.2.10 --port 27960 --protocol unified-1
+```
+
+Currently, `--game PRODUCT` is required to select the local character and configuration profile, independently of the server map. For an original game server, explicitly choose its protocol, for example:
 
 ```sh
 ./build/quake-anthology --game q2-classic-baseq2 --connect 192.0.2.10 --port 27910 --protocol q2-34

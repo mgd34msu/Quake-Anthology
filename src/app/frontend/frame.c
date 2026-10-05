@@ -549,6 +549,8 @@ bool frontend_startup_advance(qa_frontend *frontend,bool *complete,qa_error *err
     if (!prepared || !*complete) return prepared;
     if (!frontend_startup_launch_complete(frontend,error)) return false;
     if (!qa_application_launch(frontend->application)) {
+        if (frontend->options.network_connect)
+            return frontend_network_create(frontend,error);
         if (frontend->options.game) {
             if (!frontend_launch(frontend,error)) return false;
             *complete=!qa_application_startup_pending(frontend->application);
