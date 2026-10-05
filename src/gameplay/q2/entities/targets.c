@@ -410,18 +410,11 @@ bool q2_target_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id ac
         return services->area_portal(services->context, (uint32_t)s->style, s->count != 0, e);
     }
     case Q2E_HELP:
-        if (g->options.edition == QA_Q2_RERELEASE)
-            return q2_rerelease_goal_use(g, a, activator, e);
-        return q2_map_event(g,
-                            &(qa_q2_map_event){.kind = QA_Q2_MAP_HELP,
-                                               .actor = a->id,
-                                               .slot = (s->spawnflags & 1) ? 1 : 2,
-                                               .text = s->message},
-                            e);
+        return q2_goal_use(g, a, activator, e);
     case Q2E_SECRET:
     case Q2E_GOAL: {
         if (g->options.edition == QA_Q2_RERELEASE)
-            return q2_rerelease_goal_use(g, a, activator, e);
+            return q2_goal_use(g, a, activator, e);
         const char *noise = q2_field_text(g, s, "noise");
         if (!q2_entity_sound(g, a, *noise ? noise : "misc/secret.wav", 2, 1, 1, 0, e))
             return false;

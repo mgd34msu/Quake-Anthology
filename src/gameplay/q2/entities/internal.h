@@ -131,7 +131,7 @@ bool q2_entity_teleport(qa_q2_game *, q2_actor *, qa_actor_id, const qa_body_sta
 bool q2_scenery_prethink(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_laser_think(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_rerelease_poi(qa_q2_game *, q2_actor *, qa_actor_id, qa_error *);
-bool q2_rerelease_goal_use(qa_q2_game *, q2_actor *, qa_actor_id, qa_error *);
+bool q2_goal_use(qa_q2_game *, q2_actor *, qa_actor_id, qa_error *);
 bool q2_rerelease_notify(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_rerelease_goal_frame(qa_q2_game *, q2_actor *, qa_error *);
 uint32_t q2_entity_color(const char *);

@@ -12,13 +12,15 @@ static bool short_text(qa_q2_game *g, qa_string_id text, qa_string_id *out, qa_e
     copy[size] = 0;
     return qa_builtin_resource(&g->services, copy, out, e);
 }
-bool q2_rerelease_goal_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e) {
+bool q2_goal_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e) {
     q2_entity_state *s = a->entity;
     q2_entities *r = g->entity_runtime;
     if (s->kind == Q2E_HELP) {
         qa_string_id *text = (s->spawnflags & 1) ? &r->primary : &r->secondary;
-        uint32_t *changes = (s->spawnflags & 1) ? &r->primary_changes : &r->secondary_changes;
-        if (*text != s->message) {
+        bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+        uint32_t *changes = !rerelease || (s->spawnflags & 1)
+                                ? &r->primary_changes : &r->secondary_changes;
+        if (!rerelease || *text != s->message) {
             if (!short_text(g, s->message, text, e))
                 return false;
             (*changes)++;
@@ -26,11 +28,11 @@ bool q2_rerelease_goal_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa
                               &(qa_q2_map_event){.kind = QA_Q2_MAP_HELP,
                                                  .actor = a->id,
                                                  .slot = (s->spawnflags & 1) ? 1 : 2,
-                                                 .text = s->message},
+                                                 .text = rerelease ? s->message : *text},
                               e))
                 return false;
         }
-        return !q2_actor_live(g, a->id) || !(s->spawnflags & 2) ||
+        return !rerelease || !q2_actor_live(g, a->id) || !(s->spawnflags & 2) ||
                q2_rerelease_poi(g, a, activator, e);
     }
     const char *noise = q2_field_text(g, s, "noise");
