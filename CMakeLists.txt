@@ -1086,7 +1086,6 @@ add_library(qa_q3_presentation STATIC
     src/presentation/q3/scene.c
     src/presentation/q3/assets_custody.c
     src/presentation/q3/source_scene_bank.c
-    src/presentation/q3/source_scene_bank_save.c
 
     src/presentation/q3/cinematic_handles.c
     src/presentation/q3/cinematic_handles_prepare.c

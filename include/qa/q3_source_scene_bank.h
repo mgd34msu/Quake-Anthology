@@ -71,15 +71,4 @@ size_t qa_q3_source_scene_bank_registry_count(const qa_q3_source_scene_bank *);
 qa_q3_presentation_assets *qa_q3_source_scene_bank_registry_at(
     const qa_q3_source_scene_bank *, size_t);
 
-typedef struct qa_q3_source_scene_bank_refs {
-    void *context;
-    bool (*assets_encode)(void *, const qa_q3_presentation_assets *, uint64_t *, qa_error *);
-    bool (*assets_decode)(void *, uint64_t, qa_q3_presentation_assets **, qa_error *);
-} qa_q3_source_scene_bank_refs;
-bool qa_q3_source_scene_bank_checkpoint(const qa_q3_source_scene_bank *,
-    const qa_q3_source_scene_bank_refs *, qa_buffer *, qa_error *);
-/* Creates isolated value storage and retains actual decoded registry owners. */
-bool qa_q3_source_scene_bank_restore(qa_bytes, const qa_q3_source_scene_bank_refs *,
-    qa_q3_source_scene_bank **, qa_error *);
-
 #endif
