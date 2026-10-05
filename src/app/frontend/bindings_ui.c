@@ -484,7 +484,10 @@ static bool menu(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
                 if (binding) snprintf(suffix, sizeof(suffix), ":%u:%d:%u:%u", (unsigned)binding->input.kind,
                     binding->input.device, binding->input.code, (unsigned)binding->input.positive);
                 char *row_key = cursor;
-                cursor += (size_t)sprintf(cursor, "%s%s", canonical, suffix) + 1;
+                size_t canonical_size = strlen(canonical), suffix_size = strlen(suffix) + 1;
+                memmove(cursor, canonical, canonical_size);
+                memcpy(cursor + canonical_size, suffix, suffix_size);
+                cursor += canonical_size + suffix_size;
                 binding_record *record = records + row_count;
                 *record = (binding_record){.cells={retain_text(&cursor, actions[i].label), retain_text(&cursor, physical)},
                     .command=retain_text(&cursor, binding ? binding_text(binding) : canonical), .canonical=canonical,
