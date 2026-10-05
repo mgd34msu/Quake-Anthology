@@ -2,17 +2,8 @@
 #define QA_FRONTEND_NETWORK_Q2_HOST_SAVE_H
 #include "network_q2_host.h"
 
-bool frontend_network_q2_host_checkpoint(frontend_network_q2_host *,qa_buffer *,qa_error *);
-/* Decodes custody only, before the canonical runtime's actual admission. */
-bool frontend_network_q2_host_restore_prepare(const frontend_network_q2_host_options *,
-    uint64_t network_owner,qa_bytes,frontend_network_q2_host **,qa_error *);
 bool frontend_network_q2_host_restore_admit(frontend_network_q2_host *,
     const qa_net_connect *,bool *recognized,qa_error *);
-bool frontend_network_q2_host_restore_hooks(frontend_network_q2_host *,qa_network_runtime *,
-    const qa_net_client *,qa_network_q2_server_policy *,qa_network_q2_server_hooks *,qa_error *);
-bool frontend_network_q2_host_restore_local_hooks(frontend_network_q2_host *,qa_network_runtime *,
-    const qa_net_client *,qa_network_local_hooks *,qa_error *);
-bool frontend_network_q2_host_finish_restore(frontend_network_q2_host *,qa_network_runtime *,qa_error *);
 bool frontend_network_q2_host_qualified(const frontend_network_q2_host *,const qa_network_runtime *,
     bool complete,qa_error *);
 bool frontend_network_q2_host_importing(const frontend_network_q2_host *);
