@@ -3174,12 +3174,15 @@ static bool local_userinfo(void *context,qa_application *application,const qa_la
     const qa_launch_snapshot *snapshot=candidate?candidate:qa_application_launch(application);
     if (!snapshot || qa_launch_snapshot_choices(snapshot)!=choices)
         return fail(error,QA_ERROR_ARGUMENT,"Local userinfo differs from its actual admission choices");
-    bool actual=false;
-    for (size_t i=0;i<choices->seat_count;++i) if (choices->seats+i==seat) actual=true;
+    const qa_launch_seat *authored=NULL;
+    for (size_t i=0;i<choices->seat_count;++i) if (choices->seats[i].id==seat->id) {
+        if (authored) return fail(error,QA_ERROR_FORMAT,"Local userinfo repeats its authored seat identity");
+        authored=choices->seats+i;
+    }
     const qa_launch_binding *binding=qa_launch_binding_for(choices,
         (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
     const qa_launch_instance *selected=binding?qa_launch_snapshot_find(snapshot,binding->instance):NULL;
-    if (!actual || !selected)
+    if (!authored || !authored->local || authored->bot || !selected)
         return fail(error,QA_ERROR_ARGUMENT,"Local userinfo has no actual authored seat and GAME");
     frontend_config_source *source=NULL;
     for (frontend_config_source *row=manager->sources;row;row=row->next) {
