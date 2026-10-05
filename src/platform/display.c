@@ -1230,7 +1230,7 @@ struct qa_display_restore_guard {
     SDL_GLContext context;
     SDL_Surface *frame;
     display_saved saved,baseline,staged;
-    bool attempted,prepared,transferred;
+    bool attempted,prepared,transferred,fresh;
 };
 static bool display_save_error(qa_error *error,qa_status status,const char *message)
 { qa_error_set(error,status,0,"%s",message); return false; }
@@ -1351,15 +1351,39 @@ bool qa_display_checkpoint(qa_display *display,qa_buffer *out,qa_error *error)
     if (!ok && (!error || error->code==QA_OK)) display_save_error(error,QA_ERROR_FORMAT,"Invalid genuine display continuation");
     return ok;
 }
+static void display_detached_bind(qa_display *active,qa_display *candidate,qa_display_restore_guard *guard)
+{
+    candidate->backend=active->backend; candidate->window=active->window; candidate->native_borrowed=true;
+    candidate->revision=1;
+    candidate->lease=active->lease; ++candidate->lease->references;
+    memcpy(candidate->fullscreen_failure,guard->saved.fullscreen_failure,sizeof(candidate->fullscreen_failure));
+    if (active->backend==QA_DISPLAY_OPENGL) candidate->native.gl=active->native.gl;
+    guard->active=active; guard->candidate=candidate; guard->window=active->window;
+    candidate->restore_guard=guard;
+    if (active->backend==QA_DISPLAY_CPU) guard->frame=active->native.cpu.frame;
+    else guard->context=active->native.gl.context;
+}
 bool qa_display_create_detached(qa_display *active,qa_display **out,
     qa_display_restore_guard **guard_out,qa_error *error)
 {
-    if (!out || *out || !guard_out || *guard_out)
-        return display_save_error(error,QA_ERROR_ARGUMENT,"Fresh detached display requires empty owner/guard destinations");
-    qa_buffer current={0};
-    bool ok=qa_display_checkpoint(active,&current,error) &&
-        qa_display_restore((qa_bytes){current.data,current.size},active,out,guard_out,error);
-    qa_buffer_free(&current); return ok;
+    if (!active || active->surface_ticket || active->pending_restore || active->destroy_pending || active->native_borrowed ||
+        !active->lease || active->lease->references==SIZE_MAX || !out || *out || !guard_out || *guard_out)
+        return display_save_error(error,QA_ERROR_ARGUMENT,"Fresh detached display requires its live native parent and empty destinations");
+    qa_display_restore_guard *guard=calloc(1,sizeof(*guard));
+    qa_display *candidate=calloc(1,sizeof(*candidate));
+    if (!guard || !candidate) {
+        free(guard); free(candidate);
+        return display_save_error(error,QA_ERROR_MEMORY,"Allocating fresh detached display");
+    }
+    if (!display_observe(active,&guard->saved,false,error) || !display_observe(active,&guard->baseline,false,error)) {
+        display_saved_free(&guard->saved); display_saved_free(&guard->baseline);
+        free(guard); free(candidate); return false;
+    }
+    guard->saved.texture=guard->saved.frame=false;
+    guard->saved.texture_width=guard->saved.texture_height=0;
+    guard->fresh=true;
+    display_detached_bind(active,candidate,guard);
+    *out=candidate; *guard_out=guard; return true;
 }
 bool qa_display_restore(qa_bytes bytes,const qa_display *active,qa_display **out,qa_display_restore_guard **guard_out,qa_error *error)
 {
@@ -1373,15 +1397,7 @@ bool qa_display_restore(qa_bytes bytes,const qa_display *active,qa_display **out
         display_observe((qa_display *)active,&guard->baseline,true,error) &&
         guard->saved.info.backend==guard->baseline.info.backend;
     if (ok) {
-        candidate->backend=active->backend; candidate->window=active->window; candidate->native_borrowed=true;
-        candidate->revision=1;
-        candidate->lease=active->lease; ++candidate->lease->references;
-        memcpy(candidate->fullscreen_failure,guard->saved.fullscreen_failure,sizeof(candidate->fullscreen_failure));
-        if (active->backend==QA_DISPLAY_OPENGL) candidate->native.gl=active->native.gl;
-        guard->active=(qa_display *)active; guard->candidate=candidate; guard->window=active->window;
-        candidate->restore_guard=guard;
-        if (active->backend==QA_DISPLAY_CPU) guard->frame=active->native.cpu.frame;
-        else guard->context=active->native.gl.context;
+        display_detached_bind((qa_display *)active,candidate,guard);
         *out=candidate; *guard_out=guard; candidate=NULL; guard=NULL;
     }
     qa_source_save_dispose(&io); qa_display_destroy(candidate);
@@ -1422,6 +1438,12 @@ bool qa_display_handoff_prepare(qa_display_restore_guard *guard,qa_error *error)
         return display_save_error(error,QA_ERROR_ARGUMENT,"Display candidate belongs to another native restore guard");
     guard->candidate->restore_guard=guard;
     guard->attempted=true;
+    if (guard->fresh) {
+        if (!display_observe(guard->candidate,&guard->staged,false,error) ||
+            (guard->candidate->backend==QA_DISPLAY_CPU &&
+                !resize_cpu_frame(guard->candidate,guard->staged.info.drawable_width,guard->staged.info.drawable_height,error))) return false;
+        guard->prepared=true; return true;
+    }
     display_changed(guard->active);
     qa_display_settings settings={.width=guard->saved.info.logical_width,.height=guard->saved.info.logical_height,
         .fullscreen=guard->saved.info.fullscreen,.swap_interval=guard->saved.swap_interval};
@@ -1449,6 +1471,14 @@ bool qa_display_handoff_abort(qa_display_restore_guard *guard,qa_error *error)
         return true;
     }
     if (!display_guard_owned(guard,true,error)) return false;
+    if (guard->fresh) {
+        if (guard->active->backend==QA_DISPLAY_CPU && guard->baseline.frame &&
+            !cpu_frame_blit(guard->active,true,error)) return false;
+        display_saved_free(&guard->staged); guard->staged=(display_saved){0};
+        guard->attempted=guard->prepared=false;
+        if (guard->candidate->restore_guard==guard) guard->candidate->restore_guard=NULL;
+        return true;
+    }
     qa_display_settings settings={.width=guard->baseline.info.logical_width,.height=guard->baseline.info.logical_height,
         .fullscreen=guard->baseline.info.fullscreen,.swap_interval=guard->baseline.swap_interval};
     if (!window_settings_stage(guard->active,&settings,guard->baseline.info.visible,
