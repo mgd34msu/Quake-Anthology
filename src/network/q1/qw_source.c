@@ -1,5 +1,6 @@
 /* Donor: network/q1/codecs/qw28.ts and bootstrap/network/qw-server.ts. */
 #include "qa/network_qw_source.h"
+#include "qa/text.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -49,22 +50,17 @@ static bool frame_valid(const qa_qw_source_frame *frame)
     }
     return true;
 }
-/* ECMAScript integer writes truncate and reduce modulo the actual wire width.
- * Reduce the whole binary64 result, including angle scaling, before casting. */
-static uint32_t word(double value, double modulus)
-{
-    double reduced = fmod(trunc(value), modulus);
-    if (reduced < 0) reduced += modulus;
-    return (uint32_t)reduced;
-}
+/* Integer Source fields are widened here without rounding through float. */
+static int32_t source_integer(double value)
+{ return value >= INT32_MIN && value <= INT32_MAX ? (int32_t)value : INT32_MIN; }
 static bool byte(qa_net_writer *writer, double value)
-{ return qa_net_write_u8(writer, (uint8_t)word(value, 256.0)); }
-static bool short_word(qa_net_writer *writer, double value)
-{ return qa_net_write_u16(writer, (uint16_t)word(value, 65536.0)); }
+{ return qa_net_write_u8(writer, (uint8_t)(uint32_t)source_integer(value)); }
+static bool short_word(qa_net_writer *writer, int32_t value)
+{ return qa_net_write_u16(writer, (uint16_t)(uint32_t)value); }
 static bool coord(qa_net_writer *writer, float value)
-{ return short_word(writer, (double)value * 8.0); }
+{ return short_word(writer, qa_source_float_to_i32(value * 8.0f)); }
 static bool angle(qa_net_writer *writer, float value)
-{ return byte(writer, ((double)value * 256.0) / 360.0); }
+{ return byte(writer, qa_source_float_to_i32(value * 256.0f / 360.0f)); }
 
 qa_qw_source_history *qa_qw_source_history_create(qa_error *error)
 {
@@ -148,7 +144,7 @@ bool qa_qw_source_write_stat(qa_net_writer *writer, uint8_t index, double value)
     if (!number_valid(value)) return qa_net_writer_fail(writer, "Invalid QuakeWorld source stat Number");
     bool narrow = value >= 0 && value <= 255;
     qa_net_write_u8(writer, narrow ? 3 : 38); qa_net_write_u8(writer, index);
-    if (narrow) byte(writer, value); else qa_net_write_u32(writer, word(value, 4294967296.0));
+    if (narrow) byte(writer, value); else qa_net_write_u32(writer, (uint32_t)source_integer(value));
     return !writer->failed;
 }
 static bool command(qa_net_writer *writer, const qa_qw_command *value)
@@ -160,7 +156,8 @@ static bool command(qa_net_writer *writer, const qa_qw_command *value)
         (value->buttons != 0 ? 32u : 0u) | (value->impulse != 0 ? 64u : 0u);
     qa_net_write_u8(writer, (uint8_t)bits);
     for (size_t i = 0; i < 3; ++i)
-        if (value->angles[i] != 0) short_word(writer, ((double)value->angles[i] * 65536.0) / 360.0);
+        if (value->angles[i] != 0)
+            short_word(writer, qa_source_float_to_i32(value->angles[i] * 65536.0f / 360.0f));
     if (bits & 4) qa_net_write_i16(writer, value->forward);
     if (bits & 8) qa_net_write_i16(writer, value->side);
     if (bits & 16) qa_net_write_i16(writer, value->up);
@@ -183,7 +180,8 @@ bool qa_qw_source_write_player(qa_net_writer *writer, const qa_qw_source_player 
     if (player->flags & QA_QW_PF_MSEC) qa_net_write_u8(writer, player->msec);
     if ((player->flags & QA_QW_PF_COMMAND) && !command(writer, &player->command)) return false;
     for (size_t i = 0; i < 3; ++i)
-        if (player->flags & (QA_QW_PF_VELOCITY1 << i)) short_word(writer, player->velocity[i]);
+        if (player->flags & (QA_QW_PF_VELOCITY1 << i))
+            short_word(writer, qa_source_float_to_i32(player->velocity[i]));
     if (player->flags & QA_QW_PF_MODEL) byte(writer, player->model);
     if (player->flags & QA_QW_PF_SKIN) byte(writer, player->skin);
     if (player->flags & QA_QW_PF_EFFECTS) byte(writer, player->effects);
@@ -200,12 +198,12 @@ bool qa_qw_source_write_nails(qa_net_writer *writer, const qa_qw_nail *nails, si
     qa_net_write_u8(writer, 43); qa_net_write_u8(writer, (uint8_t)count);
     for (size_t i = 0; i < count; ++i) {
         const qa_qw_nail *nail = nails + i;
-        uint32_t x = word(((double)nail->origin[0] + 4096.0) / 2.0, 4096.0);
-        uint32_t y = word(((double)nail->origin[1] + 4096.0) / 2.0, 4096.0);
-        uint32_t z = word(((double)nail->origin[2] + 4096.0) / 2.0, 4096.0);
-        uint32_t pitch = word(((double)nail->pitch * 16.0) / 360.0, 16.0);
-        uint32_t yaw = word(((double)nail->yaw * 256.0) / 360.0, 256.0);
-        uint8_t packed[6] = {(uint8_t)x, (uint8_t)((x >> 8) | ((y & 15u) << 4)),
+        uint32_t x = (uint32_t)(qa_source_float_to_i32(nail->origin[0] + 4096.0f) >> 1);
+        uint32_t y = (uint32_t)(qa_source_float_to_i32(nail->origin[1] + 4096.0f) >> 1);
+        uint32_t z = (uint32_t)(qa_source_float_to_i32(nail->origin[2] + 4096.0f) >> 1);
+        uint32_t pitch = (uint32_t)qa_source_float_to_i32(nail->pitch * 16.0f / 360.0f) & 15u;
+        uint32_t yaw = (uint32_t)qa_source_float_to_i32(nail->yaw * 256.0f / 360.0f) & 255u;
+        uint8_t packed[6] = {(uint8_t)x, (uint8_t)((x >> 8) | (y << 4)),
             (uint8_t)(y >> 4), (uint8_t)z, (uint8_t)((z >> 8) | (pitch << 4)), (uint8_t)yaw};
         qa_net_write_data(writer, packed, sizeof(packed));
     }

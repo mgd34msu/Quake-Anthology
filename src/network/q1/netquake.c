@@ -1,5 +1,6 @@
 #include "qa/network_q1_nq.h"
 #include "qa/network_q1_decoder_save.h"
+#include "qa/text.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -524,9 +525,7 @@ bool qa_nq_write_damage(qa_net_writer *w, uint8_t armor, uint8_t blood, const do
     for (unsigned axis = 0; axis < 3; ++axis) {
         if (!isfinite(origin[axis]) || !isfinite(origin[axis] * 8))
             return qa_net_writer_fail(w, "Nonfinite original NetQuake damage center");
-        double bits = fmod(trunc(origin[axis] * 8), 65536.0);
-        if (bits < 0) bits += 65536.0;
-        fixed[axis] = (uint16_t)bits;
+        fixed[axis] = (uint16_t)(uint32_t)qa_source_float_to_i32((float)origin[axis] * 8.0f);
     }
     return qa_net_write_u8(w, QA_NQ_DAMAGE) && qa_net_write_u8(w, armor) && qa_net_write_u8(w, blood) &&
         qa_net_write_u16(w, fixed[0]) && qa_net_write_u16(w, fixed[1]) && qa_net_write_u16(w, fixed[2]);

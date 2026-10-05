@@ -3,7 +3,7 @@
 
 #include "qa/network_q1_qw.h"
 
-/* Actual classic source Numbers precede the wire's low-byte conversion. */
+/* Widened classic Source integer fields precede wire byte conversion. */
 typedef struct qa_qw_source_entity {
     uint32_t number;
     double model, frame, colormap, skin, effects;
@@ -44,8 +44,8 @@ bool qa_qw_source_history_restore(qa_bytes, uint32_t next_outgoing,
 bool qa_qw_source_write_baseline(qa_net_writer *, const qa_qw_source_entity *);
 bool qa_qw_source_write_stat(qa_net_writer *, uint8_t index, double truncated_value);
 bool qa_qw_source_write_player(qa_net_writer *, const qa_qw_source_player *);
-/* Pack actual source vectors with full binary64 arithmetic before low-bit
- * conversion. The physical publisher owns its source projectile limit. */
+/* Pack actual Source float vectors through native integer shifts and masks.
+ * The physical publisher owns its source projectile limit. */
 bool qa_qw_source_write_nails(qa_net_writer *, const qa_qw_nail *, size_t count);
 bool qa_qw_source_write_entities(qa_net_writer *, const qa_qw_source_history *,
     const qa_qw_source_frame *, const qa_qw_source_frame *previous);
