@@ -1,5 +1,18 @@
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "gameplay_fixture.h"
+#include "qa/frontend.h"
+#include "qa/application_startup_prepare.h"
 #include "qa/qc.h"
+
+#include <errno.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
 
 typedef struct guest_fixture {
     gameplay_map map;
@@ -168,6 +181,224 @@ static void shared_entities(guest_fixture *fixture, qa_actor_owner owner)
     GAME_CHECK(error.code == QA_ERROR_NOT_FOUND);
 }
 
+typedef struct live_guest_case {
+    const char *name, *product, *map, *path, *artifact;
+    qa_program_kind runtime;
+    qa_bsp_family family;
+} live_guest_case;
+
+static const live_guest_case live_guests[] = {
+    {"retail", "q1-classic-id1", "e1m1", "maps/e1m1.bsp", "progs.dat", QA_PROGRAM_QUAKEC, QA_BSP_Q1},
+    {"qc", "q1-classic-ctf", "ctfstart", "maps/ctfstart.bsp", "progs.dat", QA_PROGRAM_QUAKEC, QA_BSP_Q1},
+    {"qvm", "q3-classic-lrctf", "lrctf01", "maps/lrctf01.bsp", "vm/qagame.qvm", QA_PROGRAM_QVM, QA_BSP_Q3},
+    {"dll", "q2-classic-lmctf", "lmctf09", "maps/lmctf09.bsp", "gamex86.dll", QA_PROGRAM_NATIVE, QA_BSP_Q2}
+};
+
+static bool live_time(uint64_t *out, qa_error *error)
+{
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        qa_error_set(error, QA_ERROR_IO, 0, "Reading live guest deadline: %s", strerror(errno));
+        return false;
+    }
+    *out = (uint64_t)now.tv_sec * UINT64_C(1000000000) + (uint64_t)now.tv_nsec;
+    return true;
+}
+
+static bool live_guest_run(const live_guest_case *test, const char *root,
+    const char *binary, const char *user_root)
+{
+    qa_error error = {0};
+    qa_frontend_options options = {0};
+    qa_frontend *frontend = NULL;
+    qa_clock_state initial = {0}, current = {0};
+    qa_actor_owner primary = 0;
+    bool ready = false, passed = false;
+    uint64_t began = 0, now = 0;
+    const char *stage = "options";
+    char port[16];
+    (void)snprintf(port, sizeof(port), "%u", 40000u + (unsigned)getpid() % 20000u);
+    char *argv[] = {(char *)binary, "--content-root", (char *)root,
+        "--user-content-root", (char *)user_root, "--game", (char *)test->product,
+        "--map", (char *)test->path, "--original", "--dedicated", "--no-audio",
+        "--host", "127.0.0.1", "--port", port, "--protocol", "unified-1",
+        "--native-backend", "emulated"};
+    printf("LIVE_GUEST_START case=%s product=%s user_root=%s\n",
+        test->name, test->product, user_root);
+    fflush(stdout);
+    if (!live_time(&began, &error) ||
+        !qa_frontend_options_parse((int)(sizeof(argv) / sizeof(*argv)), argv, &options, &error))
+        goto cleanup;
+    options.native_bootstrap = malloc(strlen(binary) + 1);
+    if (!options.native_bootstrap) {
+        qa_error_set(&error, QA_ERROR_MEMORY, 0, "Retaining actual live guest executable");
+        goto cleanup;
+    }
+    memcpy(options.native_bootstrap, binary, strlen(binary) + 1);
+    options.application.native_bootstrap = options.native_bootstrap;
+    stage = "locations";
+    if (!qa_frontend_options_resolve_locations(&options, &error)) goto cleanup;
+    stage = "create";
+    if (!qa_frontend_create(&options, &frontend, &error)) goto cleanup;
+    stage = "startup";
+    for (;;) {
+        if (!live_time(&now, &error)) goto cleanup;
+        /* Leave shutdown time inside the parent's strict 100-second bound. */
+        if (now - began >= UINT64_C(95000000000)) {
+            qa_error_set(&error, QA_ERROR_IO, 0, "Live guest deadline reached during %s", stage);
+            goto cleanup;
+        }
+        if (!qa_frontend_step(frontend, UINT64_C(20000000), &error)) goto cleanup;
+        qa_application *app = qa_frontend_application(frontend);
+        if (!app || qa_application_get_state(app) != QA_APPLICATION_RUNNING ||
+            qa_application_startup_pending(app)) continue;
+        if (qa_application_should_stop(app)) {
+            qa_error_set(&error, QA_ERROR_FORMAT, 0, "Live guest stopped before completing its Source frames");
+            goto cleanup;
+        }
+        if (!ready) {
+            stage = "source admission";
+            const qa_launch_instance *instance = qa_launch_snapshot_find(
+                qa_application_launch(app), "native:primary");
+            const qa_launch_choices *choices = qa_launch_snapshot_choices(qa_application_launch(app));
+            qa_application_map_view map;
+            if (!instance || instance->selection.runtime != test->runtime ||
+                !instance->selection.artifact || strcmp(instance->selection.artifact, test->artifact) ||
+                !instance->artifact || !qa_resource_bytes(instance->artifact).size ||
+                !choices || strcmp(choices->world.map, test->path) ||
+                !qa_application_provider_owner(app, "native:primary", &primary) ||
+                !qa_application_map_read(app, &map) || !map.resource || strcmp(map.name, test->map)) {
+                qa_error_set(&error, QA_ERROR_FORMAT, 0, "Live guest lost its selected original program or real map");
+                goto cleanup;
+            }
+            qa_bsp_view bsp;
+            if (!qa_bsp_open(qa_resource_bytes(map.resource), &bsp, &error)) goto cleanup;
+            if (bsp.family != test->family || !qa_world_geometry(qa_application_world(app)) ||
+                !qa_bsp_record_count(&bsp, QA_BSP_MODELS) ||
+                !bsp.lumps[QA_BSP_ENTITIES].bytes.size ||
+                !qa_session_clock(qa_application_session(app), primary, &initial)) {
+                qa_error_set(&error, QA_ERROR_FORMAT, 0, "Live guest lacks real BSP entities or primary Source clock");
+                goto cleanup;
+            }
+            char digest[65];
+            qa_sha256_hex(qa_resource_digest(instance->artifact), digest);
+            printf("LIVE_GUEST_READY case=%s artifact=%s sha256=%s map=%s bsp=%s primary=%u frame=%llu\n",
+                test->name, test->artifact, digest, map.name, qa_bsp_format_name(bsp.format),
+                primary, (unsigned long long)initial.frame_number);
+            fflush(stdout);
+            ready = true;
+            stage = "Source frames";
+        }
+        if (!qa_session_clock(qa_application_session(app), primary, &current) ||
+            current.frame_number < initial.frame_number || current.elapsed_ns < initial.elapsed_ns ||
+            qa_session_faulted(qa_application_session(app))) {
+            qa_error_set(&error, QA_ERROR_FORMAT, 0, "Live guest lost its advancing primary Source clock");
+            goto cleanup;
+        }
+        if (current.frame_number - initial.frame_number >= 20 && current.elapsed_ns > initial.elapsed_ns &&
+            current.frame.phase == QA_FRAME_EXIT && current.frame.number == current.frame_number) {
+            passed = true;
+            break;
+        }
+    }
+cleanup:
+    if (!passed)
+        fprintf(stderr, "LIVE_GUEST_FAILURE case=%s stage=%s code=%d offset=%zu message=%s\n",
+            test->name, stage, (int)error.code, error.offset, error.message);
+    qa_error cleanup_error = {0};
+    if (frontend && !qa_frontend_shutdown(&frontend, &cleanup_error)) {
+        fprintf(stderr, "LIVE_GUEST_CLEANUP_FAILURE case=%s code=%d message=%s retained=%d\n",
+            test->name, (int)cleanup_error.code, cleanup_error.message, frontend != NULL);
+        passed = false;
+    }
+    /* A rejected owner still borrows options until this isolated process exits. */
+    if (!frontend) qa_frontend_options_destroy(&options);
+    if (passed)
+        printf("LIVE_GUEST_PASS case=%s ticks=%llu elapsed_ns=%llu shutdown=complete\n", test->name,
+            (unsigned long long)(current.frame_number - initial.frame_number),
+            (unsigned long long)(current.elapsed_ns - initial.elapsed_ns));
+    fflush(stdout);
+    fflush(stderr);
+    return passed;
+}
+
+static void live_guest_case_run(const live_guest_case *test, const char *root, const char *binary)
+{
+    qa_error error = {0};
+    const char *cache = getenv("XDG_CACHE_HOME"), *home = getenv("HOME");
+    char user_root[4096];
+    int length = cache && *cache ? snprintf(user_root, sizeof(user_root), "%s/qa-live-%s-XXXXXX", cache, test->name) :
+        home && *home ? snprintf(user_root, sizeof(user_root), "%s/.cache/qa-live-%s-XXXXXX", home, test->name) : -1;
+    if (length < 0 || (size_t)length >= sizeof(user_root) || !mkdtemp(user_root)) {
+        fprintf(stderr, "LIVE_GUEST_FAILURE case=%s creating isolated user root: %s\n", test->name, strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    fflush(NULL);
+    pid_t child = fork();
+    if (child < 0) {
+        fprintf(stderr, "LIVE_GUEST_FAILURE case=%s fork: %s\n", test->name, strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    if (!child) {
+        if (setpgid(0, 0) != 0) {
+            fprintf(stderr, "LIVE_GUEST_FAILURE case=%s process group: %s\n", test->name, strerror(errno));
+            _exit(EXIT_FAILURE);
+        }
+        _exit(live_guest_run(test, root, binary, user_root) ? EXIT_SUCCESS : EXIT_FAILURE);
+    }
+    /* The child also establishes this group before any native Source begins. */
+    (void)setpgid(child, child);
+    uint64_t began = 0, now = 0;
+    bool timed = live_time(&began, &error);
+    int status = 0;
+    for (;;) {
+        pid_t waited = waitpid(child, &status, WNOHANG);
+        if (waited == child) break;
+        if ((waited < 0 && errno != EINTR) || !timed || !live_time(&now, &error) ||
+            now - began >= UINT64_C(100000000000)) {
+            if (error.code == QA_OK)
+                qa_error_set(&error, QA_ERROR_IO, 0, "%s", waited < 0 ?
+                    "Waiting for live guest child failed" : "Live guest exceeded its 100-second deadline");
+            (void)kill(-child, SIGKILL);
+            (void)kill(child, SIGKILL);
+            while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
+            fprintf(stderr, "LIVE_GUEST_FAILURE case=%s supervisor deadline/wait code=%d message=%s\n",
+                test->name, (int)error.code, error.message);
+            exit(EXIT_FAILURE);
+        }
+        struct timespec delay = {.tv_nsec = 10000000};
+        (void)nanosleep(&delay, NULL);
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != EXIT_SUCCESS) {
+        fprintf(stderr, "LIVE_GUEST_FAILURE case=%s child_status=%d user_root=%s\n", test->name, status, user_root);
+        exit(EXIT_FAILURE);
+    }
+}
+
+static void live_guest_tests(void)
+{
+    const char *gate = getenv("QA_REQUIRE_LIVE");
+    if (!gate || strcmp(gate, "1")) return;
+    const char *root = getenv("QA_LIVE_CONTENT_ROOT"), *binary = getenv("QA_LIVE_BINARY");
+    const char *selected = getenv("QA_LIVE_CASE");
+    struct stat root_info;
+    if (!root || !*root || stat(root, &root_info) != 0 || !S_ISDIR(root_info.st_mode) ||
+        !binary || binary[0] != '/' || access(binary, X_OK) != 0) {
+        fputs("QA_REQUIRE_LIVE=1 requires QA_LIVE_CONTENT_ROOT and an absolute executable QA_LIVE_BINARY\n", stderr);
+        exit(EXIT_FAILURE);
+    }
+    bool found = false;
+    for (size_t i = 0; i < sizeof(live_guests) / sizeof(*live_guests); ++i) {
+        if (selected && *selected && strcmp(selected, live_guests[i].name)) continue;
+        found = true;
+        live_guest_case_run(live_guests + i, root, binary);
+    }
+    if (!found) {
+        fputs("QA_LIVE_CASE must be retail, qc, qvm, or dll\n", stderr);
+        exit(EXIT_FAILURE);
+    }
+}
+
 void test_guest(void);
 void test_guest(void)
 {
@@ -198,4 +429,5 @@ void test_guest(void)
     GAME_CHECK(qa_world_destroy(fixture.world, &error));
     GAME_CHECK(qa_session_destroy(fixture.session, &error));
     qa_collision_destroy(fixture.map.geometry);
+    live_guest_tests();
 }

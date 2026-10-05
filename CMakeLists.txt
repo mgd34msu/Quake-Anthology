@@ -1940,7 +1940,7 @@ include(CTest)
 if(BUILD_TESTING)
     if(UNIX)
         add_executable(core_test tests/core_test.c tests/q1_gameplay_test.c tests/guest_test.c)
-        target_link_libraries(core_test PRIVATE qa_core qa_game_q1 qa_qc)
+        target_link_libraries(core_test PRIVATE qa_core qa_game_q1 qa_qc qa_frontend)
         add_test(NAME core COMMAND core_test)
 
         add_executable(archive_test tests/archive_test.c)
