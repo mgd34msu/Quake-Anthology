@@ -21,6 +21,7 @@ bool frontend_save_commands_queue(qa_frontend *, const qa_command_invocation *, 
  * Original and shared signature selection is final. Every displaced/failed
  * heap remains owned for ordinary cleanup, including after publication. */
 bool frontend_save_commands_drain(qa_frontend **slot, qa_error *);
+bool frontend_save_commands_autosave(qa_frontend *, qa_error *);
 bool frontend_save_commands_checkpoint(qa_frontend *, qa_buffer *, qa_error *);
 /* The candidate's real tools root and core command generation must exist.
  * Import creates its own owner; no active manager pointer transfers. */

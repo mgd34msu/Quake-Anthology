@@ -62,7 +62,8 @@ bool qa_autosave_write(qa_autosave_state *state, qa_fs_root *root, const qa_save
 bool qa_recovery_begin(qa_fs_root *root, const char *name, const qa_save_image *initial,
                         qa_recovery **out, qa_error *error)
 {
-    if (!out || !initial || qa_save_image_metadata(initial)->purpose != QA_SAVE_RECOVERY)
+    if (!out || !initial || (qa_save_image_metadata(initial)->purpose != QA_SAVE_RECOVERY &&
+        qa_save_image_metadata(initial)->purpose != QA_SAVE_LEVEL_ENTRY))
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Recovery requires an explicit recovery checkpoint");
     qa_recovery *recovery = calloc(1, sizeof(*recovery));
     if (!recovery) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating recovery owner");
@@ -79,7 +80,8 @@ bool qa_recovery_append(qa_recovery *recovery, qa_demo_record_kind kind, uint64_
 }
 bool qa_recovery_checkpoint(qa_recovery *recovery, const qa_save_image *image, qa_error *error)
 {
-    if (!recovery || !image || qa_save_image_metadata(image)->purpose != QA_SAVE_RECOVERY)
+    if (!recovery || !image || (qa_save_image_metadata(image)->purpose != QA_SAVE_RECOVERY &&
+        qa_save_image_metadata(image)->purpose != QA_SAVE_LEVEL_ENTRY))
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid recovery checkpoint replacement");
     return qa_demo_record_keyframe(recovery->recorder, image, error);
 }
@@ -98,7 +100,8 @@ bool qa_recovery_restore(qa_fs_root *root, const char *name, void *context,
     const qa_demo_record *first = qa_demo_record_at(demo, 0);
     qa_save_image *image = NULL;
     bool ok = first && qa_save_image_decode(first->payload, &image, error);
-    if (ok && qa_save_image_metadata(image)->purpose != QA_SAVE_RECOVERY)
+    if (ok && qa_save_image_metadata(image)->purpose != QA_SAVE_RECOVERY &&
+        qa_save_image_metadata(image)->purpose != QA_SAVE_LEVEL_ENTRY)
         ok = persistence_fail(error, QA_ERROR_FORMAT, "Recording is not a recovery journal");
     if (!qa_save_image_destroy_checked(&image, error)) ok = false;
     if (ok) ok = qa_demo_seek(demo, qa_demo_end_time(demo), context, ops, reached_ns, error);

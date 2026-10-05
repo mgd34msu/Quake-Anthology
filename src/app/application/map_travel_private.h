@@ -17,7 +17,11 @@ struct application_map_state {
     bool publication_complete, match_finished;
     uint64_t load_revision;
     qa_string_id load_nextserver;
+    uint64_t entry_generation, save_request_revision;
+    bool save_requested, fresh_entry, authored_autosave;
 };
+bool application_map_level_entry(qa_application *, bool fresh, qa_error *);
+bool application_map_autosave_request(qa_application *, qa_error *);
 void application_map_load_finish(qa_application *, bool published);
 bool application_map_stop_prepare(qa_application *, qa_error *);
 bool application_map_checkpoint_capture(qa_application *, qa_buffer *, qa_error *);

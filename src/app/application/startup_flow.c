@@ -1322,6 +1322,7 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
             finish_candidate(app, flow, qa_configuration_current(app->configuration), published);
             application_q3_product_finish(app, &flow->product, published);
             application_map_load_finish(app, published);
+            if (published) ok = application_map_level_entry(app, true, error);
             for (size_t i = 0; ok && i < flow->count; ++i)
                 ok = published ? application_startup_program_adopt(&flow->sources[i].program, error)
                     : application_startup_program_abort(&flow->sources[i].program, error);

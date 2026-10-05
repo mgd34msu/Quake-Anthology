@@ -41,6 +41,58 @@ static bool map_safe(const qa_application *application)
            qa_combat_idle(application->combat);
 }
 
+bool application_map_level_entry(qa_application *application, bool fresh, qa_error *error)
+{
+    if (!application || !application->map_revision || !application->world) return true;
+    struct application_map_state *state = map_state(application, error);
+    if (!state) return false;
+    if (state->entry_generation == application->map_revision) return true;
+    if (state->save_request_revision == UINT64_MAX)
+        return application_fail(error, QA_ERROR_MEMORY, "level save request identity exhausted");
+    state->entry_generation = application->map_revision;
+    ++state->save_request_revision;
+    state->save_requested = true;
+    state->fresh_entry = fresh;
+    state->authored_autosave = false;
+    return true;
+}
+
+bool application_map_autosave_request(qa_application *application, qa_error *error)
+{
+    struct application_map_state *state = map_state(application, error);
+    if (!state) return false;
+    if (state->save_request_revision == UINT64_MAX)
+        return application_fail(error, QA_ERROR_MEMORY, "authored save request identity exhausted");
+    state->entry_generation = application->map_revision;
+    ++state->save_request_revision;
+    state->save_requested = true;
+    state->authored_autosave = true;
+    return true;
+}
+
+bool qa_application_save_request_read(const qa_application *application, qa_application_save_request *out)
+{
+    const struct application_map_state *state = application ? application->map_state : NULL;
+    if (!out || !state || !state->save_requested || !state->entry_generation ||
+        state->loading || state->busy || qa_application_startup_pending(application)) return false;
+    *out = (qa_application_save_request){state->entry_generation, state->save_request_revision,
+        state->fresh_entry, state->authored_autosave};
+    return true;
+}
+
+bool qa_application_save_request_complete(qa_application *application,
+    const qa_application_save_request *request, qa_error *error)
+{
+    qa_application_save_request current;
+    if (!request || !qa_application_save_request_read(application, &current) ||
+        request->world_generation != current.world_generation || request->revision != current.revision)
+        return application_fail(error, QA_ERROR_ARGUMENT, "save request changed before completion");
+    application->map_state->save_requested = false;
+    application->map_state->fresh_entry = false;
+    application->map_state->authored_autosave = false;
+    return true;
+}
+
 static char *map_path(const char *input, qa_error *error)
 {
     if (input == NULL || input[0] == '\0') {
@@ -161,8 +213,10 @@ bool qa_application_load_map(qa_application *application,
             state->restart_draft = NULL;
         }
         application->map_force_reload = previous_force;
-        if (!ok || !qa_application_startup_pending(application))
+        if (!ok || !qa_application_startup_pending(application)) {
             application_map_load_finish(application, ok);
+            if (ok) ok = application_map_level_entry(application, true, error);
+        }
     }
     qa_launch_draft_destroy(draft);
     free(start);
@@ -710,6 +764,7 @@ bool application_map_checkpoint_restore(qa_application *candidate, qa_bytes byte
         if (error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "invalid map continuation schema or extent");
         return false;
     }
+    if (state) state->entry_generation = candidate->map_revision;
     candidate->map_state = state;
     return true;
 }

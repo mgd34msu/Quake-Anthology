@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "map_travel_private.h"
 #include "network_q1_signon.h"
 #include "native_q1_wire.h"
 #include "equipment_events.h"
@@ -302,7 +303,8 @@ bool application_emit_q2_map(application_provider *provider,
         if (!levels) return false;
         memcpy(levels, event->levels, bytes);
     }
-    if (!application_unified_q2_native_map(provider, event, &retained, error)) return false;
+    if (!application_unified_q2_native_map(provider, event, &retained, error) ||
+        (event->kind == QA_Q2_MAP_AUTOSAVE && !application_map_autosave_request(application, error))) return false;
     application_q2_map_event_record *record =
         &application->q2_map_events[application->q2_map_event_count];
     *record = (application_q2_map_event_record){.audience=retained,.source={

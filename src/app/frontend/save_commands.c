@@ -19,6 +19,9 @@ typedef struct save_command_request {
 } save_command_request;
 struct frontend_save_commands {
     qa_fs_root *root;
+    qa_fs_root *level_root;
+    qa_recovery *recovery;
+    qa_autosave_state autosave;
     uint64_t next_nonce, command_registry;
     save_command_request request;
     qa_frontend_q1_restore *original;
@@ -101,7 +104,9 @@ bool frontend_save_commands_destroy(qa_frontend *f, qa_error *error)
         owner->draining = false;
         if (!disposed) return false;
     }
-    request_free(&owner->request); qa_fs_root_close(owner->root);
+    if (owner->recovery && !qa_recovery_close_clean(owner->recovery, error)) return false;
+    qa_recovery_destroy(owner->recovery);
+    request_free(&owner->request); qa_fs_root_close(owner->level_root); qa_fs_root_close(owner->root);
     free(owner); f->save_commands = NULL; return true;
 }
 
@@ -313,7 +318,7 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
     if (owner->draining) return frontend_fail(error, QA_ERROR_ARGUMENT, "Save command reentry");
     qa_error cleanup = {0};
     if (!cleanup_retained(owner, &cleanup)) return true;
-    if (!owner->pending) return true;
+    if (!owner->pending) return frontend_save_commands_autosave(f,error);
     save_command_request request = owner->request;
     owner->pending = false; owner->draining = true;
     qa_save_image *image = NULL;
@@ -369,5 +374,48 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
     request_free(&request);
     current->draining = false;
     (void)cleanup_retained(current, &cleanup);
+    return true;
+}
+
+bool frontend_save_commands_autosave(qa_frontend *f, qa_error *error)
+{
+    qa_application_save_request request;
+    if (!f || !f->save_commands || f->stepping || f->preparing || f->source_restoring ||
+        frontend_save_commands_pending(f) || !qa_application_save_request_read(f->application,&request)) return true;
+    frontend_save_commands *owner=f->save_commands;
+    qa_error local={0}, cleanup={0};
+    if (f->options.dedicated || frontend_network_save_authority(f)!=QA_SAVE_OFFLINE ||
+        !qa_application_save_policy(f->application,QA_SAVE_OFFLINE,false,false,QA_SAVE_LEVEL_ENTRY,&local))
+        return qa_application_save_request_complete(f->application,&request,error);
+    const qa_cvar_view *enabled=qa_cvars_find(qa_application_cvars(f->application),"sv_autosave");
+    qa_autosave_configure(&owner->autosave,!enabled || enabled->number!=0);
+    bool autosaved=false;
+    bool ok=qa_autosave_level_entry(&owner->autosave,request.world_generation,request.fresh_entry,&local);
+    if (ok && request.authored && owner->autosave.enabled) owner->autosave.pending=true;
+    if (ok && !owner->level_root) {
+        char *path=NULL;
+        ok=qa_fs_root_create_directory(owner->root,"saves",&local) &&
+            qa_fs_root_join(owner->root,"saves",&path,&local) && qa_fs_root_open(path,&owner->level_root,&local);
+        free(path);
+    }
+    qa_save_image *image=NULL;
+    owner->draining=true;
+    if (ok) ok=qa_frontend_persistence_capture(f,f->options.persistence_services,QA_SAVE_LEVEL_ENTRY,&image,&local);
+    if (ok && owner->autosave.pending) {
+        if (owner->next_nonce==UINT64_MAX) ok=frontend_fail(&local,QA_ERROR_ARGUMENT,"Autosave write sequence exhausted");
+        else {
+            ok=qa_autosave_write(&owner->autosave,owner->level_root,image,owner->next_nonce++,&local);
+            autosaved=ok;
+        }
+    }
+    if (ok) ok=owner->recovery ? qa_recovery_checkpoint(owner->recovery,image,&local) :
+        qa_recovery_begin(owner->level_root,"recovery.qdemo",image,&owner->recovery,&local);
+    if (!frontend_save_image_release(f,&image,ok?&local:&cleanup)) ok=false;
+    owner->draining=false;
+    if (!qa_application_save_request_complete(f->application,&request,error)) return false;
+    char message[512];
+    snprintf(message,sizeof(message),"%s%s.\n",ok?"Level checkpoint saved: ":"Autosave/recovery failed: ",
+        ok?autosaved?"saves/autosave.sav":"saves/recovery.qdemo":local.message);
+    qa_console_emit(qa_application_console(f->application),NULL,message);
     return true;
 }

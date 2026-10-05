@@ -623,6 +623,13 @@ bool qa_application_travel_publication_read(const qa_application *, uint64_t *re
 bool qa_application_finish_travel_publication(qa_application *, uint64_t revision, qa_error *);
 bool qa_application_complete_travel(qa_application *, uint64_t revision, qa_error *);
 qa_string_id qa_application_nextserver(const qa_application *);
+typedef struct qa_application_save_request {
+    uint64_t world_generation, revision;
+    bool fresh_entry, authored;
+} qa_application_save_request;
+/* Observed only after actual map/player publication and Source callbacks return. */
+bool qa_application_save_request_read(const qa_application *, qa_application_save_request *);
+bool qa_application_save_request_complete(qa_application *, const qa_application_save_request *, qa_error *);
 bool qa_application_player_actor(const qa_application *, uint32_t seat, qa_actor_id *);
 size_t qa_application_player_count(const qa_application *);
 

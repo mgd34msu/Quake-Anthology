@@ -32,6 +32,8 @@ typedef struct qa_recovery qa_recovery;
  * committed input/frame effects belong in the log. A record failure faults
  * recording and the valid prefix remains recoverable; it is never replayed
  * into the live application as an automatic retry. */
+/* A committed level-entry image is also the recovery checkpoint; its payload
+ * does not need a second capture just to change the purpose label. */
 bool qa_recovery_begin(qa_fs_root *, const char *relative_name, const qa_save_image *,
                         qa_recovery **, qa_error *);
 bool qa_recovery_append(qa_recovery *, qa_demo_record_kind, uint64_t elapsed_ns,
