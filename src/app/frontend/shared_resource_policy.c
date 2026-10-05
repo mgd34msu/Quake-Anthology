@@ -845,42 +845,27 @@ bool frontend_shared_resource_policy_live_destroy(qa_frontend *f, qa_error *erro
     for (size_t i = 0; i < POLICY_VALUES; ++i) free(owner->applied[i].value);
     free(owner); f->live_resource_policy = NULL; return true;
 }
-static bool image_policy_equal(const qa_scene_image_policy *a, const qa_scene_image_policy *b)
-{
-    if (a->override_level != b->override_level || a->override_usages != b->override_usages ||
-        a->source_formats != b->source_formats || a->format_count != b->format_count) return false;
-    for (size_t i = 0; i < a->format_count; ++i) if (a->formats[i] != b->formats[i]) return false;
-    return true;
-}
 static bool live_recipe_changed(const struct frontend_live_resource_policy *owner, bool *changed, qa_error *error)
 {
     *changed = !owner->applied_count;
     if (*changed) return true;
-    qa_cvar_view saved[3] = {0};
-    for (size_t i = 0; i < 3; ++i) {
-        saved[i].value = owner->applied[i].value;
-        memcpy(&saved[i].number, &owner->applied[i].number, sizeof(owner->applied[i].number));
-    }
-    const qa_cvar_view *rows[] = {saved, saved + 1, saved + 2};
-    qa_scene_image_policy previous[3], current[3]; frontend_model_policy models;
-    if (!image_policy_rows(rows, previous, error) || !frontend_image_policy_read(owner->frontend, current, error) ||
-        !frontend_model_policy_read(owner->frontend, &models, error)) return false;
-    float q1_load, q2_load;
-    memcpy(&q1_load, &owner->applied[3].number, sizeof(q1_load));
-    memcpy(&q2_load, &owner->applied[4].number, sizeof(q2_load));
-    *changed = (q1_load != 0) != models.q1_enhanced || (q2_load != 0) != models.q2_load;
-    for (size_t i = 0; i < 3 && !*changed; ++i)
-        *changed = !image_policy_equal(previous + i, current + i);
-    /* Use and distance alone update the retained selected child; they do
-     * not reopen images or a missed replacement recipe. */
-    for (size_t i = BASE_POLICY_VALUES; i < owner->applied_count && !*changed; ++i) {
+    for (size_t i = 0; i < owner->applied_count; ++i) {
+        /* Use and distance update the selected model without reopening assets. */
+        if (i >= 5 && i < BASE_POLICY_VALUES) continue;
         const qa_cvar_view *row = i < BASE_POLICY_VALUES ? qa_cvars_find(owner->registry, policy_names[i]) :
             frontend_render_control_record(owner->registry, policy_names[i]);
-        uint32_t number = 0;
         if (!row || !row->value || !owner->applied[i].value)
             return policy_fail(error, "Live resource refresh lost its canonical Source declaration");
-        memcpy(&number, &row->number, sizeof(number));
-        *changed = number != owner->applied[i].number || strcmp(row->value, owner->applied[i].value);
+        if (i == 3 || i == 4) {
+            float previous;
+            memcpy(&previous, &owner->applied[i].number, sizeof(previous));
+            *changed = (previous != 0) != (row->number != 0);
+        } else {
+            uint32_t number;
+            memcpy(&number, &row->number, sizeof(number));
+            *changed = number != owner->applied[i].number || strcmp(row->value, owner->applied[i].value);
+        }
+        if (*changed) break;
     }
     return true;
 }
