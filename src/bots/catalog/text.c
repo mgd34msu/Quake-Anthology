@@ -108,22 +108,7 @@ bool bot_catalog_lookup(qa_bot_catalog *c,bot_catalog_infos *infos,const char *k
 int32_t bot_catalog_word(uint32_t bits) {int32_t value;memcpy(&value,&bits,4);return value;}
 static bool whitespace(unsigned char c) {return c<=32 || c>=128;}
 float bot_catalog_atof(const char *text) {
-    while(*text && whitespace((unsigned char)*text)) ++text;
-    float sign=1;if(*text=='-' || *text=='+') {if(*text=='-') sign=-1;++text;}
-    volatile float value=0,fraction=.1f;int character=(unsigned char)*text;
-    if(character!='.') {
-        for(;;) {
-            character=(unsigned char)*text;if(*text) ++text;
-            if(character<'0' || character>'9') break;
-            volatile float product=value*10.0f;value=product+(float)(character-'0');
-        }
-    } else ++text;
-    if(character=='.') for(;;) {
-        character=(unsigned char)*text;if(*text) ++text;
-        if(character<'0' || character>'9') break;
-        volatile float part=(float)(character-'0')*fraction;value=value+part;fraction=fraction*.1f;
-    }
-    return value*sign;
+    return (float)qa_parse_quake_number(text,QA_QUAKE_NUMBER_Q3_VM);
 }
 int32_t bot_catalog_atoi(const char *text) {
     while(*text && whitespace((unsigned char)*text)) ++text;

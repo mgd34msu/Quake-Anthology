@@ -99,6 +99,27 @@ bool qa_format_quake_float(float value, char out[64], qa_error *error) {
 double qa_parse_quake_number(const char *text, qa_quake_number_policy policy) {
     if (!text)
         return 0;
+    if (policy == QA_QUAKE_NUMBER_Q3_VM) {
+        while (*text && (int8_t)(uint8_t)*text <= ' ')
+            ++text;
+        float sign = 1, value = 0;
+        if (*text == '-' || *text == '+') {
+            if (*text == '-')
+                sign = -1;
+            ++text;
+        }
+        while (*text >= '0' && *text <= '9')
+            value = value * 10 + (float)(*text++ - '0');
+        if (*text == '.') {
+            double fraction = 0.1;
+            ++text;
+            while (*text >= '0' && *text <= '9') {
+                value = (float)((double)value + (*text++ - '0') * fraction);
+                fraction *= 0.1;
+            }
+        }
+        return value * sign;
+    }
     int sign = 1;
     if (*text == '-') {
         sign = -1;

@@ -1054,10 +1054,8 @@ static bool codec_kernel(windows_codec *io, guest_windows_kernel *kernel)
         kernel->handle_count,sizeof(*kernel->handles),io->error)) return false;
     for (size_t i = 0; i < kernel->handle_count; ++i) {
         uint32_t stream = io->reading ? 0 : (uint32_t)kernel->handles[i].stream;
-        uint64_t offset = 0;
-        if (!io->reading) memcpy(&offset,&kernel->handles[i].stream_offset,8);
-        if (!codec_u64(io,&kernel->handles[i].handle) || !codec_u32(io,&stream) || !codec_u64(io,&offset)) return false;
-        memcpy(&kernel->handles[i].stream_offset,&offset,8);
+        if (!codec_u64(io,&kernel->handles[i].handle) || !codec_u32(io,&stream) ||
+            !codec_u64(io,&kernel->handles[i].stream_offset)) return false;
         memcpy(&kernel->handles[i].stream,&stream,4);
     }
     return true;
@@ -1293,7 +1291,6 @@ static bool records_valid(guest_windows *owner, qa_error *error)
     for (size_t i = 0; i < kernel->handle_count; ++i) {
         windows_file_handle *record = kernel->handles + i;
         if (!record->handle || !pointer_value(owner,record->handle) || record->stream < -1 || record->stream > 2 ||
-            !isfinite(record->stream_offset) || record->stream_offset < 0 || floor(record->stream_offset) != record->stream_offset ||
             (record->stream < 0 && record->stream_offset != 0)) return guest_fail(error,QA_ERROR_FORMAT,i,"Windows file handle receipt is invalid");
         for (size_t j = 0; j < i; ++j) if (record->handle == kernel->handles[j].handle) return guest_fail(error,QA_ERROR_FORMAT,i,"Windows file handle repeats");
     }

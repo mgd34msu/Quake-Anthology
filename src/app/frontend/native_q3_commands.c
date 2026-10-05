@@ -1,4 +1,5 @@
 #include "native_q3_client_internal.h"
+#include "qa/text.h"
 #include <limits.h>
 #include <stdio.h>
 
@@ -57,19 +58,6 @@ static int32_t game_atoi(const char *text)
     while(*text>='0' && *text<='9')value=value*10+(uint32_t)(*text++-'0');
     return signed_word(negative?0-value:value);
 }
-static float game_atof(const char *text)
-{
-    bool negative; text=number_start(text,&negative); float value=0;
-    while(*text>='0' && *text<='9') { volatile float product=value*10; volatile float next=product+(float)(*text++-'0'); value=next; }
-    if(*text=='.') {
-        ++text; float fraction=.1f;
-        while(*text>='0' && *text<='9') {
-            volatile float product=(float)(*text++-'0')*fraction; volatile float next=value+product;
-            volatile float scale=fraction*.1f; value=next; fraction=scale;
-        }
-    }
-    return negative?-value:value;
-}
 static const char *arg(const qa_command_invocation *command,size_t index,char out[1024])
 {
     const char *text=index<command->argc?command->argv[index]:"";
@@ -106,7 +94,7 @@ static bool dispatch_command(frontend_native_q3_commands *o,const qa_command_inv
     if(!hud || !state)return frontend_fail(e,QA_ERROR_ARGUMENT,"Native console children are active");
     if(equal(name,"testmodel") || equal(name,"testgun")) {
         float back=0; const float *optional=NULL;
-        if(command->argc==3) { char arg2[1024]; back=game_atof(arg(command,2,arg2)); optional=&back; }
+        if(command->argc==3) { char arg2[1024]; back=(float)qa_parse_quake_number(arg(command,2,arg2),QA_QUAKE_NUMBER_Q3_VM); optional=&back; }
         return q3n_view_test_model(owners.view,f,command->argc<2?NULL:value,optional,equal(name,"testgun"),e);
     }
     if(equal(name,"nextframe") || equal(name,"prevframe") || equal(name,"nextskin") || equal(name,"prevskin")) {

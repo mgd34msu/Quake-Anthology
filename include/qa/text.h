@@ -30,12 +30,16 @@ bool qa_parse_atof_float(const char *text, float *out, qa_error *error);
 /* Quake-style prefix grammar: optional minus, hex or quoted byte, otherwise
  * decimal digits scaled after the last dot. Whitespace, plus and exponents
  * are not consumed. NULL or a missing numeric prefix produces zero.
- * Accumulation/result stay binary64; callers retain their float conversion
- * and admission bounds. Flags preserve reached arithmetic and quoted bytes. */
+ * The first three policies accumulate/result in binary64; callers retain
+ * their float conversion and admission bounds. Q3_VM selects bg_lib grammar
+ * and arithmetic instead. Flags preserve reached arithmetic/quoted bytes. */
 typedef enum qa_quake_number_policy {
     QA_QUAKE_NUMBER_ASCII_UNSIGNED = 0, /* value * 10 + ascii - '0' */
     QA_QUAKE_NUMBER_DIGIT_FIRST = 1,    /* value * 10 + (ascii - '0') */
-    QA_QUAKE_NUMBER_SIGNED_QUOTE = 2    /* Interpret quoted bytes as int8. */
+    QA_QUAKE_NUMBER_SIGNED_QUOTE = 2,   /* Interpret quoted bytes as int8. */
+    /* Q3 bg_lib atof: signed whitespace/plus/minus, decimal prefix, float
+     * accumulator with double fractional terms; no hex, quotes or exponent. */
+    QA_QUAKE_NUMBER_Q3_VM = 4
 } qa_quake_number_policy;
 double qa_parse_quake_number(const char *, qa_quake_number_policy);
 /* Original QC/x86 truncation, with INT32_MIN for nonfinite or out-of-range

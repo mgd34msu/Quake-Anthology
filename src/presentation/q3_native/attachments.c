@@ -2,10 +2,8 @@
 
 #include <string.h>
 
-static float add(float a, float b) { volatile float value = a + b; return value; }
-static float mul(float a, float b) { volatile float value = a * b; return value; }
 static float dot(qa_vec3 a, qa_vec3 b) {
-    return add(add(mul(a.x, b.x), mul(a.y, b.y)), mul(a.z, b.z));
+    return (((a.x * b.x) + (a.y * b.y)) + (a.z * b.z));
 }
 static void multiply(const qa_vec3 left[3], const qa_vec3 right[3], qa_vec3 out[3]) {
     qa_vec3 columns[3] = {{right[0].x, right[1].x, right[2].x},
@@ -19,14 +17,14 @@ static void multiply(const qa_vec3 left[3], const qa_vec3 right[3], qa_vec3 out[
 bool q3n_attach(const qa_q3_presentation_assets *assets, qa_q3_ref_entity *child,
     const qa_q3_ref_entity *parent, const char *name, bool rotated, qa_error *error) {
     qa_model_tag tag; bool found;
-    volatile float fraction = 1.0f - parent->back_lerp;
+    float fraction = 1.0f - parent->back_lerp;
     if (!qa_q3_presentation_tag(assets, parent->model, name, parent->old_frame,
             parent->frame, fraction, &tag, &found, error)) return false;
     qa_vec3 origin = parent->origin, axes[3];
     for (unsigned i = 0; i < 3; ++i) {
-        origin.x = add(origin.x, mul(parent->axis[i].x, tag.origin[i]));
-        origin.y = add(origin.y, mul(parent->axis[i].y, tag.origin[i]));
-        origin.z = add(origin.z, mul(parent->axis[i].z, tag.origin[i]));
+        origin.x = (origin.x + (parent->axis[i].x * tag.origin[i]));
+        origin.y = (origin.y + (parent->axis[i].y * tag.origin[i]));
+        origin.z = (origin.z + (parent->axis[i].z * tag.origin[i]));
         axes[i] = qa_v3(tag.axes[i][0], tag.axes[i][1], tag.axes[i][2]);
     }
     child->origin = origin;

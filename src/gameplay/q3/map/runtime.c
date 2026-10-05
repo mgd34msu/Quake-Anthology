@@ -774,10 +774,7 @@ bool qa_q3_map_team_location_read(qa_q3_game *game, qa_actor_id actor,
         if (!q3_source_body_read(game, next, &body, error) ||
             !team_location_current(game, actor, slot, next, error)) goto done;
         qa_vec3 delta = qa_vec_sub(client.origin, body.origin);
-        float squared = q3_source_float_add(q3_source_float_add(
-            q3_source_float_multiply(delta.x, delta.x),
-            q3_source_float_multiply(delta.y, delta.y)),
-            q3_source_float_multiply(delta.z, delta.z));
+        float squared = (((delta.x * delta.x) + (delta.y * delta.y)) + (delta.z * delta.z));
         if (squared <= nearest) {
             qa_collision_leaf to;
             bool visible, connected;

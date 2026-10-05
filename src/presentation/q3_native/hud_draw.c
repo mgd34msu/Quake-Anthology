@@ -20,16 +20,17 @@ bool q3nh_fade(int32_t time,int32_t start,int32_t duration,float color[4])
 {
     int32_t elapsed=q3ne_sub(time,start); if(!start || elapsed>=duration)return false;
     color[0]=color[1]=color[2]=1; int32_t remaining=q3ne_sub(duration,elapsed);
-    color[3]=remaining<200?q3ne_div((float)remaining,200):1; return true;
+    color[3]=remaining<200?((float)remaining / 200):1; return true;
 }
 void q3nh_health(int32_t health,int32_t armor,float color[4])
 {
     color[3]=1;
     if(health<=0) { color[0]=color[1]=color[2]=0; return; }
-    int32_t maximum=q3ne_int(q3ne_div(q3ne_mul((float)health,0.66f),q3ne_add(1,-0.66f)));
+    double absorption=health*0.66/(1.0-0.66);
+    int32_t maximum=absorption<2147483648.0?(int32_t)absorption:INT32_MIN;
     health=q3ne_plus(health,armor<maximum?armor:maximum); color[0]=1;
-    color[1]=health>60?1:health<30?0:q3ne_div((float)q3ne_sub(health,30),30);
-    color[2]=health>=100?1:health<66?0:q3ne_div((float)q3ne_sub(health,66),33);
+    color[1]=health>60?1:health<30?0:((float)q3ne_sub(health,30) / 30);
+    color[2]=health>=100?1:health<66?0:((float)q3ne_sub(health,66) / 33);
 }
 bool q3nh_color(q3n_hud_draw *d,const float c[4])
 {
@@ -65,7 +66,7 @@ bool q3nh_text(q3n_hud_draw *d,float x,float y,const char *text,float w,float h,
     bool handled;
     if(!q3nh_font_text(d,x,y,text,h,c,force,shadow,limit,QA_FONT_ALIGN_LEFT,false,&handled))return false;
     if(handled)return true;
-    w=q3ne_mul(w,d->frame->preferences.text_scale); h=q3ne_mul(h,d->frame->preferences.text_scale);
+    w=(w * d->frame->preferences.text_scale); h=(h * d->frame->preferences.text_scale);
     float selected[4]; memcpy(selected,c,sizeof(selected));
     if(d->frame->preferences.high_contrast) { selected[0]=selected[1]=selected[2]=1; force=true; shadow=true; }
     force=force || d->frame->preferences.color_mode!=QA_UI_COLOR_STANDARD;
@@ -75,7 +76,7 @@ bool q3nh_text(q3n_hud_draw *d,float x,float y,const char *text,float w,float h,
         for(const unsigned char *p=(const unsigned char *)text;*p && (!limit || count<limit);++p) {
             if(p[0]=='^' && p[1] && p[1]!='^') { ++p; continue; }
             if(!glyph(d,xx+2,y+2,w,h,*p))return false;
-            xx=q3ne_add(xx,w); ++count;
+            xx=(xx + w); ++count;
         }
     }
     if(!q3nh_color(d,selected))return false;
@@ -86,7 +87,7 @@ bool q3nh_text(q3n_hud_draw *d,float x,float y,const char *text,float w,float h,
             ++p; continue;
         }
         if(!glyph(d,x,y,w,h,*p))return false;
-        x=q3ne_add(x,w); ++count;
+        x=(x + w); ++count;
     }
     return q3nh_color(d,NULL);
 }
@@ -103,10 +104,10 @@ bool q3nh_field(q3n_hud_draw *d,float x,float y,int32_t width,int32_t value)
     static const int32_t max[4]={9,99,999,9999},min[4]={0,-9,-99,-999};
     if(width<=4) { if(value>max[width-1])value=max[width-1]; if(value<min[width-1])value=min[width-1]; }
     char text[16]; snprintf(text,sizeof(text),"%i",value); size_t count=strlen(text); if(count>(size_t)width)count=(size_t)width;
-    y=q3ne_add(y,48-48*d->frame->preferences.text_scale);
+    y=(y + (48-48*d->frame->preferences.text_scale));
     float measured;
     if(!q3nh_width(d,text,32,48,(int32_t)count,&measured))return false;
-    x=q3ne_add(x,(float)(2+32*width)-measured);
+    x=(x + ((float)(2+32*width)-measured));
     if(d->frame->preferences.typeface==QA_UI_TYPEFACE_BOLD) {
         /* The actual selected font replaces the authored numeral shaders only
          * when the user requests that typography. */
@@ -118,7 +119,7 @@ bool q3nh_field(q3n_hud_draw *d,float x,float y,int32_t width,int32_t value)
     const q3n_media_view *m=q3n_media_read(d->frame->media);
     for(size_t i=0;i<count;++i) { unsigned frame=text[i]=='-'?10u:(unsigned)(text[i]-'0');
         if(!q3nh_picture(d,x,y,32*d->frame->preferences.text_scale,48*d->frame->preferences.text_scale,m->number_shaders[frame]))return false;
-        x=q3ne_add(x,32*d->frame->preferences.text_scale); }
+        x=(x + (32*d->frame->preferences.text_scale)); }
     return true;
 }
 bool q3nh_model(q3n_hud_draw *d,float x,float y,float w,float h,int32_t model,int32_t skin,qa_vec3 origin,qa_vec3 angles)
@@ -135,8 +136,8 @@ bool q3nh_model(q3n_hud_draw *d,float x,float y,float w,float h,int32_t model,in
         qa_q3_presentation_render(d->frame->presentation,&view,d->error) && q3nh_current(d->owner,d->frame,d->error);
 }
 static qa_vec3 icon_origin(qa_bounds b,float fraction)
-{ return qa_v3(q3ne_div(q3ne_mul(fraction,q3ne_add(b.maxs.z,-b.mins.z)),0.268f),
-    q3ne_mul(0.5f,q3ne_add(b.mins.y,b.maxs.y)),-q3ne_mul(0.5f,q3ne_add(b.mins.z,b.maxs.z))); }
+{ return qa_v3(((fraction * (b.maxs.z + -b.mins.z)) / 0.268f),
+    (0.5f * (b.mins.y + b.maxs.y)),-(0.5f * (b.mins.z + b.maxs.z))); }
 bool q3nh_head(q3n_hud_draw *d,float x,float y,float w,float h,int32_t client,qa_vec3 angles)
 {
     if(client<0 || client>=64)return q3ne_fail(d->error,QA_ERROR_FORMAT,"HUD head client is outside physical source array");
@@ -155,7 +156,7 @@ bool q3nh_flag(q3n_hud_draw *d,float x,float y,float w,float h,int32_t team,bool
     const q3n_media_view *m=q3n_media_read(d->frame->media); unsigned powerup=team==1?7:team==2?8:9;
     if(!force_2d && d->settings->draw_3d_icons) {
         qa_bounds b; if(!qa_q3_presentation_model_bounds(d->frame->assets,m->graphics[Q3N_G_RED_FLAG],&b,d->error))return false;
-        qa_vec3 angles=qa_v3(0,q3ne_mul(60,(float)sin((double)q3ne_div((float)d->frame->time,2000))),0);
+        qa_vec3 angles=qa_v3(0,(60 * (float)sin((double)((float)d->frame->time / 2000))),0);
         return q3nh_model(d,x,y,w,h,m->graphics[team==1?Q3N_G_RED_FLAG:team==2?Q3N_G_BLUE_FLAG:Q3N_G_NEUTRAL_FLAG],0,icon_origin(b,0.5f),angles);
     }
     if(d->settings->draw_icons) {

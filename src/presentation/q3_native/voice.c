@@ -230,7 +230,7 @@ bool q3n_voice_local(q3n_server_commands *o, const q3n_frame *f, int32_t mode,
     for (int32_t i = 0; i < list->count; ++i) {
         q3n_voice_chat *chat = &list->chats[i];
         if (!q3nc_same(chat->id, id)) continue;
-        volatile float choice = q3n_events_random(o->options.events) * (float)chat->count;
+        float choice = q3n_events_random(o->options.events) * (float)chat->count;
         int32_t index = (int32_t)choice;
         if (index < 0 || index >= 64) return q3nc_fail(e, QA_ERROR_FORMAT, "Voice random choice outside donor sound storage");
         qa_native_q3_client_cvar team_only;

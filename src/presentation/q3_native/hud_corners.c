@@ -154,14 +154,14 @@ static bool powerups(q3n_hud_draw *d,float y)
         y-=48; const float red[4]={1,0.2f,0.2f,1};
         if(!q3nh_color(d,red) || !q3nh_field(d,528,y,2,remaining[i]/1000))return false;
         float color[4],*modulation=NULL;
-        if(!d->frame->preferences.reduced_flashes && remaining[i]<5000) { float fraction=q3ne_div((float)remaining[i],1000); fraction=q3ne_add(fraction,-(float)q3ne_int(fraction));
+        if(!d->frame->preferences.reduced_flashes && remaining[i]<5000) { float fraction=((float)remaining[i] / 1000); fraction=(fraction + -(float)q3ne_int(fraction));
             for(unsigned j=0;j<4;++j)color[j]=fraction;
             modulation=color; }
         if(!q3nh_color(d,modulation))return false;
         float size=48;
         if(!d->frame->preferences.reduced_flashes && g->powerup_active==(int32_t)sorted[i] && q3ne_sub(d->frame->time,g->powerup_time)<200) {
-            float pulse=q3ne_add(1,-q3ne_div(q3ne_add((float)d->frame->time,-(float)g->powerup_time),200));
-            size=q3ne_mul(48,q3ne_add(1,q3ne_mul(0.5f,pulse)));
+            float pulse=(1 + -(((float)d->frame->time + -(float)g->powerup_time) / 200));
+            size=(48 * (1 + (0.5f * pulse)));
         }
         int32_t shader;
         if(!qa_q3_register_shader(d->frame->assets,item->icon,false,&shader,d->error) || !q3nh_picture(d,640-size,y+24-size/2,size,size,shader))return false;

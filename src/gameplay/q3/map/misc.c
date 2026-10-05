@@ -25,8 +25,7 @@ bool q3_map_spawn_misc(qa_q3_game *game, qa_q3_map_actor_state *state,
         state->kind = QA_Q3_MAP_PORTAL_SURFACE;
     else if (!strcmp(name, "misc_portal_camera")) {
         state->kind = QA_Q3_MAP_PORTAL_CAMERA;
-        state->count = q3_map_float_to_int(q3_source_float_multiply(
-            q3_source_float_divide(state->roll, 360.0f), 256.0f));
+        state->count = q3_map_float_to_int(((state->roll / 360.0f) * 256.0f));
     } else if (!strncmp(name, "shooter_", 8)) {
         state->kind = QA_Q3_MAP_SHOOTER;
         state->usable = true;
@@ -51,7 +50,7 @@ bool q3_map_spawn_misc(qa_q3_game *game, qa_q3_map_actor_state *state,
         state->angles = qa_v3(0, 0, 0);
         if (state->random == 0)
             state->random = 1;
-        float radians = q3_source_float_divide(q3_source_float_multiply(Q3_PI, state->random), 180.0f);
+        float radians = ((Q3_PI * state->random) / 180.0f);
         state->random = (float)sin((double)radians);
     } else
         return q3_map_fail(error, "unsupported Q3 misc classname");
@@ -116,7 +115,7 @@ bool q3_map_spawn_misc(qa_q3_game *game, qa_q3_map_actor_state *state,
 
 static qa_vec3 shooter_normalize(qa_vec3 value) {
     float length = (float)sqrt((double)qa_vec_dot(value, value));
-    return length == 0 ? value : qa_vec_scale(value, q3_source_float_divide(1, length));
+    return length == 0 ? value : qa_vec_scale(value, (1 / length));
 }
 static qa_vec3 perpendicular(qa_vec3 direction) {
     qa_vec3 axis = qa_v3(1, 0, 0);
@@ -127,8 +126,8 @@ static qa_vec3 perpendicular(qa_vec3 direction) {
         axis = qa_v3(0, 1, 0);
     }
     if (fabsf(direction.z) < minimum) axis = qa_v3(0, 0, 1);
-    float inverse = q3_source_float_divide(1, qa_vec_dot(direction, direction));
-    float distance = q3_source_float_multiply(qa_vec_dot(axis, direction), inverse);
+    float inverse = (1 / qa_vec_dot(direction, direction));
+    float distance = (qa_vec_dot(axis, direction) * inverse);
     qa_vec3 normal = qa_vec_scale(direction, inverse);
     return shooter_normalize(qa_vec_sub(axis, qa_vec_scale(normal, distance)));
 }
@@ -155,9 +154,9 @@ static bool use_shooter(qa_q3_game *game, qa_q3_map_actor_state *state,
     }
     qa_vec3 up = perpendicular(direction);
     qa_vec3 right = qa_vec_cross(up, direction);
-    direction = qa_vec_add(direction, qa_vec_scale(up, q3_source_float_multiply(q3_crandom(game), spread)));
+    direction = qa_vec_add(direction, qa_vec_scale(up, (q3_crandom(game) * spread)));
     direction = shooter_normalize(
-        qa_vec_add(direction, qa_vec_scale(right, q3_source_float_multiply(q3_crandom(game), spread))));
+        qa_vec_add(direction, qa_vec_scale(right, (q3_crandom(game) * spread))));
     if (!q3_launch(game, actor, weapon, origin, direction, right, up, 1, NULL, error))
         return false;
     if (q3_map_get(game, actor) && !q3_wire_add_event(game, actor, 23, 0, error))
@@ -218,8 +217,7 @@ static bool locate_portal(qa_q3_game *game, qa_q3_map_actor_state *state,
         return true;
     camera_wire = q3_wire_entity(game, camera);
     int32_t camera_roll = camera_wire ? camera_wire->client :
-        q3_map_float_to_int(q3_source_float_multiply(
-            q3_source_float_divide(roll, 360.0f), 256.0f));
+        q3_map_float_to_int(((roll / 360.0f) * 256.0f));
     int32_t owner_number = q3_entity_number(game, camera);
     state = q3_map_get(game, surface);
     if (!state || !qa_actors_get(qa_session_actors(game->options.services.session), camera))

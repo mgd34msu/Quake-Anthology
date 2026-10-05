@@ -726,8 +726,8 @@ static bool draw(frontend_unified_q3_runtime *o,bool gather,bool *rendered,qa_er
     }
     if(okay && !tournament) {
         okay=q3n_hud_tile_clear(o->children.hud,&f,viewport,e); qa_q3_refdef render=f.refdef;
-        volatile float separation=o->stereo==0?0:o->settings.stereo_separation*(o->stereo==1?-0.5f:0.5f);
-        volatile float x=render.axis[1].x*-separation,y=render.axis[1].y*-separation,z=render.axis[1].z*-separation;
+        float separation=o->stereo==0?0:o->settings.stereo_separation*(o->stereo==1?-0.5f:0.5f);
+        float x=render.axis[1].x*-separation,y=render.axis[1].y*-separation,z=render.axis[1].z*-separation;
         render.origin.x+=x; render.origin.y+=y; render.origin.z+=z;
         if(okay)okay=qa_q3_presentation_render(f.presentation,&render,e) && cut(o,&f,e);
     }

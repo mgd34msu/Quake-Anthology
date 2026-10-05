@@ -94,9 +94,9 @@ static bool shadow(player_fx *p,float *plane,bool *visible,qa_error *e)
     qa_bounds bounds={{-15,-15,0},{15,15,2}};
     if(!world_trace(p,origin,q3ne_sum(origin,qa_v3(0,0,-128)),bounds,FX_PLAYERSOLID,&tr,e))return false;
     if(tr.fraction==1 || tr.start_solid || tr.all_solid)return true;
-    *plane=q3ne_add(tr.end.z,1); *visible=true;
+    *plane=(tr.end.z + 1); *visible=true;
     if(p->settings->shadow_mode!=1)return true;
-    float alpha=q3ne_add(1,-tr.fraction);
+    float alpha=(1 + -tr.fraction);
     q3n_impact_mark mark={.shader=p->media->graphics[Q3N_G_SHADOW_MARK],.origin=tr.end,
         .direction=tr.contact?tr.contact_plane.normal:tr.plane.normal,.orientation=p->cent->player.legs.yaw_angle,
         .color={alpha,alpha,alpha,1},.radius=24,.temporary=true};
@@ -199,7 +199,7 @@ static bool dust(player_fx *p,qa_error *e)
     q3n_effect_smoke(f,&smoke); return true;
 }
 static float sphere_angle(int32_t time,int32_t divisor)
-{ return q3ne_div(q3ne_mul((float)((uint32_t)(time/divisor)&255u),q3ne_mul(3.14159265358979323846f,2)),255); }
+{ return (((float)((uint32_t)(time/divisor)&255u) * (3.14159265358979323846f * 2)) / 255); }
 static bool tokens(player_fx *p,int32_t flags,qa_error *e)
 {
     q3n_player_fx_state *state=&p->cent->player_fx;
@@ -225,7 +225,7 @@ static bool tokens(player_fx *p,int32_t flags,qa_error *e)
         skull.axis[0]=q3ne_normalize(qa_v3(delta.x,delta.y,0)); skull.axis[2]=qa_v3(0,0,1);
         skull.axis[1]=q3ne_cross(skull.axis[0],skull.axis[2]);
         float angle=sphere_angle(q3ne_plus(p->frame->time,5000-(int32_t)i*500),16);
-        skull.origin=q3ne_sum(position,qa_v3(0,0,q3ne_mul((float)sin((double)angle),10)));
+        skull.origin=q3ne_sum(position,qa_v3(0,0,((float)sin((double)angle) * 10)));
         if(!emit(p,&skull,e))return false;
         origin=position;
     }
@@ -244,30 +244,30 @@ static bool skull_pair(player_fx *p,qa_q3_ref_entity *skull,bool flip,qa_error *
 }
 static bool kamikaze(player_fx *p,const qa_q3_ref_entity *torso,qa_error *e)
 {
-    const float pi=3.14159265358979323846f,two_pi=q3ne_mul(pi,2);
+    const float pi=3.14159265358979323846f,two_pi=(pi * 2);
     qa_q3_ref_entity skull=reference(QA_Q3_REF_MODEL,0);
     skull.lighting_origin=p->cent->lerp_origin; skull.shadow_plane=torso->shadow_plane; skull.flags=torso->flags;
     int32_t time=p->frame->time; float angle; qa_vec3 direction;
     if(p->state->eFlags&1) {
-        angle=sphere_angle(time,7); if(angle>two_pi)angle=q3ne_add(angle,-two_pi);
-        float x=q3ne_mul((float)sin((double)angle),20),y=q3ne_mul((float)cos((double)angle),20);
-        angle=sphere_angle(time,4); direction=qa_v3(x,y,q3ne_add(15,q3ne_mul((float)sin((double)angle),8)));
+        angle=sphere_angle(time,7); if(angle>two_pi)angle=(angle + -two_pi);
+        float x=((float)sin((double)angle) * 20),y=((float)cos((double)angle) * 20);
+        angle=sphere_angle(time,4); direction=qa_v3(x,y,(15 + ((float)sin((double)angle) * 8)));
         skull.origin=q3ne_sum(torso->origin,direction); orbit_axis(&skull,direction); return skull_pair(p,&skull,false,e);
     }
     angle=sphere_angle(time,4);
-    direction=qa_v3(q3ne_mul((float)cos((double)angle),20),q3ne_mul((float)sin((double)angle),20),q3ne_mul((float)cos((double)angle),20));
+    direction=qa_v3(((float)cos((double)angle) * 20),((float)sin((double)angle) * 20),((float)cos((double)angle) * 20));
     skull.origin=q3ne_sum(torso->origin,direction);
-    float yaw=q3ne_add(q3ne_div(q3ne_mul(angle,180),pi),90); if(yaw>360)yaw=q3ne_add(yaw,-360);
-    q3n_angles_axis(qa_v3(q3ne_mul((float)sin((double)angle),30),yaw,0),skull.axis);
+    float yaw=(((angle * 180) / pi) + 90); if(yaw>360)yaw=(yaw + -360);
+    q3n_angles_axis(qa_v3(((float)sin((double)angle) * 30),yaw,0),skull.axis);
     if(!skull_pair(p,&skull,true,e))return false;
-    angle=q3ne_add(sphere_angle(time,4),pi); if(angle>two_pi)angle=q3ne_add(angle,-two_pi);
-    direction=qa_v3(q3ne_mul((float)sin((double)angle),20),q3ne_mul((float)cos((double)angle),20),q3ne_mul((float)cos((double)angle),20));
+    angle=(sphere_angle(time,4) + pi); if(angle>two_pi)angle=(angle + -two_pi);
+    direction=qa_v3(((float)sin((double)angle) * 20),((float)cos((double)angle) * 20),((float)cos((double)angle) * 20));
     skull.origin=q3ne_sum(torso->origin,direction);
-    yaw=q3ne_add(360,-q3ne_div(q3ne_mul(angle,180),pi)); if(yaw>360)yaw=q3ne_add(yaw,-360);
-    q3n_angles_axis(qa_v3(q3ne_mul((float)cos((double)q3ne_add(angle,-q3ne_mul(0.5f,pi))),30),yaw,0),skull.axis);
+    yaw=(360 + -((angle * 180) / pi)); if(yaw>360)yaw=(yaw + -360);
+    q3n_angles_axis(qa_v3(((float)cos((double)(angle + -(0.5f * pi))) * 30),yaw,0),skull.axis);
     if(!skull_pair(p,&skull,false,e))return false;
-    angle=q3ne_add(sphere_angle(time,3),q3ne_mul(0.5f,pi)); if(angle>two_pi)angle=q3ne_add(angle,-two_pi);
-    direction=qa_v3(q3ne_mul((float)sin((double)angle),20),q3ne_mul((float)cos((double)angle),20),0);
+    angle=(sphere_angle(time,3) + (0.5f * pi)); if(angle>two_pi)angle=(angle + -two_pi);
+    direction=qa_v3(((float)sin((double)angle) * 20),((float)cos((double)angle) * 20),0);
     skull.origin=q3ne_sum(torso->origin,direction); orbit_axis(&skull,direction); return skull_pair(p,&skull,false,e);
 }
 static bool mission(player_fx *p,const qa_q3_ref_entity *torso,qa_error *e)
@@ -288,33 +288,33 @@ static bool mission(player_fx *p,const qa_q3_ref_entity *torso,qa_error *e)
     if(invulnerable || stop<250) {
         qa_q3_ref_entity r=*torso; r.model=p->media->graphics[Q3N_G_INVULNERABILITY_PLAYER];
         r.custom_skin=0; r.flags&=~2; r.origin=p->cent->lerp_origin;
-        float scale=start<250?q3ne_div((float)start,250):stop<250?q3ne_div((float)q3ne_sub(250,stop),250):1;
+        float scale=start<250?((float)start / 250):stop<250?((float)q3ne_sub(250,stop) / 250):1;
         r.axis[0]=qa_v3(scale,0,0); r.axis[1]=qa_v3(0,scale,0); r.axis[2]=qa_v3(0,0,scale);
         if(!emit(p,&r,e))return false;
     }
     int32_t elapsed=q3ne_sub(time,dynamic.medkit_usage_time);
     if(dynamic.medkit_usage_time && elapsed<500) {
         qa_q3_ref_entity r=*torso; r.model=p->media->graphics[Q3N_G_MEDKIT_USAGE]; r.custom_skin=0; r.flags&=~2;
-        q3ne_identity(r.axis); r.origin=q3ne_sum(p->cent->lerp_origin,qa_v3(0,0,q3ne_add(-24,q3ne_div(q3ne_mul((float)elapsed,80),500))));
-        uint8_t color=elapsed>400?q3ne_byte(q3ne_add(255,-q3ne_div(q3ne_mul((float)q3ne_sub(elapsed,1000),255),100))):255;
+        q3ne_identity(r.axis); r.origin=q3ne_sum(p->cent->lerp_origin,qa_v3(0,0,(-24 + (((float)elapsed * 80) / 500))));
+        uint8_t color=elapsed>400?q3ne_byte((255 + -(((float)q3ne_sub(elapsed,1000) * 255) / 100))):255;
         memset(r.color,color,4); if(!emit(p,&r,e))return false;
     }
     return true;
 }
 static float angle_subtract(float a,float b)
-{ float d=q3ne_add(a,-b); while(d>180)d=q3ne_add(d,-360); while(d< -180)d=q3ne_add(d,360); return d; }
+{ float d=(a + -b); while(d>180)d=(d + -360); while(d< -180)d=(d + 360); return d; }
 static float angle_mod(float a)
-{ return q3ne_mul((float)((uint32_t)q3ne_int(q3ne_mul(a,65536.0f/360.0f))&65535u),360.0f/65536.0f); }
+{ return ((float)((uint32_t)q3ne_int((a * (65536.0f/360.0f)))&65535u) * (360.0f/65536.0f)); }
 static void flag_swing(q3n_player_fx_state *s,float destination,int32_t milliseconds)
 {
     if(!s->flag_yawing && fabsf(angle_subtract(s->flag_yaw,destination))>25)s->flag_yawing=true;
     if(!s->flag_yawing)return;
     float d=angle_subtract(destination,s->flag_yaw),distance=fabsf(d),scale=distance<12.5f?0.5f:distance<25?1:2;
-    float move=q3ne_mul(q3ne_mul((float)milliseconds,scale),d>=0?0.15f:-0.15f);
+    float move=(((float)milliseconds * scale) * (d>=0?0.15f:-0.15f));
     if((d>=0 && move>=d) || (d<0 && move<=d)) { move=d; s->flag_yawing=false; }
-    s->flag_yaw=angle_mod(q3ne_add(s->flag_yaw,move)); d=angle_subtract(destination,s->flag_yaw);
-    if(d>90)s->flag_yaw=angle_mod(q3ne_add(destination,-89));
-    else if(d< -90)s->flag_yaw=angle_mod(q3ne_add(destination,89));
+    s->flag_yaw=angle_mod((s->flag_yaw + move)); d=angle_subtract(destination,s->flag_yaw);
+    if(d>90)s->flag_yaw=angle_mod((destination + -89));
+    else if(d< -90)s->flag_yaw=angle_mod((destination + 89));
 }
 static bool flag(player_fx *p,int32_t skin,const qa_q3_ref_entity *torso,qa_error *e)
 {
@@ -329,11 +329,11 @@ static bool flag(player_fx *p,int32_t skin,const qa_q3_ref_entity *torso,qa_erro
     if(!idle) {
         qa_vec3 d=q3ne_normalize(q3ne_sum(q3ne_array(p->state->pos.delta),qa_v3(0,0,100)));
         if(fabsf(q3ne_dot(pole.axis[2],d))<0.9f) {
-            float a=q3ne_f((float)acos((double)fmaxf(-1,fminf(1,q3ne_dot(pole.axis[0],d)))));
-            float degrees=q3ne_div(q3ne_mul(a,180),3.14159265358979323846f);
-            float yaw=q3ne_dot(pole.axis[1],d)<0?q3ne_add(360,-degrees):degrees;
-            if(yaw<0)yaw=q3ne_add(yaw,360);
-            if(yaw>360)yaw=q3ne_add(yaw,-360);
+            float a=((float)acos((double)fmaxf(-1,fminf(1,q3ne_dot(pole.axis[0],d)))));
+            float degrees=((a * 180) / 3.14159265358979323846f);
+            float yaw=q3ne_dot(pole.axis[1],d)<0?(360 + -degrees):degrees;
+            if(yaw<0)yaw=(yaw + 360);
+            if(yaw>360)yaw=(yaw + -360);
             flag_swing(s,yaw,p->frame->frame_milliseconds);
         }
     }
@@ -363,7 +363,7 @@ static bool powerups(player_fx *p,const qa_q3_ref_entity *torso,qa_error *e)
             qa_q3_ref_entity r=reference(QA_Q3_REF_MODEL,p->media->graphics[models[i]]); qa_vec3 axis[3];
             q3n_angles_axis(qa_v3(0,p->cent->lerp_angles.y,0),axis);
             r.origin=q3ne_sum(q3ne_sum(p->cent->lerp_origin,q3ne_scale(axis[0],-16)),qa_v3(0,0,16));
-            q3n_angles_axis(qa_v3(0,q3ne_add(p->cent->lerp_angles.y,90),0),r.axis);
+            q3n_angles_axis(qa_v3(0,(p->cent->lerp_angles.y + 90),0),r.axis);
             if(!emit(p,&r,e))return false;
         }
         if(!light(p,colors[i],e))return false;

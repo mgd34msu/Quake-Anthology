@@ -164,7 +164,7 @@ bool qa_bot_log_write_timestamped(qa_bot_log *log,float time,const char *text,qa
     if(!idle(log,error)) return false;
     if(!log->current) return true;
     int32_t hours,minutes,seconds,centiseconds;
-    volatile float first=time/60.0f,second=first/60.0f,hundred=time*100.0f;
+    float first=time/60.0f,second=first/60.0f,hundred=time*100.0f;
     if(!source_integer(second,&hours,error) || !source_integer(first,&minutes,error) ||
        !source_integer(time,&seconds,error) || !source_integer(hundred,&centiseconds,error)) return false;
     int64_t whole=(int64_t)seconds*100,fraction=(int64_t)centiseconds-whole;

@@ -3,9 +3,6 @@
 #include <limits.h>
 #include <string.h>
 
-static float add(float a, float b) { volatile float value = a + b; return value; }
-static float mul(float a, float b) { volatile float value = a * b; return value; }
-static float divide(float a, float b) { volatile float value = a / b; return value; }
 static int32_t word(uint32_t value) { int32_t result; memcpy(&result, &value, sizeof(result)); return result; }
 static int32_t sum(int32_t a, int32_t b) { return word((uint32_t)a + (uint32_t)b); }
 static int32_t difference(int32_t a, int32_t b) { return word((uint32_t)a - (uint32_t)b); }
@@ -55,7 +52,7 @@ bool q3n_lerp_run(const qa_player_animation_config *config, q3n_lerp_frame *stat
         state->frame_time = time < state->animation_time ? state->animation_time
             : sum(state->old_frame_time, a->frame_lerp);
         double quotient = trunc((double)difference(state->frame_time, state->animation_time) / a->frame_lerp);
-        int32_t offset = integer(mul((float)quotient, speed));
+        int32_t offset = integer(((float)quotient * speed));
         int32_t count = a->flipflop ? word((uint32_t)a->num_frames * 2u) : a->num_frames;
         if (offset >= count) {
             offset = difference(offset, count);
@@ -77,34 +74,32 @@ bool q3n_lerp_run(const qa_player_animation_config *config, q3n_lerp_frame *stat
     if (state->frame_time > sum(time, 200)) state->frame_time = time;
     if (state->old_frame_time > time) state->old_frame_time = time;
     state->back_lerp = state->frame_time == state->old_frame_time ? 0
-        : add(1, -divide((float)difference(time, state->old_frame_time),
-                        (float)difference(state->frame_time, state->old_frame_time)));
+        : (1 + -((float)difference(time, state->old_frame_time) / (float)difference(state->frame_time, state->old_frame_time)));
     return true;
 }
 
 static float angle_mod(float angle) {
-    return mul((float)((uint32_t)integer(mul(angle, 65536.0f / 360.0f)) & 65535u),
-        360.0f / 65536.0f);
+    return ((float)((uint32_t)integer((angle * (65536.0f / 360.0f))) & 65535u) * (360.0f / 65536.0f));
 }
 static float angle_subtract(float first, float second) {
-    float angle = add(first, -second);
-    while (angle > 180) angle = add(angle, -360);
-    while (angle < -180) angle = add(angle, 360);
+    float angle = (first + -second);
+    while (angle > 180) angle = (angle + -360);
+    while (angle < -180) angle = (angle + 360);
     return angle;
 }
 void q3n_angles_axis(qa_vec3 angles, qa_vec3 axis[3]) {
     const float radians = 0.01745329251994329577f;
-    float yaw = mul(angles.y, radians), pitch = mul(angles.x, radians), roll = mul(angles.z, radians);
+    float yaw = (angles.y * radians), pitch = (angles.x * radians), roll = (angles.z * radians);
     float sy = (float)sin((double)yaw), cy = (float)cos((double)yaw);
     float sp = (float)sin((double)pitch), cp = (float)cos((double)pitch);
     float sr = (float)sin((double)roll), cr = (float)cos((double)roll);
-    axis[0] = qa_v3(mul(cp, cy), mul(cp, sy), -sp);
-    float rp = mul(-sr, sp);
-    axis[1] = qa_v3(-add(mul(rp, cy), mul(-cr, -sy)),
-        -add(mul(rp, sy), mul(-cr, cy)), -mul(-sr, cp));
-    rp = mul(cr, sp);
-    axis[2] = qa_v3(add(mul(rp, cy), mul(-sr, -sy)),
-        add(mul(rp, sy), mul(-sr, cy)), mul(cr, cp));
+    axis[0] = qa_v3((cp * cy), (cp * sy), -sp);
+    float rp = (-sr * sp);
+    axis[1] = qa_v3(-((rp * cy) + (-cr * -sy)),
+        -((rp * sy) + (-cr * cy)), -(-sr * cp));
+    rp = (cr * sp);
+    axis[2] = qa_v3(((rp * cy) + (-sr * -sy)),
+        ((rp * sy) + (-sr * cy)), (cr * cp));
 }
 static void swing(float destination, float tolerance, float clamp, float speed,
     int32_t milliseconds, float *angle, bool *swinging) {
@@ -114,21 +109,21 @@ static void swing(float destination, float tolerance, float clamp, float speed,
     }
     if (!*swinging) return;
     float delta = angle_subtract(destination, *angle), distance = fabsf(delta);
-    float scale = distance < mul(tolerance, 0.5f) ? 0.5f : distance < tolerance ? 1 : 2;
-    float move = mul(mul((float)milliseconds, scale), delta >= 0 ? speed : -speed);
+    float scale = distance < (tolerance * 0.5f) ? 0.5f : distance < tolerance ? 1 : 2;
+    float move = (((float)milliseconds * scale) * (delta >= 0 ? speed : -speed));
     if ((delta >= 0 && move >= delta) || (delta < 0 && move <= delta)) {
         move = delta; *swinging = false;
     }
-    *angle = angle_mod(add(*angle, move));
+    *angle = angle_mod((*angle + move));
     delta = angle_subtract(destination, *angle);
-    if (delta > clamp) *angle = angle_mod(add(destination, -add(clamp, -1)));
-    else if (delta < -clamp) *angle = angle_mod(add(destination, add(clamp, -1)));
+    if (delta > clamp) *angle = angle_mod((destination + -(clamp + -1)));
+    else if (delta < -clamp) *angle = angle_mod((destination + (clamp + -1)));
 }
 static qa_vec3 subtract_angles(qa_vec3 a, qa_vec3 b) {
     return qa_v3(angle_subtract(a.x, b.x), angle_subtract(a.y, b.y), angle_subtract(a.z, b.z));
 }
 static float dot(qa_vec3 a, qa_vec3 b) {
-    return add(add(mul(a.x, b.x), mul(a.y, b.y)), mul(a.z, b.z));
+    return (((a.x * b.x) + (a.y * b.y)) + (a.z * b.z));
 }
 
 bool q3n_player_angles_pose(q3n_player_pose *state, const qa_player_animation_config *config,
@@ -144,28 +139,28 @@ bool q3n_player_angles_pose(q3n_player_pose *state, const qa_player_animation_co
     if ((entity->legs_animation & ~128) != 22 || (entity->torso_animation & ~128) != 11) {
         state->torso.yawing = state->torso.pitching = state->legs.yawing = true;
     }
-    swing(add(head.y, mul(0.25f, offsets[direction])), 25, 90, speed,
+    swing((head.y + (0.25f * offsets[direction])), 25, 90, speed,
         milliseconds, &state->torso.yaw_angle, &state->torso.yawing);
-    swing(add(head.y, offsets[direction]), 40, 90, speed,
+    swing((head.y + offsets[direction]), 40, 90, speed,
         milliseconds, &state->legs.yaw_angle, &state->legs.yawing);
     torso.y = state->torso.yaw_angle; legs.y = state->legs.yaw_angle;
-    float pitch = mul(head.x > 180 ? add(-360, head.x) : head.x, 0.75f);
+    float pitch = ((head.x > 180 ? (-360 + head.x) : head.x) * 0.75f);
     swing(pitch, 15, 30, 0.1f, milliseconds, &state->torso.pitch_angle, &state->torso.pitching);
     torso.x = config->fixed_torso ? 0 : state->torso.pitch_angle;
     float velocity_length = (float)sqrt((double)dot(source_velocity, source_velocity));
     if (velocity_length != 0) {
-        float inverse_length = divide(1, velocity_length);
-        qa_vec3 velocity = qa_v3(mul(source_velocity.x, inverse_length),
-            mul(source_velocity.y, inverse_length), mul(source_velocity.z, inverse_length));
-        float lean = mul(velocity_length, 0.05f); qa_vec3 axis[3]; q3n_angles_axis(legs, axis);
-        legs.x = add(legs.x, mul(lean, dot(velocity, axis[0])));
-        legs.z = add(legs.z, -mul(lean, dot(velocity, axis[1])));
+        float inverse_length = (1 / velocity_length);
+        qa_vec3 velocity = qa_v3((source_velocity.x * inverse_length),
+            (source_velocity.y * inverse_length), (source_velocity.z * inverse_length));
+        float lean = (velocity_length * 0.05f); qa_vec3 axis[3]; q3n_angles_axis(legs, axis);
+        legs.x = (legs.x + (lean * dot(velocity, axis[0])));
+        legs.z = (legs.z + -(lean * dot(velocity, axis[1])));
     }
     if (config->fixed_legs) legs = qa_v3(0, torso.y, 0);
     int32_t elapsed = difference(time, state->pain_time);
     if (elapsed < 200) {
-        float roll = mul(20, add(1, -divide((float)elapsed, 200)));
-        torso.z = add(torso.z, state->pain_direction ? roll : -roll);
+        float roll = (20 * (1 + -((float)elapsed / 200)));
+        torso.z = (torso.z + (state->pain_direction ? roll : -roll));
     }
     q3n_angles_axis(legs, out->legs);
     q3n_angles_axis(subtract_angles(torso, legs), out->torso);

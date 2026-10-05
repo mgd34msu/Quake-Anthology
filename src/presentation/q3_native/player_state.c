@@ -83,18 +83,18 @@ static void damage(q3n_player_state *o,const q3n_frame *f,const qa_q3_player *p,
 {
     q3n_player_feedback *g=&o->feedback;
     g->attacker_time=f->time;
-    float scale=snapshot->stats[0]<40?1:q3ne_div(40,(float)snapshot->stats[0]);
-    float kick=q3nh_clamp(q3ne_mul((float)p->damageCount,scale),5,10);
+    float scale=snapshot->stats[0]<40?1:(40 / (float)snapshot->stats[0]);
+    float kick=q3nh_clamp(((float)p->damageCount * scale),5,10);
     if(p->damageYaw==255 && p->damagePitch==255) {
         g->damage_x=g->damage_y=g->damage_roll=0; g->damage_pitch=-kick;
     } else {
-        qa_vec3 dir; q3nh_vectors(qa_v3(q3ne_mul(q3ne_div((float)p->damagePitch,255),360),
-            q3ne_mul(q3ne_div((float)p->damageYaw,255),360),0),&dir,NULL,NULL);
+        qa_vec3 dir; q3nh_vectors(qa_v3((((float)p->damagePitch / 255) * 360),
+            (((float)p->damageYaw / 255) * 360),0),&dir,NULL,NULL);
         dir=q3ne_scale(dir,-1);
         float front=q3ne_dot(dir,f->refdef.axis[0]),left=q3ne_dot(dir,f->refdef.axis[1]),up=q3ne_dot(dir,f->refdef.axis[2]);
         float distance=fmaxf(0.1f,q3ne_length(qa_v3(front,left,0)));
-        g->damage_roll=q3ne_mul(kick,left); g->damage_pitch=-q3ne_mul(kick,front);
-        front=fmaxf(front,0.1f); g->damage_x=q3ne_div(-left,front); g->damage_y=q3ne_div(up,distance);
+        g->damage_roll=(kick * left); g->damage_pitch=-(kick * front);
+        front=fmaxf(front,0.1f); g->damage_x=(-left / front); g->damage_y=(up / distance);
     }
     g->damage_x=q3nh_clamp(g->damage_x,-1,1); g->damage_y=q3nh_clamp(g->damage_y,-1,1);
     g->damage_value=kick; g->damage_kick_end_time=q3ne_plus(f->time,500); g->damage_time=(float)server_time;
@@ -415,7 +415,7 @@ bool q3n_player_state_reward(q3n_player_state *o,const q3n_frame *f,q3n_reward *
         g->reward_time=f->time; --g->reward_stack; elapsed=0;
         if(!q3ne_sound(f,g->rewards[0].sound,NULL,q3n_frame_predicted_player(f)->clientNum,7,true,e))return false;
     }
-    *reward=g->rewards[0]; *alpha=3000-elapsed<200?q3ne_div((float)(3000-elapsed),200):1; *visible=true; return true;
+    *reward=g->rewards[0]; *alpha=3000-elapsed<200?((float)(3000-elapsed) / 200):1; *visible=true; return true;
 }
 void q3n_player_state_round(q3n_player_state *o)
 { if(o && !o->busy) { o->feedback.fraglimit_warnings=0; o->feedback.timelimit_warnings=0; o->map_restart=true; } }

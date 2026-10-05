@@ -112,8 +112,7 @@ static float source_float(q3_source_number *input, bool scan) {
             character = source_take(input);
             if (character < '0' || character > '9')
                 break;
-            value = q3_source_float_add(q3_source_float_multiply(value, 10.0f),
-                                        (float)(character - '0'));
+            value = ((value * 10.0f) + (float)(character - '0'));
         }
     } else if (!scan)
         ++input->offset;
@@ -123,12 +122,11 @@ static float source_float(q3_source_number *input, bool scan) {
             character = source_take(input);
             if (character < '0' || character > '9')
                 break;
-            value = q3_source_float_add(
-                value, q3_source_float_multiply((float)(character - '0'), fraction));
-            fraction = q3_source_float_multiply(fraction, 0.1f);
+            value = (value + ((float)(character - '0') * fraction));
+            fraction = (fraction * 0.1f);
         }
     }
-    return q3_source_float_multiply(value, (float)sign);
+    return (value * (float)sign);
 }
 
 float q3_source_atof(qa_bytes text) {

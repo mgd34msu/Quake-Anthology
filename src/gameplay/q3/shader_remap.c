@@ -64,8 +64,8 @@ static size_t source_float(char out[32], float value) {
     while (digits) out[at++] = reversed[--digits];
     out[at++] = '.';
     for (unsigned i = 0; i < 2; ++i) {
-        volatile float fraction = remaining - (float)trunc((double)remaining);
-        volatile float scaled = fraction * 10.0f;
+        float fraction = remaining - (float)trunc((double)remaining);
+        float scaled = fraction * 10.0f;
         remaining = scaled;
         out[at++] = (char)('0' + (uint32_t)trunc((double)remaining) % 10u);
     }
@@ -138,8 +138,8 @@ bool qa_q3_shader_remap_apply(qa_q3_game *game, const char *old_name,
     return okay;
 }
 float qa_q3_shader_remap_source_time(int32_t level_time_ms) {
-    volatile float time = (float)level_time_ms;
-    volatile float seconds = time * 0.001f;
+    float time = (float)level_time_ms;
+    float seconds = time * 0.001f;
     return seconds;
 }
 bool qa_q3_shader_remap_teams(qa_q3_game *game, const char *red_team,

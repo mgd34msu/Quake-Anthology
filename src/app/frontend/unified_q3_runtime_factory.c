@@ -223,8 +223,8 @@ static bool timescale(void *context,int32_t elapsed,qa_error *e)
         !frontend_unified_q3_client_cvar_read(o->options.client,"cg_timescaleFadeSpeed",&speed,e) ||
         !frontend_unified_q3_client_cvar_read(o->options.client,"cg_timescale",&value,e))return false;
     if(value.number==finish.number)return true;
-    volatile float product=speed.number*(float)elapsed,delta=product/1000.0f;
-    volatile float sum=value.number<finish.number?value.number+delta:value.number-delta;
+    float product=speed.number*(float)elapsed,delta=product/1000.0f;
+    float sum=value.number<finish.number?value.number+delta:value.number-delta;
     float next=value.number<finish.number?fminf(finish.number,sum):fmaxf(finish.number,sum);
     if(!frontend_unified_q3_client_cvar_number(o->options.client,"cg_timescale",next,e))return false;
     return speed.number==0 || qa_cvars_set_number(qa_application_cvars(o->options.frontend->application),"timescale",next,e);

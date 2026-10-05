@@ -402,8 +402,7 @@ bool q3_item_bind_existing(qa_q3_game *game, qa_actor_id actor,
         q3_postgame_native_think_assigned(game, actor);
         available = false;
         entry->state.item.hidden = true;
-        float delay_seconds = q3_source_float_add(
-            45.0f, q3_source_float_multiply(q3_crandom(game), 15.0f));
+        float delay_seconds = (45.0f + (q3_crandom(game) * 15.0f));
         entry->state.item.respawn_at = q3_source_float_schedule(game->now_ms, delay_seconds);
     }
     if (!available) {
@@ -1041,9 +1040,7 @@ static bool pickup_complete(void *context, const qa_pickup_offer *offer, bool ac
     float seconds = spawn.wait_seconds != 0 ? spawn.wait_seconds : call->respawn;
     int32_t respawn_seconds = q3_source_float_to_int(seconds);
     if (spawn.random_seconds != 0) {
-        float adjusted = q3_source_float_add(
-            (float)respawn_seconds,
-            q3_source_float_multiply(q3_crandom(game), spawn.random_seconds));
+        float adjusted = ((float)respawn_seconds + (q3_crandom(game) * spawn.random_seconds));
         respawn_seconds = q3_source_float_to_int(adjusted);
         if (respawn_seconds < 1)
             respawn_seconds = 1;

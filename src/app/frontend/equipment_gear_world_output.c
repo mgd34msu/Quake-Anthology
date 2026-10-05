@@ -16,28 +16,25 @@ struct frontend_equipment_gear_world_output {
     bool (*current)(void *);
     bool projectile_present;
 };
-static float rounded(double value) { volatile float result = (float)value; return result; }
-static float sum(float a, float b) { return rounded((double)a + b); }
-static float product(float a, float b) { return rounded((double)a * b); }
 static float length(qa_vec3 vector)
 {
-    float square = sum(sum(product(vector.x, vector.x), product(vector.y, vector.y)), product(vector.z, vector.z));
-    return rounded(sqrt((double)square));
+    float square = (((vector.x * vector.x) + (vector.y * vector.y)) + (vector.z * vector.z));
+    return ((float)(sqrt((double)square)));
 }
 static qa_vec3 scaled(qa_vec3 vector, double scale)
-{ return qa_v3(rounded(vector.x * scale), rounded(vector.y * scale), rounded(vector.z * scale)); }
+{ return qa_v3(((float)(vector.x * scale)), ((float)(vector.y * scale)), ((float)(vector.z * scale))); }
 static void model_axis(qa_vec3 angles, qa_vec3 axis[3])
 {
     const double radians = 6.28318530717958647693 / 360.0;
-    float yaw = rounded(angles.y * radians), pitch = rounded(angles.x * radians), roll = rounded(angles.z * radians);
-    float sy = rounded(sin(yaw)), cy = rounded(cos(yaw)), sp = rounded(sin(pitch)), cp = rounded(cos(pitch));
-    float sr = rounded(sin(roll)), cr = rounded(cos(roll)), rp = product(-sr, sp);
-    axis[0] = qa_v3(product(cp, cy), product(cp, sy), -sp);
-    axis[1] = qa_v3(-sum(product(rp, cy), product(-cr, -sy)),
-        -sum(product(rp, sy), product(-cr, cy)), -product(-sr, cp));
-    rp = product(cr, sp);
-    axis[2] = qa_v3(sum(product(rp, cy), product(-sr, -sy)),
-        sum(product(rp, sy), product(-sr, cy)), product(cr, cp));
+    float yaw = ((float)(angles.y * radians)), pitch = ((float)(angles.x * radians)), roll = ((float)(angles.z * radians));
+    float sy = ((float)(sin(yaw))), cy = ((float)(cos(yaw))), sp = ((float)(sin(pitch))), cp = ((float)(cos(pitch)));
+    float sr = ((float)(sin(roll))), cr = ((float)(cos(roll))), rp = (-sr * sp);
+    axis[0] = qa_v3((cp * cy), (cp * sy), -sp);
+    axis[1] = qa_v3(-((rp * cy) + (-cr * -sy)),
+        -((rp * sy) + (-cr * cy)), -(-sr * cp));
+    rp = (cr * sp);
+    axis[2] = qa_v3(((rp * cy) + (-sr * -sy)),
+        ((rp * sy) + (-sr * cy)), (cr * cp));
 }
 static qa_vec3 vector_angles(qa_vec3 vector)
 {
@@ -45,12 +42,12 @@ static qa_vec3 vector_angles(qa_vec3 vector)
     if (vector.x == 0 && vector.y == 0) {
         yaw = 0; pitch = vector.z > 0 ? 90 : 270;
     } else {
-        yaw = vector.x != 0 ? rounded(product(rounded(atan2(vector.y, vector.x)), 180) / (double)pi) :
+        yaw = vector.x != 0 ? ((float)((((float)(atan2(vector.y, vector.x))) * 180) / (double)pi)) :
             vector.y > 0 ? 90 : 270;
-        if (yaw < 0) yaw = sum(yaw, 360);
-        float forward = rounded(sqrt(sum(product(vector.x, vector.x), product(vector.y, vector.y))));
-        pitch = rounded(product(rounded(atan2(vector.z, forward)), 180) / (double)pi);
-        if (pitch < 0) pitch = sum(pitch, 360);
+        if (yaw < 0) yaw = (yaw + 360);
+        float forward = ((float)(sqrt(((vector.x * vector.x) + (vector.y * vector.y)))));
+        pitch = ((float)((((float)(atan2(vector.z, forward))) * 180) / (double)pi));
+        if (pitch < 0) pitch = (pitch + 360);
     }
     return qa_v3(-pitch, yaw, 0);
 }
@@ -174,7 +171,7 @@ bool frontend_equipment_gear_world_prepare(qa_frontend *frontend,
             if (!output->segments) okay = frontend_fail(error, QA_ERROR_MEMORY, "Retaining authored world cable segments");
         }
         if (okay) {
-            qa_vec3 direction = distance == 0 ? qa_v3(0, 0, 0) : scaled(delta, rounded(1.0 / distance));
+            qa_vec3 direction = distance == 0 ? qa_v3(0, 0, 0) : scaled(delta, ((float)(1.0 / distance)));
             qa_q3_ref_entity ref = model_ref(handle, source->tether_body.origin, vector_angles(direction));
             for (size_t i = 0; i < output->segment_count; ++i) {
                 ref.origin = qa_vec_sub(output->start, scaled(direction, (double)(i + 1) * segment));

@@ -16,10 +16,6 @@ static int32_t subtract(int32_t a,int32_t b)
 { return signed_word((uint32_t)a-(uint32_t)b); }
 static int32_t increment(int32_t a)
 { return signed_word((uint32_t)a+1u); }
-static float multiply(float a,float b)
-{ volatile float out=a*b; return out; }
-static float add(float a,float b)
-{ volatile float out=a+b; return out; }
 static qa_vec3 array_vector(const float v[3])
 { return qa_v3(v[0],v[1],v[2]); }
 
@@ -351,8 +347,8 @@ static bool timescale(q3n_native *o,qa_error *e)
         !qa_native_q3_client_cvar_read(client,"cg_timescaleFadeSpeed",&speed,e) ||
         !qa_native_q3_client_cvar_read(client,"cg_timescale",&current,e))return false;
     if(current.number==end.number)return true;
-    volatile float delta=multiply(speed.number,(float)o->frame_milliseconds)/1000;
-    float value=current.number<end.number?fminf(end.number,add(current.number,delta)):fmaxf(end.number,add(current.number,-delta));
+    float delta=(speed.number * (float)o->frame_milliseconds)/1000;
+    float value=current.number<end.number?fminf(end.number,(current.number + delta)):fmaxf(end.number,(current.number + -delta));
     return qa_native_q3_client_cvar_number(client,"cg_timescale",value,e) &&
         (speed.number==0 || qa_native_q3_client_set_timescale(client,value,e));
 }
@@ -466,10 +462,10 @@ static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,
     if(!tournament) {
         if(!q3n_hud_tile_clear(o->hud,f,backend.options.viewport,e))return false;
         qa_q3_refdef render=f->refdef;
-        float separation=settings->stereo==0?0:multiply(settings->stereo_separation,settings->stereo==1?-0.5f:0.5f);
-        render.origin.x=add(render.origin.x,multiply(render.axis[1].x,-separation));
-        render.origin.y=add(render.origin.y,multiply(render.axis[1].y,-separation));
-        render.origin.z=add(render.origin.z,multiply(render.axis[1].z,-separation));
+        float separation=settings->stereo==0?0:(settings->stereo_separation * (settings->stereo==1?-0.5f:0.5f));
+        render.origin.x=(render.origin.x + (render.axis[1].x * -separation));
+        render.origin.y=(render.origin.y + (render.axis[1].y * -separation));
+        render.origin.z=(render.origin.z + (render.axis[1].z * -separation));
         if(!qa_q3_presentation_render(f->presentation,&render,e))return false;
     }
     if(!q3n_hud_frame(o->hud,f,&settings->hud,o->commands,o->player_state,backend.options.viewport,e) ||

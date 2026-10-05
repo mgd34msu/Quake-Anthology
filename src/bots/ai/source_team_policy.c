@@ -617,7 +617,7 @@ static bool human_leader(qa_bots *b, bot_ai_state *s, bool *found, qa_error *e) 
             bot_ai_decisionmaker_set(s,i);bot_ai_ordered_set(s,true);bot_ai_order_time_set(s,b->time);
             float random;if(!bot_ai_random(b,&random,e)) return false;
             if(!alive(b,s)) return true;
-            volatile float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);
+            float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);
             bot_ai_long_term_goal_set(s,BOT_LTG_DEFEND);bot_ai_team_goal_time_set(s,b->time+600.0f);bot_ai_defend_away_time_set(s,0);
             if(!team_status(b,s,e)) return false;
             if(alive(b,s) && !bot_ai_remember_order(b,s,e)) return false;
@@ -635,7 +635,7 @@ static bool random_deadline(qa_bots *b, bot_ai_state *s, float wait, uint32_t of
     if(!alive(b,s)) return true;
     float random;if(!bot_ai_random(b,&random,e)) return false;
     if(alive(b,s)) {
-        volatile float delay=random*10.0f;volatile float start=b->time+wait;
+        float delay=random*10.0f;float start=b->time+wait;
         bot_source_f32_write(s->source_span.data+offset,start+delay);
     }
     return true;
@@ -762,7 +762,7 @@ static bool own_decision(qa_bots *b, bot_ai_state *s, qa_error *e) {
 }
 static bool decision_deadline(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(!alive(b,s)) return true;
-    volatile float deadline=b->time+5.0f;
+    float deadline=b->time+5.0f;
     if(!isfinite(deadline) || (double)deadline<-2147483648.0 || (double)deadline>2147483647.0)
         return bot_ai_fail(e,"Source bot own-decision deadline has an undefined integer conversion");
     if(alive(b,s)) bot_ai_own_decision_time_set(s,(int32_t)deadline);
@@ -819,7 +819,7 @@ static void thresholds(const bot_ai_state *s, float *attack, float *defense) {
 static bool message_delay(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(!alive(b,s)) return true;
     float random;if(!bot_ai_random(b,&random,e)) return false;
-    if(alive(b,s)) {volatile float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);}
+    if(alive(b,s)) {float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);}
     return true;
 }
 static bool common_seek(qa_bots *b, bot_ai_state *s, bool one_flag, bool harvester,
@@ -1134,7 +1134,7 @@ bool bot_ai_source_alternate_route(qa_bots *b, bot_ai_state *s, int32_t base, qa
     if(count>BOT_SOURCE_ALTERNATE_ROUTES) return bot_ai_fail(e,"Source alternate route count exceeds retained storage");
     float random;if(!bot_ai_random(b,&random,e)) return false;
     if(!alive(b,s)) return true;
-    volatile float scaled=random*(float)count;
+    float scaled=random*(float)count;
     if(!isfinite(scaled) || scaled<0 || (double)scaled>2147483647.0)
         return bot_ai_fail(e,"Source alternate-route RNG index has an undefined integer conversion");
     size_t index=(size_t)(int32_t)scaled;if(index>=count) index=count-1;

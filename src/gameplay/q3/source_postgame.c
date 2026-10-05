@@ -25,9 +25,9 @@ static float source_yaw(qa_vec3 direction)
     if (direction.x == 0 && direction.y == 0) return 0;
     if (direction.x != 0) {
         float radians = (float)atan2((double)direction.y, (double)direction.x);
-        yaw = q3_source_float_divide(q3_source_float_multiply(radians, 180), Q3_PI);
+        yaw = ((radians * 180) / Q3_PI);
     } else yaw = direction.y > 0 ? 90 : 270;
-    return yaw < 0 ? q3_source_float_add(yaw, 360) : yaw;
+    return yaw < 0 ? (yaw + 360) : yaw;
 }
 
 static bool podium_origin(qa_q3_game *game, qa_vec3 *out, qa_error *error)
@@ -41,15 +41,14 @@ static bool podium_origin(qa_q3_game *game, qa_vec3 *out, qa_error *error)
     for (unsigned axis = 0; axis < 3; ++axis) {
         if (!game->options.hooks.postgame_cvar_integer(game->options.hooks.context,
                 "g_podiumDist", &distance, error)) return false;
-        float component = q3_source_float_add(q3_source_vec_component(origin, axis),
-            q3_source_float_multiply(q3_source_vec_component(forward, axis), (float)distance));
+        float component = (q3_source_vec_component(origin, axis) + (q3_source_vec_component(forward, axis) * (float)distance));
         if (!axis) origin.x = component;
         else if (axis == 1) origin.y = component;
         else origin.z = component;
     }
     if (!game->options.hooks.postgame_cvar_integer(game->options.hooks.context,
             "g_podiumDrop", &drop, error)) return false;
-    origin.z = q3_source_float_add(origin.z, -(float)drop);
+    origin.z = (origin.z + -(float)drop);
     *out = origin;
     return true;
 }
@@ -405,12 +404,12 @@ bool q3_postgame_step(qa_q3_game *game, qa_actor_id actor, qa_error *error)
     qa_vec3 normal = trace.contact ? trace.contact_plane.normal : qa_v3(0, 0, 0);
     float dot = qa_vec_dot(velocity, normal);
     velocity = qa_vec_scale(qa_vec_add(velocity,
-        qa_vec_scale(normal, q3_source_float_multiply(-2, dot))), entry->state.postgame.physics_bounce);
+        qa_vec_scale(normal, (-2 * dot))), entry->state.postgame.physics_bounce);
     entity = &entry->state.postgame.entity;
     entity->pos.delta[0] = velocity.x; entity->pos.delta[1] = velocity.y; entity->pos.delta[2] = velocity.z;
     if (normal.z > 0 && velocity.z < 40) {
         qa_vec3 stopped = qa_physics_q3_snap(qa_v3(trace.end.x, trace.end.y,
-            q3_source_float_add(trace.end.z, 1)));
+            (trace.end.z + 1)));
         if (!set_origin(game, actor, stopped, error)) return false;
         entry = q3_actor_get(game, actor);
         if (!entry || entry->kind != Q3_ACTOR_VICTORY_MODEL) return true;

@@ -41,7 +41,7 @@ static bool client_score(q3n_hud_draw *d,float y,const q3n_command_score *score,
     const qa_q3_player *p=q3n_frame_snapshot_player(d->frame);
     if(score->client==p->clientNum) {
         *local=true; int32_t rank=p->persistant[3]==3 || c->game_type>=3?-1:p->persistant[2]&~0x4000;
-        float highlight[4]={rank==0?0:0.7f,rank==0 || rank==1?0:0.7f,rank==1 || rank==2?0:0.7f,q3ne_mul(fade,0.7f)};
+        float highlight[4]={rank==0?0:0.7f,rank==0 || rank==1?0:0.7f,rank==1 || rank==2?0:0.7f,(fade * 0.7f)};
         if(!q3nh_fill(d,176,y,512,17*d->frame->preferences.text_scale,highlight))return false;
     }
     if(!q3nh_big(d,160,y,text,fade))return false;

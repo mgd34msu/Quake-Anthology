@@ -244,14 +244,12 @@ static double jump_pad_pitch(qa_vec3 velocity) {
     if (velocity.x == 0 && velocity.y == 0)
         pitch = velocity.z > 0 ? 90.0f : 270.0f;
     else {
-        float squared = q3_source_float_add(
-            q3_source_float_multiply(velocity.x, velocity.x),
-            q3_source_float_multiply(velocity.y, velocity.y));
+        float squared = ((velocity.x * velocity.x) + (velocity.y * velocity.y));
         float horizontal = (float)sqrt((double)squared);
         float radians = (float)atan2((double)velocity.z, (double)horizontal);
-        pitch = q3_source_float_multiply(radians, 180.0f) / Q3_PI;
+        pitch = (radians * 180.0f) / Q3_PI;
         if (pitch < 0)
-            pitch = q3_source_float_add(pitch, 360.0f);
+            pitch = (pitch + 360.0f);
     }
     int32_t turns = isfinite(pitch) ? (int32_t)(-(double)pitch * (65536.0 / 360.0)) : 0;
     double normalized = (360.0 / 65536.0) * ((uint32_t)turns & 65535u);

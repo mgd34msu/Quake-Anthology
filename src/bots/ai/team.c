@@ -47,8 +47,8 @@ static bool source_goal_entity(qa_bots *b,qa_bot_goal *goal,const char *classnam
             if(!name) return bot_ai_fail(e,"bot objective classname lost its actual source string");
             if(source_same_name(name,classname)) continue;
         }
-        volatile float x=goal->origin.x-row.state.origin[0],y=goal->origin.y-row.state.origin[1],z=goal->origin.z-row.state.origin[2];
-        volatile float xx=x*x,yy=y*y,zz=z*z,xy=xx+yy,distance=xy+zz;
+        float x=goal->origin.x-row.state.origin[0],y=goal->origin.y-row.state.origin[1],z=goal->origin.z-row.state.origin[2];
+        float xx=x*x,yy=y*y,zz=z*z,xy=xx+yy,distance=xy+zz;
         if(distance<100.0f) {goal->entity=(int32_t)index;return true;}
     }
     return true;
@@ -196,7 +196,7 @@ static int32_t token_number(const char **text) {
 static bool ordered(qa_bots *b,bot_ai_state *s,int32_t client,bot_long_term_goal goal,float duration,qa_error *e) {
     bot_ai_decisionmaker_set(s,client);bot_ai_ordered_set(s,true);bot_ai_order_time_set(s,b->time);
     float random;if(!bot_ai_random(b,&random,e)) return false;
-    volatile float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);
+    float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);
     bot_ai_long_term_goal_set(s,(int32_t)goal);bot_ai_team_goal_time_set(s,b->time+duration);
     return true;
 }

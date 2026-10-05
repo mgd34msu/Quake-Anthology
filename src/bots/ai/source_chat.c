@@ -106,7 +106,7 @@ static bool opponent_name(qa_bots *b,bot_ai_state *s,char out[32],qa_error *e) {
         if(!same) opponents[count++]=client;
     }
     float random;CHAT_CALL(bot_ai_random(b,&random,e));
-    volatile float scaled=random*(float)count;
+    float scaled=random*(float)count;
     int32_t index=(int32_t)scaled,selected=count?opponents[0]:0;
     for(int32_t i=0;i<count;++i) if(--index<=0) {selected=opponents[i];break;}
     return bot_ai_easy_name(b,selected,out,32,e);
@@ -145,7 +145,7 @@ static const char *weapon_name(bool missionpack,int32_t method) {
 }
 static bool random_weapon(qa_bots *b,bot_ai_state *s,const char **out,qa_error *e) {
     *out="BFG10K";float random;CHAT_CALL(bot_ai_random(b,&random,e));
-    volatile float scaled=random*(b->services.team_arena?11.9f:8.9f);
+    float scaled=random*(b->services.team_arena?11.9f:8.9f);
     switch((int32_t)scaled) {
     case 0:*out="Gauntlet";break;case 1:*out="Shotgun";break;case 2:*out="Machinegun";break;
     case 3:*out="Grenade Launcher";break;case 4:*out="Rocket Launcher";break;case 5:*out="Plasmagun";break;
@@ -222,7 +222,7 @@ bool bot_ai_source_valid_chat_position(qa_bots *b,bot_ai_state *s,bool *out,qa_e
     return true;
 }
 static bool unavailable(qa_bots *b,bot_ai_state *s) {
-    volatile float before=b->time-25.0f;
+    float before=b->time-25.0f;
     return b->controls.no_chat || bot_ai_last_chat_time(s)>before;
 }
 static bool characteristic(qa_bots *b,bot_ai_state *s,uint32_t index,float *out,qa_error *e) {
@@ -265,7 +265,7 @@ bool bot_ai_source_chat_exit_game(qa_bots *b,bot_ai_state *s,bool *out,qa_error 
 static bool level_available(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     *out=false;if(b->controls.no_chat) return true;
     bool watching;CHAT_CALL(observer(b,s,&watching,e));if(watching) return true;
-    volatile float before=b->time-25.0f;*out=!(bot_ai_last_chat_time(s)>before);return true;
+    float before=b->time-25.0f;*out=!(bot_ai_last_chat_time(s)>before);return true;
 }
 bool bot_ai_source_chat_start_level(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     *out=false;bool available;CHAT_CALL(level_available(b,s,&available,e));if(!available) return true;
@@ -402,7 +402,7 @@ static bool attacker_allowed(qa_bots *b,bot_ai_state *s,int32_t attacker,bool *o
 static bool hit_chance(qa_bots *b,bot_ai_state *s,uint32_t index,bool *out,qa_error *e) {
     *out=false;float chance;CHAT_CALL(characteristic(b,s,index,&chance,e));
     if(b->source_goals.game_type>=3 || b->source_goals.game_type==1) return true;
-    bool skip;volatile float probability=chance*.5f;
+    bool skip;float probability=chance*.5f;
     CHAT_CALL(refused(b,s,probability,&skip,e));*out=!skip;return true;
 }
 bool bot_ai_source_chat_hit_talking(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
@@ -450,7 +450,7 @@ bool bot_ai_source_chat_random(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e)
     if(b->source_goals.game_type==1 || bot_ai_long_term_goal(s)==BOT_LTG_TEAM_HELP ||
        bot_ai_long_term_goal(s)==BOT_LTG_TEAM_ACCOMPANY || bot_ai_long_term_goal(s)==BOT_LTG_RUSH_BASE) return true;
     float chance,random;CHAT_CALL(characteristic(b,s,SOURCE_CHAT_RANDOM,&chance,e));
-    CHAT_CALL(bot_ai_random(b,&random,e));volatile float limit=bot_ai_think_time(s)*.1f;
+    CHAT_CALL(bot_ai_random(b,&random,e));float limit=bot_ai_think_time(s)*.1f;
     if(random>limit) return true;
     if(!b->controls.fast_chat) {
         CHAT_CALL(bot_ai_random(b,&random,e));if(random>chance) return true;

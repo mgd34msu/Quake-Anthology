@@ -114,7 +114,7 @@ void q3n_hud_disconnect_command(q3n_hud *o,int32_t time)
 static bool center_string(q3n_hud_draw *d)
 {
     q3n_hud_state *s=&d->owner->state; float color[4];
-    if(!q3nh_fade(d->frame->time,s->center_print_time,q3ne_int(q3ne_mul(1000,d->settings->center_time)),color))return true;
+    if(!q3nh_fade(d->frame->time,s->center_print_time,q3ne_int((1000 * d->settings->center_time)),color))return true;
     q3nh_anchor(d,320,240);
     float y=(float)s->center_print_y-(float)s->center_print_lines*8*d->frame->preferences.text_scale; const char *start=s->center_print;
     for(;;) {
@@ -124,14 +124,14 @@ static bool center_string(q3n_hud_draw *d)
             float height;
             if(!d->owner->options.mission_center_line(d->owner->options.context,d->frame,line,y,color,&height,d->error) ||
                !q3nh_current(d->owner,d->frame,d->error))return false;
-            y=q3ne_add(y,q3ne_add(height,6));
+            y=(y + (height + 6));
         } else {
-            int32_t height=q3ne_int(q3ne_mul((float)s->center_print_char_width,1.5f));
+            int32_t height=q3ne_int(((float)s->center_print_char_width * 1.5f));
             float width;
             if(!q3nh_width(d,line,(float)s->center_print_char_width,(float)height,0,&width) ||
                !q3nh_text(d,(640-width)/2,y,line,
                (float)s->center_print_char_width,(float)height,color,false,true,0))return false;
-            y=(float)q3ne_int(q3ne_add(y,q3ne_mul(q3ne_mul((float)s->center_print_char_width,1.5f),d->frame->preferences.text_scale)));
+            y=(float)q3ne_int((y + (((float)s->center_print_char_width * 1.5f) * d->frame->preferences.text_scale)));
         }
         if(!*end)break;
         start=end+1;
@@ -142,26 +142,26 @@ static bool status_head(q3n_hud_draw *d,float x)
 {
     q3n_hud_state *s=&d->owner->state; const q3n_player_feedback *g=q3n_player_state_feedback(d->player);
     int32_t time=d->frame->time; float size=60;
-    if(g->damage_time!=0.0f && q3ne_add((float)time,-g->damage_time)<500) {
-        float fraction=q3ne_div(q3ne_add((float)time,-g->damage_time),500);
-        size=q3ne_mul(60,q3ne_add(1.5f,-q3ne_mul(fraction,0.5f))); float stretch=q3ne_add(size,-60);
-        x=q3ne_add(x,-q3ne_add(q3ne_mul(stretch,0.5f),q3ne_mul(q3ne_mul(g->damage_x,stretch),0.5f)));
-        s->head_start_yaw=q3ne_add(180,q3ne_mul(g->damage_x,45));
-        s->head_end_yaw=q3ne_add(180,q3ne_mul(20,(float)cos((double)q3ne_mul(q3n_events_crandom(d->frame->events),3.14159274101257324219f))));
-        s->head_end_pitch=q3ne_mul(5,(float)cos((double)q3ne_mul(q3n_events_crandom(d->frame->events),3.14159274101257324219f)));
-        s->head_start_time=time; s->head_end_time=q3ne_int(q3ne_add((float)q3ne_plus(time,100),q3ne_mul(q3n_events_random(d->frame->events),2000)));
+    if(g->damage_time!=0.0f && ((float)time + -g->damage_time)<500) {
+        float fraction=(((float)time + -g->damage_time) / 500);
+        size=(60 * (1.5f + -(fraction * 0.5f))); float stretch=(size + -60);
+        x=(x + -((stretch * 0.5f) + ((g->damage_x * stretch) * 0.5f)));
+        s->head_start_yaw=(180 + (g->damage_x * 45));
+        s->head_end_yaw=(180 + (20 * (float)cos((double)(q3n_events_crandom(d->frame->events) * 3.14159274101257324219f))));
+        s->head_end_pitch=(5 * (float)cos((double)(q3n_events_crandom(d->frame->events) * 3.14159274101257324219f)));
+        s->head_start_time=time; s->head_end_time=q3ne_int(((float)q3ne_plus(time,100) + (q3n_events_random(d->frame->events) * 2000)));
     } else if(time>=s->head_end_time) {
         s->head_start_yaw=s->head_end_yaw; s->head_start_pitch=s->head_end_pitch; s->head_start_time=s->head_end_time;
-        s->head_end_time=q3ne_int(q3ne_add((float)q3ne_plus(time,100),q3ne_mul(q3n_events_random(d->frame->events),2000)));
-        s->head_end_yaw=q3ne_add(180,q3ne_mul(20,(float)cos((double)q3ne_mul(q3n_events_crandom(d->frame->events),3.14159274101257324219f))));
-        s->head_end_pitch=q3ne_mul(5,(float)cos((double)q3ne_mul(q3n_events_crandom(d->frame->events),3.14159274101257324219f)));
+        s->head_end_time=q3ne_int(((float)q3ne_plus(time,100) + (q3n_events_random(d->frame->events) * 2000)));
+        s->head_end_yaw=(180 + (20 * (float)cos((double)(q3n_events_crandom(d->frame->events) * 3.14159274101257324219f))));
+        s->head_end_pitch=(5 * (float)cos((double)(q3n_events_crandom(d->frame->events) * 3.14159274101257324219f)));
     }
     if(s->head_start_time>time)s->head_start_time=time;
-    float fraction=q3ne_div((float)q3ne_sub(time,s->head_start_time),(float)q3ne_sub(s->head_end_time,s->head_start_time));
-    fraction=q3ne_mul(q3ne_mul(fraction,fraction),q3ne_add(3,-q3ne_mul(2,fraction)));
-    qa_vec3 angles=qa_v3(q3ne_add(s->head_start_pitch,q3ne_mul(q3ne_add(s->head_end_pitch,-s->head_start_pitch),fraction)),
-        q3ne_add(s->head_start_yaw,q3ne_mul(q3ne_add(s->head_end_yaw,-s->head_start_yaw),fraction)),0);
-    return q3nh_head(d,x,q3ne_add(480,-size),size,size,q3n_frame_snapshot_player(d->frame)->clientNum,angles);
+    float fraction=((float)q3ne_sub(time,s->head_start_time) / (float)q3ne_sub(s->head_end_time,s->head_start_time));
+    fraction=((fraction * fraction) * (3 + -(2 * fraction)));
+    qa_vec3 angles=qa_v3((s->head_start_pitch + ((s->head_end_pitch + -s->head_start_pitch) * fraction)),
+        (s->head_start_yaw + ((s->head_end_yaw + -s->head_start_yaw) * fraction)),0);
+    return q3nh_head(d,x,(480 + -size),size,size,q3n_frame_snapshot_player(d->frame)->clientNum,angles);
 }
 static bool status_bar(q3n_hud_draw *d)
 {
@@ -176,14 +176,14 @@ static bool status_bar(q3n_hud_draw *d)
     if(weapon<0 || weapon>=16 || predicted->weapon<0 || predicted->weapon>=16)return q3ne_fail(d->error,QA_ERROR_FORMAT,"HUD actual source weapon is invalid");
     if(!q3nh_team_background(d,0,420,640,60,0.33f,p->persistant[3]))return false;
     if(!d->weapon_hud.selected && weapon && m->weapons[weapon].ammo_model && !q3nh_model(d,100,432,48,48,m->weapons[weapon].ammo_model,0,
-       qa_v3(70,0,0),qa_v3(0,q3ne_add(90,q3ne_mul(20,(float)sin((double)q3ne_div((float)d->frame->time,1000)))),0)))return false;
+       qa_v3(70,0,0),qa_v3(0,(90 + (20 * (float)sin((double)((float)d->frame->time / 1000)))),0)))return false;
     if(!status_head(d,285))return false;
     if(predicted->powerups[7]) { if(!q3nh_flag(d,333,432,48,48,1,false))return false; }
     else if(predicted->powerups[8]) { if(!q3nh_flag(d,333,432,48,48,2,false))return false; }
     else if(predicted->powerups[9] && !q3nh_flag(d,333,432,48,48,0,false))return false;
     int32_t armor=p->stats[q3nh_armor_stat(d->owner->product)];
     if(armor && !q3nh_model(d,470,432,48,48,m->graphics[Q3N_G_ARMOR],0,qa_v3(90,0,-10),
-       qa_v3(0,q3ne_div(q3ne_mul((float)(d->frame->time&2047),360),2048),0)))return false;
+       qa_v3(0,(((float)(d->frame->time&2047) * 360) / 2048),0)))return false;
     if(!d->weapon_hud.selected && weapon && p->ammo[weapon]>-1) {
         const float firing[4]={0.5f,0.5f,0.5f,1};
         if(!q3nh_color(d,predicted->weaponState==3 && predicted->weaponTime>100?firing:q3nh_normal) ||
@@ -208,14 +208,12 @@ static bool crosshair(q3n_hud_draw *d)
     if(!d->frame->preferences.crosshair || !s->crosshair || p->persistant[3]==3 || d->frame->third_person)return true;
     float color[4]; q3nh_health(p->stats[0],p->stats[q3nh_armor_stat(d->owner->product)],color);
     if(!q3nh_color(d,s->crosshair_health?color:NULL))return false;
-    float size=q3ne_mul(s->crosshair_size,q3ne_div(d->frame->preferences.crosshair_size,8));
+    float size=(s->crosshair_size * (d->frame->preferences.crosshair_size / 8));
     int32_t elapsed=q3ne_sub(d->frame->time,q3n_events_state(d->frame->events)->item_pickup_blend_time);
-    if(!d->frame->preferences.reduced_flashes && elapsed>0 && elapsed<200)size=q3ne_mul(size,q3ne_add(1,q3ne_div((float)elapsed,200)));
-    float w=q3ne_mul(size,q3ne_div((float)d->viewport.width,640)),h=q3ne_mul(size,q3ne_div((float)d->viewport.height,480));
-    float x=q3ne_add(q3ne_add(q3ne_mul((float)s->crosshair_x,q3ne_div((float)d->viewport.width,640)),(float)d->frame->refdef.x),
-        q3ne_mul(0.5f,q3ne_add((float)d->frame->refdef.width,-w)));
-    float y=q3ne_add(q3ne_add(q3ne_mul((float)s->crosshair_y,q3ne_div((float)d->viewport.height,480)),(float)d->frame->refdef.y),
-        q3ne_mul(0.5f,q3ne_add((float)d->frame->refdef.height,-h)));
+    if(!d->frame->preferences.reduced_flashes && elapsed>0 && elapsed<200)size=(size * (1 + ((float)elapsed / 200)));
+    float w=(size * ((float)d->viewport.width / 640)),h=(size * ((float)d->viewport.height / 480));
+    float x=((((float)s->crosshair_x * ((float)d->viewport.width / 640)) + (float)d->frame->refdef.x) + (0.5f * ((float)d->frame->refdef.width + -w)));
+    float y=((((float)s->crosshair_y * ((float)d->viewport.height / 480)) + (float)d->frame->refdef.y) + (0.5f * ((float)d->frame->refdef.height + -h)));
     int32_t index=(s->crosshair<0?0:s->crosshair)%10;
     if(d->frame->preferences.high_contrast) {
         float black[4]={0,0,0,1};
@@ -242,7 +240,7 @@ static bool crosshair_names(q3n_hud_draw *d)
     }
     float color[4]; if(!q3nh_fade(d->frame->time,d->owner->state.crosshair_client_time,1000,color))return q3nh_color(d,NULL);
     const q3n_client_info *ci=q3n_clients_get(d->frame->clients,(uint32_t)d->owner->state.crosshair_client); if(!ci)return false;
-    color[3]=q3ne_mul(color[3],0.5f);
+    color[3]=(color[3] * 0.5f);
     bool ok=d->owner->product==QA_Q3_TEAM_ARENA?
         d->owner->options.mission_text(d->owner->options.context,d->frame,ci->name,190,0.3f,color,3,false,d->error):
         q3nh_center(d,170,ci->name,color[3]);
@@ -319,7 +317,7 @@ static bool warmup(q3n_hud_draw *d)
         } else {
             size_t length=q3nh_strlen(heading); int32_t cw=length>20?640/(int32_t)length:32;
             if(!q3nh_text(d,(float)(320-(int32_t)length*cw/2),c->game_type==1?20:25,heading,(float)cw,
-               (float)q3ne_int(q3ne_mul((float)cw,c->game_type==1?1.5f:1.1f)),q3nh_white,false,true,0))return false;
+               (float)q3ne_int(((float)cw * (c->game_type==1?1.5f:1.1f))),q3nh_white,false,true,0))return false;
         }
     }
     int32_t seconds=q3ne_sub(c->warmup,d->frame->time)/1000,new_warmup=c->warmup;
@@ -373,18 +371,18 @@ static bool lagometer(q3n_hud_draw *d)
     float ax=graph.x,ay=graph.y,aw=graph.width,ah=graph.height;
     const float yellow[4]={1,1,0,1},blue[4]={0,0,1,1},green[4]={0,1,0,1};
     int32_t shader=q3n_media_read(d->frame->media)->graphics[Q3N_G_WHITE];
-    float range=q3ne_div(ah,3),mid=q3ne_add(ay,range),scale=q3ne_div(range,300);
+    float range=(ah / 3),mid=(ay + range),scale=(range / 300);
     for(int32_t a=0;(float)a<aw;++a) {
-        float value=q3ne_mul((float)o->frame_samples[(uint32_t)q3ne_sub(q3ne_sub(o->frame_count,1),a)&127u],scale);
+        float value=(((float)o->frame_samples[(uint32_t)q3ne_sub(q3ne_sub(o->frame_count,1),a)&127u]) * scale);
         if(value==0.0f)continue;
         float h=fminf(fabsf(value),range);
         if(!q3nh_color(d,value>0?yellow:blue) || !q3nh_pixels(d,ax+aw-(float)a,value>0?mid-h:mid,1,h,shader,(qa_scene_vec4){0}))return false;
     }
-    range=q3ne_div(ah,2); scale=q3ne_div(range,900);
+    range=(ah / 2); scale=(range / 900);
     for(int32_t a=0;(float)a<aw;++a) {
         unsigned i=(uint32_t)q3ne_sub(q3ne_sub(o->snapshot_count,1),a)&127u; int32_t value=o->snapshot_samples[i];
         if(!value)continue;
-        float h=value<0?range:fminf(q3ne_mul((float)value,scale),range);
+        float h=value<0?range:fminf(((float)value * scale),range);
         if(!q3nh_color(d,value<0?q3nh_red:o->snapshot_flags[i]&1?yellow:green) ||
            !q3nh_pixels(d,ax+aw-(float)a,ay+ah-h,1,h,shader,(qa_scene_vec4){0}))return false;
     }

@@ -598,7 +598,7 @@ static bool lifecycle(qa_bots *b, bot_ai_state *s, bool *handled, qa_error *e) {
                 bot_ai_respawn_time_set(s,b->time+duration);bot_ai_respawn_chat_time_set(s,b->time);
             } else {
                 float random;DECISION_CALL(bot_ai_random(b,&random,e));
-                volatile float base=b->time+1;bot_ai_respawn_time_set(s,base+random);bot_ai_respawn_chat_time_set(s,0);
+                float base=b->time+1;bot_ai_respawn_time_set(s,base+random);bot_ai_respawn_chat_time_set(s,0);
             }
             bot_ai_respawn_wait_set(s,false);
         } else {
@@ -631,7 +631,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 bool chat;DECISION_CALL(bot_ai_source_chat_hit_talking(b,s,&chat,e));
                 if(chat) {
                     float duration;DECISION_CALL(bot_ai_source_chat_time(b,s,&duration,e));
-                    volatile float until=b->time+duration;bot_ai_stand_enemy_time_set(s,until+.1f);
+                    float until=b->time+duration;bot_ai_stand_enemy_time_set(s,until+.1f);
                     DECISION_CALL(bot_ai_source_chat_time(b,s,&duration,e));
                     until=b->time+duration;bot_ai_stand_until_set(s,until+.1f);
                 }
@@ -768,7 +768,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
                     if(nearby_found) {
                         if(!qa_bot_moves_reset_avoid(moves(b),s->movement,true,e)) return false;
-                        volatile float added=range*.01f,until=b->time+4;bot_ai_nearby_until_set(s,until+added);
+                        float added=range*.01f,until=b->time+4;bot_ai_nearby_until_set(s,until+added);
                         ENTER(QA_BOT_SEEK_NEARBY);continue;
                     }
                 }
@@ -971,7 +971,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 if(!nearby(b,s,&goal,range,&nearby_found,e)) return false;
                 if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
                 if(nearby_found) {
-                    volatile float added=node==QA_BOT_CHASING?.1f*range:range/100,until=b->time+added;
+                    float added=node==QA_BOT_CHASING?.1f*range:range/100,until=b->time+added;
                     if(source_combat && node==QA_BOT_CHASING) bot_ai_nearby_until_set(s,until+1);
                     DECISION_CALL(qa_bot_moves_reset_avoid(moves(b),s->movement,true,e));
                     if(!source_combat || node!=QA_BOT_CHASING)

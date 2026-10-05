@@ -33,16 +33,16 @@ qa_vec3 bot_ai_angles(qa_vec3 direction) {
     if(direction.x==0 && direction.y==0) {yaw=0;pitch=direction.z>0?90:270;}
     else {
         if(direction.x!=0) {
-            volatile float radians=(float)atan2((double)direction.y,(double)direction.x);
-            volatile float degrees=radians*180;
+            float radians=(float)atan2((double)direction.y,(double)direction.x);
+            float degrees=radians*180;
             yaw=degrees/pi;
         } else yaw=direction.y>0?90:270;
         if(yaw<0) yaw+=360;
-        volatile float x_squared=direction.x*direction.x,y_squared=direction.y*direction.y;
-        volatile float squared=x_squared+y_squared;
-        volatile float horizontal=(float)sqrt((double)squared);
-        volatile float radians=(float)atan2((double)direction.z,(double)horizontal);
-        volatile float degrees=radians*180;
+        float x_squared=direction.x*direction.x,y_squared=direction.y*direction.y;
+        float squared=x_squared+y_squared;
+        float horizontal=(float)sqrt((double)squared);
+        float radians=(float)atan2((double)direction.z,(double)horizontal);
+        float degrees=radians*180;
         pitch=degrees/pi;
         if(pitch<0) pitch+=360;
     }
@@ -353,18 +353,18 @@ bool bot_ai_find_enemy(qa_bots *b,bot_ai_state *s,int32_t current_enemy,bool *fo
         if(!carrying && ((uint32_t)info.state.powerups&(1u<<BOT_SOURCE_PW_INVIS)) && !firing) continue;
         if(easy<.5f && (info.state.flags&0x1000)) continue;
         qa_vec3 direction=qa_vec_sub(info.state.origin,b->source_event_globals.last_teleport_origin);
-        volatile float recent=b->time-3;
+        float recent=b->time-3;
         if(b->source_event_globals.last_teleport_time>recent && qa_vec_dot(direction,direction)<70*70) continue;
         direction=qa_vec_sub(info.state.origin,bot_ai_origin(s));
         float distance=qa_vec_dot(direction,direction);
         if(!carrying && current_enemy>=0 && distance>best) continue;
-        volatile float alert_distance=alertness*4000,limit=900+alert_distance,squared_limit=limit*limit;
+        float alert_distance=alertness*4000,limit=900+alert_distance,squared_limit=limit*limit;
         if(distance>squared_limit) continue;
         bool same;
         if(!source_enemy_same_team(b,s,client,&same,e)) return false;
         if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
         if(same) continue;
-        volatile float scaled=fminf(distance,810*810)/(810*9),remaining=90-scaled;
+        float scaled=fminf(distance,810*810)/(810*9),remaining=90-scaled;
         float fov=current_enemy<0 && (hurt || firing)?360:180-remaining;
         float visible;
         if(!bot_ai_source_entity_visible(b,s,client,fov,&visible,e)) return false;
@@ -409,7 +409,7 @@ bool bot_ai_find_enemy(qa_bots *b,bot_ai_state *s,int32_t current_enemy,bool *fo
         qa_vec3 d = qa_vec_sub(player.origin, bot_ai_origin(s));
         float distance = qa_vec_dot(d,d), limit = 900+alertness*4000;
         qa_vec3 teleport_delta=qa_vec_sub(player.origin,b->source_event_globals.last_teleport_origin);
-        volatile float recent_teleport=b->time-3;
+        float recent_teleport=b->time-3;
         if ((current_enemy>=0 && distance > best) || distance > limit*limit ||
             (b->source_event_globals.last_teleport_time>recent_teleport &&
              qa_vec_dot(teleport_delta,teleport_delta)<70*70)) continue;

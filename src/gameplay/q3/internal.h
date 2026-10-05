@@ -24,47 +24,31 @@ static inline float q3_source_vec_component(qa_vec3 vector, unsigned axis) {
     return axis == 0 ? vector.x : axis == 1 ? vector.y : vector.z;
 }
 
-static inline float q3_source_float_multiply(float left, float right) {
-    volatile float value = left * right;
-    return value;
-}
 
-static inline float q3_source_float_add(float left, float right) {
-    volatile float value = left + right;
-    return value;
-}
 
-static inline float q3_source_float_divide(float left, float right) {
-    volatile float value = left / right;
-    return value;
-}
 
 static inline void q3_source_angle_vectors(qa_vec3 angles, qa_vec3 *forward,
                                            qa_vec3 *right, qa_vec3 *up) {
-    const float radians = 0.01745329251994329577f;
-    float yaw = q3_source_float_multiply(angles.y, radians);
-    float pitch = q3_source_float_multiply(angles.x, radians);
-    float roll = q3_source_float_multiply(angles.z, radians);
+    const float radians = Q3_PI * 2 / 360;
+    float yaw = (angles.y * radians);
+    float pitch = (angles.x * radians);
+    float roll = (angles.z * radians);
     float sy = (float)sin((double)yaw), cy = (float)cos((double)yaw);
     float sp = (float)sin((double)pitch), cp = (float)cos((double)pitch);
     float sr = (float)sin((double)roll), cr = (float)cos((double)roll);
     if (forward)
-        *forward = qa_v3(q3_source_float_multiply(cp, cy), q3_source_float_multiply(cp, sy), -sp);
+        *forward = qa_v3((cp * cy), (cp * sy), -sp);
     if (right) {
-        float roll_pitch = q3_source_float_multiply(-sr, sp);
-        *right = qa_v3(q3_source_float_add(q3_source_float_multiply(roll_pitch, cy),
-                                          q3_source_float_multiply(-cr, -sy)),
-                       q3_source_float_add(q3_source_float_multiply(roll_pitch, sy),
-                                          q3_source_float_multiply(-cr, cy)),
-                       q3_source_float_multiply(-sr, cp));
+        float roll_pitch = (-sr * sp);
+        *right = qa_v3(((roll_pitch * cy) + (-cr * -sy)),
+                       ((roll_pitch * sy) + (-cr * cy)),
+                       (-sr * cp));
     }
     if (up) {
-        float roll_pitch = q3_source_float_multiply(cr, sp);
-        *up = qa_v3(q3_source_float_add(q3_source_float_multiply(roll_pitch, cy),
-                                       q3_source_float_multiply(-sr, -sy)),
-                    q3_source_float_add(q3_source_float_multiply(roll_pitch, sy),
-                                       q3_source_float_multiply(-sr, cy)),
-                    q3_source_float_multiply(cr, cp));
+        float roll_pitch = (cr * sp);
+        *up = qa_v3(((roll_pitch * cy) + (-sr * -sy)),
+                    ((roll_pitch * sy) + (-sr * cy)),
+                    (cr * cp));
     }
 }
 
@@ -75,8 +59,8 @@ static inline int32_t q3_source_float_to_int(float value) {
 }
 
 static inline int32_t q3_source_float_schedule(int32_t now, float seconds) {
-    float milliseconds = q3_source_float_multiply(seconds, 1000.0f);
-    return q3_source_float_to_int(q3_source_float_add((float)now, milliseconds));
+    float milliseconds = (seconds * 1000.0f);
+    return q3_source_float_to_int(((float)now + milliseconds));
 }
 
 typedef qa_q3_projectile_state q3_missile;

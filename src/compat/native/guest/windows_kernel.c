@@ -4,7 +4,6 @@
 #include <unicode/ustring.h>
 #include <stdio.h>
 #include <math.h>
-#include <fenv.h>
 
 enum kernel_operation {
     K_ENCODE = 1, K_HEAP, K_LAST_ERROR, K_SET_ERROR, K_THREAD, K_PROCESS, K_CURRENT_PROCESS,
@@ -447,26 +446,10 @@ static bool file_operation(windows_service *service, const qa_native_value *args
             if (!okay && error) *error = failure;
         }
         free(bytes);
-        if (completed) {
-            /* Windows' source cursor is a Number. Keep its actual nearest
-             * binary64 addition, including positions beyond MAX_SAFE_INTEGER. */
-            fenv_t saved; bool held = feholdexcept(&saved) == 0;
-            if (!held || fesetround(FE_TONEAREST) != 0) {
-                if (held) fesetenv(&saved);
-                return guest_fail(error,QA_ERROR_UNSUPPORTED,address,"host cannot provide Windows Number cursor rounding");
-            }
-            volatile double start = handle->stream >= 0 ? handle->stream_offset : (double)view.offset;
-            volatile double amount = (double)completed;
-            double next = start + amount;
-            if (fesetenv(&saved) != 0) return guest_fail(error,QA_ERROR_UNSUPPORTED,address,"Windows cursor environment restore failed");
-            if (handle->stream >= 0) handle->stream_offset = next;
-            else {
-                if (!isfinite(next) || next < 0 || next >= 0x1p64)
-                    return guest_fail(error,QA_ERROR_UNSUPPORTED,address,"actual Windows file cursor exceeds its uint64 external capability domain");
-                qa_error failure = error ? *error : (qa_error){0};
-                if (!guest_runtime_resources_seek(owner->resources,address,(uint64_t)next,error)) return false;
-                if (!okay && error) *error = failure;
-            }
+        if (completed && handle->stream >= 0) {
+            if (completed > UINT64_MAX - handle->stream_offset)
+                return guest_fail(error,QA_ERROR_UNSUPPORTED,address,"Windows stream byte count overflows");
+            handle->stream_offset += completed;
         }
         if (integer(args + 3)) {
             qa_error failure = error ? *error : (qa_error){0};
@@ -502,29 +485,18 @@ static bool file_operation(windows_service *service, const qa_native_value *args
         uint32_t origin = (uint32_t)integer(args + 3); uint64_t start = origin == 0 ? 0 : view.offset;
         if (origin == 2) {
             if (!guest_runtime_resources_size(owner->resources, address, &start, error)) return false;
-            /* Source size() is a Number before BigInt seek arithmetic. Round
-             * its physical integer to 53 significant bits, nearest/even,
-             * independently of the guest's current floating-point mode. */
-            unsigned shift = 0; uint64_t significand = start;
-            while (significand > UINT64_C(9007199254740991)) { significand >>= 1; ++shift; }
-            if (shift) {
-                uint64_t remainder = start & ((UINT64_C(1) << shift) - 1);
-                uint64_t half = UINT64_C(1) << (shift - 1);
-                if (remainder > half || (remainder == half && (significand & 1u))) ++significand;
-                /* A size rounded to 2^64 cannot reach a safe Source position
-                 * with this API's signed 64-bit displacement. */
-                if (significand > (UINT64_MAX >> shift))
-                    return invalid_result(owner, out, QA_NATIVE_U32, 87, UINT32_MAX, error);
-                start = significand << shift;
-            }
         }
         uint64_t magnitude = distance < 0 ? UINT64_C(0) - (uint64_t)distance : (uint64_t)distance;
-        if (origin > 2 || (distance < 0 ? magnitude > start : magnitude > UINT64_C(9007199254740991) || start > UINT64_C(9007199254740991) - magnitude))
+        if (origin > 2 || (distance >= 0 && magnitude > UINT64_MAX - start))
             return invalid_result(owner, out, QA_NATIVE_U32, 87, UINT32_MAX, error);
+        if (distance < 0 && magnitude > start)
+            return invalid_result(owner, out, QA_NATIVE_U32, 131, UINT32_MAX, error);
         uint64_t position = distance < 0 ? start - magnitude : start + magnitude;
-        if (position > UINT64_C(9007199254740991)) return invalid_result(owner, out, QA_NATIVE_U32, 87, UINT32_MAX, error);
+        if (position > INT64_MAX || (!high && position > UINT32_MAX))
+            return invalid_result(owner, out, QA_NATIVE_U32, 87, UINT32_MAX, error);
         if (!guest_runtime_resources_seek(owner->resources, address, position, error) ||
             (high && !windows_write(owner, high, 4, position >> 32, error))) return false;
+        if ((uint32_t)position == UINT32_MAX && !windows_last_error(owner,0,error)) return false;
         result(out, QA_NATIVE_U32, position); return true;
     }
     return guest_fail(error, QA_ERROR_ARGUMENT, operation, "invalid Windows file operation");

@@ -18,7 +18,7 @@ static bool impact(const q3n_frame *f, const q3n_impact_mark *r, qa_error *error
     if(!o->options.mark_fragments(o->options.context,f,points,4,q3ne_scale(r->direction,-20),output,384,fragments,128,&count,error) ||
        !q3ne_current(f,error))return false;
     if(count>128)return q3ne_fail(error,QA_ERROR_FORMAT,"Actual mark projector exceeded its source fragment destination");
-    float scale=q3ne_div(0.5f,r->radius);
+    float scale=(0.5f / r->radius);
     for(size_t i=0;i<count;++i) {
         q3n_mark_fragment fragment=fragments[i]; uint32_t vertices=fragment.count>10?10:fragment.count;
         if(fragment.first>384 || fragment.count>384-fragment.first)
@@ -28,8 +28,8 @@ static bool impact(const q3n_frame *f, const q3n_impact_mark *r, qa_error *error
         for(uint32_t j=0;j<vertices;++j) {
             qa_q3_poly_vertex *v=&mark.vertices[j]; v->position=output[fragment.first+j];
             qa_vec3 delta=q3ne_difference(v->position,r->origin);
-            v->texcoord=(qa_scene_vec2){q3ne_add(0.5f,q3ne_mul(q3ne_dot(delta,axis1),scale)),q3ne_add(0.5f,q3ne_mul(q3ne_dot(delta,axis2),scale))};
-            for(unsigned k=0;k<4;++k)v->color[k]=q3ne_byte(q3ne_mul(r->color[k],255));
+            v->texcoord=(qa_scene_vec2){(0.5f + (q3ne_dot(delta,axis1) * scale)),(0.5f + (q3ne_dot(delta,axis2) * scale))};
+            for(unsigned k=0;k<4;++k)v->color[k]=q3ne_byte((r->color[k] * 255));
         }
         if(r->temporary) {
             if(!qa_q3_presentation_poly(f->presentation,r->shader,mark.vertices,vertices,error) || !q3ne_current(f,error))return false;
@@ -55,7 +55,7 @@ bool q3n_marks_impact(const q3n_frame *f, const q3n_impact_mark *r, qa_error *er
 static void fade_rgb(q3n_stored_mark *m, int32_t fade)
 {
     for(uint32_t i=0;i<m->count;++i)for(unsigned c=0;c<3;++c)
-        m->vertices[i].color[c]=q3ne_byte(q3ne_mul(m->color[c],(float)fade));
+        m->vertices[i].color[c]=q3ne_byte((m->color[c] * (float)fade));
 }
 static bool submit(const q3n_frame *f, qa_error *error)
 {
@@ -67,7 +67,7 @@ static bool submit(const q3n_frame *f, qa_error *error)
             --o->mark_count; memmove(m,m+1,(o->mark_count-i)*sizeof(*m)); continue;
         }
         if(m->shader==q3n_media_read(f->media)->graphics[Q3N_G_ENERGY_MARK]) {
-            int32_t fade=q3ne_int(q3ne_add(450,-q3ne_mul(450,q3ne_div((float)q3ne_sub(f->time,m->time),3000))));
+            int32_t fade=q3ne_int((450 + -(450 * ((float)q3ne_sub(f->time,m->time) / 3000))));
             if(fade<255 && m->count && m->vertices[0].color[0])fade_rgb(m,fade<0?0:fade);
         }
         int32_t remaining=q3ne_sub(expires,f->time);

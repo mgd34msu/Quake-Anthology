@@ -78,7 +78,7 @@ bool q3_radius(qa_q3_game *game, qa_actor_id inflictor, qa_actor_id attacker, qa
 }
 static qa_vec3 nail_direction(qa_vec3 value) {
     float length = (float)sqrt((double)qa_vec_dot(value, value));
-    return length == 0 ? value : qa_vec_scale(value, q3_source_float_divide(1.0f, length));
+    return length == 0 ? value : qa_vec_scale(value, (1.0f / length));
 }
 
 bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3 start,
@@ -201,22 +201,14 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
     if (weapon == QA_Q3_W_GRAPPLE)
         source->other_entity = q3_entity_number(game, owner);
     if (weapon == QA_Q3_W_NAIL) {
-        float angle = q3_source_float_multiply(
-            q3_source_float_multiply(q3_random(game), Q3_PI), 2.0f);
-        float vertical = q3_source_float_multiply(
-            q3_source_float_multiply(
-                q3_source_float_multiply((float)sin((double)angle), q3_crandom(game)), 500.0f),
-            16.0f);
-        float horizontal = q3_source_float_multiply(
-            q3_source_float_multiply(
-                q3_source_float_multiply((float)cos((double)angle), q3_crandom(game)), 500.0f),
-            16.0f);
+        float angle = ((q3_random(game) * Q3_PI) * 2.0f);
+        float vertical = ((((float)sin((double)angle) * q3_crandom(game)) * 500.0f) * 16.0f);
+        float horizontal = ((((float)cos((double)angle) * q3_crandom(game)) * 500.0f) * 16.0f);
         qa_vec3 end = qa_vec_add(
             qa_vec_add(qa_vec_add(start, qa_vec_scale(direction, 131072.0f)),
                        qa_vec_scale(right, horizontal)),
             qa_vec_scale(up, vertical));
-        float nail_speed = q3_source_float_add(555.0f,
-            q3_source_float_multiply(q3_random(game), 1800.0f));
+        float nail_speed = (555.0f + (q3_random(game) * 1800.0f));
         velocity = qa_physics_q3_snap(
             qa_vec_scale(nail_direction(qa_vec_sub(end, start)), nail_speed));
         entry->state.missile.trajectory.time_ms = game->now_ms;
@@ -559,16 +551,13 @@ static bool stick_mine(qa_q3_game *game, qa_actor_id actor, const qa_trace_resul
             return q3_fail(error, "Q3 stuck proximity mine lost its source angles");
         qa_vec3 normal = trace->contact_plane.normal;
         float yaw = normal.x == 0 ? (normal.y > 0 ? 90 : normal.y < 0 ? 270 : 0)
-            : q3_source_float_divide(q3_source_float_multiply(
-                (float)atan2((double)normal.y, (double)normal.x), 180), Q3_PI);
-        if (yaw < 0) yaw = q3_source_float_add(yaw, 360);
+            : (((float)atan2((double)normal.y, (double)normal.x) * 180) / Q3_PI);
+        if (yaw < 0) yaw = (yaw + 360);
         float pitch = normal.x == 0 && normal.y == 0 ? (normal.z > 0 ? 90 : 270)
-            : q3_source_float_divide(q3_source_float_multiply((float)atan2((double)normal.z,
-                (double)(float)sqrt((double)q3_source_float_add(
-                    q3_source_float_multiply(normal.x, normal.x),
-                    q3_source_float_multiply(normal.y, normal.y)))), 180), Q3_PI);
-        if (pitch < 0) pitch = q3_source_float_add(pitch, 360);
-        source->authored_angles = qa_v3(q3_source_float_add(-pitch, 90), yaw, 0);
+            : (((float)atan2((double)normal.z,
+                (double)(float)sqrt((double)((normal.x * normal.x) + (normal.y * normal.y)))) * 180) / Q3_PI);
+        if (pitch < 0) pitch = (pitch + 360);
+        source->authored_angles = qa_v3((-pitch + 90), yaw, 0);
         if (!q3_wire_add_event(game, actor, 66, trace->surface_flags, error))
             return false;
         qa_body_state body;

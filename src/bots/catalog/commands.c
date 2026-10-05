@@ -7,7 +7,7 @@ static bool clock_read(qa_bot_catalog *c,qa_bot_catalog_clock *clock,qa_error *e
 static bool floating(float value,unsigned digits,unsigned width,char *out,size_t capacity,qa_error *e) {
     if(!isfinite(value) || value>=2147483648.0f || value<=-2147483648.0f || digits>32)
         return bot_catalog_fail(e,QA_ERROR_FORMAT,"game format float is outside the source safe int-cast range");
-    volatile float remaining=value<0?-value:value;
+    float remaining=value<0?-value:value;
     char integer[32];snprintf(integer,sizeof(integer),"%s%d",value<0?"-":"",(int32_t)remaining);
     size_t n=strlen(integer),padding=width>n?width-n:0,total=padding+n+(digits?digits+1:0);
     if(total>=capacity) return bot_catalog_fail(e,QA_ERROR_FORMAT,"source float format exceeds its destination");
@@ -226,7 +226,7 @@ static bool add_random(qa_bot_catalog *c,int32_t team,const qa_bot_catalog_clock
         qa_buffer_free(&info);if(!okay) return false;if(!used) ++count;
     }
     float random;if(!c->services.random(c->services.context,&random,e)) return false;
-    volatile float product=random*(float)count;
+    float product=random*(float)count;
     int64_t selected=!isfinite(product) || product>=2147483648.0f || product<-2147483648.0f?INT32_MIN:(int32_t)product;
     for(uint32_t i=0;i<c->bots.count;++i) {
         qa_buffer info={0};char name[8192];bool used;

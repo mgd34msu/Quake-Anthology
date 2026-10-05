@@ -49,8 +49,8 @@ const q3n_event_state *q3n_events_state(const q3n_events *o) { return o?&o->stat
 void q3n_events_clear_pickup_time(q3n_events *o) { if(o)o->state.item_pickup_time=0; }
 void q3n_events_clear_killer(q3n_events *o) { if(o && !o->busy)o->state.killer_name[0]=0; }
 int32_t q3n_events_rand(q3n_events *o) { o->seed=69069u*o->seed+1u; return (int32_t)(o->seed&32767u); }
-float q3n_events_random(q3n_events *o) { return q3ne_div((float)q3n_events_rand(o),32767); }
-float q3n_events_crandom(q3n_events *o) { return q3ne_mul(2,q3ne_add(q3n_events_random(o),-0.5f)); }
+float q3n_events_random(q3n_events *o) { return ((float)q3n_events_rand(o) / 32767); }
+float q3n_events_crandom(q3n_events *o) { return (2 * (q3n_events_random(o) + -0.5f)); }
 qa_vec3 q3n_events_direction(int32_t value)
 { return value>=0 && value<(int32_t)QA_BYTE_NORMAL_COUNT?qa_byte_normals[value]:qa_v3(0,0,0); }
 void q3n_events_round(q3n_events *o) { if(o && !o->busy) { q3ne_local_reset(o); o->mark_count=0; } }
@@ -60,8 +60,8 @@ qa_vec3 q3ne_perpendicular(qa_vec3 v)
     float a[3]={fabsf(v.x),fabsf(v.y),fabsf(v.z)}; unsigned index=0;
     for(unsigned i=1;i<3;++i)if(a[i]<a[index])index=i;
     qa_vec3 temp=index==0?qa_v3(1,0,0):index==1?qa_v3(0,1,0):qa_v3(0,0,1);
-    float inverse=q3ne_div(1,q3ne_dot(v,v));
-    float distance=q3ne_mul(q3ne_dot(v,temp),inverse);
+    float inverse=(1 / q3ne_dot(v,v));
+    float distance=(q3ne_dot(v,temp) * inverse);
     return q3ne_normalize(q3ne_difference(temp,q3ne_scale(q3ne_scale(v,inverse),distance)));
 }
 static void multiply(const qa_vec3 a[3], const qa_vec3 b[3], qa_vec3 out[3])
@@ -72,7 +72,7 @@ static void multiply(const qa_vec3 a[3], const qa_vec3 b[3], qa_vec3 out[3])
 qa_vec3 q3ne_rotate(qa_vec3 forward, qa_vec3 point, float degrees)
 {
     qa_vec3 radial=q3ne_perpendicular(forward), vertical=q3ne_cross(radial,forward);
-    float radians=q3ne_div(q3ne_mul(degrees,3.14159274101257324219f),180);
+    float radians=((degrees * 3.14159274101257324219f) / 180);
     float c=(float)cos((double)radians), s=(float)sin((double)radians);
     qa_vec3 basis[3]={{radial.x,vertical.x,forward.x},{radial.y,vertical.y,forward.y},{radial.z,vertical.z,forward.z}};
     qa_vec3 rotation[3]={{c,s,0},{-s,c,0},{0,0,1}},inverse[3]={radial,vertical,forward},first[3],last[3];
@@ -461,8 +461,8 @@ static bool dispatch(const q3n_frame *f, qa_q3_entity *s, q3n_entity *cent, qa_v
     case Q3N_EV_STEP4:case Q3N_EV_STEP8:case Q3N_EV_STEP12:case Q3N_EV_STEP16: {
         if(!predicted || client!=predicted->clientNum || f->event_settings->demo_playback || (ps->pmFlags&4096) || f->event_settings->no_predict || f->event_settings->synchronous_clients)break;
         int32_t delta=q3ne_sub(f->time,o->state.step_time);
-        float old=delta<200?q3ne_div(q3ne_mul(o->state.step_change,(float)q3ne_sub(200,delta)),200):0;
-        o->state.step_change=fminf(32,q3ne_add(old,(float)(4*(event-Q3N_EV_STEP4+1)))); o->state.step_time=f->time; break;
+        float old=delta<200?((o->state.step_change * (float)q3ne_sub(200,delta)) / 200):0;
+        o->state.step_change=fminf(32,(old + (float)(4*(event-Q3N_EV_STEP4+1)))); o->state.step_time=f->time; break;
     }
     case Q3N_EV_JUMP_PAD: {
         q3n_smoke smoke={.origin=cent->lerp_origin,.velocity={0,0,1},.radius=32,.color={1,1,1,0.33f},.duration=1000,.start_time=f->time,.flags=1,.shader=m->graphics[Q3N_G_SMOKE_PUFF]};

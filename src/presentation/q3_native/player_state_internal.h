@@ -29,17 +29,17 @@ static inline int q3nh_dead_yaw_stat(qa_q3_product p) { return p==QA_Q3_TEAM_ARE
 static inline float q3nh_clamp(float x,float low,float high) { return x<low?low:x>high?high:x; }
 static inline void q3nh_vectors(qa_vec3 a,qa_vec3 *forward,qa_vec3 *right,qa_vec3 *up)
 {
-    float yaw=q3ne_mul(a.y,q3ne_div(3.14159274101257324219f,180));
-    float pitch=q3ne_mul(a.x,q3ne_div(3.14159274101257324219f,180));
-    float roll=q3ne_mul(a.z,q3ne_div(3.14159274101257324219f,180));
+    float yaw=(a.y * (3.14159274101257324219f / 180));
+    float pitch=(a.x * (3.14159274101257324219f / 180));
+    float roll=(a.z * (3.14159274101257324219f / 180));
     float sy=(float)sin((double)yaw),cy=(float)cos((double)yaw);
     float sp=(float)sin((double)pitch),cp=(float)cos((double)pitch);
     float sr=(float)sin((double)roll),cr=(float)cos((double)roll);
-    if(forward)*forward=qa_v3(q3ne_mul(cp,cy),q3ne_mul(cp,sy),-sp);
-    if(right)*right=qa_v3(q3ne_add(-q3ne_mul(q3ne_mul(sr,sp),cy),q3ne_mul(cr,sy)),
-        q3ne_add(-q3ne_mul(q3ne_mul(sr,sp),sy),-q3ne_mul(cr,cy)),-q3ne_mul(sr,cp));
-    if(up)*up=qa_v3(q3ne_add(q3ne_mul(q3ne_mul(cr,sp),cy),q3ne_mul(sr,sy)),
-        q3ne_add(q3ne_mul(q3ne_mul(cr,sp),sy),-q3ne_mul(sr,cy)),q3ne_mul(cr,cp));
+    if(forward)*forward=qa_v3((cp * cy),(cp * sy),-sp);
+    if(right)*right=qa_v3((-((sr * sp) * cy) + (cr * sy)),
+        (-((sr * sp) * sy) + -(cr * cy)),-(sr * cp));
+    if(up)*up=qa_v3((((cr * sp) * cy) + (sr * sy)),
+        (((cr * sp) * sy) + -(sr * cy)),(cr * cp));
 }
 static inline void q3nh_axis(qa_vec3 a,qa_vec3 axis[3])
 { q3nh_vectors(a,&axis[0],&axis[1],&axis[2]); axis[1]=q3ne_scale(axis[1],-1); }

@@ -268,11 +268,9 @@ typedef struct loading_draw {
     q3n_loading_media media;
     float sx,sy;
 } loading_draw;
-static float mul(float a,float b) { volatile float result=a*b; return result; }
-static float add(float a,float b) { volatile float result=a+b; return result; }
 static bool picture(loading_draw *d,float x,float y,float w,float h,int32_t handle,qa_scene_vec4 uv,bool pixels)
 {
-    if(!pixels) { x=mul(x,d->sx); y=mul(y,d->sy); w=mul(w,d->sx); h=mul(h,d->sy); }
+    if(!pixels) { x=(x * d->sx); y=(y * d->sy); w=(w * d->sx); h=(h * d->sy); }
     return qa_q3_presentation_picture(d->owner->options.presentation,handle,(qa_scene_rect_f){x,y,w,h},uv,d->error) &&
         current(d->owner,d->frame,d->error);
 }
@@ -309,23 +307,23 @@ static bool text(loading_draw *d,int32_t y,const char *value)
     }
     int32_t width=0;
     for(const unsigned char *p=(const unsigned char *)value;*p;++p) { const int16_t *m=metric(*p); if(m)width+=m[2]+3; }
-    width-=3; float size=mul(0.75f,d->preferences.text_scale);
-    int32_t scaled=(int32_t)mul((float)width,size),x=320-scaled/2;
+    width-=3; float size=(0.75f * d->preferences.text_scale);
+    int32_t scaled=(int32_t)((float)width * size),x=320-scaled/2;
     int32_t handle=d->media.proportional;
     for(unsigned pass=0;pass<2;++pass) {
         qa_scene_vec4 color=pass?(qa_scene_vec4){1,1,1,1}:(qa_scene_vec4){0,0,0,1};
         qa_q3_presentation_color(d->owner->options.presentation,&color);
-        float ax=mul((float)(x+(pass?0:2)),d->sx),ay=mul((float)(y+(pass?0:2)),d->sy),aw=0;
-        float gap=mul(mul(3,d->sx),size),height=mul(mul(27,d->sy),size);
+        float ax=((float)(x+(pass?0:2)) * d->sx),ay=((float)(y+(pass?0:2)) * d->sy),aw=0;
+        float gap=((3 * d->sx) * size),height=((27 * d->sy) * size);
         for(const unsigned char *p=(const unsigned char *)value;*p;++p) {
             unsigned code=*p&127u; const int16_t *m=metric(code);
-            if(code==32)aw=mul(mul(8,d->sx),size);
+            if(code==32)aw=((8 * d->sx) * size);
             else if(m) {
-                aw=mul(mul((float)m[2],d->sx),size);
+                aw=(((float)m[2] * d->sx) * size);
                 if(!picture(d,ax,ay,aw,height,handle,(qa_scene_vec4){(float)m[0]/256,(float)m[1]/256,
                     (float)(m[0]+m[2])/256,(float)(m[1]+27)/256},true))return false;
             }
-            ax=add(ax,add(aw,gap));
+            ax=(ax + (aw + gap));
         }
         qa_q3_presentation_color(d->owner->options.presentation,NULL);
     }

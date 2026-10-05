@@ -168,7 +168,7 @@ bool qa_q1_source_client_add_score(qa_q1_game *game,qa_actor_id actor,double del
     qa_q1_game_operation operation={0};if(!qa_q1_game_operation_begin(game,&operation,error)) return false;
     q1_player *player=(q1_player *)client_const(game,actor);bool okay=false;
     if(!player) qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Q1 source score client is absent");
-    else {volatile float score=(float)((double)player->source_frags+delta);player->source_frags=score;okay=publish(game,player,error);}
+    else {float score=(float)((double)player->source_frags+delta);player->source_frags=score;okay=publish(game,player,error);}
     qa_q1_game_operation_end(&operation);return okay;
 }
 bool qa_q1_source_client_set_score(qa_q1_game *game,qa_actor_id actor,float score,qa_error *error) {

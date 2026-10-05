@@ -206,10 +206,10 @@ static bool bind_mover(qa_q3_game *game, qa_q3_map_actor_state *state,
     if (!wire || !qa_q3_source_actor_slot(game, actor, &source_slot, error))
         return q3_rollback_spawn(game, actor, error);
     if (state->has_light || state->has_color) {
-        int32_t red = q3_source_float_to_int(q3_source_float_multiply(state->color.x, 255.0f));
-        int32_t green = q3_source_float_to_int(q3_source_float_multiply(state->color.y, 255.0f));
-        int32_t blue = q3_source_float_to_int(q3_source_float_multiply(state->color.z, 255.0f));
-        int32_t intensity = q3_source_float_to_int(q3_source_float_divide(state->light, 4.0f));
+        int32_t red = q3_source_float_to_int((state->color.x * 255.0f));
+        int32_t green = q3_source_float_to_int((state->color.y * 255.0f));
+        int32_t blue = q3_source_float_to_int((state->color.z * 255.0f));
+        int32_t intensity = q3_source_float_to_int((state->light / 4.0f));
         if (red > 255) red = 255;
         if (green > 255) green = 255;
         if (blue > 255) blue = 255;
@@ -288,8 +288,7 @@ static qa_q3_mover_definition binary_definition(const qa_q3_map_actor_state *sta
                                                  bool crusher) {
     qa_vec3 move = qa_vec_sub(state->second, state->first);
     float distance = qa_vec_length(move);
-    int32_t duration = q3_map_float_to_int(q3_source_float_divide(
-        q3_source_float_multiply(distance, 1000.0f), state->speed));
+    int32_t duration = q3_map_float_to_int(((distance * 1000.0f) / state->speed));
     if (duration < 1)
         duration = 1;
     return (qa_q3_mover_definition){
@@ -341,7 +340,7 @@ static bool spawn_door(qa_q3_game *game, const qa_q3_map_fields *fields,
         state->speed = 400;
     if (state->wait == 0)
         state->wait = 2;
-    state->wait = q3_source_float_multiply(state->wait, 1000.0f);
+    state->wait = (state->wait * 1000.0f);
     state->kind = QA_Q3_MAP_MOVER_DOOR;
     state->usable = true;
     state->direction = q3_map_direction(state->angles);
@@ -437,7 +436,7 @@ static bool spawn_button(qa_q3_game *game, const qa_q3_map_fields *fields,
         state->speed = 40;
     if (state->wait == 0)
         state->wait = 1;
-    state->wait = q3_source_float_multiply(state->wait, 1000.0f);
+    state->wait = (state->wait * 1000.0f);
     state->kind = QA_Q3_MAP_MOVER_BUTTON;
     state->usable = true;
     state->touchable = state->health == 0;

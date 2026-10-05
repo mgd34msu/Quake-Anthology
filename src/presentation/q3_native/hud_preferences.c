@@ -25,8 +25,8 @@ qa_scene_rect_f q3nh_rect(const q3n_hud_draw *d,qa_scene_rect_f r)
         r.y=d->anchor_y+(r.y-d->anchor_y)*scale;
         r.width*=scale; r.height*=scale;
     }
-    float sx=q3ne_div((float)d->viewport.width,640),sy=q3ne_div((float)d->viewport.height,480);
-    return (qa_scene_rect_f){q3ne_mul(r.x,sx),q3ne_mul(r.y,sy),q3ne_mul(r.width,sx),q3ne_mul(r.height,sy)};
+    float sx=((float)d->viewport.width / 640),sy=((float)d->viewport.height / 480);
+    return (qa_scene_rect_f){(r.x * sx),(r.y * sy),(r.width * sx),(r.height * sy)};
 }
 void q3nh_palette(const q3n_hud_draw *d,const float input[4],float output[4])
 {

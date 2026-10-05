@@ -23,11 +23,11 @@ bool qa_q3_client_toss_cube(qa_q3_game *game, qa_actor_id actor, int32_t team,
     ++game->observation_depth;
     qa_vec3 forward;
     q3_source_angle_vectors(qa_v3(0, (float)(source_time % 360), 0), &forward, NULL, NULL);
-    qa_vec3 velocity = qa_v3(q3_source_float_multiply(forward.x, 150),
-                            q3_source_float_multiply(forward.y, 150),
-                            q3_source_float_multiply(forward.z, 150));
-    float scatter = q3_source_float_multiply(q3_crandom(game), 50);
-    velocity.z = q3_source_float_add(velocity.z, q3_source_float_add(200, scatter));
+    qa_vec3 velocity = qa_v3((forward.x * 150),
+                            (forward.y * 150),
+                            (forward.z * 150));
+    float scatter = (q3_crandom(game) * 50);
+    velocity.z = (velocity.z + (200 + scatter));
     qa_vec3 origin = qa_v3(0, 0, 0);
     qa_actor_id neutral = game->team_state.neutral_obelisk;
     if (neutral.registry) {
@@ -40,7 +40,7 @@ bool qa_q3_client_toss_cube(qa_q3_game *game, qa_actor_id actor, int32_t team,
             return false;
         }
         origin = qa_v3(source.pos.base[0], source.pos.base[1],
-                       q3_source_float_add(source.pos.base[2], 44));
+                       (source.pos.base[2] + 44));
     }
     qa_actor_id cube;
     bool okay = qa_q3_spawn_item(game, &(qa_q3_item_spawn){.item_index = item_index,

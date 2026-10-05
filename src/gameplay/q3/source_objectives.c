@@ -137,10 +137,10 @@ static bool spawn_trigger(qa_q3_game *game, qa_actor_id model, qa_vec3 origin,
     wire->position = (qa_trajectory){.type = QA_TRAJECTORY_STATIONARY, .base = origin};
     if (!(flags & 1u)) {
         qa_vec3 start = origin;
-        start.z = q3_source_float_add(start.z, 1);
+        start.z = (start.z + 1);
         wire->authored_origin = start;
         qa_vec3 end = start;
-        end.z = q3_source_float_add(end.z, -4096);
+        end.z = (end.z + -4096);
         qa_trace_query query = {.start = start, .end = end, .pass_actor = actor,
             .shape = {.kind = QA_SHAPE_BOX, .bounds = bounds},
             .policy = {.family = QA_COLLISION_Q3, .contents_mask = 1, .curves = true}};
@@ -149,7 +149,7 @@ static bool spawn_trigger(qa_q3_game *game, qa_actor_id model, qa_vec3 origin,
             return q3_rollback_spawn(game, actor, error);
         if (!obelisk(game, actor)) return q3_fail(error, "Obelisk retired during its floor trace");
         if (trace.start_solid || trace.all_solid) {
-            start.z = q3_source_float_add(start.z, -1);
+            start.z = (start.z + -1);
             wire = q3_wire_entity(game, actor);
             if (!wire) return q3_fail(error, "Obelisk startsolid lost its true source row");
             wire->authored_origin = start;

@@ -2,7 +2,6 @@
 #include <math.h>
 
 static uint32_t draw(qa_builtin_random *random) { return qa_builtin_random_integer(random); }
-static float source_float(double value) { volatile float result = (float)value; return result; }
 static void append(frontend_fx_particles *state, qa_scene_q1_particle_state value)
 { if (state->count < FRONTEND_FX_PARTICLE_CAPACITY) state->values.q1[state->count++] = value; }
 
@@ -48,18 +47,18 @@ void frontend_fx_q1_entity(frontend_fx_particles *state, qa_builtin_random *rand
     qa_vec3 origin, double seconds)
 {
     if (state->angular[0].x == 0) for (unsigned i = 0; i < QA_BYTE_NORMAL_COUNT; ++i) {
-        state->angular[i].x = source_float((draw(random) & 255) * .01);
-        state->angular[i].y = source_float((draw(random) & 255) * .01);
-        state->angular[i].z = source_float((draw(random) & 255) * .01);
+        state->angular[i].x = ((float)((draw(random) & 255) * .01));
+        state->angular[i].y = ((float)((draw(random) & 255) * .01));
+        state->angular[i].z = ((float)((draw(random) & 255) * .01));
     }
     for (unsigned i = 0; i < QA_BYTE_NORMAL_COUNT && state->count < FRONTEND_FX_PARTICLE_CAPACITY; ++i) {
-        float yaw = source_float(seconds * state->angular[i].x), pitch = source_float(seconds * state->angular[i].y);
-        float cp = source_float(cos(pitch)), sp = source_float(sin(pitch)), cy = source_float(cos(yaw)), sy = source_float(sin(yaw));
-        qa_vec3 forward = {source_float(cp * cy), source_float(cp * sy), -sp}, normal = qa_byte_normals[i];
-        qa_scene_q1_particle_state value = {.color = 111, .die = source_float(seconds + .01), .kind = QA_Q1_PARTICLE_EXPLODE};
-        value.origin.x = source_float(source_float(origin.x + source_float(normal.x * 64)) + source_float(forward.x * 16));
-        value.origin.y = source_float(source_float(origin.y + source_float(normal.y * 64)) + source_float(forward.y * 16));
-        value.origin.z = source_float(source_float(origin.z + source_float(normal.z * 64)) + source_float(forward.z * 16));
+        float yaw = ((float)(seconds * state->angular[i].x)), pitch = ((float)(seconds * state->angular[i].y));
+        float cp = ((float)(cos(pitch))), sp = ((float)(sin(pitch))), cy = ((float)(cos(yaw))), sy = ((float)(sin(yaw)));
+        qa_vec3 forward = {((float)(cp * cy)), ((float)(cp * sy)), -sp}, normal = qa_byte_normals[i];
+        qa_scene_q1_particle_state value = {.color = 111, .die = ((float)(seconds + .01)), .kind = QA_Q1_PARTICLE_EXPLODE};
+        value.origin.x = ((float)(((float)(origin.x + ((float)(normal.x * 64)))) + ((float)(forward.x * 16))));
+        value.origin.y = ((float)(((float)(origin.y + ((float)(normal.y * 64)))) + ((float)(forward.y * 16))));
+        value.origin.z = ((float)(((float)(origin.z + ((float)(normal.z * 64)))) + ((float)(forward.z * 16))));
         append(state, value);
     }
 }
@@ -69,13 +68,13 @@ void frontend_fx_q1_trail(frontend_fx_particles *state, qa_builtin_random *rando
 {
     static const uint32_t ramp[6] = {109, 107, 6, 5, 4, 3};
     qa_vec3 delta = qa_vec_sub(end, start);
-    float remaining = source_float(sqrt(source_float(source_float(source_float(delta.x * delta.x) + source_float(delta.y * delta.y)) + source_float(delta.z * delta.z))));
-    float inverse = remaining == 0 ? 0 : source_float(1 / remaining);
+    float remaining = ((float)(sqrt(((float)(((float)(((float)(delta.x * delta.x)) + ((float)(delta.y * delta.y)))) + ((float)(delta.z * delta.z)))))));
+    float inverse = remaining == 0 ? 0 : ((float)(1 / remaining));
     qa_vec3 direction = qa_vec_scale(delta, inverse), point = start;
     while (remaining > 0) {
-        remaining = source_float(remaining - 3);
+        remaining = ((float)(remaining - 3));
         if (state->count == FRONTEND_FX_PARTICLE_CAPACITY) return;
-        qa_scene_q1_particle_state value = {.origin = point, .die = source_float(seconds + 2), .kind = QA_Q1_PARTICLE_STATIC};
+        qa_scene_q1_particle_state value = {.origin = point, .die = ((float)(seconds + 2)), .kind = QA_Q1_PARTICLE_STATIC};
         if (type == 0 || type == 1) {
             value.ramp = (float)((draw(random) & 3) + (type == 1 ? 2 : 0));
             value.color = ramp[(unsigned)value.ramp]; value.kind = QA_Q1_PARTICLE_FIRE;
@@ -87,15 +86,15 @@ void frontend_fx_q1_trail(frontend_fx_particles *state, qa_builtin_random *rando
             value.origin.x = point.x + ((float)(draw(random) % 6) - 3);
             value.origin.y = point.y + ((float)(draw(random) % 6) - 3);
             value.origin.z = point.z + ((float)(draw(random) % 6) - 3);
-            if (type == 4) remaining = source_float(remaining - 3);
+            if (type == 4) remaining = ((float)(remaining - 3));
         } else if (type == 3 || type == 5) {
-            value.die = source_float(seconds + .5);
+            value.die = ((float)(seconds + .5));
             value.color = (type == 3 ? 52u : 230u) + ((state->tracer_count & 4) << 1);
             ++state->tracer_count;
             value.velocity = (state->tracer_count & 1) ? qa_v3(30 * direction.y, -30 * direction.x, 0)
                 : qa_v3(-30 * direction.y, 30 * direction.x, 0);
         } else {
-            value.color = 152 + (draw(random) & 3); value.die = source_float(seconds + .3);
+            value.color = 152 + (draw(random) & 3); value.die = ((float)(seconds + .3));
             value.origin.x = point.x + ((float)(draw(random) & 15) - 8);
             value.origin.y = point.y + ((float)(draw(random) & 15) - 8);
             value.origin.z = point.z + ((float)(draw(random) & 15) - 8);

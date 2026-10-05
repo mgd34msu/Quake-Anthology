@@ -111,8 +111,7 @@ static bool finish_item(qa_q3_game *game, qa_q3_map_actor_state *state,
         qa_world_linked(game->options.services.world, actor, &linked);
     if (delayed_powerup) {
         q3_postgame_native_think_assigned(game, actor);
-        float seconds = q3_source_float_add(
-            45.0f, q3_source_float_multiply(q3_crandom(game), 15.0f));
+        float seconds = (45.0f + (q3_crandom(game) * 15.0f));
         state->due_ms = q3_map_source_schedule(game->now_ms, seconds);
         state->think = QA_Q3_MAP_THINK_ITEM_RESPAWN;
     }

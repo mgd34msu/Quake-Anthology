@@ -112,8 +112,8 @@ static bool sound(q3n_media *m, const char *path, bool compressed, int32_t *out,
 { return qa_q3_register_sound(m->options.assets, path, compressed, out, e); }
 static float midpoint(float minimum, float maximum)
 {
-    volatile float extent = maximum - minimum;
-    volatile float half = 0.5f * extent;
+    float extent = maximum - minimum;
+    float half = 0.5f * extent;
     return minimum + half;
 }
 static bool model_midpoint(q3n_media *m, int32_t handle, qa_vec3 *out, qa_error *e)

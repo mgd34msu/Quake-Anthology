@@ -250,7 +250,7 @@ static bool attach_part(frontend_selected_character *owner, qa_q3_ref_entity *ch
     const qa_q3_ref_entity *parent, const char *name, bool *found, qa_error *error)
 {
     qa_model_tag tag;
-    volatile float fraction = 1.0f - parent->back_lerp;
+    float fraction = 1.0f - parent->back_lerp;
     if (!qa_q3_presentation_tag(owner->view.assets, parent->model, name, parent->old_frame,
         parent->frame, fraction, &tag, found, error)) return false;
     return !*found || q3n_attach(owner->view.assets, child, parent, name, true, error);

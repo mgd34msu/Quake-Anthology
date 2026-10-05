@@ -169,11 +169,10 @@ uint32_t q3_rand(qa_q3_game *game) {
     return game->rng & UINT32_C(0x7fff);
 }
 float q3_random(qa_q3_game *game) {
-    return q3_source_float_divide((float)q3_rand(game), 32767.0f);
+    return ((float)q3_rand(game) / 32767.0f);
 }
 float q3_crandom(qa_q3_game *game) {
-    return q3_source_float_multiply(
-        2.0f, q3_source_float_add(q3_random(game), -0.5f));
+    return (2.0f * (q3_random(game) + -0.5f));
 }
 bool qa_q3_game_random(qa_q3_game *game, float *out, qa_error *error) {
     if (!game || !out || game->source_restored)

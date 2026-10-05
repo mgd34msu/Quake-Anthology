@@ -93,86 +93,86 @@ static void first_person(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,con
     const qa_q3_player *snapshot=q3n_frame_snapshot_player(f);
     if(snapshot->stats[0]<=0) {
         f->view_angles=qa_v3(-15,(float)snapshot->stats[q3nh_dead_yaw_stat(o->product)],40);
-        r->origin.z=q3ne_add(r->origin.z,(float)p->viewheight); return;
+        r->origin.z=(r->origin.z + (float)p->viewheight); return;
     }
     qa_vec3 angles=q3ne_sum(f->view_angles,v->kick_angles);
     if(g->damage_time!=0) {
-        float delta=q3ne_add((float)f->time,-g->damage_time),ratio;
-        if(delta<100)ratio=q3ne_div(delta,100);
-        else ratio=q3ne_add(1,-q3ne_div(q3ne_add(delta,-100),400));
+        float delta=((float)f->time + -g->damage_time),ratio;
+        if(delta<100)ratio=(delta / 100);
+        else ratio=(1 + -((delta + -100) / 400));
         if(delta<100 || ratio>0) {
-            angles.x=q3ne_add(angles.x,q3ne_mul(ratio,g->damage_pitch));
-            angles.z=q3ne_add(angles.z,q3ne_mul(ratio,g->damage_roll));
+            angles.x=(angles.x + (ratio * g->damage_pitch));
+            angles.z=(angles.z + (ratio * g->damage_roll));
         }
     }
     /* Source refdef axes are still zero here, before AnglesToAxis. */
     qa_vec3 velocity=q3ne_array(p->velocity);
-    angles.x=q3ne_add(angles.x,q3ne_mul(q3ne_dot(velocity,r->axis[0]),s->run_pitch));
-    angles.z=q3ne_add(angles.z,-q3ne_mul(q3ne_dot(velocity,r->axis[1]),s->run_roll));
-    float speed=fmaxf(v->xy_speed,200),pitch=q3ne_mul(q3ne_mul(v->bob_fraction_sin,s->bob_pitch),speed);
-    float roll=q3ne_mul(q3ne_mul(v->bob_fraction_sin,s->bob_roll),speed);
-    if(p->pmFlags&1) { pitch=q3ne_mul(pitch,3); roll=q3ne_mul(roll,3); }
+    angles.x=(angles.x + (q3ne_dot(velocity,r->axis[0]) * s->run_pitch));
+    angles.z=(angles.z + -(q3ne_dot(velocity,r->axis[1]) * s->run_roll));
+    float speed=fmaxf(v->xy_speed,200),pitch=((v->bob_fraction_sin * s->bob_pitch) * speed);
+    float roll=((v->bob_fraction_sin * s->bob_roll) * speed);
+    if(p->pmFlags&1) { pitch=(pitch * 3); roll=(roll * 3); }
     if(v->bob_cycle&1)roll=-roll;
-    angles.x=q3ne_add(angles.x,pitch); angles.z=q3ne_add(angles.z,roll); f->view_angles=angles;
-    float height=q3ne_add(r->origin.z,(float)p->viewheight);
+    angles.x=(angles.x + pitch); angles.z=(angles.z + roll); f->view_angles=angles;
+    float height=(r->origin.z + (float)p->viewheight);
     int32_t delta=q3ne_sub(f->time,g->duck_time);
-    if(delta<100)height=q3ne_add(height,-q3ne_div(q3ne_mul(g->duck_change,(float)q3ne_sub(100,delta)),100));
-    height=q3ne_add(height,fminf(6,q3ne_mul(q3ne_mul(v->bob_fraction_sin,v->xy_speed),s->bob_up)));
+    if(delta<100)height=(height + -((g->duck_change * (float)q3ne_sub(100,delta)) / 100));
+    height=(height + fminf(6,((v->bob_fraction_sin * v->xy_speed) * s->bob_up)));
     const q3n_event_state *events=q3n_events_state(f->events); delta=q3ne_sub(f->time,events->land_time);
-    if(delta<150)height=q3ne_add(height,q3ne_mul(events->land_change,q3ne_div((float)delta,150)));
-    else if(delta<450)height=q3ne_add(height,q3ne_mul(events->land_change,q3ne_add(1,-q3ne_div((float)q3ne_sub(delta,150),300))));
+    if(delta<150)height=(height + (events->land_change * ((float)delta / 150)));
+    else if(delta<450)height=(height + (events->land_change * (1 + -((float)q3ne_sub(delta,150) / 300))));
     delta=q3ne_sub(f->time,events->step_time);
-    if(delta<200)height=q3ne_add(height,-q3ne_div(q3ne_mul(events->step_change,(float)q3ne_sub(200,delta)),200));
+    if(delta<200)height=(height + -((events->step_change * (float)q3ne_sub(200,delta)) / 200));
     r->origin=q3ne_sum(qa_v3(r->origin.x,r->origin.y,height),v->kick_origin);
 }
 static bool third_person(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,float angle,qa_error *e)
 {
     const qa_q3_player *p=q3n_frame_predicted_player(f); qa_q3_refdef *r=&f->refdef;
-    r->origin.z=q3ne_add(r->origin.z,(float)p->viewheight); qa_vec3 focus_angles=f->view_angles;
+    r->origin.z=(r->origin.z + (float)p->viewheight); qa_vec3 focus_angles=f->view_angles;
     if(p->stats[0]<=0)focus_angles.y=f->view_angles.y=(float)p->stats[q3nh_dead_yaw_stat(o->product)];
     if(focus_angles.x>45)focus_angles.x=45;
     qa_vec3 forward,right; q3nh_vectors(focus_angles,&forward,NULL,NULL);
-    qa_vec3 focus=q3ne_sum(r->origin,q3ne_scale(forward,512)),view=r->origin; view.z=q3ne_add(view.z,8);
-    f->view_angles.x=q3ne_mul(f->view_angles.x,0.5f); q3nh_vectors(f->view_angles,&forward,&right,NULL);
-    float radians=q3ne_mul(q3ne_div(angle,180),3.14159274101257324219f);
-    view=q3ne_sum(view,q3ne_scale(forward,q3ne_mul(-s->third_person_range,(float)cos((double)radians))));
-    view=q3ne_sum(view,q3ne_scale(right,q3ne_mul(-s->third_person_range,(float)sin((double)radians))));
+    qa_vec3 focus=q3ne_sum(r->origin,q3ne_scale(forward,512)),view=r->origin; view.z=(view.z + 8);
+    f->view_angles.x=(f->view_angles.x * 0.5f); q3nh_vectors(f->view_angles,&forward,&right,NULL);
+    float radians=((angle / 180) * 3.14159274101257324219f);
+    view=q3ne_sum(view,q3ne_scale(forward,(-s->third_person_range * (float)cos((double)radians))));
+    view=q3ne_sum(view,q3ne_scale(right,(-s->third_person_range * (float)sin((double)radians))));
     if(!s->camera_mode) {
         qa_trace_result trace; qa_bounds bounds={qa_v3(-4,-4,-4),qa_v3(4,4,4)};
         if(!q3n_events_trace(f,r->origin,view,bounds,p->clientNum,1,&trace,e))return false;
         if(trace.fraction!=1) {
-            view=trace.end; view.z=q3ne_add(view.z,q3ne_mul(q3ne_add(1,-trace.fraction),32));
+            view=trace.end; view.z=(view.z + ((1 + -trace.fraction) * 32));
             if(!q3n_events_trace(f,r->origin,view,bounds,p->clientNum,1,&trace,e))return false;
             view=trace.end;
         }
     }
     r->origin=view; focus=q3ne_difference(focus,view);
-    float distance=fmaxf(1,q3ne_f(sqrtf(q3ne_add(q3ne_mul(focus.x,focus.x),q3ne_mul(focus.y,focus.y)))));
-    f->view_angles.x=q3ne_mul(-57.295780181884765625f,(float)atan2((double)focus.z,(double)distance));
-    f->view_angles.y=q3ne_add(f->view_angles.y,-angle); return true;
+    float distance=fmaxf(1,(sqrtf(((focus.x * focus.x) + (focus.y * focus.y)))));
+    f->view_angles.x=(-57.295780181884765625f * (float)atan2((double)focus.z,(double)distance));
+    f->view_angles.y=(f->view_angles.y + -angle); return true;
 }
 static bool fov(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,bool *in_water,qa_error *e)
 {
     qa_q3_refdef *r=&f->refdef; float horizontal=90;
     if(q3n_frame_predicted_player(f)->pmType!=5) {
         horizontal=s->dm_flags&16?90:q3nh_clamp(s->fov,1,160); float zoom=q3nh_clamp(s->zoom_fov,1,160);
-        float fraction=q3ne_div((float)q3ne_sub(f->time,o->state.zoom_time),150);
-        if(o->state.zoomed)horizontal=fraction>1?zoom:q3ne_add(horizontal,q3ne_mul(fraction,q3ne_add(zoom,-horizontal)));
-        else if(fraction<=1)horizontal=q3ne_add(zoom,q3ne_mul(fraction,q3ne_add(horizontal,-zoom)));
+        float fraction=((float)q3ne_sub(f->time,o->state.zoom_time) / 150);
+        if(o->state.zoomed)horizontal=fraction>1?zoom:(horizontal + (fraction * (zoom + -horizontal)));
+        else if(fraction<=1)horizontal=(zoom + (fraction * (horizontal + -zoom)));
     }
-    float radians=q3ne_mul(q3ne_div(horizontal,360),3.14159274101257324219f);
-    float tangent=q3ne_div((float)sin((double)radians),(float)cos((double)radians));
-    float x=q3ne_div((float)r->width,tangent);
-    float vertical=q3ne_div(q3ne_mul((float)atan2((double)r->height,(double)x),360),3.14159274101257324219f);
+    float radians=((horizontal / 360) * 3.14159274101257324219f);
+    float tangent=((float)sin((double)radians) / (float)cos((double)radians));
+    float x=((float)r->width / tangent);
+    float vertical=(((float)atan2((double)r->height,(double)x) * 360) / 3.14159274101257324219f);
     uint32_t contents;
     if(!q3n_events_point_contents(f,r->origin,-1,&contents,e))return false;
     *in_water=(contents&(8|16|32))!=0;
     if(*in_water) {
-        float phase=q3ne_mul(q3ne_mul(q3ne_mul(q3ne_div((float)f->time,1000),0.4f),3.14159274101257324219f),2);
-        float wave=(float)sin((double)phase); horizontal=q3ne_add(horizontal,wave); vertical=q3ne_add(vertical,-wave);
+        float phase=(((((float)f->time / 1000) * 0.4f) * 3.14159274101257324219f) * 2);
+        float wave=(float)sin((double)phase); horizontal=(horizontal + wave); vertical=(vertical + -wave);
     }
     r->fov_x=horizontal; r->fov_y=vertical;
-    o->state.zoom_sensitivity=o->state.zoomed?q3ne_div(vertical,75):1; return true;
+    o->state.zoom_sensitivity=o->state.zoomed?(vertical / 75):1; return true;
 }
 bool q3n_view_frame(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,const q3n_player_state *ps,
     qa_scene_rect viewport,bool *in_water,qa_error *e)
@@ -198,19 +198,18 @@ bool q3n_view_frame(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,const q3
     f->third_person=s->third_person || snapshot->stats[0]<=0;
     if(predicted->pmType!=5) {
         q3n_view_state *v=&o->state; v->bob_cycle=(predicted->bobCycle&128)>>7;
-        v->bob_fraction_sin=fabsf((float)sin((double)q3ne_mul(q3ne_div((float)(predicted->bobCycle&127),127),3.14159274101257324219f)));
-        v->xy_speed=q3ne_f(sqrtf(q3ne_add(q3ne_mul(predicted->velocity[0],predicted->velocity[0]),
-            q3ne_mul(predicted->velocity[1],predicted->velocity[1]))));
+        v->bob_fraction_sin=fabsf((float)sin((double)(((float)(predicted->bobCycle&127) / 127) * 3.14159274101257324219f)));
+        v->xy_speed=(sqrtf(((predicted->velocity[0] * predicted->velocity[0]) + (predicted->velocity[1] * predicted->velocity[1]))));
         float angle=s->third_person_angle;
         if(s->camera_orbit_integer && f->time>v->next_orbit_time) {
-            v->next_orbit_time=q3ne_plus(f->time,s->camera_orbit_delay); angle=q3ne_add(angle,s->camera_orbit_value);
+            v->next_orbit_time=q3ne_plus(f->time,s->camera_orbit_delay); angle=(angle + s->camera_orbit_value);
             if(ok)ok=o->options.set_third_person_angle_value(o->options.context,angle,e) && q3ne_current(f,e);
         }
         if(!f->remote && !f->compiled && g->this_frame_teleport) { v->predicted_error=qa_v3(0,0,0); v->predicted_error_time=0; }
         if(s->error_decay>0) {
             int32_t error_time=f->compiled?f->compiled->prediction_error_time:f->remote?f->remote->prediction.prediction_error_time:v->predicted_error_time;
             qa_vec3 error=f->compiled?f->compiled->prediction_error:f->remote?f->remote->prediction.prediction_error:v->predicted_error;
-            float factor=q3ne_div(q3ne_add(s->error_decay,-(float)q3ne_sub(f->time,error_time)),s->error_decay);
+            float factor=((s->error_decay + -(float)q3ne_sub(f->time,error_time)) / s->error_decay);
             if(factor>0 && factor<1)r->origin=q3ne_sum(r->origin,q3ne_scale(error,factor));
             else if(f->compiled) {
                 if(ok)ok=q3n_compiled_frame_prediction_error_clear(f->compiled,e) && q3ne_current(f,e);
@@ -240,14 +239,14 @@ bool q3n_view_damage_blob(q3n_view *o,const q3n_frame *f,const q3n_view_settings
        ps->options.application!=o->options.application || ps->options.seat!=o->options.seat ||
        ps->options.remote_client!=o->options.remote_client || ps->options.compiled_source!=o->options.compiled_source)return false;
     const q3n_player_feedback *g=q3n_player_state_feedback(ps);
-    int32_t elapsed=q3ne_int(q3ne_add((float)f->time,-g->damage_time));
+    int32_t elapsed=q3ne_int(((float)f->time + -g->damage_time));
     if(g->damage_value==0.0f || s->ragepro || elapsed<=0 || elapsed>=500 || f->third_person)return true;
     qa_q3_ref_entity r={.kind=QA_Q3_REF_SPRITE,.flags=4,.custom_shader=q3n_media_read(f->media)->graphics[Q3N_G_VIEW_BLOOD]};
     r.origin=q3ne_sum(f->refdef.origin,q3ne_scale(f->refdef.axis[0],8));
-    r.origin=q3ne_sum(r.origin,q3ne_scale(f->refdef.axis[1],q3ne_mul(g->damage_x,-8)));
-    r.origin=q3ne_sum(r.origin,q3ne_scale(f->refdef.axis[2],q3ne_mul(g->damage_y,8)));
-    r.radius=q3ne_mul(g->damage_value,3); r.color[0]=r.color[1]=r.color[2]=255;
-    r.color[3]=q3ne_byte(q3ne_mul(200,q3ne_add(1,-q3ne_div((float)elapsed,500))));
+    r.origin=q3ne_sum(r.origin,q3ne_scale(f->refdef.axis[1],(g->damage_x * -8)));
+    r.origin=q3ne_sum(r.origin,q3ne_scale(f->refdef.axis[2],(g->damage_y * 8)));
+    r.radius=(g->damage_value * 3); r.color[0]=r.color[1]=r.color[2]=255;
+    r.color[3]=q3ne_byte((200 * (1 + -((float)elapsed / 500))));
     o->busy=true; bool ok=qa_q3_presentation_entity(f->presentation,&r,e) && q3ne_current(f,e); o->busy=false; return ok;
 }
 void q3n_view_test_clear(q3n_view *o)
@@ -263,7 +262,7 @@ bool q3n_view_test_model(q3n_view *o,const q3n_frame *f,const char *name,const f
         if(ok && !o->test_model.model)o->options.print(o->options.context,"Can't register model\n");
         else if(ok) {
             o->test_model.origin=q3ne_sum(f->refdef.origin,q3ne_scale(f->refdef.axis[0],100));
-            q3nh_axis(qa_v3(0,q3ne_add(180,f->view_angles.y),0),o->test_model.axis);
+            q3nh_axis(qa_v3(0,(180 + f->view_angles.y),0),o->test_model.axis);
             o->state.test_gun=false;
         }
     }

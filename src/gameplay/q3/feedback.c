@@ -164,22 +164,17 @@ static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_
             player->damage_from_world = false;
         } else {
             qa_vec3 d = player->damage_from;
-            float yaw = d.x != 0 ? q3_source_float_divide(
-                q3_source_float_multiply((float)atan2((double)d.y, (double)d.x), 180), Q3_PI)
+            float yaw = d.x != 0 ? (((float)atan2((double)d.y, (double)d.x) * 180) / Q3_PI)
                 : d.y != 0 ? (d.y > 0 ? 90 : 270) : 0;
             if (yaw < 0)
-                yaw = q3_source_float_add(yaw, 360);
+                yaw = (yaw + 360);
             float pitch = d.x == 0 && d.y == 0 ? (d.z > 0 ? 90 : 270)
-                : q3_source_float_divide(q3_source_float_multiply((float)atan2((double)d.z,
-                    (double)(float)sqrt((double)q3_source_float_add(
-                        q3_source_float_multiply(d.x, d.x), q3_source_float_multiply(d.y, d.y)))),
-                    180), Q3_PI);
+                : (((float)atan2((double)d.z,
+                    (double)(float)sqrt((double)((d.x * d.x) + (d.y * d.y)))) * 180) / Q3_PI);
             if (pitch < 0)
-                pitch = q3_source_float_add(pitch, 360);
-            player->damage_pitch = q3_source_float_to_int(q3_source_float_multiply(
-                q3_source_float_divide(-pitch, 360), 256));
-            player->damage_yaw = q3_source_float_to_int(q3_source_float_multiply(
-                q3_source_float_divide(yaw, 360), 256));
+                pitch = (pitch + 360);
+            player->damage_pitch = q3_source_float_to_int(((-pitch / 360) * 256));
+            player->damage_yaw = q3_source_float_to_int(((yaw / 360) * 256));
         }
         qa_combat_state combat;
         if (!qa_combat_read_traits(game->options.services.combat, actor, &combat, error))

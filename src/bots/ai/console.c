@@ -61,7 +61,7 @@ bool bot_ai_messages(qa_bots *b,bot_ai_state *s,qa_error *e) {
         if(!qa_bot_chat_console_count_source(chat,&count,e)) return false;
         if(count<10 && message.type==1) {
             float random;if(!bot_ai_random(b,&random,e)) return false;
-            volatile float delay=1+random,threshold=b->time-delay;
+            float delay=1+random,threshold=b->time-delay;
             if(message.time>threshold) break;
         }
         qa_bot_chat_match match;bool found,matched;size_t offset=0;uint32_t synonym_context;

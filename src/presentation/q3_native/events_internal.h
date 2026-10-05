@@ -54,10 +54,6 @@ enum q3n_source_event {
     Q3N_EV_DEBUG_LINE, Q3N_EV_STOP_LOOP, Q3N_EV_TAUNT, Q3N_EV_TAUNT_YES, Q3N_EV_TAUNT_NO,
     Q3N_EV_TAUNT_FOLLOW, Q3N_EV_TAUNT_FLAG, Q3N_EV_TAUNT_BASE, Q3N_EV_TAUNT_PATROL
 };
-static inline float q3ne_f(float x) { volatile float v = x; return v; }
-static inline float q3ne_add(float x, float y) { return q3ne_f(x + y); }
-static inline float q3ne_mul(float x, float y) { return q3ne_f(x * y); }
-static inline float q3ne_div(float x, float y) { return q3ne_f(x / y); }
 static inline int32_t q3ne_word(uint32_t x) { int32_t v; memcpy(&v, &x, 4); return v; }
 static inline int32_t q3ne_sub(int32_t x, int32_t y) { return q3ne_word((uint32_t)x - (uint32_t)y); }
 static inline int32_t q3ne_plus(int32_t x, int32_t y) { return q3ne_word((uint32_t)x + (uint32_t)y); }
@@ -65,16 +61,16 @@ static inline int32_t q3ne_int(float x) { return !isfinite(x) || x < -2147483648
 static inline uint8_t q3ne_byte(float x) { return (uint8_t)(uint32_t)q3ne_int(x); }
 static inline qa_vec3 q3ne_array(const float x[3]) { return qa_v3(x[0], x[1], x[2]); }
 static inline void q3ne_store(float x[3], qa_vec3 v) { x[0] = v.x; x[1] = v.y; x[2] = v.z; }
-static inline qa_vec3 q3ne_scale(qa_vec3 v, float s) { return qa_v3(q3ne_mul(v.x,s),q3ne_mul(v.y,s),q3ne_mul(v.z,s)); }
-static inline qa_vec3 q3ne_sum(qa_vec3 a, qa_vec3 b) { return qa_v3(q3ne_add(a.x,b.x),q3ne_add(a.y,b.y),q3ne_add(a.z,b.z)); }
+static inline qa_vec3 q3ne_scale(qa_vec3 v, float s) { return qa_v3((v.x * s),(v.y * s),(v.z * s)); }
+static inline qa_vec3 q3ne_sum(qa_vec3 a, qa_vec3 b) { return qa_v3((a.x + b.x),(a.y + b.y),(a.z + b.z)); }
 static inline qa_vec3 q3ne_difference(qa_vec3 a, qa_vec3 b) { return q3ne_sum(a,q3ne_scale(b,-1)); }
-static inline float q3ne_dot(qa_vec3 a, qa_vec3 b) { return q3ne_add(q3ne_add(q3ne_mul(a.x,b.x),q3ne_mul(a.y,b.y)),q3ne_mul(a.z,b.z)); }
-static inline qa_vec3 q3ne_cross(qa_vec3 a, qa_vec3 b) { return qa_v3(q3ne_add(q3ne_mul(a.y,b.z),-q3ne_mul(a.z,b.y)),q3ne_add(q3ne_mul(a.z,b.x),-q3ne_mul(a.x,b.z)),q3ne_add(q3ne_mul(a.x,b.y),-q3ne_mul(a.y,b.x))); }
-static inline float q3ne_length(qa_vec3 v) { return q3ne_f(sqrtf(q3ne_dot(v,v))); }
-static inline qa_vec3 q3ne_normalize(qa_vec3 v) { float n=q3ne_length(v); return n!=0.0f? q3ne_scale(v,q3ne_div(1,n)):v; }
+static inline float q3ne_dot(qa_vec3 a, qa_vec3 b) { return (((a.x * b.x) + (a.y * b.y)) + (a.z * b.z)); }
+static inline qa_vec3 q3ne_cross(qa_vec3 a, qa_vec3 b) { return qa_v3(((a.y * b.z) + -(a.z * b.y)),((a.z * b.x) + -(a.x * b.z)),((a.x * b.y) + -(a.y * b.x))); }
+static inline float q3ne_length(qa_vec3 v) { return (sqrtf(q3ne_dot(v,v))); }
+static inline qa_vec3 q3ne_normalize(qa_vec3 v) { float n=q3ne_length(v); return n!=0.0f? q3ne_scale(v,(1 / n)):v; }
 static inline bool q3ne_fail(qa_error *e, qa_status status, const char *s) { qa_error_set(e,status,0,"%s",s); return false; }
-static inline float q3ne_life(int32_t start, int32_t end) { return q3ne_div(1,(float)q3ne_sub(end,start)); }
-static inline float q3ne_remaining(const q3n_local_entity *v, int32_t time) { return q3ne_mul((float)q3ne_sub(v->end_time,time),v->life_rate); }
+static inline float q3ne_life(int32_t start, int32_t end) { return (1 / (float)q3ne_sub(end,start)); }
+static inline float q3ne_remaining(const q3n_local_entity *v, int32_t time) { return ((float)q3ne_sub(v->end_time,time) * v->life_rate); }
 static inline void q3ne_identity(qa_vec3 axis[3]) { axis[0]=qa_v3(1,0,0); axis[1]=qa_v3(0,1,0); axis[2]=qa_v3(0,0,1); }
 qa_vec3 q3ne_perpendicular(qa_vec3);
 qa_vec3 q3ne_rotate(qa_vec3 axis, qa_vec3 point, float degrees);

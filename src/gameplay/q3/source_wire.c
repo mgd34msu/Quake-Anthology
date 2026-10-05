@@ -759,7 +759,7 @@ static void link_write(qa_q3_game *game, uint32_t slot, const qa_body_state *bod
     q3_wire_row *record = &game->wire->rows[slot];
     uint32_t solid = collision->inline_model ? UINT32_C(0xffffff)
         : !(collision->contents & INT32_C(0x02000001)) ? 0u
-        : (solid_byte(q3_source_float_add(body->bounds.maxs.z, 32)) << 16) |
+        : (solid_byte((body->bounds.maxs.z + 32)) << 16) |
           (solid_byte(-body->bounds.mins.z) << 8) | solid_byte(body->bounds.maxs.x);
     qa_q3_entity *temporary = q3_wire_temporary(game, record->actor);
     if (temporary) temporary->solid = word(solid);

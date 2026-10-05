@@ -62,8 +62,8 @@ static bool fail(qa_error *e,qa_status status,const char *text)
 { return frontend_fail(e,status,text); }
 static int32_t word(uint32_t n) { int32_t out; memcpy(&out,&n,sizeof(out)); return out; }
 static int32_t subtract(int32_t a,int32_t b) { return word((uint32_t)a-(uint32_t)b); }
-static float product(float a,float b) { volatile float v=a*b; return v; }
-static float sum(float a,float b) { volatile float v=a+b; return v; }
+static float product(float a,float b) { float v=a*b; return v; }
+static float sum(float a,float b) { float v=a+b; return v; }
 static bool attached(const frontend_remote_q3_runtime *o)
 { return o && o->attached && frontend_remote_q3_runtime_read(o->parent)==o; }
 static bool current(frontend_remote_q3_runtime *o,const q3n_remote_frame *r,qa_error *e)
@@ -1213,7 +1213,7 @@ static bool timescale(frontend_remote_q3_runtime *o,qa_error *e)
        !qa_native_q3_remote_client_cvar_read(client,"cg_timescaleFadeSpeed",&speed,e) ||
        !qa_native_q3_remote_client_cvar_read(client,"cg_timescale",&value,e))return false;
     if(value.number==finish.number)return true;
-    volatile float delta=product(speed.number,(float)o->frame_milliseconds)/1000;
+    float delta=product(speed.number,(float)o->frame_milliseconds)/1000;
     float next=value.number<finish.number?fminf(finish.number,sum(value.number,delta)):fmaxf(finish.number,sum(value.number,-delta));
     return qa_native_q3_remote_client_cvar_number(client,"cg_timescale",next,e) &&
         (speed.number==0 || qa_native_q3_remote_client_set_timescale(client,next,e));

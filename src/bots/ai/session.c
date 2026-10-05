@@ -46,20 +46,20 @@ static bool scan_float(const char *text,size_t length,size_t *cursor,float *out,
     if(!byte) {*out=0;return true;}
     bool negative=byte=='-';
     if(byte=='-' || byte=='+') {++*cursor;if(!scan_byte(text,length,*cursor,&byte,e)) return false;}
-    volatile float value=0;
+    float value=0;
     int32_t delimiter='0';
     if(byte!='.') for(;;) {
         if(!scan_byte(text,length,(*cursor)++,&delimiter,e)) return false;
         if(delimiter<'0' || delimiter>'9') break;
-        volatile float product=value*10.0f;value=product+(float)(delimiter-'0');
+        float product=value*10.0f;value=product+(float)(delimiter-'0');
     }
     if(delimiter=='.') {
-        volatile float fraction=.1f;
+        double fraction=.1;
         for(;;) {
             if(!scan_byte(text,length,(*cursor)++,&byte,e)) return false;
             if(byte<'0' || byte>'9') break;
-            volatile float product=(float)(byte-'0')*fraction;
-            value=value+product;fraction=fraction*.1f;
+            double product=(byte-'0')*fraction;
+            value=(float)((double)value+product);fraction=fraction*.1;
         }
     }
     *out=negative?-value:value;return true;
@@ -120,7 +120,7 @@ static void format_integer(char *text,size_t *used,int32_t value) {
 static bool format_float(char *text,size_t *used,float value,qa_error *e) {
     if(!isfinite(value) || fabs((double)value)>INT32_MAX)
         return bot_ai_fail(e,"bot session float exceeds source formatter integer range");
-    volatile float remaining=value<0?-value:value;
+    float remaining=value<0?-value:value;
     if(value<0) text[(*used)++]='-';
     format_integer(text,used,(int32_t)remaining);text[(*used)++]='.';
     for(size_t i=0;i<6;++i) {

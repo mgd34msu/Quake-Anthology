@@ -9,29 +9,26 @@
 #include <limits.h>
 #include <string.h>
 
-static float add(float a, float b) { volatile float v = a + b; return v; }
-static float mul(float a, float b) { volatile float v = a * b; return v; }
-static float divide(float a, float b) { volatile float v = a / b; return v; }
 static int32_t word(uint32_t v) { int32_t out; memcpy(&out, &v, sizeof(out)); return out; }
 static int32_t sum(int32_t a, int32_t b) { return word((uint32_t)a + (uint32_t)b); }
 static int32_t difference(int32_t a, int32_t b) { return word((uint32_t)a - (uint32_t)b); }
 static int32_t integer(float v) { return isfinite(v) && v >= -2147483648.0f && v < 2147483648.0f ? (int32_t)truncf(v) : INT32_MIN; }
 static qa_vec3 vector(const float v[3]) { return qa_v3(v[0], v[1], v[2]); }
-static qa_vec3 plus(qa_vec3 a, qa_vec3 b) { return qa_v3(add(a.x,b.x),add(a.y,b.y),add(a.z,b.z)); }
-static qa_vec3 scale(qa_vec3 a, float s) { return qa_v3(mul(a.x,s),mul(a.y,s),mul(a.z,s)); }
-static float dot(qa_vec3 a, qa_vec3 b) { return add(add(mul(a.x,b.x),mul(a.y,b.y)),mul(a.z,b.z)); }
+static qa_vec3 plus(qa_vec3 a, qa_vec3 b) { return qa_v3((a.x + b.x),(a.y + b.y),(a.z + b.z)); }
+static qa_vec3 scale(qa_vec3 a, float s) { return qa_v3((a.x * s),(a.y * s),(a.z * s)); }
+static float dot(qa_vec3 a, qa_vec3 b) { return (((a.x * b.x) + (a.y * b.y)) + (a.z * b.z)); }
 static qa_vec3 cross(qa_vec3 a, qa_vec3 b) {
-    return qa_v3(add(mul(a.y,b.z),-mul(a.z,b.y)),add(mul(a.z,b.x),-mul(a.x,b.z)),add(mul(a.x,b.y),-mul(a.y,b.x)));
+    return qa_v3(((a.y * b.z) + -(a.z * b.y)),((a.z * b.x) + -(a.x * b.z)),((a.x * b.y) + -(a.y * b.x)));
 }
 static qa_vec3 normalize(qa_vec3 v) {
-    float length=(float)sqrt((double)dot(v,v)); return length==0 ? v : scale(v,divide(1,length));
+    float length=(float)sqrt((double)dot(v,v)); return length==0 ? v : scale(v,(1 / length));
 }
 static qa_vec3 perpendicular(qa_vec3 v) {
     float minimum=1; qa_vec3 axis={1,0,0};
     if (fabsf(v.x)<minimum) { minimum=fabsf(v.x); axis=qa_v3(1,0,0); }
     if (fabsf(v.y)<minimum) { minimum=fabsf(v.y); axis=qa_v3(0,1,0); }
     if (fabsf(v.z)<minimum) axis=qa_v3(0,0,1);
-    float inverse=divide(1,dot(v,v)), distance=mul(dot(v,axis),inverse);
+    float inverse=(1 / dot(v,v)), distance=(dot(v,axis) * inverse);
     qa_vec3 normal=scale(v,inverse);
     return normalize(plus(axis,scale(normal,-distance)));
 }
@@ -42,7 +39,7 @@ static void matrix(const qa_vec3 a[3], const qa_vec3 b[3], qa_vec3 out[3]) {
 }
 static qa_vec3 rotate(qa_vec3 direction, qa_vec3 point, float degrees) {
     qa_vec3 radial=perpendicular(direction), vertical=cross(radial,direction);
-    float radians=divide(mul(degrees,3.14159265358979323846f),180);
+    float radians=((degrees * 3.14159265358979323846f) / 180);
     float cosine=(float)cos((double)radians), sine=(float)sin((double)radians);
     qa_vec3 basis[3]={{radial.x,vertical.x,direction.x},{radial.y,vertical.y,direction.y},{radial.z,vertical.z,direction.z}};
     qa_vec3 inverse[3]={radial,vertical,direction}, turn[3]={{cosine,sine,0},{-sine,cosine,0},{0,0,1}}, first[3], result[3];
@@ -149,9 +146,8 @@ static bool item(const q3n_frame *f,const packet_source *source,q3n_entity *enti
         ref.kind=QA_Q3_REF_SPRITE; ref.origin=entity->lerp_origin; ref.radius=14; ref.custom_shader=visual->icon;
         memset(ref.color,255,sizeof(ref.color)); return body(f,source,entity,imports,&ref,error);
     }
-    float bob=add(4,mul((float)cos((double)mul((float)sum(f->time,1000),
-        add(0.005f,mul((float)s->number,0.00001f)))),4));
-    entity->lerp_origin.z=add(entity->lerp_origin.z,bob);
+    float bob=(4 + ((float)cos((double)((float)sum(f->time,1000) * (0.005f + ((float)s->number * 0.00001f)))) * 4));
+    entity->lerp_origin.z=(entity->lerp_origin.z + bob);
     ref.kind=QA_Q3_REF_MODEL; ref.model=visual->models[0];
     float yaw=definition->kind==QA_Q3_ITEM_HEALTH ? (float)((f->time&1023)*360)/1024
         : (float)((f->time&2047)*360)/2048;
@@ -162,11 +158,11 @@ static bool item(const q3n_frame *f,const packet_source *source,q3n_entity *enti
         weapon=&media->weapons[definition->tag];
         qa_vec3 midpoint=weapon->weapon_midpoint;
         qa_vec3 offset=plus(plus(scale(ref.axis[0],midpoint.x),scale(ref.axis[1],midpoint.y)),scale(ref.axis[2],midpoint.z));
-        entity->lerp_origin=plus(entity->lerp_origin,scale(offset,-1)); entity->lerp_origin.z=add(entity->lerp_origin.z,8);
+        entity->lerp_origin=plus(entity->lerp_origin,scale(offset,-1)); entity->lerp_origin.z=(entity->lerp_origin.z + 8);
     }
     ref.origin=ref.old_origin=entity->lerp_origin;
     int32_t elapsed=difference(f->time,entity->misc_time); float fraction=1;
-    if(elapsed>=0 && elapsed<1000) { fraction=divide((float)elapsed,1000); scale_axis(ref.axis,fraction); ref.non_normalized_axes=true; }
+    if(elapsed>=0 && elapsed<1000) { fraction=((float)elapsed / 1000); scale_axis(ref.axis,fraction); ref.non_normalized_axes=true; }
     if(definition->kind==QA_Q3_ITEM_WEAPON || definition->kind==QA_Q3_ITEM_ARMOR) ref.flags|=1;
     if(weapon) {
         scale_axis(ref.axis,1.5f); ref.non_normalized_axes=true;
@@ -186,7 +182,7 @@ static bool item(const q3n_frame *f,const packet_source *source,q3n_entity *enti
     }
     if(!options->simple_items && (definition->kind==QA_Q3_ITEM_HEALTH || definition->kind==QA_Q3_ITEM_POWERUP) && visual->models[1]) {
         ref.model=visual->models[1]; yaw=0;
-        if(definition->kind==QA_Q3_ITEM_POWERUP) { ref.origin.z=add(ref.origin.z,12); yaw=divide((float)((f->time&1023)*360),-1024); }
+        if(definition->kind==QA_Q3_ITEM_POWERUP) { ref.origin.z=(ref.origin.z + 12); yaw=((float)((f->time&1023)*360) / -1024); }
         q3n_angles_axis(qa_v3(0,yaw,0),ref.axis);
         if(fraction!=1) { scale_axis(ref.axis,fraction); ref.non_normalized_axes=true; }
         if(!body(f,source,entity,imports,&ref,error)) return false;
@@ -252,21 +248,21 @@ static bool team(const q3n_frame *f,const packet_source *source,q3n_entity *enti
         entity->misc_time=entity->muzzle_flash_time=0;
         ref.color[0]=ref.color[3]=255; ref.color[1]=ref.color[2]=health; ref.model=media->graphics[Q3N_G_OVERLOAD_LIGHTS];
         if(!body(f,source,entity,imports,&ref,error)) return false;
-        ref.origin.z=add(ref.origin.z,56); ref.model=media->graphics[Q3N_G_OVERLOAD_TARGET]; return body(f,source,entity,imports,&ref,error);
+        ref.origin.z=(ref.origin.z + 56); ref.model=media->graphics[Q3N_G_OVERLOAD_TARGET]; return body(f,source,entity,imports,&ref,error);
     }
     if(!entity->misc_time) entity->misc_time=f->time;
     int32_t elapsed=difference(f->time,entity->misc_time), threshold=word((uint32_t)difference(options->obelisk_respawn_delay,5)*1000u);
-    float amount=elapsed>threshold ? fminf(1,divide((float)difference(elapsed,threshold),(float)threshold)) : 0;
-    memset(ref.color,(uint8_t)integer(mul(amount,255)),sizeof(ref.color)); ref.model=media->graphics[Q3N_G_OVERLOAD_LIGHTS];
+    float amount=elapsed>threshold ? fminf(1,((float)difference(elapsed,threshold) / (float)threshold)) : 0;
+    memset(ref.color,(uint8_t)integer((amount * 255)),sizeof(ref.color)); ref.model=media->graphics[Q3N_G_OVERLOAD_LIGHTS];
     if(!body(f,source,entity,imports,&ref,error)) return false;
     if(elapsed>threshold) {
         if(!entity->muzzle_flash_time) {
             if(!qa_q3_presentation_sound(f->presentation,media->sounds[Q3N_S_OBELISK_RESPAWN],&entity->lerp_origin,1023,5,false,error) || !current(f,source,error)) return false;
             entity->muzzle_flash_time=1;
         }
-        float spin=divide(mul(mul(16,(float)acos((double)add(1,-amount))),180),3.14159265358979323846f);
-        qa_vec3 angles=vector(s->angles); angles.y=add(angles.y,spin); q3n_angles_axis(angles,ref.axis); scale_axis(ref.axis,amount);
-        memset(ref.color,255,sizeof(ref.color)); ref.origin.z=add(ref.origin.z,56); ref.model=media->graphics[Q3N_G_OVERLOAD_TARGET];
+        float spin=(((16 * (float)acos((double)(1 + -amount))) * 180) / 3.14159265358979323846f);
+        qa_vec3 angles=vector(s->angles); angles.y=(angles.y + spin); q3n_angles_axis(angles,ref.axis); scale_axis(ref.axis,amount);
+        memset(ref.color,255,sizeof(ref.color)); ref.origin.z=(ref.origin.z + 56); ref.model=media->graphics[Q3N_G_OVERLOAD_TARGET];
         if(!body(f,source,entity,imports,&ref,error)) return false;
     }
     return true;
@@ -304,7 +300,7 @@ static bool packet_entity(const q3n_frame *f,const packet_source *source,q3n_ent
         ref.kind=QA_Q3_REF_PORTAL; ref.origin=entity->lerp_origin; ref.old_origin=vector(s->origin2);
         qa_vec3 forward={0}; if(s->eventParm>=0 && s->eventParm<(int32_t)QA_BYTE_NORMAL_COUNT) qa_byte_normal((uint8_t)s->eventParm,&forward);
         qa_vec3 side=scale(perpendicular(forward),-1); ref.axis[0]=forward; ref.axis[1]=side; ref.axis[2]=cross(forward,side);
-        ref.old_frame=s->powerups; ref.frame=s->frame; ref.skin=integer(mul(divide((float)s->clientNum,256),360));
+        ref.old_frame=s->powerups; ref.frame=s->frame; ref.skin=integer((((float)s->clientNum / 256) * 360));
         return body(f,source,entity,imports,&ref,error);
     }
     case 7: {
@@ -312,8 +308,8 @@ static bool packet_entity(const q3n_frame *f,const packet_source *source,q3n_ent
         if(!range(s->eventParm,256,"sound",error) || !qa_q3_presentation_sound(f->presentation,media->game_sounds[s->eventParm],NULL,s->number,4,false,error) || !current(f,source,error)) return false;
         int32_t random_word=random_value(imports);
         if(!current(f,source,error)) return false;
-        float random=divide((float)((uint32_t)random_word&32767u),32767), crandom=mul(2,add(random,-0.5f));
-        entity->misc_time=integer(add((float)sum(f->time,word((uint32_t)s->frame*100u)),mul((float)word((uint32_t)s->clientNum*100u),crandom)));
+        float random=((float)((uint32_t)random_word&32767u) / 32767), crandom=(2 * (random + -0.5f));
+        entity->misc_time=integer(((float)sum(f->time,word((uint32_t)s->frame*100u)) + ((float)word((uint32_t)s->clientNum*100u) * crandom)));
         return true;
     }
     case 11: return missile(f,source,entity,imports,true,error);
@@ -358,10 +354,10 @@ static bool remote_valid(const q3n_frame *f,const q3n_remote_entity *source,qa_e
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"Remote packet lacks its actual reached entity receipt"); return false;
 }
 static float lerp_angle(float from,float to,float fraction) {
-    float delta=add(to,-from);
-    if(delta>180) to=add(to,-360);
-    if(delta< -180) to=add(to,360);
-    return add(from,mul(fraction,add(to,-from)));
+    float delta=(to + -from);
+    if(delta>180) to=(to + -360);
+    if(delta< -180) to=(to + 360);
+    return (from + (fraction * (to + -from)));
 }
 static bool predict(const q3n_frame *f,qa_q3_player *p,qa_q3_entity *s,q3n_entity *entity,qa_error *error) {
     s->number=p->clientNum; s->eType=p->pmType==2 || p->pmType==5 || p->stats[0]<=-40 ? 10 : 1;
@@ -414,7 +410,7 @@ static bool lerp(const q3n_frame *f,const packet_source *source,const q3n_packet
             qa_error_set(error,QA_ERROR_FORMAT,0,"CG_InterpolateEntityPosition: cg.nextSnap == NULL"); return false;
         }
         int32_t delta=difference(next->server_time,snapshot->server_time);
-        float fraction=delta ? divide((float)difference(f->time,snapshot->server_time),(float)delta) : 0;
+        float fraction=delta ? ((float)difference(f->time,snapshot->server_time) / (float)delta) : 0;
         qa_q3_trajectory next_pos=next_state->pos;
         qa_vec3 a,b;
         if(!q3n_trajectory(&pos,snapshot->server_time,&a,error) ||

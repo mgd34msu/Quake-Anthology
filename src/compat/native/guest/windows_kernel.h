@@ -4,7 +4,7 @@
 typedef struct windows_reservation { uint64_t base, bytes; bool allocated; } windows_reservation;
 typedef struct windows_fls { uint64_t callback, value; bool allocated; } windows_fls;
 typedef struct windows_standard { int32_t id; uint64_t handle; } windows_standard;
-typedef struct windows_file_handle { uint64_t handle; int32_t stream; double stream_offset; } windows_file_handle;
+typedef struct windows_file_handle { uint64_t handle; int32_t stream; uint64_t stream_offset; } windows_file_handle;
 typedef struct windows_pending_file {
     char *path;
     uint32_t creation;

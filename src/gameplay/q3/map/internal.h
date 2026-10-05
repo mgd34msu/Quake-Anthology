@@ -27,7 +27,7 @@ static inline int32_t q3_map_source_schedule(int32_t now, float seconds) {
 
 static inline int32_t q3_map_random_schedule(int32_t now, float wait, float random,
                                              float crandom) {
-    float seconds = q3_source_float_add(wait, q3_source_float_multiply(random, crandom));
+    float seconds = (wait + (random * crandom));
     return q3_source_float_schedule(now, seconds);
 }
 

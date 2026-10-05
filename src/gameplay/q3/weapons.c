@@ -85,19 +85,15 @@ bool q3_invulnerability(qa_q3_game *game, qa_actor_id actor, qa_vec3 direction, 
     qa_vec3 offset_angles = qa_vec_sub(*impact, body.origin);
     float yaw = 0, pitch = offset_angles.z > 0 ? 90 : 270;
     if (offset_angles.x != 0 || offset_angles.y != 0) {
-        yaw = offset_angles.x != 0 ? q3_source_float_divide(q3_source_float_multiply(
-            (float)atan2((double)offset_angles.y, (double)offset_angles.x), 180), Q3_PI)
+        yaw = offset_angles.x != 0 ? (((float)atan2((double)offset_angles.y, (double)offset_angles.x) * 180) / Q3_PI)
             : offset_angles.y > 0 ? 90 : 270;
-        if (yaw < 0) yaw = q3_source_float_add(yaw, 360);
-        float horizontal = (float)sqrt((double)q3_source_float_add(
-            q3_source_float_multiply(offset_angles.x, offset_angles.x),
-            q3_source_float_multiply(offset_angles.y, offset_angles.y)));
-        pitch = q3_source_float_divide(q3_source_float_multiply(
-            (float)atan2((double)offset_angles.z, (double)horizontal), 180), Q3_PI);
-        if (pitch < 0) pitch = q3_source_float_add(pitch, 360);
+        if (yaw < 0) yaw = (yaw + 360);
+        float horizontal = (float)sqrt((double)((offset_angles.x * offset_angles.x) + (offset_angles.y * offset_angles.y)));
+        pitch = (((float)atan2((double)offset_angles.z, (double)horizontal) * 180) / Q3_PI);
+        if (pitch < 0) pitch = (pitch + 360);
     }
-    pitch = q3_source_float_add(-pitch, 90);
-    if (pitch > 360) pitch = q3_source_float_add(pitch, -360);
+    pitch = (-pitch + 90);
+    if (pitch > 360) pitch = (pitch + -360);
     event->angles[0] = pitch; event->angles[1] = yaw; event->angles[2] = 0;
     return q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_IMPACT, 71, 0, body.origin, *impact,
                     *normal, error);
@@ -160,16 +156,9 @@ static bool impact_event(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon wea
 }
 static bool bullet(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon weapon,
                    q3_attack_geometry attack, float spread, float damage, qa_error *error) {
-    float angle = q3_source_float_multiply(
-        q3_source_float_multiply(q3_random(game), Q3_PI), 2.0f);
-    float vertical = q3_source_float_multiply(
-        q3_source_float_multiply(
-            q3_source_float_multiply((float)sin((double)angle), q3_crandom(game)), spread),
-        16.0f);
-    float horizontal = q3_source_float_multiply(
-        q3_source_float_multiply(
-            q3_source_float_multiply((float)cos((double)angle), q3_crandom(game)), spread),
-        16.0f);
+    float angle = ((q3_random(game) * Q3_PI) * 2.0f);
+    float vertical = ((((float)sin((double)angle) * q3_crandom(game)) * spread) * 16.0f);
+    float horizontal = ((((float)cos((double)angle) * q3_crandom(game)) * spread) * 16.0f);
     qa_vec3 end =
         qa_vec_add(qa_vec_add(qa_vec_add(attack.muzzle, qa_vec_scale(attack.forward, 131072)),
                               qa_vec_scale(attack.right, horizontal)),
@@ -300,7 +289,7 @@ static bool lightning(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry 
 }
 static qa_vec3 source_normalize(qa_vec3 value) {
     float length = (float)sqrt((double)qa_vec_dot(value, value));
-    return length == 0 ? value : qa_vec_scale(value, q3_source_float_divide(1, length));
+    return length == 0 ? value : qa_vec_scale(value, (1 / length));
 }
 static qa_vec3 perpendicular(qa_vec3 direction) {
     qa_vec3 axis = qa_v3(1, 0, 0);
@@ -313,8 +302,8 @@ static qa_vec3 perpendicular(qa_vec3 direction) {
     }
     if (fabsf(direction.z) < minimum)
         axis = qa_v3(0, 0, 1);
-    float inverse = q3_source_float_divide(1, qa_vec_dot(direction, direction));
-    float distance = q3_source_float_multiply(qa_vec_dot(axis, direction), inverse);
+    float inverse = (1 / qa_vec_dot(direction, direction));
+    float distance = (qa_vec_dot(axis, direction) * inverse);
     qa_vec3 normal = qa_vec_scale(direction, inverse);
     return source_normalize(qa_vec_sub(axis, qa_vec_scale(normal, distance)));
 }

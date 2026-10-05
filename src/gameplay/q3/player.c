@@ -343,7 +343,7 @@ bool qa_q3_player_set_view(qa_q3_game *game, qa_actor_id actor, qa_vec3 angles, 
     return true;
 }
 static int32_t q3_angle_word(float angle) {
-    float scaled = q3_source_float_divide(q3_source_float_multiply(angle, 65536.0f), 360.0f);
+    float scaled = ((angle * 65536.0f) / 360.0f);
     return (int32_t)((uint32_t)q3_source_float_to_int(scaled) & 65535u);
 }
 static void q3_cutscene_movement(qa_movement_state *state, qa_movement_command *command,

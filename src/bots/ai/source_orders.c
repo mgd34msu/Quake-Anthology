@@ -76,16 +76,16 @@ static bool number_float(source_number *n,bool scan,float *out,qa_error *e) {
         for(;;) {
             if(!number_take(n,&c,e)) return false;
             if(c<'0' || c>'9') break;
-            volatile float product=value*10.0f;value=product+(float)(c-'0');
+            float product=value*10.0f;value=product+(float)(c-'0');
         }
     } else if(!scan) ++n->offset;
     if(c=='.') {
-        float fraction=.1f;
+        double fraction=.1;
         for(;;) {
             if(!number_take(n,&c,e)) return false;
             if(c<'0' || c>'9') break;
-            volatile float product=(float)(c-'0')*fraction;value=value+product;
-            fraction=fraction*.1f;
+            double product=(c-'0')*fraction;value=(float)((double)value+product);
+            fraction=fraction*.1;
         }
     }
     *out=value*(float)sign;return true;
@@ -393,7 +393,7 @@ static bool ordered(qa_bots *b,bot_ai_state *s,int32_t client,qa_error *e) {
     if(!alive(b,s)) return true;
     bot_ai_decisionmaker_set(s,client);bot_ai_ordered_set(s,true);bot_ai_order_time_set(s,b->time);
     float random;if(!bot_ai_random(b,&random,e)) return false;
-    if(alive(b,s)) {volatile float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);}
+    if(alive(b,s)) {float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);}
     return true;
 }
 static bool requester(qa_bots *b,const qa_bot_chat_match *m,bool find,int32_t *out,qa_error *e) {
@@ -464,7 +464,7 @@ static bool help_accompany(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m
     bot_ai_decisionmaker_set(s,client);bot_ai_ordered_set(s,true);bot_ai_order_time_set(s,b->time);bot_ai_teammate_visible_time_set(s,b->time);
     float random;if(!bot_ai_random(b,&random,e)) return false;
     if(!alive(b,s)) return true;
-    volatile float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);
+    float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);
     float deadline_value;if(!deadline(b,m,&deadline_value,e)) return false;
     bot_ai_team_goal_time_set(s,deadline_value);
     if(m->type==MSG_HELP) {
@@ -663,7 +663,7 @@ static bool formation_space(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *
     char text[256];float value;
     if(!variable(m,VAR_AREA,text,e) || !scalar(text,&value,e)) return false;
     float space;
-    if(m->subtype&MATCH_FEET) {volatile float feet=.3048f*32.0f;space=feet*value;}
+    if(m->subtype&MATCH_FEET) {float feet=.3048f*32.0f;space=feet*value;}
     else space=32.0f*value;
     if(space<48 || space>500) space=100;
     if(alive(b,s)) bot_ai_formation_distance_set(s,space);
@@ -747,7 +747,7 @@ static bool lead(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error 
     if(!alive(b,s)) return true;
     bot_ai_lead_teammate_set(s,client);bot_ai_lead_time_set(s,b->time+600.0f);bot_ai_lead_visible_time_set(s,0);
     float random;if(!bot_ai_random(b,&random,e)) return false;
-    if(alive(b,s)) {volatile float delay=2.0f*random;bot_ai_lead_message_time_set(s,-(b->time+delay));}
+    if(alive(b,s)) {float delay=2.0f*random;bot_ai_lead_message_time_set(s,-(b->time+delay));}
     return true;
 }
 static bool kill(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error *e) {
@@ -762,7 +762,7 @@ static bool kill(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error 
     bot_ai_goal_entity_set(s,QA_BOT_SOURCE_TEAM_GOAL,client);
     float random;if(!bot_ai_random(b,&random,e)) return false;
     if(!alive(b,s)) return true;
-    volatile float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);
+    float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);
     bot_ai_long_term_goal_set(s,BOT_LTG_KILL);bot_ai_team_goal_time_set(s,b->time+180.0f);
     return finish_order(b,s,false,e);
 }
