@@ -1028,9 +1028,7 @@ static bool model_beam(qa_scene_model *model, const qa_scene_model_input *input,
     if (!isfinite(seed_number) || fabs(seed_number) > 9007199254740991.0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model beam random seed is outside source integer range"); return false;
     }
-    double wrapped = fmod(seed_number, 4294967296.0);
-    if (wrapped < 0) wrapped += 4294967296.0;
-    uint32_t random = (uint32_t)wrapped;
+    uint32_t random = (uint32_t)(int64_t)seed_number;
     uint32_t count = model->source->frame_group_count ? model->source->frame_group_count : model->source->frame_count;
     if (!count) count = input->animation ? input->animation->frame_count : 1;
     if (!count) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model beam has no source frames"); return false; }

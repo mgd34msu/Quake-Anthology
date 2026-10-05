@@ -123,9 +123,9 @@ static bool counter(qa_inventory_count_policy policy, double value, double *out,
         *out = rounded; return true;
     }
     case QA_COUNT_SOURCE_INT32: {
-        double wrapped = fmod(trunc(value), 4294967296.0);
-        if (wrapped < 0) wrapped += 4294967296.0;
-        *out = wrapped >= 2147483648.0 ? wrapped - 4294967296.0 : wrapped;
+        if (value <= -2147483649.0 || value >= 2147483648.0)
+            return fail(e, QA_ERROR_ARGUMENT, "Inventory counter exceeds its native integer field");
+        *out = (int32_t)value;
         return true;
     }
     case QA_COUNT_SOURCE_DOUBLE:

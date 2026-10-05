@@ -19,12 +19,11 @@ static float project(const float axis[4], qa_vec3 point)
     return point.x * axis[0] + point.y * axis[1] + point.z * axis[2] + axis[3];
 }
 
-/* Uint32Array assignment in the donor truncates and wraps each addition. */
+/* Native unsigned light accumulators and grid indices retain the low word.
+ * An invalid x86 floating conversion has a zero low word. */
 static uint32_t light_u32(double value)
 {
-    double integer = fmod(trunc(value), 4294967296.0);
-    if (integer < 0) integer += 4294967296.0;
-    return (uint32_t)integer;
+    return value >= -0x1p63 && value < 0x1p63 ? (uint32_t)(int64_t)value : 0;
 }
 
 bool qawl_light_styles(qa_scene_world *world, const qa_scene_world_input *input, qa_error *error)

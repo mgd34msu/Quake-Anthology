@@ -70,10 +70,10 @@ bool qa_debug_native_q2(qa_native_instance *instance, const qa_native_import_cal
     if (!ok || !color(instance, call, rows[row].color, &rgba, error) ||
         !scalar(call, rows[row].lifetime, &seconds, error) ||
         !argument(call, rows[row].lifetime + 1, QA_NATIVE_U8, error)) return false;
-    float product = (float)(seconds * 1000.0f);
-    double wrapped = isfinite(product) ? fmod(trunc((double)product), 4294967296.0) : 0;
-    if (wrapped < 0) wrapped += 4294967296.0;
-    uint32_t milliseconds = (uint32_t)wrapped;
+    float product = seconds * 1000.0f;
+    if (!isfinite(product) || product < -0x1p63f || product >= 0x1p63f)
+        return tools_fail(error, "native debug lifetime exceeds its unsigned millisecond field");
+    uint32_t milliseconds = (uint32_t)(int64_t)product;
     if (!qa_debug_shape_lines(&shape, rgba, call->arguments[rows[row].lifetime + 1].as.u8 != 0, scratch, out, count, error)) return false;
     *lifetime = milliseconds; return true;
 }
