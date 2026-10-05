@@ -655,8 +655,9 @@ static bool level_clock(qa_q2_game *g, const q2_original_level_state *state, qa_
 {
     qa_clock_state clock;
     qa_clock_config recipe;
+    uint64_t order;
     if (!qa_session_clock(g->services.session, g->options.owner, &clock) ||
-        !qa_session_component_recipe(g->services.session, g->options.owner, &recipe, NULL) ||
+        !qa_session_component_recipe(g->services.session, g->options.owner, &recipe, &order) ||
         state->time_ns < recipe.initial_time_ns)
         return level_error(error, 0, "Original Q2 level has no admitted native Source clock");
     uint64_t duration = recipe.interval_ns ? recipe.interval_ns : Q2_NS / 10;
