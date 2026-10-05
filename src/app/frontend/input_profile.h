@@ -5,6 +5,7 @@
 #include "qa/settings.h"
 bool frontend_input_profile_default_options(qa_frontend *,qa_error *);
 bool frontend_input_profile_bind(qa_frontend *,qa_error *);
+bool frontend_input_profile_bind_product(qa_frontend *,qa_catalog *,qa_product_id,qa_error *);
 bool frontend_input_profile_bind_store(qa_frontend *,qa_catalog *,qa_product_id,qa_settings_store,qa_error *);
 const qa_vfs *frontend_input_profile_files(const qa_frontend *);
 qa_product_id frontend_input_profile_product(const qa_frontend *);

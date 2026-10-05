@@ -40,11 +40,17 @@ bool frontend_input_profile_bind(qa_frontend *f,qa_error *error)
     if (!choices || !choices->world.preset)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Input profile has no genuine selected preset product");
     qa_catalog *catalog=qa_launch_snapshot_catalog(publication);
-    frontend_config_files *files=frontend_config_files_create(catalog,choices->world.preset,
+    return frontend_input_profile_bind_product(f,catalog,choices->world.preset,error);
+}
+bool frontend_input_profile_bind_product(qa_frontend *f,qa_catalog *catalog,qa_product_id product,
+    qa_error *error)
+{
+    if (f->input_config) return frontend_input_profile_bind(f,error);
+    frontend_config_files *files=frontend_config_files_create(catalog,product,
         frontend_global_settings_storage_user_store(f->global_settings_storage),
         frontend_global_settings_storage_device_store(f->global_settings_storage),error);
     if (!files) return false;
-    bool ok=frontend_input_profile_bind_store(f,catalog,choices->world.preset,
+    bool ok=frontend_input_profile_bind_store(f,catalog,product,
         frontend_config_files_store(files,false),error);
     bool destroyed=frontend_config_files_destroy(files,ok?error:NULL);
     return ok && destroyed;

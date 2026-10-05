@@ -7,6 +7,7 @@
 #include "demo_dispatch.h"
 #include "startup_server_profile.h"
 #include "global_settings_storage.h"
+#include "input_profile.h"
 #include "qa/application_q3_campaign.h"
 #include <stdio.h>
 
@@ -259,6 +260,8 @@ bool frontend_startup_launch_drain(qa_frontend *f, qa_error *error)
     if (ok && !complete) return true;
     if (!ok && f->input_settings) { if (error) *error = failure; return false; }
     if (ok) ok = frontend_demo_dispatch_stop(f->demos, &failure) && frontend_network_destroy(f, &failure);
+    if (ok) ok = frontend_input_profile_bind_product(f,qa_launch_draft_catalog(request->draft),
+        selected->world.preset,&failure);
     if (ok) {
         f->options.network_connect = NULL;
         f->options.network_host = request->hosting.kind == FRONTEND_HOST_OFFLINE ? NULL : "0.0.0.0";
