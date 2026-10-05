@@ -308,7 +308,8 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                 !frontend_qc_messages_client_camera(frontend->qc_messages,actor,&camera,&override,error)) return false;
         }
         qa_application_presentation_view source = {0};
-        if (published) (void)qa_application_presentation_read(frontend->application, launch_seat, &source);
+        bool local_presentation = published &&
+            qa_application_presentation_read(frontend->application, launch_seat, &source);
         bool source_weapon_status=false;
         if (live) {
             qa_application_equipment_view equipped; bool present=false;
@@ -415,7 +416,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (!source.source_world && !native_rendered && (!frontend_event_debug(frontend, &view, error) ||
             !frontend_tools_debug(frontend, &view, error))) return false;
         uint32_t real_milliseconds = (uint32_t)((frontend->time_ns / 1000000) & UINT32_MAX);
-        if (published && !frontend_source_present(frontend, i, launch_seat, real_milliseconds,
+        if (local_presentation && !frontend_source_present(frontend, i, launch_seat, real_milliseconds,
                 frontend_network_remote(frontend) ? frontend_network_client_time(frontend) :
                     real_milliseconds, error)) return false;
         if (!frontend_native_q2_world_text(frontend, i, &view, error) ||
