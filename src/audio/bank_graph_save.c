@@ -1,6 +1,8 @@
 #include "bank_save_private.h"
 #include "qa/audio_bank_graph_save.h"
 #include <limits.h>
+#include <stdlib.h>
+#include <string.h>
 
 typedef struct bank_cut {
     qa_vfs *view;
@@ -129,112 +131,4 @@ bool qa_audio_asset_inventory_ready(const qa_audio_asset_inventory *inventory, q
             return fail(error, QA_ERROR_UNSUPPORTED, "Audio asset holders do not match their actual graph");
     }
     return true;
-}
-bool qa_audio_bank_graph_checkpoint(const qa_audio_asset_inventory *inventory,
-    const qa_audio_bank_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
-{
-    if (!refs || !refs->view_encode || !refs->resource_encode || !out || out->data || out->size ||
-        !inventory || inventory->owns_assets) return fail(error, QA_ERROR_ARGUMENT, "Audio graph capture requires a borrowed cut and empty output");
-    if (!qa_audio_asset_inventory_ready(inventory, error)) return false;
-    struct sample_row *samples = NULL; size_t sample_count = 0; bool ok = true;
-    for (size_t i = 0; ok && i < inventory->asset_count; ++i)
-        ok = qa_bank_asset_valid(inventory->assets[i].asset, error) &&
-            qa_bank_add_sample(&samples, &sample_count, inventory->assets[i].asset->sample, error);
-    qa_source_save_io w;
-    if (!qa_source_save_writer(&w, NULL, error)) return false;
-    ok = ok && qa_ac_write(&w, "QABG", 4) && qa_ac_u64(&w, inventory->bank_count) &&
-        qa_ac_u64(&w, sample_count) && qa_ac_u64(&w, inventory->asset_count);
-    for (size_t i = 0; ok && i < sample_count; ++i) {
-        qa_buffer saved = {0}; ok = qa_audio_sample_checkpoint(samples[i].sample, &saved, error) &&
-            qa_ac_blob(&w, (qa_bytes){saved.data, saved.size}); qa_buffer_free(&saved);
-    }
-    for (size_t i = 0; ok && i < inventory->asset_count; ++i)
-        ok = qa_ac_u64(&w, inventory->assets[i].holders) &&
-            qa_bank_write_asset(&w, &inventory->assets[i], samples, sample_count, refs);
-    for (size_t i = 0; ok && i < inventory->bank_count; ++i) {
-        const bank_cut *cut = &inventory->cuts[i]; uint64_t view = 0;
-        ok = refs->view_encode(refs->context, cut->view, &view, error) && qa_ac_u64(&w, view) &&
-            qa_ac_u64(&w, cut->registration) && qa_ac_u64(&w, cut->capacity) && qa_ac_u64(&w, cut->count) &&
-            qa_bank_write_extent(&w, cut->capacity, cut->count);
-        for (size_t j = 0; ok && j < cut->count; ++j)
-            ok = qa_ac_u64(&w, qa_bank_asset_index(inventory->assets, inventory->asset_count, cut->entries[j].asset)) &&
-                qa_ac_u64(&w, cut->entries[j].touched);
-    }
-    if (ok) ok = qa_ac_finish(&w, out); else qa_source_save_dispose(&w);
-    free(samples);
-    if (!ok && error && error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Audio graph is not completely qualified");
-    return ok;
-}
-bool qa_audio_bank_graph_restore(qa_audio_bank *const *banks, size_t count,
-    const qa_audio_bank_checkpoint_refs *refs, qa_bytes bytes, qa_audio_asset_inventory **out, qa_error *error)
-{
-    if (!refs || !refs->view_decode || !refs->view_retain || !refs->resource_decode || !out || *out || (bytes.size && !bytes.data))
-        return fail(error, QA_ERROR_ARGUMENT, "Audio graph restore requires content resolvers and empty output");
-    qa_audio_asset_inventory *inventory = create(banks, count, true, error);
-    if (!inventory) return false;
-    inventory->owns_assets = true;
-    qa_audio_bank *decoded = NULL; struct sample_row *samples = NULL;
-    qa_source_save_io r;
-    if (!qa_source_save_reader(&r, NULL, bytes, error)) return false;
-    qa_bytes magic;
-    bool ok = qa_ac_read(&r, 4, &magic) && !memcmp(magic.data, "QABG", 4);
-    uint64_t bank_count = qa_ac_get64(&r), sample_count = qa_ac_get64(&r), asset_count = qa_ac_get64(&r);
-    ok = ok && !r.failed && bank_count == count && count <= bytes.size / 32 &&
-        sample_count <= SIZE_MAX / sizeof(*samples) && sample_count <= bytes.size / 52 &&
-        asset_count <= SIZE_MAX / sizeof(*inventory->assets) && asset_count <= bytes.size / 64;
-    if (ok) {
-        decoded = calloc(count ? count : 1, sizeof(*decoded));
-        samples = calloc(sample_count ? (size_t)sample_count : 1, sizeof(*samples));
-        inventory->assets = calloc(asset_count ? (size_t)asset_count : 1, sizeof(*inventory->assets));
-        if (!decoded || !samples || !inventory->assets) ok = fail(error, QA_ERROR_MEMORY, "Allocating restored global audio graph");
-        else inventory->asset_count = (size_t)asset_count;
-    }
-    for (size_t i = 0; ok && i < sample_count; ++i) {
-        qa_bytes saved; ok = qa_ac_getblob(&r, &saved) && qa_audio_sample_restore(saved, &samples[i].sample, error);
-    }
-    for (size_t i = 0; ok && i < asset_count; ++i) {
-        uint64_t expected = qa_ac_get64(&r);
-        ok = !r.failed && expected && expected < UINT_MAX &&
-            qa_bank_read_asset(&r, &inventory->assets[i], samples, (size_t)sample_count, refs);
-        if (ok) inventory->assets[i].holders = (size_t)expected;
-    }
-    for (size_t i = 0; ok && i < count; ++i) {
-        uint64_t view = qa_ac_get64(&r), registration = qa_ac_get64(&r), capacity = qa_ac_get64(&r), entries = qa_ac_get64(&r);
-        const qa_vfs *resolved = NULL;
-        ok = !r.failed && entries <= capacity && capacity <= SIZE_MAX / sizeof(bank_entry) && entries <= bytes.size / 16 &&
-            refs->view_decode(refs->context, view, &resolved, error) && resolved == banks[i]->view &&
-            qa_bank_read_extent(&r, capacity, entries);
-        if (!ok) break;
-        decoded[i] = (qa_audio_bank){.view = banks[i]->view, .registration = registration, .capacity = (size_t)capacity,
-            .lookup_generation = qa_vfs_lookup_generation(banks[i]->view)};
-        decoded[i].entries = capacity ? calloc((size_t)capacity, sizeof(*decoded[i].entries)) : NULL;
-        if (capacity && !decoded[i].entries) { ok = fail(error, QA_ERROR_MEMORY, "Restoring global audio bank entries"); break; }
-        for (size_t j = 0; ok && j < entries; ++j) {
-            uint64_t index = qa_ac_get64(&r), touched = qa_ac_get64(&r);
-            ok = !r.failed && index < asset_count;
-            qa_audio_asset *asset = ok ? qa_audio_asset_retain(inventory->assets[index].asset) : NULL;
-            if (!asset) { ok = false; break; }
-            decoded[i].entries[decoded[i].count++] = (bank_entry){asset, touched};
-        }
-        ok = ok && qa_bank_cache_valid(&decoded[i], error) && snapshot(&inventory->cuts[i], &decoded[i], error);
-    }
-    if (ok) ok = cache_independence(inventory, error) && sample_aliases(inventory, error);
-    for (size_t i = 0; ok && i < sample_count; ++i) ok = samples[i].holders != 0;
-    for (size_t i = 0; ok && i < asset_count; ++i)
-        ok = atomic_load_explicit(&inventory->assets[i].asset->references, memory_order_relaxed) <= inventory->assets[i].holders + 1;
-    ok = ok && !r.failed && r.offset == bytes.size;
-    if (ok) {
-        for (size_t i = 0; i < count; ++i) {
-            free(banks[i]->entries); free(banks[i]->names); *banks[i] = decoded[i]; decoded[i].entries = NULL; decoded[i].count = 0;
-        }
-        *out = inventory; inventory = NULL;
-    }
-    if (decoded) for (size_t i = 0; i < count; ++i) {
-        for (size_t j = 0; j < decoded[i].count; ++j) qa_audio_asset_release(decoded[i].entries[j].asset);
-        free(decoded[i].entries);
-    }
-    if (samples) for (size_t i = 0; i < sample_count; ++i) qa_audio_sample_release(samples[i].sample);
-    free(samples); free(decoded); qa_audio_asset_inventory_destroy(inventory);
-    if (!ok && error && error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Global audio bank graph is invalid");
-    return ok;
 }

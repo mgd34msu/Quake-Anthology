@@ -580,46 +580,6 @@ bool qa_audio_decode(qa_bytes bytes, qa_audio_wav_policy policy, qa_audio_sample
     return true;
 }
 
-bool qa_audio_sample_checkpoint(const qa_audio_sample *sample, qa_buffer *out, qa_error *error) {
-    size_t bytes;
-    if (!out || !sample_valid(sample, error) ||
-        !qa_audio_pcm_size(sample->frame_count, sample->channels, &bytes, error)) return false;
-    if (bytes > SIZE_MAX - 44)
-        return qa_audio_codec_fail(error, QA_ERROR_MEMORY, 0, "PCM checkpoint extent overflows storage");
-    qa_buffer buffer = {.data = calloc(1, 44 + bytes), .size = 44 + bytes};
-    if (!buffer.data)
-        return qa_audio_codec_fail(error, QA_ERROR_MEMORY, 0, "Retaining PCM checkpoint");
-    uint8_t *data = buffer.data;
-    memcpy(data, "QASP", 4);
-    qa_store_u32le(data + 4, sample->sample_rate); qa_store_u32le(data + 8, sample->channels);
-    qa_store_u32le(data + 12, sample->source_bytes_per_sample);
-    qa_store_u64le(data + 20, sample->frame_count); qa_store_u64le(data + 28, sample->loop_start);
-    qa_store_u64le(data + 36, bytes);
-    for (size_t i = 0; i < bytes / 2; ++i)
-        qa_store_u16le(data + 44 + i * 2, (uint16_t)sample->samples[i]);
-    *out = buffer; return true;
-}
-
-bool qa_audio_sample_restore(qa_bytes bytes, qa_audio_sample **out, qa_error *error) {
-    if (!out || !bytes.data || bytes.size < 44 || memcmp(bytes.data, "QASP", 4) ||
-        qa_load_u32le(bytes.data + 16))
-        return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 0, "Invalid PCM checkpoint header");
-    const uint8_t *data = bytes.data;
-    uint32_t rate = qa_load_u32le(data + 4), channels = qa_load_u32le(data + 8);
-    uint32_t width = qa_load_u32le(data + 12);
-    uint64_t frames = qa_load_u64le(data + 20), loop = qa_load_u64le(data + 28);
-    size_t extent;
-    if (!rate || width < 1 || width > 3 || (loop != QA_AUDIO_NO_LOOP && loop >= frames) ||
-        !qa_audio_pcm_size(frames, channels, &extent, error) || extent != bytes.size - 44 ||
-        qa_load_u64le(data + 36) != extent)
-        return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 4, "Invalid PCM checkpoint extent or format");
-    qa_audio_sample *sample = sample_allocate(frames, channels, rate, width, loop, error);
-    if (!sample) return false;
-    int16_t *pcm = (int16_t *)(sample + 1);
-    for (size_t i = 0; i < extent / 2; ++i) pcm[i] = qa_load_i16le(data + 44 + i * 2);
-    *out = sample; return true;
-}
-
 typedef struct stream_saved {
     uint32_t kind, policy, failed, resource;
     uint64_t frames, position, size;
@@ -632,43 +592,34 @@ static bool stream_fields(qa_source_save_io *io, stream_saved *saved) {
         qa_source_save_u32(io, &saved->policy) && saved->policy <= QA_WAV_Q3 &&
         qa_source_save_u32(io, &saved->failed) && saved->failed <= 1 &&
         (!saved->failed || saved->kind == STREAM_VORBIS) &&
-        qa_source_save_u32(io, &saved->resource) && saved->resource <= 1 &&
-        (!saved->resource || saved->kind != STREAM_SAMPLE) &&
+        qa_source_save_u32(io, &saved->resource) && saved->resource == 1 &&
+        saved->kind != STREAM_SAMPLE &&
         qa_source_save_u64(io, &saved->frames) && qa_source_save_u64(io, &saved->position) &&
         saved->position <= saved->frames && qa_source_save_u64(io, &saved->size) &&
-        saved->size <= SIZE_MAX && (!saved->resource || saved->size == 16);
+        saved->size == 16;
 }
 
 bool qa_audio_stream_checkpoint(const qa_audio_stream *stream,
                                const qa_audio_checkpoint_refs *refs, qa_buffer *out, qa_error *error) {
     if (!stream || !out || stream->position > stream->frames)
         return qa_audio_codec_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid stream checkpoint owner");
-    qa_buffer sample = {0};
-    if (stream->kind == STREAM_SAMPLE && !qa_audio_sample_checkpoint(stream->source.sample, &sample, error))
-        return false;
-    qa_bytes source = stream->kind == STREAM_SAMPLE ? (qa_bytes){sample.data, sample.size} : stream->original;
-    if (!source.data && source.size) {
-        qa_buffer_free(&sample);
-        return qa_audio_codec_fail(error, QA_ERROR_MEMORY, 0, "Stream checkpoint extent overflows storage");
-    }
+    if (!stream->resource || stream->kind == STREAM_SAMPLE)
+        return qa_audio_codec_fail(error, QA_ERROR_UNSUPPORTED, 0,
+                                   "Stream state requires installed content");
     stream_saved saved = {.kind = stream->kind, .policy = stream->policy,
         .failed = stream->kind == STREAM_VORBIS && stream->source.vorbis.failed,
-        .resource = stream->resource != NULL, .frames = stream->frames, .position = stream->position,
-        .size = stream->resource ? 16 : source.size};
+        .resource = 1, .frames = stream->frames, .position = stream->position, .size = 16};
     uint64_t pool = 0, version = 0;
-    bool ok = !saved.resource || (refs && refs->resource_encode &&
-        refs->resource_encode(refs->context, stream->resource, &pool, &version, error) && pool && version);
+    bool ok = refs && refs->resource_encode &&
+        refs->resource_encode(refs->context, stream->resource, &pool, &version, error) && pool && version;
     qa_source_save_io io = {0};
     if (ok) ok = qa_source_save_writer(&io, NULL, error) && stream_fields(&io, &saved) &&
-        (saved.resource ? (qa_source_save_u64(&io, &pool) && qa_source_save_u64(&io, &version)) :
-            qa_source_save_bytes(&io, (void *)source.data, source.size)) && qa_source_save_finish(&io, out);
-    qa_source_save_dispose(&io); qa_buffer_free(&sample);
+        qa_source_save_u64(&io, &pool) && qa_source_save_u64(&io, &version) && qa_source_save_finish(&io, out);
+    qa_source_save_dispose(&io);
     if (!ok && (!error || error->code == QA_OK))
         qa_audio_codec_fail(error, QA_ERROR_FORMAT, 0, "Stream checkpoint lost its content resource");
     return ok;
 }
-
-static void release_checkpoint_bytes(void *owner) { free(owner); }
 
 bool qa_audio_stream_restore(qa_bytes bytes, const qa_audio_checkpoint_refs *refs,
                             qa_audio_stream **out, qa_error *error) {
@@ -681,29 +632,15 @@ bool qa_audio_stream_restore(qa_bytes bytes, const qa_audio_checkpoint_refs *ref
     if (!valid)
         return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 0, "Invalid stream checkpoint format or cursor");
     qa_audio_stream *stream = NULL;
-    if (saved.resource) {
-        uint64_t pool = qa_load_u64le(source.data), version = qa_load_u64le(source.data + 8);
-        const qa_resource *resource = NULL;
-        if (!pool || !version || !refs || !refs->resource_decode ||
-            !refs->resource_decode(refs->context, pool, version, &resource, error) || !resource)
-            return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 44, "Stream checkpoint lost its content resource");
-        qa_resource_retain((qa_resource *)resource);
-        if (!qa_audio_stream_open_resource((qa_resource *)resource, (qa_audio_wav_policy)saved.policy,
-                                           &stream, error)) {
-            qa_resource_release((qa_resource *)resource); return false;
-        }
-    } else if (saved.kind == STREAM_SAMPLE) {
-        qa_audio_sample *sample = NULL;
-        if (!qa_audio_sample_restore(source, &sample, error)) return false;
-        bool ok = qa_audio_stream_from_sample(sample, &stream, error);
-        qa_audio_sample_release(sample);
-        if (!ok) return false;
-    } else {
-        uint8_t *copy = malloc(source.size ? source.size : 1);
-        if (!copy) return qa_audio_codec_fail(error, QA_ERROR_MEMORY, 0, "Retaining stream checkpoint source");
-        if (source.size) memcpy(copy, source.data, source.size);
-        if (!qa_audio_stream_open_retained((qa_bytes){copy, source.size}, (qa_audio_wav_policy)saved.policy,
-                release_checkpoint_bytes, copy, &stream, error)) { free(copy); return false; }
+    uint64_t pool = qa_load_u64le(source.data), version = qa_load_u64le(source.data + 8);
+    const qa_resource *resource = NULL;
+    if (!pool || !version || !refs || !refs->resource_decode ||
+        !refs->resource_decode(refs->context, pool, version, &resource, error) || !resource)
+        return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 44, "Stream checkpoint lost its content resource");
+    qa_resource_retain((qa_resource *)resource);
+    if (!qa_audio_stream_open_resource((qa_resource *)resource, (qa_audio_wav_policy)saved.policy,
+                                       &stream, error)) {
+        qa_resource_release((qa_resource *)resource); return false;
     }
     if (stream->kind != (stream_kind)saved.kind || stream->frames != saved.frames) {
         qa_audio_stream_close(stream);

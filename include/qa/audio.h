@@ -28,8 +28,6 @@ qa_audio_sample *qa_audio_sample_retain(qa_audio_sample *sample);
 void qa_audio_sample_release(qa_audio_sample *sample);
 bool qa_audio_sample_copy(const int16_t *samples, uint64_t frames, unsigned channels, uint32_t rate,
                           uint64_t loop_start, qa_audio_sample **out, qa_error *error);
-bool qa_audio_sample_checkpoint(const qa_audio_sample *, qa_buffer *, qa_error *);
-bool qa_audio_sample_restore(qa_bytes, qa_audio_sample **, qa_error *);
 bool qa_audio_decode_wav(qa_bytes bytes, qa_audio_wav_policy policy, qa_audio_sample **out,
                          qa_error *error);
 bool qa_audio_decode(qa_bytes bytes, qa_audio_wav_policy policy, qa_audio_sample **out,
@@ -78,8 +76,8 @@ bool qa_audio_stream_read(qa_audio_stream *stream, int16_t *out, size_t capacity
                           size_t *frames, qa_error *error);
 bool qa_audio_stream_seek(qa_audio_stream *stream, uint64_t frame, qa_error *error);
 void qa_audio_stream_close(qa_audio_stream *stream);
-/* Exact decoded frame cursor and a retained content reference. Standalone
- * streams carry their source bytes. Checkpointing never seeks the stream. */
+/* Stream state contains only the decoded frame cursor and installed content
+ * reference. A standalone byte or PCM stream cannot be saved. */
 bool qa_audio_stream_checkpoint(const qa_audio_stream *, const qa_audio_checkpoint_refs *, qa_buffer *, qa_error *);
 bool qa_audio_stream_restore(qa_bytes, const qa_audio_checkpoint_refs *, qa_audio_stream **, qa_error *);
 
