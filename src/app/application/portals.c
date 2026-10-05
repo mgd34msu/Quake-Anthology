@@ -71,8 +71,16 @@ static bool change(application_provider *provider, application_portal_claim key,
     while (owner && index < owner->count && !same_claim(owner->claims + index, &key))
         ++index;
     uint32_t before = owner && index < owner->count ? owner->claims[index].contributions : 0;
-    if (open ? before == UINT32_MAX : before == 0)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native portal owner count overflow or underflow");
+    uint32_t after;
+    if (key.family == QA_COLLISION_Q2) {
+        /* Q2 SetAreaPortalState assigns a boolean; repeated sets are legal. */
+        after = open ? 1u : 0u;
+        if (before == after) return true;
+    } else {
+        if (open ? before == UINT32_MAX : before == 0)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Native portal owner count overflow or underflow");
+        after = open ? before + 1 : before - 1;
+    }
     if (!owner) {
         owner = calloc(1, sizeof(*owner));
         if (!owner)
@@ -90,14 +98,14 @@ static bool change(application_provider *provider, application_portal_claim key,
         owner->capacity = capacity;
     }
     bool ok = key.family == QA_COLLISION_Q2
-        ? qa_collision_adjust_portal(app->geometry, key.portal, open ? 1 : -1, error)
+        ? qa_collision_adjust_portal(app->geometry, key.portal, (int)after - (int)before, error)
         : qa_collision_adjust_area_pair(app->geometry, (int32_t)key.first,
                                          (int32_t)key.second, open, error);
     if (!ok)
         return false;
     if (index == owner->count)
         owner->claims[owner->count++] = key;
-    owner->claims[index].contributions = open ? before + 1 : before - 1;
+    owner->claims[index].contributions = after;
     return true;
 }
 
@@ -316,6 +324,8 @@ static bool row_fields(qa_source_save_io *io, qa_application *app,
         !qa_source_save_u32(io, &c->portal) || !qa_source_save_u32(io, &c->contributions))
         return false;
     c->family = (qa_collision_family)family;
+    if (io->direction == QA_SOURCE_SAVE_READ && c->family == QA_COLLISION_Q2)
+        c->contributions = c->contributions != 0;
     return claim_valid(app, c, io->error);
 }
 
@@ -327,6 +337,44 @@ static bool header(qa_source_save_io *io, bool *present, size_t *count, size_t *
         qa_source_save_count(io, count, SIZE_MAX / sizeof(application_portal_claim)) &&
         qa_source_save_count(io, capacity, SIZE_MAX / sizeof(application_portal_claim)) &&
         *count <= *capacity && (*present || (!*count && !*capacity));
+}
+
+static bool primary_fields(qa_source_save_io *io, qa_application *app)
+{
+    qa_collision_portal_checkpoint shared = {0};
+    if (!qa_collision_capture_portals(app->geometry, &shared, io->error))
+        return false;
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    size_t count = 0;
+    if (!reading)
+        for (size_t i = 0; i < shared.portal_count; ++i)
+            count += shared.portals[i].primary;
+    bool ok = qa_source_save_count(io, &count, shared.portal_count);
+    if (reading) {
+        for (size_t i = 0; i < shared.portal_count; ++i)
+            shared.portals[i].primary = false;
+        uint32_t previous = 0;
+        for (size_t i = 0; ok && i < count; ++i) {
+            uint32_t portal = 0;
+            size_t index;
+            ok = qa_source_save_u32(io, &portal);
+            if (ok && i && portal <= previous)
+                ok = application_fail(io->error, QA_ERROR_FORMAT,
+                                      "Saved primary portal IDs are not unique and ordered");
+            qa_q3_host_portal_claim claim = {.family = shared.family,
+                .map_identity = shared.map_identity, .portal = portal};
+            if (ok) ok = target(&shared, &claim, &index, io->error);
+            if (ok) shared.portals[index].primary = true;
+            previous = portal;
+        }
+        if (ok) ok = qa_collision_restore_portals(app->geometry, &shared, io->error);
+    } else {
+        for (size_t i = 0; ok && i < shared.portal_count; ++i)
+            if (shared.portals[i].primary)
+                ok = qa_source_save_u32(io, &shared.portals[i].portal);
+    }
+    qa_collision_portal_checkpoint_free(&shared);
+    return ok;
 }
 
 bool application_portals_capture(qa_application *app, qa_buffer *out, qa_error *error)
@@ -342,6 +390,7 @@ bool application_portals_capture(qa_application *app, qa_buffer *out, qa_error *
         application_portal_claim copy = app->portals->claims[i];
         ok = row_fields(&io, app, &copy);
     }
+    if (ok) ok = primary_fields(&io, app);
     if (ok)
         ok = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
@@ -359,8 +408,7 @@ bool application_portals_restore(qa_application *app, qa_bytes bytes, qa_error *
         return application_fail(error, QA_ERROR_MEMORY, "Allocating restored native portal owner");
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) &&
         header(&io, &present, &owner->count, &owner->capacity);
-    if (ok && (owner->count > (bytes.size - io.offset) / 64 ||
-               owner->count * 64 != bytes.size - io.offset))
+    if (ok && owner->count > (bytes.size - io.offset) / 64)
         ok = application_fail(error, QA_ERROR_FORMAT, "Native portal journal byte extent disagrees");
     if (ok && owner->capacity) {
         owner->claims = calloc(owner->capacity, sizeof(*owner->claims));
@@ -373,6 +421,8 @@ bool application_portals_restore(qa_application *app, qa_bytes bytes, qa_error *
             if (same_claim(owner->claims + i, owner->claims + j))
                 ok = application_fail(error, QA_ERROR_FORMAT, "Duplicate native portal owner/key");
     }
+    /* Earlier records cannot recover primary flags they never saved. */
+    if (ok && io.offset < bytes.size) ok = primary_fields(&io, app);
     if (ok)
         ok = qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
