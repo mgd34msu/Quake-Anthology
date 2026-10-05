@@ -30,8 +30,7 @@ static bool observer_boundary(qa_native_instance *instance, qa_error *error) {
     if (!instance || instance->checkpointing || instance->destroying || instance->unloading)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native observation requires a live instance");
-    bool owned = instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS && instance->guest &&
-        qa_native_guest_execution(instance->guest) == QA_NATIVE_GUEST_EMULATED;
+    bool owned = instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS && instance->guest;
     if ((!owned && instance->backend != QA_NATIVE_BACKEND_RUNNER) ||
         (!instance->options.observe && !instance->region_count))
         return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
@@ -167,7 +166,6 @@ bool qa_native_observers_restore_ready(const qa_native_instance *instance,qa_err
 static bool stopped_write_subscription(const qa_native_instance *instance)
 {
     return instance->backend==QA_NATIVE_BACKEND_OWNED_PROCESS&&instance->guest&&
-        instance->guest->options.backend==QA_NATIVE_GUEST_EMULATED&&
         instance->active_write_event&&instance->write_depth&&instance->callback_depth&&
         native_active_instance==instance&&
         instance->guest->publication_depth&&!instance->guest->faulting&&!instance->guest->stepping;
@@ -317,7 +315,6 @@ bool qa_native_write_scope_open(qa_native_instance *instance,const qa_native_wri
 {
     if(!out||*out||!event||!observer_boundary(instance,error)||
         instance->backend!=QA_NATIVE_BACKEND_OWNED_PROCESS||!instance->guest||
-        instance->guest->options.backend!=QA_NATIVE_GUEST_EMULATED||
         instance->active_write_event!=event||!instance->write_depth||!instance->callback_depth||
         native_active_instance!=instance||
         !instance->guest->publication_depth||instance->guest->faulting||
@@ -339,9 +336,9 @@ bool qa_native_invoke_original_cancellable(qa_native_entry_observer *binding,
     *cancelled=false;
     if(!instance||!accepts||!binding->active_calls||native_active_instance!=instance||
         !instance->callback_depth||instance->backend!=QA_NATIVE_BACKEND_OWNED_PROCESS||
-        !instance->guest||instance->guest->options.backend!=QA_NATIVE_GUEST_EMULATED||
+        !instance->guest||
         binding->signature.result.kind!=QA_NATIVE_VOID||!guest_mutable(instance->guest,error))
-        return native_fail(error,QA_ERROR_UNSUPPORTED,0,"Original cancellation requires its actual stopped emulated VOID entry");
+        return native_fail(error,QA_ERROR_UNSUPPORTED,0,"Original cancellation requires its actual stopped VOID entry");
     guest_callback_recovery recovery={.previous=instance->guest->recovery,.accepts=accepts,.context=context};
     instance->guest->recovery=&recovery;
     bool okay=qa_native_invoke_original(binding,arguments,count,result,error);
@@ -359,6 +356,7 @@ struct qa_native_call_scope {
     struct qa_native_call_scope *previous;
     qa_native_instance *instance;
     qa_native_guest_cpu cpu;
+    guest_host_x86_64_state hardware;
     guest_callback_recovery recovery;
     guest_run *run;
     unsigned active_depth,callback_depth,write_depth,region_depth;
@@ -384,12 +382,13 @@ bool qa_native_call_scope_open(qa_native_instance *instance,qa_native_entry_canc
     if(!out||*out||!instance||!accepts||instance->lifecycle!=QA_NATIVE_INITIALIZED||
         instance->checkpointing||instance->destroying||instance->unloading||
         instance->backend!=QA_NATIVE_BACKEND_OWNED_PROCESS||!instance->guest||
-        instance->guest->options.backend!=QA_NATIVE_GUEST_EMULATED||
         !guest_mutable(instance->guest,error))
-        return native_fail(error,QA_ERROR_UNSUPPORTED,0,"Source cancellation requires its live emulated processor");
+        return native_fail(error,QA_ERROR_UNSUPPORTED,0,"Source cancellation requires its live stopped processor");
     qa_native_call_scope *scope=calloc(1,sizeof(*scope));
     if(!scope)return native_fail(error,QA_ERROR_MEMORY,0,"Retaining actual Source call processor");
     if(!qa_native_guest_cpu_read(instance->guest,&scope->cpu,error)) { free(scope); return false; }
+    if(instance->guest->options.backend==QA_NATIVE_GUEST_HOST_X86_64 &&
+        !guest_host_child_cpu_read(instance->guest->child,&scope->hardware,error)) { free(scope); return false; }
     scope->instance=instance; scope->previous=instance->call_scope; scope->run=instance->guest->run;
     scope->active_depth=instance->active_depth; scope->callback_depth=instance->callback_depth;
     scope->write_depth=instance->write_depth; scope->region_depth=instance->region_depth;
@@ -416,7 +415,8 @@ bool qa_native_call_scope_resolve(qa_native_call_scope *scope,bool completed,
         guest_callback_cancelled(guest,error);
     scope->recovery.resolved=true;
     if(!accepted)return false;
-    if(!qa_native_guest_cpu_write(guest,&scope->cpu,error))return false;
+    if(!(scope->hardware.xsave.data ? guest_host_child_cpu_write(guest->child,&scope->hardware,error) :
+        qa_native_guest_cpu_write(guest,&scope->cpu,error)))return false;
     scope->recovery.restored=true; *cancelled=true;
     if(error)*error=(qa_error){0};
     return true;
@@ -427,7 +427,8 @@ bool qa_native_call_scope_close(qa_native_call_scope **out,qa_error *error)
     if(!scope)return true;
     if(!call_scope_current(scope,true,error))return false;
     scope->instance->guest->recovery=scope->recovery.previous;
-    scope->instance->call_scope=scope->previous; free(scope); *out=NULL;
+    scope->instance->call_scope=scope->previous;
+    guest_host_x86_64_state_free(&scope->hardware); free(scope); *out=NULL;
     return true;
 }
 bool qa_native_call_scope_abandon(qa_native_call_scope *scope,qa_error *error)
@@ -540,6 +541,8 @@ bool qa_native_observe_writes(qa_native_instance *instance, qa_native_address ad
             ok = qa_native_guest_observe(instance->guest, native_process_write_commit, instance, error);
             if (ok) instance->process_observing = true;
         }
+        if (ok) ok = guest_native_interest(instance->guest, GUEST_PROFILE_INTEREST_STORE,
+            binding->id, address, bytes, false, error);
     } else if (ok) ok = native_runner_observer_control(instance, control, error);
     if (!ok) {
         qa_buffer_free(&binding->snapshot); free(binding);
@@ -560,8 +563,12 @@ bool qa_native_unobserve_writes(qa_native_write_observer *binding, qa_error *err
     if (binding->active_calls)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "active native write watch cannot be removed");
     native_hook_control control = {.operation = NATIVE_HOOK_WATCH_REMOVE, .id = binding->id};
-    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS &&
-        (!qa_native_terminal(instance) || instance->active_depth || instance->callback_depth || instance->region_depth || instance->write_depth) &&
+    bool control_needed = !qa_native_terminal(instance) || instance->active_depth ||
+        instance->callback_depth || instance->region_depth || instance->write_depth;
+    if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS && control_needed &&
+        !guest_native_interest(instance->guest, GUEST_PROFILE_INTEREST_STORE,
+            binding->id, binding->address, binding->size, true, error)) return false;
+    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS && control_needed &&
         !native_runner_observer_control(instance, control, error))
         return false;
     qa_native_write_observer **cursor = &instance->write_observers;

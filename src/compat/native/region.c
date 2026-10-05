@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "guest/internal.h"
 
 bool native_regions_copy(qa_native_instance *instance, const qa_native_declaration *declaration,
                          qa_error *error) {
@@ -68,8 +69,7 @@ bool qa_native_bind_region(qa_native_instance *instance, uint32_t region_id,
         return native_fail(error, QA_ERROR_ARGUMENT, region_id,
                            "native region, callback and output are required");
     if (instance->backend != QA_NATIVE_BACKEND_RUNNER &&
-        !(instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS && instance->guest &&
-          qa_native_guest_execution(instance->guest) == QA_NATIVE_GUEST_EMULATED))
+        !(instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS && instance->guest))
         return native_fail(error, QA_ERROR_UNSUPPORTED, region_id,
                            "inline native regions require the instrumented runner backend");
     if (instance->active_depth || instance->callback_depth || instance->checkpointing ||

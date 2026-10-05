@@ -7,17 +7,23 @@ typedef struct guest_profile_guard_launch {
     const char *runner, *client; /* Actual configured SDK runner/client paths. */
 } guest_profile_guard_launch;
 typedef struct guest_profile_guard_receipt {
-    uint32_t policy, version; /* Written by the actual installed client. */
+    uint32_t policy; /* Written by the actual installed client. */
 } guest_profile_guard_receipt;
 #define GUEST_PROFILE_GUARD_SOURCE_X64 1u
-#define GUEST_PROFILE_GUARD_SOURCE_VERSION 2u
-#define GUEST_PROFILE_GUARD_CONTROL_VERSION 2u
 typedef struct guest_profile_guard_mapping {
     qa_native_guest_mapping mapping;
     bool file;
     uint64_t accessible_bytes; /* Actual backing's accessible EOF prefix. */
 } guest_profile_guard_mapping;
 typedef struct guest_profile_guard_callback { uint64_t id, address; } guest_profile_guard_callback;
+typedef enum guest_profile_interest_kind {
+    GUEST_PROFILE_INTEREST_STORE, GUEST_PROFILE_INTEREST_INSTRUCTION
+} guest_profile_interest_kind;
+typedef struct guest_profile_interest {
+    guest_profile_interest_kind kind;
+    uint64_t id, address, bytes;
+    size_t references;
+} guest_profile_interest;
 typedef enum guest_profile_guard_operation {
     GUEST_PROFILE_GUARD_PROBE, GUEST_PROFILE_GUARD_ENTER,
     GUEST_PROFILE_GUARD_RESUME, GUEST_PROFILE_GUARD_LEAVE,
@@ -27,16 +33,17 @@ typedef enum guest_profile_guard_fault_kind {
     GUEST_PROFILE_GUARD_NO_FAULT, GUEST_PROFILE_GUARD_FETCH,
     GUEST_PROFILE_GUARD_OPERAND, GUEST_PROFILE_GUARD_INSTRUCTION,
     GUEST_PROFILE_GUARD_PROCESSOR, GUEST_PROFILE_GUARD_ENTRY,
-    GUEST_PROFILE_GUARD_SYSCALL
+    GUEST_PROFILE_GUARD_SYSCALL, GUEST_PROFILE_GUARD_STORE,
+    GUEST_PROFILE_GUARD_BOUNDARY, GUEST_PROFILE_GUARD_RETURN
 } guest_profile_guard_fault_kind;
 typedef struct guest_profile_guard_fault {
     guest_profile_guard_fault_kind kind;
     uint32_t access, vector;
-    uint64_t scope, instruction, address, bytes;
+    uint64_t scope, instruction, address, bytes, continuation;
 } guest_profile_guard_fault;
 typedef struct guest_profile_guard_control {
     uint64_t magic;
-    uint32_t version, operation, status, reserved;
+    uint32_t operation, status, reserved;
     guest_profile_guard_receipt installed;
     uint64_t scope, entry, stop, fs_base, gs_base;
     bool syscalls; /* Actual invocation owns a stopped Linux syscall service. */
@@ -44,6 +51,9 @@ typedef struct guest_profile_guard_control {
     size_t mapping_count;
     const guest_profile_guard_callback *callbacks;
     size_t callback_count;
+    const guest_profile_interest *interests;
+    size_t interest_count;
+    uint64_t bypass;
     guest_profile_guard_fault *fault;
     uint8_t *xsave;
     size_t xsave_bytes; /* Borrowed actual stopped signal/capture transfer. */

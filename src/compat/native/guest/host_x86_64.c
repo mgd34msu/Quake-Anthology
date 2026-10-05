@@ -11,6 +11,7 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <ucontext.h>
+#include <errno.h>
 #include <unistd.h>
 #endif
 
@@ -197,7 +198,7 @@ bool guest_host_x86_64_capture(guest_host_x86_64_state *out, qa_error *error)
         guest_host_x86_64_state_free(out); return fail(error,QA_ERROR_ARGUMENT,0,"capturing actual hardware thread bases failed");
     }
     __asm__ volatile("movw %%cs,%0; movw %%ds,%1; movw %%es,%2; movw %%ss,%3; movw %%fs,%4; movw %%gs,%5"
-        : "=rm"(out->selectors[0]),"=rm"(out->selectors[1]),"=rm"(out->selectors[2]),"=rm"(out->selectors[3]),"=rm"(out->selectors[4]),"=rm"(out->selectors[5]));
+        : "=r"(out->selectors[0]),"=r"(out->selectors[1]),"=r"(out->selectors[2]),"=r"(out->selectors[3]),"=r"(out->selectors[4]),"=r"(out->selectors[5]));
     return true;
 }
 
@@ -217,7 +218,7 @@ void qa_host_bridge_dispatch(int number, siginfo_t *information, void *opaque)
     uint64_t selectors=(uint64_t)context->uc_mcontext.gregs[REG_CSGSFS];
     frame->state.selectors[0]=(uint16_t)selectors; frame->state.selectors[4]=(uint16_t)(selectors>>32);
     frame->state.selectors[5]=(uint16_t)(selectors>>16); frame->state.selectors[3]=(uint16_t)(selectors>>48);
-    __asm__ volatile("movw %%ds,%0; movw %%es,%1" : "=rm"(frame->state.selectors[1]),"=rm"(frame->state.selectors[2]));
+    __asm__ volatile("movw %%ds,%0; movw %%es,%1" : "=r"(frame->state.selectors[1]),"=r"(frame->state.selectors[2]));
     memset(frame->state.xsave.data,0,frame->state.xsave.size); memcpy(frame->state.xsave.data,fp,size);
     memset(frame->state.xsave.data+464,0,48);
     frame->state.xfeatures=magic==0x46505853 ? qa_load_u64le(fp+472) : 3;
@@ -276,7 +277,7 @@ bool guest_host_x86_64_enter(const guest_host_x86_64_state *source, qa_error *er
     if (!bridge_stop || !guest_host_x86_64_state_valid(source,&bridge_capability,error)) return false;
     uint16_t selectors[6];
     __asm__ volatile("movw %%cs,%0; movw %%ds,%1; movw %%es,%2; movw %%ss,%3; movw %%fs,%4; movw %%gs,%5"
-        : "=rm"(selectors[0]),"=rm"(selectors[1]),"=rm"(selectors[2]),"=rm"(selectors[3]),"=rm"(selectors[4]),"=rm"(selectors[5]));
+        : "=r"(selectors[0]),"=r"(selectors[1]),"=r"(selectors[2]),"=r"(selectors[3]),"=r"(selectors[4]),"=r"(selectors[5]));
     if (selectors[4] || selectors[5] || memcmp(selectors,source->selectors,sizeof(selectors)))
         return fail(error,QA_ERROR_UNSUPPORTED,0,"native entry selectors differ from the actual flat host profile");
     if (source->flags&UINT64_C(0x10100))
@@ -313,7 +314,8 @@ bool guest_host_x86_64_enter(const guest_host_x86_64_state *source, qa_error *er
         okay=sigprocmask(SIG_SETMASK,&allowed,NULL)==0;
     }
     if (okay) { qa_host_bridge_frame=&frame; qa_host_bridge_target=frame.instruction; qa_host_bridge_enter(); qa_host_bridge_frame=frame.parent; okay=frame.okay; if (!okay && error) *error=frame.failure; }
-    else fail(error,QA_ERROR_ARGUMENT,0,"preparing actual child stack or thread bases failed");
+    else qa_error_set(error,QA_ERROR_ARGUMENT,0,
+        "preparing actual child stack or thread bases failed: %s",strerror(errno));
     if (mask_saved && sigprocmask(SIG_SETMASK,&frame.previous_mask,NULL)!=0) okay=fail(error,QA_ERROR_ARGUMENT,0,"restoring child controller signal mask failed");
     if (stack_installed && sigaltstack(&frame.previous_stack,NULL)!=0) okay=fail(error,QA_ERROR_ARGUMENT,0,"restoring child controller signal stack failed");
     if (frame.signal_stack!=MAP_FAILED) munmap(frame.signal_stack,frame.signal_stack_bytes);

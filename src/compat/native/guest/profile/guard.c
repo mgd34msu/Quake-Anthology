@@ -27,13 +27,12 @@ bool guest_profile_guard_control_call(guest_profile_guard_control *control, qa_e
         (control->mapping_count && !control->mappings) || (control->callback_count && !control->callbacks)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "profile control requires actual child observations"); return false;
     }
-    control->magic = GUEST_PROFILE_GUARD_MAGIC; control->version = GUEST_PROFILE_GUARD_CONTROL_VERSION;
+    control->magic = GUEST_PROFILE_GUARD_MAGIC;
     control->status = 0; control->reserved = 0;
     control->installed = (guest_profile_guard_receipt){0};
     qa_guest_profile_control(control);
     atomic_signal_fence(memory_order_seq_cst);
-    if (control->status != 1 || control->installed.policy != GUEST_PROFILE_GUARD_SOURCE_X64 ||
-        control->installed.version != GUEST_PROFILE_GUARD_SOURCE_VERSION) {
+    if (control->status != 1 || control->installed.policy != GUEST_PROFILE_GUARD_SOURCE_X64) {
         qa_error_set(error, QA_ERROR_UNSUPPORTED, (size_t)control->scope,
             "actual instruction guard did not admit the child control transfer"); return false;
     }

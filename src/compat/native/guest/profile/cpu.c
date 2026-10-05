@@ -103,8 +103,12 @@ bool guest_profile_cpu_current(const guest_profile_cpu_domain *domain,
         return fail(error, bit, "non-init extended registers have no source x87/SSE domain");
     uint32_t pkru = domain->has_pkru && (active & (UINT64_C(1) << 9)) ?
         qa_load_u32le(state->xsave.data + rows[9].offset) : 0;
-    if (pkru != domain->pkru)
-        return fail(error, 9, "source PKRU differs from the actual controller baseline");
+    if (pkru != domain->pkru) {
+        qa_error_set(error,QA_ERROR_UNSUPPORTED,9,
+            "source PKRU %u differs from the actual controller baseline %u at instruction %llu",
+            pkru,domain->pkru,(unsigned long long)state->instruction);
+        return false;
+    }
     return true;
 }
 

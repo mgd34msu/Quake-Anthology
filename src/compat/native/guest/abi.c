@@ -592,7 +592,7 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
     qa_native_value discarded = {.type = QA_NATIVE_VOID};
     if (!result && plan->result.layout.kind == QA_NATIVE_VOID) result = &discarded;
     if (native != (guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64) ||
-        (native && (budget || guest->observe || plan->x87_result || bypass)))
+        (native && (budget || plan->x87_result)))
         return guest_fail(error, QA_ERROR_UNSUPPORTED, target,
             "guest ABI execution capability differs from its actual backend");
     if (count != plan->count || (count && !values) || (!native && !budget) || !result ||
@@ -638,11 +638,11 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
     qa_native_guest_cpu enclosing;
     if (okay) okay = qa_native_guest_cpu_read(guest, &enclosing, error);
     guest_callback_recovery *recovery=guest->recovery;
-    bool recovery_owner=okay&&recovery&&!recovery->invocation&&!native;
+    bool recovery_owner=okay&&recovery&&!recovery->invocation;
     if(recovery_owner) recovery->invocation=&enclosing;
     bool nested = guest->run != NULL || guest->stopped_write_calls != 0;
     guest_host_x86_64_state hardware = {0};
-    if (okay && native && nested) okay = guest_host_child_cpu_read(guest->child, &hardware, error);
+    if (okay && native && (nested || recovery_owner)) okay = guest_host_child_cpu_read(guest->child, &hardware, error);
     uint64_t original_sp = okay ? enclosing.registers[QA_NATIVE_RSP] : 0, sp = 0;
     if (okay && original_sp < needed + plan->stack_alignment + plan->word)
         okay = guest_fail(error, QA_ERROR_ARGUMENT, original_sp, "guest ABI stack reserve underflows");
@@ -685,7 +685,8 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
         cpu.flags &= ~UINT64_C(0x400); cpu.registers[QA_NATIVE_RSP] = sp; cpu.instruction = target;
         okay = qa_native_guest_cpu_write(guest, &cpu, error);
     }
-    if (okay) okay = native ? qa_native_guest_run_native(guest, target, return_trap, error) :
+    if (okay) okay = native ? (bypass ? qa_native_guest_run_original(guest, bypass, target, return_trap, 0, error) :
+        qa_native_guest_run_native(guest, target, return_trap, error)) :
         bypass ? qa_native_guest_run_original(guest, bypass, target, return_trap, budget, error) :
         qa_native_guest_run(guest, target, return_trap, budget, error);
     if (okay) okay = qa_native_guest_cpu_read(guest, &cpu, error);
@@ -714,7 +715,7 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
     }
     if(!okay&&recovery_owner&&recovery->cancelled&&!recovery->restored&&!recovery->resolved&&
         guest_callback_cancelled(guest,error)&&layout->kind==QA_NATIVE_VOID) {
-        okay=qa_native_guest_cpu_write(guest,&enclosing,error);
+        okay=native ? guest_host_child_cpu_write(guest->child,&hardware,error) : qa_native_guest_cpu_write(guest,&enclosing,error);
         if(okay) {
             recovery->restored=true; *result=(qa_native_value){.type=QA_NATIVE_VOID};
             if(error) *error=(qa_error){0};
@@ -735,7 +736,8 @@ bool guest_abi_invoke_original(const guest_abi_plan *plan, qa_native_guest *gues
     size_t count, qa_native_value *result, size_t budget, qa_error *error)
 {
     if (!id) return guest_fail(error, QA_ERROR_ARGUMENT, 0, "original ABI invocation requires its callback identity");
-    return invoke(plan, guest, target, return_trap, values, count, result, budget, false, id, error);
+    return invoke(plan, guest, target, return_trap, values, count, result, budget,
+        guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64, id, error);
 }
 
 bool guest_abi_invoke_native(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t target,

@@ -14,7 +14,7 @@ typedef struct guest_host_child_options {
 } guest_host_child_options;
 typedef enum guest_host_stop_kind {
     GUEST_HOST_STOP_IMPORT, GUEST_HOST_STOP_RETURN, GUEST_HOST_STOP_FAULT,
-    GUEST_HOST_STOP_SYSCALL
+    GUEST_HOST_STOP_SYSCALL, GUEST_HOST_STOP_OBSERVATION
 } guest_host_stop_kind;
 typedef struct guest_host_stop {
     guest_host_stop_kind kind;
@@ -26,6 +26,15 @@ typedef struct guest_host_stop {
 } guest_host_stop;
 typedef bool (*guest_host_import_fn)(void *, guest_host_child *, uint64_t,
     guest_host_x86_64_state *, qa_error *);
+typedef bool (*guest_host_observe_fn)(void *, guest_host_child *,
+    const guest_profile_guard_fault *, qa_error *);
+typedef bool (*guest_host_cancel_fn)(void *, const qa_error *);
+typedef struct guest_host_observation {
+    guest_host_observe_fn invoke;
+    guest_host_cancel_fn cancelled;
+    void *context;
+    uint64_t bypass;
+} guest_host_observation;
 typedef struct guest_host_syscall {
     uint64_t instruction, next_instruction, number, arguments[6];
 } guest_host_syscall;
@@ -66,6 +75,7 @@ bool guest_host_child_change(guest_host_child *, const qa_native_guest_mapping *
     bool, qa_error *);
 bool guest_host_child_bind(guest_host_child *, uint64_t, uint64_t, qa_error *);
 bool guest_host_child_unbind(guest_host_child *, uint64_t, qa_error *);
+bool guest_host_child_interest(guest_host_child *, const guest_profile_interest *, bool, qa_error *);
 bool guest_host_child_cpu_read(const guest_host_child *, guest_host_x86_64_state *, qa_error *);
 bool guest_host_child_cpu_write(guest_host_child *, const guest_host_x86_64_state *, qa_error *);
 bool guest_host_child_read(const guest_host_child *, uint64_t, void *, size_t, qa_error *);
@@ -80,7 +90,7 @@ bool guest_host_child_run(guest_host_child *, uint64_t, uint64_t,
  * its fault or actual return), before any import callback. A later failure
  * keeps it true; construction/preflight or rejected HOST_RUN keeps it false. */
 bool guest_host_child_run_receipt(guest_host_child *, uint64_t, uint64_t,
-    guest_host_import_fn, void *, bool *entered, qa_error *);
+    guest_host_import_fn, void *, const guest_host_observation *, bool *entered, qa_error *);
 /* Explicit PROGRAM invocation capability. A real two-byte SYSCALL is stopped
  * before execution. On successful service return commit RAX, RCX, R11 and the
  * observed next PC; failure retains entry state. stop=true ends the entered
@@ -88,7 +98,7 @@ bool guest_host_child_run_receipt(guest_host_child *, uint64_t, uint64_t,
  * library run does not admit raw syscalls. A zero return trap means the raw
  * PROGRAM has no controller return continuation; only its source exit stops. */
 bool guest_host_child_run_with_syscalls(guest_host_child *, uint64_t, uint64_t,
-    guest_host_import_fn, guest_host_syscall_fn, void *, bool *program_stopped, qa_error *);
+    guest_host_import_fn, guest_host_syscall_fn, void *, const guest_host_observation *, bool *program_stopped, qa_error *);
 bool guest_host_child_last_fault(const guest_host_child *, guest_host_stop *, qa_error *);
 /* Called by the real executable startup before ordinary application creation.
  * A matching child command runs its private server and never enters app Init. */

@@ -6,10 +6,12 @@
 #error The source instruction monitor requires the actual Linux x64 DynamoRIO SDK.
 #endif
 #include "guard.h"
+#include <cpuid.h>
 #include <signal.h>
 #include <string.h>
 
 typedef enum profile_phase { PROFILE_ARMED, PROFILE_ACTIVE, PROFILE_STOPPED } profile_phase;
+typedef struct profile_store { uint64_t instruction, address, bytes; } profile_store;
 typedef struct profile_scope {
     struct profile_scope *parent;
     uint64_t id, entry, stop, fs_base, gs_base;
@@ -19,6 +21,13 @@ typedef struct profile_scope {
     size_t mapping_count;
     guest_profile_guard_callback *callbacks;
     size_t callback_count;
+    guest_profile_interest *interests;
+    size_t interest_count;
+    profile_store *pending;
+    size_t pending_count, pending_at, pending_capacity;
+    uint64_t bypass, boundary_bypass;
+    uint64_t pkru;
+    bool pkru_active;
     guest_profile_guard_fault *fault;
 } profile_scope;
 typedef struct profile_instruction {
@@ -33,6 +42,7 @@ static profile_scope *scope;
 static profile_instruction *instructions;
 static app_pc control_entry, fault_entry, import_entry;
 static thread_id_t owner_thread;
+static size_t pkru_offset;
 
 static bool copy_from_app(const void *address, void *out, size_t bytes)
 {
@@ -48,6 +58,8 @@ static void scope_free(profile_scope *row)
 {
     if (row->mappings) dr_global_free(row->mappings, row->mapping_count * sizeof(*row->mappings));
     if (row->callbacks) dr_global_free(row->callbacks, row->callback_count * sizeof(*row->callbacks));
+    if (row->interests) dr_global_free(row->interests, row->interest_count * sizeof(*row->interests));
+    if (row->pending) dr_global_free(row->pending, row->pending_capacity * sizeof(*row->pending));
     dr_global_free(row, sizeof(*row));
 }
 static bool canonical(uint64_t address)
@@ -110,7 +122,8 @@ static profile_scope *scope_read(const guest_profile_guard_control *control)
 {
     if (!control->scope || !control->entry || (!control->stop && !control->syscalls) || !control->fault ||
         !control->mapping_count || control->mapping_count > SIZE_MAX / sizeof(guest_profile_guard_mapping) ||
-        control->callback_count > SIZE_MAX / sizeof(guest_profile_guard_callback)) return NULL;
+        control->callback_count > SIZE_MAX / sizeof(guest_profile_guard_callback) ||
+        control->interest_count > SIZE_MAX / sizeof(guest_profile_interest)) return NULL;
     profile_scope *row = dr_global_alloc(sizeof(*row));
     if (!row) return NULL;
     memset(row, 0, sizeof(*row));
@@ -119,9 +132,22 @@ static profile_scope *scope_read(const guest_profile_guard_control *control)
     row->syscalls = control->syscalls;
     row->fault = control->fault; row->phase = PROFILE_ARMED;
     row->mapping_count = control->mapping_count; row->callback_count = control->callback_count;
+    row->interest_count = control->interest_count; row->bypass = control->bypass;
+    if (pkru_offset) {
+        uint64_t active;
+        if (!control->xsave || control->xsave_bytes < 576 ||
+            pkru_offset > control->xsave_bytes || sizeof(row->pkru) > control->xsave_bytes - pkru_offset ||
+            !copy_from_app(control->xsave + 512, &active, sizeof(active)) ||
+            !copy_from_app(control->xsave + pkru_offset, &row->pkru, sizeof(row->pkru))) {
+            scope_free(row); return NULL;
+        }
+        row->pkru_active = (active & (UINT64_C(1) << 9)) != 0;
+    }
     row->mappings = dr_global_alloc(row->mapping_count * sizeof(*row->mappings));
     row->callbacks = row->callback_count ? dr_global_alloc(row->callback_count * sizeof(*row->callbacks)) : NULL;
-    bool okay = row->mappings && (!row->callback_count || row->callbacks) &&
+    row->interests = row->interest_count ? dr_global_alloc(row->interest_count * sizeof(*row->interests)) : NULL;
+    bool okay = (!row->interest_count || (row->interests && copy_from_app(control->interests,
+        row->interests, row->interest_count * sizeof(*row->interests)))) && row->mappings && (!row->callback_count || row->callbacks) &&
         copy_from_app(control->mappings, row->mappings, row->mapping_count * sizeof(*row->mappings)) &&
         (!row->callback_count || copy_from_app(control->callbacks, row->callbacks, row->callback_count * sizeof(*row->callbacks)));
     for (size_t i = 0; okay && i < row->mapping_count; ++i) {
@@ -138,6 +164,16 @@ static profile_scope *scope_read(const guest_profile_guard_control *control)
             scope_range(row, row->callbacks[i].address, 1, QA_NATIVE_GUEST_EXECUTE, NULL);
         for (size_t j = 0; okay && j < i; ++j) okay = row->callbacks[j].id != row->callbacks[i].id && row->callbacks[j].address != row->callbacks[i].address;
     }
+    for (size_t i = 0; okay && i < row->interest_count; ++i) {
+        const guest_profile_interest *interest = row->interests + i;
+        okay = interest->id && interest->address &&
+            (interest->kind == GUEST_PROFILE_INTEREST_STORE ? interest->bytes &&
+                scope_range(row, interest->address, interest->bytes, QA_NATIVE_GUEST_READ, NULL) :
+             interest->kind == GUEST_PROFILE_INTEREST_INSTRUCTION && !interest->bytes &&
+                scope_range(row, interest->address, 1, QA_NATIVE_GUEST_EXECUTE, NULL));
+        for (size_t j = 0; okay && j < i; ++j)
+            okay = row->interests[j].kind != interest->kind || row->interests[j].id != interest->id;
+    }
     byte trap;
     okay = okay && scope_range(row, row->entry, 1, QA_NATIVE_GUEST_EXECUTE, NULL) &&
         (!row->stop || (scope_range(row, row->stop, 1, QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE, NULL) &&
@@ -147,7 +183,7 @@ static profile_scope *scope_read(const guest_profile_guard_control *control)
 }
 static bool control_apply(guest_profile_guard_control *control)
 {
-    if (control->magic != GUEST_PROFILE_GUARD_MAGIC || control->version != GUEST_PROFILE_GUARD_CONTROL_VERSION || control->reserved ||
+    if (control->magic != GUEST_PROFILE_GUARD_MAGIC || control->reserved ||
         control->operation > GUEST_PROFILE_GUARD_CAPTURE) return false;
     /* FISTTP is part of the source x87 opcode domain and requires real SSE3
      * hardware. Qualify it before any source instruction or initializer. */
@@ -157,9 +193,23 @@ static bool control_apply(guest_profile_guard_control *control)
         if ((scope && (scope->phase != PROFILE_STOPPED || scope->id != control->scope)) ||
             (!scope && control->scope) || !control->xsave || control->xsave_bytes < 576) return false;
         byte legacy[512];
-        return copy_from_app(control->xsave, legacy, sizeof(legacy)) &&
+        bool okay = copy_from_app(control->xsave, legacy, sizeof(legacy)) &&
             fp_original(dr_get_current_drcontext(), legacy) &&
             copy_to_app(control->xsave + 8, legacy + 8, sizeof(uint64_t));
+        /* DR rebuilds terminal-trap frames with x87/SIMD only. Protection-key
+         * writes are outside the admitted instruction domain; retain their
+         * actual ENTER component through that signal transfer. */
+        if (okay && scope && pkru_offset) {
+            uint64_t active = 0;
+            okay = pkru_offset <= control->xsave_bytes &&
+                sizeof(scope->pkru) <= control->xsave_bytes - pkru_offset &&
+                copy_from_app(control->xsave + 512, &active, sizeof(active));
+            active = (active & ~(UINT64_C(1) << 9)) |
+                (scope->pkru_active ? UINT64_C(1) << 9 : 0);
+            okay = okay && copy_to_app(control->xsave + pkru_offset, &scope->pkru, sizeof(scope->pkru)) &&
+                copy_to_app(control->xsave + 512, &active, sizeof(active));
+        }
+        return okay;
     }
     if (control->operation == GUEST_PROFILE_GUARD_LEAVE) {
         if (!scope || scope->id != control->scope || scope->phase != PROFILE_STOPPED) return false;
@@ -170,7 +220,13 @@ static bool control_apply(guest_profile_guard_control *control)
     profile_scope *next = scope_read(control);
     if (!next) return false;
     if (control->operation == GUEST_PROFILE_GUARD_RESUME) {
-        next->parent = scope->parent; scope_free(scope);
+        next->parent = scope->parent;
+        next->pending = scope->pending; next->pending_count = scope->pending_count;
+        next->pending_at = scope->pending_at; next->pending_capacity = scope->pending_capacity;
+        next->bypass = scope->bypass;
+        if (control->entry == scope->boundary_bypass)
+            next->boundary_bypass = scope->boundary_bypass;
+        scope->pending = NULL; scope_free(scope);
     } else next->parent = scope;
     scope = next;
     return true;
@@ -186,7 +242,7 @@ static void reject(dr_mcontext_t *context, byte *fp, app_pc pc,
     uint64_t address, uint64_t bytes)
 {
     guest_profile_guard_fault fault = {kind, rights, vector, scope->id,
-        (uint64_t)(ptr_uint_t)pc, address, bytes};
+        (uint64_t)(ptr_uint_t)pc, address, bytes, (uint64_t)(ptr_uint_t)pc};
     if (!copy_to_app(scope->fault, &fault, sizeof(fault))) dr_abort();
     redirect(context, fp, fault_entry);
 }
@@ -224,6 +280,32 @@ static uint64_t operand_address(profile_instruction *description, opnd_t operand
         offset = (uint64_t)(ptr_uint_t)opnd_get_addr(operand) + (uint64_t)displacement;
     else { dr_abort(); return 0; }
     return offset + segment;
+}
+static void store_interest(uint64_t instruction, uint64_t address, size_t bytes)
+{
+    bool watched = false;
+    for (size_t i = 0; i < scope->interest_count; ++i) {
+        const guest_profile_interest *interest = scope->interests + i;
+        if (interest->kind == GUEST_PROFILE_INTEREST_STORE &&
+            address < interest->address + interest->bytes && interest->address < address + bytes) {
+            watched = true; break;
+        }
+    }
+    if (!watched) return;
+    for (size_t i = 0; i < scope->pending_count; ++i)
+        if (scope->pending[i].address == address && scope->pending[i].bytes == bytes) return;
+    if (scope->pending_count == scope->pending_capacity) {
+        size_t capacity = scope->pending_capacity ? scope->pending_capacity * 2 : 2;
+        if (capacity < scope->pending_capacity || capacity > SIZE_MAX / sizeof(profile_store)) dr_abort();
+        profile_store *next = dr_global_alloc(capacity * sizeof(*next));
+        if (!next) dr_abort();
+        if (scope->pending) {
+            memcpy(next, scope->pending, scope->pending_count * sizeof(*next));
+            dr_global_free(scope->pending, scope->pending_capacity * sizeof(*next));
+        }
+        scope->pending = next; scope->pending_capacity = capacity;
+    }
+    scope->pending[scope->pending_count++] = (profile_store){instruction, address, bytes};
 }
 static void environment_store(profile_instruction *description, dr_mcontext_t *cpu,
     byte *fp, byte opcode)
@@ -339,8 +421,8 @@ static void clean(ptr_uint_t encoded)
         guest_profile_guard_control *destination = (guest_profile_guard_control *)cpu.xdi;
         if (!copy_from_app(destination, &control, sizeof(control))) dr_abort();
         control.status = control_apply(&control) ? 1 : 0;
-        control.installed = control.status ? (guest_profile_guard_receipt){GUEST_PROFILE_GUARD_SOURCE_X64,
-            GUEST_PROFILE_GUARD_SOURCE_VERSION} : (guest_profile_guard_receipt){0};
+        control.installed = control.status ? (guest_profile_guard_receipt){GUEST_PROFILE_GUARD_SOURCE_X64} :
+            (guest_profile_guard_receipt){0};
         if (!copy_to_app(destination, &control, sizeof(control))) dr_abort();
         proc_restore_fpstate(fp); return;
     }
@@ -348,18 +430,42 @@ static void clean(ptr_uint_t encoded)
     if (pc == fault_entry || pc == import_entry) {
         guest_profile_guard_fault receipt;
         if (!copy_from_app(scope->fault, &receipt, sizeof(receipt)) || receipt.scope != scope->id ||
-            (pc == import_entry ? (receipt.kind != GUEST_PROFILE_GUARD_ENTRY && receipt.kind != GUEST_PROFILE_GUARD_SYSCALL) :
+            (pc == import_entry ? (receipt.kind != GUEST_PROFILE_GUARD_ENTRY && receipt.kind != GUEST_PROFILE_GUARD_SYSCALL &&
+                receipt.kind != GUEST_PROFILE_GUARD_STORE && receipt.kind != GUEST_PROFILE_GUARD_BOUNDARY &&
+                receipt.kind != GUEST_PROFILE_GUARD_RETURN) :
                 receipt.kind == GUEST_PROFILE_GUARD_NO_FAULT || receipt.kind == GUEST_PROFILE_GUARD_ENTRY ||
-                    receipt.kind == GUEST_PROFILE_GUARD_SYSCALL)) dr_abort();
+                    receipt.kind == GUEST_PROFILE_GUARD_SYSCALL || receipt.kind == GUEST_PROFILE_GUARD_STORE ||
+                    receipt.kind == GUEST_PROFILE_GUARD_BOUNDARY || receipt.kind == GUEST_PROFILE_GUARD_RETURN)) dr_abort();
         proc_restore_fpstate(fp); return;
     }
+    if (scope->pending_at < scope->pending_count) {
+        profile_store store = scope->pending[scope->pending_at++];
+        guest_profile_guard_fault committed = {GUEST_PROFILE_GUARD_STORE, QA_NATIVE_GUEST_WRITE,
+            scope->pending_at == scope->pending_count, scope->id, store.instruction,
+            store.address, store.bytes, (uint64_t)(ptr_uint_t)pc};
+        if (!copy_to_app(scope->fault, &committed, sizeof(committed))) dr_abort();
+        redirect(&cpu, fp, import_entry);
+    }
+    scope->pending_count = 0; scope->pending_at = 0;
     uint64_t bad;
     for (size_t i = 0; i < scope->callback_count; ++i) if (scope->callbacks[i].address == (uint64_t)(ptr_uint_t)pc) {
         if (!range((uint64_t)(ptr_uint_t)pc, 1, QA_NATIVE_GUEST_EXECUTE, &bad))
             reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_FETCH, QA_NATIVE_GUEST_EXECUTE, 0, bad, 1);
+        if (scope->callbacks[i].id == scope->bypass) { scope->bypass = 0; break; }
         guest_profile_guard_fault entry = {GUEST_PROFILE_GUARD_ENTRY, 0, 0,
-            scope->id, (uint64_t)(ptr_uint_t)pc, (uint64_t)(ptr_uint_t)pc, 1};
+            scope->id, (uint64_t)(ptr_uint_t)pc, (uint64_t)(ptr_uint_t)pc, 1, (uint64_t)(ptr_uint_t)pc};
         if (!copy_to_app(scope->fault, &entry, sizeof(entry))) dr_abort();
+        redirect(&cpu, fp, import_entry);
+    }
+    bool bypass_boundary = scope->boundary_bypass == (uint64_t)(ptr_uint_t)pc;
+    scope->boundary_bypass = 0;
+    if (!bypass_boundary) for (size_t i = 0; i < scope->interest_count; ++i) {
+        const guest_profile_interest *interest = scope->interests + i;
+        if (interest->kind != GUEST_PROFILE_INTEREST_INSTRUCTION || interest->address != (uint64_t)(ptr_uint_t)pc) continue;
+        guest_profile_guard_fault boundary = {GUEST_PROFILE_GUARD_BOUNDARY, 0, 0, scope->id,
+            interest->address, interest->address, 1, interest->address};
+        if (!copy_to_app(scope->fault, &boundary, sizeof(boundary))) dr_abort();
+        scope->boundary_bypass = interest->address;
         redirect(&cpu, fp, import_entry);
     }
     if (!range((uint64_t)(ptr_uint_t)pc, description->size, QA_NATIVE_GUEST_EXECUTE, &bad)) reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_FETCH, QA_NATIVE_GUEST_EXECUTE, 0, bad, description->size);
@@ -369,6 +475,12 @@ static void clean(ptr_uint_t encoded)
         if (!dr_unlink_flush_region(pc, description->size)) dr_abort();
         redirect(&cpu, fp, pc);
     }
+    if ((uint64_t)(ptr_uint_t)pc == scope->stop && description->size == 1 && actual[0] == 0xcc) {
+        guest_profile_guard_fault returned = {GUEST_PROFILE_GUARD_RETURN, 0, 0, scope->id,
+            scope->stop, scope->stop, 1, scope->stop};
+        if (!copy_to_app(scope->fault, &returned, sizeof(returned))) dr_abort();
+        redirect(&cpu, fp, import_entry);
+    }
     guest_profile_instruction policy = guest_profile_x64_instruction((qa_bytes){actual, description->size});
     if (policy.kind == GUEST_PROFILE_UNSUPPORTED) reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_INSTRUCTION, 0, 0, 0, description->size);
     if (policy.kind == GUEST_PROFILE_PROCESSOR_FAULT) reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_PROCESSOR, 0, policy.vector, 0, description->size);
@@ -376,7 +488,7 @@ static void clean(ptr_uint_t encoded)
         if (!scope->syscalls || description->size != 2)
             reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_INSTRUCTION, 0, 0, 0, description->size);
         guest_profile_guard_fault syscall = {GUEST_PROFILE_GUARD_SYSCALL, 0, 0,
-            scope->id, (uint64_t)(ptr_uint_t)pc, (uint64_t)(ptr_uint_t)pc + 2, 2};
+            scope->id, (uint64_t)(ptr_uint_t)pc, (uint64_t)(ptr_uint_t)pc + 2, 2, (uint64_t)(ptr_uint_t)pc};
         if (!copy_to_app(scope->fault, &syscall, sizeof(syscall))) dr_abort();
         redirect(&cpu, fp, import_entry);
     }
@@ -397,7 +509,6 @@ static void clean(ptr_uint_t encoded)
         reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_PROCESSOR, 0, 16, 0, description->size);
     size_t popped = 0;
     int opcode = description->operands ? instr_get_opcode(description->operands) : OP_INVALID;
-    if (opcode == OP_shld || opcode == OP_shrd) double_shift(description, &cpu, fp);
     if (opcode == OP_pop && opnd_is_memory_reference(instr_get_dst(description->operands, 0))) {
         popped = drutil_opnd_mem_size_in_bytes(instr_get_dst(description->operands, 0), description->operands);
         bad = (uint64_t)cpu.xsp;
@@ -441,8 +552,10 @@ static void clean(ptr_uint_t encoded)
                  * operand fault, including POP/LEAVE's intermediate SP changes. */
                 reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_OPERAND, rights, 0, bad, bytes);
             }
+            if (write) store_interest((uint64_t)(ptr_uint_t)pc, actual_address, bytes);
         }
     }
+    if (opcode == OP_shld || opcode == OP_shrd) double_shift(description, &cpu, fp);
     if ((op == 0xd9 || op == 0xdd) && modrm < 0xc0 && group == 6)
         environment_store(description, &cpu, fp, op);
     proc_restore_fpstate(fp);
@@ -469,11 +582,12 @@ static dr_emit_flags_t instrument(void *context, void *tag, instrlist_t *list, i
         original = emulated->instr; pc = emulated->pc;
     }
     if (!pc) return DR_EMIT_DEFAULT;
-    size_t bytes = instr_length(context, original);
-    if (!bytes || bytes > 15) dr_abort();
     profile_instruction *row = dr_global_alloc(sizeof(*row));
     if (!row) dr_abort();
-    memset(row, 0, sizeof(*row)); row->pc = pc; row->size = bytes;
+    memset(row, 0, sizeof(*row)); row->pc = pc;
+    size_t bytes = instr_length(context, original);
+    if (!bytes || bytes > 15) dr_abort();
+    row->size = bytes;
     if (!copy_from_app(pc, row->bytes, bytes)) dr_abort();
     size_t opcode_at = 0;
     for (; opcode_at < bytes; ++opcode_at) {
@@ -494,6 +608,24 @@ static dr_emit_flags_t instrument(void *context, void *tag, instrlist_t *list, i
         DR_CLEANCALL_READS_APP_CONTEXT | DR_CLEANCALL_WRITES_APP_CONTEXT, 1, OPND_CREATE_INTPTR(row));
     return DR_EMIT_DEFAULT;
 }
+static dr_emit_flags_t meta_branches(void *context, void *tag, instrlist_t *list,
+    bool trace, bool translating)
+{
+    (void)tag; (void)trace; (void)translating;
+    /* REP expansion adds an eight-bit JECXZ. The actual guard clean calls can
+     * exceed that reach; use DR's long meta sequence after insertion. */
+    for (instr_t *row = instrlist_first(list), *next; row; row = next) {
+        next = instr_get_next(row);
+        /* drmgr marks intra-block application branches meta only after this
+         * phase. Apply that same rule before asking DR to widen their reach. */
+        if (instr_is_cti_short(row) && opnd_is_instr(instr_get_target(row))) {
+            instr_set_meta(row);
+            instr_set_translation(row, NULL);
+            instr_convert_short_meta_jmp_to_long(context, list, row);
+        }
+    }
+    return DR_EMIT_DEFAULT;
+}
 static void module_load(void *context, const module_data_t *module, bool loaded)
 {
     (void)loaded;
@@ -508,6 +640,19 @@ static void module_load(void *context, const module_data_t *module, bool loaded)
 }
 static dr_signal_action_t signal_event(void *context, dr_siginfo_t *information)
 {
+    /* A terminal INT3 has no following app instruction for DR's post-trap PC
+     * translation. Recover the actual trap from the stopped cache instruction,
+     * only for this scope's admitted import marker or return trap. */
+    if (scope && information->sig == SIGTRAP && information->mcontext &&
+        !information->mcontext->xip && information->raw_mcontext &&
+        information->raw_mcontext->xip) {
+        app_pc original = dr_app_pc_from_cache_pc(information->raw_mcontext->xip - 1);
+        byte opcode;
+        if (original && (original == import_entry ||
+            original == (app_pc)(ptr_uint_t)scope->stop) &&
+            copy_from_app(original, &opcode, 1) && opcode == 0xcc)
+            information->mcontext->xip = original + 1;
+    }
     /* DR's decoder can forge SIGILL before presenting an invalid first
      * instruction to a bb callback (core/arch/interp.c bb_process_invalid_instr).
      * The source callback table dispatches that actual entry before decoding.
@@ -518,11 +663,23 @@ static dr_signal_action_t signal_event(void *context, dr_siginfo_t *information)
             information->mcontext->xip == (app_pc)(ptr_uint_t)scope->entry)) &&
         (information->sig == SIGILL || information->sig == SIGSEGV || information->sig == SIGBUS)) {
         uint64_t pc = (uint64_t)(ptr_uint_t)information->mcontext->xip;
+        byte trap;
+        if (pc == scope->stop && scope_range(scope, pc, 1,
+            QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE, NULL) &&
+            copy_from_app((void *)(ptr_uint_t)pc, &trap, 1) && trap == 0xcc) {
+            guest_profile_guard_fault returned = {GUEST_PROFILE_GUARD_RETURN, 0, 0,
+                scope->id, pc, pc, 1, pc};
+            if (!copy_to_app(scope->fault, &returned, sizeof(returned))) dr_abort();
+            scope->phase = PROFILE_ACTIVE;
+            information->mcontext->xip = import_entry;
+            return DR_SIGNAL_REDIRECT;
+        }
         for (size_t i = 0; i < scope->callback_count; ++i) if (scope->callbacks[i].address == pc &&
             range(pc, 1, QA_NATIVE_GUEST_EXECUTE, NULL)) {
+            if (scope->callbacks[i].id == scope->bypass) { scope->bypass = 0; break; }
             if (dr_get_thread_id(context) != owner_thread) dr_abort();
             guest_profile_guard_fault entry = {GUEST_PROFILE_GUARD_ENTRY, 0, 0,
-                scope->id, pc, pc, 1};
+                scope->id, pc, pc, 1, pc};
             if (!copy_to_app(scope->fault, &entry, sizeof(entry))) dr_abort();
             scope->phase = PROFILE_ACTIVE;
             information->mcontext->xip = import_entry;
@@ -538,6 +695,8 @@ static dr_signal_action_t signal_event(void *context, dr_siginfo_t *information)
         information->sig == SIGILL || information->sig == SIGFPE ||
         information->sig == SIGSEGV || information->sig == SIGBUS)) {
         if (dr_get_thread_id(context) != owner_thread) dr_abort();
+        if (information->mcontext && information->mcontext->xip != import_entry + 1)
+            scope->pending_count = scope->pending_at = 0;
         scope->phase = PROFILE_STOPPED;
     }
     (void)information;
@@ -571,12 +730,18 @@ static void process_exit(void)
     drmgr_unregister_signal_event(signal_event); drmgr_unregister_module_load_event(module_load);
     drmgr_unregister_pre_syscall_event(syscall_pre); drmgr_unregister_filter_syscall_event(syscall_filter);
     drmgr_unregister_bb_app2app_event(app2app); drmgr_unregister_bb_insertion_event(instrument);
+    drmgr_unregister_bb_instru2instru_event(meta_branches);
     drutil_exit(); drmgr_exit();
 }
 DR_EXPORT void dr_client_main(client_id_t id, int argc, const char *argv[])
 {
     (void)id; (void)argc; (void)argv;
     dr_set_client_name("Quake Anthology source instruction guard", "");
+    unsigned a, b, c, d;
+    if (__get_cpuid_count(0x0d, 9, &a, &b, &c, &d) && a) {
+        if (a != sizeof(uint64_t) || b < 576 || (c & 1)) dr_abort();
+        pkru_offset = b;
+    }
     uint64 setting;
     /* A direct branch elided before client instrumentation would omit its
      * source fetch/canonical-target admission. Qualify the real engine values,
@@ -591,6 +756,7 @@ DR_EXPORT void dr_client_main(client_id_t id, int argc, const char *argv[])
         !drmgr_register_module_load_event(module_load) || !drmgr_register_signal_event(signal_event) ||
         !drmgr_register_filter_syscall_event(syscall_filter) || !drmgr_register_pre_syscall_event(syscall_pre) ||
         !drmgr_register_bb_app2app_event(app2app, NULL) || !drmgr_register_bb_instrumentation_event(NULL, instrument, NULL) ||
+        !drmgr_register_bb_instru2instru_event(meta_branches, NULL) ||
         !drmgr_register_exit_event(process_exit)) dr_abort();
 }
 #else

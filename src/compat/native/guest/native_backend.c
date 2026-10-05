@@ -102,6 +102,50 @@ bool guest_native_transfer(qa_native_guest *guest, qa_native_guest_cpu *cpu,
     return okay;
 }
 
+bool guest_native_interest(qa_native_guest *guest, guest_profile_interest_kind kind,
+    uint64_t id, uint64_t address, size_t bytes, bool remove, qa_error *error)
+{
+    if (guest && guest->options.backend != QA_NATIVE_GUEST_HOST_X86_64) return true;
+    if (!guest_mutable(guest, error)) return false;
+    guest_profile_interest interest = {kind, id, address, bytes, 1};
+    return guest_native_result(guest,
+        guest_host_child_interest(guest->child, &interest, remove, error), error);
+}
+static bool observed(void *context, guest_host_child *child,
+    const guest_profile_guard_fault *event, qa_error *error)
+{
+    qa_native_guest *guest = context;
+    if (guest->child != child || !guest->run || guest->callback_depth == UINT_MAX)
+        return guest_fail(error, QA_ERROR_ARGUMENT, event->instruction, "native observation lost its stopped child");
+    guest_dispatch_started(guest);
+    guest->stepping = false; ++guest->callback_depth;
+    bool okay = guest_mutable(guest, error);
+    if (okay && event->kind == GUEST_PROFILE_GUARD_BOUNDARY)
+        okay = guest->instruction_observer && guest->instruction_observer(
+            guest->instruction_context, guest, event->instruction, error);
+    else if (okay && event->kind == GUEST_PROFILE_GUARD_STORE) {
+        uint64_t offset = 0;
+        while (okay && offset < event->bytes) {
+            qa_native_guest_mapping *mapping = guest_mapping(guest, event->address + offset);
+            if (!mapping) { okay = guest_fail(error, QA_ERROR_FORMAT, event->address,
+                "native committed store lost its actual mapping"); break; }
+            uint64_t within = event->address + offset - mapping->base;
+            uint64_t amount = mapping->bytes - within;
+            if (amount > event->bytes - offset) amount = event->bytes - offset;
+            qa_native_guest_commit commit = {.address = event->address + offset,
+                .backing = mapping->backing, .backing_offset = mapping->backing_offset + within,
+                .bytes = (size_t)amount, .instruction = event->instruction,
+                .instruction_last = event->vector && offset + amount == event->bytes};
+            okay = guest_publish(guest, &commit, error); offset += amount;
+        }
+    } else if (okay) okay = guest_fail(error, QA_ERROR_FORMAT, event->instruction,
+        "native observation has no admitted store or region boundary");
+    if (!okay) (void)guest_callback_failure(guest, error);
+    --guest->callback_depth; guest->stepping = true;
+    return okay;
+}
+static bool cancelled(void *context, const qa_error *error)
+{ return guest_callback_cancelled(context, error); }
 static bool import(void *context, guest_host_child *child, uint64_t id,
     guest_host_x86_64_state *state, qa_error *error)
 {
@@ -119,6 +163,7 @@ static bool import(void *context, guest_host_child *child, uint64_t id,
     ++guest->callback_depth;
     bool okay = guest_mutable(guest, error) &&
         callback.invoke(callback.context, guest, id, error);
+    if (!okay) (void)guest_callback_failure(guest, error);
     --guest->callback_depth;
     if (okay) okay = guest_mutable(guest, error);
     guest->stepping = true;
@@ -159,11 +204,11 @@ static bool program_syscall(void *context, guest_host_child *child,
 }
 
 static bool native_run(qa_native_guest *guest, uint64_t start,
-    uint64_t stop, qa_native_guest_syscall_fn syscall, void *context,
+    uint64_t stop, uint64_t bypass, qa_native_guest_syscall_fn syscall, void *context,
     bool *program_stopped, qa_error *error)
 {
     if (!guest_mutable(guest, error)) return false;
-    if (guest->options.backend != QA_NATIVE_GUEST_HOST_X86_64 || guest->observe ||
+    if (guest->options.backend != QA_NATIVE_GUEST_HOST_X86_64 ||
         (!stop && !syscall) || (guest->run && !guest->callback_depth) ||
         !guest_range(guest, start, 1, QA_NATIVE_GUEST_EXECUTE, error) ||
         (stop && !guest_range(guest, stop, 1, QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE, error)))
@@ -172,13 +217,14 @@ static bool native_run(qa_native_guest *guest, uint64_t start,
     guest_run frame = {.parent = guest->run};
     guest->run = &frame; guest->stepping = true;
     program_call call = {guest, syscall, context};
+    guest_host_observation observation = {observed, cancelled, guest, bypass};
     bool entered = false;
     bool okay = syscall ? guest_host_child_run_with_syscalls(guest->child, start, stop,
-        program_import, program_syscall, &call, program_stopped, error) :
-        guest_host_child_run_receipt(guest->child, start, stop, import, guest, &entered, error);
+        program_import, program_syscall, &call, &observation, program_stopped, error) :
+        guest_host_child_run_receipt(guest->child, start, stop, import, guest, &observation, &entered, error);
     if (entered) guest_dispatch_started(guest);
     guest->stepping = false; guest->run = frame.parent;
-    if (!okay) {
+    if (!okay && !guest_callback_cancelled(guest, error)) {
         guest_host_stop fault = {0}; qa_error ignored = {0};
         if (guest_host_child_last_fault(guest->child, &fault, &ignored) && fault.access) {
             qa_native_guest_mapping *mapping = guest_mapping(guest, fault.address);
@@ -202,9 +248,18 @@ static bool native_run(qa_native_guest *guest, uint64_t start,
 
 bool qa_native_guest_run_native(qa_native_guest *guest, uint64_t start,
     uint64_t stop, qa_error *error)
-{ return native_run(guest, start, stop, NULL, NULL, NULL, error); }
+{ return native_run(guest, start, stop, 0, NULL, NULL, NULL, error); }
 
+bool guest_native_run_original(qa_native_guest *guest, uint64_t id,
+    uint64_t start, uint64_t stop, qa_error *error)
+{
+    bool bound = false;
+    for (size_t i = 0; guest && i < guest->callback_count; ++i)
+        if (guest->callbacks[i].id == id && guest->callbacks[i].address == start) bound = true;
+    return bound ? native_run(guest, start, stop, id, NULL, NULL, NULL, error) :
+        guest_fail(error, QA_ERROR_ARGUMENT, id, "native original requires its real bound entry");
+}
 bool guest_native_run_program(qa_native_guest *guest, uint64_t start,
     uint64_t stop, qa_native_guest_syscall_fn syscall, void *context,
     bool *program_stopped, qa_error *error)
-{ return native_run(guest, start, stop, syscall, context, program_stopped, error); }
+{ return native_run(guest, start, stop, 0, syscall, context, program_stopped, error); }

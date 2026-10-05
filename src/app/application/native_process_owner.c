@@ -4,7 +4,7 @@
 bool application_native_process_prepare(qa_application *application,
     const qa_launch_instance *descriptor, qa_actor_owner receiver, uint64_t service_owner,
     const qa_native_process_resource_artifact *artifacts, size_t count, size_t primary,
-    const qa_native_image_info *image, bool observe,
+    const qa_native_image_info *image,
     bool (*current)(void *, const qa_launch_instance *, qa_actor_owner, uint64_t, qa_error *),
     void *context, const qa_native_process_resources *capture, qa_bytes recipe,
     application_native_process_owner *owner, qa_error *error)
@@ -24,7 +24,7 @@ bool application_native_process_prepare(qa_application *application,
     bool native_target = image->target.arch == QA_NATIVE_ARCH_X86_64 &&
         image->target.pointer_bytes == 8 &&
         (image->target.os == QA_NATIVE_OS_LINUX || image->target.os == QA_NATIVE_OS_WINDOWS);
-    if (policy.backend == QA_NATIVE_GUEST_HOST_X86_64 && (observe || !native_target)) {
+    if (policy.backend == QA_NATIVE_GUEST_HOST_X86_64 && !native_target) {
         policy.backend = QA_NATIVE_GUEST_EMULATED;
         policy.instruction_budget = 50000000u;
     }

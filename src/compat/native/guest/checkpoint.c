@@ -124,12 +124,12 @@ static bool mapping(guest_codec *io, qa_native_guest_mapping *saved)
 static bool source_profile(guest_codec *io, guest_profile_guard_receipt *profile,
     guest_profile_cpu_domain *domain)
 {
-    uint32_t has_pkru = domain->has_pkru ? 1 : 0;
-    if (!u32(io, &profile->policy) || !u32(io, &profile->version) ||
+    uint32_t unused = 0, has_pkru = domain->has_pkru ? 1 : 0;
+    if (!u32(io, &profile->policy) || !u32(io, &unused) ||
         !u64(io, &domain->xfeatures) || !u32(io, &domain->pkru) ||
         !u32(io, &has_pkru)) return false;
     if (profile->policy != GUEST_PROFILE_GUARD_SOURCE_X64 ||
-        profile->version != GUEST_PROFILE_GUARD_SOURCE_VERSION || has_pkru > 1 ||
+        has_pkru > 1 ||
         (domain->xfeatures & 3) != 3 ||
         has_pkru != ((domain->xfeatures & (UINT64_C(1) << 9)) != 0) ||
         (!has_pkru && domain->pkru) || (domain->pkru & 3))
@@ -143,7 +143,7 @@ static bool same_profile(const guest_profile_guard_receipt *a,
     const guest_profile_cpu_domain *x, const guest_profile_guard_receipt *b,
     const guest_profile_cpu_domain *y)
 {
-    return a->policy == b->policy && a->version == b->version &&
+    return a->policy == b->policy &&
         x->xfeatures == y->xfeatures && x->pkru == y->pkru && x->has_pkru == y->has_pkru;
 }
 

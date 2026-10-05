@@ -421,7 +421,7 @@ static bool process_invoke(qa_native_sysv_process *owner, uint64_t original, uin
     } else okay = begin(owner, error);
     if (okay) {
         owner->busy=true;
-        bool invoked = owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64 ?
+        bool invoked = owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64 && !original ?
             guest_abi_invoke_native(plan, owner->guest, target, owner->returned,
                 arguments, count, result, error) :
             original ? guest_abi_invoke_original(plan, owner->guest, original, target, owner->returned,

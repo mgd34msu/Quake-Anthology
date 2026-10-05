@@ -364,7 +364,7 @@ static bool process_invoke(qa_native_windows_process *owner, uint64_t original, 
     bool okay = nested||prepared ? windows_process_current(owner, error) : begin(owner, error);
     if (okay) {
         owner->busy = true;
-        okay = owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64 ?
+        okay = owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64 && !original ?
             guest_abi_invoke_native(plan, owner->guest, target, owner->runtime->return_trap, arguments, count, result, error) :
             original ? guest_abi_invoke_original(plan, owner->guest, original, target, owner->runtime->return_trap,
                 arguments, count, result, owner->options.instruction_budget, error) :

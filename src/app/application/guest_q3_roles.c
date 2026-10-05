@@ -586,7 +586,6 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         }
         if (!application_native_process_prepare(app, descriptor, provider->owner,
             role->service_owner, &artifact, 1, 0, &module.image,
-            native.instance.observe || qa_native_declaration_region_count(role->declaration) != 0,
             process_current, role, capture, recipe, &role->process, error)) goto failed;
         if (restored_executor.size) {
             if (!qa_native_process_resources_restore_read(role->process.resources,

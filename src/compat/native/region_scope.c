@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "guest/internal.h"
 
 struct qa_native_region_snapshot {
     struct qa_native_region_snapshot *next;
@@ -64,8 +65,7 @@ bool qa_native_region_scope_open(qa_native_instance *instance,
         instance->write_depth || instance->lifecycle != QA_NATIVE_INITIALIZED || instance->process_host_pending ||
         (instance->active_depth && (native_active_instance != instance || !instance->callback_depth)))
         return fail(error, "Region scope requires its actual acquired declaration and returned or entered source owner");
-    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS || !instance->guest ||
-        qa_native_guest_execution(instance->guest) != QA_NATIVE_GUEST_EMULATED)
+    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS || !instance->guest)
         return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
             "Dynamic region scope requires its actual full stopped processor owner");
     const qa_native_declared_region *declared = &declaration->regions[id].definition;
@@ -92,6 +92,8 @@ bool qa_native_region_scope_open(qa_native_instance *instance,
     scope->callback = callback; scope->context = context;
     scope->parent_calls = instance->active_depth; scope->parent_callbacks = instance->callback_depth;
     scope->parent_regions = instance->region_depth; scope->parent_services = instance->region_service_depth;
+    if (!guest_native_interest(instance->guest, GUEST_PROFILE_INTEREST_INSTRUCTION,
+        target, target, 0, false, error)) { free(scope); return false; }
     scope->next = instance->region_scopes; instance->region_scopes = scope;
     *out = scope; return true;
 }
@@ -223,6 +225,9 @@ bool qa_native_region_scope_close(qa_native_region_scope **owner, qa_error *erro
     qa_native_region_scope **at = &scope->instance->region_scopes;
     while (*at && *at != scope) at = &(*at)->next;
     if (!*at) return fail(error, "Region scope lost its actual instance association");
+    if ((!qa_native_terminal(instance) || !drained) &&
+        !guest_native_interest(scope->guest, GUEST_PROFILE_INTEREST_INSTRUCTION,
+        scope->target, scope->target, 0, true, error)) return false;
     *at = scope->next;
     while (scope->snapshots) {
         qa_native_region_snapshot *snapshot = scope->snapshots; scope->snapshots = snapshot->next; free(snapshot);

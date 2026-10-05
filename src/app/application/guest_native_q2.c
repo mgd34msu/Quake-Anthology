@@ -466,7 +466,6 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
     }
     if (!application_native_process_prepare(provider->application, provider->launch,
         provider->owner, provider->owner, &artifact, 1, 0, &module.image,
-        instance.observe || qa_native_declaration_region_count(engine->declaration) != 0,
         process_current, engine, capture, lower_recipe, &engine->process, error)) return false;
     qa_native_checkpoint cold = {0};
     if (provider->application->native_restore_image && engine->profile != QA_NATIVE_Q2_CGAME_API2023) {

@@ -3,6 +3,22 @@
 #include "guest/sysv_libc_format.h"
 #include "guest/internal.h"
 
+static bool observe_regions(qa_native_instance *instance, qa_error *error)
+{
+    if (!instance->region_count) return true;
+    for (size_t i = 0; i < instance->region_count; ++i) {
+        const qa_native_declared_region *region = &instance->regions[i].definition;
+        uint32_t points[] = {region->entry_rva, region->join_rva,
+            region->frame_entry_rva, region->frame_exit_rva};
+        size_t count = region->has_frame ? 4 : 2;
+        for (size_t j = 0; j < count; ++j) {
+            uint64_t address = instance->image_base + points[j];
+            if (!guest_native_interest(instance->guest, GUEST_PROFILE_INTEREST_INSTRUCTION,
+                address, address, 0, false, error)) return false;
+        }
+    }
+    return qa_native_guest_instructions(instance->guest, native_process_region_instruction, instance, error);
+}
 static bool source_matches(const qa_native_instance *instance, const qa_native_image_info *image,
     qa_bytes bytes)
 {
@@ -75,9 +91,8 @@ bool native_process_open(qa_native_instance *instance, const qa_native_process_o
         instance->guest = qa_native_windows_process_guest(instance->windows_process);
     }
     const native_profile_spec *profile = native_profile(instance->module->info.profile);
-    if (instance->region_count && !qa_native_guest_instructions(instance->guest,
-        native_process_region_instruction, instance, error)) return false;
-    if (instance->options.observe && qa_native_guest_execution(instance->guest) == QA_NATIVE_GUEST_EMULATED) {
+    if (!observe_regions(instance, error)) return false;
+    if (instance->options.observe) {
         if (!qa_native_guest_observe(instance->guest, native_process_write_commit, instance, error)) return false;
         instance->process_observing = true;
     }
@@ -609,9 +624,8 @@ bool native_process_restore(qa_native_instance *instance, const qa_native_proces
     for (native_allocation *a = instance->allocations; a; a = a->next)
         if (!retained_allocation(instance, a->guest_address, a->size, a->tag, error)) return false;
     if (!native_profile_restore_tables(instance, error)) return false;
-    if (instance->region_count && !qa_native_guest_instructions(instance->guest,
-        native_process_region_instruction, instance, error)) return false;
-    if (instance->options.observe && qa_native_guest_execution(instance->guest) == QA_NATIVE_GUEST_EMULATED) {
+    if (!observe_regions(instance, error)) return false;
+    if (instance->options.observe) {
         if (!qa_native_guest_observe(instance->guest, native_process_write_commit, instance, error)) return false;
         instance->process_observing = true;
     }

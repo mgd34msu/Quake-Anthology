@@ -52,18 +52,24 @@ qa_host_bridge_enter:
     xsave64 (%rdi)
     movq 160(%r10),%rdi
     xrstor64 (%rdi)
+    movq 144(%r10),%rsi
+    cmpq 240(%r10),%rsi
+    je .Lenter_fs_current
     movl $158,%eax
     movl $0x1002,%edi
-    movq 144(%r10),%rsi
     syscall
     testq %rax,%rax
     js .Lhost_fatal
+.Lenter_fs_current:
+    movq 152(%r10),%rsi
+    cmpq 248(%r10),%rsi
+    je .Lenter_gs_current
     movl $158,%eax
     movl $0x1001,%edi
-    movq 152(%r10),%rsi
     syscall
     testq %rax,%rax
     js .Lhost_fatal
+.Lenter_gs_current:
     pushq 136(%r10)
     popfq
     movq 0(%r10),%rax
@@ -128,18 +134,24 @@ qa_host_bridge_signal:
     syscall
     testq %rax,%rax
     js .Lhost_fatal
+    movq 240(%r12),%rsi
+    cmpq 256(%r12),%rsi
+    je .Lsignal_host_fs_current
     movl $158,%eax
     movl $0x1002,%edi
-    movq 240(%r12),%rsi
     syscall
     testq %rax,%rax
     js .Lhost_fatal
+.Lsignal_host_fs_current:
+    movq 248(%r12),%rsi
+    cmpq 264(%r12),%rsi
+    je .Lsignal_host_gs_current
     movl $158,%eax
     movl $0x1001,%edi
-    movq 248(%r12),%rsi
     syscall
     testq %rax,%rax
     js .Lhost_fatal
+.Lsignal_host_gs_current:
     pushq 280(%r12)
     popfq
     movq 168(%r12),%rax
@@ -150,19 +162,32 @@ qa_host_bridge_signal:
     movq 24(%rsp),%rdi
     movq 16(%rsp),%rsi
     movq 8(%rsp),%rdx
+    pushq %r13
+    movq %rsp,%r13
+    movq 176(%r12),%rsp
+    subq $128,%rsp
+    andq $-16,%rsp
     call qa_host_bridge_dispatch
+    movq %r13,%rsp
+    popq %r13
+    movq 256(%r12),%rsi
+    cmpq 240(%r12),%rsi
+    je .Lsignal_guest_fs_current
     movl $158,%eax
     movl $0x1002,%edi
-    movq 256(%r12),%rsi
     syscall
     testq %rax,%rax
     js .Lhost_fatal
+.Lsignal_guest_fs_current:
+    movq 264(%r12),%rsi
+    cmpq 248(%r12),%rsi
+    je .Lsignal_guest_gs_current
     movl $158,%eax
     movl $0x1001,%edi
-    movq 264(%r12),%rsi
     syscall
     testq %rax,%rax
     js .Lhost_fatal
+.Lsignal_guest_gs_current:
     addq $8,%rsp
     popq %rdx
     popq %rsi

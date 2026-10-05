@@ -266,9 +266,6 @@ bool qa_native_guest_observe(qa_native_guest *guest, qa_native_guest_commit_fn o
 {
     if (!qa_native_guest_idle(guest))
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native guest observer replacement requires idle ownership");
-    if (observer && guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64)
-        return guest_fail(error, QA_ERROR_UNSUPPORTED, 0,
-            "hardware execution cannot provide exact committed CPU store receipts");
     guest->observe = observer; guest->observe_context = context;
     return true;
 }
@@ -284,8 +281,6 @@ bool qa_native_guest_instructions(qa_native_guest *guest, qa_native_guest_instru
 {
     if (!qa_native_guest_idle(guest))
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native instruction observer replacement requires idle ownership");
-    if (observer && guest->options.backend != QA_NATIVE_GUEST_EMULATED)
-        return guest_fail(error, QA_ERROR_UNSUPPORTED, 0, "exact stopped instruction regions require emulated execution");
     guest->instruction_observer = observer; guest->instruction_context = context;
     return true;
 }
@@ -458,6 +453,11 @@ bool qa_native_guest_run_original(qa_native_guest *guest, uint64_t id,
     uint64_t start, uint64_t stop, size_t budget, qa_error *error)
 {
     if (!id) return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native original callback identity is required");
+    if (guest && guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64) {
+        if (budget) return guest_fail(error, QA_ERROR_ARGUMENT, budget,
+            "hardware original execution has no instruction-budget capability");
+        return guest_native_run_original(guest,id,start,stop,error);
+    }
     return run(guest, start, stop, budget, id, NULL, NULL, NULL, error);
 }
 

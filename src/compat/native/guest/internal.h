@@ -102,6 +102,9 @@ void guest_dispatch_started(qa_native_guest *);
 bool guest_native_map(qa_native_guest *, const qa_native_guest_mapping *, qa_error *);
 bool guest_backing_retire(qa_native_guest *, guest_backing *, qa_error *);
 bool guest_native_transfer(qa_native_guest *, qa_native_guest_cpu *, bool, qa_error *);
+bool guest_native_interest(qa_native_guest *, guest_profile_interest_kind, uint64_t,
+    uint64_t, size_t, bool, qa_error *);
+bool guest_native_run_original(qa_native_guest *, uint64_t, uint64_t, uint64_t, qa_error *);
 bool guest_native_run_program(qa_native_guest *, uint64_t, uint64_t,
     qa_native_guest_syscall_fn, void *, bool *, qa_error *);
 

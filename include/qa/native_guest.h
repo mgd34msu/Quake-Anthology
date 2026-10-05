@@ -159,11 +159,13 @@ bool qa_native_guest_observe(qa_native_guest *, qa_native_guest_commit_fn, void 
  * A caller prepares the actual ABI stack/registers before this raw operation. */
 bool qa_native_guest_run(qa_native_guest *, uint64_t, uint64_t, size_t, qa_error *);
 /* Invoke the original instruction at a genuinely bound entry exactly once.
- * Recursion reaches the binding again. This requires the emulated backend. */
+ * Recursion reaches the binding again. Hardware calls use budget zero and the
+ * same one-shot bypass in their actual instruction monitor. */
 bool qa_native_guest_run_original(qa_native_guest *, uint64_t, uint64_t, uint64_t,
     size_t, qa_error *);
-/* Explicit hardware invocation without instruction budgets or CPU store
- * observers. The installed monitor observes genuine bound entries without
+/* Explicit hardware invocation without instruction budgets. Watched stores
+ * and admitted instruction boundaries use the actual child monitor. It
+ * observes genuine bound entries without
  * rewriting source bytes and dispatches their actual IDs and stopped ABI state. */
 bool qa_native_guest_run_native(qa_native_guest *, uint64_t, uint64_t, qa_error *);
 
