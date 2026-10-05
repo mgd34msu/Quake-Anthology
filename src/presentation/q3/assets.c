@@ -3,6 +3,73 @@
 #include "qa/scene_world_save.h"
 #include "qa/q3_assets_custody.h"
 
+static bool observed(const qa_q3_presentation_assets *a, qa_error *error)
+{
+    return a && (!a->busy || (a->capturing && !a->codec_busy)) ? true :
+        q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 asset observation requires an idle or captured owner");
+}
+bool qa_q3_assets_capture_begin(qa_q3_presentation_assets *a, qa_error *error)
+{
+    if (!a || a->busy || !a->users || !q3p_assets_children_idle(a))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 asset capture requires an idle live owner");
+    a->busy = 1; a->capturing = true; return true;
+}
+void qa_q3_assets_capture_end(qa_q3_presentation_assets *a)
+{
+    if (!a || !a->capturing || a->codec_busy) return;
+    a->capturing = false; a->busy = 0;
+}
+bool qa_q3_assets_model_count(const qa_q3_presentation_assets *a, size_t *out, qa_error *error)
+{
+    if (!out || !observed(a, error)) return false;
+    *out = a->model_count; return true;
+}
+bool qa_q3_assets_model_holder(const qa_q3_presentation_assets *a, size_t ordinal,
+    qa_q3_asset_model_holder *out, qa_error *error)
+{
+    if (!out || !observed(a, error) || ordinal >= a->model_count)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 model holder ordinal is absent");
+    const q3p_model *m = a->models[ordinal]; *out = (qa_q3_asset_model_holder){0};
+    if (!m) return true;
+    out->present = true; out->has_lods = m->has_lods; out->owns_world = m->owns_world;
+    out->shared_parent = q3p_model_shared(a, m);
+    out->source_registration = m->source_registration;
+    out->registration_bad = m->registration_bad; out->source_kind = m->source_kind;
+    out->source_num_lods = m->source_num_lods;
+    out->source_md4 = m->borrowed_models ? m->source_md4 :
+        (m->source_md4_resource ? &m->source_md4_model : NULL);
+    out->source_md4_resource = m->source_md4_resource;
+    out->source_md4_scene = m->source_md4_scene;
+    out->provider = m->provider; out->resource = m->resource; out->world = m->world;
+    out->inline_model = m->inline_model; out->lods = m->has_lods ? &m->lods : NULL;
+    for (unsigned i = 0; i < 3; ++i) {
+        out->lod_resources[i] = m->lod_resources[i]; out->scenes[i] = m->scene[i];
+        out->sources[i] = m->has_lods || !i ? q3p_model_source(m, i) : NULL;
+    }
+    return true;
+}
+bool qa_q3_assets_skin_count(const qa_q3_presentation_assets *a, size_t *out, qa_error *error)
+{
+    if (!out || !observed(a, error)) return false;
+    *out = a->skin_count; return true;
+}
+bool qa_q3_assets_skin_holder(const qa_q3_presentation_assets *a, size_t ordinal,
+    qa_q3_asset_skin_holder *out, qa_error *error)
+{
+    if (!out || !observed(a, error) || ordinal >= a->skin_count || !a->skins[ordinal])
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 skin holder ordinal is absent");
+    const q3p_skin *skin = a->skins[ordinal];
+    *out = (qa_q3_asset_skin_holder){skin->provider, skin->resource, &skin->map,
+        q3p_skin_shared(a, skin)}; return true;
+}
+bool qa_q3_assets_services(const qa_q3_presentation_assets *a,
+    qa_q3_presentation_asset_options *out, qa_scene_world **world,
+    qa_collision_geometry **geometry, qa_error *error)
+{
+    if (!out || !world || !geometry || !observed(a, error)) return false;
+    *out = a->options; *world = a->world; *geometry = a->geometry; return true;
+}
+
 static unsigned char key_byte(q3p_resource_kind kind, unsigned char byte)
 {
     return kind == Q3P_SHADER && byte >= 'A' && byte <= 'Z' ? byte + ('a' - 'A') : byte;

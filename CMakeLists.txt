@@ -1072,7 +1072,6 @@ target_link_libraries(qa_qc_host PUBLIC qa_qc qa_builtin qa_console qa_movement)
 add_library(qa_q3_presentation STATIC
     src/presentation/q3/assets.c
     src/presentation/q3/shader_access.c
-    src/presentation/q3/assets_save.c
     src/presentation/q3/capture.c
     src/presentation/q3/audio.c
     src/presentation/q3/cinematics.c
