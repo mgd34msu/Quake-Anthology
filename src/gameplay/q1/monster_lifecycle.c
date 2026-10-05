@@ -79,14 +79,13 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
     case QA_Q1_ARMY:
         if (m->pain_finished > g->time)
             return true;
-        if (m->addon.enabled && g->options.skill > 2 && q1_random(g) * 100 > damage)
+        if (g->options.program == QA_Q1_MG3 && g->options.skill > 2 &&
+            q1_random(g) * 100 > damage)
             return true;
         r = q1_random(g);
         m->pain_finished = g->time + (r < 0.2f ? 0.6 : 1.1);
         frame = r < 0.2f ? "army_pain1" : r < 0.6f ? "army_painb1" : "army_painc1";
         sound = r < 0.2f ? "soldier/pain1.wav" : "soldier/pain2.wav";
-        if (!m->addon.enabled && g->options.skill == 3)
-            m->pain_finished = g->time + 5;
         break;
     case QA_Q1_DOG:
         if (!q1_sound(g, entity->id, "dog/dpain1.wav", 2, 1, error))

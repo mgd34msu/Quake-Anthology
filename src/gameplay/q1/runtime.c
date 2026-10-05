@@ -1610,7 +1610,7 @@ bool qa_q1_game_pusher_think(qa_q1_game *g, qa_actor_id actor, const qa_source_f
                             .interval_elapsed_ns = frame->elapsed_ns};
     return think_callback(g, actor, &scope, error);
 }
-static bool reaction_inner(qa_q1_game *g, const qa_damage_outcome *outcome, qa_error *error) {
+static bool reaction_dispatch(qa_q1_game *g, const qa_damage_outcome *outcome, qa_error *error) {
     q1_actor *entity = q1_entity(g, outcome->request.target);
     if (entity && entity->kind == Q1_BOSS_CHILD)
         return q1_boss_child_reaction(g, entity, outcome, error);
@@ -1626,6 +1626,27 @@ static bool reaction_inner(qa_q1_game *g, const qa_damage_outcome *outcome, qa_e
     if (outcome->result.reaction == QA_REACTION_PAIN)
         return q1_monster_pain(g, entity, outcome->request.attack.attacker,
                                outcome->result.applied_damage, error);
+    return true;
+}
+static bool reaction_inner(qa_q1_game *g, const qa_damage_outcome *outcome, qa_error *error) {
+    if (!reaction_dispatch(g, outcome, error))
+        return false;
+    qa_actor_id actor = outcome->request.target;
+    if (outcome->result.reaction != QA_REACTION_PAIN || g->options.quakeworld ||
+        !q1_alive(g, actor))
+        return true;
+    bool nightmare = g->options.program == QA_Q1_MG3
+                         ? g->options.skill > 2 && !q1_classnamed(g, actor, "monster_boss") &&
+                               !q1_classnamed(g, actor, "monster_zombie")
+                         : g->options.skill == 3;
+    if (!nightmare)
+        return true;
+    q1_actor *entity = q1_entity(g, actor);
+    if (entity && entity->kind == Q1_MONSTER)
+        entity->state.monster.pain_finished = g->time + 5;
+    q1_player *player = q1_player_get(g, actor);
+    if (player && player->character)
+        player->character_state.pain_until = g->time + 5;
     return true;
 }
 static bool reaction_body(void *opaque, const qa_builtin_actor_callback_request *request,
