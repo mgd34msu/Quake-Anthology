@@ -62,8 +62,6 @@ q3n_entity *frontend_unified_q3_snapshots_storage(frontend_unified_q3_snapshots 
 bool frontend_unified_q3_snapshots_prediction(frontend_unified_q3_snapshots *, const qa_q3_player *,
     const frontend_unified_q3_prediction_receipt *, qa_vec3 correction, int32_t correction_time,
     bool hyperspace, qa_error *);
-bool frontend_unified_q3_snapshots_checkpoint(const frontend_unified_q3_snapshots *, qa_buffer *, qa_error *);
-bool frontend_unified_q3_snapshots_restore(const frontend_unified_q3_snapshots_options *, qa_bytes,
-    frontend_unified_q3_snapshots **, qa_error *);
+
 
 #endif
