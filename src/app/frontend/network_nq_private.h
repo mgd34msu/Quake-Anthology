@@ -1,7 +1,6 @@
 #ifndef QA_FRONTEND_NETWORK_NQ_PRIVATE_H
 #define QA_FRONTEND_NETWORK_NQ_PRIVATE_H
 #include "network_nq.h"
-#include "save_private.h"
 
 enum { NQ_CLIENTS = 64, NQ_MESSAGE = 8000, NQ_DATAGRAM = 1024, NQ_PENDING = 32, NQ_PINGS = 16 };
 typedef struct nq_frontend_peer {
@@ -53,8 +52,4 @@ struct frontend_nq_host {
 bool frontend_nq_source_hooks(frontend_nq_host *, const qa_net_client *,
     qa_network_nq_server_policy *, qa_network_nq_server_hooks *, qa_error *);
 bool frontend_nq_qualified(const frontend_nq_host *, bool complete_clock, qa_error *);
-bool frontend_nq_checkpoint(const frontend_nq_host *, qa_buffer *, qa_error *);
-bool frontend_nq_restore(qa_frontend *, qa_network_runtime *, qa_bytes,
-    frontend_nq_host **, qa_error *);
-void frontend_nq_rebind(frontend_nq_host *, qa_frontend *, qa_network_runtime *);
 #endif
