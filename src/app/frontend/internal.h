@@ -406,10 +406,6 @@ bool frontend_network_command(qa_frontend *, uint32_t, qa_actor_id, const qa_mov
 bool frontend_network_client_command_seat(qa_frontend *,uint32_t,const char *,qa_error *);
 bool frontend_network_publish(qa_frontend *, qa_error *);
 bool frontend_network_world_change_ready(qa_frontend *, qa_error *);
-bool frontend_network_prepare_restored(qa_frontend *, qa_bytes, qa_error *);
-bool frontend_network_checkpoint(qa_frontend *, qa_buffer *, qa_buffer *, qa_error *);
-bool frontend_network_restore_connections(qa_frontend *, qa_bytes, qa_error *);
-bool frontend_network_restore_prediction(qa_frontend *, qa_bytes, qa_error *);
 bool frontend_network_rebind_ready(const qa_frontend *, const qa_frontend *, qa_error *);
 bool frontend_network_rebind_prepare(qa_frontend *, const qa_frontend *, qa_error *);
 bool frontend_network_fresh_ready(const qa_frontend *,const qa_frontend *,const qa_frontend *,qa_error *);

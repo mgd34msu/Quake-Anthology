@@ -8,12 +8,6 @@
 bool frontend_network_create_detached(qa_frontend *,const qa_frontend *,qa_error *);
 bool frontend_network_rebuild_ready(const qa_frontend *,const qa_frontend *,qa_error *);
 
-/* Import native CONNECTIONS once after QNRS and CLIENT dictionaries, before
- * console COMMANDS. Other candidates import only the genuine browser and menu
- * history prefix for UI reconstruction. Final import proves identical bytes
- * and preserves that browser owner; no connection or Init is replayed. */
-bool frontend_network_restore_connections_prefix(qa_frontend *, qa_bytes, bool *staged, qa_error *);
-
 /* Candidate-only data binding. It exposes the genuinely imported native
  * connection, physical CLIENT and pending content without claiming Init. */
 bool frontend_network_client_restore_domain_read(const qa_frontend *,
