@@ -253,6 +253,7 @@ struct qa_gl_renderer {
     gl_restore_storage *restore;
 };
 void gl_restore_storage_destroy(qa_gl_renderer *);
+qa_gl_renderer *gl_renderer_allocate(const qa_gl_options *, const qa_display_info *, qa_error *);
 
 bool gl_api_load(qa_gl_renderer *renderer, qa_error *error);
 bool gl_programs_create(qa_gl_renderer *renderer, qa_error *error);
@@ -284,6 +285,7 @@ bool gl_select_target(qa_gl_renderer *renderer, const qa_scene_image *image,
 void gl_gamma_table(float gamma, uint8_t table[256]);
 bool gl_output_set_gamma(qa_gl_renderer *renderer, float gamma,
                          qa_error *error);
+bool gl_output_gamma_prepare(qa_gl_renderer *, float, bool copy_default, qa_error *);
 bool gl_output_resolve(qa_gl_renderer *renderer, qa_error *error);
 void gl_output_destroy(qa_gl_renderer *renderer);
 bool gl_opacity_begin(qa_gl_renderer *renderer, float opacity,

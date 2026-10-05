@@ -296,8 +296,8 @@ void gl_gamma_table(float gamma, uint8_t table[256])
     }
 }
 
-bool gl_output_set_gamma(qa_gl_renderer *renderer, float gamma,
-                         qa_error *error)
+bool gl_output_gamma_prepare(qa_gl_renderer *renderer, float gamma,
+                             bool copy_default, qa_error *error)
 {
     if (!isfinite(gamma) || gamma < 0.5f || gamma > 3) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0,
@@ -343,7 +343,7 @@ bool gl_output_set_gamma(qa_gl_renderer *renderer, float gamma,
     }
     bool was_enabled = renderer->output.enabled;
     renderer->output.enabled = true;
-    if (!gl_bind_destination(renderer, error)) {
+    if (!output_bind_slot(renderer, gl_draw_buffer_index(renderer->draw_buffer), copy_default, error)) {
         renderer->output.enabled = was_enabled;
         gl->DeleteTextures(1, &table_texture);
         qa_error ignored = {0};
@@ -356,6 +356,10 @@ bool gl_output_set_gamma(qa_gl_renderer *renderer, float gamma,
     renderer->gamma = gamma;
     return true;
 }
+
+bool gl_output_set_gamma(qa_gl_renderer *renderer, float gamma,
+                         qa_error *error)
+{ return gl_output_gamma_prepare(renderer, gamma, true, error); }
 
 static void composite_state(qa_gl_renderer *renderer, uint32_t width,
                             uint32_t height)

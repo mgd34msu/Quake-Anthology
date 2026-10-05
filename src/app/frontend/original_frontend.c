@@ -35,9 +35,10 @@ static void native_guards_destroy(frontend_persistence_native *native)
     qa_display_restore_guard_destroy(native->display);
     *native=(frontend_persistence_native){0};
 }
-static bool graphics_create(qa_frontend *f,qa_frontend *active,
+bool frontend_graphics_create_detached(qa_frontend *f,qa_frontend *active,
     frontend_persistence_native *native,qa_error *error)
 {
+    if (f->options.dedicated) return true;
     if (!qa_display_create_detached(active->display,&f->display,&native->display,error)) return false;
     qa_display_info info;
     if (!qa_display_info_get(f->display,&info,error)) return false;
@@ -53,6 +54,12 @@ static bool graphics_create(qa_frontend *f,qa_frontend *active,
         renderer.display=f->display; renderer.owner=QA_FRONTEND_COMMAND_OWNER;
         if (!qa_gl_create_detached(&renderer,f->options.gamma,active->gl,&f->gl,&native->gl,error)) return false;
     }
+    return true;
+}
+static bool graphics_create(qa_frontend *f,qa_frontend *active,
+    frontend_persistence_native *native,qa_error *error)
+{
+    if (!frontend_graphics_create_detached(f,active,native,error)) return false;
     if (!frontend_resources(f,error) || !frontend_seats_create(f,error)) return false;
     qa_audio_engine_options audio; frontend_audio_engine_options(f,&audio);
     if (!qa_audio_engine_create(&audio,&f->audio,error) ||

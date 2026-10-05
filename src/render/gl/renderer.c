@@ -281,6 +281,26 @@ static bool capabilities(qa_gl_renderer *renderer, qa_error *error)
     return gl_check(renderer, "OpenGL capability query", error);
 }
 
+qa_gl_renderer *gl_renderer_allocate(const qa_gl_options *options, const qa_display_info *info, qa_error *error)
+{
+    qa_gl_renderer *renderer = calloc(1, sizeof(*renderer));
+    if (renderer == NULL) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating OpenGL renderer");
+        return NULL;
+    }
+    renderer->options = *options;
+    qa_render_controls_init_gl(&renderer->controls, renderer);
+    qa_scene_state_default(&renderer->pipeline);
+    renderer->pipeline.depth_test=QA_DEPTH_LESS;
+    renderer->draw_buffer = QA_DRAW_BACK;
+    renderer->gamma = 1;
+    renderer->clear_depth = 1;
+    renderer->view.viewport = (qa_scene_rect){0, 0, info->drawable_width,
+                                              info->drawable_height};
+    renderer->view.depth = 1;
+    return renderer;
+}
+
 qa_gl_renderer *qa_gl_create(const qa_gl_options *input, qa_error *error)
 {
     qa_gl_options defaults;
@@ -298,21 +318,8 @@ qa_gl_renderer *qa_gl_create(const qa_gl_options *input, qa_error *error)
                      "OpenGL renderer requires an OpenGL display");
         return NULL;
     }
-    qa_gl_renderer *renderer = calloc(1, sizeof(*renderer));
-    if (renderer == NULL) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating OpenGL renderer");
-        return NULL;
-    }
-    renderer->options = *options;
-    qa_render_controls_init_gl(&renderer->controls, renderer);
-    qa_scene_state_default(&renderer->pipeline);
-    renderer->pipeline.depth_test=QA_DEPTH_LESS;
-    renderer->draw_buffer = QA_DRAW_BACK;
-    renderer->gamma = 1;
-    renderer->clear_depth = 1;
-    renderer->view.viewport = (qa_scene_rect){0, 0, info.drawable_width,
-                                              info.drawable_height};
-    renderer->view.depth = 1;
+    qa_gl_renderer *renderer = gl_renderer_allocate(options, &info, error);
+    if (!renderer) return NULL;
     if (!gl_api_load(renderer, error)) {
         free(renderer);
         return NULL;

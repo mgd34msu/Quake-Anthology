@@ -1,4 +1,5 @@
 #include "persistence.h"
+#include "original_frontend.h"
 #include "internal.h"
 #include "capture.h"
 #include "component_scene.h"
@@ -105,7 +106,7 @@ typedef enum frontend_section {
     SECTION_NATIVE_TOPOLOGY, SECTION_TOOLS, SECTION_IMAGES, SECTION_NAMESPACE,
     SECTION_IMAGE_OWNERS, SECTION_MATERIALS, SECTION_FONTS, SECTION_MODELS,
     SECTION_ROOTS, SECTION_FRAME, SECTION_EVENTS, SECTION_PARTICLES,
-    SECTION_PLAYERS, SECTION_NATIVE, SECTION_SEATS_PRESENTATION, SECTION_SHADERS, SECTION_ALIASES, SECTION_RENDERER,
+    SECTION_PLAYERS, SECTION_NATIVE, SECTION_SEATS_PRESENTATION, SECTION_SHADERS, SECTION_ALIASES,
     SECTION_AUDIO_IDS, SECTION_BANKS, SECTION_ENGINE, SECTION_DEVICE,
     SECTION_SEATS_INPUT, SECTION_PLATFORM, SECTION_TERMINAL, SECTION_SAVE_COMMANDS,
     SECTION_Q3, SECTION_SOURCE, SECTION_INPUT_PROFILE, SECTION_UI_FEATURES, SECTION_QC_DEBUG,
@@ -273,7 +274,7 @@ static bool envelope(qa_source_save_io *io, qa_save_owner_kind expected,
 static const frontend_section presentation_sections[]={SECTION_TOPOLOGY,SECTION_EVENTS_TOPOLOGY,
     SECTION_VISUAL_TOPOLOGY,SECTION_NATIVE_TOPOLOGY,SECTION_TOOLS,SECTION_IMAGES,SECTION_NAMESPACE,
     SECTION_IMAGE_OWNERS,SECTION_MATERIALS,SECTION_FONTS,SECTION_MODELS,SECTION_ROOTS,SECTION_FRAME,
-    SECTION_EVENTS,SECTION_PARTICLES,SECTION_PLAYERS,SECTION_NATIVE,SECTION_SEATS_PRESENTATION,SECTION_SHADERS,SECTION_ALIASES,SECTION_RENDERER,SECTION_QC_DEBUG,
+    SECTION_EVENTS,SECTION_PARTICLES,SECTION_PLAYERS,SECTION_NATIVE,SECTION_SEATS_PRESENTATION,SECTION_SHADERS,SECTION_ALIASES,SECTION_QC_DEBUG,
     SECTION_EQUIPMENT_TOPOLOGY,SECTION_SELECTED_Q3_TOPOLOGY,SECTION_NATIVE_Q3_TOPOLOGY,SECTION_CHARACTER_TOPOLOGY,
     SECTION_EFFECTS_TOPOLOGY,SECTION_GEAR_EVENTS,SECTION_GEAR_TOPOLOGY,SECTION_REMOTE_GRAPH,SECTION_VIEW_SETTINGS,
     SECTION_MATERIAL_MOVIES,SECTION_Q1_SKY,SECTION_QC_MESSAGES,SECTION_SOURCE_COLOR,SECTION_RENDERER_MATERIALS,SECTION_RENDERER_WORLDS,SECTION_COMPONENT_SCENES,SECTION_UNIFIED_GRAPH,SECTION_CLASSIC_CLIENT_GRAPH,SECTION_Q2_CLIENT_GRAPH,SECTION_RENDERER_REGISTRIES,SECTION_RESOURCE_POLICY};
@@ -694,139 +695,20 @@ static qa_scene_frame_checkpoint_refs frame_refs(frontend_scene_namespace *space
         .mesh_identity_encode=frontend_scene_mesh_identity_encode,.mesh_identity_decode=frontend_scene_mesh_identity_decode,
         .light_identity_encode=frontend_scene_light_identity_encode,.light_identity_decode=frontend_scene_light_identity_decode};
 }
-static bool renderer_resource_capture(void *context,const qa_scene_image *image,
-    const qa_scene_geometry *geometry,size_t ordinal,qa_error *error)
+static bool renderer_rebuild(frontend_persistence *operation,qa_error *error)
 {
-    frontend_scene_namespace *space=context; uint64_t key=0;
-    if ((image!=NULL)==(geometry!=NULL))
-        return frontend_fail(error,QA_ERROR_FORMAT,"Renderer resource row requires one actual typed holder");
-    return image?frontend_scene_image_encode(space,image,&key,error):
-        frontend_scene_namespace_capture_renderer_geometry(space,1,ordinal,geometry,error);
-}
-static bool renderer_resources_capture(qa_frontend *f,frontend_scene_namespace *space,qa_error *error)
-{
-    if (f->cpu && f->gl) return frontend_fail(error,QA_ERROR_FORMAT,"Frontend installs two renderer destructor owners");
-    return (!f->cpu || qa_cpu_checkpoint_resources(f->cpu,renderer_resource_capture,space,error)) &&
-        (!f->gl || qa_gl_checkpoint_resources(f->gl,renderer_resource_capture,space,error));
-}
-static bool renderer_mesh_capture(void *context,uint64_t identity,uint64_t revision,
-    const qa_scene_geometry *geometry,size_t ordinal,qa_error *error)
-{
-    frontend_scene_namespace *space=context; uint64_t key=0; (void)revision;
-    if (!identity || !qa_scene_geometry_active(geometry))
-        return frontend_fail(error,QA_ERROR_FORMAT,"Renderer live mesh row has no genuine identity/geometry");
-    return frontend_scene_geometry_encode(space,geometry,&key,error) &&
-        frontend_scene_namespace_capture_renderer_mesh(space,1,ordinal,identity,error);
-}
-#define RENDER_SCENE_REFS(name,type) \
-static bool renderer_##name##_encode(void *context,const type *value,uint64_t *id,qa_error *error) \
-{ return frontend_scene_##name##_encode(((frontend_persistence *)context)->space,value,id,error); } \
-static bool renderer_##name##_decode(void *context,uint64_t id,const type **value,qa_error *error) \
-{ return frontend_scene_##name##_decode(((frontend_persistence *)context)->space,id,value,error); }
-RENDER_SCENE_REFS(image,qa_scene_image)
-RENDER_SCENE_REFS(geometry,qa_scene_geometry)
-RENDER_SCENE_REFS(material,qa_material)
-RENDER_SCENE_REFS(world,qa_scene_world)
-#undef RENDER_SCENE_REFS
-static bool renderer_mesh_encode(void *context,uint64_t value,uint64_t *id,qa_error *error)
-{ return frontend_scene_mesh_identity_encode(((frontend_persistence *)context)->space,value,id,error); }
-static bool renderer_mesh_decode(void *context,uint64_t id,uint64_t *value,qa_error *error)
-{ return frontend_scene_mesh_identity_decode(((frontend_persistence *)context)->space,id,value,error); }
-static bool renderer_assets_encode(void *context,const qa_q3_presentation_assets *assets,uint64_t *id,qa_error *error)
-{ return frontend_q3_assets_encode(((frontend_persistence *)context)->q3,assets,id,error); }
-static bool renderer_assets_decode(void *context,uint64_t id,qa_q3_presentation_assets **assets,qa_error *error)
-{ return frontend_q3_assets_decode(((frontend_persistence *)context)->renderer_q3,id,assets,error); }
-static qa_render_checkpoint_refs renderer_refs(frontend_persistence *operation)
-{
-    return (qa_render_checkpoint_refs){.context=operation,
-        .image_encode=renderer_image_encode,.image_decode=renderer_image_decode,
-        .geometry_encode=renderer_geometry_encode,.geometry_decode=renderer_geometry_decode,
-        .material_encode=renderer_material_encode,.material_decode=renderer_material_decode,
-        .world_encode=renderer_world_encode,.world_decode=renderer_world_decode,
-        .assets_encode=renderer_assets_encode,.assets_decode=renderer_assets_decode,
-        .mesh_identity_encode=renderer_mesh_encode,.mesh_identity_decode=renderer_mesh_decode};
-}
-static bool renderer_fields(qa_source_save_io *io,uint32_t expected,qa_bytes *display,qa_bytes *renderer)
-{
-    uint8_t magic[4]={'Q','F','R','D'}; uint32_t kind=expected;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFRD",4) &&
-        qa_source_save_u32(io,&kind) && kind==expected &&
-        blob(io,display) && blob(io,renderer) &&
-        (kind ? display->size!=0 && renderer->size!=0 : display->size==0 && renderer->size==0);
-}
-static bool renderer_kind(const qa_frontend *f,uint32_t *kind,qa_error *error)
-{
-    if (!f || !kind || (f->options.dedicated ? f->display || f->cpu || f->gl :
-        !f->display || (f->cpu!=NULL)==(f->gl!=NULL) ||
-        (f->cpu!=NULL)!=(f->options.display.backend==QA_DISPLAY_CPU)))
-        return frontend_fail(error,QA_ERROR_FORMAT,"Frontend renderer differs from its genuine display/backend topology");
-    *kind=f->options.dedicated?0:f->cpu?1:2; return true;
-}
-static bool renderer_checkpoint(frontend_persistence *operation,qa_buffer *out,qa_error *error)
-{
-    qa_frontend *f=operation->candidate?operation->candidate:operation->active;
-    qa_buffer display={0},renderer={0}; uint32_t kind=0;
-    qa_render_checkpoint_refs refs=renderer_refs(operation);
-    bool ok=renderer_kind(f,&kind,error);
-    if (ok && kind) ok=operation->restored_from?
-        qa_display_restore_checkpoint(operation->restored_from->display_guard,&display,error):
-        qa_display_checkpoint(f->display,&display,error);
-    if (ok && kind==1) ok=qa_cpu_checkpoint(f->cpu,&refs,&renderer,error);
-    if (ok && kind==2) ok=operation->restored_from?
-        qa_gl_restore_checkpoint(operation->restored_from->gl_guard,&refs,&renderer,error):
-        qa_gl_checkpoint(f->gl,&refs,&renderer,error);
-    qa_source_save_io io={0}; qa_bytes display_bytes={display.data,display.size},renderer_bytes={renderer.data,renderer.size};
-    ok=ok && qa_source_save_writer(&io,NULL,error) && renderer_fields(&io,kind,&display_bytes,&renderer_bytes) &&
-        qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); qa_buffer_free(&display); qa_buffer_free(&renderer); return ok;
-}
-static bool renderer_resource_qualify(void *context,const qa_scene_image *image,
-    const qa_scene_geometry *geometry,size_t ordinal,qa_error *error)
-{
-    frontend_scene_namespace *space=context; uint64_t key=0;
-    if ((image!=NULL)==(geometry!=NULL))
-        return frontend_fail(error,QA_ERROR_FORMAT,"Restored renderer requires one actual typed resource holder");
-    return image?frontend_scene_image_encode(space,image,&key,error):
-        frontend_scene_namespace_qualify_renderer_geometry(space,1,ordinal,geometry,error);
-}
-static bool renderer_mesh_qualify(void *context,uint64_t identity,uint64_t revision,
-    const qa_scene_geometry *geometry,size_t ordinal,qa_error *error)
-{
-    frontend_scene_namespace *space=context; (void)revision;
-    if (!identity || !qa_scene_geometry_active(geometry))
-        return frontend_fail(error,QA_ERROR_FORMAT,"Restored renderer mesh has no actual active cache allocation");
-    return frontend_scene_namespace_qualify_renderer_geometry(space,1,ordinal,geometry,error) &&
-        frontend_scene_namespace_qualify_renderer_mesh(space,1,ordinal,identity,error);
-}
-static bool renderer_restore(frontend_persistence *operation,qa_error *error)
-{
-    qa_frontend *f=operation->candidate; uint32_t kind=0; qa_bytes display={0},renderer={0};
-    qa_source_save_io io={0};
-    bool ok=renderer_kind(operation->active,&kind,error) && !f->display && !f->cpu && !f->gl &&
-        qa_source_save_reader(&io,NULL,section(&operation->sections,SECTION_RENDERER),error) &&
-        renderer_fields(&io,kind,&display,&renderer) && qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io);
-    if (ok && kind) ok=frontend_q3_source_color_restore_native(f,operation->active->display,
-        section(&operation->sections,SECTION_SOURCE_COLOR),error) &&
-        qa_display_restore(display,operation->active->display,&f->display,&operation->display_guard,error) &&
-        qa_display_handoff_prepare(operation->display_guard,error);
-    qa_render_checkpoint_refs refs=renderer_refs(operation);
-    if (ok && kind==1) {
-        qa_cpu_options options; qa_cpu_options_default(&options);
-        options.width=f->width; options.height=f->height; options.owner=QA_FRONTEND_COMMAND_OWNER;
-        options.present=qa_display_present_cpu; options.present_context=f->display;
-        ok=qa_cpu_restore(renderer,&options,&refs,&f->cpu,error) &&
-            qa_cpu_checkpoint_resources(f->cpu,renderer_resource_qualify,operation->space,error);
-    }
-    if (ok && kind==2) {
-        qa_gl_options options; qa_gl_options_default(&options);
-        options.display=f->display; options.owner=QA_FRONTEND_COMMAND_OWNER;
-        ok=qa_gl_restore(renderer,&options,&refs,operation->active->gl,&f->gl,&operation->gl_guard,error) &&
-            qa_gl_checkpoint_resources(f->gl,renderer_resource_qualify,operation->space,error) &&
-            qa_gl_checkpoint_meshes(f->gl,renderer_mesh_qualify,operation->space,error);
-    }
-    return ok || (error && error->code!=QA_OK ? false :
-        frontend_fail(error,QA_ERROR_FORMAT,"Saved renderer lacks its complete genuine candidate display/resource graph"));
+    qa_frontend *f=operation->candidate;
+    qa_frontend *active=operation->fresh_original?operation->constructor:operation->active;
+    frontend_persistence_native native={0};
+    if (f->display || f->cpu || f->gl)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Loaded presentation already has a renderer");
+    bool ok=f->options.dedicated ||
+        frontend_q3_source_color_restore_native(f,active->display,
+            section(&operation->sections,SECTION_SOURCE_COLOR),error);
+    if (ok) ok=frontend_graphics_create_detached(f,active,&native,error);
+    operation->display_guard=native.display;
+    operation->gl_guard=native.gl;
+    return ok && (!operation->display_guard || qa_display_handoff_prepare(operation->display_guard,error));
 }
 static bool aliases_fields(qa_source_save_io *io, qa_frontend *f, frontend_scene_namespace *space)
 {
@@ -964,8 +846,6 @@ static bool capture_components(frontend_persistence *operation, qa_error *error)
     operation->models=frontend_scene_inventory_models(operation->scenes);
     event_scope.space=operation->space;
     ok=ok && frontend_event_capture_namespace(f,&event_scope,error) &&
-        renderer_resources_capture(f,operation->space,error) &&
-        (!f->gl || qa_gl_checkpoint_meshes(f->gl,renderer_mesh_capture,operation->space,error)) &&
         frontend_scene_namespace_capture_frame(operation->space,1,&f->frame,error) &&
         frontend_component_scenes_capture_frames(f,operation->space,error) &&
         frontend_unified_graph_capture_numbers(f,operation->space,error) &&
@@ -1021,7 +901,6 @@ static bool capture_components(frontend_persistence *operation, qa_error *error)
         frontend_equipment_events_checkpoint(f->gear_events,set->owned+SECTION_GEAR_EVENTS,error) &&
         frontend_shader_checkpoint(f,set->owned+SECTION_SHADERS,error) &&
         aliases_checkpoint(f,operation->space,set->owned+SECTION_ALIASES,error) &&
-        renderer_checkpoint(operation,set->owned+SECTION_RENDERER,error) &&
         frontend_audio_id_checkpoint(f,set->owned+SECTION_AUDIO_IDS,error) &&
         music_sources_capture(operation,set->owned+SECTION_MUSIC_SOURCES,error) &&
         frontend_view_settings_checkpoint(f->view_settings,set->owned+SECTION_VIEW_SETTINGS,error) &&
@@ -1258,7 +1137,7 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
         renderer_registries_roster(operation,error) &&
         music_sources_prepare(operation,error) &&
         equipment_roots_restore(operation,error) &&
-        aliases_restore(f,operation->space,section(set,SECTION_ALIASES),error) && renderer_restore(operation,error) &&
+        aliases_restore(f,operation->space,section(set,SECTION_ALIASES),error) && renderer_rebuild(operation,error) &&
         frontend_source_renderer_runtime_bind(f,error) &&
         frontend_q3_source_color_restore(f,operation->display_guard,section(set,SECTION_SOURCE_COLOR),error) &&
         frontend_remote_q3_graph_prepare_modules(operation->remote_graph,error) &&

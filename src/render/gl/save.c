@@ -50,7 +50,7 @@ struct gl_restore_storage {
 struct qa_gl_restore_guard {
     qa_gl_renderer *active,*candidate;
     gl_restore_storage *saved;
-    bool attempted,prepared,transferred;
+    bool attempted,prepared,transferred,fresh;
 };
 static bool gl_save_error(qa_error *error,qa_status status,const char *message)
 { qa_error_set(error,status,0,"%s",message); return false; }
@@ -670,63 +670,30 @@ bool qa_gl_checkpoint(qa_gl_renderer *renderer,const qa_render_checkpoint_refs *
     bool ok=gl_gpu_capture(renderer,saved,true,error) && gl_saved_write(renderer,saved,refs,out,error);
     gl_saved_dispose(saved,NULL); return ok;
 }
-static bool gl_saved_copy_pixels(qa_buffer *out,const qa_buffer *source,qa_error *error)
-{
-    if (!gl_save_allocate(out,source->size,error)) return false;
-    if (source->size) memcpy(out->data,source->data,source->size);
-    return true;
-}
 bool qa_gl_create_detached(const qa_gl_options *options,float gamma,qa_gl_renderer *active,
     qa_gl_renderer **out,qa_gl_restore_guard **guard_out,qa_error *error)
 {
-    if (!out || !guard_out || !options || !options->display || !active || active->surface_ticket ||
+    if (!out || !guard_out || !options || !options->display || !active || active->closed || active->detached ||
+        active->executing || active->capturing || active->preparing || active->opacity.active || active->surface_ticket ||
         active->controls.ticket || active->controls.image_ticket || active->controls.source.entered || !isfinite(gamma) || gamma<0.5f || gamma>3)
         return gl_save_error(error,QA_ERROR_ARGUMENT,"Fresh GPU owner requires a real display, renderer cut, and supported gamma");
     *out=NULL; *guard_out=NULL;
     qa_display_info info={0};
     if (!qa_display_info_get(options->display,&info,error) || info.backend!=QA_DISPLAY_OPENGL)
         return gl_save_error(error,QA_ERROR_ARGUMENT,"Fresh GPU owner requires its actual OpenGL display");
-    qa_gl_renderer *candidate=calloc(1,sizeof(*candidate));
+    qa_gl_renderer *candidate=gl_renderer_allocate(options,&info,error);
+    if (!candidate) return false;
     gl_restore_storage *saved=calloc(1,sizeof(*saved));
     qa_gl_restore_guard *guard=calloc(1,sizeof(*guard));
-    if (!candidate || !saved || !guard) {
+    if (!saved || !guard) {
         free(candidate); free(saved); free(guard);
         return gl_save_error(error,QA_ERROR_MEMORY,"Allocating fresh detached GPU owners");
     }
-    candidate->options=*options; candidate->detached=true; candidate->restore=saved;
-    qa_render_controls_init_gl(&candidate->controls, candidate);
-    candidate->capabilities=active->capabilities; candidate->draw_buffer=QA_DRAW_BACK; candidate->gamma=gamma;
-    qa_scene_state_default(&candidate->pipeline); candidate->pipeline.depth_test=QA_DEPTH_LESS;
-    candidate->clear_depth=1;
-    candidate->view.viewport=(qa_scene_rect){0,0,info.drawable_width,info.drawable_height}; candidate->view.depth=1;
-    bool ok=gl_gpu_capture(active,saved,false,error) && saved->width==info.drawable_width && saved->height==info.drawable_height;
-    if (ok && gamma!=1) {
-        unsigned slot=gl_draw_buffer_index(QA_DRAW_BACK);
-        gl_saved_surface *surface=saved->output+slot;
-        surface->width=saved->width; surface->height=saved->height;
-        surface->floating_depth=saved->native[2].floating_depth;
-        ok=gl_saved_copy_pixels(&surface->color,&saved->native[2].color,error) &&
-            gl_saved_copy_pixels(&surface->depth,&saved->native[2].depth,error) &&
-            gl_saved_copy_pixels(&surface->stencil,&saved->native[2].stencil,error) &&
-            gl_save_allocate(&saved->gamma.pixels,256*4,error);
-        if (ok) {
-            uint8_t table[256]; gl_gamma_table(gamma,table);
-            for (size_t i=0;i<256;++i) {
-                uint8_t *pixel=saved->gamma.pixels.data+i*4;
-                pixel[0]=pixel[1]=pixel[2]=table[i]; pixel[3]=255;
-            }
-            saved->gamma.width=256; saved->gamma.height=1; saved->gamma.internal=GL_LUMINANCE8;
-            saved->output_allocated=true; candidate->output.enabled=true;
-            candidate->output.width=saved->width; candidate->output.height=saved->height;
-            candidate->output.color_ready[slot]=true; candidate->output.dirty[slot]=true;
-        }
-    }
-    if (!ok) {
-        qa_gl_destroy(candidate); free(guard);
-        if (error && error->code==QA_OK) gl_save_error(error,QA_ERROR_ARGUMENT,"Fresh GPU drawable does not match its retained native cut");
-        return false;
-    }
-    guard->active=active; guard->candidate=candidate; guard->saved=saved;
+    candidate->detached=true; candidate->restore=saved;
+    candidate->capabilities=active->capabilities; candidate->gamma=gamma;
+    saved->width=info.drawable_width; saved->height=info.drawable_height;
+    gl_saved_zero_defaults(&saved->zero_texture);
+    guard->active=active; guard->candidate=candidate; guard->saved=saved; guard->fresh=true;
     *out=candidate; *guard_out=guard; return true;
 }
 bool qa_gl_restore(qa_bytes bytes,const qa_gl_options *options,const qa_render_checkpoint_refs *refs,
@@ -925,16 +892,17 @@ bool qa_gl_handoff_prepare(qa_gl_restore_guard *guard,qa_error *error)
     if (guard->prepared) return true;
     if (guard->attempted) return gl_save_error(error,QA_ERROR_ARGUMENT,"Failed GPU preparation must retire through its enclosing candidate owner");
     qa_gl_renderer *renderer=guard->candidate; gl_restore_storage *saved=guard->saved;
-    if (renderer->capabilities.stencil_bits && (renderer->capabilities.stencil_bits!=8 ||
+    if (!guard->fresh && renderer->capabilities.stencil_bits && (renderer->capabilities.stencil_bits!=8 ||
         (!renderer->capabilities.floating_depth && renderer->capabilities.depth_bits!=24)))
         return gl_save_error(error,QA_ERROR_UNSUPPORTED,"Native GPU depth/stencil visual requires an exact upload format before publication");
-    if (renderer->capabilities.color_bits>24 || renderer->capabilities.alpha_bits>8)
+    if (!guard->fresh && (renderer->capabilities.color_bits>24 || renderer->capabilities.alpha_bits>8))
         return gl_save_error(error,QA_ERROR_UNSUPPORTED,"Native GPU color visual exceeds this exact RGBA8 continuation transfer");
     if (!qa_display_make_current(renderer->options.display,error)) return false;
     guard->attempted=true; renderer->gl=guard->active->gl;
     gl_native_cut cut={0}; gl_cut_read(renderer,&cut); renderer->preparing=true;
     gl_tight_pixels(renderer); renderer->gl.Disable(GL_SCISSOR_TEST);
     bool ok=gl_programs_create(renderer,error) && gl_resources_create(renderer,error);
+    if (ok && guard->fresh) ok=gl_output_gamma_prepare(renderer,renderer->gamma,false,error);
     for (gl_saved_texture *row=saved->textures;ok && row;row=row->next) {
         ok=gl_saved_level_upload(renderer,&row->entry->name,row->levels,row->count,error);
         if (ok) {
