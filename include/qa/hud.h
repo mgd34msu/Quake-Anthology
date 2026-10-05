@@ -49,7 +49,7 @@ typedef struct qa_hud_data {
     size_t timer_count;
     const qa_hud_score *scores;
     size_t score_count;
-    const qa_scene_image *crosshair;
+    const qa_scene_image *crosshair, *health_icon;
     qa_scene_vec4 crosshair_color;
     float crosshair_size; /* Zero retains the source default. */
     bool crosshair_visible, source_vitals;

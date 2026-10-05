@@ -5,6 +5,8 @@
 #include "qa/text.h"
 #include "config_store.h"
 #include "qa/network_q1_nq.h"
+#include "qa/application_network.h"
+#include "qa/application_network_qw.h"
 #include <math.h>
 
 struct frontend_view_settings {
@@ -183,6 +185,7 @@ bool frontend_view_settings_q1_sample(frontend_view_settings *owner,qa_console_d
 static const struct { const char *name, *initial; bool offset; } motion_declarations[] = {
     {"cl_bob", "0.02", false}, {"cl_bobcycle", "0.6", false}, {"cl_bobup", "0.5", false},
     {"cl_rollspeed", "200", false}, {"cl_rollangle", "2.0", false},
+    {"gl_cshiftpercent", "100", false},
     {"v_kicktime", "0.5", false}, {"v_kickroll", "0.6", false}, {"v_kickpitch", "0.6", false},
     {"v_idlescale", "0", false}, {"v_ipitch_cycle", "1", false},
     {"v_iyaw_cycle", "2", false}, {"v_iroll_cycle", "0.5", false},
@@ -197,10 +200,11 @@ bool frontend_view_settings_q1_motion_register(qa_cvars *registry, uint64_t owne
         if (!qa_cvars_register(registry, motion_declarations[i].name, motion_declarations[i].initial,
             0, owner, "", error)) return false;
     }
-    return true;
+    return !quakeworld || qa_cvars_register(registry, "v_contentblend", "1", 0, owner, "", error);
 }
 bool frontend_view_settings_q1_motion_owns(const char *name, bool quakeworld)
 {
+    if (quakeworld && !strcmp(name, "v_contentblend")) return true;
     for (size_t i = 0; i < sizeof(motion_declarations) / sizeof(*motion_declarations); ++i)
         if ((!quakeworld || !motion_declarations[i].offset) && !strcmp(name, motion_declarations[i].name)) return true;
     return false;
@@ -215,13 +219,14 @@ static bool motion_setting(const qa_cvars *registry, const char *name, float *ou
 bool frontend_view_settings_q1_motion_sample(const qa_cvars *registry, bool quakeworld,
     frontend_q1_motion_settings *out, qa_error *error)
 {
-    frontend_q1_motion_settings value = {0};
+    frontend_q1_motion_settings value = {.contents_blend=true};
     if (!registry || !out) return fail(error, "Q1 view motion requires its actual registry and output");
     if (!motion_setting(registry, "cl_bob", &value.bob, error) ||
         !motion_setting(registry, "cl_bobcycle", &value.bob_cycle, error) ||
         !motion_setting(registry, "cl_bobup", &value.bob_up, error) ||
         !motion_setting(registry, "cl_rollspeed", &value.roll_speed, error) ||
         !motion_setting(registry, "cl_rollangle", &value.roll_angle, error) ||
+        !motion_setting(registry, "gl_cshiftpercent", &value.cshift_percent, error) ||
         !motion_setting(registry, "v_kicktime", &value.kick_time, error) ||
         !motion_setting(registry, "v_kickroll", &value.kick_roll, error) ||
         !motion_setting(registry, "v_kickpitch", &value.kick_pitch, error) ||
@@ -232,6 +237,11 @@ bool frontend_view_settings_q1_motion_sample(const qa_cvars *registry, bool quak
         !motion_setting(registry, "v_ipitch_level", &value.idle_level.x, error) ||
         !motion_setting(registry, "v_iyaw_level", &value.idle_level.y, error) ||
         !motion_setting(registry, "v_iroll_level", &value.idle_level.z, error)) return false;
+    if (quakeworld) {
+        float enabled;
+        if (!motion_setting(registry, "v_contentblend", &enabled, error)) return false;
+        value.contents_blend = enabled != 0;
+    }
     if (!quakeworld && (!motion_setting(registry, "scr_ofsx", &value.offset.x, error) ||
         !motion_setting(registry, "scr_ofsy", &value.offset.y, error) ||
         !motion_setting(registry, "scr_ofsz", &value.offset.z, error))) return false;
@@ -240,10 +250,15 @@ bool frontend_view_settings_q1_motion_sample(const qa_cvars *registry, bool quak
     *out = value; return true;
 }
 void frontend_view_q1_damage(const frontend_q1_motion_settings *settings, qa_vec3 origin, qa_vec3 angles,
-    uint8_t armor, uint8_t blood, qa_vec3 from, frontend_q1_view_motion *state)
+    uint8_t armor, uint8_t blood, qa_vec3 from, double seconds, frontend_q1_view_motion *state)
 {
     float count = (float)(blood * .5 + armor * .5);
     if (count < 10) count = 10;
+    state->face_until = seconds + .2;
+    state->damage_percent = (int32_t)((float)state->damage_percent + 3 * count);
+    if (state->damage_percent > 150) state->damage_percent = 150;
+    state->damage_color = armor > blood ? qa_v3(200,100,100) :
+        armor ? qa_v3(220,50,50) : qa_v3(255,0,0);
     from = qa_vec_sub(from, origin);
     float length = (float)sqrt(qa_vec_dot(from, from));
     if (length != 0) from = qa_vec_scale(from, 1 / length);
@@ -251,6 +266,43 @@ void frontend_view_q1_damage(const frontend_q1_motion_settings *settings, qa_vec
     state->damage_roll = count * -qa_vec_dot(from, axes[1]) * settings->kick_roll;
     state->damage_pitch = count * qa_vec_dot(from, axes[0]) * settings->kick_pitch;
     state->damage_time = settings->kick_time;
+}
+qa_scene_vec4 frontend_view_q1_blend(const frontend_q1_motion_settings *settings,
+    const frontend_q1_view_motion *state, int32_t contents, bool quakeworld)
+{
+    qa_vec3 colors[2] = {{0}, state->damage_color};
+    int32_t percents[2] = {0, state->damage_percent};
+    if (settings->contents_blend && contents != -1 && (quakeworld || contents != -2)) {
+        if (contents == -5) { colors[0] = qa_v3(255,80,0); percents[0] = 150; }
+        else if (contents == -4 || (quakeworld && contents == -2)) {
+            colors[0] = qa_v3(0,25,5); percents[0] = 150;
+        } else { colors[0] = qa_v3(130,80,50); percents[0] = 128; }
+    }
+    qa_vec3 color = {0}; float alpha = 0;
+    for (unsigned i = 0; i < 2; ++i) {
+        if (settings->cshift_percent == 0) continue;
+        float weight = (float)(((float)percents[i] * settings->cshift_percent / 100.0) / 255.0);
+        if (weight == 0) continue;
+        alpha = alpha + weight * (1 - alpha);
+        weight = weight / alpha;
+        color.x = color.x * (1 - weight) + colors[i].x * weight;
+        color.y = color.y * (1 - weight) + colors[i].y * weight;
+        color.z = color.z * (1 - weight) + colors[i].z * weight;
+    }
+    return (qa_scene_vec4){color.x/255,color.y/255,color.z/255,fmaxf(0,fminf(1,alpha))};
+}
+const char *frontend_view_q1_face(int32_t health, uint32_t items, double seconds,
+    const frontend_q1_view_motion *state)
+{
+    if ((items & (524288u | 1048576u)) == (524288u | 1048576u)) return "face_inv2";
+    if (items & 4194304u) return "face_quad";
+    if (items & 524288u) return "face_invis";
+    if (items & 1048576u) return "face_invul2";
+    static const char *const faces[5][2] = {
+        {"face5","face_p5"},{"face4","face_p4"},{"face3","face_p3"},
+        {"face2","face_p2"},{"face1","face_p1"}};
+    unsigned level = health >= 100 ? 4 : health > 0 ? (unsigned)health / 20 : 0;
+    return faces[level][seconds <= state->face_until];
 }
 bool frontend_view_q1_damage_origin(uint8_t armor, uint8_t blood, const double from[3], qa_vec3 *out, qa_error *error)
 {
@@ -287,8 +339,20 @@ bool frontend_view_q1_local_damage(qa_frontend *f, qa_actor_id actor, uint8_t ar
         if (!qa_actor_id_equal(seat->q1_view_actor, actor)) {
             seat->q1_view_motion = (frontend_q1_view_motion){0}; seat->q1_view_actor = actor;
         }
+        double seconds;
+        if (qw) {
+            qa_application_network_qw_source clock;
+            if (!qa_application_network_qw_source_read(f->application, &clock, error)) return false;
+            seconds = (double)clock.source_time_ns / 1000000000.0;
+        } else {
+            qa_actor_owner owner; uint32_t slot; qa_net_protocol_id protocol;
+            qa_application_network_q1_world clock;
+            if (!qa_application_network_q1_source(f->application,actor,&owner,&slot,&protocol,error) ||
+                !qa_application_network_q1_world_read(f->application,owner,&clock,error)) return false;
+            seconds = clock.seconds;
+        }
         frontend_view_q1_damage(&settings, body.origin, qw ? camera.angles : body.angles,
-            armor, blood, from, &seat->q1_view_motion);
+            armor, blood, from, seconds, &seat->q1_view_motion);
         return frontend_config_store_primary_legacy_current(f->config_store, &source) ||
             fail(error, "Q1 damage changed its retained CLIENT settings");
     }
@@ -321,9 +385,11 @@ void frontend_view_q1_motion(const frontend_q1_motion_settings *settings,
     if (state->initialized && input->seconds < state->seconds)
         *state = (frontend_q1_view_motion){0};
     if (!state->initialized) state->old_z = input->origin.z;
-    double elapsed = state->initialized ? input->seconds - state->seconds : 0;
+    double elapsed = input->frame_seconds;
     if (elapsed < 0) elapsed = 0;
     state->seconds = input->seconds; state->initialized = true;
+    double remaining = state->damage_percent - elapsed * 150;
+    state->damage_percent = remaining <= 0 ? 0 : (int32_t)remaining;
     float idle_scale = input->intermission ? 1 : settings->idle_scale;
     double idle[3] = {
         idle_scale * sin(input->seconds * settings->idle_cycle.x) * settings->idle_level.x,

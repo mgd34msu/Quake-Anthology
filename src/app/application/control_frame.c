@@ -1073,7 +1073,10 @@ bool qa_application_control_qw_commands(qa_application *app, qa_actor_id actor,
         if (!qa_q1_game_clock_read(provider->state.q1, &receipt_time, &source_elapsed))
             return application_fail(error, QA_ERROR_ARGUMENT, "QW source receipt lost its native gameplay clock");
     }
-    if (receipt_time > clock.frame.time_ns)
+    if (clock.frame.time_ns > UINT64_MAX - clock.debt_ns)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QW current source clock exhausted");
+    uint64_t source_time = clock.frame.time_ns + clock.debt_ns;
+    if (receipt_time > source_time)
         return application_fail(error, QA_ERROR_ARGUMENT, "QW source receipt clock exceeds its real admission");
     control_input *input = &frames->inputs[actor.slot];
     if (input->turn)
@@ -1082,7 +1085,7 @@ bool qa_application_control_qw_commands(qa_application *app, qa_actor_id actor,
     if (!group) return application_fail(error, QA_ERROR_MEMORY, "Allocating raw QW source group");
     *group = (control_group){.actor = actor, .provider = provider->owner, .count = count,
         .quakeworld = true, .before_source = before_source(provider), .domain = CONTROL_COMMAND_QW_SOURCE,
-        .source_time_ns = clock.frame.time_ns};
+        .source_time_ns = source_time};
     for (size_t i = 0; i < count; ++i) {
         group->commands[i] = commands[i];
         if (!qc_receipt(app, actor, (uint64_t)i, &group->commands[i], error)) {
@@ -1091,7 +1094,7 @@ bool qa_application_control_qw_commands(qa_application *app, qa_actor_id actor,
     }
     if (!qa_actor_id_equal(input->actor, actor)) *input = (control_input){.actor = actor};
     input->provider = provider->owner; input->sequence = commands[0].sequence; input->seen = true;
-    input->retained = false; input->domain = CONTROL_COMMAND_QW_SOURCE; input->accepted_time_ns = input->source_time_ns = clock.frame.time_ns;
+    input->retained = false; input->domain = CONTROL_COMMAND_QW_SOURCE; input->accepted_time_ns = input->source_time_ns = source_time;
     input->qw_receipt_time_ns = receipt_time;
     input->latest = group->commands[count - 1]; input->arsenal = 0; input->weapon = 0; input->impulse = 0;
     if (frames->tail) frames->tail->next = group; else frames->head = group;
@@ -2131,10 +2134,11 @@ static bool drain(qa_application *app, const qa_source_frame *frames, size_t cou
             control_group *candidate = *link;
             bool candidate_live = qa_actors_get(qa_session_actors(app->session), candidate->actor) != NULL;
             application_provider *provider = candidate_live ? source_provider(app, candidate->actor) : NULL;
-            bool later_native_q3 = provider && provider->component.clock.kind == QA_CLOCK_Q3 &&
+            bool later_source = provider && (provider->component.clock.kind == QA_CLOCK_Q3 ||
+                provider->component.clock.kind == QA_CLOCK_QUAKEWORLD) &&
                 !actor_frame(app, candidate->actor, frames, count) && qa_session_frame_pending(app->session, provider->owner);
             if (!candidate_live || (candidate->quakeworld == quakeworld && candidate->before_source == before &&
-                (!quakeworld || actor_frame(app, candidate->actor, frames, count)) && !later_native_q3)) break;
+                !later_source)) break;
             link = &candidate->next;
         }
         if (!*link) break;
@@ -2396,7 +2400,11 @@ static bool domain_owner(qa_application *app, application_provider *source, qa_a
     if (source != application_world_provider(app, QA_ROLE_ENTITIES, "") ||
         !saved_source_client(source, actor, NULL)) return false;
     qa_clock_state clock;
-    if (!reading && (!qa_session_clock(app->session, source->owner, &clock) || time_ns > clock.frame.time_ns)) return false;
+    if (!reading) {
+        if (!qa_session_clock(app->session, source->owner, &clock)) return false;
+        uint64_t pending = domain == CONTROL_COMMAND_QW_SOURCE ? clock.debt_ns : 0;
+        if (clock.frame.time_ns > UINT64_MAX - pending || time_ns > clock.frame.time_ns + pending) return false;
+    }
     if (domain == CONTROL_COMMAND_Q3_SOURCE)
         return source->component.clock.kind == QA_CLOCK_Q3 &&
             (source->kind == APPLICATION_PROVIDER_Q3 || original_q3(source));

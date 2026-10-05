@@ -53,7 +53,8 @@ bool qa_source_frame_time_controls_read(const qa_cvars *cvars,
 {
     if (!cvars || !out || !known_dialect(qa_cvars_dialect(cvars)))
         return frame_time_fail(error, QA_ERROR_ARGUMENT, "frame controls require an actual source registry and output");
-    qa_source_frame_time_controls controls = {.timescale = 1, .rate = 2500};
+    qa_source_frame_time_controls controls = {.timescale = 1, .rate = 2500,
+        .server_minimum_seconds = .03f, .server_maximum_seconds = .1f};
     const qa_cvar_view *view;
     if ((view = qa_cvars_find(cvars, "timescale"))) controls.timescale = view->number;
     if ((view = qa_cvars_find(cvars, "fixedtime")))
@@ -63,6 +64,8 @@ bool qa_source_frame_time_controls_read(const qa_cvars *cvars,
     if ((view = qa_cvars_find(cvars, "com_cameraMode"))) controls.camera_mode = view->integer;
     if ((view = qa_cvars_find(cvars, "cl_maxfps"))) controls.maximum_fps = view->number;
     if ((view = qa_cvars_find(cvars, "rate"))) controls.rate = view->number;
+    if ((view = qa_cvars_find(cvars, "sv_mintic"))) controls.server_minimum_seconds = view->number;
+    if ((view = qa_cvars_find(cvars, "sv_maxtic"))) controls.server_maximum_seconds = view->number;
     *out = controls;
     return true;
 }
@@ -154,7 +157,7 @@ bool qa_source_frame_time_sample(const qa_cvars *cvars, double supplied_millisec
 }
 
 bool qa_source_frame_time_admit(const qa_cvars *cvars, uint64_t pending_ns,
-    bool dedicated, bool *accepted, uint64_t *source_ns, qa_error *error)
+    bool server, bool *accepted, uint64_t *source_ns, qa_error *error)
 {
     qa_source_frame_time_controls controls;
     if (!accepted || !source_ns || !qa_source_frame_time_controls_read(cvars, &controls, error)) return false;
@@ -162,23 +165,35 @@ bool qa_source_frame_time_admit(const qa_cvars *cvars, uint64_t pending_ns,
     if (!q1_dialect(dialect))
         return frame_time_fail(error, QA_ERROR_ARGUMENT, "host admission requires an actual Q1 registry");
     double seconds = (double)pending_ns / 1000000000.0;
-    double fps = 72;
-    if (dialect == QA_CONSOLE_QW && !dedicated) {
-        if (!isfinite(controls.maximum_fps) || !isfinite(controls.rate))
-            return frame_time_fail(error, QA_ERROR_ARGUMENT, "QW client frame controls must be finite");
-        float rate = (float)controls.rate;
-        float rate_fps = rate / 80;
-        fps = controls.maximum_fps != 0 ? controls.maximum_fps : rate_fps;
-        if (fps < 30) fps = 30;
-        if (fps > 72) fps = 72;
+    double ns;
+    if (dialect == QA_CONSOLE_QW && server) {
+        if (!isfinite(controls.server_minimum_seconds) || !isfinite(controls.server_maximum_seconds) ||
+            controls.server_maximum_seconds <= 0)
+            return frame_time_fail(error, QA_ERROR_ARGUMENT, "QW server physics controls must have a finite positive maximum");
+        *accepted = pending_ns != 0 && seconds >= controls.server_minimum_seconds;
+        *source_ns = 0;
+        if (!*accepted) return true;
+        double duration = seconds > controls.server_maximum_seconds ? controls.server_maximum_seconds : seconds;
+        ns = duration * 1000000000;
+    } else {
+        double fps = 72;
+        if (dialect == QA_CONSOLE_QW) {
+            if (!isfinite(controls.maximum_fps) || !isfinite(controls.rate))
+                return frame_time_fail(error, QA_ERROR_ARGUMENT, "QW client frame controls must be finite");
+            float rate = (float)controls.rate;
+            float rate_fps = rate / 80;
+            fps = controls.maximum_fps != 0 ? controls.maximum_fps : rate_fps;
+            if (fps < 30) fps = 30;
+            if (fps > 72) fps = 72;
+        }
+        *accepted = pending_ns != 0 && seconds >= 1.0 / fps;
+        *source_ns = 0;
+        if (!*accepted) return true;
+        double milliseconds;
+        if (!qa_source_frame_time_transform(dialect, seconds * 1000, &controls, false, true,
+            &milliseconds, error)) return false;
+        ns = milliseconds * 1000000;
     }
-    *accepted = pending_ns != 0 && (dialect == QA_CONSOLE_QW && dedicated ? true : seconds >= 1.0 / fps);
-    *source_ns = 0;
-    if (!*accepted) return true;
-    double milliseconds;
-    if (!qa_source_frame_time_transform(dialect, seconds * 1000, &controls, dedicated, true,
-        &milliseconds, error)) return false;
-    double ns = milliseconds * 1000000;
     if (!isfinite(ns) || ns < 0 || ns >= 18446744073709551616.0)
         return frame_time_fail(error, QA_ERROR_ARGUMENT, "Source frame duration exceeds the native elapsed range");
     *source_ns = (uint64_t)ns;

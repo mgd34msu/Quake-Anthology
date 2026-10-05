@@ -92,6 +92,9 @@ bool application_control_q1_world_begin(application_provider *provider,
     qa_source_frame frame; qa_clock_state retained;
     if (!provider || provider->kind != APPLICATION_PROVIDER_Q1 || !map || !map->component_attached)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 weapon clock needs its actual world source");
+    qa_source_command command;
+    if (qa_session_active_command(app->session, map->owner, &command) && command.kind == QA_CLOCK_QUAKEWORLD)
+        return qa_q1_game_command_begin(provider->state.q1, command.time_ns, command.elapsed_ns, operation, error);
     if (!qa_session_active_frame(app->session, map->owner, &frame)) {
         if (!qa_session_clock(app->session, map->owner, &retained))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q1 weapon clock lost its actual world interval");
@@ -118,7 +121,12 @@ static bool begin_q1_operations(application_move_call *move, qa_error *error)
         for (size_t j = 0; j < move->q1_operation_count; ++j)
             duplicate |= move->q1_operations[j].game == provider->state.q1;
         bool weapon_clock = provider == move->arsenal && provider != move->world;
-        if (!duplicate && !(weapon_clock ? application_control_q1_world_begin(provider,
+        bool source_command = move->context.command_only && move->context.command.kind == QA_CLOCK_QUAKEWORLD &&
+            move->context.command.provider == provider->owner;
+        if (!duplicate && !(source_command ? qa_q1_game_command_begin(provider->state.q1,
+                move->context.command.time_ns, move->context.command.elapsed_ns,
+                &move->q1_operations[move->q1_operation_count], error) :
+                weapon_clock ? application_control_q1_world_begin(provider,
                 &move->q1_operations[move->q1_operation_count], error) :
                 qa_q1_game_operation_begin(provider->state.q1,
                 &move->q1_operations[move->q1_operation_count], error))) {

@@ -21,6 +21,9 @@
 #include "campaign_cinematic.h"
 #include "network_recipient.h"
 #include "equipment_media.h"
+#include "view_settings.h"
+#include "config_store.h"
+#include "qa/application_network.h"
 #include "material_movies.h"
 #include "qc_messages.h"
 #include <stdio.h>
@@ -213,6 +216,18 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
             out->source_values[1]=(qa_hud_value){.label="Armor",.value=qc.armor};
             out->vitals=out->source_values; out->vital_count=2; out->source_vitals=true;
         }
+    }
+    if (seat->q1_view_ready && qa_actor_id_equal(frame->actor,seat->q1_view_actor)) {
+        frontend_config_legacy_view legacy; bool present;
+        qa_q1_clientdata client; qa_actor_owner provider;
+        if (!frontend_config_store_primary_legacy_read(seat->frontend->config_store,launch_seat,&legacy,&present,error)) return false;
+        if (!present || legacy.product->family!=QA_GAME_Q1 ||
+            !qa_application_provider_owner(seat->frontend->application,legacy.descriptor->selection.instance,&provider))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 face lost its actual primary CLIENT source");
+        if (!qa_application_network_q1_clientdata(seat->frontend->application,frame->actor,&client,error) ||
+            !frontend_equipment_media_q1_face_read(seat->frontend,provider,
+                frontend_view_q1_face(client.health,client.items,seat->q1_view_motion.seconds,&seat->q1_view_motion),
+                &out->health_icon,error)) return false;
     }
     bool source_slot = false;
     if (!hud_weapon_data(seat,frame,out,source.source_hud || out->source_vitals,
@@ -539,6 +554,7 @@ static bool seats_create(qa_frontend *frontend, unsigned first, qa_error *error)
     }
     for (unsigned i = first; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i]; seat->frontend = frontend; seat->id = i;
+        seat->client_clock_ns=frontend->wall_time_ns;
         if (!seat_services_create(seat, error)) return false;
         qa_ui_preferences preferences;
         if (!seat->console || !qa_ui_preferences_read(qa_application_cvars(frontend->application), i, &preferences, error) ||

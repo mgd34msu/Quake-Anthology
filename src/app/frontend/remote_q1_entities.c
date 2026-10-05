@@ -50,7 +50,8 @@ bool remote_q1_view_damage(frontend_remote_q1 *row, const qa_nq_message *message
     frontend_q1_motion_settings settings;
     if (!frontend_view_settings_q1_motion_sample(row->options.domain.cvars, qw, &settings, error)) return false;
     frontend_view_q1_damage(&settings, origin, angles, message->data.damage.armor, message->data.damage.blood,
-        qa_v3(message->data.damage.origin[0], message->data.damage.origin[1], message->data.damage.origin[2]), &row->view_motion);
+        qa_v3(message->data.damage.origin[0], message->data.damage.origin[1], message->data.damage.origin[2]),
+        row->view_motion.initialized ? row->view_motion.seconds : row->seconds, &row->view_motion);
     return remote_q1_live(row, error);
 }
 bool remote_q1_view_sample(frontend_remote_q1 *row, qa_error *error)
@@ -80,6 +81,7 @@ bool remote_q1_view_sample(frontend_remote_q1 *row, qa_error *error)
         .entity_angles = qa_v3(-player.angles.x, player.angles.y, entity_angles.z),
         .velocity = player.velocity, .punch = player.kick_angles,
         .seconds = row->previous_seconds + (row->seconds - row->previous_seconds) * row->fraction,
+        .frame_seconds = (double)row->frontend->seats[row->options.domain.physical_seat].client_frame_ns / 1000000000.0,
         .view_height = player.view_height, .view_size = (float)view.size,
         .quakeworld = qw, .grounded = player.grounded, .spectator = qw && row->qw.spectator,
         .dead = row->data.health <= 0, .intermission = player.intermission};

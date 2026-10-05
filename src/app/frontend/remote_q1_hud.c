@@ -1,6 +1,8 @@
 #include "remote_q1_hud.h"
 #include "remote_q1_private.h"
 #include "internal.h"
+#include "equipment_media.h"
+#include "view_settings.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -28,7 +30,10 @@ bool frontend_remote_q1_hud_read(frontend_remote_q1 *row,const qa_hud_frame *fra
     }
     frontend_remote_q1_hud_storage *hud=row->hud;
     const qa_q1_clientdata *data=&row->data;
-    hud->vitals[0]=(qa_hud_value){.label="Health",.value=data->health,.warning=data->health<=25};
+    const qa_scene_image *face=NULL;
+    if (!frontend_q1_face_read(row->materials,
+        frontend_view_q1_face(data->health,data->items,row->view_motion.seconds,&row->view_motion),&face,error)) return false;
+    hud->vitals[0]=(qa_hud_value){.label="Health",.value=data->health,.warning=data->health<=25,.icon=face};
     hud->vitals[1]=(qa_hud_value){.label="Armor",.value=data->armor};
     hud->vitals[2]=(qa_hud_value){.label="Ammo",.value=data->ammo,.warning=data->ammo==0};
     static const char *const labels[]={"Shells","Nails","Rockets","Cells"};

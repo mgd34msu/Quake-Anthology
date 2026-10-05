@@ -2,6 +2,7 @@
 #include "restart.h"
 #include "network_q2_input.h"
 #include "network_q1_input.h"
+#include "qa/source_frame_time.h"
 #include "qc_messages.h"
 #include "remote_q1_client.h"
 #include "remote_unified.h"
@@ -248,11 +249,12 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
     double now=(double)frontend->wall_time_ns/1000000.0;
     double default_duration=(double)elapsed_ns/1000000.0;
     double default_wall_duration=(double)wall_elapsed_ns/1000000.0;
-    if (default_wall_duration<=0) return true;
     bool remote=frontend_network_remote(frontend);
     bool client_only=frontend_network_client_only(frontend);
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i];
+        seat->client_frame_ns=0;
+        if (default_wall_duration<=0) continue;
         double duration=default_duration, wall_duration=default_wall_duration;
         bool unified_owned=false,sample_needed=false;
         if (!frontend_remote_unified_input_prepare(frontend,i,&seat->sequence,&unified_owned,&sample_needed,error)) return false;
@@ -303,6 +305,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
                 bool accepted; uint64_t source_ns,wall_ns;
                 if(!frontend_network_q1_input_prepare(frontend,i,&accepted,&source_ns,&wall_ns,error)) return false;
                 if(!accepted) continue;
+                seat->client_frame_ns=source_ns;
                 duration=(double)source_ns/1000000.0; wall_duration=(double)wall_ns/1000000.0;
             }
             if (seat->sequence==UINT64_MAX)
@@ -333,6 +336,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
         if (!qa_application_control_read(frontend->application, actor, &state))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "local player lacks its application control continuation");
         uint64_t source_duration=elapsed_ns;
+        bool qw_client=false;
         if (!remote) {
             qa_actor_owner source_owner; const qa_cvars *source_cvars;
             qa_clock_state clock; qa_clock_config recipe; uint64_t order, frame;
@@ -342,12 +346,21 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
                 !qa_session_clock(session,source_owner,&clock) ||
                 !qa_session_component_recipe(session,source_owner,&recipe,&order) ||
                 !qa_session_pending_frame(session,source_owner,wall_elapsed_ns,&accepted,&frame,&source_duration,error)) return false;
-            if (!recipe.interval_ns) {
+            if (recipe.kind==QA_CLOCK_QUAKEWORLD && !recipe.interval_ns) {
+                if (frontend->wall_time_ns<seat->client_clock_ns)
+                    return frontend_fail(error,QA_ERROR_ARGUMENT,"Local QW CLIENT clock moved backwards");
+                uint64_t pending=frontend->wall_time_ns-seat->client_clock_ns;
+                if (!qa_source_frame_time_admit(source_cvars,pending,false,&accepted,&source_duration,error)) return false;
+                if (!accepted) continue;
+                wall_duration=(double)pending/1000000.0;
+                qw_client=true;
+            } else if (!recipe.interval_ns) {
                 if (!accepted) continue;
                 wall_duration=(double)(clock.debt_ns+wall_elapsed_ns)/1000000.0;
             }
             duration=(double)source_duration/1000000.0;
         }
+        seat->client_frame_ns=source_duration;
         qa_movement_kind kind = state.profile.kind;
         if (!control_binding(frontend,seat,actor,&state,remote,error)) return false;
         /* Q3 client angles survive commands that do not advance server movement. */
@@ -400,6 +413,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             if (!frontend_network_client_sample(frontend,i,actor,&command,
                 FRONTEND_REMOTE_PREDICTION_ABSOLUTE,&sample,duration,error)) return false;
         } else if (!frontend_network_command(frontend,i,actor,&command,error)) return false;
+        if (qw_client) seat->client_clock_ns=frontend->wall_time_ns;
         uint32_t source_slot;
         if (!qa_ui_rankings_set_slot(seat->rankings,
             qa_application_rankings_client_slot(frontend->application, actor, &source_slot) && source_slot <= INT32_MAX ?

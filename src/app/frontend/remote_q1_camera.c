@@ -222,18 +222,9 @@ bool remote_q1_camera_contents_blend(frontend_remote_q1 *row,const qa_scene_view
         !remote_q1_mutable(row) || !remote_q1_live(row,error)) return false;
     int32_t contents;
     if (!qa_scene_world_q1_contents(row->world,view->origin,&contents,error)) return false;
-    const qa_cvar_view *scale=qa_cvars_find(row->options.domain.cvars,"gl_cshiftpercent");
     bool quakeworld=qa_q1_is_qw(row->options.domain.protocol);
-    const qa_cvar_view *enabled=quakeworld?qa_cvars_find(row->options.domain.cvars,"v_contentblend"):NULL;
-    if (!scale || !isfinite(scale->number) || (quakeworld && (!enabled || !isfinite(enabled->number))))
-        return remote_q1_fail(error,QA_ERROR_ARGUMENT,"Q1 camera blend lost its actual Source controls");
-    *out=(qa_scene_vec4){0};
-    if ((quakeworld && enabled->number==0.0f) || contents==-1 || (!quakeworld && contents==-2)) return true;
-    float percent;
-    if (contents==-5) { *out=(qa_scene_vec4){1,80.0f/255,0,0}; percent=150; }
-    else if (contents==-4 || (quakeworld && contents==-2)) {
-        *out=(qa_scene_vec4){0,25.0f/255,5.0f/255,0}; percent=150;
-    } else { *out=(qa_scene_vec4){130.0f/255,80.0f/255,50.0f/255,0}; percent=128; }
-    out->w=(float)fmin(1,fmax(0,(double)percent*scale->number/100/255));
+    frontend_q1_motion_settings settings;
+    if (!frontend_view_settings_q1_motion_sample(row->options.domain.cvars,quakeworld,&settings,error)) return false;
+    *out=frontend_view_q1_blend(&settings,&row->view_motion,contents,quakeworld);
     return remote_q1_live(row,error);
 }

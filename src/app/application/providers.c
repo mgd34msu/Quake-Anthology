@@ -1324,7 +1324,7 @@ static bool provider_clock_admit(void *context, uint64_t host_ns, uint64_t pendi
             return application_fail(error, QA_ERROR_ARGUMENT, "Source host interval exhausted");
         *pending_after_ns = pending_ns + host_ns;
         bool accepted;
-        return qa_source_frame_time_admit(cvars, *pending_after_ns, dedicated, &accepted, frame_ns, error);
+        return qa_source_frame_time_admit(cvars, *pending_after_ns, dialect == QA_CONSOLE_QW, &accepted, frame_ns, error);
     }
     if (!host_ns) { *pending_after_ns = pending_ns; return true; }
     qa_source_frame_time_controls controls;
@@ -1358,10 +1358,21 @@ static bool provider_clock_admit(void *context, uint64_t host_ns, uint64_t pendi
     return true;
 }
 
-static void provider_clock_bind(application_provider *provider)
+static bool provider_clock_bind(application_provider *provider, qa_error *error)
 {
+    if (provider->component.clock.kind == QA_CLOCK_QUAKEWORLD) {
+        qa_console *console; qa_cvars *cvars;
+        if (!application_guest_console_at(provider, 0, &console, &cvars, NULL) || !cvars)
+            return application_fail(error, QA_ERROR_ARGUMENT, "QW clock requires its actual GAME registry");
+        static const char *const names[] = {"sv_mintic", "sv_maxtic"};
+        static const char *const values[] = {"0.03", "0.1"};
+        for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i)
+            if (!qa_cvars_find(cvars, names[i]) &&
+                !qa_cvars_register(cvars, names[i], values[i], 0, provider->owner, NULL, error)) return false;
+    }
     provider->component.clock_admit = provider_clock_admit;
     provider->component.clock_context = provider;
+    return true;
 }
 
 bool application_provider_construct(qa_application *application,
@@ -1423,7 +1434,7 @@ bool application_provider_construct(qa_application *application,
         (void)application_provider_deconstruct(provider, &ignored);
         return false;
     }
-    provider_clock_bind(provider);
+    if (!provider_clock_bind(provider, error)) return false;
     return true;
 }
 
@@ -1450,7 +1461,7 @@ bool application_provider_construct_q3_restored(qa_application *application,
         (void)application_provider_deconstruct(provider, &ignored);
         return false;
     }
-    provider_clock_bind(provider);
+    if (!provider_clock_bind(provider, error)) return false;
     return true;
 }
 

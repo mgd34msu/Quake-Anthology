@@ -939,6 +939,11 @@ bool application_qc_control_phase(application_provider *provider, qa_actor_id ac
         if (call->water_type && !control_store_scalar(engine, reference, actor, "watertype", (float)*call->water_type, error)) return false;
     }
     if (phase == QA_MOVE_PRETHINK) {
+        if (context->command_only && context->command.kind == QA_CLOCK_QUAKEWORLD) {
+            engine->source_time_ns = context->command.time_ns;
+            if (!qa_qc_game_set_time(provider->state.qc.game, (double)engine->source_time_ns / 1e9,
+                (double)context->command.elapsed_ns / 1e9, error)) return false;
+        }
         int32_t before_flags = 0; qa_vec3 before_velocity = {0};
         bool mixed = path == APPLICATION_CONTROL_MIXED ||
             (path == APPLICATION_CONTROL_QW_GROUP && call->state->kind != QA_MOVEMENT_QUAKEWORLD) ||

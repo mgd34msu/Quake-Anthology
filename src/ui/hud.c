@@ -717,7 +717,7 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
         frame->actor, &combat, error)) return false;
     qa_hud_value canonical[2];
     if (frame->actor.registry && !data.source_vitals) {
-        canonical[0] = (qa_hud_value){.label = "Health", .value = combat.health, .warning = combat.health <= 25};
+        canonical[0] = (qa_hud_value){.label = "Health", .value = combat.health, .warning = combat.health <= 25, .icon = data.health_icon};
         canonical[1] = (qa_hud_value){.label = "Armor", .value = combat.armor.regular.points};
         data.vitals = canonical; data.vital_count = 2;
     }

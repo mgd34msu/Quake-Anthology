@@ -28,12 +28,13 @@ typedef struct frontend_q1_view_settings {
 } frontend_q1_view_settings;
 typedef struct frontend_q1_motion_settings {
     float bob, bob_cycle, bob_up, roll_speed, roll_angle;
-    float idle_scale, kick_time, kick_roll, kick_pitch;
+    float idle_scale, kick_time, kick_roll, kick_pitch, cshift_percent;
+    bool contents_blend;
     qa_vec3 idle_cycle, idle_level, offset;
 } frontend_q1_motion_settings;
 typedef struct frontend_q1_motion_input {
     qa_vec3 origin, angles, entity_angles, velocity, punch;
-    double seconds;
+    double seconds, frame_seconds;
     float view_height, view_size;
     bool quakeworld, grounded, spectator, dead, intermission;
 } frontend_q1_motion_input;
@@ -42,7 +43,11 @@ bool frontend_view_settings_q1_motion_owns(const char *,bool quakeworld);
 bool frontend_view_settings_q1_motion_sample(const qa_cvars *,bool quakeworld,
     frontend_q1_motion_settings *,qa_error *);
 void frontend_view_q1_damage(const frontend_q1_motion_settings *,qa_vec3 origin,qa_vec3 angles,
-    uint8_t armor,uint8_t blood,qa_vec3 from,frontend_q1_view_motion *);
+    uint8_t armor,uint8_t blood,qa_vec3 from,double seconds,frontend_q1_view_motion *);
+qa_scene_vec4 frontend_view_q1_blend(const frontend_q1_motion_settings *,
+    const frontend_q1_view_motion *,int32_t contents,bool quakeworld);
+const char *frontend_view_q1_face(int32_t health,uint32_t items,double seconds,
+    const frontend_q1_view_motion *);
 bool frontend_view_q1_damage_origin(uint8_t armor,uint8_t blood,const double from[3],qa_vec3 *,qa_error *);
 bool frontend_view_q1_local_damage(qa_frontend *,qa_actor_id,uint8_t armor,uint8_t blood,
     qa_vec3 from,qa_error *);

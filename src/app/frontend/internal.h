@@ -93,8 +93,10 @@ void frontend_source_audio_stopped(qa_frontend *);
 bool frontend_source_audio_view(const qa_frontend *,const qa_audio_asset *,qa_vfs **);
 bool frontend_event_audio_view(const qa_frontend *,const qa_audio_asset *,qa_vfs **);
 typedef struct frontend_q1_view_motion {
-    double seconds, bob_seconds;
+    double seconds, bob_seconds, face_until;
     float bob, old_z, damage_time, damage_roll, damage_pitch;
+    int32_t damage_percent;
+    qa_vec3 damage_color;
     bool initialized;
 } frontend_q1_view_motion;
 typedef struct frontend_q1_view_pose {
@@ -135,6 +137,7 @@ typedef struct frontend_seat {
     qa_input_command_builder builder;
     qa_actor_id actor;
     uint64_t sequence;
+    uint64_t client_clock_ns, client_frame_ns;
     qa_ui_control controls[96];
     qa_ui_row *binding_rows;
     char *binding_labels, *binding_command;
@@ -158,6 +161,7 @@ typedef struct frontend_seat {
     char setting_value[1024];
     frontend_q1_view_motion q1_view_motion;
     frontend_q1_view_pose q1_view_pose;
+    qa_scene_vec4 q1_blend;
     qa_actor_id q1_view_actor;
     bool q1_view_ready, q1_chase;
     qa_actor_id q2_actor;

@@ -209,18 +209,22 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
             qa_vec3 from;
             if (!frontend_view_q1_damage_origin(feedback.armor,feedback.blood,feedback.origin,&from,error)) return false;
             frontend_view_q1_damage(&settings, body.origin, body.angles,
-                feedback.armor, feedback.blood, from, &seat->q1_view_motion);
+                feedback.armor, feedback.blood, from, seconds, &seat->q1_view_motion);
         }
     }
     frontend_q1_motion_input input = {.origin = camera->origin, .angles = camera->angles,
         .entity_angles = qa_v3(-camera->angles.x, camera->angles.y, body.angles.z),
         .velocity = body.velocity, .punch = equipment.kick_angles, .seconds = seconds,
+        .frame_seconds = (double)seat->client_frame_ns / 1000000000.0,
         .view_height = camera->view_height, .view_size = (float)view->size, .quakeworld = qw,
         .grounded = control.ground.hit != QA_TRACE_HIT_NONE,
         .dead = client.health <= 0, .intermission = camera->cutscene};
     frontend_view_q1_motion(&settings, &input, &seat->q1_view_motion, &seat->q1_view_pose);
     if (!frontend_config_store_primary_legacy_current(f->config_store, &source))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view changed its retained CLIENT settings");
+    qa_actor_owner provider;
+    if (!qa_application_provider_owner(f->application,source.descriptor->selection.instance,&provider) ||
+        !frontend_equipment_media_q1_faces_prepare(f,provider,error)) return false;
     seat->q1_view_ready = true;
     scene->origin = seat->q1_view_pose.origin; qa_vec3 angles = seat->q1_view_pose.angles;
     seat->q1_chase = !qw && view->chase && !camera->cutscene;
@@ -228,6 +232,9 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
         qa_world_geometry(qa_application_world(f->application)),scene->origin,camera->angles,
         &scene->origin,&angles,error)) return false;
     frontend_camera_axes(angles, scene->axis);
+    int32_t contents;
+    if (!qa_scene_world_q1_contents(f->scene_world,scene->origin,&contents,error)) return false;
+    seat->q1_blend=frontend_view_q1_blend(&settings,&seat->q1_view_motion,contents,qw);
     return true;
 }
 static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
@@ -395,6 +402,14 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                 memcpy(listener->axis, view.axis, sizeof(view.axis));
                 frontend_source_listener(frontend, i, listener);
             }
+        }
+        if (live && !ui.fullscreen && !source.source_world && !native_rendered && seat->q1_view_ready &&
+                qa_actor_id_equal(actor,seat->q1_view_actor) && seat->q1_blend.w>0 && !preferences.reduced_flashes) {
+            frontend_legacy_render_policy policy;
+            if (!local_product || !frontend_legacy_local_policy_read(frontend,i,local_product,&policy,error)) return false;
+            if (policy.lighting.polyblend && !qa_scene_frame_picture(&frontend->frame,
+                qa_scene_white(frontend->ui_images),view.viewport,view.viewport,
+                (qa_scene_vec4){0,0,1,1},seat->q1_blend,error)) return false;
         }
         if (live && !ui.fullscreen && !source.source_world && !native_rendered && seat->q2_view_ready &&
                 qa_actor_id_equal(actor, seat->q2_actor) && seat->q2_view.blend.w > 0 && !preferences.reduced_flashes) {

@@ -5,6 +5,7 @@
 
 typedef struct qa_source_frame_time_controls {
     double timescale, fixedtime, host_framerate, camera_mode, maximum_fps, rate;
+    double server_minimum_seconds, server_maximum_seconds;
 } qa_source_frame_time_controls;
 
 /* The selected source registry owns these values. These functions introduce
@@ -16,9 +17,9 @@ bool qa_source_frame_time_transform(qa_console_dialect, double supplied_millisec
     double *source_milliseconds, qa_error *);
 bool qa_source_frame_time_sample(const qa_cvars *, double supplied_milliseconds,
     bool dedicated, bool local_server, double *source_milliseconds, qa_error *);
-/* Host_FilterTime and QW's client Host_Frame admit the accumulated host delta
- * before transforming simulation time. The caller owns that pending delta. */
+/* Host_FilterTime, QW client Host_Frame and QW server SV_Physics admit their
+ * own accumulated host delta. The caller owns that pending delta. */
 bool qa_source_frame_time_admit(const qa_cvars *, uint64_t pending_ns,
-    bool dedicated, bool *accepted, uint64_t *source_ns, qa_error *);
+    bool server, bool *accepted, uint64_t *source_ns, qa_error *);
 
 #endif

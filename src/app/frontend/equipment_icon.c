@@ -4,6 +4,7 @@
 #include "../../render/scene/resources_internal.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 static bool text(const qa_json_document *doc,qa_json_id value,char **out,qa_error *error)
 {
@@ -14,12 +15,25 @@ static bool text(const qa_json_document *doc,qa_json_id value,char **out,qa_erro
     }
     *out=(char *)bytes.data;return true;
 }
+bool frontend_equipment_icon_key(const char *path, const char *lump, char *out,
+    size_t capacity, qa_error *error)
+{
+    /* Material COM_StripExtension ends at the first dot. Keep the authored
+     * WAD lump before its container extension; image/resource names retain
+     * their actual path and lump independently of this material identity. */
+    int length=lump && *lump ? snprintf(out,capacity,"%s/%s",lump,path) :
+        snprintf(out,capacity,"%s",path);
+    if (length<0 || (size_t)length>=capacity) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Item icon material identity exceeds its extent");return false;
+    }
+    return true;
+}
 bool frontend_equipment_icon_load(qa_bytes declaration,qa_scene_family family,qa_vfs *files,
     qa_scene_resources *images,qa_material_library *library,const qa_material **out,
     qa_resource **source,qa_error *error)
 {
     if(!declaration.size||!files||!images||!library||!out||*out||!source||*source)return false;
-    qa_json_document *doc=NULL;char *path=NULL,*lump=NULL,*name=NULL;
+    qa_json_document *doc=NULL;char *path=NULL,*lump=NULL,*name=NULL,*material_key=NULL;
     bool okay=qa_json_parse(declaration,&doc,error);
     qa_json_id root=okay?qa_json_root(doc):QA_JSON_NONE;
     qa_json_id kind=okay?qa_json_get(doc,root,"kind"):QA_JSON_NONE;
@@ -59,8 +73,10 @@ bool frontend_equipment_icon_load(qa_bytes declaration,qa_scene_family family,qa
         if(okay&&wad) {
             size_t a=strlen(name),b=strlen(lump);
             if(b>SIZE_MAX-2||a>SIZE_MAX-b-2){okay=false;qa_error_set(error,QA_ERROR_MEMORY,0,"Item icon identity exceeds address space");}
-            else {char *key=malloc(a+b+2);if(!key){okay=false;qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining WAD picture identity");}
-                else {memcpy(key,name,a);key[a]='#';memcpy(key+a+1,lump,b+1);free(name);name=key;}}
+            else {char *key=malloc(a+b+2);material_key=malloc(a+b+2);
+                if(!key||!material_key){free(key);okay=false;qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining WAD picture identity");}
+                else {okay=frontend_equipment_icon_key(name,lump,material_key,a+b+2,error);
+                    memcpy(key,name,a);key[a]='#';memcpy(key+a+1,lump,b+1);free(name);name=key;}}
         }
         qa_scene_image_level pixels={rgba.width,rgba.height,rgba.rgba.data,rgba.rgba.size};
         if(okay)okay=qa_scene_image_create(images,name,QA_SCENE_RGBA8,&pixels,1,QA_SCENE_CLAMP,QA_SCENE_LINEAR,
@@ -72,10 +88,10 @@ bool frontend_equipment_icon_load(qa_bytes declaration,qa_scene_family family,qa
                 .fullbright_last=-1,.layer=QA_PALETTE_COMBINED};
             options.palette_rgb=palette;scene_image_asset_palette(images,&recipe,&options);
             okay=scene_image_asset_copy(image,&recipe,error)&&
-                qa_material_register_generated_picture(library,name,image,&material,error);
+                qa_material_register_generated_picture(library,material_key?material_key:name,image,&material,error);
         }
         qa_image_free(&indexed);qa_image_free(&rgba);qa_wad_free(&directory);
     }
     if(okay){*out=material;*source=resource;resource=NULL;}
-    qa_resource_release(resource);free(path);free(lump);free(name);qa_json_destroy(doc);return okay;
+    qa_resource_release(resource);free(path);free(lump);free(name);free(material_key);qa_json_destroy(doc);return okay;
 }
