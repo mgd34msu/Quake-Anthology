@@ -2,7 +2,6 @@
 #include "remote_unified_presentation.h"
 #include "remote_unified_save.h"
 #include "internal.h"
-#include "qa/source_save.h"
 #include "qa/source_frame_time.h"
 #include "qa/application_character_selection.h"
 #include "qa/application_native_q3_cvars.h"
@@ -521,10 +520,7 @@ bool frontend_network_unified_client_publication_ready(const frontend_network_un
 }
 void frontend_network_unified_client_publish(frontend_network_unified_client_service *o)
 { if(o) o->published=true; }
-bool frontend_network_unified_client_imported(const frontend_network_unified_client_service *o)
-{ return o&&o->published&&frontend_network_unified_client_restored_complete(o); }
-bool frontend_network_unified_client_restored_complete(const frontend_network_unified_client_service *o)
-{ return o&&o->restored&&frontend_client_source_restore_finished(o->physical); }
+
 bool frontend_network_unified_client_destroy(frontend_network_unified_client_service **owned,qa_error *e)
 {
     frontend_network_unified_client_service *o=owned?*owned:NULL;
@@ -533,112 +529,4 @@ bool frontend_network_unified_client_destroy(frontend_network_unified_client_ser
     if (!o->configuration_released && o->options.configuration.released)
         o->options.configuration.released(o->options.configuration.context);
     qa_buffer_free(&o->userinfo); free(o); *owned=NULL; return true;
-}
-static bool capsule_fields(qa_source_save_io *io,qa_net_address *remote,qa_net_seat_id *seat,
-    uint32_t *physical,bool *retired,qa_buffer *encoded,qa_bytes *decoded)
-{
-    uint8_t magic[8]={'Q','U','S','C',2,0,0,0};
-    const uint8_t expected[8]={'Q','U','S','C',2,0,0,0};
-    uint32_t kind=(uint32_t)remote->kind;
-    bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    if (!qa_source_save_bytes(io,magic,8) || memcmp(magic,expected,8) ||
-        !qa_source_save_u32(io,&kind) || !qa_source_save_u16(io,&remote->port)) return false;
-    remote->kind=(qa_net_address_kind)kind;
-    if (remote->kind==QA_NET_IPV4) {
-        if (!qa_source_save_bytes(io,remote->host.ipv4,4)) return false;
-    } else if (remote->kind==QA_NET_IPV6) {
-        if (!qa_source_save_bytes(io,remote->host.ipv6.bytes,16) ||
-            !qa_source_save_u32(io,&remote->host.ipv6.scope)) return false;
-    } else if (remote->kind==QA_NET_LOOPBACK) {
-        size_t length=0;
-        if (!reading) {
-            const char *end=memchr(remote->host.loopback,0,sizeof(remote->host.loopback));
-            if (!end) return false;
-            length=(size_t)(end-remote->host.loopback)+1;
-        }
-        if (!qa_source_save_count(io,&length,sizeof(remote->host.loopback)) || length<2 ||
-            !qa_source_save_bytes(io,remote->host.loopback,length) || remote->host.loopback[length-1] ||
-            memchr(remote->host.loopback,0,length-1)) return false;
-    } else return false;
-    if (!qa_source_save_u64(io,&seat->owner) || !seat->owner ||
-        !qa_source_save_u32(io,&seat->index) || !qa_source_save_u32(io,physical)||
-        !qa_source_save_bool(io,retired)) return false;
-    size_t length=reading?0:encoded->size;
-    if (!qa_source_save_count(io,&length,SIZE_MAX) || !length) return false;
-    if (!reading) return qa_source_save_bytes(io,encoded->data,length);
-    if (io->offset>io->input.size || length>io->input.size-io->offset) return false;
-    *decoded=(qa_bytes){io->input.data+io->offset,length}; io->offset+=length; return true;
-}
-bool frontend_network_unified_client_checkpoint(frontend_network_unified_client_service *o,
-    const qa_application_content_graph *graph,qa_buffer *out,qa_error *e)
-{
-    if (!o || !out || out->data || out->size || !frontend_network_unified_client_idle(o)) return false;
-    qa_buffer physical={0}; qa_source_save_io io={0};
-    qa_net_address remote=o->options.remote; qa_net_seat_id seat=o->options.seat;
-    uint32_t ordinal=o->options.physical_seat;
-    bool retired=o->retired;
-    bool ok=frontend_client_source_checkpoint(o->physical,graph,&physical,e) &&
-        qa_source_save_writer(&io,NULL,e) && capsule_fields(&io,&remote,&seat,&ordinal,&retired,&physical,NULL) &&
-        qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); qa_buffer_free(&physical); return ok;
-}
-static bool capsule_read(qa_bytes bytes,qa_net_address *remote,qa_net_seat_id *seat,
-    uint32_t *physical,bool *retired,qa_bytes *prefix,qa_error *e)
-{
-    qa_source_save_io io={0};
-    bool ok=qa_source_save_reader(&io,NULL,bytes,e) &&
-        capsule_fields(&io,remote,seat,physical,retired,NULL,prefix) && qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io);
-    if (!ok && (!e || e->code==QA_OK))
-        frontend_fail(e,QA_ERROR_FORMAT,"Invalid retained Unified CLIENT capsule");
-    return ok;
-}
-bool frontend_network_unified_client_saved_read(qa_frontend *f,qa_application_content_graph *graph,qa_bytes bytes,
-    frontend_client_source_prefix *out,qa_net_address *remote,qa_net_seat_id *seat,bool *retired,qa_error *e)
-{
-    qa_bytes prefix={0}; uint32_t physical=0; qa_net_address address={0}; qa_net_seat_id binding={0};
-    bool disconnected=false;
-    if (!f || !out || !remote || !seat ||!retired|| !capsule_read(bytes,&address,&binding,&physical,&disconnected,&prefix,e) ||
-        !frontend_client_source_prefix_read(f,graph,prefix,out,e)) return false;
-    if ((disconnected&&!out->state.application.client.owner)||out->state.application.physical_seat!=physical || (out->state.application.client.owner &&
-        (out->state.application.network_seat.owner!=binding.owner || out->state.application.network_seat.index!=binding.index))) {
-        frontend_client_source_prefix_free(out);
-        return frontend_fail(e,QA_ERROR_FORMAT,"Unified CLIENT capsule changes its actual physical seat");
-    }
-    *remote=address; *seat=binding;*retired=disconnected; return true;
-}
-bool frontend_network_unified_client_restore(const frontend_network_unified_client_options *options,
-    qa_application_content_graph *graph,const qa_console_save_resolvers *resolvers,qa_bytes bytes,
-    frontend_network_unified_client_service **out,qa_error *e)
-{
-    qa_frontend *f=options?options->frontend:NULL;
-    if (!f || !f->application || !f->source_restoring || f->capture || f->resource_inventory ||
-        !options->runtime || !options->current || !options->disconnected || !options->seat.owner ||
-        !graph || !resolvers || !out || *out || options->physical_seat>=f->options.seats)
-        return frontend_fail(e,QA_ERROR_ARGUMENT,"Unified CLIENT import requires its actual cold graph and transport owners");
-    frontend_network_unified_client_service *o=calloc(1,sizeof(*o));
-    if (!o) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining restored Unified CLIENT services");
-    *out=o; o->options=*options;
-    frontend_client_source_prefix prefix={0}; qa_net_address remote={0}; qa_net_seat_id seat={0};
-    qa_bytes physical={0}; uint32_t ordinal=0;
-    bool ok=parent(o) && capsule_read(bytes,&remote,&seat,&ordinal,&o->retired,&physical,e) &&
-        ordinal==options->physical_seat && seat.owner==options->seat.owner && seat.index==options->seat.index &&
-        qa_net_address_equal(&remote,&options->remote,true) && frontend_client_source_prefix_read(f,graph,physical,&prefix,e);
-    if (ok) ok=(!o->retired||prefix.state.application.client.owner)&&
-        prefix.recipe.profile==options->profile && prefix.recipe.selected==options->profile &&
-        prefix.state.application.physical_seat==options->physical_seat &&
-        (!prefix.state.application.client.owner ||
-            (prefix.state.application.network_seat.owner==options->seat.owner &&
-             prefix.state.application.network_seat.index==options->seat.index));
-    if (ok) {
-        o->client=prefix.state.application.client; o->epoch=prefix.state.application.connection_epoch;
-        o->restored=true;
-        frontend_client_source_options source=physical_options(o);
-        source.metadata=prefix.recipe; source.input_origin=prefix.state.command;
-        ok=frontend_client_source_restore_prefix(f,&source,graph,resolvers,physical,&o->physical,e);
-    }
-    frontend_client_source_prefix_free(&prefix);
-    if(ok) o->restored=true;
-    if (!ok && e && e->code==QA_OK) frontend_fail(e,QA_ERROR_FORMAT,"Saved Unified CLIENT differs from its retained physical namespace");
-    return ok;
 }

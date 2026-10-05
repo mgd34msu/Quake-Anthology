@@ -56,16 +56,5 @@ bool frontend_network_unified_client_metadata_read(const frontend_network_unifie
 bool frontend_network_unified_client_idle(const frontend_network_unified_client_service *);
 bool frontend_network_unified_client_publication_ready(const frontend_network_unified_client_service *,qa_error *);
 void frontend_network_unified_client_publish(frontend_network_unified_client_service *);
-bool frontend_network_unified_client_imported(const frontend_network_unified_client_service *);
-bool frontend_network_unified_client_restored_complete(const frontend_network_unified_client_service *);
 bool frontend_network_unified_client_destroy(frontend_network_unified_client_service **, qa_error *);
-bool frontend_network_unified_client_checkpoint(frontend_network_unified_client_service *,
-    const qa_application_content_graph *, qa_buffer *, qa_error *);
-bool frontend_network_unified_client_saved_read(qa_frontend *, qa_application_content_graph *, qa_bytes,
-    frontend_client_source_prefix *, qa_net_address *, qa_net_seat_id *,bool *retired, qa_error *);
-/* The physical graph, QFCR heaps, neutral programme and generic connections
- * restore first. Imports the actual CLIENT prefix without configuration. */
-bool frontend_network_unified_client_restore(const frontend_network_unified_client_options *,
-    qa_application_content_graph *, const qa_console_save_resolvers *, qa_bytes,
-    frontend_network_unified_client_service **, qa_error *);
 #endif

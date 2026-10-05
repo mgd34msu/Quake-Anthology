@@ -54,8 +54,7 @@ struct frontend_unified_events {
     bool has_presentation_sequence, has_simulation_sequence;
     bool has_frame, prepared, busy, failed, owns_audio, families_ready;
 };
-static qa_json_id field(const qa_json_document *j, qa_json_id row, const char *key)
-{ return qa_json_get(j, row, key); }
+
 static bool current(frontend_unified_events *o, qa_error *e)
 {
     if (!o || o->failed || !frontend_unified_media_current(o->media))
@@ -71,13 +70,7 @@ static bool execution_current(frontend_unified_events *o,qa_error *e)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event delivery overlaps private graph capture or restore");
     return current(o,e);
 }
-static bool text(const qa_unified_document *d, qa_json_id row, qa_buffer *v, qa_error *e)
-{
-    if (!qa_json_string(qa_unified_document_json(d),row,v,e)) return false;
-    if (!memchr(v->data,0,v->size)) return true;
-    qa_buffer_free(v);
-    return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified event text contains an embedded NUL");
-}
+
 static bool actor(frontend_unified_events *o,qa_actor_id source,qa_actor_id *out,qa_error *e)
 {
     const qa_unified_frame *frame=qa_unified_document_frame(frontend_remote_unified_frame(o->replica));
@@ -211,33 +204,7 @@ static void batch_free(unified_event_batch *b)
 { qa_unified_document_destroy(b->document); free(b); }
 static void resource_free(unified_event_resource *r)
 { qa_audio_asset_release(r->asset); qa_unified_document_destroy(r->key); free(r->content); free(r->path); free(r); }
-static bool resource_read(frontend_unified_events *o,const qa_unified_document *key,
-    unified_event_resource **out,qa_error *e)
-{
-    const qa_json_document *j=qa_unified_document_json(key); qa_json_id row=qa_unified_document_root(key);
-    qa_buffer content={0},path={0},hash={0}; uint64_t length;
-    qa_sha256_digest digest; qa_launch_resource resource; qa_vfs *vfs; const qa_vfs_acquisition *opening;
-    bool okay=text(key,field(j,row,"content"),&content,e) && text(key,field(j,row,"path"),&path,e) &&
-        text(key,field(j,row,"digest"),&hash,e) && qa_sha256_parse((const char *)hash.data,&digest,e) &&
-        qa_json_u64(j,field(j,row,"byteLength"),&length,e);
-    if (okay) okay=qa_executable_recipe_find_resource(frontend_remote_unified_recipe(o->replica),
-        (const char *)content.data,(const char *)path.data,&digest,length,&resource,&vfs,&opening);
-    unified_event_resource *r=okay?calloc(1,sizeof(*r)):NULL;
-    const qa_product *product=NULL; qa_vfs *actual;
-    if (okay && !r) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining declared unified sound identity");
-    if (okay) okay=qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),
-        (const char *)content.data,&actual,&product,e) && actual==vfs &&
-        application_unified_resource_key(product,(const char *)path.data,resource.resource,&r->key,r->id,e);
-    if (okay) {
-        r->resource=resource.resource;
-        r->family=product->family==QA_GAME_Q1?QA_AUDIO_Q1:product->family==QA_GAME_Q2?QA_AUDIO_Q2:QA_AUDIO_Q3;
-        r->content=(char *)content.data; content=(qa_buffer){0};
-        r->path=(char *)path.data; path=(qa_buffer){0};
-        *out=r;
-    } else { if (r) resource_free(r); if (!e || e->code==QA_OK)
-        frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified resource is outside its admitted recipe dictionary"); }
-    qa_buffer_free(&content); qa_buffer_free(&path); qa_buffer_free(&hash); return okay;
-}
+
 static bool resource_read_typed(frontend_unified_events *o, const qa_unified_resource_declaration *row,
     unified_event_resource **out, qa_error *e)
 {
@@ -569,230 +536,7 @@ bool frontend_unified_events_destroy(frontend_unified_events **slot,qa_error *e)
     while (o->components) { unified_component_owner *c=o->components; o->components=c->next; component_free(c); }
     free(o->links); free(o); *slot=NULL; return true;
 }
-static bool blob(qa_source_save_io *io,qa_buffer *b)
-{
-    size_t n=b->size;
-    if (!qa_source_save_count(io,&n,SIZE_MAX)) return false;
-    if (io->direction==QA_SOURCE_SAVE_READ) {
-        if (io->offset>io->input.size || n>io->input.size-io->offset)
-            return frontend_unified_fail(io->error,QA_ERROR_FORMAT,"Truncated unified event child capsule");
-        b->data=n?malloc(n):NULL; b->size=n;
-        if (n && !b->data) return frontend_unified_fail(io->error,QA_ERROR_MEMORY,"Restoring unified event child bytes");
-    }
-    return qa_source_save_bytes(io,b->data,n);
-}
-static bool document(qa_source_save_io *io,qa_unified_document_kind kind,qa_unified_document **d)
-{
-    qa_buffer bytes={0}; bool okay;
-    if (io->direction==QA_SOURCE_SAVE_WRITE) {
-        okay=qa_unified_document_encode(*d,&bytes,io->error) && blob(io,&bytes);
-    } else {
-        okay=blob(io,&bytes) && qa_unified_document_decode(kind,(qa_bytes){bytes.data,bytes.size},d,io->error);
-    }
-    qa_buffer_free(&bytes); return okay;
-}
-static bool fields(qa_source_save_io *io,frontend_unified_events *o,const frontend_unified_event_refs *refs)
-{
-    bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[5]={'Q','U','E','V','6'};
-    const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
-    uint32_t physical=d->physical_seat,epoch=o->epoch;
-    uint64_t audio_owner=o->options.audio_owner;
-    if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUEV6",sizeof(magic)) ||
-        !qa_source_save_u32(io,&physical) || physical!=d->physical_seat ||
-        !qa_source_save_u32(io,&epoch) || epoch!=o->epoch ||
-        !qa_source_save_u64(io,&audio_owner) || audio_owner!=o->options.audio_owner ||
-        !qa_source_save_bool(io,&o->has_frame) || !qa_source_save_u64(io,&o->frame) ||
-        !qa_source_save_f64(io,&o->seconds) || !isfinite(o->seconds) ||
-        (!o->has_frame && (o->frame || o->seconds != 0.0)) ||
-        !qa_source_save_bool(io,&o->has_presentation_sequence) || !qa_source_save_u64(io,&o->presentation_sequence) ||
-        (!o->has_presentation_sequence && o->presentation_sequence) ||
-        !qa_source_save_bool(io,&o->has_simulation_sequence) || !qa_source_save_u64(io,&o->simulation_sequence) ||
-        (!o->has_simulation_sequence && o->simulation_sequence) ||
-        !qa_source_save_bool(io,&o->failed)) return false;
-    if(!qa_source_save_bool(io,&o->prepared))return false;
-    if(o->prepared){
-        if(!qa_source_save_u64(io,&o->prepared_frame) || !qa_source_save_f64(io,&o->prepared_seconds) || !isfinite(o->prepared_seconds) ||
-            (o->has_frame && o->prepared_frame<=o->frame) || !document(io,QA_UNIFIED_FRAME_DOCUMENT,&o->prepared_document))return false;
-        uint32_t actual_epoch=0; uint64_t number=0; double seconds=0;
-        if (!frame_values(o->prepared_document,&actual_epoch,&number,&seconds,io->error) ||
-            actual_epoch!=o->epoch || number!=o->prepared_frame || seconds!=o->prepared_seconds) return false;
-    }
-    bool capabilities[]={o->options.presentation_validate!=NULL,o->options.simulation_validate!=NULL,
-        o->options.presentation!=NULL,o->options.simulation!=NULL,o->options.audio_actor!=NULL};
-    for (size_t i=0;i<sizeof(capabilities)/sizeof(*capabilities);++i) {
-        bool expected=capabilities[i];
-        if (!qa_source_save_bool(io,capabilities+i) || capabilities[i]!=expected) return false;
-    }
-    size_t count=0;
-    for (unified_component_owner *c=o->components;c;c=c->next) ++count;
-    if (!qa_source_save_count(io,&count,SIZE_MAX/sizeof(unified_component_owner))) return false;
-    if (reading && count>(io->input.size-io->offset)/18) return false;
-    unified_component_owner *c=o->components,**component_tail=&o->components;
-    for (size_t i=0;i<count;++i) {
-        char *provider=reading?NULL:c->provider,*content=reading?NULL:c->content;
-        uint64_t generation=reading?0:c->generation;
-        if (!qa_source_save_owned_text(io,&provider) || !qa_source_save_u64(io,&generation) ||
-            !qa_source_save_owned_text(io,&content)) {
-            if (reading) { free(provider); free(content); } return false;
-        }
-        if (reading) {
-            qa_unified_component_owner token={provider,generation}; unified_component_owner *next=NULL;
-            bool okay=component_read(o,&token,content,&next,io->error);
-            free(provider); free(content);
-            if (!okay) return false;
-            if (component_find(o,next->provider,next->generation)) { component_free(next);
-                return frontend_unified_fail(io->error,QA_ERROR_FORMAT,"Component ledger repeats a reliable owner token"); }
-            *component_tail=next; component_tail=&next->next; c=next;
-        }
-        if (!qa_source_save_bool(io,&c->retired) || !qa_source_save_bool(io,&c->cancelled) || (c->retired && c->cancelled)) return false;
-        if (!reading) c=c->next;
-    }
-    count=0;
-    for (unified_event_resource *r=o->resources;r;r=r->next) ++count;
-    if (!qa_source_save_count(io,&count,SIZE_MAX/sizeof(unified_event_resource))) return false;
-    if (reading && count>(io->input.size-io->offset)/9) return false;
-    unified_event_resource *r=o->resources,**resource_tail=&o->resources;
-    for (size_t i=0;i<count;++i) {
-        qa_unified_document *key=reading?NULL:r->key;
-        bool temporary=false;
-        if (!reading && !key) {
-            qa_vfs *files; const qa_product *product; char identity[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
-            if (!qa_executable_recipe_content_read(frontend_remote_unified_recipe(o->replica),r->content,&files,&product) ||
-                !application_unified_resource_key(product,r->path,r->resource,&key,identity,io->error)) return false;
-            if (strcmp(identity,r->id)) { qa_unified_document_destroy(key);
-                return frontend_unified_fail(io->error,QA_ERROR_FORMAT,"Saved resource differs from its admitted Source identity"); }
-            temporary=true;
-        }
-        if (!document(io,QA_UNIFIED_CHECKPOINT,&key)) { if (reading || temporary) qa_unified_document_destroy(key); return false; }
-        if (temporary) qa_unified_document_destroy(key);
-        if (reading) {
-            unified_event_resource *next=NULL;
-            bool okay=resource_read(o,key,&next,io->error); qa_unified_document_destroy(key);
-            if (!okay) return false;
-            for (unified_event_resource *previous=o->resources;previous;previous=previous->next)
-                if (!strcmp(previous->id,next->id)) { resource_free(next);
-                    return frontend_unified_fail(io->error,QA_ERROR_FORMAT,"Unified resource dictionary repeats an identity"); }
-            *resource_tail=next; resource_tail=&next->next; r=next;
-        }
-        bool has_sample=r->asset!=NULL;
-        if (!qa_source_save_bool(io,&has_sample)) return false;
-        if (has_sample) {
-            uint64_t id=0;
-            if (!reading) {
-                const qa_resource *resource=qa_audio_asset_resource(r->asset);
-                if (!resource || qa_audio_asset_family(r->asset)!=r->family ||
-                    !qa_sha256_equal(qa_resource_digest(resource),qa_resource_digest(r->resource)) ||
-                    qa_resource_bytes(resource).size!=qa_resource_bytes(r->resource).size)
-                    return frontend_unified_fail(io->error,QA_ERROR_FORMAT,"Unified retained sound no longer matches its declared resource");
-            }
-            if ((!reading && !refs->asset_encode(refs->context,r->asset,&id,io->error)) ||
-                !qa_source_save_u64(io,&id) || !id) return false;
-            if (reading) {
-                const qa_audio_asset *asset=NULL;
-                if (!refs->asset_decode(refs->context,id,&asset,io->error) || !asset ||
-                    qa_audio_asset_family(asset)!=r->family) return false;
-                const qa_resource *resource=qa_audio_asset_resource(asset);
-                if (!qa_sha256_equal(qa_resource_digest(resource),qa_resource_digest(r->resource)) ||
-                    qa_resource_bytes(resource).size!=qa_resource_bytes(r->resource).size) return false;
-                r->asset=qa_audio_asset_retain((qa_audio_asset *)asset); if (!r->asset) return false;
-            }
-        }
-        if (!reading) r=r->next;
-    }
-    count=o->link_count;
-    if (!qa_source_save_count(io,&count,SIZE_MAX/sizeof(unified_event_link))) return false;
-    if (reading && count>(io->input.size-io->offset)/9) return false;
-    if (reading && count) {
-        o->links=calloc(count,sizeof(*o->links));
-        if (!o->links) return frontend_unified_fail(io->error,QA_ERROR_MEMORY,"Restoring unified message links");
-        o->link_capacity=count; o->link_count=count;
-    }
-    for (size_t i=0;i<count;++i) {
-        unified_event_link *l=o->links+i;
-        if (!qa_source_save_u64(io,&l->sequence) || !o->has_presentation_sequence ||
-            l->sequence>o->presentation_sequence || (i && l->sequence<=o->links[i-1].sequence) ||
-            !qa_source_save_bool(io,&l->mirrored)) return false;
-    }
-    count=0; for (unified_event_batch *batch=o->pending;batch;batch=batch->next) ++count;
-    if (!qa_source_save_count(io,&count,SIZE_MAX/sizeof(unified_event_batch))) return false;
-    if (reading && count>(io->input.size-io->offset)/24) return false;
-    unified_event_batch *batch=o->pending;
-    for (size_t i=0;i<count;++i) {
-        if (reading) {
-            batch=calloc(1,sizeof(*batch));
-            if (!batch) return frontend_unified_fail(io->error,QA_ERROR_MEMORY,"Restoring pending reliable events");
-            *o->tail=batch; o->tail=&batch->next;
-        }
-        if (!document(io,QA_UNIFIED_CONTROL_DOCUMENT,&batch->document) ||
-            !qa_source_save_count(io,&batch->presentation_at,65536) ||
-            !qa_source_save_count(io,&batch->simulation_at,65536)) return false;
-        const qa_unified_frame_events *events=qa_unified_document_events(batch->document);
-        if (!events || batch->presentation_at>events->presentation_count || batch->simulation_at>events->simulation_count ||
-            (batch->presentation_at<events->presentation_count && batch->simulation_at) ||
-            !rows_valid(o,events,false,io->error)) return false;
-        if (!reading) batch=batch->next;
-    }
-    qa_buffer hud={0}; bool okay;
-    if (!reading) okay=qa_hud_checkpoint(o->hud,NULL,&hud,io->error) && blob(io,&hud);
-    else {
-        qa_hud_options h=hud_options(o);
-        okay=blob(io,&hud) && qa_hud_restore((qa_bytes){hud.data,hud.size},&h,NULL,&o->hud,io->error);
-    }
-    qa_buffer_free(&hud); return okay;
-}
-bool frontend_unified_events_assets_read(const frontend_unified_events *o,qa_audio_asset ***out,size_t *count,qa_error *e)
-{
-    if (!o || !out || *out || !count || !frontend_unified_events_checkpoint_ready(o)) return false;
-    size_t n=0; for (unified_event_resource *r=o->resources;r;r=r->next) if (r->asset) ++n;
-    if (n>SIZE_MAX/sizeof(**out)) return false;
-    qa_audio_asset **rows=n?malloc(n*sizeof(*rows)):NULL;
-    if (n && !rows) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Reading Unified retained sound assets");
-    size_t i=0; for (unified_event_resource *r=o->resources;r;r=r->next) if (r->asset) rows[i++]=r->asset;
-    *out=rows; *count=n; return true;
-}
-bool frontend_unified_events_checkpoint(frontend_unified_events *o,const frontend_unified_event_refs *refs,qa_buffer *out,qa_error *e)
-{
-    if (!o || !refs || !refs->asset_encode || !out || out->data || out->size || !frontend_unified_events_checkpoint_ready(o))
-        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event capture needs a returned owner and empty output");
-    if (!frontend_remote_unified_checkpoint_current(o->replica,e)) return false;
-    qa_source_save_io io={0};
-    bool okay=qa_source_save_writer(&io,NULL,e) && fields(&io,o,refs) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); return okay;
-}
-bool frontend_unified_events_restore(qa_frontend *f,frontend_remote_unified *replica,frontend_unified_media *media,
-    const frontend_unified_event_options *opts,const frontend_unified_event_refs *refs,qa_bytes bytes,frontend_unified_events **out,qa_error *e)
-{
-    if (!refs || !refs->asset_decode || !out || *out) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event candidate needs actual asset graph references");
-    frontend_unified_events *o=allocate(f,replica,media,opts,e);
-    if (!o) return false;
-    o->families_ready=false;
-    if (!frontend_remote_unified_checkpoint_current(replica,e)) { free(o); return false; }
-    *out=o;
-    qa_source_save_io io={0};
-    bool okay=qa_source_save_reader(&io,NULL,bytes,e) && fields(&io,o,refs) && qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io);
-    if (!okay) {
-        qa_error ignored={0};
-        frontend_unified_events_frame_abort(o);frontend_unified_events_destroy(out,&ignored);
-        if (e && e->code==QA_OK) frontend_unified_fail(e,QA_ERROR_FORMAT,"Invalid unified event ledger");
-        return false;
-    }
-    return true;
-}
-bool frontend_unified_events_restore_finish(frontend_unified_events *o,qa_error *e)
-{
-    if (!o || !o->frontend->source_restoring || !frontend_unified_events_checkpoint_ready(o) ||
-        !frontend_remote_unified_checkpoint_current(o->replica,e))
-        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event import needs its returned family owners");
-    for (unified_event_batch *batch=o->pending;batch;batch=batch->next) {
-        const qa_unified_frame_events *events=qa_unified_document_events(batch->document);
-        if (!rows_valid(o,events,o->has_frame && events->frame<=o->frame,e)) return false;
-    }
-    o->families_ready=true; return true;
-}
-void frontend_unified_events_adopt(frontend_unified_events *o)
-{ if (o && frontend_unified_events_checkpoint_ready(o)) o->owns_audio=true; }
+
 uint64_t frontend_unified_events_audio_owner(const frontend_unified_events *o)
 { return o?o->options.audio_owner:QA_AUDIO_NO_OWNER; }
 bool frontend_unified_events_audio_actor(frontend_unified_events *o,qa_actor_id actor_id,uint64_t *id,qa_error *e)
@@ -923,13 +667,4 @@ bool frontend_unified_events_sound_stop_loop(frontend_unified_events *o,qa_actor
     if (!o || !o->frontend->audio || !current(o,e) || !frontend_unified_events_audio_actor(o,actor_id,&audio,e)) return false;
     return qa_audio_engine_stop_loop(o->frontend->audio,audio,o->options.audio_owner,
         frontend_remote_unified_domain_read(o->replica)->physical_seat,e);
-}
-
-bool frontend_unified_events_frame_restore_bind(frontend_unified_events *o,const qa_unified_document *d,qa_error *e)
-{
-    if(!o || !o->frontend->source_restoring || !frontend_unified_events_checkpoint_ready(o) || !current(o,e))return false;
-    if(!o->prepared)return d==o->replica->prepared_frame;
-    if(!d || !o->prepared_document || qa_unified_document_type(d)!=QA_UNIFIED_FRAME_DOCUMENT)return false;
-    return frontend_unified_document_restore_bind(&o->prepared_document,d,true,e) &&
-        frontend_unified_events_frame_ready(o,d,e);
 }
