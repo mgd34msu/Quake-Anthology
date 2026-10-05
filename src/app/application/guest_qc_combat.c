@@ -325,7 +325,7 @@ static bool raw_armor(combat_actor *actor, const qa_qc_store_event *prior, qa_ar
     if (!raw_float(actor, profile->items, prior, &items, error) || !isfinite(items) ||
         !raw_float(actor, profile->armorvalue, prior, &points, error) ||
         !raw_float(actor, profile->armortype, prior, &absorption, error)) return false;
-    *out = (qa_armor){0}; uint32_t flags = (uint32_t)qa_number_to_i32(items);
+    *out = (qa_armor){0}; uint32_t flags = (uint32_t)qa_source_float_to_i32(items);
     for (size_t i = 3; i > 0; --i) if (flags & profile->masks[i - 1]) {
         out->regular = (qa_regular_armor){.kind = QA_ARMOR_Q1, .points = points,
             .item = profile->armor_items[i - 1], .protection.q1_absorption = absorption}; break;
@@ -373,15 +373,17 @@ static bool write_armor(void *context, const qa_armor *armor, qa_error *error)
     if (!validate_armor(context, armor, error)) return false;
     float value;
     if (!raw_float(actor, profile->items, NULL, &value, error) || !isfinite(value)) return false;
-    uint32_t bits = (uint32_t)qa_number_to_i32(value) & ~(profile->masks[0] | profile->masks[1] | profile->masks[2]);
+    uint32_t bits = (uint32_t)qa_source_float_to_i32(value) & ~(profile->masks[0] | profile->masks[1] | profile->masks[2]);
     if (armor->regular.kind == QA_ARMOR_Q1)
         for (size_t i = 0; i < 3; ++i) if (armor->regular.item == profile->armor_items[i]) bits |= profile->masks[i];
+    int32_t source_bits;
+    memcpy(&source_bits, &bits, sizeof(source_bits));
     qa_qc_instance *vm = actor->owner->engine->provider->state.qc.instance;
     return qa_qc_project_entity_float(vm, actor->reference, profile->armorvalue->offset,
         armor->regular.kind == QA_ARMOR_Q1 ? (float)armor->regular.points : 0, error) &&
         qa_qc_project_entity_float(vm, actor->reference, profile->armortype->offset,
         armor->regular.kind == QA_ARMOR_Q1 ? armor->regular.protection.q1_absorption : 0, error) &&
-        qa_qc_project_entity_float(vm, actor->reference, profile->items->offset, (float)bits, error);
+        qa_qc_project_entity_float(vm, actor->reference, profile->items->offset, (float)source_bits, error);
 }
 static bool empty_armor(void *context, double points, qa_regular_armor *out, bool *present, qa_error *error)
 {
@@ -843,7 +845,7 @@ bool application_qc_combat_inline(struct application_qc_state *engine, qa_qc_ins
     if (stage.flag_bits) {
         float value;
         if (!qa_qc_global_float(vm, stage.flags, &value, error) || !isfinite(value)) return false;
-        uint32_t bits = (uint32_t)qa_number_to_i32(value);
+        uint32_t bits = (uint32_t)qa_source_float_to_i32(value);
         if (stage.no_armor) flags.no_armor = (bits & stage.no_armor) != 0;
         if (stage.no_power) flags.no_power_armor = (bits & stage.no_power) != 0;
         if (stage.no_regular) flags.no_regular_armor = (bits & stage.no_regular) != 0;

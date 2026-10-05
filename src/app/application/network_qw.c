@@ -369,7 +369,7 @@ bool qa_application_network_qw_client_read(qa_application *app, qa_actor_id acto
     float items, flags;
     if (!qw_scalar(engine, reference, "items", &items, error) ||
         !qw_global(engine, "serverflags", &flags, error)) return false;
-    uint32_t item_bits = (uint32_t)qa_number_to_i32(items) | ((uint32_t)qa_number_to_i32(flags) << 28);
+    uint32_t item_bits = (uint32_t)qa_source_float_to_i32(items) | ((uint32_t)qa_source_float_to_i32(flags) << 28);
     int32_t signed_items;
     memcpy(&signed_items, &item_bits, sizeof(item_bits));
     value.stats[15] = signed_items;

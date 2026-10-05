@@ -252,15 +252,15 @@ static bool q1_wire_integer(float value, int32_t minimum, int32_t maximum, int32
         return application_fail(error, QA_ERROR_FORMAT, "Q1 source integer exceeds its original wire range");
     *out = (int32_t)value; return true;
 }
-/* Original QC floats carry bit masks through the same modulo-32-bit integer
- * conversion as the source protocol. Avoid undefined out-of-range C casts. */
+/* Original QC masks use the native float-to-int conversion before narrowing
+ * to the protocol word. */
 static bool q1_wire_bits(float value, uint32_t *out, qa_error *error)
 {
     if (!isfinite(value)) {
         application_fail(error, QA_ERROR_FORMAT, "Nonfinite Q1 source bit mask");
         return false;
     }
-    *out = (uint32_t)qa_number_to_i32(value); return true;
+    *out = (uint32_t)qa_source_float_to_i32(value); return true;
 }
 static bool q1_standard_quake(qa_application *app, struct application_qc_state *engine, bool *out, qa_error *error)
 {

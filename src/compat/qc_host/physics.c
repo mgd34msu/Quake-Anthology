@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/text.h"
 #include <float.h>
 
 static bool scalar(qa_qc_game *game, int32_t reference, const char *name, float fallback,
@@ -25,11 +26,6 @@ static bool entity(qa_qc_game *game, int32_t reference, const char *name, qa_act
     if (!qa_qc_entity_int(game->vm, reference, field->offset, &target, error)) return false;
     if (!target) { *out = (qa_actor_id){0}; return true; }
     return qa_qc_reference_actor(game->vm, target, out, error);
-}
-static uint32_t flags_word(float value) {
-    double bits = fmod(trunc((double)value), 4294967296.0);
-    if (bits < 0) bits += 4294967296.0;
-    return (uint32_t)bits;
 }
 static bool clock_word(double value, float *out, qa_error *error) {
     if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127) {
@@ -85,7 +81,7 @@ bool qa_qc_game_read_physics(qa_qc_game *game, qa_actor_id actor, qa_physics_pro
     value.solid = solid == 0 || (solid == 5 && game->options.vm.profile != QA_QC_RERELEASE) ? QA_PHYSICS_NOT_SOLID
         : solid == 1 ? QA_PHYSICS_TRIGGER : solid == 4 ? QA_PHYSICS_BRUSH
         : solid == 5 ? QA_PHYSICS_CORPSE : QA_PHYSICS_BOX;
-    uint32_t source = flags_word(flags);
+    uint32_t source = (uint32_t)qa_source_float_to_i32(flags);
     if (source & 1u) value.flags |= QA_PHYSICS_FLYING;
     if (source & 2u) value.flags |= QA_PHYSICS_SWIMMING;
     if (source & 1024u) value.flags |= QA_PHYSICS_PARTIAL_GROUND;
@@ -125,11 +121,11 @@ bool qa_qc_game_write_physics(qa_qc_game *game, qa_actor_id actor,
     if (!clock_word(value->q1_pusher.local_seconds, &local, error) ||
         !clock_word(value->q1_pusher.next_think_seconds, &next, error)) return false;
     if (!scalar(game, reference, "flags", 0, false, &flags, error)) return false;
-    uint32_t bits = flags_word(flags) & ~(1u | 2u | 1024u | 512u);
-    if (value->flags & QA_PHYSICS_FLYING) bits |= 1u;
-    if (value->flags & QA_PHYSICS_SWIMMING) bits |= 2u;
-    if (value->flags & QA_PHYSICS_PARTIAL_GROUND) bits |= 1024u;
-    if (value->flags & QA_PHYSICS_ONGROUND) bits |= 512u;
+    int32_t bits = qa_source_float_to_i32(flags) & ~(1 | 2 | 1024 | 512);
+    if (value->flags & QA_PHYSICS_FLYING) bits |= 1;
+    if (value->flags & QA_PHYSICS_SWIMMING) bits |= 2;
+    if (value->flags & QA_PHYSICS_PARTIAL_GROUND) bits |= 1024;
+    if (value->flags & QA_PHYSICS_ONGROUND) bits |= 512;
     const qa_qc_definition *angular = qa_qc_program_find_field(game->program, "avelocity");
     if (!angular || angular->type != QA_QC_VECTOR)
         return qc_game_fail(error, QA_ERROR_FORMAT, "Missing QC angular velocity field");

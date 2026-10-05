@@ -1,9 +1,6 @@
 #include "bot_world.h"
 #include "../../bots/save_fields.h"
-#include "qa/text.h"
 #include <limits.h>
-#include <ctype.h>
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -115,58 +112,14 @@ static void text_free(bot_world_text *table,size_t count) {
     for(size_t i=0;i<count;++i) free(table[i].text);
     free(table);
 }
-static size_t source_space(const unsigned char *text,size_t length) {
-    if(!length) return 0;
-    if(text[0]==' ' || (text[0]>=9 && text[0]<=13)) return 1;
-    if(length>=2 && text[0]==0xc2 && text[1]==0xa0) return 2;
-    if(length<3) return 0;
-    if(text[0]==0xe1 && text[1]==0x9a && text[2]==0x80) return 3;
-    if(text[0]==0xe2 && text[1]==0x80 &&
-       ((text[2]>=0x80 && text[2]<=0x8a) || text[2]==0xa8 || text[2]==0xa9 || text[2]==0xaf)) return 3;
-    if(text[0]==0xe2 && text[1]==0x81 && text[2]==0x9f) return 3;
-    if(text[0]==0xe3 && text[1]==0x80 && text[2]==0x80) return 3;
-    if(text[0]==0xef && text[1]==0xbb && text[2]==0xbf) return 3;
-    return 0;
-}
-static double inline_index(const char *name) {
-    const char *start=name+1;size_t length=strlen(start),width;
-    while((width=source_space((const unsigned char *)start,length))!=0) {start+=width;length-=width;}
-    size_t end_offset=0;
-    for(size_t offset=0;offset<length;) {
-        width=source_space((const unsigned char *)start+offset,length-offset);
-        if(width) offset+=width;
-        else {++offset;end_offset=offset;}
-    }
-    length=end_offset;
-    if(!length) return 0;
-    if((length==8 && !memcmp(start,"Infinity",8)) || (length==9 && !memcmp(start,"+Infinity",9))) return INFINITY;
-    if(length==9 && !memcmp(start,"-Infinity",9)) return -INFINITY;
-    if(length>2 && start[0]=='0' && (start[1]=='x' || start[1]=='X' || start[1]=='b' || start[1]=='B' || start[1]=='o' || start[1]=='O')) {
-        unsigned base=start[1]=='b' || start[1]=='B'?2:start[1]=='o' || start[1]=='O'?8:16;
-        double value=0;
-        for(size_t i=2;i<length;++i) {
-            unsigned char c=(unsigned char)start[i];unsigned digit;
-            if(c>='0' && c<='9') digit=c-'0';
-            else if(c>='a' && c<='f') digit=c-'a'+10;
-            else if(c>='A' && c<='F') digit=c-'A'+10;
-            else return NAN;
-            if(digit>=base) return NAN;
-            value=value*base+digit;
-        }
-        return value;
-    }
-    /* strtod's inf/nan and hexadecimal extensions are absent from Number. */
-    size_t at=start[0]=='+' || start[0]=='-'?1:0;
-    if(at>=length || (!isdigit((unsigned char)start[at]) && start[at]!='.')) return NAN;
-    for(size_t i=at;i<length;++i)
-        if(!isdigit((unsigned char)start[i]) && start[i]!='.' && start[i]!='e' && start[i]!='E' && start[i]!='+' && start[i]!='-') return NAN;
-    char *end;double value=strtod(start,&end);
-    return (size_t)(end-start)==length?value:NAN;
+static int32_t inline_index(const char *name) {
+    long index=strtol(name+1,NULL,10);
+    return index>INT32_MAX?INT32_MAX:index<INT32_MIN?INT32_MIN:(int32_t)index;
 }
 static bool model_index(application_bot_world *world,const char *name,int32_t *out,qa_error *error) {
     if(!name || !out) return fail(error,QA_ERROR_ARGUMENT,"shared bot model query requires actual source text");
     if(!*name) {*out=0;return true;}
-    if(*name=='*') {*out=qa_number_to_i32(inline_index(name));return true;}
+    if(*name=='*') {*out=inline_index(name);return true;}
     for(size_t i=0;i<world->model_count;++i) if(!strcmp(world->models[i].text,name)) {
         *out=(int32_t)world->models[i].id;return true;
     }
