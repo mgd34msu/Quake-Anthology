@@ -16,6 +16,20 @@ static bool malformed(q2_original_record_io *io, size_t position, const char *me
     return false;
 }
 
+/* Source wait fields remain float seconds in both editions. */
+bool q2_original_seconds(q2_original_record_io *io, const char *name,
+    uint16_t offset, uint64_t *time)
+{
+    float value = io->reading ? 0 : (float)((double)*time / (double)Q2_NS);
+    if (!q2_original_scalar(io, name, Q2_ORIGINAL_F32, offset, offset, offset, &value)) return false;
+    if (io->reading) {
+        if (!isfinite(value) || value < 0 || (double)value * (double)Q2_NS >= (double)UINT64_MAX)
+            return malformed(io, offset, "Original Q2 float-second deadline is invalid");
+        *time = (uint64_t)((double)value * (double)Q2_NS);
+    }
+    return true;
+}
+
 bool q2_original_function(qa_q2_game *game, q2_original_record_io *io,
     const char *field, uint16_t offset, const char *name)
 {
