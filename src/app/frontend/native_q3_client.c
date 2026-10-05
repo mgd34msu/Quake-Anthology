@@ -881,8 +881,16 @@ static bool make_media(frontend_native_q3 *row,qa_error *e)
 {
     qa_frontend *f=row->frontend; frontend_native_q3_view *v=&row->view;
     if (!frontend_q3_source_color_ensure(f,e)) return false;
-    v->mounts=qa_vfs_clone(v->source_files,e); v->images=v->mounts?qa_scene_resources_create(v->mounts,e):NULL;
-    if(v->images && !frontend_image_policy_initialize(f,v->images,e))return false;
+    frontend_visual_owner_view shared;
+    if(!frontend_visual_media_acquire(f,v->source_owner,QA_GAME_Q3,&shared,e))return false;
+    if(!qa_vfs_lookup_equal(shared.mounts,v->source_files))
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Native image bank differs from its actual Source content");
+    /* Source's image registry survives CG_Init. Keep the provider's canonical
+     * bank while each physical CLIENT rebuilds its own shader/media owners. */
+    if(!qa_vfs_retain(shared.mounts,e))return false;
+    v->mounts=shared.mounts;
+    if(!qa_scene_resources_retain(shared.images,e))return false;
+    v->images=shared.images;
     v->materials=v->images?qa_material_library_create(v->images,f->order,e):NULL;
     v->fonts=v->images?qa_font_library_create(v->mounts,v->images,e):NULL;
     v->movies=v->images?qa_media_library_create(v->images,e):NULL;
