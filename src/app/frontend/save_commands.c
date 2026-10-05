@@ -55,6 +55,22 @@ typedef struct recovery_frame {
 static bool recovery_inspect(qa_frontend *,qa_error *);
 static bool recovery_start(qa_frontend *,qa_error *);
 static bool recovery_drain(qa_frontend **,qa_error *);
+static bool recovery_checkpoint(qa_frontend *f,const qa_save_image *image,qa_error *error)
+{
+    frontend_save_commands *owner=f->save_commands;
+    bool ok=owner->recovery?qa_recovery_checkpoint(owner->recovery,image,error):
+        qa_recovery_begin(owner->level_root,"recovery.qdemo",image,&owner->recovery,error);
+    if (ok) {
+        owner->recovery_time_ns=qa_save_image_metadata(image)->elapsed_ns;
+        owner->recovery_flush_ns=f->wall_time_ns;
+        owner->recovery_checkpoint_generation=qa_application_configuration_generation(f->application);
+        owner->recovery_bound=false;owner->recovery_data=false;
+        owner->recovery_advanced=false;owner->recovery_completed=false;
+    }
+    return ok;
+}
+
+
 
 static bool command_fields(qa_source_save_io *io,recovery_command *command)
 {
@@ -218,6 +234,16 @@ bool frontend_save_commands_recovery_complete_frame(qa_frontend *f,qa_error *err
             owner->recovery_flush_ns=f->wall_time_ns;
         owner->recovery_time_ns=now;owner->recovery_data=false;owner->recovery_advanced=false;
         owner->recovery_completed=false;
+        if (frame.completed && qa_recovery_checkpoint_due(owner->recovery) &&
+            !frontend_save_commands_pending(f)) {
+            qa_save_image *image=NULL;qa_error cleanup={0};
+            owner->draining=true;
+            ok=qa_frontend_persistence_capture(f,f->options.persistence_services,QA_SAVE_RECOVERY,&image,&local) &&
+                recovery_checkpoint(f,image,&local);
+            if (!frontend_save_image_release(f,&image,ok?&local:&cleanup)) ok=false;
+            owner->draining=false;
+            if (!ok) recovery_fault(f,&local);
+        }
     }
     return true;
 }
@@ -532,15 +558,7 @@ static bool recovery_start(qa_frontend *f,qa_error *error)
     owner->draining=true;
     bool ok=recovery_directory(owner,true,&local) &&
         qa_frontend_persistence_capture(f,f->options.persistence_services,QA_SAVE_RECOVERY,&image,&local);
-    if (ok) ok=owner->recovery?qa_recovery_checkpoint(owner->recovery,image,&local):
-        qa_recovery_begin(owner->level_root,"recovery.qdemo",image,&owner->recovery,&local);
-    if (ok) {
-        owner->recovery_time_ns=qa_save_image_metadata(image)->elapsed_ns;
-        owner->recovery_flush_ns=f->wall_time_ns;
-        owner->recovery_checkpoint_generation=generation;
-        owner->recovery_bound=false;owner->recovery_data=false;
-        owner->recovery_advanced=false;owner->recovery_completed=false;
-    }
+    if (ok) ok=recovery_checkpoint(f,image,&local);
     if (!frontend_save_image_release(f,&image,ok?&local:&cleanup)) ok=false;
     owner->draining=false;
     if (!ok) recovery_fault(f,&local);
@@ -564,11 +582,10 @@ static void recovery_candidate_free(recovery_candidate *candidate)
 static bool recovery_create(void *context,const qa_save_image *image,void **out,qa_error *error)
 {
     (void)context;
-    recovery_candidate *candidate=calloc(1,sizeof(*candidate));qa_buffer bytes={0};
+    recovery_candidate *candidate=calloc(1,sizeof(*candidate));qa_bytes bytes={0};
     if (!candidate) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining recovery checkpoint");
     bool ok=qa_save_image_encode(image,&bytes,error) &&
-        qa_save_image_decode((qa_bytes){bytes.data,bytes.size},&candidate->image,error);
-    qa_buffer_free(&bytes);
+        qa_save_image_decode(bytes,&candidate->image,error);
     if (!ok) { recovery_candidate_free(candidate);return false; }
     *out=candidate;return true;
 }

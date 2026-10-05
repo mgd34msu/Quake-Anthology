@@ -2,7 +2,14 @@
 #include "qa/recovery.h"
 #include <math.h>
 
-struct qa_recovery { qa_demo_recorder *recorder; };
+struct qa_recovery {
+    qa_demo_recorder *recorder;
+    qa_fs_root *root;
+    char *name;
+    uint64_t time_ns, checkpoint_ns, checkpoint_bytes;
+};
+
+enum { RECOVERY_TAIL_LIMIT = 8 * 1024 * 1024, RECOVERY_ROTATE_BYTES = 4 * 1024 * 1024 };
 
 static bool input_fields(qa_source_save_io *io, qa_recovery_input *input)
 {
@@ -154,15 +161,22 @@ bool qa_autosave_write(qa_autosave_state *state, qa_fs_root *root, const qa_save
 bool qa_recovery_begin(qa_fs_root *root, const char *name, const qa_save_image *initial,
                         qa_recovery **out, qa_error *error)
 {
-    if (!out || !initial || (qa_save_image_metadata(initial)->purpose != QA_SAVE_RECOVERY &&
+    if (!root || !name || !out || !initial || (qa_save_image_metadata(initial)->purpose != QA_SAVE_RECOVERY &&
         qa_save_image_metadata(initial)->purpose != QA_SAVE_LEVEL_ENTRY))
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Recovery requires an explicit recovery checkpoint");
     qa_recovery *recovery = calloc(1, sizeof(*recovery));
     if (!recovery) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating recovery owner");
+    recovery->name = malloc(strlen(name) + 1);
+    if (!recovery->name) { free(recovery); return persistence_fail(error, QA_ERROR_MEMORY, "Retaining recovery filename"); }
+    strcpy(recovery->name, name);
+    recovery->root = root;
+    qa_fs_root_retain(root);
     if (!qa_demo_record_begin(root, name, initial, &recovery->recorder, error) ||
         !qa_demo_record_buffered(recovery->recorder, true, error)) {
         qa_recovery_destroy(recovery); return false;
     }
+    recovery->time_ns = recovery->checkpoint_ns = qa_save_image_metadata(initial)->elapsed_ns;
+    recovery->checkpoint_bytes = persistence_demo_record_bytes(recovery->recorder);
     *out = recovery;
     return true;
 }
@@ -171,14 +185,39 @@ bool qa_recovery_append(qa_recovery *recovery, qa_demo_record_kind kind, uint64_
 {
     if (!recovery || kind == QA_DEMO_KEYFRAME || kind == QA_DEMO_END)
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid recovery journal record");
-    return qa_demo_record_append(recovery->recorder, kind, elapsed_ns, protocol, payload, error);
+    uint64_t tail = persistence_demo_record_bytes(recovery->recorder) - recovery->checkpoint_bytes;
+    /* Leave space for the record header too. Oversized or stalled frames cannot
+     * grow the journal without bound while waiting for a completed frame. */
+    if (tail > RECOVERY_TAIL_LIMIT || payload.size > RECOVERY_TAIL_LIMIT - tail ||
+        RECOVERY_TAIL_LIMIT - tail - payload.size < PERSISTENCE_DEMO_RECORD_HEADER)
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Recovery journal requires a completed-frame checkpoint");
+    if (!qa_demo_record_append(recovery->recorder, kind, elapsed_ns, protocol, payload, error)) return false;
+    recovery->time_ns += elapsed_ns;
+    return true;
 }
 bool qa_recovery_checkpoint(qa_recovery *recovery, const qa_save_image *image, qa_error *error)
 {
     if (!recovery || !image || (qa_save_image_metadata(image)->purpose != QA_SAVE_RECOVERY &&
         qa_save_image_metadata(image)->purpose != QA_SAVE_LEVEL_ENTRY))
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid recovery checkpoint replacement");
-    return qa_demo_record_keyframe(recovery->recorder, image, error);
+    if (qa_save_image_metadata(image)->elapsed_ns != recovery->time_ns)
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Recovery checkpoint differs from the completed journal time");
+    qa_demo_recorder *replacement = NULL;
+    if (!qa_demo_record_begin(recovery->root, recovery->name, image, &replacement, error)) return false;
+    if (!qa_demo_record_buffered(replacement, true, error)) {
+        qa_demo_recorder_destroy(replacement);
+        return false;
+    }
+    qa_demo_recorder_destroy(recovery->recorder);
+    recovery->recorder = replacement;
+    recovery->checkpoint_ns = recovery->time_ns;
+    recovery->checkpoint_bytes = persistence_demo_record_bytes(replacement);
+    return true;
+}
+bool qa_recovery_checkpoint_due(const qa_recovery *recovery)
+{
+    return recovery && (persistence_demo_record_bytes(recovery->recorder) - recovery->checkpoint_bytes >= RECOVERY_ROTATE_BYTES ||
+        recovery->time_ns - recovery->checkpoint_ns >= UINT64_C(300000000000));
 }
 bool qa_recovery_close_clean(qa_recovery *recovery, qa_error *error)
 {
@@ -191,7 +230,13 @@ bool qa_recovery_flush(qa_recovery *recovery, qa_error *error)
         persistence_fail(error, QA_ERROR_ARGUMENT, "Absent recovery owner");
 }
 void qa_recovery_destroy(qa_recovery *recovery)
-{ if (recovery) { qa_demo_recorder_destroy(recovery->recorder); free(recovery); } }
+{
+    if (recovery) {
+        qa_demo_recorder_destroy(recovery->recorder);
+        qa_fs_root_close(recovery->root);
+        free(recovery->name); free(recovery);
+    }
+}
 
 typedef struct recovery_seek {
     const qa_demo_seek_ops *ops;

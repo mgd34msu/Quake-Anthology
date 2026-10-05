@@ -2,7 +2,6 @@
 #include "qa/demo.h"
 
 #define DEMO_HEADER_BYTES 32u
-#define DEMO_RECORD_HEADER 52u
 
 struct qa_demo_recorder {
     qa_fs_stream *stream;
@@ -49,32 +48,32 @@ static bool write_part(qa_demo_recorder *recorder, qa_bytes bytes, qa_error *err
     return true;
 }
 
-bool qa_demo_record_append(qa_demo_recorder *recorder, qa_demo_record_kind kind, uint64_t elapsed_ns,
+static bool record_header(qa_net_writer *writer, qa_demo_record_kind kind,
+    uint64_t sequence, uint64_t time_ns, uint64_t elapsed_ns,
+    qa_net_protocol_id protocol, size_t payload_size)
+{
+    qa_net_write_u64(writer, PERSISTENCE_DEMO_RECORD_HEADER + payload_size); qa_net_write_u32(writer, kind); qa_net_write_u32(writer, 0);
+    qa_net_write_u64(writer, sequence); qa_net_write_u64(writer, time_ns);
+    qa_net_write_u64(writer, elapsed_ns); qa_net_write_u32(writer, protocol.kind);
+    qa_net_write_u32(writer, protocol.revision); qa_net_write_u32(writer, protocol.flags);
+    return !writer->failed;
+}
+
+static bool record_append(qa_demo_recorder *recorder, qa_demo_record_kind kind, uint64_t elapsed_ns,
                             qa_net_protocol_id protocol, qa_bytes payload, qa_error *error)
 {
     if (!recorder || recorder->faulted || recorder->ended || kind < QA_DEMO_KEYFRAME || kind > QA_DEMO_END ||
         (!payload.data && payload.size) || recorder->sequence == UINT64_MAX ||
-        payload.size > UINT64_MAX - DEMO_RECORD_HEADER || (kind != QA_DEMO_ADVANCE && elapsed_ns) ||
+        payload.size > UINT64_MAX - PERSISTENCE_DEMO_RECORD_HEADER || (kind != QA_DEMO_ADVANCE && elapsed_ns) ||
         recorder->time_ns > UINT64_MAX - elapsed_ns || (kind == QA_DEMO_ADVANCE && payload.size) ||
         (kind == QA_DEMO_END && payload.size) || (!recorder->sequence && kind != QA_DEMO_KEYFRAME))
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid or faulted demo append");
     if (!qa_net_protocol_valid(protocol, error)) return false;
-    if (kind == QA_DEMO_KEYFRAME) {
-        qa_save_image *image = NULL;
-        if (!qa_save_image_decode(payload, &image, error)) return false;
-        const qa_save_metadata *metadata = qa_save_image_metadata(image);
-        bool matches = metadata->elapsed_ns == recorder->time_ns;
-        if (!qa_save_image_destroy_checked(&image, error)) return false;
-        if (!matches) return persistence_fail(error, QA_ERROR_FORMAT, "Demo keyframe time differs from recording");
-    }
-    uint8_t header[DEMO_RECORD_HEADER];
+    uint8_t header[PERSISTENCE_DEMO_RECORD_HEADER];
     qa_net_writer w;
     qa_net_writer_init(&w, header, sizeof(header), error);
-    qa_net_write_u64(&w, DEMO_RECORD_HEADER + payload.size); qa_net_write_u32(&w, kind); qa_net_write_u32(&w, 0);
-    qa_net_write_u64(&w, recorder->sequence + 1); qa_net_write_u64(&w, recorder->time_ns + elapsed_ns);
-    qa_net_write_u64(&w, elapsed_ns); qa_net_write_u32(&w, protocol.kind);
-    qa_net_write_u32(&w, protocol.revision); qa_net_write_u32(&w, protocol.flags);
-    if (w.failed || !write_part(recorder, (qa_bytes){header, sizeof(header)}, error) ||
+    if (!record_header(&w, kind, recorder->sequence + 1,
+        recorder->time_ns + elapsed_ns, elapsed_ns, protocol, payload.size) || !write_part(recorder, (qa_bytes){header, sizeof(header)}, error) ||
         !write_part(recorder, payload, error)) return false;
     recorder->dirty = true;
     if ((!recorder->buffered || kind == QA_DEMO_KEYFRAME || kind == QA_DEMO_END) &&
@@ -83,6 +82,21 @@ bool qa_demo_record_append(qa_demo_recorder *recorder, qa_demo_record_kind kind,
     recorder->time_ns += elapsed_ns;
     recorder->ended = kind == QA_DEMO_END;
     return true;
+}
+
+bool qa_demo_record_append(qa_demo_recorder *recorder, qa_demo_record_kind kind, uint64_t elapsed_ns,
+    qa_net_protocol_id protocol, qa_bytes payload, qa_error *error)
+{
+    if (!recorder) return persistence_fail(error, QA_ERROR_ARGUMENT, "Absent demo recorder");
+    if (kind == QA_DEMO_KEYFRAME) {
+        qa_save_image *image = NULL;
+        if (!qa_save_image_decode(payload, &image, error)) return false;
+        const qa_save_metadata *metadata = qa_save_image_metadata(image);
+        bool matches = metadata->elapsed_ns == recorder->time_ns;
+        if (!qa_save_image_destroy_checked(&image, error)) return false;
+        if (!matches) return persistence_fail(error, QA_ERROR_FORMAT, "Demo keyframe time differs from recording");
+    }
+    return record_append(recorder, kind, elapsed_ns, protocol, payload, error);
 }
 
 bool qa_demo_record_flush(qa_demo_recorder *recorder, qa_error *error)
@@ -109,36 +123,48 @@ bool qa_demo_record_buffered(qa_demo_recorder *recorder, bool buffered, qa_error
 
 bool qa_demo_record_keyframe(qa_demo_recorder *recorder, const qa_save_image *image, qa_error *error)
 {
-    qa_buffer bytes = {0};
-    if (!qa_save_image_encode(image, &bytes, error)) return false;
-    bool ok = qa_demo_record_append(recorder, QA_DEMO_KEYFRAME, 0,
-        (qa_net_protocol_id){QA_NET_UNIFIED_1, 0, 0}, (qa_bytes){bytes.data, bytes.size}, error);
-    qa_buffer_free(&bytes);
-    return ok;
+    if (!recorder || !image || qa_save_image_metadata(image)->elapsed_ns != recorder->time_ns)
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Demo keyframe time differs from recording");
+    qa_bytes bytes = {0};
+    return qa_save_image_encode(image, &bytes, error) &&
+        record_append(recorder, QA_DEMO_KEYFRAME, 0,
+            (qa_net_protocol_id){QA_NET_UNIFIED_1, 0, 0}, bytes, error);
 }
 
 bool qa_demo_record_begin(qa_fs_root *root, const char *name, const qa_save_image *initial,
                            qa_demo_recorder **out, qa_error *error)
 {
     if (!root || !initial || !out || !demo_name(name, error)) return false;
+    qa_bytes bytes = {0};
+    if (!qa_save_image_encode(initial, &bytes, error)) return false;
+    if (bytes.size > SIZE_MAX - DEMO_HEADER_BYTES - PERSISTENCE_DEMO_RECORD_HEADER)
+        return persistence_fail(error, QA_ERROR_MEMORY, "Initial recording size overflows");
     const qa_save_metadata *metadata = qa_save_image_metadata(initial);
     qa_demo_recorder *recorder = calloc(1, sizeof(*recorder));
     if (!recorder) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating demo recorder");
-    uint64_t previous_size;
-    if (!qa_fs_root_stream_open(root, name, QA_FS_STREAM_WRITE, false, &recorder->stream, &previous_size, error)) {
-        free(recorder); return false;
-    }
+    size_t size = DEMO_HEADER_BYTES + PERSISTENCE_DEMO_RECORD_HEADER + bytes.size;
+    uint8_t *data = malloc(size);
+    if (!data) { free(recorder); return persistence_fail(error, QA_ERROR_MEMORY, "Allocating initial recording"); }
+    qa_net_writer writer;
+    qa_net_writer_init(&writer, data, size, error);
+    qa_net_write_data(&writer, "QADM\r\n\032\n", 8);
+    qa_net_write_u32(&writer, 0); qa_net_write_u32(&writer, DEMO_HEADER_BYTES);
+    qa_net_write_u64(&writer, metadata->elapsed_ns);
+    qa_net_write_u32(&writer, 0); qa_net_write_u32(&writer, 0);
+    bool ok = !writer.failed && record_header(&writer, QA_DEMO_KEYFRAME, 1,
+        metadata->elapsed_ns, 0, (qa_net_protocol_id){QA_NET_UNIFIED_1, 0, 0}, bytes.size) &&
+        qa_net_write_data(&writer, bytes.data, bytes.size) &&
+        qa_fs_root_replace(root, name, (qa_bytes){data, size}, metadata->elapsed_ns, error);
+    free(data);
+    uint64_t stored_size = 0;
+    if (ok) ok = qa_fs_root_stream_open(root, name, QA_FS_STREAM_WRITE, true,
+        &recorder->stream, &stored_size, error);
+    if (ok && stored_size != size)
+        ok = persistence_fail(error, QA_ERROR_IO, "Initial recording changed before append admission");
+    if (!ok) { qa_demo_recorder_destroy(recorder); return false; }
     recorder->time_ns = metadata->elapsed_ns;
-    uint8_t header[DEMO_HEADER_BYTES];
-    qa_net_writer w;
-    qa_net_writer_init(&w, header, sizeof(header), error);
-    qa_net_write_data(&w, "QADM\r\n\032\n", 8); qa_net_write_u32(&w, 0); qa_net_write_u32(&w, DEMO_HEADER_BYTES);
-    qa_net_write_u64(&w, metadata->elapsed_ns);
-    qa_net_write_u32(&w, 0); qa_net_write_u32(&w, 0);
-    if (w.failed || !write_part(recorder, (qa_bytes){header, sizeof(header)}, error) ||
-        !qa_demo_record_keyframe(recorder, initial, error)) {
-        qa_demo_recorder_destroy(recorder); return false;
-    }
+    recorder->sequence = 1;
+    recorder->position = size;
     *out = recorder;
     return true;
 }
@@ -151,6 +177,8 @@ bool qa_demo_record_end(qa_demo_recorder *recorder, qa_error *error)
 }
 void qa_demo_recorder_destroy(qa_demo_recorder *recorder)
 { if (recorder) { qa_fs_stream_close(recorder->stream); free(recorder); } }
+uint64_t persistence_demo_record_bytes(const qa_demo_recorder *recorder)
+{ return recorder ? recorder->position : 0; }
 
 void qa_demo_destroy(qa_demo *demo)
 { if (demo) { qa_buffer_free(&demo->storage); free(demo->records); free(demo); } }
@@ -193,13 +221,13 @@ bool qa_demo_take(qa_buffer *buffer, bool recover_tail, qa_demo **out, qa_error 
         if (demo->complete) {
             ok = persistence_fail(error, QA_ERROR_FORMAT, "Trailing data after shared demo end marker"); break;
         }
-        if (remaining < DEMO_RECORD_HEADER) {
+        if (remaining < PERSISTENCE_DEMO_RECORD_HEADER) {
             if (!recover_tail) ok = persistence_fail(error, QA_ERROR_FORMAT, "Truncated shared demo tail");
             break;
         }
         const uint8_t *header = buffer->data + position;
         uint64_t length = qa_load_u64le(header);
-        if (length < DEMO_RECORD_HEADER) {
+        if (length < PERSISTENCE_DEMO_RECORD_HEADER) {
             ok = persistence_fail(error, QA_ERROR_FORMAT, "Invalid shared demo block extent or trailing data"); break;
         }
         if (length > remaining) {
@@ -210,7 +238,7 @@ bool qa_demo_take(qa_buffer *buffer, bool recover_tail, qa_demo **out, qa_error 
             .sequence = qa_load_u64le(header + 16), .time_ns = qa_load_u64le(header + 24),
             .elapsed_ns = qa_load_u64le(header + 32),
             .protocol = {(qa_net_protocol)qa_load_u32le(header + 40), qa_load_u32le(header + 44), qa_load_u32le(header + 48)},
-            .payload = {header + DEMO_RECORD_HEADER, (size_t)length - DEMO_RECORD_HEADER}};
+            .payload = {header + PERSISTENCE_DEMO_RECORD_HEADER, (size_t)length - PERSISTENCE_DEMO_RECORD_HEADER}};
         if (qa_load_u32le(header + 12) || record.kind < QA_DEMO_KEYFRAME || record.kind > QA_DEMO_END ||
             record.sequence != demo->count + 1 || demo->end_ns > UINT64_MAX - record.elapsed_ns ||
             record.time_ns != demo->end_ns + record.elapsed_ns ||

@@ -104,8 +104,18 @@ static void image_free(qa_save_image *image)
         free((void *)image->records[i].payload.data);
     }
     free(image->records);
+    if (image->encoded) qa_buffer_free(image->encoded);
     free(image);
 }
+
+static qa_save_image *image_allocate(void)
+{
+    /* Keep the mutable encoding cache with its immutable owner in one allocation. */
+    qa_save_image *image = calloc(1, sizeof(*image) + sizeof(qa_buffer));
+    if (image) image->encoded = (qa_buffer *)(image + 1);
+    return image;
+}
+
 
 bool qa_save_image_destroy_checked(qa_save_image **pointer, qa_error *error)
 {
@@ -141,7 +151,7 @@ static bool image_create(const qa_save_metadata *metadata, const qa_save_record 
         !memchr(metadata->game, 0, sizeof(metadata->game)))
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid save image metadata/output");
     if (!persistence_owner_set(records, count, error)) return false;
-    qa_save_image *image = calloc(1, sizeof(*image));
+    qa_save_image *image = image_allocate();
     if (!image) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating save image");
     image->records = calloc(count, sizeof(*image->records));
     if (!image->records) {
@@ -339,10 +349,14 @@ static bool image_fields(qa_source_save_io *io, qa_save_image *image, uint64_t e
     return true;
 }
 
-bool qa_save_image_encode(const qa_save_image *image, qa_buffer *out, qa_error *error)
+bool qa_save_image_encode(const qa_save_image *image, qa_bytes *out, qa_error *error)
 {
-    if (!image || image->retiring || !out)
+    if (!image || image->retiring || !image->encoded || !out)
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid or retiring save encode owner");
+    if (image->encoded->data) {
+        *out = (qa_bytes){image->encoded->data, image->encoded->size};
+        return true;
+    }
     size_t size = SAVE_HEADER + strlen(image->metadata.map) + strlen(image->metadata.game);
     for (size_t i = 0; i < image->count; ++i) {
         const qa_save_record *record = image->records + i;
@@ -364,7 +378,8 @@ bool qa_save_image_encode(const qa_save_image *image, qa_buffer *out, qa_error *
     if (ok) ok = qa_source_save_finish(&io, &buffer);
     qa_source_save_dispose(&io);
     if (!ok) return false;
-    *out = buffer;
+    *image->encoded = buffer;
+    *out = (qa_bytes){buffer.data, buffer.size};
     return true;
 }
 
@@ -374,7 +389,7 @@ bool qa_save_image_decode(qa_bytes bytes, qa_save_image **out, qa_error *error)
         return persistence_fail(error, QA_ERROR_FORMAT, "Truncated save image");
     qa_source_save_io io = {0};
     if (!qa_source_save_reader(&io, NULL, bytes, error)) return false;
-    qa_save_image *image = calloc(1, sizeof(*image));
+    qa_save_image *image = image_allocate();
     if (!image) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating decoded save image");
     bool ok = image_fields(&io, image, bytes.size) && qa_source_save_finish(&io, NULL) &&
         persistence_owner_set(image->records, image->count, error);

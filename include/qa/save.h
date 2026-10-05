@@ -57,7 +57,8 @@ typedef bool (*qa_save_native_release_fn)(qa_native_resource_inventory **, qa_er
 bool qa_save_image_create(const qa_save_metadata *, const qa_save_record *, size_t,
                            qa_save_image **, qa_error *);
 bool qa_save_image_decode(qa_bytes, qa_save_image **, qa_error *);
-bool qa_save_image_encode(const qa_save_image *, qa_buffer *, qa_error *);
+/* Encoding borrows immutable image storage until the image is destroyed. */
+bool qa_save_image_encode(const qa_save_image *, qa_bytes *, qa_error *);
 /* Reads only the bounded header of an admitted file. Foreign formats return
  * shared=false; shared payload owners are validated when actually loaded.
  * Metadata output remains unchanged on failure or a foreign format. */

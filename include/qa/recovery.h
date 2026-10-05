@@ -2,6 +2,7 @@
 #define QA_RECOVERY_H
 
 #include "qa/demo.h"
+#include "qa/source_save.h"
 #include "qa/movement.h"
 #include "qa/gameplay.h"
 
@@ -53,6 +54,8 @@ bool qa_recovery_begin(qa_fs_root *, const char *relative_name, const qa_save_im
 bool qa_recovery_append(qa_recovery *, qa_demo_record_kind, uint64_t elapsed_ns,
                          qa_net_protocol_id, qa_bytes, qa_error *);
 bool qa_recovery_checkpoint(qa_recovery *, const qa_save_image *, qa_error *);
+/* Check at a completed frame; rotation replaces the old checkpoint and tail. */
+bool qa_recovery_checkpoint_due(const qa_recovery *);
 bool qa_recovery_flush(qa_recovery *, qa_error *);
 bool qa_recovery_close_clean(qa_recovery *, qa_error *);
 void qa_recovery_destroy(qa_recovery *);

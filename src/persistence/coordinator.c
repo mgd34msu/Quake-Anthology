@@ -111,11 +111,9 @@ bool qa_save_write(qa_fs_root *root, const char *name, const qa_save_image *imag
                    uint64_t nonce, qa_error *error)
 {
     if (!root || !qa_save_slot_name(name, error)) return false;
-    qa_buffer bytes = {0};
+    qa_bytes bytes = {0};
     if (!qa_save_image_encode(image, &bytes, error)) return false;
-    bool ok = qa_fs_root_replace(root, name, (qa_bytes){bytes.data, bytes.size}, nonce, error);
-    qa_buffer_free(&bytes);
-    return ok;
+    return qa_fs_root_replace(root, name, bytes, nonce, error);
 }
 
 bool qa_save_read(qa_fs_root *root, const char *name, qa_save_image **out, qa_error *error)

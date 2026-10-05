@@ -10,6 +10,7 @@
 struct qa_save_image {
     qa_save_metadata metadata;
     qa_save_record *records;
+    qa_buffer *encoded;
     size_t count;
     qa_native_resource_inventory *native_resources;
     qa_save_native_release_fn native_release;
@@ -33,5 +34,9 @@ bool persistence_owner_valid(const qa_save_owner *, qa_error *);
 bool persistence_owner_set(const qa_save_record *, size_t, qa_error *);
 bool persistence_image_create_owned(const qa_save_metadata *, qa_save_record *, size_t,
                                     qa_save_image **, qa_error *);
+
+enum { PERSISTENCE_DEMO_RECORD_HEADER = 52 };
+struct qa_demo_recorder;
+uint64_t persistence_demo_record_bytes(const struct qa_demo_recorder *);
 
 #endif

@@ -535,13 +535,13 @@ bool qa_application_campaign_stage(qa_application *application, const qa_save_im
     if (!travel || travel->visit || !map_safe(application) || !metadata ||
         metadata->purpose!=QA_SAVE_TRANSITION || metadata->world_generation!=application->map_revision)
         return application_fail(error,QA_ERROR_ARGUMENT,"Campaign stage requires its actual departed state image");
-    qa_buffer bytes={0}; qa_campaign_world *departure=NULL;
+    qa_bytes bytes={0}; qa_campaign_world *departure=NULL;
     bool retain, reload;
     bool ok=campaign_q2_policy(application,&retain,&reload,error) &&
         qa_save_image_encode(image,&bytes,error) &&
-        qa_campaign_world_take(travel->source,&bytes,&departure,error) &&
+        qa_campaign_world_create(travel->source,bytes,&departure,error) &&
         qa_campaign_unit_stage(application->campaign_unit,travel->destination,false,reload,departure,&travel->visit,error);
-    qa_campaign_world_release(departure); qa_buffer_free(&bytes);
+    qa_campaign_world_release(departure);
     return ok;
 }
 

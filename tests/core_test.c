@@ -5,6 +5,7 @@
 #include "qa/arena.h"
 #include "qa/binary.h"
 #include "qa/campaign.h"
+#include "qa/recovery.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -311,6 +312,92 @@ static void test_campaign_unit(void)
     qa_campaign_unit_destroy(unit); qa_strings_destroy(strings);
 }
 
+static qa_save_image *recovery_image(uint64_t elapsed, uint8_t value)
+{
+    qa_error error = {0};
+    qa_save_record records[QA_SAVE_PROVIDER];
+    size_t count = 0;
+    for (qa_save_owner_kind kind = QA_SAVE_STRINGS; kind < QA_SAVE_PROVIDER; ++kind) {
+        switch (kind) {
+        case QA_SAVE_CAMPAIGN: case QA_SAVE_CONNECTIONS: case QA_SAVE_PREDICTION:
+        case QA_SAVE_PRESENTATION: case QA_SAVE_AUDIO: case QA_SAVE_INPUT: case QA_SAVE_MEDIA:
+            continue;
+        default: break;
+        }
+        records[count++] = (qa_save_record){.owner = {kind, "", "fixture", ""},
+            .payload = {&value, 1}};
+    }
+    qa_save_metadata metadata = {.purpose = QA_SAVE_RECOVERY, .elapsed_ns = elapsed,
+        .world_generation = 1, .map = "fixture", .game = "fixture"};
+    qa_save_image *image = NULL;
+    CHECK(qa_save_image_create(&metadata, records, count, &image, &error));
+    return image;
+}
+
+static void test_recovery_rotation(void)
+{
+    qa_error error = {0};
+    char directory[] = "/tmp/qa-recovery-XXXXXX";
+    CHECK(mkdtemp(directory));
+    qa_fs_root *root = NULL;
+    CHECK(qa_fs_root_open(directory, &root, &error));
+    qa_save_image *image = recovery_image(0, 73);
+    qa_bytes first, again;
+    CHECK(qa_save_image_encode(image, &first, &error));
+    CHECK(qa_save_image_encode(image, &again, &error));
+    CHECK(first.data == again.data && first.size == again.size);
+    qa_recovery *recovery = NULL;
+    CHECK(qa_recovery_begin(root, "recovery.qdemo", image, &recovery, &error));
+    CHECK(!qa_recovery_checkpoint_due(recovery));
+    CHECK(qa_save_image_destroy_checked(&image, &error));
+    uint8_t payload[16384] = {73};
+    qa_net_protocol_id protocol = {QA_NET_UNIFIED_1, 0, 0};
+    for (unsigned i = 0; i < 256; ++i)
+        CHECK(qa_recovery_append(recovery, QA_DEMO_JOURNAL, 0, protocol,
+            (qa_bytes){payload, sizeof(payload)}, &error));
+    CHECK(qa_recovery_checkpoint_due(recovery));
+    CHECK(qa_recovery_append(recovery, QA_DEMO_ADVANCE, 1, protocol, (qa_bytes){0}, &error));
+    image = recovery_image(1, 47);
+    CHECK(qa_save_image_encode(image, &first, &error));
+    CHECK(qa_recovery_checkpoint(recovery, image, &error));
+    CHECK(!qa_recovery_checkpoint_due(recovery));
+    qa_demo *demo = NULL;
+    CHECK(qa_demo_read(root, "recovery.qdemo", true, &demo, &error));
+    CHECK(qa_demo_record_count(demo) == 1 && qa_demo_start_time(demo) == 1);
+    const qa_demo_record *record = qa_demo_record_at(demo, 0);
+    CHECK(record->payload.size == first.size && !memcmp(record->payload.data, first.data, first.size));
+    qa_demo_destroy(demo);
+    qa_fs_entry_kind kind;
+    qa_fs_identity identity;
+    CHECK(qa_fs_root_status(root, "recovery.qdemo", &kind, &identity, &error));
+    CHECK(qa_fs_identity_size(&identity) == first.size + 84);
+    CHECK(qa_save_image_destroy_checked(&image, &error));
+    uint64_t elapsed = 1;
+    for (unsigned i = 0; i < 16; ++i) {
+        CHECK(qa_recovery_append(recovery, QA_DEMO_ADVANCE, UINT64_C(300000000000),
+            protocol, (qa_bytes){0}, &error));
+        CHECK(qa_recovery_checkpoint_due(recovery));
+        elapsed += UINT64_C(300000000000);
+        image = recovery_image(elapsed, (uint8_t)i);
+        CHECK(qa_recovery_checkpoint(recovery, image, &error));
+        CHECK(qa_save_image_destroy_checked(&image, &error));
+        CHECK(qa_demo_read(root, "recovery.qdemo", true, &demo, &error));
+        CHECK(qa_demo_record_count(demo) == 1 && qa_demo_start_time(demo) == elapsed);
+        qa_demo_destroy(demo);
+    }
+    bool available = false;
+    CHECK(qa_recovery_available(root, "recovery.qdemo", &available, &error) && available);
+    CHECK(!qa_recovery_append(recovery, QA_DEMO_JOURNAL, 0, protocol,
+        (qa_bytes){payload, 8u * 1024u * 1024u}, &error));
+    CHECK(qa_recovery_close_clean(recovery, &error));
+    CHECK(qa_recovery_available(root, "recovery.qdemo", &available, &error) && !available);
+    qa_recovery_destroy(recovery);
+    qa_fs_root_close(root);
+    char path[sizeof(directory) + 32];
+    CHECK(snprintf(path, sizeof(path), "%s/recovery.qdemo", directory) > 0);
+    CHECK(unlink(path) == 0 && rmdir(directory) == 0);
+}
+
 void test_q1_gameplay(void);
 void test_guest(void);
 bool test_recovery_child(int, char **, int *);
@@ -326,6 +413,7 @@ int main(int argc, char **argv)
     test_arena();
     test_files();
     test_campaign_unit();
+    test_recovery_rotation();
     test_q1_gameplay();
     test_guest();
     test_recovery(argv[0]);
