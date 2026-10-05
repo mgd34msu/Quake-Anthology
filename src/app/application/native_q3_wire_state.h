@@ -60,6 +60,11 @@ bool application_native_q3_wire_local_publication(application_provider *, uint32
 bool application_native_q3_bot_snapshot_entity(application_provider *, qa_actor_id,
     int32_t index, int32_t *entity_number, bool *present, qa_error *);
 
+/* Read-only recording observation; never acknowledges or executes a command. */
+bool application_native_q3_wire_record_read(application_provider *,uint32_t,
+    qa_q3_gamestate *optional_state,int32_t *sequence,qa_error *);
+bool application_native_q3_wire_record_command(application_provider *,uint32_t,
+    int32_t,const char **,qa_error *);
 /* Real source observations are copied into the connected transport owner.
  * Neither producer infers source words from canonical actor storage. */
 bool application_native_q3_wire_gamestate(application_provider *, uint32_t,

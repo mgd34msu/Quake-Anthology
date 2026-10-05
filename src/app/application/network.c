@@ -1572,6 +1572,23 @@ bool qa_application_network_q3_client_command(qa_application *app, qa_actor_owne
     qa_command_tokens_free(&role->arguments); role->arguments = copy; return true;
 }
 
+bool qa_application_network_q3_record_read(qa_application *app,qa_actor_id actor,
+    qa_q3_gamestate *state,int32_t *sequence,qa_error *error)
+{
+    uint32_t slot;
+    application_provider *provider=q3_native_actor(app,actor,&slot,error);
+    if(!provider)return application_fail(error,QA_ERROR_UNSUPPORTED,"Local Q3 recording requires its actual native CLIENT wire owner");
+    return application_native_q3_wire_record_read(provider,slot,state,sequence,error);
+}
+bool qa_application_network_q3_record_command(qa_application *app,qa_actor_id actor,
+    int32_t sequence,const char **text,qa_error *error)
+{
+    uint32_t slot;
+    application_provider *provider=q3_native_actor(app,actor,&slot,error);
+    if(!provider)return application_fail(error,QA_ERROR_UNSUPPORTED,"Local Q3 recording requires its actual native CLIENT wire owner");
+    return application_native_q3_wire_record_command(provider,slot,sequence,text,error);
+}
+
 bool qa_application_network_q3_snapshot(qa_application *application, qa_actor_id actor,
     int32_t message, int32_t commands, uint8_t flags,
     qa_application_network_q3_frame *out, qa_error *error)

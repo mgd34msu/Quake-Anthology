@@ -332,6 +332,9 @@ bool frontend_demo_dispatch_execute(frontend_demo_dispatch *d,qa_error *error) {
 bool frontend_demo_dispatch_advance(frontend_demo_dispatch *d,uint64_t elapsed,uint64_t frame,qa_error *error) {
     return !d||frontend_demo_advance(d->service,elapsed,frame,error);
 }
+bool frontend_demo_dispatch_publish(frontend_demo_dispatch *d,qa_error *error) {
+    return !d||frontend_demo_publish(d->service,error);
+}
 bool frontend_demo_dispatch_sources_returned(frontend_demo_dispatch *d,qa_error *error) {
     return !d||frontend_demo_sources_returned(d->service,error);
 }

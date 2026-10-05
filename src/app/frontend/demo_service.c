@@ -692,6 +692,18 @@ static bool sources_returned(frontend_demo_service *s,qa_error *error) {
         okay=record_finish(s,&s->server,true,error);
     return okay;
 }
+bool frontend_demo_publish(frontend_demo_service *s,qa_error *error) {
+    if(!s)return true;
+    if(!frontend_demo_service_idle(s))return fail(error,QA_ERROR_ARGUMENT,"Demo publisher is entered");
+    s->busy=true;
+    bool okay=sources_returned(s,error);
+    demo_recording *owners[]={s->recording,s->server};
+    for(size_t i=0;okay&&i<sizeof(owners)/sizeof(owners[0]);++i) {
+        demo_recording *r=owners[i];
+        if(r&&r->attached&&r->source.publish)okay=r->source.publish(r->source.owner,error);
+    }
+    s->busy=false;return okay;
+}
 bool frontend_demo_sources_returned(frontend_demo_service *s,qa_error *error) {
     if(!s)return true;
     if(!frontend_demo_service_idle(s))return fail(error,QA_ERROR_ARGUMENT,"Demo source callback is entered");

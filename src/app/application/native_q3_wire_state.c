@@ -746,6 +746,37 @@ bool application_native_q3_bot_snapshot_entity(application_provider *provider, q
     return true;
 }
 
+bool application_native_q3_wire_record_read(application_provider *provider,uint32_t slot,
+    qa_q3_gamestate *state,int32_t *sequence,qa_error *error)
+{
+    struct application_native_q3_wire *wire;
+    native_q3_wire_client *client=wire_client(provider,slot,&wire,error);
+    if(!client)return false;
+    if(!sequence||wire->calls||wire->round_pending||!client->begun||client->bot||
+        client->drop_pending||!client->gamestate||!qa_session_safe(provider->application->session))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Native Q3 recording requires its returned local client publication");
+    if(state) {
+        *state=*client->gamestate;
+        for(uint32_t i=0;i<QA_Q3_CONFIGSTRINGS;++i) {
+            const char *text;
+            if(!qa_q3_configstring_read(provider->state.q3,i,&text,error)||
+                !qa_q3_configstring_set(state,i,text,error))return false;
+        }
+        state->command_sequence=client->reliable.sequence;
+    }
+    *sequence=client->reliable.sequence;return true;
+}
+bool application_native_q3_wire_record_command(application_provider *provider,uint32_t slot,
+    int32_t sequence,const char **text,qa_error *error)
+{
+    int32_t latest;
+    if(!text||!application_native_q3_wire_record_read(provider,slot,NULL,&latest,error))return false;
+    if(sequence<=0||sequence>latest||(int64_t)latest-sequence>=QA_Q3_RELIABLE)
+        return application_fail(error,QA_ERROR_FORMAT,"Native Q3 recording command left its actual retained reliable ring");
+    *text=qa_q3_reliable_lookup(&provider->native_q3_wire->clients[slot].reliable,sequence);
+    return true;
+}
+
 bool application_native_q3_wire_gamestate(application_provider *provider, uint32_t slot,
     const qa_q3_gamestate *value, qa_error *error)
 {

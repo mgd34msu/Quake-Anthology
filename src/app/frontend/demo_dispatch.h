@@ -13,6 +13,7 @@ void frontend_demo_dispatch_manual_game(frontend_demo_dispatch *);
 bool frontend_demo_dispatch_stage(frontend_demo_dispatch *,const frontend_demo_request *,qa_error *);
 bool frontend_demo_dispatch_execute(frontend_demo_dispatch *,qa_error *);
 bool frontend_demo_dispatch_advance(frontend_demo_dispatch *,uint64_t elapsed_ns,uint64_t frame,qa_error *);
+bool frontend_demo_dispatch_publish(frontend_demo_dispatch *,qa_error *);
 bool frontend_demo_dispatch_sources_returned(frontend_demo_dispatch *,qa_error *);
 bool frontend_demo_dispatch_capture_ready(const frontend_demo_dispatch *,qa_error *);
 bool frontend_demo_dispatch_stop(frontend_demo_dispatch *,qa_error *);

@@ -213,6 +213,13 @@ bool qa_application_network_q3_round_world(qa_application *, qa_actor_owner sour
 bool qa_application_network_q3_round_prepare(qa_application *, qa_actor_owner source_owner,
     int32_t server_id, int32_t restarted_server_id, int32_t checksum_feed,
     const qa_application_network_q3_package_view *, qa_q3_server_world *, qa_error *);
+/* Observe the actual native local CLIENT seed and retained reliable commands.
+ * A NULL state reads only the current command ordinal. Borrowed command text
+ * lasts until the next Source mutation; neither call acknowledges or executes. */
+bool qa_application_network_q3_record_read(qa_application *,qa_actor_id,
+    qa_q3_gamestate *optional_state,int32_t *sequence,qa_error *);
+bool qa_application_network_q3_record_command(qa_application *,qa_actor_id,
+    int32_t,const char **,qa_error *);
 bool qa_application_network_q3_snapshot(qa_application *, qa_actor_id,
     int32_t message_number, int32_t server_command_number, uint8_t flags,
     qa_application_network_q3_frame *, qa_error *);

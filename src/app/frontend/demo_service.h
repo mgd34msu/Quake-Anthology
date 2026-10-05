@@ -57,6 +57,9 @@ typedef struct frontend_demo_record_source {
      * source. It must replace its real receiver and record that receiver's signon. */
     bool (*reconnect)(void *, const qa_command_context *, const frontend_demo_sink *,
         bool *attached, qa_error *);
+    /* Local Source publishers use this same sink after their completed frame.
+     * Accepted remote packets already feed the sink at the receiver boundary. */
+    bool (*publish)(void *, qa_error *);
     bool (*release)(void **, qa_error *);
 } frontend_demo_record_source;
 typedef struct frontend_demo_playback_source {
@@ -112,6 +115,8 @@ bool frontend_demo_execute(frontend_demo_service *, qa_error *);
 bool frontend_demo_advance(frontend_demo_service *, uint64_t elapsed_ns, uint64_t frame, qa_error *);
 /* Detach returned retired/faulted feeds without advancing a playback clock. */
 bool frontend_demo_sources_returned(frontend_demo_service *,qa_error *);
+/* Runs only actual attached local Source feeds, before Source events retire. */
+bool frontend_demo_publish(frontend_demo_service *,qa_error *);
 bool frontend_demo_service_idle(const frontend_demo_service *);
 bool frontend_demo_service_pending(const frontend_demo_service *);
 bool frontend_demo_service_active(const frontend_demo_service *);
