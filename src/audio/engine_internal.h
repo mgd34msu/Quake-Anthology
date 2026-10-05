@@ -34,7 +34,6 @@ struct qa_audio_engine {
     qa_audio_q3_operation *q3_operations;
     size_t q3_first, q3_count, q3_capacity;
     float *sum, *seat_scratch;
-    int16_t *pcm_scratch;
     uint64_t clock, next_voice;
     double milliseconds;
     float effects_gain, music_gain;

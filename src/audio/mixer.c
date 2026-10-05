@@ -1562,14 +1562,58 @@ static bool issue_scheduled(qa_audio_mixer *mixer, qa_error *error) {
     }
 }
 
-static void paint_effect(double *paint, size_t frame, double sample, qa_mixer_gain gain,
-                         double effects) {
-    paint[frame * 2] += floor(sample * (gain.left * effects) / 256);
-    paint[frame * 2 + 1] += floor(sample * (gain.right * effects) / 256);
+/* The Source accumulators contain integral 24.8 contributions. Bound the
+ * complete block before choosing integer storage: arbitrary static gains remain
+ * valid, and their exceptional double arithmetic must not overflow a C cast. */
+static bool integer_paint(const qa_audio_mixer *mixer, double effects) {
+    double bound = 0;
+    for (size_t i = 0; i < mixer->voice_count; ++i) {
+        const qa_mixer_voice *voice = &mixer->voices[i];
+        if (voice->state == QA_MIXER_STARTED)
+            bound += fmax(fabs(voice->gain.left * effects), fabs(voice->gain.right * effects)) + 1;
+    }
+    for (size_t i = 0; i < mixer->loop_mix_count; ++i) {
+        const qa_mixer_loop_mix *loop = &mixer->loop_mixes[i];
+        bound += fmax(fabs(loop->gain.left * effects), fabs(loop->gain.right * effects)) + 1;
+    }
+    /* Below this bound, all sums (including raw int32 samples) are exactly
+     * representable by the previous double accumulator as well as int64. */
+    return bound <= 0x1p45;
+}
+
+static int64_t source_shift(int64_t value) {
+    return value / 256 - (value % 256 < 0);
+}
+
+static void add_paint(qa_audio_mixer *mixer, size_t index, double value, bool integer) {
+    if (integer)
+        mixer->paint.integer[index] += (int64_t)value;
+    else
+        mixer->paint.wide[index] += value;
+}
+
+static void paint_samples(qa_audio_mixer *mixer, size_t frame, const int16_t *samples,
+                          size_t count, qa_mixer_gain gain, double effects, bool integer) {
+    double left = gain.left * effects, right = gain.right * effects;
+    if (integer && fabs(left) <= 0x1p38 && fabs(right) <= 0x1p38 &&
+        trunc(left) == left && trunc(right) == right) {
+        int64_t lvol = (int64_t)left, rvol = (int64_t)right;
+        int64_t *paint = mixer->paint.integer + frame * 2;
+        for (size_t i = 0; i < count; ++i) {
+            paint[i * 2] += source_shift((int64_t)samples[i] * lvol);
+            paint[i * 2 + 1] += source_shift((int64_t)samples[i] * rvol);
+        }
+    } else {
+        /* Ambient fades and extreme scales retain their actual precision. */
+        for (size_t i = 0; i < count; ++i) {
+            add_paint(mixer, (frame + i) * 2, floor(samples[i] * left / 256), integer);
+            add_paint(mixer, (frame + i) * 2 + 1, floor(samples[i] * right / 256), integer);
+        }
+    }
 }
 
 static void paint_voice(qa_audio_mixer *mixer, const qa_mixer_voice *voice, size_t count,
-                        double effects) {
+                        double effects, bool integer) {
     if (voice->state != QA_MIXER_STARTED || (voice->gain.left == 0 && voice->gain.right == 0))
         return;
     size_t frame = 0;
@@ -1588,15 +1632,14 @@ static void paint_voice(qa_audio_mixer *mixer, const qa_mixer_voice *voice, size
         size_t span = count - frame;
         if (length - offset < span) span = (size_t)(length - offset);
         const int16_t *samples = voice->prepared->pcm->samples + (size_t)offset;
-        for (size_t i = 0; i < span; ++i)
-            paint_effect(mixer->paint, frame + i, samples[i], voice->gain, effects);
+        paint_samples(mixer, frame, samples, span, voice->gain, effects, integer);
         frame += span;
         offset += span;
     }
 }
 
 static void paint_wide_doppler(qa_audio_mixer *mixer, const qa_mixer_loop_mix *loop, size_t output,
-                               size_t count, uint64_t source, double effects) {
+                               size_t count, uint64_t source, double effects, bool integer) {
     const qa_mixer_prepared *prepared = loop->prepared;
     size_t period = prepared->doppler_period;
     const double *sums = prepared->doppler_sums;
@@ -1611,16 +1654,18 @@ static void paint_wide_doppler(qa_audio_mixer *mixer, const qa_mixer_loop_mix *l
         double tail = sums[last < period ? last : period] - sums[first] +
                       (last > period ? sums[last - period] : 0);
         double average = (cycle_total + tail) / (cycle_samples + (double)last - (double)first);
-        mixer->paint[(output + frame) * 2] += trunc(average * loop->gain.left * effects / 256);
-        mixer->paint[(output + frame) * 2 + 1] += trunc(average * loop->gain.right * effects / 256);
+        add_paint(mixer, (output + frame) * 2,
+                  trunc(average * loop->gain.left * effects / 256), integer);
+        add_paint(mixer, (output + frame) * 2 + 1,
+                  trunc(average * loop->gain.right * effects / 256), integer);
         offset = fmod(end, (double)period);
     }
 }
 
 static void paint_doppler(qa_audio_mixer *mixer, const qa_mixer_loop_mix *loop, size_t output,
-                          size_t count, uint64_t source, double effects) {
+                          size_t count, uint64_t source, double effects, bool integer) {
     if (loop->doppler_scale > QA_MIXER_CHUNK_FRAMES) {
-        paint_wide_doppler(mixer, loop, output, count, source, effects);
+        paint_wide_doppler(mixer, loop, output, count, source, effects, integer);
         return;
     }
     const qa_mixer_prepared *prepared = loop->prepared;
@@ -1645,8 +1690,8 @@ static void paint_doppler(qa_audio_mixer *mixer, const qa_mixer_loop_mix *loop, 
         }
         float divisor = (float)(256u * (last - first));
         float lvalue = total * left, rvalue = total * right;
-        mixer->paint[(output + frame) * 2] += truncf(lvalue / divisor);
-        mixer->paint[(output + frame) * 2 + 1] += truncf(rvalue / divisor);
+        add_paint(mixer, (output + frame) * 2, truncf(lvalue / divisor), integer);
+        add_paint(mixer, (output + frame) * 2 + 1, truncf(rvalue / divisor), integer);
     }
 }
 
@@ -1659,7 +1704,7 @@ static uint64_t positive_modulo(int64_t time, uint64_t period) {
 }
 
 static void paint_loop(qa_audio_mixer *mixer, const qa_mixer_loop_mix *loop, size_t frames,
-                       double effects) {
+                       double effects, bool integer) {
     size_t output = 0;
     while (output < frames) {
         int64_t absolute = mixer->paint_time + (int64_t)output;
@@ -1672,11 +1717,10 @@ static void paint_loop(qa_audio_mixer *mixer, const qa_mixer_loop_mix *loop, siz
         if (loop->prepared->pcm->frame_count - source < count)
             count = (size_t)(loop->prepared->pcm->frame_count - source);
         if (mixer->doppler_enabled && loop->doppler && loop->doppler_scale != 1)
-            paint_doppler(mixer, loop, output, count, source, effects);
+            paint_doppler(mixer, loop, output, count, source, effects, integer);
         else
-            for (size_t frame = 0; frame < count; frame++)
-                paint_effect(mixer->paint, output + frame,
-                             effect_sample(loop->prepared, source + frame), loop->gain, effects);
+            paint_samples(mixer, output, loop->prepared->pcm->samples + (size_t)source,
+                          count, loop->gain, effects, integer);
         output += count;
     }
 }
@@ -1690,11 +1734,13 @@ static int16_t clipped_sample(double sample) {
     return isfinite(sample) ? (int16_t)sample : 0;
 }
 
-static bool paint_range(qa_audio_mixer *mixer, int64_t start, int16_t *stereo, size_t frames,
-                        bool consume, qa_error *error) {
+static bool paint_range(qa_audio_mixer *mixer, int64_t start, int16_t *stereo, float *floating,
+                        size_t frames, bool consume, qa_error *error) {
     if (!allow_mutation(mixer, error))
         return false;
-    if ((frames && !stereo) || frames > SIZE_MAX / (2 * sizeof(*stereo)) || frames > INT64_MAX ||
+    size_t sample_size = floating ? sizeof(*floating) : sizeof(*stereo);
+    if ((frames && !stereo && !floating) || frames > SIZE_MAX / (2 * sample_size) ||
+        frames > INT64_MAX ||
         (uint64_t)frames > (uint64_t)INT64_MAX - (uint64_t)start)
         return mixer_error(error, QA_ERROR_ARGUMENT, "Invalid audio paint range");
     int64_t end = start + (int64_t)frames;
@@ -1723,28 +1769,43 @@ static bool paint_range(qa_audio_mixer *mixer, int64_t start, int16_t *stereo, s
                     count = (size_t)until;
             }
         }
-        memset(mixer->paint, 0, count * 2 * sizeof(*mixer->paint));
+        bool integer = integer_paint(mixer, effects);
+        memset(&mixer->paint, 0, count * 2 * sizeof(int64_t));
         for (size_t frame = 0; frame < count; frame++) {
             int64_t absolute = mixer->paint_time + (int64_t)frame;
             if (absolute >= mixer->raw_end)
                 break;
             size_t index = (uint64_t)absolute & (QA_MIXER_RAW_FRAMES - 1);
-            mixer->paint[frame * 2] = mixer->raw[index * 2];
-            mixer->paint[frame * 2 + 1] = mixer->raw[index * 2 + 1];
+            add_paint(mixer, frame * 2, mixer->raw[index * 2], integer);
+            add_paint(mixer, frame * 2 + 1, mixer->raw[index * 2 + 1], integer);
         }
         for (size_t i = 0; i < mixer->voice_count; i++)
-            paint_voice(mixer, &mixer->voices[i], count, effects);
+            paint_voice(mixer, &mixer->voices[i], count, effects, integer);
         for (size_t i = 0; i < mixer->loop_mix_count; i++)
-            paint_loop(mixer, &mixer->loop_mixes[i], count, effects);
+            paint_loop(mixer, &mixer->loop_mixes[i], count, effects, integer);
         if (setting(mixer, "s_testsound"))
             for (size_t frame = 0; frame < count; frame++) {
                 double value =
                     trunc(sin((double)(mixer->paint_time + (int64_t)frame) * 0.1) * 20000 * 256);
-                mixer->paint[frame * 2] = value;
-                mixer->paint[frame * 2 + 1] = value;
+                if (integer)
+                    mixer->paint.integer[frame * 2] =
+                        mixer->paint.integer[frame * 2 + 1] = (int64_t)value;
+                else
+                    mixer->paint.wide[frame * 2] = mixer->paint.wide[frame * 2 + 1] = value;
             }
-        for (size_t sample = 0; sample < count * 2; sample++)
-            stereo[output * 2 + sample] = clipped_sample(mixer->paint[sample]);
+        for (size_t sample = 0; sample < count * 2; sample++) {
+            int16_t value;
+            if (integer) {
+                int64_t shifted = source_shift(mixer->paint.integer[sample]);
+                value = shifted > INT16_MAX ? INT16_MAX
+                        : shifted < INT16_MIN ? INT16_MIN : (int16_t)shifted;
+            } else
+                value = clipped_sample(mixer->paint.wide[sample]);
+            if (floating)
+                floating[output * 2 + sample] = value;
+            else
+                stereo[output * 2 + sample] = value;
+        }
         mixer->paint_time += (int64_t)count;
         output += count;
         for (size_t i = 0; i < mixer->voice_count; i++) {
@@ -1760,12 +1821,16 @@ static bool paint_range(qa_audio_mixer *mixer, int64_t start, int16_t *stereo, s
 }
 
 bool qa_audio_mixer_mix(qa_audio_mixer *mixer, int16_t *stereo, size_t frames, qa_error *error) {
-    return paint_range(mixer, mixer ? mixer->paint_time : 0, stereo, frames, true, error);
+    return paint_range(mixer, mixer ? mixer->paint_time : 0, stereo, NULL, frames, true, error);
+}
+
+bool qa_audio_mixer_mix_float(qa_audio_mixer *mixer, float *stereo, size_t frames, qa_error *error) {
+    return paint_range(mixer, mixer ? mixer->paint_time : 0, NULL, stereo, frames, true, error);
 }
 
 bool qa_audio_mixer_paint(qa_audio_mixer *mixer, int64_t start_frame, int16_t *stereo,
                           size_t frames, qa_error *error) {
-    return paint_range(mixer, start_frame, stereo, frames, false, error);
+    return paint_range(mixer, start_frame, stereo, NULL, frames, false, error);
 }
 
 bool qa_audio_mixer_rebase(qa_audio_mixer *mixer, uint64_t delivered_frame, qa_error *error) {

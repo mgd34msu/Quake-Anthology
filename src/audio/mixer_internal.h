@@ -102,7 +102,10 @@ struct qa_audio_mixer {
     size_t event_count, event_capacity, event_free_count, event_free, event_head, event_tail;
     char *diagnostic_message;
     size_t diagnostic_capacity;
-    double paint[QA_MIXER_PAINT_FRAMES * 2];
+    union {
+        int64_t integer[QA_MIXER_PAINT_FRAMES * 2];
+        double wide[QA_MIXER_PAINT_FRAMES * 2];
+    } paint;
     int32_t raw[QA_MIXER_RAW_FRAMES * 2];
     uint64_t next_voice, schedule_order;
     int64_t paint_time, sound_time, raw_end;
@@ -113,6 +116,9 @@ struct qa_audio_mixer {
     bool round_locked, round_destroy_requested;
     uint32_t random_state;
 };
+
+/* Float destination for the engine DSP, with the same Source shift/clipping as PCM. */
+bool qa_audio_mixer_mix_float(qa_audio_mixer *, float *, size_t, qa_error *);
 
 bool qa_audio_mixer_round_lock(qa_audio_mixer *, qa_error *);
 void qa_audio_mixer_round_stop(qa_audio_mixer *);

@@ -183,8 +183,7 @@ bool qa_audio_engine_create(const qa_audio_engine_options *options, qa_audio_eng
     engine->doppler = true;
     engine->sum = malloc(frames * 2 * sizeof(float));
     engine->seat_scratch = malloc(frames * 2 * sizeof(float));
-    engine->pcm_scratch = malloc(frames * 2 * sizeof(int16_t));
-    if (!engine->sum || !engine->seat_scratch || !engine->pcm_scratch) {
+    if (!engine->sum || !engine->seat_scratch) {
         qa_audio_engine_destroy(engine);
         return fail(error, QA_ERROR_MEMORY, "Audio scratch allocation failed");
     }
@@ -220,7 +219,6 @@ void qa_audio_engine_destroy(qa_audio_engine *engine) {
     free(engine->q3_operations);
     free(engine->sum);
     free(engine->seat_scratch);
-    free(engine->pcm_scratch);
     free(engine);
 }
 static bool listeners_impl(qa_audio_engine *engine, const qa_audio_listener *listeners,
@@ -700,10 +698,8 @@ static bool mix_impl(qa_audio_engine *engine, int16_t *stereo, size_t frames, qa
         memset(engine->sum, 0, count * 2 * sizeof(float));
         for (size_t i = 0; i < engine->seat_count; i++) {
             audio_seat *seat = engine->seats[i];
-            if (!qa_audio_mixer_mix(seat->mixer, engine->pcm_scratch, count, error))
+            if (!qa_audio_mixer_mix_float(seat->mixer, engine->seat_scratch, count, error))
                 return false;
-            for (size_t j = 0; j < count * 2; j++)
-                engine->seat_scratch[j] = engine->pcm_scratch[j];
             const qa_audio_reverb_params *params =
                 seat->environment ? qa_audio_environment_params(seat->environment) : NULL;
             if (params)
