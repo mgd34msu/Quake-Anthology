@@ -1003,17 +1003,27 @@ static double spawn_random(void *context)
     qa_application *application = context;
     return qa_builtin_random_unit(&application->random);
 }
+static bool q1_spawn_eligible(void *context, qa_actor_id point)
+{
+    return qa_q1_game_map_spawn_eligible(context, point);
+}
 
 static bool create_q1_selector_options(qa_application *application,
                                struct application_player_roster *roster,
                                const qa_q1_options *source_options,
                                qa_error *error)
 {
+    bool progressive_coop = source_options->coop &&
+        roster->map_provider->kind == APPLICATION_PROVIDER_Q1 &&
+        (source_options->program == QA_Q1_MG1 || source_options->program == QA_Q1_MG3);
     roster->q1_selector = qa_q1_spawn_selector_create(&(qa_q1_spawn_options){
         .services = application_builtin_services(application, application->world, application->physics),
         .server_flags = &roster->map_provider->q1_server_flags,
         .rerelease = source_options->edition == QA_Q1_RERELEASE,
         .coop = source_options->coop,
+        .cycle_coop = progressive_coop,
+        .point_context = progressive_coop ? roster->map_provider->state.q1 : NULL,
+        .point_eligible = progressive_coop ? q1_spawn_eligible : NULL,
         .deathmatch = source_options->deathmatch, .context = application, .random = spawn_random}, error);
     return roster->q1_selector != NULL;
 }
@@ -2395,7 +2405,9 @@ static bool q1_finish_first_spawn(qa_application *app, const qa_launch_choices *
     uint64_t source_time;
     double seconds;
     size_t ordinal;
-    if (!qa_q1_source_current_ammo_select(source->state.q1, actor, error) ||
+    if (!qa_q1_game_map_coop_spawn_grant(source->state.q1, actor, point, error) ||
+        !q1_player_current(app, source, character, arsenal, actor, begun, &ordinal, error) ||
+        !qa_q1_source_current_ammo_select(source->state.q1, actor, error) ||
         !q1_spawn_overlap(app, source, character, arsenal, actor, begun, error)) return false;
     receiver = qa_actors_get(qa_session_actors(app->session), point);
     if (!receiver || receiver->owner != source->owner)
@@ -2434,7 +2446,8 @@ bool application_players_native_q1_respawn(qa_application *app,
     bool found;
     if (!qa_world_body_read(app->world, actor, &body, error)) return false;
     qa_body_state standing = body;
-    if (!spawn_pose(app, ordinal, force, &body, &found, NULL, error) ||
+    qa_actor_id point = {0};
+    if (!spawn_pose(app, ordinal, force, &body, &found, &point, error) ||
         !q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
     if (!found) return true;
     body.bounds = qa_movement_input_default(character->component.clock.kind == QA_CLOCK_Q3
@@ -2487,7 +2500,9 @@ bool application_players_native_q1_respawn(qa_application *app,
         .contents = family == QA_COLLISION_Q1 ? -2 : 0x2000000, .role = QA_COLLISION_SOLID};
     if (!qa_world_set_collision(app->world, actor, &collision, error) ||
         !qa_world_link(app->world, actor, NULL, error)) return false;
-    if (!qa_q1_source_current_ammo_select(source->state.q1, actor, error) ||
+    if (!qa_q1_game_map_coop_spawn_grant(source->state.q1, actor, point, error) ||
+        !q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error) ||
+        !qa_q1_source_current_ammo_select(source->state.q1, actor, error) ||
         !q1_spawn_overlap(app, source, character, arsenal, actor, true, error)) return false;
     if (!source->q1_level)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 respawn lost its actual level-rule owner");

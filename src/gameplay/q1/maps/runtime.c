@@ -348,14 +348,22 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
     }
     if (entity->map && !strcmp(key, "state")) {
         bool moving = q1_map_is_mover(entity->map->kind) || q1_map_is_rogue_plat(entity->map->kind);
-        if (!moving)
-            return false;
+        if (!moving) {
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                     .value.number = entity->map->field_state};
+            return true;
+        }
         static const char *const states[] = {"bottom", "up", "top", "down"};
         qa_string_id value;
         if (!qa_strings_intern_cstr(qa_session_strings(g->services.session),
                                     states[entity->map->pending.mover.position], &value, NULL))
             return false;
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = value};
+        return true;
+    }
+    if (entity->map && entity->map->kind == Q1_MAP_COOP_POINT && !strcmp(key, "items")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                 .value.number = entity->map->coop_weapons};
         return true;
     }
     if (entity->map &&
@@ -1068,7 +1076,8 @@ static q1_map_kind classify(const char *name) {
                    {"info_player_start", Q1_MAP_POINT},
                    {"info_player_start_hub", Q1_MAP_POINT},
                    {"info_player_start2", Q1_MAP_POINT},
-                   {"info_player_coop", Q1_MAP_POINT},
+                   {"info_player_coop", Q1_MAP_COOP_POINT},
+                   {"trigger_activate_coop_spawns", Q1_MAP_COOP_ACTIVATE},
                    {"info_player_deathmatch", Q1_MAP_POINT},
                    {"info_intermission", Q1_MAP_POINT},
                    {"info_notnull", Q1_MAP_POINT},
@@ -1138,6 +1147,12 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         kind = Q1_MAP_ROGUE_LAMP;
     bool addon = g->options.program == QA_Q1_DOPA || g->options.program == QA_Q1_MG1 ||
                  g->options.program == QA_Q1_MG3;
+    if (g->options.program != QA_Q1_MG1 && g->options.program != QA_Q1_MG3) {
+        if (kind == Q1_MAP_COOP_POINT)
+            kind = Q1_MAP_POINT;
+        else if (kind == Q1_MAP_COOP_ACTIVATE)
+            kind = Q1_MAP_FIELDS;
+    }
     if (!addon && (q1_map_is_addon_effect(kind) || q1_map_is_fog(kind)))
         kind = Q1_MAP_FIELDS;
     if (g->options.program != QA_Q1_MG3 && q1_map_is_addon_control(kind))

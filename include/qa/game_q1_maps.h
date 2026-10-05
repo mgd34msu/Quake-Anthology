@@ -187,6 +187,11 @@ bool qa_q1_game_map_observer_passage(qa_q1_game *, qa_actor_id observer, qa_acto
 bool qa_q1_game_map_after_physics(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_game_map_intermission_input(qa_q1_game *, qa_actor_id, bool pressed, bool *handled,
                                         qa_error *);
+bool qa_q1_game_map_spawn_eligible(qa_q1_game *, qa_actor_id);
+bool qa_q1_game_map_coop_spawn_grant(qa_q1_game *, qa_actor_id player, qa_actor_id point,
+                                    qa_error *);
+bool qa_q1_game_coop_weapons_read(qa_q1_game *, qa_actor_id, uint32_t *, qa_error *);
+bool qa_q1_game_coop_weapons_grant(qa_q1_game *, qa_actor_id, uint32_t, qa_error *);
 /* Player frame extension; attack_finished is expressed on this source clock.
  * Native same-provider Q1 prethink calls this. The application supplies the
  * selected arsenal cooldown for other provider/family selections. */

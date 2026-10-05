@@ -118,9 +118,11 @@ typedef struct qa_q1_spawn_rule {
 typedef struct qa_q1_spawn_options {
     qa_builtin_services services;
     uint32_t *server_flags;
-    bool rerelease, coop, deathmatch;
+    bool rerelease, coop, deathmatch, cycle_coop;
     void *context;
     double (*random)(void *);
+    void *point_context;
+    bool (*point_eligible)(void *, qa_actor_id);
     const qa_q1_spawn_rule *rules;
     size_t rule_count;
 } qa_q1_spawn_options;

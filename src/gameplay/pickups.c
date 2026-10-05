@@ -1086,7 +1086,7 @@ bool qa_supply_owns(qa_supply *supply, qa_actor_id actor, qa_item_id item, bool 
     if (!supply_available(supply, e)) return false;
     supply_enter(supply);
     const qa_supply_mapping *mapping = supply_current(supply, actor, e) ? destinations(supply, item, true, e) : NULL;
-    bool ok = mapping != NULL, all = true;
+    bool ok = mapping != NULL, all = mapping && mapping->count != 0;
     for (size_t i = 0; ok && i < mapping->count; ++i) {
         qa_inventory_entry entry;
         qa_error read_error = {0};

@@ -102,6 +102,7 @@ bool q1_save_map(q1_save_io *io, q1_map_state *m, q1_door_group **groups, size_t
     Q1_SAVE(io, i32, m->color_map);
     Q1_SAVE(io, i32, m->impulse);
     Q1_SAVE(io, u32, m->inline_model);
+    Q1_SAVE(io, u32, m->coop_weapons);
     Q1_SAVE(io, float, m->counter_value);
     Q1_SAVE(io, float, m->goal_state);
     Q1_SAVE(io, float, m->field_state);

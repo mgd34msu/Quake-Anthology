@@ -143,6 +143,8 @@ typedef enum q1_map_kind {
     Q1_MAP_ADDON_HEALTH_RELAY,
     Q1_MAP_RUNE_INDICATOR,
     Q1_MAP_SIGIL_FIXER,
+    Q1_MAP_COOP_POINT,
+    Q1_MAP_COOP_ACTIVATE,
     Q1_MAP_ADDON_DOOR_RELAY,
     Q1_MAP_ADDON_DOOR_GROUP,
     Q1_MAP_ADDON_LORE,
@@ -363,7 +365,7 @@ struct q1_map_state {
     float height, lip, width, length, pause_time, volume, duration, distance, initial_think;
     float spawn_multi, spawn_silent, gravity, current_ammo, weapon, frags;
     int32_t sounds, style, color_map, impulse;
-    uint32_t inline_model;
+    uint32_t inline_model, coop_weapons;
     float counter_value, field_state, goal_state;
     int32_t particle_color;
     double cooldown, active_until;
@@ -501,7 +503,8 @@ bool q1_map_addon_fog_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_addon_fog_activate(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 static inline bool q1_map_is_addon_campaign(q1_map_kind kind) {
     return kind == Q1_MAP_RUNE_INDICATOR || kind == Q1_MAP_SIGIL_FIXER ||
-           kind == Q1_MAP_ELECTRODE_TARGET || kind == Q1_MAP_EGG_OPENER;
+           kind == Q1_MAP_ELECTRODE_TARGET || kind == Q1_MAP_EGG_OPENER ||
+           kind == Q1_MAP_COOP_POINT || kind == Q1_MAP_COOP_ACTIVATE;
 }
 static inline bool q1_map_campaign_action_matches(q1_map_kind kind, q1_map_action action) {
     return action == Q1_MAP_CAMPAIGN_USE_TARGETS

@@ -5,6 +5,55 @@ static q1_actor *campaign_actor(qa_q1_game *g, qa_actor_id id) {
     q1_actor *e = q1_entity(g, id);
     return e && e->map ? e : NULL;
 }
+static const float Q1_COOP_SPAWN_ACTIVE = 73;
+bool qa_q1_game_map_spawn_eligible(qa_q1_game *g, qa_actor_id actor) {
+    q1_actor *point = q1_entity(g, actor);
+    return point && (!point->map || point->map->kind != Q1_MAP_COOP_POINT ||
+                     point->map->field_state == Q1_COOP_SPAWN_ACTIVE);
+}
+bool qa_q1_game_map_coop_spawn_grant(qa_q1_game *g, qa_actor_id actor, qa_actor_id point,
+                                     qa_error *error) {
+    if (!g->options.coop ||
+        (g->options.program != QA_Q1_MG1 && g->options.program != QA_Q1_MG3))
+        return true;
+    q1_actor *source = q1_entity(g, point);
+    if (!source || !source->map)
+        return q1_map_fail(error, "Q1 cooperative spawn lost its actual authored point");
+    uint32_t weapons = source->map->kind == Q1_MAP_COOP_POINT ? source->map->coop_weapons : 0;
+    return qa_q1_game_coop_weapons_grant(g, actor, weapons, error);
+}
+static bool activate_coop_spawns(qa_q1_game *g, q1_actor *e, qa_error *error) {
+    qa_actor_id id = e->id;
+    qa_string_id target = e->target;
+    qa_builtin_snapshot_frame *players;
+    if (!q1_snapshot_players(g, &players, error))
+        return false;
+    uint32_t weapons = 0;
+    bool okay = true;
+    for (size_t i = 0; okay && i < players->snapshot.count && q1_alive(g, id); ++i) {
+        qa_actor_id player = players->snapshot.ids[i];
+        if (!q1_alive(g, player))
+            continue;
+        uint32_t owned;
+        okay = qa_q1_game_coop_weapons_read(g, player, &owned, error);
+        if (okay)
+            weapons |= owned;
+    }
+    qa_builtin_snapshot_release(players);
+    if (!okay || !q1_alive(g, id))
+        return okay;
+    qa_target_cursor cursor = {0};
+    qa_actor_id actor;
+    while (qa_targets_next_authored(g->maps->options.targets, "info_player_coop", &cursor, &actor)) {
+        q1_actor *point = campaign_actor(g, actor);
+        if (!point || point->map->kind != Q1_MAP_COOP_POINT)
+            continue;
+        bool active = point->targetname == target;
+        point->map->field_state = active ? Q1_COOP_SPAWN_ACTIVE : 0;
+        point->map->coop_weapons = active ? weapons : 0;
+    }
+    return true;
+}
 bool q1_map_addon_sigil_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     bool mg3 = g->options.program == QA_Q1_MG3;
     uint32_t spawned = mg3 ? e->spawnflags & 128u : 0;
@@ -140,6 +189,19 @@ static bool indicator_model(qa_q1_game *g, q1_actor *e, qa_error *error) {
 bool q1_map_addon_campaign_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;
     switch (e->map->kind) {
+    case Q1_MAP_COOP_POINT:
+        if (!g->options.coop)
+            return q1_remove(g, e, error);
+        if (!qa_builtin_resource(&g->services, "info_player_coop", &e->map->netname, error))
+            return false;
+        if (!e->targetname || (e->spawnflags & 1u))
+            e->map->field_state = Q1_COOP_SPAWN_ACTIVE;
+        return true;
+    case Q1_MAP_COOP_ACTIVATE:
+        if (!g->options.coop)
+            return q1_remove(g, e, error);
+        e->map->use_enabled = true;
+        return true;
     case Q1_MAP_RUNE_INDICATOR: {
         bool active = (e->spawnflags & 64) != 0;
         e->spawnflags &= ~64u;
@@ -168,6 +230,8 @@ bool q1_map_addon_campaign_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
 }
 bool q1_map_addon_campaign_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator,
                                qa_error *error) {
+    if (e->map->kind == Q1_MAP_COOP_ACTIVATE)
+        return activate_coop_spawns(g, e, error);
     if (e->map->kind == Q1_MAP_EGG_OPENER) {
         qa_actor_id id = e->id;
         qa_builtin_snapshot_frame *targets;

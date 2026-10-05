@@ -264,6 +264,85 @@ static bool supply(qa_q1_game *g, qa_actor_id actor, qa_supply **out, qa_error *
     *out = selected ? selected : g->source_supply;
     return true;
 }
+enum { Q1_COOP_WEAPONS = 0x10ff };
+static bool coop_weapons_read(qa_q1_game *g, qa_supply *selected, qa_actor_id actor,
+                               uint32_t *out, qa_error *error) {
+    *out = 0;
+    for (unsigned shift = 0; shift <= 12; ++shift) {
+        uint32_t bit = UINT32_C(1) << shift;
+        qa_q1_weapon weapon;
+        if (!(bit & Q1_COOP_WEAPONS) || !qa_q1_weapon_source(g->options.program, bit, &weapon))
+            continue;
+        bool owned;
+        if (!qa_supply_owns(selected, actor, g->weapons[weapon], &owned, error))
+            return false;
+        if (owned)
+            *out |= bit;
+    }
+    return true;
+}
+bool qa_q1_game_coop_weapons_read(qa_q1_game *g, qa_actor_id actor, uint32_t *out,
+                                  qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    qa_supply *selected;
+    bool okay = supply(g, actor, &selected, error) &&
+                coop_weapons_read(g, selected, actor, out, error);
+    qa_q1_game_operation_end(&operation);
+    return okay;
+}
+static bool coop_ammo_quantity(void *context, const qa_inventory_entry *entry,
+                                 qa_supply_quantity *out, qa_error *error) {
+    (void)entry;
+    (void)error;
+    *out = (qa_supply_quantity){.amount = *(const double *)context, .exact = true,
+                                .accepted = true};
+    return true;
+}
+bool qa_q1_game_coop_weapons_grant(qa_q1_game *g, qa_actor_id actor, uint32_t weapons,
+                                   qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    qa_supply *selected;
+    bool okay = supply(g, actor, &selected, error);
+    for (unsigned shift = 0; okay && shift <= 12; ++shift) {
+        uint32_t bit = UINT32_C(1) << shift;
+        qa_q1_weapon weapon;
+        if (!(bit & weapons & Q1_COOP_WEAPONS) ||
+            !qa_q1_weapon_source(g->options.program, bit, &weapon))
+            continue;
+        qa_supply_offer offer = {.kind = QA_SUPPLY_WEAPON, .item = g->weapons[weapon]};
+        qa_supply_options options = {.selection = QA_PICKUP_SWITCH_NEVER};
+        bool accepted;
+        okay = qa_supply_apply(selected, actor, &offer, &options, &accepted, error);
+    }
+    uint32_t owned = 0;
+    if (okay)
+        okay = coop_weapons_read(g, selected, actor, &owned, error);
+    static const struct {
+        uint32_t weapons;
+        qa_q1_ammo ammo;
+        double amount;
+    } starting_ammo[] = {{4u | 8u, QA_Q1_NAILS, 30},
+                        {16u | 32u, QA_Q1_ROCKETS, 4},
+                        {64u, QA_Q1_CELLS, 12}};
+    for (size_t i = 0; okay && i < sizeof(starting_ammo) / sizeof(*starting_ammo); ++i) {
+        if (!(owned & starting_ammo[i].weapons))
+            continue;
+        double amount = starting_ammo[i].amount;
+        qa_pickup_grant grant = {.item = g->ammo[starting_ammo[i].ammo], .amount = amount};
+        qa_supply_offer offer = {.kind = QA_SUPPLY_AMMO, .ammo = &grant, .ammo_count = 1};
+        qa_supply_options options = {.selection = QA_PICKUP_SWITCH_NEVER,
+                                      .quantity = coop_ammo_quantity,
+                                      .quantity_context = &amount};
+        bool accepted;
+        okay = qa_supply_apply(selected, actor, &offer, &options, &accepted, error);
+    }
+    qa_q1_game_operation_end(&operation);
+    return okay;
+}
 static bool weapon_leave(const qa_q1_game *g) {
     bool mission = g->options.program == QA_Q1_HIPNOTIC || g->options.program == QA_Q1_ROGUE;
     return g->options.coop || g->options.deathmatch == 2 ||

@@ -185,7 +185,9 @@ static bool visible(qa_q1_spawn_selector *selector, qa_actor_id point, bool *out
 static qa_actor_id first(const qa_q1_spawn_selector *selector, const qa_q1_spawn_point *points,
                          size_t count, qa_q1_spawn_kind kind, size_t start) {
     for (size_t i = start; i < count; ++i)
-        if (points[i].kind == kind && live(selector, points[i].actor))
+        if (points[i].kind == kind && live(selector, points[i].actor) &&
+            (!selector->options.point_eligible ||
+             selector->options.point_eligible(selector->options.point_context, points[i].actor)))
             return points[i].actor;
     return (qa_actor_id){0};
 }
@@ -232,6 +234,8 @@ static bool select_point(qa_q1_spawn_selector *selector, const qa_q1_spawn_point
                 break;
             }
         point = first(selector, points, count, QA_Q1_SPAWN_COOP, after);
+        if (!point.registry && selector->options.cycle_coop && after)
+            point = first(selector, points, after, QA_Q1_SPAWN_COOP, 0);
         if (!point.registry)
             point = first(selector, points, count, QA_Q1_SPAWN_START, 0);
         if (point.registry) {
