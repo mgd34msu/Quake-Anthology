@@ -10,7 +10,7 @@ typedef struct qa_bots_save_requirements {
 } qa_bots_save_requirements;
 
 /* Real constructor configuration, separate from private continuation owners.
- * Capture rejects installed script globals until their own codec is available.
+ * Mutable global definitions belong to the sole runtime state codec.
  * Decode runs no services and returns owned include/date/time strings. Supply
  * candidate callbacks before runtime construction and retain this configuration
  * until that runtime is destroyed. Complete validation precedes output. */

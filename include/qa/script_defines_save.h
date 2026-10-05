@@ -18,4 +18,7 @@ typedef bool (*qa_script_defines_alias)(void *,size_t,qa_bytes,
 bool qa_script_defines_save_prepare(qa_script_defines *,qa_bytes,void *,
     qa_script_defines_alias,qa_script_defines_prepared **,qa_error *);
 void qa_script_defines_save_finish(qa_script_defines_prepared *,bool);
+/* Persistent mutable definitions rebuild real allocations from typed tokens. */
+bool qa_script_defines_state_capture(const qa_script_defines *,qa_buffer *,qa_error *);
+bool qa_script_defines_state_restore_into(qa_script_defines *,qa_bytes,qa_error *);
 #endif

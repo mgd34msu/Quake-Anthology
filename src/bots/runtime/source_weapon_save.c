@@ -1,21 +1,33 @@
 #include "source_weapon_save.h"
 #include "../save_fields.h"
-#include "qa/bots_allocator_save.h"
 
-static bool allocation_fields(qa_source_save_io *io,qa_bot_memory *memory,qa_bot_memory_allocation *allocation) {
-    bool reading=io->direction==QA_SOURCE_SAVE_READ;size_t reference=0;
-    bool ok=reading || qa_bot_memory_reference(memory,*allocation,&reference,io->error);
-    if(ok) ok=qa_source_save_count(io,&reference,SIZE_MAX);
-    if(ok && reading) ok=qa_bot_memory_resolve(memory,reference,allocation,io->error);
-    if(!ok) io->failed=true;
-    return ok;
+static bool index_fields(qa_source_save_io *io,qa_bot_memory *memory,qa_bot_memory_allocation *allocation) {
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;qa_bot_memory_span bytes={0};size_t count=0;
+    if(!reading) {
+        if(!qa_bot_memory_bytes(memory,*allocation,&bytes,io->error) || bytes.size%4) return false;
+        count=bytes.size/4;
+    }
+    if(!qa_source_save_count(io,&count,(INT32_MAX-4)/4)) return false;
+    if(reading && count>(io->input.size-io->offset)/4)
+        return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated saved bot selector indexes");
+    if(reading && !bot_weapon_indexes_allocate(memory,(uint32_t)count,allocation,io->error)) return false;
+    for(uint32_t index=0;index<count;++index) {
+        int32_t value=0;
+        if((!reading && !bot_weapon_index_read(memory,*allocation,index,&value,io->error)) ||
+           !qa_source_save_i32(io,&value) ||
+           (reading && !bot_weapon_index_write(memory,*allocation,index,value,io->error))) return false;
+    }
+    return true;
 }
 bool bot_weapon_record_fields(qa_source_save_io *io,qa_bot_memory *memory,bot_weapon_record *record) {
-    qa_bot_memory_allocation allocation=record->allocation;
-    if(!allocation_fields(io,memory,&allocation)) return false;
-    bot_weapon_record qualified;
-    if(!bot_weapon_record_bind(memory,allocation,&qualified,io->error)) {io->failed=true;return false;}
-    if(io->direction==QA_SOURCE_SAVE_READ) *record=qualified;
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    uint32_t config=0,index=0;
+    if(!reading && (!bot_weapon_record_read(record,BOT_WEAPON_CONFIG_POINTER,&config,io->error) ||
+       !bot_weapon_record_read(record,BOT_WEAPON_INDEX_POINTER,&index,io->error))) return false;
+    if(!qa_source_save_u32(io,&config) || !qa_source_save_u32(io,&index)) return false;
+    if(reading && (!bot_weapon_record_allocate(memory,record,io->error) ||
+       !bot_weapon_record_write(record,BOT_WEAPON_CONFIG_POINTER,config,io->error) ||
+       !bot_weapon_record_write(record,BOT_WEAPON_INDEX_POINTER,index,io->error))) return false;
     return true;
 }
 static bool config_fields(qa_source_save_io *io,const bot_weapon_weight_refs *refs,
@@ -64,7 +76,7 @@ static bool fields(qa_source_save_io *io,qa_bot_memory *memory,bot_weapon_pointe
             if(!qa_source_save_u64(io,&row->references) || !row->references ||
                row->references>UINT64_C(9007199254740991))
                 return bot_save_fail(io,QA_ERROR_FORMAT,"Invalid live weapon configuration reference");
-        } else if(!allocation_fields(io,memory,&row->indexes)) return false;
+        } else if(!index_fields(io,memory,&row->indexes)) return false;
         if(!reading) row=row->next;
     }
     count=0;

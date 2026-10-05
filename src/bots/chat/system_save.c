@@ -1,42 +1,32 @@
 #include "internal.h"
 #include "../save_fields.h"
 #include "qa/bot_chat_system_save.h"
-#include "qa/bots_allocator_save.h"
-#include "../memory/internal.h"
 static const uint8_t magic[8]={'Q','A','B','C','S','Y','S',2};
-static bool allocation_fields(qa_source_save_io *io,qa_bot_memory *memory,
-    qa_bot_memory_allocation *allocation,bool optional,qa_bot_memory_kind kind,uint32_t size) {
-    bool reading=io->direction==QA_SOURCE_SAVE_READ,present=!reading && allocation->owner;
-    if(optional && !qa_source_save_bool(io,&present)) return false;
-    if(optional && !present) {if(reading) *allocation=(qa_bot_memory_allocation){0};return true;}
-    size_t reference=0;
-    bool ok=(reading || qa_bot_memory_reference(memory,*allocation,&reference,io->error)) && qa_source_save_count(io,&reference,SIZE_MAX);
-    if(ok && reading) ok=qa_bot_memory_resolve(memory,reference,allocation,io->error);
-    bot_memory_record *record=ok?bot_memory_record_get(memory,*allocation):NULL;
-    if(!record || record->kind!=kind || (size && record->size!=size))
-        return bot_save_fail(io,QA_ERROR_FORMAT,"Chat alias does not identify its actual source allocation");
+static bool text_field(qa_source_save_io *io,uint8_t *bytes,size_t capacity) {
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    const uint8_t *zero=reading?NULL:memchr(bytes,0,capacity);
+    size_t size=reading?0:zero?(size_t)(zero-bytes):capacity;
+    if(!qa_source_save_count(io,&size,capacity) || !qa_source_save_bytes(io,bytes,size)) return false;
+    if(reading && size<capacity) bytes[size]=0;
     return true;
 }
-static bool memory_fields(qa_source_save_io *io,qa_bot_chat_system *system) {
-    bool reading=io->direction==QA_SOURCE_SAVE_READ,local=system->library!=NULL;
-    if(!qa_source_save_bool(io,&local)) return false;
-    if(local) {
-        if(!system->library || system->memory!=system->library->memory)
-            return bot_save_fail(io,QA_ERROR_FORMAT,"Chat requires its already imported actual library MEMORY");
-        return true;
-    }
-    if(system->library) return bot_save_fail(io,QA_ERROR_FORMAT,"Standalone chat MEMORY cannot replace the bound library");
-    qa_buffer bytes={0};size_t extent=0;
-    bool ok=reading || qa_bot_memory_capture(system->memory,&bytes,io->error);
-    if(!reading) extent=bytes.size;
-    if(ok) ok=qa_source_save_count(io,&extent,SIZE_MAX);
-    if(ok && reading) {
-        if(io->offset>io->input.size || extent>io->input.size-io->offset) ok=bot_save_fail(io,QA_ERROR_FORMAT,"Truncated standalone chat MEMORY");
-        else {ok=qa_bot_memory_restore(system->memory,(qa_bytes){io->input.data+io->offset,extent},io->error);if(ok) io->offset+=extent;}
-    } else if(ok) ok=qa_source_save_bytes(io,bytes.data,extent);
-    qa_buffer_free(&bytes);
-    if(!ok) io->failed=true;
-    return ok;
+static bool word_field(qa_source_save_io *io,uint8_t *bytes,uint32_t offset) {
+    uint32_t value=io->direction==QA_SOURCE_SAVE_READ?0:chat_raw_word(bytes+offset);
+    if(!qa_source_save_u32(io,&value)) return false;
+    if(io->direction==QA_SOURCE_SAVE_READ) chat_raw_store(bytes+offset,value);
+    return true;
+}
+static bool time_field(qa_source_save_io *io,uint8_t *bytes,uint32_t offset) {
+    uint32_t bits=io->direction==QA_SOURCE_SAVE_WRITE?chat_raw_word(bytes+offset):0;
+    float value;memcpy(&value,&bits,sizeof(value));
+    if(!qa_source_save_f32(io,&value)) return false;
+    if(io->direction==QA_SOURCE_SAVE_READ) {memcpy(&bits,&value,sizeof(bits));chat_raw_store(bytes+offset,bits);}
+    return true;
+}
+static bool console_fields(qa_source_save_io *io,qa_bot_chat_system *system,uint32_t pointer) {
+    qa_bot_memory_span bytes;if(!chat_console_span(system,pointer,&bytes,io->error)) return false;
+    return word_field(io,bytes.data,0) && time_field(io,bytes.data,4) && word_field(io,bytes.data,8) &&
+        text_field(io,bytes.data+12,256) && word_field(io,bytes.data,268) && word_field(io,bytes.data,272);
 }
 bool qa_bot_chat_system_state_index(const qa_bot_chat_system *system,const qa_bot_chat *state,size_t *out) {
     if(!system || !state || !out) return false;
@@ -63,9 +53,44 @@ static bool asset_field(qa_source_save_io *io,const qa_bot_chat_asset_save_refs 
     return ok;
 }
 static bool state_fields(qa_source_save_io *io,qa_bot_chat *state,const qa_bot_chat_asset_save_refs *refs) {
-    return asset_field(io,refs,&state->initial,QA_BOT_CHAT_INITIAL) &&
-        allocation_fields(io,state->system->memory,&state->allocation,false,QA_BOT_MEMORY_HEAP,CHAT_STATE_BYTES) &&
-        qa_source_save_u64(io,&state->initial_revision) && state->initial_revision;
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    if(!reading && !chat_state_initial(state,&state->initial,io->error)) return false;
+    if(!asset_field(io,refs,&state->initial,QA_BOT_CHAT_INITIAL) ||
+       !qa_source_save_u64(io,&state->initial_revision) || !state->initial_revision) return false;
+    if(reading && !qa_bot_memory_allocate(state->system->memory,CHAT_STATE_BYTES,QA_BOT_MEMORY_HEAP,true,NULL,&state->allocation,io->error)) return false;
+    qa_bot_memory_span bytes;if(!chat_state_span(state,&bytes,io->error)) return false;
+    bool ok=word_field(io,bytes.data,CHAT_GENDER) && word_field(io,bytes.data,CHAT_CLIENT) &&
+        text_field(io,bytes.data+CHAT_NAME,32) && text_field(io,bytes.data+CHAT_MESSAGE,256) &&
+        word_field(io,bytes.data,CHAT_HANDLE) && word_field(io,bytes.data,CHAT_FIRST) &&
+        word_field(io,bytes.data,CHAT_LAST) && word_field(io,bytes.data,CHAT_COUNT);
+    if(ok && reading) chat_raw_store(bytes.data+CHAT_INITIAL,state->initial?state->initial->initial_source->initial.pointer:0);
+    return ok;
+}
+static bool cache_fields(qa_source_save_io *io,qa_bot_chat_system *system,const qa_bot_chat_asset_save_refs *refs,size_t index) {
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;qa_bot_chat_asset *asset=NULL;
+    if(!reading && system->initial_cache[index].owner) {
+        qa_bot_memory_span bytes;
+        if(!qa_bot_memory_bytes(system->memory,system->initial_cache[index],&bytes,io->error) || bytes.size!=132) return false;
+        uint32_t pointer=chat_raw_word(bytes.data);
+        for(qa_bot_chat_asset *row=system->library?system->library->chat_assets:NULL;pointer && row;row=row->next)
+            if(row->initial_source && row->initial_source->initial.pointer==pointer) {asset=row;break;}
+        if(pointer && !asset) return bot_save_fail(io,QA_ERROR_FORMAT,"Chat cache has no installed asset recipe");
+    }
+    if(!asset_field(io,refs,&asset,QA_BOT_CHAT_INITIAL)) return false;
+    if(reading && asset) {
+        qa_bot_memory_span bytes;
+        bool ok=qa_bot_memory_allocate(system->memory,132,QA_BOT_MEMORY_HEAP,true,NULL,&system->initial_cache[index],io->error) &&
+            qa_bot_memory_bytes(system->memory,system->initial_cache[index],&bytes,io->error);
+        if(ok) {
+            chat_raw_store(bytes.data,asset->initial_source->initial.pointer);
+            size_t path=strlen(asset->view.path),name=strlen(asset->view.name);
+            if(path>63) path=63;
+            if(name>63) name=63;
+            memcpy(bytes.data+4,asset->view.path,path);memcpy(bytes.data+68,asset->view.name,name);
+        }
+        qa_bot_chat_asset_release(asset);return ok;
+    }
+    return true;
 }
 static bool walk(const qa_bot_chat_system *system,uint32_t pointer,size_t *out,
     uint8_t *seen,qa_error *error) {
@@ -127,16 +152,19 @@ invalid:
 }
 static bool system_fields(qa_source_save_io *io,qa_bot_chat_system *system,
     const qa_bot_chat_asset_save_refs *refs,size_t *states) {
-    bool ok=memory_fields(io,system) && asset_field(io,refs,&system->options.synonyms,QA_BOT_CHAT_SYNONYMS) &&
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    size_t capacity=system->console_capacity;uint32_t free_console=system->free_console;
+    bool ok=asset_field(io,refs,&system->options.synonyms,QA_BOT_CHAT_SYNONYMS) &&
         asset_field(io,refs,&system->options.randoms,QA_BOT_CHAT_RANDOMS) && asset_field(io,refs,&system->options.matches,QA_BOT_CHAT_MATCHES) &&
         asset_field(io,refs,&system->options.replies,QA_BOT_CHAT_REPLIES) && qa_source_save_count(io,&system->options.console_capacity,UINT32_MAX-1u) &&
         qa_source_save_bool(io,&system->options.debug) && qa_source_save_bool(io,&system->options.console_unavailable) &&
-        qa_source_save_u64(io,&system->revision) &&
-        allocation_fields(io,system->memory,&system->console_heap,true,QA_BOT_MEMORY_HUNK,0) &&
-        qa_source_save_count(io,&system->console_capacity,UINT32_MAX-1u) && qa_source_save_u32(io,&system->free_console) &&
-        qa_source_save_count(io,states,SIZE_MAX);
-    for(size_t index=0;ok && index<64;++index)
-        ok=allocation_fields(io,system->memory,&system->initial_cache[index],true,QA_BOT_MEMORY_HEAP,132);
+        qa_source_save_u64(io,&system->revision) && qa_source_save_count(io,&capacity,UINT32_MAX/CHAT_CONSOLE_BYTES) &&
+        qa_source_save_u32(io,&free_console) && qa_source_save_count(io,states,SIZE_MAX);
+    if(ok && reading && capacity>(io->input.size-io->offset)/28)
+        ok=bot_save_fail(io,QA_ERROR_FORMAT,"Truncated saved bot console cells");
+    if(ok && reading && capacity) ok=chat_console_heap(system,(uint32_t)capacity,true,io->error);
+    if(ok && reading) system->free_console=free_console;
+    for(size_t index=0;ok && index<64;++index) ok=cache_fields(io,system,refs,index);
     return ok;
 }
 static void scratch_clear(qa_bot_chat_system *scratch) {
@@ -154,7 +182,7 @@ bool qa_bot_chat_system_capture(const qa_bot_chat_system *system,const qa_bot_ch
     size_t count=0;for(const qa_bot_chat *state=system->states;state;state=state->next) ++count;
     qa_source_save_io io={0};bool ok=qa_source_save_writer(&io,NULL,error) && bot_save_signature(&io,magic) && system_fields(&io,&view,refs,&count);
     for(size_t index=0;ok && index<system->console_capacity;++index) {
-        chat_console_cell cell=system->console[index];ok=allocation_fields(&io,system->memory,&cell.allocation,false,QA_BOT_MEMORY_HUNK,0) && qa_source_save_u32(&io,&cell.offset);
+        ok=console_fields(&io,&view,(uint32_t)index+1);
     }
     for(const qa_bot_chat *state=system->states;ok && state;state=state->next) {qa_bot_chat copy=*state;ok=state_fields(&io,&copy,refs);}
     if(ok) ok=qa_source_save_finish(&io,out);
@@ -173,10 +201,9 @@ bool qa_bot_chat_system_restore_bytes(qa_bot_chat_system *system,qa_bytes bytes,
     if(ok) ok=qa_source_save_reader(&io,NULL,bytes,error) && bot_save_signature(&io,magic) && system_fields(&io,&scratch,refs,&states.count);
     if(ok && (scratch.console_capacity>SIZE_MAX/sizeof(*scratch.console) || states.count>SIZE_MAX/sizeof(*states.states) ||
        scratch.console_capacity>io.input.size-io.offset || states.count>io.input.size-io.offset)) ok=bot_save_fail(&io,QA_ERROR_FORMAT,"Oversized source chat alias maps");
-    if(ok && scratch.console_capacity && !(scratch.console=calloc(scratch.console_capacity,sizeof(*scratch.console)))) ok=bot_save_fail(&io,QA_ERROR_MEMORY,"Restoring source console view identities");
     if(ok && states.count && !(states.states=calloc(states.count,sizeof(*states.states)))) ok=bot_save_fail(&io,QA_ERROR_MEMORY,"Restoring source chat states");
     for(size_t index=0;ok && index<scratch.console_capacity;++index) {
-        chat_console_cell *cell=&scratch.console[index];ok=allocation_fields(&io,scratch.memory,&cell->allocation,false,QA_BOT_MEMORY_HUNK,0) && qa_source_save_u32(&io,&cell->offset);
+        ok=console_fields(&io,&scratch,(uint32_t)index+1);
     }
     qa_bot_chat **tail=&scratch.states,*previous=NULL;
     for(size_t index=0;ok && index<states.count;++index) {

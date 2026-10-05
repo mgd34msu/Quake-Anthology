@@ -57,6 +57,36 @@ static bool route_fields(qa_source_save_io *io,bot_move_record *record) {
     record->route.edge_capacity=record->route.edge_count;
     return true;
 }
+static bool state_fields(qa_source_save_io *io,qa_bot_move_state *state) {
+    bool ok=qa_source_save_vec3(io,&state->input.origin) &&
+        qa_source_save_vec3(io,&state->input.velocity) &&
+        qa_source_save_vec3(io,&state->input.view_offset) &&
+        qa_source_save_vec3(io,&state->input.view_angles) &&
+        qa_source_save_vec3(io,&state->last_origin) &&
+        qa_source_save_i32(io,&state->input.entity) &&
+        qa_source_save_i32(io,&state->input.client) &&
+        qa_source_save_i32(io,&state->avoid_tries) &&
+        qa_source_save_f32(io,&state->input.think_time) &&
+        qa_source_save_f32(io,&state->grapple_visible_time) &&
+        qa_source_save_f32(io,&state->last_grapple_distance) &&
+        qa_source_save_f32(io,&state->reachability_time) &&
+        qa_source_save_f32(io,&state->avoid_time) &&
+        qa_source_save_u32(io,&state->input.presence) &&
+        qa_source_save_u32(io,&state->input.flags) &&
+        qa_source_save_u32(io,&state->area) &&
+        qa_source_save_u32(io,&state->last_area) &&
+        qa_source_save_u32(io,&state->last_goal_area) &&
+        qa_source_save_u32(io,&state->last_reachability) &&
+        qa_source_save_u32(io,&state->reach_area) &&
+        qa_source_save_u32(io,&state->jump_reach) &&
+        qa_source_save_u32(io,&state->avoid_reachability) &&
+        qa_source_save_u32(io,&state->avoid_count);
+    for(size_t i=0;ok && i<QA_BOT_AVOID_SPOTS;++i) {
+        qa_bot_avoid_spot *spot=&state->avoid_spots[i];
+        ok=qa_source_save_vec3(io,&spot->origin) && qa_source_save_f32(io,&spot->radius) && qa_source_save_i32(io,&spot->type);
+    }
+    return ok;
+}
 bool qa_bot_moves_save_capture(const qa_bot_moves *m,qa_buffer *out,qa_error *e) {
     if(!m || m->busy || !out || !m->memory || !m->maximum)
         return bot_move_fail(e,"Bot movement capture requires its actual idle owner");
@@ -75,12 +105,11 @@ bool qa_bot_moves_save_capture(const qa_bot_moves *m,qa_buffer *out,qa_error *e)
         bool used=slot->used;
         ok=qa_source_save_bool(&io,&used);
         if(!ok || !used) continue;
-        qa_bot_memory_span bytes;size_t reference=0;
+        qa_bot_move_state state;
         bool progress=slot->state.walk_progress;uint32_t edge=slot->state.walk_edge;
         bot_move_record record=slot->state;
-        ok=slot->state.owner==m && bot_move_record_span(&slot->state,&bytes,e) &&
-           qa_bot_memory_reference(m->memory,slot->state.allocation,&reference,e) &&
-           qa_source_save_count(&io,&reference,SIZE_MAX) &&
+        ok=slot->state.owner==m && qa_bot_moves_capture(m,i+1,&state,e) &&
+           state_fields(&io,&state) &&
            qa_source_save_bool(&io,&progress) && qa_source_save_u32(&io,&edge) &&
            route_fields(&io,&record);
         for(uint32_t j=0;ok && j<i;++j)
@@ -93,7 +122,7 @@ bool qa_bot_moves_save_capture(const qa_bot_moves *m,qa_buffer *out,qa_error *e)
 }
 bool qa_bot_moves_save_restore(qa_bot_moves *m,qa_bytes saved,qa_error *e) {
     if(!bot_move_mutable(m,e) || !empty(m))
-        return bot_move_fail(e,"Movement import requires an empty handle store after MEMORY import");
+        return bot_move_fail(e,"Movement import requires an empty handle store");
     qa_source_save_io io={0};uint32_t maximum=0;float time=0;
     const qa_bot_variable *variables[BOT_MOVE_VARIABLE_COUNT]={0};
     bot_move_slot *slots=NULL;
@@ -114,20 +143,24 @@ bool qa_bot_moves_save_restore(qa_bot_moves *m,qa_bytes saved,qa_error *e) {
         ok=bot_save_fail(&io,QA_ERROR_FORMAT,"Truncated movement handle table");
     if(ok) {
         slots=calloc(maximum,sizeof(*slots));clients=calloc(maximum,sizeof(*clients));
-        if(!slots || !clients) ok=bot_save_fail(&io,QA_ERROR_MEMORY,"Restoring movement allocation references");
+        if(!slots || !clients) ok=bot_save_fail(&io,QA_ERROR_MEMORY,"Restoring movement states");
     }
     for(uint32_t i=0;ok && i<maximum;++i) {
         bot_move_slot *slot=&slots[i];
         ok=qa_source_save_bool(&io,&slot->used);
         if(!ok || !slot->used) continue;
-        size_t reference=0;qa_bot_memory_span bytes;
+        qa_bot_move_state state={0};
         slot->state.owner=m;
-        ok=qa_source_save_count(&io,&reference,SIZE_MAX) &&
-           qa_bot_memory_resolve(m->memory,reference,&slot->state.allocation,e) &&
-           bot_move_record_span(&slot->state,&bytes,e) &&
+        ok=state_fields(&io,&state) &&
+           qa_bot_memory_allocate(m->memory,BOT_MOVE_STATE_BYTES,QA_BOT_MEMORY_HEAP,true,NULL,&slot->state.allocation,e);
+        if(ok) {
+            qa_bot_moves candidate=*m;candidate.slots=slots;slot->state.owner=&candidate;
+            ok=qa_bot_moves_restore(&candidate,i+1,&state,e);slot->state.owner=m;
+        }
+        if(ok) ok=
            qa_source_save_bool(&io,&slot->state.walk_progress) &&
            qa_source_save_u32(&io,&slot->state.walk_edge) && route_fields(&io,&slot->state);
-        if(ok) clients[i]=client_read(&bytes);
+        if(ok) clients[i]=state.input.client;
         for(uint32_t j=0;ok && j<i;++j)
             if(slots[j].used && same_allocation(slots[j].state.allocation,slot->state.allocation))
                 ok=bot_save_fail(&io,QA_ERROR_FORMAT,"Restored movement handles share one source allocation");

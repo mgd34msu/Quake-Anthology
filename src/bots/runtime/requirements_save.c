@@ -3,7 +3,6 @@
 #include "../library/internal.h"
 #include "../save_fields.h"
 #include "qa/bots_save.h"
-#include "qa/script_defines_save.h"
 
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'R', 'E', 'Q', 'S', 0};
 
@@ -12,27 +11,6 @@ static bool signature(qa_source_save_io *io)
     uint8_t bytes[8]; memcpy(bytes, magic, sizeof(bytes));
     return qa_source_save_bytes(io, bytes, sizeof(bytes)) && !memcmp(bytes, magic, sizeof(bytes)) ? true :
         bot_save_fail(io, QA_ERROR_FORMAT, "Invalid bot constructor configuration signature");
-}
-
-static bool globals_fields(qa_source_save_io *io, const qa_script_defines **globals)
-{
-    qa_buffer bytes = {0};
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    bool ok = reading || qa_script_defines_save_capture(*globals, &bytes, io->error);
-    size_t count = bytes.size;
-    if (ok) ok = qa_source_save_count(io, &count, SIZE_MAX);
-    if (ok && reading) {
-        if (count > io->input.size - io->offset)
-            ok = bot_save_fail(io, QA_ERROR_FORMAT, "Truncated bot global macro constructor owner");
-        else {
-            qa_script_defines *restored = NULL;
-            ok = qa_script_defines_save_restore((qa_bytes){io->input.data + io->offset, count}, &restored, io->error);
-            if (ok) { *globals = restored; io->offset += count; }
-        }
-    } else if (ok) ok = qa_source_save_bytes(io, bytes.data, bytes.size);
-    qa_buffer_free(&bytes);
-    if (!ok) io->failed = true;
-    return ok;
 }
 
 void qa_bots_save_requirements_free(qa_bots_save_requirements *requirements)
@@ -79,7 +57,6 @@ static bool requirements_fields(qa_source_save_io *io, qa_bots_save_requirements
         (!requirements->population_actor_capacity || sizeof(uint32_t) <= SIZE_MAX / requirements->population_actor_capacity) &&
         (requirements->population ||
         (!requirements->population_client_capacity && !requirements->population_actor_capacity));
-    if (ok) ok = globals_fields(io, &preprocessor->globals);
     runtime->observations = (qa_bot_observation_profile)profile;
     if (!ok && !io->failed)
         return bot_save_fail(io, QA_ERROR_FORMAT, "Invalid bot constructor configuration");

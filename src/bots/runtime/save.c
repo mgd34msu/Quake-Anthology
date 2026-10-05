@@ -11,12 +11,11 @@
 #include "qa/bot_movement_save.h"
 #include "qa/bot_observations_save.h"
 #include "qa/script_defines_save.h"
-#include "qa/bots_allocator_save.h"
 #include "source_weapon_save.h"
 #include "../library/source_fuzzy_store.h"
 #include "source_weapon_setup.h"
 
-enum { VARIABLES, ASSETS, ACTIONS, GOALS, CHAT, MOVES, OBSERVATIONS, HANDLES, GLOBALS, LOG, MEMORY, PART_COUNT };
+enum { VARIABLES, ASSETS, ACTIONS, GOALS, CHAT, MOVES, OBSERVATIONS, HANDLES, GLOBALS, LOG, PART_COUNT };
 typedef struct runtime_state {
     uint32_t maximum, minimum, profile;
     bool debug, initialized, library_initialized, loaded, bsp_loaded, closed;
@@ -81,7 +80,6 @@ static bool present(const runtime_state *state, size_t index)
     case GOALS: return state->goals;
     case CHAT: return state->chat;
     case MOVES: return state->moves;
-    case MEMORY: return !state->closed;
     default: return true;
     }
 }
@@ -195,8 +193,7 @@ static bool handles_fields(qa_source_save_io *io, qa_bot_runtime *runtime, const
 static bool capture_parts(qa_session *session, const qa_bot_runtime *runtime, qa_buffer parts[PART_COUNT], qa_error *error)
 {
     qa_bot_saved_assets *assets = NULL;
-    bool ok=runtime->closed || qa_bot_memory_capture(runtime->memory,&parts[MEMORY],error);
-    if(ok) ok = !runtime->library || (qa_bot_library_variables_capture(runtime->library, &parts[VARIABLES], error) &&
+    bool ok = !runtime->library || (qa_bot_library_variables_capture(runtime->library, &parts[VARIABLES], error) &&
         qa_bot_runtime_assets_capture(runtime, &parts[ASSETS], &assets, error));
     if (ok && runtime->actions) ok = qa_bot_actions_source_capture(runtime->actions, &parts[ACTIONS], error);
     if (ok && runtime->goals) ok = qa_bot_goals_save_capture(session, runtime->goals, assets, &parts[GOALS], error);
@@ -204,7 +201,7 @@ static bool capture_parts(qa_session *session, const qa_bot_runtime *runtime, qa
     if (ok && runtime->chat_system) ok = qa_bot_chat_system_capture(runtime->chat_system, &refs, &parts[CHAT], error);
     if (ok && runtime->moves) ok = qa_bot_moves_save_capture(runtime->moves, &parts[MOVES], error);
     if (ok) ok = qa_bot_observations_capture(session, runtime, &parts[OBSERVATIONS], error);
-    if (ok) ok = qa_script_defines_save_capture(runtime->globals, &parts[GLOBALS], error);
+    if (ok) ok = qa_script_defines_state_capture(runtime->globals, &parts[GLOBALS], error);
     if (ok) ok = qa_bot_log_capture(runtime->log,&parts[LOG],error);
     qa_source_save_io io = {0};
     if (ok) ok = qa_source_save_writer(&io, session, error) && bot_save_signature(&io, handle_magic) &&
@@ -286,8 +283,7 @@ bool qa_bot_runtime_save_restore(qa_session *session, qa_bot_runtime *runtime, q
         map_matches(&state, map, error);
     qa_source_save_dispose(&io);
     qa_bot_saved_assets *assets = NULL; qa_bot_chat_restored_states chats = {0};
-    if(ok && !state.closed) ok=qa_bot_memory_restore(runtime->memory,parts[MEMORY],error);
-    if (ok) ok = qa_script_defines_save_restore_into(runtime->globals,parts[GLOBALS],error);
+    if (ok) ok = qa_script_defines_state_restore_into(runtime->globals,parts[GLOBALS],error);
     if (ok) {
         runtime->restore_pending = true;
         runtime->weapon_generation=state.weapon_generation;
@@ -309,7 +305,7 @@ bool qa_bot_runtime_save_restore(qa_session *session, qa_bot_runtime *runtime, q
     if (ok) ok = qa_bot_actions_source_restore(runtime->actions, parts[ACTIONS], error);
     if (ok && state.bsp) ok = bot_runtime_bsp_load(runtime, &runtime->bsp, error);
     if (ok && state.goals) ok = qa_bot_goals_save_restore(session, runtime->goals, parts[GOALS], assets,
-        runtime->bsp ? qa_bot_bsp_entities(runtime->bsp) : runtime->map.entities, error);
+        runtime->bsp ? qa_bot_bsp_entities(runtime->bsp) : runtime->map.entities, runtime->map.navigation, error);
     qa_bot_chat_asset_save_refs refs = {.context = assets, .encode = chat_encode, .decode = chat_decode};
     if (ok && state.chat) ok = qa_bot_chat_system_restore_bytes(runtime->chat_system, parts[CHAT], &refs, &chats, error);
     if (ok && state.moves) ok = qa_bot_moves_save_restore(runtime->moves, parts[MOVES], error);

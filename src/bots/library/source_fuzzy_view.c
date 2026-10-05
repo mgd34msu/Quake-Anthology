@@ -7,7 +7,7 @@ static bool fail(qa_error *error,const char *message) {
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"%s",message);return false;
 }
 static bool project_tree(bot_fuzzy_config *config,uint32_t root,bot_weight_topology *topology,
-    qa_bot_weight_value **values,size_t *value_capacity,uint32_t *out,qa_error *error) {
+    qa_bot_weight_value **values,size_t *value_capacity,uint32_t *out,const qa_bot_weight_value *restored,size_t restored_count,qa_error *error) {
     view_frame *frames=NULL;size_t count=0,capacity=0;uint32_t pending=root;
     uint32_t parent=QA_BOT_NO_INDEX;bool child_link=false,ok=true;
     for(;;) {
@@ -32,6 +32,14 @@ static bool project_tree(bot_fuzzy_config *config,uint32_t root,bot_weight_topol
             bot_fuzzy_separator_float_read(&separator,BOT_FUZZY_MINIMUM,&value->minimum,error) &&
             bot_fuzzy_separator_float_read(&separator,BOT_FUZZY_MAXIMUM,&value->maximum,error);
         if(!ok) break;
+        if(restored) {
+            if(node>=restored_count) {ok=fail(error,"Saved fuzzy values exceed their installed topology");break;}
+            *value=restored[node];
+            ok=bot_fuzzy_separator_float_write(&separator,BOT_FUZZY_WEIGHT,value->weight,error) &&
+                bot_fuzzy_separator_float_write(&separator,BOT_FUZZY_MINIMUM,value->minimum,error) &&
+                bot_fuzzy_separator_float_write(&separator,BOT_FUZZY_MAXIMUM,value->maximum,error);
+            if(!ok) break;
+        }
         row->balanced=balanced==1;
         if(row->inventory>topology->maximum_inventory_index) topology->maximum_inventory_index=row->inventory;
         ++topology->node_count;
@@ -53,7 +61,7 @@ static bool project_tree(bot_fuzzy_config *config,uint32_t root,bot_weight_topol
     }
     free(frames);return ok;
 }
-bool bot_weights_source_view(qa_bot_weights *weights,qa_error *error) {
+static bool view(qa_bot_weights *weights,const qa_bot_weight_value *restored,size_t restored_count,qa_error *error) {
     if(!weights || !weights->source || !bot_fuzzy_owned_open(weights->source,error))
         return fail(error,"Fuzzy view requires its actual open configuration");
     bot_weight_topology *topology=calloc(1,sizeof(*topology));qa_bot_weight_value *values=NULL;size_t value_capacity=0;
@@ -75,12 +83,22 @@ bool bot_weights_source_view(qa_bot_weights *weights,qa_error *error) {
         definition->name=bot_string(&topology->arena,text,error);
         ok=definition->name!=NULL;
         if(ok && !root) ok=fail(error,"Fuzzy weight has no genuine source separator");
-        if(ok) ok=project_tree(config,root,topology,&values,&value_capacity,&definition->root,error);
+        if(ok) ok=project_tree(config,root,topology,&values,&value_capacity,&definition->root,restored,restored_count,error);
         if(!ok) break;
         definition->end=(uint32_t)topology->node_count;++topology->weight_count;
     }
+    if(ok && restored && topology->node_count!=restored_count) ok=fail(error,"Saved fuzzy values differ from their installed topology");
     if(!ok) {bot_weight_topology_release(topology);free(values);return false;}
     bot_weight_topology_release(weights->topology);free(weights->values);
     weights->topology=topology;weights->values=values;weights->value_capacity=value_capacity;
     bot_weights_view(weights);return true;
+}
+
+bool bot_weights_source_view(qa_bot_weights *weights,qa_error *error) {
+    return view(weights,NULL,0,error);
+}
+bool bot_weights_source_values_restore(qa_bot_weights *weights,const qa_bot_weight_value *values,
+    size_t count,qa_error *error) {
+    if(count && !values) return fail(error,"Missing saved fuzzy values");
+    return view(weights,values,count,error);
 }

@@ -50,5 +50,6 @@ bool bot_fuzzy_config_count_write(const bot_fuzzy_config *,int32_t,qa_error *);
 bool bot_fuzzy_config_pointer_read(const bot_fuzzy_config *,int32_t,bool,uint32_t *,qa_error *);
 bool bot_fuzzy_config_pointer_write(const bot_fuzzy_config *,int32_t,bool,uint32_t,qa_error *);
 bool bot_fuzzy_config_filename(const bot_fuzzy_config *,qa_bytes *,qa_error *);
+bool bot_fuzzy_config_filename_write(const bot_fuzzy_config *,qa_bytes,qa_error *);
 bool bot_fuzzy_config_matches_filename(const bot_fuzzy_config *,qa_bytes,bool *,qa_error *);
 #endif

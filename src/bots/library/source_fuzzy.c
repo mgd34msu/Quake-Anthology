@@ -142,7 +142,7 @@ bool bot_fuzzy_config_allocate(bot_fuzzy_heap *heap,qa_bytes filename,bot_fuzzy_
     if(!qa_bot_memory_allocate(heap->memory,BOT_FUZZY_CONFIG_BYTES,QA_BOT_MEMORY_HEAP,true,NULL,&allocation,error)) return false;
     bot_fuzzy_config config={heap,allocation};qa_bot_memory_span bytes;
     if(!config_span(&config,&bytes,error)) return false;
-    if(size) memcpy(bytes.data+1028,encoded,size);
+    if(!bot_fuzzy_config_filename_write(&config,(qa_bytes){encoded,size},error)) return false;
     *out=config;return true;
 }
 bool bot_fuzzy_config_bind(bot_fuzzy_heap *heap,qa_bot_memory_allocation allocation,bot_fuzzy_config *out,qa_error *error) {
@@ -180,6 +180,14 @@ bool bot_fuzzy_config_filename(const bot_fuzzy_config *config,qa_bytes *out,qa_e
     if(!out) return fail(error,"Fuzzy filename read requires its byte output");
     qa_bot_memory_span bytes;if(!config_span(config,&bytes,error)) return false;
     qa_bytes filename={bytes.data+1028,64};*out=(qa_bytes){filename.data,terminated(filename)};return true;
+}
+bool bot_fuzzy_config_filename_write(const bot_fuzzy_config *config,qa_bytes filename,qa_error *error) {
+    if(filename.size && !filename.data) return fail(error,"Fuzzy filename has no source bytes");
+    size_t size=terminated(filename);if(size>63) size=63;
+    uint8_t encoded[63];if(size) memcpy(encoded,filename.data,size);
+    qa_bot_memory_span bytes;if(!config_span(config,&bytes,error)) return false;
+    memset(bytes.data+1028,0,64);if(size) memcpy(bytes.data+1028,encoded,size);
+    return true;
 }
 bool bot_fuzzy_config_matches_filename(const bot_fuzzy_config *config,qa_bytes filename,bool *out,qa_error *error) {
     if(!out || (filename.size && !filename.data)) return fail(error,"Fuzzy filename match requires source bytes/output");

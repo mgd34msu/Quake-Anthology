@@ -81,6 +81,7 @@ bool bot_goal_level_word(const qa_bot_goals *, uint32_t, uint32_t, uint32_t, qa_
 bool bot_goal_level_vector(const qa_bot_goals *, uint32_t, uint32_t, qa_vec3, qa_error *);
 bool bot_goal_level_topology(const qa_bot_goals *, qa_error *);
 void bot_goal_map_clear(qa_bot_goals *);
+bool bot_goal_map_info_load(qa_bot_goals *,qa_bot_navigation *,qa_error *);
 bool bot_goal_info_free(qa_bot_goals *, qa_error *);
 bool bot_goal_info_span(const qa_bot_goals *, uint32_t, qa_bot_memory_span *, bool *, qa_error *);
 bool bot_goal_info_topology(const qa_bot_goals *, qa_error *);

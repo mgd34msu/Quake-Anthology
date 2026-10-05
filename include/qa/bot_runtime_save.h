@@ -13,8 +13,9 @@ typedef struct qa_bot_runtime_saved_map {
 /* Inspection owns name and validates the complete enclosing record extent.
  * Map content/navigation are qualified by the application before restore.
  * Restore requires its actual newly constructed detached runtime, preserving
- * that address and service contexts. It imports actual owners and handles
- * without setup, map loading, admission, source commands or random calls.
+ * that address and service contexts. Installed recipes and immutable map
+ * goals are rebuilt before typed mutable owners and handles are restored.
+ * No actor admission, source commands or random calls are replayed.
  * A failed import can retain partial state only inside this isolated candidate;
  * the application must discard or retain the entire candidate for teardown. */
 bool qa_bot_runtime_save_map_read(qa_bytes, qa_bot_runtime_saved_map *, qa_error *);

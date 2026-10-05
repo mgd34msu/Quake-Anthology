@@ -244,7 +244,7 @@ static bool move(qa_bot_goals *g, uint32_t id, qa_vec3 origin,
     return bot_goal_level_vector(g, id, 16, origin, e) && bot_goal_level_vector(g, id, 32, target, e) &&
         bot_goal_level_word(g, id, 28, area, e);
 }
-static bool load_info(qa_bot_goals *g, qa_bot_navigation *n, qa_error *e) {
+bool bot_goal_map_info_load(qa_bot_goals *g, qa_bot_navigation *n, qa_error *e) {
     if (!bot_goal_info_free(g, e)) return false;
     size_t location_count = 0, camp_count = 0;
     for (int32_t id = qa_bot_bsp_next(g->entities, 0); id; id = qa_bot_bsp_next(g->entities, id)) {
@@ -437,7 +437,7 @@ bool qa_bot_goals_load_map(qa_bot_goals *g, const qa_entities *entities,
     g->source = NULL;
     g->source_count = g->source_capacity = 0;
     memset(g->source_buckets, 0, sizeof(g->source_buckets));
-    bool ok = load_info(g, navigation, e);
+    bool ok = bot_goal_map_info_load(g, navigation, e);
     if (ok && g->level_allocation.owner) ok = qa_bot_memory_free(g->memory, g->level_allocation, e);
     if (ok) ok = load_items(g, navigation, e);
     g->busy = false;

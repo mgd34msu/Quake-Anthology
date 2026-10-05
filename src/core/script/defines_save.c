@@ -172,3 +172,86 @@ void qa_script_defines_save_finish(qa_script_defines_prepared *plan,bool commit)
     if(commit) publish(plan->owner,plan->decoded);
     qa_script_defines_release(plan->decoded);qa_script_defines_release(plan->owner);free(plan);
 }
+
+/* Persistent definitions contain semantic tokens, never allocator aliases or
+ * unreachable parser cells. History above retains its independent raw owner. */
+static bool semantic_token(qa_source_save_io *io,qa_arena *arena,script_queued_token *token) {
+    uint32_t kind=(uint32_t)token->token.kind;
+    if(!qa_source_save_u32(io,&kind) || kind>QA_SCRIPT_PUNCTUATION ||
+       !qa_source_save_u32(io,&token->token.subtype) || !qa_source_save_i32(io,&token->token.integer) ||
+       !qa_source_save_f64(io,&token->token.number) || !span(io,arena,&token->token.text) ||
+       token->token.text.size>=1024 || !location(io,arena,&token->token.location) ||
+       !profile(io,arena,&token->unsupported)) return fail(io,"Invalid semantic global token");
+    token->token.kind=(qa_script_token_kind)kind;
+    return true;
+}
+static bool semantic_chain(qa_source_save_io *io,script_macro *macro,size_t offset,qa_arena *arena,size_t expected) {
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;script_macro_table *table=macro->owner;
+    uint32_t pointer=reading?0:script_macro_word(macro,offset),last=0;size_t count=0;
+    for(uint32_t at=pointer;at;) {
+        script_token_record *node=script_heap_token(table,at);
+        if(++count>table->queue_count || !script_heap_token_bytes(table,node,io->error)) return fail(io,"Global token chain is not live");
+        at=qa_load_u32le(node->record.bytes+1064);
+    }
+    if(!qa_source_save_count(io,&count,SIZE_MAX)) return false;
+    if(expected!=SIZE_MAX && count!=expected) return fail(io,"Global parameter chain differs from its actual count");
+    if(reading && count>(io->input.size-io->offset)/36) return fail(io,"Truncated semantic global token chain");
+    for(size_t i=0;i<count;++i) {
+        script_queued_token token=script_local_token();
+        if(!reading) {
+            script_token_record *node=script_heap_token(table,pointer);
+            if(!script_heap_token_bytes(table,node,io->error) ||
+               !script_token_load(node->record.bytes,node->extent,node->location,node->whitespace,arena,&token.token,io->error)) return false;
+            token.unsupported=node->unsupported;pointer=qa_load_u32le(node->record.bytes+1064);
+        }
+        if(!semantic_token(io,arena,&token)) return false;
+        if(reading && !script_macro_add_token(macro,offset,token,&last,io->error)) return false;
+    }
+    return true;
+}
+static bool semantic_definitions(qa_source_save_io *io,qa_script_defines *owner,qa_arena *arena) {
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;script_macro_table *table=&owner->table;
+    size_t count=reading?0:table->count;uint32_t pointer=reading?0:table->first,previous=0;
+    if(!qa_source_save_count(io,&count,SIZE_MAX)) return false;
+    if(reading && count>(io->input.size-io->offset)/29) return fail(io,"Truncated semantic global definitions");
+    for(size_t i=0;i<count;++i) {
+        script_macro *macro=reading?NULL:script_macro_resolve(table,pointer);qa_bytes name={0};
+        uint32_t flags=0,builtin=0,parameters=0;
+        if(!reading) {
+            if(!script_macro_bind(macro,io->error)) return false;
+            name=script_macro_name(macro);flags=script_macro_word(macro,4);builtin=script_macro_word(macro,8);
+            parameters=script_macro_word(macro,12);pointer=script_macro_word(macro,24);
+        }
+        if(!span(io,arena,&name) || !name.size || name.size>1023 || memchr(name.data,0,name.size) ||
+           !qa_source_save_u32(io,&flags) || !qa_source_save_u32(io,&builtin) || builtin>4 ||
+           !qa_source_save_u32(io,&parameters) || parameters>128)
+            return fail(io,"Invalid semantic global definition");
+        if(reading) {
+            if(!script_macro_allocate(table,name,true,&macro,io->error)) return false;
+            script_macro_word_set(macro,4,flags);script_macro_word_set(macro,8,builtin);script_macro_word_set(macro,12,parameters);
+            macro->published=true;
+            if(previous) script_macro_word_set(script_macro_resolve(table,previous),24,macro->pointer);
+            else table->first=macro->pointer;
+            previous=macro->pointer;++table->count;
+        }
+        if(!semantic_chain(io,macro,16,arena,parameters) || !semantic_chain(io,macro,20,arena,SIZE_MAX)) return false;
+    }
+    return reading || !pointer ? true : fail(io,"Global definition list differs from its actual count");
+}
+bool qa_script_defines_state_capture(const qa_script_defines *owner,qa_buffer *out,qa_error *error) {
+    if(!owner || !out) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Global state requires its actual owner/output");return false;}
+    qa_source_save_io io={0};qa_arena arena={0};
+    bool ok=qa_source_save_writer(&io,NULL,error) && signature(&io) &&
+        semantic_definitions(&io,(qa_script_defines *)owner,&arena) && qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io);qa_arena_destroy(&arena);return ok;
+}
+bool qa_script_defines_state_restore_into(qa_script_defines *owner,qa_bytes bytes,qa_error *error) {
+    if(!owner) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Global state requires its retained owner");return false;}
+    qa_script_defines *decoded=NULL;qa_source_save_io io={0};qa_arena arena={0};
+    bool ok=qa_script_defines_create(&decoded,error);
+    if(ok) decoded->table.memory=owner->table.memory;
+    if(ok) ok=qa_source_save_reader(&io,NULL,bytes,error) && signature(&io) &&
+        semantic_definitions(&io,decoded,&arena) && qa_source_save_finish(&io,NULL);
+    if(ok) publish(owner,decoded);
+    qa_script_defines_release(decoded);qa_source_save_dispose(&io);qa_arena_destroy(&arena);return ok;
+}
