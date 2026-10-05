@@ -5,6 +5,76 @@
 #include <limits.h>
 #include <stdio.h>
 
+static bool fail(qa_error *error, qa_status code, const char *message)
+{ qa_error_set(error, code, 0, "%s", message); return false; }
+struct qa_scene_model_capture { qa_scene_model *root; };
+static bool model_idle(const qa_scene_model *model, bool include_capture)
+{
+    if (!model) return false;
+    while (model->replacement_parent) model = model->replacement_parent;
+    const qa_scene_model *root = model;
+    for (;;) {
+        if (model->active_submissions || model->checkpoint_active || (include_capture && model->capture)) return false;
+        if (model->replacement) { model = model->replacement; continue; }
+        while (model != root && !model->replacement_next) model = model->replacement_parent;
+        if (model == root) return true;
+        model = model->replacement_next;
+    }
+}
+bool qa_scene_model_idle(const qa_scene_model *model) { return model_idle(model,true); }
+bool qa_scene_model_observation_ready(const qa_scene_model *model) { return model_idle(model,false); }
+bool qa_scene_model_capture_begin(const qa_scene_model *model, qa_scene_model_capture **out, qa_error *error)
+{
+    if (!model || !out || *out || model->replacement_parent || model->replacement_next || !qa_scene_model_idle(model))
+        return fail(error,QA_ERROR_ARGUMENT,"Model aggregate capture requires an idle owned root and empty token");
+    qa_scene_model_capture *capture=malloc(sizeof(*capture));
+    if (!capture) return fail(error,QA_ERROR_MEMORY,"Retaining the model owner capture lease");
+    capture->root=(qa_scene_model *)model; capture->root->capture=capture; *out=capture; return true;
+}
+void qa_scene_model_capture_end(qa_scene_model_capture *capture)
+{
+    if (!capture) return;
+    if (capture->root->capture==capture) capture->root->capture=NULL;
+    free(capture);
+}
+const qa_model *qa_scene_model_source(const qa_scene_model *model) { return model ? model->source : NULL; }
+const qa_scene_image_options *qa_scene_model_image_options(const qa_scene_model *model) { return model ? &model->options : NULL; }
+qa_scene_resources *qa_scene_model_resource_owner(const qa_scene_model *model) { return model ? model->resources : NULL; }
+qa_material_library *qa_scene_model_material_owner(const qa_scene_model *model) { return model ? model->materials : NULL; }
+bool qa_scene_model_content_read(const qa_scene_model *model, qa_scene_model_content_kind kind,
+    qa_scene_model_content_lease *out)
+{
+    if (!model || !out || !qa_scene_model_observation_ready(model)) return false;
+    qa_scene_model_content_lease lease;
+    switch (kind) {
+    case QA_SCENE_MODEL_CONTENT_SOURCE: lease=model->source_lease; break;
+    case QA_SCENE_MODEL_CONTENT_REPLACEMENT_SOURCE: lease=model->replacement_source_lease; break;
+    case QA_SCENE_MODEL_CONTENT_ANIMATION: lease=model->animation_lease; break;
+    default: return false;
+    }
+    if ((lease.context!=NULL)!=(lease.release!=NULL)) return false;
+    *out=lease; return true;
+}
+const qa_scene_mesh *qa_scene_model_mesh_at(const qa_scene_model *model, size_t index)
+{ return model && index < model->source->mesh_count ? &model->meshes[index].retained : NULL; }
+const qa_scene_model *qa_scene_model_replacement_first(const qa_scene_model *model) { return model ? model->replacement : NULL; }
+const qa_scene_model *qa_scene_model_replacement_next(const qa_scene_model *model) { return model ? model->replacement_next : NULL; }
+const qa_model_replacement *qa_scene_model_replacement_description(const qa_scene_model *model) { return model ? model->replacement_source : NULL; }
+uint64_t qa_scene_model_identity(const qa_scene_model *model) { return model ? model->identity : 0; }
+size_t qa_scene_model_shadow_identity_count(const qa_scene_model *model)
+{
+    size_t count = 0;
+    if (model) for (const scene_model_shadow_identity *entry = model->shadow_identities; entry; entry = entry->next) ++count;
+    return count;
+}
+bool qa_scene_model_shadow_identity_at(const qa_scene_model *model, size_t index, uint32_t *entity, uint64_t *identity)
+{
+    if (!model || !entity || !identity) return false;
+    const scene_model_shadow_identity *entry = model->shadow_identities;
+    while (entry && index) { entry = entry->next; --index; }
+    if (!entry) return false;
+    *entity = entry->entity; *identity = entry->identity; return true;
+}
 static bool model_array(size_t count, size_t size, void **out, qa_error *error) {
     if (count > SIZE_MAX / size) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "model array exceeds addressable storage"); return false;

@@ -804,7 +804,6 @@ add_library(qa_scene STATIC
     src/render/scene/models/draw.c
     src/render/scene/models/images.c
     src/render/scene/models/lighting.c
-    src/render/scene/models/owner_save.c
     src/render/scene/models/shadows.c
     src/render/scene/models/sprites.c
     src/render/scene/models/topology.c
