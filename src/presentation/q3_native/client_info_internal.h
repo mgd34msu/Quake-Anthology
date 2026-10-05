@@ -30,7 +30,6 @@ struct q3n_clients {
 };
 bool q3n_client_fail(qa_error *, qa_status, const char *);
 void q3n_animation_dispose(q3n_animation_holder *);
-bool q3n_client_handles_valid(const q3n_clients *, const q3n_client_info *, qa_error *);
 bool q3n_clients_runtime_bound(const q3n_clients *, const q3n_client_options *, qa_error *);
 bool q3n_clients_runtime_dispose(q3n_clients *, const q3n_client_options *, qa_error *);
 #endif

@@ -18,12 +18,6 @@ typedef struct frontend_remote_q3_services_view {
 /* Retains the actual constructor CHARACTER declaration without a player actor.
  * The owners are empty constructor children, without media registration or Init. */
 bool frontend_remote_q3_services_create(frontend_remote_q3 *, qa_error *);
-/* Genuine empty child reconstruction under the parent's staged graph domain.
- * Client/source continuation precedes runtime construction; numeric media and
- * immutable animation holders import after the actual asset dictionary. */
-bool frontend_remote_q3_services_prepare_restored(frontend_remote_q3 *,qa_bytes client,qa_bytes source,qa_error *);
-bool frontend_remote_q3_services_finish_restore(frontend_remote_q3 *,qa_bytes media,
-    const q3n_client_refs *,qa_bytes clients,qa_error *);
 bool frontend_remote_q3_services_read(const frontend_remote_q3 *,
     frontend_remote_q3_services_view *, qa_error *);
 bool frontend_remote_q3_services_bind(frontend_remote_q3 *, qa_error *);

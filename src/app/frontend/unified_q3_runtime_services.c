@@ -33,7 +33,6 @@ struct frontend_unified_q3_runtime_services {
     q3n_media *media;
     q3n_clients *clients;
     qa_buffer import_bytes;
-    q3n_client_refs import_refs;
     bool import_has_refs, media_imported, clients_imported;
     uint32_t physical_seat;
     bool codec_busy, caches_restored;

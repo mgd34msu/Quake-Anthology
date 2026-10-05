@@ -22,7 +22,7 @@ struct frontend_remote_q3_services {
     frontend_remote_q3_services_view view;
     qa_command_context origin;
     size_t callbacks;
-    bool retiring, released, restoring;
+    bool retiring, released;
 };
 static bool returned(void *context)
 {
@@ -187,13 +187,11 @@ static bool command_current(void *context,const q3n_remote_command *view)
 }
 
 static bool construct(frontend_remote_q3 *row,const frontend_remote_q3_resources *resources,
-    qa_native_q3_remote_client_services *services,qa_bytes client_bytes,qa_bytes source_bytes,qa_error *error)
+    qa_native_q3_remote_client_services *services,qa_error *error)
 {
-    bool restoring=row->importing;
     frontend_remote_q3_services *owner=calloc(1,sizeof(*owner));
-    if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,restoring?
-        "Retaining restored remote CLIENT children":"Retaining native remote CLIENT children");
-    owner->row=row; owner->restoring=restoring; row->services=owner; row->constructing=true;
+    if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining native remote CLIENT children");
+    owner->row=row; row->services=owner; row->constructing=true;
     qa_native_q3_character_selection character={0};
     bool ok=qa_native_q3_remote_client_character_selection_read(row->application,&resources->domain.source,&character,error) &&
         qa_application_capture_command_context(row->application,&services->basis.client.command_context,&owner->origin,error) &&
@@ -202,13 +200,11 @@ static bool construct(frontend_remote_q3 *row,const frontend_remote_q3_resources
     services->context=owner; services->current=basis_current; services->idle=returned; services->release=release;
     services->reliable=reliable; services->console=console; services->reload_client_info=reload; services->status_visible=status_visible;
     services->console_command=console_command; services->forward=forward; services->milliseconds=milliseconds;
-    if(ok) ok=restoring?qa_native_q3_remote_client_restore(services,&character,client_bytes,&owner->view.client,error):
-        qa_native_q3_remote_client_create(services,&character,&owner->view.client,error);
+    if(ok) ok=qa_native_q3_remote_client_create(services,&character,&owner->view.client,error);
     if(character.lifetime) character.release(character.lifetime);
     q3n_remote_source_options source={.client=owner->view.client,.context=owner,.publication_read=publication_read,
         .publication_current=publication_current,.command_read=command_read,.command_current=command_current,.idle=returned};
-    if(ok) ok=restoring?q3n_remote_source_restore(&source,source_bytes,&owner->view.source,error):
-        q3n_remote_source_create(&source,&owner->view.source,error);
+    if(ok) ok=q3n_remote_source_create(&source,&owner->view.source,error);
     qa_native_q3_remote_client_basis basis;
     if(ok) ok=qa_native_q3_remote_client_basis_read(owner->view.client,&basis,error);
     if(ok) {
@@ -220,33 +216,6 @@ static bool construct(frontend_remote_q3 *row,const frontend_remote_q3_resources
     }
     row->constructing=false; return ok;
 }
-bool frontend_remote_q3_services_prepare_restored(frontend_remote_q3 *row,
-    qa_bytes client_bytes,qa_bytes source_bytes,qa_error *error)
-{
-    frontend_remote_q3_resources resources; qa_native_q3_remote_client_services services={0};
-    if(!row || !row->importing || row->services || row->constructing || row->users ||
-        row->frontend->capture || !client_bytes.data || !client_bytes.size ||
-        !source_bytes.data || !source_bytes.size ||
-        !frontend_remote_q3_resources_import_read(row,&resources,error) ||
-        !frontend_remote_q3_basis_read(row,&services.basis,error) || services.basis.client.initialized)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Remote service import requires its empty actual staged CLIENT attachment");
-    return construct(row,&resources,&services,client_bytes,source_bytes,error);
-}
-bool frontend_remote_q3_services_finish_restore(frontend_remote_q3 *row,qa_bytes media,
-    const q3n_client_refs *refs,qa_bytes clients,qa_error *error)
-{
-    frontend_remote_q3_services *owner=row?row->services:NULL; frontend_remote_q3_resources resources;
-    if(!owner || !owner->restoring || owner->retiring || owner->released || row->constructing ||
-        !owner->view.media || !owner->view.clients || !refs ||
-        !frontend_remote_q3_resources_import_read(row,&resources,error) || !returned(owner))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Remote media import requires its retained staged children and asset dictionary");
-    bool ok=q3n_media_restore(owner->view.media,media,error) &&
-        q3n_clients_restore(owner->view.clients,refs,clients,error) &&
-        frontend_remote_q3_resources_import_current(&resources);
-    if(ok) owner->restoring=false;
-    return ok;
-}
-
 bool frontend_remote_q3_services_create(frontend_remote_q3 *row,qa_error *error)
 {
     frontend_remote_q3_resources resources; qa_native_q3_remote_client_services services={0};
@@ -254,7 +223,7 @@ bool frontend_remote_q3_services_create(frontend_remote_q3 *row,qa_error *error)
         !frontend_remote_q3_resources_read(row,&resources,error) ||
         !frontend_remote_q3_basis_read(row,&services.basis,error) || services.basis.client.initialized)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Remote service construction requires its actual uninitialized CLIENT and declaration");
-    return construct(row,&resources,&services,(qa_bytes){0},(qa_bytes){0},error);
+    return construct(row,&resources,&services,error);
 }
 bool frontend_remote_q3_services_read(const frontend_remote_q3 *row,frontend_remote_q3_services_view *out,qa_error *error)
 {

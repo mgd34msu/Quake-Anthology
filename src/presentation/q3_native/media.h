@@ -188,7 +188,5 @@ bool q3n_media_remote_configstring_changed(q3n_media *, const q3n_remote_source_
     uint32_t index, qa_error *);
 /* Aggregate imports the actual backend registry first. These pure codecs
  * require its capture lease and retain only real numeric holder references. */
-bool q3n_media_checkpoint(const q3n_media *, qa_buffer *, qa_error *);
-bool q3n_media_restore(q3n_media *, qa_bytes, qa_error *);
 
 #endif

@@ -103,15 +103,6 @@ bool q3n_clients_remote_dynamic_write(q3n_clients *, const q3n_remote_source_vie
     uint32_t physical_client, uint64_t configstring_revision, uint64_t media_revision,
     const q3n_client_dynamic *, qa_error *);
 
-/* The aggregate holds the backend registry through these codecs. Resource
- * resolution returns genuine imported immutable holders, without acquisition. */
-typedef struct q3n_client_refs {
-    void *context;
-    bool (*resource_encode)(void *, const qa_resource *, uint64_t *, qa_error *);
-    bool (*resource_decode)(void *, uint64_t, const qa_resource **, qa_error *);
-} q3n_client_refs;
-bool q3n_clients_checkpoint(const q3n_clients *, const q3n_client_refs *, qa_buffer *, qa_error *);
-bool q3n_clients_restore(q3n_clients *, const q3n_client_refs *, qa_bytes, qa_error *);
 /* Counted physical rows, including absent rows. Returned holder/receipt borrow
  * this idle owner. Each nonnull row owns exactly one immutable resource ref. */
 bool q3n_clients_animation_holder(const q3n_clients *, uint32_t physical_client,
