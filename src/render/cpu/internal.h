@@ -3,6 +3,7 @@
 #include "qa/render_cpu.h"
 #include "../controls_private.h"
 #include "../output_domain.h"
+#include "../resource_index_private.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -54,6 +55,7 @@ struct qa_cpu_renderer {
   struct cpu_raster_pool *raster_pool;
   const qa_scene_image *bound[2];
   cpu_source_image source_images[CPU_SOURCE_IMAGES_QA];
+  qa_render_resource_index source_image_index;
   uint32_t source_image_count;
   double texture_components[3][256];
   bool texture_components_ready;

@@ -4,6 +4,7 @@
 #include "qa/render_gl.h"
 #include "../controls_private.h"
 #include "../output_domain.h"
+#include "../resource_index_private.h"
 
 #include <SDL_opengl.h>
 
@@ -227,9 +228,11 @@ struct qa_gl_renderer {
     qa_gl_capabilities capabilities;
     gl_programs programs;
     gl_texture_entry *textures;
+    qa_render_resource_index texture_index, source_image_index;
     gl_texture_entry *source_images[GL_SOURCE_IMAGES_QA];
     uint32_t source_image_count;
     gl_mesh_entry *meshes;
+    qa_render_resource_index mesh_index;
     gl_stream_buffers stream;
     gl_output_target output;
     gl_opacity_target opacity;
@@ -267,6 +270,7 @@ void gl_draw_quad(qa_gl_renderer *renderer);
 
 bool gl_texture_get(qa_gl_renderer *renderer, const qa_scene_image *image,
                     gl_texture_entry **out, qa_error *error);
+gl_texture_entry *gl_texture_resident(const qa_gl_renderer *, const qa_scene_image *);
 bool gl_source_texture_bind(qa_gl_renderer *,const qa_scene_image *,qa_error *);
 bool gl_resources_create(qa_gl_renderer *renderer, qa_error *error);
 bool gl_image_update(qa_gl_renderer *renderer, const qa_scene_image *image,

@@ -1294,17 +1294,3 @@ void qa_render_source_report(qa_render_controls *controls,uint32_t width,uint32_
     *pc=(qa_render_source_counters){0};
     memset(controls->image_used,0,sizeof(controls->image_used));
 }
-
-void qa_render_source_image_used(qa_render_controls *controls,const qa_scene_image *image)
-{
-    if (!image) return;
-    size_t count=controls->backend==QA_RENDER_CONTROLS_CPU?qa_cpu_source_images_metadata_count(controls):
-        qa_gl_source_images_metadata_count(controls);
-    for (size_t i=0;i<count;++i) {
-        const qa_scene_image *slot=controls->backend==QA_RENDER_CONTROLS_CPU?qa_cpu_source_image_metadata_at(controls,i):
-            qa_gl_source_image_metadata_at(controls,i);
-        if (slot==image || (slot->identity==image->identity && qa_scene_image_resource_owner(slot)==qa_scene_image_resource_owner(image))) {
-            controls->image_used[i]=true; return;
-        }
-    }
-}

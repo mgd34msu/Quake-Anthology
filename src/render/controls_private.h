@@ -60,7 +60,6 @@ bool qa_cpu_source_overdraw(qa_render_controls *,bool,qa_error *);
 bool qa_gl_source_overdraw(qa_render_controls *,bool,qa_error *);
 bool qa_cpu_source_image_grid(qa_render_controls *,int32_t,qa_error *);
 bool qa_gl_source_image_grid(qa_render_controls *,int32_t,qa_error *);
-void qa_render_source_image_used(qa_render_controls *,const qa_scene_image *);
 void qa_render_source_report(qa_render_controls *,uint32_t,uint32_t);
 
 typedef enum qa_render_primitive_mode {

@@ -163,6 +163,7 @@ void qa_cpu_destroy(qa_cpu_renderer *renderer) {
     qa_scene_image_release(renderer->source_images[i].image);
     qa_scene_resources_destroy(renderer->source_images[i].owner);
   }
+  render_resource_destroy(&renderer->source_image_index);
   while (renderer->targets) {
     cpu_target *target = renderer->targets;
     renderer->targets = target->next;
@@ -816,11 +817,18 @@ bool qa_cpu_source_cull(qa_render_controls *controls,qa_scene_cull cull,qa_error
   return true;
 }
 static cpu_source_image *cpu_source_object(qa_cpu_renderer *,const qa_scene_image *);
+static void cpu_source_index_admit(qa_cpu_renderer *renderer, cpu_source_image *row)
+{
+  render_resource_put(&renderer->source_image_index, 0, 0, row->image, row);
+  render_resource_put(&renderer->source_image_index, 0, 0, &row->texture.view, row);
+  render_resource_put(&renderer->source_image_index, row->image->identity, 0, row->owner, row);
+}
 static void cpu_source_bind(qa_cpu_renderer *renderer,const qa_scene_image *image)
 {
   cpu_source_image *object=cpu_source_object(renderer,image);
   if (object) image=object->image;
-  qa_render_source_image_used(&renderer->controls,image);
+  if (object)
+    renderer->controls.image_used[(size_t)(object - renderer->source_images)] = true;
   uint32_t unit=renderer->controls.attributes.texture_unit;
   const qa_scene_image **binding=renderer->bound+unit;
   if (*binding!=image) {
@@ -857,11 +865,10 @@ qa_scene_filter qa_cpu_source_image_sampling(const qa_render_controls *controls,
   const qa_cpu_renderer *renderer=controls->owner.cpu;
   const qa_render_source_texture *texture=NULL;
   if (image==&controls->zero_texture.view) texture=&controls->zero_texture;
-  else for (uint32_t i=0;i<renderer->source_image_count;++i)
-    if (image==&renderer->source_images[i].texture.view || renderer->source_images[i].image==image) {
-      texture=&renderer->source_images[i].texture;
-      break;
-    }
+  else {
+    const cpu_source_image *row = render_resource_get(&renderer->source_image_index, 0, 0, image);
+    if (row) texture = &row->texture;
+  }
   if (magnification_linear) *magnification_linear=texture?texture->magnification_linear:
       image->filter==QA_SCENE_LINEAR || image->filter==QA_SCENE_LINEAR_MIPMAP_NEAREST ||
       image->filter==QA_SCENE_LINEAR_MIPMAP_LINEAR;
@@ -870,13 +877,11 @@ qa_scene_filter qa_cpu_source_image_sampling(const qa_render_controls *controls,
 }
 static cpu_source_image *cpu_source_object(qa_cpu_renderer *renderer,const qa_scene_image *image)
 {
-  for (uint32_t i=0;i<renderer->source_image_count;++i)
-    if (renderer->source_images[i].image==image) return renderer->source_images+i;
+  if (!image) return NULL;
+  cpu_source_image *row = render_resource_get(&renderer->source_image_index, 0, 0, image);
+  if (row) return row;
   qa_scene_resources *owner=image && image->source_q3?qa_scene_image_resource_owner(image):NULL;
-  if (owner) for (uint32_t i=renderer->source_image_count;i>0;--i)
-    if (renderer->source_images[i-1].owner==owner && renderer->source_images[i-1].image->identity==image->identity)
-      return renderer->source_images+i-1;
-  return NULL;
+  return owner ? render_resource_get(&renderer->source_image_index, image->identity, 0, owner) : NULL;
 }
 bool qa_cpu_source_texture_upload(qa_render_controls *controls,const qa_scene_image *slot,
     const qa_scene_image *image,const qa_scene_image *binding,bool redefine,bool dirty,qa_error *error)
@@ -942,11 +947,12 @@ bool qa_cpu_source_image_admit(qa_render_controls *controls,const qa_scene_image
     return false;
   }
   qa_cpu_renderer *renderer=controls->owner.cpu;
-  for (uint32_t i=0;i<renderer->source_image_count;++i)
-    if (renderer->source_images[i].image==image) return true;
+  if (render_resource_get(&renderer->source_image_index, 0, 0, image)) return true;
   if (renderer->source_image_count>=CPU_SOURCE_IMAGES_QA) {
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"MAX_DRAWIMAGES hit in actual Source CPU image admission"); return false;
   }
+  if (!render_resource_reserve(&renderer->source_image_index,
+                               renderer->source_image_index.count + 3, error)) return false;
   qa_scene_resources *owner=qa_scene_image_resource_owner(image);
   if (!owner || !qa_scene_resources_retain(owner,error)) {
     if (!error || error->code==QA_OK) qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source CPU image lost its actual bank owner");
@@ -961,6 +967,7 @@ bool qa_cpu_source_image_admit(qa_render_controls *controls,const qa_scene_image
   *requested=(cpu_source_image){.image=image,.owner=owner,
       .filter=image->source_mipmap?controls->source_filter:image->filter};
   qa_render_source_texture_init(&requested->texture);
+  cpu_source_index_admit(renderer, requested);
   controls->attributes.texture_unit=unit;
   cpu_source_bind(renderer,binding);
   cpu_source_image *selected=cpu_source_object(renderer,binding);
@@ -1064,6 +1071,8 @@ bool qa_cpu_source_images_prepare(qa_render_controls *controls,qa_scene_resource
     qa_render_source_texture_init(&row->row.texture);
     row->unit=image->source_texture_unit; ++ticket->count;
   }
+  if (!render_resource_reserve(&renderer->source_image_index,
+                               renderer->source_image_index.count + 3 * ticket->count, error)) return false;
   if (ticket->count>1) qsort(ticket->rows,ticket->count,sizeof(*ticket->rows),cpu_source_prepared_order);
   for (size_t i=1;i<ticket->count;++i)
     if (ticket->rows[i-1].creation==ticket->rows[i].creation) {
@@ -1135,6 +1144,7 @@ void qa_cpu_source_images_publish(qa_cpu_source_images_ticket *ticket)
   if (!ticket || !ticket->prepared || ticket->published) return;
   qa_cpu_renderer *renderer=ticket->renderer;
   if (ticket->restart) {
+    render_resource_clear(&renderer->source_image_index);
     for (uint32_t i=0;i<renderer->source_image_count;++i) {
       qa_render_source_texture_release(&renderer->source_images[i].texture);
       qa_scene_image_release(renderer->source_images[i].image); qa_scene_resources_destroy(renderer->source_images[i].owner);
@@ -1161,7 +1171,9 @@ void qa_cpu_source_images_publish(qa_cpu_source_images_ticket *ticket)
   }
   for (size_t i=0;i<ticket->count;++i) {
     cpu_source_prepared_image *row=ticket->rows+i;
-    renderer->source_images[renderer->source_image_count++]=row->row;
+    cpu_source_image *admitted = renderer->source_images + renderer->source_image_count++;
+    *admitted = row->row;
+    cpu_source_index_admit(renderer, admitted);
     row->row=(cpu_source_image){0};
   }
   for (uint32_t unit=0;unit<2;++unit) {

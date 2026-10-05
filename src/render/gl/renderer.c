@@ -385,6 +385,9 @@ void qa_gl_destroy(qa_gl_renderer *renderer)
             qa_scene_geometry_cache_release(entry->geometry);
             free(entry);
         }
+        render_resource_destroy(&renderer->texture_index);
+        render_resource_destroy(&renderer->source_image_index);
+        render_resource_destroy(&renderer->mesh_index);
         free(renderer);
         return;
     }
@@ -580,9 +583,10 @@ void gl_source_pipeline_restore(qa_gl_renderer *renderer)
     qa_render_source_attributes *attributes=&renderer->controls.attributes;
     for (uint32_t unit=0;unit<2;++unit) {
         GLuint name=0;
-        if (!attributes->actual_empty[unit] && renderer->bound[unit])
-            for (gl_texture_entry *entry=renderer->textures;entry;entry=entry->next)
-                if (entry->image==renderer->bound[unit]) { name=entry->name; break; }
+        if (!attributes->actual_empty[unit] && renderer->bound[unit]) {
+            const gl_texture_entry *entry = gl_texture_resident(renderer, renderer->bound[unit]);
+            if (entry && entry->image == renderer->bound[unit]) name = entry->name;
+        }
         gl->ActiveTexture(GL_TEXTURE0+unit);
         gl->BindTexture(GL_TEXTURE_2D,name);
         if (!name) {

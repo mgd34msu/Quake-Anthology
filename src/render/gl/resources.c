@@ -5,6 +5,13 @@
 #include <SDL_video.h>
 #include "qa/display_settings.h"
 static gl_texture_entry *source_entry(qa_gl_renderer *,const qa_scene_image *);
+static void source_index_admit(qa_gl_renderer *renderer, gl_texture_entry *entry)
+{
+    render_resource_put(&renderer->source_image_index, 0, 0, entry->image, entry);
+    render_resource_put(&renderer->source_image_index, 0, 0, &entry->source_texture.view, entry);
+    render_resource_put(&renderer->source_image_index, entry->image->identity, 0,
+                        entry->source_owner, entry);
+}
 
 static bool finite4(qa_scene_vec4 value)
 {
@@ -242,7 +249,8 @@ bool gl_source_texture_bind(qa_gl_renderer *renderer,const qa_scene_image *image
 {
     gl_texture_entry *object=source_entry(renderer,image);
     if (object && object->source_admitted) image=object->image;
-    qa_render_source_image_used(&renderer->controls,image);
+    if (object && object->source_admitted)
+        renderer->controls.image_used[object->source_ordinal] = true;
     uint32_t unit=renderer->controls.attributes.texture_unit;
     renderer->gl.ActiveTexture(GL_TEXTURE0+unit);
     if (renderer->bound[unit]==image) return gl_check(renderer,"Source cached texture binding",error);
@@ -255,15 +263,16 @@ bool gl_source_texture_bind(qa_gl_renderer *renderer,const qa_scene_image *image
 }
 static gl_texture_entry *source_entry(qa_gl_renderer *renderer,const qa_scene_image *image)
 {
-    for (gl_texture_entry *entry=renderer->textures;entry;entry=entry->next)
-        if (entry->image==image && entry->source_admitted) return entry;
+    if (!image) return NULL;
+    gl_texture_entry *entry = render_resource_get(&renderer->source_image_index, 0, 0, image);
+    if (entry) return entry;
     qa_scene_resources *owner=image && image->source_q3?qa_scene_image_resource_owner(image):NULL;
-    if (owner) for (uint32_t i=renderer->source_image_count;i>0;--i)
-        if (renderer->source_images[i-1]->source_owner==owner && renderer->source_images[i-1]->image->identity==image->identity)
-            return renderer->source_images[i-1];
-    for (gl_texture_entry *entry=renderer->textures;entry;entry=entry->next)
-        if (entry->image==image) return entry;
-    return NULL;
+    if (owner) {
+        entry = render_resource_get(&renderer->source_image_index, image->identity, 0, owner);
+        if (entry) return entry;
+    }
+    entry = gl_texture_resident(renderer, image);
+    return entry && entry->image == image ? entry : NULL;
 }
 size_t qa_gl_source_texture_metadata_count(const qa_render_controls *controls)
 {
@@ -382,13 +391,17 @@ bool qa_gl_source_image_admit(qa_render_controls *controls,const qa_scene_image 
     }
     qa_gl_renderer *renderer=controls->owner.gl;
     if (!qa_display_make_current(renderer->options.display,error)) return false;
-    gl_texture_entry *entry=NULL;
-    for (gl_texture_entry *existing=renderer->textures;existing;existing=existing->next)
-        if (existing->image==image && existing->source_admitted) return true;
+    gl_texture_entry *entry = gl_texture_resident(renderer, image);
+    if (entry && entry->image != image) entry = NULL;
+    if (entry && entry->source_admitted) return true;
     if (renderer->source_image_count>=GL_SOURCE_IMAGES_QA) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"MAX_DRAWIMAGES hit in actual Source image admission"); return false;
     }
     if (!image_valid(renderer,image,error)) return false;
+    if (!render_resource_reserve(&renderer->source_image_index,
+                                 renderer->source_image_index.count + 3, error) ||
+        (!entry && !render_resource_reserve(&renderer->texture_index,
+                                            renderer->texture_index.count + 1, error))) return false;
     gl_texture_entry *selected=binding==image?NULL:source_entry(renderer,binding);
     if (binding!=image && (!selected || !selected->source_admitted)) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source no-bind upload lost its genuinely admitted GL target"); return false;
@@ -398,8 +411,6 @@ bool qa_gl_source_image_admit(qa_render_controls *controls,const qa_scene_image 
         if (!error || error->code==QA_OK) qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source image lost its actual bank owner");
         return false;
     }
-    for (gl_texture_entry *existing=renderer->textures;existing;existing=existing->next)
-        if (existing->image==image) { entry=existing; break; }
     if (!entry) {
         entry=calloc(1,sizeof(*entry));
         if (!entry) { qa_scene_resources_destroy(owner); qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating Source texture object"); return false; }
@@ -408,12 +419,14 @@ bool qa_gl_source_image_admit(qa_render_controls *controls,const qa_scene_image 
         qa_scene_image_retain(image); entry->image=image;
         qa_render_source_texture_init(&entry->source_texture);
         entry->next=renderer->textures; renderer->textures=entry;
+        render_resource_put(&renderer->texture_index, image->identity, image->revision, NULL, entry);
     } else if (!qa_render_source_texture_upload(&entry->source_texture,image,owner,
         image->source_mipmap?controls->source_filter:image->filter,error)) {
         qa_scene_resources_destroy(owner); return false;
     }
     entry->source_owner=owner; entry->source_ordinal=renderer->source_image_count;
     entry->source_admitted=true; renderer->source_images[renderer->source_image_count++]=entry;
+    source_index_admit(renderer, entry);
     controls->attributes.texture_unit=unit;
     renderer->gl.ActiveTexture(GL_TEXTURE0+unit); renderer->gl.ClientActiveTexture(GL_TEXTURE0+unit);
     if (!gl_source_texture_bind(renderer,binding,error)) return false;
@@ -544,6 +557,10 @@ bool qa_gl_source_images_prepare(qa_render_controls *controls,qa_scene_resource_
             ++ticket->count;
         }
     }
+    if (!render_resource_reserve(&renderer->texture_index,
+                                 renderer->texture_index.count + ticket->count, error) ||
+        !render_resource_reserve(&renderer->source_image_index,
+                                 renderer->source_image_index.count + 3 * ticket->count, error)) return false;
     if (ticket->count>1) qsort(ticket->rows,ticket->count,sizeof(*ticket->rows),source_prepared_order);
     for (size_t i=1;i<ticket->count;++i)
         if (ticket->rows[i-1].creation==ticket->rows[i].creation) {
@@ -671,6 +688,7 @@ void qa_gl_source_images_publish(qa_gl_source_images_ticket *ticket)
         renderer->bound[unit]=ticket->final_bound[unit];
     }
     if (ticket->restart) {
+        render_resource_clear(&renderer->source_image_index);
         gl_texture_entry **cursor=&renderer->textures;
         while (*cursor) {
             gl_texture_entry *entry=*cursor;
@@ -680,6 +698,11 @@ void qa_gl_source_images_publish(qa_gl_source_images_ticket *ticket)
             qa_scene_image_release(entry->image); qa_scene_resources_destroy(entry->source_owner); free(entry);
         }
         memset(renderer->source_images,0,sizeof(renderer->source_images)); renderer->source_image_count=0;
+        render_resource_clear(&renderer->texture_index);
+        for (gl_texture_entry *entry = renderer->textures; entry; entry = entry->next)
+            if (!gl_texture_resident(renderer, entry->image))
+                render_resource_put(&renderer->texture_index, entry->image->identity,
+                                    entry->image->revision, NULL, entry);
         renderer->pipeline.blend_source=QA_BLEND_ONE;
         renderer->pipeline.blend_destination=QA_BLEND_ZERO;
         renderer->pipeline.depth_test=QA_DEPTH_DISABLED;
@@ -704,6 +727,9 @@ void qa_gl_source_images_publish(qa_gl_source_images_ticket *ticket)
         gl_texture_entry *entry=row->entry;
         entry->next=renderer->textures; renderer->textures=entry;
         renderer->source_images[renderer->source_image_count++]=entry;
+        render_resource_put(&renderer->texture_index, entry->image->identity,
+                            entry->image->revision, NULL, entry);
+        source_index_admit(renderer, entry);
         row->entry=NULL;
     }
     qa_render_source_texture_release(&renderer->controls.zero_texture);
@@ -765,6 +791,11 @@ bool qa_gl_source_images_abort(qa_gl_source_images_ticket **out,qa_error *error)
     free(ticket->updates); free(ticket->banks); free(ticket->rows); free(ticket); *out=NULL; return true;
 }
 
+gl_texture_entry *gl_texture_resident(const qa_gl_renderer *renderer, const qa_scene_image *image)
+{
+    return image ? render_resource_get(&renderer->texture_index, image->identity,
+                                      image->revision, NULL) : NULL;
+}
 bool gl_texture_get(qa_gl_renderer *renderer, const qa_scene_image *image,
                     gl_texture_entry **out, qa_error *error)
 {
@@ -773,16 +804,13 @@ bool gl_texture_get(qa_gl_renderer *renderer, const qa_scene_image *image,
                      "Invalid OpenGL texture lookup");
         return false;
     }
-    for (gl_texture_entry *entry = renderer->textures; entry;
-         entry = entry->next)
-        if (entry->image->identity == image->identity &&
-            entry->image->revision == image->revision) {
-            *out = entry;
-            return true;
-        }
+    gl_texture_entry *entry = gl_texture_resident(renderer, image);
+    if (entry) { *out = entry; return true; }
+    if (!render_resource_reserve(&renderer->texture_index,
+                                 renderer->texture_index.count + 1, error)) return false;
     GLuint name;
     if (!texture_upload(renderer, image, &name, error)) return false;
-    gl_texture_entry *entry = calloc(1, sizeof(*entry));
+    entry = calloc(1, sizeof(*entry));
     if (entry == NULL) {
         renderer->gl.DeleteTextures(1, &name);
         qa_error_set(error, QA_ERROR_MEMORY, 0,
@@ -796,6 +824,7 @@ bool gl_texture_get(qa_gl_renderer *renderer, const qa_scene_image *image,
     qa_render_source_texture_init(&entry->source_texture);
     entry->next = renderer->textures;
     renderer->textures = entry;
+    render_resource_put(&renderer->texture_index, image->identity, image->revision, NULL, entry);
     *out = entry;
     return true;
 }
@@ -803,9 +832,10 @@ qa_scene_filter qa_gl_source_image_filter(const qa_render_controls *controls,con
 {
     const qa_gl_renderer *renderer=controls->owner.gl;
     if (image==&controls->zero_texture.view) return image->filter;
-    for (const gl_texture_entry *entry=renderer->textures;entry;entry=entry->next)
-        if (image==&entry->source_texture.view) return image->filter;
-        else if (entry->image==image) return entry->source_filter;
+    const gl_texture_entry *entry = render_resource_get(&renderer->source_image_index, 0, 0, image);
+    if (entry && image == &entry->source_texture.view) return image->filter;
+    if (!entry) entry = gl_texture_resident(renderer, image);
+    if (entry && entry->image == image) return entry->source_filter;
     return image->source_mipmap?controls->source_filter:image->filter;
 }
 
@@ -852,6 +882,9 @@ void gl_textures_prune(qa_gl_renderer *renderer)
                  renderer->bound[unit]->revision == entry->image->revision);
         if (!entry->source_admitted && !current && entry->image->references == 1) {
             *link = entry->next;
+            if (gl_texture_resident(renderer, entry->image) == entry)
+                render_resource_remove(&renderer->texture_index, entry->image->identity,
+                                       entry->image->revision, NULL);
             renderer->gl.DeleteTextures(1, &entry->name);
             qa_scene_image_release(entry->image);
             free(entry);
@@ -883,10 +916,7 @@ const gl_mesh_entry *gl_mesh_resident(const qa_gl_renderer *renderer,
                                     const qa_scene_mesh *mesh)
 {
     if (mesh->identity == 0) return NULL;
-    for (const gl_mesh_entry *entry = renderer->meshes; entry; entry = entry->next)
-        if (entry->identity == mesh->identity && entry->revision == mesh->revision)
-            return entry;
-    return NULL;
+    return render_resource_get(&renderer->mesh_index, mesh->identity, mesh->revision, NULL);
 }
 
 static bool mesh_storage(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
@@ -950,6 +980,8 @@ static bool mesh_storage(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
         *indices = resident->index_buffer;
         return true;
     }
+    if (!render_resource_reserve(&renderer->mesh_index,
+                                 renderer->mesh_index.count + 1, error)) return false;
     gl_mesh_entry *entry = calloc(1, sizeof(*entry));
     if (entry == NULL) {
         qa_error_set(error, QA_ERROR_MEMORY, 0,
@@ -978,6 +1010,7 @@ static bool mesh_storage(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
     entry->index_count = mesh->index_count;
     entry->next = renderer->meshes;
     renderer->meshes = entry;
+    render_resource_put(&renderer->mesh_index, entry->identity, entry->revision, NULL, entry);
     *vertices = entry->vertex_buffer;
     *indices = entry->index_buffer;
     return true;
@@ -1000,6 +1033,7 @@ void gl_meshes_prune(qa_gl_renderer *renderer)
             continue;
         }
         *link = entry->next;
+        render_resource_remove(&renderer->mesh_index, entry->identity, entry->revision, NULL);
         renderer->gl.DeleteBuffers(1, &entry->vertex_buffer);
         renderer->gl.DeleteBuffers(1, &entry->index_buffer);
         qa_scene_geometry_cache_release(entry->geometry);
@@ -1072,6 +1106,9 @@ bool gl_resources_create(qa_gl_renderer *renderer, qa_error *error)
 
 void gl_resources_destroy(qa_gl_renderer *renderer)
 {
+    render_resource_destroy(&renderer->texture_index);
+    render_resource_destroy(&renderer->source_image_index);
+    render_resource_destroy(&renderer->mesh_index);
     qa_scene_image_release(renderer->target);
     renderer->target = NULL;
     for (size_t unit = 0; unit < 2; ++unit) {
