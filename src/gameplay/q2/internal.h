@@ -48,7 +48,8 @@ typedef enum q2_projectile_kind {
     Q2_PROBOSCIS_SEGMENT,
     Q2_RERELEASE_SPAWN_GROWTH,
     Q2_RERELEASE_SPAWN_BEAM,
-    Q2_LOOGIE
+    Q2_LOOGIE,
+    Q2_BFG_LASER
 } q2_projectile_kind;
 typedef enum q2_proboscis_phase {
     Q2_PROBOSCIS_FLYING,

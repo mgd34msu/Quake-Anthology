@@ -236,7 +236,8 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
         return false;
     }
     const qa_q2_projectile_checkpoint *p = &s->projectile;
-    if (p->kind > Q2_LOOGIE ||
+    if (p->kind > Q2_BFG_LASER ||
+        (p->kind == Q2_BFG_LASER && g->options.edition != QA_Q2_RERELEASE) ||
         ((p->gib_flags & Q2_GIB_WIDOW_LEGS) != 0 &&
          (p->kind != Q2_GIB || p->frame < 0 || p->frame > 23 ||
           p->phase < 0 || p->phase > 1 || p->expire_ns != UINT64_MAX ||

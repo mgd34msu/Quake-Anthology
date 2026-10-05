@@ -438,7 +438,7 @@ static bool bfg_fly(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, qa_ve
     qa_builtin_snapshot_release(scratch);
     return result;
 }
-static bool bfg_ambient(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_error *e) {
+static bool bfg_laser_spawn(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_error *e) {
     float theta = q2_random(g) * 6.283185307179586f;
     float phi = acosf(q2_random(g) * 2 - 1);
     qa_vec3 direction = qa_v3(sinf(phi) * cosf(theta), sinf(phi) * sinf(theta), cosf(phi));
@@ -452,16 +452,58 @@ static bool bfg_ambient(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_error 
         return false;
     if (trace.fraction == 1)
         return true;
-    qa_builtin_event event = {.kind = QA_BUILTIN_BEAM,
-                              .family = QA_GAME_Q2,
-                              .provider = g->options.owner,
-                              .actor = id,
-                              .time_ns = g->now_ns,
-                              .origin = origin,
-                              .end = trace.end,
-                              .value = 0.3f};
-    return qa_builtin_resource(&g->services, "q2:bfg-lightning", &event.resource, e) &&
-           qa_builtin_emit(&g->services, &event, e);
+    qa_actor_definition definition;
+    if (!qa_builtin_resource(&g->services, "noclass", &definition, e))
+        return false;
+    if (!live(g, id))
+        return true;
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), id);
+    qa_actor_reference owner = record->owner == g->options.owner && record->has_source ?
+        qa_actor_reference_source(record->owner, record->source_slot) : qa_actor_reference_lifetime(id);
+    qa_builtin_spawn spawn = {.owner = g->options.owner, .definition = definition,
+                              .body = {.origin = origin}};
+    qa_actor_id laser_id;
+    if (!qa_builtin_spawn_actor(&g->services, &spawn, &laser_id, e))
+        return false;
+    if (!live(g, laser_id))
+        return true;
+    q2_actor *laser = q2_actor_get(g, laser_id, true, e);
+    if (!laser) {
+        (void)qa_session_release(g->services.session, laser_id, NULL);
+        return false;
+    }
+    laser->projectile = (q2_projectile){.kind = Q2_BFG_LASER, .classname = definition,
+        .owner = owner, .movedir = trace.end, .frame = 3, .render_flags = 128u | 512u,
+        .next_ns = q2_deadline(g->now_ns, Q2_MS),
+        .expire_ns = q2_deadline(g->now_ns, 300 * Q2_MS),
+        .scale = 1, .alpha = 1, .visible = true};
+    uint32_t skin = UINT32_C(0xd0d0d0d0);
+    memcpy(&laser->projectile.skin, &skin, sizeof(skin));
+    laser->physics_bound = true;
+    laser->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    laser->physics.q2_rerelease = true;
+    laser->physics.motion = QA_PHYSICS_STATIONARY;
+    laser->physics.solid = QA_PHYSICS_NOT_SOLID;
+    if (qa_world_link(g->services.world, laser_id, NULL, e))
+        return true;
+    (void)qa_session_release(g->services.session, laser_id, NULL);
+    return false;
+}
+static bool bfg_laser_update(qa_q2_game *g, q2_actor *laser, qa_body_state *body, qa_error *e) {
+    if (!laser->projectile.next_ns || laser->projectile.next_ns > g->now_ns)
+        return true;
+    qa_actor_id owner = qa_actor_reference_resolve(qa_session_actors(g->services.session),
+                                                   laser->projectile.owner);
+    if (g->now_ns > laser->projectile.expire_ns || !live(g, owner))
+        return qa_session_release(g->services.session, laser->id, e);
+    qa_body_state parent;
+    if (!qa_world_body_read(g->services.world, owner, &parent, e))
+        return false;
+    body->origin = parent.origin;
+    if (!qa_world_body_write(g->services.world, laser->id, body, e))
+        return false;
+    laser->projectile.next_ns = q2_deadline(g->now_ns, Q2_MS);
+    return qa_world_link(g->services.world, laser->id, NULL, e);
 }
 static bool tracker_daemon(qa_q2_game *g, const q2_projectile *p, qa_actor_reference target, qa_error *e) {
     qa_actor_definition definition;
@@ -1261,6 +1303,8 @@ bool q2_projectile_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, id, &body, e))
         return false;
+    if (p.kind == Q2_BFG_LASER)
+        return bfg_laser_update(g, a, &body, e);
     if (p.kind == Q2_CTF_HOOK || p.kind == Q2_LMCTF_HOOK) {
         if (!q2_grapple_think(g, a, e))
             return false;
@@ -1306,7 +1350,7 @@ bool q2_projectile_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (p.next_ns <= g->now_ns) {
             if (p.armed && p.frame >= 5)
                 return qa_session_release(g->services.session, id, e);
-            if (g->options.edition == QA_Q2_RERELEASE && !bfg_ambient(g, id, body.origin, e))
+            if (g->options.edition == QA_Q2_RERELEASE && !bfg_laser_spawn(g, id, body.origin, e))
                 return false;
             if (!live(g, id))
                 return true;

@@ -337,10 +337,17 @@ static bool visual_record(qa_q2_game *game, q2_original_record_io *io,
                 continue;
             }
         }
-        if (actor->wire_bound && actor->wire_slot == 0 && i == 0) {
+        bool world = actor->wire_bound && actor->wire_slot == 0;
+        bool beam = actor->projectile.kind == Q2_BFG_LASER;
+        if ((world || beam) && i == 0) {
             index = io->reading ? 0 : 1;
             if (!q2_original_scalar(io, names[i], Q2_ORIGINAL_I32, offset, offset, offset, &index)) return false;
-            if (io->reading && !qa_builtin_resource(&game->services, "*0", visual->models + i, io->error)) return false;
+            if (io->reading) {
+                if (beam) {
+                    if (index != 1) return malformed(io, offset, "Original BFG laser lacks MODELINDEX_WORLD");
+                    visual->models[i] = 0;
+                } else if (!qa_builtin_resource(&game->services, "*0", visual->models + i, io->error)) return false;
+            }
         } else if (!q2_original_resource(game, io, engine, names[i], offset, offset, offset,
             32, visual->models + i)) return false;
     }
@@ -444,7 +451,8 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
     uint32_t event = io->reading ? 0 : actor->wire_event_frame == game->wire_frame ? actor->wire_event : 0;
     if (!q2_original_scalar(io, "s.event", Q2_ORIGINAL_U32, 80, 80, 80, &event)) return false;
     if (io->reading) { actor->wire_event = event; actor->wire_event_frame = game->wire_frame; }
-    bool beam = actor->entity && (actor->entity->kind == Q2E_LASER || actor->entity->scenery == Q2S_MAL_LASER);
+    bool beam = actor->projectile.kind == Q2_BFG_LASER ||
+        (actor->entity && (actor->entity->kind == Q2E_LASER || actor->entity->scenery == Q2S_MAL_LASER));
     qa_vec3 previous = body.origin;
     if (!beam && !q2_original_scalar(io, "s.old_origin", Q2_ORIGINAL_VECTOR, 28, 28, 28, &previous)) return false;
     bool speaker = actor->entity && actor->entity->kind == Q2E_SPEAKER;

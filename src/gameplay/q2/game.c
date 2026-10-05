@@ -495,7 +495,8 @@ bool qa_q2_projectile_read(qa_q2_game *g, qa_actor_id id, qa_q2_projectile_view 
                                                 ? p->alpha : g->actors[id.slot]->alpha,
                                    .visible = p->visible,
                                    .beam = p->kind == Q2_PROBOSCIS_SEGMENT ||
-                                           p->kind == Q2_RERELEASE_SPAWN_BEAM,
+                                           p->kind == Q2_RERELEASE_SPAWN_BEAM ||
+                                           p->kind == Q2_BFG_LASER,
                                    .beam_end = p->movedir};
     return true;
 }

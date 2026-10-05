@@ -65,15 +65,14 @@ static bool identify(qa_q2_game *g, q2_original_record_io *io,
     if (!matches(g, io, "think", 436, "Trap_Gib_Think", &found)) return false;
     if (found) { *kind = Q2_TRAP_ORBIT_GIB; return true; }
     if (!matches(g, io, "think", 436, "bfg_laser_update", &found)) return false;
-    if (found) return unsupported(io, 436,
-        "Original Q2 BFG laser controller has no native continuation");
+    if (found) { *kind = Q2_BFG_LASER; return true; }
     if (*kind == Q2_PROJECTILE_NONE) {
         bool debris, gib;
         if (!matches(g, io, "die", 456, "debris_die", &debris) ||
             !matches(g, io, "die", 456, "gib_die", &gib)) return false;
         if (debris || gib) {
-            uint32_t effects = 0;
-            if (!scalar(io, "s.effects", Q2_ORIGINAL_U32, 64, &effects)) return false;
+            uint64_t effects = 0;
+            if (!scalar(io, "s.effects", Q2_ORIGINAL_U64, 64, &effects)) return false;
             /* Retail folds the two free-on-damage functions to one address. */
             *kind = gib && (!debris || (effects & 2u)) ? Q2_GIB : Q2_DEBRIS;
             return true;
@@ -96,13 +95,14 @@ static bool identify(qa_q2_game *g, q2_original_record_io *io,
     }
     if (*kind == Q2_PROJECTILE_NONE && name && !strcmp(name, "noclass")) {
         bool free_think, no_touch, no_die;
-        uint32_t flags = 0, effects = 0;
+        uint32_t flags = 0;
+        uint64_t effects = 0;
         int32_t dead = 0;
         if (!matches(g, io, "think", 436, "G_FreeEdict", &free_think) ||
             !matches(g, io, "touch", 444, NULL, &no_touch) ||
             !matches(g, io, "die", 456, NULL, &no_die) ||
             !scalar(io, "svflags", Q2_ORIGINAL_U32, 184, &flags) ||
-            !scalar(io, "s.effects", Q2_ORIGINAL_U32, 64, &effects) ||
+            !scalar(io, "s.effects", Q2_ORIGINAL_U64, 64, &effects) ||
             !scalar(io, "deadflag", Q2_ORIGINAL_I32, 492, &dead)) return false;
         if (free_think && no_touch && no_die && (flags & 4u) && (effects & 2u) && dead == 2)
             *kind = Q2_TRAP_GIB;
@@ -177,6 +177,7 @@ static bool callbacks(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
         think = p->phase == FINISHED || (p->armed && p->frame >= 5) ? "G_FreeEdict" :
             p->armed ? "bfg_explode" : "bfg_think";
         touch = p->armed ? NULL : "bfg_touch"; break;
+    case Q2_BFG_LASER: think = "bfg_laser_update"; break;
     case Q2_ION: think = "ionripper_sparks"; touch = "ionripper_touch"; break;
     case Q2_PLASMA: touch = "plasma_touch"; break;
     case Q2_FLECHETTE: touch = "flechette_touch"; break;
@@ -301,7 +302,7 @@ static bool deadlines(q2_original_record_io *io, q2_projectile *p)
         p->next_ns = next;
         p->expire_ns = expiry_think ? next : UINT64_MAX;
     }
-    if ((p->kind == Q2_GRENADE && rr && p->armed) || p->kind == Q2_TRAP ||
+    if ((p->kind == Q2_GRENADE && rr && p->armed) || p->kind == Q2_TRAP || p->kind == Q2_BFG_LASER ||
         (p->kind == Q2_PROX && rr && p->phase == FLIGHT)) {
         uint64_t expires = p->expire_ns;
         if (p->kind == Q2_TRAP && p->phase == FINISHED) expires = 0;
@@ -399,6 +400,8 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
         if (!read_phase(g, io, p)) return false;
     }
     if (p->kind == Q2_PROJECTILE_NONE) return true;
+    if (p->kind == Q2_BFG_LASER && io->edition != QA_Q2_RERELEASE)
+        return unsupported(io, 436, "Original Q2 BFG laser requires the rerelease");
     if (io->edition == QA_Q2_CLASSIC &&
         ((io->product != QA_Q2_XATRIX && (p->kind == Q2_ION || p->kind == Q2_PLASMA ||
             p->kind == Q2_TRAP || p->kind == Q2_BLUE_BOLT || p->kind == Q2_HEAT_ROCKET)) ||
@@ -420,7 +423,8 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
         !scalar(io, "dmg", Q2_ORIGINAL_I32, 516, &damage) ||
         !scalar(io, "radius_dmg", Q2_ORIGINAL_I32, 520, &radius_damage) ||
         !scalar(io, "dmg_radius", Q2_ORIGINAL_F32, 524, &radius) ||
-        !scalar(io, "movedir", Q2_ORIGINAL_VECTOR, 340, &p->movedir) ||
+        !scalar(io, p->kind == Q2_BFG_LASER ? "s.old_origin" : "movedir",
+            Q2_ORIGINAL_VECTOR, p->kind == Q2_BFG_LASER ? 28 : 340, &p->movedir) ||
         !deadlines(io, p)) return false;
     if (io->reading) {
         p->damage = p->kind == Q2_BFG_BALL ? (float)radius_damage : (float)damage;
