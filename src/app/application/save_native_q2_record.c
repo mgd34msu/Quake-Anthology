@@ -15,11 +15,13 @@ static bool complete(const qa_native_checkpoint *state, bool owned_process, qa_e
     return ((state->kind == QA_NATIVE_CHECKPOINT_Q2_CLASSIC ||
              state->kind == QA_NATIVE_CHECKPOINT_Q2_RERELEASE) &&
             state->has_host && state->host.size &&
-            (owned_process ? state->has_process && state->process.size &&
+            (state->transition ? state->has_level && state->level.size &&
+                !state->has_game && !state->has_process :
+             owned_process ? state->has_process && state->process.size &&
                 !state->has_game && !state->has_level :
                 state->has_game && state->has_level && state->game.size && state->level.size)) ||
         application_fail(error, QA_ERROR_FORMAT, owned_process ?
-            "Native Q2 record requires its complete original process and HOST continuation" :
+            "Native Q2 record requires its original process or departed LEVEL and HOST continuation" :
             "Native primary record requires actual GAME LEVEL and HOST continuation");
 }
 
@@ -44,7 +46,7 @@ bool application_native_q2_save_resource_recipe(const qa_save_record *record,
     qa_bytes recipe = {0};
     for (size_t i = 0; i < NATIVE_RECORD_PARTS; ++i) {
         uint64_t bytes_count = qa_load_u64le(bytes.data + 36 + i * 8);
-        if ((!bytes_count && i != 5) || bytes_count > bytes.size - offset)
+        if ((!bytes_count && i != 1 && i != 5) || bytes_count > bytes.size - offset)
             return application_fail(error, QA_ERROR_FORMAT, "Native Q2 resource recipe part is truncated");
         if (i == 5) recipe = (qa_bytes){bytes.data + offset, (size_t)bytes_count};
         offset += (size_t)bytes_count;
@@ -55,7 +57,7 @@ bool application_native_q2_save_resource_recipe(const qa_save_record *record,
     return true;
 }
 
-bool application_native_q2_save_process(const qa_save_record *record,
+bool application_native_q2_save_checkpoint(const qa_save_record *record,
     qa_native_checkpoint *out, qa_error *error)
 {
     qa_bytes recipe;
@@ -85,11 +87,13 @@ bool application_native_q2_save_capture(application_provider *provider, qa_save_
     qa_native_checkpoint snapshot = {0};
     qa_buffer parts[NATIVE_RECORD_PARTS] = {0};
     bool owned_process = qa_native_get_backend(qa_native_host_instance(provider->state.native.host)) == QA_NATIVE_BACKEND_OWNED_PROCESS;
-    qa_native_checkpoint_request request = {.game = !owned_process, .level = !owned_process,
-        .autosave = purpose == QA_SAVE_LEVEL_ENTRY};
+    bool transition = purpose == QA_SAVE_TRANSITION;
+    qa_native_checkpoint_request request = {.game = !owned_process && !transition,
+        .level = !owned_process || transition,
+        .autosave = purpose == QA_SAVE_LEVEL_ENTRY, .transition = transition};
     bool ok = qa_native_checkpoint_capture(qa_native_host_instance(provider->state.native.host),
         request, &snapshot, error) && complete(&snapshot, owned_process, error) &&
-        application_native_q2_continuation_capture(provider, &snapshot, parts + 1, error) &&
+        (transition || application_native_q2_continuation_capture(provider, &snapshot, parts + 1, error)) &&
         qa_native_checkpoint_encode(&snapshot, parts, error);
     if (ok && engine->process.resources) {
         if (!resources || !resources->capture || !resources->resolve || !resources->attach)
@@ -107,7 +111,7 @@ bool application_native_q2_save_capture(application_provider *provider, qa_save_
             parts[i].data = (uint8_t *)texts[i - 2];
             parts[i].size = strlen(texts[i - 2]) + 1;
         }
-        if ((!parts[i].size && i != 5) || parts[i].size > SIZE_MAX - size)
+        if ((!parts[i].size && i != 5 && !(i == 1 && transition)) || parts[i].size > SIZE_MAX - size)
             ok = application_fail(error, QA_ERROR_MEMORY, "native Q2 owned record extent is exhausted");
         else size += parts[i].size;
     }
@@ -143,7 +147,7 @@ static bool record_parts(application_provider *provider, qa_bytes bytes,
     size_t offset = NATIVE_RECORD_HEADER;
     for (size_t i = 0; i < NATIVE_RECORD_PARTS; ++i) {
         uint64_t length = qa_load_u64le(bytes.data + 36 + i * 8);
-        if ((!length && i != 5) || length > bytes.size - offset)
+        if ((!length && i != 1 && i != 5) || length > bytes.size - offset)
             return application_fail(error, QA_ERROR_FORMAT, "native Q2 continuation part extent is invalid");
         out[i] = (qa_bytes){bytes.data + offset, (size_t)length};
         offset += (size_t)length;
@@ -164,53 +168,7 @@ static bool record_parts(application_provider *provider, qa_bytes bytes,
         application_fail(error, QA_ERROR_FORMAT, "native Q2 baseline map name differs from its selected source");
 }
 
-bool application_native_q2_save_matches(application_provider *provider, qa_bytes bytes,
-    qa_error *error)
-{
-    struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE
-        ? provider->state.native.q2_engine : NULL;
-    if (!engine || !engine->initialized || !engine->map_ready || !provider->map_bound ||
-        !provider->state.native.host || !application_native_q2_idle(provider))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 equivalence requires its complete idle source owner");
-    qa_bytes parts[NATIVE_RECORD_PARTS];
-    bool owned_process = qa_native_get_backend(qa_native_host_instance(provider->state.native.host)) == QA_NATIVE_BACKEND_OWNED_PROCESS;
-    qa_native_checkpoint saved = {0}, actual = {0};
-    qa_buffer private = {0};
-    bool ok = application_native_q2_continuation_portable(provider, error) &&
-        record_parts(provider, bytes, parts, error) &&
-        qa_native_checkpoint_decode(parts[0], &saved, error) && complete(&saved, owned_process, error);
-    const char *texts[] = {source_text(provider, engine->map_name), engine->entity_text,
-                          source_text(provider, engine->spawn_point)};
-    for (size_t i = 0; ok && i < 3; ++i)
-        if (!texts[i] || strcmp(texts[i], (const char *)parts[i + 2].data))
-            ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 actual source map text changed after restoration");
-    /* The qualified full graph covers actual post-export source continuation.
-     * GAME/LEVEL exports can mutate that state and contain historical pointers. */
-    if (ok)
-        ok = application_native_q2_continuation_capture(provider, &saved, &private, error);
-    if (ok && (private.size != parts[1].size || memcmp(private.data, parts[1].data, private.size)))
-        ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 complete portable private state changed after restoration");
-    qa_native_checkpoint_request request = {.autosave = saved.autosave,
-                                            .transition = saved.transition};
-    if (ok)
-        ok = qa_native_checkpoint_capture(qa_native_host_instance(provider->state.native.host),
-                                           request, &actual, error);
-    if (ok && (!actual.has_host || actual.has_game || actual.has_level ||
-        actual.kind != saved.kind || actual.profile != saved.profile || actual.q3_role != saved.q3_role ||
-        !actual.has_declaration || !qa_sha256_equal(&actual.declaration, &saved.declaration) ||
-        !qa_sha256_equal(&actual.image.digest, &saved.image.digest) ||
-        actual.host.size != saved.host.size || memcmp(actual.host.data, saved.host.data, actual.host.size)))
-        ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 actual HOST continuation changed after restoration");
-    if (ok && owned_process && (!actual.has_process || actual.process.size != saved.process.size ||
-        memcmp(actual.process.data, saved.process.data, actual.process.size)))
-        ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 original CPU/RAM continuation changed after restoration");
-    qa_buffer_free(&private);
-    qa_native_checkpoint_free(&actual);
-    qa_native_checkpoint_free(&saved);
-    return ok;
-}
-
-bool application_native_q2_save_restore(application_provider *provider, qa_bytes bytes,
+bool application_native_q2_save_restore(application_provider *provider, application_provider *current, qa_bytes bytes,
     const qa_application_options *options, const qa_application_persistence_ops *ops, qa_error *error)
 {
     struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE
@@ -221,7 +179,7 @@ bool application_native_q2_save_restore(application_provider *provider, qa_bytes
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q2 restore requires its detached fresh source owner");
     bool owned_process = provider->state.native.host &&
         qa_native_get_backend(qa_native_host_instance(provider->state.native.host)) == QA_NATIVE_BACKEND_OWNED_PROCESS;
-    if(owned_process&&engine->restore_record.data)
+    if(engine->restore_record.data)
         return (bytes.data==engine->restore_record.data&&bytes.size==engine->restore_record.size&&
             engine->initialized&&engine->map_ready&&provider->state.native.host&&
             application_native_q2_idle(provider))||
@@ -234,6 +192,29 @@ bool application_native_q2_save_restore(application_provider *provider, qa_bytes
     struct application_native_q2_continuation *private = NULL;
     bool ok = record_parts(provider, bytes, parts, error) &&
         qa_native_checkpoint_decode(parts[0], &snapshot, error) && complete(&snapshot, owned_process, error);
+    if (ok && ((snapshot.transition ? parts[1].size != 0 : parts[1].size == 0) ||
+        snapshot.transition != (current != NULL)))
+        ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 record differs from its actual GAME or LEVEL restore purpose");
+    qa_native_checkpoint game = {0};
+    if (ok && snapshot.transition) {
+        struct application_native_q2 *live = current->kind == APPLICATION_PROVIDER_NATIVE
+            ? current->state.native.q2_engine : NULL;
+        ok = live && current != provider && current->application != app &&
+            current->constructed && current->attached && !current->close_pending &&
+            current->owner == provider->owner && current->launch &&
+            qa_sha256_equal(&current->launch->identity, &provider->launch->identity) &&
+            live->initialized && live->map_ready && live->profile == engine->profile &&
+            current->state.native.host && application_native_q2_idle(current);
+        if (!ok)
+            application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 revisit requires its current matching GAME owner");
+        if (ok) {
+            qa_native_checkpoint_request request = {.game = true, .autosave = true, .transition = true};
+            ok = qa_native_checkpoint_capture(qa_native_host_instance(current->state.native.host),
+                request, &game, error);
+        }
+        if (ok && (!game.has_game || !game.game.size || game.has_level || game.has_process))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 revisit requires its current original GAME file");
+    }
     const qa_actor_record *world = qa_actors_at_source(qa_session_actors(app->session), provider->owner, 0);
     if (ok && !world) ok = application_fail(error, QA_ERROR_FORMAT, "native Q2 saved world actor is missing");
     if (ok) {
@@ -241,7 +222,7 @@ bool application_native_q2_save_restore(application_provider *provider, qa_bytes
         ok = application_native_q2_activate(engine, error) &&
             application_native_q2_prepare_restore(provider, error);
     }
-    if (owned_process) {
+    if (owned_process && !snapshot.transition) {
         if (ok) ok = application_native_q2_continuation_prepare(provider, &snapshot, parts[1], &private, error) &&
             qa_native_process_restore_host(qa_native_host_instance(provider->state.native.host),
                 (qa_bytes){snapshot.host.data, snapshot.host.size}, error) &&
@@ -274,7 +255,8 @@ bool application_native_q2_save_restore(application_provider *provider, qa_bytes
         --engine->calls;
         if (ok) engine->initialized = true;
     }
-    if (ok) ok = application_native_q2_continuation_prepare(provider, &snapshot, parts[1], &private, error);
+    if (ok && !snapshot.transition)
+        ok = application_native_q2_continuation_prepare(provider, &snapshot, parts[1], &private, error);
     qa_application_native_baseline_services *services = NULL;
     struct application_native_q2_scratch *scratch = NULL;
     const qa_launch_snapshot *launch = qa_application_launch(app);
@@ -284,14 +266,15 @@ bool application_native_q2_save_restore(application_provider *provider, qa_bytes
     if (ok) ok = application_native_q2_scratch_prepare(provider, launch, services, &scratch, error);
     qa_native_instance *instance = provider->state.native.host
         ? qa_native_host_instance(provider->state.native.host) : NULL;
-    if (ok) ok = qa_native_checkpoint_restore(instance, &snapshot, QA_NATIVE_RESTORE_GAME, error) &&
+    if (ok) ok = qa_native_checkpoint_restore(instance,
+        snapshot.transition ? &game : &snapshot, QA_NATIVE_RESTORE_GAME, error) &&
         application_native_q2_scratch_begin(scratch, error) &&
         application_native_q2_scratch_spawn(scratch, (const char *)parts[2].data,
             (const char *)parts[3].data, (const char *)parts[4].data, error) &&
         qa_native_checkpoint_restore(instance, &snapshot, QA_NATIVE_RESTORE_LEVEL, error) &&
         application_native_q2_scratch_end(scratch, error) &&
         qa_native_checkpoint_restore(instance, &snapshot, QA_NATIVE_RESTORE_HOST, error) &&
-        application_native_q2_continuation_apply(provider, private, error);
+        (snapshot.transition || application_native_q2_continuation_apply(provider, private, error));
     if (ok) {
         const char *name = source_text(provider, engine->map_name);
         const char *spawn = source_text(provider, engine->spawn_point);
@@ -302,6 +285,9 @@ bool application_native_q2_save_restore(application_provider *provider, qa_bytes
         if (!ok) application_fail(error, QA_ERROR_FORMAT, "native Q2 HOST continuation differs from its actual baseline source input");
     }
     application_native_q2_continuation_abort(private);
+    qa_native_checkpoint_free(&game);
     qa_native_checkpoint_free(&snapshot);
-    return ok && application_native_q2_baselines_destroy(app, error);
+    if (ok) ok = application_native_q2_baselines_destroy(app, error);
+    if (ok) engine->restore_record = bytes;
+    return ok;
 }

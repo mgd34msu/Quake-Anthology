@@ -472,13 +472,13 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
     if (provider->application->native_restore_image && engine->profile != QA_NATIVE_Q2_CGAME_API2023) {
         const qa_save_record *saved = qa_save_image_find(provider->application->native_restore_image,
             QA_SAVE_PROVIDER, provider->launch->selection.instance);
-        if (!saved || !application_native_q2_save_process(saved, &cold, error)) return false;
-        if (!qa_native_process_resources_restore_read(engine->process.resources,
+        if (!saved || !application_native_q2_save_checkpoint(saved, &cold, error)) return false;
+        if (cold.has_process && !qa_native_process_resources_restore_read(engine->process.resources,
             (qa_bytes){cold.process.data, cold.process.size}, NULL, &engine->process.process, error)) {
             qa_native_checkpoint_free(&cold);
             return false;
         }
-        engine->process.process.defer_host_restore = true;
+        engine->process.process.defer_host_restore = cold.has_process;
     }
     instance.process = &engine->process.process;
     bool ok;

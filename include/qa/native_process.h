@@ -54,6 +54,8 @@ bool qa_native_process_checkpoint(qa_native_instance *, qa_buffer *, qa_error *)
  * This commits the real actor decoder and independent capability adoption;
  * any postmutation failure makes the candidate terminal. */
 bool qa_native_process_restore_host(qa_native_instance *, qa_bytes expected_host, qa_error *);
+/* The real HOST capsule remains unadopted during synchronous construction as
+ * well as deferred restoration. Fresh source file imports have no capsule. */
 bool qa_native_process_restore_pending(const qa_native_instance *);
 
 #endif

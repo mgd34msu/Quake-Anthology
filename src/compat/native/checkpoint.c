@@ -298,7 +298,9 @@ bool qa_native_checkpoint_capture(qa_native_instance *instance,
         ok = instance->options.checkpoint(instance->options.context, &checkpoint.host, error);
         checkpoint.has_host = ok;
     }
-    if (ok && instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS) {
+    if (ok && instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS &&
+        !(request.transition && (profile == QA_NATIVE_Q2_GAME_API3 ||
+                                 profile == QA_NATIVE_Q2_GAME_API2023))) {
         ok = checkpoint.has_host && instance->options.restore &&
             native_process_checkpoint_host(instance, (qa_bytes){checkpoint.host.data, checkpoint.host.size},
                 &checkpoint.process, error);

@@ -455,7 +455,8 @@ bool qa_native_process_restore_host(qa_native_instance *instance, qa_bytes expec
 
 bool qa_native_process_restore_pending(const qa_native_instance *instance)
 {
-    return instance && instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS && instance->process_host_pending;
+    return instance && instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS &&
+        (instance->process_host_pending || instance->process_host.size);
 }
 
 static bool restored_callback(void *context, uint64_t id, uint64_t address,

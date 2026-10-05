@@ -1,6 +1,7 @@
 #include "internal.h"
 #include <math.h>
 #include "qa/cvars_save.h"
+#include "qa/native_process.h"
 
 #define HOST_CHECKPOINT_HEADER 80u
 #define HOST_CHECKPOINT_SLOT 248u
@@ -347,7 +348,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     qa_bytes registry, objects;
     if (!qa_source_save_span(&io, registry_extent, &registry) ||
         !qa_source_save_span(&io, memory_extent, &objects)) goto truncated;
-    bool bind_memory=!cvars_only && qa_native_get_backend(host->instance)==QA_NATIVE_BACKEND_OWNED_PROCESS;
+    bool bind_memory=!cvars_only && qa_native_process_restore_pending(host->instance);
     qa_source_save_io objects_io={0};
     bool prepared=qa_source_save_reader(&objects_io,NULL,objects,error) &&
         native_host_memory_fields(&objects_io,host,&memory,bind_memory) && qa_source_save_finish(&objects_io,NULL);

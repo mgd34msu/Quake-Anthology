@@ -1342,7 +1342,10 @@ static bool provider_restore(application_persistence *operation,
     else if (provider->kind == APPLICATION_PROVIDER_Q3)
         ok = native_q3_restore(provider, state, error);
     else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
-        ok = application_native_q2_save_restore(provider, state, operation->options, operation->ops, error);
+        ok = application_native_q2_save_restore(provider,
+            operation->purpose == QA_SAVE_TRANSITION
+                ? saved_provider(operation->active, provider->launch->selection.instance) : NULL,
+            state, operation->options, operation->ops, error);
     else ok = application_guest_checkpoint_restore(provider, state, error);
     if (!ok) return false;
     provider->map_bound = qa_load_u32le(bytes.data + 8) != 0;
