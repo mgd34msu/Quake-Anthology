@@ -77,10 +77,7 @@ static bool gib(qa_q2_game *game, qa_actor_id source, const char *model,
   if (!qa_builtin_resource(&game->services, "gib", &definition, error) ||
       !qa_builtin_resource(&game->services, "noclass", &classname, error)) return false;
   if (!q2_actor_live(game, source)) return true;
-  const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(game->services.session), source);
-  qa_actor_reference owner_reference = reference_owner && reference_owner->owner == game->options.owner && reference_owner->has_source ?
-      qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
-      qa_actor_reference_lifetime(source);
+  qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(game->services.session), game->options.owner, source);
   qa_combat_state combat = {.can_take_damage = true, .no_knockback = true};
   qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
       .contents = 2, .owner = owner_reference, .role = QA_COLLISION_SOLID};

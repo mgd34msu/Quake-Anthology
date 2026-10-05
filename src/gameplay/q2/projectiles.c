@@ -457,9 +457,7 @@ static bool bfg_laser_spawn(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_er
         return false;
     if (!live(g, id))
         return true;
-    const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), id);
-    qa_actor_reference owner = record->owner == g->options.owner && record->has_source ?
-        qa_actor_reference_source(record->owner, record->source_slot) : qa_actor_reference_lifetime(id);
+    qa_actor_reference owner = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, id);
     qa_builtin_spawn spawn = {.owner = g->options.owner, .definition = definition,
                               .body = {.origin = origin}};
     qa_actor_id laser_id;
@@ -538,10 +536,7 @@ static bool tracker_daemon(qa_q2_game *g, const q2_projectile *p, qa_actor_refer
 }
 static bool tracker_touch(qa_q2_game *g, qa_actor_id id, const q2_projectile *p,
                           const qa_touch_contact *contact, const qa_body_state *body, qa_error *e) {
-    const qa_actor_record *reference_target = qa_actors_get(qa_session_actors(g->services.session), contact->other);
-    qa_actor_reference target_reference = reference_target && reference_target->owner == g->options.owner && reference_target->has_source ?
-            qa_actor_reference_source(reference_target->owner, reference_target->source_slot) :
-            qa_actor_reference_lifetime(contact->other);
+    qa_actor_reference target_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, contact->other);
     if (q2_target_damageable(g, contact->other)) {
         qa_combat_state health;
         if (!qa_combat_read(g->services.combat, contact->other, &health, e))
@@ -705,10 +700,7 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
         !qa_actor_id_equal(g->actors[id.slot]->id, id))
         return true;
     q2_projectile p = g->actors[id.slot]->projectile;
-    const qa_actor_record *reference_other = qa_actors_get(qa_session_actors(g->services.session), contact->other);
-    qa_actor_reference other_reference = reference_other && reference_other->owner == g->options.owner && reference_other->has_source ?
-            qa_actor_reference_source(reference_other->owner, reference_other->source_slot) :
-            qa_actor_reference_lifetime(contact->other);
+    qa_actor_reference other_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, contact->other);
     if (p.kind == Q2_PROBOSCIS || p.kind == Q2_PROBOSCIS_SEGMENT)
         return q2_proboscis_touch(g, contact, e);
     if (p.kind == Q2_BFG_BALL && p.armed)
@@ -1052,10 +1044,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     qa_actor_definition definition;
     if (!qa_builtin_resource(&g->services, name, &definition, e))
         return false;
-    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner);
-    qa_actor_reference owner_reference = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
-        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
-        qa_actor_reference_lifetime(owner);
+    qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner);
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = 2,
@@ -1146,10 +1135,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
         qa_actor_id enemy = c->projectile_enemy;
         if (!c->has_projectile_enemy && !q2_tracker_target(c, start, direction, &enemy, e))
             return false;
-        const qa_actor_record *reference_enemy = qa_actors_get(qa_session_actors(g->services.session), enemy);
-        a->projectile.enemy = reference_enemy && reference_enemy->owner == g->options.owner && reference_enemy->has_source ?
-            qa_actor_reference_source(reference_enemy->owner, reference_enemy->source_slot) :
-            qa_actor_reference_lifetime(enemy);
+        a->projectile.enemy = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, enemy);
         if (qa_actor_reference_present(a->projectile.enemy) != 0) {
             a->projectile.next_ns = q2_deadline(c->now_ns, 100 * Q2_MS);
             a->projectile.expire_ns = UINT64_MAX;

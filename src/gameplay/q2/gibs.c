@@ -123,13 +123,10 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float da
         lifetime = (uint64_t)((instant ? 1000u : 10000u) +
             q2_random_bounded(g, instant ? 4001u : 10001u)) * Q2_MS;
     } else lifetime = (uint64_t)((10 + q2_random(g) * 10) * 1e9);
-    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), source);
     a->projectile = (q2_projectile){
         .kind = Q2_GIB,
         .classname = rr || !head ? definition : 0,
-        .owner = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
-            qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
-            qa_actor_reference_lifetime(source),
+        .owner = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, source),
         .effects = debris ? 0 : 2,
         .render_flags = rr ? ((1u << 24) | (1u << 13) | (debris ? 0 : 1u << 15)) : 0,
         .skin = (flags & Q2_GIB_SKINNED) != 0 ? skin : 0,

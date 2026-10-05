@@ -135,10 +135,7 @@ static bool hit(qa_q2_game *game, q2_actor *tip, qa_actor_id other, qa_vec3 poin
         owner.monster->next_frame = DRAIN_HIT;
         tip->projectile.phase = Q2_PROBOSCIS_ATTACHED;
         tip->projectile.movedir = qa_vec_sub(position, target.origin);
-        const qa_actor_record *reference_enemy = qa_actors_get(qa_session_actors(game->services.session), other);
-        tip->projectile.enemy = reference_enemy && reference_enemy->owner == game->options.owner && reference_enemy->has_source ?
-            qa_actor_reference_source(reference_enemy->owner, reference_enemy->source_slot) :
-            qa_actor_reference_lifetime(other);
+        tip->projectile.enemy = qa_actor_reference_from_actor(qa_session_actors(game->services.session), game->options.owner, other);
         tip->projectile.render_flags |= 32;
         if (!stop(game, tip, error) ||
             !q2_projectile_event(game, id, QA_BUILTIN_SOUND, "parasite/paratck3.wav", 1,
@@ -337,10 +334,7 @@ static bool create_part(q2m_context *context, bool segment, qa_vec3 from, qa_vec
     if (!qa_builtin_resource(&game->services, segment ? "parasite_proboscis_segment" : "parasite_proboscis", &classname, error) ||
         !qa_builtin_resource(&game->services, segment ? "models/monsters/parasite/segment/tris.md2" : "models/monsters/parasite/tip/tris.md2", &model, error))
         return false;
-    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(game->services.session), owner);
-    qa_actor_reference owner_reference = reference_owner && reference_owner->owner == game->options.owner && reference_owner->has_source ?
-        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
-        qa_actor_reference_lifetime(owner);
+    qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(game->services.session), game->options.owner, owner);
     qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
                                     .contents = 2, .owner = owner_reference, .role = QA_COLLISION_SOLID};
     qa_combat_state combat = {.can_take_damage = true, .no_knockback = true};

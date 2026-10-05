@@ -599,10 +599,7 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
             if (rerelease &&
                 (!disarm(g, id, e) || !qa_world_set_collision(g->services.world, id, NULL, e)))
                 return false;
-            const qa_actor_record *reference_target = qa_actors_get(qa_session_actors(g->services.session), best);
-            qa_actor_reference target_reference = reference_target && reference_target->owner == g->options.owner && reference_target->has_source ?
-            qa_actor_reference_source(reference_target->owner, reference_target->source_slot) :
-            qa_actor_reference_lifetime(best);
+            qa_actor_reference target_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, best);
             qa_attack attack = q2_projectile_attack(g, id, p, 39, 0);
             if (!q2_damage(g, &attack, best, q2_trap_capture_damage(), 1, qa_v3(0, 0, 0), target.origin,
                            qa_v3(0, 0, 0), false, e))
@@ -852,10 +849,7 @@ bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa
         .bounds = kind == Q2_PROX    ? (qa_bounds){qa_v3(-6, -6, -6), qa_v3(6, 6, 6)}
                   : kind == Q2_TESLA ? (qa_bounds){qa_v3(-12, -12, 0), qa_v3(12, 12, 20)}
                                      : (qa_bounds){qa_v3(-4, -4, 0), qa_v3(4, 4, 8)}};
-    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), c->actor->id);
-    qa_actor_reference owner_reference = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
-        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
-        qa_actor_reference_lifetime(c->actor->id);
+    qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, c->actor->id);
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = 2,
@@ -1027,10 +1021,7 @@ bool qa_q2_spawn_bad_area(qa_q2_game *g, qa_bounds absolute, uint64_t lifespan, 
     qa_actor_definition definition;
     if (!qa_builtin_resource(&g->services, "bad_area", &definition, e))
         return false;
-    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner);
-    qa_actor_reference owner_reference = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
-        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
-        qa_actor_reference_lifetime(owner);
+    qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner);
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .role = QA_COLLISION_TRIGGER,

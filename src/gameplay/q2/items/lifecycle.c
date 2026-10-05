@@ -279,9 +279,7 @@ bool q2_item_finish(qa_q2_game *g, q2_actor *a, qa_actor_id player, qa_error *e)
         return true;
     }
     if (d->kind == QA_Q2_ITEM_HEALTH && d->timed) {
-        const qa_actor_record *reference = qa_actors_get(qa_session_actors(g->services.session), player);
-        item->owner = reference && reference->owner == g->options.owner && reference->has_source ?
-            qa_actor_reference_source(reference->owner, reference->source_slot) : qa_actor_reference_lifetime(player);
+        item->owner = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, player);
         return q2_item_hide(g, a, Q2_ITEM_MEGA, q2_deadline(g->now_ns, 5 * Q2_NS), e);
     }
     if (!dropped && g->options.deathmatch) {

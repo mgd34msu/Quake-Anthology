@@ -235,10 +235,7 @@ static bool heat_rocket_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapsho
                 return true;
         }
         if (!rr || !qa_actor_reference_present(p->enemy)) {
-            const qa_actor_record *reference_enemy = qa_actors_get(qa_session_actors(g->services.session), best);
-            p->enemy = reference_enemy && reference_enemy->owner == g->options.owner && reference_enemy->has_source ?
-            qa_actor_reference_source(reference_enemy->owner, reference_enemy->source_slot) :
-            qa_actor_reference_lifetime(best);
+            p->enemy = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, best);
         }
     }
     if (!controlled && (rr || best.registry != 0)) {

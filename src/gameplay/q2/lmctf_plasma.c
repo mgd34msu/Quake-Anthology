@@ -68,10 +68,7 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
             qa_builtin_angle_vectors(shot, &forward, NULL, NULL);
         }
         qa_vec3 velocity = qa_vec_scale(forward, spec.speed);
-        const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), c->actor->id);
-        qa_actor_reference owner_reference = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
-            qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
-            qa_actor_reference_lifetime(c->actor->id);
+        qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, c->actor->id);
         qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                         .shape = QA_SHAPE_BOX,
                                         .contents = 2,

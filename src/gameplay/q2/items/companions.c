@@ -135,12 +135,8 @@ static bool launch(qa_q2_game *g, qa_actor_id owner, q2_companion_kind kind, boo
     a->item->companion = calloc(1, sizeof(*a->item->companion));
     if (!a->item->companion)
         goto memory;
-    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner);
-    qa_actor_reference owner_reference = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
-        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) : qa_actor_reference_lifetime(owner);
-    const qa_actor_record *reference_credit = qa_actors_get(qa_session_actors(g->services.session), credit);
-    qa_actor_reference credit_reference = reference_credit && reference_credit->owner == g->options.owner && reference_credit->has_source ?
-        qa_actor_reference_source(reference_credit->owner, reference_credit->source_slot) : qa_actor_reference_lifetime(credit);
+    qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner);
+    qa_actor_reference credit_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, credit);
     *a->item->companion = (q2_companion){.kind = kind,
                                          .owner = decoy ? (qa_actor_reference){0} : owner_reference,
                                          .credit = credit_reference,
@@ -195,9 +191,7 @@ static bool pain(qa_q2_game *g, q2_actor *a, qa_actor_id attacker, qa_error *e) 
     q2_companion *c = a->item->companion;
     if (!q2_actor_live(g, attacker))
         return true;
-    const qa_actor_record *reference_attacker = qa_actors_get(qa_session_actors(g->services.session), attacker);
-    qa_actor_reference attacker_reference = reference_attacker && reference_attacker->owner == g->options.owner && reference_attacker->has_source ?
-        qa_actor_reference_source(reference_attacker->owner, reference_attacker->source_slot) : qa_actor_reference_lifetime(attacker);
+    qa_actor_reference attacker_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, attacker);
     if (c->kind == Q2_SPHERE_DEFENDER) {
         if (!qa_actor_id_equal(attacker, qa_actor_reference_resolve(qa_session_actors(g->services.session), c->owner)))
             c->enemy = attacker_reference;
@@ -290,9 +284,7 @@ static bool decoy(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definition 
     a->item->companion = calloc(1, sizeof(*a->item->companion));
     if (!a->item->companion)
         goto memory;
-    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner);
-    qa_actor_reference owner_reference = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
-        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) : qa_actor_reference_lifetime(owner);
+    qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner);
     *a->item->companion = (q2_companion){.kind = Q2_DOPPLEGANGER,
                                          .owner = owner_reference,
                                          .credit = owner_reference,
@@ -329,9 +321,7 @@ static bool decoy(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definition 
     child->item->companion = calloc(1, sizeof(*child->item->companion));
     if (!child->item->companion)
         goto memory;
-    const qa_actor_record *reference_base = qa_actors_get(qa_session_actors(g->services.session), id);
-    qa_actor_reference base_reference = reference_base && reference_base->owner == g->options.owner && reference_base->has_source ?
-        qa_actor_reference_source(reference_base->owner, reference_base->source_slot) : qa_actor_reference_lifetime(id);
+    qa_actor_reference base_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, id);
     *child->item->companion = (q2_companion){.kind = Q2_DOPPLEGANGER_BODY,
                                              .owner = base_reference,
                                              .next_ns = q2_deadline(g->now_ns, g->frame_ns),
@@ -341,9 +331,7 @@ static bool decoy(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definition 
     if (!qa_q2_entity_visual(g, owner, &child->item->visual, e))
         goto fail;
     child->item->visual.visible = true;
-    const qa_actor_record *reference_child = qa_actors_get(qa_session_actors(g->services.session), child_id);
-    a->item->companion->child = reference_child && reference_child->owner == g->options.owner && reference_child->has_source ?
-        qa_actor_reference_source(reference_child->owner, reference_child->source_slot) : qa_actor_reference_lifetime(child_id);
+    a->item->companion->child = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, child_id);
     if (!q2_item_visual(g, child, e))
         goto fail;
     *used = true;
@@ -575,9 +563,7 @@ bool q2_companion_reaction(qa_q2_game *g, const qa_damage_outcome *outcome, qa_e
     if (c->kind == Q2_DOPPLEGANGER) {
         if (outcome->result.reaction == QA_REACTION_PAIN) {
             qa_actor_id attacker = outcome->request.attack.attacker;
-            const qa_actor_record *reference = qa_actors_get(qa_session_actors(g->services.session), attacker);
-            c->enemy = reference && reference->owner == g->options.owner && reference->has_source ?
-                qa_actor_reference_source(reference->owner, reference->source_slot) : qa_actor_reference_lifetime(attacker);
+            c->enemy = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, attacker);
         }
         if (outcome->result.reaction != QA_REACTION_DEATH)
             return true;

@@ -269,10 +269,7 @@ static bool attach(qa_q2_game *g, q2_actor *hook, qa_actor_id target, q2_anchor 
         attachment.follow = QA_BODY_FOLLOW_TRANSLATION;
         attachment.offset = qa_vec_sub(body.origin, other.origin);
     }
-    const qa_actor_record *reference_enemy = qa_actors_get(qa_session_actors(g->services.session), target);
-    hook->projectile.enemy = reference_enemy && reference_enemy->owner == g->options.owner && reference_enemy->has_source ?
-            qa_actor_reference_source(reference_enemy->owner, reference_enemy->source_slot) :
-            qa_actor_reference_lifetime(target);
+    hook->projectile.enemy = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, target);
     hook->physics.solid = lm ? QA_PHYSICS_TRIGGER : QA_PHYSICS_NOT_SOLID;
     qa_actor_collision collision;
     qa_error observed = {0};
@@ -449,10 +446,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
     if (!qa_builtin_resource(&g->services, lm ? "noclass" : "grapple", &definition, e))
         return false;
     direction = qa_vec_normalize(direction);
-    const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(g->services.session), owner->id);
-    qa_actor_reference owner_reference = reference_owner && reference_owner->owner == g->options.owner && reference_owner->has_source ?
-        qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
-        qa_actor_reference_lifetime(owner->id);
+    qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner->id);
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = 2,
