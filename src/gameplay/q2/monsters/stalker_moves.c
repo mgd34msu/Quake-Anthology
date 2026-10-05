@@ -5,11 +5,11 @@ enum stalker_action {
     ST_JUMP, ST_WAIT, ST_UP, ST_DOWN, ST_STEP
 };
 static const q2m_frame_action actions[] = {
-    {NULL, INT_MIN}, {"stalker_idle_noise", INT_MIN}, {"stalker_heal", INT_MIN},
-    {"stalker_shoot_attack", INT_MIN}, {"stalker_shoot_attack2", INT_MIN},
-    {"stalker_swing_attack", INT_MIN}, {"stalker_jump_straightup", INT_MIN},
-    {"stalker_jump_wait_land", INT_MIN}, {"stalker_jump_up", INT_MIN},
-    {"stalker_jump_down", INT_MIN}, {"stalker_footstep", INT_MIN}
+    {NULL, INT_MIN}, {&q2m_callbacks[Q2M_CALLBACK_stalker_idle_noise], INT_MIN}, {&q2m_callbacks[Q2M_CALLBACK_stalker_heal], INT_MIN},
+    {&q2m_callbacks[Q2M_CALLBACK_stalker_shoot_attack], INT_MIN}, {&q2m_callbacks[Q2M_CALLBACK_stalker_shoot_attack2], INT_MIN},
+    {&q2m_callbacks[Q2M_CALLBACK_stalker_swing_attack], INT_MIN}, {&q2m_callbacks[Q2M_CALLBACK_stalker_jump_straightup], INT_MIN},
+    {&q2m_callbacks[Q2M_CALLBACK_stalker_jump_wait_land], INT_MIN}, {&q2m_callbacks[Q2M_CALLBACK_stalker_jump_up], INT_MIN},
+    {&q2m_callbacks[Q2M_CALLBACK_stalker_jump_down], INT_MIN}, {&q2m_callbacks[Q2M_CALLBACK_stalker_footstep], INT_MIN}
 };
 #define F(AI, DISTANCE, ACTION) { .ai = Q2M_AI_##AI, .distance = DISTANCE, \
     .lerp_frame = -1, .action_first = ACTION, .action_count = (ACTION != ST_NONE) }
@@ -56,29 +56,50 @@ static const q2m_frame frames[] = {
 _Static_assert(sizeof(frames) / sizeof(*frames) == ST_FRAME_COUNT,
                "Rerelease Stalker authored frame offsets");
 #define MOVE(NAME, FIRST, LAST, END, OFFSET) \
-    {"stalker_move_" NAME, FIRST, LAST, END, 0, OFFSET}
+    {Q2M_MOVE_stalker_move_##NAME, \
+     Q2M_MOVE_stalker_move_##NAME == Q2M_MOVE_stalker_move_walk ? Q2M_MOVE_WALKING : 0, \
+     FIRST, LAST, END, 0, OFFSET}
 static const q2m_move moves[] = {
-    MOVE("idle", 0, 20, "stalker_stand", ST_IDLE_FIRST),
-    MOVE("idle2", 21, 33, "stalker_stand", ST_IDLE2_FIRST),
-    MOVE("stand", 0, 20, "stalker_stand", ST_IDLE_FIRST),
-    MOVE("run", 49, 52, NULL, ST_RUN_FIRST),
-    MOVE("walk", 34, 41, "stalker_walk", ST_WALK_FIRST),
-    MOVE("false_death_end", 89, 92, "stalker_run", ST_REACTIVATE_FIRST),
-    MOVE("false_death", 79, 88, "stalker_false_death", ST_HEAL_FIRST),
-    MOVE("false_death_start", 70, 78, "stalker_false_death", ST_FALSE_FIRST),
-    MOVE("pain", 66, 69, "stalker_run", ST_PAIN_FIRST),
-    MOVE("shoot", 49, 52, "stalker_run", ST_SHOOT_FIRST),
-    MOVE("swing_l", 53, 60, "stalker_run", ST_LEFT_FIRST),
-    MOVE("swing_r", 61, 65, "stalker_run", ST_RIGHT_FIRST),
-    MOVE("jump_straightup", 45, 48, "stalker_run", ST_JUMP_FIRST),
-    MOVE("jump_up", 42, 48, "stalker_run", ST_UP_FIRST),
-    MOVE("jump_down", 42, 48, "stalker_run", ST_DOWN_FIRST),
-    MOVE("death", 70, 78, "stalker_dead", ST_DEATH_FIRST)
+    MOVE(idle, 0, 20, &q2m_callbacks[Q2M_CALLBACK_stalker_stand], ST_IDLE_FIRST),
+    MOVE(idle2, 21, 33, &q2m_callbacks[Q2M_CALLBACK_stalker_stand], ST_IDLE2_FIRST),
+    MOVE(stand, 0, 20, &q2m_callbacks[Q2M_CALLBACK_stalker_stand], ST_IDLE_FIRST),
+    MOVE(run, 49, 52, NULL, ST_RUN_FIRST),
+    MOVE(walk, 34, 41, &q2m_callbacks[Q2M_CALLBACK_stalker_walk], ST_WALK_FIRST),
+    MOVE(false_death_end, 89, 92, &q2m_callbacks[Q2M_CALLBACK_stalker_run], ST_REACTIVATE_FIRST),
+    MOVE(false_death, 79, 88, &q2m_callbacks[Q2M_CALLBACK_stalker_false_death], ST_HEAL_FIRST),
+    MOVE(false_death_start, 70, 78, &q2m_callbacks[Q2M_CALLBACK_stalker_false_death], ST_FALSE_FIRST),
+    MOVE(pain, 66, 69, &q2m_callbacks[Q2M_CALLBACK_stalker_run], ST_PAIN_FIRST),
+    MOVE(shoot, 49, 52, &q2m_callbacks[Q2M_CALLBACK_stalker_run], ST_SHOOT_FIRST),
+    MOVE(swing_l, 53, 60, &q2m_callbacks[Q2M_CALLBACK_stalker_run], ST_LEFT_FIRST),
+    MOVE(swing_r, 61, 65, &q2m_callbacks[Q2M_CALLBACK_stalker_run], ST_RIGHT_FIRST),
+    MOVE(jump_straightup, 45, 48, &q2m_callbacks[Q2M_CALLBACK_stalker_run], ST_JUMP_FIRST),
+    MOVE(jump_up, 42, 48, &q2m_callbacks[Q2M_CALLBACK_stalker_run], ST_UP_FIRST),
+    MOVE(jump_down, 42, 48, &q2m_callbacks[Q2M_CALLBACK_stalker_run], ST_DOWN_FIRST),
+    MOVE(death, 70, 78, &q2m_callbacks[Q2M_CALLBACK_stalker_dead], ST_DEATH_FIRST)
+};
+
+static const uint16_t move_index[Q2M_MOVE_COUNT] = {
+    [Q2M_MOVE_stalker_move_idle]=1u,
+    [Q2M_MOVE_stalker_move_idle2]=2u,
+    [Q2M_MOVE_stalker_move_stand]=3u,
+    [Q2M_MOVE_stalker_move_run]=4u,
+    [Q2M_MOVE_stalker_move_walk]=5u,
+    [Q2M_MOVE_stalker_move_false_death_end]=6u,
+    [Q2M_MOVE_stalker_move_false_death]=7u,
+    [Q2M_MOVE_stalker_move_false_death_start]=8u,
+    [Q2M_MOVE_stalker_move_pain]=9u,
+    [Q2M_MOVE_stalker_move_shoot]=10u,
+    [Q2M_MOVE_stalker_move_swing_l]=11u,
+    [Q2M_MOVE_stalker_move_swing_r]=12u,
+    [Q2M_MOVE_stalker_move_jump_straightup]=13u,
+    [Q2M_MOVE_stalker_move_jump_up]=14u,
+    [Q2M_MOVE_stalker_move_jump_down]=15u,
+    [Q2M_MOVE_stalker_move_death]=16u,
 };
 const q2m_move_set *q2m_stalker_rerelease_moves(void) {
     static const q2m_move_set value = {
         .key = "rerelease/stalker:stalkerMoves",
-        .moves = moves, .move_count = sizeof(moves) / sizeof(*moves),
+        .moves = moves, .move_index = move_index, .move_count = sizeof(moves) / sizeof(*moves),
         .frames = frames, .frame_count = sizeof(frames) / sizeof(*frames),
         .actions = actions, .action_count = sizeof(actions) / sizeof(*actions)
     };

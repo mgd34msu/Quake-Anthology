@@ -6,40 +6,39 @@
 #include "../entities/internal.h"
 
 typedef struct q2m_transition {
-  const char *callback;
-  const char *move;
+  q2m_move_id move;
 } q2m_transition;
 
-static const q2m_transition transitions[] = {
-    {"boss2_attack_mg", "boss2_move_attack_mg"},
-    {"carrier_attack_mg", "carrier_move_attack_mg"},
-    {"chick_attack1", "chick_move_attack1"},
-    {"chick_slash", "chick_move_slash"},
-    {"fixbot_attack", "fixbot_move_attack1"},
-    {"flipper_run_loop", "flipper_move_run_loop"},
-    {"flyer_check_melee", "flyer_move_start_melee"},
-    {"flyer_kamikaze", "flyer_move_kamikaze"},
-    {"flyer_loop_melee", "flyer_move_loop_melee"},
-    {"gekk_chant", "gekk_move_chant"},
-    {"gekk_face", "gekk_move_attack"},
-    {"gekk_run_start", "gekk_move_run_start"},
-    {"gekk_swim_loop", "gekk_move_swim_loop"},
-    {"guardian_atk1_finish", "guardian_atk1_out"},
-    {"guardian_atk2", "guardian_move_atk2_fire"},
-    {"guardian_atk2_out", "guardian_move_atk2_out"},
-    {"guncmdr_fire_chain", "guncmdr_move_fire_chain"},
-    {"guncmdr_grenade_back_dodge_resume", "guncmdr_move_attack_grenade_back"},
-    {"guncmdr_grenade_mortar_resume", "guncmdr_move_attack_mortar"},
-    {"gunner_fire_chain", "gunner_move_fire_chain"},
-    {"hover_attack", "hover_move_attack1"},
-    {"jorg_attack1", "jorg_move_attack1"},
-    {"parasite_do_fidget", "parasite_move_fidget"},
-    {"parasite_refidget", "parasite_move_start_fidget"},
-    {"parasite_start_run", "parasite_move_run"},
-    {"soldier_blind", "soldier_move_blind"},
-    {"stalker_false_death", "stalker_move_false_death"},
-    {"tank_doattack_rocket", "tank_move_attack_fire_rocket"},
-    {"tank_poststrike", "tank_move_run"},
+static const q2m_transition transitions[Q2M_CALLBACK_COUNT] = {
+    [Q2M_CALLBACK_boss2_attack_mg]={ Q2M_MOVE_boss2_move_attack_mg},
+    [Q2M_CALLBACK_carrier_attack_mg]={ Q2M_MOVE_carrier_move_attack_mg},
+    [Q2M_CALLBACK_chick_attack1]={ Q2M_MOVE_chick_move_attack1},
+    [Q2M_CALLBACK_chick_slash]={ Q2M_MOVE_chick_move_slash},
+    [Q2M_CALLBACK_fixbot_attack]={ Q2M_MOVE_fixbot_move_attack1},
+    [Q2M_CALLBACK_flipper_run_loop]={ Q2M_MOVE_flipper_move_run_loop},
+    [Q2M_CALLBACK_flyer_check_melee]={ Q2M_MOVE_flyer_move_start_melee},
+    [Q2M_CALLBACK_flyer_kamikaze]={ Q2M_MOVE_flyer_move_kamikaze},
+    [Q2M_CALLBACK_flyer_loop_melee]={ Q2M_MOVE_flyer_move_loop_melee},
+    [Q2M_CALLBACK_gekk_chant]={ Q2M_MOVE_gekk_move_chant},
+    [Q2M_CALLBACK_gekk_face]={ Q2M_MOVE_gekk_move_attack},
+    [Q2M_CALLBACK_gekk_run_start]={ Q2M_MOVE_gekk_move_run_start},
+    [Q2M_CALLBACK_gekk_swim_loop]={ Q2M_MOVE_gekk_move_swim_loop},
+    [Q2M_CALLBACK_guardian_atk1_finish]={ Q2M_MOVE_guardian_atk1_out},
+    [Q2M_CALLBACK_guardian_atk2]={ Q2M_MOVE_guardian_move_atk2_fire},
+    [Q2M_CALLBACK_guardian_atk2_out]={ Q2M_MOVE_guardian_move_atk2_out},
+    [Q2M_CALLBACK_guncmdr_fire_chain]={ Q2M_MOVE_guncmdr_move_fire_chain},
+    [Q2M_CALLBACK_guncmdr_grenade_back_dodge_resume]={ Q2M_MOVE_guncmdr_move_attack_grenade_back},
+    [Q2M_CALLBACK_guncmdr_grenade_mortar_resume]={ Q2M_MOVE_guncmdr_move_attack_mortar},
+    [Q2M_CALLBACK_gunner_fire_chain]={ Q2M_MOVE_gunner_move_fire_chain},
+    [Q2M_CALLBACK_hover_attack]={ Q2M_MOVE_hover_move_attack1},
+    [Q2M_CALLBACK_jorg_attack1]={ Q2M_MOVE_jorg_move_attack1},
+    [Q2M_CALLBACK_parasite_do_fidget]={ Q2M_MOVE_parasite_move_fidget},
+    [Q2M_CALLBACK_parasite_refidget]={ Q2M_MOVE_parasite_move_start_fidget},
+    [Q2M_CALLBACK_parasite_start_run]={ Q2M_MOVE_parasite_move_run},
+    [Q2M_CALLBACK_soldier_blind]={ Q2M_MOVE_soldier_move_blind},
+    [Q2M_CALLBACK_stalker_false_death]={ Q2M_MOVE_stalker_move_false_death},
+    [Q2M_CALLBACK_tank_doattack_rocket]={ Q2M_MOVE_tank_move_attack_fire_rocket},
+    [Q2M_CALLBACK_tank_poststrike]={ Q2M_MOVE_tank_move_run},
 };
 
 static bool trace_point(q2m_context *, qa_vec3, qa_vec3, uint32_t,
@@ -65,20 +64,17 @@ static bool trace_hit_brush(q2m_context *context,
 }
 
 
-static bool ends_with(const char *value, const char *suffix) {
-  size_t length = strlen(value), tail = strlen(suffix);
-  return tail <= length && strcmp(value + length - tail, suffix) == 0;
-}
 
-static bool set_existing_move(q2m_context *context, const char *name,
+
+static bool set_existing_move(q2m_context *context, q2m_move_id name,
                               bool immediate, bool *found, qa_error *error) {
-  *found = q2m_move_named(context->monster, name) != NULL;
+  *found = q2m_move_find(context->monster, name) != NULL;
   return !*found || q2m_set_move(context, name, immediate, error);
 }
 
-static bool set_definition_move(q2m_context *context, const char *name,
+static bool set_definition_move(q2m_context *context, q2m_move_id name,
                                 qa_error *error) {
-  return name == NULL || q2m_set_move(context, name, false, error);
+  return name == Q2M_MOVE_NONE || q2m_set_move(context, name, false, error);
 }
 
 static bool enemy_alive(q2m_context *context) {
@@ -198,7 +194,7 @@ static bool toss_makron(q2m_context *context, qa_error *error) {
   }
   if (!q2m_alive(&resumed))
     return true;
-  if (!q2m_set_move(&resumed, "makron_move_sight", true, error))
+  if (!q2m_set_move(&resumed, Q2M_MOVE_makron_move_sight, true, error))
     return false;
   if (q2m_alive(&resumed)) {
     resumed.monster->frame = resumed.monster->move->first_frame;
@@ -226,15 +222,15 @@ static bool set_duck(q2m_context *context, bool down, qa_error *error) {
   return publish_duck(context, down, error);
 }
 
-static bool duck_action(q2m_context *context, const char *callback,
+static bool duck_action(q2m_context *context, q2m_callback_id callback,
                         qa_error *error) {
   struct qa_q2_monster *m = context->monster;
-  bool shared = !strcmp(callback, "monster_duck_down") ||
-      !strcmp(callback, "monster_duck_hold") || !strcmp(callback, "monster_duck_up");
-  bool down = !strcmp(callback, "brain_duck_down") || !strcmp(callback, "chick_duck_down") ||
-      !strcmp(callback, "medic_duck_down") || !strcmp(callback, "monster_duck_down");
-  bool hold = !strcmp(callback, "brain_duck_hold") || !strcmp(callback, "chick_duck_hold") ||
-      !strcmp(callback, "medic_duck_hold") || !strcmp(callback, "monster_duck_hold");
+  bool shared = (callback == Q2M_CALLBACK_monster_duck_down) ||
+      (callback == Q2M_CALLBACK_monster_duck_hold) || (callback == Q2M_CALLBACK_monster_duck_up);
+  bool down = (callback == Q2M_CALLBACK_brain_duck_down) || (callback == Q2M_CALLBACK_chick_duck_down) ||
+      (callback == Q2M_CALLBACK_medic_duck_down) || (callback == Q2M_CALLBACK_monster_duck_down);
+  bool hold = (callback == Q2M_CALLBACK_brain_duck_hold) || (callback == Q2M_CALLBACK_chick_duck_hold) ||
+      (callback == Q2M_CALLBACK_medic_duck_hold) || (callback == Q2M_CALLBACK_monster_duck_hold);
   bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
   if (down) {
     if (!shared && m->ducked) return true;
@@ -242,7 +238,7 @@ static bool duck_action(q2m_context *context, const char *callback,
       if (rerelease) m->next_duck_ns = q2m_after(context->game->now_ns, 5);
       else if (m->duck_ns < context->game->now_ns)
         m->duck_ns = q2m_after(context->game->now_ns, 1);
-    } else if (strcmp(callback, "brain_duck_down"))
+    } else if ((callback != (Q2M_CALLBACK_brain_duck_down)))
       m->pause_ns = q2m_after(context->game->now_ns, 1);
     return set_duck(context, true, error);
   }
@@ -259,23 +255,20 @@ static bool duck_action(q2m_context *context, const char *callback,
   return set_duck(context, false, error);
 }
 
-static bool jump_action(q2m_context *context, const char *callback,
+static bool jump_action(q2m_context *context, q2m_callback_id callback,
                         qa_error *error) {
-  static const struct { const char *name; float forward, up; } jumps[] = {
-      {"berserk_jump_now", 100, 300}, {"berserk_jump2_now", 150, 400},
-      {"guncmdr_jump_now", 100, 300}, {"guncmdr_jump2_now", 150, 400},
-      {"gunner_jump_now", 100, 300}, {"gunner_jump2_now", 150, 400},
-      {"infantry_jump_now", 100, 300}, {"infantry_jump2_now", 150, 400},
-      {"mutant_jump_down", 100, 100}, {"mutant_jump_up", 200, 450},
-      {"parasite_jump_down", 100, 100}, {"parasite_jump_up", 200, 450},
+  static const struct { q2m_callback_id name; float forward, up; } jumps[Q2M_CALLBACK_COUNT] = {
+      [Q2M_CALLBACK_berserk_jump_now]={Q2M_CALLBACK_berserk_jump_now, 100, 300}, [Q2M_CALLBACK_berserk_jump2_now]={Q2M_CALLBACK_berserk_jump2_now, 150, 400},
+      [Q2M_CALLBACK_guncmdr_jump_now]={Q2M_CALLBACK_guncmdr_jump_now, 100, 300}, [Q2M_CALLBACK_guncmdr_jump2_now]={Q2M_CALLBACK_guncmdr_jump2_now, 150, 400},
+      [Q2M_CALLBACK_gunner_jump_now]={Q2M_CALLBACK_gunner_jump_now, 100, 300}, [Q2M_CALLBACK_gunner_jump2_now]={Q2M_CALLBACK_gunner_jump2_now, 150, 400},
+      [Q2M_CALLBACK_infantry_jump_now]={Q2M_CALLBACK_infantry_jump_now, 100, 300}, [Q2M_CALLBACK_infantry_jump2_now]={Q2M_CALLBACK_infantry_jump2_now, 150, 400},
+      [Q2M_CALLBACK_mutant_jump_down]={Q2M_CALLBACK_mutant_jump_down, 100, 100}, [Q2M_CALLBACK_mutant_jump_up]={Q2M_CALLBACK_mutant_jump_up, 200, 450},
+      [Q2M_CALLBACK_parasite_jump_down]={Q2M_CALLBACK_parasite_jump_down, 100, 100}, [Q2M_CALLBACK_parasite_jump_up]={Q2M_CALLBACK_parasite_jump_up, 200, 450},
   };
-  static const char *const waits[] = {
-      "berserk_jump_wait_land", "guncmdr_jump_wait_land", "gunner_jump_wait_land",
-      "infantry_jump_wait_land", "mutant_jump_wait_land", "parasite_jump_wait_land",
-  };
-  bool wait = false;
-  for (size_t i = 0; i < sizeof(waits) / sizeof(*waits); ++i)
-    wait |= !strcmp(callback, waits[i]);
+  bool wait = callback == Q2M_CALLBACK_berserk_jump_wait_land ||
+      callback == Q2M_CALLBACK_guncmdr_jump_wait_land || callback == Q2M_CALLBACK_gunner_jump_wait_land ||
+      callback == Q2M_CALLBACK_infantry_jump_wait_land || callback == Q2M_CALLBACK_mutant_jump_wait_land ||
+      callback == Q2M_CALLBACK_parasite_jump_wait_land;
   if (wait) {
     if (context->body.ground.registry == 0 &&
         context->game->options.edition == QA_Q2_RERELEASE) {
@@ -303,16 +296,13 @@ static bool jump_action(q2m_context *context, const char *callback,
   }
   qa_vec3 forward, up;
   qa_builtin_angle_vectors(context->body.angles, &forward, NULL, &up);
-  size_t index;
-  for (index = 0; index < sizeof(jumps) / sizeof(*jumps); ++index)
-    if (!strcmp(callback, jumps[index].name)) break;
-  if (index == sizeof(jumps) / sizeof(*jumps)) {
-    qa_error_set(error, QA_ERROR_FORMAT, 0, "Unknown authored Q2 jump callback %s", callback);
+  if (jumps[callback].name != callback) {
+    qa_error_set(error, QA_ERROR_FORMAT, 0, "Unknown authored Q2 jump callback %s", q2m_callbacks[callback].name);
     return false;
   }
   context->body.velocity = qa_vec_add(
-      context->body.velocity, qa_vec_add(qa_vec_scale(forward, jumps[index].forward),
-                                         qa_vec_scale(up, jumps[index].up)));
+      context->body.velocity, qa_vec_add(qa_vec_scale(forward, jumps[callback].forward),
+                                         qa_vec_scale(up, jumps[callback].up)));
   context->body.ground = (qa_actor_id){0};
   context->actor->physics.motion = QA_PHYSICS_STEP;
   return q2m_write_body(context, true, error);
@@ -330,60 +320,58 @@ static bool shrink(q2m_context *context, qa_error *error) {
 }
 
 typedef struct source_sound {
-  const char *callback, *path;
+  const char *path;
   int channel;
   float attenuation, volume;
 } source_sound;
 
-static const source_sound source_sounds[] = {
-    {"TankStrike", "tank/tnkatck5.wav", 1, 1, 1},
-    {"TreadSound2", "bosstank/btkengn1.wav", 2, 1, 1},
-    {"arachnid_footstep", "insane/insane11.wav", 4, 2, .5f},
-    {"guardian_footstep", "zortemp/step.wav", 4, 1, 1},
-    {"guncmdr_idlesound", "guncmdr/gcdridle1.wav", 2, 2, 1},
-    {"guncmdr_opengun", "guncmdr/gcdratck1.wav", 2, 2, 1},
-    {"insane_fist", "insane/insane11.wav", 2, 2, 1},
-    {"jorg_idle", "boss3/bs3idle1.wav", 2, 1, 1},
-    {"jorg_step_left", "boss3/step1.wav", 4, 1, 1},
-    {"jorg_step_right", "boss3/step2.wav", 4, 1, 1},
-    {"makron_hit", "makron/bhit.wav", 0, 0, 1},
-    {"makron_popup", "makron/popup.wav", 4, 0, 1},
-    {"makron_step_left", "makron/step1.wav", 4, 1, 1},
-    {"makron_step_right", "makron/step2.wav", 4, 1, 1},
-    {"makron_brainsplorch", "makron/brain1.wav", 2, 1, 1},
-    {"makron_prerailgun", "makron/rail_up.wav", 1, 1, 1},
-    {"shambler_melee1", "shambler/melee1.wav", 1, 1, 1},
-    {"shambler_melee2", "shambler/melee2.wav", 1, 1, 1},
-    {"tank_footstep", "tank/step.wav", 4, 1, 1},
-    {"tank_thud", "tank/tnkdeth2.wav", 4, 1, 1},
-    {"tank_windup", "tank/tnkatck4.wav", 1, 1, 1},
+static const source_sound source_sounds[Q2M_CALLBACK_COUNT] = {
+    [Q2M_CALLBACK_TankStrike]={ "tank/tnkatck5.wav", 1, 1, 1},
+    [Q2M_CALLBACK_TreadSound2]={ "bosstank/btkengn1.wav", 2, 1, 1},
+    [Q2M_CALLBACK_arachnid_footstep]={ "insane/insane11.wav", 4, 2, .5f},
+    [Q2M_CALLBACK_guardian_footstep]={ "zortemp/step.wav", 4, 1, 1},
+    [Q2M_CALLBACK_guncmdr_idlesound]={ "guncmdr/gcdridle1.wav", 2, 2, 1},
+    [Q2M_CALLBACK_guncmdr_opengun]={ "guncmdr/gcdratck1.wav", 2, 2, 1},
+    [Q2M_CALLBACK_insane_fist]={ "insane/insane11.wav", 2, 2, 1},
+    [Q2M_CALLBACK_jorg_idle]={ "boss3/bs3idle1.wav", 2, 1, 1},
+    [Q2M_CALLBACK_jorg_step_left]={ "boss3/step1.wav", 4, 1, 1},
+    [Q2M_CALLBACK_jorg_step_right]={ "boss3/step2.wav", 4, 1, 1},
+    [Q2M_CALLBACK_makron_hit]={ "makron/bhit.wav", 0, 0, 1},
+    [Q2M_CALLBACK_makron_popup]={ "makron/popup.wav", 4, 0, 1},
+    [Q2M_CALLBACK_makron_step_left]={ "makron/step1.wav", 4, 1, 1},
+    [Q2M_CALLBACK_makron_step_right]={ "makron/step2.wav", 4, 1, 1},
+    [Q2M_CALLBACK_makron_brainsplorch]={ "makron/brain1.wav", 2, 1, 1},
+    [Q2M_CALLBACK_makron_prerailgun]={ "makron/rail_up.wav", 1, 1, 1},
+    [Q2M_CALLBACK_shambler_melee1]={ "shambler/melee1.wav", 1, 1, 1},
+    [Q2M_CALLBACK_shambler_melee2]={ "shambler/melee2.wav", 1, 1, 1},
+    [Q2M_CALLBACK_tank_footstep]={ "tank/step.wav", 4, 1, 1},
+    [Q2M_CALLBACK_tank_thud]={ "tank/tnkdeth2.wav", 4, 1, 1},
+    [Q2M_CALLBACK_tank_windup]={ "tank/tnkatck4.wav", 1, 1, 1},
 };
 
-static bool source_sound_callback(q2m_context *context, const char *callback,
+static bool source_sound_callback(q2m_context *context, q2m_callback_id callback,
                                    bool *handled, qa_error *error) {
   *handled = true;
-  for (size_t i = 0; i < sizeof(source_sounds) / sizeof(*source_sounds); ++i) {
-    const source_sound *sound = source_sounds + i;
-    if (strcmp(callback, sound->callback) == 0)
-      return q2m_sound_volume(context, sound->path, sound->channel,
-                               sound->attenuation, sound->volume, error);
-  }
-  if (strcmp(callback, "monster_footstep") == 0)
+  const source_sound *sound = source_sounds + callback;
+  if (sound->path)
+    return q2m_sound_volume(context, sound->path, sound->channel,
+                           sound->attenuation, sound->volume, error);
+  if (callback == Q2M_CALLBACK_monster_footstep)
     return context->body.ground.registry == 0 ||
            q2m_emit(context, QA_BUILTIN_Q2_ENTITY_EVENT, NULL, 8,
                      context->body.origin, context->body.origin, 0, error);
-  if (strcmp(callback, "makron_taunt") == 0) {
+  if (callback == Q2M_CALLBACK_makron_taunt) {
     float choice = q2m_random(context->game);
     const char *path = choice <= .3f ? "makron/voice4.wav"
                        : choice <= .6f ? "makron/voice3.wav"
                                          : "makron/voice.wav";
     return q2m_sound(context, path, 0, 0, error);
   }
-  if (strcmp(callback, "insane_shake") == 0 ||
-      strcmp(callback, "insane_moan") == 0 ||
-      strcmp(callback, "insane_scream") == 0) {
+  if ((callback == Q2M_CALLBACK_insane_shake) ||
+      (callback == Q2M_CALLBACK_insane_moan) ||
+      (callback == Q2M_CALLBACK_insane_scream)) {
     bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
-    bool shake = strcmp(callback, "insane_shake") == 0;
+    bool shake = (callback == Q2M_CALLBACK_insane_shake);
     if (rerelease && ((context->monster->spawnflags & 64u) ||
         (!shake && context->monster->attack_ns >= context->game->now_ns)))
       return true;
@@ -392,7 +380,7 @@ static bool source_sound_callback(q2m_context *context, const char *callback,
         "insane/insane4.wav", "insane/insane6.wav", "insane/insane8.wav",
         "insane/insane9.wav", "insane/insane10.wav"};
     const char *path = shake ? "insane/insane5.wav"
-                       : strcmp(callback, "insane_moan") == 0
+                       : (callback == Q2M_CALLBACK_insane_moan)
                            ? "insane/insane7.wav"
                            : screams[q2_random_bounded(context->game, 8)];
     if (!q2m_sound(context, path, 2, 2, error))
@@ -893,45 +881,45 @@ static bool soldier_run(q2m_context *context, qa_error *error) {
       context->monster->attack_state = Q2M_STRAIGHT;
     if (!q2m_soldier_sound_end(context, error)) return false;
     if (!q2m_alive(context)) return true;
-    const char *move = context->monster->stand_ground ? "soldier_move_stand1"
+    q2m_move_id move = context->monster->stand_ground ? Q2M_MOVE_soldier_move_stand1
         : context->monster->move &&
-          (strcmp(context->monster->move->name, "soldier_move_walk1") == 0 ||
-           strcmp(context->monster->move->name, "soldier_move_walk2") == 0 ||
-           strcmp(context->monster->move->name, "soldier_move_start_run") == 0 ||
-           strcmp(context->monster->move->name, "soldier_move_run") == 0)
-            ? "soldier_move_run" : "soldier_move_start_run";
+          ((context->monster->move->id == Q2M_MOVE_soldier_move_walk1) ||
+           (context->monster->move->id == Q2M_MOVE_soldier_move_walk2) ||
+           (context->monster->move->id == Q2M_MOVE_soldier_move_start_run) ||
+           (context->monster->move->id == Q2M_MOVE_soldier_move_run))
+            ? Q2M_MOVE_soldier_move_run : Q2M_MOVE_soldier_move_start_run;
     return q2m_set_move(context, move, true, error);
   }
   context->monster->charging = false;
   context->monster->hold_frame = false;
-  const char *move = context->monster->stand_ground
+  q2m_move_id move = context->monster->stand_ground
                          ? context->monster->definition->stand_move
                          : context->monster->definition->run_move;
   return set_definition_move(context, move, error);
 }
 
-static bool soldier_callbacks(q2m_context *context, const char *callback,
+static bool soldier_callbacks(q2m_context *context, q2m_callback_id callback,
                               bool *handled, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
-  bool base = strncmp(callback, "soldier_", 8) == 0;
-  bool heavy = strncmp(callback, "soldierh_", 9) == 0;
+  bool base = (q2m_callbacks[callback].flags & Q2M_CALLBACK_BASE_SOLDIER) != 0;
+  bool heavy = (q2m_callbacks[callback].flags & Q2M_CALLBACK_HEAVY_SOLDIER) != 0;
   *handled = base || heavy;
   if (!*handled)
     return true;
 
-  if (strcmp(callback, "soldier_attack1_shotgun_check") == 0 ||
-      strcmp(callback, "soldier_attack2_shotgun_check") == 0 ||
-      strcmp(callback, "soldier_attack6_shotgun_check") == 0) {
+  if ((callback == Q2M_CALLBACK_soldier_attack1_shotgun_check) ||
+      (callback == Q2M_CALLBACK_soldier_attack2_shotgun_check) ||
+      (callback == Q2M_CALLBACK_soldier_attack6_shotgun_check)) {
     if (!soldier_shotgun(monster) || monster->cocked)
       return true;
-    monster->next_frame = strstr(callback, "attack1") != NULL   ? 5
-                          : strstr(callback, "attack2") != NULL ? 21
+    monster->next_frame = (q2m_callbacks[callback].flags & Q2M_CALLBACK_ATTACK1) != 0   ? 5
+                          : (q2m_callbacks[callback].flags & Q2M_CALLBACK_ATTACK2) != 0 ? 21
                                                                 : 117;
     monster->force_refire = true;
     return true;
   }
 
-  if (strcmp(callback, "soldier_attack1_refire1") == 0) {
+  if (callback == Q2M_CALLBACK_soldier_attack1_refire1) {
     if (context->game->options.edition == QA_Q2_RERELEASE &&
         soldier_blaster(monster))
       monster->next_frame = 9;
@@ -947,20 +935,20 @@ static bool soldier_callbacks(q2m_context *context, const char *callback,
     monster->next_frame = refire ? 1 : 9;
     return true;
   }
-  if (strcmp(callback, "soldier_attack1_refire2") == 0 ||
-      strcmp(callback, "soldier_attack2_refire2") == 0) {
+  if ((callback == Q2M_CALLBACK_soldier_attack1_refire2) ||
+      (callback == Q2M_CALLBACK_soldier_attack2_refire2)) {
     if (soldier_blaster(monster) || !enemy_alive(context))
       return true;
     bool refire;
     if (!soldier_refire(context, monster->force_refire, &refire, error))
       return false;
     if (refire) {
-      monster->next_frame = callback[14] == '1' ? 1 : 15;
+      monster->next_frame = callback == Q2M_CALLBACK_soldier_attack1_refire2 ? 1 : 15;
       monster->force_refire = false;
     }
     return true;
   }
-  if (strcmp(callback, "soldier_attack2_refire1") == 0) {
+  if (callback == Q2M_CALLBACK_soldier_attack2_refire1) {
     if (context->game->options.edition == QA_Q2_RERELEASE &&
         soldier_blaster(monster))
       monster->next_frame = 27;
@@ -975,7 +963,7 @@ static bool soldier_callbacks(q2m_context *context, const char *callback,
       monster->next_frame = 27;
     return true;
   }
-  if (strcmp(callback, "soldier_attack3_refire") == 0) {
+  if (callback == Q2M_CALLBACK_soldier_attack3_refire) {
     if (context->game->options.edition == QA_Q2_RERELEASE &&
         soldier_shotgun(monster) && !monster->cocked)
       monster->hold_frame = context->game->now_ns < monster->duck_ns;
@@ -988,7 +976,7 @@ static bool soldier_callbacks(q2m_context *context, const char *callback,
     }
     return true;
   }
-  if (strcmp(callback, "soldier_attack6_refire") == 0) {
+  if (callback == Q2M_CALLBACK_soldier_attack6_refire) {
     if (enemy_alive(context) &&
         q2m_distance(context, monster->enemy) >=
             (context->game->options.product == QA_Q2_ROGUE ? 80.0f : 500.0f) &&
@@ -1000,9 +988,9 @@ static bool soldier_callbacks(q2m_context *context, const char *callback,
     monster->charging = false;
     return true;
   }
-  if (strcmp(callback, "soldier_attack6_refire1") == 0 ||
-      strcmp(callback, "soldier_attack6_refire2") == 0) {
-    bool first = ends_with(callback, "refire1");
+  if ((callback == Q2M_CALLBACK_soldier_attack6_refire1) ||
+      (callback == Q2M_CALLBACK_soldier_attack6_refire2)) {
+    bool first = (q2m_callbacks[callback].flags & Q2M_CALLBACK_REFIRE1) != 0;
     monster->dodging = false;
     monster->charging = false;
     if (monster->enemy.registry == 0 ||
@@ -1024,14 +1012,14 @@ static bool soldier_callbacks(q2m_context *context, const char *callback,
     return true;
   }
 
-  if (strcmp(callback, "soldierh_attack1_refire1") == 0 ||
-      strcmp(callback, "soldierh_attack1_refire2") == 0 ||
-      strcmp(callback, "soldierh_attack2_refire1") == 0 ||
-      strcmp(callback, "soldierh_attack2_refire2") == 0) {
+  if ((callback == Q2M_CALLBACK_soldierh_attack1_refire1) ||
+      (callback == Q2M_CALLBACK_soldierh_attack1_refire2) ||
+      (callback == Q2M_CALLBACK_soldierh_attack2_refire1) ||
+      (callback == Q2M_CALLBACK_soldierh_attack2_refire2)) {
     if (!enemy_alive(context))
       return true;
-    bool attack1 = strstr(callback, "attack1") != NULL;
-    bool first = ends_with(callback, "refire1");
+    bool attack1 = (q2m_callbacks[callback].flags & Q2M_CALLBACK_ATTACK1) != 0;
+    bool first = (q2m_callbacks[callback].flags & Q2M_CALLBACK_REFIRE1) != 0;
     float distance = q2m_distance(context, monster->enemy);
     if (first && soldierh_ripper(monster)) {
       bool refire = (context->game->options.skill == 3 &&
@@ -1046,20 +1034,20 @@ static bool soldier_callbacks(q2m_context *context, const char *callback,
     }
     return true;
   }
-  if (strcmp(callback, "soldierh_attack3_refire") == 0) {
+  if (callback == Q2M_CALLBACK_soldierh_attack3_refire) {
     if (q2m_after(context->game->now_ns, 0.4) < monster->pause_ns)
       monster->next_frame = 32;
     return true;
   }
-  if (strcmp(callback, "soldierh_attack6_refire") == 0) {
+  if (callback == Q2M_CALLBACK_soldierh_attack6_refire) {
     if (enemy_alive(context) &&
         q2m_distance(context, monster->enemy) >= 500.0f &&
         context->game->options.skill == 3)
       monster->next_frame = 111;
     return true;
   }
-  if (strcmp(callback, "soldierh_hyper_refire1") == 0 ||
-      strcmp(callback, "soldierh_hyper_refire2") == 0) {
+  if ((callback == Q2M_CALLBACK_soldierh_hyper_refire1) ||
+      (callback == Q2M_CALLBACK_soldierh_hyper_refire2)) {
     if (!soldierh_hyper(monster))
       return true;
     if (q2m_random(context->game) < 0.7f) {
@@ -1067,58 +1055,58 @@ static bool soldier_callbacks(q2m_context *context, const char *callback,
       if (!visible_enemy(context, &visible, error))
         return false;
       if (visible)
-        monster->frame = ends_with(callback, "refire1") ? 2 : 16;
+        monster->frame = (q2m_callbacks[callback].flags & Q2M_CALLBACK_REFIRE1) != 0 ? 2 : 16;
     } else {
       return q2m_sound(context, "weapons/hyprbd1a.wav", 0, 1.0f, error);
     }
     return true;
   }
-  if (strcmp(callback, "soldierh_hyper_sound") == 0)
+  if (callback == Q2M_CALLBACK_soldierh_hyper_sound)
     return soldierh_hyper(monster)
                ? q2m_sound(context, "weapons/hyprbl1a.wav", 0, 1.0f, error)
                : true;
 
-  if (strcmp(callback, "soldier_idle") == 0 ||
-      strcmp(callback, "soldierh_idle") == 0)
+  if ((callback == Q2M_CALLBACK_soldier_idle) ||
+      (callback == Q2M_CALLBACK_soldierh_idle))
     return q2m_random(context->game) > 0.8f
                ? q2m_sound(context, "soldier/solidle1.wav", 2, 2.0f, error)
                : true;
-  if (strcmp(callback, "soldier_cock") == 0 ||
-      strcmp(callback, "soldierh_cock") == 0) {
+  if ((callback == Q2M_CALLBACK_soldier_cock) ||
+      (callback == Q2M_CALLBACK_soldierh_cock)) {
     if (base)
       monster->cocked = true;
     return q2m_sound(context, "infantry/infatck3.wav", 1, 1.0f, error);
   }
-  if (strcmp(callback, "soldier_walk1_random") == 0 ||
-      strcmp(callback, "soldierh_walk1_random") == 0) {
+  if ((callback == Q2M_CALLBACK_soldier_walk1_random) ||
+      (callback == Q2M_CALLBACK_soldierh_walk1_random)) {
     if (q2m_random(context->game) > 0.1f)
       monster->next_frame = monster->move->first_frame;
     return true;
   }
-  if (strcmp(callback, "soldier_duck_down") == 0 ||
-      strcmp(callback, "soldierh_duck_down") == 0) {
+  if ((callback == Q2M_CALLBACK_soldier_duck_down) ||
+      (callback == Q2M_CALLBACK_soldierh_duck_down)) {
     if (monster->ducked)
       return true;
     monster->pause_ns = q2m_after(context->game->now_ns, 1.0);
     return set_duck(context, true, error);
   }
-  if (strcmp(callback, "soldier_duck_hold") == 0 ||
-      strcmp(callback, "soldierh_duck_hold") == 0) {
+  if ((callback == Q2M_CALLBACK_soldier_duck_hold) ||
+      (callback == Q2M_CALLBACK_soldierh_duck_hold)) {
     monster->hold_frame = context->game->now_ns < monster->pause_ns;
     return true;
   }
-  if (strcmp(callback, "soldier_duck_up") == 0 ||
-      strcmp(callback, "soldierh_duck_up") == 0)
+  if ((callback == Q2M_CALLBACK_soldier_duck_up) ||
+      (callback == Q2M_CALLBACK_soldierh_duck_up))
     return set_duck(context, false, error);
-  if (strcmp(callback, "soldier_start_charge") == 0) {
+  if (callback == Q2M_CALLBACK_soldier_start_charge) {
     monster->charging = true;
     return true;
   }
-  if (strcmp(callback, "soldier_stop_charge") == 0) {
+  if (callback == Q2M_CALLBACK_soldier_stop_charge) {
     monster->charging = false;
     return true;
   }
-  if (strcmp(callback, "soldier_blind_check") == 0) {
+  if (callback == Q2M_CALLBACK_soldier_blind_check) {
     if (monster->manual_steering) {
       qa_vec3 direction =
           qa_vec_sub(monster->blind_fire_target, context->body.origin);
@@ -1127,47 +1115,47 @@ static bool soldier_callbacks(q2m_context *context, const char *callback,
     }
     return true;
   }
-  if (strcmp(callback, "soldier_death_shrink") == 0)
+  if (callback == Q2M_CALLBACK_soldier_death_shrink)
     return shrink(context, error);
 
-  static const struct { const char *callback; unsigned index; bool limited, extra; } shots[] = {
-      {"soldier_fire1",0,false,false}, {"soldier_fire2",1,false,false},
-      {"soldier_fire3",2,false,false}, {"soldier_fire4",3,false,false},
-      {"soldier_fire5",8,true,false}, {"soldier_fire6",5,false,false},
-      {"soldier_fire7",6,false,false}, {"soldier_fire8",7,true,false},
-      {"soldierh_fire1",0,false,false}, {"soldierh_fire2",1,false,false},
-      {"soldierh_fire3",2,false,false}, {"soldierh_fire4",3,false,false},
-      {"soldierh_fire6",5,false,false}, {"soldierh_fire7",6,false,false},
-      {"soldierh_fire8",7,false,false},
-      {"soldierh_ripper1",0,false,true}, {"soldierh_ripper2",1,false,true},
-      {"soldierh_hyperripper1",0,false,true}, {"soldierh_hyperripper2",1,false,true},
-      {"soldierh_hyperripper3",2,false,true}, {"soldierh_hyperripper5",8,true,true},
-      {"soldierh_hyperripper8",7,true,true},
+  static const struct { q2m_callback_id callback; unsigned index; bool limited, extra; } shots[Q2M_CALLBACK_COUNT] = {
+      [Q2M_CALLBACK_soldier_fire1]={Q2M_CALLBACK_soldier_fire1,0,false,false}, [Q2M_CALLBACK_soldier_fire2]={Q2M_CALLBACK_soldier_fire2,1,false,false},
+      [Q2M_CALLBACK_soldier_fire3]={Q2M_CALLBACK_soldier_fire3,2,false,false}, [Q2M_CALLBACK_soldier_fire4]={Q2M_CALLBACK_soldier_fire4,3,false,false},
+      [Q2M_CALLBACK_soldier_fire5]={Q2M_CALLBACK_soldier_fire5,8,true,false}, [Q2M_CALLBACK_soldier_fire6]={Q2M_CALLBACK_soldier_fire6,5,false,false},
+      [Q2M_CALLBACK_soldier_fire7]={Q2M_CALLBACK_soldier_fire7,6,false,false}, [Q2M_CALLBACK_soldier_fire8]={Q2M_CALLBACK_soldier_fire8,7,true,false},
+      [Q2M_CALLBACK_soldierh_fire1]={Q2M_CALLBACK_soldierh_fire1,0,false,false}, [Q2M_CALLBACK_soldierh_fire2]={Q2M_CALLBACK_soldierh_fire2,1,false,false},
+      [Q2M_CALLBACK_soldierh_fire3]={Q2M_CALLBACK_soldierh_fire3,2,false,false}, [Q2M_CALLBACK_soldierh_fire4]={Q2M_CALLBACK_soldierh_fire4,3,false,false},
+      [Q2M_CALLBACK_soldierh_fire6]={Q2M_CALLBACK_soldierh_fire6,5,false,false}, [Q2M_CALLBACK_soldierh_fire7]={Q2M_CALLBACK_soldierh_fire7,6,false,false},
+      [Q2M_CALLBACK_soldierh_fire8]={Q2M_CALLBACK_soldierh_fire8,7,false,false},
+      [Q2M_CALLBACK_soldierh_ripper1]={Q2M_CALLBACK_soldierh_ripper1,0,false,true}, [Q2M_CALLBACK_soldierh_ripper2]={Q2M_CALLBACK_soldierh_ripper2,1,false,true},
+      [Q2M_CALLBACK_soldierh_hyperripper1]={Q2M_CALLBACK_soldierh_hyperripper1,0,false,true}, [Q2M_CALLBACK_soldierh_hyperripper2]={Q2M_CALLBACK_soldierh_hyperripper2,1,false,true},
+      [Q2M_CALLBACK_soldierh_hyperripper3]={Q2M_CALLBACK_soldierh_hyperripper3,2,false,true}, [Q2M_CALLBACK_soldierh_hyperripper5]={Q2M_CALLBACK_soldierh_hyperripper5,8,true,true},
+      [Q2M_CALLBACK_soldierh_hyperripper8]={Q2M_CALLBACK_soldierh_hyperripper8,7,true,true},
   };
-  for (size_t i = 0; i < sizeof(shots) / sizeof(*shots); ++i) {
-    if (strcmp(callback, shots[i].callback)) continue;
-    if (shots[i].extra) {
+  if (shots[callback].callback == callback) {
+    if (shots[callback].extra) {
       if (context->game->options.edition == QA_Q2_RERELEASE) {
         if (monster->count >= 4 ||
-            ((shots[i].index == 2 || shots[i].index == 7) && monster->skin < 6) ||
-            (shots[i].index == 8 && !monster->style)) return true;
+            ((shots[callback].index == 2 || shots[callback].index == 7) && monster->skin < 6) ||
+            (shots[callback].index == 8 && !monster->style)) return true;
       } else if (soldierh_laser(monster)) return true;
     }
-    if (base && shots[i].index == 2 && context->game->options.edition == QA_Q2_CLASSIC) {
+    if (base && shots[callback].index == 2 && context->game->options.edition == QA_Q2_CLASSIC) {
       monster->pause_ns = q2m_after(context->game->now_ns, 1);
       if (!set_duck(context, true, error)) return false;
     }
-    if (!soldier_fire_exact(context, shots[i].index, shots[i].limited, error)) return false;
-    if (q2m_alive(context) && !strcmp(callback, "soldier_fire6") &&
+    if (!soldier_fire_exact(context, shots[callback].index, shots[callback].limited, error)) return false;
+    if (q2m_alive(context) && (callback == Q2M_CALLBACK_soldier_fire6) &&
         context->game->options.edition == QA_Q2_RERELEASE &&
         soldier_shotgun(monster) && !monster->cocked)
       monster->next_frame = 297;
     return true;
+
   }
 
-  if (strcmp(callback, "soldierh_hyper_laser_sound_start") == 0)
+  if (callback == Q2M_CALLBACK_soldierh_hyper_laser_sound_start)
     return soldier_laser_sound(context, true, error);
-  if (strcmp(callback, "soldierh_hyper_laser_sound_end") == 0)
+  if (callback == Q2M_CALLBACK_soldierh_hyper_laser_sound_end)
     return soldier_laser_sound(context, false, error);
 
   *handled = false;
@@ -1289,10 +1277,10 @@ static bool infantry_fire(q2m_context *context, qa_error *error) {
     return true;
   }
   monster->cocked = false;
-  if (strcmp(monster->move->name, "infantry_move_attack4") == 0) {
+  if ((monster->move->id == Q2M_MOVE_infantry_move_attack4)) {
     if (context->game->now_ns >= monster->fire_ns) {
       finish_dodge_action(monster);
-      if (!q2m_set_move(context, "infantry_move_attack1", false, error))
+      if (!q2m_set_move(context, Q2M_MOVE_infantry_move_attack1, false, error))
         return false;
       monster->next_frame = 197;
     } else {
@@ -1300,7 +1288,7 @@ static bool infantry_fire(q2m_context *context, qa_error *error) {
       if (!can_walk_forward(context, 8.0f, &moved, error))
         return false;
       if (!moved) {
-        if (!q2m_set_move(context, "infantry_move_attack1", false, error))
+        if (!q2m_set_move(context, Q2M_MOVE_infantry_move_attack1, false, error))
           return false;
         monster->next_frame = 186;
         finish_dodge_action(monster);
@@ -1320,19 +1308,19 @@ static bool infantry_fire(q2m_context *context, qa_error *error) {
   return true;
 }
 
-static bool infantry_callbacks(q2m_context *context, const char *callback,
+static bool infantry_callbacks(q2m_context *context, q2m_callback_id callback,
                                bool *handled, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
-  *handled = strncmp(callback, "infantry_", 9) == 0 ||
-             strcmp(callback, "InfantryMachineGun") == 0;
+  *handled = (q2m_callbacks[callback].flags & Q2M_CALLBACK_INFANTRY) != 0 ||
+             (callback == Q2M_CALLBACK_InfantryMachineGun);
   if (!*handled)
     return true;
 
-  if (strcmp(callback, "InfantryMachineGun") == 0)
+  if (callback == Q2M_CALLBACK_InfantryMachineGun)
     return infantry_machinegun(context, error);
-  if (strcmp(callback, "infantry_fire") == 0)
+  if (callback == Q2M_CALLBACK_infantry_fire)
     return infantry_fire(context, error);
-  if (strcmp(callback, "infantry_cock_gun") == 0) {
+  if (callback == Q2M_CALLBACK_infantry_cock_gun) {
     if (context->game->options.edition == QA_Q2_CLASSIC) {
       unsigned tenths = 10u + (unsigned)(q2m_random(context->game) * 16.0f);
       monster->pause_ns =
@@ -1342,7 +1330,7 @@ static bool infantry_callbacks(q2m_context *context, const char *callback,
     }
     return q2m_sound(context, "infantry/infatck3.wav", 1, 1.0f, error);
   }
-  if (strcmp(callback, "infantry_set_firetime") == 0) {
+  if (callback == Q2M_CALLBACK_infantry_set_firetime) {
     monster->fire_ns =
         q2m_after(context->game->now_ns, 0.7 + q2m_random(context->game) * 1.3);
     if (!monster->stand_ground && monster->enemy.registry != 0 &&
@@ -1351,14 +1339,14 @@ static bool infantry_callbacks(q2m_context *context, const char *callback,
       if (!can_walk_forward(context, 8.0f, &moved, error))
         return false;
       if (moved)
-        return q2m_set_move(context, "infantry_move_attack4", false, error);
+        return q2m_set_move(context, Q2M_MOVE_infantry_move_attack4, false, error);
     }
     return true;
   }
-  if (strcmp(callback, "infantry_attack4_refire") == 0) {
+  if (callback == Q2M_CALLBACK_infantry_attack4_refire) {
     if (context->game->now_ns >= monster->fire_ns) {
       finish_dodge_action(monster);
-      if (!q2m_set_move(context, "infantry_move_attack1", false, error))
+      if (!q2m_set_move(context, Q2M_MOVE_infantry_move_attack1, false, error))
         return false;
       monster->next_frame = 197;
     } else {
@@ -1369,7 +1357,7 @@ static bool infantry_callbacks(q2m_context *context, const char *callback,
         return false;
       if (monster->stand_ground || monster->enemy.registry == 0 ||
           q2m_distance(context, monster->enemy) < 330.0f || !moved) {
-        if (!q2m_set_move(context, "infantry_move_attack1", false, error))
+        if (!q2m_set_move(context, Q2M_MOVE_infantry_move_attack1, false, error))
           return false;
         monster->next_frame = 186;
         finish_dodge_action(monster);
@@ -1380,25 +1368,25 @@ static bool infantry_callbacks(q2m_context *context, const char *callback,
     }
     return infantry_fire(context, error);
   }
-  if (strcmp(callback, "infantry_swing") == 0)
+  if (callback == Q2M_CALLBACK_infantry_swing)
     return q2m_sound(context, "infantry/infatck2.wav", 1, 1.0f, error);
-  if (strcmp(callback, "infantry_duck_down") == 0) {
+  if (callback == Q2M_CALLBACK_infantry_duck_down) {
     if (monster->ducked)
       return true;
     monster->pause_ns = q2m_after(context->game->now_ns, 1.0);
     return set_duck(context, true, error);
   }
-  if (strcmp(callback, "infantry_duck_hold") == 0) {
+  if (callback == Q2M_CALLBACK_infantry_duck_hold) {
     monster->hold_frame = context->game->now_ns < monster->pause_ns;
     return true;
   }
-  if (strcmp(callback, "infantry_duck_up") == 0)
+  if (callback == Q2M_CALLBACK_infantry_duck_up)
     return set_duck(context, false, error);
-  if (strcmp(callback, "infantry_shrink") == 0)
+  if (callback == Q2M_CALLBACK_infantry_shrink)
     return shrink(context, error);
-  if (strcmp(callback, "infantry_jump_now") == 0 ||
-      strcmp(callback, "infantry_jump2_now") == 0 ||
-      strcmp(callback, "infantry_jump_wait_land") == 0)
+  if ((callback == Q2M_CALLBACK_infantry_jump_now) ||
+      (callback == Q2M_CALLBACK_infantry_jump2_now) ||
+      (callback == Q2M_CALLBACK_infantry_jump_wait_land))
     return jump_action(context, callback, error);
 
   *handled = false;
@@ -1677,12 +1665,12 @@ static bool carrier_spawn_child(q2m_context *context, qa_error *error) {
     if (phase == 1 || phase == 3) {
       spawned.monster->lefty = phase == 3;
       spawned.monster->attack_state = Q2M_SLIDING;
-      return q2m_set_move(&spawned, "flyer_move_attack3", false, error);
+      return q2m_set_move(&spawned, Q2M_MOVE_flyer_move_attack3, false, error);
     }
     if (phase == 2) {
       spawned.monster->lefty = false;
       spawned.monster->attack_state = Q2M_STRAIGHT;
-      if (!q2m_set_move(&spawned, "flyer_move_kamikaze", false, error))
+      if (!q2m_set_move(&spawned, Q2M_MOVE_flyer_move_kamikaze, false, error))
         return false;
       if (!q2m_alive(&spawned))
         return true;
@@ -1703,17 +1691,17 @@ static bool carrier_spawn_child(q2m_context *context, qa_error *error) {
   return true;
 }
 
-static bool carrier_spawn_callbacks(q2m_context *context, const char *callback,
+static bool carrier_spawn_callbacks(q2m_context *context, q2m_callback_id callback,
                                     bool *handled, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   *handled = true;
-  if (strcmp(callback, "carrier_prep_spawn") == 0) {
+  if (callback == Q2M_CALLBACK_carrier_prep_spawn) {
     monster->manual_steering = true;
     monster->timestamp_ns = context->game->now_ns;
     monster->yaw_speed = 10.0f;
     return carrier_machineguns(context, error);
   }
-  if (strcmp(callback, "carrier_start_spawn") == 0) {
+  if (callback == Q2M_CALLBACK_carrier_start_spawn) {
     qa_body_state enemy;
     qa_error ignored = {0};
     if (monster->enemy.registry != 0 &&
@@ -1732,7 +1720,7 @@ static bool carrier_spawn_callbacks(q2m_context *context, const char *callback,
     }
     return carrier_machineguns(context, error);
   }
-  if (strcmp(callback, "carrier_ready_spawn") == 0) {
+  if (callback == Q2M_CALLBACK_carrier_ready_spawn) {
     if (!carrier_machineguns(context, error))
       return false;
     if (!q2m_alive(context))
@@ -1756,7 +1744,7 @@ static bool carrier_spawn_callbacks(q2m_context *context, const char *callback,
       return false;
     return !found || q2_spawn_growth(context->game, point, 0, error);
   }
-  if (strcmp(callback, "carrier_spawn_check") == 0) {
+  if (callback == Q2M_CALLBACK_carrier_spawn_check) {
     if (!carrier_machineguns(context, error))
       return false;
     if (!q2m_alive(context))
@@ -1814,8 +1802,8 @@ static int widow_torso_frame(q2m_context *context, bool *turned,
     angle -= 360.0f;
   angle -= 180.0f;
   if (angle >= 105.0f || angle <= -75.0f) {
-    const char *move = angle >= 105.0f ? "widow_move_attack_post_blaster_r"
-                                       : "widow_move_attack_post_blaster_l";
+    q2m_move_id move = angle >= 105.0f ? Q2M_MOVE_widow_move_attack_post_blaster_r
+                                       : Q2M_MOVE_widow_move_attack_post_blaster_l;
     if (!q2m_set_move(context, move, false, error))
       return -1;
     context->monster->manual_steering = false;
@@ -1906,9 +1894,9 @@ static bool widow_blaster(q2m_context *context, qa_error *error) {
 }
 
 static bool widow_rail(q2m_context *context, qa_error *error) {
-  const char *move = context->monster->move->name;
-  int flash = !strcmp(move, "widow_move_attack_rail_l") ? 154
-              : !strcmp(move, "widow_move_attack_rail_r") ? 155 : 150;
+  q2m_move_id move = context->monster->move->id;
+  int flash = (move == Q2M_MOVE_widow_move_attack_rail_l) ? 154
+              : (move == Q2M_MOVE_widow_move_attack_rail_r) ? 155 : 150;
   qa_vec3 start;
   if (!q2m_project_flash(context, flash, &start, error))
     return false;
@@ -2060,7 +2048,7 @@ static bool widow2_pull(q2m_context *context, qa_error *error) {
     return true;
   if (!available || !q2_actor_live(context->game, enemy_id))
     return q2m_set_move(context, context->monster->stand_ground
-        ? "widow2_move_stand" : "widow2_move_run", false, error);
+        ? Q2M_MOVE_widow2_move_stand : Q2M_MOVE_widow2_move_run, false, error);
   qa_vec3 start;
   if (!widow2_tongue_point(context, &start) || !widow2_tongue_reaches(start, enemy.origin))
     return true;
@@ -2099,24 +2087,24 @@ static bool widow2_pull(q2m_context *context, qa_error *error) {
                                       .body = enemy}, error);
 }
 
-static bool conditional_transition(q2m_context *context, const char *callback,
+static bool conditional_transition(q2m_context *context, q2m_callback_id callback,
                                    bool *handled, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   *handled = true;
 
-  if (strcmp(callback, "carrier_attack_gren") == 0) {
+  if (callback == Q2M_CALLBACK_carrier_attack_gren) {
     monster->timestamp_ns = context->game->now_ns;
-    return q2m_set_move(context, "carrier_move_attack_gren", false, error);
+    return q2m_set_move(context, Q2M_MOVE_carrier_move_attack_gren, false, error);
   }
 
-  if (strcmp(callback, "guardian_atk1") == 0) {
+  if (callback == Q2M_CALLBACK_guardian_atk1) {
     monster->timestamp_ns = q2_deadline(context->game->now_ns,
         (UINT64_C(650) + (uint64_t)q2_rerelease_time_ms(context->game, 0, 1500)) * Q2_MS);
-    return q2m_set_move(context, "guardian_move_atk1_spin", false, error);
+    return q2m_set_move(context, Q2M_MOVE_guardian_move_atk1_spin, false, error);
   }
 
-  if (strcmp(callback, "guardian_atk1_finish") == 0) {
-    if (!q2m_set_move(context, "guardian_atk1_out", true, error))
+  if (callback == Q2M_CALLBACK_guardian_atk1_finish) {
+    if (!q2m_set_move(context, Q2M_MOVE_guardian_atk1_out, true, error))
       return false;
     monster->weapon_sound = 0;
     if (!stop_loop_sound(context, "weapons/hyprbl1a.wav", error))
@@ -2124,29 +2112,29 @@ static bool conditional_transition(q2m_context *context, const char *callback,
     return true;
   }
 
-  if (strcmp(callback, "widow_start_rail") == 0 ||
-      strcmp(callback, "widow_done_spawn") == 0 ||
-      strcmp(callback, "widow_rail_done") == 0) {
-    monster->manual_steering = strcmp(callback, "widow_start_rail") == 0;
+  if ((callback == Q2M_CALLBACK_widow_start_rail) ||
+      (callback == Q2M_CALLBACK_widow_done_spawn) ||
+      (callback == Q2M_CALLBACK_widow_rail_done)) {
+    monster->manual_steering = (callback == Q2M_CALLBACK_widow_start_rail);
     return true;
   }
 
-  if (strcmp(callback, "widow_start_run_5") == 0 ||
-      strcmp(callback, "widow_start_run_10") == 0 ||
-      strcmp(callback, "widow_start_run_12") == 0) {
-    int frame = strcmp(callback, "widow_start_run_5") == 0    ? 15
-                : strcmp(callback, "widow_start_run_10") == 0 ? 20
+  if ((callback == Q2M_CALLBACK_widow_start_run_5) ||
+      (callback == Q2M_CALLBACK_widow_start_run_10) ||
+      (callback == Q2M_CALLBACK_widow_start_run_12)) {
+    int frame = (callback == Q2M_CALLBACK_widow_start_run_5)    ? 15
+                : (callback == Q2M_CALLBACK_widow_start_run_10) ? 20
                                                               : 22;
-    if (!q2m_set_move(context, "widow_move_run", false, error))
+    if (!q2m_set_move(context, Q2M_MOVE_widow_move_run, false, error))
       return false;
     monster->next_frame = frame;
     return true;
   }
 
-  if (strcmp(callback, "widow_attack_blaster") == 0) {
+  if (callback == Q2M_CALLBACK_widow_attack_blaster) {
     monster->pause_ns =
         q2m_after(context->game->now_ns, 1.0 + 2.0 * q2m_random(context->game));
-    if (!q2m_set_move(context, "widow_move_attack_blaster", false, error))
+    if (!q2m_set_move(context, Q2M_MOVE_widow_move_attack_blaster, false, error))
       return false;
     bool turned;
     int frame = widow_torso_frame(context, &turned, error);
@@ -2157,7 +2145,7 @@ static bool conditional_transition(q2m_context *context, const char *callback,
     return true;
   }
 
-  if (strcmp(callback, "brain_laserbeam_reattack") == 0) {
+  if (callback == Q2M_CALLBACK_brain_laserbeam_reattack) {
     if (q2m_random(context->game) < 0.5f) {
       bool visible;
       if (!q2m_visible(context, monster->enemy, &visible, error))
@@ -2168,10 +2156,10 @@ static bool conditional_transition(q2m_context *context, const char *callback,
     return true;
   }
 
-  if (strcmp(callback, "chick_rerocket") == 0) {
+  if (callback == Q2M_CALLBACK_chick_rerocket) {
     if (monster->manual_steering) {
       monster->manual_steering = false;
-      return q2m_set_move(context, "chick_move_end_attack1", false, error);
+      return q2m_set_move(context, Q2M_MOVE_chick_move_end_attack1, false, error);
     }
     bool visible;
     if (!visible_enemy(context, &visible, error))
@@ -2183,22 +2171,22 @@ static bool conditional_transition(q2m_context *context, const char *callback,
     bool repeat = visible && q2m_distance(context, monster->enemy) >= 80.0f &&
                   q2m_random(context->game) <= chance;
     return q2m_set_move(
-        context, repeat ? "chick_move_attack1" : "chick_move_end_attack1",
+        context, repeat ? Q2M_MOVE_chick_move_attack1 : Q2M_MOVE_chick_move_end_attack1,
         false, error);
   }
 
-  if (strcmp(callback, "chick_reslash") == 0) {
+  if (callback == Q2M_CALLBACK_chick_reslash) {
     bool repeat = enemy_alive(context) &&
                   q2m_distance(context, monster->enemy) < 80.0f &&
                   q2m_random(context->game) <= 0.9f;
     return q2m_set_move(context,
-                        repeat ? "chick_move_slash" : "chick_move_end_slash",
+                        repeat ? Q2M_MOVE_chick_move_slash : Q2M_MOVE_chick_move_end_slash,
                         false, error);
   }
 
-  if (strcmp(callback, "gunner_refire_chain") == 0 ||
-      strcmp(callback, "guncmdr_refire_chain") == 0) {
-    bool commander = strcmp(callback, "guncmdr_refire_chain") == 0;
+  if ((callback == Q2M_CALLBACK_gunner_refire_chain) ||
+      (callback == Q2M_CALLBACK_guncmdr_refire_chain)) {
+    bool commander = (callback == Q2M_CALLBACK_guncmdr_refire_chain);
     if (commander) {
       monster->dodging = false;
       monster->attack_state = Q2M_STRAIGHT;
@@ -2207,35 +2195,35 @@ static bool conditional_transition(q2m_context *context, const char *callback,
     if (!visible_enemy(context, &visible, error))
       return false;
     bool repeat = visible && q2m_random(context->game) <= 0.5f;
-    const char *move;
+    q2m_move_id move;
     if (!repeat) {
-      move = commander ? "guncmdr_move_endfire_chain"
-                       : "gunner_move_endfire_chain";
+      move = commander ? Q2M_MOVE_guncmdr_move_endfire_chain
+                       : Q2M_MOVE_gunner_move_endfire_chain;
     } else if (commander && !monster->stand_ground &&
                q2m_distance(context, monster->enemy) > 400.0f) {
-      move = "guncmdr_move_fire_chain_run";
+      move = Q2M_MOVE_guncmdr_move_fire_chain_run;
     } else {
-      move = commander ? "guncmdr_move_fire_chain" : "gunner_move_fire_chain";
+      move = commander ? Q2M_MOVE_guncmdr_move_fire_chain : Q2M_MOVE_gunner_move_fire_chain;
     }
     return q2m_set_move(context, move, false, error);
   }
 
-  if (strcmp(callback, "hover_reattack") == 0) {
+  if (callback == Q2M_CALLBACK_hover_reattack) {
     bool visible;
     if (!visible_enemy(context, &visible, error))
       return false;
-    const char *move = "hover_move_end_attack";
+    q2m_move_id move = Q2M_MOVE_hover_move_end_attack;
     if (visible && q2m_random(context->game) <= 0.6f) {
       if (monster->attack_state == Q2M_SLIDING &&
-          q2m_move_named(monster, "hover_move_attack2") != NULL)
-        move = "hover_move_attack2";
+          q2m_move_find(monster, Q2M_MOVE_hover_move_attack2) != NULL)
+        move = Q2M_MOVE_hover_move_attack2;
       else if (monster->attack_state == Q2M_STRAIGHT)
-        move = "hover_move_attack1";
+        move = Q2M_MOVE_hover_move_attack1;
     }
     return q2m_set_move(context, move, false, error);
   }
 
-  if (strcmp(callback, "jorg_reattack1") == 0) {
+  if (callback == Q2M_CALLBACK_jorg_reattack1) {
     bool visible;
     if (!q2m_visible(context, monster->enemy, &visible, error))
       return false;
@@ -2243,18 +2231,18 @@ static bool conditional_transition(q2m_context *context, const char *callback,
     bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
     if (visible && (rerelease ? q2_rerelease_float(context->game, 0, 1) :
                               q2m_random(context->game)) < 0.9f)
-      return q2m_set_move(context, "jorg_move_attack1", rerelease, error);
-    if (rerelease && !q2m_set_move(context, "jorg_move_end_attack1", true, error))
+      return q2m_set_move(context, Q2M_MOVE_jorg_move_attack1, rerelease, error);
+    if (rerelease && !q2m_set_move(context, Q2M_MOVE_jorg_move_end_attack1, true, error))
       return false;
     if (!q2m_jorg_sound_end(context, error))
       return false;
     return !q2m_alive(context) || rerelease ||
-           q2m_set_move(context, "jorg_move_end_attack1", false, error);
+           q2m_set_move(context, Q2M_MOVE_jorg_move_end_attack1, false, error);
   }
 
-  if (strcmp(callback, "boss5_reattack1") == 0 ||
-      strcmp(callback, "supertank_reattack1") == 0) {
-    bool supertank = callback[0] == 's';
+  if ((callback == Q2M_CALLBACK_boss5_reattack1) ||
+      (callback == Q2M_CALLBACK_supertank_reattack1)) {
+    bool supertank = callback == Q2M_CALLBACK_supertank_reattack1;
     bool visible;
     if (!q2m_visible(context, monster->enemy, &visible, error))
       return false;
@@ -2265,29 +2253,29 @@ static bool conditional_transition(q2m_context *context, const char *callback,
         visible &&
         ((supertank && monster->timestamp_ns >= context->game->now_ns) ||
          q2m_random(context->game) < chance);
-    const char *move = supertank ? repeat ? "supertank_move_attack1"
-                                          : "supertank_move_end_attack1"
-                       : repeat  ? "boss5_move_attack1"
-                                 : "boss5_move_end_attack1";
+    q2m_move_id move = supertank ? repeat ? Q2M_MOVE_supertank_move_attack1
+                                          : Q2M_MOVE_supertank_move_end_attack1
+                       : repeat  ? Q2M_MOVE_boss5_move_attack1
+                                 : Q2M_MOVE_boss5_move_end_attack1;
     return q2m_set_move(context, move, false, error);
   }
 
-  if (strcmp(callback, "boss2_reattack_mg") == 0) {
+  if (callback == Q2M_CALLBACK_boss2_reattack_mg) {
     bool repeat = monster->enemy.registry != 0 && enemy_in_front(context) &&
                   q2m_random(context->game) <= 0.7f;
     return q2m_set_move(
-        context, repeat ? "boss2_move_attack_mg" : "boss2_move_attack_post_mg",
+        context, repeat ? Q2M_MOVE_boss2_move_attack_mg : Q2M_MOVE_boss2_move_attack_post_mg,
         false, error);
   }
 
-  if (strcmp(callback, "tank_reattack_blaster") == 0 ||
-      strcmp(callback, "tank_refire_rocket") == 0) {
-    bool rocket = strcmp(callback, "tank_refire_rocket") == 0;
+  if ((callback == Q2M_CALLBACK_tank_reattack_blaster) ||
+      (callback == Q2M_CALLBACK_tank_refire_rocket)) {
+    bool rocket = (callback == Q2M_CALLBACK_tank_refire_rocket);
     if (monster->manual_steering) {
       monster->manual_steering = false;
       return q2m_set_move(context,
-                          rocket ? "tank_move_attack_post_rocket"
-                                 : "tank_move_attack_post_blast",
+                          rocket ? Q2M_MOVE_tank_move_attack_post_rocket
+                                 : Q2M_MOVE_tank_move_attack_post_blast,
                           false, error);
     }
     bool visible;
@@ -2298,58 +2286,58 @@ static bool conditional_transition(q2m_context *context, const char *callback,
     bool repeat = skill_allows && visible &&
                   q2m_random(context->game) <= (rocket ? 0.4f : 0.6f);
     return q2m_set_move(context,
-                        rocket   ? repeat ? "tank_move_attack_fire_rocket"
-                                          : "tank_move_attack_post_rocket"
-                        : repeat ? "tank_move_reattack_blast"
-                                 : "tank_move_attack_post_blast",
+                        rocket   ? repeat ? Q2M_MOVE_tank_move_attack_fire_rocket
+                                          : Q2M_MOVE_tank_move_attack_post_rocket
+                        : repeat ? Q2M_MOVE_tank_move_reattack_blast
+                                 : Q2M_MOVE_tank_move_attack_post_blast,
                         false, error);
   }
 
-  if (strcmp(callback, "carrier_reattack_gren") == 0) {
+  if (callback == Q2M_CALLBACK_carrier_reattack_gren) {
     bool repeat = monster->enemy.registry != 0 && enemy_in_front(context) &&
                   q2m_after(monster->timestamp_ns, 1.3) > context->game->now_ns;
     return q2m_set_move(context,
-                        repeat ? "carrier_move_attack_gren"
-                               : "carrier_move_attack_post_gren",
+                        repeat ? Q2M_MOVE_carrier_move_attack_gren
+                               : Q2M_MOVE_carrier_move_attack_post_gren,
                         false, error);
   }
 
-  if (strcmp(callback, "carrier_reattack_mg") == 0) {
-    const char *move = "carrier_move_attack_post_mg";
+  if (callback == Q2M_CALLBACK_carrier_reattack_mg) {
+    q2m_move_id move = Q2M_MOVE_carrier_move_attack_post_mg;
     if (monster->enemy.registry != 0 && enemy_in_front(context) &&
         q2m_random(context->game) <= 0.5f)
       move = q2m_random(context->game) < 0.7f || monster->monster_slots <= 2
-                 ? "carrier_move_attack_mg"
-                 : "carrier_move_spawn";
+                 ? Q2M_MOVE_carrier_move_attack_mg
+                 : Q2M_MOVE_carrier_move_spawn;
     return q2m_set_move(context, move, false, error);
   }
 
-  if (strcmp(callback, "widow_reattack_blaster") == 0) {
+  if (callback == Q2M_CALLBACK_widow_reattack_blaster) {
     if (!widow_blaster(context, error))
       return false;
     if (!q2m_alive(context) || monster->pause_ns >= context->game->now_ns ||
-        !strcmp(monster->move->name, "widow_move_attack_post_blaster_r") ||
-        !strcmp(monster->move->name, "widow_move_attack_post_blaster_l"))
+        (monster->move->id == Q2M_MOVE_widow_move_attack_post_blaster_r) ||
+        (monster->move->id == Q2M_MOVE_widow_move_attack_post_blaster_l))
       return true;
     monster->manual_steering = false;
-    return q2m_set_move(context, "widow_move_attack_post_blaster", false,
+    return q2m_set_move(context, Q2M_MOVE_widow_move_attack_post_blaster, false,
                         error);
   }
 
-  if (strcmp(callback, "widow2_reattack_beam") == 0) {
+  if (callback == Q2M_CALLBACK_widow2_reattack_beam) {
     monster->manual_steering = false;
     bool repeat = monster->enemy.registry != 0 && enemy_in_front(context) &&
                   q2m_random(context->game) <= 0.5f;
-    const char *move = "widow2_move_attack_post_beam";
+    q2m_move_id move = Q2M_MOVE_widow2_move_attack_post_beam;
     if (repeat)
       move = q2m_random(context->game) < 0.7f ||
                      !q2m_summon_has_slots(monster, 2)
-                 ? "widow2_move_attack_beam"
-                 : "widow2_move_spawn";
+                 ? Q2M_MOVE_widow2_move_attack_beam
+                 : Q2M_MOVE_widow2_move_spawn;
     return q2m_set_move(context, move, false, error);
   }
 
-  if (strcmp(callback, "widow2_disrupt_reattack") == 0) {
+  if (callback == Q2M_CALLBACK_widow2_disrupt_reattack) {
     if (q2m_random(context->game) <
         0.25f + 0.15f * (float)context->game->options.skill)
       monster->next_frame = 28;
@@ -2360,35 +2348,35 @@ static bool conditional_transition(q2m_context *context, const char *callback,
   return true;
 }
 
-static bool end_transition(q2m_context *context, const char *callback,
+static bool end_transition(q2m_context *context, q2m_callback_id callback,
                            bool *handled, qa_error *error) {
   if (context->game->options.edition == QA_Q2_RERELEASE &&
       (context->monster->definition->species == Q2M_MEDIC ||
        context->monster->definition->species == Q2M_MEDIC_COMMANDER) &&
-      (!strcmp(callback, "medic_stand") || !strcmp(callback, "medic_walk"))) {
+      ((callback == Q2M_CALLBACK_medic_stand) || (callback == Q2M_CALLBACK_medic_walk))) {
     *handled = true;
-    return q2m_set_move(context, !strcmp(callback, "medic_stand")
-                                   ? "medic_move_stand" : "medic_move_walk",
+    return q2m_set_move(context, (callback == Q2M_CALLBACK_medic_stand)
+                                   ? Q2M_MOVE_medic_move_stand : Q2M_MOVE_medic_move_walk,
                         true, error);
   }
   if (context->monster->definition->species == Q2M_ACTOR &&
-      (!strcmp(callback, "actor_run") || !strcmp(callback, "actor_stand") ||
-       !strcmp(callback, "actor_walk"))) {
+      ((callback == Q2M_CALLBACK_actor_run) || (callback == Q2M_CALLBACK_actor_stand) ||
+       (callback == Q2M_CALLBACK_actor_walk))) {
     *handled = true;
-    const char *move = "actor_move_run";
-    if (!strcmp(callback, "actor_stand"))
-      move = "actor_move_stand";
-    else if (!strcmp(callback, "actor_walk"))
-      move = "actor_move_walk";
+    q2m_move_id move = Q2M_MOVE_actor_move_run;
+    if (callback == Q2M_CALLBACK_actor_stand)
+      move = Q2M_MOVE_actor_move_stand;
+    else if (callback == Q2M_CALLBACK_actor_walk)
+      move = Q2M_MOVE_actor_move_walk;
     else if (context->game->now_ns < context->monster->pain_ns &&
              !context->monster->enemy.registry)
-      move = context->monster->move_target.registry ? "actor_move_walk" : "actor_move_stand";
+      move = context->monster->move_target.registry ? Q2M_MOVE_actor_move_walk : Q2M_MOVE_actor_move_stand;
     else if (context->monster->stand_ground)
-      move = "actor_move_stand";
+      move = Q2M_MOVE_actor_move_stand;
     if (!q2m_set_move(context, move, true, error))
       return false;
     if (q2m_alive(context) &&
-        !strcmp(context->monster->move->name, "actor_move_stand") &&
+        (context->monster->move->id == Q2M_MOVE_actor_move_stand) &&
         context->game->now_ns < Q2M_SECOND) {
       unsigned frames = (unsigned)(context->monster->move->last_frame -
                                    context->monster->move->first_frame + 1);
@@ -2400,70 +2388,69 @@ static bool end_transition(q2m_context *context, const char *callback,
     return true;
   }
   if (context->game->options.edition == QA_Q2_RERELEASE &&
-      (!strcmp(callback, "jorg_stand") || !strcmp(callback, "jorg_run"))) {
+      ((callback == Q2M_CALLBACK_jorg_stand) || (callback == Q2M_CALLBACK_jorg_run))) {
     *handled = true;
-    bool stand = !strcmp(callback, "jorg_stand") || context->monster->stand_ground;
-    if (!q2m_set_move(context, stand ? "jorg_move_stand" : "jorg_move_run", true, error))
+    bool stand = (callback == Q2M_CALLBACK_jorg_stand) || context->monster->stand_ground;
+    if (!q2m_set_move(context, stand ? Q2M_MOVE_jorg_move_stand : Q2M_MOVE_jorg_move_run, true, error))
       return false;
     return q2m_jorg_sound_end(context, error);
   }
   if (context->game->options.edition == QA_Q2_RERELEASE &&
-      (strcmp(callback, "soldier_stand") == 0 ||
-       strcmp(callback, "soldier_run") == 0)) {
+      ((callback == Q2M_CALLBACK_soldier_stand) ||
+       (callback == Q2M_CALLBACK_soldier_run))) {
     *handled = true;
-    if (strcmp(callback, "soldier_run") == 0)
+    if (callback == Q2M_CALLBACK_soldier_run)
       return soldier_run(context, error);
     float draw = q2m_random(context->game);
-    const char *move = !context->monster->move ||
-                      strcmp(context->monster->move->name, "soldier_move_stand1") != 0 ||
-                      draw < .6f ? "soldier_move_stand1"
-                        : draw < .8f ? "soldier_move_stand2" : "soldier_move_stand3";
+    q2m_move_id move = !context->monster->move ||
+                      (context->monster->move->id != Q2M_MOVE_soldier_move_stand1) ||
+                      draw < .6f ? Q2M_MOVE_soldier_move_stand1
+                        : draw < .8f ? Q2M_MOVE_soldier_move_stand2 : Q2M_MOVE_soldier_move_stand3;
     if (!q2m_set_move(context, move, true, error)) return false;
     return q2m_soldier_sound_end(context, error);
   }
-  if (strcmp(callback, "soldier_stand_up") == 0) {
+  if (callback == Q2M_CALLBACK_soldier_stand_up) {
     *handled = true;
-    if (!q2m_set_move(context, "soldier_move_trip", false, error))
+    if (!q2m_set_move(context, Q2M_MOVE_soldier_move_trip, false, error))
       return false;
     context->monster->next_frame = 134;
     return true;
   }
-  if (strcmp(callback, "guncmdr_kick_finished") == 0) {
+  if (callback == Q2M_CALLBACK_guncmdr_kick_finished) {
     *handled = true;
     context->monster->melee_ns = q2m_after(context->game->now_ns, 3.0);
     return set_definition_move(context, context->monster->definition->run_move,
                                error);
   }
-  if (strcmp(callback, "supertank_dead") == 0 ||
-      strcmp(callback, "boss5_dead") == 0 ||
-      strcmp(callback, "boss2_dead") == 0 ||
-      strcmp(callback, "jorg_dead") == 0 ||
-      strcmp(callback, "guardian_dead") == 0) {
+  if ((callback == Q2M_CALLBACK_supertank_dead) ||
+      (callback == Q2M_CALLBACK_boss5_dead) ||
+      (callback == Q2M_CALLBACK_boss2_dead) ||
+      (callback == Q2M_CALLBACK_jorg_dead) ||
+      (callback == Q2M_CALLBACK_guardian_dead)) {
     *handled = true;
     return q2m_finish_boss_death(context, error);
   }
-  for (size_t i = 0; i < sizeof(transitions) / sizeof(transitions[0]); ++i) {
-    if (strcmp(callback, transitions[i].callback) != 0)
-      continue;
+  if (transitions[callback].move != Q2M_MOVE_NONE) {
     *handled = true;
     bool found;
-    if (!set_existing_move(context, transitions[i].move, false, &found, error))
+    if (!set_existing_move(context, transitions[callback].move, false, &found, error))
       return false;
     if (found)
       return true;
     return set_definition_move(context, context->monster->definition->run_move,
                                error);
+
   }
-  if (ends_with(callback, "_dead") || strcmp(callback, "soldier_dead2") == 0 ||
-      strcmp(callback, "monster_dead") == 0 ||
-      strcmp(callback, "widow2_finaldeath") == 0) {
+  if ((q2m_callbacks[callback].flags & Q2M_CALLBACK_DEAD) != 0 || (callback == Q2M_CALLBACK_soldier_dead2) ||
+      (callback == Q2M_CALLBACK_monster_dead) ||
+      (callback == Q2M_CALLBACK_widow2_finaldeath)) {
     *handled = true;
     return q2m_corpse_callback(context, callback, error);
   }
-  if (ends_with(callback, "_run") || ends_with(callback, "_run_loop") ||
-      strcmp(callback, "mutant_walk_loop") == 0) {
+  if ((q2m_callbacks[callback].flags & Q2M_CALLBACK_RUN) != 0 || (q2m_callbacks[callback].flags & Q2M_CALLBACK_RUN_LOOP) != 0 ||
+      (callback == Q2M_CALLBACK_mutant_walk_loop)) {
     *handled = true;
-    if (!strcmp(callback, "guncmdr_run")) {
+    if (callback == Q2M_CALLBACK_guncmdr_run) {
       context->monster->dodging = false;
       if (context->game->options.edition == QA_Q2_RERELEASE &&
           context->monster->attack_state == Q2M_SLIDING)
@@ -2475,14 +2462,14 @@ static bool end_transition(q2m_context *context, const char *callback,
                                    : context->monster->definition->run_move,
                                error);
   }
-  if (ends_with(callback, "_stand") ||
-      strcmp(callback, "insane_onground") == 0 ||
-      strcmp(callback, "insane_cross") == 0) {
+  if ((q2m_callbacks[callback].flags & Q2M_CALLBACK_STAND) != 0 ||
+      (callback == Q2M_CALLBACK_insane_onground) ||
+      (callback == Q2M_CALLBACK_insane_cross)) {
     *handled = true;
     return set_definition_move(context,
                                context->monster->definition->stand_move, error);
   }
-  if (ends_with(callback, "_walk")) {
+  if ((q2m_callbacks[callback].flags & Q2M_CALLBACK_WALK) != 0) {
     *handled = true;
     return set_definition_move(context, context->monster->definition->walk_move,
                                error);
@@ -2491,12 +2478,12 @@ static bool end_transition(q2m_context *context, const char *callback,
 }
 
 static bool foundational_species_callback(q2m_context *context,
-                                          const char *callback, bool *handled,
+                                          q2m_callback_id callback, bool *handled,
                                           qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   *handled = true;
 
-  if (!strcmp(callback, "berserk_run_swing")) {
+  if (callback == Q2M_CALLBACK_berserk_run_swing) {
     if (!q2m_sound(context, "berserk/attack.wav", 1, 1, error)) return false;
     if (!q2m_alive(context)) return true;
     monster->melee_ns = q2m_after(context->game->now_ns, .6);
@@ -2506,16 +2493,16 @@ static bool foundational_species_callback(q2m_context *context,
     }
     return true;
   }
-  if (strcmp(callback, "berserk_swing") == 0)
+  if (callback == Q2M_CALLBACK_berserk_swing)
     return q2m_sound(context, "berserk/attack.wav", 1, 1.0f, error);
-  if (strcmp(callback, "berserk_strike") == 0)
+  if (callback == Q2M_CALLBACK_berserk_strike)
     return true;
-  if (strcmp(callback, "berserk_high_gravity") == 0) {
+  if (callback == Q2M_CALLBACK_berserk_high_gravity) {
     context->actor->physics.gravity_scale =
         context->body.velocity.z < 0.0f ? 2.25f : 5.25f;
     return true;
   }
-  if (strcmp(callback, "berserk_check_landing") == 0) {
+  if (callback == Q2M_CALLBACK_berserk_check_landing) {
     context->actor->physics.gravity_scale =
         context->body.velocity.z < 0.0f ? 2.25f : 5.25f;
     if (context->body.ground.registry != 0) {
@@ -2531,11 +2518,11 @@ static bool foundational_species_callback(q2m_context *context,
     return true;
   }
 
-  if (strcmp(callback, "brain_swing_right") == 0)
+  if (callback == Q2M_CALLBACK_brain_swing_right)
     return q2m_sound(context, "brain/melee1.wav", 4, 1.0f, error);
-  if (strcmp(callback, "brain_swing_left") == 0)
+  if (callback == Q2M_CALLBACK_brain_swing_left)
     return q2m_sound(context, "brain/melee2.wav", 4, 1.0f, error);
-  if (strcmp(callback, "brain_chest_open") == 0) {
+  if (callback == Q2M_CALLBACK_brain_chest_open) {
     if (context->game->options.edition == QA_Q2_RERELEASE)
       monster->count = 0;
     else
@@ -2552,7 +2539,7 @@ static bool foundational_species_callback(q2m_context *context,
     return !q2m_alive(context) ||
            q2m_sound(context, "brain/brnatck1.wav", 4, 1.0f, error);
   }
-  if (strcmp(callback, "brain_chest_closed") == 0) {
+  if (callback == Q2M_CALLBACK_brain_chest_closed) {
     context->combat.armor.powered.kind = QA_POWER_SCREEN;
     qa_q2_combat_power_armor_source(context->game, &context->combat.armor.powered);
     if (!qa_combat_set_armor(context->game->services.combat, context->actor->id,
@@ -2569,19 +2556,19 @@ static bool foundational_species_callback(q2m_context *context,
         return true;
       monster->spawnflags &= ~UINT32_C(65536);
     }
-    return q2m_set_move(context, "brain_move_attack1", false, error);
+    return q2m_set_move(context, Q2M_MOVE_brain_move_attack1, false, error);
   }
 
-  if (strcmp(callback, "ChickMoan") == 0)
+  if (callback == Q2M_CALLBACK_ChickMoan)
     return q2m_sound(context,
                      q2m_random(context->game) < 0.5f ? "chick/chkidle1.wav"
                                                       : "chick/chkidle2.wav",
                      2, 2.0f, error);
-  if (strcmp(callback, "Chick_PreAttack1") == 0)
+  if (callback == Q2M_CALLBACK_Chick_PreAttack1)
     return q2m_sound(context, "chick/chkatck1.wav", 2, 1.0f, error);
-  if (strcmp(callback, "ChickReload") == 0)
+  if (callback == Q2M_CALLBACK_ChickReload)
     return q2m_sound(context, "chick/chkatck5.wav", 2, 1.0f, error);
-  if (strcmp(callback, "ChickRocket") == 0) {
+  if (callback == Q2M_CALLBACK_ChickRocket) {
     bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
     bool rogue = !rerelease && context->game->options.product == QA_Q2_ROGUE;
     bool heat = monster->definition->species == Q2M_CHICK_HEAT &&
@@ -2693,14 +2680,14 @@ static bool foundational_species_callback(q2m_context *context,
   }
 
 
-  if (strcmp(callback, "floater_fire_blaster") == 0) {
+  if (callback == Q2M_CALLBACK_floater_fire_blaster) {
     bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
     bool effect = rerelease ? monster->frame % 4 == 0
                             : monster->frame == 34 || monster->frame == 37;
     return fire_source_exact(context, Q2M_ATTACK_BLASTER, 1.0f, 82, 0.0f,
                              1000.0f, true, effect ? 64u : 0u, error);
   }
-  if (strcmp(callback, "floater_zap") == 0) {
+  if (callback == Q2M_CALLBACK_floater_zap) {
     if (!q2m_sound(context, "floater/fltatck2.wav", 1, 1.0f, error))
       return false;
     return !q2m_alive(context) ||
@@ -2709,11 +2696,11 @@ static bool foundational_species_callback(q2m_context *context,
                             -10.0f, NULL, error);
   }
 
-  if (strcmp(callback, "flyer_pop_blades") == 0)
+  if (callback == Q2M_CALLBACK_flyer_pop_blades)
     return q2m_sound(context, "flyer/flyatck1.wav", 2, 1.0f, error);
-  if (strcmp(callback, "flyer_fireleft") == 0 ||
-      strcmp(callback, "flyer_fireright") == 0) {
-    int flash = strcmp(callback, "flyer_fireleft") == 0 ? 58 : 59;
+  if ((callback == Q2M_CALLBACK_flyer_fireleft) ||
+      (callback == Q2M_CALLBACK_flyer_fireright)) {
+    int flash = (callback == Q2M_CALLBACK_flyer_fireleft) ? 58 : 59;
     bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
     bool effect = rerelease ? monster->frame % 4 == 0
                             : monster->frame == 82 || monster->frame == 85 ||
@@ -2722,10 +2709,10 @@ static bool foundational_species_callback(q2m_context *context,
                              1000.0f, true, effect ? 64u : 0u, error);
   }
 
-  if (strcmp(callback, "gladiator_cleaver_swing") == 0 ||
-      strcmp(callback, "gladb_cleaver_swing") == 0)
+  if ((callback == Q2M_CALLBACK_gladiator_cleaver_swing) ||
+      (callback == Q2M_CALLBACK_gladb_cleaver_swing))
     return q2m_sound(context, "gladiator/melee1.wav", 1, 1.0f, error);
-  if (strcmp(callback, "GladiatorGun") == 0) {
+  if (callback == Q2M_CALLBACK_GladiatorGun) {
     qa_vec3 start;
     if (!q2m_project_flash(context, 61, &start, error))
       return false;
@@ -2736,14 +2723,14 @@ static bool foundational_species_callback(q2m_context *context,
     return q2m_fire(context, &spec, error);
   }
 
-  if (strcmp(callback, "gunner_idlesound") == 0)
+  if (callback == Q2M_CALLBACK_gunner_idlesound)
     return q2m_sound(context, "gunner/gunidle1.wav", 2, 2.0f, error);
-  if (strcmp(callback, "gunner_opengun") == 0)
+  if (callback == Q2M_CALLBACK_gunner_opengun)
     return q2m_sound(context, "gunner/gunatck1.wav", 2, 2.0f, error);
-  if (strcmp(callback, "GunnerGrenade") == 0) {
+  if (callback == Q2M_CALLBACK_GunnerGrenade) {
     return gunner_grenade(context, error);
   }
-  if (strcmp(callback, "GunnerFire") == 0) {
+  if (callback == Q2M_CALLBACK_GunnerFire) {
     int flash = 45 + monster->frame - 144;
     qa_vec3 start, direction;
     bool available;
@@ -2759,7 +2746,7 @@ static bool foundational_species_callback(q2m_context *context,
            fire_bullet_exact(context, flash, start, direction, 3.0f, 300.0f,
                              500.0f, error);
   }
-  if (strcmp(callback, "gunner_duck_down") == 0) {
+  if (callback == Q2M_CALLBACK_gunner_duck_down) {
     if (monster->ducked)
       return true;
     if (context->game->options.skill >= 2 && q2m_random(context->game) > 0.5f &&
@@ -2770,14 +2757,14 @@ static bool foundational_species_callback(q2m_context *context,
     monster->pause_ns = q2m_after(context->game->now_ns, 1.0);
     return set_duck(context, true, error);
   }
-  if (strcmp(callback, "gunner_duck_hold") == 0) {
+  if (callback == Q2M_CALLBACK_gunner_duck_hold) {
     monster->hold_frame = context->game->now_ns < monster->pause_ns;
     return true;
   }
-  if (strcmp(callback, "gunner_duck_up") == 0)
+  if (callback == Q2M_CALLBACK_gunner_duck_up)
     return set_duck(context, false, error);
 
-  if (strcmp(callback, "hover_fire_blaster") == 0) {
+  if (callback == Q2M_CALLBACK_hover_fire_blaster) {
     bool daedalus = monster->definition->species == Q2M_DAEDALUS;
     bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
     int source_flash = rerelease && !daedalus && (monster->frame & 1) != 0
@@ -2807,7 +2794,7 @@ static bool foundational_species_callback(q2m_context *context,
     return q2m_fire(context, &spec, error);
   }
 
-  if (strcmp(callback, "medic_fire_blaster") == 0) {
+  if (callback == Q2M_CALLBACK_medic_fire_blaster) {
     bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
     bool rogue = rerelease || context->game->options.product == QA_Q2_ROGUE ||
                  monster->definition->species == Q2M_MEDIC_COMMANDER;
@@ -2861,18 +2848,18 @@ static bool foundational_species_callback(q2m_context *context,
     return q2m_fire(context, &spec, error);
   }
 
-  if (strcmp(callback, "mutant_step") == 0 ||
-      strcmp(callback, "gekk_step") == 0) {
+  if ((callback == Q2M_CALLBACK_mutant_step) ||
+      (callback == Q2M_CALLBACK_gekk_step)) {
     unsigned variant =
         ((unsigned)(q2m_random(context->game) * 3.0f) + 1u) % 3u + 1u;
     char path[32];
     snprintf(path, sizeof(path),
-             strcmp(callback, "mutant_step") == 0 ? "mutant/step%u.wav"
+             (callback == Q2M_CALLBACK_mutant_step) ? "mutant/step%u.wav"
                                                   : "gek/gk_step%u.wav",
              variant);
     return q2m_sound(context, path, 2, 1.0f, error);
   }
-  if (strcmp(callback, "mutant_jump_takeoff") == 0) {
+  if (callback == Q2M_CALLBACK_mutant_jump_takeoff) {
     qa_vec3 forward;
     qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
     if (!q2m_sound(context, "mutant/mutsght1.wav", 2, 1.0f, error))
@@ -2891,7 +2878,7 @@ static bool foundational_species_callback(q2m_context *context,
     monster->attack_ns = q2m_after(context->game->now_ns, 3.0);
     return q2m_write_body(context, true, error);
   }
-  if (strcmp(callback, "mutant_check_landing") == 0) {
+  if (callback == Q2M_CALLBACK_mutant_check_landing) {
     if (context->body.ground.registry != 0) {
       monster->attack_ns = 0;
       monster->ducked = false;
@@ -2902,9 +2889,9 @@ static bool foundational_species_callback(q2m_context *context,
     return true;
   }
 
-  if (strcmp(callback, "gekk_jump_takeoff") == 0 ||
-      strcmp(callback, "gekk_jump_takeoff2") == 0) {
-    bool from_water = strcmp(callback, "gekk_jump_takeoff2") == 0;
+  if ((callback == Q2M_CALLBACK_gekk_jump_takeoff) ||
+      (callback == Q2M_CALLBACK_gekk_jump_takeoff2)) {
+    bool from_water = (callback == Q2M_CALLBACK_gekk_jump_takeoff2);
     qa_body_state enemy;
     qa_error ignored = {0};
     bool has_enemy = monster->enemy.registry != 0 &&
@@ -2947,7 +2934,7 @@ static bool foundational_species_callback(q2m_context *context,
     monster->jump_ns = q2m_after(context->game->now_ns, 3.0);
     return q2m_write_body(context, true, error);
   }
-  if (strcmp(callback, "gekk_check_landing") == 0) {
+  if (callback == Q2M_CALLBACK_gekk_check_landing) {
     if (context->body.ground.registry != 0) {
       monster->jump_ns = 0;
       monster->ducked = false;
@@ -2960,7 +2947,7 @@ static bool foundational_species_callback(q2m_context *context,
     return true;
   }
 
-  if (strcmp(callback, "berserk_jump_takeoff") == 0) {
+  if (callback == Q2M_CALLBACK_berserk_jump_takeoff) {
     qa_body_state enemy;
     qa_error ignored = {0};
     if (monster->enemy.registry == 0 ||
@@ -2992,15 +2979,15 @@ static bool foundational_species_callback(q2m_context *context,
     return q2m_write_body(context, true, error);
   }
 
-  if (strcmp(callback, "parasite_launch") == 0)
+  if (callback == Q2M_CALLBACK_parasite_launch)
     return q2m_sound(context, "parasite/paratck1.wav", 1, 1.0f, error);
-  if (strcmp(callback, "parasite_reel_in") == 0)
+  if (callback == Q2M_CALLBACK_parasite_reel_in)
     return q2m_sound(context, "parasite/paratck4.wav", 1, 1.0f, error);
-  if (strcmp(callback, "parasite_tap") == 0)
+  if (callback == Q2M_CALLBACK_parasite_tap)
     return q2m_sound(context, "parasite/paridle1.wav", 1, 2.0f, error);
-  if (strcmp(callback, "parasite_scratch") == 0)
+  if (callback == Q2M_CALLBACK_parasite_scratch)
     return q2m_sound(context, "parasite/paridle2.wav", 1, 2.0f, error);
-  if (strcmp(callback, "parasite_drain_attack") == 0) {
+  if (callback == Q2M_CALLBACK_parasite_drain_attack) {
     bool first = monster->frame == 41;
     if (first && !q2m_sound(context, "parasite/paratck2.wav", 0, 1.0f, error))
       return false;
@@ -3769,7 +3756,7 @@ static bool fixbot_blaster(q2m_context *context, qa_error *error) {
     return false;
   if (!q2m_alive(context))
     return true;
-  if (!visible && !q2m_set_move(context, "fixbot_move_run", false, error))
+  if (!visible && !q2m_set_move(context, Q2M_MOVE_fixbot_move_run, false, error))
     return false;
   if (!q2m_alive(context))
     return true;
@@ -3864,7 +3851,7 @@ static bool turret_aim(q2m_context *context, qa_error *error) {
       return true;
   }
   if (context->monster->frame < 2) {
-    if (!q2m_set_move(context, "turret_move_ready_gun", false, error))
+    if (!q2m_set_move(context, Q2M_MOVE_turret_move_ready_gun, false, error))
       return false;
     return !q2m_alive(context) || q2m_weapon_sound(context, "turret/moving.wav", error);
   }
@@ -3879,7 +3866,7 @@ static bool turret_aim(q2m_context *context, qa_error *error) {
     return true;
   qa_vec3 point = enemy.origin;
   if (context->monster->move &&
-      !strcmp(context->monster->move->name, "turret_move_fire_blind")) {
+      (context->monster->move->id == Q2M_MOVE_turret_move_fire_blind)) {
     point = context->monster->blind_fire_target;
     point.z += enemy.origin.z < point.z ? traits.view_height + 10
                                          : enemy.bounds.mins.z - 10;
@@ -4219,31 +4206,31 @@ static bool tank_rocket(q2m_context *context, qa_error *error) {
                            error);
 }
 
-static bool heavy_weapon_callback(q2m_context *context, const char *callback,
+static bool heavy_weapon_callback(q2m_context *context, q2m_callback_id callback,
                                   bool *handled, qa_error *error) {
   *handled = true;
-  if (strcmp(callback, "Boss2MachineGun") == 0)
+  if (callback == Q2M_CALLBACK_Boss2MachineGun)
     return boss2_bullet(context, 73, error) &&
            (!q2m_alive(context) || boss2_bullet(context, 133, error));
-  if (strcmp(callback, "boss2_firebullet_left") == 0)
+  if (callback == Q2M_CALLBACK_boss2_firebullet_left)
     return boss2_bullet(context, 73, error);
-  if (strcmp(callback, "boss2_firebullet_right") == 0)
+  if (callback == Q2M_CALLBACK_boss2_firebullet_right)
     return boss2_bullet(context, 133, error);
-  if (strcmp(callback, "Boss2Rocket") == 0)
+  if (callback == Q2M_CALLBACK_Boss2Rocket)
     return boss2_rockets(context, false, error);
-  if (strcmp(callback, "Boss2PredictiveRocket") == 0)
+  if (callback == Q2M_CALLBACK_Boss2PredictiveRocket)
     return boss2_rockets(context, true, error);
-  if (strcmp(callback, "Boss2Rocket64") == 0)
+  if (callback == Q2M_CALLBACK_Boss2Rocket64)
     return boss2_rocket64(context, error);
-  if (strcmp(callback, "Boss2HyperBlaster") == 0)
+  if (callback == Q2M_CALLBACK_Boss2HyperBlaster)
     return boss2_hyperblaster(context, error);
-  if (strcmp(callback, "jorg_firebullet") == 0)
+  if (callback == Q2M_CALLBACK_jorg_firebullet)
     return jorg_bullets(context, -1, error);
-  if (strcmp(callback, "jorg_firebullet_left") == 0)
+  if (callback == Q2M_CALLBACK_jorg_firebullet_left)
     return jorg_bullets(context, 120, error);
-  if (strcmp(callback, "jorg_firebullet_right") == 0)
+  if (callback == Q2M_CALLBACK_jorg_firebullet_right)
     return jorg_bullets(context, 126, error);
-  if (strcmp(callback, "jorgBFG") == 0) {
+  if (callback == Q2M_CALLBACK_jorgBFG) {
     bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
     if (!q2m_sound(context,
                    rerelease ? "makron/bfg_fire.wav" : "boss3/bs3atck2.wav",
@@ -4251,14 +4238,14 @@ static bool heavy_weapon_callback(q2m_context *context, const char *callback,
       return false;
     return !q2m_alive(context) || fire_bfg_exact(context, 132, 200.0f, error);
   }
-  if (strcmp(callback, "makronBFG") == 0) {
+  if (callback == Q2M_CALLBACK_makronBFG) {
     if (!q2m_sound(context, "makron/bfg_fire.wav", 2, 1.0f, error))
       return false;
     return !q2m_alive(context) || fire_bfg_exact(context, 101, 300.0f, error);
   }
-  if (strcmp(callback, "MakronSaveloc") == 0)
+  if (callback == Q2M_CALLBACK_MakronSaveloc)
     return makron_save_location(context);
-  if (strcmp(callback, "MakronRailgun") == 0) {
+  if (callback == Q2M_CALLBACK_MakronRailgun) {
     qa_vec3 start;
     if (!q2m_project_flash(context, 119, &start, error))
       return false;
@@ -4268,32 +4255,32 @@ static bool heavy_weapon_callback(q2m_context *context, const char *callback,
         context, Q2M_ATTACK_RAIL, 50.0f, 119, start, direction);
     return q2m_fire(context, &spec, error);
   }
-  if (strcmp(callback, "MakronHyperblaster") == 0)
+  if (callback == Q2M_CALLBACK_MakronHyperblaster)
     return makron_hyperblaster(context, error);
-  if (strcmp(callback, "supertankMachineGun") == 0 ||
-      strcmp(callback, "boss5MachineGun") == 0)
+  if ((callback == Q2M_CALLBACK_supertankMachineGun) ||
+      (callback == Q2M_CALLBACK_boss5MachineGun))
     return supertank_machinegun(context, error);
-  if (strcmp(callback, "supertankRocket") == 0 ||
-      strcmp(callback, "boss5Rocket") == 0)
+  if ((callback == Q2M_CALLBACK_supertankRocket) ||
+      (callback == Q2M_CALLBACK_boss5Rocket))
     return supertank_rocket(context, error);
-  if (strcmp(callback, "supertankGrenade") == 0)
+  if (callback == Q2M_CALLBACK_supertankGrenade)
     return supertank_grenade(context, error);
-  if (strcmp(callback, "TankBlaster") == 0)
+  if (callback == Q2M_CALLBACK_TankBlaster)
     return tank_blaster(context, error);
-  if (strcmp(callback, "TankRocket") == 0)
+  if (callback == Q2M_CALLBACK_TankRocket)
     return tank_rocket(context, error);
-  if (strcmp(callback, "TankMachineGun") == 0)
+  if (callback == Q2M_CALLBACK_TankMachineGun)
     return tank_machinegun(context, error);
-  if (strcmp(callback, "CarrierMachineGun") == 0 ||
-      strcmp(callback, "CarrierMachineGunHold") == 0)
+  if ((callback == Q2M_CALLBACK_CarrierMachineGun) ||
+      (callback == Q2M_CALLBACK_CarrierMachineGunHold))
     return carrier_machineguns(context, error);
-  if (strcmp(callback, "CarrierRocket") == 0)
+  if (callback == Q2M_CALLBACK_CarrierRocket)
     return carrier_rocket(context, error);
-  if (strcmp(callback, "CarrierGrenade") == 0)
+  if (callback == Q2M_CALLBACK_CarrierGrenade)
     return carrier_grenade(context, error);
-  if (strcmp(callback, "CarrierRail") == 0)
+  if (callback == Q2M_CALLBACK_CarrierRail)
     return carrier_rail(context, error);
-  if (strcmp(callback, "CarrierSaveLoc") == 0)
+  if (callback == Q2M_CALLBACK_CarrierSaveLoc)
     return carrier_coop_check(context, error) &&
            (!q2m_alive(context) || carrier_save_location(context));
   *handled = false;
@@ -4338,8 +4325,8 @@ static bool fixbot_goal_create(q2m_context *context, int vertical, qa_error *err
     return false;
   if (!q2m_alive(context) || !goal.registry) return true;
   context->monster->goal = context->monster->enemy = goal;
-  return q2m_set_move(context, vertical < 0 ? "fixbot_move_landing" :
-      vertical > 0 ? "fixbot_move_takeoff" : "fixbot_move_turn", false, error);
+  return q2m_set_move(context, vertical < 0 ? Q2M_MOVE_fixbot_move_landing :
+      vertical > 0 ? Q2M_MOVE_fixbot_move_takeoff : Q2M_MOVE_fixbot_move_turn, false, error);
 }
 
 static bool fixbot_roam(q2m_context *context, qa_error *error) {
@@ -4349,7 +4336,7 @@ static bool fixbot_roam(q2m_context *context, qa_error *error) {
       !q2m_medic_acquire(context, true, &acquired, error))
     return false;
   if (!q2m_alive(context) || acquired) return true;
-  if (!q2m_set_move(context, "fixbot_move_roamgoal", false, error)) return false;
+  if (!q2m_set_move(context, Q2M_MOVE_fixbot_move_roamgoal, false, error)) return false;
   if (m->spawnflags & 1u) {
     if (!fixbot_goal_create(context, -1, error)) return false;
     if (!q2m_alive(context)) return true;
@@ -4361,17 +4348,17 @@ static bool fixbot_roam(q2m_context *context, qa_error *error) {
     m->spawnflags = 8;
   }
   if (m->spawnflags & 4u) {
-    if (!q2m_set_move(context, "fixbot_move_roamgoal", false, error)) return false;
+    if (!q2m_set_move(context, Q2M_MOVE_fixbot_move_roamgoal, false, error)) return false;
     if (!q2m_alive(context)) return true;
     m->spawnflags = 8;
   }
-  return m->spawnflags || q2m_set_move(context, "fixbot_move_stand2", false, error);
+  return m->spawnflags || q2m_set_move(context, Q2M_MOVE_fixbot_move_stand2, false, error);
 }
 
 static bool fixbot_finish_goal(q2m_context *context, bool clear, qa_error *error) {
   q2m_fixbot_goal_retire(context, context->monster->goal);
   if (clear) context->monster->goal = context->monster->enemy = (qa_actor_id){0};
-  return q2m_set_move(context, "fixbot_move_stand", false, error);
+  return q2m_set_move(context, Q2M_MOVE_fixbot_move_stand, false, error);
 }
 
 static bool fixbot_scanner(q2m_context *context, qa_error *error) {
@@ -4399,21 +4386,21 @@ static bool fixbot_scanner(q2m_context *context, qa_error *error) {
     context->monster->goal = context->monster->enemy = repair;
     q2m_fixbot_flight(context, false, true);
     return q2m_distance(context, repair) >= 32 ||
-        q2m_set_move(context, "fixbot_move_weld_start", false, error);
+        q2m_set_move(context, Q2M_MOVE_fixbot_move_weld_start, false, error);
   }
   qa_actor_id goal_id = context->monster->goal;
   q2_actor *goal = q2_actor_get(game, goal_id, false, NULL);
-  if (!goal) return q2m_set_move(context, "fixbot_move_stand", false, error);
+  if (!goal) return q2m_set_move(context, Q2M_MOVE_fixbot_move_stand, false, error);
   bool is_repair = goal->entity && goal->entity->scenery == Q2S_REPAIR;
   float distance = q2m_distance(context, goal_id);
   if (distance < 32)
-    return is_repair ? q2m_set_move(context, "fixbot_move_weld_start", false, error)
+    return is_repair ? q2m_set_move(context, Q2M_MOVE_fixbot_move_weld_start, false, error)
                      : fixbot_finish_goal(context, true, error);
   if (game->wire_frame) {
     const qa_q2_wire_origin *old = context->actor->wire_lifetime.origins + ((game->wire_frame - 1) & 7u);
     if (old->present && old->source_frame == game->wire_frame - 1 &&
         qa_vec_length(qa_vec_sub(context->body.origin, old->origin)) == 0)
-      return is_repair ? q2m_set_move(context, "fixbot_move_stand", false, error)
+      return is_repair ? q2m_set_move(context, Q2M_MOVE_fixbot_move_stand, false, error)
                        : fixbot_finish_goal(context, true, error);
   }
   return true;
@@ -4445,7 +4432,7 @@ static bool fixbot_vertical(q2m_context *context, bool approach, qa_error *error
 
 static bool fixbot_weld_state(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
-  if (m->frame == 197) return q2m_set_move(context, "fixbot_move_weld", false, error);
+  if (m->frame == 197) return q2m_set_move(context, Q2M_MOVE_fixbot_move_weld, false, error);
   if (m->goal.registry && m->frame == 204) {
     qa_combat_state combat;
     if (!qa_combat_read(context->game->services.combat, m->goal, &combat, error))
@@ -4454,629 +4441,2920 @@ static bool fixbot_weld_state(q2m_context *context, qa_error *error) {
     if (context->game->options.edition == QA_Q2_RERELEASE ? combat.health <= 0 : combat.health < 0) {
       q2_actor *enemy = q2_actor_get(context->game, m->enemy, false, NULL);
       if (enemy && enemy->entity) enemy->entity->owner = (qa_actor_id){0};
-      return q2m_set_move(context, "fixbot_move_weld_end", false, error);
+      return q2m_set_move(context, Q2M_MOVE_fixbot_move_weld_end, false, error);
     }
     return qa_combat_set_health(context->game->services.combat, m->goal, combat.health - 10, error);
   }
   m->goal = m->enemy = (qa_actor_id){0};
-  return q2m_set_move(context, "fixbot_move_stand", false, error);
+  return q2m_set_move(context, Q2M_MOVE_fixbot_move_stand, false, error);
 }
 
-bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
-  if (!q2m_alive(context) || callback == NULL)
-    return true;
-  struct qa_q2_monster *monster = context->monster;
-  bool handled = false;
-  if (!strcmp(callback, "GunnerCmdrFire"))
+static bool callback_GunnerCmdrFire_0(q2m_context *context, q2m_callback_id callback,
+                                      qa_error *error) {
+    (void)callback;
     return guncmdr_fire(context, error);
-  if (!strcmp(callback, "GunnerCmdrGrenade"))
+}
+
+static bool callback_GunnerCmdrGrenade_1(q2m_context *context, q2m_callback_id callback,
+                                         qa_error *error) {
+    (void)callback;
     return guncmdr_grenade(context, error);
-  if (!strcmp(callback, "arachnid_rail"))
+}
+
+static bool callback_arachnid_rail_2(q2m_context *context, q2m_callback_id callback,
+                                     qa_error *error) {
+    (void)callback;
     return arachnid_rail(context, error);
-  if (!strcmp(callback, "gladbGun"))
+}
+
+static bool callback_gladbGun_3(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    (void)callback;
     return gladb_gun(context, error);
-  if (!strcmp(callback, "actor_fire"))
+}
+
+static bool callback_actor_fire_4(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    (void)callback;
     return actor_fire(context, error);
-  if (!strcmp(callback, "fixbot_fire_blaster"))
+}
+
+static bool callback_fixbot_fire_blaster_5(q2m_context *context, q2m_callback_id callback,
+                                           qa_error *error) {
+    (void)callback;
     return fixbot_blaster(context, error);
-  if (!strcmp(callback, "fixbot_fire_welder"))
+}
+
+static bool callback_fixbot_fire_welder_6(q2m_context *context, q2m_callback_id callback,
+                                          qa_error *error) {
+    (void)callback;
     return fixbot_welder(context, error);
-  if (!strcmp(callback, "fixbot_fire_laser"))
+}
+
+static bool callback_fixbot_fire_laser_7(q2m_context *context, q2m_callback_id callback,
+                                         qa_error *error) {
+    (void)callback;
     return q2m_fixbot_repair(context, error);
-  if (!strcmp(callback, "fixbot_attack"))
+}
+
+static bool callback_fixbot_attack_8(q2m_context *context, q2m_callback_id callback,
+                                     qa_error *error) {
+    (void)callback;
     return q2m_fixbot_attack(context, error);
-  if (!strcmp(callback, "brain_laserbeam"))
+}
+
+static bool callback_brain_laserbeam_9(q2m_context *context, q2m_callback_id callback,
+                                       qa_error *error) {
+    (void)callback;
     return q2m_brain_laser_beam(context, error);
-  if (!strcmp(callback, "ShamblerCastLightning"))
+}
+
+static bool callback_ShamblerCastLightning_10(q2m_context *context, q2m_callback_id callback,
+                                              qa_error *error) {
+    (void)callback;
     return shambler_lightning(context, error);
-  if (!strcmp(callback, "sham_swingl9") || !strcmp(callback, "sham_swingr9")) {
-    bool left = !strcmp(callback, "sham_swingl9");
-    if (!q2m_run_ai(context, Q2M_AI_CHARGE, NULL, left ? 8 : 1, error))
-      return false;
+}
+
+static bool callback_sham_swingl9_11(q2m_context *context, q2m_callback_id callback,
+                                     qa_error *error) {
+
+    struct qa_q2_monster *monster = context->monster;
+    bool left = (callback == Q2M_CALLBACK_sham_swingl9);
+    if (!q2m_run_ai(context, Q2M_AI_CHARGE, left ? 8 : 1, error))
+        return false;
     if (!q2m_alive(context))
-      return true;
-    if (!left && !q2m_run_ai(context, Q2M_AI_CHARGE, NULL, 10, error))
-      return false;
+        return true;
+    if (!left && !q2m_run_ai(context, Q2M_AI_CHARGE, 10, error))
+        return false;
     if (!q2m_alive(context))
-      return true;
+        return true;
     if (q2m_random(context->game) < .5f && monster->enemy.registry &&
         q2m_distance(context, monster->enemy) < 80)
-      return q2m_set_move(context, left ? "shambler_attack_swingr"
-                                       : "shambler_attack_swingl", false, error);
+        return q2m_set_move(
+            context, left ? Q2M_MOVE_shambler_attack_swingr : Q2M_MOVE_shambler_attack_swingl,
+            false, error);
     return true;
-  }
-  if (!strcmp(callback, "flipper_run"))
-    return q2m_set_move(context, "flipper_move_run", false, error);
-  if (!strcmp(callback, "widow2_attack_beam"))
-    return q2m_set_move(context, "widow2_move_attack_beam", false, error) &&
-        (!q2m_alive(context) || q2m_sound(context, "widow/bwstep1.wav", 4, 1, error));
-  if (!strcmp(callback, "widow_attack_rail")) {
+}
+
+static bool callback_flipper_run_12(q2m_context *context, q2m_callback_id callback,
+                                    qa_error *error) {
+    (void)callback;
+    return q2m_set_move(context, Q2M_MOVE_flipper_move_run, false, error);
+}
+
+static bool callback_widow2_attack_beam_13(q2m_context *context, q2m_callback_id callback,
+                                           qa_error *error) {
+    (void)callback;
+    return q2m_set_move(context, Q2M_MOVE_widow2_move_attack_beam, false, error) &&
+           (!q2m_alive(context) || q2m_sound(context, "widow/bwstep1.wav", 4, 1, error));
+}
+
+static bool callback_widow_attack_rail_14(q2m_context *context, q2m_callback_id callback,
+                                          qa_error *error) {
+    (void)callback;
     qa_body_state enemy;
     qa_builtin_actor_traits traits;
     bool available;
     if (!target_body(context, &enemy, &traits, &available))
-      return false;
+        return false;
     if (!q2m_alive(context) || !available)
-      return true;
+        return true;
     float angle = context->body.angles.y -
-        q2m_vector_angles(qa_vec_sub(context->body.origin, enemy.origin)).y;
-    if (angle < 0) angle += 360;
+                  q2m_vector_angles(qa_vec_sub(context->body.origin, enemy.origin)).y;
+    if (angle < 0)
+        angle += 360;
     angle -= 180;
-    return q2m_set_move(context, angle < -15 ? "widow_move_attack_rail_l"
-        : angle > 15 ? "widow_move_attack_rail_r" : "widow_move_attack_rail", false, error);
-  }
-  if (!strcmp(callback, "TurretAim"))
+    return q2m_set_move(context,
+                        angle < -15  ? Q2M_MOVE_widow_move_attack_rail_l
+                        : angle > 15 ? Q2M_MOVE_widow_move_attack_rail_r
+                                     : Q2M_MOVE_widow_move_attack_rail,
+                        false, error);
+}
+
+static bool callback_TurretAim_15(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    (void)callback;
     return turret_aim(context, error);
-  if (!strcmp(callback, "TurretFire") || !strcmp(callback, "TurretFireBlind"))
-    return turret_fire(context, !strcmp(callback, "TurretFireBlind"), error);
-  if (!source_sound_callback(context, callback, &handled, error))
-    return false;
-  if (handled)
-    return true;
-  if (!q2m_species_melee(context, callback, &handled, error))
-    return false;
-  if (handled)
-    return true;
-  if (!q2m_stalker_callback(context, callback, &handled, error))
-    return false;
-  if (handled)
-    return true;
-  if (strcmp(callback, "loogie") == 0) {
+}
+
+static bool callback_TurretFire_16(q2m_context *context, q2m_callback_id callback,
+                                   qa_error *error) {
+
+    return turret_fire(context, (callback == Q2M_CALLBACK_TurretFireBlind), error);
+}
+
+static bool callback_loogie_17(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     if (!enemy_alive(context))
-      return true;
+        return true;
     qa_body_state enemy;
     qa_actor_id enemy_id = monster->enemy;
     if (!qa_world_body_read(context->game->services.world, enemy_id, &enemy, error))
-      return false;
+        return false;
     float height;
     if (!enemy_view_height(context, &height))
-      return true;
+        return true;
     qa_vec3 up;
     qa_builtin_angle_vectors(context->body.angles, NULL, NULL, &up);
-    qa_vec3 start = qa_vec_add(q2m_project_offset(context, qa_v3(-18, -.8f, 24)),
-                                qa_vec_scale(up, 2));
+    qa_vec3 start =
+        qa_vec_add(q2m_project_offset(context, qa_v3(-18, -.8f, 24)), qa_vec_scale(up, 2));
     qa_vec3 eye = enemy.origin;
     eye.z += height;
     return !q2m_alive(context) || !enemy_alive(context) ||
-           q2_fire_actor_loogie(context->game, context->actor->id, start,
-                                 qa_vec_sub(eye, start), error);
-  }
-  if (!q2m_medic_callback(context, callback, &handled, error))
-    return false;
-  if (handled)
-    return true;
-  if (!q2m_parasite_callback(context, callback, &handled, error))
-    return false;
-  if (handled)
-    return true;
-  if (!q2m_summon_callback(context, callback, &handled, error))
-    return false;
-  if (handled)
-    return true;
-  if (!conditional_transition(context, callback, &handled, error))
-    return false;
-  if (handled)
-    return true;
-  if (!end_transition(context, callback, &handled, error))
-    return false;
-  if (handled)
-    return true;
-  if (!soldier_callbacks(context, callback, &handled, error))
-    return false;
-  if (handled)
-    return true;
-  if (!infantry_callbacks(context, callback, &handled, error))
-    return false;
-  if (handled)
-    return true;
-  if (!carrier_spawn_callbacks(context, callback, &handled, error))
-    return false;
-  if (handled)
-    return true;
-  if (!foundational_species_callback(context, callback, &handled, error))
-    return false;
-  if (handled)
-    return true;
-  if (!heavy_weapon_callback(context, callback, &handled, error))
-    return false;
-  if (handled)
-    return true;
+           q2_fire_actor_loogie(context->game, context->actor->id, start, qa_vec_sub(eye, start),
+                                error);
+}
 
-  if (!strcmp(callback, "WidowBlaster"))
+static bool callback_WidowBlaster_18(q2m_context *context, q2m_callback_id callback,
+                                     qa_error *error) {
+    (void)callback;
     return widow_blaster(context, error);
-  if (!strcmp(callback, "Widow2Beam"))
+}
+
+static bool callback_Widow2Beam_19(q2m_context *context, q2m_callback_id callback,
+                                   qa_error *error) {
+    (void)callback;
     return widow2_beam(context, error);
-  if (!strcmp(callback, "Widow2Tongue"))
+}
+
+static bool callback_Widow2Tongue_20(q2m_context *context, q2m_callback_id callback,
+                                     qa_error *error) {
+    (void)callback;
     return widow2_tongue(context, error);
-  if (!strcmp(callback, "Widow2TonguePull"))
+}
+
+static bool callback_Widow2TonguePull_21(q2m_context *context, q2m_callback_id callback,
+                                         qa_error *error) {
+    (void)callback;
     return widow2_pull(context, error);
-  if (!strcmp(callback, "Widow2Crunch")) {
+}
+
+static bool callback_Widow2Crunch_22(q2m_context *context, q2m_callback_id callback,
+                                     qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     if (!widow2_pull(context, error))
-      return false;
+        return false;
     if (!q2m_alive(context))
-      return true;
+        return true;
     qa_body_state enemy;
     qa_builtin_actor_traits traits;
     bool available;
     if (!target_body(context, &enemy, &traits, &available))
-      return false;
+        return false;
     if (!q2m_alive(context) || !available)
-      return true;
+        return true;
     float kick = monster->frame != 53 ? 0.0f : enemy.ground.registry ? 500.0f : 250.0f;
     bool hit;
-    return q2m_hit(context, qa_v3(150, 0, 4),
-        20.0f + floorf(q2m_random(context->game) * 6.0f), kick, &hit, error);
-  }
-  if (!strcmp(callback, "widow_attack_kick")) {
+    return q2m_hit(context, qa_v3(150, 0, 4), 20.0f + floorf(q2m_random(context->game) * 6.0f),
+                   kick, &hit, error);
+}
+
+static bool callback_widow_attack_kick_23(q2m_context *context, q2m_callback_id callback,
+                                          qa_error *error) {
+    (void)callback;
     qa_body_state enemy;
     qa_builtin_actor_traits traits;
     bool available;
     if (!target_body(context, &enemy, &traits, &available))
-      return false;
+        return false;
     if (!q2m_alive(context) || !available)
-      return true;
+        return true;
     bool hit;
-    return q2m_hit(context, qa_v3(100, 0, 4),
-        50.0f + floorf(q2m_random(context->game) * 6.0f),
-        enemy.ground.registry ? 500.0f : 250.0f, &hit, error);
-  }
-  if (!strcmp(callback, "Widow2SaveBeamTarget") || !strcmp(callback, "Widow2StartSweep"))
+    return q2m_hit(context, qa_v3(100, 0, 4), 50.0f + floorf(q2m_random(context->game) * 6.0f),
+                   enemy.ground.registry ? 500.0f : 250.0f, &hit, error);
+}
+
+static bool callback_Widow2SaveBeamTarget_24(q2m_context *context, q2m_callback_id callback,
+                                             qa_error *error) {
+    (void)callback;
+    (void)error;
     return widow2_save_beam(context);
-  if (!strcmp(callback, "Widow2BeamTargetRemove")) {
+}
+
+static bool callback_Widow2BeamTargetRemove_25(q2m_context *context, q2m_callback_id callback,
+                                               qa_error *error) {
+    (void)callback;
+    (void)error;
+    struct qa_q2_monster *monster = context->monster;
     monster->saved_attack_position = monster->widow_previous_target = qa_v3(0, 0, 0);
     return true;
-  }
-  if (!strcmp(callback, "WidowRail"))
+}
+
+static bool callback_WidowRail_26(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    (void)callback;
     return widow_rail(context, error);
-  if (!strcmp(callback, "WidowSaveLoc")) {
+}
+
+static bool callback_WidowSaveLoc_27(q2m_context *context, q2m_callback_id callback,
+                                     qa_error *error) {
+    (void)callback;
+    (void)error;
+    struct qa_q2_monster *monster = context->monster;
     qa_body_state enemy;
     qa_builtin_actor_traits traits;
     bool available;
     if (!target_body(context, &enemy, &traits, &available))
-      return false;
+        return false;
     if (q2m_alive(context) && available)
-      monster->saved_attack_position = qa_vec_add(enemy.origin, qa_v3(0, 0, traits.view_height));
+        monster->saved_attack_position = qa_vec_add(enemy.origin, qa_v3(0, 0, traits.view_height));
     return true;
-  }
-  if (!strcmp(callback, "brain_duck_down") || !strcmp(callback, "brain_duck_hold") ||
-      !strcmp(callback, "brain_duck_up") || !strcmp(callback, "chick_duck_down") ||
-      !strcmp(callback, "chick_duck_hold") || !strcmp(callback, "chick_duck_up") ||
-      !strcmp(callback, "medic_duck_down") || !strcmp(callback, "medic_duck_hold") ||
-      !strcmp(callback, "medic_duck_up") || !strcmp(callback, "monster_duck_down") ||
-      !strcmp(callback, "monster_duck_hold") || !strcmp(callback, "monster_duck_up"))
-    return duck_action(context, callback, error);
-  if (!strcmp(callback, "berserk_jump_now") || !strcmp(callback, "berserk_jump2_now") ||
-      !strcmp(callback, "berserk_jump_wait_land") || !strcmp(callback, "guncmdr_jump_now") ||
-      !strcmp(callback, "guncmdr_jump2_now") || !strcmp(callback, "guncmdr_jump_wait_land") ||
-      !strcmp(callback, "gunner_jump_now") || !strcmp(callback, "gunner_jump2_now") ||
-      !strcmp(callback, "gunner_jump_wait_land") || !strcmp(callback, "mutant_jump_down") ||
-      !strcmp(callback, "mutant_jump_up") || !strcmp(callback, "mutant_jump_wait_land") ||
-      !strcmp(callback, "parasite_jump_down") || !strcmp(callback, "parasite_jump_up") ||
-      !strcmp(callback, "parasite_jump_wait_land"))
-    return jump_action(context, callback, error);
-  if (!strcmp(callback, "berserk_shrink") || !strcmp(callback, "boss2_shrink") ||
-      !strcmp(callback, "brain_shrink") || !strcmp(callback, "chick_shrink") ||
-      !strcmp(callback, "gladiator_shrink") || !strcmp(callback, "guncmdr_shrink") ||
-      !strcmp(callback, "gunner_shrink") || !strcmp(callback, "mutant_shrink") ||
-      !strcmp(callback, "parasite_shrink") || !strcmp(callback, "shambler_shrink") ||
-      !strcmp(callback, "tank_shrink"))
-    return shrink(context, error);
+}
 
-  if (strcmp(callback, "Widow2SaveDisruptLoc") == 0)
+static bool callback_brain_duck_down_28(q2m_context *context, q2m_callback_id callback,
+                                        qa_error *error) {
+
+    return duck_action(context, callback, error);
+}
+
+static bool callback_berserk_jump2_now_29(q2m_context *context, q2m_callback_id callback,
+                                          qa_error *error) {
+
+    return jump_action(context, callback, error);
+}
+
+static bool callback_berserk_shrink_30(q2m_context *context, q2m_callback_id callback,
+                                       qa_error *error) {
+    (void)callback;
+    return shrink(context, error);
+}
+
+static bool callback_Widow2SaveDisruptLoc_31(q2m_context *context, q2m_callback_id callback,
+                                             qa_error *error) {
+    (void)callback;
+    (void)error;
     return save_widow_disrupt_location(context);
-  if (strcmp(callback, "WidowDisrupt") == 0)
+}
+
+static bool callback_WidowDisrupt_32(q2m_context *context, q2m_callback_id callback,
+                                     qa_error *error) {
+    (void)callback;
     return q2m_widow_disrupt(context, error);
-  if (!strcmp(callback, "ShamblerSaveLoc")) {
+}
+
+static bool callback_ShamblerSaveLoc_33(q2m_context *context, q2m_callback_id callback,
+                                        qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     qa_body_state enemy;
     qa_builtin_actor_traits traits;
     bool available;
-    if (!target_body(context, &enemy, &traits, &available)) return false;
-    if (!q2m_alive(context) || !available) return true;
+    if (!target_body(context, &enemy, &traits, &available))
+        return false;
+    if (!q2m_alive(context) || !available)
+        return true;
     monster->saved_attack_position = qa_vec_add(enemy.origin, qa_v3(0, 0, traits.view_height));
     monster->next_frame = 73;
     return q2m_sound(context, "shambler/sboom.wav", 1, 1, error) &&
-        (!q2m_alive(context) || q2m_shambler_lightning(context, false, error));
-  }
-  if (!strcmp(callback, "shambler_windup") || !strcmp(callback, "shambler_lightning_update"))
-    return q2m_shambler_lightning(context, !strcmp(callback, "shambler_windup"), error);
-  if (strcmp(callback, "gekk_face") == 0)
+           (!q2m_alive(context) || q2m_shambler_lightning(context, false, error));
+}
+
+static bool callback_shambler_lightning_update_34(q2m_context *context, q2m_callback_id callback,
+                                                  qa_error *error) {
+
+    return q2m_shambler_lightning(context, (callback == Q2M_CALLBACK_shambler_windup), error);
+}
+
+static bool callback_gekk_face_35(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    (void)callback;
     return q2m_face_enemy(context, error);
-  if (strcmp(callback, "monster_done_dodge") == 0) {
+}
+
+static bool callback_monster_done_dodge_36(q2m_context *context, q2m_callback_id callback,
+                                           qa_error *error) {
+    (void)callback;
+    (void)error;
+    struct qa_q2_monster *monster = context->monster;
     monster->dodging = false;
-    if (monster->attack_state == Q2M_SLIDING &&
-        context->game->options.edition == QA_Q2_RERELEASE)
-      monster->attack_state = Q2M_STRAIGHT;
+    if (monster->attack_state == Q2M_SLIDING && context->game->options.edition == QA_Q2_RERELEASE)
+        monster->attack_state = Q2M_STRAIGHT;
     return true;
-  }
-  if (strcmp(callback, "monster_check_prone") == 0) {
+}
+
+static bool callback_monster_check_prone_37(q2m_context *context, q2m_callback_id callback,
+                                            qa_error *error) {
+    (void)callback;
+    (void)error;
+    struct qa_q2_monster *monster = context->monster;
     if (!enemy_alive(context))
-      monster->next_frame = monster->frame + 1;
+        monster->next_frame = monster->frame + 1;
     return true;
-  }
-  if (strcmp(callback, "brain_chest_open") == 0) {
-    if (context->game->options.edition == QA_Q2_RERELEASE) monster->count = 0;
-    else monster->spawnflags &= ~UINT32_C(65536);
+}
+
+static bool callback_brain_chest_open_38(q2m_context *context, q2m_callback_id callback,
+                                         qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
+    if (context->game->options.edition == QA_Q2_RERELEASE)
+        monster->count = 0;
+    else
+        monster->spawnflags &= ~UINT32_C(65536);
     context->combat.armor.powered.kind = QA_POWER_NONE;
     qa_q2_combat_power_armor_source(context->game, &context->combat.armor.powered);
-    if (!qa_combat_set_armor(context->game->services.combat,
-                               context->actor->id, &context->combat.armor,
-                               error))
-      return false;
+    if (!qa_combat_set_armor(context->game->services.combat, context->actor->id,
+                             &context->combat.armor, error))
+        return false;
     return !q2m_alive(context) || q2m_sound(context, "brain/brnatck1.wav", 4, 1, error);
-  }
-  if (strcmp(callback, "brain_chest_closed") == 0) {
+}
+
+static bool callback_brain_chest_closed_39(q2m_context *context, q2m_callback_id callback,
+                                           qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     context->combat.armor.powered.kind = QA_POWER_SCREEN;
     qa_q2_combat_power_armor_source(context->game, &context->combat.armor.powered);
-    if (!qa_combat_set_armor(context->game->services.combat,
-                               context->actor->id, &context->combat.armor,
-                               error))
-      return false;
+    if (!qa_combat_set_armor(context->game->services.combat, context->actor->id,
+                             &context->combat.armor, error))
+        return false;
     if (!q2m_alive(context))
-      return true;
+        return true;
     bool follow = context->game->options.edition == QA_Q2_RERELEASE
-                      ? monster->count != 0 : (monster->spawnflags & UINT32_C(65536)) != 0;
+                      ? monster->count != 0
+                      : (monster->spawnflags & UINT32_C(65536)) != 0;
     if (!follow)
-      return true;
+        return true;
     if (context->game->options.edition == QA_Q2_RERELEASE)
-      monster->count = 0;
+        monster->count = 0;
     else
-      monster->spawnflags &= ~UINT32_C(65536);
-    return q2m_set_move(context, "brain_move_attack1", false, error);
-  }
-  if (!strcmp(callback, "change_to_roam")) return fixbot_roam(context, error);
-  if (!strcmp(callback, "roam_goal")) return fixbot_goal_create(context, 0, error);
-  if (!strcmp(callback, "fly_vertical") || !strcmp(callback, "fly_vertical2"))
-    return fixbot_vertical(context, !strcmp(callback, "fly_vertical2"), error);
-  if (strcmp(callback, "berserk_high_gravity") == 0) {
+        monster->spawnflags &= ~UINT32_C(65536);
+    return q2m_set_move(context, Q2M_MOVE_brain_move_attack1, false, error);
+}
+
+static bool callback_change_to_roam_40(q2m_context *context, q2m_callback_id callback,
+                                       qa_error *error) {
+    (void)callback;
+    return fixbot_roam(context, error);
+}
+
+static bool callback_roam_goal_41(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    (void)callback;
+    return fixbot_goal_create(context, 0, error);
+}
+
+static bool callback_fly_vertical_42(q2m_context *context, q2m_callback_id callback,
+                                     qa_error *error) {
+
+    return fixbot_vertical(context, (callback == Q2M_CALLBACK_fly_vertical2), error);
+}
+
+static bool callback_berserk_high_gravity_43(q2m_context *context, q2m_callback_id callback,
+                                             qa_error *error) {
+    (void)callback;
+    (void)error;
     context->actor->physics.gravity_scale = 2.0f;
     return true;
-  }
-  if (strcmp(callback, "gekk_check_underwater") == 0) {
-    const char *move = context->actor->physics.water_level > 1
-                           ? "gekk_move_swim_start"
-                           : monster->definition->run_move;
+}
+
+static bool callback_gekk_check_underwater_44(q2m_context *context, q2m_callback_id callback,
+                                              qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
+    q2m_move_id move = context->actor->physics.water_level > 1 ? Q2M_MOVE_gekk_move_swim_start
+                                                               : monster->definition->run_move;
     bool found;
     return set_existing_move(context, move, false, &found, error);
-  }
-  if (strcmp(callback, "gekk_stop_skid") == 0) {
+}
+
+static bool callback_gekk_stop_skid_45(q2m_context *context, q2m_callback_id callback,
+                                       qa_error *error) {
+    (void)callback;
     context->body.velocity = qa_v3(0, 0, 0);
     return q2m_write_body(context, true, error);
-  }
-  if (strcmp(callback, "MakronToss") == 0)
+}
+
+static bool callback_MakronToss_46(q2m_context *context, q2m_callback_id callback,
+                                   qa_error *error) {
+    (void)callback;
     return toss_makron(context, error);
-  if (strcmp(callback, "Widow2Toss") == 0) {
+}
+
+static bool callback_Widow2Toss_47(q2m_context *context, q2m_callback_id callback,
+                                   qa_error *error) {
+    (void)callback;
     context->body.velocity.z += 200.0f;
     return q2m_write_body(context, true, error);
-  }
-  if (!strcmp(callback, "use_scanner")) return fixbot_scanner(context, error);
-  if (!strcmp(callback, "weldstate")) return fixbot_weld_state(context, error);
-  if (strcmp(callback, "CarrierCoopCheck") == 0)
-    return carrier_coop_check(context, error);
+}
 
-  if (strcmp(callback, "gunner_blind_check") == 0 ||
-      strcmp(callback, "soldier_blind_check") == 0 ||
-      strcmp(callback, "tank_blind_check") == 0) {
+static bool callback_use_scanner_48(q2m_context *context, q2m_callback_id callback,
+                                    qa_error *error) {
+    (void)callback;
+    return fixbot_scanner(context, error);
+}
+
+static bool callback_weldstate_49(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    (void)callback;
+    return fixbot_weld_state(context, error);
+}
+
+static bool callback_CarrierCoopCheck_50(q2m_context *context, q2m_callback_id callback,
+                                         qa_error *error) {
+    (void)callback;
+    return carrier_coop_check(context, error);
+}
+
+static bool callback_gunner_blind_check_51(q2m_context *context, q2m_callback_id callback,
+                                           qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     if (monster->attack_state == Q2M_BLIND) {
-      qa_vec3 direction =
-          qa_vec_sub(monster->blind_fire_target, context->body.origin);
-      monster->ideal_yaw =
-          atan2f(direction.y, direction.x) * 57.29577951308232f;
-      return q2m_change_yaw(context, error);
+        qa_vec3 direction = qa_vec_sub(monster->blind_fire_target, context->body.origin);
+        monster->ideal_yaw = atan2f(direction.y, direction.x) * 57.29577951308232f;
+        return q2m_change_yaw(context, error);
     }
     return true;
-  }
+}
 
-  bool widow_death_handled;
-  if (!q2m_widow_death_action(context, callback, &widow_death_handled, error))
-    return false;
-  if (widow_death_handled)
-    return true;
+static bool callback_parasite_drain_attack_52(q2m_context *context, q2m_callback_id callback,
+                                              qa_error *error) {
 
-  if (strcmp(callback, "parasite_drain_attack") == 0 ||
-      strcmp(callback, "parasite_launch") == 0)
     return q2m_melee(context, 256.0f,
-                     strcmp(callback, "parasite_drain_attack") == 0 ? 5.0f
-                                                                    : 2.0f,
-                     0.0f, error);
+                     (callback == Q2M_CALLBACK_parasite_drain_attack) ? 5.0f : 2.0f, 0.0f, error);
+}
 
-  if (strcmp(callback, "soldier_walk1_random") == 0 ||
-      strcmp(callback, "soldierh_walk1_random") == 0) {
+static bool callback_soldier_walk1_random_53(q2m_context *context, q2m_callback_id callback,
+                                             qa_error *error) {
+    (void)callback;
+    (void)error;
+    struct qa_q2_monster *monster = context->monster;
     if (q2m_random(context->game) > 0.1f)
-      monster->next_frame = monster->move->first_frame;
+        monster->next_frame = monster->move->first_frame;
     return true;
-  }
+}
 
-  if (strcmp(callback, "soldier_cock") == 0) {
+static bool callback_soldier_cock_54(q2m_context *context, q2m_callback_id callback,
+                                     qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     monster->cocked = true;
-    return q2m_sound(context, "infantry/infatck3.wav", 1,
-                      monster->frame == 197 ? 2.0f : 1.0f, error);
-  }
+    return q2m_sound(context, "infantry/infatck3.wav", 1, monster->frame == 197 ? 2.0f : 1.0f,
+                     error);
+}
 
-  if (strcmp(callback, "soldierh_hyper_laser_sound_start") == 0)
+static bool callback_soldierh_hyper_laser_sound_start_55(q2m_context *context,
+                                                         q2m_callback_id callback,
+                                                         qa_error *error) {
+    (void)callback;
     return soldier_laser_sound(context, true, error);
-  if (strcmp(callback, "soldierh_hyper_laser_sound_end") == 0)
+}
+
+static bool callback_soldierh_hyper_laser_sound_end_56(q2m_context *context,
+                                                       q2m_callback_id callback, qa_error *error) {
+    (void)callback;
     return soldier_laser_sound(context, false, error);
-  if (strcmp(callback, "soldierh_hyper_sound") == 0)
+}
+
+static bool callback_soldierh_hyper_sound_57(q2m_context *context, q2m_callback_id callback,
+                                             qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     return monster->definition->species == Q2M_SOLDIER_HYPER
                ? q2m_sound(context, "weapons/hyprbl1a.wav", 0, 1.0f, error)
                : true;
+}
 
-  if (strcmp(callback, "flyer_kamikaze_check") == 0) {
+static bool callback_flyer_kamikaze_check_58(q2m_context *context, q2m_callback_id callback,
+                                             qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     if (!enemy_alive(context) || q2m_distance(context, monster->enemy) < 90.0f)
-      return q2m_kamikaze(context, error);
+        return q2m_kamikaze(context, error);
     monster->goal = monster->enemy;
     return true;
-  }
+}
 
-  if (strcmp(callback, "gladbGun_check") == 0)
+static bool callback_gladbGun_check_59(q2m_context *context, q2m_callback_id callback,
+                                       qa_error *error) {
+    (void)callback;
     return context->game->options.skill == 3 ? gladb_gun(context, error) : true;
+}
 
-  if (strcmp(callback, "mutant_check_refire") == 0) {
-    if (enemy_alive(context) && ((context->game->options.skill == 3 &&
-                                  q2m_random(context->game) < 0.5f) ||
-                                 q2m_distance(context, monster->enemy) < 80.0f))
-      monster->next_frame = 8;
+static bool callback_mutant_check_refire_60(q2m_context *context, q2m_callback_id callback,
+                                            qa_error *error) {
+    (void)callback;
+    (void)error;
+    struct qa_q2_monster *monster = context->monster;
+    if (enemy_alive(context) &&
+        ((context->game->options.skill == 3 && q2m_random(context->game) < 0.5f) ||
+         q2m_distance(context, monster->enemy) < 80.0f))
+        monster->next_frame = 8;
     return true;
-  }
+}
 
-  if (strcmp(callback, "gekk_check_refire") == 0) {
+static bool callback_gekk_check_refire_61(q2m_context *context, q2m_callback_id callback,
+                                          qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     if (!enemy_alive(context) ||
-        q2m_random(context->game) >=
-            (float)context->game->options.skill * 0.1f ||
+        q2m_random(context->game) >= (float)context->game->options.skill * 0.1f ||
         q2m_distance(context, monster->enemy) >= 80.0f)
-      return true;
-    const char *move =
-        monster->frame == 53 ? "gekk_move_attack2" : "gekk_move_attack1";
+        return true;
+    q2m_move_id move =
+        monster->frame == 53 ? Q2M_MOVE_gekk_move_attack2 : Q2M_MOVE_gekk_move_attack1;
     bool found;
     return set_existing_move(context, move, false, &found, error);
-  }
+}
 
-
-  if (strcmp(callback, "insane_checkdown") == 0) {
+static bool callback_insane_checkdown_62(q2m_context *context, q2m_callback_id callback,
+                                         qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     if (!(monster->spawnflags & 32u) && q2m_random(context->game) < .3f)
-      return q2m_set_move(context, q2m_random(context->game) < .5f
-          ? "insane_move_uptodown" : "insane_move_jumpdown", false, error);
+        return q2m_set_move(context,
+                            q2m_random(context->game) < .5f ? Q2M_MOVE_insane_move_uptodown
+                                                            : Q2M_MOVE_insane_move_jumpdown,
+                            false, error);
     return true;
-  }
-  if (strcmp(callback, "insane_checkup") == 0) {
+}
+
+static bool callback_insane_checkup_63(q2m_context *context, q2m_callback_id callback,
+                                       qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     if ((monster->spawnflags & 20u) != 20u && q2m_random(context->game) < .5f)
-      return q2m_set_move(context, "insane_move_downtoup", false, error);
+        return q2m_set_move(context, Q2M_MOVE_insane_move_downtoup, false, error);
     return true;
-  }
+}
 
-  if (strcmp(callback, "reloogie") == 0) {
+static bool callback_reloogie_64(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     bool found;
-    if (q2m_random(context->game) > 0.8f &&
-        context->combat.health < monster->base_health)
-      return set_existing_move(context, "gekk_move_idle2", false, &found,
-                               error);
+    if (q2m_random(context->game) > 0.8f && context->combat.health < monster->base_health)
+        return set_existing_move(context, Q2M_MOVE_gekk_move_idle2, false, &found, error);
     float distance = q2m_distance(context, monster->enemy);
-    if (enemy_alive(context) && q2m_random(context->game) > 0.7f &&
-        distance >= 80.0f && distance < 500.0f)
-      return set_existing_move(context, "gekk_move_spit", false, &found, error);
+    if (enemy_alive(context) && q2m_random(context->game) > 0.7f && distance >= 80.0f &&
+        distance < 500.0f)
+        return set_existing_move(context, Q2M_MOVE_gekk_move_spit, false, &found, error);
     return true;
-  }
+}
 
-  if (strcmp(callback, "widow_step") == 0)
+static bool callback_widow_step_65(q2m_context *context, q2m_callback_id callback,
+                                   qa_error *error) {
+    (void)callback;
     return q2m_sound(context, "widow/bwstep3.wav", 4, 1.0f, error);
-  if (strcmp(callback, "widow_stepshoot") == 0)
-    return q2m_sound(context, "widow/bwstep3.wav", 4, 1.0f, error) &&
-           (!q2m_alive(context) ||
-            widow_blaster(context, error));
+}
 
-  if (strcmp(callback, "arachnid_charge_rail") == 0) {
+static bool callback_widow_stepshoot_66(q2m_context *context, q2m_callback_id callback,
+                                        qa_error *error) {
+    (void)callback;
+    return q2m_sound(context, "widow/bwstep3.wav", 4, 1.0f, error) &&
+           (!q2m_alive(context) || widow_blaster(context, error));
+}
+
+static bool callback_arachnid_charge_rail_67(q2m_context *context, q2m_callback_id callback,
+                                             qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     qa_body_state enemy;
     qa_builtin_actor_traits traits;
     bool available;
     if (!target_body(context, &enemy, &traits, &available))
-      return false;
+        return false;
     if (!q2m_alive(context) || !available)
-      return true;
+        return true;
     monster->saved_attack_position = qa_vec_add(enemy.origin, qa_v3(0, 0, traits.view_height));
     return q2m_sound(context, "gladiator/railgun.wav", 1, 1.0f, error);
-  }
+}
 
-  if (strcmp(callback, "berserk_run_attack_speed") == 0) {
+static bool callback_berserk_run_attack_speed_68(q2m_context *context, q2m_callback_id callback,
+                                                 qa_error *error) {
+    (void)callback;
+    (void)error;
+    struct qa_q2_monster *monster = context->monster;
     if (enemy_alive(context) && q2m_distance(context, monster->enemy) < 80.0f) {
-      monster->next_frame = monster->frame + 6;
-      monster->dodging = false;
+        monster->next_frame = monster->frame + 6;
+        monster->dodging = false;
     }
     return true;
-  }
+}
 
-  if (strcmp(callback, "arachnid_melee_charge") == 0)
+static bool callback_arachnid_melee_charge_69(q2m_context *context, q2m_callback_id callback,
+                                              qa_error *error) {
+    (void)callback;
     return q2m_sound(context, "gladiator/melee3.wav", 1, 1.0f, error);
-  if (strcmp(callback, "flipper_preattack") == 0)
-    return q2m_sound(context, "flipper/flpatck1.wav", 1, 1.0f, error);
-  if (strcmp(callback, "gekk_preattack") == 0)
-    return true;
+}
 
-  if (strcmp(callback, "mutant_idle_loop") == 0) {
+static bool callback_flipper_preattack_70(q2m_context *context, q2m_callback_id callback,
+                                          qa_error *error) {
+    (void)callback;
+    return q2m_sound(context, "flipper/flpatck1.wav", 1, 1.0f, error);
+}
+
+static bool callback_gekk_preattack_71(q2m_context *context, q2m_callback_id callback,
+                                       qa_error *error) {
+    (void)context;
+    (void)callback;
+    (void)error;
+    return true;
+}
+
+static bool callback_mutant_idle_loop_72(q2m_context *context, q2m_callback_id callback,
+                                         qa_error *error) {
+    (void)callback;
+    (void)error;
+    struct qa_q2_monster *monster = context->monster;
     if (q2m_random(context->game) < 0.75f)
-      monster->next_frame = 116;
+        monster->next_frame = 116;
     return true;
-  }
-  if (strcmp(callback, "gekk_idle_loop") == 0) {
-    if (q2m_random(context->game) > 0.75f &&
-        context->combat.health < monster->base_health)
-      monster->next_frame = 297;
+}
+
+static bool callback_gekk_idle_loop_73(q2m_context *context, q2m_callback_id callback,
+                                       qa_error *error) {
+    (void)callback;
+    (void)error;
+    struct qa_q2_monster *monster = context->monster;
+    if (q2m_random(context->game) > 0.75f && context->combat.health < monster->base_health)
+        monster->next_frame = 297;
     return true;
-  }
-  if (strcmp(callback, "shambler_maybe_idle") == 0)
+}
+
+static bool callback_shambler_maybe_idle_74(q2m_context *context, q2m_callback_id callback,
+                                            qa_error *error) {
+    (void)callback;
     return q2m_random(context->game) > 0.8f
                ? q2m_sound(context, "shambler/sidle.wav", 2, 2.0f, error)
                : true;
+}
 
-  if (strcmp(callback, "berserk_fidget") == 0) {
-    if (monster->stand_ground || monster->enemy.registry != 0 ||
-        q2m_random(context->game) > 0.15f)
-      return true;
-    return q2m_set_move(context, "berserk_move_stand_fidget", false, error) &&
-           (!q2m_alive(context) ||
-            q2m_sound(context, "berserk/beridle1.wav", 1, 2.0f, error));
-  }
-  if (strcmp(callback, "chick_fidget") == 0) {
+static bool callback_berserk_fidget_75(q2m_context *context, q2m_callback_id callback,
+                                       qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
+    if (monster->stand_ground || monster->enemy.registry != 0 || q2m_random(context->game) > 0.15f)
+        return true;
+    return q2m_set_move(context, Q2M_MOVE_berserk_move_stand_fidget, false, error) &&
+           (!q2m_alive(context) || q2m_sound(context, "berserk/beridle1.wav", 1, 2.0f, error));
+}
+
+static bool callback_chick_fidget_76(q2m_context *context, q2m_callback_id callback,
+                                     qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     if (!monster->stand_ground && q2m_random(context->game) <= 0.3f)
-      return q2m_set_move(context, "chick_move_fidget", false, error);
+        return q2m_set_move(context, Q2M_MOVE_chick_move_fidget, false, error);
     return true;
-  }
-  if (strcmp(callback, "gunner_fidget") == 0 ||
-      strcmp(callback, "guncmdr_fidget") == 0) {
-    bool commander = callback[3] == 'c';
-    if (!monster->stand_ground &&
-        (!commander || monster->enemy.registry == 0) &&
-        q2m_random(context->game) <= 0.05f)
-      return q2m_set_move(
-          context, commander ? "guncmdr_move_fidget" : "gunner_move_fidget",
-          false, error);
-    return true;
-  }
+}
 
-  if (strcmp(callback, "guardian_atk1_charge") == 0) {
+static bool callback_guncmdr_fidget_77(q2m_context *context, q2m_callback_id callback,
+                                       qa_error *error) {
+
+    struct qa_q2_monster *monster = context->monster;
+    bool commander = (callback == Q2M_CALLBACK_guncmdr_fidget);
+    if (!monster->stand_ground && (!commander || monster->enemy.registry == 0) &&
+        q2m_random(context->game) <= 0.05f)
+        return q2m_set_move(context,
+                            commander ? Q2M_MOVE_guncmdr_move_fidget : Q2M_MOVE_gunner_move_fidget,
+                            false, error);
+    return true;
+}
+
+static bool callback_guardian_atk1_charge_78(q2m_context *context, q2m_callback_id callback,
+                                             qa_error *error) {
+    (void)callback;
     if (!q2m_weapon_sound(context, "weapons/hyprbl1a.wav", error))
-      return false;
-    return !q2m_alive(context) ||
-           q2m_sound(context, "weapons/hyprbu1a.wav", 1, 1.0f, error);
-  }
-  if (strcmp(callback, "guardian_fire_blaster") == 0) {
+        return false;
+    return !q2m_alive(context) || q2m_sound(context, "weapons/hyprbu1a.wav", 1, 1.0f, error);
+}
+
+static bool callback_guardian_fire_blaster_79(q2m_context *context, q2m_callback_id callback,
+                                              qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     qa_body_state enemy;
     if (!qa_world_body_read(context->game->services.world, monster->enemy, &enemy, error))
-      return false;
-    if (!q2m_alive(context)) return true;
+        return false;
+    if (!q2m_alive(context))
+        return true;
     qa_vec3 start;
     float height;
-    if (!q2m_project_flash(context, 227, &start, error)) return false;
-    if (!enemy_view_height(context, &height)) return true;
+    if (!q2m_project_flash(context, 227, &start, error))
+        return false;
+    if (!enemy_view_height(context, &height))
+        return true;
     qa_vec3 target = enemy.origin;
     target.z += height;
     float low = nextafterf(-1.0f, 0.0f), high = nextafterf(1.0f, 0.0f);
     target.x += fminf(high, q2_rerelease_float(context->game, low, 1.0f)) * 5.0f;
     target.y += fminf(high, q2_rerelease_float(context->game, low, 1.0f)) * 5.0f;
     target.z += fminf(high, q2_rerelease_float(context->game, low, 1.0f)) * 5.0f;
-    q2m_fire_spec spec = q2m_fire_default(context, Q2M_ATTACK_BLASTER, 2.0f, 227,
-        start, qa_vec_normalize(qa_vec_sub(target, start)));
+    q2m_fire_spec spec = q2m_fire_default(context, Q2M_ATTACK_BLASTER, 2.0f, 227, start,
+                                          qa_vec_normalize(qa_vec_sub(target, start)));
     spec.speed = 1000.0f;
     spec.has_projectile_effects = true;
     spec.projectile_effects = monster->frame % 4 == 0 ? UINT64_C(16) : 0;
     if (!q2m_fire(context, &spec, error))
-      return false;
+        return false;
     if (!q2m_alive(context) || monster->frame != 173 ||
         monster->timestamp_ns <= context->game->now_ns || !enemy_alive(context))
-      return true;
+        return true;
     bool visible;
     if (!visible_enemy(context, &visible, error))
-      return false;
+        return false;
     if (visible)
-      monster->next_frame = 166;
+        monster->next_frame = 166;
     return true;
-  }
-  if (strcmp(callback, "guardian_laser_fire") == 0)
-    return q2m_sound(context, "weapons/laser2.wav", 1, 1.0f, error) &&
-           (!q2m_alive(context) ||
-            q2m_guardian_beam(context, error));
+}
 
-  if (!strcmp(callback, "infantry_fire_prep")) {
-    monster->fire_ns = q2m_after(context->game->now_ns,
-        ((qa_builtin_random_integer(&context->game->random) & 15u) + 4u) * .1);
+static bool callback_guardian_laser_fire_80(q2m_context *context, q2m_callback_id callback,
+                                            qa_error *error) {
+    (void)callback;
+    return q2m_sound(context, "weapons/laser2.wav", 1, 1.0f, error) &&
+           (!q2m_alive(context) || q2m_guardian_beam(context, error));
+}
+
+static bool callback_infantry_fire_prep_81(q2m_context *context, q2m_callback_id callback,
+                                           qa_error *error) {
+    (void)callback;
+    (void)error;
+    struct qa_q2_monster *monster = context->monster;
+    monster->fire_ns =
+        q2m_after(context->game->now_ns,
+                  ((qa_builtin_random_integer(&context->game->random) & 15u) + 4u) * .1);
     monster->pause_ns = monster->fire_ns;
     return true;
-  }
-  if (strcmp(callback, "soldier_start_charge") == 0) {
+}
+
+static bool callback_soldier_start_charge_82(q2m_context *context, q2m_callback_id callback,
+                                             qa_error *error) {
+    (void)callback;
+    (void)error;
+    struct qa_q2_monster *monster = context->monster;
     monster->charging = true;
     return true;
-  }
-  if (strcmp(callback, "GunnerCmdrCounter") == 0) {
+}
+
+static bool callback_GunnerCmdrCounter_83(q2m_context *context, q2m_callback_id callback,
+                                          qa_error *error) {
+    (void)callback;
+    (void)error;
+    struct qa_q2_monster *monster = context->monster;
     ++monster->count;
     return true;
-  }
-  if (!strcmp(callback, "guncmdr_pain5_to_death1") ||
-      !strcmp(callback, "guncmdr_pain5_to_death2") ||
-      !strcmp(callback, "guncmdr_pain6_to_death6")) {
+}
+
+static bool callback_guncmdr_pain5_to_death1_84(q2m_context *context, q2m_callback_id callback,
+                                                qa_error *error) {
+
     if (context->combat.health < 0 &&
-        (strcmp(callback, "guncmdr_pain5_to_death2") || q2m_random(context->game) < .5f))
-      return q2m_set_move(context, !strcmp(callback, "guncmdr_pain5_to_death1")
-          ? "guncmdr_move_death1" : !strcmp(callback, "guncmdr_pain5_to_death2")
-          ? "guncmdr_move_death2" : "guncmdr_move_death6", false, error);
+        ((callback != (Q2M_CALLBACK_guncmdr_pain5_to_death2)) || q2m_random(context->game) < .5f))
+        return q2m_set_move(
+            context,
+            (callback == Q2M_CALLBACK_guncmdr_pain5_to_death1)   ? Q2M_MOVE_guncmdr_move_death1
+            : (callback == Q2M_CALLBACK_guncmdr_pain5_to_death2) ? Q2M_MOVE_guncmdr_move_death2
+                                                                 : Q2M_MOVE_guncmdr_move_death6,
+            false, error);
     return true;
-  }
-  if (strcmp(callback, "flyer_nextmove") == 0) {
+}
+
+static bool callback_flyer_nextmove_85(q2m_context *context, q2m_callback_id callback,
+                                       qa_error *error) {
+    (void)callback;
     bool found;
     return set_existing_move(context,
-                             q2m_random(context->game) < 0.5f
-                                 ? "flyer_move_rollleft"
-                                 : "flyer_move_rollright",
+                             q2m_random(context->game) < 0.5f ? Q2M_MOVE_flyer_move_rollleft
+                                                              : Q2M_MOVE_flyer_move_rollright,
                              false, &found, error);
-  }
-  if (strcmp(callback, "gekk_gibfest") == 0 ||
-      strcmp(callback, "isgibfest") == 0)
-    return context->combat.health <= monster->gib_health
-               ? q2m_die(context, error)
-               : true;
-  if (strcmp(callback, "BossExplode") == 0 ||
-      strcmp(callback, "BossExplode2") == 0)
+}
+
+static bool callback_gekk_gibfest_86(q2m_context *context, q2m_callback_id callback,
+                                     qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
+    return context->combat.health <= monster->gib_health ? q2m_die(context, error) : true;
+}
+
+static bool callback_BossExplode_87(q2m_context *context, q2m_callback_id callback,
+                                    qa_error *error) {
+    (void)callback;
     return q2m_start_boss_explosion(context, error);
-  if (strcmp(callback, "hover_dying") == 0)
+}
+
+static bool callback_hover_dying_88(q2m_context *context, q2m_callback_id callback,
+                                    qa_error *error) {
+    (void)callback;
     return q2m_hover_dying(context, error);
-  if (strcmp(callback, "jorg_death_hit") == 0) {
+}
+
+static bool callback_jorg_death_hit_89(q2m_context *context, q2m_callback_id callback,
+                                       qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     ++monster->count;
-    return q2m_emit(context, QA_BUILTIN_EXPLOSION, "q2:explosion1",
-                    monster->count, context->body.origin, context->body.origin,
-                    1.0f, error);
-  }
-  if (strcmp(callback, "BossLoop") == 0) {
+    return q2m_emit(context, QA_BUILTIN_EXPLOSION, "q2:explosion1", monster->count,
+                    context->body.origin, context->body.origin, 1.0f, error);
+}
+
+static bool callback_BossLoop_90(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    (void)callback;
+    (void)error;
+    struct qa_q2_monster *monster = context->monster;
     if ((monster->spawnflags & 16u) == 0)
-      return true;
+        return true;
     if (monster->count != 0)
-      --monster->count;
+        --monster->count;
     else
-      monster->spawnflags &= ~16u;
+        monster->spawnflags &= ~16u;
     monster->next_frame = monster->move->first_frame + 18;
     return true;
-  }
-  if (strcmp(callback, "widow2_start_searching") == 0) {
+}
+
+static bool callback_widow2_start_searching_91(q2m_context *context, q2m_callback_id callback,
+                                               qa_error *error) {
+    (void)callback;
+    (void)error;
+    struct qa_q2_monster *monster = context->monster;
     monster->count = 0;
     return true;
-  }
-  if (strcmp(callback, "widow2_keep_searching") == 0) {
+}
+
+static bool callback_widow2_keep_searching_92(q2m_context *context, q2m_callback_id callback,
+                                              qa_error *error) {
+    (void)callback;
+    struct qa_q2_monster *monster = context->monster;
     if (monster->count > 2)
-      return q2m_set_move(context, "widow2_move_really_dead", false, error);
-    if (!q2m_set_move(context, "widow2_move_dead", false, error))
-      return false;
+        return q2m_set_move(context, Q2M_MOVE_widow2_move_really_dead, false, error);
+    if (!q2m_set_move(context, Q2M_MOVE_widow2_move_dead, false, error))
+        return false;
     monster->frame = 104;
     ++monster->count;
     return true;
-  }
-  if (strcmp(callback, "widow2_finaldeath") == 0)
+}
+
+static bool callback_widow2_finaldeath_93(q2m_context *context, q2m_callback_id callback,
+                                          qa_error *error) {
+    (void)callback;
     return q2m_corpse(context, error);
+}
 
-  if (strcmp(callback, "parasite_reel_in") == 0 ||
-      strcmp(callback, "parasite_walk") == 0 ||
-      strcmp(callback, "gekk_swim") == 0 ||
-      strcmp(callback, "gekk_search") == 0 || strcmp(callback, "loogie") == 0)
+static bool callback_gekk_search_94(q2m_context *context, q2m_callback_id callback,
+                                    qa_error *error) {
+    (void)context;
+    (void)callback;
+    (void)error;
     return true;
+}
 
-  qa_error_set(error, QA_ERROR_FORMAT, 0,
-               "%s references unsupported monster callback %s",
-               monster->definition->classname, callback);
-  return false;
+static bool callback_TreadSound(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    (void)callback;
+    return q2m_sound(context, "bosstank/btkengn1.wav",
+                     context->game->options.edition == QA_Q2_RERELEASE ? 4 : 2, 1, error);
+}
+
+static bool callback_stalker_idle_noise(q2m_context *context, q2m_callback_id callback,
+                                        qa_error *error) {
+    (void)callback;
+    return q2m_sound_volume(context, "stalker/idle.wav",
+                            context->game->options.edition == QA_Q2_RERELEASE ? 2 : 1, 2, .5f,
+                            error);
+}
+
+static bool callback_unsupported(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    qa_error_set(error, QA_ERROR_FORMAT, 0, "%s references unsupported monster callback %s",
+                 context->monster->definition->classname, q2m_callbacks[callback].name);
+    return false;
+}
+
+static bool callback_sequence_1(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!carrier_spawn_callbacks(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_2(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!conditional_transition(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_3(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!conditional_transition(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    if (!end_transition(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_4(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!end_transition(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_5(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!end_transition(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    if (!infantry_callbacks(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_6(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!end_transition(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    if (!soldier_callbacks(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_7(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!end_transition(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_gekk_face_35(context, callback, error);
+}
+
+static bool callback_sequence_8(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!end_transition(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_gekk_search_94(context, callback, error);
+}
+
+static bool callback_sequence_9(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!end_transition(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_widow2_finaldeath_93(context, callback, error);
+}
+
+static bool callback_sequence_10(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!foundational_species_callback(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_11(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!foundational_species_callback(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_berserk_high_gravity_43(context, callback, error);
+}
+
+static bool callback_sequence_12(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!foundational_species_callback(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_brain_chest_closed_39(context, callback, error);
+}
+
+static bool callback_sequence_13(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!foundational_species_callback(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_brain_chest_open_38(context, callback, error);
+}
+
+static bool callback_sequence_14(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!foundational_species_callback(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_gekk_search_94(context, callback, error);
+}
+
+static bool callback_sequence_15(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!foundational_species_callback(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_parasite_drain_attack_52(context, callback, error);
+}
+
+static bool callback_sequence_16(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!heavy_weapon_callback(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_17(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!infantry_callbacks(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_18(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!infantry_callbacks(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_infantry_fire_prep_81(context, callback, error);
+}
+
+static bool callback_sequence_19(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!q2m_medic_callback(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_20(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!q2m_medic_callback(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    if (!end_transition(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_21(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!q2m_parasite_callback(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_22(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!q2m_parasite_callback(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    if (!end_transition(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_23(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!q2m_parasite_callback(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    if (!foundational_species_callback(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_24(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!q2m_species_melee(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_25(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!q2m_species_melee(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    if (!infantry_callbacks(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_26(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!q2m_stalker_callback(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_27(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!q2m_summon_callback(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_28(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!q2m_widow_death_action(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_29(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!soldier_callbacks(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+static bool callback_sequence_30(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!soldier_callbacks(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_gunner_blind_check_51(context, callback, error);
+}
+
+static bool callback_sequence_31(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!soldier_callbacks(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_soldier_cock_54(context, callback, error);
+}
+
+static bool callback_sequence_32(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!soldier_callbacks(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_soldier_start_charge_82(context, callback, error);
+}
+
+static bool callback_sequence_33(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!soldier_callbacks(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_soldier_walk1_random_53(context, callback, error);
+}
+
+static bool callback_sequence_34(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!soldier_callbacks(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_soldierh_hyper_laser_sound_end_56(context, callback, error);
+}
+
+static bool callback_sequence_35(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!soldier_callbacks(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_soldierh_hyper_laser_sound_start_55(context, callback, error);
+}
+
+static bool callback_sequence_36(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!soldier_callbacks(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_soldierh_hyper_sound_57(context, callback, error);
+}
+
+static bool callback_sequence_37(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+    bool handled = false;
+    if (!source_sound_callback(context, callback, &handled, error))
+        return false;
+    if (handled)
+        return true;
+    return callback_unsupported(context, callback, error);
+}
+
+const q2m_callback q2m_callbacks[Q2M_CALLBACK_COUNT] = {
+
+    [Q2M_CALLBACK_Boss2HyperBlaster] = {callback_sequence_16, Q2M_CALLBACK_Boss2HyperBlaster,
+                                        "Boss2HyperBlaster", 0},
+
+    [Q2M_CALLBACK_Boss2MachineGun] = {callback_sequence_16, Q2M_CALLBACK_Boss2MachineGun,
+                                      "Boss2MachineGun", 0},
+
+    [Q2M_CALLBACK_Boss2PredictiveRocket] = {callback_sequence_16,
+                                            Q2M_CALLBACK_Boss2PredictiveRocket,
+                                            "Boss2PredictiveRocket", 0},
+
+    [Q2M_CALLBACK_Boss2Rocket] = {callback_sequence_16, Q2M_CALLBACK_Boss2Rocket, "Boss2Rocket", 0},
+
+    [Q2M_CALLBACK_Boss2Rocket64] = {callback_sequence_16, Q2M_CALLBACK_Boss2Rocket64,
+                                    "Boss2Rocket64", 0},
+
+    [Q2M_CALLBACK_BossExplode] = {callback_BossExplode_87, Q2M_CALLBACK_BossExplode, "BossExplode",
+                                  0},
+
+    [Q2M_CALLBACK_BossExplode2] = {callback_BossExplode_87, Q2M_CALLBACK_BossExplode2,
+                                   "BossExplode2", 0},
+
+    [Q2M_CALLBACK_BossLoop] = {callback_BossLoop_90, Q2M_CALLBACK_BossLoop, "BossLoop", 0},
+
+    [Q2M_CALLBACK_CarrierCoopCheck] = {callback_CarrierCoopCheck_50, Q2M_CALLBACK_CarrierCoopCheck,
+                                       "CarrierCoopCheck", 0},
+
+    [Q2M_CALLBACK_CarrierGrenade] = {callback_sequence_16, Q2M_CALLBACK_CarrierGrenade,
+                                     "CarrierGrenade", 0},
+
+    [Q2M_CALLBACK_CarrierMachineGun] = {callback_sequence_16, Q2M_CALLBACK_CarrierMachineGun,
+                                        "CarrierMachineGun", 0},
+
+    [Q2M_CALLBACK_CarrierMachineGunHold] = {callback_sequence_16,
+                                            Q2M_CALLBACK_CarrierMachineGunHold,
+                                            "CarrierMachineGunHold", 0},
+
+    [Q2M_CALLBACK_CarrierRail] = {callback_sequence_16, Q2M_CALLBACK_CarrierRail, "CarrierRail", 0},
+
+    [Q2M_CALLBACK_CarrierRocket] = {callback_sequence_16, Q2M_CALLBACK_CarrierRocket,
+                                    "CarrierRocket", 0},
+
+    [Q2M_CALLBACK_CarrierSaveLoc] = {callback_sequence_16, Q2M_CALLBACK_CarrierSaveLoc,
+                                     "CarrierSaveLoc", 0},
+
+    [Q2M_CALLBACK_ChickMoan] = {callback_sequence_10, Q2M_CALLBACK_ChickMoan, "ChickMoan", 0},
+
+    [Q2M_CALLBACK_ChickReload] = {callback_sequence_10, Q2M_CALLBACK_ChickReload, "ChickReload", 0},
+
+    [Q2M_CALLBACK_ChickRocket] = {callback_sequence_10, Q2M_CALLBACK_ChickRocket, "ChickRocket", 0},
+
+    [Q2M_CALLBACK_ChickSlash] = {callback_sequence_24, Q2M_CALLBACK_ChickSlash, "ChickSlash", 0},
+
+    [Q2M_CALLBACK_Chick_PreAttack1] = {callback_sequence_10, Q2M_CALLBACK_Chick_PreAttack1,
+                                       "Chick_PreAttack1", 0},
+
+    [Q2M_CALLBACK_GaldiatorMelee] = {callback_sequence_24, Q2M_CALLBACK_GaldiatorMelee,
+                                     "GaldiatorMelee", 0},
+
+    [Q2M_CALLBACK_GladbMelee] = {callback_sequence_24, Q2M_CALLBACK_GladbMelee, "GladbMelee", 0},
+
+    [Q2M_CALLBACK_GladiatorGun] = {callback_sequence_10, Q2M_CALLBACK_GladiatorGun, "GladiatorGun",
+                                   0},
+
+    [Q2M_CALLBACK_GladiatorMelee] = {callback_sequence_24, Q2M_CALLBACK_GladiatorMelee,
+                                     "GladiatorMelee", 0},
+
+    [Q2M_CALLBACK_GunnerCmdrCounter] = {callback_GunnerCmdrCounter_83,
+                                        Q2M_CALLBACK_GunnerCmdrCounter, "GunnerCmdrCounter", 0},
+
+    [Q2M_CALLBACK_GunnerCmdrFire] = {callback_GunnerCmdrFire_0, Q2M_CALLBACK_GunnerCmdrFire,
+                                     "GunnerCmdrFire", 0},
+
+    [Q2M_CALLBACK_GunnerCmdrGrenade] = {callback_GunnerCmdrGrenade_1,
+                                        Q2M_CALLBACK_GunnerCmdrGrenade, "GunnerCmdrGrenade", 0},
+
+    [Q2M_CALLBACK_GunnerFire] = {callback_sequence_10, Q2M_CALLBACK_GunnerFire, "GunnerFire", 0},
+
+    [Q2M_CALLBACK_GunnerGrenade] = {callback_sequence_10, Q2M_CALLBACK_GunnerGrenade,
+                                    "GunnerGrenade", 0},
+
+    [Q2M_CALLBACK_InfantryMachineGun] = {callback_sequence_17, Q2M_CALLBACK_InfantryMachineGun,
+                                         "InfantryMachineGun", 0},
+
+    [Q2M_CALLBACK_MakronHyperblaster] = {callback_sequence_16, Q2M_CALLBACK_MakronHyperblaster,
+                                         "MakronHyperblaster", 0},
+
+    [Q2M_CALLBACK_MakronRailgun] = {callback_sequence_16, Q2M_CALLBACK_MakronRailgun,
+                                    "MakronRailgun", 0},
+
+    [Q2M_CALLBACK_MakronSaveloc] = {callback_sequence_16, Q2M_CALLBACK_MakronSaveloc,
+                                    "MakronSaveloc", 0},
+
+    [Q2M_CALLBACK_MakronToss] = {callback_MakronToss_46, Q2M_CALLBACK_MakronToss, "MakronToss", 0},
+
+    [Q2M_CALLBACK_ShamClaw] = {callback_sequence_24, Q2M_CALLBACK_ShamClaw, "ShamClaw", 0},
+
+    [Q2M_CALLBACK_ShamblerCastLightning] = {callback_ShamblerCastLightning_10,
+                                            Q2M_CALLBACK_ShamblerCastLightning,
+                                            "ShamblerCastLightning", 0},
+
+    [Q2M_CALLBACK_ShamblerSaveLoc] = {callback_ShamblerSaveLoc_33, Q2M_CALLBACK_ShamblerSaveLoc,
+                                      "ShamblerSaveLoc", 0},
+
+    [Q2M_CALLBACK_TankBlaster] = {callback_sequence_16, Q2M_CALLBACK_TankBlaster, "TankBlaster", 0},
+
+    [Q2M_CALLBACK_TankMachineGun] = {callback_sequence_16, Q2M_CALLBACK_TankMachineGun,
+                                     "TankMachineGun", 0},
+
+    [Q2M_CALLBACK_TankRocket] = {callback_sequence_16, Q2M_CALLBACK_TankRocket, "TankRocket", 0},
+
+    [Q2M_CALLBACK_TankStrike] = {callback_sequence_37, Q2M_CALLBACK_TankStrike, "TankStrike", 0},
+
+    [Q2M_CALLBACK_TreadSound] = {callback_TreadSound, Q2M_CALLBACK_TreadSound, "TreadSound", 0},
+
+    [Q2M_CALLBACK_TreadSound2] = {callback_sequence_37, Q2M_CALLBACK_TreadSound2, "TreadSound2", 0},
+
+    [Q2M_CALLBACK_TurretAim] = {callback_TurretAim_15, Q2M_CALLBACK_TurretAim, "TurretAim", 0},
+
+    [Q2M_CALLBACK_TurretFire] = {callback_TurretFire_16, Q2M_CALLBACK_TurretFire, "TurretFire", 0},
+
+    [Q2M_CALLBACK_TurretFireBlind] = {callback_TurretFire_16, Q2M_CALLBACK_TurretFireBlind,
+                                      "TurretFireBlind", 0},
+
+    [Q2M_CALLBACK_Widow2Beam] = {callback_Widow2Beam_19, Q2M_CALLBACK_Widow2Beam, "Widow2Beam", 0},
+
+    [Q2M_CALLBACK_Widow2BeamTargetRemove] = {callback_Widow2BeamTargetRemove_25,
+                                             Q2M_CALLBACK_Widow2BeamTargetRemove,
+                                             "Widow2BeamTargetRemove", 0},
+
+    [Q2M_CALLBACK_Widow2Crunch] = {callback_Widow2Crunch_22, Q2M_CALLBACK_Widow2Crunch,
+                                   "Widow2Crunch", 0},
+
+    [Q2M_CALLBACK_Widow2SaveBeamTarget] = {callback_Widow2SaveBeamTarget_24,
+                                           Q2M_CALLBACK_Widow2SaveBeamTarget,
+                                           "Widow2SaveBeamTarget", 0},
+
+    [Q2M_CALLBACK_Widow2SaveDisruptLoc] = {callback_Widow2SaveDisruptLoc_31,
+                                           Q2M_CALLBACK_Widow2SaveDisruptLoc,
+                                           "Widow2SaveDisruptLoc", 0},
+
+    [Q2M_CALLBACK_Widow2StartSweep] = {callback_Widow2SaveBeamTarget_24,
+                                       Q2M_CALLBACK_Widow2StartSweep, "Widow2StartSweep", 0},
+
+    [Q2M_CALLBACK_Widow2Tongue] = {callback_Widow2Tongue_20, Q2M_CALLBACK_Widow2Tongue,
+                                   "Widow2Tongue", 0},
+
+    [Q2M_CALLBACK_Widow2TonguePull] = {callback_Widow2TonguePull_21, Q2M_CALLBACK_Widow2TonguePull,
+                                       "Widow2TonguePull", 0},
+
+    [Q2M_CALLBACK_Widow2Toss] = {callback_Widow2Toss_47, Q2M_CALLBACK_Widow2Toss, "Widow2Toss", 0},
+
+    [Q2M_CALLBACK_WidowBlaster] = {callback_WidowBlaster_18, Q2M_CALLBACK_WidowBlaster,
+                                   "WidowBlaster", 0},
+
+    [Q2M_CALLBACK_WidowDisrupt] = {callback_WidowDisrupt_32, Q2M_CALLBACK_WidowDisrupt,
+                                   "WidowDisrupt", 0},
+
+    [Q2M_CALLBACK_WidowExplode] = {callback_sequence_28, Q2M_CALLBACK_WidowExplode, "WidowExplode",
+                                   0},
+
+    [Q2M_CALLBACK_WidowExplosion1] = {callback_sequence_28, Q2M_CALLBACK_WidowExplosion1,
+                                      "WidowExplosion1", 0},
+
+    [Q2M_CALLBACK_WidowExplosion2] = {callback_sequence_28, Q2M_CALLBACK_WidowExplosion2,
+                                      "WidowExplosion2", 0},
+
+    [Q2M_CALLBACK_WidowExplosion3] = {callback_sequence_28, Q2M_CALLBACK_WidowExplosion3,
+                                      "WidowExplosion3", 0},
+
+    [Q2M_CALLBACK_WidowExplosion4] = {callback_sequence_28, Q2M_CALLBACK_WidowExplosion4,
+                                      "WidowExplosion4", 0},
+
+    [Q2M_CALLBACK_WidowExplosion5] = {callback_sequence_28, Q2M_CALLBACK_WidowExplosion5,
+                                      "WidowExplosion5", 0},
+
+    [Q2M_CALLBACK_WidowExplosion6] = {callback_sequence_28, Q2M_CALLBACK_WidowExplosion6,
+                                      "WidowExplosion6", 0},
+
+    [Q2M_CALLBACK_WidowExplosion7] = {callback_sequence_28, Q2M_CALLBACK_WidowExplosion7,
+                                      "WidowExplosion7", 0},
+
+    [Q2M_CALLBACK_WidowExplosionLeg] = {callback_sequence_28, Q2M_CALLBACK_WidowExplosionLeg,
+                                        "WidowExplosionLeg", 0},
+
+    [Q2M_CALLBACK_WidowRail] = {callback_WidowRail_26, Q2M_CALLBACK_WidowRail, "WidowRail", 0},
+
+    [Q2M_CALLBACK_WidowSaveLoc] = {callback_WidowSaveLoc_27, Q2M_CALLBACK_WidowSaveLoc,
+                                   "WidowSaveLoc", 0},
+
+    [Q2M_CALLBACK_actor_dead] = {callback_sequence_4, Q2M_CALLBACK_actor_dead, "actor_dead",
+                                 Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_actor_fire] = {callback_actor_fire_4, Q2M_CALLBACK_actor_fire, "actor_fire", 0},
+
+    [Q2M_CALLBACK_actor_run] = {callback_sequence_4, Q2M_CALLBACK_actor_run, "actor_run",
+                                Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_actor_stand] = {callback_sequence_4, Q2M_CALLBACK_actor_stand, "actor_stand",
+                                  Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_actor_walk] = {callback_sequence_4, Q2M_CALLBACK_actor_walk, "actor_walk",
+                                 Q2M_CALLBACK_WALK},
+
+    [Q2M_CALLBACK_arachnid_charge_rail] = {callback_arachnid_charge_rail_67,
+                                           Q2M_CALLBACK_arachnid_charge_rail,
+                                           "arachnid_charge_rail", 0},
+
+    [Q2M_CALLBACK_arachnid_dead] = {callback_sequence_4, Q2M_CALLBACK_arachnid_dead,
+                                    "arachnid_dead", Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_arachnid_footstep] = {callback_sequence_37, Q2M_CALLBACK_arachnid_footstep,
+                                        "arachnid_footstep", 0},
+
+    [Q2M_CALLBACK_arachnid_melee_charge] = {callback_arachnid_melee_charge_69,
+                                            Q2M_CALLBACK_arachnid_melee_charge,
+                                            "arachnid_melee_charge", 0},
+
+    [Q2M_CALLBACK_arachnid_melee_hit] = {callback_sequence_24, Q2M_CALLBACK_arachnid_melee_hit,
+                                         "arachnid_melee_hit", 0},
+
+    [Q2M_CALLBACK_arachnid_rail] = {callback_arachnid_rail_2, Q2M_CALLBACK_arachnid_rail,
+                                    "arachnid_rail", 0},
+
+    [Q2M_CALLBACK_arachnid_run] = {callback_sequence_4, Q2M_CALLBACK_arachnid_run, "arachnid_run",
+                                   Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_berserk_attack_club] = {callback_sequence_24, Q2M_CALLBACK_berserk_attack_club,
+                                          "berserk_attack_club", 0},
+
+    [Q2M_CALLBACK_berserk_attack_spike] = {callback_sequence_24, Q2M_CALLBACK_berserk_attack_spike,
+                                           "berserk_attack_spike", 0},
+
+    [Q2M_CALLBACK_berserk_check_landing] = {callback_sequence_10,
+                                            Q2M_CALLBACK_berserk_check_landing,
+                                            "berserk_check_landing", 0},
+
+    [Q2M_CALLBACK_berserk_dead] = {callback_sequence_4, Q2M_CALLBACK_berserk_dead, "berserk_dead",
+                                   Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_berserk_fidget] = {callback_berserk_fidget_75, Q2M_CALLBACK_berserk_fidget,
+                                     "berserk_fidget", 0},
+
+    [Q2M_CALLBACK_berserk_high_gravity] = {callback_sequence_11, Q2M_CALLBACK_berserk_high_gravity,
+                                           "berserk_high_gravity", 0},
+
+    [Q2M_CALLBACK_berserk_jump2_now] = {callback_berserk_jump2_now_29,
+                                        Q2M_CALLBACK_berserk_jump2_now, "berserk_jump2_now", 0},
+
+    [Q2M_CALLBACK_berserk_jump_now] = {callback_berserk_jump2_now_29, Q2M_CALLBACK_berserk_jump_now,
+                                       "berserk_jump_now", 0},
+
+    [Q2M_CALLBACK_berserk_jump_takeoff] = {callback_sequence_10, Q2M_CALLBACK_berserk_jump_takeoff,
+                                           "berserk_jump_takeoff", 0},
+
+    [Q2M_CALLBACK_berserk_jump_wait_land] = {callback_berserk_jump2_now_29,
+                                             Q2M_CALLBACK_berserk_jump_wait_land,
+                                             "berserk_jump_wait_land", 0},
+
+    [Q2M_CALLBACK_berserk_run] = {callback_sequence_4, Q2M_CALLBACK_berserk_run, "berserk_run",
+                                  Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_berserk_run_attack_speed] = {callback_berserk_run_attack_speed_68,
+                                               Q2M_CALLBACK_berserk_run_attack_speed,
+                                               "berserk_run_attack_speed", 0},
+
+    [Q2M_CALLBACK_berserk_run_swing] = {callback_sequence_10, Q2M_CALLBACK_berserk_run_swing,
+                                        "berserk_run_swing", 0},
+
+    [Q2M_CALLBACK_berserk_shrink] = {callback_berserk_shrink_30, Q2M_CALLBACK_berserk_shrink,
+                                     "berserk_shrink", 0},
+
+    [Q2M_CALLBACK_berserk_stand] = {callback_sequence_4, Q2M_CALLBACK_berserk_stand,
+                                    "berserk_stand", Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_berserk_strike] = {callback_sequence_10, Q2M_CALLBACK_berserk_strike,
+                                     "berserk_strike", 0},
+
+    [Q2M_CALLBACK_berserk_swing] = {callback_sequence_10, Q2M_CALLBACK_berserk_swing,
+                                    "berserk_swing", 0},
+
+    [Q2M_CALLBACK_boss2_attack_mg] = {callback_sequence_4, Q2M_CALLBACK_boss2_attack_mg,
+                                      "boss2_attack_mg", 0},
+
+    [Q2M_CALLBACK_boss2_dead] = {callback_sequence_4, Q2M_CALLBACK_boss2_dead, "boss2_dead",
+                                 Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_boss2_firebullet_left] = {callback_sequence_16,
+                                            Q2M_CALLBACK_boss2_firebullet_left,
+                                            "boss2_firebullet_left", 0},
+
+    [Q2M_CALLBACK_boss2_firebullet_right] = {callback_sequence_16,
+                                             Q2M_CALLBACK_boss2_firebullet_right,
+                                             "boss2_firebullet_right", 0},
+
+    [Q2M_CALLBACK_boss2_reattack_mg] = {callback_sequence_2, Q2M_CALLBACK_boss2_reattack_mg,
+                                        "boss2_reattack_mg", 0},
+
+    [Q2M_CALLBACK_boss2_run] = {callback_sequence_4, Q2M_CALLBACK_boss2_run, "boss2_run",
+                                Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_boss2_shrink] = {callback_berserk_shrink_30, Q2M_CALLBACK_boss2_shrink,
+                                   "boss2_shrink", 0},
+
+    [Q2M_CALLBACK_boss5MachineGun] = {callback_sequence_16, Q2M_CALLBACK_boss5MachineGun,
+                                      "boss5MachineGun", 0},
+
+    [Q2M_CALLBACK_boss5Rocket] = {callback_sequence_16, Q2M_CALLBACK_boss5Rocket, "boss5Rocket", 0},
+
+    [Q2M_CALLBACK_boss5_dead] = {callback_sequence_4, Q2M_CALLBACK_boss5_dead, "boss5_dead",
+                                 Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_boss5_reattack1] = {callback_sequence_2, Q2M_CALLBACK_boss5_reattack1,
+                                      "boss5_reattack1", Q2M_CALLBACK_ATTACK1},
+
+    [Q2M_CALLBACK_boss5_run] = {callback_sequence_4, Q2M_CALLBACK_boss5_run, "boss5_run",
+                                Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_brain_chest_closed] = {callback_sequence_12, Q2M_CALLBACK_brain_chest_closed,
+                                         "brain_chest_closed", 0},
+
+    [Q2M_CALLBACK_brain_chest_open] = {callback_sequence_13, Q2M_CALLBACK_brain_chest_open,
+                                       "brain_chest_open", 0},
+
+    [Q2M_CALLBACK_brain_dead] = {callback_sequence_4, Q2M_CALLBACK_brain_dead, "brain_dead",
+                                 Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_brain_duck_down] = {callback_brain_duck_down_28, Q2M_CALLBACK_brain_duck_down,
+                                      "brain_duck_down", 0},
+
+    [Q2M_CALLBACK_brain_duck_hold] = {callback_brain_duck_down_28, Q2M_CALLBACK_brain_duck_hold,
+                                      "brain_duck_hold", 0},
+
+    [Q2M_CALLBACK_brain_duck_up] = {callback_brain_duck_down_28, Q2M_CALLBACK_brain_duck_up,
+                                    "brain_duck_up", 0},
+
+    [Q2M_CALLBACK_brain_hit_left] = {callback_sequence_24, Q2M_CALLBACK_brain_hit_left,
+                                     "brain_hit_left", 0},
+
+    [Q2M_CALLBACK_brain_hit_right] = {callback_sequence_24, Q2M_CALLBACK_brain_hit_right,
+                                      "brain_hit_right", 0},
+
+    [Q2M_CALLBACK_brain_laserbeam] = {callback_brain_laserbeam_9, Q2M_CALLBACK_brain_laserbeam,
+                                      "brain_laserbeam", 0},
+
+    [Q2M_CALLBACK_brain_laserbeam_reattack] = {callback_sequence_2,
+                                               Q2M_CALLBACK_brain_laserbeam_reattack,
+                                               "brain_laserbeam_reattack", 0},
+
+    [Q2M_CALLBACK_brain_run] = {callback_sequence_4, Q2M_CALLBACK_brain_run, "brain_run",
+                                Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_brain_shrink] = {callback_berserk_shrink_30, Q2M_CALLBACK_brain_shrink,
+                                   "brain_shrink", 0},
+
+    [Q2M_CALLBACK_brain_stand] = {callback_sequence_4, Q2M_CALLBACK_brain_stand, "brain_stand",
+                                  Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_brain_swing_left] = {callback_sequence_10, Q2M_CALLBACK_brain_swing_left,
+                                       "brain_swing_left", 0},
+
+    [Q2M_CALLBACK_brain_swing_right] = {callback_sequence_10, Q2M_CALLBACK_brain_swing_right,
+                                        "brain_swing_right", 0},
+
+    [Q2M_CALLBACK_brain_tentacle_attack] = {callback_sequence_24,
+                                            Q2M_CALLBACK_brain_tentacle_attack,
+                                            "brain_tentacle_attack", 0},
+
+    [Q2M_CALLBACK_brain_tounge_attack] = {callback_sequence_24, Q2M_CALLBACK_brain_tounge_attack,
+                                          "brain_tounge_attack", 0},
+
+    [Q2M_CALLBACK_carrier_attack_gren] = {callback_sequence_2, Q2M_CALLBACK_carrier_attack_gren,
+                                          "carrier_attack_gren", 0},
+
+    [Q2M_CALLBACK_carrier_attack_mg] = {callback_sequence_4, Q2M_CALLBACK_carrier_attack_mg,
+                                        "carrier_attack_mg", 0},
+
+    [Q2M_CALLBACK_carrier_dead] = {callback_sequence_4, Q2M_CALLBACK_carrier_dead, "carrier_dead",
+                                   Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_carrier_prep_spawn] = {callback_sequence_1, Q2M_CALLBACK_carrier_prep_spawn,
+                                         "carrier_prep_spawn", 0},
+
+    [Q2M_CALLBACK_carrier_ready_spawn] = {callback_sequence_1, Q2M_CALLBACK_carrier_ready_spawn,
+                                          "carrier_ready_spawn", 0},
+
+    [Q2M_CALLBACK_carrier_reattack_gren] = {callback_sequence_2, Q2M_CALLBACK_carrier_reattack_gren,
+                                            "carrier_reattack_gren", 0},
+
+    [Q2M_CALLBACK_carrier_reattack_mg] = {callback_sequence_2, Q2M_CALLBACK_carrier_reattack_mg,
+                                          "carrier_reattack_mg", 0},
+
+    [Q2M_CALLBACK_carrier_run] = {callback_sequence_4, Q2M_CALLBACK_carrier_run, "carrier_run",
+                                  Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_carrier_spawn_check] = {callback_sequence_1, Q2M_CALLBACK_carrier_spawn_check,
+                                          "carrier_spawn_check", 0},
+
+    [Q2M_CALLBACK_carrier_start_spawn] = {callback_sequence_1, Q2M_CALLBACK_carrier_start_spawn,
+                                          "carrier_start_spawn", 0},
+
+    [Q2M_CALLBACK_change_to_roam] = {callback_change_to_roam_40, Q2M_CALLBACK_change_to_roam,
+                                     "change_to_roam", 0},
+
+    [Q2M_CALLBACK_chick_attack1] = {callback_sequence_4, Q2M_CALLBACK_chick_attack1,
+                                    "chick_attack1", Q2M_CALLBACK_ATTACK1},
+
+    [Q2M_CALLBACK_chick_dead] = {callback_sequence_4, Q2M_CALLBACK_chick_dead, "chick_dead",
+                                 Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_chick_duck_down] = {callback_brain_duck_down_28, Q2M_CALLBACK_chick_duck_down,
+                                      "chick_duck_down", 0},
+
+    [Q2M_CALLBACK_chick_duck_hold] = {callback_brain_duck_down_28, Q2M_CALLBACK_chick_duck_hold,
+                                      "chick_duck_hold", 0},
+
+    [Q2M_CALLBACK_chick_duck_up] = {callback_brain_duck_down_28, Q2M_CALLBACK_chick_duck_up,
+                                    "chick_duck_up", 0},
+
+    [Q2M_CALLBACK_chick_fidget] = {callback_chick_fidget_76, Q2M_CALLBACK_chick_fidget,
+                                   "chick_fidget", 0},
+
+    [Q2M_CALLBACK_chick_rerocket] = {callback_sequence_2, Q2M_CALLBACK_chick_rerocket,
+                                     "chick_rerocket", 0},
+
+    [Q2M_CALLBACK_chick_reslash] = {callback_sequence_2, Q2M_CALLBACK_chick_reslash,
+                                    "chick_reslash", 0},
+
+    [Q2M_CALLBACK_chick_run] = {callback_sequence_4, Q2M_CALLBACK_chick_run, "chick_run",
+                                Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_chick_shrink] = {callback_berserk_shrink_30, Q2M_CALLBACK_chick_shrink,
+                                   "chick_shrink", 0},
+
+    [Q2M_CALLBACK_chick_slash] = {callback_sequence_4, Q2M_CALLBACK_chick_slash, "chick_slash", 0},
+
+    [Q2M_CALLBACK_chick_stand] = {callback_sequence_4, Q2M_CALLBACK_chick_stand, "chick_stand",
+                                  Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_fixbot_attack] = {callback_fixbot_attack_8, Q2M_CALLBACK_fixbot_attack,
+                                    "fixbot_attack", 0},
+
+    [Q2M_CALLBACK_fixbot_dead] = {callback_sequence_4, Q2M_CALLBACK_fixbot_dead, "fixbot_dead",
+                                  Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_fixbot_fire_blaster] = {callback_fixbot_fire_blaster_5,
+                                          Q2M_CALLBACK_fixbot_fire_blaster, "fixbot_fire_blaster",
+                                          0},
+
+    [Q2M_CALLBACK_fixbot_fire_laser] = {callback_fixbot_fire_laser_7,
+                                        Q2M_CALLBACK_fixbot_fire_laser, "fixbot_fire_laser", 0},
+
+    [Q2M_CALLBACK_fixbot_fire_welder] = {callback_fixbot_fire_welder_6,
+                                         Q2M_CALLBACK_fixbot_fire_welder, "fixbot_fire_welder", 0},
+
+    [Q2M_CALLBACK_fixbot_run] = {callback_sequence_4, Q2M_CALLBACK_fixbot_run, "fixbot_run",
+                                 Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_flipper_bite] = {callback_sequence_24, Q2M_CALLBACK_flipper_bite, "flipper_bite",
+                                   0},
+
+    [Q2M_CALLBACK_flipper_dead] = {callback_sequence_4, Q2M_CALLBACK_flipper_dead, "flipper_dead",
+                                   Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_flipper_preattack] = {callback_flipper_preattack_70,
+                                        Q2M_CALLBACK_flipper_preattack, "flipper_preattack", 0},
+
+    [Q2M_CALLBACK_flipper_run] = {callback_flipper_run_12, Q2M_CALLBACK_flipper_run, "flipper_run",
+                                  Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_flipper_run_loop] = {callback_sequence_4, Q2M_CALLBACK_flipper_run_loop,
+                                       "flipper_run_loop", Q2M_CALLBACK_RUN_LOOP},
+
+    [Q2M_CALLBACK_floater_dead] = {callback_sequence_4, Q2M_CALLBACK_floater_dead, "floater_dead",
+                                   Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_floater_fire_blaster] = {callback_sequence_10, Q2M_CALLBACK_floater_fire_blaster,
+                                           "floater_fire_blaster", 0},
+
+    [Q2M_CALLBACK_floater_run] = {callback_sequence_4, Q2M_CALLBACK_floater_run, "floater_run",
+                                  Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_floater_wham] = {callback_sequence_24, Q2M_CALLBACK_floater_wham, "floater_wham",
+                                   0},
+
+    [Q2M_CALLBACK_floater_zap] = {callback_sequence_10, Q2M_CALLBACK_floater_zap, "floater_zap", 0},
+
+    [Q2M_CALLBACK_fly_vertical] = {callback_fly_vertical_42, Q2M_CALLBACK_fly_vertical,
+                                   "fly_vertical", 0},
+
+    [Q2M_CALLBACK_fly_vertical2] = {callback_fly_vertical_42, Q2M_CALLBACK_fly_vertical2,
+                                    "fly_vertical2", 0},
+
+    [Q2M_CALLBACK_flyer_check_melee] = {callback_sequence_4, Q2M_CALLBACK_flyer_check_melee,
+                                        "flyer_check_melee", 0},
+
+    [Q2M_CALLBACK_flyer_fireleft] = {callback_sequence_10, Q2M_CALLBACK_flyer_fireleft,
+                                     "flyer_fireleft", 0},
+
+    [Q2M_CALLBACK_flyer_fireright] = {callback_sequence_10, Q2M_CALLBACK_flyer_fireright,
+                                      "flyer_fireright", 0},
+
+    [Q2M_CALLBACK_flyer_kamikaze] = {callback_sequence_4, Q2M_CALLBACK_flyer_kamikaze,
+                                     "flyer_kamikaze", 0},
+
+    [Q2M_CALLBACK_flyer_kamikaze_check] = {callback_flyer_kamikaze_check_58,
+                                           Q2M_CALLBACK_flyer_kamikaze_check,
+                                           "flyer_kamikaze_check", 0},
+
+    [Q2M_CALLBACK_flyer_loop_melee] = {callback_sequence_4, Q2M_CALLBACK_flyer_loop_melee,
+                                       "flyer_loop_melee", 0},
+
+    [Q2M_CALLBACK_flyer_nextmove] = {callback_flyer_nextmove_85, Q2M_CALLBACK_flyer_nextmove,
+                                     "flyer_nextmove", 0},
+
+    [Q2M_CALLBACK_flyer_pop_blades] = {callback_sequence_10, Q2M_CALLBACK_flyer_pop_blades,
+                                       "flyer_pop_blades", 0},
+
+    [Q2M_CALLBACK_flyer_run] = {callback_sequence_4, Q2M_CALLBACK_flyer_run, "flyer_run",
+                                Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_flyer_slash_left] = {callback_sequence_24, Q2M_CALLBACK_flyer_slash_left,
+                                       "flyer_slash_left", 0},
+
+    [Q2M_CALLBACK_flyer_slash_right] = {callback_sequence_24, Q2M_CALLBACK_flyer_slash_right,
+                                        "flyer_slash_right", 0},
+
+    [Q2M_CALLBACK_gekk_bite] = {callback_sequence_24, Q2M_CALLBACK_gekk_bite, "gekk_bite", 0},
+
+    [Q2M_CALLBACK_gekk_chant] = {callback_sequence_4, Q2M_CALLBACK_gekk_chant, "gekk_chant", 0},
+
+    [Q2M_CALLBACK_gekk_check_landing] = {callback_sequence_10, Q2M_CALLBACK_gekk_check_landing,
+                                         "gekk_check_landing", 0},
+
+    [Q2M_CALLBACK_gekk_check_refire] = {callback_gekk_check_refire_61,
+                                        Q2M_CALLBACK_gekk_check_refire, "gekk_check_refire", 0},
+
+    [Q2M_CALLBACK_gekk_check_underwater] = {callback_gekk_check_underwater_44,
+                                            Q2M_CALLBACK_gekk_check_underwater,
+                                            "gekk_check_underwater", 0},
+
+    [Q2M_CALLBACK_gekk_dead] = {callback_sequence_4, Q2M_CALLBACK_gekk_dead, "gekk_dead",
+                                Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_gekk_face] = {callback_sequence_7, Q2M_CALLBACK_gekk_face, "gekk_face", 0},
+
+    [Q2M_CALLBACK_gekk_gibfest] = {callback_gekk_gibfest_86, Q2M_CALLBACK_gekk_gibfest,
+                                   "gekk_gibfest", 0},
+
+    [Q2M_CALLBACK_gekk_hit_left] = {callback_sequence_24, Q2M_CALLBACK_gekk_hit_left,
+                                    "gekk_hit_left", 0},
+
+    [Q2M_CALLBACK_gekk_hit_right] = {callback_sequence_24, Q2M_CALLBACK_gekk_hit_right,
+                                     "gekk_hit_right", 0},
+
+    [Q2M_CALLBACK_gekk_idle_loop] = {callback_gekk_idle_loop_73, Q2M_CALLBACK_gekk_idle_loop,
+                                     "gekk_idle_loop", 0},
+
+    [Q2M_CALLBACK_gekk_jump_takeoff] = {callback_sequence_10, Q2M_CALLBACK_gekk_jump_takeoff,
+                                        "gekk_jump_takeoff", 0},
+
+    [Q2M_CALLBACK_gekk_jump_takeoff2] = {callback_sequence_10, Q2M_CALLBACK_gekk_jump_takeoff2,
+                                         "gekk_jump_takeoff2", 0},
+
+    [Q2M_CALLBACK_gekk_preattack] = {callback_gekk_preattack_71, Q2M_CALLBACK_gekk_preattack,
+                                     "gekk_preattack", 0},
+
+    [Q2M_CALLBACK_gekk_run] = {callback_sequence_4, Q2M_CALLBACK_gekk_run, "gekk_run",
+                               Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_gekk_run_start] = {callback_sequence_4, Q2M_CALLBACK_gekk_run_start,
+                                     "gekk_run_start", 0},
+
+    [Q2M_CALLBACK_gekk_search] = {callback_gekk_search_94, Q2M_CALLBACK_gekk_search, "gekk_search",
+                                  0},
+
+    [Q2M_CALLBACK_gekk_stand] = {callback_sequence_4, Q2M_CALLBACK_gekk_stand, "gekk_stand",
+                                 Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_gekk_step] = {callback_sequence_10, Q2M_CALLBACK_gekk_step, "gekk_step", 0},
+
+    [Q2M_CALLBACK_gekk_stop_skid] = {callback_gekk_stop_skid_45, Q2M_CALLBACK_gekk_stop_skid,
+                                     "gekk_stop_skid", 0},
+
+    [Q2M_CALLBACK_gekk_swim] = {callback_gekk_search_94, Q2M_CALLBACK_gekk_swim, "gekk_swim", 0},
+
+    [Q2M_CALLBACK_gekk_swim_loop] = {callback_sequence_4, Q2M_CALLBACK_gekk_swim_loop,
+                                     "gekk_swim_loop", 0},
+
+    [Q2M_CALLBACK_gladbGun] = {callback_gladbGun_3, Q2M_CALLBACK_gladbGun, "gladbGun", 0},
+
+    [Q2M_CALLBACK_gladbGun_check] = {callback_gladbGun_check_59, Q2M_CALLBACK_gladbGun_check,
+                                     "gladbGun_check", 0},
+
+    [Q2M_CALLBACK_gladb_cleaver_swing] = {callback_sequence_10, Q2M_CALLBACK_gladb_cleaver_swing,
+                                          "gladb_cleaver_swing", 0},
+
+    [Q2M_CALLBACK_gladb_dead] = {callback_sequence_4, Q2M_CALLBACK_gladb_dead, "gladb_dead",
+                                 Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_gladb_run] = {callback_sequence_4, Q2M_CALLBACK_gladb_run, "gladb_run",
+                                Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_gladiator_cleaver_swing] = {callback_sequence_10,
+                                              Q2M_CALLBACK_gladiator_cleaver_swing,
+                                              "gladiator_cleaver_swing", 0},
+
+    [Q2M_CALLBACK_gladiator_dead] = {callback_sequence_4, Q2M_CALLBACK_gladiator_dead,
+                                     "gladiator_dead", Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_gladiator_run] = {callback_sequence_4, Q2M_CALLBACK_gladiator_run,
+                                    "gladiator_run", Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_gladiator_shrink] = {callback_berserk_shrink_30, Q2M_CALLBACK_gladiator_shrink,
+                                       "gladiator_shrink", 0},
+
+    [Q2M_CALLBACK_guardian_atk1] = {callback_sequence_2, Q2M_CALLBACK_guardian_atk1,
+                                    "guardian_atk1", 0},
+
+    [Q2M_CALLBACK_guardian_atk1_charge] = {callback_guardian_atk1_charge_78,
+                                           Q2M_CALLBACK_guardian_atk1_charge,
+                                           "guardian_atk1_charge", 0},
+
+    [Q2M_CALLBACK_guardian_atk1_finish] = {callback_sequence_3, Q2M_CALLBACK_guardian_atk1_finish,
+                                           "guardian_atk1_finish", 0},
+
+    [Q2M_CALLBACK_guardian_atk2] = {callback_sequence_4, Q2M_CALLBACK_guardian_atk2,
+                                    "guardian_atk2", 0},
+
+    [Q2M_CALLBACK_guardian_atk2_out] = {callback_sequence_4, Q2M_CALLBACK_guardian_atk2_out,
+                                        "guardian_atk2_out", 0},
+
+    [Q2M_CALLBACK_guardian_dead] = {callback_sequence_4, Q2M_CALLBACK_guardian_dead,
+                                    "guardian_dead", Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_guardian_fire_blaster] = {callback_guardian_fire_blaster_79,
+                                            Q2M_CALLBACK_guardian_fire_blaster,
+                                            "guardian_fire_blaster", 0},
+
+    [Q2M_CALLBACK_guardian_footstep] = {callback_sequence_37, Q2M_CALLBACK_guardian_footstep,
+                                        "guardian_footstep", 0},
+
+    [Q2M_CALLBACK_guardian_kick] = {callback_sequence_24, Q2M_CALLBACK_guardian_kick,
+                                    "guardian_kick", 0},
+
+    [Q2M_CALLBACK_guardian_laser_fire] = {callback_guardian_laser_fire_80,
+                                          Q2M_CALLBACK_guardian_laser_fire, "guardian_laser_fire",
+                                          0},
+
+    [Q2M_CALLBACK_guardian_run] = {callback_sequence_4, Q2M_CALLBACK_guardian_run, "guardian_run",
+                                   Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_guncmdr_dead] = {callback_sequence_4, Q2M_CALLBACK_guncmdr_dead, "guncmdr_dead",
+                                   Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_guncmdr_fidget] = {callback_guncmdr_fidget_77, Q2M_CALLBACK_guncmdr_fidget,
+                                     "guncmdr_fidget", 0},
+
+    [Q2M_CALLBACK_guncmdr_fire_chain] = {callback_sequence_4, Q2M_CALLBACK_guncmdr_fire_chain,
+                                         "guncmdr_fire_chain", 0},
+
+    [Q2M_CALLBACK_guncmdr_grenade_back_dodge_resume] =
+        {callback_sequence_4, Q2M_CALLBACK_guncmdr_grenade_back_dodge_resume,
+         "guncmdr_grenade_back_dodge_resume", 0},
+
+    [Q2M_CALLBACK_guncmdr_grenade_mortar_resume] = {callback_sequence_4,
+                                                    Q2M_CALLBACK_guncmdr_grenade_mortar_resume,
+                                                    "guncmdr_grenade_mortar_resume", 0},
+
+    [Q2M_CALLBACK_guncmdr_idlesound] = {callback_sequence_37, Q2M_CALLBACK_guncmdr_idlesound,
+                                        "guncmdr_idlesound", 0},
+
+    [Q2M_CALLBACK_guncmdr_jump2_now] = {callback_berserk_jump2_now_29,
+                                        Q2M_CALLBACK_guncmdr_jump2_now, "guncmdr_jump2_now", 0},
+
+    [Q2M_CALLBACK_guncmdr_jump_now] = {callback_berserk_jump2_now_29, Q2M_CALLBACK_guncmdr_jump_now,
+                                       "guncmdr_jump_now", 0},
+
+    [Q2M_CALLBACK_guncmdr_jump_wait_land] = {callback_berserk_jump2_now_29,
+                                             Q2M_CALLBACK_guncmdr_jump_wait_land,
+                                             "guncmdr_jump_wait_land", 0},
+
+    [Q2M_CALLBACK_guncmdr_kick] = {callback_sequence_24, Q2M_CALLBACK_guncmdr_kick, "guncmdr_kick",
+                                   0},
+
+    [Q2M_CALLBACK_guncmdr_kick_finished] = {callback_sequence_4, Q2M_CALLBACK_guncmdr_kick_finished,
+                                            "guncmdr_kick_finished", 0},
+
+    [Q2M_CALLBACK_guncmdr_opengun] = {callback_sequence_37, Q2M_CALLBACK_guncmdr_opengun,
+                                      "guncmdr_opengun", 0},
+
+    [Q2M_CALLBACK_guncmdr_pain5_to_death1] = {callback_guncmdr_pain5_to_death1_84,
+                                              Q2M_CALLBACK_guncmdr_pain5_to_death1,
+                                              "guncmdr_pain5_to_death1", 0},
+
+    [Q2M_CALLBACK_guncmdr_pain5_to_death2] = {callback_guncmdr_pain5_to_death1_84,
+                                              Q2M_CALLBACK_guncmdr_pain5_to_death2,
+                                              "guncmdr_pain5_to_death2", 0},
+
+    [Q2M_CALLBACK_guncmdr_pain6_to_death6] = {callback_guncmdr_pain5_to_death1_84,
+                                              Q2M_CALLBACK_guncmdr_pain6_to_death6,
+                                              "guncmdr_pain6_to_death6", 0},
+
+    [Q2M_CALLBACK_guncmdr_refire_chain] = {callback_sequence_2, Q2M_CALLBACK_guncmdr_refire_chain,
+                                           "guncmdr_refire_chain", 0},
+
+    [Q2M_CALLBACK_guncmdr_run] = {callback_sequence_4, Q2M_CALLBACK_guncmdr_run, "guncmdr_run",
+                                  Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_guncmdr_shrink] = {callback_berserk_shrink_30, Q2M_CALLBACK_guncmdr_shrink,
+                                     "guncmdr_shrink", 0},
+
+    [Q2M_CALLBACK_guncmdr_stand] = {callback_sequence_4, Q2M_CALLBACK_guncmdr_stand,
+                                    "guncmdr_stand", Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_gunner_blind_check] = {callback_gunner_blind_check_51,
+                                         Q2M_CALLBACK_gunner_blind_check, "gunner_blind_check", 0},
+
+    [Q2M_CALLBACK_gunner_dead] = {callback_sequence_4, Q2M_CALLBACK_gunner_dead, "gunner_dead",
+                                  Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_gunner_duck_down] = {callback_sequence_10, Q2M_CALLBACK_gunner_duck_down,
+                                       "gunner_duck_down", 0},
+
+    [Q2M_CALLBACK_gunner_duck_hold] = {callback_sequence_10, Q2M_CALLBACK_gunner_duck_hold,
+                                       "gunner_duck_hold", 0},
+
+    [Q2M_CALLBACK_gunner_duck_up] = {callback_sequence_10, Q2M_CALLBACK_gunner_duck_up,
+                                     "gunner_duck_up", 0},
+
+    [Q2M_CALLBACK_gunner_fidget] = {callback_guncmdr_fidget_77, Q2M_CALLBACK_gunner_fidget,
+                                    "gunner_fidget", 0},
+
+    [Q2M_CALLBACK_gunner_fire_chain] = {callback_sequence_4, Q2M_CALLBACK_gunner_fire_chain,
+                                        "gunner_fire_chain", 0},
+
+    [Q2M_CALLBACK_gunner_idlesound] = {callback_sequence_10, Q2M_CALLBACK_gunner_idlesound,
+                                       "gunner_idlesound", 0},
+
+    [Q2M_CALLBACK_gunner_jump2_now] = {callback_berserk_jump2_now_29, Q2M_CALLBACK_gunner_jump2_now,
+                                       "gunner_jump2_now", 0},
+
+    [Q2M_CALLBACK_gunner_jump_now] = {callback_berserk_jump2_now_29, Q2M_CALLBACK_gunner_jump_now,
+                                      "gunner_jump_now", 0},
+
+    [Q2M_CALLBACK_gunner_jump_wait_land] = {callback_berserk_jump2_now_29,
+                                            Q2M_CALLBACK_gunner_jump_wait_land,
+                                            "gunner_jump_wait_land", 0},
+
+    [Q2M_CALLBACK_gunner_opengun] = {callback_sequence_10, Q2M_CALLBACK_gunner_opengun,
+                                     "gunner_opengun", 0},
+
+    [Q2M_CALLBACK_gunner_refire_chain] = {callback_sequence_2, Q2M_CALLBACK_gunner_refire_chain,
+                                          "gunner_refire_chain", 0},
+
+    [Q2M_CALLBACK_gunner_run] = {callback_sequence_4, Q2M_CALLBACK_gunner_run, "gunner_run",
+                                 Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_gunner_shrink] = {callback_berserk_shrink_30, Q2M_CALLBACK_gunner_shrink,
+                                    "gunner_shrink", 0},
+
+    [Q2M_CALLBACK_gunner_stand] = {callback_sequence_4, Q2M_CALLBACK_gunner_stand, "gunner_stand",
+                                   Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_hover_attack] = {callback_sequence_4, Q2M_CALLBACK_hover_attack, "hover_attack",
+                                   0},
+
+    [Q2M_CALLBACK_hover_dead] = {callback_sequence_4, Q2M_CALLBACK_hover_dead, "hover_dead",
+                                 Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_hover_dying] = {callback_hover_dying_88, Q2M_CALLBACK_hover_dying, "hover_dying",
+                                  0},
+
+    [Q2M_CALLBACK_hover_fire_blaster] = {callback_sequence_10, Q2M_CALLBACK_hover_fire_blaster,
+                                         "hover_fire_blaster", 0},
+
+    [Q2M_CALLBACK_hover_reattack] = {callback_sequence_2, Q2M_CALLBACK_hover_reattack,
+                                     "hover_reattack", 0},
+
+    [Q2M_CALLBACK_hover_run] = {callback_sequence_4, Q2M_CALLBACK_hover_run, "hover_run",
+                                Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_infantry_attack4_refire] = {callback_sequence_17,
+                                              Q2M_CALLBACK_infantry_attack4_refire,
+                                              "infantry_attack4_refire", Q2M_CALLBACK_INFANTRY},
+
+    [Q2M_CALLBACK_infantry_cock_gun] = {callback_sequence_17, Q2M_CALLBACK_infantry_cock_gun,
+                                        "infantry_cock_gun", Q2M_CALLBACK_INFANTRY},
+
+    [Q2M_CALLBACK_infantry_dead] = {callback_sequence_5, Q2M_CALLBACK_infantry_dead,
+                                    "infantry_dead", Q2M_CALLBACK_INFANTRY | Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_infantry_duck_down] = {callback_sequence_17, Q2M_CALLBACK_infantry_duck_down,
+                                         "infantry_duck_down", Q2M_CALLBACK_INFANTRY},
+
+    [Q2M_CALLBACK_infantry_duck_hold] = {callback_sequence_17, Q2M_CALLBACK_infantry_duck_hold,
+                                         "infantry_duck_hold", Q2M_CALLBACK_INFANTRY},
+
+    [Q2M_CALLBACK_infantry_duck_up] = {callback_sequence_17, Q2M_CALLBACK_infantry_duck_up,
+                                       "infantry_duck_up", Q2M_CALLBACK_INFANTRY},
+
+    [Q2M_CALLBACK_infantry_fire] = {callback_sequence_17, Q2M_CALLBACK_infantry_fire,
+                                    "infantry_fire", Q2M_CALLBACK_INFANTRY},
+
+    [Q2M_CALLBACK_infantry_fire_prep] = {callback_sequence_18, Q2M_CALLBACK_infantry_fire_prep,
+                                         "infantry_fire_prep", Q2M_CALLBACK_INFANTRY},
+
+    [Q2M_CALLBACK_infantry_jump2_now] = {callback_sequence_17, Q2M_CALLBACK_infantry_jump2_now,
+                                         "infantry_jump2_now", Q2M_CALLBACK_INFANTRY},
+
+    [Q2M_CALLBACK_infantry_jump_now] = {callback_sequence_17, Q2M_CALLBACK_infantry_jump_now,
+                                        "infantry_jump_now", Q2M_CALLBACK_INFANTRY},
+
+    [Q2M_CALLBACK_infantry_jump_wait_land] = {callback_sequence_17,
+                                              Q2M_CALLBACK_infantry_jump_wait_land,
+                                              "infantry_jump_wait_land", Q2M_CALLBACK_INFANTRY},
+
+    [Q2M_CALLBACK_infantry_run] = {callback_sequence_5, Q2M_CALLBACK_infantry_run, "infantry_run",
+                                   Q2M_CALLBACK_INFANTRY | Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_infantry_set_firetime] = {callback_sequence_17,
+                                            Q2M_CALLBACK_infantry_set_firetime,
+                                            "infantry_set_firetime", Q2M_CALLBACK_INFANTRY},
+
+    [Q2M_CALLBACK_infantry_shrink] = {callback_sequence_17, Q2M_CALLBACK_infantry_shrink,
+                                      "infantry_shrink", Q2M_CALLBACK_INFANTRY},
+
+    [Q2M_CALLBACK_infantry_smack] = {callback_sequence_25, Q2M_CALLBACK_infantry_smack,
+                                     "infantry_smack", Q2M_CALLBACK_INFANTRY},
+
+    [Q2M_CALLBACK_infantry_stand] = {callback_sequence_5, Q2M_CALLBACK_infantry_stand,
+                                     "infantry_stand", Q2M_CALLBACK_INFANTRY | Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_infantry_swing] = {callback_sequence_17, Q2M_CALLBACK_infantry_swing,
+                                     "infantry_swing", Q2M_CALLBACK_INFANTRY},
+
+    [Q2M_CALLBACK_insane_checkdown] = {callback_insane_checkdown_62, Q2M_CALLBACK_insane_checkdown,
+                                       "insane_checkdown", 0},
+
+    [Q2M_CALLBACK_insane_checkup] = {callback_insane_checkup_63, Q2M_CALLBACK_insane_checkup,
+                                     "insane_checkup", 0},
+
+    [Q2M_CALLBACK_insane_cross] = {callback_sequence_4, Q2M_CALLBACK_insane_cross, "insane_cross",
+                                   0},
+
+    [Q2M_CALLBACK_insane_dead] = {callback_sequence_4, Q2M_CALLBACK_insane_dead, "insane_dead",
+                                  Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_insane_fist] = {callback_sequence_37, Q2M_CALLBACK_insane_fist, "insane_fist", 0},
+
+    [Q2M_CALLBACK_insane_moan] = {callback_sequence_37, Q2M_CALLBACK_insane_moan, "insane_moan", 0},
+
+    [Q2M_CALLBACK_insane_onground] = {callback_sequence_4, Q2M_CALLBACK_insane_onground,
+                                      "insane_onground", 0},
+
+    [Q2M_CALLBACK_insane_run] = {callback_sequence_4, Q2M_CALLBACK_insane_run, "insane_run",
+                                 Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_insane_scream] = {callback_sequence_37, Q2M_CALLBACK_insane_scream,
+                                    "insane_scream", 0},
+
+    [Q2M_CALLBACK_insane_shake] = {callback_sequence_37, Q2M_CALLBACK_insane_shake, "insane_shake",
+                                   0},
+
+    [Q2M_CALLBACK_insane_stand] = {callback_sequence_4, Q2M_CALLBACK_insane_stand, "insane_stand",
+                                   Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_insane_walk] = {callback_sequence_4, Q2M_CALLBACK_insane_walk, "insane_walk",
+                                  Q2M_CALLBACK_WALK},
+
+    [Q2M_CALLBACK_isgibfest] = {callback_gekk_gibfest_86, Q2M_CALLBACK_isgibfest, "isgibfest", 0},
+
+    [Q2M_CALLBACK_jorgBFG] = {callback_sequence_16, Q2M_CALLBACK_jorgBFG, "jorgBFG", 0},
+
+    [Q2M_CALLBACK_jorg_attack1] = {callback_sequence_4, Q2M_CALLBACK_jorg_attack1, "jorg_attack1",
+                                   Q2M_CALLBACK_ATTACK1},
+
+    [Q2M_CALLBACK_jorg_dead] = {callback_sequence_4, Q2M_CALLBACK_jorg_dead, "jorg_dead",
+                                Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_jorg_death_hit] = {callback_jorg_death_hit_89, Q2M_CALLBACK_jorg_death_hit,
+                                     "jorg_death_hit", 0},
+
+    [Q2M_CALLBACK_jorg_firebullet] = {callback_sequence_16, Q2M_CALLBACK_jorg_firebullet,
+                                      "jorg_firebullet", 0},
+
+    [Q2M_CALLBACK_jorg_firebullet_left] = {callback_sequence_16, Q2M_CALLBACK_jorg_firebullet_left,
+                                           "jorg_firebullet_left", 0},
+
+    [Q2M_CALLBACK_jorg_firebullet_right] = {callback_sequence_16,
+                                            Q2M_CALLBACK_jorg_firebullet_right,
+                                            "jorg_firebullet_right", 0},
+
+    [Q2M_CALLBACK_jorg_idle] = {callback_sequence_37, Q2M_CALLBACK_jorg_idle, "jorg_idle", 0},
+
+    [Q2M_CALLBACK_jorg_reattack1] = {callback_sequence_2, Q2M_CALLBACK_jorg_reattack1,
+                                     "jorg_reattack1", Q2M_CALLBACK_ATTACK1},
+
+    [Q2M_CALLBACK_jorg_run] = {callback_sequence_4, Q2M_CALLBACK_jorg_run, "jorg_run",
+                               Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_jorg_stand] = {callback_sequence_4, Q2M_CALLBACK_jorg_stand, "jorg_stand",
+                                 Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_jorg_step_left] = {callback_sequence_37, Q2M_CALLBACK_jorg_step_left,
+                                     "jorg_step_left", 0},
+
+    [Q2M_CALLBACK_jorg_step_right] = {callback_sequence_37, Q2M_CALLBACK_jorg_step_right,
+                                      "jorg_step_right", 0},
+
+    [Q2M_CALLBACK_loogie] = {callback_loogie_17, Q2M_CALLBACK_loogie, "loogie", 0},
+
+    [Q2M_CALLBACK_makronBFG] = {callback_sequence_16, Q2M_CALLBACK_makronBFG, "makronBFG", 0},
+
+    [Q2M_CALLBACK_makron_brainsplorch] = {callback_sequence_37, Q2M_CALLBACK_makron_brainsplorch,
+                                          "makron_brainsplorch", 0},
+
+    [Q2M_CALLBACK_makron_dead] = {callback_sequence_4, Q2M_CALLBACK_makron_dead, "makron_dead",
+                                  Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_makron_hit] = {callback_sequence_37, Q2M_CALLBACK_makron_hit, "makron_hit", 0},
+
+    [Q2M_CALLBACK_makron_popup] = {callback_sequence_37, Q2M_CALLBACK_makron_popup, "makron_popup",
+                                   0},
+
+    [Q2M_CALLBACK_makron_prerailgun] = {callback_sequence_37, Q2M_CALLBACK_makron_prerailgun,
+                                        "makron_prerailgun", 0},
+
+    [Q2M_CALLBACK_makron_run] = {callback_sequence_4, Q2M_CALLBACK_makron_run, "makron_run",
+                                 Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_makron_step_left] = {callback_sequence_37, Q2M_CALLBACK_makron_step_left,
+                                       "makron_step_left", 0},
+
+    [Q2M_CALLBACK_makron_step_right] = {callback_sequence_37, Q2M_CALLBACK_makron_step_right,
+                                        "makron_step_right", 0},
+
+    [Q2M_CALLBACK_makron_taunt] = {callback_sequence_37, Q2M_CALLBACK_makron_taunt, "makron_taunt",
+                                   0},
+
+    [Q2M_CALLBACK_medic_cable_attack] = {callback_sequence_19, Q2M_CALLBACK_medic_cable_attack,
+                                         "medic_cable_attack", 0},
+
+    [Q2M_CALLBACK_medic_continue] = {callback_sequence_19, Q2M_CALLBACK_medic_continue,
+                                     "medic_continue", 0},
+
+    [Q2M_CALLBACK_medic_dead] = {callback_sequence_4, Q2M_CALLBACK_medic_dead, "medic_dead",
+                                 Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_medic_determine_spawn] = {callback_sequence_27,
+                                            Q2M_CALLBACK_medic_determine_spawn,
+                                            "medic_determine_spawn", 0},
+
+    [Q2M_CALLBACK_medic_duck_down] = {callback_brain_duck_down_28, Q2M_CALLBACK_medic_duck_down,
+                                      "medic_duck_down", 0},
+
+    [Q2M_CALLBACK_medic_duck_hold] = {callback_brain_duck_down_28, Q2M_CALLBACK_medic_duck_hold,
+                                      "medic_duck_hold", 0},
+
+    [Q2M_CALLBACK_medic_duck_up] = {callback_brain_duck_down_28, Q2M_CALLBACK_medic_duck_up,
+                                    "medic_duck_up", 0},
+
+    [Q2M_CALLBACK_medic_finish_spawn] = {callback_sequence_27, Q2M_CALLBACK_medic_finish_spawn,
+                                         "medic_finish_spawn", 0},
+
+    [Q2M_CALLBACK_medic_fire_blaster] = {callback_sequence_10, Q2M_CALLBACK_medic_fire_blaster,
+                                         "medic_fire_blaster", 0},
+
+    [Q2M_CALLBACK_medic_hook_launch] = {callback_sequence_19, Q2M_CALLBACK_medic_hook_launch,
+                                        "medic_hook_launch", 0},
+
+    [Q2M_CALLBACK_medic_hook_retract] = {callback_sequence_19, Q2M_CALLBACK_medic_hook_retract,
+                                         "medic_hook_retract", 0},
+
+    [Q2M_CALLBACK_medic_idle] = {callback_sequence_19, Q2M_CALLBACK_medic_idle, "medic_idle", 0},
+
+    [Q2M_CALLBACK_medic_quick_attack] = {callback_sequence_19, Q2M_CALLBACK_medic_quick_attack,
+                                         "medic_quick_attack", 0},
+
+    [Q2M_CALLBACK_medic_run] = {callback_sequence_20, Q2M_CALLBACK_medic_run, "medic_run",
+                                Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_medic_search] = {callback_sequence_19, Q2M_CALLBACK_medic_search, "medic_search",
+                                   0},
+
+    [Q2M_CALLBACK_medic_shrink] = {callback_sequence_19, Q2M_CALLBACK_medic_shrink, "medic_shrink",
+                                   0},
+
+    [Q2M_CALLBACK_medic_spawngrows] = {callback_sequence_27, Q2M_CALLBACK_medic_spawngrows,
+                                       "medic_spawngrows", 0},
+
+    [Q2M_CALLBACK_medic_stand] = {callback_sequence_4, Q2M_CALLBACK_medic_stand, "medic_stand",
+                                  Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_medic_start_spawn] = {callback_sequence_27, Q2M_CALLBACK_medic_start_spawn,
+                                        "medic_start_spawn", 0},
+
+    [Q2M_CALLBACK_medic_walk] = {callback_sequence_4, Q2M_CALLBACK_medic_walk, "medic_walk",
+                                 Q2M_CALLBACK_WALK},
+
+    [Q2M_CALLBACK_monster_check_prone] = {callback_monster_check_prone_37,
+                                          Q2M_CALLBACK_monster_check_prone, "monster_check_prone",
+                                          0},
+
+    [Q2M_CALLBACK_monster_dead] = {callback_sequence_4, Q2M_CALLBACK_monster_dead, "monster_dead",
+                                   Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_monster_done_dodge] = {callback_monster_done_dodge_36,
+                                         Q2M_CALLBACK_monster_done_dodge, "monster_done_dodge", 0},
+
+    [Q2M_CALLBACK_monster_duck_down] = {callback_brain_duck_down_28, Q2M_CALLBACK_monster_duck_down,
+                                        "monster_duck_down", 0},
+
+    [Q2M_CALLBACK_monster_duck_hold] = {callback_brain_duck_down_28, Q2M_CALLBACK_monster_duck_hold,
+                                        "monster_duck_hold", 0},
+
+    [Q2M_CALLBACK_monster_duck_up] = {callback_brain_duck_down_28, Q2M_CALLBACK_monster_duck_up,
+                                      "monster_duck_up", 0},
+
+    [Q2M_CALLBACK_monster_footstep] = {callback_sequence_37, Q2M_CALLBACK_monster_footstep,
+                                       "monster_footstep", 0},
+
+    [Q2M_CALLBACK_mutant_check_landing] = {callback_sequence_10, Q2M_CALLBACK_mutant_check_landing,
+                                           "mutant_check_landing", 0},
+
+    [Q2M_CALLBACK_mutant_check_refire] = {callback_mutant_check_refire_60,
+                                          Q2M_CALLBACK_mutant_check_refire, "mutant_check_refire",
+                                          0},
+
+    [Q2M_CALLBACK_mutant_dead] = {callback_sequence_4, Q2M_CALLBACK_mutant_dead, "mutant_dead",
+                                  Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_mutant_hit_left] = {callback_sequence_24, Q2M_CALLBACK_mutant_hit_left,
+                                      "mutant_hit_left", 0},
+
+    [Q2M_CALLBACK_mutant_hit_right] = {callback_sequence_24, Q2M_CALLBACK_mutant_hit_right,
+                                       "mutant_hit_right", 0},
+
+    [Q2M_CALLBACK_mutant_idle_loop] = {callback_mutant_idle_loop_72, Q2M_CALLBACK_mutant_idle_loop,
+                                       "mutant_idle_loop", 0},
+
+    [Q2M_CALLBACK_mutant_jump_down] = {callback_berserk_jump2_now_29, Q2M_CALLBACK_mutant_jump_down,
+                                       "mutant_jump_down", 0},
+
+    [Q2M_CALLBACK_mutant_jump_takeoff] = {callback_sequence_10, Q2M_CALLBACK_mutant_jump_takeoff,
+                                          "mutant_jump_takeoff", 0},
+
+    [Q2M_CALLBACK_mutant_jump_up] = {callback_berserk_jump2_now_29, Q2M_CALLBACK_mutant_jump_up,
+                                     "mutant_jump_up", 0},
+
+    [Q2M_CALLBACK_mutant_jump_wait_land] = {callback_berserk_jump2_now_29,
+                                            Q2M_CALLBACK_mutant_jump_wait_land,
+                                            "mutant_jump_wait_land", 0},
+
+    [Q2M_CALLBACK_mutant_run] = {callback_sequence_4, Q2M_CALLBACK_mutant_run, "mutant_run",
+                                 Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_mutant_shrink] = {callback_berserk_shrink_30, Q2M_CALLBACK_mutant_shrink,
+                                    "mutant_shrink", 0},
+
+    [Q2M_CALLBACK_mutant_stand] = {callback_sequence_4, Q2M_CALLBACK_mutant_stand, "mutant_stand",
+                                   Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_mutant_step] = {callback_sequence_10, Q2M_CALLBACK_mutant_step, "mutant_step", 0},
+
+    [Q2M_CALLBACK_mutant_walk_loop] = {callback_sequence_4, Q2M_CALLBACK_mutant_walk_loop,
+                                       "mutant_walk_loop", 0},
+
+    [Q2M_CALLBACK_parasite_break_noise] = {callback_sequence_21, Q2M_CALLBACK_parasite_break_noise,
+                                           "parasite_break_noise", 0},
+
+    [Q2M_CALLBACK_parasite_break_retract] = {callback_sequence_21,
+                                             Q2M_CALLBACK_parasite_break_retract,
+                                             "parasite_break_retract", 0},
+
+    [Q2M_CALLBACK_parasite_break_sound] = {callback_sequence_21, Q2M_CALLBACK_parasite_break_sound,
+                                           "parasite_break_sound", 0},
+
+    [Q2M_CALLBACK_parasite_break_wait] = {callback_sequence_21, Q2M_CALLBACK_parasite_break_wait,
+                                          "parasite_break_wait", 0},
+
+    [Q2M_CALLBACK_parasite_dead] = {callback_sequence_4, Q2M_CALLBACK_parasite_dead,
+                                    "parasite_dead", Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_parasite_do_fidget] = {callback_sequence_4, Q2M_CALLBACK_parasite_do_fidget,
+                                         "parasite_do_fidget", 0},
+
+    [Q2M_CALLBACK_parasite_drain_attack] = {callback_sequence_15,
+                                            Q2M_CALLBACK_parasite_drain_attack,
+                                            "parasite_drain_attack", 0},
+
+    [Q2M_CALLBACK_parasite_fire_proboscis] = {callback_sequence_21,
+                                              Q2M_CALLBACK_parasite_fire_proboscis,
+                                              "parasite_fire_proboscis", 0},
+
+    [Q2M_CALLBACK_parasite_jump_down] = {callback_berserk_jump2_now_29,
+                                         Q2M_CALLBACK_parasite_jump_down, "parasite_jump_down", 0},
+
+    [Q2M_CALLBACK_parasite_jump_up] = {callback_berserk_jump2_now_29, Q2M_CALLBACK_parasite_jump_up,
+                                       "parasite_jump_up", 0},
+
+    [Q2M_CALLBACK_parasite_jump_wait_land] = {callback_berserk_jump2_now_29,
+                                              Q2M_CALLBACK_parasite_jump_wait_land,
+                                              "parasite_jump_wait_land", 0},
+
+    [Q2M_CALLBACK_parasite_launch] = {callback_sequence_15, Q2M_CALLBACK_parasite_launch,
+                                      "parasite_launch", 0},
+
+    [Q2M_CALLBACK_parasite_proboscis_pull_wait] = {callback_sequence_21,
+                                                   Q2M_CALLBACK_parasite_proboscis_pull_wait,
+                                                   "parasite_proboscis_pull_wait", 0},
+
+    [Q2M_CALLBACK_parasite_proboscis_wait] = {callback_sequence_21,
+                                              Q2M_CALLBACK_parasite_proboscis_wait,
+                                              "parasite_proboscis_wait", 0},
+
+    [Q2M_CALLBACK_parasite_reel_in] = {callback_sequence_14, Q2M_CALLBACK_parasite_reel_in,
+                                       "parasite_reel_in", 0},
+
+    [Q2M_CALLBACK_parasite_refidget] = {callback_sequence_4, Q2M_CALLBACK_parasite_refidget,
+                                        "parasite_refidget", 0},
+
+    [Q2M_CALLBACK_parasite_run] = {callback_sequence_22, Q2M_CALLBACK_parasite_run, "parasite_run",
+                                   Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_parasite_scratch] = {callback_sequence_23, Q2M_CALLBACK_parasite_scratch,
+                                       "parasite_scratch", 0},
+
+    [Q2M_CALLBACK_parasite_shrink] = {callback_berserk_shrink_30, Q2M_CALLBACK_parasite_shrink,
+                                      "parasite_shrink", 0},
+
+    [Q2M_CALLBACK_parasite_stand] = {callback_sequence_4, Q2M_CALLBACK_parasite_stand,
+                                     "parasite_stand", Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_parasite_start_run] = {callback_sequence_22, Q2M_CALLBACK_parasite_start_run,
+                                         "parasite_start_run", Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_parasite_tap] = {callback_sequence_23, Q2M_CALLBACK_parasite_tap, "parasite_tap",
+                                   0},
+
+    [Q2M_CALLBACK_parasite_walk] = {callback_sequence_8, Q2M_CALLBACK_parasite_walk,
+                                    "parasite_walk", Q2M_CALLBACK_WALK},
+
+    [Q2M_CALLBACK_reloogie] = {callback_reloogie_64, Q2M_CALLBACK_reloogie, "reloogie", 0},
+
+    [Q2M_CALLBACK_roam_goal] = {callback_roam_goal_41, Q2M_CALLBACK_roam_goal, "roam_goal", 0},
+
+    [Q2M_CALLBACK_sham_smash10] = {callback_sequence_24, Q2M_CALLBACK_sham_smash10, "sham_smash10",
+                                   0},
+
+    [Q2M_CALLBACK_sham_swingl9] = {callback_sham_swingl9_11, Q2M_CALLBACK_sham_swingl9,
+                                   "sham_swingl9", 0},
+
+    [Q2M_CALLBACK_sham_swingr9] = {callback_sham_swingl9_11, Q2M_CALLBACK_sham_swingr9,
+                                   "sham_swingr9", 0},
+
+    [Q2M_CALLBACK_shambler_dead] = {callback_sequence_4, Q2M_CALLBACK_shambler_dead,
+                                    "shambler_dead", Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_shambler_lightning_update] = {callback_shambler_lightning_update_34,
+                                                Q2M_CALLBACK_shambler_lightning_update,
+                                                "shambler_lightning_update", 0},
+
+    [Q2M_CALLBACK_shambler_maybe_idle] = {callback_shambler_maybe_idle_74,
+                                          Q2M_CALLBACK_shambler_maybe_idle, "shambler_maybe_idle",
+                                          0},
+
+    [Q2M_CALLBACK_shambler_melee1] = {callback_sequence_37, Q2M_CALLBACK_shambler_melee1,
+                                      "shambler_melee1", 0},
+
+    [Q2M_CALLBACK_shambler_melee2] = {callback_sequence_37, Q2M_CALLBACK_shambler_melee2,
+                                      "shambler_melee2", 0},
+
+    [Q2M_CALLBACK_shambler_run] = {callback_sequence_4, Q2M_CALLBACK_shambler_run, "shambler_run",
+                                   Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_shambler_shrink] = {callback_berserk_shrink_30, Q2M_CALLBACK_shambler_shrink,
+                                      "shambler_shrink", 0},
+
+    [Q2M_CALLBACK_shambler_windup] = {callback_shambler_lightning_update_34,
+                                      Q2M_CALLBACK_shambler_windup, "shambler_windup", 0},
+
+    [Q2M_CALLBACK_soldier_attack1_refire1] = {callback_sequence_29,
+                                              Q2M_CALLBACK_soldier_attack1_refire1,
+                                              "soldier_attack1_refire1",
+                                              Q2M_CALLBACK_BASE_SOLDIER | Q2M_CALLBACK_ATTACK1 |
+                                                  Q2M_CALLBACK_REFIRE1},
+
+    [Q2M_CALLBACK_soldier_attack1_refire2] = {callback_sequence_29,
+                                              Q2M_CALLBACK_soldier_attack1_refire2,
+                                              "soldier_attack1_refire2",
+                                              Q2M_CALLBACK_BASE_SOLDIER | Q2M_CALLBACK_ATTACK1},
+
+    [Q2M_CALLBACK_soldier_attack1_shotgun_check] = {callback_sequence_29,
+                                                    Q2M_CALLBACK_soldier_attack1_shotgun_check,
+                                                    "soldier_attack1_shotgun_check",
+                                                    Q2M_CALLBACK_BASE_SOLDIER |
+                                                        Q2M_CALLBACK_ATTACK1},
+
+    [Q2M_CALLBACK_soldier_attack2_refire1] = {callback_sequence_29,
+                                              Q2M_CALLBACK_soldier_attack2_refire1,
+                                              "soldier_attack2_refire1",
+                                              Q2M_CALLBACK_BASE_SOLDIER | Q2M_CALLBACK_ATTACK2 |
+                                                  Q2M_CALLBACK_REFIRE1},
+
+    [Q2M_CALLBACK_soldier_attack2_refire2] = {callback_sequence_29,
+                                              Q2M_CALLBACK_soldier_attack2_refire2,
+                                              "soldier_attack2_refire2",
+                                              Q2M_CALLBACK_BASE_SOLDIER | Q2M_CALLBACK_ATTACK2},
+
+    [Q2M_CALLBACK_soldier_attack2_shotgun_check] = {callback_sequence_29,
+                                                    Q2M_CALLBACK_soldier_attack2_shotgun_check,
+                                                    "soldier_attack2_shotgun_check",
+                                                    Q2M_CALLBACK_BASE_SOLDIER |
+                                                        Q2M_CALLBACK_ATTACK2},
+
+    [Q2M_CALLBACK_soldier_attack3_refire] = {callback_sequence_29,
+                                             Q2M_CALLBACK_soldier_attack3_refire,
+                                             "soldier_attack3_refire", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_attack6_refire] = {callback_sequence_29,
+                                             Q2M_CALLBACK_soldier_attack6_refire,
+                                             "soldier_attack6_refire", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_attack6_refire1] = {callback_sequence_29,
+                                              Q2M_CALLBACK_soldier_attack6_refire1,
+                                              "soldier_attack6_refire1",
+                                              Q2M_CALLBACK_BASE_SOLDIER | Q2M_CALLBACK_REFIRE1},
+
+    [Q2M_CALLBACK_soldier_attack6_refire2] = {callback_sequence_29,
+                                              Q2M_CALLBACK_soldier_attack6_refire2,
+                                              "soldier_attack6_refire2", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_attack6_shotgun_check] = {callback_sequence_29,
+                                                    Q2M_CALLBACK_soldier_attack6_shotgun_check,
+                                                    "soldier_attack6_shotgun_check",
+                                                    Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_blind] = {callback_sequence_6, Q2M_CALLBACK_soldier_blind,
+                                    "soldier_blind", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_blind_check] = {callback_sequence_30, Q2M_CALLBACK_soldier_blind_check,
+                                          "soldier_blind_check", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_cock] = {callback_sequence_31, Q2M_CALLBACK_soldier_cock, "soldier_cock",
+                                   Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_dead] = {callback_sequence_6, Q2M_CALLBACK_soldier_dead, "soldier_dead",
+                                   Q2M_CALLBACK_BASE_SOLDIER | Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_soldier_dead2] = {callback_sequence_6, Q2M_CALLBACK_soldier_dead2,
+                                    "soldier_dead2", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_death_shrink] = {callback_sequence_29, Q2M_CALLBACK_soldier_death_shrink,
+                                           "soldier_death_shrink", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_duck_down] = {callback_sequence_29, Q2M_CALLBACK_soldier_duck_down,
+                                        "soldier_duck_down", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_duck_hold] = {callback_sequence_29, Q2M_CALLBACK_soldier_duck_hold,
+                                        "soldier_duck_hold", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_duck_up] = {callback_sequence_29, Q2M_CALLBACK_soldier_duck_up,
+                                      "soldier_duck_up", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_fire1] = {callback_sequence_29, Q2M_CALLBACK_soldier_fire1,
+                                    "soldier_fire1", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_fire2] = {callback_sequence_29, Q2M_CALLBACK_soldier_fire2,
+                                    "soldier_fire2", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_fire3] = {callback_sequence_29, Q2M_CALLBACK_soldier_fire3,
+                                    "soldier_fire3", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_fire4] = {callback_sequence_29, Q2M_CALLBACK_soldier_fire4,
+                                    "soldier_fire4", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_fire5] = {callback_sequence_29, Q2M_CALLBACK_soldier_fire5,
+                                    "soldier_fire5", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_fire6] = {callback_sequence_29, Q2M_CALLBACK_soldier_fire6,
+                                    "soldier_fire6", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_fire7] = {callback_sequence_29, Q2M_CALLBACK_soldier_fire7,
+                                    "soldier_fire7", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_fire8] = {callback_sequence_29, Q2M_CALLBACK_soldier_fire8,
+                                    "soldier_fire8", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_idle] = {callback_sequence_29, Q2M_CALLBACK_soldier_idle, "soldier_idle",
+                                   Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_run] = {callback_sequence_6, Q2M_CALLBACK_soldier_run, "soldier_run",
+                                  Q2M_CALLBACK_BASE_SOLDIER | Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_soldier_stand] = {callback_sequence_6, Q2M_CALLBACK_soldier_stand,
+                                    "soldier_stand",
+                                    Q2M_CALLBACK_BASE_SOLDIER | Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_soldier_stand_up] = {callback_sequence_6, Q2M_CALLBACK_soldier_stand_up,
+                                       "soldier_stand_up", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_start_charge] = {callback_sequence_32, Q2M_CALLBACK_soldier_start_charge,
+                                           "soldier_start_charge", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_stop_charge] = {callback_sequence_29, Q2M_CALLBACK_soldier_stop_charge,
+                                          "soldier_stop_charge", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldier_walk1_random] = {callback_sequence_33, Q2M_CALLBACK_soldier_walk1_random,
+                                           "soldier_walk1_random", Q2M_CALLBACK_BASE_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_attack1_refire1] = {callback_sequence_29,
+                                               Q2M_CALLBACK_soldierh_attack1_refire1,
+                                               "soldierh_attack1_refire1",
+                                               Q2M_CALLBACK_HEAVY_SOLDIER | Q2M_CALLBACK_ATTACK1 |
+                                                   Q2M_CALLBACK_REFIRE1},
+
+    [Q2M_CALLBACK_soldierh_attack1_refire2] = {callback_sequence_29,
+                                               Q2M_CALLBACK_soldierh_attack1_refire2,
+                                               "soldierh_attack1_refire2",
+                                               Q2M_CALLBACK_HEAVY_SOLDIER | Q2M_CALLBACK_ATTACK1},
+
+    [Q2M_CALLBACK_soldierh_attack2_refire1] = {callback_sequence_29,
+                                               Q2M_CALLBACK_soldierh_attack2_refire1,
+                                               "soldierh_attack2_refire1",
+                                               Q2M_CALLBACK_HEAVY_SOLDIER | Q2M_CALLBACK_ATTACK2 |
+                                                   Q2M_CALLBACK_REFIRE1},
+
+    [Q2M_CALLBACK_soldierh_attack2_refire2] = {callback_sequence_29,
+                                               Q2M_CALLBACK_soldierh_attack2_refire2,
+                                               "soldierh_attack2_refire2",
+                                               Q2M_CALLBACK_HEAVY_SOLDIER | Q2M_CALLBACK_ATTACK2},
+
+    [Q2M_CALLBACK_soldierh_attack3_refire] = {callback_sequence_29,
+                                              Q2M_CALLBACK_soldierh_attack3_refire,
+                                              "soldierh_attack3_refire",
+                                              Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_attack6_refire] = {callback_sequence_29,
+                                              Q2M_CALLBACK_soldierh_attack6_refire,
+                                              "soldierh_attack6_refire",
+                                              Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_cock] = {callback_sequence_29, Q2M_CALLBACK_soldierh_cock,
+                                    "soldierh_cock", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_dead] = {callback_sequence_6, Q2M_CALLBACK_soldierh_dead,
+                                    "soldierh_dead",
+                                    Q2M_CALLBACK_HEAVY_SOLDIER | Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_soldierh_duck_down] = {callback_sequence_29, Q2M_CALLBACK_soldierh_duck_down,
+                                         "soldierh_duck_down", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_duck_hold] = {callback_sequence_29, Q2M_CALLBACK_soldierh_duck_hold,
+                                         "soldierh_duck_hold", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_duck_up] = {callback_sequence_29, Q2M_CALLBACK_soldierh_duck_up,
+                                       "soldierh_duck_up", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_fire1] = {callback_sequence_29, Q2M_CALLBACK_soldierh_fire1,
+                                     "soldierh_fire1", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_fire2] = {callback_sequence_29, Q2M_CALLBACK_soldierh_fire2,
+                                     "soldierh_fire2", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_fire3] = {callback_sequence_29, Q2M_CALLBACK_soldierh_fire3,
+                                     "soldierh_fire3", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_fire4] = {callback_sequence_29, Q2M_CALLBACK_soldierh_fire4,
+                                     "soldierh_fire4", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_fire6] = {callback_sequence_29, Q2M_CALLBACK_soldierh_fire6,
+                                     "soldierh_fire6", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_fire7] = {callback_sequence_29, Q2M_CALLBACK_soldierh_fire7,
+                                     "soldierh_fire7", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_fire8] = {callback_sequence_29, Q2M_CALLBACK_soldierh_fire8,
+                                     "soldierh_fire8", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_hyper_laser_sound_end] = {callback_sequence_34,
+                                                     Q2M_CALLBACK_soldierh_hyper_laser_sound_end,
+                                                     "soldierh_hyper_laser_sound_end",
+                                                     Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_hyper_laser_sound_start] =
+        {callback_sequence_35, Q2M_CALLBACK_soldierh_hyper_laser_sound_start,
+         "soldierh_hyper_laser_sound_start", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_hyper_refire1] = {callback_sequence_29,
+                                             Q2M_CALLBACK_soldierh_hyper_refire1,
+                                             "soldierh_hyper_refire1",
+                                             Q2M_CALLBACK_HEAVY_SOLDIER | Q2M_CALLBACK_REFIRE1},
+
+    [Q2M_CALLBACK_soldierh_hyper_refire2] = {callback_sequence_29,
+                                             Q2M_CALLBACK_soldierh_hyper_refire2,
+                                             "soldierh_hyper_refire2", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_hyper_sound] = {callback_sequence_36, Q2M_CALLBACK_soldierh_hyper_sound,
+                                           "soldierh_hyper_sound", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_hyperripper1] = {callback_sequence_29,
+                                            Q2M_CALLBACK_soldierh_hyperripper1,
+                                            "soldierh_hyperripper1", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_hyperripper2] = {callback_sequence_29,
+                                            Q2M_CALLBACK_soldierh_hyperripper2,
+                                            "soldierh_hyperripper2", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_hyperripper3] = {callback_sequence_29,
+                                            Q2M_CALLBACK_soldierh_hyperripper3,
+                                            "soldierh_hyperripper3", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_hyperripper5] = {callback_sequence_29,
+                                            Q2M_CALLBACK_soldierh_hyperripper5,
+                                            "soldierh_hyperripper5", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_hyperripper8] = {callback_sequence_29,
+                                            Q2M_CALLBACK_soldierh_hyperripper8,
+                                            "soldierh_hyperripper8", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_idle] = {callback_sequence_29, Q2M_CALLBACK_soldierh_idle,
+                                    "soldierh_idle", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_ripper1] = {callback_sequence_29, Q2M_CALLBACK_soldierh_ripper1,
+                                       "soldierh_ripper1", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_ripper2] = {callback_sequence_29, Q2M_CALLBACK_soldierh_ripper2,
+                                       "soldierh_ripper2", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_soldierh_run] = {callback_sequence_6, Q2M_CALLBACK_soldierh_run, "soldierh_run",
+                                   Q2M_CALLBACK_HEAVY_SOLDIER | Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_soldierh_stand] = {callback_sequence_6, Q2M_CALLBACK_soldierh_stand,
+                                     "soldierh_stand",
+                                     Q2M_CALLBACK_HEAVY_SOLDIER | Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_soldierh_walk1_random] = {callback_sequence_33,
+                                            Q2M_CALLBACK_soldierh_walk1_random,
+                                            "soldierh_walk1_random", Q2M_CALLBACK_HEAVY_SOLDIER},
+
+    [Q2M_CALLBACK_spawn_out_do] = {callback_sequence_28, Q2M_CALLBACK_spawn_out_do, "spawn_out_do",
+                                   0},
+
+    [Q2M_CALLBACK_spawn_out_start] = {callback_sequence_28, Q2M_CALLBACK_spawn_out_start,
+                                      "spawn_out_start", 0},
+
+    [Q2M_CALLBACK_stalker_dead] = {callback_sequence_4, Q2M_CALLBACK_stalker_dead, "stalker_dead",
+                                   Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_stalker_false_death] = {callback_sequence_4, Q2M_CALLBACK_stalker_false_death,
+                                          "stalker_false_death", 0},
+
+    [Q2M_CALLBACK_stalker_footstep] = {callback_sequence_26, Q2M_CALLBACK_stalker_footstep,
+                                       "stalker_footstep", 0},
+
+    [Q2M_CALLBACK_stalker_heal] = {callback_sequence_26, Q2M_CALLBACK_stalker_heal, "stalker_heal",
+                                   0},
+
+    [Q2M_CALLBACK_stalker_idle_noise] = {callback_stalker_idle_noise,
+                                         Q2M_CALLBACK_stalker_idle_noise, "stalker_idle_noise", 0},
+
+    [Q2M_CALLBACK_stalker_jump_down] = {callback_sequence_26, Q2M_CALLBACK_stalker_jump_down,
+                                        "stalker_jump_down", 0},
+
+    [Q2M_CALLBACK_stalker_jump_straightup] = {callback_sequence_26,
+                                              Q2M_CALLBACK_stalker_jump_straightup,
+                                              "stalker_jump_straightup", 0},
+
+    [Q2M_CALLBACK_stalker_jump_up] = {callback_sequence_26, Q2M_CALLBACK_stalker_jump_up,
+                                      "stalker_jump_up", 0},
+
+    [Q2M_CALLBACK_stalker_jump_wait_land] = {callback_sequence_26,
+                                             Q2M_CALLBACK_stalker_jump_wait_land,
+                                             "stalker_jump_wait_land", 0},
+
+    [Q2M_CALLBACK_stalker_run] = {callback_sequence_4, Q2M_CALLBACK_stalker_run, "stalker_run",
+                                  Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_stalker_shoot_attack] = {callback_sequence_26, Q2M_CALLBACK_stalker_shoot_attack,
+                                           "stalker_shoot_attack", 0},
+
+    [Q2M_CALLBACK_stalker_shoot_attack2] = {callback_sequence_26,
+                                            Q2M_CALLBACK_stalker_shoot_attack2,
+                                            "stalker_shoot_attack2", Q2M_CALLBACK_ATTACK2},
+
+    [Q2M_CALLBACK_stalker_stand] = {callback_sequence_4, Q2M_CALLBACK_stalker_stand,
+                                    "stalker_stand", Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_stalker_swing_attack] = {callback_sequence_24, Q2M_CALLBACK_stalker_swing_attack,
+                                           "stalker_swing_attack", 0},
+
+    [Q2M_CALLBACK_stalker_walk] = {callback_sequence_4, Q2M_CALLBACK_stalker_walk, "stalker_walk",
+                                   Q2M_CALLBACK_WALK},
+
+    [Q2M_CALLBACK_supertankGrenade] = {callback_sequence_16, Q2M_CALLBACK_supertankGrenade,
+                                       "supertankGrenade", 0},
+
+    [Q2M_CALLBACK_supertankMachineGun] = {callback_sequence_16, Q2M_CALLBACK_supertankMachineGun,
+                                          "supertankMachineGun", 0},
+
+    [Q2M_CALLBACK_supertankRocket] = {callback_sequence_16, Q2M_CALLBACK_supertankRocket,
+                                      "supertankRocket", 0},
+
+    [Q2M_CALLBACK_supertank_dead] = {callback_sequence_4, Q2M_CALLBACK_supertank_dead,
+                                     "supertank_dead", Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_supertank_reattack1] = {callback_sequence_2, Q2M_CALLBACK_supertank_reattack1,
+                                          "supertank_reattack1", Q2M_CALLBACK_ATTACK1},
+
+    [Q2M_CALLBACK_supertank_run] = {callback_sequence_4, Q2M_CALLBACK_supertank_run,
+                                    "supertank_run", Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_tank_blind_check] = {callback_gunner_blind_check_51,
+                                       Q2M_CALLBACK_tank_blind_check, "tank_blind_check", 0},
+
+    [Q2M_CALLBACK_tank_dead] = {callback_sequence_4, Q2M_CALLBACK_tank_dead, "tank_dead",
+                                Q2M_CALLBACK_DEAD},
+
+    [Q2M_CALLBACK_tank_doattack_rocket] = {callback_sequence_4, Q2M_CALLBACK_tank_doattack_rocket,
+                                           "tank_doattack_rocket", 0},
+
+    [Q2M_CALLBACK_tank_footstep] = {callback_sequence_37, Q2M_CALLBACK_tank_footstep,
+                                    "tank_footstep", 0},
+
+    [Q2M_CALLBACK_tank_poststrike] = {callback_sequence_4, Q2M_CALLBACK_tank_poststrike,
+                                      "tank_poststrike", 0},
+
+    [Q2M_CALLBACK_tank_reattack_blaster] = {callback_sequence_2, Q2M_CALLBACK_tank_reattack_blaster,
+                                            "tank_reattack_blaster", 0},
+
+    [Q2M_CALLBACK_tank_refire_rocket] = {callback_sequence_2, Q2M_CALLBACK_tank_refire_rocket,
+                                         "tank_refire_rocket", 0},
+
+    [Q2M_CALLBACK_tank_run] = {callback_sequence_4, Q2M_CALLBACK_tank_run, "tank_run",
+                               Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_tank_shrink] = {callback_berserk_shrink_30, Q2M_CALLBACK_tank_shrink,
+                                  "tank_shrink", 0},
+
+    [Q2M_CALLBACK_tank_stand] = {callback_sequence_4, Q2M_CALLBACK_tank_stand, "tank_stand",
+                                 Q2M_CALLBACK_STAND},
+
+    [Q2M_CALLBACK_tank_thud] = {callback_sequence_37, Q2M_CALLBACK_tank_thud, "tank_thud", 0},
+
+    [Q2M_CALLBACK_tank_walk] = {callback_sequence_4, Q2M_CALLBACK_tank_walk, "tank_walk",
+                                Q2M_CALLBACK_WALK},
+
+    [Q2M_CALLBACK_tank_windup] = {callback_sequence_37, Q2M_CALLBACK_tank_windup, "tank_windup", 0},
+
+    [Q2M_CALLBACK_turret_run] = {callback_sequence_4, Q2M_CALLBACK_turret_run, "turret_run",
+                                 Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_use_scanner] = {callback_use_scanner_48, Q2M_CALLBACK_use_scanner, "use_scanner",
+                                  0},
+
+    [Q2M_CALLBACK_weldstate] = {callback_weldstate_49, Q2M_CALLBACK_weldstate, "weldstate", 0},
+
+    [Q2M_CALLBACK_widow2_attack_beam] = {callback_widow2_attack_beam_13,
+                                         Q2M_CALLBACK_widow2_attack_beam, "widow2_attack_beam", 0},
+
+    [Q2M_CALLBACK_widow2_disrupt_reattack] = {callback_sequence_2,
+                                              Q2M_CALLBACK_widow2_disrupt_reattack,
+                                              "widow2_disrupt_reattack", 0},
+
+    [Q2M_CALLBACK_widow2_finaldeath] = {callback_sequence_9, Q2M_CALLBACK_widow2_finaldeath,
+                                        "widow2_finaldeath", 0},
+
+    [Q2M_CALLBACK_widow2_keep_searching] = {callback_widow2_keep_searching_92,
+                                            Q2M_CALLBACK_widow2_keep_searching,
+                                            "widow2_keep_searching", 0},
+
+    [Q2M_CALLBACK_widow2_ready_spawn] = {callback_sequence_27, Q2M_CALLBACK_widow2_ready_spawn,
+                                         "widow2_ready_spawn", 0},
+
+    [Q2M_CALLBACK_widow2_reattack_beam] = {callback_sequence_2, Q2M_CALLBACK_widow2_reattack_beam,
+                                           "widow2_reattack_beam", 0},
+
+    [Q2M_CALLBACK_widow2_run] = {callback_sequence_4, Q2M_CALLBACK_widow2_run, "widow2_run",
+                                 Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_widow2_spawn_check] = {callback_sequence_27, Q2M_CALLBACK_widow2_spawn_check,
+                                         "widow2_spawn_check", 0},
+
+    [Q2M_CALLBACK_widow2_start_searching] = {callback_widow2_start_searching_91,
+                                             Q2M_CALLBACK_widow2_start_searching,
+                                             "widow2_start_searching", 0},
+
+    [Q2M_CALLBACK_widow_attack_blaster] = {callback_sequence_2, Q2M_CALLBACK_widow_attack_blaster,
+                                           "widow_attack_blaster", 0},
+
+    [Q2M_CALLBACK_widow_attack_kick] = {callback_widow_attack_kick_23,
+                                        Q2M_CALLBACK_widow_attack_kick, "widow_attack_kick", 0},
+
+    [Q2M_CALLBACK_widow_attack_rail] = {callback_widow_attack_rail_14,
+                                        Q2M_CALLBACK_widow_attack_rail, "widow_attack_rail", 0},
+
+    [Q2M_CALLBACK_widow_done_spawn] = {callback_sequence_2, Q2M_CALLBACK_widow_done_spawn,
+                                       "widow_done_spawn", 0},
+
+    [Q2M_CALLBACK_widow_rail_done] = {callback_sequence_2, Q2M_CALLBACK_widow_rail_done,
+                                      "widow_rail_done", 0},
+
+    [Q2M_CALLBACK_widow_ready_spawn] = {callback_sequence_27, Q2M_CALLBACK_widow_ready_spawn,
+                                        "widow_ready_spawn", 0},
+
+    [Q2M_CALLBACK_widow_reattack_blaster] = {callback_sequence_2,
+                                             Q2M_CALLBACK_widow_reattack_blaster,
+                                             "widow_reattack_blaster", 0},
+
+    [Q2M_CALLBACK_widow_run] = {callback_sequence_4, Q2M_CALLBACK_widow_run, "widow_run",
+                                Q2M_CALLBACK_RUN},
+
+    [Q2M_CALLBACK_widow_spawn_check] = {callback_sequence_27, Q2M_CALLBACK_widow_spawn_check,
+                                        "widow_spawn_check", 0},
+
+    [Q2M_CALLBACK_widow_start_rail] = {callback_sequence_2, Q2M_CALLBACK_widow_start_rail,
+                                       "widow_start_rail", 0},
+
+    [Q2M_CALLBACK_widow_start_run_10] = {callback_sequence_2, Q2M_CALLBACK_widow_start_run_10,
+                                         "widow_start_run_10", 0},
+
+    [Q2M_CALLBACK_widow_start_run_12] = {callback_sequence_2, Q2M_CALLBACK_widow_start_run_12,
+                                         "widow_start_run_12", 0},
+
+    [Q2M_CALLBACK_widow_start_run_5] = {callback_sequence_2, Q2M_CALLBACK_widow_start_run_5,
+                                        "widow_start_run_5", 0},
+
+    [Q2M_CALLBACK_widow_start_spawn] = {callback_sequence_27, Q2M_CALLBACK_widow_start_spawn,
+                                        "widow_start_spawn", 0},
+
+    [Q2M_CALLBACK_widow_step] = {callback_widow_step_65, Q2M_CALLBACK_widow_step, "widow_step", 0},
+
+    [Q2M_CALLBACK_widow_stepshoot] = {callback_widow_stepshoot_66, Q2M_CALLBACK_widow_stepshoot,
+                                      "widow_stepshoot", 0},
+
+};
+
+bool q2m_callback_call(q2m_context *context, const q2m_callback *callback, qa_error *error) {
+    return !q2m_alive(context) || !callback || callback->invoke(context, callback->id, error);
+}
+bool q2m_callback_run(q2m_context *context, q2m_callback_id id, qa_error *error) {
+    return q2m_callback_call(context, id == Q2M_CALLBACK_NONE ? NULL : q2m_callbacks + id, error);
 }

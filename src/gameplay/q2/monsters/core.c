@@ -190,13 +190,13 @@ const q2m_frame *q2m_frame_at(const struct qa_q2_monster *monster, const q2m_mov
       frame < move->first_frame || frame > move->last_frame ||
       (size_t)(frame - move->first_frame) >= limit - move->frame_first) {
     qa_error_set(error, QA_ERROR_FORMAT, 0, "%s move %s has no source frame %d",
-                  monster->definition->classname, move->name, frame);
+                  monster->definition->classname, q2m_move_name(move), frame);
     return NULL;
   }
   const q2m_frame *entry = &set->frames[move->frame_first + (size_t)(frame - move->first_frame)];
   if ((size_t)entry->action_first + entry->action_count > set->action_count) {
     qa_error_set(error, QA_ERROR_FORMAT, 0, "%s move %s has an invalid action table",
-                  monster->definition->classname, move->name);
+                  monster->definition->classname, q2m_move_name(move));
     return NULL;
   }
   return entry;
@@ -230,7 +230,7 @@ bool q2m_animation(q2m_context *context, qa_error *error) {
       monster->next_frame = 0;
     } else {
       if (monster->frame == move->last_frame && move->end != NULL) {
-        if (!q2m_dispatch(context, move->end, error))
+        if (!q2m_callback_call(context, move->end, error))
           return false;
         if (!q2m_alive(context))
           return true;
@@ -272,7 +272,7 @@ bool q2m_animation(q2m_context *context, qa_error *error) {
                        ? 0.0f
                        : frame.distance * monster->animation_scale *
                              (rerelease ? context->elapsed * 10.0f : 1.0f);
-  if (!q2m_run_ai(context, frame.ai, frame.source_ai, distance, error))
+  if (!q2m_run_ai(context, frame.ai, distance, error))
     return false;
   if (!q2m_alive(context))
     return true;
@@ -282,7 +282,7 @@ bool q2m_animation(q2m_context *context, qa_error *error) {
       const q2m_frame_action *action =
           &monster->move_set->actions[frame.action_first + i];
       if (action->callback != NULL) {
-        if (!q2m_dispatch(context, action->callback, error))
+        if (!q2m_callback_call(context, action->callback, error))
           return false;
       } else if (action->next_frame == INT_MAX) {
         monster->next_frame = monster->frame + 1;
@@ -300,14 +300,14 @@ bool q2m_animation(q2m_context *context, qa_error *error) {
   return true;
 }
 
-bool q2m_set_move(q2m_context *context, const char *name, bool immediate,
+bool q2m_set_move(q2m_context *context, q2m_move_id name, bool immediate,
                   qa_error *error) {
-  const q2m_move *move = q2m_move_named(context->monster, name);
+  const q2m_move *move = q2m_move_find(context->monster, name);
   if (move == NULL) {
     qa_error_set(error, QA_ERROR_FORMAT, 0,
                  "%s references missing monster move %s",
                  context->monster->definition->classname,
-                 name == NULL ? "(null)" : name);
+                 move ? q2m_move_name(move) : "(unavailable)");
     return false;
   }
   if (context->game->options.edition == QA_Q2_RERELEASE && !immediate) {
@@ -329,9 +329,8 @@ static bool species_is_soldierh(q2m_species species) {
          species == Q2M_SOLDIER_LASER;
 }
 
-static bool move_is(const struct qa_q2_monster *monster, const char *name) {
-  return monster->move != NULL && monster->move->name != NULL &&
-         strcmp(monster->move->name, name) == 0;
+static bool move_is(const struct qa_q2_monster *monster, q2m_move_id id) {
+  return monster->move != NULL && monster->move->id == id;
 }
 
 static void finish_dodge(struct qa_q2_monster *monster) {
@@ -401,17 +400,17 @@ static void dodge_capabilities(const q2m_context *context, bool *duck,
 }
 
 static bool medic_dodge_attacking(const struct qa_q2_monster *monster) {
-  return move_is(monster, "medic_move_attackBlaster") ||
-         move_is(monster, "medic_move_attackHyperBlaster") ||
-         move_is(monster, "medic_move_attackCable") ||
-         move_is(monster, "medic_move_callReinforcements");
+  return move_is(monster, Q2M_MOVE_medic_move_attackBlaster) ||
+         move_is(monster, Q2M_MOVE_medic_move_attackHyperBlaster) ||
+         move_is(monster, Q2M_MOVE_medic_move_attackCable) ||
+         move_is(monster, Q2M_MOVE_medic_move_callReinforcements);
 }
 
 static bool dodge_duck(q2m_context *context, float eta_seconds, bool rogue,
                        bool *accepted, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   const q2m_species species = monster->definition->species;
-  const char *move = NULL;
+  q2m_move_id move = Q2M_MOVE_NONE;
   *accepted = false;
 
   if (species == Q2M_MEDIC || species == Q2M_MEDIC_COMMANDER) {
@@ -419,7 +418,7 @@ static bool dodge_duck(q2m_context *context, float eta_seconds, bool rogue,
       return true;
     if (medic_dodge_attacking(monster)) {
       if (!rogue)
-        return q2m_dispatch(context, "monster_duck_up", error);
+        return q2m_callback_run(context, Q2M_CALLBACK_monster_duck_up, error);
       monster->ducked = false;
       return true;
     }
@@ -427,13 +426,13 @@ static bool dodge_duck(q2m_context *context, float eta_seconds, bool rogue,
       double extra = context->game->options.skill == 0
                          ? 1.0 : 0.1 * (3 - context->game->options.skill);
       monster->duck_ns = q2m_after(context->game->now_ns, (double)eta_seconds + extra);
-      if (!q2m_dispatch(context, "monster_duck_down", error))
+      if (!q2m_callback_run(context, Q2M_CALLBACK_monster_duck_down, error))
         return false;
       if (!q2m_alive(context))
         return true;
-      monster->next_frame = q2m_move_named(monster, "medic_move_duck")->first_frame;
+      monster->next_frame = q2m_move_find(monster, Q2M_MOVE_medic_move_duck)->first_frame;
     }
-    if (!q2m_set_move(context, "medic_move_duck", true, error))
+    if (!q2m_set_move(context, Q2M_MOVE_medic_move_duck, true, error))
       return false;
     *accepted = q2m_alive(context);
     return true;
@@ -444,49 +443,49 @@ static bool dodge_duck(q2m_context *context, float eta_seconds, bool rogue,
     return true;
   if (species == Q2M_INFANTRY) {
     if (!rogue &&
-        (move_is(monster, "infantry_move_attack2") || monster->frame == 186 ||
+        (move_is(monster, Q2M_MOVE_infantry_move_attack2) || monster->frame == 186 ||
          monster->frame == 227 || monster->frame == 255))
       return set_duck_bounds(context, false, error);
-    move = "infantry_move_duck";
+    move = Q2M_MOVE_infantry_move_duck;
   } else if (species_is_soldier(species) ||
              (!rogue && species_is_soldierh(species))) {
     monster->hold_frame = false;
-    if (!rogue && move_is(monster, "soldier_move_attack6"))
-      move = "soldier_move_trip";
+    if (!rogue && move_is(monster, Q2M_MOVE_soldier_move_attack6))
+      move = Q2M_MOVE_soldier_move_trip;
     else if (!rogue)
       move = monster->cocked || q2_random_bounded(context->game, 2) == 0
-                 ? "soldier_move_duck" : "soldier_move_attack3";
+                 ? Q2M_MOVE_soldier_move_duck : Q2M_MOVE_soldier_move_attack3;
     else
-      move = "soldier_move_duck";
+      move = Q2M_MOVE_soldier_move_duck;
   } else if (species == Q2M_BERSERK) {
     if (rogue || context->body.ground.registry == 0 ||
-        move_is(monster, "berserk_move_jump") ||
-        move_is(monster, "berserk_move_jump2") ||
+        move_is(monster, Q2M_MOVE_berserk_move_jump) ||
+        move_is(monster, Q2M_MOVE_berserk_move_jump2) ||
         q2m_random(context->game) >= 0.05f)
       return true;
-    move = "berserk_move_duck2";
+    move = Q2M_MOVE_berserk_move_duck2;
   } else if (species == Q2M_BRAIN) {
-    move = "brain_move_duck";
+    move = Q2M_MOVE_brain_move_duck;
   } else if (species == Q2M_CHICK || species == Q2M_CHICK_HEAT) {
-    if (!rogue && (move_is(monster, "chick_move_start_attack1") ||
-                   move_is(monster, "chick_move_attack1")))
+    if (!rogue && (move_is(monster, Q2M_MOVE_chick_move_start_attack1) ||
+                   move_is(monster, Q2M_MOVE_chick_move_attack1)))
       return set_duck_bounds(context, false, error);
-    move = "chick_move_duck";
+    move = Q2M_MOVE_chick_move_duck;
   } else if (species == Q2M_GUNNER) {
-    if (move_is(monster, "gunner_move_attack_chain") ||
-        move_is(monster, "gunner_move_fire_chain") ||
-        move_is(monster, "gunner_move_attack_grenade"))
+    if (move_is(monster, Q2M_MOVE_gunner_move_attack_chain) ||
+        move_is(monster, Q2M_MOVE_gunner_move_fire_chain) ||
+        move_is(monster, Q2M_MOVE_gunner_move_attack_grenade))
       return set_duck_bounds(context, false, error);
-    move = "gunner_move_duck";
+    move = Q2M_MOVE_gunner_move_duck;
   } else if (species == Q2M_GUN_COMMANDER) {
-    if (move_is(monster, "guncmdr_move_jump") ||
-        move_is(monster, "guncmdr_move_jump2"))
+    if (move_is(monster, Q2M_MOVE_guncmdr_move_jump) ||
+        move_is(monster, Q2M_MOVE_guncmdr_move_jump2))
       return true;
-    if (strstr(monster->move->name, "_dodge") != NULL)
-      return q2m_dispatch(context, "monster_duck_up", error);
-    move = "guncmdr_move_duck_attack";
+    if ((monster->move->flags & Q2M_MOVE_DODGING) != 0)
+      return q2m_callback_run(context, Q2M_CALLBACK_monster_duck_up, error);
+    move = Q2M_MOVE_guncmdr_move_duck_attack;
   }
-  if (move == NULL || q2m_move_named(monster, move) == NULL)
+  if (move == Q2M_MOVE_NONE || q2m_move_find(monster, move) == NULL)
     return true;
 
   if (rogue && species != Q2M_GUN_COMMANDER) {
@@ -495,7 +494,7 @@ static bool dodge_duck(q2m_context *context, float eta_seconds, bool rogue,
                        : 0.1 * (3 - context->game->options.skill);
     monster->duck_ns =
         q2m_after(context->game->now_ns, fmax(0.0, eta_seconds) + extra);
-    monster->next_frame = q2m_move_named(monster, move)->first_frame;
+    monster->next_frame = q2m_move_find(monster, move)->first_frame;
   }
   if (!q2m_set_move(context, move, true, error))
     return false;
@@ -515,7 +514,7 @@ static bool dodge_sidestep(q2m_context *context, bool rogue, bool *accepted,
                            qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   const q2m_species species = monster->definition->species;
-  const char *move = NULL;
+  q2m_move_id move = Q2M_MOVE_NONE;
   bool immediate = true;
   *accepted = false;
 
@@ -526,8 +525,8 @@ static bool dodge_sidestep(q2m_context *context, bool rogue, bool *accepted,
         monster->dodging = false;
       return true;
     }
-    if (!move_is(monster, "medic_move_run") &&
-        !q2m_set_move(context, "medic_move_run", true, error))
+    if (!move_is(monster, Q2M_MOVE_medic_move_run) &&
+        !q2m_set_move(context, Q2M_MOVE_medic_move_run, true, error))
       return false;
     *accepted = q2m_alive(context);
     return true;
@@ -538,75 +537,75 @@ static bool dodge_sidestep(q2m_context *context, bool rogue, bool *accepted,
       context->body.ground.registry == 0)
     return true;
   if (species == Q2M_INFANTRY) {
-    if (!rogue && !move_is(monster, "infantry_move_run") &&
-        !move_is(monster, "infantry_move_attack4") && !monster->cocked &&
+    if (!rogue && !move_is(monster, Q2M_MOVE_infantry_move_run) &&
+        !move_is(monster, Q2M_MOVE_infantry_move_attack4) && !monster->cocked &&
         (monster->frame == 186 || monster->frame == 227 ||
          monster->frame == 255)) {
       monster->fire_ns = q2m_after(monster->fire_ns > context->game->now_ns
                                        ? monster->fire_ns
                                        : context->game->now_ns,
                                    0.3 + q2m_random(context->game) * 0.3);
-      move = "infantry_move_attack4";
+      move = Q2M_MOVE_infantry_move_attack4;
       immediate = false;
     } else {
-      move = "infantry_move_run";
+      move = Q2M_MOVE_infantry_move_run;
     }
   } else if (species_is_soldier(species) ||
              (!rogue && species_is_soldierh(species))) {
-    if (!rogue && (move_is(monster, "soldier_move_trip") ||
-                   move_is(monster, "soldier_move_attack5") ||
-                   move_is(monster, "soldier_move_pain4")))
+    if (!rogue && (move_is(monster, Q2M_MOVE_soldier_move_trip) ||
+                   move_is(monster, Q2M_MOVE_soldier_move_attack5) ||
+                   move_is(monster, Q2M_MOVE_soldier_move_pain4)))
       return true;
     if (!rogue && monster->count > 3 &&
-        (move_is(monster, "soldier_move_start_run") ||
-         move_is(monster, "soldier_move_run"))) {
+        (move_is(monster, Q2M_MOVE_soldier_move_start_run) ||
+         move_is(monster, Q2M_MOVE_soldier_move_run))) {
       *accepted = true;
       return true;
     }
     move =
         (rogue ? monster->skin : monster->count) <= 3
-            ? "soldier_move_attack6" : "soldier_move_start_run";
+            ? Q2M_MOVE_soldier_move_attack6 : Q2M_MOVE_soldier_move_start_run;
   } else if (species == Q2M_BERSERK) {
-    if (move_is(monster, "berserk_move_jump") ||
-        move_is(monster, "berserk_move_jump2") ||
-        move_is(monster, "berserk_move_pain2"))
+    if (move_is(monster, Q2M_MOVE_berserk_move_jump) ||
+        move_is(monster, Q2M_MOVE_berserk_move_jump2) ||
+        move_is(monster, Q2M_MOVE_berserk_move_pain2))
       return true;
-    move = "berserk_move_run1";
+    move = Q2M_MOVE_berserk_move_run1;
   } else if (species == Q2M_GUNNER) {
-    if (move_is(monster, "gunner_move_attack_chain") ||
-        move_is(monster, "gunner_move_fire_chain") ||
-        move_is(monster, "gunner_move_attack_grenade") ||
-        move_is(monster, "gunner_move_pain1"))
+    if (move_is(monster, Q2M_MOVE_gunner_move_attack_chain) ||
+        move_is(monster, Q2M_MOVE_gunner_move_fire_chain) ||
+        move_is(monster, Q2M_MOVE_gunner_move_attack_grenade) ||
+        move_is(monster, Q2M_MOVE_gunner_move_pain1))
       return true;
-    move = "gunner_move_run";
+    move = Q2M_MOVE_gunner_move_run;
   } else if (species == Q2M_CHICK || species == Q2M_CHICK_HEAT) {
-    if (move_is(monster, "chick_move_start_attack1") ||
-        move_is(monster, "chick_move_attack1") ||
-        move_is(monster, "chick_move_pain3"))
+    if (move_is(monster, Q2M_MOVE_chick_move_start_attack1) ||
+        move_is(monster, Q2M_MOVE_chick_move_attack1) ||
+        move_is(monster, Q2M_MOVE_chick_move_pain3))
       return true;
-    move = "chick_move_run";
+    move = Q2M_MOVE_chick_move_run;
   } else if (species == Q2M_GUN_COMMANDER) {
-    if (move_is(monster, "guncmdr_move_fire_chain") ||
-        move_is(monster, "guncmdr_move_fire_chain_run"))
-      move = monster->lefty ? "guncmdr_move_fire_chain_dodge_left"
-                            : "guncmdr_move_fire_chain_dodge_right";
-    else if (move_is(monster, "guncmdr_move_attack_grenade_back")) {
+    if (move_is(monster, Q2M_MOVE_guncmdr_move_fire_chain) ||
+        move_is(monster, Q2M_MOVE_guncmdr_move_fire_chain_run))
+      move = monster->lefty ? Q2M_MOVE_guncmdr_move_fire_chain_dodge_left
+                            : Q2M_MOVE_guncmdr_move_fire_chain_dodge_right;
+    else if (move_is(monster, Q2M_MOVE_guncmdr_move_attack_grenade_back)) {
       monster->count = monster->frame;
-      move = monster->lefty ? "guncmdr_move_attack_grenade_back_dodge_left"
-                            : "guncmdr_move_attack_grenade_back_dodge_right";
-    } else if (move_is(monster, "guncmdr_move_attack_mortar")) {
+      move = monster->lefty ? Q2M_MOVE_guncmdr_move_attack_grenade_back_dodge_left
+                            : Q2M_MOVE_guncmdr_move_attack_grenade_back_dodge_right;
+    } else if (move_is(monster, Q2M_MOVE_guncmdr_move_attack_mortar)) {
       monster->count = monster->frame;
-      move = "guncmdr_move_attack_mortar_dodge";
-    } else if (move_is(monster, "guncmdr_move_run")) {
-      move = "guncmdr_move_run";
+      move = Q2M_MOVE_guncmdr_move_attack_mortar_dodge;
+    } else if (move_is(monster, Q2M_MOVE_guncmdr_move_run)) {
+      move = Q2M_MOVE_guncmdr_move_run;
       immediate = true;
     } else {
       return true;
     }
-    if (strcmp(move, "guncmdr_move_run") != 0)
+    if ((move != Q2M_MOVE_guncmdr_move_run))
       immediate = false;
   }
-  if (move == NULL || q2m_move_named(monster, move) == NULL)
+  if (move == Q2M_MOVE_NONE || q2m_move_find(monster, move) == NULL)
     return true;
   if (!move_is(monster, move) || species == Q2M_GUN_COMMANDER) {
     if (!q2m_set_move(context, move, immediate, error)) return false;
@@ -630,44 +629,44 @@ static bool classic_dodge(q2m_context *context, qa_actor_id attacker,
 
   if (context->game->options.product == QA_Q2_XATRIX && species == Q2M_GEKK) {
     if (context->actor->physics.water_level > 0)
-      return q2m_set_move(context, "gekk_move_attack", true, error);
+      return q2m_set_move(context, Q2M_MOVE_gekk_move_attack, true, error);
     if (context->game->options.skill == 0)
       return q2m_set_move(context,
-                          q2m_random(context->game) > 0.5f ? "gekk_move_lduck"
-                                                           : "gekk_move_rduck",
+                          q2m_random(context->game) > 0.5f ? Q2M_MOVE_gekk_move_lduck
+                                                           : Q2M_MOVE_gekk_move_rduck,
                           true, error);
     monster->pause_ns = q2m_after(context->game->now_ns, eta_seconds + 0.3f);
     float choice = q2m_random(context->game);
     if (context->game->options.skill < 3 &&
         choice > (context->game->options.skill == 1 ? 0.33f : 0.66f))
       return q2m_set_move(context,
-                          q2m_random(context->game) > 0.5f ? "gekk_move_lduck"
-                                                           : "gekk_move_rduck",
+                          q2m_random(context->game) > 0.5f ? Q2M_MOVE_gekk_move_lduck
+                                                           : Q2M_MOVE_gekk_move_rduck,
                           true, error);
     return q2m_set_move(context,
-                        q2m_random(context->game) > 0.66f ? "gekk_move_attack1"
-                                                          : "gekk_move_attack2",
+                        q2m_random(context->game) > 0.66f ? Q2M_MOVE_gekk_move_attack1
+                                                          : Q2M_MOVE_gekk_move_attack2,
                         true, error);
   }
   if (species == Q2M_INFANTRY)
-    return q2m_set_move(context, "infantry_move_duck", true, error);
+    return q2m_set_move(context, Q2M_MOVE_infantry_move_duck, true, error);
   if (species == Q2M_BRAIN) {
     monster->pause_ns = q2m_after(context->game->now_ns, eta_seconds + 0.5f);
-    return q2m_set_move(context, "brain_move_duck", true, error);
+    return q2m_set_move(context, Q2M_MOVE_brain_move_duck, true, error);
   }
   if (species == Q2M_CHICK || species == Q2M_CHICK_HEAT)
-    return q2m_set_move(context, "chick_move_duck", true, error);
+    return q2m_set_move(context, Q2M_MOVE_chick_move_duck, true, error);
   if (species == Q2M_GUNNER)
-    return q2m_set_move(context, "gunner_move_duck", true, error);
+    return q2m_set_move(context, Q2M_MOVE_gunner_move_duck, true, error);
   if (species == Q2M_MEDIC)
-    return q2m_set_move(context, "medic_move_duck", true, error);
+    return q2m_set_move(context, Q2M_MOVE_medic_move_duck, true, error);
   if (!species_is_soldier(species) && !species_is_soldierh(species))
     return true;
 
-  const char *duck =
-      species_is_soldierh(species) ? "soldierh_move_duck" : "soldier_move_duck";
-  const char *attack = species_is_soldierh(species) ? "soldierh_move_attack3"
-                                                    : "soldier_move_attack3";
+  q2m_move_id duck =
+      species_is_soldierh(species) ? Q2M_MOVE_soldierh_move_duck : Q2M_MOVE_soldier_move_duck;
+  q2m_move_id attack = species_is_soldierh(species) ? Q2M_MOVE_soldierh_move_attack3
+                                                    : Q2M_MOVE_soldier_move_attack3;
   if (context->game->options.skill == 0)
     return q2m_set_move(context, duck, true, error);
   monster->pause_ns = q2m_after(context->game->now_ns, eta_seconds + 0.3f);
@@ -721,7 +720,7 @@ static bool source_dodge(q2m_context *context, qa_actor_id attacker,
         m->lefty = qa_vec_dot(right, qa_vec_sub(trace->end, context->body.origin)) >= 0;
       } else m->lefty = q2_random_bounded(g, 2) == 0;
       if (!rerelease) {
-        if (duck && m->ducked && !q2m_dispatch(context, "monster_duck_up", error)) return false;
+        if (duck && m->ducked && !q2m_callback_run(context, Q2M_CALLBACK_monster_duck_up, error)) return false;
         if (!q2m_alive(context)) return true;
         m->dodging = true;
         m->attack_state = Q2M_SLIDING;
@@ -730,7 +729,7 @@ static bool source_dodge(q2m_context *context, qa_actor_id attacker,
       if (!dodge_sidestep(context, !rerelease, &accepted, error)) return false;
       if (!q2m_alive(context)) return true;
       if (accepted && rerelease) {
-        if (duck && m->ducked && !q2m_dispatch(context, "monster_duck_up", error)) return false;
+        if (duck && m->ducked && !q2m_callback_run(context, Q2M_CALLBACK_monster_duck_up, error)) return false;
         if (!q2m_alive(context)) return true;
         m->dodging = true;
         m->attack_state = Q2M_SLIDING;
@@ -751,7 +750,7 @@ static bool source_dodge(q2m_context *context, qa_actor_id attacker,
     if (rerelease) {
       if (accepted) {
         if (m->duck_ns < g->now_ns) m->duck_ns = q2m_after(g->now_ns, eta);
-        if (!q2m_dispatch(context, "monster_duck_down", error)) return false;
+        if (!q2m_callback_run(context, Q2M_CALLBACK_monster_duck_down, error)) return false;
         if (!q2m_alive(context)) return true;
         if (g->options.skill < 2)
           m->duck_ns = q2_deadline(m->duck_ns,
@@ -814,7 +813,7 @@ bool q2_monster_dodge(qa_q2_game *game, qa_actor_id target,
         return true;
       monster->timestamp_ns = q2m_after(game->now_ns, 1.0 + q2m_random(game) * 4.0);
     }
-    return q2m_set_move(&context, "stalker_move_jump_straightup", true, error);
+    return q2m_set_move(&context, Q2M_MOVE_stalker_move_jump_straightup, true, error);
   }
 
   bool duck, sidestep;
@@ -950,8 +949,8 @@ static bool monster_action(qa_q2_game *game, qa_actor_id id,
       return q2m_stalker_blocked(&context, value, &(bool){false}, error);
     if (monster->definition->flags & Q2M_JUMPS) {
       monster->jump_ns = q2m_after(game->now_ns, 3.0);
-      const char *move =
-          value > 0.0f ? "infantry_move_jump2" : "infantry_move_jump";
+      q2m_move_id move =
+          value > 0.0f ? Q2M_MOVE_infantry_move_jump2 : Q2M_MOVE_infantry_move_jump;
       if (monster->definition->species != Q2M_INFANTRY)
         move = monster->definition->run_move;
       return q2m_set_move(&context, move, true, error);
@@ -1204,7 +1203,7 @@ bool qa_q2_monster_route_read(const qa_q2_game *game, qa_actor_id id, qa_q2_mons
   const struct qa_q2_monster *monster = actor->monster;
   *out = (qa_q2_monster_route_state){.goal = monster->move_target, .enemy = monster->enemy,
     .old_enemy = monster->old_enemy, .activator = monster->activator, .pause_until_ns = monster->pause_ns,
-    .walking = monster->move && strstr(monster->move->name, "walk")};
+    .walking = monster->move && (monster->move->flags & Q2M_MOVE_WALKING)};
   return true;
 }
 bool qa_q2_monster_route_advance(qa_q2_game *game, qa_actor_id id, qa_actor_id goal,
@@ -1274,7 +1273,7 @@ bool qa_q2_monster_touch_path_corner(qa_q2_game *game, qa_actor_id id,
   context.monster->move_target = step->next;
   if (step->pause_until_ns != 0) {
     context.monster->pause_ns = step->pause_until_ns;
-    if (context.monster->definition->stand_move != NULL &&
+    if (context.monster->definition->stand_move != Q2M_MOVE_NONE &&
         !q2m_set_move(&context, context.monster->definition->stand_move, false,
                       error))
       return false;
@@ -1315,10 +1314,10 @@ bool qa_q2_monster_touch_combat_point(qa_q2_game *game, qa_actor_id id,
     context.monster->move_target =
         step->next.registry != 0 ? step->next : step->corner;
   } else if (step->hold_if_walking && context.monster->move != NULL &&
-             strstr(context.monster->move->name, "walk") != NULL) {
+             (context.monster->move->flags & Q2M_MOVE_WALKING) != 0) {
     context.monster->pause_ns = q2m_after(game->now_ns, 100000000.0);
     context.monster->stand_ground = true;
-    if (context.monster->definition->stand_move != NULL &&
+    if (context.monster->definition->stand_move != Q2M_MOVE_NONE &&
         !q2m_set_move(&context, context.monster->definition->stand_move, false,
                       error))
       return false;
@@ -1620,7 +1619,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   }
   monster->definition = definition;
   monster->move_set = move_set;
-  monster->move = q2m_move_named(monster, definition->initial_move);
+  monster->move = q2m_move_find(monster, definition->initial_move);
   if (monster->move == NULL) {
     q2m_free_monster(monster);
     qa_error_set(error, QA_ERROR_FORMAT, 0,
@@ -1945,7 +1944,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   if (game->options.edition == QA_Q2_RERELEASE &&
       (species_is_soldier(definition->species) || species_is_soldierh(definition->species))) {
     monster->move = NULL;
-    if (!q2m_dispatch(&context, monster->spawnflags & 8u ? "soldier_blind" : "soldier_stand", error))
+    if (!q2m_callback_run(&context, monster->spawnflags & 8u ? Q2M_CALLBACK_soldier_blind : Q2M_CALLBACK_soldier_stand, error))
       return false;
     if (!q2m_alive(&context)) return true;
   }

@@ -391,7 +391,7 @@ bool q2m_widow_slots(q2m_context *context, qa_error *error) {
     return true;
 }
 
-bool q2m_widow_attack_move(q2m_context *context, bool second, float distance, const char **move,
+bool q2m_widow_attack_move(q2m_context *context, bool second, float distance, q2m_move_id *move,
                            qa_error *error) {
     struct qa_q2_monster *monster = context->monster;
     qa_q2_game *game = context->game;
@@ -401,7 +401,7 @@ bool q2m_widow_attack_move(q2m_context *context, bool second, float distance, co
         monster->move_target = (qa_actor_id){0};
         monster->target_anger = false;
     }
-    *move = NULL;
+    *move = Q2M_MOVE_NONE;
     if (!q2_actor_live(game, monster->enemy))
         return true;
     qa_actor_id hazard;
@@ -413,8 +413,8 @@ bool q2m_widow_attack_move(q2m_context *context, bool second, float distance, co
     if (hazard.registry) {
         float chance = second ? .75f : .1f;
         *move = q2m_random(game) < chance || !ready
-                    ? (second ? "widow2_move_attack_pre_beam" : "widow_move_attack_pre_blaster")
-                    : (second ? "widow2_move_attack_disrupt" : "widow_move_attack_pre_rail");
+                    ? (second ? Q2M_MOVE_widow2_move_attack_pre_beam : Q2M_MOVE_widow_move_attack_pre_blaster)
+                    : (second ? Q2M_MOVE_widow2_move_attack_disrupt : Q2M_MOVE_widow_move_attack_pre_rail);
     } else {
         if (!q2m_widow_slots(context, error))
             return false;
@@ -422,49 +422,49 @@ bool q2m_widow_attack_move(q2m_context *context, bool second, float distance, co
             return true;
         bool slots = q2m_summon_has_slots(monster, 2);
         if ((monster->attack_state == Q2M_BLIND || blocked) && slots)
-            *move = second ? "widow2_move_spawn" : "widow_move_spawn";
+            *move = second ? Q2M_MOVE_widow2_move_spawn : Q2M_MOVE_widow_move_spawn;
         else if (second) {
             float luck = q2m_random(game);
             if (distance < 600)
-                *move = slots ? (luck <= .4f            ? "widow2_move_attack_pre_beam"
-                                 : luck <= .7f && ready ? "widow2_move_attack_disrupt"
-                                                        : "widow2_move_spawn")
-                              : (luck <= .5f || !ready ? "widow2_move_attack_pre_beam"
-                                                       : "widow2_move_attack_disrupt");
+                *move = slots ? (luck <= .4f            ? Q2M_MOVE_widow2_move_attack_pre_beam
+                                 : luck <= .7f && ready ? Q2M_MOVE_widow2_move_attack_disrupt
+                                                        : Q2M_MOVE_widow2_move_spawn)
+                              : (luck <= .5f || !ready ? Q2M_MOVE_widow2_move_attack_pre_beam
+                                                       : Q2M_MOVE_widow2_move_attack_disrupt);
             else
-                *move = slots ? (luck < .3f              ? "widow2_move_attack_pre_beam"
-                                 : luck < .65f || !ready ? "widow2_move_spawn"
-                                                         : "widow2_move_attack_disrupt")
-                              : (luck < .45f || !ready ? "widow2_move_attack_pre_beam"
-                                                       : "widow2_move_attack_disrupt");
+                *move = slots ? (luck < .3f              ? Q2M_MOVE_widow2_move_attack_pre_beam
+                                 : luck < .65f || !ready ? Q2M_MOVE_widow2_move_spawn
+                                                         : Q2M_MOVE_widow2_move_attack_disrupt)
+                              : (luck < .45f || !ready ? Q2M_MOVE_widow2_move_attack_pre_beam
+                                                       : Q2M_MOVE_widow2_move_attack_disrupt);
         } else if (distance > 300 && !anger && q2m_random(game) < .5f && !blocked) {
-            *move = "widow_move_run_attack";
+            *move = Q2M_MOVE_widow_move_run_attack;
         } else {
             bool rail_frame =
                 monster->frame == 23 || (monster->frame >= 11 && monster->frame <= 13);
             bool blaster_frame = monster->frame >= 19 && monster->frame <= 22;
             bool blaster_ready = q2m_after(monster->pause_ns, 2) <= game->now_ns;
             if (blaster_frame && slots)
-                *move = "widow_move_spawn";
+                *move = Q2M_MOVE_widow_move_spawn;
             else if (blaster_frame && blaster_ready)
-                *move = "widow_move_attack_pre_blaster";
+                *move = Q2M_MOVE_widow_move_attack_pre_blaster;
             else if (rail_frame && ready)
-                *move = "widow_move_attack_pre_rail";
+                *move = Q2M_MOVE_widow_move_attack_pre_rail;
             else if (!blaster_frame && !rail_frame) {
                 float luck = q2m_random(game);
                 if (slots)
-                    *move = luck <= .4f && blaster_ready ? "widow_move_attack_pre_blaster"
-                            : luck <= .7f && ready       ? "widow_move_attack_pre_rail"
-                                                         : "widow_move_spawn";
+                    *move = luck <= .4f && blaster_ready ? Q2M_MOVE_widow_move_attack_pre_blaster
+                            : luck <= .7f && ready       ? Q2M_MOVE_widow_move_attack_pre_rail
+                                                         : Q2M_MOVE_widow_move_spawn;
                 else
-                    *move = !ready ? "widow_move_attack_pre_blaster"
+                    *move = !ready ? Q2M_MOVE_widow_move_attack_pre_blaster
                             : luck <= .5f || q2m_after(game->now_ns, 2) >= monster->pause_ns
-                                ? "widow_move_attack_pre_rail"
-                                : "widow_move_attack_pre_blaster";
+                                ? Q2M_MOVE_widow_move_attack_pre_rail
+                                : Q2M_MOVE_widow_move_attack_pre_blaster;
             }
         }
     }
-    return !*move || strcmp(*move, "widow_move_attack_pre_rail") ||
+    return !*move || (*move != Q2M_MOVE_widow_move_attack_pre_rail) ||
            q2m_sound(context, "gladiator/railgun.wav", 1, 1, error);
 }
 
@@ -625,13 +625,7 @@ static bool medic_positions_pass(q2m_context *context, q2m_summon_state *state, 
     return true;
 }
 
-static float source_angle_mod(float angle) {
-    double scaled = trunc((double)angle * (65536.0 / 360.0));
-    double wrapped = fmod(scaled, 65536.0);
-    if (wrapped < 0)
-        wrapped += 65536.0;
-    return (float)(wrapped * (360.0 / 65536.0));
-}
+
 
 bool q2m_medic_determine_summons(q2m_context *context, q2m_summon_state *state, qa_error *error) {
     if (!choose_squad(context, state, error))
@@ -648,7 +642,7 @@ bool q2m_medic_determine_summons(q2m_context *context, q2m_summon_state *state, 
             return true;
         if (success) {
             context->monster->manual_steering = true;
-            context->monster->ideal_yaw = source_angle_mod(context->body.angles.y) + 180;
+            context->monster->ideal_yaw = qa_angle_mod(context->body.angles.y) + 180;
             if (context->monster->ideal_yaw > 360)
                 context->monster->ideal_yaw -= 360;
         }
@@ -660,7 +654,7 @@ bool q2m_medic_determine_summons(q2m_context *context, q2m_summon_state *state, 
 
 bool q2m_medic_grow_summons(q2m_context *context, q2m_summon_state *state, qa_error *error) {
     if (context->monster->manual_steering) {
-        if (fabsf(source_angle_mod(context->body.angles.y) - context->monster->ideal_yaw) > .1f) {
+        if (fabsf(qa_angle_mod(context->body.angles.y) - context->monster->ideal_yaw) > .1f) {
             context->monster->hold_frame = true;
             return true;
         }
@@ -679,30 +673,30 @@ bool q2m_medic_finish_summons(q2m_context *context, q2m_summon_state *state, qa_
     return medic_positions_pass(context, state, false, MEDIC_FINISH, &success, error);
 }
 
-bool q2m_summon_callback(q2m_context *context, const char *callback, bool *handled,
+bool q2m_summon_callback(q2m_context *context, q2m_callback_id callback, bool *handled,
                          qa_error *error) {
     *handled = true;
-    if (!strcmp(callback, "medic_start_spawn")) {
+    if (callback == Q2M_CALLBACK_medic_start_spawn) {
         if (!q2m_sound(context, "medic_commander/monsterspawn1.wav", 1, 1, error))
             return false;
         if (q2m_alive(context))
             context->monster->next_frame = 224;
         return true;
     }
-    if (!strcmp(callback, "widow_start_spawn")) {
+    if (callback == Q2M_CALLBACK_widow_start_spawn) {
         context->monster->manual_steering = true;
         return true;
     }
-    if (!strcmp(callback, "widow_ready_spawn") || !strcmp(callback, "widow_spawn_check") ||
-        !strcmp(callback, "widow2_ready_spawn") || !strcmp(callback, "widow2_spawn_check")) {
-        bool second = callback[5] == '2';
-        bool grow = !strcmp(callback, second ? "widow2_ready_spawn" : "widow_ready_spawn");
-        return q2m_dispatch(context, second ? "Widow2Beam" : "WidowBlaster", error) &&
+    if ((callback == Q2M_CALLBACK_widow_ready_spawn) || (callback == Q2M_CALLBACK_widow_spawn_check) ||
+        (callback == Q2M_CALLBACK_widow2_ready_spawn) || (callback == Q2M_CALLBACK_widow2_spawn_check)) {
+        bool second = (callback == Q2M_CALLBACK_widow2_ready_spawn || callback == Q2M_CALLBACK_widow2_spawn_check);
+        bool grow = !(callback != (second ? Q2M_CALLBACK_widow2_ready_spawn : Q2M_CALLBACK_widow_ready_spawn));
+        return q2m_callback_run(context, second ? Q2M_CALLBACK_Widow2Beam : Q2M_CALLBACK_WidowBlaster, error) &&
                (!q2m_alive(context) || q2m_widow_summon(context, second, grow, error));
     }
-    bool determine = !strcmp(callback, "medic_determine_spawn");
-    bool grow = !strcmp(callback, "medic_spawngrows");
-    bool finish = !strcmp(callback, "medic_finish_spawn");
+    bool determine = (callback == Q2M_CALLBACK_medic_determine_spawn);
+    bool grow = (callback == Q2M_CALLBACK_medic_spawngrows);
+    bool finish = (callback == Q2M_CALLBACK_medic_finish_spawn);
     if (!determine && !grow && !finish) {
         *handled = false;
         return true;

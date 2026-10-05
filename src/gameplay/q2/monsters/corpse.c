@@ -89,7 +89,7 @@ bool q2m_corpse_phase_valid(const qa_q2_game *game, q2m_species species,
     return false;
 }
 
-bool q2m_corpse_callback(q2m_context *c, const char *callback, qa_error *error) {
+bool q2m_corpse_callback(q2m_context *c, q2m_callback_id callback, qa_error *error) {
     if (!q2m_alive(c) || c->monster->corpse)
         return true;
     struct qa_q2_monster *m = c->monster;
@@ -124,7 +124,7 @@ bool q2m_corpse_callback(q2m_context *c, const char *callback, qa_error *error) 
         bounds.mins = qa_vec_scale(bounds.mins, m->entity_scale);
         bounds.maxs = qa_vec_scale(bounds.maxs, m->entity_scale);
     }
-    if (callback && !strcmp(callback, "soldier_dead2")) {
+    if (callback && (callback == Q2M_CALLBACK_soldier_dead2)) {
         qa_trace_query query = {.start = qa_vec_add(c->body.origin, qa_v3(0, 0, 1)),
                                 .pass_actor = c->actor->id,
                                 .shape = {.kind = QA_SHAPE_BOX,
@@ -183,7 +183,7 @@ bool q2m_corpse_callback(q2m_context *c, const char *callback, qa_error *error) 
         m->corpse_end_ns = q2m_after(c->game->now_ns, 15);
         schedule(c, Q2M_CORPSE_HOVER, .1);
     } else if (rerelease && dead_think_species(species) &&
-               (!callback || strcmp(callback, "soldier_dead2"))) {
+               (!callback || (callback != (Q2M_CALLBACK_soldier_dead2)))) {
         schedule(c, Q2M_CORPSE_DEAD_THINK, .1);
     } else if (!rerelease && (species == Q2M_INFANTRY || species == Q2M_TURRET_DRIVER ||
                               species == Q2M_MUTANT)) {
@@ -198,7 +198,7 @@ bool q2m_corpse_callback(q2m_context *c, const char *callback, qa_error *error) 
 }
 
 bool q2m_corpse(q2m_context *c, qa_error *error) {
-    return q2m_corpse_callback(c, NULL, error);
+    return q2m_corpse_callback(c, Q2M_CALLBACK_NONE, error);
 }
 
 bool q2m_corpse_tick(q2m_context *c, bool *handled, qa_error *error) {

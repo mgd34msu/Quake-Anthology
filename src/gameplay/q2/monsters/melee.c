@@ -2,7 +2,7 @@
 
 typedef enum melee_side { MELEE_CENTER, MELEE_LEFT, MELEE_RIGHT } melee_side;
 typedef struct melee_action {
-    const char *callback;
+    q2m_callback_id callback;
     melee_side side;
     float height, damage, random_damage, kick;
     const char *before, *connected, *missed;
@@ -10,36 +10,36 @@ typedef struct melee_action {
     float rerelease_miss_seconds;
 } melee_action;
 
-static const melee_action actions[] = {
-    {"berserk_attack_spike", MELEE_CENTER, -24, 15, 6, 400, NULL, NULL, NULL, 0, 0},
-    {"berserk_attack_club", MELEE_LEFT, -4, 5, 6, 400, NULL, NULL, NULL, 0, 0},
-    {"brain_hit_right", MELEE_RIGHT, 8, 15, 5, 40, NULL, "brain/melee3.wav", NULL, 1, 3},
-    {"brain_hit_left", MELEE_LEFT, 8, 15, 5, 40, NULL, "brain/melee3.wav", NULL, 1, 3},
-    {"ChickSlash", MELEE_LEFT, 10, 10, 6, 100, "chick/chkatck3.wav", NULL, NULL, 0, 0},
-    {"flipper_bite", MELEE_CENTER, 0, 5, 0, 0, NULL, NULL, NULL, 0, 0},
-    {"floater_wham", MELEE_CENTER, 0, 5, 6, -50, "floater/fltatck3.wav", NULL, NULL, 1, 3},
-    {"flyer_slash_left", MELEE_LEFT, 0, 5, 0, 0, NULL, "flyer/flyatck2.wav", "flyer/flyatck2.wav", 1, 1.5f},
-    {"flyer_slash_right", MELEE_RIGHT, 0, 5, 0, 0, NULL, "flyer/flyatck2.wav", "flyer/flyatck2.wav", 1, 1.5f},
-    {"GaldiatorMelee", MELEE_LEFT, -4, 20, 5, 300, NULL, "gladiator/melee2.wav", "gladiator/melee3.wav", 0, 1.5f},
-    {"GladiatorMelee", MELEE_LEFT, -4, 20, 5, 300, NULL, "gladiator/melee2.wav", "gladiator/melee3.wav", 0, 1.5f},
-    {"GladbMelee", MELEE_LEFT, -4, 20, 5, 300, NULL, "gladiator/melee2.wav", "gladiator/melee3.wav", 0, 0},
-    {"infantry_smack", MELEE_CENTER, 0, 5, 5, 50, NULL, "infantry/melee2.wav", NULL, 1, 1.5f},
-    {"mutant_hit_left", MELEE_LEFT, 8, 10, 5, 100, NULL, "mutant/mutatck2.wav", "mutant/mutatck1.wav", 1, 1.5f},
-    {"mutant_hit_right", MELEE_RIGHT, 8, 10, 5, 100, NULL, "mutant/mutatck3.wav", "mutant/mutatck1.wav", 1, 1.5f},
-    {"gekk_hit_left", MELEE_LEFT, 8, 15, 5, 100, NULL, "gek/gk_atck2.wav", "gek/gk_atck1.wav", 1, 0},
-    {"gekk_hit_right", MELEE_RIGHT, 8, 15, 5, 100, NULL, "gek/gk_atck3.wav", "gek/gk_atck1.wav", 1, 0},
-    {"gekk_bite", MELEE_CENTER, 0, 5, 0, 0, NULL, NULL, NULL, 0, 0},
-    {"stalker_swing_attack", MELEE_CENTER, 0, 5, 5, 50, NULL, NULL, NULL, 1, .8f},
-    {"arachnid_melee_hit", MELEE_CENTER, 0, 15, 0, 50, NULL, NULL, NULL, 0, 1},
-    {"guardian_kick", MELEE_CENTER, -80, 85, 0, 700, NULL, NULL, NULL, 0, 1},
+static const melee_action actions[Q2M_CALLBACK_COUNT] = {
+    [Q2M_CALLBACK_berserk_attack_spike]={Q2M_CALLBACK_berserk_attack_spike, MELEE_CENTER, -24, 15, 6, 400, NULL, NULL, NULL, 0, 0},
+    [Q2M_CALLBACK_berserk_attack_club]={Q2M_CALLBACK_berserk_attack_club, MELEE_LEFT, -4, 5, 6, 400, NULL, NULL, NULL, 0, 0},
+    [Q2M_CALLBACK_brain_hit_right]={Q2M_CALLBACK_brain_hit_right, MELEE_RIGHT, 8, 15, 5, 40, NULL, "brain/melee3.wav", NULL, 1, 3},
+    [Q2M_CALLBACK_brain_hit_left]={Q2M_CALLBACK_brain_hit_left, MELEE_LEFT, 8, 15, 5, 40, NULL, "brain/melee3.wav", NULL, 1, 3},
+    [Q2M_CALLBACK_ChickSlash]={Q2M_CALLBACK_ChickSlash, MELEE_LEFT, 10, 10, 6, 100, "chick/chkatck3.wav", NULL, NULL, 0, 0},
+    [Q2M_CALLBACK_flipper_bite]={Q2M_CALLBACK_flipper_bite, MELEE_CENTER, 0, 5, 0, 0, NULL, NULL, NULL, 0, 0},
+    [Q2M_CALLBACK_floater_wham]={Q2M_CALLBACK_floater_wham, MELEE_CENTER, 0, 5, 6, -50, "floater/fltatck3.wav", NULL, NULL, 1, 3},
+    [Q2M_CALLBACK_flyer_slash_left]={Q2M_CALLBACK_flyer_slash_left, MELEE_LEFT, 0, 5, 0, 0, NULL, "flyer/flyatck2.wav", "flyer/flyatck2.wav", 1, 1.5f},
+    [Q2M_CALLBACK_flyer_slash_right]={Q2M_CALLBACK_flyer_slash_right, MELEE_RIGHT, 0, 5, 0, 0, NULL, "flyer/flyatck2.wav", "flyer/flyatck2.wav", 1, 1.5f},
+    [Q2M_CALLBACK_GaldiatorMelee]={Q2M_CALLBACK_GaldiatorMelee, MELEE_LEFT, -4, 20, 5, 300, NULL, "gladiator/melee2.wav", "gladiator/melee3.wav", 0, 1.5f},
+    [Q2M_CALLBACK_GladiatorMelee]={Q2M_CALLBACK_GladiatorMelee, MELEE_LEFT, -4, 20, 5, 300, NULL, "gladiator/melee2.wav", "gladiator/melee3.wav", 0, 1.5f},
+    [Q2M_CALLBACK_GladbMelee]={Q2M_CALLBACK_GladbMelee, MELEE_LEFT, -4, 20, 5, 300, NULL, "gladiator/melee2.wav", "gladiator/melee3.wav", 0, 0},
+    [Q2M_CALLBACK_infantry_smack]={Q2M_CALLBACK_infantry_smack, MELEE_CENTER, 0, 5, 5, 50, NULL, "infantry/melee2.wav", NULL, 1, 1.5f},
+    [Q2M_CALLBACK_mutant_hit_left]={Q2M_CALLBACK_mutant_hit_left, MELEE_LEFT, 8, 10, 5, 100, NULL, "mutant/mutatck2.wav", "mutant/mutatck1.wav", 1, 1.5f},
+    [Q2M_CALLBACK_mutant_hit_right]={Q2M_CALLBACK_mutant_hit_right, MELEE_RIGHT, 8, 10, 5, 100, NULL, "mutant/mutatck3.wav", "mutant/mutatck1.wav", 1, 1.5f},
+    [Q2M_CALLBACK_gekk_hit_left]={Q2M_CALLBACK_gekk_hit_left, MELEE_LEFT, 8, 15, 5, 100, NULL, "gek/gk_atck2.wav", "gek/gk_atck1.wav", 1, 0},
+    [Q2M_CALLBACK_gekk_hit_right]={Q2M_CALLBACK_gekk_hit_right, MELEE_RIGHT, 8, 15, 5, 100, NULL, "gek/gk_atck3.wav", "gek/gk_atck1.wav", 1, 0},
+    [Q2M_CALLBACK_gekk_bite]={Q2M_CALLBACK_gekk_bite, MELEE_CENTER, 0, 5, 0, 0, NULL, NULL, NULL, 0, 0},
+    [Q2M_CALLBACK_stalker_swing_attack]={Q2M_CALLBACK_stalker_swing_attack, MELEE_CENTER, 0, 5, 5, 50, NULL, NULL, NULL, 1, .8f},
+    [Q2M_CALLBACK_arachnid_melee_hit]={Q2M_CALLBACK_arachnid_melee_hit, MELEE_CENTER, 0, 15, 0, 50, NULL, NULL, NULL, 0, 1},
+    [Q2M_CALLBACK_guardian_kick]={Q2M_CALLBACK_guardian_kick, MELEE_CENTER, -80, 85, 0, 700, NULL, NULL, NULL, 0, 1},
 };
 
-bool q2m_species_melee(q2m_context *context, const char *callback, bool *handled,
+bool q2m_species_melee(q2m_context *context, q2m_callback_id callback, bool *handled,
                        qa_error *error) {
     *handled = false;
     bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
     struct qa_q2_monster *monster = context->monster;
-    if (strcmp(callback, "guncmdr_kick") == 0) {
+    if (callback == Q2M_CALLBACK_guncmdr_kick) {
         *handled = true;
         qa_actor_id enemy = monster->enemy;
         bool hit;
@@ -64,7 +64,7 @@ bool q2m_species_melee(q2m_context *context, const char *callback, bool *handled
         }
         return true;
     }
-    if (strcmp(callback, "brain_tounge_attack") == 0) {
+    if (callback == Q2M_CALLBACK_brain_tounge_attack) {
         *handled = true;
         qa_actor_id enemy = monster->enemy;
         if (!q2_actor_live(context->game, enemy))
@@ -126,12 +126,12 @@ bool q2m_species_melee(q2m_context *context, const char *callback, bool *handled
         body.velocity = qa_vec_scale(forward, -1200);
         return qa_world_body_write(context->game->services.world, enemy, &body, error);
     }
-    if (!strcmp(callback, "sham_smash10") || !strcmp(callback, "ShamClaw")) {
+    if ((callback == Q2M_CALLBACK_sham_smash10) || (callback == Q2M_CALLBACK_ShamClaw)) {
         *handled = true;
-        bool smash = !strcmp(callback, "sham_smash10");
+        bool smash = (callback == Q2M_CALLBACK_sham_smash10);
         if (!q2_actor_live(context->game, monster->enemy))
             return true;
-        if (!q2m_run_ai(context, Q2M_AI_CHARGE, NULL, smash ? 0 : 10, error))
+        if (!q2m_run_ai(context, Q2M_AI_CHARGE, smash ? 0 : 10, error))
             return false;
         if (!q2m_alive(context))
             return true;
@@ -152,7 +152,7 @@ bool q2m_species_melee(q2m_context *context, const char *callback, bool *handled
         return !q2m_alive(context) || !hit ||
                q2m_sound(context, "shambler/smack.wav", 1, 1, error);
     }
-    if (!strcmp(callback, "brain_tentacle_attack")) {
+    if (callback == Q2M_CALLBACK_brain_tentacle_attack) {
         *handled = true;
         bool hit;
         if (!q2m_hit(context, qa_v3(80, 0, 8),
@@ -168,10 +168,8 @@ bool q2m_species_melee(q2m_context *context, const char *callback, bool *handled
             monster->melee_ns = q2m_after(context->game->now_ns, 3);
         return q2m_sound(context, "brain/brnatck3.wav", 1, 1, error);
     }
-    for (size_t i = 0; i < sizeof(actions) / sizeof(actions[0]); ++i) {
-        const melee_action *action = &actions[i];
-        if (strcmp(callback, action->callback))
-            continue;
+    const melee_action *action = actions + callback;
+    if (action->callback == callback) {
         *handled = true;
         if (action->before && !q2m_sound(context, action->before, 1, 1, error))
             return false;
@@ -179,26 +177,26 @@ bool q2m_species_melee(q2m_context *context, const char *callback, bool *handled
             return true;
         float damage = action->damage, random_damage = action->random_damage,
               kick = action->kick, miss_seconds = action->rerelease_miss_seconds;
-        if (rerelease && !strcmp(callback, "berserk_attack_spike")) {
+        if (rerelease && (callback == Q2M_CALLBACK_berserk_attack_spike)) {
             damage = 5;
             kick = 80;
             miss_seconds = 1.2f;
-        } else if (rerelease && !strcmp(callback, "berserk_attack_club")) {
+        } else if (rerelease && (callback == Q2M_CALLBACK_berserk_attack_club)) {
             damage = 15;
             miss_seconds = 2.5f;
         } else if (rerelease && monster->definition->species == Q2M_MUTANT) {
             damage = 5;
             random_damage = 10;
         }
-        if (rerelease && !strcmp(callback, "floater_wham"))
+        if (rerelease && (callback == Q2M_CALLBACK_floater_wham))
             damage += (float)q2_random_bounded(context->game, 6);
         else if (random_damage != 0)
             damage += floorf(q2m_random(context->game) * random_damage);
         float side = action->side == MELEE_LEFT ? context->body.bounds.mins.x
                    : action->side == MELEE_RIGHT ? context->body.bounds.maxs.x : 0;
         bool hit;
-        float reach = rerelease && (!strcmp(callback, "stalker_swing_attack") ||
-                                    !strcmp(callback, "guardian_kick")) ? 50 : 80;
+        float reach = rerelease && ((callback == Q2M_CALLBACK_stalker_swing_attack) ||
+                                    (callback == Q2M_CALLBACK_guardian_kick)) ? 50 : 80;
         if (!q2m_hit(context, qa_v3(reach, side, action->height), damage, kick, &hit, error))
             return false;
         if (!q2m_alive(context))
@@ -206,11 +204,12 @@ bool q2m_species_melee(q2m_context *context, const char *callback, bool *handled
         if (!hit && rerelease && miss_seconds != 0)
             monster->melee_ns = q2m_after(context->game->now_ns, miss_seconds);
         const char *sound = hit ? action->connected : action->missed;
-        if (hit && !strcmp(callback, "stalker_swing_attack"))
+        if (hit && (callback == Q2M_CALLBACK_stalker_swing_attack))
             sound = monster->frame < 60 ? "stalker/melee2.wav" : "stalker/melee1.wav";
         return !sound || q2m_sound(context, sound,
-                                  !strcmp(callback, "stalker_swing_attack") ? 1 : action->channel,
+                                  (callback == Q2M_CALLBACK_stalker_swing_attack) ? 1 : action->channel,
                                   1, error);
+
     }
     return true;
 }

@@ -264,7 +264,7 @@ bool q2m_widow_explode(q2m_context *context, qa_error *error) {
     context->monster->death_ns = 0;
     context->monster->dead = true;
     context->monster->next_frame_ns = q2m_after(game->now_ns, .1);
-    return q2m_set_move(context, "widow2_move_dead", false, error);
+    return q2m_set_move(context, Q2M_MOVE_widow2_move_dead, false, error);
   }
   point = qa_vec_add(count < 8 ? point : origin, offsets[count]);
   if ((count == 1 || count == 7) && !pieces(game, id, point, false, error)) return false;
@@ -287,12 +287,12 @@ bool q2m_widow_explode(q2m_context *context, qa_error *error) {
   return effect(game, id, point, name, 1, error);
 }
 
-bool q2m_widow_death_action(q2m_context *context, const char *name,
+bool q2m_widow_death_action(q2m_context *context, q2m_callback_id name,
                             bool *handled, qa_error *error) {
   *handled = true;
-  if (strcmp(name, "WidowExplode") == 0) return q2m_widow_explode(context, error);
-  if (strcmp(name, "spawn_out_start") == 0 || strcmp(name, "spawn_out_do") == 0) {
-    bool start = strcmp(name, "spawn_out_start") == 0;
+  if (name == Q2M_CALLBACK_WidowExplode) return q2m_widow_explode(context, error);
+  if ((name == Q2M_CALLBACK_spawn_out_start) || (name == Q2M_CALLBACK_spawn_out_do)) {
+    bool start = (name == Q2M_CALLBACK_spawn_out_start);
     if (start) context->monster->pause_ns = q2m_after(context->game->now_ns, 2);
     const qa_vec3 offsets[] = {{12.58f,-43.71f,68.88f},{3.43f,58.72f,68.41f}};
     for (unsigned i = 0; i < 2; ++i) {
@@ -309,8 +309,8 @@ bool q2m_widow_death_action(q2m_context *context, const char *name,
   static const qa_vec3 offsets[] = {{23.74f,-37.67f,76.96f},{-20.49f,36.92f,73.52f},
       {2.11f,.05f,92.20f},{-28.04f,-35.57f,-77.56f},{-20.11f,-1.11f,40.76f},
       {-20.11f,-1.11f,40.76f},{-20.11f,-1.11f,40.76f}};
-  if (strncmp(name, "WidowExplosion", 14) == 0 && name[14] >= '1' && name[14] <= '7' && !name[15]) {
-    qa_vec3 point = project(&context->body, offsets[name[14] - '1']);
+  if (name >= Q2M_CALLBACK_WidowExplosion1 && name <= Q2M_CALLBACK_WidowExplosion7) {
+    qa_vec3 point = project(&context->body, offsets[name - Q2M_CALLBACK_WidowExplosion1]);
     qa_actor_id id = context->actor->id;
     if (!effect(context->game, id, point, "q2:explosion1", 1, error) ||
         !gib(context->game, id, meat, 300, true, &point, false, false, false, error) ||
@@ -319,7 +319,7 @@ bool q2m_widow_death_action(q2m_context *context, const char *name,
       if (!gib(context->game, id, metal, 300, false, &point, false, false, false, error)) return false;
     return true;
   }
-  if (strcmp(name, "WidowExplosionLeg") == 0) {
+  if (name == Q2M_CALLBACK_WidowExplosionLeg) {
     const qa_vec3 leg_offsets[] = {{-31.89f,-47.86f,67.02f},{-44.9f,-82.14f,54.72f}};
     const char *const models[] = {"models/monsters/blackwidow2/gib2/tris.md2",
                                   "models/monsters/blackwidow2/gib1/tris.md2"};

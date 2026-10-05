@@ -60,7 +60,7 @@ static bool stop(qa_q2_game *game, q2_actor *tip, qa_error *error) {
 static bool retract(qa_q2_game *game, q2_actor *tip, qa_error *error) {
     q2m_context owner;
     if (owner_context(game, tip, &owner) && owner.monster->move &&
-        !strcmp(owner.monster->move->name, "parasite_move_fire_proboscis"))
+        (owner.monster->move->id == Q2M_MOVE_parasite_move_fire_proboscis))
         owner.monster->next_frame = DRAIN_PULL_ONE;
     if (tip->projectile.phase != Q2_PROBOSCIS_RETRACTING)
         tip->projectile.speed *= 2;
@@ -112,7 +112,7 @@ static bool hit(qa_q2_game *game, q2_actor *tip, qa_actor_id other, qa_vec3 poin
                  qa_vec3 normal, bool start_solid, qa_error *error) {
     q2m_context owner;
     if (!owner_context(game, tip, &owner) || !owner.monster->move ||
-        strcmp(owner.monster->move->name, "parasite_move_fire_proboscis"))
+        (owner.monster->move->id != Q2M_MOVE_parasite_move_fire_proboscis))
         return true;
     qa_actor_id id = tip->id, owner_id = owner.actor->id;
     qa_body_state body, target;
@@ -154,7 +154,7 @@ static bool hit(qa_q2_game *game, q2_actor *tip, qa_actor_id other, qa_vec3 poin
             if (!retract(game, tip, error))
                 return false;
         } else {
-            if (!q2m_set_move(&owner, "parasite_move_break", false, error))
+            if (!q2m_set_move(&owner, Q2M_MOVE_parasite_move_break, false, error))
                 return false;
             tip->projectile.phase = Q2_PROBOSCIS_ATTACHED;
             if (!stop(game, tip, error) || !q2m_refresh(&owner, error))
@@ -424,7 +424,7 @@ static bool fire(q2m_context *context, qa_error *error) {
 
 bool q2m_parasite_charge(q2m_context *context, float distance, qa_error *error) {
     bool breaking = context->monster->frame >= BREAK_FIRST && context->monster->frame <= BREAK_LAST;
-    if (!q2m_run_ai(context, breaking ? Q2M_AI_MOVE : Q2M_AI_CHARGE, NULL, distance, error))
+    if (!q2m_run_ai(context, breaking ? Q2M_AI_MOVE : Q2M_AI_CHARGE, distance, error))
         return false;
     if (!q2m_alive(context))
         return true;
@@ -433,7 +433,7 @@ bool q2m_parasite_charge(q2m_context *context, float distance, qa_error *error) 
     return !segment || draw(context->game, segment, NULL, error);
 }
 
-bool q2m_parasite_callback(q2m_context *context, const char *name, bool *handled, qa_error *error) {
+bool q2m_parasite_callback(q2m_context *context, q2m_callback_id name, bool *handled, qa_error *error) {
     *handled = false;
     if (context->game->options.edition != QA_Q2_RERELEASE ||
         context->monster->definition->species != Q2M_PARASITE)
@@ -441,40 +441,40 @@ bool q2m_parasite_callback(q2m_context *context, const char *name, bool *handled
     *handled = true;
     struct qa_q2_monster *monster = context->monster;
     q2_actor *tip = q2_actor_get(context->game, monster->proboscis, false, NULL);
-    if (!strcmp(name, "parasite_fire_proboscis"))
+    if (name == Q2M_CALLBACK_parasite_fire_proboscis)
         return fire(context, error);
-    if (!strcmp(name, "parasite_proboscis_wait")) {
+    if (name == Q2M_CALLBACK_parasite_proboscis_wait) {
         monster->next_frame = monster->frame == DRAIN_WAIT_ONE ? DRAIN_WAIT_TWO : DRAIN_WAIT_ONE;
-    } else if (!strcmp(name, "parasite_proboscis_pull_wait")) {
+    } else if (name == Q2M_CALLBACK_parasite_proboscis_pull_wait) {
         if (!tip || tip->projectile.phase == Q2_PROBOSCIS_RETURNED)
             monster->next_frame = DRAIN_FINISH;
         else {
             monster->next_frame = monster->frame == DRAIN_PULL_ONE ? DRAIN_PULL_TWO : DRAIN_PULL_ONE;
             return tip->projectile.phase == Q2_PROBOSCIS_RETRACTING || retract(context->game, tip, error);
         }
-    } else if (!strcmp(name, "parasite_break_retract")) {
+    } else if (name == Q2M_CALLBACK_parasite_break_retract) {
         return !tip || retract(context->game, tip, error);
-    } else if (!strcmp(name, "parasite_break_wait")) {
+    } else if (name == Q2M_CALLBACK_parasite_break_wait) {
         if (tip && tip->projectile.phase != Q2_PROBOSCIS_RETURNED)
             monster->next_frame = 18;
         else if (q2_random_bounded(context->game, 2)) {
             monster->next_frame = 30;
             return q2m_sound(context, "parasite/paratck4.wav", 1, 1, error);
         }
-    } else if (!strcmp(name, "parasite_run") || !strcmp(name, "parasite_start_run")) {
-        bool start = !strcmp(name, "parasite_start_run");
+    } else if ((name == Q2M_CALLBACK_parasite_run) || (name == Q2M_CALLBACK_parasite_start_run)) {
+        bool start = (name == Q2M_CALLBACK_parasite_start_run);
         if (!start && !q2m_parasite_interrupt(context, false, error))
             return false;
-        return !q2m_alive(context) || q2m_set_move(context, monster->stand_ground ? "parasite_move_stand"
-             : start ? "parasite_move_start_run" : "parasite_move_run", false, error);
-    } else if (!strcmp(name, "parasite_break_noise")) {
+        return !q2m_alive(context) || q2m_set_move(context, monster->stand_ground ? Q2M_MOVE_parasite_move_stand
+             : start ? Q2M_MOVE_parasite_move_start_run : Q2M_MOVE_parasite_move_run, false, error);
+    } else if (name == Q2M_CALLBACK_parasite_break_noise) {
         return q2m_sound(context, "parasite/parsrch1.wav", 2, 1, error);
-    } else if (!strcmp(name, "parasite_break_sound")) {
+    } else if (name == Q2M_CALLBACK_parasite_break_sound) {
         monster->pain_ns = q2m_after(context->game->now_ns, 3);
         return q2m_sound(context, q2m_random(context->game) < .5f ? "parasite/parpain1.wav"
                                                                : "parasite/parpain2.wav", 2, 1, error);
-    } else if (!strcmp(name, "parasite_tap") || !strcmp(name, "parasite_scratch")) {
-        const char *path = !strcmp(name, "parasite_tap") ? "parasite/paridle1.wav" : "parasite/paridle2.wav";
+    } else if ((name == Q2M_CALLBACK_parasite_tap) || (name == Q2M_CALLBACK_parasite_scratch)) {
+        const char *path = (name == Q2M_CALLBACK_parasite_tap) ? "parasite/paridle1.wav" : "parasite/paridle2.wav";
         qa_string_id resource;
         return qa_builtin_resource(&context->game->services, path, &resource, error) &&
             qa_builtin_emit(&context->game->services, &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,

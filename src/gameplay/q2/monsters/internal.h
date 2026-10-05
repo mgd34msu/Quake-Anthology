@@ -2,6 +2,7 @@
 #define QA_Q2_MONSTERS_INTERNAL_H
 
 #include "../internal.h"
+#include "identities.h"
 #include "qa/game_q2_monsters.h"
 #include "qa/game_q2_entities.h"
 #include "qa/game_q2_player.h"
@@ -143,7 +144,13 @@ typedef enum q2m_ai_kind {
   Q2M_AI_MOVE,
   Q2M_AI_SOLDIER_MOVE,
   Q2M_AI_TURN,
-  Q2M_AI_SOURCE
+  Q2M_AI_STAND2,
+  Q2M_AI_MOVE_TO_GOAL,
+  Q2M_AI_FACING,
+  Q2M_AI_MOVE2,
+  Q2M_AI_SLIDE_LEFT,
+  Q2M_AI_SLIDE_RIGHT,
+  Q2M_AI_PARASITE_CHARGE
 } q2m_ai_kind;
 
 typedef enum q2m_attack_state {
@@ -179,14 +186,35 @@ typedef enum q2m_controller_kind {
   Q2M_CONTROLLER_BOT_GOAL
 } q2m_controller_kind;
 
+typedef struct q2m_context q2m_context;
+typedef struct q2m_callback {
+  bool (*invoke)(q2m_context *, q2m_callback_id, qa_error *);
+  q2m_callback_id id;
+  const char *name;
+  uint16_t flags;
+} q2m_callback;
+extern const q2m_callback q2m_callbacks[Q2M_CALLBACK_COUNT];
+enum {
+  Q2M_CALLBACK_BASE_SOLDIER = 1u << 0,
+  Q2M_CALLBACK_HEAVY_SOLDIER = 1u << 1,
+  Q2M_CALLBACK_INFANTRY = 1u << 2,
+  Q2M_CALLBACK_ATTACK1 = 1u << 3,
+  Q2M_CALLBACK_ATTACK2 = 1u << 4,
+  Q2M_CALLBACK_REFIRE1 = 1u << 5,
+  Q2M_CALLBACK_DEAD = 1u << 6,
+  Q2M_CALLBACK_RUN = 1u << 7,
+  Q2M_CALLBACK_RUN_LOOP = 1u << 8,
+  Q2M_CALLBACK_STAND = 1u << 9,
+  Q2M_CALLBACK_WALK = 1u << 10,
+};
+
 typedef struct q2m_frame_action {
-  const char *callback;
+  const q2m_callback *callback;
   int next_frame;
 } q2m_frame_action;
 
 typedef struct q2m_frame {
   q2m_ai_kind ai;
-  const char *source_ai;
   float distance;
   int lerp_frame;
   uint32_t action_first;
@@ -194,9 +222,10 @@ typedef struct q2m_frame {
 } q2m_frame;
 
 typedef struct q2m_move {
-  const char *name;
+  q2m_move_id id;
+  uint8_t flags;
   int first_frame, last_frame;
-  const char *end;
+  const q2m_callback *end;
   float sidestep_scale;
   uint32_t frame_first;
 } q2m_move;
@@ -204,12 +233,15 @@ typedef struct q2m_move {
 typedef struct q2m_move_set {
   const char *key;
   const q2m_move *moves;
+  const uint16_t *move_index;
   size_t move_count;
   const q2m_frame *frames;
   size_t frame_count;
   const q2m_frame_action *actions;
   size_t action_count;
 } q2m_move_set;
+
+enum { Q2M_MOVE_WALKING = 1, Q2M_MOVE_DODGING = 2 };
 
 enum q2m_flags {
   Q2M_HAS_MELEE = 1u << 0,
@@ -239,10 +271,10 @@ typedef struct q2m_definition {
   uint32_t flags;
   q2m_attack_kind primary, secondary;
   float primary_damage, secondary_damage, projectile_speed;
-  const char *initial_move, *stand_move, *walk_move, *run_move;
-  const char *attack_move, *attack2_move, *melee_move;
-  const char *pain1_move, *pain2_move, *pain3_move;
-  const char *death1_move, *death2_move;
+  q2m_move_id initial_move, stand_move, walk_move, run_move;
+  q2m_move_id attack_move, attack2_move, melee_move;
+  q2m_move_id pain1_move, pain2_move, pain3_move;
+  q2m_move_id death1_move, death2_move;
   const char *sight_sound, *pain_sound, *death_sound, *idle_sound;
 } q2m_definition;
 
@@ -352,8 +384,10 @@ const q2m_definition *q2m_definition_for(const qa_q2_game *, const char *);
 const q2m_move_set *q2m_move_set_for(const qa_q2_game *,
                                      const q2m_definition *);
 const q2m_move_set *q2m_stalker_rerelease_moves(void);
+const q2m_move *q2m_move_find(const struct qa_q2_monster *, q2m_move_id);
 const q2m_move *q2m_move_named(const struct qa_q2_monster *, const char *);
-bool q2m_set_move(q2m_context *, const char *, bool immediate, qa_error *);
+const char *q2m_move_name(const q2m_move *);
+bool q2m_set_move(q2m_context *, q2m_move_id, bool immediate, qa_error *);
 bool q2m_refresh(q2m_context *, qa_error *);
 bool q2m_damageable(q2m_context *, bool enabled, qa_error *);
 bool q2m_write_body(q2m_context *, bool link, qa_error *);
@@ -385,7 +419,7 @@ bool q2m_find_target(q2m_context *, bool *found, qa_error *);
 bool q2m_found_target(q2m_context *, qa_actor_id, qa_error *);
 bool q2m_medic_acquire(q2m_context *, bool preserve_enemy, bool *, qa_error *);
 bool q2m_check_attack(q2m_context *, bool *selected, bool *started, qa_error *);
-bool q2m_run_ai(q2m_context *, q2m_ai_kind, const char *, float, qa_error *);
+bool q2m_run_ai(q2m_context *, q2m_ai_kind, float, qa_error *);
 bool q2m_move_to_goal(q2m_context *, float, qa_error *);
 bool q2m_change_yaw(q2m_context *, qa_error *);
 bool q2m_face_enemy(q2m_context *, qa_error *);
@@ -394,7 +428,7 @@ bool q2m_clear_shot(q2m_context *, qa_vec3, bool *, qa_error *);
 bool q2m_project_flash(const q2m_context *, int flash, qa_vec3 *,
                        qa_error *);
 qa_vec3 q2m_project_offset(const q2m_context *, qa_vec3);
-bool q2m_parasite_callback(q2m_context *, const char *, bool *, qa_error *);
+bool q2m_parasite_callback(q2m_context *, q2m_callback_id, bool *, qa_error *);
 bool q2m_parasite_interrupt(q2m_context *, bool death, qa_error *);
 bool q2m_parasite_charge(q2m_context *, float, qa_error *);
 bool q2m_muzzle_offset(const q2m_context *, int flash, qa_vec3 *, qa_error *);
@@ -413,11 +447,11 @@ bool q2m_widow_disrupt(q2m_context *, qa_error *);
 bool q2m_melee(q2m_context *, float range, float damage, float kick,
                qa_error *);
 bool q2m_hit(q2m_context *, qa_vec3 aim, float damage, float kick, bool *, qa_error *);
-bool q2m_species_melee(q2m_context *, const char *, bool *, qa_error *);
+bool q2m_species_melee(q2m_context *, q2m_callback_id, bool *, qa_error *);
 bool q2m_weapon_sound(q2m_context *, const char *path, qa_error *);
 bool q2m_jorg_sound_end(q2m_context *, qa_error *);
 bool q2m_soldier_sound_end(q2m_context *, qa_error *);
-bool q2m_stalker_callback(q2m_context *, const char *, bool *, qa_error *);
+bool q2m_stalker_callback(q2m_context *, q2m_callback_id, bool *, qa_error *);
 bool q2m_stalker_pain(q2m_context *, bool reacts, bool chainfist, qa_error *);
 bool q2m_stalker_blocked(q2m_context *, float distance, bool *accepted, qa_error *);
 bool q2m_blocked_tesla(q2m_context *, bool *accepted, qa_error *);
@@ -427,7 +461,8 @@ bool q2m_medic_blocked(q2m_context *, float distance, bool *accepted, qa_error *
 bool q2m_damage_enemy(q2m_context *, float range, int canonical_mod,
                       uint32_t flags, float damage, float kick, bool *hit,
                       qa_error *);
-bool q2m_dispatch(q2m_context *, const char *, qa_error *);
+bool q2m_callback_call(q2m_context *, const q2m_callback *, qa_error *);
+bool q2m_callback_run(q2m_context *, q2m_callback_id, qa_error *);
 bool q2m_pain(q2m_context *, qa_error *);
 bool q2m_die(q2m_context *, qa_error *);
 bool q2m_corpse(q2m_context *, qa_error *);
@@ -436,13 +471,13 @@ bool q2m_widow_powerups(q2m_context *, qa_error *);
 void q2m_widow_power_think(q2m_context *);
 void q2m_widow_clear_powerups(q2m_context *);
 bool q2m_corpse_phase_valid(const qa_q2_game *, q2m_species, q2m_corpse_phase);
-bool q2m_corpse_callback(q2m_context *, const char *, qa_error *);
+bool q2m_corpse_callback(q2m_context *, q2m_callback_id, qa_error *);
 bool q2m_corpse_tick(q2m_context *, bool *handled, qa_error *);
 bool q2m_hover_dying(q2m_context *, qa_error *);
 bool q2m_hover_explode(q2m_context *, qa_error *);
 bool q2m_start_boss_explosion(q2m_context *, qa_error *);
 bool q2m_boss_explosion_tick(q2m_context *, qa_error *);
-bool q2m_widow_death_action(q2m_context *, const char *, bool *, qa_error *);
+bool q2m_widow_death_action(q2m_context *, q2m_callback_id, bool *, qa_error *);
 bool q2m_widow_explode(q2m_context *, qa_error *);
 bool q2m_widow_death_gibs(q2m_context *, float, qa_error *);
 bool q2m_finish_boss_death(q2m_context *, qa_error *);

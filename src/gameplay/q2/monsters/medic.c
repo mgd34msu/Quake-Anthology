@@ -496,7 +496,7 @@ bool q2m_fixbot_repair(q2m_context *c, qa_error *error) {
     q2_actor *actor = native_actor(c->game, c->monster->enemy);
     if (!actor) {
         c->monster->medic = false;
-        return q2m_set_move(c, "fixbot_move_stand", false, error);
+        return q2m_set_move(c, Q2M_MOVE_fixbot_move_stand, false, error);
     }
     q2m_context target = {.game = c->game, .actor = actor, .monster = actor->monster};
     if (!q2m_refresh(&target, error))
@@ -505,7 +505,7 @@ bool q2m_fixbot_repair(q2m_context *c, qa_error *error) {
         return true;
     if (target.combat.health <= target.monster->gib_health) {
         c->monster->medic = false;
-        return q2m_set_move(c, "fixbot_move_stand", false, error);
+        return q2m_set_move(c, Q2M_MOVE_fixbot_move_stand, false, error);
     }
     if (!q2m_fixbot_laser_beam(c, error))
         return false;
@@ -529,7 +529,7 @@ bool q2m_fixbot_repair(q2m_context *c, qa_error *error) {
         if (!q2m_write_body(c, false, error))
             return false;
     }
-    return !q2m_alive(c) || q2m_set_move(c, "fixbot_move_stand", false, error);
+    return !q2m_alive(c) || q2m_set_move(c, Q2M_MOVE_fixbot_move_stand, false, error);
 }
 
 void q2m_fixbot_flight(q2m_context *c, bool heal, bool weld) {
@@ -550,10 +550,10 @@ bool q2m_fixbot_attack(q2m_context *c, qa_error *error) {
             return false;
         if (!q2m_alive(c) || !visible || q2m_distance(c, c->monster->enemy) > 128)
             return true;
-        return q2m_set_move(c, "fixbot_move_laserattack", false, error);
+        return q2m_set_move(c, Q2M_MOVE_fixbot_move_laserattack, false, error);
     }
     q2m_fixbot_flight(c, false, false);
-    return q2m_set_move(c, "fixbot_move_attack2", false, error);
+    return q2m_set_move(c, Q2M_MOVE_fixbot_move_attack2, false, error);
 }
 
 static bool cable(q2m_context *c, qa_error *error) {
@@ -753,16 +753,16 @@ static bool target_distance(q2m_context *c, float *out, qa_error *error) {
     return true;
 }
 
-bool q2m_medic_attack_move(q2m_context *c, float distance, const char **move,
+bool q2m_medic_attack_move(q2m_context *c, float distance, q2m_move_id *move,
                           qa_error *error) {
     struct qa_q2_monster *m = c->monster;
     if (!rogue(c)) {
-        *move = m->medic ? "medic_move_attackCable" : "medic_move_attackBlaster";
+        *move = m->medic ? Q2M_MOVE_medic_move_attackCable : Q2M_MOVE_medic_move_attackBlaster;
         return true;
     }
     finish_dodge(c);
     if (m->source_blocked) {
-        if (!q2m_set_move(c, "medic_move_callReinforcements", rerelease(c), error))
+        if (!q2m_set_move(c, Q2M_MOVE_medic_move_callReinforcements, rerelease(c), error))
             return false;
         if (!q2m_alive(c))
             return true;
@@ -772,13 +772,13 @@ bool q2m_medic_attack_move(q2m_context *c, float distance, const char **move,
     bool commander = c->combat.mass > 400;
     bool slots = rerelease(c) ? m->monster_slots > m->monster_used : m->monster_slots > 2;
     if (m->medic)
-        *move = commander && roll > .8 && slots ? "medic_move_callReinforcements"
-                                                 : "medic_move_attackCable";
+        *move = commander && roll > .8 && slots ? Q2M_MOVE_medic_move_callReinforcements
+                                                 : Q2M_MOVE_medic_move_attackCable;
     else
         *move = m->attack_state == Q2M_BLIND ||
                     (commander && roll > .2 &&
                      (rerelease(c) ? distance > 20 : distance >= 80) && slots)
-                    ? "medic_move_callReinforcements" : "medic_move_attackBlaster";
+                    ? Q2M_MOVE_medic_move_callReinforcements : Q2M_MOVE_medic_move_attackBlaster;
     return true;
 }
 
@@ -822,7 +822,7 @@ bool q2m_medic_check_attack(q2m_context *c, bool *handled, bool *selected, bool 
                 return true;
             }
         }
-        const char *move = NULL;
+        q2m_move_id move = Q2M_MOVE_NONE;
         if (!q2m_medic_attack_move(c, distance, &move, error))
             return false;
         if (!q2m_alive(c))
@@ -882,17 +882,17 @@ bool q2m_medic_check_attack(q2m_context *c, bool *handled, bool *selected, bool 
     return true;
 }
 
-bool q2m_medic_callback(q2m_context *c, const char *name, bool *handled,
+bool q2m_medic_callback(q2m_context *c, q2m_callback_id name, bool *handled,
                        qa_error *error) {
     *handled = false;
     if (!medic_species(c->monster))
         return true;
     *handled = true;
-    if (!strcmp(name, "medic_cable_attack"))
+    if (name == Q2M_CALLBACK_medic_cable_attack)
         return cable(c, error);
-    if (!strcmp(name, "medic_hook_launch"))
+    if (name == Q2M_CALLBACK_medic_hook_launch)
         return sound(c, "medic/medatck2.wav", "medic_commander/medatck2c.wav", 1, 1, error);
-    if (!strcmp(name, "medic_hook_retract")) {
+    if (name == Q2M_CALLBACK_medic_hook_retract) {
         bool ok = q2m_sound(c, "medic/medatck5.wav", 1, 1, error);
         if (!ok || !q2m_alive(c))
             return ok;
@@ -915,24 +915,24 @@ bool q2m_medic_callback(q2m_context *c, const char *name, bool *handled,
         c->monster->old_enemy = (qa_actor_id){0};
         return idle_without_enemy(c, error);
     }
-    if (!strcmp(name, "medic_continue")) {
+    if (name == Q2M_CALLBACK_medic_continue) {
         bool visible;
         if (!q2m_visible(c, c->monster->enemy, &visible, error))
             return false;
         return !q2m_alive(c) || !visible ||
                (rerelease(c) ? q2_rerelease_float(c->game, 0, 1) : q2m_random(c->game)) > .95 ||
-               q2m_set_move(c, "medic_move_attackHyperBlaster", false, error);
+               q2m_set_move(c, Q2M_MOVE_medic_move_attackHyperBlaster, false, error);
     }
-  if (!strcmp(name, "medic_quick_attack") && rerelease(c)) {
+  if ((name == Q2M_CALLBACK_medic_quick_attack) && rerelease(c)) {
         if (q2_rerelease_float(c->game, 0, 1) >= .5f)
             return true;
-        if (!q2m_set_move(c, "medic_move_attackHyperBlaster", false, error))
+        if (!q2m_set_move(c, Q2M_MOVE_medic_move_attackHyperBlaster, false, error))
             return false;
         if (q2m_alive(c))
             c->monster->next_frame = 192;
     return true;
   }
-  if (!strcmp(name, "medic_shrink") && rerelease(c)) {
+  if ((name == Q2M_CALLBACK_medic_shrink) && rerelease(c)) {
     if (!qa_world_body_read(c->game->services.world, c->actor->id, &c->body, error))
       return false;
     if (!q2m_alive(c))
@@ -952,8 +952,8 @@ bool q2m_medic_callback(q2m_context *c, const char *name, bool *handled,
       return false;
     return !q2m_alive(c) || q2m_link(c, error);
   }
-    bool run = !strcmp(name, "medic_run"), search = !strcmp(name, "medic_search");
-    if (run || search || !strcmp(name, "medic_idle")) {
+    bool run = (name == Q2M_CALLBACK_medic_run), search = (name == Q2M_CALLBACK_medic_search);
+    if (run || search || (name == Q2M_CALLBACK_medic_idle)) {
         if (run && (rogue(c) || c->game->options.product != QA_Q2_XATRIX))
             finish_dodge(c);
         if (!run && !sound(c, search ? "medic/medsrch1.wav" : "medic/idle.wav",
@@ -968,7 +968,7 @@ bool q2m_medic_callback(q2m_context *c, const char *name, bool *handled,
         if (acquire && !q2m_medic_acquire(c, run || search || rogue(c), &acquired, error))
             return false;
         return !q2m_alive(c) || !run || acquired ||
-               q2m_set_move(c, c->monster->stand_ground ? "medic_move_stand" : "medic_move_run",
+               q2m_set_move(c, c->monster->stand_ground ? Q2M_MOVE_medic_move_stand : Q2M_MOVE_medic_move_run,
                              rerelease(c), error);
     }
     *handled = false;

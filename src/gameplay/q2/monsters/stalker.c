@@ -90,7 +90,7 @@ static bool transition(q2m_context *c, bool *allowed, qa_error *error) {
 }
 static bool reactivate(q2m_context *c, qa_error *error) {
     c->monster->stand_ground = false;
-    return q2m_set_move(c, "stalker_move_false_death_end", true, error);
+    return q2m_set_move(c, Q2M_MOVE_stalker_move_false_death_end, true, error);
 }
 bool q2m_stalker_pain(q2m_context *c, bool reacts, bool chainfist, qa_error *error) {
     struct qa_q2_monster *m = c->monster;
@@ -101,10 +101,10 @@ bool q2m_stalker_pain(q2m_context *c, bool reacts, bool chainfist, qa_error *err
         m->skin = 1;
     if ((!rerelease && c->game->options.skill == 3) || !c->body.ground.registry)
         return true;
-    if (!strcmp(m->move->name, "stalker_move_false_death_end") ||
-        !strcmp(m->move->name, "stalker_move_false_death_start"))
+    if ((m->move->id == Q2M_MOVE_stalker_move_false_death_end) ||
+        (m->move->id == Q2M_MOVE_stalker_move_false_death_start))
         return true;
-    if (!strcmp(m->move->name, "stalker_move_false_death"))
+    if ((m->move->id == Q2M_MOVE_stalker_move_false_death))
         return reactivate(c, error);
     float threshold = rerelease ? m->max_health * .25f : truncf(m->max_health * .25f);
     if (c->combat.health > 0 && c->combat.health < threshold &&
@@ -118,7 +118,7 @@ bool q2m_stalker_pain(q2m_context *c, bool reacts, bool chainfist, qa_error *err
             c->body.angles.z = 0;
             c->actor->physics.gravity_direction = qa_v3(0, 0, -1);
             m->stand_ground = true;
-            if (!q2m_set_move(c, "stalker_move_false_death_start", true, error))
+            if (!q2m_set_move(c, Q2M_MOVE_stalker_move_false_death_start, true, error))
                 return false;
             return !q2m_alive(c) || q2m_write_body(c, true, error);
         }
@@ -131,9 +131,9 @@ bool q2m_stalker_pain(q2m_context *c, bool reacts, bool chainfist, qa_error *err
     if (!q2m_alive(c) || (m->pending_damage <= 10 && (!rerelease || !chainfist)))
         return true;
     if (q2m_random(c->game) < .5f) {
-        if (!q2m_set_move(c, "stalker_move_jump_straightup", true, error))
+        if (!q2m_set_move(c, Q2M_MOVE_stalker_move_jump_straightup, true, error))
             return false;
-    } else if ((!rerelease || reacts) && !q2m_set_move(c, "stalker_move_pain", true, error))
+    } else if ((!rerelease || reacts) && !q2m_set_move(c, Q2M_MOVE_stalker_move_pain, true, error))
         return false;
     return rerelease || !q2m_alive(c) || q2m_sound(c, "stalker/pain.wav", 1, 1, error);
 }
@@ -457,7 +457,7 @@ static bool blocked_jump(q2m_context *c, const qa_body_state *enemy, bool *accep
     }
     *accepted = true;
     bool up = rerelease ? position > 0 : enemy->origin.z >= c->body.origin.z;
-    return q2m_set_move(c, up ? "stalker_move_jump_up" : "stalker_move_jump_down", true, error);
+    return q2m_set_move(c, up ? Q2M_MOVE_stalker_move_jump_up : Q2M_MOVE_stalker_move_jump_down, true, error);
 }
 bool q2m_stalker_blocked(q2m_context *c, float distance, bool *accepted, qa_error *error) {
     *accepted = false;
@@ -575,15 +575,15 @@ static bool shoot(q2m_context *c, qa_error *error) {
     spec.projectile_effects = 8;
     return q2m_fire(c, &spec, error);
 }
-bool q2m_stalker_callback(q2m_context *c, const char *name, bool *handled, qa_error *error) {
+bool q2m_stalker_callback(q2m_context *c, q2m_callback_id name, bool *handled, qa_error *error) {
     *handled = c->monster->definition->species == Q2M_STALKER;
     if (!*handled)
         return true;
-    if (!strcmp(name, "stalker_footstep"))
+    if (name == Q2M_CALLBACK_stalker_footstep)
         return !c->body.ground.registry ||
                q2m_emit(c, QA_BUILTIN_EFFECT, "q2:entity-event", 8, c->body.origin,
                           qa_v3(0, 0, 0), 0, error);
-    if (!strcmp(name, "stalker_heal")) {
+    if (name == Q2M_CALLBACK_stalker_heal) {
         int skill = c->game->options.skill;
         float health = c->combat.health + (skill == 2 ? 2 : skill == 3 ? 3 : 1);
         bool rerelease = c->game->options.edition == QA_Q2_RERELEASE;
@@ -597,17 +597,17 @@ bool q2m_stalker_callback(q2m_context *c, const char *name, bool *handled, qa_er
             return false;
         return !q2m_alive(c) || !full || reactivate(c, error);
     }
-    if (!strcmp(name, "stalker_shoot_attack"))
+    if (name == Q2M_CALLBACK_stalker_shoot_attack)
         return shoot(c, error);
-    if (!strcmp(name, "stalker_shoot_attack2")) {
+    if (name == Q2M_CALLBACK_stalker_shoot_attack2) {
         float chance = c->game->options.edition == QA_Q2_RERELEASE
                            ? .5f : .4f + .1f * (float)c->game->options.skill;
         return q2m_random(c->game) >= chance || shoot(c, error);
     }
-    if (!strcmp(name, "stalker_jump_straightup"))
+    if (name == Q2M_CALLBACK_stalker_jump_straightup)
         return jump_straight(c, error);
-    if (!strcmp(name, "stalker_jump_up") || !strcmp(name, "stalker_jump_down")) {
-        bool up = !strcmp(name, "stalker_jump_up");
+    if ((name == Q2M_CALLBACK_stalker_jump_up) || (name == Q2M_CALLBACK_stalker_jump_down)) {
+        bool up = (name == Q2M_CALLBACK_stalker_jump_up);
         qa_vec3 forward, vertical;
         qa_builtin_angle_vectors(c->body.angles, &forward, NULL, &vertical);
         if (c->game->options.edition == QA_Q2_CLASSIC) {
@@ -617,7 +617,7 @@ bool q2m_stalker_callback(q2m_context *c, const char *name, bool *handled, qa_er
             qa_vec_add(qa_vec_scale(forward, up ? 200 : 100), qa_vec_scale(vertical, up ? 450 : 300)));
         return q2m_write_body(c, true, error);
     }
-    if (!strcmp(name, "stalker_jump_wait_land")) {
+    if (name == Q2M_CALLBACK_stalker_jump_wait_land) {
         float chance = c->game->options.edition == QA_Q2_RERELEASE
                            ? .4f : .3f + .1f * (float)c->game->options.skill;
         if (q2m_random(c->game) < chance &&

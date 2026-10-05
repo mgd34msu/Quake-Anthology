@@ -215,7 +215,7 @@ static bool dead_at_spawn(q2m_context *context, qa_error *error) {
             const q2m_frame_action *action =
                 &monster->move_set->actions[entry->action_first + i];
             if (action->callback) {
-                if (!q2m_dispatch(context, action->callback, error))
+                if (!q2m_callback_call(context, action->callback, error))
                     return false;
             } else if (action->next_frame != INT_MIN) {
                 monster->next_frame = action->next_frame == INT_MAX ? frame + 1 : action->next_frame;
@@ -224,7 +224,7 @@ static bool dead_at_spawn(q2m_context *context, qa_error *error) {
                 return true;
         }
     }
-    if (move->end && !q2m_dispatch(context, move->end, error))
+    if (move->end && !q2m_callback_call(context, move->end, error))
         return false;
     if (!q2m_alive(context))
         return true;

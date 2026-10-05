@@ -278,11 +278,11 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
   }
   if (!copy_name(saved.definition, sizeof(saved.definition),
                  monster->definition->classname, error) ||
-      !copy_name(saved.move, sizeof(saved.move), monster->move->name, error))
+      !copy_name(saved.move, sizeof(saved.move), q2m_move_name(monster->move), error))
     return false;
   if (monster->next_move != NULL &&
       !copy_name(saved.next_move, sizeof(saved.next_move),
-                 monster->next_move->name, error))
+                 q2m_move_name(monster->next_move), error))
     return false;
   if (monster->summons) {
     const q2m_summon_state *summons = monster->summons;

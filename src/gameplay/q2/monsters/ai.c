@@ -802,18 +802,18 @@ bool q2m_hunt_target(q2m_context *context, bool animate_state, qa_error *error) 
   context->monster->goal = context->actor->physics.goal = id;
   if (animate_state) {
     bool actor_callback = context->monster->definition->species == Q2M_ACTOR;
-    if (actor_callback && !q2m_dispatch(context,
-        context->monster->stand_ground ? "actor_stand" : "actor_run", error))
+    if (actor_callback && !q2m_callback_run(context,
+        context->monster->stand_ground ? Q2M_CALLBACK_actor_stand : Q2M_CALLBACK_actor_run, error))
       return false;
     bool medic_callback = context->game->options.edition == QA_Q2_RERELEASE &&
         (context->monster->definition->species == Q2M_MEDIC ||
          context->monster->definition->species == Q2M_MEDIC_COMMANDER);
-    if (medic_callback && !q2m_dispatch(context,
-        context->monster->stand_ground ? "medic_stand" : "medic_run", error))
+    if (medic_callback && !q2m_callback_run(context,
+        context->monster->stand_ground ? Q2M_CALLBACK_medic_stand : Q2M_CALLBACK_medic_run, error))
       return false;
     bool handled = false;
     if (!actor_callback && !medic_callback && !context->monster->stand_ground &&
-        !q2m_medic_callback(context, "medic_run", &handled, error))
+        !q2m_medic_callback(context, Q2M_CALLBACK_medic_run, &handled, error))
       return false;
     if (!q2m_alive(context))
       return true;
@@ -1781,7 +1781,7 @@ static bool widow_check_attack(q2m_context *context, bool *selected, qa_error *e
   if (!q2m_alive(context) || !q2_actor_live(game, enemy))
     return true;
   bool second = monster->definition->species == Q2M_WIDOW2;
-  if (!second && strcmp(monster->move->name, "widow_move_run") == 0 &&
+  if (!second && (monster->move->id == Q2M_MOVE_widow_move_run) &&
       ((monster->frame >= 14 && monster->frame <= 18) || monster->frame == 22))
     return true;
   float distance = q2m_body_distance(game->options.edition, &context->body, &target);
@@ -2034,13 +2034,13 @@ bool q2m_check_attack(q2m_context *context, bool *selected, bool *started, qa_er
   return true;
 }
 
-static bool select_species_attack(q2m_context *context, const char **move,
+static bool select_species_attack(q2m_context *context, q2m_move_id *move,
                                   qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   q2m_species species = monster->definition->species;
   float distance = q2m_distance(context, monster->enemy);
   if (!q2m_alive(context)) {
-    *move = NULL;
+    *move = Q2M_MOVE_NONE;
     return true;
   }
   bool melee = monster->attack_state == Q2M_MELEE;
@@ -2048,7 +2048,7 @@ static bool select_species_attack(q2m_context *context, const char **move,
   float random;
 
   *move = melee ? monster->definition->melee_move
-          : monster->definition->attack_move != NULL
+          : monster->definition->attack_move != Q2M_MOVE_NONE
               ? monster->definition->attack_move
               : monster->definition->attack2_move;
   switch (species) {
@@ -2060,7 +2060,7 @@ static bool select_species_attack(q2m_context *context, const char **move,
         return false;
       if (!q2m_alive(context))
         return true;
-      *move = clear ? "parasite_move_fire_proboscis" : NULL;
+      *move = clear ? Q2M_MOVE_parasite_move_fire_proboscis : Q2M_MOVE_NONE;
       if (clear && !q2m_parasite_interrupt(context, false, error))
         return false;
     }
@@ -2070,13 +2070,13 @@ static bool select_species_attack(q2m_context *context, const char **move,
     if (melee ||
         distance <
             (context->game->options.edition == QA_Q2_CLASSIC ? 80.0f : 20.0f)) {
-      *move = "infantry_move_attack2";
+      *move = Q2M_MOVE_infantry_move_attack2;
     } else if (context->game->options.edition == QA_Q2_RERELEASE &&
                !monster->cocked) {
-      *move = q2m_random(context->game) <= 0.1f ? "infantry_move_attack5"
-                                                : "infantry_move_attack3";
+      *move = q2m_random(context->game) <= 0.1f ? Q2M_MOVE_infantry_move_attack5
+                                                : Q2M_MOVE_infantry_move_attack3;
     } else {
-      *move = "infantry_move_attack1";
+      *move = Q2M_MOVE_infantry_move_attack1;
     }
     break;
   case Q2M_SOLDIER_LIGHT:
@@ -2084,59 +2084,59 @@ static bool select_species_attack(q2m_context *context, const char **move,
   case Q2M_SOLDIER_SS:
     if (blind) {
       monster->manual_steering = true;
-      *move = "soldier_move_attack1";
+      *move = Q2M_MOVE_soldier_move_attack1;
       monster->attack_ns =
           q2m_after(context->game->now_ns, 1.5 + q2m_random(context->game));
     } else if (species == Q2M_SOLDIER_SS) {
-      *move = "soldier_move_attack4";
+      *move = Q2M_MOVE_soldier_move_attack4;
     } else if (context->game->options.edition == QA_Q2_RERELEASE &&
                !monster->stand_ground && distance >= 220.0f &&
                q2m_random(context->game) < 0.25f) {
-      *move = "soldier_move_attack6";
+      *move = Q2M_MOVE_soldier_move_attack6;
     } else {
-      *move = q2m_random(context->game) < 0.5f ? "soldier_move_attack1"
-                                               : "soldier_move_attack2";
+      *move = q2m_random(context->game) < 0.5f ? Q2M_MOVE_soldier_move_attack1
+                                               : Q2M_MOVE_soldier_move_attack2;
     }
     break;
   case Q2M_SOLDIER_RIPPER:
   case Q2M_SOLDIER_HYPER:
   case Q2M_SOLDIER_LASER:
-    *move = blind                              ? "soldierh_move_attack1"
-            : q2m_random(context->game) < 0.5f ? "soldierh_move_attack1"
-                                               : "soldierh_move_attack2";
+    *move = blind                              ? Q2M_MOVE_soldierh_move_attack1
+            : q2m_random(context->game) < 0.5f ? Q2M_MOVE_soldierh_move_attack1
+                                               : Q2M_MOVE_soldierh_move_attack2;
     monster->manual_steering = blind;
     break;
   case Q2M_BERSERK:
     if (melee)
-      *move = q2m_random(context->game) < 0.5f ? "berserk_move_attack_spike"
-                                               : "berserk_move_attack_club";
+      *move = q2m_random(context->game) < 0.5f ? Q2M_MOVE_berserk_move_attack_spike
+                                               : Q2M_MOVE_berserk_move_attack_club;
     break;
   case Q2M_BRAIN:
     if (melee)
-      *move = q2m_random(context->game) < 0.5f ? "brain_move_attack1"
-                                               : "brain_move_attack2";
+      *move = q2m_random(context->game) < 0.5f ? Q2M_MOVE_brain_move_attack1
+                                               : Q2M_MOVE_brain_move_attack2;
     break;
   case Q2M_FLOATER:
     if (melee)
-      *move = q2m_random(context->game) < 0.5f ? "floater_move_attack3"
-                                               : "floater_move_attack2";
+      *move = q2m_random(context->game) < 0.5f ? Q2M_MOVE_floater_move_attack3
+                                               : Q2M_MOVE_floater_move_attack2;
     else if (context->game->options.edition == QA_Q2_RERELEASE &&
              q2m_random(context->game) > 0.5f &&
-             q2m_move_named(monster, "floater_move_attack1a") != NULL) {
+             q2m_move_find(monster, Q2M_MOVE_floater_move_attack1a) != NULL) {
       monster->attack_state = Q2M_SLIDING;
-      *move = "floater_move_attack1a";
+      *move = Q2M_MOVE_floater_move_attack1a;
     }
     break;
   case Q2M_FLYER:
     if (melee)
-      *move = "flyer_move_start_melee";
+      *move = Q2M_MOVE_flyer_move_start_melee;
     else
-      *move = "flyer_move_attack2";
+      *move = Q2M_MOVE_flyer_move_attack2;
     break;
   case Q2M_GLADIATOR:
   case Q2M_GLADB:
     if (!melee && distance <= 112.0f) {
-      *move = NULL;
+      *move = Q2M_MOVE_NONE;
       break;
     }
     if (!melee) {
@@ -2166,24 +2166,24 @@ static bool select_species_attack(q2m_context *context, const char **move,
     break;
   case Q2M_GUNNER:
     *move = distance < 80.0f || q2m_random(context->game) > 0.5f
-                ? "gunner_move_attack_chain"
-                : "gunner_move_attack_grenade";
+                ? Q2M_MOVE_gunner_move_attack_chain
+                : Q2M_MOVE_gunner_move_attack_grenade;
     break;
   case Q2M_GUN_COMMANDER:
     if (melee) {
-      *move = "guncmdr_move_attack_kick";
+      *move = Q2M_MOVE_guncmdr_move_attack_kick;
     } else if (blind || distance > 400.0f) {
-      *move = "guncmdr_move_attack_mortar";
+      *move = Q2M_MOVE_guncmdr_move_attack_mortar;
     } else {
-      *move = "guncmdr_move_attack_chain";
+      *move = Q2M_MOVE_guncmdr_move_attack_chain;
     }
     break;
   case Q2M_HOVER:
   case Q2M_DAEDALUS:
     *move = monster->attack_state == Q2M_SLIDING &&
-                    q2m_move_named(monster, "hover_move_start_attack2") != NULL
-                ? "hover_move_start_attack2"
-                : "hover_move_start_attack";
+                    q2m_move_find(monster, Q2M_MOVE_hover_move_start_attack2) != NULL
+                ? Q2M_MOVE_hover_move_start_attack2
+                : Q2M_MOVE_hover_move_start_attack;
     break;
   case Q2M_JORG:
     if ((context->game->options.edition == QA_Q2_RERELEASE
@@ -2194,61 +2194,61 @@ static bool select_species_attack(q2m_context *context, const char **move,
         return false;
       if (!q2m_alive(context)) return true;
       if (!q2m_weapon_sound(context, "boss3/w_loop.wav", error)) return false;
-      *move = "jorg_move_start_attack1";
+      *move = Q2M_MOVE_jorg_move_start_attack1;
     } else {
       if (!q2m_sound(context, "boss3/bs3atck2.wav", 2, 1.0f, error))
         return false;
-      *move = "jorg_move_attack2";
+      *move = Q2M_MOVE_jorg_move_attack2;
     }
     break;
   case Q2M_MAKRON:
     random = q2m_random(context->game);
-    *move = random <= 0.3f   ? "makron_move_attack3"
-            : random <= 0.6f ? "makron_move_attack4"
-                             : "makron_move_attack5";
+    *move = random <= 0.3f   ? Q2M_MOVE_makron_move_attack3
+            : random <= 0.6f ? Q2M_MOVE_makron_move_attack4
+                             : Q2M_MOVE_makron_move_attack5;
     break;
   case Q2M_MEDIC:
   case Q2M_MEDIC_COMMANDER:
     return q2m_medic_attack_move(context, distance, move, error);
   case Q2M_SUPERTANK:
     *move = distance <= 160.0f || q2m_random(context->game) < 0.3f
-                ? "supertank_move_attack1"
-                : "supertank_move_attack2";
+                ? Q2M_MOVE_supertank_move_attack1
+                : Q2M_MOVE_supertank_move_attack2;
     break;
   case Q2M_BOSS5:
     *move = distance <= 160.0f || q2m_random(context->game) < 0.3f
-                ? "boss5_move_attack1"
-                : "boss5_move_attack2";
+                ? Q2M_MOVE_boss5_move_attack1
+                : Q2M_MOVE_boss5_move_attack2;
     break;
   case Q2M_TANK:
   case Q2M_TANK_COMMANDER:
     if (blind) {
       monster->manual_steering = true;
-      *move = "tank_move_attack_pre_rocket";
+      *move = Q2M_MOVE_tank_move_attack_pre_rocket;
       break;
     }
     random = q2m_random(context->game);
     if (distance <= 125.0f)
       *move =
-          random < 0.4f ? "tank_move_attack_chain" : "tank_move_attack_blast";
+          random < 0.4f ? Q2M_MOVE_tank_move_attack_chain : Q2M_MOVE_tank_move_attack_blast;
     else if (distance <= 250.0f)
       *move =
-          random < 0.5f ? "tank_move_attack_chain" : "tank_move_attack_blast";
+          random < 0.5f ? Q2M_MOVE_tank_move_attack_chain : Q2M_MOVE_tank_move_attack_blast;
     else if (random < 0.33f)
-      *move = "tank_move_attack_chain";
+      *move = Q2M_MOVE_tank_move_attack_chain;
     else if (random < 0.66f) {
       monster->pain_ns = q2m_after(context->game->now_ns, 5.0);
-      *move = "tank_move_attack_pre_rocket";
+      *move = Q2M_MOVE_tank_move_attack_pre_rocket;
     } else
-      *move = "tank_move_attack_blast";
+      *move = Q2M_MOVE_tank_move_attack_blast;
     break;
   case Q2M_BOSS2: {
     bool guns = distance <= 125.0f || q2m_random(context->game) <= 0.6f;
     bool n64 = context->game->options.edition == QA_Q2_RERELEASE &&
                (monster->spawnflags & 8u) != 0;
-    *move = guns  ? n64 ? "boss2_move_attack_hb" : "boss2_move_attack_pre_mg"
-            : n64 ? "boss2_move_attack_rocket2"
-                  : "boss2_move_attack_rocket";
+    *move = guns  ? n64 ? Q2M_MOVE_boss2_move_attack_hb : Q2M_MOVE_boss2_move_attack_pre_mg
+            : n64 ? Q2M_MOVE_boss2_move_attack_rocket2
+                  : Q2M_MOVE_boss2_move_attack_rocket;
     break;
   }
   case Q2M_ACTOR:
@@ -2257,25 +2257,25 @@ static bool select_species_attack(q2m_context *context, const char **move,
     else
       monster->pause_ns = q2m_after(context->game->now_ns,
           (10.0 + floorf(q2m_random(context->game) * 16.0f)) * 0.1);
-    *move = "actor_move_attack";
+    *move = Q2M_MOVE_actor_move_attack;
     break;
   case Q2M_FIXBOT:
-    *move = "fixbot_move_attack2";
+    *move = Q2M_MOVE_fixbot_move_attack2;
     q2m_fixbot_flight(context, false, false);
     break;
   case Q2M_GEKK:
     if (melee)
-      *move = q2m_random(context->game) < 0.5f ? "gekk_move_attack1"
-                                               : "gekk_move_attack2";
+      *move = q2m_random(context->game) < 0.5f ? Q2M_MOVE_gekk_move_attack1
+                                               : Q2M_MOVE_gekk_move_attack2;
     else if (distance < 80.0f)
-      *move = "gekk_move_leapatk";
+      *move = Q2M_MOVE_gekk_move_leapatk;
     else
-      *move = "gekk_move_spit";
+      *move = Q2M_MOVE_gekk_move_spit;
     break;
   case Q2M_STALKER:
     if (melee)
-      *move = q2m_random(context->game) < 0.5f ? "stalker_move_swing_l"
-                                               : "stalker_move_swing_r";
+      *move = q2m_random(context->game) < 0.5f ? Q2M_MOVE_stalker_move_swing_l
+                                               : Q2M_MOVE_stalker_move_swing_r;
     else {
       float luck = q2m_random(context->game);
       if (context->game->options.edition == QA_Q2_RERELEASE
@@ -2288,23 +2288,23 @@ static bool select_species_attack(q2m_context *context, const char **move,
           monster->lefty = !monster->lefty;
         monster->attack_state = Q2M_SLIDING;
       }
-      *move = "stalker_move_shoot";
+      *move = Q2M_MOVE_stalker_move_shoot;
     }
     break;
   case Q2M_TURRET:
-    *move = blind ? "turret_move_fire_blind" : "turret_move_fire";
+    *move = blind ? Q2M_MOVE_turret_move_fire_blind : Q2M_MOVE_turret_move_fire;
     break;
   case Q2M_CARRIER: {
     monster->hold_frame = false;
     if (blind) {
-      *move = "carrier_move_spawn";
+      *move = Q2M_MOVE_carrier_move_spawn;
       break;
     }
     qa_body_state target;
     qa_error ignored = {0};
     if (!qa_world_body_read(context->game->services.world, monster->enemy,
                             &target, &ignored)) {
-      *move = NULL;
+      *move = Q2M_MOVE_NONE;
       break;
     }
     qa_vec3 direction =
@@ -2316,48 +2316,48 @@ static bool select_species_attack(q2m_context *context, const char **move,
     bool back = facing < -0.3f;
     bool below = -direction.z > 0.95f;
     if (back || below) {
-      *move = "carrier_move_attack_rocket";
+      *move = Q2M_MOVE_carrier_move_attack_rocket;
       break;
     }
     if (!front) {
-      *move = q2m_random(context->game) < 0.1f ? "carrier_move_attack_pre_mg"
-                                               : "carrier_move_attack_rail";
+      *move = q2m_random(context->game) < 0.1f ? Q2M_MOVE_carrier_move_attack_pre_mg
+                                               : Q2M_MOVE_carrier_move_attack_rail;
       break;
     }
     random = q2m_random(context->game);
     if (distance <= 125.0f)
-      *move = random < 0.8f ? "carrier_move_attack_pre_mg"
-                            : "carrier_move_attack_rail";
+      *move = random < 0.8f ? Q2M_MOVE_carrier_move_attack_pre_mg
+                            : Q2M_MOVE_carrier_move_attack_rail;
     else if (distance < 600.0f && monster->monster_slots > 2)
-      *move = random <= 0.2f   ? "carrier_move_attack_pre_mg"
-              : random <= 0.4f ? "carrier_move_attack_pre_gren"
-              : random <= 0.7f ? "carrier_move_attack_rail"
-                               : "carrier_move_spawn";
+      *move = random <= 0.2f   ? Q2M_MOVE_carrier_move_attack_pre_mg
+              : random <= 0.4f ? Q2M_MOVE_carrier_move_attack_pre_gren
+              : random <= 0.7f ? Q2M_MOVE_carrier_move_attack_rail
+                               : Q2M_MOVE_carrier_move_spawn;
     else if (distance < 600.0f)
-      *move = random <= 0.3f    ? "carrier_move_attack_pre_mg"
-              : random <= 0.65f ? "carrier_move_attack_pre_gren"
-                                : "carrier_move_attack_rail";
+      *move = random <= 0.3f    ? Q2M_MOVE_carrier_move_attack_pre_mg
+              : random <= 0.65f ? Q2M_MOVE_carrier_move_attack_pre_gren
+                                : Q2M_MOVE_carrier_move_attack_rail;
     else if (monster->monster_slots > 2)
-      *move = random < 0.3f    ? "carrier_move_attack_pre_mg"
-              : random < 0.65f ? "carrier_move_attack_rail"
-                               : "carrier_move_spawn";
+      *move = random < 0.3f    ? Q2M_MOVE_carrier_move_attack_pre_mg
+              : random < 0.65f ? Q2M_MOVE_carrier_move_attack_rail
+                               : Q2M_MOVE_carrier_move_spawn;
     else
-      *move = random < 0.45f ? "carrier_move_attack_pre_mg"
-                             : "carrier_move_attack_rail";
-    if (*move != NULL && strcmp(*move, "carrier_move_attack_rail") == 0 &&
+      *move = random < 0.45f ? Q2M_MOVE_carrier_move_attack_pre_mg
+                             : Q2M_MOVE_carrier_move_attack_rail;
+    if (*move != Q2M_MOVE_NONE && (*move == Q2M_MOVE_carrier_move_attack_rail) &&
         !q2m_sound(context, "gladiator/railgun.wav", 1, 1.0f, error))
       return false;
     break;
   }
   case Q2M_WIDOW:
     if (melee)
-      *move = "widow_move_attack_kick";
+      *move = Q2M_MOVE_widow_move_attack_kick;
     else
       return q2m_widow_attack_move(context, false, distance, move, error);
     break;
   case Q2M_WIDOW2:
     if (melee)
-      *move = "widow2_move_tongs";
+      *move = Q2M_MOVE_widow2_move_tongs;
     else
       return q2m_widow_attack_move(context, true, distance, move, error);
     break;
@@ -2366,31 +2366,31 @@ static bool select_species_attack(q2m_context *context, const char **move,
     qa_error ignored = {0};
     if (melee ||
         (monster->melee_ns < context->game->now_ns && distance < 80.0f)) {
-      *move = "arachnid_melee";
+      *move = Q2M_MOVE_arachnid_melee;
     } else if (qa_world_body_read(context->game->services.world, monster->enemy,
                                   &target, &ignored) &&
                target.origin.z - context->body.origin.z > 150.0f) {
-      *move = "arachnid_attack_up1";
+      *move = Q2M_MOVE_arachnid_attack_up1;
     } else {
-      *move = "arachnid_attack1";
+      *move = Q2M_MOVE_arachnid_attack1;
     }
     break;
   }
   case Q2M_GUARDIAN:
-    *move = distance > 440.0f ? "guardian_move_atk2_in"
+    *move = distance > 440.0f ? Q2M_MOVE_guardian_move_atk2_in
             : monster->melee_ns < context->game->now_ns && distance < 120.0f
-                ? "guardian_move_kick"
-                : "guardian_move_atk1_in";
+                ? Q2M_MOVE_guardian_move_kick
+                : Q2M_MOVE_guardian_move_atk1_in;
     break;
   case Q2M_SHAMBLER:
     if (melee) {
       random = q2m_random(context->game);
       *move = random > 0.6f || context->combat.health == 600.0f
-                  ? "shambler_attack_smash"
-              : random > 0.3f ? "shambler_attack_swingl"
-                              : "shambler_attack_swingr";
+                  ? Q2M_MOVE_shambler_attack_smash
+              : random > 0.3f ? Q2M_MOVE_shambler_attack_swingl
+                              : Q2M_MOVE_shambler_attack_swingr;
     } else {
-      *move = "shambler_attack_magic";
+      *move = Q2M_MOVE_shambler_attack_magic;
     }
     break;
   default:
@@ -2407,7 +2407,7 @@ bool q2m_source_attack(q2m_context *context, bool melee, qa_error *error) {
       (species == Q2M_MEDIC || species == Q2M_MEDIC_COMMANDER)) {
     if (!q2_actor_live(context->game, context->monster->enemy))
       return true;
-    const char *move = NULL;
+    q2m_move_id move = Q2M_MOVE_NONE;
     if (!q2m_medic_attack_move(context, INFINITY, &move, error))
       return false;
     return !q2m_alive(context) || !move || q2m_set_move(context, move,
@@ -2421,13 +2421,13 @@ bool q2m_source_attack(q2m_context *context, bool melee, qa_error *error) {
   if (!q2m_alive(context) || !living)
     return true;
   context->monster->attack_state = melee ? Q2M_MELEE : Q2M_MISSILE;
-  const char *move;
+  q2m_move_id move;
   if (!select_species_attack(context, &move, error))
     return false;
   bool immediate = context->game->options.edition == QA_Q2_RERELEASE &&
                    (species == Q2M_JORG || species == Q2M_MEDIC ||
                     species == Q2M_MEDIC_COMMANDER);
-  return !q2m_alive(context) || move == NULL || q2m_set_move(context, move, immediate, error);
+  return !q2m_alive(context) || move == Q2M_MOVE_NONE || q2m_set_move(context, move, immediate, error);
 }
 
 static bool attack_selected(q2m_context *context, qa_error *error) {
@@ -2448,12 +2448,12 @@ static bool attack_selected(q2m_context *context, qa_error *error) {
   if (delta > 45)
     return true;
   bool melee = monster->attack_state == Q2M_MELEE;
-  const char *move;
+  q2m_move_id move;
   if (!select_species_attack(context, &move, error))
     return false;
   if (!q2m_alive(context))
     return true;
-  if (move == NULL)
+  if (move == Q2M_MOVE_NONE)
     return true;
   bool immediate = context->game->options.edition == QA_Q2_RERELEASE &&
                    (monster->definition->species == Q2M_JORG ||
@@ -3141,7 +3141,7 @@ static bool prone_shot(q2m_context *context, bool *eligible, qa_error *error) {
   return true;
 }
 
-bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind, const char *source_ai,
+bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
                 float distance, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   switch (kind) {
@@ -3186,7 +3186,7 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind, const char *source_ai,
       bool play = monster->idle_ns != 0;
       if (play) {
         bool handled;
-        if (!q2m_medic_callback(context, "medic_idle", &handled, error))
+        if (!q2m_medic_callback(context, Q2M_CALLBACK_medic_idle, &handled, error))
           return false;
         if (!q2m_alive(context))
           return true;
@@ -3213,7 +3213,7 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind, const char *source_ai,
                  monster->definition->species == Q2M_MEDIC_COMMANDER;
     if (medic && context->game->now_ns > monster->idle_ns) {
       bool play = monster->idle_ns != 0, handled;
-      if (play && !q2m_medic_callback(context, "medic_search", &handled, error))
+      if (play && !q2m_medic_callback(context, Q2M_CALLBACK_medic_search, &handled, error))
         return false;
       if (q2m_alive(context))
         monster->idle_ns = q2m_after(context->game->now_ns,
@@ -3284,7 +3284,7 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind, const char *source_ai,
     bool prone;
     if (!prone_shot(context, &prone, error))
       return false;
-    return !q2m_alive(context) || prone || q2m_dispatch(context, "soldier_stand_up", error);
+    return !q2m_alive(context) || prone || q2m_callback_run(context, Q2M_CALLBACK_soldier_stand_up, error);
   }
   case Q2M_AI_TURN: {
     if (distance != 0 && !frame_move(context, distance, error))
@@ -3298,18 +3298,15 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind, const char *source_ai,
            (context->game->options.edition == QA_Q2_RERELEASE && monster->manual_steering) ||
            q2m_change_yaw(context, error);
   }
-  case Q2M_AI_SOURCE:
-    if (source_ai == NULL)
-      return true;
-    if (strcmp(source_ai, "ai_stand2") == 0)
-      return q2m_run_ai(context, Q2M_AI_STAND, NULL, distance, error);
-    if (strcmp(source_ai, "ai_movetogoal") == 0)
-      return q2m_move_to_goal(context, distance, error);
-    if (strcmp(source_ai, "ai_facing") == 0)
-      return q2m_face_enemy(context, error);
-    if (strcmp(source_ai, "ai_move2") == 0) {
+  case Q2M_AI_STAND2:
+    return q2m_run_ai(context, Q2M_AI_STAND, distance, error);
+  case Q2M_AI_MOVE_TO_GOAL:
+    return q2m_move_to_goal(context, distance, error);
+  case Q2M_AI_FACING:
+    return q2m_face_enemy(context, error);
+  case Q2M_AI_MOVE2: {
       if (!q2_actor_live(context->game, monster->goal))
-        return q2m_set_move(context, "fixbot_move_stand", false, error);
+        return q2m_set_move(context, Q2M_MOVE_fixbot_move_stand, false, error);
       if (distance != 0.0f &&
           !walk_move(context, context->body.angles.y, distance, &(bool){false}, error))
         return false;
@@ -3319,19 +3316,14 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind, const char *source_ai,
         return !q2_actor_live(context->game, monster->goal);
       monster->ideal_yaw = vector_yaw(qa_vec_sub(goal.origin, context->body.origin));
       return q2m_change_yaw(context, error);
-    }
-    if (strcmp(source_ai, "ai_move_slide_left") == 0 ||
-        strcmp(source_ai, "ai_move_slide_right") == 0) {
-      float yaw = context->body.angles.y +
-                  (strstr(source_ai, "left") != NULL ? 90.0f : -90.0f);
-      return walk_move(context, yaw, distance, &(bool){false}, error);
-    }
-    if (strcmp(source_ai, "parasite_charge_proboscis") == 0)
-      return q2m_parasite_charge(context, distance, error);
-    qa_error_set(error, QA_ERROR_FORMAT, 0,
-                 "%s references unsupported source AI %s",
-                 monster->definition->classname, source_ai);
-    return false;
+  }
+  case Q2M_AI_SLIDE_LEFT:
+  case Q2M_AI_SLIDE_RIGHT: {
+    float yaw = context->body.angles.y + (kind == Q2M_AI_SLIDE_LEFT ? 90.0f : -90.0f);
+    return walk_move(context, yaw, distance, &(bool){false}, error);
+  }
+  case Q2M_AI_PARASITE_CHARGE:
+    return q2m_parasite_charge(context, distance, error);
   }
   return true;
 }
