@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/text.h"
 #include "qa/game_q2_monsters.h"
 
 static bool beam(qa_q2_game *g, q2_actor *a, qa_vec3 start, qa_vec3 end, bool visible,
@@ -172,7 +173,7 @@ static bool ramp(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return true;
     float elapsed = (float)(g->now_ns - s->timestamp_ns) / Q2_NS;
     float level = 97 + s->direction.x + elapsed / s->speed * (s->direction.y - s->direction.x);
-    uint8_t byte = isfinite(level) ? (uint8_t)(int)fmodf(truncf(level), 256) : 0;
+    uint8_t byte = (uint8_t)(uint32_t)qa_source_float_to_i32(level);
     qa_string_id text;
     char pattern[2] = {(char)byte, 0};
     if (!qa_builtin_resource(&g->services, pattern, &text, e) ||

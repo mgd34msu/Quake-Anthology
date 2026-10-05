@@ -453,15 +453,6 @@ static bool q2_check_duck(q2_classic_move *pm)
     return true;
 }
 
-static int32_t q2_packed(const qa_q2_movement_state *state, float value)
-{
-    if (!isfinite(value)) return 0;
-    float modulus = state->wide_coordinates ? 8388608.0f : 65536.0f;
-    float word = fmodf(truncf(value), modulus);
-    if (word < 0) word += modulus;
-    return (int32_t)word - (word >= modulus * 0.5f ? (int32_t)modulus : 0);
-}
-
 static qa_vec3 q2_unpack(const qa_q2_movement_state *state, bool velocity)
 {
     return qa_v3((float)qa_q2_movement_coordinate(state, velocity, 0) * 0.125f,
@@ -507,8 +498,8 @@ static bool q2_snap(q2_classic_move *pm)
     int32_t base[3];
     for (unsigned i = 0; i < 3; ++i) {
         float origin = qa_move_component(pm->origin, i);
-        qa_q2_movement_coordinate_set(pm->state, true, i, q2_packed(pm->state, qa_move_component(pm->velocity, i) * 8.0f));
-        base[i] = q2_packed(pm->state, origin * 8.0f);
+        qa_q2_movement_coordinate_set(pm->state, true, i, qa_move_q2_coordinate_word(pm->state, qa_move_component(pm->velocity, i) * 8.0f));
+        base[i] = qa_move_q2_coordinate_word(pm->state, origin * 8.0f);
         sign[i] = (float)base[i] * 0.125f == origin ? 0 : origin >= 0.0f ? 1 : -1;
     }
     for (unsigned j = 0; j < 8; ++j) {

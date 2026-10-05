@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "qa/math.h"
+#include "qa/text.h"
 uint32_t qa_q2_protocol_version(qa_net_protocol_id p) {
     switch (p.kind) {
         case QA_NET_Q2_34: return 34;
@@ -197,8 +199,8 @@ bool qa_q2_write_coord(qa_net_writer*w,float f) {
 }
 static bool angle(qa_net_writer*w,float f,unsigned bits) {
     if(!isfinite(f))return qa_net_writer_fail(w,"Nonfinite Q2 angle");
-    double v=trunc(fmod((double)f,360.0)*(ldexp(1.0,(int)bits)/360.0));
-    return qa_net_write_bits(w,(uint32_t)(int32_t)v,bits);
+    uint32_t value=bits==16 ? qa_angle_to_word(f) : (uint32_t)qa_source_float_to_i32(f*256.0f/360.0f);
+    return qa_net_write_bits(w,value,bits);
 }
 bool qa_q2_write_angle8(qa_net_writer*w,float f) {
     return angle(w,f,8);

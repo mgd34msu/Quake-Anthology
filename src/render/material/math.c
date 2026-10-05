@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/text.h"
 #include <math.h>
 #include <stdatomic.h>
 #include <string.h>
@@ -44,9 +45,7 @@ static void initialize_tables(void)
 unsigned qa_material_table_index(float value)
 {
     if (!isfinite(value)) return 0;
-    /* Reduce in floating point before conversion to avoid C overflow UB. */
-    int index = (int)fmodf(truncf(value), 1024.0f);
-    return (unsigned)index & 1023u;
+    return (unsigned)(uint32_t)qa_source_float_to_i32(value) & 1023u;
 }
 float qa_material_sine(unsigned index)
 {
@@ -71,7 +70,7 @@ qa_vec3 qa_material_fast_normalize(qa_vec3 value)
 }
 static unsigned noise_cell(float value)
 {
-    return (unsigned)(int)fmodf(floorf(value), 256.0f) & 255u;
+    return (unsigned)(uint32_t)qa_source_float_to_i32(floorf(value)) & 255u;
 }
 static float noise_lattice(unsigned x, unsigned y, unsigned z, unsigned t)
 {

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/text.h"
 #include <limits.h>
 #include <stdlib.h>
 
@@ -31,10 +32,10 @@ int16_t qa_move_short(int32_t value) {
     return (int16_t)(word >= 32768 ? (int32_t)word - 65536 : (int32_t)word);
 }
 float qa_move_short_angle(int32_t word) { return (float)qa_move_short(word) * (360.0f / 65536.0f); }
-float qa_move_angle_mod(float value) {
-    float word = truncf(fmodf(value, 360.0f) * (65536.0f / 360.0f));
-    if (!isfinite(word)) return 0;
-    return (float)((uint32_t)(int32_t)word & 65535u) * (360.0f / 65536.0f);
+int32_t qa_move_q2_coordinate_word(const qa_q2_movement_state *state, float value) {
+    uint32_t mask = state->wide_coordinates ? UINT32_C(0x7fffff) : UINT32_C(0xffff);
+    uint32_t bits = (uint32_t)qa_source_float_to_i32(value) & mask;
+    return (int32_t)bits - (bits > mask / 2 ? (int32_t)(mask + 1) : 0);
 }
 void qa_move_angles(qa_vec3 angles, qa_vec3 *forward, qa_vec3 *right, qa_vec3 *up) {
     const float radians = 0.01745329251994329577f;
@@ -141,14 +142,10 @@ static bool write_vector(qa_movement_state *s, qa_vec3 value, bool velocity, qa_
         if (velocity) s->data.qw.velocity=value; else s->data.qw.origin=qa_qw_origin_from_vec3(value); break;
     case QA_MOVEMENT_Q2_CLASSIC: {
         int32_t words[3];
-        float modulus=s->data.q2.wide_coordinates?8388608.0f:65536.0f;
         for (unsigned axis=0;axis<3;axis++) {
             float scaled=qa_move_component(value,axis)*8.0f;
             if (!isfinite(scaled)) { qa_error_set(error,QA_ERROR_ARGUMENT,axis,"Movement eighth conversion overflow"); return false; }
-            float wrapped=fmodf(truncf(scaled),modulus);
-            if (wrapped<0) wrapped+=modulus;
-            words[axis]=(int32_t)wrapped;
-            if (wrapped>=modulus*0.5f) words[axis]-=(int32_t)modulus;
+            words[axis]=qa_move_q2_coordinate_word(&s->data.q2,scaled);
         }
         for (unsigned axis=0;axis<3;axis++)
             qa_q2_movement_coordinate_set(&s->data.q2,velocity,axis,words[axis]);
@@ -411,7 +408,7 @@ void qa_movement_q3_jump_pad(qa_movement_state *state, qa_actor_id pad, qa_vec3 
     if (changed) {
         float pitch=velocity.x==0&&velocity.y==0?(velocity.z>0?-90.0f:-270.0f):
             -atan2f(velocity.z,hypotf(velocity.x,velocity.y))*57.29577951308232f;
-        pitch=qa_move_angle_mod(pitch);
+        pitch=qa_angle_mod(pitch);
         pitch=fabsf(pitch>180?pitch-360:pitch);
         s->event_sequence++;
         if (event) *event=13;

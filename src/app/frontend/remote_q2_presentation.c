@@ -411,7 +411,10 @@ bool frontend_remote_q2_input(qa_frontend *f, uint32_t seat, const qa_seat_input
         .forwardmove = command.forward_move, .sidemove = command.side_move, .upmove = command.up_move};
     if (kind == QA_MOVEMENT_Q2_RERELEASE) {
         float values[3] = {command.angles.x, command.angles.y, command.angles.z};
-        for (size_t i = 0; i < 3; ++i) out->angles[i] = (int16_t)(int32_t)fmodf(truncf(values[i] * (65536.0f / 360)), 65536);
+        for (size_t i = 0; i < 3; ++i) {
+            uint16_t bits = qa_angle_to_word(values[i]);
+            memcpy(out->angles + i, &bits, sizeof(bits));
+        }
     } else for (size_t i = 0; i < 3; ++i) out->angles[i] = (int16_t)command.angle_words[i];
     if (!remote_q2_live(row, error)) return false;
     row->input_set = true;

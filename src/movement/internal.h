@@ -62,7 +62,7 @@ bool qa_move_apply_stance(qa_move_context *);
 int32_t qa_move_mode_type(qa_movement_kind, qa_movement_mode);
 qa_vec3 qa_move_clip(qa_vec3 velocity, qa_vec3 normal, float overbounce, float stop_epsilon);
 void qa_move_angles(qa_vec3 degrees, qa_vec3 *forward, qa_vec3 *right, qa_vec3 *up);
-float qa_move_angle_mod(float);
+int32_t qa_move_q2_coordinate_word(const qa_q2_movement_state *, float);
 float qa_move_short_angle(int32_t);
 int16_t qa_move_short(int32_t);
 float qa_move_component(qa_vec3, unsigned);

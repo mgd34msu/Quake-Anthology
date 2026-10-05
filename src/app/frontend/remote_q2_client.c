@@ -400,7 +400,8 @@ static bool hook_command(void *context, const qa_network_command *source, qa_q2_
         for (size_t i = 0; i < 3; ++i) {
             float delta = !player ? 0 : player->pmove.float_delta_angles ? player->pmove.delta_angles_f[i] :
                 player->pmove.delta_angles[i] * (360.0f / 65536);
-            out->angles[i] = (int16_t)(int32_t)fmodf(truncf((angles[i] - delta) * (65536.0f / 360)), 65536);
+            uint16_t bits = qa_angle_to_word(angles[i] - delta);
+            memcpy(out->angles + i, &bits, sizeof(bits));
         }
     } else for (size_t i = 0; i < 3; ++i)
         out->angles[i] = (int16_t)(command->angle_words[i] - (player ? player->pmove.delta_angles[i] : 0));

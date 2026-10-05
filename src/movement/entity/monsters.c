@@ -396,11 +396,6 @@ bool qa_physics_walk_move(qa_physics *p, qa_actor_id actor, float yaw, float dis
                                     elapsed, commit, relink, moved, error);
 }
 
-static float q1_anglemod(float angle) {
-    int32_t word = (int32_t)truncf(fmodf(angle, 360)*(65536.0f/360.0f));
-    return (float)((uint32_t)word & UINT32_C(65535))*(360.0f/65536.0f);
-}
-
 static float anglemod(float angle) {
     float result = fmodf(angle, 360);
     return result < 0 ? result+360 : result;
@@ -415,7 +410,7 @@ bool qa_physics_change_yaw(qa_physics *p, qa_actor_id actor, float elapsed, qa_e
     int read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) return read == 0;
     bool q1 = props.family == QA_COLLISION_Q1;
-    float current = q1 ? q1_anglemod(body.angles.y) : anglemod(body.angles.y);
+    float current = q1 ? qa_angle_mod(body.angles.y) : anglemod(body.angles.y);
     float move = props.ideal_yaw-current;
     if (q1) {
         if (props.ideal_yaw > current) { if (move >= 180) move -= 360; }
@@ -426,7 +421,7 @@ bool qa_physics_change_yaw(qa_physics *p, qa_actor_id actor, float elapsed, qa_e
     }
     float speed = props.yaw_speed*(!q1 && props.q2_rerelease ? elapsed*10 : 1);
     move = fmaxf(-speed, fminf(speed, move));
-    body.angles.y = q1 ? q1_anglemod(current+move) : anglemod(current+move);
+    body.angles.y = q1 ? qa_angle_mod(current+move) : anglemod(current+move);
     return ph_write(p, actor, &body, error);
 }
 
@@ -496,7 +491,7 @@ bool qa_physics_q1_chase_direction(qa_physics *p, qa_actor_id actor, qa_actor_id
     if (!p->services.random_integer) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 chase requires the game's random source"); return false;
     }
-    float old = q1_anglemod(truncf(props.ideal_yaw/45)*45), turnaround = q1_anglemod(old-180);
+    float old = qa_angle_mod(truncf(props.ideal_yaw/45)*45), turnaround = qa_angle_mod(old-180);
     qa_vec3 delta = qa_vec_sub(enemy.origin, body.origin);
     float first = delta.x > 10 ? 0 : delta.x < -10 ? 180 : -1;
     float second = delta.y < -10 ? 270 : delta.y > 10 ? 90 : -1;

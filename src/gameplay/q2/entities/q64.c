@@ -6,20 +6,14 @@ static qa_vec3 angles_for(qa_vec3 direction) {
                              : -atan2f(direction.z, planar) * 57.29577951308232f,
                  planar == 0 ? 0 : atan2f(direction.y, direction.x) * 57.29577951308232f, 0);
 }
-static float anglemod(float angle) {
-    float units = fmodf(truncf(angle * (65536.0f / 360)), 65536);
-    if (units < 0)
-        units += 65536;
-    return units * (360.0f / 65536);
-}
 static float turn(float current, float ideal, float speed) {
-    current = anglemod(current);
+    current = qa_angle_mod(current);
     float move = ideal - current;
     if (ideal > current && move >= 180)
         move -= 360;
     else if (ideal <= current && move <= -180)
         move += 360;
-    return anglemod(current + q2_clamp(move, -speed, speed));
+    return qa_angle_mod(current + q2_clamp(move, -speed, speed));
 }
 static float step(float current, float wanted, float amount) {
     return current < wanted ? fminf(wanted, current + amount) : fmaxf(wanted, current - amount);
