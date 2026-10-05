@@ -207,7 +207,7 @@ static bool frame(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
         if (!qa_strings_intern_cstr(qa_session_strings(g->services.session), "gamecfg", &name, error) ||
             !g->services.cvar(q1_cvar_context(g), name, &cfg, error) || !current(g, error) ||
             world(g, error) != owner) return false;
-        uint32_t integer = (uint32_t)qa_number_to_i32(cfg);
+        uint32_t integer = (uint32_t)qa_source_float_to_i32(cfg);
         if ((integer & 1) && owner->rogue_runes_spawned == 0) {
             owner->rogue_runes_spawned = 1;
             q1_actor *timer;

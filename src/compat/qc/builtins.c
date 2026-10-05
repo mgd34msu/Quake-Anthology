@@ -206,11 +206,7 @@ static uint32_t random_word(qa_qc_instance *instance)
     return instance->random_state;
 }
 
-static int32_t builtin_float_int(float value)
-{
-    if (!isfinite(value)) return INT32_MIN;
-    return qa_number_to_i32(value);
-}
+
 
 static bool var_string(qa_qc_instance *instance, char **out, qa_error *error)
 {
@@ -316,8 +312,7 @@ static bool pure_builtin(qa_qc_instance *instance, int32_t number,
     case 26:
         if (!instance) return false;
         if (!qa_qc_arg_float(instance, 0, &value, error)) return false;
-        if (value == truncf(value)) snprintf(text, sizeof(text), "%d", builtin_float_int(value));
-        else snprintf(text, sizeof(text), "%5.1f", (double)value);
+        if (!qa_format_quake_float(value, text, error)) return false;
         return qa_qc_engine_string(instance, "pr_string_temp", text, 128, &id, error)
             && qa_qc_return_int(instance, id, error);
     case 27:

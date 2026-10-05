@@ -77,11 +77,7 @@ static bool write_vector(qa_qc_instance *instance, uint32_t word,
     return qc_write_global(instance, word, bits, 3, error);
 }
 
-static int32_t float_int(float value)
-{
-    if (!isfinite(value)) return INT32_MIN;
-    return qa_number_to_i32(value);
-}
+
 
 static int byte_compare(const char *left, const char *right)
 {
@@ -347,8 +343,8 @@ static bool execute_statement(qa_qc_instance *instance,
                            ? af != 0 && bf != 0 : af != 0 || bf != 0, error);
     case QA_QC_BITAND: case QA_QC_BITOR:
         if (!read_float(instance, s->a, &af, error) || !read_float(instance, s->b, &bf, error)) return false;
-        ai = s->opcode == QA_QC_BITAND ? float_int(af) & float_int(bf)
-                                      : float_int(af) | float_int(bf);
+        ai = s->opcode == QA_QC_BITAND ? qa_source_float_to_i32(af) & qa_source_float_to_i32(bf)
+                                      : qa_source_float_to_i32(af) | qa_source_float_to_i32(bf);
         return store_float(instance, s->c, (float)ai, error);
     case QA_QC_STORE_F: case QA_QC_STORE_S: case QA_QC_STORE_ENT:
     case QA_QC_STORE_FLD: case QA_QC_STORE_FN:

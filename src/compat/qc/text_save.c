@@ -60,7 +60,7 @@ bool qa_qc_text_body_read(const qa_qc_instance *vm,uint32_t slot,qa_body_state *
                 return qc_fail(error,QA_ERROR_FORMAT,slot,"Saved flags field has an invalid source definition");
             float value=qc_load_float(qc_entity_words_const(vm,slot),flags->offset);
             if (!isfinite(value)) return qc_fail(error,QA_ERROR_FORMAT,slot,"Saved body flags are nonfinite");
-            bits=(uint32_t)qa_number_to_i32(value);
+            bits=(uint32_t)qa_source_float_to_i32(value);
         }
         if ((bits&512u)!=0 && target && vm->slots[target].kind!=QA_QC_SLOT_FREE)
             body.ground=vm->slots[target].actor;

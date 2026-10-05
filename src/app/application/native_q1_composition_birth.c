@@ -77,11 +77,7 @@ static bool write_number(source_birth *call, qa_mode_q1_number field,
     return qa_modes_q1_source_write(call->app->modes, call->mode, call->actor, field, value, error) &&
         current(call, error);
 }
-static uint32_t source_bits(double value) {
-    double integer = isfinite(value) ? fmod(trunc(value), 4294967296.0) : 0;
-    if (integer < 0) integer += 4294967296.0;
-    return (uint32_t)integer;
-}
+
 
 static bool status(source_birth *call, qa_error *error) {
     qa_builtin_ctf_status status = {0};
@@ -94,7 +90,7 @@ static bool status(source_birth *call, qa_error *error) {
         bool found;
         if (!qa_q1_source_entity_first(call->operation.game, names[i], &flag, &found, error) ||
             !current(call, error)) return false;
-        flags |= (found ? UINT32_C(1) << (source_bits(flag.count) & 31u) : UINT32_C(1)) << (i * 3);
+        flags |= (found ? UINT32_C(1) << ((uint32_t)qa_source_float_to_i32((float)(flag.count)) & 31u) : UINT32_C(1)) << (i * 3);
     }
     int32_t signed_flags;
     memcpy(&signed_flags, &flags, sizeof(signed_flags));
@@ -183,7 +179,7 @@ static bool ctf_birth(source_birth *call, bool first, qa_error *error) {
     if (!qa_modes_read(call->app->modes, call->mode, &view, error) ||
         !source_cvar(call, "teamplay", &teamplay, error) ||
         !qa_q1_source_ctf_spawn_arsenal(call->operation.game, call->actor, false,
-            (source_bits(teamplay) & 2048) != 0, error) || !current(call, error) ||
+            ((uint32_t)qa_source_float_to_i32((float)(teamplay)) & 2048) != 0, error) || !current(call, error) ||
         !write_number(call, QA_Q1_CTF_LAST_HURT_CARRIER, -10, error) ||
         !write_number(call, QA_Q1_CTF_REGEN_TIME, 0, error) ||
         !write_number(call, QA_Q1_CTF_RUNE_NOTICE, 0, error)) return false;
@@ -191,7 +187,7 @@ static bool ctf_birth(source_birth *call, bool first, qa_error *error) {
         if (!write_number(call, QA_Q1_CTF_KILLED, 0, error) ||
             !write_number(call, QA_Q1_CTF_MOTD, 0, error)) return false;
         if (!source_cvar(call, "teamplay", &teamplay, error)) return false;
-        if ((source_bits(teamplay) & 1024) && !view.rules.start_map) {
+        if (((uint32_t)qa_source_float_to_i32((float)(teamplay)) & 1024) && !view.rules.start_map) {
             if (!observer(call, error)) return false;
         } else if (!check_team(call, error)) return false;
     } else {
@@ -244,7 +240,7 @@ static bool rogue_birth(source_birth *call, qa_error *error) {
     double old_flags;
     if (!write_number(call, QA_Q1_ROGUE_STEAM, team, error) ||
         !read_number(call, call->actor, QA_Q1_ROGUE_FLAGS, &old_flags, error)) return false;
-    uint32_t bits = source_bits(old_flags) | UINT32_C(4);
+    uint32_t bits = (uint32_t)qa_source_float_to_i32((float)(old_flags)) | UINT32_C(4);
     int32_t flags;
     memcpy(&flags, &bits, sizeof(flags));
     if (!write_number(call, QA_Q1_ROGUE_FLAGS, flags, error)) return false;
@@ -362,7 +358,7 @@ static bool team_damage(source_birth *call, qa_error *error) {
         call->actor, 1000, "ctf:teamchange", error) && current(call, error);
 }
 static bool frame_colors(source_birth *call, double color, qa_error *error) {
-    uint32_t word = source_bits(color);
+    uint32_t word = (uint32_t)qa_source_float_to_i32((float)(color));
     int32_t value;
     memcpy(&value, &word, sizeof(value));
     return qa_q1_source_client_colors(call->operation.game, call->actor, value, value, error) &&
@@ -391,7 +387,7 @@ static bool team_lock(source_birth *call, qa_error *error) {
         last = -1;
     }
     if (team == last) return true;
-    if ((source_bits(policy) & 64u) && last >= 0) {
+    if (((uint32_t)qa_source_float_to_i32((float)(policy)) & 64u) && last >= 0) {
         if (previous != 0) {
             if (!read_number(call, call->actor, QA_Q1_CTF_SUICIDE_COUNT, &value, error)) return false;
             if (value > 3 && (!qa_session_release(call->app->session, call->actor, error) ||
@@ -433,7 +429,7 @@ static bool observer_impulse(source_birth *call, const qa_q1_input *input,
         !(!supported && client.observer && ((impulse >= 1 && impulse <= 3) || input->jump))) return true;
     double policy;
     if (!source_cvar(call, "teamplay", &policy, error)) return false;
-    if (impulse == 100 && (source_bits(policy) & 64u)) {
+    if (impulse == 100 && ((uint32_t)qa_source_float_to_i32((float)(policy)) & 64u)) {
         if (!frame_message(call, "$qc_ctf_teams_locked", error) ||
             !qa_q1_source_client_consume_impulse(call->operation.game, call->actor, error) ||
             !current(call, error)) return false;
@@ -634,7 +630,7 @@ bool application_native_q1_ctf_impulse(application_provider *source, qa_actor_id
              * its source-native slot is disabled independently of selected gear. */
             okay = frame_message(&call, "$qc_no_weapon", error);
             consumed = true;
-        } else if (okay && !client.observer && (source_bits(policy) & 128u) &&
+        } else if (okay && !client.observer && ((uint32_t)qa_source_float_to_i32((float)(policy)) & 128u) &&
                    (command.impulse == 20 || command.impulse == 21)) {
             qa_q1_drop_input drop = {.selected_weapon = selected.item,
                 .selected_ammo = selected.ammo, .view_angles = command.view_angles};
@@ -651,13 +647,13 @@ bool application_native_q1_ctf_impulse(application_provider *source, qa_actor_id
                 "Drop-Items (Backpack Impulse 20, Weapon Impulse 21)"};
             char message[256] = {0};
             if (policy < 0) {
-                char number[32];
-                okay = qa_format_ecmascript_number(-policy, number, error);
+                char number[64];
+                okay = qa_format_quake_float((float)-policy, number, error);
                 if (okay) snprintf(message, sizeof(message), "Frag Penalty: %s", number);
             } else {
                 size_t used = 0;
                 for (size_t i = 0; i < sizeof(bits) / sizeof(*bits); ++i)
-                    if (source_bits(policy) & bits[i]) {
+                    if ((uint32_t)qa_source_float_to_i32((float)(policy)) & bits[i]) {
                         size_t length = strlen(names[i]);
                         if (used) message[used++] = ' ';
                         memcpy(message + used, names[i], length);

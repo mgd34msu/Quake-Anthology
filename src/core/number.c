@@ -62,6 +62,40 @@ int32_t qa_number_to_i32(double value) {
     return result;
 }
 
+int32_t qa_source_float_to_i32(float value) {
+    return value >= -2147483648.0f && value < 2147483648.0f
+        ? (int32_t)value : INT32_MIN;
+}
+
+bool qa_format_quake_float(float value, char out[64], qa_error *error) {
+    if (!out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Quake float output");
+        return false;
+    }
+    int32_t integer = qa_source_float_to_i32(value);
+    if (value == (float)integer) {
+        (void)snprintf(out, 64, "%d", integer);
+        return true;
+    }
+    if (!ready(error)) return false;
+#if defined(_WIN32)
+    int count = _snprintf_l(out, 64, "%5.1f", numeric_locale, (double)value);
+#else
+    locale_t previous = uselocale(numeric_locale);
+    if (!previous) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "selecting numeric locale");
+        return false;
+    }
+    int count = snprintf(out, 64, "%5.1f", (double)value);
+    uselocale(previous);
+#endif
+    if (count < 0 || count >= 64) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "formatting Quake float");
+        return false;
+    }
+    return true;
+}
+
 double qa_parse_quake_number(const char *text, qa_quake_number_policy policy) {
     if (!text)
         return 0;

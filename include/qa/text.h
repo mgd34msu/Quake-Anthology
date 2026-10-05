@@ -41,6 +41,11 @@ double qa_parse_quake_number(const char *, qa_quake_number_policy);
 /* Truncate finite binary64 modulo 2^32 and reinterpret the resulting signed
  * word. Zero and nonfinite input produce zero. */
 int32_t qa_number_to_i32(double value);
+/* Original QC/x86 truncation, with INT32_MIN for nonfinite or out-of-range
+ * binary32 operands. This is not a wrapping word conversion. */
+int32_t qa_source_float_to_i32(float value);
+/* Quake PF_ftos: integral values use %d; all others use %5.1f. */
+bool qa_format_quake_float(float value, char out[64], qa_error *error);
 /* Q3 bg_lib AddInt spelling, including its wrapped INT32_MIN digit bytes.
  * Output includes a trailing NUL; the returned length excludes it. */
 size_t qa_format_q3_integer(int32_t value, char out[12]);
