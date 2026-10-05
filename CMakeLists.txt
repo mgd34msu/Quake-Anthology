@@ -470,6 +470,21 @@ add_library(qa_game_q2 STATIC
 )
 target_link_libraries(qa_game_q2 PUBLIC qa_builtin qa_campaign qa_persistence)
 
+find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
+file(GLOB QA_Q2_MONSTER_CALLBACK_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gameplay/q2/monsters/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gameplay/q2/monsters/*.h")
+set(QA_Q2_MONSTER_CALLBACK_CHECK "${CMAKE_CURRENT_BINARY_DIR}/q2-monster-callbacks.checked")
+add_custom_command(OUTPUT "${QA_Q2_MONSTER_CALLBACK_CHECK}"
+    COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_q2_monster_callbacks.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${QA_Q2_MONSTER_CALLBACK_CHECK}"
+    DEPENDS tools/check_q2_monster_callbacks.py ${QA_Q2_MONSTER_CALLBACK_SOURCES}
+    VERBATIM)
+add_custom_target(qa_q2_monster_callbacks DEPENDS "${QA_Q2_MONSTER_CALLBACK_CHECK}")
+add_dependencies(qa_game_q2 qa_q2_monster_callbacks)
+
 add_library(qa_game_q3 STATIC
     src/gameplay/q3/alpha.c
     src/gameplay/q3/checkpoint.c

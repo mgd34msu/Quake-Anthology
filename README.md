@@ -6,7 +6,7 @@ This native C version is not ready to play yet. Game data is not included; use t
 
 ## Build and launch
 
-You need a C17 compiler, CMake 3.20 or newer, Git and pkg-config. Install the development libraries for SDL2 2.0.18+, libcurl 7.85+, zlib, PNG, JPEG, GIF, ICU, FreeType, libffi, Vorbis, Ogg and Theora. The build downloads its pinned native runtime dependencies, so the first build needs internet access.
+You need a C17 compiler, CMake 3.20 or newer, Python 3.8 or newer, Git and pkg-config. Python checks the Quake II monster callback tables during the build; the game does not need Python to run. Install the development libraries for SDL2 2.0.18+, libcurl 7.85+, zlib, PNG, JPEG, GIF, ICU, FreeType, libffi, Vorbis, Ogg and Theora. The build downloads its pinned native runtime dependencies, so the first build needs internet access.
 
 ```sh
 git clone https://github.com/mgd34msu/Quake-Anthology.git
