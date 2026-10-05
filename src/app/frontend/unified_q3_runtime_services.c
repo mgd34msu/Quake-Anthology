@@ -575,66 +575,6 @@ bool frontend_unified_q3_runtime_services_caches(const frontend_unified_q3_runti
         return fail(e,"CG cache inventory requires its returned retained owners");
     *media=o->media;*clients=o->clients;return true;
 }
-static bool cache_codec_ready(const frontend_unified_q3_runtime_services *o,qa_error *e)
-{
-    return o && !o->codec_busy && tuple_current(o,true) && q3n_media_idle(o->media) && q3n_clients_idle(o->clients) &&
-        o->assets->capturing && o->assets->busy==1 && !o->assets->codec_busy ? true:
-        fail(e,"CG cache codec requires its retained CLIENT and actual captured bank");
-}
-static bool cache_blob(qa_source_save_io *io,qa_bytes *bytes)
-{
-    size_t count=io->direction==QA_SOURCE_SAVE_WRITE?bytes->size:0;
-    if(!qa_source_save_count(io,&count,64u*1024u*1024u))return false;
-    if(io->direction==QA_SOURCE_SAVE_WRITE)return qa_source_save_bytes(io,(void *)bytes->data,count);
-    if(io->offset>io->input.size || count>io->input.size-io->offset)
-        return fail(io->error,"Truncated CG cache continuation");
-    *bytes=(qa_bytes){io->input.data+io->offset,count};io->offset+=count;return true;
-}
-bool frontend_unified_q3_runtime_services_checkpoint(frontend_unified_q3_runtime_services *o,
-    const q3n_client_refs *refs,qa_buffer *out,qa_error *e)
-{
-    if(!out || out->data || out->size || !cache_codec_ready(o,e) || o->import_bytes.data)return false;
-    o->codec_busy=true;qa_buffer media={0},clients={0};qa_source_save_io io={0};
-    uint8_t magic[5]={'U','Q','3','S','1'};
-    bool okay=q3n_media_checkpoint(o->media,&media,e) && q3n_clients_checkpoint(o->clients,refs,&clients,e) &&
-        qa_source_save_writer(&io,NULL,e) && qa_source_save_bytes(&io,magic,sizeof(magic)) &&
-        q3n_compiled_source_fields(&io,o->source);
-    qa_bytes a={media.data,media.size},b={clients.data,clients.size};
-    if(okay)okay=cache_blob(&io,&a) && cache_blob(&io,&b) && tuple_current(o,true) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io);qa_buffer_free(&media);qa_buffer_free(&clients);o->codec_busy=false;return okay;
-}
-bool frontend_unified_q3_runtime_services_restore(frontend_unified_q3_runtime_services *o,
-    const q3n_client_refs *refs,qa_bytes bytes,qa_error *e)
-{
-    if(!cache_codec_ready(o,e) || !o->options.frontend->source_restoring || o->caches_restored)
-        return fail(e,"CG cache import requires its actual empty restoration continuation");
-    if(o->import_bytes.data && (bytes.size!=o->import_bytes.size || !bytes.data ||
-        memcmp(bytes.data,o->import_bytes.data,bytes.size) || (refs!=NULL)!=o->import_has_refs ||
-        (refs && (refs->context!=o->import_refs.context || refs->resource_encode!=o->import_refs.resource_encode ||
-            refs->resource_decode!=o->import_refs.resource_decode))))
-        return fail(e,"CG cache retry changed its retained bytes or actual resource decoder");
-    if(o->import_bytes.data)bytes=(qa_bytes){o->import_bytes.data,o->import_bytes.size};
-    o->codec_busy=true;qa_source_save_io io={0};uint8_t magic[5]={0};qa_bytes media={0},clients={0};
-    bool okay=qa_source_save_reader(&io,NULL,bytes,e) && qa_source_save_bytes(&io,magic,sizeof(magic)) &&
-        !memcmp(magic,"UQ3S1",sizeof(magic)) && q3n_compiled_source_fields(&io,o->source) &&
-        cache_blob(&io,&media) && cache_blob(&io,&clients) && qa_source_save_finish(&io,NULL);
-    if(okay && !o->import_bytes.data){
-        o->import_bytes.data=malloc(bytes.size);
-        if(!o->import_bytes.data){qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining exact CG cache import continuation");okay=false;}
-        else {memcpy(o->import_bytes.data,bytes.data,bytes.size);o->import_bytes.size=bytes.size;
-            o->import_has_refs=refs!=NULL;if(refs)o->import_refs=*refs;}
-    }
-    if(okay){
-        media.data=o->import_bytes.data+(size_t)(media.data-bytes.data);
-        clients.data=o->import_bytes.data+(size_t)(clients.data-bytes.data);
-    }
-    if(okay && !o->media_imported){okay=q3n_media_restore(o->media,media,e);if(okay)o->media_imported=true;}
-    if(okay && !o->clients_imported){okay=q3n_clients_restore(o->clients,o->import_has_refs?&o->import_refs:NULL,clients,e);
-        if(okay)o->clients_imported=true;}
-    if(okay && !tuple_current(o,true))okay=fail(e,"CG cache import lost its retained CLIENT after child restoration");
-    if(okay){o->caches_restored=true;qa_buffer_free(&o->import_bytes);memset(&o->import_refs,0,sizeof(o->import_refs));}
-    qa_source_save_dispose(&io);o->codec_busy=false;return okay;
-}
 bool frontend_unified_q3_runtime_services_destroy(frontend_unified_q3_runtime_services **slot,qa_error *e)
 {
     if(!slot || !*slot)return true;

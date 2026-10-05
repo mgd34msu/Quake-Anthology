@@ -145,12 +145,5 @@ bool frontend_unified_q3_runtime_rebind_restore(frontend_unified_q3_runtime *,
     const frontend_unified_q3_client_frame *,qa_error *);
 void frontend_unified_q3_runtime_rebind_commit(frontend_unified_q3_runtime *, const frontend_unified_q3_client_frame *);
 void frontend_unified_q3_runtime_rebind_abort(frontend_unified_q3_runtime *, const frontend_unified_q3_client_frame *);
-/* Asset dictionaries and actual client/cache parents import first; this
- * continuation does not replay CG_Init, reached commands or movie opens. */
-bool frontend_unified_q3_runtime_checkpoint(const frontend_unified_q3_runtime *, qa_buffer *, qa_error *);
-bool frontend_unified_q3_runtime_restore(frontend_unified_q3_runtime *, qa_bytes, qa_error *);
-bool frontend_unified_q3_runtime_restore_ready(const frontend_unified_q3_runtime *, qa_error *);
-bool frontend_unified_q3_runtime_restore_passive_finish(frontend_unified_q3_runtime *, qa_error *);
-bool frontend_unified_q3_runtime_restore_bind(frontend_unified_q3_runtime *, qa_error *);
 
 #endif

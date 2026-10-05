@@ -39,12 +39,6 @@ bool frontend_unified_q3_runtime_services_current(const frontend_unified_q3_runt
 /* Literal constructor-owned caches; they outlive the runtime borrowing them. */
 bool frontend_unified_q3_runtime_services_caches(const frontend_unified_q3_runtime_services *,
     q3n_media **, q3n_clients **, qa_error *);
-bool frontend_unified_q3_runtime_services_checkpoint(frontend_unified_q3_runtime_services *,
-    const q3n_client_refs *, qa_buffer *, qa_error *);
-/* Retries keep the exact payload and resource resolver, resuming after each
- * successfully imported child. Cleanup retains ownership of that prefix. */
-bool frontend_unified_q3_runtime_services_restore(frontend_unified_q3_runtime_services *,
-    const q3n_client_refs *, qa_bytes, qa_error *);
 /* Destroy after the runtime and all of its borrowed callbacks retire. */
 bool frontend_unified_q3_runtime_services_destroy(frontend_unified_q3_runtime_services **, qa_error *);
 #endif

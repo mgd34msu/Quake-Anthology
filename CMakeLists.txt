@@ -1867,7 +1867,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/video_guests.c
     src/app/frontend/remote_q2_material_movies_bridge.c
     src/app/frontend/unified_q3_runtime.c
-    src/app/frontend/unified_q3_runtime_save.c
     src/app/frontend/unified_q3_runtime_services.c
     src/app/frontend/unified_q3_runtime_video.c
 
