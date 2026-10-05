@@ -872,6 +872,7 @@ bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
     application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
     bool command_only = elapsed_ns == 0 && source &&
         source->kind == APPLICATION_PROVIDER_Q2;
+    application_snapshot_mutated(application);
     application->operation = APPLICATION_ADVANCING;
     bool ok = command_only
         ? qa_session_command_turn(application->session, error)

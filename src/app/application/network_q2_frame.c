@@ -255,6 +255,12 @@ static bool original_entity(qa_application_network_q2 *owner, uint32_t number,
 
 bool application_network_q2_entities(qa_application_network_q2 *owner, qa_error *error)
 {
+    uint64_t actors_revision = qa_actors_revision(qa_session_actors(owner->app->session));
+    if (owner->source_entities_ready && owner->source_frame == owner->host.source.clock.frame_number &&
+        owner->source_application_frame == application_frame_revision(owner->app) &&
+        owner->source_mutation == owner->app->snapshot_mutation &&
+        owner->source_actors_revision == actors_revision) return true;
+    owner->source_entities_ready = false;
     uint32_t extent;
     bool builtin = owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN;
     if (builtin) {
@@ -265,7 +271,7 @@ bool application_network_q2_entities(qa_application_network_q2 *owner, qa_error 
         extent = engine->wire_engine->capacity;
     }
     if (extent > owner->entity_capacity) return application_fail(error, QA_ERROR_FORMAT, "Q2 entity publication exceeds its admitted physical extent");
-    owner->entity_count = 0;
+    owner->source_entity_count = 0;
     for (uint32_t slot = 1; slot < extent; ++slot) {
         qa_q2_entity value;
         bool present;
@@ -274,10 +280,16 @@ bool application_network_q2_entities(qa_application_network_q2 *owner, qa_error 
         } else {
             if (!original_entity(owner, slot, &value, &present, error)) return false;
         }
-        if (present) owner->entities[owner->entity_count++] = value;
+        if (present) owner->source_entities[owner->source_entity_count++] = value;
     }
-    return qa_application_native_q2_presentation_current(owner->app, &owner->host.source) ||
-        application_fail(error, QA_ERROR_ARGUMENT, "Q2 entity publication changed its completed Source frame");
+    if (!qa_application_native_q2_presentation_current(owner->app, &owner->host.source))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 entity publication changed its completed Source frame");
+    owner->source_frame = owner->host.source.clock.frame_number;
+    owner->source_application_frame = application_frame_revision(owner->app);
+    owner->source_mutation = owner->app->snapshot_mutation;
+    owner->source_actors_revision = actors_revision;
+    owner->source_entities_ready = true;
+    return true;
 }
 
 bool qa_application_network_q2_motion(qa_application_network_q2 *owner,
@@ -556,7 +568,7 @@ static bool headnode_visible(qa_collision_geometry *geometry, const q2_recipient
 
 static bool source_visible(qa_application_network_q2 *owner, const q2_recipient *recipient,
     const qa_q2_entity *state, uint32_t *leaves, size_t leaf_capacity,
-    bool *out, bool *owned, qa_error *error)
+    bool novis, bool *out, bool *owned, qa_error *error)
 {
     qa_collision_geometry *geometry = owner->app->geometry;
     bool builtin = owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN;
@@ -607,8 +619,7 @@ static bool source_visible(qa_application_network_q2 *owner, const q2_recipient 
                 original.binding.actor, recipient->slot, recipient->actor, &admitted, error)) return false;
         if (!admitted) return true;
     }
-    const qa_cvar_view *novis = qa_cvars_find(owner->host.cvars, "sv_novis");
-    if (state->number == recipient->slot || (rr && ((flags & 1024) || (novis && novis->number != 0)))) { *out = true; return true; }
+    if (state->number == recipient->slot || (rr && ((flags & 1024) || novis))) { *out = true; return true; }
     bool beam = (state->renderfx & 128) != 0, shadow = rr && (state->renderfx & 16384) != 0;
     bool phs = beam || (rr && (shadow || state->sound));
     bool area = false, visible = false;
@@ -679,8 +690,13 @@ bool qa_application_network_q2_frame(qa_application_network_q2 *owner, const qa_
     size_t leaf_capacity = qa_bsp_record_count(map, QA_BSP_LEAVES);
     if (!leaf_capacity || leaf_capacity > SIZE_MAX / sizeof(uint32_t))
         return application_fail(error, QA_ERROR_FORMAT, "Q2 publication has no bounded geometry leaves");
-    uint32_t *leaves = malloc(leaf_capacity * sizeof(*leaves));
-    if (!leaves) return application_fail(error, QA_ERROR_MEMORY, "Observing actual Q2 recipient leaves");
+    if (leaf_capacity > owner->leaf_capacity) {
+        uint32_t *leaves = realloc(owner->leaves, leaf_capacity * sizeof(*leaves));
+        if (!leaves) return application_fail(error, QA_ERROR_MEMORY, "Observing actual Q2 recipient leaves");
+        owner->leaves = leaves; owner->leaf_capacity = leaf_capacity;
+    }
+    const qa_cvar_view *novis = qa_cvars_find(owner->host.cvars, "sv_novis");
+    bool no_visibility = novis && novis->number != 0;
     qa_q2_wire_frame value = {.valid = true, .delta_frame = -1, .player_count = seats};
     uint32_t frame_bits = (uint32_t)owner->host.source.clock.frame_number;
     memcpy(&value.server_frame, &frame_bits, sizeof(frame_bits));
@@ -717,13 +733,14 @@ bool qa_application_network_q2_frame(qa_application_network_q2 *owner, const qa_
     }
     if (ok) ok = application_network_q2_entities(owner, error);
     size_t count = 0;
-    for (size_t i = 0; ok && i < owner->entity_count; ++i) {
-        qa_q2_entity state = owner->entities[i];
+    for (size_t i = 0; ok && i < owner->source_entity_count; ++i) {
+        qa_q2_entity state = owner->source_entities[i];
         bool visible = false, owned = false;
         uint32_t hidden = 0;
         for (size_t j = 0; ok && j < seats; ++j) {
             bool seen = false, own = false;
-            ok = source_visible(owner, &recipients[j], &state, leaves, leaf_capacity, &seen, &own, error);
+            ok = source_visible(owner, &recipients[j], &state, owner->leaves, leaf_capacity,
+                no_visibility, &seen, &own, error);
             visible |= seen; owned |= own;
             if (!seen) hidden |= UINT32_C(1) << j;
         }
@@ -733,7 +750,6 @@ bool qa_application_network_q2_frame(qa_application_network_q2 *owner, const qa_
             owner->entities[count++] = state;
         }
     }
-    free(leaves);
     if (ok && !qa_application_native_q2_presentation_current(owner->app, &owner->host.source))
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Q2 frame changed its actual Source receipt during visibility");
     if (!ok) return false;

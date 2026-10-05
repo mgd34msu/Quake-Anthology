@@ -99,10 +99,15 @@ struct qa_application_network_q2 {
     application_q2_resource_table resources[3];
     qa_q2_config_entry *entries;
     application_q2_layout_receipt *layouts;
-    qa_q2_entity *entities, *baselines;
+    qa_q2_entity *entities, *source_entities, *baselines;
     qa_q2_source_entity_motion *motion_rows;
     qa_q2_source_motion motion;
     size_t entity_count, baseline_count, entity_capacity;
+    size_t source_entity_count;
+    uint64_t source_frame, source_application_frame, source_mutation, source_actors_revision;
+    uint32_t *leaves;
+    size_t leaf_capacity;
+    bool source_entities_ready;
     uint8_t area_bits[QA_Q2_MAX_SEATS][QA_Q2_MAX_AREABITS];
     qa_q2_status_player *status_players;
     char (*status_names)[32];

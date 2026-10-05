@@ -887,6 +887,7 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
     if (!deferred && !group)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating raw Q3 source command");
     qa_movement_command command = q3_command(raw, sequence);
+    application_snapshot_mutated(app);
     if (!qc_receipt(app, actor, ordinal, &command, error)) {
         free(group); application_fault(app, error); return false;
     }
@@ -1970,6 +1971,7 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
     if (session != app->session || group->provider != command->provider ||
         !qa_actor_id_equal(group->actor, command->actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Command group lost its genuine source admission");
+    application_snapshot_mutated(app);
     struct application_control_frames *owner = app->control_frames;
     const application_control_context *previous = owner->current;
     application_control_context current = {.actor = group->actor, .path = group->quakeworld

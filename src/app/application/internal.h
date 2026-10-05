@@ -389,6 +389,7 @@ struct qa_application {
     uint64_t publication_generation;
     uint64_t command_generation, map_revision;
     uint64_t frame_revision;
+    uint64_t snapshot_mutation;
     qa_product_id map_geometry, map_presentation;
     bool map_view_ready;
     bool q1_paused;
@@ -404,6 +405,11 @@ struct qa_application {
     qa_error publication_error;
     struct application_supplies *supplies;
 };
+
+static inline void application_snapshot_mutated(qa_application *application)
+{
+    ++application->snapshot_mutation;
+}
 
 bool application_actor_released(void *, qa_session *, qa_actor_record,
                                 qa_error *);

@@ -72,8 +72,9 @@ static bool begin(void *context, qa_net_client_id id, qa_net_seat_id seat, qa_er
 {
     qa_application_network_q2 *owner = context;
     qa_actor_id actor;
-    return seat_actor(owner, id, seat, &actor, error) &&
-        qa_application_remote_player_begin(owner->app, id, seat, error);
+    if (!seat_actor(owner, id, seat, &actor, error)) return false;
+    application_snapshot_mutated(owner->app);
+    return qa_application_remote_player_begin(owner->app, id, seat, error);
 }
 
 static bool input(void *context, qa_net_client_id id, qa_net_seat_id seat,
@@ -87,6 +88,7 @@ static bool input(void *context, qa_net_client_id id, qa_net_seat_id seat,
         actual.source_owner != receipt->source_owner || actual.source_slot != receipt->source_slot ||
         actual.movement != receipt->movement)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 raw command lost its physical Source receipt");
+    application_snapshot_mutated(owner->app);
     return owner->bindings.input(owner->bindings.context, id, seat, receipt, command, sequence, error);
 }
 
@@ -131,6 +133,7 @@ static bool command(void *context, qa_net_client_id id, qa_net_seat_id seat,
     if (!text || !seat_actor(owner, id, seat, &actor, error) ||
         !console(owner, actor, &source, &invocation, error) ||
         owner->app->operation != APPLICATION_IDLE) return false;
+    application_snapshot_mutated(owner->app);
     application_provider *provider = application_network_q2_provider(owner);
     bool handled = false, ok;
     if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_ORIGINAL)
@@ -200,6 +203,7 @@ static bool userinfo(void *context, qa_net_client_id id, qa_net_seat_id seat,
         }
     }
     if (!row) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 userinfo lost its canonical Source admission");
+    application_snapshot_mutated(owner->app);
     application_provider *provider = application_network_q2_provider(owner);
     owner->app->operation = APPLICATION_CONFIGURING;
     bool ok = owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN ?

@@ -341,6 +341,7 @@ static qa_command_result command_dispatch(qa_application *application,
     if (!qa_application_capture_command_context(application, &invocation->context,
                                                   &command.context, error))
         return QA_COMMAND_FAILED;
+    application_snapshot_mutated(application);
     qa_command_result flight = application_native_engine_fly(application, invocation,
         &command.context, error);
     if (flight != QA_COMMAND_UNHANDLED) return flight;

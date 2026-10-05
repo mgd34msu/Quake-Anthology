@@ -85,6 +85,7 @@ bool application_network_q2_config(qa_application_network_q2 *owner, uint32_t in
     char *copy = *text ? application_network_q2_copy(text, error) : NULL;
     if (*text && !copy) return false;
     free(owner->configs[index]); owner->configs[index] = copy;
+    owner->source_entities_ready = false;
     return true;
 }
 
@@ -336,13 +337,14 @@ bool qa_application_network_q2_create(qa_application *app, qa_net_protocol_id pr
     if (ok) {
         owner->entity_capacity = owner->host.entity_slots;
         owner->entities = calloc(owner->entity_capacity, sizeof(*owner->entities));
+        owner->source_entities = calloc(owner->entity_capacity, sizeof(*owner->source_entities));
         owner->baselines = calloc(owner->entity_capacity, sizeof(*owner->baselines));
         owner->motion_rows = calloc(owner->entity_capacity, sizeof(*owner->motion_rows));
         owner->status_players = calloc(owner->host.client_slots, sizeof(*owner->status_players));
         owner->status_names = calloc(owner->host.client_slots, sizeof(*owner->status_names));
         owner->event_actors = calloc(owner->entity_capacity, sizeof(*owner->event_actors));
         owner->events = calloc(owner->entity_capacity, sizeof(*owner->events));
-        ok = owner->entities && owner->baselines && owner->motion_rows && owner->status_players && owner->status_names &&
+        ok = owner->entities && owner->source_entities && owner->baselines && owner->motion_rows && owner->status_players && owner->status_names &&
             owner->event_actors && owner->events;
         if (!ok) application_fail(error, QA_ERROR_MEMORY, "Retaining genuine Q2 publication rows");
     }
@@ -433,7 +435,8 @@ void qa_application_network_q2_destroy(qa_application_network_q2 *owner)
     application_network_q2_unbind(owner);
     application_network_q2_free_tables(owner);
     application_network_q2_resources_free(owner);
-    free(owner->entities); free(owner->baselines); free(owner->status_players); free(owner->status_names);
+    free(owner->entities); free(owner->source_entities); free(owner->baselines); free(owner->status_players); free(owner->status_names);
+    free(owner->leaves);
     free(owner->motion_rows);
     free(owner->event_actors); free(owner->events);
     free(owner->source_instance); free(owner->source_map);
@@ -488,8 +491,8 @@ bool qa_application_network_q2_game_state(qa_application_network_q2 *owner,
     for (uint32_t i = 0; i < owner->config_count; ++i)
         if (owner->configs[i]) owner->entries[configs++] = (qa_q2_config_entry){(uint16_t)i, owner->configs[i]};
     owner->baseline_count = 0;
-    for (size_t i = 0; i < owner->entity_count; ++i) {
-        const qa_q2_entity *entity = &owner->entities[i];
+    for (size_t i = 0; i < owner->source_entity_count; ++i) {
+        const qa_q2_entity *entity = &owner->source_entities[i];
         if (entity->modelindex || entity->modelindex2 || entity->modelindex3 || entity->modelindex4 || entity->sound || entity->effects || entity->morefx)
             owner->baselines[owner->baseline_count++] = *entity;
     }
