@@ -3,6 +3,11 @@
 
 #include "qa/session.h"
 
+typedef struct qa_monster_activation {
+    bool active;
+    qa_actor_id activator;
+} qa_monster_activation;
+
 typedef struct qa_monster_combat_route {
     qa_actor_id goal;
     bool stand_ground;
@@ -16,6 +21,7 @@ typedef struct qa_monster_mission {
     bool ambush;
     bool (*spawned)(void *, qa_actor_id, qa_error *);
     bool (*started)(void *, qa_actor_id, qa_error *);
+    bool (*active)(void *, qa_actor_id, qa_monster_activation *, qa_error *);
     bool (*killed)(void *, qa_actor_id, qa_actor_id attacker, qa_error *);
     bool (*route)(void *, qa_actor_id, qa_actor_id *goal, qa_error *);
     bool (*use)(void *, qa_actor_id, qa_actor_id activator, bool *handled, qa_error *);

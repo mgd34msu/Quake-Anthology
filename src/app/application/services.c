@@ -993,6 +993,17 @@ static bool builtin_traits(void *opaque, qa_actor_id actor,
     return false;
 }
 
+static application_provider *target_source(qa_application *app, qa_actor_id actor)
+{
+    qa_authored_monster *monster = qa_targets_monster(app->targets, actor);
+    if (monster)
+        for (size_t i = 0; i < app->provider_count; ++i) {
+            application_provider *provider = app->providers[i];
+            if (provider && provider->owner == monster->owner) return provider;
+        }
+    return application_provider_for(app, actor, QA_ROLE_ENTITIES, "");
+}
+
 static bool builtin_use_targets(void *opaque, qa_actor_id source,
                                 qa_actor_id activator, qa_string_id target,
                                 qa_string_id killtarget, float delay,
@@ -1025,8 +1036,7 @@ static bool target_defer(void *opaque, const qa_target_use *request,
                          qa_error *error)
 {
     qa_application *application = opaque;
-    application_provider *provider = application_provider_for(
-        application, request->source, QA_ROLE_ENTITIES, "");
+    application_provider *provider = target_source(application, request->source);
     if (provider != NULL && provider->kind == APPLICATION_PROVIDER_Q1)
         return qa_q1_game_map_defer_targets(provider->state.q1, request, error);
     if (provider != NULL && provider->kind == APPLICATION_PROVIDER_Q2)
@@ -1042,8 +1052,7 @@ static bool target_message(void *opaque, const qa_target_use *request,
     if (!application || !application->session || !request)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Target message lost its actual application request");
-    application_provider *provider = application_provider_for(
-        application, request->source, QA_ROLE_ENTITIES, "");
+    application_provider *provider = target_source(application, request->source);
     qa_clock_state clock;
     if (!provider || !provider->constructed || provider->close_pending ||
         provider->component.clock.kind != request->dialect ||

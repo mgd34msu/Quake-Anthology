@@ -63,6 +63,8 @@ bool qa_q1_game_path_change(qa_q1_game *g, qa_actor_id actor, const qa_q1_path_c
         m = &entity->state.monster;
         m->path = change->reference.registry ? change->target : QA_STRING_NONE;
         entity->physics.goal = m->move_target = change->reference;
+        if (g->maps && !change->combat_route) qa_targets_monster_route(g->maps->options.targets, actor,
+            m->path, change->reference);
         qa_vec3 direction = qa_vec_sub(destination.origin, self.origin);
         entity->physics.ideal_yaw =
             qa_builtin_angle_mod(atan2f(direction.y, direction.x) * 57.29577951308232f);

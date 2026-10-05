@@ -242,7 +242,13 @@ static bool start(q2m_context *context, qa_error *error) {
     struct qa_q2_monster *monster = context->monster;
     bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
     bool spawn_dead = rerelease && (monster->spawnflags & UINT32_C(65536));
-    if (!(monster->spawnflags & 2u) && monster->definition->locomotion == Q2M_WALK &&
+    qa_monster_mission mission;
+    bool present;
+    if (!q2m_mission(context, &mission, &present, error)) return false;
+    qa_monster_activation activation = {.active = true};
+    if (present && mission.active && !mission.active(mission.context, context->actor->id, &activation, error)) return false;
+    if (!q2m_alive(context)) return true;
+    if (activation.active && !(monster->spawnflags & 2u) && monster->definition->locomotion == Q2M_WALK &&
         context->game->now_ns < Q2M_SECOND &&
         (!rerelease || !(monster->spawnflags & UINT32_C(262144)))) {
         if (!drop_to_floor(context, error))
@@ -252,10 +258,6 @@ static bool start(q2m_context *context, qa_error *error) {
     }
     if (context->combat.health <= 0)
         return true;
-    qa_monster_mission mission;
-    bool present;
-    if (!q2m_mission(context, &mission, &present, error))
-        return false;
     if (!q2m_alive(context))
         return true;
     if (present) {
@@ -292,82 +294,40 @@ static bool start(q2m_context *context, qa_error *error) {
     return !present || mission.started(mission.context, context->actor->id, error);
 }
 
-static bool place_triggered(q2m_context *context, qa_error *error) {
-    context->body.origin.z += 1.0f;
-    if (!q2m_write_body(context, false, error))
-        return false;
-    if (!q2m_alive(context))
-        return true;
-    qa_trace_query query = {.start = context->body.origin,
-                           .end = context->body.origin,
-                           .shape = {.kind = QA_SHAPE_BOX, .bounds = context->body.bounds},
-                           .pass_actor = context->actor->id,
-                           .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = Q2M_MONSTER_MASK |
-        (context->game->options.edition == QA_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0);
-    qa_attack attack = {.time_ns = context->game->now_ns,
-                        .weapon_provider = context->game->options.owner,
-                        .attacker = context->actor->id,
-                        .inflictor = context->actor->id,
-                        .combat_provider = context->game->options.owner,
-                        .cause = qa_q2_damage_cause(context->game->options.edition,
-                                                   context->game->options.product, 21, 8)};
-    for (unsigned i = 0; i < 1024; i++) {
-        qa_trace_result trace;
-        if (!qa_world_trace(context->game->services.world, &query, &trace, error))
-            return false;
-        if (!q2m_alive(context))
-            return true;
-        if (trace.hit != QA_TRACE_HIT_ACTOR)
-            break;
-        qa_actor_id victim = trace.actor;
-        qa_combat_state combat;
-        qa_error ignored = {0};
-        if (!qa_combat_read(context->game->services.combat, victim, &combat, &ignored))
-            break;
-        if (!q2m_alive(context))
-            return true;
-        if (!q2_damage(context->game, &attack, victim, 100000, 0, qa_v3(0, 0, 0),
-                       query.start, qa_v3(0, 0, 0), false, error))
-            return false;
-        if (!q2m_alive(context))
-            return true;
-        if (!qa_world_trace(context->game->services.world, &query, &trace, error))
-            return false;
-        if (!q2m_alive(context))
-            return true;
-        if (trace.hit == QA_TRACE_HIT_ACTOR && qa_actor_id_equal(trace.actor, victim))
-            break;
-    }
-    return true;
+static bool activate_body(q2m_context *context, qa_error *error) {
+    context->monster->visible = true;
+    context->monster->air_ns = q2m_after(context->game->now_ns, 12);
+    context->actor->physics.solid = QA_PHYSICS_BOX;
+    context->actor->physics.motion = QA_PHYSICS_STEP;
+    qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
+        .contents = (int32_t)UINT32_C(0x02000000), .role = QA_COLLISION_SOLID, .monster = true};
+    return q2m_damageable(context, true, error) && (!q2m_alive(context) ||
+        (qa_world_set_collision(context->game->services.world, context->actor->id, &collision, error) &&
+        q2m_link(context, error)));
+}
+
+bool qa_q2_monster_activate(qa_q2_game *game, qa_actor_id actor, qa_error *error) {
+    q2_actor *native = q2_actor_get(game, actor, false, NULL);
+    if (!native || !native->monster) return false;
+    q2m_context context = {.game = game, .actor = native, .monster = native->monster};
+    return q2m_refresh(&context, error) && activate_body(&context, error);
 }
 
 static bool trigger_spawn(q2m_context *context, qa_error *error) {
-    if (!place_triggered(context, error))
-        return false;
-    if (!q2m_alive(context))
-        return true;
+    context->body.origin.z += 1;
+    if (!q2m_write_body(context, false, error)) return false;
+    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    if (rerelease && !activate_body(context, error)) return false;
+    if (!q2m_alive(context)) return true;
+    bool clear;
+    if (!qa_q2_entities_killbox(context->game, context->actor->id, context->actor->id, &clear, error)) return false;
+    if (!q2m_alive(context)) return true;
     struct qa_q2_monster *monster = context->monster;
     monster->spawnflags &= ~2u;
     monster->triggered = false;
-    monster->visible = true;
-    monster->air_ns = q2m_after(context->game->now_ns, 12);
     if (context->actor->entity)
         context->actor->entity->spawnflags = monster->spawnflags;
-    context->actor->physics.solid = QA_PHYSICS_BOX;
-    context->actor->physics.motion = QA_PHYSICS_STEP;
-    qa_actor_collision collision = {.family = QA_COLLISION_Q2,
-                                    .shape = QA_SHAPE_BOX,
-                                    .contents = (int32_t)UINT32_C(0x02000000),
-                                    .role = QA_COLLISION_SOLID,
-                                    .monster = true};
-    if (!q2m_damageable(context, true, error))
-        return false;
-    if (!q2m_alive(context))
-        return true;
-    if (!qa_world_set_collision(context->game->services.world, context->actor->id, &collision, error) ||
-        !start(context, error))
-        return false;
+    if ((!rerelease && !activate_body(context, error)) || (q2m_alive(context) && !start(context, error))) return false;
     if (!q2m_alive(context))
         return true;
     qa_builtin_actor_traits target;
@@ -384,17 +344,45 @@ static bool trigger_spawn(q2m_context *context, qa_error *error) {
     return !q2m_alive(context) || q2m_link(context, error);
 }
 
+static bool mission_turn(q2m_context *context, bool *active, qa_error *error) {
+    qa_monster_mission mission;
+    bool present;
+    *active = true;
+    if (!q2m_mission(context, &mission, &present, error)) return false;
+    struct qa_q2_monster *monster = context->monster;
+    if (!present || !mission.active || monster->start_phase != Q2M_START_ACTIVE || monster->dead) return true;
+    qa_monster_activation activation;
+    if (!mission.active(mission.context, context->actor->id, &activation, error)) return false;
+    if (!q2m_alive(context)) { *active = false; return true; }
+    if (!q2m_refresh(context, error)) return false;
+    *active = activation.active;
+    if (!*active) {
+        monster->visible = false;
+        context->actor->physics.solid = QA_PHYSICS_NOT_SOLID;
+        context->actor->physics.motion = QA_PHYSICS_STATIONARY;
+        return q2m_damageable(context, false, error) &&
+            qa_world_set_collision(context->game->services.world, context->actor->id, NULL, error) &&
+            q2m_link(context, error);
+    }
+    if (!monster->visible) {
+        if (!activate_body(context, error) || (q2m_alive(context) && !q2m_refresh(context, error))) return false;
+    }
+    return !activation.activator.registry || q2m_lifecycle_use(context, activation.activator, error);
+}
 bool q2m_lifecycle_tick(q2m_context *context, bool *handled, qa_error *error) {
     struct qa_q2_monster *monster = context->monster;
     *handled = true;
     if (monster->start_phase == Q2M_START_DORMANT || monster->start_phase == Q2M_START_MANUAL ||
         context->game->now_ns < monster->start_due_ns)
         return true;
+    bool active;
     if (monster->start_phase == Q2M_START_PENDING || monster->start_phase == Q2M_START_TRIGGER) {
         bool ok = monster->start_phase == Q2M_START_PENDING ? start(context, error)
                                                             : trigger_spawn(context, error);
-        return ok && (!q2m_alive(context) || q2m_show(context, error));
+        return ok && (!q2m_alive(context) || (mission_turn(context, &active, error) && q2m_show(context, error)));
     }
+    if (!mission_turn(context, &active, error)) return false;
+    if (!active) return !q2m_alive(context) || q2m_show(context, error);
     *handled = false;
     return true;
 }
@@ -473,7 +461,7 @@ bool q2m_lifecycle_killed(q2m_context *context, qa_error *error) {
         return true;
     monster->touch_active = false;
     context->actor->physics.flags &= ~(uint32_t)(QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING);
-    if (context->actor->entity) {
+    if (!present && context->actor->entity) {
         const char *drop = q2_field_text(context->game, context->actor->entity, "item");
         if (*drop) {
             qa_actor_id item;
@@ -482,6 +470,10 @@ bool q2m_lifecycle_killed(q2m_context *context, qa_error *error) {
                 return false;
             if (!q2m_alive(context))
                 return true;
+            if (dropped && context->game->options.edition == QA_Q2_RERELEASE) {
+                qa_string_id item_target = q2_field_id(context->game, context->actor->entity, "itemtarget");
+                if (item_target && !qa_q2_entity_set_target(context->game, item, item_target, error)) return false;
+            }
         }
     }
     if (present)
@@ -492,7 +484,13 @@ bool q2m_lifecycle_killed(q2m_context *context, qa_error *error) {
     qa_string_id death_target = q2_field_id(context->game, entity, "deathtarget");
     if (death_target)
         entity->target = death_target;
-    return !entity->target || q2_entity_targets(context->game, context->actor, attacker, false, error);
+    if (entity->target && !q2_entity_targets(context->game, context->actor, attacker, false, error)) return false;
+    if (!q2m_alive(context) || context->game->options.edition != QA_Q2_RERELEASE) return true;
+    entity = context->actor->entity;
+    qa_string_id health_target = q2_field_id(context->game, entity, "healthtarget");
+    if (!health_target) return true;
+    entity->target = health_target;
+    return q2_entity_targets(context->game, context->actor, attacker, false, error);
 }
 
 bool q2m_lifecycle_route(q2m_context *context, bool found_target, bool *routed, qa_error *error) {

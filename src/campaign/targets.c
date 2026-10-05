@@ -56,10 +56,11 @@ qa_targets *qa_targets_create(const qa_target_options *options, qa_error *error)
     targets->options = *options;
     targets->capacity = qa_actors_capacity(qa_session_actors(options->session));
     targets->bindings = calloc(targets->capacity, sizeof(*targets->bindings));
+    targets->monsters = calloc(targets->capacity, sizeof(*targets->monsters));
     targets->binding_serial = calloc(targets->capacity, sizeof(*targets->binding_serial));
     targets->index = calloc(targets->capacity, sizeof(*targets->index));
     targets->authored = calloc(targets->capacity, sizeof(*targets->authored));
-    if (!targets->bindings || !targets->binding_serial || !targets->index || !targets->authored) {
+    if (!targets->bindings || !targets->monsters || !targets->binding_serial || !targets->index || !targets->authored) {
         qa_targets_destroy(targets);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating target index");
         return NULL;
@@ -71,11 +72,116 @@ void qa_targets_destroy(qa_targets *targets) {
     if (!targets)
         return;
     qa_arena_destroy(&targets->scratch);
+    if (targets->monsters)
+        for (size_t i = 0; i < targets->capacity; ++i) {
+            if (targets->monsters[i]) free(targets->monsters[i]->authored.barriers);
+            free(targets->monsters[i]);
+        }
+    free(targets->monsters);
     free(targets->authored);
     free(targets->index);
     free(targets->bindings);
     free(targets->binding_serial);
     free(targets);
+}
+static bool monster_read(void *opaque, qa_actor_id actor, qa_authored_target *out) {
+    target_monster *monster = opaque;
+    if (!qa_actor_id_equal(monster->native.actor, actor)) return false;
+    *out = monster->authored.fields;
+    return true;
+}
+static bool monster_use(void *opaque, qa_actor_id actor, qa_actor_id other,
+    qa_actor_id activator, qa_error *error) {
+    target_monster *monster = opaque;
+    qa_target_binding native = monster->native;
+    return !native.use || native.use(native.context, actor, other, activator, error);
+}
+static bool monster_field(void *opaque, qa_actor_id actor, const char *key, qa_target_field *out) {
+    target_monster *monster = opaque;
+    const qa_authored_monster *row = &monster->authored;
+    const char *keys[] = {"classname", "targetname", "target", "killtarget", "message",
+        "deathtarget", "item", "itemtarget", "healthtarget", "combattarget"};
+    const qa_string_id values[] = {row->fields.classname, row->fields.targetname,
+        row->fields.target, row->fields.killtarget, row->fields.message,
+        row->death_target, row->drop_item, row->item_target, row->health_target, row->combat_target};
+    for (size_t i = 0; i < sizeof(keys) / sizeof(*keys); ++i)
+        if (!strcmp(key, keys[i])) {
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = values[i]};
+            return true;
+        }
+    if (!strcmp(key, "spawnflags") || !strcmp(key, "delay")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+            .value.number = !strcmp(key, "spawnflags") ? (double)row->spawnflags : (double)row->fields.delay_seconds};
+        return true;
+    }
+    return monster->native.field && monster->native.field(monster->native.context, actor, key, out);
+}
+static bool monster_targetname(void *opaque, qa_actor_id actor, qa_string_id name, qa_error *error) {
+    (void)actor; (void)error;
+    ((target_monster *)opaque)->authored.fields.targetname = name;
+    return true;
+}
+static bool monster_target(void *opaque, qa_actor_id actor, qa_string_id name, qa_error *error) {
+    (void)actor; (void)error;
+    ((target_monster *)opaque)->authored.fields.target = name;
+    return true;
+}
+static bool monster_delay(void *opaque, qa_actor_id actor, float seconds, qa_error *error) {
+    (void)actor; (void)error;
+    ((target_monster *)opaque)->authored.fields.delay_seconds = seconds;
+    return true;
+}
+static qa_target_binding monster_binding(target_monster *monster) {
+    return (qa_target_binding){.actor = monster->native.actor, .source = monster->authored.source,
+        .context = monster, .read = monster_read, .use = monster_use, .field = monster_field,
+        .set_targetname = monster_targetname, .set_target = monster_target, .set_delay = monster_delay};
+}
+void qa_targets_monsters_configure(qa_targets *targets, void *context,
+    bool (*resolve)(void *, qa_actor_owner, qa_monster_mission *, qa_error *)) {
+    targets->monster_context = context;
+    targets->monster_resolve = resolve;
+}
+qa_authored_monster *qa_targets_monster(qa_targets *targets, qa_actor_id actor) {
+    if (!targets || actor.slot >= targets->capacity || !live(targets, actor)) return NULL;
+    target_monster *row = targets->monsters[actor.slot];
+    return row && qa_actor_id_equal(row->native.actor, actor) ? &row->authored : NULL;
+}
+void qa_targets_monster_route(qa_targets *targets, qa_actor_id actor, qa_string_id name, qa_actor_id goal) {
+    qa_authored_monster *row = qa_targets_monster(targets, actor);
+    if (!row) return;
+    row->route = name; row->route_goal = goal; row->route_resolved = true;
+}
+bool qa_targets_monster_lookup(void *opaque, qa_actor_id actor, qa_monster_mission *out) {
+    qa_targets *targets = opaque;
+    if (!qa_targets_monster(targets, actor)) return false;
+    *out = targets->monsters[actor.slot]->mission;
+    return true;
+}
+bool qa_targets_monster_admit(qa_targets *targets, qa_actor_id actor,
+    const qa_authored_monster *authored, qa_error *error) {
+    const qa_target_binding *native = targets ? binding(targets, actor) : NULL;
+    if (!native || !authored || !authored->owner || !valid_fields(targets, &authored->fields))
+        return fail(error, "Selected monster requires its real native binding and authored map fields");
+    target_monster *row = calloc(1, sizeof(*row));
+    if (!row) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating authored monster target"); return false; }
+    *row = (target_monster){.native = *native, .authored = *authored};
+    if (!targets->monster_resolve || !targets->monster_resolve(targets->monster_context,
+        authored->owner, &row->mission, error)) { free(row); return false; }
+    const char *classname = qa_strings_cstr(qa_session_strings(targets->options.session), authored->fields.classname);
+    bool zombie = (authored->source == QA_CLOCK_NETQUAKE || authored->source == QA_CLOCK_QUAKEWORLD) &&
+        classname && !strcmp(classname, "monster_zombie");
+    row->mission.ambush = (authored->spawnflags & (zombie ? 2u : 1u)) != 0;
+    if (authored->barrier_count) {
+        row->authored.barriers = malloc(authored->barrier_count * sizeof(*authored->barriers));
+        if (!row->authored.barriers) { free(row); qa_error_set(error, QA_ERROR_MEMORY, 0, "retaining authored door encounter"); return false; }
+        memcpy(row->authored.barriers, authored->barriers, authored->barrier_count * sizeof(*authored->barriers));
+    }
+    if (targets->monsters[actor.slot]) free(targets->monsters[actor.slot]->authored.barriers);
+    free(targets->monsters[actor.slot]);
+    targets->monsters[actor.slot] = row;
+    targets->bindings[actor.slot] = monster_binding(row);
+    qa_targets_changed(targets);
+    return true;
 }
 bool qa_targets_bind(qa_targets *targets, const qa_target_binding *entry, qa_error *error) {
     qa_authored_target fields;
@@ -86,7 +192,12 @@ bool qa_targets_bind(qa_targets *targets, const qa_target_binding *entry, qa_err
         return fail(error, "Invalid authored target binding");
     if (targets->next_binding_serial == UINT64_MAX)
         return fail(error, "Authored target binding serial exhausted");
-    targets->bindings[entry->actor.slot] = *entry;
+    target_monster *monster = targets->monsters[entry->actor.slot];
+    if (monster && !qa_actor_id_equal(monster->native.actor, entry->actor)) {
+        free(monster->authored.barriers); free(monster); targets->monsters[entry->actor.slot] = NULL; monster = NULL;
+    }
+    if (monster) monster->native = *entry;
+    targets->bindings[entry->actor.slot] = monster ? monster_binding(monster) : *entry;
     targets->binding_serial[entry->actor.slot] = ++targets->next_binding_serial;
     targets->dirty = true;
     return true;
@@ -94,13 +205,17 @@ bool qa_targets_bind(qa_targets *targets, const qa_target_binding *entry, qa_err
 void qa_targets_unbind(qa_targets *targets, qa_actor_id actor) {
     if (actor.slot < targets->capacity &&
         qa_actor_id_equal(targets->bindings[actor.slot].actor, actor)) {
+        if (targets->monsters[actor.slot]) free(targets->monsters[actor.slot]->authored.barriers);
+        free(targets->monsters[actor.slot]);
+        targets->monsters[actor.slot] = NULL;
         targets->bindings[actor.slot] = (qa_target_binding){0};
         targets->binding_serial[actor.slot] = 0;
         targets->dirty = true;
     }
 }
 void qa_targets_unbind_context(qa_targets *targets, qa_actor_id actor, const void *context) {
-    if (actor.slot < targets->capacity && targets->bindings[actor.slot].context == context)
+    if (actor.slot < targets->capacity && (targets->bindings[actor.slot].context == context ||
+        (targets->monsters[actor.slot] && targets->monsters[actor.slot]->native.context == context)))
         qa_targets_unbind(targets, actor);
 }
 void qa_targets_changed(qa_targets *targets) { targets->dirty = true; }
@@ -274,7 +389,8 @@ static void refresh(qa_targets *targets) {
         qa_authored_target fields;
         if (!actor || !qa_targets_read(targets, entry->actor, &fields))
             continue;
-        uint32_t order = actor->has_source ? actor->source_slot : actor->id.slot;
+        uint32_t order = targets->monsters[i] ? targets->monsters[i]->authored.ordinal :
+            actor->has_source ? actor->source_slot : actor->id.slot;
         targets->authored[targets->authored_count++] = (authored_index){order, actor->id.slot};
         if (fields.targetname)
             targets->index[targets->count++] =

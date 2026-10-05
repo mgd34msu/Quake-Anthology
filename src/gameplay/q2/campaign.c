@@ -169,6 +169,12 @@ bool q2_campaign_monster_count(qa_q2_game *game, qa_q2_monster_count kind, qa_er
     }
     ++*counter; return true;
 }
+bool qa_q2_monster_pick_target(qa_q2_game *game, qa_string_id name, qa_actor_id *out) {
+    return q2_entity_pick(game, name, out);
+}
+bool qa_q2_campaign_monster_count(qa_q2_game *game, qa_q2_monster_count kind, qa_error *error) {
+    return q2_campaign_monster_count(game, kind, error);
+}
 bool q2_campaign_saved_valid(qa_q2_game *game, const qa_q2_entities_checkpoint *saved, qa_error *error) {
     if (saved->level_count > QA_Q2_CAMPAIGN_LEVEL_LIMIT ||
         saved->total_secrets < 0 || saved->found_secrets < 0 ||

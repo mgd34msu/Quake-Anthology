@@ -73,6 +73,7 @@ typedef struct qa_q1_path_change {
     qa_actor_id reference;
     qa_string_id target;
     double pause_until, follow_until;
+    bool combat_route;
 } qa_q1_path_change;
 typedef enum qa_q1_map_mover_kind {
     QA_Q1_MOVER_DOOR, QA_Q1_MOVER_ELEVATOR, QA_Q1_MOVER_TRAIN,

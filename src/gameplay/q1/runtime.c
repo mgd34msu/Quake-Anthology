@@ -499,6 +499,11 @@ static bool actor_frame_inner(void *context, qa_session *session, qa_actor_id ac
     q1_actor *entity = q1_entity(g, actor);
     if (!entity || !entity->native)
         return true;
+    if (entity->kind == Q1_MONSTER) {
+        bool active;
+        if (!q1_monster_mission_turn(g, entity, &active, error)) return false;
+        if (!active || !q1_alive(g, actor)) return true;
+    }
     qa_think_result thought;
     if (!g->services.physics)
         return qa_scheduler_run(qa_session_scheduler(g->services.session), actor, frame,
@@ -1282,7 +1287,7 @@ static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_s
     }
     const q1_species *species = q1_species_find(spawn->classname);
     bool dormant_mine = !strcmp(spawn->classname, "monster_spikemine");
-    if ((species || dormant_mine) && g->options.deathmatch) {
+    if ((species || dormant_mine) && g->options.deathmatch && !spawn->authored_monster) {
         *out = (qa_actor_id){0};
         return true;
     }
@@ -1353,6 +1358,9 @@ static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_s
                 input[i], output[i], error)) goto fail;
     }
     if (!q1_map_bind_target(g, entity, error))
+        goto fail;
+    if (spawn->authored_monster && (!species || !g->host.monster_admit ||
+        !g->host.monster_admit(g->host.context, actor, spawn->authored_monster, error)))
         goto fail;
     bool flag_handled;
     if (!q1_source_rogue_flag_spawn(g, entity, &flag_handled, error)) goto fail;

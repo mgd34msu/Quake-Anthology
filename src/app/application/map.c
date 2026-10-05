@@ -26,6 +26,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+static bool monster_path_read(application_provider *, qa_actor_id, qa_q1_path_state *);
+static bool monster_path_change(application_provider *, qa_actor_id, const qa_q1_path_change *, qa_error *);
+static bool monster_path_touch(application_provider *, qa_actor_id, qa_actor_id, bool *, qa_error *);
+
 static const qa_entity_property *entity_properties(const qa_entities *entities,
                                                    size_t index,
                                                    size_t *count)
@@ -584,6 +588,8 @@ static bool q1_path_touch(void *opaque, qa_actor_id corner,
     if (handled == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Q1 path touch needs an output");
+    if (qa_targets_monster(((application_provider *)opaque)->application->targets, follower))
+        return monster_path_touch(opaque, corner, follower, handled, error);
     *handled = false;
     return provider != NULL && provider->kind == APPLICATION_PROVIDER_Q1
                ? qa_q1_game_rogue_path_touch(provider->state.q1, corner,
@@ -596,6 +602,8 @@ static bool q1_path_touch(void *opaque, qa_actor_id corner,
 static bool q1_path_read(void *opaque, qa_actor_id actor,
                          qa_q1_path_state *out)
 {
+    if (qa_targets_monster(((application_provider *)opaque)->application->targets, actor))
+        return monster_path_read(opaque, actor, out);
     application_provider *provider = q1_actor_provider(opaque, actor);
     return provider != NULL && provider->kind == APPLICATION_PROVIDER_Q1 &&
            qa_q1_game_path_read(provider->state.q1, actor, out);
@@ -604,6 +612,8 @@ static bool q1_path_read(void *opaque, qa_actor_id actor,
 static bool q1_path_change(void *opaque, qa_actor_id actor,
                            const qa_q1_path_change *change, qa_error *error)
 {
+    if (qa_targets_monster(((application_provider *)opaque)->application->targets, actor))
+        return monster_path_change(opaque, actor, change, error);
     application_provider *provider = q1_actor_provider(opaque, actor);
     return provider != NULL && provider->kind == APPLICATION_PROVIDER_Q1
                ? qa_q1_game_path_change(provider->state.q1, actor, change,
@@ -1058,6 +1068,668 @@ static application_provider *active_provider_named(qa_application *application,
     return NULL;
 }
 
+static application_provider *monster_owner(qa_application *app, qa_actor_owner owner)
+{
+    for (size_t i = 0; i < app->provider_count; ++i) {
+        application_provider *provider = app->providers[i];
+        if (provider && provider->owner == owner && provider->constructed && !provider->close_pending)
+            return provider;
+    }
+    return NULL;
+}
+static bool monster_activate_behavior(application_provider *map, qa_actor_id actor, qa_error *error)
+{
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(map->application->session), actor);
+    application_provider *behavior = record ? monster_owner(map->application, record->owner) : NULL;
+    if (!behavior) return application_fail(error, QA_ERROR_NOT_FOUND, "Activated monster lost its creature Source");
+    return behavior->kind == APPLICATION_PROVIDER_Q1 ? qa_q1_monster_activate(behavior->state.q1, actor, error) :
+        behavior->kind == APPLICATION_PROVIDER_Q2 ? qa_q2_monster_activate(behavior->state.q2, actor, error) : false;
+}
+static bool monster_row(application_provider *map, qa_actor_id actor,
+    qa_authored_monster **out, qa_error *error)
+{
+    *out = qa_targets_monster(map->application->targets, actor);
+    return (*out && (*out)->owner == map->owner) ||
+        application_fail(error, QA_ERROR_NOT_FOUND, "Selected monster lost its authored map row");
+}
+static bool monster_spawned(void *opaque, qa_actor_id actor, qa_error *error)
+{
+    application_provider *map = opaque;
+    qa_authored_monster *row;
+    if (!monster_row(map, actor, &row, error)) return false;
+    if (row->counted_spawn) return true;
+    row->counted_spawn = true;
+    if (map->kind == APPLICATION_PROVIDER_Q2)
+        return qa_q2_campaign_monster_count(map->state.q2, QA_Q2_MONSTER_COUNT_TOTAL, error);
+    const char *classname = qa_strings_cstr(qa_session_strings(map->application->session), row->fields.classname);
+    return qa_q1_game_monster_count(map->state.q1, actor, (qa_actor_id){0}, false,
+        map->product->edition == QA_EDITION_CLASSIC && classname && !strcmp(classname, "monster_fish"), error);
+}
+static bool monster_started(void *, qa_actor_id, qa_error *);
+static bool monster_active(void *opaque, qa_actor_id actor, qa_monster_activation *out, qa_error *error)
+{
+    application_provider *map = opaque;
+    qa_authored_monster *row;
+    *out = (qa_monster_activation){0};
+    if (!monster_row(map, actor, &row, error)) return false;
+    qa_clock_state clock;
+    if (!qa_session_clock(map->application->session, map->owner, &clock))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Authored monster has no map clock");
+    if (row->activation == QA_MONSTER_DORMANT ||
+        (row->activation == QA_MONSTER_SCHEDULED && clock.frame.time_ns < row->activation_ns)) return true;
+    if (row->placement == QA_MONSTER_WAITING) {
+        for (size_t i = 0; i < row->barrier_count; ++i) {
+            if (!qa_actors_get(qa_session_actors(map->application->session), row->barriers[i].actor)) continue;
+            qa_q2_map_mover_view view; qa_body_state body; size_t count; bool found;
+            if (!qa_q2_entity_mover_read(map->state.q2, row->barriers[i].actor, &view, NULL, 0, &count, &found, error) ||
+                !qa_world_body_read(map->application->world, row->barriers[i].actor, &body, error)) return false;
+            if (found && (view.navigation.locked || view.navigation.has_destination ||
+                (body.origin.x == row->barriers[i].origin.x && body.origin.y == row->barriers[i].origin.y &&
+                    body.origin.z == row->barriers[i].origin.z))) return true;
+        }
+        if (!monster_started(map, actor, error)) return false;
+        row = qa_targets_monster(map->application->targets, actor);
+        if (!row || row->placement == QA_MONSTER_WAITING) return true;
+        out->activator = row->activator;
+        row->activator = (qa_actor_id){0};
+    }
+    if (row->placement == QA_MONSTER_TELEPORT) {
+        qa_body_state body;
+        if (!qa_world_body_read(map->application->world, actor, &body, error)) return false;
+        if (body.origin.x != row->placement_origin.x || body.origin.y != row->placement_origin.y ||
+            body.origin.z != row->placement_origin.z) {
+            row->authored_origin = body.origin;
+            if (!monster_started(map, actor, error)) return false;
+            row = qa_targets_monster(map->application->targets, actor);
+            if (!row || row->placement == QA_MONSTER_WAITING) return true;
+        }
+    }
+    if (row->activation == QA_MONSTER_SCHEDULED) {
+        qa_body_state body;
+        bool clear;
+        if (map->kind != APPLICATION_PROVIDER_Q2 || !qa_world_body_read(map->application->world, actor, &body, error)) return false;
+        body.origin.z += 1;
+        if (!qa_world_body_write(map->application->world, actor, &body, error)) return false;
+        bool rerelease = map->product->edition == QA_EDITION_RERELEASE;
+        if (rerelease && !monster_activate_behavior(map, actor, error)) return false;
+        if (!qa_q2_entities_killbox(map->state.q2, actor, actor, &clear, error)) return false;
+        if (!qa_actors_get(qa_session_actors(map->application->session), actor)) return true;
+        if (!rerelease && !monster_activate_behavior(map, actor, error)) return false;
+        row = qa_targets_monster(map->application->targets, actor);
+        if (!row) return true;
+        row->activation = QA_MONSTER_ACTIVE;
+        if (!(row->spawnflags & 1u)) out->activator = row->activator;
+        row->activator = (qa_actor_id){0};
+    }
+    out->active = row->activation == QA_MONSTER_ACTIVE;
+    return true;
+}
+static bool monster_use(void *opaque, qa_actor_id actor, qa_actor_id activator,
+    bool *handled, qa_error *error)
+{
+    application_provider *map = opaque;
+    qa_authored_monster *row;
+    if (!monster_row(map, actor, &row, error)) return false;
+    *handled = row->activation != QA_MONSTER_ACTIVE || row->placement == QA_MONSTER_WAITING;
+    if (!*handled) return true;
+    row->activator = activator;
+    if (row->activation != QA_MONSTER_DORMANT) return true;
+    qa_clock_state clock;
+    if (!qa_session_clock(map->application->session, map->owner, &clock))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Triggered monster has no original map clock");
+    row->activation = QA_MONSTER_SCHEDULED;
+    uint64_t interval = map->product->edition == QA_EDITION_RERELEASE ?
+        map->component.clock.interval_ns : UINT64_C(100000000);
+    row->activation_ns = clock.frame.time_ns + interval;
+    return true;
+}
+static bool monster_killed(void *opaque, qa_actor_id actor, qa_actor_id attacker, qa_error *error)
+{
+    application_provider *map = opaque;
+    qa_application *app = map->application;
+    qa_authored_monster *row;
+    if (!monster_row(map, actor, &row, error)) return false;
+    if (row->counted_death) return true;
+    row->counted_death = true;
+    if (map->kind == APPLICATION_PROVIDER_Q2) {
+        if (!qa_q2_campaign_monster_count(map->state.q2, QA_Q2_MONSTER_COUNT_KILLED, error)) return false;
+        if (row->drop_item) {
+            const char *drop = qa_strings_cstr(qa_session_strings(app->session), row->drop_item);
+            qa_actor_id item;
+            bool dropped;
+            if (!qa_q2_item_drop_monster(map->state.q2, actor, drop, &item, &dropped, error)) return false;
+            row = qa_targets_monster(app->targets, actor);
+            if (!row) return true;
+            if (map->product->edition == QA_EDITION_RERELEASE && dropped && row->item_target) {
+                if (!qa_q2_entity_set_target(map->state.q2, item, row->item_target, error)) return false;
+                row->item_target = 0;
+            }
+            row->drop_item = 0;
+        }
+        if (row->death_target) row->fields.target = row->death_target;
+    } else if (!qa_q1_game_monster_count(map->state.q1, actor, attacker, true, false, error)) return false;
+    row = qa_targets_monster(app->targets, actor);
+    if (!row) return true;
+    qa_clock_state clock;
+    if (!qa_session_clock(app->session, map->owner, &clock))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Authored monster death has no map clock");
+    if (!qa_targets_use_request(app->targets, &(qa_target_use){.source = actor, .activator = attacker,
+        .dialect = row->source, .fields = row->fields, .time_ns = clock.frame.time_ns}, error)) return false;
+    row = qa_targets_monster(app->targets, actor);
+    if (!row || map->kind != APPLICATION_PROVIDER_Q2 || map->product->edition != QA_EDITION_RERELEASE || !row->health_target) return true;
+    row->fields.target = row->health_target;
+    return qa_targets_use_request(app->targets, &(qa_target_use){.source = actor, .activator = attacker,
+        .dialect = row->source, .fields = row->fields, .time_ns = clock.frame.time_ns}, error);
+}
+static bool monster_class(qa_application *app, qa_actor_id actor, const char *classname)
+{
+    qa_authored_target target;
+    if (!qa_targets_read(app->targets, actor, &target)) return false;
+    const char *name = qa_strings_cstr(qa_session_strings(app->session), target.classname);
+    return name && !strcmp(name, classname);
+}
+static bool monster_pick(application_provider *map, qa_string_id name, qa_actor_id *out)
+{
+    *out = (qa_actor_id){0};
+    if (map->kind == APPLICATION_PROVIDER_Q1) return qa_targets_first(map->application->targets, name, out);
+    return qa_q2_monster_pick_target(map->state.q2, name, out);
+}
+static bool monster_route_goal(void *opaque, qa_actor_id actor, qa_actor_id *out, qa_error *error)
+{
+    application_provider *map = opaque;
+    qa_authored_monster *row;
+    if (!monster_row(map, actor, &row, error)) return false;
+    if (!row->route_resolved) {
+        if (map->kind == APPLICATION_PROVIDER_Q2) {
+            qa_target_cursor cursor = {0}; qa_actor_id target;
+            while (qa_targets_next(map->application->targets, row->route, &cursor, &target))
+                if (monster_class(map->application, target, "point_combat")) {
+                    row->combat_target = row->route;
+                    row->fields.target = row->route = 0;
+                    break;
+                }
+        }
+        qa_actor_id target;
+        if (monster_pick(map, row->route, &target) && monster_class(map->application, target, "path_corner"))
+            row->route_goal = target;
+        row->route_resolved = true;
+        if (map->kind == APPLICATION_PROVIDER_Q2 && row->route_goal.registry) row->fields.target = 0;
+    }
+    *out = row->route_goal;
+    return true;
+}
+typedef struct monster_placement_query {
+    application_provider *map;
+    qa_actor_id actor;
+    qa_body_state body;
+    qa_physics_properties movement;
+    qa_bounds authored_bounds;
+    uint32_t authored_flags;
+    qa_vec3 authored_origin;
+    qa_trace_policy policy;
+    qa_actor_id *doors;
+    bool *blocked;
+    size_t door_count;
+    const qa_actor_id *excluded;
+    size_t excluded_count;
+    int32_t medium;
+} monster_placement_query;
+static bool monster_medium(monster_placement_query *query, qa_vec3 origin, int32_t *out, qa_error *error)
+{
+    qa_point_contents contents;
+    if (!qa_world_point_contents(query->map->application->world,
+        &(qa_point_query){.point = origin, .policy = query->policy, .pass_actor = query->actor}, &contents, error)) return false;
+    *out = query->policy.family == QA_COLLISION_Q1 ?
+        contents.contents == -3 ? 32 : contents.contents == -4 ? 16 : contents.contents == -5 ? 8 : 0 :
+        contents.contents & 56;
+    return true;
+}
+static bool monster_trace(monster_placement_query *query, qa_vec3 start, qa_vec3 end,
+    qa_bounds bounds, bool point, bool route, qa_trace_result *out, qa_error *error)
+{
+    qa_trace_policy policy = query->policy;
+    if (route && policy.family == QA_COLLISION_Q1) policy.q1_move = QA_Q1_MOVE_NO_MONSTERS;
+    if (!qa_world_trace_excluding(query->map->application->world,
+        &(qa_trace_query){.start = start, .end = end,
+            .shape = {.kind = point ? QA_SHAPE_POINT : QA_SHAPE_BOX, .bounds = bounds},
+            .policy = policy, .pass_actor = query->actor},
+        query->excluded, query->excluded_count, out, error)) return false;
+    if (out->fraction < 1 && out->hit == QA_TRACE_HIT_ACTOR)
+        for (size_t i = 0; i < query->door_count; ++i)
+            if (qa_actor_id_equal(query->doors[i], out->actor)) query->blocked[i] = true;
+    return true;
+}
+static bool monster_reachable(monster_placement_query *query, qa_vec3 start,
+    qa_vec3 destination, bool *out, qa_error *error)
+{
+    qa_trace_result route, center, exit;
+    *out = false;
+    if (!monster_trace(query, start, destination, query->authored_bounds, false, true, &route, error)) return false;
+    if (route.all_solid || route.fraction != 1) return true;
+    if (!route.start_solid) { *out = true; return true; }
+    if (!monster_trace(query, start, destination, query->authored_bounds, true, true, &center, error) ||
+        !monster_trace(query, destination, destination, query->authored_bounds, false, true, &exit, error)) return false;
+    *out = !center.start_solid && !center.all_solid && center.fraction == 1 && !exit.start_solid && !exit.all_solid;
+    return true;
+}
+typedef struct monster_offset { int x, y, distance; } monster_offset;
+static int monster_offset_compare(const void *left, const void *right)
+{
+    const monster_offset *a = left, *b = right;
+    return a->distance != b->distance ? a->distance < b->distance ? -1 : 1 :
+        a->y != b->y ? a->y < b->y ? -1 : 1 : a->x < b->x ? -1 : a->x > b->x;
+}
+static bool monster_candidate(monster_placement_query *query, qa_vec3 start,
+    qa_vec3 end, qa_vec3 source_origin, bool walking, bool *found, qa_body_state *out, qa_error *error)
+{
+    qa_trace_result floor, fit;
+    *found = false;
+    if (!monster_trace(query, start, end, query->body.bounds, false, false, &floor, error)) return false;
+    if (floor.start_solid || floor.all_solid ||
+        (walking && (floor.fraction == 1 || !floor.contact || floor.contact_plane.normal.z < 0.7f))) return true;
+    int32_t medium;
+    if (!monster_medium(query, floor.end, &medium, error)) return false;
+    if (medium != query->medium) return true;
+    if (!monster_trace(query, floor.end, floor.end, query->body.bounds, false, false, &fit, error)) return false;
+    if (fit.start_solid || fit.all_solid) return true;
+    qa_vec3 destination = floor.end;
+    destination.z += query->body.bounds.mins.z - query->authored_bounds.mins.z;
+    bool reachable;
+    if (!monster_reachable(query, source_origin, destination, &reachable, error)) return false;
+    if (!reachable) return true;
+    *out = query->body;
+    out->origin = floor.end;
+    out->ground = walking ? floor.hit == QA_TRACE_HIT_ACTOR ? floor.actor :
+        query->map->application->physics->world_actor : (qa_actor_id){0};
+    *found = true;
+    return true;
+}
+typedef struct monster_placement_node { qa_vec3 origin; int x, y; } monster_placement_node;
+static bool monster_corner_placement(monster_placement_query *query, qa_vec3 source_origin,
+    float radius, bool walking, qa_body_state *out, bool *found, qa_error *error)
+{
+    enum { limit = 4096, capacity = 4 * limit + 1 };
+    static const int directions[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    float reach = fmaxf(512, radius);
+    int extent = (int)ceilf(reach / 8);
+    size_t width = (size_t)(extent * 2 + 1);
+    bool *visited = calloc(width * width, sizeof(*visited));
+    monster_placement_node *pending = malloc(capacity * sizeof(*pending));
+    if (!visited || !pending) {
+        free(visited); free(pending);
+        return application_fail(error, QA_ERROR_MEMORY, "Finding reachable selected monster placement");
+    }
+    size_t count = 1;
+    pending[0] = (monster_placement_node){.origin = source_origin};
+    visited[(size_t)extent * width + (size_t)extent] = true;
+    bool ok = true;
+    for (size_t index = 0; ok && !*found && index < count && index < limit; ++index) {
+        monster_placement_node current = pending[index];
+        for (size_t direction = 0; ok && !*found && direction < 4; ++direction) {
+            int x = current.x + directions[direction][0], y = current.y + directions[direction][1];
+            if (x < -extent || x > extent || y < -extent || y > extent ||
+                (float)(x * x + y * y) * 64 > reach * reach) continue;
+            size_t cell = (size_t)(y + extent) * width + (size_t)(x + extent);
+            if (visited[cell]) continue;
+            for (size_t lift = 0; ok && !*found && lift < 2; ++lift) {
+                qa_vec3 start = current.origin;
+                start.z += lift ? 18 : 0;
+                qa_trace_result raised, across, floor, fit;
+                if (!monster_trace(query, current.origin, start, query->authored_bounds, false, true, &raised, error)) { ok = false; break; }
+                if (raised.start_solid || raised.all_solid || raised.fraction != 1) continue;
+                qa_vec3 end = qa_v3(source_origin.x + (float)x * 8, source_origin.y + (float)y * 8, start.z);
+                if (!monster_trace(query, start, end, query->authored_bounds, false, true, &across, error)) { ok = false; break; }
+                if (across.start_solid || across.all_solid || across.fraction != 1) continue;
+                end.z = current.origin.z - 18;
+                if (!monster_trace(query, across.end, end, query->authored_bounds, false, true, &floor, error)) { ok = false; break; }
+                if (floor.start_solid || floor.all_solid || floor.fraction == 1 || !floor.contact || floor.contact_plane.normal.z < 0.7f) continue;
+                visited[cell] = true;
+                pending[count++] = (monster_placement_node){.origin = floor.end, .x = x, .y = y};
+                qa_vec3 origin = floor.end;
+                origin.z += query->authored_bounds.mins.z - query->body.bounds.mins.z;
+                int32_t medium;
+                if (!monster_medium(query, origin, &medium, error)) { ok = false; break; }
+                if (medium == query->medium) {
+                    if (!monster_trace(query, origin, origin, query->body.bounds, false, false, &fit, error)) { ok = false; break; }
+                    if (!fit.start_solid && !fit.all_solid) {
+                        *out = query->body;
+                        out->origin = origin;
+                        out->ground = walking ? floor.hit == QA_TRACE_HIT_ACTOR ? floor.actor :
+                            query->map->application->physics->world_actor : (qa_actor_id){0};
+                        *found = true;
+                    }
+                }
+                break;
+            }
+        }
+    }
+    free(visited); free(pending);
+    return ok;
+}
+static bool monster_nearby(monster_placement_query *query, qa_body_state *out, bool *found, qa_error *error)
+{
+    *found = false;
+    qa_vec3 start = query->authored_origin;
+    start.z += 1;
+    qa_trace_result floor;
+    if (!monster_trace(query, start, qa_vec_add(start, qa_v3(0, 0, -256)),
+        query->authored_bounds, false, true, &floor, error)) return false;
+    bool supported = !floor.start_solid && !floor.all_solid && floor.fraction < 1;
+    bool authored_walk = !(query->authored_flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING));
+    bool walking = !(query->movement.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING));
+    qa_vec3 source_origin = supported && authored_walk ? floor.end : query->authored_origin;
+    qa_vec3 anchor = floor.end;
+    anchor.z = source_origin.z + query->authored_bounds.mins.z - query->body.bounds.mins.z;
+    float radius = 2 * fmaxf(fmaxf(query->body.bounds.maxs.x - query->body.bounds.mins.x,
+        query->body.bounds.maxs.y - query->body.bounds.mins.y),
+        fmaxf(query->authored_bounds.maxs.x - query->authored_bounds.mins.x,
+        query->authored_bounds.maxs.y - query->authored_bounds.mins.y));
+    int extent = (int)ceilf(radius / 4);
+    size_t width = (size_t)(extent * 2 + 1);
+    monster_offset *offsets = malloc(width * width * sizeof(*offsets));
+    if (!offsets) return application_fail(error, QA_ERROR_MEMORY, "Finding selected monster placement");
+    size_t count = 0;
+    for (int x = -extent; x <= extent; ++x) for (int y = -extent; y <= extent; ++y)
+        if ((float)((x * x + y * y) * 16) <= radius * radius)
+            offsets[count++] = (monster_offset){.x = x * 4, .y = y * 4, .distance = x * x + y * y};
+    qsort(offsets, count, sizeof(*offsets), monster_offset_compare);
+    bool ok = true;
+    for (size_t i = 0; ok && !*found && i < count; ++i) {
+        if (walking) for (size_t lift = 0; ok && !*found && lift < 2; ++lift) {
+            start = qa_vec_add(anchor, qa_v3((float)offsets[i].x, (float)offsets[i].y, lift ? 18 : 1));
+            qa_vec3 end = start;
+            end.z = anchor.z - (supported && authored_walk ? 18 : 256);
+            ok = monster_candidate(query, start, end, source_origin, true, found, out, error);
+        }
+        else {
+            float height = query->body.bounds.maxs.z - query->body.bounds.mins.z;
+            for (int z = 0; ok && !*found && (float)z <= height; z += 4)
+                for (int direction = -1; ok && !*found && direction <= 1; direction += 2) {
+                    if (!z && direction == 1) continue;
+                    start = qa_vec_add(query->body.origin, qa_v3((float)offsets[i].x,
+                        (float)offsets[i].y, (float)(z * direction)));
+                    ok = monster_candidate(query, start, start, source_origin, false, found, out, error);
+                }
+        }
+    }
+    free(offsets);
+    if (ok && !*found && supported && authored_walk)
+        ok = monster_corner_placement(query, source_origin, radius, walking, out, found, error);
+    return ok;
+}
+static bool monster_teleport_staging(application_provider *map, const qa_body_state *body)
+{
+    qa_target_cursor cursor = {0}; qa_actor_id trigger;
+    while (qa_targets_next_authored(map->application->targets, "trigger_teleport", &cursor, &trigger)) {
+        qa_authored_target fields; qa_linked_body linked; qa_actor_collision collision; double flags = 0;
+        qa_actor_id destination;
+        if (!qa_targets_read(map->application->targets, trigger, &fields) || !fields.targetname ||
+            !qa_world_linked(map->application->world, trigger, &linked) ||
+            !qa_world_get_collision(map->application->world, trigger, &collision, NULL) ||
+            collision.role != QA_COLLISION_TRIGGER ||
+            !qa_targets_first(map->application->targets, fields.target, &destination)) continue;
+        (void)qa_targets_number(map->application->targets, trigger, "spawnflags", &flags);
+        if (!((uint32_t)flags & 1u) && qa_bounds_overlap(linked.absolute_bounds,
+            qa_bounds_translate(body->bounds, body->origin))) return true;
+    }
+    return false;
+}
+static bool monster_started(void *opaque, qa_actor_id actor, qa_error *error)
+{
+    application_provider *map = opaque;
+    qa_application *app = map->application;
+    qa_authored_monster *row;
+    if (!monster_row(map, actor, &row, error)) return false;
+    monster_placement_query query = {.map = map, .actor = actor, .authored_origin = row->authored_origin};
+    if (!qa_world_body_read(app->world, actor, &query.body, error) ||
+        !app->physics->services.read(app->physics->services.context, actor, &query.movement))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Selected monster has no physical Source body");
+    query.policy = qa_collision_default_policy(query.movement.family);
+    if (query.policy.family == QA_COLLISION_Q2) query.policy.contents_mask = 1;
+    qa_trace_result trace;
+    if (!monster_trace(&query, query.body.origin, query.body.origin, query.body.bounds,
+        false, false, &trace, error)) return false;
+    if (!trace.start_solid && !trace.all_solid) {
+        row->placement = QA_MONSTER_PLACED;
+        free(row->barriers); row->barriers = NULL; row->barrier_count = 0;
+        return true;
+    }
+    if (map->kind == APPLICATION_PROVIDER_Q1 && monster_teleport_staging(map, &query.body)) {
+        row->placement = QA_MONSTER_TELEPORT; row->placement_origin = query.body.origin;
+        return true;
+    }
+    const char *authored = qa_strings_cstr(qa_session_strings(app->session), row->fields.classname);
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), actor);
+    application_provider *behavior = record ? monster_owner(app, record->owner) : NULL;
+    const char *selected = record ? qa_strings_cstr(qa_session_strings(app->session), record->definition) : NULL;
+    if (behavior && behavior->product == map->product && selected && authored && !strcmp(selected, authored)) {
+        row->placement = QA_MONSTER_PLACED;
+        return true;
+    }
+    bool shape = map->kind == APPLICATION_PROVIDER_Q1 ?
+        qa_q1_monster_shape(authored, &query.authored_bounds, &query.authored_flags) :
+        qa_q2_monster_shape(map->state.q2, authored, &query.authored_bounds, &query.authored_flags);
+    if (!shape || !monster_medium(&query, query.body.origin, &query.medium, error))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Authored monster has no native placement shape");
+    qa_arena scratch; qa_arena_init(&scratch, 1024);
+    size_t capacity = qa_actors_count(qa_session_actors(app->session));
+    query.doors = qa_arena_alloc(&scratch, capacity * sizeof(*query.doors), _Alignof(qa_actor_id), error);
+    query.blocked = qa_arena_alloc(&scratch, capacity * sizeof(*query.blocked), _Alignof(bool), error);
+    qa_actor_id *excluded = qa_arena_alloc(&scratch, capacity * sizeof(*excluded), _Alignof(qa_actor_id), error);
+    bool ok = query.doors && query.blocked && excluded;
+    if (ok && map->kind == APPLICATION_PROVIDER_Q2 && row->fields.targetname) {
+        qa_target_cursor cursor = {0}; qa_actor_id door;
+        while (qa_targets_next(app->targets, row->fields.targetname, &cursor, &door)) {
+            if (!monster_class(app, door, "func_door")) continue;
+            qa_q2_map_mover_view view; size_t count; bool found;
+            ok = qa_q2_entity_mover_read(map->state.q2, door, &view, NULL, 0, &count, &found, error);
+            if (!ok) break;
+            if (found && (view.navigation.locked || view.navigation.has_destination)) query.doors[query.door_count++] = door;
+        }
+    }
+    if (ok) memset(query.blocked, 0, query.door_count * sizeof(*query.blocked));
+    qa_body_state placement; bool found = false;
+    if (ok) ok = monster_nearby(&query, &placement, &found, error);
+    if (ok && found) {
+        row->placement = QA_MONSTER_PLACED;
+        free(row->barriers); row->barriers = NULL; row->barrier_count = 0;
+        ok = qa_world_body_write(app->world, actor, &placement, error) && qa_world_link(app->world, actor, NULL, error);
+    } else if (ok) {
+        query.excluded = excluded;
+        while (ok && !found) {
+            size_t previous = query.excluded_count;
+            query.excluded_count = 0;
+            for (size_t i = 0; i < query.door_count; ++i) if (query.blocked[i]) excluded[query.excluded_count++] = query.doors[i];
+            if (previous == query.excluded_count) break;
+            ok = monster_nearby(&query, &placement, &found, error);
+        }
+        if (ok && found) {
+            qa_monster_barrier *barriers = calloc(query.excluded_count, sizeof(*barriers));
+            ok = barriers != NULL;
+            if (!ok) application_fail(error, QA_ERROR_MEMORY, "Retaining authored door encounter");
+            for (size_t i = 0; ok && i < query.excluded_count; ++i) {
+                qa_body_state body;
+                ok = qa_world_body_read(app->world, excluded[i], &body, error);
+                barriers[i] = (qa_monster_barrier){.actor = excluded[i], .origin = body.origin};
+            }
+            if (ok) { free(row->barriers); row->barriers = barriers; row->barrier_count = query.excluded_count; row->placement = QA_MONSTER_WAITING; }
+            else free(barriers);
+        } else if (ok) ok = application_fail(error, QA_ERROR_UNSUPPORTED, "Selected monster cannot fit its reachable authored encounter");
+    }
+    qa_arena_destroy(&scratch);
+    return ok;
+}
+
+static bool monster_combat_route(void *opaque, qa_actor_id actor, qa_monster_combat_route *out, qa_error *error)
+{
+    qa_authored_monster *row;
+    if (!monster_row(opaque, actor, &row, error)) return false;
+    *out = (qa_monster_combat_route){.goal = row->combat_goal, .stand_ground = row->stand_ground};
+    return true;
+}
+static bool monster_found_target(void *opaque, qa_actor_id actor, qa_error *error)
+{
+    application_provider *map = opaque;
+    qa_authored_monster *row;
+    if (!monster_row(map, actor, &row, error)) return false;
+    qa_actor_id target;
+    if (map->kind == APPLICATION_PROVIDER_Q2 && row->combat_target && monster_pick(map, row->combat_target, &target)) {
+        row->combat_target = 0;
+        row->combat_goal = target;
+        if (map->product->edition == QA_EDITION_CLASSIC)
+            return qa_targets_set_targetname(map->application->targets, target, 0, error);
+    }
+    return true;
+}
+bool application_monster_mission(void *opaque, qa_actor_owner owner, qa_monster_mission *out, qa_error *error)
+{
+    application_provider *map = monster_owner(opaque, owner);
+    if (!map || (map->kind != APPLICATION_PROVIDER_Q1 && map->kind != APPLICATION_PROVIDER_Q2))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Authored monster has no native map producer");
+    *out = (qa_monster_mission){.owner = owner, .context = map, .spawned = monster_spawned,
+        .started = monster_started, .active = monster_active, .killed = monster_killed,
+        .route = monster_route_goal, .use = monster_use, .combat_route = monster_combat_route,
+        .found_target = monster_found_target};
+    return true;
+}
+bool application_monster_admit(void *opaque, qa_actor_id actor, const qa_authored_monster *row, qa_error *error)
+{
+    application_provider *provider = opaque;
+    qa_targets_monsters_configure(provider->application->targets, provider->application, application_monster_mission);
+    return qa_targets_monster_admit(provider->application->targets, actor, row, error);
+}
+
+static application_provider *monster_behavior(application_provider *map, qa_actor_id actor)
+{
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(map->application->session), actor);
+    return record ? monster_owner(map->application, record->owner) : NULL;
+}
+static uint64_t monster_path_time(application_provider *from, application_provider *to, uint64_t deadline)
+{
+    if (!deadline || from == to) return deadline;
+    qa_clock_state source, destination;
+    if (!qa_session_clock(from->application->session, from->owner, &source) ||
+        !qa_session_clock(to->application->session, to->owner, &destination)) return deadline;
+    return destination.frame.time_ns + (deadline > source.frame.time_ns ? deadline - source.frame.time_ns : 0);
+}
+static bool monster_path_read(application_provider *map, qa_actor_id actor, qa_q1_path_state *out)
+{
+    qa_authored_monster *row = qa_targets_monster(map->application->targets, actor);
+    application_provider *behavior = monster_behavior(map, actor);
+    if (!row || !behavior) return false;
+    if (behavior->kind == APPLICATION_PROVIDER_Q1) {
+        if (!qa_q1_game_path_read(behavior->state.q1, actor, out)) return false;
+    } else if (behavior->kind == APPLICATION_PROVIDER_Q2) {
+        qa_q2_monster_route_state source;
+        if (!qa_q2_monster_route_read(behavior->state.q2, actor, &source)) return false;
+        *out = (qa_q1_path_state){.enemy = source.enemy, .old_enemy = source.old_enemy, .monster = true,
+            .pause_until = (double)monster_path_time(behavior, map, source.pause_until_ns) / 1e9};
+    } else return false;
+    out->path = row->route;
+    out->move_target = row->combat_goal.registry ? row->combat_goal : row->route_goal;
+    out->previous_corner = row->previous_corner;
+    return true;
+}
+static bool monster_path_change(application_provider *map, qa_actor_id actor,
+    const qa_q1_path_change *change, qa_error *error)
+{
+    qa_authored_monster *row = qa_targets_monster(map->application->targets, actor);
+    application_provider *behavior = monster_behavior(map, actor);
+    if (!row || !behavior) return application_fail(error, QA_ERROR_NOT_FOUND, "Selected path has no creature Source");
+    if (change->kind == QA_Q1_PATH_VISIT) row->previous_corner = change->reference;
+    if (change->kind == QA_Q1_PATH_DESTINATION)
+        qa_targets_monster_route(map->application->targets, actor, change->reference.registry ? change->target : 0, change->reference);
+    if (behavior->kind == APPLICATION_PROVIDER_Q1) {
+        qa_q1_path_change converted = *change;
+        if (change->kind == QA_Q1_PATH_PAUSE_END || change->kind == QA_Q1_PATH_STAND)
+            converted.pause_until = (double)monster_path_time(map, behavior,
+                (uint64_t)(change->pause_until * 1e9)) / 1e9;
+        return qa_q1_game_path_change(behavior->state.q1, actor, &converted, error);
+    }
+    if (behavior->kind != APPLICATION_PROVIDER_Q2)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Selected path creature has no native continuation");
+    qa_q2_monster_route_state state;
+    if (!qa_q2_monster_route_read(behavior->state.q2, actor, &state)) return false;
+    switch (change->kind) {
+    case QA_Q1_PATH_OWNER:
+    case QA_Q1_PATH_VISIT: return true;
+    case QA_Q1_PATH_DESTINATION:
+        return qa_q2_monster_route_advance(behavior->state.q2, actor, change->reference, 0, false, error);
+    case QA_Q1_PATH_PAUSE_END:
+    case QA_Q1_PATH_STAND:
+        return qa_q2_monster_route_advance(behavior->state.q2, actor, state.goal,
+            monster_path_time(map, behavior, (uint64_t)(change->pause_until * 1e9)), false, error);
+    case QA_Q1_PATH_CANCEL_PAUSE:
+        return qa_q2_monster_route_advance(behavior->state.q2, actor, state.goal, 0, false, error);
+    case QA_Q1_PATH_FOUND:
+        return qa_q2_monster_action(behavior->state.q2, actor, QA_Q2_MONSTER_FOUND_TARGET, change->reference, 0, error);
+    case QA_Q1_PATH_FOLLOW_BEGIN:
+    case QA_Q1_PATH_FOLLOW_UNTIL:
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Q1 addon follow command has no selected Q2 continuation");
+    }
+    return false;
+}
+static bool monster_path_touch(application_provider *map, qa_actor_id corner, qa_actor_id actor,
+    bool *handled, qa_error *error)
+{
+    *handled = qa_targets_monster(map->application->targets, actor) != NULL;
+    if (!*handled) return true;
+    qa_q1_path_state follower;
+    qa_authored_target target;
+    if (!monster_path_read(map, actor, &follower) || !qa_targets_read(map->application->targets, corner, &target) ||
+        follower.enemy.registry || follower.path != target.targetname) return true;
+    qa_actor_id next = {0};
+    (void)qa_targets_first(map->application->targets, target.target, &next);
+    if (!monster_path_change(map, actor, &(qa_q1_path_change){.kind = QA_Q1_PATH_DESTINATION,
+        .target = target.target, .reference = next}, error)) return false;
+    if (next.registry) return true;
+    qa_clock_state clock;
+    if (!qa_session_clock(map->application->session, map->owner, &clock)) return false;
+    return monster_path_change(map, actor, &(qa_q1_path_change){.kind = QA_Q1_PATH_PAUSE_END,
+        .pause_until = (double)clock.frame.time_ns / 1e9 + 999999}, error);
+}
+static bool q2_monster_path_follower(void *opaque, qa_actor_id actor, qa_q2_path_follower *out)
+{
+    application_provider *map = opaque;
+    qa_q1_path_state source;
+    qa_authored_monster *row = qa_targets_monster(map->application->targets, actor);
+    if (!row || !monster_path_read(map, actor, &source)) return false;
+    qa_physics_properties motion;
+    if (!map->application->physics->services.read(map->application->physics->services.context, actor, &motion)) return false;
+    *out = (qa_q2_path_follower){.move_target = source.move_target, .enemy = source.enemy,
+        .old_enemy = source.old_enemy, .activator = row->activator,
+        .walking = !(motion.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING))};
+    return true;
+}
+static bool q2_monster_path_advance(void *opaque, qa_actor_id actor,
+    const qa_q2_path_advance *change, qa_error *error)
+{
+    application_provider *map = opaque;
+    qa_authored_monster *row;
+    if (!monster_row(map, actor, &row, error)) return false;
+    application_provider *behavior = monster_behavior(map, actor);
+    bool combat = row->combat_goal.registry != 0;
+    if (combat) {
+        if (change->set_target) row->fields.target = change->target;
+        row->combat_goal = change->finish ? (qa_actor_id){0} : change->move_target;
+        row->stand_ground = change->hold;
+        if (change->finish) row->fields.target = 0;
+    } else qa_targets_monster_route(map->application->targets, actor, change->target, change->move_target);
+    qa_actor_id goal = change->finish ? (qa_actor_id){0} : change->goal;
+    if (behavior && behavior->kind == APPLICATION_PROVIDER_Q2)
+        return qa_q2_monster_route_advance(behavior->state.q2, actor, goal,
+            monster_path_time(map, behavior, change->pause_until_ns), change->hold, error);
+    if (!behavior || behavior->kind != APPLICATION_PROVIDER_Q1)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Q2 path lost selected creature Source");
+    if (!qa_q1_game_path_change(behavior->state.q1, actor, &(qa_q1_path_change){
+        .kind = QA_Q1_PATH_DESTINATION, .target = change->target, .reference = goal,
+        .combat_route = combat}, error)) return false;
+    if (change->pause_until_ns)
+        return qa_q1_game_path_change(behavior->state.q1, actor, &(qa_q1_path_change){.kind = QA_Q1_PATH_STAND,
+            .pause_until = (double)monster_path_time(map, behavior, change->pause_until_ns) / 1e9}, error);
+    return true;
+}
+
 static bool monster_route(application_provider *map_provider,
                              const qa_launch_choices *choices,
                              const char *authored,
@@ -1100,8 +1772,20 @@ static bool native_entity_spawn(application_provider *map_provider,
 static bool q1_spawn_entity(application_provider *provider,
     const qa_entities *entities, size_t index, qa_arena *arena,
     const char *classname, bool has_source, uint32_t source_slot,
-    qa_actor_id *out, qa_error *error)
+    const qa_authored_monster *authored_monster, qa_actor_id *out, qa_error *error)
 {
+    if (authored_monster) {
+        qa_q1_spawn spawn = {.classname = classname, .authored_monster = authored_monster,
+            .has_source = has_source, .source_slot = source_slot};
+        float angle;
+        bool has_angles;
+        if (!entity_vector(entities, index, "origin", qa_v3(0, 0, 0), &spawn.origin, NULL, error) ||
+            !entity_vector(entities, index, "angles", qa_v3(0, 0, 0), &spawn.angles, &has_angles, error) ||
+            !entity_float(entities, index, "angle", 0, &angle, error)) return false;
+        if (!has_angles) spawn.angles = angle == -1 ? qa_v3(-90, 0, 0) :
+            angle == -2 ? qa_v3(90, 0, 0) : qa_v3(0, angle, 0);
+        return qa_q1_game_spawn(provider->state.q1, &spawn, out, error);
+    }
     qa_q1_map_fields fields = {0};
     qa_q1_boss_fields boss = {0};
     const char *target, *targetname, *killtarget, *message;
@@ -1567,6 +2251,8 @@ static qa_q2_entity_services q2_entity_services(application_provider *provider,
         .world_gravity = q2_world_gravity,
         .player_push = q2_player_push,
         .target_name_changed = q2_target_name_changed,
+        .path_follower = q2_monster_path_follower,
+        .path_advance = q2_monster_path_advance,
         .target_anger = q2_target_anger,
         .invoke_use = q2_invoke_use,
         .holds_healthbar = q2_holds_healthbar,
@@ -1586,14 +2272,64 @@ static bool q2_property_id(application_provider *provider,
                              value, out, error);
 }
 
+static bool monster_authored_fields(application_provider *map, const qa_entities *entities,
+    size_t index, uint32_t ordinal, qa_authored_monster *row, qa_error *error)
+{
+    static const char *const q1_ordinary[] = {
+        "monster_army_infected", "monster_knight_infected", "monster_enforcer_infected", "monster_hell_knight_infected",
+        "monster_demodog", "monster_ranged_knight", "monster_ogre_rocket", "monster_army", "monster_dog", "monster_knight",
+        "monster_enforcer", "monster_demon1", "monster_ogre", "monster_ogre_marksman", "monster_hell_knight", "monster_shambler",
+        "monster_wizard", "monster_shalrath", "monster_tarbaby", "monster_fish", "monster_zombie", "monster_scourge",
+        "monster_gremlin", "monster_eel", "monster_sword", "monster_wrath", "monster_mummy", "monster_lava_man"};
+    static const char *const q2_ordinary[] = {
+        "monster_soldier", "monster_soldier_light", "monster_soldier_ss", "monster_infantry", "monster_berserk", "monster_gladiator",
+        "monster_gunner", "monster_parasite", "monster_flyer", "monster_floater", "monster_hover", "monster_mutant", "monster_chick",
+        "monster_tank", "monster_tank_commander", "monster_flipper", "monster_brain", "monster_gekk", "monster_chick_heat",
+        "monster_soldier_ripper", "monster_soldier_hypergun", "monster_soldier_lasergun", "monster_stalker", "monster_daedalus"};
+    *row = (qa_authored_monster){.owner = map->owner, .source = map->component.clock.kind,
+        .ordinal = ordinal};
+    if (!q2_property_id(map, entities, index, "classname", &row->fields.classname, error) ||
+        !q2_property_id(map, entities, index, "targetname", &row->fields.targetname, error) ||
+        !q2_property_id(map, entities, index, "target", &row->fields.target, error) ||
+        !q2_property_id(map, entities, index, "killtarget", &row->fields.killtarget, error) ||
+        !q2_property_id(map, entities, index, "message", &row->fields.message, error) ||
+        !q2_property_id(map, entities, index, "deathtarget", &row->death_target, error) ||
+        !q2_property_id(map, entities, index, "item", &row->drop_item, error) ||
+        !q2_property_id(map, entities, index, "itemtarget", &row->item_target, error) ||
+        !q2_property_id(map, entities, index, "healthtarget", &row->health_target, error) ||
+        !q2_property_id(map, entities, index, "combattarget", &row->combat_target, error) ||
+        !entity_u32(entities, index, "spawnflags", 0, &row->spawnflags, error) ||
+        !entity_float(entities, index, "delay", 0, &row->fields.delay_seconds, error) ||
+        !entity_float(entities, index, "wait", 0, &row->fields.wait_seconds, error) ||
+        !entity_vector(entities, index, "origin", qa_v3(0, 0, 0), &row->authored_origin, NULL, error)) return false;
+    row->route = row->fields.target;
+    row->activation = map->kind == APPLICATION_PROVIDER_Q2 && (row->spawnflags & 2u) ?
+        QA_MONSTER_DORMANT : QA_MONSTER_ACTIVE;
+    const char *classname = qa_strings_cstr(qa_session_strings(map->application->session), row->fields.classname);
+    const char *const *ordinary = map->kind == APPLICATION_PROVIDER_Q1 ? q1_ordinary : q2_ordinary;
+    size_t count = map->kind == APPLICATION_PROVIDER_Q1 ? sizeof(q1_ordinary) / sizeof(*q1_ordinary) :
+        sizeof(q2_ordinary) / sizeof(*q2_ordinary);
+    bool supported = false;
+    for (size_t i = 0; i < count; ++i) if (classname && !strcmp(classname, ordinary[i])) { supported = true; break; }
+    uint32_t inhibition = map->kind == APPLICATION_PROVIDER_Q1 ? 0xf00u :
+        map->product->edition == QA_EDITION_RERELEASE ? 0xff00u : 0x1f00u;
+    uint32_t flags = map->kind == APPLICATION_PROVIDER_Q1 ?
+        classname && !strcmp(classname, "monster_zombie") ? 2u : 1u : 3u;
+    if (!supported || (row->spawnflags & ~(inhibition | flags)) ||
+        (classname && !strcmp(classname, "monster_zombie") && (row->spawnflags & 1u)))
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Selected monster does not preserve this authored boss or special spawn obligation");
+    return true;
+}
+
 static bool q2_spawn_native_fields(application_provider *map_provider,
     application_provider *actor_provider, const char *authored,
     const char *selected_classname, bool monster, const qa_entities *entities,
-    size_t index, bool has_source, uint32_t source_slot, qa_actor_id *out,
-    qa_error *error)
+    size_t index, bool has_source, uint32_t source_slot, const qa_authored_monster *authored_monster,
+    qa_actor_id *out, qa_error *error)
 {
     *out = (qa_actor_id){0};
-    application_provider *entity_provider = map_provider->kind == APPLICATION_PROVIDER_Q2 ?
+    application_provider *entity_provider = !authored_monster && map_provider->kind == APPLICATION_PROVIDER_Q2 ?
         map_provider : actor_provider;
     qa_string_id definition;
     qa_body_state body = {0};
@@ -1632,6 +2368,10 @@ static bool q2_spawn_native_fields(application_provider *map_provider,
     size_t property_count;
     const qa_entity_property *properties =
         entity_properties(entities, index, &property_count);
+    qa_entity_property selected_property = {
+        .key = {(const uint8_t *)"classname", sizeof("classname") - 1},
+        .value = {(const uint8_t *)selected_classname, strlen(selected_classname)}};
+    if (authored_monster) { properties = &selected_property; property_count = 1; }
     bool handled = false;
     bool ok = qa_q2_entity_spawn(
         entity_provider->state.q2, actor,
@@ -1639,7 +2379,8 @@ static bool q2_spawn_native_fields(application_provider *map_provider,
                             .count = property_count,
                             .ordinal = has_source && entity_provider == map_provider ? source_slot : UINT32_MAX},
         &handled, error);
-    if (ok && !handled &&
+    if (ok && authored_monster) ok = application_monster_admit(actor_provider, actor, authored_monster, error);
+    if (ok && !handled && !authored_monster &&
         qa_actors_get(qa_session_actors(map_provider->application->session),
                       actor) != NULL) {
         qa_q2_item_spawn item = {.classname = authored};
@@ -1669,7 +2410,10 @@ static bool q2_spawn_native_fields(application_provider *map_provider,
         qa_q2_monster_spawn_options options = {
             .classname = selected_classname,
         };
-        if (!entity_u32(entities, index, "spawnflags", 0,
+        if (authored_monster) {
+            ok = qa_q2_monster_spawn(actor_provider->state.q2, actor, &options, error);
+            handled = ok;
+        } else if (!entity_u32(entities, index, "spawnflags", 0,
                         &options.spawnflags, error) ||
             !entity_float(entities, index, "scale", 0, &options.scale,
                           error) ||
@@ -1716,15 +2460,21 @@ static bool native_entity_spawn(application_provider *map_provider,
     qa_error *error)
 {
     *out = (qa_actor_id){0};
+    qa_authored_monster authored_row = {0};
+    const qa_authored_monster *mission = NULL;
+    if (monster && (actor_provider != map_provider || strcmp(authored, selected_classname))) {
+        if (!monster_authored_fields(map_provider, entities, index, source_slot, &authored_row, error)) return false;
+        mission = &authored_row;
+    }
     if (actor_provider->kind == APPLICATION_PROVIDER_Q2)
         return q2_spawn_native_fields(map_provider, actor_provider, authored,
-            selected_classname, monster, entities, index, has_source, source_slot, out, error);
+            selected_classname, monster, entities, index, has_source, source_slot, mission, out, error);
     if (actor_provider->kind != APPLICATION_PROVIDER_Q1)
         return application_fail(error, QA_ERROR_UNSUPPORTED,
             "Selected authored monster has no native Q1 or Q2 constructor");
     bool ok = q1_spawn_entity(actor_provider, entities, index, arena,
         selected_classname, has_source && map_provider == actor_provider,
-        source_slot, out, error);
+        source_slot, mission, out, error);
     if (!ok && out->registry && qa_actors_get(qa_session_actors(map_provider->application->session), *out))
         (void)qa_session_release(map_provider->application->session, *out, NULL);
     return ok;

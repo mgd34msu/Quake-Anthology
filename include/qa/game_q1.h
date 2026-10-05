@@ -160,6 +160,8 @@ typedef enum qa_q1_path_result {
 } qa_q1_path_result;
 typedef struct qa_q1_host {
     void *context;
+    qa_monster_missions missions;
+    bool (*monster_admit)(void *, qa_actor_id, const qa_authored_monster *, qa_error *);
     /* Read the admitted source client's current selected attack input. */
     bool (*client_attack)(void *, qa_actor_id, bool *);
     bool (*target)(void *, qa_actor_id, qa_q1_target *);
@@ -228,6 +230,7 @@ typedef struct qa_q1_spawn {
     float health, speed, wait, delay, damage, count;
     const struct qa_q1_map_fields *map_fields;
     const qa_q1_boss_fields *boss_fields;
+    const qa_authored_monster *authored_monster;
     /* Explicit constructor-owned source bits, independent of physics.flags.
      * Stock authored constructors and delayed PlaceItem own their stamps. */
     uint32_t source_movement_flags;
@@ -517,6 +520,10 @@ bool qa_q1_game_rules_read(const qa_q1_game *, int32_t *deathmatch, uint32_t *ga
 /* Rogue startup is owned by the actual source world, shared by its modes. */
 bool qa_q1_game_rogue_runes_claim(qa_q1_game *, bool *newly_claimed, qa_error *);
 bool qa_q1_game_rogue_runes_read(const qa_q1_game *, qa_actor_id *world, bool *started);
+bool qa_q1_monster_activate(qa_q1_game *, qa_actor_id, qa_error *);
+bool qa_q1_monster_shape(const char *classname, qa_bounds *, uint32_t *physics_flags);
+bool qa_q1_game_monster_count(qa_q1_game *, qa_actor_id monster, qa_actor_id attacker,
+    bool killed, bool classic_fish, qa_error *);
 bool qa_q1_game_monster_counts(const qa_q1_game *, uint32_t *total, uint32_t *killed);
 /* Source alpha retains finite authored fade overshoot before retirement. */
 bool qa_q1_game_alpha(qa_q1_game *, qa_actor_id, float alpha, qa_error *);

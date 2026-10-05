@@ -2,12 +2,37 @@
 #define QA_TARGETS_H
 #include "qa/session.h"
 #include "qa/math.h"
+#include "qa/monster_mission.h"
 
 typedef struct qa_authored_target {
     qa_string_id classname, targetname, target, killtarget, message;
     qa_string_id shader_old, shader_new;
     float delay_seconds, wait_seconds;
 } qa_authored_target;
+typedef enum qa_monster_activation_kind {
+    QA_MONSTER_ACTIVE, QA_MONSTER_DORMANT, QA_MONSTER_SCHEDULED
+} qa_monster_activation_kind;
+typedef enum qa_monster_placement_kind {
+    QA_MONSTER_PLACED, QA_MONSTER_WAITING, QA_MONSTER_TELEPORT
+} qa_monster_placement_kind;
+/* The map owns authored links and encounter state. Native behavior remains in
+ * its selected Source; this row is the ordinary shared target authority. */
+typedef struct qa_monster_barrier { qa_actor_id actor; qa_vec3 origin; } qa_monster_barrier;
+typedef struct qa_authored_monster {
+    qa_authored_target fields;
+    qa_actor_owner owner;
+    qa_clock_kind source;
+    uint32_t ordinal, spawnflags;
+    qa_string_id death_target, drop_item, item_target, health_target, route, combat_target;
+    qa_actor_id route_goal, combat_goal, activator, previous_corner;
+    bool route_resolved, stand_ground, counted_spawn, counted_death;
+    qa_monster_activation_kind activation;
+    uint64_t activation_ns;
+    qa_monster_placement_kind placement;
+    qa_vec3 authored_origin, placement_origin;
+    qa_monster_barrier *barriers;
+    size_t barrier_count;
+} qa_authored_monster;
 typedef struct qa_targets qa_targets;
 typedef enum qa_target_field_kind {
     QA_TARGET_FIELD_TEXT,
@@ -75,6 +100,12 @@ void qa_targets_unbind_context(qa_targets *, qa_actor_id, const void *expected_c
 /* Call after changing a bound actor's targetname or source-slot mapping. The
  * retained index rebuilds only after such changes or registry mutations. */
 void qa_targets_changed(qa_targets *);
+void qa_targets_monsters_configure(qa_targets *, void *context,
+    bool (*resolve)(void *, qa_actor_owner, qa_monster_mission *, qa_error *));
+bool qa_targets_monster_admit(qa_targets *, qa_actor_id, const qa_authored_monster *, qa_error *);
+void qa_targets_monster_route(qa_targets *, qa_actor_id, qa_string_id, qa_actor_id);
+qa_authored_monster *qa_targets_monster(qa_targets *, qa_actor_id);
+bool qa_targets_monster_lookup(void *targets, qa_actor_id, qa_monster_mission *);
 bool qa_targets_read(const qa_targets *, qa_actor_id, qa_authored_target *);
 /* The binding owns the field. Any attempted write invalidates the retained
  * index, including a callback that mutates its field before returning failure. */

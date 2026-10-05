@@ -1173,6 +1173,51 @@ bool qa_q2_monster_turret_release(qa_q2_game *game, qa_actor_id id,
   return true;
 }
 
+static qa_bounds monster_bounds(const qa_q2_game *game, const q2m_definition *definition) {
+  qa_bounds bounds = definition->bounds;
+  if (game->options.edition == QA_Q2_RERELEASE) {
+    if (definition->species == Q2M_FLIPPER) { bounds.mins.z = -8; bounds.maxs.z = 20; }
+    else if (definition->species == Q2M_FLOATER) bounds.maxs.z = 48;
+    else if (definition->species == Q2M_FLYER) bounds.maxs.z = 16;
+    else if (definition->species == Q2M_TANK_STAND) bounds.maxs.z = 72;
+  }
+  return bounds;
+}
+bool qa_q2_monster_shape(qa_q2_game *game, const char *classname, qa_bounds *bounds, uint32_t *flags) {
+  const q2m_definition *definition = q2m_definition_for(game, classname);
+  if (!definition || !bounds || !flags) return false;
+  *bounds = monster_bounds(game, definition);
+  *flags = definition->locomotion == Q2M_FLY ? QA_PHYSICS_FLYING :
+      definition->locomotion == Q2M_SWIM ? QA_PHYSICS_SWIMMING : 0;
+  return true;
+}
+bool qa_q2_monster_route_read(const qa_q2_game *game, qa_actor_id id, qa_q2_monster_route_state *out) {
+  const q2_actor *actor = game && id.slot < game->capacity ? game->actors[id.slot] : NULL;
+  if (!actor || !qa_actor_id_equal(actor->id, id) || !actor->monster || !out) return false;
+  const struct qa_q2_monster *monster = actor->monster;
+  *out = (qa_q2_monster_route_state){.goal = monster->move_target, .enemy = monster->enemy,
+    .old_enemy = monster->old_enemy, .activator = monster->activator, .pause_until_ns = monster->pause_ns,
+    .walking = monster->move && strstr(monster->move->name, "walk")};
+  return true;
+}
+bool qa_q2_monster_route_advance(qa_q2_game *game, qa_actor_id id, qa_actor_id goal,
+    uint64_t pause_until_ns, bool hold, qa_error *error) {
+  q2m_context context;
+  if (!public_monster_context(game, id, &context, error)) return false;
+  if (!context.actor) return true;
+  context.monster->goal = context.monster->move_target = context.actor->physics.goal = goal;
+  context.monster->pause_ns = pause_until_ns;
+  context.monster->stand_ground = hold;
+  if (goal.registry) {
+    qa_body_state body;
+    if (!qa_world_body_read(game->services.world, goal, &body, error)) return false;
+    qa_vec3 delta = qa_vec_sub(body.origin, context.body.origin);
+    context.monster->ideal_yaw = atan2f(delta.y, delta.x) * 57.29577951308232f;
+  }
+  return q2m_set_move(&context, pause_until_ns || hold || !goal.registry ?
+    context.monster->definition->stand_move : context.monster->definition->walk_move, false, error);
+}
+
 bool qa_q2_monster_route_contact(const qa_q2_game *game, qa_actor_id id,
                                  qa_actor_id corner, bool combat_point,
                                  bool *eligible) {
@@ -1342,20 +1387,9 @@ static bool initialize_body(qa_q2_game *game, q2_actor *actor,
   if (!q2m_alive(&context))
     return true;
   float scale = monster->entity_scale;
-  body.bounds.mins = qa_vec_scale(monster->definition->bounds.mins, scale);
-  body.bounds.maxs = qa_vec_scale(monster->definition->bounds.maxs, scale);
-  if (game->options.edition == QA_Q2_RERELEASE) {
-    if (monster->definition->species == Q2M_FLIPPER) {
-      body.bounds.mins.z = -8.0f * scale;
-      body.bounds.maxs.z = 20.0f * scale;
-    } else if (monster->definition->species == Q2M_FLOATER) {
-      body.bounds.maxs.z = 48.0f * scale;
-    } else if (monster->definition->species == Q2M_FLYER) {
-      body.bounds.maxs.z = 16.0f * scale;
-    } else if (monster->definition->species == Q2M_TANK_STAND) {
-      body.bounds.maxs.z = 72.0f * scale;
-    }
-  }
+  qa_bounds bounds = monster_bounds(game, monster->definition);
+  body.bounds.mins = qa_vec_scale(bounds.mins, scale);
+  body.bounds.maxs = qa_vec_scale(bounds.maxs, scale);
   monster->normal_height = body.bounds.maxs.z;
   monster->view_height = monster->definition->view_height;
   if (monster->view_height == 0.0f)
@@ -1500,7 +1534,11 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
                  "Invalid native Q2 monster spawn");
     return false;
   }
-  if (game->options.deathmatch)
+  qa_monster_mission mission;
+  q2m_context mission_context = {.game = game, .actor = q2_actor_get(game, id, false, NULL)};
+  bool selected;
+  if (!q2m_mission(&mission_context, &mission, &selected, error)) return false;
+  if (game->options.deathmatch && !selected)
     return !q2_actor_live(game, id) ||
            qa_session_release(game->services.session, id, error);
   if (game->services.physics == NULL) {
@@ -1550,7 +1588,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
                  options->classname, definition->initial_move);
     return false;
   }
-  monster->spawnflags = options->spawnflags;
+  monster->spawnflags = selected ? mission.ambush ? 1u : 0 : options->spawnflags;
   monster->old_frame = -1;
   monster->render_flags = game->options.edition == QA_Q2_CLASSIC ? 64u : 32768u;
   monster->entity_scale = options->scale > 0.0f ? options->scale : 1.0f;

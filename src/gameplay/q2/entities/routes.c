@@ -72,8 +72,8 @@ static qa_actor_id external_activator(qa_q2_game *g, qa_actor_id actor,
 bool q2_route_touch(qa_q2_game *g, q2_actor *a, qa_actor_id actor, qa_error *e) {
     bool combat = a->entity->kind == Q2E_COMBAT_POINT;
     q2_actor *monster = q2_actor_get(g, actor, false, NULL);
-    bool native = monster && monster->monster;
     qa_q2_entity_services *services = &g->entity_runtime->services;
+    bool native = monster && monster->monster && !qa_targets_monster(services->targets, actor);
     qa_q2_path_follower follower = {0};
     bool eligible = false;
     if (native) {

@@ -26,6 +26,11 @@ typedef struct qa_q2_monster_services {
   bool (*count)(void *, qa_actor_id, qa_q2_monster_count, qa_error *);
 } qa_q2_monster_services;
 
+bool qa_q2_monster_activate(qa_q2_game *, qa_actor_id, qa_error *);
+bool qa_q2_monster_pick_target(qa_q2_game *, qa_string_id, qa_actor_id *);
+bool qa_q2_monster_shape(qa_q2_game *, const char *classname, qa_bounds *, uint32_t *physics_flags);
+bool qa_q2_campaign_monster_count(qa_q2_game *, qa_q2_monster_count, qa_error *);
+bool qa_q2_monsters_bind_missions(qa_q2_game *, const qa_monster_missions *, qa_error *);
 bool qa_q2_monsters_bind_services(qa_q2_game *, const qa_q2_monster_services *, qa_error *);
 bool qa_q2_monsters_end_frame(qa_q2_game *, qa_error *);
 
@@ -169,6 +174,14 @@ bool qa_q2_monsters_capture(qa_q2_game *, qa_q2_monsters_checkpoint *,
 bool qa_q2_monsters_restore(qa_q2_game *, const qa_q2_monsters_checkpoint *,
                             qa_error *);
 void qa_q2_monsters_checkpoint_free(qa_q2_monsters_checkpoint *);
+typedef struct qa_q2_monster_route_state {
+  qa_actor_id goal, enemy, old_enemy, activator;
+  uint64_t pause_until_ns;
+  bool walking;
+} qa_q2_monster_route_state;
+bool qa_q2_monster_route_read(const qa_q2_game *, qa_actor_id, qa_q2_monster_route_state *);
+bool qa_q2_monster_route_advance(qa_q2_game *, qa_actor_id, qa_actor_id goal,
+    uint64_t pause_until_ns, bool hold, qa_error *);
 bool qa_q2_monster_route_contact(const qa_q2_game *, qa_actor_id monster,
                                  qa_actor_id corner, bool combat_point,
                                  bool *eligible);

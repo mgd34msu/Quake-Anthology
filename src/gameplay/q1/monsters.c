@@ -1,6 +1,15 @@
 #include "internal.h"
 #include "qa/game_q1_maps.h"
 
+bool qa_q1_monster_shape(const char *classname, qa_bounds *bounds, uint32_t *flags) {
+    const q1_species *species = q1_species_find(classname);
+    if (!species || !bounds || !flags) return false;
+    *bounds = species->bounds; *flags = species->flags;
+    return true;
+}
+bool q1_monster_mission(const qa_q1_game *g, qa_actor_id actor, qa_monster_mission *out) {
+    return g->host.missions.lookup && g->host.missions.lookup(g->host.missions.context, actor, out);
+}
 static bool body(qa_q1_game *g, q1_actor *entity, qa_body_state *out, qa_error *error) {
     return qa_world_body_read(g->services.world, entity->id, out, error);
 }
@@ -20,6 +29,11 @@ qa_actor_id q1_find_target(const qa_q1_game *g, qa_string_id name) {
     return (qa_actor_id){0};
 }
 qa_actor_id q1_monster_route(const qa_q1_game *g, const q1_actor *entity) {
+    qa_monster_mission mission;
+    if (q1_monster_mission(g, entity->id, &mission)) {
+        qa_actor_id goal = {0};
+        if (mission.route(mission.context, entity->id, &goal, NULL)) return goal;
+    }
     return q1_find_target(g, entity->state.monster.path);
 }
 static bool target_body(qa_q1_game *g, q1_actor *entity, qa_body_state *out) {
@@ -117,6 +131,14 @@ bool q1_monster_found(qa_q1_game *g, q1_actor *entity, qa_actor_id target, qa_er
         qa_vec3 delta = qa_vec_sub(other.origin, self.origin);
         entity->physics.ideal_yaw =
             qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f);
+    }
+    qa_monster_mission mission;
+    if (q1_monster_mission(g, entity->id, &mission)) {
+        qa_monster_combat_route route;
+        if (!mission.found_target(mission.context, entity->id, error) ||
+            !mission.combat_route(mission.context, entity->id, &route, error)) return false;
+        if (route.goal.registry) monster->move_target = entity->physics.goal = route.goal;
+        if (route.stand_ground) monster->pause_until = 99999999;
     }
     if (g->host.monster_found && !g->host.monster_found(g->host.context, entity->id, target, error))
         return false;
@@ -580,6 +602,14 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
                                           error);
     }
     case Q1_AI_RUN: {
+        qa_monster_mission mission;
+        if (q1_monster_mission(g, entity->id, &mission)) {
+            qa_monster_combat_route route;
+            if (!mission.combat_route(mission.context, entity->id, &route, error)) return false;
+            if (route.goal.registry)
+                return qa_physics_q1_move_to_goal(g->services.physics, entity->id, route.goal, distance, false, error);
+            if (route.stand_ground) distance = 0;
+        }
         if (m->addon.enabled && g->options.program == QA_Q1_MG3)
             m->hostile_until = g->time + 1;
         if (m->charmer.registry && (!m->enemy.registry || qa_actor_id_equal(m->enemy, m->charmer) ||
@@ -747,6 +777,40 @@ bool q1_monster_play(qa_q1_game *g, q1_actor *entity, const char *name, qa_error
     }
     entity->state.monster.next_frame = index;
     return q1_monster_frame(g, entity, error);
+}
+bool qa_q1_monster_activate(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    q1_actor *entity = q1_entity(g, actor);
+    if (!entity || entity->kind != Q1_MONSTER) return false;
+    qa_combat_state combat;
+    if (!qa_combat_read_traits(g->services.combat, actor, &combat, error)) return false;
+    entity->physics.motion = QA_PHYSICS_STEP;
+    entity->physics.solid = QA_PHYSICS_BOX;
+    combat.can_take_damage = true;
+    return q1_model(g, entity, entity->state.monster.species->model, error) &&
+        qa_combat_set_traits(g->services.combat, actor, &combat, error) && q1_link(g, entity, error);
+}
+bool q1_monster_mission_turn(qa_q1_game *g, q1_actor *entity, bool *active, qa_error *error) {
+    qa_monster_mission mission;
+    *active = true;
+    if (!q1_monster_mission(g, entity->id, &mission) || !mission.active || q1_health(g, entity->id) <= 0) return true;
+    qa_actor_id actor = entity->id;
+    qa_monster_activation activation;
+    if (!mission.active(mission.context, entity->id, &activation, error)) return false;
+    if (!q1_alive(g, actor)) { *active = false; return true; }
+    *active = activation.active;
+    qa_combat_state combat;
+    if (!qa_combat_read_traits(g->services.combat, entity->id, &combat, error)) return false;
+    if (!*active) {
+        entity->physics.motion = QA_PHYSICS_STATIONARY;
+        entity->physics.solid = QA_PHYSICS_NOT_SOLID;
+        combat.can_take_damage = false;
+        entity->model = 0;
+        return qa_combat_set_traits(g->services.combat, entity->id, &combat, error) && q1_link(g, entity, error);
+    }
+    if (entity->physics.solid == QA_PHYSICS_NOT_SOLID && !qa_q1_monster_activate(g, entity->id, error)) return false;
+    if (activation.activator.registry && entity->think == Q1_THINK_MONSTER_START &&
+        !q1_monster_start(g, entity, error)) return false;
+    return !activation.activator.registry || !q1_alive(g, entity->id) || q1_monster_use(g, entity, activation.activator, error);
 }
 bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_monster *m = &entity->state.monster;
@@ -936,8 +1000,13 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
         spec->species != QA_Q1_SHAMBLER && spec->species != QA_Q1_SHALRATH)
         state.bounds = (qa_bounds){{-16, -16, -24}, {16, 16, 40}};
     bool hanging = addon && g->options.program == QA_Q1_MG3 && (entity->spawnflags & 8388608u);
+    qa_monster_mission mission;
+    bool has_mission = q1_monster_mission(g, entity->id, &mission);
+    if (has_mission) entity->spawnflags = mission.ambush ? spec->species == QA_Q1_ZOMBIE ? 2u : 1u : 0;
     bool crucified = spec->species == QA_Q1_ZOMBIE && ((entity->spawnflags & 1) || hanging);
-    if (!crucified && spec->species != QA_Q1_DECOY)
+    if (has_mission) {
+        if (!mission.spawned(mission.context, entity->id, error)) return false;
+    } else if (!crucified && spec->species != QA_Q1_DECOY)
         ++g->total_monsters;
     if (spec->species == QA_Q1_DRAGON)
         return q1_dragon_spawn(g, entity, error);
@@ -1102,7 +1171,9 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (!q1_alive(g, entity->id))
             return true;
     }
-    if (!addon && m->species->species == QA_Q1_FISH && g->options.edition == QA_Q1_CLASSIC)
+    qa_monster_mission mission;
+    bool has_mission = q1_monster_mission(g, entity->id, &mission);
+    if (!has_mission && !addon && m->species->species == QA_Q1_FISH && g->options.edition == QA_Q1_CLASSIC)
         ++g->total_monsters;
     entity->physics.flags |= QA_PHYSICS_MONSTER;
     qa_combat_state combat;
@@ -1115,6 +1186,12 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         !q1_link(g, entity, error))
         return false;
     qa_actor_id goal = addon ? q1_find_target(g, entity->target) : q1_monster_route(g, entity);
+    if (has_mission) {
+        if (!mission.route(mission.context, entity->id, &goal, error) ||
+            !mission.started(mission.context, entity->id, error)) return false;
+        m->move_target = entity->physics.goal = goal;
+        m->path = goal.registry ? entity->target : 0;
+    }
     if (!addon && m->species->species >= QA_Q1_GREMLIN) {
         m->move_target = goal;
         entity->physics.goal = goal;

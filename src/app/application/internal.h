@@ -648,6 +648,8 @@ bool application_composition_destroy(qa_application *, qa_error *);
 bool application_apply(qa_application *, const qa_launch_draft *, qa_error *);
 bool application_q1_pause_set(qa_application *, application_provider *, bool, qa_error *);
 uint64_t application_frame_revision(const qa_application *);
+bool application_monster_admit(void *, qa_actor_id, const qa_authored_monster *, qa_error *);
+bool application_monster_mission(void *, qa_actor_owner, qa_monster_mission *, qa_error *);
 bool application_map_prepare(qa_application *, application_publication *, qa_error *);
 bool application_map_publish(qa_application *, application_publication *, qa_error *);
 bool application_match_prepare(qa_application *, application_publication *, qa_error *);

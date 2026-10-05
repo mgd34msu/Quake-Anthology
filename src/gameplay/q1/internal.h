@@ -774,6 +774,8 @@ bool q1_monster_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_monster_face(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_ctf_monster_removed(qa_bytes classname);
 qa_actor_id q1_find_target(const qa_q1_game *, qa_string_id);
+bool q1_monster_mission_turn(qa_q1_game *, q1_actor *, bool *, qa_error *);
+bool q1_monster_mission(const qa_q1_game *, qa_actor_id, qa_monster_mission *);
 qa_actor_id q1_monster_route(const qa_q1_game *, const q1_actor *);
 bool q1_monster_found(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_monster_find_target(qa_q1_game *, q1_actor *, bool *, qa_error *);

@@ -214,31 +214,31 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
     return !q1_alive(g, entity->id) || q1_monster_play(g, entity, frame, error);
 }
 
+bool qa_q1_game_monster_count(qa_q1_game *g, qa_actor_id monster, qa_actor_id attacker,
+    bool killed, bool classic_fish, qa_error *error) {
+    if (!killed) { g->total_monsters += classic_fish ? 2u : 1u; return true; }
+    ++g->killed_monsters;
+    return qa_builtin_emit(&g->services, &(qa_builtin_event){.kind = QA_BUILTIN_DEATH,
+        .family = QA_GAME_Q1, .provider = g->options.provider, .actor = monster,
+        .other = attacker, .time_ns = g->time_ns, .count = (int32_t)g->killed_monsters,
+        .value = (float)g->total_monsters}, error);
+}
 bool q1_monster_death_report(qa_q1_game *g, q1_actor *entity, qa_actor_id killer, bool count,
                              qa_error *error) {
-    if (g->host.monster_killed) {
-        if (!g->host.monster_killed(g->host.context, entity->id, killer, count, error))
-            return false;
-    } else if (count) {
-        ++g->killed_monsters;
-        qa_builtin_event event = {.kind = QA_BUILTIN_DEATH,
-                                  .family = QA_GAME_Q1,
-                                  .provider = g->options.provider,
-                                  .actor = entity->id,
-                                  .other = killer,
-                                  .time_ns = g->time_ns,
-                                  .count = (int32_t)g->killed_monsters,
-                                  .value = (float)g->total_monsters};
-        if (!qa_builtin_emit(&g->services, &event, error))
-            return false;
-    }
-    return true;
+    if (g->host.monster_killed)
+        return g->host.monster_killed(g->host.context, entity->id, killer, count, error);
+    return !count || qa_q1_game_monster_count(g, entity->id, killer, true, false, error);
 }
 bool q1_monster_count_kill(qa_q1_game *g, q1_actor *entity, qa_actor_id killer, qa_error *error) {
     q1_monster *m = &entity->state.monster;
     if (m->counted_death)
         return true;
     m->counted_death = true;
+    qa_monster_mission mission;
+    if (q1_monster_mission(g, entity->id, &mission)) {
+        entity->physics.flags &= ~(uint32_t)(QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING);
+        return mission.killed(mission.context, entity->id, killer, error);
+    }
     bool count = g->host.count_monster_kill
                      ? g->host.count_monster_kill(g->host.context, entity->id)
                      : !(m->horde && m->species->species == QA_Q1_ZOMBIE);
@@ -472,6 +472,11 @@ bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
 
 bool q1_monster_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
     q1_monster *m = &entity->state.monster;
+    qa_monster_mission mission;
+    bool handled = false;
+    if (q1_monster_mission(g, entity->id, &mission) &&
+        !mission.use(mission.context, entity->id, activator, &handled, error)) return false;
+    if (handled || !q1_alive(g, entity->id)) return true;
     if (!m->addon.normal_use &&
         (m->addon.boss == Q1_BOSS_GHOST || m->addon.boss == Q1_BOSS_SHUB_ZOMBIE))
         return true;

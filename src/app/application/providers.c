@@ -548,6 +548,7 @@ static bool construct_q1(qa_application *application,
                 !qa_cvars_set(cvars, "horde", "1", true, error)) return false;
         }
     if (!application_native_q1_wire_create(provider, error)) return false;
+    qa_targets_monsters_configure(application->targets, application, application_monster_mission);
     qa_q1_host host = {.context = provider,
                        .source_console_print = application_native_q1_source_console_print,
                        .source_logfrag_write = application_native_q1_source_logfrag_write,
@@ -580,6 +581,8 @@ static bool construct_q1(qa_application *application,
                        .before_fire = application_q1_before_fire,
                        .attack_delay = q1_selected_attack_delay,
                        .nail_fire = application_q1_nail_fire,
+                       .missions = {.context = application->targets, .lookup = qa_targets_monster_lookup},
+                       .monster_admit = application_monster_admit,
                        .monster_path = application_bots_npc_walk,
                        .horde = application_bots_npc_horde,
                        .monster_path_clone = application_bots_npc_clone,
@@ -827,6 +830,7 @@ static bool construct_q2(qa_application *application,
     services.cvar_context = provider;
     services.cvar = application_native_q2_cvar;
     if (!q2_arsenal_options(provider, choices, &options, error)) return false;
+    qa_targets_monsters_configure(application->targets, application, application_monster_mission);
     qa_q2_hooks hooks = {.context = provider,
         .equipment_animation = q2_equipment_animation,
         .selected_firing_interval = application_q3_weapons_services_selected_delay,
@@ -842,7 +846,10 @@ static bool construct_q2(qa_application *application,
         return false;
     qa_q2_item_options items = {.context = provider, .supply_for = application_supplies_source_for,
         .instanced_coop = options.edition == QA_Q2_RERELEASE, .weapon_respawn_seconds = 30};
-    if (!qa_q2_items_configure(provider->state.q2, &items, error)) return false;
+    if (!qa_q2_monsters_bind_missions(provider->state.q2,
+        &(qa_monster_missions){.context = application->targets,
+            .lookup = qa_targets_monster_lookup}, error) ||
+        !qa_q2_items_configure(provider->state.q2, &items, error)) return false;
     if (!application_native_q2_arsenal_prepare(provider, choices, error)) return false;
     if (application->operation != APPLICATION_PERSISTING &&
         !application_native_q2_console_refresh(provider, error)) return false;

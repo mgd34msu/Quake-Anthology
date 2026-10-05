@@ -71,6 +71,35 @@ static bool record(qa_source_save_io *io, qa_target_binding *binding, uint64_t *
     return true;
 }
 
+static bool monster_record(qa_source_save_io *io, qa_authored_monster *row) {
+    uint32_t source = row->source, activation = row->activation, placement = row->placement;
+    if (!fields(io, &row->fields) || !qa_source_save_string(io, &row->owner) || !row->owner ||
+        !qa_source_save_u32(io, &source) || source > QA_CLOCK_Q3 ||
+        !qa_source_save_u32(io, &row->ordinal) || !qa_source_save_u32(io, &row->spawnflags) ||
+        !qa_source_save_string(io, &row->death_target) || !qa_source_save_string(io, &row->drop_item) ||
+        !qa_source_save_string(io, &row->item_target) || !qa_source_save_string(io, &row->health_target) ||
+        !qa_source_save_string(io, &row->route) || !qa_source_save_string(io, &row->combat_target) ||
+        !qa_source_save_actor(io, &row->route_goal) || !qa_source_save_actor(io, &row->combat_goal) ||
+        !qa_source_save_actor(io, &row->activator) || !qa_source_save_actor(io, &row->previous_corner) || !qa_source_save_bool(io, &row->route_resolved) ||
+        !qa_source_save_bool(io, &row->stand_ground) || !qa_source_save_bool(io, &row->counted_spawn) ||
+        !qa_source_save_bool(io, &row->counted_death) || !qa_source_save_u32(io, &activation) ||
+        activation > QA_MONSTER_SCHEDULED || !qa_source_save_u64(io, &row->activation_ns) ||
+        !qa_source_save_u32(io, &placement) || placement > QA_MONSTER_TELEPORT ||
+        !qa_source_save_vec3(io, &row->authored_origin) || !qa_source_save_vec3(io, &row->placement_origin)) return false;
+    if (!qa_source_save_count(io, &row->barrier_count, qa_actors_capacity(qa_session_actors(io->session)))) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ && row->barrier_count) {
+        row->barriers = calloc(row->barrier_count, sizeof(*row->barriers));
+        if (!row->barriers) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "restoring authored door encounter"); return false; }
+    }
+    for (size_t i = 0; i < row->barrier_count; ++i)
+        if (!qa_source_save_actor(io, &row->barriers[i].actor) ||
+            !qa_source_save_vec3(io, &row->barriers[i].origin)) return false;
+    row->source = (qa_clock_kind)source;
+    row->activation = (qa_monster_activation_kind)activation;
+    row->placement = (qa_monster_placement_kind)placement;
+    return true;
+}
+
 bool qa_persistence_targets_capture(qa_targets *targets, qa_buffer *out, qa_error *error)
 {
     if (!targets || !out || targets->depth || !qa_session_safe(targets->options.session))
@@ -82,8 +111,12 @@ bool qa_persistence_targets_capture(qa_targets *targets, qa_buffer *out, qa_erro
     uint64_t next = targets->next_binding_serial;
     bool ok = signature(&io) && qa_source_save_u64(&io, &next) && qa_source_save_count(&io, &count, targets->capacity);
     for (size_t i = 0; ok && i < targets->capacity; ++i) if (targets->bindings[i].actor.registry) {
-        qa_target_binding copy = targets->bindings[i]; uint64_t serial = targets->binding_serial[i];
-        ok = record(&io, &copy, &serial, NULL);
+        target_monster *monster = targets->monsters[i];
+        qa_target_binding copy = monster ? monster->native : targets->bindings[i];
+        uint64_t serial = targets->binding_serial[i];
+        bool selected = monster != NULL;
+        ok = record(&io, &copy, &serial, NULL) && qa_source_save_bool(&io, &selected);
+        if (ok && selected) { qa_authored_monster authored = monster->authored; ok = monster_record(&io, &authored); }
     }
     if (ok) ok = !targets->depth && next == targets->next_binding_serial && qa_source_save_finish(&io, out);
     if (!ok && (!error || error->code == QA_OK)) fail(error, "Invalid authored target continuation");
@@ -97,6 +130,7 @@ bool qa_persistence_targets_restore(qa_targets *targets, const qa_persistence_ga
         return fail(error, "Target restore requires an idle candidate");
     qa_targets *scratch = qa_targets_create(&targets->options, error);
     if (!scratch) return false;
+    qa_targets_monsters_configure(scratch, targets->monster_context, targets->monster_resolve);
     qa_source_save_io io = {0}; size_t count = 0;
     uint64_t *serials = NULL; size_t serial_count = 0, serial_capacity = 0;
     bool ok = qa_source_save_reader(&io, targets->options.session, bytes, error) && signature(&io) &&
@@ -104,20 +138,27 @@ bool qa_persistence_targets_restore(qa_targets *targets, const qa_persistence_ga
     uint32_t previous = 0;
     for (size_t i = 0; ok && i < count; ++i) {
         qa_target_binding binding = {0}; uint64_t serial = 0;
-        ok = record(&io, &binding, &serial, resolve);
+        bool selected = false;
+        qa_authored_monster authored = {0};
+        ok = record(&io, &binding, &serial, resolve) && qa_source_save_bool(&io, &selected);
+        if (ok && selected) ok = monster_record(&io, &authored);
         if (ok && ((i && binding.actor.slot <= previous) || serial > scratch->next_binding_serial))
             ok = fail(error, "Saved target ordering or serial namespace is invalid");
         if (ok) ok = persistence_serial_append(&serials, &serial_count, &serial_capacity, serial, scratch->next_binding_serial, error);
         if (ok) {
             previous = binding.actor.slot; scratch->bindings[binding.actor.slot] = binding;
             scratch->binding_serial[binding.actor.slot] = serial;
+            if (selected) ok = qa_targets_monster_admit(scratch, binding.actor, &authored, error);
         }
+        free(authored.barriers);
     }
     if (ok) ok = persistence_serial_unique(serials, serial_count, error) && qa_source_save_finish(&io, NULL) && !targets->depth;
     if (ok) {
         qa_target_binding *old = targets->bindings; uint64_t *old_serial = targets->binding_serial;
         targets->bindings = scratch->bindings; targets->binding_serial = scratch->binding_serial;
         scratch->bindings = old; scratch->binding_serial = old_serial;
+        target_monster **old_monsters = targets->monsters;
+        targets->monsters = scratch->monsters; scratch->monsters = old_monsters;
         targets->next_binding_serial = scratch->next_binding_serial; qa_targets_changed(targets);
     }
     if (!ok && (!error || error->code == QA_OK)) fail(error, "Invalid saved target continuation");

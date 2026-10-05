@@ -65,6 +65,12 @@ bool qa_q2_monsters_bind_services(qa_q2_game *game,
   return true;
 }
 
+bool qa_q2_monsters_bind_missions(qa_q2_game *game, const qa_monster_missions *missions, qa_error *error) {
+  if (!game || !missions || !q2_monsters_init(game, error)) return false;
+  game->monster_runtime->services.missions = *missions;
+  return true;
+}
+
 bool q2m_mission(q2m_context *context, qa_monster_mission *mission,
                   bool *present, qa_error *error) {
   const qa_monster_missions *missions =
