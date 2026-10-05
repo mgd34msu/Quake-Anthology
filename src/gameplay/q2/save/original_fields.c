@@ -112,6 +112,20 @@ static const q2_original_field mover_fields[] = {
     {"moveinfo.decel_distance", MEMBER(q2_mover, motion.decel_distance), 1, Q2_ORIGINAL_F32, {764, 764, 764}},
 };
 
+static const q2_original_field game_fields[] = {
+    {"helpmessage1", MEMBER(q2_original_game_state, help[0]), 512, Q2_ORIGINAL_TEXT, {0, 0, 0}},
+    {"helpmessage2", MEMBER(q2_original_game_state, help[1]), 512, Q2_ORIGINAL_TEXT, {512, 512, 512}},
+    {"help1changed", MEMBER(q2_original_game_state, help_changes[0]), 1, Q2_ORIGINAL_U32, {1024, 1024, 1024}},
+    {"help2changed", MEMBER(q2_original_game_state, help_changes[1]), 1, Q2_ORIGINAL_U32, {65535, 65535, 65535}},
+    {"spawnpoint", MEMBER(q2_original_game_state, spawnpoint), 512, Q2_ORIGINAL_TEXT, {1032, 1032, 1032}},
+    {"maxclients", MEMBER(q2_original_game_state, clients), 1, Q2_ORIGINAL_U32, {1544, 1544, 1544}},
+    {"maxentities", MEMBER(q2_original_game_state, entities), 1, Q2_ORIGINAL_U32, {1548, 1548, 1548}},
+    {"cross_level_flags", MEMBER(q2_original_game_state, level_flags), 1, Q2_ORIGINAL_U32, {1552, 1552, 1552}},
+    {"cross_unit_flags", MEMBER(q2_original_game_state, unit_flags), 1, Q2_ORIGINAL_U32, {65535, 65535, 65535}},
+    {"num_items", MEMBER(q2_original_game_state, items), 1, Q2_ORIGINAL_U32, {1556, 1556, 1556}},
+    {"autosaved", MEMBER(q2_original_game_state, autosave), 1, Q2_ORIGINAL_BOOL, {1560, 1560, 1560}},
+};
+
 static const q2_original_layout layouts[] = {
     {sizeof(qa_q2_player_state), persistent_fields, sizeof(persistent_fields) / sizeof(persistent_fields[0])},
     {sizeof(qa_q2_player_view), view_fields, sizeof(view_fields) / sizeof(view_fields[0])},
@@ -120,6 +134,7 @@ static const q2_original_layout layouts[] = {
     {sizeof(qa_q2_powerups), powers_fields, sizeof(powers_fields) / sizeof(powers_fields[0])},
     {sizeof(qa_q2_entity_state), entity_fields, sizeof(entity_fields) / sizeof(entity_fields[0])},
     {sizeof(q2_mover), mover_fields, sizeof(mover_fields) / sizeof(mover_fields[0])},
+    {sizeof(q2_original_game_state), game_fields, sizeof(game_fields) / sizeof(game_fields[0])},
 };
 
 const q2_original_layout *q2_original_layout_for(q2_original_record_kind kind)
@@ -141,5 +156,5 @@ size_t q2_original_entity_size(qa_q2_product product)
 
 size_t q2_original_level_size(qa_q2_product product)
 {
-    return product == QA_Q2_ROGUE ? 312 : product <= QA_Q2_XATRIX ? 304 : 0;
+    return product == QA_Q2_ROGUE ? 312 : (unsigned)product <= QA_Q2_XATRIX ? 304 : 0;
 }

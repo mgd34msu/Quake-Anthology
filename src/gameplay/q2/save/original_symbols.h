@@ -9,7 +9,7 @@ typedef enum q2_original_symbol_kind {
 
 typedef struct q2_original_library {
     char date[16];
-    uint32_t init_game, mmove;
+    uint32_t init_game, mmove, item_list;
 } q2_original_library;
 
 /* The original compiler can fold identical callbacks to one address.
