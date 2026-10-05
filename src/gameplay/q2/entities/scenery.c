@@ -378,9 +378,14 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             s->visual.visible = false;
             s->usable = true;
             s->stage = 1;
-        } else
+        } else {
             s->usable = s->targetname != 0;
-        if ((s->spawnflags & 1) || !s->targetname) {
+            if (s->usable && (s->spawnflags & 8) &&
+                (g->options.edition == QA_Q2_RERELEASE || g->options.product == QA_Q2_ROGUE))
+                s->stage = 2;
+        }
+        if ((s->spawnflags & 1) || !s->targetname ||
+            (g->options.edition == QA_Q2_RERELEASE && (s->spawnflags & 16))) {
             if (s->health == 0)
                 s->health = 100;
             float mass = q2_field_float(g, s, "mass", 75);
@@ -612,6 +617,28 @@ bool q2_scenery_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id a
     switch (s->scenery) {
     case Q2S_WALL:
     case Q2S_EXPLOSIVE: {
+        if (s->scenery == Q2S_EXPLOSIVE && s->stage == 2) {
+            /* Rogue and the rerelease arm an inactive brush only through its
+             * named target; this use does not detonate it. */
+            if (!s->targetname ||
+                (q2_actor_field(g, other, "target") != s->targetname &&
+                 q2_actor_field(g, activator, "target") != s->targetname))
+                return true;
+            qa_combat_state combat;
+            bool present = qa_combat_read(g->services.combat, a->id, &combat, NULL);
+            if (!present)
+                combat = (qa_combat_state){.health = s->health, .mass = 75};
+            if (combat.health == 0)
+                combat.health = 100;
+            combat.can_take_damage = true;
+            if (!(present ? (qa_combat_set_health(g->services.combat, a->id, combat.health, e) &&
+                             qa_combat_set_traits(g->services.combat, a->id, &combat, e)) :
+                            qa_combat_create_actor(g->services.combat, a->id, &combat, e)))
+                return false;
+            s->health = combat.health;
+            s->stage = 0;
+            return true;
+        }
         if (s->scenery == Q2S_EXPLOSIVE && s->stage != 1)
             return break_apart(g, a, a->id, other, e);
         s->visual.visible = a->physics.solid == QA_PHYSICS_NOT_SOLID;
