@@ -313,9 +313,13 @@ static void test_campaign_unit(void)
 
 void test_q1_gameplay(void);
 void test_guest(void);
+bool test_recovery_child(int, char **, int *);
+void test_recovery(const char *);
 
-int main(void)
+int main(int argc, char **argv)
 {
+    int recovery_status;
+    if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
     test_binary();
     test_spans();
@@ -324,6 +328,7 @@ int main(void)
     test_campaign_unit();
     test_q1_gameplay();
     test_guest();
+    test_recovery(argv[0]);
     puts("core tests passed");
     return EXIT_SUCCESS;
 }

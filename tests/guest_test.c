@@ -489,6 +489,7 @@ static void live_guest_tests(void)
     if (!gate || strcmp(gate, "1")) return;
     const char *root = getenv("QA_LIVE_CONTENT_ROOT"), *binary = getenv("QA_LIVE_BINARY");
     const char *selected = getenv("QA_LIVE_CASE");
+    if (selected && !strcmp(selected, "recovery")) return;
     struct stat root_info;
     if (!root || !*root || stat(root, &root_info) != 0 || !S_ISDIR(root_info.st_mode) ||
         !binary || binary[0] != '/' || access(binary, X_OK) != 0) {
