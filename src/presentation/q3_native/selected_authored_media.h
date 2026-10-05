@@ -37,11 +37,5 @@ bool q3n_selected_authored_read(const q3n_selected_authored_media *, bool view,
 size_t q3n_selected_authored_attachment_count(const q3n_selected_authored_media *);
 bool q3n_selected_authored_attachment_read(const q3n_selected_authored_media *, size_t,
     q3n_selected_authored_attachment_view *, qa_error *);
-/* The actual imported registry capture and content dictionary precede these
- * pure codecs. Restore registers/acquires/parses nothing. */
-bool q3n_selected_authored_checkpoint(const q3n_selected_authored_media *,
-    const q3n_selected_media_refs *, qa_buffer *, qa_error *);
-bool q3n_selected_authored_restore(q3n_selected_authored_media *,
-    const q3n_selected_media_refs *, qa_bytes, qa_error *);
 
 #endif

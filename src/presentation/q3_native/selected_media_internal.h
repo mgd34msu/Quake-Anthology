@@ -20,5 +20,5 @@ struct q3n_selected_media {
 };
 const qa_q3_item *q3n_selected_media_item(qa_q3_product, int32_t);
 bool q3n_selected_media_path(const char *, const char *, char [128], qa_error *);
-bool q3n_selected_media_valid(const q3n_selected_media *, bool capture, qa_error *);
+bool q3n_selected_media_valid(const q3n_selected_media *, qa_error *);
 #endif

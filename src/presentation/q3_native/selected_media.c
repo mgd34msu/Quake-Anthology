@@ -269,7 +269,7 @@ bool q3n_selected_media_read(const q3n_selected_media *o, int32_t weapon,
     const q3n_selected_media_row *row = &o->rows[weapon];
     if (!row->world_ready || !o->shaders_ready || (view_required && (!row->view_ready || !o->animation_resource)))
         return q3p_fail(e, QA_ERROR_ARGUMENT, "Selected Q3 weapon media has not completed actual admission");
-    if (!q3n_selected_media_valid(o, false, e)) return false;
+    if (!q3n_selected_media_valid(o, e)) return false;
     *out = tuple(o, row); return true;
 }
 bool q3n_selected_media_animation(const q3n_selected_media *o, q3n_selected_animation *out,
@@ -282,4 +282,83 @@ bool q3n_selected_media_animation(const q3n_selected_media *o, q3n_selected_anim
     if (!qa_vfs_acquisition_retained(o->animation_content, &o->animation_receipt, e)) return false;
     *out = (q3n_selected_animation){o->animation_content, o->animation_resource, &o->animation_receipt, &o->animation_config};
     return true;
+}
+
+static bool model_handle(const q3n_selected_media *o, const char *path, int32_t handle,
+    bool required, qa_error *e)
+{
+    qa_q3_presentation_assets *a = o->options.assets;
+    q3p_name *name = q3p_find_name(a, Q3P_MODEL, path);
+    if (!name || name->handle != handle || handle < 0 || (size_t)handle > a->model_count || (required && !handle))
+        return q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 model handle has no exact retained registration");
+    if (!handle) return true;
+    const q3p_model *model = a->models[handle - 1];
+    return model && !model->world && model->resource && model->provider.mounts == o->options.content &&
+        model->provider.images == a->options.provider.images && model->provider.materials == a->options.provider.materials ? true :
+        q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 model holder leaves its actual content namespace");
+}
+static bool shader_handle(const q3n_selected_media *o, const char *path, int32_t handle, qa_error *e)
+{
+    qa_q3_presentation_assets *a = o->options.assets;
+    if (handle < 0 || (size_t)handle > a->shader_count || (handle && !a->shaders[handle - 1]))
+        return q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 shader holder is absent");
+    q3p_name *name = q3p_find_name(a, Q3P_SHADER, path);
+    if (!handle) return !name || !name->handle ? true :
+        q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 powerup shader lost its exact authored registration");
+    return name && name->handle == handle ? true :
+        q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 powerup shader lost its exact authored registration");
+}
+static bool animation_valid(const q3n_selected_media *o, qa_error *e)
+{
+    if (!o->animation_resource) return !o->animation_content && !o->character ? true :
+        q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 animation has no retained resource");
+    if (!o->animation_content || o->animation_receipt.resource_id != qa_resource_id(o->animation_resource) ||
+        qa_resource_pool_find(qa_vfs_resources(o->animation_content), o->animation_receipt.resource_id) != o->animation_resource ||
+        (!o->character && (o->animation_content != o->options.content || !o->animation_receipt.path ||
+            strcmp(o->animation_receipt.path, "models/players/sarge/animation.cfg"))))
+        return q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 animation holder lost its true acquisition provenance");
+    const qa_player_animation_config *config = &o->animation_config;
+    if (config->footsteps < QA_FOOTSTEP_NORMAL || config->footsteps > QA_FOOTSTEP_ENERGY ||
+        config->gender < QA_MODEL_MALE || config->gender > QA_MODEL_NEUTER)
+        return q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 animation header is outside its source enums");
+    for (unsigned i = 0; i < QA_PLAYER_ANIMATION_COUNT; ++i)
+        if (i != 31 && !config->animations[i].present)
+            return q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 animation has an absent required source cell");
+    return qa_vfs_acquisition_retained(o->animation_content, &o->animation_receipt, e);
+}
+bool q3n_selected_media_valid(const q3n_selected_media *o, qa_error *e)
+{
+    const qa_q3_presentation_assets *a = o ? o->options.assets : NULL;
+    if (!a || a->options.provider.mounts != o->options.content || a->options.provider.family != QA_SCENE_Q3 ||
+        a->options.select || a->codec_busy ||
+        (a->capturing || a->busy != 0))
+        return q3p_fail(e, QA_ERROR_ARGUMENT, "Selected Q3 media qualification requires its actual registry lease");
+    if (o->shaders_ready) {
+        if (!shader_handle(o, "powerups/invisibility", o->invisibility, e) ||
+            !shader_handle(o, "powerups/battleWeapon", o->battle_weapon, e) ||
+            !shader_handle(o, "powerups/quadWeapon", o->quad_weapon, e)) return false;
+    } else if (o->invisibility || o->battle_weapon || o->quad_weapon)
+        return q3p_fail(e, QA_ERROR_FORMAT, "Unadmitted selected Q3 shaders contain live handles");
+    for (unsigned i = 0; i < 14; ++i) {
+        const q3n_selected_media_row *row = &o->rows[i];
+        if (!row->world_ready) {
+            if (row->view_ready || row->hands_fallback || row->gun || row->hands || row->barrel || row->flash)
+                return q3p_fail(e, QA_ERROR_FORMAT, "Unadmitted selected Q3 row contains live media");
+            continue;
+        }
+        const qa_q3_item *item = q3n_selected_media_item(o->options.product, (int32_t)i); char path[128];
+        if (!item || !item->model || !o->shaders_ready ||
+            !model_handle(o, item->model, row->gun, true, e) ||
+            !q3n_selected_media_path(item->model, "_barrel.md3", path, e) || !model_handle(o, path, row->barrel, false, e) ||
+            !q3n_selected_media_path(item->model, "_flash.md3", path, e) || !model_handle(o, path, row->flash, false, e)) return false;
+        if (row->view_ready) {
+            if (!o->animation_resource || !q3n_selected_media_path(item->model, "_hand.md3", path, e)) return false;
+            if (row->hands_fallback) {
+                if (!model_handle(o, path, 0, false, e)) return false;
+                if (!model_handle(o, "models/weapons2/shotgun/shotgun_hand.md3", row->hands, true, e)) return false;
+            } else if (!model_handle(o, path, row->hands, true, e)) return false;
+        } else if (row->hands || row->hands_fallback)
+            return q3p_fail(e, QA_ERROR_FORMAT, "World-only selected Q3 row contains unadmitted hands");
+    }
+    return animation_valid(o, e);
 }

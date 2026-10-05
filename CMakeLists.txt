@@ -1501,9 +1501,7 @@ add_library(qa_q3_native_presentation STATIC
     src/presentation/q3_native/loading.c
     src/presentation/q3_native/loading_save.c
     src/presentation/q3_native/selected_media.c
-    src/presentation/q3_native/selected_media_save.c
     src/presentation/q3_native/selected_authored_media.c
-    src/presentation/q3_native/selected_authored_media_save.c
     src/presentation/q3_native/remote_frame.c
     src/presentation/q3_native/weapon.c
     src/presentation/q3_native/client_info.c

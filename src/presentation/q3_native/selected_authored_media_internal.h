@@ -13,6 +13,6 @@ struct q3n_selected_authored_media {
     int32_t invisibility, battle_weapon, quad_weapon;
     bool gun_ready, view_ready, world_ready, hands_fallback, busy;
 };
-bool q3n_selected_authored_valid(const q3n_selected_authored_media *, bool capture, qa_error *);
+bool q3n_selected_authored_valid(const q3n_selected_authored_media *, qa_error *);
 
 #endif

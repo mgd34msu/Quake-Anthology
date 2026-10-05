@@ -43,17 +43,4 @@ bool q3n_selected_media_read(const q3n_selected_media *, int32_t weapon,
 bool q3n_selected_media_animation(const q3n_selected_media *, q3n_selected_animation *,
     bool *character, qa_error *);
 
-typedef struct q3n_selected_media_refs {
-    void *context;
-    bool (*view_encode)(void *, const qa_vfs *, uint64_t *, qa_error *);
-    bool (*view_decode)(void *, uint64_t, qa_vfs **, qa_error *);
-    bool (*resource_encode)(void *, const qa_resource *, uint64_t *pool, uint64_t *resource, qa_error *);
-    bool (*resource_decode)(void *, uint64_t pool, uint64_t resource, const qa_resource **, qa_error *);
-} q3n_selected_media_refs;
-/* The genuine selected assets capture lease and imported content/resource
- * dictionary precede these codecs. Restore attaches exact existing handles
- * and animation bytes/config; it never registers, acquires or parses. */
-bool q3n_selected_media_checkpoint(const q3n_selected_media *, const q3n_selected_media_refs *, qa_buffer *, qa_error *);
-bool q3n_selected_media_restore(q3n_selected_media *, const q3n_selected_media_refs *, qa_bytes, qa_error *);
-
 #endif

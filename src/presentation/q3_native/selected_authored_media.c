@@ -143,7 +143,7 @@ bool q3n_selected_authored_read(const q3n_selected_authored_media *owner, bool v
     q3n_selected_weapon_media *out, qa_error *error)
 {
     if (!q3n_selected_authored_idle(owner) || !out || !owner->gun_ready ||
-        (view ? !owner->view_ready : !owner->world_ready) || !q3n_selected_authored_valid(owner, false, error))
+        (view ? !owner->view_ready : !owner->world_ready) || !q3n_selected_authored_valid(owner, error))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Authored Q3 media has no completed admitted route");
     *out = tuple(owner, view); return true;
 }
@@ -155,4 +155,68 @@ bool q3n_selected_authored_attachment_read(const q3n_selected_authored_media *ow
     if (!q3n_selected_authored_idle(owner) || !owner->view_ready || !out || index >= owner->options.attachment_count)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Authored Q3 attachment requires its completed view admission");
     *out = (q3n_selected_authored_attachment_view){owner->attachments[index].tag, owner->attachment_models[index]}; return true;
+}
+
+static bool model_handle(const q3n_selected_authored_media *owner, const char *path,
+    int32_t handle, bool required, qa_error *error)
+{
+    qa_q3_presentation_assets *assets = owner->options.assets;
+    q3p_name *name = q3p_find_name(assets, Q3P_MODEL, path);
+    if (!name || name->handle != handle || handle < 0 ||
+        (size_t)handle > assets->model_count || (required && !handle))
+        return q3p_fail(error, QA_ERROR_FORMAT, "Authored Q3 model lost its exact retained registration");
+    if (!handle) return true;
+    const q3p_model *model = assets->models[handle - 1];
+    return model && !model->world && model->resource && model->provider.mounts == owner->options.content &&
+        model->provider.images == assets->options.provider.images &&
+        model->provider.materials == assets->options.provider.materials ? true :
+        q3p_fail(error, QA_ERROR_FORMAT, "Authored Q3 model leaves its actual selected content namespace");
+}
+static bool shader_handle(const q3n_selected_authored_media *owner, const char *path,
+    int32_t handle, qa_error *error)
+{
+    qa_q3_presentation_assets *assets = owner->options.assets;
+    if (handle < 0 || (size_t)handle > assets->shader_count || (handle && !assets->shaders[handle - 1]))
+        return q3p_fail(error, QA_ERROR_FORMAT, "Authored Q3 shader holder is absent");
+    q3p_name *name = q3p_find_name(assets, Q3P_SHADER, path);
+    if (!handle) return !name || !name->handle ? true :
+        q3p_fail(error, QA_ERROR_FORMAT, "Absent authored Q3 shader conflicts with its retained registration");
+    return name && name->handle == handle ? true :
+        q3p_fail(error, QA_ERROR_FORMAT, "Authored Q3 shader lost its source registration");
+}
+bool q3n_selected_authored_valid(const q3n_selected_authored_media *owner,
+    qa_error *error)
+{
+    const qa_q3_presentation_assets *assets = owner ? owner->options.assets : NULL;
+    if (!assets || assets->options.provider.mounts != owner->options.content ||
+        assets->options.provider.family != QA_SCENE_Q3 || assets->options.select || assets->codec_busy ||
+        (assets->capturing || assets->busy != 0))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Authored Q3 qualification requires its real registry lease");
+    if (owner->gun_ready) {
+        if (!model_handle(owner, owner->gun, owner->gun_model, true, error)) return false;
+    } else if (owner->gun_model || owner->view_ready || owner->world_ready)
+        return q3p_fail(error, QA_ERROR_FORMAT, "Unadmitted authored Q3 gun has live media");
+    if (owner->view_ready) {
+        if (owner->hands_fallback) {
+            if (!model_handle(owner, owner->anchor, 0, false, error) ||
+                !model_handle(owner, "models/weapons2/shotgun/shotgun_hand.md3", owner->hands, true, error)) return false;
+        } else if (!model_handle(owner, owner->anchor, owner->hands, true, error)) return false;
+        for (size_t i = 0; i < owner->options.attachment_count; ++i)
+            if (!model_handle(owner, owner->attachments[i].path, owner->attachment_models[i], true, error)) return false;
+    } else {
+        if (owner->hands || owner->hands_fallback)
+            return q3p_fail(error, QA_ERROR_FORMAT, "Unadmitted authored Q3 view has live hands");
+        for (size_t i = 0; i < owner->options.attachment_count; ++i)
+            if (owner->attachment_models[i])
+                return q3p_fail(error, QA_ERROR_FORMAT, "Unadmitted authored Q3 view has live attachments");
+    }
+    if (owner->world_ready) {
+        if (!model_handle(owner, owner->barrel, owner->barrel_model, false, error) ||
+            !model_handle(owner, owner->flash, owner->flash_model, false, error) ||
+            !shader_handle(owner, "powerups/invisibility", owner->invisibility, error) ||
+            !shader_handle(owner, "powerups/battleWeapon", owner->battle_weapon, error) ||
+            !shader_handle(owner, "powerups/quadWeapon", owner->quad_weapon, error)) return false;
+    } else if (owner->barrel_model || owner->flash_model || owner->invisibility || owner->battle_weapon || owner->quad_weapon)
+        return q3p_fail(error, QA_ERROR_FORMAT, "Unadmitted authored Q3 held route has live media");
+    return true;
 }
