@@ -35,6 +35,7 @@
 #include "qa/source_frame_time.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/application_network.h"
+#include "qa/text.h"
 #include <stdio.h>
 
 static qa_console_dialect dialect(qa_movement_kind kind)
@@ -171,7 +172,8 @@ static bool control_binding(qa_frontend *frontend,frontend_seat *seat,qa_actor_i
         if (!qa_ui_rankings_reset_binding(seat->rankings, error)) return false;
         if (!qa_input_seat_release(seat->input, now, error) || !qa_input_seat_profile(seat->input, profile, error)) return false;
         qa_input_command_clear(&seat->builder); seat->builder.kind = kind; seat->actor = actor;
-        if (remote && !qa_input_command_angles(&seat->builder,state->view_angles,error)) return false;
+        if (!qa_input_command_angles(&seat->builder,
+            remote?state->view_angles:state->command_angles,error)) return false;
     }
     return true;
 }
@@ -313,9 +315,8 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             return frontend_fail(error, QA_ERROR_ARGUMENT, "local player lacks its application control continuation");
         qa_movement_kind kind = state.profile.kind;
         if (!control_binding(frontend,seat,actor,&state,remote,error)) return false;
-        /* Local forced angles come from the current player. Remote selected
-         * angles continue independently of the raw Q3 transport builder. */
-        if (!remote &&
+        /* Q3 client angles survive commands that do not advance server movement. */
+        if (!remote && (kind!=QA_MOVEMENT_Q3 || state.cutscene) &&
             !qa_input_command_angles(&seat->builder, state.command_angles, error)) return false;
         qa_seat_input_sample sample;
         qa_input_command_tuning tuning;
@@ -336,8 +337,19 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             !qa_input_settings_read_routed(input_settings, view_settings, kind, &tuning, error)) return false;
         if (!remote && qa_application_q1_paused(frontend->application)) continue;
         if (!wheel_sample(seat,frontend->time_ns,&sample,error)) return false;
+        uint64_t command_time=frontend->time_ns;
+        if (!remote && kind==QA_MOVEMENT_Q3) {
+            qa_application_startup_source source; bool present=false; qa_clock_state clock;
+            if (!frontend_config_store_primary_server_read(frontend->config_store,&source,&present,error)) return false;
+            if (!present || !qa_session_clock(qa_application_session(frontend->application),source.scope.provider,&clock))
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Local Q3 input has no actual GAME clock");
+            command_time=clock.frame.time_ns;
+            if (clock.debt_ns>UINT64_MAX-command_time || elapsed_ns>UINT64_MAX-command_time-clock.debt_ns)
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Local Q3 command clock exhausted");
+            command_time+=clock.debt_ns+elapsed_ns;
+        }
         qa_input_command_frame frame = {.kind = kind, .sequence = ++seat->sequence,
-            .server_time_ms = (int32_t)((frontend->time_ns / 1000000) & INT32_MAX),
+            .server_time_ms = qa_number_to_i32((double)(command_time / UINT64_C(1000000))),
             .sensitivity = 1, .attack_allowed = true, .grounded = state.ground.hit != QA_TRACE_HIT_NONE};
         qa_movement_command command;
         if (!qa_input_command_build(&seat->builder, &tuning, &sample, &frame, duration, &command, error)) return false;
