@@ -23,9 +23,9 @@ static const char *reason(const qa_ui_saves *o, bool saving) {
 }
 static qa_scene_rect_f row(unsigned index) { return (qa_scene_rect_f){64, 92 + (float)index * 28, 512, 28}; }
 static qa_scene_rect_f startup_row(unsigned index) { return (qa_scene_rect_f){64, 118 + (float)index * 34, 512, 30}; }
-static bool list(qa_ui_saves *o, const qa_ui_save_entry **entries, size_t *count, const char **message, qa_error *e) {
+static bool list(qa_ui_saves *o, bool saving, const qa_ui_save_entry **entries, size_t *count, const char **message, qa_error *e) {
     *entries = NULL; *count = 0; *message = NULL;
-    return o->service.list(o->service.context, entries, count, message, e) && (!*count || *entries);
+    return o->service.list(o->service.context, saving, entries, count, message, e) && (!*count || *entries);
 }
 static bool run(qa_ui_saves *o, bool refresh, bool saving, const char *id, qa_error *e) {
     if (busy(o)) return true;
@@ -52,7 +52,7 @@ static bool action(void *context, uint32_t seat, qa_ui_id control, const qa_ui_a
     if (control == REFRESH) return run(o, true, false, NULL, e);
     if (control == WRITE || control == OVERWRITE || control == NAME) return run(o, false, true, NULL, e);
     const qa_ui_save_entry *entries; size_t count; const char *status;
-    if (!list(o, &entries, &count, &status, e)) return false;
+    if (!list(o, p->id != o->menus.load, &entries, &count, &status, e)) return false;
     size_t pages = count / 5 + (count % 5 != 0); if (!pages) pages = 1;
     if (control == PREVIOUS) { o->page = (o->page + pages - 1) % pages; return true; }
     if (control == NEXT) { o->page = (o->page + 1) % pages; return true; }
@@ -115,7 +115,7 @@ static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *e) 
     } else {
         title = saving ? "Save game" : "Load Game";
         const qa_ui_save_entry *entries; size_t count; const char *status;
-        if (!list(o,&entries,&count,&status,e)) return false;
+        if (!list(o,saving,&entries,&count,&status,e)) return false;
         size_t pages = count/5+(count%5!=0); if (!pages) pages=1; if(o->page>=pages)o->page=pages-1;
         if (saving) o->controls[n++] = button(p,NEW,"New saved game",row(0),reason(o,true)==NULL);
         for(size_t i=0;i<5 && o->page*5+i<count;++i) {

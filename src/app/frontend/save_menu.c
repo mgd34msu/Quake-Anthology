@@ -201,12 +201,10 @@ static int newest_first(const void *left,const void *right)
     if(a->saved_at_ms!=b->saved_at_ms)return a->saved_at_ms>b->saved_at_ms?-1:1;
     return strcmp(a->id,b->id);
 }
-static bool read_entries(void *context,const qa_ui_save_entry **entries,size_t *count,const char **message,qa_error *error)
+static bool read_entries(void *context,bool saving,const qa_ui_save_entry **entries,size_t *count,const char **message,qa_error *error)
 {
-    frontend_save_menu *owner=context;qa_ui_state state;bool available=false;
-    if (!qa_ui_state_read(owner->seat->ui,&state,error) ||
-        !frontend_save_commands_recovery_available(owner->seat->frontend,&available,error)) return false;
-    size_t first=state.menu==FRONTEND_LOAD && available?0:owner->recovery_rows;
+    frontend_save_menu *owner=context;(void)error;
+    size_t first=saving?owner->recovery_rows:0;
     *entries=owner->entries?owner->entries+first:NULL;
     *count=owner->count-first;*message=owner->listing_error;return true;
 }

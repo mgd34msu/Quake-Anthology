@@ -9,7 +9,7 @@ typedef struct qa_ui_save_entry {
 } qa_ui_save_entry;
 typedef struct qa_ui_saves_service {
     void *context;
-    bool (*list)(void *, const qa_ui_save_entry **, size_t *, const char **, qa_error *);
+    bool (*list)(void *, bool saving, const qa_ui_save_entry **, size_t *, const char **, qa_error *);
     bool (*refresh)(void *, qa_error *);
     const char *(*unavailable)(void *, bool saving);
     bool (*busy)(void *);
