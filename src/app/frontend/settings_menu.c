@@ -165,7 +165,7 @@ static bool action(void *context,uint32_t id,qa_ui_id control,const qa_ui_action
         return event->kind!=QA_UI_SELECT || (qa_ui_preference_set(binding->cvars,seat->id,QA_UI_PREF_LANGUAGE,choice,error) &&
             frontend_settings_devices_save(seat->frontend,error));
     case SET_DOPPLER: case SET_ENVIRONMENT:
-        return event->kind!=QA_UI_SELECT || qa_ui_library_select(seat->library,binding->library_field,choice,error);
+        return event->kind!=QA_UI_ACTIVATE || qa_ui_library_open_selection(seat->library,binding->library_field,error);
     case SET_RUMBLE: case SET_RUMBLE_STRENGTH: {
         if (event->kind!=QA_UI_CHANGE_NUMBER) return true;
         qa_haptic_player *haptics=qa_input_platform_haptics(seat->frontend->input,seat->id);
@@ -477,17 +477,18 @@ static bool sound(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
         for(size_t field=0;field<2;++field) {
             const qa_ui_library_choice *rows=NULL; size_t count=0; const char *current=NULL;
             if(!qa_ui_library_selection_choices(seat->library,fields[field],&rows,&count,&current,error)) return false;
-            const char **labels=cache(seat->settings_menu,count,sizeof(*labels),_Alignof(const char *));
-            const char **values=cache(seat->settings_menu,count,sizeof(*values),_Alignof(const char *));
-            if(!labels || !values) return false;
-            size_t used=0,index=0;
+            const char *selected_label="Game default";
+            size_t used=0;
             for(size_t i=0;i<count;++i) {
                 if(rows[i].unavailable) continue;
-                labels[used]=copy_text(seat->settings_menu,rows[i].label); values[used]=copy_text(seat->settings_menu,rows[i].id);
-                if(current && !strcmp(current,rows[i].id)) index=used;
+                if(current && !strcmp(current,rows[i].id)) selected_label=rows[i].label;
                 ++used;
             }
-            qa_ui_control *item=choice(seat,names[field],labels,values,used,index,field?SET_DOPPLER:SET_ENVIRONMENT);
+            size_t size=strlen(names[field])+strlen(selected_label)+3;
+            char *label=cache(seat->settings_menu,size,1,1);
+            if(!label) return false;
+            snprintf(label,size,"%s: %s",names[field],selected_label);
+            qa_ui_control *item=control(seat,label,QA_UI_BUTTON,field?SET_DOPPLER:SET_ENVIRONMENT);
             binding_of(item)->library_field=fields[field]; item->enabled=used!=0;
         }
     }
@@ -520,7 +521,11 @@ static bool primary_input_controls(frontend_seat *seat)
             const qa_cvar_view *row=qa_cvars_find(mouse,axes[i]); if(!row) continue;
             item=slider(seat,axis_labels[i],fabs(row->number)/.022*100,0,200,1,SET_MOUSE_AXIS);
             setting_binding *binding=binding_of(item); binding->cvars=mouse; binding->name=axes[i];
-            char text[48]; snprintf(text,sizeof(text),"%.2f%%",item->value.slider.value); item->value.slider.label=copy_text(owner,text);
+            char text[48]; snprintf(text,sizeof(text),"%.2f",item->value.slider.value);
+            size_t length=strlen(text);
+            while(length && text[length-1]=='0') text[--length]='\0';
+            if(length && text[length-1]=='.') text[--length]='\0';
+            text[length++]='%'; text[length]='\0'; item->value.slider.label=copy_text(owner,text);
         }
         const qa_cvar_view *pitch=qa_cvars_find(mouse,"m_pitch");
         if(pitch) { item=toggle(seat,"Invert mouse",signbit(pitch->number)!=0,SET_MOUSE_INVERT); binding_of(item)->cvars=mouse; binding_of(item)->name="m_pitch"; }

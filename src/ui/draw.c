@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <stdio.h>
 
 static qa_scene_rect clip_rect(qa_ui *ui, qa_scene_rect target, qa_scene_rect_f logical) {
     double x = floor(ui->bias_x + logical.x * ui->scale);
@@ -376,7 +377,7 @@ static bool slider_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
                         const qa_ui_control *control, qa_scene_vec4 color,
                         qa_scene_vec4 disabled, qa_error *error) {
     char numeric[32];
-    if (!qa_format_number(control->value.slider.value, numeric, error)) return false;
+    snprintf(numeric, sizeof(numeric), "%g", control->value.slider.value);
     const char *value = control->value.slider.label ? control->value.slider.label : numeric;
     float x = control->rect.x + control->rect.width * .6f;
     float width = control->rect.width * .32f, value_right = x - 12;

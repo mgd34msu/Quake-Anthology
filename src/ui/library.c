@@ -312,7 +312,7 @@ static bool action_impl(void *context,uint32_t seat,qa_ui_id control,const qa_ui
         const qa_product *p=qa_catalog_product(m->catalog,m->native_product);
         if (control>=1 && control<=(p->family==QA_GAME_Q3?5u:4u)) { m->native_skill=(int32_t)control-(p->family==QA_GAME_Q3?0:1); return true; }
         if (control==8) return launch(m,true,error);
-        if (control==20 || control==21) { m->field=control==20?QA_UI_LIBRARY_TEAM_PLAYER:QA_UI_LIBRARY_TEAM_OPPONENT; m->page=0; return open(m,QA_UI_LIBRARY_CHOICES,error); }
+        if (control==20 || control==21) return qa_ui_library_open_selection(m,control==20?QA_UI_LIBRARY_TEAM_PLAYER:QA_UI_LIBRARY_TEAM_OPPONENT,error);
     }
     if (page==QA_UI_LIBRARY_CUSTOM && event->kind==QA_UI_ACTIVATE) {
         if (control>=1 && control<=4) { m->group=(unsigned)control-1; return open(m,QA_UI_LIBRARY_CATEGORY,error); }
@@ -334,7 +334,7 @@ static bool action_impl(void *context,uint32_t seat,qa_ui_id control,const qa_ui
                 return true;
             }
             if (m->field==QA_UI_LIBRARY_GRENADES && event->kind==QA_UI_CHANGE_NUMBER) return select_choice(m,event->value.number!=0?"enabled":"disabled",error);
-            return open(m,QA_UI_LIBRARY_CHOICES,error);
+            return qa_ui_library_open_selection(m,m->field,error);
         }
     }
     if (page==QA_UI_LIBRARY_CHOICES && event->kind==QA_UI_ACTIVATE) {
@@ -780,6 +780,12 @@ bool qa_ui_library_selection_choices(qa_ui_library *m,qa_ui_library_field field,
     if (!m || !choices || !count || !selected || (unsigned)field>QA_UI_LIBRARY_DOPPLER) return ui_fail(error,"selection rows require their actual field and outputs");
     if (!selection_choices(m,field,error)) return false;
     *choices=m->choices; *count=m->choice_count; *selected=m->selected; return true;
+}
+bool qa_ui_library_open_selection(qa_ui_library *m,qa_ui_library_field field,qa_error *error) {
+    if (!m || (unsigned)field>QA_UI_LIBRARY_DOPPLER) return ui_fail(error,"selection menu requires its actual owner and field");
+    m->field=field; m->page=0;
+    if (field!=QA_UI_LIBRARY_MONSTER_CLASS) { free(m->monster_classname); m->monster_classname=NULL; }
+    return open(m,QA_UI_LIBRARY_CHOICES,error);
 }
 bool qa_ui_library_select(qa_ui_library *m,qa_ui_library_field field,const char *choice,qa_error *error) {
     if (!m || !choice || (unsigned)field>QA_UI_LIBRARY_DOPPLER) return ui_fail(error,"selection requires its authored field");

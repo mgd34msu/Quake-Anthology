@@ -53,6 +53,7 @@ bool qa_ui_library_select_preset(qa_ui_library *, const char *product_key, const
 bool qa_ui_library_apply(qa_ui_library *, qa_error *);
 bool qa_ui_library_input(qa_ui_library *, const qa_input_event *, bool *handled, qa_error *);
 bool qa_ui_library_open_arenas(qa_ui_library *, qa_error *);
+bool qa_ui_library_open_selection(qa_ui_library *, qa_ui_library_field, qa_error *);
 bool qa_ui_library_launch_failed(qa_ui_library *, const char *message, qa_error *);
 bool qa_ui_library_selection_choices(qa_ui_library *, qa_ui_library_field,
     const qa_ui_library_choice **, size_t *, const char **selected, qa_error *);
