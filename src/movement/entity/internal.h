@@ -19,7 +19,7 @@ bool ph_trace(qa_physics *, qa_actor_id, const qa_physics_properties *,
 bool ph_body_trace(qa_physics *, qa_actor_id, const qa_body_state *,
                     const qa_physics_properties *, qa_vec3, qa_vec3, bool exact,
                     const qa_actor_id *, size_t, qa_trace_result *, qa_error *);
-bool ph_contents(qa_physics *, qa_actor_id, qa_collision_family,
+bool ph_contents(qa_physics *, qa_actor_id, const qa_physics_properties *,
                   qa_vec3, qa_point_contents *, qa_error *);
 bool ph_event(qa_physics *, qa_actor_id, qa_physics_event_kind, qa_vec3, qa_error *);
 qa_actor_id ph_hit(const qa_physics *, const qa_trace_result *);

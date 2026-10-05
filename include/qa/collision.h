@@ -13,8 +13,8 @@ typedef struct qa_trace_policy {
     qa_collision_family family;
     uint32_t contents_mask;
     qa_q1_move_kind q1_move;
-    int32_t q1_hull; /* -1 selects the hull from the moving dimensions. */
-    bool q2_merged_contents;
+    int32_t q1_hull; /* -1 selects the Q1 box hull from its X width. */
+    bool q2_merged_contents; /* Q2 rerelease leaf and brush-clip rules. */
     bool curves, player_curve_clip;
 } qa_trace_policy;
 typedef struct qa_collision_target {

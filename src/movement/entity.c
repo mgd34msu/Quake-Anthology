@@ -56,13 +56,13 @@ bool ph_link(qa_physics *p, qa_actor_id actor, bool triggers, qa_error *error) {
     return !triggers || qa_physics_touch_triggers(p, actor, error);
 }
 
-static qa_trace_policy ph_policy(qa_collision_family family, uint32_t mask,
+static qa_trace_policy ph_policy(const qa_physics_properties *props, uint32_t mask,
                                  qa_q1_move_kind move) {
-    qa_trace_policy policy = qa_collision_default_policy(family);
+    qa_trace_policy policy = qa_collision_default_policy(props->family);
     policy.contents_mask = mask;
     policy.q1_move = move;
     policy.q1_hull = -1;
-    policy.q2_merged_contents = true;
+    policy.q2_merged_contents = props->q2_rerelease;
     policy.curves = policy.player_curve_clip = true;
     return policy;
 }
@@ -73,7 +73,7 @@ bool ph_trace(qa_physics *p, qa_actor_id actor, const qa_physics_properties *pro
                qa_trace_result *trace, qa_error *error) {
     qa_trace_query query = {.start = start, .end = end,
         .shape = {.kind = bounds ? QA_SHAPE_BOX : QA_SHAPE_POINT},
-        .policy = ph_policy(props->family, mask, move), .pass_actor = actor};
+        .policy = ph_policy(props, mask, move), .pass_actor = actor};
     if (bounds) query.shape.bounds = *bounds;
     return count ? qa_world_trace_excluding(p->world, &query, exclude, count, trace, error) :
                    qa_world_trace(p->world, &query, trace, error);
@@ -92,10 +92,10 @@ bool ph_body_trace(qa_physics *p, qa_actor_id actor, const qa_body_state *body,
                     exclude, count, trace, error);
 }
 
-bool ph_contents(qa_physics *p, qa_actor_id actor, qa_collision_family family,
+bool ph_contents(qa_physics *p, qa_actor_id actor, const qa_physics_properties *props,
                   qa_vec3 point, qa_point_contents *out, qa_error *error) {
     qa_point_query query = {.point = point, .pass_actor = actor,
-        .policy = ph_policy(family, UINT32_MAX, QA_Q1_MOVE_NORMAL)};
+        .policy = ph_policy(props, UINT32_MAX, QA_Q1_MOVE_NORMAL)};
     return qa_world_point_contents(p->world, &query, out, error);
 }
 
@@ -317,8 +317,8 @@ bool qa_physics_water_transition(qa_physics *p, qa_actor_id actor,
     int read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) return read == 0;
     qa_point_contents contents;
-    if (!ph_contents(p, actor, props.family, body.origin, &contents, error)) return false;
-    int32_t value = props.family == QA_COLLISION_Q2 ? contents.merged : contents.contents;
+    if (!ph_contents(p, actor, &props, body.origin, &contents, error)) return false;
+    int32_t value = contents.contents;
     bool wet = ph_wet(props.family, value), was_wet = props.water_level != 0;
     props.water_level = wet ? 1 : 0;
     props.water_type = value;
@@ -577,10 +577,10 @@ static bool ph_new_toss(qa_physics *p, qa_actor_id actor, float seconds,
     read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) { result->status = QA_PHYSICS_REMOVED; return read == 0; }
     qa_point_contents contents;
-    if (!ph_contents(p, actor, QA_COLLISION_Q2, body.origin, &contents, error)) return false;
-    bool was_wet = (props.water_type & 56) != 0, wet = (contents.stored & 56) != 0;
+    if (!ph_contents(p, actor, &props, body.origin, &contents, error)) return false;
+    bool was_wet = (props.water_type & 56) != 0, wet = (contents.contents & 56) != 0;
     props.water_level = wet ? 1 : 0;
-    props.water_type = contents.stored;
+    props.water_type = contents.contents;
     if (!ph_properties(p, actor, &props, error)) return false;
     if (wet != was_wet && !ph_event(p, p->world_actor.registry ? p->world_actor : actor,
         QA_PHYSICS_WATER_ENTER, wet ? old_origin : body.origin, error)) return false;
@@ -655,7 +655,8 @@ static bool physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame
             if (!read) { result->status = QA_PHYSICS_REMOVED; return true; }
             return !sound || !body.ground.registry || ph_event(p, actor, QA_PHYSICS_LAND, body.origin, error);
         }
-        if (!body.ground.registry && qa_vec_dot(velocity, props.gravity_direction) >= -100) {
+        if (props.family != QA_COLLISION_Q2 && !body.ground.registry &&
+            qa_vec_dot(velocity, props.gravity_direction) >= -100) {
             qa_trace_result floor;
             if (!ph_body_trace(p, actor, &body, &props, body.origin,
                 qa_vec_add(body.origin, qa_vec_scale(props.gravity_direction, 0.25f)), false, NULL, 0, &floor, error)) return false;
@@ -665,7 +666,10 @@ static bool physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame
             }
         }
         bool was_grounded = body.ground.registry != 0;
-        bool falling_fast = qa_vec_dot(body.velocity, props.gravity_direction) > p->gravity*0.1f;
+        bool falling_fast = (props.family != QA_COLLISION_Q2 ||
+            (!was_grounded && !(props.flags & QA_PHYSICS_FLYING) &&
+             !((props.flags & QA_PHYSICS_SWIMMING) && props.water_level > 2))) &&
+            qa_vec_dot(body.velocity, props.gravity_direction) > p->gravity*0.1f;
         if (!ph_angular_step(p, actor, seconds, 600, error)) return false;
         read = ph_read(p, actor, &body, &props, error);
         if (read <= 0) { result->status = QA_PHYSICS_REMOVED; return read == 0; }

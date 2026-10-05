@@ -549,17 +549,12 @@ static bool absolute_body_bounds(void *opaque, qa_actor_id actor,
     bool found = false;
     if (!body_source(application, record, &source, &flags, &found, error)) return false;
     qa_bounds bounds = qa_bounds_translate(state->bounds, state->origin);
-    if (has_collision && collision.inline_model && collision.role != QA_COLLISION_TRIGGER &&
+    if (has_collision && collision.family != QA_COLLISION_Q1 && collision.inline_model && collision.role != QA_COLLISION_TRIGGER &&
         (state->angles.x != 0 || state->angles.y != 0 || state->angles.z != 0)) {
         qa_vec3 extent = {fmaxf(fabsf(state->bounds.mins.x), fabsf(state->bounds.maxs.x)),
             fmaxf(fabsf(state->bounds.mins.y), fabsf(state->bounds.maxs.y)),
             fmaxf(fabsf(state->bounds.mins.z), fabsf(state->bounds.maxs.z))};
-        bool original_q2 = false;
-        if (source && source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.host) {
-            qa_native_profile profile = qa_native_host_profile(source->state.native.host);
-            original_q2 = profile == QA_NATIVE_Q2_GAME_API3 || profile == QA_NATIVE_Q2_GAME_API2023;
-        }
-        float radius = original_q2 ? fmaxf(extent.x, fmaxf(extent.y, extent.z)) : qa_vec_length(extent);
+        float radius = collision.family == QA_COLLISION_Q2 ? fmaxf(extent.x, fmaxf(extent.y, extent.z)) : qa_vec_length(extent);
         qa_vec3 offset = {radius, radius, radius};
         bounds = (qa_bounds){qa_vec_sub(state->origin, offset), qa_vec_add(state->origin, offset)};
     }

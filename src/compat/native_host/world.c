@@ -1080,6 +1080,7 @@ bool native_host_trace(qa_native_host *host, const qa_native_import_call *call,
         .policy = qa_collision_default_policy(QA_COLLISION_Q2),
         .pass_actor = pass};
     query.policy.contents_mask = mask;
+    query.policy.q2_merged_contents = host->profile != QA_NATIVE_Q2_GAME_API3;
     qa_trace_result trace;
     qa_native_address forced_entity = 0;
     if (!clip) {

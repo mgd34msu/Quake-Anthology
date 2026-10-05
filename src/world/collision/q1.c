@@ -478,8 +478,8 @@ static bool q1_trace(void *opaque,const qa_trace_query *query,qa_trace_result *o
     if(query->policy.family==QA_COLLISION_Q1) {
         if(query->policy.q1_hull>=0) hull_index=query->policy.q1_hull;
         else if(query->shape.kind==QA_SHAPE_BOX) {
-            qa_vec3 dimensions=qa_vec_sub(bounds.maxs,bounds.mins);
-            for(unsigned i=0;i<3;i++) if(same_vec(dimensions,qa_vec_sub(hull_bounds[i].maxs,hull_bounds[i].mins))) { hull_index=(int32_t)i; break; }
+            float width=bounds.maxs.x-bounds.mins.x;
+            hull_index=width<3?0:width<=32?1:2;
         }
     }
     if(hull_index>=0) {

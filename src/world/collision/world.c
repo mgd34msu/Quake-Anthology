@@ -110,6 +110,12 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
     qa_error local={0};
     const qa_actor_collision *pass=qa_world_get_collision(world,query->pass_actor,&pass_collision,&local)?&pass_collision:NULL;
     if(local.code!=QA_OK) { if(error!=NULL) *error=local; return false; }
+    bool pass_has_width=false;
+    if(query->policy.family==QA_COLLISION_Q1 && pass!=NULL) {
+        qa_body_state body;
+        if(!qa_world_body_read(world,query->pass_actor,&body,error)) return false;
+        pass_has_width=body.bounds.maxs.x!=body.bounds.mins.x;
+    }
     qa_trace_query broad=*query;
     const qa_trace_shape missile={QA_SHAPE_BOX,{{-15,-15,-15},{15,15,15}}};
     if(query->policy.family==QA_COLLISION_Q1 && query->policy.q1_move==QA_Q1_MOVE_MISSILE) broad.shape=missile;
@@ -135,6 +141,7 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
         if(!qa_world_body_read(world,id,&state,error)) {
             ok=false; break;
         }
+        if(pass_has_width && state.bounds.maxs.x==state.bounds.mins.x) continue;
         qa_trace_query moving=*query;
         if(query->policy.family==QA_COLLISION_Q1 && query->policy.q1_move==QA_Q1_MOVE_MISSILE && collision.monster) moving.shape=missile;
         qa_trace_result hit;

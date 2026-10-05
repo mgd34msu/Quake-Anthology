@@ -304,19 +304,22 @@ static void q2_trace_brush(q2_work *work, uint32_t index)
         float last = distances->last;
         if (first > 0) start_out = true;
         if (last > 0) get_out = true;
-        if (first > 0 && (last >= Q2_DISTANCE_EPSILON || last >= first)) return;
+        if (first > 0 && (last >= first || (work->merged && last >= Q2_DISTANCE_EPSILON))) return;
         if (first <= 0 && last <= 0) continue;
         if (first > last) {
-            float fraction = fmaxf(0, (first - Q2_DISTANCE_EPSILON) / (first - last));
+            float fraction = (first - Q2_DISTANCE_EPSILON) / (first - last);
+            if (work->merged) fraction = fmaxf(0, fraction);
             if (fraction > enter) {
                 enter = fraction;
                 lead = side;
-            } else if (fraction > second_enter) {
+            } else if (work->merged && fraction > second_enter) {
                 second_enter = fraction;
                 second = plane;
             }
         } else {
-            leave = fminf(leave, fminf(1, (first + Q2_DISTANCE_EPSILON) / (first - last)));
+            float fraction = (first + Q2_DISTANCE_EPSILON) / (first - last);
+            if (work->merged) fraction = fminf(1, fraction);
+            leave = fminf(leave, fraction);
         }
     }
     if (!start_out) {
@@ -331,7 +334,7 @@ static void q2_trace_brush(q2_work *work, uint32_t index)
         return;
     }
     if (enter < leave && enter > -1 && enter < work->result.fraction && lead != NULL) {
-        work->result.fraction = enter;
+        work->result.fraction = enter < 0 ? 0 : enter;
         work->result.plane = collision->planes[lead->plane];
         work->result.has_surface = lead->texture >= 0;
         work->result.surface = lead->texture >= 0 ? collision->surfaces[(size_t)lead->texture]
@@ -606,7 +609,8 @@ static bool q2_trace(void *opaque, const qa_trace_query *query,
         qa_collision_basis(qa_vec_scale(query->target.angles, -1), inverse);
         work.result.plane.normal = qa_collision_to_local(work.result.plane.normal, inverse);
     }
-    work.result.end = qa_vec_lerp(query->start, query->end, work.result.fraction);
+    work.result.end = !query->target.inline_model && work.result.fraction == 1
+        ? query->end : qa_vec_lerp(query->start, query->end, work.result.fraction);
     work.result.contact = work.result.fraction < 1 && !work.result.all_solid;
     work.result.contact_plane = work.result.plane;
     work.result.hit = work.result.fraction < 1 || work.result.start_solid ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_NONE;
