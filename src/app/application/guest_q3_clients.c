@@ -64,6 +64,23 @@ bool application_q3_guest_actor_client(application_provider *provider, qa_actor_
     return false;
 }
 
+bool application_q3_guest_input_values_read(application_provider *provider,uint32_t seat,
+    qa_actor_id actor,uint8_t *weapon,float *sensitivity,qa_error *error)
+{
+    struct application_q3_guest *engine=q3g_engine(provider);
+    uint32_t slot;
+    if (!engine || engine->calls || engine->entered_role || engine->draining_clients ||
+        engine->restore_pending || engine->round.phase!=Q3G_ROUND_NONE || !engine->map_ready ||
+        !application_q3_guest_actor_bound(provider,actor,&slot))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q3 command selection lost its returned foreign GAME source");
+    const q3g_client *client=engine->clients+slot;
+    if (!client->connected || !client->begun || client->bot || client->pending_retirement ||
+        client->disconnect_pending || client->disconnect_started || engine->seats[slot]!=seat)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q3 command selection lost its current foreign CLIENT");
+    *weapon=(uint8_t)client->weapon; *sensitivity=client->sensitivity;
+    return true;
+}
+
 static q3g_client *client_slot(application_provider *provider, uint32_t slot,
                                struct application_q3_guest **engine, qa_error *error)
 {

@@ -1751,17 +1751,9 @@ bool qa_native_q3_wire_reader_command_values(qa_native_q3_wire_reader *reader, i
     float sensitivity, qa_error *error)
 { return reader && reader->builtin ? leased_command_values(reader, weapon, sensitivity, error) :
     application_fail(error, QA_ERROR_ARGUMENT, "Command values require their native reader"); }
-bool qa_application_native_q3_input_values_read(qa_application *app,uint32_t seat,qa_actor_id actor,
-    uint8_t *weapon,float *sensitivity,bool *present,qa_error *error)
+bool application_native_q3_input_values_read(application_provider *provider,uint32_t seat,
+    qa_actor_id actor,uint8_t *weapon,float *sensitivity,qa_error *error)
 {
-    qa_actor_id local;
-    if (!app || !weapon || !sensitivity || !present || app->destroy_requested ||
-        app->state!=QA_APPLICATION_RUNNING || app->operation!=APPLICATION_IDLE ||
-        !qa_application_player_actor(app,seat,&local) || !qa_actor_id_equal(local,actor))
-        return application_fail(error,QA_ERROR_ARGUMENT,"Q3 command selection needs its actual returned local actor");
-    application_provider *provider=application_world_provider(app,QA_ROLE_ENTITIES,"");
-    *present=false;
-    if (!provider || provider->kind!=APPLICATION_PROVIDER_Q3) return true;
     uint32_t slot;
     if (!provider->constructed || !provider->attached || !provider->map_bound ||
         !qa_q3_native_client_slot(provider->state.q3,actor,&slot,error))
@@ -1772,7 +1764,7 @@ bool qa_application_native_q3_input_values_read(qa_application *app,uint32_t sea
     if (wire->calls || wire->round_pending || !client->begun || client->bot || client->drop_pending ||
         client->seat!=seat || !qa_actor_id_equal(client->actor,actor))
         return application_fail(error,QA_ERROR_ARGUMENT,"Q3 command selection lost its current physical CLIENT");
-    *weapon=(uint8_t)client->weapon; *sensitivity=client->sensitivity; *present=true;
+    *weapon=(uint8_t)client->weapon; *sensitivity=client->sensitivity;
     return true;
 }
 bool qa_native_q3_wire_reader_actor(qa_native_q3_wire_reader *reader, uint32_t number,

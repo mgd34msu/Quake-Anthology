@@ -35,7 +35,6 @@
 #include "qa/source_frame_time.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/application_network.h"
-#include "qa/application_native_q3_wire.h"
 #include "qa/text.h"
 #include <stdio.h>
 
@@ -354,7 +353,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             .sensitivity = 1, .attack_allowed = true, .grounded = state.ground.hit != QA_TRACE_HIT_NONE};
         if (!remote && kind==QA_MOVEMENT_Q3) {
             bool present;
-            if (!qa_application_native_q3_input_values_read(frontend->application,launch_seat,actor,
+            if (!qa_application_q3_input_values_read(frontend->application,launch_seat,actor,
                 &frame.weapon,&frame.sensitivity,&present,error)) return false;
         }
         qa_movement_command command;

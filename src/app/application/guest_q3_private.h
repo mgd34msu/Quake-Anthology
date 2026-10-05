@@ -202,6 +202,8 @@ void q3g_game_aliases(struct application_q3_guest *, q3g_role *);
 bool q3g_role_restart(q3g_role *, q3g_role **, qa_error *);
 void q3g_server_bind(q3g_role *, qa_q3_host_options *);
 bool q3g_client_bind(q3g_role *, qa_q3_host_options *, qa_error *);
+bool application_q3_guest_input_values_read(application_provider *, uint32_t seat,
+    qa_actor_id, uint8_t *weapon, float *sensitivity, qa_error *);
 bool q3g_arsenal_client_admit(application_provider *, uint32_t, qa_error *);
 application_provider *q3g_native_game_source(qa_application *);
 application_provider *q3g_game_source(qa_application *);

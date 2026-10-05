@@ -556,6 +556,11 @@ bool qa_application_control_unified_command(qa_application *, qa_actor_id,
  * the actor's selected movement profile. */
 bool qa_application_control_q3_command(qa_application *, qa_actor_id,
     uint64_t transport_sequence, const qa_q3_usercmd *, qa_error *);
+/* Read the actual local CGAME values and selected Q3 arsenal request. A
+ * different selected arsenal keeps the genuine CGAME sensitivity. Without a
+ * CGAME or Q3 arsenal, present is false and the values remain unchanged. */
+bool qa_application_q3_input_values_read(qa_application *, uint32_t seat, qa_actor_id,
+    uint8_t *weapon, float *sensitivity, bool *present, qa_error *);
 bool qa_application_control_read(const qa_application *, qa_actor_id,
                                  qa_application_control_view *);
 bool qa_application_control_prediction_read(qa_application *, qa_actor_id,

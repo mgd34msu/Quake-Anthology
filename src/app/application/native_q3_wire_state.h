@@ -29,6 +29,8 @@ bool application_native_q3_wire_command(application_provider *, uint32_t source_
     const qa_q3_usercmd *, qa_error *);
 bool application_native_q3_wire_command_seed(application_provider *, uint32_t source_slot,
     const qa_q3_usercmd *, qa_error *);
+bool application_native_q3_input_values_read(application_provider *, uint32_t seat,
+    qa_actor_id, uint8_t *weapon, float *sensitivity, qa_error *);
 
 typedef struct application_native_q3_wire_client_view {
     qa_actor_id actor;

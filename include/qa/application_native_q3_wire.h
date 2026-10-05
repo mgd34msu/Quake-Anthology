@@ -63,9 +63,6 @@ bool qa_native_q3_wire_reader_user_command(qa_native_q3_wire_reader *, int32_t n
     qa_q3_usercmd *, bool *present, qa_error *);
 bool qa_native_q3_wire_reader_command_values(qa_native_q3_wire_reader *, int32_t weapon,
     float sensitivity, qa_error *);
-/* Current local CGAME command selection, held by its actual GAME wire client. */
-bool qa_application_native_q3_input_values_read(qa_application *, uint32_t seat, qa_actor_id,
-    uint8_t *weapon, float *sensitivity, bool *present, qa_error *);
 bool qa_native_q3_wire_reader_actor(qa_native_q3_wire_reader *, uint32_t source_number,
     qa_actor_id *, bool *present, qa_error *);
 bool qa_native_q3_wire_reader_reliable(qa_native_q3_wire_reader *, const char *, qa_error *);

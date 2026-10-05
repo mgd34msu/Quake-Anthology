@@ -9,6 +9,7 @@
 #include "guest_q2_control.h"
 #include "guest_qc_profile.h"
 #include "native_q3_settings.h"
+#include "native_q3_wire_state.h"
 #include "native_q1_composition_rogue.h"
 #include "native_q1_composition_birth.h"
 #include "native_q1_spectator.h"
@@ -3319,6 +3320,38 @@ bool application_control_water_read(const qa_application *app, qa_actor_id actor
     } else if (record->moving || application_control_frames_state_current(app, actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Source water requires its actual active movement call");
     *water_type = type; *water_level = level;
+    return true;
+}
+
+bool qa_application_q3_input_values_read(qa_application *app,uint32_t seat,qa_actor_id actor,
+    uint8_t *weapon,float *sensitivity,bool *present,qa_error *error)
+{
+    qa_actor_id local;
+    if (!app || !weapon || !sensitivity || !present || app->destroy_requested ||
+        app->state!=QA_APPLICATION_RUNNING || app->operation!=APPLICATION_IDLE ||
+        !qa_application_player_actor(app,seat,&local) || !qa_actor_id_equal(local,actor))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q3 command selection needs its actual returned local actor");
+    application_provider *primary=application_world_provider(app,QA_ROLE_ENTITIES,"");
+    if (!primary || !primary->constructed || !primary->attached || primary->close_pending)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q3 command selection lost its actual primary GAME");
+    uint8_t selected=0; float scale=1; bool found=false;
+    if (primary->kind==APPLICATION_PROVIDER_Q3) {
+        if (!application_native_q3_input_values_read(primary,seat,actor,&selected,&scale,error)) return false;
+        found=true;
+    } else if (q3g_engine(primary)) {
+        if (!application_q3_guest_input_values_read(primary,seat,actor,&selected,&scale,error)) return false;
+        found=true;
+    }
+    application_provider *arsenal=application_provider_for(app,actor,QA_ROLE_ARSENAL,"");
+    if (arsenal && arsenal!=primary && arsenal->kind==APPLICATION_PROVIDER_Q3) {
+        qa_q3_player_state player;
+        if (!arsenal->constructed || !arsenal->attached || arsenal->close_pending ||
+            !qa_q3_player_read(arsenal->state.q3,actor,&player) || !(player.selections&QA_Q3_ARSENAL))
+            return application_fail(error,QA_ERROR_ARGUMENT,"Q3 command selection lost its actual selected arsenal");
+        selected=(uint8_t)player.requested_weapon; found=true;
+    }
+    if (found) { *weapon=selected; *sensitivity=scale; }
+    *present=found;
     return true;
 }
 
