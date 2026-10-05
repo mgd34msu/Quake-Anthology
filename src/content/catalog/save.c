@@ -140,41 +140,33 @@ static bool products(qa_source_save_io *io, qa_catalog *catalog)
             !qa_source_save_count(io, &product->required_count, 4)) return false;
         for (size_t j = 0; j < 4; ++j)
             if (!text(io, catalog, &product->required[j]) || (j < product->required_count && !product->required[j])) return false;
-        ARRAY(product, maps, map_count, 18);
-        for (size_t j = 0; j < product->map_count; ++j) {
-            qa_catalog_map *map = &product->maps[j];
-            if (!text(io, catalog, &map->path) || !map->path || !*map->path) return false;
-            FIELD(u64, map, mount);
-            if (!map->mount || map->mount > catalog->physical_count || !qa_source_save_count(io, &map->member, SIZE_MAX)) return false;
-            FIELD(bool, map, archived);
-            const catalog_physical *package = &catalog->physical[map->mount - 1];
-            if (map->archived != (package->view.format != QA_ARCHIVE_AUTO)) return false;
-            bool admitted = false;
-            for (size_t k = 0; k < product->mount_count; ++k) admitted |= product->mounts[k] == map->mount;
-            if (!admitted) return false;
-            if (map->archived) {
-                admitted = false;
-                for (size_t k = 0; k < package->member_count; ++k)
-                    admitted |= package->members[k].ordinal == map->member && !strcmp(package->members[k].path, map->path);
-                if (!admitted) return false;
-            }
+        /* Map indexes and mapdb starts are installed content, rebuilt below.
+         * Consume any prior descriptor in the same reader without retaining it. */
+        size_t maps = 0;
+        size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? (io->input.size - io->offset) / 18 : 0;
+        if (!qa_source_save_count(io, &maps, maximum)) return false;
+        for (size_t j = 0; j < maps; ++j) {
+            qa_catalog_map map = {0};
+            if (!text(io, catalog, &map.path)) return false;
+            FIELD(u64, &map, mount);
+            if (!qa_source_save_count(io, &map.member, SIZE_MAX)) return false;
+            FIELD(bool, &map, archived);
         }
-        ARRAY(product, starts, start_count, 8);
-        for (size_t j = 0; j < product->start_count; ++j) {
-            qa_catalog_start *start = &product->starts[j];
-            if (!text(io, catalog, &start->episode) || !start->episode || !*start->episode ||
-                !text(io, catalog, &start->bsp) || !start->bsp || !*start->bsp ||
-                !text(io, catalog, &start->path) || !start->path || !*start->path ||
-                !text(io, catalog, &start->title) || !start->title ||
-                !text(io, catalog, &start->start_items) || !start->start_items) return false;
-            FIELD(bool, start, singleplayer); FIELD(bool, start, cooperative); FIELD(bool, start, capture_the_flag);
+        size_t starts = 0;
+        maximum = io->direction == QA_SOURCE_SAVE_READ ? (io->input.size - io->offset) / 8 : 0;
+        if (!qa_source_save_count(io, &starts, maximum)) return false;
+        for (size_t j = 0; j < starts; ++j) {
+            qa_catalog_start start = {0};
+            if (!text(io, catalog, &start.episode) || !text(io, catalog, &start.bsp) ||
+                !text(io, catalog, &start.path) || !text(io, catalog, &start.title) ||
+                !text(io, catalog, &start.start_items)) return false;
+            FIELD(bool, &start, singleplayer); FIELD(bool, &start, cooperative); FIELD(bool, &start, capture_the_flag);
         }
-        FIELD(bool, product, has_episode);
-        qa_catalog_episode *episode = &product->episode;
-        if (!text(io, catalog, &episode->id) || !text(io, catalog, &episode->command) ||
-            !text(io, catalog, &episode->name) || !text(io, catalog, &episode->activity)) return false;
-        FIELD(bool, episode, needs_skill_select);
-        if (product->has_episode && (!episode->id || !episode->command || !episode->name || !episode->activity)) return false;
+        bool has_episode = false; qa_catalog_episode episode = {0};
+        if (!qa_source_save_bool(io, &has_episode) ||
+            !text(io, catalog, &episode.id) || !text(io, catalog, &episode.command) ||
+            !text(io, catalog, &episode.name) || !text(io, catalog, &episode.activity)) return false;
+        FIELD(bool, &episode, needs_skill_select);
         for (size_t j = 0; j < i; ++j)
             if (!strcmp(catalog->products[j].view.key, view->key)) return false;
     }
@@ -244,6 +236,14 @@ static bool products(qa_source_save_io *io, qa_catalog *catalog)
             if (at >= product->mount_count || product->mounts[at++] != base->mounts[j]) return false;
         }
         if (at != product->mount_count) return false;
+    }
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        for (size_t i = 0; i < catalog->product_count; ++i) {
+            catalog_product *product = &catalog->products[i];
+            bool archives_only = catalog->q3_demo_restricted && product->view.family == QA_GAME_Q3;
+            if (!catalog_index_maps(catalog, product, archives_only, io->error) ||
+                !catalog_read_starts(catalog, product, io->error)) return false;
+        }
     }
     return true;
 }
