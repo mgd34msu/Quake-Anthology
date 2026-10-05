@@ -22,7 +22,6 @@ typedef struct event_store {
     qa_application_q2_player_event *q2_player;
     application_protocol_record *protocol;
     size_t counts[5], capacities[5];
-    size_t arena_block_size;
     uint64_t protocol_generation;
     application_event_journal_record *journal;
     size_t journal_count, journal_capacity;
@@ -75,39 +74,39 @@ static bool signature(qa_source_save_io *io)
          event_fail(io, QA_ERROR_FORMAT, "Invalid application event signature"));
 }
 
+static bool queue_extent(qa_source_save_io *io, size_t *count, size_t *capacity, size_t width)
+{
+    if (io->direction == QA_SOURCE_SAVE_WRITE && *count > *capacity)
+        return event_fail(io, QA_ERROR_FORMAT, "Application event count exceeds its storage");
+    if (!qa_source_save_count(io, count, SIZE_MAX / width)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) *capacity = *count;
+    return true;
+}
+
 static bool prefix(qa_source_save_io *io, event_store *store)
 {
     if (!signature(io) ||
-        !qa_source_save_u64(io, &store->protocol_generation) ||
-        !qa_source_save_count(io, &store->arena_block_size, SIZE_MAX)) return false;
+        !qa_source_save_u64(io, &store->protocol_generation)) return false;
     for (size_t i = 0; i < 5; ++i) {
-        if (!qa_source_save_count(io, &store->capacities[i], SIZE_MAX / event_widths[i]) ||
-            !qa_source_save_count(io, &store->counts[i], store->capacities[i])) return false;
+        if (!queue_extent(io, &store->counts[i], &store->capacities[i], event_widths[i])) return false;
     }
     if (!qa_source_save_u64(io, &store->sequence) ||
         !qa_source_save_u64(io, &store->simulation_sequence) ||
-        !qa_source_save_count(io, &store->journal_capacity, SIZE_MAX / sizeof(*store->journal)) ||
-        !qa_source_save_count(io, &store->journal_count, store->journal_capacity))
+        !queue_extent(io, &store->journal_count, &store->journal_capacity, sizeof(*store->journal)))
         return event_fail(io, QA_ERROR_FORMAT, "Invalid Source event journal extent");
     if (!qa_source_save_u64(io, &store->unified_sequence) ||
         !qa_source_save_u64(io, &store->presentation_sequence) ||
-        !qa_source_save_count(io, &store->unified_capacity, SIZE_MAX / sizeof(*store->unified)) ||
-        !qa_source_save_count(io, &store->unified_count, store->unified_capacity) ||
+        !queue_extent(io, &store->unified_count, &store->unified_capacity, sizeof(*store->unified)) ||
         store->unified_count > store->unified_sequence ||
-        !qa_source_save_count(io, &store->persistent_capacity, SIZE_MAX / sizeof(*store->persistent)) ||
-        !qa_source_save_count(io, &store->persistent_count, store->persistent_capacity) ||
+        !queue_extent(io, &store->persistent_count, &store->persistent_capacity, sizeof(*store->persistent)) ||
         store->persistent_count > store->presentation_sequence ||
         !qa_source_save_u64(io, &store->persistent_revision) ||
-        !qa_source_save_count(io, &store->owner_capacity, SIZE_MAX / sizeof(*store->owners)) ||
-        !qa_source_save_count(io, &store->owner_count, store->owner_capacity) ||
+        !queue_extent(io, &store->owner_count, &store->owner_capacity, sizeof(*store->owners)) ||
         !qa_source_save_u64(io, &store->owner_generation) || store->owner_generation >= QA_UNIFIED_SAFE_INTEGER ||
-        !qa_source_save_count(io, &store->resource_capacity, SIZE_MAX / sizeof(*store->resources)) ||
-        !qa_source_save_count(io, &store->resource_count, store->resource_capacity) ||
-        !qa_source_save_count(io, &store->registration_capacity, SIZE_MAX / sizeof(*store->registrations)) ||
-        !qa_source_save_count(io, &store->registration_count, store->registration_capacity) ||
+        !queue_extent(io, &store->resource_count, &store->resource_capacity, sizeof(*store->resources)) ||
+        !queue_extent(io, &store->registration_count, &store->registration_capacity, sizeof(*store->registrations)) ||
         !qa_source_save_u64(io, &store->registration_revision) ||
-        !qa_source_save_count(io, &store->world_text_capacity, SIZE_MAX / sizeof(*store->world_text)) ||
-        !qa_source_save_count(io, &store->world_text_count, store->world_text_capacity) ||
+        !queue_extent(io, &store->world_text_count, &store->world_text_capacity, sizeof(*store->world_text)) ||
         !qa_source_save_u64(io, &store->world_text_revision) || !qa_source_save_u64(io, &store->world_text_map))
         return event_fail(io, QA_ERROR_FORMAT, "Invalid normalized Source continuation extent");
     size_t total = 0;
@@ -125,9 +124,9 @@ static bool prefix(qa_source_save_io *io, event_store *store)
                 return event_fail(io, QA_ERROR_FORMAT, "Truncated application event rows");
             remaining -= store->counts[i] * event_minimums[i];
         }
-        if (store->journal_count > remaining / 21)
+        if (store->journal_count > remaining / 2)
             return event_fail(io, QA_ERROR_FORMAT, "Truncated Source event journal");
-        remaining -= store->journal_count * 21;
+        remaining -= store->journal_count * 2;
         if (store->unified_count > remaining / 100)
             return event_fail(io, QA_ERROR_FORMAT, "Truncated normalized Source events");
         remaining -= store->unified_count * 100;
@@ -821,8 +820,7 @@ static event_store borrow_store(qa_application *app)
         .counts = {app->event_count, app->q2_map_event_count, app->q3_map_event_count,
                    app->q2_player_event_count, app->protocol_event_count},
         .capacities = {app->event_capacity, app->q2_map_event_capacity, app->q3_map_event_capacity,
-                       app->q2_player_event_capacity, app->protocol_event_capacity},
-        .arena_block_size = app->event_arena.block_size
+                       app->q2_player_event_capacity, app->protocol_event_capacity}
     };
 }
 
@@ -866,7 +864,7 @@ static void dispose_store(event_store *store)
 
 static bool allocate_store(qa_source_save_io *io, event_store *store)
 {
-    qa_arena_init(&store->arena, store->arena_block_size);
+    qa_arena_init(&store->arena, 0);
     void *arrays[5] = {0};
     for (size_t i = 0; i < 5; ++i) {
         if (store->capacities[i]) arrays[i] = calloc(store->capacities[i], event_widths[i]);
@@ -900,25 +898,38 @@ static bool allocate_store(qa_source_save_io *io, event_store *store)
     return true;
 }
 
+static bool frame_equal(qa_source_frame a, qa_source_frame b)
+{
+    return a.provider == b.provider && a.kind == b.kind && a.phase == b.phase &&
+        a.number == b.number && a.start_ns == b.start_ns && a.elapsed_ns == b.elapsed_ns && a.time_ns == b.time_ns;
+}
+
 static bool journal_rows(qa_source_save_io *io, event_store *store)
 {
     if ((store->journal_capacity != 0) != (store->journal != NULL))
         return event_fail(io, QA_ERROR_FORMAT, "Source event journal allocation differs");
     size_t next[5] = {0};
+    application_event_journal_record previous = {0};
     for (size_t i = 0; i < store->journal_count; ++i) {
         application_event_journal_record row = io->direction == QA_SOURCE_SAVE_WRITE ?
             store->journal[i] : (application_event_journal_record){0};
-        uint32_t queue = row.queue;
-        if (!qa_source_save_u64(io, &row.sequence) ||
-            !enum_field(io, &queue, APPLICATION_EVENT_PROTOCOL) ||
-            !qa_source_save_count(io, &row.index, SIZE_MAX) ||
-            !qa_source_save_bool(io, &row.has_frame)) return false;
+        uint8_t queue = (uint8_t)row.queue;
+        uint8_t clock = row.has_frame ? (previous.has_frame && frame_equal(row.frame, previous.frame) ? 1u : 2u) : 0;
+        if ((io->direction == QA_SOURCE_SAVE_WRITE && (unsigned)row.queue > APPLICATION_EVENT_PROTOCOL) ||
+            !qa_source_save_u8(io, &queue) || queue > APPLICATION_EVENT_PROTOCOL ||
+            !qa_source_save_u8(io, &clock) || clock > 2 || (clock == 1 && !previous.has_frame))
+            return event_fail(io, QA_ERROR_FORMAT, "Invalid Source event journal queue or frame");
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            row.sequence = store->sequence - store->journal_count + i;
+            row.index = next[queue]; row.has_frame = clock != 0;
+            if (clock == 1) row.frame = previous.frame;
+        }
         if (row.sequence != store->sequence - store->journal_count + i ||
             row.index != next[queue] || row.index >= store->counts[queue])
             return event_fail(io, QA_ERROR_FORMAT, "Source event journal has invalid append order");
         ++next[queue];
         row.queue = (application_event_queue)queue;
-        if (row.has_frame) {
+        if (clock == 2) {
             uint32_t kind = row.frame.kind, phase = row.frame.phase;
             if (!provider_field(io, &row.frame.provider, true) ||
                 !enum_field(io, &kind, QA_CLOCK_Q3) || !enum_field(io, &phase, QA_FRAME_EXIT) ||
@@ -932,11 +943,12 @@ static bool journal_rows(qa_source_save_io *io, event_store *store)
                 row.frame.time_ns < row.frame.start_ns ||
                 row.frame.time_ns > row.frame.start_ns + row.frame.elapsed_ns)
                 return event_fail(io, QA_ERROR_FORMAT, "Source event clock exceeds its admitted frame");
-        } else if (io->direction == QA_SOURCE_SAVE_WRITE &&
+        } else if (!row.has_frame && io->direction == QA_SOURCE_SAVE_WRITE &&
             (row.frame.provider || row.frame.number || row.frame.start_ns ||
              row.frame.elapsed_ns || row.frame.time_ns))
             return event_fail(io, QA_ERROR_FORMAT, "Absent Source event clock has provenance");
         if (io->direction == QA_SOURCE_SAVE_READ) store->journal[i] = row;
+        previous = row;
     }
     for (size_t i = 0; i < 5; ++i)
         if (next[i] != store->counts[i])
@@ -1181,14 +1193,10 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
         for (size_t j = 0; j < i; ++j)
             if (!strcmp(row->id, store->resources[j].id))
                 return event_fail(io, QA_ERROR_FORMAT, "Source resource dictionary identity is duplicated");
-        if (!qa_source_save_count(io, &row->custody_capacity, SIZE_MAX / sizeof(*row->custodies)) ||
-            !qa_source_save_count(io, &row->custody_count, row->custody_capacity)) return false;
+        if (!queue_extent(io, &row->custody_count, &row->custody_capacity, sizeof(*row->custodies))) return false;
         if (io->direction == QA_SOURCE_SAVE_READ) {
-            if (row->custody_count > (io->input.size - io->offset) / 34 ||
-                (row->custody_capacity && (row->custody_capacity < 4 ||
-                    (row->custody_capacity & (row->custody_capacity - 1)) ||
-                    row->custody_capacity > (row->custody_count < 2 ? 4 : row->custody_count * 2))))
-                return event_fail(io, QA_ERROR_FORMAT, "Source custody allocation exceeds its actual growth or document");
+            if (row->custody_count > (io->input.size - io->offset) / 34)
+                return event_fail(io, QA_ERROR_FORMAT, "Truncated Source opening receipts");
             row->custodies = row->custody_capacity ? calloc(row->custody_capacity, sizeof(*row->custodies)) : NULL;
             if (row->custody_capacity && !row->custodies)
                 return event_fail(io, QA_ERROR_MEMORY, "Retaining restored Source opening receipts");
