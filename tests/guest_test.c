@@ -63,7 +63,7 @@ static qa_qc_program *guest_program(void)
         {"nested", 6, 35, 1}, {"normalize", -9, 0, 0}, {"vlen", -12, 0, 0},
         {"rint", -36, 0, 0}, {"spawn", -14, 0, 0},
         {"setorigin", -2, 0, 0}, {"remove", -15, 0, 0},
-        {"projected", 9, 0, 0}
+        {"projected", 10, 0, 0}
     };
     const uint32_t statement_count = (uint32_t)(sizeof(statements) / sizeof(*statements));
     const uint32_t function_count = (uint32_t)(sizeof(functions) / sizeof(*functions));
