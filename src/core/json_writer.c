@@ -3,6 +3,8 @@
 #include "qa/text.h"
 
 #include <stdlib.h>
+#include <inttypes.h>
+#include <stdio.h>
 #include <string.h>
 
 static void fail(qa_json_writer *w, qa_status code, const char *message) {
@@ -130,6 +132,17 @@ void qa_json_writer_number(qa_json_writer *w, double number) {
         return;
     }
     append(w, text, strlen(text));
+}
+void qa_json_writer_u64(qa_json_writer *w, uint64_t number) {
+    if (!value(w))
+        return;
+    char text[21];
+    int length = snprintf(text, sizeof(text), "%" PRIu64, number);
+    if (length < 1 || (size_t)length >= sizeof(text)) {
+        fail(w, QA_ERROR_ARGUMENT, "Formatting JSON unsigned integer");
+        return;
+    }
+    append(w, text, (size_t)length);
 }
 void qa_json_writer_bool(qa_json_writer *w, bool flag) {
     if (value(w))

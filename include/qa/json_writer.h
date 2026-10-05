@@ -22,6 +22,7 @@ void qa_json_writer_key(qa_json_writer *, const char *);
 void qa_json_writer_string(qa_json_writer *, const char *);
 void qa_json_writer_bytes(qa_json_writer *, qa_bytes utf8);
 void qa_json_writer_number(qa_json_writer *, double);
+void qa_json_writer_u64(qa_json_writer *, uint64_t);
 void qa_json_writer_bool(qa_json_writer *, bool);
 void qa_json_writer_null(qa_json_writer *);
 bool qa_json_writer_finish(qa_json_writer *, qa_buffer *, qa_error *);
