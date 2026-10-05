@@ -259,18 +259,6 @@ static bool console_context(void *opaque, uint64_t captured_registry,
     return true;
 }
 
-static bool console_binding(void *opaque, const qa_console *console,
-    const qa_console_entry *saved, uint64_t registration_owner,
-    qa_command_handler *handler, void **user, qa_error *error)
-{
-    const application_save_console_context *context = opaque;
-    if (!context->ops || !context->ops->command_binding)
-        return application_fail(error, QA_ERROR_FORMAT,
-            "Saved command callback has no physical Source declaration factory");
-    return context->ops->command_binding(context->ops->context, context->application,
-        console, saved, registration_owner, handler, user, error);
-}
-
 bool application_save_console_resolvers(const application_save_console_context *context,
     qa_console_save_resolvers *out, qa_error *error)
 {
@@ -279,7 +267,6 @@ bool application_save_console_resolvers(const application_save_console_context *
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Console restoration requires retained candidate application owners");
     *out = (qa_console_save_resolvers){.context = (void *)context,
-        .identity = console_identity, .command_context = console_context,
-        .command_binding = console_binding};
+        .identity = console_identity, .command_context = console_context};
     return true;
 }

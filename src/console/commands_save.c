@@ -64,115 +64,6 @@ static bool context_fields(qa_source_save_io *io, qa_command_context *context,
     *context = restored; return true;
 }
 
-static uint32_t capabilities(const qa_console_options *o)
-{
-    return (o->cvars ? 1u : 0u) | (o->print ? 2u : 0u) | (o->cvar_owner ? 4u : 0u) |
-        (o->visible_cvars ? 8u : 0u) | (o->read_script ? 16u : 0u) | (o->release_script ? 32u : 0u) |
-        (o->script_complete ? 64u : 0u) | (o->allow_command ? 128u : 0u) |
-        (o->source_command ? 256u : 0u) | (o->client_game ? 512u : 0u) | (o->server_game ? 1024u : 0u) |
-        (o->ui ? 2048u : 0u) | (o->forward ? 4096u : 0u) |
-        (o->capture_context ? 8192u : 0u) | (o->context_active ? 16384u : 0u) |
-        (o->cvar_edit ? 32768u : 0u) | (o->post_dispatch ? 65536u : 0u);
-}
-
-static bool retired_fields(qa_source_save_io *io, retired_id **head,
-                           const qa_console_save_resolvers *resolve, qa_console_save_identity kind)
-{
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    size_t count = 0;
-    if (!reading) for (retired_id *entry = *head; entry; entry = entry->next) ++count;
-    if (!qa_source_save_count(io, &count, SIZE_MAX / sizeof(retired_id))) return false;
-    if (reading && count > io->input.size - io->offset) return invalid(io->error, "Invalid retired console extent");
-    retired_id **tail = head;
-    for (size_t i = 0; i < count; ++i) {
-        if (reading) {
-            *tail = calloc(1, sizeof(**tail));
-            if (!*tail) return qac_fail(io->error, QA_ERROR_MEMORY, "Retaining retired console identity");
-        }
-        if (!identity(io, resolve, kind, &(*tail)->value) || !(*tail)->value) return false;
-        for (retired_id *prior = *head; prior != *tail; prior = prior->next)
-            if (prior->value == (*tail)->value) return invalid(io->error, "Duplicate retired console identity");
-        tail = &(*tail)->next;
-    }
-    return true;
-}
-
-static command_entry *find_command(qa_console *console, uint64_t owner, const char *name)
-{
-    for (command_entry *entry = console->commands; entry; entry = entry->next)
-        if (entry->view.owner == owner && !strcmp(entry->view.name, name)) return entry;
-    return NULL;
-}
-
-static bool commands_fields(qa_source_save_io *io, qa_console *state, qa_console *candidate,
-                             const qa_console_save_resolvers *resolve)
-{
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    size_t count = 0;
-    if (!reading) for (command_entry *entry = state->commands; entry; entry = entry->next) ++count;
-    if (!qa_source_save_count(io, &count, SIZE_MAX / sizeof(command_entry))) return false;
-    if (reading && count > io->input.size - io->offset) return invalid(io->error, "Invalid command registration extent");
-    command_entry **tail = &state->commands;
-    for (size_t i = 0; i < count; ++i) {
-        if (reading) {
-            *tail = calloc(1, sizeof(**tail));
-            if (!*tail) return qac_fail(io->error, QA_ERROR_MEMORY, "Retaining restored command registration");
-        }
-        command_entry *entry = *tail;
-        bool handler = entry->handler != NULL;
-        if (!qac_save_text(io, &entry->view.name) || !entry->view.name || !*entry->view.name ||
-            strpbrk(entry->view.name, " \t\r\n;\"") ||
-            !qac_save_text(io, &entry->view.description) || !entry->view.description ||
-            !qac_save_documentation(io, &entry->view.documentation) ||
-            !identity(io, resolve, QA_CONSOLE_SAVE_OWNER, &entry->view.owner) ||
-            !qa_source_save_bool(io, &entry->view.engine_command) ||
-            !identity(io, resolve, QA_CONSOLE_SAVE_OWNER, &entry->registration_owner) ||
-            !qa_source_save_bool(io, &entry->ordinary_registration) || !qa_source_save_bool(io, &handler)) return false;
-        for (command_entry *prior = state->commands; prior != entry; prior = prior->next)
-            if (prior->view.owner == entry->view.owner && !strcmp(prior->view.name, entry->view.name))
-                return invalid(io->error, "Duplicate restored command registration");
-        size_t contributors = 0;
-        if (!reading) for (command_contribution *p = entry->contributions; p; p = p->next) ++contributors;
-        if (!qa_source_save_count(io, &contributors, SIZE_MAX / sizeof(command_contribution))) return false;
-        if (reading && contributors > io->input.size - io->offset) return invalid(io->error, "Invalid command contribution extent");
-        command_contribution **link = &entry->contributions;
-        for (size_t j = 0; j < contributors; ++j) {
-            if (reading) {
-                *link = calloc(1, sizeof(**link));
-                if (!*link) return qac_fail(io->error, QA_ERROR_MEMORY, "Retaining restored command contribution");
-            }
-            if (!identity(io, resolve, QA_CONSOLE_SAVE_OWNER, &(*link)->owner) || !(*link)->owner) return false;
-            for (command_contribution *prior = entry->contributions; prior != *link; prior = prior->next)
-                if (prior->owner == (*link)->owner) return invalid(io->error, "Duplicate command contribution owner");
-            link = &(*link)->next;
-        }
-        if ((!entry->ordinary_registration && (handler || entry->view.engine_command || !contributors)) ||
-            (handler && !entry->ordinary_registration)) return invalid(io->error, "Invalid command callback lifetime");
-        if (reading) {
-            command_entry *actual = find_command(candidate, entry->view.owner, entry->view.name);
-            if (handler && !actual && resolve && resolve->command_binding) {
-                if (!resolve->command_binding(resolve->context, candidate, &entry->view,
-                    entry->registration_owner, &entry->handler, &entry->user, io->error))
-                    return false;
-                if (!entry->handler)
-                    return invalid(io->error, "Saved command factory has no actual Source callback");
-            } else {
-                if (handler && (!actual || !actual->handler || !actual->ordinary_registration ||
-                    actual->registration_owner != entry->registration_owner || actual->view.engine_command != entry->view.engine_command))
-                    return invalid(io->error, "Saved command callback has no matching candidate source registration");
-                if (!handler && actual && actual->handler)
-                    return invalid(io->error, "Saved command differs from an installed candidate callback");
-                if (handler) { entry->handler = actual->handler; entry->user = actual->user; }
-            }
-        }
-        tail = &entry->next;
-    }
-    if (reading) for (command_entry *actual = candidate->commands; actual; actual = actual->next)
-        if (actual->handler && !find_command(state, actual->view.owner, actual->view.name))
-            return invalid(io->error, "Console restore would discard an installed candidate callback");
-    return true;
-}
-
 static bool aliases_fields(qa_source_save_io *io, qa_console *state,
                             const qa_console_save_resolvers *resolve)
 {
@@ -269,50 +160,53 @@ static bool queue_valid(const qa_console *state, const command_chunk *head, size
     return true;
 }
 
-static bool state_valid(const qa_console *state, qa_error *error)
+static bool state_valid(const qa_console *state, const qa_console *candidate, qa_error *error)
 {
-    for (const command_entry *entry = state->commands; entry; entry = entry->next) {
-        if (is_retired(state->owners, entry->view.owner) ||
-            (entry->ordinary_registration && is_retired(state->owners, entry->registration_owner)))
-            return invalid(error, "Console command registration names a retired owner");
-        for (const command_contribution *p = entry->contributions; p; p = p->next)
-            if (is_retired(state->owners, p->owner)) return invalid(error, "Command contribution owner retired");
-    }
     for (const alias_entry *entry = state->aliases; entry; entry = entry->next)
-        if (is_retired(state->owners, entry->view.owner)) return invalid(error, "Console alias owner retired");
-    if (state->wait && (state->wait_context.session != state->options.context.session ||
-        is_retired(state->owners, state->wait_context.owner) ||
-        (state->wait_context.client && is_retired(state->clients, state->wait_context.client))))
+        if (is_retired(candidate->owners, entry->view.owner)) return invalid(error, "Console alias owner retired");
+    if (state->wait && (state->wait_context.session != candidate->options.context.session ||
+        is_retired(candidate->owners, state->wait_context.owner) ||
+        (state->wait_context.client && is_retired(candidate->clients, state->wait_context.client))))
         return invalid(error, "Console wait names a retired context");
-    return queue_valid(state, state->head, state->queued_bytes, error) &&
-        queue_valid(state, state->deferred, state->deferred_bytes, error);
+    return queue_valid(candidate, state->head, state->queued_bytes, error) &&
+        queue_valid(candidate, state->deferred, state->deferred_bytes, error);
 }
 
 static bool fields(qa_source_save_io *io, qa_console *state, qa_console *candidate,
                      const qa_console_save_resolvers *resolve, uint64_t captured_registry)
 {
     char magic[8] = {'Q','A','C','O','N','S','L',0};
-    uint32_t callbacks = capabilities(&state->options);
-    uint32_t expected = capabilities(&candidate->options);
-    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QACONSL", 8) ||
-        !qa_source_save_u64(io, &captured_registry) || !captured_registry ||
-        !qa_source_save_u32(io, &callbacks) || callbacks != expected ||
-        !context_fields(io, &state->options.context, resolve, captured_registry) ||
-        state->options.context.session != candidate->options.context.session ||
-        state->options.context.dialect != candidate->options.context.dialect ||
-        !qac_save_text(io, &state->options.startup_commands) ||
-        !qa_source_save_count(io, &state->options.maximum_buffer, SIZE_MAX) ||
-        !qa_source_save_count(io, &state->options.maximum_command, SIZE_MAX) || state->options.maximum_command == 1 ||
-        !qa_source_save_bool(io, &state->options.disable_builtins) ||
-        !qa_source_save_i32(io, &state->wait) || !context_fields(io, &state->wait_context, resolve, captured_registry) ||
-        !qa_source_save_count(io, &state->alias_count, SIZE_MAX) ||
-        !retired_fields(io, &state->owners, resolve, QA_CONSOLE_SAVE_OWNER) ||
-        !retired_fields(io, &state->clients, resolve, QA_CONSOLE_SAVE_CLIENT) ||
-        !commands_fields(io, state, candidate, resolve) || !aliases_fields(io, state, resolve) ||
-        !chunks_fields(io, &state->head, &state->tail, &state->queued_bytes, resolve, captured_registry) ||
-        !chunks_fields(io, &state->deferred, &state->deferred_tail, &state->deferred_bytes, resolve, captured_registry)) return false;
-    if (io->direction == QA_SOURCE_SAVE_READ) state->startup = (char *)state->options.startup_commands;
-    return state_valid(state, io->error);
+    return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QACONSL", 8) &&
+        qa_source_save_u64(io, &captured_registry) && captured_registry &&
+        qa_source_save_i32(io, &state->wait) &&
+        (!state->wait || context_fields(io, &state->wait_context, resolve, captured_registry)) &&
+        qa_source_save_count(io, &state->alias_count, SIZE_MAX) && aliases_fields(io, state, resolve) &&
+        chunks_fields(io, &state->head, &state->tail, &state->queued_bytes, resolve, captured_registry) &&
+        chunks_fields(io, &state->deferred, &state->deferred_tail, &state->deferred_bytes, resolve, captured_registry) &&
+        state_valid(state, candidate, io->error);
+}
+
+/* Keep ordinary constructor callbacks, options and process-local lifetime
+ * exclusions. Only mutable Source command state belongs to the save. */
+static void state_exchange(qa_console *console, qa_console *state)
+{
+    qa_console old = *console;
+    console->aliases = state->aliases; state->aliases = old.aliases;
+    console->head = state->head; state->head = old.head;
+    console->tail = state->tail; state->tail = old.tail;
+    console->deferred = state->deferred; state->deferred = old.deferred;
+    console->deferred_tail = state->deferred_tail; state->deferred_tail = old.deferred_tail;
+    console->queued_bytes = state->queued_bytes; state->queued_bytes = old.queued_bytes;
+    console->deferred_bytes = state->deferred_bytes; state->deferred_bytes = old.deferred_bytes;
+    console->wait = state->wait; state->wait = old.wait;
+    console->wait_context = state->wait_context; state->wait_context = old.wait_context;
+    console->alias_count = state->alias_count; state->alias_count = old.alias_count;
+    console->drain_yielded = state->drain_yielded; state->drain_yielded = old.drain_yielded;
+    console->release_first = state->release_first; state->release_first = old.release_first;
+    console->release_owner = state->release_owner; state->release_owner = old.release_owner;
+    console->release_leases = state->release_leases; state->release_leases = old.release_leases;
+    for (qa_console_release *at = console->release_first; at; at = at->next) at->console = console;
+    qac_console_program_touch(console, true);
 }
 
 uint64_t qa_console_save_context_registry(qa_session *session, uint64_t registry, uint64_t captured_registry)
@@ -331,28 +225,17 @@ bool qa_console_save_restore(qa_console *console, qa_session *session,
     if (!console || !session || !resolve || !qa_console_idle(console) || console->program_leases || console->release_leases ||
         console->program_unpublished)
         return qac_fail(error, QA_ERROR_ARGUMENT, "Console restore requires an idle candidate owner");
-    qa_buffer before = {0}, after = {0};
-    if (!qa_console_save_capture(console, session, &before, error)) return false;
     qa_console *scratch = calloc(1, sizeof(*scratch));
-    if (!scratch) { qa_buffer_free(&before); return qac_fail(error, QA_ERROR_MEMORY, "Allocating console restore candidate"); }
+    if (!scratch) return qac_fail(error, QA_ERROR_MEMORY, "Allocating console restore candidate");
     scratch->options = console->options;
-    scratch->options.context = (qa_command_context){0};
+    scratch->options.context.script = NULL;
     scratch->options.startup_commands = NULL;
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, session, bytes, error) && fields(&io, scratch, console, resolve, 0) &&
-        qa_source_save_finish(&io, NULL) && qa_console_idle(console) &&
-        qa_console_save_capture(console, session, &after, error);
-    /* qac_save_text's allocation is owned even if a later header field fails. */
-    scratch->startup = (char *)scratch->options.startup_commands;
-    if (ok && (before.size != after.size || memcmp(before.data, after.data, before.size)))
-        ok = invalid(error, "Candidate console changed during descriptor resolution");
-    if (ok) {
-        qa_console saved = *console;
-        *console = *scratch;
-        *scratch = saved;
-    }
+        qa_source_save_finish(&io, NULL) && qa_console_idle(console);
+    if (ok) state_exchange(console, scratch);
     qa_console_destroy(scratch);
-    qa_source_save_dispose(&io); qa_buffer_free(&before); qa_buffer_free(&after);
+    qa_source_save_dispose(&io);
     if (!ok && (!error || error->code == QA_OK)) invalid(error, "Invalid saved console continuation");
     return ok;
 }
@@ -417,7 +300,7 @@ static bool releases_fields(qa_source_save_io *io,qa_console *state,
                 !chunks_fields(io,&owner->head,&owner->tail,&owner->queued_bytes,resolve,registry) ||
                 !chunks_fields(io,&owner->deferred,&owner->deferred_tail,&owner->deferred_bytes,resolve,registry) ||
                 !qa_source_save_i32(io,&owner->wait) ||
-                !context_fields(io,&owner->wait_context,resolve,registry) ||
+                (owner->wait && !context_fields(io,&owner->wait_context,resolve,registry)) ||
                 !qa_source_save_count(io,&owner->alias_count,SIZE_MAX) ||
                 !qa_source_save_bool(io,&owner->drain_yielded) ||
                 !queue_valid(state,owner->head,owner->queued_bytes,io->error) ||
@@ -484,27 +367,18 @@ bool qa_console_release_save_restore(qa_console *console,qa_session *session,
     if (!console || !session || !resolve || !qa_console_idle(console) || console->program_leases ||
         console->release_leases || console->program_unpublished || console->pending_program)
         return qac_fail(error,QA_ERROR_ARGUMENT,"Release import requires the unleased candidate console");
-    qa_buffer before={0},after={0};
-    if (!qa_console_save_capture(console,session,&before,error)) return false;
     qa_console *scratch=calloc(1,sizeof(*scratch));
-    if (!scratch) { qa_buffer_free(&before); return qac_fail(error,QA_ERROR_MEMORY,"Allocating release import"); }
-    scratch->options=console->options; scratch->options.context=(qa_command_context){0};
+    if (!scratch) return qac_fail(error,QA_ERROR_MEMORY,"Allocating release import");
+    scratch->options=console->options; scratch->options.context.script=NULL;
     scratch->options.startup_commands=NULL;
     qa_source_save_io io={0}; char magic[4];
     bool ok=qa_source_save_reader(&io,session,bytes,error) && qa_source_save_bytes(&io,magic,4) &&
         !memcmp(magic,"QACR",4) &&
         fields(&io,scratch,console,resolve,0) && qa_source_save_bool(&io,&scratch->drain_yielded) &&
-        releases_fields(&io,scratch,resolve,0) &&
-        qa_source_save_finish(&io,NULL) && qa_console_save_capture(console,session,&after,error);
-    scratch->startup=(char *)scratch->options.startup_commands;
-    if (ok && (before.size!=after.size || memcmp(before.data,after.data,before.size)))
-        ok=invalid(error,"Candidate console changed during release resolution");
-    if (ok) {
-        qa_console old=*console; *console=*scratch; *scratch=old;
-        for (qa_console_release *at=console->release_first;at;at=at->next) at->console=console;
-    }
+        releases_fields(&io,scratch,resolve,0) && qa_source_save_finish(&io,NULL) && qa_console_idle(console);
+    if (ok) state_exchange(console,scratch);
     imported_storage_free(scratch); qa_console_destroy(scratch);
-    qa_source_save_dispose(&io); qa_buffer_free(&before); qa_buffer_free(&after);
+    qa_source_save_dispose(&io);
     if (!ok && (!error || error->code==QA_OK)) invalid(error,"Invalid saved console release");
     return ok;
 }

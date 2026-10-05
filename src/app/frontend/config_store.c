@@ -4030,24 +4030,6 @@ bool frontend_config_store_visit(const frontend_config_store *manager,
         (!manager->storage || (manager->storage_seeded && shared_storage_current(manager) &&
             frontend_shared_storage_visit(manager->storage,visitor,error)));
 }
-bool frontend_config_store_restore_command_binding(frontend_config_store *manager,
-    qa_application *application,const qa_console *console,const qa_console_entry *saved,
-    uint64_t registration_owner,qa_command_handler *handler,void **user,qa_error *error)
-{
-    frontend_config_source *source=manager?frontend_config_store_source(manager,console):NULL;
-    const qa_launch_instance *selected=source?instance(source):NULL;
-    const qa_launch_instance *actual=selected && application?
-        qa_launch_snapshot_find(qa_application_launch(application),selected->selection.instance):NULL;
-    if (!manager || !source || !source->configured || !source->released || source->application!=application || source->imported ||
-        !selected || !actual || actual->state!=selected->state || actual->storage!=selected->storage ||
-        !saved || !saved->name || !handler || !user || !saved->engine_command || saved->alias_text ||
-        saved->owner!=source->command.owner || registration_owner!=source->command.owner ||
-        source->scope.provider!=source->command.owner || qa_console_cvars(console)!=source->cvars ||
-        qa_cvars_dialect(source->cvars)!=source->command.dialect ||
-        !source_callback_binding(source,saved->name,handler,user))
-        return fail(error,QA_ERROR_FORMAT,"Saved command callback has no matching physical Source declaration");
-    return true;
-}
 bool frontend_config_store_commands_restored(frontend_config_store *manager,
     qa_application *application,qa_console *console,qa_error *error)
 {

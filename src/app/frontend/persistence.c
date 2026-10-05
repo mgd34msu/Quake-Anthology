@@ -129,15 +129,6 @@ static bool ranking_capture(void *context,qa_application_ranking_effect_fn insta
     qa_application_ranking_checkpoint_refs refs=frontend_ranking_refs(f);
     return refs.capture(refs.context,installed,binding,out,error);
 }
-static bool command_binding(void *context,qa_application *application,const qa_console *console,
-    const qa_console_entry *saved,uint64_t registration_owner,qa_command_handler *handler,void **user,qa_error *error)
-{
-    frontend_persistence *operation=context; qa_frontend *f=operation->candidate;
-    if (!f || f->application!=application)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Command binding has no actual isolated frontend owner");
-    return frontend_config_store_restore_command_binding(f->config_store,application,console,
-        saved,registration_owner,handler,user,error);
-}
 static bool commands_restored(void *context,qa_application *application,qa_console *console,qa_error *error)
 {
     frontend_persistence *operation=context; qa_frontend *f=operation->candidate;
@@ -331,7 +322,7 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
         .rankings=services?services->rankings:NULL,.progress=services?services->progress:NULL,.ranking_source=&operation->ranking,
         .rankings_handoff=services && services->rankings_handoff?ranking_handoff:NULL,
         .prepare_services=prepare_services,.prepare_native_baseline=native_baseline,.prepare_content=prepare_content,
-        .command_binding=command_binding,.commands_restored=commands_restored,.reconnect=reconnect,
+        .commands_restored=commands_restored,.reconnect=reconnect,
         .complete_state=complete_state,.validate=validate,.publish_ready=publish_ready,.publish=publish,
         .discard_services=discard_services};
     return true;

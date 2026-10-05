@@ -107,8 +107,6 @@ typedef struct qa_application_persistence_ops {
      * application is still alive. False retains both owners for a later retry;
      * the application's ordinary destruction follows only after true. */
     bool (*discard_services)(void *, qa_application *, qa_error *);
-    bool (*command_binding)(void *, qa_application *, const qa_console *,
-        const qa_console_entry *, uint64_t registration_owner, qa_command_handler *, void **, qa_error *);
     bool (*commands_restored)(void *, qa_application *, qa_console *, qa_error *);
 } qa_application_persistence_ops;
 
