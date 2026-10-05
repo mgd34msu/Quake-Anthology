@@ -22,8 +22,6 @@ typedef struct frontend_ui_seat_features {
     qa_ui_row *save_rows;
     char *save_details;
     qa_error *save_qualification;
-    char **save_product_keys, **save_product_labels;
-    size_t save_product_count, selected_product;
     size_t selected_save;
     uint64_t save_revision;
     char *save_name;

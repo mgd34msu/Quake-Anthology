@@ -1,6 +1,9 @@
 #include "guest_qc_internal.h"
 #include "map_players_private.h"
 #include "qa/application_q1_save.h"
+#include "qa/application_save_policy.h"
+#include "qa/application_network.h"
+#include "native_q1_save.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/qc_text_save.h"
 #include "guest_qc_original_save.h"
@@ -13,7 +16,7 @@ struct application_q1_original_save {
     uint64_t initial_ns;
     bool applying;
 };
-static const uint8_t original_constructor[8]={'Q','1','O','I',1,0,0,0};
+static const uint8_t original_constructor[4]={'Q','1','O','I'};
 bool application_q1_original_clock(const application_provider *provider,uint64_t *out)
 {
     if (!provider || !provider->application || !provider->launch || !out ||
@@ -49,7 +52,7 @@ static struct application_qc_state *source(qa_application *app,qa_error *error)
         !provider->constructed || !provider->attached || provider->close_pending || !provider->map_bound ||
         provider->state.qc.qualified || !provider->state.qc.game || !provider->state.qc.instance ||
         engine->profile==QA_QC_QUAKEWORLD || !engine->initialized || engine->loading ||
-        engine->max_clients!=1 || !engine->clients || engine->has_frame ||
+        engine->max_clients<1 || !engine->clients || engine->has_frame ||
         engine->input_scope || engine->parked_inputs || engine->client_think_time ||
         qa_qc_program_describe(provider->state.qc.program).api!=QA_QC_API_NETQUAKE) {
         application_fail(error,QA_ERROR_ARGUMENT,"Original save requires its actual idle singleplayer NetQuake source"); return NULL;
@@ -57,13 +60,12 @@ static struct application_qc_state *source(qa_application *app,qa_error *error)
     qa_mode_view mode;
     const qa_launch_snapshot *snapshot=qa_application_launch(app);
     const qa_launch_choices *choices=snapshot?qa_launch_snapshot_choices(snapshot):NULL;
-    if (!choices || choices->world.skill<0 || choices->world.skill>3 || !app->primary_mode_ready ||
-        !qa_modes_read(app->modes,app->primary_mode,&mode,error) || mode.rules.kind!=QA_MODE_SINGLE_PLAYER) {
-        application_fail(error,QA_ERROR_ARGUMENT,"Original save requires its actual chosen singleplayer mode and skill"); return NULL;
+    if (!choices || !app->primary_mode_ready ||
+        !qa_modes_read(app->modes,app->primary_mode,&mode,error)) {
+        application_fail(error,QA_ERROR_ARGUMENT,"Original save requires its actual chosen singleplayer mode"); return NULL;
     }
-    if (!provider->product || choices->world.geometry!=provider->product->id ||
-        choices->world.presentation!=provider->product->id) {
-        application_fail(error,QA_ERROR_ARGUMENT,"Original save cannot preserve mixed world geometry/presentation"); return NULL;
+    if (engine->max_clients!=1 || mode.rules.kind!=QA_MODE_SINGLE_PLAYER) {
+        application_fail(error,QA_ERROR_UNSUPPORTED,"Original Quake saves represent only singleplayer games"); return NULL;
     }
     application_qc_client *client=engine->clients+1; qa_qc_slot_binding binding;
     const qa_actor_record *actor=qa_actors_get(qa_session_actors(app->session),client->actor);
@@ -81,46 +83,11 @@ static struct application_qc_state *source(qa_application *app,qa_error *error)
         matches=qa_actor_id_equal(row->actor,client->actor) && row->seat==client->seat &&
             !row->remote && !row->bot && !row->spectator && !row->deferred && !row->source_begin_pending;
     }
+    if (count>1) {
+        application_fail(error,QA_ERROR_UNSUPPORTED,"Original Quake saves cannot retain several players"); return NULL;
+    }
     if (count!=1 || !matches) {
         application_fail(error,QA_ERROR_ARGUMENT,"Original save requires exactly one local source player"); return NULL;
-    }
-    static const qa_launch_role source_roles[]={QA_ROLE_ARSENAL,QA_ROLE_COMBAT,QA_ROLE_INVENTORY,
-        QA_ROLE_PICKUPS,QA_ROLE_ENGINE_BEHAVIOR,QA_ROLE_TRANSITION,QA_ROLE_HUD,QA_ROLE_EFFECTS,QA_ROLE_AUDIO};
-    for (size_t i=0;i<sizeof(source_roles)/sizeof(*source_roles);++i) {
-        application_provider *selected=application_provider_for(app,client->actor,source_roles[i],"");
-        if (!selected) selected=application_world_provider(app,source_roles[i],"");
-        if (selected!=provider) {
-            application_fail(error,QA_ERROR_ARGUMENT,"Original save cannot preserve mixed source role ownership"); return NULL;
-        }
-    }
-    static const qa_launch_role player_roles[]={QA_ROLE_MOVEMENT,QA_ROLE_CHARACTER,QA_ROLE_BODY};
-    for (size_t i=0;i<sizeof(player_roles)/sizeof(*player_roles);++i) {
-        application_provider *selected=application_provider_for(app,client->actor,player_roles[i],"");
-        if (!selected || !selected->product || selected->product->family!=QA_GAME_Q1 ||
-            (selected!=provider && selected->kind!=APPLICATION_PROVIDER_Q1) ||
-            selected->component.clock.kind!=QA_CLOCK_NETQUAKE) {
-            application_fail(error,QA_ERROR_ARGUMENT,"Original save requires genuine Quake movement/character/body owners"); return NULL;
-        }
-    }
-    for (size_t i=0;i<choices->binding_count;++i) {
-        const qa_launch_binding *selected_binding=choices->bindings+i;
-        if ((selected_binding->role==QA_ROLE_ARSENAL && strcmp(selected_binding->instance,provider->launch->selection.instance)) ||
-            (selected_binding->role==QA_ROLE_BODY && selected_binding->definition && strcmp(selected_binding->definition,"player"))) {
-            application_fail(error,QA_ERROR_ARGUMENT,"Original save cannot preserve selected mixed weapons or character models"); return NULL;
-        }
-    }
-    for (size_t i=0;i<choices->equipment_count;++i)
-        if (choices->equipment[i].selection.grapple!=QA_GRAPPLE_DISABLED || choices->equipment[i].selection.grenades.enabled) {
-            application_fail(error,QA_ERROR_ARGUMENT,"Original save cannot preserve additional equipment owners"); return NULL;
-        }
-    for (size_t i=0;i<choices->monster_count;++i) if (!choices->monsters[i].map_defined) {
-        application_fail(error,QA_ERROR_ARGUMENT,"Original save requires map-defined source enemies"); return NULL;
-    }
-    for (size_t i=0;i<choices->behavior_count;++i) if (choices->behaviors[i].enabled) {
-        application_fail(error,QA_ERROR_ARGUMENT,"Original save cannot preserve additional weapon behavior"); return NULL;
-    }
-    for (size_t i=0;i<choices->mod_count;++i) if (choices->mods[i].enabled) {
-        application_fail(error,QA_ERROR_ARGUMENT,"Original save cannot preserve additional composition components"); return NULL;
     }
     return engine;
 }
@@ -177,65 +144,71 @@ static qa_q1_save_data *copy_save(const qa_q1_save_data *source,qa_error *error)
     if (!ok) { qa_q1_save_destroy(out); return NULL; }
     return out;
 }
-bool qa_application_q1_save_capture(qa_application *app,uint32_t version,const char *comment,
-    qa_q1_save_data **out,qa_error *error)
+bool qa_application_q1_save_capture(qa_application *app,qa_q1_save_data **out,qa_error *error)
 {
-    if (!out || *out || !comment || !*comment || (version!=5 && version!=6))
-        return application_fail(error,QA_ERROR_ARGUMENT,"Original save capture requires a v5/v6 format and empty output");
-    struct application_qc_state *engine=source(app,error);
-    if (!engine) return false;
-    const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(app));
-    const qa_product *product=engine->provider->product;
+    if (!out || *out || !app || app->operation!=APPLICATION_IDLE ||
+        app->state!=QA_APPLICATION_RUNNING || !app->map_view_ready || app->publication_started ||
+        app->client_preparation || !app->world || !app->session || !qa_session_safe(app->session) ||
+        !qa_world_idle(app->world) || !application_guests_idle(app))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Original save requires its actual completed idle game");
+    const qa_product *product=qa_application_save_original_product(app);
+    application_provider *provider=application_world_provider(app,QA_ROLE_ENTITIES,"");
+    if (!product || product->family!=QA_GAME_Q1 || product->edition==QA_EDITION_QUAKEWORLD ||
+        !provider || !provider->constructed || !provider->attached || !provider->map_bound || provider->close_pending)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Original Quake save requires its actual stock NetQuake product");
     const char *map=qa_strings_cstr(qa_session_strings(app->session),app->current_map);
-    if (!map || !product || !product->directory)
+    if (!map || !product->directory)
         return application_fail(error,QA_ERROR_FORMAT,"Original source has no genuine map/product directory");
     qa_q1_save_data *save=calloc(1,sizeof(*save));
     if (!save) return application_fail(error,QA_ERROR_MEMORY,"Allocating original source save");
-    save->version=version; save->skill=choices->world.skill;
-    save->time=(double)engine->source_time_ns/1e9;
-    save->comment=duplicate(comment,error);
-    if (save->comment) for (unsigned char *p=(unsigned char *)save->comment;*p;++p)
-        if ((*p>=9 && *p<=13) || *p==32 || *p==160) *p='_';
+    save->version=product->edition==QA_EDITION_RERELEASE?6:5;
     save->map=duplicate(map,error);
-    if (version==6) {
+    if (save->version==6) {
         const char *directory=product->directory;
         for (const char *p=directory;*p;++p) if (*p=='/' || *p=='\\') directory=p+1;
         save->game_directories=duplicate(directory,error);
     }
-    bool ok=save->comment && save->map && (version!=6 || save->game_directories);
-    if (ok && engine->original_extension.size) {
-        save->extension.data=malloc(engine->original_extension.size);
-        if (!save->extension.data) ok=application_fail(error,QA_ERROR_MEMORY,"Retaining original save extension");
-        else {
-            memcpy(save->extension.data,engine->original_extension.data,engine->original_extension.size);
-            save->extension.size=engine->original_extension.size;
+    bool ok=save->map && (save->version!=6 || save->game_directories);
+    if (ok && provider->kind==APPLICATION_PROVIDER_Q1)
+        ok=application_q1_native_save_capture(app,provider,save,error);
+    else if (ok) {
+        struct application_qc_state *engine=source(app,error);
+        ok=engine!=NULL;
+        const qa_cvar_view *skill=ok?qa_cvars_find(engine->cvars,"skill"):NULL;
+        if (ok && (!skill || !isfinite(skill->number)))
+            ok=application_fail(error,QA_ERROR_FORMAT,"Original source lost its live skill setting");
+        if (ok) {
+            save->skill=qa_source_float_to_i32(fmaxf(0,fminf(3,floorf(skill->number))));
+            save->time=(double)engine->source_time_ns/1e9;
+            int32_t reference=0;float health=0;
+            ok=qa_qc_slot_reference(provider->state.qc.instance,1,&reference,error) &&
+                application_qc_float(engine,reference,"health",&health,error);
+            if (ok && !(health>0)) ok=application_fail(error,QA_ERROR_ARGUMENT,"Cannot save a dead original Quake player");
+        }
+        for (size_t i=0;ok && i<16;++i) {
+            save->spawn_parameters[i]=engine->clients[1].parms[i];
+            if (!isfinite(save->spawn_parameters[i]))
+                ok=application_fail(error,QA_ERROR_FORMAT,"Source spawn parameters are nonfinite");
+        }
+        for (size_t i=0;ok && i<64;++i) {
+            const char *style=engine->lightstyles[i];
+            save->lightstyles[i]=duplicate(style && *style?style:"m",error);ok=save->lightstyles[i]!=NULL;
+        }
+        if (ok) {
+            app->operation=APPLICATION_PERSISTING;
+            ok=qa_qc_text_capture(provider->state.qc.instance,&save->globals,&save->entities,&save->entity_count,error);
+            app->operation=APPLICATION_IDLE;
         }
     }
-    for (size_t i=0;ok && i<16;++i) {
-        save->spawn_parameters[i]=engine->clients[1].parms[i];
-        if (!isfinite(save->spawn_parameters[i])) ok=application_fail(error,QA_ERROR_FORMAT,"Source spawn parameters are nonfinite");
-    }
-    for (size_t i=0;ok && i<64;++i) {
-        const char *style=engine->lightstyles[i];
-        save->lightstyles[i]=duplicate(style && *style?style:"m",error); ok=save->lightstyles[i]!=NULL;
-    }
-    qa_qc_checkpoint *checkpoint=NULL;
-    if (ok) {
-        /* The real host checkpoint refreshes coupled canonical projections.
-         * Its queued console owner is retained while this actual app boundary
-         * admits the same pure persistence callback as shared capture. */
-        app->operation=APPLICATION_PERSISTING;
-        ok=qa_qc_game_capture(engine->provider->state.qc.game,&checkpoint,error) &&
-            qa_qc_text_capture(engine->provider->state.qc.instance,&save->globals,&save->entities,&save->entity_count,error);
-        app->operation=APPLICATION_IDLE;
-    }
-    qa_qc_checkpoint_destroy(checkpoint);
-    if (ok) ok=qa_q1_save_singleplayer(save,error) && save->entities[1].count!=0;
+    qa_application_network_q1_world world={0};
+    if (ok) ok=qa_application_network_q1_world_read(app,provider->owner,&world,error) &&
+        qa_q1_save_comment(save,world.level?world.level:map,world.killed_monsters,world.total_monsters,error) &&
+        qa_q1_save_singleplayer(save,error) && save->entities[1].count!=0;
     if (!ok) {
         if (error && error->code==QA_OK) application_fail(error,QA_ERROR_FORMAT,"Original source save lacks its physical player record");
-        qa_q1_save_destroy(save); return false;
+        qa_q1_save_destroy(save);return false;
     }
-    *out=save; return true;
+    *out=save;return true;
 }
 static bool restore_body(struct application_qc_state *engine,uint32_t slot,qa_error *error)
 {
@@ -267,11 +240,6 @@ static bool restore_think(struct application_qc_state *engine,uint32_t slot,qa_e
 static bool restore_raw(struct application_qc_state *engine,const qa_q1_save_data *save,qa_error *error)
 {
     qa_application *app=engine->provider->application; qa_qc_instance *vm=engine->provider->state.qc.instance;
-    qa_qc_checkpoint *checkpoint=NULL;
-    app->operation=APPLICATION_PERSISTING;
-    bool ok=qa_qc_game_capture(engine->provider->state.qc.game,&checkpoint,error);
-    app->operation=APPLICATION_IDLE; qa_qc_checkpoint_destroy(checkpoint);
-    if (!ok) return false;
     uint32_t previous=qa_qc_entity_count(vm);
     for (uint32_t slot=1;slot<previous;++slot) {
         qa_qc_slot_binding binding;
@@ -358,7 +326,8 @@ bool application_q1_original_admit(const qa_application *app,const qa_q1_save_da
         return application_fail(error,QA_ERROR_FORMAT,"Original import requires a v5/v6 source record and physical player");
     const qa_product *product=qa_catalog_find(app->catalog,key);
     if (!product || product->family!=QA_GAME_Q1 || product->availability!=QA_CONTENT_INSTALLED ||
-        product->edition==QA_EDITION_QUAKEWORLD || save->entity_count>qa_actors_capacity(qa_session_actors(app->session)))
+        product->edition==QA_EDITION_QUAKEWORLD ||
+        save->version!=(product->edition==QA_EDITION_RERELEASE?6u:5u) || save->entity_count>qa_actors_capacity(qa_session_actors(app->session)))
         return application_fail(error,QA_ERROR_ARGUMENT,"Original candidate lacks its genuine selected Quake content/capacity");
     long double nanoseconds=(long double)save->time*1000000000.0L;
     if (!isfinite(nanoseconds) || nanoseconds<0 || nanoseconds>=(long double)UINT64_MAX)

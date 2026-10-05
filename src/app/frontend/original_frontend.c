@@ -21,7 +21,7 @@
 #include "qa/application_q1_save.h"
 #include <SDL.h>
 
-struct qa_frontend_q1_restore {
+struct qa_frontend_original_restore {
     qa_frontend *active,*source;
     const qa_application_persistence_ops *services;
     frontend_persistence_native native;
@@ -85,7 +85,7 @@ static bool original_create(qa_frontend *active,const qa_q1_save_data *save,cons
 {
     qa_frontend *f=calloc(1,sizeof(*f));
     if (!f) return frontend_fail(error,QA_ERROR_MEMORY,"Allocating original source frontend");
-    f->seats=calloc(1,sizeof(*f->seats));
+    f->seats=calloc(QA_INPUT_LOCAL_SEATS,sizeof(*f->seats));
     if (!f->seats) {
         free(f); return frontend_fail(error,QA_ERROR_MEMORY,"Allocating original source seat");
     }
@@ -119,7 +119,7 @@ static bool original_create(qa_frontend *active,const qa_q1_save_data *save,cons
     if (!qa_application_create(&options,&f->application,error)) return false;
     const qa_product *selected=frontend_product_selection(qa_application_catalog(f->application),product);
     if (!selected || selected->availability!=QA_CONTENT_INSTALLED || selected->family!=QA_GAME_Q1)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Original ENGINE settings lack their selected Quake source product");
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Original ENGINE settings lack their selected Source product");
     qa_console_dialect dialect=selected->edition==QA_EDITION_QUAKEWORLD?QA_CONSOLE_QW:QA_CONSOLE_Q1;
     qa_audio_output_format output=active->device?qa_audio_device_requested_configuration(active->device).format:
         active->audio_output_format;
@@ -156,21 +156,21 @@ static bool original_create(qa_frontend *active,const qa_q1_save_data *save,cons
     }
     return qa_application_q1_save_import(f->application,save,product,error);
 }
-bool qa_frontend_q1_restore_begin(qa_frontend *active,const qa_application_persistence_ops *services,
-    const qa_q1_save_data *save,const char *product,qa_frontend_q1_restore **out,qa_error *error)
+bool qa_frontend_original_restore_begin(qa_frontend *active,const qa_application_persistence_ops *services,
+    const qa_q1_save_data *save,const char *product,qa_frontend_original_restore **out,qa_error *error)
 {
     if (!active || !active->application || !save || !product || !*product || !out || *out ||
         active->stepping || active->preparing || active->round || !frontend_owners_idle(active) ||
         !frontend_seat_callbacks_idle(active) || !frontend_cinematic_capture_ready(active))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Original frontend import needs its idle driver and empty operation output");
-    qa_frontend_q1_restore *operation=calloc(1,sizeof(*operation));
+    qa_frontend_original_restore *operation=calloc(1,sizeof(*operation));
     if (!operation) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining original frontend preparation");
     operation->active=active; operation->services=services;
     *out=operation;
     operation->begun=original_create(active,save,product,&operation->source,&operation->native,error);
     return operation->begun;
 }
-bool qa_frontend_q1_restore_advance(qa_frontend_q1_restore *operation,qa_frontend **slot,
+bool qa_frontend_original_restore_advance(qa_frontend_original_restore *operation,qa_frontend **slot,
     bool *complete,qa_frontend **displaced,qa_frontend **retained_candidate,qa_error *error)
 {
     if (!operation || !operation->begun || operation->finished || !slot || *slot!=operation->active ||
@@ -204,9 +204,9 @@ bool qa_frontend_q1_restore_advance(qa_frontend_q1_restore *operation,qa_fronten
     *complete=ok;
     return ok;
 }
-bool qa_frontend_q1_restore_capture_ready(const qa_frontend_q1_restore *operation)
+bool qa_frontend_original_restore_capture_ready(const qa_frontend_original_restore *operation)
 { return operation && operation->begun && operation->finished && operation->final_cut; }
-bool qa_frontend_q1_restore_dispose(qa_frontend_q1_restore *operation,qa_frontend **retained_source,qa_error *error)
+bool qa_frontend_original_restore_dispose(qa_frontend_original_restore *operation,qa_frontend **retained_source,qa_error *error)
 {
     if (!retained_source || *retained_source)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Original preparation disposal needs an empty retained source output");

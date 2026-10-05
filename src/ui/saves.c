@@ -70,7 +70,7 @@ static bool action(void *context, uint32_t seat, qa_ui_id control, const qa_ui_a
     if (control < SLOT || control >= SLOT + 5) return true;
     size_t index = o->page * 5 + (size_t)(control - SLOT);
     if (index >= count) return ui_fail(e, "Save row left its actual listing");
-    if (entries[index].unavailable && !(p->id == o->menus.load && entries[index].requires_product)) {
+    if (entries[index].unavailable) {
         snprintf(o->message, sizeof(o->message), "%s", entries[index].unavailable); return true;
     }
     if (p->id == o->menus.load) return run(o, false, false, entries[index].id, e);
@@ -127,7 +127,7 @@ static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *e) 
                 if(stamp && strftime(date,sizeof(date),"%x %X",stamp))snprintf(o->details[i],sizeof(o->details[i]),"%s  -  %s",entry->game?entry->game:"",date);
             }
             qa_scene_rect_f rect=saving?row((unsigned)i+1):(qa_scene_rect_f){64,118+(float)i*46,512,42};
-            o->controls[n++]=button(p,SLOT+i,o->labels[i],rect,reason(o,saving)==NULL && (saving || !entry->unavailable || entry->requires_product));
+            o->controls[n++]=button(p,SLOT+i,o->labels[i],rect,reason(o,saving)==NULL && (saving || !entry->unavailable));
         }
         if(pages>1) {
             if(saving)o->controls[n++]=button(p,PREVIOUS,"Previous page",row(6),true);
@@ -149,7 +149,6 @@ static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *e) 
                     o->controls[n++]=text(DETAIL+8,entry->unavailable,64,360,1.6f,512,true);
             }
             if(status && *status)o->controls[n++]=text(DETAIL+9,status,64,390,1.5f,512,false);
-            if(o->service.load_choice) { bool present=false;if(!o->service.load_choice(o->service.context,o->controls+n,&present,e))return false;if(present)++n; }
         }
         if(!o->message[0])info(o,reason(o,saving)?reason(o,saving):saving?(status && *status?status:!count?"No saved games yet.":""):"");
     }

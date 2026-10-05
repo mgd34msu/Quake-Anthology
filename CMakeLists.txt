@@ -743,7 +743,7 @@ target_sources(qa_catalog PRIVATE src/content/catalog/q3_product.c)
 target_sources(qa_catalog PRIVATE src/content/catalog/q3_mods.c)
 target_sources(qa_catalog PRIVATE src/content/catalog/q3_write.c)
 target_sources(qa_catalog PRIVATE src/content/catalog/save.c)
-target_link_libraries(qa_catalog PUBLIC qa_content qa_persistence)
+target_link_libraries(qa_catalog PUBLIC qa_content qa_persistence qa_qc)
 
 add_library(qa_configuration STATIC
     src/session/configuration/draft.c

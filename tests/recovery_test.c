@@ -71,7 +71,7 @@ static bool observation(qa_frontend *f,qa_buffer *source,const char *directory,
         !qa_world_body_read(qa_application_world(f->application),actor,&body,error) ||
         !qa_application_control_read(f->application,actor,&control)) return false;
     qa_q1_save_data *data=NULL;double health=0;bool god=false;
-    bool okay=qa_application_q1_save_capture(f->application,6,"Recovery qualification",&data,error) &&
+    bool okay=qa_application_q1_save_capture(f->application,&data,error) &&
         source_health(data,&health,&god,error);
     if (!okay) { qa_q1_save_destroy(data);return false; }
     printf("STATE logical=%u elapsed=%llu origin=%.9g,%.9g,%.9g health=%.9g god=%d input_sequence=%llu\n",
@@ -201,7 +201,7 @@ static int recovery_run(const char *root,const char *binary,const char *user_roo
             !observation(f,&observed,user_root,!strcmp(phase,"record"),&error) || !write_observation(user_root,"expected-source.sav",(qa_bytes){observed.data,observed.size},&error)) goto done;
         if (!command(f,"give h 13",&error)) goto done;
         qa_q1_save_data *tail=NULL;double tail_health=0;bool tail_god=false;
-        bool tail_okay=qa_application_q1_save_capture(f->application,6,"Recovery qualification",&tail,&error) &&
+        bool tail_okay=qa_application_q1_save_capture(f->application,&tail,&error) &&
             source_health(tail,&tail_health,&tail_god,&error);
         qa_q1_save_destroy(tail);
         if (!tail_okay || tail_health!=13 || !tail_god) {

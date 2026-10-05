@@ -66,11 +66,6 @@ bool frontend_ui_features_destroy(qa_frontend *f, qa_error *error)
         qa_sound_captions_destroy(owner->seats[i].captions);
         qa_localization_release(owner->seats[i].localization); free(owner->seats[i].language);
         qa_save_slot_listing_free(&owner->seats[i].saves);
-        for (size_t j=0;j<owner->seats[i].save_product_count;++j) {
-            free(owner->seats[i].save_product_keys?owner->seats[i].save_product_keys[j]:NULL);
-            free(owner->seats[i].save_product_labels?owner->seats[i].save_product_labels[j]:NULL);
-        }
-        free(owner->seats[i].save_product_keys); free(owner->seats[i].save_product_labels);
         free(owner->seats[i].save_qualification);
         free(owner->seats[i].save_rows); free(owner->seats[i].save_details); free(owner->seats[i].save_name);
         free(owner->seats[i].campaign_rows); free(owner->seats[i].campaign_labels);

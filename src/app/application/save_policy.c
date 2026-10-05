@@ -7,6 +7,63 @@
 #include "qa/game_q3_source.h"
 #include <stdlib.h>
 
+static bool stock_provider(const qa_catalog *catalog,const qa_launch_provider *selection,
+    const qa_product *product)
+{
+    if (!selection || selection->product!=product->id ||
+        (selection->component && *selection->component)) return false;
+    qa_clock_kind clock=product->family==QA_GAME_Q3?QA_CLOCK_Q3:product->family==QA_GAME_Q2?
+        (product->edition==QA_EDITION_RERELEASE?QA_CLOCK_Q2_RERELEASE:QA_CLOCK_Q2_CLASSIC):
+        product->edition==QA_EDITION_QUAKEWORLD?QA_CLOCK_QUAKEWORLD:QA_CLOCK_NETQUAKE;
+    if (selection->clock.kind!=clock || (selection->options.size &&
+        !(product->family==QA_GAME_Q1 && selection->runtime==QA_PROGRAM_QUAKEC &&
+          selection->options.size==4 && selection->options.data && !memcmp(selection->options.data,"Q1OI",4)))) return false;
+    const qa_product *program=qa_catalog_product(catalog,product->program_product);
+    if (!program) program=product;
+    if (selection->implementation && strcmp(selection->implementation,program->key)) return false;
+    if (selection->runtime==QA_PROGRAM_BUILTIN)
+        return !selection->artifact || !*selection->artifact;
+    qa_program_kind original=product->program_kind!=QA_PROGRAM_BUILTIN?product->program_kind:
+        product->family==QA_GAME_Q1?QA_PROGRAM_QUAKEC:
+        product->family==QA_GAME_Q2?QA_PROGRAM_NATIVE:QA_PROGRAM_QVM;
+    return selection->runtime==original && product->program && selection->artifact &&
+        !strcmp(selection->artifact,product->program);
+}
+const qa_product *qa_application_save_original_product(const qa_application *app)
+{
+    const qa_launch_snapshot *snapshot=app?qa_application_launch(app):NULL;
+    const qa_launch_choices *choices=snapshot?qa_launch_snapshot_choices(snapshot):NULL;
+    const application_provider *source=app?application_world_provider((qa_application *)app,QA_ROLE_ENTITIES,""):NULL;
+    const qa_product *product=source?source->product:NULL;
+    if (!choices || !product || !product->builtin || !source->launch ||
+        choices->world.geometry!=product->id || choices->world.presentation!=product->id ||
+        !stock_provider(app->catalog,&source->launch->selection,product)) return NULL;
+    if (source->kind==APPLICATION_PROVIDER_QC && source->state.qc.qualified) return NULL;
+    for (size_t i=0;i<choices->binding_count;++i) {
+        const qa_launch_binding *binding=choices->bindings+i;
+        const qa_launch_provider *selected=NULL;
+        for (size_t j=0;j<choices->provider_count;++j)
+            if (!strcmp(choices->providers[j].instance,binding->instance)) { selected=choices->providers+j; break; }
+        if (!stock_provider(app->catalog,selected,product)) return NULL;
+        if (binding->selector && *binding->selector) return NULL;
+        if (binding->definition && *binding->definition && binding->role!=QA_ROLE_BODY &&
+            binding->role!=QA_ROLE_SKIN && binding->role!=QA_ROLE_VOICE && binding->role!=QA_ROLE_BOTS) return NULL;
+        if (product->family==QA_GAME_Q1 && binding->role==QA_ROLE_BODY &&
+            binding->definition && *binding->definition && strcmp(binding->definition,"player")) return NULL;
+    }
+    for (size_t i=0;i<choices->mod_count;++i) if (choices->mods[i].enabled) return NULL;
+    for (size_t i=0;i<choices->behavior_count;++i) if (choices->behaviors[i].enabled) return NULL;
+    if (choices->loadout_count) return NULL;
+    for (size_t i=0;i<choices->monster_count;++i) if (!choices->monsters[i].map_defined) return NULL;
+    bool ctf=!strcmp(product->campaign,"ctf"),lm=!strcmp(product->campaign,"lmctf");
+    qa_grapple_mechanic grapple=ctf?(product->family==QA_GAME_Q1?QA_GRAPPLE_THREEWAVE:QA_GRAPPLE_Q2_CTF):
+        lm?QA_GRAPPLE_LMCTF:QA_GRAPPLE_DISABLED;
+    for (size_t i=0;i<choices->equipment_count;++i)
+        if (choices->equipment[i].selection.grapple!=grapple || choices->equipment[i].selection.grenades.enabled)
+            return NULL;
+    return product;
+}
+
 static bool selected_player(const qa_application *app,const application_player_record *record,bool dedicated)
 {
     return !record->retiring && !record->deferred && !record->source_begin_pending &&

@@ -4,8 +4,7 @@
 #include "qa/q1_save.h"
 /* Actual primary singleplayer NetQuake source, one fully admitted local human
  * in physical client row1, completed source/canonical callback boundary. */
-bool qa_application_q1_save_capture(qa_application *,uint32_t version,
-    const char *comment,qa_q1_save_data **,qa_error *);
+bool qa_application_q1_save_capture(qa_application *,qa_q1_save_data **,qa_error *);
 /* Pure shared header/product/capacity admission against the actual application
  * catalog and actor owner. No VM construction, source callback or file access.
  * The fresh importer uses these same guards before preparing any world. */

@@ -4,6 +4,7 @@
 #include "tools_restore.h"
 #include "persistence.h"
 #include "config_store.h"
+#include "network_session.h"
 #include "campaign_cinematic.h"
 #include "qa/frontend_save.h"
 #include "qa/application_save_policy.h"
@@ -13,11 +14,9 @@
 #include "qa/application_startup_prepare.h"
 #include <stdio.h>
 
-typedef enum save_command_format { SAVE_SHARED, SAVE_Q1_V5, SAVE_Q1_V6 } save_command_format;
 typedef struct save_command_request {
     bool load;
-    save_command_format format;
-    char *name, *product, *script;
+    char *name, *script;
     qa_command_context context;
 } save_command_request;
 struct frontend_save_commands {
@@ -27,7 +26,7 @@ struct frontend_save_commands {
     qa_autosave_state autosave;
     uint64_t next_nonce, command_registry;
     save_command_request request;
-    qa_frontend_q1_restore *original;
+    qa_frontend_original_restore *original;
     qa_save_image *campaign;
     qa_frontend *retained[3];
     bool pending, draining;
@@ -69,8 +68,6 @@ static bool recovery_checkpoint(qa_frontend *f,const qa_save_image *image,qa_err
     }
     return ok;
 }
-
-
 
 static bool command_fields(qa_source_save_io *io,recovery_command *command)
 {
@@ -258,7 +255,7 @@ static char *copy_text(const char *text, qa_error *error)
 }
 static void request_free(save_command_request *request)
 {
-    free(request->name); free(request->product); free(request->script);
+    free(request->name); free(request->script);
     *request = (save_command_request){0};
 }
 static bool cleanup_pending(const frontend_save_commands *owner)
@@ -305,7 +302,7 @@ bool frontend_save_commands_capture_ready(const qa_frontend *f)
 {
     return f && f->save_commands && !cleanup_pending(f->save_commands)
         && (!f->save_commands->original || (f->save_commands->draining &&
-            qa_frontend_q1_restore_capture_ready(f->save_commands->original)))
+            qa_frontend_original_restore_capture_ready(f->save_commands->original)))
         && (!f->save_commands->draining || !f->save_commands->pending);
 }
 bool frontend_save_commands_destroy(qa_frontend *f, qa_error *error)
@@ -317,9 +314,9 @@ bool frontend_save_commands_destroy(qa_frontend *f, qa_error *error)
     if (!cleanup_retained(owner, error)) return false;
     if (!qa_save_image_destroy_checked(&owner->campaign,error)) return false;
     if (owner->original) {
-        qa_frontend_q1_restore *original = owner->original;
+        qa_frontend_original_restore *original = owner->original;
         owner->original = NULL; owner->draining = true;
-        bool disposed = qa_frontend_q1_restore_dispose(original, &owner->retained[1], error);
+        bool disposed = qa_frontend_original_restore_dispose(original, &owner->retained[1], error);
         request_free(&owner->request); owner->pending = false;
         owner->draining = false;
         if (!disposed) return false;
@@ -336,24 +333,37 @@ bool frontend_save_commands_destroy(qa_frontend *f, qa_error *error)
     free(owner); f->save_commands = NULL; return true;
 }
 
-static char *slot_name(frontend_save_commands *owner, const char *input, qa_error *error)
+static bool absolute_path(const char *input)
+{
+    if (input[0]=='/') return true;
+#ifdef _WIN32
+    return input[0]=='\\' ||
+        (((input[0]>='A' && input[0]<='Z') || (input[0]>='a' && input[0]<='z')) &&
+            input[1]==':' && (input[2]=='/' || input[2]=='\\'));
+#else
+    return false;
+#endif
+}
+static bool path_extension(const char *input)
+{
+    const char *leaf=strrchr(input,'/');leaf=leaf?leaf+1:input;
+#ifdef _WIN32
+    const char *backslash=strrchr(input,'\\');
+    if (backslash && backslash+1>leaf) leaf=backslash+1;
+#endif
+    const char *dot=strrchr(leaf,'.');
+    return dot && dot!=leaf && strcmp(leaf,"..");
+}
+static char *slot_name(frontend_save_commands *owner, const char *input, bool load, qa_error *error)
 {
     char *directory = NULL;
     if (!qa_fs_root_join(owner->root, "saves", &directory, error)) return NULL;
-    const char *leaf = strrchr(input, '/'); leaf = leaf ? leaf + 1 : input;
-    bool absolute = input[0] == '/';
+    bool absolute=absolute_path(input);
 #ifdef _WIN32
-    const char *backslash = strrchr(input, '\\');
-    if (backslash && backslash + 1 > leaf) leaf = backslash + 1;
-    absolute = absolute || input[0] == '\\'
-        || (((input[0] >= 'A' && input[0] <= 'Z') || (input[0] >= 'a' && input[0] <= 'z'))
-            && input[1] == ':' && (input[2] == '/' || input[2] == '\\'));
     for (char *part = directory; *part; ++part) if (*part == '\\') *part = '/';
 #endif
-    const char *dot = strrchr(leaf, '.');
-    bool extension = dot && dot != leaf && strcmp(leaf, "..");
     size_t length = strlen(input), prefix = absolute ? 0 : strlen(directory) + 1;
-    size_t suffix = extension ? 0 : 4;
+    size_t suffix=load || path_extension(input)?0:4;
     if (length > SIZE_MAX - suffix - 1 || prefix > SIZE_MAX - length - suffix - 1) {
         free(directory); frontend_fail(error, QA_ERROR_MEMORY, "Save path exceeds address space"); return NULL;
     }
@@ -390,6 +400,7 @@ static char *slot_name(frontend_save_commands *owner, const char *input, qa_erro
     resolved[used] = 0;
     size_t directory_length = strlen(directory);
     if (strncmp(resolved, directory, directory_length) || resolved[directory_length] != '/') {
+        if (load && absolute_path(resolved)) { free(directory);return resolved; }
         free(resolved); free(directory);
         frontend_fail(error, QA_ERROR_ARGUMENT, "Save path is outside the save directory"); return NULL;
     }
@@ -410,15 +421,14 @@ char *frontend_save_commands_slot_path(const qa_frontend *f, const char *name, q
     if (!f || !f->save_commands || !name || !*name) {
         frontend_fail(error, QA_ERROR_ARGUMENT, "Save slot requires its actual directory and name"); return NULL;
     }
-    return slot_name(f->save_commands, name, error);
+    return slot_name(f->save_commands, name, false, error);
 }
 bool frontend_save_commands_queue(qa_frontend *f, const qa_command_invocation *command, qa_error *error)
 {
     if (!f || !f->application || !f->save_commands || !command ||
-        command->argc < 2 || command->argc > 3 || !command->argv ||
-        !command->argv[0] || !command->argv[1] || !*command->argv[1] ||
-        (command->argc == 3 && (!command->argv[2] || !*command->argv[2])))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Usage: save <name or path> [shared|v5|v6], load <name or path> [source-product]");
+        command->argc != 2 || !command->argv ||
+        !command->argv[0] || !command->argv[1] || !*command->argv[1])
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Usage: save <name or path>, load <name or path>");
     frontend_save_commands *owner = f->save_commands;
     if (owner->pending || owner->original || owner->draining || cleanup_pending(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Another save operation is in progress");
@@ -427,21 +437,11 @@ bool frontend_save_commands_queue(qa_frontend *f, const qa_command_invocation *c
     if (!request.load && strcmp(command->argv[0], "save"))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Unknown save command");
     if (!qa_application_capture_command_context(f->application, &command->context, &request.context, error)) return false;
-    if (!request.load && command->argc == 3) {
-        if (!strcmp(command->argv[2], "v5")) request.format = SAVE_Q1_V5;
-        else if (!strcmp(command->argv[2], "v6")) request.format = SAVE_Q1_V6;
-        else if (strcmp(command->argv[2], "shared"))
-            return frontend_fail(error, QA_ERROR_ARGUMENT, "Save format must be shared, v5 or v6");
-    }
-    request.name = slot_name(owner, command->argv[1], error);
+    request.name = slot_name(owner, command->argv[1], request.load, error);
     if (!request.name) return false;
     request.script = copy_text(request.context.script, error);
     if (request.context.script && !request.script) { request_free(&request); return false; }
     request.context.script = request.script;
-    if (request.load && command->argc == 3) {
-        request.product = copy_text(command->argv[2], error);
-        if (!request.product) { request_free(&request); return false; }
-    }
     owner->request = request; owner->pending = true; return true;
 }
 static bool root_fields(qa_source_save_io *io, frontend_save_commands *owner)
@@ -473,14 +473,11 @@ static bool fields(qa_source_save_io *io, frontend_save_commands *owner)
     if (ok && io->direction == QA_SOURCE_SAVE_READ) owner->command_registry = registry;
     if (!ok || !owner->pending) return ok;
     save_command_request *request = &owner->request;
-    uint32_t format = request->format;
-    ok = qa_source_save_bool(io, &request->load) && qa_source_save_u32(io, &format)
-        && format <= SAVE_Q1_V6 && (!request->load || format == SAVE_SHARED)
-        && qa_source_save_owned_text(io, &request->name) && request->name && qa_save_slot_name(request->name, io->error)
-        && !strncmp(request->name, "saves/", 6) && qa_source_save_owned_text(io, &request->product)
-        && (!request->product || (request->load && *request->product))
+    ok = qa_source_save_bool(io, &request->load)
+        && qa_source_save_owned_text(io, &request->name) && request->name &&
+        ((request->load && absolute_path(request->name)) ||
+            (qa_save_slot_name(request->name,io->error) && !strncmp(request->name,"saves/",6)))
         && frontend_save_command_context(io, &request->context, &request->script, registry);
-    if (ok) request->format = (save_command_format)format;
     return ok;
 }
 bool frontend_save_commands_checkpoint(qa_frontend *f, qa_buffer *out, qa_error *error)
@@ -727,37 +724,87 @@ static bool recovery_drain(qa_frontend **slot,qa_error *error)
     if (cleanup_retained(current,&cleanup) && ok) return recovery_start(*slot,error);
     return true;
 }
+static bool read_saved(frontend_save_commands *owner,const char *name,qa_save_image **image,
+    qa_q1_save_data **source,char **path,qa_error *error)
+{
+    qa_fs_root *root=owner->root,*external=NULL;
+    char *relative=copy_text(name,error);
+    if (!relative) return false;
+    bool ok=true;
+#ifdef _WIN32
+    for (char *part=relative;*part;++part) if (*part=='\\') *part='/';
+#endif
+    if (absolute_path(name)) {
+        char *slash=strrchr(relative,'/');
+        size_t parent=slash?(size_t)(slash-relative):0;
+        if (parent==0) parent=1;
+#ifdef _WIN32
+        else if (parent==2 && relative[1]==':') parent=3;
+#endif
+        char *directory=malloc(parent+1);
+        if (!directory) ok=frontend_fail(error,QA_ERROR_MEMORY,"Retaining original save directory");
+        else {
+            memcpy(directory,relative,parent);directory[parent]=0;
+            ok=qa_fs_root_open(directory,&external,error);
+            free(directory);
+        }
+        if (ok) { root=external;memmove(relative,slash+1,strlen(slash+1)+1); }
+    }
+    qa_fs_entry_kind kind=QA_FS_MISSING;
+    if (ok) ok=qa_fs_root_status(root,relative,&kind,NULL,error);
+    if (ok && kind==QA_FS_MISSING && !path_extension(relative)) {
+        size_t length=strlen(relative);
+        char *file=length<=SIZE_MAX-5?realloc(relative,length+5):NULL;
+        if (!file) ok=frontend_fail(error,QA_ERROR_MEMORY,"Retaining save filename");
+        else { relative=file;memcpy(relative+length,".sav",5); }
+    }
+    if (ok) ok=qa_save_slot_name(relative,error) && qa_saved_game_read(root,relative,image,source,error) &&
+        qa_fs_root_join(root,relative,path,error);
+    free(relative);qa_fs_root_close(external);
+    return ok;
+}
 static bool restore_saved(qa_frontend **slot, frontend_save_commands *owner,
     const save_command_request *request, qa_save_image **image, qa_q1_save_data **source,
     qa_frontend **displaced, qa_frontend **retained_candidate,
     qa_error *error)
 {
-    if (!qa_saved_game_read(owner->root, request->name, image, source, error)) return false;
+    char *path=NULL;
+    if (!read_saved(owner,request->name,image,source,&path,error)) return false;
     qa_frontend *f = *slot;
-    if (*image) return qa_frontend_persistence_restore(slot, f->options.persistence_services,
-        *image, displaced, retained_candidate, error);
-    char *path = NULL; const qa_product *product = NULL;
-    bool ok = qa_fs_root_join(owner->root, request->name, &path, error) &&
-        qa_q1_save_select_product(qa_application_catalog(f->application), *source, path,
-            request->product, &product, error);
+    if (*image) {
+        free(path);
+        return qa_frontend_persistence_restore(slot,f->options.persistence_services,
+            *image,displaced,retained_candidate,error);
+    }
+    const qa_product *product=NULL;
+    bool ok=qa_q1_save_select_product(qa_application_catalog(f->application),*source,path,&product,error);
     free(path);
-    return ok && qa_frontend_q1_restore_begin(f, f->options.persistence_services, *source,
-        product->key, &owner->original, error);
+    return ok && qa_frontend_original_restore_begin(f,f->options.persistence_services,*source,
+        product->key,&owner->original,error);
 }
-static bool write_original(qa_frontend *f, frontend_save_commands *owner,
-    const save_command_request *request, uint64_t nonce, qa_q1_save_data **source, qa_error *error)
+
+static bool write_game(qa_frontend *f,qa_fs_root *root,const char *name,
+    qa_save_purpose purpose,uint64_t nonce,qa_save_image **image,qa_q1_save_data **source,qa_error *error)
 {
-    const char *leaf = strrchr(request->name, '/');
-    leaf = leaf ? leaf + 1 : request->name;
-    char *comment = copy_text(leaf, error);
-    if (!comment) return false;
-    size_t length = strlen(comment);
-    if (length >= 4 && !strcmp(comment + length - 4, ".sav")) comment[length - 4] = 0;
-    bool ok = qa_application_q1_save_capture(f->application,
-        request->format == SAVE_Q1_V5 ? 5 : 6, comment, source, error) &&
-        qa_q1_save_write(owner->root, request->name, *source, nonce, error);
-    free(comment);
-    return ok;
+    const qa_product *product=qa_application_save_original_product(f->application);
+    bool original=false,written=false;
+    if (product && product->family==QA_GAME_Q1 && product->edition!=QA_EDITION_QUAKEWORLD) {
+        original=true;
+        if (!frontend_cinematic_capture_ready(f))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Cannot save during standalone cinematic playback");
+        written=qa_application_q1_save_capture(f->application,source,error) &&
+            qa_q1_save_write(root,name,*source,nonce,error);
+    }
+    if (original) {
+        if (written) return true;
+        if (!error || error->code!=QA_ERROR_UNSUPPORTED) return false;
+        qa_console_emit(qa_application_console(f->application),NULL,"Original save cannot represent this state: ");
+        qa_console_emit(qa_application_console(f->application),NULL,error->message);
+        qa_console_emit(qa_application_console(f->application),NULL,". Saving shared game state.\n");
+        *error=(qa_error){0};
+    }
+    return (*image || qa_frontend_persistence_capture(f,f->options.persistence_services,purpose,image,error)) &&
+        qa_save_write(root,name,*image,nonce,error);
 }
 bool frontend_save_commands_campaign(qa_frontend *f, uint64_t revision, bool *handled,
     qa_error *error)
@@ -828,11 +875,9 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
     if (!ok) frontend_fail(&local, QA_ERROR_ARGUMENT, "Save command belongs to a retired world");
     if (ok) ok = qa_application_save_policy(f->application, frontend_network_save_authority(f),
         f->options.dedicated, request.load, QA_SAVE_MANUAL, &local);
-    if (ok && !request.load && request.format != SAVE_SHARED && !frontend_cinematic_capture_ready(f))
-        ok = frontend_fail(&local, QA_ERROR_ARGUMENT, "Original save export cannot capture standalone cinematic playback");
     bool complete = !owner->original;
     if (owner->original) {
-        if (ok) ok = qa_frontend_q1_restore_advance(owner->original, slot, &complete,
+        if (ok) ok = qa_frontend_original_restore_advance(owner->original, slot, &complete,
             &displaced, &retained_candidate, &local);
     } else if (ok && request.load) {
         ok = restore_saved(slot, owner, &request, &image, &source, &displaced,
@@ -842,10 +887,7 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
         if (owner->next_nonce == UINT64_MAX) ok = frontend_fail(&local, QA_ERROR_ARGUMENT, "Save write sequence exhausted");
         else {
             uint64_t nonce = owner->next_nonce++;
-            if (request.format == SAVE_SHARED)
-                ok = qa_frontend_persistence_capture(f, f->options.persistence_services, QA_SAVE_MANUAL, &image, &local)
-                    && qa_save_write(owner->root, request.name, image, nonce, &local);
-            else ok = write_original(f, owner, &request, nonce, &source, &local);
+            ok=write_game(f,owner->root,request.name,QA_SAVE_MANUAL,nonce,&image,&source,&local);
         }
     }
     if (!frontend_save_image_release(f,&image,ok?&local:&cleanup)) ok=false;
@@ -855,9 +897,9 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
         return true;
     }
     if (owner->original) {
-        qa_frontend_q1_restore *original = owner->original;
+        qa_frontend_original_restore *original = owner->original;
         owner->original = NULL;
-        (void)qa_frontend_q1_restore_dispose(original, &retained_source, &cleanup);
+        (void)qa_frontend_original_restore_dispose(original, &retained_source, &cleanup);
     }
     owner->request = (save_command_request){0}; owner->pending = false;
     owner->draining = false;
@@ -894,35 +936,48 @@ bool frontend_save_commands_autosave(qa_frontend *f, qa_error *error)
     bool ok=qa_autosave_level_entry(&owner->autosave,request.world_generation,request.fresh_entry,&local);
     if (ok && request.authored && owner->autosave.enabled) owner->autosave.pending=true;
     if (ok) ok=recovery_directory(owner,true,&local);
-    qa_save_image *image=NULL;
+    qa_save_image *image=NULL; qa_q1_save_data *source=NULL;char *autosave=NULL;
     owner->draining=true;
     if (ok) ok=qa_frontend_persistence_capture(f,f->options.persistence_services,QA_SAVE_LEVEL_ENTRY,&image,&local);
     if (ok && owner->autosave.pending) {
-        if (owner->next_nonce==UINT64_MAX) ok=frontend_fail(&local,QA_ERROR_ARGUMENT,"Autosave write sequence exhausted");
-        else {
-            ok=qa_autosave_write(&owner->autosave,owner->level_root,image,owner->next_nonce++,&local);
+        const qa_launch_snapshot *snapshot=qa_application_launch(f->application);
+        const qa_launch_instance *instance=qa_application_selected_instance(f->application,snapshot,(qa_actor_id){0},QA_ROLE_ENTITIES,"");
+        const qa_product *product=instance?qa_catalog_product(qa_application_catalog(f->application),instance->selection.product):NULL;
+        if (!product || !product->key)
+            ok=frontend_fail(&local,QA_ERROR_ARGUMENT,"Autosave requires its actual GAME profile");
+        size_t length=ok?strlen(product->key):0;
+        if (ok) {
+            autosave=length<=SIZE_MAX-sizeof("autosave-.sav")?malloc(length+sizeof("autosave-.sav")):NULL;
+            if (!autosave) ok=frontend_fail(&local,QA_ERROR_MEMORY,"Retaining actual GAME autosave slot");
+            else {
+                memcpy(autosave,"autosave-",9);memcpy(autosave+9,product->key,length);
+                memcpy(autosave+9+length,".sav",5);
+                ok=qa_save_slot_name(autosave,&local);
+            }
+        }
+        if (ok && owner->next_nonce==UINT64_MAX) ok=frontend_fail(&local,QA_ERROR_ARGUMENT,"Autosave write sequence exhausted");
+        if (ok) {
+            ok=write_game(f,owner->level_root,autosave,QA_SAVE_LEVEL_ENTRY,owner->next_nonce++,&image,&source,&local);
+            if (ok) owner->autosave.pending=false;
             autosaved=ok;
         }
     }
     bool recovered=false;
     if (ok && !owner->recovery_available && !owner->recovery_abandoned) {
-        ok=owner->recovery ? qa_recovery_checkpoint(owner->recovery,image,&local) :
-            qa_recovery_begin(owner->level_root,"recovery.qdemo",image,&owner->recovery,&local);
+        ok=recovery_checkpoint(f,image,&local);
         if (ok) {
-            owner->recovery_time_ns=qa_save_image_metadata(image)->elapsed_ns;
-            owner->recovery_checkpoint_generation=qa_application_configuration_generation(f->application);
-            owner->recovery_flush_ns=f->wall_time_ns;owner->recovery_data=false;
-            owner->recovery_advanced=false;owner->recovery_completed=false;
-            owner->recovery_bound=false;recovered=true;
+            recovered=true;
         } else recovery_fault(f,&local);
     }
     if (!frontend_save_image_release(f,&image,ok?&local:&cleanup)) ok=false;
+    qa_q1_save_destroy(source);
     owner->draining=false;
-    if (!qa_application_save_request_complete(f->application,&request,error)) return false;
+    if (!qa_application_save_request_complete(f->application,&request,error)) { free(autosave);return false; }
     char message[512];
-    if (ok && !autosaved && !recovered) return true;
-    snprintf(message,sizeof(message),"%s%s.\n",ok?"Level checkpoint saved: ":"Autosave/recovery failed: ",
-        ok?autosaved?"saves/autosave.sav":"saves/recovery.qdemo":local.message);
+    if (ok && !autosaved && !recovered) { free(autosave);return true; }
+    if (ok) snprintf(message,sizeof(message),"Level checkpoint saved: saves/%s.\n",autosaved?autosave:"recovery.qdemo");
+    else snprintf(message,sizeof(message),"Autosave/recovery failed: %s.\n",local.message);
+    free(autosave);
     qa_console_emit(qa_application_console(f->application),NULL,message);
     return true;
 }

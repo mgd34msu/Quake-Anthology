@@ -18,21 +18,21 @@ bool qa_frontend_persistence_restore(qa_frontend **active, const qa_application_
  * publish their shared continuation through the same native transaction. Both
  * failed source and final candidate graphs remain independently reachable.
  * Publication may succeed while source retirement transfers to retained_source. */
-typedef struct qa_frontend_q1_restore qa_frontend_q1_restore;
+typedef struct qa_frontend_original_restore qa_frontend_original_restore;
 /* Begin owns a genuine fresh frontend and exact application save copy. A
  * partially constructed operation can be returned on failure; dispose it.
  * Services remain borrowed until disposal. The active frontend is untouched. */
-bool qa_frontend_q1_restore_begin(qa_frontend *active,const qa_application_persistence_ops *,
-    const qa_q1_save_data *,const char *product,qa_frontend_q1_restore **,qa_error *);
+bool qa_frontend_original_restore_begin(qa_frontend *active,const qa_application_persistence_ops *,
+    const qa_q1_save_data *,const char *product,qa_frontend_original_restore **,qa_error *);
 /* Call once after each real driver frame, retaining the operation while
  * complete is false. Startup script waits advance before raw import; the
  * candidate receives no gameplay frame before raw state is installed. */
-bool qa_frontend_q1_restore_advance(qa_frontend_q1_restore *,qa_frontend **active,
+bool qa_frontend_original_restore_advance(qa_frontend_original_restore *,qa_frontend **active,
     bool *complete,qa_frontend **displaced,qa_frontend **retained_candidate,qa_error *);
 /* Only the final shared capture/publication transaction is admitted. Pending
  * startup phases remain excluded from ordinary save capture. */
-bool qa_frontend_q1_restore_capture_ready(const qa_frontend_q1_restore *);
+bool qa_frontend_original_restore_capture_ready(const qa_frontend_original_restore *);
 /* Always consumes the operation. A constructor that rejects cancellation or
  * retirement transfers whole to the distinct empty retained_source output. */
-bool qa_frontend_q1_restore_dispose(qa_frontend_q1_restore *,qa_frontend **retained_source,qa_error *);
+bool qa_frontend_original_restore_dispose(qa_frontend_original_restore *,qa_frontend **retained_source,qa_error *);
 #endif
