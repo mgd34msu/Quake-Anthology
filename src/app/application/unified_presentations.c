@@ -7,6 +7,7 @@
 #include "qa/application_native_q3_presentation.h"
 #include "qa/application_native_q2_presentation.h"
 #include "qa/application_selected_q3_character.h"
+#include "qa/application_q3_asset_selection.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q1_bots.h"
@@ -314,11 +315,21 @@ bool application_unified_presentations_build(qa_application *app, const applicat
         qa_application_selected_q3_character c; bool found;
         if (!qa_application_selected_q3_character_read(app, id, &c, &found, error)) { ok = false; break; }
         if (found && c.present) {
-            qa_q3_player_state p;
-            if (!qa_q3_player_read(c.game, id, &p)) {
-                ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified character lost its actual selected player"); break;
+            qa_application_q3_asset_selection appearance; bool appearance_found;
+            if (!qa_application_q3_asset_selection_read(app, id, QA_ROLE_SKIN,
+                    &appearance, &appearance_found, error)) { ok = false; break; }
+            uint32_t physical_client;
+            /* Original CG owns this physical client's model/hmodel through CS_PLAYERS. */
+            bool source_character = appearance_found && c.provider == source->owner &&
+                appearance.provider == source->owner &&
+                qa_q3_native_client_slot(c.game, id, &physical_client, NULL);
+            if (!source_character) {
+                qa_q3_player_state p;
+                if (!qa_q3_player_read(c.game, id, &p)) {
+                    ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified character lost its actual selected player"); break;
+                }
+                if (!character(visuals, &c, &p)) { ok = false; break; }
             }
-            if (!character(visuals, &c, &p)) { ok = false; break; }
             if (!qa_application_selected_q3_character_current(app, &c)) {
                 ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified character changed its actual selected continuation"); break;
             }
