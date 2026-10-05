@@ -59,13 +59,13 @@ bool frontend_scene_model_content_clone(const qa_scene_model *model,qa_scene_mod
         frontend_model_source source; frontend_model_lease *lease=NULL;
         if(!frontend_scene_model_source_read(model,kind,&source) ||
             !frontend_model_lease_clone(held.context,&lease,error)) return false;
-        *out=(qa_scene_model_content_lease){lease,model_release}; return true;
+        *out=(qa_scene_model_content_lease){lease,model_release,source.resource}; return true;
     }
     if(kind==QA_SCENE_MODEL_CONTENT_ANIMATION && held.release==animation_release) {
         frontend_animation_source source; frontend_animation_lease *lease=NULL;
         if(!frontend_scene_animation_source_read(model,&source) ||
             !frontend_animation_lease_clone(held.context,&lease,error)) return false;
-        *out=(qa_scene_model_content_lease){lease,animation_release}; return true;
+        *out=(qa_scene_model_content_lease){lease,animation_release,source.resource}; return true;
     }
     return frontend_visual_scene_model_content_clone(model,kind,out,error);
 }
@@ -76,7 +76,9 @@ static bool model_retain(void *context, const qa_model *source, qa_scene_model_c
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Scene model retention requires its real inventory and empty lease");
     frontend_model_lease *token=NULL;
     if (!frontend_model_retain(scope->models,source,&token,error)) return false;
-    *out=(qa_scene_model_content_lease){token,model_release}; return true;
+    frontend_model_source held;
+    if (!frontend_model_lease_source(token, &held)) { frontend_model_release(token); return false; }
+    *out=(qa_scene_model_content_lease){token,model_release,held.resource}; return true;
 }
 static bool animation_retain(void *context, const qa_model_animation *source, qa_scene_model_content_lease *out, qa_error *error)
 {
@@ -85,7 +87,9 @@ static bool animation_retain(void *context, const qa_model_animation *source, qa
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Scene animation retention requires its real inventory and empty lease");
     frontend_animation_lease *token=NULL;
     if (!frontend_animation_retain(scope->models,source,&token,error)) return false;
-    *out=(qa_scene_model_content_lease){token,animation_release}; return true;
+    frontend_animation_source held;
+    if (!frontend_animation_lease_source(token, &held)) { frontend_animation_release(token); return false; }
+    *out=(qa_scene_model_content_lease){token,animation_release,held.resource}; return true;
 }
 bool frontend_scene_q3_model_retain(void *context, const qa_model *source, qa_q3_asset_model_lease *out, qa_error *error)
 {
