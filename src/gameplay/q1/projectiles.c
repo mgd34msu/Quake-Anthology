@@ -122,7 +122,6 @@ bool q1_sprite_prepare(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_actor_id id = entity->id;
     entity->touch_disabled = true;
     entity->physics.solid = QA_PHYSICS_NOT_SOLID;
-    entity->physics.motion = QA_PHYSICS_STATIONARY;
     entity->frame = 0;
     if (!q1_model(g, entity, "progs/s_explod.spr", error))
         return false;
@@ -143,6 +142,9 @@ bool q1_sprite_explosion(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity = q1_entity(g, id);
     if (!entity)
         return true;
+    entity->physics.enemy = entity->state.projectile.enemy;
+    if (entity->state.projectile.kind != Q1_OGRE_GRENADE &&
+        entity->state.projectile.kind != Q1_VORE_BALL) entity->physics.motion = QA_PHYSICS_STATIONARY;
     entity->kind = Q1_TIMER;
     if (!q1_sprite_prepare(g, entity, error))
         return false;
@@ -176,11 +178,17 @@ bool q1_explode(qa_q1_game *g, q1_actor *entity, qa_actor_id direct, qa_error *e
     if (!q1_alive(g, entity->id))
         return true;
     if (projectile.kind == Q1_OGRE_GRENADE || projectile.kind == Q1_VORE_BALL)
-        return q1_sound(g, entity->id, "weapons/r_exp3.wav", 1, 1, error) &&
+        return q1_sound(g, entity->id, "weapons/r_exp3.wav",
+                       projectile.kind == Q1_OGRE_GRENADE ? 2 : 1, 1, error) &&
                q1_sprite_explosion(g, entity, error);
     qa_vec3 origin = rocket
                          ? qa_vec_sub(body.origin, qa_vec_scale(qa_vec_normalize(body.velocity), 8))
                          : body.origin;
+    if (rocket || projectile.kind == Q1_GRENADE) {
+        body.origin = origin;
+        return qa_world_body_write(g->services.world, entity->id, &body, error) &&
+               q1_sprite_explosion(g, entity, error);
+    }
     return q1_effect(g, QA_BUILTIN_EXPLOSION, entity->id, origin, 0, 0, error) &&
            q1_remove(g, entity, error);
 }

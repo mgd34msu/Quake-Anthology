@@ -569,6 +569,13 @@ static bool sprite_remove(const qa_q1_game *game, const q1_actor *entity) {
     const char *model = qa_strings_cstr(qa_session_strings(game->services.session), entity->model);
     return model && !strcmp(model,"progs/s_explod.spr");
 }
+static const char *sprite_classname(const qa_q1_game *game, const q1_actor *entity) {
+    const char *name = qa_strings_cstr(qa_session_strings(game->services.session), entity->classname);
+    if (!name || !strcmp(name,"explosion")) return NULL;
+    for (size_t i=0; i<sizeof(projectiles)/sizeof(*projectiles); ++i)
+        if (!strcmp(name,projectiles[i].native_classname)) return projectiles[i].classname;
+    return name;
+}
 static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
     q1_player *player, const qa_movement_state *movement, qa_q1_save_record *record, qa_error *error) {
     qa_q1_game *game = receipt->operation.game; qa_body_state body; qa_combat_state combat;
@@ -590,6 +597,9 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
     }
     if ((entity && !FIELDS(receipt, record, &source_entity, entity_fields, error)) ||
         !FIELDS(receipt, record, &body, body_fields, error) || !FIELDS(receipt, record, &physics, physics_fields, error)) return false;
+    if (entity && entity->kind != Q1_PROJECTILE && !entity->map &&
+        (entity->think == Q1_THINK_SPRITE || sprite_remove(game,entity)) &&
+        !text(record,"classname",sprite_classname(game,entity),QA_Q1_SAVE_STRING,error)) return false;
     static const int motion[] = {0, 8, 7, 7, 6, 6, 10, 11, 5, 9, 4};
     static const int solid[] = {0, 1, 2, 4, 2};
     uint32_t flags; bool found;
