@@ -142,7 +142,7 @@ bool frontend_remote_q1_demo_seed(frontend_remote_q1 *row, const frontend_demo_s
             if (!demo_qw_message(row, sink, &service, decoder, incoming, outgoing, error)) return false;
         }
         for (size_t i = 0; i < 256; ++i) {
-            service = (qa_qw_service){.kind = QA_QW_STAT, .data.stat = {(uint8_t)i, row->qw_stats[i]}};
+            service = (qa_qw_service){.kind = QA_QW_STAT, .data.stat = {(uint8_t)i, row->stats[i]}};
             if (!demo_qw_message(row, sink, &service, decoder, incoming, outgoing, error)) return false;
         }
         for (size_t i = 0; i < 32; ++i) if (row->clients[i].userinfo) {
@@ -282,7 +282,7 @@ void remote_q1_clear(frontend_remote_q1 *row)
     free(row->skybox); row->skybox = NULL;
     row->current.count = row->previous.count = row->statics.count = 0;
     row->qw_entities.count = row->qw_nails.count = row->qw_batch_players.count = 0;
-    memset(row->qw_player_valid, 0, sizeof(row->qw_player_valid)); memset(row->qw_stats, 0, sizeof(row->qw_stats));
+    memset(row->qw_player_valid, 0, sizeof(row->qw_player_valid)); memset(row->stats, 0, sizeof(row->stats));
     row->max_clients = row->view_entity = 0; row->view_angles = qa_v3(0, 0, 0);
     row->pending_impulse = 0;
     row->has_data = row->loaded = row->qw_ready = row->qw_frame = row->qw_intermission = row->intermission = row->published = false;
@@ -353,7 +353,8 @@ static bool serverinfo(frontend_remote_q1 *row, const qa_nq_serverinfo *info, qa
     if (!names_copy(&row->models, &row->model_count, info->models, info->model_count, error) ||
         !names_copy(&row->sounds, &row->sound_count, info->sounds, info->sound_count, error)) return false;
     if (!qa_vfs_acquire_receipt(row->content.mounts, map, &row->map, &row->map_opening, error)) return false;
-    if (!remote_q1_media_prepare(row, error)) return false;
+    if (!remote_q1_media_prepare(row, error) || !remote_q1_string(&row->level_name, info->level, error)) return false;
+    if (qa_q1_is_qw(row->options.domain.protocol)) row->qw.level = row->level_name;
     row->max_clients = info->max_clients; row->loaded = true; ++row->map_generation; return true;
 }
 void remote_q1_time_advance(frontend_remote_q1 *row, double seconds, uint64_t received)
@@ -404,6 +405,9 @@ bool frontend_remote_q1_receive_nq(frontend_remote_q1 *row, const qa_nq_message 
     case QA_NQ_SETVIEW: row->view_entity = message->data.value; break;
     case QA_NQ_SETANGLE: row->view_angles = qa_v3(message->data.angles[0], message->data.angles[1], message->data.angles[2]); break;
     case QA_NQ_CLIENTDATA: row->data = message->data.clientdata; row->has_data = true; break;
+    case QA_NQ_STAT: row->stats[message->data.indexed.index] = message->data.indexed.value; break;
+    case QA_NQ_KILLEDMONSTER: ++row->stats[14]; break;
+    case QA_NQ_FOUNDSECRET: ++row->stats[13]; break;
     case QA_NQ_LIGHTSTYLE: ok = remote_q1_string(&row->styles[message->data.indexed_text.index], message->data.indexed_text.text, error); break;
     case QA_NQ_SKYBOX: ok = remote_q1_string(&row->skybox, message->data.text, error) && remote_q1_sky_load(row, error); break;
     case QA_NQ_NAME: case QA_NQ_SOCIAL: case QA_NQ_PLAYERINFO: {
@@ -475,10 +479,26 @@ bool frontend_remote_q1_metadata_read(const frontend_remote_q1 *row, frontend_re
         row->previous_seconds + (row->seconds - row->previous_seconds) * row->fraction, row->fraction,
         row->view_entity, row->max_clients, viewer, row->view_angles, row->has_data ? &row->data : NULL,
         row->skybox ? row->skybox : "", row->bound, row->loaded, row->retired, row->map, &row->map_opening,
-        row->images, row->materials, row->world, row->protocol, row->published}; return true;
+        row->images, row->materials, row->world, row->protocol, row->published, row->level_name, row->stats}; return true;
 }
 bool frontend_remote_q1_read(const frontend_remote_q1 *row, frontend_remote_q1_view *out, qa_error *error)
 { return remote_q1_live(row, error) && frontend_remote_q1_metadata_read(row, out, error); }
+bool frontend_remote_q1_save_client_read(const qa_frontend *f,uint32_t physical_seat,
+    qa_q1_save_client *out,qa_error *error)
+{
+    if (!f || !out || physical_seat>=f->options.seats)
+        return remote_q1_fail(error,QA_ERROR_ARGUMENT,"Save comment requires its actual local CLIENT");
+    for (frontend_remote_q1 *row=f->remote_q1;row;row=row->next) {
+        if (row->retired || row->options.domain.physical_seat!=physical_seat) continue;
+        frontend_remote_q1_view view;
+        if (!frontend_remote_q1_read(row,&view,error)) return false;
+        if (!view.loaded || !view.level_name)
+            return remote_q1_fail(error,QA_ERROR_ARGUMENT,"Save comment requires received CLIENT serverinfo");
+        *out=(qa_q1_save_client){view.level_name,view.stats[14],view.stats[12]};
+        return true;
+    }
+    return remote_q1_fail(error,QA_ERROR_ARGUMENT,"Save comment has no received local CLIENT");
+}
 bool frontend_remote_q1_application_read(const frontend_remote_q1 *row,qa_application_client_source *out,qa_error *error)
 {
     return row && out && row->options.application_read && remote_q1_live(row,error) &&
@@ -519,7 +539,7 @@ bool frontend_remote_q1_destroy(frontend_remote_q1 **owned, qa_error *error)
     free(row->current.rows); free(row->previous.rows); free(row->statics.rows);
     free(row->qw_entities.rows); free(row->qw_nails.rows); free(row->qw_batch_players.rows); free(row->qw_pending); free(row->actors);
     *link = row->next;
-    free(row->qw_directory); free(row->qw_level); qa_catalog_release(row->options.domain.catalog); free(row); *owned = NULL; return true;
+    free(row->qw_directory); free(row->level_name); qa_catalog_release(row->options.domain.catalog); free(row); *owned = NULL; return true;
 }
 bool frontend_remote_q1_disconnected(frontend_remote_q1 *row, const char *reason, qa_error *error)
 {

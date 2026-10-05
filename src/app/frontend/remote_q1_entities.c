@@ -240,10 +240,10 @@ bool frontend_remote_q1_receive_end(frontend_remote_q1 *row, uint64_t received, 
             const qa_qw_player *own = row->qw_players + row->qw.player_slot;
             message = (qa_nq_message){.op = QA_NQ_CLIENTDATA, .data.clientdata = {
                 .viewheight = own->flags & QA_QW_PF_GIB ? 8 : own->flags & QA_QW_PF_DEAD ? -16 : 22,
-                .items = (uint32_t)row->qw_stats[15], .weapon_frame = own->weapon_frame,
-                .armor = (uint32_t)row->qw_stats[4], .weapon_model = (uint32_t)row->qw_stats[2], .health = row->qw_stats[0],
-                .ammo = (uint32_t)row->qw_stats[3], .shells = (uint32_t)row->qw_stats[6], .nails = (uint32_t)row->qw_stats[7],
-                .rockets = (uint32_t)row->qw_stats[8], .cells = (uint32_t)row->qw_stats[9], .weapon = (uint32_t)row->qw_stats[10]}};
+                .items = (uint32_t)row->stats[15], .weapon_frame = own->weapon_frame,
+                .armor = (uint32_t)row->stats[4], .weapon_model = (uint32_t)row->stats[2], .health = row->stats[0],
+                .ammo = (uint32_t)row->stats[3], .shells = (uint32_t)row->stats[6], .nails = (uint32_t)row->stats[7],
+                .rockets = (uint32_t)row->stats[8], .cells = (uint32_t)row->stats[9], .weapon = (uint32_t)row->stats[10]}};
             message.data.clientdata.punch[0] = row->qw_kick;
             for (unsigned i = 0; i < 3; ++i) message.data.clientdata.velocity[i] = own->velocity[i];
             if (!frontend_remote_q1_receive_nq(row, &message, received, error)) return false;

@@ -2,9 +2,14 @@
 #define QA_APPLICATION_Q1_SAVE_H
 #include "qa/application.h"
 #include "qa/q1_save.h"
+typedef struct qa_q1_save_client {
+    const char *level;
+    int32_t killed_monsters, total_monsters;
+} qa_q1_save_client;
 /* Actual primary singleplayer NetQuake source, one fully admitted local human
  * in physical client row1, completed source/canonical callback boundary. */
-bool qa_application_q1_save_capture(qa_application *,qa_q1_save_data **,qa_error *);
+bool qa_application_q1_save_capture(qa_application *,const qa_q1_save_client *,
+    qa_q1_save_data **,qa_error *);
 /* Pure shared header/product/capacity admission against the actual application
  * catalog and actor owner. No VM construction, source callback or file access.
  * The fresh importer uses these same guards before preparing any world. */

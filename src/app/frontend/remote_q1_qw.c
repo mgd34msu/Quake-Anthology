@@ -108,8 +108,8 @@ bool frontend_remote_q1_serverdata_qw(frontend_remote_q1 *row, const qa_qw_serve
         data->player_slot >= 32 || data->protocol.kind != row->protocol.kind ||
         data->protocol.revision != row->protocol.revision || data->protocol.flags != row->protocol.flags)
         return remote_q1_fail(error, QA_ERROR_ARGUMENT, "QW serverdata requires its real native CLIENT dialect");
-    if (!remote_q1_string(&row->qw_directory, data->game_directory, error) || !remote_q1_string(&row->qw_level, data->level, error)) return false;
-    row->qw = *data; row->qw.game_directory = row->qw_directory; row->qw.level = row->qw_level;
+    if (!remote_q1_string(&row->qw_directory, data->game_directory, error) || !remote_q1_string(&row->level_name, data->level, error)) return false;
+    row->qw = *data; row->qw.game_directory = row->qw_directory; row->qw.level = row->level_name;
     row->qw_ready = false; row->qw_has_pending_track = false; ++row->revision; return true;
 }
 bool frontend_remote_q1_gamestate_qw(frontend_remote_q1 *row, const char *const *models, size_t model_count,
@@ -180,7 +180,9 @@ bool frontend_remote_q1_receive_qw(frontend_remote_q1 *row, const qa_qw_service 
         }
         return true;
     }
-    case QA_QW_STAT: row->qw_stats[service->data.stat.index] = service->data.stat.value; return true;
+    case QA_QW_STAT: message.op = QA_NQ_STAT; message.data.indexed.index = service->data.stat.index; message.data.indexed.value = service->data.stat.value; break;
+    case QA_QW_KILLED_MONSTER: message.op = QA_NQ_KILLEDMONSTER; break;
+    case QA_QW_FOUND_SECRET: message.op = QA_NQ_FOUNDSECRET; break;
     case QA_QW_CHOKE_COUNT: return remote_q1_prediction_choked(row, service->data.byte, error);
     case QA_QW_INVALID_DELTA: return remote_q1_prediction_invalid_delta(row, error);
     case QA_QW_KICK: row->qw_kick = service->data.kick; return true;

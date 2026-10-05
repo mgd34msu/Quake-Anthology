@@ -77,10 +77,10 @@ struct frontend_remote_q1 {
     char *styles[256], *skybox;
     remote_q1_client clients[256];
     qa_qw_serverdata qw;
-    char *qw_directory, *qw_level;
+    char *qw_directory, *level_name;
     qa_qw_player qw_players[32];
     bool qw_player_valid[32], qw_ready, qw_frame;
-    int32_t qw_stats[256];
+    int32_t stats[256];
     int8_t qw_kick;
     uint8_t qw_pending_track;
     bool qw_has_pending_track;
