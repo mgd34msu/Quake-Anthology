@@ -40,7 +40,10 @@ static bool name_field(qa_source_save_io *io, const char **name, char **owned)
 static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const qa_scene_image *source,
     qa_scene_image **out, uint64_t *lineage_revision)
 {
-    bool reading = io->direction == QA_SOURCE_SAVE_READ; const char *name = reading ? NULL : source->name;
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    bool embedded = reading ? false : ((const owned_image *)source)->embedded_png;
+    if (!qa_source_save_bool(io, &embedded)) return false;
+    const char *name = reading ? NULL : source->name;
     char *owned_name = NULL; uint32_t kind = reading ? 0 : source->kind, wrap = reading ? 0 : source->wrap, filter = reading ? 0 : source->filter;
     uint64_t revision = reading ? 0 : source->revision;
     uint32_t logical_width = reading ? 0 : source->logical_width, logical_height = reading ? 0 : source->logical_height;
@@ -81,9 +84,10 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
         (source_q3 || !source_after_upload_border) &&
         (source_after_upload_border || (source_upload_border.x == 0.0f && source_upload_border.y == 0.0f &&
          source_upload_border.z == 0.0f && source_upload_border.w == 0.0f));
-    qa_scene_image_level *decoded = reading && ok ? calloc(levels, sizeof(*decoded)) : NULL;
-    if (reading && ok && !decoded) { qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "Allocating saved mip levels"); ok = false; }
-    for (size_t i = 0; ok && i < levels; ++i) {
+    if (ok && embedded) ok = kind == QA_SCENE_RGBA8 && levels == 1 && !recipient.rgba.size;
+    qa_scene_image_level *decoded = reading && ok && !embedded ? calloc(levels, sizeof(*decoded)) : NULL;
+    if (reading && ok && !embedded && !decoded) { qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "Allocating saved mip levels"); ok = false; }
+    for (size_t i = 0; ok && !embedded && i < levels; ++i) {
         qa_scene_image_level level = reading ? (qa_scene_image_level){0} : source->levels[i];
         uint64_t bytes = level.bytes;
         ok = qa_source_save_u32(io, &level.width) && level.width && qa_source_save_u32(io, &level.height) && level.height &&
@@ -106,7 +110,7 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
     }
     if (ok) {
         bool present = recipient.rgba.size != 0;
-        ok = qa_source_save_bool(io, &present) && (!present || source_q3);
+        ok = qa_source_save_bool(io, &present) && (!present || (source_q3 && !embedded));
         if (ok && present) {
             size_t bytes = recipient.rgba.size;
             ok = qa_source_save_u32(io, &recipient.width) && recipient.width &&
@@ -124,8 +128,10 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
         }
     }
     if (reading && ok) {
-        ok = qa_scene_image_create(owner, name, (qa_scene_image_kind)kind, decoded, levels,
-            (qa_scene_wrap)wrap, (qa_scene_filter)filter, border, out, io->error);
+        ok = embedded ? qa_scene_image_load_embedded(owner, name, (qa_scene_wrap)wrap,
+            (qa_scene_filter)filter, border, out, io->error) :
+            qa_scene_image_create(owner, name, (qa_scene_image_kind)kind, decoded, levels,
+                (qa_scene_wrap)wrap, (qa_scene_filter)filter, border, out, io->error);
         if (ok) {
             (*out)->revision = revision; (*out)->logical_width = logical_width; (*out)->logical_height = logical_height;
             (*out)->source_q3 = source_q3; (*out)->source_mipmap = source_mipmap;

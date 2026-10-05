@@ -273,6 +273,13 @@ typedef struct qa_scene_palette_source {
 /* Exact palette admission retained by this bank; no historical-name lookup. */
 bool qa_scene_resources_palette_source_read(const qa_scene_resources *, qa_scene_family,
                                            qa_scene_palette_source *);
+/* Borrowed immutable executable assets. The descriptor table, names and PNG
+ * spans outlive the resource bank; no asset bytes are copied into checkpoints. */
+typedef struct qa_scene_embedded_image { const char *name; qa_bytes png; } qa_scene_embedded_image;
+bool qa_scene_resources_bind_embedded_images(qa_scene_resources *,
+    const qa_scene_embedded_image *, size_t count, qa_error *);
+bool qa_scene_image_load_embedded(qa_scene_resources *, const char *name, qa_scene_wrap,
+    qa_scene_filter, qa_scene_vec4 border, qa_scene_image **, qa_error *);
 bool qa_scene_image_create(qa_scene_resources *, const char *, qa_scene_image_kind,
                           const qa_scene_image_level *, size_t, qa_scene_wrap,
                           qa_scene_filter, qa_scene_vec4, qa_scene_image **, qa_error *);

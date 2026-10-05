@@ -13,6 +13,7 @@ typedef struct recipient_image_binding {
 } recipient_image_binding;
 struct owned_image {
     qa_scene_image image;
+    bool embedded_png;
     scene_names *names;
     qa_scene_image_level *levels;
     image_lineage *lineage;
@@ -60,6 +61,8 @@ typedef struct image_alias {
 struct qa_scene_resources {
     size_t references;
     qa_vfs *vfs;
+    const qa_scene_embedded_image *embedded_images;
+    size_t embedded_image_count;
     scene_names *names;
     qa_scene_image *white, *missing;
     qa_scene_image *source_white, *source_missing, *source_identity;

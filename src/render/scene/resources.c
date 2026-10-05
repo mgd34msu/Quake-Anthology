@@ -470,6 +470,45 @@ allocation_failed:
     qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate scene image");
     return false;
 }
+bool qa_scene_resources_bind_embedded_images(qa_scene_resources *resources,
+    const qa_scene_embedded_image *images, size_t count, qa_error *error)
+{
+    if (!resources || (count && !images) || !admission_ready(resources, error) ||
+        (resources->embedded_images && (resources->embedded_images != images || resources->embedded_image_count != count))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Embedded images require an idle bank and its immutable asset table"); return false;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        if (!images[i].name || !*images[i].name || !images[i].png.data || !images[i].png.size) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, i, "Embedded image descriptor requires its name and PNG bytes"); return false;
+        }
+        for (size_t j = 0; j < i; ++j) if (!strcmp(images[i].name, images[j].name)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, i, "Embedded image names must be unique"); return false;
+        }
+    }
+    resources->embedded_images = images; resources->embedded_image_count = count;
+    return true;
+}
+bool qa_scene_image_load_embedded(qa_scene_resources *resources, const char *name,
+    qa_scene_wrap wrap, qa_scene_filter filter, qa_scene_vec4 border,
+    qa_scene_image **out, qa_error *error)
+{
+    if (!resources || !name || !out || !admission_ready(resources, error)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Embedded image load requires its actual bank, name and output"); return false;
+    }
+    const qa_scene_embedded_image *asset = NULL;
+    for (size_t i = 0; i < resources->embedded_image_count; ++i)
+        if (!strcmp(resources->embedded_images[i].name, name)) { asset = resources->embedded_images + i; break; }
+    if (!asset) { qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Embedded image is not bound: %s", name); return false; }
+    qa_image decoded = {0};
+    qa_scene_image *image = NULL;
+    bool ok = qa_image_decode_png(asset->png, &decoded, error) &&
+        qa_scene_image_create(resources, name, QA_SCENE_RGBA8,
+            &(qa_scene_image_level){decoded.width, decoded.height, decoded.rgba.data, decoded.rgba.size},
+            1, wrap, filter, border, &image, error);
+    qa_image_free(&decoded);
+    if (ok) { ((owned_image *)image)->embedded_png = true; *out = image; }
+    return ok;
+}
 bool qa_scene_resources_images(const qa_scene_resources *resources, qa_arena *scratch,
                                const qa_scene_image *const **out, size_t *count, qa_error *error)
 {
@@ -556,6 +595,7 @@ bool qa_scene_image_sample(qa_scene_resources *resources, const qa_scene_image *
     if (!qa_scene_image_create(resources, source->name, source->kind, source->levels,
         mipmap ? source->level_count : 1, wrap, filter, source->border, &image, error)) return false;
     image->logical_width = source->logical_width; image->logical_height = source->logical_height;
+    ((owned_image *)image)->embedded_png = ((const owned_image *)source)->embedded_png;
     ((owned_image *)image)->sampling_source = source;
     ((owned_image *)image)->sampling_mipmap = mipmap;
     image->source_q3 = source->source_q3; image->source_mipmap = source->source_mipmap && mipmap;
@@ -592,6 +632,7 @@ bool qa_scene_image_sample(qa_scene_resources *resources, const qa_scene_image *
             sampled->source_texture_unit = frame->source_texture_unit;
             sampled->recipient_mipmap = frame->recipient_mipmap && mipmap;
             sampled->recipient_upload_pixels = frame->recipient_upload_pixels;
+            owned->embedded_png = ((const owned_image *)frame)->embedded_png;
             owned->sampling_source = frame; owned->sampling_mipmap = mipmap;
             qa_scene_image_retain(frame);
             frames[i] = sampled;
@@ -897,6 +938,8 @@ static bool policy_prepare(qa_scene_resources *owner,
     }
     owner->policy_pending = ticket;
     qa_scene_resources *destination = ticket->destination;
+    destination->embedded_images = owner->embedded_images;
+    destination->embedded_image_count = owner->embedded_image_count;
     destination->fullbright_first = owner->fullbright_first;
     destination->white = owner->white; qa_scene_image_retain(destination->white);
     destination->policy_source = owner;
