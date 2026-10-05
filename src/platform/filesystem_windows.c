@@ -18,6 +18,7 @@ struct qa_fs_root {
     HANDLE handle;
     DWORD volume, file_index_high, file_index_low;
     uint64_t creation;
+    bool temporary;
 };
 
 struct qa_fs_file {
@@ -1158,6 +1159,97 @@ static PSECURITY_DESCRIPTOR private_descriptor(qa_error *error)
     code = GetLastError(); free(text);
     if (!ok) fail_windows(error, "cannot encode private-file permissions", "", code);
     return descriptor;
+}
+
+bool qa_fs_root_temporary_create(qa_fs_root **out, qa_error *error)
+{
+    if (!out || *out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "temporary directory needs an empty owner"); return false;
+    }
+    wchar_t parent[MAX_PATH + 1], path[MAX_PATH + 1];
+    DWORD length = GetTempPathW(MAX_PATH + 1, parent);
+    if (!length || length >= MAX_PATH + 1)
+        return fail_windows(error, "locating temporary directory", "", GetLastError());
+    PSECURITY_DESCRIPTOR descriptor = private_descriptor(error);
+    if (!descriptor) return false;
+    SECURITY_ATTRIBUTES attributes = {sizeof(attributes), descriptor, FALSE};
+    bool created = false;
+    for (unsigned attempt = 0; attempt < 64 && !created; ++attempt) {
+        if (!GetTempFileNameW(parent, L"qaa", 0, path)) {
+            fail_windows(error, "reserving private directory", "", GetLastError()); break;
+        }
+        if (!DeleteFileW(path)) {
+            fail_windows(error, "releasing private directory reservation", "", GetLastError()); break;
+        }
+        created = CreateDirectoryW(path, &attributes) != 0;
+        if (!created && GetLastError() != ERROR_ALREADY_EXISTS) {
+            fail_windows(error, "creating private directory", "", GetLastError()); break;
+        }
+    }
+    LocalFree(descriptor);
+    if (!created) {
+        if (!error || error->code == QA_OK) qa_error_set(error, QA_ERROR_IO, 0, "private directory names exhausted");
+        return false;
+    }
+    char *native = wide_to_utf8(path, error);
+    bool okay = native && qa_fs_root_open(native, out, error);
+    free(native);
+    if (okay) (*out)->temporary = true;
+    else (void)RemoveDirectoryW(path);
+    return okay;
+}
+
+static bool temporary_clear(qa_fs_root *root, qa_error *error)
+{
+    qa_fs_listing entries = {0};
+    if (!qa_fs_root_list(root, "", &entries, error)) return false;
+    bool okay = true;
+    for (size_t i = 0; okay && i < entries.count; ++i) {
+        char *native = NULL;
+        if (!qa_fs_root_join(root, entries.entries[i].name, &native, error)) { okay = false; break; }
+        wchar_t *path = utf8_to_wide(native, error);
+        HANDLE handle = path ? CreateFileW(path, FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL) : INVALID_HANDLE_VALUE;
+        if (handle == INVALID_HANDLE_VALUE) {
+            okay = path ? fail_windows(error, "opening private entry", native, GetLastError()) : false;
+        } else {
+            BY_HANDLE_FILE_INFORMATION info;
+            if (!GetFileInformationByHandle(handle, &info))
+                okay = fail_windows(error, "inspecting private entry", native, GetLastError());
+            else {
+                bool directory = (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                if (directory && !(info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+                    qa_fs_root child = {.references = 1, .handle = handle,
+                        .volume = info.dwVolumeSerialNumber, .file_index_high = info.nFileIndexHigh,
+                        .file_index_low = info.nFileIndexLow};
+                    okay = temporary_clear(&child, error);
+                }
+                if (okay && !(directory ? RemoveDirectoryW(path) : DeleteFileW(path)))
+                    okay = fail_windows(error, "removing private entry", native, GetLastError());
+            }
+            CloseHandle(handle);
+        }
+        free(path); free(native);
+    }
+    qa_fs_listing_free(&entries); return okay;
+}
+
+bool qa_fs_root_temporary_dispose(qa_fs_root **owner, qa_error *error)
+{
+    if (!owner || !*owner) return true;
+    qa_fs_root *root = *owner;
+    if (!root->temporary || root->references != 1) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "private directory retains foreign owners"); return false;
+    }
+    if (!temporary_clear(root, error)) return false;
+    wchar_t *path = handle_path(root->handle, error);
+    if (!path) return false;
+    bool okay = RemoveDirectoryW(path) != 0;
+    if (!okay) fail_windows(error, "removing private directory", "", GetLastError());
+    free(path);
+    if (okay) { qa_fs_root_close(root); *owner = NULL; }
+    return okay;
 }
 
 static bool private_handle(HANDLE handle, const char *path, qa_error *error)

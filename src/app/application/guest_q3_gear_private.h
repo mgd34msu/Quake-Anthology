@@ -53,7 +53,7 @@ bool q3gear_vector_store(application_q3_gear *, uint32_t, qa_vec3, qa_error *);
 bool q3gear_slot(application_q3_gear *, uint32_t pointer, uint32_t *, qa_error *);
 bool q3gear_layout(application_q3_gear *, qa_q3_host_game_data *, qa_error *);
 bool q3gear_filter_entities(qa_bytes, qa_buffer *, qa_error *);
-bool q3gear_services(application_q3_gear *, bool restoring, qa_error *);
+bool q3gear_services(application_q3_gear *, qa_error *);
 bool q3gear_syscall(void *, const qa_qvm_call *, int32_t, int32_t *, qa_error *);
 bool q3gear_host_checkpoint(void *, qa_buffer *, qa_error *);
 bool q3gear_host_restore(void *, qa_bytes, qa_error *);

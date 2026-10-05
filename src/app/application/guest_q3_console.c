@@ -5,6 +5,7 @@
 #include "startup_flow.h"
 #include "guest_q3_client_console.h"
 #include "engine_shutdown.h"
+#include "native_q3_settings.h"
 
 #include <ctype.h>
 
@@ -201,26 +202,26 @@ static qa_command_result command(void *context, const qa_command_invocation *inv
 static bool register_engine(struct application_guest_q3_console *owner,
     const char *map_path, qa_error *error)
 {
-    static const struct { const char *name, *value; uint32_t flags; } definitions[] = {
-        {"vm_game", "2", QA_CVAR_ARCHIVE},
-        {"protocol", "68", QA_CVAR_SERVERINFO | QA_CVAR_READONLY},
-        {"sv_pure", "1", QA_CVAR_SYSTEMINFO},
-        {"sv_allowDownload", "0", QA_CVAR_SERVERINFO},
-        {"sv_maxRate", "0", QA_CVAR_SERVERINFO}, {"sv_fps", "20", 0},
-        {"sv_serverid", "0", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY},
-        {"sv_paks", "", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY},
-        {"sv_pakNames", "", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY},
-        {"sv_referencedPaks", "", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY},
-        {"sv_referencedPakNames", "", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY},
-        {"sv_maxclients", "8", QA_CVAR_SERVERINFO | QA_CVAR_LATCH},
-        {"sv_privateClients", "0", QA_CVAR_SERVERINFO},
-        {"sv_privatePassword", "", QA_CVAR_TEMPORARY}, {"sv_reconnectlimit", "3", 0},
-        {"sv_minPing", "0", QA_CVAR_ARCHIVE | QA_CVAR_SERVERINFO},
-        {"sv_maxPing", "0", QA_CVAR_ARCHIVE | QA_CVAR_SERVERINFO},
-        {"sv_floodProtect", "1", QA_CVAR_ARCHIVE | QA_CVAR_SERVERINFO},
-        {"sv_strictAuth", "1", QA_CVAR_ARCHIVE}, {"bot_enable", "1", 0},
-        {"cm_noAreas", "0", QA_CVAR_CHEAT}, {"cm_noCurves", "0", QA_CVAR_CHEAT},
-        {"cm_playerCurveClip", "1", QA_CVAR_ARCHIVE | QA_CVAR_CHEAT}, {"dedicated", "0", 0}
+    static const struct { const char *name, *value; uint32_t flags; qa_cvar_save_policy save_policy; } definitions[] = {
+        {"vm_game", "2", QA_CVAR_ARCHIVE, QA_CVAR_SAVE_SETTING},
+        {"protocol", "68", QA_CVAR_SERVERINFO | QA_CVAR_READONLY, QA_CVAR_SAVE_SETTING},
+        {"sv_pure", "1", QA_CVAR_SYSTEMINFO, QA_CVAR_SAVE_SETTING},
+        {"sv_allowDownload", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_SETTING},
+        {"sv_maxRate", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_SETTING}, {"sv_fps", "20", 0, QA_CVAR_SAVE_GAMEPLAY},
+        {"sv_serverid", "0", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY, QA_CVAR_SAVE_SETTING},
+        {"sv_paks", "", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY, QA_CVAR_SAVE_SETTING},
+        {"sv_pakNames", "", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY, QA_CVAR_SAVE_SETTING},
+        {"sv_referencedPaks", "", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY, QA_CVAR_SAVE_SETTING},
+        {"sv_referencedPakNames", "", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY, QA_CVAR_SAVE_SETTING},
+        {"sv_maxclients", "8", QA_CVAR_SERVERINFO | QA_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
+        {"sv_privateClients", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_SETTING},
+        {"sv_privatePassword", "", QA_CVAR_TEMPORARY, QA_CVAR_SAVE_SETTING}, {"sv_reconnectlimit", "3", 0, QA_CVAR_SAVE_SETTING},
+        {"sv_minPing", "0", QA_CVAR_ARCHIVE | QA_CVAR_SERVERINFO, QA_CVAR_SAVE_SETTING},
+        {"sv_maxPing", "0", QA_CVAR_ARCHIVE | QA_CVAR_SERVERINFO, QA_CVAR_SAVE_SETTING},
+        {"sv_floodProtect", "1", QA_CVAR_ARCHIVE | QA_CVAR_SERVERINFO, QA_CVAR_SAVE_SETTING},
+        {"sv_strictAuth", "1", QA_CVAR_ARCHIVE, QA_CVAR_SAVE_SETTING}, {"bot_enable", "1", 0, QA_CVAR_SAVE_SETTING},
+        {"cm_noAreas", "0", QA_CVAR_CHEAT, QA_CVAR_SAVE_GAMEPLAY}, {"cm_noCurves", "0", QA_CVAR_CHEAT, QA_CVAR_SAVE_GAMEPLAY},
+        {"cm_playerCurveClip", "1", QA_CVAR_ARCHIVE | QA_CVAR_CHEAT, QA_CVAR_SAVE_GAMEPLAY}, {"dedicated", "0", 0, QA_CVAR_SAVE_SETTING}
     };
     application_provider *provider = owner->engine->provider;
     qa_cvars *startup = provider->application->cvars;
@@ -235,6 +236,8 @@ static bool register_engine(struct application_guest_q3_console *owner,
         if (!qa_cvars_find(owner->cvars, value->name) &&
             !qa_cvars_register(owner->cvars, value->name, value->reset_value,
                 flags, 0, value->description, error)) return false;
+        if (value->save_policy != QA_CVAR_SAVE_UNCLASSIFIED &&
+            !qa_cvars_declare_save_policy(owner->cvars, value->name, value->save_policy, error)) return false;
         if (!qa_cvars_set(owner->cvars, value->name,
             value->latched_value ? value->latched_value : value->value, true, error)) return false;
     }
@@ -243,7 +246,9 @@ static bool register_engine(struct application_guest_q3_console *owner,
             owner->cvars, provider->owner, error)) return false;
     for (size_t i = 0; i < sizeof(definitions) / sizeof(*definitions); ++i)
         if (!qa_cvars_register(owner->cvars, definitions[i].name, definitions[i].value,
-            definitions[i].flags, provider->owner, NULL, error)) return false;
+            definitions[i].flags, provider->owner, NULL, error) ||
+            !qa_cvars_declare_save_policy(owner->cvars, definitions[i].name,
+                definitions[i].save_policy, error)) return false;
     const char *name = !strncmp(map_path, "maps/", 5) ? map_path + 5 : map_path;
     size_t length = strlen(name);
     if (length > 4 && !strcmp(name + length - 4, ".bsp")) length -= 4;
@@ -256,6 +261,8 @@ static bool register_engine(struct application_guest_q3_console *owner,
         qa_cvars_register(owner->cvars, "sv_mapname", "",
             QA_CVAR_SERVERINFO | QA_CVAR_READONLY, provider->owner, NULL, error) &&
         qa_cvars_set(owner->cvars, "sv_mapname", map, true, error);
+    if (okay) okay = qa_cvars_declare_save_policy(owner->cvars, "mapname", QA_CVAR_SAVE_SETTING, error) &&
+        qa_cvars_declare_save_policy(owner->cvars, "sv_mapname", QA_CVAR_SAVE_SETTING, error);
     free(map);
     return okay;
 }
@@ -270,7 +277,8 @@ bool application_guest_q3_console_create(struct application_q3_guest *engine,
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Allocating original GAME console");
     owner->engine = engine;
     qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3, .user = owner,
-        .print = cvar_print, .cheats_allowed = cheats_allowed};
+        .print = cvar_print, .cheats_allowed = cheats_allowed,
+        .declaration_save_policy = application_native_q3_cvar_save_policy};
     owner->cvars = qa_cvars_create(&cvars, error);
     qa_console_options options = {.context = {.owner = engine->provider->owner,
         .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER}, .cvars = owner->cvars,
@@ -280,7 +288,7 @@ bool application_guest_q3_console_create(struct application_q3_guest *engine,
         .release_script = release_script, .script_complete = script_complete,
         .allow_command = allow_command, .source_command = command};
     if (owner->cvars) owner->console = qa_console_create(&options, error);
-    if (!owner->console || (!restoring && !register_engine(owner, map_path, error))) {
+    if (!owner->console || !register_engine(owner, map_path, error)) {
         qa_console_destroy(owner->console); qa_cvars_destroy(owner->cvars); free(owner);
         return false;
     }

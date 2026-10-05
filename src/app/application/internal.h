@@ -378,6 +378,7 @@ struct qa_application {
     application_control_record *controls;
     struct application_control_frames *control_frames;
     struct application_native_q2_scratch *native_baselines;
+    qa_fs_root *baseline_write_root;
     uint32_t control_capacity;
     application_q2_visual_record *q2_visuals;
     uint32_t q2_visual_capacity;

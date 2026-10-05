@@ -9,6 +9,29 @@
 enum { ENGINE_CHEATS_HANDLE = -2 };
 static bool status_name(const char *);
 
+static qa_q3_host_cvar_namespace private_namespace(const qa_q3_host *host)
+{ return host->options.role == QA_QVM_GAME ? QA_Q3_HOST_CVAR_GAME : QA_Q3_HOST_CVAR_CLIENT; }
+
+static bool namespace_resolve(const qa_q3_host *host, qa_q3_host_cvar_namespace reference,
+    qa_cvars **out, qa_error *error)
+{
+    const qa_q3_host_cvar_services *services = &host->options.cvar_namespaces;
+    if (services->resolve) return services->resolve(services->context, reference, out, error);
+    if (services->reference || reference != private_namespace(host) || !host->options.cvars)
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 cvar namespace has no actual registry owner");
+    *out = host->options.cvars; return true;
+}
+
+static bool namespace_reference(const qa_q3_host *host, const qa_cvars *registry,
+    qa_q3_host_cvar_namespace *out, qa_error *error)
+{
+    const qa_q3_host_cvar_services *services = &host->options.cvar_namespaces;
+    if (services->reference) return services->reference(services->context, registry, out, error);
+    if (services->resolve || !registry || registry != host->options.cvars)
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 cvar registry has no actual namespace owner");
+    *out = private_namespace(host); return true;
+}
+
 void q3_cvars_bindings_free(q3_cvar_binding *bindings,size_t count)
 {
     for (size_t i=0;i<count;++i) { free(bindings[i].name); free(bindings[i].previous_value); }
@@ -41,7 +64,7 @@ static bool binding_fields(qa_source_save_io *io,q3_cvar_binding *binding)
 {
     uint32_t reference=binding->reference,dialect=binding->dialect;
     bool ok=qa_source_save_u32(io,&reference) && qa_source_save_u32(io,&dialect) &&
-        qa_source_save_count(io,&binding->handle,SIZE_MAX-1) && binding_text(io,&binding->name) &&
+        binding_text(io,&binding->name) &&
         qa_source_save_bool(io,&binding->read) && qa_source_save_u64(io,&binding->revision);
     if (io->direction==QA_SOURCE_SAVE_READ) {
         binding->reference=(qa_q3_host_cvar_namespace)reference;
@@ -56,7 +79,6 @@ static bool binding_fields(qa_source_save_io *io,q3_cvar_binding *binding)
         return q3_fail(io->error,QA_ERROR_FORMAT,0,"Invalid authored Q3 cvar binding name");
     return !binding->read || (qa_source_save_bool(io,&binding->previous_current) &&
         binding_text(io,&binding->previous_value) &&
-        qa_source_save_u64(io,&binding->previous_modification) &&
         qa_source_save_f32(io,&binding->previous_number) &&
         qa_source_save_i32(io,&binding->previous_integer));
 }
@@ -78,15 +100,12 @@ static bool status_fields(qa_source_save_io *io,q3_cvar_status *status)
 static bool binding_namespace(const qa_q3_host *host,const q3_cvar_binding *binding,
     qa_cvars **out,qa_error *error)
 {
-    const qa_q3_host_cvar_services *services=&host->options.cvar_namespaces;
     qa_cvars *registry=NULL; qa_q3_host_cvar_namespace reference=0;
-    if (!services->resolve || !services->reference)
-        return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cvar binding lacks its actual namespace services");
-    if (!services->resolve(services->context,binding->reference,&registry,error)) return false;
+    if (!namespace_resolve(host,binding->reference,&registry,error)) return false;
     if (!registry || qa_cvars_dialect(registry)!=binding->dialect ||
         !qa_cvars_observer_idle(registry))
         return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cvar binding namespace is absent or active");
-    if (!services->reference(services->context,registry,&reference,error)) return false;
+    if (!namespace_reference(host,registry,&reference,error)) return false;
     if (reference!=binding->reference)
         return q3_fail(error,QA_ERROR_FORMAT,0,"Q3 cvar binding differs from its canonical namespace reference");
     *out=registry; return true;
@@ -115,7 +134,11 @@ bool q3_cvars_bindings_capture(const qa_q3_host *host,qa_buffer *out,qa_error *e
         ok=binding_namespace(host,&copy,&current,error) && copy.handle<qa_cvars_handle_count(current);
         if (!ok && (!error || error->code==QA_OK))
             q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cvar checkpoint lost its actual namespace");
-        copy.previous_current=copy.registry==current;
+        const qa_cvar_view *view=ok?qa_cvars_handle(current,copy.handle):NULL;
+        if (view && strcmp(view->name,copy.name))
+            ok=q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cvar checkpoint changed its actual named binding");
+        copy.previous_current=copy.registry==current && view &&
+            copy.previous_modification==view->modification_count;
         if (ok) ok=binding_fields(&io,&copy);
     }
     size_t caches=host->cvar_cache_count;
@@ -152,8 +175,8 @@ bool q3_cvars_bindings_decode(qa_bytes bytes,q3_cvar_binding **out,size_t *out_c
     for (size_t i=0;ok && i<count;++i) {
         ok=binding_fields(&io,bindings+i);
         for (size_t j=0;ok && j<i;++j)
-            if (bindings[j].reference==bindings[i].reference && bindings[j].handle==bindings[i].handle)
-                ok=q3_fail(error,QA_ERROR_FORMAT,0,"Duplicate Q3 physical cvar binding");
+            if (bindings[j].reference==bindings[i].reference && !strcmp(bindings[j].name,bindings[i].name))
+                ok=q3_fail(error,QA_ERROR_FORMAT,0,"Duplicate Q3 named cvar binding");
     }
     size_t cache_count=0;
     if (ok) ok=qa_source_save_count(&io,&cache_count,SIZE_MAX/sizeof(q3_cvar_cache));
@@ -184,10 +207,15 @@ bool q3_cvars_bindings_restore_ready(qa_q3_host *host,qa_error *error)
     for (size_t i=0;i<host->cvar_binding_count;++i) {
         q3_cvar_binding *binding=host->cvar_bindings+i; qa_cvars *registry=NULL;
         if (!binding_namespace(host,binding,&registry,error)) return false;
-        const qa_cvar_view *view=qa_cvars_handle(registry,binding->handle);
-        if (binding->handle>=qa_cvars_handle_count(registry) || (view && strcmp(view->name,binding->name)))
-            return q3_fail(error,QA_ERROR_FORMAT,0,"Restored Q3 binding differs from its actual canonical handle");
+        const qa_cvar_view *view=qa_cvars_find(registry,binding->name);
+        if (!view || strcmp(view->name,binding->name))
+            return q3_fail(error,QA_ERROR_FORMAT,0,"Restored Q3 binding lacks its current authored declaration");
+        size_t handle=0;
+        uint64_t modification=view->modification_count;
+        if (!qa_cvars_vm_rebind(registry,binding->name,&handle,error)) return false;
+        binding->handle=handle;
         binding->registry=binding->previous_current?registry:NULL;
+        binding->previous_modification=binding->previous_current?modification:0;
     }
     if (host->cvar_cache_count && ((!host->vm && !host->native) || host->options.role!=QA_QVM_CGAME))
         return q3_fail(error,QA_ERROR_FORMAT,0,"Restored cvar cache lacks its original CGAME executor");
@@ -324,13 +352,11 @@ static bool bind_routed(q3_call *call,q3_cvar_access access,size_t handle,
     const qa_cvar_view *view,int32_t *token,qa_error *error)
 {
     qa_q3_host *host=call->host;
-    qa_q3_host_cvar_services *services=&host->options.cvar_namespaces;
     qa_q3_host_cvar_namespace reference=0;
     qa_cvars *resolved=NULL;
-    if (!services->reference || !services->resolve ||
-        !services->reference(services->context,access.registry,&reference,error) ||
+    if (!namespace_reference(host,access.registry,&reference,error) ||
         reference<QA_Q3_HOST_CVAR_ENGINE || reference>QA_Q3_HOST_CVAR_SELECTED_VIEW ||
-        !services->resolve(services->context,reference,&resolved,error) || resolved!=access.registry)
+        !namespace_resolve(host,reference,&resolved,error) || resolved!=access.registry)
         return q3_fail(error,QA_ERROR_ARGUMENT,0,"Routed Q3 cvar lacks its actual factory namespace reference");
     for (size_t i=0;i<host->cvar_binding_count;++i) {
         const q3_cvar_binding *binding=host->cvar_bindings+i;
@@ -352,9 +378,8 @@ static bool bind_routed(q3_call *call,q3_cvar_access access,size_t handle,
 static bool routed_view(q3_call *call,q3_cvar_binding *binding,const qa_cvar_view **out,
     uint64_t *modification,qa_error *error)
 {
-    qa_q3_host_cvar_services *services=&call->host->options.cvar_namespaces;
     qa_cvars *registry=NULL;
-    if (!services->resolve || !services->resolve(services->context,binding->reference,&registry,error) ||
+    if (!namespace_resolve(call->host,binding->reference,&registry,error) ||
         !registry || qa_cvars_dialect(registry)!=binding->dialect)
         return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cvar binding lost its actual physical namespace");
     q3_cvar_access access;
@@ -577,7 +602,6 @@ static bool register_vm(q3_call *call, qa_error *error)
     int32_t token=0;
     if (ok) {
         if (engine) token=ENGINE_CHEATS_HANDLE;
-        else if (access.registry==call->host->options.cvars && handle<=INT32_MAX) token=(int32_t)handle;
         else ok=bind_routed(call,access,handle,view,&token,error);
     }
     if (ok && call->arguments[0]) {

@@ -26,6 +26,7 @@ bool application_native_q3_settings_create(application_provider *, qa_q3_product
 /* Register the real source tables before configuration without copying the
  * GAME cache or entering source Init. */
 bool application_native_q3_settings_prepare_definitions(application_provider *, qa_q3_product, qa_error *);
+qa_cvar_save_policy application_native_q3_cvar_save_policy(const char *);
 bool application_native_q3_settings_destroy(application_provider *, qa_error *);
 bool application_native_q3_settings_initialized(const application_provider *);
 bool application_native_q3_settings_idle(const application_provider *);

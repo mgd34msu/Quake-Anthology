@@ -1360,7 +1360,9 @@ static bool provider_restore(application_persistence *operation,
             operation->purpose == QA_SAVE_TRANSITION
                 ? saved_provider(operation->active, provider->launch->selection.instance) : NULL,
             state, operation->options, operation->ops, error);
-    else ok = application_guest_checkpoint_restore(provider, state, error);
+    else ok = application_guest_q3_save_declarations(provider,
+        operation->options, operation->ops, error) &&
+        application_guest_checkpoint_restore(provider, state, error);
     if (!ok) return false;
     provider->map_bound = qa_load_u32le(bytes.data + 8) != 0;
     provider->q1_server_flags = qa_load_u32le(bytes.data + 12);

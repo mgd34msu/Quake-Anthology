@@ -3,6 +3,7 @@
 
 #include "guest_q3_private.h"
 #include "qa/save.h"
+#include "qa/persistence_application.h"
 
 /* Authoritative Q3 GAME state. CLIENT/CGAME/UI are constructed from the
  * selected configuration and current GAME state. */
@@ -22,6 +23,10 @@ bool application_guest_q3_save_restore(application_provider *, qa_bytes, qa_erro
 bool application_guest_q3_save_actor_client(application_provider *, qa_actor_id, uint32_t *slot);
 bool application_guest_q3_save_prepare(application_provider *, qa_world *, const qa_product *,
     const qa_launch_choices *, const qa_save_record *, qa_error *);
+/* Rebuild current GAME declarations in a separately owned Source application,
+ * then merge saved gameplay values before importing mutable module memory. */
+bool application_guest_q3_save_declarations(application_provider *,
+    const qa_application_options *, const qa_application_persistence_ops *, qa_error *);
 /* After WORLD/session, roster/control/modes/bots, primary lease promotion and
  * shared service restoration. This also requires collective portal admission
  * and rechecks the complete private owner bytes before allowing guest entry. */

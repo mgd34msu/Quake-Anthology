@@ -858,9 +858,13 @@ static bool register_variable(cvar_target target, const char *name, const char *
         (!valid_info(name) || !valid_info(default_value)))
         return qac_fail(error, QA_ERROR_FORMAT, "invalid info cvar name or default");
     cvar *entry = qac_cvars_find_values(registry, target.values, name);
+    qa_cvar_save_policy policy = registry->options.declaration_save_policy
+        ? registry->options.declaration_save_policy(name) : QA_CVAR_SAVE_UNCLASSIFIED;
     if (entry != NULL) {
         if (entry->bound && entry->binding.validate != NULL &&
             !validate_value(registry,&entry->binding,default_value,error)) return false;
+        if (policy != QA_CVAR_SAVE_UNCLASSIFIED && entry->view.save_policy != QA_CVAR_SAVE_SETTING)
+            entry->view.save_policy = policy;
         if (qac_q1(dialect)) {
             if (!entry->view.console_created) {
                 print_message(target, name, " is already registered\n");
@@ -916,7 +920,8 @@ static bool register_variable(cvar_target target, const char *name, const char *
     }
     entry->view.flags = q2 && (flags & q2_no_archive) != 0 ? flags & ~UINT32_C(1) : flags;
     entry->view.owner = owner;
-    entry->view.save_policy = registry->options.default_save_policy;
+    entry->view.save_policy = policy != QA_CVAR_SAVE_UNCLASSIFIED
+        ? policy : registry->options.default_save_policy;
     entry->view.modified = true;
     entry->view.modification_count = 1;
     entry->view.handle = target.values->next_handle++;
@@ -1289,6 +1294,22 @@ bool qa_cvars_declare_save_policy(qa_cvars *registry,const char *name,
     return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SAVE_POLICY,
         .name=name,.save_policy=policy},error);
 }
+static bool vm_handle_variable(cvar_target target,const char *name,size_t *handle,qa_error *error)
+{
+    qa_cvars *registry=target.registry;
+    cvar_alias *alias=find_alias(registry,target.values,name);
+    const cvar *entry=qac_cvars_find_values(registry,target.values,canonical_name(registry,target.values,name));
+    if (!entry) return qac_fail(error,QA_ERROR_NOT_FOUND,"VM canonical cvar is absent");
+    if (!alias || alias->conversion==QA_CVAR_ALIAS_IDENTITY) {
+        *handle=entry->view.handle; return true;
+    }
+    if (alias->vm_bound) { *handle=alias->handle; return true; }
+    if (target.values->next_handle>=1024)
+        return qac_fail(error,QA_ERROR_MEMORY,"MAX_CVARS");
+    alias->handle=target.values->next_handle++; alias->vm_bound=true;
+    *handle=alias->handle; return true;
+}
+
 static bool vm_bind_variable(cvar_target target,const char *name,const char *default_value,
     uint32_t flags,uint64_t owner,size_t *handle,qa_error *error)
 {
@@ -1310,17 +1331,19 @@ static bool vm_bind_variable(cvar_target target,const char *name,const char *def
             return qac_fail(error,QA_ERROR_MEMORY,"MAX_CVARS");
         if (registry->options.dialect==QA_CONSOLE_Q3 &&
             !register_variable(target,name,default_value,flags,owner,NULL,error)) return false;
-        const cvar *entry=qac_cvars_find_values(registry,target.values,canonical_name(registry,target.values,name));
-        if (!entry) return qac_fail(error,QA_ERROR_NOT_FOUND,"VM canonical cvar is absent");
-        *handle=entry->view.handle; return true;
+        return vm_handle_variable(target,name,handle,error);
     }
     if (alias_info_flags(registry,flags) || !qac_cvars_find_values(registry,target.values,alias->target))
         return qac_fail(error,QA_ERROR_ARGUMENT,"VM alias lacks its canonical protocol admission");
-    if (alias->vm_bound) { *handle=alias->handle; return true; }
-    if (target.values->next_handle>=1024)
-        return qac_fail(error,QA_ERROR_MEMORY,"MAX_CVARS");
-    alias->handle=target.values->next_handle++; alias->vm_bound=true;
-    *handle=alias->handle; return true;
+    return vm_handle_variable(target,name,handle,error);
+}
+bool qa_cvars_vm_rebind(qa_cvars *registry,const char *name,size_t *handle,qa_error *error)
+{
+    if (!registry || !name || !handle)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"VM cvar rebind requires its actual current registry and name");
+    if (!mutation_begin(registry,error)) return false;
+    return mutation_end(registry,vm_handle_variable(live_target(registry),source_name(registry,name),
+        handle,error),error);
 }
 bool qa_cvars_vm_bind(qa_cvars *registry,const char *name,const char *default_value,
     uint32_t flags,uint64_t owner,size_t *handle,qa_error *error)
@@ -1703,7 +1726,8 @@ void qa_cvars_edit_abort(qa_cvars_edit *edit)
     registry->ready_edit=NULL; free(edit->bindings); free(edit);
 }
 
-bool qa_cvars_copy(qa_cvars *destination,const qa_cvars *source,qa_error *error)
+static bool copy_variables(qa_cvars *destination,const qa_cvars *source,
+    bool declarations_only,qa_error *error)
 {
     if (!qa_cvars_observer_idle(source) || !qa_cvars_observer_idle(destination) ||
         source->options.dialect!=destination->options.dialect)
@@ -1726,9 +1750,9 @@ bool qa_cvars_copy(qa_cvars *destination,const qa_cvars *source,qa_error *error)
             actual=okay?qac_cvars_find_values(destination,&edit->values,row->view.name):NULL;
             if (okay) okay=actual && qac_document_replace(&actual->view.documentation,row->view.documentation,error);
         }
-        if (okay) okay=qa_cvars_edit_apply(edit,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET,
+        if (okay && !declarations_only) okay=qa_cvars_edit_apply(edit,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET,
             .name=row->view.name,.value=row->view.value,.force=true},error);
-        if (okay && (row->view.latched_value || actual->view.latched_value))
+        if (okay && !declarations_only && (row->view.latched_value || actual->view.latched_value))
             okay=qa_cvars_edit_apply(edit,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_STAGE,
                 .name=row->view.name,.value=row->view.latched_value ? row->view.latched_value : row->view.value},error);
         if (okay && actual->view.save_policy==QA_CVAR_SAVE_UNCLASSIFIED)
@@ -1766,6 +1790,12 @@ bool qa_cvars_copy(qa_cvars *destination,const qa_cvars *source,qa_error *error)
     qa_cvars_edit_publish(edit);
     return qa_cvars_edit_finish(destination,error);
 }
+
+bool qa_cvars_copy(qa_cvars *destination,const qa_cvars *source,qa_error *error)
+{ return copy_variables(destination,source,false,error); }
+
+bool qa_cvars_copy_declarations(qa_cvars *destination,const qa_cvars *source,qa_error *error)
+{ return copy_variables(destination,source,true,error); }
 
 void qa_cvars_set_server_active(qa_cvars *registry, bool active) { if (qac_cvars_touch(registry, NULL)) registry->values.server_active = active; }
 void qa_cvars_set_high_characters(qa_cvars *registry, bool enabled) { if (qac_cvars_touch(registry, NULL)) registry->values.high_characters = enabled; }

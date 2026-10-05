@@ -121,6 +121,7 @@ typedef struct qa_cvar_options {
     bool (*cheats_allowed)(void *user);
     void (*effect)(void *user, qa_cvar_effect_kind kind, const qa_cvar_view *variable);
     qa_cvar_save_policy default_save_policy;
+    qa_cvar_save_policy (*declaration_save_policy)(const char *name);
 } qa_cvar_options;
 
 typedef struct qa_cvar_binding {
@@ -159,6 +160,7 @@ bool qa_cvars_declare_save_policy(qa_cvars *,const char *,qa_cvar_save_policy,qa
 /* Same-process scalar/declaration carry. Current destination callbacks stay
  * with their owner; no callback or saved registry identity is transplanted. */
 bool qa_cvars_copy(qa_cvars *destination,const qa_cvars *source,qa_error *);
+bool qa_cvars_copy_declarations(qa_cvars *destination,const qa_cvars *source,qa_error *);
 bool qa_cvars_document(qa_cvars *, const char *name, uint64_t owner,
                        const qa_console_documentation *, qa_error *);
 /* Bindings validate before publication and observe committed values. They use

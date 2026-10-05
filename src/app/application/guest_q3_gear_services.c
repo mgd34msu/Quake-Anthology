@@ -1,5 +1,6 @@
 #include "guest_q3_gear_private.h"
 #include "qa/vfs.h"
+#include "native_q3_settings.h"
 
 bool q3gear_replace_text(char **out, const char *text, qa_error *error)
 {
@@ -154,9 +155,10 @@ static bool send_command(void *context, int32_t client, const char *text, qa_err
         q3gear_fail(error, QA_ERROR_UNSUPPORTED, "Separate QVM gear server-command event owner is absent");
 }
 
-bool q3gear_services(application_q3_gear *gear, bool restoring, qa_error *error)
+bool q3gear_services(application_q3_gear *gear, qa_error *error)
 {
-    qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3, .user = gear, .print = print, .cheats_allowed = cheats};
+    qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3, .user = gear, .print = print, .cheats_allowed = cheats,
+        .declaration_save_policy = application_native_q3_cvar_save_policy};
     gear->cvars = qa_cvars_create(&cvars, error);
     if (!gear->cvars) return false;
     qa_console_options console = {.context = gear->options.host.command_context,
@@ -165,12 +167,23 @@ bool q3gear_services(application_q3_gear *gear, bool restoring, qa_error *error)
         .capture_context = command_capture, .context_active = command_active};
     gear->console = qa_console_create(&console, error);
     if (!gear->console) return false;
-    if (!restoring) {
-        static const char *names[] = {"g_log", "cm_noCurves", "cm_playerCurveClip", "bot_enable", "sv_maxclients", "dedicated", "g_gametype"};
-        static const char *values[] = {"", "0", "1", "0", "64", "1", "0"};
-        for (size_t i = 0; i < sizeof(names)/sizeof(*names); ++i)
-            if (!qa_cvars_register(gear->cvars, names[i], values[i], 0,
-                gear->options.host.service_owner, NULL, error)) return false;
+    {
+        static const struct {
+            const char *name, *value;
+            qa_cvar_save_policy policy;
+        } definitions[] = {
+            {"g_log", "", QA_CVAR_SAVE_SETTING},
+            {"cm_noCurves", "0", QA_CVAR_SAVE_GAMEPLAY},
+            {"cm_playerCurveClip", "1", QA_CVAR_SAVE_GAMEPLAY},
+            {"bot_enable", "0", QA_CVAR_SAVE_SETTING},
+            {"sv_maxclients", "64", QA_CVAR_SAVE_GAMEPLAY},
+            {"dedicated", "1", QA_CVAR_SAVE_SETTING},
+            {"g_gametype", "0", QA_CVAR_SAVE_GAMEPLAY}
+        };
+        for (size_t i = 0; i < sizeof(definitions)/sizeof(*definitions); ++i)
+            if (!qa_cvars_register(gear->cvars, definitions[i].name, definitions[i].value, 0,
+                gear->options.host.service_owner, NULL, error) ||
+                !qa_cvars_declare_save_policy(gear->cvars, definitions[i].name, definitions[i].policy, error)) return false;
         for (size_t i = 0; i < gear->definition->initial_cvar_count; ++i) {
             application_q3_grapple_cvar value = gear->definition->initial_cvars[i];
             if (!qa_cvars_register(gear->cvars, value.name, value.value, 0, gear->options.host.service_owner, NULL, error) ||

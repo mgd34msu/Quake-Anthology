@@ -108,12 +108,17 @@ bool qa_cvars_save_prepare(qa_cvars *registry, qa_bytes bytes, qa_cvars_restore 
     if (okay) okay = qa_cvars_edit_prepare(registry, &state->edit, error);
     for (const saved_cvar *row = state->rows; okay && row; row = row->next) {
         const qa_cvar_view *actual = qa_cvars_edit_canonical_record(state->edit, row->name);
-        /* Removed declarations are absent; current settings retain their current
-         * values even when a name formerly belonged to gameplay. */
-        if (!actual || !qac_cvars_name_equal(registry, actual->name, row->name) || actual->save_policy != QA_CVAR_SAVE_GAMEPLAY) continue;
+        /* Current settings and aliases keep their current factory meaning.
+         * A GAME-created name has no registration declaration to replay. */
+        if (actual && (!qac_cvars_name_equal(registry, actual->name, row->name) ||
+            actual->save_policy == QA_CVAR_SAVE_SETTING)) continue;
         okay = qa_cvars_edit_apply(state->edit, &(qa_cvars_edit_command){
             .kind = QA_CVARS_EDIT_SET, .name = row->name, .value = row->value, .force = true}, error);
         actual = okay ? qa_cvars_edit_canonical_record(state->edit, row->name) : NULL;
+        if (okay && actual->save_policy == QA_CVAR_SAVE_UNCLASSIFIED)
+            okay = qa_cvars_edit_apply(state->edit, &(qa_cvars_edit_command){
+                .kind = QA_CVARS_EDIT_SAVE_POLICY, .name = row->name,
+                .save_policy = QA_CVAR_SAVE_GAMEPLAY}, error);
         if (okay && (row->latch || actual->latched_value))
             okay = qa_cvars_edit_apply(state->edit, &(qa_cvars_edit_command){
                 .kind = QA_CVARS_EDIT_STAGE, .name = row->name,
@@ -129,6 +134,22 @@ bool qa_cvars_save_validate(const qa_cvars_restore *state, qa_error *error)
 {
     return (state && qa_cvars_edit_ready_is(state->edit)) ||
         qac_fail(error, QA_ERROR_ARGUMENT, "gameplay cvar restore lost its current prepared registry");
+}
+
+bool qa_cvars_save_matches(qa_cvars *registry, qa_bytes bytes, qa_error *error)
+{
+    qa_cvars_restore *state = NULL;
+    if (!qa_cvars_save_prepare(registry, bytes, &state, error)) return false;
+    bool okay = state->edit->values.count == registry->values.count;
+    for (const cvar *row = registry->values.first; okay && row; row = row->next) {
+        const qa_cvar_view *prepared = qa_cvars_save_find(state, row->view.name);
+        const char *latch = row->view.latched_value;
+        okay = prepared && !strcmp(prepared->value, row->view.value) &&
+            ((latch == NULL && prepared->latched_value == NULL) ||
+             (latch != NULL && prepared->latched_value != NULL && !strcmp(latch, prepared->latched_value)));
+    }
+    qa_cvars_save_abort(state);
+    return okay || qac_fail(error, QA_ERROR_FORMAT, "current gameplay cvars differ from saved name/value/latch state");
 }
 
 const qa_cvar_view *qa_cvars_save_find(const qa_cvars_restore *state, const char *name)

@@ -177,6 +177,16 @@ static bool ascii_equal(const char *a, const char *b)
     return *a == *b;
 }
 
+qa_cvar_save_policy application_native_q3_cvar_save_policy(const char *name)
+{
+    const setting_definition *tables[] = {common_settings, missionpack_settings, final_settings};
+    const size_t counts[] = {COMMON_COUNT, MISSIONPACK_COUNT, FINAL_COUNT};
+    for (size_t table = 0; table < sizeof(tables) / sizeof(*tables); ++table)
+        for (size_t row = 0; row < counts[table]; ++row)
+            if (ascii_equal(name, tables[table][row].name)) return tables[table][row].save_policy;
+    return QA_CVAR_SAVE_UNCLASSIFIED;
+}
+
 static void snapshot_dispose(application_native_q3_cvar_snapshot *snapshot)
 {
     free((void *)snapshot->name);

@@ -8,6 +8,7 @@ typedef struct qa_cvars_restore qa_cvars_restore;
  * commit publishes and delivers current notifications. Successful commit consumes
  * the ticket; failure leaves it available for checked abort. */
 bool qa_cvars_save_capture(const qa_cvars *, qa_buffer *, qa_error *);
+bool qa_cvars_save_matches(qa_cvars *, qa_bytes, qa_error *);
 bool qa_cvars_save_prepare(qa_cvars *, qa_bytes, qa_cvars_restore **, qa_error *);
 bool qa_cvars_save_validate(const qa_cvars_restore *, qa_error *);
 /* Prepared physical rows remain readable until commit or abort. */

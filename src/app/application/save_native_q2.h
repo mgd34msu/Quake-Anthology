@@ -10,6 +10,12 @@ bool application_native_q2_baseline_services_prepare(qa_application *,
     const qa_application_options *, qa_application_native_baseline_services **, qa_error *);
 bool application_create_native_baseline(const qa_application_options *, const qa_strings *,
                                          qa_catalog *, qa_application **, qa_error *);
+bool application_source_baseline_prepare(struct application_provider *,
+    const qa_launch_snapshot *, qa_application_native_baseline_services *,
+    struct application_native_q2_scratch **, qa_error *);
+struct application_provider *application_source_baseline_provider(
+    struct application_native_q2_scratch *);
+bool application_source_baseline_ready(struct application_native_q2_scratch *, qa_error *);
 /* The enclosing candidate retains the full scratch graph immediately. It is
  * never initialized or map-published before original GAME reconstruction. */
 bool application_native_q2_scratch_prepare(struct application_provider *,

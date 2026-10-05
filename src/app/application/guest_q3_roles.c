@@ -287,12 +287,14 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
     --engine->calls;
     if (!services_ready) goto failed;
     qa_catalog *catalog = qa_launch_instance_catalog(descriptor);
-    qa_fs_root *write_root = qa_catalog_product_write_root(catalog, descriptor->selection.product);
-    if (write_root && !qa_catalog_write_resolver_create(catalog, descriptor->selection.product,
+    qa_fs_root *write_root = provider->application->baseline_write_root;
+    if (!write_root) write_root = qa_catalog_product_write_root(catalog, descriptor->selection.product);
+    if (write_root && !provider->application->baseline_write_root && !qa_catalog_write_resolver_create(catalog, descriptor->selection.product,
         &role->write_resolver, error)) goto failed;
     options.write_view = (qa_q3_host_write_view){
-        .root = qa_catalog_write_resolver_root(role->write_resolver),
+        .root = provider->application->baseline_write_root ? write_root : qa_catalog_write_resolver_root(role->write_resolver),
         .resolver = qa_catalog_write_resolver_services(role->write_resolver)};
+    if (provider->application->baseline_write_root) options.writable_mount = 0;
     if (kind != QA_QVM_GAME) {
         qa_console *console = NULL;
         if (!application_guest_q3_client_console_at(engine, seat, &console, NULL) ||

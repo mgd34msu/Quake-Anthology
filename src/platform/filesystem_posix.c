@@ -33,6 +33,7 @@ struct qa_fs_root {
     ino_t inode;
     char *display_path;
     char *final_path;
+    bool temporary;
 };
 
 struct qa_fs_file {
@@ -383,6 +384,88 @@ void qa_fs_root_close(qa_fs_root *root)
     free(root->display_path);
     free(root->final_path);
     free(root);
+}
+
+bool qa_fs_root_temporary_create(qa_fs_root **out, qa_error *error)
+{
+    if (!out || *out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "temporary directory needs an empty owner");
+        return false;
+    }
+    const char *parent = getenv("TMPDIR");
+    if (!parent || !*parent) parent = "/tmp";
+    size_t length = strlen(parent);
+    const char suffix[] = "/quake-anthology-XXXXXX";
+    if (length > SIZE_MAX - sizeof(suffix)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "temporary directory path overflows"); return false;
+    }
+    char *path = malloc(length + sizeof(suffix));
+    if (!path) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "retaining temporary directory path"); return false;
+    }
+    memcpy(path, parent, length); memcpy(path + length, suffix, sizeof(suffix));
+    if (!mkdtemp(path)) {
+        int code = errno; fail_errno(error, "creating private directory", path, code); free(path); return false;
+    }
+    bool okay = qa_fs_root_open(path, out, error);
+    if (okay) (*out)->temporary = true;
+    else (void)rmdir(path);
+    free(path); return okay;
+}
+
+static bool temporary_clear(int descriptor, qa_error *error)
+{
+    int opened = openat(descriptor, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (opened < 0) return fail_errno(error, "opening private directory", "", errno);
+    DIR *directory = fdopendir(opened);
+    if (!directory) {
+        int code = errno; (void)close(opened); return fail_errno(error, "listing private directory", "", code);
+    }
+    bool okay = true;
+    while (okay) {
+        errno = 0;
+        struct dirent *entry = readdir(directory);
+        if (!entry) { if (errno) okay = fail_errno(error, "listing private directory", "", errno); break; }
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        struct stat expected;
+        if (fstatat(descriptor, entry->d_name, &expected, AT_SYMLINK_NOFOLLOW) < 0) {
+            if (errno != ENOENT) okay = fail_errno(error, "inspecting private entry", entry->d_name, errno);
+            continue;
+        }
+        bool child_directory = S_ISDIR(expected.st_mode);
+        if (child_directory) {
+            int child = openat(descriptor, entry->d_name, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+            struct stat actual;
+            if (child < 0) okay = fail_errno(error, "opening private child", entry->d_name, errno);
+            else {
+                if (!descriptor_stat(child, &actual)) okay = fail_errno(error, "inspecting private child", entry->d_name, errno);
+                else if (actual.st_dev != expected.st_dev || actual.st_ino != expected.st_ino)
+                    okay = fail_errno(error, "private child changed", entry->d_name, EIO);
+                else okay = temporary_clear(child, error);
+                (void)close(child);
+            }
+        }
+        if (okay && unlinkat(descriptor, entry->d_name, child_directory ? AT_REMOVEDIR : 0) < 0 && errno != ENOENT)
+            okay = fail_errno(error, "removing private entry", entry->d_name, errno);
+    }
+    (void)closedir(directory); return okay;
+}
+
+bool qa_fs_root_temporary_dispose(qa_fs_root **owner, qa_error *error)
+{
+    if (!owner || !*owner) return true;
+    qa_fs_root *root = *owner;
+    if (!root->temporary || root->references != 1) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "private directory retains foreign owners"); return false;
+    }
+    struct stat named;
+    if (lstat(root->final_path, &named) < 0)
+        return fail_errno(error, "inspecting private directory", root->final_path, errno);
+    if (named.st_dev != root->device || named.st_ino != root->inode || !S_ISDIR(named.st_mode))
+        return fail_errno(error, "private directory changed", root->final_path, EIO);
+    if (!temporary_clear(root->descriptor, error)) return false;
+    if (rmdir(root->final_path) < 0) return fail_errno(error, "removing private directory", root->final_path, errno);
+    qa_fs_root_close(root); *owner = NULL; return true;
 }
 
 bool qa_fs_root_join(const qa_fs_root *root, const char *relative,

@@ -43,7 +43,8 @@ bool application_native_process_prepare(qa_application *application,
     qa_native_process_resource_root *roots = calloc(mounts + 1, sizeof(*roots));
     if (!roots) return application_fail(error, QA_ERROR_MEMORY, "Holding actual native directory authorities");
     qa_catalog *catalog = qa_launch_instance_catalog(descriptor);
-    qa_fs_root *writable = qa_catalog_product_write_root(catalog, descriptor->selection.product);
+    qa_fs_root *writable = application->baseline_write_root ? application->baseline_write_root :
+        qa_catalog_product_write_root(catalog, descriptor->selection.product);
     bool selected = false;
     for (size_t i = 0; i < mounts; ++i) {
         qa_vfs_mount_info mount;

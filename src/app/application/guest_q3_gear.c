@@ -47,7 +47,7 @@ bool application_q3_gear_create(const application_q3_gear_options *options, bool
             else { if (text.size) memcpy(gear->entities.data, text.data, text.size); gear->entities.data[text.size] = 0; }
         }
     } else if (okay) okay = q3gear_filter_entities(options->host.entity_text, &gear->entities, error);
-    if (okay) okay = q3gear_services(gear, restoring, error);
+    if (okay) okay = q3gear_services(gear, error);
     if (okay) {
         gear->lower = qa_q3_host_qvm_options(gear->host, QA_QVM_INTERPRETED);
         qa_qvm_options vm = gear->lower;

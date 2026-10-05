@@ -18,6 +18,8 @@
 #include "qa/persistence_content.h"
 #include "qa/native_module_save.h"
 #include "qa/persistence_application.h"
+#include "save_native_q2.h"
+#include "qa/map_sidecars.h"
 
 static bool state_fail(qa_source_save_io *io, qa_status status, const char *message)
 {
@@ -807,8 +809,15 @@ static bool saved_collect(application_provider *provider,
         saved_free(saved);
         return application_fail(error, QA_ERROR_FORMAT, "Original GAME console changes its actual engine ownership");
     }
-    if (cvars && !qa_cvars_save_capture(cvars, &saved->cvar_storage, error)) { saved_free(saved); return false; }
-    saved->cvars = (qa_bytes){saved->cvar_storage.data, saved->cvar_storage.size};
+    if (cvars) {
+        if (expected) {
+            if (!qa_cvars_save_matches(cvars, expected->cvars, error)) { saved_free(saved); return false; }
+            saved->cvars = expected->cvars;
+        } else {
+            if (!qa_cvars_save_capture(cvars, &saved->cvar_storage, error)) { saved_free(saved); return false; }
+            saved->cvars = (qa_bytes){saved->cvar_storage.data, saved->cvar_storage.size};
+        }
+    }
     *out = saved; return true;
 }
 
@@ -1188,13 +1197,6 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
     qa_cvars *cvars = application_guest_q3_console_registry(provider);
     if ((cvars != NULL) != (saved->game != 0))
         return application_fail(error, QA_ERROR_FORMAT, "Restored original GAME has another private console owner");
-    if (cvars) {
-        qa_cvars_restore *ticket = NULL;
-        if (!qa_cvars_save_prepare(cvars, saved->cvars, &ticket, error)) return false;
-        if (!qa_cvars_save_commit(ticket, error)) { qa_cvars_save_abort(ticket); return false; }
-        if (qa_cvars_find(cvars, "sv_cheats"))
-            return application_fail(error, QA_ERROR_FORMAT, "Restored original GAME shadows shared engine sv_cheats");
-    }
     if (!application_guest_q3_client_consoles_prepare(engine, choices, error)) return false;
     memcpy(engine->seats, saved->seats, sizeof(engine->seats));
     if (saved->entity_text && !(engine->entity_text = q3g_copy_text(saved->entity_text, error))) return false;
@@ -1224,6 +1226,46 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
     for (size_t i = 0; i < saved->role_count; ++i)
         saved->roles[i].actual->next = i + 1 < saved->role_count ? saved->roles[i + 1].actual : NULL;
     return true;
+}
+
+bool application_guest_q3_save_declarations(application_provider *provider,
+    const qa_application_options *options, const qa_application_persistence_ops *ops, qa_error *error)
+{
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!engine || q3g_primary_role(provider->launch->selection.artifact) != QA_QVM_GAME) return true;
+    q3g_restore *saved = engine->restoration;
+    qa_application *app = provider->application;
+    qa_cvars *cvars = application_guest_q3_console_registry(provider);
+    if (!saved || saved->imported || !engine->restore_pending || !engine->game || !cvars ||
+        !saved->game || saved->game > saved->role_count || saved->roles[saved->game - 1].actual != engine->game ||
+        !options || !ops || !owner(provider, error) || app->operation != APPLICATION_PERSISTING)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 declarations require their cold actual GAME candidate");
+    qa_application_native_baseline_services *services = NULL;
+    struct application_native_q2_scratch *scratch = NULL;
+    bool ok = true;
+    if (saved->roles[saved->game - 1].flags & ROLE_INITIALIZED) {
+        ok = application_native_q2_baseline_services_prepare(app, options, &services, error);
+        if (ok && ops->prepare_native_baseline)
+            ok = ops->prepare_native_baseline(ops->context, app, provider->owner, services, error);
+        if (ok) ok = application_source_baseline_prepare(provider, qa_application_launch(app), services, &scratch, error);
+        application_provider *source = application_source_baseline_provider(scratch);
+        qa_bsp_view map;
+        if (ok) ok = qa_bsp_open(qa_resource_bytes(app->map_resource), &map, error) &&
+            qa_map_sidecars_apply_entities(app->map_sidecars, &map, error) &&
+            application_q3_guest_spawn_map(source, &map, NULL, source->application->current_map, QA_STRING_NONE, error) &&
+            qa_cvars_copy_declarations(cvars, application_guest_q3_console_registry(source), error) &&
+            application_source_baseline_ready(scratch, error);
+    }
+    /* The separate normal Source supplies current declarations and reset
+     * defaults. Saved values never become registration metadata. */
+    qa_cvars_restore *ticket = NULL;
+    if (ok) ok = qa_cvars_save_prepare(cvars, saved->cvars, &ticket, error) &&
+        qa_cvars_save_commit(ticket, error);
+    if (!ok) qa_cvars_save_abort(ticket);
+    if (ok && qa_cvars_find(cvars, "sv_cheats"))
+        ok = application_fail(error, QA_ERROR_FORMAT, "Restored original GAME shadows shared engine sv_cheats");
+    if (ok && scratch) ok = application_native_q2_baselines_destroy(app, error);
+    return ok;
 }
 
 bool application_guest_q3_save_restore(application_provider *provider, qa_bytes bytes, qa_error *error)

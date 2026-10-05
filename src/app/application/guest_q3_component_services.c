@@ -1,4 +1,5 @@
 #include "guest_q3_component_private.h"
+#include "native_q3_settings.h"
 
 static bool source_config(void *context,uint32_t index,const char **out,qa_error *e)
 { return application_q3_component_source_configstring(((application_q3_component *)context)->source,index,out,e); }
@@ -118,7 +119,8 @@ static qa_command_result console_command(void *context,const qa_command_invocati
 }
 bool q3component_services(application_q3_component *c,qa_error *e)
 {
-    qa_cvar_options cvars={.dialect=QA_CONSOLE_Q3,.user=c,.print=print,.cheats_allowed=cheats};
+    qa_cvar_options cvars={.dialect=QA_CONSOLE_Q3,.user=c,.print=print,.cheats_allowed=cheats,
+        .declaration_save_policy=application_native_q3_cvar_save_policy};
     c->cvars=qa_cvars_create(&cvars,e); if(!c->cvars) return false;
     if(c->options.map_path) {
         const char *path=c->options.map_path;
@@ -129,6 +131,7 @@ bool q3component_services(application_q3_component *c,qa_error *e)
         if(!name) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining actual component map cvar");
         memcpy(name,path,length); name[length]=0;
         bool registered=qa_cvars_register(c->cvars,"mapname",name,QA_CVAR_SERVERINFO|QA_CVAR_READONLY,0,NULL,e)&&
+            qa_cvars_declare_save_policy(c->cvars,"mapname",QA_CVAR_SAVE_SETTING,e)&&
             qa_cvars_set(c->cvars,"mapname",name,true,e);
         free(name); if(!registered) return false;
     }
