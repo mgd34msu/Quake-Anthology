@@ -39,6 +39,93 @@ bool q2m_species_melee(q2m_context *context, const char *callback, bool *handled
     *handled = false;
     bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
     struct qa_q2_monster *monster = context->monster;
+    if (strcmp(callback, "guncmdr_kick") == 0) {
+        *handled = true;
+        qa_actor_id enemy = monster->enemy;
+        bool hit;
+        if (!q2m_hit(context, qa_v3(80, 0, -32), 15, 400, &hit, error))
+            return false;
+        if (!q2m_alive(context) || !hit || !q2_actor_live(context->game, enemy))
+            return true;
+        qa_builtin_actor_traits traits = {0};
+        if (!context->game->services.actor_traits ||
+            !context->game->services.actor_traits(context->game->services.context,
+                                                   enemy, &traits) || !traits.player)
+            return true;
+        if (!q2m_alive(context) || !q2_actor_live(context->game, enemy))
+            return true;
+        qa_body_state body;
+        if (!qa_world_body_read(context->game->services.world, enemy, &body, error))
+            return false;
+        if (body.velocity.z < 270) {
+            body.velocity.z = 270;
+            return qa_world_body_write(context->game->services.world, enemy,
+                                         &body, error);
+        }
+        return true;
+    }
+    if (strcmp(callback, "brain_tounge_attack") == 0) {
+        *handled = true;
+        qa_actor_id enemy = monster->enemy;
+        if (!q2_actor_live(context->game, enemy))
+            return true;
+        qa_body_state body;
+        if (!qa_world_body_read(context->game->services.world, enemy, &body, error))
+            return false;
+        qa_vec3 start = q2m_project_offset(context, qa_v3(24, 0, 16));
+        qa_vec3 endpoints[] = {body.origin, body.origin, body.origin};
+        endpoints[1].z += body.bounds.maxs.z - 8;
+        endpoints[2].z += body.bounds.mins.z + 8;
+        bool reachable = false;
+        for (size_t i = 0; i < sizeof(endpoints) / sizeof(*endpoints); ++i) {
+            qa_vec3 delta = qa_vec_sub(start, endpoints[i]);
+            if (qa_vec_length(delta) <= 512 &&
+                fabsf(q2m_vector_angles(delta).x) <= 30) {
+                reachable = true;
+                break;
+            }
+        }
+        if (!reachable)
+            return true;
+        qa_trace_query query = {.start = start, .end = body.origin,
+            .pass_actor = context->actor->id,
+            .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+        query.policy.contents_mask = Q2M_ATTACK_MASK;
+        qa_trace_result trace;
+        if (!qa_world_trace(context->game->services.world, &query, &trace, error))
+            return false;
+        if (!q2m_alive(context) || trace.hit != QA_TRACE_HIT_ACTOR ||
+            !qa_actor_id_equal(trace.actor, enemy))
+            return true;
+        if (!q2m_sound(context, "brain/brnatck3.wav", 1, 1, error) ||
+            !q2m_emit(context, QA_BUILTIN_BEAM, "q2:parasite", 0, start,
+                        body.origin, 0, error))
+            return false;
+        if (!q2m_alive(context) || !q2_actor_live(context->game, enemy))
+            return true;
+        qa_attack attack = {.attacker = context->actor->id,
+            .inflictor = context->actor->id,
+            .combat_provider = context->game->options.owner,
+            .cause = qa_q2_damage_cause(context->game->options.edition,
+                context->game->options.product, 36, 8u)};
+        if (!q2_damage(context->game, &attack, enemy, 5, 0,
+                         qa_vec_sub(start, body.origin), body.origin,
+                         qa_v3(0, 0, 0), false, error))
+            return false;
+        if (!q2m_alive(context) || !q2_actor_live(context->game, enemy))
+            return true;
+        context->body.origin.z += 1;
+        if (!q2m_write_body(context, false, error))
+            return false;
+        if (!q2m_alive(context) || !q2_actor_live(context->game, enemy))
+            return true;
+        if (!qa_world_body_read(context->game->services.world, enemy, &body, error))
+            return false;
+        qa_vec3 forward;
+        qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+        body.velocity = qa_vec_scale(forward, -1200);
+        return qa_world_body_write(context->game->services.world, enemy, &body, error);
+    }
     if (!strcmp(callback, "sham_smash10") || !strcmp(callback, "ShamClaw")) {
         *handled = true;
         bool smash = !strcmp(callback, "sham_smash10");

@@ -3,6 +3,7 @@
 #include "medic.h"
 #include "qa/game_q2_entities.h"
 #include "qa/game_q2_combat.h"
+#include "../entities/internal.h"
 
 typedef struct q2m_transition {
   const char *callback;
@@ -63,9 +64,6 @@ static bool trace_hit_brush(q2m_context *context,
          properties.solid == QA_PHYSICS_BRUSH;
 }
 
-static bool has(const char *value, const char *part) {
-  return strstr(value, part) != NULL;
-}
 
 static bool ends_with(const char *value, const char *suffix) {
   size_t length = strlen(value), tail = strlen(suffix);
@@ -92,19 +90,6 @@ static bool enemy_alive(q2m_context *context) {
          combat.health > 0.0f;
 }
 
-static bool save_enemy_location(q2m_context *context) {
-  qa_body_state enemy;
-  qa_error ignored = {0};
-  if (context->monster->enemy.registry != 0 &&
-      qa_world_body_read(context->game->services.world, context->monster->enemy,
-                         &enemy, &ignored)) {
-    context->monster->last_sighting = enemy.origin;
-    context->monster->saved_goal = enemy.origin;
-    context->monster->has_saved_goal = true;
-    context->monster->blind_fire_target = enemy.origin;
-  }
-  return true;
-}
 
 static bool save_widow_disrupt_location(q2m_context *context) {
   struct qa_q2_monster *monster = context->monster;
@@ -140,20 +125,11 @@ static bool toss_makron(q2m_context *context, qa_error *error) {
 
   const qa_actor_id jorg = context->actor->id;
   const qa_actor_id enemy = context->monster->enemy;
-  qa_actor_definition definition;
-  if (!qa_builtin_resource(&context->game->services, "monster_makron",
-                           &definition, error))
-    return false;
-
-  qa_builtin_spawn spawn = {
-      .owner = context->game->options.owner,
-      .definition = definition,
-      .body = {.origin = context->body.origin, .angles = context->body.angles},
-      .link = false,
-  };
   qa_actor_id child;
-  if (!qa_builtin_spawn_actor(&context->game->services, &spawn, &child, error))
+  if (!q2m_spawn_makron_entity(context, &child, error))
     return false;
+  if (child.registry == 0)
+    return true;
 
   qa_q2_monster_spawn_options options = {
       .classname = "monster_makron",
@@ -253,38 +229,73 @@ static bool set_duck(q2m_context *context, bool down, qa_error *error) {
 static bool duck_action(q2m_context *context, const char *callback,
                         qa_error *error) {
   struct qa_q2_monster *m = context->monster;
-  bool commander = m->definition->species == Q2M_GUN_COMMANDER;
+  bool shared = !strcmp(callback, "monster_duck_down") ||
+      !strcmp(callback, "monster_duck_hold") || !strcmp(callback, "monster_duck_up");
+  bool down = !strcmp(callback, "brain_duck_down") || !strcmp(callback, "chick_duck_down") ||
+      !strcmp(callback, "medic_duck_down") || !strcmp(callback, "monster_duck_down");
+  bool hold = !strcmp(callback, "brain_duck_hold") || !strcmp(callback, "chick_duck_hold") ||
+      !strcmp(callback, "medic_duck_hold") || !strcmp(callback, "monster_duck_hold");
   bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
-  if (has(callback, "duck_down")) {
-    if (!rerelease && (commander || !strcmp(callback, "monster_duck_down"))) {
-      if (m->duck_ns < context->game->now_ns)
+  if (down) {
+    if (!shared && m->ducked) return true;
+    if (shared) {
+      if (rerelease) m->next_duck_ns = q2m_after(context->game->now_ns, 5);
+      else if (m->duck_ns < context->game->now_ns)
         m->duck_ns = q2m_after(context->game->now_ns, 1);
-    } else {
-      m->next_duck_ns = q2m_after(context->game->now_ns, 5.0);
-    }
+    } else if (strcmp(callback, "brain_duck_down"))
+      m->pause_ns = q2m_after(context->game->now_ns, 1);
     return set_duck(context, true, error);
   }
-  if (has(callback, "duck_hold")) {
-    context->monster->hold_frame =
-        context->game->now_ns < context->monster->duck_ns;
+  if (hold) {
+    m->hold_frame = context->game->now_ns < (shared ? m->duck_ns : m->pause_ns);
     return true;
   }
-  bool source_up = !strcmp(callback, "monster_duck_up");
-  if ((commander || source_up) && (!rerelease || m->ducked)) {
+  if (shared) {
+    if (rerelease && !m->ducked) return true;
     if (!rerelease) m->next_duck_ns = q2m_after(context->game->now_ns, 5);
     else if (m->next_duck_ns > context->game->now_ns)
       m->next_duck_ns = context->game->now_ns + (m->next_duck_ns - context->game->now_ns) / 2;
   }
-  if (source_up && !rerelease)
-    return publish_duck(context, false, error);
   return set_duck(context, false, error);
 }
 
 static bool jump_action(q2m_context *context, const char *callback,
                         qa_error *error) {
-  if (has(callback, "wait_land") || has(callback, "check_landing")) {
+  static const struct { const char *name; float forward, up; } jumps[] = {
+      {"berserk_jump_now", 100, 300}, {"berserk_jump2_now", 150, 400},
+      {"guncmdr_jump_now", 100, 300}, {"guncmdr_jump2_now", 150, 400},
+      {"gunner_jump_now", 100, 300}, {"gunner_jump2_now", 150, 400},
+      {"infantry_jump_now", 100, 300}, {"infantry_jump2_now", 150, 400},
+      {"mutant_jump_down", 100, 100}, {"mutant_jump_up", 200, 450},
+      {"parasite_jump_down", 100, 100}, {"parasite_jump_up", 200, 450},
+  };
+  static const char *const waits[] = {
+      "berserk_jump_wait_land", "guncmdr_jump_wait_land", "gunner_jump_wait_land",
+      "infantry_jump_wait_land", "mutant_jump_wait_land", "parasite_jump_wait_land",
+  };
+  bool wait = false;
+  for (size_t i = 0; i < sizeof(waits) / sizeof(*waits); ++i)
+    wait |= !strcmp(callback, waits[i]);
+  if (wait) {
+    if (context->body.ground.registry == 0 &&
+        context->game->options.edition == QA_Q2_RERELEASE) {
+      qa_vec3 forward;
+      qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+      qa_vec3 projected = qa_v3(context->body.velocity.x * forward.x,
+                               context->body.velocity.y * forward.y,
+                               context->body.velocity.z * forward.z);
+      if (qa_vec_length(projected) < 150) {
+        float z = context->body.velocity.z;
+        context->body.velocity = qa_vec_scale(forward, 150);
+        context->body.velocity.z = z;
+        if (!q2m_write_body(context, false, error))
+          return false;
+        if (!q2m_alive(context))
+          return true;
+      }
+    }
     if (context->body.ground.registry != 0 ||
-        context->game->now_ns >= context->monster->jump_ns)
+        context->game->now_ns > context->monster->jump_ns)
       context->monster->next_frame = context->monster->frame + 1;
     else
       context->monster->next_frame = context->monster->frame;
@@ -292,74 +303,107 @@ static bool jump_action(q2m_context *context, const char *callback,
   }
   qa_vec3 forward, up;
   qa_builtin_angle_vectors(context->body.angles, &forward, NULL, &up);
-  bool high = has(callback, "jump2") || has(callback, "straightup") ||
-              has(callback, "jump_up");
-  float forward_speed = high ? 150.0f : 100.0f;
-  float upward_speed = high ? 400.0f : 300.0f;
-  if (has(callback, "jump_down"))
-    upward_speed = 100.0f;
+  size_t index;
+  for (index = 0; index < sizeof(jumps) / sizeof(*jumps); ++index)
+    if (!strcmp(callback, jumps[index].name)) break;
+  if (index == sizeof(jumps) / sizeof(*jumps)) {
+    qa_error_set(error, QA_ERROR_FORMAT, 0, "Unknown authored Q2 jump callback %s", callback);
+    return false;
+  }
   context->body.velocity = qa_vec_add(
-      context->body.velocity, qa_vec_add(qa_vec_scale(forward, forward_speed),
-                                         qa_vec_scale(up, upward_speed)));
+      context->body.velocity, qa_vec_add(qa_vec_scale(forward, jumps[index].forward),
+                                         qa_vec_scale(up, jumps[index].up)));
   context->body.ground = (qa_actor_id){0};
-  context->monster->jump_ns = q2m_after(context->game->now_ns, 3.0);
   context->actor->physics.motion = QA_PHYSICS_STEP;
   return q2m_write_body(context, true, error);
 }
 
 static bool shrink(q2m_context *context, qa_error *error) {
-  context->body.bounds.maxs.z = fminf(context->body.bounds.maxs.z,
-                                      -4.0f * context->monster->entity_scale);
+  q2m_species species = context->monster->definition->species;
+  float height = species == Q2M_BOSS2 ? 50 : (species == Q2M_CHICK || species == Q2M_CHICK_HEAT) ? 12
+                 : species == Q2M_GUNNER ? -4
+                 : species == Q2M_GUN_COMMANDER ? -4 * context->monster->entity_scale : 0;
+  context->body.bounds.maxs.z = height;
+  if (species != Q2M_BOSS2)
+    context->actor->physics.flags |= QA_PHYSICS_DEAD;
   return q2m_write_body(context, true, error);
 }
 
-static bool footstep(q2m_context *context, const char *callback,
-                     qa_error *error) {
-  if (context->body.ground.registry == 0)
-    return true;
-  const char *path = has(callback, "arachnid") ? "insane/insane11.wav"
-                     : has(callback, "Tread")  ? "tank/step.wav"
-                                               : "player/step1.wav";
-  return q2m_sound(context, path, 4, 1.0f, error);
-}
+typedef struct source_sound {
+  const char *callback, *path;
+  int channel;
+  float attenuation, volume;
+} source_sound;
 
-static bool simple_sound(q2m_context *context, const char *callback,
-                         qa_error *error) {
-  const char *path = "misc/talk.wav";
-  int channel = 2;
-  float attenuation = 1.0f;
-  if (has(callback, "cock") || has(callback, "Reload") ||
-      has(callback, "opengun")) {
-    path = has(callback, "infantry") ? "infantry/infatck3.wav"
-                                     : "weapons/shotgr1b.wav";
-    channel = 1;
-  } else if (has(callback, "swing") || has(callback, "charge") ||
-             has(callback, "windup") || has(callback, "PreAttack")) {
-    path = context->monster->definition->species == Q2M_BERSERK
-               ? "berserk/attack.wav"
-           : context->monster->definition->species == Q2M_SHAMBLER
-               ? "shambler/sattck1.wav"
-               : "gladiator/melee3.wav";
-    channel = 1;
-  } else if (has(callback, "idle") || has(callback, "fidget") ||
-             has(callback, "Moan") || has(callback, "moan")) {
-    path = context->monster->definition->species == Q2M_INFANTRY
-               ? "infantry/infidle1.wav"
-           : context->monster->definition->species == Q2M_GUNNER
-               ? "gunner/gunidle1.wav"
-           : context->monster->definition->species == Q2M_GEKK
-               ? "gek/gk_idle1.wav"
-               : "insane/insane11.wav";
-    attenuation = 2.0f;
-  } else if (has(callback, "scream")) {
-    path = "insane/insane5.wav";
-  } else if (has(callback, "tap") || has(callback, "scratch") ||
-             has(callback, "break_noise") || has(callback, "break_sound")) {
-    path = "parasite/paridle1.wav";
-  } else if (has(callback, "thud")) {
-    path = "tank/thud.wav";
+static const source_sound source_sounds[] = {
+    {"TankStrike", "tank/tnkatck5.wav", 1, 1, 1},
+    {"TreadSound2", "bosstank/btkengn1.wav", 2, 1, 1},
+    {"arachnid_footstep", "insane/insane11.wav", 4, 2, .5f},
+    {"guardian_footstep", "zortemp/step.wav", 4, 1, 1},
+    {"guncmdr_idlesound", "guncmdr/gcdridle1.wav", 2, 2, 1},
+    {"guncmdr_opengun", "guncmdr/gcdratck1.wav", 2, 2, 1},
+    {"insane_fist", "insane/insane11.wav", 2, 2, 1},
+    {"jorg_idle", "boss3/bs3idle1.wav", 2, 1, 1},
+    {"jorg_step_left", "boss3/step1.wav", 4, 1, 1},
+    {"jorg_step_right", "boss3/step2.wav", 4, 1, 1},
+    {"makron_hit", "makron/bhit.wav", 0, 0, 1},
+    {"makron_popup", "makron/popup.wav", 4, 0, 1},
+    {"makron_step_left", "makron/step1.wav", 4, 1, 1},
+    {"makron_step_right", "makron/step2.wav", 4, 1, 1},
+    {"makron_brainsplorch", "makron/brain1.wav", 2, 1, 1},
+    {"makron_prerailgun", "makron/rail_up.wav", 1, 1, 1},
+    {"shambler_melee1", "shambler/melee1.wav", 1, 1, 1},
+    {"shambler_melee2", "shambler/melee2.wav", 1, 1, 1},
+    {"tank_footstep", "tank/step.wav", 4, 1, 1},
+    {"tank_thud", "tank/tnkdeth2.wav", 4, 1, 1},
+    {"tank_windup", "tank/tnkatck4.wav", 1, 1, 1},
+};
+
+static bool source_sound_callback(q2m_context *context, const char *callback,
+                                   bool *handled, qa_error *error) {
+  *handled = true;
+  for (size_t i = 0; i < sizeof(source_sounds) / sizeof(*source_sounds); ++i) {
+    const source_sound *sound = source_sounds + i;
+    if (strcmp(callback, sound->callback) == 0)
+      return q2m_sound_volume(context, sound->path, sound->channel,
+                               sound->attenuation, sound->volume, error);
   }
-  return q2m_sound(context, path, channel, attenuation, error);
+  if (strcmp(callback, "monster_footstep") == 0)
+    return context->body.ground.registry == 0 ||
+           q2m_emit(context, QA_BUILTIN_Q2_ENTITY_EVENT, NULL, 8,
+                     context->body.origin, context->body.origin, 0, error);
+  if (strcmp(callback, "makron_taunt") == 0) {
+    float choice = q2m_random(context->game);
+    const char *path = choice <= .3f ? "makron/voice4.wav"
+                       : choice <= .6f ? "makron/voice3.wav"
+                                         : "makron/voice.wav";
+    return q2m_sound(context, path, 0, 0, error);
+  }
+  if (strcmp(callback, "insane_shake") == 0 ||
+      strcmp(callback, "insane_moan") == 0 ||
+      strcmp(callback, "insane_scream") == 0) {
+    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    bool shake = strcmp(callback, "insane_shake") == 0;
+    if (rerelease && ((context->monster->spawnflags & 64u) ||
+        (!shake && context->monster->attack_ns >= context->game->now_ns)))
+      return true;
+    static const char *const screams[] = {
+        "insane/insane1.wav", "insane/insane2.wav", "insane/insane3.wav",
+        "insane/insane4.wav", "insane/insane6.wav", "insane/insane8.wav",
+        "insane/insane9.wav", "insane/insane10.wav"};
+    const char *path = shake ? "insane/insane5.wav"
+                       : strcmp(callback, "insane_moan") == 0
+                           ? "insane/insane7.wav"
+                           : screams[q2_random_bounded(context->game, 8)];
+    if (!q2m_sound(context, path, 2, 2, error))
+      return false;
+    if (rerelease && !shake && q2m_alive(context))
+      context->monster->attack_ns = q2m_after(context->game->now_ns,
+          q2_rerelease_float(context->game, 1, 3));
+    return true;
+  }
+  *handled = false;
+  return true;
 }
 
 bool q2m_weapon_sound(q2m_context *context, const char *path, qa_error *error) {
@@ -414,94 +458,6 @@ static bool soldier_laser_sound(q2m_context *context, bool start,
       context->monster->count >= 4)
     return true;
   return q2m_weapon_sound(context, "weapons/hyprbl1a.wav", error);
-}
-
-static q2m_attack_kind attack_kind(q2m_context *context, const char *callback) {
-  if (strcmp(callback, "Boss2HyperBlaster") == 0 ||
-      strcmp(callback, "MakronHyperblaster") == 0)
-    return Q2M_ATTACK_BLASTER;
-  if (strcmp(callback, "GunnerCmdrFire") == 0)
-    return Q2M_ATTACK_FLECHETTE;
-  if (has(callback, "Disrupt") || has(callback, "disrupt"))
-    return Q2M_ATTACK_TRACKER;
-  if (has(callback, "BFG"))
-    return Q2M_ATTACK_BFG;
-  if (has(callback, "Rail") || has(callback, "rail"))
-    return Q2M_ATTACK_RAIL;
-  if (has(callback, "Rocket") || has(callback, "rocket"))
-    return Q2M_ATTACK_ROCKET;
-  if (has(callback, "Grenade") || has(callback, "Gren") ||
-      has(callback, "gren"))
-    return Q2M_ATTACK_GRENADE;
-  if (has(callback, "Beam") || has(callback, "beam") ||
-      has(callback, "laser") || has(callback, "Laser") ||
-      has(callback, "Lightning") || has(callback, "lightning") ||
-      has(callback, "zap") || has(callback, "welder"))
-    return Q2M_ATTACK_BEAM;
-  if (has(callback, "Melee") || has(callback, "melee_hit") ||
-      has(callback, "_hit") || has(callback, "_bite") ||
-      has(callback, "_wham") || has(callback, "_slash") ||
-      has(callback, "_smack") || has(callback, "_strike") ||
-      has(callback, "_kick") || has(callback, "Claw") ||
-      has(callback, "smash") || has(callback, "tentacle") ||
-      has(callback, "tounge") || has(callback, "_fist") ||
-      has(callback, "Crunch") || has(callback, "Tongue") ||
-      has(callback, "melee") || has(callback, "Strike") ||
-      has(callback, "Slash") || has(callback, "attack_club") ||
-      has(callback, "attack_spike") || has(callback, "swing_attack"))
-    return Q2M_ATTACK_HIT;
-  if (has(callback, "Shotgun"))
-    return Q2M_ATTACK_SHOTGUN;
-  if (has(callback, "MachineGun") || has(callback, "firebullet"))
-    return Q2M_ATTACK_BULLET;
-  if (has(callback, "Blaster") || has(callback, "blaster") ||
-      has(callback, "Hyper") || has(callback, "hyper") ||
-      has(callback, "loogie") || has(callback, "fireleft") ||
-      has(callback, "fireright") || has(callback, "shoot_attack") ||
-      strcmp(callback, "actor_fire") == 0)
-    return context->monster->definition->primary != Q2M_ATTACK_NONE
-               ? context->monster->definition->primary
-               : Q2M_ATTACK_BLASTER;
-  if (has(callback, "GunnerFire") || has(callback, "TurretFire") ||
-      has(callback, "infantry_fire") || has(callback, "soldier_fire") ||
-      has(callback, "soldierh_fire") || has(callback, "ripper"))
-    return context->monster->definition->primary;
-  if (ends_with(callback, "Gun"))
-    return context->monster->definition->primary;
-  return Q2M_ATTACK_NONE;
-}
-
-static float attack_damage(q2m_context *context, q2m_attack_kind kind) {
-  const q2m_definition *definition = context->monster->definition;
-  if (kind == definition->primary && definition->primary_damage > 0.0f)
-    return definition->primary_damage;
-  if (kind == definition->secondary && definition->secondary_damage > 0.0f)
-    return definition->secondary_damage;
-  switch (kind) {
-  case Q2M_ATTACK_HIT:
-    return 20.0f;
-  case Q2M_ATTACK_BULLET:
-    return 3.0f;
-  case Q2M_ATTACK_SHOTGUN:
-    return 4.0f;
-  case Q2M_ATTACK_ROCKET:
-  case Q2M_ATTACK_GRENADE:
-  case Q2M_ATTACK_RAIL:
-  case Q2M_ATTACK_BFG:
-    return 50.0f;
-  case Q2M_ATTACK_TRACKER:
-    return 20.0f;
-  case Q2M_ATTACK_ION:
-  case Q2M_ATTACK_BLUE_BOLT:
-  case Q2M_ATTACK_GREEN_BOLT:
-  case Q2M_ATTACK_PLASMA:
-  case Q2M_ATTACK_FLECHETTE:
-  case Q2M_ATTACK_BEAM:
-  case Q2M_ATTACK_HEAT:
-    return 15.0f;
-  default:
-    return 5.0f;
-  }
 }
 
 static bool visible_enemy(q2m_context *context, bool *visible,
@@ -780,33 +736,13 @@ static bool soldier_fire_exact(q2m_context *context, unsigned index,
       monster->pause_ns =
           q2m_after(context->game->now_ns, (double)tenths * 0.1);
     }
-    if (q2m_random(context->game) > 0.8f &&
+    if (context->game->options.edition == QA_Q2_CLASSIC &&
+        q2m_random(context->game) > 0.8f &&
         !q2m_sound(context, "misc/lasfly.wav", 0, 3.0f, error))
       return false;
     if (!q2m_alive(context))
       return true;
-    qa_body_state enemy;
-    qa_error ignored = {0};
-    if (monster->enemy.registry == 0 ||
-        !qa_world_body_read(context->game->services.world, monster->enemy,
-                            &enemy, &ignored))
-      return true;
-    qa_vec3 aim_forward, aim_right, aim_up;
-    qa_builtin_angle_vectors(
-        q2m_vector_angles(qa_vec_sub(enemy.origin, context->body.origin)),
-        &aim_forward, &aim_right, &aim_up);
-    qa_vec3 muzzle_offset;
-    if (!q2m_muzzle_offset(context, flash, &muzzle_offset, error))
-      return false;
-    qa_vec3 origin = qa_vec_add(
-        context->body.origin,
-        qa_vec_add(
-            qa_vec_scale(aim_right,
-                         muzzle_offset.x + (flash == 85 ? -14.0f : 2.0f)),
-            qa_vec_add(qa_vec_scale(aim_up, muzzle_offset.z + 8.0f),
-                       qa_vec_scale(aim_forward, muzzle_offset.y))));
-    if (!q2m_spawn_monster_beam(context, monster->enemy, origin, aim_forward,
-                                1.0f, false, error))
+    if (!q2m_soldier_laser_beam(context, flash, error))
       return false;
     if (q2m_alive(context))
       monster->hold_frame = context->game->now_ns < monster->pause_ns;
@@ -931,31 +867,6 @@ static bool soldierh_laser(const struct qa_q2_monster *monster) {
   return monster->definition->species == Q2M_SOLDIER_LASER;
 }
 
-static int soldier_callback_index(const char *callback) {
-  size_t length = strlen(callback);
-  if (length == 0 || callback[length - 1] < '1' || callback[length - 1] > '8')
-    return -1;
-  switch (callback[length - 1]) {
-  case '1':
-    return 0;
-  case '2':
-    return 1;
-  case '3':
-    return 2;
-  case '4':
-    return 3;
-  case '5':
-    return 8;
-  case '6':
-    return 5;
-  case '7':
-    return 6;
-  case '8':
-    return 7;
-  default:
-    return -1;
-  }
-}
 
 static bool soldier_refire(q2m_context *context, bool force, bool *result,
                            qa_error *error) {
@@ -1219,32 +1130,39 @@ static bool soldier_callbacks(q2m_context *context, const char *callback,
   if (strcmp(callback, "soldier_death_shrink") == 0)
     return shrink(context, error);
 
-  if ((base && strncmp(callback, "soldier_fire", 12) == 0) ||
-      (heavy && (strncmp(callback, "soldierh_fire", 13) == 0 ||
-                 strncmp(callback, "soldierh_ripper", 15) == 0 ||
-                 strncmp(callback, "soldierh_hyperripper", 20) == 0))) {
-    bool ripper_callback = strncmp(callback, "soldierh_ripper", 15) == 0;
-    bool hyper_callback =
-        strncmp(callback, "soldierh_hyperripper", 20) == 0;
-    if (heavy && soldierh_laser(monster) &&
-        (ripper_callback || hyper_callback))
-      return true;
-    if (!heavy && hyper_callback && monster->skin < 6)
-      return true;
-    int index = soldier_callback_index(callback);
-    if (index < 0)
-      return true;
-    if (base && strcmp(callback, "soldier_fire3") == 0 &&
-        context->game->options.edition == QA_Q2_CLASSIC) {
-      monster->pause_ns = q2m_after(context->game->now_ns, 1.0);
-      if (!set_duck(context, true, error))
-        return false;
+  static const struct { const char *callback; unsigned index; bool limited, extra; } shots[] = {
+      {"soldier_fire1",0,false,false}, {"soldier_fire2",1,false,false},
+      {"soldier_fire3",2,false,false}, {"soldier_fire4",3,false,false},
+      {"soldier_fire5",8,true,false}, {"soldier_fire6",5,false,false},
+      {"soldier_fire7",6,false,false}, {"soldier_fire8",7,true,false},
+      {"soldierh_fire1",0,false,false}, {"soldierh_fire2",1,false,false},
+      {"soldierh_fire3",2,false,false}, {"soldierh_fire4",3,false,false},
+      {"soldierh_fire6",5,false,false}, {"soldierh_fire7",6,false,false},
+      {"soldierh_fire8",7,false,false},
+      {"soldierh_ripper1",0,false,true}, {"soldierh_ripper2",1,false,true},
+      {"soldierh_hyperripper1",0,false,true}, {"soldierh_hyperripper2",1,false,true},
+      {"soldierh_hyperripper3",2,false,true}, {"soldierh_hyperripper5",8,true,true},
+      {"soldierh_hyperripper8",7,true,true},
+  };
+  for (size_t i = 0; i < sizeof(shots) / sizeof(*shots); ++i) {
+    if (strcmp(callback, shots[i].callback)) continue;
+    if (shots[i].extra) {
+      if (context->game->options.edition == QA_Q2_RERELEASE) {
+        if (monster->count >= 4 ||
+            ((shots[i].index == 2 || shots[i].index == 7) && monster->skin < 6) ||
+            (shots[i].index == 8 && !monster->style)) return true;
+      } else if (soldierh_laser(monster)) return true;
     }
-    bool limited = strcmp(callback, "soldier_fire5") == 0 ||
-                   strcmp(callback, "soldier_fire8") == 0 ||
-                   strcmp(callback, "soldierh_hyperripper5") == 0 ||
-                   strcmp(callback, "soldierh_hyperripper8") == 0;
-    return soldier_fire_exact(context, (unsigned)index, limited, error);
+    if (base && shots[i].index == 2 && context->game->options.edition == QA_Q2_CLASSIC) {
+      monster->pause_ns = q2m_after(context->game->now_ns, 1);
+      if (!set_duck(context, true, error)) return false;
+    }
+    if (!soldier_fire_exact(context, shots[i].index, shots[i].limited, error)) return false;
+    if (q2m_alive(context) && !strcmp(callback, "soldier_fire6") &&
+        context->game->options.edition == QA_Q2_RERELEASE &&
+        soldier_shotgun(monster) && !monster->cocked)
+      monster->next_frame = 297;
+    return true;
   }
 
   if (strcmp(callback, "soldierh_hyper_laser_sound_start") == 0)
@@ -2442,31 +2360,6 @@ static bool conditional_transition(q2m_context *context, const char *callback,
   return true;
 }
 
-static bool reattack(q2m_context *context, const char *callback,
-                     qa_error *error) {
-  if (enemy_alive(context) && q2m_random(context->game) < 0.6f) {
-    context->monster->next_frame = context->monster->move->first_frame;
-    return true;
-  }
-  context->monster->hold_frame = false;
-  context->monster->manual_steering = false;
-  if (has(callback, "chick")) {
-    bool found;
-    return set_existing_move(context, "chick_move_end_attack1", false, &found,
-                             error);
-  }
-  if (has(callback, "gunner") || has(callback, "guncmdr")) {
-    bool found;
-    const char *move =
-        context->monster->definition->species == Q2M_GUN_COMMANDER
-            ? "guncmdr_move_endfire_chain"
-            : "gunner_move_endfire_chain";
-    return set_existing_move(context, move, false, &found, error);
-  }
-  return set_definition_move(context, context->monster->definition->run_move,
-                             error);
-}
-
 static bool end_transition(q2m_context *context, const char *callback,
                            bool *handled, qa_error *error) {
   if (context->game->options.edition == QA_Q2_RERELEASE &&
@@ -2494,7 +2387,9 @@ static bool end_transition(q2m_context *context, const char *callback,
       move = "actor_move_stand";
     if (!q2m_set_move(context, move, true, error))
       return false;
-    if (!strcmp(move, "actor_move_stand") && context->game->now_ns < Q2M_SECOND) {
+    if (q2m_alive(context) &&
+        !strcmp(context->monster->move->name, "actor_move_stand") &&
+        context->game->now_ns < Q2M_SECOND) {
       unsigned frames = (unsigned)(context->monster->move->last_frame -
                                    context->monster->move->first_frame + 1);
       unsigned choice = context->game->options.edition == QA_Q2_RERELEASE
@@ -2601,6 +2496,16 @@ static bool foundational_species_callback(q2m_context *context,
   struct qa_q2_monster *monster = context->monster;
   *handled = true;
 
+  if (!strcmp(callback, "berserk_run_swing")) {
+    if (!q2m_sound(context, "berserk/attack.wav", 1, 1, error)) return false;
+    if (!q2m_alive(context)) return true;
+    monster->melee_ns = q2m_after(context->game->now_ns, .6);
+    if (monster->attack_state == Q2M_SLIDING) {
+      monster->attack_state = Q2M_STRAIGHT;
+      monster->dodging = false;
+    }
+    return true;
+  }
   if (strcmp(callback, "berserk_swing") == 0)
     return q2m_sound(context, "berserk/attack.wav", 1, 1.0f, error);
   if (strcmp(callback, "berserk_strike") == 0)
@@ -2631,6 +2536,10 @@ static bool foundational_species_callback(q2m_context *context,
   if (strcmp(callback, "brain_swing_left") == 0)
     return q2m_sound(context, "brain/melee2.wav", 4, 1.0f, error);
   if (strcmp(callback, "brain_chest_open") == 0) {
+    if (context->game->options.edition == QA_Q2_RERELEASE)
+      monster->count = 0;
+    else
+      monster->spawnflags &= ~UINT32_C(65536);
     if (context->game->options.edition == QA_Q2_RERELEASE)
       monster->count = 0;
     else
@@ -3668,6 +3577,476 @@ static bool gunner_grenade(q2m_context *context, qa_error *error) {
   return q2m_fire(context, &spec, error);
 }
 
+static bool guncmdr_grenade(q2m_context *context, qa_error *error) {
+  static const struct { int frame, flash; float spread; } shots[] = {
+      {381, 242, -.1f}, {384, 243, 0}, {387, 244, .1f},
+      {401, 245, -.1f}, {404, 246, 0}, {407, 247, .1f},
+      {748, 248, .25f}, {749, 249, 0}, {750, 250, -.25f}};
+  size_t shot;
+  for (shot = 0; shot < sizeof(shots) / sizeof(*shots); ++shot)
+    if (shots[shot].frame == context->monster->frame)
+      break;
+  if (shot == sizeof(shots) / sizeof(*shots)) {
+    qa_error_set(error, QA_ERROR_FORMAT, context->actor->id.slot,
+                  "Gunner commander grenade has no authored muzzle frame");
+    return false;
+  }
+  qa_body_state enemy;
+  qa_builtin_actor_traits traits;
+  bool available;
+  if (!target_body(context, &enemy, &traits, &available) || !available ||
+      !q2m_alive(context))
+    return true;
+  qa_vec3 target = enemy.origin;
+  if (context->monster->manual_steering) {
+    bool visible;
+    if (!q2m_visible(context, context->monster->enemy, &visible, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    if (!visible) {
+      target = context->monster->blind_fire_target;
+      if (qa_vec_length(target) == 0)
+        return true;
+    }
+  }
+  int flash = shots[shot].flash;
+  bool mortar = flash <= 244, crouch = flash >= 248;
+  qa_vec3 start, forward, right, up, aim;
+  if (!q2m_project_flash(context, flash, &start, error))
+    return false;
+  qa_builtin_angle_vectors(context->body.angles, &forward, &right, &up);
+  if (crouch) {
+    if (!q2m_predict_from(context, start, 800, false, 0, NULL, &aim,
+                          &available, error))
+      return false;
+    if (!available || !q2m_alive(context))
+      return true;
+    aim = qa_vec_normalize(qa_vec_add(aim, qa_vec_scale(right, shots[shot].spread)));
+    for (int i = 0; i < 3; ++i) {
+      q2m_fire_spec spec = q2m_fire_default(context, Q2M_ATTACK_ION, 15, 0,
+          start, qa_vec_add(aim, qa_vec_scale(right, -.25f + .125f * (float)(i + 1))));
+      spec.speed = 800;
+      spec.has_projectile_effects = true;
+      spec.projectile_effects = UINT64_C(0x00100000);
+      if (!q2m_fire(context, &spec, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+    }
+    return q2m_emit(context, QA_BUILTIN_MUZZLE, "q2:monster-muzzle", flash,
+                     start, qa_vec_add(start, aim), 1, error);
+  }
+  qa_vec3 delta = qa_vec_sub(target, context->body.origin);
+  float distance = qa_vec_length(delta);
+  if (distance > 512 && delta.z > -64 && delta.z < 64)
+    delta.z += distance - 512;
+  float pitch = fmaxf(-.5f, fminf(.4f, qa_vec_normalize(delta).z));
+  if (mortar && enemy.origin.z + enemy.bounds.mins.z -
+                   context->body.origin.z - context->body.bounds.maxs.z > 16)
+    pitch += .5f;
+  if (!mortar)
+    pitch -= .05f;
+  aim = qa_vec_normalize(qa_vec_add(qa_vec_add(forward,
+      qa_vec_scale(right, shots[shot].spread)), qa_vec_scale(up, pitch)));
+  float speed = mortar ? 850 : 600;
+  float gravity = context->game->services.physics
+                      ? context->game->services.physics->gravity : 800;
+  qa_vec3 direction;
+  bool predicted;
+  if (!mortar_direction(context, target, start, aim, speed, gravity, mortar,
+                        &direction, &predicted, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  q2m_fire_spec spec = q2m_fire_default(context, Q2M_ATTACK_GRENADE, 50,
+      flash, start, predicted ? direction : aim);
+  spec.speed = speed;
+  spec.fuse = 2.5f;
+  spec.radius = 90;
+  spec.radius_damage = 50;
+  spec.has_grenade_impulse = true;
+  spec.grenade_right = q2m_crandom(context->game) * 10;
+  spec.grenade_up = predicted ? q2m_random(context->game) * 10
+                              : 200 + q2m_crandom(context->game) * 10;
+  spec.grenade_gravity = gravity;
+  return q2m_fire(context, &spec, error);
+}
+
+static bool arachnid_rail(q2m_context *context, qa_error *error) {
+  int frame = context->monster->frame;
+  int flash = frame == 7 ? 229 : frame == 121 ? 230
+                               : frame == 125 ? 231 : 228;
+  qa_vec3 start;
+  if (!q2m_project_flash(context, flash, &start, error))
+    return false;
+  q2m_fire_spec spec = q2m_fire_default(context, Q2M_ATTACK_RAIL, 35,
+      flash, start, qa_vec_normalize(qa_vec_sub(
+          context->monster->saved_attack_position, start)));
+  spec.kick = 100;
+  return q2m_fire(context, &spec, error);
+}
+
+static bool gladb_gun(q2m_context *context, qa_error *error) {
+  qa_vec3 start;
+  if (!q2m_project_flash(context, 61, &start, error))
+    return false;
+  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  float damage = 35, radius = 45;
+  if (rerelease && context->monster->frame > 48) {
+    damage = 17;
+    radius = 22;
+  }
+  q2m_fire_spec spec = q2m_fire_default(context, Q2M_ATTACK_PLASMA, damage, 0,
+      start, qa_vec_normalize(qa_vec_sub(context->monster->blind_fire_target, start)));
+  exact_projectile_speed(&spec, 725);
+  spec.radius = spec.radius_damage = radius;
+  if (!q2m_fire(context, &spec, error))
+    return false;
+  if (rerelease && q2m_alive(context))
+    return makron_save_location(context);
+  return true;
+}
+
+static bool actor_fire(q2m_context *context, qa_error *error) {
+  qa_vec3 start, direction;
+  if (!q2m_project_flash(context, 63, &start, error))
+    return false;
+  qa_builtin_angle_vectors(context->body.angles, &direction, NULL, NULL);
+  qa_body_state enemy;
+  qa_builtin_actor_traits traits;
+  bool available;
+  if (!target_body(context, &enemy, &traits, &available))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  if (available) {
+    qa_vec3 point;
+    if (enemy_alive(context))
+      point = qa_vec_add(qa_vec_add(enemy.origin, qa_vec_scale(enemy.velocity, -.2f)),
+                         qa_v3(0, 0, traits.view_height));
+    else {
+      point = qa_vec_add(enemy.origin, enemy.bounds.mins);
+      point.z += (enemy.bounds.maxs.z - enemy.bounds.mins.z) * .5f + 1;
+    }
+    direction = qa_vec_normalize(qa_vec_sub(point, start));
+  }
+  q2m_fire_spec spec = q2m_fire_default(context, Q2M_ATTACK_BULLET, 3, 63,
+                                       start, direction);
+  spec.kick = 4;
+  if (!q2m_fire(context, &spec, error))
+    return false;
+  if (q2m_alive(context))
+    context->monster->hold_frame = context->game->now_ns <
+        (context->game->options.edition == QA_Q2_RERELEASE
+             ? context->monster->fire_ns : context->monster->pause_ns);
+  return true;
+}
+
+static bool guncmdr_fire(q2m_context *context, qa_error *error) {
+  int frame = context->monster->frame;
+  int flash = frame >= 419 && frame <= 428 ? 241 : 240;
+  qa_vec3 start, direction;
+  bool available;
+  if (!q2m_project_flash(context, flash, &start, error) ||
+      !q2m_predict_from(context, start, 800, false,
+          q2m_random(context->game) * .3f, NULL, &direction, &available, error))
+    return false;
+  if (!available || !q2m_alive(context))
+    return true;
+  direction.x += q2m_crandom(context->game) * .025f;
+  direction.y += q2m_crandom(context->game) * .025f;
+  direction.z += q2m_crandom(context->game) * .025f;
+  q2m_fire_spec spec = q2m_fire_default(context, Q2M_ATTACK_FLECHETTE, 4,
+                                       flash, start, direction);
+  spec.speed = 800;
+  return q2m_fire(context, &spec, error);
+}
+
+static bool fixbot_blaster(q2m_context *context, qa_error *error) {
+  bool visible;
+  if (!visible_enemy(context, &visible, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  if (!visible && !q2m_set_move(context, "fixbot_move_run", false, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  return fire_source_exact(context, Q2M_ATTACK_BLASTER, 15, 62, 0, 1000,
+                            true, 8, error);
+}
+
+static bool fixbot_welder(q2m_context *context, qa_error *error) {
+  if (!q2_actor_live(context->game, context->monster->enemy))
+    return true;
+  qa_builtin_event event = {
+      .kind = QA_BUILTIN_EFFECT, .family = QA_GAME_Q2,
+      .provider = context->game->options.owner, .actor = context->actor->id,
+      .time_ns = context->game->now_ns,
+      .origin = q2m_project_offset(context, qa_v3(24, -.8f, -10)),
+      .count = 10, .code = 0xe0 + (int32_t)q2_random_bounded(context->game, 8),
+  };
+  if (!qa_builtin_resource(&context->game->services, "q2:welding-sparks",
+                            &event.resource, error) ||
+      !qa_builtin_emit(&context->game->services, &event, error))
+    return false;
+  if (!q2m_alive(context) || q2m_random(context->game) <= .8f)
+    return true;
+  float choice = q2m_random(context->game);
+  return q2m_sound(context, choice < .33f ? "misc/welder1.wav"
+                            : choice < .66f ? "misc/welder2.wav"
+                                            : "misc/welder3.wav", 2, 2, error);
+}
+
+static bool shambler_lightning(q2m_context *context, qa_error *error) {
+  if (!q2_actor_live(context->game, context->monster->enemy))
+    return true;
+  qa_vec3 offset = qa_v3(0, 0, 48);
+  bool clear;
+  for (unsigned i = 0; i < 8; ++i, offset.z -= 4) {
+    if (!q2m_clear_shot(context, offset, &clear, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    if (clear)
+      break;
+  }
+  if (!clear)
+    offset.z = 48;
+  qa_vec3 start = q2m_project_offset(context, offset), direction;
+  bool available;
+  if (!q2m_predict_from(context, start, 0, false,
+      context->monster->spawnflags & 1u ? 0 : .1f,
+      NULL, &direction, &available, error))
+    return false;
+  if (!available || !q2m_alive(context))
+    return true;
+  qa_trace_query query = {
+      .start = start, .end = qa_vec_add(start, qa_vec_scale(direction, 8192)),
+      .pass_actor = context->actor->id,
+      .policy = qa_collision_default_policy(QA_COLLISION_Q2),
+  };
+  query.policy.contents_mask = Q2M_ATTACK_MASK;
+  if (context->game->options.edition == QA_Q2_RERELEASE)
+    query.policy.contents_mask |= UINT32_C(0x40000000);
+  qa_trace_result trace;
+  if (!qa_world_trace(context->game->services.world, &query, &trace, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  qa_builtin_event event = {
+      .kind = QA_BUILTIN_BEAM, .family = QA_GAME_Q2,
+      .provider = context->game->options.owner, .actor = context->actor->id,
+      .other = context->game->services.physics->world_actor,
+      .time_ns = context->game->now_ns, .origin = start, .end = trace.end,
+  };
+  if (!qa_builtin_resource(&context->game->services, "q2:lightning",
+                            &event.resource, error) ||
+      !qa_builtin_emit(&context->game->services, &event, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  q2m_fire_spec spec = q2m_fire_default(context, Q2M_ATTACK_BULLET,
+      8 + (float)q2_random_bounded(context->game, 4), 0, start, direction);
+  spec.kick = 15;
+  spec.horizontal_spread = spec.vertical_spread = 0;
+  spec.direct_mod = 45;
+  return q2m_fire(context, &spec, error);
+}
+
+static bool turret_aim(q2m_context *context, qa_error *error) {
+  if (!q2_actor_live(context->game, context->monster->enemy)) {
+    bool found;
+    if (!q2m_find_target(context, &found, error))
+      return false;
+    if (!q2m_alive(context) || !found)
+      return true;
+  }
+  if (context->monster->frame < 2) {
+    if (!q2m_set_move(context, "turret_move_ready_gun", false, error))
+      return false;
+    return !q2m_alive(context) || q2m_weapon_sound(context, "turret/moving.wav", error);
+  }
+  if (context->monster->frame < 8)
+    return true;
+  qa_body_state enemy;
+  qa_builtin_actor_traits traits;
+  bool available;
+  if (!target_body(context, &enemy, &traits, &available))
+    return false;
+  if (!q2m_alive(context) || !available)
+    return true;
+  qa_vec3 point = enemy.origin;
+  if (context->monster->move &&
+      !strcmp(context->monster->move->name, "turret_move_fire_blind")) {
+    point = context->monster->blind_fire_target;
+    point.z += enemy.origin.z < point.z ? traits.view_height + 10
+                                         : enemy.bounds.mins.z - 10;
+  } else if (traits.player)
+    point.z += traits.view_height;
+  qa_vec3 ideal = q2m_vector_angles(qa_vec_sub(point, context->body.origin));
+  switch (context->monster->turret_orientation) {
+  case -1:
+    if (ideal.x < -90) ideal.x += 360;
+    ideal.x = fminf(ideal.x, -5);
+    break;
+  case -2:
+    if (ideal.x > -90) ideal.x -= 360;
+    ideal.x = fminf(-185, fmaxf(-355, ideal.x));
+    break;
+  case 0:
+    if (ideal.x < -180) ideal.x += 360;
+    ideal.x = fminf(85, fmaxf(-85, ideal.x));
+    if (ideal.y > 180) ideal.y -= 360;
+    ideal.y = fminf(85, fmaxf(-85, ideal.y));
+    break;
+  case 90:
+    if (ideal.x < -180) ideal.x += 360;
+    ideal.x = fminf(85, fmaxf(-85, ideal.x));
+    if (ideal.y > 270) ideal.y -= 360;
+    ideal.y = fminf(175, fmaxf(5, ideal.y));
+    break;
+  case 180:
+    if (ideal.x < -180) ideal.x += 360;
+    ideal.x = fminf(85, fmaxf(-85, ideal.x));
+    ideal.y = fminf(265, fmaxf(95, ideal.y));
+    break;
+  case 270:
+    if (ideal.x < -180) ideal.x += 360;
+    ideal.x = fminf(85, fmaxf(-85, ideal.x));
+    if (ideal.y < 90) ideal.y += 360;
+    ideal.y = fminf(355, fmaxf(185, ideal.y));
+    break;
+  }
+  float speed = context->monster->yaw_speed *
+      (context->game->options.edition == QA_Q2_RERELEASE ? context->elapsed * 10 : 1);
+  float move = ideal.x - context->body.angles.x;
+  while (move >= 360) move -= 360;
+  if (move >= 90) move -= 360;
+  while (move <= -360) move += 360;
+  if (move <= -90) move += 360;
+  context->body.angles.x = qa_builtin_angle_mod(context->body.angles.x +
+                                               fminf(speed, fmaxf(-speed, move)));
+  move = ideal.y - context->body.angles.y;
+  if (move >= 180) move -= 360;
+  if (move <= -180) move += 360;
+  context->body.angles.y = qa_builtin_angle_mod(context->body.angles.y +
+                                               fminf(speed, fmaxf(-speed, move)));
+  return q2m_write_body(context, false, error) &&
+      (!q2m_alive(context) || q2m_turret_lasersight(context, error));
+}
+
+static bool turret_fire(q2m_context *context, bool blind, qa_error *error) {
+  if (!turret_aim(context, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  qa_body_state enemy;
+  qa_builtin_actor_traits traits;
+  bool available;
+  if (!target_body(context, &enemy, &traits, &available))
+    return false;
+  if (!q2m_alive(context) || !available)
+    return true;
+  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  uint32_t flags = context->monster->spawnflags;
+  qa_vec3 point = blind || (rerelease && context->monster->lost_sight)
+                     ? context->monster->blind_fire_target : enemy.origin;
+  qa_vec3 forward;
+  qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+  if (qa_vec_dot(qa_vec_normalize(qa_vec_sub(point, context->body.origin)), forward) < .98f)
+    return true;
+  float speed = flags & 32u ? 650 : flags & 8u ? 800 : 0;
+  if (!rerelease) {
+    if (flags & 32u) {
+      speed = 550;
+      if (context->game->options.skill == 2)
+        speed += 200 * q2m_random(context->game);
+      else if (context->game->options.skill == 3)
+        speed += 100 + 200 * q2m_random(context->game);
+    } else if (flags & 8u)
+      speed = blind ? 1000 : context->game->options.skill == 0 ? 600
+                            : context->game->options.skill == 1 ? 800 : 1000;
+  }
+  if (!blind) {
+    bool visible;
+    if (!visible_enemy(context, &visible, error))
+      return false;
+    if (!q2m_alive(context) || (!visible && !(rerelease && (flags & 16u))))
+      return true;
+    if (!(rerelease && context->monster->lost_sight))
+      point.z += traits.player ? traits.view_height : 22;
+  } else
+    point.z += enemy.origin.z < point.z ? traits.view_height + 10
+                                         : enemy.bounds.mins.z - 10;
+  qa_vec3 start = context->body.origin, direction = qa_vec_sub(point, start);
+  float distance = qa_vec_length(direction);
+  if (!blind) {
+    if (rerelease && !context->monster->lost_sight) {
+      if ((flags & 16u) || q2m_random(context->game) < (float)context->game->options.skill / 5) {
+        float offset = flags & 16u ? .3f
+            : q2m_random(context->game) * (3 - (float)context->game->options.skill) / 3 -
+              q2m_random(context->game) * .05f * (3 - (float)context->game->options.skill);
+        if (!q2m_predict_from(context, start, speed, true, offset,
+                              NULL, &direction, &available, error))
+          return false;
+        if (!q2m_alive(context) || !available)
+          return true;
+      }
+    } else if (!rerelease && !(flags & 0x50u) && distance < 512 &&
+        q2m_random(context->game) + (3 - (float)context->game->options.skill) * .1f < .8f)
+      direction = qa_vec_sub(qa_vec_add(point, qa_vec_scale(enemy.velocity, distance / 1000)), start);
+    qa_trace_query query = {.start = start, .end = point, .pass_actor = context->actor->id,
+                           .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+    query.policy.contents_mask = Q2M_ATTACK_MASK;
+    if (rerelease) query.policy.contents_mask |= UINT32_C(0x40000000);
+    qa_trace_result trace;
+    if (!qa_world_trace(context->game->services.world, &query, &trace, error))
+      return false;
+    if (!q2m_alive(context) || (trace.hit == QA_TRACE_HIT_ACTOR &&
+        !qa_actor_id_equal(trace.actor, context->monster->enemy) &&
+        !qa_actor_id_equal(trace.actor, context->game->services.physics->world_actor)))
+      return true;
+    if ((flags & 32u) && distance * trace.fraction <= 72)
+      return true;
+  }
+  q2m_attack_kind kind = flags & 8u ? Q2M_ATTACK_BLASTER
+                         : flags & 16u ? Q2M_ATTACK_BULLET : Q2M_ATTACK_ROCKET;
+  if (blind && kind == Q2M_ATTACK_BULLET)
+    return true;
+  if (rerelease && kind == Q2M_ATTACK_BULLET) {
+    if (!context->monster->hold_frame) {
+      context->monster->hold_frame = true;
+      context->monster->duck_ns = q2m_after(context->game->now_ns,
+          2 + q2m_random(context->game) * (float)context->game->options.skill);
+      context->monster->next_duck_ns = q2m_after(context->game->now_ns, 1);
+      return q2m_sound(context, "weapons/chngnu1a.wav", 2, 1, error);
+    }
+    if (context->monster->duck_ns < context->game->now_ns)
+      context->monster->hold_frame = false;
+    if (context->monster->next_duck_ns >= context->game->now_ns ||
+        context->monster->melee_ns > context->game->now_ns)
+      return true;
+    context->monster->melee_ns = q2m_after(context->game->now_ns, .1);
+  }
+  float damage = kind == Q2M_ATTACK_BLASTER ? rerelease ? 8 : 20
+                   : kind == Q2M_ATTACK_BULLET ? rerelease ? 2 : 4
+                                              : rerelease ? 40 : 50;
+  int flash = kind == Q2M_ATTACK_BLASTER ? 143 : kind == Q2M_ATTACK_BULLET ? 141 : 142;
+  q2m_fire_spec spec = q2m_fire_default(context, kind, damage, flash,
+                                       start, qa_vec_normalize(direction));
+  spec.kick = 0;
+  if (kind != Q2M_ATTACK_BULLET) {
+    spec.speed = speed;
+    if (kind == Q2M_ATTACK_BLASTER) {
+      spec.has_projectile_effects = true;
+      spec.projectile_effects = 8;
+    }
+  }
+  return q2m_fire(context, &spec, error);
+}
+
 static bool supertank_grenade(q2m_context *context, qa_error *error) {
   if (context->game->options.edition != QA_Q2_RERELEASE)
     return true;
@@ -3921,11 +4300,239 @@ static bool heavy_weapon_callback(q2m_context *context, const char *callback,
   return true;
 }
 
+static bool fixbot_goal_create(q2m_context *context, int vertical, qa_error *error) {
+  qa_vec3 point = {0};
+  qa_bounds bounds = {{-32,-32,-24},{32,32,24}};
+  qa_trace_query query = {.start = context->body.origin, .pass_actor = context->actor->id,
+    .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+  if (vertical) {
+    qa_vec3 up;
+    qa_builtin_angle_vectors(context->body.angles, NULL, NULL, &up);
+    query.end = qa_vec_add(context->body.origin, qa_vec_scale(up, vertical < 0 ? -8096 : 128));
+    query.shape = (qa_trace_shape){.kind = QA_SHAPE_BOX, .bounds = bounds};
+    query.policy.contents_mask = Q2M_MONSTER_MASK;
+    qa_trace_result trace;
+    if (!qa_world_trace(context->game->services.world, &query, &trace, error))
+      return false;
+    point = trace.end;
+  } else {
+    float longest = 0;
+    query.policy.contents_mask = Q2M_ATTACK_MASK |
+        (context->game->options.edition == QA_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0);
+    for (int i = 0; i < 12; ++i) {
+      qa_vec3 angles = context->body.angles, forward;
+      angles.y += (float)(i < 6 ? 30 * i : -30 * (i - 6));
+      qa_builtin_angle_vectors(angles, &forward, NULL, NULL);
+      query.end = qa_vec_add(context->body.origin, qa_vec_scale(forward, 8192));
+      qa_trace_result trace;
+      if (!qa_world_trace(context->game->services.world, &query, &trace, error))
+        return false;
+      if (!q2m_alive(context)) return true;
+      float length = qa_vec_length(qa_vec_sub(context->body.origin, trace.end));
+      if (length > longest) { longest = length; point = trace.end; }
+    }
+  }
+  if (!q2m_alive(context)) return true;
+  qa_actor_id goal;
+  if (!q2m_fixbot_goal(context, point, vertical ? &bounds : NULL, &goal, error))
+    return false;
+  if (!q2m_alive(context) || !goal.registry) return true;
+  context->monster->goal = context->monster->enemy = goal;
+  return q2m_set_move(context, vertical < 0 ? "fixbot_move_landing" :
+      vertical > 0 ? "fixbot_move_takeoff" : "fixbot_move_turn", false, error);
+}
+
+static bool fixbot_roam(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  bool acquired = false;
+  if (!(context->game->options.edition == QA_Q2_RERELEASE ? m->enemy.registry : m->goal.registry) &&
+      !q2m_medic_acquire(context, true, &acquired, error))
+    return false;
+  if (!q2m_alive(context) || acquired) return true;
+  if (!q2m_set_move(context, "fixbot_move_roamgoal", false, error)) return false;
+  if (m->spawnflags & 1u) {
+    if (!fixbot_goal_create(context, -1, error)) return false;
+    if (!q2m_alive(context)) return true;
+    m->spawnflags = 8;
+  }
+  if (m->spawnflags & 2u) {
+    if (!fixbot_goal_create(context, 1, error)) return false;
+    if (!q2m_alive(context)) return true;
+    m->spawnflags = 8;
+  }
+  if (m->spawnflags & 4u) {
+    if (!q2m_set_move(context, "fixbot_move_roamgoal", false, error)) return false;
+    if (!q2m_alive(context)) return true;
+    m->spawnflags = 8;
+  }
+  return m->spawnflags || q2m_set_move(context, "fixbot_move_stand2", false, error);
+}
+
+static bool fixbot_finish_goal(q2m_context *context, bool clear, qa_error *error) {
+  q2m_fixbot_goal_retire(context, context->monster->goal);
+  if (clear) context->monster->goal = context->monster->enemy = (qa_actor_id){0};
+  return q2m_set_move(context, "fixbot_move_stand", false, error);
+}
+
+static bool fixbot_scanner(q2m_context *context, qa_error *error) {
+  qa_q2_game *game = context->game;
+  qa_builtin_snapshot_frame *nearby = q2_nearby(game, context->body.origin, 1024, error);
+  if (!nearby) return false;
+  qa_actor_id repair = {0};
+  bool result = true;
+  for (size_t i = 0; i < nearby->snapshot.count; ++i) {
+    qa_actor_id id = nearby->snapshot.ids[i];
+    q2_actor *a = q2_actor_get(game, id, false, NULL);
+    qa_combat_state combat;
+    if (!a || !a->entity || a->entity->scenery != Q2S_REPAIR ||
+        !qa_combat_read(game->services.combat, id, &combat, NULL) || combat.health < 100)
+      continue;
+    bool visible;
+    if (!q2m_visible(context, id, &visible, error)) { result = false; break; }
+    if (!q2m_alive(context)) break;
+    if (visible) { repair = id; break; }
+  }
+  qa_builtin_snapshot_release(nearby);
+  if (!result || !q2m_alive(context)) return result;
+  if (repair.registry) {
+    q2m_fixbot_goal_retire(context, context->monster->goal);
+    context->monster->goal = context->monster->enemy = repair;
+    q2m_fixbot_flight(context, false, true);
+    return q2m_distance(context, repair) >= 32 ||
+        q2m_set_move(context, "fixbot_move_weld_start", false, error);
+  }
+  qa_actor_id goal_id = context->monster->goal;
+  q2_actor *goal = q2_actor_get(game, goal_id, false, NULL);
+  if (!goal) return q2m_set_move(context, "fixbot_move_stand", false, error);
+  bool is_repair = goal->entity && goal->entity->scenery == Q2S_REPAIR;
+  float distance = q2m_distance(context, goal_id);
+  if (distance < 32)
+    return is_repair ? q2m_set_move(context, "fixbot_move_weld_start", false, error)
+                     : fixbot_finish_goal(context, true, error);
+  if (game->wire_frame) {
+    const qa_q2_wire_origin *old = context->actor->wire_lifetime.origins + ((game->wire_frame - 1) & 7u);
+    if (old->present && old->source_frame == game->wire_frame - 1 &&
+        qa_vec_length(qa_vec_sub(context->body.origin, old->origin)) == 0)
+      return is_repair ? q2m_set_move(context, "fixbot_move_stand", false, error)
+                       : fixbot_finish_goal(context, true, error);
+  }
+  return true;
+}
+
+static bool fixbot_vertical(q2m_context *context, bool approach, qa_error *error) {
+  qa_actor_id goal = context->monster->goal;
+  qa_body_state body;
+  if (!q2_actor_live(context->game, goal)) return true;
+  if (!qa_world_body_read(context->game->services.world, goal, &body, error))
+    return !q2_actor_live(context->game, goal);
+  qa_vec3 difference = qa_vec_sub(body.origin, context->body.origin);
+  context->monster->ideal_yaw = q2m_vector_angles(difference).y;
+  if (!q2m_change_yaw(context, error)) return false;
+  if (!q2m_alive(context)) return true;
+  int frame = context->monster->frame;
+  if ((approach ? qa_vec_length(difference) < 32 : frame == 88 || frame == 120) &&
+      !fixbot_finish_goal(context, true, error)) return false;
+  if (!q2m_alive(context) || approach) return true;
+  qa_vec3 angles = context->body.angles, forward;
+  angles.x += 90;
+  qa_builtin_angle_vectors(angles, &forward, NULL, NULL);
+  q2m_fire_spec shot = {.kind = Q2M_ATTACK_SHOTGUN, .flash = -1,
+    .start = context->body.origin, .direction = forward, .damage = 2, .kick = 1,
+    .horizontal_spread = (float)(1000 + frame - 105),
+    .vertical_spread = (float)(500 + frame - 105), .pellets = 10, .direct_mod = 37};
+  return q2m_fire(context, &shot, error);
+}
+
+static bool fixbot_weld_state(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  if (m->frame == 197) return q2m_set_move(context, "fixbot_move_weld", false, error);
+  if (m->goal.registry && m->frame == 204) {
+    qa_combat_state combat;
+    if (!qa_combat_read(context->game->services.combat, m->goal, &combat, error))
+      return !q2_actor_live(context->game, m->goal);
+    if (!q2m_alive(context)) return true;
+    if (context->game->options.edition == QA_Q2_RERELEASE ? combat.health <= 0 : combat.health < 0) {
+      q2_actor *enemy = q2_actor_get(context->game, m->enemy, false, NULL);
+      if (enemy && enemy->entity) enemy->entity->owner = (qa_actor_id){0};
+      return q2m_set_move(context, "fixbot_move_weld_end", false, error);
+    }
+    return qa_combat_set_health(context->game->services.combat, m->goal, combat.health - 10, error);
+  }
+  m->goal = m->enemy = (qa_actor_id){0};
+  return q2m_set_move(context, "fixbot_move_stand", false, error);
+}
+
 bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
   if (!q2m_alive(context) || callback == NULL)
     return true;
   struct qa_q2_monster *monster = context->monster;
   bool handled = false;
+  if (!strcmp(callback, "GunnerCmdrFire"))
+    return guncmdr_fire(context, error);
+  if (!strcmp(callback, "GunnerCmdrGrenade"))
+    return guncmdr_grenade(context, error);
+  if (!strcmp(callback, "arachnid_rail"))
+    return arachnid_rail(context, error);
+  if (!strcmp(callback, "gladbGun"))
+    return gladb_gun(context, error);
+  if (!strcmp(callback, "actor_fire"))
+    return actor_fire(context, error);
+  if (!strcmp(callback, "fixbot_fire_blaster"))
+    return fixbot_blaster(context, error);
+  if (!strcmp(callback, "fixbot_fire_welder"))
+    return fixbot_welder(context, error);
+  if (!strcmp(callback, "fixbot_fire_laser"))
+    return q2m_fixbot_repair(context, error);
+  if (!strcmp(callback, "fixbot_attack"))
+    return q2m_fixbot_attack(context, error);
+  if (!strcmp(callback, "brain_laserbeam"))
+    return q2m_brain_laser_beam(context, error);
+  if (!strcmp(callback, "ShamblerCastLightning"))
+    return shambler_lightning(context, error);
+  if (!strcmp(callback, "sham_swingl9") || !strcmp(callback, "sham_swingr9")) {
+    bool left = !strcmp(callback, "sham_swingl9");
+    if (!q2m_run_ai(context, Q2M_AI_CHARGE, NULL, left ? 8 : 1, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    if (!left && !q2m_run_ai(context, Q2M_AI_CHARGE, NULL, 10, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    if (q2m_random(context->game) < .5f && monster->enemy.registry &&
+        q2m_distance(context, monster->enemy) < 80)
+      return q2m_set_move(context, left ? "shambler_attack_swingr"
+                                       : "shambler_attack_swingl", false, error);
+    return true;
+  }
+  if (!strcmp(callback, "flipper_run"))
+    return q2m_set_move(context, "flipper_move_run", false, error);
+  if (!strcmp(callback, "widow2_attack_beam"))
+    return q2m_set_move(context, "widow2_move_attack_beam", false, error) &&
+        (!q2m_alive(context) || q2m_sound(context, "widow/bwstep1.wav", 4, 1, error));
+  if (!strcmp(callback, "widow_attack_rail")) {
+    qa_body_state enemy;
+    qa_builtin_actor_traits traits;
+    bool available;
+    if (!target_body(context, &enemy, &traits, &available))
+      return false;
+    if (!q2m_alive(context) || !available)
+      return true;
+    float angle = context->body.angles.y -
+        q2m_vector_angles(qa_vec_sub(context->body.origin, enemy.origin)).y;
+    if (angle < 0) angle += 360;
+    angle -= 180;
+    return q2m_set_move(context, angle < -15 ? "widow_move_attack_rail_l"
+        : angle > 15 ? "widow_move_attack_rail_r" : "widow_move_attack_rail", false, error);
+  }
+  if (!strcmp(callback, "TurretAim"))
+    return turret_aim(context, error);
+  if (!strcmp(callback, "TurretFire") || !strcmp(callback, "TurretFireBlind"))
+    return turret_fire(context, !strcmp(callback, "TurretFireBlind"), error);
+  if (!source_sound_callback(context, callback, &handled, error))
+    return false;
+  if (handled)
+    return true;
   if (!q2m_species_melee(context, callback, &handled, error))
     return false;
   if (handled)
@@ -4051,29 +4658,48 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
       monster->saved_attack_position = qa_vec_add(enemy.origin, qa_v3(0, 0, traits.view_height));
     return true;
   }
-  if (has(callback, "duck_down") || has(callback, "duck_hold") ||
-      has(callback, "duck_up"))
+  if (!strcmp(callback, "brain_duck_down") || !strcmp(callback, "brain_duck_hold") ||
+      !strcmp(callback, "brain_duck_up") || !strcmp(callback, "chick_duck_down") ||
+      !strcmp(callback, "chick_duck_hold") || !strcmp(callback, "chick_duck_up") ||
+      !strcmp(callback, "medic_duck_down") || !strcmp(callback, "medic_duck_hold") ||
+      !strcmp(callback, "medic_duck_up") || !strcmp(callback, "monster_duck_down") ||
+      !strcmp(callback, "monster_duck_hold") || !strcmp(callback, "monster_duck_up"))
     return duck_action(context, callback, error);
-  if ((has(callback, "jump") || has(callback, "check_landing")) &&
-      (has(callback, "now") || has(callback, "takeoff") ||
-       has(callback, "wait_land") || has(callback, "check_landing") ||
-       has(callback, "jump_up") || has(callback, "jump_down")))
+  if (!strcmp(callback, "berserk_jump_now") || !strcmp(callback, "berserk_jump2_now") ||
+      !strcmp(callback, "berserk_jump_wait_land") || !strcmp(callback, "guncmdr_jump_now") ||
+      !strcmp(callback, "guncmdr_jump2_now") || !strcmp(callback, "guncmdr_jump_wait_land") ||
+      !strcmp(callback, "gunner_jump_now") || !strcmp(callback, "gunner_jump2_now") ||
+      !strcmp(callback, "gunner_jump_wait_land") || !strcmp(callback, "mutant_jump_down") ||
+      !strcmp(callback, "mutant_jump_up") || !strcmp(callback, "mutant_jump_wait_land") ||
+      !strcmp(callback, "parasite_jump_down") || !strcmp(callback, "parasite_jump_up") ||
+      !strcmp(callback, "parasite_jump_wait_land"))
     return jump_action(context, callback, error);
-  if (has(callback, "shrink") || strcmp(callback, "soldier_death_shrink") == 0)
+  if (!strcmp(callback, "berserk_shrink") || !strcmp(callback, "boss2_shrink") ||
+      !strcmp(callback, "brain_shrink") || !strcmp(callback, "chick_shrink") ||
+      !strcmp(callback, "gladiator_shrink") || !strcmp(callback, "guncmdr_shrink") ||
+      !strcmp(callback, "gunner_shrink") || !strcmp(callback, "mutant_shrink") ||
+      !strcmp(callback, "parasite_shrink") || !strcmp(callback, "shambler_shrink") ||
+      !strcmp(callback, "tank_shrink"))
     return shrink(context, error);
-  if (has(callback, "footstep") || has(callback, "_step") ||
-      has(callback, "TreadSound") || has(callback, "step_left") ||
-      has(callback, "step_right"))
-    return footstep(context, callback, error);
 
   if (strcmp(callback, "Widow2SaveDisruptLoc") == 0)
     return save_widow_disrupt_location(context);
   if (strcmp(callback, "WidowDisrupt") == 0)
     return q2m_widow_disrupt(context, error);
-  if (has(callback, "SaveLoc") || has(callback, "Saveloc") ||
-      has(callback, "save_loc"))
-    return save_enemy_location(context);
-  if (strcmp(callback, "TurretAim") == 0 || strcmp(callback, "gekk_face") == 0)
+  if (!strcmp(callback, "ShamblerSaveLoc")) {
+    qa_body_state enemy;
+    qa_builtin_actor_traits traits;
+    bool available;
+    if (!target_body(context, &enemy, &traits, &available)) return false;
+    if (!q2m_alive(context) || !available) return true;
+    monster->saved_attack_position = qa_vec_add(enemy.origin, qa_v3(0, 0, traits.view_height));
+    monster->next_frame = 73;
+    return q2m_sound(context, "shambler/sboom.wav", 1, 1, error) &&
+        (!q2m_alive(context) || q2m_shambler_lightning(context, false, error));
+  }
+  if (!strcmp(callback, "shambler_windup") || !strcmp(callback, "shambler_lightning_update"))
+    return q2m_shambler_lightning(context, !strcmp(callback, "shambler_windup"), error);
+  if (strcmp(callback, "gekk_face") == 0)
     return q2m_face_enemy(context, error);
   if (strcmp(callback, "monster_done_dodge") == 0) {
     monster->dodging = false;
@@ -4088,33 +4714,39 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
     return true;
   }
   if (strcmp(callback, "brain_chest_open") == 0) {
+    if (context->game->options.edition == QA_Q2_RERELEASE) monster->count = 0;
+    else monster->spawnflags &= ~UINT32_C(65536);
     context->combat.armor.powered.kind = QA_POWER_NONE;
     qa_q2_combat_power_armor_source(context->game, &context->combat.armor.powered);
-    return qa_combat_set_armor(context->game->services.combat,
+    if (!qa_combat_set_armor(context->game->services.combat,
                                context->actor->id, &context->combat.armor,
-                               error);
+                               error))
+      return false;
+    return !q2m_alive(context) || q2m_sound(context, "brain/brnatck1.wav", 4, 1, error);
   }
   if (strcmp(callback, "brain_chest_closed") == 0) {
     context->combat.armor.powered.kind = QA_POWER_SCREEN;
-    if (context->combat.armor.powered.cells <= 0.0f)
-      context->combat.armor.powered.cells = 100.0f;
     qa_q2_combat_power_armor_source(context->game, &context->combat.armor.powered);
-    return qa_combat_set_armor(context->game->services.combat,
+    if (!qa_combat_set_armor(context->game->services.combat,
                                context->actor->id, &context->combat.armor,
-                               error);
+                               error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    bool follow = context->game->options.edition == QA_Q2_RERELEASE
+                      ? monster->count != 0 : (monster->spawnflags & UINT32_C(65536)) != 0;
+    if (!follow)
+      return true;
+    if (context->game->options.edition == QA_Q2_RERELEASE)
+      monster->count = 0;
+    else
+      monster->spawnflags &= ~UINT32_C(65536);
+    return q2m_set_move(context, "brain_move_attack1", false, error);
   }
-  if (strcmp(callback, "change_to_roam") == 0 ||
-      strcmp(callback, "roam_goal") == 0) {
-    monster->enemy = (qa_actor_id){0};
-    monster->goal = monster->move_target;
-    return set_definition_move(context, monster->definition->walk_move, error);
-  }
-  if (strcmp(callback, "fly_vertical") == 0 ||
-      strcmp(callback, "fly_vertical2") == 0) {
-    context->body.velocity.z +=
-        strcmp(callback, "fly_vertical2") == 0 ? -80.0f : 80.0f;
-    return q2m_write_body(context, true, error);
-  }
+  if (!strcmp(callback, "change_to_roam")) return fixbot_roam(context, error);
+  if (!strcmp(callback, "roam_goal")) return fixbot_goal_create(context, 0, error);
+  if (!strcmp(callback, "fly_vertical") || !strcmp(callback, "fly_vertical2"))
+    return fixbot_vertical(context, !strcmp(callback, "fly_vertical2"), error);
   if (strcmp(callback, "berserk_high_gravity") == 0) {
     context->actor->physics.gravity_scale = 2.0f;
     return true;
@@ -4136,14 +4768,8 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
     context->body.velocity.z += 200.0f;
     return q2m_write_body(context, true, error);
   }
-  if (strcmp(callback, "use_scanner") == 0) {
-    return q2m_emit(context, QA_BUILTIN_LIGHT, "q2:scanner", 0,
-                    context->body.origin, context->body.origin, 1.0f, error);
-  }
-  if (strcmp(callback, "weldstate") == 0) {
-    ++monster->count;
-    return true;
-  }
+  if (!strcmp(callback, "use_scanner")) return fixbot_scanner(context, error);
+  if (!strcmp(callback, "weldstate")) return fixbot_weld_state(context, error);
   if (strcmp(callback, "CarrierCoopCheck") == 0)
     return carrier_coop_check(context, error);
 
@@ -4182,7 +4808,8 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
 
   if (strcmp(callback, "soldier_cock") == 0) {
     monster->cocked = true;
-    return simple_sound(context, callback, error);
+    return q2m_sound(context, "infantry/infatck3.wav", 1,
+                      monster->frame == 197 ? 2.0f : 1.0f, error);
   }
 
   if (strcmp(callback, "soldierh_hyper_laser_sound_start") == 0)
@@ -4202,10 +4829,7 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
   }
 
   if (strcmp(callback, "gladbGun_check") == 0)
-    return context->game->options.skill == 3
-               ? q2m_attack(context, monster->definition->primary,
-                            monster->definition->primary_damage, error)
-               : true;
+    return context->game->options.skill == 3 ? gladb_gun(context, error) : true;
 
   if (strcmp(callback, "mutant_check_refire") == 0) {
     if (enemy_alive(context) && ((context->game->options.skill == 3 &&
@@ -4227,19 +4851,18 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
     return set_existing_move(context, move, false, &found, error);
   }
 
-  if (has(callback, "soldier_attack") && has(callback, "shotgun_check")) {
-    if (monster->definition->species == Q2M_SOLDIER && !monster->cocked) {
-      monster->next_frame = has(callback, "attack1")   ? 5
-                            : has(callback, "attack2") ? 21
-                                                       : 117;
-      monster->force_refire = true;
-    }
+
+  if (strcmp(callback, "insane_checkdown") == 0) {
+    if (!(monster->spawnflags & 32u) && q2m_random(context->game) < .3f)
+      return q2m_set_move(context, q2m_random(context->game) < .5f
+          ? "insane_move_uptodown" : "insane_move_jumpdown", false, error);
     return true;
   }
-
-  if (strcmp(callback, "insane_checkdown") == 0 ||
-      strcmp(callback, "insane_checkup") == 0)
+  if (strcmp(callback, "insane_checkup") == 0) {
+    if ((monster->spawnflags & 20u) != 20u && q2m_random(context->game) < .5f)
+      return q2m_set_move(context, "insane_move_downtoup", false, error);
     return true;
+  }
 
   if (strcmp(callback, "reloogie") == 0) {
     bool found;
@@ -4262,7 +4885,14 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
             widow_blaster(context, error));
 
   if (strcmp(callback, "arachnid_charge_rail") == 0) {
-    save_enemy_location(context);
+    qa_body_state enemy;
+    qa_builtin_actor_traits traits;
+    bool available;
+    if (!target_body(context, &enemy, &traits, &available))
+      return false;
+    if (!q2m_alive(context) || !available)
+      return true;
+    monster->saved_attack_position = qa_vec_add(enemy.origin, qa_v3(0, 0, traits.view_height));
     return q2m_sound(context, "gladiator/railgun.wav", 1, 1.0f, error);
   }
 
@@ -4289,7 +4919,7 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
   if (strcmp(callback, "gekk_idle_loop") == 0) {
     if (q2m_random(context->game) > 0.75f &&
         context->combat.health < monster->base_health)
-      monster->next_frame = 203;
+      monster->next_frame = 297;
     return true;
   }
   if (strcmp(callback, "shambler_maybe_idle") == 0)
@@ -4365,12 +4995,9 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
            (!q2m_alive(context) ||
             q2m_guardian_beam(context, error));
 
-  if (has(callback, "refire") || has(callback, "reattack"))
-    return reattack(context, callback, error);
-
-  if (has(callback, "firetime") || has(callback, "fire_prep")) {
-    monster->fire_ns =
-        q2m_after(context->game->now_ns, 0.7 + q2m_random(context->game) * 1.3);
+  if (!strcmp(callback, "infantry_fire_prep")) {
+    monster->fire_ns = q2m_after(context->game->now_ns,
+        ((qa_builtin_random_integer(&context->game->random) & 15u) + 4u) * .1);
     monster->pause_ns = monster->fire_ns;
     return true;
   }
@@ -4382,9 +5009,14 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
     ++monster->count;
     return true;
   }
-  if (has(callback, "pain5_to_death") || has(callback, "pain6_to_death")) {
-    if (context->combat.health < 0.0f)
-      return q2m_die(context, error);
+  if (!strcmp(callback, "guncmdr_pain5_to_death1") ||
+      !strcmp(callback, "guncmdr_pain5_to_death2") ||
+      !strcmp(callback, "guncmdr_pain6_to_death6")) {
+    if (context->combat.health < 0 &&
+        (strcmp(callback, "guncmdr_pain5_to_death2") || q2m_random(context->game) < .5f))
+      return q2m_set_move(context, !strcmp(callback, "guncmdr_pain5_to_death1")
+          ? "guncmdr_move_death1" : !strcmp(callback, "guncmdr_pain5_to_death2")
+          ? "guncmdr_move_death2" : "guncmdr_move_death6", false, error);
     return true;
   }
   if (strcmp(callback, "flyer_nextmove") == 0) {
@@ -4436,32 +5068,6 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
   }
   if (strcmp(callback, "widow2_finaldeath") == 0)
     return q2m_corpse(context, error);
-
-  q2m_attack_kind kind = attack_kind(context, callback);
-  if (kind != Q2M_ATTACK_NONE) {
-    float damage = attack_damage(context, kind);
-    if (strcmp(callback, "Boss2HyperBlaster") == 0)
-      damage = 2.0f;
-    if (strcmp(callback, "MakronHyperblaster") == 0)
-      damage = 15.0f;
-    if (strcmp(callback, "Boss2Rocket64") == 0)
-      damage = 35.0f;
-    return q2m_attack(context, kind, damage, error);
-  }
-
-  if (has(callback, "swing") || has(callback, "idle") ||
-      has(callback, "fidget") || has(callback, "Moan") ||
-      has(callback, "moan") || has(callback, "scream") ||
-      has(callback, "shake") || has(callback, "cock") ||
-      has(callback, "Reload") || has(callback, "opengun") ||
-      has(callback, "tap") || has(callback, "scratch") ||
-      has(callback, "break_") || has(callback, "preattack") ||
-      has(callback, "PreAttack") || has(callback, "windup") ||
-      has(callback, "taunt") || has(callback, "brainsplorch") ||
-      has(callback, "popup") || has(callback, "prerailgun") ||
-      has(callback, "pop_blades") || has(callback, "shambler_melee") ||
-      has(callback, "thud") || has(callback, "charge"))
-    return simple_sound(context, callback, error);
 
   if (strcmp(callback, "parasite_reel_in") == 0 ||
       strcmp(callback, "parasite_walk") == 0 ||

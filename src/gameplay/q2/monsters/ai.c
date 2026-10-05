@@ -2252,12 +2252,16 @@ static bool select_species_attack(q2m_context *context, const char **move,
     break;
   }
   case Q2M_ACTOR:
-    monster->pause_ns = q2m_after(
-        context->game->now_ns,
-        context->game->options.edition == QA_Q2_RERELEASE
-            ? 1.0 + q2m_random(context->game) * 1.6
-            : (10.0 + floorf(q2m_random(context->game) * 16.0f)) * 0.1);
+    if (context->game->options.edition == QA_Q2_RERELEASE)
+      monster->fire_ns = q2m_after(context->game->now_ns, 1.0 + q2m_random(context->game) * 1.6);
+    else
+      monster->pause_ns = q2m_after(context->game->now_ns,
+          (10.0 + floorf(q2m_random(context->game) * 16.0f)) * 0.1);
     *move = "actor_move_attack";
+    break;
+  case Q2M_FIXBOT:
+    *move = "fixbot_move_attack2";
+    q2m_fixbot_flight(context, false, false);
     break;
   case Q2M_GEKK:
     if (melee)
@@ -3304,10 +3308,17 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind, const char *source_ai,
     if (strcmp(source_ai, "ai_facing") == 0)
       return q2m_face_enemy(context, error);
     if (strcmp(source_ai, "ai_move2") == 0) {
+      if (!q2_actor_live(context->game, monster->goal))
+        return q2m_set_move(context, "fixbot_move_stand", false, error);
       if (distance != 0.0f &&
           !walk_move(context, context->body.angles.y, distance, &(bool){false}, error))
         return false;
-      return !q2m_alive(context) || q2m_change_yaw(context, error);
+      if (!q2m_alive(context)) return true;
+      qa_body_state goal;
+      if (!qa_world_body_read(context->game->services.world, monster->goal, &goal, error))
+        return !q2_actor_live(context->game, monster->goal);
+      monster->ideal_yaw = vector_yaw(qa_vec_sub(goal.origin, context->body.origin));
+      return q2m_change_yaw(context, error);
     }
     if (strcmp(source_ai, "ai_move_slide_left") == 0 ||
         strcmp(source_ai, "ai_move_slide_right") == 0) {

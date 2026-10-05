@@ -1,7 +1,9 @@
 #include "unified_q2_native_events.h"
 #include "unified_events.h"
+#include "unified_q2_events.h"
 #include "unified_output_json.h"
 #include "qa/game_q2_wire.h"
+#include "qa/game_q2_combat.h"
 
 #include <limits.h>
 #include <string.h>
@@ -437,6 +439,28 @@ bool application_unified_q2_native_builtin(qa_application *app, const qa_builtin
                 boolean(&j, ",\"visible\":", (v->flags & 1u) != 0, e);
             break;
         }
+        if (!strcmp(path, "q2:lightning")) {
+            qa_q2_wire_binding from = {0}, to = {0};
+            qa_q2_combat_rules rules;
+            if (!qa_q2_combat_rules_read(p->state.q2, &rules)) {
+                ok = application_fail(e, QA_ERROR_FORMAT, "Q2 lightning lost its actual GAME rules"); break;
+            }
+            if (!qa_q2_wire_actor(p->state.q2, v->actor, &from, e) ||
+                !qa_q2_wire_actor(p->state.q2, v->other, &to, e)) { ok = false; break; }
+            qa_q2_temp_entity temporary = {.type = QA_Q2_TE_LIGHTNING, .field_count = 4,
+                .fields = {
+                    {.name = QA_Q2_TEMP_ENTITY1, .kind = QA_Q2_TEMP_INTEGER, .value.integer = (int32_t)from.source_slot},
+                    {.name = QA_Q2_TEMP_ENTITY2, .kind = QA_Q2_TEMP_INTEGER, .value.integer = (int32_t)to.source_slot},
+                    {.name = QA_Q2_TEMP_POSITION1, .kind = QA_Q2_TEMP_VECTOR,
+                        .value.vector = {v->origin.x, v->origin.y, v->origin.z}},
+                    {.name = QA_Q2_TEMP_POSITION2, .kind = QA_Q2_TEMP_VECTOR,
+                        .value.vector = {v->end.x, v->end.y, v->end.z}},
+                }};
+            qa_actor_id actors[7] = {v->actor, v->other};
+            ok = application_unified_q2_temporary_json(&j, &temporary,
+                rules.edition == QA_Q2_RERELEASE, actors, e);
+            break;
+        }
         if (!strcmp(path, "q2:parasite") || !strcmp(path, "q2:medic-cable")) {
             ok = begin(&j, "q2", "monster-beam", e) &&
                 string(&j, ",\"effect\":", !strcmp(path, "q2:parasite") ? "parasite" : "medic", e) &&
@@ -476,7 +500,8 @@ bool application_unified_q2_native_builtin(qa_application *app, const qa_builtin
         if (!effect && v->kind == QA_BUILTIN_PARTICLES) effect = damage_effect(v->code);
         if (!effect) break;
         bool palette = !strcmp(effect, "splash") || !strcmp(effect, "laser-sparks") ||
-            !strcmp(effect, "laser_sparks") || !strcmp(effect, "tunnel-sparks");
+            !strcmp(effect, "laser_sparks") || !strcmp(effect, "tunnel-sparks") ||
+            !strcmp(effect, "welding-sparks");
         ok = begin(&j, "q2", "effect", e) && string(&j, ",\"effect\":", effect, e) &&
             vector(&j, ",\"origin\":", v->origin, e) && vector(&j, ",\"direction\":", v->direction, e) &&
             number(&j, ",\"count\":", v->count, e) && number(&j, ",\"color\":", palette ? v->code : 0, e);

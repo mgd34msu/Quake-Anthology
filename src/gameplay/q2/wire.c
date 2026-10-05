@@ -655,7 +655,10 @@ bool qa_q2_wire_entity_read(qa_q2_game *g, uint32_t slot,
         value.classname = a->entity ? a->entity->classname : 0;
         value.loop_sound = a->client->loop_sound;
     } else if (a->monster) {
-        value.classname = a->monster->classname;
+        value.classname = a->monster->controller_kind != Q2M_CONTROLLER_NONE && a->entity
+            ? a->entity->classname : a->monster->classname;
+        if (a->monster->controller_kind != Q2M_CONTROLLER_NONE && a->entity)
+            value.owner = a->entity->owner;
         value.loop_sound = a->monster->weapon_sound;
     } else if (a->item) {
         value.classname = a->item->definition ? a->item->definition->classname_id : 0;

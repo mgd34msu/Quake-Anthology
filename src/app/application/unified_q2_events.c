@@ -209,15 +209,14 @@ static const char *temp_effect(uint8_t type)
     }
 }
 
-static bool residual_temporary(q2_projection *p, application_unified_json *j,
-    const qa_q2_temp_entity *t, qa_error *e)
+bool application_unified_q2_temporary_json(application_unified_json *j,
+    const qa_q2_temp_entity *t, bool rerelease, const qa_actor_id actors[7], qa_error *e)
 {
     static const char *const names[] = {"entity1", "entity2", "count", "color", "time",
         "position1", "position2", "direction", "offset"};
     if (!text(j, "{\"kind\":\"q2-temp-entity\",\"event\":{", e) ||
-        !string(j, "\"profile\":", p->engine->profile == QA_NATIVE_Q2_GAME_API3 ? "q2-34" : "q2-kex-2023", e) ||
+        !string(j, "\"profile\":", rerelease ? "q2-kex-2023" : "q2-34", e) ||
         !number(j, ",\"type\":", t->type, e) || !text(j, ",\"fields\":[", e)) return false;
-    size_t offset = 2;
     for (size_t i = 0; i < t->field_count; ++i) {
         const qa_q2_temp_field *f = t->fields + i;
         if ((unsigned)f->name >= sizeof(names) / sizeof(*names) ||
@@ -231,19 +230,32 @@ static bool residual_temporary(q2_projection *p, application_unified_json *j,
         } else {
             if (!number(j, ",\"value\":", f->value.integer, e)) return false;
             if (f->name == QA_Q2_TEMP_ENTITY1 || f->name == QA_Q2_TEMP_ENTITY2) {
-                qa_actor_id a = {0};
-                if (f->value.integer >= 0 && t->type != QA_Q2_TE_STEAM && t->type != QA_Q2_TE_WIDOWBEAMOUT &&
-                    !source_actor(p, (uint32_t)f->value.integer, offset, &a, e)) return false;
-                if (!actor(j, ",\"actor\":", a, e)) return false;
+                if (!actor(j, ",\"actor\":", actors[i], e)) return false;
             }
         }
         if (!text(j, "}", e)) return false;
+    }
+    return text(j, "]", e);
+}
+
+static bool residual_temporary(q2_projection *p, application_unified_json *j,
+    const qa_q2_temp_entity *t, qa_error *e)
+{
+    qa_actor_id actors[7] = {0};
+    size_t offset = 2;
+    for (size_t i = 0; i < t->field_count; ++i) {
+        const qa_q2_temp_field *f = t->fields + i;
+        if (f->kind == QA_Q2_TEMP_INTEGER &&
+            (f->name == QA_Q2_TEMP_ENTITY1 || f->name == QA_Q2_TEMP_ENTITY2) &&
+            f->value.integer >= 0 && t->type != QA_Q2_TE_STEAM && t->type != QA_Q2_TE_WIDOWBEAMOUT &&
+            !source_actor(p, (uint32_t)f->value.integer, offset, actors + i, e)) return false;
         if (f->kind == QA_Q2_TEMP_VECTOR)
             offset += f->name == QA_Q2_TEMP_DIRECTION ? 1u : p->engine->profile == QA_NATIVE_Q2_GAME_API3 ? 6u : 12u;
         else offset += f->name == QA_Q2_TEMP_ENTITY1 || f->name == QA_Q2_TEMP_ENTITY2 ? 2u :
             f->name == QA_Q2_TEMP_TIME ? 4u : 1u;
     }
-    return text(j, "]}}", e);
+    return application_unified_q2_temporary_json(j, t,
+        p->engine->profile != QA_NATIVE_Q2_GAME_API3, actors, e) && text(j, "}}", e);
 }
 
 static bool temporary(q2_projection *p, application_unified_json *j, const qa_q2_temp_entity *t, qa_error *e)

@@ -205,15 +205,16 @@ bool q2m_medic_abort(q2m_context *c, bool change_frame, bool gib, bool mark,
 bool q2m_medic_acquire(q2m_context *c, bool preserve_enemy, bool *acquired,
                       qa_error *error) {
     *acquired = false;
-    if (!medic_species(c->monster) || c->monster->medic || c->monster->dead ||
-        (rerelease(c) && c->monster->react_ns > c->game->now_ns))
+    bool fixbot = c->monster->definition->species == Q2M_FIXBOT;
+    if ((!medic_species(c->monster) && !fixbot) || c->monster->medic || c->monster->dead ||
+        (!fixbot && rerelease(c) && c->monster->react_ns > c->game->now_ns))
         return true;
     bool source_rogue = rogue(c);
     if (!qa_world_body_read(c->game->services.world, c->actor->id, &c->body, error))
         return !q2m_alive(c);
     if (!q2m_alive(c))
         return true;
-    float radius = source_rogue && c->monster->stand_ground ? 400 : 1024;
+    float radius = !fixbot && source_rogue && c->monster->stand_ground ? 400 : 1024;
     qa_builtin_snapshot_frame *nearby = q2_nearby(c->game, c->body.origin, radius, error);
     if (!nearby)
         return false;
@@ -274,7 +275,7 @@ bool q2m_medic_acquire(q2m_context *c, bool preserve_enemy, bool *acquired,
         }
         if (!q2m_alive(c) || !q2m_alive(&candidate) || !visible)
             continue;
-        if (source_rogue) {
+        if (source_rogue && !fixbot) {
             if (!qa_world_body_read(c->game->services.world, c->actor->id,
                                     &c->body, error)) {
                 result = !q2m_alive(c);
@@ -306,20 +307,22 @@ bool q2m_medic_acquire(q2m_context *c, bool preserve_enemy, bool *acquired,
     q2_actor *target = native_actor(c->game, best);
     if (!target)
         return true;
-    if (preserve_enemy || source_rogue)
+    if (preserve_enemy || source_rogue || fixbot)
         c->monster->old_enemy = c->monster->enemy;
     enemy(c, best);
     c->monster->resurrect_target = best;
     c->monster->medic = true;
     if (source_rogue) {
         target->monster->healer = c->actor->id;
-        c->monster->timestamp_ns = q2m_after(c->game->now_ns, 10);
+        if (!fixbot)
+            c->monster->timestamp_ns = q2m_after(c->game->now_ns, 10);
     } else if (target->entity) {
         target->entity->owner = c->actor->id;
     } else {
         target->monster->healer = c->actor->id;
     }
     *acquired = true;
+    if (fixbot) q2m_fixbot_flight(c, true, false);
     return q2m_found_target(c, best, error);
 }
 
@@ -359,7 +362,7 @@ static void clear_targets(q2m_context *c, q2m_context *target) {
         if (target->actor->entity_targets)
             qa_targets_changed(target->actor->entity_targets);
     }
-    if (!rogue(c))
+    if (!rogue(c) && c->monster->definition->species != Q2M_FIXBOT)
         return;
     m->ignore_shots = m->do_not_count = m->good_guy = m->target_anger = false;
     m->brutal = m->medic = m->resurrecting = m->stand_ground = false;
@@ -389,6 +392,28 @@ static bool idle_without_enemy(q2m_context *c, qa_error *error) {
 }
 
 static bool revive(q2m_context *c, q2m_context *target, qa_error *error) {
+    bool fixbot = c->monster->definition->species == Q2M_FIXBOT;
+    if (fixbot && !rerelease(c)) {
+        qa_vec3 up;
+        qa_builtin_angle_vectors(target->body.angles, NULL, NULL, &up);
+        qa_trace_query query = {
+            .start = target->body.origin, .end = qa_vec_scale(up, 48),
+            .shape = {.kind = QA_SHAPE_BOX, .bounds = target->body.bounds},
+            .pass_actor = c->actor->id,
+            .policy = qa_collision_default_policy(QA_COLLISION_Q2),
+        };
+        query.policy.contents_mask = Q2M_MONSTER_MASK;
+        qa_trace_result trace;
+        if (!qa_world_trace(c->game->services.world, &query, &trace, error))
+            return false;
+        if (!q2m_alive(c) || !q2m_alive(target))
+            return true;
+        qa_combat_state state;
+        if (trace.hit == QA_TRACE_HIT_ACTOR &&
+            qa_combat_read(c->game->services.combat, trace.actor, &state, NULL) &&
+            state.can_take_damage)
+            return qa_combat_set_health(c->game->services.combat, trace.actor, -1000, error);
+    }
     clear_targets(c, target);
     qa_actor_id target_id = target->actor->id;
     if (rogue(c)) {
@@ -425,7 +450,7 @@ static bool revive(q2m_context *c, q2m_context *target, qa_error *error) {
         return false;
     if (!q2m_alive(c) || !q2m_alive(target))
         return true;
-    if (!rogue(c)) {
+    if (!rogue(c) && !fixbot) {
         target->monster->resurrecting = true;
         target->monster->healer = (qa_actor_id){0};
         qa_actor_id old_enemy = c->monster->old_enemy;
@@ -440,7 +465,8 @@ static bool revive(q2m_context *c, q2m_context *target, qa_error *error) {
         return true;
     }
     target->monster->resurrecting = false;
-    target->monster->ignore_shots = target->monster->do_not_count = true;
+    if (rogue(c))
+        target->monster->ignore_shots = target->monster->do_not_count = true;
     target->actor->extra_effects &= ~UINT64_C(0x4000);
     target->monster->healer = (qa_actor_id){0};
     qa_actor_id previous = c->monster->old_enemy;
@@ -464,6 +490,70 @@ static bool revive(q2m_context *c, q2m_context *target, qa_error *error) {
             return false;
     }
     return !q2m_alive(c) || !rerelease(c) || cleanup(c, false, error);
+}
+
+bool q2m_fixbot_repair(q2m_context *c, qa_error *error) {
+    q2_actor *actor = native_actor(c->game, c->monster->enemy);
+    if (!actor) {
+        c->monster->medic = false;
+        return q2m_set_move(c, "fixbot_move_stand", false, error);
+    }
+    q2m_context target = {.game = c->game, .actor = actor, .monster = actor->monster};
+    if (!q2m_refresh(&target, error))
+        return false;
+    if (!q2m_alive(c) || !q2m_alive(&target))
+        return true;
+    if (target.combat.health <= target.monster->gib_health) {
+        c->monster->medic = false;
+        return q2m_set_move(c, "fixbot_move_stand", false, error);
+    }
+    if (!q2m_fixbot_laser_beam(c, error))
+        return false;
+    if (!q2m_alive(c) || !q2m_alive(&target))
+        return true;
+    if (!q2m_refresh(&target, error))
+        return false;
+    if (!q2m_alive(c) || !q2m_alive(&target))
+        return true;
+    if (target.combat.health <= target.combat.mass / 10) {
+        target.monster->resurrecting = true;
+        return heal_effects(&target, error);
+    }
+    if (!revive(c, &target, error))
+        return false;
+    if (!q2m_alive(c) || !q2m_alive(&target) || target.monster->dead)
+        return true;
+    c->monster->medic = false;
+    if (!rerelease(c)) {
+        c->body.origin.z += 1;
+        if (!q2m_write_body(c, false, error))
+            return false;
+    }
+    return !q2m_alive(c) || q2m_set_move(c, "fixbot_move_stand", false, error);
+}
+
+void q2m_fixbot_flight(q2m_context *c, bool heal, bool weld) {
+    if (!rerelease(c)) return;
+    c->monster->fly_position_ns = 0;
+    c->monster->fly_acceleration = 5;
+    c->monster->fly_speed = 110;
+    c->monster->fly_buzzard = false;
+    c->monster->fly_min_distance = heal ? 100 : weld ? 24 : 300;
+    c->monster->fly_max_distance = heal ? 100 : weld ? 24 : 500;
+    if (heal) c->monster->fly_thrusters = true;
+}
+
+bool q2m_fixbot_attack(q2m_context *c, qa_error *error) {
+    if (c->monster->medic) {
+        bool visible;
+        if (!q2m_visible(c, c->monster->enemy, &visible, error))
+            return false;
+        if (!q2m_alive(c) || !visible || q2m_distance(c, c->monster->enemy) > 128)
+            return true;
+        return q2m_set_move(c, "fixbot_move_laserattack", false, error);
+    }
+    q2m_fixbot_flight(c, false, false);
+    return q2m_set_move(c, "fixbot_move_attack2", false, error);
 }
 
 static bool cable(q2m_context *c, qa_error *error) {
@@ -697,6 +787,16 @@ bool q2m_medic_check_attack(q2m_context *c, bool *handled, bool *selected, bool 
     *handled = false;
     *selected = false;
     *started = false;
+    if (c->monster->definition->species == Q2M_FIXBOT && c->monster->medic) {
+        *handled = true;
+        const q2m_move *previous = c->monster->move;
+        const q2m_move *next = c->monster->next_move;
+        if (!q2m_fixbot_attack(c, error))
+            return false;
+        if (q2m_alive(c))
+            *selected = *started = c->monster->move != previous || c->monster->next_move != next;
+        return true;
+    }
     if (!medic_species(c->monster))
         return true;
     struct qa_q2_monster *m = c->monster;

@@ -10,6 +10,9 @@ bool q2m_medic_attack_move(q2m_context *, float distance, const char **, qa_erro
 bool q2m_medic_cleanup_patient(q2m_context *, qa_actor_id, qa_error *);
 bool q2m_medic_abort(q2m_context *, bool change_frame, bool gib, bool mark, qa_error *);
 bool q2m_medic_died(q2m_context *, qa_error *);
+bool q2m_fixbot_repair(q2m_context *, qa_error *);
+void q2m_fixbot_flight(q2m_context *, bool heal, bool weld);
+bool q2m_fixbot_attack(q2m_context *, qa_error *);
 bool q2m_revive(q2m_context *patient, qa_error *);
 bool q2m_hunt_target(q2m_context *, bool animate_state, qa_error *);
 

@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "reinforcements.h"
+#include "../entities/internal.h"
 
 static bool copy_name(char *out, size_t capacity, const char *value,
                       qa_error *error) {
@@ -147,6 +148,7 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
       .render_flags = monster->render_flags,
       .skin = monster->skin,
       .style = monster->style,
+      .turret_orientation = monster->turret_orientation,
       .count = monster->count,
       .entity_scale = monster->entity_scale,
       .animation_scale = monster->animation_scale,
@@ -420,7 +422,11 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
       (saved->corpse_phase != Q2M_CORPSE_IDLE && !saved->corpse) ||
       saved->initial_power_armor > QA_POWER_SHIELD || saved->max_power_armor < 0 ||
       saved->medic_tries > 2 ||
-      saved->controller_kind > Q2M_CONTROLLER_GUARDIAN_BEAM ||
+      saved->controller_kind > Q2M_CONTROLLER_BOT_GOAL ||
+      ((saved->controller_kind == Q2M_CONTROLLER_VISUAL_CHILD ||
+        saved->controller_kind == Q2M_CONTROLLER_BOT_GOAL) &&
+       (!saved->controller_owner.present || saved->count < 0 ||
+        saved->count > (saved->controller_kind == Q2M_CONTROLLER_VISUAL_CHILD ? 1 : 0))) ||
       (saved->controller_kind == Q2M_CONTROLLER_GUARDIAN_BEAM &&
        (game->options.edition != QA_Q2_RERELEASE || saved->count < 0 || saved->count > 1 ||
         !saved->controller_owner.present || saved->controller_damage != 25.0f)) ||
@@ -451,6 +457,12 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
                  "Invalid Q2 monster controller checkpoint");
     return false;
   }
+  if ((saved->controller_kind == Q2M_CONTROLLER_VISUAL_CHILD ||
+       saved->controller_kind == Q2M_CONTROLLER_BOT_GOAL) &&
+      !q2_ent(game, id)) {
+    qa_error_set(error, QA_ERROR_FORMAT, id.slot, "Q2 Source child lost its native entity continuation");
+    return false;
+  }
   if (controller) {
     struct qa_q2_monster *monster = calloc(1, sizeof(*monster));
     if (monster == NULL) {
@@ -460,6 +472,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
     }
     monster->controller_kind = (q2m_controller_kind)saved->controller_kind;
     monster->count = saved->count;
+    monster->style = saved->style;
     monster->controller_direction = saved->controller_direction;
     monster->controller_damage = saved->controller_damage;
     monster->controller_ns = saved->controller_ns;
@@ -541,6 +554,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   Q2M_RESTORE(next_frame);
   Q2M_RESTORE(skin);
   Q2M_RESTORE(style);
+  Q2M_RESTORE(turret_orientation);
   Q2M_RESTORE(count);
   Q2M_RESTORE(weapon_sound);
   Q2M_RESTORE(entity_scale);

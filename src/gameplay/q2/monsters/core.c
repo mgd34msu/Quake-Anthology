@@ -2,6 +2,7 @@
 #include "reinforcements.h"
 #include "medic.h"
 #include "qa/game_q2_combat.h"
+#include "../entities/internal.h"
 
 static bool actor_current(const q2m_context *context) {
   qa_actor_id id = context->actor->id;
@@ -131,8 +132,9 @@ bool q2m_emit(q2m_context *context, qa_builtin_event_kind kind,
   return qa_builtin_emit(&context->game->services, &event, error);
 }
 
-bool q2m_sound_at(q2m_context *context, const char *path, int channel,
-                  float attenuation, qa_vec3 origin, qa_error *error) {
+static bool sound_at(q2m_context *context, const char *path, int channel,
+                     float attenuation, float volume, qa_vec3 origin,
+                     qa_error *error) {
   if (!q2m_alive(context))
     return true;
   qa_builtin_event event = {
@@ -143,7 +145,7 @@ bool q2m_sound_at(q2m_context *context, const char *path, int channel,
       .other = context->monster->enemy,
       .time_ns = context->game->now_ns,
       .origin = origin,
-      .volume = 1.0f,
+      .volume = volume,
       .attenuation = attenuation,
       .channel = channel,
       .frame = context->monster->frame,
@@ -154,8 +156,13 @@ bool q2m_sound_at(q2m_context *context, const char *path, int channel,
   return qa_builtin_emit(&context->game->services, &event, error);
 }
 
-bool q2m_sound(q2m_context *context, const char *path, int channel,
-               float attenuation, qa_error *error) {
+bool q2m_sound_at(q2m_context *context, const char *path, int channel,
+                  float attenuation, qa_vec3 origin, qa_error *error) {
+  return sound_at(context, path, channel, attenuation, 1.0f, origin, error);
+}
+
+bool q2m_sound_volume(q2m_context *context, const char *path, int channel,
+                       float attenuation, float volume, qa_error *error) {
   if (!q2m_alive(context))
     return true;
   qa_body_state body;
@@ -164,7 +171,13 @@ bool q2m_sound(q2m_context *context, const char *path, int channel,
     return !q2m_alive(context);
   if (!q2m_alive(context))
     return true;
-  return q2m_sound_at(context, path, channel, attenuation, body.origin, error);
+  return sound_at(context, path, channel, attenuation, volume, body.origin,
+                  error);
+}
+
+bool q2m_sound(q2m_context *context, const char *path, int channel,
+               float attenuation, qa_error *error) {
+  return q2m_sound_volume(context, path, channel, attenuation, 1.0f, error);
 }
 
 const q2m_frame *q2m_frame_at(const struct qa_q2_monster *monster, const q2m_move *move,
@@ -464,12 +477,6 @@ static bool dodge_duck(q2m_context *context, float eta_seconds, bool rogue,
         move_is(monster, "gunner_move_fire_chain") ||
         move_is(monster, "gunner_move_attack_grenade"))
       return set_duck_bounds(context, false, error);
-    if (!rogue && q2m_random(context->game) > 0.5f &&
-        !q2m_attack(context, Q2M_ATTACK_GRENADE,
-                    monster->definition->secondary_damage, error))
-      return false;
-    if (!q2m_alive(context))
-      return true;
     move = "gunner_move_duck";
   } else if (species == Q2M_GUN_COMMANDER) {
     if (move_is(monster, "guncmdr_move_jump") ||
@@ -1400,6 +1407,29 @@ static bool initialize_body(qa_q2_game *game, q2_actor *actor,
   qa_bounds bounds = monster_bounds(game, monster->definition);
   body.bounds.mins = qa_vec_scale(bounds.mins, scale);
   body.bounds.maxs = qa_vec_scale(bounds.maxs, scale);
+  if (monster->definition->species == Q2M_TURRET) {
+    monster->turret_orientation = (int)q2_actor_field_float(
+        game, actor->id, "angle", body.angles.y);
+    if (!(monster->spawnflags & 0x78u))
+      monster->spawnflags |= 8u;
+    if (monster->spawnflags & 64u) {
+      monster->spawnflags &= ~64u;
+      monster->spawnflags |= 8u;
+    }
+    monster->yaw_speed = game->options.edition == QA_Q2_RERELEASE
+                             ? 10 * (float)game->options.skill : 45;
+    monster->manual_steering = true;
+    switch (monster->turret_orientation) {
+    case -1: body.angles = qa_v3(270, 0, 0); body.origin.z += 2; break;
+    case -2: body.angles = qa_v3(90, 0, 0); body.origin.z -= 2; break;
+    case 0: body.origin.x += 2; break;
+    case 90: body.origin.y += 2; break;
+    case 180: body.origin.x -= 2; break;
+    case 270: body.origin.y -= 2; break;
+    }
+    monster->skin = monster->spawnflags & 16u ? 1
+                    : monster->spawnflags & 32u ? 2 : 0;
+  }
   monster->normal_height = body.bounds.maxs.z;
   monster->view_height = monster->definition->view_height;
   if (monster->view_height == 0.0f)
@@ -1651,6 +1681,8 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
       (definition->species == Q2M_JORG || definition->species == Q2M_MAKRON))
     monster->ignore_shots = true;
   monster->can_take_damage = true;
+  if (species_is_soldier(definition->species) || species_is_soldierh(definition->species))
+    monster->cocked = true;
   monster->visible = true;
   if (options->triggered)
     monster->spawnflags |= 2u;

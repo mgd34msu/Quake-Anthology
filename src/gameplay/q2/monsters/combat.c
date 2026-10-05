@@ -25,44 +25,6 @@ static q2_weapon_call monster_weapon(q2m_context *context,
   return call;
 }
 
-static bool monster_aim(q2m_context *context, float speed, qa_vec3 *start,
-                        qa_vec3 *direction) {
-  qa_vec3 forward, right, up;
-  qa_builtin_angle_vectors(context->body.angles, &forward, &right, &up);
-  (void)right;
-  *start = qa_vec_add(
-      qa_vec_add(context->body.origin,
-                 qa_vec_scale(up, context->monster->view_height)),
-      qa_vec_scale(forward, fmaxf(8.0f, context->body.bounds.maxs.x * 0.5f)));
-
-  qa_body_state target;
-  qa_error ignored = {0};
-  if (context->monster->enemy.registry == 0 ||
-      !qa_world_body_read(context->game->services.world,
-                          context->monster->enemy, &target, &ignored)) {
-    *direction = forward;
-    return false;
-  }
-  qa_builtin_actor_traits traits = {.view_height = 22.0f};
-  if (context->game->services.actor_traits != NULL) {
-    qa_builtin_actor_traits shared = {0};
-    if (context->game->services.actor_traits(context->game->services.context,
-                                             context->monster->enemy, &shared))
-      traits = shared;
-  }
-  if (!q2m_alive(context))
-    return true;
-  qa_vec3 point = target.origin;
-  point.z += traits.view_height;
-  if (context->monster->attack_state == Q2M_BLIND)
-    point = context->monster->blind_fire_target;
-  else if (speed > 0.0f) {
-    float travel = qa_vec_length(qa_vec_sub(point, *start)) / speed;
-    point = qa_vec_add(point, qa_vec_scale(target.velocity, travel));
-  }
-  *direction = qa_vec_normalize(qa_vec_sub(point, *start));
-  return true;
-}
 
 static bool muzzle(q2m_context *context, int flash, qa_vec3 start,
                    qa_vec3 direction, qa_error *error) {
@@ -647,33 +609,6 @@ q2m_fire_spec q2m_fire_default(q2m_context *context, q2m_attack_kind kind,
   return spec;
 }
 
-bool q2m_attack_flash(q2m_context *context, q2m_attack_kind kind,
-                      float damage, int flash, float aim_offset,
-                      qa_error *error) {
-  qa_vec3 start, direction;
-  bool available;
-  if (!q2m_source_shot(context, flash, aim_offset, &start, &direction,
-                       &available, error))
-    return false;
-  if (!available || !q2m_alive(context))
-    return true;
-  q2m_fire_spec spec =
-      q2m_fire_default(context, kind, damage, flash, start, direction);
-  return q2m_fire(context, &spec, error);
-}
-
-bool q2m_attack_forward(q2m_context *context, q2m_attack_kind kind,
-                        float damage, int flash, qa_error *error) {
-  qa_vec3 start;
-  if (!q2m_project_flash(context, flash, &start, error))
-    return false;
-  qa_vec3 direction;
-  qa_builtin_angle_vectors(context->body.angles, &direction, NULL, NULL);
-  q2m_fire_spec spec =
-      q2m_fire_default(context, kind, damage, flash, start, direction);
-  return q2m_fire(context, &spec, error);
-}
-
 bool q2m_widow_disrupt(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context) || context->monster->enemy.registry == 0)
     return true;
@@ -769,174 +704,6 @@ bool q2m_widow_disrupt(q2m_context *context, qa_error *error) {
                    qa_vec_add(start, direction), 1.0f, error));
 }
 
-bool q2m_attack(q2m_context *context, q2m_attack_kind kind, float damage,
-                qa_error *error) {
-  if (!q2m_alive(context) || kind == Q2M_ATTACK_NONE)
-    return true;
-  if (kind == Q2M_ATTACK_HIT)
-    return q2m_melee(context, 80.0f, damage, damage * 2.0f, error);
-  if (kind == Q2M_ATTACK_SUMMON) {
-    if (!context->monster->summons) {
-      qa_error_set(error, QA_ERROR_FORMAT, 0, "Medic summon attack lacks retained choices");
-      return false;
-    }
-    return q2m_medic_finish_summons(context, context->monster->summons, error);
-  }
-
-  float speed = monster_projectile_speed(context, kind);
-  qa_vec3 start, direction;
-  monster_aim(context, speed, &start, &direction);
-  if (!q2m_alive(context))
-    return true;
-
-  qa_q2_weapon weapon = QA_Q2_BLASTER;
-  switch (kind) {
-  case Q2M_ATTACK_BULLET:
-    weapon = QA_Q2_MACHINEGUN;
-    break;
-  case Q2M_ATTACK_SHOTGUN:
-    weapon = QA_Q2_SHOTGUN;
-    break;
-  case Q2M_ATTACK_ROCKET:
-    weapon = QA_Q2_ROCKETLAUNCHER;
-    break;
-  case Q2M_ATTACK_GRENADE:
-    weapon = QA_Q2_GRENADELAUNCHER;
-    break;
-  case Q2M_ATTACK_RAIL:
-    weapon = QA_Q2_RAILGUN;
-    break;
-  case Q2M_ATTACK_BFG:
-    weapon = QA_Q2_BFG;
-    break;
-  case Q2M_ATTACK_HEAT:
-    weapon = QA_Q2_ROCKETLAUNCHER;
-    break;
-  case Q2M_ATTACK_BEAM:
-    weapon = QA_Q2_HEATBEAM;
-    break;
-  case Q2M_ATTACK_TRACKER:
-    weapon = QA_Q2_DISINTEGRATOR;
-    break;
-  case Q2M_ATTACK_ION:
-    weapon = QA_Q2_IONRIPPER;
-    break;
-  case Q2M_ATTACK_BLUE_BOLT:
-  case Q2M_ATTACK_GREEN_BOLT:
-    weapon = QA_Q2_HYPERBLASTER;
-    break;
-  case Q2M_ATTACK_PLASMA:
-    weapon = QA_Q2_PHALANX;
-    break;
-  case Q2M_ATTACK_FLECHETTE:
-    weapon = QA_Q2_ETF_RIFLE;
-    break;
-  default:
-    weapon = QA_Q2_BLASTER;
-    break;
-  }
-  q2_weapon_call call = monster_weapon(context, weapon);
-  if (kind == Q2M_ATTACK_TRACKER) {
-    call.has_projectile_enemy = context->monster->enemy.registry != 0;
-    call.projectile_enemy = context->monster->enemy;
-  }
-
-  bool result;
-  switch (kind) {
-  case Q2M_ATTACK_BULLET: {
-    bool wide = context->monster->definition->species == Q2M_CARRIER ||
-                (context->game->options.edition == QA_Q2_RERELEASE &&
-                 (context->monster->definition->species == Q2M_SUPERTANK ||
-                  context->monster->definition->species == Q2M_BOSS5));
-    result = q2_bullet(
-        &call, start, direction, damage, 4.0f, wide ? 900.0f : 300.0f,
-        wide && context->monster->definition->species != Q2M_CARRIER ? 1500.0f
-                                                                     : 500.0f,
-        1, Q2M_MOD_MACHINEGUN, false, error);
-    break;
-  }
-  case Q2M_ATTACK_SHOTGUN:
-    result = q2_bullet(&call, start, direction, damage, 8.0f, 500.0f, 500.0f,
-                       12, Q2M_MOD_SHOTGUN, true, error);
-    break;
-  case Q2M_ATTACK_BLASTER:
-    result = q2_projectile_spawn(&call, Q2_BOLT, start, direction, damage, 1.0f,
-                                 speed, 0.0f, 0.0f, 2.0f, Q2M_MOD_BLASTER, 0,
-                                 false, false, error);
-    break;
-  case Q2M_ATTACK_ROCKET:
-    result = q2_projectile_spawn(&call, Q2_ROCKET, start, direction, damage,
-                                 0.0f, speed, 70.0f, damage, 8000.0f / speed,
-                                 Q2M_MOD_ROCKET, Q2M_MOD_ROCKET_SPLASH, false,
-                                 false, error);
-    break;
-  case Q2M_ATTACK_GRENADE:
-    result = q2_projectile_spawn(
-        &call, Q2_GRENADE, start, direction, damage, 0.0f, speed, 90.0f, damage,
-        2.5f, Q2M_MOD_GRENADE, Q2M_MOD_GRENADE_SPLASH, false, false, error);
-    break;
-  case Q2M_ATTACK_RAIL:
-    result = q2_rail(&call, start, direction, damage, 100.0f, Q2M_MOD_RAILGUN,
-                     0, error);
-    break;
-  case Q2M_ATTACK_BFG:
-    result = q2_projectile_spawn(&call, Q2_BFG_BALL, start, direction, damage,
-                                 0.0f, speed, monster_bfg_radius(context),
-                                 damage, 0.0f, Q2M_MOD_BFG_BLAST,
-                                 Q2M_MOD_BFG_BLAST, false, false, error);
-    break;
-  case Q2M_ATTACK_HEAT:
-    result = q2_projectile_spawn(&call, Q2_HEAT_ROCKET, start, direction,
-                                 damage, 0.0f, speed, 70.0f, damage,
-                                 8000.0f / speed, Q2M_MOD_ROCKET,
-                                 Q2M_MOD_ROCKET_SPLASH, false, false, error);
-    break;
-  case Q2M_ATTACK_BEAM:
-    result = q2_heatbeam(&call, start, direction, damage,
-                         (float)context->game->options.skill, error);
-    break;
-  case Q2M_ATTACK_TRACKER:
-    result = q2_projectile_spawn(
-        &call, Q2_TRACKER, start, direction, damage, damage * 3.0f, speed, 0.0f,
-        0.0f, 10.0f, Q2M_MOD_TRACKER, Q2M_MOD_TRACKER, false, false, error);
-    break;
-  case Q2M_ATTACK_ION:
-    call.has_projectile_effects = true;
-    call.projectile_effects = UINT64_C(0x100000);
-    result = q2_projectile_spawn(&call, Q2_ION, start, direction, damage, 1.0f,
-                                 speed, 100.0f, 0.0f, 3.0f, 34, 0, false, false,
-                                 error);
-    break;
-  case Q2M_ATTACK_BLUE_BOLT:
-    call.has_projectile_effects = true;
-    call.projectile_effects = UINT64_C(0x400000);
-    result = q2_projectile_spawn(
-        &call, Q2_BLUE_BOLT, start, direction, damage, 1.0f, speed, 0.0f, 0.0f,
-        2.0f, context->game->options.edition == QA_Q2_RERELEASE ? 58 : 1, 0,
-        false, false, error);
-    break;
-  case Q2M_ATTACK_GREEN_BOLT:
-    result = q2_projectile_spawn(&call, Q2_GREEN_BOLT, start, direction, damage,
-                                 1.0f, speed, 128.0f, 0.0f, 2.0f, 43, 0, false,
-                                 false, error);
-    break;
-  case Q2M_ATTACK_PLASMA:
-    result = q2_projectile_spawn(&call, Q2_PLASMA, start, direction, damage,
-                                 0.0f, speed, 60.0f, 60.0f, 8000.0f / speed, 35,
-                                 35, false, false, error);
-    break;
-  case Q2M_ATTACK_FLECHETTE:
-    result = q2_projectile_spawn(&call, Q2_FLECHETTE, start, direction, damage,
-                                 2.0f, speed, 0.0f, 0.0f, 8000.0f / speed, 42,
-                                 0, false, false, error);
-    break;
-  default:
-    result = true;
-    break;
-  }
-  return result && (!q2m_alive(context) ||
-                    muzzle(context, (int)kind, start, direction, error));
-}
 
 static const char *pain_sound(q2m_species species) {
   switch (species) {
@@ -2891,6 +2658,10 @@ bool q2m_die(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   if (monster->gibbed)
     return true;
+  if ((monster->definition->species == Q2M_SHAMBLER ||
+       monster->definition->species == Q2M_TURRET) &&
+      !q2m_source_visuals_release(context, error)) return false;
+  if (!q2m_alive(context)) return true;
   if (monster->definition->species == Q2M_SOLDIER_LIGHT ||
       monster->definition->species == Q2M_SOLDIER ||
       monster->definition->species == Q2M_SOLDIER_SS ||

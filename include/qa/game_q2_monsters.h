@@ -101,7 +101,7 @@ typedef struct qa_q2_monster_checkpoint {
   qa_string_id combat_target, weapon_sound;
   uint64_t start_due_ns;
   bool death_notified;
-  int frame, next_frame, old_frame, skin, style, count;
+  int frame, next_frame, old_frame, skin, style, count, turret_orientation;
   uint32_t render_flags;
   float entity_scale, animation_scale, base_health, health_scaling;
   float max_health;

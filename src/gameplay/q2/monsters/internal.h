@@ -174,7 +174,9 @@ typedef enum q2m_controller_kind {
   Q2M_CONTROLLER_BEAM,
   Q2M_CONTROLLER_BOSS_EXPLODER,
   Q2M_CONTROLLER_MAKRON_SPAWN,
-  Q2M_CONTROLLER_GUARDIAN_BEAM
+  Q2M_CONTROLLER_GUARDIAN_BEAM,
+  Q2M_CONTROLLER_VISUAL_CHILD,
+  Q2M_CONTROLLER_BOT_GOAL
 } q2m_controller_kind;
 
 typedef struct q2m_frame_action {
@@ -271,7 +273,7 @@ struct qa_q2_monster {
   uint64_t start_due_ns;
   bool death_notified;
   uint32_t spawnflags;
-  int frame, next_frame, old_frame, skin, style, count;
+  int frame, next_frame, old_frame, skin, style, count, turret_orientation;
   uint32_t render_flags;
   float entity_scale, animation_scale, base_health, health_scaling;
   float max_health;
@@ -359,6 +361,8 @@ bool q2m_link(q2m_context *, qa_error *);
 bool q2m_emit(q2m_context *, qa_builtin_event_kind, const char *, int, qa_vec3,
               qa_vec3, float, qa_error *);
 bool q2m_sound(q2m_context *, const char *, int, float, qa_error *);
+bool q2m_sound_volume(q2m_context *, const char *, int channel, float attenuation,
+                       float volume, qa_error *);
 bool q2m_sound_at(q2m_context *, const char *, int, float, qa_vec3, qa_error *);
 bool q2_player_print(qa_q2_game *, qa_actor_id, int, const char *, qa_error *);
 bool q2m_animation(q2m_context *, qa_error *);
@@ -387,11 +391,6 @@ bool q2m_change_yaw(q2m_context *, qa_error *);
 bool q2m_face_enemy(q2m_context *, qa_error *);
 bool q2m_clear_shot(q2m_context *, qa_vec3, bool *, qa_error *);
 
-bool q2m_attack(q2m_context *, q2m_attack_kind, float, qa_error *);
-bool q2m_attack_flash(q2m_context *, q2m_attack_kind, float damage, int flash,
-                      float aim_offset, qa_error *);
-bool q2m_attack_forward(q2m_context *, q2m_attack_kind, float damage,
-                        int flash, qa_error *);
 bool q2m_project_flash(const q2m_context *, int flash, qa_vec3 *,
                        qa_error *);
 qa_vec3 q2m_project_offset(const q2m_context *, qa_vec3);
@@ -451,12 +450,17 @@ bool q2m_world_effects(q2m_context *, qa_error *);
 bool q2m_touch(q2m_context *, const qa_touch_contact *, qa_error *);
 bool q2m_kamikaze(q2m_context *, qa_error *);
 bool q2m_berserk_land(q2m_context *, qa_error *);
-bool q2m_spawn_monster_beam(q2m_context *, qa_actor_id target, qa_vec3 origin,
-                            qa_vec3 direction, float damage, bool medic,
-                            qa_error *);
+bool q2m_soldier_laser_beam(q2m_context *, int flash, qa_error *);
+bool q2m_brain_laser_beam(q2m_context *, qa_error *);
+bool q2m_fixbot_laser_beam(q2m_context *, qa_error *);
 bool q2m_spawn_boss_exploder(q2m_context *, qa_error *);
 bool q2m_spawn_makron_entity(q2m_context *, qa_actor_id *child, qa_error *);
 bool q2m_schedule_makron_spawn(q2m_context *, qa_error *);
+bool q2m_source_visuals_release(q2m_context *, qa_error *);
+bool q2m_shambler_lightning(q2m_context *, bool windup, qa_error *);
+bool q2m_turret_lasersight(q2m_context *, qa_error *);
+bool q2m_fixbot_goal(q2m_context *, qa_vec3, const qa_bounds *, qa_actor_id *, qa_error *);
+void q2m_fixbot_goal_retire(q2m_context *, qa_actor_id);
 bool q2m_controller_tick(qa_q2_game *, q2_actor *, qa_error *);
 bool q2m_controller_postthink(qa_q2_game *, q2_actor *, qa_error *);
 bool q2m_guardian_beam(q2m_context *, qa_error *);
