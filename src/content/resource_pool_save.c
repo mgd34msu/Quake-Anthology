@@ -189,8 +189,13 @@ static bool pool_fields(qa_source_save_io *io, qa_resource_pool *pool,
     bool success = vfs_save_magic(io, pool_magic) &&
         qa_source_save_u64(io, &pool->next_resource) && packages(io, pool, views, view_count, refs) &&
         resources(io, pool, &index, &count, refs);
-    if (success && io->direction == QA_SOURCE_SAVE_READ) for (size_t i = count; i > 0; --i)
-        if (!index[i - 1]->archive && !vfs_loose_cache_add(pool, index[i - 1], io->error)) { success = false; break; }
+    if (success && io->direction == QA_SOURCE_SAVE_READ) for (size_t i = count; i > 0; --i) {
+        qa_resource *resource = index[i - 1];
+        if (!vfs_resource_index_add(pool, resource, io->error) ||
+            (!resource->archive && !vfs_loose_cache_add(pool, resource, io->error))) {
+            success = false; break;
+        }
+    }
     free(index);
     if (!success && io->error && io->error->code == QA_OK)
         vfs_save_fail(io, QA_ERROR_FORMAT, "invalid VFS resource pool continuation");

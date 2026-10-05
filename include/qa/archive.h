@@ -28,6 +28,7 @@ typedef struct qa_archive_entry {
     const char *path;
     size_t size;
     size_t compressed_size;
+    /* ZIP payload offset is resolved by the first successful local-header read. */
     size_t data_offset;
     uint32_t crc32;
     uint16_t compression_method;
@@ -47,8 +48,8 @@ bool qa_archive_open_memory(qa_bytes bytes, qa_archive_kind kind,
                             qa_archive **out, qa_error *error);
 bool qa_archive_open_file(const char *path, qa_archive_kind kind,
                           qa_archive **out, qa_error *error);
-/* Metadata-only admission retains the handle; range reads and first payload admission check
- * the same file identity and path. */
+/* Directory admission retains the handle; ZIP local headers are checked lazily
+ * at payload admission. Range reads check the same file identity and path. */
 bool qa_archive_open_retained(qa_fs_file *, const qa_fs_identity *, qa_archive_kind,
     qa_archive **, qa_error *);
 bool qa_archive_source_current(const qa_archive *, qa_error *);

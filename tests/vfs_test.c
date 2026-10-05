@@ -116,6 +116,60 @@ static void expect_text(const qa_resource *resource, const char *text)
     CHECK(memcmp(bytes.data, text, bytes.size) == 0);
 }
 
+static void test_history_lifetime(const char *directory)
+{
+    qa_error error = {0};
+    qa_resource_pool *pool = qa_resource_pool_create(&error);
+    qa_vfs *vfs = qa_vfs_create(pool, &error);
+    qa_mount_id mount_id;
+    CHECK(pool && vfs && qa_vfs_mount_directory(vfs, directory,
+        QA_ARCHIVE_EXACT, true, &mount_id, &error));
+    qa_resource *held = NULL;
+    for (unsigned i = 0; i < 72; ++i) {
+        char prefix[32], path[64];
+        CHECK(snprintf(prefix, sizeof(prefix), "alias%u/", i) > 0);
+        CHECK(snprintf(path, sizeof(path), "%sitem.txt", prefix) > 0);
+        CHECK(qa_vfs_set_link(vfs, prefix, mount_id, "maps/", &error));
+        qa_resource *resource = NULL;
+        CHECK(qa_vfs_acquire(vfs, path, &resource, NULL, &error));
+        if (!held) { held = resource; qa_resource_retain(held); }
+        CHECK(resource == held);
+        qa_resource_release(resource);
+    }
+    CHECK(qa_vfs_retained_read_count(vfs) == 72);
+    uint64_t ids[72];
+    for (unsigned i = 0; i < 72; ++i) {
+        char text[32];
+        int length = snprintf(text, sizeof(text), "resource-%u", i);
+        CHECK(length > 0 && (size_t)length < sizeof(text));
+        CHECK(qa_vfs_write(vfs, mount_id, "maps/item.txt",
+            (qa_bytes){(const uint8_t *)text, (size_t)length}, &error));
+        qa_resource *resource = NULL;
+        CHECK(qa_vfs_acquire_from(vfs, mount_id, "maps/item.txt", &resource, &error));
+        ids[i] = qa_resource_id(resource);
+        CHECK(qa_resource_pool_find(pool, ids[i]) == resource);
+        qa_resource_release(resource);
+    }
+    qa_vfs *clone = qa_vfs_clone(vfs, &error);
+    CHECK(clone && qa_vfs_retained_read_count(clone) == 144);
+    qa_vfs_clear_references(vfs);
+    CHECK(qa_vfs_retained_read_count(vfs) == 144);
+    CHECK(qa_vfs_unmount(vfs, mount_id, &error));
+    qa_resource_pool_trim(pool);
+    CHECK(qa_vfs_retained_read_count(vfs) == 72);
+    CHECK(qa_vfs_retained_read_count(clone) == 72);
+    for (unsigned i = 0; i < 72; ++i) CHECK(qa_resource_pool_find(pool, ids[i]) == NULL);
+    uint64_t id = qa_resource_id(held);
+    qa_vfs_read_reference read;
+    CHECK(qa_vfs_retained_read_at(vfs, 71, &read) && read.resource == held);
+    qa_resource_release(held);
+    qa_resource_pool_trim(pool);
+    CHECK(qa_resource_pool_find(pool, id) == NULL);
+    CHECK(qa_vfs_retained_read_count(vfs) == 0 && qa_vfs_retained_read_count(clone) == 0);
+    CHECK(!qa_vfs_retained_read_at(vfs, 0, &read));
+    qa_vfs_destroy(clone); qa_vfs_destroy(vfs); qa_resource_pool_destroy(pool);
+}
+
 int main(void)
 {
     char directory[] = "/tmp/qa-vfs-test-XXXXXX";
@@ -282,6 +336,7 @@ int main(void)
     qa_vfs_destroy(NULL);
     qa_resource_pool_destroy(NULL);
 
+    test_history_lifetime(loose);
     CHECK(unlink(pak) == 0 && unlink(zip) == 0 && unlink(item) == 0);
     CHECK(unlink(uppercase) == 0 && unlink(lowercase) == 0 && unlink(latin) == 0);
     CHECK(unlink(alias) == 0 && unlink(absolute) == 0 && unlink(escape) == 0);

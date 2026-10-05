@@ -10,6 +10,7 @@
 
 static void prioritize_mounts(const qa_vfs *vfs, mount **order);
 static void prioritize_ids(qa_vfs *vfs, qa_mount_id *order);
+static void history_free(retained_read *);
 
 static char *copy_string(const char *source)
 {
@@ -167,6 +168,7 @@ void qa_resource_retain(qa_resource *resource)
 void qa_resource_release(qa_resource *resource)
 {
     if (resource != NULL && --resource->references == 0) {
+        while (resource->history != NULL) history_free(resource->history);
         if (resource->archive != NULL && resource->archive->members[resource->ordinal] == resource)
             resource->archive->members[resource->ordinal] = NULL;
         qa_archive_data_free(&resource->data);
@@ -245,7 +247,57 @@ void qa_resource_pool_destroy(qa_resource_pool *pool)
         archive = next;
     }
     free(pool->loose_buckets);
+    free(pool->id_buckets);
     free(pool);
+}
+
+static size_t resource_bucket(uint64_t id, size_t capacity)
+{
+    return (size_t)(id * UINT64_C(11400714819323198485)) & (capacity - 1);
+}
+
+bool vfs_resource_index_add(qa_resource_pool *pool, qa_resource *resource, qa_error *error)
+{
+    if (qa_resource_pool_find(pool, resource->id) != NULL || resource->id == 0) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Duplicate resource identity"); return false;
+    }
+    size_t capacity = pool->id_bucket_count;
+    if (pool->resource_count == SIZE_MAX || capacity > SIZE_MAX / 2) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Resource identity index overflow"); return false;
+    }
+    if (capacity == 0 || pool->resource_count + 1 > capacity - capacity / 4) {
+        capacity = capacity == 0 ? 64 : capacity * 2;
+        if (capacity > SIZE_MAX / sizeof(*pool->id_buckets)) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Resource identity index overflow"); return false;
+        }
+        qa_resource **buckets = calloc(capacity, sizeof(*buckets));
+        if (buckets == NULL) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating resource identity index"); return false;
+        }
+        for (size_t i = 0; i < pool->id_bucket_count; ++i) {
+            qa_resource *row = pool->id_buckets[i];
+            while (row != NULL) {
+                qa_resource *next = row->id_next;
+                size_t bucket = resource_bucket(row->id, capacity);
+                row->id_next = buckets[bucket]; buckets[bucket] = row;
+                row = next;
+            }
+        }
+        free(pool->id_buckets); pool->id_buckets = buckets; pool->id_bucket_count = capacity;
+    }
+    size_t bucket = resource_bucket(resource->id, capacity);
+    resource->id_next = pool->id_buckets[bucket]; pool->id_buckets[bucket] = resource;
+    ++pool->resource_count;
+    return true;
+}
+
+static void resource_index_remove(qa_resource_pool *pool, qa_resource *resource)
+{
+    size_t bucket = resource_bucket(resource->id, pool->id_bucket_count);
+    qa_resource **position = &pool->id_buckets[bucket];
+    while (*position != resource) position = &(*position)->id_next;
+    *position = resource->id_next; resource->id_next = NULL;
+    --pool->resource_count;
 }
 
 void qa_resource_pool_trim(qa_resource_pool *pool)
@@ -256,6 +308,7 @@ void qa_resource_pool_trim(qa_resource_pool *pool)
         if ((*resource)->references == 1) {
             qa_resource *removed = *resource;
             *resource = removed->next;
+            resource_index_remove(pool, removed);
             if (removed->archive == NULL) loose_remove(pool, removed);
             qa_resource_release(removed);
         } else resource = &(*resource)->next;
@@ -272,8 +325,9 @@ void qa_resource_pool_trim(qa_resource_pool *pool)
 
 const qa_resource *qa_resource_pool_find(const qa_resource_pool *pool, uint64_t id)
 {
-    if (pool == NULL || id == 0) return NULL;
-    for (const qa_resource *resource = pool->resources; resource != NULL; resource = resource->next)
+    if (pool == NULL || id == 0 || pool->id_bucket_count == 0) return NULL;
+    size_t bucket = resource_bucket(id, pool->id_bucket_count);
+    for (const qa_resource *resource = pool->id_buckets[bucket]; resource != NULL; resource = resource->id_next)
         if (resource->id == id) return resource;
     return NULL;
 }
@@ -439,24 +493,107 @@ static bool read_recipe_equal(const qa_vfs_read_reference *entry, const char *pa
 }
 size_t qa_vfs_retained_read_count(const qa_vfs *vfs)
 {
-    size_t count = 0;
-    if (vfs) for (const retained_read *row = vfs->history; row; row = row->next)
-        if (qa_resource_pool_find(vfs->pool, row->resource)) ++count;
-    return count;
+    return vfs ? vfs->history_count : 0;
 }
 bool qa_vfs_retained_read_at(const qa_vfs *vfs, size_t index, qa_vfs_read_reference *out)
 {
-    if (!vfs || !out) return false;
-    for (const retained_read *row = vfs->history; row; row = row->next) {
-        const qa_resource *resource = qa_resource_pool_find(vfs->pool, row->resource);
-        if (!resource) continue;
-        if (index) { --index; continue; }
-        *out = row->recipe; out->resource = resource; return true;
+    if (!vfs || !out || index >= vfs->history_count) return false;
+    *out = vfs->history_rows[vfs->history_count - index - 1]->recipe;
+    return true;
+}
+static size_t history_bucket(uint64_t resource, const qa_vfs_read_reference *read,
+    size_t capacity)
+{
+    uint64_t value = resource ^ (read->mount * UINT64_C(11400714819323198485));
+    const char *paths[] = {read->path, read->lookup_path, read->link_source, read->link_target};
+    for (size_t i = 0; i < 4; ++i) {
+        for (const unsigned char *p = (const unsigned char *)paths[i]; *p; ++p) {
+            value ^= *p; value *= UINT64_C(1099511628211);
+        }
+        value *= UINT64_C(1099511628211);
     }
-    return false;
+    return (size_t)value & (capacity - 1);
+}
+static const retained_read *history_find(const qa_vfs *vfs, uint64_t resource,
+    const qa_vfs_read_reference *read)
+{
+    if (vfs->history_bucket_count == 0) return NULL;
+    size_t bucket = history_bucket(resource, read, vfs->history_bucket_count);
+    for (const retained_read *row = vfs->history_buckets[bucket]; row; row = row->hash_next)
+        if (row->resource == resource && row->recipe.mount == read->mount &&
+            read_recipe_equal(&row->recipe, read->path, read->lookup_path,
+                read->link_source, read->link_target)) return row;
+    return NULL;
+}
+static void history_hash_link(qa_vfs *vfs, retained_read *row)
+{
+    size_t bucket = history_bucket(row->resource, &row->recipe, vfs->history_bucket_count);
+    row->hash_previous = &vfs->history_buckets[bucket];
+    row->hash_next = *row->hash_previous;
+    if (row->hash_next) row->hash_next->hash_previous = &row->hash_next;
+    *row->hash_previous = row;
+}
+bool vfs_history_index(qa_vfs *vfs, retained_read *row, qa_resource *resource, qa_error *error)
+{
+    if (history_find(vfs, row->resource, &row->recipe) != NULL) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Duplicate retained first-opening recipe"); return false;
+    }
+    if (vfs->history_count == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Historical recipe index overflow"); return false;
+    }
+    if (vfs->history_count == vfs->history_capacity) {
+        size_t capacity = vfs->history_capacity ? vfs->history_capacity * 2 : 64;
+        if (capacity < vfs->history_capacity || capacity > SIZE_MAX / sizeof(*vfs->history_rows)) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Historical recipe index overflow"); return false;
+        }
+        retained_read **rows = realloc(vfs->history_rows, capacity * sizeof(*rows));
+        if (!rows) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating historical recipe rows"); return false;
+        }
+        vfs->history_rows = rows; vfs->history_capacity = capacity;
+    }
+    size_t capacity = vfs->history_bucket_count;
+    if (capacity == 0 || vfs->history_count + 1 > capacity - capacity / 4) {
+        if (capacity > SIZE_MAX / 2) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Historical recipe index overflow"); return false;
+        }
+        capacity = capacity == 0 ? 64 : capacity * 2;
+        if (capacity > SIZE_MAX / sizeof(*vfs->history_buckets)) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Historical recipe index overflow"); return false;
+        }
+        retained_read **buckets = calloc(capacity, sizeof(*buckets));
+        if (!buckets) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating historical recipe index"); return false;
+        }
+        free(vfs->history_buckets); vfs->history_buckets = buckets; vfs->history_bucket_count = capacity;
+        for (size_t i = 0; i < vfs->history_count; ++i)
+            history_hash_link(vfs, vfs->history_rows[i]);
+    }
+    row->view = vfs; row->position = vfs->history_count;
+    vfs->history_rows[vfs->history_count++] = row;
+    history_hash_link(vfs, row);
+    row->recipe.resource = resource;
+    row->resource_previous = &resource->history;
+    row->resource_next = resource->history;
+    if (row->resource_next) row->resource_next->resource_previous = &row->resource_next;
+    resource->history = row;
+    return true;
 }
 static void history_free(retained_read *row)
 {
+    if (row->previous) {
+        *row->previous = row->next;
+        if (row->next) row->next->previous = row->previous;
+    }
+    if (row->view) {
+        *row->hash_previous = row->hash_next;
+        if (row->hash_next) row->hash_next->hash_previous = row->hash_previous;
+        *row->resource_previous = row->resource_next;
+        if (row->resource_next) row->resource_next->resource_previous = row->resource_previous;
+        qa_vfs *vfs = row->view;
+        retained_read *last = vfs->history_rows[--vfs->history_count];
+        vfs->history_rows[row->position] = last; last->position = row->position;
+    }
     free((char *)row->recipe.path); free((char *)row->recipe.lookup_path);
     free((char *)row->recipe.link_source); free((char *)row->recipe.link_target);
     free((void *)row->recipe.opening.order); free((char *)row->recipe.opening.prefix); free(row);
@@ -464,9 +601,7 @@ static void history_free(retained_read *row)
 bool vfs_history_record(qa_vfs *vfs, const qa_vfs_read_reference *read, qa_error *error)
 {
     uint64_t resource = qa_resource_id(read->resource);
-    for (const retained_read *row = vfs->history; row; row = row->next)
-        if (row->resource == resource && row->recipe.mount == read->mount &&
-            read_recipe_equal(&row->recipe, read->path, read->lookup_path, read->link_source, read->link_target)) return true;
+    if (history_find(vfs, resource, read) != NULL) return true;
     retained_read *row = calloc(1, sizeof(*row));
     if (!row) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining first resource opening"); return false; }
     row->resource = resource; row->recipe = *read; row->recipe.resource = NULL;
@@ -484,7 +619,12 @@ bool vfs_history_record(qa_vfs *vfs, const qa_vfs_read_reference *read, qa_error
         (count && !row->recipe.opening.order) || (read->opening.prefix && !row->recipe.opening.prefix)) {
         history_free(row); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining complete historical resource recipe"); return false;
     }
-    row->next = vfs->history; vfs->history = row; return true;
+    if (!vfs_history_index(vfs, row, (qa_resource *)read->resource, error)) {
+        history_free(row); return false;
+    }
+    row->previous = &vfs->history; row->next = vfs->history;
+    if (row->next) row->next->previous = &row->next;
+    vfs->history = row; return true;
 }
 static bool read_index(qa_vfs *vfs, size_t capacity, qa_error *error)
 {
@@ -528,7 +668,8 @@ bool vfs_read_record(qa_vfs *vfs, mount *source, qa_resource *resource, const ch
         if (entry->mount == source->id && entry->resource == resource &&
             read_recipe_equal(entry, requested, lookup, from, to)) {
             free(requested); free(lookup); free(from); free(to);
-            return retained || (vfs_origin_record(vfs, source, resource, error) && vfs_history_record(vfs, entry, error));
+            return retained || history_find(vfs, resource->id, entry) != NULL ||
+                (vfs_origin_record(vfs, source, resource, error) && vfs_history_record(vfs, entry, error));
         }
         index = (index + 1) & (capacity - 1);
     }
@@ -746,9 +887,8 @@ void qa_vfs_destroy(qa_vfs *vfs)
         resource_origin *next = origin->next;
         free((char *)origin->receipt.mount_path); free(origin); origin = next;
     }
-    while (vfs->history) {
-        retained_read *row = vfs->history; vfs->history = row->next; history_free(row);
-    }
+    while (vfs->history) history_free(vfs->history);
+    free(vfs->history_buckets); free(vfs->history_rows);
     prefix_order *prefix = vfs->prefixes;
     while (prefix != NULL) {
         prefix_order *next = prefix->next;
@@ -1594,8 +1734,11 @@ bool vfs_loose_cache_add(qa_resource_pool *pool, qa_resource *resource, qa_error
 
 static bool cache_resource(qa_resource_pool *pool, qa_resource *resource, qa_error *error)
 {
+    if (!vfs_resource_index_add(pool, resource, error)) return false;
     if (resource->archive != NULL) resource->archive->members[resource->ordinal] = resource;
-    else if (!vfs_loose_cache_add(pool, resource, error)) return false;
+    else if (!vfs_loose_cache_add(pool, resource, error)) {
+        resource_index_remove(pool, resource); return false;
+    }
     resource->next = pool->resources;
     pool->resources = resource;
     qa_resource_retain(resource);
@@ -2087,11 +2230,10 @@ bool qa_vfs_acquisition_retained(const qa_vfs *vfs, const qa_vfs_acquisition *re
             return false;
         }
     }
-    bool retained = false;
-    for (const retained_read *row = vfs->history; row; row = row->next)
-        if (row->resource == receipt->resource_id && row->recipe.mount == receipt->mount &&
-            read_recipe_equal(&row->recipe, receipt->path, receipt->lookup_path,
-                receipt->link_source, receipt->link_target)) { retained = true; break; }
+    qa_vfs_read_reference recipe = {.mount = receipt->mount, .path = receipt->path,
+        .lookup_path = receipt->lookup_path, .link_source = receipt->link_source,
+        .link_target = receipt->link_target};
+    bool retained = history_find(vfs, receipt->resource_id, &recipe) != NULL;
     if (!retained || origin.archive != (resource->archive != NULL) ||
         (origin.archive && (*receipt->link_source ||
          !qa_fs_identity_equal(&origin.archive_identity, &resource->archive->identity)))) goto invalid;

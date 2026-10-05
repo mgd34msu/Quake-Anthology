@@ -423,7 +423,9 @@ static bool historical_reads(qa_source_save_io *io, qa_vfs *vfs)
         retained_read copy = source ? *source : (retained_read){0};
         retained_read *row = (io->direction == QA_SOURCE_SAVE_READ) ? calloc(1, sizeof(*row)) : &copy;
         if (!row) return vfs_save_fail(io, QA_ERROR_MEMORY, "Restoring retained first opening");
-        if (io->direction == QA_SOURCE_SAVE_READ) { *tail = row; tail = &row->next; }
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            row->previous = tail; *tail = row; tail = &row->next;
+        }
         qa_vfs_read_reference *r = &row->recipe;
         char *path = (char *)r->path, *lookup = (char *)r->lookup_path;
         char *from = (char *)r->link_source, *to = (char *)r->link_target;
@@ -451,11 +453,9 @@ static bool historical_reads(qa_source_save_io *io, qa_vfs *vfs)
             }
         }
         ok = ok && opening_fields(io, vfs, &r->opening, r->mount, path, *from != 0);
-        for (const retained_read *prior = vfs->history; ok && (io->direction == QA_SOURCE_SAVE_READ) && prior != row; prior = prior->next)
-            if (prior->resource == row->resource && prior->recipe.mount == r->mount &&
-                !strcmp(prior->recipe.path, path) && !strcmp(prior->recipe.lookup_path, lookup) &&
-                !strcmp(prior->recipe.link_source, from) && !strcmp(prior->recipe.link_target, to)) ok = false;
         if (!ok) return vfs_save_fail(io, QA_ERROR_FORMAT, "Invalid retained first-opening recipe");
+        if (io->direction == QA_SOURCE_SAVE_READ &&
+            !vfs_history_index(vfs, row, (qa_resource *)resource, io->error)) return false;
         if (io->direction != QA_SOURCE_SAVE_READ) source = source->next;
     }
     return true;

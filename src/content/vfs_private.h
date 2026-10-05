@@ -2,6 +2,7 @@
 #define QA_CONTENT_VFS_PRIVATE_H
 #include "qa/vfs.h"
 #include "qa/filesystem.h"
+typedef struct retained_read retained_read;
 typedef struct package {
     struct package *next;
     size_t references;
@@ -16,6 +17,8 @@ typedef struct package {
 struct qa_resource {
     qa_resource *next;
     qa_resource *identity_next;
+    qa_resource *id_next;
+    retained_read *history;
     size_t references;
     uint64_t id;
     char *path;
@@ -32,6 +35,8 @@ struct qa_resource_pool {
     uint64_t next_resource;
     package *packages;
     qa_resource *resources;
+    qa_resource **id_buckets;
+    size_t id_bucket_count, resource_count;
     qa_resource **loose_buckets;
     size_t loose_bucket_count;
     size_t loose_count;
@@ -69,11 +74,18 @@ typedef struct resource_origin {
     uint64_t resource;
     qa_vfs_resource_origin receipt;
 } resource_origin;
-typedef struct retained_read {
+struct retained_read {
     struct retained_read *next;
+    struct retained_read **previous;
+    struct retained_read *hash_next;
+    struct retained_read **hash_previous;
+    struct retained_read *resource_next;
+    struct retained_read **resource_previous;
+    qa_vfs *view;
+    size_t position;
     uint64_t resource;
     qa_vfs_read_reference recipe;
-} retained_read;
+};
 struct qa_vfs {
     size_t references;
     qa_resource_pool *pool;
@@ -92,6 +104,9 @@ struct qa_vfs {
     uint64_t read_generation;
     resource_origin *origins;
     retained_read *history;
+    retained_read **history_buckets;
+    retained_read **history_rows;
+    size_t history_count, history_capacity, history_bucket_count;
     bool q3_demo;
 };
 struct qa_vfs_file {
@@ -104,12 +119,14 @@ uint64_t vfs_package_index(const qa_resource_pool *, const package *);
 package *vfs_package_at(qa_resource_pool *, uint64_t);
 bool vfs_package_materialize(package *, qa_error *);
 bool vfs_loose_cache_add(qa_resource_pool *, qa_resource *, qa_error *);
+bool vfs_resource_index_add(qa_resource_pool *, qa_resource *, qa_error *);
 void vfs_package_release(package *);
 void vfs_mount_free(mount *);
 bool vfs_root_reference_add(mount *, const qa_fs_object_reference *, qa_error *);
 bool vfs_read_record(qa_vfs *, mount *, qa_resource *, const char *, const char *, const char *, const char *, bool, const qa_vfs_read_opening *, qa_error *);
 bool vfs_origin_record(qa_vfs *, const mount *, const qa_resource *, qa_error *);
 bool vfs_history_record(qa_vfs *, const qa_vfs_read_reference *, qa_error *);
+bool vfs_history_index(qa_vfs *, retained_read *, qa_resource *, qa_error *);
 bool vfs_read_valid(const qa_vfs *, const qa_vfs_read_reference *, qa_error *);
 bool vfs_demo_package_allowed(const package *, qa_error *);
 #endif

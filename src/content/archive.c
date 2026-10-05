@@ -15,6 +15,8 @@ struct qa_archive {
     qa_fs_file *file;
     qa_fs_identity identity;
     qa_archive_entry *entries;
+    size_t *local_offsets;
+    size_t central_offset;
     const qa_archive_entry **name_index[3];
     size_t count;
 };
@@ -225,19 +227,20 @@ static bool parse_local(qa_archive *archive, qa_archive_entry *entry,
     if (local_name_length != name_length ||
         memcmp(name_bytes.data, entry->raw_path, name_length) != 0)
         return fail(error, QA_ERROR_FORMAT, variable, "ZIP local and central names disagree");
-    entry->data_offset = variable + local_name_length + extra_length;
-    if (!span(central, entry->data_offset, entry->compressed_size, error)) return false;
+    size_t data_offset = variable + local_name_length + extra_length;
+    if (!span(central, data_offset, entry->compressed_size, error)) return false;
     if (descriptor) {
-        size_t offset = entry->data_offset + entry->compressed_size;
+        size_t offset = data_offset + entry->compressed_size;
         size_t remaining = central - offset;
         qa_bytes descriptor_bytes;
         if (!archive_span(archive, offset, remaining < 16 ? remaining : 16, &descriptor_bytes, error)) return false;
         const uint8_t *record = descriptor_bytes.data;
-        if (remaining >= 16 && qa_load_u32le(record) == UINT32_C(0x08074b50) &&
-            descriptor_matches(record + 4, entry)) return true;
-        if (remaining >= 12 && descriptor_matches(record, entry)) return true;
-        return fail(error, QA_ERROR_FORMAT, offset, "ZIP data descriptor is missing or disagrees");
+        bool matches = remaining >= 16 && qa_load_u32le(record) == UINT32_C(0x08074b50) &&
+            descriptor_matches(record + 4, entry);
+        if (!matches && !(remaining >= 12 && descriptor_matches(record, entry)))
+            return fail(error, QA_ERROR_FORMAT, offset, "ZIP data descriptor is missing or disagrees");
     }
+    entry->data_offset = data_offset;
     return true;
 }
 
@@ -273,11 +276,17 @@ static bool parse_zip(qa_archive *archive, qa_error *error)
     if (count > (size_t)length / 46)
         return fail(error, QA_ERROR_FORMAT, central, "ZIP entry count exceeds directory size");
     if (!allocate_entries(archive, count, error)) return false;
+    if (count != 0) {
+        archive->local_offsets = calloc(count, sizeof(*archive->local_offsets));
+        if (archive->local_offsets == NULL)
+            return fail(error, QA_ERROR_MEMORY, central, "allocating ZIP local header offsets");
+    }
+    archive->central_offset = central;
+    if (!archive_span(archive, central, length, &source, error)) return false;
     size_t offset = central;
     for (size_t i = 0; i < count; ++i) {
         if (!span(end, offset, 46, error)) return false;
-        if (!archive_span(archive, offset, 46, &source, error)) return false;
-        const uint8_t *record = source.data;
+        const uint8_t *record = source.data + offset - central;
         if (qa_load_u32le(record) != UINT32_C(0x02014b50))
             return fail(error, QA_ERROR_FORMAT, offset, "invalid ZIP central directory signature");
         qa_archive_entry *entry = &archive->entries[i];
@@ -304,11 +313,16 @@ static bool parse_zip(qa_archive *archive, qa_error *error)
         size_t variable = offset + 46;
         size_t variable_size = name_length + extra_length + comment_length;
         if (!span(end, variable, variable_size, error) ||
-            !archive_span(archive, variable, variable_size, &source, error) ||
-            !set_name(entry, source.data, name_length, variable, error)) return false;
+            !set_name(entry, source.data + variable - central, name_length, variable, error)) return false;
         if (local > central - prefix)
             return fail(error, QA_ERROR_FORMAT, offset + 42, "ZIP local header offset exceeds payload range");
-        if (!parse_local(archive, entry, prefix + local, central, name_length, error)) return false;
+        size_t local_offset = prefix + local;
+        if (!span(central, local_offset, 30 + name_length, error)) return false;
+        size_t minimum_data = local_offset + 30 + name_length;
+        if (!span(central, minimum_data, entry->compressed_size, error) ||
+            ((entry->flags & 8u) && !span(central,
+                minimum_data + entry->compressed_size, 12, error))) return false;
+        archive->local_offsets[i] = local_offset;
         offset = variable + variable_size;
     }
     if (offset != end)
@@ -457,6 +471,7 @@ void qa_archive_close(qa_archive *archive)
         free((void *)archive->entries[i].path);
     }
     free(archive->entries);
+    free(archive->local_offsets);
     for (size_t policy = 0; policy < 3; ++policy) free(archive->name_index[policy]);
     qa_buffer_free(&archive->owned);
     qa_buffer_free(&archive->metadata);
@@ -612,6 +627,10 @@ bool qa_archive_read(const qa_archive *archive, size_t ordinal,
     if (entry == NULL) return fail(error, QA_ERROR_ARGUMENT, ordinal, "invalid archive entry ordinal");
     if (entry->is_directory)
         return fail(error, QA_ERROR_ARGUMENT, ordinal, "cannot read an archive directory");
+    if (archive->local_offsets != NULL && entry->data_offset == 0 &&
+        !parse_local((qa_archive *)archive, &archive->entries[ordinal],
+            archive->local_offsets[ordinal], archive->central_offset,
+            strlen(entry->raw_path), error)) return false;
     qa_bytes bytes = {0};
     if (!archive->bytes.data && entry->compression_method == 0) {
         out->owned.size = entry->size;

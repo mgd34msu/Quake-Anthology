@@ -147,10 +147,26 @@ static void bad_zip(const zip_fixture *zip, qa_status status)
 {
     qa_archive *archive = NULL;
     qa_error error = {0};
-    CHECK(!qa_archive_open_memory((qa_bytes){zip->bytes, zip->size}, QA_ARCHIVE_ZIP,
-                                 &archive, &error));
-    CHECK(archive == NULL);
-    CHECK(error.code == status);
+    if (!qa_archive_open_memory((qa_bytes){zip->bytes, zip->size}, QA_ARCHIVE_ZIP,
+                                &archive, &error)) {
+        CHECK(archive == NULL && error.code == status);
+        return;
+    }
+    bool rejected = false;
+    for (size_t i = 0; i < qa_archive_count(archive); ++i) {
+        if (qa_archive_entry_at(archive, i)->is_directory) continue;
+        qa_archive_data data = {0};
+        if (!qa_archive_read(archive, i, &data, &error)) {
+            CHECK(error.code == status && data.bytes.data == NULL && data.owned.data == NULL);
+            CHECK(!qa_archive_read(archive, i, &data, &error));
+            CHECK(error.code == status && data.bytes.data == NULL && data.owned.data == NULL);
+            rejected = true;
+            break;
+        }
+        qa_archive_data_free(&data);
+    }
+    qa_archive_close(archive);
+    CHECK(rejected);
 }
 
 static void expect_data(const qa_archive *archive, size_t ordinal, const char *expected)
