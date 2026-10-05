@@ -3,6 +3,7 @@
 #include "shared_resource_policy.h"
 #include "visual_access.h"
 #include "equipment_media.h"
+#include "q1_help.h"
 #include "qa/material.h"
 #include "qa/scene_world_save.h"
 #include "qa/scene_model_save.h"
@@ -15,6 +16,8 @@ static qa_scene_image_options image_options(qa_scene_image_usage usage)
     .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true, .transparent_index = 255}; }
 void remote_q1_media_clear(frontend_remote_q1 *row)
 {
+    if (row->frontend->seats)
+        frontend_q1_help_forget_source(row->frontend->seats+row->options.domain.physical_seat,row->images);
     qa_scene_world_destroy(row->world); row->world = NULL;
     while (row->model_cache) {
         remote_q1_model *model = row->model_cache; row->model_cache = model->next;
@@ -53,6 +56,7 @@ bool remote_q1_media_prepare(frontend_remote_q1 *row, qa_error *error)
         row->sound_available[i] = asset != NULL;
         qa_audio_asset_release(asset);
     }
+    frontend_q1_help_bind_source(row->frontend->seats+row->options.domain.physical_seat,row->images);
     return true;
 }
 bool remote_q1_sky_load(frontend_remote_q1 *row, qa_error *error)

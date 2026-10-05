@@ -1,5 +1,6 @@
 #include "menu_art.h"
 #include "menu-art-embedded.h"
+#include <stdio.h>
 
 static const qa_scene_embedded_image pictures[] = {
     {"engine-menu:background", {qa_menu_background_data, sizeof(qa_menu_background_data)}},
@@ -37,4 +38,24 @@ void frontend_menu_art_destroy(qa_frontend *f)
     qa_scene_image_release(f->menu_art.panel);
     qa_scene_image_release(f->menu_art.focus);
     f->menu_art = (qa_ui_art){0};
+}
+bool frontend_menu_art_q1_source(frontend_seat *seat,qa_scene_resources **out,qa_error *error)
+{
+    qa_frontend *f=seat->frontend;
+    const qa_launch_snapshot *launch=qa_application_launch(f->application);
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(launch);
+    const qa_product *product=choices?qa_catalog_product(qa_launch_snapshot_catalog(launch),choices->world.geometry):NULL;
+    if (!product || product->family!=QA_GAME_Q1 || !f->images)
+        return frontend_fail(error,QA_ERROR_NOT_FOUND,"Quake help needs its installed Source content");
+    *out=f->images;return true;
+}
+bool frontend_menu_art_q1_help_page(qa_scene_resources *images,unsigned page,const qa_scene_image **out,qa_error *error)
+{
+    char path[20];snprintf(path,sizeof(path),"gfx/help%u.lmp",page);
+    qa_scene_image_options options={.family=QA_SCENE_Q1,.usage=QA_IMAGE_USAGE_PICTURE,
+        .wrap=QA_SCENE_CLAMP,.filter=QA_SCENE_NEAREST,.transparent_index=-1};
+    qa_scene_image *image=NULL;
+    if (!qa_scene_image_load_exact(images,path,&options,&image,error))return false;
+    if (!image)return frontend_fail(error,QA_ERROR_NOT_FOUND,"Quake Source help page is absent");
+    *out=image;return true;
 }

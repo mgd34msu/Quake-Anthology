@@ -201,6 +201,7 @@ bool frontend_remote_q1_receive_qw(frontend_remote_q1 *row, const qa_qw_service 
         if (!remote_q1_qw_queue(row, &message, error)) return false;
         message.op = QA_NQ_INTERMISSION; break;
     case QA_QW_CD_TRACK: message.op = QA_NQ_CDTRACK; message.data.cd.track = message.data.cd.loop = service->data.byte; break;
+    case QA_QW_SELL_SCREEN: message.op = QA_NQ_SELLSCREEN; break;
     case QA_QW_SOUND: case QA_QW_STATIC_SOUND:
         if (!service->data.sound.index || service->data.sound.index > row->sound_count)
             return remote_q1_fail(error, QA_ERROR_FORMAT, "Invalid QW sound index");

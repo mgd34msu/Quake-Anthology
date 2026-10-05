@@ -76,6 +76,7 @@ typedef struct qa_ui_menu {
     bool source_title;
     /* Authored startup Home panel and heading; other menus use the wide panel. */
     bool narrow;
+    bool picture_only;
 } qa_ui_menu;
 /* A factory returns borrowed spans valid until its next invocation. Factories
  * and open/close hooks do not mutate the controller. Actions may open/close

@@ -13,6 +13,7 @@
 #include "accessibility.h"
 #include "save_menu.h"
 #include "menu_fonts.h"
+#include "q1_help.h"
 #include "settings_menu.h"
 #include "startup_menus.h"
 #include "qa/ui_library.h"
@@ -591,7 +592,7 @@ static bool seats_create(qa_frontend *frontend, unsigned first, qa_error *error)
             &(qa_ui_menu_registration){.id = FRONTEND_HOME, .context = seat, .factory = home}, error) ||
             !qa_ui_register(seat->ui, &(qa_ui_menu_registration){.id = FRONTEND_OPTIONS,
                 .context = seat, .factory = settings, .open = settings_open}, error) ||
-            !frontend_settings_create(seat, error)) return false;
+            !frontend_settings_create(seat, error) || !frontend_q1_help_create(seat,error)) return false;
         frontend_startup_server_browser_menus browser={200,201,202};
         if (!frontend_startup_server_browser_create(seat,&browser,&seat->server_browser,error) ||
             !frontend_startup_downloads_create(seat,203,204,&seat->downloads_menu,error) ||
@@ -619,6 +620,7 @@ bool frontend_seats_destroy_range(qa_frontend *frontend, unsigned first, unsigne
 {
     for (unsigned i = first; i < last; ++i) {
         frontend_seat *seat = &frontend->seats[i];
+        if (!frontend_q1_help_destroy(seat,error))return false;
         if (!frontend_startup_menus_destroy(seat,error) ||
             !frontend_save_menu_destroy(seat,error)) return false;
         frontend_settings_destroy(seat);

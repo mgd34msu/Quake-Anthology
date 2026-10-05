@@ -3,6 +3,7 @@
 #include "remote_unified_save.h"
 #include "selected_effects_particles.h"
 #include "legacy_render_policy.h"
+#include "q1_help.h"
 #include "scene_identity.h"
 #include "received_music.h"
 #include "qa/localization.h"
@@ -306,7 +307,9 @@ static bool group(frontend_unified_q1 *o,const char *content,q1_activation *owne
     g->content=malloc(strlen(content)+1);if(g->content) strcpy(g->content,content);
     if(!g->content || !qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),content,&files,&g->product,e) || g->product->family!=QA_GAME_Q1 ||
         !frontend_unified_media_bank(o->media,content,&g->images,&g->materials,&fonts,&g->sounds,e)) {free(g->content);free(g);return false;}
-    g->parent=o;g->activation=owner;g->particles.family=QA_GAME_Q1;q1_group **tail=&o->groups;while(*tail) tail=&(*tail)->next;*tail=g;*out=g;return true;
+    g->parent=o;g->activation=owner;g->particles.family=QA_GAME_Q1;q1_group **tail=&o->groups;while(*tail) tail=&(*tail)->next;*tail=g;*out=g;
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
+    frontend_q1_help_bind_source(o->frontend->seats+domain->physical_seat,g->images);return true;
 }
 static bool music_current(void *context,const frontend_music_origin *origin)
 {
@@ -473,6 +476,8 @@ static void prompt_clear(frontend_unified_q1 *o)
 {free(o->prompt_title);o->prompt_title=NULL;for(size_t i=0;i<o->prompt_count;++i) free(o->prompt_lines[i]);free(o->prompt_lines);o->prompt_lines=NULL;o->prompt_count=0;retained_free(o->prompt);o->prompt=NULL;o->prompt_activation=NULL;}
 static void group_free(q1_group *g)
 {
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(g->parent->replica);
+    frontend_q1_help_forget_source(g->parent->frontend->seats+domain->physical_seat,g->images);
     while(g->ambient){q1_ambient *a=g->ambient;g->ambient=a->next;
         if(a->mixer)qa_audio_mixer_remove_static(a->mixer,a->identity);
         qa_audio_asset_release(a->asset);free(a->path);free(a);}
@@ -565,7 +570,10 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
     bool ok=parse(o,row,&p,e) && activation(o,&p,&owner,e);if(!ok) {event_free(&p);return false;}
     if(owner && owner->retired){event_free(&p);return true;}
     if(p.kind==Q1_COMPLETED){ok=progress_record(o,&p,e);event_free(&p);return ok && mutable(o,e);}
-    if(p.kind==Q1_SELL_SCREEN){ok=frontend_remote_unified_command_text(o->replica,"help\n",e);
+    if(p.kind==Q1_SELL_SCREEN){const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
+        ok=group(o,(char *)p.content.data,owner,&g,e);
+        if(ok){frontend_q1_help_bind_source(o->frontend->seats+d->physical_seat,g->images);
+            ok=frontend_remote_unified_command_text(o->replica,"help\n",e);}
         event_free(&p);return ok && mutable(o,e);}
     bool persistent=p.kind==Q1_BEAM || p.kind==Q1_STYLE || p.kind==Q1_STATIC || p.kind==Q1_AMBIENT || p.kind==Q1_CLIENT || p.kind==Q1_SKY ||
         p.kind==Q1_MUSIC || p.kind==Q1_PAUSE || p.kind==Q1_FINALE;

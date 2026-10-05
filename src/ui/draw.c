@@ -420,11 +420,11 @@ static bool draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport, float
     if (!ui_active(ui, &menu, error)) return false;
     if (!ui->depth) return true;
     menu_colors colors = menu_palette(ui, contrast, menu.narrow);
-    if ((startup && !menu_backdrop(ui, frame, viewport, error)) ||
+    if (!menu.picture_only && ((startup && !menu_backdrop(ui, frame, viewport, error)) ||
         !menu_panel(ui, frame, viewport, menu.narrow, colors.panel, error) ||
         !menu_title(ui, frame, viewport, &menu, error) ||
         !ui_fill(ui, frame, viewport, (qa_scene_rect_f){64, 104, menu.narrow ? 224 : 512, 1},
-            (qa_scene_vec4){.6f, .39f, .18f, .65f}, error)) return false;
+            (qa_scene_vec4){.6f, .39f, .18f, .65f}, error))) return false;
     if (!menu_text_controls(ui, frame, viewport, &menu, false, error)) return false;
     qa_ui_id focused = ui->stack[ui->depth - 1].control;
     for (size_t i = 0; i < menu.count; ++i) {

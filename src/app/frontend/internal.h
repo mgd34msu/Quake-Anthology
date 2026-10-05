@@ -38,7 +38,7 @@ enum { FRONTEND_HOME = 1, FRONTEND_LIBRARY, FRONTEND_MODS, FRONTEND_SETTINGS,
     FRONTEND_OPTIONS = 210, FRONTEND_CONTENT_LIBRARY, FRONTEND_DISPLAY, FRONTEND_SOUND,
     FRONTEND_CONTROLS, FRONTEND_ALL_OPTIONS, FRONTEND_GRAPHICS, FRONTEND_NETWORK_OPTIONS,
     FRONTEND_LANGUAGE, FRONTEND_BINDINGS_CONFLICT, FRONTEND_BINDINGS_RESET, FRONTEND_LOAD,
-    FRONTEND_SAVE, FRONTEND_SAVE_NAME, FRONTEND_SAVE_OVERWRITE };
+    FRONTEND_SAVE, FRONTEND_SAVE_NAME, FRONTEND_SAVE_OVERWRITE, FRONTEND_Q1_HELP };
 typedef struct qa_frontend_tools qa_frontend_tools;
 typedef struct qa_frontend_network qa_frontend_network;
 bool frontend_network_content_visit(const qa_frontend *,const qa_application *,const qa_application_content_visitor *,qa_error *);
@@ -127,6 +127,7 @@ typedef struct frontend_seat {
     struct frontend_startup_rotation *rotation_menu;
     struct frontend_startup_downloads *downloads_menu;
     struct frontend_source_prompt *source_prompt;
+    struct frontend_q1_help *q1_help;
     qa_ui_rankings *rankings;
     qa_ui_llm *assistance;
     frontend_save_menu *save_menu;

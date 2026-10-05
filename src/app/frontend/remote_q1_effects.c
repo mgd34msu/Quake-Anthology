@@ -5,6 +5,7 @@
 #include "selected_effects_particles.h"
 #include "legacy_render_policy.h"
 #include "received_music.h"
+#include "q1_help.h"
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -221,6 +222,12 @@ bool remote_q1_effects_service(frontend_remote_q1 *row, const qa_nq_message *mes
 {
     if (!row || !message || !remote_q1_mutable(row) || !remote_q1_live(row, error)) return false;
     switch (message->op) {
+    case QA_NQ_SELLSCREEN: {
+        frontend_q1_help_bind_source(row->frontend->seats+row->options.domain.physical_seat,row->images);
+        qa_command_context command=row->options.domain.command_context;
+        command.origin=QA_COMMAND_REMOTE;command.direct=false;command.console_text=true;command.script=0;
+        return qa_console_append(row->options.domain.console,&command,"help\n",error);
+    }
     case QA_NQ_CDTRACK:return music_track(row,message->data.cd.track,error);
     case QA_NQ_PAUSE:return !row->frontend->audio || frontend_music_sources_received_pause(row->frontend->music_sources,message->data.value!=0,error);
     case QA_NQ_SOUND: case QA_NQ_STATICSOUND:

@@ -1637,6 +1637,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/demo_dispatch.c
     ${QA_MENU_ASSET_SOURCES}
     src/app/frontend/menu_art.c
+    src/app/frontend/q1_help.c
     src/app/frontend/settings_menu.c
     src/app/frontend/settings_devices.c
     src/app/frontend/host_menu.c

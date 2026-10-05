@@ -9,10 +9,11 @@
 #include "music_sources.h"
 #include "q1_sky.h"
 #include "source_renderer_runtime.h"
+#include "q1_help.h"
 #include <stdio.h>
 
 static const char *const client_menus[]={"toggleconsole","menu","messagemode","messagemode2",
-    "menu_anthology","library","mods","settings","rankings","assistance","controls","quit","togglemenu"};
+    "menu_anthology","library","mods","settings","rankings","assistance","controls","quit","togglemenu","help"};
 static const qa_ui_id menu_destinations[] = {FRONTEND_HOME, FRONTEND_LIBRARY, FRONTEND_MODS,
     FRONTEND_OPTIONS, FRONTEND_RANKINGS, FRONTEND_ASSISTANCE, FRONTEND_CONTROLS};
 struct frontend_client_commands {
@@ -141,11 +142,12 @@ static bool client_menu_command(void *context,const qa_command_invocation *comma
         !qa_actor_id_equal(command->context.actor,source.context.command.actor) || !f->seats ||
         owner->physical>=f->options.seats || f->seats[owner->physical].frontend!=f)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT menu command lost its actual physical namespace");
+    frontend_seat *seat=f->seats+owner->physical;
+    if (client_name(command->argv[0],"help"))return frontend_q1_help_open(seat,error);
     if (command->context.origin==QA_COMMAND_REMOTE) {
         frontend_console_print(f,&command->context,"Menu commands require the local client.\n"); return true;
     }
     if (client_name(command->argv[0],"quit")) { qa_application_request_stop(f->application); return true; }
-    frontend_seat *seat=f->seats+owner->physical;
     size_t kind=0;
     while (kind<sizeof(client_menus)/sizeof(*client_menus) && !client_name(command->argv[0],client_menus[kind])) ++kind;
     if (kind==0) return qa_seat_console_toggle(seat->console,false,false,error);
@@ -182,6 +184,8 @@ bool frontend_commands_client_bind(qa_frontend *f,const qa_application_client_so
         .seat=source->context.seat,.physical=source->context.physical_seat};
     *out=owner;
     for (size_t i=0;i<sizeof(client_menus)/sizeof(*client_menus);++i) {
+        if (client_name(client_menus[i],"help") && source->context.command.dialect!=QA_CONSOLE_Q1 &&
+            source->context.command.dialect!=QA_CONSOLE_QW)continue;
         if (!qa_console_register_owned(owner->console,client_menus[i],"Native client menu command",0,
             owner->receiver,true,client_menu_command,owner,error)) {
             qa_error original=error?*error:(qa_error){0};
@@ -260,6 +264,7 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
     if (!frontend_command_seat_read(frontend,&invocation->context,&slot))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "command requires a local player");
     frontend_seat *seat = &frontend->seats[slot];
+    if (!strcmp(name,"help"))return frontend_q1_help_open(seat,error);
     if (!strcmp(name, "toggleconsole")) return qa_seat_console_toggle(seat->console, false, false, error);
     if (!strcmp(name, "menu") || !strcmp(name,"togglemenu")) return frontend_game_menu(seat, error);
     const char *menus[] = {"menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls"};
@@ -274,7 +279,7 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
 bool frontend_commands(qa_frontend *frontend, qa_error *error)
 {
     qa_console *console = qa_application_console(frontend->application);
-    const char *names[] = {"quit", "toggleconsole", "menu", "togglemenu", "messagemode", "messagemode2", "weapnext", "weapprev",
+    const char *names[] = {"quit", "help", "toggleconsole", "menu", "togglemenu", "messagemode", "messagemode2", "weapnext", "weapprev",
         "menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls", "save", "load",
         "cinematic", "cinematicpause", "stopcinematic", "cd", "music", "sky", "actualimagegrid"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
