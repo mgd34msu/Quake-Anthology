@@ -274,9 +274,19 @@ static bool capabilities(qa_gl_renderer *renderer, qa_error *error)
     caps->stereo = stereo != 0;
     if (!gl_native_buffers(renderer,caps->stereo,&caps->native_buffer_mask,error)) return false;
     caps->floating_depth = floating_depth;
+    const char *extensions=(const char *)gl->GetString(GL_EXTENSIONS);
+    unsigned major=0,minor=0;
+    (void)sscanf(caps->version,"%u.%u",&major,&minor);
+    if (!(major>=3 || gl_extension(extensions,"GL_ARB_vertex_array_object")) ||
+        !gl->GenVertexArrays || !gl->DeleteVertexArrays || !gl->BindVertexArray) {
+        gl->GenVertexArrays=NULL; gl->DeleteVertexArrays=NULL; gl->BindVertexArray=NULL;
+    }
+    if (!(major>3 || (major==3 && minor>=2) ||
+          gl_extension(extensions,"GL_ARB_draw_elements_base_vertex")))
+        gl->DrawElementsBaseVertex=NULL;
     caps->compiled_vertex_arrays = gl->LockArraysEXT && gl->UnlockArraysEXT &&
-        gl_extension((const char *)gl->GetString(GL_EXTENSIONS), "GL_EXT_compiled_vertex_array");
-    caps->s3tc=gl_extension((const char *)gl->GetString(GL_EXTENSIONS),"GL_S3_s3tc");
+        gl_extension(extensions, "GL_EXT_compiled_vertex_array");
+    caps->s3tc=gl_extension(extensions,"GL_S3_s3tc");
     return gl_check(renderer, "OpenGL capability query", error);
 }
 
@@ -616,7 +626,7 @@ void gl_source_pipeline_restore(qa_gl_renderer *renderer)
 }
 
 static bool draw_valid(const qa_gl_renderer *renderer,
-                       const qa_scene_draw *draw, const gl_mesh_entry **resident,
+                       const qa_scene_draw *draw, gl_mesh_entry **resident,
                        qa_error *error)
 {
     const qa_scene_state *state = &draw->state;
@@ -786,7 +796,7 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
     if (qa_scene_draw_lightmap_split(source, &base, &lightmap))
         return draw_scene(renderer, &base, error) && draw_scene(renderer, &lightmap, error);
     qa_scene_draw draw = *source;
-    const gl_mesh_entry *resident = NULL;
+    gl_mesh_entry *resident = NULL;
     qa_render_source_direct_state(&draw.state,&renderer->pipeline,source);
     if ((unsigned)draw.source_direct>QA_SOURCE_DIRECT_IMAGE_GRID || !draw_valid(renderer,&draw,&resident,error)) {
         if (!error || error->code==QA_OK)
@@ -870,7 +880,9 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
     qa_scene_mesh uploaded=draw.mesh;
     if (draw.source_vertex_storage) uploaded.vertex_count=draw.source_vertex_storage;
     size_t index_offset;
-    if (!gl_mesh_bind(renderer, &uploaded, resident, &draw.vertex_inputs,&index_offset,error)) return false;
+    GLint base_vertex;
+    if (!gl_mesh_bind(renderer, &uploaded, resident, &draw.vertex_inputs,
+                      !source_pipeline && !draw.source_primitives,&index_offset,&base_vertex,error)) return false;
     if (source_pipeline && draw.mesh.vertex_count) {
         qa_scene_vec4 color; qa_scene_vec2 uv[2];
         qa_render_source_attributes_vertex(&renderer->controls,&draw,mode,0,draw.mesh.vertices,&color,uv);
@@ -897,11 +909,14 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
                 return false;
             }
     if (locked) renderer->gl.LockArraysEXT(0, (GLsizei)draw.mesh.vertex_count);
-    if (mode == QA_RENDER_PRIMITIVES_INDEXED && draw.mesh.index_count != 0)
-        renderer->gl.DrawElements(draw.mesh.primitive == QA_SCENE_LINES
-                                      ? GL_LINES : GL_TRIANGLES,
-                                  (GLsizei)draw.mesh.index_count,
-                                  GL_UNSIGNED_INT, (const void *)(uintptr_t)index_offset);
+    if (mode == QA_RENDER_PRIMITIVES_INDEXED && draw.mesh.index_count != 0) {
+        GLenum primitive=draw.mesh.primitive==QA_SCENE_LINES?GL_LINES:GL_TRIANGLES;
+        if (base_vertex)
+            renderer->gl.DrawElementsBaseVertex(primitive,(GLsizei)draw.mesh.index_count,
+                GL_UNSIGNED_INT,(const void *)(uintptr_t)index_offset,base_vertex);
+        else renderer->gl.DrawElements(primitive,(GLsizei)draw.mesh.index_count,
+                GL_UNSIGNED_INT,(const void *)(uintptr_t)index_offset);
+    }
     else if (mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS || mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS)
         draw_source_strips(renderer, &draw, mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS);
     if (draw.source_arrays && draw.mesh.primitive==QA_SCENE_TRIANGLES && !draw.state.wireframe)

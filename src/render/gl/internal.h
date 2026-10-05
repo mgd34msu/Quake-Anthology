@@ -74,11 +74,15 @@ typedef struct gl_api {
     void (APIENTRY *BufferData)(GLenum, GLsizeiptr, const void *, GLenum);
     void (APIENTRY *BufferSubData)(GLenum, GLintptr, GLsizeiptr, const void *);
     void (APIENTRY *GetBufferSubData)(GLenum, GLintptr, GLsizeiptr, void *);
+    void (APIENTRY *GenVertexArrays)(GLsizei, GLuint *);
+    void (APIENTRY *DeleteVertexArrays)(GLsizei, const GLuint *);
+    void (APIENTRY *BindVertexArray)(GLuint);
     void (APIENTRY *EnableVertexAttribArray)(GLuint);
     void (APIENTRY *DisableVertexAttribArray)(GLuint);
     void (APIENTRY *VertexAttribPointer)(GLuint, GLint, GLenum, GLboolean,
                                          GLsizei, const void *);
     void (APIENTRY *DrawElements)(GLenum, GLsizei, GLenum, const void *);
+    void (APIENTRY *DrawElementsBaseVertex)(GLenum, GLsizei, GLenum, const void *, GLint);
     void (APIENTRY *ArrayElement)(GLint);
     void (APIENTRY *VertexAttrib4f)(GLuint, GLfloat, GLfloat, GLfloat, GLfloat);
     void (APIENTRY *LockArraysEXT)(GLint, GLsizei);
@@ -179,11 +183,18 @@ typedef struct gl_texture_entry {
     struct gl_texture_entry *next;
 } gl_texture_entry;
 
+typedef struct gl_vertex_array {
+    GLuint name;
+    size_t vertex_offset;
+    bool swap_uv, color_array;
+} gl_vertex_array;
+
 typedef struct gl_mesh_entry {
     uint64_t identity, revision;
     const qa_scene_geometry *geometry;
     size_t vertex_count, index_count;
     GLuint vertex_buffer, index_buffer;
+    gl_vertex_array array;
     struct gl_mesh_entry *next;
 } gl_mesh_entry;
 static inline bool gl_mesh_storage_matches(const gl_mesh_entry *entry,
@@ -197,6 +208,7 @@ typedef struct gl_stream_buffers {
     GLuint vertex_buffer, index_buffer;
     size_t vertex_bytes, index_bytes;
     size_t vertex_cursor, index_cursor;
+    gl_vertex_array array;
 } gl_stream_buffers;
 
 typedef struct gl_output_target {
@@ -236,6 +248,7 @@ struct qa_gl_renderer {
     gl_mesh_entry *meshes;
     qa_render_resource_index mesh_index;
     gl_stream_buffers stream;
+    GLuint bound_vertex_array;
     gl_output_target output;
     gl_opacity_target opacity;
     gl_presented_target presented_target;
@@ -284,10 +297,10 @@ bool gl_image_stream_admit(qa_gl_renderer *, const qa_scene_image_stream *, qa_e
 void gl_textures_prune(qa_gl_renderer *renderer);
 void gl_meshes_prune(qa_gl_renderer *renderer);
 void gl_resources_destroy(qa_gl_renderer *renderer);
-const gl_mesh_entry *gl_mesh_resident(const qa_gl_renderer *, const qa_scene_mesh *);
+gl_mesh_entry *gl_mesh_resident(const qa_gl_renderer *, const qa_scene_mesh *);
 bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
-                  const gl_mesh_entry *, const qa_scene_vertex_inputs *, size_t *index_offset,
-                  qa_error *error);
+                  gl_mesh_entry *, const qa_scene_vertex_inputs *, bool cached_arrays,
+                  size_t *index_offset, GLint *base_vertex, qa_error *error);
 void gl_mesh_unbind(qa_gl_renderer *renderer);
 
 bool gl_bind_destination(qa_gl_renderer *renderer, qa_error *error);

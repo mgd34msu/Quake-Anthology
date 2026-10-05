@@ -977,18 +977,19 @@ static bool reserve_stream(qa_gl_renderer *renderer, GLenum target, GLuint buffe
     return true;
 }
 
-const gl_mesh_entry *gl_mesh_resident(const qa_gl_renderer *renderer,
-                                    const qa_scene_mesh *mesh)
+gl_mesh_entry *gl_mesh_resident(const qa_gl_renderer *renderer,
+                              const qa_scene_mesh *mesh)
 {
     if (mesh->identity == 0) return NULL;
     return render_resource_get(&renderer->mesh_index, mesh->identity, mesh->revision, NULL);
 }
 
 static bool mesh_storage(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
-                         const gl_mesh_entry *resident,
+                         gl_mesh_entry *resident, gl_mesh_entry **stored,
                          GLuint *vertices, GLuint *indices, size_t *vertex_offset,
                          size_t *index_offset, qa_error *error)
 {
+    *stored=resident;
     if (mesh->vertex_count > SIZE_MAX / sizeof(*mesh->vertices) ||
         mesh->index_count > SIZE_MAX / sizeof(*mesh->indices) ||
         mesh->index_count > INT_MAX) {
@@ -1004,6 +1005,7 @@ static bool mesh_storage(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
         return false;
     }
     if (mesh->identity == 0) {
+        *stored=NULL;
         if (renderer->stream.vertex_buffer == 0)
             renderer->gl.GenBuffers(1, &renderer->stream.vertex_buffer);
         if (renderer->stream.index_buffer == 0)
@@ -1074,6 +1076,7 @@ static bool mesh_storage(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
     entry->next = renderer->meshes;
     renderer->meshes = entry;
     render_resource_put(&renderer->mesh_index, entry->identity, entry->revision, NULL, entry);
+    *stored=entry;
     *vertices = entry->vertex_buffer;
     *indices = entry->index_buffer;
     return true;
@@ -1084,6 +1087,13 @@ fail:
         renderer->gl.DeleteBuffers(1, &entry->index_buffer);
     free(entry);
     return false;
+}
+
+static void mesh_buffers_delete(qa_gl_renderer *renderer,gl_mesh_entry *entry)
+{
+    if (entry->array.name) renderer->gl.DeleteVertexArrays(1,&entry->array.name);
+    renderer->gl.DeleteBuffers(1,&entry->vertex_buffer);
+    renderer->gl.DeleteBuffers(1,&entry->index_buffer);
 }
 
 void gl_meshes_prune(qa_gl_renderer *renderer)
@@ -1097,55 +1107,106 @@ void gl_meshes_prune(qa_gl_renderer *renderer)
         }
         *link = entry->next;
         render_resource_remove(&renderer->mesh_index, entry->identity, entry->revision, NULL);
-        renderer->gl.DeleteBuffers(1, &entry->vertex_buffer);
-        renderer->gl.DeleteBuffers(1, &entry->index_buffer);
+        mesh_buffers_delete(renderer,entry);
         qa_scene_geometry_cache_release(entry->geometry);
         free(entry);
     }
 }
 
-bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
-                  const gl_mesh_entry *resident, const qa_scene_vertex_inputs *inputs,
-                  size_t *index_offset, qa_error *error)
+static void mesh_uv_pointers(gl_api *gl,size_t vertex_offset,bool swap_uv)
 {
-    GLuint vertices, indices;
-    size_t vertex_offset;
-    if (!mesh_storage(renderer, mesh, resident, &vertices, &indices,&vertex_offset,index_offset,error)) return false;
-    gl_api *gl = &renderer->gl;
-    gl->BindBuffer(GL_ARRAY_BUFFER, vertices);
-    gl->BindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices);
-    const GLsizei stride = (GLsizei)sizeof(qa_scene_vertex);
-    gl->EnableVertexAttribArray(0);
-    gl->EnableVertexAttribArray(1);
-    gl->EnableVertexAttribArray(2);
-    gl->EnableVertexAttribArray(3);
-    gl->EnableVertexAttribArray(4);
+    const GLsizei stride=(GLsizei)sizeof(qa_scene_vertex);
+    gl->VertexAttribPointer(2,2,GL_FLOAT,GL_FALSE,stride,
+        (const void *)(uintptr_t)(vertex_offset+(swap_uv
+            ?offsetof(qa_scene_vertex,lightmap):offsetof(qa_scene_vertex,texcoord))));
+    gl->VertexAttribPointer(3,2,GL_FLOAT,GL_FALSE,stride,
+        (const void *)(uintptr_t)(vertex_offset+(swap_uv
+            ?offsetof(qa_scene_vertex,texcoord):offsetof(qa_scene_vertex,lightmap))));
+}
+
+static void mesh_pointers(gl_api *gl,size_t vertex_offset,bool swap_uv)
+{
+    const GLsizei stride=(GLsizei)sizeof(qa_scene_vertex);
     gl->VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
                             (const void *)(uintptr_t)(vertex_offset+offsetof(qa_scene_vertex,
                                                              position)));
     gl->VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride,
                             (const void *)(uintptr_t)(vertex_offset+offsetof(qa_scene_vertex,
                                                              normal)));
-    gl->VertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
-                            (const void *)(uintptr_t)(vertex_offset+(inputs->swap_uv
-                                ? offsetof(qa_scene_vertex, lightmap)
-                                : offsetof(qa_scene_vertex, texcoord))));
-    gl->VertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride,
-                            (const void *)(uintptr_t)(vertex_offset+(inputs->swap_uv
-                                ? offsetof(qa_scene_vertex, texcoord)
-                                : offsetof(qa_scene_vertex, lightmap))));
+    mesh_uv_pointers(gl,vertex_offset,swap_uv);
     gl->VertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride,
                             (const void *)(uintptr_t)(vertex_offset+offsetof(qa_scene_vertex,
                                                              color)));
-    if (inputs->constant_color) {
-        gl->DisableVertexAttribArray(4);
-        gl->VertexAttrib4f(4, inputs->color.x, inputs->color.y, inputs->color.z, inputs->color.w);
+}
+
+static void mesh_array_setup(gl_api *gl,GLuint vertices,GLuint indices,size_t vertex_offset,bool swap_uv)
+{
+    gl->BindBuffer(GL_ARRAY_BUFFER,vertices);
+    gl->BindBuffer(GL_ELEMENT_ARRAY_BUFFER,indices);
+    for (GLuint attribute=0;attribute<5;++attribute) gl->EnableVertexAttribArray(attribute);
+    mesh_pointers(gl,vertex_offset,swap_uv);
+}
+
+bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
+                  gl_mesh_entry *resident, const qa_scene_vertex_inputs *inputs,
+                  bool cached_arrays,size_t *index_offset,GLint *base_vertex,qa_error *error)
+{
+    GLuint vertices,indices;
+    size_t vertex_offset;
+    gl_mesh_entry *stored;
+    *base_vertex=0;
+    if (!mesh_storage(renderer,mesh,resident,&stored,&vertices,&indices,&vertex_offset,index_offset,error)) return false;
+    gl_api *gl=&renderer->gl;
+    if (cached_arrays && gl->GenVertexArrays) {
+        gl_vertex_array *array=stored?&stored->array:&renderer->stream.array;
+        /* The stream stores whole vertices. Base-vertex drawing keeps its
+         * pointers fixed at zero and leaves the original local indices intact. */
+        size_t first_vertex=vertex_offset/sizeof(qa_scene_vertex);
+        if (!stored && gl->DrawElementsBaseVertex && first_vertex<=INT_MAX &&
+            (!mesh->vertex_count || mesh->vertex_count-1<=UINT32_MAX-first_vertex)) {
+            *base_vertex=(GLint)first_vertex;
+            vertex_offset=0;
+        }
+        bool fresh=array->name==0;
+        if (fresh) gl->GenVertexArrays(1,&array->name);
+        if (!array->name) {
+            qa_error_set(error,QA_ERROR_MEMORY,0,"OpenGL could not allocate a mesh vertex array");
+            return false;
+        }
+        gl->BindVertexArray(array->name);
+        renderer->bound_vertex_array=array->name;
+        if (fresh) {
+            mesh_array_setup(gl,vertices,indices,vertex_offset,inputs->swap_uv);
+            array->color_array=true;
+        } else if (array->vertex_offset!=vertex_offset) {
+            gl->BindBuffer(GL_ARRAY_BUFFER,vertices);
+            mesh_pointers(gl,vertex_offset,inputs->swap_uv);
+        } else if (array->swap_uv!=inputs->swap_uv) {
+            gl->BindBuffer(GL_ARRAY_BUFFER,vertices);
+            mesh_uv_pointers(gl,vertex_offset,inputs->swap_uv);
+        }
+        array->vertex_offset=vertex_offset;
+        array->swap_uv=inputs->swap_uv;
+        bool color_array=!inputs->constant_color;
+        if (array->color_array!=color_array) {
+            if (color_array) gl->EnableVertexAttribArray(4); else gl->DisableVertexAttribArray(4);
+            array->color_array=color_array;
+        }
+    } else {
+        mesh_array_setup(gl,vertices,indices,vertex_offset,inputs->swap_uv);
+        if (inputs->constant_color) gl->DisableVertexAttribArray(4);
     }
+    if (inputs->constant_color)
+        gl->VertexAttrib4f(4,inputs->color.x,inputs->color.y,inputs->color.z,inputs->color.w);
     return true;
 }
 
 void gl_mesh_unbind(qa_gl_renderer *renderer)
 {
+    if (renderer->bound_vertex_array) {
+        renderer->gl.BindVertexArray(0);
+        renderer->bound_vertex_array=0;
+    }
     for (GLuint attribute = 0; attribute < 5; ++attribute)
         renderer->gl.DisableVertexAttribArray(attribute);
     renderer->gl.BindBuffer(GL_ARRAY_BUFFER, 0);
@@ -1198,11 +1259,12 @@ void gl_resources_destroy(qa_gl_renderer *renderer)
     while (renderer->meshes != NULL) {
         gl_mesh_entry *entry = renderer->meshes;
         renderer->meshes = entry->next;
-        renderer->gl.DeleteBuffers(1, &entry->vertex_buffer);
-        renderer->gl.DeleteBuffers(1, &entry->index_buffer);
+        mesh_buffers_delete(renderer,entry);
         qa_scene_geometry_cache_release(entry->geometry);
         free(entry);
     }
+    if (renderer->stream.array.name)
+        renderer->gl.DeleteVertexArrays(1,&renderer->stream.array.name);
     if (renderer->stream.vertex_buffer != 0)
         renderer->gl.DeleteBuffers(1, &renderer->stream.vertex_buffer);
     if (renderer->stream.index_buffer != 0)

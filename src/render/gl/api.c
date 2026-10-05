@@ -92,6 +92,14 @@ bool gl_api_load(qa_gl_renderer *renderer, qa_error *error)
     LOAD(ArrayElement);
     LOAD(VertexAttrib4f);
     qa_error optional = {0};
+    (void)load_proc(renderer, &renderer->gl.GenVertexArrays,
+        sizeof(renderer->gl.GenVertexArrays), "glGenVertexArrays", "glGenVertexArraysARB", &optional);
+    (void)load_proc(renderer, &renderer->gl.DeleteVertexArrays,
+        sizeof(renderer->gl.DeleteVertexArrays), "glDeleteVertexArrays", "glDeleteVertexArraysARB", &optional);
+    (void)load_proc(renderer, &renderer->gl.BindVertexArray,
+        sizeof(renderer->gl.BindVertexArray), "glBindVertexArray", "glBindVertexArrayARB", &optional);
+    (void)load_proc(renderer, &renderer->gl.DrawElementsBaseVertex,
+        sizeof(renderer->gl.DrawElementsBaseVertex), "glDrawElementsBaseVertex", NULL, &optional);
     (void)load_proc(renderer, &renderer->gl.LockArraysEXT,
         sizeof(renderer->gl.LockArraysEXT), "glLockArraysEXT", NULL, &optional);
     (void)load_proc(renderer, &renderer->gl.UnlockArraysEXT,
