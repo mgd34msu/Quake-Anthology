@@ -12,6 +12,7 @@
 #include "equipment_runtime.h"
 #include "map_players_private.h"
 #include "qa/application_equipment.h"
+#include "qa/application_network.h"
 #include "qa/application_native_q3_presentation.h"
 #include "qa/game_q1_inventory.h"
 #include "qa/game_q1_ui.h"
@@ -900,6 +901,21 @@ static const char *arsenal_warning(player_observation *o)
     return "none";
 }
 
+static bool q1_team_face(application_unified_json *j,player_observation *o,qa_error *e)
+{
+    if (o->source->family!=QA_GAME_Q1 || strcmp(o->primary->product->campaign,"rogue")) return true;
+    qa_cvars *cvars=qa_application_network_q1_cvars(o->app,o->primary->owner,e);
+    if (!cvars) return false;
+    const qa_cvar_view *teamplay=qa_cvars_find(cvars,"teamplay");
+    if (!teamplay || !qa_q1_rogue_team_face_active(o->source->max_clients,teamplay->number)) return true;
+    qa_application_network_q1_status_player players[255]; size_t count=0;
+    if (!qa_application_network_q1_status(o->app,o->primary->owner,players,&count,e) || !current(o,e)) return false;
+    for (size_t i=0;i<count;++i) if (qa_actor_id_equal(players[i].actor,o->player->actor))
+        return text(j,",\"q1TeamFace\":{\"content\":",e) && string(j,o->primary->product->identity,e) &&
+            text(j,",\"colors\":",e) && number(j,players[i].colors,e) &&
+            text(j,",\"frags\":",e) && number(j,players[i].frags,e) && text(j,"}",e);
+    return application_fail(e,QA_ERROR_ARGUMENT,"Rogue team face lost its physical Source player");
+}
 static bool ui(application_unified_json *j, player_observation *o, qa_error *e)
 {
     if (!text(j, "{\"health\":", e) || !number(j, o->has_q2 ? (double)o->q2.stats[1] :
@@ -980,7 +996,7 @@ static bool ui(application_unified_json *j, player_observation *o, qa_error *e)
         if (!ok) return false;
         }
     }
-    return text(j, "}", e) && current(o, e);
+    return q1_team_face(j,o,e) && text(j, "}", e) && current(o, e);
 }
 
 bool application_unified_player_values(qa_application *app, const application_unified_source *source,

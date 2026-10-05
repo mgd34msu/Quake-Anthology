@@ -7,6 +7,7 @@
 #include "remote_unified_material_movies_bridge.h"
 #include "save_private.h"
 #include "material_movies.h"
+#include "equipment_media.h"
 #include "qa/game_q2.h"
 
 #include <float.h>
@@ -42,6 +43,7 @@ struct frontend_unified_render {
     size_t model_count;
     qa_hud *hud;
     qa_hud_value vitals[3];
+    qa_hud_team_face team_face;
     char *ammo_label;
     qa_vec3 origin, angles, kick;
     qa_scene_vec4 blend,damage_blend;
@@ -142,7 +144,7 @@ static bool hud_read(void *context, const qa_hud_frame *frame, qa_hud_data *out,
     if (!r->busy || !d || frame->seat!=d->physical_seat)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified HUD changed its received physical seat");
     *out=(qa_hud_data){.vitals=r->vitals,.vital_count=frame->source_status_native?0:r->ammo_label?3:2,.source_vitals=true,
-        .crosshair_visible=true,.crosshair_color={1,1,1,1}};
+        .health_team_face=r->team_face,.crosshair_visible=true,.crosshair_color={1,1,1,1}};
     qa_application_camera_view camera;bool has_view=false,has_vitals=false;
     if(!frontend_unified_render_client_presentation_read(r,frame->actor,&camera,out->source_values,
         &has_view,&has_vitals,error))return false;
@@ -271,6 +273,27 @@ static bool model_read(frontend_unified_render *r, qa_json_id id, unified_render
     }
     qa_buffer_free(&content); qa_buffer_free(&path); return okay;
 }
+static bool q1_team_face_prepare(frontend_unified_render *r,qa_json_id ui,qa_error *e)
+{
+    const qa_json_document *j=qa_unified_document_json(r->frame);
+    qa_json_id value=field(j,ui,"q1TeamFace");
+    if (value==QA_JSON_NONE) return true;
+    const qa_recipe_provider *source=frontend_remote_unified_provider(r->replica,QA_ROLE_ENTITIES,"");
+    const qa_product *product=source?qa_catalog_product(qa_executable_recipe_catalog(
+        frontend_remote_unified_recipe(r->replica)),source->selection.product):NULL;
+    uint32_t colors;double score;
+    if (!product || product->family!=QA_GAME_Q1 || strcmp(product->campaign,"rogue") ||
+        qa_json_type(j,value)!=QA_JSON_OBJECT || !qa_json_string_equal(j,field(j,value,"content"),product->identity) ||
+        !word(r->frame,field(j,value,"colors"),&colors,e) || colors>255 ||
+        !scalar(r->frame,field(j,value,"frags"),&score,e) || trunc(score)!=score || score<INT32_MIN || score>INT32_MAX)
+        return frontend_unified_fail(e,QA_ERROR_FORMAT,"Rogue team face differs from its received Source player");
+    qa_vfs *files;const qa_product *admitted;
+    qa_scene_resources *images;qa_material_library *materials;qa_font_library *fonts;qa_audio_bank *sounds;
+    return frontend_unified_media_files(r->media,product->identity,&files,&admitted,e) && admitted==product &&
+        frontend_unified_media_bank(r->media,product->identity,&images,&materials,&fonts,&sounds,e) &&
+        frontend_q1_faces_prepare(files,images,materials,true,e) &&
+        frontend_q1_team_face_read(images,materials,(uint8_t)colors,(int32_t)score,&r->team_face,e);
+}
 bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *replica,
     frontend_unified_media *media,const qa_unified_document *frame,frontend_unified_render **out,qa_error *e)
 {
@@ -292,6 +315,7 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     if (okay && qa_json_type(j,area)!=QA_JSON_NULL)
         okay=qa_unified_document_bytes(frame,area,&r->area_bits,e);
     qa_json_id player=field(j,root,"player"),view=field(j,player,"view"),ui=field(j,player,"ui");
+    if (okay) okay=q1_team_face_prepare(r,ui,e);
     if (okay) okay=vector(frame,field(j,view,"origin"),&r->origin,e) && vector(frame,field(j,view,"angles"),&r->angles,e) &&
         real(frame,field(j,view,"viewHeight"),&r->height,e);
     r->source_view_offset=field(j,view,"clientViewOffsetDelta")!=QA_JSON_NONE;

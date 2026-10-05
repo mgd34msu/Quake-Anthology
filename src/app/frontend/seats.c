@@ -24,6 +24,7 @@
 #include "view_settings.h"
 #include "config_store.h"
 #include "qa/application_network.h"
+#include "qa/game_q1_ui.h"
 #include "material_movies.h"
 #include "qc_messages.h"
 #include <stdio.h>
@@ -228,6 +229,20 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
             !frontend_equipment_media_q1_face_read(seat->frontend,provider,
                 frontend_view_q1_face(client.health,client.items,seat->q1_view_motion.seconds,&seat->q1_view_motion),
                 &out->health_icon,error)) return false;
+        if (!strcmp(legacy.product->campaign,"rogue")) {
+            const qa_cvar_view *teamplay=qa_cvars_find(legacy.registry,"teamplay");
+            uint32_t clients,entities;
+            if (!qa_application_network_q1_extents(seat->frontend->application,provider,&clients,&entities,error)) return false;
+            if (teamplay && qa_q1_rogue_team_face_active(clients,teamplay->number)) {
+                qa_application_network_q1_status_player players[255]; size_t count=0;
+                if (!qa_application_network_q1_status(seat->frontend->application,provider,players,&count,error)) return false;
+                for (size_t i=0;i<count;++i) if (qa_actor_id_equal(players[i].actor,frame->actor)) {
+                    if (!frontend_equipment_media_q1_team_face_read(seat->frontend,provider,players[i].colors,
+                        players[i].frags,&out->health_team_face,error)) return false;
+                    break;
+                }
+            }
+        }
     }
     bool source_slot = false;
     if (!hud_weapon_data(seat,frame,out,source.source_hud || out->source_vitals,

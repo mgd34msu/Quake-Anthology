@@ -248,7 +248,7 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view changed its retained CLIENT settings");
     qa_actor_owner provider;
     if (!qa_application_provider_owner(f->application,source.descriptor->selection.instance,&provider) ||
-        !frontend_equipment_media_q1_faces_prepare(f,provider,error)) return false;
+        !frontend_equipment_media_q1_faces_prepare(f,provider,!strcmp(source.product->campaign,"rogue"),error)) return false;
     seat->q1_view_ready = true;
     scene->origin = seat->q1_view_pose.origin; qa_vec3 angles = seat->q1_view_pose.angles;
     seat->q1_chase = !qw && view->chase && !camera->cutscene;

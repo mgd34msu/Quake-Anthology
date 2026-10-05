@@ -461,7 +461,33 @@ static bool status_layout(qa_hud *hud, const qa_hud_frame *frame, size_t count,
         .text_scale = text_scale * scale, .scale = scale, .label_top = label_top * scale, .compact = compact};
     return true;
 }
+static bool team_face_draw(qa_hud *hud,const qa_hud_frame *frame,const qa_hud_team_face *face,
+    qa_scene_rect_f rect,qa_scene_frame *scene,qa_error *error)
+{
+    qa_ui *ui=hud->options.ui;
+    float sx=rect.width/24,sy=rect.height/24;
+    if (!qa_scene_frame_picture_f(scene,face->border,frame->safe_area,rect,
+        (qa_scene_vec4){0,0,1,1},(qa_scene_vec4){1,1,1,1},error) ||
+        !qa_scene_frame_picture_f(scene,ui->options.white,frame->safe_area,
+            (qa_scene_rect_f){rect.x+sx,rect.y+3*sy,22*sx,9*sy},(qa_scene_vec4){0,0,1,1},face->top,error) ||
+        !qa_scene_frame_picture_f(scene,ui->options.white,frame->safe_area,
+            (qa_scene_rect_f){rect.x+sx,rect.y+12*sy,22*sx,9*sy},(qa_scene_vec4){0,0,1,1},face->bottom,error)) return false;
+    char number[32]; snprintf(number,sizeof(number),"%3ld",(long)face->score);
+    for (unsigned i=0;i<3;++i) {
+        unsigned character=(uint8_t)number[i];
+        if (character==' ') continue;
+        if (face->alternate_digits) character=18+character-'0';
+        qa_font_glyph glyph;
+        if (!qa_font_find_glyph(ui->options.fonts.classic,character,&glyph))
+            return ui_fail(error,"Rogue team score lost its original conchars glyph");
+        if (glyph.visible && !qa_scene_frame_picture_f(scene,glyph.image,frame->safe_area,
+            (qa_scene_rect_f){rect.x+(1+7*(float)i)*sx,rect.y+3*sy,8*sx,8*sy},
+            glyph.uv,(qa_scene_vec4){1,1,1,1},error)) return false;
+    }
+    return true;
+}
 static bool status_vital(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_value *vital,
+    const qa_hud_team_face *team_face,
     size_t count, size_t index, qa_scene_frame *scene, qa_error *error)
 {
     hud_status_layout layout;
@@ -470,14 +496,15 @@ static bool status_vital(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_va
     if (rect.width <= 8 || rect.height <= 8) return true;
     if (!qa_scene_frame_picture_f(scene, hud->options.ui->options.white, frame->safe_area, rect,
         (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){.055f, .06f, .065f, .94f}, error)) return false;
-    if (vital->icon && !qa_scene_frame_picture_f(scene, vital->icon, frame->safe_area,
-        (qa_scene_rect_f){rect.x + 6 * layout.scale, rect.y + 8 * layout.scale,
-            24 * layout.scale, 24 * layout.scale}, (qa_scene_vec4){0, 0, 1, 1},
-        (qa_scene_vec4){1, 1, 1, 1}, error)) return false;
+    qa_scene_rect_f face_rect={rect.x+6*layout.scale,rect.y+8*layout.scale,24*layout.scale,24*layout.scale};
+    bool team=team_face && team_face->border;
+    if (team ? !team_face_draw(hud,frame,team_face,face_rect,scene,error) :
+        vital->icon && !qa_scene_frame_picture_f(scene,vital->icon,frame->safe_area,face_rect,
+            (qa_scene_vec4){0,0,1,1},(qa_scene_vec4){1,1,1,1},error)) return false;
     char value[32];
     if (!qa_format_number(vital->value, value, error)) return false;
     const char *label = vital->label ? vital->label : "";
-    float left = (vital->icon ? 34 : 4) * layout.scale;
+    float left = (vital->icon || team ? 34 : 4) * layout.scale;
     float available = rect.width - left - 4 * layout.scale;
     qa_scene_vec4 color = vital->warning ? (qa_scene_vec4){1, .65f, .22f, 1} : (qa_scene_vec4){.92f, .88f, .78f, 1};
     if (layout.compact) {
@@ -756,7 +783,8 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
     if (!weapon_draw(hud, frame, &data, scene, error)) return false;
     size_t status_count = data.vital_count + (data.weapon.present && !data.weapon.native_status ? 1 : 0);
     for (size_t i = 0; i < data.vital_count; ++i)
-        if (!status_vital(hud, frame, data.vitals + i, status_count, i, scene, error)) return false;
+        if (!status_vital(hud, frame, data.vitals + i,i==0?&data.health_team_face:NULL,
+            status_count, i, scene, error)) return false;
     for (size_t i = 0; i < data.bar_count; ++i) {
         const qa_hud_value *bar = &data.bars[i];
         float width = bar->maximum > 0 ? (float)fmax(0, fmin(1, bar->value / bar->maximum)) * 240 : 0;

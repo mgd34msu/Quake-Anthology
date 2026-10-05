@@ -3,6 +3,7 @@
 #include "internal.h"
 #include "equipment_media.h"
 #include "view_settings.h"
+#include "qa/game_q1_ui.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -63,5 +64,13 @@ bool frontend_remote_q1_hud_read(frontend_remote_q1 *row,const qa_hud_frame *fra
     *out=(qa_hud_data){.vitals=hud->vitals,.vital_count=3,.bars=hud->ammo,.bar_count=4,
         .scores=hud->scores,.score_count=scores,.source_vitals=true,.selected_weapon=selected,
         .crosshair_visible=data->health>0,.crosshair_color={1,1,1,1}};
+    const qa_product *product=qa_catalog_product(row->content.catalog,row->content.product);
+    const qa_cvar_view *teamplay=qa_cvars_find(row->options.domain.cvars,"teamplay");
+    if (product && !strcmp(product->campaign,"rogue") && teamplay &&
+        qa_q1_rogue_team_face_active(row->max_clients,teamplay->number) && row->view_entity<=256) {
+        const remote_q1_client *viewer_row=row->clients+row->view_entity-1;
+        if (!frontend_q1_team_face_read(row->images,row->materials,viewer_row->colors,viewer_row->frags,
+            &out->health_team_face,error)) return false;
+    }
     return remote_q1_live(row,error);
 }

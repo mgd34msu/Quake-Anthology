@@ -490,11 +490,12 @@ bool frontend_equipment_media_native_icon_read(qa_frontend *f,
 }
 
 bool frontend_q1_faces_prepare(qa_vfs *files, qa_scene_resources *images,
-    qa_material_library *materials, qa_error *error)
+    qa_material_library *materials, bool rogue, qa_error *error)
 {
     static const char *const faces[] = {"face1","face_p1","face2","face_p2","face3","face_p3",
-        "face4","face_p4","face5","face_p5","face_invis","face_invul2","face_inv2","face_quad"};
-    for (size_t i=0;i<sizeof(faces)/sizeof(*faces);++i) {
+        "face4","face_p4","face5","face_p5","face_invis","face_invul2","face_inv2","face_quad","r_teambord"};
+    size_t count=sizeof(faces)/sizeof(*faces)-(rogue?0u:1u);
+    for (size_t i=0;i<count;++i) {
         char key[64], declaration[128];
         if (!frontend_equipment_icon_key("gfx.wad",faces[i],key,sizeof(key),error)) return false;
         if (qa_material_find(materials,key)) continue;
@@ -519,11 +520,12 @@ bool frontend_q1_face_read(const qa_material_library *materials, const char *lum
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 face has not completed its actual media preparation");
     *out=material->stages[0].images[0]; return true;
 }
-bool frontend_equipment_media_q1_faces_prepare(qa_frontend *f, qa_actor_owner provider, qa_error *error)
+bool frontend_equipment_media_q1_faces_prepare(qa_frontend *f, qa_actor_owner provider,
+    bool rogue, qa_error *error)
 {
     frontend_visual_owner_view media;
     return frontend_visual_media_acquire(f,provider,QA_GAME_Q1,&media,error) &&
-        frontend_q1_faces_prepare(media.mounts,media.images,media.materials,error);
+        frontend_q1_faces_prepare(media.mounts,media.images,media.materials,rogue,error);
 }
 bool frontend_equipment_media_q1_face_read(qa_frontend *f, qa_actor_owner provider,
     const char *lump, const qa_scene_image **out, qa_error *error)
@@ -531,6 +533,27 @@ bool frontend_equipment_media_q1_face_read(qa_frontend *f, qa_actor_owner provid
     frontend_visual_owner_view media;
     return frontend_visual_media_read(f,provider,QA_GAME_Q1,&media,error) &&
         frontend_q1_face_read(media.materials,lump,out,error);
+}
+bool frontend_q1_team_face_read(qa_scene_resources *images,const qa_material_library *materials,
+    uint8_t colors,int32_t score,qa_hud_team_face *out,qa_error *error)
+{
+    qa_bytes palette={0};
+    const qa_scene_image *border=NULL;
+    if (!frontend_q1_face_read(materials,"r_teambord",&border,error)) return false;
+    if (!qa_scene_resources_palette_read(images,QA_SCENE_Q1,&palette) || palette.size!=768)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Rogue team face lost its admitted Source palette");
+    unsigned top=(colors&0xf0u)+8u,bottom=((colors&15u)<<4)+8u;
+    *out=(qa_hud_team_face){.border=border,.score=score,.alternate_digits=top==8,
+        .top={palette.data[top*3]/255.0f,palette.data[top*3+1]/255.0f,palette.data[top*3+2]/255.0f,1},
+        .bottom={palette.data[bottom*3]/255.0f,palette.data[bottom*3+1]/255.0f,palette.data[bottom*3+2]/255.0f,1}};
+    return true;
+}
+bool frontend_equipment_media_q1_team_face_read(qa_frontend *f,qa_actor_owner provider,
+    uint8_t colors,int32_t score,qa_hud_team_face *out,qa_error *error)
+{
+    frontend_visual_owner_view media;
+    return frontend_visual_media_read(f,provider,QA_GAME_Q1,&media,error) &&
+        frontend_q1_team_face_read(media.images,media.materials,colors,score,out,error);
 }
 
 bool frontend_equipment_media_source_icon_read(const qa_frontend *f,

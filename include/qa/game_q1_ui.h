@@ -3,6 +3,10 @@
 
 #include "qa/game_q1.h"
 
+/* Original Rogue Sbar_DrawFace only replaces the face in CTF modes. */
+static inline bool qa_q1_rogue_team_face_active(uint32_t max_clients, double teamplay)
+{ return max_clients != 1 && teamplay > 3 && teamplay < 7; }
+
 typedef struct qa_q1_ui_power {
     qa_q1_power power;
     double expires;

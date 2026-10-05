@@ -46,12 +46,16 @@ bool frontend_equipment_media_native_icon_prepare(qa_frontend *,const qa_applica
     const qa_material **,qa_error *);
 bool frontend_equipment_media_native_icon_read(qa_frontend *,const qa_application_equipment_view *,
     const qa_material **,qa_error *);
-bool frontend_q1_faces_prepare(qa_vfs *,qa_scene_resources *,qa_material_library *,qa_error *);
+bool frontend_q1_faces_prepare(qa_vfs *,qa_scene_resources *,qa_material_library *,bool rogue,qa_error *);
 bool frontend_q1_face_read(const qa_material_library *,const char *lump,
     const qa_scene_image **,qa_error *);
-bool frontend_equipment_media_q1_faces_prepare(qa_frontend *,qa_actor_owner,qa_error *);
+bool frontend_equipment_media_q1_faces_prepare(qa_frontend *,qa_actor_owner,bool rogue,qa_error *);
 bool frontend_equipment_media_q1_face_read(qa_frontend *,qa_actor_owner,const char *lump,
     const qa_scene_image **,qa_error *);
+bool frontend_q1_team_face_read(qa_scene_resources *,const qa_material_library *,uint8_t colors,
+    int32_t score,qa_hud_team_face *,qa_error *);
+bool frontend_equipment_media_q1_team_face_read(qa_frontend *,qa_actor_owner,uint8_t colors,
+    int32_t score,qa_hud_team_face *,qa_error *);
 bool frontend_equipment_media_source_icon_read(const qa_frontend *,const qa_application_equipment_view *,
     const qa_material **,qa_error *);
 bool frontend_equipment_media_read(const frontend_equipment_media *, frontend_equipment_media_view *);
