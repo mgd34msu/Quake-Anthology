@@ -67,7 +67,7 @@ struct application_native_q3_wire_client_lease {
     qa_cvars *registry;
     qa_actor_id actor;
     uint64_t publication_generation, map_revision;
-    int32_t receipt_sequence;
+    int32_t initial_command_sequence, receipt_sequence;
     size_t calls;
     bool cgame, builtin, has_receipt, receipt_present;
 };
@@ -1637,6 +1637,9 @@ bool qa_native_q3_wire_reader_acquire(qa_application *app, qa_actor_owner receiv
     if (!qa_native_q3_wire_reader_current(lease))
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Native reader acquisition lost its source during initial publication");
+    /* CG_Init starts at the real CLIENT's last executed command. A new CGAME
+     * owner can follow a seat reindex while the CLIENT and gamestate survive. */
+    lease->initial_command_sequence = wire->clients[slot].consumed_server_command;
     return true;
 }
 
@@ -1673,7 +1676,7 @@ bool qa_native_q3_wire_reader_publication(const qa_native_q3_wire_reader *reader
     if (!out || !qa_native_q3_wire_reader_current(reader))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native reader publication has no current source");
     const native_q3_wire_client *client = &reader->wire->clients[reader->slot];
-    *out = (qa_native_q3_wire_publication){.initial_command_sequence = client->initial_server_command,
+    *out = (qa_native_q3_wire_publication){.initial_command_sequence = reader->initial_command_sequence,
         .latest_command_sequence = client->reliable.sequence,
         .reached_command_sequence = client->consumed_server_command,
         .snapshot_number = client->has_snapshot ? client->snapshot_sequence : 0,
