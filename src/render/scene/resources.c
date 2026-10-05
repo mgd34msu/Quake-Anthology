@@ -1609,6 +1609,32 @@ void scene_image_fog_pixels(uint8_t pixels[256 * 32 * 4])
         pixels[at + 3] = (uint8_t)(255 * qa_material_fog_factor(((float)x + .5f) / 256, ((float)y + .5f) / 32));
     }
 }
+bool scene_resource_source_builtin_create(qa_scene_resources *resources, const char *name,
+    const qa_q3_image_upload_options *profile, qa_scene_image **out, qa_error *error)
+{
+    if (!strcmp(name,"*default")) return source_builtin(resources,name,profile,16,32,true,false,out,error);
+    if (!strcmp(name,"*white")) return source_builtin(resources,name,profile,8,255,false,false,out,error);
+    if (!strcmp(name,"*identityLight") || !strcmp(name,"*scratch")) {
+        qa_q3_color_lighting lighting;
+        if (!qa_q3_color_lighting_read(&profile->color.device,profile->color.requested_overbright_bits,&lighting,error)) return false;
+        bool scratch=!strcmp(name,"*scratch");
+        return source_builtin(resources,name,profile,scratch?16:8,lighting.identity_light_byte,false,scratch,out,error);
+    }
+    qa_scene_image_options options={.family=QA_SCENE_Q3,.wrap=QA_SCENE_CLAMP,
+        .filter=QA_SCENE_LINEAR,.source_q3=true,.source_upload=*profile};
+    options.source_upload.allow_picmip=false; options.source_upload.mipmap=false;
+    if (!strcmp(name,"*dlight")) {
+        uint8_t pixels[16*16*4]; scene_image_dlight_pixels(pixels);
+        qa_image input={.width=16,.height=16,.rgba={pixels,sizeof(pixels)}};
+        return image_from_rgba_complete(resources,name,&input,&options,false,(qa_scene_vec4){0},true,out,error);
+    }
+    if (!strcmp(name,"*fog")) {
+        uint8_t pixels[256*32*4]; scene_image_fog_pixels(pixels);
+        qa_image input={.width=256,.height=32,.rgba={pixels,sizeof(pixels)}};
+        return image_from_rgba_complete(resources,name,&input,&options,true,(qa_scene_vec4){1,1,1,1},false,out,error);
+    }
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Unknown Source constructor image"); return false;
+}
 bool qa_scene_resources_source_q3_initialize(qa_scene_resources *resources,
     const qa_q3_image_upload_options *profile, qa_error *error)
 {
@@ -1617,37 +1643,26 @@ bool qa_scene_resources_source_q3_initialize(qa_scene_resources *resources,
     }
     if (!admission_ready(resources, error) || !qa_q3_image_upload_options_valid(profile, error)) return false;
     if (resources->source_builtins) return true;
-    qa_q3_color_lighting lighting;
-    if (!qa_q3_color_lighting_read(&profile->color.device, profile->color.requested_overbright_bits, &lighting, error)) return false;
-    qa_scene_image *white = NULL, *missing = NULL, *identity = NULL, *scratch[32] = {0}, *dlight = NULL, *fog = NULL;
-    bool ok = source_builtin(resources, "*default", profile, 16, 32, true, false, &missing, error) &&
-        source_builtin(resources, "*white", profile, 8, 255, false, false, &white, error) &&
-        source_builtin(resources, "*identityLight", profile, 8, lighting.identity_light_byte, false, false, &identity, error);
-    for (unsigned i = 0; ok && i < 32; ++i)
-        ok = source_builtin(resources, "*scratch", profile, 16, lighting.identity_light_byte, false, true, &scratch[i], error);
-    uint8_t light_pixels[16 * 16 * 4], fog_pixels[256 * 32 * 4];
-    scene_image_dlight_pixels(light_pixels);
-    qa_scene_image_options options = {.family = QA_SCENE_Q3, .wrap = QA_SCENE_CLAMP,
-        .filter = QA_SCENE_LINEAR, .source_q3 = true, .source_upload = *profile};
-    options.source_upload.allow_picmip = false; options.source_upload.mipmap = false;
-    qa_image light_input = {.width = 16, .height = 16, .rgba = {light_pixels,sizeof(light_pixels)}};
-    if (ok) ok = image_from_rgba_complete(resources, "*dlight", &light_input, &options, false,
-        (qa_scene_vec4){0}, true, &dlight, error);
-    if (ok) resources->source_dlight = dlight;
-    scene_image_fog_pixels(fog_pixels);
-    qa_image fog_input = {.width = 256, .height = 32, .rgba = {fog_pixels,sizeof(fog_pixels)}};
-    if (ok) ok = image_from_rgba_complete(resources, "*fog", &fog_input, &options, true,
-        (qa_scene_vec4){1,1,1,1}, false, &fog, error);
+    qa_scene_image *white=NULL,*missing=NULL,*identity=NULL,*scratch[32]={0},*dlight=NULL,*fog=NULL;
+    bool ok=scene_resource_source_builtin_create(resources,"*default",profile,&missing,error) &&
+        scene_resource_source_builtin_create(resources,"*white",profile,&white,error) &&
+        scene_resource_source_builtin_create(resources,"*identityLight",profile,&identity,error);
+    for (unsigned i=0;ok && i<32;++i)
+        ok=scene_resource_source_builtin_create(resources,"*scratch",profile,&scratch[i],error);
+    if (ok) ok=scene_resource_source_builtin_create(resources,"*dlight",profile,&dlight,error);
+    if (ok) resources->source_dlight=dlight;
+    if (ok) ok=scene_resource_source_builtin_create(resources,"*fog",profile,&fog,error);
     if (!ok) {
-        resources->source_dlight = NULL;
+        resources->source_dlight=NULL;
         qa_scene_image_release(white); qa_scene_image_release(missing); qa_scene_image_release(identity);
-        for (unsigned i = 0; i < 32; ++i) qa_scene_image_release(scratch[i]);
+        for (unsigned i=0;i<32;++i) qa_scene_image_release(scratch[i]);
         qa_scene_image_release(dlight); qa_scene_image_release(fog); return false;
     }
-    resources->source_white = white; resources->source_missing = missing; resources->source_identity = identity;
-    memcpy(resources->source_scratch, scratch, sizeof(scratch)); resources->source_fog = fog;
-    resources->source_builtins_upload = *profile; resources->source_builtins = true; return true;
+    resources->source_white=white; resources->source_missing=missing; resources->source_identity=identity;
+    memcpy(resources->source_scratch,scratch,sizeof(scratch)); resources->source_fog=fog;
+    resources->source_builtins_upload=*profile; resources->source_builtins=true; return true;
 }
+
 void scene_image_skin_flood(uint8_t *pixels, uint32_t width, uint32_t height,
     uint8_t fill, uint8_t black, size_t *queue)
 {

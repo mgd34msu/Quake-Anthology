@@ -85,7 +85,8 @@ struct qa_scene_resources {
     qa_scene_image *source_white, *source_missing, *source_identity;
     qa_scene_image *source_scratch[32], *source_dlight, *source_fog;
     qa_q3_image_upload_options source_builtins_upload;
-    bool source_builtins;
+    qa_q3_image_upload_options restore_upload;
+    bool source_builtins, has_restore_upload;
     qa_scene_source_image_admit_fn source_admit;
     void *source_admit_context;
     owned_image *variants;
@@ -103,6 +104,24 @@ struct qa_scene_resources {
     qa_scene_resources *policy_source;
     bool continuation_active, detached;
 };
+static inline qa_q3_image_upload_options scene_resource_restore_upload(
+    const qa_scene_resources *owner, const qa_q3_image_upload_options *saved)
+{
+    if (!owner->has_restore_upload) return *saved;
+    qa_q3_image_upload_options upload=owner->restore_upload;
+    upload.allow_picmip=saved->allow_picmip;
+    upload.mipmap=saved->mipmap;
+    upload.lightmap=saved->lightmap;
+    return upload;
+}
+static inline void scene_resource_restore_options(const qa_scene_resources *owner,
+    qa_scene_image_options *options)
+{
+    if (options->source_q3)
+        options->source_upload=scene_resource_restore_upload(owner,&options->source_upload);
+}
+bool scene_resource_source_builtin_create(qa_scene_resources *, const char *,
+    const qa_q3_image_upload_options *, qa_scene_image **, qa_error *);
 bool scene_resource_variant_parent_retain(qa_scene_resources *, const qa_scene_image *,
                                           qa_scene_resources **, qa_error *);
 void scene_resource_alias_free(image_alias *);

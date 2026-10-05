@@ -157,7 +157,8 @@ bool frontend_images_checkpoint(qa_frontend *f, qa_buffer *out, qa_error *error)
     if (!ok && error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "image owner topology is not completely qualified");
     return ok;
 }
-bool frontend_images_restore(qa_frontend *f, qa_bytes bytes, qa_scene_image_set **out, qa_error *error)
+bool frontend_images_restore(qa_frontend *f, qa_bytes bytes, const qa_q3_image_upload_options *upload,
+    qa_scene_image_set **out, qa_error *error)
 {
     if (!out || *out) return frontend_fail(error, QA_ERROR_ARGUMENT, "image restore requires empty construction-reference output");
     image_inventory inventory = {0}; qa_source_save_io io = {0}; size_t size = 0;
@@ -169,7 +170,7 @@ bool frontend_images_restore(qa_frontend *f, qa_bytes bytes, qa_scene_image_set 
         else { images = (qa_bytes){bytes.data + io.offset, size}; io.offset += size; }
     }
     ok = ok && qa_source_save_finish(&io, NULL) && frontend_menu_art_bind(f, error) && (inventory.count ?
-        qa_scene_images_restore(inventory.owners, inventory.count, images, out, error) : images.size == 0);
+        qa_scene_images_restore(inventory.owners, inventory.count, images, upload, out, error) : images.size == 0);
     qa_source_save_dispose(&io); dispose(&inventory);
     if (!ok && error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "saved image topology differs from prepared actual owners");
     return ok;

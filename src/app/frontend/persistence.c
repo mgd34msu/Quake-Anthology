@@ -1102,7 +1102,11 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
     qa_audio_checkpoint_refs audio=audio_refs(operation);
     frontend_unified_graph_refs unified=unified_refs(operation,&audio);
     qa_bytes engine={0},device={0},platform={0},terminal={0},sky={0};
-    bool ok=frontend_component_scenes_prepare_restored(f,content,section(set,SECTION_COMPONENT_SCENES),
+    qa_q3_image_upload_options upload={0};
+    bool ok=renderer_rebuild(operation,error) &&
+        frontend_source_renderer_runtime_bind(f,error) &&
+        frontend_q3_source_color_restore(f,operation->display_guard,section(set,SECTION_SOURCE_COLOR),&upload,error) &&
+        frontend_component_scenes_prepare_restored(f,content,section(set,SECTION_COMPONENT_SCENES),
             &operation->component_scenes,error) &&
         application_q3_components_scenes_restore_prepare(f->application,error) &&
         frontend_unified_graph_prepare_components(operation->unified_graph,&unified,error) &&
@@ -1111,7 +1115,7 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
         frontend_view_settings_restore(f->view_settings,section(set,SECTION_VIEW_SETTINGS),error) &&
         frontend_equipment_gear_prepare_restored(f,section(set,SECTION_GEAR_TOPOLOGY),error) &&
         frontend_input_profile_restore(f,content,section(set,SECTION_INPUT_PROFILE),error) &&
-        frontend_images_restore(f,section(set,SECTION_IMAGES),&operation->images,error) &&
+        frontend_images_restore(f,section(set,SECTION_IMAGES),f->source_color?&upload:NULL,&operation->images,error) &&
         frontend_scene_namespace_restore(section(set,SECTION_NAMESPACE),operation->images,&operation->space,error) &&
         frontend_scene_namespace_bind_frame(operation->space,1,&f->frame,error) &&
         frontend_component_scenes_bind_frames(f,operation->space,error) &&
@@ -1139,9 +1143,7 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
         renderer_registries_roster(operation,error) &&
         music_sources_prepare(operation,error) &&
         equipment_roots_restore(operation,error) &&
-        aliases_restore(f,operation->space,section(set,SECTION_ALIASES),error) && renderer_rebuild(operation,error) &&
-        frontend_source_renderer_runtime_bind(f,error) &&
-        frontend_q3_source_color_restore(f,operation->display_guard,section(set,SECTION_SOURCE_COLOR),error) &&
+        aliases_restore(f,operation->space,section(set,SECTION_ALIASES),error) &&
         frontend_remote_q3_graph_prepare_modules(operation->remote_graph,error) &&
         frontend_remote_q3_graph_prepare_runtime(operation->remote_graph,error) &&
         frontend_source_material_bindings_restore(f,error) &&

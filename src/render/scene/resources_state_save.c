@@ -86,36 +86,18 @@ static bool builtin_image(const qa_scene_image *image, bool missing)
     return true;
 }
 
-static bool source_builtin_image(const qa_scene_image *image, const qa_q3_image_upload_options *profile,
-    const char *name, uint32_t size, uint8_t value, bool missing, bool scratch, qa_error *error)
+static bool source_builtin_image(const qa_scene_image *image,const char *name,
+    uint32_t size,bool missing,bool scratch)
 {
-    if (!image || !image->name || strcmp(image->name, name) || image->kind == QA_SCENE_DEPTH32F ||
-        image->wrap != (scratch ? QA_SCENE_CLAMP : QA_SCENE_REPEAT) ||
-        image->filter != (missing ? QA_SCENE_LINEAR_MIPMAP_NEAREST : QA_SCENE_LINEAR) ||
-        image->logical_width != size || image->logical_height != size || image->animation_count || image->animation ||
-        image->revision != 1 || image->border.x != 0.0f || image->border.y != 0.0f || image->border.z != 0.0f || image->border.w != 0.0f ||
-        image->source_dlight || image->source_after_upload_border || image->source_upload_border.x != 0.0f ||
-        image->source_upload_border.y != 0.0f || image->source_upload_border.z != 0.0f || image->source_upload_border.w != 0.0f) return false;
-    uint8_t pixels[16 * 16 * 4];
-    for (uint32_t y = 0; y < size; ++y) for (uint32_t x = 0; x < size; ++x) {
-        uint8_t pixel = missing ? (x == 0 || x == 15 || y == 0 || y == 15 ? 255 : 32) : value;
-        size_t at = ((size_t)y * size + x) * 4;
-        pixels[at] = pixels[at + 1] = pixels[at + 2] = pixel; pixels[at + 3] = missing ? pixel : 255;
-    }
-    qa_image original = {.width = size, .height = size, .rgba = {pixels, (size_t)size * size * 4}};
-    qa_q3_image_upload_options upload = *profile; upload.allow_picmip = scratch; upload.mipmap = missing;
-    qa_mip_chain expected = {0};
-    qa_q3_texture_format format;
-    if (!qa_q3_image_upload_format(&original, &upload, &expected, &format, error)) return false;
-    qa_scene_image_kind kind = scene_resource_q3_image_kind(format);
-    bool ok = image->level_count == expected.count && image->source_q3 && image->source_format == format && image->kind == kind;
-    for (size_t i = 0; ok && i < expected.count; ++i) {
-        const qa_image *level = expected.levels + i;
-        ok = image->levels[i].width == level->width && image->levels[i].height == level->height &&
-            image->levels[i].bytes == level->rgba.size && image->levels[i].pixels &&
-            !memcmp(image->levels[i].pixels, level->rgba.data, level->rgba.size);
-    }
-    qa_mip_chain_free(&expected); return ok;
+    return image && image->name && !strcmp(image->name,name) && image->source_q3 &&
+        image->kind==scene_resource_q3_image_kind(image->source_format) &&
+        image->wrap==(scratch?QA_SCENE_CLAMP:QA_SCENE_REPEAT) &&
+        image->filter==(missing?QA_SCENE_LINEAR_MIPMAP_NEAREST:QA_SCENE_LINEAR) &&
+        image->logical_width==size && image->logical_height==size &&
+        !image->animation_count && !image->animation && image->revision==1 &&
+        image->source_mipmap==missing && image->level_count &&
+        image->border.x==0 && image->border.y==0 && image->border.z==0 && image->border.w==0 &&
+        !image->source_dlight && !image->source_after_upload_border;
 }
 static bool source_builtins_fields(qa_source_save_io *io, qa_scene_resources *owner,
     qa_scene_resources *state, const qa_scene_resource_checkpoint_refs *refs)
@@ -127,40 +109,27 @@ static bool source_builtins_fields(qa_source_save_io *io, qa_scene_resources *ow
     if (!(qa_q3_image_upload_options_precision_codec(io, &state->source_builtins_upload)) ||
         !image_field(io, refs, owner, &state->source_white) || !image_field(io, refs, owner, &state->source_missing) ||
         !image_field(io, refs, owner, &state->source_identity)) return false;
-    qa_q3_color_lighting lighting;
-    if (!qa_q3_color_lighting_read(&state->source_builtins_upload.color.device,
-        state->source_builtins_upload.color.requested_overbright_bits, &lighting, io->error) ||
-        !source_builtin_image(state->source_white, &state->source_builtins_upload, "*white", 8, 255, false, false, io->error) ||
-        !source_builtin_image(state->source_missing, &state->source_builtins_upload, "*default", 16, 32, true, false, io->error) ||
-        !source_builtin_image(state->source_identity, &state->source_builtins_upload, "*identityLight", 8,
-            lighting.identity_light_byte, false, false, io->error)) return false;
+    if (reading) state->source_builtins_upload=scene_resource_restore_upload(owner,&state->source_builtins_upload);
+    if (!source_builtin_image(state->source_white,"*white",8,false,false) ||
+        !source_builtin_image(state->source_missing,"*default",16,true,false) ||
+        !source_builtin_image(state->source_identity,"*identityLight",8,false,false)) return false;
     return !reading || owner->detached || (owner->source_builtins &&
         qa_q3_image_upload_options_equal(&owner->source_builtins_upload, &state->source_builtins_upload) &&
         same_image(owner->source_white, state->source_white) && same_image(owner->source_missing, state->source_missing) &&
         same_image(owner->source_identity, state->source_identity));
 }
-static bool source_generated_image(const qa_scene_image *image, const qa_q3_image_upload_options *profile,
-    const char *name, uint32_t width, uint32_t height, uint8_t *pixels, bool fog, qa_error *error)
+static bool source_generated_image(const qa_scene_image *image,const char *name,
+    uint32_t width,uint32_t height,bool fog)
 {
-    if (!image || !image->name || strcmp(image->name, name) || image->kind == QA_SCENE_DEPTH32F ||
-        image->wrap != QA_SCENE_CLAMP || image->filter != QA_SCENE_LINEAR || image->animation_count ||
-        image->revision != 1 || image->logical_width != width || image->logical_height != height ||
-        image->border.x != 0.0f || image->border.y != 0.0f || image->border.z != 0.0f || image->border.w != 0.0f) return false;
-    if (image->source_dlight != !fog || image->source_after_upload_border != fog ||
-        (fog && (image->source_upload_border.x != 1 || image->source_upload_border.y != 1 ||
-         image->source_upload_border.z != 1 || image->source_upload_border.w != 1))) return false;
-    qa_image original = {.width = width, .height = height, .rgba = {pixels,(size_t)width * height * 4}};
-    qa_q3_image_upload_options upload = *profile; upload.mipmap = false; upload.allow_picmip = false;
-    qa_mip_chain expected = {0};
-    qa_q3_texture_format format;
-    if (!qa_q3_image_upload_format(&original, &upload, &expected, &format, error)) return false;
-    qa_scene_image_kind kind = scene_resource_q3_image_kind(format);
-    bool ok = image->level_count == expected.count && image->source_q3 && image->source_format == format && image->kind == kind;
-    for (size_t i = 0; ok && i < expected.count; ++i)
-        ok = image->levels[i].width == expected.levels[i].width && image->levels[i].height == expected.levels[i].height &&
-            image->levels[i].bytes == expected.levels[i].rgba.size && image->levels[i].pixels &&
-            !memcmp(image->levels[i].pixels, expected.levels[i].rgba.data, image->levels[i].bytes);
-    qa_mip_chain_free(&expected); return ok;
+    return image && image->name && !strcmp(image->name,name) && image->source_q3 &&
+        image->kind==scene_resource_q3_image_kind(image->source_format) &&
+        image->wrap==QA_SCENE_CLAMP && image->filter==QA_SCENE_LINEAR &&
+        !image->animation_count && image->revision==1 && !image->source_mipmap && image->level_count &&
+        image->logical_width==width && image->logical_height==height &&
+        image->border.x==0 && image->border.y==0 && image->border.z==0 && image->border.w==0 &&
+        image->source_dlight==!fog && image->source_after_upload_border==fog &&
+        (!fog || (image->source_upload_border.x==1 && image->source_upload_border.y==1 &&
+            image->source_upload_border.z==1 && image->source_upload_border.w==1));
 }
 static bool source_extended_builtins_fields(qa_source_save_io *io, qa_scene_resources *owner,
     qa_scene_resources *state, const qa_scene_resource_checkpoint_refs *refs)
@@ -178,24 +147,17 @@ static bool source_extended_builtins_fields(qa_source_save_io *io, qa_scene_reso
         return true;
     }
     if (!state->source_builtins) return false;
-    qa_q3_color_lighting lighting;
-    if (!qa_q3_color_lighting_read(&state->source_builtins_upload.color.device,
-        state->source_builtins_upload.color.requested_overbright_bits, &lighting, io->error)) return false;
     for (unsigned i = 0; i < 32; ++i) {
         if (!image_field(io, refs, owner, &state->source_scratch[i]) ||
-            !source_builtin_image(state->source_scratch[i], &state->source_builtins_upload, "*scratch", 16,
-                lighting.identity_light_byte, false, true, io->error)) return false;
+            !source_builtin_image(state->source_scratch[i],"*scratch",16,false,true)) return false;
         for (unsigned j = 0; j < i; ++j)
             if (state->source_scratch[i] == state->source_scratch[j] ||
                 state->source_scratch[i]->identity == state->source_scratch[j]->identity) return false;
         if (reading && !owner->detached && owner->source_scratch[i] != state->source_scratch[i]) return false;
     }
     if (!image_field(io, refs, owner, &state->source_dlight) || !image_field(io, refs, owner, &state->source_fog)) return false;
-    uint8_t light[16 * 16 * 4], fog[256 * 32 * 4];
-    scene_image_dlight_pixels(light);
-    scene_image_fog_pixels(fog);
-    return source_generated_image(state->source_dlight, &state->source_builtins_upload, "*dlight", 16, 16, light, false, io->error) &&
-        source_generated_image(state->source_fog, &state->source_builtins_upload, "*fog", 256, 32, fog, true, io->error) &&
+    return source_generated_image(state->source_dlight,"*dlight",16,16,false) &&
+        source_generated_image(state->source_fog,"*fog",256,32,true) &&
         (!reading || owner->detached || (state->source_dlight == owner->source_dlight && state->source_fog == owner->source_fog));
 }
 static bool content_field(qa_source_save_io *io, qa_scene_resources *owner,
@@ -401,6 +363,7 @@ static bool aliases_fields(qa_source_save_io *io, qa_scene_resources *owner,
         if (ok) ok = cache_options(io, &options) && !options.exact_file;
         if (reading && ok) {
             alias->palette_error = (qa_status)status; alias->decode_options = options.options;
+            scene_resource_restore_options(owner,&alias->decode_options);
             alias->source_error = (qa_status)source_status;
             memcpy(alias->palette, options.palette, 768); memcpy(alias->translation, options.translation, 256);
             if (alias->decode_options.palette_rgb.size) alias->decode_options.palette_rgb.data = alias->palette;
@@ -622,6 +585,8 @@ static bool sampling_fields(qa_source_save_io *io, qa_scene_resources *owner,
                 (!row->generic_variant && !(qa_q3_image_upload_options_precision_codec(io, &row->upload))))) return false;
         }
         if (reading) {
+            if (row->source_variant && !row->generic_variant)
+                row->upload=scene_resource_restore_upload(owner,&row->upload);
             const qa_scene_image *decoded = NULL;
             if (!refs->image_decode(refs->context, source, &decoded, io->error) || !decoded) return false;
             qa_scene_image_retain(decoded); row->source = decoded;
@@ -692,6 +657,7 @@ static bool resource_fields(qa_source_save_io *io, qa_scene_resources *owner, qa
             !content_field(io, owner, refs, &entry->logical_record, &entry->logical_mount) ||
             (!cache_receipts_fields(io, owner, entry, refs)) ||
             !image_field(io, refs, owner, &entry->image)) return false;
+        if (reading) scene_resource_restore_options(owner,&entry->options);
         const char *cache_name=qa_strings_cstr(reading?state->names->strings:owner->names->strings,entry->name);
         bool source_rgb = entry->options.family == QA_SCENE_Q3 && entry->options.source_q3 &&
             entry->image->source_q3 && entry->image->kind == QA_SCENE_RGB8 &&
@@ -877,6 +843,7 @@ bool qa_scene_resources_restore(qa_scene_resources *owner, qa_bytes bytes, const
     } else state_clear(&state);
     sampling_clear(&sampling); qa_source_save_dispose(&io);
     owner->continuation_active = false;
+    owner->has_restore_upload = false;
     if (!ok && (!error || error->code == QA_OK)) fail(error, QA_ERROR_FORMAT, "invalid saved resource cache");
     return ok;
 }

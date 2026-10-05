@@ -7,7 +7,8 @@
  * views qualify immutable image namespace/animation aliases before holders. */
 bool frontend_images_checkpoint(qa_frontend *, qa_buffer *, qa_error *);
 /* A genuinely empty owner inventory succeeds with a NULL image set. */
-bool frontend_images_restore(qa_frontend *, qa_bytes, qa_scene_image_set **, qa_error *);
+bool frontend_images_restore(qa_frontend *, qa_bytes, const qa_q3_image_upload_options *,
+    qa_scene_image_set **, qa_error *);
 /* Read-only ordinal matching the whole-image codec's actual traversal. */
 bool frontend_image_index(qa_frontend *, const qa_scene_image *, uint64_t *, qa_error *);
 /* Full QARS owner continuation in the identical physical QFIM roster. QAIM and

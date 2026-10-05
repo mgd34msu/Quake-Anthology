@@ -9,7 +9,7 @@ typedef struct qa_scene_image_set qa_scene_image_set;
 bool qa_scene_images_checkpoint(const qa_scene_resources *const *owners, size_t count,
                                  qa_buffer *, qa_error *);
 bool qa_scene_images_restore(qa_scene_resources *const *owners, size_t count, qa_bytes,
-                              qa_scene_image_set **, qa_error *);
+                              const qa_q3_image_upload_options *, qa_scene_image_set **, qa_error *);
 /* The set holds one construction reference per version. Consumers retain
  * their own references before releasing the set. References are borrowed. */
 const qa_scene_image *qa_scene_image_set_at(const qa_scene_image_set *, size_t);

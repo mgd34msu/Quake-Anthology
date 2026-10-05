@@ -99,6 +99,12 @@ static bool asset_fields(qa_source_save_io *io, const qa_scene_resources *const 
         fail(io->error, "Saved installed image resource is unavailable");
     return ok;
 }
+static bool source_constructor_image(const char *name,uint32_t width,uint32_t height)
+{
+    if (!strcmp(name,"*white") || !strcmp(name,"*identityLight")) return width==8 && height==8;
+    if (!strcmp(name,"*default") || !strcmp(name,"*scratch") || !strcmp(name,"*dlight")) return width==16 && height==16;
+    return !strcmp(name,"*fog") && width==256 && height==32;
+}
 static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner,
     const qa_scene_resources *const *owners, size_t owner_count, const qa_scene_image *source,
     qa_scene_image **out, uint64_t *lineage_revision)
@@ -203,12 +209,19 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner,
         }
     }
     if (reading && ok) {
+        bool builtin=owner->has_restore_upload && !installed && !embedded && source_q3 && revision==1 &&
+            source_constructor_image(name,logical_width,logical_height);
+        if (installed) {
+            scene_resource_restore_options(owner,&recipe.options);
+            if (recipe.recipient) recipe.recipient_upload=scene_resource_restore_upload(owner,&recipe.recipient_upload);
+        }
         ok = installed ? scene_resource_image_decode(owner, name, &recipe, out, io->error) :
+            builtin ? scene_resource_source_builtin_create(owner,name,&owner->restore_upload,out,io->error) :
             embedded ? qa_scene_image_load_embedded(owner, name, (qa_scene_wrap)wrap,
             (qa_scene_filter)filter, border, out, io->error) :
             qa_scene_image_create(owner, name, (qa_scene_image_kind)kind, decoded, levels,
                 (qa_scene_wrap)wrap, (qa_scene_filter)filter, border, out, io->error);
-        if (ok && installed) {
+        if (ok && installed && !owner->has_restore_upload) {
             owned_image *image = (owned_image *)*out;
             if (image->image.level_count < levels) { ok = fail(io->error, "Installed image lacks its saved mip levels"); }
             else {
@@ -216,12 +229,19 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner,
                 image->image.level_count = levels;
             }
         }
+        if (ok && builtin && !source_mipmap) {
+            owned_image *image=(owned_image *)*out;
+            for (size_t i=1;i<image->image.level_count;++i) free((void *)image->levels[i].pixels);
+            image->image.level_count=1;
+        }
         if (ok) {
-            (*out)->kind = (qa_scene_image_kind)kind; (*out)->wrap = (qa_scene_wrap)wrap;
+            if (!builtin && (!installed || !owner->has_restore_upload)) (*out)->kind = (qa_scene_image_kind)kind;
+            (*out)->wrap = (qa_scene_wrap)wrap;
             (*out)->filter = (qa_scene_filter)filter; (*out)->border = border;
             (*out)->revision = revision; (*out)->logical_width = logical_width; (*out)->logical_height = logical_height;
             (*out)->source_q3 = source_q3; (*out)->source_mipmap = source_mipmap;
-            (*out)->source_format = source_q3 ? (qa_q3_texture_format)source_format : QA_Q3_TEXTURE_RGB;
+            if (!builtin && (!installed || !owner->has_restore_upload))
+                (*out)->source_format = source_q3 ? (qa_q3_texture_format)source_format : QA_Q3_TEXTURE_RGB;
             (*out)->source_texture_unit = source_texture_unit;
             (*out)->source_after_upload_border = source_after_upload_border;
             (*out)->source_dlight = source_dlight;
@@ -229,7 +249,7 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner,
             (*out)->recipient_upload_pixels = recipient_upload_pixels;
             (*out)->recipient_mipmap = recipient_mipmap;
             ((owned_image *)*out)->lineage->revision = *lineage_revision;
-            if (!installed) { ((owned_image *)*out)->recipient_source = recipient; recipient = (qa_image){0}; }
+            if (!installed && !builtin) { ((owned_image *)*out)->recipient_source = recipient; recipient = (qa_image){0}; }
         }
     }
     if (decoded) for (size_t i = 0; i < levels; ++i) free((void *)decoded[i].pixels);
@@ -312,11 +332,14 @@ static bool acyclic(image_edges *edges, size_t count, qa_error *error)
     ok = ok && end == count; free(degree); free(queue); return ok;
 }
 bool qa_scene_images_restore(qa_scene_resources *const *owners, size_t count, qa_bytes bytes,
-    qa_scene_image_set **out, qa_error *error)
+    const qa_q3_image_upload_options *upload, qa_scene_image_set **out, qa_error *error)
 {
     if (!owners || !count || !out || count > SIZE_MAX / sizeof(owned_image *)) return fail(error, "Image restore requires actual detached resource owners");
+    if (upload && !qa_q3_image_upload_options_valid(upload,error)) return false;
     for (size_t i = 0; i < count; ++i) {
         if (!owners[i]) return fail(error, "Image restore resource owner is absent");
+        owners[i]->has_restore_upload=upload!=NULL;
+        if (upload) owners[i]->restore_upload=*upload;
         for (size_t j = 0; j < i; ++j) if (owners[i] == owners[j]) return fail(error, "Image restore resource owner is duplicated");
     }
     qa_source_save_io io = {0}; size_t owner_count = 0, total = 0;
