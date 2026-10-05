@@ -8,7 +8,6 @@
 #include "qa/audio_music_prepare.h"
 #include "capture.h"
 #include "save_private.h"
-#include "audio_identity_save.h"
 #include "qa/q3_presentation_save.h"
 #include "../application/native_q3_remote_client_settings.h"
 #include "../../presentation/q3_native/loading.h"
