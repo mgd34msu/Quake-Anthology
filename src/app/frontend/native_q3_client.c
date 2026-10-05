@@ -206,17 +206,13 @@ bool frontend_native_q3_service_options(frontend_native_q3 *row,qa_native_q3_cli
 }
 static bool audio_actor(void *context,int32_t number,uint64_t *out,qa_error *e)
 {
-    frontend_native_q3 *row=context; qa_actor_id actor; bool present;
+    frontend_native_q3 *row=context;
     if(!out || !frontend_native_q3_current(row))return false;
     if(number==1022 || number==1023) { *out=QA_AUDIO_NO_ACTOR; return true; }
-    if(number<0 || !qa_native_q3_wire_reader_actor(row->view.reader,(uint32_t)number,&actor,&present,e) || !actor.registry)
+    if(number<0)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native source audio has no actual physical actor");
-    /* A received entity's sound can outlive its GAME actor. Resolve its exact
-     * retained generation, rather than the replacement occupying that slot. */
-    *out=frontend_audio_actor(row->frontend,actor,e);
-    if(*out!=QA_AUDIO_NO_ACTOR)return true;
-    return e && e->code ? false :
-        frontend_fail(e,QA_ERROR_ARGUMENT,"Native source audio lost its retained full-actor identity");
+    *out=frontend_audio_native_q3_actor(row,(uint32_t)number,e);
+    return *out!=QA_AUDIO_NO_ACTOR;
 }
 static bool listener(void *context,const qa_audio_listener *value,qa_error *e)
 {

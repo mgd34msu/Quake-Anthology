@@ -366,6 +366,7 @@ void frontend_bindings_destroy(frontend_seat *);
 void frontend_wheel_command(void *, qa_input_seat *, bool, bool);
 uint64_t frontend_audio_actor(qa_frontend *, qa_actor_id, qa_error *);
 uint64_t frontend_audio_retained_q2_actor(qa_frontend *, const qa_builtin_event *, qa_error *);
+uint64_t frontend_audio_native_q3_actor(frontend_native_q3 *, uint32_t source_number, qa_error *);
 bool frontend_tools_create(qa_frontend *, qa_error *);
 bool frontend_tools_before_world_change(qa_frontend *, qa_error *);
 bool frontend_tools_world_change_ready(qa_frontend *, qa_error *);

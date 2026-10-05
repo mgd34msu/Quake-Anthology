@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "round.h"
+#include "native_q3_client_internal.h"
 static uint64_t append_actor(qa_frontend *frontend, qa_actor_id actor, bool retired,
     qa_error *error);
 void frontend_audio_retire_round_aliases(qa_frontend *frontend)
@@ -46,6 +47,36 @@ static uint64_t append_actor(qa_frontend *frontend, qa_actor_id actor, bool reti
         (frontend_audio_identity){.actor = actor, .id = id, .retired = retired};
     return id;
 }
+static uint64_t retained_actor(qa_frontend *frontend, qa_actor_id actor, qa_error *error)
+{
+    uint64_t id = frontend_audio_actor(frontend, actor, error);
+    if (id != QA_AUDIO_NO_ACTOR || (error && error->code)) return id;
+    if (qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), actor))
+        return QA_AUDIO_NO_ACTOR;
+    return append_actor(frontend, actor, true, error);
+}
+uint64_t frontend_audio_native_q3_actor(frontend_native_q3 *row,
+    uint32_t source_number, qa_error *error)
+{
+    if (!row || !frontend_native_q3_current(row) || !row->frontend->audio ||
+        row->frontend->capture || row->frontend->resource_inventory || row->frontend->source_restoring ||
+        source_number >= QA_Q3_ENTITY_WORLD) {
+        frontend_fail(error, QA_ERROR_ARGUMENT, "Native Q3 sound requires its actual installed CLIENT receipt");
+        return QA_AUDIO_NO_ACTOR;
+    }
+    qa_actor_id actor;
+    bool present;
+    if (!qa_native_q3_wire_reader_actor(row->view.reader, source_number, &actor, &present, error))
+        return QA_AUDIO_NO_ACTOR;
+    if (!actor.registry) {
+        frontend_fail(error, QA_ERROR_ARGUMENT, "Native Q3 sound has no mapped Source actor receipt");
+        return QA_AUDIO_NO_ACTOR;
+    }
+    /* CG can first position a received entity after GAME has freed it. Its
+     * retained full generation owns the sound; its decoded position follows
+     * through S_UpdateEntityPosition, without reading a replacement body. */
+    return retained_actor(row->frontend, actor, error);
+}
 uint64_t frontend_audio_retained_q2_actor(qa_frontend *frontend,
     const qa_builtin_event *event, qa_error *error)
 {
@@ -83,9 +114,5 @@ uint64_t frontend_audio_retained_q2_actor(qa_frontend *frontend,
     qa_command_context captured;
     if (!qa_application_capture_command_context(frontend->application, &source, &captured, error))
         return QA_AUDIO_NO_ACTOR;
-    uint64_t id = frontend_audio_actor(frontend, event->actor, error);
-    if (id != QA_AUDIO_NO_ACTOR) return id;
-    if (qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), event->actor))
-        return QA_AUDIO_NO_ACTOR;
-    return append_actor(frontend, event->actor, true, error);
+    return retained_actor(frontend, event->actor, error);
 }
