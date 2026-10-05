@@ -816,7 +816,7 @@ bool frontend_remote_q2_effects_weapon_draw(frontend_remote_q2_effects *o,qa_act
 {
     if (!o || !frontend_remote_q2_effects_idle(o) || !weapon || !frame ||
         !isfinite(weapon->seconds) || weapon->family!=QA_SCENE_Q2 ||
-        weapon->material_library!=o->source.materials || !q2fx_source_current(o,e)) return false;
+        !q2fx_source_current(o,e)) return false;
     q2fx_weapon_muzzle *m=&o->weapon_muzzle;
     if (!m->active || !qa_actor_id_equal(m->actor,viewer)) return true;
     double time=weapon->seconds*1000;
@@ -843,7 +843,7 @@ bool frontend_remote_q2_effects_weapon_draw(frontend_remote_q2_effects *o,qa_act
     input.previous_origin=origin; input.flags=8|16|4|32; input.color=(qa_scene_vec4){1,1,1,1};
     input.frame=0; input.old_frame=0; input.skin=0; input.back_lerp=0;
     input.ambient=qa_v3(1,1,1); input.source_path=q2fx_model_paths[m->model];
-    input.pose=NULL; input.pose_count=0; input.custom_material=NULL; input.custom_skin=NULL;
+    input.pose=NULL; input.pose_count=0; input.material_library=NULL; input.custom_material=NULL; input.custom_skin=NULL;
     input.custom_skin_materials=NULL; input.custom_skin_material_count=0; input.indexed_skin=NULL;
     input.replacement=NULL; input.animation=NULL; input.attachments=NULL; input.attachment_count=0;
     input.video_frame=o->source.video_frame; input.video_context=o->source.video_context;
@@ -1150,7 +1150,7 @@ bool frontend_remote_q2_effects_draw(frontend_remote_q2_effects *o,
         }
         qa_scene_model_input input={.view=s->view,.transform=transform,.previous_origin=row->origin,.color={1,1,1,row->alpha},
             .family=QA_SCENE_Q2,.frame=(uint32_t)row->frame,.old_frame=(uint32_t)row->old_frame,.skin=(uint32_t)row->skin,
-            .flags=row->flags,.back_lerp=row->back_lerp,.seconds=s->milliseconds*.001,.material_library=o->source.materials,
+            .flags=row->flags,.back_lerp=row->back_lerp,.seconds=s->milliseconds*.001,
             .ambient=qa_vec_add(ambient,directed),.light_direction=direction,.source_path=q2fx_model_paths[row->model],
             .video_frame=o->source.video_frame,.video_context=o->source.video_context};
         ok=qa_scene_model_submit(o->models[row->model],&input,frame,e);
