@@ -304,6 +304,12 @@ bool qa_q1_game_damage_effect(qa_q1_game *g, qa_damage_effect_stage stage,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 damage effect call");
         return false;
     }
+    if (stage == QA_DAMAGE_BEFORE_QUAD && g->options.edition == QA_Q1_RERELEASE &&
+        g->options.program == QA_Q1_ID1 && request->amount < 9999 &&
+        q1_entity(g, request->target) && q1_classnamed(g, request->target, "monster_oldone")) {
+        effect->allowed = false;
+        return true;
+    }
     if (stage == QA_DAMAGE_BEFORE_QUAD && !request->radius &&
         q1_map_radius_only(g, request->target)) {
         effect->allowed = false;
