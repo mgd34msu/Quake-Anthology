@@ -1648,13 +1648,17 @@ bool application_guest_spawn_map(application_provider *provider,
 {
     if (provider == NULL || !provider->constructed)
         return application_fail(error, QA_ERROR_ARGUMENT, "guest map owner is not constructed");
+    bool ok;
     if (provider->kind == APPLICATION_PROVIDER_QC)
-        return application_qc_spawn_map(provider, map, entities, name, spawn_point, error);
-    if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
+        ok = application_qc_spawn_map(provider, map, entities, name, spawn_point, error);
+    else if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
         provider->state.native.q2_engine != NULL)
-        return application_native_q2_spawn_map(provider, map, entities, name, spawn_point, error);
-    if (provider->kind == APPLICATION_PROVIDER_QVM ||
+        ok = application_native_q2_spawn_map(provider, map, entities, name, spawn_point, error);
+    else if (provider->kind == APPLICATION_PROVIDER_QVM ||
         (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine != NULL))
-        return application_q3_guest_spawn_map(provider, map, entities, name, spawn_point, error);
-    return application_fail(error, QA_ERROR_UNSUPPORTED, "selected provider has no guest map adapter");
+        ok = application_q3_guest_spawn_map(provider, map, entities, name, spawn_point, error);
+    else
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "selected provider has no guest map adapter");
+    if (ok) provider->map_bound = true;
+    return ok;
 }
