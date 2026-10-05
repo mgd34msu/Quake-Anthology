@@ -43,10 +43,8 @@
 #include "network_q1_input.h"
 #include "network_q2_client.h"
 #include "network_q1_client.h"
-#include "network_q1_restore.h"
 #include "neutral_config.h"
 #include "config_store.h"
-#include "network_q2_restore.h"
 #include "network_client_commands.h"
 #include "network_q2_host.h"
 #include "network_q2_host_save.h"
@@ -55,7 +53,6 @@
 #include "../application/unified_save_internal.h"
 #include "network_unified_client.h"
 #include "qc_messages.h"
-#include "network_unified_restore.h"
 #include "network_player_drop.h"
 #include "remote_q2_client.h"
 #include "qa/application_native_q3_client_modules.h"
@@ -145,25 +142,9 @@ struct qa_frontend_network {
     frontend_qw_host *qw_host;
     frontend_network_q2_client *q2_client_owner;
     frontend_network_q1_client *q1_client_owner;
-    frontend_network_q1_client_recipe q1_import_recipe;
-    frontend_network_q1_client_state q1_import;
-    frontend_remote_q1_restore_refs q1_import_refs;
-    const qa_console_save_resolvers *q1_import_console;
-    bool q1_import_pending;
-    frontend_network_q2_client_recipe q2_import_recipe;
-    frontend_network_q2_client_restore q2_import;
-    bool q2_import_pending;
     frontend_network_q2_host *q2_host;
     frontend_network_unified *unified;
     frontend_network_unified_client_service *unified_client_service;
-    qa_bytes unified_service_import;
-    qa_application_content_graph *unified_service_graph;
-    const qa_console_save_resolvers *unified_service_console;
-    qa_network_runtime *unified_service_runtime;
-    qa_net_client_id unified_service_client;
-    uint64_t unified_service_epoch;
-    bool unified_service_pending;
-    bool unified_service_retired;
     uint64_t unified_map_revision;
     frontend_q3_packages *q3_packages;
     frontend_q3_peer q3_peers[64];
@@ -321,18 +302,9 @@ static bool unified_current(void *context,const frontend_network_unified *owner)
 }
 static bool unified_client_current(void *context,const frontend_network_unified_client_service *service)
 {
-    qa_frontend_network *n=context;
-    if(!n || !n->frontend || n->frontend->network!=n || n->unified_client_service!=service) return false;
-    if(!n->detached_transport) return true;
-    bool complete=frontend_network_unified_client_restored_complete(service);
-    return n->unified_service_runtime && n->unified_service_graph &&
-        (n->frontend->source_restoring || complete || (n->unified && frontend_network_unified_imported(n->unified))) &&
-        qa_network_callbacks_idle(n->unified_service_runtime) &&
-        (complete || !n->unified_service_client.owner ||
-            (n->frontend->source_restoring && n->unified_service_retired &&
-                !qa_net_connections_get(qa_network_connections(n->unified_service_runtime),n->unified_service_client)) ||
-            (qa_net_connections_get(qa_network_connections(n->unified_service_runtime),n->unified_service_client) &&
-            qa_network_epoch(n->unified_service_runtime,n->unified_service_client)==n->unified_service_epoch));
+    const qa_frontend_network *n=context;
+    return n && n->frontend && n->frontend->network==n &&
+        n->unified_client_service==service && !n->detached_transport;
 }
 static bool unified_client_disconnected(void *context,const qa_application_client_source *source,
     const char *reason,qa_error *error)
@@ -666,199 +638,6 @@ bool frontend_network_client_configuration_advance(qa_frontend *f,qa_application
     }
     return frontend_fail(error,QA_ERROR_ARGUMENT,"Network CLIENT token has no retained physical programme owner");
 }
-bool frontend_network_unified_service_checkpoint(qa_frontend *f,const qa_application_content_graph *graph,
-    bool *present,qa_buffer *out,qa_error *error)
-{
-    if(!f || !graph || !present || !out || out->data || out->size)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Unified service capture requires its actual Graph and outputs");
-    *present=f->network && f->network->unified_client_service;
-    return !*present || frontend_network_unified_client_checkpoint(f->network->unified_client_service,graph,out,error);
-}
-static bool client_recipe_adopt(qa_frontend_network *n,const qa_net_address *remote,
-    qa_net_protocol_id protocol,qa_error *error)
-{
-    qa_frontend *f=n?n->frontend:NULL;
-    if(!f || f->network!=n || !f->application || !f->source_restoring || f->stepping ||
-        !n->detached_transport || n->busy || !qa_network_callbacks_idle(n->runtime) ||
-        f->options.network_host || f->options.dedicated || f->options.seats!=1 ||
-        n->q3_client_requested || n->q1_client_owner || n->q2_client_owner || n->unified_client_service ||
-        n->q3_admission || n->nq_host || n->qw_host || n->q2_host || n->unified ||
-        n->q1_import_pending || n->q2_import_pending || n->unified_service_pending ||
-        !remote || !remote->port || (remote->kind!=QA_NET_IPV4 && remote->kind!=QA_NET_IPV6) ||
-        !remote_client_protocol(protocol))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT recipe adoption requires its genuine isolated remote owner");
-    if(!qa_net_protocol_valid(protocol,error) ||
-        !qa_net_address_format(remote,n->client_server,sizeof(n->client_server),error)) return false;
-    f->options.network_protocol=protocol;
-    f->options.network_connect=n->client_server;
-    return true;
-}
-bool frontend_network_unified_service_stage(qa_frontend *f,qa_application_content_graph *graph,
-    const qa_console_save_resolvers *console,qa_bytes bytes,qa_error *error)
-{
-    qa_frontend_network *n=f?f->network:NULL;
-    if(!n || !graph || !console || !bytes.data || !bytes.size || !f->source_restoring ||
-        !n->detached_transport || n->unified_client_service || n->unified_service_pending)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Unified service stage requires its actual detached CLIENT recipe");
-    frontend_client_source_prefix prefix={0}; qa_net_address remote; qa_net_seat_id seat;
-    bool retired=false;
-    bool ok=frontend_network_unified_client_saved_read(f,graph,bytes,&prefix,&remote,&seat,&retired,error);
-    if(ok) ok=prefix.state.application.physical_seat<f->options.seats && seat.owner==QA_NETWORK_COMMAND_OWNER;
-    if(ok) ok=client_recipe_adopt(n,&remote,(qa_net_protocol_id){.kind=QA_NET_UNIFIED_1},error);
-    if(ok) {
-        n->unified_service_client=prefix.state.application.client;
-        n->unified_service_epoch=prefix.state.application.connection_epoch;
-        n->unified_service_retired=retired;
-        n->unified_service_import=bytes; n->unified_service_graph=graph;
-        n->unified_service_console=console; n->unified_service_pending=true;
-    }
-    frontend_client_source_prefix_free(&prefix);
-    return ok || frontend_fail(error,QA_ERROR_FORMAT,"Unified service stage differs from its real physical seat namespace");
-}
-bool frontend_network_unified_replica_capture_read(qa_frontend *f,qa_net_client_id *client,
-    frontend_remote_unified **replica,bool *present,qa_error *error)
-{
-    if(!f || !client || !replica || !present)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Unified capture requires its actual retained CLIENT owner");
-    *client=(qa_net_client_id){0}; *replica=NULL; *present=false;
-    qa_frontend_network *n=f->network;
-    size_t count=frontend_remote_unified_count(f);
-    if(!n || !n->unified || f->options.network_host)
-        return !count || frontend_fail(error,QA_ERROR_FORMAT,"Unified capture roster has no retained Network CLIENT");
-    bool candidate=n->detached_transport && f->capture &&
-        frontend_network_unified_imported(n->unified) &&
-        frontend_network_unified_client_restored_complete(n->unified_client_service);
-    if(n->frontend!=f || n->busy || (n->detached_transport && !candidate) || !qa_network_callbacks_idle(n->runtime))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Unified capture retains unfinished transport work");
-    if(candidate && !frontend_network_unified_qualified(n->unified,n->runtime,true,error)) return false;
-    if(!frontend_network_unified_client(n->unified,client,replica))
-        return !count || frontend_fail(error,QA_ERROR_FORMAT,"Unified capture retains an unbound replica owner");
-    if(count!=1 || frontend_remote_unified_at(f,0)!=*replica)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Unified Network CLIENT differs from its full physical replica roster");
-    *present=true; return true;
-}
-bool frontend_network_unified_replica_import_read(qa_frontend *f,qa_net_client_id *client,
-    frontend_remote_unified **replica,bool *present,qa_error *error)
-{
-    if(!f || !client || !replica || !present || !f->source_restoring)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Unified replica import requires its actual candidate Frontend");
-    *client=(qa_net_client_id){0}; *replica=NULL; *present=false;
-    qa_frontend_network *n=f->network;
-    if(!n || !n->unified || f->options.network_host || !f->options.network_connect) return true;
-    if(!n->detached_transport || n->busy || !qa_network_callbacks_idle(n->runtime))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Unified replica import retains entered transport work");
-    return frontend_network_unified_restore_client(n->unified,n->runtime,client,replica,present,error);
-}
-bool frontend_network_unified_finish_import(qa_frontend *f,qa_error *error)
-{
-    qa_frontend_network *n=f?f->network:NULL;
-    if(!n || !f->source_restoring || !n->detached_transport || !n->unified_client_service ||
-        n->unified_service_runtime!=n->runtime || n->unified_service_pending || !n->unified_service_graph)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Unified completion requires its actual restored CLIENT graph");
-    if(n->unified) return frontend_network_unified_restore_finish(n->unified,n->runtime,error);
-    frontend_network_unified_client_view held; uint32_t cursor=0; const qa_net_client *client=NULL;
-    return frontend_network_unified_client_metadata_read(n->unified_client_service,&held,error) &&
-        held.retired==n->unified_service_retired &&
-        qa_net_client_id_equal(held.physical.source.client,n->unified_service_client) &&
-        held.physical.source.connection_epoch==n->unified_service_epoch &&
-        (!held.physical.source.client.owner || held.retired) &&
-        !qa_net_connections_next(qa_network_connections(n->runtime),&cursor,&client);
-}
-bool frontend_network_q1_checkpoint(qa_frontend *f,const frontend_remote_q1_restore_refs *refs,bool *present,
-    frontend_network_q1_client_recipe *recipe,frontend_network_q1_client_state *saved,qa_error *error)
-{
-    if(!f || !present || !recipe || !saved) return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 capture lacks its actual outputs");
-    *present=f->network && f->network->q1_client_owner;
-    if(!*present) return true;
-    frontend_network_q1_client_view view;
-    if(!frontend_network_q1_client_metadata_read(f->network->q1_client_owner,&view,error) ||
-        !frontend_network_q1_client_capture(f->network->q1_client_owner,refs,saved,error)) return false;
-    *recipe=(frontend_network_q1_client_recipe){.remote=view.remote,.connected_remote=view.connected_remote,
-        .protocol=view.protocol,.profile=view.profile,.physical_seat=view.physical_seat,.qport=view.qport,
-        .policy=view.policy,.client=view.client,.epoch=view.epoch,.composition=view.composition,
-        .seat=view.client.owner?view.seat:(qa_net_seat_id){0},.retired=view.retired};
-    return true;
-}
-bool frontend_network_q1_stage_recipe(qa_frontend *f,const frontend_network_q1_client_recipe *recipe,
-    const frontend_remote_q1_restore_refs *refs,const qa_console_save_resolvers *console,
-    const frontend_network_q1_client_state *saved,qa_error *error)
-{
-    qa_frontend_network *n=f?f->network:NULL;
-    if(!n || !recipe || !refs || !refs->content || !console || !saved || !saved->physical.size ||
-        !saved->controller.size || !f->source_restoring || !n->detached_transport || n->q1_client_owner ||
-        n->q1_import_pending || !q1_client_protocol(recipe->protocol) || recipe->physical_seat>=f->options.seats)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 stage requires its genuine Graph recipe and detached candidate");
-    frontend_client_source_prefix prefix={0};
-    bool ok=frontend_client_source_prefix_read(f,refs->content,
-        (qa_bytes){saved->physical.data,saved->physical.size},&prefix,error);
-    if(ok) ok=prefix.recipe.profile==recipe->profile &&
-        qa_net_client_id_equal(prefix.state.application.client,recipe->client) &&
-        prefix.state.application.connection_epoch==recipe->epoch &&
-        prefix.state.application.network_seat.owner==recipe->seat.owner &&
-        prefix.state.application.network_seat.index==recipe->seat.index &&
-        prefix.state.application.physical_seat==recipe->physical_seat &&
-        (!recipe->client.owner || qa_sha256_equal(&prefix.descriptor.identity,&recipe->composition));
-    frontend_client_source_prefix_free(&prefix);
-    if(!ok) return frontend_fail(error,QA_ERROR_FORMAT,"Q1 stage differs from its imported physical CLIENT prefix");
-    if(!client_recipe_adopt(n,&recipe->remote,recipe->protocol,error)) return false;
-    n->q1_import_recipe=*recipe; n->q1_import=*saved; n->q1_import_refs=*refs;
-    n->q1_import_console=console; n->q1_import_pending=true; return true;
-}
-bool frontend_network_q1_finish_import(qa_frontend *f,const frontend_remote_q1_restore_refs *refs,qa_error *error)
-{
-    qa_frontend_network *n=f?f->network:NULL;
-    return n && f->source_restoring && n->detached_transport && n->q1_client_owner && refs &&
-        frontend_network_q1_client_restore_finish(n->q1_client_owner,refs,error);
-}
-bool frontend_network_q2_checkpoint(qa_frontend *f,const frontend_remote_q2_restore_refs *refs,
-    bool *present,frontend_network_q2_client_state *state,qa_error *error)
-{
-    if(!f || !present || !state) return frontend_fail(error,QA_ERROR_ARGUMENT,"Missing actual Q2 Network capture owner");
-    *present=f->network && f->network->q2_client_owner;
-    return !*present || frontend_network_q2_client_capture(f->network->q2_client_owner,refs,state,error);
-}
-bool frontend_network_q2_prepare_import(qa_frontend *f,qa_network_runtime *runtime,
-    const frontend_network_q2_client_recipe *recipe,const frontend_network_q2_client_restore *saved,qa_error *error)
-{
-    qa_frontend_network *n=f?f->network:NULL;
-    if(!n || !runtime || !recipe || !saved || !f->source_restoring || !n->detached_transport ||
-        n->q2_client_owner || !f->options.network_connect || !q2_host_protocol(recipe->protocol) ||
-        recipe->protocol.kind!=f->options.network_protocol.kind || recipe->physical_seat>=f->options.seats ||
-        saved->source.domain.runtime!=runtime)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 staging requires its real detached Network and saved connection recipe");
-    frontend_network_q2_client_options options={.frontend=f,.runtime=runtime,.remote=recipe->remote,
-        .protocol=recipe->protocol,.qport=recipe->qport,.physical_seat=recipe->physical_seat,
-        .context=n,.current=q2_client_current,.download_stage=q2_download_stage,.restore_stage=q2_restore_stage,
-        .lobby=n->kex_transport?qa_kex_transport_lobby(n->kex_transport):NULL};
-    return frontend_network_q2_client_restore_prepare(&options,saved,&n->q2_client_owner,error);
-}
-bool frontend_network_q2_stage_recipe(qa_frontend *f,const frontend_network_q2_client_recipe *recipe,
-    const frontend_network_q2_client_restore *saved,qa_error *error)
-{
-    qa_frontend_network *n=f?f->network:NULL;
-    if(!n || !recipe || !saved || !saved->application || !f->source_restoring || !n->detached_transport ||
-        n->q2_client_owner || n->q2_import_pending || !q2_host_protocol(recipe->protocol) ||
-        recipe->physical_seat>=f->options.seats || saved->source.domain.application!=f->application ||
-        saved->source.domain.physical_seat!=recipe->physical_seat ||
-        saved->source.domain.protocol.kind!=recipe->protocol.kind ||
-        saved->source.domain.protocol.revision!=recipe->protocol.revision ||
-        saved->source.domain.protocol.flags!=recipe->protocol.flags)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 recipe staging requires its actual candidate Graph claims");
-    if(!client_recipe_adopt(n,&recipe->remote,recipe->protocol,error)) return false;
-    n->q2_import_recipe=*recipe; n->q2_import=*saved; n->q2_import_pending=true; return true;
-}
-bool frontend_network_q2_import_read(const qa_frontend *f,frontend_remote_q2_source_view *view,qa_error *error)
-{
-    return f && f->network && f->source_restoring && f->network->detached_transport &&
-        frontend_network_q2_client_importing(f->network->q2_client_owner) &&
-        frontend_network_q2_client_physical_read(f->network->q2_client_owner,view,error);
-}
-bool frontend_network_q2_finish_import(qa_frontend *f,const frontend_remote_q2_restore_refs *refs,qa_error *error)
-{
-    frontend_remote_q2_source_view view;
-    return refs && frontend_network_q2_import_read(f,&view,error) &&
-        (!view.receiver || frontend_remote_q2_restore_finish(view.receiver,refs,error));
-}
 static const char *const names[] = {"serverlist", "serverquery", "serverfavorite", "servermaster", "setmaster",
     "addip", "removeip", "listip", "writeip", "addlrconcmd", "dellrconcmd", "listlrconcmds",
     "heartbeat", "maprotation", "nextmap", "download", "downloadstatus", "downloadcancel", "downloadsuspend",
@@ -1028,27 +807,6 @@ static bool admit(void *context, const qa_net_connect *request, qa_error *error)
         bool recognized=false;
         if(!frontend_network_q1_client_admit(n->q1_client_owner,request,&recognized,error)) return false;
         if(recognized) return true;
-    }
-    if(n->q1_import_pending && n->detached_transport && n->frontend->source_restoring &&
-        request->protocol.kind==n->q1_import_recipe.protocol.kind) {
-        const frontend_network_q1_client_recipe *recipe=&n->q1_import_recipe;
-        return (recipe->client.owner && request->attachment==QA_NET_REMOTE &&
-            qa_net_address_equal(&request->endpoint,&recipe->connected_remote,true) &&
-            request->protocol.revision==recipe->protocol.revision && request->protocol.flags==recipe->protocol.flags &&
-            request->seat_count==1 && request->seats && request->seats[0].seat.owner==recipe->seat.owner &&
-            request->seats[0].seat.index==recipe->seat.index && !request->seats[0].remote_index &&
-            qa_sha256_equal(&request->composition,&recipe->composition)) ||
-            frontend_fail(error,QA_ERROR_FORMAT,"Q1 restored admission differs from its real Graph receipt");
-    }
-    if(n->q2_import_pending && n->detached_transport && n->frontend->source_restoring &&
-        request->protocol.kind==n->q2_import_recipe.protocol.kind) {
-        const frontend_remote_q2_domain *domain=&n->q2_import.source.domain;
-        return (request->attachment==QA_NET_REMOTE && request->seat_count==1 && request->seats &&
-            qa_net_address_equal(&request->endpoint,&n->q2_import_recipe.remote,true) &&
-            request->protocol.revision==domain->protocol.revision && request->protocol.flags==domain->protocol.flags &&
-            request->seats[0].seat.owner==domain->seat.owner && request->seats[0].seat.index==domain->seat.index &&
-            !request->seats[0].remote_index && qa_sha256_equal(&request->composition,&n->q2_import.composition)) ||
-            frontend_fail(error,QA_ERROR_FORMAT,"Q2 canonical import differs from its retained physical Graph recipe");
     }
     if(n->unified) {
         bool recognized=false;

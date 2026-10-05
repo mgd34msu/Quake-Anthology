@@ -1879,9 +1879,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/unified_q3_runtime_video.c
 
     src/app/frontend/equipment_icon.c
-    src/app/frontend/network_q1_recipe_save.c
     src/app/frontend/network_q2_host_save.c
-    src/app/frontend/network_q2_recipe_save.c
     src/app/frontend/remote_q2_effects_semantic.c
     src/app/frontend/remote_unified_components_submission.c
     src/app/frontend/remote_unified_material_movies_bridge.c
