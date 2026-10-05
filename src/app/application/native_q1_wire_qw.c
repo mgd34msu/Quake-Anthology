@@ -6,6 +6,7 @@
 #include "qa/application_equipment.h"
 #include "qa/game_q1_weapons.h"
 #include "qa/network_q1_channel.h"
+#include "qa/text.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -560,7 +561,7 @@ bool application_native_q1_qw_emit(application_provider *p,const qa_builtin_even
     return application_emit_protocol(p,&output,error);
 }
 static uint8_t byte(double number) {
-    double value=fmod(trunc(number),256);if (value<0) value+=256;return (uint8_t)value;
+    return (uint8_t)(uint32_t)qa_source_float_to_i32((float)number);
 }
 bool application_native_q1_qw_setangle(application_provider *p,qa_actor_id actor,
     qa_vec3 angles,qa_error *error) {

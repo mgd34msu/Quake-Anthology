@@ -10,6 +10,7 @@
 #include "shared_register.h"
 #include "qa/hud_q2.h"
 #include "qa/caption_save.h"
+#include "qa/text.h"
 #include "qa/ui_preferences.h"
 #include "qa/text.h"
 #include "qa/player_progress.h"
@@ -1233,11 +1234,8 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_document *d,q
 }
 static float fog_fraction(float value)
 {
-    float scaled=value*255;
-    if (!isfinite(scaled)) return 0;
-    double word=fmod(trunc((double)scaled),256);
-    if (word<0) word+=256;
-    return (float)(word/255);
+    uint8_t word=(uint8_t)(uint32_t)qa_source_float_to_i32(value*255.0f);
+    return (float)word/255;
 }
 static qa_vec3 fog_color(qa_vec3 color)
 { return qa_v3(fog_fraction(color.x),fog_fraction(color.y),fog_fraction(color.z)); }

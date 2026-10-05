@@ -2,6 +2,7 @@
 #include "internal.h"
 #include "remote_q1_prediction.h"
 #include "remote_q1_skins.h"
+#include "qa/text.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,10 +42,8 @@ static bool selected(frontend_remote_q1 *row, qa_bytes name, qa_error *error)
 }
 static int16_t source_short(float input)
 {
-    double value = isfinite(input) ? fmod(trunc((double)input), 65536) : 0;
-    if (value < 0) value += 65536;
-    uint32_t word = (uint32_t)value;
-    return word <= INT16_MAX ? (int16_t)word : (int16_t)((int32_t)word - 65536);
+    uint16_t word = (uint16_t)(uint32_t)qa_source_float_to_i32(input);
+    int16_t result; memcpy(&result, &word, sizeof(result)); return result;
 }
 static bool command(frontend_remote_q1 *row, const qa_network_command *source, qa_error *error)
 {

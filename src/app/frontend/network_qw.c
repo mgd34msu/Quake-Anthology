@@ -4,6 +4,7 @@
 #include "qa/launch_identity.h"
 #include "qa/localization.h"
 #include "qa/q1_chat_commands.h"
+#include "qa/text.h"
 #include <inttypes.h>
 #include <math.h>
 #include <stdlib.h>
@@ -340,11 +341,13 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
             double sum = 0; size_t samples = 0;
             for (size_t j = 0; j < 64; ++j) if (other->pings[j].present && other->pings[j].ping_ms > 0) { sum += other->pings[j].ping_ms; ++samples; }
             double ping = samples ? trunc(sum / (double)samples) : 9999;
-            double bits = fmod(ping, 65536.0); if (bits < 0) bits += 65536.0;
-            int32_t value = bits > INT16_MAX ? (int32_t)bits - 65536 : (int32_t)bits;
+            if (!isfinite(ping) || ping >= 0x1p63)
+                return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld ping exceeds native millisecond storage");
+            uint16_t bits = (uint16_t)(int64_t)ping;
+            int16_t value; memcpy(&value, &bits, sizeof(value));
             qa_network_qw_server_state state;
             if (!qa_network_qw_server_state_read(host->runtime, other->client, &state, error) ||
-                !reliable(peer, &(qa_qw_service){.kind = QA_QW_PING, .data.score = {(uint8_t)i, (int16_t)value}}, error) ||
+                !reliable(peer, &(qa_qw_service){.kind = QA_QW_PING, .data.score = {(uint8_t)i, value}}, error) ||
                 !reliable(peer, &(qa_qw_service){.kind = QA_QW_PACKET_LOSS, .data.packet_loss = {(uint8_t)i, state.loss}}, error)) return false;
         }
         return true;
@@ -863,9 +866,8 @@ static bool source_actions(frontend_qw_host *host, qa_error *error)
 }
 static int16_t source_short(float value)
 {
-    double bits = fmod(trunc((double)value), 65536.0);
-    if (bits < 0) bits += 65536.0;
-    return (int16_t)(bits > INT16_MAX ? (int32_t)bits - 65536 : (int32_t)bits);
+    uint16_t bits = (uint16_t)(uint32_t)qa_source_float_to_i32(value);
+    int16_t result; memcpy(&result, &bits, sizeof(result)); return result;
 }
 static qa_qw_source_player source_player(const qa_application_network_qw_client *client,
     const qa_application_network_qw_client *viewer, uint32_t model, uint64_t source_time)
@@ -975,9 +977,8 @@ bool frontend_qw_publish(frontend_qw_host *host, qa_error *error)
         qw_frontend_peer *peer = host->peers + i;
         if (!peer->occupied || peer->retiring || !peer->begun) continue;
         for (size_t j = 0; ok && j < frame->client_count; ++j) if (frame->clients[j].source_slot == i + 1 && peer->frags != frame->clients[j].frags) {
-            double bits = fmod(trunc((double)frame->clients[j].frags), 65536.0); if (bits < 0) bits += 65536.0;
-            int32_t value = bits > INT16_MAX ? (int32_t)bits - 65536 : (int32_t)bits;
-            ok = broadcast(host, &(qa_qw_service){.kind = QA_QW_FRAGS, .data.score = {(uint8_t)i, (int16_t)value}}, error);
+            ok = broadcast(host, &(qa_qw_service){.kind = QA_QW_FRAGS,
+                .data.score = {(uint8_t)i, source_short(frame->clients[j].frags)}}, error);
             if (ok) peer->frags = frame->clients[j].frags;
         }
     }

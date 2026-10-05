@@ -4,6 +4,7 @@
 #include "map_players_private.h"
 #include "qa/network_q1_qw.h"
 #include "qa/source_save.h"
+#include "qa/text.h"
 
 typedef struct qc_finale_held { qa_actor_id actor; bool held; } qc_finale_held;
 typedef struct qc_prompt_choice { char *text; int32_t impulse; } qc_prompt_choice;
@@ -48,11 +49,11 @@ static char *text_copy(const char *text,qa_error *error)
 static bool byte_argument(qa_qc_instance *vm,uint32_t arg,uint8_t *out,qa_error *error)
 {
     float value;
-    if (!qa_qc_arg_float(vm,arg,&value,error) || !isfinite(value))
-        return application_fail(error,QA_ERROR_FORMAT,"Rerelease byte argument is nonfinite");
-    double byte=fmod(trunc((double)value),256);
-    if (byte<0) byte+=256;
-    *out=(uint8_t)byte; return true;
+    if (!qa_qc_arg_float(vm,arg,&value,error) || !isfinite(value)) {
+        (void)application_fail(error,QA_ERROR_FORMAT,"Rerelease byte argument is nonfinite");
+        return false;
+    }
+    *out=(uint8_t)(uint32_t)qa_source_float_to_i32(value); return true;
 }
 static bool target(struct application_qc_state *engine,qa_qc_instance *vm,int32_t reference,
     bool connected,uint32_t *out,qa_error *error)
