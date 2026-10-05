@@ -95,43 +95,8 @@ bool frontend_remote_q2_source_owner_retirement_idle(const frontend_remote_q2_so
 bool frontend_remote_q2_source_constructor_read(const frontend_remote_q2_source *, const qa_launch_instance **, qa_error *);
 bool frontend_remote_q2_source_owner_current(const frontend_remote_q2_source *,
     const qa_launch_instance *, const qa_console *, const qa_cvars *, const qa_command_context *, qa_error *);
-typedef struct frontend_remote_q2_source_state {
-    const qa_launch_instance *constructor, *selected;
-    qa_launch_q2_client_metadata constructor_request, selected_request;
-    frontend_remote_q2_domain domain;
-    qa_buffer console;
-    bool receiver_present, configuration_complete, retiring, template_retired, release_programmes;
-} frontend_remote_q2_source_state;
-bool frontend_remote_q2_source_capture(const frontend_remote_q2_source *,
-    frontend_remote_q2_source_state *, qa_error *);
-void frontend_remote_q2_source_state_free(frontend_remote_q2_source_state *);
 bool frontend_remote_q2_source_content_visit(const frontend_remote_q2_source *,
     const qa_application_content_visitor *, qa_error *);
-typedef struct frontend_remote_q2_source_restore {
-    qa_launch_q2_client_metadata constructor_request, selected_request;
-    const qa_launch_restored_instance *constructor;
-    /* NULL means the actual same descriptor owner as constructor. Distinct
-     * descriptors carry distinct claimed views, never a second view claim. */
-    const qa_launch_restored_instance *selected;
-    void *descriptor_context;
-    void (*descriptor_transfer)(void *, bool selected);
-    frontend_remote_q2_domain domain;
-    qa_bytes console, receiver;
-    bool receiver_present, configuration_complete, retiring, template_retired, release_programmes;
-    const qa_console_save_resolvers *console_resolvers;
-    const frontend_remote_q2_restore_refs *receiver_refs;
-    /* Restores the real app CLIENT row against this completed physical tuple.
-     * Does not execute startup/configuration or require receiver readiness. */
-    bool (*physical_admit)(void *, const qa_launch_instance *, qa_cvars *, qa_console *, qa_error *);
-} frontend_remote_q2_source_restore;
-/* QFCR is already staged. Imports its actual heap and console, and a retained
- * Q2RC receiver only when one existed. A pending configuration programme is
- * resumed after publication without startup/configuration replay at import.
- * Ordinary receiver current remains unavailable
- * until the real lower/session and resource dictionaries finish restoration.
- * Partial construction stays in out for checked candidate destruction. */
-bool frontend_remote_q2_source_restore_prepare(qa_frontend *, const frontend_remote_q2_source_options *,
-    const frontend_remote_q2_source_restore *, frontend_remote_q2_source **, qa_error *);
 bool frontend_remote_q2_source_commands_capture(const frontend_remote_q2_source *, qa_application *,
     const qa_application_console_scope *, const qa_console *, qa_buffer *, qa_error *);
 bool frontend_remote_q2_source_commands_restore(frontend_remote_q2_source *, qa_application *,
