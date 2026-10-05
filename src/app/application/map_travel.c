@@ -94,8 +94,11 @@ static bool campaign_q2_policy(qa_application *application, bool *retain,
     if (!found) return application_fail(error,QA_ERROR_UNSUPPORTED,
         "Campaign travel requires its selected Q2 GAME profile");
     qa_console *console=NULL; qa_cvars *cvars=NULL; qa_command_context command;
-    if (!qa_application_startup_source_read(application,qa_application_launch(application),
-        source->launch,&console,&cvars,&command,error)) return false;
+    const qa_launch_snapshot *snapshot=qa_application_launch(application);
+    const qa_launch_instance *selected=qa_launch_snapshot_find(snapshot,
+        source->launch->selection.instance);
+    if (!qa_application_startup_source_read(application,snapshot,
+        selected,&console,&cvars,&command,error)) return false;
     const qa_cvar_view *deathmatch=qa_cvars_find(cvars,"deathmatch");
     const qa_cvar_view *noreload=qa_cvars_find(cvars,"sv_noreload");
     if (!deathmatch) return application_fail(error,QA_ERROR_FORMAT,
