@@ -3161,6 +3161,43 @@ static qa_cvars *cvar_owner(void *context,qa_application *application,qa_console
     return source && source->application==application?
         frontend_config_store_cvar_owner(context,console,command,name):NULL;
 }
+static bool local_userinfo(void *context,qa_application *application,const qa_launch_choices *choices,
+    const qa_launch_seat *seat,qa_cvars **out,const qa_cvar_view **field_of_view,bool *found,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    if (!manager || manager->frontend->application!=application || !choices || !seat ||
+        !out || !field_of_view || !found || manager->running || manager->restoring)
+        return fail(error,QA_ERROR_ARGUMENT,"Local userinfo requires its actual returned configuration owner");
+    *out=NULL; *field_of_view=NULL; *found=false;
+    if (!seat->local || seat->bot || manager->frontend->options.dedicated) return true;
+    const qa_launch_snapshot *candidate=qa_application_startup_candidate(application);
+    const qa_launch_snapshot *snapshot=candidate?candidate:qa_application_launch(application);
+    if (!snapshot || qa_launch_snapshot_choices(snapshot)!=choices)
+        return fail(error,QA_ERROR_ARGUMENT,"Local userinfo differs from its actual admission choices");
+    bool actual=false;
+    for (size_t i=0;i<choices->seat_count;++i) if (choices->seats+i==seat) actual=true;
+    const qa_launch_binding *binding=qa_launch_binding_for(choices,
+        (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
+    const qa_launch_instance *selected=binding?qa_launch_snapshot_find(snapshot,binding->instance):NULL;
+    if (!actual || !selected)
+        return fail(error,QA_ERROR_ARGUMENT,"Local userinfo has no actual authored seat and GAME");
+    frontend_config_source *source=NULL;
+    for (frontend_config_source *row=manager->sources;row;row=row->next) {
+        const qa_launch_instance *held=instance(row);
+        if (row->application!=application || !row->primary || row->imported || !held ||
+            held->storage!=selected->storage || held->state!=selected->state ||
+            (!row->published && row->candidate!=candidate)) continue;
+        if (source) return fail(error,QA_ERROR_FORMAT,"Local userinfo repeats its physical GAME configuration");
+        source=row;
+    }
+    size_t index=source?seat_index(source,seat->id):0;
+    if (!source || !source->configured || !source->released || source->running || source->phase ||
+        !qa_console_idle(source->console) || index>=source->seat_count || !source->seats[index].cvars)
+        return fail(error,QA_ERROR_ARGUMENT,"Local userinfo lacks its completed physical seat settings");
+    *out=source->seats[index].cvars;
+    *field_of_view=frontend_config_store_engine_value(manager,application,source->console,"fov");
+    *found=true; return true;
+}
 static bool cvar_edit(void *context,qa_application *application,qa_console *console,
     const qa_command_context *command,qa_cvars *registry,qa_cvars_edit **out,qa_error *error)
 { return frontend_config_store_cvar_edit(context,application,console,command,registry,out,error); }
@@ -3511,6 +3548,7 @@ frontend_config_store *frontend_config_store_create(qa_frontend *frontend,qa_err
         .read_script=phase_read,.release_script=phase_release,.script_complete=phase_complete,
         .allow_command=allow,.prepare_candidate=prepare_candidate,.release_source=phase_destroy,.finish_candidate=finish,
         .preinit_source=preinit,.restore_source=restore_source,.retire_source=retire,.cvar_owner=cvar_owner,.visible_cvars=visible_cvars,
+        .local_userinfo=local_userinfo,
         .read_source_script=source_read,.release_source_script=source_release,.begin_retire_source=begin_retire,
         .carry_source_variables=carry_variables,.configuration_store=configuration_store,.program_source=program_source,
         .parked_program_source_current=parked_program_current,

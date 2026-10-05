@@ -3,6 +3,10 @@
 
 #include "qa/application.h"
 
+/* Canonical player identity declarations follow the physical console dialect. */
+bool qa_application_player_userinfo_register(qa_cvars *,uint32_t authored_seat,
+    const char *protocol_model,qa_error *);
+
 typedef struct qa_native_q3_character_declaration {
     const char *model, *skin, *head_model, *head_skin;
 } qa_native_q3_character_declaration;

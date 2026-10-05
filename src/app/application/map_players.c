@@ -43,6 +43,7 @@
 #include "qa/game_q1_bots.h"
 #include "qa/game_q1_supply.h"
 #include "qa/game_q1_source_birth.h"
+#include "qa/game_q2_combat.h"
 #include "qa/game_q1_source_travel.h"
 #include "qa/modes_q1_source.h"
 #include "qa/network_q1_channel.h"
@@ -474,13 +475,13 @@ static bool record_bot_choice(application_player_record *record,
     return true;
 }
 
-static bool q3_initial_userinfo(qa_catalog *catalog, const qa_launch_choices *choices,
+static bool q3_initial_userinfo(qa_application *application,qa_catalog *catalog,const qa_launch_choices *choices,
     application_player_record *record, const qa_launch_seat *seat, qa_error *error)
 {
     if (record->userinfo != NULL)
         return true;
     char userinfo[1024];
-    if (!application_character_userinfo(catalog, choices, seat, QA_GAME_Q3,
+    if (!application_character_userinfo(application,catalog,choices,seat,QA_GAME_Q3,
             true, userinfo, sizeof(userinfo), error)) return false;
     size_t length = strlen(userinfo);
     record->userinfo = malloc((size_t)length + 1);
@@ -885,7 +886,7 @@ bool application_players_prepare(qa_application *application,
         }
         if ((character->launch->selection.clock.kind == QA_CLOCK_Q3 ||
              publication->map_provider->launch->selection.clock.kind == QA_CLOCK_Q3) &&
-            !q3_initial_userinfo(qa_launch_snapshot_catalog(publication->candidate), choices,
+            !q3_initial_userinfo(application,qa_launch_snapshot_catalog(publication->candidate),choices,
                 &travel->roster->records[i], seat, error)) {
             application_players_dispose(travel);
             return false;
@@ -2521,6 +2522,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             return application_fail(error, QA_ERROR_NOT_FOUND, "selected player character disappeared");
         uint32_t source_slot = record->source_slot;
         bool reserved_player = phase == PLAYER_ADMISSION_BEGIN;
+        bool initial_local_userinfo=!reserved_player && seat->local && !record->remote &&
+            !carry->present && !carry->q3_client && !round;
         qa_actor_id source_actor = reserved_player ? record->actor : (qa_actor_id){0};
         if (character->kind == APPLICATION_PROVIDER_QC &&
             !application_qc_player_source_actor(character, source_slot, &source_actor, error))
@@ -2664,13 +2667,20 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         }
         if (!reserved_player && map_source->kind == APPLICATION_PROVIDER_Q2 && map_source != character) {
             char userinfo[2304];
-            if (!application_character_userinfo(application->catalog, choices, seat, QA_GAME_Q2,
+            if (!application_character_userinfo(application,application->catalog,choices,seat,QA_GAME_Q2,
                     false, userinfo, sizeof(userinfo), error)) return false;
+            char initial_info[2304];
+            const char *source_info=record->userinfo?record->userinfo:userinfo;
+            if (initial_local_userinfo && record->userinfo) {
+                if (!application_character_q2_initial_userinfo(record->userinfo,userinfo,
+                        initial_info,sizeof(initial_info),error)) return false;
+                source_info=initial_info;
+            }
             const char *info = "";
             qa_q2_connection_result connection;
             if (phase != PLAYER_ADMISSION_RESERVE) {
                 if (!qa_q2_player_connect(map_source->state.q2,
-                        record->userinfo ? record->userinfo : userinfo, seat->bot, &connection, error)) return false;
+                        source_info,seat->bot,&connection,error)) return false;
                 if (!connection.allowed) return application_fail(error, QA_ERROR_ARGUMENT, connection.reason);
                 info = connection.userinfo;
             }
@@ -2791,15 +2801,13 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         bool selected_spawn = false;
         if (character->kind == APPLICATION_PROVIDER_Q2) {
             char userinfo[2304];
-            if (!application_character_userinfo(application->catalog, choices, seat, QA_GAME_Q2,
+            if (!application_character_userinfo(application,application->catalog,choices,seat,QA_GAME_Q2,
                     false, userinfo, sizeof(userinfo), error)) return false;
             const char *source_info = record->userinfo != NULL ? record->userinfo : userinfo;
             char initial_info[2304];
-            if (!reserved_player && seat->local && !record->remote && record->userinfo &&
-                map_source->component.clock.kind == QA_CLOCK_Q3 && !carry->present &&
-                !carry->q3_client && !round) {
-                if (!application_character_q2_initial_skin(application->catalog, choices, seat,
-                        record->userinfo, initial_info, sizeof(initial_info), error)) return false;
+            if (initial_local_userinfo && record->userinfo) {
+                if (!application_character_q2_initial_userinfo(record->userinfo,userinfo,
+                        initial_info,sizeof(initial_info),error)) return false;
                 source_info = initial_info;
             }
             qa_q2_connection_result connection;
@@ -2866,7 +2874,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                     continue;
                 }
                 char userinfo[1024];
-                if (!application_character_userinfo(application->catalog, choices, seat, QA_GAME_Q3,
+                if (!application_character_userinfo(application,application->catalog,choices,seat,QA_GAME_Q3,
                         false, userinfo, sizeof(userinfo), error)) return false;
                 bool accepted = false;
                 application_q3_world_startup startup;
@@ -2889,11 +2897,18 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             } else if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
                        provider->state.native.q2_engine != NULL) {
                 char userinfo[2304];
-                if (!application_character_userinfo(application->catalog, choices, seat, QA_GAME_Q2,
+                if (!application_character_userinfo(application,application->catalog,choices,seat,QA_GAME_Q2,
                         false, userinfo, sizeof(userinfo), error)) return false;
+                char initial_info[2304];
+                const char *source_info=record->userinfo?record->userinfo:userinfo;
+                if (initial_local_userinfo && record->userinfo) {
+                    if (!application_character_q2_initial_userinfo(record->userinfo,userinfo,
+                            initial_info,sizeof(initial_info),error)) return false;
+                    source_info=initial_info;
+                }
                 bool accepted = false;
                 if (!application_native_q2_client_admit(provider, record->client_slot + 1,
-                    actor, record->userinfo != NULL ? record->userinfo : userinfo,
+                    actor,source_info,
                     "", seat->bot, &accepted, error))
                     return false;
                 if (!accepted)
@@ -4087,6 +4102,16 @@ bool qa_application_local_player_available(qa_application *application, uint32_t
     application_provider *source=application->players->map_provider;
     if (!source)
         return application_fail(error,QA_ERROR_ARGUMENT,"Local admission availability lost its actual Source");
+    if (source->kind==APPLICATION_PROVIDER_Q1) {
+        qa_q1_options options; double seconds;
+        if (!qa_q1_source_respawn_options_read(source->state.q1,&options,&seconds,error)) return false;
+        if (!options.coop && !options.deathmatch) return true;
+    } else if (source->kind==APPLICATION_PROVIDER_Q2) {
+        qa_q2_combat_rules rules;
+        if (!qa_q2_combat_rules_read(source->state.q2,&rules) || rules.owner!=source->owner)
+            return application_fail(error,QA_ERROR_ARGUMENT,"Local admission lost its actual Q2 GAME rules");
+        if (!rules.cooperative && !rules.deathmatch) return true;
+    }
     if (source->kind==APPLICATION_PROVIDER_Q1 && source->component.clock.kind==QA_CLOCK_QUAKEWORLD) {
         bool allowed;
         if (!application_native_q1_qw_admission(application,false,&allowed,error)) return false;

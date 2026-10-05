@@ -1,7 +1,80 @@
 #include "character_selection.h"
+#include "qa/application_startup_prepare.h"
+#include <inttypes.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+
+static bool declare(qa_cvars *cvars,const char *name,const char *value,uint32_t flags,qa_error *error)
+{
+    const qa_cvar_view *previous=qa_cvars_find(cvars,name);
+    if (qa_cvars_dialect(cvars)<=QA_CONSOLE_QW && previous && !previous->console_created)
+        return (previous->flags&flags)==flags || qa_cvars_add_flags(cvars,name,flags,error);
+    return qa_cvars_register(cvars,name,value,flags,0,"Prepared client identity",error);
+}
+bool qa_application_player_userinfo_register(qa_cvars *cvars,uint32_t seat,const char *model,qa_error *error)
+{
+    if (!cvars || !model || !*model) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Client configuration needs its actual identity declaration"); return false;
+    }
+    qa_console_dialect dialect=qa_cvars_dialect(cvars);
+    const uint32_t identity=QA_CVAR_ARCHIVE|QA_CVAR_USERINFO;
+    char name[64]; snprintf(name,sizeof(name),"Player %" PRIu64,(uint64_t)seat+1);
+    if (dialect<=QA_CONSOLE_QW && !declare(cvars,"qts_weapon_autoswitch","always",identity,error)) return false;
+    if (dialect==QA_CONSOLE_Q2_RERELEASE && !declare(cvars,"autoswitch","0",identity,error)) return false;
+    if (dialect==QA_CONSOLE_Q1) {
+        const qa_cvar_view *old_name=qa_cvars_find(cvars,"name"),*color=qa_cvars_find(cvars,"color");
+        return declare(cvars,"_cl_name",old_name?old_name->value:name,QA_CVAR_ARCHIVE,error) &&
+            declare(cvars,"_cl_color",color?color->value:"0",QA_CVAR_ARCHIVE,error);
+    }
+    if (dialect==QA_CONSOLE_QW) {
+        static const char *names[]={"topcolor","bottomcolor","team","skin"};
+        if (!declare(cvars,"name",name,identity,error)) return false;
+        for (size_t i=0;i<4;++i) if (!declare(cvars,names[i],i<2?"0":"",identity,error)) return false;
+        return true;
+    }
+    if (dialect==QA_CONSOLE_Q3) {
+        static const struct {const char *name,*value; uint32_t flags;} prefix[]={
+            {"vm_ui","2",QA_CVAR_ARCHIVE},{"vm_cgame","2",QA_CVAR_ARCHIVE},
+            {"cl_allowDownload","0",QA_CVAR_ARCHIVE},
+            {"cl_timeNudge","0",QA_CVAR_TEMPORARY},{"rate","25000",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
+            {"cl_maxpackets","30",QA_CVAR_ARCHIVE},{"cl_packetdup","1",QA_CVAR_ARCHIVE},
+            {"snaps","20",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO}};
+        for (size_t i=0;i<sizeof(prefix)/sizeof(*prefix);++i)
+            if (!declare(cvars,prefix[i].name,prefix[i].value,prefix[i].flags,error)) return false;
+        if (!declare(cvars,"name",name,identity,error)) return false;
+        size_t length=strlen(model);
+        char *body=length<=SIZE_MAX-9?malloc(length+9):NULL;
+        if (!body) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining actual prepared client model"); return false; }
+        memcpy(body,model,length); memcpy(body+length,"/default",9);
+        static const char *names[]={"model","headmodel","team_model","team_headmodel"};
+        bool ok=true;
+        for (size_t i=0;ok && i<4;++i) ok=declare(cvars,names[i],body,identity,error);
+        free(body); if (!ok) return false;
+        static const struct {const char *name,*value; uint32_t flags;} suffix[]={
+            {"color1","4",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},{"color2","5",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
+            {"sex","male",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},{"cl_anonymous","0",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
+            {"cg_predictItems","1",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},{"teamtask","0",QA_CVAR_USERINFO},
+            {"password","",QA_CVAR_USERINFO},{"handicap","100",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
+            {"cl_maxPing","800",QA_CVAR_ARCHIVE},{"cl_serverStatusResendTime","750",0},
+            {"sv_master1","master.quake3arena.com",0}};
+        for (size_t i=0;i<sizeof(suffix)/sizeof(*suffix);++i)
+            if (!declare(cvars,suffix[i].name,suffix[i].value,suffix[i].flags,error)) return false;
+        return true;
+    }
+    if (!declare(cvars,"name",name,identity,error) || !declare(cvars,"spectator","0",QA_CVAR_USERINFO,error) ||
+        !declare(cvars,"password","",QA_CVAR_USERINFO,error)) return false;
+    const char *skin=!strcmp(model,"female")?"athena":!strcmp(model,"cyborg")?"oni911":"grunt";
+    size_t a=strlen(model),b=strlen(skin);
+    char *body=a<=SIZE_MAX-b-2?malloc(a+b+2):NULL;
+    if (!body) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining actual prepared client skin"); return false; }
+    memcpy(body,model,a); body[a]='/'; memcpy(body+a+1,skin,b+1);
+    bool ok=declare(cvars,"skin",body,identity,error); free(body);
+    static const char *names[]={"rate","msg","hand","fov","gender"};
+    const char *values[]={"25000","1","0","90",!strcmp(model,"female")?"female":"male"};
+    for (size_t i=0;ok && i<5;++i) ok=declare(cvars,names[i],values[i],identity,error);
+    return ok;
+}
 
 typedef struct character_selection_owner {
     qa_application *application;
@@ -80,13 +153,13 @@ bool qa_application_character_declaration_read(qa_catalog *catalog, const qa_lau
     return declared(catalog, choices, seat, seat_binding(choices, seat), out, found, error);
 }
 
-bool application_character_userinfo(qa_catalog *catalog, const qa_launch_choices *choices,
+bool application_character_userinfo(qa_application *app,qa_catalog *catalog,const qa_launch_choices *choices,
     const qa_launch_seat *seat, qa_game_family protocol, bool local_ip,
     char *out, size_t capacity, qa_error *error)
 {
     qa_application_character_declaration declaration;
     bool found;
-    if (!out || !capacity || !seat || !seat->name)
+    if (!app || !out || !capacity || !seat || !seat->name)
         return application_fail(error, QA_ERROR_ARGUMENT, "Initial userinfo requires its actual CHARACTER declaration");
     if (!qa_application_character_declaration_read(catalog, choices, seat, &declaration, &found, error)) return false;
     const char *name = strchr(seat->name, '\\') ? "badinfo" : seat->name;
@@ -102,51 +175,80 @@ bool application_character_userinfo(qa_catalog *catalog, const qa_launch_choices
                 name, appearance->model, appearance->skin, head, appearance->head_skin, team, ip);
         } else length = snprintf(out, capacity, "\\name\\%.900s\\team\\%s%s", name, team, ip);
     } else if (protocol == QA_GAME_Q2) {
-        if (found) {
-            /* registerPlayerUserinfo selects Q2's protocol model independently
-             * of foreign CHARACTER appearance, then its source skin default. */
-            const char *model = declaration.family == QA_GAME_Q2 ? declaration.appearance.model : "male";
-            const char *skin = !strcmp(model, "female") ? "athena" : !strcmp(model, "cyborg") ? "oni911" : "grunt";
-            length = snprintf(out, capacity, "\\name\\%.2000s\\skin\\%s/%s\\spectator\\%d",
-                name, model, skin, seat->spectator ? 1 : 0);
-        } else length = snprintf(out, capacity, "\\name\\%.2000s\\spectator\\%d", name, seat->spectator ? 1 : 0);
+        qa_cvars *prepared=NULL;
+        const qa_cvar_view *field_of_view=NULL;
+        bool configured=false;
+        const qa_application_startup_hooks *hooks=app->startup_hooks;
+        if (seat->local && !seat->bot && hooks && hooks->local_userinfo &&
+            !hooks->local_userinfo(hooks->context,app,choices,seat,&prepared,&field_of_view,
+                &configured,error)) return false;
+        const qa_product *product=found?qa_catalog_product(catalog,declaration.product):NULL;
+        qa_console_dialect dialect=configured && prepared &&
+            (qa_cvars_dialect(prepared)==QA_CONSOLE_Q2 || qa_cvars_dialect(prepared)==QA_CONSOLE_Q2_RERELEASE)?
+            qa_cvars_dialect(prepared):product && product->family==QA_GAME_Q2 && product->edition==QA_EDITION_RERELEASE?
+            QA_CONSOLE_Q2_RERELEASE:QA_CONSOLE_Q2;
+        const char *model=found && declaration.family==QA_GAME_Q2?declaration.appearance.model:"male";
+        qa_cvars *protocol_cvars=qa_cvars_create(&(qa_cvar_options){.dialect=dialect},error);
+        if (!protocol_cvars) return false;
+        bool ok=qa_application_player_userinfo_register(protocol_cvars,seat->id,model,error) &&
+            qa_cvars_set(protocol_cvars,"name",name,true,error);
+        bool q2_registry=prepared && (qa_cvars_dialect(prepared)==QA_CONSOLE_Q2 ||
+            qa_cvars_dialect(prepared)==QA_CONSOLE_Q2_RERELEASE);
+        for (const qa_cvar_view *row=configured?qa_cvars_next(prepared,NULL):NULL;
+             ok && row;row=qa_cvars_next(prepared,row))
+            if ((row->flags&QA_CVAR_USERINFO) && !(q2_registry && (row->flags&QA_Q2_CVAR_PRIVATE)))
+                ok=qa_cvars_full_set(protocol_cvars,row->name,row->value,QA_CVAR_USERINFO,error);
+        if (ok && field_of_view)
+            ok=qa_cvars_set(protocol_cvars,"fov",field_of_view->value,true,error);
+        if (ok) ok=qa_cvars_set(protocol_cvars,"spectator",seat->spectator?"1":"0",true,error);
+        qa_buffer info={0};
+        if (ok) ok=qa_cvars_info(protocol_cvars,QA_CVAR_USERINFO,capacity,&info,error);
+        if (ok) memcpy(out,info.data,info.size+1);
+        qa_buffer_free(&info); qa_cvars_destroy(protocol_cvars); return ok;
     } else return application_fail(error, QA_ERROR_ARGUMENT, "Initial userinfo has no declared protocol constructor");
     return (length >= 0 && (size_t)length < capacity) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Initial CHARACTER userinfo exceeds its source extent");
 }
 
-bool application_character_q2_initial_skin(qa_catalog *catalog, const qa_launch_choices *choices,
-    const qa_launch_seat *seat, const char *source, char *out, size_t capacity, qa_error *error)
+bool application_character_q2_initial_userinfo(const char *source,const char *defaults,
+    char *out,size_t capacity,qa_error *error)
 {
-    if (!source || !out || !capacity)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Initial Q2 skin requires actual source userinfo");
-    size_t length = strlen(source);
-    if (length >= capacity)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Initial Q2 userinfo exceeds its source extent");
-    memcpy(out, source, length + 1);
-    /* Q2's source lookup is case-sensitive and distinguishes an existing
-     * empty skin from an absent key. Preserve every existing wire byte. */
-    const char *p = source;
-    if (*p == '\\') ++p;
-    while (*p) {
-        const char *key = p;
-        while (*p && *p != '\\') ++p;
-        size_t key_length = (size_t)(p - key);
+    if (!source || !defaults || !out || !capacity)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Initial Q2 userinfo requires its actual Source and declared defaults");
+    size_t length=strlen(source);
+    if (length>=capacity)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Initial Q2 userinfo exceeds its source extent");
+    memcpy(out,source,length+1);
+    /* Retain every supplied byte, including an explicitly empty value. Only
+     * absent protocol keys receive the canonical prepared default/settings. */
+    for (const char *p=defaults;*p;) {
+        const char *pair=p++;
+        const char *key=p;
+        while (*p && *p!='\\') ++p;
+        size_t key_length=(size_t)(p-key);
         if (!*p) break;
         ++p;
-        if (key_length == 4 && !memcmp(key, "skin", 4)) return true;
-        while (*p && *p != '\\') ++p;
-        if (*p) ++p;
+        while (*p && *p!='\\') ++p;
+        bool present=false;
+        const char *existing=source;
+        if (*existing=='\\') ++existing;
+        while (*existing) {
+            const char *at=existing;
+            while (*existing && *existing!='\\') ++existing;
+            if (!*existing) break;
+            size_t size=(size_t)(existing-at);
+            ++existing;
+            if (size==key_length && !memcmp(at,key,size)) { present=true; break; }
+            while (*existing && *existing!='\\') ++existing;
+            if (*existing) ++existing;
+        }
+        if (present) continue;
+        size_t added=(size_t)(p-pair);
+        if (added>=capacity-length)
+            return application_fail(error,QA_ERROR_ARGUMENT,"Initial prepared Q2 userinfo exceeds its source extent");
+        memcpy(out+length,pair,added);length+=added;out[length]=0;
     }
-    qa_application_character_declaration declaration;
-    bool found;
-    if (!qa_application_character_declaration_read(catalog, choices, seat, &declaration, &found, error)) return false;
-    if (!found || declaration.family != QA_GAME_Q2) return true;
-    const char *model = declaration.appearance.model;
-    const char *skin = !strcmp(model, "female") ? "athena" : !strcmp(model, "cyborg") ? "oni911" : "grunt";
-    int added = snprintf(out + length, capacity - length, "\\skin\\%s/%s", model, skin);
-    return (added >= 0 && (size_t)added < capacity - length) ||
-        application_fail(error, QA_ERROR_ARGUMENT, "Initial declared Q2 skin exceeds its source extent");
+    return true;
 }
 
 static bool constructor_choices(qa_application *app, qa_actor_owner receiver,

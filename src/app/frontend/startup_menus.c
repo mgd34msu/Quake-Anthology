@@ -92,9 +92,9 @@ static bool stage(void *context, qa_ui_library *library, qa_launch_draft *draft,
 {
     frontend_seat *seat = context;
     qa_frontend *f = seat->frontend;
-    (void)library;
     if (f->startup_launch || qa_application_startup_pending(f->application))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "A game is already loading");
+    if (!frontend_startup_selection_complete(library, error)) return false;
     struct frontend_startup_launch *request = calloc(1, sizeof(*request));
     if (!request) return frontend_fail(error, QA_ERROR_MEMORY, "Preparing game selection");
     request->seat = seat->id;

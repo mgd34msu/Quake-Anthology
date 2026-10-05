@@ -8,6 +8,12 @@
 #include "qa/application_client.h"
 #include "qa/input_release.h"
 #include <inttypes.h>
+qa_mode_kind frontend_local_mode(qa_game_family family, unsigned local_count, qa_mode_kind requested)
+{
+    return requested == QA_MODE_SINGLE_PLAYER && local_count > 1 &&
+        (family == QA_GAME_Q1 || family == QA_GAME_Q2) ? QA_MODE_COOPERATIVE : requested;
+}
+
 bool frontend_seat_launch_id_read(const qa_frontend *f,uint32_t ordinal,uint32_t *out)
 {
     if (!f || !f->application || !out || ordinal>=f->options.seats) return false;
@@ -320,13 +326,13 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
         qa_launch_draft_destroy(draft);
         return false;
     }
-    if ((product->family == QA_GAME_Q1 || product->family == QA_GAME_Q2) && frontend->options.seats > 1 &&
-        !frontend->options.dedicated) {
+    if (!frontend->options.dedicated) {
         const qa_launch_choices *choices = qa_launch_draft_choices(draft);
         for (size_t i = 0; i < choices->mode_count; ++i) {
             qa_launch_mode mode = choices->modes[i];
-            if (mode.rules.kind != QA_MODE_SINGLE_PLAYER) continue;
-            mode.rules.kind = QA_MODE_COOPERATIVE;
+            qa_mode_kind kind = frontend_local_mode(product->family, frontend->options.seats, mode.rules.kind);
+            if (kind == mode.rules.kind) continue;
+            mode.rules.kind = kind;
             if (!qa_launch_set_mode(draft, &mode, error)) {
                 qa_launch_draft_destroy(draft);
                 return false;

@@ -288,6 +288,7 @@ bool frontend_clipboard_write(qa_frontend *, const char *, qa_error *);
 bool frontend_tools_create_diagnostics(qa_frontend *, qa_vfs *, qa_error *);
 bool frontend_protocol(const char *, qa_net_protocol_id *, qa_error *);
 bool frontend_launch(qa_frontend *, qa_error *);
+qa_mode_kind frontend_local_mode(qa_game_family, unsigned local_count, qa_mode_kind);
 bool frontend_launch_overlay(qa_launch_draft *, const char *, uint64_t, const char *,
     qa_launch_scope, qa_error *);
 bool frontend_player_source_select(qa_frontend *, uint32_t physical_seat,

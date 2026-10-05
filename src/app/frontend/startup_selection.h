@@ -7,6 +7,7 @@ typedef struct frontend_startup_selection frontend_startup_selection;
 
 bool frontend_startup_selection_create(frontend_startup_selection **, qa_error *);
 void frontend_startup_selection_destroy(frontend_startup_selection *);
+bool frontend_startup_selection_complete(qa_ui_library *, qa_error *);
 bool frontend_startup_selection_choices(void *, qa_ui_library *, qa_ui_library_field,
     const char *classname, const qa_ui_library_choice **, size_t *, const char **selected, qa_error *);
 bool frontend_startup_selection_select(void *, qa_ui_library *, qa_ui_library_field,

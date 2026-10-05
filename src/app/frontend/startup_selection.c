@@ -1,4 +1,5 @@
 #include "startup_selection.h"
+#include "startup_menus.h"
 #include "internal.h"
 #include "config_weapon_defaults.h"
 #include "qa/application_character_selection.h"
@@ -673,7 +674,21 @@ static bool select_seats(qa_ui_library *library, unsigned requested, qa_error *e
             .character_head_model = declaration.head_model, .character_head_skin = declaration.head_skin};
         ok = qa_launch_set_seat(draft, &seat, e);
     }
-    free(model); return ok;
+    free(model); return ok && frontend_startup_selection_complete(library, e);
+}
+
+static qa_mode_kind local_mode(qa_ui_library *library, qa_mode_kind requested)
+{
+    const qa_launch_choices *choices = qa_ui_library_choices(library);
+    const qa_product *product = qa_catalog_product(qa_ui_library_catalog(library), choices->world.preset);
+    return product ? frontend_local_mode(product->family, frontend_local_seat_count(choices), requested) : requested;
+}
+
+bool frontend_startup_selection_complete(qa_ui_library *library, qa_error *error)
+{
+    qa_mode_kind current = qa_ui_library_mode_preference(library);
+    qa_mode_kind selected = local_mode(library, current);
+    return selected == current || qa_ui_library_select_mode(library, selected, error);
 }
 
 static bool select_hook(frontend_startup_selection *s, qa_ui_library *library, const char *id, bool placement, qa_error *e)
@@ -874,7 +889,7 @@ bool frontend_startup_selection_select(void *context, qa_ui_library *library, qa
         free(id); free(class_copy); return ok;
     }
     if (field == QA_UI_LIBRARY_MODE) {
-        qa_mode_kind base_mode = !strcmp(id, "singleplayer") ? QA_MODE_SINGLE_PLAYER : !strcmp(id, "coop") ? QA_MODE_COOPERATIVE : QA_MODE_FFA;
+        qa_mode_kind base_mode = local_mode(library, !strcmp(id, "singleplayer") ? QA_MODE_SINGLE_PLAYER : !strcmp(id, "coop") ? QA_MODE_COOPERATIVE : QA_MODE_FFA);
         ok = !strcmp(id, "singleplayer") || !strcmp(id, "coop") || !strcmp(id, "deathmatch");
         if (!ok) fail(e, "Unknown game mode");
         const char *rule = rule_selected(library);
