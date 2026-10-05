@@ -294,6 +294,13 @@ bool qa_bot_runtime_rebind_round(qa_bot_runtime *r, const qa_bot_runtime_map *ma
     bot_runtime_observations_clear(r);
     return true;
 }
+bool bot_runtime_bsp_load(qa_bot_runtime *r,qa_bot_bsp **out,qa_error *error) {
+    qa_script_lexer_options options = {.token_limit = r->options.library.preprocessor.token_limit,
+        .context = r->options.library.scripts.context,
+        .diagnostic = r->options.library.scripts.diagnostic,
+        .memory=qa_bot_memory_script_services(r->memory)};
+    return qa_bot_bsp_load(r->map.source_entities,&options,out,error);
+}
 bool qa_bot_runtime_load_map(qa_bot_runtime *r, const char *name, qa_error *e) {
     if (!bot_runtime_owners_idle(r, e)) return false;
     if (r->restore_pending) return bot_runtime_fail(e, "bot runtime continuation is not completely imported");
@@ -305,11 +312,7 @@ bool qa_bot_runtime_load_map(qa_bot_runtime *r, const char *name, qa_error *e) {
     r->busy = true;
     bool ok = true;
     if (r->map.source_entities.data || !r->map.entities) {
-        qa_script_lexer_options options = {.token_limit = r->options.library.preprocessor.token_limit,
-            .context = r->options.library.scripts.context,
-            .diagnostic = r->options.library.scripts.diagnostic,
-            .memory=qa_bot_memory_script_services(r->memory)};
-        ok = qa_bot_bsp_load(r->map.source_entities, &options, &bsp, e);
+        ok = bot_runtime_bsp_load(r, &bsp, e);
     }
     const qa_entities *entities = bsp ? qa_bot_bsp_entities(bsp) : r->map.entities;
     if (ok) {

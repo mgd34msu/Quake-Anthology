@@ -45,6 +45,7 @@ struct qa_bot_runtime {
     bool initialized, library_initialized, loaded, bsp_loaded, closed, busy, restore_pending;
 };
 bool bot_runtime_fail(qa_error *, const char *);
+bool bot_runtime_bsp_load(qa_bot_runtime *,qa_bot_bsp **,qa_error *);
 bool bot_runtime_mutable(qa_bot_runtime *, qa_error *);
 bool bot_runtime_owners_idle(qa_bot_runtime *, qa_error *);
 bool bot_runtime_variable(qa_bot_runtime *, const char *, const char *, const qa_bot_variable **, qa_error *);

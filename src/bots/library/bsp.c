@@ -338,14 +338,15 @@ bool qa_bot_bsp_load(qa_bytes bytes, const qa_script_lexer_options *options, qa_
                 ok = token_diagnostic(&opts, lexer, "invalid ", token.text, "\n", e);
                 break;
             }
-            /* With escapes and concatenation disabled, values borrow their
-             * exact source bytes. The lexer's temporary decoded buffer is not retained. */
+            /* These flags leave quoted text unchanged. Retain the pinned map
+             * span rather than the lexer's script_t copy, which closes below. */
             qa_bytes key = token.text;
-            if (key.size < 2) {
+            if (key.size < 2 || token.location.offset > bytes.size ||
+                key.size > bytes.size - token.location.offset) {
                 malformed = true;
                 break;
             }
-            key.data++;
+            key.data = bytes.data + token.location.offset + 1;
             key.size -= 2;
             if (!qa_script_lexer_next(lexer, &token, &found, e)) {
                 ok = e->code == QA_ERROR_FORMAT;
@@ -366,11 +367,12 @@ bool qa_bot_bsp_load(qa_bytes bytes, const qa_script_lexer_options *options, qa_
                 break;
             }
             qa_bytes value = token.text;
-            if (value.size < 2) {
+            if (value.size < 2 || token.location.offset > bytes.size ||
+                value.size > bytes.size - token.location.offset) {
                 malformed = true;
                 break;
             }
-            value.data++;
+            value.data = bytes.data + token.location.offset + 1;
             value.size -= 2;
             if (!reserve((void **)&bsp->entities.properties, &bsp->property_capacity,
                          bsp->entities.property_count + 1, sizeof(*bsp->entities.properties), e)) {

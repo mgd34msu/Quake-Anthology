@@ -6,7 +6,6 @@
 #include "qa/bot_runtime_assets_save.h"
 #include "qa/bot_library_save.h"
 #include "qa/bot_actions_save.h"
-#include "qa/bot_bsp_save.h"
 #include "qa/bot_goals_save.h"
 #include "qa/bot_chat_system_save.h"
 #include "qa/bot_movement_save.h"
@@ -17,7 +16,7 @@
 #include "../library/source_fuzzy_store.h"
 #include "source_weapon_setup.h"
 
-enum { VARIABLES, ASSETS, ACTIONS, BSP, GOALS, CHAT, MOVES, OBSERVATIONS, HANDLES, GLOBALS, LOG, MEMORY, PART_COUNT };
+enum { VARIABLES, ASSETS, ACTIONS, GOALS, CHAT, MOVES, OBSERVATIONS, HANDLES, GLOBALS, LOG, MEMORY, PART_COUNT };
 typedef struct runtime_state {
     uint32_t maximum, minimum, profile;
     bool debug, initialized, library_initialized, loaded, bsp_loaded, closed;
@@ -79,7 +78,6 @@ static bool present(const runtime_state *state, size_t index)
     switch (index) {
     case VARIABLES: case ASSETS: return state->library;
     case ACTIONS: return state->actions;
-    case BSP: return state->bsp;
     case GOALS: return state->goals;
     case CHAT: return state->chat;
     case MOVES: return state->moves;
@@ -201,7 +199,6 @@ static bool capture_parts(qa_session *session, const qa_bot_runtime *runtime, qa
     if(ok) ok = !runtime->library || (qa_bot_library_variables_capture(runtime->library, &parts[VARIABLES], error) &&
         qa_bot_runtime_assets_capture(runtime, &parts[ASSETS], &assets, error));
     if (ok && runtime->actions) ok = qa_bot_actions_source_capture(runtime->actions, &parts[ACTIONS], error);
-    if (ok && runtime->bsp) ok = qa_bot_bsp_capture(runtime->bsp, runtime->map.source_entities, &parts[BSP], error);
     if (ok && runtime->goals) ok = qa_bot_goals_save_capture(session, runtime->goals, assets, &parts[GOALS], error);
     qa_bot_chat_asset_save_refs refs = {.context = assets, .encode = chat_encode, .decode = chat_decode};
     if (ok && runtime->chat_system) ok = qa_bot_chat_system_capture(runtime->chat_system, &refs, &parts[CHAT], error);
@@ -310,7 +307,7 @@ bool qa_bot_runtime_save_restore(qa_session *session, qa_bot_runtime *runtime, q
         }
     }
     if (ok) ok = qa_bot_actions_source_restore(runtime->actions, parts[ACTIONS], error);
-    if (ok && state.bsp) ok = qa_bot_bsp_restore(parts[BSP], runtime->map.source_entities, &runtime->bsp, error);
+    if (ok && state.bsp) ok = bot_runtime_bsp_load(runtime, &runtime->bsp, error);
     if (ok && state.goals) ok = qa_bot_goals_save_restore(session, runtime->goals, parts[GOALS], assets,
         runtime->bsp ? qa_bot_bsp_entities(runtime->bsp) : runtime->map.entities, error);
     qa_bot_chat_asset_save_refs refs = {.context = assets, .encode = chat_encode, .decode = chat_decode};
