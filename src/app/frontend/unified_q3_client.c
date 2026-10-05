@@ -351,8 +351,6 @@ bool frontend_unified_q3_client_actor_fields(frontend_unified_q3_client *c, qa_s
     return qa_source_save_u32(io,&wire.slot) && qa_source_save_u64(io,&wire.generation) &&
         (io->direction != QA_SOURCE_SAVE_READ || frontend_remote_unified_actor_retained(c->replica,wire.slot,wire.generation,actor,io->error));
 }
-static bool actor_fields(void *context, qa_source_save_io *io, qa_actor_id *actor)
-{ return frontend_unified_q3_client_actor_fields(context,io,actor); }
 static bool actor_known(void *context,qa_actor_id actor)
 {
     frontend_unified_q3_client *c = context; qa_saved_actor_id wire;
@@ -374,7 +372,7 @@ static bool client_actor(void *context, uint32_t slot, qa_actor_id *actor, bool 
 static bool create_source(frontend_unified_q3_client *c,bool restoring,qa_error *e)
 {
     q3n_compiled_source_options options = {.context=c,.read=source_read,.current=source_current,
-        .configstring=configstring,.idle=source_idle,.actor_fields=actor_fields,.client_actor=client_actor,.actor_known=actor_known,
+        .configstring=configstring,.idle=source_idle,.client_actor=client_actor,.actor_known=actor_known,
         .checkpoint_read=checkpoint_read,.checkpoint_current=checkpoint_current};
     return restoring ? q3n_compiled_source_create_restored(&options,&c->source,e) :
         q3n_compiled_source_create(&options,&c->source,e);

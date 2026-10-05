@@ -37,7 +37,6 @@ typedef struct q3n_compiled_source_options {
     bool (*current)(void *, const q3n_compiled_source_basis *);
     bool (*configstring)(void *, uint32_t, const char **, uint64_t *, qa_error *);
     bool (*idle)(void *);
-    bool (*actor_fields)(void *, qa_source_save_io *, qa_actor_id *);
     bool (*client_actor)(void *, uint32_t, qa_actor_id *, bool *, qa_error *);
     /* Pure actual wire-history provenance. Retired cached actors remain
      * observations; this grants no live source or gameplay authority. */
@@ -76,6 +75,5 @@ bool q3n_compiled_source_actor_known(const q3n_compiled_source_view *, qa_actor_
 /* Runtime codecs serialize the real receiver, not this stateless borrowed
  * adapter. Its constructor identity is requalified after pure owner import. */
 bool q3n_compiled_source_idle(const q3n_compiled_source *);
-bool q3n_compiled_source_fields(qa_source_save_io *, const q3n_compiled_source *);
 
 #endif
