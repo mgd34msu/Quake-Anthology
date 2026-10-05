@@ -132,6 +132,64 @@ void application_qc_items_profile_free(struct application_qc_items *p)
     application_qc_item_weapons_profile_free(p->weapons);
     free(p->admissions);free(p->definitions);free(p->storage);free(p);
 }
+static bool original_item(struct application_qc_state *engine,struct application_qc_items *p,
+    const char *name,const char *label,const char *ammo,bool weapon,qa_item_id *out,qa_error *e)
+{
+    qa_strings *strings=qa_session_strings(engine->services.session);qa_item_id item;
+    if(!qa_strings_intern_cstr(strings,name,&item,e))return false;
+    size_t size=strlen(label)+1;char *owned=malloc(size);
+    if(!owned)return application_fail(e,QA_ERROR_MEMORY,"Owning original QC item identity");
+    memcpy(owned,label,size);
+    qa_item_id ammunition=ammo?qa_strings_find(strings,(qa_bytes){(const uint8_t *)ammo,strlen(ammo)}):0;
+    p->admissions[p->definition_count++].definition=(qa_item_definition){.item=item,.ammo=ammunition,
+        .owner=engine->provider->owner,.label=owned,.weapon=weapon};
+    *out=item;return true;
+}
+bool application_qc_items_initialize(struct application_qc_state *engine,qa_error *e)
+{
+    application_provider *provider=engine->provider;
+    if(provider->state.qc.qualified){engine->items=provider->state.qc.qualified->items;return true;}
+    const qa_qc_definition *items=qa_qc_program_find_field(provider->state.qc.program,"items");
+    if(!items)return true;
+    if(items->type!=QA_QC_FLOAT)return application_fail(e,QA_ERROR_FORMAT,"Original QC item word is not a Source float");
+    struct application_qc_items *p=calloc(1,sizeof(*p));
+    if(!p)return application_fail(e,QA_ERROR_MEMORY,"Owning original QC item fields");
+    engine->items=p;
+    p->admissions=calloc((size_t)QA_Q1_WEAPON_COUNT+QA_Q1_AMMO_COUNT,sizeof(*p->admissions));
+    p->definitions=calloc((size_t)QA_Q1_WEAPON_COUNT+QA_Q1_AMMO_COUNT,sizeof(*p->definitions));
+    p->storage=calloc(1u+QA_Q1_AMMO_COUNT,sizeof(*p->storage));
+    if(!p->admissions||!p->definitions||!p->storage)return application_fail(e,QA_ERROR_MEMORY,"Owning original QC item storage");
+    p->storage_count=1;
+    p->storage[0]=(application_qc_item_storage){.field=items,.bits=true,.private_mask=UINT32_MAX};
+    p->storage[0].items=calloc(QA_Q1_WEAPON_COUNT,sizeof(*p->storage[0].items));
+    if(!p->storage[0].items)return application_fail(e,QA_ERROR_MEMORY,"Owning original QC weapon bits");
+    static const char *const ammo_fields[]={"ammo_shells","ammo_nails","ammo_rockets","ammo_cells",
+        "ammo_lava_nails","ammo_multi_rockets","ammo_plasma"};
+    qa_q1_program program=application_q1_program(provider->product->campaign);
+    for(unsigned ammo=0;ammo<QA_Q1_AMMO_COUNT;++ammo){
+        if(ammo>QA_Q1_CELLS&&program!=QA_Q1_ROGUE)continue;
+        const qa_qc_definition *f=qa_qc_program_find_field(provider->state.qc.program,ammo_fields[ammo]);
+        if(!f)continue;
+        if(f->type!=QA_QC_FLOAT)return application_fail(e,QA_ERROR_FORMAT,"Original QC ammunition is not a Source float");
+        const char *name=qa_q1_ammo_identity((qa_q1_ammo)ammo);qa_item_id item;
+        if(!original_item(engine,p,name,name,NULL,false,&item,e))return false;
+        p->storage[p->storage_count++]=(application_qc_item_storage){.field=f,.item=item,
+            .constant_capacity=(float)qa_q1_ammo_capacity((qa_q1_ammo)ammo)};
+    }
+    for(unsigned bit=0;bit<32;++bit){
+        uint32_t mask=UINT32_C(1)<<bit;qa_q1_weapon weapon;qa_q1_weapon_profile profile;
+        if(!qa_q1_weapon_source(program,mask,&weapon)||!qa_q1_weapon_profile_identity(program,weapon,&profile))continue;
+        qa_item_id item;
+        if(!original_item(engine,p,profile.item,profile.label,profile.ammo,true,&item,e))return false;
+        p->storage[0].items[p->storage[0].count++]=(application_qc_item_bit){item,mask};
+    }
+    return true;
+}
+void application_qc_items_destroy(struct application_qc_state *engine)
+{
+    if(!engine->provider->state.qc.qualified)application_qc_items_profile_free(engine->items);
+    engine->items=NULL;
+}
 static struct application_qc_item_actor *actor_find(struct application_qc_state *engine,qa_actor_id actor)
 {for(struct application_qc_item_actor *a=engine->item_actors;a;a=a->next)if(qa_actor_id_equal(a->actor,actor)&&a->lease.serial)return a;return NULL;}
 static bool physical_current(struct application_qc_item_actor *a,qa_error *e)
@@ -146,7 +204,7 @@ bool application_qc_items_actor_current(struct application_qc_state *engine,qa_a
     return physical_current(a,e)&&qa_inventory_lease_current(engine->services.inventory,a->lease);
 }
 static const struct application_qc_items *profile_of(struct application_qc_item_actor *a)
-{return a->engine->provider->state.qc.qualified->items;}
+{return a->engine->items;}
 static bool scalar(struct application_qc_item_actor *a,const qa_qc_definition *f,const qa_qc_store_event *before,float *out,qa_error *e)
 {
     if(before&&f->offset>=before->word&&f->offset<before->word+before->count)memcpy(out,before->before+f->offset-before->word,sizeof(*out));
@@ -158,8 +216,10 @@ static bool read_entry(struct application_qc_item_actor *a,const application_qc_
     float count,capacity=s->constant_capacity;
     if(!physical_current(a,e)||!scalar(a,s->field,before,&count,e))return false;
     if(s->bits){uint32_t allowed=s->private_mask;for(size_t i=0;i<s->count;++i)allowed|=s->items[i].mask;
-        if(count<0||count>16777215||truncf(count)!=count||((uint32_t)count&~allowed))return application_fail(e,QA_ERROR_FORMAT,"QC item bits leave declared exact Source storage");
-        *out=(qa_inventory_entry){s->items[bit].item,((uint32_t)count&s->items[bit].mask)?1:0,1,QA_COUNT_STACK};return true;
+        if(a->engine->provider->state.qc.qualified &&
+            (count<0||count>16777215||truncf(count)!=count||((uint32_t)count&~allowed)))return application_fail(e,QA_ERROR_FORMAT,"QC item bits leave declared exact Source storage");
+        uint32_t bits=(uint32_t)qa_source_float_to_i32(count);
+        *out=(qa_inventory_entry){s->items[bit].item,(bits&s->items[bit].mask)?1:0,1,QA_COUNT_STACK};return true;
     }
     if(s->capacity&&!scalar(a,s->capacity,before,&capacity,e))return false;
     *out=(qa_inventory_entry){s->item,count,capacity,QA_COUNT_SOURCE_FLOAT};
@@ -183,8 +243,10 @@ static bool entry_write(void *context,const qa_inventory_entry *value,qa_error *
     if(!s||!qa_inventory_validate_entry(value,&normalized,e)||!read_entry(a,s,bit,NULL,&previous,e))return false;
     qa_qc_instance *vm=a->engine->provider->state.qc.instance;
     if(s->bits){float count;if(value->capacity!=1||(value->count!=0&&value->count!=1)||!scalar(a,s->field,NULL,&count,e))return false;
-        uint32_t bits=value->count!=0?((uint32_t)count|s->items[bit].mask):((uint32_t)count&~s->items[bit].mask);
-        return qa_qc_project_entity_float(vm,a->reference,s->field->offset,(float)bits,e);
+        uint32_t bits=(uint32_t)qa_source_float_to_i32(count);
+        bits=value->count!=0?(bits|s->items[bit].mask):(bits&~s->items[bit].mask);
+        float stored=a->engine->provider->state.qc.qualified?(float)bits:(float)(int32_t)bits;
+        return qa_qc_project_entity_float(vm,a->reference,s->field->offset,stored,e);
     }
     if(value->policy!=QA_COUNT_SOURCE_FLOAT||(!s->capacity&&value->capacity!=previous.capacity))return application_fail(e,QA_ERROR_ARGUMENT,"QC item write changes its immutable Source policy");
     if(!qa_qc_project_entity_float(vm,a->reference,s->field->offset,(float)normalized.count,e))return false;
@@ -221,7 +283,9 @@ static struct application_qc_item_actor *actor_create(struct application_qc_stat
 }
 bool application_qc_items_admit(struct application_qc_state *engine,qa_actor_id actor,qa_error *e)
 {
-    if(!engine->provider->state.qc.qualified||!engine->provider->state.qc.qualified->items)return true;
+    if(!engine->items)return true;
+    if(!engine->provider->state.qc.qualified &&
+        application_provider_for(engine->provider->application,actor,QA_ROLE_INVENTORY,"")!=engine->provider)return true;
     struct application_qc_item_actor *a=actor_find(engine,actor);
     if(a){
         if(!physical_current(a,e)||!qa_inventory_lease_current(engine->services.inventory,a->lease))return false;
@@ -268,7 +332,7 @@ bool application_qc_items_field_permission(struct application_qc_state *engine,q
 bool application_qc_items_source_stored(struct application_qc_state *engine,qa_qc_instance *vm,const qa_qc_store_event *event,qa_error *e)
 {
     (void)vm;qa_actor_id actor;
-    if(!engine->provider->state.qc.qualified||!engine->provider->state.qc.qualified->items||event->kind!=QA_QC_STORE_ENTITY||!event->entity_reference)return true;
+    if(engine->projecting||!engine->items||event->kind!=QA_QC_STORE_ENTITY||!event->entity_reference)return true;
     if(!qa_qc_reference_actor(engine->provider->state.qc.instance,event->entity_reference,&actor,e))return false;
     struct application_qc_item_actor *a=actor_find(engine,actor);if(!a)return true;
     if(!physical_current(a,e)||!qa_inventory_lease_current(engine->services.inventory,a->lease))return false;
@@ -292,7 +356,7 @@ bool application_qc_items_source_stored(struct application_qc_state *engine,qa_q
 }
 bool application_qc_items_saved_group(application_provider *provider,qa_actor_id actor,uint64_t serial,const qa_inventory_source_group *group,qa_inventory_items *out,qa_error *e)
 {
-    struct application_qc_state *engine=provider->state.qc.engine;const struct application_qc_items *p=provider->state.qc.qualified?provider->state.qc.qualified->items:NULL;
+    struct application_qc_state *engine=provider->state.qc.engine;const struct application_qc_items *p=engine?engine->items:NULL;
     if(!engine||!p||!serial||group->owner!=provider->owner||group->definitions_only||group->count!=p->definition_count)return application_fail(e,QA_ERROR_FORMAT,"Saved QC item group differs from its actual declaration");
     struct application_qc_item_actor *a=actor_find(engine,actor);
     if(a&&a->lease.serial!=serial)return application_fail(e,QA_ERROR_FORMAT,"Saved QC inventory duplicates full actor ownership");
@@ -312,9 +376,10 @@ bool application_qc_items_item_read(application_provider *provider,qa_actor_id a
 bool application_qc_items_restore_finish(application_provider *provider,qa_error *e)
 {
     struct application_qc_state *engine=provider->state.qc.engine;
-    if(!engine||!provider->state.qc.qualified||!provider->state.qc.qualified->items)return true;
+    if(!engine||!engine->items)return true;
     for(uint32_t slot=1;slot<=engine->max_clients;++slot){const application_qc_client *client=engine->clients+slot;
-        if(!client->connected||!client->spawned)continue;
+        if(!client->connected||!client->spawned || (!provider->state.qc.qualified &&
+            (client->spectator || application_provider_for(provider->application,client->actor,QA_ROLE_INVENTORY,"")!=provider)))continue;
         if(!application_qc_items_actor_current(engine,client->actor,e)||
             !application_qc_item_weapons_admit(engine,client->actor,e))
             return application_fail(e,QA_ERROR_FORMAT,"Restored QC client lacks its canonical saved item group");

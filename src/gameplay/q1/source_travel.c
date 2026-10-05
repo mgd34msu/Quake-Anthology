@@ -36,7 +36,7 @@ bool qa_q1_source_inventory_initialize(qa_q1_game *game, qa_actor_id actor, qa_e
             weapon == QA_Q1_AXE || weapon == QA_Q1_SHOTGUN ? 1 : 0, 1, false, error);
     for (int ammo = QA_Q1_SHELLS; ok && ammo <= QA_Q1_CELLS; ++ammo)
         ok = configure(&operation, actor, player, game->ammo[ammo],
-            ammo == QA_Q1_SHELLS ? 25 : 0, ammo == QA_Q1_NAILS ? 200 : 100, false, error);
+            ammo == QA_Q1_SHELLS ? 25 : 0, qa_q1_ammo_capacity((qa_q1_ammo)ammo), false, error);
     const char *keys[] = {"q1:key/silver", "q1:key/gold"};
     for (size_t i = 0; ok && i < sizeof(keys) / sizeof(*keys); ++i) {
         qa_item_id item;
@@ -52,7 +52,7 @@ bool qa_q1_source_inventory_initialize(qa_q1_game *game, qa_actor_id actor, qa_e
     if (game->options.program == QA_Q1_ROGUE) {
         for (int ammo = QA_Q1_LAVA_NAILS; ok && ammo <= QA_Q1_PLASMA_CELLS; ++ammo)
             ok = configure(&operation, actor, player, game->ammo[ammo], 0,
-                ammo == QA_Q1_LAVA_NAILS ? 200 : 100, true, error);
+                qa_q1_ammo_capacity((qa_q1_ammo)ammo), true, error);
         if (ok) ok = configure(&operation, actor, player, game->vengeance_item, 0, 1, true, error);
         if (ok) ok = configure(&operation, actor, player, game->weapons[QA_Q1_ROGUE_GRAPPLE],
             game->options.deathmatch && game->options.teamplay >= 4 ? 1 : 0, 1, false, error);

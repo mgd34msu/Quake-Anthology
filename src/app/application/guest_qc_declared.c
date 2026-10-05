@@ -492,8 +492,7 @@ bool application_qc_store_declared(struct application_qc_state *engine, qa_qc_in
     if (!qa_qc_reference_actor(vm, event->entity_reference, &actor, error) ||
         !qa_qc_slot(vm, (uint32_t)event->entity_reference / layout.stride_bytes, &binding)) return false;
     if (binding.kind != QA_QC_SLOT_BORROWED) return true;
-    if (!application_qc_items_source_stored(engine,vm,event,error) ||
-        !application_qc_protection_source_stored(engine,vm,event,error)) return false;
+    if (!application_qc_protection_source_stored(engine,vm,event,error)) return false;
     engine->projecting = true; bool ok = true;
     for (size_t i = 0; ok && i < profile->field_count; ++i) {
         const application_qc_bound_field *field = &profile->fields[i]; const qa_qc_definition *def = field->definition;

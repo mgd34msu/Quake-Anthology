@@ -32,6 +32,10 @@ static const char *const ammo_names[QA_Q1_AMMO_COUNT] = {
 const char *qa_q1_ammo_identity(qa_q1_ammo ammo) {
     return (unsigned)ammo < QA_Q1_AMMO_COUNT ? ammo_names[ammo] : NULL;
 }
+double qa_q1_ammo_capacity(qa_q1_ammo ammo) {
+    if ((unsigned)ammo >= QA_Q1_AMMO_COUNT) return 0;
+    return ammo == QA_Q1_NAILS || ammo == QA_Q1_LAVA_NAILS ? 200 : 100;
+}
 static const char *const weapon_models[QA_Q1_WEAPON_COUNT] = {
     "progs/v_axe.mdl",    "progs/v_shot.mdl",   "progs/v_shot2.mdl",  "progs/v_nail.mdl",
     "progs/v_nail2.mdl",  "progs/v_rock.mdl",   "progs/v_rock2.mdl",  "progs/v_light.mdl",

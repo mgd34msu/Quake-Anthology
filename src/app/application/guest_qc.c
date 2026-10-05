@@ -382,6 +382,7 @@ static bool stored(void *opaque, qa_qc_instance *vm, const qa_qc_store_event *ev
 {
     struct application_qc_state *engine = opaque;
     if (!application_qc_combat_source_stored(engine, vm, event, error)) return false;
+    if (!application_qc_items_source_stored(engine, vm, event, error)) return false;
     if (!application_qc_store_declared(engine, vm, event, error)) return false;
     if (!engine->provider->state.qc.qualified && !application_qc_project_body_store(engine, vm, event, error)) return false;
     if (event->kind != QA_QC_STORE_ENTITY || event->entity_reference == 0) return true;
@@ -1267,7 +1268,8 @@ bool application_construct_qc(qa_application *app, application_provider *provide
     bool created=qa_qc_game_create(provider->state.qc.program,&options,&provider->state.qc.game,error);
     free(regions);if(!created)return false;
     provider->state.qc.instance = qa_qc_game_instance(provider->state.qc.game);
-    if(!application_qc_combat_create(engine,error) || !application_qc_protection_create(engine,error))return false;
+    if(!application_qc_combat_create(engine,error) || !application_qc_protection_create(engine,error) ||
+        !application_qc_items_initialize(engine,error))return false;
     provider->component = (qa_component){.owner = provider->owner, .clock = provider->launch->selection.clock,
         .state = engine, .prepare_frame = prepare_frame, .begin_frame = begin_frame,
         .actor_frame = actor_frame, .end_frame = end_frame, .command_actor = command_actor};
@@ -1448,6 +1450,7 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     qa_buffer_free(&engine->original_extension);
     application_qc_rerelease_destroy(engine);
     qa_builtin_snapshot_free(&engine->observations);
+    application_qc_items_destroy(engine);
     free(engine->resources); free(engine->messages); free(engine->clients); free(engine->actors); free(engine);
     provider->state.qc.engine = NULL;
     return true;

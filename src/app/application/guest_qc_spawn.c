@@ -1,4 +1,5 @@
 #include "guest_qc_spawn.h"
+#include "guest_qc_items.h"
 #include "supplies.h"
 
 static bool client_current(struct application_qc_state *engine, qa_qc_instance *vm,
@@ -50,6 +51,10 @@ bool application_qc_spawn_call(void *opaque, qa_qc_instance *vm,
     if (!client_current(engine, vm, slot, actor, error) || !qa_qc_call_continue(next, error)) return false;
     if (!qa_qc_call_completed(next)) return true;
     if (!qa_actors_get(qa_session_actors(engine->services.session), actor)) return true;
+    /* The real PutClientInServer body has completed before supplies observe
+     * its items. Publish that client stage before binding the Source fields. */
+    engine->clients[slot].spawned = true;
     return client_current(engine, vm, slot, actor, error) &&
+        application_qc_items_admit(engine,actor,error) &&
         application_supplies_source_spawned(provider, actor, error);
 }

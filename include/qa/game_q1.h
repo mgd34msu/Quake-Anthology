@@ -541,6 +541,7 @@ typedef struct qa_q1_weapon_profile {
 /* Borrowed native source identities; no game or inventory admission occurs. */
 bool qa_q1_weapon_profile_identity(qa_q1_program, qa_q1_weapon, qa_q1_weapon_profile *);
 const char *qa_q1_ammo_identity(qa_q1_ammo);
+double qa_q1_ammo_capacity(qa_q1_ammo);
 bool qa_q1_weapon_source(qa_q1_program, uint32_t source_value, qa_q1_weapon *);
 qa_item_id qa_q1_ammo_item(const qa_q1_game *, qa_q1_ammo);
 

@@ -310,7 +310,8 @@ static bool bind_player(application_provider *provider, uint32_t slot, uint32_t 
         return application_fail(error, QA_ERROR_NOT_FOUND, "QuakeC client was removed during admission");
     client->spawned = true;
     qa_body_state body;
-    if (!qa_world_body_read(engine->world, actor, &body, error)) return false;
+    if ((!spectator && !application_qc_items_admit(engine,actor,error)) ||
+        !qa_world_body_read(engine->world, actor, &body, error)) return false;
     /* Source fields remain private, while the shared movement continuation is
      * admitted from the committed source spawn. */
     application_control_record *control;
@@ -399,7 +400,8 @@ bool application_qc_begin_player(application_provider *provider, qa_actor_id act
             return application_fail(error, QA_ERROR_NOT_FOUND, "QC source removed its reserved client during begin");
         client->spawned = true;
         qa_body_state body; application_control_record *control;
-        return qa_world_body_read(engine->world, actor, &body, error) &&
+        return (client->spectator || application_qc_items_admit(engine,actor,error)) &&
+            qa_world_body_read(engine->world, actor, &body, error) &&
             application_control_ensure(provider->application, actor, body.angles, &control, error);
     }
     return application_fail(error, QA_ERROR_NOT_FOUND, "QC source begin has no reserved connected client");

@@ -355,7 +355,7 @@ static bool reset_inventory(qa_q1_game_operation *operation, qa_actor_id actor,
         entries[weapons + i] = (qa_inventory_entry){
             .item = g->ammo[i],
             .count = i == QA_Q1_SHELLS ? 25 : 0,
-            .capacity = i == QA_Q1_NAILS || i == QA_Q1_LAVA_NAILS ? 200 : 100,
+            .capacity = qa_q1_ammo_capacity((qa_q1_ammo)i),
             .policy = QA_COUNT_SOURCE_FLOAT};
     size_t count = weapons + ammo;
     if (!qa_inventory_has(g->services.inventory, actor)) {

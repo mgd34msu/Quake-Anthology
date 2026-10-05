@@ -25,6 +25,8 @@ struct application_qc_items {
     struct application_qc_item_weapons *weapons;
 };
 bool application_qc_items_qualify(application_provider *, const qa_json_document *, qa_json_id, qa_error *);
+bool application_qc_items_initialize(struct application_qc_state *, qa_error *);
+void application_qc_items_destroy(struct application_qc_state *);
 void application_qc_items_profile_free(struct application_qc_items *);
 bool application_qc_items_actor_current(struct application_qc_state *, qa_actor_id, qa_error *);
 bool application_qc_items_admit(struct application_qc_state *, qa_actor_id, qa_error *);

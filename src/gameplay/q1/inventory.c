@@ -79,7 +79,7 @@ bool q1_inventory_attach(qa_q1_game_operation *operation, q1_player *player,
     if (game->options.program == QA_Q1_ROGUE) {
         for (int ammo = QA_Q1_LAVA_NAILS; ammo <= QA_Q1_PLASMA_CELLS; ++ammo)
             if (!attach_item(operation, actor, player, game->ammo[ammo],
-                ammo == QA_Q1_LAVA_NAILS ? 200 : 100, true, 0, error))
+                qa_q1_ammo_capacity((qa_q1_ammo)ammo), true, 0, error))
                 return false;
         if (!attach_item(operation, actor, player, game->vengeance_item, 1, true, 0, error) ||
             !attach_item(operation, actor, player, game->weapons[QA_Q1_ROGUE_GRAPPLE], 1,
