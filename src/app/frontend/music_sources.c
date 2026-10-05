@@ -537,11 +537,10 @@ static bool absent_command(frontend_music_sources *owner, const qa_command_invoc
         }
     } else if (!strcmp(command, "info")) {
         bool enabled = false; const qa_cvar_view *row = qa_cvars_find(qa_application_cvars(owner->application), "bgmvolume");
-        double gain = 0; char value[32], text[64];
-        ok = qa_audio_music_controls_enabled(owner->controls, &enabled) && row && row->value &&
-            qa_parse_ecmascript_number((qa_bytes){(const uint8_t *)row->value, strlen(row->value)}, &gain, e) && isfinite(gain);
+        char value[32], text[64];
+        ok = qa_audio_music_controls_enabled(owner->controls, &enabled) && row && row->value && isfinite(row->number);
         if (ok) ok = command_print(owner, call, enabled ? "Not playing.\n" : "CD music is disabled.\n", e) &&
-            qa_format_ecmascript_number(fmax(0, fmin(1, gain)), value, e);
+            qa_format_fixed(fmax(0, fmin(1, row->number)), 6, value, sizeof(value), e);
         if (ok) { snprintf(text, sizeof(text), "Volume is %s\n", value); ok = command_print(owner, call, text, e); }
     } else if (!strcmp(command, "close") || !strcmp(command, "eject")) {
         char text[128]; snprintf(text, sizeof(text), "cd %s: disc tray operations are unavailable with file-backed music.\n", command);

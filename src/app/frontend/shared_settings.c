@@ -152,12 +152,11 @@ bool frontend_shared_settings_constructor_settings(frontend_shared_settings *own
     }
     double width=row[0]->number!=0.0f?(double)row[0]->number:(double)display->width;
     double height=row[1]->number!=0.0f?(double)row[1]->number:(double)display->height;
-    double fullscreen=row[2]->number,swap=row[3]->number,brightness=0;
+    double fullscreen=row[2]->number,swap=row[3]->number,brightness=row[4]->number;
     if (!isfinite(width) || !isfinite(height) || floor(width)!=width || floor(height)!=height ||
         width<64 || width>16384 || height<64 || height>16384 ||
         (fullscreen!=0 && fullscreen!=1) || (swap!=0 && swap!=1) ||
-        !qa_parse_ecmascript_number((qa_bytes){(const uint8_t *)row[4]->value,strlen(row[4]->value)},
-            &brightness,error) || !isfinite(brightness) || brightness<.5 || brightness>3)
+        !isfinite(brightness) || brightness<.5 || brightness>3)
         return fail(error,"Bootstrap native settings require valid size, fullscreen, swap and brightness");
     qa_audio_output_format prepared_output; float prepared_effects,prepared_music;
     qa_input_platform_settings prepared_input;

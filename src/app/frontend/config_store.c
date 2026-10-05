@@ -529,7 +529,7 @@ static bool images_view(frontend_config_store *manager,frontend_shared_values *v
     const frontend_shared_view_preferences *view=frontend_shared_storage_view(manager->storage);
     if (manager->frontend->options.dedicated || !view || !view->present) return true;
     char value[64];
-    if (!qa_format_ecmascript_number(view->field_of_view,value,error)) return false;
+    if (!qa_format_number(view->field_of_view,value,error)) return false;
     qa_cvar_archive_entry row={(char *)"fov",value};
     qa_cvar_archive loaded={.entries=&row,.count=1};
     if (!frontend_shared_values_archive(values,&loaded,error)) return false;
@@ -3877,7 +3877,7 @@ bool frontend_config_store_client_settings_seed(frontend_config_store *manager,
     const frontend_shared_view_preferences *view=frontend_shared_storage_view(manager->storage);
     if (!manager->image_fov_touched && view && view->present) {
         char text[64];
-        if (!qa_format_ecmascript_number(view->field_of_view,text,error) || !archive_remember(snapshot,"fov",text,error)) return false;
+        if (!qa_format_number(view->field_of_view,text,error) || !archive_remember(snapshot,"fov",text,error)) return false;
         qa_cvar_archive_entry row={(char *)"fov",text}; qa_cvar_archive one={.entries=&row,.count=1};
         if (!frontend_shared_values_archive(values,&one,error)) return false;
     }

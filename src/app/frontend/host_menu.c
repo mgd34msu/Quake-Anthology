@@ -126,7 +126,7 @@ static bool opened(void *context,uint32_t seat,qa_error *error)
 static bool port_number(const char *text,uint16_t *out,qa_error *error)
 {
     double value;
-    if(!qa_parse_ecmascript_number((qa_bytes){(const uint8_t *)text,strlen(text)},&value,NULL) ||
+    if(!qa_parse_number((qa_bytes){(const uint8_t *)text,strlen(text)},&value,NULL) ||
        !isfinite(value) || value!=floor(value) || value<1 || value>65535)
         return fail(error,QA_ERROR_ARGUMENT,"Port must be a whole number from 1 to 65535.");
     *out=(uint16_t)value; return true;

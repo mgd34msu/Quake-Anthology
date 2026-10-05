@@ -31,18 +31,8 @@ bool qa_q2_userinfo_field_of_view_read(const char *text, double *out, qa_error *
     while ((p = pair_read(p, &pair)) != NULL) {
         if (pair.key_size == 3 && !memcmp(pair.key, "fov", 3)) {
             char *end;
-            qa_bytes bytes = {(const uint8_t *)pair.value, pair.value_size};
-            size_t offset = 0;
-            while (offset < bytes.size) {
-                size_t next = offset; uint32_t scalar;
-                if (!qa_utf8_next(bytes, &next, &scalar) || !qa_unicode_whitespace(scalar)) break;
-                offset = next;
-            }
-            const char *start = pair.value + offset;
-            const char *digits = start;
-            if (*digits == '+' || *digits == '-') ++digits;
-            int base = digits[0] == '0' && (digits[1] == 'x' || digits[1] == 'X') ? 16 : 10;
-            long value = strtol(start, &end, base);
+            const char *start = pair.value;
+            long value = strtol(start, &end, 10);
             *out = end == start ? 0 : value > INT_MAX ? INT_MAX :
                 value < INT_MIN ? INT_MIN : (int)value;
             return true;
@@ -67,7 +57,7 @@ bool qa_q2_userinfo_field_of_view(const char *text, double fov,
     }
     info_pair *pairs = calloc(length / 2 + 1, sizeof(*pairs));
     char number[32];
-    if (!qa_format_ecmascript_number(fov, number, e)) { free(pairs); return false; }
+    if (!qa_format_number(fov, number, e)) { free(pairs); return false; }
     char *copy = malloc(length + sizeof(number) + 6);
     if (!pairs || !copy) {
         free(pairs); free(copy);

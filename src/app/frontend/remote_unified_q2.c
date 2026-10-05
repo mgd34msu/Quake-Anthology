@@ -1220,7 +1220,7 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_document *d,q
         char s[32],p[32],m[32];
         okay=string(d,get(j,r,"name"),&name,e) && number(d,get(j,r,"score"),&score,e) && number(d,get(j,r,"ping"),&ping,e) &&
             number(d,get(j,r,"minutes"),&minutes,e) && qa_json_bool(j,get(j,r,"spectator"),&spectator,e) &&
-            qa_format_ecmascript_number(score,s,e) && qa_format_ecmascript_number(ping,p,e) && qa_format_ecmascript_number(minutes,m,e);
+            qa_format_number(score,s,e) && qa_format_number(ping,p,e) && qa_format_number(minutes,m,e);
         if (okay && name.size<=SIZE_MAX-128) {
             scores[i]=malloc(name.size+128); okay=scores[i]!=NULL;
             if (okay) snprintf(scores[i],name.size+128,"%s  %s  %sms  %sm%s",s,(const char *)name.data,p,m,spectator?"  Spectator":"");
@@ -2195,7 +2195,7 @@ bool frontend_unified_q2_hud(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect view
     if (okay && o->inventory_visible) {
         okay=overlay_text(ui,viewport,frame,"Inventory",160,80,(qa_scene_vec4){1,1,1,1},e);
         for (size_t i=0;okay && i<o->item_count;++i) {
-            char count[32]; if (!qa_format_ecmascript_number(o->items[i].count,count,e)) { okay=false; break; }
+            char count[32]; if (!qa_format_number(o->items[i].count,count,e)) { okay=false; break; }
             size_t label_size=strlen(o->items[i].label); if (label_size>SIZE_MAX-64) { okay=false; break; }
             char *row=malloc(label_size+64); if (!row) { okay=false; break; }
             snprintf(row,label_size+64,"%s  %s",count,o->items[i].label);

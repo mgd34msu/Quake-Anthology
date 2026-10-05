@@ -51,14 +51,6 @@ bool qa_format_quake_float(float value, char out[64], qa_error *error);
 size_t qa_format_q3_integer(int32_t value, char out[12]);
 /* Finite double serialization in the same C locale, with round-trip precision. */
 bool qa_format_number(double value, char out[32], qa_error *error);
-/* ECMAScript Number/String spelling: shortest round-tripping binary64,
- * closest decimal with even ties, fixed/scientific thresholds, and -0 as 0. */
-bool qa_format_ecmascript_number(double value, char out[32], qa_error *error);
-/* ECMAScript StringNumericLiteral conversion, including Unicode trim,
- * unsigned binary/octal/hex integers and signed decimal/Infinity. Empty
- * trimmed text produces zero. Invalid grammar fails without changing output;
- * callers separately qualify nonempty, finite and domain requirements. */
-bool qa_parse_ecmascript_number(qa_bytes, double *, qa_error *);
 /* Fixed decimal C-locale formatting, rounding ties to even. Nonfinite values
  * use nan/inf/-inf. Capacity includes NUL; failure empties a valid output. */
 bool qa_format_fixed(double value, unsigned digits, char *out, size_t capacity, qa_error *error);

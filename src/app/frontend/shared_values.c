@@ -336,7 +336,7 @@ bool frontend_shared_values_window_observed(frontend_shared_values *owner,const 
     for (size_t i=info->fullscreen==QA_DISPLAY_WINDOWED?0:2;i<4;++i) {
         if (i==3 && !opengl) continue;
         char text[32];
-        if (!qa_format_ecmascript_number(values[i].value,text,error) ||
+        if (!qa_format_number(values[i].value,text,error) ||
             !qa_cvars_edit_apply(owner->edit,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET,
                 .name=values[i].name,.value=text,.force=true},error)) return false;
     }

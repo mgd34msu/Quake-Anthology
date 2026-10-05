@@ -149,8 +149,8 @@ static bool valid_size(const frontend_seat *seat, uint32_t *width, uint32_t *hei
 {
     double w,h;
     if (!*seat->menu_width || !*seat->menu_height ||
-        !qa_parse_ecmascript_number((qa_bytes){(const uint8_t *)seat->menu_width,strlen(seat->menu_width)},&w,NULL) ||
-        !qa_parse_ecmascript_number((qa_bytes){(const uint8_t *)seat->menu_height,strlen(seat->menu_height)},&h,NULL) ||
+        !qa_parse_number((qa_bytes){(const uint8_t *)seat->menu_width,strlen(seat->menu_width)},&w,NULL) ||
+        !qa_parse_number((qa_bytes){(const uint8_t *)seat->menu_height,strlen(seat->menu_height)},&h,NULL) ||
         !isfinite(w) || !isfinite(h) || floor(w)!=w || floor(h)!=h || w<320 || h<200 || w>8192 || h>8192) return false;
     *width=(uint32_t)w; *height=(uint32_t)h; return true;
 }

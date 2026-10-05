@@ -281,7 +281,7 @@ static bool message(packed_parser *parser,char output[256],size_t *size,qa_error
         if(token.kind==QA_SCRIPT_STRING) value=string_value(&token);
         else if(token.kind==QA_SCRIPT_NUMBER && (token.subtype&QA_SCRIPT_INTEGER)) {
             if(length+7>256) return grammar(parser,error,"chat message too long\n");
-            if(!qa_format_ecmascript_number(token.integer,number,error)) return false;
+            (void)snprintf(number,sizeof(number),"%d",token.integer);
             value=(qa_bytes){(const uint8_t *)number,strlen(number)};marker='v';
         } else if(token.kind==QA_SCRIPT_NAME) {
             if(length+7>256) return grammar(parser,error,"chat message too long\n");

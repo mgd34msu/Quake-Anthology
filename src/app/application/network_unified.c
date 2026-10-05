@@ -654,10 +654,9 @@ static bool command_provider(application_provider *provider, const qa_command_in
 
 static int32_t command_color(const char *word)
 {
-    double value;
-    if (!qa_parse_ecmascript_number((qa_bytes){(const uint8_t *)word, strlen(word)}, &value, NULL) ||
-        !isfinite(value)) return 0;
-    return value <= 0 ? 0 : value >= 13 ? 13 : (int32_t)trunc(value);
+    long value=strtol(word,NULL,10);
+    unsigned long color=(unsigned long)value & 15u;
+    return color>13?13:(int32_t)color;
 }
 
 bool application_unified_player_command(qa_application *app, qa_net_client_id client,

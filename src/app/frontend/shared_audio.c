@@ -53,10 +53,11 @@ static bool fail(qa_error *error,const char *text)
 static bool number(const qa_cvars_edit *edit,const char *name,double *out,qa_error *error)
 {
     const qa_cvar_view *row=qa_cvars_edit_find(edit,name);
-    if (!row || !row->value || !qa_parse_ecmascript_number(
-        (qa_bytes){(const uint8_t *)row->value,strlen(row->value)},out,error) || !isfinite(*out))
-        return fail(error,"Prepared audio setting has no finite canonical value");
-    return true;
+    if (!row || !row->value || !isfinite(row->number)) {
+        (void)fail(error,"Prepared audio setting has no finite canonical value");
+        return false;
+    }
+    *out=row->number; return true;
 }
 bool frontend_shared_audio_configuration(const qa_cvars_edit *edit,qa_audio_output_format *output,
     float *effects,float *music,qa_error *error)

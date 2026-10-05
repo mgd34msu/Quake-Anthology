@@ -48,20 +48,13 @@ static bool model_policy_rows(const qa_cvar_view *const rows[5], frontend_model_
     frontend_model_policy policy = {.q1_enhanced = rows[0]->number != 0,
         .q2_load = rows[1]->number != 0, .q2_use = rows[2]->number != 0,
         .q2_distance = rows[3]->number};
-    qa_bytes input = {(const unsigned char *)rows[4]->value, strlen(rows[4]->value)};
-    size_t cursor = 0, start = SIZE_MAX, end = 0;
-    uint32_t scalar;
-    while (cursor < input.size) {
-        size_t begin = cursor;
-        if (!qa_utf8_next(input, &cursor, &scalar))
-            return policy_fail(error, "r_model_distance must contain valid UTF-8");
-        if (!qa_unicode_whitespace(scalar)) {
-            if (start == SIZE_MAX) start = begin;
-            end = cursor;
-        }
+    const unsigned char *text = (const unsigned char *)rows[4]->value;
+    size_t length = strlen(rows[4]->value);
+    while (length && (*text == ' ' || (*text >= '\t' && *text <= '\r'))) {
+        ++text; --length;
     }
-    const unsigned char *text = input.data + (start == SIZE_MAX ? 0 : start);
-    size_t length = start == SIZE_MAX ? 0 : end - start;
+    while (length && (text[length - 1] == ' ' ||
+        (text[length - 1] >= '\t' && text[length - 1] <= '\r'))) --length;
     static const char source[] = "source";
     policy.source_distance = length == sizeof(source) - 1;
     for (size_t i = 0; policy.source_distance && i < length; ++i) {
@@ -70,7 +63,7 @@ static bool model_policy_rows(const qa_cvar_view *const rows[5], frontend_model_
         if (c != (unsigned char)source[i]) policy.source_distance = false;
     }
     if (!policy.source_distance) {
-        if (!qa_parse_ecmascript_number((qa_bytes){text, length}, &policy.distance, error) || !isfinite(policy.distance))
+        if (!qa_parse_number((qa_bytes){text, length}, &policy.distance, error) || !isfinite(policy.distance))
             return policy_fail(error, "r_model_distance must be source or a finite number");
     }
     *out = policy; return true;

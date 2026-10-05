@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/settings_server_profile.h"
 #include "qa/text.h"
+#include <stdio.h>
 
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 #define VALUE(name_) {QA_SERVER_SETTING_VALUE, name_, 0, false}
@@ -165,17 +166,13 @@ bool qa_server_setting_parse(const qa_server_setting_definition *definition,
         else return settings_fail(error, "Server toggle requires a boolean");
         break;
     case QA_SERVER_SETTING_NUMBER: {
-        size_t cursor = 0; uint32_t scalar; bool nonempty = false;
-        while (qa_utf8_next(bytes, &cursor, &scalar))
-            if (!qa_unicode_whitespace(scalar)) { nonempty = true; break; }
         double value;
-        if (!nonempty) return settings_fail(error, "Server number requires nonempty numeric text");
-        if (!qa_parse_ecmascript_number(bytes, &value, error)) return false;
+        if (!qa_parse_number(bytes, &value, error)) return false;
         if (!isfinite(value) || value < definition->control.number.minimum ||
             value > definition->control.number.maximum ||
             (definition->control.number.integer && (floor(value) != value || fabs(value) > 9007199254740991.0)))
             return settings_fail(error, "Server number is outside its allowed range");
-        if (!qa_format_ecmascript_number(value, number, error)) return false;
+        if (!qa_format_number(value, number, error)) return false;
         normalized = number;
         break;
     }
@@ -234,7 +231,7 @@ static bool profile_version(const qa_json_document *document, qa_json_id root, q
     double version;
     return settings_object(document, root, error) &&
         (qa_json_type(document, id) == QA_JSON_NUMBER || settings_fail(error, "Unsupported server profile version")) &&
-        qa_parse_ecmascript_number(qa_json_source(document, id), &version, error) &&
+        qa_parse_number(qa_json_source(document, id), &version, error) &&
         (version == 1 || settings_fail(error, "Unsupported server profile version"));
 }
 
@@ -337,16 +334,13 @@ bool qa_server_profile_apply_startup(const qa_server_profile *profile,
             const char *desired = NULL;
             if (!owner->read_desired(owner->context, target->name, &desired, error) || !desired) { ok = false; break; }
             double number = 0;
-            qa_error numeric = {0};
-            if (!qa_parse_ecmascript_number((qa_bytes){(const unsigned char *)desired, strlen(desired)}, &number, &numeric) &&
-                numeric.code != QA_ERROR_FORMAT) {
-                if (error) *error = numeric;
-                ok = false; break;
-            }
-            uint32_t bits = (uint32_t)qa_number_to_i32(number);
+            if (!qa_parse_atof(desired, &number, error)) { ok = false; break; }
+            uint32_t bits = (uint32_t)qa_source_float_to_i32((float)number);
             bool enabled = (!strcmp(value, "1")) != target->inverted;
             bits = enabled ? bits | target->mask : bits & ~target->mask;
-            if (!qa_format_ecmascript_number((double)bits, merged, error)) { ok = false; break; }
+            int32_t integer;
+            memcpy(&integer, &bits, sizeof(integer));
+            (void)snprintf(merged, sizeof(merged), "%d", integer);
             value = merged;
         }
         ok = owner->write_initial(owner->context, target->name, value, error);

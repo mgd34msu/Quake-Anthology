@@ -119,7 +119,7 @@ static bool audio_load(frontend_shared_storage *owner,qa_error *e)
     static const char *const fields[]={"s_outputRate","s_outputBits","s_outputChannels","volume","bgmvolume"};
     const double values[]={value.format.sample_rate,value.format.sample_bits,value.format.channels,value.effects,value.music};
     for (size_t i=0;i<sizeof(fields)/sizeof(*fields);++i)
-        if (!qa_format_ecmascript_number(values[i],text,e) || !archive_add(owner,fields[i],text,e)) return false;
+        if (!qa_format_number(values[i],text,e) || !archive_add(owner,fields[i],text,e)) return false;
     return (!value.has_shuffle || archive_add(owner,"music_shuffle",value.shuffle?"1":"0",e)) &&
         (!value.has_menu_track || archive_add(owner,"music_menu_track",value.menu_track,e));
 }

@@ -789,12 +789,12 @@ static bool draw_report(frontend_unified_q2_rr_hud *o, rr_draw *draw, qa_error *
     for (size_t i=0; i<count; ++i) {
         const rr_level *level=order[i].level; const char *name=*level->name?level->name:level->map;
         char killed[32],monsters[32],secrets[32],total[32],minutes[32],seconds[32];
-        if (!qa_format_ecmascript_number(level->killed_monsters,killed,e) ||
-            !qa_format_ecmascript_number(level->total_monsters,monsters,e) ||
-            !qa_format_ecmascript_number(level->found_secrets,secrets,e) ||
-            !qa_format_ecmascript_number(level->total_secrets,total,e) ||
-            !qa_format_ecmascript_number(floor(level->time/60),minutes,e) ||
-            !qa_format_ecmascript_number(floor(fmod(level->time,60)),seconds,e)) return false;
+        if (!qa_format_number(level->killed_monsters,killed,e) ||
+            !qa_format_number(level->total_monsters,monsters,e) ||
+            !qa_format_number(level->found_secrets,secrets,e) ||
+            !qa_format_number(level->total_secrets,total,e) ||
+            !qa_format_number(floor(level->time/60),minutes,e) ||
+            !qa_format_number(floor(fmod(level->time,60)),seconds,e)) return false;
         size_t size=strlen(name); if (size>SIZE_MAX-256) return fail(e,"RR unit report row exceeds storage");
         char *line=qa_arena_alloc(&draw->frame->storage,size+256,1,e);
         if (!line) return false;
@@ -867,7 +867,7 @@ bool frontend_unified_q2_rr_draw(frontend_unified_q2_rr_hud *o, qa_ui *ui,
         if (o->coop.value.coop.state)
             okay=draw_text(&draw,o->coop.localized,320,360,QA_FONT_ALIGN_CENTER,(qa_scene_vec4){1,.8f,.3f,1},e);
         if (okay && o->coop.value.coop.lives!=0) {
-            char lives[32]; okay=qa_format_ecmascript_number(o->coop.value.coop.lives,lives,e) &&
+            char lives[32]; okay=qa_format_number(o->coop.value.coop.lives,lives,e) &&
                 draw_text(&draw,lives,624,2,QA_FONT_ALIGN_RIGHT,(qa_scene_vec4){1,1,1,1},e) &&
                 draw_text(&draw,o->coop.secondary_localized,624,28,QA_FONT_ALIGN_RIGHT,(qa_scene_vec4){1,1,1,1},e);
         }

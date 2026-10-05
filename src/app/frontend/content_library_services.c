@@ -152,7 +152,7 @@ static bool progress_load(frontend_content_library_services *owner, qa_error *er
         char description[160], score[32];
         const char *source = event.source == QA_GAME_Q1 ? "Q1" : event.source == QA_GAME_Q2 ? "Q2" : "Q3";
         if (event.kind == QA_PROGRESS_MATCH_COMPLETED) {
-            okay = qa_format_ecmascript_number(event.value.match.score, score, error);
+            okay = qa_format_number(event.value.match.score, score, error);
             if (okay) snprintf(description, sizeof(description), "%s · Match completed · Score %s", source, score);
         } else snprintf(description, sizeof(description), "%s · %s", source,
             event.kind == QA_PROGRESS_ACHIEVEMENT ? "Achievement earned" : "Level completed");

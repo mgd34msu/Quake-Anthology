@@ -72,28 +72,21 @@ static bool expand(qa_bot_chat *state, const char *source, uint32_t context,
         char *variable_value=NULL;
         char variable[256];
         if (kind == 'v') {
-            if(size>SIZE_MAX/2) {free(key);qa_error_set(e,QA_ERROR_MEMORY,0,"Chat numeric argument exceeds native extent");return false;}
-            uint8_t *utf8=malloc(size?size*2:1);size_t count=0;
-            if(!utf8) {free(key);qa_error_set(e,QA_ERROR_MEMORY,0,"Reading byte-valued chat numeric argument");return false;}
-            for(size_t i=0;i<size;++i) {
-                uint8_t byte=(uint8_t)key[i];
-                if(byte>=128) {utf8[count++]=(uint8_t)(0xc0u|(byte>>6));utf8[count++]=(uint8_t)(0x80u|(byte&63u));}
-                else utf8[count++]=byte;
+            uint32_t number=0; bool numeric_ok=true;
+            for (size_t i=0;i<size;++i) {
+                unsigned char byte=(unsigned char)key[i];
+                if (byte<'0' || byte>'9') { numeric_ok=false; break; }
+                number=number*10u+(unsigned)(byte-'0');
+                if (number>=8) { numeric_ok=false; break; }
             }
-            double number;qa_error numeric={0};
-            bool numeric_ok=qa_parse_ecmascript_number((qa_bytes){utf8,count},&number,&numeric);
-            free(utf8);
-            if(!numeric_ok && numeric.code!=QA_ERROR_FORMAT) {
-                free(key);if(e) *e=numeric;return false;
-            }
-            if(!numeric_ok || !isfinite(number) || trunc(number)!=number || number<0 || number>=8) {
+            if(!numeric_ok) {
                 size_t capacity=size+40;char *diagnostic=malloc(capacity);
                 if(!diagnostic) {free(key);qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining invalid chat variable diagnostic");return false;}
                 (void)snprintf(diagnostic,capacity,"message variable %s outside 0..7",key);
                 *stopped=true;bool ok=chat_print(state->system,QA_SCRIPT_ERROR,diagnostic,e);
                 free(diagnostic);free(key);return ok;
             }
-            uint32_t index=(uint32_t)number;
+            uint32_t index=number;
             if(match->variables[index].offset<0) {free(key);continue;}
             if (!qa_bot_chat_match_variable(match, index, variable, sizeof(variable), e) ||
                 !chat_replace_source(state->system,variable,variable_context,false,reply,&variable_value,e)) {

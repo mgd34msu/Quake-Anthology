@@ -609,7 +609,7 @@ static bool localize_piece(q1_group *g,const qa_unified_document *doc,qa_json_id
     size_t count=qa_json_size(j,args);if(count>8){qa_buffer_free(&base);return fail(e,"Q1 message exceeds eight Source arguments");}
     qa_buffer values[8]={{0}};const char *argv[8]={0};char numeric[8][32];bool ok=true;
     for(size_t i=0;ok && i<count;++i){qa_json_id a=qa_json_at(j,args,i);if(qa_json_type(j,a)==QA_JSON_STRING){ok=string(doc,a,&values[i],e);argv[i]=(char *)values[i].data;}
-        else {double n;ok=number(doc,a,&n,e) && qa_format_ecmascript_number(n,numeric[i],e);argv[i]=numeric[i];}}
+        else {double n;ok=number(doc,a,&n,e) && qa_format_number(n,numeric[i],e);argv[i]=numeric[i];}}
     if(ok){out->data=malloc(65536);if(!out->data)ok=frontend_unified_fail(e,QA_ERROR_MEMORY,"Resolving received Q1 message");
         else if(g->product->edition!=QA_EDITION_RERELEASE && (base.data[0]!='$' || !qa_localization_find(g->localization,(char *)base.data+1))){
             ok=qa_q1_classic_text((char *)base.data,argv,count,(char *)out->data,65536,e);if(ok)out->size=strlen((char *)out->data);}

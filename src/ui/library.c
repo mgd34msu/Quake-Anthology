@@ -433,15 +433,13 @@ static bool arena_menu(qa_ui_library *m,size_t *count,qa_error *error) {
     if (m->arena_tier==INT32_MIN && m->tier_count) {
         int32_t selected=-1;
         const qa_cvar_view *saved=qa_cvars_find(progress->cvars,"ui_spSelection");
-        if (saved && strspn(saved->value," \t\r\n\v\f")!=strlen(saved->value)) {
-            double selection=0; qa_error ignored={0};
-            if (qa_parse_ecmascript_number((qa_bytes){(const uint8_t *)saved->value,strlen(saved->value)},&selection,&ignored)) {
-                for (size_t i=0;i<maximum;++i) {
-                    const qa_base_arena *a=qa_base_arena_catalog_at(catalog,i); bool available=false;
-                    if ((double)a->selection==selection && (*a->special || a->number<levels.regular_levels)) {
-                        if (!qa_arena_progress_available(progress,a->number,&available,error)) return false;
-                        if (available) { selected=a->number; break; }
-                    }
+        if (saved && isfinite(saved->number)) {
+            double selection=saved->number;
+            for (size_t i=0;i<maximum;++i) {
+                const qa_base_arena *a=qa_base_arena_catalog_at(catalog,i); bool available=false;
+                if ((double)a->selection==selection && (*a->special || a->number<levels.regular_levels)) {
+                    if (!qa_arena_progress_available(progress,a->number,&available,error)) return false;
+                    if (available) { selected=a->number; break; }
                 }
             }
         }

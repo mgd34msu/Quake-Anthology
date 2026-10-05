@@ -203,10 +203,10 @@ bool frontend_shared_publication_prepare(frontend_shared_settings *owner,
     bool complete=false;
     if (!frontend_input_settings_release_advance(owner->input,&complete,e) || !complete ||
         !frontend_input_settings_enter(owner->input,e)) return false;
-    const qa_cvar_view *gamma_row=qa_cvars_edit_find(edit,"r_gamma"); double gamma=0;
-    if (!gamma_row || !gamma_row->value || !qa_parse_ecmascript_number(
-        (qa_bytes){(const uint8_t *)gamma_row->value,strlen(gamma_row->value)},&gamma,e) ||
-        !isfinite(gamma) || gamma<.5 || gamma>3) return fail(e,"Final brightness lacks its actual canonical scalar");
+    const qa_cvar_view *gamma_row=qa_cvars_edit_find(edit,"r_gamma");
+    if (!gamma_row || !gamma_row->value || !isfinite(gamma_row->number) ||
+        gamma_row->number<.5 || gamma_row->number>3) return fail(e,"Final brightness lacks its actual canonical scalar");
+    double gamma=gamma_row->number;
     qa_display_info info; int swap=0;
     if (window) {
         if (!frontend_shared_video_prepare(f,&settings,(float)gamma,owner->input,&ticket->video,e) ||

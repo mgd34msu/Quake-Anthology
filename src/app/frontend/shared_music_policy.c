@@ -888,7 +888,7 @@ bool frontend_music_policy_command(frontend_music_policy *owner, const qa_comman
                     snprintf(text, n, "%s %s track %s%s\n", player.paused ? "Paused" : "Currently", owner->state.looping ? "looping" : "playing", owner->state.track, mapped);
                     ok = print(owner, call, text, e); free(text); }
             }
-            if (ok) { char value[32], text[64]; ok = qa_format_ecmascript_number(player.target_volume, value, e);
+            if (ok) { char value[32], text[64]; ok = qa_format_number(player.target_volume, value, e);
                 if (ok) { snprintf(text, sizeof(text), "Volume is %s\n", value); ok = print(owner, call, text, e); } }
         } else { size_t n = strlen(command) + 32; char *text = malloc(n);
             if (!text) ok = frontend_fail(e, QA_ERROR_MEMORY, "Retaining unknown CD command output");

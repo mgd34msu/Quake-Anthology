@@ -184,7 +184,7 @@ static char *info_replace(const char *text,const char *key,const char *value,boo
 static bool color_team(const char *text,int32_t *out,qa_error *e)
 {
     double number;
-    if(!text||!qa_parse_ecmascript_number((qa_bytes){(const uint8_t *)text,strlen(text)},&number,e)) return false;
+    if(!text||!qa_parse_number((qa_bytes){(const uint8_t *)text,strlen(text)},&number,e)) return false;
     if(!isfinite(number)||trunc(number)!=number||number<1||number>14)
         return application_fail(e,QA_ERROR_ARGUMENT,"Component team has no original Quake color command");
     *out=(int32_t)number;return true;
