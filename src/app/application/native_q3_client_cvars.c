@@ -174,7 +174,7 @@ bool qa_native_q3_client_defaults(const qa_launch_instance *descriptor, qa_cvars
     const qa_product *product = catalog ? qa_catalog_product(catalog, descriptor->selection.product) : NULL;
     if (!descriptor || !descriptor->storage || !descriptor->content || !product ||
         product->family != QA_GAME_Q3 || !registry || qa_cvars_dialect(registry) != QA_CONSOLE_Q3 ||
-        !command || !command->session || !command->owner || command->origin != QA_COMMAND_SEAT ||
+        !command || !command->owner || command->origin != QA_COMMAND_SEAT ||
         command->dialect != QA_CONSOLE_Q3)
         return native_client_fail(error, QA_ERROR_ARGUMENT, "Q3 defaults require their actual catalog CLIENT and seat registry");
     qa_native_q3_character_declaration defaults;
