@@ -628,7 +628,9 @@ bool qa_application_travel_read(const qa_application *, qa_application_travel_vi
 /* The application owns departed world state and the genuine player carry.
  * A cached destination is imported by the same ordinary save reader. */
 bool qa_application_campaign_depart(qa_application *, uint64_t revision, bool *needed, qa_error *);
-bool qa_application_campaign_stage(qa_application *, const struct qa_save_image *, qa_error *);
+struct qa_q2_save_level;
+bool qa_application_campaign_stage(qa_application *, const struct qa_save_image *,
+    struct qa_q2_save_level *, qa_error *);
 qa_bytes qa_application_campaign_restore(const qa_application *);
 bool qa_application_campaign_reenter(qa_application *candidate, qa_application *previous, qa_error *);
 bool qa_application_commit_travel(qa_application *, uint64_t revision, qa_error *);

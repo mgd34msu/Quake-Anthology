@@ -8,6 +8,7 @@
 #include "unified_q2_native_events.h"
 #include "native_q2_console.h"
 #include "guest_native_q2_private.h"
+#include "guest_native_q2_original_save.h"
 #include "map_travel_private.h"
 #include "map_players_private.h"
 #include "portals.h"
@@ -2650,6 +2651,8 @@ static bool q2_spawn_map(application_provider *provider,
     services.spawn = q2_spawn;
     if (!qa_q2_entities_configure(provider->state.q2, &services, error))
         return false;
+    if (!application_q2_original_game(provider, error))
+        return false;
     if (entities->count > SIZE_MAX / sizeof(qa_q2_wire_binding))
         return application_fail(error, QA_ERROR_MEMORY,
                                 "Q2 authored spawn bindings are exhausted");
@@ -2681,6 +2684,7 @@ static bool q2_spawn_map(application_provider *provider,
             provider->application->physics->world_actor = actor;
     }
     if (ok) ok = qa_q2_entities_post_spawn(provider->state.q2, error) &&
+        application_q2_original_level(provider, error) &&
         application_players_q2_points(players, (uint32_t)clients,
             bindings, entities->count, error);
     free(bindings);

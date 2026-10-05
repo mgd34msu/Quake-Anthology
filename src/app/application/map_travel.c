@@ -56,7 +56,7 @@ static void campaign_travel_dispose(qa_application *application)
     free(travel); application->campaign_travel=NULL;
 }
 
-static bool campaign_location(qa_application *application, qa_product_id geometry,
+bool application_campaign_location(qa_application *application, qa_product_id geometry,
     const char *map, qa_campaign_location *out, qa_error *error)
 {
     application_provider *source=application_world_provider(application,QA_ROLE_ENTITIES,"");
@@ -127,7 +127,7 @@ static bool campaign_level_entry(qa_application *application, qa_error *error)
     }
     const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(application));
     qa_campaign_location destination,current;
-    if (!choices || !campaign_location(application,choices->world.geometry,choices->world.map,&destination,error)) return false;
+    if (!choices || !application_campaign_location(application,choices->world.geometry,choices->world.map,&destination,error)) return false;
     bool new_unit=application->map_state && application->map_state->load_new_unit;
     bool has_current=qa_campaign_unit_current(application->campaign_unit,&current);
     if (!new_unit && has_current &&
@@ -547,8 +547,8 @@ bool qa_application_campaign_depart(qa_application *application, uint64_t revisi
     application_campaign_travel *travel=calloc(1,sizeof(*travel));
     if (!travel) return application_fail(error,QA_ERROR_MEMORY,"Retaining campaign departure");
     bool ok=qa_application_travel_read(application,&travel->request) &&
-        campaign_location(application,choices->world.geometry,choices->world.map,&travel->source,error) &&
-        campaign_location(application,choices->world.geometry,target->name,&travel->destination,error) &&
+        application_campaign_location(application,choices->world.geometry,choices->world.map,&travel->source,error) &&
+        application_campaign_location(application,choices->world.geometry,target->name,&travel->destination,error) &&
         application_players_campaign_prepare(application,state->carry_players,
             state->has_landmark?&state->landmark:NULL,
             &travel->players,error);
@@ -560,19 +560,34 @@ bool qa_application_campaign_depart(qa_application *application, uint64_t revisi
 }
 
 bool qa_application_campaign_stage(qa_application *application, const qa_save_image *image,
-    qa_error *error)
+    qa_q2_save_level *original, qa_error *error)
 {
     application_campaign_travel *travel=application?application->campaign_travel:NULL;
     const qa_save_metadata *metadata=qa_save_image_metadata(image);
-    if (!travel || travel->visit || !map_safe(application) || !metadata ||
-        metadata->purpose!=QA_SAVE_TRANSITION || metadata->world_generation!=application->map_revision)
+    if (!travel || travel->visit || !map_safe(application) ||
+        ((image!=NULL)==(original!=NULL)) ||
+        (image && (!metadata || metadata->purpose!=QA_SAVE_TRANSITION ||
+            metadata->world_generation!=application->map_revision)))
         return application_fail(error,QA_ERROR_ARGUMENT,"Campaign stage requires its actual departed state image");
     qa_bytes bytes={0}; qa_campaign_world *departure=NULL;
     bool retain, reload;
-    bool ok=campaign_q2_policy(application,&retain,&reload,error) &&
-        qa_save_image_encode(image,&bytes,error) &&
-        qa_campaign_world_create(travel->source,bytes,&departure,error) &&
-        qa_campaign_unit_stage(application->campaign_unit,travel->destination,false,reload,departure,&travel->visit,error);
+    bool ok=campaign_q2_policy(application,&retain,&reload,error);
+    if (ok && original) {
+        const char *map=qa_strings_cstr(qa_session_strings(application->session),travel->source.map);
+        if (!map || strcmp(map,original->name) || !original->game.data || !original->game.size)
+            ok=application_fail(error,QA_ERROR_ARGUMENT,"Original Q2 departure differs from its actual map");
+        qa_q2_save_level *value=ok?malloc(sizeof(*value)):NULL;
+        if (ok && !value) ok=application_fail(error,QA_ERROR_MEMORY,"Retaining original Q2 departure");
+        if (ok) {
+            *value=*original;
+            original->game=(qa_buffer){0};
+            ok=qa_campaign_world_q2_take(travel->source,&value,&departure,error);
+        }
+        if (value) {qa_buffer_free(&value->game);free(value);}
+    } else if (ok) ok=qa_save_image_encode(image,&bytes,error) &&
+        qa_campaign_world_create(travel->source,bytes,&departure,error);
+    if (ok) ok=qa_campaign_unit_stage(application->campaign_unit,travel->destination,false,reload,
+        departure,&travel->visit,error);
     qa_campaign_world_release(departure);
     return ok;
 }
@@ -582,6 +597,12 @@ qa_bytes qa_application_campaign_restore(const qa_application *application)
     const application_campaign_travel *travel=application?application->campaign_travel:NULL;
     const qa_campaign_world *world=travel && travel->visit?qa_campaign_visit_restore(travel->visit):NULL;
     return world?qa_campaign_world_bytes(world):(qa_bytes){0};
+}
+const qa_q2_save_level *application_campaign_q2_level(const qa_application *application)
+{
+    const application_campaign_travel *travel=application?application->campaign_travel:NULL;
+    const qa_campaign_world *world=travel && travel->visit?qa_campaign_visit_restore(travel->visit):NULL;
+    return qa_campaign_world_q2(world);
 }
 
 bool qa_application_commit_travel(qa_application *application,

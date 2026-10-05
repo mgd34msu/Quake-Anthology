@@ -5,6 +5,7 @@
 #include "guest_q3_combat.h"
 #include "guest_q3_weapons_services.h"
 #include "guest_native_q2_private.h"
+#include "guest_native_q2_original_save.h"
 #include "guest_native_q2_input.h"
 #include "guest_qc_profile.h"
 #include "guest_qc_combat.h"
@@ -2838,6 +2839,9 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 .use_q2_inventory = arsenal == character, .bot = seat->bot,
                 .carry = keep && carry->has_q2 && carry->character_owner == character->owner ? &q2 : NULL}, error)))
                 return false;
+            bool original_restored = false;
+            if (!application_q2_original_player(character, record->client_slot, actor,
+                    &original_restored, error)) return false;
             if (map_source->kind <= APPLICATION_PROVIDER_Q3) {
                 if (!application_supplies_admit(application->supplies, map_source, actor, error) ||
                     (map_source != character &&
@@ -2847,7 +2851,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (map_source->kind == APPLICATION_PROVIDER_Q1) {
                 if (!configure_borrowed_q2_character(application, choices, seat,
                         character, actor, error)) return false;
-            } else if (!qa_q2_player_spawn(character->state.q2, actor, false, landmark, error))
+            } else if (!original_restored &&
+                !qa_q2_player_spawn(character->state.q2, actor, false, landmark, error))
                 return false;
             found = !record->deferred;
         }

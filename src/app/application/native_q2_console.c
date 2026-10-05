@@ -1,4 +1,5 @@
 #include "native_q2_console.h"
+#include "guest_native_q2_original_save.h"
 #include "q3_product.h"
 #include "startup_flow.h"
 #include "map_players_private.h"
@@ -510,7 +511,7 @@ bool application_native_q2_console_finalize(application_provider *provider, qa_q
     qa_cvars *cvars = application_native_q2_console_registry(provider);
     if (!cvars || !rules || !choices || provider->state.q2 || !application_native_q2_console_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 source options require their completed idle preparation");
-    bool okay = true;
+    bool okay = application_q2_original_prepare(provider,error);
     for (size_t i = 0; okay && i < qa_cvars_count(cvars); ++i) {
         const qa_cvar_view *value = qa_cvars_at(cvars, i);
         if (value->latched_value) okay = qa_cvars_apply_latched(cvars, value->name, error);

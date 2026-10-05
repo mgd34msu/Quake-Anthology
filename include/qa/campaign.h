@@ -1,6 +1,7 @@
 #ifndef QA_CAMPAIGN_H
 #define QA_CAMPAIGN_H
 #include "qa/strings.h"
+#include "qa/q2_save.h"
 
 typedef enum qa_travel_kind {
     QA_TRAVEL_MAP,
@@ -30,11 +31,20 @@ bool qa_campaign_location_make(qa_strings *, qa_string_id content, qa_bytes map,
                                qa_campaign_location *, qa_error *);
 bool qa_campaign_location_equal(qa_campaign_location, qa_campaign_location);
 typedef struct qa_campaign_world qa_campaign_world;
+typedef enum qa_campaign_world_kind {
+    QA_CAMPAIGN_APPLICATION_STATE, QA_CAMPAIGN_Q2_ORIGINAL_LEVEL
+} qa_campaign_world_kind;
 bool qa_campaign_world_create(qa_campaign_location, qa_bytes snapshot,
                               qa_campaign_world **out, qa_error *);
 /* Successful admission transfers the already encoded buffer without copying. */
 bool qa_campaign_world_take(qa_campaign_location, qa_buffer *snapshot,
                             qa_campaign_world **out, qa_error *);
+/* Transfers the actual original module LEVEL file and engine table value.
+ * It shares the same world/location/reference owner as application state. */
+bool qa_campaign_world_q2_take(qa_campaign_location, qa_q2_save_level **,
+    qa_campaign_world **out, qa_error *);
+qa_campaign_world_kind qa_campaign_world_type(const qa_campaign_world *);
+const qa_q2_save_level *qa_campaign_world_q2(const qa_campaign_world *);
 /* Relocate only the session-owned location. Immutable state keeps its one
  * original byte owner across candidate application publication. */
 bool qa_campaign_world_relocate(const qa_campaign_world *, qa_campaign_location,

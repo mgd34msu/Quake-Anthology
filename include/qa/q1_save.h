@@ -1,6 +1,7 @@
 #ifndef QA_Q1_SAVE_H
 #define QA_Q1_SAVE_H
 #include "qa/save.h"
+#include "qa/q2_save.h"
 
 /* Byte strings and source-order pairs, including duplicate/unknown keys.
  * Empty entity records are free physical edicts. No UTF-8 conversion occurs. */
@@ -45,7 +46,7 @@ bool qa_q1_save_singleplayer(const qa_q1_save_data *, qa_error *);
  * Both outputs must be empty; exactly one becomes non-NULL on success. */
 bool qa_saved_game_decode(qa_bytes, qa_save_image **, qa_q1_save_data **, qa_error *);
 bool qa_saved_game_read(qa_fs_root *, const char *, qa_save_image **,
-                         qa_q1_save_data **, qa_error *);
+                         qa_q1_save_data **,qa_q2_save_data **,qa_error *);
 bool qa_q1_save_write(qa_fs_root *, const char *, const qa_q1_save_data *, uint64_t,
                        qa_error *);
 #endif

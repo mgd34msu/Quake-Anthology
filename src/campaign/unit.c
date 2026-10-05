@@ -5,7 +5,9 @@
 struct qa_campaign_world {
     size_t references;
     qa_campaign_location location;
+    qa_campaign_world_kind kind;
     qa_buffer bytes;
+    qa_q2_save_level *q2;
     struct qa_campaign_world *source;
 };
 struct qa_campaign_unit {
@@ -87,7 +89,10 @@ bool qa_campaign_world_take(qa_campaign_location location, qa_buffer *bytes,
 void qa_campaign_world_release(qa_campaign_world *world) {
     if (world && !--world->references) {
         if (world->source) qa_campaign_world_release(world->source);
-        else qa_buffer_free(&world->bytes);
+        else {
+            qa_buffer_free(&world->bytes);
+            if (world->q2) { qa_buffer_free(&world->q2->game); free(world->q2); }
+        }
         free(world);
     }
 }
@@ -98,6 +103,7 @@ bool qa_campaign_world_relocate(const qa_campaign_world *source, qa_campaign_loc
     qa_campaign_world *world=calloc(1,sizeof(*world));
     if (!world) return fail(error,QA_ERROR_MEMORY,"Retaining relocated campaign world");
     world->references=1; world->location=location; world->bytes=source->bytes;
+    world->kind=source->kind; world->q2=source->q2;
     world->source=source->source?source->source:(qa_campaign_world *)source;
     qa_campaign_world_retain(world->source); *out=world;
     return true;
@@ -107,6 +113,24 @@ qa_campaign_location qa_campaign_world_location(const qa_campaign_world *world) 
 }
 qa_bytes qa_campaign_world_bytes(const qa_campaign_world *world) {
     return (qa_bytes){world->bytes.data, world->bytes.size};
+}
+bool qa_campaign_world_q2_take(qa_campaign_location location, qa_q2_save_level **level,
+    qa_campaign_world **out, qa_error *error) {
+    if (!level || !*level || !out || !location.content || !location.map ||
+        !(*level)->game.data || !(*level)->game.size || !(*level)->name[0] ||
+        !memchr((*level)->name, 0, sizeof((*level)->name)))
+        return fail(error, QA_ERROR_ARGUMENT, "Invalid original Q2 campaign level");
+    qa_campaign_world *world=calloc(1,sizeof(*world));
+    if (!world) return fail(error,QA_ERROR_MEMORY,"Retaining original Q2 campaign level");
+    world->references=1; world->location=location; world->kind=QA_CAMPAIGN_Q2_ORIGINAL_LEVEL;
+    world->q2=*level; *level=NULL; *out=world;
+    return true;
+}
+qa_campaign_world_kind qa_campaign_world_type(const qa_campaign_world *world) {
+    return world->kind;
+}
+const qa_q2_save_level *qa_campaign_world_q2(const qa_campaign_world *world) {
+    return world && world->kind==QA_CAMPAIGN_Q2_ORIGINAL_LEVEL?world->q2:NULL;
 }
 qa_campaign_unit *qa_campaign_unit_create(qa_strings *strings, qa_error *error) {
     if (!strings) {

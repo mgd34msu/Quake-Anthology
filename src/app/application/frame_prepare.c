@@ -9,7 +9,7 @@ bool qa_application_prepare_frame(qa_application *app, qa_error *error)
     bool pending_map = qa_application_travel_read(app, &travel) &&
         travel.target.kind == QA_TRAVEL_MAP;
     if (!app || app->operation != APPLICATION_IDLE || app->frame_preparing ||
-        qa_application_startup_pending(app) || pending_map || app->q1_original_save ||
+        qa_application_startup_pending(app) || pending_map || app->q1_original_save || app->q2_original_save ||
         app->q3_round_active || app->publication_started || app->destroy_requested ||
         app->finalizing || app->pending_close || app->routing_snapshot ||
         app->routing_providers || app->routing_provider_count ||

@@ -80,8 +80,8 @@ bool qa_save_restore(void *context, const qa_save_restore_ops *ops,
 
 bool qa_save_slot_name(const char *name, qa_error *error)
 {
-    if (!name || !*name || name[0] == '/' || strlen(name) < 5)
-        return persistence_fail(error, QA_ERROR_ARGUMENT, "Save requires a contained .sav name");
+    if (!name || !*name || name[0] == '/')
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Save requires a contained file or directory name");
     const char *component = name;
     for (const char *cursor = name;; ++cursor) {
         unsigned char value = (unsigned char)*cursor;
@@ -105,10 +105,7 @@ bool qa_save_slot_name(const char *name, qa_error *error)
             current = letter == (unsigned char)reserved[i];
         }
         if (current) return persistence_fail(error, QA_ERROR_ARGUMENT, "The current slot is reserved for transitions");
-        if (!value) {
-            if (stem == length) return persistence_fail(error, QA_ERROR_ARGUMENT, "Save slot must end in .sav");
-            return true;
-        }
+        if (!value) return true;
         component = cursor + 1;
     }
 }

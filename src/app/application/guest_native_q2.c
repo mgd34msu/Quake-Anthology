@@ -7,6 +7,7 @@
 #include "native_q2_visibility.h"
 #include "native_q2_console.h"
 #include "save_native_q2_record.h"
+#include "guest_native_q2_original_save.h"
 #include "unified_events.h"
 #include "guest_native_q2_attack.h"
 #include "guest_native_q2_combat.h"
@@ -672,6 +673,9 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
         engine->clients[i].protocol_fog_actor = engine->clients[i].actor;
     }
     if (!application_native_q2_combat_load(engine, error)) return false;
+    bool original = application_q2_original_source(provider);
+    if (original && (!application_q2_original_prepare(provider,error) ||
+        !application_native_q2_prepare_restore(provider,error))) return false;
     application_native_q2_wire_destroy(&engine->wire_engine);
     application_native_q2_visibility_destroy(&engine->visibility);
     ++engine->calls;
@@ -682,10 +686,11 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
         ok = qa_native_host_initialize(provider->state.native.host, 0, 0, false, error);
         if (ok) engine->initialized = true;
     }
+    if (ok && original) ok = application_q2_original_game(provider,error);
     if (ok && !engine->wire_engine) ok = application_native_q2_wire_begin(engine, error);
-    if (ok) ok = application_native_q2_attack_activate(engine, error);
-    if (ok) ok = application_native_q2_combat_activate(engine, error);
-    if (ok) ok = application_q2_control_activate(engine, error);
+    if (ok && !original) ok = application_native_q2_attack_activate(engine, error);
+    if (ok && !original) ok = application_native_q2_combat_activate(engine, error);
+    if (ok && !original) ok = application_q2_control_activate(engine, error);
     if (ok) ok = qa_native_host_source_reconcile(provider->state.native.host, error);
     const char *source_entities = copy;
     qa_buffer declared_entities = {0};
@@ -704,12 +709,15 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
         qa_strings_cstr(qa_session_strings(provider->application->session), name), source_entities,
         spawn ? qa_strings_cstr(qa_session_strings(provider->application->session), spawn) : "", error);
     qa_buffer_free(&declared_entities);
+    if (ok && original) ok = application_q2_original_level(provider,error);
     if(ok) ok=application_native_q2_callbacks_arrays_validate(engine,error);
     if(ok)ok=declared_initialize(engine,error);
     --engine->calls;
     if (ok) {
         engine->map_ready = provider->map_bound = true;
         qa_cvars_set_server_active(engine->cvars, true);
+        if (original) return application_native_q2_restore_finish(provider,error) &&
+            application_native_q2_publication_activate(engine->publication,error);
         if(engine->inventory_rows) ok=application_native_q2_inventory_rows_prepare(engine->inventory_rows,error)&&
             application_native_q2_inventory_scanner_activate(engine->inventory_scanner,error);
         if(ok) ok = application_native_q2_callbacks_register(engine,error) &&

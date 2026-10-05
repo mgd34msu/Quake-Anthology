@@ -47,6 +47,12 @@ static bool current(frontend_network_q2_host *host,qa_error *error)
         source.source.map_revision==host->source.source.map_revision &&
         source.source.publication==host->source.source.publication;
 }
+bool frontend_network_q2_host_configs(frontend_network_q2_host *host,
+    const qa_q2_config_entry **entries,size_t *count,qa_error *error)
+{
+    return host && !host->calls && current(host,error) &&
+        qa_application_network_q2_configs(host->discovery,entries,count,error);
+}
 static bool drop(void *context,qa_net_client_id id,const char *reason,qa_error *error)
 {
     q2_host_peer *peer=context;

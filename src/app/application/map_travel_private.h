@@ -30,4 +30,7 @@ bool application_source_queue_map_travel(qa_application *,
     const qa_application_travel_request *, qa_error *);
 bool application_source_queue_travel(qa_application *,
     const qa_application_travel_request *, qa_error *);
+bool application_campaign_location(qa_application *, qa_product_id, const char *,
+    qa_campaign_location *, qa_error *);
+const qa_q2_save_level *application_campaign_q2_level(const qa_application *);
 #endif

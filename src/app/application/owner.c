@@ -758,7 +758,7 @@ bool qa_application_guest_context_rebind_ready(const qa_application *application
                                                 qa_error *error)
 {
     if (!application || application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
-        application->q1_original_save ||
+        application->q1_original_save || application->q2_original_save ||
         !application->session || !application->world || !application->console ||
         !qa_session_safe(application->session) ||
         !qa_session_destroy_ready(application->session) ||
@@ -811,7 +811,7 @@ bool qa_application_complete_frame(qa_application *application, qa_error *error)
 {
     if (!application || application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
         application->client_preparation ||
-        application->q1_original_save ||
+        application->q1_original_save || application->q2_original_save ||
         application->publication_started || application->destroy_requested ||
         application->finalizing || application->pending_close ||
         (application->state != QA_APPLICATION_READY &&
@@ -830,7 +830,7 @@ bool qa_application_clients_drain(qa_application *application, qa_error *error)
 {
     if (!application || application->operation != APPLICATION_IDLE ||
         application->q3_round_active || application->frame_preparing ||
-        application->client_preparation || application->q1_original_save ||
+        application->client_preparation || application->q1_original_save || application->q2_original_save ||
         qa_application_startup_pending(application) ||
         application->publication_started || application->destroy_requested ||
         application->finalizing || application->pending_close ||
@@ -876,7 +876,7 @@ bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
         travel.target.kind == QA_TRAVEL_MAP;
     if (application == NULL || application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
         application->client_preparation ||
-        qa_application_startup_pending(application) || pending_map || application->q1_original_save ||
+        qa_application_startup_pending(application) || pending_map || application->q1_original_save || application->q2_original_save ||
         !application_guests_idle(application) || !application_rankings_idle(application) ||
         application->state != QA_APPLICATION_RUNNING)
         return application_fail(error, QA_ERROR_ARGUMENT,

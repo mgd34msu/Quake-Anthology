@@ -861,7 +861,7 @@ bool qa_application_startup_bootstrap(qa_application *app, qa_error *error)
         app->startup_flow || app->client_preparation || app->operation != APPLICATION_IDLE || app->frame_preparing ||
         app->q3_round_active || app->destroy_requested || app->engine_shutdown ||
         app->publication_started || app->failed_publications || qa_application_should_stop(app) ||
-        app->live_providers || app->provider_states || app->pending_close || app->q1_original_save ||
+        app->live_providers || app->provider_states || app->pending_close || app->q1_original_save || app->q2_original_save ||
         app->routing_snapshot || app->routing_providers || app->routing_provider_count ||
         qa_configuration_current(app->configuration) || !app->console || !app->cvars ||
         !application_guests_idle(app) || !qa_console_idle(app->console) ||

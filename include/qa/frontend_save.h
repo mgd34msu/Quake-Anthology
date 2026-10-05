@@ -19,11 +19,15 @@ bool qa_frontend_persistence_restore(qa_frontend **active, const qa_application_
  * failed source and final candidate graphs remain independently reachable.
  * Publication may succeed while source retirement transfers to retained_source. */
 typedef struct qa_frontend_original_restore qa_frontend_original_restore;
+typedef struct qa_frontend_original_save {
+    qa_game_family family;
+    union { const qa_q1_save_data *q1; const qa_q2_save_data *q2; } state;
+} qa_frontend_original_save;
 /* Begin owns a genuine fresh frontend and exact application save copy. A
  * partially constructed operation can be returned on failure; dispose it.
  * Services remain borrowed until disposal. The active frontend is untouched. */
 bool qa_frontend_original_restore_begin(qa_frontend *active,const qa_application_persistence_ops *,
-    const qa_q1_save_data *,const char *product,qa_frontend_original_restore **,qa_error *);
+    const qa_frontend_original_save *,const char *product,qa_frontend_original_restore **,qa_error *);
 /* Call once after each real driver frame, retaining the operation while
  * complete is false. Startup script waits advance before raw import; the
  * candidate receives no gameplay frame before raw state is installed. */

@@ -5,6 +5,7 @@
 #include "network_q1_signon.h"
 #include "guest_native_q2_private.h"
 #include "guest_qc_original_save.h"
+#include "guest_native_q2_original_save.h"
 #include "native_q3_console.h"
 #include "native_q1_console.h"
 #include "native_q1_wire.h"
@@ -393,6 +394,7 @@ bool application_finalize(qa_application *application, qa_error *error)
     free(application->native_bootstrap);
     qa_native_runtime_release(application->native_runtime);
     application_q1_original_dispose(application);
+    application_q2_original_dispose(application);
     application_startup_dispose(application);
     free(application);
     return true;

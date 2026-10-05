@@ -10,6 +10,7 @@
 #include "qa/frontend_save.h"
 #include "qa/application_save_policy.h"
 #include "qa/application_q1_save.h"
+#include "qa/application_q2_save.h"
 #include "qa/q1_save_product.h"
 #include "qa/recovery.h"
 #include "qa/application_startup_prepare.h"
@@ -726,7 +727,7 @@ static bool recovery_drain(qa_frontend **slot,qa_error *error)
     return true;
 }
 static bool read_saved(frontend_save_commands *owner,const char *name,qa_save_image **image,
-    qa_q1_save_data **source,char **path,qa_error *error)
+    qa_q1_save_data **source,qa_q2_save_data **q2,char **path,qa_error *error)
 {
     qa_fs_root *root=owner->root,*external=NULL;
     char *relative=copy_text(name,error);
@@ -759,18 +760,18 @@ static bool read_saved(frontend_save_commands *owner,const char *name,qa_save_im
         if (!file) ok=frontend_fail(error,QA_ERROR_MEMORY,"Retaining save filename");
         else { relative=file;memcpy(relative+length,".sav",5); }
     }
-    if (ok) ok=qa_save_slot_name(relative,error) && qa_saved_game_read(root,relative,image,source,error) &&
+    if (ok) ok=qa_save_slot_name(relative,error) && qa_saved_game_read(root,relative,image,source,q2,error) &&
         qa_fs_root_join(root,relative,path,error);
     free(relative);qa_fs_root_close(external);
     return ok;
 }
 static bool restore_saved(qa_frontend **slot, frontend_save_commands *owner,
-    const save_command_request *request, qa_save_image **image, qa_q1_save_data **source,
+    const save_command_request *request, qa_save_image **image, qa_q1_save_data **source,qa_q2_save_data **q2,
     qa_frontend **displaced, qa_frontend **retained_candidate,
     qa_error *error)
 {
     char *path=NULL;
-    if (!read_saved(owner,request->name,image,source,&path,error)) return false;
+    if (!read_saved(owner,request->name,image,source,q2,&path,error)) return false;
     qa_frontend *f = *slot;
     if (*image) {
         free(path);
@@ -778,14 +779,23 @@ static bool restore_saved(qa_frontend **slot, frontend_save_commands *owner,
             *image,displaced,retained_candidate,error);
     }
     const qa_product *product=NULL;
-    bool ok=qa_q1_save_select_product(qa_application_catalog(f->application),*source,path,&product,error);
+    qa_frontend_original_save original={0};
+    bool ok=false;
+    if (*source) {
+        ok=qa_q1_save_select_product(qa_application_catalog(f->application),*source,path,&product,error);
+        original=(qa_frontend_original_save){.family=QA_GAME_Q1,.state.q1=*source};
+    } else {
+        ok=qa_q2_save_select_product(qa_application_catalog(f->application),*q2,&product,error) &&
+            qa_application_q2_save_import_ready(f->application,*q2,product->key,error);
+        original=(qa_frontend_original_save){.family=QA_GAME_Q2,.state.q2=*q2};
+    }
     free(path);
-    return ok && qa_frontend_original_restore_begin(f,f->options.persistence_services,*source,
+    return ok && qa_frontend_original_restore_begin(f,f->options.persistence_services,&original,
         product->key,&owner->original,error);
 }
 
 static bool write_game(qa_frontend *f,qa_fs_root *root,const char *name,
-    qa_save_purpose purpose,uint64_t nonce,qa_save_image **image,qa_q1_save_data **source,qa_error *error)
+    qa_save_purpose purpose,uint64_t nonce,qa_save_image **image,qa_q1_save_data **source,qa_q2_save_data **q2,qa_error *error)
 {
     const qa_product *product=qa_application_save_original_product(f->application);
     bool original=false,written=false;
@@ -797,6 +807,12 @@ static bool write_game(qa_frontend *f,qa_fs_root *root,const char *name,
         written=frontend_q1_save_client_read(f,0,&client,error) &&
             qa_application_q1_save_capture(f->application,&client,source,error) &&
             qa_q1_save_write(root,name,*source,nonce,error);
+    } else if (product && product->family==QA_GAME_Q2 && product->edition==QA_EDITION_CLASSIC) {
+        original=true;
+        const qa_q2_config_entry *configs=NULL;size_t count=0;
+        written=frontend_network_q2_configs(f,&configs,&count,error) &&
+            qa_application_q2_save_capture(f->application,purpose,configs,count,q2,error) &&
+            qa_q2_save_directory_write(root,name,*q2,nonce,error);
     }
     if (original) {
         if (written) return true;
@@ -822,11 +838,19 @@ bool frontend_save_commands_campaign(qa_frontend *f, uint64_t revision, bool *ha
     if (!needed) return true;
     /* Real disconnect events are projected before retaining the departed cut. */
     if (!frontend_events(f,error)) return false;
-    qa_save_image *departure=NULL;
+    qa_save_image *departure=NULL;qa_q2_save_data *original=NULL;
     owner->draining=true;
-    bool ok=qa_frontend_persistence_capture(f,f->options.persistence_services,QA_SAVE_TRANSITION,&departure,error) &&
-        qa_application_campaign_stage(f->application,departure,error);
+    const qa_product *product=qa_application_save_original_product(f->application);
+    bool ok;
+    if (product && product->family==QA_GAME_Q2 && product->edition==QA_EDITION_CLASSIC) {
+        const qa_q2_config_entry *configs=NULL;size_t count=0;
+        ok=frontend_network_q2_configs(f,&configs,&count,error) &&
+            qa_application_q2_save_capture(f->application,QA_SAVE_TRANSITION,configs,count,&original,error) &&
+            qa_application_campaign_stage(f->application,NULL,original->levels,error);
+    } else ok=qa_frontend_persistence_capture(f,f->options.persistence_services,QA_SAVE_TRANSITION,&departure,error) &&
+        qa_application_campaign_stage(f->application,departure,NULL,error);
     if (!frontend_save_image_release(f,&departure,error)) ok=false;
+    qa_q2_save_destroy(original);
     owner->draining=false;
     if (!ok) return false;
     qa_bytes cached=qa_application_campaign_restore(f->application);
@@ -871,7 +895,7 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
     save_command_request request = owner->request;
     owner->pending = false; owner->draining = true;
     qa_save_image *image = NULL;
-    qa_q1_save_data *source = NULL;
+    qa_q1_save_data *source = NULL;qa_q2_save_data *q2=NULL;
     qa_frontend *displaced = NULL, *retained_source = NULL, *retained_candidate = NULL;
     qa_error local = {0};
     bool ok = qa_application_command_context_active(f->application, &request.context);
@@ -883,18 +907,18 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
         if (ok) ok = qa_frontend_original_restore_advance(owner->original, slot, &complete,
             &displaced, &retained_candidate, &local);
     } else if (ok && request.load) {
-        ok = restore_saved(slot, owner, &request, &image, &source, &displaced,
+        ok = restore_saved(slot, owner, &request, &image, &source,&q2, &displaced,
             &retained_candidate, &local);
         if (ok && owner->original) complete = false;
     } else if (ok) {
         if (owner->next_nonce == UINT64_MAX) ok = frontend_fail(&local, QA_ERROR_ARGUMENT, "Save write sequence exhausted");
         else {
             uint64_t nonce = owner->next_nonce++;
-            ok=write_game(f,owner->root,request.name,QA_SAVE_MANUAL,nonce,&image,&source,&local);
+            ok=write_game(f,owner->root,request.name,QA_SAVE_MANUAL,nonce,&image,&source,&q2,&local);
         }
     }
     if (!frontend_save_image_release(f,&image,ok?&local:&cleanup)) ok=false;
-    qa_q1_save_destroy(source);
+    qa_q1_save_destroy(source);qa_q2_save_destroy(q2);
     if (ok && !complete) {
         owner->pending = true; owner->draining = false;
         return true;
@@ -939,7 +963,7 @@ bool frontend_save_commands_autosave(qa_frontend *f, qa_error *error)
     bool ok=qa_autosave_level_entry(&owner->autosave,request.world_generation,request.fresh_entry,&local);
     if (ok && request.authored && owner->autosave.enabled) owner->autosave.pending=true;
     if (ok) ok=recovery_directory(owner,true,&local);
-    qa_save_image *image=NULL; qa_q1_save_data *source=NULL;char *autosave=NULL;
+    qa_save_image *image=NULL; qa_q1_save_data *source=NULL;qa_q2_save_data *q2=NULL;char *autosave=NULL;
     owner->draining=true;
     if (ok) ok=qa_frontend_persistence_capture(f,f->options.persistence_services,QA_SAVE_LEVEL_ENTRY,&image,&local);
     if (ok && owner->autosave.pending) {
@@ -962,7 +986,7 @@ bool frontend_save_commands_autosave(qa_frontend *f, qa_error *error)
         }
         if (ok && owner->next_nonce==UINT64_MAX) ok=frontend_fail(&local,QA_ERROR_ARGUMENT,"Autosave write sequence exhausted");
         if (ok) {
-            ok=write_game(f,owner->level_root,autosave,QA_SAVE_LEVEL_ENTRY,owner->next_nonce++,&image,&source,&local);
+            ok=write_game(f,owner->level_root,autosave,QA_SAVE_LEVEL_ENTRY,owner->next_nonce++,&image,&source,&q2,&local);
             if (ok) owner->autosave.pending=false;
             autosaved=ok;
         }
@@ -975,7 +999,7 @@ bool frontend_save_commands_autosave(qa_frontend *f, qa_error *error)
         } else recovery_fault(f,&local);
     }
     if (!frontend_save_image_release(f,&image,ok?&local:&cleanup)) ok=false;
-    qa_q1_save_destroy(source);
+    qa_q1_save_destroy(source);qa_q2_save_destroy(q2);
     owner->draining=false;
     if (!qa_application_save_request_complete(f->application,&request,error)) { free(autosave);return false; }
     char message[512];

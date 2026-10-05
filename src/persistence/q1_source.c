@@ -350,9 +350,14 @@ bool qa_saved_game_decode(qa_bytes bytes,qa_save_image **shared,qa_q1_save_data 
     if (!qa_q1_save_singleplayer(save,error)) { qa_q1_save_destroy(save); return false; }
     *source=save; return true;
 }
-bool qa_saved_game_read(qa_fs_root *root,const char *name,qa_save_image **shared,qa_q1_save_data **source,qa_error *error)
+bool qa_saved_game_read(qa_fs_root *root,const char *name,qa_save_image **shared,
+    qa_q1_save_data **source,qa_q2_save_data **q2,qa_error *error)
 {
-    if (!root || !qa_save_slot_name(name,error)) return false;
+    if (!root || !shared || *shared || !source || *source || !q2 || *q2 ||
+        !qa_save_slot_name(name,error)) return false;
+    qa_fs_entry_kind kind;
+    if (!qa_fs_root_status(root,name,&kind,NULL,error)) return false;
+    if (kind==QA_FS_DIRECTORY) return qa_q2_save_directory_read(root,name,q2,error);
     qa_fs_file *file=NULL; qa_fs_identity identity; qa_buffer bytes={0};
     bool ok=qa_fs_root_file_open(root,name,&file,&identity,error) &&
         qa_fs_file_read_snapshot(file,&identity,&bytes,error) &&

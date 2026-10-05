@@ -737,14 +737,54 @@ bool application_campaign_fields(qa_source_save_io *io, qa_application *app, boo
     for (size_t i=0;ok && i<checkpoint.count;++i) {
         qa_campaign_location location=reading?(qa_campaign_location){0}:
             qa_campaign_world_location(checkpoint.worlds[i]);
-        qa_bytes bytes=reading?(qa_bytes){0}:qa_campaign_world_bytes(checkpoint.worlds[i]);
-        size_t size=bytes.size;
+        uint32_t kind=reading?0:(uint32_t)qa_campaign_world_type(checkpoint.worlds[i]);
         ok=qa_source_save_string(io,&location.content) && qa_source_save_string(io,&location.map) &&
-            qa_source_save_count(io,&size,SIZE_MAX);
-        if (ok && reading) {
-            ok=qa_source_save_span(io,size,&bytes);
-            if (ok) ok=qa_campaign_world_create(location,bytes,&checkpoint.worlds[i],io->error);
-        } else if (ok) ok=qa_source_save_bytes(io,(void *)bytes.data,size);
+            qa_source_save_u32(io,&kind);
+        if (ok && kind==QA_CAMPAIGN_Q2_ORIGINAL_LEVEL) {
+            qa_q2_save_level *level=reading?calloc(1,sizeof(*level)):
+                (qa_q2_save_level *)qa_campaign_world_q2(checkpoint.worlds[i]);
+            if (!level) ok=application_fail(io->error,reading?QA_ERROR_MEMORY:QA_ERROR_FORMAT,
+                "Campaign original Q2 LEVEL owner is unavailable");
+            if (ok) ok=qa_source_save_bytes(io,level->name,sizeof(level->name)) &&
+                qa_source_save_memory_delta(io,(uint8_t *)level->configstrings,
+                    sizeof(level->configstrings),(qa_bytes){0});
+            size_t portals=0, cursor=0;
+            if (ok && !reading)
+                for (size_t j=0;j<QA_Q2_SAVE_AREA_PORTALS;++j)
+                    if (level->portal_open[j]) ++portals;
+            if (ok) ok=qa_source_save_count(io,&portals,QA_Q2_SAVE_AREA_PORTALS);
+            for (size_t j=0;ok && j<portals;++j) {
+                size_t index=reading?0:cursor;
+                if (!reading) while (!level->portal_open[index]) ++index;
+                ok=qa_source_save_count(io,&index,QA_Q2_SAVE_AREA_PORTALS-1);
+                if (ok && index<cursor)
+                    ok=application_fail(io->error,QA_ERROR_FORMAT,"Duplicate campaign area portal");
+                if (ok) ok=qa_source_save_i32(io,level->portal_open+index);
+                cursor=index+1;
+            }
+            size_t size=level?level->game.size:0;
+            if (ok) ok=qa_source_save_count(io,&size,SIZE_MAX);
+            if (ok && reading) {
+                qa_bytes bytes={0};
+                ok=qa_source_save_span(io,size,&bytes);
+                if (ok) {
+                    level->game=(qa_buffer){.data=size?malloc(size):NULL,.size=size};
+                    if (size && !level->game.data)
+                        ok=application_fail(io->error,QA_ERROR_MEMORY,"Retaining campaign original Q2 LEVEL file");
+                    else if (size) memcpy(level->game.data,bytes.data,size);
+                }
+                if (ok) ok=qa_campaign_world_q2_take(location,&level,checkpoint.worlds+i,io->error);
+            } else if (ok) ok=qa_source_save_bytes(io,level->game.data,size);
+            if (reading && level) {qa_buffer_free(&level->game);free(level);}
+        } else if (ok && kind==QA_CAMPAIGN_APPLICATION_STATE) {
+            qa_bytes bytes=reading?(qa_bytes){0}:qa_campaign_world_bytes(checkpoint.worlds[i]);
+            size_t size=bytes.size;
+            ok=qa_source_save_count(io,&size,SIZE_MAX);
+            if (ok && reading) {
+                ok=qa_source_save_span(io,size,&bytes);
+                if (ok) ok=qa_campaign_world_create(location,bytes,checkpoint.worlds+i,io->error);
+            } else if (ok) ok=qa_source_save_bytes(io,(void *)bytes.data,size);
+        } else if (ok) ok=application_fail(io->error,QA_ERROR_FORMAT,"Unknown campaign departed world kind");
     }
     if (ok && reading) ok=qa_campaign_unit_restore(app->campaign_unit,&checkpoint,io->error);
     qa_campaign_unit_checkpoint_free(&checkpoint);

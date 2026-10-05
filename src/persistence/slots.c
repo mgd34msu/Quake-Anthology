@@ -24,11 +24,45 @@ static bool source_value(const qa_q1_save_record *record, const char *key, char 
 }
 
 bool qa_save_slot_inspect(qa_fs_root *root, const char *name,
-    qa_save_slot_format *format, qa_save_metadata *out, qa_q1_save_slot_metadata *original, qa_error *error)
+    qa_save_slot_format *format, qa_save_metadata *out, qa_q1_save_slot_metadata *original,
+    qa_q2_save_slot_metadata *q2, qa_error *error)
 {
     if (!format || !out || !original)
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Missing save slot metadata output");
     if (!root || !qa_save_slot_name(name, error)) return false;
+    qa_fs_entry_kind entry_kind;
+    if (!qa_fs_root_status(root, name, &entry_kind, NULL, error)) return false;
+    if (entry_kind == QA_FS_DIRECTORY) {
+        qa_q2_save_server server = {0};
+        if (!qa_q2_save_server_read(root, name, &server, error)) return false;
+        size_t size = strlen(name);
+        char *game_path = malloc(size + sizeof("/game.ssv"));
+        bool ok = game_path != NULL;
+        if (!ok) persistence_fail(error, QA_ERROR_MEMORY, "Retaining Quake II GAME save path");
+        if (ok) {
+            memcpy(game_path, name, size); memcpy(game_path + size, "/game.ssv", sizeof("/game.ssv"));
+            ok = qa_fs_root_status(root, game_path, &entry_kind, NULL, error);
+            if (ok && entry_kind != QA_FS_REGULAR)
+                ok = persistence_fail(error, QA_ERROR_NOT_FOUND, "Quake II save directory has no GAME file");
+        }
+        free(game_path);
+        qa_q2_save_slot_metadata metadata = {0};
+        if (ok) {
+            memcpy(metadata.comment, server.comment, sizeof(metadata.comment));
+            memcpy(metadata.map_command, server.map_command, sizeof(metadata.map_command));
+            memcpy(metadata.game_directory, "baseq2", sizeof("baseq2"));
+            for (size_t i = 0; i < server.cvar_count; ++i)
+                if (!strcmp(server.cvars[i].name, "game")) {
+                    memset(metadata.game_directory, 0, sizeof(metadata.game_directory));
+                    memcpy(metadata.game_directory, server.cvars[i].value, sizeof(metadata.game_directory));
+                    if (!metadata.game_directory[0]) memcpy(metadata.game_directory, "baseq2", sizeof("baseq2"));
+                }
+            *format = QA_SAVE_SLOT_Q2_CLASSIC; *out = (qa_save_metadata){0};
+            *original = (qa_q1_save_slot_metadata){0}; if (q2) *q2 = metadata;
+        }
+        qa_q2_save_server_dispose(&server);
+        return ok;
+    }
     qa_fs_file *file = NULL; qa_fs_identity identity; qa_save_metadata summary = {0}; bool is_shared = false;
     bool inspected = qa_fs_root_file_open(root, name, &file, &identity, error) &&
         qa_save_image_metadata_read(file, &identity, &summary, &is_shared, error);
@@ -36,10 +70,11 @@ bool qa_save_slot_inspect(qa_fs_root *root, const char *name,
     if (!inspected) return false;
     if (is_shared) {
         *format = QA_SAVE_SLOT_SHARED; *out = summary; *original = (qa_q1_save_slot_metadata){0};
+        if (q2) *q2 = (qa_q2_save_slot_metadata){0};
         return true;
     }
-    qa_save_image *image = NULL; qa_q1_save_data *save = NULL;
-    if (!qa_saved_game_read(root, name, &image, &save, error))
+    qa_save_image *image = NULL; qa_q1_save_data *save = NULL; qa_q2_save_data *directory = NULL;
+    if (!qa_saved_game_read(root, name, &image, &save, &directory, error))
         return false;
     qa_save_slot_format kind = QA_SAVE_SLOT_SHARED;
     qa_save_metadata shared = {0}; qa_q1_save_slot_metadata source = {0};
@@ -60,8 +95,10 @@ bool qa_save_slot_inspect(qa_fs_root *root, const char *name,
     }
     if (!qa_save_image_destroy_checked(&image, error)) ok = false;
     qa_q1_save_destroy(save);
+    qa_q2_save_destroy(directory);
     if (!ok) { qa_q1_save_slot_metadata_dispose(&source); return false; }
     *format = kind; *out = shared; *original = source;
+    if (q2) *q2 = (qa_q2_save_slot_metadata){0};
     return true;
 }
 
@@ -137,8 +174,11 @@ bool qa_save_slots_list(qa_fs_root *root, const char *directory,
     }
     bool ok = true;
     for (size_t i = 0; ok && i < files.count; ++i) {
-        if (files.entries[i].kind != QA_FS_REGULAR)
+        if (files.entries[i].kind != QA_FS_REGULAR && files.entries[i].kind != QA_FS_DIRECTORY)
             continue;
+        size_t leaf_length = strlen(files.entries[i].name);
+        if (files.entries[i].kind == QA_FS_REGULAR &&
+            (leaf_length < 5 || strcmp(files.entries[i].name + leaf_length - 4, ".sav"))) continue;
         char *path = slot_path(directory, files.entries[i].name, error);
         if (!path) {
             ok = false;
@@ -148,9 +188,24 @@ bool qa_save_slots_list(qa_fs_root *root, const char *directory,
             free(path);
             continue;
         }
+        if (files.entries[i].kind == QA_FS_DIRECTORY) {
+            char *server = slot_path(path, "server.ssv", error);
+            if (!server) { free(path); ok = false; break; }
+            qa_fs_entry_kind kind;
+            qa_error status = {0};
+            bool present = qa_fs_root_status(root, server, &kind, NULL, &status);
+            free(server);
+            if (!present) {
+                free(path);
+                if (status.code == QA_ERROR_NOT_FOUND) continue;
+                if (error) *error = status;
+                ok = false; break;
+            }
+            if (kind != QA_FS_REGULAR) { free(path); continue; }
+        }
         qa_save_slot_entry *entry = candidate.entries + candidate.count++;
         entry->name = path;
-        if (!qa_save_slot_inspect(root, path, &entry->format, &entry->metadata, &entry->source, &entry->error)) {
+        if (!qa_save_slot_inspect(root, path, &entry->format, &entry->metadata, &entry->source, &entry->q2, &entry->error)) {
             if (entry->error.code == QA_ERROR_MEMORY) {
                 if (error)
                     *error = entry->error;

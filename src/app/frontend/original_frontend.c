@@ -19,6 +19,7 @@
 #include "music_sources.h"
 #include "global_settings_storage.h"
 #include "qa/application_q1_save.h"
+#include "qa/application_q2_save.h"
 #include <SDL.h>
 
 struct qa_frontend_original_restore {
@@ -26,6 +27,7 @@ struct qa_frontend_original_restore {
     const qa_application_persistence_ops *services;
     frontend_persistence_native native;
     bool begun,finished,final_cut;
+    qa_game_family family;
 };
 static void native_guards_destroy(frontend_persistence_native *native)
 {
@@ -80,7 +82,7 @@ static bool graphics_create(qa_frontend *f,qa_frontend *active,
     return f->input && qa_input_platform_prepare_fresh(f->input,active->input,seats,controllers,0,f->display,0,
         &native->input,error);
 }
-static bool original_create(qa_frontend *active,const qa_q1_save_data *save,const char *product,
+static bool original_create(qa_frontend *active,const qa_frontend_original_save *save,const char *product,
     qa_frontend **out,frontend_persistence_native *native,qa_error *error)
 {
     qa_frontend *f=calloc(1,sizeof(*f));
@@ -98,7 +100,7 @@ static bool original_create(qa_frontend *active,const qa_q1_save_data *save,cons
     f->options.mods=NULL; f->options.mod_count=0; f->options.startup=NULL; f->options.startup_count=0;
     f->options.seats=1; f->options.menu=false;
     f->options.network_host=NULL; f->options.network_connect=NULL; f->options.network_port=0;
-    f->options.network_protocol=(qa_net_protocol_id){QA_NET_NQ15,0,0};
+    f->options.network_protocol=(qa_net_protocol_id){save->family==QA_GAME_Q1?QA_NET_NQ15:QA_NET_Q2_34,0,0};
     f->options.application.player_profile_root=NULL;
     f->options.application.actor_capacity=qa_actors_capacity(
         qa_session_actors(qa_application_session(active->application)));
@@ -118,9 +120,10 @@ static bool original_create(qa_frontend *active,const qa_q1_save_data *save,cons
     frontend_application_options(f,&options);
     if (!qa_application_create(&options,&f->application,error)) return false;
     const qa_product *selected=frontend_product_selection(qa_application_catalog(f->application),product);
-    if (!selected || selected->availability!=QA_CONTENT_INSTALLED || selected->family!=QA_GAME_Q1)
+    if (!selected || selected->availability!=QA_CONTENT_INSTALLED || selected->family!=save->family)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Original ENGINE settings lack their selected Source product");
-    qa_console_dialect dialect=selected->edition==QA_EDITION_QUAKEWORLD?QA_CONSOLE_QW:QA_CONSOLE_Q1;
+    qa_console_dialect dialect=selected->family==QA_GAME_Q2?QA_CONSOLE_Q2:
+        selected->edition==QA_EDITION_QUAKEWORLD?QA_CONSOLE_QW:QA_CONSOLE_Q1;
     qa_audio_output_format output=active->device?qa_audio_device_requested_configuration(active->device).format:
         active->audio_output_format;
     f->audio_output_format=output;
@@ -154,18 +157,21 @@ static bool original_create(qa_frontend *active,const qa_q1_save_data *save,cons
         if (!qa_ui_llm_create(f->seats[0].ui,frontend_tools_llm(f),FRONTEND_ASSISTANCE,
             &f->seats[0].assistance,error)) return false;
     }
-    return qa_application_q1_save_import(f->application,save,product,error);
+    return save->family==QA_GAME_Q1?qa_application_q1_save_import(f->application,save->state.q1,product,error):
+        qa_application_q2_save_import(f->application,save->state.q2,product,error);
 }
 bool qa_frontend_original_restore_begin(qa_frontend *active,const qa_application_persistence_ops *services,
-    const qa_q1_save_data *save,const char *product,qa_frontend_original_restore **out,qa_error *error)
+    const qa_frontend_original_save *save,const char *product,qa_frontend_original_restore **out,qa_error *error)
 {
-    if (!active || !active->application || !save || !product || !*product || !out || *out ||
+    if (!active || !active->application || !save ||
+        (save->family!=QA_GAME_Q1 && save->family!=QA_GAME_Q2) ||
+        (save->family==QA_GAME_Q1?!save->state.q1:!save->state.q2) || !product || !*product || !out || *out ||
         active->stepping || active->preparing || active->round || !frontend_owners_idle(active) ||
         !frontend_seat_callbacks_idle(active) || !frontend_cinematic_capture_ready(active))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Original frontend import needs its idle driver and empty operation output");
     qa_frontend_original_restore *operation=calloc(1,sizeof(*operation));
     if (!operation) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining original frontend preparation");
-    operation->active=active; operation->services=services;
+    operation->active=active; operation->services=services;operation->family=save->family;
     *out=operation;
     operation->begun=original_create(active,save,product,&operation->source,&operation->native,error);
     return operation->begun;
@@ -183,7 +189,9 @@ bool qa_frontend_original_restore_advance(qa_frontend_original_restore *operatio
     *complete=false;
     qa_frontend *source=operation->source;
     bool imported=false;
-    if (!qa_application_q1_save_import_advance(source->application,&imported,error)) {
+    bool advanced=operation->family==QA_GAME_Q1?qa_application_q1_save_import_advance(source->application,&imported,error):
+        qa_application_q2_save_import_advance(source->application,&imported,error);
+    if (!advanced) {
         operation->finished=true; return false;
     }
     if (!imported) return true;

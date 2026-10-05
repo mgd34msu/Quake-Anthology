@@ -1650,6 +1650,14 @@ qa_save_authority frontend_network_save_authority(const qa_frontend *f)
     return n->q3_admission || n->nq_host || n->qw_host || unified_server ||
         (n->q2_host && !frontend_network_q2_host_local_only(n->q2_host)) ? QA_SAVE_SERVER : QA_SAVE_OFFLINE;
 }
+bool frontend_network_q2_configs(qa_frontend *f,const qa_q2_config_entry **entries,
+    size_t *count,qa_error *error)
+{
+    qa_frontend_network *n=f?f->network:NULL;
+    if (!n || n->frontend!=f || !n->q2_host)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Original Quake II save requires its actual Source configstrings");
+    return frontend_network_q2_host_configs(n->q2_host,entries,count,error);
+}
 bool frontend_network_remote(const qa_frontend *f)
 { return f && ((f->network&&f->network->demo_playback&&f->network->demo_format==FRONTEND_DEMO_Q3)||
     (f->options.network_connect && f->options.network_protocol.kind == QA_NET_Q3_68)); }

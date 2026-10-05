@@ -117,8 +117,8 @@ typedef struct qa_save_restore_ops {
 } qa_save_restore_ops;
 bool qa_save_restore(void *, const qa_save_restore_ops *, const qa_save_image *, qa_error *);
 
-/* Contained .sav names only. Every path component named current is reserved
- * for transition storage. Atomic file replacement is supplied by filesystem. */
+/* A contained save file or directory. Every path component named current is
+ * reserved for transition storage. Filesystem provides atomic replacement. */
 bool qa_save_slot_name(const char *, qa_error *);
 bool qa_save_write(qa_fs_root *, const char *, const qa_save_image *, uint64_t nonce, qa_error *);
 bool qa_save_read(qa_fs_root *, const char *, qa_save_image **, qa_error *);

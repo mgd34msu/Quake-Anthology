@@ -3,6 +3,7 @@
 #include "save_commands.h"
 #include "qa/application_save_policy.h"
 #include "qa/application_q1_save.h"
+#include "qa/application_q2_save.h"
 #include "qa/q1_save_product.h"
 #include "qa/text.h"
 #include "qa/ui_saves.h"
@@ -15,12 +16,13 @@ static char *copy(const char *text,qa_error *error)
     memcpy(out,text,size); return out;
 }
 static bool original_read(frontend_seat *seat,const qa_save_slot_entry *entry,
-    qa_q1_save_data **source,char **path,qa_error *error)
+    qa_q1_save_data **source,qa_q2_save_data **q2,char **path,qa_error *error)
 {
     qa_save_image *image=NULL;
     qa_fs_root *root=frontend_save_commands_root(seat->frontend);
-    bool ok=qa_saved_game_read(root,entry->name,&image,source,error);
-    qa_save_slot_format actual=*source?((*source)->version==5?QA_SAVE_SLOT_Q1_V5:QA_SAVE_SLOT_Q1_V6):QA_SAVE_SLOT_SHARED;
+    bool ok=qa_saved_game_read(root,entry->name,&image,source,q2,error);
+    qa_save_slot_format actual=*source?((*source)->version==5?QA_SAVE_SLOT_Q1_V5:QA_SAVE_SLOT_Q1_V6):
+        *q2?QA_SAVE_SLOT_Q2_CLASSIC:QA_SAVE_SLOT_SHARED;
     if (ok && actual!=entry->format)
         ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Saved game changed format; refresh its slot");
     if (ok) ok=qa_fs_root_join(root,entry->name,path,error);
@@ -28,12 +30,14 @@ static bool original_read(frontend_seat *seat,const qa_save_slot_entry *entry,
     if (!frontend_save_image_release(seat->frontend,&image,ok?error:&cleanup)) ok=false;
     return ok;
 }
-static bool select_product(frontend_seat *seat,const qa_q1_save_data *source,const char *path,
+static bool select_product(frontend_seat *seat,const qa_q1_save_data *source,const qa_q2_save_data *q2,const char *path,
     const qa_product **out,qa_error *error)
 {
     qa_application *application=seat->frontend->application;
-    return qa_q1_save_select_product(qa_application_catalog(application),source,path,out,error) &&
-        qa_application_q1_save_import_ready(application,source,(*out)->key,error);
+    return source?(qa_q1_save_select_product(qa_application_catalog(application),source,path,out,error) &&
+        qa_application_q1_save_import_ready(application,source,(*out)->key,error)):
+        (qa_q2_save_select_product(qa_application_catalog(application),q2,out,error) &&
+         qa_application_q2_save_import_ready(application,q2,(*out)->key,error));
 }
 static bool refresh(frontend_seat *seat, qa_error *error)
 {
@@ -52,11 +56,11 @@ static bool refresh(frontend_seat *seat, qa_error *error)
         return frontend_fail(error, QA_ERROR_MEMORY, "Retaining save menu rows");
     }
     for (size_t i=0;i<listing.count;++i) if (listing.entries[i].error.code==QA_OK && listing.entries[i].format!=QA_SAVE_SLOT_SHARED) {
-        qa_q1_save_data *source=NULL;char *path=NULL; const qa_product *product=NULL;
-        bool ok=original_read(seat,listing.entries+i,&source,&path,qualifications+i) &&
-            select_product(seat,source,path,&product,qualifications+i);
+        qa_q1_save_data *source=NULL;qa_q2_save_data *q2=NULL;char *path=NULL; const qa_product *product=NULL;
+        bool ok=original_read(seat,listing.entries+i,&source,&q2,&path,qualifications+i) &&
+            select_product(seat,source,q2,path,&product,qualifications+i);
         if(ok)snprintf(details+listing.count*128+i*128,128,"%s",product->title && *product->title?product->title:product->key);
-        qa_q1_save_destroy(source);free(path);
+        qa_q1_save_destroy(source);qa_q2_save_destroy(q2);free(path);
         if (!ok && qualifications[i].code==QA_ERROR_MEMORY) {
             if (error) *error=qualifications[i];
             free(rows); free(details); free(qualifications); qa_save_slot_listing_free(&listing); return false;
@@ -79,10 +83,10 @@ static bool queue(frontend_seat *seat, bool load, bool overwrite, qa_error *erro
         name = state->saves.entries[state->selected_save].name + 6;
         qa_save_slot_entry *entry=state->saves.entries+state->selected_save;
         if (entry->format!=QA_SAVE_SLOT_SHARED) {
-            qa_q1_save_data *source=NULL;char *path=NULL; const qa_product *product=NULL;
-            bool ok=original_read(seat,entry,&source,&path,error) &&
-                select_product(seat,source,path,&product,error);
-            qa_q1_save_destroy(source);free(path);
+            qa_q1_save_data *source=NULL;qa_q2_save_data *q2=NULL;char *path=NULL; const qa_product *product=NULL;
+            bool ok=original_read(seat,entry,&source,&q2,&path,error) &&
+                select_product(seat,source,q2,path,&product,error);
+            qa_q1_save_destroy(source);qa_q2_save_destroy(q2);free(path);
             if (!ok) return false;
         }
     }
@@ -155,7 +159,7 @@ static bool rebuild_entries(frontend_save_menu *owner,int64_t *saved_at,bool ins
         else for(char *part=label;*part;++part)if(*part=='_')*part=' ';
         rows[prefix+i]=(qa_ui_save_entry){.id=entry->name,.label=label,
             .map=entry->format==QA_SAVE_SLOT_SHARED?entry->metadata.map:
-                entry->source.map?entry->source.map:"",
+                entry->format==QA_SAVE_SLOT_Q2_CLASSIC?entry->q2.map_command:entry->source.map?entry->source.map:"",
             .game=entry->format==QA_SAVE_SLOT_SHARED?entry->metadata.game:state->save_details+state->saves.count*128+i*128,
             .unavailable=entry->error.code!=QA_OK?entry->error.message:state->save_qualification[i].code!=QA_OK?state->save_qualification[i].message:NULL};
         qa_fs_entry_kind kind;qa_fs_identity identity;qa_fs_timestamp stamp;qa_error timestamp_error={0};

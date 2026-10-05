@@ -1,4 +1,5 @@
 #include "network_q2_private.h"
+#include "guest_native_q2_original_save.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -348,6 +349,7 @@ bool qa_application_network_q2_create(qa_application *app, qa_net_protocol_id pr
             owner->event_actors && owner->events;
         if (!ok) application_fail(error, QA_ERROR_MEMORY, "Retaining genuine Q2 publication rows");
     }
+    if (ok) ok=application_q2_original_configure(owner,error);
     if (ok) *out = owner;
     else qa_application_network_q2_destroy(owner);
     return ok;

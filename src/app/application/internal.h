@@ -292,6 +292,7 @@ struct qa_application {
     struct application_match_intents *match_intents;
     struct application_q3_world_restart *q3_world_restart;
     struct application_q1_original_save *q1_original_save;
+    struct application_q2_original_save *q2_original_save;
     struct application_q3_campaign_launch *q3_campaign_launch;
     bool frame_preparing;
     bool source_shutdown_admitted;

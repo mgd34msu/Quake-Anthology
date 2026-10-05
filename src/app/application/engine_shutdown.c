@@ -28,7 +28,7 @@ static bool retained(const qa_application_engine_shutdown *loan)
 static bool callbacks_returned(const qa_application *app)
 {
     return app->operation == APPLICATION_IDLE && !app->q3_round_active && !app->frame_preparing &&
-        !app->failed_publications && !app->q1_original_save && !app->publication_started &&
+        !app->failed_publications && !app->q1_original_save && !app->q2_original_save && !app->publication_started &&
         !app->destroy_requested && !app->finalizing && !app->engine_shutdown_provider &&
         app->console && app->cvars && qa_console_idle(app->console) &&
         application_rankings_idle(app) && application_bots_can_destroy(app) &&

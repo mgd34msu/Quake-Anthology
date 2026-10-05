@@ -1196,6 +1196,7 @@ add_library(qa_application STATIC
     src/app/application/guest_input_profile.c
     src/app/application/guest_inventory_profile.c
     src/app/application/guest_native_q2.c
+    src/app/application/guest_native_q2_original_save.c
     src/app/application/guest_native_q2_equipment.c
     src/app/application/guest_q2_control.c
     src/app/application/guest_native_q2_attack.c
@@ -1578,6 +1579,7 @@ add_library(qa_persistence STATIC
     src/persistence/navigation.c
     src/persistence/pickups.c
     src/persistence/q1_source.c
+    src/persistence/q2_source.c
     src/persistence/recovery.c
     src/persistence/session.c
     src/persistence/slots.c

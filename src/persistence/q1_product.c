@@ -94,3 +94,24 @@ bool qa_q1_save_select_product(const qa_catalog *catalog,const qa_q1_save_data *
     return failure(error,count?"Original save matches several installed games; its content does not identify one":
         "Required original save game content is not installed");
 }
+bool qa_q2_save_select_product(const qa_catalog *catalog,const qa_q2_save_data *save,
+    const qa_product **out,qa_error *error)
+{
+    if (!catalog || !save || !out) return failure(error,"Original Quake II save requires its actual catalog and state");
+    const char *game="baseq2";
+    for (size_t i=0;i<save->server.cvar_count;++i)
+        if (!strcmp(save->server.cvars[i].name,"game"))
+            game=*save->server.cvars[i].value?basename(save->server.cvars[i].value):"baseq2";
+    const qa_product *selected=NULL;
+    for (size_t i=0;i<qa_catalog_count(catalog);++i) {
+        const qa_product *product=qa_catalog_at(catalog,i);
+        if (!product || product->family!=QA_GAME_Q2 || product->edition!=QA_EDITION_CLASSIC ||
+            product->availability!=QA_CONTENT_INSTALLED || !product->directory) continue;
+        const char *directory=basename(product->directory);
+        if (!equal(game,strlen(game),directory,strlen(directory))) continue;
+        if (selected) return failure(error,"Original Quake II save matches several installed game directories");
+        selected=product;
+    }
+    if (!selected) return failure(error,"Required original Quake II game directory is not installed");
+    *out=selected;return true;
+}
