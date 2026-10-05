@@ -844,17 +844,12 @@ static bool resolve(qa_application_content_graph *g, qa_error *error)
     return true;
 }
 
-static bool copy_bytes(const qa_buffer *source, qa_buffer *out, qa_error *error)
-{
-    out->data = source->size ? malloc(source->size) : NULL;
-    if (source->size && !out->data) return fail(error, QA_ERROR_MEMORY, "Retaining qualified graph owner bytes");
-    out->size = source->size; if (source->size) memcpy(out->data, source->data, source->size); return true;
-}
 static bool files_encode(void *context, const qa_vfs *view, qa_buffer *out, qa_error *error)
 {
     const qa_application_content_graph *g = context; uint64_t id = qa_application_content_view_id(g, view);
-    if (!id || !out || out->data || out->size) return fail(error, QA_ERROR_FORMAT, "Catalog files are outside actual content graph");
-    return copy_bytes(&g->views[id - 1].bytes, out, error);
+    if (!id || !g->views[id - 1].catalog || !out || out->data || out->size)
+        return fail(error, QA_ERROR_FORMAT, "Catalog files are outside actual content graph");
+    return true;
 }
 static bool refresh(qa_application_content_graph *g, qa_error *error)
 {
@@ -924,9 +919,9 @@ static bool physical_ready(void *context, const qa_catalog_mount *mount,
 static bool files_decode(void *context, qa_resource_pool *pool, qa_bytes bytes, qa_vfs **out, qa_error *error)
 {
     catalog_admission *a = context; content_view *v = a->view;
-    if (!out || *out || !v->owned || !v->value || qa_vfs_resources(v->value) != pool ||
-        bytes.size != v->bytes.size || (bytes.size && memcmp(bytes.data, v->bytes.data, bytes.size)))
-        return fail(error, QA_ERROR_FORMAT, "Catalog nested files disagree with the one genuine graph view owner");
+    (void)bytes;
+    if (!out || *out || !v->owned || !v->value || qa_vfs_resources(v->value) != pool)
+        return fail(error, QA_ERROR_FORMAT, "Catalog files require their one decoded graph view owner");
     *out = v->value; v->value = NULL; v->owned = false; return true;
 }
 
