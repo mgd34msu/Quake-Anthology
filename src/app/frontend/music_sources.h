@@ -89,11 +89,4 @@ size_t frontend_music_sources_bank_count(const frontend_music_sources *);
 qa_audio_bank *frontend_music_sources_bank_at(const frontend_music_sources *, size_t);
 bool frontend_music_sources_content_visit(const frontend_music_sources *, const qa_application_content_visitor *, qa_error *);
 void frontend_music_sources_rebind(frontend_music_sources *, qa_frontend *, frontend_music_sources **);
-/* Metadata/banks are prepared before the genuine bank/engine import. Finish
- * binds the imported playback holders; neither stage opens or starts music. */
-bool frontend_music_sources_checkpoint(const frontend_music_sources *, const qa_application_content_graph *,
-    const qa_audio_checkpoint_refs *, qa_buffer *, qa_error *);
-bool frontend_music_sources_restore_prepare(qa_frontend *, qa_application_content_graph *,
-    const qa_audio_checkpoint_refs *, qa_bytes, frontend_music_sources **, qa_error *);
-bool frontend_music_sources_restore_finish(frontend_music_sources *, qa_error *);
 #endif

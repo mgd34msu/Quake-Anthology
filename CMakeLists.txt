@@ -1664,7 +1664,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/equipment_held.c
     src/app/frontend/equipment_held_stock.c
     src/app/frontend/equipment_media.c
-    src/app/frontend/equipment_media_save.c
     src/app/frontend/equipment_source.c
     src/app/frontend/equipment_q3.c
     src/app/frontend/equipment_q3_save.c
@@ -1720,7 +1719,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/material_movies_prepare.c
     src/app/frontend/material_movies_save.c
     src/app/frontend/music_sources.c
-    src/app/frontend/music_sources_save.c
     src/app/frontend/q3_inventory.c
     src/app/frontend/q3_render_policy.c
     src/app/frontend/native_q2.c
@@ -1810,7 +1808,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/remote_q1_qw.c
     src/app/frontend/q1_sky.c
     src/app/frontend/q1_sky_prepare.c
-    src/app/frontend/material_movie_inventory.c
     src/app/frontend/q3_color_policy.c
     src/app/frontend/qc_messages.c
     src/app/frontend/remote_q1_effects.c
@@ -1891,13 +1888,11 @@ add_library(qa_frontend STATIC
     src/app/frontend/unified_q3_runtime_services.c
     src/app/frontend/unified_q3_runtime_video.c
 
-    src/app/frontend/classic_client_graph_save.c
     src/app/frontend/component_scene_save.c
     src/app/frontend/equipment_icon.c
     src/app/frontend/network_q1_recipe_save.c
     src/app/frontend/network_q2_host_save.c
     src/app/frontend/network_q2_recipe_save.c
-    src/app/frontend/q2_client_graph_save.c
     src/app/frontend/remote_q2_effects_semantic.c
     src/app/frontend/remote_unified_components_submission.c
     src/app/frontend/remote_unified_material_movies_bridge.c
@@ -1906,7 +1901,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/renderer_registries_save.c
     src/app/frontend/source_cinematics.c
     src/app/frontend/source_companion_legacy.c
-    src/app/frontend/unified_graph_save.c
     src/app/frontend/unified_q3_commands.c
     src/app/frontend/unified_q3_runtime_factory.c
     src/app/frontend/native_components.c
