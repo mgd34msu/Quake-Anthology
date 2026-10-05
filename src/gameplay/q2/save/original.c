@@ -856,6 +856,8 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
     }
     if (io->reading) {
         state->weapon.weapon = state->persistent.weapon;
+        state->weapon.gun_rate = 10;
+        if (io->edition == QA_Q2_CLASSIC) state->weapon.kick_seconds = .2f;
         state->player.fov = state->view.fov;
         state->player.loop_sound = state->weapon.loop_sound;
         state->movement.view_offset = state->view.offset;

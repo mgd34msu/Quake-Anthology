@@ -15,7 +15,7 @@ bool qa_q2_game_original_read_level(qa_q2_game *, qa_bytes,
     const qa_q2_save_level *, qa_error *);
 /* The normal connection and physical slot are already admitted. A live saved
  * LEVEL client restores its Source state; otherwise normal spawn follows. */
-bool qa_q2_game_original_read_client(qa_q2_game *, uint32_t physical_slot,
+bool qa_q2_game_original_read_client(qa_q2_game *, uint32_t client_slot,
     qa_actor_id, qa_bytes game, qa_bytes level, const qa_q2_save_level *,
     bool *restored, qa_error *);
 

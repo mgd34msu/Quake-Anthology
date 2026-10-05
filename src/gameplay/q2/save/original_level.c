@@ -1,7 +1,7 @@
 #include "original_internal.h"
+#include "qa/game_q2_original_save.h"
 #include "original_symbols.h"
 #include "internal.h"
-#include "qa/game_q2_original_save.h"
 
 /* These are the original g_save fields, in their string-tail write order. */
 typedef struct original_string_field {
@@ -196,4 +196,158 @@ const q2_original_edict_row *q2_original_level_actor(const q2_original_level_fil
         else high = middle;
     }
     return low < file->count && file->rows[low].number == number ? file->rows + low : NULL;
+}
+
+static q2_original_record_io edict_reader(qa_q2_game *game,
+    const q2_original_level_file *file, const q2_original_edict_row *row, qa_error *error)
+{
+    return (q2_original_record_io){.reading = true, .edition = game->options.edition,
+        .product = game->options.product, .document = file->document,
+        .object = row->object, .input = row->fields, .error = error};
+}
+
+static bool physical_reference(qa_q2_game *game, q2_original_record_io *io,
+    const char *name, uint16_t offset, qa_actor_id *actor)
+{
+    int32_t number = -1;
+    if (io->edition == QA_Q2_RERELEASE) {
+        qa_json_id value = qa_json_get(io->document, io->object, name);
+        if (value != QA_JSON_NONE && qa_json_type(io->document, value) != QA_JSON_NULL) {
+            int64_t integer;
+            if (!qa_json_i64(io->document, value, &integer, io->error)) return false;
+            if (integer < 0 || (uint64_t)integer >= game->wire_capacity)
+                return level_error(io->error, value, "Original Q2 pointer exceeds its physical edict table");
+            number = (int32_t)integer;
+        }
+    } else if (!q2_original_scalar(io, name, Q2_ORIGINAL_I32,
+        offset, offset, offset, &number)) return false;
+    if (number < -1 || (number >= 0 && (uint32_t)number >= game->wire_capacity))
+        return level_error(io->error, offset, "Original Q2 pointer exceeds its physical edict table");
+    *actor = number < 0 ? (qa_actor_id){0} :
+        qa_actor_reference_resolve(qa_session_actors(game->services.session),
+            qa_actor_reference_source(game->options.owner, (uint32_t)number));
+    return true;
+}
+
+static bool edict_body_read(qa_q2_game *game, q2_original_record_io *io,
+    qa_body_state *body)
+{
+    return q2_original_scalar(io, "s.origin", Q2_ORIGINAL_VECTOR, 4, 4, 4, &body->origin) &&
+        q2_original_scalar(io, "s.angles", Q2_ORIGINAL_VECTOR, 16, 16, 16, &body->angles) &&
+        q2_original_scalar(io, "velocity", Q2_ORIGINAL_VECTOR, 376, 376, 376, &body->velocity) &&
+        q2_original_scalar(io, "mins", Q2_ORIGINAL_VECTOR, 188, 188, 188, &body->bounds.mins) &&
+        q2_original_scalar(io, "maxs", Q2_ORIGINAL_VECTOR, 200, 200, 200, &body->bounds.maxs) &&
+        physical_reference(game, io, "groundentity", 552, &body->ground);
+}
+
+bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
+    qa_actor_id actor, qa_bytes game_bytes, qa_bytes level_bytes,
+    const qa_q2_save_level *engine_level, bool *restored, qa_error *error)
+{
+    q2_actor *source = game ? q2_actor_get(game, actor, false, NULL) : NULL;
+    if (!game || !restored || !source || !source->client ||
+        slot >= game->wire_clients || !source->wire_bound || source->wire_slot != slot + 1 ||
+        !q2_checkpoint_idle(game, error)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, slot,
+            "Original Q2 client requires its admitted physical slot and GAME owner");
+        return false;
+    }
+    qa_json_document *document = NULL;
+    q2_original_record_io io;
+    q2_original_game_state globals = {0};
+    q2_original_client_state client = {0};
+    q2_original_level_file level = {0};
+    bool live_level = false;
+    bool okay = q2_original_game_open(game, game_bytes, &document, &io, &globals, error);
+    if (okay && slot >= globals.clients)
+        okay = level_error(error, slot, "Original Q2 client is outside its GAME file");
+    if (okay) {
+        if (game->options.edition == QA_Q2_RERELEASE) {
+            qa_json_id clients = qa_json_get(document, qa_json_root(document), "clients");
+            io.object = qa_json_at(document, clients, slot);
+        } else {
+            size_t stride = q2_original_client_size(game->options.product);
+            io.input = (qa_bytes){game_bytes.data + 16 + 1564 + (size_t)slot * stride, stride};
+        }
+        okay = q2_original_client_record(game, &io, engine_level, &client);
+    }
+    qa_body_state body = {0};
+    int32_t view_height = 22, health = 0, maximum_health = 0, dead = 0, motion = 0;
+    uint32_t flags = client.persistent.flags;
+    if (okay && level_bytes.size) {
+        okay = q2_original_level_open(game, level_bytes, &level, error);
+        const q2_original_edict_row *row = okay ? q2_original_level_actor(&level, slot + 1) : NULL;
+        if (row) {
+            io = edict_reader(game, &level, row, error);
+            okay = edict_body_read(game, &io, &body) &&
+                q2_original_scalar(&io, "viewheight", Q2_ORIGINAL_I32, 508, 508, 508, &view_height) &&
+                q2_original_scalar(&io, "health", Q2_ORIGINAL_I32, 480, 480, 480, &health) &&
+                q2_original_scalar(&io, "max_health", Q2_ORIGINAL_I32, 484, 484, 484, &maximum_health) &&
+                q2_original_scalar(&io, "deadflag", Q2_ORIGINAL_I32, 492, 492, 492, &dead) &&
+                q2_original_scalar(&io, "movetype", Q2_ORIGINAL_I32, 260, 260, 260, &motion) &&
+                q2_original_scalar(&io, "flags", Q2_ORIGINAL_U32, 264, 264, 264, &flags);
+            live_level = okay;
+        }
+    }
+    if (okay) {
+        const qa_q2_player_state *current = source->client;
+        /* Client admission owns the current seat, character and service bindings.
+         * The original file owns the player's gameplay fields and inventory. */
+        client.player.info.slot = current->info.slot;
+        client.player.info.seat = current->info.seat;
+        client.player.info.connected = true;
+        client.player.info.view_height = (float)view_height;
+        client.player.info.dead = dead != 0;
+        client.player.info.noclip = motion == 1;
+        client.player.info.god = (flags & 16u) != 0;
+        client.player.info.notarget = (flags & 32u) != 0;
+        memcpy(client.player.info.skin, current->info.skin, sizeof(client.player.info.skin));
+        client.player.use_weapons = current->use_weapons;
+        client.player.use_inventory = current->use_inventory;
+        client.player.bot = current->bot;
+        client.player.gender = current->gender;
+        client.player.visual = current->visual;
+        client.player.character_configured = current->character_configured;
+        client.player.character_model = current->character_model;
+        client.player.character_skin = current->character_skin;
+        client.player.spawned = live_level;
+        client.player.pending_start_items = false;
+        client.player.info.chase_target = (qa_actor_id){0};
+        client.persistent.flags = flags;
+        if (live_level) {
+            client.persistent.health = (float)health;
+            client.persistent.maximum_health = (float)maximum_health;
+        }
+        qa_q2_player_checkpoint saved = {.present = true, .value = client.player};
+        okay = qa_q2_player_restore(game, actor, &saved, error) &&
+            qa_q2_player_carry_restore(game, actor, &client.persistent, error);
+        if (okay && source->weapon_bound)
+            okay = qa_q2_weapon_restore(game, actor, &client.weapon, error);
+        if (okay) {
+            source->silencer = client.silencer;
+            if (source->powers) source->powers->values = client.powers;
+        }
+        if (okay && live_level) {
+            okay = qa_world_body_write(game->services.world, actor, &body, error) &&
+                q2_player_move(game, source, &(qa_q2_player_motion){.kind = QA_Q2_PLAYER_SPAWN,
+                    .origin = body.origin, .velocity = body.velocity,
+                    .angles = client.movement.view_angles,
+                    .command_angles = client.movement.command_angles,
+                    .preserve_view_angles = true, .spectator = client.player.info.spectator}, error);
+            if (okay) {
+                client.movement.bounds = body.bounds;
+                client.movement.view_height = (float)view_height;
+                client.movement.frame = game->wire_frame;
+                client.movement.time_ns = game->now_ns;
+                source->wire_movement = client.movement;
+                source->wire_view = (qa_q2_wire_view){.present = true, .view = client.view,
+                    .frame = game->wire_frame, .time_ns = game->now_ns};
+            }
+        }
+    }
+    qa_json_destroy(document);
+    q2_original_level_close(&level);
+    q2_original_client_free(&client);
+    if (okay) *restored = live_level;
+    return okay;
 }
