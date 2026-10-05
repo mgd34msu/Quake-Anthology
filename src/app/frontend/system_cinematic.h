@@ -2,7 +2,6 @@
 #define QA_FRONTEND_SYSTEM_CINEMATIC_H
 #include "campaign_cinematic.h"
 #include "qa/q3_host.h"
-#include "qa/q3_presentation_media_save.h"
 #include "qa/persistence_content.h"
 
 typedef struct frontend_system_cinematic frontend_system_cinematic;
@@ -25,16 +24,6 @@ typedef struct frontend_system_cinematic_source {
     bool (*append)(void *,const char *,qa_error *);
     void (*release)(void *);
 } frontend_system_cinematic_source;
-typedef struct frontend_system_cinematic_refs {
-    void *context;
-    /* Resolves a real candidate role lease, including the same source cache,
-     * CLIENT namespace and reserved audio bus; no source initialization. */
-    bool (*source_decode)(void *,const frontend_system_cinematic_identity *,
-        frontend_system_cinematic_source *,qa_error *);
-    bool (*asset_encode)(void *,const qa_cinematic_asset *,uint64_t *,qa_error *);
-    bool (*asset_decode)(void *,uint64_t,const char *,qa_cinematic_asset **,qa_error *);
-    qa_cinematic_image_checkpoint_refs publication;
-} frontend_system_cinematic_refs;
 
 /* Success transfers source's held lease and one real handle to the caller.
  * Failure leaves the incoming lease with the caller. Request flags are exact;
@@ -54,11 +43,6 @@ bool frontend_system_cinematic_view_current(const qa_frontend *,const qa_vfs *,c
  * lower handle removes its retained row; checked teardown requires no rows. */
 bool frontend_system_cinematic_stop_all(qa_frontend *,qa_error *);
 bool frontend_system_cinematic_destroy(qa_frontend *,qa_error *);
-bool frontend_system_cinematic_checkpoint(qa_frontend *,const qa_q3_system_movie *,uint32_t flags,
-    const frontend_system_cinematic_refs *,qa_buffer *,qa_error *);
-bool frontend_system_cinematic_restore(qa_frontend *,const frontend_system_cinematic_refs *,
-    uint32_t flags,qa_bytes,qa_q3_system_movie *,qa_error *);
-void frontend_system_cinematic_discard(qa_q3_system_movie *);
 /* All cold row/decoder/PCM owners qualify before the enclosing candidate's
  * no-fail publication. No playback, commands or output occur during restore. */
 bool frontend_system_cinematic_publish_ready(const qa_frontend *,qa_error *);

@@ -3,7 +3,6 @@
 #include "unified_q3_runtime_services.h"
 #include "unified_q3_commands.h"
 #include "remote_unified_input.h"
-#include "qa/q3_presentation_media_save.h"
 #include "qa/audio_save.h"
 #include "qa/q3_cinematic_handles.h"
 
@@ -64,10 +63,6 @@ bool frontend_unified_q3_runtime_factory_topology_read(const frontend_unified_q3
     frontend_unified_q3_runtime_factory_topology *,qa_error *);
 bool frontend_unified_q3_runtime_factory_cinematic_read(const frontend_unified_q3_runtime_factory *,
     qa_q3_cinematic_source **,qa_error *);
-bool frontend_unified_q3_runtime_factory_system_checkpoint(frontend_unified_q3_runtime_factory *,
-    const qa_q3_movie_checkpoint_refs *,const qa_q3_system_movie *,uint32_t,qa_buffer *,qa_error *);
-bool frontend_unified_q3_runtime_factory_system_restore(frontend_unified_q3_runtime_factory *,
-    const qa_q3_movie_checkpoint_refs *,qa_bytes,uint32_t,qa_q3_system_movie *,qa_error *);
 bool frontend_unified_q3_runtime_factory_initialize(frontend_unified_q3_runtime_factory *,qa_error *);
 bool frontend_unified_q3_runtime_factory_rebind_prepare(frontend_unified_q3_runtime_factory *,
     const frontend_unified_q3_client_frame *,qa_error *);

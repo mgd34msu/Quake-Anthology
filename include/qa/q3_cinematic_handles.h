@@ -1,7 +1,6 @@
 #ifndef QA_Q3_CINEMATIC_HANDLES_H
 #define QA_Q3_CINEMATIC_HANDLES_H
 #include "qa/q3_presentation.h"
-#include "qa/q3_presentation_media_save.h"
 
 typedef struct qa_q3_cinematic_handles qa_q3_cinematic_handles;
 typedef struct qa_q3_cinematic_source qa_q3_cinematic_source;

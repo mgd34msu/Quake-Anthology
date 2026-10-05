@@ -358,7 +358,7 @@ static bool create(const frontend_unified_q3_runtime_options *options,bool resto
     if(!out || *out || !options || !options->frontend || !options->replica || !options->client || !options->media ||
        !options->clients || !options->current || !options->frame_settings || !options->preferences ||
        !options->backend_frame || !options->trace_number || !options->command_values ||
-       !options->timescale || !options->backend_checkpoint || !options->backend_restore ||
+       !options->timescale ||
        !options->player_fx.world_trace || !options->player_fx.world_point_contents ||
        !options->player_fx.body_hidden || !options->player_fx.body_submit || !options->player_fx.player_weapon ||
        !options->commands.compiled_current || !options->commands.compiled_register ||

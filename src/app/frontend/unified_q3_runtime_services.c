@@ -326,12 +326,7 @@ static bool initialize_stage(void *context,const q3n_frame *f,q3n_command_init_s
     const char *map,int32_t physical,uint32_t *extent,qa_error *e)
 { frontend_unified_q3_runtime_services *o=context;const q3n_server_command_options *c=&o->options.operations.commands;
     return cut(o,f,e) && c->initialize_stage(c->context,f,stage,map,physical,extent,e) && cut(o,f,e); }
-static bool backend_checkpoint(void *context,const qa_q3_presentation *p,qa_buffer *out,qa_error *e)
-{ frontend_unified_q3_runtime_services *o=context;return o->options.operations.backend_checkpoint(
-    o->options.operations.context,p,out,e); }
-static bool backend_restore(void *context,qa_q3_presentation *p,qa_bytes bytes,qa_error *e)
-{ frontend_unified_q3_runtime_services *o=context;return o->options.operations.backend_restore(
-    o->options.operations.context,p,bytes,e); }
+
 static bool video_shutdown(void *context,qa_error *e)
 { frontend_unified_q3_runtime_services *o=context;return o->options.operations.video_shutdown(
     o->options.operations.context,e); }
@@ -441,7 +436,7 @@ static bool create(const frontend_unified_q3_runtime_services_options *options,b
         !options->operations.presentation.listener ||
         !options->operations.commands.compiled_register || !options->operations.commands.initialize_stage ||
         !options->operations.player_fx.body_hidden || !options->operations.player_fx.body_submit ||
-        !options->operations.player_fx.player_weapon || !options->operations.backend_checkpoint || !options->operations.backend_restore ||
+        !options->operations.player_fx.player_weapon ||
         !options->operations.hud.compiled_oldest_command || !options->operations.hud.client_command ||
         (restoring?(!options->frontend->source_restoring || options->frontend->capture ||
             !frontend_unified_q3_client_checkpoint_matches(options->client,&options->source)):
@@ -508,7 +503,6 @@ static bool read(frontend_unified_q3_runtime_services *o,bool restoring,
     v.context=o;v.current=runtime_current;v.frame_settings=frame_settings;v.trace_number=trace_number;
     v.command_values=command_values;v.timescale=timescale;
     v.preferences=preferences;v.backend_frame=backend_frame;
-    v.backend_checkpoint=backend_checkpoint;v.backend_restore=backend_restore;
     v.video_shutdown=o->options.operations.video_shutdown?video_shutdown:NULL;
     v.presentation.assets=o->assets;v.presentation.audio=o->options.frontend->audio;
     v.presentation.owner=o->options.audio_owner;v.presentation.seat=o->physical_seat;

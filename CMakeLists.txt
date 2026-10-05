@@ -781,10 +781,8 @@ add_library(qa_media STATIC
     src/media/roq_playback.c
     src/media/ogg.c
     src/media/ogv.c
-    src/media/save.c
     src/media/cinematic.c
     src/media/cinematic_scene.c
-    src/media/cinematic_presentation_save.c
     src/media/library.c
     src/media/library_prepare.c
     src/media/material_movies.c
@@ -1072,7 +1070,6 @@ add_library(qa_q3_presentation STATIC
     src/presentation/q3/cinematics.c
     src/presentation/q3/core.c
     src/presentation/q3/models.c
-    src/presentation/q3/media_save.c
     src/presentation/q3/picture.c
     src/presentation/q3/render.c
     src/presentation/q3/scene.c
@@ -1745,7 +1742,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/startup_server_browser.c
     src/app/frontend/startup_downloads.c
     src/app/frontend/system_cinematic.c
-    src/app/frontend/system_cinematic_save.c
     src/app/frontend/tools.c
     src/app/frontend/visuals.c
     src/app/frontend/view_settings.c

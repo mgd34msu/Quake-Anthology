@@ -25,5 +25,4 @@ void frontend_system_cinematic_row_free(frontend_system_cinematic *,bool cold);
 qa_cinematic_options frontend_system_cinematic_options(frontend_system_cinematic *,qa_audio_engine *);
 bool frontend_system_cinematic_source_valid(const qa_frontend *,const frontend_system_cinematic_source *);
 bool frontend_system_cinematic_path_valid(const char *);
-bool frontend_system_cinematic_restore_attach(frontend_system_cinematic *,qa_error *);
 #endif

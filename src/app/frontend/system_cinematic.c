@@ -384,16 +384,7 @@ bool frontend_system_cinematic_frame(qa_frontend *f,uint64_t elapsed_ns,bool *re
         (!row->numeric_source || qa_cinematic_frame(row->movie))) return end(row,QA_CINEMATIC_FINISHED,error);
     return true;
 }
-bool frontend_system_cinematic_restore_attach(frontend_system_cinematic *row,qa_error *error)
-{
-    qa_frontend *f=row->frontend;
-    for (const frontend_system_cinematic *held=f->system_cinematics;held;held=held->next) {
-        if ((held->phase==SYSTEM_PLAYING && row->phase==SYSTEM_PLAYING &&
-            held->source.identity.audio_bus==row->source.identity.audio_bus) || (held->screen && row->screen))
-            return frontend_fail(error,QA_ERROR_FORMAT,"Saved system cinematics compete for a true screen or PCM owner");
-    }
-    row->next=f->system_cinematics; f->system_cinematics=row; return true;
-}
+
 bool frontend_system_cinematic_publish_ready(const qa_frontend *f,qa_error *error)
 {
     if (!frontend_system_cinematic_idle(f)) return frontend_fail(error,QA_ERROR_ARGUMENT,"System cinematic publication retains a callback");

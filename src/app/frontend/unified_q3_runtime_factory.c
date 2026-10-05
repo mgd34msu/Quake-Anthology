@@ -26,7 +26,6 @@ struct frontend_unified_q3_runtime_factory {
     qa_audio_music *music;
     char *intro,*loop;
     qa_audio_listener listener;
-    const qa_q3_movie_checkpoint_refs *movie_refs;
     qa_buffer import_bytes;
     unsigned imported_children;
     size_t movie_references,calls;
@@ -288,65 +287,7 @@ static frontend_system_cinematic_source movie_source(frontend_unified_q3_runtime
     .cvars=o->restoring?frontend_unified_q3_client_checkpoint_stage_cvars(o->options.client,
         frontend_unified_q3_runtime_rebind_frame(o->runtime)):frontend_unified_q3_client_cvars(o->options.client),
     .context=o,.current=movie_current,.append=movie_append,.release=movie_release}; }
-static bool movie_source_decode(void *context,const frontend_system_cinematic_identity *id,
-    frontend_system_cinematic_source *out,qa_error *e)
-{
-    frontend_unified_q3_runtime_factory *o=context;q3n_compiled_source_view source;
-    if(!id || !out || !o->restoring || o->movie_references==SIZE_MAX || !movie_parent(o,&source))
-        return fail(e,"Compiled system movie import lost its actual retained role");
-    frontend_system_cinematic_source value=movie_source(o,&source);
-    const frontend_system_cinematic_identity *actual=&value.identity;
-    if(id->source_group!=actual->source_group || id->service_owner!=actual->service_owner || id->audio_bus!=actual->audio_bus ||
-       id->source_owner!=actual->source_owner || id->role!=actual->role || id->physical_seat!=actual->physical_seat ||
-       id->launch_seat!=actual->launch_seat)return fail(e,"Compiled system movie identity leaves its saved Source role");
-    ++o->movie_references;*out=value;return true;
-}
-static bool movie_asset_encode(void *context,const qa_cinematic_asset *asset,uint64_t *id,qa_error *e)
-{ frontend_unified_q3_runtime_factory *o=context;return o->movie_refs && o->movie_refs->asset_encode &&
-    o->movie_refs->asset_encode(o->movie_refs->context,asset,id,e); }
-static bool movie_asset_decode(void *context,uint64_t id,const char *path,qa_cinematic_asset **out,qa_error *e)
-{ frontend_unified_q3_runtime_factory *o=context;return o->movie_refs && o->movie_refs->asset_decode &&
-    o->movie_refs->asset_decode(o->movie_refs->context,id,path,out,e); }
-static frontend_system_cinematic_refs system_refs(frontend_unified_q3_runtime_factory *o)
-{ return (frontend_system_cinematic_refs){.context=o,.source_decode=movie_source_decode,
-    .asset_encode=movie_asset_encode,.asset_decode=movie_asset_decode,.publication=o->movie_refs->publication}; }
-static bool system_encode(void *context,const qa_q3_system_movie *movie,uint32_t flags,qa_buffer *out,qa_error *e)
-{ frontend_unified_q3_runtime_factory *o=context;frontend_system_cinematic_refs refs=system_refs(o);
-    return frontend_system_cinematic_checkpoint(o->options.frontend,movie,flags,&refs,out,e); }
-static bool system_decode(void *context,qa_bytes bytes,uint32_t flags,qa_q3_system_movie *out,qa_error *e)
-{ frontend_unified_q3_runtime_factory *o=context;frontend_system_cinematic_refs refs=system_refs(o);
-    return frontend_system_cinematic_restore(o->options.frontend,&refs,flags,bytes,out,e); }
-static void system_discard(void *context,qa_q3_system_movie *movie)
-{ (void)context;frontend_system_cinematic_discard(movie); }
-bool frontend_unified_q3_runtime_factory_system_checkpoint(frontend_unified_q3_runtime_factory *o,
-    const qa_q3_movie_checkpoint_refs *refs,const qa_q3_system_movie *movie,uint32_t flags,qa_buffer *out,qa_error *e)
-{
-    if(!o || !refs || o->movie_refs || !frontend_unified_q3_runtime_factory_idle(o) ||
-        !o->options.frontend->capture || !o->options.current(o->options.context,&o->options,true))
-        return fail(e,"Global system movie capture lost its actual compiled role owner");
-    o->movie_refs=refs; bool okay=system_encode(o,movie,flags,out,e); o->movie_refs=NULL; return okay;
-}
-bool frontend_unified_q3_runtime_factory_system_restore(frontend_unified_q3_runtime_factory *o,
-    const qa_q3_movie_checkpoint_refs *refs,qa_bytes bytes,uint32_t flags,qa_q3_system_movie *out,qa_error *e)
-{
-    if(!o || !refs || o->movie_refs || !o->restoring || !o->options.frontend->source_restoring ||
-        !frontend_unified_q3_runtime_factory_idle(o) || !o->options.current(o->options.context,&o->options,true))
-        return fail(e,"Global system movie import lost its actual reconstructed compiled role");
-    o->movie_refs=refs; bool okay=system_decode(o,bytes,flags,out,e); o->movie_refs=NULL; return okay;
-}
-static qa_q3_movie_checkpoint_refs backend_refs(frontend_unified_q3_runtime_factory *o)
-{ qa_q3_movie_checkpoint_refs refs=*o->movie_refs;refs.context=o;
-    refs.asset_encode=movie_asset_encode;refs.asset_decode=movie_asset_decode;
-    refs.system_encode=system_encode;refs.system_decode=system_decode;refs.system_discard=system_discard;return refs; }
-static bool backend_checkpoint(void *context,const qa_q3_presentation *backend,qa_buffer *out,qa_error *e)
-{ frontend_unified_q3_runtime_factory *o=context;
-    if(!o->movie_refs)return fail(e,"Compiled movie capture requires its actual dictionaries");
-    qa_q3_movie_checkpoint_refs refs=backend_refs(o);return qa_q3_presentation_media_checkpoint(backend,&refs,out,e); }
-static bool backend_restore(void *context,qa_q3_presentation *backend,qa_bytes bytes,qa_error *e)
-{ frontend_unified_q3_runtime_factory *o=context;
-    if(!o->movie_refs)return fail(e,"Compiled movie import requires its actual candidate dictionaries");
-    qa_q3_movie_checkpoint_refs refs=backend_refs(o);return qa_q3_presentation_media_restore(backend,&refs,o->options.audio_owner,
-        (double)o->options.frontend->wall_time_ns/1e6,bytes,e); }
+
 static bool system_movie(void *context,const qa_q3_movie_request *request,qa_q3_system_movie *out,qa_error *e)
 {
     frontend_unified_q3_runtime_factory *o=context;const q3n_compiled_frame *frame=entered(o);
@@ -397,7 +338,7 @@ static bool create(const frontend_unified_q3_runtime_factory_options *options,bo
     frontend_unified_q3_runtime_options operations={.frontend=options->frontend,.replica=options->replica,.client=options->client,
         .scene_only=!options->primary_view,
         .context=o,.current=operation_current,.frame_settings=frame_settings,.trace_number=trace_number,.command_values=command_values,.timescale=timescale,
-        .backend_checkpoint=backend_checkpoint,.backend_restore=backend_restore,.video_shutdown=video_shutdown,.player_fx=options->composition};
+        .video_shutdown=video_shutdown,.player_fx=options->composition};
     operations.weapons.context=options->context;operations.weapons.view_replacement=options->view_replacement;
     operations.view.camera_context=options->context;
     operations.view.camera_override=options->primary_view?options->camera_override:NULL;

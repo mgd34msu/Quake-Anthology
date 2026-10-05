@@ -35,8 +35,6 @@ typedef struct frontend_unified_q3_runtime_options {
     bool (*timescale)(void *, int32_t frame_milliseconds, qa_error *);
     bool (*preferences)(void *, qa_ui_preferences *, qa_error *);
     bool (*backend_frame)(void *, qa_q3_presentation *, qa_error *);
-    bool (*backend_checkpoint)(void *, const qa_q3_presentation *, qa_buffer *, qa_error *);
-    bool (*backend_restore)(void *, qa_q3_presentation *, qa_bytes, qa_error *);
     /* Retire genuine external CG command registration after Shutdown, before
      * the retained CLIENT enters fresh video initialization. */
     bool (*video_shutdown)(void *, qa_error *);
