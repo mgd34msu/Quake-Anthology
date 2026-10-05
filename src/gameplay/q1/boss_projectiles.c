@@ -245,7 +245,7 @@ bool q1_boss_teledeath(qa_q1_game *g, q1_actor *owner, qa_error *error) {
         return false;
     death->physics.solid = QA_PHYSICS_TRIGGER;
     body.velocity = body.angles = qa_v3(0, 0, 0);
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     body.bounds.mins = qa_vec_sub(body.bounds.mins, qa_v3(1, 1, 1));
     body.bounds.maxs = qa_vec_add(body.bounds.maxs, qa_v3(1, 1, 1));
     if (!qa_world_body_write(g->services.world, death->id, &body, error) ||

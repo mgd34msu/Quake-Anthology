@@ -59,7 +59,7 @@ static bool q3_body_position(q3_mover_transaction *transaction, qa_actor_id acto
     int read = q3_read(transaction, actor, &current);
     if (read <= 0) return read == 0;
     current.body.origin = origin;
-    if (clear_ground) current.body.ground = ph_none();
+    if (clear_ground) current.body.ground = (qa_actor_reference){0};
     return ph_write(transaction->physics, actor, &current.body, transaction->error);
 }
 static bool q3_lose_ground(q3_mover_transaction *transaction, qa_actor_id actor) {
@@ -72,7 +72,7 @@ static bool q3_lose_ground(q3_mover_transaction *transaction, qa_actor_id actor)
     }
     read = q3_read(transaction, actor, &current);
     if (read <= 0) return read == 0;
-    current.body.ground = ph_none();
+    current.body.ground = (qa_actor_reference){0};
     return ph_write(transaction->physics, actor, &current.body, transaction->error);
 }
 static bool q3_action(q3_mover_transaction *transaction, qa_q3_mover_action action,
@@ -187,7 +187,7 @@ static bool q3_try_push(q3_mover_transaction *transaction, qa_actor_id actor,
     if (read <= 0) return read == 0;
     read = q3_read(transaction, pusher, &support);
     if (read <= 0) return read == 0;
-    bool rider = qa_actor_id_equal(check.body.ground, pusher);
+    bool rider = qa_actor_id_equal(qa_physics_actor_reference(transaction->physics, check.body.ground), pusher);
     if (support.source.stop && !rider) {
         *pushed = false;
         return true;
@@ -380,7 +380,7 @@ static bool q3_push_part(q3_mover_transaction *transaction, qa_actor_id pusher,
             ok = q3_proximity_push(transaction, actor, pusher, move, angular);
             continue;
         }
-        if (!qa_actor_id_equal(check.body.ground, pusher)) {
+        if (!qa_actor_id_equal(qa_physics_actor_reference(transaction->physics, check.body.ground), pusher)) {
             if (!q3_overlap(q3_absolute(transaction, actor, &check.body), destination)) continue;
             bool blocked;
             if (!q3_position_blocked(transaction, actor, &blocked)) { ok = false; break; }

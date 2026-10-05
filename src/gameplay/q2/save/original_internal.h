@@ -21,7 +21,7 @@ typedef enum q2_original_record_kind {
 } q2_original_record_kind;
 
 typedef enum q2_original_field_kind {
-    Q2_ORIGINAL_I32, Q2_ORIGINAL_U32, Q2_ORIGINAL_I16, Q2_ORIGINAL_U8,
+    Q2_ORIGINAL_I32, Q2_ORIGINAL_U32, Q2_ORIGINAL_U64, Q2_ORIGINAL_I16, Q2_ORIGINAL_U8,
     Q2_ORIGINAL_F32, Q2_ORIGINAL_BOOL,
     Q2_ORIGINAL_VECTOR, Q2_ORIGINAL_TIME, Q2_ORIGINAL_FRAME_TIME,
     Q2_ORIGINAL_FRAME_INDEX, Q2_ORIGINAL_SECONDS_TIME, Q2_ORIGINAL_WEAPON_PHASE,
@@ -49,10 +49,11 @@ typedef struct q2_original_record_io {
     qa_json_writer *writer;
     const qa_json_document *document;
     qa_json_id object;
-    qa_bytes input;
+    qa_bytes input, strings;
+    struct q2_save_io *string_tail;
     qa_buffer output;
     qa_error *error;
-    bool reading;
+    bool reading, references_only;
 } q2_original_record_io;
 
 /* Temporary Source values at the original file boundary, never a GAME owner. */
@@ -98,8 +99,12 @@ typedef struct q2_original_level_file {
     size_t count;
 } q2_original_level_file;
 
+bool q2_original_source_text(q2_original_record_io *, qa_q2_game *, const char *,
+    qa_string_id *, size_t);
 bool q2_original_scalar(q2_original_record_io *, const char *, q2_original_field_kind,
     uint16_t, uint16_t, uint16_t, void *);
+bool q2_original_item(qa_q2_game *, q2_original_record_io *, const char *,
+    uint16_t, uint16_t, uint16_t, qa_item_id *);
 bool q2_original_resource(qa_q2_game *, q2_original_record_io *, const qa_q2_save_level *,
     const char *, uint16_t, uint16_t, uint16_t, uint32_t, qa_string_id *);
 bool q2_original_object_begin(q2_original_record_io *, const char *, q2_original_record_io *, bool *);

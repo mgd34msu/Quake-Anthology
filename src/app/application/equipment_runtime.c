@@ -156,7 +156,7 @@ static bool velocity(void *context, qa_actor_id actor, qa_vec3 value, qa_error *
     qa_body_state body;
     if (!source_current(source) || !qa_world_body_read(runtime->options.services.world, actor, &body, error)) return false;
     if (body.velocity.x == value.x && body.velocity.y == value.y && body.velocity.z == value.z) return true;
-    body.velocity = value; body.ground = (qa_actor_id){0};
+    body.velocity = value; body.ground = (qa_actor_reference){0};
     if (!qa_world_body_write(runtime->options.services.world, actor, &body, error)) return false;
     if (!qa_actors_get(qa_session_actors(runtime->options.services.session), actor)) return true;
     if (!application_control_velocity(runtime->options.application, actor, value, error)) return false;

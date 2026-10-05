@@ -176,8 +176,10 @@ bool q1_map_trigger_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 bool q1_map_grounded(qa_q1_game *g, q1_actor *entity, qa_actor_id other) {
     if (g->options.program != QA_Q1_MG3 || !(entity->spawnflags & 64u))
         return true;
-    qa_body_state body;
-    return qa_world_body_read(g->services.world, other, &body, NULL) && body.ground.registry;
+    const q1_actor *native = q1_entity_const(g, other);
+    if (native) return (native->physics.flags & QA_PHYSICS_ONGROUND) != 0;
+    qa_builtin_actor_traits traits;
+    return g->services.actor_traits && g->services.actor_traits(g->services.context, other, &traits) && traits.grounded;
 }
 bool q1_map_multi_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
     qa_actor_id id = entity->id;
@@ -329,7 +331,7 @@ static bool teleport(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_erro
         return true;
     body.origin = destination.origin;
     body.angles = angles;
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     if (player)
         body.velocity = qa_vec_scale(forward, 300);
     if (!qa_world_body_write(g->services.world, other, &body, error) ||
@@ -530,11 +532,11 @@ bool q1_map_trigger_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contac
             return false;
         body.velocity.x = state->movedir.x * entity->speed;
         body.velocity.y = state->movedir.y * entity->speed;
-        if (body.ground.registry) {
+        if (props.flags & QA_PHYSICS_ONGROUND) {
             body.velocity.z = state->height != 0 ? state->height : 200;
             props.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
         }
-        body.ground = (qa_actor_id){0};
+        body.ground = (qa_actor_reference){0};
         if (!qa_world_body_write(g->services.world, other, &body, error) ||
             !physics->services.write(physics->services.context, other, &props, error))
             return false;

@@ -253,7 +253,7 @@ bool q2m_corpse_tick(q2m_context *c, bool *handled, qa_error *error) {
         return true;
     case Q2M_CORPSE_HOVER:
         if (!(c->actor->physics.flags & QA_PHYSICS_ONGROUND) &&
-            !c->body.ground.registry && c->game->now_ns < m->corpse_end_ns) {
+            !qa_actor_reference_present(c->body.ground) && c->game->now_ns < m->corpse_end_ns) {
             schedule(c, Q2M_CORPSE_HOVER, .1);
             return true;
         }
@@ -265,7 +265,7 @@ bool q2m_corpse_tick(q2m_context *c, bool *handled, qa_error *error) {
 }
 
 bool q2m_hover_dying(q2m_context *c, qa_error *error) {
-    if ((c->actor->physics.flags & QA_PHYSICS_ONGROUND) || c->body.ground.registry)
+    if ((c->actor->physics.flags & QA_PHYSICS_ONGROUND) || qa_actor_reference_present(c->body.ground))
         return q2m_hover_explode(c, error);
     if (q2_random_bounded(c->game, 2))
         return true;

@@ -358,7 +358,7 @@ bool q1_map_special_think(qa_q1_game *g, q1_actor *entity, q1_map_action action,
             return q1_remove(g, entity, error);
         body.origin = trace.end;
         body.velocity = qa_v3(0, 0, 0);
-        body.ground = trace.actor;
+        body.ground = trace.hit == QA_TRACE_HIT_WORLD ? qa_actor_reference_source(g->options.provider, 0) : q1_ref_from(g, trace.actor);
         if (!qa_world_body_write(g->services.world, id, &body, error))
             return false;
         entity = q1_entity(g, id);

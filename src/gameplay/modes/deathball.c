@@ -123,7 +123,7 @@ bool mode_ball_frame(qa_modes *m, mode_instance *v, mode_object *o, qa_error *e)
         }
     body.angles = (qa_vec3){0};
     body.velocity = (qa_vec3){0};
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     o->physics.angular_velocity = (qa_vec3){0};
     o->value.phase = QA_OBJECTIVE_HOME;
     o->value.visible = true;

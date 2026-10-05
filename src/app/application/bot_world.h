@@ -21,6 +21,7 @@ typedef struct application_bot_world_metadata {
 typedef struct application_bot_world_movement {
     int32_t source_client,view_height;
     qa_vec3 view_angles;
+    bool grounded;
 } application_bot_world_movement;
 typedef struct application_bot_world_client {
     const char *name,*skin;

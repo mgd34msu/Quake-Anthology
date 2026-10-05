@@ -111,6 +111,15 @@ qa_actor_id ph_hit(const qa_physics *p, const qa_trace_result *trace) {
            trace->hit == QA_TRACE_HIT_WORLD ? p->world_actor : ph_none();
 }
 
+qa_actor_reference ph_reference(const qa_physics *p, qa_actor_id actor, qa_actor_id target) {
+    const qa_actor_registry *registry = qa_world_actors(p->world);
+    const qa_actor_record *self = qa_actors_get(registry, actor);
+    const qa_actor_record *other = qa_actors_get(registry, target);
+    if (self && other && self->owner == other->owner && other->has_source)
+        return qa_actor_reference_source(other->owner, other->source_slot);
+    return qa_actor_reference_lifetime(target);
+}
+
 qa_vec3 ph_normal(const qa_trace_result *trace) {
     return trace->contact ? trace->contact_plane.normal : trace->plane.normal;
 }
@@ -137,7 +146,8 @@ bool ph_ground(qa_physics *p, qa_actor_id actor, qa_actor_id ground, qa_error *e
     qa_physics_properties props;
     int read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) return read == 0;
-    body.ground = ground;
+    if (ground.registry || props.family != QA_COLLISION_Q1)
+        body.ground = ph_reference(p, actor, ground);
     if (!ph_write(p, actor, &body, error)) return false;
     if (!ph_live(p, actor) || !p->services.read(p->services.context, actor, &props)) return true;
     if (ground.registry) props.flags |= QA_PHYSICS_ONGROUND;
@@ -554,7 +564,7 @@ static bool ph_new_toss(qa_physics *p, qa_actor_id actor, float seconds,
     qa_vec3 below = body.origin;
     below.z -= 0.25f;
     if (!ph_body_trace(p, actor, &body, &props, body.origin, below, true, NULL, 0, &trace, error)) return false;
-    qa_actor_id ground = ph_live(p, body.ground) ?
+    qa_actor_id ground = ph_live(p, qa_physics_actor_reference(p, body.ground)) ?
         (trace.hit == QA_TRACE_HIT_ACTOR ? trace.actor : p->world_actor) : ph_none();
     if (!ph_ground(p, actor, ground, error)) return false;
     if (ground.registry && ph_normal(&trace).z == 1 && !ph_moving(body.velocity)) {
@@ -643,15 +653,16 @@ static bool physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame
         return ph_write(p, actor, &body, error) && ph_link(p, actor, false, error);
     }
     if (motion == QA_PHYSICS_NEW_TOSS) return ph_new_toss(p, actor, seconds, result, error);
-    if (body.ground.registry && (!ph_live(p, body.ground) ||
-        (props.family != QA_COLLISION_Q1 && qa_vec_dot(body.velocity, props.gravity_direction) < 0))) {
+    if (props.family != QA_COLLISION_Q1 && motion != QA_PHYSICS_STEP &&
+        ph_grounded(&body, &props) && (!ph_live(p, qa_physics_actor_reference(p, body.ground)) ||
+        qa_vec_dot(body.velocity, props.gravity_direction) < 0)) {
         if (!ph_ground(p, actor, ph_none(), error)) return false;
-        body.ground = ph_none();
+        body.ground = (qa_actor_reference){0};
     }
     qa_vec3 velocity = ph_limit(body.velocity, p->max_velocity);
     if (motion == QA_PHYSICS_STEP) {
         if (props.family == QA_COLLISION_Q1) {
-            if (body.ground.registry || (props.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING))) return true;
+            if (ph_grounded(&body, &props) || (props.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING))) return true;
             bool sound = body.velocity.z < -p->gravity*0.1f;
             body.velocity = ph_limit(qa_vec_add(body.velocity,
                 qa_vec_scale(props.gravity_direction, props.gravity_scale*p->gravity*seconds)), p->max_velocity);
@@ -660,19 +671,19 @@ static bool physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame
             read = ph_read(p, actor, &body, &props, error);
             if (read < 0) return false;
             if (!read) { result->status = QA_PHYSICS_REMOVED; return true; }
-            return !sound || !body.ground.registry || ph_event(p, actor, QA_PHYSICS_LAND, body.origin, error);
+            return !sound || !ph_grounded(&body, &props) || ph_event(p, actor, QA_PHYSICS_LAND, body.origin, error);
         }
-        if (props.family != QA_COLLISION_Q2 && !body.ground.registry &&
+        if (props.family != QA_COLLISION_Q2 && !ph_grounded(&body, &props) &&
             qa_vec_dot(velocity, props.gravity_direction) >= -100) {
             qa_trace_result floor;
             if (!ph_body_trace(p, actor, &body, &props, body.origin,
                 qa_vec_add(body.origin, qa_vec_scale(props.gravity_direction, 0.25f)), false, NULL, 0, &floor, error)) return false;
             if (floor.fraction < 1 && !floor.start_solid && qa_vec_dot(floor.plane.normal, props.gravity_direction) <= -0.7f) {
-                body.ground = ph_hit(p, &floor);
-                if (!ph_ground(p, actor, body.ground, error)) return false;
+                body.ground = ph_reference(p, actor, ph_hit(p, &floor));
+                if (!ph_ground(p, actor, ph_hit(p, &floor), error)) return false;
             }
         }
-        bool was_grounded = body.ground.registry != 0;
+        bool was_grounded = ph_grounded(&body, &props);
         bool falling_fast = (props.family != QA_COLLISION_Q2 ||
             (!was_grounded && !(props.flags & QA_PHYSICS_FLYING) &&
              !((props.flags & QA_PHYSICS_SWIMMING) && props.water_level > 2))) &&
@@ -680,7 +691,7 @@ static bool physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame
         if (!ph_angular_step(p, actor, seconds, 600, error)) return false;
         read = ph_read(p, actor, &body, &props, error);
         if (read <= 0) { result->status = QA_PHYSICS_REMOVED; return read == 0; }
-        if (!body.ground.registry && !(props.flags & QA_PHYSICS_FLYING) &&
+        if (!ph_grounded(&body, &props) && !(props.flags & QA_PHYSICS_FLYING) &&
             !((props.flags & QA_PHYSICS_SWIMMING) && props.water_level > 2) && props.water_level == 0)
             velocity = qa_vec_add(velocity, qa_vec_scale(props.gravity_direction, props.gravity_scale*p->gravity*seconds));
         if ((props.flags & QA_PHYSICS_FLYING) && velocity.z != 0) {
@@ -692,7 +703,7 @@ static bool physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame
             velocity.z *= fmaxf(0, speed-seconds*fmaxf(speed, 100)*(float)props.water_level)/speed;
         }
         if (ph_moving(velocity)) {
-            if (body.ground.registry || (props.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING))) {
+            if (ph_grounded(&body, &props) || (props.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING))) {
                 float speed = hypotf(velocity.x, velocity.y);
                 bool bottom = true;
                 if (speed > 0 && (props.flags & QA_PHYSICS_DEAD) &&
@@ -707,13 +718,13 @@ static bool physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame
                 !ph_link(p, actor, true, error)) return false;
             read = ph_read(p, actor, &body, &props, error);
             if (read <= 0) { result->status = QA_PHYSICS_REMOVED; return read == 0; }
-            return was_grounded || !falling_fast || !body.ground.registry ||
+            return was_grounded || !falling_fast || !ph_grounded(&body, &props) ||
                 ph_event(p, actor, QA_PHYSICS_LAND, body.origin, error);
         }
         body.velocity = velocity;
         return ph_write(p, actor, &body, error);
     }
-    if (body.ground.registry) { result->status = QA_PHYSICS_STOPPED; return true; }
+    if (ph_grounded(&body, &props)) { result->status = QA_PHYSICS_STOPPED; return true; }
     if (props.motion != QA_PHYSICS_FLY && props.motion != QA_PHYSICS_FLY_MISSILE && props.motion != QA_PHYSICS_WALL_BOUNCE)
         velocity = qa_vec_add(velocity, qa_vec_scale(props.gravity_direction, props.gravity_scale*p->gravity*seconds));
     qa_vec3 old_origin = body.origin;

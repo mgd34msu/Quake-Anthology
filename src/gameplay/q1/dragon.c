@@ -475,7 +475,7 @@ bool q1_dragon_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, q
             return false;
         qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
         body.velocity = qa_vec_sub(qa_vec_scale(g->forward, 300), qa_vec_scale(g->up, 40));
-        body.ground = (qa_actor_id){0};
+        body.ground = (qa_actor_reference){0};
         body.bounds = (qa_bounds){{-16, -16, -24}, {16, 16, 32}};
         entity->physics.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
         return qa_world_body_write(g->services.world, entity->id, &body, error) &&

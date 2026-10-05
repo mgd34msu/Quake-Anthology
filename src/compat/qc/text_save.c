@@ -42,17 +42,9 @@ bool qa_qc_text_body_read(const qa_qc_instance *vm,uint32_t slot,qa_body_state *
         int32_t reference=qc_load_int(qc_entity_words_const(vm,slot),ground->offset);
         uint32_t target;
         if (!qc_entity_slot(vm,reference,&target,error)) return false;
-        const qa_qc_definition *flags=qa_qc_program_find_field(vm->program,"flags");
-        uint32_t bits=0;
-        if (flags) {
-            if (flags->type!=QA_QC_FLOAT || flags->offset>=vm->layout.field_words)
-                return qc_fail(error,QA_ERROR_FORMAT,slot,"Saved flags field has an invalid source definition");
-            float value=qc_load_float(qc_entity_words_const(vm,slot),flags->offset);
-            if (!isfinite(value)) return qc_fail(error,QA_ERROR_FORMAT,slot,"Saved body flags are nonfinite");
-            bits=(uint32_t)qa_source_float_to_i32(value);
-        }
-        if ((bits&512u)!=0 && target && vm->slots[target].kind!=QA_QC_SLOT_FREE)
-            body.ground=vm->slots[target].actor;
+        body.ground = vm->slots[target].kind == QA_QC_SLOT_BORROWED ?
+            qa_actor_reference_lifetime(vm->slots[target].actor) :
+            qa_actor_reference_source(vm->options.host.owner, target);
     }
     if (body.bounds.mins.x>body.bounds.maxs.x || body.bounds.mins.y>body.bounds.maxs.y ||
         body.bounds.mins.z>body.bounds.maxs.z)

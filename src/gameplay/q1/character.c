@@ -123,7 +123,8 @@ bool qa_q1_character_frame(qa_q1_game *g, qa_actor_id actor, const qa_q1_charact
         c->animation.count = 0;
         c->attack_animation = false;
     }
-    bool grounded = body.ground.registry != 0;
+    const q1_actor *native = q1_entity_const(g, actor);
+    bool grounded = native && (native->physics.flags & QA_PHYSICS_ONGROUND);
     qa_builtin_actor_traits traits;
     if (g->services.actor_traits && g->services.actor_traits(g->services.context, actor, &traits))
         grounded = traits.grounded;
@@ -305,7 +306,7 @@ static bool die(qa_q1_game *g, q1_player *player, const qa_damage_outcome *outco
     }
     if (body.velocity.z < 10)
         body.velocity.z += q1_random(g) * 300;
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     if (!qa_world_body_write(g->services.world, actor, &body, error))
         return false;
     float health = q1_health(g, actor);
@@ -454,7 +455,8 @@ bool qa_q1_character_post_move(qa_q1_game *g, qa_actor_id actor, qa_error *error
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, actor, &body, error))
         return false;
-    bool grounded = body.ground.registry != 0;
+    const q1_actor *native = q1_entity_const(g, actor);
+    bool grounded = native && (native->physics.flags & QA_PHYSICS_ONGROUND);
     qa_builtin_actor_traits traits;
     if (g->services.actor_traits && g->services.actor_traits(g->services.context, actor, &traits))
         grounded = traits.grounded;

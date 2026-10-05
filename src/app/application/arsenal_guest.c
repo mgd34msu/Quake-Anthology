@@ -282,9 +282,13 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
     if (!qa_world_body_read(app->world, scope->actor, &body, error) ||
         !qa_application_control_read(app, scope->actor, &control)) return false;
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
-    uint32_t ground = body.ground.registry ? 1022u : 1023u;
-    if (body.ground.registry && !qa_actor_id_equal(body.ground, app->physics->world_actor) &&
-        !qa_q3_host_actor_slot(input->role->host, body.ground, &ground, error)) return false;
+    qa_actor_id ground_actor = qa_actor_reference_resolve(qa_session_actors(app->session), body.ground);
+    bool grounded = control.ground.hit != QA_TRACE_HIT_NONE;
+    uint32_t ground = grounded ? 1022u : 1023u;
+    if (grounded && body.ground.kind == QA_ACTOR_REFERENCE_SOURCE && body.ground.value.source.owner == input->role->source_owner)
+        ground = body.ground.value.source.slot;
+    else if (grounded && qa_actor_reference_present(body.ground) && !qa_actor_id_equal(ground_actor, app->physics->world_actor) &&
+        !qa_q3_host_actor_slot(input->role->host, ground_actor, &ground, error)) return false;
     const float motion[] = {body.origin.x, body.origin.y, body.origin.z,
                             body.velocity.x, body.velocity.y, body.velocity.z,
                             control.view_angles.x, control.view_angles.y, control.view_angles.z};

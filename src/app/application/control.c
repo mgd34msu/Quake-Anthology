@@ -330,18 +330,41 @@ static int16_t gravity_short(double gravity)
                                : (int16_t)value;
 }
 
+static qa_movement_ground body_ground(application_control_record *record,
+    const qa_body_state *body, bool grounded)
+{
+    if (!grounded) return (qa_movement_ground){0};
+    const qa_actor_registry *actors = qa_session_actors(record->application->session);
+    qa_actor_id target = qa_actor_reference_resolve(actors, body->ground);
+    qa_physics *physics = record->application->physics;
+    const qa_actor_record *self = qa_actors_get(actors, record->actor);
+    bool source_world = (record->state.kind == QA_MOVEMENT_NETQUAKE ||
+        record->state.kind == QA_MOVEMENT_QUAKEWORLD) && self &&
+        body->ground.kind == QA_ACTOR_REFERENCE_SOURCE &&
+        body->ground.value.source.owner == self->owner && !body->ground.value.source.slot;
+    bool world = source_world || (physics && physics->world_actor.registry &&
+        qa_actor_id_equal(target, physics->world_actor));
+    return (qa_movement_ground){.hit = world ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_ACTOR,
+        .actor = target};
+}
+
 static void state_body(application_control_record *record,
                        const qa_body_state *body, float health)
 {
     (void)qa_movement_set_origin(&record->state, body->origin, NULL);
     (void)qa_movement_set_velocity(&record->state, body->velocity, NULL);
+    qa_physics_properties props;
+    qa_physics *physics = record->application->physics;
+    bool grounded = qa_actor_reference_present(body->ground);
+    if (record->state.kind == QA_MOVEMENT_NETQUAKE && physics &&
+        physics->services.read(physics->services.context, record->actor, &props))
+        grounded = (props.flags & QA_PHYSICS_ONGROUND) != 0;
+    qa_movement_ground contact = body_ground(record, body, grounded);
     switch (record->state.kind) {
     case QA_MOVEMENT_NETQUAKE:
         record->state.data.nq.angles = body->angles;
         record->state.data.nq.health = health;
-        if (body->ground.registry != 0)
-            record->ground = (qa_movement_ground){.hit = QA_TRACE_HIT_ACTOR,
-                                                   .actor = body->ground};
+        record->ground = contact;
         record->state.data.nq.ground = record->ground;
         if (record->ground.hit == QA_TRACE_HIT_NONE)
             record->state.data.nq.flags &= ~(uint32_t)APPLICATION_Q1_ONGROUND;
@@ -351,9 +374,7 @@ static void state_body(application_control_record *record,
     case QA_MOVEMENT_QUAKEWORLD:
         record->state.data.qw.angles = record->view_angles;
         record->state.data.qw.dead = health <= 0;
-        if (body->ground.registry != 0)
-            record->ground = (qa_movement_ground){.hit = QA_TRACE_HIT_ACTOR,
-                                                   .actor = body->ground};
+        record->ground = contact;
         record->state.data.qw.ground = record->ground;
         break;
     case QA_MOVEMENT_Q2_CLASSIC:
@@ -386,9 +407,7 @@ static void state_body(application_control_record *record,
                     record->application->physics == NULL ? 800.0f :
                     (double)record->application->physics->gravity * (double)record->gravity_multiplier);
         }
-        if (body->ground.registry != 0)
-            record->ground = (qa_movement_ground){.hit = QA_TRACE_HIT_ACTOR,
-                                                   .actor = body->ground};
+        record->ground = contact;
         record->state.data.q3.ground = record->ground;
         break;
     }
@@ -405,10 +424,17 @@ static bool same_bounds(qa_bounds left, qa_bounds right)
            same_vector(left.maxs, right.maxs);
 }
 
-static qa_actor_id result_ground(const qa_movement_ground *ground)
+static qa_actor_reference result_ground(qa_application *app, qa_actor_id actor,
+    const qa_movement_ground *ground)
 {
-    return ground->hit == QA_TRACE_HIT_ACTOR ? ground->actor
-                                             : (qa_actor_id){0};
+    qa_actor_id target = ground->hit == QA_TRACE_HIT_ACTOR ? ground->actor :
+        ground->hit == QA_TRACE_HIT_WORLD ? app->physics->world_actor : (qa_actor_id){0};
+    const qa_actor_registry *registry = qa_session_actors(app->session);
+    const qa_actor_record *self = qa_actors_get(registry, actor);
+    const qa_actor_record *other = qa_actors_get(registry, target);
+    if (self && other && self->owner == other->owner && other->has_source)
+        return qa_actor_reference_source(other->owner, other->source_slot);
+    return qa_actor_reference_lifetime(target);
 }
 
 static qa_movement_ground state_ground(const qa_movement_state *state,
@@ -455,7 +481,11 @@ static bool publish_result_body(application_move_call *move,
     body.origin = qa_movement_origin(state);
     body.velocity = qa_movement_velocity(state);
     body.bounds = bounds;
-    body.ground = result_ground(&ground);
+    if (state->kind != QA_MOVEMENT_NETQUAKE || ground.hit != QA_TRACE_HIT_NONE) {
+        body.ground = state->kind == QA_MOVEMENT_NETQUAKE && ground.hit == QA_TRACE_HIT_WORLD &&
+            body.ground.kind == QA_ACTOR_REFERENCE_SOURCE ?
+            qa_actor_reference_source(body.ground.value.source.owner, 0) : result_ground(application, actor, &ground);
+    }
     body.angles = state->kind == QA_MOVEMENT_NETQUAKE
                       ? state->data.nq.angles
                   : state->kind == QA_MOVEMENT_QUAKEWORLD
@@ -1288,8 +1318,8 @@ static qa_movement_control move_phase_body(void *opaque, qa_movement_phase phase
         qa_body_state source_body;
         if (!qa_world_body_read(move->application->world, actor, &source_body, error)) return QA_MOVEMENT_ERROR;
         qa_movement_ground ground = state_ground(call->state,
-            source_body.ground.registry ? (qa_movement_ground){.hit = QA_TRACE_HIT_ACTOR,
-                .actor = source_body.ground} : (qa_movement_ground){0});
+            qa_actor_reference_present(source_body.ground) ? (qa_movement_ground){.hit = QA_TRACE_HIT_ACTOR,
+                .actor = qa_actor_reference_resolve(qa_session_actors(move->application->session), source_body.ground)} : (qa_movement_ground){0});
         if (!publish_result_body(move, call->state, *call->bounds, ground,
             call_view_angles(move, call), false, false, error)) return QA_MOVEMENT_ERROR;
         if (!live(move->application, actor)) return QA_MOVEMENT_REMOVED;
@@ -2746,7 +2776,11 @@ static bool control_move(qa_application *application,
             desired.origin = qa_movement_origin(&record->result.state);
             desired.velocity = qa_movement_velocity(&record->result.state);
             desired.bounds = record->result.bounds;
-            desired.ground = result_ground(&record->result.ground);
+            if (record->result.state.kind != QA_MOVEMENT_NETQUAKE || record->result.ground.hit != QA_TRACE_HIT_NONE)
+                desired.ground = record->result.state.kind == QA_MOVEMENT_NETQUAKE &&
+                    record->result.ground.hit == QA_TRACE_HIT_WORLD && before.ground.kind == QA_ACTOR_REFERENCE_SOURCE ?
+                    qa_actor_reference_source(before.ground.value.source.owner, 0) :
+                    result_ground(application, actor, &record->result.ground);
             desired.angles = result_angles(&record->result, before.angles);
             if (move.execution && move.execution->kind == APPLICATION_PROVIDER_QC &&
                 !application_qc_control_body(move.execution, actor, &record->result.state, &desired, error)) ok = false;
@@ -2754,7 +2788,7 @@ static bool control_move(qa_application *application,
                            !same_vector(before.velocity, desired.velocity) ||
                            !same_vector(before.angles, desired.angles) ||
                            !same_bounds(before.bounds, desired.bounds) ||
-                           !qa_actor_id_equal(before.ground, desired.ground);
+                           !qa_actor_reference_equal(before.ground, desired.ground);
             qa_linked_body linked;
             bool is_linked =
                 qa_world_linked(application->world, actor, &linked);
@@ -3199,15 +3233,13 @@ static bool guest_complete(qa_application *application, qa_actor_id actor,
         body.origin = qa_v3(player->origin[0], player->origin[1], player->origin[2]);
         body.velocity = qa_v3(player->velocity[0], player->velocity[1], player->velocity[2]);
         body.angles = qa_v3(0, player->viewangles[1], body.angles.z);
-        body.ground = (qa_actor_id){0};
-        if (player->groundEntityNum == 1022) body.ground = application->physics->world_actor;
-        else if (player->groundEntityNum >= 0 && player->groundEntityNum < 1022) {
+        body.ground = (qa_actor_reference){0};
+        if (player->groundEntityNum >= 0 && player->groundEntityNum < 1023) {
             application_provider *provider = application_provider_for(application, actor, QA_ROLE_MOVEMENT, "");
             struct application_q3_guest *engine = q3g_engine(provider);
             if (!engine || !engine->game)
                 ok = application_fail(error, QA_ERROR_NOT_FOUND, "Guest movement source disappeared");
-            else ok = qa_q3_host_actor(engine->game->host, (uint32_t)player->groundEntityNum,
-                                       false, &body.ground, error);
+            else body.ground = qa_actor_reference_source(provider->owner, (uint32_t)player->groundEntityNum);
         }
         if (ok && live(application, actor))
             ok = qa_world_body_write(application->world, actor, &body, error) &&
@@ -3227,9 +3259,9 @@ static bool guest_complete(qa_application *application, qa_actor_id actor,
         state->flags = (uint32_t)player->eFlags;
         state->view_angles = qa_v3(player->viewangles[0], player->viewangles[1], player->viewangles[2]);
         state->view_height = (float)player->viewheight;
-        state->ground = body.ground.registry
-            ? (qa_movement_ground){.hit = qa_actor_id_equal(body.ground, application->physics->world_actor)
-                                               ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_ACTOR, .actor = body.ground}
+        state->ground = qa_actor_reference_present(body.ground)
+            ? (qa_movement_ground){.hit = player->groundEntityNum == 1022 ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_ACTOR,
+                .actor = qa_actor_reference_resolve(qa_session_actors(application->session), body.ground)}
             : (qa_movement_ground){0};
         state->event_sequence = (uint32_t)player->eventSequence;
         state->movement_frame = player->pmoveFramecount; state->jump_pad_frame = player->jumppadFrame;
@@ -3826,7 +3858,7 @@ bool application_control_cutscene(qa_application *application,
     body.origin = origin;
     body.angles = angles;
     body.velocity = qa_v3(0, 0, 0);
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     combat.can_take_damage = false;
     if (!qa_world_body_write(application->world, actor, &body, error) ||
         !qa_combat_set_traits(application->combat, actor, &combat, error)) {
@@ -4082,7 +4114,7 @@ bool application_control_source_spawn(qa_application *application,
     qa_movement_input postures = qa_movement_input_default(
         character->component.clock.kind == QA_CLOCK_Q3 ? QA_MOVEMENT_Q3 : QA_MOVEMENT_NETQUAKE,
         actor);
-    if (!same_bounds(body.bounds, postures.standing.bounds) || body.ground.registry ||
+    if (!same_bounds(body.bounds, postures.standing.bounds) || record->ground.hit != QA_TRACE_HIT_NONE ||
         !same_vector(body.angles, view_angles))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Source spawn must follow its committed standing body");
@@ -4210,6 +4242,26 @@ bool application_control_physics_write(qa_application *application,
     if (!record->active || !qa_actor_id_equal(record->actor, actor))
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "selected player physics is not admitted");
+    qa_body_state body;
+    if (!qa_world_body_read(application->world, actor, &body, error)) return false;
+    record->ground = body_ground(record, &body, (value->flags & QA_PHYSICS_ONGROUND) != 0);
+    switch (record->state.kind) {
+    case QA_MOVEMENT_NETQUAKE:
+        record->state.data.nq.ground = record->ground;
+        record->state.data.nq.flags = (record->state.data.nq.flags & ~(uint32_t)APPLICATION_Q1_ONGROUND) |
+            (record->ground.hit != QA_TRACE_HIT_NONE ? APPLICATION_Q1_ONGROUND : 0u);
+        break;
+    case QA_MOVEMENT_QUAKEWORLD: record->state.data.qw.ground = record->ground; break;
+    case QA_MOVEMENT_Q2_CLASSIC:
+        record->state.data.q2.flags = (record->state.data.q2.flags & ~(uint32_t)APPLICATION_Q2_ONGROUND) |
+            (record->ground.hit != QA_TRACE_HIT_NONE ? APPLICATION_Q2_ONGROUND : 0u);
+        break;
+    case QA_MOVEMENT_Q2_RERELEASE:
+        record->state.data.q2r.flags = (record->state.data.q2r.flags & ~(uint32_t)APPLICATION_Q2_ONGROUND) |
+            (record->ground.hit != QA_TRACE_HIT_NONE ? APPLICATION_Q2_ONGROUND : 0u);
+        break;
+    case QA_MOVEMENT_Q3: record->state.data.q3.ground = record->ground; break;
+    }
     record->flight = (value->flags & QA_PHYSICS_FLYING) != 0;
     record->water_level = value->water_level;
     record->water_type = value->water_type;

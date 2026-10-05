@@ -260,7 +260,7 @@ bool q1_source_flag_think(qa_q1_game *game, q1_actor *entity, q1_think_kind kind
         entity->state.source_flag.placed = true;
         body.origin = floor.end;
         body.velocity = qa_v3(0, 0, 0);
-        body.ground = floor.actor;
+        body.ground = floor.hit == QA_TRACE_HIT_WORLD ? qa_actor_reference_source(game->options.provider, 0) : q1_ref_from(game, floor.actor);
         return qa_world_body_write(game->services.world, actor, &body, error) &&
             q1_link(game, entity, error) && current(game, actor, entity, error) &&
             q1_schedule(game, entity, .1, Q1_THINK_SOURCE_CTF_FLAG, error);

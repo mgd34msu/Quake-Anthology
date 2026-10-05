@@ -1339,7 +1339,7 @@ bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             return q1_remove(g, entity, error);
         body.origin = trace.end;
         body.velocity = qa_v3(0, 0, 0);
-        body.ground = trace.actor;
+        body.ground = trace.hit == QA_TRACE_HIT_WORLD ? qa_actor_reference_source(g->options.provider, 0) : q1_ref_from(g, trace.actor);
         entity->physics.solid = QA_PHYSICS_TRIGGER;
         entity->physics.motion = QA_PHYSICS_TOSS;
         entity->physics.flags = QA_PHYSICS_KILL_VELOCITY | QA_PHYSICS_ONGROUND;

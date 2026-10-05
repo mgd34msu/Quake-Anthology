@@ -754,7 +754,7 @@ static bool control_clear_ground(struct application_qc_state *engine, qa_actor_i
 {
     qa_body_state body;
     if (!qa_world_body_read(engine->world, actor, &body, error)) return false;
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     return qa_world_body_write(engine->world, actor, &body, error);
 }
 static bool control_qw_input(struct application_qc_state *engine, int32_t reference, qa_actor_id actor,
@@ -797,7 +797,7 @@ static bool control_mixed_water(struct application_qc_state *engine, int32_t ref
     else {
         qa_body_state body;
         if (!qa_world_body_read(engine->world, actor, &body, error)) return false;
-        ground = body.ground.registry ? (qa_movement_ground){.hit = QA_TRACE_HIT_ACTOR, .actor = body.ground}
+        ground = qa_actor_reference_present(body.ground) ? (qa_movement_ground){.hit = QA_TRACE_HIT_ACTOR, .actor = qa_actor_reference_resolve(qa_session_actors(engine->provider->application->session), body.ground)}
             : (qa_movement_ground){0};
     }
     if (!call->water_level || !call->water_type)

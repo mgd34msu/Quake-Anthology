@@ -43,7 +43,7 @@ static bool floor_drop(qa_q1_game *g, q1_actor *e, bool *placed, qa_error *error
     if (hit.fraction == 1 || hit.all_solid) return true;
     body.origin = hit.end;
     body.velocity = qa_v3(0, 0, 0);
-    body.ground = hit.actor;
+    body.ground = hit.hit == QA_TRACE_HIT_WORLD ? qa_actor_reference_source(g->options.provider, 0) : q1_ref_from(g, hit.actor);
     if (!qa_world_body_write(g->services.world, actor, &body, error) ||
         !q1_link(g, e, error) || !current(g, actor, e, error)) return false;
     *placed = true;
@@ -228,7 +228,7 @@ bool q1_source_rogue_flag_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_er
     } else {
         body.origin = hit.end;
         body.velocity = qa_v3(0, 0, 0);
-        body.ground = hit.actor;
+        body.ground = hit.hit == QA_TRACE_HIT_WORLD ? qa_actor_reference_source(g->options.provider, 0) : q1_ref_from(g, hit.actor);
         if (!qa_world_body_write(g->services.world, base_actor, &body, error) ||
             !q1_link(g, base, error)) return false;
         base->state.rogue_flag.placed = true;

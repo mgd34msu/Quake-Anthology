@@ -28,7 +28,7 @@ bool qa_persistence_body(qa_source_save_io *io, qa_body_state *value)
 {
     return value && qa_source_save_vec3(io, &value->origin) && qa_source_save_vec3(io, &value->angles) &&
         qa_source_save_vec3(io, &value->velocity) && qa_persistence_bounds(io, &value->bounds) &&
-        qa_source_save_actor(io, &value->ground);
+        qa_source_save_actor_reference(io, &value->ground);
 }
 
 bool qa_persistence_ground(qa_source_save_io *io, qa_movement_ground *value)

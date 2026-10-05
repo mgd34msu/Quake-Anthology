@@ -33,7 +33,7 @@ static bool floor_token(qa_modes *m, mode_object *o, bool *landed, qa_error *e) 
     if (!*landed)
         return true;
     body.origin = result.end;
-    body.ground = result.actor;
+    body.ground = qa_actor_reference_lifetime(result.actor);
     return qa_world_body_write(m->options.services.world, o->actor, &body, e) &&
            qa_world_link(m->options.services.world, o->actor, NULL, e);
 }

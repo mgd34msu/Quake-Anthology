@@ -176,7 +176,7 @@ static bool commit_monster(qa_physics *p, qa_actor_id actor, qa_vec3 origin,
     int read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) return read == 0;
     body.origin = origin;
-    if (change_ground && props.family == QA_COLLISION_Q1) body.ground = ground;
+    if (change_ground && props.family == QA_COLLISION_Q1) body.ground = ph_reference(p, actor, ground);
     if (!ph_write(p, actor, &body, error)) return false;
     if (change_ground && props.family != QA_COLLISION_Q1 && !ph_ground(p, actor, ground, error)) return false;
     if (clear_partial && ph_live(p, actor) && p->services.read(p->services.context, actor, &props)) {
@@ -332,7 +332,7 @@ static bool monster_step_state(qa_physics *p, qa_actor_id actor, qa_vec3 move,
     if (commit && !commit_monster(p, actor, trace.end, true, ph_hit(p, &trace), true, relink, error)) return false;
     if (detached_body) {
         detached_body->origin = trace.end;
-        detached_body->ground = ph_hit(p, &trace);
+        detached_body->ground = ph_reference(p, actor, ph_hit(p, &trace));
         detached_props->flags &= ~(uint32_t)QA_PHYSICS_PARTIAL_GROUND;
     }
     *moved = true;
@@ -396,7 +396,7 @@ bool qa_physics_walk_move(qa_physics *p, qa_actor_id actor, float yaw, float dis
     if (props.family == QA_COLLISION_Q1) {
         if (!(props.flags & (QA_PHYSICS_ONGROUND | QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING))) return true;
     } else if (props.motion == QA_PHYSICS_STATIONARY ||
-        (!body.ground.registry && !(props.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING)))) return true;
+        (!qa_actor_reference_present(body.ground) && !(props.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING)))) return true;
     float radians = yaw*0.01745329251994329577f;
     return qa_physics_monster_step(p, actor, qa_v3(cosf(radians)*distance, sinf(radians)*distance, 0),
                                     elapsed, commit, relink, moved, error);

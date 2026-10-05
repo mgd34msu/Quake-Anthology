@@ -68,7 +68,7 @@ static bool vote_teleport(qa_q1_game *g, qa_actor_id trigger, qa_actor_id player
     body.origin = destination.origin;
     body.angles = angles;
     body.velocity = qa_vec_scale(forward, 300);
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     if (!qa_world_body_write(g->services.world, player, &body, error))
         return false;
     if (!q1_alive(g, player))

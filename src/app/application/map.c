@@ -1384,6 +1384,18 @@ static bool monster_reachable(monster_placement_query *query, qa_vec3 start,
     return true;
 }
 typedef struct monster_offset { int x, y, distance; } monster_offset;
+static qa_actor_reference monster_ground(const monster_placement_query *query,
+    const qa_trace_result *floor, bool walking)
+{
+    qa_actor_id actor = walking ? floor->hit == QA_TRACE_HIT_ACTOR ? floor->actor :
+        query->map->application->physics->world_actor : (qa_actor_id){0};
+    const qa_actor_registry *actors = qa_session_actors(query->map->application->session);
+    const qa_actor_record *self = qa_actors_get(actors, query->actor);
+    const qa_actor_record *ground = qa_actors_get(actors, actor);
+    return self && ground && self->owner == ground->owner && ground->has_source ?
+        qa_actor_reference_source(ground->owner, ground->source_slot) : qa_actor_reference_lifetime(actor);
+}
+
 static int monster_offset_compare(const void *left, const void *right)
 {
     const monster_offset *a = left, *b = right;
@@ -1410,8 +1422,7 @@ static bool monster_candidate(monster_placement_query *query, qa_vec3 start,
     if (!reachable) return true;
     *out = query->body;
     out->origin = floor.end;
-    out->ground = walking ? floor.hit == QA_TRACE_HIT_ACTOR ? floor.actor :
-        query->map->application->physics->world_actor : (qa_actor_id){0};
+    out->ground = monster_ground(query, &floor, walking);
     *found = true;
     return true;
 }
@@ -1465,8 +1476,7 @@ static bool monster_corner_placement(monster_placement_query *query, qa_vec3 sou
                     if (!fit.start_solid && !fit.all_solid) {
                         *out = query->body;
                         out->origin = origin;
-                        out->ground = walking ? floor.hit == QA_TRACE_HIT_ACTOR ? floor.actor :
-                            query->map->application->physics->world_actor : (qa_actor_id){0};
+                        out->ground = monster_ground(query, &floor, walking);
                         *found = true;
                     }
                 }

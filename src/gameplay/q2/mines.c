@@ -132,7 +132,7 @@ static bool explode(qa_q2_game *g, q2_actor *a, bool blow, qa_error *e) {
     if (!contents_at(g, body.origin, &contents, e))
         return false;
     const char *effect =
-        body.ground.registry == 0
+        !qa_actor_reference_present(body.ground)
             ? ((contents & 56u) != 0 ? "q2:rocket-explosion-water" : "q2:rocket-explosion")
             : ((contents & 56u) != 0 ? "q2:grenade-explosion-water" : "q2:grenade-explosion");
     return q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, effect, 0,
@@ -426,7 +426,7 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
     if (p->expire_ns < g->now_ns)
         return explode(g, a, false, e);
     p->next_ns = q2_deadline(g->now_ns, 100 * Q2_MS);
-    if (body.ground.registry == 0)
+    if (!qa_actor_reference_present(body.ground))
         return true;
     if (p->frame > 4) {
         if (p->frame == 5) {
@@ -521,9 +521,9 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
         qa_body_state target;
         if (!qa_world_body_read(g->services.world, best, &target, e))
             return false;
-        if (target.ground.registry != 0)
+        if (qa_actor_reference_present(target.ground))
             target.origin.z += 1;
-        target.ground = (qa_actor_id){0};
+        target.ground = (qa_actor_reference){0};
         qa_vec3 delta = qa_vec_sub(body.origin, target.origin);
         float distance = qa_vec_length(delta);
         bool player;

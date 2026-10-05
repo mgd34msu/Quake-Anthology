@@ -172,7 +172,7 @@ bool q2m_hit(q2m_context *context, qa_vec3 aim, float damage, float kick,
   current.velocity = qa_vec_add(current.velocity,
       qa_vec_scale(qa_vec_normalize(qa_vec_sub(center, impact)), kick));
   if (current.velocity.z > 0.0f)
-    current.ground = (qa_actor_id){0};
+    current.ground = (qa_actor_reference){0};
   return qa_world_body_write(game->services.world, enemy, &current, error);
 }
 
@@ -964,7 +964,7 @@ static bool pain_gunner(q2m_context *context, qa_error *error) {
   if (rerelease) {
     if (m->move && ((m->move->id == Q2M_MOVE_gunner_move_jump) ||
                     (m->move->id == Q2M_MOVE_gunner_move_jump2))) return true;
-  } else if (rogue && !context->body.ground.registry) return true;
+  } else if (rogue && !qa_actor_reference_present(context->body.ground)) return true;
   if (g->now_ns < m->pain_ns) return true;
   m->pain_ns = q2m_after(g->now_ns, 3.0);
   bool first = rerelease ? q2_random_bounded(g, 2) == 0 :
@@ -1121,7 +1121,7 @@ static bool pain_infantry(q2m_context *context, qa_error *error) {
   if (rerelease && ordinary_think && m->move &&
       ((m->move->id == Q2M_MOVE_infantry_move_jump) ||
        (m->move->id == Q2M_MOVE_infantry_move_jump2))) return true;
-  if (!rerelease && rogue && !context->body.ground.registry) return true;
+  if (!rerelease && rogue && !qa_actor_reference_present(context->body.ground)) return true;
   if (rerelease || rogue) {
     m->dodging = false;
     if (rerelease && m->attack_state == Q2M_SLIDING) m->attack_state = Q2M_STRAIGHT;
@@ -3099,7 +3099,7 @@ static bool berserk_slam_damage(q2m_context *context, qa_vec3 point,
                                            target, &traits);
     if (!q2m_alive(context))
       break;
-    if (traits.player && body.ground.registry == 0)
+    if (traits.player && !qa_actor_reference_present(body.ground))
       continue;
 
     qa_trace_policy visibility = qa_collision_default_policy(QA_COLLISION_Q2);
@@ -3204,7 +3204,7 @@ bool q2m_touch(q2m_context *context, const qa_touch_contact *contact,
   q2m_species species = monster->definition->species;
   if (species == Q2M_BERSERK) {
     if (context->game->options.edition == QA_Q2_RERELEASE &&
-        context->body.ground.registry != 0)
+        qa_actor_reference_present(context->body.ground))
       return q2m_berserk_land(context, error);
     return true;
   }
@@ -3245,7 +3245,7 @@ bool q2m_touch(q2m_context *context, const qa_touch_contact *contact,
   if (!q2m_alive(context))
     return true;
   if (!supported) {
-    if (context->body.ground.registry != 0) {
+    if (qa_actor_reference_present(context->body.ground)) {
       monster->next_frame = species == Q2M_GEKK ? 81 : 1;
       monster->touch_active = false;
     }

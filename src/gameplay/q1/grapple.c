@@ -156,7 +156,7 @@ static bool pull_velocity(qa_q1_game *g, q1_actor *hook, q1_player *player, bool
     float distance = qa_vec_length(delta);
     body.velocity = qa_vec_scale(qa_vec_normalize(delta), distance <= 100 ? distance * 10 : 1000);
     if (!threewave(hook))
-        body.ground = (qa_actor_id){0};
+        body.ground = (qa_actor_reference){0};
     if (!qa_world_body_write(g->services.world, player->id, &body, error))
         return false;
     if (!q1_alive(g, player->id) || !q1_alive(g, hook->id))
@@ -356,7 +356,7 @@ bool q1_grapple_touch(qa_q1_game *g, q1_actor *hook, qa_actor_id actor,
         qa_body_state owner;
         if (!qa_world_body_read(g->services.world, player->id, &owner, error))
             return false;
-        owner.ground = (qa_actor_id){0};
+        owner.ground = (qa_actor_reference){0};
         if (!qa_world_body_write(g->services.world, player->id, &owner, error))
             return false;
         if (!g->services.motion_changed) {

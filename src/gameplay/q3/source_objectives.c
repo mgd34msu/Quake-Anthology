@@ -162,9 +162,12 @@ static bool spawn_trigger(qa_q3_game *game, qa_actor_id model, qa_vec3 origin,
             body.origin = start;
         } else {
             body.origin = trace.end;
-            body.ground = trace.hit == QA_TRACE_HIT_ACTOR ? trace.actor :
-                trace.hit == QA_TRACE_HIT_WORLD ? game->source_entities[QA_Q3_SOURCE_WORLD].actor :
-                (qa_actor_id){0};
+            const qa_actor_record *ground = qa_actors_get(qa_session_actors(game->options.services.session), trace.actor);
+            body.ground = trace.hit == QA_TRACE_HIT_ACTOR ?
+                ground && ground->owner == game->options.owner && ground->has_source ?
+                    qa_actor_reference_source(ground->owner, ground->source_slot) : qa_actor_reference_lifetime(trace.actor) :
+                trace.hit == QA_TRACE_HIT_WORLD ? qa_actor_reference_source(game->options.owner, QA_Q3_SOURCE_WORLD) :
+                (qa_actor_reference){0};
             wire = q3_wire_entity(game, actor);
             if (!wire) return q3_fail(error, "Obelisk floor trace lost its real wire row");
             wire->ground_entity = trace.hit == QA_TRACE_HIT_WORLD ? 1022 :

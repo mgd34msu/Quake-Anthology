@@ -147,7 +147,7 @@ static bool q1_push(qa_physics *p, const qa_physics_push *input,
         if (read < 0) { ok = false; break; }
         if (!read || props.motion == QA_PHYSICS_PUSH || props.motion == QA_PHYSICS_STOP ||
             props.motion == QA_PHYSICS_STATIONARY || props.motion == QA_PHYSICS_NOCLIP) continue;
-        bool rider = qa_actor_id_equal(body.ground, input->actor) &&
+        bool rider = qa_actor_id_equal(qa_physics_actor_reference(p, body.ground), input->actor) &&
                      (props.family != QA_COLLISION_Q1 || (props.flags & QA_PHYSICS_ONGROUND));
         if (!rider) {
             if (!qa_world_linked(p->world, actor, &linked) || !overlaps_strict(linked.absolute_bounds, bounds)) continue;
@@ -157,7 +157,7 @@ static bool q1_push(qa_physics *p, const qa_physics_push *input,
         }
         if (!(props.flags & QA_PHYSICS_PLAYER)) {
             props.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
-            body.ground = ph_none();
+            if (props.family != QA_COLLISION_Q1) body.ground = (qa_actor_reference){0};
             if (!ph_properties(p, actor, &props, error) || !ph_write(p, actor, &body, error)) { ok = false; break; }
         }
         if (!save_push(&saved, actor, &body, &props, error)) { ok = false; break; }
@@ -264,7 +264,7 @@ static bool q2_push(qa_physics *p, const qa_physics_push *input,
         if (read < 0) { ok = false; break; }
         if (!read || !qa_world_linked(p->world, actor, &linked) || props.motion == QA_PHYSICS_PUSH ||
             props.motion == QA_PHYSICS_STOP || props.motion == QA_PHYSICS_STATIONARY || props.motion == QA_PHYSICS_NOCLIP) continue;
-        bool rider = qa_actor_id_equal(body.ground, input->actor), blocked = false;
+        bool rider = qa_actor_id_equal(qa_physics_actor_reference(p, body.ground), input->actor), blocked = false;
         if (!rider) {
             if (!qa_bounds_overlap(linked.absolute_bounds, bounds)) continue;
             if (!ph_test_position(p, actor, &blocked, error)) { ok = false; break; }
@@ -279,7 +279,7 @@ static bool q2_push(qa_physics *p, const qa_physics_push *input,
         if (!blocked) {
             if (!save_push(saved, actor, &body, &props, error)) { ok = false; break; }
             body.origin = qa_vec_add(body.origin, rotated_delta(body.origin, pusher.origin, move, forward, right, up));
-            if (!rider) body.ground = ph_none();
+            if (!rider) body.ground = (qa_actor_reference){0};
             if (!ph_write(p, actor, &body, error)) { ok = false; break; }
             if (props.flags & QA_PHYSICS_PLAYER) {
                 if (p->services.read(p->services.context, actor, &props)) {

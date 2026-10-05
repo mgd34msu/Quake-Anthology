@@ -466,7 +466,7 @@ bool q1_gib_head(qa_q1_game *g, q1_actor *source, const char *model, float healt
     body.origin = origin;
     body.velocity = velocity;
     body.bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 56}};
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     if (!qa_world_body_write(g->services.world, id, &body, error))
         return false;
     source = q1_entity(g, id);

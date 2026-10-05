@@ -24,6 +24,7 @@ static size_t native_size(const q2_original_field *field)
     case Q2_ORIGINAL_VECTOR: return sizeof(qa_vec3);
     case Q2_ORIGINAL_TIME:
     case Q2_ORIGINAL_FRAME_TIME:
+    case Q2_ORIGINAL_U64:
     case Q2_ORIGINAL_FRAME_INDEX: return sizeof(uint64_t);
     case Q2_ORIGINAL_TEXT: return field->count;
     default: return sizeof(uint32_t);
@@ -139,25 +140,22 @@ static bool value_store(q2_original_record_io *io, const q2_original_field *fiel
     }
 }
 
-static bool json_field(q2_original_record_io *io, const q2_original_field *field, void *value)
+static bool json_component(q2_original_record_io *io, const q2_original_field *field, void *value, qa_json_id id)
 {
-    qa_json_id id = io->reading ? qa_json_get(io->document, io->object, field->name) : QA_JSON_NONE;
+    if (field->kind == Q2_ORIGINAL_U64) {
+        uint64_t *word = value;
+        if (io->reading) {
+            if (id == QA_JSON_NONE) { *word = 0; return true; }
+            return qa_json_u64(io->document, id, word, io->error);
+        }
+        qa_json_writer_u64(io->writer, *word);
+        return written(io);
+    }
     if (io->reading && id == QA_JSON_NONE) {
         memset(value, 0, native_size(field));
         if (field->kind == Q2_ORIGINAL_WEAPON_PHASE)
             *(qa_q2_weapon_phase *)value = QA_Q2_READY;
         return true;
-    }
-    if (!io->reading) {
-        bool empty = false;
-        if (field->kind == Q2_ORIGINAL_TEXT) empty = !*(const char *)value;
-        else if (field->kind == Q2_ORIGINAL_VECTOR) {
-            const qa_vec3 *v = value;
-            empty = v->x == 0 && v->y == 0 && v->z == 0;
-        } else empty = value_number(field, value) == 0;
-        if (empty) return true;
-        qa_json_writer_key(io->writer, field->name);
-        if (!written(io)) return false;
     }
     if (field->kind == Q2_ORIGINAL_TEXT)
         return io->reading ? text_read(io, id, value, field->count) : text_write(io, value, field->count);
@@ -214,8 +212,55 @@ static bool json_field(q2_original_record_io *io, const q2_original_field *field
     return written(io);
 }
 
+
+static bool json_empty(const q2_original_field *field, const void *value)
+{
+    if (field->kind == Q2_ORIGINAL_U64) return !*(const uint64_t *)value;
+    if (field->kind == Q2_ORIGINAL_TEXT) return !*(const char *)value;
+    if (field->kind == Q2_ORIGINAL_VECTOR) {
+        const qa_vec3 *v = value;
+        return v->x == 0 && v->y == 0 && v->z == 0;
+    }
+    return value_number(field, value) == 0;
+}
+
+static bool json_field(q2_original_record_io *io, const q2_original_field *field, void *value)
+{
+    bool array = field->kind != Q2_ORIGINAL_TEXT && field->kind != Q2_ORIGINAL_VECTOR && field->count > 1;
+    size_t count = array ? field->count : 1, stride = native_size(field);
+    qa_json_id id = io->reading ? qa_json_get(io->document, io->object, field->name) : QA_JSON_NONE;
+    if (io->reading && array && id != QA_JSON_NONE &&
+        (qa_json_type(io->document, id) != QA_JSON_ARRAY || qa_json_size(io->document, id) != count))
+        return fail(io, id, "Q2 original array differs from its fixed Source extent");
+    if (!io->reading) {
+        bool empty = true;
+        for (size_t i = 0; i < count; ++i)
+            empty = empty && json_empty(field, (const uint8_t *)value + i * stride);
+        if (empty) return true;
+        qa_json_writer_key(io->writer, field->name);
+        if (array) qa_json_writer_array(io->writer);
+    }
+    for (size_t i = 0; i < count; ++i) {
+        qa_json_id element = io->reading && array && id != QA_JSON_NONE ? qa_json_at(io->document, id, i) : id;
+        if (!json_component(io, field, (uint8_t *)value + i * stride, element)) return false;
+    }
+    if (!io->reading && array) qa_json_writer_end(io->writer);
+    return io->reading || written(io);
+}
+
 static bool classic_field(q2_original_record_io *io, const q2_original_field *field, void *value)
 {
+    if (field->kind == Q2_ORIGINAL_U64) {
+        uint64_t *wide = value;
+        if (!io->reading && *wide > UINT32_MAX)
+            return fail(io, field->offset, "Q2 Source word exceeds the original 32-bit ABI");
+        q2_original_field narrow = *field;
+        narrow.kind = Q2_ORIGINAL_U32;
+        uint32_t word = io->reading ? 0 : (uint32_t)*wide;
+        if (!classic_field(io, &narrow, &word)) return false;
+        if (io->reading) *wide = word;
+        return true;
+    }
     size_t offset = field->classic_offsets[io->product];
     if (offset == UINT16_MAX) {
         if (io->reading) memset(value, 0, native_size(field));
@@ -316,6 +361,8 @@ bool q2_original_record(q2_original_record_io *io, q2_original_record_kind kind,
         return fail(io, io->object, "Q2 original record requires an object");
     for (size_t i = 0; i < layout->count; ++i) {
         const q2_original_field *field = &layout->fields[i];
+        if (io->edition == QA_Q2_RERELEASE && kind == Q2_ORIGINAL_GAME &&
+            !strcmp(field->name, "num_items")) continue; /* Original RR GAME has no such member. */
         void *member = (uint8_t *)value + field->offset;
         if (!q2_original_value(io, field, member))
             return false;
@@ -330,7 +377,7 @@ bool q2_original_scalar(q2_original_record_io *io, const char *name,
     return q2_original_value(io, &field, value);
 }
 
-static bool source_text(q2_original_record_io *io, qa_q2_game *g, const char *name,
+bool q2_original_source_text(q2_original_record_io *io, qa_q2_game *g, const char *name,
     qa_string_id *value, size_t capacity)
 {
     if (io->edition != QA_Q2_RERELEASE)
@@ -357,7 +404,7 @@ static bool source_text(q2_original_record_io *io, qa_q2_game *g, const char *na
     return okay;
 }
 
-static bool item_field(qa_q2_game *g, q2_original_record_io *io, const char *name,
+bool q2_original_item(qa_q2_game *g, q2_original_record_io *io, const char *name,
     uint16_t base, uint16_t xatrix, uint16_t rogue, qa_item_id *item)
 {
     const qa_q2_item_definition *definition = !io->reading && *item ? q2_item_by_id(g, *item) : NULL;
@@ -587,7 +634,7 @@ static bool original_weapon(qa_q2_game *g, q2_original_record_io *io, const char
             if (!definition) return fail(io, pointer, "Original coop pointer is outside the actual item list");
             item = definition->item;
         }
-    } else if (!item_field(g, io, name, base, xatrix, rogue, &item)) return false;
+    } else if (!q2_original_item(g, io, name, base, xatrix, rogue, &item)) return false;
     if (io->reading) {
         *weapon = QA_Q2_WEAPON_NONE;
         for (unsigned i = 1; i < QA_Q2_WEAPON_COUNT; ++i)
@@ -646,7 +693,7 @@ static bool persistent_record(qa_q2_game *g, q2_original_record_io *io,
         !q2_original_scalar(io, "max_health", Q2_ORIGINAL_I32, 728, 728, 728, &maximum_health) ||
         !q2_original_scalar(io, "savedFlags", Q2_ORIGINAL_U32, 732, 732, 732, &carry->flags) ||
         !q2_original_scalar(io, "power_cubes", Q2_ORIGINAL_U32, 1796, 1804, 1812, &carry->power_cubes) ||
-        !item_field(g, io, "selected_item", 736, 736, 736, &carry->selected_item) ||
+        !q2_original_item(g, io, "selected_item", 736, 736, 736, &carry->selected_item) ||
         !original_weapon(g, io, "weapon", 1788, 1796, 1804, coop, &carry->weapon) ||
         !original_weapon(g, io, "lastweapon", 1792, 1800, 1808, coop, last_weapon) ||
         !inventory_record(g, io, carry)) return false;
@@ -949,8 +996,8 @@ static bool campaign_record(qa_q2_game *g, q2_original_record_io *io,
                 return fail(io, i, "Q2 Source campaign time exceeds its original clock");
             time = (uint64_t)nanoseconds;
         }
-        if (!source_text(&row, g, "map_name", &level->map, 64) ||
-            !source_text(&row, g, "pretty_name", &level->name, 64) ||
+        if (!q2_original_source_text(&row, g, "map_name", &level->map, 64) ||
+            !q2_original_source_text(&row, g, "pretty_name", &level->name, 64) ||
             !q2_original_scalar(&row, "total_secrets", Q2_ORIGINAL_U32, 0, 0, 0, &level->total_secrets) ||
             !q2_original_scalar(&row, "found_secrets", Q2_ORIGINAL_U32, 0, 0, 0, &level->found_secrets) ||
             !q2_original_scalar(&row, "total_monsters", Q2_ORIGINAL_U32, 0, 0, 0, &level->total_monsters) ||

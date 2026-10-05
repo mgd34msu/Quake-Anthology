@@ -308,7 +308,7 @@ bool q2_trigger_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contac
             (native &&
              (native->physics.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING | QA_PHYSICS_DEAD))))
             return true;
-        bool grounded = b.ground.registry != 0;
+        bool grounded = qa_actor_reference_present(b.ground);
         if (rr && !grounded) {
             qa_trace_result hit;
             qa_vec3 down = b.origin;
@@ -321,7 +321,7 @@ bool q2_trigger_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contac
         b.velocity.y = s->direction.y * s->speed;
         if (grounded)
             b.velocity.z = s->direction.z;
-        b.ground = (qa_actor_id){0};
+        b.ground = (qa_actor_reference){0};
         return qa_world_body_write(g->services.world, id, &b, e);
     }
     qa_combat_state combat;

@@ -137,9 +137,10 @@ bool qa_native_host_source_body_read(qa_native_host *host,uint32_t slot,uint32_t
         uint32_t other;qa_native_slot_binding target;qa_native_entity_table table;
         if(!qa_native_entity_table_get(host->instance,&table,error)||!qa_native_entity_slot(host->instance,at,&other,error)||
             !qa_native_slot(host->instance,other,&target,error)) return false;
-        if(other>=table.count||target.kind==QA_NATIVE_SLOT_FREE||!actor_live(host,target.actor))
-            return native_host_fail(error,QA_ERROR_ARGUMENT,other,"Native source ground has no actual bound full actor");
-        body.ground=target.actor;
+        if(other>=table.count)
+            return native_host_fail(error,QA_ERROR_ARGUMENT,other,"Native source ground exceeds physical entity extent");
+        body.ground=target.kind==QA_NATIVE_SLOT_BORROWED ? qa_actor_reference_lifetime(target.actor) :
+            qa_actor_reference_source(host->world.owner,other);
     }
     *out=body;return true;
 }
@@ -151,7 +152,13 @@ bool qa_native_host_source_body_write(qa_native_host *host,uint32_t slot,uint32_
     if(!body||!qa_vec_finite(body->origin)||!qa_vec_finite(body->angles)||!qa_vec_finite(body->velocity)||
         !qa_bounds_valid(body->bounds)) return native_host_fail(error,QA_ERROR_ARGUMENT,slot,"Native body write has invalid canonical vectors or bounds");
     if(!source_body_address(host,slot,velocity,ground,&address,&binding,error)) return false;
-    if(body->ground.registry&&!native_host_address_for_actor(host,body->ground,&target,error)) return false;
+    if(body->ground.kind==QA_ACTOR_REFERENCE_SOURCE&&body->ground.value.source.owner==host->world.owner) {
+        qa_native_entity_table table;
+        if(!qa_native_entity_table_get(host->instance,&table,error)||body->ground.value.source.slot>=table.count)
+            return native_host_fail(error,QA_ERROR_ARGUMENT,slot,"Native ground exceeds physical entity extent");
+        target=table.base+(qa_native_address)body->ground.value.source.slot*table.stride;
+    } else if(qa_actor_reference_present(body->ground)&&!native_host_address_for_actor(host,
+        qa_actor_reference_resolve(qa_session_actors(host->world.session),body->ground),&target,error)) return false;
     qa_native_address current_address;qa_native_slot_binding current_binding;
     if(!source_body_address(host,slot,velocity,ground,&current_address,&current_binding,error)) return false;
     if(current_address!=address||!qa_actor_id_equal(current_binding.actor,binding.actor))

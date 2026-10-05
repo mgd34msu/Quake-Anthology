@@ -208,7 +208,7 @@ bool application_bot_world_read(application_bot_world *world,int32_t number,
             ps->product=QA_Q3_ARENA;ps->clientNum=movement.source_client;
             vector(ps->origin,body.origin);vector(ps->velocity,body.velocity);vector(ps->viewangles,movement.view_angles);
             ps->viewheight=movement.view_height;ps->groundEntityNum=1023;
-            if(okay && body.ground.registry) okay=entity_id(world,body.ground,&ps->groundEntityNum,error);
+            if(okay && movement.grounded && qa_actor_reference_present(body.ground)) okay=entity_id(world,qa_actor_reference_resolve(qa_session_actors(world->services.session), body.ground),&ps->groundEntityNum,error);
             ps->pmType=client.spectator?2:(!has_combat || combat.health<=0)?3:0;
             if(okay) okay=world->services.weapon(world->services.context,actor,&ps->weapon,&ps->weaponState,error);
             ps->stats[0]=has_combat?combat.health:0;ps->stats[3]=has_combat?combat.armor:0;

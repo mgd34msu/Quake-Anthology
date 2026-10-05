@@ -56,7 +56,7 @@ static bool scene_read(const frontend_remote_unified_prediction *p,const qa_unif
         if (!actor_read(p,frame,row->body.actor,&id,e) || !id.registry ||
             !(p->importing ? frontend_remote_unified_actor_published(p->replica,row->body.actor.slot,row->body.actor.generation) :
                 frontend_remote_unified_actor_present(p->replica,row->body.actor.slot,row->body.actor.generation)) ||
-            !actor_read(p,frame,state.ground,&state.ground,e) || !actor_read(p,frame,collision.owner,&collision.owner,e)) return false;
+            !(state.ground.kind != QA_ACTOR_REFERENCE_LIFETIME || actor_read(p,frame,state.ground.value.actor,&state.ground.value.actor,e)) || !actor_read(p,frame,collision.owner,&collision.owner,e)) return false;
         link.state=state;
         if (!qa_world_body_create(scene,id,&state,e) || !qa_world_set_collision(scene,id,&collision,e) ||
             !qa_world_restore_link_state(scene,id,&link,e)) return false;

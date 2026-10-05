@@ -28,7 +28,10 @@ bool q1_map_rogue_shake(qa_q1_game *g, qa_actor_id actor, float intensity, qa_er
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, actor, &body, error))
         return false;
-    if (!q1_alive(g, world) || !q1_alive(g, actor) || !body.ground.registry)
+    qa_physics_properties ground_flags;
+    if (!g->services.physics || !g->services.physics->services.read(
+        g->services.physics->services.context, actor, &ground_flags)) return true;
+    if (!q1_alive(g, world) || !q1_alive(g, actor) || !(ground_flags.flags & QA_PHYSICS_ONGROUND))
         return true;
     float x = q1_random(g) * intensity * 2 - intensity;
     float y = q1_random(g) * intensity * 2 - intensity;

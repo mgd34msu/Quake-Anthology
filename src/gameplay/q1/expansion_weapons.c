@@ -42,7 +42,7 @@ bool q1_missile_velocity(qa_q1_game *g, q1_actor *entity, qa_vec3 velocity, qa_e
                   : qa_builtin_angle_mod(atan2f(velocity.z, hypotf(velocity.x, velocity.y)) *
                                          57.29577951308232f),
               qa_builtin_angle_mod(atan2f(velocity.y, velocity.x) * 57.29577951308232f), 0);
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     return qa_world_body_write(g->services.world, entity->id, &body, error);
 }
 bool q1_grenade_velocity(qa_q1_game *g, q1_player *player, qa_vec3 *out, qa_error *error) {

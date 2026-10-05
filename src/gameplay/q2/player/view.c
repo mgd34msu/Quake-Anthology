@@ -154,7 +154,7 @@ bool q2_player_animate_reference(qa_q2_game *g, qa_actor_id owner, const qa_body
         return false;
     if (!q2_actor_live(g, owner))
         return true;
-    movement.grounded = body->ground.registry != 0;
+    movement.grounded = qa_actor_reference_present(body->ground);
     animation(g, a->client, visual, &movement, hypotf(body->velocity.x, body->velocity.y));
     return true;
 }

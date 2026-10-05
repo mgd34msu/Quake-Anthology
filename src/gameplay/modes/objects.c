@@ -404,7 +404,7 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
                 goto rollback;
             }
             body.origin = result.end;
-            body.ground = result.actor;
+            body.ground = qa_actor_reference_lifetime(result.actor);
             o->home = body.origin;
             if (!qa_world_body_write(m->options.services.world, actor, &body, e))
                 goto rollback;
@@ -687,7 +687,7 @@ bool mode_object_drop(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id
     body.origin = trace.end;
     body.velocity = qa_vec_scale(forward, v->value.rules.source == QA_MODE_LMCTF ? 200 : 100);
     body.velocity.z = 300;
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     if (o->spec.kind == QA_MODE_OBJECT_FLAG && family(v) == QA_COLLISION_Q1)
         body.velocity = qa_v3(0, 0, 300);
     if (o->spec.kind == QA_MODE_OBJECT_RELIC && family(v) == QA_COLLISION_Q1) {
@@ -823,7 +823,7 @@ bool mode_object_relocate(qa_modes *m, mode_instance *v, mode_object *o, bool fa
     body.angles = point.angles;
     float yaw = mode_random_float(m) * 6.28318530717958647692f;
     body.velocity = qa_v3(100 * cosf(yaw), 100 * sinf(yaw), 300);
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     o->value.phase = QA_OBJECTIVE_HOME;
     o->value.carrier = (qa_actor_id){0};
     o->value.previous_owner = (qa_actor_id){0};

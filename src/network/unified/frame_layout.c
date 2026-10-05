@@ -744,12 +744,27 @@ static const qa_unified_field qa_linked_body_fields[] = {
 };
 static const qa_unified_record_layout qa_linked_body_layout = QA_UNIFIED_LAYOUT(qa_linked_body, qa_linked_body_fields);
 
+static const qa_unified_record_layout reference_none_layout = {sizeof(qa_actor_id), NULL, 0, SIZE_MAX, QA_UNIFIED_KEY_NONE};
+static const qa_unified_field reference_source_fields[] = {
+    {QA_UNIFIED_FIELD_U32, 0, NULL, 0, 0, NULL},
+    {QA_UNIFIED_FIELD_U32, sizeof(qa_actor_owner), NULL, 0, 0, NULL},
+};
+static const qa_unified_record_layout reference_source_layout = {
+    2 * sizeof(uint32_t), reference_source_fields, 2, SIZE_MAX, QA_UNIFIED_KEY_NONE};
+static const qa_unified_record_layout *const reference_variants[] = {
+    &reference_none_layout, &qa_unified_actor_layout, &reference_source_layout};
+static const qa_unified_field reference_fields[] = {
+    QA_UNIFIED_FIELD(qa_actor_reference, kind, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_VARIANT(qa_actor_reference, value, kind, reference_variants),
+};
+static const qa_unified_record_layout reference_layout = QA_UNIFIED_LAYOUT(qa_actor_reference, reference_fields);
+
 static const qa_unified_field qa_body_state_fields[] = {
     QA_UNIFIED_RECORD(qa_body_state, origin, qa_unified_vector_layout),
     QA_UNIFIED_RECORD(qa_body_state, angles, qa_unified_vector_layout),
     QA_UNIFIED_RECORD(qa_body_state, velocity, qa_unified_vector_layout),
     QA_UNIFIED_RECORD(qa_body_state, bounds, qa_unified_bounds_layout),
-    QA_UNIFIED_RECORD(qa_body_state, ground, qa_unified_actor_layout),
+    QA_UNIFIED_RECORD(qa_body_state, ground, reference_layout),
 };
 const qa_unified_record_layout qa_unified_body_layout = QA_UNIFIED_LAYOUT(qa_body_state, qa_body_state_fields);
 

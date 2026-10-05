@@ -782,7 +782,7 @@ static bool makron_spawn_tick(qa_q2_game *game, q2_actor *actor,
       atan2f(difference.y, difference.x) * 57.29577951308232f);
   resumed.body.velocity = qa_vec_scale(direction, 400.0f);
   resumed.body.velocity.z = 200.0f;
-  resumed.body.ground = (qa_actor_id){0};
+  resumed.body.ground = (qa_actor_reference){0};
   return q2m_write_body(&resumed, true, error);
 }
 

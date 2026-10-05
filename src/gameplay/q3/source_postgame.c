@@ -173,7 +173,7 @@ static bool spawn_model(qa_q3_game *game, qa_actor_id podium, uint32_t client,
     if (!qa_world_body_read(game->options.services.world, actor, &body, error))
         return q3_rollback_spawn(game, actor, error);
     body.bounds = body_source.current.bounds;
-    body.ground = game->source_entities[QA_Q3_SOURCE_WORLD].actor;
+    body.ground = qa_actor_reference_source(game->options.owner, QA_Q3_SOURCE_WORLD);
     if (!qa_world_body_write(game->options.services.world, actor, &body, error))
         return q3_rollback_spawn(game, actor, error);
     uint32_t slot;
@@ -417,8 +417,10 @@ bool q3_postgame_step(qa_q3_game *game, qa_actor_id actor, qa_error *error)
             ? (int32_t)QA_Q3_SOURCE_WORLD : trace.hit == QA_TRACE_HIT_ACTOR
                 ? q3_entity_number(game, trace.actor) : (int32_t)QA_Q3_SOURCE_NONE;
         if (!qa_world_body_read(game->options.services.world, actor, &body, error)) return false;
-        body.ground = trace.hit == QA_TRACE_HIT_WORLD ? game->source_entities[QA_Q3_SOURCE_WORLD].actor
-            : trace.hit == QA_TRACE_HIT_ACTOR ? trace.actor : (qa_actor_id){0};
+        const qa_actor_record *ground = qa_actors_get(qa_session_actors(game->options.services.session), trace.actor);
+        body.ground = trace.hit == QA_TRACE_HIT_WORLD ? qa_actor_reference_source(game->options.owner, QA_Q3_SOURCE_WORLD)
+            : trace.hit == QA_TRACE_HIT_ACTOR ? ground && ground->owner == game->options.owner && ground->has_source ?
+                qa_actor_reference_source(ground->owner, ground->source_slot) : qa_actor_reference_lifetime(trace.actor) : (qa_actor_reference){0};
     } else {
         if (!qa_world_body_read(game->options.services.world, actor, &body, error)) return false;
         body.origin = qa_vec_add(body.origin, normal);

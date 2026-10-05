@@ -7,7 +7,7 @@ typedef struct qa_world qa_world;
 typedef struct qa_body_state {
     qa_vec3 origin, angles, velocity;
     qa_bounds bounds;
-    qa_actor_id ground;
+    qa_actor_reference ground;
 } qa_body_state;
 typedef struct qa_linked_body {
     qa_actor_id actor;
@@ -137,6 +137,8 @@ bool qa_world_restore_link_state(qa_world *, qa_actor_id, const qa_body_link_sta
 typedef struct qa_world_body_checkpoint {
     qa_saved_actor_id actor, ground, stored_ground, linked_ground, collision_owner,
                       stored_collision_owner, retained_collision_owner, anchor;
+    qa_actor_reference_kind ground_kind, stored_ground_kind, linked_ground_kind;
+    qa_actor_owner ground_owner, stored_ground_owner, linked_ground_owner;
     qa_body_state state, stored_state;
     qa_body_link_state link;
     qa_actor_collision collision, stored_collision, retained_collision;

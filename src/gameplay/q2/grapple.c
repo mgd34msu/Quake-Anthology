@@ -180,7 +180,7 @@ bool qa_q2_grapple_reset(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_kind kind,
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, id, &body, e))
             return false;
-        if (body.ground.registry != 0) {
+        if (qa_actor_reference_present(body.ground)) {
             qa_q2_grapple_pose p;
             if (!pose(g, a, kind, &p, e))
                 return false;

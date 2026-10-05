@@ -447,6 +447,9 @@ static bool after_physics(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, actor, &body, error))
         return false;
+    qa_physics_properties ground_flags;
+    if (!g->services.physics || !g->services.physics->services.read(
+        g->services.physics->services.context, actor, &ground_flags)) return true;
     if (!q1_alive(g, world) || !q1_alive(g, actor))
         return true;
     if (g->maps->earthquake_end <= g->time) {
@@ -466,7 +469,7 @@ static bool after_physics(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
             return true;
         g->maps->quake_active = true;
     }
-    if (!body.ground.registry)
+    if (!(ground_flags.flags & QA_PHYSICS_ONGROUND))
         return true;
     body.velocity.z += q1_random(g) * 150;
     return qa_world_body_write(g->services.world, actor, &body, error);

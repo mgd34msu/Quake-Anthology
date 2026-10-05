@@ -438,7 +438,7 @@ static bool dodge_duck(q2m_context *context, float eta_seconds, bool rogue,
     return true;
   }
 
-  if (context->body.ground.registry == 0 &&
+  if (!qa_actor_reference_present(context->body.ground) &&
       (species == Q2M_INFANTRY || species == Q2M_GUNNER))
     return true;
   if (species == Q2M_INFANTRY) {
@@ -458,7 +458,7 @@ static bool dodge_duck(q2m_context *context, float eta_seconds, bool rogue,
     else
       move = Q2M_MOVE_soldier_move_duck;
   } else if (species == Q2M_BERSERK) {
-    if (rogue || context->body.ground.registry == 0 ||
+    if (rogue || !qa_actor_reference_present(context->body.ground) ||
         move_is(monster, Q2M_MOVE_berserk_move_jump) ||
         move_is(monster, Q2M_MOVE_berserk_move_jump2) ||
         q2m_random(context->game) >= 0.05f)
@@ -534,7 +534,7 @@ static bool dodge_sidestep(q2m_context *context, bool rogue, bool *accepted,
 
   if ((species == Q2M_INFANTRY || species == Q2M_GUNNER ||
        species == Q2M_BERSERK) &&
-      context->body.ground.registry == 0)
+      !qa_actor_reference_present(context->body.ground))
     return true;
   if (species == Q2M_INFANTRY) {
     if (!rogue && !move_is(monster, Q2M_MOVE_infantry_move_run) &&
@@ -800,7 +800,7 @@ bool q2_monster_dodge(qa_q2_game *game, qa_actor_id target,
     return classic_dodge(&context, attacker, eta_seconds, error);
 
   if (monster->definition->species == Q2M_STALKER) {
-    if (context.body.ground.registry == 0)
+    if (!qa_actor_reference_present(context.body.ground))
       return true;
     if (monster->enemy.registry == 0) {
       monster->enemy = attacker;

@@ -214,13 +214,18 @@ bool qa_q3_item_availability(qa_q3_game *game, qa_actor_id actor, bool available
     --game->observation_depth;
     return okay;
 }
-static qa_actor_id item_ground_actor(const qa_q3_game *game, const qa_trace_result *trace) {
-    if (trace->hit == QA_TRACE_HIT_ACTOR)
-        return trace->actor;
-    if (trace->hit == QA_TRACE_HIT_WORLD && game->options.services.physics)
-        return game->options.services.physics->world_actor;
-    return (qa_actor_id){0};
+static qa_actor_reference item_ground_actor(const qa_q3_game *game, const qa_trace_result *trace) {
+    if (trace->hit == QA_TRACE_HIT_WORLD)
+        return qa_actor_reference_source(game->options.owner, QA_Q3_SOURCE_WORLD);
+    if (trace->hit == QA_TRACE_HIT_ACTOR) {
+        const qa_actor_record *record = qa_actors_get(qa_session_actors(game->options.services.session), trace->actor);
+        if (record && record->owner == game->options.owner && record->has_source)
+            return qa_actor_reference_source(record->owner, record->source_slot);
+        return qa_actor_reference_lifetime(trace->actor);
+    }
+    return (qa_actor_reference){0};
 }
+
 static int32_t item_ground_number(const qa_q3_game *game, const qa_trace_result *trace) {
     if (trace->hit == QA_TRACE_HIT_WORLD)
         return 1022;
@@ -338,7 +343,7 @@ bool q3_item_bind_existing(qa_q3_game *game, qa_actor_id actor,
     body.origin = input->origin;
     body.velocity = input->velocity;
     body.bounds = (qa_bounds){qa_v3(-15, -15, -15), qa_v3(15, 15, 15)};
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     qa_actor_collision collision = {.family = QA_COLLISION_Q3,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = Q3_CONTENTS_TRIGGER,

@@ -623,7 +623,7 @@ bool q1_final_teleport(qa_q1_game *g, bool variant, qa_error *error) {
         body.origin = target.origin;
         body.angles = point->initial_angles;
         body.velocity = qa_v3(0, 0, 300);
-        body.ground = (qa_actor_id){0};
+        body.ground = (qa_actor_reference){0};
         q1_actor *native = q1_entity(g, player);
         if (native)
             native->physics.flags &= ~(uint32_t)QA_PHYSICS_FLYING;

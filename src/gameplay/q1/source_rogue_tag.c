@@ -61,7 +61,7 @@ static bool drop_floor(qa_q1_game *game, q1_actor *source, bool *placed,
         !current(game, actor, source, error)) return false;
     if (hit.all_solid || hit.fraction == 1) return true;
     body.origin = hit.end;
-    body.ground = hit.actor;
+    body.ground = hit.hit == QA_TRACE_HIT_WORLD ? qa_actor_reference_source(game->options.provider, 0) : q1_ref_from(game, hit.actor);
     if (!qa_world_body_write(game->services.world, actor, &body, error) ||
         !q1_link(game, source, error) || !current(game, actor, source, error)) return false;
     *placed = true;

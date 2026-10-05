@@ -257,14 +257,20 @@ static qa_actor_id reference(qa_q3_host *host, int32_t number)
     return qa_actors_get(qa_session_actors(host->options.session), id) ? id : (qa_actor_id){0};
 }
 
-static qa_actor_id ground_reference(qa_q3_host *host, int32_t number)
+static qa_actor_reference ground_reference(qa_q3_host *host, int32_t number)
 {
-    if (number == 1022 && host->options.server.world_actor) {
-        qa_actor_id actor = host->options.server.world_actor(host->options.server.context);
-        if (qa_actors_get(qa_session_actors(host->options.session), actor)) return actor;
-        return (qa_actor_id){0};
+    if (number < 0 || number >= 1023) return (qa_actor_reference){0};
+    if (number == 1022) {
+        qa_actor_id world = host->options.server.world_actor ?
+            host->options.server.world_actor(host->options.server.context) : (qa_actor_id){0};
+        const qa_actor_record *record = qa_actors_get(qa_session_actors(host->options.session), world);
+        return record && record->owner == host->options.owner && record->has_source ?
+            qa_actor_reference_source(record->owner, record->source_slot) : qa_actor_reference_lifetime(world);
     }
-    return reference(host, number);
+    qa_actor_id id = host->game->slots[number].actor;
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(host->options.session), id);
+    return record && record->owner != host->options.owner ? qa_actor_reference_lifetime(id) :
+        qa_actor_reference_source(host->options.owner, (uint32_t)number);
 }
 
 static qa_vec3 body_vector(const uint8_t *bytes, size_t offset)
@@ -370,13 +376,17 @@ static bool body_write(void *context, const qa_body_state *body, qa_error *error
     for (size_t i = 0; ok && i < 5; ++i)
         ok = body_vector_write(&scope, address + fields[i], vectors[i], error);
     if (ok && !slot->input_motion) {
-        uint32_t ground = 1023;
-        if (body->ground.registry) {
+        uint32_t ground = qa_load_i32le(entity.abi.bytes.data + 148) == -1 ? UINT32_MAX : 1023;
+        if (body->ground.kind == QA_ACTOR_REFERENCE_SOURCE && body->ground.value.source.owner == host->options.owner) {
+            ground = body->ground.value.source.slot;
+            if (ground >= 1023) ok = q3_fail(error, QA_ERROR_ARGUMENT, ground, "Invalid physical Q3 ground number");
+        } else if (qa_actor_reference_present(body->ground)) {
+            qa_actor_id target = qa_actor_reference_resolve(qa_session_actors(host->options.session), body->ground);
             qa_actor_id world = host->options.server.world_actor ?
                 host->options.server.world_actor(host->options.server.context) : (qa_actor_id){0};
             ok = body_write_current(&scope, error);
-            if (ok && world.registry && qa_actor_id_equal(world, body->ground)) ground = 1022;
-            else if (ok) ok = qa_q3_host_actor_slot(host, body->ground, &ground, error);
+            if (ok && world.registry && qa_actor_id_equal(world, target)) ground = 1022;
+            else if (ok) ok = qa_q3_host_actor_slot(host, target, &ground, error);
         }
         uint8_t bytes[4]; qa_store_u32le(bytes, ground);
         if (ok) ok = body_write_bytes(&scope, address + 148, (qa_bytes){bytes, sizeof(bytes)}, error);

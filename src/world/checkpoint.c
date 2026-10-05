@@ -12,6 +12,23 @@ static bool save_ref(qa_world *world, qa_actor_id actor, qa_saved_actor_id *save
     return !*present || qa_actors_save_reference(world->actors, actor, saved, error);
 }
 
+static bool save_ground(qa_world *world, qa_actor_reference reference,
+    qa_saved_actor_id *saved, qa_actor_reference_kind *kind, qa_actor_owner *owner,
+    bool *present, qa_error *error)
+{
+    *kind = reference.kind;
+    *present = qa_actor_reference_present(reference);
+    if (reference.kind == QA_ACTOR_REFERENCE_NONE) return true;
+    if (reference.kind == QA_ACTOR_REFERENCE_SOURCE) {
+        *owner = reference.value.source.owner;
+        *saved = (qa_saved_actor_id){.slot = reference.value.source.slot};
+        return true;
+    }
+    if (reference.kind == QA_ACTOR_REFERENCE_LIFETIME && *present)
+        return qa_actors_save_reference(world->actors, reference.value.actor, saved, error);
+    return checkpoint_fail(error, QA_ERROR_ARGUMENT, "Invalid canonical ground reference");
+}
+
 void qa_world_checkpoint_free(qa_world_checkpoint *value)
 {
     if (!value) return;
@@ -66,9 +83,12 @@ bool qa_world_checkpoint_capture(qa_world *world, qa_world_checkpoint *out, qa_e
         if (ok) record->effective_collision = qa_world_get_collision(world, body->actor, &record->collision, &collision_error);
         if (collision_error.code != QA_OK) { if (error) *error = collision_error; ok = false; }
         if (ok && body->member) record->retained_collision = body->member->actor.collision;
-        if (ok) ok = save_ref(world, record->state.ground, &record->ground, &record->has_ground, error) &&
-            save_ref(world, record->stored_state.ground, &record->stored_ground, &record->has_stored_ground, error) &&
-            save_ref(world, record->link.state.ground, &record->linked_ground, &record->has_linked_ground, error) &&
+        if (ok) ok = save_ground(world, record->state.ground, &record->ground, &record->ground_kind,
+                        &record->ground_owner, &record->has_ground, error) &&
+            save_ground(world, record->stored_state.ground, &record->stored_ground, &record->stored_ground_kind,
+                        &record->stored_ground_owner, &record->has_stored_ground, error) &&
+            save_ground(world, record->link.state.ground, &record->linked_ground, &record->linked_ground_kind,
+                        &record->linked_ground_owner, &record->has_linked_ground, error) &&
             save_ref(world, record->collision.owner, &record->collision_owner, &record->has_collision_owner, error) &&
             save_ref(world, record->stored_collision.owner, &record->stored_collision_owner,
                      &record->has_stored_collision_owner, error) &&
@@ -76,7 +96,7 @@ bool qa_world_checkpoint_capture(qa_world *world, qa_world_checkpoint *out, qa_e
                      &record->has_retained_collision_owner, error) &&
             save_ref(world, record->attached ? record->attachment.anchor : (qa_actor_id){0},
                      &record->anchor, &record->has_anchor, error);
-        record->state.ground = record->stored_state.ground = record->link.state.ground = (qa_actor_id){0};
+        record->state.ground = record->stored_state.ground = record->link.state.ground = (qa_actor_reference){0};
         record->collision.owner = record->stored_collision.owner = record->retained_collision.owner = (qa_actor_id){0};
         record->attachment.anchor = (qa_actor_id){0};
         if (qa_actors_revision(world->actors) != revision || world->body_serial != serial ||
@@ -109,6 +129,27 @@ static bool restore_ref(qa_world *world, bool present, qa_saved_actor_id saved,
 {
     *out = (qa_actor_id){0};
     return !present || qa_actors_reference_saved(world->actors, saved, true, out, error);
+}
+
+static bool restore_ground(qa_world *world, bool present, qa_saved_actor_id saved,
+    qa_actor_reference_kind kind, qa_actor_owner owner, qa_actor_reference *out,
+    qa_error *error)
+{
+    *out = (qa_actor_reference){0};
+    if (!present) return kind == QA_ACTOR_REFERENCE_NONE ||
+        checkpoint_fail(error, QA_ERROR_FORMAT, "Absent saved ground has reference provenance");
+    if (kind == QA_ACTOR_REFERENCE_SOURCE) {
+        if (saved.generation)
+            return checkpoint_fail(error, QA_ERROR_FORMAT, "Physical ground has lifetime provenance");
+        *out = qa_actor_reference_source(owner, saved.slot);
+        return true;
+    }
+    qa_actor_id actor;
+    if (kind != QA_ACTOR_REFERENCE_LIFETIME || owner)
+        return checkpoint_fail(error, QA_ERROR_FORMAT, "Invalid saved ground provenance");
+    if (!qa_actors_reference_saved(world->actors, saved, true, &actor, error)) return false;
+    *out = qa_actor_reference_lifetime(actor);
+    return true;
 }
 
 static bool collision_equal(qa_actor_collision a,qa_actor_collision b)
@@ -159,9 +200,12 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
         qa_actor_collision collision = record->collision;
         qa_actor_collision stored_collision = record->stored_collision;
         qa_body_attachment attachment = record->attachment;
-        ok = restore_ref(world, record->has_ground, record->ground, &state.ground, error) &&
-            restore_ref(world, record->has_stored_ground, record->stored_ground, &stored_state.ground, error) &&
-            restore_ref(world, record->has_linked_ground, record->linked_ground, &link.state.ground, error) &&
+        ok = restore_ground(world, record->has_ground, record->ground, record->ground_kind,
+                           record->ground_owner, &state.ground, error) &&
+            restore_ground(world, record->has_stored_ground, record->stored_ground, record->stored_ground_kind,
+                           record->stored_ground_owner, &stored_state.ground, error) &&
+            restore_ground(world, record->has_linked_ground, record->linked_ground, record->linked_ground_kind,
+                           record->linked_ground_owner, &link.state.ground, error) &&
             restore_ref(world, record->has_collision_owner, record->collision_owner, &collision.owner, error) &&
             restore_ref(world, record->has_stored_collision_owner, record->stored_collision_owner,
                          &stored_collision.owner, error) &&

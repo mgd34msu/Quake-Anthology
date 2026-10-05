@@ -23,6 +23,11 @@ bool ph_contents(qa_physics *, qa_actor_id, const qa_physics_properties *,
                   qa_vec3, qa_point_contents *, qa_error *);
 bool ph_event(qa_physics *, qa_actor_id, qa_physics_event_kind, qa_vec3, qa_error *);
 qa_actor_id ph_hit(const qa_physics *, const qa_trace_result *);
+qa_actor_reference ph_reference(const qa_physics *, qa_actor_id, qa_actor_id);
+static inline bool ph_grounded(const qa_body_state *body, const qa_physics_properties *props) {
+    return props->family == QA_COLLISION_Q1 ? (props->flags & QA_PHYSICS_ONGROUND) != 0 :
+        qa_actor_reference_present(body->ground);
+}
 qa_vec3 ph_normal(const qa_trace_result *);
 void ph_axes(qa_vec3, qa_vec3 *, qa_vec3 *, qa_vec3 *);
 bool ph_ground(qa_physics *, qa_actor_id, qa_actor_id ground, qa_error *);

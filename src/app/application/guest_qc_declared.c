@@ -445,8 +445,7 @@ bool application_qc_project_declared(struct application_qc_state *engine, qa_qc_
                 bits = (uint32_t)qa_source_float_to_i32(previous) & field->private_mask;
                 if (client) bits |= 8u | (traits.no_target ? 128u : 0u);
                 if (client && field->grounded) {
-                    ok = qa_world_body_read(engine->world, access->binding.actor, &body, error);
-                    if (ok && body.ground.registry) bits |= 512u;
+                    if (ok && traits.grounded) bits |= 512u;
                 }
                 int32_t integer; memcpy(&integer, &bits, sizeof(integer));
                 value.value.number = (float)integer;
@@ -533,7 +532,15 @@ bool application_qc_store_declared(struct application_qc_state *engine, qa_qc_in
                 uint32_t next = (uint32_t)(int32_t)scalar, changed = ((uint32_t)(int32_t)before ^ next) & ~field->private_mask;
                 if (changed) {
                     ok = field->grounded && changed == 512u && !(next & 512u);
-                    if (ok) { ok = qa_world_body_read(engine->world, actor, &body, error); if (ok) { body.ground = (qa_actor_id){0}; ok = qa_world_body_write(engine->world, actor, &body, error); } }
+                    if (ok) {
+                        qa_application *app = engine->provider->application;
+                        qa_physics_properties properties;
+                        ok = application_control_physics_read(app, actor, &properties);
+                        if (ok) {
+                            properties.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
+                            ok = application_control_physics_write(app, actor, &properties, error);
+                        }
+                    }
                     if (!ok && error && error->code == QA_OK) application_fail(error, QA_ERROR_ARGUMENT, "QC changed canonical client flags without ownership");
                 }
             }

@@ -41,7 +41,7 @@ static bool armed_eye(qa_q1_game *g, q1_actor *owner, q1_boss_child_kind kind, f
                               qa_vec_add(qa_vec_scale(g->up, 80), qa_vec_scale(g->forward, 200))));
     body.bounds = (qa_bounds){{-32, -32, -24}, {32, 32, 64}};
     body.velocity = qa_v3(0, 0, 0);
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     e->physics.solid = QA_PHYSICS_BOX;
     e->physics.motion = QA_PHYSICS_STEP;
     e->physics.flags = QA_PHYSICS_MONSTER | QA_PHYSICS_FLYING;

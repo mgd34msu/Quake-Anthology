@@ -224,7 +224,7 @@ static bool grenade_explode(qa_q2_game *g, qa_actor_id id, qa_actor_id direct, q
     if (!qa_world_point_contents(g->services.world, &query, &water, e))
         return false;
     bool wet = ((uint32_t)water.contents & Q2_WATER_MASK) != 0;
-    const char *effect = body.ground.registry == 0
+    const char *effect = !qa_actor_reference_present(body.ground)
                              ? (wet ? "q2:rocket-explosion-water" : "q2:rocket-explosion")
                              : (wet ? "q2:grenade-explosion-water" : "q2:grenade-explosion");
     return q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, effect, 0,

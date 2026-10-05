@@ -376,6 +376,7 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/save/game.c
     src/gameplay/q2/save/original.c
     src/gameplay/q2/save/original_level.c
+    src/gameplay/q2/save/original_edicts.c
     src/gameplay/q2/save/original_fields.c
     src/gameplay/q2/save/original_symbols.c
     src/gameplay/q2/definitions.c

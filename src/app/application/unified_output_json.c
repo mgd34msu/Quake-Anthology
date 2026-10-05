@@ -110,6 +110,18 @@ bool application_unified_json_bounds(application_unified_json *out, qa_bounds va
         application_unified_json_text(out, "}", error);
 }
 
+static bool json_reference(application_unified_json *out, qa_actor_reference ground, qa_error *error)
+{
+    if (ground.kind == QA_ACTOR_REFERENCE_NONE) return application_unified_json_text(out, "null", error);
+    if (ground.kind == QA_ACTOR_REFERENCE_LIFETIME) return application_unified_json_actor(out, ground.value.actor, error);
+    return ground.kind == QA_ACTOR_REFERENCE_SOURCE &&
+        application_unified_json_text(out, "{\"owner\":", error) &&
+        application_unified_json_natural(out, ground.value.source.owner, error) &&
+        application_unified_json_text(out, ",\"sourceSlot\":", error) &&
+        application_unified_json_natural(out, ground.value.source.slot, error) &&
+        application_unified_json_text(out, "}", error);
+}
+
 bool application_unified_json_body(application_unified_json *out, const qa_body_state *body, qa_error *error)
 {
     return application_unified_json_text(out, "{\"origin\":", error) &&
@@ -121,8 +133,7 @@ bool application_unified_json_body(application_unified_json *out, const qa_body_
         application_unified_json_text(out, ",\"bounds\":", error) &&
         application_unified_json_bounds(out, body->bounds, error) &&
         application_unified_json_text(out, ",\"ground\":", error) &&
-        (body->ground.registry ? application_unified_json_actor(out, body->ground, error) :
-            application_unified_json_text(out, "null", error)) &&
+        json_reference(out, body->ground, error) &&
         application_unified_json_text(out, "}", error);
 }
 

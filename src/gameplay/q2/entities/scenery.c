@@ -136,7 +136,7 @@ static bool barrel_blast(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (!q2_actor_live(g, a->id))
             return true;
     }
-    return explode(g, a, body.ground.registry ? 2 : 1, e);
+    return explode(g, a, qa_actor_reference_present(body.ground) ? 2 : 1, e);
 }
 static bool animate(qa_q2_game *g, q2_actor *a, int first, int end, float delay, qa_error *e) {
     a->entity->animation_first = first;
@@ -817,10 +817,12 @@ bool q2_scenery_think(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         if (hit.all_solid || hit.fraction >= 1)
             return true;
         body.origin = hit.end;
-        body.ground = hit.hit == QA_TRACE_HIT_ACTOR ? hit.actor
+        qa_actor_id ground = hit.hit == QA_TRACE_HIT_ACTOR ? hit.actor
                       : hit.hit == QA_TRACE_HIT_WORLD && g->services.physics
-                          ? g->services.physics->world_actor
-                          : (qa_actor_id){0};
+                          ? g->services.physics->world_actor : (qa_actor_id){0};
+        const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), ground);
+        body.ground = record && record->owner == g->options.owner && record->has_source ?
+            qa_actor_reference_source(record->owner, record->source_slot) : qa_actor_reference_lifetime(ground);
         return q2_entity_body(g, a, &body, true, e);
     }
     case Q2S_ROTATING_LIGHT:
@@ -879,7 +881,7 @@ bool q2_scenery_prethink(qa_q2_game *g, q2_actor *a, qa_error *e) {
     direction.z = diff;
     b.angles = qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f,
                      atan2f(direction.y, direction.x) * 57.29577951308232f, b.angles.z + 10);
-    b.ground = (qa_actor_id){0};
+    b.ground = (qa_actor_reference){0};
     return q2_entity_body(g, a, &b, false, e);
 }
 bool q2_scenery_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contact, bool *handled,
@@ -922,7 +924,7 @@ bool q2_scenery_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contac
         if (!qa_world_body_read(g->services.world, contact->other, &other, NULL) ||
             !qa_combat_read(g->services.combat, contact->other, &state, NULL))
             return true;
-        if (!other.ground.registry || qa_actor_id_equal(other.ground, a->id))
+        if (!qa_actor_reference_present(other.ground) || qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(g->services.session), other.ground), a->id))
             return true;
         if (!qa_world_body_read(g->services.world, a->id, &body, e) ||
             !qa_combat_read(g->services.combat, a->id, &mine, e))

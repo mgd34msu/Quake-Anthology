@@ -32,7 +32,7 @@ bool q2_entity_teleport(qa_q2_game *g, q2_actor *source, qa_actor_id id,
         body.origin.z += 10;
     body.velocity = ctf ? qa_vec_scale(q2_movedir(destination->angles), 200) : qa_v3(0, 0, 0);
     body.angles = ctf ? qa_v3(0, destination->angles.y, 0) : qa_v3(0, 0, 0);
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     if (!qa_world_unlink(g->services.world, id, e) ||
         !qa_world_body_write(g->services.world, id, &body, e))
         return false;

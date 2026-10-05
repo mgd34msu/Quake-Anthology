@@ -158,7 +158,7 @@ bool qa_q1_horde_spawn(qa_q1_game *g, const char *classname, qa_vec3 origin, qa_
             return false;
         if (trace.fraction < 1 && !trace.all_solid) {
             body.origin = trace.end;
-            body.ground = trace.actor;
+            body.ground = trace.hit == QA_TRACE_HIT_WORLD ? qa_actor_reference_source(g->options.provider, 0) : q1_ref_from(g, trace.actor);
             entity->physics.flags |= QA_PHYSICS_ONGROUND;
         }
     }

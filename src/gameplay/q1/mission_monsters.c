@@ -18,7 +18,7 @@ bool q1_monster_drop_floor(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return true;
     entity->physics.flags |= QA_PHYSICS_ONGROUND;
     body.origin = trace.end;
-    body.ground = trace.actor;
+    body.ground = trace.hit == QA_TRACE_HIT_WORLD ? qa_actor_reference_source(g->options.provider, 0) : q1_ref_from(g, trace.actor);
     return qa_world_body_write(g->services.world, entity->id, &body, error) &&
            q1_link(g, entity, error);
 }

@@ -525,7 +525,7 @@ bool q2_player_spawn_select(qa_q2_game *g, q2_actor *a, const qa_q2_player_movem
     if (!qa_world_body_read(g->services.world, spot, &body, e))
         return false;
     body.velocity = qa_v3(0, 0, 0);
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     body.bounds = m->standing_bounds;
     bool from_landmark = false;
     if (landmark && landmark->name) {

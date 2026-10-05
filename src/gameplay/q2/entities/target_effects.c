@@ -216,11 +216,11 @@ static bool quake(qa_q2_game *g, q2_actor *a, qa_error *e) {
         qa_combat_state health;
         if (!qa_world_body_read(g->services.world, id, &body, e))
             goto out;
-        if (!body.ground.registry)
+        if (!qa_actor_reference_present(body.ground))
             continue;
         if (!qa_combat_read(g->services.combat, id, &health, e))
             goto out;
-        body.ground = (qa_actor_id){0};
+        body.ground = (qa_actor_reference){0};
         body.velocity.x += q2_crandom(g) * 150;
         body.velocity.y += q2_crandom(g) * 150;
         body.velocity.z = s->speed * (100 / (health.mass != 0 ? health.mass : 200));

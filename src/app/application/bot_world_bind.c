@@ -83,7 +83,7 @@ static bool movement(void *context,qa_actor_id actor,application_bot_world_movem
         return application_fail(error,QA_ERROR_FORMAT,"shared bot selected movement has no actual source player client");
     int32_t height=qa_source_float_to_i32(control.view_height);
     *out=(application_bot_world_movement){.source_client=(int32_t)record->client_slot,
-        .view_height=height,.view_angles=control.view_angles};return true;
+        .view_height=height,.view_angles=control.view_angles,.grounded=control.ground.hit!=QA_TRACE_HIT_NONE};return true;
 }
 static bool client(void *context,qa_actor_id actor,application_bot_world_client *out,
     bool *found,qa_error *error) {

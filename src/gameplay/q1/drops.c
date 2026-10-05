@@ -101,7 +101,7 @@ static bool launch_body(qa_q1_game *g, qa_actor_id actor, qa_vec3 angles, qa_bod
     out->origin.z += 16;
     out->velocity = qa_vec_scale(direction, 500);
     out->angles = qa_v3(0, 0, 0);
-    out->ground = (qa_actor_id){0};
+    out->ground = (qa_actor_reference){0};
     out->bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 56}};
     return true;
 }

@@ -189,12 +189,12 @@ static bool actor_physics(qa_q2_game *g, q2_actor *a, qa_error *e) {
     }
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, id, &body, e)) return false;
-    if (!body.ground.registry) {
+    if (!qa_actor_reference_present(body.ground)) {
         if (!qa_physics_check_ground(g->services.physics, id, e)) return false;
         if (!q2_actor_live(g, id)) return true;
         if (!qa_world_body_read(g->services.world, id, &body, e)) return false;
     }
-    bool was_grounded = body.ground.registry != 0;
+    bool was_grounded = qa_actor_reference_present(body.ground);
     if (!qa_physics_step(g->services.physics, id, &frame, &result, e)) return false;
     a = q2_actor_get(g, id, false, NULL);
     if (!a || !step_environment(g, a, was_grounded, e)) return !a;

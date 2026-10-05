@@ -163,7 +163,7 @@ static bool relic_place(qa_modes *m, mode_instance *v, mode_object *o, bool init
     o = mode_object_get(m, actor);
     if (!o) return mode_fail(e, "rune retired during placement body read");
     body.origin = origin;
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     if (v->value.rules.source == QA_MODE_ROGUE) {
         body.velocity = rogue_velocity(m, v);
         o = mode_object_get(m, actor);

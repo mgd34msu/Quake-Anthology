@@ -1535,7 +1535,7 @@ static bool q2_movement(void *context, qa_actor_id actor,
         .noclip = control->player_mode_set && control->player_mode == QA_MOVEMENT_MODE_NOCLIP,
         .on_ladder = control->state.kind == QA_MOVEMENT_Q2_RERELEASE &&
                      (control->state.data.q2r.flags & 128u) != 0,
-        .grounded_on_world = qa_actor_id_equal(body.ground, provider->application->physics->world_actor),
+        .grounded_on_world = qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(provider->application->session), body.ground), provider->application->physics->world_actor),
         .ducked = body.bounds.maxs.z < control->standing_bounds.maxs.z,
         .animate_q2 = application_provider_for(provider->application, actor,
                                                 QA_ROLE_CHARACTER, "") == provider};
@@ -1596,7 +1596,7 @@ static bool q2_source_motion(void *context, qa_actor_id actor,
     body.origin = motion->origin;
     body.velocity = motion->velocity;
     body.angles = motion->angles;
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     if (!qa_world_body_write(application->world, actor, &body, error))
         return false;
     qa_builtin_motion_change change = {.body = body, .view_angles = motion->angles,
@@ -2214,7 +2214,7 @@ static bool selected_qc_native_respawn(application_provider *character,
         &weapon, &maximum, &preference, error);
     if (okay) {
         body.velocity = qa_v3(0, 0, 0);
-        body.ground = (qa_actor_id){0};
+        body.ground = (qa_actor_reference){0};
         okay = qa_world_body_write(app->world, actor, &body, error) &&
             selected_qc_native_current(character, source, &operation, actor, &ordinal, error) &&
             native_q1_character_spawn(character, source, actor, &maximum, maximum, error) &&
@@ -2445,7 +2445,7 @@ bool application_players_native_q1_respawn(qa_application *app,
     if (!found) return true;
     body.bounds = qa_movement_input_default(character->component.clock.kind == QA_CLOCK_Q3
         ? QA_MOVEMENT_Q3 : QA_MOVEMENT_NETQUAKE, actor).standing.bounds;
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     standing.bounds = body.bounds;
     if (!qa_world_body_write(app->world, actor, &standing, error) ||
         !application_native_q1_travel_admit(source, actor, travel, error) ||
@@ -2474,7 +2474,7 @@ bool application_players_native_q1_respawn(qa_application *app,
     standing.velocity = body.velocity;
     standing.angles = body.angles;
     standing.bounds = body.bounds;
-    standing.ground = (qa_actor_id){0};
+    standing.ground = (qa_actor_reference){0};
     body = standing;
     if (!qa_world_body_write(app->world, actor, &body, error) ||
         !q1_source_control_spawn(app, actor, &body, error) ||
@@ -3035,7 +3035,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         body.bounds = qa_movement_input_default(map_source->kind == APPLICATION_PROVIDER_Q1
             ? character->component.clock.kind == QA_CLOCK_Q3 ? QA_MOVEMENT_Q3 : QA_MOVEMENT_NETQUAKE
             : movement_kind, actor).standing.bounds;
-        if (map_source->kind == APPLICATION_PROVIDER_Q1) body.ground = (qa_actor_id){0};
+        if (map_source->kind == APPLICATION_PROVIDER_Q1) body.ground = (qa_actor_reference){0};
         qa_collision_family family = movement_kind == QA_MOVEMENT_Q3 ? QA_COLLISION_Q3
             : movement_kind == QA_MOVEMENT_Q2_CLASSIC || movement_kind == QA_MOVEMENT_Q2_RERELEASE
                 ? QA_COLLISION_Q2 : QA_COLLISION_Q1;
@@ -3459,7 +3459,7 @@ bool application_players_advance(qa_application *application, qa_error *error)
                 true, &ordinal, error)) return false;
             body.bounds = qa_movement_input_default(character->component.clock.kind == QA_CLOCK_Q3
                 ? QA_MOVEMENT_Q3 : QA_MOVEMENT_NETQUAKE, actor).standing.bounds;
-            body.ground = (qa_actor_id){0};
+            body.ground = (qa_actor_reference){0};
         }
         qa_builtin_motion_change change = {.body = body, .view_angles = body.angles,
             .reason = QA_BUILTIN_MOTION_RESET, .force_view_angles = true};

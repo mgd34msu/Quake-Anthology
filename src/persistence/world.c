@@ -2,7 +2,7 @@
 
 #define WORLD_HEADER_BYTES 28u
 #define WORLD_BODY_MIN_BYTES 35u
-#define WORLD_BODY_MAX_BYTES 450u
+#define WORLD_BODY_MAX_BYTES 453u
 #define WORLD_SPATIAL_BYTES 16u
 
 enum {
@@ -17,6 +17,26 @@ static void write_ref(qa_net_writer *w, qa_saved_actor_id value)
 { qa_net_write_u64(w, value.generation); qa_net_write_u32(w, value.slot); }
 static qa_saved_actor_id read_ref(qa_net_reader *r)
 { qa_saved_actor_id v; v.generation = qa_net_read_u64(r); v.slot = qa_net_read_u32(r); return v; }
+
+static void write_ground(qa_net_writer *w, qa_saved_actor_id id,
+    qa_actor_reference_kind kind, qa_actor_owner owner)
+{
+    qa_net_write_u8(w, (uint8_t)kind);
+    if (kind == QA_ACTOR_REFERENCE_SOURCE && !id.generation) {
+        qa_net_write_u32(w, owner); qa_net_write_u32(w, id.slot);
+    } else if (kind == QA_ACTOR_REFERENCE_LIFETIME && !owner) write_ref(w, id);
+    else qa_net_writer_fail(w, "Invalid saved ground reference kind");
+}
+
+static void read_ground(qa_net_reader *r, qa_saved_actor_id *id,
+    qa_actor_reference_kind *kind, qa_actor_owner *owner)
+{
+    *kind = (qa_actor_reference_kind)qa_net_read_u8(r);
+    if (*kind == QA_ACTOR_REFERENCE_SOURCE) {
+        *owner = qa_net_read_u32(r); id->slot = qa_net_read_u32(r);
+    } else if (*kind == QA_ACTOR_REFERENCE_LIFETIME) *id = read_ref(r);
+    else qa_net_reader_fail(r, "Invalid saved ground reference kind");
+}
 
 /* Compare the stored float bits so signed zero and retained link snapshots
  * survive as well as the authoritative body. Missing fields use the baseline. */
@@ -144,9 +164,9 @@ bool qa_save_world_encode(const qa_world_checkpoint *value, qa_buffer *out, qa_e
             (v->collision_serial ? WORLD_COLLISION_SERIAL : 0) | (v->attachment_order ? WORLD_ATTACHMENT_ORDER : 0) |
             (v->link.link_count ? WORLD_LINK_COUNT : 0) | (v->attachment.follow ? WORLD_ATTACHMENT_FOLLOW : 0);
         write_ref(&w, v->actor); qa_net_write_u32(&w, flags);
-        if (v->has_ground) write_ref(&w, v->ground);
-        if (v->has_stored_ground) write_ref(&w, v->stored_ground);
-        if (v->has_linked_ground) write_ref(&w, v->linked_ground);
+        if (v->has_ground) write_ground(&w, v->ground, v->ground_kind, v->ground_owner);
+        if (v->has_stored_ground) write_ground(&w, v->stored_ground, v->stored_ground_kind, v->stored_ground_owner);
+        if (v->has_linked_ground) write_ground(&w, v->linked_ground, v->linked_ground_kind, v->linked_ground_owner);
         if (v->has_collision_owner) write_ref(&w, v->collision_owner);
         if (v->has_stored_collision_owner) write_ref(&w, v->stored_collision_owner);
         if (v->has_retained_collision_owner) write_ref(&w, v->retained_collision_owner);
@@ -206,9 +226,9 @@ bool qa_save_world_decode(qa_bytes bytes, qa_world_checkpoint *out, qa_error *er
         v->has_collision_owner = (flags & 256u) != 0; v->has_stored_collision_owner = (flags & 512u) != 0;
         v->has_retained_collision_owner = (flags & 1024u) != 0; v->has_anchor = (flags & 2048u) != 0;
         v->link.linked = (flags & 4096u) != 0;
-        if (v->has_ground) v->ground = read_ref(&r);
-        if (v->has_stored_ground) v->stored_ground = read_ref(&r);
-        if (v->has_linked_ground) v->linked_ground = read_ref(&r);
+        if (v->has_ground) read_ground(&r, &v->ground, &v->ground_kind, &v->ground_owner);
+        if (v->has_stored_ground) read_ground(&r, &v->stored_ground, &v->stored_ground_kind, &v->stored_ground_owner);
+        if (v->has_linked_ground) read_ground(&r, &v->linked_ground, &v->linked_ground_kind, &v->linked_ground_owner);
         if (v->has_collision_owner) v->collision_owner = read_ref(&r);
         if (v->has_stored_collision_owner) v->stored_collision_owner = read_ref(&r);
         if (v->has_retained_collision_owner) v->retained_collision_owner = read_ref(&r);

@@ -181,9 +181,10 @@ static bool physical_input_read(application_provider *provider, qa_actor_id acto
         .view_offset=qa_v3(player.viewoffset[0],player.viewoffset[1],player.viewoffset[2]),
         .bounds=body.bounds,.frame=engine->frame.number,.time_ns=engine->frame.time_ns,
         .view_height=classic ? player.viewoffset[2] : (float)player.pmove.viewheight,.present=true};
-    if (body.ground.registry) out->ground = qa_actor_id_equal(body.ground,engine->world_actor)
+    qa_actor_id ground_actor = qa_actor_reference_resolve(qa_session_actors(engine->provider->application->session), body.ground);
+    if (qa_actor_reference_present(body.ground)) out->ground = qa_actor_id_equal(ground_actor,engine->world_actor)
         ? (qa_movement_ground){.hit=QA_TRACE_HIT_WORLD}
-        : (qa_movement_ground){.hit=QA_TRACE_HIT_ACTOR,.actor=body.ground};
+        : (qa_movement_ground){.hit=QA_TRACE_HIT_ACTOR,.actor=ground_actor};
     if(!qa_vec_finite(qa_movement_origin(&state))||!qa_vec_finite(qa_movement_velocity(&state))||
         !qa_vec_finite(out->view_angles)||!qa_vec_finite(out->view_offset))
         return application_fail(error,QA_ERROR_FORMAT,"Native Q2 physical input contains nonfinite SDK motion");

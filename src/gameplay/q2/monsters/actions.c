@@ -183,7 +183,7 @@ static bool toss_makron(q2m_context *context, qa_error *error) {
         atan2f(difference.y, difference.x) * 57.29577951308232f);
     resumed.body.velocity = qa_vec_scale(direction, 400.0f);
     resumed.body.velocity.z = 200.0f;
-    resumed.body.ground = (qa_actor_id){0};
+    resumed.body.ground = (qa_actor_reference){0};
     if (!q2m_write_body(&resumed, true, error))
       return false;
     if (!q2m_alive(&resumed))
@@ -270,7 +270,7 @@ static bool jump_action(q2m_context *context, q2m_callback_id callback,
       callback == Q2M_CALLBACK_infantry_jump_wait_land || callback == Q2M_CALLBACK_mutant_jump_wait_land ||
       callback == Q2M_CALLBACK_parasite_jump_wait_land;
   if (wait) {
-    if (context->body.ground.registry == 0 &&
+    if (!qa_actor_reference_present(context->body.ground) &&
         context->game->options.edition == QA_Q2_RERELEASE) {
       qa_vec3 forward;
       qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
@@ -287,7 +287,7 @@ static bool jump_action(q2m_context *context, q2m_callback_id callback,
           return true;
       }
     }
-    if (context->body.ground.registry != 0 ||
+    if (qa_actor_reference_present(context->body.ground) ||
         context->game->now_ns > context->monster->jump_ns)
       context->monster->next_frame = context->monster->frame + 1;
     else
@@ -303,7 +303,7 @@ static bool jump_action(q2m_context *context, q2m_callback_id callback,
   context->body.velocity = qa_vec_add(
       context->body.velocity, qa_vec_add(qa_vec_scale(forward, jumps[callback].forward),
                                          qa_vec_scale(up, jumps[callback].up)));
-  context->body.ground = (qa_actor_id){0};
+  context->body.ground = (qa_actor_reference){0};
   context->actor->physics.motion = QA_PHYSICS_STEP;
   return q2m_write_body(context, true, error);
 }
@@ -357,7 +357,7 @@ static bool source_sound_callback(q2m_context *context, q2m_callback_id callback
     return q2m_sound_volume(context, sound->path, sound->channel,
                            sound->attenuation, sound->volume, error);
   if (callback == Q2M_CALLBACK_monster_footstep)
-    return context->body.ground.registry == 0 ||
+    return !qa_actor_reference_present(context->body.ground) ||
            q2m_emit(context, QA_BUILTIN_Q2_ENTITY_EVENT, NULL, 8,
                      context->body.origin, context->body.origin, 0, error);
   if (callback == Q2M_CALLBACK_makron_taunt) {
@@ -2052,7 +2052,7 @@ static bool widow2_pull(q2m_context *context, qa_error *error) {
   qa_vec3 start;
   if (!widow2_tongue_point(context, &start) || !widow2_tongue_reaches(start, enemy.origin))
     return true;
-  if (enemy.ground.registry)
+  if (qa_actor_reference_present(enemy.ground))
     enemy.origin.z += 1.0f;
   qa_vec3 delta = qa_vec_sub(context->body.origin, enemy.origin);
   if (traits.player) {
@@ -2076,7 +2076,7 @@ static bool widow2_pull(q2m_context *context, qa_error *error) {
     qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
     enemy.velocity = qa_vec_scale(forward, 1000.0f);
   }
-  enemy.ground = (qa_actor_id){0};
+  enemy.ground = (qa_actor_reference){0};
   if (!qa_world_body_write(context->game->services.world, enemy_id, &enemy, error))
     return false;
   if (!q2m_alive(context) || !q2_actor_live(context->game, enemy_id))
@@ -2505,7 +2505,7 @@ static bool foundational_species_callback(q2m_context *context,
   if (callback == Q2M_CALLBACK_berserk_check_landing) {
     context->actor->physics.gravity_scale =
         context->body.velocity.z < 0.0f ? 2.25f : 5.25f;
-    if (context->body.ground.registry != 0) {
+    if (qa_actor_reference_present(context->body.ground)) {
       if (monster->touch_active)
         return q2m_berserk_land(context, error);
       monster->jump_ns = 0;
@@ -2870,7 +2870,7 @@ static bool foundational_species_callback(q2m_context *context,
     bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
     context->body.velocity = qa_vec_scale(forward, rerelease ? 425.0f : 600.0f);
     context->body.velocity.z = rerelease ? 160.0f : 250.0f;
-    context->body.ground = (qa_actor_id){0};
+    context->body.ground = (qa_actor_reference){0};
     monster->ducked = true;
     monster->touch_active = true;
     if (rerelease)
@@ -2879,7 +2879,7 @@ static bool foundational_species_callback(q2m_context *context,
     return q2m_write_body(context, true, error);
   }
   if (callback == Q2M_CALLBACK_mutant_check_landing) {
-    if (context->body.ground.registry != 0) {
+    if (qa_actor_reference_present(context->body.ground)) {
       monster->attack_ns = 0;
       monster->ducked = false;
       monster->touch_active = false;
@@ -2928,14 +2928,14 @@ static bool foundational_species_callback(q2m_context *context,
     context->body.velocity.z = from_water  ? long_jump ? 250.0f : 300.0f
                                : long_jump ? 250.0f
                                            : 400.0f;
-    context->body.ground = (qa_actor_id){0};
+    context->body.ground = (qa_actor_reference){0};
     monster->ducked = true;
     monster->touch_active = true;
     monster->jump_ns = q2m_after(context->game->now_ns, 3.0);
     return q2m_write_body(context, true, error);
   }
   if (callback == Q2M_CALLBACK_gekk_check_landing) {
-    if (context->body.ground.registry != 0) {
+    if (qa_actor_reference_present(context->body.ground)) {
       monster->jump_ns = 0;
       monster->ducked = false;
       monster->touch_active = false;
@@ -2971,7 +2971,7 @@ static bool foundational_species_callback(q2m_context *context,
     context->body.origin.z += 1.0f;
     context->body.velocity = qa_vec_scale(forward, speed);
     context->body.velocity.z = 450.0f;
-    context->body.ground = (qa_actor_id){0};
+    context->body.ground = (qa_actor_reference){0};
     context->actor->physics.gravity_scale = 5.25f;
     monster->ducked = true;
     monster->touch_active = true;
@@ -4642,7 +4642,7 @@ static bool callback_Widow2Crunch_22(q2m_context *context, q2m_callback_id callb
         return false;
     if (!q2m_alive(context) || !available)
         return true;
-    float kick = monster->frame != 53 ? 0.0f : enemy.ground.registry ? 500.0f : 250.0f;
+    float kick = monster->frame != 53 ? 0.0f : qa_actor_reference_present(enemy.ground) ? 500.0f : 250.0f;
     bool hit;
     return q2m_hit(context, qa_v3(150, 0, 4), 20.0f + floorf(q2m_random(context->game) * 6.0f),
                    kick, &hit, error);
@@ -4660,7 +4660,7 @@ static bool callback_widow_attack_kick_23(q2m_context *context, q2m_callback_id 
         return true;
     bool hit;
     return q2m_hit(context, qa_v3(100, 0, 4), 50.0f + floorf(q2m_random(context->game) * 6.0f),
-                   enemy.ground.registry ? 500.0f : 250.0f, &hit, error);
+                   qa_actor_reference_present(enemy.ground) ? 500.0f : 250.0f, &hit, error);
 }
 
 static bool callback_Widow2SaveBeamTarget_24(q2m_context *context, q2m_callback_id callback,

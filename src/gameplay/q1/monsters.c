@@ -1226,7 +1226,7 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             return false;
         if (trace.fraction < 1 && !trace.all_solid) {
             state.origin = trace.end;
-            state.ground = trace.actor;
+            state.ground = trace.hit == QA_TRACE_HIT_WORLD ? qa_actor_reference_source(g->options.provider, 0) : q1_ref_from(g, trace.actor);
             entity->physics.flags |= QA_PHYSICS_ONGROUND;
         }
         if (!qa_world_body_write(g->services.world, entity->id, &state, error))

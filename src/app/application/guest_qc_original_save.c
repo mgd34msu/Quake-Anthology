@@ -297,10 +297,12 @@ static bool restore_raw(struct application_qc_state *engine,const qa_q1_save_dat
         !application_control_ensure(app,actor,body.angles,&control,error) ||
         !application_qc_control_state(engine->provider,actor,&control->state,&control->bounds,NULL,&control->view_angles,error)) return false;
     control->command_angles=control->view_angles; control->standing_bounds=body.bounds;
-    control->ground=(qa_movement_ground){.hit=body.ground.registry?QA_TRACE_HIT_ACTOR:QA_TRACE_HIT_NONE,.actor=body.ground};
+    control->ground=(qa_movement_ground){0};
     if (control->state.kind==QA_MOVEMENT_NETQUAKE) {
-        if (!body.ground.registry && (control->state.data.nq.flags&UINT32_C(512)))
-            control->ground.hit=QA_TRACE_HIT_WORLD;
+        if (control->state.data.nq.flags&UINT32_C(512))
+            control->ground=(qa_movement_ground){
+                .hit=body.ground.kind==QA_ACTOR_REFERENCE_SOURCE && body.ground.value.source.slot==0 ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_ACTOR,
+                .actor=qa_actor_reference_resolve(qa_session_actors(app->session),body.ground)};
         control->state.data.nq.ground=control->ground;
         control->water_level=control->state.data.nq.water_level;
         control->water_type=control->state.data.nq.water_type;

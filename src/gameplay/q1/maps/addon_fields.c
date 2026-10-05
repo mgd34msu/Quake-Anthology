@@ -207,11 +207,11 @@ static bool push(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error)
         if (row && row->sheltered)
             return true;
         bool jump = g->options.program == QA_Q1_MG3 && (flags & 16);
-        if (jump && !body.ground.registry)
+        if (jump && !traits.grounded)
             return true;
         body.velocity = velocity;
         if (traits.monster)
-            body.ground = (qa_actor_id){0};
+            body.ground = (qa_actor_reference){0};
         if (!motion(g, other, &body, error))
             return false;
         if (!field(g, id) || !q1_alive(g, other))

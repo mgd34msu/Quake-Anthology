@@ -90,7 +90,7 @@ static bool teleport_player(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin,
         return true;
     body.origin = qa_vec_add(origin, qa_v3(0, 0, 1));
     body.angles = angles;
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     qa_vec3 forward;
     q3_source_angle_vectors(angles, &forward, NULL, NULL);
     body.velocity = qa_vec_scale(forward, 400);
@@ -207,7 +207,7 @@ static bool portal_drop(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     qa_vec3 portal_angles = source ? qa_v3(0, 0, 0)
         : player_angles;
     body.velocity = qa_v3(0, 0, 0);
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     qa_builtin_spawn spawn = {.owner = game->options.owner,
                               .body = body,
                               .collision = &collision,
@@ -370,7 +370,7 @@ bool q3_start_kamikaze(qa_q3_game *game, qa_actor_id source, qa_actor_id attacke
     body.angles = qa_v3(0, 0, 0);
     body.velocity = qa_v3(0, 0, 0);
     body.bounds = (qa_bounds){0};
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     qa_builtin_spawn spawn = {.owner = game->options.owner, .body = body};
     if (!qa_builtin_resource(&game->options.services, "kamikaze", &spawn.definition, error)) return false;
     qa_actor_id explosion;

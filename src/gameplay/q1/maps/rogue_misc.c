@@ -116,7 +116,7 @@ bool q1_map_rogue_rubble_throw(qa_q1_game *g, q1_actor *e, qa_error *error) {
     body.velocity.x = (float)(((double)direction.x + (double)q1_random(g) * .2 - .1) * 300);
     body.velocity.y = (float)(((double)direction.y + (double)q1_random(g) * .2 - .1) * 300);
     body.velocity.z = (float)(((double)direction.z + (double)q1_random(g) * .2 - .1) * 300);
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     if (!qa_world_body_write(g->services.world, id, &body, error))
         goto fail;
     piece = misc_actor(g, id);

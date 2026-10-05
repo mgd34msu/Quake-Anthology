@@ -18,7 +18,6 @@ bool q1_demodog_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
     entity->state.monster.jump_touch = true;
     entity->physics.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
     body.origin.z += 1;
-    body.ground = (qa_actor_id){0};
     body.velocity = qa_vec_add(qa_vec_scale(g->forward, 300), qa_v3(0, 0, 200));
     return qa_world_body_write(g->services.world, entity->id, &body, error);
 }

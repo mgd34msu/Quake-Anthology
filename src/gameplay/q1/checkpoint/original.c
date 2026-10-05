@@ -54,7 +54,7 @@ static const original_field body_fields[] = {
     FIELD(qa_body_state, angles, "angles", VECTOR),
     FIELD(qa_body_state, bounds.mins, "mins", VECTOR),
     FIELD(qa_body_state, bounds.maxs, "maxs", VECTOR),
-    FIELD(qa_body_state, ground, "groundentity", ACTOR)
+    FIELD(qa_body_state, ground, "groundentity", REF)
 };
 static const original_field physics_fields[] = {
     FIELD(qa_physics_properties, angular_velocity, "avelocity", VECTOR),
@@ -1077,7 +1077,6 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         !RESTORE_FIELDS(game, record, &body, body_fields, slots, count, error) ||
         !RESTORE_FIELDS(game, record, &physics, physics_fields, slots, count, error) ||
         !restore_physics(record, &physics, &flags, error)) return false;
-    if ((flags & 512) && !body.ground.registry) body.ground = slots[0];
     combat.health = saved_number(record, "health");
     combat.can_take_damage = saved_number(record, "takedamage") != 0;
     combat.armor.regular.kind = QA_ARMOR_Q1;
@@ -1125,7 +1124,12 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
             .move_type = (int32_t)saved_number(record,"movetype"),.health = combat.health,.flags = flags,
             .water_level = physics.water_level,.water_type = physics.water_type,
             .teleport_time_seconds = player->input.teleport_until,.ideal_pitch = saved_number(record,"idealpitch")};
-        movement->data.nq.ground = (qa_movement_ground){.actor = body.ground,.hit = (flags & 512) ? qa_actor_id_equal(body.ground,slots[0]) ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_ACTOR : QA_TRACE_HIT_NONE};
+        qa_actor_id ground = qa_actor_reference_resolve(qa_session_actors(game->services.session), body.ground);
+        bool world_ground = (body.ground.kind == QA_ACTOR_REFERENCE_SOURCE &&
+            body.ground.value.source.owner == game->options.provider && !body.ground.value.source.slot) ||
+            qa_actor_id_equal(ground, slots[0]);
+        movement->data.nq.ground = (qa_movement_ground){.actor = ground,
+            .hit = flags & 512 ? world_ground ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_ACTOR : QA_TRACE_HIT_NONE};
         if (!saved_vector(saved(record,"movedir"),&movement->data.nq.water_jump_direction,error)) return false;
         return game->services.physics && game->services.physics->services.write &&
             game->services.physics->services.write(game->services.physics->services.context, id, &physics, error);

@@ -153,7 +153,7 @@ bool q3gear_publish(application_q3_gear *gear, q3gear_tether *entry, qa_error *e
              !q3gear_word(gear, hook + gear->definition->fields.mover, &mover, error))) return false;
         bool pulling = ((uint32_t)flags & gear->definition->pulling_flag) != 0;
         qa_body_state body = {.origin = shared.origin, .angles = shared.angles, .bounds = shared.local_bounds,
-            .velocity = {source.pos.delta[0], source.pos.delta[1], source.pos.delta[2]}, .ground = q3gear_actor(gear, mover)};
+            .velocity = {source.pos.delta[0], source.pos.delta[1], source.pos.delta[2]}, .ground = qa_actor_reference_lifetime(q3gear_actor(gear, mover))};
         if (pulling && !q3gear_vector(gear, client + 92, &body.origin, error)) return false;
         if (tether.actor.registry && tether.hook != hook)
             return q3gear_fail(error, QA_ERROR_ARGUMENT, "Separate QVM gear replaced a live tether source slot");

@@ -515,9 +515,10 @@ bool q3_copy_corpse(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     source->loop_sound = 0;
     source->event = 0;
     source->legs = source->torso = animation;
-    source->ground_entity = body.ground.registry ? q3_entity_number(game, body.ground)
+    source->ground_entity = qa_actor_reference_present(body.ground) ? body.ground.kind == QA_ACTOR_REFERENCE_SOURCE && body.ground.value.source.owner == game->options.owner ?
+        (int32_t)body.ground.value.source.slot : q3_entity_number(game, qa_actor_reference_resolve(qa_session_actors(game->options.services.session), body.ground))
                                                  : (int32_t)QA_Q3_SOURCE_NONE;
-    if (!body.ground.registry) {
+    if (!qa_actor_reference_present(body.ground)) {
         source_position.type = QA_TRAJECTORY_GRAVITY;
         source_position.time_ms = game->now_ms;
         source_position.delta = body.velocity;
@@ -612,9 +613,10 @@ bool q3_corpse_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     entry->state.corpse.trajectory.delta = body.velocity;
     if (normal.z > 0) {
         body.origin = qa_physics_q3_snap(qa_vec_add(trace.end, qa_v3(0, 0, 1)));
-        body.ground = trace.hit == QA_TRACE_HIT_ACTOR ? trace.actor
-            : trace.hit == QA_TRACE_HIT_WORLD && game->options.services.physics
-                ? game->options.services.physics->world_actor : (qa_actor_id){0};
+        const qa_actor_record *ground = qa_actors_get(qa_session_actors(game->options.services.session), trace.actor);
+        body.ground = trace.hit == QA_TRACE_HIT_WORLD ? qa_actor_reference_source(game->options.owner, QA_Q3_SOURCE_WORLD) :
+            trace.hit == QA_TRACE_HIT_ACTOR ? ground && ground->owner == game->options.owner && ground->has_source ?
+                qa_actor_reference_source(ground->owner, ground->source_slot) : qa_actor_reference_lifetime(trace.actor) : (qa_actor_reference){0};
         entry->state.corpse.trajectory = (qa_trajectory){.type = QA_TRAJECTORY_STATIONARY,
                                                          .base = body.origin};
         q3_wire_entity_source *source = q3_wire_entity(game, actor);

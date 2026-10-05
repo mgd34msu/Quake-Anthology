@@ -18,12 +18,14 @@ static bool posture(void *context,qa_actor_id actor,qa_bounds *bounds,double *he
     if(!qa_application_control_read(app,actor,&control)||!qa_application_control_camera(app,actor,&camera))
         return q3records_fail(e,QA_ERROR_NOT_FOUND,"Component weapon posture lost its authoritative client view");
     *bounds=body.bounds; *height=camera.view_offset.z;
-    bool world=body.ground.registry&&app->physics&&qa_actor_id_equal(body.ground,app->physics->world_actor);
-    if(body.ground.registry&&!world) {
+    qa_actor_id ground_actor=qa_actor_reference_resolve(qa_session_actors(app->session),body.ground);
+    bool grounded=control.ground.hit!=QA_TRACE_HIT_NONE;
+    bool world=grounded&&qa_actor_reference_present(body.ground)&&app->physics&&qa_actor_id_equal(ground_actor,app->physics->world_actor);
+    if(grounded&&qa_actor_reference_present(body.ground)&&!world) {
         if(c->entity_record==SIZE_MAX) return q3records_fail(e,QA_ERROR_FORMAT,"Weapon ground actor has no declared source entity array");
         component_record *record=c->records->records+c->entity_record;
         uint32_t pointer;
-        if(!application_q3_component_records_pointer(c->records,body.ground,record->id,&pointer,e)) return false;
+        if(!application_q3_component_records_pointer(c->records,ground_actor,record->id,&pointer,e)) return false;
         uint32_t slot=(pointer-record->address)/record->stride;
         if(slot>INT32_MAX) return q3records_fail(e,QA_ERROR_FORMAT,"Weapon ground slot exceeds its Source ABI");
         *ground=(int32_t)slot;

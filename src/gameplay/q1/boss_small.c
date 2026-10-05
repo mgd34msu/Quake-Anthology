@@ -428,7 +428,6 @@ static bool orb_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_er
         float x = -200 + 400 * q1_random(g), y = -200 + 400 * q1_random(g);
         float z = 150 + 150 * q1_random(g);
         value.velocity = qa_v3(x, y, z);
-        value.ground = (qa_actor_id){0};
         value.bounds = (qa_bounds){0};
         e->physics.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
         e->physics.solid = QA_PHYSICS_BOX;

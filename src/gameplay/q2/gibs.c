@@ -144,7 +144,7 @@ static bool debris(qa_q2_game *g, qa_body_state body, const char *model, float s
     body.velocity = qa_vec_add(body.velocity, qa_vec_scale(impulse, speed));
     body.bounds = (qa_bounds){0};
     body.angles = qa_v3(0, 0, 0);
-    body.ground = (qa_actor_id){0};
+    body.ground = (qa_actor_reference){0};
     qa_combat_state combat = {.can_take_damage = true};
     qa_builtin_spawn spawn = {.owner = g->options.owner,
                               .definition = definition,
@@ -210,7 +210,7 @@ static bool gib_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
         }
         return true;
     }
-    if ((p->gib_flags & Q2_GIB_METALLIC) != 0 || body.ground.registry == 0)
+    if ((p->gib_flags & Q2_GIB_METALLIC) != 0 || !qa_actor_reference_present(body.ground))
         return true;
     p->armed = true;
     if (!contact->has_plane)

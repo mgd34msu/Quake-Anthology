@@ -9,7 +9,7 @@ static bool physics_changed(void *context, qa_actor_id id, qa_error *error) {
         return true;
     q2m_context c = {.game = g, .actor = a, .monster = a->monster};
     if (!q2m_refresh(&c, error)) return false;
-    if (!q2m_alive(&c) || c.body.ground.registry || a->physics.gravity_direction.z <= 0)
+    if (!q2m_alive(&c) || qa_actor_reference_present(c.body.ground) || a->physics.gravity_direction.z <= 0)
         return true;
     a->physics.gravity_direction.z = -1;
     c.body.angles.z += 180;
@@ -99,7 +99,7 @@ bool q2m_stalker_pain(q2m_context *c, bool reacts, bool chainfist, qa_error *err
         m->skin = c->combat.health < m->max_health * .5f ? 1 : 0;
     else if (c->combat.health < truncf(m->max_health * .5f))
         m->skin = 1;
-    if ((!rerelease && c->game->options.skill == 3) || !c->body.ground.registry)
+    if ((!rerelease && c->game->options.skill == 3) || !qa_actor_reference_present(c->body.ground))
         return true;
     if ((m->move->id == Q2M_MOVE_stalker_move_false_death_end) ||
         (m->move->id == Q2M_MOVE_stalker_move_false_death_start))
@@ -150,10 +150,10 @@ static bool jump_straight(q2m_context *c, qa_error *error) {
         c->body.angles.z += 180;
         if (c->body.angles.z > 360)
             c->body.angles.z -= 360;
-        c->body.ground = (qa_actor_id){0};
+        c->body.ground = (qa_actor_reference){0};
         return q2m_write_body(c, true, error);
     }
-    if (!c->body.ground.registry)
+    if (!qa_actor_reference_present(c->body.ground))
         return true;
     c->body.velocity.x += q2m_random(c->game) * 10 - 5;
     c->body.velocity.y += q2m_random(c->game) * 10 - 5;
@@ -164,11 +164,11 @@ static bool jump_straight(q2m_context *c, qa_error *error) {
         return true;
     c->actor->physics.gravity_direction.z = 1;
     c->body.angles.z = 180;
-    c->body.ground = (qa_actor_id){0};
+    c->body.ground = (qa_actor_reference){0};
     return q2m_write_body(c, true, error);
 }
 static bool pounce(q2m_context *c, const qa_body_state *enemy, qa_error *error) {
-    if (c->actor->physics.gravity_direction.z > 0 || !enemy->ground.registry)
+    if (c->actor->physics.gravity_direction.z > 0 || !qa_actor_reference_present(enemy->ground))
         return true;
     uint32_t value;
     if (!contents(c, enemy->origin, &value, error))
@@ -335,7 +335,7 @@ bool q2m_blocked_platform(q2m_context *c, const qa_body_state *enemy, float dist
                  : enemy->origin.z + enemy->bounds.maxs.z <= self_min ? -1 : 0;
     if (!position)
         return true;
-    q2_actor *platform = q2_actor_get(c->game, c->body.ground, false, NULL);
+    q2_actor *platform = q2_actor_get(c->game, qa_actor_reference_resolve(qa_session_actors(c->game->services.session), c->body.ground), false, NULL);
     if (!platform || !platform->entity || platform->entity->kind != Q2E_PLAT) {
         qa_vec3 forward;
         qa_builtin_angle_vectors(c->body.angles, &forward, NULL, NULL);
@@ -355,7 +355,7 @@ bool q2m_blocked_platform(q2m_context *c, const qa_body_state *enemy, float dist
     if (!platform || !platform->entity || platform->entity->kind != Q2E_PLAT ||
         !platform->entity->usable || !platform->entity->mover)
         return true;
-    bool aboard = qa_actor_id_equal(c->body.ground, platform->id);
+    bool aboard = qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(c->game->services.session), c->body.ground), platform->id);
     int phase = platform->entity->mover->phase;
     if ((position > 0 && (aboard ? phase == 0 : phase == 2)) ||
         (position < 0 && (aboard ? phase == 2 : phase == 0))) {
@@ -491,7 +491,7 @@ bool q2m_stalker_blocked(q2m_context *c, float distance, bool *accepted, qa_erro
         c->body.angles.z += 180;
         if (c->body.angles.z > 360)
             c->body.angles.z -= 360;
-        c->body.ground = (qa_actor_id){0};
+        c->body.ground = (qa_actor_reference){0};
         *accepted = true;
         return q2m_write_body(c, true, error);
     }
@@ -537,7 +537,7 @@ static bool shoot(q2m_context *c, qa_error *error) {
         return !q2m_alive(c) || !q2_actor_live(c->game, target);
     if (!q2m_alive(c) || combat.health <= 0)
         return true;
-    if (c->body.ground.registry && q2m_random(c->game) < .33f) {
+    if (qa_actor_reference_present(c->body.ground) && q2m_random(c->game) < .33f) {
         bool okay = qa_vec_length(qa_vec_sub(enemy.origin, c->body.origin)) > 256 ||
                             q2m_random(c->game) < .5f
                         ? pounce(c, &enemy, error) : jump_straight(c, error);
@@ -580,7 +580,7 @@ bool q2m_stalker_callback(q2m_context *c, q2m_callback_id name, bool *handled, q
     if (!*handled)
         return true;
     if (name == Q2M_CALLBACK_stalker_footstep)
-        return !c->body.ground.registry ||
+        return !qa_actor_reference_present(c->body.ground) ||
                q2m_emit(c, QA_BUILTIN_EFFECT, "q2:entity-event", 8, c->body.origin,
                           qa_v3(0, 0, 0), 0, error);
     if (name == Q2M_CALLBACK_stalker_heal) {
@@ -628,7 +628,7 @@ bool q2m_stalker_callback(q2m_context *c, q2m_callback_id name, bool *handled, q
             if (!q2m_alive(c))
                 return true;
         }
-        bool finished = c->body.ground.registry != 0;
+        bool finished = qa_actor_reference_present(c->body.ground);
         if (!finished) {
             c->actor->physics.gravity_scale = 1.3f;
             if (c->game->options.edition == QA_Q2_CLASSIC)

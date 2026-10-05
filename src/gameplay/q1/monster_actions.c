@@ -50,7 +50,6 @@ static bool jump(qa_q1_game *g, q1_actor *entity, bool tar, bool dog, qa_error *
     entity->state.monster.jump_touch = true;
     entity->physics.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
     body.origin.z += 1;
-    body.ground = (qa_actor_id){0};
     body.velocity =
         qa_vec_add(qa_vec_scale(g->forward, dog ? 300 : 600), qa_v3(0, 0,
                                                                     tar   ? 200 + q1_random(g) * 150
@@ -89,7 +88,7 @@ bool q1_monster_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_err
     bool grounded;
     if (!qa_physics_check_bottom(g->services.physics, entity->id, body.origin, &grounded, error))
         return false;
-    if (grounded || (!dog && body.ground.registry)) {
+    if (grounded || (!dog && (entity->physics.flags & QA_PHYSICS_ONGROUND))) {
         m->jump_touch = false;
         if (!tar || !grounded)
             entity->physics.motion = QA_PHYSICS_STEP;
@@ -551,7 +550,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         float x = -200 + 400 * q1_random(g), y = -200 + 400 * q1_random(g),
               z = 100 + 100 * q1_random(g);
         body.velocity = qa_v3(x, y, z);
-        body.ground = (qa_actor_id){0};
+        body.ground = (qa_actor_reference){0};
         return qa_world_body_write(g->services.world, entity->id, &body, error) &&
                q1_sound(g, entity->id, "wizard/wdeath.wav", 2, 1, error);
     }

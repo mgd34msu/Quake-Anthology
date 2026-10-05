@@ -3031,7 +3031,7 @@ bool q2m_move_to_goal(q2m_context *context, float distance, qa_error *error) {
   if (monster->definition->locomotion == Q2M_STATIONARY)
     return true;
   if (monster->definition->locomotion == Q2M_WALK &&
-      context->body.ground.registry == 0 &&
+      !qa_actor_reference_present(context->body.ground) &&
       !(context->actor->physics.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING)))
     return true;
   bool handled;

@@ -16,12 +16,23 @@ static int32_t reference_of(const qa_qc_instance *instance, uint32_t slot)
 {
     return (int32_t)((uint64_t)slot * instance->layout.stride_bytes);
 }
-static bool source_ground(const qa_qc_instance *instance, uint32_t slot)
+static bool canonical_ground_reference(qa_qc_instance *instance,
+    qa_actor_reference ground, int32_t *out, qa_error *error)
 {
-    return instance->options.host.declared_projection
-        ? instance->slots[slot].kind == QA_QC_SLOT_OWNED
-        : instance->program->info.api == QA_QC_API_NETQUAKE;
+    *out = 0;
+    if (ground.kind == QA_ACTOR_REFERENCE_SOURCE &&
+        ground.value.source.owner == instance->options.host.owner) {
+        if (ground.value.source.slot >= instance->entity_count)
+            return qc_fail(error, QA_ERROR_ARGUMENT, ground.value.source.slot,
+                "Ground reference exceeds the physical QuakeC entity extent");
+        *out = (int32_t)(ground.value.source.slot * instance->layout.stride_bytes);
+        return true;
+    }
+    return !qa_actor_reference_present(ground) || qa_qc_actor_reference(instance,
+        qa_actor_reference_resolve(qa_session_actors(instance->options.host.session), ground),
+        true, out, error);
 }
+
 static bool body_ground_flags(const qa_qc_instance *instance,uint32_t slot,
     uint32_t *out,qa_error *error)
 {
@@ -657,15 +668,15 @@ static bool refresh_borrowed_impl(qa_qc_instance *instance, uint32_t slot,
                            "QuakeC groundentity field has the wrong type");
         }
         int32_t ground = 0;
-        if (body.ground.registry != 0
-            && !qa_qc_actor_reference(instance, body.ground, true,
+        if (qa_actor_reference_present(body.ground)
+            && !canonical_ground_reference(instance, body.ground,
                                       &ground, error)) ok = false;
         if (ok && !slot_matches(instance, slot, QA_QC_SLOT_BORROWED,
                                 actor)) {
             ok = qc_fail(error, QA_ERROR_NOT_FOUND, slot,
                          "Borrowed QuakeC actor changed during body refresh");
         }
-        if (ok && (!source_ground(instance, slot) || body.ground.registry!=0) &&
+        if (ok &&
             !raw_entity_int(instance, slot, field->offset,
                                   ground, error)) ok = false;
     }
@@ -1011,17 +1022,17 @@ static bool body_read_impl(void *context, qa_body_state *out, qa_error *error)
         || !field_vector(instance, body->slot, instance->program->engine_fields.maxs, qa_v3(0,0,0), &state.bounds.maxs, error)) return false;
     const qa_qc_definition *ground = instance->program->engine_fields.groundentity;
     int32_t reference;
-    qa_error ignored = {0};
     if (ground != NULL) {
         if (ground->type != QA_QC_ENTITY)
             return qc_fail(error, QA_ERROR_FORMAT, ground->offset,
                            "QuakeC groundentity field has the wrong type");
         if (!qa_qc_entity_int(instance, reference_of(instance, body->slot),
                               ground->offset, &reference, error)) return false;
-        uint32_t flags=512;
-        if (source_ground(instance, body->slot) && !body_ground_flags(instance,body->slot,&flags,error)) return false;
-        if (reference != 0 && (flags&512u)!=0)
-            (void)qa_qc_reference_actor(instance, reference, &state.ground, &ignored);
+        uint32_t target;
+        if (!qc_entity_slot(instance, reference, &target, error)) return false;
+        state.ground = instance->slots[target].kind == QA_QC_SLOT_BORROWED ?
+            qa_actor_reference_lifetime(instance->slots[target].actor) :
+            qa_actor_reference_source(instance->options.host.owner, target);
     }
     if (!slot_matches(instance, body->slot, QA_QC_SLOT_OWNED, actor))
         return qc_fail(error, QA_ERROR_NOT_FOUND, body->slot,
@@ -1052,15 +1063,6 @@ static bool body_write_impl(void *context, const qa_body_state *state,
         || instance->slots[body->slot].kind != QA_QC_SLOT_OWNED)
         return qc_fail(error, QA_ERROR_NOT_FOUND, body->slot, "QuakeC body binding is retired");
     qa_actor_id actor = instance->slots[body->slot].actor;
-    if (source_ground(instance, body->slot)) {
-        uint32_t value;
-        if (!body_ground_flags(instance,body->slot,&value,error)) return false;
-        const qa_qc_definition *flags=instance->program->engine_fields.flags;
-        /* A zero canonical actor also represents world ground. Only the
-         * actual physics/control flags owner can clear that distinction. */
-        if (flags && state->ground.registry) qc_store_float(qc_entity_words(instance,body->slot),flags->offset,
-            (float)(int32_t)(value|512u));
-    }
 #define WRITE_VECTOR(name_, value_) do { \
     if (!raw_body_vector(instance, body->slot, instance->program->engine_fields.name_, value_, error)) return false; \
 } while (0)
@@ -1075,12 +1077,12 @@ static bool body_write_impl(void *context, const qa_body_state *state,
             return qc_fail(error, QA_ERROR_FORMAT, field->offset,
                            "QuakeC groundentity field has the wrong type");
         int32_t ground = 0;
-        if (state->ground.registry != 0
-            && !qa_qc_actor_reference(instance, state->ground, true, &ground, error)) return false;
+        if (qa_actor_reference_present(state->ground)
+            && !canonical_ground_reference(instance, state->ground, &ground, error)) return false;
         if (!slot_matches(instance, body->slot, QA_QC_SLOT_OWNED, actor))
             return qc_fail(error, QA_ERROR_NOT_FOUND, body->slot,
                            "QuakeC body changed during source write");
-        if ((!source_ground(instance, body->slot) || state->ground.registry!=0) &&
+        if (
             !raw_entity_int(instance, body->slot, field->offset, ground, error)) return false;
     }
     return slot_matches(instance, body->slot, QA_QC_SLOT_OWNED, actor)
@@ -1552,7 +1554,8 @@ static bool droptofloor(qa_qc_instance *instance, qa_error *error)
     if (trace.fraction == 1.0f || trace.all_solid)
         return qa_qc_return_float(instance, 0, error);
     body.origin = trace.end;
-    body.ground = trace.hit == QA_TRACE_HIT_ACTOR ? trace.actor : (qa_actor_id){0};
+    body.ground = trace.hit == QA_TRACE_HIT_ACTOR ? qa_actor_reference_lifetime(trace.actor) :
+        qa_actor_reference_source(instance->options.host.owner, 0);
     if (!set_field_vector(instance, slot, instance->program->engine_fields.origin, trace.end, error)) return false;
     if (!slot_matches(instance, slot, binding.kind, binding.actor))
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot,
@@ -1563,8 +1566,8 @@ static bool droptofloor(qa_qc_instance *instance, qa_error *error)
             return qc_fail(error, QA_ERROR_FORMAT, ground->offset,
                            "QuakeC groundentity field has the wrong type");
         int32_t ground_reference = 0;
-        if (body.ground.registry != 0
-            && !qa_qc_actor_reference(instance, body.ground, true,
+        if (qa_actor_reference_present(body.ground)
+            && !canonical_ground_reference(instance, body.ground,
                                       &ground_reference, error)) return false;
         if (!qa_qc_set_entity_int(instance, reference, ground->offset,
                                   ground_reference, error)) return false;
