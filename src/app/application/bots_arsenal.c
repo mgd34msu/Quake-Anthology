@@ -70,14 +70,16 @@ static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *e
             if(!found) continue;
             if(bots->knowledge_count>=sizeof(bots->knowledge)/sizeof(*bots->knowledge))
                 return application_fail(error,QA_ERROR_MEMORY,"native bot weapon observation capacity exceeded");
+            int32_t ammo_amount;
+            if (!application_bot_integer(view.ammo_per_shot,&ammo_amount,error)) return false;
             qa_bot_weapon_knowledge *value=&bots->knowledge[bots->knowledge_count++];
             *value=(qa_bot_weapon_knowledge){.weapon={.valid=true,.number=source+1,
                 .weapon_inventory=65+source,.ammo_inventory=97+source,
-                .ammo_amount=qa_number_to_i32(view.ammo_per_shot),.projectile_count=(int32_t)view.shots,
+                .ammo_amount=ammo_amount,.projectile_count=(int32_t)view.shots,
                 .reload=view.fire_interval,.speed=view.speed,.extra_z_velocity=view.extra_z_velocity,
                 .horizontal_spread=(float)(atan(view.horizontal_spread)*(180.0/3.14159265358979323846)/6),
                 .vertical_spread=(float)(atan(view.vertical_spread)*(180.0/3.14159265358979323846)/6)},
-                .projectile={.damage=qa_number_to_i32(view.damage),.radius=view.blast_radius,
+                .projectile={.damage=qa_source_float_to_i32(view.damage),.radius=view.blast_radius,
                     .gravity=view.gravity,.detonation=view.lifetime,
                     .damage_type=1|(view.blast_radius>0?2:0)},
                 .selected_projectile_damage=view.damage,.selected_splash_damage=view.blast_damage,
@@ -107,15 +109,18 @@ static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *e
             if(!found) continue;
             if(bots->knowledge_count>=sizeof(bots->knowledge)/sizeof(*bots->knowledge))
                 return application_fail(error,QA_ERROR_MEMORY,"native bot weapon observation capacity exceeded");
+            int32_t ammo_amount,damage;
+            if (!application_bot_integer(fact.required_ammo,&ammo_amount,error) ||
+                !application_bot_integer(fact.damage,&damage,error)) return false;
             qa_bot_weapon_knowledge *value=&bots->knowledge[bots->knowledge_count++];
             *value=(qa_bot_weapon_knowledge){.weapon={.valid=true,.number=(int32_t)ordinal+1,
                 .weapon_inventory=(int32_t)ordinal+65,.ammo_inventory=(int32_t)ordinal+97,
-                .ammo_amount=qa_number_to_i32(fact.required_ammo),.projectile_count=(int32_t)fact.shots,
+                .ammo_amount=ammo_amount,.projectile_count=(int32_t)fact.shots,
                 .reload=fact.cycle,.activate=fact.activate,.spin_up=fact.spin_up,
                 .speed=fact.speed,.extra_z_velocity=fact.extra_z_velocity,.offset=fact.offset,
                 .horizontal_spread=q2_spread(fact.spread_x,fact.range,fact.spread_degrees_x),
                 .vertical_spread=q2_spread(fact.spread_y,fact.range,fact.spread_degrees_y)},
-                .projectile={.damage=qa_number_to_i32(fact.damage),.radius=fact.radius,
+                .projectile={.damage=damage,.radius=fact.radius,
                     .gravity=fact.ballistic?1:0,.detonation=fact.fuse,
                     .damage_type=1|(fact.radius>0?2:0)},
                 .selected_projectile_damage=fact.damage,.selected_splash_damage=fact.splash_damage,
@@ -165,9 +170,11 @@ bool application_bot_inventory(application_bots *bots,qa_actor_id actor,const qa
         if(!qa_bot_inventory_write(inventory,index,0,error)) return false;
     qa_combat_state combat;
     bool present=qa_combat_read(bots->application->combat,actor,&combat,NULL);
-    if(!qa_bot_inventory_write(inventory,QA_BOT_INV_HEALTH,present?qa_number_to_i32(combat.health):0,error) ||
-       !qa_bot_inventory_write(inventory,QA_BOT_INV_ARMOR,
-           present && combat.armor.regular.kind!=QA_ARMOR_NONE?qa_number_to_i32(combat.armor.regular.points):0,error)) return false;
+    int32_t health=0,armor=0;
+    if (present && (!application_bot_integer(combat.health,&health,error) ||
+        !application_bot_integer(combat.armor.regular.kind!=QA_ARMOR_NONE?combat.armor.regular.points:0,&armor,error))) return false;
+    if(!qa_bot_inventory_write(inventory,QA_BOT_INV_HEALTH,health,error) ||
+       !qa_bot_inventory_write(inventory,QA_BOT_INV_ARMOR,armor,error)) return false;
     if(provider->kind==APPLICATION_PROVIDER_Q1) {
         double time,started;bool intermission;
         if(!qa_q1_bot_clock_read(provider->state.q1,&time,&intermission,&started,error)) return false;
@@ -178,8 +185,10 @@ bool application_bot_inventory(application_bots *bots,qa_actor_id actor,const qa
             if(!qa_q1_bot_weapon_items(provider->state.q1,(qa_q1_weapon)source,&item,&ammo,&covered,error)) return false;
             if(!covered) continue;
             if(!qa_q1_bot_weapon_usable(provider->state.q1,actor,(qa_q1_weapon)source,&usable,error)) return false;
+            int32_t ammunition;
+            if (!application_bot_integer(count(bots,actor,ammo),&ammunition,error)) return false;
             if(!qa_bot_inventory_write(inventory,65+source,usable,error) ||
-               !qa_bot_inventory_write(inventory,97+source,qa_number_to_i32(count(bots,actor,ammo)),error)) return false;
+               !qa_bot_inventory_write(inventory,97+source,ammunition,error)) return false;
         }
     } else if(provider->kind==APPLICATION_PROVIDER_Q2) {
         uint32_t registered_count;
@@ -190,8 +199,10 @@ bool application_bot_inventory(application_bots *bots,qa_actor_id actor,const qa
             qa_q2_bot_weapon_fact fact;bool found;
             if(!qa_q2_bot_weapon_read(provider->state.q2,actor,definition->weapon,&fact,&found,error)) return false;
             if(!found) continue;
+            int32_t ammunition;
+            if (!application_bot_integer(count(bots,actor,fact.ammo),&ammunition,error)) return false;
             if(!qa_bot_inventory_write(inventory,(int32_t)(65+ordinal),fact.owned,error) ||
-               !qa_bot_inventory_write(inventory,(int32_t)(97+ordinal),qa_number_to_i32(count(bots,actor,fact.ammo)),error)) return false;
+               !qa_bot_inventory_write(inventory,(int32_t)(97+ordinal),ammunition,error)) return false;
         }
     } else {
         qa_q3_product product;
@@ -215,7 +226,9 @@ bool application_bot_inventory(application_bots *bots,qa_actor_id actor,const qa
             int source=ammunition[index];
             if(source>maximum) continue;
             qa_item_id ammo=qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)source,true);
-            if(!qa_bot_inventory_write(inventory,ammo_indices[source],qa_number_to_i32(count(bots,actor,ammo)),error)) return false;
+            int32_t ammo_count;
+            if (!application_bot_integer(count(bots,actor,ammo),&ammo_count,error) ||
+                !qa_bot_inventory_write(inventory,ammo_indices[source],ammo_count,error)) return false;
         }
     }
     return true;

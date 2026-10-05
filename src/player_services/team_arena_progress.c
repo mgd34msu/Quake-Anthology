@@ -1,9 +1,9 @@
 /* UI_CalcPostGameStats and native postGameInfo_t score files. */
 #include "qa/team_arena_progress.h"
 #include "qa/binary.h"
+#include "qa/text.h"
 #include "save_io.h"
 
-#include <float.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <math.h>
@@ -20,32 +20,20 @@ static bool fail(qa_error *error, qa_status status, const char *message)
 { qa_error_set(error, status, 0, "%s", message); return false; }
 static int32_t signed_bits(uint32_t bits)
 { int32_t value; memcpy(&value, &bits, sizeof(value)); return value; }
-static int32_t qvm_integer(double value)
-{
-    volatile float stored = value > FLT_MAX ? INFINITY : value < -FLT_MAX ? -INFINITY : (float)value;
-    return stored >= -2147483648.0 && stored < 2147483648.0 ? (int32_t)stored : INT32_MIN;
-}
-static int32_t js_integer(double value)
-{
-    if (!isfinite(value) || value == 0) return 0;
-    double remainder = fmod(trunc(value), 4294967296.0);
-    if (remainder < 0) remainder += 4294967296.0;
-    return signed_bits((uint32_t)remainder);
-}
 bool qa_team_arena_score_calculate(const qa_team_arena_score_input *input,
     const qa_team_arena_score *previous, qa_team_arena_score_result *out, qa_error *error)
 {
     if (!input || !previous || !out)
         return fail(error, QA_ERROR_ARGUMENT, "Team Arena score calculation needs its actual source inputs");
     const qa_team_arena_stats *stats = &input->stats;
-    volatile float end = (float)stats->end_time, start = (float)input->match_start_time;
-    volatile float elapsed = end - start, seconds = elapsed / 1000.0f;
-    int32_t time = qvm_integer(seconds);
-    int32_t bonus = time < input->time_to_beat
-        ? signed_bits((uint32_t)js_integer(input->time_to_beat - time) * 10u) : 0;
+    float seconds = ((float)stats->end_time - (float)input->match_start_time) / 1000.0f;
+    int32_t time = qa_source_float_to_i32(seconds);
+    int32_t adjusted_time = qa_source_float_to_i32((float)input->time_to_beat);
+    int32_t bonus = time < adjusted_time
+        ? signed_bits(((uint32_t)adjusted_time - (uint32_t)time) * 10u) : 0;
     bool won = stats->red_score > stats->blue_score;
     int32_t shutout = won && stats->blue_score <= 0 ? 100 : 0;
-    int32_t skill = qvm_integer(input->skill);
+    int32_t skill = qa_source_float_to_i32((float)input->skill);
     if (skill < 1) skill = 1;
     qa_team_arena_score current = {
         .score = signed_bits(((uint32_t)stats->base_score + (uint32_t)shutout + (uint32_t)bonus) * (uint32_t)skill),

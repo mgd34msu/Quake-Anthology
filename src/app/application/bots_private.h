@@ -7,6 +7,14 @@
 #include "qa/bots_catalog.h"
 #include <math.h>
 
+static inline bool application_bot_integer(double value,int32_t *out,qa_error *error) {
+    if (!isfinite(value) || value<=-2147483649.0 || value>=2147483648.0) {
+        (void)application_fail(error,QA_ERROR_ARGUMENT,"Bot observation exceeds its native integer field");
+        return false;
+    }
+    *out=(int32_t)value; return true;
+}
+
 static inline int32_t application_bot_angle_word(float angle) {
     float reduced=fmodf(angle,360.0f);
     return (int32_t)(uint16_t)(int32_t)(reduced*(65536.0f/360.0f));

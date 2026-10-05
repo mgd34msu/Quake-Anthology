@@ -55,7 +55,7 @@ static bool metadata(void *context,qa_actor_id actor,application_bot_world_metad
         if(actual.present) {
             const char *model=actual.model?qa_strings_cstr(strings,actual.model):"";
             if(!model) return false;
-            int32_t maximum=qa_number_to_i32(actual.max_health);
+            int32_t maximum=qa_source_float_to_i32(actual.max_health);
             *out=(application_bot_world_metadata){.model=model,.classname=actual.classname,
                 .frame=actual.frame,.max_health=maximum,.hidden=actual.hidden,.worldspawn=actual.worldspawn};
             *found=true;return true;
@@ -65,7 +65,7 @@ static bool metadata(void *context,qa_actor_id actor,application_bot_world_metad
     qa_q1_bot_entity actual;
     if(!qa_q1_bot_entity_read(source->state.q1,actor,&actual,error)) return false;
     if(!actual.present) return true;
-    int32_t maximum=qa_number_to_i32(actual.max_health);
+    int32_t maximum=qa_source_float_to_i32(actual.max_health);
     const char *model=actual.model?qa_strings_cstr(strings,actual.model):"";
     if(!model) return application_fail(error,QA_ERROR_FORMAT,"shared Q1 metadata has no actual source model text");
     *out=(application_bot_world_metadata){.model=model,.classname=actual.classname,.frame=actual.frame,
@@ -81,7 +81,7 @@ static bool movement(void *context,qa_actor_id actor,application_bot_world_movem
     application_player_record *record=player(binding,actor);
     if(!record || record->client_slot>INT32_MAX)
         return application_fail(error,QA_ERROR_FORMAT,"shared bot selected movement has no actual source player client");
-    int32_t height=qa_number_to_i32(control.view_height);
+    int32_t height=qa_source_float_to_i32(control.view_height);
     *out=(application_bot_world_movement){.source_client=(int32_t)record->client_slot,
         .view_height=height,.view_angles=control.view_angles};return true;
 }
@@ -98,7 +98,7 @@ static bool client(void *context,qa_actor_id actor,application_bot_world_client 
     qa_q1_source_client_view actual;
     *found=qa_q1_source_client_read(binding->source->state.q1,actor,&actual);
     if(!*found) return true;
-    int32_t score=qa_number_to_i32(actual.frags);
+    int32_t score=qa_source_float_to_i32(actual.frags);
     qa_application *app=binding->bots->application;
     application_provider *appearance=application_provider_for(app,actor,QA_ROLE_SKIN,NULL);
     if(!actual.name || !appearance || !appearance->launch)
@@ -113,9 +113,8 @@ static bool combat(void *context,qa_actor_id actor,application_bot_world_combat 
     qa_combat_state state;qa_error local={0};
     *found=qa_combat_read(binding->bots->application->combat,actor,&state,&local);
     if(!*found) {if(local.code!=QA_ERROR_NOT_FOUND) {if(error) *error=local;return false;}return true;}
-    out->health=qa_number_to_i32(state.health);
-    out->armor=qa_number_to_i32(state.armor.regular.kind==QA_ARMOR_NONE?0:state.armor.regular.points);
-    return true;
+    return application_bot_integer(state.health,&out->health,error) &&
+        application_bot_integer(state.armor.regular.kind==QA_ARMOR_NONE?0:state.armor.regular.points,&out->armor,error);
 }
 static bool brush(void *context,qa_actor_id actor,bool *out,qa_error *error) {
     application_bot_world_binding *binding=context;
@@ -135,21 +134,29 @@ static qa_actor_id world_actor(void *context) {
     }
     return qa_q2_bot_world_actor(binding->source->state.q2);
 }
-static int32_t milliseconds(double seconds) {
-    return qa_number_to_i32(seconds*1000.0);
+static int32_t milliseconds(uint64_t nanoseconds) {
+    uint32_t word=(uint32_t)(nanoseconds/UINT64_C(1000000));
+    int32_t value;memcpy(&value,&word,sizeof(value));return value;
 }
 static bool clock(void *context,int32_t *time,int32_t *intermission,qa_error *error) {
     application_bot_world_binding *binding=context;
     if(!source_live(binding,error)) return false;
-    *time=milliseconds((double)qa_session_elapsed(binding->bots->application->session)/1e9);
+    *time=milliseconds(qa_session_elapsed(binding->bots->application->session));
     if(binding->source->kind==APPLICATION_PROVIDER_Q2) {
         uint64_t source_time,started;bool active;
         if(!qa_q2_bot_clock_read(binding->source->state.q2,&source_time,&active,&started,error)) return false;
-        *intermission=active?milliseconds((double)started/1e9):0;
+        *intermission=active?milliseconds(started):0;
     } else {
         double source_time,exit_after;bool active;
         if(!qa_q1_bot_clock_read(binding->source->state.q1,&source_time,&active,&exit_after,error)) return false;
-        *intermission=active?milliseconds(exit_after-5):0;
+        *intermission=0;
+        if (active) {
+            double elapsed=(exit_after-5)*1000.0;
+            if (!isfinite(elapsed) || elapsed< -0x1p63 || elapsed>=0x1p63)
+                return application_fail(error,QA_ERROR_ARGUMENT,"Q1 bot intermission exceeds its native clock domain");
+            uint32_t word=(uint32_t)(int64_t)elapsed;
+            memcpy(intermission,&word,sizeof(*intermission));
+        }
     }
     return true;
 }

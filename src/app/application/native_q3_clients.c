@@ -1494,8 +1494,8 @@ bool application_native_q3_client_movement_parameters(application_provider *prov
         if (!application_native_q3_settings_number(provider, "g_gravity", &gravity_value, error) ||
             !application_native_q3_settings_number(provider, "g_speed", &speed_value, error)) return false;
         *pm_type = player.noclip ? 1 : combat.health <= 0 ? 3 : 0;
-        *gravity = qa_number_to_i32(gravity_value);
-        *speed = qa_number_to_i32(speed_value);
+        *gravity = qa_source_float_to_i32(gravity_value);
+        *speed = qa_source_float_to_i32(speed_value);
         application_provider *equipment = application_provider_for(app, actor, QA_ROLE_EQUIPMENT, "");
         application_provider *speed_owner = provider;
         qa_q3_player_state speed_player = player;
@@ -1513,11 +1513,11 @@ bool application_native_q3_client_movement_parameters(application_provider *prov
             return application_fail(error, QA_ERROR_UNSUPPORTED,
                 "selected guest Q3 equipment has no typed movement speed capability");
         }
-        float multiplier = speed_owner->product && !strcmp(speed_owner->product->campaign, "missionpack") &&
-            speed_player.persistent == QA_Q3_P_SCOUT ? 1.5f : speed_player.powerups[QA_Q3_P_HASTE] ? 1.3f : 1.0f;
-        if (multiplier != 1.0f) {
-            volatile float scaled = (float)*speed * multiplier;
-            *speed = qa_number_to_i32(scaled);
+        double multiplier = speed_owner->product && !strcmp(speed_owner->product->campaign, "missionpack") &&
+            speed_player.persistent == QA_Q3_P_SCOUT ? 1.5 : speed_player.powerups[QA_Q3_P_HASTE] ? 1.3 : 1.0;
+        if (multiplier != 1.0) {
+            double scaled = *speed * multiplier;
+            *speed = scaled >= -2147483648.0 && scaled < 2147483648.0 ? (int32_t)scaled : INT32_MIN;
         }
     }
     if (!foreign) return true;

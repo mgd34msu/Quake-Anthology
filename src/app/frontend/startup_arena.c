@@ -208,7 +208,7 @@ static bool mode_set(qa_launch_draft *draft,qa_mode_kind kind,bool team,const qa
     mode.rules=qa_mode_defaults(team?QA_MODE_TEAM_ARENA:QA_MODE_Q3,kind);
     mode.rules.single_player_active=true;
     if (arena) {
-        mode.rules.frag_limit=qa_number_to_i32((float)arena->frag_limit);
+        mode.rules.frag_limit=qa_source_float_to_i32((float)arena->frag_limit);
         mode.rules.time_limit_minutes=(float)arena->time_limit;
         if (!mode.rules.frag_limit && mode.rules.time_limit_minutes==0) mode.rules.frag_limit=10;
     }
