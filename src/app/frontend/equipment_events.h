@@ -17,7 +17,5 @@ bool frontend_equipment_events_drain(frontend_equipment_events *, qa_error *);
  * private gear namespaces, separate from primary GAME/CGAME rows. */
 bool frontend_equipment_events_configstring(const frontend_equipment_events *, qa_actor_owner,
     uint32_t, const char **, bool *present, qa_error *);
-bool frontend_equipment_events_checkpoint(const frontend_equipment_events *, qa_buffer *, qa_error *);
-bool frontend_equipment_events_restore(frontend_equipment_events *, qa_bytes, qa_error *);
 
 #endif

@@ -27,6 +27,4 @@ bool frontend_native_character_torso(const frontend_native_character *, qa_actor
 bool frontend_native_character_submit(frontend_native_character *, const qa_q3_scene_options *,
     qa_scene_frame *, qa_error *);
 bool frontend_native_character_prepare_view(frontend_native_character *, qa_q3_scene_options *, qa_error *);
-bool frontend_native_character_checkpoint(const frontend_native_character *, qa_buffer *, qa_error *);
-bool frontend_native_character_restore(frontend_native_character *, qa_bytes, qa_error *);
 #endif
