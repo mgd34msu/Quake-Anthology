@@ -1298,8 +1298,10 @@ static bool admit_globals(original_admission *admission,const qa_qc_program *pro
         char name[16];snprintf(name,sizeof(name),"parm%u",i+1);
         if (!admit_number(admission,name,(float)save->spawn_parameters[i],error)) return false;
     }
-    /* These numeric precache identities are not retained by the inverse. Until
-     * their symbolic model identity is qualified, preserve the QC execution. */
+    /* Model ordinals are qualified against the actual constructed map's one
+     * ordered precache owner before the inverse can mutate an edict. */
+    if (!admit_word(admission,"modelindex_eyes",error) ||
+        !admit_word(admission,"modelindex_player",error)) return false;
     for (size_t i=0;i<admission->record->count;++i) {
         if (admission->consumed[i]) continue;
         const qa_q1_save_pair *pair=admission->record->pairs+i;
@@ -1335,9 +1337,7 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
         !restore_physics(record,&physics,&flags,error)) return false;
     if (!admit_word(admission,"flags",error) || !admit_word(admission,"movetype",error) ||
         !admit_word(admission,"solid",error)) return false;
-    /* The physical Source renderer index is not reconstructed from this file.
-     * A nonzero index cannot currently be admitted before map construction. */
-    if (!admit_number(admission,"modelindex",0,error)) return false;
+    if (!admit_word(admission,"modelindex",error)) return false;
     if (saved(record,"size") && !admit_vector(admission,"size",qa_vec_sub(body.bounds.maxs,body.bounds.mins),error)) return false;
     admitted_key(admission,"size");
     qa_combat_state combat={0};combat.armor.regular.kind=QA_ARMOR_Q1;
@@ -1684,6 +1684,50 @@ static bool restore_groups(qa_q1_game *game, const qa_q1_save_data *save,
     }
     return true;
 }
+static bool original_model_fits(const qa_q1_wire_receipt *receipt,
+    const qa_strings *strings,const qa_q1_save_record *record,qa_error *error) {
+    float ordinal=saved_number(record,"modelindex");
+    if (!isfinite(ordinal) || ordinal<0 || ordinal>=4294967296.0 || truncf(ordinal)!=ordinal)
+        return unsupported(error,"Original model ordinal has no lossless native state");
+    uint32_t index=(uint32_t)ordinal;
+    if (index>=receipt->model_count)
+        return unsupported(error,"Original model ordinal leaves the constructed Source precache");
+    const char *value=saved(record,"model");char *model=NULL;
+    if (!qa_q1_save_string_decode(value?value:"",&model,error)) return false;
+    const char *expected=qa_strings_cstr(strings,receipt->models[index]);
+    bool equal=!strcmp(model,expected?expected:"");free(model);
+    return equal || unsupported(error,"Original model name differs from its constructed Source ordinal");
+}
+static bool original_precache_fits(qa_q1_game *game,const qa_q1_save_data *save,
+    const qa_q1_wire_receipt *receipt,qa_error *error) {
+    const qa_strings *strings=qa_session_strings(game->services.session);
+    uint32_t index;
+    if (!qa_q1_wire_index(receipt,true,game->eyes_model,&index) ||
+        saved_number(&save->globals,"modelindex_eyes")!=(float)index ||
+        !qa_q1_wire_index(receipt,true,game->player_model,&index) ||
+        saved_number(&save->globals,"modelindex_player")!=(float)index)
+        return unsupported(error,"Original player model globals differ from the constructed Source precache");
+    for (size_t i=0;i<save->entity_count;++i)
+        if (save->entities[i].count && !original_model_fits(receipt,strings,save->entities+i,error)) return false;
+    return true;
+}
+bool qa_q1_game_original_fit(qa_q1_game *game,const qa_q1_save_data *save,
+    bool *supported,qa_error *error) {
+    if (!game || !save || !supported || !game->wire || game->wire->loading ||
+        game->destroy_pending || game->continuation_pending || game->observation_depth ||
+        game->options.quakeworld || game->options.max_clients!=1 || game->options.deathmatch ||
+        !qa_session_safe(game->services.session) || !qa_world_idle(game->services.world))
+        return fail(error,"Original model admission requires its idle constructed Source precache");
+    *supported=false;
+    if (!qa_q1_save_singleplayer(save,error)) return false;
+    qa_q1_wire_receipt receipt={0};
+    if (!qa_q1_wire_read_begin(game,&receipt,error)) return false;
+    qa_error local={0};bool okay=original_precache_fits(game,save,&receipt,&local);
+    qa_q1_wire_read_end(&receipt);
+    if (!okay && local.code!=QA_ERROR_UNSUPPORTED) {if (error) *error=local;return false;}
+    *supported=okay;if (error) *error=(qa_error){0};return true;
+}
+
 bool qa_q1_game_original_restore(qa_q1_game *game, const qa_qc_program *program,
     const qa_q1_save_data *save, qa_movement_state *movement, qa_error *error) {
     if (!movement || !game || !program || !save || !game->wire || game->wire->loading || !game->maps ||
@@ -1693,6 +1737,9 @@ bool qa_q1_game_original_restore(qa_q1_game *game, const qa_qc_program *program,
         !qa_q1_save_singleplayer(save,error) || save->entity_count > UINT32_MAX ||
         (game->wire->edict_limit && save->entity_count > game->wire->edict_limit))
         return fail(error,"Original restore requires its idle compiled single-player Source");
+    bool supported;
+    if (!qa_q1_game_original_fit(game,save,&supported,error)) return false;
+    if (!supported) return unsupported(error,"Original model identities differ from the actual constructed map");
     qa_actor_id *slots = calloc(save->entity_count,sizeof(*slots));
     if (!slots) { qa_error_set(error,QA_ERROR_MEMORY,0,"Restoring physical Source ordinal links"); return false; }
     qa_q1_wire_receipt receipt = {0};

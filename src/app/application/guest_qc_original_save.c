@@ -348,29 +348,17 @@ bool qa_application_q1_save_import_ready(const qa_application *app,const qa_q1_s
     application_q1_original_admission admission;
     return application_q1_original_admit(app,save,key,&admission,error);
 }
-bool qa_application_q1_save_import(qa_application *app,const qa_q1_save_data *save,const char *key,qa_error *error)
+static bool import_apply(qa_application *app,struct application_q1_original_save *stage,qa_error *error)
 {
-    if (!app || app->operation!=APPLICATION_IDLE || app->state!=QA_APPLICATION_READY ||
-        app->q1_original_save || qa_application_launch(app) || app->world || app->provider_count ||
-        !qa_session_safe(app->session))
-        return application_fail(error,QA_ERROR_ARGUMENT,"Original import requires a fresh isolated candidate");
-    application_q1_original_admission admission;
-    if (!application_q1_original_admit(app,save,key,&admission,error)) return false;
-    const qa_product *product=admission.product;
-    bool native=false;
-    if (product->program_kind==QA_PROGRAM_BUILTIN &&
-        !application_q1_native_save_admit(app,product,save,&native,error)) return false;
-    struct application_q1_original_save *stage=calloc(1,sizeof(*stage));
-    if (!stage) return application_fail(error,QA_ERROR_MEMORY,"Retaining original source construction stage");
-    stage->save=copy_save(save,error); stage->product=product->id; stage->initial_ns=admission.initial_ns; stage->native=native;
-    if (!stage->save) { free(stage); return false; }
-    save=stage->save;
-    if (native) {
+    const qa_q1_save_data *save=stage->save;
+    const qa_product *product=qa_catalog_product(app->catalog,stage->product);
+    if (!product)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Original import lost its selected content owner");
+    stage->initial_ns=(uint64_t)((long double)save->time*1000000000.0L);
+    if (stage->native) {
         double nanoseconds=ceil((double)(float)save->time*1e9);
-        if (!isfinite(nanoseconds) || nanoseconds<0 || (long double)nanoseconds>=(long double)UINT64_MAX) {
-            qa_q1_save_destroy(stage->save);free(stage);
+        if (!isfinite(nanoseconds) || nanoseconds<0 || (long double)nanoseconds>=(long double)UINT64_MAX)
             return application_fail(error,QA_ERROR_FORMAT,"Original saved time exceeds the native Source clock");
-        }
         stage->initial_ns=(uint64_t)nanoseconds;
     }
     qa_launch_draft *draft=NULL;
@@ -379,7 +367,7 @@ bool qa_application_q1_save_import(qa_application *app,const qa_q1_save_data *sa
     if (ok) { memcpy(map,"maps/",5); memcpy(map+5,save->map,length); memcpy(map+5+length,".bsp",5); }
     else application_fail(error,QA_ERROR_MEMORY,"Preparing original source map path");
     if (ok) ok=qa_launch_draft_create(app->catalog,product->id,map,&draft,error);
-    if (ok && !native) ok=qa_launch_select_original(draft,"native:primary",error);
+    if (ok && !stage->native) ok=qa_launch_select_original(draft,"native:primary",error);
     if (ok) {
         const qa_launch_choices *choices=qa_launch_draft_choices(draft);
         qa_launch_world world=choices->world; world.skill=save->skill; world.start_command=NULL;
@@ -394,14 +382,29 @@ bool qa_application_q1_save_import(qa_application *app,const qa_q1_save_data *sa
             qa_launch_set_seat(draft,&(qa_launch_seat){.id=0,.name="Player 1",.local=true},error);
     }
     free(map);
-    if (ok) {
-        app->q1_original_save=stage; stage=NULL;
-        ok=qa_application_apply(app,draft,error);
-    }
+    if (ok) ok=qa_application_apply(app,draft,error);
     qa_launch_draft_destroy(draft);
-    if (stage) { qa_q1_save_destroy(stage->save); free(stage); }
-    if (!ok && app->q1_original_save) app->q1_original_save->applying=true;
     return ok;
+}
+bool qa_application_q1_save_import(qa_application *app,const qa_q1_save_data *save,const char *key,qa_error *error)
+{
+    if (!app || app->operation!=APPLICATION_IDLE || app->state!=QA_APPLICATION_READY ||
+        app->q1_original_save || qa_application_launch(app) || app->world || app->provider_count ||
+        !qa_session_safe(app->session))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Original import requires a fresh isolated candidate");
+    application_q1_original_admission admission;
+    if (!application_q1_original_admit(app,save,key,&admission,error)) return false;
+    const qa_product *product=admission.product;
+    bool native=false;
+    if (product->program_kind==QA_PROGRAM_BUILTIN &&
+        !application_q1_native_save_admit(app,product,save,&native,error)) return false;
+    struct application_q1_original_save *stage=calloc(1,sizeof(*stage));
+    if (!stage) return application_fail(error,QA_ERROR_MEMORY,"Retaining original source construction stage");
+    stage->save=copy_save(save,error); stage->product=product->id; stage->native=native;
+    if (!stage->save) { free(stage); return false; }
+    app->q1_original_save=stage;
+    if (!import_apply(app,stage,error)) { stage->applying=true; return false; }
+    return true;
 }
 bool qa_application_q1_save_import_advance(qa_application *app,bool *complete,qa_error *error)
 {
@@ -414,11 +417,21 @@ bool qa_application_q1_save_import_advance(qa_application *app,bool *complete,qa
         if (!qa_application_startup_advance(app,&started,error)) { stage->applying=true; return false; }
         if (!started) return true;
     }
-    stage->applying=true;
     if (stage->native) {
         application_provider *provider=application_world_provider(app,QA_ROLE_ENTITIES,"");
+        bool supported=false;
+        if (!application_q1_native_save_fit(app,provider,stage->save,&supported,error)) {
+            stage->applying=true; return false;
+        }
+        if (!supported) {
+            stage->native=false;
+            if (!import_apply(app,stage,error)) { stage->applying=true; return false; }
+            return true;
+        }
+        stage->applying=true;
         if (!application_q1_native_save_restore(app,provider,stage->save,error)) return false;
     } else {
+        stage->applying=true;
         struct application_qc_state *engine=source(app,error);
         if (!engine || !restore_raw(engine,stage->save,error)) return false;
     }

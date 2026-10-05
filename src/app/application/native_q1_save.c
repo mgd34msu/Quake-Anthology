@@ -75,6 +75,13 @@ bool application_q1_native_save_capture(qa_application *app, application_provide
         qa_q1_game_original_capture(provider->state.q1, program, &control.state, save, error);
     qa_qc_program_destroy(program); return okay;
 }
+bool application_q1_native_save_fit(qa_application *app, application_provider *provider,
+    const qa_q1_save_data *save, bool *supported, qa_error *error) {
+    if (!save || !supported)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original native fit requires its save and admission output");
+    if (!local_player(app, provider, error)) return false;
+    return qa_q1_game_original_fit(provider->state.q1, save, supported, error);
+}
 bool application_q1_native_save_restore(qa_application *app, application_provider *provider,
     const qa_q1_save_data *save, qa_error *error) {
     application_player_record *player = local_player(app, provider, error);
