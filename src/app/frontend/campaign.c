@@ -7,8 +7,6 @@
 #include "qa/q3_product_policy.h"
 #include "qa/audio_save.h"
 #include "qa/application_startup_prepare.h"
-#include "save_private.h"
-#include "qa/binary.h"
 #include <SDL.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -53,7 +51,7 @@ struct frontend_campaign {
     int32_t player_client;
     qa_team_arena_score_result team_result;
     uint64_t result_counter,result_frequency;
-    bool result,announced,movie_played,music_attached,draining,restore_pending;
+    bool result,announced,movie_played,music_attached,draining;
     bool ui_pending;
     frontend_campaign_ui_action ui_action;
     int32_t ui_arena,ui_skill;
@@ -397,7 +395,6 @@ bool frontend_campaign_drain(qa_frontend *f,qa_error *error)
     if (qa_application_startup_pending(f->application)) return true;
     frontend_campaign *owner=f->campaign;
     if (!owner) return frontend_campaign_sync(f,error);
-    if (owner->restore_pending) return frontend_fail(error,QA_ERROR_ARGUMENT,"Candidate campaign has not reached its genuine publication boundary");
     if (owner->draining) return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign command drain reentered its source result owner");
     owner->draining=true; bool ok=true;
     while (ok && owner->requests) {
@@ -421,116 +418,6 @@ bool frontend_campaign_drain(qa_frontend *f,qa_error *error)
     return ok;
 }
 
-static bool campaign_catalog_encode(void *context,const qa_resource *resource,const char *path,
-    uint64_t *identity,qa_error *error)
-{
-    const qa_application_q3_campaign *view=context;
-    qa_resource_pool *pool=qa_vfs_resources(view->content);
-    if (!path || !*path || !resource || !identity ||
-        qa_resource_pool_find(pool,qa_resource_id(resource))!=resource)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Authored campaign resource leaves its actual GAME content pool");
-    *identity=qa_resource_id(resource); return *identity!=0;
-}
-static bool campaign_catalog_decode(void *context,uint64_t identity,const char *path,
-    qa_resource **out,qa_error *error)
-{
-    const qa_application_q3_campaign *view=context;
-    const qa_resource *resource=qa_resource_pool_find(qa_vfs_resources(view->content),identity);
-    if (!identity || !path || !*path || !resource || !out)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Saved campaign resource is absent from its genuine GAME content pool");
-    *out=(qa_resource *)resource; return true;
-}
-bool frontend_campaign_content_visit(const qa_frontend *f,const qa_application_content_visitor *visitor,qa_error *error)
-{
-    if (!f || !visitor || !visitor->pool || !visitor->view || !frontend_campaign_ready(f))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign inventory requires its actual idle owner");
-    const frontend_campaign *owner=f->campaign;
-    if (!owner) return true;
-    qa_resource_pool *pool=qa_vfs_resources(owner->content);
-    if (!pool || !visitor->pool(visitor->context,pool,error) ||
-        !visitor->view(visitor->context,owner->content,error)) return false;
-    for (size_t i=0;i<qa_base_arena_catalog_resource_count(owner->catalog);++i) {
-        const qa_resource *resource=qa_base_arena_catalog_resource_at(owner->catalog,i,NULL);
-        if (!resource || qa_resource_pool_find(pool,qa_resource_id(resource))!=resource)
-            return frontend_fail(error,QA_ERROR_FORMAT,"Campaign retained authored bytes have no actual source pool owner");
-    }
-    return true;
-}
-typedef struct campaign_saved {
-    frontend_campaign state;
-    uint64_t content;
-    qa_bytes catalog,team;
-    bool installed;
-} campaign_saved;
-static bool campaign_blob(qa_source_save_io *io,qa_bytes *bytes)
-{
-    size_t size=bytes->size;
-    if (!qa_source_save_count(io,&size,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)) return false;
-    if (io->direction==QA_SOURCE_SAVE_READ) {
-        if (size>io->input.size-io->offset) return false;
-        *bytes=(qa_bytes){io->input.data+io->offset,size}; io->offset+=size; return true;
-    }
-    return qa_source_save_bytes(io,(void *)bytes->data,size);
-}
-static bool campaign_game_fields(qa_source_save_io *io,qa_arena_result *game)
-{
-    return qa_source_save_i32(io,&game->level) && qa_source_save_i32(io,&game->skill) &&
-        qa_source_save_i32(io,&game->rank) && qa_source_save_i32(io,&game->accuracy) &&
-        qa_source_save_i32(io,&game->impressive) && qa_source_save_i32(io,&game->excellent) &&
-        qa_source_save_i32(io,&game->gauntlet) && qa_source_save_i32(io,&game->frags) && qa_source_save_bool(io,&game->perfect);
-}
-static bool campaign_result_fields(qa_source_save_io *io,qa_arena_postgame *result)
-{
-    if (!qa_source_save_i32(io,&result->rank) || !qa_source_save_i32(io,&result->completed_tier) ||
-        !qa_source_save_i32(io,&result->unlocked_movie) || !qa_source_save_i32(io,&result->next_level) ||
-        !qa_source_save_count(io,&result->award_count,6)) return false;
-    for (size_t i=0;i<result->award_count;++i)
-        if (!qa_source_save_i32(io,&result->awards[i].medal) || !qa_source_save_i32(io,&result->awards[i].amount) ||
-            result->awards[i].medal<0 || result->awards[i].medal>=6 || result->awards[i].amount<=0) return false;
-    return true;
-}
-static bool campaign_score_fields(qa_source_save_io *io,qa_team_arena_score *score)
-{
-    uint8_t bytes[68];
-    if (io->direction==QA_SOURCE_SAVE_WRITE) qa_team_arena_score_encode(score,bytes);
-    if (!qa_source_save_bytes(io,bytes,sizeof(bytes))) return false;
-    if (qa_load_u32le(bytes)!=64) return false;
-    if (io->direction==QA_SOURCE_SAVE_READ) qa_team_arena_score_decode((qa_bytes){bytes,sizeof(bytes)},score);
-    return true;
-}
-static bool campaign_fields(qa_source_save_io *io,qa_frontend *f,campaign_saved *saved)
-{
-    uint8_t magic[4]={'Q','F','C','A'}; uint32_t kind=saved->state.kind;
-    if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QFCA",sizeof(magic)) ||
-        !qa_source_save_bool(io,&saved->installed)) return false;
-    if (!saved->installed) return true;
-    frontend_campaign *state=&saved->state;
-    if (!qa_source_save_u32(io,&kind) || kind>CAMPAIGN_TEAM ||
-        !frontend_save_provider(io,f->application,&state->source) || !state->source ||
-        !qa_source_save_u64(io,&saved->content) || !saved->content ||
-        !qa_source_save_u64(io,&state->map_revision) || !qa_source_save_i32(io,&state->match_start) ||
-        !qa_source_save_bool(io,&state->result) || !qa_source_save_bool(io,&state->announced) ||
-        !qa_source_save_bool(io,&state->movie_played) || !qa_source_save_bool(io,&state->music_attached) ||
-        !qa_source_save_u64(io,&state->result_counter) ||
-        !qa_source_save_u64(io,&state->result_frequency) || !campaign_blob(io,&saved->catalog) ||
-        !campaign_blob(io,&saved->team)) return false;
-    state->kind=(campaign_kind)kind;
-    if ((state->kind==CAMPAIGN_BASE && (!saved->catalog.size || saved->team.size)) ||
-        (state->kind==CAMPAIGN_TEAM && (!saved->team.size || saved->catalog.size))) return false;
-    if (!state->result) return !state->result_counter && !state->result_frequency && !state->announced && !state->movie_played;
-    if ((!state->announced || !state->movie_played) && !state->result_frequency) return false;
-    if (state->kind==CAMPAIGN_TEAM)
-        return campaign_score_fields(io,&state->team_result.current) && campaign_score_fields(io,&state->team_result.previous) &&
-            qa_source_save_bool(io,&state->team_result.won) && qa_source_save_bool(io,&state->team_result.new_high_score) &&
-            qa_source_save_bool(io,&state->team_result.new_best_time);
-    if (!campaign_game_fields(io,&state->base_game) || state->base_game.skill<1 || state->base_game.skill>5 ||
-        !campaign_result_fields(io,&state->base_result) || state->base_result.rank!=state->base_game.rank ||
-        !qa_source_save_i32(io,&state->player_client) || !qa_source_save_count(io,&state->player_count,8)) return false;
-    for (size_t i=0;i<state->player_count;++i)
-        if (!qa_source_save_i32(io,&state->players[i].client) || !qa_source_save_i32(io,&state->players[i].rank) ||
-            !qa_source_save_i32(io,&state->players[i].score)) return false;
-    return true;
-}
 static bool campaign_source_matches(const frontend_campaign *owner,const qa_application_q3_campaign *view)
 {
     return owner->source==view->source_owner && owner->content==view->content && owner->cvars==view->cvars &&
@@ -539,90 +426,6 @@ static bool campaign_source_matches(const frontend_campaign *owner,const qa_appl
         (owner->kind==CAMPAIGN_BASE?(view->product==QA_Q3_ARENA && view->game_type==2):
             (view->product==QA_Q3_TEAM_ARENA && !strcmp(campaign_value(view->cvars,"nextmap"),"teamarena-results")));
 }
-bool frontend_campaign_publish_ready(const qa_frontend *f,qa_error *error)
-{
-    if (!f || !frontend_campaign_ready(f)) return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign owner still retains an active command");
-    const frontend_campaign *owner=f->campaign;
-    if (!owner) return true;
-    qa_application_q3_campaign view;
-    if (owner->music_attached && (!f->audio || !qa_audio_engine_music_ready(f->audio,
-        QA_FRONTEND_COMMAND_OWNER,QA_AUDIO_WORLD,1)))
-        return frontend_fail(error,QA_ERROR_FORMAT,"Campaign music does not own its actual restored world bus");
-    return qa_application_q3_campaign_read(f->application,owner->source,&view,error) && campaign_source_matches(owner,&view) &&
-        (owner->kind==CAMPAIGN_BASE?qa_base_arena_catalog_ready(owner->catalog,error):qa_team_arena_progress_ready(owner->team,error)) &&
-        (!owner->result_frequency || owner->result_frequency==SDL_GetPerformanceFrequency());
-}
-bool frontend_campaign_checkpoint(qa_frontend *f,const qa_application_content_graph *graph,qa_buffer *out,qa_error *error)
-{
-    if (!f || !f->application || f->stepping || f->source_restoring || !graph || !out || out->data || out->size ||
-        !frontend_campaign_publish_ready(f,error)) return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign capture requires its actual idle installed owner");
-    campaign_saved saved={.installed=f->campaign!=NULL}; qa_buffer catalog={0},team={0}; bool ok=true;
-    if (saved.installed) {
-        qa_application_q3_campaign view;
-        ok=qa_application_q3_campaign_read(f->application,f->campaign->source,&view,error);
-        saved.state=*f->campaign; saved.content=qa_application_content_view_id(graph,saved.state.content);
-        qa_base_arena_catalog_refs refs={.context=&view,.resource_encode=campaign_catalog_encode};
-        if (ok) ok=saved.state.kind==CAMPAIGN_BASE?qa_base_arena_catalog_checkpoint(saved.state.catalog,&refs,&catalog,error):
-            qa_team_arena_progress_checkpoint(saved.state.team,&team,error);
-        saved.catalog=(qa_bytes){catalog.data,catalog.size}; saved.team=(qa_bytes){team.data,team.size};
-    }
-    qa_source_save_io io={0};
-    if (ok) ok=qa_source_save_writer(&io,NULL,error) && campaign_fields(&io,f,&saved) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); qa_buffer_free(&catalog); qa_buffer_free(&team);
-    if (!ok && (!error || error->code==QA_OK)) frontend_fail(error,QA_ERROR_FORMAT,"Invalid actual source campaign continuation");
-    return ok;
-}
-bool frontend_campaign_restore(qa_frontend *f,qa_application_content_graph *graph,qa_bytes bytes,qa_error *error)
-{
-    if (!f || !f->application || f->campaign || f->stepping || f->source_restoring || !graph)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign import requires its empty finished source candidate");
-    campaign_saved saved={0}; qa_source_save_io io={0};
-    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && campaign_fields(&io,f,&saved) && qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io);
-    if (!ok || !saved.installed) {
-        if (!ok && (!error || error->code==QA_OK)) frontend_fail(error,QA_ERROR_FORMAT,"Invalid saved campaign envelope");
-        return ok;
-    }
-    frontend_campaign *owner=calloc(1,sizeof(*owner));
-    if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Restoring actual campaign result owner");
-    *owner=saved.state; owner->frontend=f; owner->tail=&owner->requests; owner->restore_pending=true;
-    owner->music_attached=false;
-    qa_application_q3_campaign view;
-    ok=qa_application_q3_campaign_read(f->application,owner->source,&view,error) &&
-        qa_application_content_view(graph,saved.content)==view.content;
-    if (ok) {
-        owner->content=view.content; owner->cvars=view.cvars; owner->config_root=view.config_root;
-        owner->publication=view.publication; qa_launch_snapshot_retain(owner->publication);
-        ok=campaign_source_matches(owner,&view);
-    }
-    if (ok && owner->kind==CAMPAIGN_BASE) {
-        qa_base_arena_catalog_refs refs={.context=&view,.resource_decode=campaign_catalog_decode};
-        ok=qa_base_arena_catalog_restore(saved.catalog,&refs,&owner->catalog,error);
-        if (ok) { owner->progression.cvars=view.cvars; owner->progression.catalog=qa_base_arena_catalog_levels(owner->catalog); }
-        if (ok && owner->result) {
-            const qa_base_arena *arena=qa_base_arena_catalog_find(owner->catalog,view.map);
-            ok=arena && arena->number==owner->base_game.level;
-        }
-    } else if (ok) ok=view.config_root && qa_team_arena_progress_restore(saved.team,view.config_root,NULL,&owner->team,error);
-    if (ok && saved.state.music_attached) {
-        ok=f->audio && qa_audio_engine_music_ready(f->audio,QA_FRONTEND_COMMAND_OWNER,QA_AUDIO_WORLD,1);
-        if (ok) owner->music_attached=true;
-    }
-    f->campaign=owner;
-    if (ok) ok=frontend_campaign_publish_ready(f,error) && qa_application_q3_campaign_current(f->application,&view);
-    if (!ok) {
-        (void)frontend_campaign_destroy(f,NULL);
-        if (!error || error->code==QA_OK) frontend_fail(error,QA_ERROR_FORMAT,"Saved campaign leaves its actual GAME round/content owners");
-        return false;
-    }
-    return true;
-}
-void frontend_campaign_publish_restored(qa_frontend *f)
-{
-    if (!f || !f->campaign) return;
-    if (f->campaign->team) qa_team_arena_progress_publish_restored(f->campaign->team);
-    f->campaign->restore_pending=false;
-}
 bool frontend_campaign_ui_read(qa_frontend *f,uint32_t seat,frontend_campaign_ui_view *out,qa_error *error)
 {
     if (!f || !out || seat>=f->options.seats || f->capture || f->source_restoring)
@@ -630,7 +433,7 @@ bool frontend_campaign_ui_read(qa_frontend *f,uint32_t seat,frontend_campaign_ui
     *out=(frontend_campaign_ui_view){0};
     if (qa_application_startup_pending(f->application)) return true;
     frontend_campaign *owner=f->campaign;
-    if (!owner || owner->restore_pending || owner->draining || frontend_network_remote(f)) return true;
+    if (!owner || owner->draining || frontend_network_remote(f)) return true;
     qa_actor_owner receiver=0;
     if (!frontend_source_cgame_recipient(f,seat,&receiver,error)) return false;
     if (!receiver) return true;
@@ -707,7 +510,7 @@ bool frontend_campaign_ui_drain(qa_frontend *f,qa_error *error)
     if (qa_application_startup_pending(f->application)) return true;
     frontend_campaign *owner=f->campaign;
     if (!owner || !owner->ui_pending) return true;
-    if (owner->draining || owner->requests || owner->restore_pending)
+    if (owner->draining || owner->requests)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign action still retains an earlier source command");
     qa_application_q3_campaign source; qa_application_q3_client_context client;
     uint32_t launch_seat;
