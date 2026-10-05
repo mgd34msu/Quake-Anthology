@@ -86,9 +86,14 @@ static bool file_read_finish(qa_fs_file *file, const qa_fs_identity *expected,
     return true;
 }
 
-static bool file_read_exact(qa_fs_file *file, size_t offset, void *bytes,
+bool qa_fs_file_read_at(qa_fs_file *file, size_t offset, void *bytes,
     size_t size, qa_error *error)
 {
+    if (!file || (size && !bytes) || offset > PTRDIFF_MAX ||
+        size > (size_t)PTRDIFF_MAX - offset) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, offset, "Retained read needs a bounded file span");
+        return false;
+    }
     size_t done = 0;
     while (done < size) {
         size_t received = 0;
@@ -118,7 +123,7 @@ bool qa_fs_file_read_prefix(qa_fs_file *file, const qa_fs_identity *expected,
     }
     if (!file_read_begin(file, expected, "prefix read", error)) return false;
     size_t limit = expected->words[2] < (uint64_t)capacity ? (size_t)expected->words[2] : capacity;
-    if (!file_read_exact(file, 0, bytes, limit, error) ||
+    if (!qa_fs_file_read_at(file, 0, bytes, limit, error) ||
         !file_read_finish(file, expected, "prefix read", false, error)) return false;
     *received = limit;
     return true;
@@ -142,7 +147,7 @@ bool qa_fs_file_read_snapshot(qa_fs_file *file, const qa_fs_identity *expected,
             return false;
         }
     }
-    if (!file_read_exact(file, 0, result.data, result.size, error) ||
+    if (!qa_fs_file_read_at(file, 0, result.data, result.size, error) ||
         !file_read_finish(file, expected, "snapshot read", true, error)) {
         qa_buffer_free(&result);
         return false;
@@ -161,7 +166,7 @@ bool qa_fs_file_read_range(qa_fs_file *file, const qa_fs_identity *expected,
         return false;
     }
     return file_read_begin(file, expected, "range read", error) &&
-        file_read_exact(file, offset, bytes, size, error) &&
+        qa_fs_file_read_at(file, offset, bytes, size, error) &&
         file_read_finish(file, expected, "range read", true, error);
 }
 
@@ -181,7 +186,7 @@ bool qa_fs_file_snapshot_matches(qa_fs_file *file, const qa_fs_identity *expecte
     for (size_t offset = 0; offset < size;) {
         size_t amount = size - offset;
         if (amount > sizeof(scratch)) amount = sizeof(scratch);
-        if (!file_read_exact(file, offset, scratch, amount, error)) return false;
+        if (!qa_fs_file_read_at(file, offset, scratch, amount, error)) return false;
         if (size == bytes.size && memcmp(scratch, bytes.data + offset, amount)) equal = false;
         offset += amount;
     }

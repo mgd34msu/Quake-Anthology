@@ -120,6 +120,11 @@ bool qa_fs_file_snapshot_matches(qa_fs_file *, const qa_fs_identity *, qa_bytes,
  * the admitted handle identity before/after; never reopens the native path. */
 bool qa_fs_file_read_prefix(qa_fs_file *, const qa_fs_identity *, void *,
                             size_t capacity, size_t *received, qa_error *);
+/* Exact bytes from an already admitted retained handle. The descriptor is the
+ * read authority; native path replacement does not reopen or invalidate it.
+ * Rejects invalid spans, truncation/EOF and native read errors. No identity or
+ * path queries are made here. The caller owns the bounded destination. */
+bool qa_fs_file_read_at(qa_fs_file *, size_t offset, void *, size_t size, qa_error *);
 /* Exact admitted range from the retained handle, with identity and path checks
  * before publication. The caller owns the bounded destination. */
 bool qa_fs_file_read_range(qa_fs_file *, const qa_fs_identity *, size_t offset,

@@ -47,7 +47,7 @@ static bool archive_span(qa_archive *archive, size_t offset, size_t size,
         if (!data) return fail(error, QA_ERROR_MEMORY, offset, "allocating archive metadata span");
         archive->metadata.data = data; archive->metadata.size = size;
     }
-    if (!qa_fs_file_read_range(archive->file, &archive->identity, offset,
+    if (!qa_fs_file_read_at(archive->file, offset,
         archive->metadata.data, size, error)) return false;
     *out = (qa_bytes){archive->metadata.data, size}; return true;
 }
@@ -56,16 +56,24 @@ bool qa_archive_source_current(const qa_archive *archive, qa_error *error)
 {
     if (!archive) return fail(error, QA_ERROR_ARGUMENT, 0, "archive source is NULL");
     if (!archive->file) return true;
-    bool unchanged = false;
-    if (!qa_fs_file_path_unchanged(archive->file, &archive->identity, &unchanged, error)) return false;
-    return unchanged || fail(error, QA_ERROR_IO, 0, "archive source changed after admission");
+    qa_fs_identity actual;
+    if (!qa_fs_file_identity(archive->file, &actual, error)) return false;
+    return qa_fs_identity_equal(&archive->identity, &actual) ||
+        fail(error, QA_ERROR_IO, 0, "archive source changed after admission");
 }
 
 static bool archive_snapshot(qa_archive *archive, qa_error *error)
 {
     if (archive->bytes.data) return true;
-    if (!qa_fs_file_read_snapshot(archive->file, &archive->identity, &archive->owned, error)) return false;
-    archive->bytes = (qa_bytes){archive->owned.data, archive->owned.size}; return true;
+    qa_buffer snapshot = {.size = archive->bytes.size};
+    snapshot.data = malloc(snapshot.size ? snapshot.size : 1);
+    if (!snapshot.data)
+        return fail(error, QA_ERROR_MEMORY, 0, "allocating retained archive snapshot");
+    if (!qa_fs_file_read_at(archive->file, 0, snapshot.data, snapshot.size, error)) {
+        qa_buffer_free(&snapshot); return false;
+    }
+    archive->owned = snapshot;
+    archive->bytes = (qa_bytes){snapshot.data, snapshot.size}; return true;
 }
 
 bool qa_archive_take_snapshot(qa_archive *archive, qa_buffer *out, qa_error *error)
@@ -427,6 +435,7 @@ bool qa_archive_open_retained(qa_fs_file *file, const qa_fs_identity *identity,
     if (!archive) return fail(error, QA_ERROR_MEMORY, 0, "allocating archive");
     archive->file = file; qa_fs_file_retain(file); archive->identity = *identity;
     archive->bytes.size = (size_t)size;
+    if (!qa_archive_source_current(archive, error)) goto failure;
     if (kind == QA_ARCHIVE_AUTO) {
         qa_bytes magic;
         if (!archive_span(archive, 0, size < 4 ? (size_t)size : 4, &magic, error)) goto failure;
@@ -434,7 +443,7 @@ bool qa_archive_open_retained(qa_fs_file *file, const qa_fs_identity *identity,
     }
     archive->kind = kind;
     if (!(kind == QA_ARCHIVE_PAK ? parse_pak(archive, error) : parse_zip(archive, error)) ||
-        !index_names(archive, error) || !qa_archive_source_current(archive, error)) goto failure;
+        !index_names(archive, error)) goto failure;
     qa_buffer_free(&archive->metadata);
     *out = archive; return true;
 failure:
@@ -636,7 +645,7 @@ bool qa_archive_read(const qa_archive *archive, size_t ordinal,
         out->owned.size = entry->size;
         out->owned.data = malloc(entry->size ? entry->size : 1);
         if (!out->owned.data) return fail(error, QA_ERROR_MEMORY, entry->data_offset, "allocating retained archive member");
-        if (!qa_fs_file_read_range(archive->file, &archive->identity, entry->data_offset,
+        if (!qa_fs_file_read_at(archive->file, entry->data_offset,
             out->owned.data, entry->size, error)) { qa_archive_data_free(out); return false; }
         bytes = (qa_bytes){out->owned.data, out->owned.size};
     } else if (!archive_span((qa_archive *)archive, entry->data_offset, entry->compressed_size, &bytes, error)) return false;

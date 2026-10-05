@@ -316,8 +316,17 @@ int main(void)
 
     int changed = open(pak, O_WRONLY | O_APPEND);
     CHECK(changed >= 0 && write(changed, "x", 1) == 1 && close(changed) == 0);
-    CHECK(!qa_vfs_acquire_from(vfs, pak_id, "maps/item.txt", &again, &error));
-    CHECK(error.code == QA_ERROR_IO);
+    CHECK(qa_vfs_acquire_from(vfs, pak_id, "maps/item.txt", &again, &error));
+    CHECK(again == pak_resource);
+    expect_text(again, "first");
+    qa_resource_release(again);
+    CHECK(rename(pak, renamed) == 0);
+    make_pak(pak);
+    CHECK(qa_vfs_acquire_from(vfs, pak_id, "maps/item.txt", &again, &error));
+    CHECK(again == pak_resource);
+    expect_text(again, "first");
+    qa_resource_release(again);
+    CHECK(unlink(renamed) == 0);
     expect_text(pak_resource, "first");
     CHECK(qa_vfs_unmount(vfs, pak_id, &error));
     CHECK(!qa_vfs_unmount(vfs, pak_id, &error));

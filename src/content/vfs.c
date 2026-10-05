@@ -1032,13 +1032,6 @@ bool qa_vfs_mount_retained(qa_vfs *vfs, const qa_vfs *retained, qa_mount_id id,
         return false;
     }
     if (source->archive) {
-        bool unchanged = false;
-        bool valid = qa_fs_file_path_unchanged(source->archive_file, &source->identity, &unchanged, error) && unchanged;
-        if (!valid) {
-            if (!error || error->code == QA_OK)
-                qa_error_set(error, QA_ERROR_IO, 0, "Retained archive changed: %s", source->path);
-            return false;
-        }
         if ((vfs->q3_demo || source->q3_demo) && !vfs_demo_package_allowed(source->archive, error)) return false;
     }
     mount *copy = malloc(sizeof(*copy));
@@ -1236,12 +1229,10 @@ const qa_archive *qa_vfs_archive(const qa_vfs *vfs, qa_mount_id id)
 }
 bool qa_vfs_archive_bytes(const qa_vfs *vfs, qa_mount_id id, qa_bytes *out, qa_error *error)
 {
-    const mount *source = vfs ? find_mount(vfs, id) : NULL; bool unchanged = false;
+    const mount *source = vfs ? find_mount(vfs, id) : NULL;
     if (!source || !source->archive || !out) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Whole package requires its actual mounted archive"); return false;
     }
-    if (!qa_fs_file_path_unchanged(source->archive_file, &source->identity, &unchanged, error)) return false;
-    if (!unchanged) { qa_error_set(error, QA_ERROR_IO, 0, "Mounted package changed after admission"); return false; }
     if (!vfs_package_materialize(source->archive, error)) return false;
     package *archive = source->archive;
     *out = (qa_bytes){archive->storage.data, archive->storage.size}; return true;
@@ -1799,9 +1790,6 @@ static bool acquire_archive(qa_resource_pool *pool, const mount *source,
                              const char *path, qa_resource **out, qa_error *error)
 {
     package *archive = source->archive;
-    bool unchanged = false;
-    if (!qa_fs_file_path_unchanged(source->archive_file, &source->identity, &unchanged, error)) return false;
-    if (!unchanged) { qa_error_set(error, QA_ERROR_IO, 0, "mounted archive changed: %s", path); return false; }
     const qa_archive_entry *selected = NULL;
     if (!archive_member(source, path, &selected, error)) return false;
     if (selected == NULL) {
@@ -2152,9 +2140,6 @@ static bool probe_mount(const qa_vfs *vfs, const mount *source, const char *path
 {
     if (!source_allowed(vfs, source, path)) return true;
     if (source->archive) {
-        bool unchanged = false;
-        if (!qa_fs_file_path_unchanged(source->archive_file, &source->identity, &unchanged, error)) return false;
-        if (!unchanged) { qa_error_set(error, QA_ERROR_IO, 0, "Mounted probe archive changed"); return false; }
         const qa_archive_entry *entry = NULL;
         if (!archive_member(source, path, &entry, error)) return false;
         if (entry) { *found = true; *size = entry->size; }

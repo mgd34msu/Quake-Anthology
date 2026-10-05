@@ -49,7 +49,9 @@ bool qa_archive_open_memory(qa_bytes bytes, qa_archive_kind kind,
 bool qa_archive_open_file(const char *path, qa_archive_kind kind,
                           qa_archive **out, qa_error *error);
 /* Directory admission retains the handle; ZIP local headers are checked lazily
- * at payload admission. Range reads check the same file identity and path. */
+ * at payload admission. The admitted descriptor remains the read authority
+ * across native path replacement. Reads enforce declared bounds, EOF/native
+ * errors and ZIP structure/CRC, without rechecking identity per member. */
 bool qa_archive_open_retained(qa_fs_file *, const qa_fs_identity *, qa_archive_kind,
     qa_archive **, qa_error *);
 bool qa_archive_source_current(const qa_archive *, qa_error *);
