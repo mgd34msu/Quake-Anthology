@@ -184,6 +184,7 @@ bool q2m_corpse_callback(q2m_context *c, q2m_callback_id callback, qa_error *err
         schedule(c, Q2M_CORPSE_HOVER, .1);
     } else if (rerelease && dead_think_species(species) &&
                (!callback || (callback != (Q2M_CALLBACK_soldier_dead2)))) {
+        m->flies_ns = 0;
         schedule(c, Q2M_CORPSE_DEAD_THINK, .1);
     } else if (!rerelease && (species == Q2M_INFANTRY || species == Q2M_TURRET_DRIVER ||
                               species == Q2M_MUTANT)) {
@@ -227,7 +228,7 @@ bool q2m_corpse_tick(q2m_context *c, bool *handled, qa_error *error) {
         return flies(c, false, error);
     case Q2M_CORPSE_DEAD_THINK:
         if (m->definition->species == Q2M_INFANTRY ||
-            m->definition->species == Q2M_TURRET_DRIVER) {
+            m->definition->species == Q2M_MUTANT) {
             if (!m->flies_ns)
                 m->flies_ns = q2m_after(c->game->now_ns, 5 + 10 * q2m_random(c->game));
             else if (m->flies_ns < c->game->now_ns) {

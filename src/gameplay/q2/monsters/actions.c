@@ -2348,6 +2348,38 @@ static bool conditional_transition(q2m_context *context, q2m_callback_id callbac
   return true;
 }
 
+static bool turret_ready_gun(q2m_context *context, qa_error *error) {
+  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  if (rerelease && context->monster->move &&
+      context->monster->move->id == Q2M_MOVE_turret_move_ready_gun)
+    return true;
+  if (!q2m_set_move(context, Q2M_MOVE_turret_move_ready_gun, false, error))
+    return false;
+  return !rerelease || !q2m_alive(context) ||
+      q2m_weapon_sound(context, "turret/moving.wav", error);
+}
+
+static bool callback_turret_run(q2m_context *context, q2m_callback_id callback, qa_error *error) {
+  (void)callback;
+  const q2m_move *run = q2m_move_find(context->monster, Q2M_MOVE_turret_move_run);
+  if (!run) {
+    qa_error_set(error, QA_ERROR_FORMAT, 0, "Turret has no Source run animation");
+    return false;
+  }
+  if (context->monster->frame < run->first_frame)
+    return turret_ready_gun(context, error);
+  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  if (rerelease) context->monster->high_tick_rate = true;
+  if (!q2m_set_move(context, Q2M_MOVE_turret_move_run, false, error))
+    return false;
+  if (rerelease && q2m_alive(context) && context->monster->weapon_sound) {
+    if (!q2m_weapon_sound(context, NULL, error)) return false;
+    return !q2m_alive(context) ||
+        q2m_sound(context, "turret/moved.wav", 1, 1, error);
+  }
+  return true;
+}
+
 static bool end_transition(q2m_context *context, q2m_callback_id callback,
                            bool *handled, qa_error *error) {
   if (context->game->options.edition == QA_Q2_RERELEASE &&
@@ -3851,9 +3883,7 @@ static bool turret_aim(q2m_context *context, qa_error *error) {
       return true;
   }
   if (context->monster->frame < 2) {
-    if (!q2m_set_move(context, Q2M_MOVE_turret_move_ready_gun, false, error))
-      return false;
-    return !q2m_alive(context) || q2m_weapon_sound(context, "turret/moving.wav", error);
+    return turret_ready_gun(context, error);
   }
   if (context->monster->frame < 8)
     return true;
@@ -7264,7 +7294,7 @@ const q2m_callback q2m_callbacks[Q2M_CALLBACK_COUNT] = {
 
     [Q2M_CALLBACK_tank_windup] = {callback_sequence_37, Q2M_CALLBACK_tank_windup, "tank_windup", 0},
 
-    [Q2M_CALLBACK_turret_run] = {callback_sequence_4, Q2M_CALLBACK_turret_run, "turret_run",
+    [Q2M_CALLBACK_turret_run] = {callback_turret_run, Q2M_CALLBACK_turret_run, "turret_run",
                                  Q2M_CALLBACK_RUN},
 
     [Q2M_CALLBACK_use_scanner] = {callback_use_scanner_48, Q2M_CALLBACK_use_scanner, "use_scanner",

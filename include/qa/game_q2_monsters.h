@@ -153,6 +153,7 @@ typedef struct qa_q2_monster_checkpoint {
   bool pending_pain, pending_death, alternate_fly, fly_buzzard, fly_above;
   bool fly_pinned, fly_thrusters, hint_path, summoned, touch_active;
   bool turret_attached, initialized, controller_medic, controller_fired;
+  bool high_tick_rate;
 } qa_q2_monster_checkpoint;
 
 bool qa_q2_monster_read(const qa_q2_game *, qa_actor_id, qa_q2_monster_view *);

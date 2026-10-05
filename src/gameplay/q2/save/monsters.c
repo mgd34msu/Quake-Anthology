@@ -63,6 +63,7 @@ bool q2_save_monster(q2_save_io *io, qa_q2_monster_checkpoint *s) {
     Q2B(pending_pain); Q2B(pending_death); Q2B(alternate_fly); Q2B(fly_buzzard); Q2B(fly_above);
     Q2B(fly_pinned); Q2B(fly_thrusters); Q2B(hint_path); Q2B(summoned); Q2B(touch_active);
     Q2B(turret_attached); Q2B(initialized); Q2B(controller_medic); Q2B(controller_fired);
+    Q2B(high_tick_rate);
     return true;
 }
 bool q2_save_monsters(q2_save_io *io, qa_q2_monsters_checkpoint *s) {

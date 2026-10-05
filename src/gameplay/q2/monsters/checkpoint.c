@@ -266,6 +266,7 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
       .initialized = monster->initialized,
       .controller_medic = monster->controller_medic,
       .controller_fired = monster->controller_fired,
+      .high_tick_rate = monster->high_tick_rate,
   };
   if (monster->controller_kind != Q2M_CONTROLLER_NONE) {
     if (!q2_save_reference(game, monster->controller_owner,
@@ -671,6 +672,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   Q2M_RESTORE(touch_active);
   Q2M_RESTORE(turret_attached);
   Q2M_RESTORE(initialized);
+  Q2M_RESTORE(high_tick_rate);
 #undef Q2M_RESTORE
   monster->attack_state = (q2m_attack_state)saved->attack_state;
   monster->spawned_by = (q2m_spawned_by)saved->spawned_by;

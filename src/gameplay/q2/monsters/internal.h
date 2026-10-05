@@ -355,6 +355,7 @@ struct qa_q2_monster {
   bool fly_pinned, fly_thrusters, hint_path, summoned, touch_active;
   bool turret_attached, initialized;
   bool controller_medic, controller_fired;
+  bool high_tick_rate;
 };
 
 typedef struct q2m_context {

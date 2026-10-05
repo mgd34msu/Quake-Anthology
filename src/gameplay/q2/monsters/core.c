@@ -257,7 +257,8 @@ bool q2m_animation(q2m_context *context, qa_error *error) {
           monster->frame = move->first_frame;
       }
     }
-    monster->next_frame_ns = q2m_after(context->game->now_ns, 0.1);
+    monster->next_frame_ns = rerelease && monster->high_tick_rate
+        ? context->game->now_ns : q2m_after(context->game->now_ns, 0.1);
     if (rerelease && monster->next_frame != 0 &&
         (monster->next_frame < move->first_frame ||
          monster->next_frame > move->last_frame))
