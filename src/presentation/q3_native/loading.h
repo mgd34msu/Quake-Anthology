@@ -40,7 +40,5 @@ bool q3n_loading_client(q3n_loading *, const q3n_frame *, uint32_t, qa_error *);
 /* Actual constructor/awaiting-snapshot cut; has_local_player may be false.
  * Also admitted from the owner's real update_screen callback. */
 bool q3n_loading_draw_information(q3n_loading *, const q3n_frame *, qa_error *);
-bool q3n_loading_checkpoint(const q3n_loading *, qa_buffer *, qa_error *);
-bool q3n_loading_restore(q3n_loading *, qa_bytes, qa_error *);
 
 #endif

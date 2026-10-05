@@ -150,7 +150,5 @@ bool q3n_weapons_impact(const q3n_frame *, int32_t weapon, int32_t client,
     qa_vec3 origin, qa_vec3 direction, q3n_impact_sound, qa_error *);
 bool q3n_weapons_event(void *, const q3n_frame *, q3n_entity *,
     const qa_q3_entity *, int32_t event, qa_vec3 position, qa_error *);
-bool q3n_weapons_checkpoint(const q3n_weapons *, qa_buffer *, qa_error *);
-bool q3n_weapons_restore(q3n_weapons *, qa_bytes, qa_error *);
 
 #endif

@@ -65,11 +65,8 @@ void q3menu_leave(q3menu_context *);
 q3menu_context *q3menu_create(displayContextDef_t *, void *, qa_error *);
 void q3menu_destroy(q3menu_context *);
 void q3menu_reset(q3menu_context *, bool strings);
-bool q3menu_checkpoint(const q3menu_context *, qa_buffer *, qa_error *);
-bool q3menu_restore(const q3menu_context *, qa_bytes, q3menu_context **, qa_error *);
 int q3menu_capture_kind(const q3menu_context *);
 bool q3menu_capture_restore(q3menu_context *, int);
-bool q3menu_save_string(qa_source_save_io *, q3menu_context *, const char **);
 void *q3menu_alloc(int, int, q3menu_allocation_kind);
 int q3menu_random(void);
 #endif

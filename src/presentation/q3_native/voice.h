@@ -33,5 +33,4 @@ bool q3n_voice_load(q3n_server_commands *, const q3n_frame *, qa_error *);
 bool q3n_voice_local(q3n_server_commands *, const q3n_frame *, int32_t,
     bool, int32_t, int32_t, const char *, qa_error *);
 bool q3n_voice_finish(q3n_server_commands *, const q3n_frame *, qa_error *);
-bool q3n_voice_fields(qa_source_save_io *, q3n_server_commands *);
 #endif

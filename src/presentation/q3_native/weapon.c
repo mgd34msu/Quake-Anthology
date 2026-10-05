@@ -1063,34 +1063,3 @@ bool q3n_weapons_draw_selection(const q3n_frame *f,const q3n_weapon_drawing *dra
     }
     return drawing->set_color(drawing->context,NULL,e) && frame_valid(f,e);
 }
-static bool weapon_fields(qa_source_save_io *io,q3n_weapons *w)
-{
-    uint8_t magic[4]={'Q','3','W','P'}; uint32_t product=w->options.product;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"Q3WP",4) &&
-        qa_source_save_u32(io,&product) && product==(uint32_t)w->options.product &&
-        qa_source_save_i32(io,&w->selection.weapon) && w->selection.weapon>=0 && w->selection.weapon<16 &&
-        qa_source_save_i32(io,&w->selection.time);
-}
-static bool codec_ready(const q3n_weapons *w,qa_error *e)
-{
-    const qa_q3_presentation_assets *a=w?w->options.assets:NULL;
-    return q3n_weapons_idle(w) && a && a->capturing && a->busy==1 && !a->codec_busy ? true :
-        q3p_fail(e,QA_ERROR_ARGUMENT,"Native weapon codec requires the actual backend capture lease");
-}
-bool q3n_weapons_checkpoint(const q3n_weapons *borrowed,qa_buffer *out,qa_error *e)
-{
-    if (!out || out->data || out->size || !codec_ready(borrowed,e)) return false;
-    q3n_weapons *w=(q3n_weapons *)borrowed; w->busy=true; q3n_weapons saved=*w; qa_source_save_io io={0};
-    bool okay=qa_source_save_writer(&io,NULL,e) && weapon_fields(&io,&saved) && qa_source_save_finish(&io,out);
-    if (!okay && e && e->code==QA_OK) q3p_fail(e,QA_ERROR_FORMAT,"Native weapon checkpoint is inconsistent");
-    qa_source_save_dispose(&io); w->busy=false; return okay;
-}
-bool q3n_weapons_restore(q3n_weapons *w,qa_bytes bytes,qa_error *e)
-{
-    if (!codec_ready(w,e)) return false;
-    w->busy=true; q3n_weapons candidate=*w; qa_source_save_io io={0};
-    bool okay=qa_source_save_reader(&io,NULL,bytes,e) && weapon_fields(&io,&candidate) && qa_source_save_finish(&io,NULL);
-    if (okay) w->selection=candidate.selection;
-    else if (e && e->code==QA_OK) q3p_fail(e,QA_ERROR_FORMAT,"Saved native weapon state is inconsistent");
-    qa_source_save_dispose(&io); w->busy=false; return okay;
-}

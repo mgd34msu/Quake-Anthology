@@ -164,7 +164,5 @@ bool q3n_server_commands_spectators_build(q3n_server_commands *, const q3n_frame
 bool q3n_server_commands_order_answered(q3n_server_commands *, const q3n_frame *, qa_error *);
 /* Import binds already restored client/backend/producer owners and only reads
  * numeric sound holders under the aggregate backend capture lease. */
-bool q3n_server_commands_checkpoint(const q3n_server_commands *, qa_buffer *, qa_error *);
-bool q3n_server_commands_restore(q3n_server_commands *, qa_bytes, qa_error *);
 
 #endif

@@ -65,6 +65,4 @@ bool q3n_mission_hud_select(q3n_mission_hud *, const q3n_frame *, bool next, qa_
 bool q3n_mission_hud_next_order(q3n_mission_hud *, const q3n_frame *, qa_error *);
 bool q3n_mission_hud_check_order(q3n_mission_hud *, const q3n_frame *, qa_error *);
 bool q3n_mission_hud_scroll(q3n_mission_hud *, const q3n_frame *, bool down, qa_error *);
-bool q3n_mission_hud_checkpoint(const q3n_mission_hud *, qa_buffer *, qa_error *);
-bool q3n_mission_hud_restore(q3n_mission_hud *, qa_bytes, qa_error *);
 #endif

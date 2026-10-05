@@ -1497,7 +1497,6 @@ add_library(qa_q3_native_presentation STATIC
     src/presentation/q3_native/trajectory.c
     src/presentation/q3_native/media.c
     src/presentation/q3_native/loading.c
-    src/presentation/q3_native/loading_save.c
     src/presentation/q3_native/selected_media.c
     src/presentation/q3_native/selected_authored_media.c
     src/presentation/q3_native/remote_frame.c
@@ -1519,17 +1518,13 @@ add_library(qa_q3_native_presentation STATIC
     src/presentation/q3_native/hud_corners.c
     src/presentation/q3_native/hud_scoreboard.c
     src/presentation/q3_native/server_commands.c
-    src/presentation/q3_native/server_commands_save.c
     src/presentation/q3_native/voice.c
-    src/presentation/q3_native/voice_save.c
     src/presentation/q3_native/mission_hud.c
     src/presentation/q3_native/mission_hud_owner.c
     src/presentation/q3_native/mission_hud_menu.c
     src/presentation/q3_native/mission_hud_text.c
-    src/presentation/q3_native/mission_hud_save.c
     src/presentation/q3_native/authored_menu_context.c
     src/presentation/q3_native/authored_menu_shared.c
-    src/presentation/q3_native/authored_menu_save.c
     src/presentation/q3_native/native.c
     src/presentation/q3_native/entity_save.c
     src/presentation/q3_native/compiled_frame.c

@@ -24,5 +24,4 @@ struct q3n_loading {
 bool q3nl_fail(qa_error *, qa_status, const char *);
 bool q3nl_basis(const q3n_loading_options *, qa_q3_product *, qa_error *);
 bool q3nl_checkpoint_basis(const q3n_loading_options *, qa_q3_product *, qa_error *);
-bool q3nl_capture(q3n_loading *, qa_error *);
 #endif
