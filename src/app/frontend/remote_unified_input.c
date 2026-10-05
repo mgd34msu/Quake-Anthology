@@ -5,6 +5,8 @@
 #include "neutral_config.h"
 #include "config_store.h"
 #include "unified_input_command.h"
+#include "qa/unified_frame_player.h"
+#include "qa/unified_frame_prediction.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -96,35 +98,30 @@ bool frontend_unified_input_create(qa_frontend *f,frontend_remote_unified *repli
 bool frontend_input_import_create(qa_frontend *f,frontend_remote_unified *replica,
     frontend_remote_unified_prediction *prediction,frontend_unified_input **out,qa_error *e)
 { return frontend_remote_unified_restore_pending(replica) && create(f,replica,prediction,true,out,e); }
-static bool scalar(const qa_unified_document *doc,qa_json_id id,double *out,qa_error *e)
-{ return qa_unified_document_number(doc,id,out,e) && isfinite(*out); }
 static bool frame_read(frontend_unified_input *p,double time,
     const frontend_unified_prediction_view *snapshot,frontend_unified_command_frame *out,qa_error *e)
 {
     const qa_unified_document *doc=frontend_remote_unified_frame(p->replica);
     const qa_unified_document *prediction=frontend_remote_unified_prediction_document(p->prediction);
-    if(!doc || !prediction) return fail(e,"Unified input lost its actual received frame");
-    const qa_json_document *json=qa_unified_document_json(doc);
-    qa_json_id root=qa_unified_document_root(doc);
-    qa_json_id state=qa_json_get(json,qa_json_get(json,root,"output"),"snapshot");
-    qa_json_id player=qa_json_get(json,root,"player"),view=qa_json_get(json,player,"view");
+    const qa_unified_frame *received=qa_unified_document_frame(doc);
+    const qa_unified_frame *predicted=qa_unified_document_frame(prediction);
+    if(!received || !received->world || !received->player || !predicted || !predicted->prediction)
+        return fail(e,"Unified input lost its actual received frame");
+    const qa_unified_player_view *view=&received->player->view;
     frontend_unified_command_frame frame={.kind=snapshot->state.kind,
         .acknowledged_seconds=snapshot->command_time_ms/1000,.server_time_ms=trunc(time),
         .weapon=2,.sensitivity=1,.light_level=128,.attack_allowed=true};
-    if(frame.kind==QA_MOVEMENT_Q2_RERELEASE &&
-        !scalar(doc,qa_json_get(json,qa_json_get(json,state,"frame"),"frame"),&frame.server_frame,e)) return false;
-    qa_json_id drift=qa_json_get(json,view,"pitchDrift");
-    if(drift!=QA_JSON_NONE) {
+    if(frame.kind==QA_MOVEMENT_Q2_RERELEASE)
+        frame.server_frame=(double)received->world->source.number;
+    if(view->has_pitch_drift) {
         frame.has_pitch_drift=true;
-        if(!qa_json_bool(json,qa_json_get(json,drift,"grounded"),&frame.grounded,e) ||
-            !qa_json_bool(json,qa_json_get(json,drift,"disabled"),&frame.drift_disabled,e) ||
-            !scalar(doc,qa_json_get(json,drift,"idealPitch"),&frame.ideal_pitch,e)) return false;
+        frame.grounded=view->grounded;
+        frame.drift_disabled=view->pitch_drift_disabled;
+        frame.ideal_pitch=view->ideal_pitch;
     }
     if(frame.kind==QA_MOVEMENT_Q3) {
-        const qa_json_document *j=qa_unified_document_json(prediction);
-        qa_json_id arsenal=qa_json_get(j,qa_unified_document_root(prediction),"arsenal");
-        if(qa_json_string_equal(j,qa_json_get(j,arsenal,"kind"),"q3") &&
-            !scalar(prediction,qa_json_get(j,arsenal,"sourceWeapon"),&frame.weapon,e)) return false;
+        const qa_unified_weapon_state *weapon=&predicted->prediction->weapon;
+        if(weapon->kind==QA_UNIFIED_WEAPON_Q3) frame.weapon=weapon->source_weapon;
         if(p->has_q3_values) { frame.weapon=p->q3_weapon; frame.sensitivity=p->q3_sensitivity; }
     }
     *out=frame;return true;
