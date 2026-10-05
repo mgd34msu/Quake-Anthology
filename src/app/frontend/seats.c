@@ -266,6 +266,7 @@ static bool menu_action(void *context, uint32_t id, qa_ui_id control, const qa_u
             qa_seat_console_toggle(seat->console,false,false,error);
         case 11: return frontend_menu_open(seat,FRONTEND_ARENA_PROGRESS,error);
         case 20: return frontend_startup_end_stage(seat,error);
+        case 21: return frontend_menu_open(seat,FRONTEND_MATCH,error);
         default: return true;
         }
     }
@@ -315,7 +316,7 @@ static bool home(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
         if(qa_input_seat_context(seat->input).dialect==QA_CONSOLE_Q3) {
             seat->controls[count]=button(seat,21,"Match controls",288);
             seat->controls[count].rect=(qa_scene_rect_f){64,288,512,28};
-            seat->controls[count++].enabled=false;
+            ++count;
         }
         seat->controls[count]=button(seat,20,"End game",316);
         seat->controls[count++].rect=(qa_scene_rect_f){64,316,512,28};

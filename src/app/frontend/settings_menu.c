@@ -19,8 +19,17 @@ typedef enum setting_operation {
     SET_RUMBLE, SET_RUMBLE_STRENGTH, SET_KEYBOARD, SET_CONTROLLER_SEAT,
     SET_CONTROLLER, SET_AUDIO_DEVICE, SET_GYRO_ENABLE, SET_GYRO_CALIBRATE,
     SET_GYRO_CANCEL, SET_GYRO_RESET, SET_LANGUAGE, SET_DOPPLER, SET_ENVIRONMENT,
-    SET_PACKED_COLOR, SET_PREFERENCE, SET_PREFERENCES_RESET, SET_GAMEPLAY_RESET
+    SET_PACKED_COLOR, SET_PREFERENCE, SET_PREFERENCES_RESET, SET_GAMEPLAY_RESET,
+    SET_MATCH_SELECT, SET_MATCH_TEXT, SET_MATCH_COMMAND
 } setting_operation;
+typedef enum match_operation {
+    MATCH_JOIN, MATCH_FOLLOW, MATCH_CALL_VOTE, MATCH_YES, MATCH_NO, MATCH_ADD, MATCH_REMOVE
+} match_operation;
+static const char *const match_teams[]={"red","blue","free","spectator"};
+static const char *const match_team_labels[]={"Red","Blue","Free for all","Spectator"};
+static const char *const match_votes[]={"map_restart","nextmap","map","kick"};
+static const char *const match_vote_labels[]={"Restart map","Next map","Change map","Kick player"};
+static const char *const match_skills[]={"1","2","3","4","5"};
 typedef struct setting_binding {
     frontend_seat *seat;
     setting_operation operation;
@@ -42,6 +51,8 @@ struct frontend_settings_menu {
     qa_error allocation;
     qa_display *display;
     qa_display_backend backend;
+    char match_target[257],match_bot[257];
+    size_t match_team,match_vote,match_skill;
 };
 static double now_ms(const frontend_seat *seat)
 { return (double)seat->frontend->time_ns / 1000000.0; }
@@ -87,6 +98,52 @@ static bool queue_restart(frontend_seat *seat, const char *text, qa_error *error
     (void)cvars;
     return qa_console_append(console, &command, text, error);
 }
+static bool match_command(frontend_seat *seat,match_operation operation,qa_error *error)
+{
+    frontend_settings_menu *owner=seat->settings_menu;
+    const char *name=NULL,*arguments[3]; size_t count=0;
+    switch(operation) {
+    case MATCH_JOIN: name="team"; arguments[count++]=match_teams[owner->match_team]; break;
+    case MATCH_FOLLOW: name="follow"; arguments[count++]=owner->match_target; break;
+    case MATCH_CALL_VOTE:
+        name="callvote"; arguments[count++]=match_votes[owner->match_vote];
+        if(owner->match_vote>=2) arguments[count++]=owner->match_target;
+        break;
+    case MATCH_YES: case MATCH_NO: name="vote"; arguments[count++]=operation==MATCH_YES?"yes":"no"; break;
+    case MATCH_ADD:
+        name="addbot"; arguments[count++]=owner->match_bot; arguments[count++]=match_skills[owner->match_skill];
+        arguments[count++]=match_teams[owner->match_team]; break;
+    case MATCH_REMOVE: name="kick"; arguments[count++]=owner->match_bot; break;
+    }
+    qa_console *console; qa_cvars *cvars; qa_command_context command;
+    if(!name || !qa_input_seat_recipient_read(seat->input,&console,&cvars,&command) ||
+        command.dialect!=QA_CONSOLE_Q3)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Match controls lost their actual Q3 CLIENT recipient");
+    if((operation==MATCH_ADD || operation==MATCH_REMOVE) && !frontend_network_remote(seat->frontend)) {
+        qa_application_startup_source source; bool present=false;
+        if(!frontend_config_store_primary_server_read(seat->frontend->config_store,&source,&present,error)) return false;
+        if(!present || source.scope.kind!=QA_APPLICATION_CONSOLE_Q3_GAME || source.command.dialect!=QA_CONSOLE_Q3)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Match administration has no actual primary Q3 Source");
+        console=source.console; command=source.command;
+    }
+    char text[1024]; size_t used=strlen(name); memcpy(text,name,used);
+    for(size_t i=0;i<count;++i) {
+        size_t size=strlen(arguments[i]);
+        if(size+3>=sizeof(text)-used) return frontend_fail(error,QA_ERROR_FORMAT,"Match command exceeds its Source text range");
+        text[used++]=' '; text[used++]='"'; memcpy(text+used,arguments[i],size); used+=size; text[used++]='"';
+    }
+    text[used]=0;
+    if(qa_command_separator(text,used,command.dialect)!=used)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Match text cannot contain a Source command separator");
+    qa_command_tokens tokens;
+    if(!qa_command_tokenize(text,command.dialect,command.console_text,&tokens,error)) return false;
+    bool exact=tokens.count==count+1 && !strcmp(tokens.values[0],name);
+    for(size_t i=0;exact && i<count;++i) exact=!strcmp(tokens.values[i+1],arguments[i]);
+    qa_command_tokens_free(&tokens);
+    if(!exact) return frontend_fail(error,QA_ERROR_FORMAT,"Match text cannot be represented by the actual Source command grammar");
+    text[used++]='\n'; text[used]=0;
+    return qa_console_append(console,&command,text,error);
+}
 static bool valid_size(const frontend_seat *seat, uint32_t *width, uint32_t *height)
 {
     double w,h;
@@ -118,6 +175,19 @@ static bool action(void *context,uint32_t id,qa_ui_id control,const qa_ui_action
     double value=event->kind==QA_UI_CHANGE_NUMBER?event->value.number:0;
     qa_gamepad_tuning *live=qa_input_seat_gamepad_tuning(seat->input), tuning=*live;
     switch(binding->operation) {
+    case SET_MATCH_SELECT:
+        if(event->kind==QA_UI_SELECT) *(size_t *)((char *)seat->settings_menu+binding->offset)=event->value.row;
+        return true;
+    case SET_MATCH_TEXT:
+        if(event->kind==QA_UI_CHANGE_TEXT || event->kind==QA_UI_SUBMIT) {
+            const char *text=event->value.text?event->value.text:""; size_t size=strlen(text);
+            if(size>=sizeof(seat->settings_menu->match_target))
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Match field exceeds its actual 64-character storage");
+            memcpy((char *)seat->settings_menu+binding->offset,text,size+1);
+        }
+        return true;
+    case SET_MATCH_COMMAND:
+        return event->kind!=QA_UI_ACTIVATE || match_command(seat,(match_operation)binding->mask,error);
     case SET_DESTINATION:
         return event->kind!=QA_UI_ACTIVATE || frontend_menu_open(seat,binding->destination,error);
     case SET_CLOSE: return event->kind!=QA_UI_ACTIVATE || qa_ui_close(seat->ui,now_ms(seat),error);
@@ -930,12 +1000,54 @@ static bool all_options(void *context,uint32_t id,qa_ui_menu *out,qa_error *erro
     for(size_t i=0;i<out->count;++i) { seat->controls[i].rect.width=512; seat->controls[i].scrolls=false; }
     return true;
 }
+static bool match_text_present(const char *text)
+{
+    qa_bytes bytes={(const uint8_t *)text,strlen(text)}; size_t offset=0; uint32_t scalar;
+    while(qa_utf8_next(bytes,&offset,&scalar)) if(!qa_unicode_whitespace(scalar)) return true;
+    return false;
+}
+static void match_button(frontend_seat *seat,const char *label,match_operation operation,bool enabled)
+{
+    qa_ui_control *item=button(seat,label,SET_MATCH_COMMAND);
+    if(item) { binding_of(item)->mask=(uint32_t)operation; item->enabled=enabled; }
+}
+static void match_field(frontend_seat *seat,const char *label,size_t offset)
+{
+    qa_ui_control *item=control(seat,label,QA_UI_FIELD,SET_MATCH_TEXT);
+    if(item) { binding_of(item)->offset=offset; item->value.field.text=(char *)seat->settings_menu+offset;
+        item->value.field.maximum=64; }
+}
+bool frontend_settings_match_menu(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
+{
+    frontend_seat *seat=context; (void)id; begin(seat);
+    frontend_settings_menu *owner=seat->settings_menu;
+    qa_ui_control *item=choice(seat,"Team",match_team_labels,match_teams,4,owner->match_team,SET_MATCH_SELECT);
+    if(item) binding_of(item)->offset=offsetof(frontend_settings_menu,match_team);
+    match_button(seat,"Join team",MATCH_JOIN,true);
+    match_field(seat,"Player or map",offsetof(frontend_settings_menu,match_target));
+    bool target=match_text_present(owner->match_target),bot=match_text_present(owner->match_bot);
+    match_button(seat,"Follow player",MATCH_FOLLOW,target);
+    item=choice(seat,"Vote",match_vote_labels,match_votes,4,owner->match_vote,SET_MATCH_SELECT);
+    if(item) binding_of(item)->offset=offsetof(frontend_settings_menu,match_vote);
+    match_button(seat,"Call vote",MATCH_CALL_VOTE,owner->match_vote<2 || target);
+    match_button(seat,"Vote yes",MATCH_YES,true); match_button(seat,"Vote no",MATCH_NO,true);
+    match_field(seat,"Bot name",offsetof(frontend_settings_menu,match_bot));
+    item=choice(seat,"Bot difficulty",match_skills,match_skills,5,owner->match_skill,SET_MATCH_SELECT);
+    if(item) binding_of(item)->offset=offsetof(frontend_settings_menu,match_skill);
+    match_button(seat,"Add bot",MATCH_ADD,bot); match_button(seat,"Remove named bot",MATCH_REMOVE,bot);
+    if(!finish(seat,FRONTEND_MATCH,"Match controls",out,error,false)) return false;
+    out->fullscreen=true; out->scroll_rect=(qa_scene_rect_f){64,92,512,306}; out->content_height=442;
+    for(size_t i=0;i+1<out->count;++i) seat->controls[i].rect=(qa_scene_rect_f){64,96+(float)i*34,496,30};
+    seat->controls[out->count-1].rect=(qa_scene_rect_f){64,416,496,30};
+    return true;
+}
 bool frontend_settings_create(frontend_seat *seat,qa_error *error)
 {
     if(!seat || seat->settings_menu) return frontend_fail(error,QA_ERROR_ARGUMENT,"Settings menus require their empty seat cache");
     frontend_settings_menu *owner=calloc(1,sizeof(*owner));
     if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining authored settings menu cache");
     qa_arena_init(&owner->arena,4096); seat->settings_menu=owner;
+    memcpy(owner->match_bot,"sarge",6); owner->match_skill=2;
     const qa_ui_menu_registration registrations[]={
         {.id=FRONTEND_DISPLAY,.context=seat,.factory=display},
         {.id=FRONTEND_SOUND,.context=seat,.factory=sound},
@@ -946,7 +1058,8 @@ bool frontend_settings_create(frontend_seat *seat,qa_error *error)
         {.id=FRONTEND_LANGUAGE,.context=seat,.factory=language},
         {.id=FRONTEND_GYRO,.context=seat,.factory=gyro,.close=close_gyro},
         {.id=FRONTEND_AUDIO_OPTIONS,.context=seat,.factory=audio_menu},
-        {.id=FRONTEND_GAMEPLAY_RESET,.context=seat,.factory=reset_menu}};
+        {.id=FRONTEND_GAMEPLAY_RESET,.context=seat,.factory=reset_menu},
+        {.id=FRONTEND_MATCH,.context=seat,.factory=frontend_settings_match_menu}};
     for(size_t i=0;i<sizeof(registrations)/sizeof(*registrations);++i)
         if(!qa_ui_register(seat->ui,registrations+i,error)) return false;
     return true;
