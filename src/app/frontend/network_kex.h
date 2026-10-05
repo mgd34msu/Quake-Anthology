@@ -19,9 +19,6 @@ bool frontend_kex_browser_receive(frontend_kex_browser *, const qa_net_datagram 
                                   bool *recognized, qa_error *);
 bool frontend_kex_browser_idle(const frontend_kex_browser *);
 void frontend_kex_browser_destroy(frontend_kex_browser *);
-bool frontend_kex_browser_checkpoint(const frontend_kex_browser *, qa_buffer *, qa_error *);
-bool frontend_kex_browser_restore(qa_bytes, qa_server_browser *,
-    const frontend_kex_browser_hooks *, frontend_kex_browser **, qa_error *);
 bool frontend_kex_browser_activate(frontend_kex_browser *, qa_error *);
 bool frontend_kex_browser_publish(frontend_kex_browser *, qa_error *);
 bool frontend_kex_browser_handoff_ready(const frontend_kex_browser *active,

@@ -1673,13 +1673,11 @@ add_library(qa_frontend STATIC
     src/app/frontend/equipment_media.c
     src/app/frontend/equipment_source.c
     src/app/frontend/equipment_q3.c
-    src/app/frontend/equipment_q3_save.c
     src/app/frontend/equipment_native.c
     src/app/frontend/equipment_events.c
     src/app/frontend/equipment_gear.c
     src/app/frontend/equipment_gear_output.c
     src/app/frontend/equipment_gear_world_output.c
-    src/app/frontend/equipment_gear_save.c
     src/app/frontend/equipment_held_output.c
     src/app/frontend/network_content_q3.c
     src/app/frontend/q1_text.c
@@ -1730,7 +1728,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/native_composition.c
     src/app/frontend/network.c
     src/app/frontend/network_kex.c
-    src/app/frontend/network_kex_save.c
     src/app/frontend/network_browser.c
     src/app/frontend/network_predictor.c
     src/app/frontend/remote_input.c
@@ -1774,11 +1771,9 @@ add_library(qa_frontend STATIC
     src/app/frontend/scene_inventory.c
     src/app/frontend/scene_refs.c
     src/app/frontend/selected_character.c
-    src/app/frontend/selected_character_save.c
     src/app/frontend/selected_character_lifetime.c
     src/app/frontend/selected_effects.c
     src/app/frontend/source_effects.c
-    src/app/frontend/selected_effects_save.c
     src/app/frontend/selected_effects_particles_save.c
     src/app/frontend/selected_effects_q1_particles.c
     src/app/frontend/selected_effects_q2_particles.c
@@ -1860,9 +1855,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/remote_unified_components_records.c
     src/app/frontend/remote_unified_components_scene.c
     src/app/frontend/remote_unified_input.c
-    src/app/frontend/remote_unified_input_save.c
     src/app/frontend/remote_unified_media_save.c
-    src/app/frontend/remote_unified_prediction_save.c
     src/app/frontend/renderer_worlds.c
     src/app/frontend/restart_binding.c
     src/app/frontend/unified_input_command.c
@@ -1873,7 +1866,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/network_unified_client.c
     src/app/frontend/received_music.c
     src/app/frontend/remote_q3_compiled_video.c
-    src/app/frontend/remote_unified_components_save.c
     src/app/frontend/remote_unified_save.c
     src/app/frontend/remote_unified_metadata.c
     src/app/frontend/source_renderer_runtime.c
