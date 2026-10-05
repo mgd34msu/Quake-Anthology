@@ -29,7 +29,7 @@ static bool identity(qa_source_save_io *io,frontend_system_cinematic_identity *i
 {
     uint32_t role=id->role;
     if (!qa_source_save_u64(io,&id->source_group) || !qa_source_save_u64(io,&id->service_owner) ||
-        !qa_source_save_u64(io,&id->audio_bus) || !qa_source_save_u32(io,&id->source_owner) ||
+        !qa_source_save_u64(io,&id->audio_bus) || !qa_source_save_u64(io,&id->source_owner) ||
         !qa_source_save_u32(io,&role) || !qa_source_save_u32(io,&id->physical_seat) || !qa_source_save_u32(io,&id->launch_seat) ||
         !id->source_group || !id->service_owner || !id->audio_bus || id->audio_bus==QA_AUDIO_NO_OWNER || !id->source_owner ||
         (role!=QA_QVM_UI && role!=QA_QVM_CGAME) || id->physical_seat>=QA_INPUT_LOCAL_SEATS) return false;

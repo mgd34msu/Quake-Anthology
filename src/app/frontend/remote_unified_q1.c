@@ -335,10 +335,10 @@ static bool music_origin(q1_group *g,frontend_music_origin *out,qa_error *e)
     frontend_unified_q1 *o=g->parent;qa_executable_recipe *recipe=frontend_remote_unified_recipe(o->replica);
     qa_vfs *files=NULL;const qa_product *product=NULL;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
-    if(!domain || !domain->command_context.owner || domain->command_context.owner>UINT32_MAX ||
+    if(!domain || !domain->command_context.owner ||
         !qa_executable_recipe_content_read(recipe,g->content,&files,&product) || product!=g->product)
         return fail(e,"Q1 music lost its actual received content declaration");
-    *out=(frontend_music_origin){.kind=FRONTEND_MUSIC_REMOTE,.receiver=(qa_actor_owner)domain->command_context.owner,.physical_seat=domain->physical_seat,
+    *out=(frontend_music_origin){.kind=FRONTEND_MUSIC_REMOTE,.receiver=domain->command_context.owner,.physical_seat=domain->physical_seat,
         .recipe=recipe,.recipe_content=g->content,.catalog=qa_executable_recipe_catalog(recipe),.product=product->id,
         .files=files,.context=g,.current=music_current};
     return true;

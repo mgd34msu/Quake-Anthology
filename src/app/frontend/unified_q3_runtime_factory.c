@@ -164,7 +164,7 @@ static frontend_music_origin music_origin(frontend_unified_q3_runtime_factory *o
 {
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->options.replica);
     return (frontend_music_origin){.kind=FRONTEND_MUSIC_REMOTE,.bus=o->options.audio_owner,.physical_seat=d->physical_seat,
-        .receiver=(qa_actor_owner)o->options.receiver,.recipe=frontend_unified_media_recipe(o->options.media),.recipe_provider=o->options.source.provider,
+        .receiver=o->options.receiver,.recipe=frontend_unified_media_recipe(o->options.media),.recipe_provider=o->options.source.provider,
         .catalog=d->catalog,.product=o->options.source.provider->selection.product,.files=o->options.source.files,
         .music=o->music,.context=o,.current=music_current,.checkpoint_current=music_checkpoint_current,.stop=music_stop};
 }
@@ -284,7 +284,7 @@ static bool movie_append(void *context,const char *text,qa_error *e)
 static frontend_system_cinematic_source movie_source(frontend_unified_q3_runtime_factory *o,
     const q3n_compiled_source_view *source)
 { return (frontend_system_cinematic_source){.identity={o->options.receiver,o->options.audio_owner,o->options.audio_owner,
-        (qa_actor_owner)o->options.receiver,QA_QVM_CGAME,source->basis.physical_seat,source->basis.seat},
+        o->options.receiver,QA_QVM_CGAME,source->basis.physical_seat,source->basis.seat},
     .files=o->options.source.files,.movies=o->movies,.cinematics=o->cinematics,
     .cvars=o->restoring?frontend_unified_q3_client_checkpoint_stage_cvars(o->options.client,
         frontend_unified_q3_runtime_rebind_frame(o->runtime)):frontend_unified_q3_client_cvars(o->options.client),
@@ -367,7 +367,7 @@ static bool create(const frontend_unified_q3_runtime_factory_options *options,bo
 {
     if(!options || !out || *out || !options->current || !options->retirement_current || !options->send_client || !options->frontend || !options->replica ||
         !options->media || !options->client || !options->input_read || !options->prediction || !options->events ||
-        !options->receiver || options->receiver>UINT32_MAX || !options->audio_owner || !options->audio_actor ||
+        !options->receiver || !options->audio_owner || !options->audio_actor ||
         !options->source.instance || !options->source.content || !options->source.provider || !options->composition.body_hidden || !options->composition.body_submit ||
         !options->composition.player_weapon || options->frontend->source_restoring!=restoring ||
         !options->current(options->context,options,restoring))return fail(e,"Compiled factory requires its real retained Source services");

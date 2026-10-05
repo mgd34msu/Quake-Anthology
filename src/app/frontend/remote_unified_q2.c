@@ -704,9 +704,9 @@ static bool music_origin(q2_bank *b,frontend_music_origin *out,qa_error *e)
 {
     qa_executable_recipe *recipe=frontend_remote_unified_recipe(b->owner->replica);
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(b->owner->replica);
-    if (!domain || !domain->command_context.owner || domain->command_context.owner>UINT32_MAX)
+    if (!domain || !domain->command_context.owner)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 music has no actual private CLIENT receiver");
-    *out=(frontend_music_origin){.kind=FRONTEND_MUSIC_REMOTE,.receiver=(qa_actor_owner)domain->command_context.owner,
+    *out=(frontend_music_origin){.kind=FRONTEND_MUSIC_REMOTE,.receiver=domain->command_context.owner,
         .physical_seat=domain->physical_seat,.recipe=recipe,.recipe_content=b->content,
         .catalog=qa_executable_recipe_catalog(recipe),.product=b->product->id,.files=b->files,.context=b,.current=music_current};
     return true;

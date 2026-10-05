@@ -265,11 +265,6 @@ bool frontend_system_cinematic_capture_ready(const qa_frontend *f)
     return true;
 }
 bool frontend_system_cinematic_running(const qa_frontend *f) { return screen(f)!=NULL; }
-bool frontend_system_cinematic_receiver_running(const qa_frontend *f,qa_actor_owner receiver,uint32_t seat)
-{
-    const frontend_system_cinematic *row=screen(f);
-    return row && row->source.identity.source_owner==receiver && row->source.identity.physical_seat==seat;
-}
 bool frontend_system_cinematic_stop_all(qa_frontend *f,qa_error *error)
 {
     if (!frontend_system_cinematic_idle(f)) return frontend_fail(error,QA_ERROR_ARGUMENT,"System cinematic source callback is active");

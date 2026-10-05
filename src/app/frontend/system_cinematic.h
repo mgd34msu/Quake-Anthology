@@ -8,7 +8,7 @@
 typedef struct frontend_system_cinematic frontend_system_cinematic;
 typedef struct frontend_system_cinematic_identity {
     uint64_t source_group, service_owner, audio_bus;
-    qa_actor_owner source_owner;
+    uint64_t source_owner;
     qa_qvm_role role;
     uint32_t physical_seat, launch_seat;
 } frontend_system_cinematic_identity;
@@ -42,9 +42,6 @@ typedef struct frontend_system_cinematic_refs {
 bool frontend_system_cinematic_open(qa_frontend *,const frontend_system_cinematic_source *,
     const qa_q3_movie_request *,qa_q3_system_movie *,qa_error *);
 bool frontend_system_cinematic_running(const qa_frontend *);
-/* Actual fullscreen CLIENT state for this receiver/physical seat, independent
- * of which of its real UI/CGAME roles issued the request. */
-bool frontend_system_cinematic_receiver_running(const qa_frontend *,qa_actor_owner,uint32_t);
 bool frontend_system_cinematic_idle(const qa_frontend *);
 bool frontend_system_cinematic_capture_ready(const qa_frontend *);
 bool frontend_system_cinematic_drain(qa_frontend *,qa_error *);

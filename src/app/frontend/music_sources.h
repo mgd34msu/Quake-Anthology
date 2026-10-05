@@ -17,7 +17,7 @@ typedef struct frontend_music_origin {
     frontend_music_origin_kind kind;
     uint64_t bus;
     uint32_t physical_seat;
-    qa_actor_owner receiver;
+    uint64_t receiver;
     const qa_launch_instance *descriptor;
     /* A remote COMPONENT instead borrows its actual executable recipe/provider.
      * Its caller retains that recipe until explicit_retire; no local launch
