@@ -312,26 +312,9 @@ bool q1_map_addon_changelevel_begin(qa_q1_game *g, q1_actor *e, qa_error *error)
         return false;
     if (!campaign_actor(g, id))
         return true;
-    qa_builtin_event event = {.kind = QA_BUILTIN_EFFECT,
-                              .family = QA_GAME_Q1,
-                              .provider = g->options.provider,
-                              .time_ns = g->time_ns};
-    if (result.kind == QA_Q1_INTERMISSION_SELL) {
-        if (!qa_builtin_resource(&g->services, "sell-screen", &event.resource, error))
-            return false;
-        return qa_builtin_emit(&g->services, &event, error);
+    if (result.kind == QA_Q1_INTERMISSION_FINALE) {
+        qa_q1_game_finale_reset(g);
+        g->maps->finale.map = map;
     }
-    if (result.kind != QA_Q1_INTERMISSION_FINALE)
-        return true;
-    qa_q1_game_finale_reset(g);
-    event.code = result.track;
-    event.count = 3;
-    if (!qa_builtin_resource(&g->services, "music", &event.resource, error) ||
-        !qa_builtin_emit(&g->services, &event, error))
-        return false;
-    if (!campaign_actor(g, id))
-        return true;
-    const char *text = qa_strings_cstr(qa_session_strings(g->services.session), result.text);
-    g->maps->finale.map = map;
-    return q1_map_finale_emit(g, 2, text ? text : "", error);
+    return q1_map_present_intermission(g, id, 2, &result, error);
 }

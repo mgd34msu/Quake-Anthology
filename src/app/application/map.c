@@ -1796,6 +1796,8 @@ static bool q1_spawn_entity(application_provider *provider,
                               &fields.model, error) ||
         !entity_optional_text(entities, index, "map", arena,
                               &fields.map, error) ||
+        !entity_optional_text(entities, index, "mdl", arena,
+                              &fields.mdl, error) ||
         !entity_optional_text(entities, index, "noise", arena,
                               &fields.noise, error) ||
         !entity_optional_text(entities, index, "noise1", arena,

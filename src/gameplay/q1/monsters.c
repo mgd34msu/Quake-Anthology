@@ -1,5 +1,5 @@
 #include "internal.h"
-#include "qa/game_q1_maps.h"
+#include "maps/internal.h"
 
 bool qa_q1_monster_shape(const char *classname, qa_bounds *bounds, uint32_t *flags) {
     const q1_species *species = q1_species_find(classname);
@@ -915,7 +915,8 @@ bool q1_ctf_monster_removed(qa_bytes classname) {
             return true;
     return false;
 }
-bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, qa_error *error) {
+static bool monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec,
+                           bool delayed_start, qa_error *error) {
     if (g->options.program == QA_Q1_CTF &&
         q1_ctf_monster_removed(qa_strings_text(qa_session_strings(g->services.session),
                                              entity->classname)))
@@ -979,6 +980,19 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
             return false;
     }
     entity->max_health = spec->health;
+    if (spec->species == QA_Q1_DECOY && g->maps) {
+        qa_builtin_snapshot_frame *players;
+        if (!q1_snapshot_players(g, &players, error))
+            return false;
+        q1_player *player = players->snapshot.count ? q1_player_get(g, players->snapshot.ids[0])
+                                                    : NULL;
+        q1_map_state *map = q1_map_allocate(g, entity, error);
+        if (map)
+            map->color_map = player && player->source_client ? (int32_t)(player->client_slot + 1) : 0;
+        qa_builtin_snapshot_release(players);
+        if (!map)
+            return false;
+    }
     entity->aimed_damage = true;
     entity->physics.motion = QA_PHYSICS_STEP;
     entity->physics.solid = QA_PHYSICS_BOX;
@@ -1113,9 +1127,76 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
         return q1_link(g, entity, error) &&
                q1_monster_play(g, entity, hanging ? "zombie_hang1" : "zombie_cruc1", error);
     }
+    if (!delayed_start)
+        return true;
     double delay = q1_random(g) * 0.5;
     delay += spec->species == QA_Q1_ARMY || spec->species == QA_Q1_DOG ? 0.1 : -g->time;
     return q1_schedule(g, entity, delay, Q1_THINK_MONSTER_START, error);
+}
+bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, qa_error *error) {
+    return monster_spawn(g, entity, spec, true, error);
+}
+bool q1_become_decoy(qa_q1_game *g, qa_vec3 origin, qa_string_id target,
+                      qa_actor_id *out, qa_error *error) {
+    *out = (qa_actor_id){0};
+    q1_actor *decoy;
+    if (!q1_create(g, "monster_decoy", Q1_MONSTER, (qa_actor_id){0}, &decoy, error))
+        return false;
+    qa_actor_id id = decoy->id;
+    decoy->target = target;
+    qa_body_state state;
+    if (!body(g, decoy, &state, error))
+        goto failed;
+    state.origin = origin;
+    if (!qa_world_body_write(g->services.world, id, &state, error) ||
+        !monster_spawn(g, decoy, q1_species_find("monster_decoy"), false, error))
+        goto failed;
+    if (!q1_alive(g, id))
+        return true;
+    decoy->physics.flags |= QA_PHYSICS_MONSTER;
+    qa_combat_state combat;
+    if (!qa_combat_read_traits(g->services.combat, id, &combat, error))
+        goto failed;
+    combat.can_take_damage = true;
+    if (!qa_combat_set_traits(g->services.combat, id, &combat, error) ||
+        !q1_link(g, decoy, error))
+        goto failed;
+    if (!q1_alive(g, id))
+        return true;
+    qa_actor_id goal = q1_monster_route(g, decoy);
+    decoy->state.monster.move_target = decoy->physics.goal = goal;
+    if (goal.registry) {
+        qa_body_state destination;
+        if (!qa_world_body_read(g->services.world, goal, &destination, error))
+            goto failed;
+        qa_vec3 delta = qa_vec_sub(destination.origin, origin);
+        decoy->physics.ideal_yaw =
+            qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f);
+    }
+    if (goal.registry && q1_classnamed(g, goal, "path_corner")) {
+        if (!q1_monster_play(g, decoy, "decoy_walk1", error))
+            goto failed;
+    } else
+        decoy->state.monster.pause_until = 99999999;
+    if (!q1_alive(g, id))
+        return true;
+    if (!q1_monster_play(g, decoy, "decoy_stand1", error))
+        goto failed;
+    if (!q1_alive(g, id))
+        return true;
+    if (!q1_schedule(g, decoy, decoy->next_think - g->time + q1_random(g) * 0.5,
+                     Q1_THINK_MONSTER_FRAME, error))
+        goto failed;
+    *out = id;
+    return true;
+failed: {
+    qa_error original = error != NULL ? *error : (qa_error){0};
+    if (q1_alive(g, id))
+        qa_session_release(g->services.session, id, NULL);
+    if (error != NULL)
+        *error = original;
+    return false;
+}
 }
 bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_monster *m = &entity->state.monster;

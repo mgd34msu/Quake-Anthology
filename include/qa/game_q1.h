@@ -256,7 +256,7 @@ bool qa_q1_drop_backpack(qa_q1_game *, qa_actor_id, qa_item_id selected_weapon,
 typedef struct qa_q1_presentation {
     qa_actor_id actor;
     qa_string_id classname, model, targetname;
-    int32_t frame, skin;
+    int32_t frame, skin, color_map;
     uint32_t effects;
     float alpha, scale;
 } qa_q1_presentation;

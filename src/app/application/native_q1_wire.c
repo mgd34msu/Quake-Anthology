@@ -609,7 +609,9 @@ static bool entity_read(qa_application *app, application_native_q1_wire_source *
     value.skin = (uint8_t)visual.skin; value.effects = (uint8_t)visual.effects;
     uint32_t client_slot;
     bool player = qa_q1_native_client_slot(source->provider->state.q1, actor, &client_slot, NULL);
-    value.colormap = player ? slot : 0;
+    qa_q1_presentation presentation;
+    value.colormap = player ? slot : qa_q1_game_presentation(source->provider->state.q1, actor,
+        &presentation) ? (uint8_t)presentation.color_map : 0;
     qa_physics_properties physics;
     value.step = !player && qa_q1_game_physics_read(source->provider->state.q1, actor, &physics) &&
                  physics.motion == QA_PHYSICS_STEP;
@@ -813,7 +815,7 @@ bool application_native_q1_wire_baseline(qa_application *app, qa_actor_id recipi
     if (okay && entity->number <= source.receipt.client_slots) {
         okay = player_model(&source, &value.model);
         value.colormap = entity->number;
-    } else value.colormap = 0;
+    }
     if (okay) {
         value.model = value.model > 255 ? 0 : value.model;
         value.frame = value.frame > 255 ? 0 : value.frame;
@@ -1083,10 +1085,34 @@ bool application_native_q1_wire_emit(qa_application *app, const qa_builtin_event
         recipient = event->other; message.op = QA_NQ_STUFFTEXT; message.data.text = "bf\n"; reliable = true; break;
     case QA_BUILTIN_EFFECT:
         if (event->provider != p->owner) return true;
+        if (event->resource && !strcmp(text(app, event->resource), "cutscene")) {
+            qa_builtin_event broadcast = *event;
+            broadcast.actor = (qa_actor_id){0};
+            if (!broadcast.text &&
+                !qa_strings_intern_cstr(qa_session_strings(app->session), "", &broadcast.text, error))
+                return false;
+            return emit_text(app, p, &broadcast, QA_NQ_CUTSCENE, error);
+        }
+        if (event->resource && !strcmp(text(app, event->resource), "music")) {
+            message.op = QA_NQ_CDTRACK;
+            message.data.cd.track = (uint8_t)(uint32_t)event->code;
+            message.data.cd.loop = (uint8_t)event->count;
+            reliable = true;
+            break;
+        }
+        if (event->resource && !strcmp(text(app, event->resource), "sell-screen")) {
+            message.op = QA_NQ_SELLSCREEN;
+            reliable = true;
+            break;
+        }
         if (event->flags & UINT32_C(0x80000000)) {
             if (event->code == 1) { message.op = QA_NQ_INTERMISSION; reliable = true; break; }
-            if (event->code != 4) return true;
-            return emit_text(app, p, event, QA_NQ_FINALE, error);
+            if (event->code != 4 && !event->text) return true;
+            qa_builtin_event finale = *event;
+            if (!finale.text &&
+                !qa_strings_intern_cstr(qa_session_strings(app->session), "", &finale.text, error))
+                return false;
+            return emit_text(app, p, &finale, QA_NQ_FINALE, error);
         }
         if (!event->actor.registry && event->resource &&
             qa_q1_wire_emission_index(p->state.q1, true, event->resource, &index)) {

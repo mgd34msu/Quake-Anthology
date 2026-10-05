@@ -61,6 +61,20 @@ static bool play_sound(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 bool q1_map_hip_misc_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_map_state *state = entity->map;
     switch (state->kind) {
+    case Q1_MAP_HIP_FINALE: {
+        if (g->options.deathmatch)
+            return q1_remove(g, entity, error);
+        state->field_state = 0;
+        state->use_enabled = true;
+        qa_body_state body;
+        if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+            return false;
+        body.angles = state->mangle;
+        return qa_world_body_write(g->services.world, entity->id, &body, error);
+    }
+    case Q1_MAP_START_ENDTEXT:
+        state->use_enabled = true;
+        return true;
     case Q1_MAP_SOUND: {
         const char *name =
             qa_strings_cstr(qa_session_strings(g->services.session), entity->classname);
@@ -256,8 +270,105 @@ retired:
     }
     return true;
 }
+static bool start_endtext(qa_q1_game *g, q1_actor *entity, qa_actor_id activator,
+                           qa_error *error) {
+    const qa_q1_level_state *level = qa_q1_level_read(g->maps->options.level);
+    qa_string_id map = level->next_map ? level->next_map : g->maps->options.current_map;
+    if (!qa_q1_level_cutscene(g->maps->options.level, map, activator, g->time, error))
+        return false;
+    qa_q1_intermission_result result;
+    if (!qa_q1_level_client_connected(g->maps->options.level, g->time, false, &result, error))
+        return false;
+    return !q1_alive(g, entity->id) ||
+           q1_map_present_intermission(g, entity->id, 4, &result, error);
+}
+bool qa_q1_game_map_intermission_input(qa_q1_game *g, qa_actor_id actor, bool pressed,
+                                        bool *handled, qa_error *error) {
+    *handled = false;
+    if (!g->maps || !q1_alive(g, actor))
+        return true;
+    const qa_q1_level_state *level = qa_q1_level_read(g->maps->options.level);
+    if (!level->intermission)
+        return true;
+    *handled = true;
+    bool same_level = false;
+    if (g->services.cvar) {
+        qa_string_id name;
+        float value;
+        if (!qa_builtin_resource(&g->services, "samelevel", &name, error) ||
+            !g->services.cvar(q1_cvar_context(g), name, &value, error))
+            return false;
+        same_level = value != 0;
+    }
+    qa_q1_intermission_result result;
+    return qa_q1_level_request_exit(g->maps->options.level, g->time, pressed, same_level,
+                                     &result, error) &&
+           q1_map_present_intermission(g, actor, 4, &result, error);
+}
+static bool effect_finale(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    if (entity->map->field_state == 1)
+        return true;
+    entity->map->field_state = 1;
+    qa_actor_id id = entity->id;
+    qa_actor_id camera = q1_find_target(g, entity->target);
+    if (!camera.registry)
+        return q1_map_fail(error, "no target in finale");
+    qa_body_state camera_body;
+    qa_vec3 angles = qa_v3(0, 0, 0);
+    if (!qa_world_body_read(g->services.world, camera, &camera_body, error))
+        return false;
+    (void)qa_targets_vector(g->maps->options.targets, camera, "mangle", &angles);
+    qa_builtin_event event = {.kind = QA_BUILTIN_EFFECT, .family = QA_GAME_Q1,
+                              .provider = g->options.provider, .time_ns = g->time_ns,
+                              .origin = camera_body.origin, .direction = angles};
+    if (!qa_builtin_resource(&g->services, "cutscene", &event.resource, error) ||
+        !qa_builtin_resource(&g->services, "", &event.text, error) ||
+        !qa_builtin_emit(&g->services, &event, error))
+        return false;
+    if (!q1_alive(g, id))
+        return true;
+    qa_builtin_snapshot_frame *players;
+    if (!q1_snapshot_players(g, &players, error))
+        return false;
+    bool ok = true;
+    if (!(entity->spawnflags & 2)) {
+        qa_actor_id path = q1_find_target(g, entity->map->mdl);
+        qa_authored_target authored;
+        qa_body_state source;
+        qa_actor_id position = (entity->spawnflags & 1)
+                                  ? players->snapshot.count ? players->snapshot.ids[0]
+                                                              : g->maps->world_actor
+                                  : path;
+        ok = qa_targets_read(g->maps->options.targets, path, &authored) &&
+             qa_world_body_read(g->services.world, position, &source, error);
+        if (!ok && (!error || error->code == QA_OK))
+            q1_map_fail(error, "Hipnotic finale has no decoy path");
+        if (ok && q1_alive(g, id)) {
+            qa_actor_id decoy;
+            ok = q1_become_decoy(g, source.origin, authored.target, &decoy, error);
+        }
+    }
+    if (ok && q1_alive(g, id) && !g->maps->options.control_player)
+        ok = q1_map_fail(error, "Hipnotic finale requires selected player control owners");
+    for (size_t i = 0; ok && i < players->snapshot.count && q1_alive(g, id); ++i)
+        if (q1_alive(g, players->snapshot.ids[i]))
+            ok = g->maps->options.control_player(g->maps->options.context,
+                players->snapshot.ids[i], camera_body.origin, angles, qa_v3(0, 0, 0), error);
+    qa_builtin_snapshot_release(players);
+    if (!ok || !q1_alive(g, id))
+        return ok;
+    g->maps->finale.origin = camera_body.origin;
+    g->maps->finale.angles = angles;
+    if (entity->map->spawn_function)
+        return q1_map_schedule(g, entity, entity->wait, Q1_MAP_HIP_FINALE_NEXT, error);
+    return true;
+}
 bool q1_map_hip_misc_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
     switch (entity->map->kind) {
+    case Q1_MAP_HIP_FINALE:
+        return effect_finale(g, entity, error);
+    case Q1_MAP_START_ENDTEXT:
+        return start_endtext(g, entity, activator, error);
     case Q1_MAP_SOUND:
         return play_sound(g, entity, error);
     case Q1_MAP_EXPLODER: {
@@ -306,6 +417,17 @@ bool q1_map_hip_misc_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, q
     return true;
 }
 bool q1_map_hip_misc_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, qa_error *error) {
+    if (action == Q1_MAP_HIP_FINALE_NEXT) {
+        const char *function = qa_strings_cstr(qa_session_strings(g->services.session),
+                                               entity->map->spawn_function);
+        if (function && !strcmp(function, "info_startendtext_use"))
+            return start_endtext(g, entity, entity->activator, error);
+        if (function && !strcmp(function, "effect_finale_use"))
+            return effect_finale(g, entity, error);
+        if (function && !strcmp(function, "SUB_Remove"))
+            return q1_remove(g, entity, error);
+        return q1_map_fail(error, "Hipnotic finale has an unknown native continuation");
+    }
     if (action == Q1_MAP_EXPLODER_FIRE)
         return explode(g, entity, error);
     if (action != Q1_MAP_SOUND_REPEAT)

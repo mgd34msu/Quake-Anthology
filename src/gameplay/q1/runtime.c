@@ -1,6 +1,6 @@
 #include "boss_internal.h"
 #include "qa/game_q1_checkpoint.h"
-#include "qa/game_q1_maps.h"
+#include "maps/internal.h"
 #include "qa/game_q1_bots.h"
 #include "wire_internal.h"
 #include <float.h>
@@ -1699,6 +1699,7 @@ bool qa_q1_game_presentation(const qa_q1_game *g, qa_actor_id actor, qa_q1_prese
                                 .targetname = entity->targetname,
                                 .frame = entity->frame,
                                 .skin = entity->skin,
+                                .color_map = entity->map ? entity->map->color_map : 0,
                                 .effects = entity->effects,
                                 .alpha = entity->alpha,
                                 .scale = entity->scale};

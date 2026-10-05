@@ -630,6 +630,7 @@ typedef struct application_q1_source_input_call {
     application_provider *provider;
     qa_actor_id actor;
     qa_q1_input input;
+    bool intermission_pressed;
     bool impulse_consumed;
 } application_q1_source_input_call;
 
@@ -641,7 +642,14 @@ static bool q1_source_prethink(void *opaque, qa_session *session, qa_error *erro
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 source input lost its session");
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(provider->state.q1, &operation, error)) return false;
-    bool okay = qa_q1_player_source_input(provider->state.q1, call->actor, &call->input, error);
+    bool handled;
+    bool okay = qa_q1_game_map_intermission_input(provider->state.q1, call->actor,
+                                                  call->intermission_pressed, &handled, error);
+    if (!okay || handled) {
+        qa_q1_game_operation_end(&operation);
+        return okay;
+    }
+    okay = qa_q1_player_source_input(provider->state.q1, call->actor, &call->input, error);
     if (okay && qa_actors_get(qa_session_actors(session), call->actor))
         okay = application_native_q1_ctf_prethink(provider, call->actor, &call->input, error);
     if (okay && call->input.impulse && qa_actors_get(qa_session_actors(session), call->actor)) {
@@ -688,7 +696,9 @@ bool application_control_q1_source_prethink(qa_application *app, qa_actor_id act
         .jump = !record->cutscene && (command ? command_jump(command) : (buttons & 2u) != 0),
         .use = (buttons & 4u) != 0, .impulse = command ? command->impulse : 0,
         .water_level = (uint8_t)(record->water_level < 0 ? 0 : record->water_level > 3 ? 3 : record->water_level),
-        .water_type = record->water_type}};
+        .water_type = record->water_type},
+        .intermission_pressed = (buttons & 5u) != 0 ||
+            (command ? command_jump(command) : (buttons & 2u) != 0)};
     if (!qa_session_invoke(app->session, actor, QA_INVOKE_PHYSICS, q1_source_prethink, &call, error)) return false;
     if (call.impulse_consumed && command && live(app, actor))
         application_control_frames_consume_impulse(app, actor, command->sequence);
@@ -2511,13 +2521,19 @@ static bool control_move(qa_application *application,
         return true;
     }
     if (record->cutscene) {
+        record->previous_buttons = record->buttons;
+        record->buttons = command->buttons;
+        if (context->stage != APPLICATION_CONTROL_PHYSICS &&
+            !application_control_q1_source_prethink(application, actor, command, error))
+            return false;
+        if (!live(application, actor))
+            return true;
+        record = &application->controls[actor.slot];
         if (context->stage == APPLICATION_CONTROL_PHYSICS && turn && *turn) {
             struct application_control_turn *prepared = *turn; *turn = NULL;
             if (!application_control_turn_abort(prepared, error)) return false;
         }
         if (applied) { *applied = *command; applied->buttons = 0; }
-        record->previous_buttons = record->buttons;
-        record->buttons = 0;
         if (!context->source_usercmd && !context->source_guestcmd && !context->source_qwcmd && !context->source_nqcmd && !context->source_q2cmd) {
             record->command_sequence = command->sequence;
             record->command_seen = true;

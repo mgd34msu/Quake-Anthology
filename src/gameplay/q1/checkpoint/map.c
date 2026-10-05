@@ -65,6 +65,7 @@ bool q1_save_map(q1_save_io *io, q1_map_state *m, q1_door_group **groups, size_t
     Q1_SAVE(io, string, m->intermissiontext);
     Q1_SAVE(io, string, m->netname);
     Q1_SAVE(io, string, m->event);
+    Q1_SAVE(io, string, m->mdl);
     Q1_SAVE(io, string, m->spawn_function);
     Q1_SAVE(io, string, m->spawn_classname);
     Q1_SAVE(io, string, m->group);

@@ -12,7 +12,7 @@ typedef struct qa_q1_ctf_map_state {
 } qa_q1_ctf_map_state;
 
 typedef struct qa_q1_map_fields {
-    const char *model, *map, *noise, *noise1, *noise2, *noise3;
+    const char *model, *map, *noise, *noise1, *noise2, *noise3, *mdl;
     const char *endtext, *intermissiontext, *netname, *event;
     const char *spawn_function, *spawn_classname;
     const char *group, *path, *category, *fog_info_entity;
@@ -185,6 +185,8 @@ bool qa_q1_game_map_observer_nearby(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_game_map_observer_passage(qa_q1_game *, qa_actor_id observer, qa_actor_id candidate,
                                      bool *handled, qa_error *);
 bool qa_q1_game_map_after_physics(qa_q1_game *, qa_actor_id, qa_error *);
+bool qa_q1_game_map_intermission_input(qa_q1_game *, qa_actor_id, bool pressed, bool *handled,
+                                        qa_error *);
 /* Player frame extension; attack_finished is expressed on this source clock.
  * Native same-provider Q1 prethink calls this. The application supplies the
  * selected arsenal cooldown for other provider/family selections. */

@@ -84,6 +84,8 @@ typedef enum q1_map_kind {
     Q1_MAP_RUBBLE_SOURCE,
     Q1_MAP_RUBBLE,
     Q1_MAP_EARTHQUAKE,
+    Q1_MAP_HIP_FINALE,
+    Q1_MAP_START_ENDTEXT,
     Q1_MAP_PARTICLE_FIELD,
     Q1_MAP_TOGGLE_WALL,
     Q1_MAP_WALL_SPRITE,
@@ -222,6 +224,7 @@ typedef enum q1_map_action {
     Q1_MAP_FINALE_SIX,
     Q1_MAP_SOUND_REPEAT,
     Q1_MAP_EXPLODER_FIRE,
+    Q1_MAP_HIP_FINALE_NEXT,
     Q1_MAP_SACRIFICE_ANIMATE,
     Q1_MAP_SACRIFICE_FLOAT,
     Q1_MAP_BOB_WATER,
@@ -349,7 +352,7 @@ struct q1_map_state {
     struct q1_map_state *allocated_next, *pool_next;
     q1_map_kind kind;
     q1_map_action action;
-    qa_string_id original_model, map, noise[4], endtext, intermissiontext, netname, event;
+    qa_string_id original_model, map, noise[4], endtext, intermissiontext, netname, event, mdl;
     qa_string_id spawn_function, spawn_classname;
     qa_string_id group, path, category, fog_info_entity;
     qa_vec3 movedir, mangle, view_offset, rotate;
@@ -447,6 +450,8 @@ struct q1_map_runtime {
 };
 
 bool q1_map_fail(qa_error *, const char *);
+bool q1_map_present_intermission(qa_q1_game *, qa_actor_id, uint32_t,
+                                 const qa_q1_intermission_result *, qa_error *);
 static inline bool q1_map_text(qa_q1_game *g, qa_string_id text) {
     return qa_strings_text(qa_session_strings(g->services.session), text).size != 0;
 }
@@ -637,6 +642,7 @@ bool q1_map_door_down(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_lightning_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_boss_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 bool q1_map_hip_misc_spawn(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_become_decoy(qa_q1_game *, qa_vec3 origin, qa_string_id target, qa_actor_id *, qa_error *);
 bool q1_map_hip_misc_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_hip_misc_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_hip_misc_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);

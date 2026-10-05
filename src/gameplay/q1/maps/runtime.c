@@ -9,6 +9,27 @@ bool q1_map_fail(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message);
     return false;
 }
+bool q1_map_present_intermission(qa_q1_game *g, qa_actor_id source, uint32_t stage,
+                                  const qa_q1_intermission_result *result, qa_error *error) {
+    if (result->kind == QA_Q1_INTERMISSION_SELL) {
+        qa_builtin_event event = {.kind = QA_BUILTIN_EFFECT, .family = QA_GAME_Q1,
+                                  .provider = g->options.provider, .time_ns = g->time_ns};
+        return qa_builtin_resource(&g->services, "sell-screen", &event.resource, error) &&
+               qa_builtin_emit(&g->services, &event, error);
+    }
+    if (result->kind != QA_Q1_INTERMISSION_FINALE)
+        return true;
+    qa_builtin_event music = {.kind = QA_BUILTIN_EFFECT, .family = QA_GAME_Q1,
+                              .provider = g->options.provider, .time_ns = g->time_ns,
+                              .code = result->track, .count = 3};
+    if (!qa_builtin_resource(&g->services, "music", &music.resource, error) ||
+        !qa_builtin_emit(&g->services, &music, error))
+        return false;
+    if (!q1_alive(g, source))
+        return true;
+    const char *text = qa_strings_cstr(qa_session_strings(g->services.session), result->text);
+    return q1_map_finale_emit(g, stage, text, error);
+}
 static bool map_options_valid(const qa_q1_game *g, const qa_q1_map_options *options,
                               qa_error *error) {
     if (!g || g->destroy_pending || !options || !options->targets || !options->level || !options->server_flags ||
@@ -432,6 +453,10 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = entity->map->event};
         return true;
     }
+    if (entity->map && !strcmp(key, "mdl")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = entity->map->mdl};
+        return true;
+    }
     if (entity->map && (!strcmp(key, "group") || !strcmp(key, "path") ||
                         !strcmp(key, "noise") || !strcmp(key, "noise1"))) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
@@ -770,12 +795,12 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
         source->model,   source->map,    source->noise,          source->noise1,
         source->noise2,  source->noise3, source->endtext,        source->intermissiontext,
         source->netname, source->event,  source->spawn_function, source->spawn_classname,
-        source->group, source->path, source->category, source->fog_info_entity};
+        source->group, source->path, source->category, source->fog_info_entity, source->mdl};
     qa_string_id *output[] = {
         &state->original_model, &state->map,      &state->noise[0],       &state->noise[1],
         &state->noise[2],       &state->noise[3], &state->endtext,        &state->intermissiontext,
         &state->netname,        &state->event,    &state->spawn_function, &state->spawn_classname,
-        &state->group, &state->path, &state->category, &state->fog_info_entity};
+        &state->group, &state->path, &state->category, &state->fog_info_entity, &state->mdl};
     for (size_t i = 0; i < sizeof(input) / sizeof(*input); ++i)
         if (input[i] && input[i][0] &&
             !qa_builtin_resource(&g->services, input[i], output[i], error))
@@ -999,6 +1024,8 @@ static q1_map_kind classify(const char *name) {
                    {"func_rubble2", Q1_MAP_RUBBLE_SOURCE},
                    {"func_rubble3", Q1_MAP_RUBBLE_SOURCE},
                    {"func_earthquake", Q1_MAP_EARTHQUAKE},
+                   {"effect_finale", Q1_MAP_HIP_FINALE},
+                   {"info_startendtext", Q1_MAP_START_ENDTEXT},
                    {"func_particlefield", Q1_MAP_PARTICLE_FIELD},
                    {"func_togglewall", Q1_MAP_TOGGLE_WALL},
                    {"wallsprite", Q1_MAP_WALL_SPRITE},
@@ -1153,7 +1180,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     if (g->options.program != QA_Q1_HIPNOTIC &&
         (kind == Q1_MAP_FOLLOW || kind == Q1_MAP_TRAIN2 || kind == Q1_MAP_BOBBING_WATER ||
          kind == Q1_MAP_PUSHABLE || kind == Q1_MAP_SPAWNER || q1_map_is_hip_trigger(kind) ||
-         q1_map_is_hip_hazard(kind) || q1_map_is_rotation(kind)))
+         q1_map_is_hip_hazard(kind) || q1_map_is_rotation(kind) ||
+         kind == Q1_MAP_HIP_FINALE || kind == Q1_MAP_START_ENDTEXT))
         kind = Q1_MAP_FIELDS;
     *handled = kind != Q1_MAP_FIELDS;
     if (!*handled && !spawn->map_fields)
