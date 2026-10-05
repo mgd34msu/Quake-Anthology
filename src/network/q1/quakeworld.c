@@ -1,5 +1,7 @@
 #include "qa/network_q1_qw.h"
 #include "qa/network_q1_decoder_save.h"
+#include "qa/network_qw_source.h"
+#include "qa/text.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -555,25 +557,17 @@ static bool attenuation_byte(qa_net_writer *w, float attenuation, uint8_t *out)
 static bool write_nails(qa_net_writer *w, const qa_qw_service *m)
 {
     if (m->data.nails.count>QA_QW_MAX_NAILS) return qa_net_writer_fail(w,"Too many QuakeWorld nails");
-    qa_net_write_u8(w,43); qa_net_write_u8(w,(uint8_t)m->data.nails.count);
     for (size_t i=0;i<m->data.nails.count;++i) {
         const qa_qw_nail *n=&m->data.nails.items[i];
         if (!finite3(n->origin) || !isfinite(n->pitch) || !isfinite(n->yaw))
             return qa_net_writer_fail(w,"Non-finite QuakeWorld nail");
-        uint16_t coordinate[3];
         for (unsigned axis=0;axis<3;++axis) {
-            double packed=trunc(((double)n->origin[axis]+4096.0)/2.0);
+            float shifted=n->origin[axis]+4096.0f;
+            int32_t packed=qa_source_float_to_i32(shifted)>>1;
             if (packed<0 || packed>4095) return qa_net_writer_fail(w,"QuakeWorld nail exceeds coordinate range");
-            coordinate[axis]=(uint16_t)packed;
         }
-        uint16_t x=coordinate[0],y=coordinate[1],z=coordinate[2];
-        uint8_t pitch=(uint8_t)(int32_t)trunc(fmod(n->pitch,360.0)*16.0/360.0)&15;
-        uint8_t yaw=(uint8_t)(int32_t)trunc(fmod(n->yaw,360.0)*256.0/360.0);
-        uint8_t packed[6]={(uint8_t)x,(uint8_t)((x>>8)|((y&15)<<4)),(uint8_t)(y>>4),
-            (uint8_t)z,(uint8_t)((z>>8)|(pitch<<4)),yaw};
-        qa_net_write_data(w,packed,sizeof(packed));
     }
-    return !w->failed;
+    return qa_qw_source_write_nails(w,m->data.nails.items,m->data.nails.count);
 }
 static bool write_list(qa_net_writer *w, qa_net_protocol_id p, const qa_qw_service *m)
 {

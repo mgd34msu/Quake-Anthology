@@ -1,4 +1,6 @@
 #include "qa/network_q1.h"
+#include "qa/math.h"
+#include "qa/text.h"
 #include <math.h>
 #include <string.h>
 
@@ -88,32 +90,40 @@ bool qa_q1_write_coord(qa_net_writer *w, qa_net_protocol_id p, float x)
     if (!write_profile(w,p)) return false;
     if (!isfinite(x)) return qa_net_writer_fail(w,"Non-finite Quake 1 coordinate");
     if (p.flags & QA_Q1_FLOATCOORD) return qa_net_write_f32(w,x);
-    if (p.flags & QA_Q1_INT32COORD) return coord_integer(w,nearest((double)x*16),true);
+    if (p.flags & QA_Q1_INT32COORD) return coord_integer(w,nearest((double)(x*16.0f)),true);
     if (p.flags & QA_Q1_COORD24) {
         if (!coord_integer(w,trunc(x),false)) return false;
-        double remainder = fmod(trunc((double)x*255),255);
-        return qa_net_write_u8(w,(uint8_t)(int32_t)remainder);
+        int32_t remainder = qa_source_float_to_i32(x*255.0f)%255;
+        return qa_net_write_u8(w,(uint8_t)(uint32_t)remainder);
     }
-    double fixed = (double)x*8;
+    double fixed = (double)(x*8.0f);
     return coord_integer(w,p.kind == QA_NET_NQ15 || p.kind == QA_NET_QW28 ? trunc(fixed) : nearest(fixed),false);
 }
-static bool packed_angle(qa_net_writer *w, float value, unsigned bits, bool round_value, bool integral_degrees)
+static bool rounded_angle(qa_net_writer *w, qa_net_protocol_id p, float value, unsigned bits)
 {
     if (!isfinite(value)) return qa_net_writer_fail(w,"Non-finite Quake 1 angle");
-    double degrees = integral_degrees ? trunc((double)value) : (double)value;
-    /* Reduce after degree truncation to avoid undefined out-of-range casts. */
-    degrees = fmod(degrees,360.0);
+    double degrees = p.kind == QA_NET_QW29 ? fmod((double)value,360.0) : (double)value;
     double scaled = degrees * (bits == 8 ? 256.0 : 65536.0)/360.0;
-    int32_t integer = (int32_t)(round_value ? nearest(scaled) : trunc(scaled));
-    return bits == 8 ? qa_net_write_u8(w,(uint8_t)integer) : qa_net_write_u16(w,(uint16_t)integer);
+    double rounded = nearest(scaled);
+    int32_t integer = rounded >= INT32_MIN && rounded < 2147483648.0 ? (int32_t)rounded : INT32_MIN;
+    return bits == 8 ? qa_net_write_u8(w,(uint8_t)(uint32_t)integer) :
+        qa_net_write_u16(w,(uint16_t)(uint32_t)integer);
 }
 bool qa_q1_write_angle(qa_net_writer *w, qa_net_protocol_id p, float x)
 {
     if (!write_profile(w,p)) return false;
     if (!isfinite(x)) return qa_net_writer_fail(w,"Non-finite Quake 1 angle");
     if (p.flags & QA_Q1_FLOATANGLE) return qa_net_write_f32(w,x);
-    if (p.flags & QA_Q1_SHORTANGLE) return packed_angle(w,x,16,true,false);
-    return packed_angle(w,x,8,p.kind != QA_NET_NQ15 && p.kind != QA_NET_QW28,p.kind == QA_NET_NQ15);
+    if (p.flags & QA_Q1_SHORTANGLE) return rounded_angle(w,p,x,16);
+    if (p.kind == QA_NET_NQ15) {
+        uint32_t bits = (uint32_t)qa_source_float_to_i32(x)*UINT32_C(256);
+        int32_t product;
+        memcpy(&product,&bits,sizeof(product));
+        return qa_net_write_u8(w,(uint8_t)(uint32_t)(product/360));
+    }
+    if (p.kind == QA_NET_QW28)
+        return qa_net_write_u8(w,(uint8_t)(uint32_t)qa_source_float_to_i32(x*256.0f/360.0f));
+    return rounded_angle(w,p,x,8);
 }
 bool qa_q1_read_protocol(qa_net_reader *r, bool qw, qa_net_protocol_id *out)
 {
@@ -189,7 +199,7 @@ bool qa_q1_write_move(qa_net_writer *w, qa_net_protocol_id p, const qa_q1_comman
         else if (p.flags & QA_Q1_FLOATANGLE) {
             if (!isfinite(c->angles[i])) return qa_net_writer_fail(w,"Non-finite move angle");
             qa_net_write_f32(w,c->angles[i]);
-        } else packed_angle(w,c->angles[i],16,true,false);
+        } else rounded_angle(w,p,c->angles[i],16);
     }
     qa_net_write_i16(w,c->forward); qa_net_write_i16(w,c->side); qa_net_write_i16(w,c->up);
     qa_net_write_u8(w,c->buttons); qa_net_write_u8(w,c->impulse);
@@ -226,7 +236,7 @@ bool qa_qw_write_delta_command(qa_net_writer *w, const qa_qw_command *from, cons
     if (c->buttons != from->buttons) bits |= 32;
     if (c->impulse != from->impulse) bits |= 64;
     qa_net_write_u8(w,(uint8_t)bits);
-    for (unsigned i=0;i<3;++i) if (bits & angle_bits[i]) packed_angle(w,c->angles[i],16,false,false);
+    for (unsigned i=0;i<3;++i) if (bits & angle_bits[i]) qa_net_write_u16(w,qa_angle_to_word(c->angles[i]));
     if (bits & 4) qa_net_write_i16(w,c->forward);
     if (bits & 8) qa_net_write_i16(w,c->side);
     if (bits & 16) qa_net_write_i16(w,c->up);
