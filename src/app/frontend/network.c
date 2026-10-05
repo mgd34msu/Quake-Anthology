@@ -4138,7 +4138,8 @@ bool frontend_network_declarations(qa_cvars *cvars,qa_error *error)
         qa_cvars_register(cvars,"rcon_limited_password","",0,NETWORK_OWNER,
             "Limited remote administrator password",error);
 }
-bool frontend_network_create(qa_frontend *f, qa_error *error)
+static bool detached_transport(const qa_net_address *,qa_net_transport **,qa_error *);
+static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *error)
 {
     if (f->network) return true;
     if ((f->options.network_connect && f->options.network_protocol.kind != QA_NET_Q3_68 &&
@@ -4152,7 +4153,7 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "selected connection requires its complete original/unified signon and prediction producer");
     qa_frontend_network *n = calloc(1, sizeof(*n));
     if (!n) return frontend_fail(error, QA_ERROR_MEMORY, "allocating network frontend owner");
-    n->frontend = f; n->nonce = SDL_GetPerformanceCounter();
+    n->frontend = f; n->detached_transport=active!=NULL; n->nonce = SDL_GetPerformanceCounter();
     n->rotation_random = (uint32_t)n->nonce ^ (uint32_t)(n->nonce >> 32); f->network = n;
     n->q3_client_requested = frontend_network_remote(f); n->q3_sensitivity = 1;
     if (client_target_selected(n)) {
@@ -4253,7 +4254,9 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
     options.hooks.reconnect = reconnect;
     options.hooks.nq_source_command = remote_nq_command;
     options.hooks.unified_input=unified_source_input;
-    if (!qa_net_udp_open(&udp, &transport, error)) goto failed;
+    if (active && active->network) {
+        if (!detached_transport(qa_network_local_address(active->network->runtime),&transport,error)) goto failed;
+    } else if (!qa_net_udp_open(&udp,&transport,error)) goto failed;
     if((f->options.network_host || f->options.network_connect) && f->options.network_protocol.kind==QA_NET_Q2KEX_2023) {
         if(f->options.network_host && source_clients>UINT8_MAX) {
             qa_net_transport_close(transport);
@@ -4347,6 +4350,30 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
     return true;
 failed:
     (void)frontend_network_destroy(f, NULL); return false;
+}
+
+bool frontend_network_create(qa_frontend *f,qa_error *error)
+{ return network_create(f,NULL,error); }
+bool frontend_network_create_detached(qa_frontend *f,const qa_frontend *active,qa_error *error)
+{
+    if (!active || !active->network)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Network rebuild needs its retained native socket owner");
+    return network_create(f,active,error);
+}
+bool frontend_network_rebuild_ready(const qa_frontend *candidate,const qa_frontend *active,qa_error *error)
+{
+    const qa_frontend_network *next=candidate?candidate->network:NULL;
+    const qa_frontend_network *previous=active?active->network:NULL;
+    if (!next || !previous || next->frontend!=candidate || previous->frontend!=active ||
+        !next->detached_transport || previous->detached_transport || next->busy || previous->busy ||
+        !qa_network_callbacks_idle(next->runtime) || !qa_network_callbacks_idle(previous->runtime) ||
+        !qa_net_address_equal(qa_network_local_address(next->runtime),qa_network_local_address(previous->runtime),true))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Network rebuild lost its actual idle socket handoff");
+    return qa_network_source_publication_ready(next->runtime,error) &&
+        frontend_network_q2_client_publication_ready(next->q2_client_owner,error) &&
+        frontend_network_q1_client_publication_ready(next->q1_client_owner,error) &&
+        frontend_network_unified_client_publication_ready(next->unified_client_service,error) &&
+        frontend_network_q2_host_publication_ready(next->q2_host,error);
 }
 
 static qa_network_options saved_network_options(qa_frontend_network *n)

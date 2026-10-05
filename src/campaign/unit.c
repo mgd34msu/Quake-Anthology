@@ -6,6 +6,7 @@ struct qa_campaign_world {
     size_t references;
     qa_campaign_location location;
     qa_buffer bytes;
+    struct qa_campaign_world *source;
 };
 struct qa_campaign_unit {
     qa_strings *strings;
@@ -53,7 +54,6 @@ bool qa_campaign_location_make(qa_strings *strings, qa_string_id content, qa_byt
     return true;
 }
 bool qa_campaign_world_create(qa_campaign_location location, qa_bytes bytes,
-                              qa_campaign_world_validate validate, void *context,
                               qa_campaign_world **out, qa_error *error) {
     if (!bytes.data || !bytes.size)
         return fail(error, QA_ERROR_ARGUMENT, "Invalid departed campaign world");
@@ -61,7 +61,7 @@ bool qa_campaign_world_create(qa_campaign_location location, qa_bytes bytes,
     if (!copy.data)
         return fail(error, QA_ERROR_MEMORY, "Retaining campaign snapshot");
     memcpy(copy.data, bytes.data, bytes.size);
-    bool ok = qa_campaign_world_take(location, &copy, validate, context, out, error);
+    bool ok = qa_campaign_world_take(location, &copy, out, error);
     qa_buffer_free(&copy);
     return ok;
 }
@@ -70,13 +70,10 @@ void qa_campaign_world_retain(qa_campaign_world *world) {
         ++world->references;
 }
 bool qa_campaign_world_take(qa_campaign_location location, qa_buffer *bytes,
-                            qa_campaign_world_validate validate, void *context,
                             qa_campaign_world **out, qa_error *error) {
-    if (!out || !validate || !location.content || !location.map || !bytes || !bytes->data ||
+    if (!out || !location.content || !location.map || !bytes || !bytes->data ||
         !bytes->size)
         return fail(error, QA_ERROR_ARGUMENT, "Invalid departed campaign world");
-    if (!validate(context, (qa_bytes){bytes->data, bytes->size}, location, error))
-        return false;
     qa_campaign_world *world = calloc(1, sizeof(*world));
     if (!world)
         return fail(error, QA_ERROR_MEMORY, "Allocating campaign world");
@@ -89,9 +86,21 @@ bool qa_campaign_world_take(qa_campaign_location location, qa_buffer *bytes,
 }
 void qa_campaign_world_release(qa_campaign_world *world) {
     if (world && !--world->references) {
-        qa_buffer_free(&world->bytes);
+        if (world->source) qa_campaign_world_release(world->source);
+        else qa_buffer_free(&world->bytes);
         free(world);
     }
+}
+bool qa_campaign_world_relocate(const qa_campaign_world *source, qa_campaign_location location,
+                                qa_campaign_world **out, qa_error *error) {
+    if (!source || !location.content || !location.map || !out)
+        return fail(error, QA_ERROR_ARGUMENT, "Invalid relocated campaign world");
+    qa_campaign_world *world=calloc(1,sizeof(*world));
+    if (!world) return fail(error,QA_ERROR_MEMORY,"Retaining relocated campaign world");
+    world->references=1; world->location=location; world->bytes=source->bytes;
+    world->source=source->source?source->source:(qa_campaign_world *)source;
+    qa_campaign_world_retain(world->source); *out=world;
+    return true;
 }
 qa_campaign_location qa_campaign_world_location(const qa_campaign_world *world) {
     return world->location;
@@ -139,19 +148,23 @@ static bool reserve(qa_campaign_unit_checkpoint *out, size_t capacity, qa_error 
     return !capacity || out->worlds ||
            fail(error, QA_ERROR_MEMORY, "Allocating campaign world handles");
 }
-bool qa_campaign_unit_capture(const qa_campaign_unit *unit, qa_campaign_unit_checkpoint *out,
-                              qa_error *error) {
-    qa_campaign_unit_checkpoint copy = {.has_current = unit->state.has_current,
-                                        .current = unit->state.current};
-    if (!reserve(&copy, unit->state.count, error))
+static bool checkpoint_retain(const qa_campaign_unit_checkpoint *state,
+                              qa_campaign_unit_checkpoint *out, qa_error *error) {
+    qa_campaign_unit_checkpoint copy = {.has_current = state->has_current,
+                                        .current = state->current};
+    if (!reserve(&copy, state->count, error))
         return false;
-    for (size_t i = 0; i < unit->state.count; ++i) {
-        qa_campaign_world *world = unit->state.worlds[i];
+    for (size_t i = 0; i < state->count; ++i) {
+        qa_campaign_world *world = state->worlds[i];
         qa_campaign_world_retain(world);
         copy.worlds[copy.count++] = world;
     }
     *out = copy;
     return true;
+}
+bool qa_campaign_unit_capture(const qa_campaign_unit *unit, qa_campaign_unit_checkpoint *out,
+                              qa_error *error) {
+    return checkpoint_retain(&unit->state,out,error);
 }
 bool qa_campaign_unit_stage(qa_campaign_unit *unit, qa_campaign_location destination, bool new_unit,
                             qa_campaign_world *departure, qa_campaign_visit **out,
@@ -206,6 +219,12 @@ bool qa_campaign_unit_stage(qa_campaign_unit *unit, qa_campaign_location destina
 }
 const qa_campaign_world *qa_campaign_visit_restore(const qa_campaign_visit *visit) {
     return visit->restore;
+}
+bool qa_campaign_visit_capture(const qa_campaign_visit *visit, qa_campaign_unit_checkpoint *out,
+                               qa_error *error) {
+    if (!visit || visit->committed || !out)
+        return fail(error,QA_ERROR_ARGUMENT,"Campaign visit is not pending");
+    return checkpoint_retain(&visit->candidate,out,error);
 }
 bool qa_campaign_visit_commit(qa_campaign_visit *visit, qa_error *error) {
     if (!visit || visit->committed || visit->revision != visit->unit->revision)

@@ -16,6 +16,8 @@ bool qa_launch_mode_identity_encode(const qa_launch_snapshot *, size_t index,
  * after preparation, match the entire candidate identity before publication. */
 bool qa_launch_identity_decode(qa_catalog *, const qa_actor_registry *, qa_bytes,
     qa_launch_draft **, qa_error *);
+/* Observe the saved preset before constructing its player profile owner. */
+bool qa_launch_identity_preset(qa_catalog *, qa_bytes, qa_product_id *, qa_error *);
 bool qa_launch_identity_match(const qa_launch_snapshot *, const qa_actor_registry *,
     qa_bytes canonical_identity, qa_error *);
 #endif

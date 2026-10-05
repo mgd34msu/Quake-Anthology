@@ -25,6 +25,7 @@
 enum { QA_APPLICATION_RESOURCE_KEY_CAPACITY = sizeof("resource:unified:") + 64 };
 
 typedef struct qa_application qa_application;
+struct qa_save_image;
 struct qa_application_q3_round_services;
 struct qa_application_startup_hooks;
 typedef struct qa_application_q3_equipment_services qa_application_q3_equipment_services;
@@ -623,6 +624,12 @@ bool qa_application_queue_map_travel(qa_application *, const qa_application_trav
 bool qa_application_prepare_match_travel(qa_application *, qa_error *);
 bool qa_application_finish_match_travel(qa_application *, uint64_t revision, qa_error *);
 bool qa_application_travel_read(const qa_application *, qa_application_travel_view *);
+/* The application owns departed world state and the genuine player carry.
+ * A cached destination is imported by the same ordinary save reader. */
+bool qa_application_campaign_depart(qa_application *, uint64_t revision, bool *needed, qa_error *);
+bool qa_application_campaign_stage(qa_application *, const struct qa_save_image *, qa_error *);
+qa_bytes qa_application_campaign_restore(const qa_application *);
+bool qa_application_campaign_reenter(qa_application *candidate, qa_application *previous, qa_error *);
 bool qa_application_commit_travel(qa_application *, uint64_t revision, qa_error *);
 /* The retained MAP request completes only when its actual world publishes. */
 bool qa_application_travel_publication_read(const qa_application *, uint64_t *revision);

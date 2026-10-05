@@ -14,9 +14,8 @@ typedef enum qa_save_purpose {
     QA_SAVE_DEMO_KEYFRAME
 } qa_save_purpose;
 
-/* Exactly one of each shared record is required, including an explicit absent
- * value when that owner is not installed. PROVIDER has one record per selected
- * instance. The configuration codec must validate that exact instance set. */
+/* Saves contain shared mutable game state and one PROVIDER per selected
+ * instance. Physical frontend services are rebuilt from that authority. */
 typedef enum qa_save_owner_kind {
     QA_SAVE_STRINGS = 1, QA_SAVE_RESOURCES, QA_SAVE_CONFIGURATION,
     QA_SAVE_SESSION, QA_SAVE_ACTORS, QA_SAVE_WORLD, QA_SAVE_COMBAT,
@@ -27,6 +26,7 @@ typedef enum qa_save_owner_kind {
     QA_SAVE_PRESENTATION, QA_SAVE_AUDIO, QA_SAVE_INPUT, QA_SAVE_MEDIA,
     QA_SAVE_APPLICATION, QA_SAVE_PROVIDER
 } qa_save_owner_kind;
+bool qa_save_shared_state_kind(qa_save_owner_kind);
 
 typedef struct qa_save_owner {
     qa_save_owner_kind kind;

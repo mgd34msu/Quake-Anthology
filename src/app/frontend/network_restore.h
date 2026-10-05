@@ -3,6 +3,11 @@
 #include "network_presentation.h"
 #include "remote_q3_initial.h"
 
+/* Normal services rebuilt against the live native socket, without saved
+ * connection, browser or prediction caches. */
+bool frontend_network_create_detached(qa_frontend *,const qa_frontend *,qa_error *);
+bool frontend_network_rebuild_ready(const qa_frontend *,const qa_frontend *,qa_error *);
+
 /* Import native CONNECTIONS once after QNRS and CLIENT dictionaries, before
  * console COMMANDS. Other candidates import only the genuine browser and menu
  * history prefix for UI reconstruction. Final import proves identical bytes

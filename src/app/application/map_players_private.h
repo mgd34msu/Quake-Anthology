@@ -96,6 +96,13 @@ bool application_players_guest_detach(qa_application *, application_provider *, 
 
 bool application_players_checkpoint_capture(qa_application *, qa_buffer *, qa_error *);
 bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes, qa_error *);
+bool application_players_campaign_prepare(qa_application *, const qa_q2_landmark *,
+    application_player_travel **, qa_error *);
+bool application_players_campaign_consume(qa_application *, application_publication *,
+    application_player_travel **, qa_error *);
+bool application_players_campaign_exclude(qa_application *, qa_error *);
+bool application_players_campaign_reenter(qa_application *candidate, qa_application *previous,
+    application_player_travel *, const char *spawn_point, qa_error *);
 bool application_player_qw_spectator(const application_provider *, const application_player_record *);
 bool application_players_native_q3_retire(qa_application *, application_provider *,
     qa_actor_id, qa_error *);

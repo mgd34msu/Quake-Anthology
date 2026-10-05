@@ -396,19 +396,51 @@ static bool metadata(identity_reader *r, qa_json_id root)
     }
     return !r->failed;
 }
-bool qa_launch_identity_decode(qa_catalog *catalog, const qa_actor_registry *registry, qa_bytes bytes,
-    qa_launch_draft **out, qa_error *error)
+static bool identity_open(qa_bytes bytes, qa_json_document **out, qa_error *error)
 {
-    if (!catalog || !out || bytes.size > IDENTITY_MAX_BYTES) return fail(error, "Invalid portable launch identity input");
+    if (bytes.size > IDENTITY_MAX_BYTES) return fail(error, "Invalid portable launch identity input");
     qa_json_document *document = NULL; if (!qa_json_parse(bytes, &document, error)) return false;
     qa_json_id root = qa_json_root(document);
     if (qa_json_type(document, root) != QA_JSON_OBJECT || qa_json_size(document, root) != 13 ||
         !qa_json_string_equal(document, qa_json_get(document, root, "schema"), "qa-launch-identity")) {
         qa_json_destroy(document); return fail(error, "Unsupported explicit launch identity schema");
     }
+    *out=document;
+    return true;
+}
+
+static bool identity_world(identity_reader *reader)
+{
+    return record(reader, qa_json_get(reader->document, qa_json_root(reader->document), "world"), 14);
+}
+
+bool qa_launch_identity_preset(qa_catalog *catalog, qa_bytes bytes, qa_product_id *out,
+    qa_error *error)
+{
+    if (!catalog || !out) return fail(error, "Invalid portable launch identity input");
+    qa_json_document *document=NULL;
+    if (!identity_open(bytes,&document,error)) return false;
+    qa_arena arena={0};
+    identity_reader reader={.document=document,.catalog=catalog,.arena=&arena,.error=error};
+    bool ok=identity_world(&reader);
+    qa_product_id preset=ok?read_product(&reader):0;
+    ok=ok && !reader.failed && preset!=0;
+    if (ok) *out=preset;
+    else if (error && error->code==QA_OK) fail(error,"Saved launch has no content preset");
+    qa_arena_destroy(&arena); qa_json_destroy(document);
+    return ok;
+}
+
+bool qa_launch_identity_decode(qa_catalog *catalog, const qa_actor_registry *registry, qa_bytes bytes,
+    qa_launch_draft **out, qa_error *error)
+{
+    if (!catalog || !out) return fail(error, "Invalid portable launch identity input");
+    qa_json_document *document=NULL;
+    if (!identity_open(bytes,&document,error)) return false;
+    qa_json_id root=qa_json_root(document);
     qa_arena arena = {0}; qa_launch_draft *draft = NULL;
     identity_reader r = {.document = document, .catalog = catalog, .registry = registry, .arena = &arena, .error = error};
-    bool ok = qa_launch_draft_create_empty(catalog, &draft, error) && record(&r, qa_json_get(document, root, "world"), 14);
+    bool ok = qa_launch_draft_create_empty(catalog, &draft, error) && identity_world(&r);
     if (ok) {
         qa_launch_world v = {0}; v.preset = read_product(&r); v.geometry = read_product(&r); v.presentation = read_product(&r);
         v.map = read_text(&r); v.start_command = read_text(&r); v.explicit_presentation = read_bool(&r);

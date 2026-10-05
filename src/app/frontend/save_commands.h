@@ -22,6 +22,9 @@ bool frontend_save_commands_queue(qa_frontend *, const qa_command_invocation *, 
  * heap remains owned for ordinary cleanup, including after publication. */
 bool frontend_save_commands_drain(qa_frontend **slot, qa_error *);
 bool frontend_save_commands_autosave(qa_frontend *, qa_error *);
+/* Prepare a real departure; a cached visit is published by the existing
+ * driver-slot drain. handled also covers an already queued save operation. */
+bool frontend_save_commands_campaign(qa_frontend *, uint64_t revision, bool *handled, qa_error *);
 bool frontend_save_commands_checkpoint(qa_frontend *, qa_buffer *, qa_error *);
 /* The candidate's real tools root and core command generation must exist.
  * Import creates its own owner; no active manager pointer transfers. */

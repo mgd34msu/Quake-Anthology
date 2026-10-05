@@ -5,6 +5,8 @@
 bool qa_application_player_profile_bind(qa_application *app, qa_fs_root *root,
     qa_error *error)
 {
+    if (app && root && app->user_files==root && app->progress)
+        return true;
     if (!app || !root || app->destroy_requested || app->operation != APPLICATION_IDLE ||
         app->frame_preparing || app->q3_round_active || app->q3_world_restart ||
         app->state == QA_APPLICATION_FAULTED || !app->session ||
@@ -12,8 +14,7 @@ bool qa_application_player_profile_bind(qa_application *app, qa_fs_root *root,
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Player profile binding requires its idle input configuration owner");
     if (app->user_files)
-        return (app->user_files == root && app->progress) ||
-            application_fail(error, QA_ERROR_ARGUMENT,
+        return application_fail(error, QA_ERROR_ARGUMENT,
                 "Application already retains a different input configuration profile");
     qa_player_progress *profile = NULL;
     if (!qa_player_progress_open(root, "player-progress.json", &profile, error)) return false;

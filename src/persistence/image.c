@@ -4,6 +4,17 @@
 #define SAVE_HEADER 72u
 #define SAVE_RECORD_HEADER 20u
 
+bool qa_save_shared_state_kind(qa_save_owner_kind kind)
+{
+    if (kind<QA_SAVE_STRINGS || kind>=QA_SAVE_PROVIDER) return false;
+    switch (kind) {
+    case QA_SAVE_CAMPAIGN: case QA_SAVE_CONNECTIONS: case QA_SAVE_PREDICTION:
+    case QA_SAVE_PRESENTATION: case QA_SAVE_AUDIO: case QA_SAVE_INPUT: case QA_SAVE_MEDIA:
+        return false;
+    default: return true;
+    }
+}
+
 static bool text_valid(const char *text, bool empty)
 {
     if (!text) return false;
@@ -17,7 +28,7 @@ static bool text_valid(const char *text, bool empty)
 
 bool persistence_owner_valid(const qa_save_owner *owner, qa_error *error)
 {
-    if (!owner || owner->kind < QA_SAVE_STRINGS || owner->kind > QA_SAVE_PROVIDER ||
+    if (!owner || (!qa_save_shared_state_kind(owner->kind) && owner->kind!=QA_SAVE_PROVIDER) ||
         !text_valid(owner->instance, owner->kind != QA_SAVE_PROVIDER) ||
         !text_valid(owner->schema, false) || !text_valid(owner->backend, true) ||
         (owner->kind != QA_SAVE_PROVIDER && owner->instance[0]))
@@ -33,7 +44,7 @@ static int provider_compare(const void *left, const void *right)
 
 bool persistence_owner_set(const qa_save_record *records, size_t count, qa_error *error)
 {
-    if (!records || count < QA_SAVE_PROVIDER - 1u || count > QA_SAVE_OWNER_LIMIT)
+    if (!records || !count || count > QA_SAVE_OWNER_LIMIT)
         return persistence_fail(error, QA_ERROR_FORMAT, "Incomplete or excessive save owner inventory");
     const qa_save_record **providers = malloc(count * sizeof(*providers));
     if (!providers)
@@ -58,7 +69,9 @@ bool persistence_owner_set(const qa_save_record *records, size_t count, qa_error
             seen |= bit;
         } else providers[provider_count++] = record;
     }
-    uint64_t required = (UINT64_C(1) << QA_SAVE_PROVIDER) - 2;
+    uint64_t required=0;
+    for (qa_save_owner_kind kind=QA_SAVE_STRINGS;kind<QA_SAVE_PROVIDER;++kind)
+        if (qa_save_shared_state_kind(kind)) required|=UINT64_C(1)<<kind;
     if (ok && seen != required)
         ok = persistence_fail(error, QA_ERROR_FORMAT, "Save omits a required shared owner");
     if (ok && provider_count > 1) {
@@ -282,7 +295,7 @@ static bool header_fields(qa_source_save_io *io, qa_save_image *image, uint64_t 
         return codec_fail(io, QA_ERROR_FORMAT, "Invalid shared save signature");
     if (header_size != io->offset || saved_extent != extent || io->offset > extent)
         return codec_fail(io, QA_ERROR_FORMAT, "Invalid save image extent");
-    if (purpose > QA_SAVE_DEMO_KEYFRAME || count < QA_SAVE_PROVIDER - 1u ||
+    if (purpose > QA_SAVE_DEMO_KEYFRAME || !count ||
         count > QA_SAVE_OWNER_LIMIT ||
         count > (extent - io->offset) / SAVE_RECORD_HEADER)
         return codec_fail(io, QA_ERROR_FORMAT, "Invalid save record inventory");

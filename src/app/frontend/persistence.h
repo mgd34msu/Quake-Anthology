@@ -14,8 +14,8 @@ typedef struct frontend_persistence_native {
     qa_gl_restore_guard *gl;
 } frontend_persistence_native;
 
-/* Backend/file resolvers remain borrowed for the operation. The frontend owns
- * the seven external records and its actual candidate constructor callbacks.
+/* Backend/file resolvers remain borrowed for the operation. Saves contain
+ * application state; the frontend rebuilds through its normal constructors.
  * A failed candidate whose children reject retirement transfers to retained;
  * its frontend context must remain alive until ordinary destroy succeeds. */
 bool frontend_persistence_capture(qa_frontend *, const qa_application_persistence_ops *,

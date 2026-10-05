@@ -2,9 +2,13 @@
 #include "qa/source_save.h"
 #include "rankings.h"
 #include "qa/application_startup_prepare.h"
+#include "map_players_private.h"
+#include "save_private.h"
+#include "qa/save.h"
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 
 static bool same_vector(qa_vec3 a, qa_vec3 b)
@@ -41,12 +45,75 @@ static bool map_safe(const qa_application *application)
            qa_combat_idle(application->combat);
 }
 
+static void campaign_travel_dispose(qa_application *application)
+{
+    application_campaign_travel *travel=application->campaign_travel;
+    if (!travel) return;
+    application_players_dispose(travel->players);
+    qa_campaign_visit_destroy(travel->visit);
+    free(travel); application->campaign_travel=NULL;
+}
+
+static bool campaign_location(qa_application *application, qa_product_id geometry,
+    const char *map, qa_campaign_location *out, qa_error *error)
+{
+    application_provider *source=application_world_provider(application,QA_ROLE_ENTITIES,"");
+    const qa_product *product=qa_catalog_product(application->catalog,geometry);
+    if (!product || !product->identity || !source || !source->product ||
+        !source->product->identity || !source->launch)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Campaign location lost its actual content owner");
+    const char *implementation=source->launch->selection.implementation;
+    if (!implementation) implementation="";
+    size_t a=strlen(product->identity), b=strlen(source->product->identity), c=strlen(implementation);
+    if (a>SIZE_MAX-64 || b>SIZE_MAX-a-64 || c>SIZE_MAX-a-b-64)
+        return application_fail(error,QA_ERROR_MEMORY,"Campaign content identity extent exhausted");
+    size_t size=a+b+c+64;
+    char *text=malloc(size);
+    if (!text) return application_fail(error,QA_ERROR_MEMORY,"Retaining campaign content identity");
+    int length=snprintf(text,size,"%zu:%s%zu:%s%zu:%s",a,product->identity,b,source->product->identity,c,implementation);
+    qa_string_id content=0;
+    bool ok=length>=0 && (size_t)length<size &&
+        qa_strings_intern(qa_session_strings(application->session),
+            (qa_bytes){(const uint8_t *)text,(size_t)length},&content,error);
+    free(text);
+    if (ok) ok=qa_campaign_location_make(qa_session_strings(application->session),content,
+        (qa_bytes){(const uint8_t *)map,strlen(map)},out,error);
+    return ok;
+}
+
+static bool campaign_level_entry(qa_application *application, qa_error *error)
+{
+    if (!application->campaign_unit) {
+        application->campaign_unit=qa_campaign_unit_create(qa_session_strings(application->session),error);
+        if (!application->campaign_unit) return false;
+    }
+    if (application->campaign_travel) {
+        application_campaign_travel *travel=application->campaign_travel;
+        if (!travel->visit || !qa_campaign_visit_commit(travel->visit,error)) return false;
+        campaign_travel_dispose(application);
+        return true;
+    }
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(application));
+    qa_campaign_location destination,current;
+    if (!choices || !campaign_location(application,choices->world.geometry,choices->world.map,&destination,error)) return false;
+    bool new_unit=application->map_state && application->map_state->load_new_unit;
+    if (!new_unit && qa_campaign_unit_current(application->campaign_unit,&current) &&
+        qa_campaign_location_equal(current,destination)) return true;
+    qa_campaign_visit *visit=NULL;
+    bool ok=qa_campaign_unit_stage(application->campaign_unit,destination,new_unit,NULL,&visit,error) &&
+        qa_campaign_visit_commit(visit,error);
+    qa_campaign_visit_destroy(visit);
+    if (ok && application->map_state) application->map_state->load_new_unit=false;
+    return ok;
+}
+
 bool application_map_level_entry(qa_application *application, bool fresh, qa_error *error)
 {
     if (!application || !application->map_revision || !application->world) return true;
     struct application_map_state *state = map_state(application, error);
     if (!state) return false;
     if (state->entry_generation == application->map_revision) return true;
+    if (!campaign_level_entry(application,error)) return false;
     if (state->save_request_revision == UINT64_MAX)
         return application_fail(error, QA_ERROR_MEMORY, "level save request identity exhausted");
     state->entry_generation = application->map_revision;
@@ -397,6 +464,62 @@ static bool travel_current(qa_application *application, uint64_t revision,
     return true;
 }
 
+bool qa_application_campaign_depart(qa_application *application, uint64_t revision,
+    bool *needed, qa_error *error)
+{
+    struct application_map_state *state=NULL;
+    if (!needed || !travel_current(application,revision,&state,error)) return false;
+    *needed=false;
+    if (application->campaign_travel) {
+        *needed=application->campaign_travel->request.revision==revision;
+        return *needed || application_fail(error,QA_ERROR_ARGUMENT,"Campaign departure changed before publication");
+    }
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(application));
+    const qa_travel_target *target=state->route.targets+state->cursor;
+    const qa_product *geometry=choices?qa_catalog_product(application->catalog,choices->world.geometry):NULL;
+    qa_mode_view mode;
+    if (!choices || !choices->world.campaign || !state->carry_players || target->new_unit ||
+        target->kind!=QA_TRAVEL_MAP || !geometry || geometry->family!=QA_GAME_Q2 ||
+        (state->geometry && state->geometry!=choices->world.geometry)) return true;
+    if (!qa_modes_read(application->modes,application->primary_mode,&mode,error)) return false;
+    if (mode.rules.kind!=QA_MODE_SINGLE_PLAYER && mode.rules.kind!=QA_MODE_COOPERATIVE) return true;
+    application_campaign_travel *travel=calloc(1,sizeof(*travel));
+    if (!travel) return application_fail(error,QA_ERROR_MEMORY,"Retaining campaign departure");
+    bool ok=qa_application_travel_read(application,&travel->request) &&
+        campaign_location(application,choices->world.geometry,choices->world.map,&travel->source,error) &&
+        campaign_location(application,choices->world.geometry,target->name,&travel->destination,error) &&
+        application_players_campaign_prepare(application,state->has_landmark?&state->landmark:NULL,
+            &travel->players,error);
+    if (!ok) { application_players_dispose(travel->players); free(travel); return false; }
+    application->campaign_travel=travel;
+    if (!application_players_campaign_exclude(application,error)) return false;
+    *needed=true;
+    return true;
+}
+
+bool qa_application_campaign_stage(qa_application *application, const qa_save_image *image,
+    qa_error *error)
+{
+    application_campaign_travel *travel=application?application->campaign_travel:NULL;
+    const qa_save_metadata *metadata=qa_save_image_metadata(image);
+    if (!travel || travel->visit || !map_safe(application) || !metadata ||
+        metadata->purpose!=QA_SAVE_TRANSITION || metadata->world_generation!=application->map_revision)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Campaign stage requires its actual departed state image");
+    qa_buffer bytes={0}; qa_campaign_world *departure=NULL;
+    bool ok=qa_save_image_encode(image,&bytes,error) &&
+        qa_campaign_world_take(travel->source,&bytes,&departure,error) &&
+        qa_campaign_unit_stage(application->campaign_unit,travel->destination,false,departure,&travel->visit,error);
+    qa_campaign_world_release(departure); qa_buffer_free(&bytes);
+    return ok;
+}
+
+qa_bytes qa_application_campaign_restore(const qa_application *application)
+{
+    const application_campaign_travel *travel=application?application->campaign_travel:NULL;
+    const qa_campaign_world *world=travel && travel->visit?qa_campaign_visit_restore(travel->visit):NULL;
+    return world?qa_campaign_world_bytes(world):(qa_bytes){0};
+}
+
 bool qa_application_commit_travel(qa_application *application,
                                    uint64_t revision, qa_error *error)
 {
@@ -546,6 +669,9 @@ void application_map_dispose(qa_application *application)
     if (application == NULL)
         return;
     application_players_close(application);
+    campaign_travel_dispose(application);
+    qa_campaign_unit_destroy(application->campaign_unit);
+    application->campaign_unit=NULL;
     if (application->map_state == NULL) return;
     qa_launch_draft_destroy(application->map_state->restart_draft);
     qa_travel_route_free(&application->map_state->route);
@@ -677,7 +803,7 @@ static bool map_checkpoint_fields(qa_source_save_io *io, struct application_map_
     return true;
 }
 
-bool application_map_checkpoint_capture(qa_application *application, qa_buffer *out,
+bool application_map_checkpoint_capture(qa_application *application, bool departed, qa_buffer *out,
                                          qa_error *error)
 {
     if (!application || !out || !application->session || !qa_session_safe(application->session) ||
@@ -687,7 +813,7 @@ bool application_map_checkpoint_capture(qa_application *application, qa_buffer *
     qa_source_save_io io;
     if (!qa_source_save_writer(&io, application->session, error)) return false;
     uint8_t signature[] = {'Q','A','M','T'};
-    bool present = application->map_state != NULL;
+    bool present = !departed && application->map_state != NULL;
     bool ok = qa_source_save_bytes(&io, signature, sizeof(signature)) &&
         qa_source_save_bool(&io, &present);
     if (ok && present) {
@@ -702,35 +828,117 @@ bool application_map_checkpoint_capture(qa_application *application, qa_buffer *
                 ok = application_fail(error, QA_ERROR_ARGUMENT, "map continuation changed during capture");
         }
     }
-    if (ok) ok = qa_source_save_finish(&io, out);
+    if (ok) ok = application_campaign_fields(&io,application,departed) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     return ok;
 }
 
-static bool own_map_route(qa_travel_route *route, qa_error *error)
+static bool own_map_route(qa_travel_route *route, const qa_travel_route *source,
+    qa_error *error)
 {
-    size_t size = 0;
-    for (size_t i = 0; i < route->count; ++i) {
-        size_t name = strlen(route->targets[i].name), spawn = strlen(route->targets[i].spawn_point);
-        if (name > SIZE_MAX - 2 || spawn > SIZE_MAX - name - 2 || size > SIZE_MAX - name - spawn - 2)
-            return application_fail(error, QA_ERROR_MEMORY, "authored map continuation text extent is exhausted");
-        size += name + spawn + 2;
+    size_t size=0;
+    for (size_t i=0;i<source->count;++i) {
+        size_t name=strlen(source->targets[i].name)+1, spawn=strlen(source->targets[i].spawn_point)+1;
+        if (name>SIZE_MAX-size || spawn>SIZE_MAX-size-name)
+            return application_fail(error,QA_ERROR_MEMORY,"Authored map continuation text extent exhausted");
+        size+=name+spawn;
     }
-    char *storage = size ? malloc(size) : NULL;
-    if (size && !storage)
-        return application_fail(error, QA_ERROR_MEMORY, "retaining owned authored map continuation text");
-    size_t position = 0;
-    for (size_t i = 0; i < route->count; ++i) {
-        size_t name = strlen(route->targets[i].name) + 1, spawn = strlen(route->targets[i].spawn_point) + 1;
-        memcpy(storage + position, route->targets[i].name, name);
-        free((void *)route->targets[i].name);
-        route->targets[i].name = storage + position; position += name;
-        memcpy(storage + position, route->targets[i].spawn_point, spawn);
-        free((void *)route->targets[i].spawn_point);
-        route->targets[i].spawn_point = storage + position; position += spawn;
+    bool decoded=route==source;
+    if (source->count>SIZE_MAX/sizeof(*source->targets))
+        return application_fail(error,QA_ERROR_MEMORY,"Map continuation target extent exhausted");
+    qa_travel_target *targets=decoded?route->targets:
+        source->count?malloc(source->count*sizeof(*targets)):NULL;
+    if (!decoded && source->count && !targets)
+        return application_fail(error,QA_ERROR_MEMORY,"Retaining map continuation targets");
+    char *storage=size?malloc(size):NULL;
+    if (size && !storage) {
+        if (!decoded) free(targets);
+        return application_fail(error,QA_ERROR_MEMORY,"Retaining map continuation text");
     }
-    route->storage = storage;
+    size_t offset=0;
+    for (size_t i=0;i<source->count;++i) {
+        const char *name=source->targets[i].name, *spawn=source->targets[i].spawn_point;
+        targets[i]=source->targets[i];
+        size_t n=strlen(name)+1, m=strlen(spawn)+1;
+        memcpy(storage+offset,name,n); targets[i].name=storage+offset; offset+=n;
+        memcpy(storage+offset,spawn,m); targets[i].spawn_point=storage+offset; offset+=m;
+        if (decoded) { free((void *)name); free((void *)spawn); }
+    }
+    size_t count=source->count;
+    if (!decoded) qa_travel_route_free(route);
+    *route=(qa_travel_route){.targets=targets,.count=count,.storage=storage};
     return true;
+}
+
+static bool campaign_relocate(qa_application *candidate, const qa_application *previous,
+    qa_campaign_location *location, qa_error *error)
+{
+    qa_strings *from=qa_session_strings(previous->session), *to=qa_session_strings(candidate->session);
+    return qa_strings_intern(to,qa_strings_text(from,location->content),&location->content,error) &&
+        qa_strings_intern(to,qa_strings_text(from,location->map),&location->map,error);
+}
+
+static bool campaign_route_copy(const struct application_map_state *source,
+    struct application_map_state *destination, qa_error *error)
+{
+    if (!own_map_route(&destination->route,&source->route,error)) return false;
+    destination->cursor=source->cursor;
+    destination->revision=source->revision;
+    destination->carry_players=source->carry_players;
+    destination->complete_campaign=source->complete_campaign;
+    destination->pending=false; destination->has_landmark=false;
+    destination->publication_complete=true; destination->match_finished=false;
+    return true;
+}
+
+bool qa_application_campaign_reenter(qa_application *candidate, qa_application *previous,
+    qa_error *error)
+{
+    application_campaign_travel *travel=previous?previous->campaign_travel:NULL;
+    if (!candidate || !travel || !travel->visit || !travel->players || !map_safe(candidate) ||
+        previous->map_revision==UINT64_MAX || !previous->map_state)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Campaign reentry requires its retained visit and restored world");
+    qa_campaign_unit_checkpoint checkpoint={0};
+    bool ok=qa_campaign_visit_capture(travel->visit,&checkpoint,error) &&
+        campaign_relocate(candidate,previous,&checkpoint.current,error);
+    for (size_t i=0;ok && i<checkpoint.count;++i) {
+        qa_campaign_location location=qa_campaign_world_location(checkpoint.worlds[i]);
+        qa_campaign_world *world=NULL;
+        ok=campaign_relocate(candidate,previous,&location,error) &&
+            qa_campaign_world_relocate(checkpoint.worlds[i],location,&world,error);
+        if (ok) { qa_campaign_world_release(checkpoint.worlds[i]); checkpoint.worlds[i]=world; }
+    }
+    if (ok) ok=qa_campaign_unit_restore(candidate->campaign_unit,&checkpoint,error);
+    qa_campaign_unit_checkpoint_free(&checkpoint);
+    for (size_t i=0;ok && i<previous->provider_count;++i) {
+        const application_provider *source=previous->providers[i];
+        for (size_t j=0;j<candidate->provider_count;++j) {
+            application_provider *next=candidate->providers[j];
+            if (strcmp(source->launch->selection.instance,next->launch->selection.instance)) continue;
+            next->q1_server_flags=source->q1_server_flags;
+            next->q2_server_flags=source->q2_server_flags;
+        }
+    }
+    if (ok) ok=application_players_campaign_reenter(candidate,previous,travel->players,
+        travel->request.target.spawn_point,error);
+    struct application_map_state *state=ok?map_state(candidate,error):NULL;
+    if (ok) ok=state && campaign_route_copy(previous->map_state,state,error);
+    if (ok) {
+        state->geometry=qa_launch_snapshot_choices(qa_application_launch(candidate))->world.geometry;
+        state->provider=0; state->cause=(qa_actor_id){0};
+        for (size_t i=0;i<previous->provider_count;++i) {
+            const application_provider *source=previous->providers[i];
+            if (source->owner!=previous->map_state->provider) continue;
+            for (size_t j=0;j<candidate->provider_count;++j)
+                if (!strcmp(source->launch->selection.instance,candidate->providers[j]->launch->selection.instance))
+                    state->provider=candidate->providers[j]->owner;
+        }
+        candidate->map_revision=previous->map_revision+1;
+        state->entry_generation=0;
+        ok=nextserver_prepare(candidate,state,&state->nextserver,error) &&
+            application_map_level_entry(candidate,false,error);
+    }
+    return ok;
 }
 
 bool application_map_checkpoint_restore(qa_application *candidate, qa_bytes bytes,
@@ -750,8 +958,8 @@ bool application_map_checkpoint_restore(qa_application *candidate, qa_bytes byte
         if (!state) ok = application_fail(error, QA_ERROR_MEMORY, "allocating isolated map continuation");
         else ok = map_checkpoint_fields(&io, state, &state->geometry, candidate->catalog);
     }
-    if (ok) ok = qa_source_save_finish(&io, NULL);
-    if (ok && state) ok = own_map_route(&state->route, error);
+    if (ok) ok = application_campaign_fields(&io,candidate,false) && qa_source_save_finish(&io, NULL);
+    if (ok && state) ok = own_map_route(&state->route, &state->route, error);
     qa_source_save_dispose(&io);
     if (!ok) {
         if (state) {

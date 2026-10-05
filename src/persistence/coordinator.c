@@ -10,7 +10,7 @@ bool qa_save_capture(void *context, const qa_save_capture_ops *ops, qa_save_purp
     const qa_save_owner *owners = NULL;
     size_t count = 0;
     if (!ops->begin(context, purpose, &metadata, &owners, &count, error)) return false;
-    bool ok = owners && count >= QA_SAVE_PROVIDER - 1u && count <= QA_SAVE_OWNER_LIMIT &&
+    bool ok = owners && count && count <= QA_SAVE_OWNER_LIMIT &&
               metadata.purpose == purpose;
     qa_save_record *records = ok ? calloc(count, sizeof(*records)) : NULL;
     qa_save_image *image = NULL;
@@ -56,11 +56,10 @@ bool qa_save_restore(void *context, const qa_save_restore_ops *ops,
         QA_SAVE_STRINGS, QA_SAVE_RESOURCES, QA_SAVE_CONFIGURATION, QA_SAVE_SESSION,
         QA_SAVE_ACTORS, QA_SAVE_PROVIDER, QA_SAVE_ROSTER, QA_SAVE_MODES, QA_SAVE_EQUIPMENT,
         QA_SAVE_WORLD, QA_SAVE_COMBAT, QA_SAVE_INVENTORY,
-        QA_SAVE_PICKUPS, QA_SAVE_TARGETS, QA_SAVE_CAMPAIGN,
+        QA_SAVE_PICKUPS, QA_SAVE_TARGETS,
         QA_SAVE_PROGRESSION,
-        QA_SAVE_CONTROLS, QA_SAVE_CVARS, QA_SAVE_CONNECTIONS, QA_SAVE_COMMANDS, QA_SAVE_EVENTS,
-        QA_SAVE_NAVIGATION, QA_SAVE_BOTS, QA_SAVE_PREDICTION, QA_SAVE_APPLICATION,
-        QA_SAVE_PRESENTATION, QA_SAVE_AUDIO, QA_SAVE_INPUT, QA_SAVE_MEDIA
+        QA_SAVE_CONTROLS, QA_SAVE_CVARS, QA_SAVE_COMMANDS, QA_SAVE_EVENTS,
+        QA_SAVE_NAVIGATION, QA_SAVE_BOTS, QA_SAVE_APPLICATION
     };
     bool ok = true;
     for (size_t stage = 0; ok && stage < sizeof(order) / sizeof(*order); ++stage)

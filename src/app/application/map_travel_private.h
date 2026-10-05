@@ -24,7 +24,7 @@ bool application_map_level_entry(qa_application *, bool fresh, qa_error *);
 bool application_map_autosave_request(qa_application *, qa_error *);
 void application_map_load_finish(qa_application *, bool published);
 bool application_map_stop_prepare(qa_application *, qa_error *);
-bool application_map_checkpoint_capture(qa_application *, qa_buffer *, qa_error *);
+bool application_map_checkpoint_capture(qa_application *, bool departed, qa_buffer *, qa_error *);
 bool application_map_checkpoint_restore(qa_application *candidate, qa_bytes, qa_error *);
 bool application_source_queue_map_travel(qa_application *,
     const qa_application_travel_request *, qa_error *);

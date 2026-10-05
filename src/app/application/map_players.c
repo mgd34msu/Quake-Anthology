@@ -4199,6 +4199,163 @@ bool qa_application_remote_player_detach(qa_application *application,
     return true;
 }
 
+bool application_players_campaign_prepare(qa_application *application,
+    const qa_q2_landmark *landmark, application_player_travel **out, qa_error *error)
+{
+    if (!player_detach_ready(application,error)) return false;
+    const qa_launch_snapshot *snapshot=qa_application_launch(application);
+    application_publication publication={.previous=snapshot,.candidate=snapshot,
+        .next=application->providers,.next_count=application->provider_count,
+        .map_provider=application->players->map_provider,
+        .map={.family=application->players->family}};
+    return application_players_prepare(application,&publication,true,false,landmark,out,error);
+}
+
+bool application_players_campaign_exclude(qa_application *application, qa_error *error)
+{
+    if (!player_detach_ready(application,error)) return false;
+    for (size_t i=0;i<application->players->count;++i) {
+        qa_actor_id actor=application->players->records[i].actor;
+        if (qa_actors_get(qa_session_actors(application->session),actor) &&
+            !player_detach(application,i,error)) return false;
+    }
+    return true;
+}
+
+bool application_players_campaign_consume(qa_application *application,
+    application_publication *publication, application_player_travel **out, qa_error *error)
+{
+    application_campaign_travel *pending=application->campaign_travel;
+    application_player_travel *travel=pending?pending->players:NULL;
+    if (!travel || !travel->roster || !publication || !publication->map_provider)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Campaign publication lost its retained player carry");
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(publication->candidate);
+    for (size_t i=0;i<travel->count;++i) {
+        application_player_record *record=travel->roster->records+i;
+        qa_launch_seat *seat=travel->seats+i;
+        record->configured_actor=(qa_actor_id){0};
+        for (size_t j=0;j<choices->seat_count;++j)
+            if (choices->seats[j].id==record->seat) record->configured_actor=choices->seats[j].actor;
+        seat->actor=record->configured_actor;
+        record->character=seat_provider(publication,seat,QA_ROLE_CHARACTER);
+        if (!player_adapter_available(record->character) ||
+            !player_adapter_available(seat_provider(publication,seat,QA_ROLE_MOVEMENT)) ||
+            !player_adapter_available(seat_provider(publication,seat,QA_ROLE_ARSENAL)))
+            return application_fail(error,QA_ERROR_UNSUPPORTED,"Campaign carry lost its selected player adapter");
+    }
+    travel->roster->map_provider=publication->map_provider;
+    travel->roster->family=publication->map.family;
+    if (!application_map_spawn_point(application,choices,&travel->roster->spawn_point,error)) return false;
+    pending->players=NULL; *out=travel;
+    return true;
+}
+
+static application_provider *campaign_provider(qa_application *candidate,
+    const qa_application *previous, qa_actor_owner owner)
+{
+    if (!owner) return NULL;
+    for (size_t i=0;i<previous->provider_count;++i) {
+        const application_provider *source=previous->providers[i];
+        if (source->owner!=owner) continue;
+        for (size_t j=0;j<candidate->provider_count;++j) {
+            application_provider *next=candidate->providers[j];
+            if (!strcmp(source->launch->selection.instance,next->launch->selection.instance)) return next;
+        }
+    }
+    return NULL;
+}
+
+static bool campaign_string(qa_application *candidate, const qa_application *previous,
+    qa_string_id *value, qa_error *error)
+{
+    if (*value==QA_STRING_NONE) return true;
+    qa_bytes text=qa_strings_text(qa_session_strings(previous->session),*value);
+    return qa_strings_intern(qa_session_strings(candidate->session),text,value,error);
+}
+
+static bool campaign_armor(qa_application *candidate, const qa_application *previous,
+    qa_armor *armor, qa_error *error)
+{
+    if (!campaign_string(candidate,previous,&armor->regular.item,error)) return false;
+    application_provider *source=campaign_provider(candidate,previous,armor->powered.source_owner);
+    if (armor->powered.source_owner && !source)
+        return application_fail(error,QA_ERROR_FORMAT,"Campaign armor lost its Source owner");
+    armor->powered.source_owner=source?source->owner:0;
+    return true;
+}
+
+bool application_players_campaign_reenter(qa_application *candidate,
+    qa_application *previous, application_player_travel *travel,
+    const char *spawn_point, qa_error *error)
+{
+    if (!candidate || !previous || !travel || !travel->roster || !candidate->players ||
+        !qa_session_safe(candidate->session) || !qa_world_idle(candidate->world))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Campaign reentry requires its restored world and retained players");
+    struct application_player_roster *destination=candidate->players;
+    for (size_t i=0;i<destination->count;++i)
+        if (qa_actors_get(qa_session_actors(candidate->session),destination->records[i].actor))
+            return application_fail(error,QA_ERROR_FORMAT,"Departed world retained an active client");
+    const qa_launch_snapshot *snapshot=qa_application_launch(candidate);
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(snapshot);
+    application_publication publication={.candidate=snapshot,.next=candidate->providers,
+        .next_count=candidate->provider_count,.map_provider=destination->map_provider};
+    for (size_t i=0;i<travel->count;++i) {
+        application_player_record *record=travel->roster->records+i;
+        application_player_carry *carry=travel->carry+i;
+        record->character=seat_provider(&publication,travel->seats+i,QA_ROLE_CHARACTER);
+        if (!record->character) return application_fail(error,QA_ERROR_FORMAT,"Campaign player lost its selected character");
+        record->configured_actor=(qa_actor_id){0};
+        for (size_t j=0;j<choices->seat_count;++j)
+            if (choices->seats[j].id==record->seat) record->configured_actor=choices->seats[j].actor;
+        for (size_t j=0;j<carry->count;++j)
+            if (!campaign_string(candidate,previous,&carry->inventory[j].item,error)) return false;
+        for (size_t j=0;j<carry->q2.count;++j)
+            if (!campaign_string(candidate,previous,&carry->q2.inventory[j].item,error)) return false;
+        if (!campaign_string(candidate,previous,&carry->q1.weapon_model,error) ||
+            !campaign_string(candidate,previous,&carry->q2.selected_item,error) ||
+            !campaign_armor(candidate,previous,&carry->combat.armor,error) ||
+            !campaign_armor(candidate,previous,&carry->q2.armor,error)) return false;
+        application_provider *character=campaign_provider(candidate,previous,carry->character_owner);
+        application_provider *arsenal=campaign_provider(candidate,previous,carry->arsenal_owner);
+        if ((carry->character_owner && !character) || (carry->arsenal_owner && !arsenal))
+            return application_fail(error,QA_ERROR_FORMAT,"Campaign carry lost its admitted provider");
+        carry->character_owner=character?character->owner:0;
+        carry->arsenal_owner=arsenal?arsenal->owner:0;
+        for (size_t j=0;j<carry->guest_count;++j) {
+            application_provider *guest=campaign_provider(candidate,previous,carry->guests[j].owner);
+            if (!guest) return application_fail(error,QA_ERROR_FORMAT,"Campaign carry lost its guest provider");
+            carry->guests[j].owner=guest->owner;
+        }
+        if (carry->q1_source && candidate!=previous) {
+            qa_buffer bytes={0}; qa_q1_travel_state *restored=NULL;
+            bool ok=qa_q1_travel_encode(previous->session,carry->q1_source,&bytes,error) &&
+                qa_q1_travel_decode(candidate->session,(qa_bytes){bytes.data,bytes.size},&restored,error);
+            qa_buffer_free(&bytes);
+            if (!ok) return false;
+            qa_q1_travel_destroy(carry->q1_source); carry->q1_source=restored;
+        }
+        travel->seats[i].name=record->name; travel->seats[i].team=record->team;
+        travel->seats[i].bot_definition=record->bot_definition;
+        travel->seats[i].actor=record->configured_actor;
+    }
+    struct application_player_roster *roster=travel->roster;
+    roster->map_provider=destination->map_provider; roster->family=destination->family;
+    roster->world_type=destination->world_type;
+    free(roster->points); roster->points=destination->points; destination->points=NULL;
+    roster->point_count=destination->point_count; destination->point_count=0;
+    free(roster->q1_points); roster->q1_points=destination->q1_points; destination->q1_points=NULL;
+    roster->q1_point_count=destination->q1_point_count; destination->q1_point_count=0;
+    qa_q1_spawn_selector_destroy(roster->q1_selector);
+    roster->q1_selector=destination->q1_selector; destination->q1_selector=NULL;
+    /* Respawn rebuilds the ordinary selector from the retained authored points. */
+    free(roster->q1_points); roster->q1_points=NULL; roster->q1_point_count=0;
+    qa_q1_spawn_selector_destroy(roster->q1_selector); roster->q1_selector=NULL;
+    roster->spawn_point=QA_STRING_NONE;
+    if (spawn_point && *spawn_point && !qa_strings_intern(qa_session_strings(candidate->session),
+        (qa_bytes){(const uint8_t *)spawn_point,strlen(spawn_point)},&roster->spawn_point,error)) return false;
+    return application_players_publish(candidate,choices,travel,error);
+}
+
 bool qa_application_local_player_clients_retire(qa_application *application, qa_error *error)
 {
     if (!player_detach_ready(application,error) || qa_application_startup_pending(application))

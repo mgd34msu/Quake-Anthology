@@ -9,6 +9,7 @@
 #include "native_q2_console.h"
 #include "guest_native_q2_private.h"
 #include "map_travel_private.h"
+#include "map_players_private.h"
 #include "portals.h"
 #include "q3_round.h"
 #include "native_q3_console.h"
@@ -245,8 +246,10 @@ bool application_map_prepare(qa_application *application,
         !application_q3_world_restart_active(application) &&
         !application_native_q3_session_capture_carry(old_source, error))
         return false;
-    if (!application_players_prepare(application, publication, carry, unit,
-                                      landmark, &publication->players, error))
+    if (!(application->campaign_travel && application->campaign_travel->players
+        ? application_players_campaign_consume(application,publication,&publication->players,error)
+        : application_players_prepare(application, publication, carry, unit,
+                                      landmark, &publication->players, error)))
         return false;
     if (publication->map_provider->kind == APPLICATION_PROVIDER_Q1 &&
         publication->entities.count != 0) {

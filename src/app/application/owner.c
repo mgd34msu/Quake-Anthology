@@ -317,6 +317,8 @@ static bool create_application(const qa_application_options *options,
     }
     if (!session_created)
         goto fail;
+    application->campaign_unit=qa_campaign_unit_create(qa_session_strings(application->session),error);
+    if (!application->campaign_unit) goto fail;
     if (!qa_inventory_create(qa_session_actor_registry(application->session),
                              &application->inventory, error))
         goto fail;

@@ -101,8 +101,6 @@ struct frontend_config_store {
     frontend_neutral_configs *neutral;
     frontend_source_admin *admin;
     frontend_qw_logfile *qw_logfile;
-    char *admin_source;
-    qa_sha256_digest admin_identity;
     config_variable_carry *variable_carries;
     frontend_config_source *prepared_primary;
     frontend_config_source *input_source;
@@ -114,14 +112,11 @@ struct frontend_config_store {
     const qa_launch_snapshot *prepared;
     qa_application *prepared_application;
     frontend_keys_publication key_publication;
-    frontend_keys_cvar_refs restore_refs;
     frontend_shared_settings *shared;
     frontend_shared_publication *publication;
     qa_application *shared_application;
     const qa_launch_snapshot *shared_candidate;
     frontend_shared_storage *storage;
-    qa_buffer restored_storage;
-    qa_application_content_graph *storage_graph;
     qa_console *images_console;
     qa_console *root_console;
     qa_cvars *root_cvars;
@@ -2819,8 +2814,8 @@ bool frontend_config_store_local_seats_retire(frontend_config_store *manager,qa_
     return true;
 }
 
-static bool prepare(void *context,qa_application *application,const qa_launch_snapshot *candidate,
-    const qa_application_startup_source *authority,void **phase,qa_error *error)
+static bool prepare_source_row(void *context,qa_application *application,const qa_launch_snapshot *candidate,
+    const qa_application_startup_source *authority,void **phase,bool restored,qa_error *error)
 {
     const qa_launch_instance *selected=authority?authority->descriptor:NULL;
     qa_console *console=authority?authority->console:NULL; qa_cvars *cvars=authority?authority->cvars:NULL;
@@ -2831,7 +2826,7 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
     if (!phase || *phase || !selected || !console || !cvars || !command || !game_scope(authority->scope) ||
         authority->scope.provider!=command->owner || frontend_config_store_source(manager,console))
         return fail(error,QA_ERROR_ARGUMENT,"Source configuration requires its fresh actual console and registry");
-    if (previous_source(manager,application,candidate,selected)) {
+    if (!restored && previous_source(manager,application,candidate,selected)) {
         frontend_config_source *carried=NULL;
         if (!carry(manager,application,candidate,authority,&carried,error)) return false;
         *phase=carried;
@@ -2873,7 +2868,7 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
     if (ok) source->fallback=source->movement_dialect==command->dialect?source->movement:registry(source,command->dialect,error);
     ok=ok && source->movement && source->fallback;
     const char *dialects[]={"q1-netquake","q1-quakeworld","q2-classic","q2-rerelease","q3"};
-    if (ok && source->primary)
+    if (ok && source->primary && !restored)
         ok=source_archive_load(source->files,product,&selected->selection,command->dialect,&source->source_archive,error);
     if (ok && source->primary && !f->options.dedicated) {
         const char *movement_owner[2]={"movement",dialects[source->movement_dialect]};
@@ -2888,12 +2883,30 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
         ok=seat_create(source,candidate,seat,logical,i,error);
     }
     if (ok) ok=install_commands(source,error);
-    if (ok && source->primary) ok=phase_create(source,error);
+    if (ok && source->primary && !restored) ok=phase_create(source,error);
+    if (ok && restored) {
+        qa_cvars *engine=qa_application_cvars(application);
+        ok=apply_archive(source->movement,&source->movement_archive,NULL,engine,NULL,false,error) &&
+            (source->fallback==source->movement ||
+                apply_archive(source->fallback,&source->fallback_archive,NULL,engine,NULL,false,error));
+        for (size_t i=0;ok && i<source->seat_count;++i) {
+            config_seat *seat=source->seats+i;
+            ok=frontend_authored_bindings_defaults(seat->authored,seat->input,seat->movement_dialect,error) &&
+                apply_archive(seat->cvars,&seat->client_archive,NULL,qa_application_cvars(application),NULL,false,error) &&
+                apply_archive(seat->mouse,&seat->mouse_archive,NULL,qa_application_cvars(application),NULL,false,error) &&
+                seat_settings_apply(seat,error);
+            if (ok) frontend_authored_bindings_finish(seat->authored);
+        }
+        source->configured=source->released=source->initial_variables=ok;
+    }
     if (!ok) { qa_error cleanup={0}; if (!source_destroy(source,&cleanup) && error) *error=cleanup; return false; }
     source->next=manager->sources; manager->sources=source;
     *phase=source;
-    return frontend_config_store_shared_begin(manager,application,candidate,authority,error);
+    return restored || frontend_config_store_shared_begin(manager,application,candidate,authority,error);
 }
+static bool prepare(void *context,qa_application *application,const qa_launch_snapshot *candidate,
+    const qa_application_startup_source *authority,void **phase,qa_error *error)
+{ return prepare_source_row(context,application,candidate,authority,phase,false,error); }
 static bool advance(void *context,void *phase,qa_console *console,bool *complete,qa_error *error)
 {
     frontend_config_store *manager=context;
@@ -3625,10 +3638,8 @@ bool frontend_config_store_destroy(frontend_config_store *manager,qa_error *erro
     }
     if (!frontend_source_admin_destroy(manager->admin,error)) return false;
     manager->admin=NULL;
-    free(manager->admin_source);
     variable_carries_discard(manager,NULL,NULL,NULL);
     frontend_shared_storage_destroy(manager->storage);
-    qa_buffer_free(&manager->restored_storage);
     free(manager); return true;
 }
 bool frontend_config_store_read(frontend_config_store *manager,const qa_console *console,const qa_command_context *command,
@@ -3996,36 +4007,6 @@ bool frontend_config_store_neutral_adopt_store(frontend_config_store *manager,co
         shared_storage_prepare(manager,error);
 }
 
-static bool config_blob(qa_source_save_io *io,qa_bytes *bytes)
-{
-    size_t count=bytes->size;
-    size_t maximum=io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX;
-    if (!qa_source_save_count(io,&count,maximum)) return false;
-    if (io->direction==QA_SOURCE_SAVE_WRITE) return qa_source_save_bytes(io,(void *)bytes->data,count);
-    if (count>io->input.size-io->offset) {
-        io->failed=true;
-        return fail(io->error,QA_ERROR_FORMAT,"Configuration blob exceeds its admitted section");
-    }
-    *bytes=(qa_bytes){io->input.data+io->offset,count}; io->offset+=count; return true;
-}
-static bool registry_bytes(frontend_config_source *source,qa_source_save_io *io,qa_cvars **cvars)
-{
-    uint32_t dialect=*cvars?qa_cvars_dialect(*cvars):0;
-    qa_buffer captured={0}; qa_bytes bytes={0};
-    bool ok=qa_source_save_u32(io,&dialect) && dialect<=QA_CONSOLE_Q3;
-    if (ok && io->direction==QA_SOURCE_SAVE_WRITE) {
-        ok=*cvars && qa_cvars_save_capture(*cvars,&captured,io->error);
-        bytes=(qa_bytes){captured.data,captured.size};
-    }
-    if (ok) ok=config_blob(io,&bytes) && bytes.size;
-    if (ok && io->direction==QA_SOURCE_SAVE_READ) {
-        *cvars=registry(source,(qa_console_dialect)dialect,io->error);
-        qa_cvars_restore *ticket=NULL;
-        ok=*cvars && qa_cvars_save_prepare(*cvars,bytes,&ticket,io->error) && qa_cvars_save_commit(ticket,io->error);
-        if (!ok) qa_cvars_save_abort(ticket);
-    }
-    qa_buffer_free(&captured); return ok;
-}
 bool frontend_config_store_visit(const frontend_config_store *manager,
     const qa_application_content_visitor *visitor,qa_error *error)
 {
@@ -4049,307 +4030,6 @@ bool frontend_config_store_visit(const frontend_config_store *manager,
         (!manager->storage || (manager->storage_seeded && shared_storage_current(manager) &&
             frontend_shared_storage_visit(manager->storage,visitor,error)));
 }
-static bool config_header(qa_source_save_io *io,size_t *count)
-{
-    uint8_t magic[4]={'Q','F','C','S'};
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCS",4) &&
-        qa_source_save_count(io,count,
-            io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX);
-}
-static bool config_row(frontend_config_source *source,qa_source_save_io *io,
-    qa_application_content_graph *graph,frontend_keys *keys,const frontend_keys_cvar_refs *refs)
-{
-    (void)refs;
-    const bool writing=io->direction==QA_SOURCE_SAVE_WRITE;
-    char *name=writing?(char *)instance(source)->selection.instance:NULL;
-    qa_sha256_digest identity=writing?instance(source)->identity:(qa_sha256_digest){0};
-    uint32_t dialect=source->command.dialect,movement=source->movement_dialect;
-    uint32_t scope=source->scope.kind;
-    uint64_t key=frontend_key_profile_id(source->keys);
-    bool same=source->fallback==source->movement;
-    bool ok=qa_source_save_owned_text(io,&name) && name && *name &&
-        qa_source_save_bytes(io,&identity,sizeof(identity)) && qa_source_save_u32(io,&dialect) && dialect<=QA_CONSOLE_Q3 &&
-        qa_source_save_u32(io,&scope) && scope<=QA_APPLICATION_CONSOLE_Q2_GAME &&
-        qa_source_save_u32(io,&source->scope.seat) &&
-        qa_source_save_u32(io,&movement) && movement<=QA_CONSOLE_Q3 &&
-        qa_source_save_bool(io,&source->primary) && qa_source_save_bool(io,&source->has_mod) &&
-        qa_source_save_u64(io,&key);
-    if (!writing) { source->saved_instance=name; source->saved_identity=identity;
-        source->command.dialect=(qa_console_dialect)dialect; source->movement_dialect=(qa_console_dialect)movement;
-        source->scope.kind=(qa_application_console_kind)scope; }
-    if (ok && !game_scope(source->scope)) ok=fail(io->error,QA_ERROR_FORMAT,"Saved configuration has no actual GAME scope");
-    qa_buffer captured={0}; qa_bytes bytes={0};
-    if (ok && key) {
-        if (!writing) {
-            source->keys=frontend_keys_profile(keys,key);
-            ok=source->keys && frontend_key_profile_saved_instance(source->keys) &&
-                !strcmp(frontend_key_profile_saved_instance(source->keys),name) &&
-                frontend_key_profile_retain(source->keys,io->error);
-            if (ok) source->files=frontend_key_profile_files(source->keys);
-            else source->keys=NULL;
-        }
-        ok=ok && dialect==QA_CONSOLE_Q3;
-    } else if (ok) {
-        if (writing) { ok=frontend_config_files_checkpoint(source->files,graph,&captured,io->error);
-            bytes=(qa_bytes){captured.data,captured.size}; }
-        if (ok) ok=config_blob(io,&bytes) && bytes.size;
-        if (ok && !writing) ok=frontend_config_files_restore(graph,bytes,&source->files,io->error);
-        qa_buffer_free(&captured);
-    }
-    if (ok) ok=registry_bytes(source,io,&source->movement) && qa_source_save_bool(io,&same);
-    if (ok && same && !writing) source->fallback=source->movement;
-    else if (ok && !same) ok=registry_bytes(source,io,&source->fallback);
-    if (ok) ok=qa_cvars_dialect(source->movement)==movement && qa_cvars_dialect(source->fallback)==dialect &&
-        same==(movement==dialect);
-    if (ok) ok=qa_source_save_count(io,&source->seat_count,QA_INPUT_LOCAL_SEATS);
-    for (size_t i=0;ok && i<source->seat_count;++i) {
-        config_seat *seat=source->seats+i;
-        uint32_t seat_movement=seat->movement_dialect;
-        ok=qa_source_save_u32(io,&seat->logical) && qa_source_save_u32(io,&seat_movement) &&
-            seat_movement<=QA_CONSOLE_Q3 && qa_source_save_bool(io,&seat->cvars_transferred);
-        if (!writing) seat->movement_dialect=(qa_console_dialect)seat_movement;
-        if (ok && !writing) { seat->authored=frontend_authored_bindings_create(io->error); ok=seat->authored!=NULL; }
-        if (ok) ok=frontend_authored_bindings_fields(seat->authored,io) && frontend_authored_bindings_completed(seat->authored);
-        for (size_t previous=0;ok && previous<i;++previous) ok=source->seats[previous].logical!=seat->logical;
-        if (ok && seat->cvars_transferred) {
-            char *receiver=NULL;
-            uint32_t logical=seat->logical;
-            if (writing) {
-                const qa_launch_instance *physical=NULL;
-                const frontend_client_registry *owner=frontend_client_registry_lookup(source->manager->frontend,seat->cvars);
-                ok=owner && owner==seat->registry &&
-                    frontend_client_registry_source(owner,&physical,&logical) &&
-                    frontend_client_registry_matches(owner,instance(source),seat->logical);
-                if (ok) receiver=(char *)physical->selection.instance;
-            }
-            if (ok) ok=qa_source_save_owned_text(io,&receiver) && receiver && *receiver &&
-                qa_source_save_u32(io,&logical) && logical==seat->logical && !strcmp(receiver,name);
-            if (!writing) seat->registry_instance=receiver;
-        } else if (ok) ok=registry_bytes(source,io,&seat->cvars);
-        if (ok) ok=registry_bytes(source,io,&seat->mouse) && qa_source_save_bool(io,&seat->found);
-        if (ok) ok=qa_cvars_dialect(seat->mouse)==dialect &&
-            (seat->cvars_transferred || qa_cvars_dialect(seat->cvars)==dialect);
-        if (ok && seat->found) {
-            if (writing) { ok=qa_seat_settings_encode(&seat->settings,&captured,io->error);
-                bytes=(qa_bytes){captured.data,captured.size}; }
-            if (ok) ok=config_blob(io,&bytes) && bytes.size;
-            if (ok && !writing) ok=qa_seat_settings_parse(bytes,&seat->settings,io->error);
-            qa_buffer_free(&captured);
-        }
-    }
-    bool dedicated=source->dedicated_bindings!=NULL;
-    if (ok) ok=qa_source_save_bool(io,&dedicated) && dedicated==(source->primary && !source->seat_count);
-    if (ok && dedicated) {
-        if (!writing) source->dedicated_bindings=frontend_config_bindings_create(io->error);
-        ok=source->dedicated_bindings && frontend_config_bindings_fields(source->dedicated_bindings,io);
-    }
-    return ok;
-}
-bool frontend_config_store_checkpoint(const frontend_config_store *manager,
-    const qa_application_content_graph *graph,const frontend_keys_cvar_refs *refs,qa_buffer *out,qa_error *error)
-{
-    if (!manager || manager->restoring || manager->running || manager->prepared || manager->shared || manager->variable_carries ||
-        manager->images_console || manager->images_program || manager->restored_storage.data || !graph ||
-        !out || out->data || out->size) return fail(error,QA_ERROR_ARGUMENT,"Configuration capture requires returned actual owners");
-    size_t count=0;
-    for (const frontend_config_source *source=manager->sources;source;source=source->next) {
-        if (!source->published || source->phase || source->running || source->imported || !source->metadata)
-            return fail(error,QA_ERROR_ARGUMENT,"Unpublished source configuration cannot enter a continuation");
-        if (source->keys && frontend_key_profile_registry(source->keys)!=source->cvars)
-            return fail(error,QA_ERROR_ARGUMENT,"Configuration key alias leaves its genuine physical GAME registry");
-        ++count;
-    }
-    qa_source_save_io io={0};
-    bool ok=qa_source_save_writer(&io,NULL,error) && config_header(&io,&count);
-    for (frontend_config_source *source=manager->sources;ok && source;source=source->next)
-        ok=config_row(source,&io,(qa_application_content_graph *)graph,NULL,refs);
-    qa_buffer clients={0}; qa_bytes bytes={0};
-    if (ok) { ok=frontend_remote_configs_checkpoint(manager->clients,graph,&clients,error);
-        bytes=(qa_bytes){clients.data,clients.size}; }
-    if (ok) ok=config_blob(&io,&bytes);
-    qa_buffer_free(&clients);
-    qa_buffer neutral={0};
-    if (ok) { ok=frontend_neutral_configs_checkpoint(manager->neutral,graph,&neutral,error);
-        bytes=(qa_bytes){neutral.data,neutral.size}; }
-    if (ok) ok=config_blob(&io,&bytes);
-    qa_buffer_free(&neutral);
-    bool shared=manager->storage!=NULL;
-    if (ok) ok=(shared || (!count && frontend_remote_configs_empty(manager->clients) && frontend_neutral_configs_empty(manager->neutral))) &&
-        (!shared || (manager->storage_seeded && shared_storage_current(manager))) && qa_source_save_bool(&io,&shared);
-    qa_buffer storage={0};
-    if (ok && shared) {
-        ok=frontend_shared_storage_checkpoint(manager->storage,graph,&storage,error);
-        bytes=(qa_bytes){storage.data,storage.size};
-        if (ok) ok=config_blob(&io,&bytes);
-    }
-    qa_buffer_free(&storage);
-    bool touched=manager->image_fov_touched,sticky=manager->sticky_seed_pending;
-    if (ok) ok=(!touched || shared) && (!sticky || (shared && !count &&
-        frontend_remote_configs_empty(manager->clients))) && qa_source_save_bool(&io,&touched) &&
-        qa_source_save_bool(&io,&sticky);
-    bool early=manager->admin!=NULL;
-    if (ok) ok=qa_source_save_bool(&io,&early);
-    if (ok && early) {
-        const qa_console *console=frontend_source_admin_console(manager->admin);
-        frontend_config_source *source=console?frontend_config_store_source((frontend_config_store *)manager,console):NULL;
-        qa_buffer admin={0};
-        char *name=source?(char *)instance(source)->selection.instance:NULL;
-        qa_sha256_digest identity=source?instance(source)->identity:(qa_sha256_digest){0};
-        qa_settings_store user=frontend_global_settings_storage_user_store(manager->frontend->global_settings_storage);
-        ok=source && source==published_primary(manager,manager->frontend->application) &&
-            frontend_source_admin_checkpoint(manager->admin,source->application,source->console,source->cvars,
-                &source->command,user,&admin,error) && qa_source_save_owned_text(&io,&name) &&
-            qa_source_save_bytes(&io,&identity,sizeof(identity));
-        bytes=(qa_bytes){admin.data,admin.size};
-        if (ok) ok=config_blob(&io,&bytes);
-        qa_buffer_free(&admin);
-        if (!ok && error && error->code==QA_OK)
-            fail(error,QA_ERROR_ARGUMENT,"Early administration capture lacks its genuine published primary Source");
-    }
-    bool logging=manager->qw_logfile!=NULL;
-    if (ok) ok=qa_source_save_bool(&io,&logging);
-    if (ok && logging) {
-        qa_buffer logfile={0};
-        ok=frontend_qw_logfile_checkpoint(manager->qw_logfile,graph,&logfile,error);
-        bytes=(qa_bytes){logfile.data,logfile.size};
-        if (ok) ok=config_blob(&io,&bytes);
-        qa_buffer_free(&logfile);
-    }
-    if (ok) ok=qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); return ok;
-}
-bool frontend_config_store_restore(qa_frontend *frontend,qa_application *application,
-    qa_application_content_graph *graph,frontend_keys *keys,const frontend_keys_cvar_refs *refs,
-    qa_bytes bytes,frontend_config_store **out,qa_error *error)
-{
-    if (!frontend || !application || !graph || !refs || !out || *out)
-        return fail(error,QA_ERROR_ARGUMENT,"Configuration import requires its isolated source manager and content graph");
-    frontend_config_store *manager=frontend_config_store_create(frontend,error);
-    if (!manager) return false;
-    manager->restoring=true; manager->restore_refs=*refs;
-    qa_source_save_io io={0}; size_t count=0;
-    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && config_header(&io,&count);
-    frontend_config_source **tail=&manager->sources;
-    for (size_t i=0;ok && i<count;++i) {
-        frontend_config_source *source=calloc(1,sizeof(*source));
-        if (!source) { ok=fail(error,QA_ERROR_MEMORY,"Decoding real source configuration continuation"); break; }
-        source->manager=manager; source->application=application; source->imported=true;
-        source->published=source->configured=source->released=true;
-        ok=config_row(source,&io,graph,keys,refs);
-        for (frontend_config_source *previous=manager->sources;ok && previous;previous=previous->next)
-            ok=strcmp(previous->saved_instance,source->saved_instance)!=0 &&
-                (!source->keys || previous->keys!=source->keys);
-        if (!ok) { source_destroy(source,NULL); break; }
-        *tail=source; tail=&source->next;
-    }
-    qa_bytes clients={0};
-    if (ok) ok=config_blob(&io,&clients) && clients.size &&
-        frontend_remote_configs_restore(manager->clients,application,graph,keys,clients,error);
-    qa_bytes neutral={0};
-    if (ok) ok=config_blob(&io,&neutral) && neutral.size &&
-        frontend_neutral_configs_restore(manager->neutral,graph,neutral,error);
-    bool shared=false;
-    if (ok) ok=qa_source_save_bool(&io,&shared) &&
-        (shared || (!count && frontend_remote_configs_empty(manager->clients) && frontend_neutral_configs_empty(manager->neutral)));
-    qa_bytes storage={0};
-    if (ok && shared) {
-        ok=config_blob(&io,&storage) && storage.size;
-        if (ok) {
-            manager->restored_storage.data=malloc(storage.size);
-            ok=manager->restored_storage.data!=NULL;
-            if (ok) { memcpy(manager->restored_storage.data,storage.data,storage.size);
-                manager->restored_storage.size=storage.size; manager->storage_graph=graph; }
-            else fail(error,QA_ERROR_MEMORY,"Retaining pure shared storage prefix before input-store binding");
-        }
-    }
-    if (ok) ok=qa_source_save_bool(&io,&manager->image_fov_touched) &&
-        qa_source_save_bool(&io,&manager->sticky_seed_pending) &&
-        (!manager->image_fov_touched || shared) &&
-        (!manager->sticky_seed_pending || (shared && !count && frontend_remote_configs_empty(manager->clients)));
-    qa_bytes admin={0}; bool early=false;
-    if (ok) ok=qa_source_save_bool(&io,&early);
-    if (ok && early) {
-        ok=qa_source_save_owned_text(&io,&manager->admin_source) && manager->admin_source && *manager->admin_source &&
-            qa_source_save_bytes(&io,&manager->admin_identity,sizeof(manager->admin_identity)) &&
-            config_blob(&io,&admin) && admin.size;
-        frontend_config_source *source=manager->sources;
-        while (ok && source && strcmp(source->saved_instance,manager->admin_source)) source=source->next;
-        if (ok) ok=source && source->primary && qa_sha256_equal(&source->saved_identity,&manager->admin_identity);
-    }
-    bool logging=false; qa_bytes logfile={0};
-    if (ok) ok=qa_source_save_bool(&io,&logging);
-    if (ok && logging) ok=config_blob(&io,&logfile) && logfile.size &&
-        frontend_qw_logfile_restore(graph,logfile,&manager->qw_logfile,error);
-    if (ok) ok=qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io);
-    if (ok && early) ok=frontend_source_admin_restore(frontend,admin,&manager->admin,error);
-    if (!ok) { frontend_config_store_destroy(manager,NULL); return false; }
-    *out=manager; return true;
-}
-bool frontend_config_store_restore_into(frontend_config_store *manager,qa_application *application,
-    qa_application_content_graph *graph,frontend_keys *keys,const frontend_keys_cvar_refs *refs,
-    qa_bytes bytes,qa_error *error)
-{
-    if (!manager || manager->sources || !frontend_remote_configs_empty(manager->clients) || !frontend_neutral_configs_empty(manager->neutral) ||
-        manager->variable_carries || manager->restoring || manager->running || manager->prepared || manager->shared ||
-        manager->storage || manager->restored_storage.data || manager->storage_graph || manager->admin || manager->admin_source || manager->qw_logfile)
-        return fail(error,QA_ERROR_ARGUMENT,"Pure import needs the constructor's empty stable configuration manager");
-    frontend_config_store *decoded=NULL;
-    if (!frontend_config_store_restore(manager->frontend,application,graph,keys,refs,bytes,&decoded,error)) return false;
-    manager->sources=decoded->sources; manager->restoring=true; manager->restore_refs=*refs;
-    manager->restored_storage=decoded->restored_storage; decoded->restored_storage=(qa_buffer){0};
-    manager->storage_graph=decoded->storage_graph;
-    manager->image_fov_touched=decoded->image_fov_touched;
-    manager->sticky_seed_pending=decoded->sticky_seed_pending;
-    manager->admin=decoded->admin; decoded->admin=NULL;
-    manager->admin_source=decoded->admin_source; decoded->admin_source=NULL;
-    manager->admin_identity=decoded->admin_identity;
-    manager->qw_logfile=decoded->qw_logfile; decoded->qw_logfile=NULL;
-    frontend_remote_configs_destroy(manager->clients,NULL);
-    manager->clients=decoded->clients; decoded->clients=NULL;
-    frontend_remote_configs_rebind(manager->clients,manager->frontend,manager);
-    frontend_neutral_configs_destroy(manager->neutral,NULL);
-    manager->neutral=decoded->neutral; decoded->neutral=NULL;
-    frontend_neutral_configs_rebind(manager->neutral,manager->frontend,manager);
-    for (frontend_config_source *source=manager->sources;source;source=source->next) source->manager=manager;
-    decoded->sources=NULL; free(decoded); return true;
-}
-bool frontend_config_store_restore_registry_options(frontend_config_store *manager,const char *name,
-    uint32_t logical,qa_cvar_options *options,frontend_client_registry_context *callback,
-    qa_sha256_digest *identity,qa_error *error)
-{
-    if (!manager || !manager->restoring || manager->running || !name || !*name || !options || !callback || !identity)
-        return fail(error,QA_ERROR_ARGUMENT,"Canonical registry prefix needs its decoded source configuration row");
-    frontend_config_source *source=manager->sources;
-    while (source && (!source->saved_instance || strcmp(source->saved_instance,name))) source=source->next;
-    size_t index=source?seat_index(source,logical):0;
-    config_seat *seat=source && index<source->seat_count?source->seats+index:NULL;
-    if (!seat || !seat->cvars_transferred || !seat->registry_instance || seat->registry || seat->cvars)
-        return fail(error,QA_ERROR_FORMAT,"Canonical registry prefix differs from its saved physical source seat");
-    *options=registry_options(source,source->command.dialect);
-    *callback=(frontend_client_registry_context){source,registry_context_retain,registry_context_release};
-    *identity=source->saved_identity; return true;
-}
-typedef struct restored_source_scope {
-    const qa_launch_instance *selected;
-    const qa_command_context *command;
-    const qa_cvars *cvars;
-} restored_source_scope;
-static bool restored_resolve(void *context,const char *name,qa_actor_owner *owner,qa_error *error)
-{
-    const restored_source_scope *scope=context;
-    if (!name || strcmp(name,scope->selected->selection.instance) || !scope->command->owner || scope->command->owner>UINT32_MAX)
-        return fail(error,QA_ERROR_FORMAT,"Restored key reference leaves its exact physical source instance");
-    *owner=(qa_actor_owner)scope->command->owner; return true;
-}
-static bool restored_qualify(void *context,const qa_application_console_scope *registry,
-    const qa_cvars *cvars,qa_error *error)
-{
-    const restored_source_scope *scope=context;
-    return (registry && registry->provider==scope->command->owner &&
-        registry->kind==QA_APPLICATION_CONSOLE_Q3_GAME && !registry->seat && cvars==scope->cvars) ||
-        fail(error,QA_ERROR_FORMAT,"Restored key registry differs from its canonical decoded GAME owner");
-}
 bool frontend_config_store_restore_command_binding(frontend_config_store *manager,
     qa_application *application,const qa_console *console,const qa_console_entry *saved,
     uint64_t registration_owner,qa_command_handler *handler,void **user,qa_error *error)
@@ -4358,7 +4038,7 @@ bool frontend_config_store_restore_command_binding(frontend_config_store *manage
     const qa_launch_instance *selected=source?instance(source):NULL;
     const qa_launch_instance *actual=selected && application?
         qa_launch_snapshot_find(qa_application_launch(application),selected->selection.instance):NULL;
-    if (!manager || !manager->restoring || !source || source->application!=application || source->imported ||
+    if (!manager || !source || !source->configured || !source->released || source->application!=application || source->imported ||
         !selected || !actual || actual->state!=selected->state || actual->storage!=selected->storage ||
         !saved || !saved->name || !handler || !user || !saved->engine_command || saved->alias_text ||
         saved->owner!=source->command.owner || registration_owner!=source->command.owner ||
@@ -4373,7 +4053,7 @@ bool frontend_config_store_commands_restored(frontend_config_store *manager,
 {
     frontend_config_source *source=manager?frontend_config_store_source(manager,console):NULL;
     if (!source) return true;
-    if (!manager->restoring || source->application!=application || source->imported ||
+    if (!source->configured || !source->released || source->application!=application || source->imported ||
         source->scope.provider!=source->command.owner || qa_console_cvars(console)!=source->cvars)
         return fail(error,QA_ERROR_ARGUMENT,"Restored callbacks lost their physical Source custody");
     uint64_t lifetime=0; qa_command_handler actual=NULL,expected=NULL; void *user=NULL,*binding=NULL;
@@ -4389,56 +4069,22 @@ bool frontend_config_store_commands_restored(frontend_config_store *manager,
 static bool restore_source(void *context,qa_application *application,const qa_launch_snapshot *candidate,
     const qa_application_startup_source *authority,qa_error *error)
 {
-    const qa_launch_instance *selected=authority?authority->descriptor:NULL;
-    qa_console *console=authority?authority->console:NULL; qa_cvars *cvars=authority?authority->cvars:NULL;
-    const qa_command_context *command=authority?&authority->command:NULL;
-    frontend_config_store *manager=context;
-    if (authority && client_scope(authority->scope))
-        return frontend_config_store_restore_client(manager,application,candidate,authority,error);
-    if (!manager->restoring || !selected || !console || !cvars || !command ||
-        !qa_application_command_context_active(application,command) || !command->owner ||
-        qa_cvars_dialect(cvars)!=command->dialect || !game_scope(authority->scope) ||
-        frontend_config_store_source(manager,console))
-        return fail(error,QA_ERROR_ARGUMENT,"Configuration import needs its exact decoded source constructor tuple");
-    frontend_config_source *source=manager->sources;
-    while (source && (!source->saved_instance || strcmp(source->saved_instance,selected->selection.instance))) source=source->next;
-    if (!source || !source->imported || source->application!=application ||
-        !qa_sha256_equal(&source->saved_identity,&selected->identity) || source->command.dialect!=command->dialect ||
-        !qa_launch_snapshot_find(candidate,selected->selection.instance) || source->scope.kind!=authority->scope.kind ||
-        source->scope.seat!=authority->scope.seat)
-        return fail(error,QA_ERROR_FORMAT,"Decoded source configuration differs from its actual retained implementation");
-    const qa_product *prepared=qa_catalog_product(frontend_config_files_catalog(source->files),
-        frontend_config_files_product(source->files));
-    const qa_product *actual=qa_catalog_product(qa_launch_instance_catalog(selected),selected->selection.product);
-    const qa_launch_binding *entities=qa_launch_binding_for(qa_launch_snapshot_choices(candidate),
-        (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
-    if (!prepared || !actual || strcmp(prepared->key,actual->key) ||
-        source->primary!=(entities && !strcmp(entities->instance,selected->selection.instance)))
-        return fail(error,QA_ERROR_FORMAT,"Decoded configuration product or primary role differs from its actual source");
-    const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
-    size_t physical_seats=(source->primary || source->seat_count) && !manager->frontend->options.dedicated?
-        manager->frontend->options.seats:0;
-    if (source->seat_count!=physical_seats || !choices || choices->seat_count<source->seat_count)
-        return fail(error,QA_ERROR_FORMAT,"Decoded configuration lacks its actual authored seat roster");
-    for (size_t i=0;i<source->seat_count;++i) {
-        if (!local_seat_present(choices,source->seats[i].logical))
-            return fail(error,QA_ERROR_FORMAT,"Decoded input profile changed its physical-to-authored seat mapping");
-        qa_console_dialect movement;
-        if (!seat_movement(candidate,source->seats[i].logical,&movement,error) ||
-            movement!=source->seats[i].movement_dialect)
-            return fail(error,QA_ERROR_FORMAT,"Decoded input profile changed its selected seat movement source");
-    }
-    if (!qa_launch_instance_retain_metadata(selected,&source->metadata,error)) return false;
-    source->console=console; source->cvars=cvars; source->command=*command;
-    source->scope=authority->scope; source->declaration_owner=authority->declaration_owner;
-    if (source->keys) {
-        restored_source_scope key_scope={selected,command,cvars};
-        frontend_keys_cvar_refs refs={.context=&key_scope,.resolve=restored_resolve,.qualify=restored_qualify};
-        if (!frontend_key_profile_bind(source->keys,cvars,&refs,error)) return false;
-    }
-    if (!install_commands(source,error)) return false;
-    source->imported=false; return true;
+    void *row=NULL;
+    return prepare_source_row(context,application,candidate,authority,&row,true,error);
 }
+bool frontend_config_store_rebuild_finish(frontend_config_store *manager,qa_error *error)
+{
+    qa_application *application=manager?manager->frontend->application:NULL;
+    const qa_launch_snapshot *snapshot=qa_application_launch(application);
+    if (!manager || !snapshot || manager->restoring || manager->prepared || manager->shared)
+        return fail(error,QA_ERROR_ARGUMENT,"Configuration rebuild needs its actual restored GAME source");
+    if (!prepare_candidate(manager,application,snapshot,error)) return false;
+    finish(manager,application,snapshot,true);
+    if (!shared_storage_prepare(manager,error)) return false;
+    manager->storage_seeded=true;
+    return true;
+}
+
 bool frontend_config_source_restore_seat_cvars(frontend_config_source *source,uint32_t logical,
     qa_cvars *cvars,const frontend_keys_cvar_refs *refs,qa_error *error)
 {
@@ -4469,48 +4115,6 @@ bool frontend_config_source_restore_seat_registry(frontend_config_source *source
     if (!frontend_config_source_restore_seat_cvars(source,logical,
         frontend_client_registry_cvars(registry),refs,error)) return false;
     return seat->registry || frontend_client_registry_retain(registry,&seat->registry,error);
-}
-bool frontend_config_store_finish_restore(frontend_config_store *manager,qa_error *error)
-{
-    if (!manager || !manager->restoring) return fail(error,QA_ERROR_ARGUMENT,"Configuration roster has no pending pure admission");
-    qa_frontend *frontend=manager->frontend;
-    if (!frontend_global_settings_storage_idle(frontend->global_settings_storage))
-        return fail(error,QA_ERROR_FORMAT,"Restored configuration lacks its actual global directory owner");
-    qa_settings_store global_user=frontend_global_settings_storage_user_store(frontend->global_settings_storage);
-    qa_settings_store global_devices=frontend_global_settings_storage_device_store(frontend->global_settings_storage);
-    for (frontend_config_source *source=manager->sources;source;source=source->next) {
-        if (source->imported || !source->metadata || !source->console || !source->cvars)
-            return fail(error,QA_ERROR_FORMAT,"Decoded configuration source lacks its physical registry binding");
-        if (!frontend_config_files_global_current(source->files,global_user,global_devices))
-            return fail(error,QA_ERROR_FORMAT,"Decoded source configuration differs from its retained global directories");
-        for (size_t i=0;i<source->seat_count;++i) if (!source->seats[i].cvars ||
-            (source->seats[i].cvars_transferred && !source->seats[i].registry_bound))
-            return fail(error,QA_ERROR_FORMAT,"Decoded configuration client lacks its canonical registry binding");
-    }
-    if (manager->restored_storage.data && !manager->storage) {
-        if (!frontend_shared_storage_restore(manager->storage_graph,
-            (qa_bytes){manager->restored_storage.data,manager->restored_storage.size},global_user,global_devices,
-            frontend_config_store_input_store(manager),!manager->frontend->options.dedicated,&manager->storage,error)) return false;
-    }
-    if (manager->storage && !shared_storage_current(manager))
-        return fail(error,QA_ERROR_FORMAT,"Restored shared storage differs from its actual source and sticky input authorities");
-    qa_settings_store sticky={0};
-    if (manager->sticky_seed_pending && (!frontend_shared_storage_input(manager->storage,&sticky) || !sticky.vfs))
-        return fail(error,QA_ERROR_FORMAT,"Saved sticky preference seed lacks its genuine admitted product store");
-    if (!frontend_remote_configs_finish_restore(manager->clients,error)) return false;
-    if (!frontend_neutral_configs_finish_restore(manager->neutral,error)) return false;
-    if (manager->qw_logfile && !frontend_qw_logfile_finish_restore(manager->qw_logfile,error)) return false;
-    if (manager->admin) {
-        frontend_config_source *source=manager->sources;
-        while (source && (!source->metadata || strcmp(instance(source)->selection.instance,manager->admin_source))) source=source->next;
-        if (!source || !source->primary || !qa_sha256_equal(&instance(source)->identity,&manager->admin_identity) ||
-            !frontend_source_admin_finish_restore(manager->admin,source->application,source->console,source->cvars,
-                &source->command,global_user,error)) return false;
-        free(manager->admin_source); manager->admin_source=NULL;
-    }
-    qa_buffer_free(&manager->restored_storage); manager->storage_graph=NULL;
-    manager->storage_seeded=manager->storage!=NULL;
-    manager->restoring=false; return true;
 }
 bool frontend_config_store_restore_client(frontend_config_store *manager,qa_application *application,
     const qa_launch_snapshot *candidate,const qa_application_startup_source *source,qa_error *error)

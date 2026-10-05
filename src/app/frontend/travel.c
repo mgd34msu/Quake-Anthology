@@ -35,6 +35,9 @@ bool frontend_travel(qa_frontend *frontend, qa_error *error)
     if (travel.target.kind!=QA_TRAVEL_MAP) return true;
     if (!frontend_source_rebind_ready(frontend, frontend, error) ||
         !frontend_world_change_ready(frontend, frontend->application, error)) return false;
+    bool handled=false;
+    if (!frontend_save_commands_campaign(frontend,travel.revision,&handled,error)) return false;
+    if (handled) return true;
     if (!qa_application_commit_travel(frontend->application,travel.revision,error)) return false;
     if (qa_application_startup_pending(frontend->application)) return true;
     return (!qa_application_travel_publication_read(frontend->application,&completed) ||

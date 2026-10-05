@@ -38,6 +38,9 @@ bool frontend_config_store_parked_recipient(const frontend_config_store *,const 
 bool frontend_config_store_retired_ready(const frontend_config_store *,qa_error *);
 bool frontend_config_store_restore_abort_unbound(frontend_config_store *,qa_application *,qa_error *);
 const qa_application_startup_hooks *frontend_config_store_hooks(frontend_config_store *);
+/* Rebuild local dictionaries and publish actual Source rows after GAME state
+ * restores; user preferences come from the normal selected ConfigStore. */
+bool frontend_config_store_rebuild_finish(frontend_config_store *,qa_error *);
 frontend_config_source *frontend_config_store_source(const frontend_config_store *,const qa_console *);
 bool frontend_config_store_restore_command_binding(frontend_config_store *,qa_application *,const qa_console *,
     const qa_console_entry *,uint64_t registration_owner,qa_command_handler *,void **,qa_error *);
@@ -238,26 +241,12 @@ bool frontend_config_store_save(frontend_config_store *,qa_error *);
 bool frontend_config_store_retire(frontend_config_store *,const qa_console *,qa_error *);
 void frontend_config_store_rebind(frontend_config_store *,qa_frontend *);
 bool frontend_config_store_visit(const frontend_config_store *,const qa_application_content_visitor *,qa_error *);
-bool frontend_config_store_checkpoint(const frontend_config_store *,const qa_application_content_graph *,
-    const frontend_keys_cvar_refs *,qa_buffer *,qa_error *);
-/* Decode real file and supplemental registry owners before physical source
- * construction. GAME and transferred client registries remain typed borrows. */
-bool frontend_config_store_restore(qa_frontend *,qa_application *,qa_application_content_graph *,
-    frontend_keys *,const frontend_keys_cvar_refs *,qa_bytes,frontend_config_store **,qa_error *);
-bool frontend_config_store_restore_into(frontend_config_store *,qa_application *,qa_application_content_graph *,
-    frontend_keys *,const frontend_keys_cvar_refs *,qa_bytes,qa_error *);
-/* Pure canonical registry prefix staging uses the already decoded source row.
- * The caller retains this callback root when it creates the one physical heap;
- * no provider lookup, metadata construction or configuration replay occurs. */
-bool frontend_config_store_restore_registry_options(frontend_config_store *,const char *source_instance,
-    uint32_t authored_seat,qa_cvar_options *,frontend_client_registry_context *,qa_sha256_digest *,qa_error *);
 /* The real factory calls this after canonical client QACV decode, before Init.
  * Repeated UI/CGAME aliases must qualify that same physical registry. */
 bool frontend_config_source_restore_seat_cvars(frontend_config_source *,uint32_t,
     qa_cvars *,const frontend_keys_cvar_refs *,qa_error *);
 bool frontend_config_source_restore_seat_registry(frontend_config_source *,uint32_t,
     frontend_client_registry *,const frontend_keys_cvar_refs *,qa_error *);
-bool frontend_config_store_finish_restore(frontend_config_store *,qa_error *);
 /* Genuine primary CLIENT slots bind the decoded roster before services copy
  * their canonical heap. Supplemental GAME-owned roles use the GAME binder. */
 bool frontend_config_store_restore_client(frontend_config_store *,qa_application *,const qa_launch_snapshot *,

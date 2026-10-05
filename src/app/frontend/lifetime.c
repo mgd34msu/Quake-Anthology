@@ -61,6 +61,8 @@
 #include "shared_register.h"
 #include "shared_settings.h"
 #include "constructor.h"
+#include "original_frontend.h"
+#include "persistence.h"
 #include "qc_rerelease_events.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/input_release.h"
@@ -445,7 +447,8 @@ void frontend_console_print(void *context, const qa_command_context *source, con
     }
 }
 struct frontend_constructor { qa_error failure; bool outputs_entered,outputs_completed; };
-static bool outputs_create(qa_frontend *frontend,frontend_shared_settings *prepared,qa_error *error)
+static bool outputs_create(qa_frontend *frontend,frontend_shared_settings *prepared,
+    qa_frontend *active,frontend_persistence_native *native,qa_error *error)
 {
     qa_frontend_options *options=&frontend->options;
     qa_audio_device_options device={.format=frontend->audio_output_format,.buffer_frames=1024};
@@ -464,31 +467,13 @@ static bool outputs_create(qa_frontend *frontend,frontend_shared_settings *prepa
         frontend->terminal = qa_dedicated_console_create(error);
         if (!frontend->terminal) return false;
     } else {
-        frontend->display = qa_display_create(&options->display, error);
-        if (!frontend->display) return false;
-        qa_display_info info;
-        if (!qa_display_info_get(frontend->display, &info, error)) return false;
-        frontend->width = info.drawable_width; frontend->height = info.drawable_height;
-        if (options->display.backend == QA_DISPLAY_CPU) {
-            qa_cpu_options renderer;
-            qa_cpu_options_default(&renderer);
-            renderer.width = frontend->width; renderer.height = frontend->height;
-            renderer.owner = QA_FRONTEND_COMMAND_OWNER;
-            renderer.present = qa_display_present_cpu; renderer.present_context = frontend->display;
-            frontend->cpu = qa_cpu_create(&renderer, error);
-            if (!frontend->cpu || !qa_cpu_set_gamma(frontend->cpu, options->gamma, error)) return false;
-        } else {
-            qa_gl_options renderer;
-            qa_gl_options_default(&renderer); renderer.display = frontend->display; renderer.owner = QA_FRONTEND_COMMAND_OWNER;
-            frontend->gl = qa_gl_create(&renderer, error);
-            if (!frontend->gl || !qa_gl_set_gamma(frontend->gl,options->gamma,error) ||
-                (prepared && !qa_display_set_swap_interval(frontend->display,swap_interval,error))) return false;
-        }
+        if (!frontend_graphics_create(frontend,active,native,error) ||
+            (frontend->gl && prepared && !qa_display_set_swap_interval(frontend->display,swap_interval,error))) return false;
         if (!frontend_resources(frontend, error) || !frontend_seats_create(frontend, error)) return false;
         qa_input_platform_options input = {.cvars = qa_application_cvars(frontend->application),
             .user = frontend, .print = frontend_print};
-        frontend->input = prepared?qa_input_platform_create_prepared(&input,edit,&input_settings,error):
-            qa_input_platform_create(&input,error);
+        frontend->input = active?qa_input_platform_create_detached(&input,error):
+            prepared?qa_input_platform_create_prepared(&input,edit,&input_settings,error):qa_input_platform_create(&input,error);
         if (!frontend->input) return false;
         qa_input_seat *seats[4] = {0};
         qa_controller_selection controllers[4] = {0};
@@ -496,11 +481,16 @@ static bool outputs_create(qa_frontend *frontend,frontend_shared_settings *prepa
         double now=(double)frontend->wall_time_ns/1000000;
         int keyboard = 0;
         if (!frontend_settings_keyboard_initial(frontend, &keyboard, error)) return false;
-        bool routed=prepared?qa_input_platform_routes_prepared(frontend->input,seats,controllers,keyboard,now,edit,&input_settings,error):
-            qa_input_platform_routes(frontend->input,seats,controllers,keyboard,now,error);
-        bool window=routed && (prepared?qa_input_platform_window_prepared(frontend->input,frontend->display,now,edit,&input_settings,error):
-            qa_input_platform_window(frontend->input,frontend->display,now,error));
-        if (!window) return false;
+        if (active) {
+            if (!qa_input_platform_prepare_fresh(frontend->input,active->input,seats,controllers,keyboard,
+                    frontend->display,now,&native->input,error)) return false;
+        } else {
+            bool routed=prepared?qa_input_platform_routes_prepared(frontend->input,seats,controllers,keyboard,now,edit,&input_settings,error):
+                qa_input_platform_routes(frontend->input,seats,controllers,keyboard,now,error);
+            bool window=routed && (prepared?qa_input_platform_window_prepared(frontend->input,frontend->display,now,edit,&input_settings,error):
+                qa_input_platform_window(frontend->input,frontend->display,now,error));
+            if (!window) return false;
+        }
         {
             qa_audio_engine_options audio;
             frontend_audio_engine_options(frontend,&audio);
@@ -510,8 +500,13 @@ static bool outputs_create(qa_frontend *frontend,frontend_shared_settings *prepa
                 if (!qa_audio_engine_music_gain(frontend->audio,music,error)) return false;
             }
             if (options->audio) {
-                if (!qa_audio_device_open(&device, &frontend->device, error)) return false;
-                qa_audio_device_pause(frontend->device, false);
+                if (active) {
+                    if (active->device && !qa_audio_device_create_detached(active->device,frontend->audio,
+                            &frontend->device,&native->device,error)) return false;
+                } else {
+                    if (!qa_audio_device_open(&device, &frontend->device, error)) return false;
+                    qa_audio_device_pause(frontend->device, false);
+                }
             }
         }
     }
@@ -527,6 +522,9 @@ static bool outputs_create(qa_frontend *frontend,frontend_shared_settings *prepa
             FRONTEND_ASSISTANCE, &frontend->seats[i].assistance, error)) return false;
     return true;
 }
+bool frontend_outputs_create_detached(qa_frontend *f,qa_frontend *active,
+    frontend_persistence_native *native,qa_error *error)
+{ return outputs_create(f,NULL,active,native,error); }
 bool frontend_constructor_pending(const qa_frontend *f)
 { return f && f->constructor; }
 bool frontend_constructor_advance(qa_frontend *f,uint64_t elapsed_ns,bool *complete,qa_error *error)
@@ -551,7 +549,7 @@ bool frontend_constructor_advance(qa_frontend *f,uint64_t elapsed_ns,bool *compl
         if (!settings || !qa_application_startup_bootstrap_images_ready(f->application))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"First native outputs lack their real completed bootstrap images receipt");
         owner->outputs_entered=true;
-        if (!outputs_create(f,settings,error)) { if (error) owner->failure=*error; return false; }
+        if (!outputs_create(f,settings,NULL,NULL,error)) { if (error) owner->failure=*error; return false; }
         if(!f->options.network_host && !f->options.network_connect && !frontend_network_create(f,error)) {
             if(error) owner->failure=*error;
             return false;

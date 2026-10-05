@@ -54,12 +54,6 @@ typedef struct qa_application_persistence_ops {
     qa_application_content_visit_fn visit_content;
     const qa_vfs_checkpoint_refs *content_files;
     const qa_application_native_resource_refs *native_resources;
-    /* Resolve the saved profile's actual writable view before progression and
-     * application construction. The output is borrowed from the prepared graph;
-     * NULL denotes an explicitly absent saved profile. No files are replayed or
-     * graph owners transferred. The graph holds the root through construction. */
-    bool (*resolve_player_profile_root)(void *, const qa_save_image *,
-        const qa_application_content_graph *, qa_fs_root **, qa_error *);
     /* Actual optional backend/native profile qualifications. Default rankings
      * are unconfigured; installed external providers require both readonly
      * binding/continuation refs and the final transactional handoff below. */
@@ -95,6 +89,10 @@ typedef struct qa_application_persistence_ops {
      * pickup observations and body/collision/target bindings against the same
      * candidate stores. Final world and scheduler restore follows this step. */
     bool (*reconnect)(void *, qa_application *, const qa_save_image *, qa_error *);
+    /* Optional authoritative state completion after ordinary owner reconnect.
+     * Hub revisits re-admit the current carried players here, before validation
+     * and external publication. This uses the same isolated candidate reader. */
+    bool (*complete_state)(void *, qa_application *, const qa_save_image *, qa_error *);
     /* Validate every service's restored references and pending continuation.
      * No external publication, file writes or source callbacks are allowed. */
     bool (*validate)(void *, qa_application *, const qa_save_image *, qa_error *);
@@ -109,16 +107,6 @@ typedef struct qa_application_persistence_ops {
      * application is still alive. False retains both owners for a later retry;
      * the application's ordinary destruction follows only after true. */
     bool (*discard_services)(void *, qa_application *, qa_error *);
-    /* Neutral physical CLIENT consoles belong to the frontend's QFCS owner.
-     * Capture returns that exact queue codec. Restore qualifies the queue
-     * already imported by the CONNECTIONS prefix against these saved bytes;
-     * it must not replay configuration or import the queue a second time.
-     * Both callbacks are required whenever the real console inventory contains
-     * a CLIENT scope. Other scopes use the application's ordinary codec. */
-    bool (*client_commands_capture)(void *, qa_application *,
-        const qa_application_console_scope *, qa_console *, qa_buffer *, qa_error *);
-    bool (*client_commands_restore)(void *, qa_application *,
-        const qa_application_console_scope *, qa_console *, qa_bytes, qa_error *);
     bool (*command_binding)(void *, qa_application *, const qa_console *,
         const qa_console_entry *, uint64_t registration_owner, qa_command_handler *, void **, qa_error *);
     bool (*commands_restored)(void *, qa_application *, qa_console *, qa_error *);

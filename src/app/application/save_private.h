@@ -5,6 +5,7 @@
 #include "qa/persistence_application.h"
 #include "qa/persistence_gameplay.h"
 #include "qa/console_save.h"
+#include "qa/source_save.h"
 
 typedef struct application_save_console_context {
     qa_application *application;
@@ -53,7 +54,6 @@ bool application_save_configuration_capture(qa_application *, qa_buffer *, qa_er
 bool application_save_configuration_decode(qa_application *candidate, qa_bytes, qa_launch_draft **, qa_error *);
 bool application_save_configuration_validate(qa_application *candidate, qa_bytes, qa_error *);
 
-bool application_map_checkpoint_capture(qa_application *, qa_buffer *, qa_error *);
-bool application_map_checkpoint_restore(qa_application *, qa_bytes, qa_error *);
+bool application_campaign_fields(qa_source_save_io *, qa_application *, bool departed);
 
 #endif

@@ -30,15 +30,15 @@ bool qa_campaign_location_make(qa_strings *, qa_string_id content, qa_bytes map,
                                qa_campaign_location *, qa_error *);
 bool qa_campaign_location_equal(qa_campaign_location, qa_campaign_location);
 typedef struct qa_campaign_world qa_campaign_world;
-/* The persistence owner validates snapshot location and rejects nested campaign
- * checkpoints. Validation happens before immutable snapshot publication. */
-typedef bool (*qa_campaign_world_validate)(void *, qa_bytes snapshot, qa_campaign_location expected,
-                                           qa_error *);
-bool qa_campaign_world_create(qa_campaign_location, qa_bytes snapshot, qa_campaign_world_validate,
-                              void *, qa_campaign_world **out, qa_error *);
+bool qa_campaign_world_create(qa_campaign_location, qa_bytes snapshot,
+                              qa_campaign_world **out, qa_error *);
 /* Successful admission transfers the already encoded buffer without copying. */
-bool qa_campaign_world_take(qa_campaign_location, qa_buffer *snapshot, qa_campaign_world_validate,
-                            void *, qa_campaign_world **out, qa_error *);
+bool qa_campaign_world_take(qa_campaign_location, qa_buffer *snapshot,
+                            qa_campaign_world **out, qa_error *);
+/* Relocate only the session-owned location. Immutable state keeps its one
+ * original byte owner across candidate application publication. */
+bool qa_campaign_world_relocate(const qa_campaign_world *, qa_campaign_location,
+                                qa_campaign_world **out, qa_error *);
 void qa_campaign_world_retain(qa_campaign_world *);
 void qa_campaign_world_release(qa_campaign_world *);
 qa_campaign_location qa_campaign_world_location(const qa_campaign_world *);
@@ -59,6 +59,7 @@ bool qa_campaign_unit_current(const qa_campaign_unit *, qa_campaign_location *);
 bool qa_campaign_unit_stage(qa_campaign_unit *, qa_campaign_location destination, bool new_unit,
                             qa_campaign_world *departure, qa_campaign_visit **out, qa_error *);
 const qa_campaign_world *qa_campaign_visit_restore(const qa_campaign_visit *);
+bool qa_campaign_visit_capture(const qa_campaign_visit *, qa_campaign_unit_checkpoint *, qa_error *);
 bool qa_campaign_visit_commit(qa_campaign_visit *, qa_error *);
 void qa_campaign_visit_destroy(qa_campaign_visit *);
 bool qa_campaign_unit_capture(const qa_campaign_unit *, qa_campaign_unit_checkpoint *, qa_error *);

@@ -224,6 +224,13 @@ typedef struct application_publication {
     struct application_startup_program_roster *programs;
 } application_publication;
 
+typedef struct application_campaign_travel {
+    qa_campaign_location source, destination;
+    qa_application_travel_view request;
+    qa_campaign_visit *visit;
+    struct application_player_travel *players;
+} application_campaign_travel;
+
 struct qa_application {
     struct qa_application_client_preparation *client_preparation;
     application_publication *failed_publications;
@@ -266,6 +273,8 @@ struct qa_application {
     qa_application_world_hook_fn world_retired;
     void (*console_print)(void *, const qa_command_context *, const char *);
     struct application_map_state *map_state;
+    qa_campaign_unit *campaign_unit;
+    application_campaign_travel *campaign_travel;
     struct application_player_roster *players;
     struct application_bots *bots;
     struct application_match_intents *match_intents;
