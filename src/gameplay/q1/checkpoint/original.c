@@ -5,6 +5,7 @@
 #include "qa/q1_text.h"
 #include "qa/text.h"
 #include "qa/game_q1_travel.h"
+#include "qa/qc_text_save.h"
 #include <stdio.h>
 #include <stddef.h>
 
@@ -47,6 +48,11 @@ static const original_field entity_fields[] = {
     FIELD(q1_actor, count, "count", FLOAT),
     FIELD(q1_actor, source_netname, "netname", STRING),
     FIELD(q1_actor, source_death_type, "deathtype", STRING)
+};
+static const original_field combat_fields[] = {
+    FIELD(qa_combat_state, health, "health", FLOAT),
+    FIELD(qa_combat_state, armor.regular.points, "armorvalue", DOUBLE),
+    FIELD(qa_combat_state, armor.regular.protection.q1_absorption, "armortype", FLOAT)
 };
 static const original_field body_fields[] = {
     FIELD(qa_body_state, origin, "origin", VECTOR),
@@ -159,6 +165,36 @@ static const original_field map_fields[] = {
     FIELD(q1_map_state, style, "style", I32),
     FIELD(q1_map_state, color_map, "colormap", I32)
 };
+static const original_field game_globals[] = {
+    FIELD(qa_q1_game, force_retouch, "force_retouch", U32),
+    FIELD(qa_q1_game, total_monsters, "total_monsters", U32),
+    FIELD(qa_q1_game, killed_monsters, "killed_monsters", U32),
+    FIELD(qa_q1_game, enemy_range, "enemy_range", U8),
+    FIELD(qa_q1_game, sight_actor, "sight_entity", REF),
+    FIELD(qa_q1_game, sight_time, "sight_entity_time", DOUBLE),
+    FIELD(qa_q1_game, hellknight_melee, "hknight_type", U32),
+    FIELD(qa_q1_game, forward.x, "v_forward_x", FLOAT),
+    FIELD(qa_q1_game, forward.y, "v_forward_y", FLOAT),
+    FIELD(qa_q1_game, forward.z, "v_forward_z", FLOAT),
+    FIELD(qa_q1_game, up.x, "v_up_x", FLOAT),
+    FIELD(qa_q1_game, up.y, "v_up_y", FLOAT),
+    FIELD(qa_q1_game, up.z, "v_up_z", FLOAT),
+    FIELD(qa_q1_game, right.x, "v_right_x", FLOAT),
+    FIELD(qa_q1_game, right.y, "v_right_y", FLOAT),
+    FIELD(qa_q1_game, right.z, "v_right_z", FLOAT)
+};
+static const original_field map_globals[] = {
+    FIELD(q1_map_runtime, total_secrets, "total_secrets", U32),
+    FIELD(q1_map_runtime, found_secrets, "found_secrets", U32),
+    FIELD(q1_map_runtime, lightning_end, "lightning_end", DOUBLE),
+    FIELD(q1_map_runtime, electrodes[0], "le1", REF),
+    FIELD(q1_map_runtime, electrodes[1], "le2", REF)
+};
+static const original_field enemy_globals[] = {
+    FIELD(qa_q1_game, enemy_visible, "enemy_vis", BOOL),
+    FIELD(qa_q1_game, enemy_visible, "enemy_visible", BOOL)
+};
+static const original_field server_globals[] = {{"serverflags", ORIGINAL_U32, 0}};
 #undef FIELD
 static bool fail(qa_error *error, const char *text) {
     qa_error_set(error, QA_ERROR_FORMAT, 0, "%s", text); return false;
@@ -214,29 +250,29 @@ static bool actor(qa_q1_wire_receipt *receipt, qa_q1_save_record *record,
     return qa_q1_save_record_value(record, key, &field, error);
 }
 static bool fields(qa_q1_wire_receipt *receipt, qa_q1_save_record *record,
-    const void *owner, const original_field *table, size_t count, qa_error *error) {
+    const void *owner, const original_field *table, size_t count, bool required, qa_error *error) {
     const qa_strings *strings = qa_session_strings(receipt->operation.game->services.session);
     for (size_t i = 0; i < count; ++i) {
         const original_field *field = table + i;
         const uint8_t *p = (const uint8_t *)owner + field->offset;
         bool okay;
         switch (field->storage) {
-        case ORIGINAL_FLOAT: okay = number(record, field->name, *(const float *)p, false, error); break;
-        case ORIGINAL_DOUBLE: okay = number(record, field->name, *(const double *)p, false, error); break;
-        case ORIGINAL_I32: okay = number(record, field->name, *(const int32_t *)p, false, error); break;
-        case ORIGINAL_I16: okay = number(record, field->name, *(const int16_t *)p, false, error); break;
-        case ORIGINAL_U32: okay = number(record, field->name, *(const uint32_t *)p, false, error); break;
-        case ORIGINAL_U16: okay = number(record, field->name, *(const uint16_t *)p, false, error); break;
-        case ORIGINAL_U8: okay = number(record, field->name, *p, false, error); break;
-        case ORIGINAL_BOOL: okay = number(record, field->name, *(const bool *)p, false, error); break;
+        case ORIGINAL_FLOAT: okay = number(record, field->name, *(const float *)p, required, error); break;
+        case ORIGINAL_DOUBLE: okay = number(record, field->name, *(const double *)p, required, error); break;
+        case ORIGINAL_I32: okay = number(record, field->name, *(const int32_t *)p, required, error); break;
+        case ORIGINAL_I16: okay = number(record, field->name, *(const int16_t *)p, required, error); break;
+        case ORIGINAL_U32: okay = number(record, field->name, *(const uint32_t *)p, required, error); break;
+        case ORIGINAL_U16: okay = number(record, field->name, *(const uint16_t *)p, required, error); break;
+        case ORIGINAL_U8: okay = number(record, field->name, *p, required, error); break;
+        case ORIGINAL_BOOL: okay = number(record, field->name, *(const bool *)p, required, error); break;
         case ORIGINAL_VECTOR: okay = vector(record, field->name, *(const qa_vec3 *)p, error); break;
         case ORIGINAL_STRING: {
             qa_string_id id = *(const qa_string_id *)p;
             const char *value = id ? qa_strings_cstr(strings, id) : NULL;
             okay = (!id || value) && text(record, field->name, value, QA_Q1_SAVE_STRING, error); break;
         }
-        case ORIGINAL_ACTOR: okay = actor_id(receipt, record, field->name, *(const qa_actor_id *)p, false, error); break;
-        case ORIGINAL_REF: okay = actor(receipt, record, field->name, *(const q1_ref *)p, false, error); break;
+        case ORIGINAL_ACTOR: okay = actor_id(receipt, record, field->name, *(const qa_actor_id *)p, required, error); break;
+        case ORIGINAL_REF: okay = actor(receipt, record, field->name, *(const q1_ref *)p, required, error); break;
         default: okay = false; break;
         }
         if (!okay) return false;
@@ -244,7 +280,10 @@ static bool fields(qa_q1_wire_receipt *receipt, qa_q1_save_record *record,
     return true;
 }
 #define FIELDS(receipt, record, owner, table, error) \
-    fields(receipt, record, owner, table, sizeof(table) / sizeof(*(table)), error)
+    fields(receipt, record, owner, table, sizeof(table) / sizeof(*(table)), false, error)
+
+#define GLOBAL_FIELDS(receipt, record, owner, table, error) \
+    fields(receipt, record, owner, table, sizeof(table) / sizeof(*(table)), true, error)
 
 typedef struct original_map_callback { q1_map_action action; const char *name; } original_map_callback;
 static const original_map_callback map_callbacks[] = {
@@ -626,10 +665,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
     if (!number(record, "movetype", player ? movement->data.nq.move_type : motion[physics.motion], false, error) ||
         !number(record, "solid", player ? 3 : solid[physics.solid], false, error) ||
         !number(record, "flags", flags, false, error) || !number(record, "modelindex", model, false, error) ||
-        !number(record, "health", combat.health, false, error) ||
+        !FIELDS(receipt, record, &combat, combat_fields, error) ||
         !number(record, "takedamage", combat.can_take_damage ? player || entity->aimed_damage ? 2 : 1 : 0, false, error) ||
-        !number(record, "armortype", combat.armor.regular.protection.q1_absorption, false, error) ||
-        !number(record, "armorvalue", combat.armor.regular.points, false, error) ||
         !vector(record, "size", qa_vec_sub(body.bounds.maxs, body.bounds.mins), error)) return false;
     if (player) {
         qa_q1_wire_player wire;
@@ -774,27 +811,15 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
     qa_q1_save_record *globals = &save->globals;
     if (okay) okay = number(globals, "time", game->time, true, error) &&
         number(globals, "frametime", game->elapsed, true, error) &&
-        number(globals, "force_retouch", game->force_retouch, true, error) &&
         text(globals, "mapname", save->map, QA_Q1_SAVE_STRING, error) &&
         number(globals, "deathmatch", game->options.deathmatch, true, error) &&
-        number(globals, "coop", game->options.coop, true, error) && number(globals, "teamplay", game->options.teamplay, true, error) &&
-        number(globals, "serverflags", *game->maps->options.server_flags, true, error) &&
-        number(globals, "total_secrets", game->maps->total_secrets, true, error) &&
-        number(globals, "total_monsters", game->total_monsters, true, error) &&
-        number(globals, "found_secrets", game->maps->found_secrets, true, error) &&
-        number(globals, "killed_monsters", game->killed_monsters, true, error) && number(globals, "skill", game->options.skill, true, error) &&
-        number(globals, game->options.edition == QA_Q1_RERELEASE ? "enemy_visible" : "enemy_vis", game->enemy_visible, true, error) &&
-        number(globals, "enemy_range", game->enemy_range, true, error) &&
-        actor(&receipt, globals, "sight_entity", game->sight_actor, true, error) &&
-        number(globals, "sight_entity_time", game->sight_time, true, error) &&
-        number(globals, "hknight_type", game->hellknight_melee, true, error) &&
-        number(globals, "lightning_end", game->maps->lightning_end, true, error);
-    static const char *const directions[] = {"v_forward_x", "v_forward_y", "v_forward_z",
-        "v_up_x", "v_up_y", "v_up_z", "v_right_x", "v_right_y", "v_right_z"};
-    float basis[] = {game->forward.x, game->forward.y, game->forward.z, game->up.x, game->up.y,
-        game->up.z, game->right.x, game->right.y, game->right.z};
-    for (size_t i = 0; okay && i < sizeof(basis) / sizeof(*basis); ++i)
-        okay = number(globals, directions[i], basis[i], true, error);
+        number(globals, "coop", game->options.coop, true, error) &&
+        number(globals, "teamplay", game->options.teamplay, true, error) &&
+        number(globals, "skill", game->options.skill, true, error) &&
+        GLOBAL_FIELDS(&receipt, globals, game, game_globals, error) &&
+        GLOBAL_FIELDS(&receipt, globals, game->maps, map_globals, error) &&
+        GLOBAL_FIELDS(&receipt, globals, game->maps->options.server_flags, server_globals, error) &&
+        fields(&receipt, globals, game, enemy_globals + (game->options.edition == QA_Q1_RERELEASE), 1, true, error);
     uint32_t eyes = 0, model_player = 0;
     if (okay) okay = qa_q1_wire_index(&receipt, true, game->eyes_model, &eyes) &&
         qa_q1_wire_index(&receipt, true, game->player_model, &model_player) &&
@@ -803,8 +828,6 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
         char name[16]; snprintf(name, sizeof(name), "parm%u", i + 1);
         okay = number(globals, name, save->spawn_parameters[i], true, error);
     }
-    if (okay) okay = actor(&receipt, globals, "le1", game->maps->electrodes[0], true, error) &&
-        actor(&receipt, globals, "le2", game->maps->electrodes[1], true, error);
     if (okay && game->options.program == QA_Q1_HIPNOTIC) {
         uint32_t mines = 0;
         for (uint32_t i=0; i<game->capacity; ++i) {
@@ -864,10 +887,9 @@ static bool saved_ref(qa_q1_game *game, const char *value, size_t count,
     *out = q1_ref_source(game, slot);
     return true;
 }
-static bool restore_fields(qa_q1_game *game, const qa_q1_save_record *record,
+static bool restore_fields(qa_strings *strings, qa_actor_owner source, const qa_q1_save_record *record,
     void *owner, const original_field *table, size_t count,
     const qa_actor_id *slots, size_t slot_count, qa_error *error) {
-    qa_strings *strings = qa_session_strings(game->services.session);
     for (size_t i = 0; i < count; ++i) {
         const original_field *field = table + i;
         uint8_t *p = (uint8_t *)owner + field->offset;
@@ -901,7 +923,12 @@ static bool restore_fields(qa_q1_game *game, const qa_q1_save_record *record,
         case ORIGINAL_BOOL: *(bool *)p = number != 0; break;
         case ORIGINAL_VECTOR: if (!saved_vector(value, (qa_vec3 *)p, error)) return false; break;
         case ORIGINAL_ACTOR: if (!saved_actor(value, slots, slot_count, (qa_actor_id *)p, error)) return false; break;
-        case ORIGINAL_REF: if (!saved_ref(game,value,slot_count,(q1_ref *)p,error)) return false; break;
+        case ORIGINAL_REF: {
+            uint32_t slot;
+            if (!qa_q1_save_entity_decode(value ? value : "0", &slot, error) || slot >= slot_count)
+                return fail(error, "Original reference exceeds its actual physical edict extent");
+            *(q1_ref *)p = qa_actor_reference_source(source, slot); break;
+        }
         case ORIGINAL_STRING: {
             qa_string_id id = 0;
             if (value && *value) {
@@ -917,7 +944,8 @@ static bool restore_fields(qa_q1_game *game, const qa_q1_save_record *record,
     return true;
 }
 #define RESTORE_FIELDS(game, record, owner, table, slots, count, error) \
-    restore_fields(game, record, owner, table, sizeof(table) / sizeof(*(table)), slots, count, error)
+    restore_fields(qa_session_strings((game)->services.session), (game)->options.provider, \
+        record, owner, table, sizeof(table) / sizeof(*(table)), slots, count, error)
 static bool restore_physics(const qa_q1_save_record *record, qa_physics_properties *physics,
     uint32_t *source_flags, qa_error *error) {
     float motion = saved_number(record, "movetype"), solid = saved_number(record, "solid"),
@@ -1062,8 +1090,14 @@ static const original_projectile *saved_projectile(const qa_q1_save_record *reco
         return projectiles+Q1_ZOMBIE_GRENADE;
     return NULL;
 }
-static bool create_original(qa_q1_game *game, const qa_q1_save_record *record,
-    uint32_t slot, q1_actor **out, qa_error *error) {
+typedef struct original_class {
+    const char *name;
+    const q1_species *species;
+    const original_projectile *projectile;
+    q1_map_kind map;
+    q1_entity_kind kind;
+} original_class;
+static bool original_classify(const qa_q1_save_record *record, original_class *out, qa_error *error) {
     const char *name = saved(record, "classname");
     const char *think = saved(record, "think");
     const char *touch = saved(record, "touch");
@@ -1097,6 +1131,17 @@ static bool create_original(qa_q1_game *game, const qa_q1_save_record *record,
         else if (think && !strcmp(think,"SUB_Remove")) name = "gib";
         else return fail(error, "Original anonymous edict has no actual Source discriminator");
     }
+    *out = (original_class){name, species, projectile, map, kind}; return true;
+}
+static bool create_original(qa_q1_game *game, const qa_q1_save_record *record,
+    uint32_t slot, q1_actor **out, qa_error *error) {
+    original_class source;
+    if (!original_classify(record, &source, error)) return false;
+    const char *name = source.name;
+    const q1_species *species = source.species;
+    const original_projectile *projectile = source.projectile;
+    q1_map_kind map = source.map;
+    q1_entity_kind kind = source.kind;
     if (!q1_create_source(game, name, kind, slot, out, error)) return false;
     q1_actor *entity = *out;
     if (species) entity->state.monster.species = species;
@@ -1114,6 +1159,288 @@ static bool create_original(qa_q1_game *game, const qa_q1_save_record *record,
     }
     return true;
 }
+static bool restore_monster_callbacks(q1_monster *monster,
+    const qa_q1_save_record *record,qa_error *error) {
+    if (!monster->species) return fail(error,"Original monster lacks its actual Source species");
+    monster->dead=saved_number(record,"health")<=0;monster->counted_death=monster->dead;
+    const char *touch=saved(record,"touch");
+    monster->jump_touch=touch && (!strcmp(touch,"Dog_JumpTouch") ||
+        !strcmp(touch,"Demon_JumpTouch") || !strcmp(touch,"Tar_JumpTouch"));
+    monster->current_frame=UINT16_MAX;
+    if (monster->species->species==QA_Q1_SWORD) {
+        const char *run=saved(record,"th_run"),*pain=saved(record,"th_pain");
+        monster->source.sword.awakened=run && !strcmp(run,"sword_run1");
+        monster->source.sword.pain_disabled=pain && !strcmp(pain,"SUB_Null");
+    }
+    if (monster->species->species==QA_Q1_MUMMY) {
+        const char *stand=saved(record,"th_stand");
+        monster->source.mummy.asleep=stand && !strcmp(stand,"mummy_sleep");
+    }
+    return true;
+}
+
+typedef struct original_admission {
+    qa_strings *strings;
+    qa_actor_owner source;
+    size_t slots;
+    const qa_q1_save_record *record;
+    uint8_t *consumed;
+} original_admission;
+static void admitted_key(original_admission *admission, const char *name) {
+    for (size_t i=0; i<admission->record->count; ++i)
+        if (!strcmp(admission->record->pairs[i].key,name)) admission->consumed[i]=1;
+}
+static bool unsupported(qa_error *error, const char *message) {
+    qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"%s",message); return false;
+}
+static bool admit_fields(original_admission *admission, void *owner,
+    const original_field *table, size_t count, qa_error *error) {
+    for (size_t i=0;i<count;++i)
+        if (table[i].storage==ORIGINAL_ACTOR)
+            return unsupported(error,"Source lifetime field lacks its physical native reference");
+    if (!restore_fields(admission->strings,admission->source,admission->record,owner,table,count,
+        NULL,admission->slots,error)) return false;
+    for (size_t i=0; i<count; ++i) {
+        const original_field *field=table+i;
+        float value=saved_number(admission->record,field->name);
+        if ((field->storage==ORIGINAL_FLOAT || field->storage==ORIGINAL_DOUBLE) && !isfinite(value))
+            return unsupported(error,"Source scalar has no finite native state");
+        if (field->storage==ORIGINAL_VECTOR &&
+            !qa_vec_finite(*(qa_vec3 *)((uint8_t *)owner+field->offset)))
+            return unsupported(error,"Source vector has no finite native state");
+        if ((field->storage==ORIGINAL_I32 || field->storage==ORIGINAL_U32 ||
+             field->storage==ORIGINAL_I16 || field->storage==ORIGINAL_U16 ||
+             field->storage==ORIGINAL_U8) && truncf(value)!=value)
+            return unsupported(error,"Source fractional field has no lossless native integer state");
+        if (field->storage==ORIGINAL_BOOL && value!=0 && value!=1)
+            return unsupported(error,"Source boolean field has no lossless native state");
+        admitted_key(admission,field->name);
+    }
+    return true;
+}
+#define ADMIT_FIELDS(admission,owner,table,error) \
+    admit_fields(admission,owner,table,sizeof(table)/sizeof(*(table)),error)
+static bool admit_number(original_admission *admission,const char *name,
+    float expected,qa_error *error) {
+    float actual=saved_number(admission->record,name);
+    if (actual!=expected) return unsupported(error,"Source scalar differs from the native derived state");
+    admitted_key(admission,name);return true;
+}
+static bool admit_word(original_admission *admission,const char *name,qa_error *error) {
+    float value=saved_number(admission->record,name);
+    if (!isfinite(value) || value<0 || value>=4294967296.0 || truncf(value)!=value)
+        return unsupported(error,"Source word has no lossless native state");
+    admitted_key(admission,name);return true;
+}
+static bool admit_text(original_admission *admission,const char *name,
+    const char *expected,qa_error *error) {
+    const char *value=saved(admission->record,name);
+    char *decoded=NULL;
+    if (!qa_q1_save_string_decode(value?value:"",&decoded,error)) return false;
+    bool equal=!strcmp(decoded,expected?expected:"");free(decoded);
+    if (!equal) return unsupported(error,"Source string differs from the native derived state");
+    admitted_key(admission,name);return true;
+}
+static bool admit_vector(original_admission *admission,const char *name,
+    qa_vec3 expected,qa_error *error) {
+    qa_vec3 actual;
+    if (!saved_vector(saved(admission->record,name),&actual,error)) return false;
+    if (actual.x!=expected.x || actual.y!=expected.y || actual.z!=expected.z)
+        return unsupported(error,"Source vector differs from the native derived state");
+    admitted_key(admission,name);return true;
+}
+static bool admit_callbacks(original_admission *admission,
+    const qa_q1_save_record *expected,qa_error *error) {
+    static const char *const callbacks[]={"touch","use","blocked","th_stand","th_walk",
+        "th_run","th_missile","th_melee","th_pain","th_die"};
+    for (size_t i=0;i<sizeof(callbacks)/sizeof(*callbacks);++i) {
+        const char *name=callbacks[i],*actual=saved(admission->record,name),*wanted=saved(expected,name);
+        if (strcmp(actual?actual:"",wanted?wanted:""))
+            return unsupported(error,"Source callback differs from the compiled continuation");
+        admitted_key(admission,name);
+    }
+    return true;
+}
+static bool admit_complete(const original_admission *admission,qa_error *error) {
+    for (size_t i=0;i<admission->record->count;++i)
+        if (!admission->consumed[i] && *admission->record->pairs[i].key!='_')
+            return unsupported(error,"Source field lacks its paired native inverse");
+    return true;
+}
+static bool admit_globals(original_admission *admission,const qa_qc_program *program,
+    qa_q1_edition edition,const qa_q1_save_data *save,qa_error *error) {
+    qa_q1_game game={0};q1_map_runtime maps={0};uint32_t flags=0;
+    if (!ADMIT_FIELDS(admission,&game,game_globals,error) ||
+        !ADMIT_FIELDS(admission,&maps,map_globals,error) ||
+        !ADMIT_FIELDS(admission,&flags,server_globals,error) ||
+        !admit_fields(admission,&game,enemy_globals+(edition==QA_Q1_RERELEASE),1,error)) return false;
+    if (!admit_number(admission,"time",(float)save->time,error) ||
+        !admit_number(admission,"frametime",0,error) ||
+        !admit_text(admission,"mapname",save->map,error) ||
+        !admit_number(admission,"deathmatch",0,error) || !admit_number(admission,"coop",0,error) ||
+        !admit_number(admission,"teamplay",0,error) || !admit_number(admission,"skill",(float)save->skill,error)) return false;
+    for (unsigned i=0;i<16;++i) {
+        char name[16];snprintf(name,sizeof(name),"parm%u",i+1);
+        if (!admit_number(admission,name,(float)save->spawn_parameters[i],error)) return false;
+    }
+    /* These numeric precache identities are not retained by the inverse. Until
+     * their symbolic model identity is qualified, preserve the QC execution. */
+    for (size_t i=0;i<admission->record->count;++i) {
+        if (admission->consumed[i]) continue;
+        const qa_q1_save_pair *pair=admission->record->pairs+i;
+        const qa_qc_definition *definition=qa_qc_program_find_global(program,pair->key);
+        int32_t initial;
+        if (!definition || !qa_qc_program_initial_int(program,definition->offset,&initial,error)) return false;
+        if (definition->type==QA_QC_FLOAT) {
+            float expected;memcpy(&expected,&initial,sizeof(expected));
+            float actual=saved_number(admission->record,pair->key);
+            uint32_t expected_bits,actual_bits;
+            memcpy(&expected_bits,&expected,4);memcpy(&actual_bits,&actual,4);
+            if (actual_bits!=expected_bits)
+                return unsupported(error,"Mutable Source global lacks its paired native inverse");
+        } else if (definition->type==QA_QC_ENTITY) {
+            uint32_t slot;
+            if (initial || !qa_q1_save_entity_decode(saved(admission->record,pair->key),&slot,error) || slot)
+                return unsupported(error,"Mutable Source reference global lacks its paired native inverse");
+        } else if (definition->type==QA_QC_STRING) {
+            if (initial || !admit_text(admission,pair->key,"",error))
+                return unsupported(error,"Mutable Source string global lacks its paired native inverse");
+        } else return unsupported(error,"Source global has no native state representation");
+        admission->consumed[i]=1;
+    }
+    return true;
+}
+static bool admit_entity(original_admission *admission,qa_q1_program program,
+    size_t slot,qa_error *error) {
+    const qa_q1_save_record *record=admission->record;
+    qa_body_state body={0};qa_physics_properties physics=qa_physics_properties_default(QA_COLLISION_Q1);
+    uint32_t flags;
+    if (!ADMIT_FIELDS(admission,&body,body_fields,error) ||
+        !ADMIT_FIELDS(admission,&physics,physics_fields,error) ||
+        !restore_physics(record,&physics,&flags,error)) return false;
+    if (!admit_word(admission,"flags",error) || !admit_word(admission,"movetype",error) ||
+        !admit_word(admission,"solid",error)) return false;
+    /* The physical Source renderer index is not reconstructed from this file.
+     * A nonzero index cannot currently be admitted before map construction. */
+    if (!admit_number(admission,"modelindex",0,error)) return false;
+    if (saved(record,"size") && !admit_vector(admission,"size",qa_vec_sub(body.bounds.maxs,body.bounds.mins),error)) return false;
+    admitted_key(admission,"size");
+    qa_combat_state combat={0};combat.armor.regular.kind=QA_ARMOR_Q1;
+    if (!ADMIT_FIELDS(admission,&combat,combat_fields,error) || !qa_armor_validate(&combat.armor,error)) return false;
+    if (body.bounds.mins.x>body.bounds.maxs.x || body.bounds.mins.y>body.bounds.maxs.y || body.bounds.mins.z>body.bounds.maxs.z)
+        return unsupported(error,"Source bounds have no native physical body");
+    float damage=saved_number(record,"takedamage");
+    if (damage!=0 && damage!=1 && damage!=2) return unsupported(error,"Source damage policy has no native state");
+    admitted_key(admission,"takedamage");
+    qa_q1_save_record callbacks={0};bool okay=false;
+    if (slot==1) {
+        q1_player player={0};
+        if (!(saved_number(record,"health")>0)) {
+            unsupported(error,"Source dead player has no living native inverse");goto done;
+        }
+        if (!admit_text(admission,"classname","player",error) ||
+            !ADMIT_FIELDS(admission,&player,player_fields,error) ||
+            !ADMIT_FIELDS(admission,&player.character_state,character_fields,error) ||
+            !admit_word(admission,"items",error) || !admit_word(admission,"weapon",error)) goto done;
+        float selected=saved_number(record,"weapon");
+        if (selected<=0 || !qa_q1_weapon_source(program,(uint32_t)selected,&player.weapon)) {
+            unsupported(error,"Source weapon has no compiled identity");goto done;
+        }
+        /* The inverse restores weapons and keys directly, and powers from their
+         * expiry fields. Other item bits and view-model identities still need
+         * a paired inverse before this row may enter native execution. */
+        uint32_t represented=131072u|262144u;
+        for (unsigned shift=0;shift<32;++shift) {
+            qa_q1_weapon weapon;
+            if (qa_q1_weapon_source(program,UINT32_C(1)<<shift,&weapon)) represented|=UINT32_C(1)<<shift;
+        }
+        if ((uint32_t)saved_number(record,"items") & ~represented) {
+            unsupported(error,"Source inventory bit lacks its paired native inverse");goto done;
+        }
+        for (unsigned i=0;i<(program==QA_Q1_ROGUE?QA_Q1_AMMO_COUNT:4);++i) {
+            qa_q1_game settings={.options={.program=program}};
+            const char *name=ammo_field(&settings,i);
+            if (!isfinite(saved_number(record,name)) || saved_number(record,name)<0) {
+                unsupported(error,"Source ammunition has no native inventory state");goto done;
+            }
+            admitted_key(admission,name);
+        }
+        if (!admit_number(admission,"items2",0,error) || !admit_number(admission,"deadflag",0,error) ||
+            !admit_number(admission,"colormap",1,error) || !admit_text(admission,"netname","",error) ||
+            !admit_text(admission,"weaponmodel","",error)) goto done;
+        if (!isfinite(saved_number(record,"max_health")) || !isfinite(saved_number(record,"idealpitch"))) {
+            unsupported(error,"Source player scalar has no finite native state");goto done;
+        }
+        admitted_key(admission,"max_health");admitted_key(admission,"idealpitch");
+        qa_vec3 water_jump;
+        if (!saved_vector(saved(record,"movedir"),&water_jump,error)) goto done;
+        admitted_key(admission,"movedir");
+        if (!restore_player(&player,record,error) || !player_functions(&player,&callbacks,error) ||
+            strcmp(saved(record,"think")?saved(record,"think"):"",saved(&callbacks,"think")?saved(&callbacks,"think"):"")) {
+            unsupported(error,"Source player animation is not preserved by the native inverse");goto done;
+        }
+        admitted_key(admission,"think");admitted_key(admission,"nextthink");
+    } else {
+        original_class source;
+        if (!original_classify(record,&source,error)) goto done;
+        if (source.kind==Q1_PICKUP || (source.map!=Q1_MAP_FIELDS && source.map!=Q1_MAP_WORLD) ||
+            source.kind==Q1_ENTITY) {
+            unsupported(error,"Source map/item state still lacks its complete paired native inverse");goto done;
+        }
+        q1_actor entity={.kind=source.kind};q1_map_state map={.kind=source.map};
+        if (!ADMIT_FIELDS(admission,&entity,entity_fields,error)) goto done;
+        if (source.map!=Q1_MAP_FIELDS) entity.map=&map;
+        if (!restore_think(NULL,&entity,record,error)) goto done;
+        admitted_key(admission,"think");admitted_key(admission,"nextthink");
+        if (entity.kind==Q1_MONSTER) {
+            q1_monster *monster=&entity.state.monster;monster->species=source.species;
+            if (!ADMIT_FIELDS(admission,monster,monster_fields,error)) goto done;
+            if (source.species->species==QA_Q1_EEL && !ADMIT_FIELDS(admission,monster,eel_fields,error)) goto done;
+            if (source.species->species==QA_Q1_SCOURGE && !ADMIT_FIELDS(admission,monster,scourge_fields,error)) goto done;
+            if (!restore_monster_callbacks(monster,record,error)) goto done;
+            if (!monster_functions(monster,&callbacks,error)) goto done;
+        } else if (entity.map) {
+            if (slot || !admit_text(admission,"classname","worldspawn",error) ||
+                !ADMIT_FIELDS(admission,&map,map_fields,error) || !admit_number(admission,"worldtype",0,error) ||
+                !map_functions(&entity,&callbacks,error)) goto done;
+        } else if (source.projectile) {
+            entity.state.projectile.kind=source.projectile->kind;
+            if (source.projectile->kind==Q1_HIP_LASER && !ADMIT_FIELDS(admission,&entity.state.projectile,hip_laser_fields,error)) goto done;
+            if (source.projectile->kind==Q1_PROXIMITY && !ADMIT_FIELDS(admission,&entity.state.projectile,proximity_fields,error)) goto done;
+            if (!callback(&callbacks,"touch",source.projectile->touch,error)) goto done;
+            if (source.projectile->kind==Q1_PROXIMITY && !callback(&callbacks,"th_die","ProximityGrenadeExplode",error)) goto done;
+        } else {
+            unsupported(error,"Source anonymous continuation needs its complete paired state admission");goto done;
+        }
+    }
+    okay=admit_callbacks(admission,&callbacks,error) && admit_complete(admission,error);
+done:
+    qa_q1_save_record_destroy(&callbacks);return okay;
+}
+bool qa_q1_game_original_admit(qa_q1_program native_program,qa_q1_edition edition,
+    const qa_qc_program *program,const qa_q1_save_data *save,bool *supported,qa_error *error) {
+    if (!supported || !program || !save || native_program>QA_Q1_CTF || edition>QA_Q1_RERELEASE)
+        return fail(error,"Original native admission requires actual Source metadata and parsed state");
+    *supported=false;
+    if (!qa_q1_save_singleplayer(save,error) || !qa_qc_text_program_ready(program,save,error)) return false;
+    if (save->entity_count>UINT32_MAX || !save->entities[1].count) return true;
+    size_t count=save->globals.count;
+    for (size_t i=0;i<save->entity_count;++i) if (save->entities[i].count>count) count=save->entities[i].count;
+    uint8_t *consumed=count?calloc(count,1):NULL;qa_strings *strings=NULL;
+    if (count && !consumed) {qa_error_set(error,QA_ERROR_MEMORY,0,"Reading original native state domains");return false;}
+    if (!qa_strings_create(&strings,error)) {free(consumed);return false;}
+    original_admission admission={strings,1,save->entity_count,&save->globals,consumed};qa_error local={0};
+    bool okay=admit_globals(&admission,program,edition,save,&local);
+    for (size_t slot=0;okay && slot<save->entity_count;++slot) {
+        if (!save->entities[slot].count) continue;
+        memset(consumed,0,count);admission.record=save->entities+slot;
+        okay=admit_entity(&admission,native_program,slot,&local);
+    }
+    qa_strings_destroy(strings);free(consumed);
+    if (!okay && local.code==QA_ERROR_MEMORY) {if(error)*error=local;return false;}
+    *supported=okay;return true;
+}
+
 static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player,
     const qa_q1_save_record *record, const qa_actor_id *slots, size_t count, qa_movement_state *movement, qa_error *error) {
     qa_actor_id id = player ? player->id : entity->id;
@@ -1125,12 +1452,10 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         !qa_combat_read_traits(game->services.combat, id, &combat, error) ||
         !RESTORE_FIELDS(game, record, &body, body_fields, slots, count, error) ||
         !RESTORE_FIELDS(game, record, &physics, physics_fields, slots, count, error) ||
+        !RESTORE_FIELDS(game, record, &combat, combat_fields, slots, count, error) ||
         !restore_physics(record, &physics, &flags, error)) return false;
-    combat.health = saved_number(record, "health");
     combat.can_take_damage = saved_number(record, "takedamage") != 0;
     combat.armor.regular.kind = QA_ARMOR_Q1;
-    combat.armor.regular.points = saved_number(record, "armorvalue");
-    combat.armor.regular.protection.q1_absorption = saved_number(record, "armortype");
     if (!qa_world_body_write(game->services.world, id, &body, error) ||
         !qa_combat_set_traits(game->services.combat, id, &combat, error) ||
         !qa_combat_set_health(game->services.combat, id, combat.health, error) ||
@@ -1205,25 +1530,11 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
     if (entity->kind == Q1_MONSTER) {
         q1_monster *monster = &entity->state.monster;
         if (!RESTORE_FIELDS(game, record, monster, monster_fields, slots, count, error)) return false;
-        monster->dead = combat.health <= 0; monster->counted_death = monster->dead;
-        const char *touch = saved(record,"touch");
-        monster->jump_touch = touch && (!strcmp(touch,"Dog_JumpTouch") ||
-            !strcmp(touch,"Demon_JumpTouch") || !strcmp(touch,"Tar_JumpTouch"));
-        monster->current_frame = UINT16_MAX;
-        if (!monster->species) return fail(error, "Original monster lacks its actual Source species");
-        if (monster->species->species == QA_Q1_EEL &&
+        if (monster->species && monster->species->species == QA_Q1_EEL &&
             !RESTORE_FIELDS(game,record,monster,eel_fields,slots,count,error)) return false;
-        if (monster->species->species == QA_Q1_SCOURGE &&
+        if (monster->species && monster->species->species == QA_Q1_SCOURGE &&
             !RESTORE_FIELDS(game,record,monster,scourge_fields,slots,count,error)) return false;
-        if (monster->species->species == QA_Q1_SWORD) {
-            const char *run = saved(record,"th_run"), *pain = saved(record,"th_pain");
-            monster->source.sword.awakened = run && !strcmp(run,"sword_run1");
-            monster->source.sword.pain_disabled = pain && !strcmp(pain,"SUB_Null");
-        }
-        if (monster->species->species == QA_Q1_MUMMY) {
-            const char *stand = saved(record,"th_stand");
-            monster->source.mummy.asleep = stand && !strcmp(stand,"mummy_sleep");
-        }
+        if (!restore_monster_callbacks(monster,record,error)) return false;
         const char *target = qa_strings_cstr(qa_session_strings(game->services.session), entity->target);
         if (target && !qa_strings_intern_cstr(qa_session_strings(game->services.session), target, &monster->path, error)) return false;
     }
@@ -1367,24 +1678,11 @@ bool qa_q1_game_original_restore(qa_q1_game *game, const qa_qc_program *program,
     if (okay) {
         game->time = (float)save->time; game->elapsed = 0;
         game->time_ns = (uint64_t)ceil((double)(float)save->time*1e9);
-        game->force_retouch = (uint32_t)saved_number(&save->globals,"force_retouch");
-        game->total_monsters = (uint32_t)saved_number(&save->globals,"total_monsters");
-        game->killed_monsters = (uint32_t)saved_number(&save->globals,"killed_monsters");
-        game->maps->total_secrets = (uint32_t)saved_number(&save->globals,"total_secrets");
-        game->maps->found_secrets = (uint32_t)saved_number(&save->globals,"found_secrets");
-        *game->maps->options.server_flags = (uint32_t)saved_number(&save->globals,"serverflags");
-        game->enemy_visible = saved_number(&save->globals,game->options.edition==QA_Q1_RERELEASE?"enemy_visible":"enemy_vis")!=0;
-        game->enemy_range = (uint8_t)saved_number(&save->globals,"enemy_range");
-        game->sight_time = saved_number(&save->globals,"sight_entity_time");
-        game->hellknight_melee = (uint32_t)saved_number(&save->globals,"hknight_type");
-        game->maps->lightning_end = saved_number(&save->globals,"lightning_end");
-        okay = saved_ref(game,saved(&save->globals,"sight_entity"),save->entity_count,&game->sight_actor,error) &&
-            saved_ref(game,saved(&save->globals,"le1"),save->entity_count,&game->maps->electrodes[0],error) &&
-            saved_ref(game,saved(&save->globals,"le2"),save->entity_count,&game->maps->electrodes[1],error);
-        qa_vec3 *basis[] = {&game->forward,&game->up,&game->right};
-        static const char *const names[] = {"v_forward_x","v_forward_y","v_forward_z", "v_up_x","v_up_y","v_up_z","v_right_x","v_right_y","v_right_z"};
-        for (unsigned i=0; i<3; ++i) *basis[i]=qa_v3(saved_number(&save->globals,names[i*3]),
-            saved_number(&save->globals,names[i*3+1]),saved_number(&save->globals,names[i*3+2]));
+        okay = RESTORE_FIELDS(game, &save->globals, game, game_globals, slots, save->entity_count, error) &&
+            RESTORE_FIELDS(game, &save->globals, game->maps, map_globals, slots, save->entity_count, error) &&
+            RESTORE_FIELDS(game, &save->globals, game->maps->options.server_flags, server_globals, slots, save->entity_count, error) &&
+            restore_fields(qa_session_strings(game->services.session), game->options.provider, &save->globals,
+                game, enemy_globals + (game->options.edition == QA_Q1_RERELEASE), 1, slots, save->entity_count, error);
     }
     for (size_t slot=0; okay && slot<save->entity_count; ++slot) {
         if (!save->entities[slot].count) continue;

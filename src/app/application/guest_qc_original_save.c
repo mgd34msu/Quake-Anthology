@@ -13,22 +13,24 @@ struct application_q1_original_save {
     qa_q1_save_data *save;
     qa_product_id product;
     uint64_t initial_ns;
-    bool applying;
+    bool native,applying;
 };
-static const uint8_t original_constructor[4]={'Q','1','O','I'};
+const uint8_t application_q1_original_constructor[4]={'Q','1','O','I'};
 bool application_q1_original_clock(const application_provider *provider,uint64_t *out)
 {
     if (!provider || !provider->application || !provider->launch || !out ||
-        provider->kind!=APPLICATION_PROVIDER_QC || provider->launch->selection.clock.kind!=QA_CLOCK_NETQUAKE ||
-        !provider->launch->selection.artifact || strcmp(provider->launch->selection.artifact,"progs.dat")) return false;
+        provider->launch->selection.clock.kind!=QA_CLOCK_NETQUAKE ||
+        (provider->kind!=APPLICATION_PROVIDER_Q1 &&
+         (provider->kind!=APPLICATION_PROVIDER_QC || !provider->launch->selection.artifact ||
+          strcmp(provider->launch->selection.artifact,"progs.dat")))) return false;
     const struct application_q1_original_save *stage=provider->application->q1_original_save;
     if (stage && provider->launch->selection.product==stage->product &&
         !strcmp(provider->launch->selection.instance,"native:primary")) {
         *out=stage->initial_ns; return true;
     }
     qa_bytes options=provider->launch->selection.options;
-    if (options.size==sizeof(original_constructor) && options.data &&
-        !memcmp(options.data,original_constructor,sizeof(original_constructor))) {
+    if (options.size==sizeof(application_q1_original_constructor) && options.data &&
+        !memcmp(options.data,application_q1_original_constructor,sizeof(application_q1_original_constructor))) {
         *out=provider->launch->selection.clock.initial_time_ns; return true;
     }
     return false;
@@ -355,24 +357,35 @@ bool qa_application_q1_save_import(qa_application *app,const qa_q1_save_data *sa
     application_q1_original_admission admission;
     if (!application_q1_original_admit(app,save,key,&admission,error)) return false;
     const qa_product *product=admission.product;
+    bool native=false;
+    if (product->program_kind==QA_PROGRAM_BUILTIN &&
+        !application_q1_native_save_admit(app,product,save,&native,error)) return false;
     struct application_q1_original_save *stage=calloc(1,sizeof(*stage));
     if (!stage) return application_fail(error,QA_ERROR_MEMORY,"Retaining original source construction stage");
-    stage->save=copy_save(save,error); stage->product=product->id; stage->initial_ns=admission.initial_ns;
+    stage->save=copy_save(save,error); stage->product=product->id; stage->initial_ns=admission.initial_ns; stage->native=native;
     if (!stage->save) { free(stage); return false; }
     save=stage->save;
+    if (native) {
+        double nanoseconds=ceil((double)(float)save->time*1e9);
+        if (!isfinite(nanoseconds) || nanoseconds<0 || (long double)nanoseconds>=(long double)UINT64_MAX) {
+            qa_q1_save_destroy(stage->save);free(stage);
+            return application_fail(error,QA_ERROR_FORMAT,"Original saved time exceeds the native Source clock");
+        }
+        stage->initial_ns=(uint64_t)nanoseconds;
+    }
     qa_launch_draft *draft=NULL;
     size_t length=strlen(save->map); char *map=length<=SIZE_MAX-10?malloc(length+10):NULL;
     bool ok=map!=NULL;
     if (ok) { memcpy(map,"maps/",5); memcpy(map+5,save->map,length); memcpy(map+5+length,".bsp",5); }
     else application_fail(error,QA_ERROR_MEMORY,"Preparing original source map path");
     if (ok) ok=qa_launch_draft_create(app->catalog,product->id,map,&draft,error);
+    if (ok && !native) ok=qa_launch_select_original(draft,"native:primary",error);
     if (ok) {
         const qa_launch_choices *choices=qa_launch_draft_choices(draft);
         qa_launch_world world=choices->world; world.skill=save->skill; world.start_command=NULL;
         qa_launch_provider primary=choices->providers[0];
-        primary.runtime=QA_PROGRAM_QUAKEC; primary.artifact="progs.dat"; primary.implementation=product->key;
         primary.clock=qa_clock_defaults(QA_CLOCK_NETQUAKE); primary.clock.initial_time_ns=stage->initial_ns;
-        primary.options=(qa_bytes){original_constructor,sizeof(original_constructor)};
+        primary.options=(qa_bytes){application_q1_original_constructor,sizeof(application_q1_original_constructor)};
         qa_launch_mode mode=choices->modes[0]; mode.rules=qa_mode_defaults(QA_MODE_Q1,QA_MODE_SINGLE_PLAYER);
         qa_launch_equipment equipment=choices->equipment[0]; equipment.selection.grapple=QA_GRAPPLE_DISABLED;
         equipment.selection.grenades.enabled=false;
@@ -402,8 +415,13 @@ bool qa_application_q1_save_import_advance(qa_application *app,bool *complete,qa
         if (!started) return true;
     }
     stage->applying=true;
-    struct application_qc_state *engine=source(app,error);
-    if (!engine || !restore_raw(engine,stage->save,error)) return false;
+    if (stage->native) {
+        application_provider *provider=application_world_provider(app,QA_ROLE_ENTITIES,"");
+        if (!application_q1_native_save_restore(app,provider,stage->save,error)) return false;
+    } else {
+        struct application_qc_state *engine=source(app,error);
+        if (!engine || !restore_raw(engine,stage->save,error)) return false;
+    }
     application_q1_original_dispose(app);
     *complete=true;
     return true;

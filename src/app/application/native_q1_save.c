@@ -4,6 +4,24 @@
 #include "native_q1_wire.h"
 #include "native_q1_console.h"
 
+bool application_q1_native_save_admit(const qa_application *app, const qa_product *product,
+    const qa_q1_save_data *save, bool *supported, qa_error *error) {
+    if (!app || !product || !save || !supported || !app->catalog ||
+        app->operation != APPLICATION_IDLE || app->state != QA_APPLICATION_READY ||
+        app->world || app->provider_count || !qa_session_safe(app->session))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original admission requires its fresh isolated application");
+    *supported = false;
+    if (product->family != QA_GAME_Q1 || product->program_kind != QA_PROGRAM_BUILTIN ||
+        product->edition == QA_EDITION_QUAKEWORLD) return true;
+    qa_vfs *files = NULL; qa_qc_program *program = NULL;
+    bool okay = qa_catalog_open(app->catalog, product->id, &files, error) &&
+        qa_qc_program_load_vfs(files, "progs.dat", &program, error) &&
+        qa_q1_game_original_admit(application_q1_program(product->campaign),
+            product->edition == QA_EDITION_RERELEASE ? QA_Q1_RERELEASE : QA_Q1_CLASSIC,
+            program, save, supported, error);
+    qa_qc_program_destroy(program); qa_vfs_destroy(files); return okay;
+}
+
 static application_player_record *local_player(qa_application *app,
     application_provider *provider, qa_error *error) {
     if (!app || app->operation != APPLICATION_IDLE || app->state != QA_APPLICATION_RUNNING ||

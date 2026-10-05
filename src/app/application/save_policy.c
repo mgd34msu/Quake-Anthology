@@ -2,6 +2,7 @@
 #include "map_players_private.h"
 #include "guest_native_q2_private.h"
 #include "guest_q3_private.h"
+#include "guest_qc_original_save.h"
 #include "qa/application_save_policy.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q3_source.h"
@@ -16,8 +17,9 @@ static bool stock_provider(const qa_catalog *catalog,const qa_launch_provider *s
         (product->edition==QA_EDITION_RERELEASE?QA_CLOCK_Q2_RERELEASE:QA_CLOCK_Q2_CLASSIC):
         product->edition==QA_EDITION_QUAKEWORLD?QA_CLOCK_QUAKEWORLD:QA_CLOCK_NETQUAKE;
     if (selection->clock.kind!=clock || (selection->options.size &&
-        !(product->family==QA_GAME_Q1 && selection->runtime==QA_PROGRAM_QUAKEC &&
-          selection->options.size==4 && selection->options.data && !memcmp(selection->options.data,"Q1OI",4)))) return false;
+        !(product->family==QA_GAME_Q1 && (selection->runtime==QA_PROGRAM_QUAKEC || selection->runtime==QA_PROGRAM_BUILTIN) &&
+          selection->options.size==sizeof(application_q1_original_constructor) && selection->options.data &&
+          !memcmp(selection->options.data,application_q1_original_constructor,sizeof(application_q1_original_constructor))))) return false;
     const qa_product *program=qa_catalog_product(catalog,product->program_product);
     if (!program) program=product;
     if (selection->implementation && strcmp(selection->implementation,program->key)) return false;

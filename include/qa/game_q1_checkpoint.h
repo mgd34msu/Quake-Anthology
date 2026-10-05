@@ -11,6 +11,10 @@ typedef struct qa_q1_restore qa_q1_restore;
  * retain the physical edict namespace, including free rows. */
 bool qa_q1_game_original_capture(qa_q1_game *, const qa_qc_program *,
     const qa_movement_state *, qa_q1_save_data *, qa_error *);
+/* Qualify saved state without constructing or modifying an engine. Unsupported
+ * state retains the installed original program within the same load path. */
+bool qa_q1_game_original_admit(qa_q1_program, qa_q1_edition, const qa_qc_program *,
+    const qa_q1_save_data *, bool *supported, qa_error *);
 bool qa_q1_game_original_restore(qa_q1_game *, const qa_qc_program *,
     const qa_q1_save_data *, qa_movement_state *, qa_error *);
 

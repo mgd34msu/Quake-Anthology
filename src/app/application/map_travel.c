@@ -6,6 +6,7 @@
 #include "map_players_private.h"
 #include "save_private.h"
 #include "save_content.h"
+#include "guest_qc_original_save.h"
 #include "qa/save.h"
 
 #include <stdlib.h>
@@ -265,7 +266,7 @@ static char *start_expression(const char *path, const char *spawn, bool unit,
 }
 
 static bool set_map_draft(qa_launch_draft *draft, const char *path,
-    const qa_application_map_request *request, qa_error *error)
+    const qa_application_map_request *request, bool restoring, qa_error *error)
 {
     char *start=start_expression(path,request->spawn_point,request->new_unit,error);
     if (!start) return false;
@@ -278,6 +279,16 @@ static bool set_map_draft(qa_launch_draft *draft, const char *path,
     if (request->presentation) world.presentation=request->presentation;
     bool ok=qa_launch_set_world(draft,&world,error);
     free(start);
+    const qa_launch_choices *choices=qa_launch_draft_choices(draft);
+    for (size_t i=0;ok && !restoring && i<choices->provider_count;++i) {
+        qa_launch_provider provider=choices->providers[i];
+        if (provider.clock.kind!=QA_CLOCK_NETQUAKE ||
+            provider.options.size!=sizeof(application_q1_original_constructor) || !provider.options.data ||
+            memcmp(provider.options.data,application_q1_original_constructor,sizeof(application_q1_original_constructor))) continue;
+        provider.options=(qa_bytes){0};
+        provider.clock.initial_time_ns=qa_clock_defaults(provider.clock.kind).initial_time_ns;
+        ok=qa_launch_set_provider(draft,&provider,error);
+    }
     return ok;
 }
 
@@ -299,7 +310,7 @@ bool application_campaign_restore_draft(qa_application *previous,
     };
     char *path=map_path(request.map,error);
     if (!path) return false;
-    bool ok=set_map_draft(draft,path,&request,error);
+    bool ok=set_map_draft(draft,path,&request,true,error);
     free(path);
     return ok;
 }
@@ -330,7 +341,7 @@ bool qa_application_load_map(qa_application *application,
     if (!ok && current == NULL && !state->restart_draft && request->geometry == 0)
         application_fail(error, QA_ERROR_ARGUMENT,
                          "initial map load requires a content preset");
-    if (ok) ok=set_map_draft(draft,path,request,error);
+    if (ok) ok=set_map_draft(draft,path,request,false,error);
     if (ok) {
         bool previous_force = application->map_force_reload;
         state->load_revision = state->revision;

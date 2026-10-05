@@ -30,6 +30,7 @@
 #include "guest_q3_weapons_services.h"
 #include "guest_qc_factory.h"
 #include "guest_qc_internal.h"
+#include "guest_qc_original_save.h"
 #include "native_q3_wire_state.h"
 #include "native_q3_wire.h"
 #include "native_q3_settings.h"
@@ -609,6 +610,7 @@ static bool construct_q1(qa_application *application,
                                   error))
         return false;
     uint64_t initial_time_ns = provider->component.clock.initial_time_ns;
+    (void)application_q1_original_clock(provider, &initial_time_ns);
     provider->component.clock = provider->launch->selection.clock;
     provider->component.clock.initial_time_ns = initial_time_ns;
     return true;
