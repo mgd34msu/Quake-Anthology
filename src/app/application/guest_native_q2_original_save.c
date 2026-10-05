@@ -36,8 +36,7 @@ static qa_q2_save_level *copy_level(const qa_q2_save_level *source, qa_error *er
 {
     qa_q2_save_level *out=malloc(sizeof(*out));
     if (!out) { application_fail(error,QA_ERROR_MEMORY,"Retaining original Q2 level"); return NULL; }
-    *out=*source; out->game=(qa_buffer){0};
-    if (!copy_bytes((qa_bytes){source->game.data,source->game.size},&out->game,error)) { free(out); return NULL; }
+    if (!qa_q2_save_level_copy(source,out,error)) { free(out); return NULL; }
     return out;
 }
 
@@ -57,8 +56,8 @@ static qa_q2_save_data *copy_save(const qa_q2_save_data *source, qa_error *error
     if (ok) ok=copy_bytes((qa_bytes){source->game.data,source->game.size},&out->game,error);
     if (ok && source->level_count) { out->levels=calloc(source->level_count,sizeof(*out->levels)); ok=out->levels!=NULL; }
     for (size_t i=0;ok && i<source->level_count;++i) {
-        out->levels[i]=source->levels[i]; out->levels[i].game=(qa_buffer){0}; ++out->level_count;
-        ok=copy_bytes((qa_bytes){source->levels[i].game.data,source->levels[i].game.size},&out->levels[i].game,error);
+        ok=qa_q2_save_level_copy(source->levels+i,out->levels+i,error);
+        if (ok) ++out->level_count;
     }
     if (!ok) {
         if (error && error->code==QA_OK) application_fail(error,QA_ERROR_MEMORY,"Retaining original Q2 save owners");
@@ -81,21 +80,27 @@ static bool capture_configs(qa_q2_save_level *level,const qa_q2_config_entry *co
 {
     if (count && !configs) return application_fail(error,QA_ERROR_ARGUMENT,
         "Original Q2 capture requires the actual configstring owner");
-    char *table=(char *)level->configstrings;
-    for (size_t i=0;i<count;++i) {
+    uint32_t rows=qa_q2_save_configstring_count(level), width=qa_q2_save_configstring_width(level);
+    qa_buffer table={.size=(size_t)rows*width};
+    table.data=calloc(1,table.size);
+    if (!table.data) return application_fail(error,QA_ERROR_MEMORY,"Capturing original Q2 config rows");
+    bool ok=true;
+    for (size_t i=0;ok && i<count;++i) {
         uint32_t index=configs[i].index;
         const char *text=configs[i].value;
-        if (index>=QA_Q2_SAVE_CONFIGSTRINGS || !text ||
-            (i && configs[i-1].index>=index))
-            return application_fail(error,QA_ERROR_FORMAT,"Original Q2 config rows leave their Source table");
-        size_t size=strlen(text)+1, offset=(size_t)index*QA_Q2_SAVE_CONFIGSTRING_BYTES;
-        if (size>sizeof(level->configstrings)-offset)
-            return application_fail(error,QA_ERROR_UNSUPPORTED,"Original Q2 configstring exceeds its physical table");
-        /* Source strcpy permits statusbar to occupy following reserved rows.
-         * Empty independently owned rows must not erase that actual span. */
-        if (*text) memcpy(table+offset,text,size);
+        if (index>=rows || !text || (i && configs[i-1].index>=index)) {
+            ok=application_fail(error,QA_ERROR_FORMAT,"Original Q2 config rows leave their Source table"); break;
+        }
+        size_t size=strlen(text)+1, offset=(size_t)index*width;
+        if (size>table.size-offset) {
+            ok=application_fail(error,QA_ERROR_UNSUPPORTED,"Original Q2 configstring exceeds its physical table"); break;
+        }
+        /* Source statusbar occupies following reserved physical rows. */
+        if (*text) memcpy(table.data+offset,text,size);
     }
-    return true;
+    if (ok) ok=qa_q2_save_configstrings_capture(level,(qa_bytes){table.data,table.size},error);
+    qa_buffer_free(&table);
+    return ok;
 }
 
 static bool capture_portals(qa_application *app,qa_q2_save_level *level,qa_error *error)
@@ -209,6 +214,7 @@ bool qa_application_q2_save_capture(qa_application *app,qa_save_purpose purpose,
     }
     if (ok) {
         qa_q2_save_level *current=save->levels;
+        save->level_count=1;
         const char *name=qa_strings_cstr(qa_session_strings(app->session),app->current_map);
         ok=name && fixed_text(current->name,sizeof(current->name),name,error) &&
             capture_configs(current,configs,count,error) &&
@@ -218,16 +224,16 @@ bool qa_application_q2_save_capture(qa_application *app,qa_save_purpose purpose,
             (purpose!=QA_SAVE_LEVEL_ENTRY && (!level.data || !level.size))))
             ok=application_fail(error,QA_ERROR_FORMAT,"Original Q2 GAME did not produce its requested save file");
         if (ok && purpose!=QA_SAVE_LEVEL_ENTRY) {
-            current->game=level; level=(qa_buffer){0}; ++save->level_count;
-        }
+            current->game=level; level=(qa_buffer){0};
+        } else if (ok) { qa_q2_save_level_dispose(current); save->level_count=0; }
     }
     for (size_t i=0;ok && i<visits.count;++i) {
         const qa_q2_save_level *value=qa_campaign_world_q2(visits.worlds[i]);
         if (!value) {ok=application_fail(error,QA_ERROR_UNSUPPORTED,
             "Original Q2 directory requires original departed LEVEL files");break;}
         qa_q2_save_level *target=save->levels+save->level_count;
-        *target=*value; target->game=(qa_buffer){0}; ++save->level_count;
-        ok=copy_bytes((qa_bytes){value->game.data,value->game.size},&target->game,error);
+        ok=qa_q2_save_level_copy(value,target,error);
+        if (ok) ++save->level_count;
     }
     qa_buffer_free(&level); qa_campaign_unit_checkpoint_free(&visits);
     if (!ok) {qa_q2_save_destroy(save);return false;}
@@ -317,13 +323,9 @@ static bool restore_engine_level(application_provider *provider,const qa_q2_save
         struct application_native_q2 *engine=provider->state.native.q2_engine;
         if (!engine || engine->profile!=QA_NATIVE_Q2_GAME_API3 || engine->configstring_count!=QA_Q2_SAVE_CONFIGSTRINGS)
             return application_fail(error,QA_ERROR_FORMAT,"Original Q2 level differs from its real engine table");
-        const char *table=(const char *)level->configstrings;
-        for (size_t i=0;i<QA_Q2_SAVE_CONFIGSTRINGS;++i) {
-            const char *text=table+i*QA_Q2_SAVE_CONFIGSTRING_BYTES;
-            size_t remaining=sizeof(level->configstrings)-i*QA_Q2_SAVE_CONFIGSTRING_BYTES;
-            const char *end=memchr(text,0,remaining);
-            if (!end) return application_fail(error,QA_ERROR_FORMAT,"Original Q2 configstring has no table terminator");
-            size_t length=(size_t)(end-text);
+        for (uint32_t i=0;i<qa_q2_save_configstring_count(level);++i) {
+            const char *text=qa_q2_save_configstring(level,i);
+            size_t length=strlen(text);
             char *copy=malloc(length+1);
             if (!copy) return application_fail(error,QA_ERROR_MEMORY,"Restoring original Q2 configstring");
             memcpy(copy,text,length+1); free(engine->configstrings[i]); engine->configstrings[i]=copy;
@@ -394,14 +396,8 @@ bool application_q2_original_configure(qa_application_network_q2 *owner,qa_error
         return application_fail(error,QA_ERROR_ARGUMENT,"Original Q2 namespace lost its actual completed GAME/LEVEL");
     const qa_q2_save_level *level=current_level(stage);
     if (level && owner->host.source.kind==QA_APPLICATION_NATIVE_Q2_BUILTIN) {
-        const char *table=(const char *)level->configstrings;
         for (uint32_t i=0;i<owner->config_count;++i) {
-            const char *text=table+(size_t)i*QA_Q2_SAVE_CONFIGSTRING_BYTES;
-            size_t remaining=sizeof(level->configstrings)-(size_t)i*QA_Q2_SAVE_CONFIGSTRING_BYTES;
-            if (!memchr(text,0,remaining)) {
-                stage->failed=true;
-                return application_fail(error,QA_ERROR_FORMAT,"Original Q2 configstring has no physical table terminator");
-            }
+            const char *text=qa_q2_save_configstring(level,i);
             if (!application_network_q2_config(owner,i,text,error)) {
                 stage->failed=true; return false;
             }
@@ -507,7 +503,7 @@ static bool import_campaign(qa_application *app,struct application_q2_original_s
         ok=level && application_campaign_location(app,stage->product,source->name,&location,error) &&
             qa_campaign_world_q2_take(location,&level,state.worlds+state.count,error);
         if (ok) ++state.count;
-        if (level) { qa_buffer_free(&level->game); free(level); }
+        if (level) { qa_q2_save_level_dispose(level); free(level); }
     }
     if (ok) ok=qa_campaign_unit_restore(app->campaign_unit,&state,error);
     qa_campaign_unit_checkpoint_free(&state);

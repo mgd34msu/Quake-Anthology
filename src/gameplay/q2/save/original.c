@@ -694,7 +694,7 @@ bool q2_original_resource(qa_q2_game *g, q2_original_record_io *io,
         const char *text = qa_strings_cstr(qa_session_strings(g->services.session), *resource);
         if (!level || !text) return fail(io, *resource, "Q2 original resource has no actual engine table");
         for (uint32_t i = 1; i < 256; ++i)
-            if (!strncmp(level->configstrings[table_base + i], text, 64)) {
+            if (!strncmp(qa_q2_save_configstring(level, table_base + i), text, 64)) {
                 index = (int32_t)i;
                 break;
             }
@@ -710,7 +710,7 @@ bool q2_original_resource(qa_q2_game *g, q2_original_record_io *io,
             "Original Q2 resource exceeds its engine table");
         if (!index) { *resource = 0; return true; }
         if (!level) return fail(io, (size_t)index, "Original Q2 resource has no saved engine table");
-        const char *text = level->configstrings[table_base + (uint32_t)index];
+        const char *text = qa_q2_save_configstring(level, table_base + (uint32_t)index);
         if (!*text || !memchr(text, 0, 64)) return fail(io, (size_t)index,
             "Original Q2 resource index has no terminated engine string");
         return qa_strings_intern_cstr(qa_session_strings(g->services.session), text, resource, io->error);

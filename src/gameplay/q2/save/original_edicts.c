@@ -288,7 +288,7 @@ static bool original_player_model(qa_q2_game *game, q2_original_record_io *io,
         if (actor->client && actor->client->corpse) actor->client->info.slot = slot;
         return true;
     }
-    const char *config = engine->configstrings[1312 + slot];
+    const char *config = qa_q2_save_configstring(engine, 1312 + slot);
     const char *name = strchr(config, '\\');
     name = name ? name + 1 : "male/grunt";
     size_t length = strcspn(name, "/");
@@ -298,7 +298,7 @@ static bool original_player_model(qa_q2_game *game, q2_original_record_io *io,
         member = "weapon.md2";
         uint32_t wanted = (skin >> 8) & 255u, ordinal = 0;
         for (uint32_t i = 1; i < 256; ++i) {
-            const char *entry = engine->configstrings[32 + i];
+            const char *entry = qa_q2_save_configstring(engine, 32 + i);
             if (entry[0] == '#' && ++ordinal == wanted) { member = entry + 1; break; }
         }
     }

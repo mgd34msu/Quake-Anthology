@@ -91,7 +91,7 @@ void qa_campaign_world_release(qa_campaign_world *world) {
         if (world->source) qa_campaign_world_release(world->source);
         else {
             qa_buffer_free(&world->bytes);
-            if (world->q2) { qa_buffer_free(&world->q2->game); free(world->q2); }
+            if (world->q2) { qa_q2_save_level_dispose(world->q2); free(world->q2); }
         }
         free(world);
     }

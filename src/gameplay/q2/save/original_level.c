@@ -477,7 +477,7 @@ static bool level_state(qa_q2_game *g, q2_original_record_io *io,
             .autosave_ns = entities->last_autosave_ns,
             .power_cubes = g->item_runtime ? g->item_runtime->cubes : 0};
         const char *map = engine && engine->name[0] ? engine->name : players->rules.map_name;
-        const char *name = engine ? engine->configstrings[0] : NULL;
+        const char *name = engine ? qa_q2_save_configstring(engine, 0) : NULL;
         if ((map && !level_copy_text(state->map, sizeof(state->map), map, io->error)) ||
             (name && !level_copy_text(state->name, sizeof(state->name), name, io->error))) return false;
     }
@@ -615,7 +615,7 @@ static bool original_player_models(qa_q2_game *game, qa_q2_save_level *engine, q
     size_t count = sizeof(base) / sizeof(base[0]) + more, ordinal = 0;
     uint32_t last = 0;
     for (uint32_t i = 1; i < 256; ++i) {
-        const char *entry = engine->configstrings[32 + i];
+        const char *entry = qa_q2_save_configstring(engine, 32 + i);
         if (*entry) last = i;
         if (*entry != '#') continue;
         const char *expected = ordinal < sizeof(base) / sizeof(base[0]) ? base[ordinal] :
@@ -628,7 +628,7 @@ static bool original_player_models(qa_q2_game *game, qa_q2_save_level *engine, q
         if (++last >= 256) return level_error(error, last, "Q2 original player models exceed CS_MODELS");
         const char *name = ordinal < sizeof(base) / sizeof(base[0]) ? base[ordinal] :
             extra[ordinal - sizeof(base) / sizeof(base[0])];
-        memcpy(engine->configstrings[32 + last], name, strlen(name) + 1);
+        if (!qa_q2_save_configstring_set(engine, 32 + last, name, error)) return false;
         ++ordinal;
     }
     return true;

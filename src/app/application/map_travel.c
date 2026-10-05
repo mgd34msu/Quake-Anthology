@@ -591,10 +591,10 @@ bool qa_application_campaign_stage(qa_application *application, const qa_save_im
         if (ok && !value) ok=application_fail(error,QA_ERROR_MEMORY,"Retaining original Q2 departure");
         if (ok) {
             *value=*original;
-            original->game=(qa_buffer){0};
+            *original=(qa_q2_save_level){0};
             ok=qa_campaign_world_q2_take(travel->source,&value,&departure,error);
         }
-        if (value) {qa_buffer_free(&value->game);free(value);}
+        if (value) {qa_q2_save_level_dispose(value);free(value);}
     } else if (ok) ok=qa_save_image_encode(image,&bytes,error) &&
         qa_campaign_world_create(travel->source,bytes,&departure,error);
     if (ok) ok=qa_campaign_unit_stage(application->campaign_unit,travel->destination,false,reload,

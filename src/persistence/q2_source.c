@@ -7,6 +7,198 @@
 #define Q2_LEVEL_STRINGS (QA_Q2_SAVE_CONFIGSTRINGS * QA_Q2_SAVE_CONFIGSTRING_BYTES)
 #define Q2_LEVEL_BYTES (Q2_LEVEL_STRINGS + QA_Q2_SAVE_AREA_PORTALS * 4)
 
+uint32_t qa_q2_save_configstring_count(const qa_q2_save_level *level)
+{
+    return level->rerelease ? QA_Q2_SAVE_RERELEASE_CONFIGSTRINGS : QA_Q2_SAVE_CONFIGSTRINGS;
+}
+
+uint32_t qa_q2_save_configstring_width(const qa_q2_save_level *level)
+{
+    return level->rerelease ? QA_Q2_SAVE_RERELEASE_CONFIGSTRING_BYTES : QA_Q2_SAVE_CONFIGSTRING_BYTES;
+}
+
+const char *qa_q2_save_configstring(const qa_q2_save_level *level, uint32_t index)
+{
+    if (!level || index >= qa_q2_save_configstring_count(level)) return "";
+    size_t low = 0, high = level->configstrings.count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        if (level->configstrings.spans[middle].index <= index) low = middle + 1;
+        else high = middle;
+    }
+    if (!low) return "";
+    const qa_q2_save_config_span *span = level->configstrings.spans + low - 1;
+    uint32_t row = index - span->index;
+    return row < span->rows ? (const char *)level->configstrings.bytes.data + span->offset +
+        (size_t)row * qa_q2_save_configstring_width(level) : "";
+}
+
+static void configstrings_dispose(qa_q2_save_configstrings *configs)
+{
+    free(configs->spans);
+    qa_buffer_free(&configs->bytes);
+    *configs = (qa_q2_save_configstrings){0};
+}
+
+static bool occupied_row(const uint8_t *row, uint32_t width)
+{
+    for (uint32_t i = 0; i < width; ++i) if (row[i]) return true;
+    return false;
+}
+
+bool qa_q2_save_configstrings_capture(qa_q2_save_level *level, qa_bytes table, qa_error *error)
+{
+    if (!level || !table.data || table.size !=
+        (size_t)qa_q2_save_configstring_count(level) * qa_q2_save_configstring_width(level))
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II config table has no actual Source extent");
+    uint32_t width = qa_q2_save_configstring_width(level), rows = qa_q2_save_configstring_count(level);
+    size_t count = 0, size = 0;
+    bool occupied = false;
+    for (uint32_t i = 0; i < rows; ++i) {
+        bool next = occupied_row(table.data + (size_t)i * width, width);
+        if (next) { size += width; if (!occupied) { ++count; ++size; } }
+        occupied = next;
+    }
+    qa_q2_save_configstrings configs = {.count = count};
+    if (count) {
+        configs.spans = malloc(count * sizeof(*configs.spans));
+        configs.bytes = (qa_buffer){.data = malloc(size), .size = size};
+        if (!configs.spans || !configs.bytes.data) {
+            configstrings_dispose(&configs);
+            return persistence_fail(error, QA_ERROR_MEMORY, "Retaining occupied Quake II config rows");
+        }
+    }
+    size_t cursor = 0, at = 0;
+    for (uint32_t i = 0; i < rows;) {
+        if (!occupied_row(table.data + (size_t)i * width, width)) { ++i; continue; }
+        uint32_t begin = i;
+        do { ++i; } while (i < rows && occupied_row(table.data + (size_t)i * width, width));
+        size_t bytes = (size_t)(i - begin) * width;
+        configs.spans[at++] = (qa_q2_save_config_span){.index = begin, .rows = i - begin, .offset = cursor};
+        memcpy(configs.bytes.data + cursor, table.data + (size_t)begin * width, bytes);
+        configs.bytes.data[cursor + bytes] = 0; cursor += bytes + 1;
+    }
+    configstrings_dispose(&level->configstrings); level->configstrings = configs;
+    return true;
+}
+
+bool qa_q2_save_configstrings_expand(const qa_q2_save_level *level, qa_buffer *out, qa_error *error)
+{
+    if (!level || !out || out->data)
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II config expansion requires an empty output");
+    uint32_t rows = qa_q2_save_configstring_count(level), width = qa_q2_save_configstring_width(level);
+    qa_buffer table = {.size = (size_t)rows * width};
+    table.data = calloc(1, table.size);
+    if (!table.data) return persistence_fail(error, QA_ERROR_MEMORY, "Expanding Quake II physical config rows");
+    uint32_t end = 0;
+    for (size_t i = 0; i < level->configstrings.count; ++i) {
+        const qa_q2_save_config_span *span = level->configstrings.spans + i;
+        size_t bytes = (size_t)span->rows * width;
+        if (!span->rows || span->index < end || span->index >= rows || span->rows > rows - span->index ||
+            span->offset >= level->configstrings.bytes.size || bytes >= level->configstrings.bytes.size - span->offset ||
+            !level->configstrings.bytes.data || level->configstrings.bytes.data[span->offset + bytes]) {
+            qa_buffer_free(&table);
+            return persistence_fail(error, QA_ERROR_FORMAT, "Quake II occupied config span leaves its Source table");
+        }
+        memcpy(table.data + (size_t)span->index * width, level->configstrings.bytes.data + span->offset, bytes);
+        end = span->index + span->rows;
+    }
+    *out = table; return true;
+}
+
+bool qa_q2_save_configstring_set(qa_q2_save_level *level, uint32_t index, const char *text, qa_error *error)
+{
+    if (!level || !text || index >= qa_q2_save_configstring_count(level))
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II config assignment leaves its Source table");
+    qa_buffer table = {0};
+    if (!qa_q2_save_configstrings_expand(level, &table, error)) return false;
+    size_t offset = (size_t)index * qa_q2_save_configstring_width(level), size = strlen(text) + 1;
+    bool ok = size <= table.size - offset;
+    if (ok) { memcpy(table.data + offset, text, size); ok = qa_q2_save_configstrings_capture(level,
+        (qa_bytes){table.data, table.size}, error); }
+    else persistence_fail(error, QA_ERROR_FORMAT, "Quake II config string exceeds its Source physical table");
+    qa_buffer_free(&table); return ok;
+}
+
+void qa_q2_save_level_dispose(qa_q2_save_level *level)
+{
+    if (!level) return;
+    configstrings_dispose(&level->configstrings); qa_buffer_free(&level->game);
+    *level = (qa_q2_save_level){0};
+}
+
+bool qa_q2_save_level_copy(const qa_q2_save_level *source, qa_q2_save_level *out, qa_error *error)
+{
+    if (!source || !out) return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II level copy requires actual file owners");
+    qa_q2_save_level value = *source;
+    value.configstrings = (qa_q2_save_configstrings){0}; value.game = (qa_buffer){0};
+    if ((source->game.size && !source->game.data) ||
+        (source->configstrings.count && (!source->configstrings.spans || !source->configstrings.bytes.data)))
+        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II level copy lacks its actual backing");
+    value.game.size = source->game.size;
+    if (source->game.size) value.game.data = malloc(source->game.size);
+    value.configstrings.count = source->configstrings.count;
+    if (source->configstrings.count) value.configstrings.spans =
+        malloc(source->configstrings.count * sizeof(*value.configstrings.spans));
+    value.configstrings.bytes.size = source->configstrings.bytes.size;
+    if (source->configstrings.bytes.size) value.configstrings.bytes.data = malloc(source->configstrings.bytes.size);
+    if ((value.game.size && !value.game.data) || (value.configstrings.count && !value.configstrings.spans) ||
+        (value.configstrings.bytes.size && !value.configstrings.bytes.data)) {
+        qa_q2_save_level_dispose(&value);
+        return persistence_fail(error, QA_ERROR_MEMORY, "Copying Quake II level file state");
+    }
+    if (value.game.size) memcpy(value.game.data, source->game.data, value.game.size);
+    if (value.configstrings.count) memcpy(value.configstrings.spans, source->configstrings.spans,
+        value.configstrings.count * sizeof(*value.configstrings.spans));
+    if (value.configstrings.bytes.size) memcpy(value.configstrings.bytes.data,
+        source->configstrings.bytes.data, value.configstrings.bytes.size);
+    *out = value; return true;
+}
+
+bool qa_q2_save_configstrings_io(qa_source_save_io *io, qa_q2_save_level *level)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    if (!qa_source_save_bool(io, &level->rerelease)) return false;
+    uint32_t rows = qa_q2_save_configstring_count(level), width = qa_q2_save_configstring_width(level);
+    size_t count = reading ? 0 : level->configstrings.count;
+    if (!qa_source_save_count(io, &count, rows)) return false;
+    qa_q2_save_configstrings configs = reading ? (qa_q2_save_configstrings){.count = count} : level->configstrings;
+    if (reading && count) {
+        configs.spans = calloc(count, sizeof(*configs.spans));
+        if (!configs.spans) return persistence_io_fail(io, QA_ERROR_MEMORY, "Retaining campaign Q2 config spans");
+    }
+    bool ok = true;
+    uint32_t end = 0; size_t extent = 0;
+    for (size_t i = 0; ok && i < count; ++i) {
+        qa_q2_save_config_span *span = configs.spans + i;
+        ok = qa_source_save_u32(io, &span->index) && qa_source_save_u32(io, &span->rows);
+        if (ok && (!span->rows || span->index < end || span->index >= rows || span->rows > rows - span->index))
+            ok = persistence_io_fail(io, QA_ERROR_FORMAT, "Campaign Q2 config span leaves its Source table");
+        if (ok) {
+            size_t size = (size_t)span->rows * width;
+            if (reading) span->offset = extent;
+            else if (span->offset != extent || span->offset >= configs.bytes.size ||
+                size >= configs.bytes.size - span->offset || !configs.bytes.data || configs.bytes.data[span->offset + size])
+                ok = persistence_io_fail(io, QA_ERROR_FORMAT, "Campaign Q2 config span has no terminated backing");
+            extent += size + 1; end = span->index + span->rows;
+        }
+    }
+    if (ok && reading && extent) {
+        configs.bytes = (qa_buffer){.data = calloc(1, extent), .size = extent};
+        if (!configs.bytes.data) ok = persistence_io_fail(io, QA_ERROR_MEMORY, "Retaining campaign Q2 config bytes");
+    }
+    for (size_t i = 0; ok && i < count; ++i) {
+        qa_q2_save_config_span *span = configs.spans + i;
+        ok = qa_source_save_memory_delta(io, configs.bytes.data + span->offset,
+            (size_t)span->rows * width, (qa_bytes){0});
+    }
+    if (reading) {
+        if (ok) { configstrings_dispose(&level->configstrings); level->configstrings = configs; }
+        else configstrings_dispose(&configs);
+    }
+    return ok;
+}
+
 void qa_q2_save_server_dispose(qa_q2_save_server *server)
 {
     if (!server) return;
@@ -141,7 +333,7 @@ static bool level_decode(qa_bytes bytes, qa_q2_save_level *level, qa_error *erro
 {
     if (bytes.size != Q2_LEVEL_BYTES)
         return persistence_fail(error, QA_ERROR_FORMAT, "Quake II .sv2 has an invalid configstring/portal extent");
-    memcpy(level->configstrings, bytes.data, Q2_LEVEL_STRINGS);
+    if (!qa_q2_save_configstrings_capture(level, (qa_bytes){bytes.data, Q2_LEVEL_STRINGS}, error)) return false;
     for (size_t i = 0; i < QA_Q2_SAVE_AREA_PORTALS; ++i)
         level->portal_open[i] = qa_load_i32le(bytes.data + Q2_LEVEL_STRINGS + i * 4);
     return true;
@@ -152,7 +344,7 @@ void qa_q2_save_destroy(qa_q2_save_data *save)
     if (!save) return;
     qa_q2_save_server_dispose(&save->server);
     qa_buffer_free(&save->game);
-    for (size_t i = 0; i < save->level_count; ++i) qa_buffer_free(&save->levels[i].game);
+    for (size_t i = 0; i < save->level_count; ++i) qa_q2_save_level_dispose(save->levels + i);
     free(save->levels); free(save);
 }
 
@@ -246,7 +438,11 @@ bool qa_q2_save_directory_write(qa_fs_root *root, const char *directory,
     }
     for (size_t i = 0; ok && i < save->level_count; ++i) {
         const qa_q2_save_level *level = save->levels + i;
-        memcpy(engine.data, level->configstrings, Q2_LEVEL_STRINGS);
+        qa_buffer configs = {0};
+        ok = qa_q2_save_configstrings_expand(level, &configs, error);
+        if (!ok) break;
+        memcpy(engine.data, configs.data, Q2_LEVEL_STRINGS);
+        qa_buffer_free(&configs);
         for (size_t portal = 0; portal < QA_Q2_SAVE_AREA_PORTALS; ++portal)
             qa_store_u32le(engine.data + Q2_LEVEL_STRINGS + portal * 4, (uint32_t)level->portal_open[portal]);
         ok = write_file(root, directory, level->name, ".sav", (qa_bytes){level->game.data, level->game.size}, nonce, error) &&

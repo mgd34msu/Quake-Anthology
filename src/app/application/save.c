@@ -746,8 +746,7 @@ bool application_campaign_fields(qa_source_save_io *io, qa_application *app, boo
             if (!level) ok=application_fail(io->error,reading?QA_ERROR_MEMORY:QA_ERROR_FORMAT,
                 "Campaign original Q2 LEVEL owner is unavailable");
             if (ok) ok=qa_source_save_bytes(io,level->name,sizeof(level->name)) &&
-                qa_source_save_memory_delta(io,(uint8_t *)level->configstrings,
-                    sizeof(level->configstrings),(qa_bytes){0});
+                qa_q2_save_configstrings_io(io,level);
             size_t portals=0, cursor=0;
             if (ok && !reading)
                 for (size_t j=0;j<QA_Q2_SAVE_AREA_PORTALS;++j)
@@ -775,7 +774,7 @@ bool application_campaign_fields(qa_source_save_io *io, qa_application *app, boo
                 }
                 if (ok) ok=qa_campaign_world_q2_take(location,&level,checkpoint.worlds+i,io->error);
             } else if (ok) ok=qa_source_save_bytes(io,level->game.data,size);
-            if (reading && level) {qa_buffer_free(&level->game);free(level);}
+            if (reading && level) {qa_q2_save_level_dispose(level);free(level);}
         } else if (ok && kind==QA_CAMPAIGN_APPLICATION_STATE) {
             qa_bytes bytes=reading?(qa_bytes){0}:qa_campaign_world_bytes(checkpoint.worlds[i]);
             size_t size=bytes.size;
