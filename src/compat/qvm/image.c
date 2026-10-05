@@ -67,12 +67,15 @@ bool qa_qvm_image_load(qa_bytes bytes, qa_qvm_image **out, qa_error *error)
         return qa_qvm_error(error,QA_ERROR_FORMAT,16,"QVM code and initialized memory overlap");
     if ((size_t)instruction_count > SIZE_MAX / sizeof(qa_qvm_instruction))
         return qa_qvm_error(error,QA_ERROR_MEMORY,4,"QVM instruction table is too large");
+    if ((size_t)code_length > SIZE_MAX / sizeof(qvm_code_word))
+        return qa_qvm_error(error,QA_ERROR_MEMORY,12,"QVM prepared code is too large");
     qa_qvm_image *image = calloc(1,sizeof(*image));
     if (image == NULL) return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating QVM image");
     image->references = 1;
     image->instructions = calloc((size_t)instruction_count,sizeof(*image->instructions));
+    image->code = calloc((size_t)code_length,sizeof(*image->code));
     if (initialized > 0) image->initialized.data = malloc(initialized);
-    if (image->instructions == NULL || (initialized > 0 && image->initialized.data == NULL)) {
+    if (image->instructions == NULL || image->code == NULL || (initialized > 0 && image->initialized.data == NULL)) {
         qa_qvm_image_release(image);
         return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating QVM image records");
     }
@@ -92,6 +95,19 @@ bool qa_qvm_image_load(qa_bytes bytes, qa_qvm_image **out, qa_error *error)
             qa_qvm_error(error,QA_ERROR_FORMAT,position - 4,"QVM branch target outside instruction table"); goto failed;
         }
         image->instructions[i] = instruction;
+    }
+    /* Source return addresses index the original byte-PC space, including its
+     * zero operand tails. Resolve branch instruction ordinals only once. */
+    for (size_t i = 0; i < (size_t)code_length; ++i) image->code[i].instruction = UINT32_MAX;
+    for (size_t i = 0; i < (size_t)instruction_count; ++i) {
+        const qa_qvm_instruction *instruction = &image->instructions[i];
+        image->code[instruction->byte_offset] = (qvm_code_word){instruction->opcode, (uint32_t)i};
+        if (instruction->operand_width != 0) {
+            int32_t operand = instruction->operand;
+            if (instruction->opcode >= QA_QVM_EQ && instruction->opcode <= QA_QVM_GEF)
+                operand = (int32_t)image->instructions[operand].byte_offset;
+            image->code[instruction->byte_offset + 1].value = operand;
+        }
     }
     image->instruction_count = (size_t)instruction_count;
     image->code_length = (uint32_t)code_length;
@@ -136,7 +152,7 @@ void qa_qvm_image_retain(qa_qvm_image *image)
 void qa_qvm_image_release(qa_qvm_image *image)
 {
     if (image == NULL || --image->references != 0) return;
-    free(image->instructions); qa_buffer_free(&image->initialized); free(image);
+    free(image->instructions); free(image->code); qa_buffer_free(&image->initialized); free(image);
 }
 
 const qa_sha256_digest *qa_qvm_image_digest(const qa_qvm_image *image) { return image == NULL ? NULL : &image->digest; }

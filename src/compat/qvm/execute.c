@@ -12,7 +12,6 @@
 
 typedef struct operands {
     int32_t words[QVM_OPERANDS];
-    bool initialized[QVM_OPERANDS];
     uint32_t depth;
 } operands;
 typedef struct source_call source_call;
@@ -178,57 +177,31 @@ static bool stack_address(qa_qvm *vm, int64_t value, uint32_t *out, qa_error *er
     *out = (uint32_t)value;
     return true;
 }
-static bool push(operands *stack, int32_t word, bool initialized, qa_error *error)
+static bool push(operands *stack, int32_t word, bool write, qa_error *error)
 {
     if (stack->depth == QVM_OPERANDS - 1) return error_at(error, 0, "QVM operand stack overflow");
     ++stack->depth;
     /* PUSH reserves the existing cell, exactly as the source operand stack. */
-    if (initialized) { stack->words[stack->depth] = word; stack->initialized[stack->depth] = true; }
+    if (write) stack->words[stack->depth] = word;
     return true;
 }
-static bool peek(const operands *stack, int32_t *word, qa_error *error)
+static int32_t peek(const operands *stack)
 {
-    if (!stack->initialized[stack->depth]) return error_at(error, 0, "QVM reads an uninitialized operand");
-    *word = stack->words[stack->depth]; return true;
+    return stack->words[stack->depth];
 }
 static bool pop(operands *stack, int32_t *word, qa_error *error)
 {
     if (stack->depth == 0) return error_at(error, 0, "QVM operand stack underflow");
-    if (!peek(stack, word, error)) return false;
+    *word = peek(stack);
     --stack->depth; return true;
 }
 static void set_top(operands *stack, int32_t word)
-{ stack->words[stack->depth] = word; stack->initialized[stack->depth] = true; }
+{ stack->words[stack->depth] = word; }
 
-/* Ordinary sequential decode reuses the current compact instruction. Only a
- * changed PC needs a search. Operand tails remain zero in the source PC space. */
-static bool code_word(const qa_qvm_image *image, int32_t pc, size_t *hint, int32_t *out, qa_error *error)
+static bool code_word(const qa_qvm_image *image, int32_t pc, int32_t *out, qa_error *error)
 {
     if (pc < 0 || (uint32_t)pc >= image->code_length) return error_at(error, 0, "QVM program counter exceeds code");
-    size_t index = *hint;
-    if (index >= image->instruction_count || image->instructions[index].byte_offset > (uint32_t)pc
-        || (index + 1 < image->instruction_count && image->instructions[index + 1].byte_offset <= (uint32_t)pc)) {
-        if (index + 1 < image->instruction_count && image->instructions[index + 1].byte_offset == (uint32_t)pc) ++index;
-        else {
-            size_t low = 0, high = image->instruction_count;
-            while (low < high) {
-                size_t middle = low + (high - low) / 2;
-                if (image->instructions[middle].byte_offset <= (uint32_t)pc) low = middle + 1;
-                else high = middle;
-            }
-            index = low - 1;
-        }
-    }
-    *hint = index;
-    const qa_qvm_instruction *instruction = &image->instructions[index];
-    uint32_t relative = (uint32_t)pc - instruction->byte_offset;
-    *out = 0;
-    if (relative == 0) *out = instruction->opcode;
-    else if (relative == 1 && instruction->operand_width != 0) {
-        *out = instruction->operand;
-        if (instruction->opcode >= QA_QVM_EQ && instruction->opcode <= QA_QVM_GEF)
-            *out = (int32_t)image->instructions[instruction->operand].byte_offset;
-    }
+    *out = image->code[pc].value;
     return true;
 }
 static bool target_pc(const qa_qvm_image *image, int32_t instruction, int32_t *pc, qa_error *error)
@@ -1003,7 +976,7 @@ static bool intercept(qa_qvm *vm, execution_frame *frame, uint32_t stack, int32_
         }
     }
     if (exec->cancelled == &source && !exec->failed) {
-        while (source.operands->depth > source.depth) source.operands->initialized[source.operands->depth--] = false;
+        if (source.operands->depth > source.depth) source.operands->depth = source.depth;
         if (source.operands->depth < source.depth) ok = error_at(error, 0, "QVM cancellation lost caller operands");
         else {
             exec->cancelled = NULL;
@@ -1028,7 +1001,6 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
     uint32_t previous_stack = exec->program_stack;
     exec->active = &frame;
     int32_t pc;
-    size_t hint = instruction;
     bool ok = target_pc(vm->image, (int32_t)instruction, &pc, error), finished = false;
     int32_t result = 0;
     return_address inline_returns[32];
@@ -1081,8 +1053,8 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
         }
         int32_t opcode, operand = 0, left = 0, right = 0;
         int32_t opcode_pc = pc;
-        if (!code_word(vm->image, pc++, &hint, &opcode, error)) { ok = false; break; }
-        uint32_t original = vm->image->instructions[hint].byte_offset == (uint32_t)opcode_pc ? (uint32_t)hint : NO_INSTRUCTION;
+        if (!code_word(vm->image, pc++, &opcode, error)) { ok = false; break; }
+        uint32_t original = vm->image->code[opcode_pc].instruction;
         if (vm->options.debug && vm->data_size >= UINT32_C(0x20000) && frame.stack <= vm->data_size - UINT32_C(0x20000)) {
             ok = error_at(error, frame.stack, "QVM debug program stack overflow"); break;
         }
@@ -1104,7 +1076,7 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
             }
             break;
         case QA_QVM_CONST: case QA_QVM_LOCAL:
-            if (!code_word(vm->image, pc, &hint, &operand, error)) { ok = false; break; }
+            if (!code_word(vm->image, pc, &operand, error)) { ok = false; break; }
             pc += 4;
             ok = push(stack, opcode == QA_QVM_CONST ? operand : signed_bits(frame.stack + (uint32_t)operand), true, error); break;
         case QA_QVM_PUSH: ok = push(stack, 0, false, error); break;
@@ -1113,7 +1085,7 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
             else --stack->depth;
             break;
         case QA_QVM_ENTER:
-            if (!code_word(vm->image, pc, &hint, &operand, error)) { ok = false; break; }
+            if (!code_word(vm->image, pc, &operand, error)) { ok = false; break; }
             pc += 4;
             ok = stack_address(vm, (int64_t)frame.stack - operand, &frame.stack, error);
             if (ok && frame.stack < frame.floor) ok = error_at(error, frame.stack, "QVM evaluation stack overlaps source data");
@@ -1126,7 +1098,7 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
             }
             break;
         case QA_QVM_LEAVE: {
-            if (!code_word(vm->image, pc, &hint, &operand, error)
+            if (!code_word(vm->image, pc, &operand, error)
                 || !stack_address(vm, (int64_t)frame.stack + operand, &frame.stack, error)) { ok = false; break; }
             int32_t target;
             if (compiled) {
@@ -1138,7 +1110,7 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
                 ok = pop(stack, &result, error); finished = ok;
             } else if (target == -1) {
                 if (stack->depth != 1) { ok = error_at(error, (size_t)opcode_pc, "QVM invocation returned with invalid operands"); break; }
-                ok = peek(stack, &result, error); finished = ok;
+                result = peek(stack); finished = true;
             } else pc = target;
             break;
         }
@@ -1173,7 +1145,7 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
                 }
                 if (hook == NULL && observers == NULL) {
                     if (compiled && !reserve_return(&returns, &return_count, &return_capacity, inline_returns, frame.stack, return_pc, error)) { ok = false; break; }
-                    pc = target; hint = (uint32_t)operand;
+                    pc = target;
                 } else {
                     uint32_t saved = exec->program_stack;
                     ok = stack_address(vm, (int64_t)frame.stack - 4, &exec->program_stack, error);
@@ -1206,10 +1178,9 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
         }
         case QA_QVM_JUMP:
             ok = pop(stack, &operand, error) && target_pc(vm->image, operand, &pc, error);
-            if (ok) hint = (uint32_t)operand;
             break;
         case QA_QVM_LOAD1: case QA_QVM_LOAD2: case QA_QVM_LOAD4: {
-            if (!peek(stack, &operand, error)) { ok = false; break; }
+            operand = peek(stack);
             uint32_t address = (uint32_t)operand & vm->data_mask;
             size_t bytes = opcode == QA_QVM_LOAD1 ? 1 : opcode == QA_QVM_LOAD2 ? 2 : 4;
             if (vm->options.debug && bytes == 4 && ((uint32_t)operand & 3) != 0) { ok = error_at(error, address, "QVM debug LOAD4 is misaligned"); break; }
@@ -1233,12 +1204,12 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
             break;
         }
         case QA_QVM_ARG:
-            if (!code_word(vm->image, pc++, &hint, &operand, error) || !pop(stack, &right, error)) { ok = false; break; }
+            if (!code_word(vm->image, pc++, &operand, error) || !pop(stack, &right, error)) { ok = false; break; }
             if (operand < 0 || (uint64_t)frame.stack + (uint32_t)operand > UINT32_MAX) { ok = error_at(error, (size_t)opcode_pc, "QVM argument address overflow"); break; }
             ok = write_word(vm, frame.stack + (uint32_t)operand, right, error); break;
         case QA_QVM_BLOCK_COPY:
             if (counter != NULL) { ok = error_at(error, (size_t)opcode_pc, "QVM counter cannot copy source memory"); break; }
-            if (!pop(stack, &right, error) || !pop(stack, &left, error) || !code_word(vm->image, pc, &hint, &operand, error)) { ok = false; break; }
+            if (!pop(stack, &right, error) || !pop(stack, &left, error) || !code_word(vm->image, pc, &operand, error)) { ok = false; break; }
             pc += 4;
             if (compiled) {
                 if (operand < 0 || left < 0 || right < 0 || (uint64_t)(uint32_t)left + (uint32_t)operand > vm->data_mask
@@ -1254,13 +1225,13 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
             }
             break;
         case QA_QVM_BCOM:
-            if (!peek(stack, &operand, error)) { ok = false; break; }
+            operand = peek(stack);
             if (compiled) set_top(stack, ~operand);
             else if (stack->depth == 0) ok = error_at(error, (size_t)opcode_pc, "QVM interpreted complement underflows");
-            else { stack->words[stack->depth - 1] = ~operand; stack->initialized[stack->depth - 1] = true; }
+            else stack->words[stack->depth - 1] = ~operand;
             break;
         case QA_QVM_SEX8: case QA_QVM_SEX16: case QA_QVM_NEGI: case QA_QVM_NEGF: case QA_QVM_CVIF: case QA_QVM_CVFI:
-            if (!peek(stack, &operand, error)) { ok = false; break; }
+            operand = peek(stack);
             if (opcode == QA_QVM_SEX8) right = (operand & 0x80) != 0 ? (operand & 255) - 256 : operand & 255;
             else if (opcode == QA_QVM_SEX16) right = (operand & 0x8000) != 0 ? (operand & 65535) - 65536 : operand & 65535;
             else if (opcode == QA_QVM_NEGI) right = signed_bits(0u - (uint32_t)operand);
@@ -1270,10 +1241,11 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
             set_top(stack, right); break;
         default:
             if ((opcode >= QA_QVM_ADD && opcode <= QA_QVM_RSHU) || (opcode >= QA_QVM_ADDF && opcode <= QA_QVM_MULF)) {
-                ok = pop(stack, &right, error) && peek(stack, &left, error) && arithmetic((uint8_t)opcode, left, right, &operand, error);
+                ok = pop(stack, &right, error);
+                if (ok) ok = arithmetic((uint8_t)opcode, peek(stack), right, &operand, error);
                 if (ok) set_top(stack, operand);
             } else if (opcode >= QA_QVM_EQ && opcode <= QA_QVM_GEF) {
-                if (!pop(stack, &right, error) || !pop(stack, &left, error) || !code_word(vm->image, pc, &hint, &operand, error)) { ok = false; break; }
+                if (!pop(stack, &right, error) || !pop(stack, &left, error) || !code_word(vm->image, pc, &operand, error)) { ok = false; break; }
                 bool taken = branch_taken((uint8_t)opcode, left, right);
                 if (owner != NULL)
                     for (size_t i = 0; ok && i < owner->branch_count; ++i) {
@@ -1288,7 +1260,6 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
                         exec->program_stack = saved; break;
                     }
                 pc = taken ? operand : pc + 4;
-                if (taken && original != NO_INSTRUCTION) hint = (uint32_t)vm->image->instructions[original].operand;
             } else if (vm->options.debug) ok = error_at(error, (size_t)opcode_pc, "Bad QVM debug instruction");
             /* Release interpreted execution admits unknown words in sparse tails. */
             break;

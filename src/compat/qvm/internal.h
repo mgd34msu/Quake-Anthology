@@ -4,10 +4,16 @@
 #include "qa/qvm.h"
 #include "qa/binary.h"
 
+typedef struct qvm_code_word {
+    int32_t value;
+    uint32_t instruction;
+} qvm_code_word;
+
 struct qa_qvm_image {
     size_t references, instruction_count, memory_size;
     uint32_t code_length, data_length, literal_length, bss_length;
     qa_qvm_instruction *instructions;
+    qvm_code_word *code;
     qa_buffer initialized;
     qa_sha256_digest digest;
 };
