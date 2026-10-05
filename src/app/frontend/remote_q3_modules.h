@@ -66,7 +66,6 @@ bool frontend_remote_q3_modules_capture_returned(const frontend_remote_q3_module
 /* After the actual movie parents import, before global numeric handles and
  * Q3MS role media: binds actual saved shared roles without Init. Saved local
  * movie ownership stays local. */
-bool frontend_remote_q3_modules_cinematics_bind(frontend_remote_q3_modules *, qa_error *);
 bool frontend_remote_q3_modules_cinematic_source_decode(frontend_remote_q3_modules *,
     const frontend_system_cinematic_identity *, frontend_system_cinematic_source *, qa_error *);
 bool frontend_remote_q3_modules_idle(const frontend_remote_q3_modules *);

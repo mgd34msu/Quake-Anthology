@@ -22,15 +22,6 @@
 #include <stdio.h>
 #include <time.h>
 
-void frontend_remote_modules_saved_dispose(remote_module_saved *roles, size_t count)
-{
-    for (size_t i = 0; roles && i < count; ++i) {
-        qa_buffer_free(&roles[i].scene); qa_buffer_free(&roles[i].media);
-        qa_buffer_free(&roles[i].equipment); qa_buffer_free(&roles[i].music);
-        free(roles[i].music_intro); free(roles[i].music_loop);
-    }
-    free(roles);
-}
 const qa_application_q3_remote_source *frontend_remote_modules_source(const frontend_remote_q3_modules *owner)
 { return owner->kind == REMOTE_MODULE_INITIAL ? &owner->basis.initial.view.attempt.source : &owner->basis.decoded.view.domain.source; }
 static const qa_application_q3_remote_source *source(const frontend_remote_q3_modules *owner)
@@ -64,7 +55,7 @@ static bool cinematic_parent(const remote_module_lease *lease,
 }
 static bool cinematic_current(const remote_module_lease *lease, qa_error *error)
 {
-    if (!lease->cinematics) return lease->owner->restoring || lease->legacy_cinematics;
+    if (!lease->cinematics) return false;
     qa_q3_cinematic_source *actual = NULL;
     const qa_q3_cinematic_source *parent = NULL;
     uint32_t seat = 0; uint64_t bus = 0;
@@ -161,21 +152,7 @@ static bool same_host_context(const qa_q3_host_client_context *a, const qa_q3_ho
         x->direct == y->direct && x->console_text == y->console_text && x->script == y->script &&
         x->registry == y->registry && x->generation == y->generation && qa_actor_id_equal(x->actor, y->actor);
 }
-static bool restored_entered(void *context, const frontend_network_client_domain *domain, qa_error *error)
-{
-    remote_module_lease *lease = context;
-    const frontend_remote_q3_modules *owner = lease ? lease->owner : NULL;
-    const frontend_network_client_domain *held = owner && owner->kind == REMOTE_MODULE_DECODED ?
-        &owner->basis.decoded.view.domain : NULL;
-    return (held && domain && held->epoch == domain->epoch &&
-        held->restart_generation == domain->restart_generation &&
-        held->connection.owner == domain->connection.owner && held->connection.slot == domain->connection.slot &&
-        held->connection.generation == domain->connection.generation &&
-        held->content_owner == domain->content_owner && held->content == domain->content &&
-        held->map == domain->map && held->gamestate == domain->gamestate &&
-        same_source(&held->source, &domain->source) && entered(lease, NULL, NULL, error)) ||
-        frontend_fail(error, QA_ERROR_ARGUMENT, "Restored DATA lost its retained entered module domain");
-}
+
 static bool browser_current(void *context, const qa_q3_host_client_context *ui, qa_error *error)
 {
     remote_module_lease *lease = context;
@@ -466,16 +443,7 @@ static frontend_music_origin music_origin(remote_module_lease *lease)
         .product = descriptor->selection.product, .files = mounts(lease->owner), .music = lease->music,
         .context = lease, .current = music_origin_current, .stop = music_stop};
 }
-bool frontend_remote_modules_music_restore_origin(remote_module_lease *lease, qa_error *error)
-{
-    frontend_music_sources *sources = lease->owner->frontend->music_sources;
-    if (!lease->music) return true;
-    qa_audio_music_controls *controls = frontend_music_sources_controls(sources);
-    if (!controls || !qa_audio_music_controls_bind(lease->music, controls, error)) return false;
-    frontend_music_origin origin = music_origin(lease);
-    return !frontend_music_sources_restore_origin_matches(sources, &origin) ||
-        frontend_music_sources_restore_origin(sources, &origin, error);
-}
+
 static bool music(void *context, const char *intro_name, const char *loop_name, qa_error *error)
 {
     remote_module_lease *lease = context; qa_frontend *f = lease->owner->frontend;
@@ -761,10 +729,7 @@ static bool prepare(void *context, const qa_application_native_q3_module_prepara
     frontend_remote_q3_modules *owner = context;
     qa_frontend *f = owner->frontend;
     const qa_q3_gamestate *gamestate = owner->kind == REMOTE_MODULE_INITIAL ? NULL : owner->basis.decoded.view.domain.gamestate;
-    remote_module_saved *saved = request && owner->restoring ?
-        frontend_remote_modules_saved(owner, request->role, request->service_owner) : NULL;
-    if (!request || !request->services || request->restoring != owner->restoring || !owner->constructing ||
-        (owner->restoring && (!saved || saved->prepared)) ||
+    if (!request || !request->services || request->restoring || !owner->constructing ||
         (owner->kind == REMOTE_MODULE_INITIAL && request->role != QA_QVM_UI) ||
         !current(owner, request->source, gamestate, error)) return false;
     if (!frontend_remote_modules_released_drain(owner, error)) return false;
@@ -789,19 +754,15 @@ static bool prepare(void *context, const qa_application_native_q3_module_prepara
     if (ok) ok = frontend_config_host_cvars_set_entry(&lease->namespaces, lease, namespace_entered, error);
     if (ok) {
         lease->keys = configuration_view.keys;
-        ok = lease->keys && (!saved || frontend_key_profile_id(lease->keys) == saved->keys) &&
+        ok = lease->keys &&
             frontend_key_profile_state(lease->keys) && frontend_key_profile_retain(lease->keys, error);
         if (!ok) lease->keys = NULL;
     }
     if (ok && owner->kind == REMOTE_MODULE_INITIAL)
-        ok = owner->restoring ? frontend_network_client_restore_attempt_services(f, &owner->basis.initial.view.attempt,
-            &lease->initial_network, lease, initial_entered, &lease->network, error) :
-            frontend_network_client_attempt_services(f, &owner->basis.initial.view.attempt,
-                &lease->initial_network, lease, initial_entered, &lease->network, error);
+        ok = frontend_network_client_attempt_services(f, &owner->basis.initial.view.attempt,
+            &lease->initial_network, lease, initial_entered, &lease->network, error);
     else if (ok)
-        ok = owner->restoring ? frontend_network_client_restore_services(f, &owner->basis.decoded.view.domain,
-            &lease->restored_network, lease, restored_entered, &lease->network, error) :
-            frontend_network_presentation_services(f, &request->source->receiver, &lease->network, error);
+        ok = frontend_network_presentation_services(f, &request->source->receiver, &lease->network, error);
     lease->constructor = (qa_q3_host_client_context){host->session, host->role, host->owner,
         host->service_owner, host->console, host->cvars, host->client_time_cvars,
         host->client_time_owner, host->command_context, lease};
@@ -813,7 +774,7 @@ static bool prepare(void *context, const qa_application_native_q3_module_prepara
         lease->preparing = false;
     }
     qa_q3_cinematic_source *parent = NULL;
-    if (ok && !owner->restoring) ok = cinematic_parent(lease, &parent, error) &&
+    if (ok) ok = cinematic_parent(lease, &parent, error) &&
         qa_q3_cinematic_source_create_role(parent, physical_seat(owner), lease->service_owner,
             &lease->cinematics, error) &&
         qa_q3_cinematic_source_role_diagnostic_bind(lease->cinematics, lease, cinematic_print,
@@ -828,20 +789,16 @@ static bool prepare(void *context, const qa_application_native_q3_module_prepara
         .frame_number = frame_number, .milliseconds = source_milliseconds, .audio_bus = audio_bus,
         .prepare_view = prepare_view, .submit_view = submit_view, .prepare_picture = prepare_picture,
         .scene_cleared = scene_cleared, .remap = remap, .print = print};
-    if (ok && !owner->restoring) ok = frontend_q3_renderer_options_read(f, &backend, error);
+    if (ok) ok = frontend_q3_renderer_options_read(f, &backend, error);
     if (ok) ok = qa_q3_presentation_create(&backend, &lease->presentation, error);
     if (ok && owner->kind == REMOTE_MODULE_DECODED) {
         const frontend_remote_q3_resources *resources = &owner->basis.decoded.view;
         qa_bsp_view bsp;
         ok = resources->world && qa_bsp_open(qa_resource_bytes(resources->map), &bsp, error);
-        if (ok) ok = owner->restoring ? qa_q3_presentation_prepare_restored(lease->presentation,
-            &f->frame, resources->world, resources->geometry, bsp.lumps[QA_BSP_ENTITIES].bytes, error) :
-            qa_q3_presentation_world(lease->presentation, resources->world, resources->geometry,
-                bsp.lumps[QA_BSP_ENTITIES].bytes, error);
+        if (ok) ok = qa_q3_presentation_world(lease->presentation, resources->world, resources->geometry,
+            bsp.lumps[QA_BSP_ENTITIES].bytes, error);
     }
-    if (ok && owner->kind == REMOTE_MODULE_INITIAL && owner->restoring)
-        ok = qa_q3_presentation_prepare_restored(lease->presentation, &f->frame, NULL, NULL, (qa_bytes){0}, error);
-    if (ok && !owner->restoring) ok = qa_q3_presentation_frame(lease->presentation, &f->frame, backend.viewport, error);
+    if (ok) ok = qa_q3_presentation_frame(lease->presentation, &f->frame, backend.viewport, error);
     if (ok && request->role == QA_QVM_CGAME) {
         frontend_equipment_source_options equipment = {.frontend = f,
             .receiver = host->owner, .seat = request->source->receiver.seat, .physical_seat = physical_seat(owner),
@@ -878,7 +835,6 @@ static bool prepare(void *context, const qa_application_native_q3_module_prepara
     host->common = (qa_q3_host_common_services){.context = lease, .print = print, .milliseconds = common_milliseconds,
         .calendar = calendar, .arguments = arguments, .client_command = client_command,
         .installed_mods = installed_mods, .clipboard = clipboard};
-    if (saved) saved->prepared = true;
     return true;
 }
 
@@ -898,56 +854,7 @@ bool frontend_remote_q3_modules_create(frontend_remote_q3 *row, frontend_remote_
     bool ok = qa_application_native_q3_client_modules_create(row->application, &options, &owner->modules, error);
     owner->constructing = false; return ok;
 }
-remote_module_saved *frontend_remote_modules_saved(frontend_remote_q3_modules *owner,
-    qa_qvm_role role, uint64_t service_owner)
-{
-    for (size_t i = 0; owner && i < owner->saved_count; ++i)
-        if (owner->saved[i].role == (uint32_t)role && owner->saved[i].service_owner == service_owner)
-            return &owner->saved[i];
-    return NULL;
-}
-bool frontend_remote_modules_construct_restored(qa_frontend *f, frontend_remote_q3 *row,
-    frontend_remote_q3_initial *initial, remote_module_saved **saved, size_t count,
-    qa_bytes wrapper, qa_bytes modules, frontend_remote_q3_modules **out, qa_error *error)
-{
-    if (!f || !out || *out || !saved || !*saved || !count || count > 2 ||
-        (!!row == !!initial) || f->capture || f->resource_inventory || f->shutdown)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Module import requires its genuine detached parent and complete role records");
-    frontend_remote_q3_resources decoded = {0}; frontend_remote_q3_initial_view connecting = {0};
-    if (row ? row->frontend != f || !frontend_remote_q3_resources_import_read(row, &decoded, error) || !decoded.world :
-        frontend_remote_q3_initial_frontend(initial) != f ||
-        !frontend_remote_q3_initial_import_read(initial, &connecting, error)) return false;
-    frontend_remote_q3_modules *owner = calloc(1, sizeof(*owner));
-    if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining restored module wrapper");
-    owner->frontend = f; owner->application = f->application; owner->restoring = true;
-    owner->kind = row ? REMOTE_MODULE_DECODED : REMOTE_MODULE_INITIAL;
-    if (row) {
-        owner->basis.decoded.row = row; owner->basis.decoded.view = decoded;
-        if (!frontend_remote_q3_modules_attach(row, owner, error)) { free(owner); return false; }
-    } else {
-        owner->basis.initial.view = connecting;
-        if (!frontend_remote_q3_initial_child_retain(initial, &owner->basis.initial.owner, error)) { free(owner); return false; }
-    }
-    owner->attached = true; *out = owner;
-    owner->saved = *saved; *saved = NULL; owner->saved_count = count;
-    if (wrapper.size) {
-        owner->saved_bytes.data = malloc(wrapper.size);
-        if (!owner->saved_bytes.data) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining wrapper recapture witness");
-        memcpy(owner->saved_bytes.data, wrapper.data, wrapper.size); owner->saved_bytes.size = wrapper.size;
-    }
-    owner->constructing = true;
-    qa_application_native_q3_client_modules_options options = {.source = *source(owner),
-        .gamestate = row ? decoded.domain.gamestate : NULL, .context = owner, .current = current, .prepare = prepare};
-    bool ok = qa_application_native_q3_client_modules_restore(f->application, &options, modules, &owner->modules, error);
-    owner->constructing = false;
-    if (ok) {
-        if (frontend_remote_q3_modules_role_count(owner) != count)
-            return frontend_fail(error, QA_ERROR_FORMAT, "Restored wrapper and module role inventories differ");
-        for (size_t i = 0; i < count; ++i) if (!owner->saved[i].prepared)
-            return frontend_fail(error, QA_ERROR_FORMAT, "Saved wrapper role has no actual restored host");
-    }
-    return ok;
-}
+
 bool frontend_remote_q3_modules_create_initial(qa_frontend *f, frontend_remote_q3_initial *initial,
     frontend_remote_q3_modules **out, qa_error *error)
 {
@@ -983,54 +890,7 @@ size_t frontend_remote_q3_modules_role_count(const frontend_remote_q3_modules *o
     for (const remote_module_lease *lease = owner ? owner->leases : NULL; lease; lease = lease->next) ++count;
     return count;
 }
-bool frontend_remote_modules_restore_renderer_parameters(frontend_remote_q3_modules *owner, qa_error *error)
-{
-    if (!owner || !owner->restoring || !owner->frontend->source_color)
-        return frontend_fail(error, QA_ERROR_FORMAT, "Restored renderer parameters require the imported physical Source color owner");
-    qa_q3_presentation_options parameters = {0};
-    if (!frontend_q3_renderer_options_read(owner->frontend, &parameters, error)) return false;
-    for (remote_module_lease *lease = owner->leases; lease; lease = lease->next)
-        if (lease->released || lease->callbacks || lease->render_definition ||
-            !qa_q3_presentation_renderer_parameters_set(lease->presentation,
-                parameters.near_clip, parameters.identity_light, error)) return false;
-    return true;
-}
-bool frontend_remote_q3_modules_cinematics_bind(frontend_remote_q3_modules *owner, qa_error *error)
-{
-    if (!owner || !owner->restoring || owner->retiring || owner->constructing ||
-        !attached(owner) || !owner->modules || !qa_application_native_q3_client_modules_idle(owner->modules))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Restored cinematic roles require their returned module prefix");
-    if (!frontend_remote_modules_restore_renderer_parameters(owner, error)) return false;
-    for (remote_module_lease *lease = owner->leases; lease; lease = lease->next) {
-        qa_q3_presentation_binding binding;
-        qa_q3_host *host = NULL; qa_q3_host_client_context context;
-        if (lease->released || lease->callbacks || lease->render_definition ||
-            !frontend_equipment_source_idle(lease->equipment) || !lease->presentation ||
-            !qa_q3_presentation_binding_read(lease->presentation, &binding, error) ||
-            binding.options.assets != assets(owner) ||
-            !qa_application_native_q3_client_modules_host_read(owner->modules, lease->role, &host, &context, error) ||
-            !same_host_context(&context, &lease->constructor)) return false;
-        remote_module_saved *saved = frontend_remote_modules_saved(owner, lease->role, lease->service_owner);
-        bool shared = false;
-        if (!saved || !saved->prepared || !qa_q3_presentation_media_binding_read(
-            (qa_bytes){saved->media.data, saved->media.size}, &shared, error)) return false;
-        if (!shared) {
-            if (lease->cinematics || binding.options.cinematics)
-                return frontend_fail(error, QA_ERROR_FORMAT, "Saved local movie role cannot acquire a numeric source");
-            continue;
-        }
-        qa_q3_cinematic_source *parent = NULL;
-        if (!cinematic_parent(lease, &parent, error)) return false;
-        if (!lease->cinematics && !qa_q3_cinematic_source_create_role(parent,
-            physical_seat(owner), lease->service_owner, &lease->cinematics, error)) return false;
-        if (!cinematic_current(lease, error)) return false;
-        if (!qa_q3_cinematic_source_role_diagnostic_bind(lease->cinematics, lease, cinematic_print,
-            cinematic_diagnostic_current, error)) return false;
-        if (binding.options.cinematics != lease->cinematics &&
-            !qa_q3_presentation_cinematics_bind(lease->presentation, lease->cinematics, error)) return false;
-    }
-    return frontend_remote_q3_modules_capture_returned(owner, error);
-}
+
 bool frontend_remote_q3_modules_capture_returned(const frontend_remote_q3_modules *owner, qa_error *error)
 {
     if (!owner || owner->retiring || owner->constructing || !attached(owner) || !owner->modules ||
@@ -1154,8 +1014,6 @@ bool frontend_remote_q3_modules_destroy(frontend_remote_q3_modules **owned, qa_e
         if (!ok) return false;
         owner->attached = false;
     }
-    frontend_remote_modules_saved_dispose(owner->saved, owner->saved_count);
-    qa_buffer_free(&owner->saved_bytes);
     free(owner); *owned = NULL; return true;
 }
 bool frontend_remote_q3_modules_media_read(const frontend_remote_q3_modules *owner, qa_qvm_role role,

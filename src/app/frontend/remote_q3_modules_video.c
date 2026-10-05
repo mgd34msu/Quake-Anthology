@@ -30,7 +30,7 @@ bool frontend_remote_q3_modules_video_current(const frontend_remote_q3_modules_v
     frontend_remote_q3_modules *owner = ticket ? ticket->owner : NULL;
     qa_frontend *f = owner ? owner->frontend : NULL;
     if (!owner || !f || owner->video != ticket || !owner->attached || owner->constructing ||
-        owner->retiring || owner->restoring || owner->application != f->application ||
+        owner->retiring || owner->application != f->application ||
         f->capture || f->resource_inventory)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote video modules lost their actual returned parent");
     for (const remote_module_lease *lease = owner->leases; lease; lease = lease->next)
@@ -47,7 +47,7 @@ bool frontend_remote_q3_modules_video_current(const frontend_remote_q3_modules_v
 bool frontend_remote_q3_modules_video_prepare(frontend_remote_q3_modules *owner,
     frontend_remote_q3_modules_video **out, qa_error *error)
 {
-    if (!owner || !out || *out || owner->video || owner->retiring || owner->restoring ||
+    if (!owner || !out || *out || owner->video || owner->retiring ||
         owner->frontend->capture || owner->frontend->resource_inventory ||
         !frontend_remote_q3_modules_idle(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote video preparation requires returned actual modules");
