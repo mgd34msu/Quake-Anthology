@@ -427,9 +427,20 @@ bool q2m_spawn_boss_exploder(q2m_context *context, qa_error *error) {
   return true;
 }
 
-bool q2m_schedule_makron_spawn(q2m_context *context, qa_error *error) {
+bool q2m_spawn_makron_entity(q2m_context *context, qa_actor_id *child,
+                            qa_error *error) {
+  *child = (qa_actor_id){0};
   if (!q2m_alive(context))
     return true;
+  qa_authored_target parent = {0};
+  qa_q2_entity_authored(context->game, context->actor->id, &parent);
+  qa_entity_property properties[] = {
+      {.key = {(const uint8_t *)"classname", sizeof("classname") - 1},
+       .value = {(const uint8_t *)"monster_makron", sizeof("monster_makron") - 1}},
+      {.key = {(const uint8_t *)"target", sizeof("target") - 1},
+       .value = qa_strings_text(
+           qa_session_strings(context->game->services.session), parent.target)},
+  };
   qa_actor_definition definition;
   if (!qa_builtin_resource(&context->game->services, "monster_makron",
                            &definition, error))
@@ -446,6 +457,34 @@ bool q2m_schedule_makron_spawn(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context))
     return !q2_actor_live(context->game, id) ||
            qa_session_release(context->game->services.session, id, error);
+  qa_q2_map_fields fields = {
+      .properties = properties,
+      .count = parent.target != 0 ? 2 : 1,
+      .ordinal = UINT32_MAX,
+  };
+  bool handled;
+  if (!qa_q2_entity_spawn(context->game, id, &fields, &handled, error)) {
+    qa_error original = error != NULL ? *error : (qa_error){0};
+    if (q2_actor_live(context->game, id))
+      qa_session_release(context->game->services.session, id, NULL);
+    if (error != NULL)
+      *error = original;
+    return false;
+  }
+  if (!q2m_alive(context))
+    return !q2_actor_live(context->game, id) ||
+           qa_session_release(context->game->services.session, id, error);
+  if (q2_actor_live(context->game, id))
+    *child = id;
+  return true;
+}
+
+bool q2m_schedule_makron_spawn(q2m_context *context, qa_error *error) {
+  qa_actor_id id;
+  if (!q2m_spawn_makron_entity(context, &id, error))
+    return false;
+  if (id.registry == 0)
+    return true;
   q2_actor *actor = q2_actor_get(context->game, id, true, error);
   if (actor == NULL) {
     qa_session_release(context->game->services.session, id, NULL);

@@ -455,6 +455,7 @@ bool q2m_spawn_monster_beam(q2m_context *, qa_actor_id target, qa_vec3 origin,
                             qa_vec3 direction, float damage, bool medic,
                             qa_error *);
 bool q2m_spawn_boss_exploder(q2m_context *, qa_error *);
+bool q2m_spawn_makron_entity(q2m_context *, qa_actor_id *child, qa_error *);
 bool q2m_schedule_makron_spawn(q2m_context *, qa_error *);
 bool q2m_controller_tick(qa_q2_game *, q2_actor *, qa_error *);
 bool q2m_controller_postthink(qa_q2_game *, q2_actor *, qa_error *);
