@@ -391,7 +391,7 @@ typedef struct qa_q2_entities_checkpoint {
 bool qa_q2_entity_capture(qa_q2_game *, qa_actor_id, qa_q2_entity_checkpoint *, qa_error *);
 bool qa_q2_entity_restore(qa_q2_game *, qa_actor_id, const qa_q2_entity_checkpoint *, qa_error *);
 void qa_q2_entity_checkpoint_free(qa_q2_entity_checkpoint *);
-bool qa_q2_entities_capture(qa_q2_game *, qa_q2_entities_checkpoint *, qa_error *);
+bool qa_q2_entities_capture(qa_q2_game *, bool level_only, qa_q2_entities_checkpoint *, qa_error *);
 bool qa_q2_entities_restore(qa_q2_game *, const qa_q2_entities_checkpoint *, qa_error *);
 void qa_q2_entities_checkpoint_free(qa_q2_entities_checkpoint *);
 bool qa_q2_entities_validate_links(qa_q2_game *, qa_error *);

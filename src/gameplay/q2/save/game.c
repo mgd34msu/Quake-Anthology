@@ -1,6 +1,8 @@
 #include "internal.h"
+#include "../player/internal.h"
 
 #define Q2_SAVE_MAGIC UINT32_C(0x32514151)
+#define Q2_SAVE_LEVEL UINT32_C(0x80000000)
 
 typedef struct actor_save {
     qa_q2_saved_reference id;
@@ -55,25 +57,31 @@ static bool actor_capture(qa_q2_game *g, q2_actor *a, actor_save *s, qa_error *e
                                     &s->hand_ammo, e));
 }
 static bool header(q2_save_io *io) {
-    uint32_t magic = Q2_SAVE_MAGIC;
+    uint32_t magic = Q2_SAVE_MAGIC | (io->level_only ? Q2_SAVE_LEVEL : 0);
     if (!q2_save_u32(io, &magic)) return false;
-    if (magic != Q2_SAVE_MAGIC)
+    if ((magic & ~Q2_SAVE_LEVEL) != Q2_SAVE_MAGIC)
         return q2_save_fail(io, "Invalid Q2 continuation signature");
+    if (io->reading) io->level_only = (magic & Q2_SAVE_LEVEL) != 0;
     return true;
 }
-bool qa_q2_game_capture(qa_q2_game *g, qa_buffer *out, qa_error *e) {
+bool qa_q2_game_capture(qa_q2_game *g, qa_save_purpose purpose, qa_buffer *out, qa_error *e) {
     if (!g || !out || g->continuation_pending || g->continuation_failed || !q2_checkpoint_idle(g, e)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 capture requires a completed provider turn");
         return false;
     }
-    q2_save_io io = {.game = g, .error = e};
+    q2_save_io io = {.game = g, .error = e, .level_only = purpose == QA_SAVE_TRANSITION};
     qa_q2_runtime_checkpoint runtime = {0};
     qa_q2_items_checkpoint items = {0};
     qa_q2_players_checkpoint players = {0};
     qa_q2_entities_checkpoint entities = {0};
     qa_q2_monsters_checkpoint monsters = {0};
-    bool ok = header(&io) && qa_q2_runtime_capture(g, &runtime, e) &&
-              q2_save_runtime(&io, &runtime);
+    if (io.level_only) runtime = (qa_q2_runtime_checkpoint){
+        .actor_sequence = g->actor_sequence, .now_ns = g->now_ns, .frame_ns = g->frame_ns,
+        .lmctf_plasma_quad = g->lmctf_plasma_quad,
+        .widow_damage_multiplier = g->widow_damage_multiplier,
+        .widow_shot_phase = g->widow_shot_phase};
+    bool ok = header(&io) && (io.level_only || qa_q2_runtime_capture(g, &runtime, e)) &&
+        q2_save_runtime(&io, &runtime);
     uint32_t count = 0;
     for (q2_actor *a = g->first_actor; a; a = a->live_next)
         if (q2_actor_live(g, a->id)) ++count;
@@ -86,8 +94,8 @@ bool qa_q2_game_capture(qa_q2_game *g, qa_buffer *out, qa_error *e) {
     }
     ok = ok && qa_q2_items_capture(g, &items, e) &&
          q2_save_u32(&io, &items.cubes) &&
-         qa_q2_players_capture(g, &players, e) && q2_save_players(&io, &players) &&
-         qa_q2_entities_capture(g, &entities, e) && q2_save_entities(&io, &entities) &&
+         qa_q2_players_capture(g, io.level_only, &players, e) && q2_save_players(&io, &players) &&
+         qa_q2_entities_capture(g, io.level_only, &entities, e) && q2_save_entities(&io, &entities) &&
          qa_q2_monsters_capture(g, &monsters, e) && q2_save_monsters(&io, &monsters) &&
          q2_save_wire(&io);
     qa_q2_players_checkpoint_free(&players);
@@ -132,10 +140,74 @@ static bool actor_restore(q2_save_io *io, actor_save *s, uint64_t limit, uint64_
     *previous_order = s->actor.source_order;
     return true;
 }
-bool qa_q2_game_restore(qa_q2_game *g, qa_bytes data, qa_error *e) {
+static bool unit_string(qa_q2_game *g, const qa_q2_game *current,
+    qa_string_id source, qa_string_id *out, qa_error *e)
+{
+    if (source == QA_STRING_NONE) { *out = QA_STRING_NONE; return true; }
+    return qa_strings_intern(qa_session_strings(g->services.session),
+        qa_strings_text(qa_session_strings(current->services.session), source), out, e);
+}
+
+static bool unit_players(qa_q2_game *g, const qa_q2_game *current,
+    qa_q2_players_checkpoint *players, qa_error *e)
+{
+    const qa_q2_player_rules *rules = &current->player_runtime->rules;
+    free(players->map_list); players->map_list = NULL;
+    players->map_list_count = rules->map_list_count;
+    players->map_list_shuffle = rules->map_list_shuffle;
+    if (!unit_string(g, current, rules->next_map, &players->next_map_rule, e)) return false;
+    if (players->map_list_count) {
+        players->map_list = malloc(players->map_list_count * sizeof(*players->map_list));
+        if (!players->map_list) {
+            qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining current Q2 unit rotation");
+            return false;
+        }
+    }
+    for (size_t i = 0; i < players->map_list_count; ++i)
+        if (!unit_string(g, current, rules->map_list[i], players->map_list + i, e)) return false;
+    return true;
+}
+
+static bool unit_entities(qa_q2_game *g, const qa_q2_game *current,
+    qa_q2_entities_checkpoint *entities, qa_error *e)
+{
+    const q2_entities *source = current->entity_runtime;
+    if (g->options.edition == QA_Q2_RERELEASE) {
+        if (!unit_string(g, current, source->primary, &entities->primary, e) ||
+            !unit_string(g, current, source->secondary, &entities->secondary, e)) return false;
+        entities->primary_changes = source->primary_changes;
+        entities->secondary_changes = source->secondary_changes;
+    }
+    entities->level_count = source->level_count;
+    memcpy(entities->levels, source->levels, sizeof(entities->levels));
+    for (uint32_t i = 0; i < entities->level_count; ++i)
+        if (!unit_string(g, current, source->levels[i].map, &entities->levels[i].map, e) ||
+            !unit_string(g, current, source->levels[i].name, &entities->levels[i].name, e)) return false;
+    free(entities->visited_maps); entities->visited_maps = NULL;
+    entities->visited_count = source->visited_count;
+    if (entities->visited_count) {
+        entities->visited_maps = malloc(entities->visited_count * sizeof(*entities->visited_maps));
+        if (!entities->visited_maps) {
+            qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining current Q2 unit visits");
+            return false;
+        }
+    }
+    for (size_t i = 0; i < entities->visited_count; ++i)
+        if (!unit_string(g, current, source->visited_maps[i], entities->visited_maps + i, e)) return false;
+    return true;
+}
+
+bool qa_q2_game_restore(qa_q2_game *g, qa_save_purpose purpose, const qa_q2_game *current,
+    qa_bytes data, qa_error *e) {
     if (!g || (data.size && !data.data) || g->first_actor || g->continuation_pending || g->continuation_failed ||
         !q2_checkpoint_idle(g, e)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 restore requires an empty candidate");
+        return false;
+    }
+    bool transition = purpose == QA_SAVE_TRANSITION;
+    if (transition && (!current || current == g || current->options.edition != g->options.edition ||
+        current->options.product != g->options.product)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 level restore requires its actual current unit GAME");
         return false;
     }
     q2_save_io io = {.game = g, .input = data, .error = e, .reading = true};
@@ -145,8 +217,20 @@ bool qa_q2_game_restore(qa_q2_game *g, qa_bytes data, qa_error *e) {
     qa_q2_entities_checkpoint entities = {0};
     qa_q2_monsters_checkpoint monsters = {0};
     g->restoring_continuation = true;
-    bool ok = header(&io) && q2_save_runtime(&io, &runtime) &&
-              qa_q2_runtime_restore(g, &runtime, e);
+    qa_q2_runtime_checkpoint unit = {0};
+    bool ok = header(&io);
+    if (ok && io.level_only && !transition)
+        ok = q2_save_fail(&io, "Q2 level state requires its current unit context");
+    if (ok && transition) ok = qa_q2_runtime_capture((qa_q2_game *)current, &unit, e);
+    if (ok) ok = q2_save_runtime(&io, &runtime);
+    if (ok && transition) {
+        unit.actor_sequence = runtime.actor_sequence; unit.now_ns = runtime.now_ns;
+        unit.frame_ns = runtime.frame_ns; unit.lmctf_plasma_quad = runtime.lmctf_plasma_quad;
+        unit.widow_damage_multiplier = runtime.widow_damage_multiplier;
+        unit.widow_shot_phase = runtime.widow_shot_phase;
+        runtime = unit;
+    }
+    if (ok) ok = qa_q2_runtime_restore(g, &runtime, e);
     /* Actor admission assigns temporary order numbers; retain the saved
      * sequence after restoring each actor's authored order. */
     if (ok) g->actor_sequence = 0;
@@ -163,8 +247,10 @@ bool qa_q2_game_restore(qa_q2_game *g, qa_bytes data, qa_error *e) {
     }
     ok = ok && q2_save_u32(&io, &items.cubes) &&
          qa_q2_items_restore(g, &items, e) &&
-         q2_save_players(&io, &players) && qa_q2_players_restore(g, &players, e) &&
-         q2_save_entities(&io, &entities) && qa_q2_entities_restore(g, &entities, e) &&
+         q2_save_players(&io, &players) && (!transition || unit_players(g, current, &players, e)) &&
+         qa_q2_players_restore(g, &players, e) &&
+         q2_save_entities(&io, &entities) && (!transition || unit_entities(g, current, &entities, e)) &&
+         qa_q2_entities_restore(g, &entities, e) &&
          q2_save_monsters(&io, &monsters) && qa_q2_monsters_restore(g, &monsters, e) &&
          q2_save_wire(&io);
     if (ok && io.offset != data.size) ok = q2_save_fail(&io, "Trailing Q2 continuation data");

@@ -204,6 +204,19 @@ const qa_sha256_digest *qa_resource_digest(const qa_resource *resource)
     }
     return &resource->digest;
 }
+bool qa_resource_package_identity(const qa_resource *resource,const char **name,
+    const qa_sha256_digest **digest,qa_error *error)
+{
+    if (!resource || !name || !digest) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Resource package identity has no owner"); return false;
+    }
+    *name=NULL; *digest=NULL;
+    if (!resource->archive) return true;
+    const char *path=resource->archive->path,*leaf=path;
+    for (const char *p=path;*p;++p) if (*p=='/' || *p=='\\') leaf=p+1;
+    if (!qa_archive_digest(resource->archive->archive,digest,error)) return false;
+    *name=leaf; return true;
+}
 
 bool qa_resource_archive_origin(const qa_resource *resource,
                                   qa_fs_identity *identity, size_t *ordinal)

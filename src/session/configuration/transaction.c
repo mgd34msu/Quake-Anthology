@@ -958,12 +958,31 @@ bool qa_configuration_source_map(qa_configuration *manager,const qa_launch_snaps
     return true;
 }
 
+bool qa_launch_mount_selection_read(const qa_catalog *catalog, const qa_launch_choices *v,
+    qa_catalog_mount_selection *out, qa_product_id **owned, qa_error *error)
+{
+    size_t maximum = v->provider_count + v->mod_count + 1;
+    qa_product_id *products = calloc(maximum ? maximum : 1, sizeof(*products));
+    if (!products) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot resolve launch content sources"); return false; }
+    size_t count = 0;
+    for (size_t i = 0; i < v->provider_count; ++i) products[count++] = v->providers[i].product;
+    for (size_t i = 0; i < v->mod_count; ++i) if (v->mods[i].enabled)
+        products[count++] = qa_catalog_mod_find(catalog, v->mods[i].component)->product;
+    if (v->world.environment == QA_ENVIRONMENT_SELECTED) products[count++] = v->world.environment_product;
+    const qa_launch_binding *combat = qa_launch_binding_for(v, (qa_launch_scope){.kind = QA_SCOPE_DEFAULT_PLAYER}, QA_ROLE_COMBAT, "");
+    const qa_launch_provider *rules = combat ? launch_provider(v, combat->instance) : NULL;
+    *out = (qa_catalog_mount_selection) {.assets = v->world.presentation, .geometry = v->world.geometry,
+        .combat = rules ? rules->product : 0, .explicit_presentation = v->world.explicit_presentation,
+        .additional = products, .additional_count = count};
+    *owned = products; return true;
+}
+
 static bool prepare_mounts(qa_launch_snapshot *candidate,
     const qa_launch_restore_content *content,const qa_configuration_hooks *hooks,qa_error *error)
 {
     const qa_launch_choices *v = &candidate->draft->choices;
-    if (content) {
-        if (!content->mounts(content->context, &candidate->mounts, error)) return false;
+    if (content && !content->mounts(content->context, &candidate->mounts, error)) return false;
+    if (content && content->resource) {
         if (!candidate->mounts || content->resource_count > SIZE_MAX / sizeof(*candidate->resources))
             return error_message(error, "saved launch content requires its real mounts and resource inventory");
         candidate->resources = calloc(content->resource_count ? content->resource_count : 1,
@@ -1020,21 +1039,13 @@ static bool prepare_mounts(qa_launch_snapshot *candidate,
         }
         return (map && environment) || error_message(error, "saved launch resources omit retained world content");
     }
-    size_t maximum = v->provider_count + v->mod_count + 1;
-    qa_product_id *products = calloc(maximum ? maximum : 1, sizeof(*products));
-    if (!products) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot resolve launch content sources"); return false; }
-    size_t count = 0;
-    for (size_t i = 0; i < v->provider_count; ++i) products[count++] = v->providers[i].product;
-    for (size_t i = 0; i < v->mod_count; ++i) if (v->mods[i].enabled)
-        products[count++] = qa_catalog_mod_find(candidate->draft->catalog, v->mods[i].component)->product;
-    if (v->world.environment == QA_ENVIRONMENT_SELECTED) products[count++] = v->world.environment_product;
-    const qa_launch_binding *combat = qa_launch_binding_for(v, (qa_launch_scope){.kind = QA_SCOPE_DEFAULT_PLAYER}, QA_ROLE_COMBAT, "");
-    const qa_launch_provider *rules = combat ? launch_provider(v, combat->instance) : NULL;
-    qa_catalog_mount_selection mounts = {.assets = v->world.presentation, .geometry = v->world.geometry,
-        .combat = rules ? rules->product : 0, .explicit_presentation = v->world.explicit_presentation,
-        .additional = products, .additional_count = count};
-    bool ok = qa_catalog_mount_plan(candidate->draft->catalog, &mounts, &candidate->mounts, error);
-    free(products);
+    bool ok = true;
+    if (!candidate->mounts) {
+        qa_catalog_mount_selection mounts = {0}; qa_product_id *products = NULL;
+        ok = qa_launch_mount_selection_read(candidate->draft->catalog, v, &mounts, &products, error) &&
+            qa_catalog_mount_plan(candidate->draft->catalog, &mounts, &candidate->mounts, error);
+        free(products);
+    }
     if (!ok || !resource_add(candidate,hooks, v->world.geometry, v->world.map, error)) return false;
     if (v->world.environment == QA_ENVIRONMENT_SELECTED &&
         !resource_add(candidate,hooks, v->world.environment_product, v->world.environment_path, error)) return false;
@@ -1227,7 +1238,9 @@ bool qa_configuration_prepare_restored(qa_configuration *manager, const qa_launc
 {
     if (!manager || !checkpoint || !out || manager->busy || manager->transactions ||
         manager->current || manager->generation || !checkpoint->has_current || !checkpoint->generation ||
-        !content || !content->mounts || !content->instance || !content->resource || !content->resource_origin ||
+        !content || !content->mounts || !content->instance ||
+        ((content->resource!=NULL)!=(content->resource_origin!=NULL)) ||
+        (!content->resource && content->resource_count) ||
         !manager->hooks.safe(manager->hooks.context))
         return error_message(error, "configuration restoration requires a fresh isolated manager and saved current snapshot");
     if (!configuration_prepare(manager, draft, content, false, out, error)) return false;

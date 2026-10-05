@@ -52,7 +52,6 @@ typedef struct frontend_persistence {
     const qa_application_persistence_ops *services;
     qa_application_persistence_ops ops;
     qa_application_ranking_checkpoint_refs ranking;
-    qa_vfs_checkpoint_refs content_files;
     frontend_native_resource_context native_resources;
     qa_application_native_resource_refs native_resource_refs;
     frontend_persistence_native native;
@@ -281,44 +280,6 @@ static void publish(void *context,qa_application *active,qa_application *candida
     f->sdl_subsystems=operation->active->sdl_subsystems; operation->active->sdl_subsystems=0;
     *operation->slot=f;
 }
-static bool content_file_open(void *context,const char *path,qa_fs_file **out,
-    qa_fs_identity *identity,qa_error *error)
-{
-    frontend_persistence *operation=context;
-    const qa_vfs_checkpoint_refs *refs=operation->services?operation->services->content_files:NULL;
-    return refs && refs->file_open?refs->file_open(refs->context,path,out,identity,error):
-        qa_fs_file_open(path,out,identity,error);
-}
-static bool content_directory_open(void *context,const char *mount_path,const char *retained_path,
-    const qa_fs_identity *identity,qa_fs_root **out,qa_error *error)
-{
-    frontend_persistence *operation=context;
-    const qa_frontend *constructor=operation->constructor?operation->constructor:operation->active;
-    qa_fs_root *profile=qa_application_player_profile_root(constructor->application);
-    if (!out || *out || !retained_path || !identity)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Content directory admission needs a saved identity and empty owner");
-    if (profile) {
-        char *path=NULL; qa_fs_entry_kind kind; qa_fs_identity actual;
-        if (!qa_fs_root_join(profile,"",&path,error)) return false;
-        bool same=!strcmp(path,retained_path); free(path);
-        if (same) {
-            if (!qa_fs_root_status(profile,"",&kind,&actual,error)) return false;
-            if (kind!=QA_FS_DIRECTORY || !qa_fs_root_identity_is(profile,&actual) ||
-                !qa_fs_root_identity_is(profile,identity))
-                return frontend_fail(error,QA_ERROR_FORMAT,"Saved input profile directory differs from its retained native object");
-            qa_fs_root_retain(profile); *out=profile; return true;
-        }
-    }
-    const qa_vfs_checkpoint_refs *refs=operation->services?operation->services->content_files:NULL;
-    if (refs && refs->directory_open)
-        return refs->directory_open(refs->context,mount_path,retained_path,identity,out,error);
-    if (!qa_fs_root_open(retained_path,out,error)) return false;
-    qa_fs_entry_kind kind; qa_fs_identity actual;
-    return qa_fs_root_status(*out,"",&kind,&actual,error) &&
-        ((kind==QA_FS_DIRECTORY && qa_fs_root_identity_is(*out,&actual) &&
-            qa_fs_root_identity_is(*out,identity)) ||
-         frontend_fail(error,QA_ERROR_FORMAT,"Saved content directory differs from its actual native object"));
-}
 static bool operation_init(frontend_persistence *operation,qa_frontend *active,
     const qa_application_persistence_ops *services,qa_error *error)
 {
@@ -328,11 +289,10 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Persistence requires an idle application and paired publication callbacks");
     operation->active=active; operation->services=services;
     operation->ranking=(qa_application_ranking_checkpoint_refs){operation,ranking_capture,ranking_resolve};
-    operation->content_files=(qa_vfs_checkpoint_refs){operation,content_file_open,content_directory_open};
     operation->native_resource_refs=frontend_native_resource_refs(&operation->native_resources);
     operation->ops=(qa_application_persistence_ops){.context=operation,
         .owners=services?services->owners:NULL,.owner_count=services?services->owner_count:0,
-        .visit_content=content_visit,.content_files=&operation->content_files,
+        .visit_content=content_visit,
         .native_resources=services && services->native_resources?services->native_resources:&operation->native_resource_refs,
         .rankings=services?services->rankings:NULL,.progress=services?services->progress:NULL,.ranking_source=&operation->ranking,
         .rankings_handoff=services && services->rankings_handoff?ranking_handoff:NULL,

@@ -422,7 +422,11 @@ static bool construct_and_reserve(qa_application *application,
         if (image != NULL && provider->kind == APPLICATION_PROVIDER_Q2) {
             const qa_save_record *record = qa_save_image_find(image, QA_SAVE_PROVIDER,
                 provider->launch->selection.instance);
-            if (!application_native_q2_checkpoint_prepare(provider, record, error)) {
+            const qa_launch_instance *current = qa_launch_snapshot_find(
+                qa_application_launch(application->native_restore_current),
+                provider->launch->selection.instance);
+            if (!application_native_q2_checkpoint_prepare(provider,
+                    current ? current->state : NULL, record, error)) {
                 okay = false;
                 break;
             }
@@ -642,7 +646,9 @@ static bool prepare_world(qa_application *application,
                                 "candidate map resource is absent");
     publication->map_resource = (qa_resource *)selected->resource;
     qa_resource_retain(publication->map_resource);
-    if (publication->restoring) {
+    bool rebuild_sidecars=application->native_restore_image &&
+        qa_save_image_metadata(application->native_restore_image)->purpose==QA_SAVE_TRANSITION;
+    if (publication->restoring && !rebuild_sidecars) {
         publication->map_sidecars = application->map_sidecars;
         qa_map_sidecars_retain(publication->map_sidecars);
         if (!qa_map_sidecars_current(publication->map_sidecars) ||

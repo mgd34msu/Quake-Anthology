@@ -1,15 +1,17 @@
 #ifndef QA_GAME_Q2_CHECKPOINT_H
 #define QA_GAME_Q2_CHECKPOINT_H
 #include "qa/game_q2.h"
+#include "qa/save.h"
 #include "qa/targets.h"
 
 /* qa.native-q2-continuation. Native continuation uses explicit
  * fields, string values and saved actor generations. Shared stores retain
  * body, combat, inventory, pickup, target and scheduler authority. */
-bool qa_q2_game_capture(qa_q2_game *, qa_buffer *, qa_error *);
+bool qa_q2_game_capture(qa_q2_game *, qa_save_purpose, qa_buffer *, qa_error *);
 /* Requires an empty candidate and restored shared actors. The application
  * discards its entire candidate on failure. Shared stores restore afterward. */
-bool qa_q2_game_restore(qa_q2_game *, qa_bytes, qa_error *);
+bool qa_q2_game_restore(qa_q2_game *, qa_save_purpose, const qa_q2_game *current,
+    qa_bytes, qa_error *);
 /* Reconnect inventory actions, power cells, pickup observations and targets
  * after all shared stores are restored. Required before candidate publication. */
 bool qa_q2_game_restore_finish(qa_q2_game *, qa_error *);

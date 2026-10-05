@@ -172,7 +172,7 @@ bool qa_q2_player_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_chec
     a->client = state;
     return true;
 }
-bool qa_q2_players_capture(qa_q2_game *g, qa_q2_players_checkpoint *out, qa_error *e) {
+bool qa_q2_players_capture(qa_q2_game *g, bool level_only, qa_q2_players_checkpoint *out, qa_error *e) {
     if (!g || !out) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 players checkpoint");
         return false;
@@ -196,8 +196,9 @@ bool qa_q2_players_capture(qa_q2_game *g, qa_q2_players_checkpoint *out, qa_erro
                                   .landmark = p->landmark,
                                   .camera_origin = p->camera_origin,
                                   .camera_angles = p->camera_angles,
-                                  .map_list_count=p->rules.map_list_count,.next_map_rule=p->rules.next_map,
-                                  .map_list_shuffle=p->rules.map_list_shuffle};
+                                  .map_list_count=level_only?0:p->rules.map_list_count,
+                                  .next_map_rule=level_only?QA_STRING_NONE:p->rules.next_map,
+                                  .map_list_shuffle=!level_only&&p->rules.map_list_shuffle};
     for (size_t i = 0; i < 8; i++)
         if (!q2_save_reference(g, p->corpses[i], &s.corpses[i], e))
             return false;

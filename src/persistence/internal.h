@@ -31,7 +31,7 @@ static inline bool persistence_io_fail(qa_source_save_io *io, qa_status code, co
 }
 
 bool persistence_owner_valid(const qa_save_owner *, qa_error *);
-bool persistence_owner_set(const qa_save_record *, size_t, qa_error *);
+bool persistence_owner_set(const qa_save_record *, size_t, qa_save_purpose, qa_error *);
 bool persistence_image_create_owned(const qa_save_metadata *, qa_save_record *, size_t,
                                     qa_save_image **, qa_error *);
 

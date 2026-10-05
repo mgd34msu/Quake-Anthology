@@ -78,6 +78,37 @@ bool application_startup_create(qa_application *app, const char *const *commands
     return true;
 }
 
+bool application_startup_clone(qa_application *app, const qa_application *current,
+    qa_error *error)
+{
+    if (!app || !current || app == current || app->startup)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Startup carry requires its current unit and fresh owner");
+    if (!current->startup) return true;
+    app->startup = calloc(1, sizeof(*app->startup));
+    if (!app->startup) return application_fail(error, QA_ERROR_MEMORY, "Retaining current unit startup");
+    size_t count = current->startup->count;
+    app->startup->rows = count ? calloc(count, sizeof(*app->startup->rows)) : NULL;
+    if (count && !app->startup->rows) {
+        application_startup_dispose(app);
+        return application_fail(error, QA_ERROR_MEMORY, "Retaining current unit startup rows");
+    }
+    app->startup->count = count;
+    for (size_t i = 0; i < app->startup->count; ++i) {
+        const application_startup_row *source = current->startup->rows + i;
+        application_startup_row *row = app->startup->rows + i;
+        *row = *source;
+        row->command = row->name = row->value = row->queued_instance = NULL;
+        const char *values[] = {source->command, source->name, source->value, source->queued_instance};
+        char **outputs[] = {&row->command, &row->name, &row->value, &row->queued_instance};
+        for (size_t j = 0; j < sizeof(values) / sizeof(*values); ++j)
+            if (values[j] && !(*outputs[j] = startup_copy(values[j], error))) {
+                application_startup_dispose(app);
+                return false;
+            }
+    }
+    return true;
+}
+
 static const char *const variables[] = {
     "com_prereleaseDemo", "com_prereleaseTeamArenaDemo", "fs_restrict"
 };

@@ -4,13 +4,16 @@
 #define SAVE_HEADER 72u
 #define SAVE_RECORD_HEADER 20u
 
-bool qa_save_shared_state_kind(qa_save_owner_kind kind)
+bool qa_save_shared_state_kind(qa_save_owner_kind kind, qa_save_purpose purpose)
 {
     if (kind<QA_SAVE_STRINGS || kind>=QA_SAVE_PROVIDER) return false;
     switch (kind) {
     case QA_SAVE_CAMPAIGN: case QA_SAVE_CONNECTIONS: case QA_SAVE_PREDICTION:
     case QA_SAVE_PRESENTATION: case QA_SAVE_AUDIO: case QA_SAVE_INPUT: case QA_SAVE_MEDIA:
         return false;
+    case QA_SAVE_RESOURCES: case QA_SAVE_CONFIGURATION: case QA_SAVE_ROSTER:
+    case QA_SAVE_PROGRESSION: case QA_SAVE_CVARS: case QA_SAVE_COMMANDS:
+        return purpose != QA_SAVE_TRANSITION;
     default: return true;
     }
 }
@@ -28,7 +31,7 @@ static bool text_valid(const char *text, bool empty)
 
 bool persistence_owner_valid(const qa_save_owner *owner, qa_error *error)
 {
-    if (!owner || (!qa_save_shared_state_kind(owner->kind) && owner->kind!=QA_SAVE_PROVIDER) ||
+    if (!owner || (!qa_save_shared_state_kind(owner->kind, QA_SAVE_MANUAL) && owner->kind!=QA_SAVE_PROVIDER) ||
         !text_valid(owner->instance, owner->kind != QA_SAVE_PROVIDER) ||
         !text_valid(owner->schema, false) || !text_valid(owner->backend, true) ||
         (owner->kind != QA_SAVE_PROVIDER && owner->instance[0]))
@@ -42,7 +45,8 @@ static int provider_compare(const void *left, const void *right)
     return strcmp((*a)->owner.instance, (*b)->owner.instance);
 }
 
-bool persistence_owner_set(const qa_save_record *records, size_t count, qa_error *error)
+bool persistence_owner_set(const qa_save_record *records, size_t count,
+    qa_save_purpose purpose, qa_error *error)
 {
     if (!records || !count || count > QA_SAVE_OWNER_LIMIT)
         return persistence_fail(error, QA_ERROR_FORMAT, "Incomplete or excessive save owner inventory");
@@ -71,8 +75,8 @@ bool persistence_owner_set(const qa_save_record *records, size_t count, qa_error
     }
     uint64_t required=0;
     for (qa_save_owner_kind kind=QA_SAVE_STRINGS;kind<QA_SAVE_PROVIDER;++kind)
-        if (qa_save_shared_state_kind(kind)) required|=UINT64_C(1)<<kind;
-    if (ok && seen != required)
+        if (qa_save_shared_state_kind(kind, purpose)) required|=UINT64_C(1)<<kind;
+    if (ok && (seen & required) != required)
         ok = persistence_fail(error, QA_ERROR_FORMAT, "Save omits a required shared owner");
     if (ok && provider_count > 1) {
         qsort(providers, provider_count, sizeof(*providers), provider_compare);
@@ -116,7 +120,6 @@ static qa_save_image *image_allocate(void)
     return image;
 }
 
-
 bool qa_save_image_destroy_checked(qa_save_image **pointer, qa_error *error)
 {
     if (!pointer) return persistence_fail(error, QA_ERROR_ARGUMENT, "Save image retirement needs its owning pointer");
@@ -150,7 +153,7 @@ static bool image_create(const qa_save_metadata *metadata, const qa_save_record 
         !memchr(metadata->map, 0, sizeof(metadata->map)) ||
         !memchr(metadata->game, 0, sizeof(metadata->game)))
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid save image metadata/output");
-    if (!persistence_owner_set(records, count, error)) return false;
+    if (!persistence_owner_set(records, count, metadata->purpose, error)) return false;
     qa_save_image *image = image_allocate();
     if (!image) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating save image");
     image->records = calloc(count, sizeof(*image->records));
@@ -392,7 +395,7 @@ bool qa_save_image_decode(qa_bytes bytes, qa_save_image **out, qa_error *error)
     qa_save_image *image = image_allocate();
     if (!image) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating decoded save image");
     bool ok = image_fields(&io, image, bytes.size) && qa_source_save_finish(&io, NULL) &&
-        persistence_owner_set(image->records, image->count, error);
+        persistence_owner_set(image->records, image->count, image->metadata.purpose, error);
     qa_source_save_dispose(&io);
     if (!ok) { image_free(image); return false; }
     *out = image;

@@ -126,6 +126,11 @@ bool q2_save_actor(q2_save_io *io, qa_q2_actor_checkpoint *s) {
     Q2B(hand_grenade_bound); return hand(io, &s->hand_grenade);
 }
 bool q2_save_runtime(q2_save_io *io, qa_q2_runtime_checkpoint *s) {
+    if (io->level_only) {
+        Q2T(actor_sequence); Q2T(now_ns); Q2T(frame_ns);
+        Q2B(lmctf_plasma_quad); Q2U8(widow_damage_multiplier); Q2U8(widow_shot_phase);
+        return true;
+    }
     Q2U(edition); Q2U(product);
     Q2U(arsenal_rules); Q2B(native_hook); Q2U(hook_edition); Q2U(definition_count);
     Q2U(equipment_hook_rules); Q2U(equipment_hook_edition);

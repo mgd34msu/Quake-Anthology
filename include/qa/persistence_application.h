@@ -52,7 +52,6 @@ typedef struct qa_application_persistence_ops {
     /* Read-only enumeration of additional retained content holders. The graph
      * is restored before any candidate content/provider factory is admitted. */
     qa_application_content_visit_fn visit_content;
-    const qa_vfs_checkpoint_refs *content_files;
     const qa_application_native_resource_refs *native_resources;
     /* Actual optional backend/native profile qualifications. Default rankings
      * are unconfigured; installed external providers require both readonly

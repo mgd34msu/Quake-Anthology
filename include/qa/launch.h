@@ -194,6 +194,9 @@ typedef struct qa_launch_resource {
     const char *path;
     const qa_resource *resource;
 } qa_launch_resource;
+/* Caller releases the additional product array with free(). */
+bool qa_launch_mount_selection_read(const qa_catalog *, const qa_launch_choices *,
+    qa_catalog_mount_selection *, qa_product_id **, qa_error *);
 typedef struct qa_launch_source_files {
     qa_catalog *catalog;
     qa_product_id product, base_product;

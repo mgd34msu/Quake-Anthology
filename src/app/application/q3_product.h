@@ -24,6 +24,7 @@ bool application_q3_product_register_source(const qa_q3_product_policy *,
 const qa_q3_product_policy *application_q3_product_source_policy(const qa_application *);
 struct application_provider;
 bool application_startup_create(qa_application *, const char *const *, size_t, qa_error *);
+bool application_startup_clone(qa_application *, const qa_application *, qa_error *);
 void application_startup_dispose(qa_application *);
 bool application_startup_seed_engine(qa_application *, qa_product_id, qa_error *);
 bool application_startup_seed_source(struct application_provider *, qa_cvars *, qa_error *);

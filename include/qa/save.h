@@ -26,7 +26,7 @@ typedef enum qa_save_owner_kind {
     QA_SAVE_PRESENTATION, QA_SAVE_AUDIO, QA_SAVE_INPUT, QA_SAVE_MEDIA,
     QA_SAVE_APPLICATION, QA_SAVE_PROVIDER
 } qa_save_owner_kind;
-bool qa_save_shared_state_kind(qa_save_owner_kind);
+bool qa_save_shared_state_kind(qa_save_owner_kind, qa_save_purpose);
 
 typedef struct qa_save_owner {
     qa_save_owner_kind kind;

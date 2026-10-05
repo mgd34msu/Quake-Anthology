@@ -232,7 +232,7 @@ void qa_q2_entities_checkpoint_free(qa_q2_entities_checkpoint *s) {
     free(s->visited_maps);
     *s = (qa_q2_entities_checkpoint){0};
 }
-bool qa_q2_entities_capture(qa_q2_game *g, qa_q2_entities_checkpoint *out, qa_error *e) {
+bool qa_q2_entities_capture(qa_q2_game *g, bool level_only, qa_q2_entities_checkpoint *out, qa_error *e) {
     if (!g || !out) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 map runtime checkpoint");
         return false;
@@ -264,9 +264,9 @@ bool qa_q2_entities_capture(qa_q2_game *g, qa_q2_entities_checkpoint *out, qa_er
                                    .wind_count = r->wind_count,
                                    .total_monsters = r->total_monsters,
                                    .killed_monsters = r->killed_monsters,
-                                   .level_count = r->level_count,
-                                   .visited_count = r->visited_count};
-    memcpy(s.levels, r->levels, sizeof(s.levels));
+                                   .level_count = level_only ? 0 : r->level_count,
+                                   .visited_count = level_only ? 0 : r->visited_count};
+    if (!level_only) memcpy(s.levels, r->levels, sizeof(s.levels));
     if (!q2_save_reference(g, r->poi, &s.poi, e) ||
         !q2_save_reference(g, r->poi_dynamic, &s.poi_dynamic, e))
         return false;

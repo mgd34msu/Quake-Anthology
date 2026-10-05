@@ -267,7 +267,7 @@ typedef struct qa_q2_players_checkpoint {
 bool qa_q2_player_capture(qa_q2_game *, qa_actor_id, qa_q2_player_checkpoint *, qa_error *);
 bool qa_q2_player_restore(qa_q2_game *, qa_actor_id, const qa_q2_player_checkpoint *, qa_error *);
 void qa_q2_player_checkpoint_free(qa_q2_player_checkpoint *);
-bool qa_q2_players_capture(qa_q2_game *, qa_q2_players_checkpoint *, qa_error *);
+bool qa_q2_players_capture(qa_q2_game *, bool level_only, qa_q2_players_checkpoint *, qa_error *);
 bool qa_q2_players_restore(qa_q2_game *, const qa_q2_players_checkpoint *, qa_error *);
 void qa_q2_players_checkpoint_free(qa_q2_players_checkpoint *);
 bool qa_q2_players_end_deathmatch_level(qa_q2_game *,qa_error *);

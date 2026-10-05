@@ -16,12 +16,16 @@ bool qa_save_capture(void *context, const qa_save_capture_ops *ops, qa_save_purp
     qa_save_image *image = NULL;
     if (!ok) persistence_fail(error, QA_ERROR_FORMAT, "Capture producer returned incomplete owner inventory");
     else if (!records) ok = persistence_fail(error, QA_ERROR_MEMORY, "Allocating captured owner records");
-    for (size_t i = 0; ok && i < count; ++i) {
-        records[i].owner = owners[i];
-        qa_buffer payload = {0};
-        ok = persistence_owner_valid(owners + i, error) && ops->capture(context, owners + i, &payload, error);
-        records[i].payload = (qa_bytes){payload.data, payload.size};
-    }
+    /* State codecs register the installed resources they actually reference.
+     * Write that one unit manifest only after all those references exist. */
+    for (unsigned pass = 0; ok && pass < 2; ++pass)
+        for (size_t i = 0; ok && i < count; ++i) {
+            if ((owners[i].kind == QA_SAVE_RESOURCES) != (pass != 0)) continue;
+            records[i].owner = owners[i];
+            qa_buffer payload = {0};
+            ok = persistence_owner_valid(owners + i, error) && ops->capture(context, owners + i, &payload, error);
+            records[i].payload = (qa_bytes){payload.data, payload.size};
+        }
     if (ok) ok = persistence_image_create_owned(&metadata, records, count, &image, error);
     if (ok && ops->attach) ok = ops->attach(context, image, error);
     if (ok) ok = ops->validate(context, image, error);
@@ -64,7 +68,9 @@ bool qa_save_restore(void *context, const qa_save_restore_ops *ops,
     bool ok = true;
     for (size_t stage = 0; ok && stage < sizeof(order) / sizeof(*order); ++stage)
         for (size_t i = 0; ok && i < image->count; ++i)
-            if (image->records[i].owner.kind == order[stage])
+            if (image->records[i].owner.kind == order[stage] &&
+                (order[stage] == QA_SAVE_PROVIDER ||
+                    qa_save_shared_state_kind(order[stage], image->metadata.purpose)))
                 ok = ops->restore(context, candidate, image->records + i, error);
     if (ok) ok = ops->finish(context, candidate, image, error);
     if (ok) ok = ops->publish(context, candidate, error);

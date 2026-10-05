@@ -7,6 +7,8 @@
 #include "qa/builtin.h"
 
 typedef struct qa_catalog qa_catalog;
+qa_resource_pool *qa_catalog_resources(const qa_catalog *);
+const qa_vfs *qa_catalog_files(const qa_catalog *);
 typedef uint32_t qa_product_id;
 #define QA_PRODUCT_NONE 0u
 typedef enum qa_product_edition {

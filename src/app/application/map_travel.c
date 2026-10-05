@@ -5,6 +5,7 @@
 #include "qa/application_native_q2_presentation.h"
 #include "map_players_private.h"
 #include "save_private.h"
+#include "save_content.h"
 #include "qa/save.h"
 
 #include <stdlib.h>
@@ -128,12 +129,17 @@ static bool campaign_level_entry(qa_application *application, qa_error *error)
     qa_campaign_location destination,current;
     if (!choices || !campaign_location(application,choices->world.geometry,choices->world.map,&destination,error)) return false;
     bool new_unit=application->map_state && application->map_state->load_new_unit;
-    if (!new_unit && qa_campaign_unit_current(application->campaign_unit,&current) &&
+    bool has_current=qa_campaign_unit_current(application->campaign_unit,&current);
+    if (!new_unit && has_current &&
         qa_campaign_location_equal(current,destination)) return true;
     qa_campaign_visit *visit=NULL;
     bool ok=qa_campaign_unit_stage(application->campaign_unit,destination,new_unit,false,NULL,&visit,error) &&
         qa_campaign_visit_commit(visit,error);
     qa_campaign_visit_destroy(visit);
+    if (ok && (new_unit || (has_current && current.content!=destination.content))) {
+        application_save_content_destroy(application->content_graph);
+        application->content_graph=NULL;
+    }
     if (ok && application->map_state) application->map_state->load_new_unit=false;
     return ok;
 }
@@ -258,6 +264,46 @@ static char *start_expression(const char *path, const char *spawn, bool unit,
     return text;
 }
 
+static bool set_map_draft(qa_launch_draft *draft, const char *path,
+    const qa_application_map_request *request, qa_error *error)
+{
+    char *start=start_expression(path,request->spawn_point,request->new_unit,error);
+    if (!start) return false;
+    qa_launch_world world=qa_launch_draft_choices(draft)->world;
+    world.map=path;
+    world.start_command=start;
+    world.spawn_point=request->spawn_point?request->spawn_point:"";
+    world.explicit_spawn_point=true;
+    if (request->geometry) world.geometry=request->geometry;
+    if (request->presentation) world.presentation=request->presentation;
+    bool ok=qa_launch_set_world(draft,&world,error);
+    free(start);
+    return ok;
+}
+
+bool application_campaign_restore_draft(qa_application *previous,
+    qa_launch_draft *draft, qa_error *error)
+{
+    application_campaign_travel *travel=previous?previous->campaign_travel:NULL;
+    if (!travel || !travel->visit || !draft ||
+        previous->operation!=APPLICATION_PERSISTING ||
+        travel->request.target.kind!=QA_TRAVEL_MAP)
+        return application_fail(error,QA_ERROR_ARGUMENT,
+            "Visited level construction requires its actual current unit travel");
+    const qa_application_map_request request={
+        .geometry=travel->request.geometry,
+        .map=travel->request.target.name,
+        .spawn_point=travel->request.target.spawn_point,
+        .new_unit=travel->request.target.new_unit,
+        .carry_players=travel->request.carry_players,
+    };
+    char *path=map_path(request.map,error);
+    if (!path) return false;
+    bool ok=set_map_draft(draft,path,&request,error);
+    free(path);
+    return ok;
+}
+
 bool qa_application_load_map(qa_application *application,
                               const qa_application_map_request *request,
                               qa_error *error)
@@ -273,10 +319,6 @@ bool qa_application_load_map(qa_application *application,
     char *path = map_path(request->map, error);
     if (path == NULL)
         return false;
-    char *start = start_expression(path, request->spawn_point,
-                                   request->new_unit, error);
-    if (start == NULL) { free(path); return false; }
-
     const qa_launch_snapshot *current = qa_application_launch(application);
     qa_launch_draft *draft = NULL;
     bool ok = current != NULL
@@ -288,16 +330,7 @@ bool qa_application_load_map(qa_application *application,
     if (!ok && current == NULL && !state->restart_draft && request->geometry == 0)
         application_fail(error, QA_ERROR_ARGUMENT,
                          "initial map load requires a content preset");
-    if (ok) {
-        qa_launch_world world = qa_launch_draft_choices(draft)->world;
-        world.map = path;
-        world.start_command = start;
-        world.spawn_point = request->spawn_point != NULL ? request->spawn_point : "";
-        world.explicit_spawn_point = true;
-        if (request->geometry != 0) world.geometry = request->geometry;
-        if (request->presentation != 0) world.presentation = request->presentation;
-        ok = qa_launch_set_world(draft, &world, error);
-    }
+    if (ok) ok=set_map_draft(draft,path,request,error);
     if (ok) {
         bool previous_force = application->map_force_reload;
         state->load_revision = state->revision;
@@ -317,7 +350,6 @@ bool qa_application_load_map(qa_application *application,
         }
     }
     qa_launch_draft_destroy(draft);
-    free(start);
     free(path);
     return ok;
 }

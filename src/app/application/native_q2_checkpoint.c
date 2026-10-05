@@ -23,7 +23,7 @@ static bool record_read(application_provider *provider, qa_bytes bytes,
         return application_fail(error, QA_ERROR_FORMAT, "Invalid Q2 physical source continuation");
     uint64_t game_size = qa_load_u64le(bytes.data + 4);
     uint64_t cvars_size = qa_load_u64le(bytes.data + 12);
-    if (!game_size || game_size > bytes.size - 20 || !cvars_size ||
+    if (!game_size || game_size > bytes.size - 20 ||
         cvars_size != bytes.size - 20 - (size_t)game_size)
         return application_fail(error, QA_ERROR_FORMAT, "Invalid Q2 source continuation lengths");
     *out = (q2_source_record){
@@ -34,15 +34,16 @@ static bool record_read(application_provider *provider, qa_bytes bytes,
 }
 
 bool application_native_q2_checkpoint_capture(application_provider *provider,
-    qa_buffer *out, qa_error *error)
+    qa_save_purpose purpose, qa_buffer *out, qa_error *error)
 {
     if (!provider || provider->kind != APPLICATION_PROVIDER_Q2 || !provider->state.q2 ||
         !provider->constructed || !provider->attached || provider->close_pending ||
         !out || out->data || out->size)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 capture requires its live physical source owner");
     qa_buffer game = {0}, cvars = {0}, bundle = {0};
-    bool okay = application_native_q2_console_capture(provider, &cvars, error) &&
-        qa_q2_game_capture(provider->state.q2, &game, error);
+    bool okay = (purpose == QA_SAVE_TRANSITION ||
+        application_native_q2_console_capture(provider, &cvars, error)) &&
+        qa_q2_game_capture(provider->state.q2, purpose, &game, error);
     if (okay && (game.size > SIZE_MAX - 20 || cvars.size > SIZE_MAX - 20 - game.size))
         okay = application_fail(error, QA_ERROR_MEMORY, "Q2 source continuation extent overflow");
     if (okay) {
@@ -55,7 +56,7 @@ bool application_native_q2_checkpoint_capture(application_provider *provider,
         qa_store_u64le(bundle.data + 4, game.size);
         qa_store_u64le(bundle.data + 12, cvars.size);
         memcpy(bundle.data + 20, game.data, game.size);
-        memcpy(bundle.data + 20 + game.size, cvars.data, cvars.size);
+        if (cvars.size) memcpy(bundle.data + 20 + game.size, cvars.data, cvars.size);
         *out = bundle;
     } else qa_buffer_free(&bundle);
     qa_buffer_free(&game);
@@ -64,7 +65,7 @@ bool application_native_q2_checkpoint_capture(application_provider *provider,
 }
 
 bool application_native_q2_checkpoint_prepare(application_provider *provider,
-    const qa_save_record *saved, qa_error *error)
+    const application_provider *current, const qa_save_record *saved, qa_error *error)
 {
     qa_bytes bytes = saved ? saved->payload : (qa_bytes){0};
     if (!provider || !provider->launch || provider->attached || !saved ||
@@ -84,9 +85,23 @@ bool application_native_q2_checkpoint_prepare(application_provider *provider,
     if (!application_native_q2_console_at(provider, &console, &cvars, &command) ||
         qa_cvars_count(cvars) != 0)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 source prefix requires its empty restored registry");
-    return application_native_q2_console_restore(provider, record.cvars, error) &&
+    qa_buffer settings = {0};
+    bool okay;
+    if (current) {
+        okay = current->application == provider->application->native_restore_current &&
+            current->kind == APPLICATION_PROVIDER_Q2 && current->constructed &&
+            current->attached && !current->close_pending && current->launch &&
+            !strcmp(current->launch->selection.instance, provider->launch->selection.instance) &&
+            application_native_q2_console_capture((application_provider *)current, &settings, error);
+        if (okay) record.cvars = (qa_bytes){settings.data, settings.size};
+    } else okay = record.cvars.size != 0;
+    if (!okay && (!error || error->code == QA_OK))
+        application_fail(error, QA_ERROR_FORMAT, "Q2 level restore lacks its current unit Source settings");
+    okay = okay && application_native_q2_console_restore(provider, record.cvars, error) &&
         application_startup_source_restore(provider, console, cvars, &command, error) &&
         application_native_q2_console_refresh(provider, error);
+    qa_buffer_free(&settings);
+    return okay;
 }
 
 bool application_native_q2_checkpoint_restore(application_provider *provider,
@@ -94,12 +109,11 @@ bool application_native_q2_checkpoint_restore(application_provider *provider,
 {
     q2_source_record record;
     if (!record_read(provider, bytes, &record, error)) return false;
-    qa_buffer current = {0};
-    bool okay = application_native_q2_console_capture(provider, &current, error);
-    if (okay && (current.size != record.cvars.size ||
-        memcmp(current.data, record.cvars.data, current.size)))
-        okay = application_fail(error, QA_ERROR_FORMAT, "Q2 GAME restore differs from its admitted source registry");
-    qa_buffer_free(&current);
-    return okay && application_native_q2_console_refresh(provider, error) &&
-        qa_q2_game_restore(provider->state.q2, record.game, error);
+    qa_application *unit = provider->application->native_restore_current;
+    const qa_launch_instance *selected = unit ? qa_launch_snapshot_find(
+        qa_application_launch(unit), provider->launch->selection.instance) : NULL;
+    const application_provider *current = selected ? selected->state : NULL;
+    return application_native_q2_console_refresh(provider, error) &&
+        qa_q2_game_restore(provider->state.q2, unit ? QA_SAVE_TRANSITION : QA_SAVE_MANUAL,
+            current ? current->state.q2 : NULL, record.game, error);
 }

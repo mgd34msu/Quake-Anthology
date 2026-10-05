@@ -3,6 +3,7 @@
 
 #include "qa/common.h"
 #include "qa/filesystem.h"
+#include "qa/hash.h"
 
 typedef enum qa_archive_kind {
     QA_ARCHIVE_AUTO,
@@ -21,6 +22,9 @@ typedef enum qa_archive_comparison {
 } qa_archive_comparison;
 
 typedef struct qa_archive qa_archive;
+/* Cached content identity of the already admitted archive. File-backed
+ * archives use bounded streaming scratch and do not retain a whole-file copy. */
+bool qa_archive_digest(qa_archive *, const qa_sha256_digest **, qa_error *);
 
 typedef struct qa_archive_entry {
     size_t ordinal;

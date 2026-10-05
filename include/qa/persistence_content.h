@@ -2,7 +2,7 @@
 #define QA_PERSISTENCE_CONTENT_H
 
 #include "qa/application.h"
-#include "qa/vfs_view_save.h"
+#include "qa/source_save.h"
 
 typedef struct qa_application_content_graph qa_application_content_graph;
 typedef struct qa_application_content_visitor {
@@ -30,13 +30,17 @@ const qa_resource *qa_application_content_resource(const qa_application_content_
 bool qa_application_content_resource_id(const qa_application_content_graph *,
     const qa_resource *, uint64_t *pool, uint64_t *resource);
 
-/* Only a restored graph can transfer a real owning pool/view reference. Each
- * private VFS has one destructor owner; catalog-owned views cannot be claimed.
- * Outputs must be empty. Borrowed aliases use the lookup functions above. */
+/* These return ordinary current-owner references, each released by the caller. */
+qa_product_id qa_application_content_product(const qa_application_content_graph *,
+    const qa_catalog *, uint32_t saved_handle);
+bool qa_application_content_acquire(const qa_vfs *,const qa_resource *,
+    const char *relative_path,qa_vfs_acquisition *,qa_error *);
+bool qa_application_content_acquisition(qa_source_save_io *,
+    const qa_application_content_graph *, const qa_vfs *, const qa_resource *,
+    qa_vfs_acquisition *);
 bool qa_application_content_claim_pool(qa_application_content_graph *, uint64_t,
                                      qa_resource_pool **, qa_error *);
-/* Own the decoded graph reference if still unclaimed, otherwise retain its
- * already adopted real pool. Both cases return one releasable reference. */
+/* Return one releasable current pool reference. */
 bool qa_application_content_retain_pool(qa_application_content_graph *, uint64_t,
                                       qa_resource_pool **, qa_error *);
 bool qa_application_content_claim_view(qa_application_content_graph *, uint64_t,

@@ -86,6 +86,7 @@ bool q2_save_players(q2_save_io *io, qa_q2_players_checkpoint *s) {
     if (!q2_save_landmark(io, &s->landmark)) return false;
     Q2V(camera_origin); Q2V(camera_angles);
     for (size_t i = 0; i < 2; ++i) { Q2V(noise[i].origin); Q2T(noise[i].time_ns); Q2B(noise[i].present); }
+    if (io->level_only) return true;
     Q2N(next_map_rule);Q2B(map_list_shuffle);
     void *maps=s->map_list;
     if(!q2_save_count(io,&s->map_list_count,4,sizeof(*s->map_list),&maps)) return false;

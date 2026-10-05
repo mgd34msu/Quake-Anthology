@@ -1111,12 +1111,9 @@ static bool custody_field(qa_source_save_io *io, const qa_application_content_gr
         return event_fail(io, QA_ERROR_FORMAT, "Source custody lost its actual graph owner");
     const qa_vfs *files = io->direction == QA_SOURCE_SAVE_READ ?
         qa_application_content_view(graph, held->saved_view) : held->view;
-    qa_vfs_acquisition *opening = &held->opening;
-    return files && qa_source_save_u64(io, &opening->mount) && qa_source_save_u64(io, &opening->resource_id) &&
-        qa_source_save_owned_text(io, &opening->path) && qa_source_save_owned_text(io, &opening->lookup_path) &&
-        qa_source_save_owned_text(io, &opening->link_source) && qa_source_save_owned_text(io, &opening->link_target) &&
-        qa_vfs_acquisition_opening_codec(io, files, opening) && opening->opening_present &&
-        qa_vfs_acquisition_retained(files, opening, io->error);
+    const qa_resource *resource=io->direction==QA_SOURCE_SAVE_READ?
+        qa_application_content_resource(graph,held->saved_pool,held->saved_resource):held->resource;
+    return qa_application_content_acquisition(io,graph,files,resource,&held->opening);
 }
 
 static bool normalized_rows(qa_source_save_io *io, event_store *store)
@@ -1173,14 +1170,10 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
             return event_fail(io, QA_ERROR_FORMAT, "Source resource dictionary has invalid ownership");
         const qa_vfs *files = io->direction == QA_SOURCE_SAVE_READ ?
             qa_application_content_view(graph, view) : row->view;
-        qa_vfs_acquisition *opening = &row->opening;
-        if (!files || !qa_source_save_u64(io, &opening->mount) ||
-            !qa_source_save_u64(io, &opening->resource_id) ||
-            !qa_source_save_owned_text(io, &opening->path) || !qa_source_save_owned_text(io, &opening->lookup_path) ||
-            !qa_source_save_owned_text(io, &opening->link_source) || !qa_source_save_owned_text(io, &opening->link_target) ||
-            !qa_vfs_acquisition_opening_codec(io, files, opening) || !opening->opening_present ||
-            !qa_vfs_acquisition_retained(files, opening, io->error))
-            return event_fail(io, QA_ERROR_FORMAT, "Source dictionary lost its actual acquisition opening");
+        const qa_resource *actual=io->direction==QA_SOURCE_SAVE_READ?
+            qa_application_content_resource(graph,pool,resource):row->resource;
+        if (!qa_application_content_acquisition(io,graph,files,actual,&row->opening))
+            return event_fail(io,QA_ERROR_FORMAT,"Source dictionary cannot reopen its installed resource");
         if (!derived_key_field(io)) return false;
         if (io->direction == QA_SOURCE_SAVE_READ) {
             row->saved_pool = pool; row->saved_resource = resource; row->saved_view = view;
@@ -1191,7 +1184,7 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
         if (!qa_source_save_count(io, &row->custody_capacity, SIZE_MAX / sizeof(*row->custodies)) ||
             !qa_source_save_count(io, &row->custody_count, row->custody_capacity)) return false;
         if (io->direction == QA_SOURCE_SAVE_READ) {
-            if (row->custody_count > (io->input.size - io->offset) / 64 ||
+            if (row->custody_count > (io->input.size - io->offset) / 34 ||
                 (row->custody_capacity && (row->custody_capacity < 4 ||
                     (row->custody_capacity & (row->custody_capacity - 1)) ||
                     row->custody_capacity > (row->custody_count < 2 ? 4 : row->custody_count * 2))))

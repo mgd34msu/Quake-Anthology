@@ -85,13 +85,22 @@ bool q2_save_entities(q2_save_io *io, qa_q2_entities_checkpoint *s) {
         Q2R(bars[i].controller); Q2R(bars[i].target); Q2T(bars[i].dead_until_ns); Q2B(bars[i].dying);
     }
     if (!q2_save_fog(io, &s->world_fog)) return false;
-    Q2N(sky); Q2N(goals); Q2N(primary); Q2N(secondary); Q2V(sky_axis); Q2F(sky_rotation);
-    Q2U(primary_changes); Q2U(secondary_changes); Q2U(goal_number); Q2B(sky_auto); Q2B(has_goals);
+    Q2N(sky); Q2N(goals);
+    if (!io->level_only || io->game->options.edition != QA_Q2_RERELEASE) {
+        Q2N(primary); Q2N(secondary);
+    }
+    Q2V(sky_axis); Q2F(sky_rotation);
+    if (!io->level_only || io->game->options.edition != QA_Q2_RERELEASE) {
+        Q2U(primary_changes); Q2U(secondary_changes);
+    }
+    Q2U(goal_number); Q2B(sky_auto); Q2B(has_goals);
     void *wind = s->wind;
     if (!q2_save_count(io, &s->wind_count, 9, sizeof(*s->wind), &wind)) return false;
     s->wind = wind;
     for (size_t i = 0; i < s->wind_count; ++i) { Q2R(wind[i].actor); Q2T(wind[i].until_ns); }
-    Q2U(total_monsters); Q2U(killed_monsters); Q2U(level_count);
+    Q2U(total_monsters); Q2U(killed_monsters);
+    if (io->level_only) return true;
+    Q2U(level_count);
     if (s->level_count > QA_Q2_CAMPAIGN_LEVEL_LIMIT) return q2_save_fail(io, "Too many Q2 campaign levels");
     for (uint32_t i = 0; i < s->level_count; ++i)
         if (!campaign_level(io, s->levels + i)) return false;

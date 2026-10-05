@@ -33,7 +33,7 @@ void application_save_foundation_free(application_save_foundation *);
  * service. Strings transfer into candidate->session only after success. */
 bool application_save_session_create(const qa_session_options *, const qa_save_image *, qa_session **, qa_error *);
 bool application_create_restored(const qa_application_options *, const qa_save_image *,
-    qa_application_content_graph **, qa_application **, qa_error *);
+    qa_application *current_unit, qa_application_content_graph **, qa_application **, qa_error *);
 bool application_save_prepare_content(qa_application *, const qa_launch_snapshot *, const qa_save_image *, qa_error *);
 bool application_save_resolvers(qa_application *, qa_persistence_gameplay_resolvers *, qa_error *);
 /* Providers and source body bindings must already be reconstructed.
@@ -47,6 +47,7 @@ bool application_save_q3_product_decode(const qa_save_image *, qa_q3_product_pol
 bool application_save_startup_decode(const qa_save_image *, qa_application *, qa_error *);
 bool application_save_sidecars_decode(const qa_save_image *, qa_application *, qa_error *);
 bool application_save_components_decode(const qa_save_image *, qa_bytes *, qa_error *);
+bool application_campaign_restore_draft(qa_application *previous, qa_launch_draft *, qa_error *);
 bool application_physics_capture(qa_application *, qa_buffer *, qa_error *);
 bool application_physics_restore(qa_application *, qa_bytes, qa_error *);
 

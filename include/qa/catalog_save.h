@@ -7,8 +7,6 @@ typedef struct qa_catalog_checkpoint_refs {
     /* Returns an owned view in the supplied actual isolated resource pool. */
     bool (*files_decode)(void *, qa_resource_pool *, qa_bytes, qa_vfs **, qa_error *);
 } qa_catalog_checkpoint_refs;
-const qa_vfs *qa_catalog_files(const qa_catalog *);
-qa_resource_pool *qa_catalog_resources(const qa_catalog *);
 /* Independent catalog and VFS policy; retain native mounts and rebuild their
  * installed indexes and declaration metadata with the normal constructors. */
 bool qa_catalog_clone(const qa_catalog *, qa_catalog **, qa_error *);

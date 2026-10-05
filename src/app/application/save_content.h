@@ -14,24 +14,21 @@ typedef struct application_saved_instance_content {
 bool application_save_content_collect(qa_application *,
     qa_application_content_visit_fn, void *, qa_application_content_graph **,
     qa_error *);
-/* Retains explicit Source filesystem opening authorities. Mounted archives
- * use exact native package receipts; unmounted custody stays embedded. */
+/* Stores only identities of used installed content. */
 bool application_save_content_encode(const qa_application_content_graph *,
     qa_buffer *, qa_error *);
-bool application_save_content_prepare(qa_bytes, const qa_vfs_checkpoint_refs *,
+bool application_save_content_prepare(qa_bytes, const qa_application_options *,
     qa_application_content_graph **, qa_error *);
+bool application_save_content_retain_current(qa_application *,
+    qa_application_content_visit_fn, void *, qa_application_content_graph **, qa_error *);
 void application_save_content_destroy(qa_application_content_graph *);
 bool application_save_content_ready(const qa_application_content_graph *, qa_error *);
-/* Called only by the already-qualified allocation-free publication. Native
- * admission normalization ends so later saves capture current view state. */
-void application_save_content_publish(qa_application_content_graph *);
 
 uint64_t application_save_content_application_pool(const qa_application_content_graph *);
 uint64_t application_save_content_application_catalog(const qa_application_content_graph *);
 uint64_t application_save_content_launch_catalog(const qa_application_content_graph *);
 uint64_t application_save_content_launch_view(const qa_application_content_graph *);
-/* source.artifact_acquisition is the graph-owned recipe captured at the real
- * executable opening and qualified against the restored owning VFS. */
+/* source.artifact_acquisition belongs to the current installed content owner. */
 bool application_save_content_instance(const qa_application_content_graph *,
     const char *, application_saved_instance_content *, qa_error *);
 bool application_save_content_launch_resource(const qa_application_content_graph *,
@@ -45,8 +42,7 @@ bool application_save_content_launch_resource_origin(const qa_application_conten
  * preserves all actually transferred partial custody and clears borrowed views. */
 bool application_save_content_launch_source_claim(qa_application_content_graph *,
     size_t, qa_launch_resource_origin *, qa_error *);
-/* Transfer a restored pool's unclaimed graph reference, or retain the already
- * adopted physical pool. Each event resource owns the returned reference. */
+/* Each event resource owns one returned current content reference. */
 bool application_save_content_event_pool(qa_application_content_graph *, uint64_t,
     qa_resource_pool **, qa_error *);
 bool application_save_content_event_view(qa_application_content_graph *, uint64_t,

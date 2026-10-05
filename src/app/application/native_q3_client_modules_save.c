@@ -9,7 +9,6 @@
 typedef struct saved_opening {
     const char *path;
     uint64_t pool, resource;
-    qa_vfs_acquisition acquisition;
 } saved_opening;
 
 typedef struct saved_module {
@@ -63,17 +62,8 @@ static bool blob(qa_source_save_io *io, qa_buffer *value)
 
 static bool opening_fields(qa_source_save_io *io, saved_opening *value)
 {
-    const char *path = value->acquisition.path, *lookup = value->acquisition.lookup_path;
-    const char *link_source = value->acquisition.link_source, *link_target = value->acquisition.link_target;
-    bool okay = qa_source_save_text(io, &value->path) && qa_source_save_u64(io, &value->pool) &&
-        qa_source_save_u64(io, &value->resource) && qa_source_save_u64(io, &value->acquisition.mount) &&
-        qa_source_save_u64(io, &value->acquisition.resource_id) && qa_source_save_text(io, &path) &&
-        qa_source_save_text(io, &lookup) && qa_source_save_text(io, &link_source) && qa_source_save_text(io, &link_target);
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        value->acquisition.path = (char *)path; value->acquisition.lookup_path = (char *)lookup;
-        value->acquisition.link_source = (char *)link_source; value->acquisition.link_target = (char *)link_target;
-    }
-    return okay;
+    return qa_source_save_text(io,&value->path) &&
+        qa_source_save_u64(io,&value->pool) && qa_source_save_u64(io,&value->resource);
 }
 
 static bool module_fields(qa_source_save_io *io, saved_module *role)
@@ -127,7 +117,7 @@ static bool capture_opening(const qa_application_content_graph *graph, qa_vfs *v
     const native_client_opening *actual, saved_opening *out, qa_error *error)
 {
     if (!actual->resource) return true;
-    *out = (saved_opening){.path = actual->path, .acquisition = actual->acquisition};
+    *out = (saved_opening){.path = actual->path};
     return (qa_application_content_resource_id(graph, actual->resource, &out->pool, &out->resource) &&
         qa_application_content_pool(graph, out->pool) == qa_vfs_resources(view) &&
         actual->acquisition.resource_id == qa_resource_id(actual->resource)) ||
@@ -212,19 +202,14 @@ bool qa_application_native_q3_client_modules_checkpoint(const application_native
 static bool opening_valid(qa_application_content_graph *graph, qa_vfs *view,
     const saved_opening *saved, bool required, qa_error *error)
 {
-    if (!saved->resource && !saved->pool && !saved->path) {
-        return (!required && !saved->acquisition.mount && !saved->acquisition.resource_id &&
-            !saved->acquisition.path && !saved->acquisition.lookup_path &&
-            !saved->acquisition.link_source && !saved->acquisition.link_target) ||
-                application_fail(error, QA_ERROR_FORMAT, "Absent acquired CLIENT opening retains a false recipe");
-    }
-    const qa_resource *resource = qa_application_content_resource(graph, saved->pool, saved->resource);
-    return (saved->path && *saved->path && saved->pool && saved->resource && resource &&
-        qa_application_content_pool(graph, saved->pool) == qa_vfs_resources(view) &&
-        saved->acquisition.path && !strcmp(saved->path, saved->acquisition.path) &&
-        saved->acquisition.resource_id == qa_resource_id(resource) &&
-        qa_vfs_acquisition_retained(view, &saved->acquisition, error)) ||
-            application_fail(error, QA_ERROR_FORMAT, "Acquired CLIENT opening leaves its actual retained VFS journal");
+    if (!saved->resource && !saved->pool && !saved->path) return !required;
+    const qa_resource *resource=qa_application_content_resource(graph,saved->pool,saved->resource);
+    qa_vfs_acquisition actual={0};
+    bool okay=saved->path && *saved->path && resource &&
+        qa_application_content_pool(graph,saved->pool)==qa_vfs_resources(view) &&
+        qa_application_content_acquire(view,resource,saved->path,&actual,error);
+    qa_vfs_acquisition_dispose(&actual);
+    return okay || application_fail(error,QA_ERROR_FORMAT,"Acquired CLIENT artifact is not installed");
 }
 
 static bool copy_text(const char *text, char **out, qa_error *error)
@@ -237,28 +222,23 @@ static bool copy_text(const char *text, char **out, qa_error *error)
 }
 
 static bool restore_opening(qa_application_content_graph *graph,
-    const saved_opening *saved, native_client_opening *out, qa_error *error)
+    const qa_vfs *view, const saved_opening *saved, native_client_opening *out, qa_error *error)
 {
     if (!saved->resource) return true;
     out->resource = (qa_resource *)qa_application_content_resource(graph, saved->pool, saved->resource);
     qa_resource_retain(out->resource);
-    out->acquisition.mount = saved->acquisition.mount;
-    out->acquisition.resource_id = saved->acquisition.resource_id;
-    return copy_text(saved->path, &out->path, error) &&
-        copy_text(saved->acquisition.path, &out->acquisition.path, error) &&
-        copy_text(saved->acquisition.lookup_path, &out->acquisition.lookup_path, error) &&
-        copy_text(saved->acquisition.link_source, &out->acquisition.link_source, error) &&
-        copy_text(saved->acquisition.link_target, &out->acquisition.link_target, error);
+    return copy_text(saved->path,&out->path,error) &&
+        qa_application_content_acquire(view,out->resource,saved->path,&out->acquisition,error);
 }
 
-static bool restore_artifact(qa_application_content_graph *graph, native_client_module *actual,
+static bool restore_artifact(qa_application_content_graph *graph, const qa_vfs *view, native_client_module *actual,
     const saved_module *saved, qa_error *error)
 {
     if (!saved->present) return true;
     actual->sequence = saved->sequence; actual->service_owner = saved->service_owner;
-    if (!restore_opening(graph, &saved->artifact, &actual->artifact, error) ||
-        !restore_opening(graph, &saved->declaration, &actual->declaration, error) ||
-        !restore_opening(graph, &saved->body_declaration, &actual->body_declaration, error) ||
+    if (!restore_opening(graph, view, &saved->artifact, &actual->artifact, error) ||
+        !restore_opening(graph, view, &saved->declaration, &actual->declaration, error) ||
+        !restore_opening(graph, view, &saved->body_declaration, &actual->body_declaration, error) ||
         !qa_qvm_image_load(qa_resource_bytes(actual->artifact.resource), &actual->image, error) ||
         !native_client_module_qualify(actual, error)) return false;
     if (actual->abi != (qa_qvm_abi)saved->abi)
@@ -323,8 +303,8 @@ bool qa_application_native_q3_client_modules_restore(qa_application *app,
         application_native_q3_client_modules *owner = *out;
         owner->script_globals = script_globals; script_globals = NULL;
         owner->pure = saved.pure;
-        okay = restore_artifact(graph, &owner->ui, &saved.ui, error) &&
-            restore_artifact(graph, &owner->cgame, &saved.cgame, error);
+        okay = restore_artifact(graph, source->descriptor->content, &owner->ui, &saved.ui, error) &&
+            restore_artifact(graph, source->descriptor->content, &owner->cgame, &saved.cgame, error);
         if (okay) okay = native_client_module_namespace(&owner->ui, true, error) &&
             (!saved.cgame.present || native_client_module_namespace(&owner->cgame, true, error));
         /* Both held artifacts and immutable profiles precede all hosts. */

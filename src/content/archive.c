@@ -19,6 +19,8 @@ struct qa_archive {
     size_t central_offset;
     const qa_archive_entry **name_index[3];
     size_t count;
+    qa_sha256_digest digest;
+    bool digest_ready;
 };
 
 static bool fail(qa_error *error, qa_status code, size_t offset,
@@ -60,6 +62,27 @@ bool qa_archive_source_current(const qa_archive *archive, qa_error *error)
     if (!qa_fs_file_identity(archive->file, &actual, error)) return false;
     return qa_fs_identity_equal(&archive->identity, &actual) ||
         fail(error, QA_ERROR_IO, 0, "archive source changed after admission");
+}
+bool qa_archive_digest(qa_archive *archive,const qa_sha256_digest **out,qa_error *error)
+{
+    if (!archive || !out) return fail(error,QA_ERROR_ARGUMENT,0,"Archive identity has no admitted owner");
+    if (!archive->digest_ready) {
+        if (!qa_archive_source_current(archive,error)) return false;
+        qa_sha256_context hash; qa_sha256_init(&hash);
+        if (archive->bytes.data) qa_sha256_update(&hash,archive->bytes);
+        else {
+            uint8_t scratch[65536];
+            for (size_t offset=0;offset<archive->bytes.size;) {
+                size_t count=archive->bytes.size-offset;
+                if (count>sizeof(scratch)) count=sizeof(scratch);
+                if (!qa_fs_file_read_at(archive->file,offset,scratch,count,error)) return false;
+                qa_sha256_update(&hash,(qa_bytes){scratch,count}); offset+=count;
+            }
+        }
+        if (!qa_archive_source_current(archive,error)) return false;
+        qa_sha256_final(&hash,&archive->digest); archive->digest_ready=true;
+    }
+    *out=&archive->digest; return true;
 }
 
 static bool archive_snapshot(qa_archive *archive, qa_error *error)

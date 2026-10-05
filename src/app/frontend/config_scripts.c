@@ -1,5 +1,6 @@
 #include "config_scripts.h"
 #include "qa/catalog_save.h"
+#include "qa/source_qw_files.h"
 #include "qa/vfs_view_save.h"
 #include "qa/source_save.h"
 #include <stdio.h>
@@ -116,24 +117,8 @@ static bool source_roots(frontend_config_files *owner,const qa_product *product,
     if (!family || !qa_vfs_mount_retained(owner->console,qa_catalog_files(owner->catalog),family->id,
         QA_ARCHIVE_CASE_INSENSITIVE,false,&owner->qw_family,error))
         return fail(error,QA_ERROR_FORMAT,"QuakeWorld Source lacks its actual installed family authority");
-    const qa_product *base=product; size_t depth=0;
-    while (base->base) {
-        const qa_product *next=qa_catalog_product(owner->catalog,base->base);
-        if (!next || ++depth>qa_catalog_count(owner->catalog))
-            return fail(error,QA_ERROR_FORMAT,"QuakeWorld Source has invalid fixed-base ancestry");
-        if (next->edition!=QA_EDITION_QUAKEWORLD) break;
-        base=next;
-    }
-    owner->qw_base_product=base->id;
-    if (!qa_catalog_open(owner->catalog,base->id,&owner->qw_base,error)) return false;
-    const char *leaf=strrchr(product->directory,'/');
-    if (!leaf || !leaf[1]) return fail(error,QA_ERROR_FORMAT,"QuakeWorld Source lacks its logical family directory");
-    owner->qw_name=copy_text(leaf+1,error);
-    size_t size=(size_t)(leaf-product->directory);
-    owner->qw_home_prefix=malloc(size+1);
-    if (!owner->qw_home_prefix) return fail(error,QA_ERROR_MEMORY,"Retaining Source writable family namespace");
-    memcpy(owner->qw_home_prefix,product->directory,size); owner->qw_home_prefix[size]=0;
-    return owner->qw_name!=NULL;
+    return qa_source_qw_files_base(owner->catalog,product->id,&owner->qw_base,
+        &owner->qw_base_product,&owner->qw_name,&owner->qw_home_prefix,error);
 }
 frontend_config_files *frontend_config_files_create(qa_catalog *catalog,qa_product_id product,
     qa_settings_store user,qa_settings_store devices,qa_error *error)
@@ -237,32 +222,6 @@ qa_vfs *frontend_config_files_source_content(const frontend_config_files *owner)
 { return owner && owner->qw_base ? owner->selected : NULL; }
 const char *frontend_config_files_source_directory(const frontend_config_files *owner)
 { return owner && owner->qw_base ? qa_vfs_mount_path(owner->console,owner->writable) : NULL; }
-static char *source_child_path(const char *parent,const char *child,qa_error *error)
-{
-    size_t a=strlen(parent),b=strlen(child);
-    if (a>SIZE_MAX-b-2) return fail(error,QA_ERROR_MEMORY,"Source directory path overflow"),NULL;
-    char *path=malloc(a+b+2);
-    if (!path) return fail(error,QA_ERROR_MEMORY,"Retaining Source child path"),NULL;
-    memcpy(path,parent,a);
-    if (a && b) path[a++]='/';
-    memcpy(path+a,child,b+1); return path;
-}
-static bool source_order(qa_vfs *view,const qa_vfs *base,qa_error *error)
-{
-    size_t count=qa_vfs_mount_count(view),fixed=qa_vfs_mount_count(base),extra=count-fixed;
-    if (count>SIZE_MAX/sizeof(qa_mount_id)) return fail(error,QA_ERROR_MEMORY,"Source search path overflow");
-    qa_mount_id *order=count?malloc(count*sizeof(*order)):NULL;
-    if (count && !order) return fail(error,QA_ERROR_MEMORY,"Retaining Source search order");
-    bool okay=true;
-    for (size_t i=0;i<count && okay;++i) {
-        qa_vfs_mount_info mount;
-        size_t source=i<extra?count-i-1:i-extra;
-        okay=qa_vfs_mount_at(view,source,&mount);
-        if (okay) order[i]=mount.id;
-    }
-    if (okay) okay=qa_vfs_set_order(view,order,count,error);
-    free(order); return okay;
-}
 bool frontend_config_files_source_gamedir(frontend_config_files *owner,const char *directory,
     bool *changed,qa_error *error)
 {
@@ -272,53 +231,18 @@ bool frontend_config_files_source_gamedir(frontend_config_files *owner,const cha
     *changed=false;
     if (!strcmp(owner->qw_name,directory)) return true;
     char *name=copy_text(directory,error);
-    qa_vfs *base=name?qa_vfs_clone(owner->qw_base,error):NULL;
-    if (!base) { free(name); return false; }
-    qa_vfs *retired=owner->selected;
-    owner->selected=base; owner->qw_changed=true;
-    free(owner->qw_name); owner->qw_name=name; *changed=true;
-    qa_vfs_destroy(retired);
-    if (!strcmp(directory,"id1") || !strcmp(directory,"qw")) return true;
-    qa_fs_root *family=qa_vfs_mount_root(owner->console,owner->qw_family);
-    qa_fs_root *home=qa_vfs_mount_root(owner->console,owner->shared);
-    const char *relative_directory=!strcmp(directory,".")?"":directory;
-    char *destination=source_child_path(owner->qw_home_prefix,relative_directory,error);
-    qa_mount_id physical,user;
-    bool okay=destination && qa_vfs_mount_child(owner->console,home,destination,
-        QA_ARCHIVE_CASE_INSENSITIVE,true,&owner->writable,error);
-    if (okay) {
-        free(owner->qw_write_child); owner->qw_write_child=destination; destination=NULL;
+    if (!name) return false;
+    qa_vfs *prepared=NULL; char *write_child=NULL; qa_mount_id writable=owner->writable;
+    bool okay=qa_source_qw_files_change(owner->qw_base,owner->console,owner->qw_family,
+        owner->shared,owner->qw_home_prefix,directory,&prepared,&writable,&write_child,error);
+    if (prepared) {
+        qa_vfs_destroy(owner->selected); owner->selected=prepared; owner->qw_changed=true;
+        free(owner->qw_name); owner->qw_name=name; name=NULL; *changed=true;
     }
-    if (okay) okay=*relative_directory?qa_vfs_mount_child(base,family,relative_directory,
-        QA_ARCHIVE_CASE_INSENSITIVE,false,&physical,error):
-        qa_vfs_mount_retained(base,owner->console,owner->qw_family,
-            QA_ARCHIVE_CASE_INSENSITIVE,false,&physical,error);
-    if (okay) okay=qa_vfs_mount_retained(base,owner->console,owner->writable,
-        QA_ARCHIVE_CASE_INSENSITIVE,true,&user,error);
-    free(destination);
-    for (size_t i=0;okay;++i) {
-        char leaf[64];
-        int length=snprintf(leaf,sizeof(leaf),"pak%zu.pak",i);
-        if (length<0 || (size_t)length>=sizeof(leaf)) { okay=fail(error,QA_ERROR_FORMAT,"Source package ordinal overflow"); break; }
-        char *relative=source_child_path(relative_directory,leaf,error),*resolved=NULL;
-        qa_error observed={0};
-        okay=relative!=NULL;
-        if (okay && !qa_fs_root_resolve(family,relative,fs_equal,NULL,false,&resolved,&observed)) {
-            if (observed.code==QA_ERROR_NOT_FOUND) { free(relative); break; }
-            if (error) *error=observed;
-            okay=false;
-        }
-        qa_mount_id archive;
-        if (okay) okay=qa_vfs_mount_archive_from(base,family,resolved,QA_ARCHIVE_PAK,
-            QA_ARCHIVE_CASE_INSENSITIVE,&archive,error);
-        free(relative); free(resolved);
-        if (i==SIZE_MAX) { okay=fail(error,QA_ERROR_FORMAT,"Source package ordinal overflow"); break; }
-    }
-    qa_error order_error={0};
-    bool ordered=source_order(base,owner->qw_base,&order_error);
-    if (okay && !ordered && error) *error=order_error;
-    return okay && ordered;
+    if (write_child) { free(owner->qw_write_child); owner->qw_write_child=write_child; owner->writable=writable; }
+    free(name); return okay;
 }
+
 bool frontend_config_files_source_read(const frontend_config_files *owner,qa_launch_source_files *out,qa_error *error)
 {
     if (!owner || !out || !owner->qw_base)
@@ -534,7 +458,7 @@ static bool names(frontend_config_files *owner,qa_mount_id mount,qa_vfs *view,co
 {
     qa_fs_root *root=qa_vfs_mount_root(view,mount); qa_fs_listing entries={0};
     const char *held=qa_vfs_mount_root_prefix(view,mount);
-    char *relative=held?source_child_path(held,prefix,error):NULL;
+    char *relative=held?qa_source_files_child_path(held,prefix,error):NULL;
     bool listed=root && relative && qa_fs_root_list(root,*relative?relative:".",&entries,error);
     free(relative);
     if (!listed) return false;

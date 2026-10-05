@@ -79,6 +79,7 @@ target_link_libraries(qa_script PUBLIC qa_core qa_persistence)
 
 add_library(qa_content STATIC
     src/content/archive.c
+    src/content/source_qw_files.c
     src/content/vfs.c
     src/content/resource_pool_save.c
     src/content/vfs_view_save.c

@@ -133,6 +133,7 @@ static bool discover(qa_application *application, bool discover_mods,
 
 static bool create_application(const qa_application_options *options,
                                 const qa_save_image *restore,
+                                qa_application *current_unit,
                                 const qa_strings *baseline_strings,
                                 qa_application_content_graph **saved_content,
                                 qa_catalog *baseline_catalog,
@@ -167,6 +168,7 @@ static bool create_application(const qa_application_options *options,
     application->prompt_context = options->prompt_context;
     application->prompt_supported = options->prompt_supported;
     application->startup_hooks = options->startup_hooks;
+    application->native_restore_current = current_unit;
     application->dedicated = options->dedicated;
     application->q3_services = options->q3_services;
     application->q3_client_prepare = options->q3_client_prepare;
@@ -186,7 +188,11 @@ static bool create_application(const qa_application_options *options,
     if (!application_console_create(application, error)) goto fail;
     if (!restore && !baseline_strings && !application_startup_create(application,
         options->startup_commands, options->startup_command_count, error)) goto fail;
-    if (restore) {
+    if (restore && current_unit) {
+        if (!application_q3_product_import(application->cvars, &current_unit->q3_product,
+            &application->q3_product, error) ||
+            !application_startup_clone(application, current_unit, error)) goto fail;
+    } else if (restore) {
         qa_q3_product_policy saved = {0};
         if (!application_save_q3_product_decode(restore, &saved, error) ||
             !application_q3_product_import(application->cvars, &saved, &application->q3_product, error)) goto fail;
@@ -358,17 +364,19 @@ fail:
 bool qa_application_create(const qa_application_options *options,
                              qa_application **out, qa_error *error)
 {
-    return create_application(options, NULL, NULL, NULL, NULL, out, error);
+    return create_application(options, NULL, NULL, NULL, NULL, NULL, out, error);
 }
 
 bool application_create_restored(const qa_application_options *options,
                                    const qa_save_image *image,
+                                   qa_application *current_unit,
                                    qa_application_content_graph **content,
                                    qa_application **out, qa_error *error)
 {
-    if (image == NULL || !content || !*content)
+    if (image == NULL || !content || !*content ||
+        ((qa_save_image_metadata(image)->purpose == QA_SAVE_TRANSITION) != (current_unit != NULL)))
         return application_fail(error, QA_ERROR_ARGUMENT, "restored application requires a save image");
-    return create_application(options, image, NULL, content, NULL, out, error);
+    return create_application(options, image, current_unit, NULL, content, NULL, out, error);
 }
 
 bool application_create_native_baseline(const qa_application_options *options,
@@ -378,7 +386,7 @@ bool application_create_native_baseline(const qa_application_options *options,
 {
     if (strings == NULL || catalog == NULL || qa_catalog_resources(catalog) == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT, "native baseline requires the exact source string namespace");
-    return create_application(options, NULL, strings, NULL, catalog, out, error);
+    return create_application(options, NULL, NULL, strings, NULL, catalog, out, error);
 }
 
 qa_application_content_graph *qa_application_content_graph_read(const qa_application *application)

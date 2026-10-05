@@ -736,7 +736,7 @@ static bool resources_create(const qa_native_process_resources_options *options,
             (row->image.target.pointer_bytes == 4 && base + bytes > UINT32_MAX))
             return fail(error, QA_ERROR_ARGUMENT, "Native image placement exceeds its actual pointer domain");
         row->base = base; cursor = base + bytes;
-        qa_bytes artifact = qa_resource_bytes(row->resource); uint64_t id = qa_resource_id(row->resource);
+        qa_bytes artifact = qa_resource_bytes(row->resource); uint64_t id = i + 1;
         owner->sysv_artifacts[i] = (qa_native_sysv_artifact){id, base - row->image.preferred_base,
             program ? QA_NATIVE_SYSV_PROGRAM : QA_NATIVE_SYSV_LIBRARY,
             row->image, artifact, options->policy.maximum_image_bytes};
@@ -811,7 +811,7 @@ static bool resources_create(const qa_native_process_resources_options *options,
     capabilities.compare_string = capabilities.locale.source == 2 ? platform_compare_string : NULL;
     if (!qa_native_process_platform_windows_streams(options->platform, capabilities.streams, error)) return false;
     owner->windows = (qa_native_windows_process_options){.guest = guest, .artifacts = owner->windows_artifacts,
-        .artifact_count = owner->artifact_count, .primary_image = qa_resource_id(owner->artifacts[options->primary].resource),
+        .artifact_count = owner->artifact_count, .primary_image = options->primary + 1,
         .stack_bytes = options->policy.stack_bytes, .instruction_budget = options->policy.instruction_budget,
         .command_line = owner->command_line, .command_line_units = options->command_line_units,
         .environment = owner->windows_environment, .environment_units = options->windows_environment_units,
@@ -949,7 +949,7 @@ bool qa_native_process_resources_options_read(qa_native_process_resources *owner
         !qa_native_runtime_profile_launch(owner->options.runtime, &owner->guard, error)) return false;
     bool windows = owner->artifacts[owner->options.primary].image.target.os == QA_NATIVE_OS_WINDOWS;
     *out = (qa_native_process_options){.kind = windows ? QA_NATIVE_PROCESS_WINDOWS : QA_NATIVE_PROCESS_SYSV,
-        .source_id = qa_resource_id(owner->artifacts[owner->options.primary].resource),
+        .source_id = owner->options.primary + 1,
         .first_callback = owner->first_callback, .resources = {.context = owner,
             .retain = source_resources_retain, .release = source_resources_release,
             .root_add = source_root_add, .root_remove = source_root_remove,
@@ -1059,13 +1059,9 @@ static bool resource_fields(qa_source_save_io *io, const qa_native_process_resou
     }
     for (size_t i = 0; i < owner->artifact_count; ++i) {
         const process_artifact *row = owner->artifacts + i;
-        if (!match_u64(io, qa_resource_id(row->resource)) || !match_text(io, row->path) ||
-            !match_bytes(io, &row->image.digest, sizeof(row->image.digest)) || !match_u64(io, row->base) ||
-            !match_bool(io, row->receipt)) return false;
-        if (row->receipt && (!match_u64(io, row->acquisition.mount) ||
-            !match_u64(io, row->acquisition.resource_id) || !match_text(io, row->acquisition.path) ||
-            !match_text(io, row->acquisition.lookup_path) || !match_text(io, row->acquisition.link_source) ||
-            !match_text(io, row->acquisition.link_target))) return false;
+        if (!match_text(io, row->path) ||
+            !match_bytes(io, &row->image.digest, sizeof(row->image.digest)) ||
+            !match_u64(io, row->base)) return false;
     }
     if (!match_u64(io, owner->root_count)) return false;
     for (size_t i = 0; i < owner->root_count; ++i) {

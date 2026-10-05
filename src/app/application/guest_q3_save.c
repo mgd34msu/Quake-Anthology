@@ -469,16 +469,12 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes, size_t minimum)
     return qa_source_save_bytes(io, (void *)bytes->data, length);
 }
 
-static bool acquisition(qa_source_save_io *io, const qa_vfs *view, qa_vfs_acquisition *value)
+static bool acquisition(qa_source_save_io *io,const qa_application_content_graph *graph,
+    const qa_vfs *view,uint64_t pool,uint64_t id,qa_vfs_acquisition *value)
 {
-    return (qa_source_save_u64(io, &value->mount) && value->mount &&
-        qa_source_save_u64(io, &value->resource_id) && value->resource_id &&
-        owned_text(io, &value->path) && value->path && *value->path &&
-        owned_text(io, &value->lookup_path) && value->lookup_path && *value->lookup_path &&
-        owned_text(io, &value->link_source) && owned_text(io, &value->link_target) &&
-        ((value->link_source != NULL) == (value->link_target != NULL)) &&
-        qa_vfs_acquisition_opening_codec(io, view, value)) ||
-        state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 actual opening acquisition");
+    const qa_resource *resource=qa_application_content_resource(graph,pool,id);
+    return qa_application_content_acquisition(io,graph,view,resource,value) ||
+        state_fail(io,QA_ERROR_FORMAT,"Q3 artifact cannot reopen its installed content");
 }
 
 static uint32_t role_flags(const q3g_role *role)
@@ -545,8 +541,7 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved, const applic
             !qa_source_save_u64(io, &artifact->resource) || !artifact->resource)
             return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 source artifact declaration");
         const qa_vfs *view = provider->launch->content;
-        if (!acquisition(io, view, &artifact->acquisition) ||
-            artifact->resource != artifact->acquisition.resource_id)
+        if (!acquisition(io, graph, view, artifact->pool, artifact->resource, &artifact->acquisition))
             return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 source artifact acquisition");
         bool items = artifact->items_resource != 0;
         if (!qa_source_save_bool(io, &items) || (items &&
@@ -554,8 +549,7 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved, const applic
              !qa_source_save_u64(io, &artifact->items_pool) || !artifact->items_pool ||
              !qa_source_save_u64(io, &artifact->items_resource) || !artifact->items_resource ||
              !qa_source_save_bytes(io, artifact->items_digest.bytes, 32) ||
-             !acquisition(io, view, &artifact->items_acquisition) ||
-             artifact->items_resource != artifact->items_acquisition.resource_id ||
+             !acquisition(io, graph, view, artifact->items_pool, artifact->items_resource, &artifact->items_acquisition) ||
              strcmp(artifact->items_acquisition.path, artifact->qvm ? "qvm-items.json" : "native-q3-items.json"))))
             return state_fail(io, QA_ERROR_FORMAT, "Invalid retained Q3 item catalog declaration");
         for (size_t j = 0; j < i; ++j)
