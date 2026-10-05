@@ -82,8 +82,5 @@ bool frontend_remote_snapshots_consume_teleport(frontend_remote_snapshots *, qa_
 /* Apply a real returned PS-transition feedback request before the next
  * prediction/view admission, after the child callback frame has ended. */
 bool frontend_remote_snapshots_mark_teleport(frontend_remote_snapshots *, qa_error *);
-bool frontend_remote_snapshots_checkpoint(const frontend_remote_snapshots *, qa_buffer *, qa_error *);
-bool frontend_remote_snapshots_restore(const frontend_remote_snapshots_options *,
-    const q3n_remote_source_view *, qa_bytes, frontend_remote_snapshots **, qa_error *);
 
 #endif

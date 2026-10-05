@@ -75,16 +75,8 @@ bool frontend_remote_q3_frame_prediction_source(const frontend_remote_q3_frame *
     const q3n_remote_frame *, frontend_remote_prediction_source *, qa_error *);
 bool frontend_remote_q3_frame_network_source(const frontend_remote_q3_frame *,
     const q3n_remote_frame *, frontend_network_prediction_source *, qa_error *);
-bool frontend_remote_q3_frame_checkpoint(const frontend_remote_q3_frame *, qa_buffer *, qa_error *);
-bool frontend_remote_q3_frame_prepare_restored(frontend_remote_q3 *,
-    const frontend_remote_q3_frame_callbacks *, qa_bytes, frontend_remote_q3_frame **, qa_error *);
 bool frontend_remote_q3_frame_import_read(const frontend_remote_q3_frame *,
     frontend_remote_q3_frame_import_view *, qa_error *);
 bool frontend_remote_q3_frame_import_current(const frontend_remote_q3_frame_import_view *);
-bool frontend_remote_q3_frame_finish_restore(frontend_remote_q3_frame *, frontend_remote_prediction *,
-    const frontend_remote_prediction_source *, qa_error *);
-bool frontend_remote_q3_frame_restore(frontend_remote_q3 *,
-    const frontend_remote_q3_frame_callbacks *, frontend_remote_prediction *,
-    const frontend_remote_prediction_source *, qa_bytes, frontend_remote_q3_frame **, qa_error *);
 
 #endif
