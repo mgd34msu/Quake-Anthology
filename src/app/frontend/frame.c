@@ -695,12 +695,18 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     }
     qa_profiler *profiler = qa_tools_profiler(frontend_tools_owner(frontend));
     if (!qa_profiler_push(profiler,"source_maintenance",error)) return false;
-    if (!frontend_profiler_end(profiler,
-        frontend_q3_source_color_publication_finish(frontend,error) &&
-        frontend_source_publish_music(frontend,error) &&
-        frontend_view_bindings_finish_restore(frontend,error) &&
-        frontend_startup_replay(frontend,error) &&
-        frontend_shared_resource_policy_live_sync(frontend,error),error)) return false;
+    bool maintained = true;
+    if (maintained) maintained = qa_profiler_push(profiler,"source_color_retirement",error);
+    if (maintained) maintained = frontend_profiler_end(profiler,frontend_q3_source_color_publication_finish(frontend,error),error);
+    if (maintained) maintained = qa_profiler_push(profiler,"source_music_publication",error);
+    if (maintained) maintained = frontend_profiler_end(profiler,frontend_source_publish_music(frontend,error),error);
+    if (maintained) maintained = qa_profiler_push(profiler,"view_restore_publication",error);
+    if (maintained) maintained = frontend_profiler_end(profiler,frontend_view_bindings_finish_restore(frontend,error),error);
+    if (maintained) maintained = qa_profiler_push(profiler,"startup_replay",error);
+    if (maintained) maintained = frontend_profiler_end(profiler,frontend_startup_replay(frontend,error),error);
+    if (maintained) maintained = qa_profiler_push(profiler,"resource_policy",error);
+    if (maintained) maintained = frontend_profiler_end(profiler,frontend_shared_resource_policy_live_sync(frontend,error),error);
+    if (!frontend_profiler_end(profiler,maintained,error)) return false;
     bool client_only=frontend_network_client_only(frontend);
     qa_application_travel_view pending;
     bool retiring_map=qa_application_travel_read(frontend->application,&pending) &&
