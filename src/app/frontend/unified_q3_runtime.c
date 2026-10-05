@@ -18,7 +18,7 @@ static int32_t subtract(int32_t a,int32_t b)
 { uint32_t bits=(uint32_t)a-(uint32_t)b; int32_t value; memcpy(&value,&bits,4); return value; }
 static bool parent_current(const frontend_unified_q3_runtime *o)
 {
-    return o && !o->retiring && !o->restoring && o->options.current(o->options.context,&o->options) &&
+    return o && !o->retiring && o->options.current(o->options.context,&o->options) &&
         frontend_remote_unified_current(o->options.replica,NULL) && frontend_unified_q3_client_current(o->options.client);
 }
 bool frontend_unified_q3_runtime_current(const frontend_unified_q3_runtime *o)
@@ -325,8 +325,7 @@ bool frontend_unified_q3_runtime_build_children(frontend_unified_q3_runtime *o,q
        !q3n_hud_create_compiled(&hud,&c->hud,e))return false;
     q3n_server_command_options commands=o->options.commands;
     commands.compiled_scene_only=o->options.scene_only;
-    const qa_command_context *actual_context=o->restoring?
-        frontend_unified_q3_client_checkpoint_context(o->options.client):frontend_unified_q3_client_context(o->options.client);
+    const qa_command_context *actual_context=frontend_unified_q3_client_context(o->options.client);
     if(!actual_context)return fail(e,"Unified CG constructor lost its real CLIENT command namespace");
     commands.compiled_context=*actual_context; commands.publication_generation=view.basis.publication;
     commands.map_revision=view.basis.map_revision; mission.compiled_context=*actual_context;
@@ -344,16 +343,14 @@ bool frontend_unified_q3_runtime_build_children(frontend_unified_q3_runtime *o,q
         mission.presentation=c->presentation;
         if(!q3n_mission_hud_create_compiled(&mission,&c->mission,e) || !q3n_mission_hud_bind(c->mission,c->hud,e))return false;
     }
-    if(!o->restoring) {
-        frontend_unified_q3_snapshots_options options=frontend_unified_q3_runtime_cache_options(o);
-        bool okay=o->video_constructor?frontend_unified_q3_snapshots_create_video(&options,
-            frontend_unified_q3_runtime_video_client(o->video),&c->snapshots,e):
-            frontend_unified_q3_snapshots_create(&options,&c->snapshots,e);
-        if(!okay)return false;
-    }
+    frontend_unified_q3_snapshots_options options=frontend_unified_q3_runtime_cache_options(o);
+    bool okay=o->video_constructor?frontend_unified_q3_snapshots_create_video(&options,
+        frontend_unified_q3_runtime_video_client(o->video),&c->snapshots,e):
+        frontend_unified_q3_snapshots_create(&options,&c->snapshots,e);
+    if(!okay)return false;
     o->complete=true; return true;
 }
-static bool create(const frontend_unified_q3_runtime_options *options,bool restoring,frontend_unified_q3_runtime **out,qa_error *e)
+bool frontend_unified_q3_runtime_create(const frontend_unified_q3_runtime_options *options,frontend_unified_q3_runtime **out,qa_error *e)
 {
     if(!out || *out || !options || !options->frontend || !options->replica || !options->client || !options->media ||
        !options->clients || !options->current || !options->frame_settings || !options->preferences ||
@@ -367,17 +364,13 @@ static bool create(const frontend_unified_q3_runtime_options *options,bool resto
        !options->commands.memory_remaining || !options->view.print || !options->events.print ||
        !options->events.trace || !options->events.point_contents || !options->events.mark_fragments ||
        !options->hud.milliseconds || !options->hud.client_command || !options->hud.compiled_oldest_command ||
-       !(restoring?frontend_unified_q3_client_checkpoint_current(options->client):frontend_unified_q3_client_current(options->client)))
+       !frontend_unified_q3_client_current(options->client))
         return fail(e,"Unified CG requires its real factory and compiled CLIENT services");
     frontend_unified_q3_runtime *o=calloc(1,sizeof(*o));
     if(!o) { qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining Unified CG runtime"); return false; }
-    o->options=*options; o->restoring=restoring; *out=o;
+    o->options=*options; *out=o;
     return frontend_unified_q3_runtime_build_children(o,e);
 }
-bool frontend_unified_q3_runtime_create(const frontend_unified_q3_runtime_options *o,frontend_unified_q3_runtime **out,qa_error *e)
-{ return create(o,false,out,e); }
-bool frontend_unified_q3_runtime_create_restored(const frontend_unified_q3_runtime_options *o,frontend_unified_q3_runtime **out,qa_error *e)
-{ return create(o,true,out,e); }
 bool frontend_unified_q3_runtime_close_children(frontend_unified_q3_runtime *o,qa_error *e)
 {
     if(!frontend_unified_q3_runtime_idle(o))return fail(e,"Unified CG teardown retains an entered child");
@@ -395,7 +388,7 @@ bool frontend_unified_q3_runtime_destroy(frontend_unified_q3_runtime **out,qa_er
 { if(!out || !*out)return true; frontend_unified_q3_runtime *o=*out;
     if(o->video || o->prepared || !frontend_unified_q3_runtime_idle(o))return fail(e,"Unified CG retirement retains a frame or video ticket");
     o->retiring=true; if(!frontend_unified_q3_runtime_close_children(o,e))return false;
-    qa_buffer_free(&o->import_bytes); free(o); *out=NULL; return true; }
+    free(o); *out=NULL; return true; }
 bool frontend_unified_q3_runtime_owners_read(const frontend_unified_q3_runtime *o,frontend_unified_q3_runtime_owners *out,qa_error *e)
 { if(!o || !out || !o->complete || (!frontend_unified_q3_runtime_idle(o)&&!frontend_unified_q3_runtime_checkpoint_current(o)))return fail(e,"Unified CG owner read requires its returned children");
     *out=o->children; return true; }
@@ -959,7 +952,7 @@ bool frontend_unified_q3_runtime_rebind_prepare(frontend_unified_q3_runtime *o,c
 {
     const q3n_compiled_source_rebind_ticket *ticket=frontend_unified_q3_client_frame_rebind(frame);
     const qa_command_context *context=frontend_unified_q3_client_frame_context(frame);
-    if(!o || !frame || !o->complete || o->retiring || o->restoring || o->rebind || o->prepared ||
+    if(!o || !frame || !o->complete || o->retiring || o->rebind || o->prepared ||
        !frontend_unified_q3_runtime_idle(o) || !context ||
        !frontend_unified_q3_client_frame_owned(o->options.client,frame) ||
        !frontend_unified_q3_client_ready(frame))
@@ -975,32 +968,14 @@ bool frontend_unified_q3_runtime_rebind_ready(const frontend_unified_q3_runtime 
     return o && f && o->rebind==f && frontend_unified_q3_client_frame_owned(o->options.client,f) &&
         frontend_unified_q3_client_ready(f) && (!t || (q3n_server_commands_rebind_ready(o->children.commands,t) &&
         (!o->children.mission || q3n_mission_hud_rebind_ready(o->children.mission,t)))); }
-bool frontend_unified_q3_runtime_rebind_restore(frontend_unified_q3_runtime *o,const frontend_unified_q3_client_frame *frame,qa_error *e)
-{
-    if(o && frame && o->restoring && o->restored && o->restored_rebind_expected && o->rebind==frame)
-        return frontend_unified_q3_runtime_rebind_checkpoint_ready(o,frame);
-    const q3n_compiled_source_rebind_ticket *t=frontend_unified_q3_client_frame_rebind(frame);
-    const qa_command_context *context=frontend_unified_q3_client_frame_context(frame);
-    if(!o || !frame || !o->restoring || !o->restored || !o->restored_rebind_expected || o->rebind ||
-       !frontend_unified_q3_runtime_idle(o) || !context ||
-       !frontend_unified_q3_client_checkpoint_stage_current(o->options.client,frame))
-        return fail(e,"Imported CG cohort requires its exact restored CLIENT frame");
-    if(t) {
-        if(!q3n_server_commands_rebind_restore(o->children.commands,t,context,e))return false;
-        if(o->children.mission && !q3n_mission_hud_rebind_restore(o->children.mission,t,context,e)) {
-            q3n_server_commands_rebind_abort(o->children.commands,t);return false;
-        }
-    }
-    o->rebind=frame;return true;
-}
 void frontend_unified_q3_runtime_rebind_commit(frontend_unified_q3_runtime *o,const frontend_unified_q3_client_frame *f)
 { if(!frontend_unified_q3_runtime_rebind_ready(o,f))return;
     const q3n_compiled_source_rebind_ticket *t=frontend_unified_q3_client_frame_rebind(f);
     q3n_server_commands_rebind_commit(o->children.commands,t);
     if(o->children.mission)q3n_mission_hud_rebind_commit(o->children.mission,t);
-    o->rebind=NULL;o->restored_rebind_expected=false; }
+    o->rebind=NULL; }
 void frontend_unified_q3_runtime_rebind_abort(frontend_unified_q3_runtime *o,const frontend_unified_q3_client_frame *f)
 { if(!o || o->rebind!=f)return; const q3n_compiled_source_rebind_ticket *t=frontend_unified_q3_client_frame_rebind(f);
     q3n_server_commands_rebind_abort(o->children.commands,t);
     if(o->children.mission)q3n_mission_hud_rebind_abort(o->children.mission,t);
-    o->rebind=NULL;o->restored_rebind_expected=false; }
+    o->rebind=NULL; }

@@ -32,10 +32,7 @@ struct frontend_unified_q3_runtime_services {
     qa_q3_product product;
     q3n_media *media;
     q3n_clients *clients;
-    qa_buffer import_bytes;
-    bool import_has_refs, media_imported, clients_imported;
     uint32_t physical_seat;
-    bool codec_busy, caches_restored;
 };
 static bool fail(qa_error *e,const char *text)
 { qa_error_set(e,QA_ERROR_ARGUMENT,0,"%s",text);return false; }
@@ -424,7 +421,7 @@ static bool trace_number(void *context,const q3n_compiled_frame *f,const qa_trac
 static bool timescale(void *context,int32_t elapsed,qa_error *e)
 { frontend_unified_q3_runtime_services *o=context;return frontend_unified_q3_runtime_services_current(o) &&
     o->options.operations.timescale(o->options.operations.context,elapsed,e); }
-static bool create(const frontend_unified_q3_runtime_services_options *options,bool restoring,
+bool frontend_unified_q3_runtime_services_create(const frontend_unified_q3_runtime_services_options *options,
     frontend_unified_q3_runtime_services **out,qa_error *e)
 {
     if(!options || !out || *out || !options->frontend || !options->replica || !options->media || !options->client || !options->events ||
@@ -438,9 +435,7 @@ static bool create(const frontend_unified_q3_runtime_services_options *options,b
         !options->operations.player_fx.body_hidden || !options->operations.player_fx.body_submit ||
         !options->operations.player_fx.player_weapon ||
         !options->operations.hud.compiled_oldest_command || !options->operations.hud.client_command ||
-        (restoring?(!options->frontend->source_restoring || options->frontend->capture ||
-            !frontend_unified_q3_client_checkpoint_matches(options->client,&options->source)):
-            !frontend_unified_q3_client_matches(options->client,&options->source)))
+        !frontend_unified_q3_client_matches(options->client,&options->source))
         return fail(e,"CG services require the genuine CLIENT, media and input/prediction producers");
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(options->replica);
     if(!d || d->application!=options->frontend->application || d->physical_seat>=options->frontend->options.seats ||
@@ -463,7 +458,7 @@ static bool create(const frontend_unified_q3_runtime_services_options *options,b
     /* Only the admitted constructor observes the received row. Every later
      * operation reads the real retained CLIENT and bank instead. */
     o->options.source=(frontend_unified_q3_source_view){0};
-    if(!bank_found || !o->fonts || !tuple_current(o,restoring)){
+    if(!bank_found || !o->fonts || !tuple_current(o,false)){
         free(o);return fail(e,"CG services require their already retained content bank");}
     q3n_media_options media={.assets=o->assets,.product=options->source.product,.compiled_source=o->source};
     q3n_client_options clients={.assets=o->assets,.content=o->files,.product=options->source.product,
@@ -472,30 +467,14 @@ static bool create(const frontend_unified_q3_runtime_services_options *options,b
         q3n_clients_destroy(o->clients);q3n_media_destroy(o->media);free(o);return false;}
     *out=o;return true;
 }
-bool frontend_unified_q3_runtime_services_create(const frontend_unified_q3_runtime_services_options *options,
-    frontend_unified_q3_runtime_services **out,qa_error *e)
-{ return create(options,false,out,e); }
-bool frontend_unified_q3_runtime_services_create_restored(const frontend_unified_q3_runtime_services_options *options,
-    frontend_unified_q3_runtime_services **out,qa_error *e)
-{ return create(options,true,out,e); }
-static bool read(frontend_unified_q3_runtime_services *o,bool restoring,
+bool frontend_unified_q3_runtime_services_read(frontend_unified_q3_runtime_services *o,
     frontend_unified_q3_runtime_options *out,qa_error *e)
 {
     q3n_compiled_source_view source;
-    if(!out || !o || o->codec_busy || (!restoring && o->import_bytes.data) || !tuple_current(o,restoring) ||
-        (restoring && (!o->options.frontend->source_restoring || o->options.frontend->capture)) ||
-        !(restoring?q3n_compiled_source_checkpoint_read(o->source,&source,e):q3n_compiled_source_read(o->source,&source,e)))
+    if(!out || !o || !tuple_current(o,false) || !q3n_compiled_source_read(o->source,&source,e))
         return fail(e,"CG options require their actual current service owner");
-    const frontend_unified_q3_client_frame *stage=restoring && o->options.checkpoint_frame?
-        o->options.checkpoint_frame(o->options.operations.context):NULL;
-    const qa_command_context *origin=restoring?(stage?
-        frontend_unified_q3_client_checkpoint_stage_context(o->options.client,stage):
-        frontend_unified_q3_client_checkpoint_context(o->options.client)):
-        frontend_unified_q3_client_context(o->options.client);
-    qa_cvars *registry=restoring?(stage?
-        frontend_unified_q3_client_checkpoint_stage_cvars(o->options.client,stage):
-        frontend_unified_q3_client_checkpoint_cvars(o->options.client)):
-        frontend_unified_q3_client_cvars(o->options.client);
+    const qa_command_context *origin=frontend_unified_q3_client_context(o->options.client);
+    qa_cvars *registry=frontend_unified_q3_client_cvars(o->options.client);
     if(!origin || !registry)return fail(e,"CG options lost the retained CLIENT command namespace");
     frontend_unified_q3_runtime_options v=o->options.operations;
     v.frontend=o->options.frontend;v.replica=o->options.replica;v.client=o->options.client;
@@ -552,19 +531,13 @@ static bool read(frontend_unified_q3_runtime_services *o,bool restoring,
     if(v.events.local_allocated)v.events.local_allocated=local_allocated;
     v.player_fx.context=o;v.player_fx.world_trace=world_trace;v.player_fx.world_point_contents=world_contents;
     v.player_fx.body_hidden=body_hidden;v.player_fx.body_submit=body_submit;v.player_fx.player_weapon=player_weapon;
-    if(!tuple_current(o,restoring))return fail(e,"CG options lost their retained CLIENT during projection");
+    if(!tuple_current(o,false))return fail(e,"CG options lost their retained CLIENT during projection");
     *out=v;return true;
 }
-bool frontend_unified_q3_runtime_services_read(frontend_unified_q3_runtime_services *o,
-    frontend_unified_q3_runtime_options *out,qa_error *e)
-{ return read(o,false,out,e); }
-bool frontend_unified_q3_runtime_services_read_restored(frontend_unified_q3_runtime_services *o,
-    frontend_unified_q3_runtime_options *out,qa_error *e)
-{ return read(o,true,out,e); }
 bool frontend_unified_q3_runtime_services_caches(const frontend_unified_q3_runtime_services *o,
     q3n_media **media,q3n_clients **clients,qa_error *e)
 {
-    if(!o || !media || !clients || o->codec_busy || !q3n_media_idle(o->media) || !q3n_clients_idle(o->clients))
+    if(!o || !media || !clients || !q3n_media_idle(o->media) || !q3n_clients_idle(o->clients))
         return fail(e,"CG cache inventory requires its returned retained owners");
     *media=o->media;*clients=o->clients;return true;
 }
@@ -572,10 +545,9 @@ bool frontend_unified_q3_runtime_services_destroy(frontend_unified_q3_runtime_se
 {
     if(!slot || !*slot)return true;
     frontend_unified_q3_runtime_services *o=*slot;
-    if(o->codec_busy || !frontend_unified_q3_client_idle(o->options.client) ||
+    if(!frontend_unified_q3_client_idle(o->options.client) ||
         !q3n_media_idle(o->media) || !q3n_clients_idle(o->clients))
         return fail(e,"CG service callbacks retain their actual CLIENT parent");
     q3n_clients_destroy(o->clients);q3n_media_destroy(o->media);
-    qa_buffer_free(&o->import_bytes);
     free(o);*slot=NULL;return true;
 }

@@ -27,13 +27,7 @@ typedef struct frontend_unified_q3_runtime_services_options {
 
 bool frontend_unified_q3_runtime_services_create(const frontend_unified_q3_runtime_services_options *,
     frontend_unified_q3_runtime_services **, qa_error *);
-/* Borrow only already imported CLIENT and bank resources. No registration or
- * Source initialization is performed by these cold constructors/readers. */
-bool frontend_unified_q3_runtime_services_create_restored(const frontend_unified_q3_runtime_services_options *,
-    frontend_unified_q3_runtime_services **, qa_error *);
 bool frontend_unified_q3_runtime_services_read(frontend_unified_q3_runtime_services *,
-    frontend_unified_q3_runtime_options *, qa_error *);
-bool frontend_unified_q3_runtime_services_read_restored(frontend_unified_q3_runtime_services *,
     frontend_unified_q3_runtime_options *, qa_error *);
 bool frontend_unified_q3_runtime_services_current(const frontend_unified_q3_runtime_services *);
 /* Literal constructor-owned caches; they outlive the runtime borrowing them. */

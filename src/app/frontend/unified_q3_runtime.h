@@ -58,8 +58,6 @@ typedef struct frontend_unified_q3_runtime_owners {
 /* Failure keeps the partially constructed owner in *out for checked cleanup. */
 bool frontend_unified_q3_runtime_create(const frontend_unified_q3_runtime_options *,
     frontend_unified_q3_runtime **, qa_error *);
-bool frontend_unified_q3_runtime_create_restored(const frontend_unified_q3_runtime_options *,
-    frontend_unified_q3_runtime **, qa_error *);
 bool frontend_unified_q3_runtime_current(const frontend_unified_q3_runtime *);
 bool frontend_unified_q3_runtime_idle(const frontend_unified_q3_runtime *);
 /* Borrow only during this runtime's genuine entered CG callback. The caller
@@ -139,8 +137,6 @@ const frontend_unified_q3_client_frame *frontend_unified_q3_runtime_rebind_frame
 bool frontend_unified_q3_runtime_checkpoint_current(const frontend_unified_q3_runtime *);
 bool frontend_unified_q3_runtime_rebind_checkpoint_ready(const frontend_unified_q3_runtime *,
     const frontend_unified_q3_client_frame *);
-bool frontend_unified_q3_runtime_rebind_restore(frontend_unified_q3_runtime *,
-    const frontend_unified_q3_client_frame *,qa_error *);
 void frontend_unified_q3_runtime_rebind_commit(frontend_unified_q3_runtime *, const frontend_unified_q3_client_frame *);
 void frontend_unified_q3_runtime_rebind_abort(frontend_unified_q3_runtime *, const frontend_unified_q3_client_frame *);
 

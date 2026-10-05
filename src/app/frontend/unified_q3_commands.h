@@ -15,7 +15,6 @@ typedef struct frontend_unified_q3_commands_options {
     bool (*send_client)(void *,frontend_unified_q3_client *,const qa_command_context *,const char *,qa_error *);
 } frontend_unified_q3_commands_options;
 bool frontend_unified_q3_commands_create(const frontend_unified_q3_commands_options *,frontend_unified_q3_commands **,qa_error *);
-bool frontend_unified_q3_commands_create_restored(const frontend_unified_q3_commands_options *,frontend_unified_q3_commands **,qa_error *);
 bool frontend_unified_q3_commands_register(void *,const q3n_frame *,qa_error *);
 bool frontend_unified_q3_commands_registration_ready(frontend_unified_q3_commands *,const q3n_frame *,qa_error *);
 bool frontend_unified_q3_commands_client_command(void *,const q3n_frame *,const char *,qa_error *);

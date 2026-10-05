@@ -19,7 +19,7 @@ bool frontend_unified_q3_runtime_video_current(const frontend_unified_q3_runtime
     frontend_unified_q3_runtime *o=t?t->owner:NULL;
     qa_frontend *f=o?o->options.frontend:NULL;
     const frontend_unified_q3_runtime_options *a=o?&o->options:NULL,*b=t?&t->retained:NULL;
-    if(!o || o->video!=t || !f || f!=b->frontend || o->retiring || o->restoring || o->prepared ||
+    if(!o || o->video!=t || !f || f!=b->frontend || o->retiring || o->prepared ||
         f->capture || f->source_restoring || !frontend_seat_callbacks_returned(f) ||
         !frontend_video_guests_parent_is(f,t->aggregate) || f->time_ns!=t->time_ns ||
         f->frame_number!=t->frame_number || o->video_generation!=t->generation ||

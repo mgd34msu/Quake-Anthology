@@ -12,8 +12,7 @@ struct frontend_unified_q3_runtime {
     qa_vec3 view_angles;
     int32_t old_time, frame_milliseconds, client_frame, presentation_time;
     uint32_t stereo;
-    bool complete, initialized, busy, faulted, retiring, restoring, restored, passive;
-    bool restored_rebind_expected;
+    bool complete, initialized, busy, faulted, retiring;
     bool prepared, prediction_prepared, prediction_applied, information_prepared, rendered;
     qa_q3_supplement *supplement;
     struct qa_q3_source_scene_bank *scene_bank;
@@ -27,8 +26,6 @@ struct frontend_unified_q3_runtime {
     struct frontend_unified_q3_runtime_video *video;
     uint64_t video_generation;
     bool video_constructor;
-    qa_buffer import_bytes;
-    unsigned imported_children;
 };
 bool frontend_unified_q3_runtime_build_children(frontend_unified_q3_runtime *, qa_error *);
 bool frontend_unified_q3_runtime_close_children(frontend_unified_q3_runtime *, qa_error *);

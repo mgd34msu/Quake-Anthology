@@ -315,31 +315,25 @@ qa_command_result frontend_unified_q3_commands_execute(frontend_unified_q3_comma
         return handle(o,call,e)?QA_COMMAND_HANDLED:QA_COMMAND_FAILED;
     return QA_COMMAND_UNHANDLED;
 }
-static bool create(const frontend_unified_q3_commands_options *options,bool restoring,
+bool frontend_unified_q3_commands_create(const frontend_unified_q3_commands_options *options,
     frontend_unified_q3_commands **out,qa_error *e)
 {
     if(!options || !out || *out || !options->frontend || !options->replica || !options->client ||
         !options->runtime || !options->current || !options->send_client || options->frontend->capture ||
-        options->frontend->source_restoring!=restoring || !options->current(options->context,options,restoring))
+        options->frontend->source_restoring || !options->current(options->context,options,false))
         return fail(e,QA_ERROR_ARGUMENT,"Unified console requires its actual factory-owned CLIENT and CG");
     q3n_compiled_source_view source;
     q3n_compiled_source *owner=frontend_unified_q3_client_source(options->client);
-    if(!(restoring?q3n_compiled_source_checkpoint_read(owner,&source,e):q3n_compiled_source_read(owner,&source,e)))return false;
+    if(!q3n_compiled_source_read(owner,&source,e))return false;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(options->replica);
-    if(!domain || !domain->console || (!restoring && source.basis.initialized))
+    if(!domain || !domain->console || source.basis.initialized)
         return fail(e,QA_ERROR_ARGUMENT,"Unified command construction precedes genuine CG initialization");
     frontend_unified_q3_commands *o=calloc(1,sizeof(*o));
     if(!o)return fail(e,QA_ERROR_MEMORY,"Retaining compiled Unified console continuation");
     o->options=*options; o->console=domain->console; o->receiver=source.basis.receiver; o->product=source.basis.product;
-    if(!current(o,restoring,NULL,e)) { free(o); return false; }
+    if(!current(o,false,NULL,e)) { free(o); return false; }
     *out=o; return true;
 }
-bool frontend_unified_q3_commands_create(const frontend_unified_q3_commands_options *options,
-    frontend_unified_q3_commands **out,qa_error *e)
-{ return create(options,false,out,e); }
-bool frontend_unified_q3_commands_create_restored(const frontend_unified_q3_commands_options *options,
-    frontend_unified_q3_commands **out,qa_error *e)
-{ return create(options,true,out,e); }
 static bool bind(frontend_unified_q3_commands *o,size_t count,qa_error *e)
 {
     while(o->installed<count) {
