@@ -89,7 +89,7 @@ bool qa_q1_source_copy_body(qa_q1_game *g, qa_actor_id actor,
     }
     corpse->model = visual->model;
     corpse->frame = visual->frame;
-    corpse->state.body.color_map = (int32_t)player->client_slot + 1;
+    corpse->state.body.color_map = visual->color_map;
     if (g->options.program == QA_Q1_ROGUE) corpse->skin = visual->skin;
     corpse->physics.motion = motion;
     corpse->physics.flags = 0;

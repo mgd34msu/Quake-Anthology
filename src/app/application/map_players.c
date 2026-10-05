@@ -2461,7 +2461,7 @@ bool application_players_native_q1_respawn(qa_application *app,
     if (visual.models[0] && !model)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 body copy model lost its real content identity");
     qa_q1_presentation corpse = {.actor = actor, .model = model,
-        .frame = visual.frame, .skin = visual.skin};
+        .frame = visual.frame, .skin = visual.skin, .color_map = visual.colormap};
     if (!qa_q1_source_copy_body(source->state.q1, actor, &corpse, physics.motion, error) ||
         !q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
     body.bounds = qa_movement_input_default(character->component.clock.kind == QA_CLOCK_Q3
