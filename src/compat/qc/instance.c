@@ -209,6 +209,37 @@ static bool copy_inline_regions(qa_qc_instance *instance, qa_error *error)
     return true;
 }
 
+static uint32_t actor_slot(const qa_qc_instance *instance, qa_actor_id actor)
+{
+    if (actor.slot >= instance->actor_capacity) return 0;
+    uint32_t slot = instance->actor_slots[actor.slot];
+    return slot && slot < instance->entity_count &&
+        (instance->slots[slot].kind == QA_QC_SLOT_OWNED || instance->slots[slot].kind == QA_QC_SLOT_BORROWED) &&
+        qa_actor_id_equal(instance->slots[slot].actor, actor) ? slot : 0;
+}
+
+static void binding_set(qa_qc_instance *instance, uint32_t slot, qc_slot binding)
+{
+    qc_slot previous = instance->slots[slot];
+    if ((previous.kind == QA_QC_SLOT_OWNED || previous.kind == QA_QC_SLOT_BORROWED) &&
+        instance->actor_slots[previous.actor.slot] == slot)
+        instance->actor_slots[previous.actor.slot] = 0;
+    instance->slots[slot] = binding;
+    if (binding.kind == QA_QC_SLOT_OWNED || binding.kind == QA_QC_SLOT_BORROWED)
+        instance->actor_slots[binding.actor.slot] = slot;
+}
+
+void qc_actor_slots_rebuild(qa_qc_instance *instance)
+{
+    if (!instance->actor_capacity) return;
+    memset(instance->actor_slots, 0, (size_t)instance->actor_capacity * sizeof(*instance->actor_slots));
+    for (uint32_t slot = 1; slot < instance->entity_count; ++slot) {
+        qc_slot binding = instance->slots[slot];
+        if (binding.kind == QA_QC_SLOT_OWNED || binding.kind == QA_QC_SLOT_BORROWED)
+            instance->actor_slots[binding.actor.slot] = slot;
+    }
+}
+
 static void free_instance(qa_qc_instance *instance)
 {
     if (instance == NULL) return;
@@ -222,6 +253,7 @@ static void free_instance(qa_qc_instance *instance)
     free(instance->inline_regions);
     qc_strings_destroy(&instance->strings);
     free(instance->globals); free(instance->entities); free(instance->slots);
+    free(instance->actor_slots);
     free(instance->bodies); free(instance->profiles); free(instance->frames);
     free(instance->locals); free(instance);
 }
@@ -282,13 +314,16 @@ bool qa_qc_instance_create(const qa_qc_program *program,
     instance->globals = malloc(global_bytes);
     instance->entities = calloc(1, (size_t)entity_bytes);
     instance->slots = calloc(instance->options.entity_capacity, sizeof(*instance->slots));
+    instance->actor_capacity = options->host.session ? qa_actors_capacity(qa_session_actors(options->host.session)) : 0;
+    if (instance->actor_capacity)
+        instance->actor_slots = calloc(instance->actor_capacity, sizeof(*instance->actor_slots));
     instance->bodies = calloc(instance->options.entity_capacity, sizeof(*instance->bodies));
     instance->profiles = calloc(program->info.function_count, sizeof(*instance->profiles));
     instance->frames = calloc(instance->options.call_limit, sizeof(*instance->frames));
     instance->locals = calloc(instance->options.local_word_limit, sizeof(*instance->locals));
     if (instance->globals == NULL || instance->entities == NULL || instance->slots == NULL
         || instance->bodies == NULL || instance->profiles == NULL || instance->frames == NULL
-        || instance->locals == NULL) {
+        || instance->locals == NULL || (instance->actor_capacity && !instance->actor_slots)) {
         free_instance(instance);
         return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot allocate QuakeC private state");
     }
@@ -359,7 +394,7 @@ bool qa_qc_instance_destroy(qa_qc_instance *instance, qa_error *error)
                 instance->destroying = false;
                 return false;
             }
-            instance->slots[slot] = (qc_slot){0};
+            binding_set(instance, slot, (qc_slot){0});
         }
     }
     free_instance(instance);
@@ -511,7 +546,7 @@ static void mark_slot_freed(qa_qc_instance *instance, uint32_t slot)
     if (slot == 0 || slot >= instance->entity_count) return;
     clear_freed_fields(instance, slot);
     set_free_metadata(instance, slot, true, (float)source_time(instance));
-    instance->slots[slot] = (qc_slot){0};
+    binding_set(instance, slot, (qc_slot){0});
 }
 
 static bool slot_reusable(const qa_qc_instance *instance, uint32_t slot,
@@ -703,10 +738,8 @@ bool qa_qc_bind_actor(qa_qc_instance *instance, uint32_t slot,
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot, "QuakeC actor is not live");
     if (instance->slots[slot].kind != QA_QC_SLOT_FREE)
         return qc_fail(error, QA_ERROR_ARGUMENT, slot, "QuakeC entity slot is occupied");
-    for (uint32_t i = 1; i < instance->entity_count; ++i)
-        if (instance->slots[i].kind != QA_QC_SLOT_FREE
-            && qa_actor_id_equal(instance->slots[i].actor, actor))
-            return qc_fail(error, QA_ERROR_ARGUMENT, slot, "Actor already has a QuakeC projection");
+    if (actor_slot(instance, actor))
+        return qc_fail(error, QA_ERROR_ARGUMENT, slot, "Actor already has a QuakeC projection");
     if (kind == QA_QC_SLOT_OWNED && (record->owner != instance->options.host.owner
         || !record->has_source || record->source_slot != slot))
         return qc_fail(error, QA_ERROR_ARGUMENT, slot, "Owned QuakeC actor source slot disagrees");
@@ -715,8 +748,8 @@ bool qa_qc_bind_actor(qa_qc_instance *instance, uint32_t slot,
         set_free_metadata(instance, gap, true, 0.0f);
     memset(edict_bytes(instance, slot), 0, instance->layout.stride_bytes);
     set_free_metadata(instance, slot, false, 0.0f);
-    instance->slots[slot] = (qc_slot){kind, actor, record->owner,
-                                      record->has_source ? record->source_slot : 0};
+    binding_set(instance, slot, (qc_slot){kind, actor, record->owner,
+                                      record->has_source ? record->source_slot : 0});
     if (instance->entity_count <= slot) instance->entity_count = slot + 1u;
     bool synchronized = kind == QA_QC_SLOT_BORROWED
         ? qc_refresh_borrowed(instance, slot, error)
@@ -754,16 +787,15 @@ bool qa_qc_rebind_reserved_actor(qa_qc_instance *instance, uint32_t slot,
     if (kind == QA_QC_SLOT_OWNED && (record->owner != instance->options.host.owner ||
         !record->has_source || record->source_slot != slot))
         return qc_fail(error, QA_ERROR_ARGUMENT, slot, "Reserved QuakeC handoff differs from its source owner");
-    for (uint32_t i = 1; i < instance->entity_count; ++i)
-        if (i != slot && instance->slots[i].kind != QA_QC_SLOT_FREE &&
-            qa_actor_id_equal(instance->slots[i].actor, actor))
-            return qc_fail(error, QA_ERROR_ARGUMENT, slot, "Reserved QuakeC actor already owns another source row");
-    instance->slots[slot] = (qc_slot){kind, actor, record->owner,
-        record->has_source ? record->source_slot : 0};
+    uint32_t existing = actor_slot(instance, actor);
+    if (existing && existing != slot)
+        return qc_fail(error, QA_ERROR_ARGUMENT, slot, "Reserved QuakeC actor already owns another source row");
+    binding_set(instance, slot, (qc_slot){kind, actor, record->owner,
+        record->has_source ? record->source_slot : 0});
     set_free_metadata(instance, slot, false, 0.0f);
     bool ok = kind == QA_QC_SLOT_OWNED ? qc_sync_body_from_fields(instance, slot, error) :
         qc_refresh_borrowed(instance, slot, error);
-    if (!ok && slot_matches(instance, slot, kind, actor)) instance->slots[slot] = before;
+    if (!ok && slot_matches(instance, slot, kind, actor)) binding_set(instance, slot, before);
     return ok && (slot_matches(instance, slot, kind, actor) ||
         qc_fail(error, QA_ERROR_NOT_FOUND, slot, "Reserved QuakeC actor changed during source handoff"));
 }
@@ -810,22 +842,22 @@ bool qa_qc_actor_movement_flags_read(const qa_qc_instance *instance, qa_actor_id
     if (!actor_live(instance, actor, &record))
         return qc_fail(error, QA_ERROR_NOT_FOUND, actor.slot,
             "QuakeC flags actor is not live");
-    for (uint32_t slot = 1; slot < instance->entity_count; ++slot) {
+    uint32_t slot = actor_slot(instance, actor);
+    if (slot) {
         qc_slot binding = instance->slots[slot];
-        if ((binding.kind != QA_QC_SLOT_OWNED && binding.kind != QA_QC_SLOT_BORROWED) ||
-            !qa_actor_id_equal(binding.actor, actor)) continue;
         if (binding.owner != record->owner || (binding.kind == QA_QC_SLOT_OWNED &&
             (record->owner != instance->options.host.owner || !record->has_source ||
              record->source_slot != slot || binding.source_slot != slot)))
             return qc_fail(error, QA_ERROR_FORMAT, slot,
                 "QuakeC flags row lost its actual source owner");
         const qa_qc_definition *field = instance->program->engine_fields.flags;
-        if (!field) break;
-        uint32_t flags;
-        if (!body_ground_flags(instance, slot, &flags, error)) return false;
-        *out = flags;
-        *found = true;
-        return true;
+        if (field) {
+            uint32_t flags;
+            if (!body_ground_flags(instance, slot, &flags, error)) return false;
+            *out = flags;
+            *found = true;
+            return true;
+        }
     }
     *out = 0;
     *found = false;
@@ -837,16 +869,13 @@ bool qa_qc_actor_reference(qa_qc_instance *instance, qa_actor_id actor,
 {
     if (instance == NULL || out == NULL || !actor_live(instance, actor, NULL))
         return qc_fail(error, QA_ERROR_NOT_FOUND, 0, "Cannot reference a stale actor from QuakeC");
-    for (uint32_t slot = 1; slot < instance->entity_count; ++slot) {
-        if (instance->slots[slot].kind != QA_QC_SLOT_FREE
-            && qa_actor_id_equal(instance->slots[slot].actor, actor)) {
-            if (instance->slots[slot].kind == QA_QC_SLOT_BORROWED
-                && !qc_refresh_borrowed(instance, slot, error)) return false;
-            *out = reference_of(instance, slot); return true;
-        }
+    uint32_t slot = actor_slot(instance, actor);
+    if (slot) {
+        if (instance->slots[slot].kind == QA_QC_SLOT_BORROWED
+            && !qc_refresh_borrowed(instance, slot, error)) return false;
+        *out = reference_of(instance, slot); return true;
     }
     if (!project) return qc_fail(error, QA_ERROR_NOT_FOUND, 0, "Actor has no QuakeC projection");
-    uint32_t slot;
     if (!available_slot(instance, false, &slot, error)) return false;
     if (!qa_qc_bind_actor(instance, slot, actor, QA_QC_SLOT_BORROWED, error)) return false;
     *out = reference_of(instance, slot);
@@ -869,11 +898,8 @@ bool qa_qc_reference_actor(const qa_qc_instance *instance, int32_t reference,
 void qa_qc_actor_released(qa_qc_instance *instance, qa_actor_record released)
 {
     if (instance == NULL) return;
-    for (uint32_t slot = 1; slot < instance->entity_count; ++slot) {
-        if (instance->slots[slot].kind != QA_QC_SLOT_FREE
-            && qa_actor_id_equal(instance->slots[slot].actor, released.id))
-            mark_slot_freed(instance, slot);
-    }
+    uint32_t slot = actor_slot(instance, released.id);
+    if (slot) mark_slot_freed(instance, slot);
 }
 
 bool qa_qc_rebind_sources(qa_qc_instance *instance, qa_error *error)
@@ -890,8 +916,7 @@ bool qa_qc_rebind_sources(qa_qc_instance *instance, qa_error *error)
             instance->options.host.owner, binding->source_slot);
         if (record == NULL)
             return qc_fail(error, QA_ERROR_NOT_FOUND, slot, "Restored QuakeC source actor is missing");
-        binding->actor = record->id;
-        binding->owner = record->owner;
+        binding_set(instance, slot, (qc_slot){binding->kind, record->id, record->owner, binding->source_slot});
         if (!qc_sync_body_from_fields(instance, slot, error)) return false;
     }
     return true;

@@ -422,6 +422,7 @@ bool qa_qc_checkpoint_restore(qa_qc_instance *instance,
     instance->strings = strings;
     strings = (qc_strings){0};
     instance->entity_count = checkpoint->entity_count;
+    qc_actor_slots_rebuild(instance);
     instance->trace_enabled = checkpoint->trace_enabled;
     instance->random_state = checkpoint->random_state;
     /* Coupled adapters rebuild from the restored guest image. This order also
