@@ -987,8 +987,10 @@ static bool destination_metadata(supply_pair *pair, qa_item_id item,
             }
         }
     }
-    return application_fail(error, QA_ERROR_ARGUMENT,
-        "Mapped supply destination has no actual admitted capacity or native item definition");
+    const char *name = qa_strings_cstr(qa_session_strings(pair->owner->application->session), item);
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Supply %s -> %s lacks native inventory for %s",
+        pair->source->product->key, pair->arsenal->product->key, name ? name : "<unnamed>");
+    return false;
 }
 static bool admission_entries(supply_pair *pair, qa_actor_id actor,
     qa_inventory_entry **out, size_t *count, qa_error *error) {
@@ -1063,7 +1065,15 @@ bool application_supplies_admit(application_supplies *owner, application_provide
     qa_inventory_entry *entries = NULL;
     size_t count = 0;
     qa_inventory_admission *admission = NULL;
-    bool ok = pair->native || (admission_entries(pair, actor, &entries, &count, error) &&
+    bool ok = true;
+    if (!pair->native) {
+        if (arsenal->kind == APPLICATION_PROVIDER_Q2)
+            ok = qa_q2_items_admit_player(arsenal->state.q2, actor, false, error);
+        else if (arsenal->kind == APPLICATION_PROVIDER_Q3)
+            ok = qa_q3_inventory_admit(arsenal->state.q3, actor, error);
+        if (ok) ok = pair_current(pair, actor, error);
+    }
+    if (ok) ok = pair->native || (admission_entries(pair, actor, &entries, &count, error) &&
         qa_inventory_prepare_entries(owner->inventory, actor, entries, count, &admission, error) &&
         pair_current(pair, actor, error) && qa_inventory_admission_validate(admission, error) &&
         pair_current(pair, actor, error) && qa_inventory_admission_commit(admission, error));

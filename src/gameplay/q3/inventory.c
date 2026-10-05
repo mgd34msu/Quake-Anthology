@@ -8,6 +8,25 @@ const qa_q3_item *qa_q3_game_items(const qa_q3_game *game, size_t *count) {
     return qa_q3_items(game->options.product, count);
 }
 
+size_t q3_inventory_arsenal_entries(const qa_q3_game *game, bool spawn,
+                                    qa_inventory_entry *out) {
+    size_t count = 0;
+    int limit = game->options.product == QA_Q3_ARENA ? 11 : QA_Q3_WEAPON_COUNT;
+    for (int weapon = 1; weapon < limit; ++weapon) {
+        out[count++] = (qa_inventory_entry){
+            .item = game->weapon_items[weapon], .capacity = 1,
+            .count = spawn && (weapon == QA_Q3_W_GAUNTLET || weapon == QA_Q3_W_MACHINEGUN) ? 1 : 0,
+            .policy = QA_COUNT_SOURCE_INT32};
+        if (game->ammo_items[weapon])
+            out[count++] = (qa_inventory_entry){
+                .item = game->ammo_items[weapon], .capacity = 200,
+                .count = spawn && weapon == QA_Q3_W_MACHINEGUN
+                    ? (game->options.rules.game_type == 3 ? 50 : 100) : 0,
+                .policy = QA_COUNT_SOURCE_INT32};
+    }
+    return count;
+}
+
 static bool invoke_source(void *opaque, qa_item_id item, qa_item_action action, qa_error *error) {
     q3_inventory_owner *owner = opaque;
     qa_q3_game *game = owner->game;
@@ -170,6 +189,19 @@ static bool inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error
     size_t count;
     const qa_q3_item *items = qa_q3_items(game->options.product, &count);
     if ((selections & QA_Q3_ARSENAL) && !qa_inventory_lease_current(inventory, owner->weapons)) {
+        qa_inventory_entry entries[2 * (QA_Q3_WEAPON_COUNT - 1)];
+        size_t entry_count = q3_inventory_arsenal_entries(game, false, entries);
+        qa_inventory_admission *admission = NULL;
+        if (!qa_inventory_prepare_entries(inventory, actor, entries, entry_count,
+                                            &admission, error)) return false;
+        if (!qa_inventory_admission_commit(admission, error)) {
+            qa_inventory_admission_abort(admission);
+            return false;
+        }
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+        memcpy(entry->state.player.ammo_regeneration_items, game->ammo_items,
+            sizeof(entry->state.player.ammo_regeneration_items));
         qa_item_definition definitions[QA_Q3_WEAPON_COUNT];
         size_t used = 0;
         for (size_t i = 1; i < count; ++i)

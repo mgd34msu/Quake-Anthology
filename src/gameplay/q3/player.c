@@ -276,6 +276,7 @@ bool qa_q3_selected_source_respawn(qa_q3_game *game, qa_actor_id actor,
         .selections = prior.selections,
         .event_sequence = prior.event_sequence, .spawn_count = prior.spawn_count,
         .external_slot = prior.external_slot,
+        .weapon = prior.weapon, .requested_weapon = prior.requested_weapon,
         .handicap = prior.handicap, .accuracy_shots = prior.accuracy_shots,
         .accuracy_hits = prior.accuracy_hits, .impressive_count = prior.impressive_count,
         .player_events = prior.player_events, .deaths = prior.deaths,
@@ -602,24 +603,8 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
         player = &entry->state.player;
     }
     if (player->selections & QA_Q3_ARSENAL) {
-        qa_inventory_entry inventory[26];
-        size_t count = 0;
-        int limit = game->options.product == QA_Q3_ARENA ? 11 : QA_Q3_WEAPON_COUNT;
-        for (int weapon = 1; weapon < limit; ++weapon) {
-            inventory[count++] = (qa_inventory_entry){
-                .item = game->weapon_items[weapon],
-                .capacity = 1,
-                .count = weapon == QA_Q3_W_GAUNTLET || weapon == QA_Q3_W_MACHINEGUN ? 1 : 0,
-                .policy = QA_COUNT_SOURCE_INT32};
-            if (game->ammo_items[weapon])
-                inventory[count++] = (qa_inventory_entry){
-                    .item = game->ammo_items[weapon],
-                    .capacity = 200,
-                    .count = weapon == QA_Q3_W_MACHINEGUN
-                                 ? (game->options.rules.game_type == 3 ? 50 : 100)
-                                 : 0,
-                    .policy = QA_COUNT_SOURCE_INT32};
-        }
+        qa_inventory_entry inventory[2 * (QA_Q3_WEAPON_COUNT - 1)];
+        size_t count = q3_inventory_arsenal_entries(game, true, inventory);
         if (!qa_inventory_has(game->options.services.inventory, actor)) {
             if (!qa_inventory_create_actor(game->options.services.inventory, actor, inventory,
                                            count, error))
@@ -637,8 +622,6 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
         if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
         player = &entry->state.player;
         player->weapon = player->requested_weapon = QA_Q3_W_MACHINEGUN;
-        memcpy(player->ammo_regeneration_items, game->ammo_items,
-               sizeof(player->ammo_regeneration_items));
         player->weapon_phase = QA_Q3_READY;
         player->weapon_time_ms = 0;
         player->external_slot = QA_Q3_SLOT_ACTIVE;

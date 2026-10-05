@@ -194,6 +194,7 @@ bool q3_use_holdable(qa_q3_game *, qa_actor_id, qa_q3_holdable, qa_error *);
 qa_actor_id q3_portal_destination(qa_q3_game *, int32_t sequence);
 bool q3_inventory_holdable_changed(qa_q3_game *, qa_actor_id, qa_q3_holdable before,
                                     qa_q3_holdable after, qa_error *);
+size_t q3_inventory_arsenal_entries(const qa_q3_game *, bool spawn, qa_inventory_entry *);
 bool q3_player_state_valid(const qa_q3_player_state *);
 bool q3_player_state_valid_source_client(const qa_q3_player_state *, const qa_q3_native_client *);
 void q3_force_view(qa_q3_player_state *, qa_vec3, int32_t lock_ms);
