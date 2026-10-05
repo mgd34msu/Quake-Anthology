@@ -1,11 +1,8 @@
 #include "remote_q1_effects.h"
 #include "remote_q1_private.h"
 #include "remote_q1_hud.h"
-#include "remote_q1_restore.h"
-#include "scene_identity.h"
 #include "internal.h"
 #include "selected_effects_particles.h"
-#include "qa/scene_save.h"
 #include "legacy_render_policy.h"
 #include "received_music.h"
 #include <math.h>
@@ -39,8 +36,7 @@ typedef struct remote_ambient {
     qa_audio_mixer *mixer;
     qa_vec3 origin;
     float volume,attenuation;
-    uint64_t identity,saved_resource;
-    bool saved_installed;
+    uint64_t identity;
 } remote_ambient;
 struct frontend_remote_q1_effects {
     frontend_received_music *music;
@@ -48,7 +44,6 @@ struct frontend_remote_q1_effects {
     frontend_fx_particles particles;
     qa_builtin_random random;
     qa_scene_image *image;
-    uint64_t saved_image;
     remote_ambient *ambient;
     qa_audio_engine *audio;
     size_t ambient_count,ambient_capacity;
@@ -449,15 +444,6 @@ static bool beam(frontend_remote_q1 *row,const remote_beam *value,const qa_scene
     }
     return true;
 }
-static bool ambient_voice(const remote_ambient *value,qa_audio_mixer *mixer)
-{
-    qa_audio_static_view voice;
-    double volume=trunc((double)truncf(value->volume*255)/255*255);
-    return value->asset && qa_audio_mixer_static_read(mixer,value->identity,&voice) &&
-        voice.sample==qa_audio_asset_sample(value->asset) &&
-        voice.origin.x==value->origin.x && voice.origin.y==value->origin.y && voice.origin.z==value->origin.z &&
-        voice.volume==volume && voice.attenuation==(double)truncf(value->attenuation*64)/64000;
-}
 bool remote_q1_effects_models(frontend_remote_q1 *row,const qa_scene_view *view,
     const qa_scene_world_input *world,qa_vec3 viewer_origin,qa_error *error)
 {
@@ -529,107 +515,6 @@ bool remote_q1_effects_draw(frontend_remote_q1 *row,const qa_scene_view *view,
     return remote_q1_live(row,error);
 }
 
-bool remote_q1_effects_fields(frontend_remote_q1 *row,qa_source_save_io *io,
-    const frontend_remote_q1_restore_refs *refs,qa_error *error)
-{
-    bool present=row->effects!=NULL;
-    if(!qa_source_save_bool(io,&present)) return false;
-    if(!present) return true;
-    if(io->direction==QA_SOURCE_SAVE_READ && !owner(row,error)) return false;
-    frontend_remote_q1_effects *fx=row->effects;
-    if(!frontend_received_music_fields(row->frontend,&fx->music,io,refs?refs->audio:NULL,error))return false;
-    if(!frontend_fx_particles_fields(io,&fx->particles) || fx->particles.family!=QA_GAME_Q1 ||
-        !qa_source_save_bytes(io,fx->random.words,sizeof(fx->random.words)) ||
-        !qa_source_save_u8(io,&fx->random.front) || !qa_source_save_u8(io,&fx->random.rear) ||
-        !qa_source_save_u64(io,&fx->random.draws) || fx->random.front>=31 || fx->random.rear>=31 ||
-        !qa_source_save_u64(io,&fx->sample) || !qa_source_save_f64(io,&fx->sampled_seconds) ||
-        !qa_source_save_f64(io,&fx->previous_sample) || !qa_source_save_f64(io,&fx->bonus_until) ||
-        !qa_source_save_bool(io,&fx->sampled) || !isfinite(fx->sampled_seconds) ||
-        !isfinite(fx->previous_sample) || !isfinite(fx->bonus_until)) return false;
-    uint64_t image=fx->saved_image; bool has_image=fx->image!=NULL || fx->saved_image;
-    if(!qa_source_save_bool(io,&has_image)) return false;
-    if(has_image) {
-        if(io->direction==QA_SOURCE_SAVE_WRITE && (!refs || !refs->scene ||
-            !frontend_scene_image_encode(refs->scene,fx->image,&image,error))) return false;
-        if(!qa_source_save_u64(io,&image)) return false;
-        if(io->direction==QA_SOURCE_SAVE_READ) {
-            if(!image) return false;
-            fx->saved_image=image;
-        }
-    }
-    for(size_t i=0;i<LIGHTS;++i) {
-        remote_light *value=fx->lights+i;
-        uint64_t identity=value->identity;
-        frontend_scene_identity_scope scope={refs?refs->scene:NULL,refs?(refs->effects_owner?refs->effects_owner:refs->owner):0};
-        if(io->direction==QA_SOURCE_SAVE_WRITE && identity &&
-            (!frontend_scene_light_owner_ready(&scope,i,identity,error) ||
-             !frontend_scene_light_saved(&scope,i,identity,&identity,error))) return false;
-        if(!qa_source_save_vec3(io,&value->origin) || !qa_source_save_vec3(io,&value->color) ||
-            !qa_source_save_f64(io,&value->birth) || !qa_source_save_f64(io,&value->die) ||
-            !qa_source_save_f32(io,&value->radius) || !qa_source_save_f32(io,&value->decay) ||
-            !qa_source_save_f32(io,&value->minimum) || !qa_source_save_u32(io,&value->entity) ||
-            !qa_source_save_u64(io,&identity) || !qa_source_save_bool(io,&value->active) || !isfinite(value->birth) ||
-            !isfinite(value->die) || !isfinite(value->radius) || !isfinite(value->decay) ||
-            !isfinite(value->minimum) || value->radius<0 || value->decay<0 || value->minimum<0 ||
-            (value->active && !identity)) return false;
-        if(io->direction==QA_SOURCE_SAVE_READ) value->identity=identity;
-    }
-    for(size_t i=0;i<BEAMS;++i) {
-        remote_beam *value=fx->beams+i;
-        if(!qa_source_save_vec3(io,&value->start) || !qa_source_save_vec3(io,&value->end) ||
-            !qa_source_save_f64(io,&value->die) || !qa_source_save_u32(io,&value->entity) ||
-            !qa_source_save_u8(io,&value->type) || !qa_source_save_bool(io,&value->active) ||
-            !isfinite(value->die) || (value->active && value->type!=5 && value->type!=6 && value->type!=9 && value->type!=13)) return false;
-    }
-    size_t count=fx->trail_count;
-    if(!qa_source_save_count(io,&count,65536)) return false;
-    if(io->direction==QA_SOURCE_SAVE_READ) {
-        remote_trail *trails=count?calloc(count,sizeof(*trails)):NULL;
-        if(count && !trails) return remote_q1_fail(error,QA_ERROR_MEMORY,"Restoring Q1 effect trails");
-        free(fx->trails); fx->trails=trails; fx->trail_count=fx->trail_capacity=count;
-    }
-    for(size_t i=0;i<count;++i) {
-        remote_trail *value=fx->trails+i;
-        if(!qa_source_save_u32(io,&value->entity) || !qa_source_save_u32(io,&value->model) ||
-            !qa_source_save_vec3(io,&value->origin) || !qa_source_save_u64(io,&value->sample) ||
-            !value->model || value->model>row->model_count || value->sample>fx->sample) return false;
-        for(size_t j=0;j<i;++j) if(fx->trails[j].entity==value->entity) return false;
-    }
-    count=fx->ambient_count;
-    if(!qa_source_save_count(io,&count,65536)) return false;
-    if(io->direction==QA_SOURCE_SAVE_READ) {
-        fx->ambient=count?calloc(count,sizeof(*fx->ambient)):NULL;
-        if(count && !fx->ambient) return remote_q1_fail(error,QA_ERROR_MEMORY,"Restoring Q1 static audio recipes");
-        fx->ambient_count=fx->ambient_capacity=count;
-    }
-    frontend_scene_identity_scope scope={refs?refs->scene:NULL,refs?(refs->effects_owner?refs->effects_owner:refs->owner):0};
-    for(size_t i=0;i<count;++i) {
-        remote_ambient *value=fx->ambient+i;
-        uint64_t identity=value->identity,resource=value->saved_resource;
-        bool installed=value->mixer!=NULL;
-        if(io->direction==QA_SOURCE_SAVE_READ) installed=value->saved_installed;
-        if(io->direction==QA_SOURCE_SAVE_WRITE) {
-            if(installed) {
-                qa_audio_engine *audio=row->frontend->audio;
-                qa_audio_mixer *mixer=audio?qa_audio_engine_seat_mixer(audio,row->options.domain.physical_seat):NULL;
-                if(fx->audio!=audio || value->mixer!=mixer || !ambient_voice(value,mixer))
-                    return remote_q1_fail(error,QA_ERROR_ARGUMENT,"Q1 static capture lost its actual mixer voice");
-            }
-            if(!value->asset || !frontend_scene_static_audio_owner_ready(&scope,i,identity,error) ||
-                !frontend_scene_static_audio_saved(&scope,i,identity,&identity,error)) return false;
-            if(!refs || !refs->assets || !qa_audio_asset_inventory_index(refs->assets,value->asset,&resource)) return false;
-            if(resource==UINT64_MAX) return false;
-            ++resource;
-        }
-        if(!qa_source_save_u64(io,&identity) || !identity || !qa_source_save_u64(io,&resource) || !resource ||
-            !qa_source_save_bool(io,&installed) ||
-            !qa_source_save_vec3(io,&value->origin) || !qa_source_save_f32(io,&value->volume) ||
-            !qa_source_save_f32(io,&value->attenuation) || !isfinite(value->volume) || value->volume<0 ||
-            value->volume>1 || !isfinite(value->attenuation) || value->attenuation<0) return false;
-        if(io->direction==QA_SOURCE_SAVE_READ) { value->identity=identity; value->saved_resource=resource; value->saved_installed=installed; }
-    }
-    return true;
-}
 size_t remote_q1_effects_light_count(const frontend_remote_q1 *row)
 {
     if(!row || !row->effects) return 0;
@@ -649,42 +534,4 @@ bool remote_q1_effects_static_at(const frontend_remote_q1 *row,size_t at,uint64_
     if(!row || !row->effects || at>=row->effects->ambient_count || !key || !asset || !mixer) return false;
     const remote_ambient *value=row->effects->ambient+at;
     *key=value->identity; *asset=value->asset; *mixer=value->mixer; return true;
-}
-bool remote_q1_effects_restore_finish(frontend_remote_q1 *row,
-    const frontend_remote_q1_restore_refs *refs,qa_error *error)
-{
-    frontend_remote_q1_effects *fx=row?row->effects:NULL;
-    if(!fx) return true;
-    if(!refs || !refs->scene || !refs->owner || !row->images || !row->sound_bank) return false;
-    if(fx->music){frontend_music_origin origin;
-        if(!music_origin(row,&origin,error) || !frontend_received_music_restore_finish(fx->music,&origin,error))return false;}
-    if(fx->saved_image && !fx->image) {
-        const qa_scene_image *image=NULL;
-        if(!frontend_scene_image_decode(refs->scene,fx->saved_image,&image,error) || !image) return false;
-        const qa_scene_resources *owners[]={row->images}; size_t index;
-        if(!qa_scene_image_owner_index(owners,1,image,&index)) return false;
-        qa_scene_image_retain(image); fx->image=(qa_scene_image *)image;
-    }
-    frontend_scene_identity_scope scope={refs->scene,refs->effects_owner?refs->effects_owner:refs->owner};
-    for(size_t i=0;i<LIGHTS;++i) if(fx->lights[i].identity &&
-        !frontend_scene_light_install(&scope,i,fx->lights[i].identity,&fx->lights[i].identity,error)) return false;
-    for(size_t i=0;i<fx->ambient_count;++i) {
-        remote_ambient *value=fx->ambient+i;
-        if(!value->asset) {
-            qa_audio_asset *asset=refs->assets && value->saved_resource?qa_audio_asset_inventory_at(refs->assets,value->saved_resource-1):NULL;
-            if(!asset || qa_audio_asset_sample(asset)->loop_start==QA_AUDIO_NO_LOOP) return false;
-            if(qa_audio_bank_get(row->sound_bank,qa_resource_id(qa_audio_asset_resource(asset)),QA_AUDIO_Q1)!=asset) return false;
-            value->asset=qa_audio_asset_retain(asset);
-            if(!frontend_scene_static_audio_install(&scope,i,value->identity,&value->identity,error)) return false;
-        }
-        /* Mixer publication is owned by the enclosing audio checkpoint, not
-         * a replay of the received static-sound command. */
-        if(value->saved_installed) {
-            qa_audio_mixer *mixer=row->frontend->audio?qa_audio_engine_seat_mixer(row->frontend->audio,row->options.domain.physical_seat):NULL;
-            if(!ambient_voice(value,mixer))
-                return remote_q1_fail(error,QA_ERROR_FORMAT,"Saved Q1 static differs from its restored mixer voice");
-            value->mixer=mixer; fx->audio=row->frontend->audio;
-        }
-    }
-    return true;
 }

@@ -1,6 +1,6 @@
 #ifndef QA_FRONTEND_REMOTE_Q1_SKINS_H
 #define QA_FRONTEND_REMOTE_Q1_SKINS_H
-#include "remote_q1_restore.h"
+#include "remote_q1_client.h"
 
 typedef struct frontend_remote_q1_skins frontend_remote_q1_skins;
 typedef struct frontend_remote_q1_skin {
@@ -40,12 +40,4 @@ bool frontend_remote_q1_skins_destroy(frontend_remote_q1_skins **, qa_error *);
 bool frontend_remote_q1_skins_at(const frontend_remote_q1_skins *, uint32_t physical_slot,
     frontend_remote_q1_skin *, bool *present, qa_error *);
 qa_vfs *frontend_remote_q1_skins_files(const frontend_remote_q1_skins *);
-bool frontend_remote_q1_skins_checkpoint(const frontend_remote_q1_skins *,
-    const frontend_remote_q1_restore_refs *, qa_buffer *, qa_error *);
-bool frontend_remote_q1_skins_restore(frontend_remote_q1 *,
-    const frontend_remote_q1_skin_bindings *, const frontend_remote_q1_restore_refs *, qa_bytes,
-    frontend_remote_q1_skins **, qa_error *);
-/* Reattaches an existing partial native stage, validating its exact retained
- * bytes. It never creates/truncates a stage or repeats a download request. */
-bool frontend_remote_q1_skins_resume(frontend_remote_q1_skins *, qa_error *);
 #endif

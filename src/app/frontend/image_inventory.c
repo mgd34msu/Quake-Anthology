@@ -6,7 +6,7 @@
 #include "remote_q3_client.h"
 #include "remote_q3_initial.h"
 #include "network_initial_graph.h"
-#include "remote_q1_restore.h"
+#include "remote_q1_client.h"
 #include "remote_q2_restore.h"
 #include "renderer_materials.h"
 #include "renderer_worlds.h"
@@ -81,8 +81,7 @@ static bool collect(qa_frontend *f, image_inventory *inventory, qa_error *error)
     }
     for(size_t i=0;ok && i<frontend_remote_q1_count(f);++i) {
         frontend_remote_q1_view owner; frontend_remote_q1 *row=frontend_remote_q1_at(f,i);
-        ok=(f->source_restoring?frontend_remote_q1_import_read(row,&owner,error):
-            frontend_remote_q1_metadata_read(row,&owner,error)) &&
+        ok=frontend_remote_q1_metadata_read(row,&owner,error) &&
             add(inventory,graph,owner.images,9,i,owner.map_generation,error);
     }
     for(size_t i=0;ok && i<frontend_remote_q2_count(f);++i) {

@@ -36,8 +36,7 @@ qa_command_result frontend_network_q1_skin_command(frontend_remote_q1 *row,
     bool cancel = named(call->argv[0], "stopdownload"), retry = named(call->argv[0], "retrydownload");
     if ((!skins && !all && !cancel && !retry) || !row ||
         !qa_q1_is_qw(row->options.domain.protocol)) return QA_COMMAND_UNHANDLED;
-    if (!row->skins || !invocation_current(row, call, error) ||
-        !frontend_remote_q1_skins_resume(row->skins, error)) return QA_COMMAND_FAILED;
+    if (!row->skins || !invocation_current(row, call, error)) return QA_COMMAND_FAILED;
     bool ready = false, ok;
     if (all) {
         if (call->argc > 1 && !call->argv[1]) return QA_COMMAND_FAILED;

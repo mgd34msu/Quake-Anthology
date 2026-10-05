@@ -124,7 +124,6 @@ static bool skins(void *context, qa_net_client_id id, bool *ready, qa_error *err
 {
     frontend_remote_q1 *row = context;
     return ready && current(row, id, error) && row->skins &&
-        frontend_remote_q1_skins_resume(row->skins,error) &&
         frontend_remote_q1_skins_refresh(row->skins,ready,error) && current(row,id,error);
 }
 static bool end(void *context, qa_net_client_id id, uint64_t received, qa_error *error)
@@ -171,8 +170,8 @@ static bool batch(void *context, qa_net_client_id id, qa_net_protocol_id protoco
 bool frontend_remote_q1_hooks(frontend_remote_q1 *row, qa_network_q1_client_hooks *out, qa_error *error)
 {
     if (!row || !out || row->busy || row->retired ||
-        (row->importing ? !row->frontend->source_restoring : row->bound || !remote_q1_mutable(row)))
-        return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 hooks require their genuine pending or importing CLIENT owner");
+        (row->bound || !remote_q1_mutable(row)))
+        return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 hooks require their genuine pending CLIENT owner");
     *out = (qa_network_q1_client_hooks){.context = row, .nq = nq, .qw = qw, .qw_game_state = game_state,
         .qw_skins = skins, .end = end, .command_nq = nq_command, .command_qw = qw_command, .qw_teleport = teleport,
         .qw_loss = loss, .sent = sent, .acknowledged = acknowledged, .drop = drop, .batch = batch}; return true;

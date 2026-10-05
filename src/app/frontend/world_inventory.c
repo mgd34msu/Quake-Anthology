@@ -11,7 +11,7 @@
 #include "remote_q3_client.h"
 #include "remote_q3_initial.h"
 #include "network_initial_graph.h"
-#include "remote_q1_restore.h"
+#include "remote_q1_client.h"
 #include "remote_q2_restore.h"
 #include "save_private.h"
 #include "renderer_materials.h"
@@ -94,9 +94,8 @@ bool frontend_scene_heap_read(const qa_frontend *f, root_heap heap, const qa_vfs
         *files=owner.mounts; *images=owner.images; *materials=owner.materials;
     } else if(heap.kind==6) {
         frontend_remote_q1_view owner; qa_error error={0};
-        if(heap.ordinal>SIZE_MAX || !(f->source_restoring?
-            frontend_remote_q1_import_read(frontend_remote_q1_at(f,(size_t)heap.ordinal),&owner,&error):
-            frontend_remote_q1_metadata_read(frontend_remote_q1_at(f,(size_t)heap.ordinal),&owner,&error))) return false;
+        if(heap.ordinal>SIZE_MAX ||
+            !frontend_remote_q1_metadata_read(frontend_remote_q1_at(f,(size_t)heap.ordinal),&owner,&error)) return false;
         *files=owner.content.mounts; *images=owner.images; *materials=owner.materials;
     } else if(heap.kind==7) {
         frontend_remote_q2_view owner; qa_error error={0};

@@ -207,13 +207,13 @@ bool remote_q1_domain_equal(const frontend_remote_q1_domain *a, const frontend_r
 }
 bool remote_q1_live(const frontend_remote_q1 *row, qa_error *error)
 {
-    if (!row || !row->bound || row->retired || row->importing || row->frontend->application != row->options.domain.application ||
+    if (!row || !row->bound || row->retired || row->frontend->application != row->options.domain.application ||
         qa_network_epoch(row->options.domain.runtime, row->options.domain.client) != row->options.domain.epoch)
         return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 presentation lost its actual CLIENT session");
     return row->options.current(row->options.context, &row->options.domain, error);
 }
 bool remote_q1_mutable(const frontend_remote_q1 *row)
-{ return row && !row->importing && !row->sky_policy && !row->frontend->capture && !row->frontend->resource_inventory && !row->frontend->source_restoring; }
+{ return row && !row->sky_policy && !row->frontend->capture && !row->frontend->resource_inventory && !row->frontend->source_restoring; }
 static bool grow(void **data, size_t *capacity, size_t count, size_t stride, qa_error *error)
 {
     if (count <= *capacity) return true;
@@ -453,8 +453,7 @@ bool frontend_remote_q1_sample(frontend_remote_q1 *row, uint64_t now, qa_error *
 {
     if (!remote_q1_mutable(row) || row->busy || !remote_q1_live(row, error)) return false;
     if (row->revision == UINT64_MAX) return remote_q1_fail(error, QA_ERROR_FORMAT, "Q1 presentation revision is exhausted");
-    if (row->skins && (!frontend_remote_q1_skins_resume(row->skins,error) ||
-        !frontend_remote_q1_skins_prepare(row->skins,error))) return false;
+    if (row->skins && !frontend_remote_q1_skins_prepare(row->skins,error)) return false;
     if (row->seconds - row->previous_seconds > .1) row->previous_seconds = row->seconds - .1;
     double duration = fmax(0, row->seconds - row->previous_seconds);
     if (row->options.sample_seconds) {
@@ -547,7 +546,7 @@ bool frontend_remote_q1_sample_all(qa_frontend *f, uint64_t now, qa_error *error
 {
     if (!f) return false;
     for (frontend_remote_q1 *r = f->remote_q1; r; r = r->next)
-        if (r->bound && !r->retired && !r->importing && !frontend_remote_q1_sample(r, now, error)) return false;
+        if (r->bound && !r->retired && !frontend_remote_q1_sample(r, now, error)) return false;
     return true;
 }
 bool frontend_remote_q1_destroy_all(qa_frontend *f, qa_error *error)

@@ -1,9 +1,7 @@
 #include "remote_q1_skins.h"
 #include "remote_q1_private.h"
-#include "save_private.h"
 #include "qa/image.h"
 #include "qa/binary.h"
-#include "qa/vfs_view_save.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,30 +29,18 @@ struct frontend_remote_q1_skins {
     qa_fs_stage *stage;
     uint64_t nonce;
     uint8_t percent;
-    qa_sha256_context hash;
-    qa_sha256_digest saved_hash;
-    bool busy, loading, again, waiting, staged, restoring, checkpointed;
+    bool busy, loading, again, waiting, staged;
     bool paused, waiting_block, resume_requested;
-    bool cleanup, cleanup_keep;
+    bool cleanup;
 };
 static bool current(const frontend_remote_q1_skins *o, qa_error *e)
 {
     return o && remote_q1_mutable(o->row) && remote_q1_live(o->row, e) &&
         o->bindings.current(o->bindings.context, &o->row->options.domain, e);
 }
-static bool root_current(const frontend_remote_q1_skins *o)
-{
-    for (size_t i = 0; i < qa_vfs_mount_count(o->files); ++i) {
-        qa_vfs_mount_info mount;
-        if (qa_vfs_mount_at(o->files, i, &mount) && mount.id == o->root_mount)
-            return !mount.is_archive && mount.writable &&
-                qa_fs_root_same_object(o->bindings.root, qa_vfs_mount_root(o->files, mount.id));
-    }
-    return false;
-}
 static bool enter(frontend_remote_q1_skins *o, qa_error *e)
 {
-    if (!o || o->busy || o->row->busy || o->restoring || o->cleanup || !current(o, e))
+    if (!o || o->busy || o->row->busy || o->cleanup || !current(o, e))
         return remote_q1_fail(e, QA_ERROR_ARGUMENT, "QW skins lost their actual CLIENT resource owner");
     o->busy = true; return true;
 }
@@ -69,13 +55,11 @@ static void cache_clear(frontend_remote_q1_skins *o)
 }
 static bool transfer_clear(frontend_remote_q1_skins *o, qa_error *e)
 {
-    if (!o->cleanup) { o->cleanup_keep = o->checkpointed; o->cleanup = true; }
-    if (!qa_fs_stage_close_checked(&o->stage, o->cleanup_keep, e)) return false;
+    o->cleanup = true;
+    if (!qa_fs_stage_close_checked(&o->stage, false, e)) return false;
     o->received = 0; o->percent = 0; o->nonce = 0;
-    o->waiting = o->staged = false; memset(&o->hash, 0, sizeof(o->hash));
-    memset(&o->saved_hash, 0, sizeof(o->saved_hash));
+    o->waiting = o->staged = false;
     o->waiting_block = false;
-    o->checkpointed = false;
     o->cleanup = false; return true;
 }
 static void info(const char *text, const char *key, char *out, size_t capacity)
@@ -105,14 +89,6 @@ static void skin_name(const char *text, char out[16])
     if (n > 15) n = 15;
     if (!n) { text = "base"; n = 4; }
     memcpy(out, text, n); out[n] = 0;
-}
-static bool stem_valid(const char *text)
-{
-    if (!text || !*text || *text == '.' || strstr(text, "..") || strlen(text) > 15) return false;
-    for (const unsigned char *p = (const unsigned char *)text; *p; ++p)
-        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
-            (*p >= '0' && *p <= '9') || *p == '_' || *p == '+' || *p == '.' || *p == '-')) return false;
-    return true;
 }
 static void player_name(const frontend_remote_q1_skins *o, unsigned slot, char out[16])
 {
@@ -268,7 +244,7 @@ bool frontend_remote_q1_skins_refresh(frontend_remote_q1_skins *o, bool *ready, 
 bool frontend_remote_q1_skins_content(frontend_remote_q1_skins *o, qa_vfs *files,
     qa_fs_root *root, qa_error *e)
 {
-    if (!o || o->busy || o->restoring || o->cleanup || o->row->loaded || o->loading || o->waiting || o->staged ||
+    if (!o || o->busy || o->cleanup || o->row->loaded || o->loading || o->waiting || o->staged ||
         o->count || !files || files != o->row->content.mounts || !root || !current(o, e))
         return remote_q1_fail(e, QA_ERROR_ARGUMENT, "QW skin content requires the actual reset receiver's new selected view");
     qa_mount_id selected = 0;
@@ -338,14 +314,14 @@ bool frontend_remote_q1_skins_receive(frontend_remote_q1_skins *o, const qa_qw_s
                     qa_fs_stage_open_checked(o->bindings.root, o->paths[o->cursor], o->nonce, false, &o->stage, &size, &disk) && !size;
                 disk_failed = !ok;
             }
-            if (ok) { o->staged = true; qa_sha256_init(&o->hash); }
+            if (ok) o->staged = true;
         }
         size_t at = 0;
         while (ok && at < bytes.size) {
             size_t written = 0;
             ok = qa_fs_stage_write(o->stage, o->received, (qa_bytes){bytes.data + at, bytes.size - at}, &written, &disk);
             if (written) {
-                qa_sha256_update(&o->hash, (qa_bytes){bytes.data + at, written}); o->received += written; at += written;
+                o->received += written; at += written;
             }
             if (ok && !written) ok = remote_q1_fail(&disk, QA_ERROR_IO, "QW skin stage made no native write progress");
             disk_failed = !ok;
@@ -414,7 +390,7 @@ bool frontend_remote_q1_skins_reset(frontend_remote_q1_skins *o, qa_error *e)
     if (!transfer_clear(o, e)) return false;
     cache_clear(o);
     for (unsigned i = 0; i < 32; ++i) { free(o->infos[i]); o->infos[i] = NULL; }
-    o->loading = o->again = o->restoring = o->paused = o->resume_requested = false;
+    o->loading = o->again = o->paused = o->resume_requested = false;
     o->path_count = o->cursor = 0; return true;
 }
 bool frontend_remote_q1_skins_idle(const frontend_remote_q1_skins *o) { return o && !o->busy && !o->cleanup; }
@@ -428,7 +404,7 @@ bool frontend_remote_q1_skins_destroy(frontend_remote_q1_skins **owned, qa_error
 bool frontend_remote_q1_skins_at(const frontend_remote_q1_skins *o, uint32_t slot,
     frontend_remote_q1_skin *out, bool *present, qa_error *e)
 {
-    if (!o || !out || !present || slot >= 32 || o->busy || o->restoring || o->cleanup || !current(o, e)) return false;
+    if (!o || !out || !present || slot >= 32 || o->busy || o->cleanup || !current(o, e)) return false;
     *out = (frontend_remote_q1_skin){0}; *present = !o->loading && o->selected[slot] != 0;
     if (*present) {
         const skin_entry *entry = o->cache + o->selected[slot] - 1;
@@ -438,145 +414,3 @@ bool frontend_remote_q1_skins_at(const frontend_remote_q1_skins *o, uint32_t slo
     return true;
 }
 qa_vfs *frontend_remote_q1_skins_files(const frontend_remote_q1_skins *o) { return o ? o->files : NULL; }
-
-static bool opening(qa_source_save_io *io, const qa_vfs *files, qa_vfs_acquisition *a)
-{
-    return qa_source_save_u64(io, &a->mount) && qa_source_save_u64(io, &a->resource_id) &&
-        qa_source_save_owned_text(io, &a->path) && qa_source_save_owned_text(io, &a->lookup_path) &&
-        qa_source_save_owned_text(io, &a->link_source) && qa_source_save_owned_text(io, &a->link_target) &&
-        qa_vfs_acquisition_opening_codec(io, files, a) && a->opening_present;
-}
-static bool fields(frontend_remote_q1_skins *o, const frontend_remote_q1_restore_refs *refs,
-    qa_source_save_io *io)
-{
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t signature[8] = {'Q','F','Q','W','S',1,0,0}, expected[8]; memcpy(expected, signature, 8);
-    uint64_t view = reading ? 0 : qa_application_content_view_id(refs->content, o->files);
-    size_t maximum = o->bindings.maximum_bytes;
-    if (!qa_source_save_bytes(io, signature, 8) || memcmp(signature, expected, 8) ||
-        !qa_source_save_u64(io, &view) || !view || !qa_source_save_u64(io, &o->root_mount) ||
-        !qa_source_save_count(io, &maximum, SIZE_MAX) || maximum != o->bindings.maximum_bytes) return false;
-    if (reading) {
-        qa_vfs_destroy(o->files); o->files = NULL;
-        if (!qa_application_content_claim_view(refs->content, view, &o->files, io->error)) return false;
-    }
-    if (!root_current(o)) return false;
-    if (!qa_source_save_f32(io, &o->noskins) || !qa_source_save_owned_text(io, &o->base) ||
-        !qa_source_save_owned_text(io, &o->all) || !o->all || !qa_source_save_bool(io, &o->loading) ||
-        !qa_source_save_bool(io, &o->again) || !qa_source_save_bool(io, &o->waiting) ||
-        !qa_source_save_bool(io, &o->staged) || !qa_source_save_bool(io, &o->paused) ||
-        !qa_source_save_bool(io, &o->waiting_block) || !qa_source_save_bool(io, &o->resume_requested) ||
-        !qa_source_save_count(io, &o->path_count, 32) ||
-        !qa_source_save_count(io, &o->cursor, o->path_count)) return false;
-    for (size_t i = 0; i < o->path_count; ++i) {
-        if (!qa_source_save_bytes(io, o->paths[i], sizeof(o->paths[i])) ||
-            !memchr(o->paths[i], 0, sizeof(o->paths[i])) || strncmp(o->paths[i], "skins/", 6)) return false;
-        size_t n = strlen(o->paths[i]);
-        if (n < 11 || strcmp(o->paths[i] + n - 4, ".pcx")) return false;
-        char name[16]; size_t length = n - 10;
-        if (length > 15) return false;
-        memcpy(name, o->paths[i] + 6, length); name[length] = 0;
-        if (!stem_valid(name)) return false;
-        for (size_t j = 0; j < i; ++j) if (!strcmp(o->paths[j], o->paths[i])) return false;
-    }
-    if (!qa_source_save_count(io, &o->received, maximum) || !qa_source_save_u64(io, &o->nonce) ||
-        !qa_source_save_u8(io, &o->percent) || o->percent > 100) return false;
-    qa_sha256_digest hash = o->saved_hash;
-    if (!reading && o->stage) { qa_sha256_context copy = o->hash; qa_sha256_final(&copy, &hash); }
-    if (!qa_source_save_bytes(io, hash.bytes, sizeof(hash.bytes))) return false;
-    if (reading) o->saved_hash = hash;
-    if ((o->waiting && (!o->loading || o->cursor >= o->path_count)) ||
-        (o->staged && (!o->waiting || !o->nonce)) || (!o->staged && (o->received || o->nonce || o->percent)) ||
-        (!o->loading && (o->waiting || o->again || o->paused)) || (o->waiting && o->paused) ||
-        (o->paused && o->cursor >= o->path_count) || (o->waiting_block && !o->waiting && !o->paused) ||
-        (o->resume_requested && (!o->paused || !o->waiting_block))) return false;
-    if (!qa_source_save_count(io, &o->count, SKIN_COUNT)) return false;
-    for (size_t i = 0; i < o->count; ++i) {
-        skin_entry *entry = o->cache + i; uint64_t pool = 0, resource = 0;
-        if (!reading && entry->resource &&
-            !qa_application_content_resource_id(refs->content, entry->resource, &pool, &resource)) return false;
-        if (!qa_source_save_bytes(io, entry->selected, sizeof(entry->selected)) ||
-            !qa_source_save_bytes(io, entry->base, sizeof(entry->base)) ||
-            !memchr(entry->selected, 0, sizeof(entry->selected)) || !memchr(entry->base, 0, sizeof(entry->base)) ||
-            !qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &resource) || !!pool != !!resource) return false;
-        if (!stem_valid(entry->selected) || !stem_valid(entry->base)) return false;
-        for (size_t j = 0; j < i; ++j)
-            if (!strcmp(entry->selected, o->cache[j].selected) && !strcmp(entry->base, o->cache[j].base)) return false;
-        if (reading && resource) {
-            entry->resource = (qa_resource *)qa_application_content_resource(refs->content, pool, resource);
-            if (!entry->resource || qa_application_content_pool(refs->content, pool) != qa_vfs_resources(o->files)) return false;
-            qa_resource_retain(entry->resource);
-        }
-        if (resource && (!opening(io, o->files, &entry->opening) ||
-            entry->opening.resource_id != qa_resource_id(entry->resource) ||
-            !qa_vfs_acquisition_retained(o->files, &entry->opening, io->error))) return false;
-        if (resource) {
-            char selected_path[27], base_path[27];
-            snprintf(selected_path, sizeof(selected_path), "skins/%s.pcx", entry->selected);
-            snprintf(base_path, sizeof(base_path), "skins/%s.pcx", entry->base);
-            if (!entry->opening.path || (strcmp(entry->opening.path, selected_path) && strcmp(entry->opening.path, base_path))) return false;
-        }
-        bool pixels = !reading && entry->pixels.data;
-        if (!qa_source_save_bool(io, &pixels) || (pixels && !resource)) return false;
-        if (pixels) {
-            if (reading) {
-                entry->pixels.data = malloc(SKIN_PIXELS); entry->pixels.size = SKIN_PIXELS;
-                if (!entry->pixels.data) return remote_q1_fail(io->error, QA_ERROR_MEMORY, "Importing actual QW skin indices");
-            }
-            if (entry->pixels.size != SKIN_PIXELS || !qa_source_save_bytes(io, entry->pixels.data, SKIN_PIXELS)) return false;
-            char hex[65]; qa_sha256_hex(qa_resource_digest(entry->resource), hex);
-            snprintf(entry->name, sizeof(entry->name), "qw-skin:%s:crop:0,0,296,194:stride320", hex);
-        }
-    }
-    for (unsigned i = 0; i < 32; ++i) {
-        if (!qa_source_save_owned_text(io, o->infos + i) || !qa_source_save_u8(io, o->selected + i) ||
-            o->selected[i] > o->count || (o->selected[i] &&
-                (o->loading || !o->cache[o->selected[i] - 1].pixels.data))) return false;
-    }
-    return true;
-}
-bool frontend_remote_q1_skins_checkpoint(const frontend_remote_q1_skins *owner,
-    const frontend_remote_q1_restore_refs *refs, qa_buffer *out, qa_error *e)
-{
-    if (!owner || owner->busy || owner->cleanup || !refs || !refs->content || !out || out->data) return false;
-    qa_source_save_io io;
-    if (!qa_source_save_writer(&io, NULL, e)) return false;
-    bool ok = fields((frontend_remote_q1_skins *)owner, refs, &io) && qa_source_save_finish(&io, out);
-    if (ok && owner->staged) ((frontend_remote_q1_skins *)owner)->checkpointed = true;
-    qa_source_save_dispose(&io); return ok;
-}
-bool frontend_remote_q1_skins_restore(frontend_remote_q1 *row,
-    const frontend_remote_q1_skin_bindings *bindings, const frontend_remote_q1_restore_refs *refs,
-    qa_bytes bytes, frontend_remote_q1_skins **out, qa_error *e)
-{
-    if (!row || !row->importing || !refs || !refs->content || !frontend_remote_q1_skins_create(row, bindings, out, e)) return false;
-    frontend_remote_q1_skins *o = *out; qa_source_save_io io;
-    if (!qa_source_save_reader(&io, NULL, bytes, e)) return false;
-    bool ok = fields(o, refs, &io) && qa_source_save_finish(&io, NULL);
-    qa_source_save_dispose(&io); o->restoring = o->staged;
-    return ok;
-}
-bool frontend_remote_q1_skins_resume(frontend_remote_q1_skins *o, qa_error *e)
-{
-    if (!o || o->busy || o->cleanup || !current(o, e)) return false;
-    if (!o->restoring) return true;
-    o->busy = true; uint64_t size = 0;
-    /* Resume never creates or truncates. Hash under the actual exclusive
-     * writer admission so inspection cannot race a later handle acquisition. */
-    bool ok = qa_fs_stage_open_checked(o->bindings.root, o->paths[o->cursor], o->nonce, true, &o->stage, &size, e);
-    if (ok && size != o->received) ok = remote_q1_fail(e, QA_ERROR_FORMAT, "Retained QW skin stage size changed after capture");
-    qa_sha256_context hash; qa_sha256_init(&hash); uint8_t buffer[4096]; uint64_t offset = 0;
-    while (ok && offset < size) {
-        size_t got = 0, capacity = size - offset < sizeof(buffer) ? (size_t)(size - offset) : sizeof(buffer);
-        ok = qa_fs_stage_read(o->stage, offset, buffer, capacity, &got, e);
-        if (ok && got != capacity) ok = remote_q1_fail(e, QA_ERROR_IO, "Retained QW skin stage ended during resume inspection");
-        if (ok) { qa_sha256_update(&hash, (qa_bytes){buffer, got}); offset += got; }
-    }
-    qa_sha256_digest digest; qa_sha256_context copy = hash; qa_sha256_final(&copy, &digest);
-    if (ok && !qa_sha256_equal(&digest, &o->saved_hash))
-        ok = remote_q1_fail(e, QA_ERROR_FORMAT, "Retained QW skin stage bytes changed after capture");
-    if (ok) ok = current(o, e);
-    if (ok) { o->hash = hash; o->restoring = false; }
-    else if (!qa_fs_stage_close_checked(&o->stage, true, e)) o->cleanup = o->cleanup_keep = true;
-    o->busy = false; return ok;
-}

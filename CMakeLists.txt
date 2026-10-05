@@ -1804,7 +1804,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/remote_q1_hud.c
     src/app/frontend/remote_q1_media.c
     src/app/frontend/remote_q1_presentation.c
-    src/app/frontend/remote_q1_restore.c
     src/app/frontend/remote_q2_source.c
     src/app/composition/recipe_choices.c
     src/app/composition/recipe_import.c

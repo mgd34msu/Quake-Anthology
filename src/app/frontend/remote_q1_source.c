@@ -216,7 +216,7 @@ bool frontend_remote_q1_source_destroy(frontend_remote_q1_source **owned, qa_err
     frontend_remote_q1_source *owner = owned ? *owned : NULL;
     if (!owner) return true;
     if (owner->calls || owner->frontend->capture || owner->frontend->resource_inventory ||
-        (owner->receiver && owner->receiver->bound && !owner->receiver->importing &&
+        (owner->receiver && owner->receiver->bound &&
         qa_net_connections_get(qa_network_connections(owner->receiver->options.domain.runtime), owner->receiver->options.domain.client)))
         return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 Source adapter retains its actual attached transport");
     if (!frontend_remote_q1_destroy(&owner->receiver, error)) return false;

@@ -138,7 +138,7 @@ bool frontend_remote_q1_receive_qw(frontend_remote_q1 *row, const qa_qw_service 
     ++row->revision;
     if (service->kind == QA_QW_DOWNLOAD) {
         bool completed=false;
-        if (!row->skins || !frontend_remote_q1_skins_resume(row->skins,error) ||
+        if (!row->skins ||
             !frontend_remote_q1_skins_receive(row->skins,service,&completed,error)) return false;
         if (!completed) return true;
         qa_network_q1_client_state actual;

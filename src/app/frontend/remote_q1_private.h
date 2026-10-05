@@ -14,7 +14,6 @@ typedef struct remote_q1_model {
     frontend_model_lease *source_lease;
     qa_scene_model *scene;
     qa_scene_world *world;
-    uint64_t saved_model, saved_scene, saved_world;
     bool colors;
     uint8_t top, bottom;
 } remote_q1_model;
@@ -67,8 +66,7 @@ struct frontend_remote_q1 {
     uint8_t pending_impulse;
     qa_vec3 view_angles;
     qa_q1_clientdata data;
-    bool bound, loaded, retired, has_data, importing, intermission, published;
-    uint64_t saved_world, saved_sky[6];
+    bool bound, loaded, retired, has_data, intermission, published;
     unsigned busy;
     remote_q1_entities current, previous, statics, qw_entities, qw_nails, qw_batch_players;
     remote_q1_actor *actors;
