@@ -368,18 +368,7 @@ static bool caption_blob(qa_source_save_io *io, qa_buffer *blob, qa_bytes *input
     if (size > io->input.size - io->offset) return false;
     *input = (qa_bytes){io->input.data + io->offset, size}; io->offset += size; return true;
 }
-static bool caption_asset(qa_source_save_io *io, const qa_sound_caption_save_refs *refs, qa_audio_asset **asset)
-{
-    uint64_t key = 0;
-    if (io->direction == QA_SOURCE_SAVE_WRITE && !qa_audio_asset_inventory_index(refs->assets, *asset, &key)) return false;
-    if (!qa_source_save_u64(io, &key)) return false;
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        qa_audio_asset *found = qa_audio_asset_inventory_at(refs->assets, key);
-        if (!found || !qa_audio_asset_resource(found)) return false;
-        *asset = qa_audio_asset_retain(found);
-    }
-    return *asset && qa_audio_asset_resource(*asset);
-}
+
 static bool media_fields(qa_source_save_io *io, qa_media_captions *media, qa_vfs *view)
 {
     if (media->visiting || (media->view && media->view != view)) return false;
@@ -445,98 +434,6 @@ bool qa_media_captions_restore(qa_media_captions *owner,qa_vfs *view,const char 
     }
     qa_media_captions_destroy(candidate);
     if (!ok && (!e || e->code==QA_OK)) fail(e,QA_ERROR_FORMAT,"Invalid compiled media caption continuation");
-    return ok;
-}
-static bool sound_fields(qa_source_save_io *io, qa_sound_captions *owner, const qa_sound_caption_save_refs *refs)
-{
-    if (!qa_text_save_header(io, "QSCP")) return false;
-    uint32_t seat = owner->options.captions.seat, kind = owner->options.captions.kind,
-        profile = owner->options.captions.localization.profile;
-    uint64_t override = 0;
-    if (io->direction == QA_SOURCE_SAVE_WRITE && !qa_localization_pool_catalog_key(owner->options.captions.catalogs,
-        owner->options.captions.override_catalog, &override)) return false;
-    char *platform = io->direction == QA_SOURCE_SAVE_WRITE ? owner->platform : NULL;
-    bool ok = qa_source_save_u32(io, &seat) && qa_source_save_u32(io, &kind) && qa_source_save_u32(io, &profile) &&
-        qa_source_save_u64(io, &override) && qa_source_save_owned_text(io, &platform);
-    if (ok) ok = seat == owner->options.captions.seat && kind == QA_CAPTION_SOUND &&
-        profile == (uint32_t)owner->options.captions.localization.profile &&
-        ((platform == NULL && owner->platform == NULL) || (platform && owner->platform && !strcmp(platform, owner->platform))) &&
-        (!override || qa_localization_pool_catalog(owner->options.captions.catalogs, override)) &&
-        qa_localization_pool_catalog(owner->options.captions.catalogs, override) == owner->options.captions.override_catalog;
-    if (io->direction == QA_SOURCE_SAVE_READ) free(platform);
-    if (!ok) return false;
-    size_t count = 0;
-    if (io->direction == QA_SOURCE_SAVE_WRITE) for (sound_catalog *row = owner->catalogs; row; row = row->next) ++count;
-    if (!qa_source_save_count(io, &count, io->direction == QA_SOURCE_SAVE_READ ? (io->input.size - io->offset) / 16 : SIZE_MAX)) return false;
-    sound_catalog **link = &owner->catalogs;
-    for (size_t i = 0; i < count; ++i) {
-        if (io->direction == QA_SOURCE_SAVE_READ) {
-            *link = calloc(1, sizeof(**link));
-            if (!*link) return fail(io->error, QA_ERROR_MEMORY, "Restoring sound caption catalog");
-            (*link)->captions = qa_media_captions_create(&owner->options.captions, io->error);
-            if (!(*link)->captions) return false;
-        }
-        sound_catalog *row = *link; uint64_t view = 0;
-        if (!caption_asset(io, refs, &row->asset)) return false;
-        for (sound_catalog *prior = owner->catalogs; prior != row; prior = prior->next) if (prior->asset == row->asset) return false;
-        if (io->direction == QA_SOURCE_SAVE_WRITE && !refs->view_key(refs->context, row->view, &view, io->error)) return false;
-        if (!qa_source_save_u64(io, &view) || !view) return false;
-        if (io->direction == QA_SOURCE_SAVE_READ && !refs->claim_view(refs->context, view, &row->view, io->error)) return false;
-        if (!row->view || !media_fields(io, row->captions, row->view)) return false;
-        if (row->captions->source && strcmp(row->captions->source, qa_audio_asset_name(row->asset))) return false;
-        link = &row->next;
-    }
-    count = 0;
-    if (io->direction == QA_SOURCE_SAVE_WRITE) for (caption_voice *voice = owner->voices; voice; voice = voice->next) ++count;
-    if (!qa_source_save_count(io, &count, io->direction == QA_SOURCE_SAVE_READ ? (io->input.size - io->offset) / 53 : SIZE_MAX)) return false;
-    caption_voice **voice_link = &owner->voices;
-    for (size_t i = 0; i < count; ++i) {
-        if (io->direction == QA_SOURCE_SAVE_READ) {
-            *voice_link = calloc(1, sizeof(**voice_link));
-            if (!*voice_link) return fail(io->error, QA_ERROR_MEMORY, "Restoring caption voice continuation");
-        }
-        caption_voice *voice = *voice_link; uint64_t catalog_key = 0;
-        if (io->direction == QA_SOURCE_SAVE_WRITE) {
-            uint64_t index = 1;
-            for (sound_catalog *row = owner->catalogs; row; row = row->next, ++index) if (voice->catalog == row) { catalog_key = index; break; }
-        }
-        if (!qa_source_save_u64(io, &voice->id) || !caption_asset(io, refs, &voice->asset) || !qa_source_save_u64(io, &catalog_key) ||
-            !catalog_key || !qa_source_save_i64(io, &voice->start) || !qa_source_save_i64(io, &voice->stop) ||
-            !qa_source_save_u32(io, &voice->rate) || !qa_source_save_f64(io, &voice->offset) ||
-            !qa_source_save_bool(io, &voice->stopping) || !voice->rate || !isfinite(voice->offset)) return false;
-        if (io->direction == QA_SOURCE_SAVE_READ) {
-            sound_catalog *row = owner->catalogs;
-            for (uint64_t index = 1; row && index < catalog_key; ++index) row = row->next;
-            voice->catalog = row;
-        }
-        if (!voice->catalog || voice->catalog->asset != voice->asset) return false;
-        for (caption_voice *prior = owner->voices; prior != voice; prior = prior->next) if (prior->id == voice->id) return false;
-        voice_link = &voice->next;
-    }
-    return true;
-}
-bool qa_sound_captions_checkpoint(const qa_sound_captions *owner, const qa_sound_caption_save_refs *refs, qa_buffer *out, qa_error *e)
-{
-    if (!qa_sound_captions_idle(owner) || !refs || !refs->assets || !refs->view_key || !out || out->data || out->size)
-        return fail(e, QA_ERROR_ARGUMENT, "Caption capture requires its actual idle owner and inventory");
-    qa_source_save_io io = {0};
-    bool ok = qa_source_save_writer(&io, NULL, e) && sound_fields(&io, (qa_sound_captions *)owner, refs) && qa_source_save_finish(&io, out);
-    qa_source_save_dispose(&io);
-    if (!ok && (!e || e->code == QA_OK)) fail(e, QA_ERROR_FORMAT, "Invalid sound caption continuation");
-    return ok;
-}
-bool qa_sound_captions_restore(qa_sound_captions *owner, const qa_sound_caption_save_refs *refs, qa_bytes bytes, qa_error *e)
-{
-    if (!qa_sound_captions_idle(owner) || owner->catalogs || owner->voices || !refs || !refs->assets || !refs->claim_view)
-        return fail(e, QA_ERROR_ARGUMENT, "Caption import requires its empty actual owner and inventory");
-    qa_sound_captions *candidate = qa_sound_captions_create(&owner->options, e);
-    if (!candidate) return false;
-    qa_source_save_io io = {0};
-    bool ok = qa_source_save_reader(&io, NULL, bytes, e) && sound_fields(&io, candidate, refs) && qa_source_save_finish(&io, NULL);
-    qa_source_save_dispose(&io);
-    if (ok) { owner->catalogs = candidate->catalogs; owner->voices = candidate->voices; candidate->catalogs = NULL; candidate->voices = NULL; }
-    qa_sound_captions_destroy(candidate);
-    if (!ok && (!e || e->code == QA_OK)) fail(e, QA_ERROR_FORMAT, "Invalid sound caption continuation");
     return ok;
 }
 
