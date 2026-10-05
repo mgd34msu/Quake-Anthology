@@ -103,7 +103,7 @@ bool frontend_unified_media_q3_assets(frontend_unified_media *owner, const char 
             return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified Q3 registry creation overlaps resource inventory");
         qa_q3_presentation_asset_options options = {.provider = {
             .mounts = row->files, .images = row->images, .materials = row->materials,
-            .family = QA_SCENE_Q3}, .sounds = row->sounds};
+            .family = QA_SCENE_Q3}, .sounds = row->sounds, .movies = row->media};
         if (!qa_q3_presentation_assets_create(&options, &row->q3_assets, error)) return false;
     }
     *out = row->q3_assets; return true;
@@ -350,11 +350,11 @@ bool frontend_unified_media_destroy(frontend_unified_media *owner, qa_error *err
     if ((owner->frontend->resource_inventory && !owner->frontend->source_restoring) ||
         !frontend_unified_media_idle(owner))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified media cleanup requires all captured children to return");
+    for (unified_media_bank *row = owner->banks; row; row = row->next)
+        if (!qa_q3_assets_services_retire(row->q3_assets,error)) return false;
     size_t ordinal = 0;
     for (unified_media_bank *row = owner->banks; row; row = row->next, ++ordinal)
         if (!frontend_unified_material_movies_clear(owner, ordinal, error)) return false;
-    for (unified_media_bank *row = owner->banks; row; row = row->next)
-        if (!qa_q3_assets_services_retire(row->q3_assets,error)) return false;
     /* Registry retirement observes its borrowed map; retire it while the real
      * map and its bank are still alive. Family users retire before this owner. */
     for (unified_media_bank *row = owner->banks; row; row = row->next) {

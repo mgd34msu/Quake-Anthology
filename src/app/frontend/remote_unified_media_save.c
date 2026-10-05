@@ -131,7 +131,7 @@ static bool services_encode(void *context, const qa_q3_presentation_asset_option
     asset_scope *scope = context; uint64_t bank = 0;
     if (!options || !out || !provider_encode(scope, &options->provider, &bank, error) ||
         bank != scope->ordinal + 1 || options->sounds != scope->bank->sounds ||
-        options->zero_sound || options->movies || options->context || options->select ||
+        options->movies != scope->bank->media || options->zero_sound || options->context || options->select ||
         options->model_initialize || options->print)
         return fail(error, "Unified Q3 registry services differ from their real bank owner");
     *out = bank; return true;
@@ -279,7 +279,7 @@ static bool fields(qa_source_save_io *io, frontend_unified_media *owner,
             if (movies && !frontend_unified_material_movies_prepare_restored(owner, i, io->error)) return false;
             if (assets) {
                 qa_q3_presentation_asset_options policy = {.provider =
-                    {admitted, row->images, row->materials, QA_SCENE_Q3}, .sounds = row->sounds};
+                    {admitted, row->images, row->materials, QA_SCENE_Q3}, .sounds = row->sounds, .movies = row->media};
                 if (!qa_q3_presentation_assets_create(&policy, &row->q3_assets, io->error)) return false;
             }
             for (unified_media_bank *prior = owner->banks; prior != row; prior = prior->next)
