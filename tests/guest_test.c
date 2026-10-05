@@ -20,6 +20,7 @@ typedef struct guest_fixture {
     qa_world *world;
     qa_qc_program *program;
     qa_qc_instance *instance;
+    double source_time;
 } guest_fixture;
 
 static bool guest_released(void *context, qa_session *session, qa_actor_record actor,
@@ -41,11 +42,11 @@ static void guest_component_released(void *state, qa_session *session, qa_actor_
  * float(float x) nested = { return increment(x)+x; };
  * bump stores a result while its temporary locals are restored on return.
  * Builtin declarations use the original pr_cmds.c numbers. */
-static qa_qc_program *guest_program(void)
+static qa_qc_program *guest_program(qa_qc_api api)
 {
     qa_error error = {0};
     static const char strings[] = "\0bump\0increment\0nested\0normalize\0vlen\0rint\0"
-        "spawn\0setorigin\0remove\0origin\0mins\0maxs\0size\0fixture.qc\0projected\0";
+        "spawn\0setorigin\0remove\0origin\0mins\0maxs\0size\0fixture.qc\0projected\0random\0";
     static const qa_qc_statement statements[] = {
         {QA_QC_DONE, 0, 0, 0},
         {QA_QC_ADD_F, 32, 28, 32}, {QA_QC_STORE_F, 32, 29, 0}, {QA_QC_RETURN, 32, 0, 0},
@@ -63,7 +64,7 @@ static qa_qc_program *guest_program(void)
         {"nested", 6, 35, 1}, {"normalize", -9, 0, 0}, {"vlen", -12, 0, 0},
         {"rint", -36, 0, 0}, {"spawn", -14, 0, 0},
         {"setorigin", -2, 0, 0}, {"remove", -15, 0, 0},
-        {"projected", 10, 0, 0}
+        {"projected", 10, 0, 0}, {"random", -7, 0, 0}
     };
     const uint32_t statement_count = (uint32_t)(sizeof(statements) / sizeof(*statements));
     const uint32_t function_count = (uint32_t)(sizeof(functions) / sizeof(*functions));
@@ -73,7 +74,7 @@ static qa_qc_program *guest_program(void)
     const uint32_t globals_at = strings_at + (uint32_t)sizeof(strings);
     uint8_t bytes[1024] = {0};
     qa_store_u32le(bytes, 6);
-    qa_store_u32le(bytes + 4, 5927);
+    qa_store_u32le(bytes + 4, api == QA_QC_API_QUAKEWORLD ? 54730u : 5927u);
     const uint32_t sections[][3] = {
         {8, statements_at, statement_count}, {16, fields_at, 0},
         {24, fields_at, 4}, {32, functions_at, function_count},
@@ -287,6 +288,131 @@ static void shared_entities(guest_fixture *fixture, qa_actor_owner owner)
     GAME_CHECK(qa_actors_count(qa_session_actors(fixture->session)) == 0);
     GAME_CHECK(!qa_world_body_read(fixture->world, actor, &body, &error));
     GAME_CHECK(error.code == QA_ERROR_NOT_FOUND);
+}
+
+static double guest_source_time(void *opaque)
+{
+    return ((guest_fixture *)opaque)->source_time;
+}
+
+static void checkpoint_strings(const qa_qc_program *program, qa_qc_profile profile)
+{
+    qa_error error = {0};
+    qa_qc_instance *instance = NULL, *fresh = NULL;
+    GAME_CHECK(qa_qc_instance_create(program,
+        &(qa_qc_options){.profile = profile, .entity_capacity = 4}, &instance, &error));
+    GAME_CHECK(qa_qc_instance_create(program,
+        &(qa_qc_options){.profile = profile, .entity_capacity = 8192}, &fresh, &error));
+    qa_qc_checkpoint *checkpoint = NULL, *decoded = NULL;
+    qa_buffer small = {0}, large = {0};
+    GAME_CHECK(qa_qc_checkpoint_capture(instance, &checkpoint, &error));
+    GAME_CHECK(qa_qc_checkpoint_encode(checkpoint, &small, &error));
+    qa_qc_checkpoint_destroy(checkpoint);
+    GAME_CHECK(qa_qc_checkpoint_capture(fresh, &checkpoint, &error));
+    GAME_CHECK(qa_qc_checkpoint_encode(checkpoint, &large, &error));
+    GAME_CHECK(small.size < 256 && small.size == large.size && !memcmp(small.data, large.data, small.size));
+    qa_buffer_free(&small); qa_buffer_free(&large);
+    qa_qc_checkpoint_destroy(checkpoint);
+    /* Rint preserves its signed-zero result; only the extra call's profile differs. */
+    GAME_CHECK(qa_qc_execute_named(fresh, "rint", 1, &error));
+    GAME_CHECK(qa_qc_execute_named(instance, "rint", 1, &error));
+    GAME_CHECK(qa_qc_execute_named(instance, "rint", 1, &error));
+    GAME_CHECK(qa_qc_checkpoint_capture(instance, &checkpoint, &error));
+    GAME_CHECK(qa_qc_checkpoint_encode(checkpoint, &small, &error));
+    qa_qc_checkpoint_destroy(checkpoint);
+    GAME_CHECK(qa_qc_checkpoint_capture(fresh, &checkpoint, &error));
+    GAME_CHECK(qa_qc_checkpoint_encode(checkpoint, &large, &error));
+    GAME_CHECK(small.size == large.size && !memcmp(small.data, large.data, small.size));
+    qa_buffer_free(&small); qa_buffer_free(&large);
+    qa_qc_checkpoint_destroy(checkpoint);
+    int32_t dynamic, engine;
+    GAME_CHECK(qa_qc_string_allocate(instance, "runtime-only", &dynamic, &error));
+    GAME_CHECK(qa_qc_engine_string(instance, "mutable", "abcdefgh", 65536, &engine, &error));
+    int32_t same;
+    GAME_CHECK(qa_qc_engine_string(instance, "mutable", "x", 65536, &same, &error) && same == engine);
+    GAME_CHECK(qa_qc_set_global_int(instance, 31, dynamic, &error));
+    GAME_CHECK(qa_qc_set_global_int(instance, 33, engine, &error));
+    GAME_CHECK(qa_qc_set_global_float(instance, 32, 0, &error));
+    GAME_CHECK(qa_qc_execute_named(instance, "random", 0, &error));
+    GAME_CHECK(qa_qc_checkpoint_capture(instance, &checkpoint, &error));
+    GAME_CHECK(qa_qc_checkpoint_encode(checkpoint, &small, &error));
+    GAME_CHECK(small.size < 512);
+    GAME_CHECK(qa_qc_checkpoint_decode((qa_bytes){small.data, small.size}, &decoded, &error));
+    GAME_CHECK(qa_qc_checkpoint_restore(fresh, decoded, &error));
+    const char *text;
+    int32_t restored;
+    float value;
+    GAME_CHECK(qa_qc_global_int(fresh, 31, &restored, &error) && restored == dynamic);
+    GAME_CHECK(qa_qc_string(fresh, restored, &text, &error) && !strcmp(text, "runtime-only"));
+    GAME_CHECK(qa_qc_global_int(fresh, 33, &restored, &error) && restored == engine);
+    GAME_CHECK(qa_qc_string(fresh, restored, &text, &error) && !strcmp(text, "x") && !memcmp(text + 2, "cdefgh", 6));
+    GAME_CHECK(qa_qc_global_float(fresh, 32, &value, &error) && value == 0);
+    GAME_CHECK(qa_qc_global_float(fresh, 28, &value, &error) && value == 1);
+    GAME_CHECK(qa_qc_string(fresh, 1, &text, &error) && !strcmp(text, "bump"));
+    float next;
+    GAME_CHECK(qa_qc_execute_named(instance, "random", 0, &error));
+    GAME_CHECK(qa_qc_global_float(instance, 1, &next, &error));
+    GAME_CHECK(qa_qc_execute_named(fresh, "random", 0, &error));
+    GAME_CHECK(qa_qc_global_float(fresh, 1, &value, &error) && value == next);
+    GAME_CHECK(qa_qc_engine_string(fresh, "mutable", "replacement", 65536, &same, &error) && same == engine);
+    GAME_CHECK(qa_qc_string(fresh, same, &text, &error) && !strcmp(text, "replacement"));
+    qa_error truncated = {0};
+    qa_qc_checkpoint *invalid = NULL;
+    GAME_CHECK(!qa_qc_checkpoint_decode((qa_bytes){small.data, small.size - 1}, &invalid, &truncated));
+    GAME_CHECK(truncated.code == QA_ERROR_FORMAT && invalid == NULL);
+    qa_buffer_free(&small);
+    qa_qc_checkpoint_destroy(decoded); qa_qc_checkpoint_destroy(checkpoint);
+    GAME_CHECK(qa_qc_instance_destroy(fresh, &error));
+    GAME_CHECK(qa_qc_instance_destroy(instance, &error));
+}
+
+static void checkpoint_entities(guest_fixture *fixture, qa_actor_owner owner)
+{
+    qa_error error = {0};
+    fixture->source_time = 10;
+    GAME_CHECK(qa_qc_execute_named(fixture->instance, "spawn", 0, &error));
+    int32_t freed, reference;
+    GAME_CHECK(qa_qc_global_int(fixture->instance, 1, &freed, &error));
+    GAME_CHECK(qa_qc_set_global_int(fixture->instance, 4, freed, &error));
+    GAME_CHECK(qa_qc_execute_named(fixture->instance, "remove", 1, &error));
+    GAME_CHECK(qa_qc_execute_named(fixture->instance, "spawn", 0, &error));
+    GAME_CHECK(qa_qc_global_int(fixture->instance, 1, &reference, &error) && reference != freed);
+    qa_actor_id actor, borrowed;
+    GAME_CHECK(qa_qc_reference_actor(fixture->instance, reference, &actor, &error));
+    GAME_CHECK(qa_qc_set_entity_vector(fixture->instance, reference, 0, qa_v3(12, 13, 14), &error));
+    GAME_CHECK(qa_session_allocate(fixture->session, owner, owner, false, 0, &borrowed, &error));
+    GAME_CHECK(qa_world_body_create(fixture->world, borrowed, &(qa_body_state){.origin = {21, 22, 23}}, &error));
+    GAME_CHECK(qa_qc_bind_actor(fixture->instance, 3, borrowed, QA_QC_SLOT_BORROWED, &error));
+    qa_qc_checkpoint *checkpoint = NULL, *decoded = NULL;
+    qa_buffer bytes = {0};
+    GAME_CHECK(qa_qc_checkpoint_capture(fixture->instance, &checkpoint, &error));
+    GAME_CHECK(qa_qc_checkpoint_encode(checkpoint, &bytes, &error) && bytes.size < 1024);
+    GAME_CHECK(qa_qc_checkpoint_decode((qa_bytes){bytes.data, bytes.size}, &decoded, &error));
+    GAME_CHECK(qa_qc_set_entity_vector(fixture->instance, reference, 0, qa_v3(90, 91, 92), &error));
+    GAME_CHECK(qa_qc_checkpoint_restore(fixture->instance, decoded, &error));
+    qa_actor_id restored;
+    GAME_CHECK(qa_qc_reference_actor(fixture->instance, reference, &restored, &error) && qa_actor_id_equal(restored, actor));
+    qa_body_state body;
+    GAME_CHECK(qa_world_body_read(fixture->world, actor, &body, &error) && body.origin.x == 12 && body.origin.y == 13 && body.origin.z == 14);
+    int32_t borrowed_reference;
+    GAME_CHECK(qa_qc_slot_reference(fixture->instance, 3, &borrowed_reference, &error));
+    GAME_CHECK(qa_qc_reference_actor(fixture->instance, borrowed_reference, &restored, &error) && qa_actor_id_equal(restored, borrowed));
+    /* The restored free timestamp still prevents premature source-slot reuse. */
+    fixture->source_time = 10.1;
+    GAME_CHECK(qa_qc_execute_named(fixture->instance, "spawn", 0, &error));
+    int32_t later;
+    GAME_CHECK(qa_qc_global_int(fixture->instance, 1, &later, &error) && later != freed);
+    GAME_CHECK(qa_qc_remove_entity(fixture->instance, later, &error));
+    fixture->source_time = 11;
+    GAME_CHECK(qa_qc_execute_named(fixture->instance, "spawn", 0, &error));
+    GAME_CHECK(qa_qc_global_int(fixture->instance, 1, &later, &error) && later == freed);
+    GAME_CHECK(qa_qc_remove_entity(fixture->instance, later, &error));
+    GAME_CHECK(qa_qc_remove_entity(fixture->instance, reference, &error));
+    GAME_CHECK(qa_qc_unbind_actor(fixture->instance, 3, &error));
+    GAME_CHECK(qa_session_release(fixture->session, borrowed, &error));
+    qa_buffer_free(&bytes);
+    qa_qc_checkpoint_destroy(decoded); qa_qc_checkpoint_destroy(checkpoint);
+    fixture->source_time = 0;
 }
 
 typedef struct live_guest_case {
@@ -519,19 +645,24 @@ void test_guest(void)
         &fixture.session, &error));
     GAME_CHECK(qa_world_create(qa_session_actor_registry(fixture.session),
         fixture.map.geometry, NULL, &fixture.world, &error));
-    fixture.program = guest_program();
+    fixture.program = guest_program(QA_QC_API_NETQUAKE);
     qa_actor_owner owner;
     GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture.session),
         "test:guest", &owner, &error));
     qa_qc_options options = {.profile = QA_QC_NETQUAKE, .entity_capacity = 8,
         .host = {.session = fixture.session, .world = fixture.world, .owner = owner,
-            .default_definition = owner}};
+            .default_definition = owner, .context = &fixture, .source_time_seconds = guest_source_time}};
     GAME_CHECK(qa_qc_instance_create(fixture.program, &options, &fixture.instance, &error));
     qa_component component = {.owner = owner, .clock = qa_clock_defaults(QA_CLOCK_NETQUAKE),
         .state = fixture.instance, .actor_released = guest_component_released};
     GAME_CHECK(qa_session_add(fixture.session, &component, &error));
     execution(fixture.instance, fixture.program);
     shared_entities(&fixture, owner);
+    checkpoint_strings(fixture.program, QA_QC_NETQUAKE);
+    qa_qc_program *qw = guest_program(QA_QC_API_QUAKEWORLD);
+    checkpoint_strings(qw, QA_QC_QUAKEWORLD);
+    qa_qc_program_destroy(qw);
+    checkpoint_entities(&fixture, owner);
     projection_loads(&fixture, owner);
     GAME_CHECK(qa_session_remove(fixture.session, owner, &error));
     GAME_CHECK(qa_qc_instance_destroy(fixture.instance, &error));

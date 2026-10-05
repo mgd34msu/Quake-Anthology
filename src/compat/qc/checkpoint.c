@@ -27,8 +27,10 @@ static bool checkpoint_idle(const qa_qc_instance *instance, qa_error *error)
 void qa_qc_checkpoint_destroy(qa_qc_checkpoint *checkpoint)
 {
     if (checkpoint == NULL) return;
-    free(checkpoint->globals); free(checkpoint->entities); free(checkpoint->slots);
-    free(checkpoint->profiles); free(checkpoint->strings);
+    free(checkpoint->globals); free(checkpoint->fields); free(checkpoint->slots);
+    for (uint32_t i = 0; checkpoint->strings && i < checkpoint->string_count; ++i)
+        free(checkpoint->strings[i].data);
+    free(checkpoint->strings);
     for (uint32_t i = 0; checkpoint->engine_strings && i < checkpoint->engine_count; ++i)
         free(checkpoint->engine_strings[i].name);
     free(checkpoint->engine_strings);
@@ -36,26 +38,110 @@ void qa_qc_checkpoint_destroy(qa_qc_checkpoint *checkpoint)
     free(checkpoint);
 }
 
-static bool checkpoint_allocate(qa_qc_checkpoint *checkpoint,
-                                qa_error *error)
+static bool checkpoint_allocate(qa_qc_checkpoint *checkpoint, qa_error *error)
 {
-    checkpoint->globals = malloc(checkpoint->global_bytes);
-    checkpoint->entities = malloc(checkpoint->entity_bytes);
-    checkpoint->slots = calloc(checkpoint->entity_capacity,
-                               sizeof(*checkpoint->slots));
-    checkpoint->profiles = calloc(checkpoint->function_count,
-                                  sizeof(*checkpoint->profiles));
-    checkpoint->strings = malloc(checkpoint->string_used);
+    checkpoint->globals = calloc(checkpoint->global_count, sizeof(*checkpoint->globals));
+    checkpoint->fields = calloc(checkpoint->field_count, sizeof(*checkpoint->fields));
+    checkpoint->slots = calloc(checkpoint->slot_count, sizeof(*checkpoint->slots));
+    checkpoint->strings = calloc(checkpoint->string_count, sizeof(*checkpoint->strings));
     checkpoint->engine_strings = calloc(checkpoint->engine_count,
                                         sizeof(*checkpoint->engine_strings));
-    if ((checkpoint->global_bytes != 0 && checkpoint->globals == NULL)
-        || (checkpoint->entity_bytes != 0 && checkpoint->entities == NULL)
-        || (checkpoint->entity_capacity != 0 && checkpoint->slots == NULL)
-        || (checkpoint->function_count != 0 && checkpoint->profiles == NULL)
-        || (checkpoint->string_used != 0 && checkpoint->strings == NULL)
+    if ((checkpoint->global_count != 0 && checkpoint->globals == NULL)
+        || (checkpoint->field_count != 0 && checkpoint->fields == NULL)
+        || (checkpoint->slot_count != 0 && checkpoint->slots == NULL)
+        || (checkpoint->string_count != 0 && checkpoint->strings == NULL)
         || (checkpoint->engine_count != 0 && checkpoint->engine_strings == NULL))
-        return qc_fail(error, QA_ERROR_MEMORY, 0,
-                       "Cannot allocate QuakeC checkpoint state");
+        return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot allocate QuakeC checkpoint state");
+    return true;
+}
+
+static uint32_t slot_freed_at(const qa_qc_instance *instance, uint32_t slot)
+{
+    const uint8_t *edict = instance->entities + (size_t)slot * instance->layout.stride_bytes;
+    return qc_load_word(edict, instance->layout.variables_offset_bytes / 4u - 1u);
+}
+
+static bool retained_slot(const qa_qc_instance *instance, uint32_t slot)
+{
+    return instance->slots[slot].kind != QA_QC_SLOT_FREE || slot_freed_at(instance, slot) != 0;
+}
+
+static bool capture_storage(qa_qc_instance *instance, qa_qc_checkpoint *checkpoint,
+                            const qa_actor_registry *actors, qa_error *error)
+{
+    checkpoint->entity_count = instance->entity_count;
+    checkpoint->global_words = instance->program->info.global_words;
+    checkpoint->string_base = instance->program->string_bytes;
+    checkpoint->string_used = instance->strings.used;
+    checkpoint->engine_count = instance->strings.engine_count;
+    checkpoint->random_state = instance->random_state;
+    for (uint32_t word = 0; word < checkpoint->global_words; ++word)
+        if (qc_load_word(instance->globals, word) != qc_load_word(instance->program->initial_globals, word))
+            ++checkpoint->global_count;
+    for (uint32_t slot = 0; slot < checkpoint->entity_count; ++slot) {
+        if (retained_slot(instance, slot)) ++checkpoint->slot_count;
+        if (instance->slots[slot].kind == QA_QC_SLOT_FREE) continue;
+        const uint8_t *fields = qc_entity_words_const(instance, slot);
+        for (uint32_t word = 0; word < checkpoint->layout.field_words; ++word)
+            if (qc_load_word(fields, word) != 0) ++checkpoint->field_count;
+    }
+    /* Keep addressable bytes after a shortened engine string, but not zero
+     * padding or immutable literals. String IDs retain their original offsets. */
+    for (uint32_t offset = checkpoint->string_base; offset < checkpoint->string_used;) {
+        if (instance->strings.bytes[offset++] == 0) continue;
+        ++checkpoint->string_count;
+        while (offset < checkpoint->string_used && instance->strings.bytes[offset] != 0) ++offset;
+    }
+    if (!checkpoint_allocate(checkpoint, error)) return false;
+    uint32_t next = 0;
+    for (uint32_t word = 0; word < checkpoint->global_words; ++word) {
+        uint32_t value = qc_load_word(instance->globals, word);
+        if (value != qc_load_word(instance->program->initial_globals, word))
+            checkpoint->globals[next++] = (qc_saved_word){word, value};
+    }
+    uint32_t next_field = 0;
+    next = 0;
+    for (uint32_t slot = 0; slot < checkpoint->entity_count; ++slot) {
+        qc_slot binding = instance->slots[slot];
+        if (retained_slot(instance, slot)) {
+            qc_saved_slot *saved = &checkpoint->slots[next++];
+            *saved = (qc_saved_slot){.slot = slot, .kind = binding.kind,
+                .freed_at = slot_freed_at(instance, slot), .owner = binding.owner,
+                .source_slot = binding.source_slot};
+            if (binding.kind == QA_QC_SLOT_OWNED || binding.kind == QA_QC_SLOT_BORROWED) {
+                if (actors == NULL || !qa_actors_save_reference(actors, binding.actor, &saved->actor, error))
+                    return false;
+                saved->has_actor = true;
+            }
+        }
+        if (binding.kind == QA_QC_SLOT_FREE) continue;
+        const uint8_t *fields = qc_entity_words_const(instance, slot);
+        for (uint32_t word = 0; word < checkpoint->layout.field_words; ++word) {
+            uint32_t value = qc_load_word(fields, word);
+            if (value != 0)
+                checkpoint->fields[next_field++] = (qc_saved_word){slot * checkpoint->layout.field_words + word, value};
+        }
+    }
+    next = 0;
+    for (uint32_t offset = checkpoint->string_base; offset < checkpoint->string_used;) {
+        if (instance->strings.bytes[offset] == 0) { ++offset; continue; }
+        uint32_t start = offset++;
+        while (offset < checkpoint->string_used && instance->strings.bytes[offset] != 0) ++offset;
+        qc_saved_bytes *range = &checkpoint->strings[next++];
+        range->offset = start;
+        range->size = offset - start;
+        range->data = malloc(range->size);
+        if (range->data == NULL)
+            return qc_fail(error, QA_ERROR_MEMORY, start, "Cannot capture runtime QuakeC strings");
+        memcpy(range->data, instance->strings.bytes + start, range->size);
+    }
+    for (uint32_t i = 0; i < checkpoint->engine_count; ++i) {
+        checkpoint->engine_strings[i] = (qc_engine_string){
+            .name = qc_strdup(instance->strings.engines[i].name, error),
+            .offset = instance->strings.engines[i].offset,
+            .capacity = instance->strings.engines[i].capacity};
+        if (checkpoint->engine_strings[i].name == NULL) return false;
+    }
     return true;
 }
 
@@ -77,12 +163,7 @@ bool qa_qc_checkpoint_capture(qa_qc_instance *instance,
     checkpoint->program = instance->program->info.digest;
     checkpoint->profile = instance->options.profile;
     checkpoint->layout = instance->layout;
-    checkpoint->entity_capacity = instance->options.entity_capacity;
     checkpoint->first_dynamic_slot = instance->options.first_dynamic_slot;
-    checkpoint->global_bytes = instance->program->info.global_words * 4u;
-    checkpoint->entity_bytes = instance->options.entity_capacity
-                             * instance->layout.stride_bytes;
-    checkpoint->function_count = instance->program->info.function_count;
     const qa_actor_registry *actors = instance->options.host.session == NULL
         ? NULL : qa_session_actors(instance->options.host.session);
     if (instance->options.host.checkpoint != NULL) {
@@ -116,39 +197,8 @@ bool qa_qc_checkpoint_capture(qa_qc_instance *instance,
             goto failed;
         }
     }
-    /* Entity inspection during the host callback may refresh canonical fields
-     * through prepare_entity. Snapshot the guest image after those projections. */
-    checkpoint->entity_count = instance->entity_count;
-    checkpoint->string_used = instance->strings.used;
-    checkpoint->engine_count = instance->strings.engine_count;
-    checkpoint->trace_enabled = instance->trace_enabled;
-    checkpoint->random_state = instance->random_state;
-    if (!checkpoint_allocate(checkpoint, error)) goto failed;
-    memcpy(checkpoint->globals, instance->globals, checkpoint->global_bytes);
-    memcpy(checkpoint->entities, instance->entities, checkpoint->entity_bytes);
-    memcpy(checkpoint->profiles, instance->profiles,
-           (size_t)checkpoint->function_count * sizeof(*checkpoint->profiles));
-    memcpy(checkpoint->strings, instance->strings.bytes, checkpoint->string_used);
-    for (uint32_t i = 0; i < checkpoint->engine_count; ++i) {
-        checkpoint->engine_strings[i] = (qc_engine_string){
-            .name = qc_strdup(instance->strings.engines[i].name, error),
-            .offset = instance->strings.engines[i].offset,
-            .capacity = instance->strings.engines[i].capacity
-        };
-        if (checkpoint->engine_strings[i].name == NULL) goto failed;
-    }
-    for (uint32_t slot = 0; slot < checkpoint->entity_capacity; ++slot) {
-        qc_slot binding = instance->slots[slot];
-        qc_saved_slot *saved = &checkpoint->slots[slot];
-        saved->kind = binding.kind;
-        saved->owner = binding.owner;
-        saved->source_slot = binding.source_slot;
-        if (binding.kind != QA_QC_SLOT_OWNED && binding.kind != QA_QC_SLOT_BORROWED)
-            continue;
-        if (actors == NULL || !qa_actors_save_reference(actors, binding.actor,
-                                                        &saved->actor, error)) goto failed;
-        saved->has_actor = true;
-    }
+    /* Snapshot after the host callback has refreshed actual guest projections. */
+    if (!capture_storage(instance, checkpoint, actors, error)) goto failed;
     *out = checkpoint;
     instance->capturing_checkpoint = false;
     instance->checkpointing = false;
@@ -160,70 +210,101 @@ failed:
     return false;
 }
 
-static bool checkpoint_matches(const qa_qc_instance *instance,
-                               const qa_qc_checkpoint *checkpoint,
-                               qa_error *error)
+static bool checkpoint_valid(const qa_qc_checkpoint *checkpoint, qa_error *error)
 {
-    uint32_t globals = instance->program->info.global_words * 4u;
-    uint32_t entities = instance->options.entity_capacity
-                      * instance->layout.stride_bytes;
-    if (!qa_sha256_equal(&instance->program->info.digest, &checkpoint->program)
-        || instance->options.profile != checkpoint->profile
-        || instance->layout.stride_bytes != checkpoint->layout.stride_bytes
-        || instance->layout.variables_offset_bytes
-            != checkpoint->layout.variables_offset_bytes
-        || instance->layout.field_words != checkpoint->layout.field_words
-        || instance->options.entity_capacity != checkpoint->entity_capacity
-        || instance->options.first_dynamic_slot
-            != checkpoint->first_dynamic_slot
-        || checkpoint->entity_count == 0
-        || checkpoint->entity_count < checkpoint->first_dynamic_slot
-        || checkpoint->entity_count > checkpoint->entity_capacity
-        || checkpoint->global_bytes != globals
-        || checkpoint->entity_bytes != entities
-        || checkpoint->function_count != instance->program->info.function_count
-        || checkpoint->string_used < instance->program->string_bytes
+    if (checkpoint->profile > QA_QC_RERELEASE || checkpoint->entity_count == 0
+        || checkpoint->first_dynamic_slot == 0
+        || checkpoint->first_dynamic_slot > checkpoint->entity_count
+        || checkpoint->global_words < QC_RESERVED_WORDS
+        || checkpoint->layout.stride_bytes == 0 || (checkpoint->layout.stride_bytes & 3u) != 0
+        || checkpoint->layout.variables_offset_bytes < 8u
+        || (checkpoint->layout.variables_offset_bytes & 3u) != 0
+        || checkpoint->layout.field_words == 0
+        || checkpoint->layout.variables_offset_bytes + (uint64_t)checkpoint->layout.field_words * 4u
+            > checkpoint->layout.stride_bytes
+        || (uint64_t)checkpoint->entity_count * checkpoint->layout.stride_bytes > (uint32_t)INT32_MAX
+        || checkpoint->string_base == 0 || checkpoint->string_base > checkpoint->string_used
         || checkpoint->string_used > (uint32_t)INT32_MAX
-        || checkpoint->strings == NULL
-        || (checkpoint->engine_count != 0
-            && checkpoint->engine_strings == NULL))
-        return qc_fail(error, QA_ERROR_FORMAT, 0,
-                       "QuakeC checkpoint does not match this instance");
-    if (checkpoint->slots == NULL || checkpoint->globals == NULL
-        || checkpoint->entities == NULL || checkpoint->profiles == NULL)
-        return qc_fail(error, QA_ERROR_FORMAT, 0,
-                       "QuakeC checkpoint storage is incomplete");
-    if (memcmp(checkpoint->strings, instance->program->strings,
-               instance->program->string_bytes) != 0)
-        return qc_fail(error, QA_ERROR_FORMAT, 0,
-                       "QuakeC checkpoint changed immutable program strings");
-    for (uint32_t i = 0; i < checkpoint->engine_count; ++i)
-        if (checkpoint->engine_strings[i].offset
-            < instance->program->string_bytes)
-            return qc_fail(error, QA_ERROR_FORMAT,
-                           checkpoint->engine_strings[i].offset,
-                           "QuakeC engine string overlaps program strings");
+        || checkpoint->slot_count == 0 || checkpoint->slot_count > checkpoint->entity_count
+        || checkpoint->global_count > checkpoint->global_words
+        || checkpoint->field_count > (uint64_t)checkpoint->entity_count * checkpoint->layout.field_words
+        || checkpoint->slots == NULL
+        || (checkpoint->global_count && checkpoint->globals == NULL)
+        || (checkpoint->field_count && checkpoint->fields == NULL)
+        || (checkpoint->string_count && checkpoint->strings == NULL)
+        || (checkpoint->engine_count && checkpoint->engine_strings == NULL)
+        || (checkpoint->host.size && checkpoint->host.data == NULL))
+        return qc_fail(error, QA_ERROR_FORMAT, 0, "Invalid QuakeC checkpoint state");
+    for (uint32_t i = 0; i < checkpoint->global_count; ++i)
+        if (checkpoint->globals[i].word >= checkpoint->global_words
+            || (i && checkpoint->globals[i - 1u].word >= checkpoint->globals[i].word))
+            return qc_fail(error, QA_ERROR_FORMAT, i, "Invalid checkpoint global word");
+    for (uint32_t i = 0; i < checkpoint->slot_count; ++i) {
+        const qc_saved_slot *slot = &checkpoint->slots[i];
+        if (slot->slot >= checkpoint->entity_count || slot->kind > QA_QC_SLOT_BORROWED
+            || (i && checkpoint->slots[i - 1u].slot >= slot->slot)
+            || (i == 0 && (slot->slot != 0 || slot->kind != QA_QC_SLOT_WORLD))
+            || (i != 0 && slot->kind == QA_QC_SLOT_WORLD)
+            || ((slot->kind == QA_QC_SLOT_OWNED || slot->kind == QA_QC_SLOT_BORROWED) != slot->has_actor)
+            || (!slot->has_actor && (slot->owner || slot->source_slot || slot->actor.generation || slot->actor.slot))
+            || (slot->kind == QA_QC_SLOT_FREE && slot->freed_at == 0))
+            return qc_fail(error, QA_ERROR_FORMAT, i, "Invalid checkpoint actor slot");
+    }
+    uint32_t row = 0;
+    for (uint32_t i = 0; i < checkpoint->field_count; ++i) {
+        uint32_t slot = checkpoint->fields[i].word / checkpoint->layout.field_words;
+        while (row < checkpoint->slot_count && checkpoint->slots[row].slot < slot) ++row;
+        if (row == checkpoint->slot_count || checkpoint->slots[row].slot != slot
+            || checkpoint->slots[row].kind == QA_QC_SLOT_FREE || checkpoint->fields[i].value == 0
+            || (i && checkpoint->fields[i - 1u].word >= checkpoint->fields[i].word))
+            return qc_fail(error, QA_ERROR_FORMAT, i, "Invalid checkpoint edict word");
+    }
+    uint32_t end = checkpoint->string_base;
+    for (uint32_t i = 0; i < checkpoint->string_count; ++i) {
+        const qc_saved_bytes *range = &checkpoint->strings[i];
+        if (range->size == 0 || range->offset < end || range->offset > checkpoint->string_used
+            || range->size > checkpoint->string_used - range->offset || range->data == NULL
+            || memchr(range->data, 0, range->size) != NULL)
+            return qc_fail(error, QA_ERROR_FORMAT, i, "Invalid checkpoint runtime string range");
+        end = range->offset + range->size;
+    }
     return true;
 }
 
-static bool stage_strings(const qa_qc_checkpoint *checkpoint, qc_strings *out,
-                          bool quakeworld, qa_error *error)
+static bool checkpoint_matches(const qa_qc_instance *instance,
+                               const qa_qc_checkpoint *checkpoint, qa_error *error)
 {
-    if (checkpoint->strings[0] != 0)
-        return qc_fail(error, QA_ERROR_FORMAT, 0,
-                       "Checkpoint QuakeC string zero is not empty");
+    if (!checkpoint_valid(checkpoint, error)) return false;
+    if (!qa_sha256_equal(&instance->program->info.digest, &checkpoint->program)
+        || instance->options.profile != checkpoint->profile
+        || instance->layout.stride_bytes != checkpoint->layout.stride_bytes
+        || instance->layout.variables_offset_bytes != checkpoint->layout.variables_offset_bytes
+        || instance->layout.field_words != checkpoint->layout.field_words
+        || instance->options.first_dynamic_slot != checkpoint->first_dynamic_slot
+        || checkpoint->entity_count > instance->options.entity_capacity
+        || checkpoint->global_words != instance->program->info.global_words
+        || checkpoint->string_base != instance->program->string_bytes)
+        return qc_fail(error, QA_ERROR_FORMAT, 0, "QuakeC checkpoint does not match this instance");
+    return true;
+}
+
+static bool stage_strings(const qa_qc_instance *instance,
+                          const qa_qc_checkpoint *checkpoint, qc_strings *out,
+                          qa_error *error)
+{
+    bool quakeworld = instance->program->info.api == QA_QC_API_QUAKEWORLD;
     if (quakeworld && checkpoint->engine_count > 1023u)
-        return qc_fail(error, QA_ERROR_FORMAT, 0,
-                       "Checkpoint exceeds QuakeWorld engine strings");
-    uint32_t capacity = checkpoint->string_used < 4096u ? 4096u
-                                                        : checkpoint->string_used;
-    out->bytes = calloc(capacity, 1u);
-    if (out->bytes == NULL)
-        return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot restore QuakeC strings");
-    out->capacity = capacity;
-    out->used = checkpoint->string_used;
-    out->quakeworld = quakeworld;
-    memcpy(out->bytes, checkpoint->strings, checkpoint->string_used);
+        return qc_fail(error, QA_ERROR_FORMAT, 0, "Checkpoint exceeds QuakeWorld engine strings");
+    if (!qc_strings_create(out, (qa_bytes){instance->program->strings, instance->program->string_bytes},
+                            quakeworld, error)) return false;
+    uint32_t offset;
+    if (!qc_strings_reserve(out, checkpoint->string_used - checkpoint->string_base, &offset, error)) {
+        qc_strings_destroy(out); return false;
+    }
+    for (uint32_t i = 0; i < checkpoint->string_count; ++i) {
+        const qc_saved_bytes *range = &checkpoint->strings[i];
+        memcpy(out->bytes + range->offset, range->data, range->size);
+    }
     if (checkpoint->engine_count != 0) {
         out->engines = calloc(checkpoint->engine_count, sizeof(*out->engines));
         if (out->engines == NULL) {
@@ -237,9 +318,10 @@ static bool stage_strings(const qa_qc_checkpoint *checkpoint, qc_strings *out,
         const qc_engine_string *source = &checkpoint->engine_strings[i];
         if (source->name == NULL || source->name[0] == '\0'
             || source->capacity == 0
+            || source->offset < checkpoint->string_base
             || source->offset > checkpoint->string_used
             || source->capacity > checkpoint->string_used - source->offset
-            || memchr(checkpoint->strings + source->offset, 0,
+            || memchr(out->bytes + source->offset, 0,
                       source->capacity) == NULL) {
             qc_strings_destroy(out);
             return qc_fail(error, QA_ERROR_FORMAT, source->offset,
@@ -269,68 +351,38 @@ static bool stage_strings(const qa_qc_checkpoint *checkpoint, qc_strings *out,
 }
 
 static bool stage_slots(qa_qc_instance *instance,
-                        const qa_qc_checkpoint *checkpoint,
-                        qc_slot **out, qa_error *error)
+                        const qa_qc_checkpoint *checkpoint, qc_slot **out, qa_error *error)
 {
-    qc_slot *slots = calloc(checkpoint->entity_capacity, sizeof(*slots));
+    qc_slot *slots = calloc(instance->options.entity_capacity, sizeof(*slots));
     if (slots == NULL)
         return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot restore QuakeC actor map");
     const qa_actor_registry *actors = instance->options.host.session == NULL
         ? NULL : qa_session_actors(instance->options.host.session);
-    for (uint32_t slot = 0; slot < checkpoint->entity_capacity; ++slot) {
-        const qc_saved_slot *saved = &checkpoint->slots[slot];
-        const uint8_t *edict = checkpoint->entities
-            + (size_t)slot * checkpoint->layout.stride_bytes;
-        uint32_t free_flag = qa_load_u32le(edict);
-        bool expected_free = slot != 0 && slot < checkpoint->entity_count
-                          && saved->kind == QA_QC_SLOT_FREE;
-        if (free_flag > 1u || (free_flag != 0u) != expected_free) goto invalid;
-        if (slot >= checkpoint->entity_count
-            && saved->kind != QA_QC_SLOT_FREE) goto invalid;
-        if (slot == 0) {
-            if (saved->kind != QA_QC_SLOT_WORLD || saved->has_actor
-                || saved->owner != 0 || saved->source_slot != 0
-                || saved->actor.generation != 0
-                || saved->actor.slot != 0) goto invalid;
-            slots[slot].kind = QA_QC_SLOT_WORLD;
+    for (uint32_t i = 0; i < checkpoint->slot_count; ++i) {
+        const qc_saved_slot *saved = &checkpoint->slots[i];
+        uint32_t slot = saved->slot;
+        if (saved->kind == QA_QC_SLOT_WORLD || saved->kind == QA_QC_SLOT_FREE) {
+            slots[slot].kind = saved->kind;
             continue;
         }
-        if (saved->kind == QA_QC_SLOT_FREE) {
-            if (saved->has_actor || saved->owner != 0
-                || saved->source_slot != 0 || saved->actor.generation != 0
-                || saved->actor.slot != 0) goto invalid;
-            continue;
-        }
-        if (saved->kind != QA_QC_SLOT_OWNED && saved->kind != QA_QC_SLOT_BORROWED)
-            goto invalid;
-        if (!saved->has_actor || actors == NULL) goto missing;
+        if (actors == NULL) goto missing;
         const qa_actor_record *record;
         if (saved->kind == QA_QC_SLOT_OWNED) {
-            if (saved->owner != instance->options.host.owner
-                || saved->source_slot != slot) goto invalid;
-            record = qa_actors_at_source(actors, instance->options.host.owner,
-                                         saved->source_slot);
+            if (saved->owner != instance->options.host.owner || saved->source_slot != slot) goto invalid;
+            record = qa_actors_at_source(actors, instance->options.host.owner, saved->source_slot);
         } else record = qa_actors_resolve_saved(actors, saved->actor);
         if (record == NULL) goto missing;
         if (record->owner != saved->owner
-            || (record->has_source ? record->source_slot : 0u)
-                != saved->source_slot
-            || (saved->kind == QA_QC_SLOT_OWNED
-                && (!record->has_source || record->source_slot != slot)))
+            || (record->has_source ? record->source_slot : 0u) != saved->source_slot
+            || (saved->kind == QA_QC_SLOT_OWNED && (!record->has_source || record->source_slot != slot)))
             goto invalid;
-        const qa_actor_record *saved_record = qa_actors_resolve_saved(
-            actors, saved->actor);
-        if (saved_record == NULL
-            || !qa_actor_id_equal(saved_record->id, record->id)) goto missing;
+        const qa_actor_record *saved_record = qa_actors_resolve_saved(actors, saved->actor);
+        if (saved_record == NULL || !qa_actor_id_equal(saved_record->id, record->id)) goto missing;
         for (uint32_t previous = 1; previous < slot; ++previous)
-            if ((slots[previous].kind == QA_QC_SLOT_OWNED
-                 || slots[previous].kind == QA_QC_SLOT_BORROWED)
-                && qa_actor_id_equal(slots[previous].actor, record->id))
-                goto invalid;
+            if ((slots[previous].kind == QA_QC_SLOT_OWNED || slots[previous].kind == QA_QC_SLOT_BORROWED)
+                && qa_actor_id_equal(slots[previous].actor, record->id)) goto invalid;
         slots[slot] = (qc_slot){saved->kind, record->id, record->owner,
-                                saved->kind == QA_QC_SLOT_OWNED
-                                    ? saved->source_slot
-                                    : (record->has_source ? record->source_slot : 0)};
+            saved->kind == QA_QC_SLOT_OWNED ? saved->source_slot : (record->has_source ? record->source_slot : 0)};
     }
     *out = slots;
     return true;
@@ -339,8 +391,7 @@ invalid:
     return qc_fail(error, QA_ERROR_FORMAT, 0, "Invalid QuakeC checkpoint actor map");
 missing:
     free(slots);
-    return qc_fail(error, QA_ERROR_NOT_FOUND, 0,
-                   "QuakeC checkpoint actor has not been restored");
+    return qc_fail(error, QA_ERROR_NOT_FOUND, 0, "QuakeC checkpoint actor has not been restored");
 }
 
 static bool staged_owned_actor(const qc_slot *slots, uint32_t count,
@@ -384,8 +435,7 @@ bool qa_qc_checkpoint_restore(qa_qc_instance *instance,
     instance->checkpointing = true;
     qc_strings strings = {0};
     qc_slot *slots = NULL;
-    if (!stage_strings(checkpoint, &strings,
-            instance->program->info.api == QA_QC_API_QUAKEWORLD, error)
+    if (!stage_strings(instance, checkpoint, &strings, error)
         || !stage_slots(instance, checkpoint, &slots, error)) {
         qc_strings_destroy(&strings); free(slots);
         instance->checkpointing = false;
@@ -411,19 +461,30 @@ bool qa_qc_checkpoint_restore(qa_qc_instance *instance,
     }
     free(slots);
     slots = verified_slots;
-    memcpy(instance->globals, checkpoint->globals, checkpoint->global_bytes);
-    memcpy(instance->entities, checkpoint->entities, checkpoint->entity_bytes);
-    memcpy(instance->profiles, checkpoint->profiles,
-           (size_t)checkpoint->function_count * sizeof(*checkpoint->profiles));
-    memcpy(instance->slots, slots,
-           (size_t)checkpoint->entity_capacity * sizeof(*slots));
+    memcpy(instance->globals, instance->program->initial_globals, (size_t)checkpoint->global_words * 4u);
+    for (uint32_t i = 0; i < checkpoint->global_count; ++i)
+        qc_store_word(instance->globals, checkpoint->globals[i].word, checkpoint->globals[i].value);
+    memset(instance->entities, 0, (size_t)instance->options.entity_capacity * instance->layout.stride_bytes);
+    for (uint32_t slot = 1; slot < checkpoint->entity_count; ++slot)
+        qa_store_u32le(instance->entities + (size_t)slot * instance->layout.stride_bytes,
+                       slots[slot].kind == QA_QC_SLOT_FREE ? 1u : 0u);
+    for (uint32_t i = 0; i < checkpoint->slot_count; ++i) {
+        const qc_saved_slot *saved = &checkpoint->slots[i];
+        qc_store_word(instance->entities + (size_t)saved->slot * instance->layout.stride_bytes,
+            instance->layout.variables_offset_bytes / 4u - 1u, saved->freed_at);
+    }
+    for (uint32_t i = 0; i < checkpoint->field_count; ++i) {
+        qc_saved_word field = checkpoint->fields[i];
+        qc_store_word(qc_entity_words(instance, field.word / checkpoint->layout.field_words),
+            field.word % checkpoint->layout.field_words, field.value);
+    }
+    memcpy(instance->slots, slots, (size_t)instance->options.entity_capacity * sizeof(*slots));
     free(slots);
     qc_strings_destroy(&instance->strings);
     instance->strings = strings;
     strings = (qc_strings){0};
     instance->entity_count = checkpoint->entity_count;
     qc_actor_slots_rebuild(instance);
-    instance->trace_enabled = checkpoint->trace_enabled;
     instance->random_state = checkpoint->random_state;
     /* Coupled adapters rebuild from the restored guest image. This order also
      * matches the QVM/QuakeC continuation contract. A callback failure leaves
@@ -479,19 +540,85 @@ bool qa_qc_checkpoint_restore(qa_qc_instance *instance,
     return true;
 }
 
-static bool write_bytes(qa_source_save_io *writer, const void *data, size_t size)
+/* The same record traversal writes and reads the sole checkpoint format. */
+static bool checkpoint_io(qa_source_save_io *io, qa_qc_checkpoint *checkpoint)
 {
-    return qa_source_save_bytes(writer, (void *)data, size);
-}
-
-static bool write_u32(qa_source_save_io *writer, uint32_t value)
-{
-    return qa_source_save_u32(writer, &value);
-}
-
-static bool write_u64(qa_source_save_io *writer, uint64_t value)
-{
-    return qa_source_save_u64(writer, &value);
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint32_t magic = QC_CHECKPOINT_MAGIC, profile = (uint32_t)checkpoint->profile;
+    size_t host_size = checkpoint->host.size;
+    if (!qa_source_save_u32(io, &magic)) return false;
+    if (magic != QC_CHECKPOINT_MAGIC)
+        return qc_fail(io->error, QA_ERROR_FORMAT, 0, "Invalid QuakeC checkpoint header");
+    if (!qa_source_save_bytes(io, checkpoint->program.bytes, sizeof(checkpoint->program.bytes))
+        || !qa_source_save_u32(io, &profile)
+        || !qa_source_save_u32(io, &checkpoint->layout.stride_bytes)
+        || !qa_source_save_u32(io, &checkpoint->layout.variables_offset_bytes)
+        || !qa_source_save_u32(io, &checkpoint->layout.field_words)
+        || !qa_source_save_u32(io, &checkpoint->entity_count)
+        || !qa_source_save_u32(io, &checkpoint->first_dynamic_slot)
+        || !qa_source_save_u32(io, &checkpoint->global_words)
+        || !qa_source_save_u32(io, &checkpoint->global_count)
+        || !qa_source_save_u32(io, &checkpoint->field_count)
+        || !qa_source_save_u32(io, &checkpoint->slot_count)
+        || !qa_source_save_u32(io, &checkpoint->string_base)
+        || !qa_source_save_u32(io, &checkpoint->string_used)
+        || !qa_source_save_u32(io, &checkpoint->string_count)
+        || !qa_source_save_u32(io, &checkpoint->engine_count)
+        || !qa_source_save_count(io, &host_size, UINT32_MAX)
+        || !qa_source_save_u32(io, &checkpoint->random_state)) return false;
+    if (reading) {
+        checkpoint->profile = (qa_qc_profile)profile;
+        uint64_t minimum = (uint64_t)checkpoint->global_count * 8u
+            + (uint64_t)checkpoint->field_count * 8u + (uint64_t)checkpoint->slot_count * 33u
+            + (uint64_t)checkpoint->string_count * 8u + (uint64_t)checkpoint->engine_count * 12u
+            + host_size;
+        if (profile > QA_QC_RERELEASE || minimum > io->input.size - io->offset)
+            return qc_fail(io->error, QA_ERROR_FORMAT, io->offset, "Invalid QuakeC checkpoint sizes");
+        if (!checkpoint_allocate(checkpoint, io->error)) return false;
+    }
+    for (uint32_t i = 0; i < checkpoint->global_count; ++i)
+        if (!qa_source_save_u32(io, &checkpoint->globals[i].word)
+            || !qa_source_save_u32(io, &checkpoint->globals[i].value)) return false;
+    for (uint32_t i = 0; i < checkpoint->field_count; ++i)
+        if (!qa_source_save_u32(io, &checkpoint->fields[i].word)
+            || !qa_source_save_u32(io, &checkpoint->fields[i].value)) return false;
+    for (uint32_t i = 0; i < checkpoint->slot_count; ++i) {
+        qc_saved_slot *slot = &checkpoint->slots[i];
+        uint32_t kind = (uint32_t)slot->kind;
+        if (!qa_source_save_u32(io, &slot->slot) || !qa_source_save_u32(io, &slot->freed_at)
+            || !qa_source_save_u32(io, &kind) || !qa_source_save_u32(io, &slot->owner)
+            || !qa_source_save_u32(io, &slot->source_slot) || !qa_source_save_bool(io, &slot->has_actor)
+            || !qa_source_save_u64(io, &slot->actor.generation)
+            || !qa_source_save_u32(io, &slot->actor.slot)) return false;
+        if (reading) slot->kind = (qa_qc_slot_kind)kind;
+    }
+    for (uint32_t i = 0; i < checkpoint->string_count; ++i) {
+        qc_saved_bytes *range = &checkpoint->strings[i];
+        if (!qa_source_save_u32(io, &range->offset) || !qa_source_save_u32(io, &range->size)) return false;
+        if (reading) {
+            qa_bytes bytes;
+            if (!qa_source_save_span(io, range->size, &bytes)) return false;
+            range->data = malloc(range->size);
+            if (range->size && range->data == NULL)
+                return qc_fail(io->error, QA_ERROR_MEMORY, io->offset, "Cannot decode runtime QuakeC strings");
+            if (range->size) memcpy(range->data, bytes.data, range->size);
+        } else if (!qa_source_save_bytes(io, range->data, range->size)) return false;
+    }
+    for (uint32_t i = 0; i < checkpoint->engine_count; ++i) {
+        qc_engine_string *entry = &checkpoint->engine_strings[i];
+        if (!qa_source_save_u32(io, &entry->offset) || !qa_source_save_u32(io, &entry->capacity)
+            || !qa_source_save_owned_text(io, &entry->name)) return false;
+    }
+    if (reading) {
+        qa_bytes bytes;
+        if (!qa_source_save_span(io, host_size, &bytes)) return false;
+        checkpoint->host.data = malloc(host_size);
+        if (host_size && checkpoint->host.data == NULL)
+            return qc_fail(io->error, QA_ERROR_MEMORY, io->offset, "Cannot decode QuakeC host state");
+        checkpoint->host.size = host_size;
+        if (host_size) memcpy(checkpoint->host.data, bytes.data, host_size);
+    } else if (!qa_source_save_bytes(io, checkpoint->host.data, host_size)) return false;
+    return true;
 }
 
 bool qa_qc_checkpoint_encode(const qa_qc_checkpoint *checkpoint,
@@ -499,174 +626,29 @@ bool qa_qc_checkpoint_encode(const qa_qc_checkpoint *checkpoint,
 {
     if (checkpoint == NULL || out == NULL)
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid QuakeC checkpoint output");
+    if (!checkpoint_valid(checkpoint, error)) return false;
     qa_source_save_io writer = {0};
     if (!qa_source_save_writer(&writer, NULL, error)) return false;
-#define W32(value_) do { if (!write_u32(&writer, (uint32_t)(value_))) goto failed; } while (0)
-    W32(QC_CHECKPOINT_MAGIC);
-    if (!write_bytes(&writer, checkpoint->program.bytes,
-                     sizeof(checkpoint->program.bytes))) goto failed;
-    W32(checkpoint->profile); W32(checkpoint->layout.stride_bytes);
-    W32(checkpoint->layout.variables_offset_bytes); W32(checkpoint->layout.field_words);
-    W32(checkpoint->entity_capacity); W32(checkpoint->entity_count);
-    W32(checkpoint->first_dynamic_slot);
-    W32(checkpoint->global_bytes); W32(checkpoint->entity_bytes);
-    W32(checkpoint->function_count); W32(checkpoint->string_used);
-    W32(checkpoint->engine_count); W32(checkpoint->host.size);
-    W32(checkpoint->random_state); W32(checkpoint->trace_enabled ? 1u : 0u);
-    for (uint32_t i = 0; i < checkpoint->entity_capacity; ++i) {
-        const qc_saved_slot *slot = &checkpoint->slots[i];
-        W32(slot->kind); W32(slot->owner); W32(slot->source_slot);
-        W32(slot->has_actor ? 1u : 0u);
-        if (!write_u64(&writer, slot->actor.generation)) goto failed;
-        W32(slot->actor.slot);
-    }
-    for (uint32_t i = 0; i < checkpoint->function_count; ++i)
-        if (!write_u64(&writer, checkpoint->profiles[i])) goto failed;
-    if (!write_bytes(&writer, checkpoint->globals, checkpoint->global_bytes)
-        || !write_bytes(&writer, checkpoint->entities, checkpoint->entity_bytes)
-        || !write_bytes(&writer, checkpoint->strings, checkpoint->string_used)) goto failed;
-    for (uint32_t i = 0; i < checkpoint->engine_count; ++i) {
-        const qc_engine_string *entry = &checkpoint->engine_strings[i];
-        size_t length = strlen(entry->name);
-        if (length > UINT32_MAX) { qc_fail(error, QA_ERROR_MEMORY, writer.output.size, "Engine string name is too long"); goto failed; }
-        W32(entry->offset); W32(entry->capacity); W32(length);
-        if (!write_bytes(&writer, entry->name, length)) goto failed;
-    }
-    if (!write_bytes(&writer, checkpoint->host.data, checkpoint->host.size)) goto failed;
-    if (!qa_source_save_finish(&writer, out)) goto failed;
+    /* WRITE primitives do not mutate the checkpoint; one traversal owns both directions. */
+    bool ok = checkpoint_io(&writer, (qa_qc_checkpoint *)checkpoint)
+        && qa_source_save_finish(&writer, out);
     qa_source_save_dispose(&writer);
-#undef W32
-    return true;
-failed:
-#undef W32
-    qa_source_save_dispose(&writer);
-    return false;
+    return ok;
 }
 
-static bool read_bytes(qa_source_save_io *reader, size_t size, const uint8_t **out)
+bool qa_qc_checkpoint_decode(qa_bytes bytes, qa_qc_checkpoint **out, qa_error *error)
 {
-    qa_bytes bytes;
-    if (!qa_source_save_span(reader, size, &bytes)) return false;
-    *out = bytes.data;
-    return true;
-}
-
-bool qa_qc_checkpoint_decode(qa_bytes bytes, qa_qc_checkpoint **out,
-                             qa_error *error)
-{
-    if (out == NULL || (bytes.size != 0 && bytes.data == NULL))
+    if (out == NULL || (bytes.size && bytes.data == NULL))
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid QuakeC checkpoint input");
     qa_source_save_io reader = {0};
     if (!qa_source_save_reader(&reader, NULL, bytes, error)) return false;
-    uint32_t magic, profile, trace, host_size;
     qa_qc_checkpoint *checkpoint = calloc(1, sizeof(*checkpoint));
     if (checkpoint == NULL)
         return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot allocate QuakeC checkpoint");
-#define R32(target_) do { if (!qa_source_save_u32(&reader, &(target_))) goto failed; } while (0)
-    R32(magic);
-    if (magic != QC_CHECKPOINT_MAGIC) {
-        qc_fail(error, QA_ERROR_FORMAT, 0, "Unsupported QuakeC checkpoint header"); goto failed;
-    }
-    if (!qa_source_save_bytes(&reader, checkpoint->program.bytes,
-                     sizeof(checkpoint->program.bytes))) goto failed;
-    R32(profile); R32(checkpoint->layout.stride_bytes);
-    R32(checkpoint->layout.variables_offset_bytes); R32(checkpoint->layout.field_words);
-    R32(checkpoint->entity_capacity); R32(checkpoint->entity_count);
-    R32(checkpoint->first_dynamic_slot);
-    R32(checkpoint->global_bytes); R32(checkpoint->entity_bytes);
-    R32(checkpoint->function_count); R32(checkpoint->string_used);
-    R32(checkpoint->engine_count); R32(host_size);
-    R32(checkpoint->random_state); R32(trace);
-    if (profile > QA_QC_RERELEASE || trace > 1u
-        || checkpoint->entity_capacity == 0
-        || checkpoint->entity_count == 0
-        || checkpoint->entity_count > checkpoint->entity_capacity
-        || checkpoint->first_dynamic_slot == 0
-        || checkpoint->first_dynamic_slot > checkpoint->entity_count
-        || checkpoint->global_bytes < QC_RESERVED_WORDS * 4u
-        || (checkpoint->global_bytes & 3u) != 0
-        || checkpoint->function_count == 0 || checkpoint->string_used == 0
-        || checkpoint->string_used > (uint32_t)INT32_MAX
-        || checkpoint->layout.stride_bytes == 0
-        || (checkpoint->layout.stride_bytes & 3u) != 0
-        || checkpoint->layout.variables_offset_bytes < 8u
-        || (checkpoint->layout.variables_offset_bytes & 3u) != 0
-        || checkpoint->layout.field_words == 0
-        || checkpoint->layout.variables_offset_bytes
-            + (uint64_t)checkpoint->layout.field_words * 4u
-            > checkpoint->layout.stride_bytes
-        || (uint64_t)checkpoint->entity_capacity * checkpoint->layout.stride_bytes
-            != checkpoint->entity_bytes
-        || checkpoint->global_bytes > bytes.size
-        || checkpoint->entity_bytes > bytes.size
-        || checkpoint->string_used > bytes.size
-        || checkpoint->engine_count > bytes.size / 12u
-        || host_size > bytes.size) {
-        qc_fail(error, QA_ERROR_FORMAT, reader.offset, "Invalid QuakeC checkpoint sizes"); goto failed;
-    }
-    uint64_t minimum = (uint64_t)checkpoint->entity_capacity * 28u
-        + (uint64_t)checkpoint->function_count * 8u
-        + checkpoint->global_bytes + checkpoint->entity_bytes
-        + checkpoint->string_used + (uint64_t)checkpoint->engine_count * 12u
-        + host_size;
-    if (minimum > bytes.size - reader.offset) {
-        qc_fail(error, QA_ERROR_FORMAT, reader.offset,
-                "Truncated QuakeC checkpoint payload"); goto failed;
-    }
-    checkpoint->profile = (qa_qc_profile)profile;
-    checkpoint->trace_enabled = trace != 0;
-    if (!checkpoint_allocate(checkpoint, error)) goto failed;
-    for (uint32_t i = 0; i < checkpoint->entity_capacity; ++i) {
-        qc_saved_slot *slot = &checkpoint->slots[i];
-        uint32_t kind, has_actor;
-        R32(kind); R32(slot->owner); R32(slot->source_slot); R32(has_actor);
-        if (!qa_source_save_u64(&reader, &slot->actor.generation)) goto failed;
-        R32(slot->actor.slot);
-        if (kind > QA_QC_SLOT_BORROWED || has_actor > 1u) {
-            qc_fail(error, QA_ERROR_FORMAT, reader.offset, "Invalid checkpoint actor slot"); goto failed;
-        }
-        slot->kind = (qa_qc_slot_kind)kind; slot->has_actor = has_actor != 0;
-    }
-    for (uint32_t i = 0; i < checkpoint->function_count; ++i)
-        if (!qa_source_save_u64(&reader, &checkpoint->profiles[i])) goto failed;
-    if (!qa_source_save_bytes(&reader, checkpoint->globals, checkpoint->global_bytes)
-        || !qa_source_save_bytes(&reader, checkpoint->entities, checkpoint->entity_bytes)
-        || !qa_source_save_bytes(&reader, checkpoint->strings, checkpoint->string_used)) goto failed;
-    for (uint32_t i = 0; i < checkpoint->engine_count; ++i) {
-        qc_engine_string *entry = &checkpoint->engine_strings[i];
-        uint32_t length;
-        R32(entry->offset); R32(entry->capacity); R32(length);
-        const uint8_t *name;
-        size_t allocation = (size_t)length + 1u;
-        if (length == 0 || allocation <= (size_t)length) {
-            qc_fail(error, QA_ERROR_FORMAT, reader.offset,
-                    "Invalid checkpoint engine name length"); goto failed;
-        }
-        if (!read_bytes(&reader, length, &name)) goto failed;
-        if (memchr(name, 0, length) != NULL) {
-            qc_fail(error, QA_ERROR_FORMAT, reader.offset - length,
-                    "Checkpoint engine name contains NUL"); goto failed;
-        }
-        entry->name = malloc(allocation);
-        if (entry->name == NULL) {
-            qc_fail(error, QA_ERROR_MEMORY, reader.offset, "Cannot decode engine name"); goto failed;
-        }
-        memcpy(entry->name, name, length); entry->name[length] = '\0';
-    }
-    if (host_size != 0) {
-        checkpoint->host.data = malloc(host_size);
-        if (checkpoint->host.data == NULL) {
-            qc_fail(error, QA_ERROR_MEMORY, reader.offset, "Cannot decode host checkpoint"); goto failed;
-        }
-        checkpoint->host.size = host_size;
-        if (!qa_source_save_bytes(&reader, checkpoint->host.data, host_size)) goto failed;
-    }
-    if (!qa_source_save_finish(&reader, NULL)) goto failed;
+    bool ok = checkpoint_io(&reader, checkpoint) && qa_source_save_finish(&reader, NULL)
+        && checkpoint_valid(checkpoint, error);
+    qa_source_save_dispose(&reader);
+    if (!ok) { qa_qc_checkpoint_destroy(checkpoint); return false; }
     *out = checkpoint;
-#undef R32
     return true;
-failed:
-#undef R32
-    qa_qc_checkpoint_destroy(checkpoint);
-    return false;
 }

@@ -20,8 +20,8 @@ static bool string_aliases(const qc_strings *strings, const char *text)
     return address >= base && address - base < strings->used;
 }
 
-static bool string_reserve(qc_strings *strings, uint32_t length,
-                           uint32_t *out, qa_error *error)
+bool qc_strings_reserve(qc_strings *strings, uint32_t length,
+                         uint32_t *out, qa_error *error)
 {
     if (strings->used > strings->capacity || strings->used > (uint32_t)INT32_MAX ||
         (strings->bytes == NULL && strings->capacity != 0))
@@ -191,7 +191,7 @@ bool qc_strings_allocate(qc_strings *strings, const char *text, int32_t *out,
     }
 
     uint32_t offset;
-    if (!string_reserve(strings, required, &offset, error)) {
+    if (!qc_strings_reserve(strings, required, &offset, error)) {
         free(staged);
         return false;
     }
@@ -256,7 +256,7 @@ bool qc_strings_engine(qc_strings *strings, const char *name, const char *text,
     }
 
     uint32_t offset;
-    if (!string_reserve(strings, (uint32_t)capacity, &offset, error)) {
+    if (!qc_strings_reserve(strings, (uint32_t)capacity, &offset, error)) {
         free(staged);
         free(owned_name);
         return false;

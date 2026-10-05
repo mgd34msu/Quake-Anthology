@@ -601,9 +601,11 @@ bool qa_qc_engine_string(qa_qc_instance *, const char *name, const char *text,
                          size_t capacity, int32_t *out, qa_error *error);
 
 /* Checkpoints are accepted only at an idle callback boundary and, when bound,
- * a session safe point. They include raw guest storage, string aliases,
- * profiling state, owner/source and borrowed actor maps, and the optional host
- * blob. Restore requires the same program digest, profile, layout and capacity.
+ * a session safe point. They include changed globals, live edict fields,
+ * runtime strings and aliases, free-slot reuse times, actor maps and the optional
+ * host blob. Immutable literals and initial globals come from the loaded program;
+ * profiling and debug state are not saved. Restore requires the same program,
+ * profile and layout, with enough capacity for the saved logical edict extent.
  * Guest storage commits before host/body rebinding; a later restore error leaves
  * that committed image visible and must be treated as a failed load boundary. */
 bool qa_qc_checkpoint_capture(qa_qc_instance *instance,

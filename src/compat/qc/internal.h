@@ -111,6 +111,7 @@ struct qa_qc_instance {
 };
 
 typedef struct qc_saved_slot {
+    uint32_t slot, freed_at;
     qa_qc_slot_kind kind;
     qa_actor_owner owner;
     uint32_t source_slot;
@@ -118,22 +119,29 @@ typedef struct qc_saved_slot {
     bool has_actor;
 } qc_saved_slot;
 
+typedef struct qc_saved_word {
+    uint32_t word, value;
+} qc_saved_word;
+
+typedef struct qc_saved_bytes {
+    uint32_t offset, size;
+    uint8_t *data;
+} qc_saved_bytes;
+
 struct qa_qc_checkpoint {
     qa_sha256_digest program;
     qa_qc_profile profile;
     qa_qc_entity_layout layout;
-    uint32_t entity_capacity, entity_count, first_dynamic_slot;
-    uint32_t global_bytes, entity_bytes;
-    uint8_t *globals, *entities;
+    uint32_t entity_count, first_dynamic_slot, global_words;
+    qc_saved_word *globals, *fields;
+    uint32_t global_count, field_count;
     qc_saved_slot *slots;
-    uint64_t *profiles;
-    uint32_t function_count;
-    uint8_t *strings;
-    uint32_t string_used;
+    uint32_t slot_count;
+    qc_saved_bytes *strings;
+    uint32_t string_count, string_base, string_used;
     qc_engine_string *engine_strings;
     uint32_t engine_count;
     uint32_t random_state;
-    bool trace_enabled;
     qa_buffer host;
 };
 
@@ -178,6 +186,8 @@ uint16_t qc_crc16(qa_bytes bytes);
 
 bool qc_strings_create(qc_strings *strings, qa_bytes program, bool quakeworld,
                        qa_error *error);
+bool qc_strings_reserve(qc_strings *strings, uint32_t length,
+                         uint32_t *out, qa_error *error);
 void qc_strings_destroy(qc_strings *strings);
 bool qc_strings_get(const qc_strings *strings, int32_t id, const char **out,
                     qa_error *error);
