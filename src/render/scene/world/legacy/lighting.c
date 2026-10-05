@@ -214,22 +214,59 @@ static bool face_sample(const qa_scene_world *world, const qaw_legacy *light,
     return qa_bsp_light_sample(&world->lighting, light->sample_offset + sample, rgb, error);
 }
 
+typedef struct projected_light {
+    float radius, s, t;
+    double threshold;
+    bool affects;
+} projected_light;
+
+static bool project_light(const qaw_surface *surface, const qa_scene_light *source,
+                          size_t index, projected_light *out, qa_error *error)
+{
+    const qaw_legacy *light = surface->legacy;
+    if (!qa_vec_finite(source->origin) || !qa_vec_finite(source->color)
+        || !isfinite(source->radius) || !isfinite(source->minimum))
+        return light_error(error, QA_ERROR_ARGUMENT, index, "nonfinite dynamic light");
+    *out = (projected_light){0};
+    float distance = qa_vec_dot(source->origin, surface->plane.normal) - surface->plane.distance;
+    out->radius = source->radius - fabsf(distance);
+    if (out->radius < source->minimum) return true;
+    out->threshold = (double)out->radius - source->minimum;
+    qa_vec3 impact = qa_vec_sub(source->origin, qa_vec_scale(surface->plane.normal, distance));
+    out->s = project(light->projection[0], impact);
+    out->t = project(light->projection[1], impact);
+    if (!isfinite(out->s) || !isfinite(out->t) || !isfinite(out->radius))
+        return light_error(error, QA_ERROR_ARGUMENT, index, "dynamic light projection overflows");
+    double x = fmin((double)light->width - 1, fmax(0, floor((double)out->s + .5)));
+    double y = fmin((double)light->height - 1, fmax(0, floor((double)out->t + .5)));
+    double sd = fabs(trunc(((double)out->s - x) * light->light_step[0]));
+    double td = fabs(trunc(((double)out->t - y) * light->light_step[1]));
+    out->affects = fmax(sd, td) + floor(fmin(sd, td) / 2) < out->threshold;
+    return true;
+}
+
+static bool surface_dynamic(const qaw_surface *surface, const qa_material_context *context,
+                            bool *affects, qa_error *error)
+{
+    *affects = false;
+    for (size_t i = 0; i < context->light_count; ++i) {
+        projected_light light;
+        if (!project_light(surface, &context->lights[i], i, &light, error)) return false;
+        *affects = *affects || light.affects;
+    }
+    return true;
+}
+
 static bool dynamic_lights(qaw_surface *surface, const qa_material_context *context, bool q1, qa_error *error)
 {
     qaw_legacy *light = surface->legacy;
     for (size_t i = 0; i < context->light_count; ++i) {
         const qa_scene_light *source = &context->lights[i];
-        if (!qa_vec_finite(source->origin) || !qa_vec_finite(source->color)
-            || !isfinite(source->radius) || !isfinite(source->minimum))
-            return light_error(error, QA_ERROR_ARGUMENT, i, "nonfinite dynamic light");
-        float distance = qa_vec_dot(source->origin, surface->plane.normal) - surface->plane.distance;
-        float radius = source->radius - fabsf(distance);
-        if (radius < source->minimum) continue;
-        double threshold = (double)radius - source->minimum;
-        qa_vec3 impact = qa_vec_sub(source->origin, qa_vec_scale(surface->plane.normal, distance));
-        float s = project(light->projection[0], impact), t = project(light->projection[1], impact);
-        if (!isfinite(s) || !isfinite(t) || !isfinite(radius))
-            return light_error(error, QA_ERROR_ARGUMENT, i, "dynamic light projection overflows");
+        projected_light projected;
+        if (!project_light(surface, source, i, &projected, error)) return false;
+        if (!projected.affects) continue;
+        float radius = projected.radius, s = projected.s, t = projected.t;
+        double threshold = projected.threshold;
         for (uint32_t y = 0; y < light->height; ++y) {
             double td = fabs(trunc(((double)t - y) * light->light_step[1]));
             for (uint32_t x = 0; x < light->width; ++x) {
@@ -281,7 +318,9 @@ bool qawl_light_update(qa_scene_world *world, qaw_surface *surface, const qa_mat
     float modulate = q1 ? 1 : input->legacy_policy.present ? input->legacy_policy.modulate : world->options.q2_light_modulate;
     uint8_t mono = !q1 && input->legacy_policy.present ? input->legacy_policy.monolightmap : '0';
     if (!isfinite(modulate)) return light_error(error, QA_ERROR_ARGUMENT, surface->source_index, "nonfinite light modulation");
-    bool changed = !light->light_cache_valid || light->light_cache_dynamic || context->light_count != 0;
+    bool dynamic;
+    if (!surface_dynamic(surface, context, &dynamic, error)) return false;
+    bool changed = !light->light_cache_valid || light->light_cache_dynamic || dynamic;
     if (!changed && light->cached_styles[0] != modulate) changed = true;
     if (!changed && light->light_cache_monolightmap != mono) changed = true;
     for (size_t i = 0; i < light->style_count; ++i) {
@@ -401,7 +440,7 @@ bool qawl_light_update(qa_scene_world *world, qaw_surface *surface, const qa_mat
         light->cached_styles[i * 3 + 2] = style.y;
         light->cached_styles[i * 3 + 3] = style.z;
     }
-    light->light_cache_dynamic = context->light_count != 0;
+    light->light_cache_dynamic = dynamic;
     light->light_cache_monolightmap = mono;
     light->light_cache_valid = true;
     return true;
