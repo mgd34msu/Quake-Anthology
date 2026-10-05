@@ -2,6 +2,7 @@
 #include "particle_delivery.h"
 #include "q1_sky.h"
 #include "config_store.h"
+#include "view_settings.h"
 #include "remote_unified_private.h"
 #include "remote_unified_presentation.h"
 #include "qa/scene_effects.h"
@@ -106,6 +107,7 @@ bool frontend_legacy_source_register(qa_cvars *registry, qa_console_dialect dial
         if (!qa_cvars_register(registry, shared[i].name, shared[i].value, shared[i].flags,
             owner, "", error)) return false;
     if (q1) {
+        if (!frontend_view_settings_q1_motion_register(registry, owner, dialect == QA_CONSOLE_QW, error)) return false;
         for (size_t i = 0; i < sizeof(quake) / sizeof(*quake); ++i)
             if (!qa_cvars_register(registry, quake[i].name, quake[i].value, quake[i].flags,
                 owner, "", error)) return false;
@@ -129,6 +131,7 @@ bool frontend_legacy_source_owns(const qa_cvars *registry, const char *name)
     if (!q1 && !q2) return false;
     const qa_cvar_view *row = qa_cvars_find(registry, name);
     if (!row || !row->owner || row->console_created) return false;
+    if (q1 && frontend_view_settings_q1_motion_owns(name,dialect == QA_CONSOLE_QW)) return true;
     const char *shared[] = {"r_fullbright", "gl_polyblend", "gl_cull", "gl_clear"};
     const char *quake[] = {"r_lightmap", "r_dynamic", "r_shadows", "r_mirroralpha", "gl_texsort", "gl_flashblend", "gl_doubleeys", "r_drawviewmodel"};
     const char *quake2[] = {"gl_lightmap", "gl_dynamic", "gl_shadows", "gl_modulate", "gl_monolightmap", "gl_saturatelighting", "cl_flares", "gl_flashblend"};

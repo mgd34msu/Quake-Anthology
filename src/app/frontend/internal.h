@@ -92,6 +92,14 @@ bool frontend_startup_queued(const qa_frontend *);
 void frontend_source_audio_stopped(qa_frontend *);
 bool frontend_source_audio_view(const qa_frontend *,const qa_audio_asset *,qa_vfs **);
 bool frontend_event_audio_view(const qa_frontend *,const qa_audio_asset *,qa_vfs **);
+typedef struct frontend_q1_view_motion {
+    double seconds, bob_seconds;
+    float bob, old_z;
+    bool initialized;
+} frontend_q1_view_motion;
+typedef struct frontend_q1_view_pose {
+    qa_vec3 origin, angles, gun_origin, gun_angles;
+} frontend_q1_view_pose;
 typedef struct frontend_seat {
     struct qa_frontend *frontend;
     uint32_t id;
@@ -148,6 +156,10 @@ typedef struct frontend_seat {
     size_t player_source_capacity, player_source_count;
     char player_source_labels[QA_INPUT_LOCAL_SEATS][3][32];
     char setting_value[1024];
+    frontend_q1_view_motion q1_view_motion;
+    frontend_q1_view_pose q1_view_pose;
+    qa_actor_id q1_view_actor;
+    bool q1_view_ready;
     qa_actor_id q2_actor;
     qa_q2_player_view q2_view;
     qa_hud_value q2_vitals[3];

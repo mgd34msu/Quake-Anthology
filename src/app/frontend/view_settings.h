@@ -26,6 +26,26 @@ typedef struct frontend_q1_view_settings {
     double size,back,up,right;
     bool overlay_status,chase;
 } frontend_q1_view_settings;
+typedef struct frontend_q1_motion_settings {
+    float bob, bob_cycle, bob_up, roll_speed, roll_angle;
+    float idle_scale;
+    qa_vec3 idle_cycle, idle_level, offset;
+} frontend_q1_motion_settings;
+typedef struct frontend_q1_motion_input {
+    qa_vec3 origin, angles, entity_angles, velocity, punch;
+    double seconds;
+    float view_height, view_size;
+    bool quakeworld, grounded, spectator, dead, intermission;
+} frontend_q1_motion_input;
+bool frontend_view_settings_q1_motion_register(qa_cvars *,uint64_t owner,bool quakeworld,qa_error *);
+bool frontend_view_settings_q1_motion_owns(const char *,bool quakeworld);
+bool frontend_view_settings_q1_motion_sample(const qa_cvars *,bool quakeworld,
+    frontend_q1_motion_settings *,qa_error *);
+/* One original Q1/QW refdef kernel; history belongs to the actual CLIENT seat
+ * or received source and is rebuilt by fresh/load constructors. */
+void frontend_view_q1_motion(const frontend_q1_motion_settings *,const frontend_q1_motion_input *,
+    frontend_q1_view_motion *,frontend_q1_view_pose *);
+bool frontend_remote_q1_view_pose_read(struct frontend_remote_q1 *,frontend_q1_view_pose *,qa_error *);
 /* Samples published canonical Q1/QW settings and applies the donor viewsize
  * clamp to that registry before returning. Candidate tickets remain fenced. */
 bool frontend_view_settings_q1_sample(frontend_view_settings *,qa_console_dialect,

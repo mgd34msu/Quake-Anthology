@@ -1,6 +1,7 @@
 #include "shared_register.h"
 #include "legacy_render_policy.h"
 #include "shared_settings.h"
+#include "view_settings.h"
 #include "qa/cvars_alias.h"
 #include "qa/console_cvar_observer.h"
 #include "qa/ui_preferences.h"
@@ -14,6 +15,7 @@ typedef struct shared_declaration {
     setting_validation validation;
 } shared_declaration;
 static const shared_declaration declarations[]={
+    {"sv_autosave","1","Autosave on level entry",QA_CVAR_ARCHIVE,TOGGLE},
     {"fov","90","Field of view",QA_CVAR_ARCHIVE,ANY},
     {"viewsize","100","Quake view size, 30 through 120",QA_CVAR_ARCHIVE,FINITE},
     {"cl_sbar","0","QuakeWorld status display placement",QA_CVAR_ARCHIVE,FINITE},
@@ -194,10 +196,7 @@ static bool validate(void *user,const char *value,qa_error *error)
         return frontend_shared_menu_track_valid(value) || frontend_fail(error,QA_ERROR_ARGUMENT,"Use auto, 0, track 1..255 or a mounted OGG/WAV path");
     double number;
     qa_bytes input={(const uint8_t *)value,strlen(value)};
-    size_t cursor=0; uint32_t scalar; bool present=false;
-    while (qa_utf8_next(input,&cursor,&scalar))
-        if (!qa_unicode_whitespace(scalar)) { present=true; break; }
-    if (!present || !qa_parse_ecmascript_number(input,&number,error) || !isfinite(number))
+    if (!qa_parse_number(input,&number,error) || !isfinite(number))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Expected a finite shared setting number");
     bool valid=row->validation==FINITE ||
         (row->validation==GAMMA && number>=.5 && number<=3) ||
@@ -405,7 +404,7 @@ bool frontend_shared_register(qa_cvars *cvars,const qa_console_dialect *source,
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Shared settings require actual factory defaults");
     for (size_t i=0;i<sizeof(declarations)/sizeof(*declarations);++i) {
         const shared_declaration *row=declarations+i; const char *initial=row->initial; char text[32];
-        if (!strcmp(row->name,"r_gamma")) { if (!qa_format_ecmascript_number(gamma,text,error)) return false; initial=text; }
+        if (!strcmp(row->name,"r_gamma")) { if (!qa_format_number(gamma,text,error)) return false; initial=text; }
         else if (!strcmp(row->name,"volume") && source && *source==QA_CONSOLE_Q3) initial="0.8";
         else if (!strcmp(row->name,"bgmvolume") && source && *source==QA_CONSOLE_Q3) initial="0.25";
         else if (!strcmp(row->name,"gl_flashblend") && source &&
@@ -430,7 +429,8 @@ bool frontend_shared_register(qa_cvars *cvars,const qa_console_dialect *source,
     for (size_t i=0;i<sizeof(aliases)/sizeof(*aliases);++i)
         if (!qa_cvars_alias_register(cvars,aliases[i].name,aliases[i].target,aliases[i].conversion,
             aliases[i].summary,&(qa_console_documentation){.usage=aliases[i].usage},error)) return false;
-    return qa_input_settings_register(cvars,QA_MOVEMENT_NETQUAKE,error) &&
+    return frontend_view_settings_q1_motion_register(cvars,QA_FRONTEND_COMMAND_OWNER,false,error) &&
+        qa_input_settings_register(cvars,QA_MOVEMENT_NETQUAKE,error) &&
         qa_input_device_settings_register(cvars,error) &&
         qa_ui_preferences_register(cvars,QA_FRONTEND_COMMAND_OWNER,error);
 }

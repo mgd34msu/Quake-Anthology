@@ -15,6 +15,44 @@ static qa_q1_entity sampled(const frontend_remote_q1 *row, qa_q1_entity value)
     }
     return value;
 }
+bool remote_q1_view_sample(frontend_remote_q1 *row, qa_error *error)
+{
+    row->view_pose_ready = false;
+    frontend_remote_q1_player_view player; bool present;
+    if (!frontend_remote_q1_player_read(row, &player, &present, error)) return false;
+    if (!present) return true;
+    bool qw = qa_q1_is_qw(row->options.domain.protocol);
+    frontend_q1_motion_settings settings;
+    frontend_q1_view_settings view;
+    if (!frontend_view_settings_q1_motion_sample(row->options.domain.cvars, qw, &settings, error) ||
+        !frontend_view_settings_q1_sample(row->frontend->view_settings,
+            qw ? QA_CONSOLE_QW : QA_CONSOLE_Q1, &view, error)) return false;
+    qa_vec3 entity_angles = player.angles;
+    for (size_t i = 0; i < row->current.count; ++i) if (row->current.rows[i].number == row->view_entity) {
+        qa_q1_entity entity = sampled(row, row->current.rows[i]);
+        entity_angles = qa_v3(entity.angles[0], entity.angles[1], entity.angles[2]); break;
+    }
+    frontend_q1_motion_input input = {.origin = player.origin, .angles = player.angles,
+        .entity_angles = qa_v3(-player.angles.x, player.angles.y, entity_angles.z),
+        .velocity = player.velocity, .punch = player.kick_angles,
+        .seconds = row->previous_seconds + (row->seconds - row->previous_seconds) * row->fraction,
+        .view_height = player.view_height, .view_size = (float)view.size,
+        .quakeworld = qw, .grounded = player.grounded, .spectator = qw && row->qw.spectator,
+        .dead = row->data.health <= 0, .intermission = player.intermission};
+    if (!qw && player.intermission) input.angles = entity_angles;
+    frontend_view_q1_motion(&settings, &input, &row->view_motion, &row->view_pose);
+    row->view_pose_ready = true; return true;
+}
+bool frontend_remote_q1_view_pose_read(frontend_remote_q1 *row,
+    frontend_q1_view_pose *out, qa_error *error)
+{
+    if (!out || !remote_q1_mutable(row) || row->busy)
+        return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 view pose requires its returned CLIENT owner");
+    if (!remote_q1_live(row, error)) return false;
+    if (!row->view_pose_ready)
+        return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 view pose has no actual sampled CLIENT frame");
+    *out = row->view_pose; return true;
+}
 size_t frontend_remote_q1_entity_count(const frontend_remote_q1 *row)
 { return row ? row->current.count + row->statics.count + (row->view_entity && row->has_data && row->data.weapon_model ? 1 : 0) : 0; }
 bool frontend_remote_q1_entity_at(frontend_remote_q1 *row, size_t index, frontend_remote_q1_entity_view *out, qa_error *error)
@@ -38,8 +76,10 @@ bool frontend_remote_q1_entity_at(frontend_remote_q1 *row, size_t index, fronten
         value.angles[0] = row->view_angles.x; value.angles[1] = row->view_angles.y; value.angles[2] = row->view_angles.z;
         frontend_remote_q1_player_view player; bool present;
         if (!frontend_remote_q1_player_read(row, &player, &present, error) || !present) return false;
-        value.origin[0] = player.origin.x; value.origin[1] = player.origin.y; value.origin[2] = player.origin.z + player.view_height;
-        value.angles[0] = player.angles.x; value.angles[1] = player.angles.y; value.angles[2] = player.angles.z;
+        frontend_q1_view_pose pose;
+        if (!frontend_remote_q1_view_pose_read(row, &pose, error)) return false;
+        value.origin[0] = pose.gun_origin.x; value.origin[1] = pose.gun_origin.y; value.origin[2] = pose.gun_origin.z;
+        value.angles[0] = pose.gun_angles.x; value.angles[1] = pose.gun_angles.y; value.angles[2] = pose.gun_angles.z;
         weapon = true;
     }
     const char *model = "";

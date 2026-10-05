@@ -266,6 +266,8 @@ void remote_q1_clear(frontend_remote_q1 *row)
     if (!qa_q1_is_qw(row->options.domain.protocol)) remote_q1_demo_clear(row);
     row->actor_count = 0;
     remote_q1_camera_reset(row);
+    row->view_motion = (frontend_q1_view_motion){0};
+    row->view_pose_ready = false;
     remote_q1_prediction_clear(row);
     remote_q1_media_clear(row);
     remote_q1_qw_queue_clear(row);
@@ -449,7 +451,8 @@ bool frontend_remote_q1_sample(frontend_remote_q1 *row, uint64_t now, qa_error *
         row->fraction = duration == 0 ? 1 : fmin(1, fmax(0, (seconds - row->previous_seconds) / duration));
     } else row->fraction = duration == 0 ? 1 : fmin(1, fmax(0, now >= row->received_ns ?
         (double)(now - row->received_ns) / (duration * 1000000000.0) : 0));
-    remote_q1_publication_update(row); ++row->revision; return true;
+    remote_q1_publication_update(row); ++row->revision;
+    return remote_q1_view_sample(row, error);
 }
 bool frontend_remote_q1_metadata_read(const frontend_remote_q1 *row, frontend_remote_q1_view *out, qa_error *error)
 {

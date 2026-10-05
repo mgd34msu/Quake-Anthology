@@ -27,6 +27,9 @@
 #include "legacy_render_policy.h"
 #include "particle_delivery.h"
 #include "qc_messages.h"
+#include "config_store.h"
+#include "qa/application_network.h"
+#include "qa/application_network_qw.h"
 #include <stdio.h>
 
 static bool source_status_native(const qa_frontend *f,uint32_t physical,qa_actor_id viewer,bool *out,qa_error *error)
@@ -122,8 +125,10 @@ static bool remote_q1_present(qa_frontend *f,unsigned seat,const qa_scene_view *
     if (!frontend_view_settings_q1_sample(f->view_settings,
         qa_q1_is_qw(source.protocol)?QA_CONSOLE_QW:QA_CONSOLE_Q1,&settings,error)) return false;
     qa_scene_view view=*fallback;
-    view.origin=player.origin; view.origin.z+=player.view_height;
-    qa_vec3 angles=qa_vec_add(player.angles,player.kick_angles);
+    frontend_q1_view_pose pose;
+    if (!frontend_remote_q1_view_pose_read(selected, &pose, error)) return false;
+    view.origin=pose.origin;
+    qa_vec3 angles=pose.angles;
     if (settings.chase && !player.intermission &&
         !frontend_remote_q1_chase_camera(selected,&settings,view.origin,player.angles,
             &view.origin,&angles,error)) return false;
@@ -163,6 +168,53 @@ bool frontend_frame_present(qa_frontend *frontend, bool finish_source, qa_error 
         ((!finish_source && frontend->frame.source_backend) || qa_gl_finish(frontend->gl, error)) &&
         qa_gl_swap(frontend->gl, error);
 }
+static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
+    const qa_application_camera_view *camera, const frontend_q1_view_settings *view,
+    qa_scene_view *scene, qa_error *error)
+{
+    frontend_seat *seat = f->seats + physical;
+    uint32_t logical; frontend_config_legacy_view source; bool present;
+    if (!frontend_seat_launch_id_read(f, physical, &logical))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view lost its actual authored seat");
+    if (!frontend_config_store_primary_legacy_read(f->config_store, logical, &source, &present, error)) return false;
+    if (!present || source.product->family != QA_GAME_Q1) return true;
+    qa_application_control_view control; qa_body_state body;
+    qa_application_equipment_view equipment;
+    qa_q1_clientdata client;
+    if (!qa_application_control_read(f->application, actor, &control))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view lost its actual selected player motion");
+    if (!qa_world_body_read(qa_application_world(f->application), actor, &body, error) ||
+        !qa_application_equipment_read(f->application, actor, &equipment, error) ||
+        !qa_application_network_q1_clientdata(f->application, actor, &client, error)) return false;
+    bool qw = source.product->edition == QA_EDITION_QUAKEWORLD;
+    double seconds;
+    if (qw) {
+        qa_application_network_qw_source clock;
+        if (!qa_application_network_qw_source_read(f->application, &clock, error)) return false;
+        seconds = (double)clock.source_time_ns / 1000000000.0;
+    } else {
+        qa_application_network_q1_world clock;
+        if (!qa_application_network_q1_world_read(f->application, equipment.primary, &clock, error)) return false;
+        seconds = clock.seconds;
+    }
+    frontend_q1_motion_settings settings;
+    if (!frontend_view_settings_q1_motion_sample(source.registry, qw, &settings, error)) return false;
+    if (!qa_actor_id_equal(seat->q1_view_actor, actor)) {
+        seat->q1_view_motion = (frontend_q1_view_motion){0}; seat->q1_view_actor = actor;
+    }
+    frontend_q1_motion_input input = {.origin = camera->origin, .angles = camera->angles,
+        .entity_angles = qa_v3(-camera->angles.x, camera->angles.y, body.angles.z),
+        .velocity = body.velocity, .punch = equipment.kick_angles, .seconds = seconds,
+        .view_height = camera->view_height, .view_size = (float)view->size, .quakeworld = qw,
+        .grounded = control.ground.hit != QA_TRACE_HIT_NONE,
+        .dead = client.health <= 0, .intermission = camera->cutscene};
+    frontend_view_q1_motion(&settings, &input, &seat->q1_view_motion, &seat->q1_view_pose);
+    if (!frontend_config_store_primary_legacy_current(f->config_store, &source))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view changed its retained CLIENT settings");
+    seat->q1_view_ready = true;
+    scene->origin = seat->q1_view_pose.origin; frontend_camera_axes(seat->q1_view_pose.angles, scene->axis);
+    return true;
+}
 static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
 {
     *render = false;
@@ -188,6 +240,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (!qa_scene_frame_output_domain(&frontend->frame,rect,false,error)) return false;
         qa_ui_state ui;
         if (!frontend_source_prompt_prepare(seat->source_prompt,error) || !qa_ui_tick(seat->ui, (double)frontend->time_ns / 1000000, error) || !qa_ui_state_read(seat->ui, &ui, error)) return false;
+        seat->q1_view_ready = false;
         qa_actor_id actor = {0}; qa_application_camera_view camera;
         uint32_t launch_seat;
         bool published=frontend_seat_launch_id_read(frontend,i,&launch_seat);
@@ -262,6 +315,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
             if (!frontend_view_settings_q1_sample(frontend->view_settings,
                 local_product->edition == QA_EDITION_QUAKEWORLD ? QA_CONSOLE_QW : QA_CONSOLE_Q1,
                 &settings, error)) return false;
+            if (!local_q1_view(frontend, i, actor, &camera, &settings, &view, error)) return false;
             view.viewport = q1_view_rectangle(rect, &settings, camera.cutscene);
             if (!q1_view_projection(frontend, &view, ordinary_fov, error)) return false;
         }
