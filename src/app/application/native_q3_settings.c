@@ -722,6 +722,7 @@ bool application_native_q3_settings_restore(application_provider *provider, qa_b
     }
     if (okay) {
         for (size_t i = 0; i < definition_count(owner); ++i) {
+            snapshot_dispose(&owner->snapshots[i]);
             owner->snapshots[i] = restored[i];
             restored[i] = (application_native_q3_cvar_snapshot){0};
         }
