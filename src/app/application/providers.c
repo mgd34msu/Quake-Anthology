@@ -1626,6 +1626,7 @@ bool application_provider_deconstruct(application_provider *provider, qa_error *
         application_unified_event_owner_bound_is(app, provider))
         provider->event_activation_bound = true;
     bool ok = deconstruct_provider(provider, error);
+    if (ok && provider) application_network_q2_capture_dispose(provider);
     if (ok && provider) application_q3_wire_capture_dispose(provider);
     if (ok) application_network_q2_retire_source_bindings(provider);
     if(ok && provider && provider->event_activation_bound)

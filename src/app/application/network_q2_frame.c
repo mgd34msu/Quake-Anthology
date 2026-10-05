@@ -70,25 +70,106 @@ static void player_profile(qa_application_network_q2 *owner, qa_q2_player *state
     state->fog = (qa_q2_player_fog){0};
 }
 
+static struct application_native_q2 *original_engine(qa_application_network_q2 *owner)
+{
+    application_provider *provider = application_network_q2_provider(owner);
+    return provider ? provider->state.native.q2_engine : NULL;
+}
+
+struct application_q2_wire_capture {
+    qa_application_native_q2_entity_prefix *rows;
+    uint32_t count, capacity;
+    qa_application_native_q2_presentation source;
+    qa_world *world;
+    qa_collision_geometry *geometry;
+    uint64_t application_frame, mutation, actors_revision;
+    bool ready;
+};
+
+void application_network_q2_capture_dispose(application_provider *provider)
+{
+    struct application_q2_wire_capture *capture = provider->q2_wire_capture;
+    if (!capture) return;
+    free(capture->rows); free(capture);
+    provider->q2_wire_capture = NULL;
+}
+
+static bool capture_source(qa_application_network_q2 *owner,
+    struct application_q2_wire_capture **out, qa_error *error)
+{
+    application_provider *provider = application_network_q2_provider(owner);
+    if (!provider) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 capture lost its actual physical Source owner");
+    qa_application *app = owner->app;
+    uint64_t frame = application_frame_revision(app), mutation = app->snapshot_mutation;
+    uint64_t actors = qa_actors_revision(qa_session_actors(app->session));
+    if (!provider->q2_wire_capture) {
+        provider->q2_wire_capture = calloc(1, sizeof(*provider->q2_wire_capture));
+        if (!provider->q2_wire_capture)
+            return application_fail(error, QA_ERROR_MEMORY, "Retaining completed Q2 Source capture");
+    }
+    struct application_q2_wire_capture *capture = provider->q2_wire_capture;
+    *out = capture;
+    if (capture->ready && capture->application_frame == frame && capture->mutation == mutation &&
+        capture->actors_revision == actors && capture->world == app->world && capture->geometry == app->geometry &&
+        qa_application_native_q2_presentation_current(app, &capture->source)) return true;
+    capture->ready = false;
+    uint32_t count;
+    if (!qa_application_native_q2_presentation_extent(app, &owner->host.source, &count, error)) return false;
+    if (count > owner->entity_capacity)
+        return application_fail(error, QA_ERROR_FORMAT, "Q2 entity publication exceeds its admitted physical extent");
+    if (count > capture->capacity) {
+        qa_application_native_q2_entity_prefix *rows = realloc(capture->rows, (size_t)count * sizeof(*rows));
+        if (!rows) return application_fail(error, QA_ERROR_MEMORY, "Growing completed Q2 Source capture");
+        capture->rows = rows; capture->capacity = count;
+    }
+    if (count) memset(capture->rows, 0, (size_t)count * sizeof(*capture->rows));
+    bool builtin = owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN;
+    for (uint32_t slot = builtin ? 1u : 0u; slot < count; ++slot) {
+        bool present;
+        if (!qa_application_native_q2_presentation_entity(app, &owner->host.source, slot,
+                &capture->rows[slot], &present, error)) return false;
+    }
+    if (!builtin && !application_native_q2_wire_prepare(original_engine(owner), capture->rows, count, error)) return false;
+    if (app->snapshot_mutation != mutation || application_frame_revision(app) != frame ||
+        qa_actors_revision(qa_session_actors(app->session)) != actors ||
+        !qa_application_native_q2_presentation_current(app, &owner->host.source))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 capture changed its completed physical Source boundary");
+    capture->count = count; capture->source = owner->host.source;
+    capture->application_frame = frame; capture->mutation = mutation; capture->actors_revision = actors;
+    capture->world = app->world; capture->geometry = app->geometry; capture->ready = true;
+    return true;
+}
+
+static const qa_application_native_q2_entity_prefix *captured_entity(
+    const struct application_q2_wire_capture *capture, uint32_t slot, qa_error *error)
+{
+    if (slot >= capture->count) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Q2 wire edict is outside its physical source table");
+        return NULL;
+    }
+    return &capture->rows[slot];
+}
+
 static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
-    qa_q2_entity *out, bool *present, qa_error *error)
+    const struct application_q2_wire_capture *capture, qa_q2_entity *out, bool *present, qa_error *error)
 {
     qa_q2_game *game = (qa_q2_game *)owner->host.source.source.game;
-    qa_q2_wire_source_entity source;
     *present = false;
-    if (!qa_q2_wire_entity_read(game, slot, &source, error)) return false;
-    if (!source.binding.in_use || (source.server_flags & 1)) return true;
-    qa_q2_visual visual = source.visual;
+    const qa_application_native_q2_entity_prefix *prefix = captured_entity(capture, slot, error);
+    if (!prefix) return false;
+    const qa_q2_wire_source_entity *source = &prefix->source.builtin;
+    if (!source->binding.in_use || (source->server_flags & 1)) return true;
+    qa_q2_visual visual = source->visual;
     qa_application_visual_view selected;
     qa_error observation = {0};
-    bool selected_visual = qa_application_visual_read(owner->app, source.binding.actor, &selected, &observation);
+    bool selected_visual = qa_application_visual_read(owner->app, source->binding.actor, &selected, &observation);
     if (!selected_visual && observation.code != QA_OK && observation.code != QA_ERROR_NOT_FOUND) {
         if (error) *error = observation;
         return false;
     }
-    if (!(selected_visual ? selected.visible : source.has_visual && visual.visible)) return true;
+    if (!(selected_visual ? selected.visible : source->has_visual && visual.visible)) return true;
     int32_t old_frame = selected_visual ? selected.old_frame : visual.old_frame;
-    bool flare = selected_visual ? selected.q2_flare.present : source.flare;
+    bool flare = selected_visual ? selected.q2_flare.present : source->flare;
     qa_q2_entity value = {.number = slot, .frame = (uint32_t)(selected_visual ? selected.frame : visual.frame),
         .old_frame = old_frame >= 0 ? (uint32_t)old_frame : 0,
         .skinnum = (uint32_t)(selected_visual ? selected.skin : visual.skin),
@@ -96,11 +177,11 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
         .renderfx = selected_visual ? selected.render_flags : visual.render_flags,
         .alpha = selected_visual ? selected.alpha : visual.alpha,
         .scale = selected_visual ? selected.scale : visual.scale,
-        .loop_volume = source.volume, .loop_attenuation = source.attenuation, .event = source.event};
-    vector(value.origin, source.body.origin); vector(value.old_origin, source.body.origin);
+        .loop_volume = source->volume, .loop_attenuation = source->attenuation, .event = source->event};
+    vector(value.origin, source->body.origin); vector(value.old_origin, source->body.origin);
     if (value.renderfx & 128u)
-        vector(value.old_origin, selected_visual ? selected.previous_origin : source.previous_origin);
-    vector(value.angles, source.body.angles);
+        vector(value.old_origin, selected_visual ? selected.previous_origin : source->previous_origin);
+    vector(value.angles, source->body.angles);
     uint32_t *models[] = {&value.modelindex, &value.modelindex2, &value.modelindex3, &value.modelindex4};
     for (unsigned i = 0; !flare && i < 4; ++i) {
         const char *path = selected_visual ? selected.models[i] : text(owner, visual.models[i]);
@@ -108,9 +189,9 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
             application_network_q2_resource(owner, 0, path, models[i], error))) return false;
     }
     if (flare) {
-        float start = selected_visual ? selected.q2_flare.fade_start : source.flare_start;
-        float end = selected_visual ? selected.q2_flare.fade_end : source.flare_end;
-        const char *image = selected_visual ? selected.q2_flare.image : text(owner, source.flare_image);
+        float start = selected_visual ? selected.q2_flare.fade_start : source->flare_start;
+        float end = selected_visual ? selected.q2_flare.fade_end : source->flare_end;
+        const char *image = selected_visual ? selected.q2_flare.image : text(owner, source->flare_image);
         if (!isfinite(start) || !isfinite(end) || start < 0 || (double)start > UINT32_MAX ||
             end < 0 || (double)end > UINT32_MAX)
             return application_fail(error, QA_ERROR_FORMAT, "Q2 flare leaves its actual Source wire field range");
@@ -121,35 +202,29 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
     }
     qa_builtin_player_info player;
     if ((!selected_visual || selected.provider == owner->host.source.source_owner) &&
-        qa_q2_player_projection(game, source.binding.actor, &player)) {
+        qa_q2_player_projection(game, source->binding.actor, &player)) {
         value.modelindex = 255; value.skinnum = player.slot;
-        if (source.has_weapon && source.weapon.weapon != QA_Q2_WEAPON_NONE) {
-            const qa_q2_weapon_definition *weapon = qa_q2_weapon_definition_at(game, source.weapon.weapon);
+        if (source->has_weapon && source->weapon.weapon != QA_Q2_WEAPON_NONE) {
+            const qa_q2_weapon_definition *weapon = qa_q2_weapon_definition_at(game, source->weapon.weapon);
             if (!weapon || weapon->player_model < 0 || weapon->player_model > 255)
                 return application_fail(error, QA_ERROR_FORMAT, "Q2 Source weapon has no representable player model");
             value.modelindex2 = 255; value.skinnum |= (uint32_t)weapon->player_model << 8;
         }
     }
-    if (!application_network_q2_resource(owner, 1, text(owner, source.loop_sound), &value.sound, error)) return false;
+    if (!application_network_q2_resource(owner, 1, text(owner, source->loop_sound), &value.sound, error)) return false;
     if (value.alpha == 1) value.alpha = 0;
     if (value.scale == 1) value.scale = 0;
-    if (source.solid == QA_PHYSICS_BRUSH) value.solid = 31;
-    else if (source.solid == QA_PHYSICS_BOX && !(source.server_flags & 2))
-        value.solid = packed_solid(owner->host.protocol, source.body.bounds);
-    if (qa_actor_id_equal(owner->event_actors[slot], source.binding.actor)) value.event = owner->events[slot];
+    if (source->solid == QA_PHYSICS_BRUSH) value.solid = 31;
+    else if (source->solid == QA_PHYSICS_BOX && !(source->server_flags & 2))
+        value.solid = packed_solid(owner->host.protocol, source->body.bounds);
+    if (qa_actor_id_equal(owner->event_actors[slot], source->binding.actor)) value.event = owner->events[slot];
     qa_q2_wire_binding after;
-    if (!qa_q2_wire_actor(game, source.binding.actor, &after, error) || after.source_slot != slot ||
-        source.body_serial != qa_world_body_storage_serial(owner->app->world, source.binding.actor))
+    if (!qa_q2_wire_actor(game, source->binding.actor, &after, error) || after.source_slot != slot ||
+        source->body_serial != qa_world_body_storage_serial(owner->app->world, source->binding.actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 entity publication changed its physical actor/body binding");
     entity_profile(owner, &value);
     *present = visible_state(&value); *out = value;
     return true;
-}
-
-static struct application_native_q2 *original_engine(qa_application_network_q2 *owner)
-{
-    application_provider *provider = application_network_q2_provider(owner);
-    return provider ? provider->state.native.q2_engine : NULL;
 }
 
 static bool original_weapon_skin(qa_application_network_q2 *owner,
@@ -181,7 +256,7 @@ static bool original_weapon_skin(qa_application_network_q2 *owner,
 }
 
 static bool original_entity(qa_application_network_q2 *owner, uint32_t number,
-    qa_q2_entity *out, bool *present, qa_error *error)
+    const struct application_q2_wire_capture *capture, qa_q2_entity *out, bool *present, qa_error *error)
 {
     struct application_native_q2 *engine = original_engine(owner);
     if (!engine || !engine->wire_engine || number >= engine->wire_engine->capacity)
@@ -192,16 +267,18 @@ static bool original_entity(qa_application_network_q2 *owner, uint32_t number,
     if (!qa_actors_get(qa_session_actors(owner->app->session), row->actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 Engine row lost its live full actor");
     qa_q2_entity value = {.number = number};
-    qa_native_host_q2_entity source = {0};
+    const qa_native_host_q2_entity *source = NULL;
     if (row->original) {
-        if (!qa_native_host_q2_wire_entity(engine->provider->state.native.host, row->source_slot, &source, error)) return false;
-        if (!source.in_use || !qa_actor_id_equal(source.binding.actor, row->actor)) return true;
-        if (source.server_flags & 1) return true;
-        value = source.state; value.number = number;
+        const qa_application_native_q2_entity_prefix *prefix = captured_entity(capture, row->source_slot, error);
+        if (!prefix) return false;
+        source = &prefix->source.original;
+        if (!source->in_use || !qa_actor_id_equal(source->binding.actor, row->actor)) return true;
+        if (source->server_flags & 1) return true;
+        value = source->state; value.number = number;
         if (owner->host.source.edition == QA_Q2_CLASSIC && value.solid && value.solid != 31 &&
             (owner->host.protocol.kind == QA_NET_Q2PRO_36 ||
              (owner->host.protocol.kind == QA_NET_R1Q2_35 && owner->host.protocol.revision >= 1905)))
-            value.solid = packed_solid(owner->host.protocol, source.bounds);
+            value.solid = packed_solid(owner->host.protocol, source->bounds);
         if (kex_fields(owner) && value.owner) {
             qa_native_slot_binding binding;
             if (!qa_native_slot(qa_native_host_instance(engine->provider->state.native.host), value.owner, &binding, error)) return false;
@@ -255,6 +332,8 @@ static bool original_entity(qa_application_network_q2 *owner, uint32_t number,
 
 bool application_network_q2_entities(qa_application_network_q2 *owner, qa_error *error)
 {
+    struct application_q2_wire_capture *capture;
+    if (!capture_source(owner, &capture, error)) return false;
     uint64_t actors_revision = qa_actors_revision(qa_session_actors(owner->app->session));
     if (owner->source_entities_ready && owner->source_frame == owner->host.source.clock.frame_number &&
         owner->source_application_frame == application_frame_revision(owner->app) &&
@@ -264,10 +343,9 @@ bool application_network_q2_entities(qa_application_network_q2 *owner, qa_error 
     uint32_t extent;
     bool builtin = owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN;
     if (builtin) {
-        if (!qa_q2_wire_extent(owner->host.source.source.game, &extent, error)) return false;
+        extent = capture->count;
     } else {
         struct application_native_q2 *engine = original_engine(owner);
-        if (!application_native_q2_wire_prepare(engine, error)) return false;
         extent = engine->wire_engine->capacity;
     }
     if (extent > owner->entity_capacity) return application_fail(error, QA_ERROR_FORMAT, "Q2 entity publication exceeds its admitted physical extent");
@@ -276,9 +354,9 @@ bool application_network_q2_entities(qa_application_network_q2 *owner, qa_error 
         qa_q2_entity value;
         bool present;
         if (builtin) {
-            if (!builtin_entity(owner, slot, &value, &present, error)) return false;
+            if (!builtin_entity(owner, slot, capture, &value, &present, error)) return false;
         } else {
-            if (!original_entity(owner, slot, &value, &present, error)) return false;
+            if (!original_entity(owner, slot, capture, &value, &present, error)) return false;
         }
         if (present) owner->source_entities[owner->source_entity_count++] = value;
     }
@@ -299,13 +377,14 @@ bool qa_application_network_q2_motion(qa_application_network_q2 *owner,
     uint64_t interval = owner->host.source.clock_config.interval_ns;
     if (!interval || UINT64_C(1000000000) / interval > 60)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Q2 native frame history exceeds its genuine Source FPS profile");
+    struct application_q2_wire_capture *capture;
+    if (!capture_source(owner, &capture, error)) return false;
     bool builtin = owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN;
     uint32_t extent;
     if (builtin) {
-        if (!qa_q2_wire_extent(owner->host.source.source.game, &extent, error)) return false;
+        extent = capture->count;
     } else {
         struct application_native_q2 *engine = original_engine(owner);
-        if (!application_native_q2_wire_prepare(engine, error)) return false;
         extent = engine->wire_engine->capacity;
     }
     if (extent > owner->entity_capacity)
@@ -315,15 +394,16 @@ bool qa_application_network_q2_motion(qa_application_network_q2 *owner,
     for (uint32_t slot = 1; slot < extent; ++slot) {
         qa_q2_source_entity_motion row = {.source_slot = slot, .source_frame = motion.source_frame};
         if (builtin) {
-            qa_q2_wire_source_entity source;
-            if (!qa_q2_wire_entity_read((qa_q2_game *)owner->host.source.source.game, slot, &source, error)) return false;
-            if (!source.binding.in_use) continue;
-            row.actor = source.binding.actor; row.origin = source.body.origin;
-            row.link_count = source.lifetime.link_count; row.creation_frame = source.lifetime.creation_frame;
-            row.creation_origin = source.lifetime.creation_origin; row.creation_present = source.lifetime.present;
+            const qa_application_native_q2_entity_prefix *prefix = captured_entity(capture, slot, error);
+            if (!prefix) return false;
+            const qa_q2_wire_source_entity *source = &prefix->source.builtin;
+            if (!source->binding.in_use) continue;
+            row.actor = source->binding.actor; row.origin = source->body.origin;
+            row.link_count = source->lifetime.link_count; row.creation_frame = source->lifetime.creation_frame;
+            row.creation_origin = source->lifetime.creation_origin; row.creation_present = source->lifetime.present;
             for (size_t i = 0; i < 8; ++i)
-                row.origins[i] = (qa_q2_source_origin){.source_frame = source.lifetime.origins[i].source_frame,
-                    .origin = source.lifetime.origins[i].origin, .present = source.lifetime.origins[i].present};
+                row.origins[i] = (qa_q2_source_origin){.source_frame = source->lifetime.origins[i].source_frame,
+                    .origin = source->lifetime.origins[i].origin, .present = source->lifetime.origins[i].present};
         } else {
             struct application_native_q2 *engine = original_engine(owner);
             const application_native_q2_wire_row *binding = &engine->wire_engine->rows[slot];
@@ -334,17 +414,17 @@ bool qa_application_network_q2_motion(qa_application_network_q2 *owner,
                 if (!qa_world_body_read(owner->app->world, binding->actor, &body, error)) return false;
                 row.origin = body.origin;
             } else {
-            qa_native_host_q2_entity source;
-            if (!qa_native_host_q2_wire_entity((qa_native_host *)owner->host.source.source.original.host,
-                binding->source_slot, &source, error)) return false;
-            if (!source.in_use) continue;
-            row.actor = source.binding.actor;
-            row.origin = qa_v3(source.state.origin[0], source.state.origin[1], source.state.origin[2]);
-            row.link_count = source.link_count; row.creation_frame = source.creation_frame;
-            row.creation_origin = source.creation_origin; row.creation_present = source.creation_present;
+            const qa_application_native_q2_entity_prefix *prefix = captured_entity(capture, binding->source_slot, error);
+            if (!prefix) return false;
+            const qa_native_host_q2_entity *source = &prefix->source.original;
+            if (!source->in_use) continue;
+            row.actor = source->binding.actor;
+            row.origin = qa_v3(source->state.origin[0], source->state.origin[1], source->state.origin[2]);
+            row.link_count = source->link_count; row.creation_frame = source->creation_frame;
+            row.creation_origin = source->creation_origin; row.creation_present = source->creation_present;
             for (size_t i = 0; i < 8; ++i)
-                row.origins[i] = (qa_q2_source_origin){.source_frame = source.origins[i].source_frame,
-                    .origin = source.origins[i].origin, .present = source.origins[i].present};
+                row.origins[i] = (qa_q2_source_origin){.source_frame = source->origins[i].source_frame,
+                    .origin = source->origins[i].origin, .present = source->origins[i].present};
             }
         }
         if (!row.actor.registry || !qa_actors_get(qa_session_actors(owner->app->session), row.actor) ||
@@ -567,7 +647,8 @@ static bool headnode_visible(qa_collision_geometry *geometry, const q2_recipient
 }
 
 static bool source_visible(qa_application_network_q2 *owner, const q2_recipient *recipient,
-    const qa_q2_entity *state, bool novis, bool *out, bool *owned, qa_error *error)
+    const qa_q2_entity *state, const struct application_q2_wire_capture *capture,
+    bool novis, bool *out, bool *owned, qa_error *error)
 {
     qa_collision_geometry *geometry = owner->app->geometry;
     bool builtin = owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN;
@@ -576,17 +657,18 @@ static bool source_visible(qa_application_network_q2 *owner, const q2_recipient 
     qa_bounds bounds;
     qa_actor_id visibility_actor;
     uint32_t flags;
-    qa_native_host_q2_entity original = {0};
+    const qa_native_host_q2_entity *original = NULL;
     if (builtin) {
-        qa_q2_wire_source_entity source;
-        if (!qa_q2_wire_entity_read((qa_q2_game *)owner->host.source.source.game, state->number, &source, error)) return false;
-        if (!source.binding.in_use) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 entity retired during recipient visibility");
-        visibility_actor = source.binding.actor;
-        flags = source.server_flags; *owned = qa_actor_id_equal(source.owner, recipient->actor);
+        const qa_application_native_q2_entity_prefix *prefix = captured_entity(capture, state->number, error);
+        if (!prefix) return false;
+        const qa_q2_wire_source_entity *source = &prefix->source.builtin;
+        if (!source->binding.in_use) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 entity retired during recipient visibility");
+        visibility_actor = source->binding.actor;
+        flags = source->server_flags; *owned = qa_actor_id_equal(source->owner, recipient->actor);
         qa_linked_body linked;
-        if (qa_world_linked(owner->app->world, source.binding.actor, &linked)) bounds = linked.absolute_bounds;
-        else bounds = (qa_bounds){qa_vec_sub(qa_vec_add(source.body.origin, source.body.bounds.mins), qa_v3(1, 1, 1)),
-            qa_vec_add(qa_vec_add(source.body.origin, source.body.bounds.maxs), qa_v3(1, 1, 1))};
+        if (qa_world_linked(owner->app->world, source->binding.actor, &linked)) bounds = linked.absolute_bounds;
+        else bounds = (qa_bounds){qa_vec_sub(qa_vec_add(source->body.origin, source->body.bounds.mins), qa_v3(1, 1, 1)),
+            qa_vec_add(qa_vec_add(source->body.origin, source->body.bounds.maxs), qa_v3(1, 1, 1))};
     } else {
         struct application_native_q2 *engine = original_engine(owner);
         if (!engine || !engine->wire_engine || state->number >= engine->wire_engine->capacity)
@@ -596,11 +678,13 @@ static bool source_visible(qa_application_network_q2 *owner, const q2_recipient 
         visibility_actor = binding->actor;
         sdk = binding->original;
         if (sdk) {
-            if (!qa_native_host_q2_wire_entity(engine->provider->state.native.host, binding->source_slot, &original, error)) return false;
-            if (!original.in_use || !qa_actor_id_equal(original.binding.actor, binding->actor))
+            const qa_application_native_q2_entity_prefix *prefix = captured_entity(capture, binding->source_slot, error);
+            if (!prefix) return false;
+            original = &prefix->source.original;
+            if (!original->in_use || !qa_actor_id_equal(original->binding.actor, binding->actor))
                 return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 edict retired during visibility");
-            flags = original.server_flags; bounds = original.absolute_bounds;
-            *owned = original.owner_slot == recipient->slot;
+            flags = original->server_flags; bounds = original->absolute_bounds;
+            *owned = original->owner_slot == recipient->slot;
         } else {
             qa_linked_body linked;
             qa_actor_collision collision = {0};
@@ -617,8 +701,8 @@ static bool source_visible(qa_application_network_q2 *owner, const q2_recipient 
     if (sdk && rr && (flags & 256)) {
         struct application_native_q2 *engine = original_engine(owner);
         bool admitted;
-        if (!application_native_q2_visibility_read(engine, original.binding.source_slot,
-                original.binding.actor, recipient->slot, recipient->actor, &admitted, error)) return false;
+        if (!application_native_q2_visibility_read(engine, original->binding.source_slot,
+                original->binding.actor, recipient->slot, recipient->actor, &admitted, error)) return false;
         if (!admitted) return true;
     }
     if (state->number == recipient->slot || (rr && ((flags & 1024) || novis))) { *out = true; return true; }
@@ -627,16 +711,16 @@ static bool source_visible(qa_application_network_q2 *owner, const q2_recipient 
     bool area = false, visible = false;
     qa_world_leaf_membership membership = {0};
     if (sdk && !rr) {
-        if (!qa_collision_areas_connected(geometry, (int32_t)recipient->leaf.area, original.areas[0], &area, error)) return false;
-        if (!area && original.areas[1] &&
-            !qa_collision_areas_connected(geometry, (int32_t)recipient->leaf.area, original.areas[1], &area, error)) return false;
+        if (!qa_collision_areas_connected(geometry, (int32_t)recipient->leaf.area, original->areas[0], &area, error)) return false;
+        if (!area && original->areas[1] &&
+            !qa_collision_areas_connected(geometry, (int32_t)recipient->leaf.area, original->areas[1], &area, error)) return false;
         if (!area) return true;
-        if (beam && original.cluster_count > 0) {
-            if (!qa_collision_cluster_visible(geometry, (int32_t)recipient->leaf.cluster, original.clusters[0], true, &visible, error)) return false;
-        } else if (original.cluster_count == -1) {
-            if (!headnode_visible(geometry, recipient, original.headnode, false, &visible, error)) return false;
-        } else for (int32_t i = 0; !visible && i < original.cluster_count; ++i)
-            if (!cluster_visible(geometry, recipient, original.clusters[i], false, &visible, error)) return false;
+        if (beam && original->cluster_count > 0) {
+            if (!qa_collision_cluster_visible(geometry, (int32_t)recipient->leaf.cluster, original->clusters[0], true, &visible, error)) return false;
+        } else if (original->cluster_count == -1) {
+            if (!headnode_visible(geometry, recipient, original->headnode, false, &visible, error)) return false;
+        } else for (int32_t i = 0; !visible && i < original->cluster_count; ++i)
+            if (!cluster_visible(geometry, recipient, original->clusters[i], false, &visible, error)) return false;
     } else {
         if (!qa_world_link_membership(owner->app->world, visibility_actor, &bounds,
                 QA_WORLD_LEAVES_BOX, &membership, error)) return false;
@@ -722,6 +806,8 @@ bool qa_application_network_q2_frame(qa_application_network_q2 *owner, const qa_
         }
     }
     if (ok) ok = application_network_q2_entities(owner, error);
+    struct application_q2_wire_capture *capture = NULL;
+    if (ok) ok = capture_source(owner, &capture, error);
     size_t count = 0;
     for (size_t i = 0; ok && i < owner->source_entity_count; ++i) {
         qa_q2_entity state = owner->source_entities[i];
@@ -729,7 +815,7 @@ bool qa_application_network_q2_frame(qa_application_network_q2 *owner, const qa_
         uint32_t hidden = 0;
         for (size_t j = 0; ok && j < seats; ++j) {
             bool seen = false, own = false;
-            ok = source_visible(owner, &recipients[j], &state, no_visibility, &seen, &own, error);
+            ok = source_visible(owner, &recipients[j], &state, capture, no_visibility, &seen, &own, error);
             visible |= seen; owned |= own;
             if (!seen) hidden |= UINT32_C(1) << j;
         }

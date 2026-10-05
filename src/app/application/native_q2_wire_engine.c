@@ -177,13 +177,13 @@ bool application_native_q2_wire_resource(struct application_native_q2 *engine, u
     *out = free_index; return true;
 }
 
-bool application_native_q2_wire_prepare(struct application_native_q2 *engine, qa_error *error)
+bool application_native_q2_wire_prepare(struct application_native_q2 *engine,
+    const qa_application_native_q2_entity_prefix *entities, uint32_t count, qa_error *error)
 {
     if (!engine || !engine->wire_engine || !application_native_q2_idle(engine->provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 Engine publication requires its idle installed namespace");
     qa_native_host *host = engine->provider->state.native.host;
-    uint32_t count;
-    if (!qa_native_host_q2_wire_count(host, &count, error) || count > engine->wire_engine->capacity) return false;
+    if (count > engine->wire_engine->capacity) return false;
     for (uint32_t i = 0; i < engine->wire_engine->capacity; ++i) {
         application_native_q2_wire_row *row = &engine->wire_engine->rows[i];
         if (!row->occupied || !row->original) continue;
@@ -196,11 +196,10 @@ bool application_native_q2_wire_prepare(struct application_native_q2 *engine, qa
         }
     }
     for (uint32_t i = 0; i < count; ++i) {
-        qa_native_host_q2_entity source;
-        if (!qa_native_host_q2_wire_entity(host, i, &source, error)) return false;
-        if (!source.in_use || source.binding.kind == QA_NATIVE_SLOT_FREE) continue;
+        const qa_native_host_q2_entity *source = &entities[i].source.original;
+        if (!source->in_use || source->binding.kind == QA_NATIVE_SLOT_FREE) continue;
         uint32_t number;
-        if (!admit(engine, source.binding.actor, true, i, &number, error)) return false;
+        if (!admit(engine, source->binding.actor, true, i, &number, error)) return false;
     }
     return true;
 }

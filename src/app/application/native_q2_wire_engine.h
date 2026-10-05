@@ -2,6 +2,7 @@
 #define APPLICATION_NATIVE_Q2_WIRE_ENGINE_H
 #include "guest_native_q2_private.h"
 #include "qa/network_q2_session.h"
+#include "qa/application_native_q2_presentation.h"
 
 typedef struct application_native_q2_wire_row {
     qa_actor_id actor;
@@ -23,7 +24,8 @@ typedef struct application_native_q2_wire_engine {
 
 bool application_native_q2_wire_begin(struct application_native_q2 *, qa_error *);
 void application_native_q2_wire_destroy(application_native_q2_wire_engine **);
-bool application_native_q2_wire_prepare(struct application_native_q2 *, qa_error *);
+bool application_native_q2_wire_prepare(struct application_native_q2 *,
+    const qa_application_native_q2_entity_prefix *, uint32_t count, qa_error *);
 bool application_native_q2_wire_linked(struct application_native_q2 *, const qa_linked_body *, qa_error *);
 void application_native_q2_wire_released(struct application_native_q2 *, qa_actor_id);
 bool application_native_q2_wire_number(struct application_native_q2 *, qa_actor_id, uint32_t *, qa_error *);
