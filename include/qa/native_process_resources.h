@@ -76,6 +76,12 @@ bool qa_native_process_resources_restore(const qa_native_process_resources_optio
  * come from the actual kernel/source policy, not a host library lookup. */
 bool qa_native_process_resources_program_create(const qa_native_process_resources_options *,
     const qa_native_process_resource_program *, qa_native_process_resources **, qa_error *);
+/* File-cold PROGRAM import against the current executable/interpreter and
+ * contained roots. The same resource recipe codec restores logical files;
+ * no program startup instructions or original pathname authority are replayed. */
+bool qa_native_process_resources_program_restore(const qa_native_process_resources_options *,
+    const qa_native_process_resource_program *, qa_bytes,
+    qa_native_process_resources **, qa_error *);
 bool qa_native_process_resources_program_read(qa_native_process_resources *,
     qa_native_sysv_program_options *, qa_error *);
 bool qa_native_process_resources_program_restore_read(qa_native_process_resources *,

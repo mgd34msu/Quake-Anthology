@@ -1142,14 +1142,26 @@ static bool resource_recipe_read(qa_native_process_resources *imported,
         fail(error,QA_ERROR_FORMAT,"Native resource continuation differs from its prepared graph");
     return ok;
 }
+static bool resource_import(qa_native_process_resources *owner, qa_bytes bytes, qa_error *error)
+{
+    owner->file_cold=true;
+    bool ok=resource_recipe_read(owner,owner,bytes,error);
+    if (!ok) owner->failed=true;
+    return ok;
+}
 bool qa_native_process_resources_restore(const qa_native_process_resources_options *options,
     qa_bytes bytes,qa_native_process_resources **out,qa_error *error)
 {
-    if (!bytes.data || !bytes.size || !qa_native_process_resources_create(options,out,error)) return false;
-    (*out)->file_cold=true;
-    bool ok=resource_recipe_read(*out,*out,bytes,error);
-    if (!ok) (*out)->failed=true;
-    return ok;
+    return bytes.data && bytes.size && qa_native_process_resources_create(options,out,error) &&
+        resource_import(*out,bytes,error);
+}
+bool qa_native_process_resources_program_restore(const qa_native_process_resources_options *options,
+    const qa_native_process_resource_program *program, qa_bytes bytes,
+    qa_native_process_resources **out, qa_error *error)
+{
+    return bytes.data && bytes.size &&
+        qa_native_process_resources_program_create(options,program,out,error) &&
+        resource_import(*out,bytes,error);
 }
 bool qa_native_process_resources_validate(const qa_native_process_resources *owner, qa_bytes bytes, qa_error *error)
 {
