@@ -1848,7 +1848,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/remote_unified_components_records.c
     src/app/frontend/remote_unified_components_scene.c
     src/app/frontend/remote_unified_input.c
-    src/app/frontend/remote_unified_media_save.c
     src/app/frontend/renderer_worlds.c
     src/app/frontend/restart_binding.c
     src/app/frontend/unified_input_command.c

@@ -280,6 +280,11 @@ bool frontend_unified_media_importing(const frontend_unified_media *owner)
 { return owner && owner->importing; }
 qa_scene_world *frontend_unified_media_world(const frontend_unified_media *owner)
 { return owner ? owner->world : NULL; }
+bool frontend_unified_media_q3_row(size_t bank, size_t model, uint64_t *out)
+{
+    if (!out || bank >= UINT32_MAX || model >= UINT32_MAX) return false;
+    *out = ((uint64_t)(bank + 1) << 32) | (uint64_t)(model + 1); return true;
+}
 bool frontend_unified_media_current(const frontend_unified_media *owner)
 { return owner && qa_executable_recipe_current(owner->recipe, qa_executable_recipe_catalog(owner->recipe)); }
 bool frontend_unified_media_ready(const frontend_unified_media *owner)
