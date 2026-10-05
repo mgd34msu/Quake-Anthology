@@ -910,7 +910,7 @@ static bool prepare_physical_source(qa_application *app, struct application_star
         ok = flow->hooks.program_source(flow->hooks.context, app, flow->candidate,
             &source->owner, &previous, &inherited, error);
         if (ok && inherited)
-            ok = application_startup_program_prepare(app, flow->candidate, &previous,
+            ok = application_startup_program_prepare(app, flow->publication, &previous,
                 &source->owner, &source->program, error);
     }
     ok = ok && qa_application_capture_command_context(app, &source->owner.command, &source->owner.command, error) &&
@@ -1029,7 +1029,7 @@ static bool begin(qa_application *app, const qa_launch_draft *draft,
                 startup_source *source = append_source(flow, error);
                 if (!source) { ok = false; break; }
                 source->provider = provider; source->owner = target;
-                ok = application_startup_program_prepare(app, flow->candidate, &previous,
+                ok = application_startup_program_prepare(app, flow->publication, &previous,
                     &source->owner, &source->program, error);
             }
             continue;

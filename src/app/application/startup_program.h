@@ -4,7 +4,7 @@
 
 typedef struct application_startup_program application_startup_program;
 typedef struct application_startup_program_roster application_startup_program_roster;
-bool application_startup_program_prepare(qa_application *, const qa_launch_snapshot *,
+bool application_startup_program_prepare(qa_application *, application_publication *,
     const qa_application_startup_source *, const qa_application_startup_source *,
     application_startup_program **, qa_error *);
 bool application_startup_program_refresh(application_startup_program *,

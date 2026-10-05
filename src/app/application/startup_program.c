@@ -132,9 +132,9 @@ static bool carried_player_seat(const application_startup_program *owner, qa_act
     uint32_t *seat)
 {
     if (qa_application_player_seat(owner->previous_application, actor, seat)) return true;
-    const application_campaign_travel *campaign = owner->restoring
-        ? owner->previous_application->campaign_travel : NULL;
-    const application_player_travel *players = campaign ? campaign->players : NULL;
+    const application_campaign_travel *campaign = owner->previous_application->campaign_travel;
+    const application_player_travel *players = owner->publication
+        ? owner->publication->players : campaign ? campaign->players : NULL;
     for (size_t i = 0; players && i < players->count; ++i)
         if (qa_actor_id_equal(players->carry[i].previous_actor, actor)) {
             *seat = players->seats[i].id;
@@ -334,10 +334,10 @@ static bool prepare_program(qa_application *app, qa_application *previous_app,
     *out = owner; return true;
 }
 
-bool application_startup_program_prepare(qa_application *app, const qa_launch_snapshot *candidate,
+bool application_startup_program_prepare(qa_application *app, application_publication *publication,
     const qa_application_startup_source *source, const qa_application_startup_source *target,
     application_startup_program **out, qa_error *error)
-{ return prepare_program(app, app, candidate, source, target, NULL, out, error); }
+{ return prepare_program(app, app, publication->candidate, source, target, publication, out, error); }
 
 bool application_startup_program_refresh(application_startup_program *owner,
     const qa_application_startup_source *target, qa_error *error)
