@@ -380,7 +380,7 @@ bool frontend_system_cinematic_frame(qa_frontend *f,uint64_t elapsed_ns,bool *re
         if (f->frame.source_pending)
             ok=qa_material_source_frame_end(f->frame.source_pending,&f->frame,false,error);
     } else if (ok) {
-        ok=frontend_frame_present(f,true,error);
+        ok=frontend_frame_present(f,error);
     }
     row->busy=false;
     if (!ok) return false;

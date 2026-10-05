@@ -443,7 +443,7 @@ static bool update_loading(void *context,q3n_loading *loading,const q3n_frame *f
         return retired&&cut(o,f,e);
     }
     bool okay=frontend->cpu?(qa_cpu_execute(frontend->cpu,&frontend->frame,e) && qa_cpu_present_frame(frontend->cpu,e)):
-        (frontend->gl && qa_gl_execute(frontend->gl,&frontend->frame,e) && (frontend->frame.source_backend || qa_gl_finish(frontend->gl,e)) &&
+        (frontend->gl && qa_gl_execute(frontend->gl,&frontend->frame,e) &&
          qa_gl_swap(frontend->gl,e));
     return okay && cut(o,f,e);
 }

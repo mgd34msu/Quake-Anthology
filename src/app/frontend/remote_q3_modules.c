@@ -701,7 +701,7 @@ static bool update_screen(void *context, qa_error *error)
         return true;
     }
     return f->cpu ? qa_cpu_execute(f->cpu, &f->frame, error) && qa_cpu_present_frame(f->cpu, error) :
-        qa_gl_execute(f->gl, &f->frame, error) && qa_gl_finish(f->gl, error) && qa_gl_swap(f->gl, error);
+        qa_gl_execute(f->gl, &f->frame, error) && qa_gl_swap(f->gl, error);
 }
 
 static bool dispose_lease(remote_module_lease *lease, qa_error *error)

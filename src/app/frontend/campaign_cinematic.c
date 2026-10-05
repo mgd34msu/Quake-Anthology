@@ -415,7 +415,7 @@ bool frontend_cinematic_frame(qa_frontend *f,uint64_t elapsed_ns,bool *rendered,
             !qa_material_source_frame_end(f->frame.source_pending,&f->frame,false,error)) return false;
         *rendered=true; return true;
     }
-    bool ok=frontend_frame_present(f,true,error);
+    bool ok=frontend_frame_present(f,error);
     if (ok) *rendered=true;
     return ok;
 }

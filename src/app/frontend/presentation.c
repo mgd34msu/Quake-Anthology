@@ -171,15 +171,26 @@ bool frontend_display_ready(qa_frontend *frontend, bool *ready, qa_error *error)
     *ready = true;
     return true;
 }
-bool frontend_frame_present(qa_frontend *frontend, bool finish_source, qa_error *error)
+bool frontend_frame_present(qa_frontend *frontend, qa_error *error)
 {
     const qa_cvar_view *gamma = qa_cvars_find(qa_application_cvars(frontend->application), "r_gamma");
     float brightness = gamma ? fmaxf(.5f, fminf(3, gamma->number)) : frontend->options.gamma;
-    if (frontend->cpu) return qa_cpu_set_gamma(frontend->cpu, brightness, error) &&
-        qa_cpu_execute(frontend->cpu, &frontend->frame, error) && qa_cpu_present_frame(frontend->cpu, error);
-    return qa_gl_set_gamma(frontend->gl, brightness, error) && qa_gl_execute(frontend->gl, &frontend->frame, error) &&
-        ((!finish_source && frontend->frame.source_backend) || qa_gl_finish(frontend->gl, error)) &&
-        qa_gl_swap(frontend->gl, error);
+    qa_profiler *profiler = qa_tools_profiler(frontend_tools_owner(frontend));
+    bool profiling = qa_profiler_enabled(profiler);
+    bool ok = frontend->cpu ? qa_cpu_set_gamma(frontend->cpu, brightness, error) :
+        qa_gl_set_gamma(frontend->gl, brightness, error);
+    if (ok && profiling) ok = qa_profiler_push(profiler, frontend->cpu ? "cpu_render" : "gl_submit", error);
+    if (ok) {
+        ok = frontend->cpu ? qa_cpu_execute(frontend->cpu, &frontend->frame, error) :
+            qa_gl_execute(frontend->gl, &frontend->frame, error);
+        if (profiling) ok = frontend_profiler_end(profiler, ok, error);
+    }
+    if (ok && profiling) ok = qa_profiler_push(profiler, "window_present", error);
+    if (ok) {
+        ok = frontend->cpu ? qa_cpu_present_frame(frontend->cpu, error) : qa_gl_swap(frontend->gl, error);
+        if (profiling) ok = frontend_profiler_end(profiler, ok, error);
+    }
+    return ok;
 }
 static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
     const qa_application_camera_view *camera, const frontend_q1_view_settings *view,
@@ -484,5 +495,5 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
     bool ok = scene_build(frontend, &render, error);
     if (profiling) ok = frontend_profiler_end(profiler, ok, error);
     if (!ok || !render) return ok;
-    return frontend_frame_present(frontend, false, error);
+    return frontend_frame_present(frontend, error);
 }

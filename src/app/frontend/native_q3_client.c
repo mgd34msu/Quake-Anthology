@@ -664,7 +664,7 @@ static bool update_loading(void *context,q3n_loading *loading,const q3n_frame *f
         return frontend_native_q3_cut(row,frame,e);
     }
     bool ok=f->cpu?(qa_cpu_execute(f->cpu,&f->frame,e) && qa_cpu_present_frame(f->cpu,e)):
-        (f->gl && qa_gl_execute(f->gl,&f->frame,e) && qa_gl_finish(f->gl,e) && qa_gl_swap(f->gl,e));
+        (f->gl && qa_gl_execute(f->gl,&f->frame,e) && qa_gl_swap(f->gl,e));
     return ok && frontend_native_q3_cut(row,frame,e);
 }
 static bool loading(void *context,const q3n_frame *f,const char *text,int32_t item,qa_error *e)

@@ -450,7 +450,7 @@ static bool begin_view(qa_gl_renderer *renderer, const qa_scene_view *view, bool
     renderer->view = *view;
     if (renderer->opacity.skip) return true;
     gl_api *gl = &renderer->gl;
-    if (source_backend && view->clear_depth) {
+    if (view->clear_depth) {
         if (renderer->controls.frame_values.finish==1 && !renderer->controls.finish_called) {
             gl->Finish(); renderer->controls.finish_called=true;
         }
@@ -1069,6 +1069,7 @@ static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *fra
             renderer->controls.source.frame->source_clear_draw_buffer = false;
     }
     if (begin) {
+        if (!frame->source_backend) renderer->controls.finish_called = false;
         renderer->presented = false;
         gl_textures_prune(renderer);
         gl_meshes_prune(renderer);

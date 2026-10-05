@@ -1096,7 +1096,7 @@ static bool update_screen(void *context, qa_error *error)
         return true;
     }
     if (frontend->cpu) return qa_cpu_execute(frontend->cpu, &frontend->frame, error) && qa_cpu_present_frame(frontend->cpu, error);
-    return qa_gl_execute(frontend->gl, &frontend->frame, error) && qa_gl_finish(frontend->gl, error) && qa_gl_swap(frontend->gl, error);
+    return qa_gl_execute(frontend->gl, &frontend->frame, error) && qa_gl_swap(frontend->gl, error);
 }
 static void common_print(void *context, const char *text)
 {
