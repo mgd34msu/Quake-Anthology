@@ -140,7 +140,7 @@ static bool images_prepare(frontend_config_store *,const qa_application_startup_
 static bool shared_storage_prepare(frontend_config_store *,qa_error *);
 static bool prepare_retained_input(frontend_config_store *,qa_application *,const qa_launch_snapshot *,qa_error *);
 static void discard_retained_input(frontend_config_store *);
-static bool prepare_input_publication(qa_frontend *,config_seat *,size_t,qa_error *);
+static bool prepare_input_publication(frontend_config_source *,config_seat *,size_t,qa_error *);
 static void publish_input(config_seat *);
 static bool equal(const char *left,const char *right)
 {
@@ -2798,7 +2798,7 @@ bool frontend_config_store_local_seats_retire(frontend_config_store *manager,qa_
                     return fail(error,QA_ERROR_ARGUMENT,"Captured local profile lost its actual published physical seat");
                 qa_input_seat *captured=seat->input; seat->input=NULL;
                 bool ok=seat_input_create(source,seat,captured,physical,error) &&
-                    prepare_input_publication(manager->frontend,seat,physical,error);
+                    prepare_input_publication(source,seat,physical,error);
                 if (ok) publish_input(seat);
                 qa_input_seat_destroy(seat->input); seat->input=NULL;
                 seat->publication_input=NULL; seat->publication_console=NULL;
@@ -3013,11 +3013,18 @@ static bool phase_destroy(void *context,void *phase,qa_error *error)
     if (!frontend_startup_config_destroy(source->phase,error)) return false;
     source->phase=NULL; source->released=true; return true;
 }
-static bool prepare_input_publication(qa_frontend *f,config_seat *seat,size_t ordinal,qa_error *error)
+static bool prepare_input_publication(frontend_config_source *source,config_seat *seat,size_t ordinal,qa_error *error)
 {
+    qa_frontend *f=source->manager->frontend;
     qa_input_seat *active=f->seats && ordinal<f->options.seats?f->seats[ordinal].input:NULL;
     if (!active || !seat->input || qa_input_seat_has_held(seat->input))
         return fail(error,QA_ERROR_ARGUMENT,"Configuration candidate requires an isolated staged input seat");
+    qa_command_context current;
+    if (!current_command(source,&current,error) ||
+        !capture_seat_command(source->application,&current,seat->logical,&current,error) ||
+        !qa_input_seat_context_ready(seat->input,&current,error)) return false;
+    qa_input_seat_context_publish(seat->input,&current);
+    if (!qa_input_seat_profile(seat->input,seat->movement_dialect,error)) return false;
     int32_t controller=f->input?qa_input_platform_controller(f->input,(unsigned)ordinal):-1;
     if ((controller>=0 && !qa_input_seat_remap_controller(seat->input,controller,error)) ||
         !qa_input_seat_configuration_ready(active,seat->input,error)) return false;
@@ -3080,13 +3087,13 @@ static bool prepare_candidate(void *context,qa_application *application,const qa
         !source_context(primary,&primary_command))
         return fail(error,QA_ERROR_ARGUMENT,"Configuration publication lost its exact physical primary source");
     for (size_t i=0;!primary->published && i<primary->seat_count;++i)
-        if (!prepare_input_publication(f,primary->seats+i,i,error)) return false;
+        if (!prepare_input_publication(primary,primary->seats+i,i,error)) return false;
     if (manager->input_source) {
         if (manager->input_source!=primary || manager->input_candidate!=candidate ||
             manager->input_application!=application || !manager->input_prepared)
             return fail(error,QA_ERROR_ARGUMENT,"Retained input preflight changed its actual primary source");
         for (size_t i=0;i<manager->input_count;++i)
-            if (!prepare_input_publication(f,manager->input_seats+i,i,error)) return false;
+            if (!prepare_input_publication(primary,manager->input_seats+i,i,error)) return false;
     }
     if (f->keys && !frontend_keys_publication_ready(f->keys,primary->keys,
         primary->keys?primary->cvars:NULL,&manager->key_publication,error)) return false;
