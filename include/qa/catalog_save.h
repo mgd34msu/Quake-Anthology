@@ -1,15 +1,11 @@
 #ifndef QA_CATALOG_SAVE_H
 #define QA_CATALOG_SAVE_H
 #include "qa/catalog.h"
-typedef struct qa_catalog_member_identity { const char *path; size_t ordinal; } qa_catalog_member_identity;
 typedef struct qa_catalog_checkpoint_refs {
     void *context;
     bool (*files_encode)(void *, const qa_vfs *, qa_buffer *, qa_error *);
     /* Returns an owned view in the supplied actual isolated resource pool. */
     bool (*files_decode)(void *, qa_resource_pool *, qa_bytes, qa_vfs **, qa_error *);
-    /* Read-only qualification of exact physical package/directory identity
-     * and archive member inventory. Does not rediscover catalog metadata. */
-    bool (*physical_ready)(void *, const qa_catalog_mount *, const qa_catalog_member_identity *, size_t, qa_error *);
 } qa_catalog_checkpoint_refs;
 const qa_vfs *qa_catalog_files(const qa_catalog *);
 qa_resource_pool *qa_catalog_resources(const qa_catalog *);
@@ -17,9 +13,7 @@ qa_resource_pool *qa_catalog_resources(const qa_catalog *);
  * authority without rediscovery or acquisition. */
 bool qa_catalog_clone(const qa_catalog *, qa_catalog **, qa_error *);
 bool qa_catalog_checkpoint(const qa_catalog *, const qa_catalog_checkpoint_refs *, qa_buffer *, qa_error *);
-/* Restores the complete retained snapshot, including original private string
- * IDs, product IDs, configured search locations, discovered physical mappings
- * and physical order. No scans or metadata/source replay run.
+/* Restore catalog references and rebuild installed archive member indexes.
  * References come from actual holders; the returned snapshot starts at one. */
 bool qa_catalog_restore(qa_resource_pool *, const qa_catalog_checkpoint_refs *, qa_bytes, qa_catalog **, qa_error *);
 #endif

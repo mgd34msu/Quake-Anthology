@@ -165,6 +165,34 @@ static bool append_mount(catalog_product *p, qa_mount_id id, qa_error *error)
     p->own_mounts = next; next[p->own_count++] = id; return true;
 }
 
+bool catalog_index_package(qa_catalog *catalog, catalog_physical *physical, qa_error *error)
+{
+    if (physical->view.format == QA_ARCHIVE_AUTO) return true;
+    const qa_archive *archive = qa_vfs_archive(catalog->mounts, physical->view.id);
+    if (!archive) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Installed catalog archive is unavailable");
+        return false;
+    }
+    size_t count = qa_archive_count(archive);
+    if (count > SIZE_MAX / sizeof(*physical->members)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Installed archive index exceeds storage");
+        return false;
+    }
+    physical->members = count ? calloc(count, sizeof(*physical->members)) : NULL;
+    if (count && !physical->members) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot index installed package metadata");
+        return false;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        const qa_archive_entry *entry = qa_archive_entry_at(archive, i);
+        if (entry->is_directory) continue;
+        const char *name = catalog_string(catalog, entry->path, error);
+        if (!name) return false;
+        physical->members[physical->member_count++] = (catalog_member){name, i};
+    }
+    return true;
+}
+
 static bool mount_file(qa_catalog *c, catalog_product *p, const char *path,
                         qa_archive_kind kind, bool writable, qa_error *error)
 {
@@ -183,19 +211,7 @@ static bool mount_file(qa_catalog *c, catalog_product *p, const char *path,
     qa_mount_id identity = id;
     catalog_physical *physical = &c->physical[c->physical_count++];
     *physical = (catalog_physical){.view = {identity, path, kind, writable, NULL}};
-    if (kind != QA_ARCHIVE_AUTO) {
-        const qa_archive *archive = qa_vfs_archive(c->mounts, id);
-        size_t count = qa_archive_count(archive);
-        physical->members = calloc(count ? count : 1, sizeof(*physical->members));
-        if (!physical->members) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain package metadata"); return false; }
-        for (size_t i = 0; i < count; ++i) {
-            const qa_archive_entry *entry = qa_archive_entry_at(archive, i);
-            if (entry->is_directory) continue;
-            const char *name = catalog_string(c, entry->path, error);
-            if (!name) return false;
-            physical->members[physical->member_count++] = (catalog_member){name, i};
-        }
-    }
+    if (!catalog_index_package(c, physical, error)) return false;
     for (size_t i = 0; i < c->physical_count; ++i)
         c->physical[i].view.identity = qa_vfs_archive_identity(c->mounts, c->physical[i].view.id);
     return !p || append_mount(p, identity, error);

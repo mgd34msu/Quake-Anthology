@@ -890,32 +890,6 @@ bool application_save_content_encode(const qa_application_content_graph *graph, 
 }
 
 typedef struct catalog_admission { qa_application_content_graph *graph; content_view *view; } catalog_admission;
-static bool physical_ready(void *context, const qa_catalog_mount *mount,
-    const qa_catalog_member_identity *members, size_t count, qa_error *error)
-{
-    catalog_admission *a = context; qa_vfs *v = a->view->value; qa_vfs_mount_info actual;
-    bool found = false;
-    for (size_t i = 0; mount && i < qa_vfs_mount_count(v); ++i)
-        if (qa_vfs_mount_at(v, i, &actual) && actual.id == mount->id) { found = true; break; }
-    if (!mount || !mount->id || !found)
-        return fail(error, QA_ERROR_FORMAT, "Catalog physical mount is outside its qualified native view");
-    const char *path = qa_vfs_mount_path(v, actual.id);
-    if (!path || strcmp(path, mount->path) || actual.format != mount->format || actual.writable != mount->writable ||
-        actual.is_archive != (mount->format != QA_ARCHIVE_AUTO))
-        return fail(error, QA_ERROR_FORMAT, "Catalog physical package identity disagrees with its qualified native view");
-    if (!actual.is_archive) return !count ||
-        fail(error, QA_ERROR_FORMAT, "Catalog directory contains fabricated archive metadata");
-    const qa_archive *archive = qa_vfs_archive(v, actual.id); size_t next = 0;
-    if (!archive) return fail(error, QA_ERROR_FORMAT, "Catalog package has no actual immutable archive owner");
-    for (size_t i = 0; i < qa_archive_count(archive); ++i) {
-        const qa_archive_entry *entry = qa_archive_entry_at(archive, i);
-        if (entry->is_directory) continue;
-        if (next >= count || members[next].ordinal != i || strcmp(members[next].path, entry->path))
-            return fail(error, QA_ERROR_FORMAT, "Catalog member inventory disagrees with actual immutable archive bytes");
-        ++next;
-    }
-    return next == count || fail(error, QA_ERROR_FORMAT, "Catalog member inventory omits actual package entries");
-}
 static bool files_decode(void *context, qa_resource_pool *pool, qa_bytes bytes, qa_vfs **out, qa_error *error)
 {
     catalog_admission *a = context; content_view *v = a->view;
@@ -951,7 +925,7 @@ bool application_save_content_prepare(qa_bytes bytes, const qa_vfs_checkpoint_re
         content_view *view = NULL;
         for (size_t j = 0; j < g->view_count; ++j) if (g->views[j].catalog == i + 1) { view = &g->views[j]; break; }
         catalog_admission admission = {.graph = g, .view = view};
-        qa_catalog_checkpoint_refs refs = {.context = &admission, .files_decode = files_decode, .physical_ready = physical_ready};
+        qa_catalog_checkpoint_refs refs = {.context = &admission, .files_decode = files_decode};
         content_catalog *c = &g->catalogs[i];
         ok = qa_catalog_restore(qa_application_content_pool(g, c->pool), &refs,
             (qa_bytes){c->bytes.data, c->bytes.size}, &c->value, error);

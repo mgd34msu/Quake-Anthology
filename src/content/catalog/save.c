@@ -29,28 +29,24 @@ static bool blob(qa_source_save_io *io, qa_buffer *bytes)
 }
 static bool text(qa_source_save_io *io, qa_catalog *catalog, const char **value)
 {
-    uint8_t kind = 0; qa_string_id id = QA_STRING_NONE; size_t length = 0;
-    if (io->direction == QA_SOURCE_SAVE_WRITE && *value) {
-        length = strlen(*value); id = qa_strings_find(catalog->strings, (qa_bytes){(const uint8_t *)*value, length});
-        kind = id ? 1 : 2;
-    }
+    uint8_t kind = io->direction == QA_SOURCE_SAVE_WRITE && *value ? 2 : 0;
     if (!qa_source_save_u8(io, &kind) || kind > 2) return false;
     if (!kind) { if (io->direction == QA_SOURCE_SAVE_READ) *value = NULL; return true; }
     if (kind == 1) {
+        qa_string_id id = QA_STRING_NONE;
         if (!qa_source_save_u32(io, &id) || !id) return false;
-        const char *actual = qa_strings_cstr(catalog->strings, id);
-        if (!actual) return false;
-        if (io->direction == QA_SOURCE_SAVE_READ) *value = actual;
-        return true;
+        *value = qa_strings_cstr(catalog->strings, id);
+        return *value != NULL;
     }
+    size_t length = io->direction == QA_SOURCE_SAVE_WRITE ? strlen(*value) : 0;
     size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? io->input.size - io->offset : SIZE_MAX;
     if (!qa_source_save_count(io, &length, maximum)) return false;
     if (io->direction == QA_SOURCE_SAVE_WRITE) return qa_source_save_bytes(io, (void *)*value, length);
-    qa_bytes bytes;
+    qa_bytes bytes; qa_string_id id;
     if (!qa_source_save_span(io, length, &bytes)) return false;
-    if (memchr(bytes.data, 0, bytes.size)) return fail(io->error, QA_ERROR_FORMAT, "Retained catalog text contains NUL");
-    if (!qa_strings_intern(catalog->restored_literals, bytes, &id, io->error)) return false;
-    *value = qa_strings_cstr(catalog->restored_literals, id); return *value != NULL;
+    if (memchr(bytes.data, 0, bytes.size)) return fail(io->error, QA_ERROR_FORMAT, "Catalog text contains NUL");
+    if (!qa_strings_intern(catalog->strings, bytes, &id, io->error)) return false;
+    *value = qa_strings_cstr(catalog->strings, id); return *value != NULL;
 }
 static bool strings(qa_source_save_io *io, qa_catalog *catalog, const char ***values, size_t *count)
 {
@@ -83,7 +79,7 @@ static bool mount_ids(qa_source_save_io *io, qa_catalog *catalog, qa_mount_id **
     }
     return true;
 }
-static bool physical(qa_source_save_io *io, qa_catalog *catalog, const qa_catalog *copy)
+static bool physical(qa_source_save_io *io, qa_catalog *catalog)
 {
     ARRAY(catalog, physical, physical_count, 15);
     for (size_t i = 0; i < catalog->physical_count; ++i) {
@@ -91,18 +87,23 @@ static bool physical(qa_source_save_io *io, qa_catalog *catalog, const qa_catalo
         FIELD(u64, view, id);
         if (view->id != i + 1 || !text(io, catalog, &view->path) || !view->path || !*view->path) return false;
         ENUM(view, format, QA_ARCHIVE_KPF); FIELD(bool, view, writable);
-        ARRAY(package, members, member_count, 9);
-        for (size_t j = 0; j < package->member_count; ++j) {
-            if (!text(io, catalog, &package->members[j].path) || !package->members[j].path || !*package->members[j].path ||
-                !qa_source_save_count(io, &package->members[j].ordinal, SIZE_MAX) ||
-                (j && package->members[j - 1].ordinal >= package->members[j].ordinal)) return false;
+        size_t saved_members = 0;
+        size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? (io->input.size - io->offset) / 9 : 0;
+        if (!qa_source_save_count(io, &saved_members, maximum)) return false;
+        for (size_t j = 0; j < saved_members; ++j) {
+            const char *ignored = NULL; size_t ordinal = 0;
+            if (!text(io, catalog, &ignored) || !qa_source_save_count(io, &ordinal, SIZE_MAX)) return false;
         }
-        if (view->format == QA_ARCHIVE_AUTO && package->member_count) return false;
-        if (copy && io->direction == QA_SOURCE_SAVE_READ) {
-            const qa_catalog_mount *original = qa_catalog_mount_at(copy, i);
-            if (!original || original->id != view->id) return false;
-            view->identity = original->identity;
-        } else view->identity = catalog->mounts ? qa_vfs_archive_identity(catalog->mounts, view->id) : NULL;
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            qa_vfs_mount_info mount; bool found = false;
+            for (size_t j = 0; j < qa_vfs_mount_count(catalog->mounts); ++j)
+                if (qa_vfs_mount_at(catalog->mounts, j, &mount) && mount.id == view->id) { found = true; break; }
+            const char *path = found ? qa_vfs_mount_path(catalog->mounts, view->id) : NULL;
+            if (!path || strcmp(path, view->path) || mount.format != view->format || mount.writable != view->writable)
+                return fail(io->error, QA_ERROR_FORMAT, "Catalog mount is absent from its installed content view");
+            if (!catalog_index_package(catalog, package, io->error)) return false;
+            view->identity = qa_vfs_archive_identity(catalog->mounts, view->id);
+        }
     }
     return true;
 }
@@ -290,7 +291,8 @@ static bool behaviors(qa_source_save_io *io, qa_catalog *catalog)
     }
     return true;
 }
-static bool fields(qa_source_save_io *io, qa_catalog *catalog, qa_buffer *files, const qa_catalog *copy)
+static bool fields(qa_source_save_io *io, qa_catalog *catalog, qa_buffer *files,
+    const qa_catalog_checkpoint_refs *refs)
 {
     uint8_t magic[4] = {'Q','C','A','T'};
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QCAT", sizeof(magic))) return false;
@@ -302,12 +304,15 @@ static bool fields(qa_source_save_io *io, qa_catalog *catalog, qa_buffer *files,
         if (!qa_source_save_u64(io, &catalog->q2_download_mount[i])) return false;
     FIELD(u64,catalog,q3_install_mount);
     qa_buffer dictionary = {0};
-    bool ok = io->direction == QA_SOURCE_SAVE_READ || qa_save_strings_encode(catalog->strings, &dictionary, io->error);
-    if (ok) ok = blob(io, &dictionary);
-    if (ok && io->direction == QA_SOURCE_SAVE_READ) ok = qa_save_strings_decode(
-        (qa_bytes){dictionary.data, dictionary.size}, &catalog->strings, io->error);
+    bool ok = blob(io, &dictionary);
+    if (ok && io->direction == QA_SOURCE_SAVE_READ && dictionary.size) {
+        qa_strings *strings = NULL;
+        ok = qa_save_strings_decode((qa_bytes){dictionary.data, dictionary.size}, &strings, io->error);
+        if (ok) { qa_strings_destroy(catalog->strings); catalog->strings = strings; }
+    }
     qa_buffer_free(&dictionary);
-    if (!ok || !text(io, catalog, &catalog->root) || !catalog->root || !*catalog->root ||
+    if (!ok) return false;
+    if (!text(io, catalog, &catalog->root) || !catalog->root || !*catalog->root ||
         !text(io, catalog, &catalog->user)) return false;
     if (!strings(io,catalog,&catalog->install_roots,&catalog->install_root_count)) return false;
     for (size_t i=0;i<catalog->install_root_count;++i) if (!*catalog->install_roots[i]) return false;
@@ -326,7 +331,10 @@ static bool fields(qa_source_save_io *io, qa_catalog *catalog, qa_buffer *files,
     }
     catalog->location_capacity=catalog->location_count;
     if (!blob(io,files)) return false;
-    if (!physical(io, catalog, copy) || !products(io, catalog) || !mods(io, catalog) || !behaviors(io, catalog)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ &&
+        (!refs->files_decode(refs->context, catalog->resources, (qa_bytes){files->data, files->size},
+            &catalog->mounts, io->error) || !catalog->mounts)) return false;
+    if (!physical(io, catalog) || !products(io, catalog) || !mods(io, catalog) || !behaviors(io, catalog)) return false;
     if (catalog->corpus_mount) {
         const qa_catalog_mount *root = catalog_mount(catalog, catalog->corpus_mount);
         if (!root || root->format != QA_ARCHIVE_AUTO || root->writable) return false;
@@ -371,7 +379,7 @@ static bool fields(qa_source_save_io *io, qa_catalog *catalog, qa_buffer *files,
     }
     return true;
 }
-static bool checkpoint(const qa_catalog *catalog, const qa_catalog_checkpoint_refs *refs, qa_buffer *out, qa_error *error, const qa_catalog *copy)
+bool qa_catalog_checkpoint(const qa_catalog *catalog, const qa_catalog_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
 {
     if (!catalog || !catalog->references || !refs || !refs->files_encode || !out || out->data || out->size)
         return fail(error, QA_ERROR_ARGUMENT, "Catalog capture requires its actual retained immutable snapshot");
@@ -379,27 +387,23 @@ static bool checkpoint(const qa_catalog *catalog, const qa_catalog_checkpoint_re
     qa_buffer files = {0};
     if (!refs->files_encode(refs->context, catalog->mounts, &files, error)) { qa_buffer_free(&files); return false; }
     qa_source_save_io io;
-    bool ok = qa_source_save_writer(&io, NULL, error) && fields(&io, (qa_catalog *)catalog, &files, copy) && qa_source_save_finish(&io, out);
+    bool ok = qa_source_save_writer(&io, NULL, error) && fields(&io, (qa_catalog *)catalog, &files, refs) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); qa_buffer_free(&files);
     if (!ok && error && error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Catalog snapshot leaves its actual source field domains");
     return ok;
 }
-static bool restore(qa_resource_pool *resources, const qa_catalog_checkpoint_refs *refs,
-    qa_bytes bytes, qa_catalog **out, qa_error *error, const qa_catalog *copy)
+bool qa_catalog_restore(qa_resource_pool *resources, const qa_catalog_checkpoint_refs *refs,
+    qa_bytes bytes, qa_catalog **out, qa_error *error)
 {
-    if (!resources || !refs || !refs->files_decode || !refs->physical_ready || !out || *out)
+    if (!resources || !refs || !refs->files_decode || !out || *out)
         return fail(error, QA_ERROR_ARGUMENT, "Catalog restore requires an isolated pool and actual snapshot admissions");
     qa_catalog *catalog = calloc(1, sizeof(*catalog));
     if (!catalog) return fail(error, QA_ERROR_MEMORY, "Allocating retained catalog snapshot");
     catalog->references = 1; catalog->resources = resources;
-    if (!qa_strings_create(&catalog->restored_literals, error)) { qa_catalog_release(catalog); return false; }
+    if (!qa_strings_create(&catalog->strings, error)) { qa_catalog_release(catalog); return false; }
     qa_source_save_io io; qa_buffer files = {0};
-    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && fields(&io, catalog, &files, copy) && qa_source_save_finish(&io, NULL);
+    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && fields(&io, catalog, &files, refs) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
-    for (size_t i = 0; ok && i < catalog->physical_count; ++i)
-        ok = refs->physical_ready(refs->context, &catalog->physical[i].view,
-            catalog->physical[i].members, catalog->physical[i].member_count, error);
-    if (ok) ok = refs->files_decode(refs->context, resources, (qa_bytes){files.data, files.size}, &catalog->mounts, error) && catalog->mounts;
     if (ok) ok = catalog_q3_restriction_valid(catalog, error);
     if (ok && catalog->corpus_mount) {
         const qa_catalog_mount *root = catalog_mount(catalog, catalog->corpus_mount);
@@ -438,17 +442,11 @@ static bool restore(qa_resource_pool *resources, const qa_catalog_checkpoint_ref
     *out = catalog; return true;
 }
 
-bool qa_catalog_checkpoint(const qa_catalog *catalog, const qa_catalog_checkpoint_refs *refs,
-    qa_buffer *out, qa_error *error)
-{ return checkpoint(catalog, refs, out, error, NULL); }
-bool qa_catalog_restore(qa_resource_pool *resources, const qa_catalog_checkpoint_refs *refs,
-    qa_bytes bytes, qa_catalog **out, qa_error *error)
-{ return restore(resources, refs, bytes, out, error, NULL); }
 bool catalog_copy_metadata(const qa_catalog *source, const qa_catalog_checkpoint_refs *refs,
     qa_catalog **out, qa_error *error)
 {
     qa_buffer bytes = {0};
-    bool ok = checkpoint(source, refs, &bytes, error, source) &&
-        restore(source->resources, refs, (qa_bytes){bytes.data, bytes.size}, out, error, source);
+    bool ok = qa_catalog_checkpoint(source, refs, &bytes, error) &&
+        qa_catalog_restore(source->resources, refs, (qa_bytes){bytes.data, bytes.size}, out, error);
     qa_buffer_free(&bytes); return ok;
 }

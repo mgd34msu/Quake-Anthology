@@ -320,7 +320,7 @@ void qa_catalog_release(qa_catalog *catalog)
     free(catalog->install_roots); free(catalog->locations);
     if (catalog->mounts) qa_resource_pool_trim(catalog->resources);
     qa_vfs_destroy(catalog->mounts); qa_strings_destroy(catalog->strings);
-    qa_strings_destroy(catalog->restored_literals); free(catalog);
+    free(catalog);
 }
 const qa_vfs *qa_catalog_files(const qa_catalog *catalog) { return catalog ? catalog->mounts : NULL; }
 qa_resource_pool *qa_catalog_resources(const qa_catalog *catalog) { return catalog ? catalog->resources : NULL; }

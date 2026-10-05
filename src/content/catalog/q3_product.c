@@ -21,9 +21,8 @@ bool qa_catalog_q3_restricted(const qa_catalog *catalog)
     return catalog && catalog->q3_demo_restricted;
 }
 
-/* The field codec owns every copied metadata table and string. The VFS clone
- * retains its genuine native handles and independently owns policy flags. No
- * serialized bytes enter this trusted in-process copy boundary. */
+/* Clone metadata with the shared codec and retain the native VFS handles.
+ * Installed archive member indexes use the normal catalog constructor. */
 static bool clone_files_encode(void *context, const qa_vfs *files,
     qa_buffer *out, qa_error *error)
 {
@@ -39,27 +38,12 @@ static bool clone_files_decode(void *context, qa_resource_pool *resources,
     *out = qa_vfs_clone(source->mounts, error);
     return *out != NULL;
 }
-static bool clone_physical_ready(void *context, const qa_catalog_mount *mount,
-    const qa_catalog_member_identity *members, size_t count, qa_error *error)
-{
-    const catalog_physical *source = catalog_package(context, mount->id);
-    const qa_catalog_mount *actual = catalog_mount(context, mount->id);
-    if (!source || strcmp(source->view.path, mount->path) || source->view.format != mount->format ||
-        source->view.writable != mount->writable || source->member_count != count ||
-        (mount->identity && (!actual->identity || !qa_fs_identity_equal(actual->identity, mount->identity))))
-        return fail(error, QA_ERROR_FORMAT, "Catalog clone changed physical package identity");
-    for (size_t i = 0; i < count; ++i)
-        if (source->members[i].ordinal != members[i].ordinal || strcmp(source->members[i].path, members[i].path))
-            return fail(error, QA_ERROR_FORMAT, "Catalog clone changed retained archive inventory");
-    return true;
-}
 bool qa_catalog_clone(const qa_catalog *source, qa_catalog **out, qa_error *error)
 {
     if (!source || !out || *out)
         return fail(error, QA_ERROR_ARGUMENT, "Catalog clone requires an actual retained snapshot");
     qa_catalog_checkpoint_refs refs = {.context = (void *)source,
-        .files_encode = clone_files_encode, .files_decode = clone_files_decode,
-        .physical_ready = clone_physical_ready};
+        .files_encode = clone_files_encode, .files_decode = clone_files_decode};
     return catalog_copy_metadata(source, &refs, out, error);
 }
 

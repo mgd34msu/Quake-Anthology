@@ -29,7 +29,7 @@ typedef struct catalog_product {
     const char *required[4];
     size_t required_count;
 } catalog_product;
-typedef qa_catalog_member_identity catalog_member;
+typedef struct catalog_member { const char *path; size_t ordinal; } catalog_member;
 typedef struct catalog_location { const char *logical, *path; } catalog_location;
 typedef struct catalog_physical {
     qa_catalog_mount view;
@@ -41,7 +41,6 @@ struct qa_catalog {
     uint64_t generation;
     bool q3_demo_restricted;
     qa_strings *strings;
-    qa_strings *restored_literals;
     qa_vfs *mounts;
     qa_resource_pool *resources;
     const char *root, *user;
@@ -79,6 +78,7 @@ bool catalog_physical_path(qa_catalog *,const char *,const char *,const char **,
 bool catalog_location_matches(const qa_catalog *,const char *,const char *);
 bool catalog_product_directory(qa_catalog *,catalog_product *,const char **,qa_error *);
 bool catalog_index_product(qa_catalog *, catalog_product *, qa_error *);
+bool catalog_index_package(qa_catalog *, catalog_physical *, qa_error *);
 bool catalog_index_maps(qa_catalog *, catalog_product *, bool archives_only, qa_error *);
 bool catalog_read_mods(qa_catalog *, catalog_product *, qa_error *);
 bool catalog_read_starts(qa_catalog *, catalog_product *, qa_error *);
