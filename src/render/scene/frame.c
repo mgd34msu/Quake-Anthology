@@ -58,6 +58,7 @@ void qa_scene_frame_reset(qa_scene_frame *frame, uint64_t sequence)
         qa_scene_geometry_release(frame->geometries[i]);
     frame->geometry_count = 0;
     frame->command_count = 0;
+    frame->picture_view_end = 0;
     frame->group_count = 0;
     frame->sequence = sequence;
     frame->source_backend = false;
@@ -131,6 +132,7 @@ bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command,
     }
     /* The command may be borrowed from this frame; snapshot before growth. */
     qa_scene_command copied = *command;
+    frame->picture_view_end = 0;
     if (frame->source_pending && (copied.kind == QA_SCENE_COMMAND_VIEW || copied.kind == QA_SCENE_COMMAND_TARGET ||
         copied.kind == QA_SCENE_COMMAND_OPACITY_BEGIN || copied.kind == QA_SCENE_COMMAND_OUTPUT_DOMAIN ||
         copied.kind == QA_SCENE_COMMAND_PREBLEND_GAMMA) &&
@@ -220,6 +222,7 @@ bool qa_scene_frame_group(qa_scene_frame *frame, size_t first, qa_scene_group_ki
         qa_error_set(error, QA_ERROR_MEMORY, 0, "scene group count overflow");
         return false;
     }
+    frame->picture_view_end = 0;
     void *data = frame->groups;
     if (!reserve(&data, &frame->group_capacity, frame->group_count + 1,
                  sizeof(*frame->groups), error)) return false;
@@ -300,6 +303,18 @@ bool qa_scene_picture_geometry(qa_scene_frame *frame, qa_scene_rect target,
     return true;
 }
 
+static bool picture_view_current(const qa_scene_frame *frame, qa_scene_rect target)
+{
+    if (frame->source_pending || !frame->picture_view_end ||
+        frame->picture_view_end != frame->command_count ||
+        frame->picture_view_index >= frame->command_count) return false;
+    const qa_scene_command *command = &frame->commands[frame->picture_view_index];
+    if (command->kind != QA_SCENE_COMMAND_VIEW) return false;
+    const qa_scene_view *view = &command->data.view;
+    return view->viewport.x == target.x && view->viewport.y == target.y &&
+        view->viewport.width == target.width && view->viewport.height == target.height;
+}
+
 bool qa_scene_frame_picture_f(qa_scene_frame *frame, const qa_scene_image *image, qa_scene_rect target,
                               qa_scene_rect_f rect, qa_scene_vec4 uv, qa_scene_vec4 color, qa_error *error)
 {
@@ -326,5 +341,16 @@ bool qa_scene_frame_picture_f(qa_scene_frame *frame, const qa_scene_image *image
     draw.state.blend_destination = QA_BLEND_ONE_MINUS_SRC_ALPHA;
     draw.state.depth_test = QA_DEPTH_ALWAYS;
     draw.state.depth_write = false;
-    return qa_scene_frame_emit(frame, &view, error) && qa_scene_frame_draw(frame, &draw, error);
+    bool ordinary = frame->source_pending == NULL;
+    size_t view_index = frame->picture_view_index;
+    if (!picture_view_current(frame, target)) {
+        if (!qa_scene_frame_emit(frame, &view, error)) return false;
+        view_index = frame->command_count - 1;
+    }
+    if (!qa_scene_frame_draw(frame, &draw, error)) return false;
+    if (ordinary && !frame->source_pending) {
+        frame->picture_view_index = view_index;
+        frame->picture_view_end = frame->command_count;
+    }
+    return true;
 }

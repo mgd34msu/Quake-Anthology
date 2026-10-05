@@ -559,6 +559,9 @@ typedef struct qa_scene_frame {
     qa_arena storage;
     qa_scene_command *commands;
     size_t command_count, command_capacity;
+    /* Derived picture run, invalidated by command publication and grouping.
+     * An end unequal to command_count also rejects a producer rewind. */
+    size_t picture_view_index, picture_view_end;
     const qa_scene_image **images;
     size_t image_count, image_capacity;
     const qa_scene_geometry **geometries;
