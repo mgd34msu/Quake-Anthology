@@ -42,6 +42,8 @@ bool guest_elf_memory_checkpoint(const guest_elf_memory *, qa_buffer *, qa_error
  * backing provenance and source artifact. Saved mutable bytes/rights win. */
 bool guest_elf_memory_adopt(const guest_elf *, qa_native_guest *, qa_bytes,
     guest_elf_memory **, qa_error *);
+bool guest_elf_memory_pristine(const guest_elf *, qa_bytes attachment, uint64_t backing,
+    size_t extent, const qa_native_guest_file *, bool *matched, qa_bytes *, qa_error *);
 bool guest_elf_memory_close(guest_elf_memory **, qa_error *);
 void guest_elf_memory_abandon(guest_elf_memory **);
 qa_native_guest *guest_elf_memory_guest(guest_elf_memory *);

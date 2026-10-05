@@ -36,6 +36,10 @@ bool guest_pe_memory_close(guest_pe_memory **, qa_error *);
 bool guest_pe_memory_checkpoint(const guest_pe_memory *, qa_buffer *, qa_error *);
 bool guest_pe_memory_adopt(const guest_pe *, qa_native_guest *, qa_bytes, bool,
     guest_pe_memory **, qa_error *);
+/* Resolve a saved attachment's backing to borrowed inert relocated bytes.
+ * Unmatched backings belong to the enclosing process's other RAM owners. */
+bool guest_pe_memory_pristine(const guest_pe *, qa_bytes attachment, uint64_t backing,
+    size_t extent, bool *matched, qa_bytes *, qa_error *);
 /* Borrowed attachments only, after successful whole lower destruction. */
 void guest_pe_memory_abandon(guest_pe_memory **);
 /* Borrowed: destruction remains with this owner. Mapping queries read the

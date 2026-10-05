@@ -10,6 +10,33 @@ typedef struct saved_process_image {
     qa_bytes loaded;
 } saved_process_image;
 
+typedef struct sysv_baseline {
+    qa_native_sysv_process *owner;
+    const qa_buffer *loaded;
+    const saved_process_image *records;
+} sysv_baseline;
+
+static bool pristine(void *context, uint64_t backing, size_t extent,
+    const qa_native_guest_file *file, qa_bytes *out, qa_error *error)
+{
+    sysv_baseline *source = context;
+    bool found = false;
+    *out = (qa_bytes){0};
+    for (size_t i = 0; i < source->owner->image_count; ++i) {
+        qa_bytes loaded = source->records ? source->records[i].loaded :
+            (qa_bytes){source->loaded[i].data, source->loaded[i].size};
+        qa_bytes attachment = {0}, bytes = {0}; bool matched = false;
+        if (!guest_elf_loaded_memory_record(loaded, &attachment, error) ||
+            !guest_elf_memory_pristine(source->owner->images[i].artifact, attachment,
+                backing, extent, file, &matched, &bytes, error)) return false;
+        if (!matched) continue;
+        if (found) return guest_fail(error, QA_ERROR_FORMAT, backing, "ELF backing has conflicting actual source ownership");
+        found = true; *out = bytes;
+    }
+    return found || !file || guest_fail(error, QA_ERROR_UNSUPPORTED, backing,
+        "Linux file pages require their actual resource baseline");
+}
+
 static bool image_fields(qa_source_save_io *io, qa_native_image_info *image)
 {
     uint32_t format = image->format, os = image->target.os;
@@ -140,13 +167,19 @@ bool qa_native_sysv_process_checkpoint(qa_native_sysv_process *owner, qa_buffer 
     owner->busy = true;
     qa_source_save_io io;
     qa_buffer runtime = {0}, resources = {0}, guest = {0}, profile = {0};
+    qa_buffer *loaded = calloc(owner->image_count, sizeof(*loaded));
+    if (!loaded) { owner->busy = false; return guest_fail(error, QA_ERROR_MEMORY, 0, "owning System V attachment records"); }
+    sysv_baseline source = {owner, loaded, NULL};
+    qa_native_guest_baseline baseline = {pristine, &source};
     bool okay = sysv_process_current(owner, error) && runtime_matches(owner, error) &&
         allocations_match(owner, error) && streams_match(owner, error) &&
         sysv_process_profile(owner, false, error) &&
         guest_profile_artifacts_checkpoint(owner->profile, &profile, error) &&
         guest_sysv_checkpoint(owner->runtime, &runtime, error) &&
-        guest_runtime_resources_checkpoint(owner->resources, &resources, error) &&
-        qa_native_guest_checkpoint(owner->guest, &guest, error);
+        guest_runtime_resources_checkpoint(owner->resources, &resources, error);
+    for (size_t i = 0; okay && i < owner->image_count; ++i)
+        okay = guest_elf_loaded_checkpoint(owner->images[i].loaded, loaded + i, error);
+    if (okay) okay = qa_native_guest_checkpoint(owner->guest, &baseline, &guest, error);
     bool writer = okay && qa_source_save_writer(&io, NULL, error);
     if (writer) {
         qa_bytes runtime_bytes = {runtime.data, runtime.size}, resource_bytes = {resources.data, resources.size};
@@ -159,21 +192,21 @@ bool qa_native_sysv_process_checkpoint(qa_native_sysv_process *owner, qa_buffer 
         for (size_t i = 0; okay && i < owner->image_count; ++i) {
             sysv_process_image *row = owner->images + i;
             const guest_elf_view *actual = guest_elf_describe(row->artifact);
-            qa_buffer loaded = {0};
-            okay = actual && guest_elf_loaded_checkpoint(row->loaded, &loaded, error);
+            okay = actual != NULL;
             if (okay) {
                 saved_process_image record = {actual->image, row->provider, actual->bias,
-                    (uint32_t)actual->role, actual->bytes.size, {loaded.data, loaded.size}};
+                    (uint32_t)actual->role, actual->bytes.size, {loaded[i].data, loaded[i].size}};
                 okay = image_fields(&io, &record.image) && qa_source_save_u64(&io, &record.provider) &&
                     qa_source_save_u64(&io, &record.bias) && qa_source_save_u32(&io, &record.role) &&
                     qa_source_save_count(&io, &record.maximum, SIZE_MAX) && blob(&io, &record.loaded);
             }
-            qa_buffer_free(&loaded);
         }
         if (okay) okay = qa_source_save_finish(&io, out);
         qa_source_save_dispose(&io);
     } else okay = false;
     qa_buffer_free(&runtime); qa_buffer_free(&resources); qa_buffer_free(&guest); qa_buffer_free(&profile);
+    for (size_t i = 0; i < owner->image_count; ++i) qa_buffer_free(loaded + i);
+    free(loaded);
     owner->busy = false; return okay;
 }
 
@@ -311,8 +344,10 @@ bool qa_native_sysv_process_restore(qa_bytes encoded,
     }
     if (okay) {
         callback_resolver resolver = {owner->runtime, bindings};
+        sysv_baseline source = {owner, NULL, records};
+        qa_native_guest_baseline baseline = {pristine, &source};
         okay = qa_native_guest_restore(guest, &owner->options.guest,
-            resolve_callback, &resolver, &owner->guest, error);
+            resolve_callback, &resolver, &baseline, &owner->guest, error);
     }
     if (okay) okay = allocations_match(owner, error) && guest_sysv_attach(owner->runtime, owner->guest, error);
     for (size_t i = 0; okay && i < owner->image_count; ++i) {

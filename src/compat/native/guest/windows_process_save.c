@@ -10,6 +10,33 @@ typedef struct saved_windows_image {
     qa_bytes path, attachment;
 } saved_windows_image;
 
+typedef struct windows_baseline {
+    qa_native_windows_process *owner;
+    const qa_buffer *attachments;
+    const saved_windows_image *records;
+} windows_baseline;
+
+static bool pristine(void *context, uint64_t backing, size_t extent,
+    const qa_native_guest_file *file, qa_bytes *out, qa_error *error)
+{
+    windows_baseline *source = context;
+    bool found = false;
+    *out = (qa_bytes){0};
+    for (size_t i = 0; i < source->owner->image_count; ++i) {
+        qa_bytes attachment = source->records ? source->records[i].attachment :
+            (qa_bytes){source->attachments[i].data, source->attachments[i].size};
+        qa_bytes bytes = {0}; bool matched = false;
+        if (!guest_pe_memory_pristine(source->owner->images[i].artifact, attachment,
+            backing, extent, &matched, &bytes, error)) return false;
+        if (!matched) continue;
+        if (found || file)
+            return guest_fail(error, QA_ERROR_FORMAT, backing, "Windows backing has conflicting actual image ownership");
+        found = true; *out = bytes;
+    }
+    return !file || guest_fail(error, QA_ERROR_UNSUPPORTED, backing,
+        "Windows file pages require their actual resource baseline");
+}
+
 static bool image_fields(qa_source_save_io *io, qa_native_image_info *image)
 {
     uint32_t format = image->format, os = image->target.os;
@@ -107,11 +134,17 @@ bool qa_native_windows_process_checkpoint(qa_native_windows_process *owner, qa_b
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Windows process capture requires complete idle ownership");
     owner->busy = true;
     qa_buffer runtime = {0}, guest = {0}, provenance = {0}; qa_source_save_io io;
+    qa_buffer *attachments = calloc(owner->image_count, sizeof(*attachments));
+    if (!attachments) { owner->busy = false; return guest_fail(error, QA_ERROR_MEMORY, 0, "owning Windows attachment records"); }
+    windows_baseline source = {owner, attachments, NULL};
+    qa_native_guest_baseline baseline = {pristine, &source};
     bool okay = windows_process_current(owner, error) && runtime_matches(owner, error) &&
         windows_process_storage(owner, error) && windows_process_artifacts(owner, false, error) &&
         guest_profile_artifacts_checkpoint(owner->provenance, &provenance, error) &&
-        guest_windows_checkpoint(owner->runtime, &runtime, error) &&
-        qa_native_guest_checkpoint(owner->guest, &guest, error);
+        guest_windows_checkpoint(owner->runtime, &runtime, error);
+    for (size_t i = 0; okay && i < owner->image_count; ++i)
+        okay = guest_pe_memory_checkpoint(owner->images[i].memory, attachments + i, error);
+    if (okay) okay = qa_native_guest_checkpoint(owner->guest, &baseline, &guest, error);
     bool writer = okay && qa_source_save_writer(&io, NULL, error);
     if (writer) {
         qa_bytes runtime_bytes = {runtime.data, runtime.size}, guest_bytes = {guest.data, guest.size};
@@ -121,21 +154,22 @@ bool qa_native_windows_process_checkpoint(qa_native_windows_process *owner, qa_b
             blob(&io, &runtime_bytes) && blob(&io, &guest_bytes) && blob(&io, &provenance_bytes);
         for (size_t i = 0; okay && i < count; ++i) {
             windows_process_image *row = owner->images + i;
-            const guest_pe_view *pe = guest_pe_describe(row->artifact); qa_buffer attachment = {0};
-            okay = pe && guest_pe_memory_checkpoint(row->memory, &attachment, error);
+            const guest_pe_view *pe = guest_pe_describe(row->artifact);
+            okay = pe != NULL;
             if (okay) {
                 saved_windows_image record = {pe->image, row->id, pe->base, pe->bytes.size,
-                    {(const uint8_t *)row->path, strlen(row->path)}, {attachment.data, attachment.size}};
+                    {(const uint8_t *)row->path, strlen(row->path)}, {attachments[i].data, attachments[i].size}};
                 okay = image_fields(&io, &record.image) && qa_source_save_u64(&io, &record.id) &&
                     qa_source_save_u64(&io, &record.base) && qa_source_save_count(&io, &record.maximum, SIZE_MAX) &&
                     blob(&io, &record.path) && blob(&io, &record.attachment);
             }
-            qa_buffer_free(&attachment);
         }
         if (okay) okay = qa_source_save_finish(&io, out);
         qa_source_save_dispose(&io);
     } else okay = false;
     qa_buffer_free(&runtime); qa_buffer_free(&guest); qa_buffer_free(&provenance);
+    for (size_t i = 0; i < owner->image_count; ++i) qa_buffer_free(attachments + i);
+    free(attachments);
     owner->busy = false; return okay;
 }
 
@@ -264,8 +298,10 @@ bool qa_native_windows_process_restore(qa_bytes encoded,
         guest_windows_decode(runtime, image_resolve, owner, &owner->runtime, error) &&
         runtime_matches(owner, error) && bindings->capabilities.current(bindings->capabilities.context, error);
     windows_restore_callbacks callbacks = {owner->runtime, bindings};
+    windows_baseline source = {owner, NULL, records};
+    qa_native_guest_baseline baseline = {pristine, &source};
     if (okay) okay = qa_native_guest_restore(guest, &owner->options.guest,
-        restore_callback, &callbacks, &owner->guest, error);
+        restore_callback, &callbacks, &baseline, &owner->guest, error);
     guest_windows_capabilities actual = windows_process_capabilities(owner);
     if (okay) okay = windows_process_storage(owner, error) &&
         guest_windows_attach(owner->runtime, owner->guest, &actual, error);

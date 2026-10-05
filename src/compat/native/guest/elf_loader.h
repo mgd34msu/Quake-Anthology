@@ -38,6 +38,7 @@ bool guest_elf_loaded_unmap(guest_elf_loaded *, qa_error *);
  * relocated frame snapshots and historical indirect PC resolutions. None
  * is recreated from later mutable image RAM or fresh source execution. */
 bool guest_elf_loaded_checkpoint(const guest_elf_loaded *, qa_buffer *, qa_error *);
+bool guest_elf_loaded_memory_record(qa_bytes, qa_bytes *borrowed, qa_error *);
 bool guest_elf_loaded_adopt(const guest_elf *, guest_sysv_runtime *, qa_bytes,
     guest_elf_loaded **, qa_error *);
 /* Host records only after actual guest destruction. The retained inert ELF

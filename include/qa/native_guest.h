@@ -193,8 +193,18 @@ bool qa_native_guest_run_program(qa_native_guest *, uint64_t, uint64_t, size_t,
  * destructors and OS-handle owners require their own enclosing records.
  * Restore creates an inert candidate and binds callbacks by ID without calling
  * them. It never invokes source initializers, dllEntry, Init or game save APIs. */
-bool qa_native_guest_checkpoint(qa_native_guest *, qa_buffer *, qa_error *);
+/* Borrow the installed loader baseline for an actual backing. Non-image RAM
+ * has an empty span and an implicit zero tail. File pages require their real
+ * installed or opened-resource baseline, never a saved copy of file bytes. */
+typedef struct qa_native_guest_baseline {
+    bool (*read)(void *, uint64_t backing, size_t extent,
+        const qa_native_guest_file *, qa_bytes *, qa_error *);
+    void *context;
+} qa_native_guest_baseline;
+bool qa_native_guest_checkpoint(qa_native_guest *, const qa_native_guest_baseline *,
+    qa_buffer *, qa_error *);
 bool qa_native_guest_restore(qa_bytes, const qa_native_guest_options *,
-    qa_native_guest_callback_resolve_fn, void *, qa_native_guest **, qa_error *);
+    qa_native_guest_callback_resolve_fn, void *, const qa_native_guest_baseline *,
+    qa_native_guest **, qa_error *);
 
 #endif

@@ -216,24 +216,33 @@ bool guest_elf_loaded_checkpoint(const guest_elf_loaded *owner,
     *out = (qa_buffer){data, bytes}; return true;
 }
 
-bool guest_elf_loaded_adopt(const guest_elf *artifact, guest_sysv_runtime *runtime,
-    qa_bytes encoded, guest_elf_loaded **out, qa_error *error)
+bool guest_elf_loaded_memory_record(qa_bytes encoded, qa_bytes *out, qa_error *error)
 {
-    if (!guest_elf_describe(artifact) || !guest_sysv_idle(runtime) || !out || *out ||
+    if (!out ||
         !encoded.data || encoded.size < ELF_LOADED_HEADER || memcmp(encoded.data, "QALL", 4) ||
         !qa_load_u64le(encoded.data + 4) ||
         qa_load_u32le(encoded.data + 12) != 1 || qa_load_u32le(encoded.data + 16) ||
         qa_load_u64le(encoded.data + 20) > encoded.size - ELF_LOADED_HEADER ||
         qa_load_u64le(encoded.data + 28) != encoded.size - ELF_LOADED_HEADER - qa_load_u64le(encoded.data + 20))
         return guest_fail(error, QA_ERROR_FORMAT, 0, "ELF cold loaded adoption requires its exact committed record and attached runtime");
+    *out = (qa_bytes){encoded.data + ELF_LOADED_HEADER,
+        (size_t)qa_load_u64le(encoded.data + 20)};
+    return true;
+}
+
+bool guest_elf_loaded_adopt(const guest_elf *artifact, guest_sysv_runtime *runtime,
+    qa_bytes encoded, guest_elf_loaded **out, qa_error *error)
+{
+    qa_bytes memory = {0};
+    if (!guest_elf_describe(artifact) || !guest_sysv_idle(runtime) || !out || *out ||
+        !guest_elf_loaded_memory_record(encoded, &memory, error)) return false;
     guest_elf_loaded *owner = calloc(1, sizeof(*owner));
     if (!owner) return guest_fail(error, QA_ERROR_MEMORY, 0, "owning ELF cold loaded image");
     owner->image = artifact; owner->runtime = runtime; owner->provider = qa_load_u64le(encoded.data + 4);
-    size_t memory_bytes = (size_t)qa_load_u64le(encoded.data + 20);
+    size_t memory_bytes = memory.size;
     size_t unwind_bytes = (size_t)qa_load_u64le(encoded.data + 28);
     bool okay = provider_retained(owner, error) && guest_elf_memory_adopt(artifact,
-        guest_sysv_guest(runtime), (qa_bytes){encoded.data + ELF_LOADED_HEADER,
-            memory_bytes}, &owner->memory, error) &&
+        guest_sysv_guest(runtime), memory, &owner->memory, error) &&
         guest_elf_unwind_restore(artifact, guest_sysv_guest(runtime),
             (qa_bytes){encoded.data + ELF_LOADED_HEADER + memory_bytes, unwind_bytes},
             unwind_bytes, &owner->unwind, error);

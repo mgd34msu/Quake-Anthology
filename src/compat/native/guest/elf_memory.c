@@ -363,18 +363,18 @@ bool guest_elf_memory_checkpoint(const guest_elf_memory *owner, qa_buffer *out, 
     *out = (qa_buffer){data, bytes}; return true;
 }
 
-bool guest_elf_memory_adopt(const guest_elf *elf, qa_native_guest *guest,
+static bool memory_record(const guest_elf *elf, qa_native_guest *guest,
     qa_bytes encoded, guest_elf_memory **out, qa_error *error)
 {
     const guest_elf_view *image = guest_elf_describe(elf);
-    if (!image || !out || *out || !qa_native_guest_idle(guest) || !encoded.data ||
+    if (!image || !out || *out || (guest && !qa_native_guest_idle(guest)) || !encoded.data ||
         encoded.size < ELF_MEMORY_HEADER || memcmp(encoded.data, "QALM", 4) ||
         encoded.data[22] > 1 || encoded.data[23] ||
         qa_load_u32le(encoded.data + 24) > 7 ||
-        image->image.target.os != guest->options.image.target.os ||
+        (guest && (image->image.target.os != guest->options.image.target.os ||
         image->image.target.arch != guest->options.image.target.arch ||
         image->image.target.abi != guest->options.image.target.abi ||
-        image->image.target.pointer_bytes != guest->options.image.target.pointer_bytes)
+        image->image.target.pointer_bytes != guest->options.image.target.pointer_bytes)))
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "ELF cold attachment requires its actual artifact, process and typed ownership record");
     guest_elf_memory *owner = calloc(1, sizeof(*owner));
     if (!owner) return guest_fail(error, QA_ERROR_MEMORY, 0, "owning ELF cold attachment");
@@ -398,13 +398,13 @@ bool guest_elf_memory_adopt(const guest_elf *elf, qa_native_guest *guest,
             qa_load_u64le(data + 16), count * QA_NATIVE_GUEST_PAGE, data[32] != 0};
         if (data[32] > 1 || data[33] || data[34] || data[35] || qa_load_u32le(data + 36))
             okay = guest_fail(error, QA_ERROR_FORMAT, extent.base, "ELF cold kernel mutation receipt is invalid");
-        if (extent.base != owner->view.base + page * (uint64_t)QA_NATIVE_GUEST_PAGE ||
+        if (!extent.id || !extent.backing || extent.base != owner->view.base + page * (uint64_t)QA_NATIVE_GUEST_PAGE ||
             qa_load_u64le(data + 24) != extent.bytes)
             okay = guest_fail(error, QA_ERROR_FORMAT, extent.base, "ELF cold attachment differs from its actual source mapping extent");
         for (size_t i = 0; okay && i < row; ++i)
             if (owner->extents[i].id == extent.id || owner->extents[i].backing == extent.backing)
                 okay = guest_fail(error, QA_ERROR_FORMAT, extent.base, "ELF cold attachment repeats an original backing owner");
-        if (okay) okay = retained(owner, &extent, planned, error);
+        if (okay && guest) okay = retained(owner, &extent, planned, error);
         if (okay) {
             owner->extents[owner->extent_count++] = extent; owner->installed += extent.bytes;
             page += count; ++row;
@@ -418,6 +418,52 @@ bool guest_elf_memory_adopt(const guest_elf *elf, qa_native_guest *guest,
     }
     if (!okay) { guest_elf_memory_abandon(&owner); return false; }
     owner->complete = owner->finished = true; *out = owner; return true;
+}
+
+
+bool guest_elf_memory_pristine(const guest_elf *elf, qa_bytes encoded, uint64_t backing,
+    size_t extent, const qa_native_guest_file *file, bool *matched, qa_bytes *out,
+    qa_error *error)
+{
+    guest_elf_memory *owner = NULL;
+    if (!matched || !out || !memory_record(elf, NULL, encoded, &owner, error)) return false;
+    *matched = false; *out = (qa_bytes){0};
+    const guest_elf_view *image = guest_elf_describe(elf);
+    bool okay = true;
+    for (size_t i = 0; okay && i < owner->extent_count; ++i) {
+        const elf_extent *row = owner->extents + i;
+        if (row->backing != backing) continue;
+        size_t page_index = (size_t)((row->base - owner->view.base) / QA_NATIVE_GUEST_PAGE);
+        const elf_page *page = owner->pages + page_index;
+        if (row->bytes != extent || (page->kind == 1) != (file != NULL)) {
+            okay = guest_fail(error, QA_ERROR_FORMAT, backing, "ELF backing differs from its actual attachment kind or extent");
+            break;
+        }
+        if (file && (!qa_sha256_equal(&file->digest, &image->image.digest) ||
+            file->bytes != image->artifact.size || file->offset != page->file_offset)) {
+            okay = guest_fail(error, QA_ERROR_FORMAT, backing, "ELF private file baseline differs from its actual installed artifact");
+            break;
+        }
+        if (page->segment) {
+            okay = guest_elf_range(elf, row->base - image->bias, extent, out, error);
+            if (okay && file && out->size > file->accessible_bytes)
+                out->size = (size_t)file->accessible_bytes;
+        } else if (page->file_offset < image->artifact.size) {
+            size_t bytes = image->artifact.size - (size_t)page->file_offset;
+            if (bytes > extent) bytes = extent;
+            *out = (qa_bytes){image->artifact.data + (size_t)page->file_offset, bytes};
+        }
+        *matched = okay;
+    }
+    guest_elf_memory_abandon(&owner);
+    return okay;
+}
+
+bool guest_elf_memory_adopt(const guest_elf *elf, qa_native_guest *guest,
+    qa_bytes encoded, guest_elf_memory **out, qa_error *error)
+{
+    if (!guest) return guest_fail(error, QA_ERROR_ARGUMENT, 0, "ELF adoption requires its actual guest");
+    return memory_record(elf, guest, encoded, out, error);
 }
 
 void guest_elf_memory_abandon(guest_elf_memory **owner)

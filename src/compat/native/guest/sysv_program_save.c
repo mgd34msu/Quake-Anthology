@@ -2,6 +2,30 @@
 #include "qa/native_sysv_program_save.h"
 #include "qa/source_save.h"
 
+typedef struct program_baseline {
+    qa_native_sysv_program *owner;
+    qa_bytes memory[2];
+    size_t count;
+} program_baseline;
+
+static bool pristine(void *context, uint64_t backing, size_t extent,
+    const qa_native_guest_file *file, qa_bytes *out, qa_error *error)
+{
+    program_baseline *source = context;
+    bool found = false;
+    *out = (qa_bytes){0};
+    for (size_t i = 0; i < source->count; ++i) {
+        qa_bytes bytes = {0}; bool matched = false;
+        if (!guest_elf_memory_pristine(source->owner->artifacts[i], source->memory[i],
+            backing, extent, file, &matched, &bytes, error)) return false;
+        if (!matched) continue;
+        if (found) return guest_fail(error, QA_ERROR_FORMAT, backing, "Linux backing has conflicting actual program ownership");
+        found = true; *out = bytes;
+    }
+    return found || !file || guest_fail(error, QA_ERROR_UNSUPPORTED, backing,
+        "Linux mapped file requires its actual capability baseline");
+}
+
 static bool image_fields(qa_source_save_io *io, qa_native_image_info *image)
 {
     uint32_t format = image->format, os = image->target.os, arch = image->target.arch, abi = image->target.abi;
@@ -134,10 +158,13 @@ bool qa_native_sysv_program_checkpoint(qa_native_sysv_program *owner, qa_buffer 
     bool okay = guest_profile_artifacts_checkpoint(owner->provenance, parts, error) &&
         guest_elf_program_checkpoint(owner->startup, parts + 1, error) &&
         guest_elf_memory_checkpoint(owner->memory[0], parts + 2, error) &&
-        (!owner->memory[1] || guest_elf_memory_checkpoint(owner->memory[1], parts + 3, error)) &&
-        qa_native_guest_checkpoint(owner->guest, parts + 4, error) &&
-        qa_source_save_writer(&io, NULL, error) && fields(&io, owner) && files(&io, owner);
+        (!owner->memory[1] || guest_elf_memory_checkpoint(owner->memory[1], parts + 3, error));
     size_t count = owner->options.interpreter.provider ? 2 : 1;
+    program_baseline source = {owner,
+        {{parts[2].data, parts[2].size}, {parts[3].data, parts[3].size}}, count};
+    qa_native_guest_baseline baseline = {pristine, &source};
+    if (okay) okay = qa_native_guest_checkpoint(owner->guest, &baseline, parts + 4, error) &&
+        qa_source_save_writer(&io, NULL, error) && fields(&io, owner) && files(&io, owner);
     if (okay) okay = qa_source_save_count(&io, &count, 2);
     for (size_t i = 0; okay && i < count; ++i) {
         qa_native_sysv_artifact row = i ? owner->options.interpreter : owner->options.program;
@@ -219,8 +246,11 @@ bool qa_native_sysv_program_restore(qa_bytes bytes, const qa_native_sysv_program
     }
     owner->options.guest.host_executable = bindings->host_executable;
     owner->options.guest.profile_guard = bindings->profile_guard;
+    program_baseline source = {owner, {parts[2], parts[3]}, count};
+    qa_native_guest_baseline baseline = {pristine, &source};
     if (okay) okay = bindings->services.current(bindings->services.context, error) &&
-        qa_native_guest_restore(parts[4], &owner->options.guest, no_callback, owner, &owner->guest, error);
+        qa_native_guest_restore(parts[4], &owner->options.guest, no_callback, owner,
+            &baseline, &owner->guest, error);
     for (size_t i = 0; okay && i < count; ++i)
         okay = guest_elf_memory_adopt(owner->artifacts[i], owner->guest, parts[i + 2], &owner->memory[i], error);
     guest_elf_program_images startup = {
