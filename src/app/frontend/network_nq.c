@@ -237,47 +237,9 @@ static bool source_drop(void *context, qa_net_client_id id, const char *reason, 
     if (!qa_net_client_id_equal(id, peer->client)) return frontend_fail(error, QA_ERROR_ARGUMENT, "NetQuake drop uses another native peer");
     peer->retiring = true; snprintf(peer->reason, sizeof(peer->reason), "%s", reason); return true;
 }
-static bool number_space(char value)
-{
-    return value == ' ' || value == '\t' || value == '\n' || value == '\r' || value == '\v' || value == '\f';
-}
 static int32_t color_number(const char *text)
 {
-    while (number_space(*text)) ++text;
-    const char *limit = text + strlen(text);
-    while (limit > text && number_space(limit[-1])) --limit;
-    if (limit == text) return 0;
-    unsigned base = 0;
-    if (limit - text >= 2 && text[0] == '0') {
-        if (text[1] == 'x' || text[1] == 'X') base = 16;
-        else if (text[1] == 'b' || text[1] == 'B') base = 2;
-        else if (text[1] == 'o' || text[1] == 'O') base = 8;
-    }
-    double number;
-    if (base) {
-        const char *digit = text + 2; uint64_t value = 0; bool overflow = false;
-        if (digit == limit) return 0;
-        for (; digit != limit; ++digit) {
-            unsigned decoded;
-            if (*digit >= '0' && *digit <= '9') decoded = (unsigned)(*digit - '0');
-            else if (*digit >= 'a' && *digit <= 'f') decoded = (unsigned)(*digit - 'a') + 10;
-            else if (*digit >= 'A' && *digit <= 'F') decoded = (unsigned)(*digit - 'A') + 10;
-            else return 0;
-            if (decoded >= base) return 0;
-            if (!overflow) {
-                if (value > (UINT64_MAX - decoded) / base) overflow = true;
-                else value = value * base + decoded;
-            }
-        }
-        if (overflow) return 0;
-        number = (double)value;
-    } else {
-        if ((*text == '+' || *text == '-') && limit - text >= 3 && text[1] == '0' &&
-            (text[2] == 'x' || text[2] == 'X')) return 0;
-        char *end; number = strtod(text, &end);
-        if (end != limit || !isfinite(number)) return 0;
-    }
-    return (int32_t)fmod(trunc(number), 16);
+    return (int32_t)((uint32_t)strtol(text, NULL, 10) & 15u);
 }
 static bool source_chat(nq_frontend_peer *sender, qa_actor_id actor, bool team_only,
     const char *cursor, qa_error *error)

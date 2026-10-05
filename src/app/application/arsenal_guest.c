@@ -142,11 +142,6 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
     return ok;
 }
 
-static int32_t angle_word(float angle)
-{
-    return (int32_t)(uint16_t)(int32_t)(fmod((double)angle, 360.0) * 65536.0 / 360.0);
-}
-
 static float move_scale(qa_movement_kind kind)
 {
     return kind == QA_MOVEMENT_Q3 ? 127.0f
@@ -215,11 +210,11 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
         command.forward_move = source.forwardmove; command.side_move = source.rightmove;
         command.up_move = source.upmove;
         for (size_t i = 0; i < 3; ++i)
-            command.angle_words[i] = (uint16_t)(angle_word(aim[i]) -
+            command.angle_words[i] = (uint16_t)(qa_angle_to_word(aim[i]) -
                                                control.state.data.q3.delta_angle_words[i]);
     } else if (command.kind == QA_MOVEMENT_Q2_CLASSIC) {
         for (size_t i = 0; i < 3; ++i)
-            command.angle_words[i] = (uint16_t)(angle_word(aim[i]) -
+            command.angle_words[i] = (uint16_t)(qa_angle_to_word(aim[i]) -
                                                control.state.data.q2.delta_angle_shorts[i]);
     } else if (command.kind == QA_MOVEMENT_Q2_RERELEASE) {
         command.angles = qa_vec_sub(command.angles, control.state.data.q2r.delta_angles);
@@ -275,7 +270,7 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
     bool aim_changed = applied.angles.x != command.angles.x || applied.angles.y != command.angles.y ||
         applied.angles.z != command.angles.z || memcmp(applied.angle_words, command.angle_words, sizeof(command.angle_words));
     if (aim_changed) for (size_t i = 0; i < 3; ++i) {
-        uint32_t bits = (uint32_t)angle_word(applied_angles[i]) - (uint32_t)player.deltaAngles[i];
+        uint32_t bits = (uint32_t)qa_angle_to_word(applied_angles[i]) - (uint32_t)player.deltaAngles[i];
         memcpy(&updated.angles[i], &bits, sizeof(bits));
     }
     if (memcmp(&updated, &source, sizeof(source)) != 0 &&
@@ -1180,7 +1175,7 @@ static bool guest_move(qa_application *app, qa_actor_id actor,
         angles[0] = aim.x; angles[1] = aim.y; angles[2] = aim.z;
     }
     for (size_t i = 0; i < 3; ++i)
-        source.angles[i] = (uint16_t)(angle_word(angles[i]) - player.deltaAngles[i]);
+        source.angles[i] = (uint16_t)(qa_angle_to_word(angles[i]) - player.deltaAngles[i]);
     if (command->kind == QA_MOVEMENT_Q3 && movement == guest) {
         source.serverTime = command->server_time_ms;
         memcpy(source.angles, command->angle_words, sizeof(source.angles));

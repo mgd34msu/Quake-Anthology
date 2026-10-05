@@ -713,11 +713,6 @@ bool application_control_q1_source_prethink(qa_application *app, qa_actor_id act
     return !live(app, actor) || application_control_frames_q1_complete(app, actor, map->owner, error);
 }
 
-static int32_t input_angle_word(float degrees)
-{
-    return (int32_t)(uint16_t)(int32_t)(fmodf(degrees, 360.0f) * (65536.0f / 360.0f));
-}
-
 static qa_vec3 command_angle_feedback(const qa_movement_command *command)
 {
     if (command->kind != QA_MOVEMENT_Q3 && command->kind != QA_MOVEMENT_Q2_CLASSIC)
@@ -835,8 +830,7 @@ static bool component_input_set(application_control_mod_input *scope, applicatio
                 return application_fail(error, QA_ERROR_ARGUMENT, "Component aim exceeds its command fields");
         } else {
             for (unsigned i = 0; i < 3; ++i) {
-                double angle_word = fmod(difference[i],360.0) * 65536.0 / 360.0;
-                uint32_t wrapped = (uint32_t)(int32_t)angle_word;
+                uint32_t wrapped = (uint32_t)qa_source_float_to_i32((float)difference[i] * 65536.0f / 360.0f);
                 wrapped += (uint32_t)next.angle_words[i];
                 memcpy(&next.angle_words[i], &wrapped, sizeof(wrapped));
             }
@@ -1068,7 +1062,7 @@ bool application_control_mod_usercmd(void *context, qa_actor_id actor,
         .weapon = (uint8_t)player->weapon};
     const double aim[] = {scope->aim.x, scope->aim.y, scope->aim.z};
     for (unsigned i = 0; i < 3; ++i) {
-        uint32_t word = (uint32_t)(uint16_t)(int32_t)(fmod(aim[i], 360.0) * 65536.0 / 360.0);
+        uint32_t word = qa_angle_to_word((float)aim[i]);
         word -= (uint32_t)player->deltaAngles[i];
         memcpy(result.angles + i, &word, sizeof(word));
     }
@@ -1187,7 +1181,7 @@ static bool qc_input_body(application_move_call *move, qa_movement_state *state,
         for (size_t i = 0; i < 3; ++i) {
             int32_t delta = state->kind == QA_MOVEMENT_Q3 ? state->data.q3.delta_angle_words[i]
                                                        : state->data.q2.delta_angle_shorts[i];
-            uint32_t word = (uint32_t)input_angle_word(angles[i]) - (uint32_t)delta;
+            uint32_t word = (uint32_t)qa_angle_to_word(angles[i]) - (uint32_t)delta;
             if (state->kind == QA_MOVEMENT_Q3)
                 memcpy(&semantic.angle_words[i], &word, sizeof(word));
             else semantic.angle_words[i] = (int32_t)(uint16_t)word;
@@ -3914,8 +3908,7 @@ static void force_state_view(qa_movement_state *state, qa_vec3 view,
         break;
     case QA_MOVEMENT_Q2_CLASSIC:
         for (size_t i = 0; i < 3; ++i) {
-            uint32_t bits = (uint32_t)(int32_t)
-                ((fmodf(angles[i], 360.0f) * 65536.0f) / 360.0f) & UINT32_C(65535);
+            uint32_t bits = qa_angle_to_word(angles[i]);
             state->data.q2.delta_angle_shorts[i] =
                 (int16_t)(bits < UINT32_C(32768) ? (int32_t)bits : (int32_t)bits - 65536);
         }
@@ -3927,7 +3920,7 @@ static void force_state_view(qa_movement_state *state, qa_vec3 view,
         float target[3] = {command_view.x, command_view.y, command_view.z};
         float base[3] = {command.x, command.y, command.z};
         for (size_t i = 0; i < 3; ++i)
-            state->data.q3.delta_angle_words[i] = input_angle_word(target[i]) - input_angle_word(base[i]);
+            state->data.q3.delta_angle_words[i] = qa_angle_to_word(target[i]) - qa_angle_to_word(base[i]);
         state->data.q3.view_angles = view;
         break;
     }

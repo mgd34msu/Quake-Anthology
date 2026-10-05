@@ -96,11 +96,6 @@ static int32_t command_word(uint32_t bits)
     int32_t value; memcpy(&value,&bits,sizeof(value)); return value;
 }
 
-static int32_t qw_angle_word(float value)
-{
-    return (int32_t)(uint16_t)(int32_t)(fmod((double)value, 360.0) * 65536.0 / 360.0);
-}
-
 static bool command_integer(double value,double minimum,double maximum)
 { return isfinite(value) && value==trunc(value) && value>=minimum && value<=maximum; }
 
@@ -383,9 +378,9 @@ static bool unified_mod_command(const control_unified *receipt, const qa_q3_play
             buttons = raw.data.q2r.buttons;
             up = (uint32_t)buttons & 8u ? 200 : (uint32_t)buttons & 16u ? -200 : 0;
         }
-        angles[0] = qw_angle_word((float)aim.x);
-        angles[1] = qw_angle_word((float)aim.y);
-        angles[2] = qw_angle_word((float)aim.z);
+        angles[0] = qa_angle_to_word((float)aim.x);
+        angles[1] = qa_angle_to_word((float)aim.y);
+        angles[2] = qa_angle_to_word((float)aim.z);
     }
     uint32_t word = (uint32_t)buttons;
     bool holdable = receipt->has_arsenal ? receipt->use_holdable : raw.kind == QA_MOVEMENT_Q3 && (word & 4u);
@@ -1333,7 +1328,7 @@ bool application_control_last_mod_command(const qa_application *app, qa_actor_id
         const double aim[] = {command->angles.x, command->angles.y, command->angles.z};
         for (unsigned i = 0; i < 3; ++i) {
             uint32_t word = command->kind == QA_MOVEMENT_Q2_CLASSIC ? (uint32_t)command->angle_words[i] :
-                (uint32_t)qw_angle_word((float)aim[i]);
+                (uint32_t)qa_angle_to_word((float)aim[i]);
             if (input->domain == CONTROL_COMMAND_SELECTED) word -= (uint32_t)player->deltaAngles[i];
             memcpy(result.angles + i, &word, sizeof(word));
         }
@@ -1689,7 +1684,7 @@ static bool q1_selected_command(qa_application *app, qa_actor_id actor,
     application_control_record *record = &app->controls[actor.slot];
     float forward = qw_axis(raw->forward_move), side = qw_axis(raw->side_move);
     float up = qw_axis(raw->buttons & 2u ? 320.0f : raw->up_move);
-    int32_t words[] = {qw_angle_word(raw->angles.x), qw_angle_word(raw->angles.y), qw_angle_word(raw->angles.z)};
+    int32_t words[] = {qa_angle_to_word(raw->angles.x), qa_angle_to_word(raw->angles.y), qa_angle_to_word(raw->angles.z)};
     *out = selected_command(record, raw, source_start_ns, words, qa_v3(forward, side, up));
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     if (arsenal && arsenal->kind == APPLICATION_PROVIDER_Q3) {
@@ -1748,7 +1743,7 @@ static bool q2_selected_command(qa_application *app, qa_actor_id actor,
     float up = raw->kind == QA_MOVEMENT_Q2_RERELEASE
         ? raw->buttons & 8u ? 127 : raw->buttons & 16u ? -127 : 0
         : (float)trunc(fmax(-127, fmin(127, (double)raw->up_move * 127 / 200)));
-    int32_t words[] = {qw_angle_word(aim.x), qw_angle_word(aim.y), qw_angle_word(aim.z)};
+    int32_t words[] = {qa_angle_to_word(aim.x), qa_angle_to_word(aim.y), qa_angle_to_word(aim.z)};
     *out = selected_command(record, raw, admission->time_ns, words, qa_v3(forward, side, up));
     out->impulse = raw->impulse; out->light_level = raw->light_level;
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
@@ -1804,7 +1799,7 @@ static bool unified_q2_source(const control_unified *receipt, qa_movement_kind s
         for (unsigned i = 0; i < 3; ++i) {
             uint16_t word = movement->kind == QA_MOVEMENT_Q2_CLASSIC ? (uint16_t)(int32_t)movement->data.q2.angle_shorts[i] :
                 movement->kind == QA_MOVEMENT_Q3 ? (uint16_t)(int32_t)movement->data.q3.angle_words[i] :
-                (uint16_t)qw_angle_word((float)degrees[i]);
+                (uint16_t)qa_angle_to_word((float)degrees[i]);
             command.angle_words[i] = word <= INT16_MAX ? word : (int32_t)word - 65536;
             uint16_t axis = (uint16_t)qa_source_float_to_i32((float)values[i]);
             values[i] = axis <= INT16_MAX ? axis : (int32_t)axis - 65536;
