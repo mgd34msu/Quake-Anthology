@@ -25,7 +25,7 @@ static bool source_ground(const qa_qc_instance *instance, uint32_t slot)
 static bool body_ground_flags(const qa_qc_instance *instance,uint32_t slot,
     uint32_t *out,qa_error *error)
 {
-    const qa_qc_definition *flags=qa_qc_program_find_field(instance->program,"flags");
+    const qa_qc_definition *flags=instance->program->engine_fields.flags;
     *out=0;
     if (!flags) return true;
     if (flags->type!=QA_QC_FLOAT || flags->offset>=instance->layout.field_words)
@@ -448,11 +448,9 @@ static bool raw_entity_int(qa_qc_instance *instance, uint32_t slot,
 }
 
 static bool raw_body_vector(qa_qc_instance *instance, uint32_t slot,
-                            const char *name, qa_vec3 value,
+                            const qa_qc_definition *field, qa_vec3 value,
                             qa_error *error)
 {
-    const qa_qc_definition *field = qa_qc_program_find_field(
-        instance->program, name);
     if (field == NULL) return true;
     if (field->type != QA_QC_VECTOR)
         return qc_fail(error, QA_ERROR_FORMAT, field->offset,
@@ -464,8 +462,7 @@ static double source_time(const qa_qc_instance *instance)
 {
     if (instance->options.host.source_time_seconds)
         return instance->options.host.source_time_seconds(instance->options.host.context);
-    const qa_qc_definition *time = qa_qc_program_find_global(
-        instance->program, "time");
+    const qa_qc_definition *time = instance->program->engine_globals.time;
     if (time == NULL || time->type != QA_QC_FLOAT
         || time->offset >= instance->program->info.global_words)
         return 0.0f;
@@ -483,23 +480,20 @@ static bool slot_matches(const qa_qc_instance *instance, uint32_t slot,
 
 static void clear_freed_fields(qa_qc_instance *instance, uint32_t slot)
 {
-    static const char *const scalars[] = {
-        "model", "takedamage", "modelindex", "colormap", "skin", "frame",
-        "solid"
+    const qa_qc_game_fields *resolved = &instance->program->engine_fields;
+    const qa_qc_definition *const scalars[] = {
+        resolved->model, resolved->takedamage, resolved->modelindex, resolved->colormap,
+        resolved->skin, resolved->frame, resolved->solid
     };
     uint8_t *fields = qc_entity_words(instance, slot);
     for (size_t i = 0; i < sizeof(scalars) / sizeof(*scalars); ++i) {
-        const qa_qc_definition *field = qa_qc_program_find_field(
-            instance->program, scalars[i]);
+        const qa_qc_definition *field = scalars[i];
         if (field != NULL && field->offset < instance->layout.field_words)
             qc_store_word(fields, field->offset, 0u);
     }
-    const qa_qc_definition *origin = qa_qc_program_find_field(
-        instance->program, "origin");
-    const qa_qc_definition *angles = qa_qc_program_find_field(
-        instance->program, "angles");
-    const qa_qc_definition *nextthink = qa_qc_program_find_field(
-        instance->program, "nextthink");
+    const qa_qc_definition *origin = instance->program->engine_fields.origin;
+    const qa_qc_definition *angles = instance->program->engine_fields.angles;
+    const qa_qc_definition *nextthink = instance->program->engine_fields.nextthink;
     if (origin != NULL && origin->type == QA_QC_VECTOR
         && (uint64_t)origin->offset + 3u <= instance->layout.field_words)
         for (uint32_t i = 0; i < 3u; ++i)
@@ -593,12 +587,12 @@ static bool refresh_borrowed_impl(qa_qc_instance *instance, uint32_t slot,
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot,
                        "Borrowed QuakeC actor changed during body refresh");
     }
-    bool ok = raw_body_vector(instance, slot, "origin", body.origin, error)
-        && raw_body_vector(instance, slot, "angles", body.angles, error)
-        && raw_body_vector(instance, slot, "velocity", body.velocity, error)
-        && raw_body_vector(instance, slot, "mins", body.bounds.mins, error)
-        && raw_body_vector(instance, slot, "maxs", body.bounds.maxs, error)
-        && raw_body_vector(instance, slot, "size",
+    bool ok = raw_body_vector(instance, slot, instance->program->engine_fields.origin, body.origin, error)
+        && raw_body_vector(instance, slot, instance->program->engine_fields.angles, body.angles, error)
+        && raw_body_vector(instance, slot, instance->program->engine_fields.velocity, body.velocity, error)
+        && raw_body_vector(instance, slot, instance->program->engine_fields.mins, body.bounds.mins, error)
+        && raw_body_vector(instance, slot, instance->program->engine_fields.maxs, body.bounds.maxs, error)
+        && raw_body_vector(instance, slot, instance->program->engine_fields.size,
                            qa_vec_sub(body.bounds.maxs, body.bounds.mins), error);
     qa_linked_body linked;
     qa_bounds absolute = qa_world_linked(instance->options.host.world, actor,
@@ -606,10 +600,9 @@ static bool refresh_borrowed_impl(qa_qc_instance *instance, uint32_t slot,
         ? linked.absolute_bounds
         : (qa_bounds){qa_vec_add(body.origin, body.bounds.mins),
                       qa_vec_add(body.origin, body.bounds.maxs)};
-    ok = ok && raw_body_vector(instance, slot, "absmin", absolute.mins, error)
-        && raw_body_vector(instance, slot, "absmax", absolute.maxs, error);
-    const qa_qc_definition *field = qa_qc_program_find_field(
-        instance->program, "groundentity");
+    ok = ok && raw_body_vector(instance, slot, instance->program->engine_fields.absmin, absolute.mins, error)
+        && raw_body_vector(instance, slot, instance->program->engine_fields.absmax, absolute.maxs, error);
+    const qa_qc_definition *field = instance->program->engine_fields.groundentity;
     if (ok && field != NULL) {
         if (field->type != QA_QC_ENTITY) {
             context->refreshing = false;
@@ -826,7 +819,7 @@ bool qa_qc_actor_movement_flags_read(const qa_qc_instance *instance, qa_actor_id
              record->source_slot != slot || binding.source_slot != slot)))
             return qc_fail(error, QA_ERROR_FORMAT, slot,
                 "QuakeC flags row lost its actual source owner");
-        const qa_qc_definition *field = qa_qc_program_find_field(instance->program, "flags");
+        const qa_qc_definition *field = instance->program->engine_fields.flags;
         if (!field) break;
         uint32_t flags;
         if (!body_ground_flags(instance, slot, &flags, error)) return false;
@@ -905,10 +898,9 @@ bool qa_qc_rebind_sources(qa_qc_instance *instance, qa_error *error)
 }
 
 static bool field_vector(qa_qc_instance *instance, uint32_t slot,
-                         const char *name, qa_vec3 fallback, qa_vec3 *out,
+                         const qa_qc_definition *field, qa_vec3 fallback, qa_vec3 *out,
                          qa_error *error)
 {
-    const qa_qc_definition *field = qa_qc_program_find_field(instance->program, name);
     if (field == NULL) { *out = fallback; return true; }
     if (field->type != QA_QC_VECTOR)
         return qc_fail(error, QA_ERROR_FORMAT, field->offset,
@@ -926,12 +918,12 @@ static bool body_read_impl(void *context, qa_body_state *out, qa_error *error)
         return qc_fail(error, QA_ERROR_NOT_FOUND, body->slot, "QuakeC body binding is retired");
     qa_actor_id actor = instance->slots[body->slot].actor;
     qa_body_state state = {0};
-    if (!field_vector(instance, body->slot, "origin", qa_v3(0,0,0), &state.origin, error)
-        || !field_vector(instance, body->slot, "angles", qa_v3(0,0,0), &state.angles, error)
-        || !field_vector(instance, body->slot, "velocity", qa_v3(0,0,0), &state.velocity, error)
-        || !field_vector(instance, body->slot, "mins", qa_v3(0,0,0), &state.bounds.mins, error)
-        || !field_vector(instance, body->slot, "maxs", qa_v3(0,0,0), &state.bounds.maxs, error)) return false;
-    const qa_qc_definition *ground = qa_qc_program_find_field(instance->program, "groundentity");
+    if (!field_vector(instance, body->slot, instance->program->engine_fields.origin, qa_v3(0,0,0), &state.origin, error)
+        || !field_vector(instance, body->slot, instance->program->engine_fields.angles, qa_v3(0,0,0), &state.angles, error)
+        || !field_vector(instance, body->slot, instance->program->engine_fields.velocity, qa_v3(0,0,0), &state.velocity, error)
+        || !field_vector(instance, body->slot, instance->program->engine_fields.mins, qa_v3(0,0,0), &state.bounds.mins, error)
+        || !field_vector(instance, body->slot, instance->program->engine_fields.maxs, qa_v3(0,0,0), &state.bounds.maxs, error)) return false;
+    const qa_qc_definition *ground = instance->program->engine_fields.groundentity;
     int32_t reference;
     qa_error ignored = {0};
     if (ground != NULL) {
@@ -977,22 +969,21 @@ static bool body_write_impl(void *context, const qa_body_state *state,
     if (source_ground(instance, body->slot)) {
         uint32_t value;
         if (!body_ground_flags(instance,body->slot,&value,error)) return false;
-        const qa_qc_definition *flags=qa_qc_program_find_field(instance->program,"flags");
+        const qa_qc_definition *flags=instance->program->engine_fields.flags;
         /* A zero canonical actor also represents world ground. Only the
          * actual physics/control flags owner can clear that distinction. */
         if (flags && state->ground.registry) qc_store_float(qc_entity_words(instance,body->slot),flags->offset,
             (float)(int32_t)(value|512u));
     }
 #define WRITE_VECTOR(name_, value_) do { \
-    if (!raw_body_vector(instance, body->slot, name_, value_, error)) return false; \
+    if (!raw_body_vector(instance, body->slot, instance->program->engine_fields.name_, value_, error)) return false; \
 } while (0)
-    WRITE_VECTOR("origin", state->origin); WRITE_VECTOR("angles", state->angles);
-    WRITE_VECTOR("velocity", state->velocity); WRITE_VECTOR("mins", state->bounds.mins);
-    WRITE_VECTOR("maxs", state->bounds.maxs);
-    WRITE_VECTOR("size", qa_vec_sub(state->bounds.maxs, state->bounds.mins));
+    WRITE_VECTOR(origin, state->origin); WRITE_VECTOR(angles, state->angles);
+    WRITE_VECTOR(velocity, state->velocity); WRITE_VECTOR(mins, state->bounds.mins);
+    WRITE_VECTOR(maxs, state->bounds.maxs);
+    WRITE_VECTOR(size, qa_vec_sub(state->bounds.maxs, state->bounds.mins));
 #undef WRITE_VECTOR
-    const qa_qc_definition *field = qa_qc_program_find_field(
-        instance->program, "groundentity");
+    const qa_qc_definition *field = instance->program->engine_fields.groundentity;
     if (field != NULL) {
         if (field->type != QA_QC_ENTITY)
             return qc_fail(error, QA_ERROR_FORMAT, field->offset,
@@ -1032,9 +1023,9 @@ static void body_linked(void *context, const qa_linked_body *linked)
     if (linked == NULL
         || !slot_matches(instance, body->slot, QA_QC_SLOT_OWNED,
                          linked->actor)) return;
-    (void)raw_body_vector(instance, body->slot, "absmin",
+    (void)raw_body_vector(instance, body->slot, instance->program->engine_fields.absmin,
                           linked->absolute_bounds.mins, NULL);
-    (void)raw_body_vector(instance, body->slot, "absmax",
+    (void)raw_body_vector(instance, body->slot, instance->program->engine_fields.absmax,
                           linked->absolute_bounds.maxs, NULL);
 }
 
@@ -1151,9 +1142,8 @@ bool qa_qc_remove_entity(qa_qc_instance *instance, int32_t reference, qa_error *
 }
 
 static bool set_field_vector(qa_qc_instance *instance, uint32_t slot,
-                             const char *name, qa_vec3 value, qa_error *error)
+                             const qa_qc_definition *field, qa_vec3 value, qa_error *error)
 {
-    const qa_qc_definition *field = qa_qc_program_find_field(instance->program, name);
     if (field == NULL || field->type != QA_QC_VECTOR)
         return qc_fail(error, QA_ERROR_FORMAT, 0,
                        "required QuakeC vector field is missing");
@@ -1174,7 +1164,7 @@ static bool setorigin(qa_qc_instance *instance, qa_error *error)
         || instance->slots[slot].kind == QA_QC_SLOT_FREE || !may_move(instance, slot))
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "setorigin lacks actor movement authority");
     qc_slot binding = instance->slots[slot];
-    if (!set_field_vector(instance, slot, "origin", origin, error)) return false;
+    if (!set_field_vector(instance, slot, instance->program->engine_fields.origin, origin, error)) return false;
     if (!slot_matches(instance, slot, binding.kind, binding.actor))
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot,
                        "setorigin actor changed during source store");
@@ -1207,16 +1197,15 @@ static bool setsize(qa_qc_instance *instance, qa_error *error)
         || instance->slots[slot].kind == QA_QC_SLOT_FREE || !may_move(instance, slot))
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "setsize lacks actor movement authority");
     qc_slot binding = instance->slots[slot];
-    if (!set_field_vector(instance, slot, "mins", mins, error)) return false;
+    if (!set_field_vector(instance, slot, instance->program->engine_fields.mins, mins, error)) return false;
     if (!slot_matches(instance, slot, binding.kind, binding.actor))
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot,
                        "setsize actor changed during source store");
-    if (!set_field_vector(instance, slot, "maxs", maxs, error)) return false;
+    if (!set_field_vector(instance, slot, instance->program->engine_fields.maxs, maxs, error)) return false;
     if (!slot_matches(instance, slot, binding.kind, binding.actor))
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot,
                        "setsize actor changed during source store");
-    const qa_qc_definition *size = qa_qc_program_find_field(instance->program,
-                                                             "size");
+    const qa_qc_definition *size = instance->program->engine_fields.size;
     if (size != NULL && size->type != QA_QC_VECTOR)
         return qc_fail(error, QA_ERROR_FORMAT, size->offset,
                        "QuakeC size field is not a vector");
@@ -1240,10 +1229,9 @@ static bool setsize(qa_qc_instance *instance, qa_error *error)
                    "setsize actor changed during world update");
 }
 
-static bool set_global_float_named(qa_qc_instance *instance, const char *name,
+static bool set_global_float(qa_qc_instance *instance, const qa_qc_definition *global,
                                    float value, qa_error *error)
 {
-    const qa_qc_definition *global = qa_qc_program_find_global(instance->program, name);
     if (global == NULL)
         return qc_fail(error, QA_ERROR_FORMAT, 0,
                        "required QuakeC trace global is missing");
@@ -1253,10 +1241,9 @@ static bool set_global_float_named(qa_qc_instance *instance, const char *name,
     return qa_qc_set_global_float(instance, global->offset, value, error);
 }
 
-static bool set_global_int_named(qa_qc_instance *instance, const char *name,
+static bool set_global_entity(qa_qc_instance *instance, const qa_qc_definition *global,
                                  int32_t value, qa_error *error)
 {
-    const qa_qc_definition *global = qa_qc_program_find_global(instance->program, name);
     if (global == NULL)
         return qc_fail(error, QA_ERROR_FORMAT, 0,
                        "required QuakeC trace entity global is missing");
@@ -1266,10 +1253,9 @@ static bool set_global_int_named(qa_qc_instance *instance, const char *name,
     return qa_qc_set_global_int(instance, global->offset, value, error);
 }
 
-static bool set_global_vector_named(qa_qc_instance *instance, const char *name,
+static bool set_global_vector(qa_qc_instance *instance, const qa_qc_definition *global,
                                     qa_vec3 value, qa_error *error)
 {
-    const qa_qc_definition *global = qa_qc_program_find_global(instance->program, name);
     if (global == NULL)
         return qc_fail(error, QA_ERROR_FORMAT, 0,
                        "required QuakeC trace vector global is missing");
@@ -1305,15 +1291,15 @@ static bool traceline(qa_qc_instance *instance, qa_error *error)
     int32_t hit = 0;
     if (trace.hit == QA_TRACE_HIT_ACTOR
         && !qa_qc_actor_reference(instance, trace.actor, true, &hit, error)) return false;
-    return set_global_float_named(instance, "trace_allsolid", trace.all_solid, error)
-        && set_global_float_named(instance, "trace_startsolid", trace.start_solid, error)
-        && set_global_float_named(instance, "trace_fraction", trace.fraction, error)
-        && set_global_vector_named(instance, "trace_endpos", trace.end, error)
-        && set_global_vector_named(instance, "trace_plane_normal", trace.plane.normal, error)
-        && set_global_float_named(instance, "trace_plane_dist", trace.plane.distance, error)
-        && set_global_int_named(instance, "trace_ent", hit, error)
-        && set_global_float_named(instance, "trace_inopen", trace.in_open, error)
-        && set_global_float_named(instance, "trace_inwater", trace.in_water, error);
+    return set_global_float(instance, instance->program->engine_globals.trace_allsolid, trace.all_solid, error)
+        && set_global_float(instance, instance->program->engine_globals.trace_startsolid, trace.start_solid, error)
+        && set_global_float(instance, instance->program->engine_globals.trace_fraction, trace.fraction, error)
+        && set_global_vector(instance, instance->program->engine_globals.trace_endpos, trace.end, error)
+        && set_global_vector(instance, instance->program->engine_globals.trace_plane_normal, trace.plane.normal, error)
+        && set_global_float(instance, instance->program->engine_globals.trace_plane_dist, trace.plane.distance, error)
+        && set_global_entity(instance, instance->program->engine_globals.trace_ent, hit, error)
+        && set_global_float(instance, instance->program->engine_globals.trace_inopen, trace.in_open, error)
+        && set_global_float(instance, instance->program->engine_globals.trace_inwater, trace.in_water, error);
 }
 
 static bool pointcontents(qa_qc_instance *instance, qa_error *error)
@@ -1350,8 +1336,8 @@ static bool findradius(qa_qc_instance *instance, qa_error *error)
         || !qa_qc_arg_float(instance, 1, &radius, error)) return false;
     if (!qa_vec_finite(origin) || !isfinite(radius) || radius < 0)
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "findradius requires finite bounds");
-    const qa_qc_definition *chain = qa_qc_program_find_field(instance->program, "chain");
-    const qa_qc_definition *solid = qa_qc_program_find_field(instance->program, "solid");
+    const qa_qc_definition *chain = instance->program->engine_fields.chain;
+    const qa_qc_definition *solid = instance->program->engine_fields.solid;
     if (chain == NULL || chain->type != QA_QC_ENTITY)
         return qc_fail(error, QA_ERROR_FORMAT, 0,
                        "findradius needs the chain entity field");
@@ -1466,7 +1452,7 @@ static bool droptofloor(qa_qc_instance *instance, qa_error *error)
 {
     if (instance->options.host.world == NULL)
         return qc_fail(error, QA_ERROR_UNSUPPORTED, 0, "droptofloor needs the shared world");
-    const qa_qc_definition *self = qa_qc_program_find_global(instance->program, "self");
+    const qa_qc_definition *self = instance->program->engine_globals.self;
     if (self == NULL || self->type != QA_QC_ENTITY)
         return qc_fail(error, QA_ERROR_FORMAT, 0,
                        "droptofloor needs an entity self global");
@@ -1491,12 +1477,11 @@ static bool droptofloor(qa_qc_instance *instance, qa_error *error)
         return qa_qc_return_float(instance, 0, error);
     body.origin = trace.end;
     body.ground = trace.hit == QA_TRACE_HIT_ACTOR ? trace.actor : (qa_actor_id){0};
-    if (!set_field_vector(instance, slot, "origin", trace.end, error)) return false;
+    if (!set_field_vector(instance, slot, instance->program->engine_fields.origin, trace.end, error)) return false;
     if (!slot_matches(instance, slot, binding.kind, binding.actor))
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot,
                        "droptofloor actor changed during source store");
-    const qa_qc_definition *ground = qa_qc_program_find_field(instance->program,
-                                                               "groundentity");
+    const qa_qc_definition *ground = instance->program->engine_fields.groundentity;
     if (ground != NULL) {
         if (ground->type != QA_QC_ENTITY)
             return qc_fail(error, QA_ERROR_FORMAT, ground->offset,
@@ -1518,7 +1503,7 @@ static bool droptofloor(qa_qc_instance *instance, qa_error *error)
     if (!slot_matches(instance, slot, binding.kind, binding.actor))
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot,
                        "droptofloor actor changed during world update");
-    const qa_qc_definition *flags = qa_qc_program_find_field(instance->program, "flags");
+    const qa_qc_definition *flags = instance->program->engine_fields.flags;
     if (flags != NULL) {
         if (flags->type != QA_QC_FLOAT)
             return qc_fail(error, QA_ERROR_FORMAT, flags->offset,

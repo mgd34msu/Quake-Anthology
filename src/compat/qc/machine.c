@@ -181,11 +181,11 @@ static void leave_frame(qa_qc_instance *instance)
 static bool state_opcode(qa_qc_instance *instance,
                          const qa_qc_statement *statement, qa_error *error)
 {
-    const qa_qc_definition *self = qa_qc_program_find_global(instance->program, "self");
-    const qa_qc_definition *time = qa_qc_program_find_global(instance->program, "time");
-    const qa_qc_definition *nextthink = qa_qc_program_find_field(instance->program, "nextthink");
-    const qa_qc_definition *frame = qa_qc_program_find_field(instance->program, "frame");
-    const qa_qc_definition *think = qa_qc_program_find_field(instance->program, "think");
+    const qa_qc_definition *self = instance->program->engine_globals.self;
+    const qa_qc_definition *time = instance->program->engine_globals.time;
+    const qa_qc_definition *nextthink = instance->program->engine_fields.nextthink;
+    const qa_qc_definition *frame = instance->program->engine_fields.frame;
+    const qa_qc_definition *think = instance->program->engine_fields.think;
     if (self == NULL || time == NULL || nextthink == NULL || frame == NULL || think == NULL)
         return runtime_fail(instance, error, "STATE needs self/time/frame/think fields");
     if (self->type != QA_QC_ENTITY || time->type != QA_QC_FLOAT

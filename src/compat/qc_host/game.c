@@ -83,9 +83,8 @@ bool qa_qc_game_create(const qa_qc_program *program, const qa_qc_game_options *o
     qa_qc_game *game = calloc(1, sizeof(*game));
     if (!game) return qc_game_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC game host");
     game->options = *options; game->program = program; game->loading = true;
-#define QC_GAME_RESOLVE_FIELD(name) game->fields.name = qa_qc_program_find_field(program, #name);
-    QA_QC_GAME_FIELD_LIST(QC_GAME_RESOLVE_FIELD)
-#undef QC_GAME_RESOLVE_FIELD
+    game->fields = qa_qc_program_resolved_fields(program);
+    game->globals = qa_qc_program_resolved_globals(program);
     game->bindings = malloc((options->vm.host.builtin_count + n) * sizeof(*game->bindings));
     if (!game->bindings) { free(game); return qc_game_fail(error, QA_ERROR_MEMORY, "Allocating QC engine imports"); }
     size_t count = options->vm.host.builtin_count;
@@ -128,7 +127,7 @@ bool qa_qc_game_destroy(qa_qc_game *game, qa_error *error) {
 }
 bool qa_qc_game_idle(const qa_qc_game *game) { return game && !game->calls && qa_qc_idle(game->vm); }
 qa_qc_instance *qa_qc_game_instance(qa_qc_game *game) { return game ? game->vm : NULL; }
-const qa_qc_game_fields *qa_qc_game_resolved_fields(const qa_qc_game *game) { return game ? &game->fields : NULL; }
+const qa_qc_game_fields *qa_qc_game_resolved_fields(const qa_qc_game *game) { return game ? game->fields : NULL; }
 bool qa_qc_game_bind_client(qa_qc_game *game, uint32_t client, qa_actor_id actor, qa_error *error) {
     if (!game || !client || client > game->options.max_clients)
         return qc_game_fail(error, QA_ERROR_ARGUMENT, "QC client slot is outside reservation");
@@ -177,8 +176,8 @@ bool qa_qc_game_set_time(qa_qc_game *game, double seconds, double frame, qa_erro
     if (!game || !isfinite(seconds) || seconds < 0 || !isfinite(frame) || frame < 0 ||
         seconds > FLT_MAX || frame > FLT_MAX)
         return qc_game_fail(error, QA_ERROR_ARGUMENT, "Invalid QC source clock");
-    const qa_qc_definition *time = qa_qc_program_find_global(game->program, "time");
-    const qa_qc_definition *delta = qa_qc_program_find_global(game->program, "frametime");
+    const qa_qc_definition *time = game->globals->time;
+    const qa_qc_definition *delta = game->globals->frametime;
     float values[2] = {(float)seconds, (float)frame}; uint32_t words[2];
     memcpy(words, values, sizeof(words));
     if (time && time->type == QA_QC_FLOAT && !qa_qc_stage_globals(game->vm, time->offset, words, 1, error)) return false;

@@ -44,20 +44,20 @@ bool qa_qc_game_read_physics(qa_qc_game *game, qa_actor_id actor, qa_physics_pro
     float motion, solid, flags, health, water_level, water_type, local, next;
     qa_physics_properties value = {.family = QA_COLLISION_Q1, .clip_mask = 3,
         .gravity_direction = {0, 0, -1}, .gravity_scale = 1};
-    if (!scalar(game, reference, game->fields.movetype, 0, false, &motion, error) ||
-        !scalar(game, reference, game->fields.solid, 0, false, &solid, error) ||
-        !scalar(game, reference, game->fields.flags, 0, false, &flags, error) ||
-        !scalar(game, reference, game->fields.health, 0, false, &health, error) ||
-        !scalar(game, reference, game->fields.waterlevel, 0, false, &water_level, error) ||
-        !scalar(game, reference, game->fields.watertype, 0, false, &water_type, error) ||
-        !scalar(game, reference, game->fields.ltime, 0, false, &local, error) ||
-        !scalar(game, reference, game->fields.nextthink, 0, false, &next, error) ||
-        !scalar(game, reference, game->fields.gravity, 1, true, &value.gravity_scale, error) ||
-        !scalar(game, reference, game->fields.ideal_yaw, 0, false, &value.ideal_yaw, error) ||
-        !scalar(game, reference, game->fields.yaw_speed, 0, false, &value.yaw_speed, error) ||
-        !vector(game, reference, game->fields.avelocity, &value.angular_velocity, error) ||
-        !entity(game, reference, game->fields.enemy, &value.enemy, error) ||
-        !entity(game, reference, game->fields.goalentity, &value.goal, error)) return false;
+    if (!scalar(game, reference, game->fields->movetype, 0, false, &motion, error) ||
+        !scalar(game, reference, game->fields->solid, 0, false, &solid, error) ||
+        !scalar(game, reference, game->fields->flags, 0, false, &flags, error) ||
+        !scalar(game, reference, game->fields->health, 0, false, &health, error) ||
+        !scalar(game, reference, game->fields->waterlevel, 0, false, &water_level, error) ||
+        !scalar(game, reference, game->fields->watertype, 0, false, &water_type, error) ||
+        !scalar(game, reference, game->fields->ltime, 0, false, &local, error) ||
+        !scalar(game, reference, game->fields->nextthink, 0, false, &next, error) ||
+        !scalar(game, reference, game->fields->gravity, 1, true, &value.gravity_scale, error) ||
+        !scalar(game, reference, game->fields->ideal_yaw, 0, false, &value.ideal_yaw, error) ||
+        !scalar(game, reference, game->fields->yaw_speed, 0, false, &value.yaw_speed, error) ||
+        !vector(game, reference, game->fields->avelocity, &value.angular_velocity, error) ||
+        !entity(game, reference, game->fields->enemy, &value.enemy, error) ||
+        !entity(game, reference, game->fields->goalentity, &value.goal, error)) return false;
     if (truncf(motion) != motion || motion < 0 || motion > 11)
         return qc_game_fail(error, QA_ERROR_UNSUPPORTED, "QC movetype is unsupported");
     switch ((int32_t)motion) {
@@ -116,22 +116,22 @@ bool qa_qc_game_write_physics(qa_qc_game *game, qa_actor_id actor,
     float flags, local, next;
     if (!clock_word(value->q1_pusher.local_seconds, &local, error) ||
         !clock_word(value->q1_pusher.next_think_seconds, &next, error)) return false;
-    if (!scalar(game, reference, game->fields.flags, 0, false, &flags, error)) return false;
+    if (!scalar(game, reference, game->fields->flags, 0, false, &flags, error)) return false;
     int32_t bits = qa_source_float_to_i32(flags) & ~(1 | 2 | 1024 | 512);
     if (value->flags & QA_PHYSICS_FLYING) bits |= 1;
     if (value->flags & QA_PHYSICS_SWIMMING) bits |= 2;
     if (value->flags & QA_PHYSICS_PARTIAL_GROUND) bits |= 1024;
     if (value->flags & QA_PHYSICS_ONGROUND) bits |= 512;
-    const qa_qc_definition *angular = game->fields.avelocity;
+    const qa_qc_definition *angular = game->fields->avelocity;
     if (!angular || angular->type != QA_QC_VECTOR)
         return qc_game_fail(error, QA_ERROR_FORMAT, "Missing QC angular velocity field");
-    if (!store_scalar(game, reference, actor, game->fields.flags, (float)bits, error) ||
-        !store_scalar(game, reference, actor, game->fields.waterlevel, (float)value->water_level, error) ||
-        !store_scalar(game, reference, actor, game->fields.watertype, (float)value->water_type, error) ||
-        !store_scalar(game, reference, actor, game->fields.ideal_yaw, value->ideal_yaw, error) ||
-        !store_scalar(game, reference, actor, game->fields.yaw_speed, value->yaw_speed, error) ||
-        !store_scalar(game, reference, actor, game->fields.ltime, local, error) ||
-        !store_scalar(game, reference, actor, game->fields.nextthink, next, error) ||
+    if (!store_scalar(game, reference, actor, game->fields->flags, (float)bits, error) ||
+        !store_scalar(game, reference, actor, game->fields->waterlevel, (float)value->water_level, error) ||
+        !store_scalar(game, reference, actor, game->fields->watertype, (float)value->water_type, error) ||
+        !store_scalar(game, reference, actor, game->fields->ideal_yaw, value->ideal_yaw, error) ||
+        !store_scalar(game, reference, actor, game->fields->yaw_speed, value->yaw_speed, error) ||
+        !store_scalar(game, reference, actor, game->fields->ltime, local, error) ||
+        !store_scalar(game, reference, actor, game->fields->nextthink, next, error) ||
         !qa_qc_set_entity_vector(game->vm, reference, angular->offset, value->angular_velocity, error)) return false;
     return still_actor(game, reference, actor, error);
 }

@@ -427,6 +427,12 @@ bool qa_qc_program_load(qa_bytes bytes, const char *source,
         qa_qc_program_destroy(program);
         return false;
     }
+#define QC_RESOLVE_FIELD(name) program->engine_fields.name = qa_qc_program_find_field(program, #name);
+    QA_QC_GAME_FIELD_LIST(QC_RESOLVE_FIELD)
+#undef QC_RESOLVE_FIELD
+#define QC_RESOLVE_GLOBAL(name) program->engine_globals.name = qa_qc_program_find_global(program, #name);
+    QA_QC_ENGINE_GLOBAL_LIST(QC_RESOLVE_GLOBAL)
+#undef QC_RESOLVE_GLOBAL
     *out = program;
     return true;
 }
@@ -480,6 +486,16 @@ const qa_qc_definition *qa_qc_program_field(const qa_qc_program *program,
 {
     return program != NULL && index < program->info.field_count
          ? &program->fields[index] : NULL;
+}
+
+const qa_qc_game_fields *qa_qc_program_resolved_fields(const qa_qc_program *program)
+{
+    return program ? &program->engine_fields : NULL;
+}
+
+const qa_qc_engine_globals *qa_qc_program_resolved_globals(const qa_qc_program *program)
+{
+    return program ? &program->engine_globals : NULL;
 }
 
 const qa_qc_function *qa_qc_program_function(const qa_qc_program *program,

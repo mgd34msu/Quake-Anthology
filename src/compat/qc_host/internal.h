@@ -9,7 +9,8 @@
 struct qa_qc_game {
     qa_qc_game_options options;
     const qa_qc_program *program;
-    qa_qc_game_fields fields;
+    const qa_qc_game_fields *fields;
+    const qa_qc_engine_globals *globals;
     qa_qc_instance *vm;
     qa_qc_builtin_binding *bindings;
     size_t binding_count;

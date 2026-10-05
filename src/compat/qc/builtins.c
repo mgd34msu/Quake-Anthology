@@ -169,10 +169,9 @@ bool qc_builtin_is_pure(qa_qc_profile profile, int32_t number)
     }
 }
 
-static bool set_named_vector(qa_qc_instance *instance, const char *name,
+static bool set_vector(qa_qc_instance *instance, const qa_qc_definition *definition,
                              qa_vec3 value, qa_error *error)
 {
-    const qa_qc_definition *definition = qa_qc_program_find_global(instance->program, name);
     if (definition == NULL || definition->type != QA_QC_VECTOR)
         return qc_fail(error, QA_ERROR_FORMAT, 0, "QuakeC vector global is missing");
     return qa_qc_set_global_vector(instance, definition->offset, value, error);
@@ -191,9 +190,9 @@ static bool makevectors(qa_qc_instance *instance, qa_error *error)
                           (-sr * sp * sy) - cr * cy, -sr * cp);
     qa_vec3 up = qa_v3((cr * sp * cy) + sr * sy,
                        (cr * sp * sy) - sr * cy, cr * cp);
-    return set_named_vector(instance, "v_forward", forward, error)
-        && set_named_vector(instance, "v_right", right, error)
-        && set_named_vector(instance, "v_up", up, error);
+    return set_vector(instance, instance->program->engine_globals.v_forward, forward, error)
+        && set_vector(instance, instance->program->engine_globals.v_right, right, error)
+        && set_vector(instance, instance->program->engine_globals.v_up, up, error);
 }
 
 static uint32_t random_word(qa_qc_instance *instance)

@@ -19,7 +19,7 @@ static bool float_field(qa_qc_game *game, int32_t entity, const qa_qc_definition
     return field(game, entity, def, QA_QC_FLOAT, words, error);
 }
 static bool self_reference(qa_qc_game *game, int32_t *out, qa_error *error) {
-    const qa_qc_definition *self = qa_qc_program_find_global(game->program, "self");
+    const qa_qc_definition *self = game->globals->self;
     if (!self || self->type != QA_QC_ENTITY) return qc_game_fail(error, QA_ERROR_FORMAT, "Missing QC self global");
     return qa_qc_global_int(game->vm, self->offset, out, error);
 }
@@ -88,15 +88,15 @@ static bool setmodel(qa_qc_game *game, qa_error *error) {
     if (!allowed || !same_model_actor(game, entity, actor, error))
         return qc_game_fail(error, QA_ERROR_ARGUMENT, "QC model cannot alter another movement owner");
     uint32_t words[3] = {(uint32_t)model, 0, 0};
-    if (!field(game, entity, game->fields.model, QA_QC_STRING, words, error) ||
+    if (!field(game, entity, game->fields->model, QA_QC_STRING, words, error) ||
         !same_model_actor(game, entity, actor, error) ||
-        !float_field(game, entity, game->fields.modelindex, (float)cached.index, error) ||
+        !float_field(game, entity, game->fields->modelindex, (float)cached.index, error) ||
         !same_model_actor(game, entity, actor, error) ||
-        !vector_field(game, entity, game->fields.mins, cached.bounds.mins, error) ||
+        !vector_field(game, entity, game->fields->mins, cached.bounds.mins, error) ||
         !same_model_actor(game, entity, actor, error) ||
-        !vector_field(game, entity, game->fields.maxs, cached.bounds.maxs, error) ||
+        !vector_field(game, entity, game->fields->maxs, cached.bounds.maxs, error) ||
         !same_model_actor(game, entity, actor, error) ||
-        !vector_field(game, entity, game->fields.size, qa_vec_sub(cached.bounds.maxs, cached.bounds.mins), error)) return false;
+        !vector_field(game, entity, game->fields->size, qa_vec_sub(cached.bounds.maxs, cached.bounds.mins), error)) return false;
     if (!entity) return true;
     if (!qa_qc_reference_actor(game->vm, entity, &current, error) || !qa_actor_id_equal(current, actor))
         return qc_game_fail(error, QA_ERROR_NOT_FOUND, "QC model actor changed during field publication");
@@ -188,7 +188,7 @@ static bool movement(qa_qc_game *game, qa_qc_builtin builtin, qa_error *error) {
     float distance;
     if (!(properties.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING | QA_PHYSICS_ONGROUND)))
         return true;
-    const qa_qc_definition *goal = game->fields.goalentity;
+    const qa_qc_definition *goal = game->fields->goalentity;
     int32_t goal_reference; qa_actor_id target;
     if (!goal || goal->type != QA_QC_ENTITY)
         return qc_game_fail(error, QA_ERROR_FORMAT, "Missing QC goalentity field");

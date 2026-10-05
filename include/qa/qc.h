@@ -129,6 +129,30 @@ typedef struct qa_qc_definition {
     const char *name; /* Borrowed from the program. */
 } qa_qc_definition;
 
+#define QA_QC_GAME_FIELD_LIST(X) \
+    X(movetype) X(solid) X(flags) X(health) X(waterlevel) X(watertype) \
+    X(ltime) X(nextthink) X(gravity) X(ideal_yaw) X(yaw_speed) X(avelocity) \
+    X(enemy) X(goalentity) X(owner) X(modelindex) X(model) \
+    X(origin) X(angles) X(velocity) X(mins) X(maxs) X(size) \
+    X(absmin) X(absmax) X(groundentity) X(takedamage) X(colormap) X(skin) \
+    X(frame) X(think) X(chain) X(effects) X(alpha) X(scale) \
+    X(weaponmodel) X(weaponframe) X(punchangle)
+typedef struct qa_qc_game_fields {
+#define QA_QC_GAME_FIELD(name) const qa_qc_definition *name;
+    QA_QC_GAME_FIELD_LIST(QA_QC_GAME_FIELD)
+#undef QA_QC_GAME_FIELD
+} qa_qc_game_fields;
+
+#define QA_QC_ENGINE_GLOBAL_LIST(X) \
+    X(self) X(time) X(frametime) X(v_forward) X(v_right) X(v_up) \
+    X(trace_allsolid) X(trace_startsolid) X(trace_fraction) X(trace_endpos) \
+    X(trace_plane_normal) X(trace_plane_dist) X(trace_ent) X(trace_inopen) X(trace_inwater)
+typedef struct qa_qc_engine_globals {
+#define QA_QC_ENGINE_GLOBAL(name) const qa_qc_definition *name;
+    QA_QC_ENGINE_GLOBAL_LIST(QA_QC_ENGINE_GLOBAL)
+#undef QA_QC_ENGINE_GLOBAL
+} qa_qc_engine_globals;
+
 typedef struct qa_qc_function {
     int32_t first_statement;
     uint32_t parameter_start, local_words;
@@ -167,6 +191,10 @@ bool qa_qc_program_initial_int(const qa_qc_program *, uint32_t word,
                                int32_t *out, qa_error *);
 const qa_qc_definition *qa_qc_program_field(const qa_qc_program *program,
                                              uint32_t index);
+/* Fixed engine definitions are resolved once when the immutable program loads.
+ * Missing definitions remain NULL; consumers preserve their source policy. */
+const qa_qc_game_fields *qa_qc_program_resolved_fields(const qa_qc_program *);
+const qa_qc_engine_globals *qa_qc_program_resolved_globals(const qa_qc_program *);
 const qa_qc_function *qa_qc_program_function(const qa_qc_program *program,
                                              uint32_t index);
 uint32_t qa_qc_program_function_end(const qa_qc_program *, const qa_qc_function *);

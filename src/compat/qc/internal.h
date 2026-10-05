@@ -75,6 +75,8 @@ struct qa_qc_program {
     uint8_t *strings, *initial_globals;
     uint32_t string_bytes;
     qc_name_index names[3];
+    qa_qc_game_fields engine_fields;
+    qa_qc_engine_globals engine_globals;
 };
 
 struct qa_qc_instance {
