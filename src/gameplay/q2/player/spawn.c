@@ -17,6 +17,7 @@ static bool post_respawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
                                                .velocity = body.velocity,
                                                .angles = movement.view_angles,
                                                .command_angles = movement.command_angles,
+                                               .preserve_view_angles = true,
                                                .hold_ns = 112 * Q2_MS,
                                                .spectator = a->client->info.spectator},
                         e))
@@ -128,10 +129,11 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
         s->has_pending_landmark = true;
     }
     qa_body_state body;
+    qa_vec3 command_view;
     bool found;
     if (!q2_player_spawn_select(g, a, &movement,
                                 s->has_pending_landmark ? &s->pending_landmark : NULL, &body,
-                                &found, e))
+                                &command_view, &found, e))
         return false;
     if (!q2_actor_live(g, id))
         return true;
@@ -277,6 +279,8 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
                                   .velocity = body.velocity,
                                   .angles = body.angles,
                                   .command_angles = movement.command_angles,
+                                  .command_view_angles = command_view,
+                                  .has_command_view_angles = true,
                                   .spectator = s->info.spectator};
     if (!q2_player_move(g, a, &change, e))
         return false;
@@ -371,7 +375,7 @@ bool qa_q2_player_map_spawn_pose(qa_q2_game *g, qa_actor_id id, const qa_bounds 
     }
     qa_q2_player_movement movement = {.standing_bounds = *bounds};
     if (!q2_player_spawn_select(g, a, &movement,
-            s->has_pending_landmark ? &s->pending_landmark : NULL, out, found, e)) return false;
+            s->has_pending_landmark ? &s->pending_landmark : NULL, out, NULL, found, e)) return false;
     if (!q2_actor_live(g, id)) return true;
     if (!*found) {
         if (!s->awaiting_respawn) s->respawn_timeout_ns = q2_deadline(g->now_ns, 3 * Q2_NS);

@@ -465,7 +465,7 @@ done:
     return okay;
 }
 bool q2_player_spawn_select(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
-                            const qa_q2_landmark *landmark, qa_body_state *out, bool *found,
+                            const qa_q2_landmark *landmark, qa_body_state *out, qa_vec3 *command_view, bool *found,
                             qa_error *e) {
     q2_players *p = g->player_runtime;
     q2_client_state *s = a->client;
@@ -475,6 +475,7 @@ bool q2_player_spawn_select(qa_q2_game *g, q2_actor *a, const qa_q2_player_movem
         s->squad_spawn = false;
         *out = (qa_body_state){
             .origin = s->squad_origin, .angles = s->squad_angles, .bounds = m->standing_bounds};
+        if (command_view) *command_view = s->squad_angles;
         *found = true;
         return true;
     }
@@ -486,6 +487,7 @@ bool q2_player_spawn_select(qa_q2_game *g, q2_actor *a, const qa_q2_player_movem
         if (selected) {
             *out =
                 (qa_body_state){.origin = origin, .angles = angles, .bounds = m->standing_bounds};
+            if (command_view) *command_view = angles;
             *found = true;
             return true;
         }
@@ -549,6 +551,7 @@ bool q2_player_spawn_select(qa_q2_game *g, q2_actor *a, const qa_q2_player_movem
         }
     }
     body.origin.z += rr ? (g->options.deathmatch ? 10 : 1) : from_landmark ? 1 : 10;
+    if (command_view) *command_view = body.angles;
     body.angles = rr || from_landmark ? qa_v3(body.angles.x / 3, body.angles.y, body.angles.z)
                                       : qa_v3(0, body.angles.y, 0);
     s->landmark_free_fall = from_landmark;

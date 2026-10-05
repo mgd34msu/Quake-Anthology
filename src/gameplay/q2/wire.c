@@ -541,13 +541,14 @@ bool q2_wire_player_motion(qa_q2_game *g, q2_actor *a,
     const qa_q2_player_motion *change, qa_error *error)
 {
     if (!a->client || !qa_vec_finite(change->origin) || !qa_vec_finite(change->velocity) ||
-        !qa_vec_finite(change->angles) || !qa_vec_finite(change->command_angles)) {
+        !qa_vec_finite(change->angles) || !qa_vec_finite(change->command_angles) ||
+        (change->has_command_view_angles && !qa_vec_finite(change->command_view_angles))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 Source motion has invalid physical client fields");
         return false;
     }
     bool rr = g->options.edition == QA_Q2_RERELEASE;
     qa_q2_wire_movement value = a->wire_movement;
-    if (change->kind == QA_Q2_PLAYER_SPAWN) {
+    if (change->kind == QA_Q2_PLAYER_SPAWN && !change->preserve_view_angles) {
         bool seen = value.command_seen; uint64_t sequence = value.source_sequence;
         bool pending = value.command_pending; uint64_t pending_sequence = value.pending_sequence;
         value = (qa_q2_wire_movement){.state.kind = rr ? QA_MOVEMENT_Q2_RERELEASE : QA_MOVEMENT_Q2_CLASSIC,
@@ -557,7 +558,8 @@ bool q2_wire_player_motion(qa_q2_game *g, q2_actor *a,
         a->wire_event = 0; a->wire_event_frame = g->wire_frame;
     }
     value.present = true; value.frame = g->wire_frame; value.time_ns = g->now_ns;
-    if (change->kind != QA_Q2_PLAYER_NOCLIP) {
+    bool force_view = change->kind != QA_Q2_PLAYER_NOCLIP && !change->preserve_view_angles;
+    if (force_view) {
         value.view_angles = change->angles; value.command_angles = change->command_angles;
     }
     value.view_height = a->client->info.view_height;
@@ -565,11 +567,17 @@ bool q2_wire_player_motion(qa_q2_game *g, q2_actor *a,
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, error)) return false;
     value.bounds = body.bounds;
-    qa_vec3 delta = qa_vec_sub(change->angles, change->command_angles);
+    qa_vec3 command_view = change->has_command_view_angles ? change->command_view_angles : change->angles;
+    qa_vec3 delta = qa_vec_sub(command_view, change->command_angles);
+    if (force_view && !qa_vec_finite(delta)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 Source motion has a nonfinite command angle offset");
+        return false;
+    }
     if (rr) {
         qa_q2r_movement_state *s = &value.state.data.q2r;
         if (change->kind != QA_Q2_PLAYER_NOCLIP) {
-            s->origin = change->origin; s->velocity = change->velocity; s->delta_angles = delta;
+            s->origin = change->origin; s->velocity = change->velocity;
+            if (force_view) s->delta_angles = delta;
         }
         s->view_height = value.view_height;
         s->type = change->kind == QA_Q2_PLAYER_FREEZE ? 6 :
@@ -584,7 +592,9 @@ bool q2_wire_player_motion(qa_q2_game *g, q2_actor *a,
             for (size_t i = 0; i < 3; ++i) {
                 s->origin_eighths[i] = source_short((double)origin[i] * 8);
                 s->velocity_eighths[i] = source_short((double)velocity[i] * 8);
-                s->delta_angle_shorts[i] = source_short((double)angles[i] * (65536. / 360));
+                if (force_view)
+                    s->delta_angle_shorts[i] = source_short(
+                        (double)((fmodf(angles[i], 360.f) * 65536.f) / 360.f));
             }
         }
         s->type = change->kind == QA_Q2_PLAYER_FREEZE ? 4 :

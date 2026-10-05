@@ -403,6 +403,24 @@ static qa_actor_id result_ground(const qa_movement_ground *ground)
                                              : (qa_actor_id){0};
 }
 
+static qa_movement_ground state_ground(const qa_movement_state *state,
+                                      qa_movement_ground fallback)
+{
+    switch (state->kind) {
+    case QA_MOVEMENT_NETQUAKE:
+        return (state->data.nq.flags & APPLICATION_Q1_ONGROUND)
+            ? state->data.nq.ground : (qa_movement_ground){0};
+    case QA_MOVEMENT_QUAKEWORLD:
+        return state->data.qw.ground;
+    case QA_MOVEMENT_Q3:
+        return state->data.q3.ground;
+    case QA_MOVEMENT_Q2_CLASSIC:
+    case QA_MOVEMENT_Q2_RERELEASE:
+        return fallback;
+    }
+    return fallback;
+}
+
 static qa_vec3 result_angles(const qa_movement_result *result,
                              qa_vec3 fallback)
 {
@@ -470,6 +488,7 @@ static bool refresh_source_call(application_move_call *move, qa_movement_call *c
         !qa_combat_read_traits(move->application->combat, call->actor, &combat, error)) return false;
     application_control_record shadow = *move->control;
     shadow.state = *call->state;
+    shadow.ground = state_ground(call->state, shadow.ground);
     state_body(&shadow, &body, combat.health);
     *call->state = shadow.state; *call->bounds = body.bounds;
     call->environment->health = combat.health;
@@ -679,6 +698,19 @@ bool application_control_q1_source_prethink(qa_application *app, qa_actor_id act
 static int32_t input_angle_word(float degrees)
 {
     return (int32_t)(uint16_t)(int32_t)(fmodf(degrees, 360.0f) * (65536.0f / 360.0f));
+}
+
+static qa_vec3 command_angle_feedback(const qa_movement_command *command)
+{
+    if (command->kind != QA_MOVEMENT_Q3 && command->kind != QA_MOVEMENT_Q2_CLASSIC)
+        return command->angles;
+    float angles[3];
+    for (size_t i = 0; i < 3; ++i) {
+        uint32_t bits = (uint32_t)command->angle_words[i] & UINT32_C(65535);
+        int32_t word = bits < UINT32_C(32768) ? (int32_t)bits : (int32_t)bits - 65536;
+        angles[i] = (float)word * (360.0f / 65536.0f);
+    }
+    return qa_v3(angles[0], angles[1], angles[2]);
 }
 
 typedef struct application_control_mod_input {
@@ -1242,10 +1274,9 @@ static qa_movement_control move_phase_body(void *opaque, qa_movement_phase phase
     if (source_phase) {
         qa_body_state source_body;
         if (!qa_world_body_read(move->application->world, actor, &source_body, error)) return QA_MOVEMENT_ERROR;
-        qa_movement_ground ground = call->state->kind == QA_MOVEMENT_NETQUAKE ? call->state->data.nq.ground
-            : call->state->kind == QA_MOVEMENT_QUAKEWORLD ? call->state->data.qw.ground
-            : source_body.ground.registry ? (qa_movement_ground){.hit = QA_TRACE_HIT_ACTOR, .actor = source_body.ground}
-            : (qa_movement_ground){0};
+        qa_movement_ground ground = state_ground(call->state,
+            source_body.ground.registry ? (qa_movement_ground){.hit = QA_TRACE_HIT_ACTOR,
+                .actor = source_body.ground} : (qa_movement_ground){0});
         if (!publish_result_body(move, call->state, *call->bounds, ground,
             call_view_angles(move, call), false, false, error)) return QA_MOVEMENT_ERROR;
         if (!live(move->application, actor)) return QA_MOVEMENT_REMOVED;
@@ -1358,13 +1389,7 @@ static qa_movement_control move_phase_body(void *opaque, qa_movement_phase phase
     }
 
     if (phase == QA_MOVE_LINK || phase == QA_MOVE_LINK_TRIGGERS) {
-        qa_movement_ground ground = move->control->ground;
-        if (call->state->kind == QA_MOVEMENT_NETQUAKE)
-            ground = call->state->data.nq.ground;
-        else if (call->state->kind == QA_MOVEMENT_QUAKEWORLD)
-            ground = call->state->data.qw.ground;
-        else if (call->state->kind == QA_MOVEMENT_Q3)
-            ground = call->state->data.q3.ground;
+        qa_movement_ground ground = state_ground(call->state, move->control->ground);
         if (!publish_result_body(move, call->state, *call->bounds, ground,
             call_view_angles(move, call), false, false, error)) return QA_MOVEMENT_ERROR;
         if (move->execution && move->execution->kind == APPLICATION_PROVIDER_QC &&
@@ -1440,6 +1465,11 @@ static qa_movement_control move_touch_body(void *opaque,
 {
     application_move_call *move = opaque;
     if (move->context.source_usercmd) return QA_MOVEMENT_CONTINUE;
+    if (!publish_result_body(move, call->state, *call->bounds,
+            state_ground(call->state, move->control->ground),
+            call_view_angles(move, call), false, false, error))
+        return QA_MOVEMENT_ERROR;
+    if (!live(move->application, call->actor)) return QA_MOVEMENT_REMOVED;
     bool first;
     if (!application_control_group_touch_once(move->application, move->control->actor, trace->actor, &first, error))
         return QA_MOVEMENT_ERROR;
@@ -2768,7 +2798,7 @@ static bool control_move(qa_application *application,
         record->water_type = record->result.water_type;
         record->previous_buttons = record->buttons;
         record->buttons = command->buttons;
-        record->command_angles = command->angles;
+        record->command_angles = command_angle_feedback(command);
         bool received; uint64_t sequence;
         (void)application_control_frames_sequence(application, actor, &received, &sequence);
         if (!context->source_usercmd && !context->source_guestcmd && !context->source_qwcmd && !context->source_nqcmd && !context->source_q2cmd &&
@@ -2797,7 +2827,7 @@ static bool control_move(qa_application *application,
                         move.application_elapsed_ns, error);
         if (ok && live(application, actor)) {
             record->buttons = effective_command.buttons;
-            record->command_angles = effective_command.angles;
+            record->command_angles = command_angle_feedback(&effective_command);
         }
     }
     qa_error cleanup = {0};
@@ -3183,7 +3213,7 @@ static bool guest_complete(qa_application *application, qa_actor_id actor,
         record->view_offset = qa_v3(0, 0, state->view_height);
         if (!stage) {
             record->previous_buttons = record->buttons; record->buttons = command->buttons;
-            record->command_angles = command->angles;
+            record->command_angles = command_angle_feedback(command);
         }
         if (!stage && !context->source_guestcmd) {
             record->command_sequence = command->sequence; record->command_seen = true;
@@ -3813,6 +3843,40 @@ bool qa_application_control_end_cutscene(qa_application *application,
     return true;
 }
 
+static void force_state_view(qa_movement_state *state, qa_vec3 view,
+                             qa_vec3 command_view, qa_vec3 command)
+{
+    qa_vec3 delta = qa_vec_sub(command_view, command);
+    float angles[3] = {delta.x, delta.y, delta.z};
+    switch (state->kind) {
+    case QA_MOVEMENT_NETQUAKE:
+        state->data.nq.view_angles = view;
+        break;
+    case QA_MOVEMENT_QUAKEWORLD:
+        state->data.qw.angles = view;
+        break;
+    case QA_MOVEMENT_Q2_CLASSIC:
+        for (size_t i = 0; i < 3; ++i) {
+            uint32_t bits = (uint32_t)(int32_t)
+                ((fmodf(angles[i], 360.0f) * 65536.0f) / 360.0f) & UINT32_C(65535);
+            state->data.q2.delta_angle_shorts[i] =
+                (int16_t)(bits < UINT32_C(32768) ? (int32_t)bits : (int32_t)bits - 65536);
+        }
+        break;
+    case QA_MOVEMENT_Q2_RERELEASE:
+        state->data.q2r.delta_angles = delta;
+        break;
+    case QA_MOVEMENT_Q3: {
+        float target[3] = {command_view.x, command_view.y, command_view.z};
+        float base[3] = {command.x, command.y, command.z};
+        for (size_t i = 0; i < 3; ++i)
+            state->data.q3.delta_angle_words[i] = input_angle_word(target[i]) - input_angle_word(base[i]);
+        state->data.q3.view_angles = view;
+        break;
+    }
+    }
+}
+
 bool application_control_motion_changed(
     qa_application *application, qa_actor_id actor,
     const qa_builtin_motion_change *change, qa_error *error)
@@ -3820,7 +3884,8 @@ bool application_control_motion_changed(
     if (application == NULL || change == NULL ||
         !qa_vec_finite(change->body.origin) ||
         !qa_vec_finite(change->body.velocity) ||
-        !qa_vec_finite(change->view_angles))
+        !qa_vec_finite(change->view_angles) ||
+        (change->has_command_view_angles && !qa_vec_finite(change->command_view_angles)))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "invalid selected movement discontinuity");
     application_control_record *record;
@@ -3844,6 +3909,16 @@ bool application_control_motion_changed(
         return false;
     state_body(record, &change->body, combat.health);
     if (change->force_view_angles) {
+        qa_movement_state *active = application_control_frames_state_current(application, actor);
+        qa_vec3 command_view = change->has_command_view_angles ? change->command_view_angles : change->view_angles;
+        qa_vec3 command = change->preserve_command_angles ? record->command_angles : change->view_angles;
+        if (!qa_vec_finite(qa_vec_sub(command_view, command)) ||
+            (record->moving && !active) || (active && active->kind != record->state.kind))
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                                    "Forced view lost its actual movement continuation");
+        force_state_view(&record->state, change->view_angles, command_view, command);
+        if (active && active != &record->state)
+            force_state_view(active, change->view_angles, command_view, command);
         record->view_angles = change->view_angles;
         if (!change->preserve_command_angles)
             record->command_angles = change->view_angles;

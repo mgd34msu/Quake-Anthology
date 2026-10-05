@@ -1580,6 +1580,13 @@ static bool q2_source_motion(void *context, qa_actor_id actor,
         return application_control_player_mode(application, actor,
             motion->enabled ? QA_MOVEMENT_MODE_NOCLIP : QA_MOVEMENT_MODE_NORMAL,
             motion->spectator, error);
+    application_control_record *control;
+    if (!application_control_ensure(application, actor, motion->angles, &control, error))
+        return false;
+    bool relative_angles = control->state.kind == QA_MOVEMENT_Q2_CLASSIC ||
+        control->state.kind == QA_MOVEMENT_Q2_RERELEASE || control->state.kind == QA_MOVEMENT_Q3;
+    if (relative_angles && !motion->preserve_view_angles)
+        control->command_angles = motion->command_angles;
     qa_body_state body;
     if (!qa_world_body_read(application->world, actor, &body, error))
         return false;
@@ -1592,11 +1599,13 @@ static bool q2_source_motion(void *context, qa_actor_id actor,
     qa_builtin_motion_change change = {.body = body, .view_angles = motion->angles,
         .reason = motion->kind == QA_Q2_PLAYER_TELEPORT ? QA_BUILTIN_MOTION_TELEPORT
                                                        : QA_BUILTIN_MOTION_RESET,
-        .hold_ns = motion->hold_ns, .force_view_angles = true};
+        .hold_ns = motion->hold_ns, .force_view_angles = !motion->preserve_view_angles,
+        .command_view_angles = motion->command_view_angles,
+        .has_command_view_angles = relative_angles && motion->has_command_view_angles,
+        .preserve_command_angles = relative_angles};
     if (!application_control_motion_changed(application, actor, &change, error) ||
         !application_record_motion_change(application, actor, &change, error))
         return false;
-    application->controls[actor.slot].command_angles = motion->command_angles;
     if (motion->kind == QA_Q2_PLAYER_SPAWN)
         return application_control_spawn_reset(application, actor, motion->spectator, error);
     return application_control_player_mode(application, actor,

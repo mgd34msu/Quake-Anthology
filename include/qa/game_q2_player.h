@@ -21,8 +21,10 @@ typedef enum qa_q2_player_motion_kind {
 typedef struct qa_q2_player_motion {
     qa_q2_player_motion_kind kind;
     qa_vec3 origin, velocity, angles, command_angles;
+    qa_vec3 command_view_angles;
     uint64_t hold_ns;
     bool spectator, enabled;
+    bool has_command_view_angles, preserve_view_angles;
 } qa_q2_player_motion;
 typedef struct qa_q2_blend {
     float x, y, z, w;
