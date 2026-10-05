@@ -1423,13 +1423,28 @@ static bool world_submit(qa_scene_world *world, const qa_scene_world_input *inpu
     bool prepared_cull = prepared && world->bsp.family == QA_BSP_Q3 &&
         prepared->no_cull == input->no_cull && prepared->no_curves == input->no_curves &&
         prepared->disable_face_plane_cull == input->disable_face_plane_cull;
+    if (world->bsp.family != QA_BSP_Q3) {
+        qa_material_context baked = context;
+        baked.lights = input->lights;
+        baked.light_count = input->light_count;
+        size_t admitted_count = 0;
+        for (size_t i = 0; i < count; ++i) {
+            qaw_surface *surface = &world->surfaces[order[i].surface];
+            if (surface_culled(world, surface, input, &context, NULL, planes, plane_count)) continue;
+            if (!qawl_light_update(world, surface, &baked, input, frame, error)) return false;
+            order[admitted_count++] = order[i];
+        }
+        count = admitted_count;
+        if (!qawl_light_flush(world, frame, error)) return false;
+    }
     for (size_t i = 0; i < count; ++i) {
         qaw_surface *surface = &world->surfaces[order[i].surface];
         bool admitted = true;
         if (input->source_order && !admit_surface(world, surface->source_index, &admitted, error)) return false;
         bool cull_current = prepared_cull && prepared->culls[order[i].ordinal] ==
             (surface->material ? surface->material->cull : QA_CULL_NONE);
-        if (!admitted || (!cull_current && surface_culled(world, surface, input, &context, NULL, planes, plane_count))) continue;
+        if (!admitted || (world->bsp.family == QA_BSP_Q3 && !cull_current &&
+            surface_culled(world, surface, input, &context, NULL, planes, plane_count))) continue;
         uint32_t incoming = prepared ? prepared->lights[order[i].ordinal] : world->surface_lights[surface->source_index];
         uint32_t mask = prepared ? incoming : surface_light_mask(surface, incoming, context.lights, context.light_count);
         context.source_dlighted = incoming != 0 && mask != 0;
@@ -1536,6 +1551,17 @@ static bool world_submit_model(qa_scene_world *world, uint32_t model_index,
             break;
         }
     }
+    if (world->bsp.family != QA_BSP_Q3) {
+        qa_material_context baked = context;
+        baked.lights = local_input.lights;
+        baked.light_count = local_input.light_count;
+        for (size_t i = 0; i < model->surface_count; ++i) {
+            qaw_surface *surface = &world->surfaces[model->surfaces[i]];
+            if (surface_culled(world, surface, input, &context, transform, planes, plane_count)) continue;
+            if (!qawl_light_update(world, surface, &baked, &local_input, frame, error)) return false;
+        }
+        if (!qawl_light_flush(world, frame, error)) return false;
+    }
     for (size_t i = 0; i < model->surface_count; ++i) {
         qaw_surface *surface = &world->surfaces[model->surfaces[i]];
         bool admitted = true;
@@ -1575,6 +1601,7 @@ static bool transaction_end(qa_scene_world *world, qa_scene_frame *frame,
                              const world_transaction *start, bool success)
 {
     if (!success) {
+        if (world->bsp.family != QA_BSP_Q3) qawl_light_atlases_dirty(world);
         frame->command_count = start->commands;
         frame->group_count = start->groups;
         while (world->admission_change_count > start->changes) {
@@ -1614,6 +1641,15 @@ bool qa_scene_world_q1_mirror_overlay(qa_scene_world *world, const qa_scene_worl
     bool ok = qa_scene_frame_emit(frame, &view, error);
     qa_material_context context = world_context(world, &parent);
     context.entity_color.w = alpha;
+    if (ok) {
+        qa_material_context baked = context;
+        baked.lights = parent.lights;
+        baked.light_count = parent.light_count;
+        for (size_t i = 0; ok && i < input->q1_mirror->count; ++i)
+            ok = qawl_light_update(world, &world->surfaces[input->q1_mirror->surfaces[i]],
+                &baked, &parent, frame, error);
+        if (ok) ok = qawl_light_flush(world, frame, error);
+    }
     for (size_t i = 0; ok && i < input->q1_mirror->count; ++i) {
         size_t first = frame->command_count;
         qaw_surface *surface = &world->surfaces[input->q1_mirror->surfaces[i]];

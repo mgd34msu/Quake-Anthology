@@ -41,23 +41,24 @@ typedef struct cpu_triangle_output {
 typedef struct cpu_raster_command {
   qa_scene_draw draw;
   cpu_sampler samplers[2];
+  cpu_fragment_kernel kernel;
   cpu_scissor bounds;
   int64_t first_y, last_y;
   size_t first, count;
-  fenv_t environment;
+  int rounding;
 } cpu_raster_command;
 typedef struct cpu_raster_job {
   qa_cpu_renderer *renderer;
   const qa_scene_draw *draw;
   const cpu_sampler *samplers;
+  cpu_fragment_kernel kernel;
   qa_render_primitive_mode mode;
   cpu_scissor bounds;
   const cpu_triangle *triangles;
   size_t triangle_count;
   const cpu_raster_command *commands;
   size_t command_count, completed_commands;
-  fenv_t environment;
-  int exceptions;
+  int rounding;
   bool completed;
 } cpu_raster_job;
 typedef struct cpu_raster_worker {
@@ -69,7 +70,6 @@ typedef struct cpu_raster_worker {
 typedef struct cpu_raster_slice {
   int64_t first, last;
   size_t completed_commands;
-  int exceptions;
 } cpu_raster_slice;
 struct cpu_raster_pool {
   cpu_triangle *triangles;
@@ -97,6 +97,7 @@ static cpu_raster_job raster_command_job(const cpu_raster_job *batch,
   cpu_raster_job job = *batch;
   job.draw = &command->draw;
   job.samplers = command->samplers;
+  job.kernel = command->kernel;
   job.triangles = batch->triangles + command->first;
   job.triangle_count = command->count;
   job.bounds = command->bounds;
@@ -106,24 +107,20 @@ static cpu_raster_job raster_command_job(const cpu_raster_job *batch,
   job.command_count = 0;
   return job;
 }
-static bool raster_commands(cpu_raster_job *batch, bool restore_environment) {
-  const fenv_t *environment = NULL;
+static bool raster_commands(cpu_raster_job *batch) {
+  int rounding = -1;
   for (; batch->completed_commands < batch->command_count;
        ++batch->completed_commands) {
     size_t i = batch->completed_commands;
     if (!raster_command_overlaps(batch, i)) continue;
-    if (restore_environment) {
-      const fenv_t *next = &batch->commands[i].environment;
-      if (!environment || memcmp(environment, next, sizeof(*next)) != 0) {
-        if (environment) batch->exceptions |= fetestexcept(FE_ALL_EXCEPT);
-        if (fesetenv(next) != 0) return false;
-        environment = next;
-      }
+    int next = batch->commands[i].rounding;
+    if (rounding != next) {
+      if (fesetround(next) != 0) return false;
+      rounding = next;
     }
     cpu_raster_job job = raster_command_job(batch, i);
     raster_prepared_draw(&job);
   }
-  if (environment) batch->exceptions |= fetestexcept(FE_ALL_EXCEPT);
   return true;
 }
 static cpu_raster_job raster_slice_job(const struct cpu_raster_pool *pool,
@@ -133,19 +130,16 @@ static cpu_raster_job raster_slice_job(const struct cpu_raster_pool *pool,
   job.bounds.y0 = slice->first;
   job.bounds.y1 = slice->last;
   job.completed_commands = slice->completed_commands;
-  job.exceptions = slice->exceptions;
   return job;
 }
-static void raster_slices(struct cpu_raster_pool *pool,
-                          bool restore_environment) {
+static void raster_slices(struct cpu_raster_pool *pool) {
   for (;;) {
     size_t index = atomic_fetch_add_explicit(&pool->next_slice, 1,
                                              memory_order_relaxed);
     if (index >= pool->slice_count) return;
     cpu_raster_job job = raster_slice_job(pool, index);
-    bool completed = raster_commands(&job, restore_environment);
+    bool completed = raster_commands(&job);
     pool->slices[index].completed_commands = job.completed_commands;
-    pool->slices[index].exceptions = job.exceptions;
     if (!completed) return;
   }
 }
@@ -156,13 +150,12 @@ static int SDLCALL raster_worker(void *context) {
     if (worker->stop) return 0;
     if (worker->job.command_count) {
       struct cpu_raster_pool *pool = worker->job.renderer->raster_pool;
-      if (pool->slice_count) raster_slices(pool, true);
-      else worker->job.completed = raster_commands(&worker->job, true);
+      if (pool->slice_count) raster_slices(pool);
+      else worker->job.completed = raster_commands(&worker->job);
     } else {
-      worker->job.completed = fesetenv(&worker->job.environment) == 0;
+      worker->job.completed = fesetround(worker->job.rounding) == 0;
       if (worker->job.completed) {
         raster_prepared_draw(&worker->job);
-        worker->job.exceptions = fetestexcept(FE_ALL_EXCEPT);
       }
     }
     SDL_SemPost(worker->done);
@@ -671,7 +664,7 @@ static bool triangle_prepare(cpu_triangle *out, const qa_scene_draw *draw,
   return true;
 }
 static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
-                          const cpu_sampler samplers[2],
+                          const cpu_sampler samplers[2], cpu_fragment_kernel kernel,
                           const cpu_triangle *triangle, cpu_scissor bounds) {
   int64_t min_y = triangle->bounds.y0 > bounds.y0 ? triangle->bounds.y0 : bounds.y0;
   int64_t max_y = triangle->bounds.y1 < bounds.y1 ? triangle->bounds.y1 : bounds.y1;
@@ -770,19 +763,19 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
       }
       if (stencil)
         admission = cpu_fragment_admit(renderer, &draw->state, &fragment, true);
-      cpu_write_fragment(renderer, draw, samplers, &fragment, admission);
+      kernel(renderer, draw, samplers, &fragment, admission);
     }
   }
 }
 static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
-                     const cpu_sampler samplers[2], screen_vertex a,
+                     const cpu_sampler samplers[2], cpu_fragment_kernel kernel, screen_vertex a,
                      screen_vertex b, screen_vertex c,
                      const screen_vertex *interpolation, cpu_scissor bounds,
                      cpu_triangle_output *output) {
   cpu_triangle prepared;
   if (!triangle_prepare(&prepared, draw, a, b, c, interpolation, bounds)) return;
   if (!output) {
-    triangle_fill(renderer, draw, samplers, &prepared, bounds);
+    triangle_fill(renderer, draw, samplers, kernel, &prepared, bounds);
     return;
   }
   struct cpu_raster_pool *pool = output->pool;
@@ -839,7 +832,7 @@ static bool exits_diamond(double ax, double ay, double bx, double by, double x,
   return enter < exit && exit < 1;
 }
 static void line(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
-                 const cpu_sampler samplers[2],
+                 const cpu_sampler samplers[2], cpu_fragment_kernel kernel,
                  cpu_vertex a, cpu_vertex b, bool portal_clip) {
   cpu_scissor bounds = scissor(renderer);
   if (bounds.x0 > bounds.x1 || bounds.y0 > bounds.y1)
@@ -975,13 +968,13 @@ static void line(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
         fragment.y = (uint32_t)actual_y;
         cpu_fragment_admission admission =
             cpu_fragment_admit(renderer, &draw->state, &fragment, stencil);
-        cpu_write_fragment(renderer, draw, samplers, &fragment, admission);
+        kernel(renderer, draw, samplers, &fragment, admission);
       }
     }
   }
 }
 static void draw_triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
-                          const cpu_sampler samplers[2],
+                          const cpu_sampler samplers[2], cpu_fragment_kernel kernel,
                           const cpu_vertex original[3], const uint32_t indices[3],
                           cpu_scissor bounds,
                           cpu_triangle_output *output) {
@@ -1002,7 +995,7 @@ static void draw_triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
         (draw->state.cull == QA_CULL_FRONT && area < 0))
       return;
     for (size_t i = 0; i < count; ++i)
-      line(renderer, draw, samplers, polygon[i], polygon[(i + 1) % count], false);
+      line(renderer, draw, samplers, kernel, polygon[i], polygon[(i + 1) % count], false);
     return;
   }
   bool z_inside = true, xy_outside = false;
@@ -1028,7 +1021,7 @@ static void draw_triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   for (size_t i = 1; i + 1 < count; ++i) {
     double scale = fmin(polygon[0].clip[3],
                         fmin(polygon[i].clip[3], polygon[i + 1].clip[3]));
-    triangle(renderer, draw, samplers,
+    triangle(renderer, draw, samplers, kernel,
              project(&polygon[0], renderer, scale, output,
                      clipped ? SIZE_MAX : indices[0]),
              project(&polygon[i], renderer, scale, output,
@@ -1051,7 +1044,7 @@ static cpu_vertex source_vertex(const qa_cpu_renderer *renderer, uint32_t index,
   return vertex;
 }
 static void draw_source_strips(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
-                                const cpu_sampler samplers[2],
+                                const cpu_sampler samplers[2], cpu_fragment_kernel kernel,
                                 bool discrete, cpu_scissor bounds,
                                 cpu_triangle_output *output) {
   size_t cursor = 0;
@@ -1067,7 +1060,7 @@ static void draw_source_strips(qa_cpu_renderer *renderer, const qa_scene_draw *d
       cpu_vertex vertices[3] = {ordinal & 1 ? b : a, ordinal & 1 ? a : b, c};
       uint32_t indices[3] = {ordinal & 1 ? b_index : a_index,
                             ordinal & 1 ? a_index : b_index, c_index};
-      draw_triangle(renderer, draw, samplers, vertices, indices, bounds, output);
+      draw_triangle(renderer, draw, samplers, kernel, vertices, indices, bounds, output);
       if (output && output->failed) return;
       a = b; b = c;
       a_index = b_index; b_index = c_index;
@@ -1100,18 +1093,18 @@ static void raster_geometry(const cpu_raster_job *job, cpu_triangle_output *outp
   }
   if (job->mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS ||
       job->mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS) {
-    draw_source_strips(renderer, draw, job->samplers,
+    draw_source_strips(renderer, draw, job->samplers, job->kernel,
         job->mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS, job->bounds, output);
   } else if (draw->mesh.primitive == QA_SCENE_LINES) {
     for (size_t i = 0; i < draw->mesh.index_count; i += 2)
-      line(renderer, draw, job->samplers, renderer->vertices[draw->mesh.indices[i]],
+      line(renderer, draw, job->samplers, job->kernel, renderer->vertices[draw->mesh.indices[i]],
            renderer->vertices[draw->mesh.indices[i + 1]], true);
   } else {
     for (size_t i = 0; i < draw->mesh.index_count; i += 3) {
       cpu_vertex vertices[3] = {renderer->vertices[draw->mesh.indices[i]],
                               renderer->vertices[draw->mesh.indices[i + 1]],
                               renderer->vertices[draw->mesh.indices[i + 2]]};
-      draw_triangle(renderer, draw, job->samplers, vertices,
+      draw_triangle(renderer, draw, job->samplers, job->kernel, vertices,
                     &draw->mesh.indices[i], job->bounds, output);
       if (output && output->failed) return;
     }
@@ -1123,7 +1116,7 @@ static void raster_prepared_draw(const cpu_raster_job *job) {
     return;
   }
   for (size_t i = 0; i < job->triangle_count; ++i)
-    triangle_fill(job->renderer, job->draw, job->samplers,
+    triangle_fill(job->renderer, job->draw, job->samplers, job->kernel,
                   &job->triangles[i], job->bounds);
 }
 static unsigned raster_worker_count(const struct cpu_raster_pool *pool,
@@ -1184,7 +1177,8 @@ static void raster_draw(cpu_raster_job *job) {
     raster_prepared_draw(job);
     return;
   }
-  if (fegetenv(&job->environment) != 0) {
+  job->rounding = fegetround();
+  if (job->rounding < 0) {
     raster_prepared_draw(job);
     return;
   }
@@ -1204,7 +1198,6 @@ static void raster_draw(cpu_raster_job *job) {
     cpu_raster_worker *worker = &pool->workers[i];
     SDL_SemWait(worker->done);
     if (!worker->job.completed) raster_prepared_draw(&worker->job);
-    else feraiseexcept(worker->job.exceptions);
     memset(&worker->job, 0, sizeof(worker->job));
   }
 }
@@ -1238,6 +1231,7 @@ static bool raster_slice_prepare(struct cpu_raster_pool *pool,
 void cpu_raster_flush(qa_cpu_renderer *renderer) {
   struct cpu_raster_pool *pool = renderer->raster_pool;
   if (!pool || !pool->command_count) return;
+  int rounding = fegetround();
   cpu_raster_job batch = {.renderer = renderer, .commands = pool->commands,
       .command_count = pool->command_count, .triangles = pool->triangles,
       .triangle_count = pool->triangle_count,
@@ -1258,27 +1252,26 @@ void cpu_raster_flush(qa_cpu_renderer *renderer) {
     SDL_SemPost(worker->start);
   }
   cpu_raster_job main = batch;
-  if (sliced) raster_slices(pool, false);
+  if (sliced) raster_slices(pool);
   else {
     main.bounds.y0 = first + rows * workers / bands;
-    raster_commands(&main, false);
+    raster_commands(&main);
   }
   for (unsigned i = 0; i < workers; ++i) {
     cpu_raster_worker *worker = &pool->workers[i];
     SDL_SemWait(worker->done);
     if (!sliced) {
-      raster_commands(&worker->job, false);
-      feraiseexcept(worker->job.exceptions);
+      raster_commands(&worker->job);
     }
     memset(&worker->job, 0, sizeof(worker->job));
   }
   if (sliced) {
     for (size_t i = 0; i < pool->slice_count; ++i) {
       cpu_raster_job job = raster_slice_job(pool, i);
-      raster_commands(&job, false);
-      feraiseexcept(job.exceptions);
+      raster_commands(&job);
     }
   }
+  if (rounding >= 0) (void)fesetround(rounding);
   pool->slice_count = 0;
   memset(&pool->batch, 0, sizeof(pool->batch));
   pool->command_count = pool->triangle_count = 0;
@@ -1300,9 +1293,10 @@ static bool raster_queue(cpu_raster_job *job) {
   size_t first = pool->triangle_count;
   cpu_triangle_output output = {.pool = pool};
   raster_geometry(job, &output);
-  cpu_raster_command command = {.draw = *job->draw, .bounds = job->bounds,
+  cpu_raster_command command = {.draw = *job->draw, .kernel = job->kernel, .bounds = job->bounds,
       .first = first, .count = pool->triangle_count - first};
-  if (output.failed || fegetenv(&command.environment) != 0) {
+  command.rounding = fegetround();
+  if (output.failed || command.rounding < 0) {
     pool->triangle_count = first;
     return false;
   }
@@ -1375,12 +1369,16 @@ static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
   if (!qa_render_source_attributes_resolve(&renderer->controls,&resolved,renderer->bound,mode,error)) return false;
   cpu_sampler samplers[2];
   for (size_t i = 0; i < resolved.texture_count; ++i)
+    if (resolved.textures[i] && resolved.textures[i]->streamed &&
+        !cpu_stream_image_admit(renderer, resolved.textures[i], error)) return false;
+  for (size_t i = 0; i < resolved.texture_count; ++i)
     if (!cpu_sampler_prepare(renderer, resolved.textures[i], &samplers[i]))
       resolved.textures[i] = NULL;
   if (mode == QA_RENDER_PRIMITIVES_NONE) return true;
   if (draw->mesh.index_count && !transform(renderer, draw, mode, error)) return false;
   cpu_raster_job job = {.renderer = renderer, .draw = draw,
-      .samplers = samplers, .mode = mode, .bounds = scissor(renderer)};
+      .samplers = samplers, .kernel = cpu_fragment_select(renderer, draw),
+      .mode = mode, .bounds = scissor(renderer)};
   for (size_t i = 0; batchable && i < draw->texture_count; ++i)
     if (draw->textures[i] && samplers[i].target == renderer->current)
       batchable = false;

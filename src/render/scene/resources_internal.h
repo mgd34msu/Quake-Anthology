@@ -135,6 +135,7 @@ bool scene_resource_image_decode(qa_scene_resources *, const char *, const image
 void scene_image_asset_palette(qa_scene_resources *, image_asset_recipe *, const qa_scene_image_options *);
 bool scene_image_asset_copy(qa_scene_image *, const image_asset_recipe *, qa_error *);
 bool scene_image_asset_source_bind(qa_scene_image *, const qa_resource *, qa_error *);
+bool scene_image_stream_region_valid(const qa_scene_image *, qa_scene_rect, qa_error *);
 bool scene_resource_indexed_image(qa_scene_resources *, const char *, const qa_indexed_level *, size_t,
     const qa_scene_image_options *, const qa_palette_options *, bool, qa_scene_vec4,
     qa_scene_image **, qa_error *);

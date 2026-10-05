@@ -1078,7 +1078,9 @@ static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *fra
         const qa_scene_command *command = &frame->commands[i];
         if (renderer->opacity.skip &&
             command->kind != QA_SCENE_COMMAND_OPACITY_BEGIN &&
-            command->kind != QA_SCENE_COMMAND_OPACITY_END) continue;
+            command->kind != QA_SCENE_COMMAND_OPACITY_END &&
+            command->kind != QA_SCENE_COMMAND_IMAGE_STREAM &&
+            command->kind != QA_SCENE_COMMAND_IMAGE_REGION) continue;
         bool ok;
         switch (command->kind) {
         case QA_SCENE_COMMAND_VIEW:
@@ -1113,6 +1115,12 @@ static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *fra
             break;
         case QA_SCENE_COMMAND_IMAGE:
             ok = gl_image_update(renderer, command->data.image, error);
+            break;
+        case QA_SCENE_COMMAND_IMAGE_REGION:
+            ok = gl_image_region_update(renderer, &command->data.image_region, error);
+            break;
+        case QA_SCENE_COMMAND_IMAGE_STREAM:
+            ok = gl_image_stream_admit(renderer, command->data.image_stream, error);
             break;
         case QA_SCENE_COMMAND_OUTPUT_DOMAIN: {
             uint32_t width=0,height=0;

@@ -1,4 +1,5 @@
 #include "qa/scene.h"
+#include "resources_internal.h"
 #include "qa/material_source_scratch.h"
 #include "../material/source_scratch_private.h"
 
@@ -54,6 +55,7 @@ void qa_scene_frame_reset(qa_scene_frame *frame, uint64_t sequence)
     }
     for (size_t i = 0; i < frame->image_count; ++i) qa_scene_image_release(frame->images[i]);
     frame->image_count = 0;
+    frame->stream_images = NULL;
     for (size_t i = 0; i < frame->geometry_count; ++i)
         qa_scene_geometry_release(frame->geometries[i]);
     frame->geometry_count = 0;
@@ -126,7 +128,7 @@ bool qa_scene_frame_geometry(qa_scene_frame *frame, const qa_scene_geometry *geo
 bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command, qa_error *error)
 {
     if (frame == NULL || command == NULL || command->kind < QA_SCENE_COMMAND_VIEW ||
-        command->kind > QA_SCENE_COMMAND_PREBLEND_GAMMA) {
+        command->kind > QA_SCENE_COMMAND_IMAGE_STREAM) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid scene command");
         return false;
     }
@@ -179,6 +181,21 @@ bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command,
             return false;
         }
         if (!pin(frame, copied.data.image, error)) return false;
+    } else if (copied.kind == QA_SCENE_COMMAND_IMAGE_REGION) {
+        qa_scene_image_region *region = &copied.data.image_region;
+        const qa_scene_image *image = region->image;
+        qa_scene_rect rect = region->rect;
+        if (!scene_image_stream_region_valid(image, rect, error)) return false;
+        if (!region->pixels) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid streamed image command"); return false;
+        }
+        if (!pin(frame, image, error)) return false;
+    } else if (copied.kind == QA_SCENE_COMMAND_IMAGE_STREAM) {
+        if (!copied.data.image_stream || !copied.data.image_stream->image ||
+            !copied.data.image_stream->image->streamed) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Stream admission requires an actual image"); return false;
+        }
+        if (!pin(frame, copied.data.image_stream->image, error)) return false;
     } else if (copied.kind == QA_SCENE_COMMAND_TARGET) {
         if (copied.data.target.image != NULL && copied.data.target.image->kind != QA_SCENE_DEPTH32F) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "scene depth target requires depth pixels");
@@ -248,6 +265,69 @@ bool qa_scene_frame_image(qa_scene_frame *frame, const qa_scene_image *image, qa
 {
     qa_scene_command command = {.kind = QA_SCENE_COMMAND_IMAGE, .data.image = image};
     return qa_scene_frame_emit(frame, &command, error);
+}
+
+bool qa_scene_frame_image_region(qa_scene_frame *frame, const qa_scene_image *image,
+    qa_scene_rect rect, qa_error *error)
+{
+    if (!scene_image_stream_region_valid(image, rect, error)) return false;
+    if (!frame) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid streamed image submission"); return false;
+    }
+    size_t pitch = (size_t)rect.width * 4;
+    uint8_t *pixels = qa_arena_alloc(&frame->storage, pitch * rect.height, 1, error);
+    if (!pixels) return false;
+    size_t source_pitch = (size_t)image->levels[0].width * 4;
+    const uint8_t *source = (const uint8_t *)image->levels[0].pixels +
+        (size_t)rect.y * source_pitch + (size_t)rect.x * 4;
+    for (size_t y = 0; y < rect.height; ++y) memcpy(pixels + y * pitch, source + y * source_pitch, pitch);
+    qa_scene_command command = {.kind = QA_SCENE_COMMAND_IMAGE_REGION,
+        .data.image_region = {.image = image, .rect = rect, .pixels = pixels, .writes = image->stream_writes}};
+    return qa_scene_frame_emit(frame, &command, error);
+}
+
+bool qa_scene_frame_image_stream(qa_scene_frame *frame, const qa_scene_image *image, qa_error *error)
+{
+    if (!frame || !image || !image->streamed) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Stream admission requires frame and image"); return false;
+    }
+    for (qa_scene_image_stream *row = frame->stream_images; row; row = row->next)
+        if (row->image == image) return true;
+    qa_scene_image_stream *stream = qa_arena_alloc(&frame->storage, sizeof(*stream),
+        _Alignof(qa_scene_image_stream), error);
+    if (!stream) return false;
+    *stream = (qa_scene_image_stream){.image = image, .initial_writes = image->stream_writes,
+        .next = frame->stream_images};
+    qa_scene_command command = {.kind = QA_SCENE_COMMAND_IMAGE_STREAM, .data.image_stream = stream};
+    if (!qa_scene_frame_emit(frame, &command, error)) return false;
+    frame->stream_images = stream;
+    return true;
+}
+
+bool qa_scene_frame_image_stream_write(qa_scene_frame *frame, qa_scene_image *image,
+    qa_scene_rect rect, const uint8_t *pixels, size_t stride, qa_error *error)
+{
+    if (!scene_image_stream_region_valid(image, rect, error)) return false;
+    if (!pixels || stride < (size_t)rect.width * 4 || stride > (size_t)PTRDIFF_MAX / rect.height) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid streamed image rows"); return false;
+    }
+    if (!qa_scene_frame_image_stream(frame, image, error)) return false;
+    qa_scene_image_stream *stream = frame->stream_images;
+    while (stream->image != image) stream = stream->next;
+    size_t pitch = (size_t)rect.width * 4;
+    qa_scene_image_region *undo = qa_arena_alloc(&frame->storage, sizeof(*undo),
+        _Alignof(qa_scene_image_region), error);
+    uint8_t *before = qa_arena_alloc(&frame->storage, pitch * rect.height, 1, error);
+    if (!undo || !before) return false;
+    size_t image_pitch = (size_t)image->levels[0].width * 4;
+    const uint8_t *source = (const uint8_t *)image->levels[0].pixels +
+        (size_t)rect.y * image_pitch + (size_t)rect.x * 4;
+    for (size_t y = 0; y < rect.height; ++y) memcpy(before + y * pitch, source + y * image_pitch, pitch);
+    *undo = (qa_scene_image_region){.image = image, .rect = rect, .pixels = before,
+        .previous = stream->undo, .writes = image->stream_writes};
+    if (!qa_scene_image_stream_write(image, rect, pixels, stride, error)) return false;
+    stream->undo = undo;
+    return true;
 }
 
 void qa_scene_state_default(qa_scene_state *state)

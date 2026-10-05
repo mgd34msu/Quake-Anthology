@@ -47,7 +47,8 @@ typedef enum qa_scene_image_kind { QA_SCENE_RGBA8, QA_SCENE_RGB8, QA_SCENE_DEPTH
 /* Color pixels occupy four bytes even for RGB8; depth pixels are float32. */
 typedef struct qa_scene_image_level { uint32_t width, height; const void *pixels; size_t bytes; } qa_scene_image_level;
 /* Versions own their pixels. Backends key residency by identity and revision.
- * Frame references keep replaced versions alive until the frame is reset. */
+ * Streamed images keep their storage and issue ordered, copied region updates;
+ * their pixels describe current contents for cold backend admission. */
 typedef struct qa_scene_image {
     uint64_t identity, revision;
     const char *name;
@@ -72,6 +73,8 @@ typedef struct qa_scene_image {
     /* Original decoded embedded model/BSP pixels may admit a recipient upload;
      * dynamic cinematic and generated control surfaces retain their identity. */
     bool recipient_upload_pixels, recipient_mipmap;
+    bool streamed;
+    uint64_t stream_writes; /* actual pixel writes, not a resource version */
 } qa_scene_image;
 /* The entered renderer recipient maps a reached immutable version into its
  * own upload domain. It preserves the original material and model identity. */
@@ -283,6 +286,12 @@ bool qa_scene_image_load_embedded(qa_scene_resources *, const char *name, qa_sce
 bool qa_scene_image_create(qa_scene_resources *, const char *, qa_scene_image_kind,
                           const qa_scene_image_level *, size_t, qa_scene_wrap,
                           qa_scene_filter, qa_scene_vec4, qa_scene_image **, qa_error *);
+bool qa_scene_image_stream_create(qa_scene_resources *, const char *, uint32_t, uint32_t,
+                                  qa_scene_image **, qa_error *);
+/* Construction writes need no frame. Live writes use frame_image_stream_write.
+ * Consume that frame before producing the next frame from the same stream. */
+bool qa_scene_image_stream_write(qa_scene_image *, qa_scene_rect, const uint8_t *, size_t stride,
+                                 qa_error *);
 bool qa_scene_image_load(qa_scene_resources *, const char *, const qa_scene_image_options *,
                         qa_scene_image **, qa_error *);
 /* Decode this explicit file only. No extension or override search; the real
@@ -517,8 +526,22 @@ typedef enum qa_scene_command_kind {
     QA_SCENE_COMMAND_OPACITY_BEGIN, QA_SCENE_COMMAND_OPACITY_END,
     QA_SCENE_COMMAND_FOG, QA_SCENE_COMMAND_DRAW_BUFFER, QA_SCENE_COMMAND_SWAP,
     QA_SCENE_COMMAND_IMAGE, QA_SCENE_COMMAND_OUTPUT_DOMAIN,
-    QA_SCENE_COMMAND_PREBLEND_GAMMA
+    QA_SCENE_COMMAND_PREBLEND_GAMMA, QA_SCENE_COMMAND_IMAGE_REGION,
+    QA_SCENE_COMMAND_IMAGE_STREAM
 } qa_scene_command_kind;
+typedef struct qa_scene_image_region {
+    const qa_scene_image *image;
+    qa_scene_rect rect;
+    const uint8_t *pixels; /* tightly packed RGBA rows, owned by the frame */
+    const struct qa_scene_image_region *previous;
+    uint64_t writes;
+} qa_scene_image_region;
+typedef struct qa_scene_image_stream {
+    const qa_scene_image *image;
+    const qa_scene_image_region *undo;
+    uint64_t initial_writes;
+    struct qa_scene_image_stream *next;
+} qa_scene_image_stream;
 typedef struct qa_scene_command {
     qa_scene_command_kind kind;
     union {
@@ -531,6 +554,8 @@ typedef struct qa_scene_command {
         /* Publish a new immutable version, including any retained binding with
          * the same identity. This preserves source update-image behavior. */
         const qa_scene_image *image;
+        qa_scene_image_region image_region;
+        const qa_scene_image_stream *image_stream;
         /* An actual renderer recipient chooses this region's upload/output
          * domain. Source RGB already owns software gamma in its image upload. */
         struct { qa_scene_rect rect; bool source; } output_domain;
@@ -552,6 +577,7 @@ typedef struct qa_scene_group {
  * backend has completed it. Commands are contiguous; transient geometry lives
  * in storage. Frame geometry pins survive command rollback until reset. */
 typedef struct qa_scene_frame {
+    qa_scene_image_stream *stream_images;
     qa_material_source_scratch *source_pending;
     uint64_t sequence, owner;
     bool source_backend, source_skip_backend, source_clear_draw_buffer;
@@ -590,6 +616,11 @@ bool qa_scene_frame_draw(qa_scene_frame *, const qa_scene_draw *, qa_error *);
  * until reset. No command is emitted. NULL geometry needs no reference. */
 bool qa_scene_frame_geometry(qa_scene_frame *, const qa_scene_geometry *, qa_error *);
 bool qa_scene_frame_image(qa_scene_frame *, const qa_scene_image *, qa_error *);
+bool qa_scene_frame_image_region(qa_scene_frame *, const qa_scene_image *, qa_scene_rect,
+                                 qa_error *);
+bool qa_scene_frame_image_stream(qa_scene_frame *, const qa_scene_image *, qa_error *);
+bool qa_scene_frame_image_stream_write(qa_scene_frame *, qa_scene_image *, qa_scene_rect,
+                                       const uint8_t *, size_t, qa_error *);
 /* Publish GIF frame versions before any views, using the global render clock. */
 bool qa_scene_resources_animate(qa_scene_resources *, double seconds, qa_scene_frame *, qa_error *);
 /* Mark the just-appended commands as one indivisible surface/model group.

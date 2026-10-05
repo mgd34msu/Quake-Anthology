@@ -474,6 +474,51 @@ allocation_failed:
     qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate scene image");
     return false;
 }
+bool qa_scene_image_stream_create(qa_scene_resources *resources, const char *name,
+    uint32_t width, uint32_t height, qa_scene_image **out, qa_error *error)
+{
+    if (!width || !height || width > (size_t)PTRDIFF_MAX / 4 / height) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid streamed image dimensions"); return false;
+    }
+    size_t bytes = (size_t)width * height * 4;
+    uint8_t *pixels = calloc(1, bytes);
+    if (!pixels) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating streamed image"); return false; }
+    for (size_t i = 3; i < bytes; i += 4) pixels[i] = 255;
+    qa_scene_image_level level = {width, height, pixels, bytes};
+    bool ok = qa_scene_image_create(resources, name, QA_SCENE_RGBA8, &level, 1,
+        QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_scene_vec4){0, 0, 0, 1}, out, error);
+    free(pixels);
+    if (ok) (*out)->streamed = true;
+    return ok;
+}
+
+bool scene_image_stream_region_valid(const qa_scene_image *image, qa_scene_rect rect, qa_error *error)
+{
+    if (!image || !image->streamed || image->level_count != 1 ||
+        rect.x < 0 || rect.y < 0 || !rect.width || !rect.height ||
+        (uint32_t)rect.x > image->levels[0].width || rect.width > image->levels[0].width - (uint32_t)rect.x ||
+        (uint32_t)rect.y > image->levels[0].height || rect.height > image->levels[0].height - (uint32_t)rect.y) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid streamed image region"); return false;
+    }
+    return true;
+}
+
+bool qa_scene_image_stream_write(qa_scene_image *image, qa_scene_rect rect,
+    const uint8_t *pixels, size_t stride, qa_error *error)
+{
+    if (!scene_image_stream_region_valid(image, rect, error)) return false;
+    if (!pixels || stride < (size_t)rect.width * 4 || stride > (size_t)PTRDIFF_MAX / rect.height) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid streamed image rows"); return false;
+    }
+    uint8_t *destination = (uint8_t *)((owned_image *)image)->levels[0].pixels;
+    size_t pitch = (size_t)image->levels[0].width * 4;
+    destination += (size_t)rect.y * pitch + (size_t)rect.x * 4;
+    for (size_t y = 0; y < rect.height; ++y)
+        memcpy(destination + y * pitch, pixels + y * stride, (size_t)rect.width * 4);
+    ++image->stream_writes;
+    return true;
+}
+
 bool qa_scene_resources_bind_embedded_images(qa_scene_resources *resources,
     const qa_scene_embedded_image *images, size_t count, qa_error *error)
 {

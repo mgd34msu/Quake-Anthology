@@ -168,6 +168,7 @@ typedef struct gl_programs {
 } gl_programs;
 
 typedef struct gl_texture_entry {
+    uint64_t stream_writes;
     const qa_scene_image *image;
     GLuint name;
     qa_scene_resources *source_owner;
@@ -275,6 +276,8 @@ bool gl_source_texture_bind(qa_gl_renderer *,const qa_scene_image *,qa_error *);
 bool gl_resources_create(qa_gl_renderer *renderer, qa_error *error);
 bool gl_image_update(qa_gl_renderer *renderer, const qa_scene_image *image,
                      qa_error *error);
+bool gl_image_region_update(qa_gl_renderer *, const qa_scene_image_region *, qa_error *);
+bool gl_image_stream_admit(qa_gl_renderer *, const qa_scene_image_stream *, qa_error *);
 void gl_textures_prune(qa_gl_renderer *renderer);
 void gl_meshes_prune(qa_gl_renderer *renderer);
 void gl_resources_destroy(qa_gl_renderer *renderer);

@@ -819,6 +819,7 @@ bool gl_texture_get(qa_gl_renderer *renderer, const qa_scene_image *image,
     }
     qa_scene_image_retain(image);
     entry->image = image;
+    entry->stream_writes = image->stream_writes;
     entry->name = name;
     entry->source_filter=image->source_q3 && image->source_mipmap?renderer->controls.source_filter:image->filter;
     qa_render_source_texture_init(&entry->source_texture);
@@ -864,6 +865,50 @@ bool gl_image_update(qa_gl_renderer *renderer, const qa_scene_image *image,
             renderer->bound[unit]->identity == image->identity &&
             renderer->bound[unit] != image)
             replace_binding(renderer, unit, image);
+    return true;
+}
+
+bool gl_image_region_update(qa_gl_renderer *renderer, const qa_scene_image_region *region,
+    qa_error *error)
+{
+    gl_texture_entry *entry;
+    if (!gl_texture_get(renderer, region->image, &entry, error)) return false;
+    gl_api *gl = &renderer->gl;
+    GLint active = 0, binding = 0;
+    gl->GetIntegerv(GL_ACTIVE_TEXTURE, &active);
+    gl->ActiveTexture(GL_TEXTURE0);
+    gl->GetIntegerv(GL_TEXTURE_BINDING_2D, &binding);
+    gl->BindTexture(GL_TEXTURE_2D, entry->name);
+    gl->BindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    gl->PixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    gl->PixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    gl->PixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+    gl->PixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+    gl->TexSubImage2D(GL_TEXTURE_2D, 0, region->rect.x, region->rect.y,
+        (GLsizei)region->rect.width, (GLsizei)region->rect.height,
+        GL_RGBA, GL_UNSIGNED_BYTE, region->pixels);
+    bool ok = gl_check(renderer, "OpenGL lightmap region upload", error);
+    if (ok) entry->stream_writes = region->writes;
+    gl->BindTexture(GL_TEXTURE_2D, (GLuint)binding);
+    gl->ActiveTexture((GLenum)active);
+    return ok;
+}
+
+bool gl_image_stream_admit(qa_gl_renderer *renderer, const qa_scene_image_stream *stream,
+    qa_error *error)
+{
+    gl_texture_entry *entry = gl_texture_resident(renderer, stream->image);
+    if (entry && entry->stream_writes == stream->initial_writes) return true;
+    if (entry) {
+        const qa_scene_image_level *level = &stream->image->levels[0];
+        qa_scene_image_region current = {.image = stream->image,
+            .rect = {0, 0, level->width, level->height}, .pixels = level->pixels,
+            .writes = stream->image->stream_writes};
+        if (!gl_image_region_update(renderer, &current, error)) return false;
+    } else if (!gl_texture_get(renderer, stream->image, &entry, error)) return false;
+    for (const qa_scene_image_region *undo = stream->undo; undo; undo = undo->previous)
+        if (!gl_image_region_update(renderer, undo, error)) return false;
+    entry->stream_writes = stream->initial_writes;
     return true;
 }
 

@@ -256,8 +256,8 @@ static bool command(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene
         return qa_source_save_bool(io,&value->data.output_domain.source) &&
             value->data.output_domain.rect.x>=0 && value->data.output_domain.rect.y>=0 &&
             value->data.output_domain.rect.width && value->data.output_domain.rect.height;
+    default: return false;
     }
-    return false;
 }
 static bool groups(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_frame_checkpoint_refs *refs)
 {

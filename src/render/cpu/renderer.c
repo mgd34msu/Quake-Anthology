@@ -164,6 +164,14 @@ void qa_cpu_destroy(qa_cpu_renderer *renderer) {
     qa_scene_resources_destroy(renderer->source_images[i].owner);
   }
   render_resource_destroy(&renderer->source_image_index);
+  render_resource_destroy(&renderer->stream_image_index);
+  while (renderer->stream_images) {
+    cpu_stream_image *image = renderer->stream_images;
+    renderer->stream_images = image->next;
+    qa_scene_image_release(image->image);
+    free((void *)image->level.pixels);
+    free(image);
+  }
   while (renderer->targets) {
     cpu_target *target = renderer->targets;
     renderer->targets = target->next;
@@ -311,6 +319,74 @@ static bool select_target(qa_cpu_renderer *renderer,
   renderer->current = &target->framebuffer;
   return true;
 }
+const qa_scene_image *cpu_stream_image_read(const qa_cpu_renderer *renderer,
+    const qa_scene_image *image)
+{
+  const cpu_stream_image *entry = render_resource_get(&renderer->stream_image_index,
+      image->identity, image->revision, NULL);
+  return entry ? &entry->view : NULL;
+}
+
+bool cpu_stream_image_admit(qa_cpu_renderer *renderer, const qa_scene_image *image, qa_error *error)
+{
+  if (cpu_stream_image_read(renderer, image)) return true;
+  if (!render_resource_reserve(&renderer->stream_image_index,
+      renderer->stream_image_index.count + 1, error)) return false;
+  cpu_stream_image *entry = calloc(1, sizeof(*entry));
+  if (!entry) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating CPU lightmap atlas"); return false; }
+  entry->level = image->levels[0];
+  uint8_t *pixels = malloc(entry->level.bytes);
+  if (!pixels) {
+    free(entry); qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating CPU lightmap pixels"); return false;
+  }
+  memcpy(pixels, entry->level.pixels, entry->level.bytes);
+  entry->level.pixels = pixels;
+  entry->image = image;
+  entry->writes = image->stream_writes;
+  entry->view = *image;
+  entry->view.levels = &entry->level;
+  qa_scene_image_retain(image);
+  entry->next = renderer->stream_images;
+  renderer->stream_images = entry;
+  render_resource_put(&renderer->stream_image_index, image->identity, image->revision, NULL, entry);
+  return true;
+}
+
+bool cpu_image_region_update(qa_cpu_renderer *renderer, const qa_scene_image_region *region,
+    qa_error *error)
+{
+  if (!cpu_stream_image_admit(renderer, region->image, error)) return false;
+  cpu_stream_image *entry = render_resource_get(&renderer->stream_image_index,
+      region->image->identity, region->image->revision, NULL);
+  size_t pitch = (size_t)entry->level.width * 4;
+  size_t source_pitch = (size_t)region->rect.width * 4;
+  uint8_t *pixels = (uint8_t *)entry->level.pixels +
+      (size_t)region->rect.y * pitch + (size_t)region->rect.x * 4;
+  for (size_t y = 0; y < region->rect.height; ++y)
+    memcpy(pixels + y * pitch, region->pixels + y * source_pitch, source_pitch);
+  entry->writes = region->writes;
+  return true;
+}
+
+bool cpu_image_stream_admit(qa_cpu_renderer *renderer, const qa_scene_image_stream *stream,
+    qa_error *error)
+{
+  cpu_stream_image *entry = render_resource_get(&renderer->stream_image_index,
+      stream->image->identity, stream->image->revision, NULL);
+  if (entry && entry->writes == stream->initial_writes) return true;
+  if (entry) {
+    memcpy((void *)entry->level.pixels, stream->image->levels[0].pixels, entry->level.bytes);
+  } else {
+    if (!cpu_stream_image_admit(renderer, stream->image, error)) return false;
+    entry = render_resource_get(&renderer->stream_image_index, stream->image->identity,
+        stream->image->revision, NULL);
+  }
+  for (const qa_scene_image_region *undo = stream->undo; undo; undo = undo->previous)
+    if (!cpu_image_region_update(renderer, undo, error)) return false;
+  entry->writes = stream->initial_writes;
+  return true;
+}
+
 static bool update_image(qa_cpu_renderer *renderer, const qa_scene_image *image,
                          qa_error *error) {
   if (!image) {
@@ -622,6 +698,18 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
   /* Versions no longer retained by any scene can release their target storage.
    */
   cpu_target **link = begin ? &renderer->targets : NULL;
+  cpu_stream_image **stream = begin ? &renderer->stream_images : NULL;
+  while (stream && *stream) {
+    cpu_stream_image *entry = *stream;
+    if (entry->image->references == 1) {
+      *stream = entry->next;
+      render_resource_remove(&renderer->stream_image_index, entry->image->identity,
+          entry->image->revision, NULL);
+      qa_scene_image_release(entry->image);
+      free((void *)entry->level.pixels);
+      free(entry);
+    } else stream = &entry->next;
+  }
   while (link && *link) {
     cpu_target *target = *link;
     if (target->image->references == 1 &&
@@ -684,6 +772,12 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
       break;
     case QA_SCENE_COMMAND_IMAGE:
       ok = update_image(renderer, command->data.image, error);
+      break;
+    case QA_SCENE_COMMAND_IMAGE_REGION:
+      ok = cpu_image_region_update(renderer, &command->data.image_region, error);
+      break;
+    case QA_SCENE_COMMAND_IMAGE_STREAM:
+      ok = cpu_image_stream_admit(renderer, command->data.image_stream, error);
       break;
     case QA_SCENE_COMMAND_OUTPUT_DOMAIN:
       if (renderer->current != &renderer->display || renderer->opacity_active) {

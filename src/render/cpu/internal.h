@@ -30,6 +30,13 @@ typedef struct cpu_source_image {
   qa_scene_filter filter;
   qa_render_source_texture texture;
 } cpu_source_image;
+typedef struct cpu_stream_image {
+  uint64_t writes;
+  const qa_scene_image *image;
+  qa_scene_image view;
+  qa_scene_image_level level;
+  struct cpu_stream_image *next;
+} cpu_stream_image;
 struct qa_cpu_renderer {
   qa_cpu_options options;
   qa_render_controls controls;
@@ -56,6 +63,8 @@ struct qa_cpu_renderer {
   const qa_scene_image *bound[2];
   cpu_source_image source_images[CPU_SOURCE_IMAGES_QA];
   qa_render_resource_index source_image_index;
+  qa_render_resource_index stream_image_index;
+  cpu_stream_image *stream_images;
   uint32_t source_image_count;
   double texture_components[3][256];
   bool texture_components_ready;
@@ -69,7 +78,7 @@ typedef struct cpu_sampler {
   const cpu_framebuffer *target;
   const double *components, *target_components;
   size_t level_count;
-  bool linear, magnification_linear, blend, alpha, inexact;
+  bool linear, magnification_linear, blend, alpha;
   double magnification_limit;
 } cpu_sampler;
 static inline bool cpu_sampler_requires_derivatives(const cpu_sampler *sampler) {
@@ -100,6 +109,9 @@ typedef struct cpu_fragment_admission {
   size_t index;
   bool depth_passed, stencil;
 } cpu_fragment_admission;
+typedef void (*cpu_fragment_kernel)(qa_cpu_renderer *, const qa_scene_draw *,
+    const cpu_sampler[2], const cpu_fragment *, cpu_fragment_admission);
+cpu_fragment_kernel cpu_fragment_select(const qa_cpu_renderer *, const qa_scene_draw *);
 static inline cpu_fragment_admission cpu_fragment_admit(
     const qa_cpu_renderer *renderer, const qa_scene_state *state,
     const cpu_fragment *fragment, bool stencil) {
@@ -134,6 +146,10 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                         cpu_fragment_admission admission);
 bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
                           const qa_scene_image *image, cpu_sampler *sampler);
+bool cpu_stream_image_admit(qa_cpu_renderer *, const qa_scene_image *, qa_error *);
+const qa_scene_image *cpu_stream_image_read(const qa_cpu_renderer *, const qa_scene_image *);
+bool cpu_image_region_update(qa_cpu_renderer *, const qa_scene_image_region *, qa_error *);
+bool cpu_image_stream_admit(qa_cpu_renderer *, const qa_scene_image_stream *, qa_error *);
 bool cpu_texture_components_init(qa_cpu_renderer *renderer, qa_error *error);
 void cpu_sample_texture(const cpu_sampler *sampler, double u, double v,
                         double rho, double out[4]);

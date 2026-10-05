@@ -112,11 +112,14 @@ static void alias_shade(const qa_cpu_renderer *renderer,
   for (size_t c = 0; c < 3; ++c)
     out[c] = fmin(fragment->color[c] * draw->shade_scale * fmax(keep[c], 0), 1);
 }
+static inline void vertex_shade(const cpu_fragment *fragment, const double texel[4], double out[4]) {
+  for (size_t c = 0; c < 4; ++c)
+    out[c] = fragment->color[c] * texel[c];
+}
 static void shade(const qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                   const cpu_fragment *fragment, const double texel[4],
                   double out[4]) {
-  for (size_t c = 0; c < 4; ++c)
-    out[c] = fragment->color[c] * texel[c];
+  vertex_shade(fragment, texel, out);
   if (draw->lighting == QA_LIGHT_VERTEX)
     return;
   if (draw->lighting == QA_LIGHT_Q2_MODEL_SHADOW) {
@@ -237,33 +240,28 @@ static void sample_fragment_texture(const cpu_sampler *sampler,
   }
   cpu_sample_texture(sampler, uv[0], uv[1], rho, out);
 }
-void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
-                        const cpu_sampler samplers[2], const cpu_fragment *fragment,
-                        cpu_fragment_admission admission) {
-  cpu_framebuffer *buffer = renderer->current;
+static inline bool fragment_color(const qa_cpu_renderer *renderer, const qa_scene_draw *draw,
+    const cpu_sampler samplers[2], const cpu_fragment *fragment, bool vertex_opaque,
+    size_t texture_count, double color[4]) {
   const qa_scene_state *state = &draw->state;
-  size_t index = admission.index;
-  bool passed = admission.depth_passed, stencil = admission.stencil;
-  if (!passed && !stencil)
-    return;
   double texel[4] = {1, 1, 1, 1};
-  if (draw->texture_count && draw->textures[0]) {
+  if (texture_count && draw->textures[0]) {
     sample_fragment_texture(&samplers[0], &fragment->derivative[0],
                             fragment->uv[0], texel);
-    if (draw->luminance_alpha) {
+    if (!vertex_opaque && draw->luminance_alpha) {
       double luminance =
           (texel[0] + texel[1] + texel[2]) / 3 * fragment->color[3];
       for (size_t c = 0; c < 3; ++c)
         texel[c] *= luminance;
     }
   }
-  double color[4];
-  shade(renderer, draw, fragment, texel, color);
-  if (draw->texture_count > 1 && draw->textures[1]) {
+  if (vertex_opaque) vertex_shade(fragment, texel, color);
+  else shade(renderer, draw, fragment, texel, color);
+  if (texture_count > 1 && draw->textures[1]) {
     sample_fragment_texture(&samplers[1], &fragment->derivative[1],
                             fragment->uv[1], texel);
     for (size_t c = 0; c < 3; ++c) {
-      if (draw->environment == QA_TEXTURE_MODULATE)
+      if (vertex_opaque || draw->environment == QA_TEXTURE_MODULATE)
         color[c] *= texel[c];
       else if (draw->environment == QA_TEXTURE_ADD)
         color[c] = cpu_clamp(color[c] + texel[c]);
@@ -271,11 +269,11 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
         color[c] = texel[c];
     }
     if (samplers[1].alpha)
-      color[3] = draw->environment == QA_TEXTURE_REPLACE ? texel[3]
-                                                         : color[3] * texel[3];
+      color[3] = !vertex_opaque && draw->environment == QA_TEXTURE_REPLACE
+                     ? texel[3] : color[3] * texel[3];
   }
   const qa_scene_fog *fog = &draw->fog;
-  if (fog->kind == QA_FOG_CONSTANT || fog->kind == QA_FOG_EXP2) {
+  if (!vertex_opaque && (fog->kind == QA_FOG_CONSTANT || fog->kind == QA_FOG_EXP2)) {
     double d = fog->density * fragment->eye_depth / 64;
     double amount =
         fog->kind == QA_FOG_CONSTANT ? fog->amount : 1 - exp(-d * d);
@@ -301,10 +299,28 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
       color[3] *= amount;
     }
   }
-  if ((state->alpha_test == QA_ALPHA_GT0 && !(color[3] > 0)) ||
+  if (!vertex_opaque && ((state->alpha_test == QA_ALPHA_GT0 && !(color[3] > 0)) ||
       (state->alpha_test == QA_ALPHA_LT128 && !(color[3] < 0.5)) ||
-      (state->alpha_test == QA_ALPHA_GE128 && !(color[3] >= 0.5)))
-    return;
+      (state->alpha_test == QA_ALPHA_GE128 && !(color[3] >= 0.5))))
+    return false;
+  return true;
+}
+
+static inline void clamp_color(double color[4]) {
+  for (size_t c = 0; c < 4; ++c) color[c] = cpu_clamp(color[c]);
+}
+static inline void replace_color(cpu_framebuffer *buffer, size_t index,
+                                 const double color[4]) {
+  for (size_t c = 0; c < 4; ++c) buffer->color[index * 4 + c] = cpu_byte(color[c]);
+  if (!buffer->alpha) buffer->color[index * 4 + 3] = 255;
+}
+static inline void fragment_store(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
+    const cpu_fragment *fragment, cpu_fragment_admission admission, double color[4],
+    bool depth_write) {
+  cpu_framebuffer *buffer = renderer->current;
+  const qa_scene_state *state = &draw->state;
+  size_t index = admission.index;
+  bool passed = admission.depth_passed, stencil = admission.stencil;
   if (stencil) {
     uint32_t current = buffer->stencil[index];
     uint32_t mask = state->stencil_compare_mask & renderer->stencil_maximum;
@@ -331,17 +347,14 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   if (!passed)
     return;
   if (state->color_write && buffer->color) {
-    for (size_t c = 0; c < 4; ++c)
-      color[c] = cpu_clamp(color[c]);
+    clamp_color(color);
     if (renderer->preblend_gamma && renderer->gamma_enabled)
       for (size_t c = 0; c < 3; ++c)
         color[c] = renderer->gamma[cpu_byte(color[c])] / 255.0;
     uint8_t *destination = buffer->color + index * 4;
-    if (draw->texture_count && samplers[0].inexact &&
-        state->blend_source == QA_BLEND_ONE &&
+    if (state->blend_source == QA_BLEND_ONE &&
         state->blend_destination == QA_BLEND_ZERO) {
-      for (size_t c = 0; c < 4; ++c)
-        destination[c] = cpu_byte(color[c]);
+      replace_color(buffer, index, color);
     } else {
       double alpha = buffer->alpha ? destination[3] / 255.0 : 1;
       for (size_t c = 0; c < 4; ++c) {
@@ -353,10 +366,50 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
         destination[c] =
             cpu_byte(color[c] * source_factor + old * destination_factor);
       }
+      if (!buffer->alpha) destination[3] = 255;
     }
-    if (!buffer->alpha)
-      destination[3] = 255;
   }
-  if (state->depth_write && state->depth_test!=QA_DEPTH_DISABLED)
+  if (depth_write)
     buffer->depth[index] = fragment->depth;
+}
+
+void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
+    const cpu_sampler samplers[2], const cpu_fragment *fragment, cpu_fragment_admission admission) {
+  if (!admission.depth_passed && !admission.stencil) return;
+  double color[4];
+  if (!fragment_color(renderer, draw, samplers, fragment, false, draw->texture_count, color)) return;
+  fragment_store(renderer, draw, fragment, admission, color,
+      draw->state.depth_write && draw->state.depth_test != QA_DEPTH_DISABLED);
+}
+
+#define OPAQUE_KERNEL(name, textures, write_depth) \
+  static void name(qa_cpu_renderer *renderer, const qa_scene_draw *draw, \
+      const cpu_sampler samplers[2], const cpu_fragment *fragment, cpu_fragment_admission admission) { \
+    if (!admission.depth_passed) return; \
+    double color[4]; \
+    if (!fragment_color(renderer, draw, samplers, fragment, true, textures, color)) return; \
+    clamp_color(color); \
+    replace_color(renderer->current, admission.index, color); \
+    if (write_depth) renderer->current->depth[admission.index] = fragment->depth; \
+  }
+OPAQUE_KERNEL(opaque_color, 0, false)
+OPAQUE_KERNEL(opaque_color_depth, 0, true)
+OPAQUE_KERNEL(opaque_texture, 1, false)
+OPAQUE_KERNEL(opaque_texture_depth, 1, true)
+OPAQUE_KERNEL(opaque_lightmap, 2, false)
+OPAQUE_KERNEL(opaque_lightmap_depth, 2, true)
+#undef OPAQUE_KERNEL
+
+cpu_fragment_kernel cpu_fragment_select(const qa_cpu_renderer *renderer, const qa_scene_draw *draw) {
+  const qa_scene_state *state = &draw->state;
+  if (draw->lighting != QA_LIGHT_VERTEX || draw->fog.kind == QA_FOG_CONSTANT ||
+      draw->fog.kind == QA_FOG_EXP2 || state->alpha_test != QA_ALPHA_NONE ||
+      draw->luminance_alpha || (renderer->preblend_gamma && renderer->gamma_enabled) ||
+      cpu_stencil_active(renderer, state) || !state->color_write || !renderer->current->color ||
+      state->blend_source != QA_BLEND_ONE || state->blend_destination != QA_BLEND_ZERO ||
+      (draw->texture_count > 1 && draw->environment != QA_TEXTURE_MODULATE)) return cpu_write_fragment;
+  static const cpu_fragment_kernel kernels[3][2] = {
+      {opaque_color, opaque_color_depth}, {opaque_texture, opaque_texture_depth},
+      {opaque_lightmap, opaque_lightmap_depth}};
+  return kernels[draw->texture_count][state->depth_write && state->depth_test != QA_DEPTH_DISABLED];
 }

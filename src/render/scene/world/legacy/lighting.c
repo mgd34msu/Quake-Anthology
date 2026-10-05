@@ -189,7 +189,7 @@ bool qawl_light_setup(qa_scene_world *world, qaw_surface *surface, const qa_bsp_
         || light->light_accumulation == NULL || light->cached_styles == NULL)
         return light_error(error, QA_ERROR_MEMORY, index, "cannot allocate lightmap storage");
     light->lightmapped = true;
-    return qawl_light_update(world, surface, &(qa_material_context){0}, &(qa_scene_world_input){0}, error);
+    return qawl_light_update(world, surface, &(qa_material_context){0}, &(qa_scene_world_input){0}, NULL, error);
 }
 
 static qa_vec3 face_style(const qa_scene_world *world, const qa_scene_world_input *input, uint16_t index)
@@ -244,14 +244,16 @@ static bool project_light(const qaw_surface *surface, const qa_scene_light *sour
     return true;
 }
 
-static bool surface_dynamic(const qaw_surface *surface, const qa_material_context *context,
+static bool surface_dynamic(qaw_surface *surface, const qa_material_context *context,
                             bool *affects, qa_error *error)
 {
     *affects = false;
+    surface->legacy->dlightbits = 0;
     for (size_t i = 0; i < context->light_count; ++i) {
         projected_light light;
         if (!project_light(surface, &context->lights[i], i, &light, error)) return false;
         *affects = *affects || light.affects;
+        if (i < 32 && light.affects) surface->legacy->dlightbits |= UINT32_C(1) << i;
     }
     return true;
 }
@@ -260,6 +262,7 @@ static bool dynamic_lights(qaw_surface *surface, const qa_material_context *cont
 {
     qaw_legacy *light = surface->legacy;
     for (size_t i = 0; i < context->light_count; ++i) {
+        if (i < 32 && (light->dlightbits & (UINT32_C(1) << i)) == 0) continue;
         const qa_scene_light *source = &context->lights[i];
         projected_light projected;
         if (!project_light(surface, source, i, &projected, error)) return false;
@@ -291,21 +294,130 @@ static bool dynamic_lights(qaw_surface *surface, const qa_material_context *cont
     return true;
 }
 
-static bool light_image(qa_scene_world *world, const qaw_surface *surface,
-                        const qa_scene_image *previous, const uint8_t *pixels, const char *suffix,
-                        qa_scene_image **out, qa_error *error)
+static bool atlas_block(qawl_light_atlas *atlas, uint32_t width, uint32_t height,
+    uint32_t *x, uint32_t *y)
 {
-    const qaw_legacy *light = surface->legacy;
-    qa_scene_image_level level = {light->width, light->height, pixels, (size_t)light->width * light->height * 4};
-    if (previous != NULL) return qa_scene_image_replace(world->resources, previous, 0, &level, out, error);
-    char name[96];
-    (void)snprintf(name, sizeof(name), "*world-%" PRIu64 "-light-%" PRIu32 "%s", world->identity, surface->source_index, suffix);
-    return qa_scene_image_create(world->resources, name, QA_SCENE_RGBA8, &level, 1,
-        QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_scene_vec4){0, 0, 0, 1}, out, error);
+    if (width > atlas->width || height > atlas->height) return false;
+    uint32_t best = atlas->height;
+    bool found = false;
+    for (uint32_t left = 0; left <= atlas->width - width; ++left) {
+        uint32_t top = 0, column = 0;
+        for (; column < width; ++column) {
+            uint32_t used = atlas->allocated[left + column];
+            if (used >= best) break;
+            if (used > top) top = used;
+        }
+        if (column == width && top <= atlas->height - height) {
+            *x = left; *y = best = top; found = true;
+        }
+    }
+    if (!found) return false;
+    for (uint32_t i = 0; i < width; ++i) atlas->allocated[*x + i] = *y + height;
+    return true;
+}
+
+static bool light_atlas_admit(qa_scene_world *world, qaw_surface *surface, qa_error *error)
+{
+    qawl_world *data = world->legacy_data;
+    qaw_legacy *light = surface->legacy;
+    if (light->atlas) return true;
+    if (light->width > INT32_MAX - 2u || light->height > INT32_MAX - 2u)
+        return light_error(error, QA_ERROR_FORMAT, surface->source_index, "lightmap atlas dimensions overflow");
+    bool dedicated = light->width > 254 || light->height > 254;
+    uint32_t gutter = dedicated ? 0u : 1u;
+    uint32_t width = light->width + gutter * 2, height = light->height + gutter * 2, x = 0, y = 0;
+    qawl_light_atlas *atlas = data->last_light_atlas;
+    if (!atlas || dedicated || atlas->dedicated || !atlas_block(atlas, width, height, &x, &y)) {
+        atlas = calloc(1, sizeof(*atlas));
+        if (!atlas) return light_error(error, QA_ERROR_MEMORY, 0, "allocating lightmap atlas");
+        atlas->dedicated = dedicated;
+        atlas->width = dedicated ? width : 256;
+        atlas->height = dedicated ? height : 256;
+        atlas->allocated = calloc(atlas->width, sizeof(*atlas->allocated));
+        char name[96];
+        (void)snprintf(name, sizeof(name), "*world-%" PRIu64 "-atlas-%" PRIu32,
+            world->identity, surface->source_index);
+        bool ok = atlas->allocated && qa_scene_image_stream_create(world->resources, name,
+            atlas->width, atlas->height, &atlas->encoded, error);
+        if (ok && light->encoded_pixels) {
+            (void)snprintf(name, sizeof(name), "*world-%" PRIu64 "-atlas-%" PRIu32 "-direct",
+                world->identity, surface->source_index);
+            ok = qa_scene_image_stream_create(world->resources, name, atlas->width,
+                atlas->height, &atlas->direct, error);
+        } else if (ok) {
+            atlas->direct = atlas->encoded; qa_scene_image_retain(atlas->direct);
+        }
+        if (!ok) {
+            qa_scene_image_release(atlas->encoded); qa_scene_image_release(atlas->direct);
+            free(atlas->allocated); free(atlas);
+            if (!error || error->code == QA_OK)
+                return light_error(error, QA_ERROR_MEMORY, 0, "allocating lightmap atlas columns");
+            return false;
+        }
+        if (data->last_light_atlas) data->last_light_atlas->next = atlas;
+        else data->light_atlases = atlas;
+        data->last_light_atlas = atlas;
+        if (!atlas_block(atlas, width, height, &x, &y))
+            return light_error(error, QA_ERROR_FORMAT, 0, "lightmap exceeds its admitted atlas");
+    }
+    light->atlas = atlas; light->atlas_x = x + gutter; light->atlas_y = y + gutter;
+    surface->lightmap = atlas->encoded; qa_scene_image_retain(surface->lightmap);
+    light->direct_lightmap = atlas->direct; qa_scene_image_retain(light->direct_lightmap);
+    return true;
+}
+
+static void atlas_dirty(qawl_light_atlas *atlas, qa_scene_rect rect)
+{
+    qa_scene_rect previous = atlas->dirty;
+    if (!previous.width) { atlas->dirty = rect; return; }
+    int32_t left = rect.x < previous.x ? rect.x : previous.x;
+    int32_t top = rect.y < previous.y ? rect.y : previous.y;
+    uint32_t right = (uint32_t)rect.x + rect.width;
+    uint32_t bottom = (uint32_t)rect.y + rect.height;
+    uint32_t old_right = (uint32_t)previous.x + previous.width;
+    uint32_t old_bottom = (uint32_t)previous.y + previous.height;
+    if (right < old_right) right = old_right;
+    if (bottom < old_bottom) bottom = old_bottom;
+    atlas->dirty = (qa_scene_rect){left, top, right - (uint32_t)left, bottom - (uint32_t)top};
+}
+
+bool qawl_light_flush(qa_scene_world *world, qa_scene_frame *frame, qa_error *error)
+{
+    qawl_world *data = world->legacy_data;
+    for (qawl_light_atlas *atlas = data->light_atlases; atlas; atlas = atlas->next)
+        if (!qa_scene_frame_image_stream(frame, atlas->encoded, error) ||
+            (atlas->direct != atlas->encoded && !qa_scene_frame_image_stream(frame, atlas->direct, error))) return false;
+    for (qawl_light_atlas *atlas = data->light_atlases; atlas; atlas = atlas->next) {
+        if (!atlas->dirty.width) continue;
+        if (!qa_scene_frame_image_region(frame, atlas->encoded, atlas->dirty, error) ||
+            (atlas->direct != atlas->encoded &&
+                !qa_scene_frame_image_region(frame, atlas->direct, atlas->dirty, error))) return false;
+    }
+    for (qawl_light_atlas *atlas = data->light_atlases; atlas; atlas = atlas->next)
+        atlas->dirty = (qa_scene_rect){0};
+    return true;
+}
+
+void qawl_light_atlases_dirty(qa_scene_world *world)
+{
+    qawl_world *data = world->legacy_data;
+    for (qawl_light_atlas *atlas = data->light_atlases; atlas; atlas = atlas->next)
+        atlas->dirty = (qa_scene_rect){0, 0, atlas->width, atlas->height};
+}
+
+void qawl_light_atlases_destroy(qawl_world *data)
+{
+    while (data->light_atlases) {
+        qawl_light_atlas *atlas = data->light_atlases;
+        data->light_atlases = atlas->next;
+        qa_scene_image_release(atlas->encoded); qa_scene_image_release(atlas->direct);
+        free(atlas->allocated); free(atlas);
+    }
+    data->last_light_atlas = NULL;
 }
 
 bool qawl_light_update(qa_scene_world *world, qaw_surface *surface, const qa_material_context *context,
-                       const qa_scene_world_input *input, qa_error *error)
+                       const qa_scene_world_input *input, qa_scene_frame *frame, qa_error *error)
 {
     qaw_legacy *light = surface->legacy;
     if (!light->lightmapped) return true;
@@ -415,23 +527,16 @@ bool qawl_light_update(qa_scene_world *world, qaw_surface *surface, const qa_mat
         }
         light->light_pixels[pixel * 4 + 3] = 255;
     }
-    qa_scene_image *replacement = NULL, *direct = NULL;
-    const uint8_t *encoded = light->encoded_pixels != NULL ? light->encoded_pixels : light->light_pixels;
-    if (!light_image(world, surface, surface->lightmap, encoded, "", &replacement, error)) return false;
-    if (light->encoded_pixels == NULL) {
-        direct = replacement;
-        qa_scene_image_retain(direct);
-    } else {
-        if (!light_image(world, surface, light->direct_lightmap, light->light_pixels, "-direct", &direct, error)) {
-            qa_scene_image_release(replacement);
-            return false;
-        }
-    }
-    /* Neither current image is released until both replacements exist. */
-    qa_scene_image_release(surface->lightmap);
-    qa_scene_image_release(light->direct_lightmap);
-    surface->lightmap = replacement;
-    light->direct_lightmap = direct;
+    if (!light_atlas_admit(world, surface, error)) return false;
+    qa_scene_rect rect = {(int32_t)light->atlas_x, (int32_t)light->atlas_y, light->width, light->height};
+    const uint8_t *encoded = light->encoded_pixels ? light->encoded_pixels : light->light_pixels;
+    size_t stride = (size_t)light->width * 4;
+    if (!(frame ? qa_scene_frame_image_stream_write(frame, light->atlas->encoded, rect, encoded, stride, error)
+                : qa_scene_image_stream_write(light->atlas->encoded, rect, encoded, stride, error)) ||
+        (light->atlas->direct != light->atlas->encoded &&
+            !(frame ? qa_scene_frame_image_stream_write(frame, light->atlas->direct, rect, light->light_pixels, stride, error)
+                    : qa_scene_image_stream_write(light->atlas->direct, rect, light->light_pixels, stride, error)))) return false;
+    atlas_dirty(light->atlas, rect);
     light->cached_styles[0] = modulate;
     for (size_t i = 0; i < light->style_count; ++i) {
         qa_vec3 style = face_style(world, input, light->styles[i]);

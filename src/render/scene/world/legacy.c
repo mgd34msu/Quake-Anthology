@@ -206,6 +206,7 @@ void qaw_destroy_legacy(qa_scene_world *world)
     }
     qawl_world *data = world->legacy_data;
     if (data) {
+        qawl_light_atlases_destroy(data);
         qawl_textures_destroy(data);
         free(data->q1_styles); free(data->q2_styles);
         free(data);
@@ -416,10 +417,6 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
             qa_vec_dot(context->local_view_origin, surface->plane.normal) - surface->plane.distance < -0.01f) return true;
         if (surface->sky) return sky_submit(world, surface, context, input, frame, error);
     }
-    qa_material_context baked = *context;
-    baked.lights = input->lights;
-    baked.light_count = input->light_count;
-    if (!qawl_light_update(world, surface, &baked, input, error)) return false;
     if (surface->material) {
         qa_material_context selected = *context;
         if (input->legacy_flashblend || (input->legacy_policy.present &&

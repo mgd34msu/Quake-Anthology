@@ -55,8 +55,10 @@ static bool append_polygon(polygon_mesh *mesh, const qa_vec3 *points, size_t cou
         }
         mesh->vertices[mesh->vertex_count + i] = (qa_scene_vertex){
             .position = points[i], .normal = mesh->surface->plane.normal, .texcoord = uv,
-            .lightmap = {(project(points[i], legacy->projection[0]) + 0.5f) / (float)legacy->width,
-                         (project(points[i], legacy->projection[1]) + 0.5f) / (float)legacy->height},
+            .lightmap = {(project(points[i], legacy->projection[0]) + 0.5f + (float)legacy->atlas_x) /
+                            (float)(legacy->atlas ? legacy->atlas->width : legacy->width),
+                         (project(points[i], legacy->projection[1]) + 0.5f + (float)legacy->atlas_y) /
+                            (float)(legacy->atlas ? legacy->atlas->height : legacy->height)},
             .color = {1, 1, 1, 1}
         };
         qa_scene_vec2 lightmap = mesh->vertices[mesh->vertex_count + i].lightmap;
