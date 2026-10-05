@@ -1718,7 +1718,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/material_movies_prepare.c
     src/app/frontend/material_movies_save.c
     src/app/frontend/music_sources.c
-    src/app/frontend/q3_inventory.c
     src/app/frontend/q3_render_policy.c
     src/app/frontend/native_q2.c
     src/app/frontend/native_q2_baseline.c
@@ -1884,7 +1883,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/unified_q3_runtime_services.c
     src/app/frontend/unified_q3_runtime_video.c
 
-    src/app/frontend/component_scene_save.c
     src/app/frontend/equipment_icon.c
     src/app/frontend/network_q1_recipe_save.c
     src/app/frontend/network_q2_host_save.c

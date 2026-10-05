@@ -1342,28 +1342,6 @@ bool frontend_native_q3_animation_holder(const qa_frontend *f,size_t index,uint3
     return frontend_native_q3_read(f,index,&view,e) && view.core &&
         q3n_native_owners_read(view.core,&owners,e) && q3n_clients_animation_holder(owners.clients,client,resource,receipt,e);
 }
-bool frontend_native_q3_q3_ready(const qa_frontend *f,size_t index,const qa_q3_presentation_options *p,
-    const qa_q3_presentation_asset_options *a,qa_error *e)
-{
-    frontend_native_q3_view view; frontend_native_q3 *row=row_at(f,index);
-    qa_q3_presentation_options expected; qa_q3_presentation_asset_options assets;
-    if(!frontend_native_q3_read(f,index,&view,e) || !p || !a ||
-        !frontend_native_q3_backend_options(row,&expected,e) || !frontend_native_q3_asset_options(row,&assets,e) ||
-        p->assets!=expected.assets || p->audio!=expected.audio || p->clock.context!=expected.clock.context ||
-        p->clock.sample!=expected.clock.sample || p->seat!=expected.seat || p->owner!=expected.owner || p->context!=row ||
-        p->far_clip!=expected.far_clip || p->lod_scale!=5 ||
-        p->lod_bias != 0.0f || p->rail_core_width!=6 || p->rail_ring_width!=16 || p->rail_segment_length!=32 ||
-        p->audio_actor!=audio_actor || p->listener!=listener || p->music!=music || p->frame_number!=frame_number ||
-        p->milliseconds!=milliseconds || p->audio_bus!=audio_bus || p->prepare_view!=prepare_view ||
-        p->submit_view!=submit_view || p->remap!=remap || p->print!=print_row || p->system_movie ||
-        p->scene_cleared!=scene_cleared ||
-        p->prepare_picture!=prepare_picture || p->video_frame!=frontend_material_movies_frontend_resolve || p->video_context!=f ||
-        a->provider.mounts!=assets.provider.mounts || a->provider.images!=assets.provider.images ||
-        a->provider.materials!=assets.provider.materials || a->provider.family!=QA_SCENE_Q3 ||
-        a->sounds!=assets.sounds || a->movies!=assets.movies || a->zero_sound || a->context!=row || a->select!=select_asset || a->print!=print_row || a->model_initialize!=model_initialize)
-        return frontend_fail(e,QA_ERROR_FORMAT,"Native Q3 dictionary policy differs from its actual installed row");
-    return true;
-}
 bool frontend_native_q3_borrow(frontend_native_q3 *row,qa_application_q3_client_context *out,qa_error *e)
 {
     if(!linked(row) || !row->constructed || row->callbacks==SIZE_MAX ||

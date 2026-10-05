@@ -102,8 +102,6 @@ bool frontend_native_q3_read(const qa_frontend *, size_t, frontend_native_q3_vie
 /* Borrow actual constructor/import heaps before core initialization. This
  * admits the synchronous factory callback without using capture enumerators. */
 bool frontend_native_q3_factory_view(const frontend_native_q3 *,frontend_native_q3_view *,qa_error *);
-bool frontend_native_q3_q3_ready(const qa_frontend *, size_t,
-    const qa_q3_presentation_options *, const qa_q3_presentation_asset_options *, qa_error *);
 bool frontend_native_q3_recipient(const qa_frontend *, uint32_t physical_seat,
     qa_application_q3_client_context *, uint64_t *action_generation, bool *found, qa_error *);
 bool frontend_native_q3_client_cvars_read(const qa_frontend *, uint32_t physical_seat,
