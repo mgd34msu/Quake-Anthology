@@ -1,6 +1,5 @@
 #include "internal.h"
 #include "qa/hud.h"
-#include "qa/source_save.h"
 #include "qa/application_q1_composition.h"
 #include <stdio.h>
 
@@ -21,156 +20,10 @@ struct qa_hud {
     qa_builtin_ctf_capture ctf_capture;
     uint64_t ctf_capture_time_ns, ctf_capture_until_ns;
     bool ctf_capture_present;
-    bool drawing, checkpoint_active;
+    bool drawing;
 };
-bool qa_hud_idle(const qa_hud *hud) { return hud && !hud->drawing && !hud->checkpoint_active; }
+bool qa_hud_idle(const qa_hud *hud) { return hud && !hud->drawing; }
 static uint64_t after(uint64_t now, uint64_t duration);
-static bool hud_signature(qa_source_save_io *io) {
-    uint8_t magic[4] = {'Q', 'A', 'H', 'D'};
-    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAHD", 4);
-}
-static bool ctf_fields(qa_source_save_io *io, qa_hud *hud) {
-    if (!qa_source_save_bool(io, &hud->ctf_present)) return false;
-    if (!hud->ctf_present) return !hud->ctf_capture_present;
-    qa_builtin_ctf_status *status = &hud->ctf_status;
-    if (!(qa_source_save_actor(io, &hud->ctf_actor) && hud->ctf_actor.registry &&
-        qa_source_save_string(io, &hud->ctf_source) && hud->ctf_source &&
-        qa_source_save_u64(io, &hud->ctf_time_ns) &&
-        qa_source_save_f64(io, &status->red) && isfinite(status->red) &&
-        qa_source_save_f64(io, &status->blue) && isfinite(status->blue) &&
-        qa_source_save_f64(io, &status->flags) && isfinite(status->flags) &&
-        qa_source_save_f64(io, &status->rune_items) && isfinite(status->rune_items) &&
-        qa_source_save_bool(io, &hud->ctf_capture_present))) return false;
-    if (!hud->ctf_capture_present) return true;
-    return qa_source_save_bool(io, &hud->ctf_capture.blue) &&
-        qa_source_save_f64(io, &hud->ctf_capture.total) && isfinite(hud->ctf_capture.total) &&
-        qa_source_save_u64(io, &hud->ctf_capture_time_ns) &&
-        qa_source_save_u64(io, &hud->ctf_capture_until_ns) &&
-        hud->ctf_capture_until_ns == after(hud->ctf_capture_time_ns, UINT64_C(3000000000));
-}
-static bool hud_reservation(qa_source_save_io *io, size_t count, size_t capacity) {
-    if (count > capacity || capacity > SIZE_MAX / sizeof(hud_message)) return false;
-    if (capacity) {
-        size_t grown = 8;
-        while (grown < capacity && grown <= SIZE_MAX / 2 && grown * 2 <= SIZE_MAX / sizeof(hud_message)) grown *= 2;
-        if (capacity < 8 || (grown != capacity && capacity <= grown)) return false;
-    }
-    if (io->direction == QA_SOURCE_SAVE_READ && capacity > io->input.size - io->offset) return false;
-    /* Each real reserved slot has a saved presence cell. Inactive slots retain
-     * no message ownership; their old allocation bytes are operation scratch. */
-    for (size_t i = 0; i < capacity; ++i) {
-        bool active = i < count;
-        if (!qa_source_save_bool(io, &active) || active != (i < count)) return false;
-    }
-    return true;
-}
-static bool hud_text(qa_source_save_io *io, char **owned) {
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    bool present = !reading && *owned;
-    size_t length = present ? strlen(*owned) : 0;
-    if (!qa_source_save_bool(io, &present) ||
-        (present && !qa_source_save_count(io, &length, SIZE_MAX - 1))) return false;
-    if (!reading) return !present || qa_source_save_bytes(io, *owned, length);
-    char *copy = NULL;
-    if (present) {
-        if (io->offset > io->input.size || length > io->input.size - io->offset) {
-            qa_error_set(io->error, QA_ERROR_FORMAT, 0, "Truncated HUD text"); return false;
-        }
-        copy = malloc(length + 1);
-        if (!copy) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring HUD text"); return false; }
-        if (!qa_source_save_bytes(io, copy, length)) { free(copy); return false; }
-        if (memchr(copy, 0, length)) {
-            free(copy); qa_error_set(io->error, QA_ERROR_FORMAT, 0, "HUD text contains a NUL byte"); return false;
-        }
-        copy[length] = 0;
-    }
-    free(*owned); *owned = copy;
-    return true;
-}
-static bool hud_message_fields(qa_source_save_io *io, hud_message *message) {
-    return hud_text(io, &message->text) && message->text && qa_source_save_u64(io, &message->starts) &&
-        qa_source_save_u64(io, &message->until) && qa_source_save_u64(io, &message->character_ns) &&
-        qa_source_save_bool(io, &message->chat) && qa_source_save_bool(io, &message->instant) && message->until >= message->starts;
-}
-static bool hud_image_fields(qa_source_save_io *io, const qa_hud_checkpoint_refs *refs, const qa_scene_image **image) {
-    bool present = *image != NULL;
-    if (!qa_source_save_bool(io, &present) || !present) return !io->failed;
-    uint64_t key = 0;
-    if (io->direction == QA_SOURCE_SAVE_WRITE) {
-        if (!refs || !refs->image_encode || !refs->image_encode(refs->context, *image, &key, io->error) || !key) {
-            if (!refs || !refs->image_encode) qa_error_set(io->error, QA_ERROR_ARGUMENT, 0, "HUD image identity encoder is absent");
-            return false;
-        }
-    }
-    bool ok = qa_source_save_u64(io, &key) && key;
-    if (ok && io->direction == QA_SOURCE_SAVE_READ) {
-        const qa_scene_image *decoded = NULL;
-        ok = refs && refs->image_decode && refs->image_decode(refs->context, key, &decoded, io->error) && decoded;
-        if (!refs || !refs->image_decode) qa_error_set(io->error, QA_ERROR_ARGUMENT, 0, "HUD candidate image resolver is absent");
-        if (ok) { qa_scene_image_retain(decoded); *image = decoded; }
-    }
-    return ok;
-}
-bool qa_hud_checkpoint(qa_hud *hud, const qa_hud_checkpoint_refs *refs, qa_buffer *out, qa_error *error) {
-    if (!hud || !out || out->data || out->size || hud->drawing || hud->checkpoint_active) return ui_fail(error, "HUD checkpoint requires completed callbacks and empty output");
-    qa_source_save_io io = {0};
-    if (!qa_source_save_writer(&io, qa_application_session(hud->options.application), error)) return false;
-    hud->checkpoint_active = true;
-    uint32_t seat = hud->options.seat; size_t count = hud->notice_count, capacity = hud->notice_capacity;
-    bool ok = hud_signature(&io) && qa_source_save_u32(&io, &seat) && qa_source_save_count(&io, &count, SIZE_MAX) &&
-        qa_source_save_count(&io, &capacity, SIZE_MAX / sizeof(hud_message)) &&
-        (!capacity || hud->notices) && hud_reservation(&io,count,capacity);
-    for (size_t i = 0; ok && i < count; ++i) { hud_message copy = hud->notices[i]; ok = hud_message_fields(&io, &copy); }
-    count = hud->center_count; capacity = hud->center_capacity;
-    ok = ok && qa_source_save_count(&io, &count, SIZE_MAX) &&
-        qa_source_save_count(&io, &capacity, SIZE_MAX / sizeof(hud_message)) &&
-        (!capacity || hud->centers) && hud_reservation(&io,count,capacity);
-    for (size_t i = 0; ok && i < count; ++i) { hud_message copy = hud->centers[i]; ok = hud_message_fields(&io, &copy); }
-    char *pickup = hud->pickup; const qa_scene_image *icon = hud->pickup_icon;
-    uint64_t pickup_until = hud->pickup_until, hit_until = hud->hit_until; float damage = hud->hit_damage;
-    ok = ok && hud_text(&io, &pickup) && hud_image_fields(&io, refs, &icon) &&
-        qa_source_save_u64(&io, &pickup_until) && (pickup || (!icon && !pickup_until)) &&
-        qa_source_save_u64(&io, &hit_until) && qa_source_save_f32(&io, &damage) && isfinite(damage) &&
-        ctf_fields(&io, hud);
-    if (ok) ok = qa_source_save_finish(&io, out);
-    if (!ok && (!error || error->code == QA_OK)) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid retained HUD state");
-    qa_source_save_dispose(&io); hud->checkpoint_active = false; return ok;
-}
-bool qa_hud_restore(qa_bytes bytes, const qa_hud_options *options, const qa_hud_checkpoint_refs *refs, qa_hud **out, qa_error *error) {
-    if (!options || !out || *out) return ui_fail(error, "HUD restore requires candidate options and empty output");
-    qa_source_save_io io = {0}; uint32_t seat = 0; qa_hud *hud = NULL;
-    bool ok = qa_source_save_reader(&io, qa_application_session(options->application), bytes, error) && hud_signature(&io) &&
-        qa_source_save_u32(&io, &seat) && seat == options->seat && qa_hud_create(options, &hud, error);
-    size_t count = 0, capacity = 0;
-    if (ok) ok = qa_source_save_count(&io, &count, bytes.size / 8) &&
-        qa_source_save_count(&io, &capacity, SIZE_MAX / sizeof(hud_message)) && hud_reservation(&io,count,capacity);
-    if (ok && capacity) {
-        hud->notices = calloc(capacity, sizeof(*hud->notices)); hud->notice_capacity = capacity;
-        if (!hud->notices) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring retained HUD notice storage"); ok = false; }
-    }
-    for (size_t i = 0; ok && i < count; ++i) {
-        hud_message *message = &hud->notices[hud->notice_count++]; *message = (hud_message){0}; ok = hud_message_fields(&io, message);
-    }
-    if (ok) ok = qa_source_save_count(&io, &count, bytes.size / 8) &&
-        qa_source_save_count(&io, &capacity, SIZE_MAX / sizeof(hud_message)) && hud_reservation(&io,count,capacity);
-    if (ok && capacity) {
-        hud->centers = calloc(capacity, sizeof(*hud->centers)); hud->center_capacity = capacity;
-        if (!hud->centers) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring retained HUD center storage"); ok = false; }
-    }
-    for (size_t i = 0; ok && i < count; ++i) {
-        hud_message *message = &hud->centers[hud->center_count++]; *message = (hud_message){0}; ok = hud_message_fields(&io, message);
-    }
-    if (ok) ok = hud_text(&io, &hud->pickup) && hud_image_fields(&io, refs, &hud->pickup_icon) &&
-        qa_source_save_u64(&io, &hud->pickup_until) && (hud->pickup || (!hud->pickup_icon && !hud->pickup_until)) &&
-        qa_source_save_u64(&io, &hud->hit_until) &&
-        qa_source_save_f32(&io, &hud->hit_damage) && isfinite(hud->hit_damage) &&
-        ctf_fields(&io, hud) && qa_source_save_finish(&io, NULL);
-    if (!ok) {
-        qa_hud_destroy(hud, NULL);
-        if (!error || error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid saved HUD state");
-    } else *out = hud;
-    qa_source_save_dispose(&io); return ok;
-}
 static uint64_t after(uint64_t now, uint64_t duration) {
     return UINT64_MAX - now < duration ? UINT64_MAX : now + duration;
 }
@@ -194,28 +47,28 @@ bool qa_hud_create(const qa_hud_options *options, qa_hud **out, qa_error *error)
 }
 bool qa_hud_clear_notify(qa_hud *hud, qa_error *error) {
     if (!hud) return true;
-    if (hud->drawing || hud->checkpoint_active) return ui_fail(error, "HUD callback or checkpoint is active");
+    if (hud->drawing) return ui_fail(error, "HUD callback is active");
     for (size_t i = 0; i < hud->notice_count; ++i) free(hud->notices[i].text);
     hud->notice_count = 0;
     return true;
 }
 bool qa_hud_clear_center(qa_hud *hud, qa_error *error) {
     if (!hud) return true;
-    if (hud->drawing || hud->checkpoint_active) return ui_fail(error, "HUD callback or checkpoint is active");
+    if (hud->drawing) return ui_fail(error, "HUD callback is active");
     for (size_t i = 0; i < hud->center_count; ++i) free(hud->centers[i].text);
     hud->center_count = 0;
     return true;
 }
 bool qa_hud_destroy(qa_hud *hud, qa_error *error) {
     if (!hud) return true;
-    if (hud->drawing || hud->checkpoint_active) return ui_fail(error, "HUD callback or checkpoint is active");
+    if (hud->drawing) return ui_fail(error, "HUD callback is active");
     qa_hud_clear_notify(hud, NULL); qa_hud_clear_center(hud, NULL);
     free(hud->notices); free(hud->centers); free(hud->pickup); qa_scene_image_release(hud->pickup_icon); free(hud);
     return true;
 }
 bool qa_hud_notify(qa_hud *hud, const char *text, bool chat, uint64_t starts,
                     uint64_t duration, qa_error *error) {
-    if (!hud || hud->drawing || hud->checkpoint_active) return ui_fail(error, "HUD message callback or checkpoint is active");
+    if (!hud || hud->drawing) return ui_fail(error, "HUD message callback is active");
     char *copy = copy_text(text, error);
     if (!copy) return false;
     if (!ui_reserve((void **)&hud->notices, &hud->notice_capacity, hud->notice_count + 1,
@@ -226,7 +79,7 @@ bool qa_hud_notify(qa_hud *hud, const char *text, bool chat, uint64_t starts,
 }
 bool qa_hud_center_print(qa_hud *hud, const char *text, uint64_t starts, uint64_t duration,
                           bool instant, uint64_t character_ns, qa_error *error) {
-    if (!hud || hud->drawing || hud->checkpoint_active) return ui_fail(error, "HUD center callback or checkpoint is active");
+    if (!hud || hud->drawing) return ui_fail(error, "HUD center callback is active");
     char *copy = copy_text(text, error);
     if (!copy) return false;
     if (!ui_reserve((void **)&hud->centers, &hud->center_capacity, hud->center_count + 1,
@@ -245,17 +98,17 @@ bool qa_hud_center_print(qa_hud *hud, const char *text, uint64_t starts, uint64_
 }
 bool qa_hud_pickup(qa_hud *hud, const char *text, const qa_scene_image *icon, uint64_t until,
                     qa_error *error) {
-    if (!hud || hud->drawing || hud->checkpoint_active) return ui_fail(error, "HUD pickup callback or checkpoint is active");
+    if (!hud || hud->drawing) return ui_fail(error, "HUD pickup callback is active");
     char *copy = copy_text(text, error); if (!copy) return false;
     qa_scene_image_retain(icon); qa_scene_image_release(hud->pickup_icon);
     free(hud->pickup); hud->pickup = copy; hud->pickup_icon = icon; hud->pickup_until = until;
     return true;
 }
 void qa_hud_hit_marker(qa_hud *hud, float damage, uint64_t until) {
-    if (hud && !hud->drawing && !hud->checkpoint_active && isfinite(damage)) { hud->hit_damage = damage; hud->hit_until = until; }
+    if (hud && !hud->drawing && isfinite(damage)) { hud->hit_damage = damage; hud->hit_until = until; }
 }
 bool qa_hud_ctf_status(qa_hud *hud, const qa_builtin_event *event, qa_error *error) {
-    if (!hud || hud->drawing || hud->checkpoint_active || !event ||
+    if (!hud || hud->drawing || !event ||
         event->kind != QA_BUILTIN_CTF_STATUS || event->family != QA_GAME_Q1 || event->argument_count ||
         !event->provider || !qa_application_provider_instance(hud->options.application, event->provider) ||
         !qa_actors_get(qa_session_actors(qa_application_session(hud->options.application)), event->actor) ||
@@ -271,7 +124,7 @@ bool qa_hud_ctf_status(qa_hud *hud, const qa_builtin_event *event, qa_error *err
 }
 bool qa_hud_ctf_capture(qa_hud *hud, const qa_builtin_event *event,
     qa_actor_id recipient, qa_error *error) {
-    if (!hud || hud->drawing || hud->checkpoint_active || !event ||
+    if (!hud || hud->drawing || !event ||
         event->kind != QA_BUILTIN_CTF_CAPTURE || event->family != QA_GAME_Q1 ||
         !event->provider || event->argument_count || event->text || event->resource ||
         !qa_actor_id_equal(event->actor, (qa_actor_id){0}) ||
@@ -890,7 +743,7 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
             (float)target.width-16,(float)target.height*.22f},fit,scene,error);
 }
 bool qa_hud_draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, qa_error *error) {
-    if (!hud || !frame || !scene || frame->seat != hud->options.seat || hud->drawing || hud->checkpoint_active ||
+    if (!hud || !frame || !scene || frame->seat != hud->options.seat || hud->drawing ||
         hud->options.ui->handling ||
         !frame->safe_area.width || !frame->safe_area.height || !isfinite(frame->scale) || frame->scale <= 0 ||
         (double)frame->safe_area.x + frame->safe_area.width > INT32_MAX ||

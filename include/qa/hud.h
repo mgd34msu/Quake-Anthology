@@ -80,14 +80,6 @@ typedef struct qa_hud_options {
     const qa_scene_image *(*video_frame)(void *, uint64_t, double, qa_error *);
     void *video_context;
 } qa_hud_options;
-typedef struct qa_hud_checkpoint_refs {
-    void *context;
-    bool (*image_encode)(void *, const qa_scene_image *, uint64_t *, qa_error *);
-    /* Returns an existing borrowed image from the shared saved image graph. */
-    bool (*image_decode)(void *, uint64_t, const qa_scene_image **, qa_error *);
-} qa_hud_checkpoint_refs;
-bool qa_hud_checkpoint(qa_hud *, const qa_hud_checkpoint_refs *, qa_buffer *, qa_error *);
-bool qa_hud_restore(qa_bytes, const qa_hud_options *, const qa_hud_checkpoint_refs *, qa_hud **, qa_error *);
 bool qa_hud_create(const qa_hud_options *, qa_hud **, qa_error *);
 bool qa_hud_idle(const qa_hud *);
 bool qa_hud_destroy(qa_hud *, qa_error *);

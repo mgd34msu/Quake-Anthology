@@ -642,25 +642,6 @@ bool q3n_weapons_selected_authored_view(q3n_weapons *owner,const q3n_selected_we
     }
     return selected_end(owner,okay);
 }
-bool q3n_selected_weapon_state_fields(qa_source_save_io *io,q3n_selected_weapon_state *state)
-{
-    if (!io || !state) return false;
-    q3n_lerp_frame *torso=&state->torso;
-    if (!qa_source_save_i32(io,&torso->old_frame) || !qa_source_save_i32(io,&torso->old_frame_time) ||
-        !qa_source_save_i32(io,&torso->frame) || !qa_source_save_i32(io,&torso->frame_time) ||
-        !qa_source_save_f32(io,&torso->back_lerp) || !qa_source_save_i32(io,&torso->animation_number) ||
-        !qa_source_save_i32(io,&torso->animation_time) || !qa_source_save_bool(io,&torso->selected) ||
-        !qa_source_save_u32(io,&state->random_seed)) return false;
-    q3n_selected_weapon_barrel *barrels[2]={&state->view_barrel,&state->world_barrel};
-    for (size_t i=0;i<2;++i)
-        if (!qa_source_save_i32(io,&barrels[i]->time) || !qa_source_save_f32(io,&barrels[i]->angle) ||
-            !qa_source_save_bool(io,&barrels[i]->spinning)) return false;
-    if (!isfinite(torso->back_lerp) || !isfinite(state->view_barrel.angle) || !isfinite(state->world_barrel.angle) ||
-        (torso->selected && ((torso->animation_number&~128)<0 || (torso->animation_number&~128)>=QA_PLAYER_ANIMATION_COUNT))) {
-        io->failed=true; return q3p_fail(io->error,QA_ERROR_FORMAT,"Invalid selected Q3 weapon continuation");
-    }
-    return true;
-}
 static void matrix_multiply(const qa_vec3 a[3],const qa_vec3 b[3],qa_vec3 out[3])
 {
     qa_vec3 columns[3]={qa_v3(b[0].x,b[1].x,b[2].x),qa_v3(b[0].y,b[1].y,b[2].y),qa_v3(b[0].z,b[1].z,b[2].z)};

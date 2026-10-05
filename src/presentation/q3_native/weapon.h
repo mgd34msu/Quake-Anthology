@@ -2,7 +2,6 @@
 #define QA_Q3_NATIVE_WEAPON_H
 
 #include "frame.h"
-#include "qa/source_save.h"
 
 typedef struct q3n_weapon_settings {
     int32_t brass_time, fov, gun_frame;
@@ -85,10 +84,6 @@ typedef struct q3n_selected_weapon_held {
     int32_t powerups;
     bool personal_model;
 } q3n_selected_weapon_held;
-/* Zero initialization is the real presenter constructor. The outer owner
- * qualifies seat, provider, full actor, immutable animation and registry before
- * this primitive codec. No source PS/S or borrowed pointer is serialized. */
-bool q3n_selected_weapon_state_fields(qa_source_save_io *, q3n_selected_weapon_state *);
 /* Suppression requires success AND submitted. These entry points do not invoke
  * primary view/held replacement callbacks or manufacture a primary frame. */
 bool q3n_weapons_selected_view(q3n_weapons *, const q3n_selected_weapon_media *,
