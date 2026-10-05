@@ -214,8 +214,14 @@ static bool instance(qa_source_save_io *io, qa_modes *m, qa_mode_checkpoint *p) 
     if (p->q3_settings_present) {
         FIELD(i32, p->q3_settings.do_warmup); FIELD(i32, p->q3_settings.warmup_seconds);
         FIELD(i32, p->q3_settings.time_limit_minutes); FIELD(i32, p->q3_settings.frag_limit);
-        FIELD(i32, p->q3_settings.capture_limit); FIELD(u64, p->q3_settings.warmup_modification_count);
-        FIELD(i32, p->q3_started_ms); FIELD(i32, p->q3_warmup_ms); FIELD(u64, p->q3_warmup_seen);
+        FIELD(i32, p->q3_settings.capture_limit);
+        FIELD(i32, p->q3_started_ms); FIELD(i32, p->q3_warmup_ms);
+        bool warmup_observed = p->q3_warmup_seen == p->q3_settings.warmup_modification_count;
+        FIELD(bool, warmup_observed);
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            p->q3_settings.warmup_modification_count = 0;
+            p->q3_warmup_seen = warmup_observed ? 0 : UINT64_MAX;
+        }
     }
     return horde(io, m, &p->horde);
 }

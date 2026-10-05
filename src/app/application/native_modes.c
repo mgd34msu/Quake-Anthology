@@ -419,15 +419,8 @@ bool application_native_q3_settings_reconnect(application_provider *p, qa_error 
     qa_application *app = p->application;
     for (size_t i = 0; i < app->mode_count; ++i) {
         qa_mode_id id = app->mode_ids[i];
-        qa_mode_q3_settings saved;
-        bool present;
         if (!native_q3_mode(p, id)) continue;
-        if (!qa_modes_q3_settings_read(app->modes, id, &saved, &present, e)) return false;
-        if (!present || saved.do_warmup != current.do_warmup || saved.warmup_seconds != current.warmup_seconds ||
-            saved.time_limit_minutes != current.time_limit_minutes || saved.frag_limit != current.frag_limit ||
-            saved.capture_limit != current.capture_limit ||
-            saved.warmup_modification_count != current.warmup_modification_count)
-            return application_fail(e, QA_ERROR_ARGUMENT, "Q3 settings differ from their restored source cvars");
+        if (!qa_modes_q3_settings_rebind(app->modes, id, &current, e)) return false;
     }
     return true;
 }

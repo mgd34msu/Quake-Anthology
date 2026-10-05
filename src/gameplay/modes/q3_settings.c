@@ -46,6 +46,22 @@ bool qa_modes_q3_settings_update(qa_modes *m, qa_mode_id id, const qa_mode_q3_se
     v->q3_settings = *settings;
     return true;
 }
+bool qa_modes_q3_settings_rebind(qa_modes *m, qa_mode_id id, const qa_mode_q3_settings *settings,
+                                qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    if (!source_mode(v) || !settings || !v->q3_settings_present || m->callback_depth ||
+        v->q3_settings.do_warmup != settings->do_warmup ||
+        v->q3_settings.warmup_seconds != settings->warmup_seconds ||
+        v->q3_settings.time_limit_minutes != settings->time_limit_minutes ||
+        v->q3_settings.frag_limit != settings->frag_limit ||
+        v->q3_settings.capture_limit != settings->capture_limit)
+        return mode_fail(e, "Q3 settings rebind requires the same actual copied gameplay values");
+    bool observed = v->q3_warmup_seen == v->q3_settings.warmup_modification_count;
+    v->q3_settings.warmup_modification_count = settings->warmup_modification_count;
+    v->q3_warmup_seen = observed ? settings->warmup_modification_count :
+        settings->warmup_modification_count - 1;
+    return true;
+}
 static bool wait(qa_modes *m, mode_instance *v, qa_error *e) {
     if (v->q3_warmup_ms == -1 && v->value.phase == QA_MODE_WAITING) return true;
     v->q3_warmup_ms = -1;

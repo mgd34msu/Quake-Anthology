@@ -65,8 +65,9 @@ bool application_native_q3_settings_number(const application_provider *, const c
 bool application_native_q3_settings_string(const application_provider *, const char *,
     const char **, qa_error *);
 
-/* Import validates the complete product-qualified name set into an empty
- * owner. It neither registers cvars nor changes their values or sends effects. */
+/* Save only pending copied gameplay values and the actual warmup observation.
+ * Import rebuilds declaration metadata and settings from the current bank;
+ * it neither registers cvars nor changes their values or sends effects. */
 bool application_native_q3_settings_capture(application_provider *, qa_buffer *, qa_error *);
 bool application_native_q3_settings_restore(application_provider *, qa_bytes, qa_error *);
 

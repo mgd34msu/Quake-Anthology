@@ -313,7 +313,7 @@ static bool checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_checkpoint
     FIELD(i32, p->team_state.red_obelisk_attacked_ms); FIELD(i32, p->team_state.blue_obelisk_attacked_ms);
     FIELD(bool, p->team_state.initialized); FIELD(actor, p->team_state.neutral_obelisk);
     FIELD(i32, p->match_state.intermission_time_ms); FIELD(i32, p->match_state.intermission_queued_ms);
-    FIELD(i32, p->match_state.exit_time_ms); FIELD(u64, p->match_state.warmup_modification_count);
+    FIELD(i32, p->match_state.exit_time_ms);
     FIELD(string, p->match_state.changemap);
     FIELD(bool, p->match_state.ready_to_exit); FIELD(bool, p->match_state.restarted);
     FIELD(vec3, p->match_state.intermission_origin); FIELD(vec3, p->match_state.intermission_angles);

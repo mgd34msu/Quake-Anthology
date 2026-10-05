@@ -2,6 +2,8 @@
 #include "native_q3_console.h"
 #include "startup_flow.h"
 #include "qa/source_save.h"
+#include "qa/game_q3_source.h"
+#include "qa/console_cvars_prepare.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -110,7 +112,6 @@ struct application_native_q3_settings {
     application_provider *provider;
     application_native_q3_settings_options options;
     application_native_q3_cvar_snapshot snapshots[SETTINGS_CAPACITY];
-    size_t snapshot_order[SETTINGS_CAPACITY];
     qa_q3_product product;
     settings_operation operation;
     uint64_t password_modification_count;
@@ -346,7 +347,6 @@ static bool register_cache(application_provider *provider, const char *build_dat
         for (size_t i = 0; i < count; ++i) {
             snapshot_dispose(&owner->snapshots[i]);
             owner->snapshots[i] = copied[i];
-            owner->snapshot_order[i] = i;
             copied[i] = (application_native_q3_cvar_snapshot){0};
         }
         owner->initialized = true;
@@ -580,24 +580,51 @@ static bool text_field(qa_source_save_io *io, const char **text, bool optional)
     return true;
 }
 
-static bool snapshot_fields(qa_source_save_io *io, application_native_q3_cvar_snapshot *snapshot)
+static bool gameplay_fields(qa_source_save_io *io, const char **name, const char **value, bool *pending)
 {
-    return text_field(io, &snapshot->name, false) && text_field(io, &snapshot->value, false) &&
-        text_field(io, &snapshot->reset_value, false) && text_field(io, &snapshot->latched_value, true) &&
-        qa_source_save_u32(io, &snapshot->flags) && qa_source_save_bool(io, &snapshot->modified) &&
-        qa_source_save_u64(io, &snapshot->modification_count) &&
-        qa_source_save_f64(io, &snapshot->numeric_value) && qa_source_save_i32(io, &snapshot->integer_value);
+    return text_field(io, name, false) && text_field(io, value, false) && qa_source_save_bool(io, pending);
 }
 
-static bool cache_header(qa_source_save_io *io, const struct application_native_q3_settings *owner)
+static size_t gameplay_count(const struct application_native_q3_settings *owner)
+{
+    size_t count = 0;
+    for (size_t i = 0; i < definition_count(owner); ++i)
+        if (definition_at(owner, i)->save_policy == QA_CVAR_SAVE_GAMEPLAY) ++count;
+    return count;
+}
+
+static bool cache_header(qa_source_save_io *io, const struct application_native_q3_settings *owner,
+    size_t *count)
 {
     uint8_t magic[4] = {'Q', 'A', 'G', 'C'};
     uint32_t product = owner->product;
-    size_t count = definition_count(owner);
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAGC", 4) &&
-        qa_source_save_u32(io, &product) &&
-        product == (uint32_t)owner->product && qa_source_save_count(io, &count, definition_count(owner)) &&
-        count == definition_count(owner);
+        qa_source_save_u32(io, &product) && product == (uint32_t)owner->product &&
+        qa_source_save_count(io, count, gameplay_count(owner));
+}
+
+/* Reuse the actual registry's numeric conversion and declaration metadata.
+ * Aborting the prepared assignment leaves current values and callbacks alone. */
+static bool snapshot_restore_value(application_native_q3_cvar_snapshot *out,
+    qa_cvars *registry, const char *name, const char *value, bool pending, qa_error *error)
+{
+    const qa_cvar_view *current = qa_cvars_find(registry, name);
+    if (!current || (!pending && strcmp(current->value, value)))
+        return application_fail(error, QA_ERROR_FORMAT, "Q3 copied gameplay value disagrees with its current source registry");
+    uint64_t modification = current->modification_count;
+    bool modified = current->modified;
+    qa_cvars_edit *edit = NULL;
+    bool okay = qa_cvars_edit_prepare(registry, &edit, error) &&
+        qa_cvars_edit_apply(edit, &(qa_cvars_edit_command){.kind = QA_CVARS_EDIT_ASSIGN,
+            .name = name, .value = value, .source_dialect = QA_CONSOLE_Q3, .force = true}, error);
+    const qa_cvar_view *copy = okay ? qa_cvars_edit_find(edit, name) : NULL;
+    if (okay) okay = copy && snapshot_copy(out, copy, error);
+    qa_cvars_edit_abort(edit);
+    if (okay) {
+        out->modification_count = pending ? modification - 1 : modification;
+        out->modified = modified;
+    }
+    return okay;
 }
 
 bool application_native_q3_settings_capture(application_provider *provider, qa_buffer *out, qa_error *error)
@@ -607,11 +634,33 @@ bool application_native_q3_settings_capture(application_provider *provider, qa_b
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 cached settings are not at a continuation boundary");
     owner->operation = SETTINGS_CAPTURING;
     qa_source_save_io io = {0};
-    bool okay = qa_source_save_writer(&io, NULL, error) && cache_header(&io, owner) &&
-        qa_source_save_bool(&io, &owner->password_seen) &&
-        (!owner->password_seen || qa_source_save_u64(&io, &owner->password_modification_count));
+    qa_q3_source_match_state match;
+    const application_native_q3_cvar_snapshot *warmup = NULL;
+    bool warmup_observed = false;
+    bool pending[SETTINGS_CAPACITY] = {0};
+    size_t count = 0;
+    bool okay = application_native_q3_settings_snapshot(provider, "g_warmup", &warmup, error) &&
+        qa_q3_source_match_state_read(provider->state.q3, &match, error);
+    if (okay) warmup_observed = match.warmup_modification_count == warmup->modification_count;
+    for (size_t i = 0; okay && i < definition_count(owner); ++i) {
+        const setting_definition *definition = definition_at(owner, i);
+        if (definition->save_policy != QA_CVAR_SAVE_GAMEPLAY) continue;
+        const qa_cvar_view *current = qa_cvars_find(application_native_q3_cvar_owner(provider,
+            definition->name), definition->name);
+        if (!current) okay = application_fail(error, QA_ERROR_NOT_FOUND,
+            "Q3 copied gameplay value lost its source registry");
+        else if (owner->snapshots[i].modification_count != current->modification_count) {
+            pending[i] = true;
+            ++count;
+        }
+    }
+    if (okay) okay = qa_source_save_writer(&io, NULL, error) && cache_header(&io, owner, &count) &&
+        qa_source_save_bool(&io, &warmup_observed);
     for (size_t i = 0; okay && i < definition_count(owner); ++i)
-        okay = snapshot_fields(&io, &owner->snapshots[owner->snapshot_order[i]]);
+        if (pending[i]) {
+            application_native_q3_cvar_snapshot *snapshot = &owner->snapshots[i];
+            okay = gameplay_fields(&io, &snapshot->name, &snapshot->value, &pending[i]);
+        }
     if (okay) okay = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     owner->operation = SETTINGS_IDLE;
@@ -626,50 +675,64 @@ bool application_native_q3_settings_restore(application_provider *provider, qa_b
     owner->operation = SETTINGS_IMPORTING;
     qa_source_save_io io = {0};
     application_native_q3_cvar_snapshot restored[SETTINGS_CAPACITY] = {{0}};
-    size_t order[SETTINGS_CAPACITY] = {0};
     bool used[SETTINGS_CAPACITY] = {0};
-    bool password_seen = false;
-    uint64_t password_modification_count = 0;
-    size_t count = definition_count(owner);
-    bool okay = qa_source_save_reader(&io, NULL, bytes, error) && cache_header(&io, owner) &&
-        qa_source_save_bool(&io, &password_seen) &&
-        (!password_seen || qa_source_save_u64(&io, &password_modification_count));
+    bool warmup_observed = false;
+    size_t count = 0;
+    bool okay = qa_source_save_reader(&io, NULL, bytes, error) && cache_header(&io, owner, &count) &&
+        qa_source_save_bool(&io, &warmup_observed);
+    for (size_t i = 0; okay && i < definition_count(owner); ++i) {
+        const setting_definition *definition = definition_at(owner, i);
+        const qa_cvar_view *current = qa_cvars_find(application_native_q3_cvar_owner(provider,
+            definition->name), definition->name);
+        if (!current) okay = application_fail(error, QA_ERROR_FORMAT,
+            "Q3 copied setting has no current source declaration");
+        else okay = snapshot_copy(&restored[i], current, error);
+    }
     for (size_t row = 0; okay && row < count; ++row) {
-        application_native_q3_cvar_snapshot snapshot = {0};
-        okay = snapshot_fields(&io, &snapshot);
+        const char *name = NULL, *value = NULL;
+        bool pending = false;
+        okay = gameplay_fields(&io, &name, &value, &pending);
         size_t index = 0;
         if (okay) {
-            while (index < count && !ascii_equal(snapshot.name, definition_at(owner, index)->name)) ++index;
-            if (index == count || used[index])
-                okay = application_fail(error, QA_ERROR_FORMAT, "Q3 cached settings have invalid or duplicate source names");
+            while (index < definition_count(owner) && !ascii_equal(name, definition_at(owner, index)->name)) ++index;
+            if (index == definition_count(owner) || used[index] ||
+                definition_at(owner, index)->save_policy != QA_CVAR_SAVE_GAMEPLAY)
+                okay = application_fail(error, QA_ERROR_FORMAT, "Q3 copied gameplay names are unknown, repeated or settings");
         }
-        if (okay && !qa_cvars_find(application_native_q3_cvar_owner(provider,
-            definition_at(owner, index)->name), definition_at(owner, index)->name))
-            okay = application_fail(error, QA_ERROR_FORMAT,
-                "Q3 cached setting has no restored source registry row");
+        application_native_q3_cvar_snapshot snapshot = {0};
+        if (okay) okay = snapshot_restore_value(&snapshot,
+            application_native_q3_cvar_owner(provider, definition_at(owner, index)->name),
+            definition_at(owner, index)->name, value, pending, error);
         if (okay) {
+            snapshot_dispose(&restored[index]);
             restored[index] = snapshot;
             snapshot = (application_native_q3_cvar_snapshot){0};
             used[index] = true;
-            order[row] = index;
         }
         snapshot_dispose(&snapshot);
+        free((void *)name);
+        free((void *)value);
     }
     if (okay) okay = qa_source_save_finish(&io, NULL);
     if (okay) {
-        for (size_t i = 0; i < count; ++i) {
+        size_t warmup = 0;
+        while (warmup < definition_count(owner) && strcmp(definition_at(owner, warmup)->name, "g_warmup")) ++warmup;
+        okay = qa_q3_source_warmup_rebind(provider->state.q3,
+            restored[warmup].modification_count, warmup_observed, error);
+    }
+    if (okay) {
+        for (size_t i = 0; i < definition_count(owner); ++i) {
             owner->snapshots[i] = restored[i];
-            owner->snapshot_order[i] = order[i];
             restored[i] = (application_native_q3_cvar_snapshot){0};
         }
-        owner->password_seen = password_seen;
-        owner->password_modification_count = password_modification_count;
+        owner->password_seen = false;
+        owner->password_modification_count = 0;
         owner->initialized = true;
     }
-    for (size_t i = 0; i < count; ++i) snapshot_dispose(&restored[i]);
+    for (size_t i = 0; i < definition_count(owner); ++i) snapshot_dispose(&restored[i]);
     qa_source_save_dispose(&io);
     owner->operation = SETTINGS_IDLE;
     if (!okay && error && error->code == QA_OK)
-        application_fail(error, QA_ERROR_FORMAT, "invalid native Q3 cached settings continuation");
+        application_fail(error, QA_ERROR_FORMAT, "invalid native Q3 copied gameplay continuation");
     return okay;
 }

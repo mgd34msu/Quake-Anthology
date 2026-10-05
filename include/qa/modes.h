@@ -424,6 +424,9 @@ bool qa_modes_q3_settings_read(const qa_modes *, qa_mode_id, qa_mode_q3_settings
 bool qa_modes_q3_settings_admit(qa_modes *, qa_mode_id, const qa_mode_q3_settings *,
                                 int32_t source_time_ms, int32_t restarted, qa_error *);
 bool qa_modes_q3_settings_update(qa_modes *, qa_mode_id, const qa_mode_q3_settings *, qa_error *);
+/* Rebind the same current gameplay values to a fresh Source cvar revision,
+ * preserving whether the warmup state has observed its copied value. */
+bool qa_modes_q3_settings_rebind(qa_modes *, qa_mode_id, const qa_mode_q3_settings *, qa_error *);
 bool qa_modes_q3_source_phase(qa_modes *, qa_mode_id, qa_mode_phase,
     uint64_t source_time_ns, uint64_t deadline_ns, qa_error *);
 bool qa_modes_q3_source_reset_teams(qa_modes *, qa_mode_id, qa_error *);

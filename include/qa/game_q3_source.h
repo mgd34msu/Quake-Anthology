@@ -41,6 +41,9 @@ bool qa_q3_source_team_state_read(const qa_q3_game *, qa_q3_source_team_state *,
 bool qa_q3_source_team_state_write(qa_q3_game *, const qa_q3_source_team_state *, qa_error *);
 bool qa_q3_source_match_state_read(const qa_q3_game *, qa_q3_source_match_state *, qa_error *);
 bool qa_q3_source_match_state_write(qa_q3_game *, const qa_q3_source_match_state *, qa_error *);
+/* A restored cold GAME binds its saved warmup observation to the current
+ * copied Source cvar revision without entering the match or resetting clocks. */
+bool qa_q3_source_warmup_rebind(qa_q3_game *, uint64_t copied_revision, bool observed, qa_error *);
 bool qa_q3_source_match_context_read(const qa_q3_game *, qa_q3_product *, int32_t *, qa_error *);
 bool qa_q3_source_current_origin_read(const qa_q3_game *, qa_actor_id, qa_vec3 *, qa_error *);
 /* Ordinary native source actor dispatch, independent of selected execution.

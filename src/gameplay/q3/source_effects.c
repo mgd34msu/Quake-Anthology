@@ -109,6 +109,16 @@ bool qa_q3_source_match_state_write(qa_q3_game *game, const qa_q3_source_match_s
     return true;
 }
 
+bool qa_q3_source_warmup_rebind(qa_q3_game *game, uint64_t copied_revision, bool observed,
+                              qa_error *error) {
+    if (!game || !game->source_restored || game->observation_depth ||
+        !q3_source_origins_idle(game) || !qa_session_safe(game->options.services.session) ||
+        !qa_world_idle(game->options.services.world) || !qa_combat_idle(game->options.services.combat))
+        return q3_fail(error, "Q3 warmup rebind requires its actual idle cold GAME");
+    game->match_state.warmup_modification_count = observed ? copied_revision : copied_revision - 1;
+    return true;
+}
+
 bool qa_q3_client_award(qa_q3_game *game, qa_actor_id actor, qa_q3_source_award award,
                          int32_t amount, qa_error *error) {
     q3_actor *entry = game && !game->source_restored ? q3_actor_get(game, actor) : NULL;
