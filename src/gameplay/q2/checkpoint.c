@@ -253,7 +253,8 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
          (p->phase < Q2_PROBOSCIS_FLYING || p->phase > Q2_PROBOSCIS_RETURNED)) ||
         (p->kind == Q2_PROBOSCIS_SEGMENT && p->phase != 0) ||
         ((p->kind == Q2_RERELEASE_SPAWN_GROWTH || p->kind == Q2_RERELEASE_SPAWN_BEAM) &&
-         p->phase != 0) ||
+         (p->phase != 0 || g->options.edition != QA_Q2_RERELEASE)) ||
+        (p->kind == Q2_RERELEASE_SPAWN_GROWTH && p->delay <= 0) ||
         !qa_vec_finite(p->movedir) || !isfinite(p->damage) ||
         !isfinite(p->kick) || !isfinite(p->radius_damage) || !isfinite(p->radius) ||
         p->radius < 0 || !isfinite(p->gravity) || !isfinite(p->speed) || p->speed < 0 ||

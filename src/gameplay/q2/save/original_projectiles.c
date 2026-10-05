@@ -54,11 +54,14 @@ static bool identify(qa_q2_game *g, q2_original_record_io *io,
         {"tesla trigger", Q2_TESLA_FIELD}, {"bad_area", Q2_BAD_AREA},
         {"htrap", Q2_TRAP}, {"food_cube_trap", Q2_TRAP}, {"nuke", Q2_NUKE},
         {"gib", Q2_GIB}, {"widowlegs", Q2_GIB}, {"debris", Q2_DEBRIS}, {"spawngro", Q2_SPAWN_GROWTH},
+        {"spawngro_beam", Q2_RERELEASE_SPAWN_BEAM},
         {"loogie", Q2_LOOGIE}
     };
     *kind = Q2_PROJECTILE_NONE;
     for (size_t i = 0; name && i < sizeof(names) / sizeof(names[0]); ++i)
         if (!strcmp(name, names[i].name)) { *kind = names[i].kind; break; }
+    if (*kind == Q2_SPAWN_GROWTH && io->edition == QA_Q2_RERELEASE)
+        *kind = Q2_RERELEASE_SPAWN_GROWTH;
     bool found;
     if (!matches(g, io, "think", 436, "heat_think", &found)) return false;
     if (found) { *kind = Q2_HEAT_ROCKET; return true; }
@@ -90,12 +93,17 @@ static bool identify(qa_q2_game *g, q2_original_record_io *io,
         {"touch", 444, "plasma_touch", Q2_PLASMA},
         {"touch", 444, "flechette_touch", Q2_FLECHETTE},
         {"touch", 444, "loogie_touch", Q2_LOOGIE},
-        {"think", 436, "spawngrow_think", Q2_SPAWN_GROWTH}
+        {"think", 436, "spawngrow_think", Q2_SPAWN_GROWTH},
+        {"think", 436, "SpawnGro_laser_think", Q2_RERELEASE_SPAWN_BEAM}
     };
     for (size_t i = 0; i < sizeof(callbacks) / sizeof(callbacks[0]); ++i) {
         if (!matches(g, io, callbacks[i].field, callbacks[i].offset, callbacks[i].name, &found))
             return false;
-        if (found) { *kind = callbacks[i].kind; return true; }
+        if (found) {
+            *kind = callbacks[i].kind == Q2_SPAWN_GROWTH && io->edition == QA_Q2_RERELEASE ?
+                Q2_RERELEASE_SPAWN_GROWTH : callbacks[i].kind;
+            return true;
+        }
     }
     if (*kind == Q2_PROJECTILE_NONE && name && !strcmp(name, "noclass")) {
         bool free_think, no_touch, no_die;
@@ -242,6 +250,8 @@ static bool callbacks(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
         think = p->phase ? "Nuke_Quake" : "Nuke_Think";
         touch = "nuke_bounce"; die = "nuke_die"; break;
     case Q2_SPAWN_GROWTH: think = "spawngrow_think"; break;
+    case Q2_RERELEASE_SPAWN_GROWTH: think = "spawngrow_think"; break;
+    case Q2_RERELEASE_SPAWN_BEAM: think = "SpawnGro_laser_think"; break;
     case Q2_LOOGIE: touch = "loogie_touch"; break;
     default: return unsupported(io, 436, "Q2 projectile has no original Source continuation");
     }
@@ -287,6 +297,8 @@ static bool references(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
     if (p->kind == Q2_PROX || p->kind == Q2_TESLA || p->kind == Q2_TESLA_FIELD ||
         p->kind == Q2_BAD_AREA)
         if (!q2_original_source_reference(g, io, "teamchain", 560, &p->child)) return false;
+    if (p->kind == Q2_RERELEASE_SPAWN_GROWTH &&
+        !q2_original_source_reference(g, io, "target_ent", UINT16_MAX, &p->child)) return false;
     if (io->reading) {
         if (!mine) p->owner = owner;
         p->attack.attacker = qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner);
@@ -356,6 +368,13 @@ static bool deadlines(q2_original_record_io *io, q2_projectile *p)
             !scalar(io, "timestamp", Q2_ORIGINAL_TIME, 288, &p->effect_ns)) return false;
     }
     if (p->kind == Q2_SPAWN_GROWTH && !q2_original_seconds(io, "wait", 592, &p->effect_ns)) return false;
+    if (p->kind == Q2_RERELEASE_SPAWN_GROWTH) {
+        if (!scalar(io, "teleport_time", Q2_ORIGINAL_TIME, UINT16_MAX, &p->born_ns) ||
+            !scalar(io, "timestamp", Q2_ORIGINAL_TIME, 288, &p->expire_ns) ||
+            !scalar(io, "wait", Q2_ORIGINAL_F32, 592, &p->delay)) return false;
+        if (!isfinite(p->delay) || p->delay <= 0)
+            return unsupported(io, 592, "Original Q2 rerelease growth has no positive lifespan");
+    }
     if (p->kind == Q2_GIB && (p->gib_flags & Q2_GIB_WIDOW_LEGS)) {
         if (!scalar(io, "wait", Q2_ORIGINAL_F32, 592, &p->delay)) return false;
         if (!isfinite(p->delay) || p->delay < 0 ||
@@ -424,8 +443,11 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
         if (!read_phase(g, io, p)) return false;
     }
     if (p->kind == Q2_PROJECTILE_NONE) return true;
-    if (p->kind == Q2_BFG_LASER && io->edition != QA_Q2_RERELEASE)
-        return unsupported(io, 436, "Original Q2 BFG laser requires the rerelease");
+    if ((p->kind == Q2_BFG_LASER || p->kind == Q2_RERELEASE_SPAWN_GROWTH ||
+        p->kind == Q2_RERELEASE_SPAWN_BEAM) && io->edition != QA_Q2_RERELEASE)
+        return unsupported(io, 436, "Original Q2 projectile requires the rerelease");
+    if (p->kind == Q2_SPAWN_GROWTH && io->edition == QA_Q2_RERELEASE)
+        return unsupported(io, 436, "Original Q2 rerelease growth requires its native controller");
     if (io->edition == QA_Q2_CLASSIC &&
         ((io->product != QA_Q2_XATRIX && (p->kind == Q2_ION || p->kind == Q2_PLASMA ||
             p->kind == Q2_TRAP || p->kind == Q2_BLUE_BOLT || p->kind == Q2_HEAT_ROCKET)) ||
@@ -435,6 +457,8 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
             p->kind == Q2_NUKE || p->kind == Q2_SPAWN_GROWTH || p->kind == Q2_GREEN_BOLT))))
         return unsupported(io, 436, "Q2 projectile does not belong to the selected original game");
     if (!references(g, io, a)) return false;
+    if (p->kind == Q2_RERELEASE_SPAWN_BEAM && !qa_actor_reference_present(p->owner))
+        return unsupported(io, 256, "Original Q2 rerelease growth beam has no Source owner");
     if (io->references_only) return true;
     if (io->reading && p->kind == Q2_GIB && !(p->gib_flags & Q2_GIB_WIDOW_LEGS) &&
         qa_actor_reference_present(p->owner) && a->physics.gravity_scale == .25f)
@@ -445,16 +469,18 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
     uint32_t flags = p->kind == Q2_GRENADE ? (p->hand ? 1u : 0) | (p->held ? 2u : 0) :
         p->kind == Q2_TRAP && io->edition == QA_Q2_CLASSIC ? 1u | (p->held ? 2u : 0) :
         (p->kind == Q2_BOLT || p->kind == Q2_BLUE_BOLT) && p->direct_mod == 10 ? 1u : 0;
-    int32_t damage = io->reading || p->kind == Q2_BFG_BALL ? 0 : qa_source_float_to_i32(p->damage);
-    int32_t radius_damage = io->reading ? 0 : qa_source_float_to_i32(
+    bool growth = p->kind == Q2_RERELEASE_SPAWN_GROWTH || p->kind == Q2_RERELEASE_SPAWN_BEAM;
+    int32_t damage = io->reading || growth || p->kind == Q2_BFG_BALL ? 0 : qa_source_float_to_i32(p->damage);
+    int32_t radius_damage = io->reading || growth ? 0 : qa_source_float_to_i32(
         p->kind == Q2_BFG_BALL ? p->damage : p->radius_damage);
-    float radius = p->kind == Q2_FLECHETTE ? p->kick : p->kind == Q2_ION ? 100 : p->radius;
+    float radius = growth ? 0 : p->kind == Q2_FLECHETTE ? p->kick : p->kind == Q2_ION ? 100 : p->radius;
     if (!scalar(io, "spawnflags", Q2_ORIGINAL_U32, 284, &flags) ||
         !scalar(io, "dmg", Q2_ORIGINAL_I32, 516, &damage) ||
         !scalar(io, "radius_dmg", Q2_ORIGINAL_I32, 520, &radius_damage) ||
         !scalar(io, "dmg_radius", Q2_ORIGINAL_F32, 524, &radius) ||
-        !scalar(io, p->kind == Q2_BFG_LASER ? "s.old_origin" : "movedir",
-            Q2_ORIGINAL_VECTOR, p->kind == Q2_BFG_LASER ? 28 : 340, &p->movedir) ||
+        !scalar(io, p->kind == Q2_BFG_LASER || p->kind == Q2_RERELEASE_SPAWN_BEAM ?
+            "s.old_origin" : "movedir", Q2_ORIGINAL_VECTOR,
+            p->kind == Q2_BFG_LASER || p->kind == Q2_RERELEASE_SPAWN_BEAM ? 28 : 340, &p->movedir) ||
         !deadlines(io, p)) return false;
     if (io->reading) {
         p->damage = p->kind == Q2_BFG_BALL ? (float)radius_damage : (float)damage;
@@ -469,6 +495,11 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
         !scalar(io, "speed", Q2_ORIGINAL_F32, 328, &p->speed)) return false;
     if (p->kind == Q2_HEAT_ROCKET && io->edition == QA_Q2_RERELEASE &&
         !scalar(io, "accel", Q2_ORIGINAL_F32, 332, &p->turn_fraction)) return false;
+    if (p->kind == Q2_RERELEASE_SPAWN_GROWTH &&
+        (!scalar(io, "accel", Q2_ORIGINAL_F32, 332, &p->radius) ||
+         !scalar(io, "decel", Q2_ORIGINAL_F32, 336, &p->radius_damage))) return false;
+    if (p->kind == Q2_RERELEASE_SPAWN_BEAM &&
+        !scalar(io, "angle", Q2_ORIGINAL_F32, UINT16_MAX, &p->radius)) return false;
     if (p->kind == Q2_TRAP) {
         float wait = (float)p->wait;
         int32_t mass = io->reading ? 0 : qa_source_float_to_i32(
