@@ -4,6 +4,7 @@
 #include "monsters/internal.h"
 #include "qa/game_q2_wire.h"
 #include "qa/game_q2_source.h"
+#include "qa/text.h"
 #include <math.h>
 
 static bool idle(const qa_q2_game *g, qa_error *error)
@@ -410,9 +411,9 @@ bool qa_q2_wire_movement_publish(qa_q2_game *g, qa_actor_id id,
     return true;
 }
 
-static int16_t source_short(double value)
+static int16_t source_short(float value)
 {
-    uint16_t bits = (uint16_t)(uint32_t)fmod(fmod(trunc(value), 65536) + 65536, 65536);
+    uint16_t bits = (uint16_t)(uint32_t)qa_source_float_to_i32(value);
     int16_t result;
     memcpy(&result, &bits, sizeof(result));
     return result;
@@ -522,8 +523,8 @@ bool qa_q2_wire_movement_complete(qa_q2_game *g, qa_actor_id id,
         const float positions[3] = {origin.x, origin.y, origin.z};
         const float speeds[3] = {velocity.x, velocity.y, velocity.z};
         for (size_t i = 0; i < 3; ++i) {
-            value.state.data.q2.origin_eighths[i] = source_short((double)positions[i] * 8);
-            value.state.data.q2.velocity_eighths[i] = source_short((double)speeds[i] * 8);
+            value.state.data.q2.origin_eighths[i] = source_short(positions[i] * 8.0f);
+            value.state.data.q2.velocity_eighths[i] = source_short(speeds[i] * 8.0f);
         }
     }
     value.view_angles = result->view_angles; value.view_offset = result->view_offset;
@@ -590,11 +591,12 @@ bool q2_wire_player_motion(qa_q2_game *g, q2_actor *a,
             const float velocity[] = {change->velocity.x, change->velocity.y, change->velocity.z};
             const float angles[] = {delta.x, delta.y, delta.z};
             for (size_t i = 0; i < 3; ++i) {
-                s->origin_eighths[i] = source_short((double)origin[i] * 8);
-                s->velocity_eighths[i] = source_short((double)velocity[i] * 8);
-                if (force_view)
-                    s->delta_angle_shorts[i] = source_short(
-                        (double)((fmodf(angles[i], 360.f) * 65536.f) / 360.f));
+                s->origin_eighths[i] = source_short(origin[i] * 8.0f);
+                s->velocity_eighths[i] = source_short(velocity[i] * 8.0f);
+                if (force_view) {
+                    uint16_t bits = qa_angle_to_word(angles[i]);
+                    memcpy(&s->delta_angle_shorts[i], &bits, sizeof(bits));
+                }
             }
         }
         s->type = change->kind == QA_Q2_PLAYER_FREEZE ? 4 :

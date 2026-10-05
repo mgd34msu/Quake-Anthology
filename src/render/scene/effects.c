@@ -1,5 +1,6 @@
 #include "effects/internal.h"
 #include "qa/scene_effects.h"
+#include "qa/text.h"
 
 #include <float.h>
 #include <string.h>
@@ -271,7 +272,7 @@ bool qa_scene_indexed_particle(qa_scene_frame *frame, const qa_scene_view *view,
     uint32_t *indices;
     if (!qa_effect_mesh(frame, 3, 3, &mesh, &vertices, &indices, error)) return false;
     if (family == QA_SCENE_Q1) color.w = 1;
-    else color.w = (float)((uint32_t)(fmod(trunc((double)color.w * 255.0), 256.0) + 256.0) & 255u) / 255.0f;
+    else color.w = (float)(uint8_t)(uint32_t)qa_source_float_to_i32(color.w * 255.0f) / 255.0f;
     vertices[0].position = origin;
     vertices[1].position = qa_vec_add(origin, qa_vec_scale(view->axis[2], 1.5f * scale));
     vertices[2].position = qa_vec_add(origin, qa_vec_scale(view->axis[1], -1.5f * scale));

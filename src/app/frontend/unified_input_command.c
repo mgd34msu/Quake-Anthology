@@ -13,11 +13,6 @@ static bool pressed(const qa_seat_input_sample *s, qa_input_action action)
 { return active(s,action) || s->buttons[action].pressed; }
 static double add(bool q3, double value, double amount)
 { return q3 ? trunc(rounded(true,rounded(true,value)+rounded(true,amount))) : value+amount; }
-static double word(double angle)
-{
-    double value=fmod(trunc(angle*65536.0/360.0),65536);
-    return value<0 ? value+65536 : value;
-}
 static bool finite_angles(qa_unified_vec3 value)
 { return isfinite(value.x) && isfinite(value.y) && isfinite(value.z); }
 static bool valid(const frontend_unified_command_builder *b,const qa_input_command_tuning *t,
@@ -59,7 +54,7 @@ bool frontend_unified_command_build(frontend_unified_command_builder *b,const qa
     if(!strafe) {
         yaw=rounded(q3,yaw-rounded(q3,rounded(q3,angle_speed*v->yaw_speed)*fraction(s,QA_INPUT_TURN_RIGHT)));
         yaw=rounded(q3,yaw+rounded(q3,rounded(q3,angle_speed*v->yaw_speed)*fraction(s,QA_INPUT_TURN_LEFT)));
-        if(q1) yaw=word(yaw)*(360.0/65536);
+        if(q1) yaw=qa_angle_mod((float)yaw);
     }
     if(klook && !q3) {
         pitch-=angle_speed*v->pitch_speed*fraction(s,QA_INPUT_FORWARD);
@@ -168,25 +163,18 @@ bool frontend_unified_command_build(frontend_unified_command_builder *b,const qa
         command.data.qw.forward=trunc(forward);command.data.qw.side=trunc(side);command.data.qw.up=trunc(up);
         command.data.qw.buttons=buttons;command.data.qw.impulse=s->impulse;break;
     case QA_MOVEMENT_Q2_CLASSIC:
-        command.data.q2.milliseconds=milliseconds;command.data.q2.angle_shorts[0]=word(pitch);
-        command.data.q2.angle_shorts[1]=word(yaw);command.data.q2.angle_shorts[2]=word(roll);
+        command.data.q2.milliseconds=milliseconds;command.data.q2.angle_shorts[0]=qa_angle_to_word((float)pitch);
+        command.data.q2.angle_shorts[1]=qa_angle_to_word((float)yaw);command.data.q2.angle_shorts[2]=qa_angle_to_word((float)roll);
         command.data.q2.forward=trunc(forward);command.data.q2.side=trunc(side);command.data.q2.up=trunc(up);
         command.data.q2.buttons=buttons;command.data.q2.impulse=s->impulse;command.data.q2.light_level=f->light_level;break;
     case QA_MOVEMENT_Q2_RERELEASE:
         command.data.q2r.milliseconds=milliseconds;command.data.q2r.angles=next.angles;
         command.data.q2r.forward=forward;command.data.q2r.side=side;command.data.q2r.buttons=buttons;command.data.q2r.server_frame=f->server_frame;break;
     case QA_MOVEMENT_Q3:
-        command.data.q3.server_time_ms=f->server_time_ms;command.data.q3.angle_words[0]=word(pitch);
-        command.data.q3.angle_words[1]=word(yaw);command.data.q3.angle_words[2]=word(roll);
+        command.data.q3.server_time_ms=f->server_time_ms;command.data.q3.angle_words[0]=qa_angle_to_word((float)pitch);
+        command.data.q3.angle_words[1]=qa_angle_to_word((float)yaw);command.data.q3.angle_words[2]=qa_angle_to_word((float)roll);
         command.data.q3.forward=trunc(clamp(forward,-127,127));command.data.q3.right=trunc(clamp(side,-127,127));command.data.q3.up=trunc(clamp(up,-127,127));
         command.data.q3.buttons=buttons;command.data.q3.weapon=f->weapon;break;
-    }
-    if((f->kind==QA_MOVEMENT_Q2_CLASSIC &&
-        (!isfinite(command.data.q2.angle_shorts[0]) || !isfinite(command.data.q2.angle_shorts[1]) ||
-         !isfinite(command.data.q2.angle_shorts[2]))) ||
-       (q3 && (!isfinite(command.data.q3.angle_words[0]) || !isfinite(command.data.q3.angle_words[1]) ||
-               !isfinite(command.data.q3.angle_words[2])))) {
-        qa_error_set(e,QA_ERROR_ARGUMENT,0,"Unified physical angle conversion overflow");return false;
     }
     *b=next;*out=command;return true;
 }

@@ -1,4 +1,5 @@
 #include "qa/network_q2_mvd.h"
+#include "qa/math.h"
 #include "q2pro_internal.h"
 #include <stdlib.h>
 #include <errno.h>
@@ -207,11 +208,6 @@ static bool mvd_diff(const float *a, const float *b, unsigned n)
     for (unsigned i=0;i<n;i++) if (a[i]!=b[i]) return true;
     return false;
 }
-static uint16_t mvd_angle(float a)
-{
-    if (!isfinite(a)) return 0;
-    return (uint16_t)(uint32_t)(int32_t)fmod(trunc((double)a*(65536.0/360.0)),65536.0);
-}
 bool qa_q2_mvd_write_player(const qa_q2_mvd_profile *p, qa_net_writer *w, uint8_t number,
                             const qa_q2_player *from, const qa_q2_player *to, bool force)
 {
@@ -228,8 +224,8 @@ bool qa_q2_mvd_write_player(const qa_q2_mvd_profile *p, qa_net_writer *w, uint8_
     if (to->pmove.type!=f->pmove.type) bits|=MP_TYPE;
     for (unsigned i=0;i<3;i++) if (p->rerelease?to->pmove.origin_f[i]!=f->pmove.origin_f[i]:to->pmove.origin[i]!=f->pmove.origin[i]) bits|=i==2?MP_ORIGIN_Z:MP_ORIGIN;
     if (mvd_diff(to->viewoffset,f->viewoffset,3)) bits|=MP_VIEWOFFSET;
-    if (mvd_angle(to->viewangles[0])!=mvd_angle(f->viewangles[0]) || mvd_angle(to->viewangles[1])!=mvd_angle(f->viewangles[1])) bits|=MP_VIEWANGLES;
-    if (mvd_angle(to->viewangles[2])!=mvd_angle(f->viewangles[2])) bits|=MP_VIEWANGLE_Z;
+    if (qa_angle_to_word(to->viewangles[0])!=qa_angle_to_word(f->viewangles[0]) || qa_angle_to_word(to->viewangles[1])!=qa_angle_to_word(f->viewangles[1])) bits|=MP_VIEWANGLES;
+    if (qa_angle_to_word(to->viewangles[2])!=qa_angle_to_word(f->viewangles[2])) bits|=MP_VIEWANGLE_Z;
     if (mvd_diff(to->kick_angles,f->kick_angles,3)) bits|=MP_KICK;
     if (to->gunindex!=f->gunindex || (p->extended && to->gunskin!=f->gunskin)) bits|=MP_GUNINDEX;
     if (to->gunframe!=f->gunframe) bits|=MP_GUNFRAME;

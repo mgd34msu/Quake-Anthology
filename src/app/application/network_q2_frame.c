@@ -1,6 +1,7 @@
 #include "network_q2_private.h"
 #include "native_q2_visibility.h"
 #include "qa/hud_q2.h"
+#include "qa/text.h"
 #include <math.h>
 
 static void vector(float out[3], qa_vec3 value)
@@ -59,9 +60,7 @@ static void player_profile(qa_application_network_q2 *owner, qa_q2_player *state
     if (owner->host.source.edition != QA_Q2_RERELEASE || kex_fields(owner)) return;
     if (state->pmove.float_delta_angles) {
         for (unsigned i = 0; i < 3; ++i) {
-            double word = fmod(trunc((double)state->pmove.delta_angles_f[i] * (65536.0 / 360.0)), 65536.0);
-            if (word < 0) word += 65536;
-            uint16_t bits = (uint16_t)word;
+            uint16_t bits = qa_angle_to_word(state->pmove.delta_angles_f[i]);
             memcpy(&state->pmove.delta_angles[i], &bits, sizeof(bits));
         }
         state->pmove.float_delta_angles = false;
@@ -367,10 +366,9 @@ static bool statistic(double value, int16_t *out, qa_error *error)
 {
     if (!isfinite(value))
         return application_fail(error, QA_ERROR_FORMAT, "Q2 Source statistic is not finite");
-    double narrowed = fmod(trunc(value), 65536);
-    if (narrowed < 0) narrowed += 65536;
-    uint16_t bits = (uint16_t)narrowed;
-    memcpy(out, &bits, sizeof(bits));
+    /* Armor is a widened integer inventory field; retain its full precision. */
+    int32_t native = value >= INT32_MIN && value < 2147483648.0 ? (int32_t)value : INT32_MIN;
+    integer_statistic(native, out);
     return true;
 }
 

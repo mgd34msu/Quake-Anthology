@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #endif
 #include "qa/text.h"
+#include "qa/math.h"
 
 #include <fenv.h>
 #include <errno.h>
@@ -53,6 +54,17 @@ static bool ready(qa_error *error) {
 int32_t qa_source_float_to_i32(float value) {
     return value >= -2147483648.0f && value < 2147483648.0f
         ? (int32_t)value : INT32_MIN;
+}
+
+uint16_t qa_angle_to_word(float angle) {
+    return (uint16_t)(uint32_t)qa_source_float_to_i32(angle * 65536.0f / 360.0f);
+}
+
+float qa_angle_mod(float angle) {
+    double scaled = (double)angle * (65536.0 / 360.0);
+    int32_t integer = scaled >= INT32_MIN && scaled < 2147483648.0 ?
+        (int32_t)scaled : INT32_MIN;
+    return (float)((360.0 / 65536.0) * (uint16_t)(uint32_t)integer);
 }
 
 bool qa_format_quake_float(float value, char out[64], qa_error *error) {

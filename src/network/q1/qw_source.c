@@ -1,6 +1,7 @@
 /* Donor: network/q1/codecs/qw28.ts and bootstrap/network/qw-server.ts. */
 #include "qa/network_qw_source.h"
 #include "qa/text.h"
+#include "qa/math.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -157,7 +158,7 @@ static bool command(qa_net_writer *writer, const qa_qw_command *value)
     qa_net_write_u8(writer, (uint8_t)bits);
     for (size_t i = 0; i < 3; ++i)
         if (value->angles[i] != 0)
-            short_word(writer, qa_source_float_to_i32(value->angles[i] * 65536.0f / 360.0f));
+            short_word(writer, qa_angle_to_word(value->angles[i]));
     if (bits & 4) qa_net_write_i16(writer, value->forward);
     if (bits & 8) qa_net_write_i16(writer, value->side);
     if (bits & 16) qa_net_write_i16(writer, value->up);

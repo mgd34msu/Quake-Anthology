@@ -123,7 +123,7 @@ bool qa_q2_extended_write_entity(qa_q2_codec *c,qa_net_writer *w,const qa_q2_ent
     uint64_t b=0;
     for(unsigned i=0;i<3;i++){
         if(t->origin[i]!=f->origin[i])b|=origin_bits[i];
-        if(kex?t->angles[i]!=f->angles[i]:q2_angle_short(t->angles[i])!=q2_angle_short(f->angles[i]))b|=angle_bits[i];
+        if(kex?t->angles[i]!=f->angles[i]:qa_angle_to_word(t->angles[i])!=qa_angle_to_word(f->angles[i]))b|=angle_bits[i];
     }
     if(!kex&&(b&(Q2_U_ANGLE1|Q2_U_ANGLE2|Q2_U_ANGLE3)))b|=Q2_U_ANGLE16;
     if(t->frame!=f->frame)b|=t->frame>255?Q2_U_FRAME16:Q2_U_FRAME8;
@@ -175,7 +175,7 @@ bool qa_q2_extended_write_entity(qa_q2_codec *c,qa_net_writer *w,const qa_q2_ent
     }
     if(kex&&(b&Q2_U_OLDORIGIN))qa_q2_write_vec3(w,t->old_origin,floating);
     for(unsigned i=0;i<3;i++)if(b&angle_bits[i]){
-        if(kex)qa_net_write_f32(w,t->angles[i]);else qa_net_write_u16(w,q2_angle_short(t->angles[i]));
+        if(kex)qa_net_write_f32(w,t->angles[i]);else qa_net_write_u16(w,qa_angle_to_word(t->angles[i]));
     }
     if(!kex&&(b&Q2_U_OLDORIGIN))qa_q2_write_vec3(w,t->old_origin,true);
     if(b&Q2_U_SOUND){
@@ -244,7 +244,7 @@ static player_delta player_flags(const qa_q2_player *f,const qa_q2_player *t) {
     for(unsigned i=0;i<3;i++)if(t->pmove.delta_angles[i]!=f->pmove.delta_angles[i])d.flags|=Q2_PS_DELTA_ANGLES;
     if(t->pmove.viewheight!=f->pmove.viewheight)d.flags|=Q2_PS_VIEWHEIGHT;
     if(q2_fixed_changed3(t->viewoffset,f->viewoffset,16.0f))d.flags|=Q2_PS_VIEWOFFSET;
-    for(unsigned i=0;i<3;i++)if(q2_angle_short(t->viewangles[i])!=q2_angle_short(f->viewangles[i])){
+    for(unsigned i=0;i<3;i++)if(qa_angle_to_word(t->viewangles[i])!=qa_angle_to_word(f->viewangles[i])){
         if(i==2)d.extra|=Q2_EPS_VIEWANGLE_Z;else d.flags|=Q2_PS_VIEWANGLES;
     }
     if(q2_fixed_changed3(t->kick_angles,f->kick_angles,1024.0f))d.flags|=Q2_PS_KICK;
@@ -288,8 +288,8 @@ static void write_player_body(qa_net_writer *w,const qa_q2_player *t,player_delt
     if(b&Q2_PS_GRAVITY)qa_net_write_i16(w,(int16_t)t->pmove.gravity);
     if(b&Q2_PS_DELTA_ANGLES)for(unsigned i=0;i<3;i++)qa_net_write_i16(w,t->pmove.delta_angles[i]);
     if(b&Q2_PS_VIEWOFFSET)for(unsigned i=0;i<3;i++)qa_net_write_i16(w,q2_fixed(t->viewoffset[i],16.0f));
-    if(b&Q2_PS_VIEWANGLES)for(unsigned i=0;i<2;i++)qa_net_write_u16(w,q2_angle_short(t->viewangles[i]));
-    if(e&Q2_EPS_VIEWANGLE_Z)qa_net_write_u16(w,q2_angle_short(t->viewangles[2]));
+    if(b&Q2_PS_VIEWANGLES)for(unsigned i=0;i<2;i++)qa_net_write_u16(w,qa_angle_to_word(t->viewangles[i]));
+    if(e&Q2_EPS_VIEWANGLE_Z)qa_net_write_u16(w,qa_angle_to_word(t->viewangles[2]));
     if(b&Q2_PS_KICK)for(unsigned i=0;i<3;i++)qa_net_write_i16(w,q2_fixed(t->kick_angles[i],1024.0f));
     if(b&Q2_PS_WEAPON)qa_net_write_u16(w,(uint16_t)(t->gunindex|(t->gunskin<<13)));
     if(b&Q2_PS_WEAPONFRAME)qa_net_write_u16(w,(uint16_t)t->gunframe);

@@ -75,7 +75,7 @@ static bool read_player(qa_q2_codec *c,qa_net_reader *r,const qa_q2_player *f,qa
         t->pmove.float_delta_angles=true;
         for(unsigned i=0;i<3;i++){
             t->pmove.delta_angles_f[i]=q2_read_float(r);
-            uint16_t a=q2_angle_short(t->pmove.delta_angles_f[i]);
+            uint16_t a=qa_angle_to_word(t->pmove.delta_angles_f[i]);
             t->pmove.delta_angles[i]=(int16_t)(a<32768u?(int32_t)a:(int32_t)a-65536);
         }
     }
@@ -194,7 +194,7 @@ static bool read_usercmd(qa_q2_codec *c,qa_net_reader *r,const qa_q2_usercmd *f,
     (void)c;uint8_t b=qa_net_read_u8(r);*t=*f;t->upmove=0.0f;t->impulse=0;
     if(b&32u)return qa_net_reader_fail(r,"KEX usercmd uses reserved bit 5");
     for(unsigned i=0;i<3;i++)if(b&(1u<<i)){
-        uint16_t a=q2_angle_short(q2_read_float(r));t->angles[i]=(int16_t)(a<32768u?(int32_t)a:(int32_t)a-65536);
+        uint16_t a=qa_angle_to_word(q2_read_float(r));t->angles[i]=(int16_t)(a<32768u?(int32_t)a:(int32_t)a-65536);
     }
     if(b&8u)t->forwardmove=q2_read_float(r);
     if(b&16u)t->sidemove=q2_read_float(r);

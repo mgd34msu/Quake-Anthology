@@ -1,6 +1,8 @@
 #ifndef QA_Q2_KEX_GAME_INTERNAL_H
 #define QA_Q2_KEX_GAME_INTERNAL_H
 #include "internal.h"
+#include "qa/text.h"
+#include "qa/math.h"
 
 #define Q2_U_ORIGIN1 (UINT64_C(1) << 0)
 #define Q2_U_ORIGIN2 (UINT64_C(1) << 1)
@@ -76,15 +78,11 @@ static inline int16_t q2_pm_short(float f) {
     if(n< -32768.0)return INT16_MIN;
     return (int16_t)n;
 }
-static inline uint16_t q2_angle_short(float f) {
-    if(!isfinite(f))return 0;
-    return (uint16_t)(int32_t)trunc(fmod((double)f,360.0)*(65536.0/360.0));
-}
 static inline uint8_t q2_byte_color(float f,bool clamp) {
-    double n=trunc((double)f*255.0);
+    float n=f*255.0f;
     if(!isfinite(n))return 0;
     if(clamp){if(n<0.0)return 0;if(n>255.0)return 255;}
-    return (uint8_t)(int32_t)fmod(n,256.0);
+    return (uint8_t)(uint32_t)qa_source_float_to_i32(n);
 }
 static inline uint8_t q2_quantized(float f,float scale,bool nonzero) {
     if(f==0.0f)return 0;

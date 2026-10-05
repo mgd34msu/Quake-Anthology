@@ -221,9 +221,7 @@ bool qa_q3_host_player_cutscene(qa_q3_host *host, qa_actor_id actor, qa_vec3 ori
     }
     const float components[] = {angles.x, angles.y, angles.z};
     for (size_t i = 0; ok && i < 3; ++i) {
-        double encoded = fmod(trunc((double)components[i] * (65536.0 / 360.0)), 65536.0);
-        if (encoded < 0) encoded += 65536.0;
-        uint32_t delta = (uint32_t)encoded - (uint32_t)command.angles[i];
+        uint32_t delta = (uint32_t)qa_angle_to_word(components[i]) - (uint32_t)command.angles[i];
         ok = control_word(&write, 56 + i * 4u, delta, error);
     }
     if (ok) ok = control_vector(&write, 152, angles, error) &&

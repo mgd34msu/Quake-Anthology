@@ -473,8 +473,7 @@ static bool input_values(struct application_native_q2_input *s,application_nativ
     qa_vec3 aim=v[Q3_MOD_VIEW_ANGLES].as.vector;double angles[]={aim.x,aim.y,aim.z};
     for(size_t i=0;i<3;++i) {
         if(rerelease) {float f=(float)angles[i];uint32_t bits;memcpy(&bits,&f,4);qa_store_u32le(s->command+4+i*4,bits);}
-        else {double word=trunc(angles[i]*65536/360);if(!isfinite(word)||fabs(word)>9007199254740991.0) return application_fail(e,QA_ERROR_ARGUMENT,"Native user command aim exceeds its source integer ABI");
-            qa_store_u16le(s->command+2+i*2,(uint16_t)(uint32_t)fmod(fmod(word,65536)+65536,65536));}
+        else qa_store_u16le(s->command+2+i*2,qa_angle_to_word((float)angles[i]));
     }
     for(size_t i=0;i<(rerelease?2u:3u);++i) {
         if(!isfinite(moves[i])||(!rerelease&&(moves[i]<INT16_MIN||moves[i]>INT16_MAX))||!isfinite((float)moves[i]))

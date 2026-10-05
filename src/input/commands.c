@@ -13,15 +13,6 @@ static bool pressed(const qa_seat_input_sample *s, qa_input_action action) {
 static float add(float value, float amount, bool integral) {
     return integral ? truncf(value + amount) : value + amount;
 }
-/* Reduce before conversion so accumulated turns never cause an out-of-range C
- * integer cast. The truncation and 16-bit wrap are the source angle encoding.
- */
-static uint16_t angle_word(float angle) {
-    double word = fmod(trunc((double)angle * (65536.0 / 360.0)), 65536.0);
-    if (word < 0)
-        word += 65536;
-    return (uint16_t)word;
-}
 qa_input_command_tuning qa_input_command_defaults(qa_movement_kind kind) {
     bool q1 = kind == QA_MOVEMENT_NETQUAKE || kind == QA_MOVEMENT_QUAKEWORLD;
     return (qa_input_command_tuning){.view = {.forward_speed = 200,
@@ -117,7 +108,7 @@ bool qa_input_command_build(qa_input_command_builder *builder, const qa_input_co
             return false;
         }
         if (q1)
-            yaw = (float)angle_word(yaw) * (360.0f / 65536.0f);
+            yaw = qa_angle_mod(yaw);
     }
     if (klook && !q3) {
         pitch -= angle_speed * v->pitch_speed * fraction(s, QA_INPUT_FORWARD);
@@ -259,9 +250,9 @@ bool qa_input_command_build(qa_input_command_builder *builder, const qa_input_co
             command.acknowledged_server_seconds = f->acknowledged_server_seconds;
     }
     if (q3 || f->kind == QA_MOVEMENT_Q2_CLASSIC) {
-        command.angle_words[0] = angle_word(pitch);
-        command.angle_words[1] = angle_word(yaw);
-        command.angle_words[2] = angle_word(roll);
+        command.angle_words[0] = qa_angle_to_word(pitch);
+        command.angle_words[1] = qa_angle_to_word(yaw);
+        command.angle_words[2] = qa_angle_to_word(roll);
     }
     bool integral = f->kind != QA_MOVEMENT_Q2_RERELEASE;
     command.forward_move = integral ? truncf(forward) : forward;
