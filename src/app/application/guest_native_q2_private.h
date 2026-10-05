@@ -124,6 +124,7 @@ bool application_native_q2_weapon_request(application_provider *, qa_actor_id,
 bool application_native_q2_weapon_accepts(application_provider *, qa_actor_id,
     qa_item_id, bool *admitted, qa_error *);
 qa_native_host_engine_services application_native_q2_services(struct application_native_q2 *);
+bool application_native_q2_resources_reconnect(struct application_native_q2 *, qa_error *);
 qa_native_host_movement_services application_native_q2_movement_services(struct application_native_q2 *);
 bool application_native_q2_move(application_provider *, qa_actor_id,
     const qa_movement_command *, bool *, qa_error *);

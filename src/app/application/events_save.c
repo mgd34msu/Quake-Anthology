@@ -6,6 +6,8 @@
 #include "save_content.h"
 #include "qa/json.h"
 #include "qa/application_network_q2.h"
+#include "native_q1_wire.h"
+#include "guest_native_q2_private.h"
 
 #include <limits.h>
 #include <math.h>
@@ -1007,31 +1009,36 @@ static bool normalized_field(qa_source_save_io *io, event_store *store, applicat
         application_unified_event_actors_valid(store->application, row, io->error);
 }
 
+static bool derived_key_field(qa_source_save_io *io)
+{
+    size_t size = 0;
+    qa_bytes unused;
+    return qa_source_save_count(io, &size, 16u * 1024u * 1024u) &&
+        (io->direction != QA_SOURCE_SAVE_READ || qa_source_save_span(io, size, &unused));
+}
+
 static bool persistent_rows(qa_source_save_io *io, event_store *store)
 {
     for (size_t i = 0; i < store->persistent_count; ++i) {
         application_unified_persistent_event *row = store->persistent + i;
         if (!normalized_field(io, store, &row->event)) return false;
-        qa_bytes key = {row->key.data, row->key.size};
-        if (!payload_field(io, store, &key)) return false;
+        if (!derived_key_field(io)) return false;
         if (!row->event.presentation.size || row->event.simulation.size || row->event.link_presentation ||
             row->event.simulation_sequence || row->event.order >= store->unified_sequence ||
             row->event.presentation_sequence >= store->presentation_sequence ||
             (i && row->event.presentation_sequence <= store->persistent[i - 1].event.presentation_sequence))
             return event_fail(io, QA_ERROR_FORMAT, "Persistent presentation lost its original emitted sequence");
-        qa_buffer expected = {0}; bool remove = false;
-        bool valid = application_unified_persistent_key(store->application, &row->event, &expected, &remove, io->error) &&
-            expected.size && !remove && expected.size == key.size && !memcmp(expected.data, key.data, key.size);
-        qa_buffer_free(&expected);
-        if (!valid) return event_fail(io, QA_ERROR_FORMAT, "Persistent presentation differs from its actual source domain");
-        for (size_t n = 0; n < i; ++n)
-            if (store->persistent[n].key.size == key.size && !memcmp(store->persistent[n].key.data, key.data, key.size))
-                return event_fail(io, QA_ERROR_FORMAT, "Persistent presentation repeats an owned domain");
         if (io->direction == QA_SOURCE_SAVE_READ) {
-            row->key.data = malloc(key.size); row->key.size = key.size;
+            bool remove = false;
+            if (!application_unified_persistent_key(store->application, &row->event, &row->key, &remove, io->error) ||
+                !row->key.size || remove)
+                return event_fail(io, QA_ERROR_FORMAT, "Persistent presentation has no actual source domain");
+            for (size_t n = 0; n < i; ++n)
+                if (store->persistent[n].key.size == row->key.size &&
+                    !memcmp(store->persistent[n].key.data, row->key.data, row->key.size))
+                    return event_fail(io, QA_ERROR_FORMAT, "Persistent presentation repeats an owned domain");
             row->payload.data = malloc(row->event.presentation.size); row->payload.size = row->event.presentation.size;
-            if (!row->key.data || !row->payload.data) return event_fail(io, QA_ERROR_MEMORY, "Retaining decoded persistent presentation");
-            memcpy(row->key.data, key.data, key.size);
+            if (!row->payload.data) return event_fail(io, QA_ERROR_MEMORY, "Retaining decoded persistent presentation");
             memcpy(row->payload.data, row->event.presentation.data, row->payload.size);
             row->event.presentation = (qa_bytes){row->payload.data, row->payload.size};
         }
@@ -1142,21 +1149,10 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
             !qa_vfs_acquisition_opening_codec(io, files, opening) || !opening->opening_present ||
             !qa_vfs_acquisition_retained(files, opening, io->error))
             return event_fail(io, QA_ERROR_FORMAT, "Source dictionary lost its actual acquisition opening");
-        size_t size = row->key.size;
-        if (!qa_source_save_count(io, &size, 16u * 1024u * 1024u) || !size) return false;
+        if (!derived_key_field(io)) return false;
         if (io->direction == QA_SOURCE_SAVE_READ) {
-            if (size > io->input.size - io->offset)
-                return event_fail(io, QA_ERROR_FORMAT, "Truncated Source resource key");
-            row->key.data = malloc(size); row->key.size = size;
-            if (!row->key.data) return event_fail(io, QA_ERROR_MEMORY, "Retaining restored Source dictionary key");
             row->saved_pool = pool; row->saved_resource = resource; row->saved_view = view;
         }
-        if (!qa_source_save_bytes(io, row->key.data, size)) return false;
-        qa_unified_document *key = NULL;
-        bool valid = qa_unified_document_create(QA_UNIFIED_CHECKPOINT,
-            (qa_bytes){row->key.data, row->key.size}, &key, io->error);
-        qa_unified_document_destroy(key);
-        if (!valid) return event_fail(io, QA_ERROR_FORMAT, "Source resource key is malformed");
         for (size_t j = 0; j < i; ++j)
             if (!strcmp(row->id, store->resources[j].id))
                 return event_fail(io, QA_ERROR_FORMAT, "Source resource dictionary identity is duplicated");
@@ -1222,14 +1218,7 @@ static bool custody_valid(const application_unified_event_resource *row, qa_appl
         qa_resource_pool_find(qa_vfs_resources(view), qa_resource_id(actual)) != actual ||
         !opening->opening_present || !qa_vfs_acquisition_retained(view, opening, error))
         return application_fail(error, QA_ERROR_FORMAT, "Source dictionary cannot bind its decoded immutable CONTENT opening");
-    qa_product product = {.identity = content};
-    qa_unified_document *key = NULL;
-    char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
-    if (!application_unified_resource_key(&product, path, actual, &key, id, error)) return false;
-    qa_bytes bytes = qa_json_source(qa_unified_document_json(key), qa_unified_document_root(key));
-    bool same = !strcmp(id, row->id) && bytes.size == row->key.size && !memcmp(bytes.data, row->key.data, bytes.size);
-    qa_unified_document_destroy(key);
-    return same || application_fail(error, QA_ERROR_FORMAT, "Source dictionary key differs from its actual saved opening bytes");
+    return true;
 }
 
 static bool resource_bindings(event_store *store, qa_application *app, qa_error *error)
@@ -1251,6 +1240,18 @@ static bool resource_bindings(event_store *store, qa_application *app, qa_error 
             application_unified_event_resource_custody *held = row->custodies + j;
             if (!custody_valid(row, app, held->saved_pool, held->saved_resource, held->saved_view, &held->opening, error)) return false;
         }
+        qa_product product = {.identity = qa_strings_cstr(qa_session_strings(app->session), row->content)};
+        const char *path = qa_strings_cstr(qa_session_strings(app->session), row->path);
+        const qa_resource *actual = qa_application_content_resource(app->content_graph, row->saved_pool, row->saved_resource);
+        qa_unified_document *key = NULL;
+        char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
+        if (!application_unified_resource_key(&product, path, actual, &key, id, error)) return false;
+        qa_bytes bytes = qa_json_source(qa_unified_document_json(key), qa_unified_document_root(key));
+        row->key.data = malloc(bytes.size); row->key.size = bytes.size;
+        if (row->key.data) memcpy(row->key.data, bytes.data, bytes.size);
+        qa_unified_document_destroy(key);
+        if (!row->key.data)
+            return application_fail(error, QA_ERROR_MEMORY, "Rebuilding Source resource key");
     }
     for (size_t i = 0; i < store->registration_count; ++i) {
         const application_unified_event_registration *row = store->registrations + i;
@@ -1343,15 +1344,148 @@ static bool leased(qa_application *app, qa_error *error)
     return true;
 }
 
+static bool resource_uses(const event_store *store, const qa_json_document *json,
+    qa_json_id value, bool *used, unsigned depth, qa_error *error)
+{
+    if (depth > 128)
+        return application_fail(error, QA_ERROR_FORMAT, "Source resource reference nesting exceeds its payload");
+    qa_json_kind kind = qa_json_type(json, value);
+    if (kind == QA_JSON_STRING) {
+        qa_buffer text = {0};
+        if (!qa_json_string(json, value, &text, error)) return false;
+        if (text.size == QA_APPLICATION_RESOURCE_KEY_CAPACITY - 1 &&
+            !memcmp(text.data, "resource:unified:", sizeof("resource:unified:") - 1))
+            for (size_t i = 0; i < store->resource_count; ++i)
+                if (!strcmp((const char *)text.data, store->resources[i].id)) used[i] = true;
+        qa_buffer_free(&text);
+    } else if (kind == QA_JSON_ARRAY || kind == QA_JSON_OBJECT)
+        for (size_t i = 0; i < qa_json_size(json, value); ++i)
+            if (!resource_uses(store, json, qa_json_at(json, value, i), used, depth + 1, error)) return false;
+    return true;
+}
+
+static bool payload_resource_uses(const event_store *store, qa_bytes payload, bool *used, qa_error *error)
+{
+    if (!payload.size) return true;
+    qa_json_document *json = NULL;
+    bool ok = qa_json_parse(payload, &json, error) &&
+        resource_uses(store, json, qa_json_root(json), used, 0, error);
+    qa_json_destroy(json);
+    return ok;
+}
+
+static bool registration_rebuilt(const event_store *store,
+    const application_unified_event_registration *registration)
+{
+    const qa_application *app = store->application;
+    for (size_t i = 0; i < app->provider_count; ++i) {
+        const application_provider *provider = app->providers[i];
+        if (provider->owner != registration->provider) continue;
+        if (provider->kind == APPLICATION_PROVIDER_Q1)
+            return registration->kind == QA_NATIVE_HOST_SOUND && qa_q1_wire_enabled(provider->state.q1);
+        if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
+            return provider->state.native.q2_engine->profile != QA_NATIVE_Q2_CGAME_API2023;
+        return false;
+    }
+    return false;
+}
+
+static bool retained_resources(event_store *store, qa_error *error)
+{
+    bool *used = store->resource_count ? calloc(store->resource_count, sizeof(*used)) : NULL;
+    size_t *indices = store->resource_count ? malloc(store->resource_count * sizeof(*indices)) : NULL;
+    application_unified_event_resource *resources = store->resource_count ?
+        malloc(store->resource_count * sizeof(*resources)) : NULL;
+    application_unified_event_registration *registrations = store->registration_count ?
+        malloc(store->registration_count * sizeof(*registrations)) : NULL;
+    if ((store->resource_count && (!used || !indices || !resources)) ||
+        (store->registration_count && !registrations)) {
+        free(used); free(indices); free(resources); free(registrations);
+        return application_fail(error, QA_ERROR_MEMORY, "Retaining referenced Source event openings");
+    }
+    bool ok = true;
+    for (size_t i = 0; ok && i < store->unified_count; ++i)
+        ok = payload_resource_uses(store, store->unified[i].presentation, used, error) &&
+            payload_resource_uses(store, store->unified[i].simulation, used, error);
+    for (size_t i = 0; ok && i < store->persistent_count; ++i)
+        ok = payload_resource_uses(store, store->persistent[i].event.presentation, used, error) &&
+            payload_resource_uses(store, store->persistent[i].event.simulation, used, error);
+    for (size_t i = 0; i < store->counts[4]; ++i) {
+        const qa_application_protocol_event *event = &store->protocol[i].event;
+        for (size_t j = 0; j < event->resource_count; ++j)
+            for (size_t n = 0; n < store->resource_count; ++n)
+                if (!strcmp(event->resources[j].resource_key, store->resources[n].id)) used[n] = true;
+    }
+    size_t registration_count = 0, resource_count = 0;
+    for (size_t i = 0; ok && i < store->registration_count; ++i) {
+        const application_unified_event_registration *row = store->registrations + i;
+        if (registration_rebuilt(store, row)) continue;
+        if (row->resource >= store->resource_count) {
+            ok = application_fail(error, QA_ERROR_FORMAT, "Source registration lost its retained event opening");
+            break;
+        }
+        used[row->resource] = true;
+        registrations[registration_count++] = *row;
+    }
+    if (ok) {
+        for (size_t i = 0; i < store->resource_count; ++i)
+            if (used[i]) {
+                indices[i] = resource_count;
+                resources[resource_count++] = store->resources[i];
+            }
+        for (size_t i = 0; i < registration_count; ++i)
+            registrations[i].resource = indices[registrations[i].resource];
+        store->resources = resources;
+        store->resource_count = store->resource_capacity = resource_count;
+        store->registrations = registrations;
+        store->registration_count = store->registration_capacity = registration_count;
+    } else { free(resources); free(registrations); }
+    free(used); free(indices);
+    return ok;
+}
+
 bool application_events_save_capture(qa_application *app, qa_buffer *out, qa_error *error)
 {
     if (!out || out->data || out->size || !leased(app, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Application event capture requires an empty output and leased owner");
     event_store store = borrow_store(app);
+    if (!retained_resources(&store, error)) return false;
     qa_source_save_io io = {0};
     bool ok = qa_source_save_writer(&io, app->session, error) && prefix(&io, &store) &&
         rows(&io, &store) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
+    free(store.resources); free(store.registrations);
+    return ok;
+}
+
+bool application_events_save_content_visit(qa_application *app,
+    const qa_application_content_visitor *visitor, qa_error *error)
+{
+    event_store store = borrow_store(app);
+    if (!retained_resources(&store, error)) return false;
+    bool ok = true;
+    for (size_t i = 0; ok && i < store.resource_count; ++i) {
+        const application_unified_event_resource *row = store.resources + i;
+        ok = row->view && row->pool && row->resource &&
+            qa_vfs_resources(row->view) == row->pool && row->opening.opening_present &&
+            row->opening.resource_id == qa_resource_id(row->resource) &&
+            qa_vfs_acquisition_retained(row->view, &row->opening, error) &&
+            qa_resource_pool_find(row->pool, qa_resource_id(row->resource)) == row->resource &&
+            visitor->view(visitor->context, row->view, error);
+        if (!ok && (!error || error->code == QA_OK))
+            application_fail(error, QA_ERROR_FORMAT, "Source event resource lost its actual immutable opening");
+        for (size_t j = 0; ok && j < row->custody_count; ++j) {
+            const application_unified_event_resource_custody *held = row->custodies + j;
+            ok = held->view && held->pool && held->resource && qa_vfs_resources(held->view) == held->pool &&
+                held->opening.opening_present && held->opening.resource_id == qa_resource_id(held->resource) &&
+                qa_resource_pool_find(held->pool, qa_resource_id(held->resource)) == held->resource &&
+                qa_vfs_acquisition_retained(held->view, &held->opening, error) &&
+                visitor->view(visitor->context, held->view, error);
+            if (!ok && (!error || error->code == QA_OK))
+                application_fail(error, QA_ERROR_FORMAT, "Source event custody lost its actual immutable opening");
+        }
+    }
+    free(store.resources); free(store.registrations);
     return ok;
 }
 
@@ -1464,7 +1598,13 @@ bool qa_application_events_restore(qa_application *app, qa_bytes bytes, qa_error
 {
     if (!public_lease(app, error)) return false;
     bool ok = application_events_save_restore(app, bytes, error) &&
-        application_unified_events_restore_finish(app, error);
+        application_native_q1_wire_reconnect(app, error);
+    for (size_t i = 0; ok && i < app->provider_count; ++i) {
+        application_provider *provider = app->providers[i];
+        if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
+            ok = application_native_q2_resources_reconnect(provider->state.native.q2_engine, error);
+    }
+    if (ok) ok = application_unified_events_restore_finish(app, error);
     app->operation = APPLICATION_IDLE;
     return ok;
 }

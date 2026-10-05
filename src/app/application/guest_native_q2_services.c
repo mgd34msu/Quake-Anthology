@@ -149,6 +149,18 @@ static bool register_file(struct application_native_q2 *engine, qa_native_host_r
     return ok;
 }
 
+bool application_native_q2_resources_reconnect(struct application_native_q2 *engine, qa_error *error)
+{
+    for (unsigned kind = 0; kind <= QA_NATIVE_HOST_IMAGE; ++kind) {
+        uint32_t base = engine->resource_base[kind];
+        for (uint32_t i = 1; i < engine->resource_limit[kind]; ++i) {
+            const char *name = engine->configstrings[base + i];
+            if (name && *name && !register_file(engine, (qa_native_host_resource_kind)kind, name, error)) return false;
+        }
+    }
+    return true;
+}
+
 static bool resource(void *opaque, qa_native_host_resource_kind kind, const char *name,
                        int32_t *out, qa_error *error)
 {

@@ -7,6 +7,7 @@
 #include "qa/vfs_save.h"
 #include "qa/application_q3_factory.h"
 #include "equipment_runtime.h"
+#include "events_save.h"
 #include "qa/map_sidecars.h"
 
 #include <stdlib.h>
@@ -268,26 +269,7 @@ bool application_save_content_collect(qa_application *app, qa_application_conten
     if (ok) ok = qa_application_q3_content_visit(app, &visitor, error);
     if (ok) ok = application_q3_components_content_visit(app->components,&visitor,error);
     if (ok) ok = application_bots_content_visit(app,&visitor,error);
-    for (size_t i = 0; ok && i < application_unified_event_resource_count(app); ++i) {
-        const application_unified_event_resource *row = application_unified_event_resource_at(app, i);
-        ok = row && row->view && row->pool && row->resource &&
-            qa_vfs_resources(row->view) == row->pool && row->opening.opening_present &&
-            row->opening.resource_id == qa_resource_id(row->resource) &&
-            qa_vfs_acquisition_retained(row->view, &row->opening, error) &&
-            qa_resource_pool_find(row->pool, qa_resource_id(row->resource)) == row->resource &&
-            add_view(g, row->view, error);
-        if (!ok && (!error || error->code == QA_OK))
-            fail(error, QA_ERROR_FORMAT, "Source event resource lost its actual immutable pool");
-        for (size_t j = 0; ok && j < row->custody_count; ++j) {
-            const application_unified_event_resource_custody *held = row->custodies + j;
-            ok = held->view && held->pool && held->resource && qa_vfs_resources(held->view) == held->pool &&
-                held->opening.opening_present && held->opening.resource_id == qa_resource_id(held->resource) &&
-                qa_resource_pool_find(held->pool, qa_resource_id(held->resource)) == held->resource &&
-                qa_vfs_acquisition_retained(held->view, &held->opening, error) && add_view(g, held->view, error);
-            if (!ok && (!error || error->code == QA_OK))
-                fail(error, QA_ERROR_FORMAT, "Source event custody lost its actual immutable opening");
-        }
-    }
+    if (ok) ok = application_events_save_content_visit(app, &visitor, error);
     for (size_t i = 0; ok && i < application_equipment_runtime_source_count(app->equipment_runtime); ++i) {
         application_equipment_runtime_source source;
         ok = application_equipment_runtime_source_at(app->equipment_runtime, i, &source, error);
