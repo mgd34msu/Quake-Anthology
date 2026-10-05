@@ -279,7 +279,7 @@ bool application_q3_components_destroy(application_q3_components **slot,qa_error
     }
     if(owner->owns_clients&&!application_q3_component_client_adapter_destroy(&owner->clients_adapter,e)) return false;
     qa_buffer_free(&owner->entity_text);
-    for(size_t i=0;i<owner->saved_count;++i) { qa_buffer_free(&owner->saved[i].game); qa_buffer_free(&owner->saved[i].scenes); }
+    for(size_t i=0;i<owner->saved_count;++i) qa_buffer_free(&owner->saved[i].game);
     free(owner->saved);
     qa_launch_snapshot_release(owner->options.snapshot);
     free(owner->retained); free(owner->rows); free(owner); *slot=NULL; return true;

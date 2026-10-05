@@ -15,7 +15,7 @@ typedef struct component_saved_row {
     const char *instance,*key;
     uint64_t owner,generation,services;
     qa_sha256_digest program,declaration;
-    qa_buffer game,scenes;
+    qa_buffer game;
 } component_saved_row;
 typedef struct component_game_row {
     application_q3_components *roster;
@@ -59,6 +59,4 @@ bool q3components_scenes_idle(const component_game_row *);
 bool q3components_identity(component_game_row *,qa_error *);
 bool q3components_saved_read(application_q3_components *,qa_bytes,qa_error *);
 bool q3components_saved_import(component_game_row *,qa_error *);
-bool q3components_scenes_checkpoint(component_game_row *,qa_buffer *,qa_error *);
-bool q3components_scenes_saved_read(component_game_row *,qa_bytes,qa_error *);
 #endif

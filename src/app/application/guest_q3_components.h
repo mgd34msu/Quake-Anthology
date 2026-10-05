@@ -9,10 +9,6 @@
 #include "unified_components_identity.h"
 
 typedef struct application_q3_components application_q3_components;
-/* MEDIA creates the actual private registry owners before dictionary import.
- * Finish runs after those registries are restored; neither phase replays Init. */
-bool application_q3_components_scenes_restore_prepare(qa_application *,qa_error *);
-bool application_q3_components_scenes_restore_finish(qa_application *,qa_error *);
 typedef struct application_q3_component_publication_lease application_q3_component_publication_lease;
 typedef struct application_q3_components_options {
     application_q3_components *previous;

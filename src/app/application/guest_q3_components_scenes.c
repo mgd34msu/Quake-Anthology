@@ -4,9 +4,6 @@
 #include "qa/json.h"
 #include "qa/application_q3_components.h"
 #include "guest_q3_components_video.h"
-#include "qa/cvars_save.h"
-#include "qa/console_save.h"
-#include "qa/persistence_fields.h"
 #include <stdio.h>
 
 typedef struct component_pending_event { application_q3_scene_player_event event; uint64_t sequence; } component_pending_event;
@@ -31,8 +28,6 @@ struct component_scene_row {
     uint64_t sequence,frontend_identity;
     component_pending_event *events;
     size_t event_count,event_cursor;
-    qa_buffer saved_scene,saved_cvars,saved_console;
-    bool restore_pending,restore_constructed,restore_consoles,restore_imported;
     bool initialized,host_entered,advanced;
 };
 bool q3components_player_event(void *context,const application_q3_scene_player_event *event,uint64_t sequence,qa_error *e)
@@ -122,10 +117,7 @@ static bool open_scene(component_scene_row *row,qa_error *e)
     free(normalized); qa_json_destroy(document);
     if(!ok) return false;
     }
-    qa_actor_owner saved_services=row->services;
     if(!scene_identity(row,e)) return false;
-    if(row->restore_pending&&row->services!=saved_services)
-        return application_fail(e,QA_ERROR_FORMAT,"Restored component CG service namespace differs from its actual viewer");
     qa_cvar_options cvars={.dialect=QA_CONSOLE_Q3,.user=row,.print=print,.cheats_allowed=cheats};
     if(!row->cvars) row->cvars=qa_cvars_create(&cvars,e);
     if(!row->cvars) return false;
@@ -141,7 +133,6 @@ static bool open_scene(component_scene_row *row,qa_error *e)
         .cvars=row->cvars,.console=row->console,.command_context={.owner=row->services,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_LOCAL},.common={.context=row,.print=print}};
     if(!options->scene_factory.prepare) return application_fail(e,QA_ERROR_UNSUPPORTED,"Component scene lacks its real renderer factory");
     application_q3_component_scene_preparation preparation={.component=game->publication.metadata,.descriptor=game->publication.descriptor,
-        .restoring=row->restore_pending,.frontend_identity=row->restore_pending?row->frontend_identity:0,
         .catalog=game->provider->product_catalog,.owner=game->publication.owner,.generation=game->publication.generation,
         .service_owner=row->services,.physical_seat=row->seat,.viewer=row->viewer,.content=game->publication.content,
         .artifact=row->artifact,.acquisition=&row->acquisition,.profile=row->profile,.source=row->source,
@@ -153,10 +144,9 @@ static bool open_scene(component_scene_row *row,qa_error *e)
         return application_fail(e,QA_ERROR_ARGUMENT,"Component scene factory omitted its actual physical identity");
     application_q3_scene_options create={.profile=row->profile,.host=row->host,.assets=row->assets,.viewer=row->viewer,.source=row->source,
         .output_context=row->frontend.owner,.finish_output=row->frontend.finish};
-    bool created=application_q3_scene_create(&create,row->restore_pending,&row->scene,e);
+    bool created=application_q3_scene_create(&create,false,&row->scene,e);
     row->host_entered=row->scene!=NULL;
     if(!created) return false;
-    if(row->restore_pending) { row->restore_constructed=true; return true; }
     if(!row->frontend.begin(row->frontend.owner,0,e)||!application_q3_scene_initialize(row->scene,e)) return false;
     row->initialized=true; return true;
 }
@@ -220,7 +210,6 @@ bool q3components_scenes_destroy(component_game_row *game,qa_error *e)
         qa_console_destroy(row->console); qa_cvars_destroy(row->cvars);
         application_q3_scene_profile_destroy(row->profile); qa_qvm_image_release(row->image);
         qa_resource_release(row->artifact); qa_vfs_acquisition_dispose(&row->acquisition);
-        qa_buffer_free(&row->saved_scene); qa_buffer_free(&row->saved_cvars); qa_buffer_free(&row->saved_console);
         game->scenes=row->next; free(row->events); free(row);
     }
     return true;
@@ -401,145 +390,4 @@ bool application_q3_components_video_finish(application_q3_components_video **sl
 bool application_q3_components_video_abort(application_q3_components_video **slot,qa_error *e)
 {
     return !slot||!*slot||(application_q3_components_video_reopen(*slot,e)&&application_q3_components_video_finish(slot,e));
-}
-static bool scene_blob(qa_source_save_io *io,qa_buffer *buffer)
-{
-    size_t size=buffer->size;
-    if(!qa_source_save_count(io,&size,UINT32_MAX)||!size) return false;
-    if(io->direction==QA_SOURCE_SAVE_READ) {
-        buffer->data=malloc(size); buffer->size=size;
-        if(!buffer->data) return application_fail(io->error,QA_ERROR_MEMORY,"Retaining actual component scene continuation");
-    }
-    return qa_source_save_bytes(io,buffer->data,size);
-}
-static bool scene_fields(qa_source_save_io *io,component_scene_row *row)
-{
-    uint64_t services=row->services;
-    if(!qa_source_save_actor(io,&row->viewer)||!row->viewer.registry||!qa_source_save_u32(io,&row->seat)||
-        row->seat>=qa_launch_snapshot_choices(row->game->roster->options.snapshot)->seat_count||
-        !qa_source_save_u64(io,&services)||!services||services>UINT32_MAX||
-        !qa_source_save_u64(io,&row->frontend_identity)||!row->frontend_identity||
-        !qa_source_save_vec3(io,&row->view.origin)||!qa_vec_finite(row->view.origin)) return false;
-    row->services=(qa_actor_owner)services;
-    for(size_t i=0;i<3;++i) if(!qa_source_save_vec3(io,row->view.axis+i)||!qa_vec_finite(row->view.axis[i])) return false;
-    if(!qa_source_save_i32(io,&row->view.time_ms)||row->view.time_ms<0||
-        !qa_source_save_i32(io,&row->view.frame_ms)||row->view.frame_ms<0||
-        !qa_source_save_u64(io,&row->sequence)||!qa_source_save_bool(io,&row->advanced)||
-        !scene_blob(io,&row->saved_scene)||!scene_blob(io,&row->saved_cvars)||!scene_blob(io,&row->saved_console)) return false;
-    size_t count=row->event_count-row->event_cursor;
-    if(!qa_source_save_count(io,&count,UINT32_MAX)) return false;
-    if(io->direction==QA_SOURCE_SAVE_READ) {
-        row->events=count?calloc(count,sizeof(*row->events)):NULL; row->event_count=count; row->event_cursor=0;
-        if(count&&!row->events) return application_fail(io->error,QA_ERROR_MEMORY,"Retaining saved original CG player event queue");
-    }
-    for(size_t i=0;i<count;++i) {
-        component_pending_event *event=row->events+row->event_cursor+i;
-        if(!qa_source_save_u64(io,&event->sequence)||!event->sequence||
-            !q3component_player_event_fields(row->game->publication.abi,io,&event->event)||
-            (i&&event[-1].sequence>=event->sequence)) return false;
-    }
-    return true;
-}
-bool q3components_scenes_checkpoint(component_game_row *game,qa_buffer *out,qa_error *e)
-{
-    if(!game||!out||out->data||out->size||!q3components_scenes_idle(game))
-        return application_fail(e,QA_ERROR_ARGUMENT,"Component scene capture requires returned physical children");
-    size_t count=0;
-    for(component_scene_row *row=game->scenes;row;row=row->next) ++count;
-    qa_source_save_io io={0}; uint8_t magic[4]={'Q','G','C','S'};
-    bool ok=qa_source_save_writer(&io,game->roster->options.application->session,e)&&qa_source_save_bytes(&io,magic,4)&&
-        qa_source_save_count(&io,&count,UINT32_MAX);
-    for(component_scene_row *row=game->scenes;ok&&row;row=row->next) {
-        component_scene_row saved=*row; saved.saved_scene=saved.saved_cvars=saved.saved_console=(qa_buffer){0};
-        ok=row->initialized&&!row->restore_pending&&application_q3_scene_checkpoint(row->scene,&saved.saved_scene,e)&&
-            qa_cvars_save_capture(row->cvars,&saved.saved_cvars,e)&&
-            qa_console_save_capture(row->console,game->roster->options.application->session,&saved.saved_console,e)&&scene_fields(&io,&saved);
-        qa_buffer_free(&saved.saved_scene); qa_buffer_free(&saved.saved_cvars); qa_buffer_free(&saved.saved_console);
-    }
-    if(ok) ok=qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); return ok;
-}
-bool q3components_scenes_saved_read(component_game_row *game,qa_bytes bytes,qa_error *e)
-{
-    if(!game||game->scenes) return application_fail(e,QA_ERROR_ARGUMENT,"Component scene topology requires an empty actual roster");
-    qa_source_save_io io={0}; uint8_t magic[4]={0}; size_t count=0;
-    bool ok=qa_source_save_reader(&io,game->roster->options.application->session,bytes,e)&&qa_source_save_bytes(&io,magic,4)&&
-        !memcmp(magic,"QGCS",4)&&qa_source_save_count(&io,&count,UINT32_MAX);
-    component_scene_row **tail=&game->scenes;
-    for(size_t i=0;ok&&i<count;++i) {
-        component_scene_row *row=calloc(1,sizeof(*row));
-        if(!row) { ok=application_fail(e,QA_ERROR_MEMORY,"Retaining real restored component viewer"); break; }
-        row->game=game; *tail=row; tail=&row->next; row->restore_pending=true;
-        row->view=(application_q3_component_view){.source=game->publication.source,
-            .weapon_presented=game->roster->options.weapon_presented,.weapon_context=game->roster->options.weapon_context};
-        ok=scene_fields(&io,row); row->view.viewer=row->viewer;
-        row->source=application_q3_component_view_services(&row->view);
-        for(component_scene_row *prior=game->scenes;ok&&prior!=row;prior=prior->next)
-            if(prior->frontend_identity==row->frontend_identity||prior->services==row->services||
-                (prior->seat==row->seat&&qa_actor_id_equal(prior->viewer,row->viewer)))
-                ok=application_fail(e,QA_ERROR_FORMAT,"Component scene topology duplicates a physical viewer or renderer");
-        for(size_t k=0;ok&&k<game->roster->count;++k) {
-            component_game_row *other=game->roster->rows[k]; if(!other||other==game) continue;
-            for(component_scene_row *prior=other->scenes;ok&&prior;prior=prior->next)
-                if(prior->frontend_identity==row->frontend_identity||prior->services==row->services)
-                    ok=application_fail(e,QA_ERROR_FORMAT,"Component scene topology aliases another actual private renderer");
-        }
-    }
-    if(ok) ok=qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io); return ok;
-}
-static bool restored_identity(void *context,qa_console_save_identity kind,uint64_t saved,uint64_t *out,qa_error *e)
-{
-    component_scene_row *row=context;
-    if(saved&&(kind!=QA_CONSOLE_SAVE_OWNER||saved!=row->services))
-        return application_fail(e,QA_ERROR_FORMAT,"Component CG console identity differs from its actual retained viewer");
-    *out=saved; return true;
-}
-static bool restored_command(void *context,uint64_t registry,const qa_command_context *saved,qa_command_context *out,qa_error *e)
-{
-    component_scene_row *row=context;
-    if(!registry||saved->session||saved->client||saved->owner!=row->services||saved->dialect!=QA_CONSOLE_Q3)
-        return application_fail(e,QA_ERROR_FORMAT,"Component CG command lost its literal saved receiver");
-    *out=*saved;
-    if(saved->registry==registry) out->registry=qa_actors_identity(qa_session_actors(row->game->roster->options.application->session));
-    else if(saved->registry) out->registry=0;
-    return true;
-}
-bool application_q3_components_scenes_restore_prepare(qa_application *app,qa_error *e)
-{
-    application_q3_components *owner=app?app->components:NULL;
-    if(!owner) return true;
-    if(owner->closing||owner->video||!application_q3_components_idle(owner))
-        return application_fail(e,QA_ERROR_ARGUMENT,"Component scene restore requires its actual returned candidate roster");
-    for(size_t i=0;i<owner->count;++i) for(component_scene_row *row=owner->rows[i]->scenes;row;row=row->next) {
-        if(!row->restore_pending||row->restore_consoles) continue;
-        if(!row->restore_constructed&&!open_scene(row,e)) return false;
-        qa_cvars_restore *cvars=NULL;
-        bool ok=qa_cvars_save_prepare(row->cvars,(qa_bytes){row->saved_cvars.data,row->saved_cvars.size},&cvars,e)&&qa_cvars_save_validate(cvars,e);
-        if(ok) { ok=qa_cvars_save_commit(cvars,e); if(ok) cvars=NULL; }
-        qa_cvars_save_abort(cvars);
-        qa_console_save_resolvers console={.context=row,.identity=restored_identity,.command_context=restored_command};
-        if(!ok||!qa_console_save_restore(row->console,app->session,&console,(qa_bytes){row->saved_console.data,row->saved_console.size},e)) return false;
-        row->restore_consoles=true;
-    }
-    return true;
-}
-bool application_q3_components_scenes_restore_finish(qa_application *app,qa_error *e)
-{
-    application_q3_components *owner=app?app->components:NULL;
-    if(!owner) return true;
-    if(owner->closing||owner->video||!application_q3_components_idle(owner))
-        return application_fail(e,QA_ERROR_ARGUMENT,"Component CG activation requires restored private dictionaries");
-    for(size_t i=0;i<owner->count;++i) for(component_scene_row *row=owner->rows[i]->scenes;row;row=row->next) {
-        if(!row->restore_pending) continue;
-        if(!row->restore_constructed||!row->restore_consoles) return application_fail(e,QA_ERROR_ARGUMENT,"Component CG restore omitted its actual renderer constructor or private console");
-        if(!row->restore_imported) {
-            if(!application_q3_scene_restore(row->scene,(qa_bytes){row->saved_scene.data,row->saved_scene.size},e)) return false;
-            row->restore_imported=true;
-        }
-        if(!application_q3_scene_finish_restore(row->scene,e)) return false;
-        row->restore_pending=false; row->initialized=true;
-        qa_buffer_free(&row->saved_scene); qa_buffer_free(&row->saved_cvars); qa_buffer_free(&row->saved_console);
-    }
-    return true;
 }
