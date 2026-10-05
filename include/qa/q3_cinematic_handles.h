@@ -93,25 +93,6 @@ typedef struct qa_q3_cinematic_slot {
     uint32_t flags;
 } qa_q3_cinematic_slot;
 bool qa_q3_cinematic_handles_at(const qa_q3_cinematic_handles *,uint32_t,qa_q3_cinematic_slot *);
-typedef struct qa_q3_cinematic_handles_refs {
-    void *context;
-    bool (*source_encode)(void *,const qa_q3_cinematic_source *,uint64_t *,qa_error *);
-    /* Returns the already reconstructed real source, belonging to this exact
-     * candidate pool. Decode never constructs or reruns its provider. */
-    bool (*source_decode)(void *,uint64_t,qa_q3_cinematic_source **,qa_error *);
-    bool (*source_clock_read)(void *,const qa_q3_cinematic_source *,double *,qa_error *);
-    bool (*asset_encode)(void *,const qa_q3_cinematic_source *,const qa_cinematic_asset *,uint64_t *,qa_error *);
-    bool (*asset_decode)(void *,const qa_q3_cinematic_source *,uint64_t,const char *,qa_cinematic_asset **,qa_error *);
-    bool (*audio_bus_decode)(void *,const qa_q3_cinematic_source *,uint64_t saved,uint64_t *actual,qa_error *);
-    /* System slots belong to their creating source's real fullscreen owner.
-     * The source is already resolved before decoding its retained handle. */
-    bool (*system_encode)(void *,const qa_q3_cinematic_source *,const qa_q3_system_movie *,uint32_t,qa_buffer *,qa_error *);
-    bool (*system_decode)(void *,const qa_q3_cinematic_source *,qa_bytes,uint32_t,qa_q3_system_movie *,qa_error *);
-    void (*system_discard)(void *,const qa_q3_cinematic_source *,qa_q3_system_movie *);
-    qa_q3_movie_checkpoint_refs movies;
-} qa_q3_cinematic_handles_refs;
-bool qa_q3_cinematic_handles_checkpoint(qa_q3_cinematic_handles *,const qa_q3_cinematic_handles_refs *,qa_buffer *,qa_error *);
-bool qa_q3_cinematic_handles_restore(qa_q3_cinematic_handles *,const qa_q3_cinematic_handles_refs *,double wall_milliseconds,qa_bytes,qa_error *);
 /* One global slot claim is held while all actual Source material libraries
  * prepare. New movies and allocations stay private until the banks publish. */
 bool qa_q3_cinematic_handles_stage_prepare(qa_q3_cinematic_handles *,qa_scene_resource_policy *,qa_q3_cinematic_handles_stage **,qa_error *);

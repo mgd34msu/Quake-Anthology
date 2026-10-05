@@ -699,3 +699,9 @@ bool qa_font_resource_policy_finish(qa_font_resource_policy **owner,qa_error *er
 { return policy_dispose(owner,true,error); }
 bool qa_font_resource_policy_abort(qa_font_resource_policy **owner,qa_error *error)
 { return policy_dispose(owner,false,error); }
+
+size_t qa_font_library_record_count(const qa_font_library *library) { return library?library->font_count:0; }
+const qa_font *qa_font_library_record_at(const qa_font_library *library, size_t index)
+{ return library && index<library->font_count?library->fonts[index]:NULL; }
+qa_scene_resources *qa_font_library_resource_owner(const qa_font_library *library)
+{ return library?library->resources:NULL; }

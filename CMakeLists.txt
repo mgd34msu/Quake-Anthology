@@ -162,7 +162,6 @@ add_library(qa_text STATIC
     src/text/captions.c
     src/text/media_captions.c
     src/text/font/library.c
-    src/text/font/save.c
     src/text/font/kfont.c
     src/text/font/freetype.c
     src/text/font/q3.c
@@ -758,10 +757,8 @@ add_library(qa_audio STATIC
     src/audio/codecs.c
     src/audio/device.c
     src/audio/engine.c
-    src/audio/engine_save.c
     src/audio/environments.c
     src/audio/mixer.c
-    src/audio/mixer_save.c
     src/audio/music.c
     src/audio/output.c
     src/audio/reverb.c
@@ -1094,7 +1091,6 @@ add_library(qa_q3_presentation STATIC
 
     src/presentation/q3/cinematic_handles.c
     src/presentation/q3/cinematic_handles_prepare.c
-    src/presentation/q3/cinematic_handles_save.c
 )
 target_link_libraries(qa_q3_presentation PUBLIC qa_scene qa_audio qa_media qa_text qa_input)
 

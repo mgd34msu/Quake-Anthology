@@ -10,7 +10,6 @@
 _Static_assert(sizeof(float) == 4 && FLT_RADIX == 2 && FLT_MANT_DIG == 24 && FLT_MAX_EXP == 128 &&
                sizeof(double) == 8 && DBL_MANT_DIG == 53 && DBL_MAX_EXP == 1024,
                "Audio checkpoint fields require binary32 and binary64");
-bool qa_audio_environment_definition_shared(const qa_audio_environment *, const qa_audio_environment *);
 static inline bool qa_ac_bad(qa_source_save_io *reader, const char *text) {
     if (!reader->failed) qa_error_set(reader->error, QA_ERROR_FORMAT, reader->offset, "%s", text);
     reader->failed = true; return false;

@@ -1,4 +1,5 @@
 #include "engine_internal.h"
+#include "qa/audio_save.h"
 #include "mixer_internal.h"
 #include "music_internal.h"
 #include <limits.h>
@@ -1360,4 +1361,46 @@ bool qa_audio_engine_reset_round(qa_audio_engine *engine, qa_error *error) {
     leave(engine);
     if (!result) return fail(error, QA_ERROR_ARGUMENT, "Audio round rejected callback destruction and retained its owners");
     return result;
+}
+
+qa_audio_music *qa_audio_engine_bus_music(qa_audio_engine *engine, uint64_t bus) {
+    if (engine && !engine->destroy_pending && !engine->destroying)
+        for (size_t i = 0; i < engine->bus_count; ++i)
+            if (engine->buses[i].id == bus && engine->buses[i].music) return engine->buses[i].music;
+    return NULL;
+}
+qa_audio_raw_stream *qa_audio_engine_bus_stream(qa_audio_engine *engine, uint64_t bus) {
+    if (engine && !engine->destroy_pending && !engine->destroying)
+        for (size_t i = 0; i < engine->bus_count; ++i)
+            if (engine->buses[i].id == bus && engine->buses[i].raw) return engine->buses[i].raw;
+    return NULL;
+}
+bool qa_audio_engine_music_ready(const qa_audio_engine *engine, uint64_t id,
+    uint32_t audience, float gain)
+{
+    if (!engine || engine->operation_depth || engine->callback_depth || engine->destroy_pending ||
+        engine->destroying || engine->round_resetting || engine->bus_count > engine->bus_capacity ||
+        (engine->bus_count && !engine->buses) || !isfinite(gain) || gain < 0) return false;
+    const audio_bus *bus = NULL;
+    for (size_t i = 0; i < engine->bus_count; ++i) {
+        const audio_bus *row = engine->buses + i;
+        if (row->id != id || !row->music) continue;
+        if (bus || row->raw) return false;
+        bus = row;
+    }
+    return bus && bus->audience == audience && !memcmp(&bus->gain, &gain, sizeof(gain));
+}
+
+bool qa_audio_engine_raw_ready(const qa_audio_engine *engine, uint64_t id,
+    uint32_t audience, float gain, bool present, qa_error *error)
+{
+    if (!engine || engine->operation_depth || engine->callback_depth || engine->destroy_pending || engine->destroying) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Raw queue qualification requires an idle restored engine"); return false;
+    }
+    const audio_bus *bus = NULL;
+    for (size_t i=0;i<engine->bus_count;++i) if (engine->buses[i].id==id && engine->buses[i].raw) { bus=&engine->buses[i]; break; }
+    if ((bus!=NULL)!=present || (bus && (bus->audience!=audience || memcmp(&bus->gain,&gain,sizeof(gain))))) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Restored cinematic queue presence or route differs"); return false;
+    }
+    return true;
 }

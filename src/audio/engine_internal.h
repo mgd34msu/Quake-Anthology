@@ -48,7 +48,6 @@ struct qa_audio_engine {
     void *geometry_user;
 };
 qa_audio_mixer_options qa_audio_engine_mixer_options(qa_audio_engine *engine);
-void qa_audio_engine_discard(qa_audio_engine *engine);
 bool qa_audio_engine_acoustics_transmit(void *, const qa_audio_listener *, qa_vec3,
     float *, qa_error *);
 void qa_audio_engine_acoustics_rebind(qa_audio_engine *);
