@@ -1,5 +1,6 @@
 #include "legacy/internal.h"
 #include "qa/scene_effects.h"
+#include "qa/text.h"
 #include "q1_sky.h"
 
 #include <ctype.h>
@@ -227,23 +228,30 @@ bool qaw_legacy_casts_shadow(const qa_scene_world *world, const qaw_surface *sur
     return (info.flags & excluded) == 0;
 }
 
+static int32_t legacy_integer(double value)
+{
+    return value >= INT32_MIN && value < 2147483648.0 ? (int32_t)value : INT32_MIN;
+}
+
 static qawl_texture *animated_texture(qa_scene_world *world, const qaw_legacy *legacy,
                                       const qa_scene_world_input *input)
 {
     qawl_world *data = world->legacy_data;
     qawl_texture *texture = &data->textures[legacy->texture];
     if (world->bsp.family == QA_BSP_Q2) {
-        double phase = input->use_animation_frame ? input->animation_frame : trunc(input->seconds * 2);
-        phase = fmod(phase, (double)legacy->frame_count);
-        if (phase < 0) phase += (double)legacy->frame_count;
+        int32_t frame;
+        if (input->use_animation_frame) memcpy(&frame,&input->animation_frame,sizeof(frame));
+        else frame = qa_source_float_to_i32((float)input->seconds * 2.0f);
+        int64_t phase = (int64_t)frame % (int64_t)legacy->frame_count;
+        if (phase < 0) phase += (int64_t)legacy->frame_count;
         return &data->textures[legacy->frames[(size_t)phase]];
     }
     unsigned cycle = texture->name[0] == '+' && toupper((unsigned char)texture->name[1]) >= 'A' ? 1u : 0u;
     if (input->alternate_animation && texture->animation_count[cycle ^ 1]) cycle ^= 1;
     size_t count = texture->animation_count[cycle];
     if (!count) return texture;
-    double phase = fmod(trunc(input->seconds * 10), (double)(count * 2));
-    if (phase < 0) phase += (double)(count * 2);
+    int32_t phase = legacy_integer(input->seconds * 10) % (int32_t)(count * 2);
+    if (phase < 0) phase += (int32_t)(count * 2);
     return &data->textures[texture->animation[cycle][(size_t)phase / 2]];
 }
 
@@ -259,8 +267,7 @@ static float turbulence(double phase, bool q1)
         7.39104f, 7.46394f, 7.53235f, 7.59623f, 7.65552f, 7.71021f, 7.76025f, 7.80562f,
         7.84628f, 7.88222f, 7.91341f, 7.93984f, 7.96148f, 7.97832f, 7.99036f, 7.99759f, 8
     };
-    double wrapped = fmod(trunc(phase * (256.0 / (2.0 * 3.14159265358979323846))), 256);
-    unsigned index = (unsigned)(wrapped < 0 ? wrapped + 256 : wrapped);
+    unsigned index = (unsigned)(uint32_t)legacy_integer(phase * (256.0 / (2.0 * 3.14159265358979323846))) & 255u;
     unsigned quadrant = index / 64, offset = index % 64;
     float value = quarter[quadrant & 1 ? 64 - offset : offset];
     if (quadrant >= 2) value = -value;
@@ -449,14 +456,16 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
     qa_scene_vertex *vertices = NULL;
     if (!diagnostic && (legacy->warp || legacy->flowing) &&
         !transient_mesh(surface, frame, &mesh, &vertices, error)) return false;
+    double seconds = q1 ? input->seconds : (double)(float)input->seconds;
     for (size_t i = 0; vertices && i < mesh.vertex_count; ++i) {
         qa_scene_vec2 uv = vertices[i].texcoord;
         if (legacy->warp) {
-            double scroll = !q1 && legacy->flowing ? -64 * (input->seconds * 0.5 - trunc(input->seconds * 0.5)) : 0;
-            vertices[i].texcoord = (qa_scene_vec2){(float)((uv.x + turbulence(uv.y * 0.125 + input->seconds, q1) + scroll) / 64),
-                                                  (float)((uv.y + turbulence(uv.x * 0.125 + input->seconds, q1)) / 64)};
+            float scroll = !q1 && legacy->flowing ?
+                (float)(-64 * (seconds * 0.5 - legacy_integer(seconds * 0.5))) : 0;
+            vertices[i].texcoord = (qa_scene_vec2){(float)((uv.x + turbulence(uv.y * 0.125 + seconds, q1) + scroll) / 64),
+                                                  (float)((uv.y + turbulence(uv.x * 0.125 + seconds, q1)) / 64)};
         } else if (legacy->flowing) {
-            float scroll = (float)(-64 * (input->seconds / 40 - trunc(input->seconds / 40)));
+            float scroll = (float)(-64 * (seconds / 40 - legacy_integer(seconds / 40)));
             vertices[i].texcoord.x += scroll == 0 ? -64 : scroll;
         }
     }
