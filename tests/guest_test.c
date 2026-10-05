@@ -77,7 +77,7 @@ static qa_qc_program *guest_program(void)
     const uint32_t sections[][3] = {
         {8, statements_at, statement_count}, {16, fields_at, 0},
         {24, fields_at, 4}, {32, functions_at, function_count},
-        {40, strings_at, (uint32_t)sizeof(strings)}, {48, globals_at, 48}
+        {40, strings_at, (uint32_t)sizeof(strings)}, {48, globals_at, 50}
     };
     for (size_t i = 0; i < sizeof(sections) / sizeof(*sections); ++i) {
         qa_store_u32le(bytes + sections[i][0], sections[i][1]);
@@ -121,7 +121,7 @@ static qa_qc_program *guest_program(void)
     gameplay_float(bytes + globals_at + 32 * 4, 7);
     gameplay_float(bytes + globals_at + 35 * 4, -1);
     qa_qc_program *program = NULL;
-    GAME_CHECK(qa_qc_program_load((qa_bytes){bytes, globals_at + 48 * 4},
+    GAME_CHECK(qa_qc_program_load((qa_bytes){bytes, globals_at + 50 * 4},
         "fixture.qc", &program, &error));
     return program;
 }
