@@ -1,4 +1,4 @@
-#include "original_internal.h"
+#include "original_edicts.h"
 #include "qa/game_q2_original_save.h"
 #include "original_symbols.h"
 #include "internal.h"
@@ -206,40 +206,6 @@ static q2_original_record_io edict_reader(qa_q2_game *game,
         .object = row->object, .input = row->fields, .error = error};
 }
 
-static bool physical_reference(qa_q2_game *game, q2_original_record_io *io,
-    const char *name, uint16_t offset, qa_actor_id *actor)
-{
-    int32_t number = -1;
-    if (io->edition == QA_Q2_RERELEASE) {
-        qa_json_id value = qa_json_get(io->document, io->object, name);
-        if (value != QA_JSON_NONE && qa_json_type(io->document, value) != QA_JSON_NULL) {
-            int64_t integer;
-            if (!qa_json_i64(io->document, value, &integer, io->error)) return false;
-            if (integer < 0 || (uint64_t)integer >= game->wire_capacity)
-                return level_error(io->error, value, "Original Q2 pointer exceeds its physical edict table");
-            number = (int32_t)integer;
-        }
-    } else if (!q2_original_scalar(io, name, Q2_ORIGINAL_I32,
-        offset, offset, offset, &number)) return false;
-    if (number < -1 || (number >= 0 && (uint32_t)number >= game->wire_capacity))
-        return level_error(io->error, offset, "Original Q2 pointer exceeds its physical edict table");
-    *actor = number < 0 ? (qa_actor_id){0} :
-        qa_actor_reference_resolve(qa_session_actors(game->services.session),
-            qa_actor_reference_source(game->options.owner, (uint32_t)number));
-    return true;
-}
-
-static bool edict_body_read(qa_q2_game *game, q2_original_record_io *io,
-    qa_body_state *body)
-{
-    return q2_original_scalar(io, "s.origin", Q2_ORIGINAL_VECTOR, 4, 4, 4, &body->origin) &&
-        q2_original_scalar(io, "s.angles", Q2_ORIGINAL_VECTOR, 16, 16, 16, &body->angles) &&
-        q2_original_scalar(io, "velocity", Q2_ORIGINAL_VECTOR, 376, 376, 376, &body->velocity) &&
-        q2_original_scalar(io, "mins", Q2_ORIGINAL_VECTOR, 188, 188, 188, &body->bounds.mins) &&
-        q2_original_scalar(io, "maxs", Q2_ORIGINAL_VECTOR, 200, 200, 200, &body->bounds.maxs) &&
-        physical_reference(game, io, "groundentity", 552, &body->ground);
-}
-
 bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
     qa_actor_id actor, qa_bytes game_bytes, qa_bytes level_bytes,
     const qa_q2_save_level *engine_level, bool *restored, qa_error *error)
@@ -279,7 +245,7 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
         const q2_original_edict_row *row = okay ? q2_original_level_actor(&level, slot + 1) : NULL;
         if (row) {
             io = edict_reader(game, &level, row, error);
-            okay = edict_body_read(game, &io, &body) &&
+            okay = q2_original_body(game, &io, &body) &&
                 q2_original_scalar(&io, "viewheight", Q2_ORIGINAL_I32, 508, 508, 508, &view_height) &&
                 q2_original_scalar(&io, "health", Q2_ORIGINAL_I32, 480, 480, 480, &health) &&
                 q2_original_scalar(&io, "max_health", Q2_ORIGINAL_I32, 484, 484, 484, &maximum_health) &&
