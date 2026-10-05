@@ -27,11 +27,6 @@ bool frontend_remote_q3_runtime_create(frontend_remote_q3 *, frontend_remote_q3_
 bool frontend_remote_q3_runtime_create_restored(frontend_remote_q3 *, frontend_remote_q3_runtime **, qa_error *);
 bool frontend_remote_q3_runtime_restore_candidate_ready(const frontend_remote_q3_runtime *, qa_error *);
 bool frontend_remote_q3_runtime_prepare_import(frontend_remote_q3_runtime *, qa_error *);
-bool frontend_remote_q3_runtime_checkpoint(const frontend_remote_q3_runtime *, const qa_audio_checkpoint_refs *, qa_buffer *, qa_error *);
-bool frontend_remote_q3_runtime_restore(frontend_remote_q3_runtime *, qa_bytes, const qa_audio_checkpoint_refs *, qa_error *);
-/* Late bind the saved soundtrack origin after actual player/engine import.
- * Sources finish verifies that every saved explicit origin found its caller. */
-bool frontend_remote_q3_runtime_music_restore_bind(frontend_remote_q3_runtime *, qa_error *);
 frontend_remote_q3 *frontend_remote_q3_runtime_parent(const frontend_remote_q3_runtime *);
 bool frontend_remote_q3_runtime_idle(const frontend_remote_q3_runtime *);
 /* Actual frontend capture holds the registry while returned children serialize.
