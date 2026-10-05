@@ -156,7 +156,7 @@ static bool prepare_table(application_provider *provider, const setting_definiti
 bool application_native_q3_settings_prepare_definitions(application_provider *provider,
     qa_q3_product product, qa_error *error)
 {
-    if (!provider || !provider->product || provider->constructed || provider->attached ||
+    if (!provider || !provider->product || provider->state.q3 || provider->attached ||
         !application_native_q3_console_registry(provider) ||
         (product != QA_Q3_ARENA && product != QA_Q3_TEAM_ARENA) ||
         (product == QA_Q3_TEAM_ARENA) != !strcmp(provider->product->campaign, "missionpack"))
