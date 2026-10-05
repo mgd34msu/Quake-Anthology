@@ -176,7 +176,9 @@ static bool lightmap_fold(qa_scene_frame *frame, const qa_scene_draw *lightmap)
         base->state.depth_test != QA_DEPTH_LEQUAL || !base->state.depth_write ||
         !base->state.color_write || base->state.alpha_test != QA_ALPHA_NONE ||
         base->state.stencil_enabled || base->state.polygon_offset || base->state.wireframe ||
-        (base->fog.kind != QA_FOG_NONE && base->fog.kind != QA_FOG_Q2) ||
+        (base->fog.kind != QA_FOG_NONE && base->fog.kind != QA_FOG_Q2 &&
+         !(base->fog.kind == QA_FOG_EXP2 && base->fog.density == 0 &&
+           base->fog.height_density == 0 && base->fog.effect != QA_FOG_OVERLAY)) ||
         base->luminance_alpha || base->source_primitives || base->source_direct ||
         base->source_stage_state || base->source_arrays || base->source_retain_depth_range ||
         base->source_retain_polygon_offset || base->retain_texture[0]) return false;
