@@ -534,7 +534,7 @@ static bool absolute_body_bounds(void *opaque, qa_actor_id actor,
     qa_actor_owner owner = record->owner;
     qa_actor_collision collision = {0};
     qa_error collision_error = {0};
-    bool has_collision = qa_world_get_collision(world, actor, &collision, &collision_error);
+    bool has_collision = qa_world_get_link_collision(world, actor, &collision, &collision_error);
     if (!has_collision && collision_error.code != QA_OK) {
         if (error) *error = collision_error;
         return false;

@@ -50,9 +50,13 @@ static bool collision_read(void *opaque, qa_actor_collision *out, qa_error *erro
                     engine->resources[i].value.index == (uint32_t)index) {
                     resource = &engine->resources[i]; break;
                 }
-        if (!resource || !resource->has_inline_model)
+        /* Stock doors/plats link their origin before setmodel installs the
+         * brush index. SV_LinkEdict uses the current box; hull queries require
+         * the actual precached brush and remain strict. */
+        bool pending = model == 0 && qa_world_collision_link_observation(engine->world, expected);
+        if ((!resource || !resource->has_inline_model) && !pending)
             return application_fail(error, QA_ERROR_FORMAT, "QuakeC brush solid has no retained inline model");
-        value.inline_model = true; value.model = resource->inline_model;
+        if (!pending) { value.inline_model = true; value.model = resource->inline_model; }
     }
     if (owner && !qa_qc_reference_actor(vm, owner, &value.owner, error)) return false;
     if (!qa_qc_reference_actor(vm, row->reference, &current, error) || !qa_actor_id_equal(current, expected))

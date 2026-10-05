@@ -315,7 +315,8 @@ bool qa_world_collision_unbind(qa_world *world,qa_actor_id actor,void *expected_
     return true;
 }
 
-bool qa_world_get_collision(qa_world *world,qa_actor_id actor,qa_actor_collision *out,qa_error *error)
+static bool read_collision(qa_world *world,qa_actor_id actor,qa_actor_collision *out,
+                           bool link_metadata,qa_error *error)
 {
     if(world==NULL || out==NULL) return fail(error,QA_ERROR_ARGUMENT,"Invalid collision read");
     qa_world_body *body=qa_world_find_body(world,actor);
@@ -328,9 +329,12 @@ bool qa_world_get_collision(qa_world *world,qa_actor_id actor,qa_actor_collision
     uint64_t serial=body->storage_serial,collision_serial=body->collision_serial;
     qa_actor_collision collision={0};
     qa_error local={0};
+    qa_actor_id previous=world->collision_link_actor;
+    world->collision_link_actor=link_metadata?actor:(qa_actor_id){0};
     ++world->callback_depth;
     bool ok=binding.read(binding.context,&collision,&local);
     --world->callback_depth;
+    world->collision_link_actor=previous;
     if(!ok) {
         if(local.code==QA_OK) qa_error_set(&local,QA_ERROR_FORMAT,0,"Collision binding read failed");
         if(error!=NULL) *error=local;
@@ -342,6 +346,13 @@ bool qa_world_get_collision(qa_world *world,qa_actor_id actor,qa_actor_collision
     if(!valid_collision(world,&collision,QA_ERROR_FORMAT,error)) return false;
     *out=collision; return true;
 }
+
+bool qa_world_get_collision(qa_world *world,qa_actor_id actor,qa_actor_collision *out,qa_error *error)
+{ return read_collision(world,actor,out,false,error); }
+bool qa_world_get_link_collision(qa_world *world,qa_actor_id actor,qa_actor_collision *out,qa_error *error)
+{ return read_collision(world,actor,out,true,error); }
+bool qa_world_collision_link_observation(const qa_world *world,qa_actor_id actor)
+{ return world!=NULL && actor.registry!=0 && qa_actor_id_equal(world->collision_link_actor,actor); }
 
 bool qa_world_attach(qa_world *world,qa_actor_id actor,const qa_body_attachment *attachment,qa_error *error)
 {
@@ -398,7 +409,7 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
     qa_spatial_member *previous_member=body->member;
     qa_actor_collision collision;
     qa_error local={0};
-    if(!qa_world_get_collision(world,linked->actor,&collision,&local)) {
+    if(!qa_world_get_link_collision(world,linked->actor,&collision,&local)) {
         if(local.code!=QA_OK) { if(error!=NULL) *error=local; return false; }
         memset(&collision,0,sizeof(collision));
         collision.family=qa_collision_geometry_family(world->geometry);

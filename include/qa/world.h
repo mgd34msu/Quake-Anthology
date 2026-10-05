@@ -89,6 +89,10 @@ bool qa_world_collision_bind(qa_world *, qa_actor_id, const qa_collision_binding
 bool qa_world_collision_unbind(qa_world *, qa_actor_id, void *expected_context, qa_error *);
 /* False with no error means absent; reader/validation failures set an error. */
 bool qa_world_get_collision(qa_world *, qa_actor_id, qa_actor_collision *, qa_error *);
+/* Link metadata does not require an initialized clipping hull. Only the bound
+ * reader for this exact actor observes this purpose; nested queries are strict. */
+bool qa_world_get_link_collision(qa_world *, qa_actor_id, qa_actor_collision *, qa_error *);
+bool qa_world_collision_link_observation(const qa_world *, qa_actor_id);
 bool qa_world_collision_validate(qa_world *, const qa_actor_collision *, qa_error *);
 bool qa_world_attach(qa_world *, qa_actor_id, const qa_body_attachment *, qa_error *);
 bool qa_world_detach(qa_world *, qa_actor_id, qa_error *);
