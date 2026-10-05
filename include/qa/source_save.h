@@ -26,6 +26,12 @@ void qa_source_save_dispose(qa_source_save_io *);
 bool qa_source_save_bytes(qa_source_save_io *, void *, size_t);
 /* READ advances over a borrowed input span without allocating or copying. */
 bool qa_source_save_span(qa_source_save_io *, size_t, qa_bytes *);
+/* Changed memory spans relative to pristine bytes, followed by an implicit
+ * zero tail. Unchanged bytes and changed-to-zero payloads are omitted. READ
+ * validates the whole delta before replacing memory; NULL memory validates
+ * without applying it. The pristine span may be shorter than the extent. */
+bool qa_source_save_memory_delta(qa_source_save_io *, uint8_t *memory,
+    size_t extent, qa_bytes pristine);
 bool qa_source_save_bool(qa_source_save_io *, bool *);
 bool qa_source_save_u8(qa_source_save_io *, uint8_t *);
 bool qa_source_save_u16(qa_source_save_io *, uint16_t *);

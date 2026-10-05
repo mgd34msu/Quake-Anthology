@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/qvm_save.h"
+#include "qa/source_save.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -12,11 +13,11 @@ bool qa_qvm_checkpoint_host(qa_bytes state, qa_bytes *out, qa_error *error)
         return qa_qvm_error(error, QA_ERROR_ARGUMENT, 0, "missing QVM host checkpoint view");
     if (!state.data || state.size < CHECKPOINT_HEADER || memcmp(state.data, "QAVM", 4))
         return qa_qvm_error(error, QA_ERROR_FORMAT, 0, "QVM checkpoint envelope mismatch");
-    uint64_t memory = qa_load_u64le(state.data + 20);
     size_t payload = state.size - CHECKPOINT_HEADER;
-    if (memory > payload || qa_load_u64le(state.data + 28) != payload - (size_t)memory)
+    uint64_t host = qa_load_u64le(state.data + 28);
+    if (host > payload)
         return qa_qvm_error(error, QA_ERROR_FORMAT, 0, "QVM checkpoint extent mismatch");
-    *out = (qa_bytes){state.data + CHECKPOINT_HEADER + (size_t)memory, payload - (size_t)memory};
+    *out = (qa_bytes){state.data + state.size - (size_t)host, (size_t)host};
     return true;
 }
 
@@ -153,33 +154,39 @@ bool qa_qvm_checkpoint(qa_qvm *vm, qa_buffer *out, qa_error *error)
     bool captured = vm->options.checkpoint(vm->options.context,&host,error);
     --vm->lifecycle_depth;
     if (!captured) { qa_buffer_free(&host); return false; }
-    if ((host.size > 0 && host.data == NULL) || host.size > SIZE_MAX - CHECKPOINT_HEADER - vm->data_size) {
+    if ((host.size > 0 && host.data == NULL) || host.size > SIZE_MAX - CHECKPOINT_HEADER) {
         qa_buffer_free(&host);
         return qa_qvm_error(error,QA_ERROR_FORMAT,0,"invalid QVM host checkpoint");
     }
-    qa_buffer state = {calloc(1,CHECKPOINT_HEADER + vm->data_size + host.size),CHECKPOINT_HEADER + vm->data_size + host.size};
-    if (state.data == NULL) { qa_buffer_free(&host); return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating QVM checkpoint"); }
-    memcpy(state.data,"QAVM",4);
-    qa_store_u32le(state.data + 4,(uint32_t)vm->options.role);
-    qa_store_u32le(state.data + 8,(uint32_t)vm->options.abi);
-    qa_store_u32le(state.data + 12,(uint32_t)vm->options.semantics);
-    qa_store_u32le(state.data + 16,vm->api_version);
-    qa_store_u64le(state.data + 20,(uint64_t)vm->data_size);
-    qa_store_u64le(state.data + 28,(uint64_t)host.size);
-    qa_store_u64le(state.data + 36,vm->write_sequence);
-    memcpy(state.data + 44,vm->image->digest.bytes,32);
-    qa_store_u64le(state.data + 108,vm->options.instruction_limit);
-    qa_store_u32le(state.data + 116,vm->options.debug);
-    qa_store_u64le(state.data + 124,vm->next_watch);
-    qa_store_u64le(state.data + 132,execution[0]);
-    qa_store_u64le(state.data + 140,execution[1]);
-    qa_store_u64le(state.data + 148,execution[2]);
-    memcpy(state.data + CHECKPOINT_HEADER,vm->data,vm->data_size);
-    if (host.size > 0) memcpy(state.data + CHECKPOINT_HEADER + vm->data_size,host.data,host.size);
+    uint8_t header[CHECKPOINT_HEADER] = {0};
+    memcpy(header,"QAVM",4);
+    qa_store_u32le(header + 4,(uint32_t)vm->options.role);
+    qa_store_u32le(header + 8,(uint32_t)vm->options.abi);
+    qa_store_u32le(header + 12,(uint32_t)vm->options.semantics);
+    qa_store_u32le(header + 16,vm->api_version);
+    qa_store_u64le(header + 20,(uint64_t)vm->data_size);
+    qa_store_u64le(header + 28,(uint64_t)host.size);
+    qa_store_u64le(header + 36,vm->write_sequence);
+    memcpy(header + 44,vm->image->digest.bytes,32);
+    qa_store_u64le(header + 108,vm->options.instruction_limit);
+    qa_store_u32le(header + 116,vm->options.debug);
+    qa_store_u64le(header + 124,vm->next_watch);
+    qa_store_u64le(header + 132,execution[0]);
+    qa_store_u64le(header + 140,execution[1]);
+    qa_store_u64le(header + 148,execution[2]);
+    qa_source_save_io io;
+    qa_buffer state = {0};
+    if (!qa_source_save_writer(&io, NULL, error)) { qa_buffer_free(&host); return false; }
+    bool encoded = qa_source_save_bytes(&io, header, sizeof(header)) &&
+        qa_source_save_memory_delta(&io, vm->data, vm->data_size,
+            (qa_bytes){vm->image->initialized.data, vm->image->initialized.size}) &&
+        qa_source_save_bytes(&io, host.data, host.size) && qa_source_save_finish(&io, &state);
+    qa_source_save_dispose(&io);
+    qa_buffer_free(&host);
+    if (!encoded) return false;
     qa_sha256_digest digest;
     checkpoint_digest((qa_bytes){state.data,state.size},&digest);
     memcpy(state.data + 76,digest.bytes,32);
-    qa_buffer_free(&host);
     *out = state;
     return true;
 }
@@ -187,7 +194,7 @@ bool qa_qvm_checkpoint(qa_qvm *vm, qa_buffer *out, qa_error *error)
 typedef struct saved_execution {
     uint32_t api;
     uint64_t watch, counters[3];
-    qa_bytes host;
+    qa_bytes memory, host;
 } saved_execution;
 
 static bool restore_envelope(qa_qvm *vm, qa_bytes state, bool candidate,
@@ -210,6 +217,12 @@ static bool restore_envelope(qa_qvm *vm, qa_bytes state, bool candidate,
     checkpoint_digest(state,&digest);
     if (memcmp(digest.bytes,state.data + 76,32) != 0)
         return qa_qvm_error(error,QA_ERROR_FORMAT,76,"QVM checkpoint checksum mismatch");
+    qa_bytes memory = {state.data + CHECKPOINT_HEADER, state.size - CHECKPOINT_HEADER - host.size};
+    qa_source_save_io io;
+    if (!qa_source_save_reader(&io, NULL, memory, error) ||
+        !qa_source_save_memory_delta(&io, NULL, vm->data_size,
+            (qa_bytes){vm->image->initialized.data, vm->image->initialized.size}) ||
+        !qa_source_save_finish(&io, NULL)) return false;
     uint32_t api = qa_load_u32le(state.data + 16);
     uint64_t saved_watch = qa_load_u64le(state.data + 124);
     uint64_t execution[3] = {qa_load_u64le(state.data + 132),
@@ -221,7 +234,7 @@ static bool restore_envelope(qa_qvm *vm, qa_bytes state, bool candidate,
         (candidate && (vm->write_sequence || saved_watch < vm->next_watch)))
         return qa_qvm_error(error,QA_ERROR_FORMAT,16,"QVM source API or candidate execution generation differs");
     if (!qa_qvm_execution_checkpoint_ready(vm,execution,candidate,error)) return false;
-    *out = (saved_execution){api, saved_watch, {execution[0], execution[1], execution[2]}, host};
+    *out = (saved_execution){api, saved_watch, {execution[0], execution[1], execution[2]}, memory, host};
     return true;
 }
 
@@ -273,7 +286,11 @@ static bool restore(qa_qvm *vm, qa_bytes state, bool candidate, qa_error *error)
     if (!vm->candidate_inventory) qa_qvm_memory_close(vm);
     vm->candidate_inventory=false;
     qa_qvm_execution_reset(vm);
-    memmove(vm->data,state.data + CHECKPOINT_HEADER,vm->data_size);
+    qa_source_save_io io;
+    if (!qa_source_save_reader(&io, NULL, source.memory, error) ||
+        !qa_source_save_memory_delta(&io, vm->data, vm->data_size,
+            (qa_bytes){vm->image->initialized.data, vm->image->initialized.size}) ||
+        !qa_source_save_finish(&io, NULL)) return false;
     uint64_t saved_sequence = qa_load_u64le(state.data + 36);
     if (candidate || saved_sequence > vm->write_sequence) vm->write_sequence = saved_sequence;
     if (candidate || source.watch > vm->next_watch) vm->next_watch = source.watch;

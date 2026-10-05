@@ -158,3 +158,64 @@ bool qa_source_save_count(qa_source_save_io *io, size_t *value, size_t maximum)
     if (io->direction == QA_SOURCE_SAVE_READ) *value = (size_t)word;
     return true;
 }
+
+static bool memory_delta_read(qa_source_save_io *io, uint8_t *memory, size_t extent)
+{
+    size_t end = 0;
+    for (;;) {
+        uint64_t start = 0, length = 0;
+        bool zero = false;
+        if (!qa_source_save_u64(io, &start)) return false;
+        if (start == extent) return true;
+        if (start < end || start > extent ||
+            !qa_source_save_u64(io, &length) || !length || length > extent - (size_t)start)
+            return persistence_io_fail(io, QA_ERROR_FORMAT, "invalid source memory delta span");
+        if (!qa_source_save_bool(io, &zero)) return false;
+        size_t at = (size_t)start, count = (size_t)length;
+        if (zero) {
+            if (memory) memset(memory + at, 0, count);
+        } else {
+            qa_bytes bytes;
+            if (!qa_source_save_span(io, count, &bytes)) return false;
+            if (memory) memcpy(memory + at, bytes.data, count);
+        }
+        end = at + count;
+    }
+}
+
+bool qa_source_save_memory_delta(qa_source_save_io *io, uint8_t *memory,
+    size_t extent, qa_bytes pristine)
+{
+    if (!io || io->failed) return false;
+    if (pristine.size > extent || (pristine.size && !pristine.data))
+        return persistence_io_fail(io, QA_ERROR_ARGUMENT, "invalid pristine source memory extent");
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        size_t begin = io->offset;
+        if (!memory_delta_read(io, NULL, extent)) return false;
+        if (!memory) return true;
+        if (pristine.size) memmove(memory, pristine.data, pristine.size);
+        if (extent > pristine.size) memset(memory + pristine.size, 0, extent - pristine.size);
+        io->offset = begin;
+        return memory_delta_read(io, memory, extent);
+    }
+    if (io->direction != QA_SOURCE_SAVE_WRITE || (extent && !memory))
+        return persistence_io_fail(io, QA_ERROR_ARGUMENT, "source memory delta requires actual memory");
+    size_t at = 0;
+    while (at < extent) {
+        uint8_t original = at < pristine.size ? pristine.data[at] : 0;
+        if (memory[at] == original) { ++at; continue; }
+        size_t begin = at;
+        bool zero = memory[at] == 0;
+        do {
+            ++at;
+            if (at == extent) break;
+            original = at < pristine.size ? pristine.data[at] : 0;
+        } while (memory[at] != original && (memory[at] == 0) == zero);
+        uint64_t start = begin, length = at - begin;
+        if (!qa_source_save_u64(io, &start) || !qa_source_save_u64(io, &length) ||
+            !qa_source_save_bool(io, &zero) ||
+            (!zero && !qa_source_save_bytes(io, memory + begin, at - begin))) return false;
+    }
+    uint64_t end = extent;
+    return qa_source_save_u64(io, &end);
+}
