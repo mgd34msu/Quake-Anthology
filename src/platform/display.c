@@ -1805,12 +1805,10 @@ bool qa_display_surface_stage(qa_display_surface_ticket *ticket, qa_error *error
         if (!surface_gl_visual_equal(ticket, error)) return false;
     }
     if (!qa_display_info_get(candidate,&ticket->staged,error)) return false;
+    /* Window size and focus are compositor decisions. Render and input use
+     * the observed drawable; the canonical settings adopt this observation. */
     if (ticket->staged.fullscreen != ticket->settings.fullscreen ||
-        ticket->staged.visible != ticket->original.visible ||
-        (ticket->original.focused && !ticket->staged.focused) ||
-        (ticket->settings.fullscreen == QA_DISPLAY_WINDOWED &&
-         (ticket->staged.logical_width != ticket->settings.width ||
-          ticket->staged.logical_height != ticket->settings.height)))
+        ticket->staged.visible != ticket->original.visible)
         return display_save_error(error, QA_ERROR_IO,
             "SDL candidate native settings differ from the requested settings");
     if (candidate->backend == QA_DISPLAY_CPU &&
