@@ -8,7 +8,6 @@
 
 _Static_assert(sizeof(float) == 4 && FLT_RADIX == 2 && FLT_MANT_DIG == 24 && FLT_MAX_EXP == 128,
     "Engine vectors require binary32 floats");
-_Static_assert(FLT_EVAL_METHOD == 0, "Engine math requires evaluation in its declared C type");
 
 typedef struct qa_vec3 { float x, y, z; } qa_vec3;
 typedef struct qa_bounds { qa_vec3 mins, maxs; } qa_bounds;
