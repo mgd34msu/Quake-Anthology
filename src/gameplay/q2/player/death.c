@@ -109,7 +109,7 @@ bool q2_player_reserve_corpses(qa_q2_game *g, qa_error *e) {
                 return false;
             qa_builtin_spawn spawn = {.owner = g->options.owner,
                                       .definition = name,
-                                      .combat = &(qa_combat_state){.can_take_damage = true}};
+                                      .combat = &(qa_combat_state){0}};
             qa_actor_id id;
             if (!qa_builtin_spawn_actor(&g->services, &spawn, &id, e))
                 return false;
