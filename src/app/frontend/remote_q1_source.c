@@ -136,17 +136,15 @@ static bool sample_seconds(void *context, const frontend_remote_q1_domain *expec
     return out && physical(owner, expected, &view, error) && owner->options.sample_seconds &&
         owner->options.sample_seconds(owner->options.context, &view.source, out, error);
 }
-static bool create(qa_frontend *f, const frontend_remote_q1_source_options *options,
-    const frontend_remote_q1_restore_refs *refs, qa_bytes bytes, frontend_remote_q1_source **out, qa_error *error)
+bool frontend_remote_q1_source_create(qa_frontend *f, const frontend_remote_q1_source_options *options,
+    frontend_remote_q1_source **out, qa_error *error)
 {
-    if (!f || f->capture || f->resource_inventory || (refs ? !f->source_restoring : f->source_restoring) ||
+    if (!f || f->capture || f->resource_inventory || f->source_restoring ||
         !options || !options->physical || !options->load_content || !options->service || !options->disconnected ||
         !out || *out || !qa_q1_profile_valid(options->protocol, error) ||
         (qa_q1_is_qw(options->protocol) && !options->skin_bindings)) return false;
     frontend_client_source_view view;
-    bool read = refs ? frontend_client_source_metadata_read(options->physical, &view, error) :
-        frontend_client_source_read(options->physical, &view, error);
-    if (!read || !view.ready || view.source.context.session != qa_application_session(f->application)) return false;
+    if (!frontend_client_source_read(options->physical, &view, error) || !view.ready || view.source.context.session != qa_application_session(f->application)) return false;
     bool linked = false;
     for (size_t i = 0; i < frontend_client_source_count(f); ++i)
         if (frontend_client_source_at(f, i) == options->physical) linked = true;
@@ -162,28 +160,7 @@ static bool create(qa_frontend *f, const frontend_remote_q1_source_options *opti
         .application_metadata_read=application_metadata_read,
         .sample_seconds=options->sample_seconds ? sample_seconds : NULL,
         .demo_forced_track=options->sample_seconds ? options->demo_forced_track : -1};
-    return refs ? frontend_remote_q1_restore_prepare(f, &receiver, refs, bytes, &owner->receiver, error) :
-        frontend_remote_q1_create(f, &receiver, &owner->receiver, error);
-}
-bool frontend_remote_q1_source_create(qa_frontend *f, const frontend_remote_q1_source_options *options,
-    frontend_remote_q1_source **out, qa_error *error)
-{ return create(f, options, NULL, (qa_bytes){0}, out, error); }
-bool frontend_remote_q1_source_restore_prepare(qa_frontend *f, const frontend_remote_q1_source_options *options,
-    const frontend_remote_q1_restore_refs *refs, qa_bytes bytes, frontend_remote_q1_source **out, qa_error *error)
-{ return refs && create(f, options, refs, bytes, out, error); }
-bool frontend_remote_q1_source_checkpoint(const frontend_remote_q1_source *owner,
-    const frontend_remote_q1_restore_refs *refs, qa_buffer *out, qa_error *error)
-{
-    return owner && !owner->closing && !owner->calls && owner->retained && owner->receiver &&
-        frontend_client_source_idle(owner->options.physical) &&
-        frontend_remote_q1_checkpoint(owner->receiver, refs, out, error);
-}
-bool frontend_remote_q1_source_restore_finish(frontend_remote_q1_source *owner,
-    const frontend_remote_q1_restore_refs *refs, qa_error *error)
-{
-    return owner && !owner->closing && !owner->calls && owner->retained && owner->receiver &&
-        frontend_client_source_idle(owner->options.physical) &&
-        frontend_remote_q1_restore_finish(owner->receiver, refs, error);
+    return frontend_remote_q1_create(f, &receiver, &owner->receiver, error);
 }
 bool frontend_remote_q1_source_read(const frontend_remote_q1_source *source,
     frontend_remote_q1_source_view *out, qa_error *error)

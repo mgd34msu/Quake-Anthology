@@ -1,7 +1,7 @@
 #ifndef QA_FRONTEND_REMOTE_Q1_SOURCE_H
 #define QA_FRONTEND_REMOTE_Q1_SOURCE_H
 #include "client_source.h"
-#include "remote_q1_restore.h"
+#include "remote_q1_client.h"
 typedef struct frontend_remote_q1_source frontend_remote_q1_source;
 bool frontend_remote_q1_source_defaults(qa_cvars *, uint64_t command_owner, uint32_t authored_seat, qa_error *);
 /* Owns the opened selected read view; root borrows the genuine catalog's
@@ -39,10 +39,4 @@ bool frontend_remote_q1_source_bind(frontend_remote_q1_source *, qa_net_client_i
 bool frontend_remote_q1_source_entity_current(const frontend_remote_q1_source *, uint32_t, uint64_t *);
 bool frontend_remote_q1_source_idle(const frontend_remote_q1_source *);
 bool frontend_remote_q1_source_destroy(frontend_remote_q1_source **, qa_error *);
-bool frontend_remote_q1_source_restore_prepare(qa_frontend *, const frontend_remote_q1_source_options *,
-    const frontend_remote_q1_restore_refs *, qa_bytes, frontend_remote_q1_source **, qa_error *);
-bool frontend_remote_q1_source_checkpoint(const frontend_remote_q1_source *,
-    const frontend_remote_q1_restore_refs *, qa_buffer *, qa_error *);
-bool frontend_remote_q1_source_restore_finish(frontend_remote_q1_source *,
-    const frontend_remote_q1_restore_refs *, qa_error *);
 #endif
