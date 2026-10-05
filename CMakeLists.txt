@@ -1725,8 +1725,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/player_inventory.c
     src/app/frontend/q3_inventory.c
     src/app/frontend/q3_render_policy.c
-    src/app/frontend/menu_save.c
-    src/app/frontend/seat_inventory.c
     src/app/frontend/native_q2.c
     src/app/frontend/native_q2_baseline.c
     src/app/frontend/native_q2_messages.c
@@ -1776,7 +1774,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/round.c
     src/app/frontend/resources.c
     src/app/frontend/remaps.c
-    src/app/frontend/restore_topology.c
     src/app/frontend/seats.c
     src/app/frontend/scene_identity.c
     src/app/frontend/scene_inventory.c
@@ -1796,7 +1793,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/system_cinematic.c
     src/app/frontend/system_cinematic_save.c
     src/app/frontend/tools.c
-    src/app/frontend/ui_restore.c
     src/app/frontend/visuals.c
     src/app/frontend/view_settings.c
     src/app/frontend/wheels.c

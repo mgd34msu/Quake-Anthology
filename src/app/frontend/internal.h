@@ -323,12 +323,7 @@ bool frontend_resources(qa_frontend *, qa_error *);
 bool frontend_seats_create(qa_frontend *, qa_error *);
 bool frontend_seats_create_range(qa_frontend *, unsigned first, qa_error *);
 bool frontend_seats_destroy_range(qa_frontend *, unsigned first, unsigned last, qa_error *);
-/* Early stable input/console bindings precede provider factories. */
-bool frontend_seats_prepare_restored(qa_frontend *, qa_error *);
-/* Late completion requires restored fonts/images and exact mods presence. */
-bool frontend_seats_create_restored(qa_frontend *, const bool *mods, qa_bytes presentation, qa_error *);
 bool frontend_seats_destroy(qa_frontend *, qa_error *);
-void frontend_seats_rebind(qa_frontend *, qa_frontend *);
 bool frontend_commands(qa_frontend *, qa_error *);
 /* Physical input/audio slots follow the retained published seat array order.
  * An absent publication/row has no admitted application seat identity. */

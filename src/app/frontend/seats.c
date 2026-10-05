@@ -6,9 +6,7 @@
 #include "startup_server_browser.h"
 #include "startup_downloads.h"
 #include "startup_menus.h"
-#include "qa/ui_menu_save.h"
 #include "qa/ui_save.h"
-#include "qa/binary.h"
 #include "seat_save.h"
 #include "source_restore.h"
 #include "chat.h"
@@ -94,12 +92,11 @@ static bool source_input(void *context, qa_input_seat *input, const qa_input_eve
         qa_application_guest_input(seat->frontend->application, launch_seat, event, consumed, error);
 }
 static bool player_sources(void *,uint32_t,qa_ui_menu *,qa_error *);
-static bool player_sources_register(frontend_seat *seat,const size_t *saved_ordinal,qa_error *error)
+static bool player_sources_register(frontend_seat *seat,qa_error *error)
 {
     if (seat->player_sources_registered) return true;
     qa_ui_menu_registration registration={.id=FRONTEND_PLAYER_SOURCES,.context=seat,.factory=player_sources};
-    bool ok=saved_ordinal?qa_ui_restore_menu_register(seat->ui,&registration,*saved_ordinal,error):
-        qa_ui_register(seat->ui,&registration,error);
+    bool ok=qa_ui_register(seat->ui,&registration,error);
     if (ok) seat->player_sources_registered=true;
     return ok;
 }
@@ -110,7 +107,7 @@ bool frontend_menu_open(frontend_seat *seat, qa_ui_id menu, qa_error *error)
         if (!seat->mods && !qa_ui_mods_create(seat->ui, seat->frontend->application, FRONTEND_MODS, &seat->mods, error)) return false;
         if (!qa_ui_mods_cancel(seat->mods, error)) return false;
     }
-    if (menu==FRONTEND_PLAYER_SOURCES && !player_sources_register(seat,NULL,error)) return false;
+    if (menu==FRONTEND_PLAYER_SOURCES && !player_sources_register(seat,error)) return false;
     qa_application_presentation_view source;
     if (frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) &&
         !(qa_application_presentation_read(seat->frontend->application,launch_seat,&source) && !source.source_menu) &&
@@ -429,7 +426,7 @@ static bool player_sources(void *context,uint32_t id,qa_ui_menu *out,qa_error *e
         .count=count,.fullscreen=true};
     return true;
 }
-static bool seat_services_create(frontend_seat *seat, bool restoring, qa_error *error)
+static bool seat_services_create(frontend_seat *seat, qa_error *error)
 {
     qa_frontend *frontend = seat->frontend;
     unsigned i = seat->id;
@@ -442,7 +439,7 @@ static bool seat_services_create(frontend_seat *seat, bool restoring, qa_error *
         .before_ui = source_input, .before_ui_user = seat,
         .context_ready=frontend_seat_context_ready,.context_user=seat};
     seat->input = qa_input_seat_create(&input, error);
-    if (!seat->input || (!restoring && !qa_input_default_bindings(seat->input, (int32_t)i, error))) return false;
+    if (!seat->input || !qa_input_default_bindings(seat->input, (int32_t)i, error)) return false;
     qa_seat_console_options console = {.seat=i,.command = command, .commands = input.console,
         .context = seat,.context_ready=frontend_seat_context_ready,
         .now_ms = input_now_ms, .connected = connected, .clipboard = clipboard, .focus = focus, .chat = chat};
@@ -480,34 +477,6 @@ void frontend_seat_client_recipient_publish(qa_frontend *f,uint32_t physical,
     frontend_seat *seat=f->seats+physical;
     qa_input_seat_recipient_publish(seat->input,source->context.console,source->context.cvars,&source->context.command);
     qa_seat_console_recipient_publish(seat->console,source->context.console,&source->context.command);
-}
-bool frontend_seats_recipients_restore(qa_frontend *f,qa_error *error)
-{
-    if (!f || !f->source_restoring)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Input recipient import requires the actual restoring frontend");
-    if (f->options.dedicated) {
-        if (f->input)
-            return frontend_fail(error,QA_ERROR_FORMAT,"Dedicated input import has an unexpected physical platform");
-        for (uint32_t i=0;f->seats && i<f->options.seats;++i)
-            if (f->seats[i].input || f->seats[i].console)
-                return frontend_fail(error,QA_ERROR_FORMAT,"Dedicated input import has unexpected physical seats");
-        return true;
-    }
-    if (!f->seats || !f->options.seats || f->options.seats>QA_INPUT_LOCAL_SEATS)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Input import lost its actual physical seat roster");
-    frontend_network_client_recipient recipients[QA_INPUT_LOCAL_SEATS]={0};
-    bool present[QA_INPUT_LOCAL_SEATS]={0};
-    for (uint32_t i=0;i<f->options.seats;++i) {
-        if (!frontend_network_client_retired_recipient_read(f,i,recipients+i,present+i,error)) return false;
-        bool retired=present[i];
-        if (!retired && !frontend_network_client_recipient_read(f,i,recipients+i,present+i,error)) return false;
-        if (present[i] && !retired && !recipients[i].ready) { present[i]=false; continue; }
-        if (present[i] && !frontend_seat_client_recipient_ready(f,i,&recipients[i].source,error))
-            return frontend_fail(error,QA_ERROR_FORMAT,"Saved input recipient has no completed physical CLIENT");
-    }
-    for (uint32_t i=0;i<f->options.seats;++i)
-        if (present[i]) frontend_seat_client_recipient_publish(f,i,&recipients[i].source);
-    return true;
 }
 static bool engine_recipient_command(qa_frontend *f,uint32_t physical,qa_command_context *out,qa_error *error)
 {
@@ -551,34 +520,17 @@ void frontend_seat_engine_recipient_publish(qa_frontend *f,uint32_t physical,con
     qa_input_seat_recipient_publish(seat->input,console,cvars,command);
     qa_seat_console_recipient_publish(seat->console,console,command);
 }
-bool frontend_seats_prepare_restored(qa_frontend *frontend, qa_error *error)
-{
-    if (!frontend || !frontend->application || !frontend->seats || frontend->options.dedicated ||
-        !frontend->options.seats || frontend->options.seats > QA_INPUT_LOCAL_SEATS || frontend->stepping)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "restored seat services require an isolated application");
-    for (unsigned i = 0; i < frontend->options.seats; ++i)
-        if (frontend->seats[i].input || frontend->seats[i].console || frontend->seats[i].ui)
-            return frontend_fail(error, QA_ERROR_ARGUMENT, "restored seat service destination is occupied");
-    for (unsigned i = 0; i < frontend->options.seats; ++i) {
-        frontend_seat *seat = &frontend->seats[i]; seat->frontend = frontend; seat->id = i;
-        if (!seat_services_create(seat, true, error)) return false;
-    }
-    return true;
-}
-static bool seats_create(qa_frontend *frontend, unsigned first, const bool *mods, const qa_bytes *saved_ui, bool restoring, qa_error *error)
+static bool seats_create(qa_frontend *frontend, unsigned first, qa_error *error)
 {
     if (!frontend || !frontend->application || !frontend->seats || !frontend->classic ||
-        !frontend->primary || !frontend->ui_images || frontend->stepping ||
-        (restoring && (!mods || !saved_ui)))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "seat construction requires actual restored resource owners");
+        !frontend->primary || !frontend->ui_images || frontend->stepping)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "seat construction requires its actual resource owners");
     for (unsigned i = first; i < frontend->options.seats; ++i)
-        if (frontend->seats[i].ui || (restoring ?
-            (!frontend->seats[i].input || !frontend->seats[i].console || frontend->seats[i].frontend != frontend || frontend->seats[i].id != i) :
-            (frontend->seats[i].input != NULL || frontend->seats[i].console != NULL)))
+        if (frontend->seats[i].ui || frontend->seats[i].input || frontend->seats[i].console)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "local seat service destination is not qualified");
     qa_cvars *cvars = qa_application_cvars(frontend->application);
-    if (!restoring && (!qa_input_settings_register(cvars, QA_MOVEMENT_NETQUAKE, error) ||
-        !qa_input_device_settings_register(cvars, error))) return false;
+    if (!qa_input_settings_register(cvars, QA_MOVEMENT_NETQUAKE, error) ||
+        !qa_input_device_settings_register(cvars, error)) return false;
     qa_launch_seat players[QA_INPUT_LOCAL_SEATS] = {0};
     char player_names[QA_INPUT_LOCAL_SEATS][32];
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
@@ -587,7 +539,7 @@ static bool seats_create(qa_frontend *frontend, unsigned first, const bool *mods
     }
     for (unsigned i = first; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i]; seat->frontend = frontend; seat->id = i;
-        if (!restoring && !seat_services_create(seat, false, error)) return false;
+        if (!seat_services_create(seat, error)) return false;
         qa_ui_preferences preferences;
         if (!seat->console || !qa_ui_preferences_read(qa_application_cvars(frontend->application), i, &preferences, error) ||
             !frontend_menu_font_selection(frontend, i, preferences.typeface == QA_UI_TYPEFACE_BOLD, &seat->fonts, error)) return false;
@@ -609,37 +561,22 @@ static bool seats_create(qa_frontend *frontend, unsigned first, const bool *mods
             !frontend_source_prompt_create(seat,206,&seat->source_prompt,error)) return false;
         if (!frontend_bindings_create(seat, error) || !frontend_accessibility_create(seat, error) ||
             !frontend_save_menu_create(seat, error) || !frontend_campaign_menu_create(seat,error)) return false;
-        bool library = restoring ? qa_ui_library_create_restored(seat->ui, frontend->application,
-            FRONTEND_LIBRARY, &seat->library, error) :
-            qa_ui_library_create(seat->ui, frontend->application, FRONTEND_LIBRARY,
-                players, frontend->options.seats, &seat->library, error);
+        bool library = qa_ui_library_create(seat->ui, frontend->application, FRONTEND_LIBRARY,
+            players, frontend->options.seats, &seat->library, error);
         if (!library || !frontend_startup_menus_create(seat, error) ||
             !qa_ui_rankings_create(seat->ui, frontend->application, FRONTEND_RANKINGS, -1, &seat->rankings, error) ||
             !qa_hud_create(&(qa_hud_options){.ui = seat->ui, .application = frontend->application, .seat = i,
                 .context = seat, .read = hud_data, .presentation = hud_presentation, .video_frame = hud_video_frame,
                 .video_context = seat}, &seat->hud, error) || !frontend_wheel_create(seat, error)) return false;
-        if ((restoring || frontend->tools) && !qa_ui_llm_create(seat->ui, frontend_tools_llm(frontend),
+        if (frontend->tools && !qa_ui_llm_create(seat->ui, frontend_tools_llm(frontend),
             FRONTEND_ASSISTANCE, &seat->assistance, error)) return false;
-        if (restoring && mods[i] && !qa_ui_mods_create_restored(seat->ui, frontend->application,
-            FRONTEND_MODS, &seat->mods, error)) return false;
-        if (restoring) {
-            bool present; size_t ordinal;
-            if (!qa_ui_checkpoint_menu_read(saved_ui[i],i,FRONTEND_PLAYER_SOURCES,&present,&ordinal,error) ||
-                (present && !player_sources_register(seat,&ordinal,error))) return false;
-        }
     }
     return true;
 }
 bool frontend_seats_create(qa_frontend *frontend, qa_error *error)
-{ return seats_create(frontend, 0, NULL, NULL, false, error); }
+{ return seats_create(frontend, 0, error); }
 bool frontend_seats_create_range(qa_frontend *frontend, unsigned first, qa_error *error)
-{ return seats_create(frontend, first, NULL, NULL, false, error); }
-bool frontend_seats_create_restored(qa_frontend *frontend, const bool *mods, qa_bytes presentation, qa_error *error)
-{
-    qa_bytes saved_ui[QA_INPUT_LOCAL_SEATS]={0};
-    return frontend_seats_saved_ui(frontend,presentation,saved_ui,error) &&
-        seats_create(frontend,0,mods,saved_ui,true,error) && frontend_startup_menus_bind(frontend,error);
-}
+{ return seats_create(frontend, first, error); }
 bool frontend_seats_destroy_range(qa_frontend *frontend, unsigned first, unsigned last, qa_error *error)
 {
     for (unsigned i = first; i < last; ++i) {
@@ -680,11 +617,6 @@ bool frontend_seats_destroy_range(qa_frontend *frontend, unsigned first, unsigne
 }
 bool frontend_seats_destroy(qa_frontend *frontend, qa_error *error)
 { return frontend_seats_destroy_range(frontend, 0, QA_INPUT_LOCAL_SEATS, error); }
-void frontend_seats_rebind(qa_frontend *owned, qa_frontend *destination)
-{
-    for (unsigned i = 0; i < owned->options.seats; ++i) owned->seats[i].frontend = destination;
-}
-
 static bool saved_seat_ready(const frontend_seat *seat)
 {
     return seat && seat->frontend && seat->frontend->application && !seat->frontend->stepping &&
@@ -733,28 +665,6 @@ static bool recipient_services(const frontend_seat *seat,const qa_console *conso
         present && recipient.ready && console==recipient.source.context.console &&
         (!cvars || cvars==recipient.source.context.cvars) &&
         same_recipient_command(command,&recipient.source.context.command);
-}
-static bool checkpoint_recipient_services(const frontend_seat *seat,const qa_console *console,
-    const qa_cvars *cvars,const qa_command_context *command,bool *client)
-{
-    if (recipient_services(seat,console,cvars,command,client)) return true;
-    if (!seat || !seat->frontend || !client ||
-        (!seat->frontend->capture && !seat->frontend->source_restoring)) return false;
-    qa_input_release *release=qa_input_seat_release_read(seat->input);
-    qa_input_release_scope all={.all=true,.controller=-1};
-    if ((release && (qa_input_release_console(release)!=console ||
-            !qa_input_release_scope_owned(release,seat->input,&all,NULL))) ||
-        (!release && !seat->frontend->source_restoring) ||
-        !retired_recipient_services(seat,console,cvars,command)) return false;
-    *client=true; return true;
-}
-bool frontend_seat_ui_clock_ready(void *context,const qa_ui *ui,double (*clock)(void *),
-    void *clock_context,qa_error *error)
-{
-    frontend_seat *seat=context;
-    return (saved_seat_ready(seat) && ui==seat->ui && qa_ui_idle(ui) &&
-        clock==input_now_ms && clock_context==seat) ||
-        frontend_fail(error,QA_ERROR_FORMAT,"UI physical clock differs from its actual frontend seat factory");
 }
 static bool input_services_encode(void *context, const qa_input_seat_options *options,
     uint64_t *out, qa_error *error)
@@ -896,57 +806,4 @@ qa_input_checkpoint_refs frontend_seat_input_refs(frontend_seat *seat)
 {
     return (qa_input_checkpoint_refs){seat,input_services_encode,input_services_decode,
         input_ui_encode,input_ui_decode,input_catcher_ready,input_recipient_fields,input_release_ready};
-}
-static bool console_services(const frontend_seat *seat, const qa_seat_console_options *options)
-{
-    bool client=false;
-    return saved_seat_ready(seat) && options && options->seat==seat->id &&
-        checkpoint_recipient_services(seat,options->commands,NULL,&options->command,&client) && options->context==seat &&
-        options->context_ready==frontend_seat_context_ready &&
-        options->now_ms==input_now_ms && options->connected==connected && options->clipboard==clipboard &&
-        options->focus==focus && options->chat==chat;
-}
-static bool seat_console_encode(void *context, const qa_seat_console_options *options, qa_buffer *out, qa_error *error)
-{
-    frontend_seat *seat=context;
-    bool client=false;
-    if (!console_services(seat,options) ||
-        !checkpoint_recipient_services(seat,options->commands,NULL,&options->command,&client) || !out || out->data || out->size)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Seat console capture lacks its actual installed callbacks");
-    uint8_t *data=malloc(12);
-    if (!data) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining seat console service descriptor");
-    memcpy(data,"QFSC",4); qa_store_u32le(data+4,seat->id);
-    qa_store_u32le(data+8,client?1u:0u);
-    *out=(qa_buffer){data,12}; return true;
-}
-static bool seat_console_decode(void *context, const qa_seat_console_options *candidate, qa_bytes bytes,
-    qa_command_context *command, qa_error *error)
-{
-    frontend_seat *seat=context;
-    if (!console_services(seat,candidate) || !command || !bytes.data || bytes.size!=12 ||
-        memcmp(bytes.data,"QFSC",4) || qa_load_u32le(bytes.data+4)!=seat->id || qa_load_u32le(bytes.data+8)>1)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Saved console descriptor differs from its prepared actual seat");
-    bool client=false;
-    if (!checkpoint_recipient_services(seat,candidate->commands,NULL,&candidate->command,&client) ||
-        client!=(qa_load_u32le(bytes.data+8)!=0) || command->script)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Saved console command names another physical recipient");
-    if (client) {
-        if (command->dialect!=candidate->command.dialect || command->origin!=candidate->command.origin ||
-            command->seat!=candidate->command.seat || command->direct!=candidate->command.direct ||
-            command->console_text!=candidate->command.console_text)
-            return frontend_fail(error,QA_ERROR_FORMAT,"Saved CLIENT console command differs from its actual namespace");
-        *command=candidate->command;
-    } else if (!local_context(command,seat))
-        return frontend_fail(error,QA_ERROR_FORMAT,"Saved ENGINE console template belongs to another physical seat");
-    return true;
-}
-qa_seat_console_save_resolvers frontend_seat_console_refs(frontend_seat *seat)
-{ return (qa_seat_console_save_resolvers){seat,seat_console_encode,seat_console_decode}; }
-bool frontend_seat_hud_options(frontend_seat *seat, qa_hud_options *out, qa_error *error)
-{
-    if (!saved_seat_ready(seat) || !seat->ui || !out)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"HUD restore lacks its actual prepared frontend seat");
-    *out=(qa_hud_options){.ui=seat->ui,.application=seat->frontend->application,
-        .seat=seat->id,.context=seat,.read=hud_data,.presentation=hud_presentation,.video_frame=hud_video_frame,.video_context=seat};
-    return true;
 }
