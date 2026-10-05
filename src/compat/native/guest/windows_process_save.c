@@ -7,7 +7,7 @@ typedef struct saved_windows_image {
     qa_native_image_info image;
     uint64_t id, base;
     size_t maximum;
-    qa_bytes path, artifact, attachment;
+    qa_bytes path, attachment;
 } saved_windows_image;
 
 static bool image_fields(qa_source_save_io *io, qa_native_image_info *image)
@@ -34,11 +34,7 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 {
     size_t count = bytes->size;
     if (!qa_source_save_count(io, &count, SIZE_MAX)) return false;
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        if (io->offset > io->input.size || count > io->input.size - io->offset)
-            return guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "Windows saved owner blob is truncated");
-        *bytes = (qa_bytes){io->input.data + io->offset, count}; io->offset += count; return true;
-    }
+    if (io->direction == QA_SOURCE_SAVE_READ) return qa_source_save_span(io, count, bytes);
     return qa_source_save_bytes(io, (void *)bytes->data, count);
 }
 static bool process_fields(qa_source_save_io *io, qa_native_windows_process *owner)
@@ -129,10 +125,10 @@ bool qa_native_windows_process_checkpoint(qa_native_windows_process *owner, qa_b
             okay = pe && guest_pe_memory_checkpoint(row->memory, &attachment, error);
             if (okay) {
                 saved_windows_image record = {pe->image, row->id, pe->base, pe->bytes.size,
-                    {(const uint8_t *)row->path, strlen(row->path)}, pe->artifact, {attachment.data, attachment.size}};
+                    {(const uint8_t *)row->path, strlen(row->path)}, {attachment.data, attachment.size}};
                 okay = image_fields(&io, &record.image) && qa_source_save_u64(&io, &record.id) &&
                     qa_source_save_u64(&io, &record.base) && qa_source_save_count(&io, &record.maximum, SIZE_MAX) &&
-                    blob(&io, &record.path) && blob(&io, &record.artifact) && blob(&io, &record.attachment);
+                    blob(&io, &record.path) && blob(&io, &record.attachment);
             }
             qa_buffer_free(&attachment);
         }
@@ -193,6 +189,7 @@ bool qa_native_windows_process_restore(qa_bytes encoded,
     const qa_native_windows_process_restore_bindings *bindings, qa_native_windows_process **out, qa_error *error)
 {
     if (!bindings || !out || *out || !bindings->maximum_backing_bytes ||
+        !bindings->artifacts || !bindings->artifact_count ||
         bindings->backend > QA_NATIVE_GUEST_HOST_X86_64 ||
         (bindings->backend == QA_NATIVE_GUEST_HOST_X86_64 &&
             (!bindings->host_executable || !*bindings->host_executable || !bindings->profile_guard)) ||
@@ -210,7 +207,7 @@ bool qa_native_windows_process_restore(qa_bytes encoded,
     bool okay = reader && process_fields(&io, owner) &&
         qa_source_save_count(&io, &count, SIZE_MAX / sizeof(*records)) && count &&
         blob(&io, &runtime) && blob(&io, &guest) && blob(&io, &provenance);
-    if (okay && count > (io.input.size - io.offset) / 113)
+    if (okay && (count != bindings->artifact_count || count > (io.input.size - io.offset) / 105))
         okay = guest_fail(error, QA_ERROR_FORMAT, count, "Windows source count exceeds its complete outer envelope");
     if (okay) {
         records = calloc(count, sizeof(*records));
@@ -220,7 +217,7 @@ bool qa_native_windows_process_restore(qa_bytes encoded,
         saved_windows_image *record = records + i;
         okay = image_fields(&io, &record->image) && qa_source_save_u64(&io, &record->id) &&
             qa_source_save_u64(&io, &record->base) && qa_source_save_count(&io, &record->maximum, SIZE_MAX) &&
-            blob(&io, &record->path) && blob(&io, &record->artifact) && blob(&io, &record->attachment);
+            blob(&io, &record->path) && blob(&io, &record->attachment);
         if (okay && (!record->id || !record->maximum || !record->path.size ||
             record->path.size == SIZE_MAX || memchr(record->path.data, 0, record->path.size)))
             okay = guest_fail(error, QA_ERROR_FORMAT, i, "Windows saved source identity or path is invalid");
@@ -239,11 +236,27 @@ bool qa_native_windows_process_restore(qa_bytes encoded,
     }
     for (size_t i = 0; okay && i < count; ++i) {
         const saved_windows_image *record = records + i; windows_process_image *row = owner->images + i;
+        const qa_native_windows_artifact *source = NULL;
+        for (size_t j = 0; okay && j < bindings->artifact_count; ++j) {
+            const qa_native_windows_artifact *actual = bindings->artifacts + j;
+            if (actual->id != record->id) continue;
+            if (source || actual->load_base != record->base ||
+                !windows_process_same_image(&actual->image, &record->image) ||
+                record->maximum > actual->maximum_image_bytes || !actual->path ||
+                strlen(actual->path) != record->path.size ||
+                memcmp(actual->path, record->path.data, record->path.size)) {
+                okay = guest_fail(error, QA_ERROR_FORMAT, i, "Windows saved image differs from its installed source");
+                break;
+            }
+            source = actual;
+        }
+        if (!okay) break;
+        if (!source) { okay = guest_fail(error, QA_ERROR_FORMAT, i, "Windows saved image is not installed"); break; }
         row->id = record->id; owner->image_count = i + 1;
         row->path = malloc(record->path.size + 1);
         if (!row->path) { okay = guest_fail(error, QA_ERROR_MEMORY, i, "owning cold Windows image path"); break; }
         memcpy(row->path, record->path.data, record->path.size); row->path[record->path.size] = 0;
-        okay = guest_pe_open(record->artifact, &record->image, record->base,
+        okay = guest_pe_open(source->bytes, &record->image, record->base,
             record->maximum, &row->artifact, error);
     }
     if (okay) okay = guest_profile_artifacts_decode(provenance, owner->options.guest.maximum_backing_bytes,

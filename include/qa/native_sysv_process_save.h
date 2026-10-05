@@ -4,6 +4,8 @@
 #include "qa/native_sysv_process.h"
 
 typedef struct qa_native_sysv_process_restore_bindings {
+    const qa_native_sysv_artifact *artifacts; /* Installed, borrowed through restore. */
+    size_t artifact_count;
     size_t maximum_backing_bytes;
     qa_native_guest_backend backend;
     /* Actual child bootstrap, borrowed through restore only, never saved. */
@@ -30,8 +32,8 @@ typedef struct qa_native_sysv_process_restore_bindings {
     void *external_context;
 } qa_native_sysv_process_restore_bindings;
 
-/* QSVP3 nests the exact backend, CPU/RAM/allocator/import runtime, immutable
- * artifacts and their ordered profile provenance, loaded-image backing
+/* Nests the exact backend, CPU/RAM/allocator/import runtime, immutable
+ * artifact identities and their ordered profile provenance, loaded-image backing
  * ownership and external resource cursors.
  * Outer envelope, artifact and detached runtime/resource admission precede
  * the pure borrowed capability resolver. Lower CPU and loaded-image ownership

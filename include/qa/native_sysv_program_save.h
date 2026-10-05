@@ -4,6 +4,7 @@
 #include "qa/native_sysv_program.h"
 
 typedef struct qa_native_sysv_program_restore_bindings {
+    qa_native_sysv_artifact program, interpreter; /* Installed borrowed bytes. */
     qa_native_guest_backend backend;
     size_t maximum_backing_bytes, maximum_image_bytes;
     const char *host_executable;
@@ -11,7 +12,7 @@ typedef struct qa_native_sysv_program_restore_bindings {
     qa_native_sysv_program_services services;
 } qa_native_sysv_program_restore_bindings;
 /* Captures actual kernel descriptor offsets/aliases/close progress/task state,
- * original program/interpreter artifacts, historical startup ownership and
+ * original program/interpreter identities, historical startup ownership and
  * current named CPU/RAM/backing/allocator state. External native objects are
  * held by the enclosing captured resource graph, not reopened by this codec. */
 bool qa_native_sysv_program_checkpoint(qa_native_sysv_program *, qa_buffer *, qa_error *);

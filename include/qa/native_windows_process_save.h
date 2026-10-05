@@ -4,6 +4,10 @@
 #include "qa/native_windows_process.h"
 
 typedef struct qa_native_windows_process_restore_bindings {
+    /* Installed artifacts borrowed through restore; saved rows carry only
+     * their actual identities, load bases and attachment state. */
+    const qa_native_windows_artifact *artifacts;
+    size_t artifact_count;
     size_t maximum_backing_bytes;
     qa_native_guest_backend backend;
     const char *host_executable; /* Borrowed actual child bootstrap only. */
@@ -13,7 +17,7 @@ typedef struct qa_native_windows_process_restore_bindings {
     void *external_context;
 } qa_native_windows_process_restore_bindings;
 
-/* Captures the full ordered source artifact graph, attachment ownership,
+/* Captures ordered source artifact identities, attachment ownership,
  * runtime/OS resources and actual lower CPU/RAM continuation at an idle boundary. */
 bool qa_native_windows_process_checkpoint(qa_native_windows_process *, qa_buffer *, qa_error *);
 /* Decode an inert candidate. The actual saved IAT/RAM/CPU/TLS and initializer

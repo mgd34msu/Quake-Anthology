@@ -710,12 +710,14 @@ static bool resources_create(const qa_native_process_resources_options *options,
         .environment = owner->windows_environment, .environment_units = options->windows_environment_units,
         .capabilities = capabilities};
     owner->sysv_restore = (qa_native_sysv_process_restore_bindings){.maximum_backing_bytes = options->policy.maximum_backing_bytes,
+        .artifacts = owner->sysv_artifacts, .artifact_count = owner->artifact_count,
         .backend = options->policy.backend, .host_executable = owner->bootstrap_path, .profile_guard = guest.profile_guard,
         .clock_id = options->service_owner, .output_is_terminal = terminal, .time = platform_seconds,
         .current = current_callback, .context = owner, .file = sysv_resolve,
         .open_file = sysv_open, .file_context = owner,
         .external_callback = options->external_callback, .external_context = options->external_context};
     owner->windows_restore = (qa_native_windows_process_restore_bindings){.maximum_backing_bytes = options->policy.maximum_backing_bytes,
+        .artifacts = owner->windows_artifacts, .artifact_count = owner->artifact_count,
         .backend = options->policy.backend, .host_executable = owner->bootstrap_path, .profile_guard = guest.profile_guard,
         .capabilities = capabilities, .external_callback = options->external_callback, .external_context = options->external_context};
     owner->options.artifacts = NULL; owner->options.roots = NULL;
@@ -803,6 +805,7 @@ bool qa_native_process_resources_program_restore_read(qa_native_process_resource
     if (owner->options.policy.backend == QA_NATIVE_GUEST_HOST_X86_64 &&
         !qa_native_runtime_profile_launch(owner->options.runtime, &owner->guard, error)) return false;
     *out = (qa_native_sysv_program_restore_bindings){.backend = owner->options.policy.backend,
+        .program = owner->program.program, .interpreter = owner->program.interpreter,
         .maximum_backing_bytes = owner->options.policy.maximum_backing_bytes,
         .maximum_image_bytes = owner->options.policy.maximum_image_bytes,
         .host_executable = owner->bootstrap_path, .profile_guard = owner->program.guest.profile_guard,
@@ -1130,6 +1133,8 @@ static bool resource_copy(const qa_native_process_resources *source,
         (copy->raw_program && !qa_native_process_platform_program_files(copy->options.platform, copy->standards, error))) return false;
     copy->sysv = source->sysv; copy->windows = source->windows;
     copy->sysv_restore = source->sysv_restore; copy->windows_restore = source->windows_restore;
+    copy->sysv_restore.artifacts = copy->sysv_artifacts;
+    copy->windows_restore.artifacts = copy->windows_artifacts;
     copy->sysv.artifacts = copy->sysv_artifacts; copy->sysv.files = copy->standards;
     copy->sysv.argv = (const char *const *)copy->argv; copy->sysv.environment = (const char *const *)copy->environment;
     copy->sysv.context = copy; copy->sysv.file_context = copy;

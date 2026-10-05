@@ -7,7 +7,7 @@ typedef struct saved_process_image {
     uint64_t provider, bias;
     uint32_t role;
     size_t maximum;
-    qa_bytes artifact, loaded;
+    qa_bytes loaded;
 } saved_process_image;
 
 static bool image_fields(qa_source_save_io *io, qa_native_image_info *image)
@@ -35,12 +35,7 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 {
     size_t count = bytes->size;
     if (!qa_source_save_count(io, &count, SIZE_MAX)) return false;
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        if (io->offset > io->input.size || count > io->input.size - io->offset)
-            return guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "saved System V process blob is truncated");
-        *bytes = (qa_bytes){io->input.data + io->offset, count}; io->offset += count;
-        return true;
-    }
+    if (io->direction == QA_SOURCE_SAVE_READ) return qa_source_save_span(io, count, bytes);
     return qa_source_save_bytes(io, (void *)bytes->data, count);
 }
 
@@ -168,10 +163,10 @@ bool qa_native_sysv_process_checkpoint(qa_native_sysv_process *owner, qa_buffer 
             okay = actual && guest_elf_loaded_checkpoint(row->loaded, &loaded, error);
             if (okay) {
                 saved_process_image record = {actual->image, row->provider, actual->bias,
-                    (uint32_t)actual->role, actual->bytes.size, actual->artifact, {loaded.data, loaded.size}};
+                    (uint32_t)actual->role, actual->bytes.size, {loaded.data, loaded.size}};
                 okay = image_fields(&io, &record.image) && qa_source_save_u64(&io, &record.provider) &&
                     qa_source_save_u64(&io, &record.bias) && qa_source_save_u32(&io, &record.role) &&
-                    qa_source_save_count(&io, &record.maximum, SIZE_MAX) && blob(&io, &record.artifact) && blob(&io, &record.loaded);
+                    qa_source_save_count(&io, &record.maximum, SIZE_MAX) && blob(&io, &record.loaded);
             }
             qa_buffer_free(&loaded);
         }
@@ -217,6 +212,7 @@ bool qa_native_sysv_process_restore(qa_bytes encoded,
     const qa_native_sysv_process_restore_bindings *bindings, qa_native_sysv_process **out, qa_error *error)
 {
     if (!bindings || !bindings->current || !bindings->maximum_backing_bytes ||
+        !bindings->artifacts || !bindings->artifact_count ||
         bindings->backend > QA_NATIVE_GUEST_HOST_X86_64 ||
         (bindings->backend == QA_NATIVE_GUEST_HOST_X86_64 && (!bindings->profile_guard ||
          !bindings->host_executable || !*bindings->host_executable)) ||
@@ -233,7 +229,7 @@ bool qa_native_sysv_process_restore(qa_bytes encoded,
     bool okay = reader && process_fields(&io, owner) &&
         qa_source_save_count(&io, &count, SIZE_MAX / sizeof(*records)) && count &&
         blob(&io, &runtime) && blob(&io, &resources) && blob(&io, &guest) && blob(&io, &profile);
-    if (okay && count > (io.input.size - io.offset) / 109)
+    if (okay && (count != bindings->artifact_count || count > (io.input.size - io.offset) / 101))
         okay = guest_fail(error, QA_ERROR_FORMAT, count, "System V artifact count exceeds its actual complete envelope");
     if (okay) {
         records = calloc(count, sizeof(*records));
@@ -243,7 +239,7 @@ bool qa_native_sysv_process_restore(qa_bytes encoded,
         saved_process_image *record = records + i;
         okay = image_fields(&io, &record->image) && qa_source_save_u64(&io, &record->provider) &&
             qa_source_save_u64(&io, &record->bias) && qa_source_save_u32(&io, &record->role) &&
-            qa_source_save_count(&io, &record->maximum, SIZE_MAX) && blob(&io, &record->artifact) && blob(&io, &record->loaded);
+            qa_source_save_count(&io, &record->maximum, SIZE_MAX) && blob(&io, &record->loaded);
         if (okay && (!record->provider || record->role > GUEST_ELF_PROGRAM || !record->maximum))
             okay = guest_fail(error, QA_ERROR_FORMAT, i, "System V saved artifact identity is invalid");
         for (size_t j = 0; okay && j < i; ++j)
@@ -270,8 +266,22 @@ bool qa_native_sysv_process_restore(qa_bytes encoded,
     bool primary_present = false;
     for (size_t i = 0; okay && i < count; ++i) {
         saved_process_image *record = records + i;
+        const qa_native_sysv_artifact *source = NULL;
+        for (size_t j = 0; okay && j < bindings->artifact_count; ++j) {
+            const qa_native_sysv_artifact *actual = bindings->artifacts + j;
+            if (actual->provider != record->provider) continue;
+            if (source || actual->load_bias != record->bias || (uint32_t)actual->role != record->role ||
+                !qa_sha256_equal(&actual->image.digest, &record->image.digest) ||
+                record->maximum > actual->maximum_image_bytes) {
+                okay = guest_fail(error, QA_ERROR_FORMAT, i, "System V saved image differs from its installed source");
+                break;
+            }
+            source = actual;
+        }
+        if (!okay) break;
+        if (!source) { okay = guest_fail(error, QA_ERROR_FORMAT, i, "System V saved image is not installed"); break; }
         owner->images[i].provider = record->provider; owner->image_count = i + 1;
-        okay = guest_elf_open(record->artifact, &record->image, (guest_elf_role)record->role,
+        okay = guest_elf_open(source->bytes, &record->image, (guest_elf_role)record->role,
             record->bias, record->maximum, &owner->images[i].artifact, error);
         const qa_native_image_info *a = &record->image, *b = &owner->options.guest.image;
         if (a->format == b->format && a->target.os == b->target.os && a->target.arch == b->target.arch &&

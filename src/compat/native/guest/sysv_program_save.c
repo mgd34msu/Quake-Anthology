@@ -20,11 +20,7 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 {
     size_t count = bytes->size;
     if (!qa_source_save_count(io, &count, SIZE_MAX)) return false;
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        if (io->offset > io->input.size || count > io->input.size - io->offset)
-            return guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "Linux program capsule blob is truncated");
-        *bytes = (qa_bytes){io->input.data + io->offset, count}; io->offset += count; return true;
-    }
+    if (io->direction == QA_SOURCE_SAVE_READ) return qa_source_save_span(io, count, bytes);
     return qa_source_save_bytes(io, (void *)bytes->data, count);
 }
 static bool fields(qa_source_save_io *io, qa_native_sysv_program *owner)
@@ -145,9 +141,8 @@ bool qa_native_sysv_program_checkpoint(qa_native_sysv_program *owner, qa_buffer 
     if (okay) okay = qa_source_save_count(&io, &count, 2);
     for (size_t i = 0; okay && i < count; ++i) {
         qa_native_sysv_artifact row = i ? owner->options.interpreter : owner->options.program;
-        const guest_elf_view *view = guest_elf_describe(owner->artifacts[i]); row.bytes = view->artifact;
         okay = qa_source_save_u64(&io, &row.provider) && qa_source_save_u64(&io, &row.load_bias) &&
-            image_fields(&io, &row.image) && qa_source_save_count(&io, &row.maximum_image_bytes, SIZE_MAX) && blob(&io, &row.bytes);
+            image_fields(&io, &row.image) && qa_source_save_count(&io, &row.maximum_image_bytes, SIZE_MAX);
     }
     for (size_t i = 0; okay && i < 5; ++i) {
         qa_bytes part = {parts[i].data, parts[i].size}; okay = blob(&io, &part);
@@ -168,6 +163,7 @@ bool qa_native_sysv_program_restore(qa_bytes bytes, const qa_native_sysv_program
     qa_native_sysv_program **out, qa_error *error)
 {
     if (!out || *out || !bindings || !bindings->maximum_backing_bytes || !bindings->maximum_image_bytes ||
+        !bindings->program.provider || bindings->program.role != QA_NATIVE_SYSV_PROGRAM ||
         !bindings->services.id || !bindings->services.current || !bindings->services.resolve_file ||
         !bindings->services.file_status || !bindings->services.descriptor_status ||
         !bindings->services.descriptor_flags ||
@@ -185,14 +181,21 @@ bool qa_native_sysv_program_restore(qa_bytes bytes, const qa_native_sysv_program
         okay = guest_fail(error, QA_ERROR_FORMAT, 0, "Linux continuation differs from its actual backend/resource authority");
     size_t count = 0;
     if (okay) okay = qa_source_save_count(&io, &count, 2) && count > 0;
+    if (okay && (count == 2) != (bindings->interpreter.provider != 0))
+        okay = guest_fail(error, QA_ERROR_FORMAT, 0, "Linux saved interpreter differs from its installed source graph");
     for (size_t i = 0; okay && i < count; ++i) {
         qa_native_sysv_artifact *row = i ? &owner->options.interpreter : &owner->options.program;
+        const qa_native_sysv_artifact *source = i ? &bindings->interpreter : &bindings->program;
         row->role = QA_NATIVE_SYSV_PROGRAM;
         okay = qa_source_save_u64(&io, &row->provider) && qa_source_save_u64(&io, &row->load_bias) &&
-            image_fields(&io, &row->image) && qa_source_save_count(&io, &row->maximum_image_bytes, bindings->maximum_image_bytes) &&
-            blob(&io, &row->bytes) && row->provider && row->maximum_image_bytes &&
-            guest_elf_open(row->bytes, &row->image, GUEST_ELF_PROGRAM, row->load_bias,
-                row->maximum_image_bytes, &owner->artifacts[i], error);
+            image_fields(&io, &row->image) && qa_source_save_count(&io, &row->maximum_image_bytes, bindings->maximum_image_bytes);
+        if (okay && (!row->provider || !row->maximum_image_bytes || row->provider != source->provider ||
+            row->load_bias != source->load_bias || source->role != QA_NATIVE_SYSV_PROGRAM ||
+            !qa_sha256_equal(&row->image.digest, &source->image.digest) ||
+            row->maximum_image_bytes > source->maximum_image_bytes))
+            okay = guest_fail(error, QA_ERROR_FORMAT, i, "Linux saved program differs from its installed source");
+        if (okay) okay = guest_elf_open(source->bytes, &row->image, GUEST_ELF_PROGRAM,
+            row->load_bias, row->maximum_image_bytes, &owner->artifacts[i], error);
     }
     qa_bytes parts[5] = {{0}};
     for (size_t i = 0; okay && i < 5; ++i) okay = blob(&io, parts + i);
