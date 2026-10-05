@@ -20,6 +20,14 @@
 #include "qa/persistence_application.h"
 #include "save_native_q2.h"
 #include "qa/map_sidecars.h"
+#include "save_private.h"
+
+static bool level_only(const qa_application *app)
+{
+    return app->native_restore_image
+        ? qa_save_image_metadata(app->native_restore_image)->purpose==QA_SAVE_TRANSITION
+        : app->capture_purpose==QA_SAVE_TRANSITION;
+}
 
 static bool state_fail(qa_source_save_io *io, qa_status status, const char *message)
 {
@@ -625,7 +633,7 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved, const applic
                 return state_fail(io, QA_ERROR_FORMAT, "Native Q3 role changes its actual process/resource presence");
         }
     }
-    return (primaries == 1 && games == 1 && console) ||
+    return (primaries == 1 && games == 1 && console != level_only(provider->application)) ||
         state_fail(io, QA_ERROR_FORMAT, "Q3 source inventory has no unique primary/game role");
 }
 
@@ -809,7 +817,7 @@ static bool saved_collect(application_provider *provider,
         saved_free(saved);
         return application_fail(error, QA_ERROR_FORMAT, "Original GAME console changes its actual engine ownership");
     }
-    if (cvars) {
+    if (cvars && !level_only(provider->application)) {
         if (expected) {
             if (!qa_cvars_save_matches(cvars, expected->cvars, error)) { saved_free(saved); return false; }
             saved->cvars = expected->cvars;
@@ -1258,10 +1266,22 @@ bool application_guest_q3_save_declarations(application_provider *provider,
     }
     /* The separate normal Source supplies current declarations and reset
      * defaults. Saved values never become registration metadata. */
+    application_provider *current=application_save_current_provider(provider);
+    qa_buffer settings={0};
+    qa_bytes values=saved->cvars;
+    if (ok && current) {
+        qa_cvars *current_cvars=current->kind==provider->kind
+            ? application_guest_q3_console_registry(current) : NULL;
+        ok=current_cvars && qa_cvars_save_capture(current_cvars,&settings,error);
+        if (ok) values=(qa_bytes){settings.data,settings.size};
+        else if (!error || error->code==QA_OK)
+            application_fail(error,QA_ERROR_FORMAT,"Q3 level restore lacks its current GAME registry");
+    }
     qa_cvars_restore *ticket = NULL;
-    if (ok) ok = qa_cvars_save_prepare(cvars, saved->cvars, &ticket, error) &&
+    if (ok) ok = qa_cvars_save_prepare(cvars, values, &ticket, error) &&
         qa_cvars_save_commit(ticket, error);
     if (!ok) qa_cvars_save_abort(ticket);
+    qa_buffer_free(&settings);
     if (ok && qa_cvars_find(cvars, "sv_cheats"))
         ok = application_fail(error, QA_ERROR_FORMAT, "Restored original GAME shadows shared engine sv_cheats");
     if (ok && scratch) ok = application_native_q2_baselines_destroy(app, error);
