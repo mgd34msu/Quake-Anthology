@@ -319,21 +319,14 @@ bool application_bot_resource_field(qa_source_save_io *io,qa_application *app,qa
     if(io->direction==QA_SOURCE_SAVE_WRITE &&
        !qa_application_content_resource_id(graph,*held_resource,&pool,&resource))
         return bot_save_fail(io,QA_ERROR_FORMAT,"Bot resource is outside its actual content pool");
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
     qa_vfs_acquisition decoded={0};
-    qa_vfs_acquisition *receipt=io->direction==QA_SOURCE_SAVE_WRITE?held_acquisition:&decoded;
-    bool ok=qa_source_save_u64(io,&pool) && pool && qa_source_save_u64(io,&resource) && resource &&
-        qa_source_save_u64(io,&receipt->mount) && qa_source_save_u64(io,&receipt->resource_id);
-    char **texts[]={&receipt->path,&receipt->lookup_path,&receipt->link_source,&receipt->link_target};
-    for(size_t i=0;ok && i<4;++i) {
-        const char *text=*texts[i];ok=bot_save_text(io,&text);
-        if(io->direction==QA_SOURCE_SAVE_READ) *texts[i]=(char *)text;
-    }
-    ok=ok && receipt->resource_id==resource && receipt->path && receipt->lookup_path &&
-        qa_vfs_acquisition_opening_codec(io,files,receipt) &&
-        receipt->opening_present && qa_vfs_acquisition_retained(files,receipt,io->error);
+    qa_vfs_acquisition *receipt=reading?&decoded:held_acquisition;
+    bool ok=qa_source_save_u64(io,&pool) && pool && qa_source_save_u64(io,&resource) && resource;
     const qa_resource *actual=ok?qa_application_content_resource(graph,pool,resource):NULL;
     ok=ok && actual && qa_vfs_resources(files)==qa_application_content_pool(graph,pool) &&
-        qa_resource_pool_find(qa_vfs_resources(files),resource)==actual;
+        (reading || actual==*held_resource) &&
+        qa_application_content_acquisition(io,graph,files,actual,receipt);
     if(ok && io->direction==QA_SOURCE_SAVE_READ && prepare) {
         if(*held_resource) ok=false;
         else {
@@ -341,15 +334,9 @@ bool application_bot_resource_field(qa_source_save_io *io,qa_application *app,qa
             *held_acquisition=decoded;decoded=(qa_vfs_acquisition){0};
         }
     } else if(ok && io->direction==QA_SOURCE_SAVE_READ) {
-        const qa_vfs_acquisition *held=held_acquisition;
-        ok=actual==*held_resource && decoded.mount==held->mount && decoded.resource_id==held->resource_id &&
-            decoded.opening.rank==held->opening.rank && decoded.opening.user_overlay==held->opening.user_overlay &&
-            decoded.opening.order_count==held->opening.order_count;
-        const char *a[]={decoded.path,decoded.lookup_path,decoded.link_source,decoded.link_target,decoded.opening.prefix};
-        const char *b[]={held->path,held->lookup_path,held->link_source,held->link_target,held->opening.prefix};
-        for(size_t i=0;ok && i<5;++i) ok=a[i]&&b[i]?strcmp(a[i],b[i])==0:a[i]==b[i];
-        for(size_t i=0;ok && i<decoded.opening.order_count;++i)
-            ok=decoded.opening.order[i]==held->opening.order[i];
+        ok=actual==*held_resource && decoded.path && held_acquisition->path &&
+            !strcmp(decoded.path,held_acquisition->path) &&
+            qa_vfs_acquisition_retained(files,held_acquisition,io->error);
     }
     qa_vfs_acquisition_dispose(&decoded);
     return ok?true:bot_save_fail(io,QA_ERROR_FORMAT,"Bot resource differs from its retained acquisition");
