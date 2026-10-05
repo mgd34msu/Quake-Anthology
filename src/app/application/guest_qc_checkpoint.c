@@ -1,5 +1,5 @@
 #include "guest_qc_profile.h"
-#include "qa/vfs_view_save.h"
+#include "qa/persistence_content.h"
 #include "qa/source_save.h"
 #include "qa/cvars_save.h"
 #include "guest_qc_rerelease.h"
@@ -103,7 +103,8 @@ static bool opening_capture(struct application_qc_state *engine,
     qa_vfs_acquisition receipt=entry->acquisition;
     qa_source_save_io io={0};
     bool ok=qa_source_save_writer(&io,engine->services.session,error) &&
-        qa_vfs_acquisition_opening_codec(&io,engine->provider->launch->content,&receipt) &&
+        qa_application_content_acquisition(&io,qa_application_content_graph_read(engine->provider->application),
+            engine->provider->launch->content,entry->source,&receipt) &&
         receipt.opening_present && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);
     if (!ok && (!error || error->code==QA_OK))
@@ -121,25 +122,24 @@ static bool opening_restore(qa_net_reader *reader,struct application_qc_state *e
     qa_bytes bytes={reader->bytes.data+reader->bit/8,size};
     qa_source_save_io io={0};
     bool ok=qa_source_save_reader(&io,engine->services.session,bytes,error) &&
-        qa_vfs_acquisition_opening_codec(&io,engine->provider->launch->content,&entry->acquisition) &&
+        qa_application_content_acquisition(&io,qa_application_content_graph_read(engine->provider->application),
+            engine->provider->launch->content,entry->source,&entry->acquisition) &&
         entry->acquisition.opening_present && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
     if (ok) reader->bit+=(size_t)size*8;
     return ok;
 }
-static bool write_resource(qa_net_writer *writer,const application_qc_resource *entry,
+static bool write_resource(qa_net_writer *writer,const qa_application_content_graph *graph,
+    const application_qc_resource *entry,
     const qa_buffer *opening)
 {
-    const qa_sha256_digest *digest=qa_resource_digest(entry->source); uint8_t empty[32]={0};
-    const qa_vfs_acquisition *a=&entry->acquisition;
+    uint64_t pool=0,resource=0;
+    if (entry->source && !qa_application_content_resource_id(graph,entry->source,&pool,&resource))
+        return qa_net_writer_fail(writer,"QuakeC precache has no installed content reference");
     qa_bounds b=entry->value.bounds;
     return qa_net_write_u32(writer,entry->kind) && qa_net_write_u32(writer,entry->value.index) &&
         qa_net_write_u8(writer,entry->world_model) && write_text(writer,entry->name) &&
-        qa_net_write_u64(writer,a->resource_id) && qa_net_write_u64(writer,a->mount) &&
-        write_text(writer,a->path) && write_text(writer,a->lookup_path) &&
-        qa_net_write_u8(writer,a->link_source!=NULL) && write_text(writer,a->link_source) &&
-        qa_net_write_u8(writer,a->link_target!=NULL) && write_text(writer,a->link_target) &&
-        qa_net_write_data(writer,digest?digest->bytes:empty,sizeof(empty)) &&
+        qa_net_write_u64(writer,pool) && qa_net_write_u64(writer,resource) &&
         qa_net_write_f32(writer,b.mins.x) && qa_net_write_f32(writer,b.mins.y) && qa_net_write_f32(writer,b.mins.z) &&
         qa_net_write_f32(writer,b.maxs.x) && qa_net_write_f32(writer,b.maxs.y) && qa_net_write_f32(writer,b.maxs.z) &&
         qa_net_write_u32(writer,(uint32_t)opening->size) && qa_net_write_data(writer,opening->data,opening->size);
@@ -150,31 +150,19 @@ static bool read_resource(qa_net_reader *reader,struct application_qc_state *eng
     uint32_t kind=qa_net_read_u32(reader); entry->kind=(qa_qc_resource_kind)kind;
     entry->value.index=qa_net_read_u32(reader); uint8_t world=qa_net_read_u8(reader);
     entry->world_model=world!=0; entry->name=read_text(reader);
-    qa_vfs_acquisition *a=&entry->acquisition;
-    a->resource_id=qa_net_read_u64(reader); a->mount=qa_net_read_u64(reader);
-    a->path=read_text(reader); a->lookup_path=read_text(reader);
-    uint8_t source=qa_net_read_u8(reader); a->link_source=read_text(reader);
-    uint8_t target=qa_net_read_u8(reader); a->link_target=read_text(reader);
-    uint8_t digest[32],empty[32]={0};
-    bool ok=kind<=QA_QC_RESOURCE_SOUND && world<=1 && source<=1 && target<=1 &&
-        entry->name && a->path && a->lookup_path && a->link_source && a->link_target &&
-        (source || !*a->link_source) && (target || !*a->link_target) &&
-        qa_net_read_data(reader,digest,sizeof(digest));
+    uint64_t pool=qa_net_read_u64(reader),resource=qa_net_read_u64(reader);
+    bool ok=kind<=QA_QC_RESOURCE_SOUND && world<=1 && entry->name &&
+        ((pool!=0)==(resource!=0));
     entry->value.bounds.mins.x=qa_net_read_f32(reader); entry->value.bounds.mins.y=qa_net_read_f32(reader);
     entry->value.bounds.mins.z=qa_net_read_f32(reader); entry->value.bounds.maxs.x=qa_net_read_f32(reader);
     entry->value.bounds.maxs.y=qa_net_read_f32(reader); entry->value.bounds.maxs.z=qa_net_read_f32(reader);
-    if (!source) { free(a->link_source); a->link_source=NULL; }
-    if (!target) { free(a->link_target); a->link_target=NULL; }
-    if (!a->resource_id) {
-        ok=ok && !a->mount && a->path && !*a->path && a->lookup_path && !*a->lookup_path;
-        free(a->path); a->path=NULL; free(a->lookup_path); a->lookup_path=NULL;
-    } else if (ok) {
-        qa_resource_pool *pool=qa_vfs_resources(engine->provider->launch->content);
-        entry->source=(qa_resource *)qa_resource_pool_find(pool,a->resource_id);
-        if (entry->source) qa_resource_retain(entry->source); else ok=false;
+    if (ok && resource) {
+        entry->source=(qa_resource *)qa_application_content_resource(
+            qa_application_content_graph_read(engine->provider->application),pool,resource);
+        if (entry->source) qa_resource_retain(entry->source);
+        else ok=qa_net_reader_fail(reader,"QuakeC precache installed content reference is absent");
     }
-    const qa_sha256_digest *actual=qa_resource_digest(entry->source);
-    return ok && !reader->failed && !memcmp(digest,actual?actual->bytes:empty,sizeof(digest)) &&
+    return ok && !reader->failed &&
         opening_restore(reader,engine,entry,error) &&
         application_qc_resource_resolve_inline(entry,error) &&
         resource_ready(engine,entry,ordinal,error);
@@ -349,7 +337,8 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
         for (unsigned p = 0; ok && p < 16; ++p) ok = qa_net_write_f32(&writer, client->parms[p]);
     }
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)engine->resource_count);
-    for (size_t i = 0; ok && i < engine->resource_count; ++i) ok=write_resource(&writer,engine->resources+i,openings+i);
+    const qa_application_content_graph *graph=qa_application_content_graph_read(engine->provider->application);
+    for (size_t i = 0; ok && i < engine->resource_count; ++i) ok=write_resource(&writer,graph,engine->resources+i,openings+i);
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)registry.size) &&
         qa_net_write_data(&writer, registry.data, registry.size);
     for (size_t i = 0; ok && i < 64; ++i) ok = write_text(&writer, engine->lightstyles[i]);
@@ -469,7 +458,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     }
     if (ok) ok = application_qc_restore_client_outputs(&candidate, error);
     uint32_t resources = ok ? qa_net_read_u32(&reader) : 0;
-    if (resources > (candidate.profile==QA_QC_RERELEASE?131070u:510u) || resources>qa_net_reader_remaining(&reader)/104)
+    if (resources > (candidate.profile==QA_QC_RERELEASE?131070u:510u) || resources>qa_net_reader_remaining(&reader)/54)
         ok = qa_net_reader_fail(&reader, "QuakeC saved precache count exceeds profile limit");
     if (ok && resources) {
         candidate.resource_capacity=32;
