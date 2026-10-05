@@ -110,7 +110,7 @@ bool q1_map_bob_water(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 }
 
 bool q1_map_pushable_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
-    qa_actor_id id = entity->id, owner_id = entity->owner;
+    qa_actor_id id = entity->id, owner_id = q1_ref_actor(g, entity->owner);
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, other, &body, NULL))
         return true;
