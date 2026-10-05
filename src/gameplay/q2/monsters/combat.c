@@ -2942,78 +2942,92 @@ bool q2m_release(q2m_context *context, qa_error *error) {
                             error);
 }
 
-static qa_attack environmental_attack(q2m_context *context, int means,
-                                      qa_hazard hazard) {
-  qa_actor_id world = context->game->services.physics != NULL
-                          ? context->game->services.physics->world_actor
-                          : (qa_actor_id){0};
-  qa_attack attack = {
-      .sequence = 0,
-      .time_ns = context->game->now_ns,
-      .attacker = world,
-      .inflictor = world,
-      .combat_provider = context->game->options.owner,
-  };
-  attack.cause.kind =
-      means == Q2M_MOD_WATER || means == Q2M_MOD_SLIME || means == Q2M_MOD_LAVA
-          ? QA_CAUSE_Q2
-          : QA_CAUSE_ENVIRONMENT;
-  if (attack.cause.kind == QA_CAUSE_Q2)
-    attack.cause = qa_q2_damage_cause(context->game->options.edition,
-                                      context->game->options.product, means, 0);
-  else
-    attack.cause.source.hazard = hazard;
-  return attack;
+static bool environment_damage(qa_q2_game *g, q2_actor *a, qa_vec3 origin,
+                               int means, float damage, uint32_t flags, qa_error *error) {
+  qa_actor_id world = g->services.physics ? g->services.physics->world_actor : (qa_actor_id){0};
+  qa_attack attack = {.time_ns = g->now_ns, .attacker = world, .inflictor = world,
+      .combat_provider = g->options.owner,
+      .cause = qa_q2_damage_cause(g->options.edition, g->options.product, means, flags)};
+  return q2_damage(g, &attack, a->id, damage, 0, qa_v3(0, 0, 0), origin,
+                   qa_v3(0, 0, 0), false, error);
+}
+
+static bool environment_sound(qa_q2_game *g, q2_actor *a, qa_vec3 origin,
+                              const char *path, qa_error *error) {
+  qa_builtin_event event = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q2,
+      .provider = g->options.owner, .actor = a->id, .time_ns = g->now_ns,
+      .origin = origin, .volume = 1, .attenuation = 1, .channel = 4};
+  return qa_builtin_resource(&g->services, path, &event.resource, error) &&
+      qa_builtin_emit(&g->services, &event, error);
+}
+
+bool q2_world_effects(qa_q2_game *g, q2_actor *a, const qa_body_state *body,
+                      const qa_combat_state *current, uint64_t *air_ns, uint64_t *pain_ns,
+                      uint64_t *damage_ns, qa_error *error) {
+  float health = current->health;
+  int water = a->physics.water_level, contents = a->physics.water_type;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  if (health > 0) {
+    bool swimming = (a->physics.flags & QA_PHYSICS_SWIMMING) != 0;
+    if (swimming ? water > 0 : water < 3)
+      *air_ns = q2_deadline(g->now_ns, (swimming ? UINT64_C(9) : UINT64_C(12)) * Q2_NS);
+    else if (*air_ns < g->now_ns && *pain_ns < g->now_ns) {
+      float elapsed = (float)((g->now_ns - *air_ns) / Q2M_SECOND);
+      float damage = fminf(15, 2 + 2 * elapsed);
+      if (!environment_damage(g, a, body->origin, Q2M_MOD_WATER, damage, 2u, error)) return false;
+      if (!q2_actor_live(g, a->id)) return true;
+      *pain_ns = q2_deadline(g->now_ns, Q2_NS);
+    }
+  }
+  if (!water) {
+    if (a->environment_flags & Q2_ENV_IN_WATER) {
+      if (!environment_sound(g, a, body->origin, "player/watr_out.wav", error)) return false;
+      if (!q2_actor_live(g, a->id)) return true;
+      a->environment_flags &= ~(uint32_t)Q2_ENV_IN_WATER;
+    }
+    return true;
+  }
+  if ((contents & 8) && !(a->environment_flags & Q2_ENV_IMMUNE_LAVA) && *damage_ns < g->now_ns) {
+    *damage_ns = q2_deadline(g->now_ns, (rerelease ? UINT64_C(100) : UINT64_C(200)) * Q2_MS);
+    if (!environment_damage(g, a, body->origin, Q2M_MOD_LAVA, 10 * (float)water, 0, error))
+      return false;
+    if (!q2_actor_live(g, a->id)) return true;
+  }
+  if ((contents & 16) && !(a->environment_flags & Q2_ENV_IMMUNE_SLIME) && *damage_ns < g->now_ns) {
+    *damage_ns = q2_deadline(g->now_ns, rerelease ? 100 * Q2_MS : Q2_NS);
+    if (!environment_damage(g, a, body->origin, Q2M_MOD_SLIME, 4 * (float)water, 0, error))
+      return false;
+    if (!q2_actor_live(g, a->id)) return true;
+  }
+  if (!(a->environment_flags & Q2_ENV_IN_WATER)) {
+    bool sound = rerelease || !(a->physics.flags & QA_PHYSICS_DEAD);
+    if (sound) {
+      const char *path = contents & (16 | 32) ? "player/watr_in.wav" : NULL;
+      if (contents & 8) {
+        if (rerelease && (a->physics.flags & QA_PHYSICS_MONSTER)) {
+          qa_combat_state combat;
+          if (!qa_combat_read(g->services.combat, a->id, &combat, error)) return false;
+          health = combat.health;
+        }
+        if (!rerelease || ((a->physics.flags & QA_PHYSICS_MONSTER) && health > 0))
+          path = q2_random(g) <= .5f ? "player/lava1.wav" : "player/lava2.wav";
+        else
+          path = "player/watr_in.wav";
+      }
+      if (path && !environment_sound(g, a, body->origin, path, error)) return false;
+      if (!q2_actor_live(g, a->id)) return true;
+    }
+    a->environment_flags |= Q2_ENV_IN_WATER;
+    *damage_ns = 0;
+  }
+  return true;
 }
 
 bool q2m_world_effects(q2m_context *context, qa_error *error) {
-  if (!q2m_alive(context))
-    return true;
-  struct qa_q2_monster *monster = context->monster;
-  int water = context->actor->physics.water_level;
-  int contents = context->actor->physics.water_type;
-  if (context->combat.health > 0.0f) {
-    bool can_breathe =
-        monster->definition->locomotion == Q2M_SWIM ? water > 0 : water < 3;
-    if (can_breathe)
-      monster->air_ns =
-          q2m_after(context->game->now_ns,
-                    monster->definition->locomotion == Q2M_SWIM ? 9.0 : 12.0);
-    else if (context->game->now_ns >= monster->air_ns &&
-             context->game->now_ns >= monster->pain_ns) {
-      float elapsed =
-          (float)((context->game->now_ns - monster->air_ns) / Q2M_SECOND);
-      float damage = fminf(15.0f, 2.0f + 2.0f * floorf(elapsed));
-      qa_attack attack =
-          environmental_attack(context, Q2M_MOD_WATER, QA_HAZARD_DROWN);
-      monster->pain_ns = q2m_after(context->game->now_ns, 1.0);
-      if (!q2_damage(context->game, &attack, context->actor->id, damage, 0.0f,
-                     qa_v3(0, 0, 0), context->body.origin, qa_v3(0, 0, 0),
-                     false, error))
-        return false;
-    }
-  }
-  if (!q2m_alive(context) || water == 0 ||
-      context->game->now_ns < monster->environment_ns)
-    return true;
-  int means = 0;
-  float damage = 0.0f;
-  if (((uint32_t)contents & 8u) != 0) {
-    means = Q2M_MOD_LAVA;
-    damage = 10.0f * (float)water;
-    monster->environment_ns = q2m_after(context->game->now_ns, 0.2);
-  } else if (((uint32_t)contents & 16u) != 0) {
-    means = Q2M_MOD_SLIME;
-    damage = 4.0f * (float)water;
-    monster->environment_ns = q2m_after(context->game->now_ns, 1.0);
-  }
-  if (means == 0)
-    return true;
-  qa_attack attack = environmental_attack(
-      context, means, means == Q2M_MOD_LAVA ? QA_HAZARD_LAVA : QA_HAZARD_SLIME);
-  return q2_damage(context->game, &attack, context->actor->id, damage, 0.0f,
-                   qa_v3(0, 0, 0), context->body.origin, qa_v3(0, 0, 0), false,
-                   error);
+  if (!q2m_alive(context)) return true;
+  struct qa_q2_monster *m = context->monster;
+  return q2_world_effects(context->game, context->actor, &context->body, &context->combat,
+                          &m->air_ns, &m->pain_ns, &m->environment_ns, error);
 }
 
 bool q2m_kamikaze(q2m_context *context, qa_error *error) {

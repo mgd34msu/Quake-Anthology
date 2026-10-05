@@ -86,13 +86,13 @@ bool q2_light_use(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!s->active)
         return q2_entity_schedule(g, a, Q2ET_NONE, 0);
     return !(s->goal.registry || (s->spawnflags & 4)) ||
-           q2_entity_schedule(g, a, Q2ET_DYNAMIC_LIGHT, .1f);
+           q2_entity_schedule(g, a, s->goal.registry ? Q2ET_DYNAMIC_LIGHT : Q2ET_LIGHT_FLICKER, .1f);
 }
-bool q2_light_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
+bool q2_light_think(qa_q2_game *g, q2_actor *a, bool flicker_only, qa_error *e) {
     q2_entity_state *s = a->entity;
-    if ((s->spawnflags & 4) && q2_random(g) < .5f)
+    if ((flicker_only || (s->spawnflags & 4)) && q2_random_bounded(g, 2) == 0)
         s->visual.visible = !s->visual.visible;
-    if (s->goal.registry) {
+    if (!flicker_only && s->goal.registry) {
         qa_q2_entity_services *services = &g->entity_runtime->services;
         qa_string_id style;
         if (!services->lightstyle) {
@@ -133,7 +133,8 @@ bool q2_light_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         s->visual.skin = (int32_t)result;
     }
     return show(g, a, e) &&
-           (!q2_actor_live(g, a->id) || q2_entity_schedule(g, a, Q2ET_DYNAMIC_LIGHT, .1f));
+           (!q2_actor_live(g, a->id) || q2_entity_schedule(g, a,
+               flicker_only ? Q2ET_LIGHT_FLICKER : Q2ET_DYNAMIC_LIGHT, .1f));
 }
 bool q2_light_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     q2_entity_state *s = a->entity;

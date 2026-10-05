@@ -93,6 +93,7 @@ typedef struct q2_actor {
     qa_q2_wire_movement wire_movement;
     qa_q2_wire_lifetime wire_lifetime;
     uint64_t extra_effects;
+    uint32_t environment_flags;
     uint64_t combat_surprise_ns;
     uint64_t character_birth_epoch;
     bool character_immortal, character_no_damage_effects;
@@ -241,6 +242,11 @@ bool q2_wire_bind(qa_q2_game *, q2_actor *, uint32_t, qa_error *);
 void q2_wire_release(qa_q2_game *, q2_actor *);
 void q2_wire_reset(qa_q2_game *);
 bool q2_actor_live(qa_q2_game *, qa_actor_id);
+enum q2_environment_flags {
+    Q2_ENV_IN_WATER = 8u, Q2_ENV_IMMUNE_SLIME = 64u, Q2_ENV_IMMUNE_LAVA = 128u
+};
+bool q2_world_effects(qa_q2_game *, q2_actor *, const qa_body_state *, const qa_combat_state *,
+                      uint64_t *air_ns, uint64_t *pain_ns, uint64_t *damage_ns, qa_error *);
 float q2_random(qa_q2_game *);
 bool q2_monster_timed_invulnerability(const q2_actor *, uint64_t now_ns);
 float q2_crandom(qa_q2_game *);

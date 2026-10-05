@@ -338,6 +338,8 @@ static const original_entity_think entity_thinks[] = {
     THINK("plat_go_down", Q2ET_PLAT_DOWN, Q2E_PLAT),
     THINK("plat2_go_down", Q2ET_PLAT_DOWN, Q2E_PLAT),
     THINK("plat2_go_up", Q2ET_PLAT_UP, Q2E_PLAT),
+    THINK("rotating_accel", Q2ET_ROTATE_ACCEL, Q2E_ROTATING),
+    THINK("rotating_decel", Q2ET_ROTATE_DECEL, Q2E_ROTATING),
     THINK("trigger_elevator_init", Q2ET_ELEVATOR, Q2E_ELEVATOR),
     THINK("force_wall_think", Q2ET_FORCEWALL, Q2E_FORCEWALL),
     ANIM("misc_banner_think", Q2S_BANNER, -1),
@@ -350,8 +352,11 @@ static const original_entity_think entity_thinks[] = {
     ANIM("commander_body_drop", Q2S_COMMANDER, 0),
     ANIM("commander_body_think", Q2S_COMMANDER, 1),
     ANIM("func_clock_think", Q2S_CLOCK, -1),
-    ANIM("M_droptofloor", Q2S_BARREL, 0),
-    ANIM("barrel_explode", Q2S_BARREL, 1),
+    ANIM("M_droptofloor", Q2S_BARREL, Q2_BARREL_DROP),
+    ANIM("barrel_start", Q2S_BARREL, Q2_BARREL_DROP),
+    ANIM("barrel_think", Q2S_BARREL, Q2_BARREL_IDLE),
+    ANIM("barrel_burn", Q2S_BARREL, Q2_BARREL_BURN),
+    ANIM("barrel_explode", Q2S_BARREL, Q2_BARREL_EXPLODE),
     ANIM("rotating_light_alarm", Q2S_ROTATING_LIGHT, -1),
     ANIM("object_repair_sparks", Q2S_REPAIR, 0),
     ANIM("object_repair_dead", Q2S_REPAIR, 1),
@@ -367,6 +372,7 @@ static const original_entity_think entity_thinks[] = {
     THINK("target_poi_setup", Q2ET_POI, Q2E_POI),
     THINK("check_target_healthbar", Q2ET_HEALTHBAR, Q2E_HEALTHBAR),
     THINK("target_light_think", Q2ET_DYNAMIC_LIGHT, Q2E_DYNAMIC_LIGHT),
+    THINK("target_light_flicker_think", Q2ET_LIGHT_FLICKER, Q2E_DYNAMIC_LIGHT),
     THINK("func_eye_setup", Q2ET_EYE_SETUP, Q2E_EYE),
     THINK("func_eye_think", Q2ET_EYE, Q2E_EYE),
     THINK("func_spinning_think", Q2ET_SPINNING, Q2E_SPINNING),
@@ -405,7 +411,12 @@ static const char *scenery_think(qa_q2_game *g, const q2_entity_state *s)
             !strcmp(name, "misc_easterchick2") ? "misc_easterchick2_think" : NULL;
     case Q2S_COMMANDER: return s->stage ? "commander_body_think" : "commander_body_drop";
     case Q2S_CLOCK: return "func_clock_think";
-    case Q2S_BARREL: return s->stage ? "barrel_explode" : "M_droptofloor";
+    case Q2S_BARREL:
+        return s->stage == Q2_BARREL_EXPLODE ? "barrel_explode" :
+            s->stage == Q2_BARREL_BURN ? "barrel_burn" :
+            s->stage == Q2_BARREL_IDLE ? "barrel_think" :
+            g->options.edition == QA_Q2_RERELEASE || g->options.product == QA_Q2_ROGUE ?
+                "barrel_start" : "M_droptofloor";
     case Q2S_ROTATING_LIGHT: return "rotating_light_alarm";
     case Q2S_REPAIR: return s->stage == 1 ? "object_repair_dead" :
         s->stage == 2 ? "object_repair_fx" : "object_repair_sparks";
@@ -860,6 +871,9 @@ static bool entity_effects(qa_q2_game *g, q2_original_record_io *io, q2_entity_s
                 UINT16_MAX, UINT16_MAX, 996, &s->multicast_origin)) return false;
     }
     bool speaker = s->kind == Q2E_SPEAKER;
+    if (s->kind == Q2E_ROTATING &&
+        !q2_original_resource(g, io, engine, "moveinfo.sound_middle", 704, 704, 704, 288,
+            &s->noise)) return false;
     if (speaker || s->kind == Q2E_SOUND_FX || s->kind == Q2E_EARTHQUAKE ||
         (s->kind == Q2E_SCENERY && s->scenery == Q2S_EXPLOSIVE))
         if (!q2_original_resource(g, io, engine, "noise_index", 576, 576, 576, 288, &s->noise))
@@ -870,6 +884,10 @@ static bool entity_effects(qa_q2_game *g, q2_original_record_io *io, q2_entity_s
         if (io->reading) s->active = loop != 0;
     }
     if (s->kind == Q2E_CHANGELEVEL && io->reading) s->active = false;
+    if (s->kind == Q2E_SCENERY && s->scenery == Q2S_BARREL &&
+        (!scalar(io, "air_finished", Q2_ORIGINAL_TIME, 404, &s->air_ns) ||
+         !scalar(io, "pain_debounce_time", Q2_ORIGINAL_TIME, 464, &s->pain_ns) ||
+         !scalar(io, "damage_debounce_time", Q2_ORIGINAL_TIME, 472, &s->environment_ns))) return false;
     if (s->kind == Q2E_DYNAMIC_LIGHT) {
         int32_t enabled = s->active ? 1 : 0;
         if (!scalar(io, "health", Q2_ORIGINAL_I32, 480, &enabled)) return false;

@@ -422,6 +422,7 @@ typedef struct qa_q2_projectile_checkpoint {
 typedef struct qa_q2_actor_checkpoint {
     uint64_t source_order;
     uint64_t extra_effects;
+    uint32_t environment_flags;
     uint64_t combat_surprise_ns;
     uint64_t character_birth_epoch;
     bool character_immortal, character_no_damage_effects;

@@ -113,6 +113,7 @@ bool qa_q2_actor_capture(qa_q2_game *g, qa_actor_id id, qa_q2_actor_checkpoint *
     const q2_projectile *p = &a->projectile;
     qa_q2_actor_checkpoint snapshot = {.source_order = a->source_order,
                                        .extra_effects = a->extra_effects,
+                                       .environment_flags = a->environment_flags,
                                        .combat_surprise_ns = a->combat_surprise_ns,
                                        .character_birth_epoch = a->character_birth_epoch,
                                        .character_immortal = a->character_immortal,
@@ -355,6 +356,7 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
     a->hand_grenade_bound = s->hand_grenade_bound;
     a->hand_grenade = s->hand_grenade;
     a->extra_effects = s->extra_effects;
+    a->environment_flags = s->environment_flags;
     a->combat_surprise_ns = s->combat_surprise_ns;
     a->character_birth_epoch = s->character_birth_epoch;
     a->character_immortal = s->character_immortal;

@@ -42,7 +42,7 @@ static bool optional(q2_save_io *io, void **value, size_t size) {
 }
 static bool state(q2_save_io *io, qa_q2_entity_state *s) {
     Q2U(kind); Q2U(think); Q2N(classname); Q2N(targetname); Q2N(target); Q2N(killtarget);
-    Q2N(message); Q2N(team); Q2N(map); Q2N(noise);
+    Q2N(message); Q2N(team); Q2N(map); Q2N(noise); Q2N(loop_sound);
     void *fields = s->fields;
     if (!q2_save_count(io, &s->field_count, 8, sizeof(*s->fields), &fields)) return false;
     s->fields = fields;
@@ -53,6 +53,7 @@ static bool state(q2_save_io *io, qa_q2_entity_state *s) {
     Q2F(speed); Q2F(accel); Q2F(decel); Q2F(wait);
     Q2F(delay); Q2F(damage); Q2F(health); Q2F(random); Q2F(volume); Q2F(attenuation);
     Q2T(due_ns); Q2T(timestamp_ns); Q2T(debounce_ns); Q2T(sound_ns); Q2T(expires_ns);
+    Q2T(air_ns); Q2T(pain_ns); Q2T(environment_ns);
     Q2I(count); Q2I(style); Q2I(stage); Q2B(usable); Q2B(touchable); Q2B(active);
     Q2B(dispatching); Q2B(has_inline); Q2B(dirty);
     void *extension = s->mover;

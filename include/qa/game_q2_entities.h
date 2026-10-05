@@ -251,7 +251,10 @@ typedef enum q2_entity_think {
     Q2ET_PLAYER_SECURITY,
     Q2ET_PLAYER_COOP_FIX,
     Q2ET_PLAYER_START_DROP,
-    Q2ET_DELAYED_USE
+    Q2ET_DELAYED_USE,
+    Q2ET_ROTATE_ACCEL,
+    Q2ET_ROTATE_DECEL,
+    Q2ET_LIGHT_FLICKER
 } q2_entity_think;
 typedef enum q2_move_done {
     Q2MD_NONE,
@@ -324,7 +327,7 @@ typedef enum q2_scenery_kind {
 typedef struct qa_q2_entity_state {
     q2_entity_kind kind;
     q2_entity_think think;
-    qa_string_id classname, targetname, target, killtarget, message, team, map, noise;
+    qa_string_id classname, targetname, target, killtarget, message, team, map, noise, loop_sound;
     q2_field *fields;
     size_t field_count;
     uint32_t ordinal, spawnflags;
@@ -334,6 +337,7 @@ typedef struct qa_q2_entity_state {
     qa_vec3 direction, beam_end, multicast_origin;
     float speed, accel, decel, wait, delay, damage, health, random, volume, attenuation;
     uint64_t due_ns, timestamp_ns, debounce_ns, sound_ns, expires_ns;
+    uint64_t air_ns, pain_ns, environment_ns;
     int count, style, stage;
     bool usable, touchable, active, dispatching, has_inline, dirty;
     q2_mover *mover;

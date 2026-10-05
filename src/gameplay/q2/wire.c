@@ -679,6 +679,7 @@ bool qa_q2_wire_entity_read(qa_q2_game *g, uint32_t slot,
         if (a->item->companion) value.loop_sound = a->item->companion->loop_sound;
     } else if (a->entity) {
         value.classname = a->entity->classname; value.owner = a->entity->owner;
+        value.loop_sound = a->entity->loop_sound;
         value.spawn_flags = a->entity->spawnflags;
         value.volume = a->entity->volume; value.attenuation = a->entity->attenuation;
         if (a->entity->kind == Q2E_SPEAKER && (a->entity->spawnflags & 3) && a->entity->active) {

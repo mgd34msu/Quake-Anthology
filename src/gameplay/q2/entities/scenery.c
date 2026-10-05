@@ -101,6 +101,7 @@ static bool break_apart(qa_q2_game *g, q2_actor *a, qa_actor_id inflictor, qa_ac
 }
 static bool barrel_blast(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_entity_state *s = a->entity;
+    if (!damageable(g, a, false, e)) return false;
     if (!q2_entity_radius(g, a, s->activator.registry ? s->activator : a->id, s->damage,
                           s->damage + 40, 26, e))
         return false;
@@ -137,6 +138,58 @@ static bool barrel_blast(qa_q2_game *g, q2_actor *a, qa_error *e) {
             return true;
     }
     return explode(g, a, qa_actor_reference_present(body.ground) ? 2 : 1, e);
+}
+static bool barrel_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    q2_entity_state *s = a->entity;
+    if (s->stage == Q2_BARREL_EXPLODE)
+        return barrel_blast(g, a, e);
+    if (s->stage == Q2_BARREL_BURN) {
+        if (g->now_ns >= s->timestamp_ns) s->stage = Q2_BARREL_EXPLODE;
+        s->visual.effects |= UINT64_C(1) << 35;
+        s->loop_sound = s->noise;
+        if (!s->loop_sound && !qa_builtin_resource(&g->services, "weapons/bfg__l1a.wav",
+            &s->loop_sound, e)) return false;
+        return q2_entity_show(g, a, e) && (!q2_actor_live(g, a->id) ||
+            q2_entity_schedule(g, a, Q2ET_SCENERY, (float)g->frame_ns / Q2_NS));
+    }
+    if (!g->services.physics) {
+        qa_error_set(e, QA_ERROR_UNSUPPORTED, 0, "Q2 barrel requires the shared physics service");
+        return false;
+    }
+    if (s->stage == Q2_BARREL_DROP) {
+        bool dropped;
+        if (!qa_physics_drop_to_floor(g->services.physics, a->id, 256, &dropped, e)) return false;
+        if (!q2_actor_live(g, a->id)) return true;
+        if (g->options.edition != QA_Q2_RERELEASE && g->options.product != QA_Q2_ROGUE)
+            return true;
+        s->stage = Q2_BARREL_IDLE;
+        return q2_entity_schedule(g, a, Q2ET_SCENERY, (float)g->frame_ns / Q2_NS);
+    }
+    q2_entity_schedule(g, a, Q2ET_SCENERY, (float)g->frame_ns / Q2_NS);
+    if (!qa_physics_categorize_water(g->services.physics, a->id, e)) return false;
+    if (!q2_actor_live(g, a->id)) return true;
+    a->environment_flags |= Q2_ENV_IMMUNE_SLIME;
+    s->air_ns = q2_deadline(g->now_ns, 100 * Q2_NS);
+    qa_body_state body;
+    qa_combat_state combat;
+    return qa_world_body_read(g->services.world, a->id, &body, e) &&
+        qa_combat_read(g->services.combat, a->id, &combat, e) &&
+        q2_world_effects(g, a, &body, &combat, &s->air_ns, &s->pain_ns, &s->environment_ns, e);
+}
+static bool barrel_die(qa_q2_game *g, q2_actor *a, qa_actor_id attacker, float damage, qa_error *e) {
+    q2_entity_state *s = a->entity;
+    if (g->options.edition == QA_Q2_RERELEASE &&
+        (s->stage == Q2_BARREL_BURN || s->stage == Q2_BARREL_EXPLODE)) return true;
+    s->activator = attacker;
+    if (g->options.edition == QA_Q2_RERELEASE) {
+        s->stage = damage >= 90 ? Q2_BARREL_EXPLODE : Q2_BARREL_BURN;
+        if (s->stage == Q2_BARREL_BURN)
+            s->timestamp_ns = q2_deadline(g->now_ns, 750 * Q2_MS);
+        return true;
+    }
+    if (!damageable(g, a, false, e)) return false;
+    s->stage = Q2_BARREL_EXPLODE;
+    return q2_entity_schedule(g, a, Q2ET_SCENERY, 2 * (float)g->frame_ns / Q2_NS);
 }
 static bool animate(qa_q2_game *g, q2_actor *a, int first, int end, float delay, qa_error *e) {
     a->entity->animation_first = first;
@@ -402,12 +455,16 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             s->health = 10;
         if (s->damage == 0)
             s->damage = 150;
-        float mass = q2_field_float(g, s, "mass", 400);
-        if (!health(g, a, s->health, mass != 0 ? mass : 400, true, false, e))
+        float default_mass = g->options.edition == QA_Q2_RERELEASE ? 50 : 400;
+        float mass = q2_field_float(g, s, "mass", default_mass);
+        if (!health(g, a, s->health, mass != 0 ? mass : default_mass, true, false, e))
             return false;
         a->physics.motion = QA_PHYSICS_STEP;
         s->touchable = true;
-        q2_entity_schedule(g, a, Q2ET_SCENERY, 2 * (float)g->frame_ns / Q2_NS);
+        if (g->options.edition == QA_Q2_RERELEASE &&
+            !qa_builtin_resource(&g->services, "weapons/bfg__l1a.wav", &s->noise, e)) return false;
+        q2_entity_schedule(g, a, Q2ET_SCENERY,
+            g->options.edition == QA_Q2_RERELEASE ? .05f : 2 * (float)g->frame_ns / Q2_NS);
         return model(g, a, "models/objects/barrels/tris.md2",
                      (qa_bounds){{-16, -16, 0}, {16, 16, 40}}, QA_PHYSICS_BOX, e);
     }
@@ -803,28 +860,8 @@ bool q2_scenery_think(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
                q2_entity_schedule(g, a, Q2ET_SCENERY, (float)g->frame_ns / Q2_NS);
     case Q2S_CLOCK:
         return clock_tick(g, a, e);
-    case Q2S_BARREL: {
-        if (s->stage)
-            return barrel_blast(g, a, e);
-        qa_body_state body;
-        qa_trace_result hit;
-        if (!qa_world_body_read(g->services.world, a->id, &body, e))
-            return false;
-        qa_vec3 start = qa_vec_add(body.origin, qa_v3(0, 0, 1));
-        if (!q2_player_trace(g, a->id, start, qa_vec_add(start, qa_v3(0, 0, -256)), &body.bounds,
-                             0x2010003, &hit, e))
-            return false;
-        if (hit.all_solid || hit.fraction >= 1)
-            return true;
-        body.origin = hit.end;
-        qa_actor_id ground = hit.hit == QA_TRACE_HIT_ACTOR ? hit.actor
-                      : hit.hit == QA_TRACE_HIT_WORLD && g->services.physics
-                          ? g->services.physics->world_actor : (qa_actor_id){0};
-        const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), ground);
-        body.ground = record && record->owner == g->options.owner && record->has_source ?
-            qa_actor_reference_source(record->owner, record->source_slot) : qa_actor_reference_lifetime(ground);
-        return q2_entity_body(g, a, &body, true, e);
-    }
+    case Q2S_BARREL:
+        return barrel_think(g, a, e);
     case Q2S_ROTATING_LIGHT:
         if (s->spawnflags & 1)
             return true;
@@ -954,11 +991,7 @@ bool q2_scenery_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *ou
     case Q2S_EXPLOSIVE:
         return break_apart(g, a, out->request.attack.inflictor, out->request.attack.attacker, e);
     case Q2S_BARREL:
-        if (!damageable(g, a, false, e))
-            return false;
-        s->activator = out->request.attack.attacker;
-        s->stage = 1;
-        return q2_entity_schedule(g, a, Q2ET_SCENERY, 2 * (float)g->frame_ns / Q2_NS);
+        return barrel_die(g, a, out->request.attack.attacker, out->result.applied_damage, e);
     case Q2S_GIB:
         return qa_session_release(g->services.session, a->id, e);
     case Q2S_SOLDIER: {

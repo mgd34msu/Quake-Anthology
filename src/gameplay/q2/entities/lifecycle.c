@@ -233,8 +233,8 @@ bool q2_entity_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
             return false;
         return !q2_actor_live(g, id) || qa_session_release(g->services.session, id, e);
     }
-    if (think == Q2ET_DYNAMIC_LIGHT)
-        return q2_light_think(g, a, e);
+    if (think == Q2ET_DYNAMIC_LIGHT || think == Q2ET_LIGHT_FLICKER)
+        return q2_light_think(g, a, think == Q2ET_LIGHT_FLICKER, e);
     if (think >= Q2ET_TURRET_INIT && think <= Q2ET_TURRET_DRIVER)
         return q2_turret_think(g, a, think, e);
     if (think >= Q2ET_PLAYER_SECURITY && think <= Q2ET_PLAYER_START_DROP)

@@ -4,6 +4,7 @@
 #include <errno.h>
 
 typedef qa_q2_entity_state q2_entity_state;
+enum q2_barrel_stage { Q2_BARREL_DROP, Q2_BARREL_EXPLODE, Q2_BARREL_IDLE, Q2_BARREL_BURN };
 bool q2_player_map_spawn(qa_q2_game *, q2_actor *, bool *, qa_error *);
 bool q2_player_map_think(qa_q2_game *, q2_actor *, q2_entity_think, qa_error *);
 typedef struct q2_entities {
@@ -142,7 +143,7 @@ bool q2_rerelease_goal_frame(qa_q2_game *, q2_actor *, qa_error *);
 uint32_t q2_entity_color(const char *);
 bool q2_light_spawn(qa_q2_game *, q2_actor *, bool *, qa_error *);
 bool q2_light_use(qa_q2_game *, q2_actor *, qa_error *);
-bool q2_light_think(qa_q2_game *, q2_actor *, qa_error *);
+bool q2_light_think(qa_q2_game *, q2_actor *, bool flicker_only, qa_error *);
 bool q2_turret_spawn(qa_q2_game *, q2_actor *, bool *, qa_error *);
 bool q2_turret_think(qa_q2_game *, q2_actor *, q2_entity_think, qa_error *);
 bool q2_turret_blocked(qa_q2_game *, q2_actor *, qa_actor_id, qa_error *);

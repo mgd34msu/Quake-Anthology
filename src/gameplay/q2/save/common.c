@@ -103,7 +103,8 @@ static bool projectile(q2_save_io *io, qa_q2_projectile_checkpoint *s) {
     Q2B(dodgeable); return true;
 }
 bool q2_save_actor(q2_save_io *io, qa_q2_actor_checkpoint *s) {
-    Q2T(source_order); Q2T(extra_effects); Q2F(alpha); Q2B(lmctf_plasma_bounce);
+    Q2T(source_order); Q2T(extra_effects); Q2U(environment_flags);
+    Q2F(alpha); Q2B(lmctf_plasma_bounce);
     Q2T(combat_surprise_ns);
     Q2T(character_birth_epoch); Q2N(combat_life_owner); Q2T(combat_life_birth_epoch);
     Q2B(character_immortal); Q2B(character_no_damage_effects);

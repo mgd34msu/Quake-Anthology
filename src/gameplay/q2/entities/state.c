@@ -365,8 +365,14 @@ bool qa_q2_entity_visual(qa_q2_game *g, qa_actor_id id, qa_q2_visual *out, qa_er
     }
 }
 bool q2_entity_schedule(qa_q2_game *g, q2_actor *a, q2_entity_think think, float seconds) {
+    uint64_t duration = q2_item_seconds(seconds);
+    if (g->options.edition == QA_Q2_RERELEASE) {
+        float milliseconds = seconds * 1000.0f;
+        duration = milliseconds <= 0 ? 0 : (double)milliseconds >= (double)(UINT64_MAX / Q2_MS) ?
+            UINT64_MAX : (uint64_t)milliseconds * Q2_MS;
+    }
     a->entity->think = think;
-    a->entity->due_ns = think == Q2ET_NONE ? 0 : q2_deadline(g->now_ns, q2_item_seconds(seconds));
+    a->entity->due_ns = think == Q2ET_NONE ? 0 : q2_deadline(g->now_ns, duration);
     return true;
 }
 bool q2_entity_body(qa_q2_game *g, q2_actor *a, const qa_body_state *b, bool link, qa_error *e) {

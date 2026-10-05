@@ -407,6 +407,7 @@ bool q2_original_edict_visual(qa_q2_game *game, q2_original_record_io *io,
     else if (actor->client) actor->client->loop_sound = sound;
     else if (actor->monster) actor->monster->weapon_sound = sound;
     else if (actor->item && actor->item->companion) actor->item->companion->loop_sound = sound;
+    else if (actor->entity && actor->entity->kind != Q2E_SPEAKER) actor->entity->loop_sound = sound;
     return true;
 }
 
@@ -449,13 +450,15 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
     bool speaker = actor->entity && actor->entity->kind == Q2E_SPEAKER;
     qa_string_id sound = actor->projectile.kind != Q2_PROJECTILE_NONE ? actor->projectile.loop_sound :
         actor->client ? actor->client->loop_sound : actor->monster ? actor->monster->weapon_sound :
-        actor->item && actor->item->companion ? actor->item->companion->loop_sound : 0;
+        actor->item && actor->item->companion ? actor->item->companion->loop_sound :
+        actor->entity ? actor->entity->loop_sound : 0;
     if (!speaker && !q2_original_resource(game, io, engine, "s.sound", 76, 76, 76, 288, &sound)) return false;
     if (io->reading) {
         if (actor->projectile.kind != Q2_PROJECTILE_NONE) actor->projectile.loop_sound = sound;
         else if (actor->client) actor->client->loop_sound = sound;
         else if (actor->monster) actor->monster->weapon_sound = sound;
         else if (actor->item && actor->item->companion) actor->item->companion->loop_sound = sound;
+    else if (actor->entity && actor->entity->kind != Q2E_SPEAKER) actor->entity->loop_sound = sound;
     }
     qa_combat_state combat = {0};
     bool has_combat = qa_combat_read(game->services.combat, actor->id, &combat, NULL);
@@ -473,7 +476,7 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
         (actor->physics.flags & QA_PHYSICS_PARTIAL_GROUND ? 256u : 0) |
         (actor->physics.flags & QA_PHYSICS_TEAM_SLAVE ? 1024u : 0) |
         (combat.no_knockback ? 2048u : 0) | (combat.armor.powered.kind ? 4096u : 0) |
-        (actor->client && actor->client->sphere_camera.registry ? 16384u : 0);
+        (actor->environment_flags & 200u) | (actor->client && actor->client->sphere_camera.registry ? 16384u : 0);
     qa_q2_visual visual = {.alpha = 1, .scale = 1};
     if (!io->reading) (void)qa_q2_presentation_read(game, actor->id, &visual);
     uint32_t svflags = io->reading ? 0 : (!visual.visible ? 1u : 0) |
@@ -489,6 +492,7 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
         if (kind == Q2_GRENADE || kind == Q2_PROX || kind == Q2_TESLA || kind == Q2_TRAP) flags |= UINT64_C(1) << 32;
         if (kind == Q2_PROX || kind == Q2_TESLA || kind == Q2_TRAP) flags |= (UINT64_C(1) << 17) | (UINT64_C(1) << 13);
         if (kind == Q2_NUKE) flags |= UINT64_C(1) << 17;
+        if (actor->entity && actor->entity->scenery == Q2S_BARREL) flags |= UINT64_C(1) << 32;
         if (kind == Q2_BOLT || kind == Q2_GREEN_BOLT || kind == Q2_BLUE_BOLT || kind == Q2_ROCKET ||
             kind == Q2_HEAT_ROCKET || kind == Q2_GRENADE || kind == Q2_BFG_BALL || kind == Q2_ION ||
             kind == Q2_PLASMA || kind == Q2_FLECHETTE || kind == Q2_TRACKER || kind == Q2_PROX) svflags |= 128u;
@@ -505,6 +509,7 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
         !q2_original_scalar(io, "svflags", Q2_ORIGINAL_U32, 184, 184, 184, &svflags)) return false;
     if (!io->reading && !visual_record(game, io, actor, engine, &visual)) return false;
     if (io->reading) {
+        actor->environment_flags = (uint32_t)flags & 200u;
         if (actor->client) actor->client->sphere_vehicle = (flags & 16384u) != 0;
         actor->physics.flags = (flags & 1u ? QA_PHYSICS_FLYING : 0) |
             (flags & 2u ? QA_PHYSICS_SWIMMING : 0) |

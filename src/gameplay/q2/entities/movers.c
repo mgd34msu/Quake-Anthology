@@ -1,13 +1,39 @@
 #include "internal.h"
 
+static bool rotating_accelerated(const qa_q2_game *g, const q2_entity_state *s) {
+    uint32_t flag = g->options.edition == QA_Q2_RERELEASE ? 0x10000u :
+        g->options.product == QA_Q2_ROGUE ? 8192u : 0;
+    return (s->spawnflags & flag) != 0;
+}
+static bool rotate_speed(qa_q2_game *g, q2_actor *a, bool decelerating, qa_error *e) {
+    q2_entity_state *s = a->entity;
+    float speed = qa_vec_length(a->physics.angular_velocity);
+    if (decelerating ? speed <= s->decel : speed >= s->speed - s->accel) {
+        a->physics.angular_velocity = decelerating ? qa_v3(0, 0, 0) :
+            qa_vec_scale(s->direction, s->speed);
+        if (!q2_entity_targets(g, a, a->id, false, e)) return false;
+        if (decelerating && q2_actor_live(g, a->id)) s->touchable = false;
+        return true;
+    }
+    speed += decelerating ? -s->decel : s->accel;
+    a->physics.angular_velocity = qa_vec_scale(s->direction, speed);
+    return q2_entity_schedule(g, a, decelerating ? Q2ET_ROTATE_DECEL : Q2ET_ROTATE_ACCEL,
+        (float)g->frame_ns / Q2_NS);
+}
 static bool rotate_use(qa_q2_game *g, q2_actor *a, qa_error *e) {
-    (void)g;
-    (void)e;
     q2_entity_state *s = a->entity;
     bool stop = qa_vec_length(a->physics.angular_velocity) != 0;
-    a->physics.angular_velocity = stop ? qa_v3(0, 0, 0) : qa_vec_scale(s->direction, s->speed);
-    s->touchable = !stop && (s->spawnflags & 16);
-    return true;
+    s->loop_sound = stop ? 0 : s->noise;
+    if (rotating_accelerated(g, s)) {
+        if (!rotate_speed(g, a, stop, e)) return false;
+    } else {
+        a->physics.angular_velocity = stop ? qa_v3(0, 0, 0) : qa_vec_scale(s->direction, s->speed);
+        if (!q2_entity_targets(g, a, a->id, false, e)) return false;
+        if (stop && q2_actor_live(g, a->id)) s->touchable = false;
+    }
+    if (!q2_actor_live(g, a->id)) return true;
+    if (!stop && (s->spawnflags & 16)) s->touchable = true;
+    return q2_entity_show(g, a, e);
 }
 bool q2_mover_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     q2_entity_state *s = a->entity;
@@ -50,8 +76,9 @@ bool q2_mover_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             s->direction = qa_vec_scale(s->direction, -1);
         if (s->speed == 0)
             s->speed = 100;
-        if (s->damage == 0)
+        if (g->options.edition == QA_Q2_RERELEASE ? !*q2_field_text(g, s, "dmg") : s->damage == 0)
             s->damage = 2;
+        if (g->options.edition == QA_Q2_CLASSIC) s->noise = 0;
         a->physics.motion = (s->spawnflags & 32) ? QA_PHYSICS_STOP : QA_PHYSICS_PUSH;
         s->usable = true;
         s->visual.visible = true;
@@ -65,6 +92,11 @@ bool q2_mover_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             return true;
         if ((s->spawnflags & 1) && !rotate_use(g, a, e))
             return false;
+        if (!q2_actor_live(g, a->id)) return true;
+        if (rotating_accelerated(g, s)) {
+            s->accel = s->accel == 0 ? 1 : fminf(s->accel, s->speed);
+            s->decel = s->decel == 0 ? 1 : fminf(s->decel, s->speed);
+        }
         return q2_entity_show(g, a, e);
     }
     s->mover = calloc(1, sizeof(*s->mover));
@@ -93,6 +125,9 @@ bool q2_mover_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id act
 bool q2_mover_think(qa_q2_game *g, q2_actor *a, q2_entity_think think, bool *handled, qa_error *e) {
     *handled = true;
     switch (think) {
+    case Q2ET_ROTATE_ACCEL:
+    case Q2ET_ROTATE_DECEL:
+        return rotate_speed(g, a, think == Q2ET_ROTATE_DECEL, e);
     case Q2ET_DOOR_PREPARE:
         return q2_door_prepare(g, a, e);
     case Q2ET_DOOR_DOWN:
@@ -137,7 +172,8 @@ bool q2_mover_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contact,
     case Q2E_COMBAT_POINT:
         return q2_route_touch(g, a, contact->other, e);
     case Q2E_ROTATING:
-        return !q2_target_damageable(g, contact->other) ||
+        return qa_vec_length(a->physics.angular_velocity) == 0 ||
+               !q2_target_damageable(g, contact->other) ||
                q2_entity_damage(g, a, contact->other, a->id, a->entity->damage, 1, 20, 0, e);
     default:
         return q2_brush_touch(g, a, contact, handled, e);
@@ -159,6 +195,10 @@ bool q2_mover_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id obstacle, qa_error
         return !q2_target_damageable(g, obstacle) ||
                q2_entity_damage(g, a, obstacle, a->id, s->damage, 1, 20, 0, e);
     case Q2E_ROTATING:
+        if (g->options.edition == QA_Q2_RERELEASE) {
+            if (s->damage == 0 || g->now_ns < s->debounce_ns) return true;
+            s->debounce_ns = q2_deadline(g->now_ns, 100 * Q2_MS);
+        }
         return !q2_target_damageable(g, obstacle) ||
                q2_entity_damage(g, a, obstacle, a->id, s->damage, 1, 20, 0, e);
     case Q2E_PLAT:
