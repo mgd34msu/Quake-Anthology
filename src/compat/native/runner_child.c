@@ -963,13 +963,14 @@ static bool child_entity_set(native_child_state *state, native_wire_reader *read
 static bool child_checkpoint_capture(native_child_state *state, native_wire_reader *reader,
                                      native_wire_buffer *body, qa_error *error) {
     uint32_t flags;
-    if (!native_wire_get_u32(reader, &flags, error) || (flags & ~15u) ||
+    if (!native_wire_get_u32(reader, &flags, error) || (flags & ~31u) ||
         !native_wire_end(reader, error))
         return native_fail(error, QA_ERROR_FORMAT, reader->offset,
                            "native runner checkpoint flags are invalid");
     qa_native_checkpoint checkpoint = {0};
     qa_native_checkpoint_request request = {.game = (flags & 1u) != 0,
                                             .level = (flags & 2u) != 0,
+                                            .host = (flags & 16u) != 0,
                                             .autosave = (flags & 4u) != 0,
                                             .transition = (flags & 8u) != 0};
     qa_buffer encoded = {0};

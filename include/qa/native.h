@@ -460,6 +460,7 @@ typedef struct qa_native_checkpoint {
 typedef struct qa_native_checkpoint_request {
     bool game;
     bool level;
+    bool host;
     bool autosave;
     bool transition;
 } qa_native_checkpoint_request;
@@ -477,10 +478,10 @@ typedef enum qa_native_restore_part {
  * slot-to-actor bindings, source ownership and any shared service continuation
  * that the module cannot serialize itself. Q3/QL bindings must cover their
  * complete guest-visible continuation because those APIs expose no save ABI.
- * An owned process also captures its original private CPU/RAM/runtime capsule,
- * except Q2 transition exports, which retain the original GAME/LEVEL files.
- * With game and level both false, no source exporter runs; declared callback
- * owners restore that complete capsule through actual cold construction. */
+ * HOST capture is requested separately from the source files. Q2 always uses
+ * its original GAME/LEVEL files and reconstructs a fresh module on restore.
+ * Other owned processes capture their private CPU/RAM/runtime capsule. With
+ * game and level both false, no source exporter runs. */
 bool qa_native_checkpoint_capture(qa_native_instance *instance,
                                   qa_native_checkpoint_request request, qa_native_checkpoint *out,
                                   qa_error *error);

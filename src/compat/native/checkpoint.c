@@ -294,7 +294,7 @@ bool qa_native_checkpoint_capture(qa_native_instance *instance,
         ok = capture_rerelease(instance, request, &checkpoint, error);
     else
         ok = true;
-    if (ok && instance->options.checkpoint) {
+    if (ok && request.host && instance->options.checkpoint) {
         ok = instance->options.checkpoint(instance->options.context, &checkpoint.host, error);
         checkpoint.has_host = ok;
     }

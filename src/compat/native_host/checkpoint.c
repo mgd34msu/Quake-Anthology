@@ -239,7 +239,7 @@ bool qa_native_host_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
     return ok;
 }
 
-static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_only,
+static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_only, bool restore_cvars,
                                 qa_error *error)
 {
     if (!host || !host->instance || host->destroying || host->restoring || host->reconstruction ||
@@ -365,7 +365,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
             qa_source_save_finish(&objects_io, NULL);
         qa_source_save_dispose(&objects_io);
     }
-    if (prepared && registry.size) prepared=qa_cvars_save_prepare(host->cvars,registry,&cvars,error);
+    if (prepared && restore_cvars && registry.size) prepared=qa_cvars_save_prepare(host->cvars,registry,&cvars,error);
     if (!prepared) {
         free(slots); free(retained); native_host_memory_dispose(&memory); return false;
     }
@@ -533,12 +533,12 @@ truncated:
                             "native host checkpoint payload is truncated");
 }
 
-bool qa_native_host_restore(qa_native_host *host, qa_bytes state, qa_error *error)
+bool qa_native_host_restore(qa_native_host *host, qa_bytes state, bool restore_cvars, qa_error *error)
 {
     if (!host || host->callback_depth)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "native host restore requires an idle callback owner");
     ++host->callback_depth;
-    bool ok = restore_checkpoint(host, state, false, error);
+    bool ok = restore_checkpoint(host, state, false, restore_cvars, error);
     --host->callback_depth;
     return ok;
 }
@@ -551,7 +551,7 @@ bool qa_native_host_restore_cvars(qa_native_host *host, qa_bytes state, qa_error
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
             "native cvar import requires its idle loaded original Q2 GAME owner");
     ++host->callback_depth;
-    bool ok = restore_checkpoint(host, state, true, error);
+    bool ok = restore_checkpoint(host, state, true, true, error);
     --host->callback_depth;
     return ok;
 }

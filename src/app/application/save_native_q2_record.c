@@ -76,7 +76,7 @@ bool application_native_q2_save_capture(application_provider *provider, qa_save_
     qa_native_checkpoint snapshot = {0};
     qa_buffer parts[NATIVE_RECORD_PARTS] = {0};
     bool transition = purpose == QA_SAVE_TRANSITION;
-    qa_native_checkpoint_request request = {.game = !transition, .level = true,
+    qa_native_checkpoint_request request = {.game = !transition, .level = true, .host = true,
         .autosave = purpose == QA_SAVE_LEVEL_ENTRY, .transition = transition};
     bool ok = qa_native_checkpoint_capture(qa_native_host_instance(provider->state.native.host),
         request, &snapshot, error) && complete(&snapshot, error) &&
@@ -165,11 +165,11 @@ bool application_native_q2_save_restore(application_provider *provider, applicat
         if (!ok)
             application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 revisit requires its current matching GAME owner");
         if (ok) {
-            qa_native_checkpoint_request request = {.game = true, .autosave = true, .transition = true};
+            qa_native_checkpoint_request request = {.game = true, .host = true, .autosave = true, .transition = true};
             ok = qa_native_checkpoint_capture(qa_native_host_instance(current->state.native.host),
                 request, &game, error);
         }
-        if (ok && (!game.has_game || !game.game.size || game.has_level || game.has_process))
+        if (ok && (!game.has_game || !game.game.size || !game.has_host || !game.host.size || game.has_level || game.has_process))
             ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 revisit requires its current original GAME file");
     }
     const qa_actor_record *world = qa_actors_at_source(qa_session_actors(app->session), provider->owner, 0);
@@ -189,7 +189,8 @@ bool application_native_q2_save_restore(application_provider *provider, applicat
     }
     if (ok)
         ok = qa_native_host_restore_cvars(provider->state.native.host,
-                (qa_bytes){snapshot.host.data, snapshot.host.size}, error) &&
+                snapshot.transition ? (qa_bytes){game.host.data, game.host.size} :
+                    (qa_bytes){snapshot.host.data, snapshot.host.size}, error) &&
             application_startup_source_restore(provider, engine->console, engine->cvars,
                 &engine->command_context, error);
     if (ok) {
@@ -217,7 +218,8 @@ bool application_native_q2_save_restore(application_provider *provider, applicat
             engine->entity_text, (const char *)parts[2].data, error) &&
         qa_native_checkpoint_restore(instance, &snapshot, QA_NATIVE_RESTORE_LEVEL, error) &&
         application_native_q2_scratch_end(scratch, error) &&
-        qa_native_checkpoint_restore(instance, &snapshot, QA_NATIVE_RESTORE_HOST, error);
+        qa_native_host_restore(provider->state.native.host,
+            (qa_bytes){snapshot.host.data, snapshot.host.size}, !snapshot.transition, error);
     if (ok) {
         const char *name = source_text(provider, engine->map_name);
         const char *spawn = source_text(provider, engine->spawn_point);

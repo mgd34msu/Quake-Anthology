@@ -1735,7 +1735,8 @@ bool native_runner_checkpoint_capture(qa_native_instance *instance,
     native_wire_buffer request = {0};
     qa_buffer response = {0};
     uint32_t flags = (request_value.game ? 1u : 0u) | (request_value.level ? 2u : 0u) |
-                     (request_value.autosave ? 4u : 0u) | (request_value.transition ? 8u : 0u);
+                     (request_value.autosave ? 4u : 0u) | (request_value.transition ? 8u : 0u) |
+                     (request_value.host ? 16u : 0u);
     bool received = false;
     bool ok = native_wire_put_u32(&request, flags, error);
     if (ok)

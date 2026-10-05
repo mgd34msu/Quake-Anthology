@@ -843,5 +843,5 @@ bool native_host_capture(void *context, qa_buffer *state, qa_error *error)
 
 bool native_host_apply(void *context, qa_bytes state, qa_error *error)
 {
-    return qa_native_host_restore(context, state, error);
+    return qa_native_host_restore(context, state, true, error);
 }
