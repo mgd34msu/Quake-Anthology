@@ -151,6 +151,7 @@ bool q2_player_copy_corpse(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!q2_actor_live(g, a->id) || !q2_actor_live(g, corpse->id))
         return true;
     corpse->client->visual = a->client->visual;
+    corpse->client->info.slot = a->client->info.slot;
     if (rr) {
         corpse->client->visual.skin &= 255;
         corpse->client->visual.effects = 0;

@@ -320,6 +320,7 @@ static bool decoy(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definition 
     *child->item->companion = (q2_companion){.kind = Q2_DOPPLEGANGER_BODY,
                                              .owner = id,
                                              .next_ns = q2_deadline(g->now_ns, g->frame_ns),
+                                             .attack_ns = q2_deadline(g->now_ns, 100 * Q2_MS),
                                              .expires_ns = q2_deadline(g->now_ns, 30 * Q2_NS)};
     child->item->visible = true;
     if (!qa_q2_entity_visual(g, owner, &child->item->visual, e))
@@ -367,7 +368,9 @@ bool q2_companion_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_companion *c = a->item->companion;
     if (g->now_ns < c->next_ns)
         return true;
-    c->next_ns = q2_deadline(g->now_ns, 100 * Q2_MS);
+    c->next_ns = q2_deadline(g->now_ns,
+        c->kind == Q2_DOPPLEGANGER_BODY && g->options.edition == QA_Q2_RERELEASE ?
+            g->frame_ns : 100 * Q2_MS);
     if (g->now_ns >= c->expires_ns)
         return expire(g, a, e);
     if (g->item_runtime->options.intermission &&
@@ -388,9 +391,15 @@ bool q2_companion_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 c->goal.y = q2_random(g) * 350;
                 c->turn_ns = q2_deadline(g->now_ns, Q2_NS);
             }
-        } else
-            body.angles.y = qa_builtin_angle_mod(yaw + fmaxf(-30, fminf(30, delta)));
-        a->item->visual.frame = (a->item->visual.frame + 1) % 40;
+        } else {
+            float speed = g->options.edition == QA_Q2_RERELEASE ?
+                30 * (float)((double)g->frame_ns / (double)(100 * Q2_MS)) : 30;
+            body.angles.y = qa_builtin_angle_mod(yaw + fmaxf(-speed, fminf(speed, delta)));
+        }
+        if (g->options.edition != QA_Q2_RERELEASE || g->now_ns >= c->attack_ns) {
+            a->item->visual.frame = (a->item->visual.frame + 1) % 40;
+            c->attack_ns = q2_deadline(g->now_ns, 100 * Q2_MS);
+        }
         return set_body(g, a, &body, e) && (!q2_actor_live(g, a->id) || q2_item_visual(g, a, e));
     }
     bool owner_live = q2_actor_live(g, c->owner);

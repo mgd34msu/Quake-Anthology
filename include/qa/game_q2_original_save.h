@@ -7,7 +7,7 @@
 /* The actual GAME product selects its original representation. Resource
  * indices refer to the same engine table captured beside the module file. */
 bool qa_q2_game_original_capture(qa_q2_game *, bool autosave, bool transition,
-    const qa_q2_save_level *, qa_buffer *game, qa_buffer *level, qa_error *);
+    qa_q2_save_level *, qa_buffer *game, qa_buffer *level, qa_error *);
 /* ReadGame precedes authored map spawning. ReadLevel replaces the spawned
  * physical edict state before spawn-point observation and client Begin. */
 bool qa_q2_game_original_read_game(qa_q2_game *, qa_bytes, qa_error *);

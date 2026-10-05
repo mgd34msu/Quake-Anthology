@@ -200,7 +200,7 @@ bool q2_original_body(qa_q2_game *game, q2_original_record_io *io, qa_body_state
 static bool physics_record(qa_q2_game *game, q2_original_record_io *io, q2_actor *actor)
 {
     qa_physics_properties *physics = &actor->physics;
-    if ((io->reading || (!actor->entity && !actor->monster && actor->projectile.kind == Q2_PROJECTILE_NONE)) &&
+    if ((io->reading || (!actor->entity && !actor->monster && !(actor->item && actor->item->companion) && actor->projectile.kind == Q2_PROJECTILE_NONE)) &&
         (!q2_original_source_reference(game, io, "enemy", 540, &physics->enemy) ||
          !q2_original_source_reference(game, io, "goalentity", 412, &physics->goal))) return false;
     if (io->references_only) return true;
@@ -253,29 +253,106 @@ static bool physics_record(qa_q2_game *game, q2_original_record_io *io, q2_actor
     return true;
 }
 
+static q2_actor *appearance_player(qa_q2_game *game, q2_actor *actor)
+{
+    if (actor->client) return actor;
+    qa_actor_id owner = actor->entity ? actor->entity->owner : (qa_actor_id){0};
+    if (actor->item && actor->item->companion) {
+        q2_companion *companion = actor->item->companion;
+        owner = companion->credit;
+        if (!owner.registry) {
+            q2_actor *base = q2_actor_get(game, companion->owner, false, NULL);
+            if (base && base->item && base->item->companion) owner = base->item->companion->owner;
+        }
+    }
+    q2_actor *player = q2_actor_get(game, owner, false, NULL);
+    return player && player->client ? player : NULL;
+}
+
+static bool original_player_model(qa_q2_game *game, q2_original_record_io *io,
+    const qa_q2_save_level *engine, q2_actor *actor, uint32_t skin,
+    size_t component, qa_string_id *model, int *native_skin)
+{
+    uint32_t slot = skin & 255u;
+    if (slot >= game->wire_clients || !engine)
+        return malformed(io, 60, "Original Q2 player model has no physical client skin");
+    q2_actor *player = q2_actor_get(game, game->wire_actors[slot + 1], false, NULL);
+    if (component == 0 && player && player->client && player->client->visual.models[0]) {
+        *model = player->client->visual.models[0];
+        *native_skin = player->client->visual.skin;
+        if (actor->client && actor->client->corpse) actor->client->info.slot = slot;
+        return true;
+    }
+    const char *config = engine->configstrings[1312 + slot];
+    const char *name = strchr(config, '\\');
+    name = name ? name + 1 : "male/grunt";
+    size_t length = strcspn(name, "/");
+    if (!length || length > 255) return malformed(io, 60, "Original Q2 player skin has no model name");
+    const char *member = "tris.md2";
+    if (component) {
+        member = "weapon.md2";
+        uint32_t wanted = (skin >> 8) & 255u, ordinal = 0;
+        for (uint32_t i = 1; i < 256; ++i) {
+            const char *entry = engine->configstrings[32 + i];
+            if (entry[0] == '#' && ++ordinal == wanted) { member = entry + 1; break; }
+        }
+    }
+    char path[384];
+    int size = snprintf(path, sizeof(path), "players/%.*s/%s", (int)length, name, member);
+    if (size < 0 || (size_t)size >= sizeof(path))
+        return malformed(io, 60, "Original Q2 player model exceeds its content path");
+    *native_skin = player && player->client ? player->client->visual.skin : 0;
+    return qa_builtin_resource(&game->services, path, model, io->error);
+}
+
 static bool visual_record(qa_q2_game *game, q2_original_record_io *io,
     q2_actor *actor, const qa_q2_save_level *engine, qa_q2_visual *visual)
 {
     static const char *names[] = {"s.modelindex", "s.modelindex2", "s.modelindex3", "s.modelindex4"};
+    q2_actor *player = appearance_player(game, actor);
+    bool virtual_player = (actor->client && !actor->client->gibbed) ||
+        (actor->entity && actor->entity->kind == Q2E_CAMERA_DUMMY) ||
+        (actor->item && actor->item->companion && actor->item->companion->kind == Q2_DOPPLEGANGER_BODY);
+    int32_t skin = visual->skin;
+    if (!io->reading && virtual_player && visual->models[0] && player) {
+        const qa_q2_weapon_definition *weapon = player->weapon_bound ?
+            qa_q2_weapon_definition_at(game, player->weapon.weapon) : NULL;
+        uint32_t number = player->client->info.slot | (uint32_t)(weapon ? weapon->player_model : 0) << 8;
+        memcpy(&skin, &number, sizeof(skin));
+    }
+    if (!q2_original_scalar(io, "s.skinnum", Q2_ORIGINAL_I32, 60, 60, 60, &skin)) return false;
+    bool custom_skin = false;
     for (size_t i = 0; i < 4; ++i) {
         uint16_t offset = (uint16_t)(40 + i * 4);
-        if (actor->client && !actor->client->gibbed && i < 2) {
-            int32_t index = visual->models[i] ? 255 : 0;
-            if (io->reading) index = 0;
+        int32_t index = 0;
+        if (io->reading || (virtual_player && i < 2)) {
+            if (!io->reading) index = i == 0 ? visual->models[0] ? 255 : 0 :
+                visual->models[0] && (visual->models[1] || (player && !player->client->info.dead && player->weapon_bound)) ? 255 : 0;
             if (!q2_original_scalar(io, names[i], Q2_ORIGINAL_I32, offset, offset, offset, &index)) return false;
-            if (!io->reading || index == 255) continue; /* Source player models resolve from player skins. */
+            if (!io->reading) continue;
+            if (index == 255 && i < 2) {
+                if (!original_player_model(game, io, engine, actor, (uint32_t)skin, i,
+                    visual->models + i, &visual->skin)) return false;
+                custom_skin = true;
+                continue;
+            }
         }
-        if (!q2_original_resource(game, io, engine, names[i], offset, offset, offset,
+        if (actor->wire_bound && actor->wire_slot == 0 && i == 0) {
+            index = io->reading ? 0 : 1;
+            if (!q2_original_scalar(io, names[i], Q2_ORIGINAL_I32, offset, offset, offset, &index)) return false;
+            if (io->reading && !qa_builtin_resource(&game->services, "*0", visual->models + i, io->error)) return false;
+        } else if (!q2_original_resource(game, io, engine, names[i], offset, offset, offset,
             32, visual->models + i)) return false;
     }
+    if (io->reading && !custom_skin) visual->skin = skin;
     if (!q2_original_scalar(io, "s.frame", Q2_ORIGINAL_I32, 56, 56, 56, &visual->frame) ||
-        !q2_original_scalar(io, "s.skinnum", Q2_ORIGINAL_I32, 60, 60, 60, &visual->skin) ||
         !q2_original_scalar(io, "s.effects", Q2_ORIGINAL_U64, 64, 64, 64, &visual->effects) ||
         !q2_original_scalar(io, "s.renderfx", Q2_ORIGINAL_U32, 68, 68, 68, &visual->render_flags)) return false;
     if (io->reading) {
         visual->old_frame = visual->frame;
         visual->visible = true;
         visual->scale = visual->alpha = 1;
+        if (actor->client) actor->client->gibbed = !custom_skin && visual->models[0] && (visual->effects & 2u);
     }
     if (io->edition == QA_Q2_RERELEASE) {
         if (!q2_original_scalar(io, "s.alpha", Q2_ORIGINAL_F32,
@@ -341,6 +418,23 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
         !q2_original_body(game, io, &body) || !physics_record(game, io, actor)) return false;
     if (io->references_only)
         return qa_world_body_write(game->services.world, actor->id, &body, error);
+    if (actor->client) {
+        int32_t maximum = io->reading ? 0 : actor->powers ?
+            qa_source_float_to_i32(actor->powers->maximum_health) : 0;
+        int32_t height = io->reading ? 0 : qa_source_float_to_i32(actor->client->info.view_height);
+        int32_t dead = io->reading ? 0 : actor->client->info.dead ? 2 : 0;
+        if (!q2_original_scalar(io, "max_health", Q2_ORIGINAL_I32, 484, 484, 484, &maximum) ||
+            !q2_original_scalar(io, "viewheight", Q2_ORIGINAL_I32, 508, 508, 508, &height) ||
+            !q2_original_scalar(io, "deadflag", Q2_ORIGINAL_I32, 492, 492, 492, &dead)) return false;
+        if (io->reading) {
+            actor->client->info.dead = dead != 0;
+            actor->client->info.view_height = (float)height;
+            if (actor->powers) actor->powers->maximum_health = (float)maximum;
+        } else if (!q2_original_function(game, io, "pain", 452,
+                actor->client->corpse ? NULL : "player_pain") ||
+            !q2_original_function(game, io, "die", 456,
+                actor->client->corpse ? actor->client->info.dead ? "body_die" : NULL : "player_die")) return false;
+    }
     if (!io->reading && actor->wire_lifetime.link_count > UINT32_MAX)
         return malformed(io, 92, "Q2 Source link count exceeds its original field");
     uint32_t links = io->reading ? 0 : (uint32_t)actor->wire_lifetime.link_count;
@@ -369,14 +463,17 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
     if (actor->entity && actor->entity->scenery == Q2S_CLOCK) source_health = (float)actor->entity->clock_value;
     int32_t health = io->reading ? 0 : qa_source_float_to_i32(source_health);
     int32_t mass = io->reading ? 0 : qa_source_float_to_i32(combat.mass);
-    int32_t damage = io->reading ? 0 : combat.can_take_damage ? 1 : 0;
+    int32_t damage = io->reading ? 0 : combat.can_take_damage ?
+        actor->item && actor->item->companion && actor->item->companion->kind == Q2_DOPPLEGANGER &&
+            io->edition == QA_Q2_CLASSIC ? 2 : 1 : 0;
     uint64_t flags = io->reading ? 0 :
         (actor->physics.flags & QA_PHYSICS_FLYING ? 1u : 0) |
         (actor->physics.flags & QA_PHYSICS_SWIMMING ? 2u : 0) |
         (combat.invulnerable ? 16u : 0) | (actor->client && actor->client->info.notarget ? 32u : 0) |
         (actor->physics.flags & QA_PHYSICS_PARTIAL_GROUND ? 256u : 0) |
         (actor->physics.flags & QA_PHYSICS_TEAM_SLAVE ? 1024u : 0) |
-        (combat.no_knockback ? 2048u : 0) | (combat.armor.powered.kind ? 4096u : 0);
+        (combat.no_knockback ? 2048u : 0) | (combat.armor.powered.kind ? 4096u : 0) |
+        (actor->client && actor->client->sphere_camera.registry ? 16384u : 0);
     qa_q2_visual visual = {.alpha = 1, .scale = 1};
     if (!io->reading) (void)qa_q2_presentation_read(game, actor->id, &visual);
     uint32_t svflags = io->reading ? 0 : (!visual.visible ? 1u : 0) |
@@ -406,8 +503,9 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
         !q2_original_scalar(io, "takedamage", Q2_ORIGINAL_I32, 512, 512, 512, &damage) ||
         !q2_original_scalar(io, "flags", Q2_ORIGINAL_U64, 264, 264, 264, &flags) ||
         !q2_original_scalar(io, "svflags", Q2_ORIGINAL_U32, 184, 184, 184, &svflags)) return false;
-    if (!visual_record(game, io, actor, engine, &visual)) return false;
+    if (!io->reading && !visual_record(game, io, actor, engine, &visual)) return false;
     if (io->reading) {
+        if (actor->client) actor->client->sphere_vehicle = (flags & 16384u) != 0;
         actor->physics.flags = (flags & 1u ? QA_PHYSICS_FLYING : 0) |
             (flags & 2u ? QA_PHYSICS_SWIMMING : 0) |
             (flags & 256u ? QA_PHYSICS_PARTIAL_GROUND : 0) |
@@ -427,15 +525,6 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
             !(has_combat ? (qa_combat_set_health(game->services.combat, actor->id, combat.health, error) &&
                 qa_combat_set_traits(game->services.combat, actor->id, &combat, error)) :
                 qa_combat_create_actor(game->services.combat, actor->id, &combat, error))) return false;
-        if (actor->entity) actor->entity->visual = visual;
-        if (actor->item) { actor->item->visual = visual; actor->item->visible = visual.visible = !(svflags & 1u); }
-        if (actor->client) actor->client->visual = visual;
-        if (actor->monster) {
-            actor->monster->model = visual.models[0]; actor->monster->frame = visual.frame;
-            actor->monster->old_frame = visual.frame; actor->monster->skin = visual.skin;
-            actor->monster->render_flags = visual.render_flags; actor->monster->entity_scale = visual.scale;
-        }
-        actor->alpha = visual.alpha;
         return qa_world_body_write(game->services.world, actor->id, &body, error);
     }
     return true;

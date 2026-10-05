@@ -1,5 +1,6 @@
 #include "original_internal.h"
 #include "original_symbols.h"
+#include "original_edicts.h"
 #include "qa/game_q2_original_save.h"
 #include "qa/game_q2_combat.h"
 #include "qa/text.h"
@@ -886,6 +887,8 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
             !q2_original_scalar(io, "latched_buttons", Q2_ORIGINAL_U32, 3524, 3540, 3556, &state->player.latched_buttons) ||
             !q2_original_scalar(io, "weapon_thunk", Q2_ORIGINAL_BOOL, 3528, 3544, 3560, &state->player.weapon_thunk))
             return false;
+        if (io->product == QA_Q2_ROGUE &&
+            !q2_original_reference(g, io, "owned_sphere", 3852, &state->sphere)) return false;
         const struct {const char *name; uint16_t offsets[3]; float *value;} damage[] = {
             {"damage_armor", {3536, 3552, 3568}, &state->player.damage_armor},
             {"damage_parmor", {3540, 3556, 3572}, &state->player.damage_power},
@@ -1103,6 +1106,7 @@ bool q2_original_client_capture(qa_q2_game *g, q2_actor *actor,
     }
     if (actor->weapon_bound) state->weapon = actor->weapon;
     state->powers = actor->powers ? actor->powers->values : (qa_q2_powerups){0};
+    state->sphere = actor->powers ? actor->powers->sphere : (qa_actor_id){0};
     state->silencer = actor->silencer;
     state->view = actor->wire_view.view;
     state->movement = actor->wire_movement;

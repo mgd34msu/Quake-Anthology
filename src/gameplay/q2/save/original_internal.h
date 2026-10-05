@@ -71,6 +71,7 @@ typedef struct q2_original_client_state {
     qa_q2_player_view view;
     qa_q2_wire_movement movement;
     int32_t silencer;
+    qa_actor_id sphere;
 } q2_original_client_state;
 
 typedef struct q2_original_level_state {
