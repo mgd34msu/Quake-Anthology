@@ -91,7 +91,7 @@ bool frontend_material_movies_policy_prepare(frontend_material_movies *owner,
 {
     qa_scene_resources *images = qa_scene_resource_policy_destination(bank);
     qa_material_library *destination = qa_scene_material_image_policy_destination(materials);
-    if (!out || *out || !frontend_material_movies_idle(owner) || owner->restore_pending ||
+    if (!out || *out || !frontend_material_movies_idle(owner) ||
         !frontend_material_movies_current(owner) || !images || !destination ||
         owner->source.images != qa_scene_resource_policy_source(bank) ||
         owner->source.materials != qa_scene_material_image_policy_source(materials) ||

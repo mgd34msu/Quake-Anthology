@@ -1,7 +1,7 @@
 #ifndef QA_FRONTEND_REMOTE_UNIFIED_MATERIAL_MOVIES_BRIDGE_H
 #define QA_FRONTEND_REMOTE_UNIFIED_MATERIAL_MOVIES_BRIDGE_H
 #include "remote_unified_media.h"
-#include "material_movies_save.h"
+#include "material_movies.h"
 
 bool frontend_unified_material_movies_create(frontend_unified_media *, size_t bank, qa_error *);
 bool frontend_unified_material_cinematic_namespace_read(const frontend_unified_media *, size_t bank,

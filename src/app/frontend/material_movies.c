@@ -56,6 +56,14 @@ bool frontend_material_movies_current(const frontend_material_movies *owner)
 { return movie_structure(owner) && owner->source.current(owner->source.context,&owner->source); }
 bool frontend_material_movies_idle(const frontend_material_movies *owner)
 { return owner && !owner->busy && !owner->pending; }
+bool frontend_material_movies_completed_ready(const frontend_material_movies *owner, qa_error *error)
+{
+    if (!frontend_material_movies_idle(owner) || !movie_structure(owner) ||
+        (owner->cinematic_source && !qa_q3_cinematic_handles_idle(qa_q3_cinematic_source_handles(owner->cinematic_source))) ||
+        !qa_material_movies_completed_ready(owner->registry, error))
+        return frontend_fail(error, QA_ERROR_FORMAT, "Shader movie owner retains an incomplete playback operation");
+    return true;
+}
 static uint64_t cinematic_bus(void *context)
 { return ((const frontend_material_movies *)context)->cinematic_bus; }
 static double cinematic_clock_value(const frontend_material_movies *owner)
@@ -98,7 +106,7 @@ bool frontend_material_movies_cinematic_attach(frontend_material_movies *owner,
         owner->cinematic_source || owner->count || qa_material_movies_count(owner->registry) ||
         !qa_q3_cinematic_handles_idle(pool) || pool!=owner->source.frontend->source_cinematics || seat==QA_AUDIO_WORLD)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Numeric shader movies require their genuine unregistered provider and cinematic pool");
-    if (!owner->restore_pending) for (size_t i=0;i<qa_material_library_record_count(owner->source.materials);++i) {
+    for (size_t i=0;i<qa_material_library_record_count(owner->source.materials);++i) {
         qa_material_library_record_view record;
         if (!qa_material_library_record_read(owner->source.materials,i,&record) ||
             (record.kind!=QA_MATERIAL_DEFAULT && record.kind!=QA_MATERIAL_STENCIL_SHADOW))
@@ -243,7 +251,7 @@ bool frontend_material_movies_transfer(frontend_material_movies **source_slot,
     frontend_material_movies *owner = source_slot ? *source_slot : NULL;
     if (!owner || !expected || !destination || !destination_slot ||
         source_slot == destination_slot || *destination_slot != owner ||
-        !member(owner) || !frontend_material_movies_idle(owner) || owner->restore_pending)
+        !member(owner) || !frontend_material_movies_idle(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Shader movie transfer requires its actual prepared renderer custody");
     const frontend_material_movie_source *old = &owner->source;
     if (old->frontend != expected->frontend || old->files != expected->files ||
@@ -414,7 +422,7 @@ bool frontend_material_movies_create(const frontend_material_movie_source *sourc
 const qa_scene_image *frontend_material_movies_start(void *context, const char *name, qa_error *error)
 {
     frontend_material_movies *owner = context;
-    if (!owner || owner->busy || owner->pending || owner->restore_pending ||
+    if (!owner || owner->busy || owner->pending ||
         !frontend_material_movies_current(owner)) {
         frontend_fail(error, QA_ERROR_ARGUMENT, "Shader movie registration lost its real provider"); return NULL;
     }
@@ -488,7 +496,7 @@ bool frontend_material_movies_read(const frontend_material_movies *owner, size_t
 }
 bool frontend_material_movies_frame(frontend_material_movies *owner, qa_scene_frame *frame, qa_error *error)
 {
-    if (!frontend_material_movies_idle(owner) || owner->restore_pending ||
+    if (!frontend_material_movies_idle(owner) ||
         !frontend_material_movies_current(owner) || frame != &owner->source.frontend->frame)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Shader movie frame lost its real frontend owner");
     return qa_material_movies_prepare(owner->registry, frame, error);
@@ -497,7 +505,7 @@ const qa_scene_image *frontend_material_movies_resolve(void *context, uint64_t i
     double seconds, qa_error *error)
 {
     frontend_material_movies *owner = context;
-    if (!frontend_material_movies_idle(owner) || owner->restore_pending ||
+    if (!frontend_material_movies_idle(owner) ||
         !frontend_material_movies_current(owner)) {
         frontend_fail(error, QA_ERROR_ARGUMENT, "Reached shader movie lost its actual provider"); return NULL;
     }

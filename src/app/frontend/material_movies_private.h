@@ -37,7 +37,7 @@ struct frontend_material_movies {
     frontend_material_movie_cinematic_receipt *cinematic_receipts;
     size_t cinematic_count, cinematic_capacity;
     struct frontend_material_movies_policy *pending;
-    bool busy, restore_pending, linked, cinematic_mode;
+    bool busy, linked, cinematic_mode;
 };
 bool frontend_material_movie_source_valid(const frontend_material_movie_source *);
 bool frontend_material_movie_link(frontend_material_movies *, qa_error *);

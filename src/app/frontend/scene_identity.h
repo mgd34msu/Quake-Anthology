@@ -3,7 +3,6 @@
 #include "qa/frontend.h"
 #include "qa/scene_world_save.h"
 #include "qa/scene_model_save.h"
-#include "qa/scene_frame_save.h"
 #include "qa/scene_save.h"
 
 typedef struct frontend_scene_namespace frontend_scene_namespace;

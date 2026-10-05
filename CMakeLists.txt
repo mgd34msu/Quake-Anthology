@@ -782,7 +782,6 @@ target_link_libraries(qa_media PUBLIC qa_content qa_audio qa_scene qa_persistenc
 add_library(qa_scene STATIC
     src/render/scene/world/q1_sky.c
     src/render/scene/frame.c
-    src/render/scene/frame_save.c
     src/render/scene/math.c
     src/render/scene/resources.c
     src/render/scene/geometry_save.c
@@ -1714,7 +1713,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/model_inventory.c
     src/app/frontend/material_movies.c
     src/app/frontend/material_movies_prepare.c
-    src/app/frontend/material_movies_save.c
     src/app/frontend/music_sources.c
     src/app/frontend/q3_render_policy.c
     src/app/frontend/native_q2.c

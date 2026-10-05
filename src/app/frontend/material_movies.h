@@ -34,6 +34,7 @@ bool frontend_material_movies_create(const frontend_material_movie_source *,
     frontend_material_movies **, qa_error *);
 bool frontend_material_movies_destroy(frontend_material_movies **, qa_error *);
 bool frontend_material_movies_idle(const frontend_material_movies *);
+bool frontend_material_movies_completed_ready(const frontend_material_movies *, qa_error *);
 bool frontend_material_movies_current(const frontend_material_movies *);
 /* Original Q3 shaders share the actual numeric guest handle/scratch pool.
  * The constructor supplies its genuine physical seat and audio namespace. */
