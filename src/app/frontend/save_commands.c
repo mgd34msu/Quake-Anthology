@@ -941,7 +941,9 @@ bool frontend_save_commands_autosave(qa_frontend *f, qa_error *error)
     if (ok) ok=qa_frontend_persistence_capture(f,f->options.persistence_services,QA_SAVE_LEVEL_ENTRY,&image,&local);
     if (ok && owner->autosave.pending) {
         const qa_launch_snapshot *snapshot=qa_application_launch(f->application);
-        const qa_launch_instance *instance=qa_application_selected_instance(f->application,snapshot,(qa_actor_id){0},QA_ROLE_ENTITIES,"");
+        const qa_launch_binding *binding=qa_launch_binding_for(qa_launch_snapshot_choices(snapshot),
+            (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
+        const qa_launch_instance *instance=binding?qa_launch_snapshot_find(snapshot,binding->instance):NULL;
         const qa_product *product=instance?qa_catalog_product(qa_application_catalog(f->application),instance->selection.product):NULL;
         if (!product || !product->key)
             ok=frontend_fail(&local,QA_ERROR_ARGUMENT,"Autosave requires its actual GAME profile");

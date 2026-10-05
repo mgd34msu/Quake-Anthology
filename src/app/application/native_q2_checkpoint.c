@@ -82,9 +82,8 @@ bool application_native_q2_checkpoint_prepare(application_provider *provider,
     qa_console *console = NULL;
     qa_cvars *cvars = NULL;
     qa_command_context command;
-    if (!application_native_q2_console_at(provider, &console, &cvars, &command) ||
-        qa_cvars_count(cvars) != 0)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 source prefix requires its empty restored registry");
+    if (!application_native_q2_console_at(provider, &console, &cvars, &command))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 source prefix requires its current Source declarations");
     qa_buffer settings = {0};
     bool okay;
     if (current) {
