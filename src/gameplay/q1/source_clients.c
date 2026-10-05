@@ -19,10 +19,8 @@ static const char *info(const qa_q1_game *game,const q1_player *player,const cha
 }
 static uint8_t color(const char *text) {
     if (!text) return 0;
-    double value;
-    if (!qa_parse_ecmascript_number((qa_bytes){(const uint8_t *)text, strlen(text)},
-            &value, NULL) || !isfinite(value)) return 0;
-    return value <= 0 ? 0 : value >= 13 ? 13 : (uint8_t)trunc(value);
+    long value = strtol(text, NULL, 10);
+    return value <= 0 ? 0 : value >= 13 ? 13 : (uint8_t)value;
 }
 bool qa_q1_source_client_info(const qa_q1_game *game,qa_actor_id actor,const char *key,const char **out) {
     const q1_player *player=client_const(game,actor);
