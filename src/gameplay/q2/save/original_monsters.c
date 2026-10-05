@@ -949,6 +949,16 @@ static bool monster_projectile_owner(qa_q2_game *game, q2_original_record_io *io
     return true;
 }
 
+static bool monster_deadflag_record(q2_original_record_io *io, bool *dead)
+{
+    if (io->edition == QA_Q2_RERELEASE)
+        return q2_original_scalar(io, "deadflag", Q2_ORIGINAL_BOOL, 492, 492, 492, dead);
+    int32_t value = io->reading ? 0 : *dead ? 2 : 0; /* DEAD_DEAD / DEAD_NO. */
+    if (!q2_original_scalar(io, "deadflag", Q2_ORIGINAL_I32, 492, 492, 492, &value)) return false;
+    if (io->reading) *dead = value != 0;
+    return true;
+}
+
 bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
     q2_actor *actor, const qa_q2_save_level *level, qa_error *error)
 {
@@ -1076,15 +1086,14 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
     if (okay && io->edition == QA_Q2_RERELEASE)
         okay = q2_original_resource(game, io, level, "monsterinfo.weapon_sound",
             65535, 65535, 65535, 288, &m->weapon_sound);
+    if (okay) okay = monster_deadflag_record(io, &m->dead);
     if (okay && io->reading) {
         if (io->edition == QA_Q2_RERELEASE) {
-            okay = q2_original_scalar(io, "deadflag", Q2_ORIGINAL_BOOL, 492, 492, 492, &m->dead) &&
+            okay =
                 q2_original_scalar(io, "takedamage", Q2_ORIGINAL_BOOL, 512, 512, 512, &m->can_take_damage);
         } else {
-            int32_t dead = 0, damage = 0;
-            okay = q2_original_scalar(io, "deadflag", Q2_ORIGINAL_I32, 492, 492, 492, &dead) &&
-                q2_original_scalar(io, "takedamage", Q2_ORIGINAL_I32, 512, 512, 512, &damage);
-            m->dead = dead != 0;
+            int32_t damage = 0;
+            okay = q2_original_scalar(io, "takedamage", Q2_ORIGINAL_I32, 512, 512, 512, &damage);
             m->can_take_damage = damage != 0;
         }
         m->death_notified = m->dead;
