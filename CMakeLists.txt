@@ -1705,7 +1705,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/bindings_ui.c
     src/app/frontend/capture.c
     src/app/frontend/commands.c
-    src/app/frontend/content_refs.c
     src/app/frontend/frame.c
     src/app/frontend/font_inventory.c
     src/app/frontend/image_inventory.c
