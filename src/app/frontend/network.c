@@ -121,7 +121,6 @@ typedef struct frontend_network_server_lease {
 struct qa_frontend_network {
     qa_frontend *frontend;
     qa_network_runtime *runtime;
-    qa_network_runtime *cold_transport;
     qa_server_browser *browser;
     qa_net_interfaces *interfaces;
     qa_kex_transport *kex_transport;
@@ -250,7 +249,6 @@ struct qa_network_q3_round {
 };
 static bool round_publish(qa_network_q3_round *, qa_error *);
 static bool demo_q3_accepted(void *,int32_t,qa_bytes,bool,qa_error *);
-static bool network_blob(qa_source_save_io *, qa_bytes *);
 static bool client_disconnect(void *, const char *, qa_error *);
 static bool client_authorization_prepare(qa_frontend_network *, qa_bytes, qa_error *);
 static bool client_admission_send(void *, const qa_net_address *, qa_bytes, qa_error *);
@@ -3700,64 +3698,6 @@ static bool downloads_ready(qa_frontend_network *n, qa_error *error)
     qa_download_options options = saved_download_options(n);
     return qa_downloads_create(frontend_tools_http(n->frontend), n->content, &options, &n->downloads, error);
 }
-static bool download_saved_resource(void *context, const qa_download_request *request,
-    const qa_download_view *view, bool staged, qa_error *error)
-{
-    qa_frontend_network *n = context;
-    qa_archive_kind archive = qa_archive_kind_for_path(request->path);
-    const char *extension = strrchr(request->path, '.');
-    if (!n->content || !request->exact_identity || request->maximum_bytes > UINT64_C(2147483648) ||
-        (archive == QA_ARCHIVE_AUTO && (!extension || strcmp(extension, ".bsp"))) ||
-        staged != (view->state == QA_DOWNLOAD_RECEIVING))
-        return frontend_fail(error, QA_ERROR_FORMAT, "saved download differs from the actual frontend admission policy");
-    qa_fs_entry_kind kind = QA_FS_MISSING; qa_fs_identity identity;
-    if (!qa_fs_root_status(n->content, request->path, &kind, &identity, error)) return false;
-    if (!view->published)
-        return kind == QA_FS_MISSING || frontend_fail(error, QA_ERROR_FORMAT, "unpublished download target is already installed");
-    if (kind != QA_FS_REGULAR || qa_fs_identity_size(&identity) != view->received)
-        return frontend_fail(error, QA_ERROR_FORMAT, "installed download target differs from its retained size");
-    qa_fs_file *file = NULL; qa_buffer content = {0};
-    bool ok = qa_fs_root_file_open(n->content, request->path, &file, &identity, error) &&
-        qa_fs_identity_size(&identity) == view->received &&
-        qa_fs_file_read_snapshot(file, &identity, &content, error);
-    qa_sha256_digest digest;
-    if (ok) {
-        qa_sha256((qa_bytes){content.data, content.size}, &digest);
-        ok = content.size == view->received && qa_sha256_equal(&digest, &view->digest) &&
-            qa_sha256_equal(&digest, &request->digest) && download_inspect_bytes(request->path, (qa_bytes){content.data, content.size}, error);
-    }
-    bool unchanged = false;
-    if (ok) ok = qa_fs_file_path_unchanged(file, &identity, &unchanged, error) && unchanged;
-    qa_buffer_free(&content); qa_fs_file_close(file);
-    return ok || (error && error->code ? false : frontend_fail(error, QA_ERROR_FORMAT, "installed download content identity changed"));
-}
-static bool download_saved_stage(void *context, const qa_download_request *request,
-    const qa_download_view *view, qa_bytes prefix, qa_fs_stage **out, uint64_t *nonce, qa_error *error)
-{
-    qa_frontend_network *n = context;
-    if (!n->preparation_nonce) n->preparation_nonce = n->nonce;
-    if (!out || *out || !nonce || *nonce || n->preparation_nonce == UINT64_MAX)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "candidate download stage allocation is exhausted");
-    uint64_t fresh = n->preparation_nonce + 1;
-    if (fresh == view->stage_nonce) {
-        if (fresh == UINT64_MAX) return frontend_fail(error, QA_ERROR_ARGUMENT, "candidate download stage namespace is exhausted");
-        ++fresh;
-    }
-    qa_fs_stage *stage = NULL; uint64_t initial = 0; size_t written = 0;
-    if (!qa_fs_stage_open(n->content, request->path, fresh, false, &stage, &initial, error)) return false;
-    bool ok = !initial && qa_fs_stage_write(stage, 0, prefix, &written, error) && written == prefix.size;
-    if (!ok) { qa_fs_stage_close(stage, false); return false; }
-    n->preparation_nonce = fresh; *nonce = fresh; *out = stage; return true;
-}
-static bool download_saved_artifact(void *context, const qa_download_request *request,
-    const qa_download_view *view, qa_fs_stage **out, qa_error *error)
-{
-    qa_frontend_network *n = context; uint64_t size = 0;
-    return out && !*out && qa_fs_stage_open_readonly(n->content, request->path, view->stage_nonce, out, &size, error);
-}
-static qa_download_checkpoint_refs saved_download_refs(qa_frontend_network *n)
-{ return (qa_download_checkpoint_refs){.context = n, .resource = download_saved_resource,
-    .stage = download_saved_stage, .artifact = download_saved_artifact}; }
 static bool unsigned_text(const char *text, uint64_t *out, qa_error *error)
 {
     uint64_t value = 0;
@@ -4366,27 +4306,6 @@ bool frontend_network_rebuild_ready(const qa_frontend *candidate,const qa_fronte
         frontend_network_q2_host_publication_ready(next->q2_host,error);
 }
 
-static qa_network_options saved_network_options(qa_frontend_network *n)
-{
-    uint32_t clients=64;
-    if(n->frontend->options.network_host && q2_host_protocol(n->frontend->options.network_protocol)) {
-        qa_application_network_q2_host source;
-        if(qa_application_network_q2_host_source(n->frontend->application,n->frontend->options.network_protocol,&source,NULL))
-            clients=256;
-    }
-    if(n->frontend->options.network_host && n->frontend->options.network_protocol.kind==QA_NET_UNIFIED_1) {
-        application_unified_source source;
-        if(application_unified_source_read(n->frontend->application,&source,NULL) &&
-            source.max_clients && source.max_clients<=256) clients=source.max_clients+8;
-    }
-    return (qa_network_options){.owner = NETWORK_OWNER, .clients = clients, .packets_per_pump = 256,
-        .timeout_ns = n->frontend->options.network_connect ? UINT64_C(120000000000) :
-            n->frontend->options.network_host && (nq_host_protocol(n->frontend->options.network_protocol) || n->frontend->options.network_protocol.kind == QA_NET_QW28) ?
-            UINT64_C(65000000000) : UINT64_C(30000000000), .hooks = {.context = n, .admit = admit, .controlled = controlled,
-        .command = remote_command, .disconnected = disconnected, .connectionless = connectionless,
-        .reconnect = reconnect, .q3_source_command = remote_q3_command, .nq_source_command = remote_nq_command,
-        .commands = remote_qw_commands,.unified_input=unified_source_input}};
-}
 static bool detached_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
 {
     (void)context; (void)to; (void)bytes;
@@ -4421,67 +4340,6 @@ static void client_attempts_dispose(qa_frontend_network *n)
         frontend_q3_attempt *next = n->q3_attempts->next; free(n->q3_attempts); n->q3_attempts = next;
     }
     n->q3_attempt_tail = NULL; n->q3_attempt_count = 0;
-}
-static bool network_host_fields(qa_source_save_io *io, qa_frontend_network *n, bool *installed,
-    qa_bytes *package_cut, qa_bytes download_cuts[64])
-{
-    if (!qa_source_save_bool(io, installed)) return false;
-    if (!*installed) return true;
-    if (!qa_source_save_u64(io, &n->q3_generation) || !qa_source_save_i32(io, &n->q3_server_id) ||
-        !qa_source_save_i32(io, &n->q3_restarted_server_id) ||
-        !qa_source_save_i32(io, &n->q3_checksum_feed) || !qa_source_save_u8(io, &n->q3_server_bit) ||
-        !qa_source_save_count(io, &n->q3_pending_count, 32)) return false;
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        if (!package_cut || !network_blob(io, package_cut)) return false;
-    } else {
-        qa_buffer buffer = {0};
-        bool ok = frontend_q3_packages_checkpoint(n->q3_packages, &buffer, io->error);
-        qa_bytes bytes = {buffer.data, buffer.size};
-        if (ok) ok = network_blob(io, &bytes);
-        qa_buffer_free(&buffer); if (!ok) return false;
-    }
-    for (size_t i = 0; i < 64; ++i) {
-        frontend_q3_peer *p = &n->q3_peers[i];
-        uint32_t product = p->product;
-        if (!qa_source_save_bool(io, &p->occupied)) return false;
-        if (!p->occupied) continue; /* Ordinary disconnect clears the entire row. */
-        if (!qa_source_save_u64(io, &p->client.generation) || !qa_source_save_u32(io, &p->client.slot) ||
-            !qa_source_save_u64(io, &p->seat.owner) || !qa_source_save_u32(io, &p->seat.index) ||
-            !qa_source_save_u64(io, &p->world.generation) || !qa_source_save_i32(io, &p->world.server_id) ||
-            !qa_source_save_i32(io, &p->world.restarted_server_id) || !qa_source_save_i32(io, &p->world.checksum_feed) ||
-            !qa_source_save_i32(io, &p->world.time) || !qa_source_save_bool(io, &p->world.pure) ||
-            !qa_source_save_bool(io, &p->world.client_running) || !qa_source_save_bool(io, &p->world.flood_protect) ||
-            !qa_source_save_bool(io, &p->world.downloading) || !qa_source_save_u32(io, &p->rate.bytes_per_second) ||
-            !qa_source_save_f64(io, &p->rate.maximum_rate) || !qa_source_save_u32(io, &p->rate.snapshot_ms) ||
-            !qa_source_save_bool(io, &p->rate.local) || !qa_source_save_bool(io, &p->rate.lan) ||
-            !qa_source_save_bool(io, &p->rate.force_lan) || !qa_source_save_u32(io, &product) || product > QA_Q3_TEAM_ARENA ||
-            !qa_source_save_u64(io, &p->sequence) || !qa_source_save_i64(io, &p->connected_ms) ||
-            !qa_source_save_u32(io, &p->slot) || !qa_source_save_u16(io, &p->qport) ||
-            !qa_source_save_bool(io, &p->retiring) || !qa_source_save_bytes(io, p->reason, sizeof(p->reason)) ||
-            !memchr(p->reason, 0, sizeof(p->reason))) return false;
-        p->client.owner = NETWORK_OWNER; p->product = (qa_q3_product)product;
-        if (io->direction == QA_SOURCE_SAVE_READ) p->network = n;
-        if (io->direction == QA_SOURCE_SAVE_READ) {
-            if (!download_cuts || !network_blob(io, download_cuts + i)) return false;
-        } else {
-            qa_buffer buffer = {0}; bool ok = qa_q3_download_window_checkpoint(p->download, &buffer, io->error);
-            qa_bytes bytes = {buffer.data, buffer.size}; if (ok) ok = network_blob(io, &bytes);
-            qa_buffer_free(&buffer); if (!ok) return false;
-        }
-    }
-    /* Draining retains physical packet rows. Keep their last extent and bytes,
-     * although only the active prefix is scheduled for the next drain. */
-    for (size_t i = 0; i < 32; ++i) {
-        frontend_q3_pending *p = &n->q3_pending[i];
-        if (!network_address_fields(io, &p->address) ||
-            !qa_source_save_count(io, &p->size, QA_Q3_MESSAGE_BYTES) ||
-            !qa_source_save_bytes(io, p->bytes, p->size)) return false;
-        if (p->size && (p->size < 4 || !p->address.port ||
-            (p->address.kind != QA_NET_IPV4 && p->address.kind != QA_NET_IPV6) ||
-            qa_load_u32le(p->bytes) != UINT32_MAX)) return false;
-        if (i < n->q3_pending_count && !p->size) return false;
-    }
-    return true;
 }
 static bool network_host_player(qa_frontend_network *n, const frontend_q3_peer *p,
     qa_application_network_player *out, qa_error *error)
@@ -4631,213 +4489,6 @@ static bool network_metadata_check(qa_frontend_network *n, bool hosting, bool fi
     }
     return true;
 }
-static bool network_save_actor(void *context, qa_actor_id actor, qa_saved_actor_id *out, qa_error *error)
-{
-    qa_frontend_network *n = context;
-    return qa_actors_save_reference(qa_session_actors(qa_application_session(n->frontend->application)), actor, out, error);
-}
-static bool network_restore_actor(void *context, qa_saved_actor_id actor, qa_actor_id *out, qa_error *error)
-{
-    qa_frontend_network *n = context;
-    return qa_actors_reference_saved(qa_session_actors(qa_application_session(n->frontend->application)), actor, true, out, error);
-}
-static bool network_restore_source(void *context, const qa_net_client *client, qa_network_source_kind kind,
-    qa_q3_client_hooks *hooks, qa_q3_server_hooks *server, qa_error *error)
-{
-    qa_frontend_network *n = context;
-    if (kind == QA_NETWORK_SOURCE_Q3_SERVER) {
-        frontend_q3_peer *p = NULL;
-        for (size_t i = 0; i < 64; ++i) if (n->q3_peers[i].occupied && qa_net_client_id_equal(n->q3_peers[i].client, client->id)) p = &n->q3_peers[i];
-        qa_application_network_player row;
-        if (!n->q3_admission || !p || client->attachment != QA_NET_REMOTE || client->protocol.kind != QA_NET_Q3_68 ||
-            client->protocol.revision || client->protocol.flags || client->seat_count != 1 ||
-            client->seats[0].seat.owner != p->seat.owner || client->seats[0].seat.index != p->seat.index ||
-            client->seats[0].remote_index || !qa_sha256_equal(&client->composition, &n->composition) ||
-            !network_host_player(n, p, &row, error))
-            return frontend_fail(error, QA_ERROR_FORMAT, "restored Q3 server source is not the declared hosted roster seat");
-        *server = (qa_q3_server_hooks){.context = p, .world = q3_world, .command = q3_client_command,
-            .enter_world = q3_enter, .think = q3_input, .resend_gamestate = q3_signon,
-            .pure_rejected_snapshot = q3_rejected_snapshot, .drop = q3_drop};
-        return true;
-    }
-    if (kind != QA_NETWORK_SOURCE_Q3_CLIENT || !n->q3_client_requested || !n->q3_client_attached ||
-        !qa_net_client_id_equal(n->q3_client, client->id) || client->attachment != QA_NET_REMOTE ||
-        client->seat_count != 1 || client->seats[0].seat.owner != NETWORK_OWNER || client->seats[0].seat.index ||
-        client->seats[0].remote_index || !qa_net_address_equal(&client->endpoint, &n->q3_client_admission.address, true) ||
-        !qa_sha256_equal(&client->composition, &n->composition))
-        return frontend_fail(error, QA_ERROR_FORMAT, "restored native source is not the declared remote Q3 endpoint/seat");
-    *hooks = (qa_q3_client_hooks){.context = n, .generation = client_generation,
-        .clear_active = client_clear, .gamestate = client_gamestate, .system_info = client_system_info,
-        .snapshot = client_snapshot, .download_size = client_download_size, .download = client_download,
-        .command = client_source_command, .map_restart = client_map_restart, .disconnect = client_disconnect,
-        .level_shot = client_level_shot, .local_server_running = client_local_server, .send = send_address,
-        .accepted_message=demo_q3_accepted,.defer_source = true};
-    return true;
-}
-static bool network_restore_nq_source(void *context, const qa_net_client *client,
-    qa_network_nq_server_policy *policy, qa_network_nq_server_hooks *hooks, qa_error *error)
-{
-    qa_frontend_network *n = context;
-    return frontend_nq_source_hooks(n->nq_host, client, policy, hooks, error);
-}
-static bool network_restore_qw_source(void *context, const qa_net_client *client,
-    qa_network_qw_server_policy *policy, qa_network_qw_server_hooks *hooks,
-    qa_qw_download_admission *downloads, qa_error *error)
-{
-    qa_frontend_network *n = context;
-    return frontend_qw_source_hooks(n->qw_host, client, policy, hooks, downloads, error);
-}
-static bool network_restore_client_policy(void *context, const qa_net_client *client,
-    qa_network_q3_client_policy *out, qa_error *error)
-{
-    qa_frontend_network *n = context;
-    if (!n->q3_client_requested || !n->q3_client_attached || !qa_net_client_id_equal(n->q3_client, client->id) ||
-        client->attachment != QA_NET_REMOTE || client->protocol.kind != QA_NET_Q3_68 ||
-        client->seat_count != 1 || client->seats[0].seat.owner != NETWORK_OWNER || client->seats[0].seat.index ||
-        client->seats[0].remote_index || !qa_net_address_equal(&client->endpoint, &n->q3_client_admission.address, true))
-        return frontend_fail(error, QA_ERROR_FORMAT, "Saved Q3 send policy has another actual client connection");
-    *out = (qa_network_q3_client_policy){n, remote_client_settings}; return true;
-}
-static bool network_restore_local(void *context,qa_network_runtime *runtime,const qa_net_client *client,
-    qa_network_local_hooks *hooks,qa_error *error)
-{
-    qa_frontend_network *n=context;
-    if(frontend_network_q2_host_importing(n->q2_host))
-        return frontend_network_q2_host_restore_local_hooks(n->q2_host,runtime,client,hooks,error);
-    return frontend_network_q2_host_local_hooks(n->q2_host,client,hooks,error);
-}
-static bool network_restore_q2_server(void *context,qa_network_runtime *runtime,const qa_net_client *client,
-    qa_network_q2_server_policy *policy,qa_network_q2_server_hooks *hooks,qa_error *error)
-{
-    qa_frontend_network *n=context;
-    return frontend_network_q2_host_restore_hooks(n->q2_host,runtime,client,policy,hooks,error);
-}
-static bool network_restore_q2_client(void *context,qa_network_runtime *runtime,const qa_net_client *client,
-    qa_network_q2_client_policy *policy,qa_network_q2_client_hooks *hooks,qa_error *error)
-{
-    qa_frontend_network *n=context;
-    if(!n->q2_client_owner && n->q2_import_pending) {
-        frontend_network_q2_client_restore saved=n->q2_import;
-        qa_application_client_state application=*saved.application;
-        if(client->id.slot!=saved.source.domain.client.slot || client->id.generation!=saved.source.domain.client.generation ||
-            qa_network_epoch(runtime,client->id)!=saved.source.domain.epoch)
-            return frontend_fail(error,QA_ERROR_FORMAT,"Q2 canonical import changed its saved CLIENT identity or epoch");
-        saved.source.domain.runtime=runtime; saved.source.domain.client=client->id;
-        application.client=client->id; saved.application=&application;
-        if(!frontend_network_q2_prepare_import(n->frontend,runtime,&n->q2_import_recipe,&saved,error)) return false;
-        n->q2_import_pending=false; n->q2_import=(frontend_network_q2_client_restore){0};
-        n->q2_import_recipe=(frontend_network_q2_client_recipe){0};
-    }
-    return frontend_network_q2_client_restore_hooks(n->q2_client_owner,runtime,client,policy,hooks,error);
-}
-static bool network_unified_service_prepare_import(qa_frontend_network *n,qa_network_runtime *runtime,qa_error *error)
-{
-    frontend_client_source_prefix prefix={0}; qa_net_address remote; qa_net_seat_id seat; bool retired=false;
-    if(!n->unified_service_pending || !runtime ||
-        !frontend_network_unified_client_saved_read(n->frontend,n->unified_service_graph,
-            n->unified_service_import,&prefix,&remote,&seat,&retired,error)) return false;
-    frontend_network_unified_client_options options={.frontend=n->frontend,.runtime=runtime,
-        .remote=remote,.profile=prefix.recipe.profile,.physical_seat=prefix.state.application.physical_seat,
-        .seat=seat,.context=n,.current=unified_client_current,.disconnected=unified_client_disconnected};
-    bool ok=frontend_config_store_neutral_pending_options(n->frontend->config_store,options.physical_seat,
-        &options.configuration,error);
-    frontend_client_source_prefix_free(&prefix);
-    if(!ok) return false;
-    n->unified_service_runtime=runtime; n->unified_service_retired=retired;
-    if(!frontend_network_unified_client_restore(&options,n->unified_service_graph,n->unified_service_console,
-        n->unified_service_import,&n->unified_client_service,error)) {
-        if(!n->unified_client_service)
-            (void)frontend_config_store_neutral_options_cancel(n->frontend->config_store,&options.configuration,NULL);
-        return false;
-    }
-    n->unified_service_pending=false; n->unified_service_import=(qa_bytes){0};
-    return !n->unified || frontend_network_unified_restore_client_service(n->unified,n->unified_client_service,error);
-}
-static bool network_restore_unified(void *context,qa_network_runtime *runtime,const qa_net_client *client,
-    qa_unified_session_hooks *hooks,qa_error *error)
-{
-    qa_frontend_network *n=context;
-    if(!n->unified_client_service && n->unified_service_pending) {
-        if(!qa_net_client_id_equal(client->id,n->unified_service_client) ||
-            qa_network_epoch(runtime,client->id)!=n->unified_service_epoch ||
-            !network_unified_service_prepare_import(n,runtime,error)) return false;
-    }
-    return frontend_network_unified_restore_hooks(n->unified,runtime,client,hooks,error);
-}
-static bool network_q1_prepare_import(qa_frontend_network *n,qa_network_runtime *runtime,qa_error *error)
-{
-    const frontend_network_q1_client_recipe *recipe=&n->q1_import_recipe;
-    frontend_network_q1_client_options options={.frontend=n->frontend,.runtime=runtime,.remote=recipe->remote,
-        .protocol=recipe->protocol,.profile=recipe->profile,.physical_seat=recipe->physical_seat,.qport=recipe->qport,
-        .policy=recipe->policy,.context=n,.current=q1_client_current,.download_nonce=q2_download_nonce,
-        .downloads=q1_downloads,.service=q1_service};
-    if(!frontend_config_store_neutral_pending_options(n->frontend->config_store,recipe->physical_seat,
-        &options.configuration,error)) return false;
-    if(!frontend_network_q1_client_restore_prepare(&options,&n->q1_import_refs,n->q1_import_console,
-        &n->q1_import,&n->q1_client_owner,error)) {
-        if(!n->q1_client_owner)
-            (void)frontend_config_store_neutral_options_cancel(n->frontend->config_store,&options.configuration,NULL);
-        return false;
-    }
-    if(frontend_network_q1_client_retired(n->q1_client_owner)!=recipe->retired)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Q1 recipe differs from its actual restored retirement receipt");
-    n->q1_import_pending=false; n->q1_import=(frontend_network_q1_client_state){0};
-    n->q1_import_recipe=(frontend_network_q1_client_recipe){0};
-    n->q1_import_refs=(frontend_remote_q1_restore_refs){0}; n->q1_import_console=NULL;
-    return true;
-}
-static bool network_restore_q1_client(void *context,qa_network_runtime *runtime,const qa_net_client *client,
-    qa_network_q1_client_policy *policy,qa_network_q1_client_hooks *hooks,qa_error *error)
-{
-    qa_frontend_network *n=context;
-    if(!n->q1_client_owner && n->q1_import_pending) {
-        if(!qa_net_client_id_equal(client->id,n->q1_import_recipe.client) ||
-            qa_network_epoch(runtime,client->id)!=n->q1_import_recipe.epoch ||
-            !network_q1_prepare_import(n,runtime,error)) return false;
-    }
-    return frontend_network_q1_client_restore_hooks(n->q1_client_owner,client,policy,hooks,error);
-}
-static bool network_q2_view_encode(void *context,const qa_vfs *view,uint64_t *out,qa_error *error)
-{
-    qa_frontend_network *n=context;
-    const qa_application_content_graph *graph=qa_application_content_graph_read(n->frontend->application);
-    uint64_t id=qa_application_content_view_id(graph,view);
-    if(!out || !id) return frontend_fail(error,QA_ERROR_FORMAT,"Q2 download view is absent from the actual Content graph");
-    *out=id; return true;
-}
-static bool network_q2_view_decode(void *context,uint64_t id,qa_vfs **out,qa_error *error)
-{
-    qa_frontend_network *n=context;
-    qa_vfs *view=qa_application_content_view(qa_application_content_graph_read(n->frontend->application),id);
-    if(!out || !view) return frontend_fail(error,QA_ERROR_FORMAT,"Q2 download view has no actual decoded Content owner");
-    *out=view; return true;
-}
-static bool network_q2_resource_encode(void *context,const qa_resource *resource,
-    uint64_t *pool,uint64_t *id,qa_error *error)
-{
-    qa_frontend_network *n=context;
-    return qa_application_content_resource_id(qa_application_content_graph_read(n->frontend->application),resource,pool,id) ||
-        frontend_fail(error,QA_ERROR_FORMAT,"Q2 download resource is absent from the actual Content graph");
-}
-static bool network_q2_resource_decode(void *context,uint64_t pool,uint64_t id,
-    const qa_resource **out,qa_error *error)
-{
-    qa_frontend_network *n=context;
-    const qa_resource *resource=qa_application_content_resource(
-        qa_application_content_graph_read(n->frontend->application),pool,id);
-    if(!out || !resource) return frontend_fail(error,QA_ERROR_FORMAT,"Q2 download resource has no actual decoded Content owner");
-    *out=resource; return true;
-}
-static qa_network_checkpoint_refs network_saved_refs(qa_frontend_network *n)
-{ return (qa_network_checkpoint_refs){.context = n, .source = network_restore_source,
-    .save_actor = network_save_actor, .restore_actor = network_restore_actor,
-    .source_nq = network_restore_nq_source, .source_qw = network_restore_qw_source,
-    .client_q3_policy = network_restore_client_policy,.source_local=network_restore_local,
-    .q2={.context=n,.source_client=network_restore_q2_client,.source_server=network_restore_q2_server,
-        .view_encode=network_q2_view_encode,.view_decode=network_q2_view_decode,
-        .resource_encode=network_q2_resource_encode,.resource_decode=network_q2_resource_decode},
-    .source_unified=network_restore_unified,
-    .source_q1_client=network_restore_q1_client}; }
 static bool network_q3_commands_valid(qa_frontend_network *n, qa_error *error)
 {
     if (!n->q3_admission) return true;
@@ -4851,15 +4502,6 @@ static bool network_q3_commands_valid(qa_frontend_network *n, qa_error *error)
             return frontend_fail(error, QA_ERROR_FORMAT, "Q3 source command ordinal differs from its actual accepted command owner");
     }
     return true;
-}
-static bool network_blob(qa_source_save_io *io, qa_bytes *bytes)
-{
-    size_t size = bytes->size;
-    if (!qa_source_save_count(io, &size, (size_t)512 * 1048576)) return false;
-    if (io->direction == QA_SOURCE_SAVE_WRITE) return qa_source_save_bytes(io, (void *)bytes->data, size);
-    if (io->offset > io->input.size || size > io->input.size - io->offset)
-        return frontend_fail(io->error, QA_ERROR_FORMAT, "truncated frontend network continuation");
-    *bytes = (qa_bytes){io->input.data + io->offset, size}; io->offset += size; return true;
 }
 static bool network_runtime_check(qa_frontend_network *n, bool complete_world, bool finishing_round, qa_error *error)
 {
@@ -4983,214 +4625,6 @@ static bool network_runtime_check(qa_frontend_network *n, bool complete_world, b
 }
 static bool network_runtime_valid(qa_frontend_network *n, bool complete_world, qa_error *error)
 { return network_runtime_check(n, complete_world, false, error); }
-static bool network_host_cut(qa_frontend_network *n, qa_buffer *out, qa_error *error)
-{
-    if (n->nq_host) return frontend_nq_checkpoint(n->nq_host, out, error);
-    if (n->qw_host) return frontend_qw_checkpoint(n->qw_host, out, error);
-    qa_frontend_network *copy = malloc(sizeof(*copy));
-    if (!copy) return frontend_fail(error, QA_ERROR_MEMORY, "qualifying retained hosting cut");
-    *copy = *n;
-    qa_source_save_io io = {0}; qa_buffer admission = {0}, authorization = {0}; bool hosting = n->q3_admission != NULL;
-    bool ok = qa_source_save_writer(&io, NULL, error) && network_host_fields(&io, copy, &hosting, NULL, NULL);
-    if (ok && hosting) {
-        ok = qa_q3_server_admission_checkpoint(n->q3_admission, &admission, error) &&
-            qa_q3_server_authorization_checkpoint(n->q3_authorization, &authorization, error);
-        qa_bytes bytes = {admission.data, admission.size};
-        if (ok) ok = network_blob(&io, &bytes);
-        bytes = (qa_bytes){authorization.data, authorization.size};
-        if (ok) ok = network_blob(&io, &bytes);
-    }
-    if (ok) ok = qa_source_save_finish(&io, out);
-    qa_source_save_dispose(&io); qa_buffer_free(&admission); qa_buffer_free(&authorization); free(copy); return ok;
-}
-static bool network_offline_local(const qa_frontend *f)
-{
-    const qa_frontend_network *n = f ? f->network : NULL;
-    return n && !f->stepping && !f->options.network_host && !f->options.network_connect &&
-        n->frontend == f && !n->round && !n->busy && !n->q3_client_requested && !n->q3_admission &&
-        !n->nq_host && !n->qw_host && !n->unified && !n->q1_client_owner && !n->q2_client_owner &&
-        !n->unified_client_service && !n->kex_transport && !n->kex_browser && !n->cold_transport &&
-        (!n->q2_host || frontend_network_q2_host_local_only(n->q2_host)) && qa_network_local_only(n->runtime);
-}
-static bool network_cold_client(const qa_frontend *candidate,const qa_frontend *published)
-{
-    const qa_frontend_network *next=candidate?candidate->network:NULL,*active=published?published->network:NULL;
-    return next && network_offline_local(published) && !active->q2_host &&
-        frontend_network_client_only(candidate) && client_target_selected(next) &&
-        !next->q3_client_requested && !next->q3_admission && !next->nq_host && !next->qw_host &&
-        !next->q2_host && !next->unified && !next->kex_transport && !next->kex_browser &&
-        ((next->q1_client_owner != NULL) + (next->q2_client_owner != NULL) +
-            (next->unified_client_service != NULL) == 1);
-}
-static bool network_cold_socket_ready(const qa_frontend_network *n,qa_error *error)
-{
-    qa_net_udp_policy policy; bool present=false; uint32_t cursor=0; const qa_net_client *client=NULL;
-    return (n->cold_transport && n->cold_transport!=n->runtime && qa_network_local_only(n->cold_transport) &&
-        !qa_net_connections_next(qa_network_connections(n->cold_transport),&cursor,&client) &&
-        qa_network_udp_policy_read(n->cold_transport,&policy,&present,error) && present &&
-        qa_net_address_equal(&policy.bound,qa_network_local_address(n->runtime),true)) ||
-        frontend_fail(error,QA_ERROR_FORMAT,"Cold CLIENT publication lost its empty returned runtime and actual saved UDP socket");
-}
-static void network_cold_socket_dispose(qa_frontend_network *n)
-{
-    qa_network_destroy(n->cold_transport); n->cold_transport=NULL;
-}
-bool frontend_network_rebind_prepare(qa_frontend *candidate, const qa_frontend *published, qa_error *error)
-{
-    if (!candidate || !published || candidate == published)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Network handoff requires its distinct frontend owners");
-    qa_frontend_network *next = candidate->network, *active = published->network;
-    if (!next || !active) return true;
-    bool cold_client=network_cold_client(candidate,published);
-    if(next->cold_transport)
-        return (cold_client && network_cold_socket_ready(next,error)) ||
-            frontend_fail(error,QA_ERROR_FORMAT,"Reserved CLIENT socket lost its genuine cold receiver");
-    if(qa_net_address_equal(qa_network_local_address(next->runtime),
-        qa_network_local_address(active->runtime),true)) return true;
-    if(cold_client) {
-        if(candidate->stepping || !next->detached_transport || active->detached_transport || next->round || next->busy ||
-            !qa_network_callbacks_idle(next->runtime) || !qa_network_callbacks_idle(active->runtime) ||
-            !qa_http_callbacks_idle(frontend_tools_http(candidate)) ||
-            !qa_http_callbacks_idle(frontend_tools_http((qa_frontend *)published)))
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Cold CLIENT socket acquisition requires its returned detached candidate and neutral receiver");
-        if(!network_runtime_valid(next,true,error) || !network_runtime_valid(active,true,error) ||
-            !qa_network_source_publication_ready(next->runtime,error) ||
-            !frontend_network_q2_client_publication_ready(next->q2_client_owner,error) ||
-            !frontend_network_q1_client_publication_ready(next->q1_client_owner,error) ||
-            !frontend_network_unified_client_publication_ready(next->unified_client_service,error)) return false;
-        qa_net_udp_options udp={.bind=*qa_network_local_address(next->runtime),.limits={65507,256},
-            .broadcast=qa_network_local_address(next->runtime)->kind==QA_NET_IPV4,.ipv6_only=false};
-        qa_net_transport *transport=NULL;
-        qa_network_options options=saved_network_options(next);
-        if(!qa_net_udp_open(&udp,&transport,error)) return false;
-        if(!qa_network_create(transport,&options,&next->cold_transport,error)) {
-            qa_net_transport_close(transport); return false;
-        }
-        return network_cold_socket_ready(next,error);
-    }
-    if (!network_offline_local(candidate) || !network_offline_local(published)) return true;
-    if (!next->detached_transport || active->detached_transport ||
-        !network_runtime_valid(next, true, error) || !network_runtime_valid(active, true, error)) return false;
-    qa_net_transport *replacement = NULL;
-    if (!detached_transport(qa_network_local_address(active->runtime), &replacement, error)) return false;
-    bool ok = qa_network_transport_replace_local(next->runtime, active->runtime, &replacement, error);
-    qa_net_transport_close(replacement);
-    return ok;
-}
-bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_frontend *published, qa_error *error)
-{
-    if (!candidate || !published || candidate == published || candidate->stepping || published->stepping ||
-        (candidate->network != NULL) != (published->network != NULL))
-        return frontend_fail(error, QA_ERROR_FORMAT, "network candidate and published service inventories differ");
-    const qa_frontend *frontends[2] = {candidate, published};
-    for (size_t i = 0; i < 2; ++i) {
-        const server_lease *slow = frontends[i]->network_server_leases, *fast = slow;
-        for (const server_lease *lease = slow; lease; lease = lease->next) {
-            if (lease->frontend != frontends[i])
-                return frontend_fail(error, QA_ERROR_FORMAT, "Q3 server wrapper borrows another frontend lifetime");
-            slow = slow ? slow->next : NULL;
-            fast = fast && fast->next ? fast->next->next : NULL;
-            if (fast && fast == slow)
-                return frontend_fail(error, QA_ERROR_FORMAT, "Q3 server wrapper lifetime list contains a cycle");
-        }
-    }
-    if (!candidate->network) return true;
-    qa_frontend_network *next = candidate->network, *active = published->network;
-    bool offline_local = network_offline_local(candidate) && network_offline_local(published);
-    bool cold_client = network_cold_client(candidate,published);
-    bool endpoint_ready=next->cold_transport ? cold_client && network_cold_socket_ready(next,error) :
-        qa_net_address_equal(qa_network_local_address(next->runtime),qa_network_local_address(active->runtime),true);
-    if (!next->detached_transport || active->detached_transport || next->frontend != candidate || active->frontend != published ||
-        next->busy || active->busy || active->cold_transport || !qa_network_callbacks_idle(next->runtime) || !qa_network_callbacks_idle(active->runtime) ||
-        !qa_http_callbacks_idle(frontend_tools_http((qa_frontend *)candidate)) || !qa_http_callbacks_idle(frontend_tools_http((qa_frontend *)published)) ||
-        !endpoint_ready ||
-        (next->q3_admission != NULL) != (active->q3_admission != NULL) ||
-        (next->nq_host != NULL) != (active->nq_host != NULL) ||
-        (next->qw_host != NULL) != (active->qw_host != NULL) ||
-        (!offline_local && (next->q2_host != NULL) != (active->q2_host != NULL)) ||
-        (next->unified != NULL) != (active->unified != NULL) ||
-        (next->kex_transport != NULL) != (active->kex_transport != NULL) ||
-        (next->kex_browser != NULL) != (active->kex_browser != NULL) ||
-        (!cold_client && ((next->q1_client_owner != NULL) != (active->q1_client_owner != NULL) ||
-            (next->q2_client_owner != NULL) != (active->q2_client_owner != NULL) ||
-            (next->unified_client_service != NULL) != (active->unified_client_service != NULL))) ||
-        next->q3_client_requested != active->q3_client_requested ||
-        (next->q3_client_requested && !qa_net_address_equal(&next->q3_client_admission.address, &active->q3_client_admission.address, true)) ||
-        !network_runtime_valid(next, true, error) || !network_runtime_valid(active, true, error) ||
-        !qa_network_source_publication_ready(next->runtime,error) ||
-        !frontend_network_q2_client_publication_ready(next->q2_client_owner,error) ||
-        !frontend_network_q1_client_publication_ready(next->q1_client_owner,error) ||
-        !frontend_network_unified_client_publication_ready(next->unified_client_service,error) ||
-        !frontend_network_q2_host_publication_ready(next->q2_host,error))
-        return frontend_fail(error, QA_ERROR_FORMAT, "network publication lacks idle qualified endpoint and candidate source ownership");
-    if ((next->content || active->content) && strcmp(candidate->options.application.user_root, published->options.application.user_root))
-        return frontend_fail(error, QA_ERROR_FORMAT, "download candidate uses another filesystem namespace");
-    if (next->downloads) {
-        qa_download_checkpoint_refs candidate_resources = saved_download_refs(next);
-        if (!qa_downloads_resources_ready(next->downloads, &candidate_resources, error)) return false;
-    }
-    if (active->downloads) {
-        qa_download_checkpoint_refs active_resources = saved_download_refs(active);
-        if (!qa_downloads_resources_ready(active->downloads, &active_resources, error)) return false;
-    }
-    if ((next->downloads != NULL) != (active->downloads != NULL) ||
-        (next->downloads && !qa_downloads_handoff_ready(active->downloads, next->downloads, error))) return false;
-    if ((next->q3_client_downloads != NULL) != (active->q3_client_downloads != NULL) ||
-        (next->q3_client_downloads && !qa_q3_client_downloads_handoff_ready(
-            active->q3_client_downloads, next->q3_client_downloads, error))) return false;
-    if (!qa_server_browser_http_handoff_ready(active->browser, next->browser, error)) return false;
-    if(next->kex_transport && !qa_kex_transport_handoff_ready(active->kex_transport,next->kex_transport,error)) return false;
-    if(next->kex_browser && !frontend_kex_browser_handoff_ready(active->kex_browser,next->kex_browser,error)) return false;
-    if (active->q3_admission || active->nq_host || active->qw_host) {
-        qa_buffer current_host = {0}, restored_host = {0};
-        bool ok = network_host_cut(active, &current_host, error) && network_host_cut(next, &restored_host, error);
-        if (ok && (current_host.size != restored_host.size || memcmp(current_host.data, restored_host.data, current_host.size)))
-            ok = frontend_fail(error, QA_ERROR_UNSUPPORTED, "live native host advanced beyond its saved admission/source continuation cut");
-        qa_buffer_free(&current_host); qa_buffer_free(&restored_host);
-        if (!ok) return false;
-    }
-    /* LOCAL Source players belong to the application state being published;
-     * an offline load may replace their roster without a wire continuation. */
-    if (offline_local) return true;
-    /* A returned neutral receiver has no original remote wire cut. The
-     * imported standalone CLIENT has qualified its own Source above. */
-    if (cold_client) return true;
-    /* A live original peer has no checkpoint barrier. Refuse to rewind its
-     * wire state after the captured cut; remote coordination is external. */
-    uint32_t cursor = 0; const qa_net_client *client = NULL;
-    bool active_connection = qa_net_connections_next(qa_network_connections(active->runtime), &cursor, &client);
-    cursor = 0;
-    if (!active_connection && !qa_net_connections_next(qa_network_connections(next->runtime), &cursor, &client)) return true;
-    qa_buffer current = {0}, restored = {0};
-    qa_network_checkpoint_refs active_refs=network_saved_refs(active),next_refs=network_saved_refs(next);
-    bool ok = qa_network_connections_checkpoint(active->runtime, &active_refs, &current, error) &&
-        qa_network_connections_checkpoint(next->runtime, &next_refs, &restored, error);
-    if (ok && (current.size != restored.size || memcmp(current.data, restored.data, current.size)))
-        ok = frontend_fail(error, QA_ERROR_UNSUPPORTED, "live original peer advanced beyond the saved protocol continuation cut");
-    qa_buffer_free(&current); qa_buffer_free(&restored);
-    if (ok && (active->nq_host || active->q3_admission || active->qw_host)) {
-        ok = qa_network_prediction_checkpoint(active->runtime, &active_refs, &current, error) &&
-            qa_network_prediction_checkpoint(next->runtime, &next_refs, &restored, error);
-        if (ok && (current.size != restored.size || memcmp(current.data, restored.data, current.size)))
-            ok = frontend_fail(error, QA_ERROR_UNSUPPORTED, "live original accepted command owner advanced beyond its saved cut");
-        qa_buffer_free(&current); qa_buffer_free(&restored);
-    }
-    return ok;
-}
-void frontend_network_rebind(qa_frontend *owned, qa_frontend *destination)
-{
-    if (owned->network) {
-        owned->network->frontend = destination;
-        frontend_network_predictor_rebind(owned->network->q3_predictor,destination);
-        qa_q3_server_authorization_rebind(owned->network->q3_authorization, owned->network);
-        qa_q3_client_authorization_rebind(owned->network->q3_client_authorization, owned->network);
-        frontend_nq_rebind(owned->network->nq_host, destination, owned->network->runtime);
-        frontend_qw_rebind(owned->network->qw_host, destination, owned->network->runtime, owned->network->admin);
-        frontend_q3_packages_rebind(owned->network->q3_packages, destination->application);
-        qa_q3_client_downloads_rebind(owned->network->q3_client_downloads, owned->network);
-    }
-    for (server_lease *lease = owned->network_server_leases; lease; lease = lease->next) lease->frontend = destination;
-}
 void frontend_network_transport_exchange(qa_frontend *active, qa_frontend *candidate)
 {
     if (!active->network) return;
@@ -5199,12 +4633,7 @@ void frontend_network_transport_exchange(qa_frontend *active, qa_frontend *candi
         active->network->q3_client_downloads, candidate->network->q3_client_downloads);
     if(active->network->kex_browser)
         (void)frontend_kex_browser_handoff(active->network->kex_browser,candidate->network->kex_browser,NULL);
-    if(candidate->network->cold_transport) {
-        qa_network_runtime *reserved=candidate->network->cold_transport;
-        qa_network_transport_publish_retained(active->network->runtime,reserved);
-        qa_network_transport_exchange(reserved,candidate->network->runtime);
-        network_cold_socket_dispose(candidate->network);
-    } else if(active->network->kex_transport) {
+    if(active->network->kex_transport) {
         (void)qa_kex_transport_handoff(active->network->kex_transport,candidate->network->kex_transport,NULL);
         qa_network_transport_publish_retained(active->network->runtime,candidate->network->runtime);
     } else qa_network_transport_exchange(active->network->runtime, candidate->network->runtime);
@@ -5239,7 +4668,9 @@ bool frontend_network_fresh_ready(const qa_frontend *candidate, const qa_fronten
     }
     if (active->network && active->network->frontend != active)
         return frontend_fail(error, QA_ERROR_FORMAT, "Displaced endpoints borrow another physical frontend owner");
-    return frontend_network_rebind_ready(candidate, constructor, error);
+    if ((candidate->network != NULL) != (constructor->network != NULL))
+        return frontend_fail(error, QA_ERROR_FORMAT, "Fresh offline publication lost its normal network constructor");
+    return !candidate->network || frontend_network_rebuild_ready(candidate, constructor, error);
 }
 void frontend_network_publish_fresh(qa_frontend *active, qa_frontend *candidate, qa_frontend *constructor)
 {
@@ -6224,7 +5655,6 @@ bool frontend_network_destroy(qa_frontend *f, qa_error *error)
     qa_buffer_free(&n->q3_download_pending);
     qa_buffer_free(&n->q3_connections_prefix);
     qa_buffer_free(&n->menu_connections_prefix);
-    network_cold_socket_dispose(n);
     qa_network_destroy(n->runtime); qa_q3_server_admission_destroy(n->q3_admission);
     qa_q3_server_authorization_destroy(n->q3_authorization);
     qa_q3_client_authorization_destroy(n->q3_client_authorization);
