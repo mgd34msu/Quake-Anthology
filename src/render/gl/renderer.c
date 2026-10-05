@@ -869,7 +869,8 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
     }
     qa_scene_mesh uploaded=draw.mesh;
     if (draw.source_vertex_storage) uploaded.vertex_count=draw.source_vertex_storage;
-    if (!gl_mesh_bind(renderer, &uploaded, resident, &draw.vertex_inputs, error)) return false;
+    size_t index_offset;
+    if (!gl_mesh_bind(renderer, &uploaded, resident, &draw.vertex_inputs,&index_offset,error)) return false;
     if (source_pipeline && draw.mesh.vertex_count) {
         qa_scene_vec4 color; qa_scene_vec2 uv[2];
         qa_render_source_attributes_vertex(&renderer->controls,&draw,mode,0,draw.mesh.vertices,&color,uv);
@@ -900,7 +901,7 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
         renderer->gl.DrawElements(draw.mesh.primitive == QA_SCENE_LINES
                                       ? GL_LINES : GL_TRIANGLES,
                                   (GLsizei)draw.mesh.index_count,
-                                  GL_UNSIGNED_INT, NULL);
+                                  GL_UNSIGNED_INT, (const void *)(uintptr_t)index_offset);
     else if (mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS || mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS)
         draw_source_strips(renderer, &draw, mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS);
     if (draw.source_arrays && draw.mesh.primitive==QA_SCENE_TRIANGLES && !draw.state.wireframe)
@@ -1081,6 +1082,7 @@ static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *fra
         renderer->sequence = frame->sequence;
     }
     for (size_t i = first; i < frame->command_count; ++i) {
+        renderer->frame_command=i;
         const qa_scene_command *command = &frame->commands[i];
         if (renderer->opacity.skip &&
             command->kind != QA_SCENE_COMMAND_OPACITY_BEGIN &&
@@ -1175,6 +1177,11 @@ bool qa_gl_source_execute_prefix(qa_render_controls *controls, const qa_scene_fr
     renderer->executing = true;
     bool ok = gl_execute_range(renderer, frame, first, begin, finish, error);
     renderer->executing = false;
+    if (finish || !ok) {
+        qa_error ignored={0};
+        bool checked=gl_frame_check(renderer,ok?error:&ignored);
+        ok=ok && checked;
+    }
     return ok;
 }
 bool qa_gl_source_depth_range(qa_render_controls *controls,float near_depth,float far_depth,
@@ -1316,7 +1323,9 @@ bool qa_gl_execute(qa_gl_renderer *renderer,const qa_scene_frame *frame,qa_error
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL renderer is absent or executing"); return false;
     }
     renderer->executing=true; bool ok=gl_execute_range(renderer,frame,0,true,true,error);
-    renderer->executing=false; return ok;
+    renderer->executing=false;
+    qa_error ignored={0};bool checked=gl_frame_check(renderer,ok?error:&ignored);
+    return ok && checked;
 }
 size_t qa_gl_source_images_metadata_count(const qa_render_controls *controls)
 { return controls->owner.gl->source_image_count; }

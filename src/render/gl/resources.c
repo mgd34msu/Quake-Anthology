@@ -1,6 +1,7 @@
 #include "internal.h"
 
 #include <limits.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <SDL_video.h>
 #include "qa/display_settings.h"
@@ -19,13 +20,33 @@ static bool finite4(qa_scene_vec4 value)
            isfinite(value.w);
 }
 
-bool gl_check(qa_gl_renderer *renderer, const char *operation, qa_error *error)
+static bool error_report(qa_gl_renderer *renderer,GLenum code,const char *operation,qa_error *error)
 {
-    GLenum code = renderer->gl.GetError();
-    if (code == GL_NO_ERROR) return true;
     qa_error_set(error, QA_ERROR_IO, 0, "%s failed with OpenGL error 0x%x",
                  operation, (unsigned)code);
     while (renderer->gl.GetError() != GL_NO_ERROR) {}
+    return false;
+}
+bool gl_check(qa_gl_renderer *renderer, const char *operation, qa_error *error)
+{
+#ifdef NDEBUG
+    if (renderer->executing || (renderer->controls.source.entered && renderer->controls.source.issuing)) {
+        renderer->frame_operation=operation;return true;
+    }
+#endif
+    GLenum code=renderer->gl.GetError();
+    return code==GL_NO_ERROR || error_report(renderer,code,operation,error);
+}
+bool gl_frame_check(qa_gl_renderer *renderer,qa_error *error)
+{
+    const char *last=renderer->frame_operation;renderer->frame_operation=NULL;
+    GLenum code=renderer->gl.GetError();
+    if (code==GL_NO_ERROR)return true;
+    char operation[256];
+    snprintf(operation,sizeof(operation),"OpenGL frame %" PRIu64 " (last stage: %s)",
+        renderer->sequence,last?last:"frame completion");
+    error_report(renderer,code,operation,error);
+    if (error)error->offset=renderer->frame_command;
     return false;
 }
 
@@ -937,23 +958,22 @@ void gl_textures_prune(qa_gl_renderer *renderer)
     }
 }
 
-static bool grow_stream(qa_gl_renderer *renderer, GLenum target, GLuint buffer,
-                        size_t required, size_t *capacity, qa_error *error)
+static bool reserve_stream(qa_gl_renderer *renderer, GLenum target, GLuint buffer,
+                           size_t required, size_t *capacity, size_t *cursor,
+                           size_t *offset, qa_error *error)
 {
-    if (required <= *capacity) return true;
-    size_t next = *capacity == 0 ? 65536 : *capacity;
-    while (next < required && next <= SIZE_MAX / 2) next *= 2;
-    if (next < required) next = required;
-    if (next > (size_t)PTRDIFF_MAX) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0,
-                     "OpenGL streaming buffer exceeds address space");
-        return false;
-    }
     renderer->gl.BindBuffer(target, buffer);
-    renderer->gl.BufferData(target, (GLsizeiptr)next, NULL, GL_STREAM_DRAW);
-    if (!gl_check(renderer, "OpenGL streaming buffer allocation", error))
-        return false;
-    *capacity = next;
+    if (required > *capacity || required > *capacity - *cursor) {
+        size_t next=*capacity?*capacity:target==GL_ARRAY_BUFFER?1048576:262144;
+        while (next<required && next<=(size_t)PTRDIFF_MAX/2)next*=2;
+        if (next<required)next=required;
+        /* BufferData(NULL) retires the old store while queued draws finish;
+         * advancing offsets never overwrites geometry still being consumed. */
+        renderer->gl.BufferData(target,(GLsizeiptr)next,NULL,GL_STREAM_DRAW);
+        if (!gl_check(renderer,"OpenGL streaming buffer allocation",error))return false;
+        *capacity=next;*cursor=0;
+    }
+    *offset=*cursor;*cursor+=required;
     return true;
 }
 
@@ -966,7 +986,8 @@ const gl_mesh_entry *gl_mesh_resident(const qa_gl_renderer *renderer,
 
 static bool mesh_storage(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
                          const gl_mesh_entry *resident,
-                         GLuint *vertices, GLuint *indices, qa_error *error)
+                         GLuint *vertices, GLuint *indices, size_t *vertex_offset,
+                         size_t *index_offset, qa_error *error)
 {
     if (mesh->vertex_count > SIZE_MAX / sizeof(*mesh->vertices) ||
         mesh->index_count > SIZE_MAX / sizeof(*mesh->indices) ||
@@ -993,28 +1014,25 @@ static bool mesh_storage(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
                          "OpenGL could not allocate streaming geometry");
             return false;
         }
-        if (!grow_stream(renderer, GL_ARRAY_BUFFER,
+        if (!reserve_stream(renderer, GL_ARRAY_BUFFER,
                          renderer->stream.vertex_buffer, vertex_bytes,
-                         &renderer->stream.vertex_bytes, error) ||
-            !grow_stream(renderer, GL_ELEMENT_ARRAY_BUFFER,
+                         &renderer->stream.vertex_bytes,&renderer->stream.vertex_cursor,vertex_offset,error) ||
+            !reserve_stream(renderer, GL_ELEMENT_ARRAY_BUFFER,
                          renderer->stream.index_buffer, index_bytes,
-                         &renderer->stream.index_bytes, error)) return false;
-        renderer->gl.BindBuffer(GL_ARRAY_BUFFER,
-                                renderer->stream.vertex_buffer);
+                         &renderer->stream.index_bytes,&renderer->stream.index_cursor,index_offset,error)) return false;
         if (vertex_bytes != 0)
-            renderer->gl.BufferSubData(GL_ARRAY_BUFFER, 0,
+            renderer->gl.BufferSubData(GL_ARRAY_BUFFER, (GLintptr)*vertex_offset,
                                        (GLsizeiptr)vertex_bytes,
                                        mesh->vertices);
-        renderer->gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER,
-                                renderer->stream.index_buffer);
         if (index_bytes != 0)
-            renderer->gl.BufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0,
+            renderer->gl.BufferSubData(GL_ELEMENT_ARRAY_BUFFER, (GLintptr)*index_offset,
                                        (GLsizeiptr)index_bytes,
                                        mesh->indices);
         *vertices = renderer->stream.vertex_buffer;
         *indices = renderer->stream.index_buffer;
         return gl_check(renderer, "OpenGL streaming geometry upload", error);
     }
+    *vertex_offset=*index_offset=0;
     if (resident) {
         if (!gl_mesh_storage_matches(resident, mesh)) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0,
@@ -1088,10 +1106,11 @@ void gl_meshes_prune(qa_gl_renderer *renderer)
 
 bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
                   const gl_mesh_entry *resident, const qa_scene_vertex_inputs *inputs,
-                  qa_error *error)
+                  size_t *index_offset, qa_error *error)
 {
     GLuint vertices, indices;
-    if (!mesh_storage(renderer, mesh, resident, &vertices, &indices, error)) return false;
+    size_t vertex_offset;
+    if (!mesh_storage(renderer, mesh, resident, &vertices, &indices,&vertex_offset,index_offset,error)) return false;
     gl_api *gl = &renderer->gl;
     gl->BindBuffer(GL_ARRAY_BUFFER, vertices);
     gl->BindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices);
@@ -1102,22 +1121,22 @@ bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
     gl->EnableVertexAttribArray(3);
     gl->EnableVertexAttribArray(4);
     gl->VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
-                            (const void *)(uintptr_t)offsetof(qa_scene_vertex,
-                                                             position));
+                            (const void *)(uintptr_t)(vertex_offset+offsetof(qa_scene_vertex,
+                                                             position)));
     gl->VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride,
-                            (const void *)(uintptr_t)offsetof(qa_scene_vertex,
-                                                             normal));
+                            (const void *)(uintptr_t)(vertex_offset+offsetof(qa_scene_vertex,
+                                                             normal)));
     gl->VertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
-                            (const void *)(uintptr_t)(inputs->swap_uv
+                            (const void *)(uintptr_t)(vertex_offset+(inputs->swap_uv
                                 ? offsetof(qa_scene_vertex, lightmap)
-                                : offsetof(qa_scene_vertex, texcoord)));
+                                : offsetof(qa_scene_vertex, texcoord))));
     gl->VertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride,
-                            (const void *)(uintptr_t)(inputs->swap_uv
+                            (const void *)(uintptr_t)(vertex_offset+(inputs->swap_uv
                                 ? offsetof(qa_scene_vertex, texcoord)
-                                : offsetof(qa_scene_vertex, lightmap)));
+                                : offsetof(qa_scene_vertex, lightmap))));
     gl->VertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride,
-                            (const void *)(uintptr_t)offsetof(qa_scene_vertex,
-                                                             color));
+                            (const void *)(uintptr_t)(vertex_offset+offsetof(qa_scene_vertex,
+                                                             color)));
     if (inputs->constant_color) {
         gl->DisableVertexAttribArray(4);
         gl->VertexAttrib4f(4, inputs->color.x, inputs->color.y, inputs->color.z, inputs->color.w);

@@ -196,6 +196,7 @@ static inline bool gl_mesh_storage_matches(const gl_mesh_entry *entry,
 typedef struct gl_stream_buffers {
     GLuint vertex_buffer, index_buffer;
     size_t vertex_bytes, index_bytes;
+    size_t vertex_cursor, index_cursor;
 } gl_stream_buffers;
 
 typedef struct gl_output_target {
@@ -249,6 +250,8 @@ struct qa_gl_renderer {
     float gamma;
     qa_output_domains output_domains;
     uint64_t sequence;
+    const char *frame_operation;
+    size_t frame_command;
     uint32_t presented_width, presented_height;
     bool overdraw, closed, presented, executing, capturing, preparing, detached;
     bool preblend_gamma, source_frame;
@@ -283,7 +286,8 @@ void gl_meshes_prune(qa_gl_renderer *renderer);
 void gl_resources_destroy(qa_gl_renderer *renderer);
 const gl_mesh_entry *gl_mesh_resident(const qa_gl_renderer *, const qa_scene_mesh *);
 bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
-                  const gl_mesh_entry *, const qa_scene_vertex_inputs *, qa_error *error);
+                  const gl_mesh_entry *, const qa_scene_vertex_inputs *, size_t *index_offset,
+                  qa_error *error);
 void gl_mesh_unbind(qa_gl_renderer *renderer);
 
 bool gl_bind_destination(qa_gl_renderer *renderer, qa_error *error);
@@ -310,6 +314,7 @@ GLenum gl_native_buffer(bool stereo, size_t slot);
 unsigned gl_draw_buffer_index(qa_scene_draw_buffer buffer);
 bool gl_check(qa_gl_renderer *renderer, const char *operation,
               qa_error *error);
+bool gl_frame_check(qa_gl_renderer *, qa_error *);
 void gl_source_pipeline_restore(qa_gl_renderer *renderer);
 
 typedef struct gl_presentation_snapshot gl_presentation_snapshot;
