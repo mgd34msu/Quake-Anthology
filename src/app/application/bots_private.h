@@ -15,11 +15,6 @@ static inline bool application_bot_integer(double value,int32_t *out,qa_error *e
     *out=(int32_t)value; return true;
 }
 
-static inline int32_t application_bot_angle_word(float angle) {
-    float reduced=fmodf(angle,360.0f);
-    return (int32_t)(uint16_t)(int32_t)(reduced*(65536.0f/360.0f));
-}
-
 typedef struct application_bot_graph {
     application_provider *movement;
     qa_movement_profile profile;

@@ -237,9 +237,9 @@ bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa
         out->crouched=(control.state.data.q2.flags&1)!=0;
     } else if(control.state.kind==QA_MOVEMENT_Q2_RERELEASE) {
         qa_vec3 delta=control.state.data.q2r.delta_angles;
-        out->delta_angles[0]=application_bot_angle_word(delta.x);
-        out->delta_angles[1]=application_bot_angle_word(delta.y);
-        out->delta_angles[2]=application_bot_angle_word(delta.z);out->crouched=(control.state.data.q2r.flags&1)!=0;
+        out->delta_angles[0]=qa_angle_to_word(delta.x);
+        out->delta_angles[1]=qa_angle_to_word(delta.y);
+        out->delta_angles[2]=qa_angle_to_word(delta.z);out->crouched=(control.state.data.q2r.flags&1)!=0;
     }
     out->presence=out->crouched?4:2;
     if(application->modes && application->primary_mode_ready) {
