@@ -75,6 +75,10 @@ static bool gib(qa_q2_game *game, qa_actor_id source, const char *model,
   qa_actor_definition definition;
   if (!qa_builtin_resource(&game->services, "gib", &definition, error)) return false;
   if (!q2_actor_live(game, source)) return true;
+  const qa_actor_record *reference_owner = qa_actors_get(qa_session_actors(game->services.session), source);
+  qa_actor_reference owner_reference = reference_owner && reference_owner->owner == game->options.owner && reference_owner->has_source ?
+      qa_actor_reference_source(reference_owner->owner, reference_owner->source_slot) :
+      qa_actor_reference_lifetime(source);
   qa_combat_state combat = {.can_take_damage = true};
   qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
       .contents = 2, .owner = source, .role = QA_COLLISION_SOLID};
@@ -89,7 +93,7 @@ static bool gib(qa_q2_game *game, qa_actor_id source, const char *model,
   q2_actor *actor = q2_actor_get(game, id, true, error);
   if (!actor) return release_failed(game, id, error);
   actor->projectile = (q2_projectile){.kind = Q2_GIB,
-      .owner = sized ? source : (qa_actor_id){0}, .classname = definition,
+      .owner = sized ? owner_reference : (qa_actor_reference){0}, .classname = definition,
       .effects = 2, .render_flags = 32768, .scale = 1, .alpha = 1,
       .visible = true, .expire_ns = q2_deadline(game->now_ns, q2_duration(lifetime)),
       .gib_flags = Q2_GIB_WIDOW | (organic ? 0 : Q2_GIB_METALLIC) |
