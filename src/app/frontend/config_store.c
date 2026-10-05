@@ -3210,7 +3210,7 @@ static bool local_userinfo(void *context,qa_application *application,const qa_la
         const qa_launch_instance *held=instance(row);
         if (row->application!=application || !row->primary || row->imported || !held ||
             held->storage!=selected->storage || held->state!=selected->state ||
-            (!row->published && row->candidate!=candidate)) continue;
+            (!row->published && row->candidate!=snapshot)) continue;
         if (source) return fail(error,QA_ERROR_FORMAT,"Local userinfo repeats its physical GAME configuration");
         source=row;
     }
