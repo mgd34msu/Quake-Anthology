@@ -282,7 +282,7 @@ bool application_native_q1_qw_visible(qa_application *app,qa_actor_id viewer,qa_
                 size_t size=qa_collision_q1_pvs_bytes(geometry);uint8_t *pvs=size?malloc(size):NULL;
                 if (size && !pvs) okay=application_fail(error,QA_ERROR_MEMORY,"Observing native QuakeWorld fat PVS");
                 else okay=qa_collision_q1_fat_pvs(geometry,qa_vec_add(body.origin,control.view_offset),pvs,size,error) &&
-                    qa_collision_q1_bounds_visible(geometry,(qa_bytes){pvs,size},linked.absolute_bounds,out,error);
+                    qa_world_q1_visible(app->world,target,&linked.absolute_bounds,(qa_bytes){pvs,size},out,error);
                 free(pvs);
             }
         }

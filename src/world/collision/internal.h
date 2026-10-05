@@ -8,6 +8,7 @@ typedef enum qa_leaf_visit { QA_LEAF_CONTINUE, QA_LEAF_STOP, QA_LEAF_FAILED } qa
 typedef qa_leaf_visit (*qa_leaf_visit_fn)(void *, const qa_collision_leaf *, qa_error *);
 bool qa_collision_walk_leaves(const qa_collision_geometry *, qa_bounds, bool q1_touched,
     qa_leaf_visit_fn, void *, qa_leaf_list *, qa_error *);
+bool qa_collision_q1_membership_visible(qa_bytes, const qa_collision_leaf *, size_t);
 
 typedef struct qa_collision_ops {
     void (*destroy)(void *);

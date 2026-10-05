@@ -60,9 +60,11 @@ typedef struct qa_world_leaf_membership {
 /* Borrowed until this body's next membership preparation, replacement or
  * release. NULL bounds reads its published link; explicit bounds prepare the
  * same derived owner before Source link publication. Q1_TOUCHED preserves
- * original Q1 visibility classification and solid-leaf exclusion. */
+ * original Q1 visibility classification, solid exclusion and first 16 rows. */
 bool qa_world_link_membership(qa_world *, qa_actor_id, const qa_bounds *,
     qa_world_leaf_policy, qa_world_leaf_membership *, qa_error *);
+bool qa_world_q1_visible(qa_world *, qa_actor_id, const qa_bounds *, qa_bytes pvs,
+    bool *, qa_error *);
 
 /* The session owns actors and geometry. World borrows both; destruction never
  * clears/releases the registry. Calls and callbacks have one thread owner.

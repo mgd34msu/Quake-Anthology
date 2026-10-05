@@ -117,10 +117,6 @@ bool qa_collision_cluster_visible(const qa_collision_geometry *, int32_t from, i
 size_t qa_collision_q1_pvs_bytes(const qa_collision_geometry *);
 bool qa_collision_q1_fat_pvs(const qa_collision_geometry *, qa_vec3 eye,
     uint8_t *, size_t capacity, qa_error *);
-/* Original touching-plane rules and first 16 non-solid touched leaves in
- * front-before-back traversal order, matching native server link membership. */
-bool qa_collision_q1_bounds_visible(const qa_collision_geometry *, qa_bytes pvs,
-    qa_bounds world_bounds, bool *, qa_error *);
 bool qa_collision_areas_connected(const qa_collision_geometry *, int32_t, int32_t, bool *, qa_error *);
 /* Overwrites the required output bytes; written reports their count even when
  * capacity is insufficient. */

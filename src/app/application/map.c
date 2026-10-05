@@ -2616,46 +2616,13 @@ static bool q3_area_portal(application_provider *provider,
     if (!qa_world_linked(provider->application->world, actor, &linked))
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "Q3 area portal actor is not linked");
-    size_t capacity = 64;
-    uint32_t *leaves = NULL;
-    qa_leaf_list list;
-    for (;;) {
-        if (capacity > SIZE_MAX / sizeof(*leaves)) {
-            free(leaves);
-            return application_fail(error, QA_ERROR_MEMORY,
-                                    "Q3 area portal leaf set is too large");
-        }
-        uint32_t *next = realloc(leaves, capacity * sizeof(*next));
-        if (next == NULL) {
-            free(leaves);
-            return application_fail(error, QA_ERROR_MEMORY,
-                                    "cannot retain Q3 area portal leaves");
-        }
-        leaves = next;
-        if (!qa_collision_box_leaves(provider->application->geometry,
-                                     linked.absolute_bounds, leaves, capacity,
-                                     &list, error)) {
-            free(leaves);
-            return false;
-        }
-        if (!list.overflow)
-            break;
-        if (capacity > SIZE_MAX / 2) {
-            free(leaves);
-            return application_fail(error, QA_ERROR_MEMORY,
-                                    "Q3 area portal leaf set is exhausted");
-        }
-        capacity *= 2;
-    }
+    qa_world_leaf_membership membership;
+    if (!qa_world_link_membership(provider->application->world, actor, &linked.absolute_bounds,
+        QA_WORLD_LEAVES_BOX, &membership, error)) return false;
     int32_t first = -1, second = -1;
     bool ok = true;
-    for (size_t index = 0; index < list.count; ++index) {
-        qa_collision_leaf leaf;
-        if (!qa_collision_leaf_at(provider->application->geometry,
-                                  leaves[index], &leaf, error)) {
-            ok = false;
-            break;
-        }
+    for (size_t index = 0; index < membership.count; ++index) {
+        qa_collision_leaf leaf = membership.leaves[index];
         if (leaf.area > INT32_MAX) {
             ok = application_fail(error, QA_ERROR_FORMAT,
                                   "Q3 area portal area exceeds source range");
@@ -2673,7 +2640,6 @@ static bool q3_area_portal(application_provider *provider,
             break;
         }
     }
-    free(leaves);
     if (!ok || first < 0 || second < 0)
         return ok;
     return application_portal_q3(provider, (uint32_t)first,

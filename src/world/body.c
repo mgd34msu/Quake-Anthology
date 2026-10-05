@@ -445,9 +445,11 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
     return true;
 }
 
+typedef struct membership_writer { qa_world_body *body; size_t limit; } membership_writer;
 static qa_leaf_visit membership_leaf(void *context,const qa_collision_leaf *leaf,qa_error *error)
 {
-    qa_world_body *body=context;
+    membership_writer *writer=context;
+    qa_world_body *body=writer->body;
     if(body->leaf_count==body->leaf_capacity) {
         size_t capacity=body->leaf_capacity?body->leaf_capacity*2:8;
         if(capacity<body->leaf_capacity || capacity>SIZE_MAX/sizeof(*body->leaves)) {
@@ -458,7 +460,7 @@ static qa_leaf_visit membership_leaf(void *context,const qa_collision_leaf *leaf
         body->leaves=leaves; body->leaf_capacity=capacity;
     }
     body->leaves[body->leaf_count++]=*leaf;
-    return QA_LEAF_CONTINUE;
+    return body->leaf_count==writer->limit?QA_LEAF_STOP:QA_LEAF_CONTINUE;
 }
 
 bool qa_world_link_membership(qa_world *world,qa_actor_id actor,const qa_bounds *explicit_bounds,
@@ -477,13 +479,29 @@ bool qa_world_link_membership(qa_world *world,qa_actor_id actor,const qa_bounds 
         memcmp(&body->leaf_bounds,&bounds,sizeof(bounds))) {
         body->leaves_ready=false; body->leaf_count=0;
         qa_leaf_list list;
+        membership_writer writer={body,policy==QA_WORLD_LEAVES_Q1_TOUCHED?16:SIZE_MAX};
         if(!qa_collision_walk_leaves(world->geometry,bounds,policy==QA_WORLD_LEAVES_Q1_TOUCHED,
-            membership_leaf,body,&list,error)) return false;
+            membership_leaf,&writer,&list,error)) return false;
         body->leaf_bounds=bounds; body->leaf_geometry=world->geometry;
         body->leaf_storage=body->storage_serial; body->leaf_policy=policy;
         body->leaf_topnode=list.topnode; body->leaf_last=list.last_leaf; body->leaves_ready=true;
     }
     *out=(qa_world_leaf_membership){body->leaves,body->leaf_count,body->leaf_topnode,body->leaf_last};
+    return true;
+}
+
+bool qa_world_q1_visible(qa_world *world,qa_actor_id actor,const qa_bounds *bounds,
+    qa_bytes pvs,bool *out,qa_error *error)
+{
+    qa_collision_geometry *geometry=qa_world_geometry(world);
+    if(!geometry || qa_collision_geometry_family(geometry)!=QA_COLLISION_Q1 || !out ||
+        (bounds && !qa_bounds_valid(*bounds)) ||
+        pvs.size!=qa_collision_q1_pvs_bytes(geometry) || (pvs.size && !pvs.data))
+        return fail(error,QA_ERROR_ARGUMENT,"Q1 entity visibility requires its actual fat-PVS and source bounds");
+    *out=false;
+    qa_world_leaf_membership membership;
+    if(!qa_world_link_membership(world,actor,bounds,QA_WORLD_LEAVES_Q1_TOUCHED,&membership,error)) return false;
+    *out=qa_collision_q1_membership_visible(pvs,membership.leaves,membership.count);
     return true;
 }
 

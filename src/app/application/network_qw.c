@@ -425,7 +425,7 @@ bool qa_application_network_qw_visible(qa_application *app, qa_actor_id viewer,
     uint8_t *pvs = size ? malloc(size) : NULL;
     if (size && !pvs) return application_fail(error, QA_ERROR_MEMORY, "Observing QuakeWorld source fat PVS");
     bool ok = qa_collision_q1_fat_pvs(geometry, eye, pvs, size, error) &&
-        qa_collision_q1_bounds_visible(geometry, (qa_bytes){pvs, size}, linked.absolute_bounds, out, error);
+        qa_world_q1_visible(app->world, target, &linked.absolute_bounds, (qa_bytes){pvs, size}, out, error);
     free(pvs); return ok;
 }
 

@@ -627,29 +627,11 @@ bool qa_collision_q1_fat_pvs(const qa_collision_geometry *geometry, qa_vec3 eye,
     return true;
 }
 
-typedef struct q1_visibility_leaves { qa_bytes pvs; size_t touched; bool visible; } q1_visibility_leaves;
-static qa_leaf_visit q1_visible_leaf(void *context, const qa_collision_leaf *leaf, qa_error *error)
+bool qa_collision_q1_membership_visible(qa_bytes pvs, const qa_collision_leaf *leaves, size_t count)
 {
-    q1_visibility_leaves *owner = context;
-    (void)error;
-    if (leaf->leaf && bit_test(owner->pvs, leaf->leaf - 1)) {
-        owner->visible = true; return QA_LEAF_STOP;
-    }
-    return ++owner->touched == 16 ? QA_LEAF_STOP : QA_LEAF_CONTINUE;
-}
-
-bool qa_collision_q1_bounds_visible(const qa_collision_geometry *geometry, qa_bytes pvs,
-    qa_bounds bounds, bool *out, qa_error *error)
-{
-    if (!geometry || geometry->family != QA_COLLISION_Q1 || !out ||
-        !qa_bounds_valid(bounds) || pvs.size != geometry->visibility_bytes || (pvs.size && !pvs.data))
-        return geometry_fail(error, QA_ERROR_ARGUMENT, "Q1 entity visibility requires its actual fat-PVS and source bounds");
-    q1_visibility_leaves visible = {.pvs = pvs};
-    qa_leaf_list list;
-    *out = false;
-    if (!qa_collision_walk_leaves(geometry, bounds, true, q1_visible_leaf, &visible, &list, error)) return false;
-    *out = visible.visible;
-    return true;
+    for (size_t i = 0; i < count; ++i)
+        if (leaves[i].leaf && bit_test(pvs, leaves[i].leaf - 1)) return true;
+    return false;
 }
 
 bool qa_collision_cluster_visible(const qa_collision_geometry *geometry, int32_t from, int32_t to,

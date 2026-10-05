@@ -922,7 +922,8 @@ static bool frame_payload(frontend_nq_host *host,qa_actor_id actor,qa_net_protoc
             ok = qa_application_network_q1_bounds(host->frontend->application, actor, entity_actor, &bounds, &modeled, error);
             if (!ok) break;
             if (!modeled) continue;
-            ok = qa_collision_q1_bounds_visible(geometry, (qa_bytes){pvs, extent}, bounds, &visible, error);
+            ok = qa_world_q1_visible(qa_application_world(host->frontend->application), entity_actor,
+                &bounds, (qa_bytes){pvs, extent}, &visible, error);
             if (!ok) break;
             if (!visible) continue;
         }
