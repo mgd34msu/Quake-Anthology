@@ -239,9 +239,9 @@ static bool handle(void *context,const qa_command_invocation *command,qa_error *
     if(!ok)dispose(o,&frame);
     --o->row->callbacks; o->busy=false; return ok;
 }
-bool frontend_native_q3_commands_create(frontend_native_q3 *row,bool restoring,frontend_native_q3_commands **out,qa_error *e)
+bool frontend_native_q3_commands_create(frontend_native_q3 *row,frontend_native_q3_commands **out,qa_error *e)
 {
-    if(!row || !out || *out || (!restoring && !row->view.client) ||
+    if(!row || !out || *out || !row->view.client ||
         (row->view.product!=QA_Q3_ARENA && row->view.product!=QA_Q3_TEAM_ARENA))return false;
     frontend_native_q3_commands *o=calloc(1,sizeof(*o)); if(!o)return frontend_fail(e,QA_ERROR_MEMORY,"Allocating native console state");
     o->row=row;
@@ -287,41 +287,6 @@ bool frontend_native_q3_commands_destroy(frontend_native_q3_commands *o,qa_error
     for(size_t i=0;i<o->contributed;++i)qa_console_uncontribute(d->console,command_name(d->product,i),d->source,o->row->view.service_owner);
     if(!--d->users)free(d);
     free(o); return true;
-}
-static bool fields(qa_source_save_io *io,frontend_native_q3_commands *o)
-{
-    uint8_t magic[4]={'Q','N','C','C'}; uint32_t product=o->dispatch->product;
-    /* The scoreboard clock is owned by the HUD continuation. */
-    int32_t reserved=0;
-    uint64_t identity=o->row->view.identity; size_t contributed=o->contributed;
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QNCC",4) || !qa_source_save_u32(io,&product) || product!=(uint32_t)o->dispatch->product ||
-        !qa_source_save_u64(io,&identity) || identity!=o->row->view.identity ||
-        !qa_source_save_i32(io,&reserved) || !qa_source_save_bool(io,&o->registered) ||
-        !qa_source_save_bool(io,&o->closed) || (o->closed && !o->registered) ||
-        !qa_source_save_count(io,&contributed,command_count(o->dispatch->product)) ||
-        (o->registered && contributed!=command_count(o->dispatch->product)))return false;
-    o->contributed=contributed; return true;
-}
-bool frontend_native_q3_commands_checkpoint(const frontend_native_q3_commands *borrowed,qa_buffer *out,qa_error *e)
-{
-    if(!borrowed || !frontend_native_q3_commands_idle(borrowed) || !out || out->data || out->size)return false;
-    frontend_native_q3_commands copy=*borrowed; qa_source_save_io io={0};
-    bool ok=qa_source_save_writer(&io,NULL,e) && fields(&io,&copy) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); return ok;
-}
-bool frontend_native_q3_commands_restore(frontend_native_q3_commands *o,qa_bytes bytes,qa_error *e)
-{
-    if(!o || o->busy || !o->row->restoring)return false;
-    frontend_native_q3_commands candidate=*o; qa_source_save_io io={0};
-    bool ok=qa_source_save_reader(&io,NULL,bytes,e) && fields(&io,&candidate) && qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io);
-    if(!ok)return frontend_fail(e,QA_ERROR_FORMAT,"Invalid actual native console continuation");
-    if(o->contributed || o->registered)
-        return o->contributed==candidate.contributed && o->registered==candidate.registered &&
-            o->closed==candidate.closed ? true :
-            frontend_fail(e,QA_ERROR_FORMAT,"Native command continuation differs from its prepared callback prefix");
-    if(!bind_commands(o,candidate.contributed,e))return false;
-    o->registered=candidate.registered; o->closed=candidate.closed; return true;
 }
 void frontend_native_q3_commands_rebind(frontend_native_q3_commands *o,qa_frontend *f)
 { if(o)o->dispatch->frontend=f; }

@@ -194,47 +194,6 @@ static void rebind(void *context, qa_frontend *frontend)
     equipment_native *owner = context;
     frontend_equipment_source_rebind(owner->source, frontend); owner->frontend = frontend;
 }
-static bool blob(qa_source_save_io *io, qa_bytes *bytes)
-{
-    size_t count = io->direction == QA_SOURCE_SAVE_WRITE ? bytes->size : 0;
-    if (!qa_source_save_count(io, &count, 64u * 1024u * 1024u)) return false;
-    if (io->direction == QA_SOURCE_SAVE_WRITE)
-        return qa_source_save_bytes(io, (void *)bytes->data, count);
-    if (io->offset > io->input.size || count > io->input.size - io->offset) return false;
-    *bytes = (qa_bytes){io->input.data + io->offset, count}; io->offset += count;
-    return true;
-}
-static bool checkpoint(const void *context, qa_buffer *out, qa_error *error)
-{
-    const equipment_native *owner = context;
-    if (!idle(owner) || !out || out->data || out->size)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native equipment capture requires its actual returned owner");
-    qa_buffer source = {0};
-    if (!frontend_equipment_source_checkpoint(owner->source, &source, error)) return false;
-    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','E','N'}; bool hud = owner->hud_requested, view = owner->view_requested;
-    qa_bytes bytes = {source.data, source.size};
-    bool okay = qa_source_save_writer(&io, qa_application_session(owner->frontend->application), error) &&
-        qa_source_save_bytes(&io, magic, sizeof(magic)) && qa_source_save_bool(&io, &hud) && qa_source_save_bool(&io, &view) &&
-        blob(&io, &bytes) && qa_source_save_finish(&io, out);
-    qa_source_save_dispose(&io); qa_buffer_free(&source); return okay;
-}
-static bool restore(void *context, const qa_application_q3_client_context *client,
-    qa_bytes bytes, qa_error *error)
-{
-    equipment_native *owner = context;
-    if (!idle(owner)) return frontend_fail(error, QA_ERROR_ARGUMENT, "Native equipment import requires its fresh empty owner");
-    qa_source_save_io io = {0}; uint8_t magic[4]; bool hud = false, view = false; qa_bytes source = {0};
-    bool okay = qa_source_save_reader(&io, qa_application_session(owner->frontend->application), bytes, error) &&
-        qa_source_save_bytes(&io, magic, sizeof(magic)) && !memcmp(magic, "QFEN", 4) &&
-        qa_source_save_bool(&io, &hud) &&
-        qa_source_save_bool(&io, &view) && blob(&io, &source) && qa_source_save_finish(&io, NULL);
-    if (okay) okay = frontend_equipment_source_restore(owner->source, client, source, error);
-    if (okay) { owner->hud_requested = hud; owner->view_requested = view; }
-    qa_source_save_dispose(&io);
-    if (!okay && error && error->code == QA_OK)
-        frontend_fail(error, QA_ERROR_FORMAT, "Invalid actual native equipment continuation");
-    return okay;
-}
 bool frontend_equipment_native_weapon(const void *context, qa_application_equipment_view *out,
     bool *requested, qa_error *error)
 {
@@ -261,7 +220,7 @@ bool frontend_equipment_native_compose(void *context, frontend_native_q3 *row,
     if (!frontend_equipment_source_create(&options, &owner->source, error)) { free(owner); return false; }
     frontend_equipment_source_services(owner->source, &owner->services);
     *out = (frontend_native_q3_composition){.context = owner, .idle = idle, .destroy = destroy,
-        .rebind_ready = rebind_ready, .rebind = rebind, .checkpoint = checkpoint, .restore = restore,
+        .rebind_ready = rebind_ready, .rebind = rebind,
         .begin_frame = begin, .end_frame = end, .held_weapon = held, .view_weapon = view_weapon,
         .weapon_warning = warning,
         .scene_cleared = clear, .prepare_view = prepare_view, .submit_view = submit_view};

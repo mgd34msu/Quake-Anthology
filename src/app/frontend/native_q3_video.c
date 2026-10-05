@@ -34,7 +34,7 @@ bool frontend_native_q3_video_read(const qa_frontend *f,size_t ordinal,frontend_
         ticket->frontend!=f || f->application!=ticket->application || f->capture || f->source_restoring ||
         !frontend_video_guests_resources_associated(f,ticket->aggregate) ||
         !frontend_seat_callbacks_returned(f) || f->time_ns!=ticket->time_ns || f->frame_number!=ticket->frame_number ||
-        !frontend_native_q3_current(row) || row->frame_active || row->callbacks || row->restoring ||
+        !frontend_native_q3_current(row) || row->frame_active || row->callbacks ||
         !qa_native_q3_wire_reader_basis(row->view.reader,&basis,error) ||
         basis.source_game!=ticket->rows[ordinal].basis.source_game ||
         basis.session!=ticket->rows[ordinal].basis.session ||
@@ -57,7 +57,7 @@ bool frontend_native_q3_video_current(const frontend_native_q3_video *ticket,qa_
         const frontend_native_q3_view *a=&row->view,*b=&saved->retained;
         qa_native_q3_wire_basis basis;
         if(video_row_at(f,i)!=row || row->video!=ticket || !frontend_native_q3_current(row) ||
-            row->frame_active || row->callbacks || row->restoring || a->identity!=b->identity ||
+            row->frame_active || row->callbacks || a->identity!=b->identity ||
             a->service_owner!=b->service_owner || a->reader!=b->reader || a->client!=b->client ||
             a->registry!=b->registry || a->cvars!=b->cvars || a->input!=b->input ||
             a->source_launch!=b->source_launch || a->source_files!=b->source_files ||

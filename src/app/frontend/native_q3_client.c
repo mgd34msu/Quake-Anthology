@@ -95,7 +95,7 @@ bool frontend_native_q3_field_of_view(qa_frontend *f,double value,qa_error *erro
     if (!f || !f->application) return frontend_fail(error,QA_ERROR_ARGUMENT,"Native FOV needs its actual application");
     char text[64]; snprintf(text,sizeof(text),"%.17g",value);
     for (frontend_native_q3 *row=f->native_q3;row;row=row->next) {
-        if (!row->constructed || row->restoring || !row->view.cvars || !qa_cvars_find(row->view.cvars,"cg_fov")) continue;
+        if (!row->constructed || !row->view.cvars || !qa_cvars_find(row->view.cvars,"cg_fov")) continue;
         if (!frontend_native_q3_current(row) || row->callbacks==SIZE_MAX) return frontend_fail(error,QA_ERROR_ARGUMENT,"Native FOV lost its actual CLIENT");
         ++row->callbacks;
         bool ok=qa_cvars_set(row->view.cvars,"cg_fov",text,true,error);
@@ -254,16 +254,6 @@ static frontend_music_origin music_origin(frontend_native_q3 *row)
         .files=row->view.source_files,.music=row->view.music,.context=row,
         .current=music_origin_current,.stop=music_origin_stop};
 }
-bool frontend_native_q3_music_restore_bind(frontend_native_q3 *row,qa_error *error)
-{
-    if (!row || !linked(row)) return frontend_fail(error,QA_ERROR_ARGUMENT,"Native music alias lacks its installed owner");
-    if (!row->view.music) return true;
-    qa_audio_music_controls *controls=frontend_music_sources_controls(row->frontend->music_sources);
-    if (!controls || !qa_audio_music_controls_bind(row->view.music,controls,error)) return false;
-    frontend_music_origin origin=music_origin(row);
-    return !frontend_music_sources_restore_origin_matches(row->frontend->music_sources,&origin) ||
-        frontend_music_sources_restore_origin(row->frontend->music_sources,&origin,error);
-}
 static bool music(void *context,const char *intro,const char *loop,qa_error *e)
 {
     frontend_native_q3 *row=context; qa_frontend *f=row->frontend;
@@ -417,8 +407,7 @@ bool frontend_native_q3_backend_options(frontend_native_q3 *row,qa_q3_presentati
         .milliseconds=milliseconds,.audio_bus=audio_bus,.prepare_view=prepare_view,.submit_view=submit_view,
         .scene_cleared=scene_cleared,.prepare_picture=prepare_picture,.remap=remap,.print=print_row};
     if (row->shader_movies && !frontend_material_movies_cinematic_read(row->shader_movies,&out->cinematics,e)) return false;
-    if (!row->restoring && !frontend_q3_renderer_options_read(f,out,e)) return false;
-    if(row->restoring && !row->view.cvars)return true;
+    if (!frontend_q3_renderer_options_read(f,out,e)) return false;
     if(row->view.cvars && !qa_cvars_find(row->view.cvars,"cg_shadows")) {
         qa_application_q3_client_context client;
         if(!row->view.client || !qa_native_q3_client_context_read(row->view.client,&client,e) ||
@@ -662,7 +651,7 @@ static bool update_loading(void *context,q3n_loading *loading,const q3n_frame *f
 {
     frontend_native_q3 *row=context; qa_frontend *f=row->frontend;
     if(loading!=row->view.loading || !frontend_native_q3_cut(row,frame,e) ||
-        row->restoring || f->capture)return false;
+        f->capture)return false;
     qa_scene_frame_reset(&f->frame,f->frame_number);
     if (!frontend_q3_texture_mode_begin_frame(f,e)) return false;
     if (!frontend_q3_source_output(f,row->view.materials,frontend_viewport(f,row->view.seat),e)) return false;
@@ -750,11 +739,11 @@ static bool before_render(void *context,const q3n_frame *f,qa_error *e)
 }
 static bool composition_ready(const frontend_native_q3_composition *o,qa_error *e)
 {
-    bool owned=o->idle || o->destroy || o->rebind_ready || o->rebind || o->checkpoint || o->restore;
+    bool owned=o->idle || o->destroy || o->rebind_ready || o->rebind;
     return (o->begin_frame==NULL)==(o->end_frame==NULL) &&
         (!o->before_render || o->begin_frame) &&
-        (!owned || (o->context && o->idle && o->destroy && o->rebind_ready && o->rebind && o->checkpoint && o->restore)) ? true :
-        frontend_fail(e,QA_ERROR_ARGUMENT,"Native composition requires paired frame callbacks and a complete actual owner lifetime/codec");
+        (!owned || (o->context && o->idle && o->destroy && o->rebind_ready && o->rebind)) ? true :
+        frontend_fail(e,QA_ERROR_ARGUMENT,"Native composition requires paired frame callbacks and a complete actual owner lifetime");
 }
 bool frontend_native_q3_core_options(frontend_native_q3 *row,q3n_native_options *out,qa_error *e)
 {
@@ -845,7 +834,7 @@ static bool namespace_name(frontend_native_q3 *row,char **out,qa_error *e)
     if(count<=0 || (size_t)count>=length+64) { free(name); return frontend_fail(e,QA_ERROR_FORMAT,"Native service namespace exceeds its exact identity buffer"); }
     *out=name; return true;
 }
-static bool row_identity(frontend_native_q3 *row,bool restoring,qa_error *e)
+static bool row_identity(frontend_native_q3 *row,qa_error *e)
 {
     qa_frontend *f=row->frontend; char *name=NULL; uint32_t ordinal;
     if(!row->view.source_launch || !row->view.source_launch->storage ||
@@ -860,20 +849,11 @@ static bool row_identity(frontend_native_q3 *row,bool restoring,qa_error *e)
         return frontend_fail(e,QA_ERROR_FORMAT,"Native frontend identity aliases a real source group");
     if(!namespace_name(row,&name,e))return false;
     qa_strings *strings=qa_session_strings(qa_application_session(f->application));
-    if(restoring) {
-        qa_bytes bytes={(const uint8_t *)name,strlen(name)};
-        if(!row->view.service_owner || qa_strings_find(strings,bytes)!=row->view.service_owner ||
-            row->view.identity<=QA_FRONTEND_COMMAND_OWNER || row->view.identity-QA_FRONTEND_COMMAND_OWNER>f->next_source_id) {
-            free(name);
-            return frontend_fail(e,QA_ERROR_FORMAT,"Native import left its actual saved frontend/service namespace");
-        }
-    } else if(!qa_strings_intern_cstr(strings,name,&row->view.service_owner,e)) { free(name); return false; }
+    if(!qa_strings_intern_cstr(strings,name,&row->view.service_owner,e)) { free(name); return false; }
     free(name);
     row->command=(qa_command_context){.owner=row->view.source_owner,.seat=row->view.launch_seat,.dialect=QA_CONSOLE_Q3,
         .origin=QA_COMMAND_SEAT,.actor=row->view.actor};
-    /* The pure callback prefix precedes the ROSTER component. Preserve the
-     * saved witness here; handlers require a constructed late-admitted row. */
-    return restoring || qa_application_capture_command_context(f->application,&row->command,&row->command,e);
+    return qa_application_capture_command_context(f->application,&row->command,&row->command,e);
 }
 static bool shader_movies_current(void *context,const frontend_material_movie_source *view)
 {
@@ -891,16 +871,6 @@ bool frontend_native_q3_movie_source_read(qa_frontend *f,size_t index,frontend_m
     if (!out || !shader_movies_current(row,&view))
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Movie binding lacks its retained native provider");
     *out=view; return true;
-}
-bool frontend_native_q3_movies_restore(qa_frontend *f,size_t index,const frontend_material_movies_refs *refs,qa_bytes bytes,qa_error *e)
-{
-    frontend_native_q3 *row=row_at(f,index); frontend_material_movie_source view;
-    if (!row || !f->source_restoring || !frontend_native_q3_movie_source_read(f,index,&view,e))
-        return frontend_fail(e,QA_ERROR_ARGUMENT,"Movie import requires its actual native candidate");
-    qa_q3_cinematic_source *cinematics=NULL;
-    return frontend_material_movies_restore(&view,refs,bytes,&row->shader_movies,e) &&
-        frontend_material_movies_cinematic_read(row->shader_movies,&cinematics,e) &&
-        (!cinematics || qa_q3_presentation_cinematics_bind(row->view.presentation,cinematics,e));
 }
 static bool make_media(frontend_native_q3 *row,qa_error *e)
 {
@@ -940,7 +910,7 @@ static bool compose_row(frontend_native_q3 *row,const frontend_native_q3_factory
     --row->callbacks;
     return ok && frontend_native_q3_current(row) && composition_ready(&row->composition,e);
 }
-bool frontend_native_q3_make_children(frontend_native_q3 *row,const qa_application_native_q3_presentation *source,bool restoring,qa_error *e)
+bool frontend_native_q3_make_children(frontend_native_q3 *row,const qa_application_native_q3_presentation *source,qa_error *e)
 {
     q3n_native_owners owners;
     if(!q3n_native_owners_read(row->view.core,&owners,e))return false;
@@ -954,17 +924,15 @@ bool frontend_native_q3_make_children(frontend_native_q3 *row,const qa_applicati
                 .assets=row->view.assets,.presentation=row->view.presentation,.fonts=row->view.fonts,
                 .seat=row->view.launch_seat,.context=row,
                 .milliseconds=milliseconds,.print=print_row,.key_catcher=key_catcher};
-            if(!(restoring?q3n_mission_hud_create_restored(&options,&row->view.mission,e):
-                q3n_mission_hud_create(&options,&row->view.mission,e)) || !q3n_mission_hud_bind(row->view.mission,owners.hud,e))return false;
+            if(!q3n_mission_hud_create(&options,&row->view.mission,e) || !q3n_mission_hud_bind(row->view.mission,owners.hud,e))return false;
         }
     }
     q3n_loading_options loading_options={.application=row->frontend->application,.client=row->view.client,
         .reader=row->view.reader,.assets=row->view.assets,.presentation=row->view.presentation,.media=owners.media,
         .ui=row->frontend->seats[row->view.seat].ui,.seat=row->view.launch_seat,.presentation_seat=row->view.seat,
         .context=row,.update_screen=update_loading};
-    return (restoring?q3n_loading_create_restored(&loading_options,&row->view.loading,e):
-        q3n_loading_create(&loading_options,&row->view.loading,e)) &&
-        (row->commands || frontend_native_q3_commands_create(row,restoring,&row->commands,e));
+    return q3n_loading_create(&loading_options,&row->view.loading,e) &&
+        (row->commands || frontend_native_q3_commands_create(row,&row->commands,e));
 }
 static bool media_close(frontend_native_q3 *row,qa_error *e)
 {
@@ -1053,7 +1021,7 @@ bool frontend_native_q3_video_row_reopen(frontend_native_q3 *row,qa_error *e)
         !qa_native_q3_wire_reader_publication(row->view.reader,&publication,e))return false;
     row->owns_media=true;
     if(!make_media(row,e) || !compose_row(row,&factory,e) || !frontend_native_q3_core_options(row,&options,e) ||
-        !q3n_native_create(&options,&row->view.core,e) || !frontend_native_q3_make_children(row,&source,false,e) ||
+        !q3n_native_create(&options,&row->view.core,e) || !frontend_native_q3_make_children(row,&source,e) ||
         !q3n_native_initialize_video(row->view.core,publication.reached_command_sequence,e) ||
         !frontend_source_renderer_end_registration(row->frontend,e))return false;
     row->constructed=true;
@@ -1074,7 +1042,7 @@ bool frontend_native_q3_create(qa_frontend *f,const qa_application_native_q3_pre
     if(!frontend_source_identity_allocate(f,&row->view.identity,e)) { free(row); return false; }
     row->next=f->native_q3; f->native_q3=row;
     row->owns_services=true;
-    bool ok=row_identity(row,false,e) && qa_launch_instance_retain_metadata(source->launch,&row->source_lease,e);
+    bool ok=row_identity(row,e) && qa_launch_instance_retain_metadata(source->launch,&row->source_lease,e);
     if(ok)row->view.source_launch=qa_launch_instance_lease_view(row->source_lease);
     if(ok)ok=qa_native_q3_wire_reader_acquire(f->application,row->view.receiver,seat,physical,actor,&row->view.reader,e);
     frontend_config_source *configuration=ok?frontend_config_store_source(f->config_store,row->console):NULL;
@@ -1107,7 +1075,7 @@ bool frontend_native_q3_create(qa_frontend *f,const qa_application_native_q3_pre
     q3n_native_options options;
     if(ok)ok=make_media(row,e) && compose_row(row,factory,e) &&
         frontend_native_q3_core_options(row,&options,e) &&
-        q3n_native_create(&options,&row->view.core,e) && frontend_native_q3_make_children(row,source,false,e);
+        q3n_native_create(&options,&row->view.core,e) && frontend_native_q3_make_children(row,source,e);
     qa_native_q3_wire_publication publication;
     if(ok)ok=qa_native_q3_wire_reader_publication(row->view.reader,&publication,e) &&
         q3n_native_initialize(row->view.core,publication.initial_command_sequence,e) &&
@@ -1154,7 +1122,7 @@ bool frontend_native_q3_sync(qa_frontend *f,const frontend_native_q3_factory *fa
                 installed=row;
             }
         if(installed) {
-            if(!installed->constructed || installed->restoring || installed->view.seat!=ordinal ||
+            if(!installed->constructed || installed->view.seat!=ordinal ||
                 installed->view.physical_client!=physical || !qa_actor_id_equal(installed->view.actor,actor) ||
                 !frontend_native_q3_current(installed))
                 return frontend_fail(e,QA_ERROR_ARGUMENT,"Native recipient no longer owns its published physical actor and seat");
@@ -1176,7 +1144,7 @@ bool frontend_native_q3_read(const qa_frontend *f,size_t index,frontend_native_q
 {
     frontend_native_q3 *row=row_at(f,index);
     if(!f || !out || f->stepping || !row || row->frontend!=f || row->frame_active || row->callbacks ||
-        row->service_released || (!row->constructed && !row->restoring))
+        row->service_released || !row->constructed)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native inventory requires its actual inactive physical row");
     *out=row->view;
     if(out->music_attached)out->music=qa_audio_engine_bus_music(f->audio,out->identity);
@@ -1356,7 +1324,7 @@ bool frontend_native_q3_client_cvars_read(const qa_frontend *f,uint32_t seat,
     frontend_native_q3 *selected=NULL;
     for(frontend_native_q3 *row=f->native_q3;row;row=row->next)if(row->view.seat==seat) {
         if(selected)return frontend_fail(e,QA_ERROR_FORMAT,"Native CLIENT settings have duplicate physical recipients");
-        if(!row->constructed || row->restoring || row->video || !row_idle(row) ||
+        if(!row->constructed || row->video || !row_idle(row) ||
             !frontend_native_q3_current(row))
             return frontend_fail(e,QA_ERROR_ARGUMENT,"Native CLIENT settings lost their installed Source row");
         selected=row;
@@ -1365,26 +1333,6 @@ bool frontend_native_q3_client_cvars_read(const qa_frontend *f,uint32_t seat,
     *receiver=selected?selected->view.receiver:0;
     *launch_seat=selected?selected->view.launch_seat:0;
     *present=selected!=NULL;
-    return true;
-}
-static bool visit_native_view(const qa_application_content_visitor *visitor,const qa_vfs *view,qa_error *e)
-{
-    qa_resource_pool *pool=view?qa_vfs_resources(view):NULL;
-    return pool && visitor->pool(visitor->context,pool,e) && visitor->view(visitor->context,view,e);
-}
-bool frontend_native_q3_content_visit(const qa_frontend *f,const qa_application_content_visitor *visitor,qa_error *e)
-{
-    if(!f || !visitor || !visitor->pool || !visitor->view || !visitor->catalog || f->stepping)return false;
-    for(size_t i=0;i<frontend_native_q3_count(f);++i) {
-        frontend_native_q3_view view;
-        if(!frontend_native_q3_read(f,i,&view,e))return false;
-        const qa_catalog *catalog=qa_launch_instance_catalog(view.source_launch);
-        qa_resource_pool *pool=catalog?qa_catalog_resources(catalog):NULL;
-        if(!pool || !visitor->pool(visitor->context,pool,e) || !visitor->catalog(visitor->context,catalog,e) ||
-            !visit_native_view(visitor,qa_catalog_files(catalog),e) ||
-            !visit_native_view(visitor,view.source_files,e) || !visit_native_view(visitor,view.mounts,e))
-            return frontend_fail(e,QA_ERROR_FORMAT,"Native retained launch/content inventory lost a genuine owner");
-    }
     return true;
 }
 bool frontend_native_q3_animation_holder(const qa_frontend *f,size_t index,uint32_t client,
@@ -1416,72 +1364,9 @@ bool frontend_native_q3_q3_ready(const qa_frontend *f,size_t index,const qa_q3_p
         return frontend_fail(e,QA_ERROR_FORMAT,"Native Q3 dictionary policy differs from its actual installed row");
     return true;
 }
-bool frontend_native_q3_prepare_restored(qa_frontend *f,const frontend_native_q3_view *view,
-    const frontend_native_q3_composition *composition,frontend_native_q3 **out,qa_error *e)
-{
-    if(!f || !view || !out || *out || f->stepping || f->capture || !f->source_restoring ||
-        view->receiver!=view->source_owner || !view->identity || !view->source_launch ||
-        (view->product!=QA_Q3_ARENA && view->product!=QA_Q3_TEAM_ARENA) ||
-        view->client || view->core || view->mission || view->loading ||
-        (composition && !composition_ready(composition,e)))
-        return frontend_fail(e,QA_ERROR_ARGUMENT,"Native topology preparation requires its genuine empty restored row");
-    frontend_native_q3 *row=calloc(1,sizeof(*row));
-    if(!row)return frontend_fail(e,QA_ERROR_MEMORY,"Allocating restored physical native row");
-    row->frontend=f; row->view=*view; row->restoring=true;
-    if(composition)row->composition=*composition;
-    row->next=f->native_q3; f->native_q3=row;
-    if(!row_identity(row,true,e) || !qa_launch_instance_retain_metadata(view->source_launch,&row->source_lease,e)) {
-        f->native_q3=row->next; free(row); return false;
-    }
-    row->view.source_launch=qa_launch_instance_lease_view(row->source_lease);
-    *out=row; return true;
-}
-bool frontend_native_q3_import_bind(frontend_native_q3 *row,const frontend_native_q3_view *view,qa_error *e)
-{
-    if(!linked(row) || !row->restoring || row->constructed || !view || view->identity!=row->view.identity ||
-        view->service_owner!=row->view.service_owner || view->receiver!=row->view.receiver ||
-        view->source_owner!=row->view.source_owner || view->seat!=row->view.seat || view->launch_seat!=row->view.launch_seat ||
-        view->product!=row->view.product ||
-        view->physical_client!=row->view.physical_client || !qa_actor_id_equal(view->actor,row->view.actor) ||
-        !view->source_launch || view->source_launch->storage!=row->view.source_launch->storage ||
-        view->source_launch->roles!=row->view.source_launch->roles || view->source_files!=row->view.source_files ||
-        row->view.client || row->view.core || view->client || view->core || view->mission || view->loading)
-        return frontend_fail(e,QA_ERROR_FORMAT,"Native imported heaps leave their prepared physical identity");
-#define QA_NATIVE_BIND(field) do { if(row->view.field && row->view.field!=view->field) \
-        return frontend_fail(e,QA_ERROR_FORMAT,"Native imported " #field " replaces an installed owner"); } while(0)
-    QA_NATIVE_BIND(mounts); QA_NATIVE_BIND(images); QA_NATIVE_BIND(materials); QA_NATIVE_BIND(fonts);
-    QA_NATIVE_BIND(sounds); QA_NATIVE_BIND(music); QA_NATIVE_BIND(movies); QA_NATIVE_BIND(reader);
-    QA_NATIVE_BIND(registry); QA_NATIVE_BIND(cvars); QA_NATIVE_BIND(input); QA_NATIVE_BIND(assets); QA_NATIVE_BIND(presentation);
-#undef QA_NATIVE_BIND
-    const qa_launch_instance *retained=row->view.source_launch;
-    qa_audio_music *music=row->view.music;
-    row->view=*view; row->view.source_launch=retained; row->view.music=music;
-    return true;
-}
-bool frontend_native_q3_prepare_media(frontend_native_q3 *row,qa_vfs **claimed_mounts,qa_error *e)
-{
-    frontend_native_q3_view *v=row?&row->view:NULL;
-    if(!linked(row) || !row->restoring || row->constructed || row->owns_media || row->owns_services ||
-        row->frame_active || row->callbacks || !claimed_mounts || !*claimed_mounts ||
-        (*claimed_mounts==v->source_files) || (v->mounts && v->mounts!=*claimed_mounts) ||
-        qa_vfs_resources(*claimed_mounts)!=qa_vfs_resources(v->source_files) ||
-        v->images || v->materials || v->fonts || v->sounds || v->movies || v->assets || v->presentation)
-        return frontend_fail(e,QA_ERROR_ARGUMENT,"Native detached media requires its actual claimed private view and empty prepared row");
-    v->mounts=*claimed_mounts; *claimed_mounts=NULL; row->owns_media=true;
-    v->images=qa_scene_resources_create_detached(v->mounts,e);
-    v->materials=v->images?qa_material_library_create_detached(v->images,e):NULL;
-    v->fonts=v->images?qa_font_library_create(v->mounts,v->images,e):NULL;
-    v->movies=v->images?qa_media_library_create(v->images,e):NULL;
-    qa_q3_presentation_asset_options assets; qa_q3_presentation_options backend;
-    return v->images && v->materials && v->fonts && v->movies &&
-        qa_audio_bank_create(v->mounts,&v->sounds,e) && frontend_native_q3_asset_options(row,&assets,e) &&
-        qa_q3_presentation_assets_create(&assets,&v->assets,e) &&
-        frontend_native_q3_backend_options(row,&backend,e) &&
-        qa_q3_presentation_create(&backend,&v->presentation,e);
-}
 bool frontend_native_q3_borrow(frontend_native_q3 *row,qa_application_q3_client_context *out,qa_error *e)
 {
-    if(!linked(row) || !row->constructed || row->restoring || row->callbacks==SIZE_MAX ||
+    if(!linked(row) || !row->constructed || row->callbacks==SIZE_MAX ||
         !out || !q3n_native_recipient(row->view.core,out,e))return false;
     ++row->callbacks; return true;
 }
@@ -1510,60 +1395,13 @@ bool frontend_native_q3_context_current(const frontend_native_q3 *row,const qa_a
 }
 void frontend_native_q3_release(frontend_native_q3 *row)
 { if(row && row->callbacks)--row->callbacks; }
-static bool imported_media_ready(frontend_native_q3 *row,bool world_bound,qa_error *e)
-{
-    frontend_native_q3_view *v=row?&row->view:NULL;
-    qa_q3_presentation_asset_options assets; qa_q3_presentation_binding backend;
-    qa_scene_world *world; qa_collision_geometry *geometry;
-    if(!linked(row) || !row->restoring || row->constructed ||
-        !v->mounts || !v->images || !v->materials || !v->fonts || !v->sounds || !v->movies ||
-        !v->assets || !v->presentation || qa_scene_resources_files(v->images)!=v->mounts ||
-        qa_material_library_resource_owner(v->materials)!=v->images ||
-        qa_font_library_resource_owner(v->fonts)!=v->images || qa_font_library_content(v->fonts)!=v->mounts ||
-        qa_audio_bank_files(v->sounds)!=v->mounts || qa_media_library_resource_owner(v->movies)!=v->images ||
-        !qa_q3_assets_services(v->assets,&assets,&world,&geometry,e) ||
-        !qa_q3_presentation_binding_read(v->presentation,&backend,e) ||
-        backend.world!=world || backend.geometry!=geometry ||
-        (world_bound && (backend.frame!=&row->frontend->frame || backend.world!=row->frontend->scene_world ||
-            backend.geometry!=qa_world_geometry(qa_application_world(row->frontend->application)))))
-        return frontend_fail(e,QA_ERROR_FORMAT,"Native root transfer requires its complete actual imported graph");
-    size_t index=0;
-    for(frontend_native_q3 *p=row->frontend->native_q3;p!=row;p=p->next)++index;
-    return frontend_native_q3_q3_ready(row->frontend,index,&backend.options,&assets,e);
-}
-bool frontend_native_q3_prepare_services(frontend_native_q3 *row,qa_error *e)
-{
-    frontend_native_q3_view *v=row?&row->view:NULL;
-    if(!linked(row) || !row->restoring || !row->owns_media || row->owns_services ||
-        row->frame_active || row->callbacks || v->reader || v->registry || v->cvars || v->input ||
-        v->client || v->core || !imported_media_ready(row,true,e))
-        return frontend_fail(e,QA_ERROR_ARGUMENT,"Native restored services require their actual imported media and empty owned lease slots");
-    frontend_config_source *configuration=frontend_config_store_source(row->frontend->config_store,row->console);
-    if(!configuration || !(v->input=frontend_config_source_input(configuration,v->launch_seat)))
-        return frontend_fail(e,QA_ERROR_ARGUMENT,"Native restored services lost their genuine source configuration/input seat");
-    if(!qa_application_capture_command_context(row->frontend->application,&row->command,&row->command,e))return false;
-    row->owns_services=true;
-    if(!frontend_config_source_acquire_seat_registry(configuration,v->launch_seat,&v->registry,e))return false;
-    v->cvars=frontend_client_registry_cvars(v->registry);
-    return frontend_config_source_restore_seat_registry(configuration,v->launch_seat,v->registry,NULL,e) &&
-        qa_native_q3_wire_reader_acquire(row->frontend->application,v->receiver,v->launch_seat,
-            v->physical_client,v->actor,&v->reader,e) && frontend_native_q3_current(row);
-}
-bool frontend_native_q3_prepare_composition(frontend_native_q3 *row,const frontend_native_q3_factory *factory,qa_error *e)
-{
-    if(!linked(row) || !row->restoring || row->constructed || !row->owns_media || !row->owns_services ||
-        row->view.client || row->view.core || row->frame_active || row->callbacks ||
-        row->composition.context || !factory || !factory->compose || !frontend_native_q3_current(row))
-        return frontend_fail(e,QA_ERROR_ARGUMENT,"Native composition preparation requires its actual imported services and empty owned child");
-    return compose_row(row,factory,e);
-}
 bool frontend_native_q3_rebind_ready(const qa_frontend *owned,const qa_frontend *destination,qa_error *e)
 {
     if(!owned || !destination || owned->stepping || destination->stepping || owned->source_restoring ||
         !frontend_native_q3_idle(owned))return frontend_fail(e,QA_ERROR_ARGUMENT,"Native publication requires inactive completed real rows");
     for(const frontend_native_q3 *row=owned->native_q3;row;row=row->next) {
         uint32_t ordinal;
-        if(!row->constructed || row->restoring || row->frontend!=owned || !frontend_native_q3_current(row) ||
+        if(!row->constructed || row->frontend!=owned || !frontend_native_q3_current(row) ||
             (row->composition.rebind_ready && !row->composition.rebind_ready(row->composition.context,owned,e)) ||
             !qa_application_constructor_seat_ordinal(owned->application,row->view.source_owner,row->view.launch_seat,&ordinal,e) ||
             ordinal!=row->view.seat || !qa_q3_presentation_frontend_rebind_ready(row->view.presentation,&owned->frame,
@@ -1579,20 +1417,4 @@ void frontend_native_q3_rebind(qa_frontend *owned,qa_frontend *destination)
         if(row->composition.rebind)row->composition.rebind(row->composition.context,destination);
         frontend_native_q3_commands_rebind(row->commands,destination); row->frontend=destination;
     }
-}
-bool frontend_native_q3_prepare_commands(frontend_native_q3 *row,qa_bytes bytes,qa_error *e)
-{
-    return linked(row) && row->restoring && !row->view.core &&
-        (row->commands || frontend_native_q3_commands_create(row,true,&row->commands,e)) &&
-        frontend_native_q3_commands_restore(row->commands,bytes,e);
-}
-
-bool frontend_native_q3_material_bindings_restore(qa_frontend *f,qa_error *error)
-{
-    if (!f || !f->source_restoring || f->capture || f->resource_inventory)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source material rebinding requires its genuine imported physical banks");
-    for (frontend_native_q3 *row=f->native_q3;row;row=row->next)
-        if (row->owns_media && row->view.materials &&
-            !frontend_q3_material_source_bind(f,row->view.materials,error)) return false;
-    return true;
 }

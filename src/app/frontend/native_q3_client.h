@@ -46,8 +46,6 @@ typedef struct frontend_native_q3_composition {
     bool (*destroy)(void *,qa_error *);
     bool (*rebind_ready)(const void *,const qa_frontend *,qa_error *);
     void (*rebind)(void *,qa_frontend *);
-    bool (*checkpoint)(const void *,qa_buffer *,qa_error *);
-    bool (*restore)(void *,const qa_application_q3_client_context *,qa_bytes,qa_error *);
     bool (*begin_frame)(void *,const q3n_frame *,qa_error *);
     void (*end_frame)(void *);
     bool (*before_render)(void *,const q3n_frame *,qa_error *);
@@ -117,43 +115,11 @@ bool frontend_native_q3_borrow_current(const frontend_native_q3 *,const qa_appli
 bool frontend_native_q3_context_current(const frontend_native_q3 *,const qa_application_q3_client_context *);
 bool frontend_native_q3_installed_context(const frontend_native_q3 *,qa_application_q3_client_context *,qa_error *);
 void frontend_native_q3_release(frontend_native_q3 *);
-bool frontend_native_q3_content_visit(const qa_frontend *, const qa_application_content_visitor *, qa_error *);
 bool frontend_native_q3_animation_holder(const qa_frontend *, size_t row, uint32_t client,
     const qa_resource **, const qa_vfs_acquisition **, qa_error *);
-/* These bind the real owner addresses for imported asset/backend dictionaries.
- * Imports never invoke constructor registration or a content loader. */
+/* Options for the ordinary native asset and renderer constructors. */
 bool frontend_native_q3_asset_options(frontend_native_q3 *, qa_q3_presentation_asset_options *, qa_error *);
 bool frontend_native_q3_backend_options(frontend_native_q3 *, qa_q3_presentation_options *, qa_error *);
-bool frontend_native_q3_prepare_restored(qa_frontend *, const frontend_native_q3_view *,
-    const frontend_native_q3_composition *, frontend_native_q3 **, qa_error *);
-/* The caller has claimed the actual saved private view. After admission this
- * consumes that root, even if a later allocation fails; partial detached heaps
- * remain owned by the prepared row for checked candidate cleanup. */
-bool frontend_native_q3_prepare_media(frontend_native_q3 *,qa_vfs **claimed_mounts,qa_error *);
-/* Acquire the one genuine reader and canonical decoded client registry after
- * media imports. Every acquired root belongs to the row immediately, including
- * partial failure; candidate teardown releases it without an external borrower. */
-bool frontend_native_q3_prepare_services(frontend_native_q3 *,qa_error *);
-bool frontend_native_q3_prepare_composition(frontend_native_q3 *,const frontend_native_q3_factory *,qa_error *);
-bool frontend_native_q3_import_bind(frontend_native_q3 *, const frontend_native_q3_view *, qa_error *);
-/* Reinstall the saved native console callbacks/contributions after genuine
- * provider routing exists, before the shared COMMANDS component is decoded.
- * No CG_Init command, registration callback or source code is executed. */
-bool frontend_native_q3_prepare_commands(frontend_native_q3 *,qa_bytes,qa_error *);
-bool frontend_native_q3_checkpoint(frontend_native_q3 *, const q3n_client_refs *,
-    const qa_audio_checkpoint_refs *, qa_buffer *, qa_error *);
-typedef struct frontend_native_q3_import {
-    frontend_native_q3_view owners;
-    qa_native_q3_character_selection character;
-    qa_bytes reader, client, core, mission, loading, commands, music, composition_state, adapter;
-} frontend_native_q3_import;
-bool frontend_native_q3_split(qa_bytes,frontend_native_q3_import *,qa_error *);
-/* The imported source wire/strings/input/cvars/content and renderer owners
- * already exist. Character is consumed only after a successful service import.
- * The registry capture lease remains held while the core is decoded. The
- * output already points at the genuine prepared/adopted candidate row. */
-bool frontend_native_q3_restore(qa_frontend *, frontend_native_q3_import *,
-    const q3n_client_refs *, const qa_audio_checkpoint_refs *, frontend_native_q3 **, qa_error *);
 bool frontend_native_q3_rebind_ready(const qa_frontend *, const qa_frontend *, qa_error *);
 void frontend_native_q3_rebind(qa_frontend *, qa_frontend *);
 

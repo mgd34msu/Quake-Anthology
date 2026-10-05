@@ -1747,7 +1747,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/remote_q3_initial.c
     src/app/frontend/remote_q3_modules.c
     src/app/frontend/native_q3_client.c
-    src/app/frontend/native_q3_client_save.c
     src/app/frontend/native_q3_commands.c
     src/app/frontend/network_nq.c
     src/app/frontend/network_nq_save.c

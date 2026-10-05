@@ -326,44 +326,6 @@ static bool submit(void *context, const qa_q3_scene_options *options, qa_scene_f
         owner->equipment.submit_view(owner->equipment.context, options, frame, error) &&
         effects_submit(owner, options, frame, error);
 }
-static bool blob(qa_source_save_io *io, qa_bytes *bytes)
-{
-    size_t count = io->direction == QA_SOURCE_SAVE_WRITE ? bytes->size : 0;
-    if (!qa_source_save_count(io, &count, 64u * 1024u * 1024u)) return false;
-    if (io->direction == QA_SOURCE_SAVE_WRITE) return qa_source_save_bytes(io, (void *)bytes->data, count);
-    if (io->offset > io->input.size || count > io->input.size - io->offset) return false;
-    *bytes = (qa_bytes){io->input.data + io->offset, count}; io->offset += count; return true;
-}
-static bool checkpoint(const void *context, qa_buffer *out, qa_error *error)
-{
-    const native_composition *owner = context;
-    if (!idle(owner) || !out || out->data || out->size)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native composition capture requires its returned genuine children");
-    qa_buffer children[2] = {0};
-    bool okay = owner->equipment.checkpoint(owner->equipment.context, children, error) &&
-        frontend_native_character_checkpoint(owner->character, children + 1, error);
-    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','N','P'}; okay = okay && qa_source_save_writer(&io, qa_application_session(owner->frontend->application), error) &&
-        qa_source_save_bytes(&io, magic, 4) ;
-    for (unsigned i = 0; okay && i < 2; ++i) { qa_bytes bytes = {children[i].data, children[i].size}; okay = blob(&io, &bytes); }
-    okay = okay && qa_source_save_finish(&io, out); qa_source_save_dispose(&io);
-    for (unsigned i = 0; i < 2; ++i) qa_buffer_free(children + i);
-    return okay;
-}
-static bool restore(void *context, const qa_application_q3_client_context *client, qa_bytes bytes, qa_error *error)
-{
-    native_composition *owner = context;
-    if (!idle(owner)) return frontend_fail(error, QA_ERROR_ARGUMENT, "Native composition import requires its empty genuine children");
-    qa_source_save_io io = {0}; uint8_t magic[4]; qa_bytes children[2] = {0};
-    bool okay = qa_source_save_reader(&io, qa_application_session(owner->frontend->application), bytes, error) &&
-        qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QFNP", 4);
-    for (unsigned i = 0; okay && i < 2; ++i) okay = blob(&io, children + i);
-    okay = okay && qa_source_save_finish(&io, NULL);
-    if (okay) okay = owner->equipment.restore(owner->equipment.context, client, children[0], error) &&
-        frontend_native_character_restore(owner->character, children[1], error);
-    qa_source_save_dispose(&io);
-    if (!okay && error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "Invalid native composed child continuation");
-    return okay;
-}
 bool frontend_native_composition_create(void *context, frontend_native_q3 *row,
     frontend_native_q3_composition *out, qa_error *error)
 {
@@ -373,7 +335,7 @@ bool frontend_native_composition_create(void *context, frontend_native_q3 *row,
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual native composition");
     owner->frontend = frontend; owner->row = row;
     *out = (frontend_native_q3_composition){.context = owner, .idle = idle, .destroy = destroy,
-        .rebind_ready = rebind_ready, .rebind = rebind, .checkpoint = checkpoint, .restore = restore,
+        .rebind_ready = rebind_ready, .rebind = rebind,
         .begin_frame = begin, .end_frame = end, .before_render = before_render,
         .body_hidden = body_hidden, .body = body, .packet = packet,
         .actor_admitted = actor_admitted, .weapon_snapshot = weapon_snapshot,

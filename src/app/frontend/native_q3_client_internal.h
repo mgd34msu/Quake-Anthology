@@ -2,7 +2,6 @@
 #define QA_FRONTEND_NATIVE_Q3_CLIENT_INTERNAL_H
 #include "native_q3_client.h"
 #include "native_q3_commands.h"
-bool frontend_native_q3_music_restore_bind(frontend_native_q3 *,qa_error *);
 struct frontend_native_q3 {
     frontend_native_q3 *next;
     qa_frontend *frontend;
@@ -14,7 +13,7 @@ struct frontend_native_q3 {
     qa_command_context command;
     frontend_native_q3_commands *commands;
     char *music_intro, *music_loop, *disconnect;
-    bool music_looping, service_released, owns_media, owns_services, restoring;
+    bool music_looping, service_released, owns_media, owns_services;
     bool frame_active, constructed;
     size_t callbacks;
     struct frontend_native_q3_video *video;
@@ -27,5 +26,5 @@ bool frontend_native_q3_cut(frontend_native_q3 *,const q3n_frame *,qa_error *);
 bool frontend_native_q3_core_options(frontend_native_q3 *,q3n_native_options *,qa_error *);
 bool frontend_native_q3_service_options(frontend_native_q3 *,qa_native_q3_client_services *,qa_error *);
 bool frontend_native_q3_project_settings(frontend_native_q3 *,q3n_native_frame_options *,qa_error *);
-bool frontend_native_q3_make_children(frontend_native_q3 *,const qa_application_native_q3_presentation *,bool,qa_error *);
+bool frontend_native_q3_make_children(frontend_native_q3 *,const qa_application_native_q3_presentation *,qa_error *);
 #endif
