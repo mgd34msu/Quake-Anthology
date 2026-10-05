@@ -68,6 +68,8 @@ bool application_qc_prepare_entity(void *opaque, qa_qc_instance *vm,
 {
     struct application_qc_state *engine = opaque;
     if (engine->projecting || access->binding.kind == QA_QC_SLOT_WORLD || access->binding.kind == QA_QC_SLOT_FREE) return true;
+    if (access->kind != QA_QC_ENTITY_BIND)
+        return application_qc_project_declared(engine, vm, access, error);
     qa_actor_id actor = access->binding.actor;
     if (actor.slot >= engine->actor_capacity)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC projected actor exceeds application capacity");
@@ -80,8 +82,7 @@ bool application_qc_prepare_entity(void *opaque, qa_qc_instance *vm,
             row->collision_bound = true;
         }
     }
-    return application_qc_combat_prepare(engine, vm, access, error) &&
-        application_qc_project_declared(engine, vm, access, error);
+    return application_qc_combat_bind(engine, vm, access, error);
 }
 bool application_qc_project_body_store(struct application_qc_state *engine, qa_qc_instance *vm,
                                          const qa_qc_store_event *event, qa_error *error)

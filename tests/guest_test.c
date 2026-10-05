@@ -45,20 +45,25 @@ static qa_qc_program *guest_program(void)
 {
     qa_error error = {0};
     static const char strings[] = "\0bump\0increment\0nested\0normalize\0vlen\0rint\0"
-        "spawn\0setorigin\0remove\0origin\0mins\0maxs\0size\0fixture.qc\0";
+        "spawn\0setorigin\0remove\0origin\0mins\0maxs\0size\0fixture.qc\0projected\0";
     static const qa_qc_statement statements[] = {
         {QA_QC_DONE, 0, 0, 0},
         {QA_QC_ADD_F, 32, 28, 32}, {QA_QC_STORE_F, 32, 29, 0}, {QA_QC_RETURN, 32, 0, 0},
         {QA_QC_ADD_F, 32, 28, 32}, {QA_QC_RETURN, 32, 0, 0},
         {QA_QC_STORE_F, 35, 4, 0}, {QA_QC_CALL1, 30, 0, 0},
-        {QA_QC_ADD_F, 1, 35, 35}, {QA_QC_RETURN, 35, 0, 0}
+        {QA_QC_ADD_F, 1, 35, 35}, {QA_QC_RETURN, 35, 0, 0},
+        {QA_QC_LOAD_F, 40, 41, 43}, {QA_QC_LOAD_F, 40, 41, 44},
+        {QA_QC_CALL0, 42, 0, 0}, {QA_QC_LOAD_F, 40, 41, 45},
+        {QA_QC_ADDRESS, 40, 41, 46}, {QA_QC_STOREP_F, 28, 46, 0},
+        {QA_QC_LOAD_F, 40, 41, 47}, {QA_QC_RETURN, 47, 0, 0}
     };
     static const struct { const char *name; int32_t first; uint32_t locals;
         uint8_t parameters; } functions[] = {
         {"", 0, 0, 0}, {"bump", 1, 32, 0}, {"increment", 4, 32, 1},
         {"nested", 6, 35, 1}, {"normalize", -9, 0, 0}, {"vlen", -12, 0, 0},
         {"rint", -36, 0, 0}, {"spawn", -14, 0, 0},
-        {"setorigin", -2, 0, 0}, {"remove", -15, 0, 0}
+        {"setorigin", -2, 0, 0}, {"remove", -15, 0, 0},
+        {"projected", 9, 0, 0}
     };
     const uint32_t statement_count = (uint32_t)(sizeof(statements) / sizeof(*statements));
     const uint32_t function_count = (uint32_t)(sizeof(functions) / sizeof(*functions));
@@ -112,12 +117,115 @@ static qa_qc_program *guest_program(void)
     }
     gameplay_float(bytes + globals_at + 28 * 4, 1);
     qa_store_u32le(bytes + globals_at + 30 * 4, 2);
+    qa_store_u32le(bytes + globals_at + 42 * 4, 8);
     gameplay_float(bytes + globals_at + 32 * 4, 7);
     gameplay_float(bytes + globals_at + 35 * 4, -1);
     qa_qc_program *program = NULL;
     GAME_CHECK(qa_qc_program_load((qa_bytes){bytes, globals_at + 48 * 4},
         "fixture.qc", &program, &error));
     return program;
+}
+
+typedef struct projection_fixture {
+    qa_world *world;
+    qa_actor_id actor;
+    unsigned binds, reads, writes, stores;
+} projection_fixture;
+
+static bool projected_access(void *opaque, qa_qc_instance *instance,
+    const qa_qc_entity_access *access, qa_error *error)
+{
+    projection_fixture *fixture = opaque;
+    if (access->kind == QA_QC_ENTITY_BIND) { ++fixture->binds; return true; }
+    if (access->kind == QA_QC_ENTITY_READ) ++fixture->reads;
+    else ++fixture->writes;
+    qa_body_state body;
+    return qa_actor_id_equal(access->binding.actor, fixture->actor) &&
+        qa_world_body_read(fixture->world, fixture->actor, &body, error) &&
+        qa_qc_project_entity_float(instance, access->reference, access->word,
+            body.origin.x, error);
+}
+
+static bool projected_builtin(void *opaque, qa_qc_instance *instance,
+    qa_qc_builtin builtin, const char *name, qa_error *error)
+{
+    (void)instance; (void)builtin; (void)name;
+    projection_fixture *fixture = opaque;
+    qa_body_state body;
+    if (!qa_world_body_read(fixture->world, fixture->actor, &body, error)) return false;
+    body.origin.x += 5;
+    return qa_world_body_write(fixture->world, fixture->actor, &body, error);
+}
+
+static bool projected_store(void *opaque, qa_qc_instance *instance,
+    const qa_qc_store_event *event, qa_error *error)
+{
+    (void)instance;
+    projection_fixture *fixture = opaque;
+    if (event->kind != QA_QC_STORE_ENTITY || event->word != 0) return false;
+    ++fixture->stores;
+    qa_body_state body;
+    if (!qa_world_body_read(fixture->world, fixture->actor, &body, error)) return false;
+    memcpy(&body.origin.x, event->after, sizeof(body.origin.x));
+    return qa_world_body_write(fixture->world, fixture->actor, &body, error);
+}
+
+static void projection_loads(guest_fixture *shared, qa_actor_owner owner)
+{
+    qa_error error = {0};
+    projection_fixture fixture = {.world = shared->world};
+    qa_qc_builtin_binding builtin = {QA_QC_BUILTIN_SETORIGIN, NULL, &fixture, projected_builtin};
+    qa_qc_instance *instance = NULL;
+    qa_qc_options options = {.profile = QA_QC_NETQUAKE, .entity_capacity = 8,
+        .host = {.session = shared->session, .world = shared->world, .owner = owner,
+            .default_definition = owner, .context = &fixture, .declared_projection = true,
+            .prepare_entity = projected_access, .builtins = &builtin, .builtin_count = 1},
+        .observers = {.context = &fixture, .stored = projected_store, .entity_stores_only = true}};
+    GAME_CHECK(qa_qc_instance_create(shared->program, &options, &instance, &error));
+    for (unsigned run = 0; run < 3; ++run) {
+        qa_qc_slot_kind kind = run == 1 ? QA_QC_SLOT_OWNED : QA_QC_SLOT_BORROWED;
+        uint32_t slot = run == 1 ? 2u : 1u;
+        GAME_CHECK(qa_session_allocate(shared->session, owner, owner, true, slot,
+            &fixture.actor, &error));
+        qa_body_state body = {.origin = {10 + (float)run, 0, 0}};
+        if (kind == QA_QC_SLOT_BORROWED)
+            GAME_CHECK(qa_world_body_create(fixture.world, fixture.actor, &body, &error));
+        unsigned binds = fixture.binds;
+        GAME_CHECK(qa_qc_bind_actor(instance, slot, fixture.actor, kind, &error));
+        GAME_CHECK(fixture.binds == binds + 1);
+        int32_t reference;
+        GAME_CHECK(qa_qc_slot_reference(instance, slot, &reference, &error));
+        if (kind == QA_QC_SLOT_OWNED)
+            GAME_CHECK(qa_qc_set_entity_float(instance, reference, 0, body.origin.x, &error));
+        GAME_CHECK(qa_qc_set_global_int(instance, 40, reference, &error));
+        GAME_CHECK(qa_qc_set_global_int(instance, 41, 0, &error));
+        fixture.reads = fixture.writes = fixture.stores = 0;
+        GAME_CHECK(qa_qc_execute_named(instance, "projected", 0, &error));
+        float first, repeated, changed, result;
+        GAME_CHECK(qa_qc_global_float(instance, 43, &first, &error));
+        GAME_CHECK(qa_qc_global_float(instance, 44, &repeated, &error));
+        GAME_CHECK(qa_qc_global_float(instance, 45, &changed, &error));
+        GAME_CHECK(qa_qc_global_float(instance, 1, &result, &error));
+        GAME_CHECK(first == body.origin.x && repeated == first && changed == first + 5 && result == 1);
+        GAME_CHECK(fixture.reads == (kind == QA_QC_SLOT_BORROWED ? 3u : 0u));
+        GAME_CHECK(fixture.writes == (kind == QA_QC_SLOT_BORROWED ? 1u : 0u) && fixture.stores == 1);
+        GAME_CHECK(qa_world_body_read(fixture.world, fixture.actor, &body, &error) && body.origin.x == 1);
+        /* Public host reads must see mutations between guest invocations. */
+        body.origin.x = 23;
+        GAME_CHECK(qa_world_body_write(fixture.world, fixture.actor, &body, &error));
+        GAME_CHECK(qa_qc_entity_float(instance, reference, 0, &result, &error) && result == 23);
+        qa_actor_id previous = fixture.actor;
+        if (kind == QA_QC_SLOT_OWNED)
+            GAME_CHECK(qa_qc_remove_entity(instance, reference, &error));
+        else {
+            GAME_CHECK(qa_qc_unbind_actor(instance, slot, &error));
+            GAME_CHECK(qa_session_release(shared->session, previous, &error));
+        }
+        qa_error stale = {0};
+        GAME_CHECK(!qa_qc_actor_reference(instance, previous, false, &reference, &stale));
+        GAME_CHECK(stale.code == QA_ERROR_NOT_FOUND);
+    }
+    GAME_CHECK(qa_qc_instance_destroy(instance, &error));
 }
 
 static void execution(qa_qc_instance *instance, const qa_qc_program *program)
@@ -423,6 +531,7 @@ void test_guest(void)
     GAME_CHECK(qa_session_add(fixture.session, &component, &error));
     execution(fixture.instance, fixture.program);
     shared_entities(&fixture, owner);
+    projection_loads(&fixture, owner);
     GAME_CHECK(qa_session_remove(fixture.session, owner, &error));
     GAME_CHECK(qa_qc_instance_destroy(fixture.instance, &error));
     qa_qc_program_destroy(fixture.program);

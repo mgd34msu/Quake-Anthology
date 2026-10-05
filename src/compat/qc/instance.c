@@ -220,6 +220,8 @@ static uint32_t actor_slot(const qa_qc_instance *instance, qa_actor_id actor)
 
 static void binding_set(qa_qc_instance *instance, uint32_t slot, qc_slot binding)
 {
+    instance->bodies[slot].projection_revision = 0;
+    instance->bodies[slot].body_revision = 0;
     qc_slot previous = instance->slots[slot];
     if ((previous.kind == QA_QC_SLOT_OWNED || previous.kind == QA_QC_SLOT_BORROWED) &&
         instance->actor_slots[previous.actor.slot] == slot)
@@ -231,6 +233,7 @@ static void binding_set(qa_qc_instance *instance, uint32_t slot, qc_slot binding
 
 void qc_actor_slots_rebuild(qa_qc_instance *instance)
 {
+    qc_projection_invalidate(instance);
     if (!instance->actor_capacity) return;
     memset(instance->actor_slots, 0, (size_t)instance->actor_capacity * sizeof(*instance->actor_slots));
     for (uint32_t slot = 1; slot < instance->entity_count; ++slot) {
@@ -254,6 +257,7 @@ static void free_instance(qa_qc_instance *instance)
     qc_strings_destroy(&instance->strings);
     free(instance->globals); free(instance->entities); free(instance->slots);
     free(instance->actor_slots);
+    free(instance->projected_words);
     free(instance->bodies); free(instance->profiles); free(instance->frames);
     free(instance->locals); free(instance);
 }
@@ -286,6 +290,7 @@ bool qa_qc_instance_create(const qa_qc_program *program,
         instance->options.first_dynamic_slot = 1;
     instance->layout = options->entity_layout.stride_bytes == 0
         ? qa_qc_default_entity_layout(program, options->profile) : options->entity_layout;
+    instance->projection_stride = ((size_t)instance->layout.field_words + 63u) / 64u;
     uint64_t entity_bytes = (uint64_t)instance->options.entity_capacity * instance->layout.stride_bytes;
     if (program->info.global_words > UINT32_MAX / 4u
         || (program->info.function_count != 0
@@ -298,6 +303,8 @@ bool qa_qc_instance_create(const qa_qc_program *program,
         || instance->layout.variables_offset_bytes
             + (uint64_t)instance->layout.field_words * 4u > instance->layout.stride_bytes
         || entity_bytes > SIZE_MAX || entity_bytes > INT32_MAX
+        || (instance->projection_stride && (size_t)instance->options.entity_capacity >
+            SIZE_MAX / sizeof(*instance->projected_words) / instance->projection_stride)
         || instance->options.first_dynamic_slot > instance->options.entity_capacity
         || (instance->options.entity_capacity != 0
             && SIZE_MAX / instance->options.entity_capacity < sizeof(*instance->slots))
@@ -318,12 +325,17 @@ bool qa_qc_instance_create(const qa_qc_program *program,
     if (instance->actor_capacity)
         instance->actor_slots = calloc(instance->actor_capacity, sizeof(*instance->actor_slots));
     instance->bodies = calloc(instance->options.entity_capacity, sizeof(*instance->bodies));
+    if (instance->projection_stride)
+        instance->projected_words = calloc(instance->options.entity_capacity,
+            instance->projection_stride * sizeof(*instance->projected_words));
+    instance->projection_revision = 1;
     instance->profiles = calloc(program->info.function_count, sizeof(*instance->profiles));
     instance->frames = calloc(instance->options.call_limit, sizeof(*instance->frames));
     instance->locals = calloc(instance->options.local_word_limit, sizeof(*instance->locals));
     if (instance->globals == NULL || instance->entities == NULL || instance->slots == NULL
         || instance->bodies == NULL || instance->profiles == NULL || instance->frames == NULL
-        || instance->locals == NULL || (instance->actor_capacity && !instance->actor_slots)) {
+        || instance->locals == NULL || (instance->actor_capacity && !instance->actor_slots)
+        || (instance->projection_stride && !instance->projected_words)) {
         free_instance(instance);
         return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot allocate QuakeC private state");
     }
@@ -676,9 +688,20 @@ bool qc_refresh_borrowed(qa_qc_instance *instance, uint32_t slot,
     return ok;
 }
 
+void qc_projection_invalidate(qa_qc_instance *instance)
+{
+    if (++instance->projection_revision != 0) return;
+    instance->projection_revision = 1;
+    for (uint32_t slot = 0; slot < instance->options.entity_capacity; ++slot) {
+        instance->bodies[slot].projection_revision = 0;
+        instance->bodies[slot].body_revision = 0;
+    }
+}
+
 bool qc_prepare_entity_access(qa_qc_instance *instance, uint32_t slot,
                               uint32_t word, uint32_t count,
                               qa_qc_entity_access_kind kind,
+                              bool retain_projection,
                               qa_error *error)
 {
     if (!qc_entity_range(instance, slot, word, count, error)) return false;
@@ -686,31 +709,59 @@ bool qc_prepare_entity_access(qa_qc_instance *instance, uint32_t slot,
      * even if it reads adjacent fields to update a shared authority. */
     if (instance->store_observer_depth != 0) return true;
     qc_slot before = instance->slots[slot];
-    if (!qc_refresh_borrowed(instance, slot, error)) return false;
-    if (instance->options.host.prepare_entity == NULL
-        || instance->entity_access_depth != 0) return true;
-    qa_qc_entity_access access = {
-        .kind = kind,
-        .binding = {before.kind, slot, before.actor, before.owner,
-                    before.source_slot},
-        .reference = reference_of(instance, slot),
-        .word = word,
-        .count = count
-    };
-    qa_error failure = {0};
-    ++instance->callback_depth;
-    ++instance->entity_access_depth;
-    bool ok = instance->options.host.prepare_entity(
-        instance->options.host.context, instance, &access, &failure);
-    --instance->entity_access_depth;
-    --instance->callback_depth;
-    if (!ok) {
-        if (failure.code == QA_OK)
-            qa_error_set(&failure, QA_ERROR_ARGUMENT, word,
-                         "QuakeC entity projection callback failed");
-        if (error != NULL) *error = failure;
-        return false;
+    if (instance->entity_access_depth != 0) return true;
+    if (kind != QA_QC_ENTITY_BIND && before.kind != QA_QC_SLOT_BORROWED)
+        return true;
+    bool retain = retain_projection && instance->execution_depth != 0
+        && kind == QA_QC_ENTITY_READ;
+    qc_body_context *body = &instance->bodies[slot];
+    uint64_t revision = instance->projection_revision;
+    uint64_t *words = instance->projected_words == NULL ? NULL
+        : instance->projected_words + (size_t)slot * instance->projection_stride;
+    if (retain) {
+        if (body->projection_revision != revision) {
+            memset(words, 0, instance->projection_stride * sizeof(*words));
+            body->projection_revision = revision;
+        }
+        bool prepared = true;
+        for (uint32_t i = word; i < word + count; ++i)
+            if (!(words[i / 64u] & (UINT64_C(1) << (i % 64u)))) {
+                prepared = false;
+                break;
+            }
+        if (prepared) return true;
     }
+    if (kind != QA_QC_ENTITY_BIND && (!retain || body->body_revision != revision)) {
+        if (!qc_refresh_borrowed(instance, slot, error)) return false;
+        if (retain) body->body_revision = revision;
+    }
+    if (kind == QA_QC_ENTITY_BIND) qc_projection_invalidate(instance);
+    if (instance->options.host.prepare_entity != NULL) {
+        qa_qc_entity_access access = {
+            .kind = kind,
+            .binding = {before.kind, slot, before.actor, before.owner,
+                        before.source_slot},
+            .reference = reference_of(instance, slot),
+            .word = word,
+            .count = count
+        };
+        qa_error failure = {0};
+        ++instance->callback_depth;
+        ++instance->entity_access_depth;
+        bool ok = instance->options.host.prepare_entity(
+            instance->options.host.context, instance, &access, &failure);
+        --instance->entity_access_depth;
+        --instance->callback_depth;
+        if (!ok) {
+            if (failure.code == QA_OK)
+                qa_error_set(&failure, QA_ERROR_ARGUMENT, word,
+                             "QuakeC entity projection callback failed");
+            if (error != NULL) *error = failure;
+            if (kind == QA_QC_ENTITY_BIND) qc_projection_invalidate(instance);
+            return false;
+        }
+    }
+    if (kind == QA_QC_ENTITY_BIND) qc_projection_invalidate(instance);
     qc_slot after = instance->slots[slot];
     if (after.kind != before.kind
         || (before.kind != QA_QC_SLOT_FREE
@@ -718,6 +769,9 @@ bool qc_prepare_entity_access(qa_qc_instance *instance, uint32_t slot,
             && !qa_actor_id_equal(after.actor, before.actor)))
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot,
                        "QuakeC entity changed during projection");
+    if (retain && instance->projection_revision == revision)
+        for (uint32_t i = word; i < word + count; ++i)
+            words[i / 64u] |= UINT64_C(1) << (i % 64u);
     return true;
 }
 
@@ -754,6 +808,9 @@ bool qa_qc_bind_actor(qa_qc_instance *instance, uint32_t slot,
     bool synchronized = kind == QA_QC_SLOT_BORROWED
         ? qc_refresh_borrowed(instance, slot, error)
         : qc_sync_body_from_fields(instance, slot, error);
+    if (synchronized)
+        synchronized = qc_prepare_entity_access(instance, slot, 0, 0,
+            QA_QC_ENTITY_BIND, false, error);
     if (!synchronized) {
         if (slot_matches(instance, slot, kind, actor))
             mark_slot_freed(instance, slot);
@@ -795,6 +852,8 @@ bool qa_qc_rebind_reserved_actor(qa_qc_instance *instance, uint32_t slot,
     set_free_metadata(instance, slot, false, 0.0f);
     bool ok = kind == QA_QC_SLOT_OWNED ? qc_sync_body_from_fields(instance, slot, error) :
         qc_refresh_borrowed(instance, slot, error);
+    if (ok) ok = qc_prepare_entity_access(instance, slot, 0, 0,
+        QA_QC_ENTITY_BIND, false, error);
     if (!ok && slot_matches(instance, slot, kind, actor)) binding_set(instance, slot, before);
     return ok && (slot_matches(instance, slot, kind, actor) ||
         qc_fail(error, QA_ERROR_NOT_FOUND, slot, "Reserved QuakeC actor changed during source handoff"));
@@ -917,7 +976,9 @@ bool qa_qc_rebind_sources(qa_qc_instance *instance, qa_error *error)
         if (record == NULL)
             return qc_fail(error, QA_ERROR_NOT_FOUND, slot, "Restored QuakeC source actor is missing");
         binding_set(instance, slot, (qc_slot){binding->kind, record->id, record->owner, binding->source_slot});
-        if (!qc_sync_body_from_fields(instance, slot, error)) return false;
+        if (!qc_sync_body_from_fields(instance, slot, error) ||
+            !qc_prepare_entity_access(instance, slot, 0, 0,
+                QA_QC_ENTITY_BIND, false, error)) return false;
     }
     return true;
 }
@@ -1064,16 +1125,8 @@ bool qc_sync_body_from_fields(qa_qc_instance *instance, uint32_t slot,
                        "QuakeC body source is unavailable");
     qa_actor_id actor = instance->slots[slot].actor;
     qa_world *world = instance->options.host.world;
-    bool initial_body = qa_world_body_storage_serial(world, actor) == 0;
-    if (initial_body && instance->entity_access_depth == UINT32_MAX)
-        return qc_fail(error, QA_ERROR_ARGUMENT, slot,
-                       "QuakeC initial body field access depth exhausted");
     qa_body_state state;
-    /* Initial owned fields supply the body that host projection will bind. */
-    if (initial_body) ++instance->entity_access_depth;
-    bool read = body_read(&instance->bodies[slot], &state, error);
-    if (initial_body) --instance->entity_access_depth;
-    if (!read) return false;
+    if (!body_read(&instance->bodies[slot], &state, error)) return false;
     if (!slot_matches(instance, slot, QA_QC_SLOT_OWNED, actor))
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot,
                        "QuakeC body source changed during synchronization");
@@ -1087,9 +1140,7 @@ bool qc_sync_body_from_fields(qa_qc_instance *instance, uint32_t slot,
     qa_body_binding binding = {
         &instance->bodies[slot], body_read, body_write, body_linked
     };
-    if (!qa_world_body_bind(world, actor, &binding, true, error)) return false;
-    return !initial_body || qc_prepare_entity_access(instance, slot, 0,
-        instance->layout.field_words, QA_QC_ENTITY_READ, error);
+    return qa_world_body_bind(world, actor, &binding, true, error);
 }
 
 bool qc_host_spawn(qa_qc_instance *instance, int32_t *reference,

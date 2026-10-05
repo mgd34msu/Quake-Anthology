@@ -239,7 +239,22 @@ bool application_qc_callbacks_register(application_provider *provider, qa_error 
         ? provider->state.qc.engine : NULL;
     struct application_qc_profile *profile = provider && provider->kind == APPLICATION_PROVIDER_QC
         ? provider->state.qc.qualified : NULL;
-    if (!profile || !profile->callback_count || !engine || !engine->initialized || engine->loading) return true;
+    if (!engine || !engine->initialized || engine->loading) return true;
+    /* Publication may retain the VM while replacing its selected services;
+     * map travel also suspends combat bindings without clearing borrowed rows. */
+    qa_qc_instance *vm = provider->state.qc.instance;
+    for (uint32_t slot = 1; slot < qa_qc_entity_count(vm); ++slot) {
+        qa_qc_slot_binding binding;
+        if (!qa_qc_slot(vm, slot, &binding) || (binding.kind != QA_QC_SLOT_OWNED &&
+            binding.kind != QA_QC_SLOT_BORROWED)) continue;
+        int32_t reference; qa_actor_id actor;
+        if (!qa_qc_slot_reference(vm, slot, &reference, error) ||
+            !qa_qc_reference_actor(vm, reference, &actor, error)) return false;
+        qa_qc_entity_access access = {.kind = QA_QC_ENTITY_BIND,
+            .binding = binding, .reference = reference};
+        if (!application_qc_prepare_entity(engine, vm, &access, error)) return false;
+    }
+    if (!profile || !profile->callback_count) return true;
     application_q3_mod_operation_services services[Q3_MOD_OPERATION_COUNT];
     if (!application_q3_mod_operations_read(provider->application->mod_operations, services, error)) return false;
     for (size_t i = 0; i < profile->callback_count; ++i) {

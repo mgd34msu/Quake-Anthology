@@ -370,11 +370,14 @@ typedef struct qa_qc_observers {
     qa_qc_call_replace_fn replace;
     qa_qc_inline_fn inline_boundary;
     qa_qc_trace_fn trace;
+    /* The store observer has no global-store consumer. */
+    bool entity_stores_only;
 } qa_qc_observers;
 
 typedef enum qa_qc_entity_access_kind {
     QA_QC_ENTITY_READ,
-    QA_QC_ENTITY_WRITE
+    QA_QC_ENTITY_WRITE,
+    QA_QC_ENTITY_BIND
 } qa_qc_entity_access_kind;
 
 typedef struct qa_qc_entity_access {
@@ -384,9 +387,10 @@ typedef struct qa_qc_entity_access {
     uint32_t word, count;
 } qa_qc_entity_access;
 
-/* Called before guest entity reads and before a write captures its old value.
- * A host uses qa_qc_project_entity_* here to refresh fields whose authority is
- * combat, inventory, clients, or another shared service. */
+/* BIND admits an actual bound/restored actor after its body is synchronized.
+ * READ/WRITE refresh borrowed fields before access; uninterrupted bytecode
+ * LOADs may reuse that projection. Owned guest fields are authoritative. A
+ * projection refresh must not mutate the shared authority it reads. */
 typedef bool (*qa_qc_entity_access_fn)(void *context,
                                        qa_qc_instance *instance,
                                        const qa_qc_entity_access *access,

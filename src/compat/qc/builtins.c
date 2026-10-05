@@ -257,7 +257,7 @@ static bool find_entity(qa_qc_instance *instance, bool next_only, qa_error *erro
         if (instance->slots[slot].kind == QA_QC_SLOT_FREE) continue;
         if (!next_only) {
             if (!qc_prepare_entity_access(instance, slot, (uint32_t)field, 1u,
-                                          QA_QC_ENTITY_READ, error)) return false;
+                                          QA_QC_ENTITY_READ, false, error)) return false;
             int32_t id = qc_load_int(qc_entity_words(instance, slot), (uint32_t)field);
             const char *text;
             if (id == 0 || !qc_strings_get(&instance->strings, id, &text, error)) {

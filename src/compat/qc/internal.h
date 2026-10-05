@@ -36,6 +36,7 @@ typedef struct qc_body_context {
     struct qa_qc_instance *instance;
     uint32_t slot;
     bool refreshing;
+    uint64_t projection_revision, body_revision;
 } qc_body_context;
 
 typedef struct qc_frame {
@@ -91,6 +92,9 @@ struct qa_qc_instance {
     uint32_t *actor_slots;
     uint32_t actor_capacity;
     qc_body_context *bodies;
+    uint64_t *projected_words;
+    size_t projection_stride;
+    uint64_t projection_revision;
     uint64_t *profiles;
     qc_strings strings;
     qc_frame *frames;
@@ -204,7 +208,9 @@ bool qc_project_entity(qa_qc_instance *instance, uint32_t slot, uint32_t word,
 bool qc_prepare_entity_access(qa_qc_instance *instance, uint32_t slot,
                               uint32_t word, uint32_t count,
                               qa_qc_entity_access_kind kind,
+                              bool retain_projection,
                               qa_error *error);
+void qc_projection_invalidate(qa_qc_instance *instance);
 
 const qa_qc_builtin_requirement *qc_builtin_number(qa_qc_profile profile,
                                                     int32_t number);

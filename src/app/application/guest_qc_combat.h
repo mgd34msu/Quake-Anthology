@@ -11,7 +11,7 @@ void application_qc_combat_profile_free(application_qc_combat_profile *);
 const qa_qc_inline_region *application_qc_combat_regions(
     const application_qc_combat_profile *, size_t *);
 bool application_qc_combat_create(struct application_qc_state *, qa_error *);
-bool application_qc_combat_prepare(struct application_qc_state *, qa_qc_instance *,
+bool application_qc_combat_bind(struct application_qc_state *, qa_qc_instance *,
     const qa_qc_entity_access *, qa_error *);
 bool application_qc_combat_source_stored(struct application_qc_state *, qa_qc_instance *,
     const qa_qc_store_event *, qa_error *);

@@ -462,6 +462,13 @@ bool qa_qc_checkpoint_restore(qa_qc_instance *instance,
             instance->checkpointing = false;
             return false;
         }
+        if ((instance->slots[slot].kind == QA_QC_SLOT_OWNED ||
+             instance->slots[slot].kind == QA_QC_SLOT_BORROWED) &&
+            !qc_prepare_entity_access(instance, slot, 0, 0,
+                QA_QC_ENTITY_BIND, false, error)) {
+            instance->checkpointing = false;
+            return false;
+        }
         if (actors != NULL && qa_actors_revision(actors) != actor_revision) {
             instance->checkpointing = false;
             return qc_fail(error, QA_ERROR_ARGUMENT, slot,

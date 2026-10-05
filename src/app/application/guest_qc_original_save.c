@@ -246,7 +246,7 @@ static bool restore_body(struct application_qc_state *engine,uint32_t slot,qa_er
          !qa_world_body_write(engine->world,binding.actor,&body,error))) return false;
     int32_t reference;
     if (!qa_qc_slot_reference(vm,slot,&reference,error)) return false;
-    qa_qc_entity_access access={.kind=QA_QC_ENTITY_READ,.binding=binding,.reference=reference};
+    qa_qc_entity_access access={.kind=QA_QC_ENTITY_BIND,.binding=binding,.reference=reference};
     return application_qc_prepare_entity(engine,vm,&access,error) &&
         qa_world_link(engine->world,binding.actor,NULL,error);
 }

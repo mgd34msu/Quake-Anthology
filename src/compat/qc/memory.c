@@ -398,18 +398,21 @@ static bool notify_store(qa_qc_instance *instance,
                          const qa_qc_store_event *event, qa_error *error)
 {
     qa_qc_store_observer_fn observer = instance->options.observers.stored;
-    if (observer == NULL) return true;
+    if (observer == NULL || (instance->options.observers.entity_stores_only &&
+        event->kind == QA_QC_STORE_GLOBAL)) return true;
     if (instance->callback_depth == UINT32_MAX)
         return memory_fail(error, QA_ERROR_ARGUMENT, event->word,
                            "QC callback depth exhausted");
 
     qa_error failure = {0};
+    qc_projection_invalidate(instance);
     ++instance->callback_depth;
     ++instance->store_observer_depth;
     bool success = observer(instance->options.observers.context, instance,
                             event, &failure);
     --instance->store_observer_depth;
     --instance->callback_depth;
+    qc_projection_invalidate(instance);
     if (success) return true;
     if (failure.code == QA_OK)
         qa_error_set(&failure, QA_ERROR_ARGUMENT, event->word,
@@ -462,7 +465,7 @@ bool qc_write_entity(qa_qc_instance *instance, uint32_t slot, uint32_t word,
         return memory_fail(error, QA_ERROR_ARGUMENT, word,
                            "QC guest storage is read-only during checkpoint callbacks");
     if (!qc_prepare_entity_access(instance, slot, word, count,
-                                  QA_QC_ENTITY_WRITE, error)) return false;
+                                  QA_QC_ENTITY_WRITE, false, error)) return false;
 
     uint64_t reference = (uint64_t)slot * instance->layout.stride_bytes;
     if (reference > (uint64_t)INT32_MAX)
@@ -487,6 +490,7 @@ bool qc_write_entity(qa_qc_instance *instance, uint32_t slot, uint32_t word,
         qc_store_word(fields, word + i, input_word(instance, values, i));
     for (uint32_t i = 0; i < count; ++i)
         event.after[i] = qc_load_word(fields, word + i);
+    qc_projection_invalidate(instance);
     return notify_store(instance, &event, error);
 }
 
@@ -675,7 +679,7 @@ bool qa_qc_entity_int(qa_qc_instance *instance, int32_t reference,
     uint32_t slot;
     if (!qc_entity_slot(instance, reference, &slot, error)
         || !qc_prepare_entity_access(instance, slot, word, 1u,
-                                     QA_QC_ENTITY_READ, error)) return false;
+                                     QA_QC_ENTITY_READ, false, error)) return false;
     *out = qc_load_int(qc_entity_words_const(instance, slot), word);
     return true;
 }
@@ -689,7 +693,7 @@ bool qa_qc_entity_float(qa_qc_instance *instance, int32_t reference,
     uint32_t slot;
     if (!qc_entity_slot(instance, reference, &slot, error)
         || !qc_prepare_entity_access(instance, slot, word, 1u,
-                                     QA_QC_ENTITY_READ, error)) return false;
+                                     QA_QC_ENTITY_READ, false, error)) return false;
     *out = qc_load_float(qc_entity_words_const(instance, slot), word);
     return true;
 }
@@ -703,7 +707,7 @@ bool qa_qc_entity_vector(qa_qc_instance *instance, int32_t reference,
     uint32_t slot;
     if (!qc_entity_slot(instance, reference, &slot, error)
         || !qc_prepare_entity_access(instance, slot, word, 3u,
-                                     QA_QC_ENTITY_READ, error)) return false;
+                                     QA_QC_ENTITY_READ, false, error)) return false;
     const uint8_t *fields = qc_entity_words_const(instance, slot);
     *out = qa_v3(qc_load_float(fields, word),
                  qc_load_float(fields, word + 1u),

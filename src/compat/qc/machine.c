@@ -92,10 +92,12 @@ static bool notify_call(qa_qc_instance *instance, qa_qc_call_observer_fn call,
 {
     if (call == NULL) return true;
     qa_error failure = {0};
+    qc_projection_invalidate(instance);
     ++instance->callback_depth;
     bool ok = call(instance->options.observers.context, instance, event,
                    &failure);
     --instance->callback_depth;
+    qc_projection_invalidate(instance);
     if (ok) return true;
     if (failure.code == QA_OK)
         runtime_fail(instance, &failure, "call observer failed");
@@ -364,7 +366,7 @@ static bool execute_statement(qa_qc_instance *instance,
         field = (uint32_t)bi;
         ai = s->opcode == QA_QC_LOAD_V ? 3 : 1;
         if (!qc_prepare_entity_access(instance, slot, field, (uint32_t)ai,
-                                      QA_QC_ENTITY_READ, error)) return false;
+                                      QA_QC_ENTITY_READ, true, error)) return false;
         for (int32_t i = 0; i < ai; ++i) words[i] = qc_load_word(qc_entity_words(instance, slot), field + (uint32_t)i);
         return store_words(instance, s->c, words, (uint32_t)ai, error);
     case QA_QC_ADDRESS: {
@@ -460,11 +462,13 @@ static bool enter_inline_boundary(qa_qc_instance *instance,
     };
     instance->inline_boundary = &boundary;
     qa_error failure = {0};
+    qc_projection_invalidate(instance);
     ++instance->callback_depth;
     bool ok = instance->options.observers.inline_boundary(
         instance->options.observers.context, instance, &event,
         (qa_qc_inline_next){instance, boundary.invocation}, &failure);
     --instance->callback_depth;
+    qc_projection_invalidate(instance);
     instance->inline_boundary = boundary.previous;
     boundary.active = false;
     if (!ok) {
@@ -521,11 +525,13 @@ static bool run_statements(qa_qc_instance *instance,
         --instance->statement_budget;
         if (instance->trace_enabled && instance->options.observers.trace != NULL) {
             qa_error failure = {0};
+            qc_projection_invalidate(instance);
             ++instance->callback_depth;
             bool ok = instance->options.observers.trace(
                 instance->options.observers.context, instance,
                 frame->function, frame->statement, &failure);
             --instance->callback_depth;
+            qc_projection_invalidate(instance);
             if (!ok) {
                 if (failure.code == QA_OK)
                     runtime_fail(instance, &failure, "trace observer failed");
@@ -571,8 +577,10 @@ bool qc_machine_body(qa_qc_instance *instance, uint32_t function,
     uint32_t saved_arguments = instance->argument_count;
     instance->argument_count = argument_count;
     if (fn->named_builtin || fn->first_statement < 0) {
+        qc_projection_invalidate(instance);
         bool ok = qc_builtin_call(instance, fn->first_statement < 0 ? -fn->first_statement : 0,
                                   fn->named_builtin ? fn->name : NULL, error);
+        qc_projection_invalidate(instance);
         instance->argument_count = saved_arguments;
         return ok;
     }
@@ -596,6 +604,7 @@ bool qa_qc_call_continue(qa_qc_call_next next, qa_error *error)
         || boundary->invocation != next.invocation)
         return runtime_fail(instance, error, "expired or repeated function continuation");
     boundary->used = true;
+    qc_projection_invalidate(instance);
     restore_staging(instance, boundary);
     boundary->executing = true;
     bool ok = qc_machine_body(instance, boundary->function,
@@ -727,6 +736,7 @@ bool qa_qc_inline_continue(qa_qc_inline_next next, qa_error *error)
         return runtime_fail(instance, error,
                             "inline continuation belongs to another frame");
     boundary->used = true;
+    qc_projection_invalidate(instance);
     boundary->completed = qc_machine_inline_continue(instance, boundary, error);
     return boundary->completed;
 }
@@ -792,6 +802,7 @@ bool qa_qc_execute_region(qa_qc_instance *instance,
         return runtime_fail(instance, error,
                             "nested QuakeC entry limit exceeded");
     bool outer = instance->execution_depth == 0;
+    qc_projection_invalidate(instance);
     if (outer) {
         instance->statement_budget = instance->options.statement_limit;
         instance->trace_enabled = false;
@@ -869,11 +880,13 @@ bool qc_machine_call(qa_qc_instance *instance, uint32_t function,
     if (instance->options.observers.replace != NULL) {
         instance->boundary = &boundary;
         qa_error failure = {0};
+        qc_projection_invalidate(instance);
         ++instance->callback_depth;
         ok = instance->options.observers.replace(instance->options.observers.context,
                 instance, &event, (qa_qc_call_next){instance, boundary.invocation},
                 &failure);
         --instance->callback_depth;
+        qc_projection_invalidate(instance);
         instance->boundary = boundary.previous;
         boundary.active = false;
         if (!ok) {
@@ -923,6 +936,7 @@ bool qa_qc_execute(qa_qc_instance *instance, uint32_t function,
     if (instance->execution_depth >= instance->options.call_limit)
         return runtime_fail(instance, error, "nested QuakeC entry limit exceeded");
     bool outer = instance->execution_depth == 0;
+    qc_projection_invalidate(instance);
     if (outer) {
         instance->statement_budget = instance->options.statement_limit;
         instance->trace_enabled = false;
