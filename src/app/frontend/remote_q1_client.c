@@ -4,6 +4,7 @@
 #include "remote_q1_effects.h"
 #include "remote_q1_skins.h"
 #include "remote_unified_q1.h"
+#include "qc_messages.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -507,6 +508,9 @@ bool frontend_q1_save_client_read(const qa_frontend *f,uint32_t physical_seat,
         *out=(qa_q1_save_client){view.level_name,view.stats[14],view.stats[12]};
         return true;
     }
+    qa_unified_q1_world_state world;bool present=false;
+    if(f->qc_messages && !frontend_qc_messages_q1_world_read(f->qc_messages,physical_seat,&world,&present,error)) return false;
+    if(present) { *out=(qa_q1_save_client){world.level,world.killed_monsters,world.total_monsters};return true; }
     return remote_q1_fail(error,QA_ERROR_ARGUMENT,"Save comment has no received local CLIENT");
 }
 bool frontend_remote_q1_application_read(const frontend_remote_q1 *row,qa_application_client_source *out,qa_error *error)

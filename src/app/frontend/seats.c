@@ -201,12 +201,14 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
     out->crosshair_color = preferences.color_mode == QA_UI_COLOR_BLUE_YELLOW ?
         (qa_scene_vec4){1, .9f, .2f, 1} : (qa_scene_vec4){1, 1, 1, 1};
     if (!frontend_ui_features_captions(seat, &out->captions, &out->caption_count, error)) return false;
-    uint32_t total, killed;
-    if (published && !source.source_hud && frame->show_scores &&
-        qa_application_q1_monster_counts(seat->frontend->application, launch_seat, &total, &killed)) {
-        snprintf(seat->q1_monster_label, sizeof(seat->q1_monster_label), "Monsters: %u / %u", killed, total);
-        seat->q1_monsters = (qa_hud_value){.label = seat->q1_monster_label, .value = killed, .maximum = total};
-        out->bars = &seat->q1_monsters; out->bar_count = 1;
+    if (published && !source.source_hud && frame->show_scores && seat->frontend->qc_messages) {
+        qa_unified_q1_world_state world;bool received=false;
+        if(!frontend_qc_messages_q1_world_read(seat->frontend->qc_messages,seat->id,&world,&received,error)) return false;
+        if(received) {
+            snprintf(seat->q1_monster_label, sizeof(seat->q1_monster_label), "Monsters: %d / %d", world.killed_monsters, world.total_monsters);
+            seat->q1_monsters = (qa_hud_value){.label = seat->q1_monster_label, .value = world.killed_monsters, .maximum = world.total_monsters};
+            out->bars = &seat->q1_monsters; out->bar_count = 1;
+        }
     }
     if (!source.source_hud && seat->q2_view_ready && qa_actor_id_equal(frame->actor, seat->q2_actor)) {
         out->source_vitals = true;

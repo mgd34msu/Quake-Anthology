@@ -26,6 +26,10 @@ typedef struct qc_recipient {
     uint64_t generation,next_sequence;
     int32_t stats[32];
     uint32_t stat_present;
+    char *level;
+    uint32_t physical_seat;
+    bool world_received;
+    int32_t published_stats[4];
 } qc_recipient;
 struct frontend_qc_messages {
     qa_frontend *frontend;
@@ -48,7 +52,7 @@ static qa_actor_owner row_provider(const qc_recipient *row)
 static qa_actor_id row_actor(const qc_recipient *row)
 { return row->native ? row->native_actor : row->camera.recipient; }
 static void row_free(qc_recipient *row)
-{ decoder_free(row_protocol(row),row->decoder); free(row); }
+{ decoder_free(row_protocol(row),row->decoder); free(row->level); free(row); }
 bool frontend_qc_messages_destroy(frontend_qc_messages **out,qa_error *error)
 {
     if(!out || !*out) return true;
@@ -323,6 +327,49 @@ static bool event(frontend_qc_messages *owner,qc_recipient *row,size_t index,
     ++row->event_index; row->event_offset=0;
     return true;
 }
+static bool world_publish(frontend_qc_messages *owner,qa_error *error)
+{
+    qa_frontend *f=owner->frontend;
+    if(f->options.dedicated || f->options.network_connect ||
+        qa_application_get_state(owner->application)!=QA_APPLICATION_RUNNING ||
+        qa_application_startup_pending(owner->application)) return true;
+    const qa_launch_snapshot *launch=qa_application_launch(owner->application);
+    const qa_launch_binding *binding=qa_launch_binding_for(qa_launch_snapshot_choices(launch),
+        (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
+    const qa_launch_instance *instance=binding?qa_launch_snapshot_find(launch,binding->instance):NULL;
+    const qa_product *product=instance?qa_catalog_product(qa_application_catalog(owner->application),instance->selection.product):NULL;
+    if(!product || product->family!=QA_GAME_Q1) return true;
+    qa_application_network_q1_host host;
+    qa_application_network_q1_world world;
+    if(!qa_application_network_q1_host_source(owner->application,&host,error) ||
+        !qa_application_network_q1_world_read(owner->application,host.owner,&world,error)) return false;
+    const qa_unified_q1_world_state metadata={.level=(char *)world.level,.total_secrets=world.total_secrets,
+        .total_monsters=world.total_monsters,.found_secrets=world.found_secrets,.killed_monsters=world.killed_monsters};
+    for(uint32_t seat=0;seat<f->options.seats;++seat) {
+        uint32_t logical;qa_actor_id actor;
+        if(!frontend_seat_launch_id_read(f,seat,&logical) ||
+            !qa_application_player_actor(owner->application,logical,&actor)) continue;
+        qc_recipient *recipient=NULL;
+        for(qc_recipient *row=owner->recipients;row;row=row->next)
+            if(row_provider(row)==host.owner && qa_actor_id_equal(row_actor(row),actor)) {
+                recipient=row;if(!row->native)break;
+            }
+        if(!recipient) continue;
+        if(!recipient->level || strcmp(recipient->level,metadata.level)) {
+            size_t length=strlen(metadata.level)+1;
+            char *level=malloc(length);
+            if(!level) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining received local Q1 world title");
+            memcpy(level,metadata.level,length);free(recipient->level);recipient->level=level;
+        }
+        const int32_t stats[]={metadata.total_secrets,metadata.total_monsters,metadata.found_secrets,metadata.killed_monsters};
+        for(uint32_t i=0;i<4;++i) if(!recipient->world_received || recipient->published_stats[i]!=stats[i]) {
+            recipient->published_stats[i]=stats[i];recipient->stats[11+i]=stats[i];
+            recipient->stat_present|=UINT32_C(1)<<(11+i);
+        }
+        recipient->physical_seat=seat;recipient->world_received=true;
+    }
+    return true;
+}
 bool frontend_qc_messages_drain(frontend_qc_messages *owner,qa_error *error)
 {
     if(!current(owner) || owner->busy || owner->frontend->capture || owner->frontend->resource_inventory ||
@@ -377,7 +424,26 @@ bool frontend_qc_messages_drain(frontend_qc_messages *owner,qa_error *error)
         okay=okay && generation==qa_application_protocol_events_generation(owner->application) &&
             count==qa_application_protocol_event_count(owner->application);
     }
+    if(okay) okay=world_publish(owner,error);
     owner->busy=false; return okay;
+}
+bool frontend_qc_messages_q1_world_read(const frontend_qc_messages *owner,uint32_t physical_seat,
+    qa_unified_q1_world_state *out,bool *present,qa_error *error)
+{
+    if(!current(owner) || owner->busy || !out || !present || physical_seat>=owner->frontend->options.seats)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 world metadata requires its returned local CLIENT");
+    *present=false;
+    uint32_t logical;qa_actor_id actor;
+    if(!frontend_seat_launch_id_read(owner->frontend,physical_seat,&logical) ||
+        !qa_application_player_actor(owner->application,logical,&actor)) return true;
+    for(const qc_recipient *row=owner->recipients;row;row=row->next)
+        if(row->world_received && row->physical_seat==physical_seat && qa_actor_id_equal(row_actor(row),actor) &&
+            row_current(owner,row)) {
+            *out=(qa_unified_q1_world_state){.level=row->level,.total_secrets=row->stats[11],
+                .total_monsters=row->stats[12],.found_secrets=row->stats[13],.killed_monsters=row->stats[14]};
+            *present=true;return true;
+        }
+    return true;
 }
 bool frontend_qc_messages_camera_read(const frontend_qc_messages *owner,qa_actor_owner provider,
     qa_actor_id recipient,frontend_qc_camera_receipt *out,qa_error *error)

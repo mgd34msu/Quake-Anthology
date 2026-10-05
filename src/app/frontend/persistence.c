@@ -110,7 +110,8 @@ static bool complete_state(void *context,qa_application *candidate,const qa_save
     if (metadata && metadata->purpose==QA_SAVE_TRANSITION &&
         !qa_application_campaign_reenter(candidate,operation->active->application,error)) return false;
     return frontend_config_store_rebuild_finish(f->config_store,error) && frontend_scene_sync(f,error) &&
-        frontend_tools_sync(f,error) && frontend_network_create_detached(f,source,error);
+        frontend_tools_sync(f,error) && frontend_network_create_detached(f,source,error) &&
+        frontend_qc_messages_drain(f->qc_messages,error);
 }
 static bool validate(void *context,qa_application *application,const qa_save_image *image,qa_error *error)
 {

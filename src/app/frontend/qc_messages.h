@@ -3,6 +3,7 @@
 #include "qa/frontend.h"
 #include "qa/application_qc_presentation.h"
 #include "../application/unified_player.h"
+#include "qa/unified_frame_metadata.h"
 typedef struct frontend_qc_messages frontend_qc_messages;
 typedef struct frontend_qc_camera_receipt {
     qa_application_qc_message_source source;
@@ -45,6 +46,8 @@ bool frontend_qc_messages_client_camera(const frontend_qc_messages *,qa_actor_id
     qa_application_camera_view *,bool *found,qa_error *);
 bool frontend_qc_messages_stat_read(const frontend_qc_messages *,qa_actor_owner,qa_actor_id,
     uint32_t index,int32_t *value,bool *present,qa_error *);
+bool frontend_qc_messages_q1_world_read(const frontend_qc_messages *,uint32_t physical_seat,
+    qa_unified_q1_world_state *,bool *present,qa_error *);
 bool frontend_qc_messages_checkpoint(const frontend_qc_messages *,qa_buffer *,qa_error *);
 bool frontend_qc_messages_restore(qa_frontend *,qa_bytes,frontend_qc_messages **,qa_error *);
 #endif
