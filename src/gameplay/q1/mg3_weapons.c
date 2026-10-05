@@ -25,7 +25,7 @@ bool q1_mg3_hammer_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
            q1_weapon_event(g, player, 0, 0, error);
 }
 bool q1_mg3_hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
-    q1_player *player = q1_player_get(g, strike->owner);
+    q1_player *player = q1_player_get(g, q1_ref_actor(g, strike->owner));
     if (!player)
         return q1_remove(g, strike, error);
     qa_body_state body;
@@ -56,7 +56,7 @@ bool q1_mg3_hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
                        : q1_health(g, trace.actor) < 40 ? 80
                                                         : 40;
         if (player->mg3_hammer_until > g->time) {
-            if (qa_actor_id_equal(player->mg3_hammer_target, trace.actor) &&
+            if (q1_ref_equal(player->mg3_hammer_target, q1_ref_from(g, trace.actor)) &&
                 player->input.water_level < 2 && q1_ammo_count(g, player->id, QA_Q1_CELLS) >= 15) {
                 qa_trace_result floor;
                 if (!q1_trace(g, source,
@@ -76,7 +76,7 @@ bool q1_mg3_hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
                 return false;
         } else {
             player->mg3_hammer_until = g->time + 0.5;
-            player->mg3_hammer_target = trace.actor;
+            player->mg3_hammer_target = q1_ref_from(g, trace.actor);
             if (!attack_delay(g, player, 0.2f, error))
                 return false;
             if (q1_ammo_count(g, player->id, QA_Q1_CELLS) >= 15)
@@ -92,7 +92,7 @@ bool q1_mg3_hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
                 return false;
         } else if (!q1_sound(g, player->id, "weapons/ax1.wav", 1, 1, error))
             return false;
-        player->mg3_hammer_target = (qa_actor_id){0};
+        player->mg3_hammer_target = (q1_ref){0};
     }
     if (q1_alive(g, player->id) && !q1_weapon_event(g, player, 0, 0, error))
         return false;

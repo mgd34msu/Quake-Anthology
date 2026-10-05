@@ -155,7 +155,7 @@ static bool repeat_explosion(qa_q1_game *g, q1_actor *e, qa_error *error) {
         e->delay = 0;
         return q1_map_schedule(g, e, delay, Q1_MAP_ADDON_EXPLOSION_REPEAT, error);
     }
-    q1_actor *previous = q1_entity(g, e->map->pending.addon.chain);
+    q1_actor *previous = q1_entity(g, q1_ref_actor(g, e->map->pending.addon.chain));
     if (previous && previous->map && previous->map->kind == Q1_MAP_ADDON_EXPLOSION &&
         q1_classnamed(g, previous->id, "spawned_explosion") && !q1_remove(g, previous, error))
         return false;
@@ -174,7 +174,7 @@ static bool repeat_explosion(qa_q1_game *g, q1_actor *e, qa_error *error) {
     e = control(g, id);
     if (!e)
         goto retire;
-    e->map->pending.addon.chain = child_id;
+    e->map->pending.addon.chain = q1_ref_from(g, child_id);
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, id, &body, error))
         goto fail;

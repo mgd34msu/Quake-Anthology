@@ -71,7 +71,7 @@ bool qa_q1_source_rune_read(const qa_q1_game *game, qa_actor_id actor,
 static bool next_spawn(qa_q1_game *game, qa_actor_id *out, qa_error *error) {
     q1_actor *owner = world(game, error);
     if (!owner || !source_current(game, error) || world(game, error) != owner) return false;
-    const q1_actor *previous = q1_entity_const(game, owner->ctf_rune_spawn);
+    const q1_actor *previous = q1_entity_const(game, q1_ref_actor(game, owner->ctf_rune_spawn));
     const qa_actor_registry *actors = qa_session_actors(game->services.session);
     const qa_actor_record *before = previous && previous->native &&
         q1_classnamed(game, previous->id, "info_player_deathmatch") ?
@@ -93,7 +93,7 @@ static bool next_spawn(qa_q1_game *game, qa_actor_id *out, qa_error *error) {
     }
     const qa_actor_record *selected = next ? next : first;
     if (!selected) return fail(error, (qa_actor_id){0}, "CTF has no info_player_deathmatch to spawn a rune");
-    owner->ctf_rune_spawn = selected->id;
+    owner->ctf_rune_spawn = q1_ref_from(game, selected->id);
     *out = selected->id;
     return true;
 }

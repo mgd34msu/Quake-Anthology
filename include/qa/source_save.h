@@ -65,4 +65,5 @@ bool qa_source_save_owned_text(qa_source_save_io *, char **);
 /* Explicit presence + original generation/slot; retired provenance survives.
  * Live-use authority must be validated by the source field's actual owner. */
 bool qa_source_save_actor(qa_source_save_io *, qa_actor_id *);
+bool qa_source_save_actor_reference(qa_source_save_io *, qa_actor_reference *);
 #endif

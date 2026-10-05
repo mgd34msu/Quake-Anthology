@@ -1,7 +1,7 @@
 #ifndef QA_Q1_BOSS_TYPES_H
 #define QA_Q1_BOSS_TYPES_H
 
-#include "qa/game_q1.h"
+#include "reference.h"
 
 typedef enum q1_boss_child_kind {
     Q1_CHILD_SPHERE,
@@ -24,7 +24,7 @@ typedef enum q1_boss_child_kind {
 } q1_boss_child_kind;
 typedef struct q1_boss_child {
     q1_boss_child_kind kind;
-    qa_actor_id enemy;
+    q1_ref enemy;
     float sign;
     int32_t maximum;
     double sound_after;

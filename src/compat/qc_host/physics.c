@@ -16,13 +16,16 @@ static bool vector(qa_qc_game *game, int32_t reference, const qa_qc_definition *
     if (!qa_qc_entity_vector(game->vm, reference, field->offset, out, error)) return false;
     return qa_vec_finite(*out) || qc_game_fail(error, QA_ERROR_FORMAT, "Nonfinite QC physics vector");
 }
-static bool entity(qa_qc_game *game, int32_t reference, const qa_qc_definition *field, qa_actor_id *out, qa_error *error) {
+static bool entity(qa_qc_game *game, int32_t reference, const qa_qc_definition *field, qa_actor_reference *out, qa_error *error) {
     int32_t target;
     if (!field || field->type != QA_QC_ENTITY)
         return qc_game_fail(error, QA_ERROR_FORMAT, "QC physics entity field differs");
     if (!qa_qc_entity_int(game->vm, reference, field->offset, &target, error)) return false;
-    if (!target) { *out = (qa_actor_id){0}; return true; }
-    return qa_qc_reference_actor(game->vm, target, out, error);
+    if (!target) { *out = (qa_actor_reference){0}; return true; }
+    qa_actor_id actor;
+    if (!qa_qc_reference_actor(game->vm, target, &actor, error)) return false;
+    *out = qa_actor_reference_lifetime(actor);
+    return true;
 }
 static bool clock_word(double value, float *out, qa_error *error) {
     if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127) {

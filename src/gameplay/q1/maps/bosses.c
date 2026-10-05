@@ -11,8 +11,8 @@ static q1_actor *first_class(qa_q1_game *g, const char *name) {
     return NULL;
 }
 static bool lightning_fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    q1_actor *first = q1_entity(g, g->maps->electrodes[0]);
-    q1_actor *second = q1_entity(g, g->maps->electrodes[1]);
+    q1_actor *first = q1_entity(g, q1_ref_actor(g, g->maps->electrodes[0]));
+    q1_actor *second = q1_entity(g, q1_ref_actor(g, g->maps->electrodes[1]));
     if (!first || !second || !first->map || !second->map)
         return q1_map_fail(error, "Q1 lightning electrodes are missing");
     if (g->time >= g->maps->lightning_end) {
@@ -66,7 +66,7 @@ bool q1_map_lightning_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator
         return true;
     for (size_t i = 0; i < 2; ++i) {
         q1_map_cancel(g, electrodes[i]);
-        g->maps->electrodes[i] = electrodes[i]->id;
+        g->maps->electrodes[i] = q1_ref_from(g, electrodes[i]->id);
     }
     g->maps->lightning_end = g->time + 1;
     if (!q1_sound(g, entity->id, "misc/power.wav", 2, 1, error))
@@ -78,7 +78,7 @@ bool q1_map_lightning_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator
     q1_actor *boss = first_class(g, "monster_boss");
     if (!boss || boss->kind != Q1_MONSTER)
         return true;
-    boss->state.monster.enemy = activator;
+    boss->state.monster.enemy = q1_ref_from(g, activator);
     if (!q1_alive(g, electrodes[0]->id) ||
         electrodes[0]->map->pending.mover.position != Q1_MAP_TOP || q1_health(g, boss->id) <= 0)
         return true;
@@ -135,7 +135,7 @@ static bool finale_begin(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
         return false;
     g->maps->finale_started = true;
     g->maps->finale_dismissed = false;
-    if (!q1_monster_count_kill(g, oldone, oldone->state.monster.enemy, error))
+    if (!q1_monster_count_kill(g, oldone, q1_ref_actor(g, oldone->state.monster.enemy), error))
         return false;
     if (!q1_alive(g, oldone->id))
         return true;
@@ -145,7 +145,7 @@ static bool finale_begin(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
         return false;
     g->maps->finale = (qa_q1_map_finale_view){
         .map = start, .origin = view.origin, .angles = angles, .exit_after = g->time + 10000000};
-    if (!qa_q1_level_cutscene(g->maps->options.level, start, oldone->state.monster.enemy,
+    if (!qa_q1_level_cutscene(g->maps->options.level, start, q1_ref_actor(g, oldone->state.monster.enemy),
                               g->maps->finale.exit_after, error))
         return false;
     qa_builtin_snapshot_frame *players;
@@ -194,7 +194,7 @@ static bool finale_begin(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
     q1_actor *timer;
     if (!q1_map_timer(g, "finale_timer", &timer, error))
         return false;
-    timer->owner = oldone->id;
+    timer->owner = q1_ref_from(g, oldone->id);
     return q1_map_schedule(g, timer, 1, Q1_MAP_FINALE_TWO, error);
 }
 static bool finale_finish(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
@@ -276,7 +276,7 @@ bool q1_map_boss_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, qa
                       : g->maps->options.finish_campaign(g->maps->options.context, error);
         return ok && (!q1_alive(g, entity->id) || q1_remove(g, entity, error));
     }
-    q1_actor *oldone = q1_entity(g, entity->owner);
+    q1_actor *oldone = q1_entity(g, q1_ref_actor(g, entity->owner));
     if (!oldone || oldone->kind != Q1_MONSTER)
         return q1_map_fail(error, "Q1 finale continuation lost its source actor");
     if (action == Q1_MAP_FINALE_TWO) {

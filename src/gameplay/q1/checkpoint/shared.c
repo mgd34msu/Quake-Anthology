@@ -57,8 +57,8 @@ bool q1_save_physics(q1_save_io *io, qa_physics_properties *physics) {
     Q1_SAVE(io, float, physics->yaw_speed);
     Q1_SAVE(io, i32, physics->water_level);
     Q1_SAVE(io, i32, physics->water_type);
-    Q1_SAVE(io, actor, physics->enemy);
-    Q1_SAVE(io, actor, physics->goal);
+    Q1_SAVE(io, ref, physics->enemy);
+    Q1_SAVE(io, ref, physics->goal);
     Q1_SAVE(io, double, physics->q1_pusher.local_seconds);
     if (io->values.direction == QA_SOURCE_SAVE_READ)
         physics->q1_pusher.next_think_seconds = 0;

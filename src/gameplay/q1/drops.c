@@ -430,7 +430,7 @@ bool q1_drop_eligible(qa_q1_game *g, q1_actor *item, qa_actor_id actor) {
         return false;
     if (ammo && q1_health(g, actor) <= 0)
         return false;
-    if (!ammo && qa_actor_id_equal(item->owner, actor) && item->next_think - g->time > 119)
+    if (!ammo && q1_ref_equal(item->owner, q1_ref_from(g, actor)) && item->next_think - g->time > 119)
         return false;
     return touch_live(g, item, actor);
 }

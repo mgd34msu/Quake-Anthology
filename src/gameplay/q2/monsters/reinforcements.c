@@ -355,7 +355,7 @@ static bool assign_enemy(q2m_context *parent, q2m_context *child, bool widow, qa
     if (!living) {
         if (widow)
             return true;
-        child->monster->enemy = child->actor->physics.enemy = (qa_actor_id){0};
+        child->monster->enemy = qa_actor_reference_resolve(qa_session_actors(parent->game->services.session), child->actor->physics.enemy = (qa_actor_reference){0});
         return q2m_set_move(child, child->monster->definition->stand_move, false, error);
     }
     if (!q2m_found_target(child, enemy, error))

@@ -5,11 +5,11 @@ static bool projectile(q1_save_io *io, q1_projectile *p) {
     Q1_SAVE_ENUM(io, p->weapon, QA_Q1_WEAPON_COUNT);
     if (!q1_save_attack(io, &p->attack))
         return false;
-    Q1_SAVE(io, actor, p->enemy);
-    Q1_SAVE(io, actor, p->activator);
-    Q1_SAVE(io, actor, p->surface);
+    Q1_SAVE(io, ref, p->enemy);
+    Q1_SAVE(io, ref, p->activator);
+    Q1_SAVE(io, ref, p->surface);
     for (size_t i = 0; i < 3; ++i)
-        Q1_SAVE(io, actor, p->links[i]);
+        Q1_SAVE(io, ref, p->links[i]);
     Q1_SAVE(io, vector, p->right);
     Q1_SAVE(io, vector, p->movedir);
     Q1_SAVE(io, vector, p->launch_angles);
@@ -31,7 +31,7 @@ static bool pickup(q1_save_io *io, q1_pickup *p) {
     Q1_SAVE(io, u32, p->kind);
     Q1_SAVE(io, u32, p->upgrade_flag);
     Q1_SAVE(io, u8, p->upgrade);
-    Q1_SAVE(io, actor, p->holder);
+    Q1_SAVE(io, ref, p->holder);
     Q1_SAVE(io, bool, p->hidden);
     Q1_SAVE(io, bool, p->mega);
     Q1_SAVE(io, bool, p->artifact);
@@ -165,8 +165,8 @@ static bool continuation(q1_save_io *io, const q1_actor *a, q1_think_kind think)
 }
 bool q1_save_entity(q1_save_io *io, q1_actor *a) {
     Q1_SAVE(io, owned_actor, a->id);
-    Q1_SAVE(io, actor, a->owner);
-    Q1_SAVE(io, actor, a->activator);
+    Q1_SAVE(io, ref, a->owner);
+    Q1_SAVE(io, ref, a->activator);
     Q1_SAVE(io, string, a->classname);
     Q1_SAVE(io, string, a->model);
     Q1_SAVE(io, string, a->target);
@@ -178,13 +178,13 @@ bool q1_save_entity(q1_save_io *io, q1_actor *a) {
     Q1_SAVE(io, string, a->source_death_type);
     Q1_SAVE(io, string, a->source_team);
     Q1_SAVE(io, float, a->rogue_next_update);
-    Q1_SAVE(io, actor, a->rogue_tag_owner);
+    Q1_SAVE(io, ref, a->rogue_tag_owner);
     Q1_SAVE(io, float, a->rogue_runes_spawned);
-    Q1_SAVE(io, actor, a->rogue_rune_spawn);
+    Q1_SAVE(io, ref, a->rogue_rune_spawn);
     Q1_SAVE(io, float, a->ctf_last_capture);
     Q1_SAVE(io, float, a->ctf_last_capture_team);
     Q1_SAVE(io, float, a->ctf_runes_spawned);
-    Q1_SAVE(io, actor, a->ctf_rune_spawn);
+    Q1_SAVE(io, ref, a->ctf_rune_spawn);
     Q1_SAVE(io, vector, a->initial_angles);
     if (!q1_save_physics(io, &a->physics))
         return false;
@@ -272,7 +272,7 @@ bool q1_save_entity(q1_save_io *io, q1_actor *a) {
         break;
     case Q1_BOSS_CHILD:
         Q1_SAVE_ENUM(io, a->state.boss_child.kind, Q1_CHILD_FINAL_END);
-        Q1_SAVE(io, actor, a->state.boss_child.enemy);
+        Q1_SAVE(io, ref, a->state.boss_child.enemy);
         Q1_SAVE(io, float, a->state.boss_child.sign);
         Q1_SAVE(io, i32, a->state.boss_child.maximum);
         Q1_SAVE(io, double, a->state.boss_child.sound_after);
@@ -346,18 +346,18 @@ bool q1_save_entity(q1_save_io *io, q1_actor *a) {
           memcmp(classname.data, "item_flag_team2", classname.size))))
         return q1_save_fail(io, "Invalid native ThreeWave flag source actor");
     if (a->kind == Q1_ROGUE_TEAM_STATE &&
-        (io->game->options.program != QA_Q1_ROGUE || !a->native || !a->owner.registry ||
+        (io->game->options.program != QA_Q1_ROGUE || !a->native || !q1_ref_present(a->owner) ||
          classname.size != sizeof("rogue_team_state") - 1 ||
          memcmp(classname.data, "rogue_team_state", classname.size) ||
          a->think != Q1_THINK_NONE || a->frozen.active || a->map))
         return q1_save_fail(io, "Invalid Rogue team-state source actor");
-    if ((a->rogue_next_update != 0 || a->rogue_tag_owner.registry || a->rogue_runes_spawned != 0 || a->rogue_rune_spawn.registry) &&
+    if ((a->rogue_next_update != 0 || q1_ref_present(a->rogue_tag_owner) || a->rogue_runes_spawned != 0 || q1_ref_present(a->rogue_rune_spawn)) &&
         (io->game->options.program != QA_Q1_ROGUE || !a->native ||
          classname.size != sizeof("worldspawn") - 1 ||
          memcmp(classname.data, "worldspawn", classname.size)))
         return q1_save_fail(io, "Rogue update word has no actual source world");
     if ((a->ctf_last_capture != 0 || a->ctf_last_capture_team != 0 || a->ctf_runes_spawned != 0 ||
-         a->ctf_rune_spawn.registry) &&
+         q1_ref_present(a->ctf_rune_spawn)) &&
         (io->game->options.program != QA_Q1_CTF || !a->native ||
          classname.size != sizeof("worldspawn") - 1 ||
          memcmp(classname.data, "worldspawn", classname.size)))

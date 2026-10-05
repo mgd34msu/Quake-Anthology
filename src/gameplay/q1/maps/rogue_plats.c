@@ -215,7 +215,7 @@ bool q1_map_rogue_plat_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     qa_actor_id id = entity->id;
     q1_map_movement *motion = &entity->map->pending.mover;
     if (entity->map->kind == Q1_MAP_ELEVATOR_BUTTON) {
-        entity->activator = activator;
+        entity->activator = q1_ref_from(g, activator);
         return button_fire(g, entity, error);
     }
     if (entity->spawnflags & 3) {
@@ -272,7 +272,7 @@ bool q1_map_rogue_plat_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     if (!entity)
         return true;
     if (entity->map->kind == Q1_MAP_ELEVATOR_BUTTON) {
-        entity->activator = other;
+        entity->activator = q1_ref_from(g, other);
         return button_fire(g, entity, error);
     }
     if (q1_health(g, other) <= 0)
@@ -280,7 +280,7 @@ bool q1_map_rogue_plat_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     entity = platform(g, id);
     if (!entity)
         return true;
-    qa_actor_id owner = entity->owner;
+    qa_actor_id owner = q1_ref_actor(g, entity->owner);
     qa_body_state player;
     qa_error read_error = {0};
     if (!qa_world_body_read(g->services.world, other, &player, &read_error)) {
@@ -351,7 +351,7 @@ bool q1_map_rogue_plat_reaction(qa_q1_game *g, q1_actor *entity, const qa_damage
         outcome->result.reaction != QA_REACTION_DEATH)
         return true;
     qa_actor_id id = entity->id;
-    entity->activator = outcome->request.attack.attacker;
+    entity->activator = q1_ref_from(g, outcome->request.attack.attacker);
     if (!qa_combat_set_health(g->services.combat, id, entity->max_health, error))
         return false;
     entity = platform(g, id);
@@ -413,7 +413,7 @@ bool q1_map_rogue_plat_think(qa_q1_game *g, q1_actor *entity, q1_map_action acti
             g->maps->elevator_direction = entity->spawnflags & 1 ? -1 : 1;
         motion->position = Q1_MAP_TOP;
         if (!q1_map_schedule(g, entity, entity->wait, Q1_MAP_ELEVATOR_BUTTON_RETURN, error) ||
-            !q1_map_targets(g, entity, entity->activator, error))
+            !q1_map_targets(g, entity, q1_ref_actor(g, entity->activator), error))
             return false;
         entity = platform(g, id);
         if (entity)

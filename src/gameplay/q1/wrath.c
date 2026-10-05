@@ -3,7 +3,7 @@
 bool q1_wrath_launch(qa_q1_game *g, q1_actor *entity, unsigned attack, qa_error *error) {
     q1_monster *monster = &entity->state.monster;
     qa_body_state body, target;
-    if (!qa_world_body_read(g->services.world, monster->enemy, &target, NULL))
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, monster->enemy), &target, NULL))
         return true;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
@@ -25,7 +25,7 @@ bool q1_wrath_launch(qa_q1_game *g, q1_actor *entity, unsigned attack, qa_error 
         (q1_projectile){.kind = Q1_WRATH_MISSILE,
                         .weapon = QA_Q1_WEAPON_COUNT,
                         .enemy = monster->enemy,
-                        .activator = entity->id,
+                        .activator = q1_ref_from(g, entity->id),
                         .attack = q1_attack(g, entity->id, shot->id, QA_Q1_WEAPON_COUNT)};
     shot->state.projectile.attack.projectile = shot->id;
     shot->physics.motion = QA_PHYSICS_FLY_MISSILE;
@@ -86,7 +86,7 @@ bool q1_wrath_think(qa_q1_game *g, q1_actor *shot, q1_think_kind kind, qa_error 
         ++shot->frame;
         return shot->frame > 5 ? q1_remove(g, shot, error) : q1_schedule(g, shot, 0.1, kind, error);
     }
-    qa_actor_id enemy = shot->state.projectile.enemy;
+    qa_actor_id enemy = q1_ref_actor(g, shot->state.projectile.enemy);
     if (!q1_alive(g, enemy) || q1_health(g, enemy) < 1)
         return q1_remove(g, shot, error);
     qa_body_state body, target;
@@ -108,7 +108,7 @@ bool q1_wrath_think(qa_q1_game *g, q1_actor *shot, q1_think_kind kind, qa_error 
 bool q1_wrath_touch(qa_q1_game *g, q1_actor *shot, qa_actor_id other, qa_error *error) {
     if (shot->physics.solid == QA_PHYSICS_NOT_SOLID)
         return true;
-    if (qa_actor_id_equal(other, shot->owner) || q1_classnamed(g, other, "monster_wrath") ||
+    if (q1_ref_equal(q1_ref_from(g, other), shot->owner) || q1_classnamed(g, other, "monster_wrath") ||
         q1_classnamed(g, other, "monster_super_wrath"))
         return q1_remove(g, shot, error);
     if (q1_classnamed(g, other, "monster_zombie") &&
@@ -117,7 +117,7 @@ bool q1_wrath_touch(qa_q1_game *g, q1_actor *shot, qa_actor_id other, qa_error *
     if (!q1_alive(g, shot->id))
         return true;
     qa_actor_id world = g->services.physics ? g->services.physics->world_actor : (qa_actor_id){0};
-    if (!q1_radius(g, shot->id, shot->owner, 20, world, QA_Q1_WEAPON_COUNT, error))
+    if (!q1_radius(g, shot->id, q1_ref_actor(g, shot->owner), 20, world, QA_Q1_WEAPON_COUNT, error))
         return false;
     if (!q1_alive(g, shot->id))
         return true;

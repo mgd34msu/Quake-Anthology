@@ -201,7 +201,7 @@ typedef struct q1_monster {
     bool dead;
     qa_string_id path;
     uint16_t current_frame, next_frame;
-    qa_actor_id enemy, old_enemy, charmer, charm_goal, move_target, previous_corner;
+    q1_ref enemy, old_enemy, charmer, charm_goal, move_target, previous_corner;
     double pause_until, attack_finished, pain_finished, search_until, idle_until, straight_after,
         dodge_after, hostile_until, follow_until;
     uint32_t counter, lightning_count;
@@ -226,7 +226,7 @@ typedef struct q1_monster {
             qa_string_id waves[4];
         } boss;
         struct {
-            qa_actor_id child;
+            q1_ref child;
             uint32_t lightning_count;
             int32_t nails;
         } heavy;
@@ -240,7 +240,7 @@ typedef struct q1_monster {
             bool awakened, pain_disabled;
         } sword;
         struct {
-            qa_actor_id trigger;
+            q1_ref trigger;
             double dodge_until;
             bool initialized, silent, previous_silent;
         } scourge;
@@ -254,7 +254,7 @@ typedef struct q1_monster {
             bool attacking;
         } dragon;
         struct {
-            qa_actor_id body;
+            q1_ref body;
             qa_vec3 old_origin;
             float torso_yaw, aim_threshold;
             double idle_at;
@@ -262,7 +262,7 @@ typedef struct q1_monster {
             bool behind;
         } armagon;
         struct {
-            qa_actor_id last_victim, flee_goal;
+            q1_ref last_victim, flee_goal;
             qa_vec3 view_angles;
             qa_q1_weapon weapon;
             float current_ammo;
@@ -276,8 +276,8 @@ typedef struct q1_projectile {
     q1_projectile_kind kind;
     qa_q1_weapon weapon;
     qa_attack attack;
-    qa_actor_id enemy, activator, surface;
-    qa_actor_id links[3];
+    q1_ref enemy, activator, surface;
+    q1_ref links[3];
     qa_vec3 right, movedir, launch_angles;
     float damage, radius_damage;
     double expires;
@@ -297,7 +297,7 @@ typedef struct q1_pickup {
     uint32_t kind;
     uint32_t upgrade_flag;
     uint8_t upgrade;
-    qa_actor_id holder;
+    q1_ref holder;
     bool hidden, mega, artifact, mission, random, external;
     bool backpack_rank, avoid_underwater_lightning;
     float absorption, duration;
@@ -316,16 +316,17 @@ typedef struct q1_actor {
     q1_map_state *map;
     qa_pickup_lease pickup_observation;
     bool restored_target;
-    qa_actor_id id, owner, activator;
+    qa_actor_id id;
+    q1_ref owner, activator;
     qa_string_id classname, model, target, targetname, killtarget, message;
     qa_string_id source_netname, source_kill_string, source_death_type, source_team;
     float rogue_next_update;
-    qa_actor_id rogue_tag_owner;
+    q1_ref rogue_tag_owner;
     float rogue_runes_spawned;
-    qa_actor_id rogue_rune_spawn;
+    q1_ref rogue_rune_spawn;
     float ctf_last_capture, ctf_last_capture_team;
     float ctf_runes_spawned;
-    qa_actor_id ctf_rune_spawn;
+    q1_ref ctf_rune_spawn;
     qa_vec3 initial_angles;
     qa_physics_properties physics;
     q1_entity_kind kind;
@@ -403,18 +404,18 @@ typedef struct q1_player {
     uint8_t wetsuit_scaled_level;
     qa_q1_auto_switch auto_switch;
     qa_q1_mg3_progress mg3_progress;
-    qa_actor_id mg3_hammer_target;
+    q1_ref mg3_hammer_target;
     double mg3_hammer_until;
     double horde_axe_chain_until;
     uint32_t horde_axe_chain;
     int32_t mg3_hammer_body;
     bool mg3_infinite_ammo, mg3_hammer_glow;
-    qa_actor_id killer;
-    qa_actor_id hook;
+    q1_ref killer;
+    q1_ref hook;
     qa_q1_input grapple_input;
     bool grapple_release, grapple_pulling;
     struct {
-        qa_actor_id animation;
+        q1_ref animation;
         double attack_finished, release_time;
         int32_t frame;
         bool selected, available;
@@ -429,8 +430,7 @@ typedef struct q1_player {
     size_t source_info_count;
     float source_frags,source_team;
     bool source_observer,source_no_target,source_god_mode;
-    qa_actor_id source_spectator_goal,source_spectator_track;
-    uint32_t source_spectator_goal_ordinal,source_spectator_track_slot;
+    q1_ref source_spectator_goal,source_spectator_track;
     int32_t source_impulse;
     bool source_use,source_death_recorded;
     bool finale_held_present, finale_held;
@@ -463,7 +463,7 @@ struct qa_q1_game {
     uint32_t capacity, total_monsters, killed_monsters, hellknight_melee;
     uint32_t authored_gremlins, spawned_gremlins;
     qa_builtin_random random;
-    qa_actor_id sight_actor, horn_charmer, rogue_runes_world;
+    q1_ref sight_actor, horn_charmer, rogue_runes_world;
     double time, elapsed, sight_time;
     double finale_last_poll;
     bool finale_polled, finale_acknowledged;
@@ -473,7 +473,7 @@ struct qa_q1_game {
     double check_client_time;
     int32_t check_client_cluster;
     qa_vec3 forward, right, up;
-    qa_actor_id qw_multi_entity;
+    q1_ref qw_multi_entity;
     float qw_multi_damage, qw_blood_count, qw_puff_count;
     float qw_rj;
     qa_vec3 qw_blood_origin, qw_puff_origin;
@@ -816,7 +816,7 @@ bool q1_grapple_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
 bool q1_grapple_weapon_launch(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_grapple_weapon_frame(qa_q1_game *, q1_player *, qa_error *);
 bool q1_grapple_touch(qa_q1_game *, q1_actor *, qa_actor_id, const qa_touch_contact *, qa_error *);
-void q1_grapple_released(qa_q1_game *, qa_actor_id);
+void q1_grapple_released(qa_q1_game *, qa_actor_record);
 bool q1_power_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
 bool q1_sphere_pickup(qa_q1_game *, q1_actor *, qa_actor_id, bool *, qa_error *);
 bool q1_sphere_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);

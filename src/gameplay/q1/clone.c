@@ -10,7 +10,7 @@ bool qa_q1_game_clone(qa_q1_game *g, qa_actor_id actor, qa_actor_id *out, qa_err
     q1_actor *target;
     const char *classname =
         qa_strings_cstr(qa_session_strings(g->services.session), source->classname);
-    if (!q1_create(g, classname, source->kind, source->owner, &target, error))
+    if (!q1_create(g, classname, source->kind, q1_ref_actor(g, source->owner), &target, error))
         return false;
     qa_actor_id id = target->id;
     source = q1_entity(g, actor);

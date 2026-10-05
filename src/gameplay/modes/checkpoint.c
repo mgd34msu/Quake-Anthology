@@ -224,7 +224,7 @@ static bool physics_valid(qa_modes *m, const qa_physics_properties *p) {
            qa_vec_finite(p->angular_velocity) && qa_vec_finite(p->gravity_direction) &&
            isfinite(p->gravity_scale) && isfinite(p->delta_yaw) && isfinite(p->ideal_yaw) &&
            isfinite(p->yaw_speed) && p->water_level >= 0 && p->water_level <= 3 &&
-           reference(m, p->enemy) && reference(m, p->goal);
+           reference(m, qa_actor_reference_resolve(qa_session_actors(m->options.services.session), p->enemy)) && reference(m, qa_actor_reference_resolve(qa_session_actors(m->options.services.session), p->goal));
 }
 static bool held_object(const qa_modes_checkpoint *saved, qa_mode_id mode, qa_actor_id actor,
                         qa_actor_id carrier, qa_mode_object_kind kind) {

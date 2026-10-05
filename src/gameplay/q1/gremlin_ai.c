@@ -39,7 +39,7 @@ bool q1_gremlin_find_victim(qa_q1_game *g, q1_actor *entity, qa_actor_id *out, q
         if (!visible)
             continue;
         float distance = qa_vec_length(qa_vec_sub(target.origin, body.origin));
-        if (qa_actor_id_equal(actor, entity->state.monster.source.gremlin.last_victim))
+        if (q1_ref_equal(q1_ref_from(g, actor), entity->state.monster.source.gremlin.last_victim))
             distance *= 2;
         if (traits.player)
             distance /= 1.5f;
@@ -53,7 +53,7 @@ bool q1_gremlin_find_victim(qa_q1_game *g, q1_actor *entity, qa_actor_id *out, q
     qa_builtin_snapshot_release(snapshot);
     if (!ok)
         return false;
-    entity->state.monster.source.gremlin.last_victim = selected;
+    entity->state.monster.source.gremlin.last_victim = q1_ref_from(g, selected);
     *out = selected;
     return true;
 }
@@ -102,7 +102,7 @@ static bool find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *er
         if (gorge.registry && best < 700 * q1_random(g)) {
             m->old_enemy = m->enemy;
             m->source.gremlin.gorging = true;
-            m->enemy = gorge;
+            m->enemy = q1_ref_from(g, gorge);
             m->search_until = g->time + 4;
             *out = true;
             return q1_monster_found(g, entity, gorge, error);
@@ -132,7 +132,7 @@ bool q1_gremlin_walk(qa_q1_game *g, q1_actor *entity, float distance, qa_error *
     if (found || !q1_alive(g, entity->id))
         return true;
     qa_actor_id goal =
-        q1_alive(g, entity->physics.goal) ? entity->physics.goal : q1_monster_route(g, entity);
+        q1_ref_actor(g, q1_alive(g, q1_ref_actor(g, entity->physics.goal)) ? entity->physics.goal : q1_ref_from(g, q1_monster_route(g, entity)));
     return !goal.registry || qa_physics_q1_move_to_goal(g->services.physics, entity->id, goal,
                                                         distance, false, error);
 }
@@ -192,7 +192,7 @@ bool q1_gremlin_run(qa_q1_game *g, q1_actor *entity, float distance, qa_error *e
     if (m->source.gremlin.stolen)
         entity->frame += 135;
     qa_body_state body, target;
-    if (!qa_world_body_read(g->services.world, m->enemy, &target, NULL))
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, m->enemy), &target, NULL))
         return q1_monster_ai(g, entity, Q1_AI_RUN, distance, error);
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
@@ -201,7 +201,7 @@ bool q1_gremlin_run(qa_q1_game *g, q1_actor *entity, float distance, qa_error *e
         qa_trace_result trace;
         bool visible;
         if (!q1_trace(g, body.origin, target.origin, entity->id, false, &trace, error) ||
-            !q1_monster_visible(g, entity, m->enemy, &visible, error))
+            !q1_monster_visible(g, entity, q1_ref_actor(g, m->enemy), &visible, error))
             return false;
         if (trace.fraction != 1 || !visible) {
             m->source.gremlin.gorging = false;
@@ -240,7 +240,7 @@ bool q1_gremlin_run(qa_q1_game *g, q1_actor *entity, float distance, qa_error *e
                 m->source.gremlin.gorging = false;
             return true;
         }
-        return qa_physics_q1_move_to_goal(g->services.physics, entity->id, m->enemy, distance,
+        return qa_physics_q1_move_to_goal(g->services.physics, entity->id, q1_ref_actor(g, m->enemy), distance,
                                           false, error);
     }
     if (q1_random(g) > 0.97f) {
@@ -251,14 +251,14 @@ bool q1_gremlin_run(qa_q1_game *g, q1_actor *entity, float distance, qa_error *e
             return true;
     }
     if (m->source.gremlin.stolen) {
-        if (q1_health(g, m->enemy) < 0 && q1_classnamed(g, m->enemy, "player"))
+        if (q1_health(g, q1_ref_actor(g, m->enemy)) < 0 && q1_classnamed(g, q1_ref_actor(g, m->enemy), "player"))
             return q1_monster_play(g, entity, "gremlin_glook1", error);
-        q1_actor *goal = q1_entity(g, m->source.gremlin.flee_goal);
+        q1_actor *goal = q1_entity(g, q1_ref_actor(g, m->source.gremlin.flee_goal));
         if (!q1_gremlin_has_ammo(entity)) {
             if (goal) {
                 if (!q1_remove(g, goal, error))
                     return false;
-                m->source.gremlin.flee_goal = (qa_actor_id){0};
+                m->source.gremlin.flee_goal = (q1_ref){0};
                 entity->physics.goal = m->enemy;
             }
             return true;
@@ -272,13 +272,13 @@ bool q1_gremlin_run(qa_q1_game *g, q1_actor *entity, float distance, qa_error *e
             if (!entity)
                 return true;
             m = &entity->state.monster;
-            m->source.gremlin.flee_goal = goal->id;
+            m->source.gremlin.flee_goal = q1_ref_from(g, goal->id);
         }
         if (goal) {
             if (range > 250) {
                 if (!q1_remove(g, goal, error))
                     return false;
-                m->source.gremlin.flee_goal = (qa_actor_id){0};
+                m->source.gremlin.flee_goal = (q1_ref){0};
                 entity->physics.goal = m->enemy;
             } else {
                 qa_body_state destination;
@@ -312,7 +312,7 @@ bool q1_gremlin_run(qa_q1_game *g, q1_actor *entity, float distance, qa_error *e
                     if (!qa_world_body_write(g->services.world, goal->id, &destination, error))
                         return false;
                 }
-                entity->physics.goal = goal->id;
+                entity->physics.goal = q1_ref_from(g, goal->id);
                 qa_vec3 delta = qa_vec_sub(destination.origin, body.origin);
                 entity->physics.ideal_yaw =
                     qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f);

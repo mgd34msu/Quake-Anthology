@@ -45,7 +45,7 @@ bool q1_save_wire_validate(q1_save_io *io, qa_q1_game *g) {
         uint32_t client;
         if (qa_q1_native_client_slot_prepared(g, actor->id, &client, NULL)) continue;
         if (!shared || !shared->has_source || shared->source_slot >= g->wire->next_dynamic ||
-            (g->wire->edict_limit && g->wire->edicts[shared->source_slot].free) ||
+            g->wire->edicts[shared->source_slot].free ||
             (shared->source_slot && shared->source_slot <= g->options.max_clients))
             return q1_save_fail(io, "Q1 wire continuation leaves its actual source entity namespace");
     }
@@ -104,15 +104,19 @@ bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
         wire->next_dynamic <= g->options.max_clients ||
         (wire->edict_limit && wire->next_dynamic > wire->edict_limit))
         return q1_save_fail(io, "Invalid Q1 source wire continuation");
-    if (wire->edict_limit)
-        for (uint32_t slot = 0; slot < wire->next_dynamic; ++slot) {
-            Q1_SAVE(io, bool, wire->edicts[slot].free);
-            Q1_SAVE(io, float, wire->edicts[slot].freetime);
-            if (!isfinite(wire->edicts[slot].freetime) || wire->edicts[slot].freetime < 0 ||
-                (slot && slot <= g->options.max_clients &&
-                    (wire->edicts[slot].free || wire->edicts[slot].freetime != 0)))
-                return q1_save_fail(io, "Invalid Q1 physical Source edict free continuation");
-        }
+    if (io->values.direction == QA_SOURCE_SAVE_READ) {
+        if (wire->next_dynamic > (io->values.input.size - io->values.offset) / 5)
+            return q1_save_fail(io, "Invalid Q1 physical Source edict continuation extent");
+        if (!q1_wire_edict_extent(wire, wire->next_dynamic, io->values.error)) return false;
+    }
+    for (uint32_t slot = 0; slot < wire->next_dynamic; ++slot) {
+        Q1_SAVE(io, bool, wire->edicts[slot].free);
+        Q1_SAVE(io, float, wire->edicts[slot].freetime);
+        if (!isfinite(wire->edicts[slot].freetime) || wire->edicts[slot].freetime < 0 ||
+            (slot && slot <= g->options.max_clients &&
+                (wire->edicts[slot].free || wire->edicts[slot].freetime != 0)))
+            return q1_save_fail(io, "Invalid Q1 physical Source edict free continuation");
+    }
     if (!table(io, &wire->models) || !table(io, &wire->sounds)) return false;
     if (wire->models.count < 2 || wire->models.rows[1] != wire->map_path ||
         wire->inline_models > wire->models.count - 2)

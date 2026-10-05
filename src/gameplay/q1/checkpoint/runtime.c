@@ -56,12 +56,12 @@ bool q1_save_runtime(q1_save_io *io, qa_q1_game *g) {
     if (g->random.front >= 31 || g->random.rear >= 31 ||
         (g->random.front + 31 - g->random.rear) % 31 != 3)
         return q1_save_fail(io, "Invalid Q1 random continuation");
-    Q1_SAVE(io, actor, g->sight_actor);
-    Q1_SAVE(io, actor, g->horn_charmer);
-    Q1_SAVE(io, actor, g->rogue_runes_world);
+    Q1_SAVE(io, ref, g->sight_actor);
+    Q1_SAVE(io, ref, g->horn_charmer);
+    Q1_SAVE(io, ref, g->rogue_runes_world);
     Q1_SAVE(io, bool, g->rogue_runes_started);
-    if (g->rogue_runes_started != (g->rogue_runes_world.registry != 0) ||
-        (g->rogue_runes_world.registry && g->options.program != QA_Q1_ROGUE))
+    if (g->rogue_runes_started != (q1_ref_present(g->rogue_runes_world) != 0) ||
+        (q1_ref_present(g->rogue_runes_world) && g->options.program != QA_Q1_ROGUE))
         return q1_save_fail(io, "Invalid Rogue rune source-world continuation");
     Q1_SAVE(io, double, g->time);
     Q1_SAVE(io, double, g->elapsed);
@@ -91,7 +91,7 @@ bool q1_save_runtime(q1_save_io *io, qa_q1_game *g) {
         Q1_SAVE(io, u32, rj);
         if (io->values.direction == QA_SOURCE_SAVE_READ) memcpy(&g->qw_rj, &rj, sizeof(rj));
         if (isnan(g->qw_rj)) return q1_save_fail(io, "Invalid QW rj Source global");
-        Q1_SAVE(io, actor, g->qw_multi_entity);
+        Q1_SAVE(io, ref, g->qw_multi_entity);
         Q1_SAVE(io, float, g->qw_multi_damage);
         Q1_SAVE(io, float, g->qw_blood_count);
         Q1_SAVE(io, float, g->qw_puff_count);

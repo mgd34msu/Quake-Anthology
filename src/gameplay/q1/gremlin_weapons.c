@@ -30,14 +30,14 @@ bool q1_gremlin_steal(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *erro
     *out = false;
     qa_q1_target traits;
     qa_body_state body, target;
-    if (m->source.gremlin.stolen || !q1_target(g, m->enemy, &traits) || !traits.player)
+    if (m->source.gremlin.stolen || !q1_target(g, q1_ref_actor(g, m->enemy), &traits) || !traits.player)
         return true;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error) ||
-        !qa_world_body_read(g->services.world, m->enemy, &target, error))
+        !qa_world_body_read(g->services.world, q1_ref_actor(g, m->enemy), &target, error))
         return false;
     if (qa_vec_length(qa_vec_sub(target.origin, body.origin)) > 100 || q1_random(g) < 0.5f)
         return true;
-    q1_player *victim = q1_player_get(g, m->enemy);
+    q1_player *victim = q1_player_get(g, q1_ref_actor(g, m->enemy));
     if (!victim || !victim->arsenal)
         return true;
     qa_q1_weapon weapon = victim->weapon;
@@ -99,7 +99,7 @@ bool q1_gremlin_steal(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *erro
         return false;
     m->source.gremlin.stolen = true;
     m->attack_finished = g->time;
-    m->source.gremlin.last_victim = q1_random(g) > 0.65f ? victim->id : entity->id;
+    m->source.gremlin.last_victim = q1_ref_from(g, q1_random(g) > 0.65f ? victim->id : entity->id);
     qa_actor_id next;
     if (!q1_gremlin_find_victim(g, entity, &next, error))
         return false;
@@ -156,7 +156,7 @@ static void aim_vectors(qa_q1_game *g, qa_vec3 angles) {
 }
 static bool aim(qa_q1_game *g, q1_actor **source, double spread, qa_vec3 *out, qa_error *error) {
     q1_actor *entity = *source;
-    qa_actor_id id = entity->id, enemy = entity->state.monster.enemy;
+    qa_actor_id id = entity->id, enemy = q1_ref_actor(g, entity->state.monster.enemy);
     qa_body_state body, target = {0};
     if (enemy.registry && !qa_world_body_read(g->services.world, enemy, &target, NULL))
         target = (qa_body_state){0};

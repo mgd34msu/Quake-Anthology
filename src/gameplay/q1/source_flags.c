@@ -86,7 +86,7 @@ bool qa_q1_source_flag_read(const qa_q1_game *game, qa_actor_id actor,
     if (!blue && (name.size != sizeof("item_flag_team1") - 1 ||
         memcmp(name.data, "item_flag_team1", name.size)))
         return fail(error, actor, "CTF flag observation names a different source class");
-    *out = (qa_q1_source_flag_view){.actor = actor, .owner = entity->owner,
+    *out = (qa_q1_source_flag_view){.actor = actor, .owner = q1_ref_actor(game, entity->owner),
         .base = entity->state.source_flag.base, .angles = entity->state.source_flag.angles,
         .count = entity->count, .blue = blue, .placed = entity->state.source_flag.placed,
         .trigger = entity->physics.solid == QA_PHYSICS_TRIGGER};
@@ -115,7 +115,7 @@ bool qa_q1_source_flag_carried(const qa_q1_game *game, qa_actor_id player,
     for (uint32_t slot = 0; slot < game->capacity; ++slot) {
         const q1_actor *entity = game->actors[slot];
         if (!entity || !entity->active || !entity->native || entity->kind != Q1_SOURCE_CTF_FLAG ||
-            entity->count != 1 || !qa_actor_id_equal(entity->owner, player)) continue;
+            entity->count != 1 || !q1_ref_equal(entity->owner, q1_ref_from(game, player))) continue;
         const qa_actor_record *record = qa_actors_get(actors, entity->id);
         if (!record || record->owner != game->options.provider || !record->has_source)
             return fail(error, player, "CTF carried flag lost its actual source identity");
@@ -141,7 +141,7 @@ bool qa_q1_source_flag_return(qa_q1_game *game, qa_actor_id actor, qa_error *err
         entity->physics.motion = QA_PHYSICS_TOSS;
         entity->physics.solid = QA_PHYSICS_TRIGGER;
         entity->count = 0;
-        entity->owner = (qa_actor_id){0};
+        entity->owner = (q1_ref){0};
         okay = qa_world_body_read(game->services.world, actor, &body, error) &&
             current(game, actor, entity, error);
     }
@@ -166,7 +166,7 @@ bool qa_q1_source_flag_drop(qa_q1_game *game, qa_actor_id actor, qa_actor_id pla
     qa_body_state body, carrier;
     bool okay = placed(game, actor, &entity, error) &&
         qa_q1_native_client_slot(game, player, &slot, error) &&
-        entity->count == 1 && qa_actor_id_equal(entity->owner, player);
+        entity->count == 1 && q1_ref_equal(entity->owner, q1_ref_from(game, player));
     if (!okay && (!error || error->code == QA_OK))
         fail(error, actor, "CTF drop has no actual source flag carrier");
     if (okay) {
@@ -179,7 +179,7 @@ bool qa_q1_source_flag_drop(qa_q1_game *game, qa_actor_id actor, qa_actor_id pla
             qa_world_body_read(game->services.world, actor, &body, error) &&
             current(game, actor, entity, error) &&
             qa_q1_native_client_slot(game, player, &slot, error);
-        if (okay && (entity->count != 2 || !qa_actor_id_equal(entity->owner, player)))
+        if (okay && (entity->count != 2 || !q1_ref_equal(entity->owner, q1_ref_from(game, player))))
             okay = fail(error, actor, "CTF drop changed during source body preparation");
     }
     if (okay) {
@@ -207,7 +207,7 @@ bool qa_q1_source_flag_carry(qa_q1_game *game, qa_actor_id actor, qa_actor_id pl
         entity->count = 1;
         entity->physics.motion = QA_PHYSICS_STATIONARY;
         entity->physics.solid = QA_PHYSICS_NOT_SOLID;
-        entity->owner = player;
+        entity->owner = q1_ref_from(game, player);
         okay = q1_link(game, entity, error) && current(game, actor, entity, error) &&
             qa_q1_native_client_slot(game, player, &slot, error);
     }
@@ -277,7 +277,7 @@ bool q1_source_flag_think(qa_q1_game *game, q1_actor *entity, q1_think_kind kind
             current(game, actor, entity, error);
     }
     if (entity->count != 1) return fail(error, actor, "CTF flag retained an invalid source count");
-    qa_actor_id owner = entity->owner;
+    qa_actor_id owner = q1_ref_actor(game, entity->owner);
     if (!owner.registry || !q1_alive(game, owner))
         return game->source_flags.return_flag(game->source_flags.context, actor, error) &&
             current(game, actor, entity, error);
@@ -291,7 +291,7 @@ bool q1_source_flag_think(qa_q1_game *game, q1_actor *entity, q1_think_kind kind
     double frame;
     if (!qa_world_body_read(game->services.world, owner, &carrier, error) ||
         !game->source_flags.player_frame(game->source_flags.context, owner, &frame, error) ||
-        !current(game, actor, entity, error) || !qa_actor_id_equal(entity->owner, owner) ||
+        !current(game, actor, entity, error) || !q1_ref_equal(entity->owner, q1_ref_from(game, owner)) ||
         !qa_world_body_read(game->services.world, actor, &body, error)) return false;
     static const unsigned offsets[] = {2, 8, 12, 11, 10, 4, 2, 10, 10, 8, 4, 2};
     float distance = 14;

@@ -354,7 +354,7 @@ bool qa_q1_game_damage_effect(qa_q1_game *g, qa_damage_effect_stage stage,
     } else if (stage == QA_DAMAGE_AFTER_QUAD) {
         qa_actor_id attacker = request->attack.attacker;
         if (attacker.registry)
-            player->killer = attacker;
+            player->killer = q1_ref_from(g, attacker);
         q1_player *inflictor = q1_player_get(g, request->attack.inflictor);
         if (attacker.registry && !qa_actor_id_equal(attacker, request->target) &&
             player->power_expires[QA_Q1_EMPATHY] != 0 &&
@@ -395,7 +395,7 @@ bool q1_sphere_pickup(qa_q1_game *g, q1_actor *item, qa_actor_id actor, bool *ta
         return false;
     sphere->state.projectile.kind = Q1_VENGEANCE;
     sphere->state.projectile.expires = g->time + 30;
-    sphere->state.projectile.activator = sphere->id;
+    sphere->state.projectile.activator = q1_ref_from(g, sphere->id);
     sphere->state.projectile.attack = q1_attack(g, sphere->id, sphere->id, QA_Q1_WEAPON_COUNT);
     if (!qa_builtin_resource(&g->services, "rogue:vengeance",
                              &sphere->state.projectile.attack.cause.source.q1.death_type, error))
@@ -420,9 +420,9 @@ static bool sphere_attack(qa_q1_game *g, q1_actor *sphere, qa_error *error) {
         return false;
     if (!q1_alive(g, sphere->id))
         return true;
-    qa_actor_id enemy = sphere->state.projectile.enemy;
+    qa_actor_id enemy = q1_ref_actor(g, sphere->state.projectile.enemy);
     if (!q1_alive(g, enemy) || q1_health(g, enemy) < 1) {
-        if (!q1_message(g, sphere->owner, "$qc_you_are_denied_vengeance", error))
+        if (!q1_message(g, q1_ref_actor(g, sphere->owner), "$qc_you_are_denied_vengeance", error))
             return false;
         return q1_remove(g, sphere, error);
     }
@@ -437,10 +437,10 @@ static bool sphere_attack(qa_q1_game *g, q1_actor *sphere, qa_error *error) {
 bool q1_power_think(qa_q1_game *g, q1_actor *entity, q1_think_kind kind, qa_error *error) {
     if (kind == Q1_THINK_SPHERE_ATTACK)
         return sphere_attack(g, entity, error);
-    if (!q1_alive(g, entity->owner))
+    if (!q1_alive(g, q1_ref_actor(g, entity->owner)))
         return q1_remove(g, entity, error);
     qa_body_state owner, body;
-    if (!qa_world_body_read(g->services.world, entity->owner, &owner, error) ||
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, entity->owner), &owner, error) ||
         !qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
     if (kind == Q1_THINK_SHIELD) {
@@ -456,7 +456,7 @@ bool q1_power_think(qa_q1_game *g, q1_actor *entity, q1_think_kind kind, qa_erro
         }
         return q1_schedule(g, entity, 0.05, kind, error);
     }
-    q1_player *player = q1_player_get(g, entity->owner);
+    q1_player *player = q1_player_get(g, q1_ref_actor(g, entity->owner));
     if (!player)
         return q1_remove(g, entity, error);
     if (entity->wait < g->time) {
@@ -476,20 +476,20 @@ bool q1_power_think(qa_q1_game *g, q1_actor *entity, q1_think_kind kind, qa_erro
                 return false;
             return q1_remove(g, entity, error);
         }
-        qa_actor_id killer = player->killer;
+        qa_actor_id killer = q1_ref_actor(g, player->killer);
         qa_q1_target target;
         if (q1_alive(g, killer) && (!q1_target(g, killer, &target) || !target.player)) {
             qa_builtin_actor_traits traits;
             q1_actor *native = q1_entity(g, killer);
-            killer = native ? native->owner
-                     : g->services.actor_traits &&
+            killer = q1_ref_actor(g, native ? native->owner
+                     : q1_ref_from(g, g->services.actor_traits &&
                              g->services.actor_traits(g->services.context, killer, &traits)
                          ? traits.owner
-                         : (qa_actor_id){0};
+                         : (qa_actor_id){0}));
         }
         if (!q1_alive(g, killer) || !q1_target(g, killer, &target) || !target.player)
             return q1_remove(g, entity, error);
-        entity->state.projectile.enemy = killer;
+        entity->state.projectile.enemy = q1_ref_from(g, killer);
         return sphere_attack(g, entity, error);
     }
     qa_vec3 center = qa_vec_add(owner.origin, qa_v3(0, 0, 48));
@@ -537,5 +537,5 @@ bool q1_sphere_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_erro
            q1_remove(g, entity, error);
 }
 qa_actor_id qa_q1_horn_charmer(const qa_q1_game *g) {
-    return g ? g->horn_charmer : (qa_actor_id){0};
+    return q1_ref_actor(g, g ? g->horn_charmer : (q1_ref){0});
 }

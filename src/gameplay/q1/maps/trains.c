@@ -80,7 +80,7 @@ static bool corner_speed(qa_q1_game *g, qa_actor_id id, float *speed, qa_error *
     return true;
 }
 static bool departed_event(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    qa_actor_id id = entity->id, goal = entity->map->pending.mover.goal;
+    qa_actor_id id = entity->id, goal = q1_ref_actor(g, entity->map->pending.mover.goal);
     qa_target_field field;
     qa_authored_target fields;
     if (!qa_targets_field(g->maps->options.targets, goal, "event", &field) ||
@@ -90,7 +90,7 @@ static bool departed_event(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_string_id prior_target = entity->target, prior_message = entity->message;
     entity->target = field.value.text;
     entity->message = fields.message;
-    bool ok = q1_map_targets(g, entity, entity->activator, error);
+    bool ok = q1_map_targets(g, entity, q1_ref_actor(g, entity->activator), error);
     entity = train(g, id);
     if (entity) {
         entity->target = prior_target;
@@ -119,7 +119,7 @@ bool q1_map_train_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa
         entity = train(g, id);
         if (!entity || body.velocity.x != 0 || body.velocity.y != 0 || body.velocity.z != 0)
             return true;
-        entity->activator = activator;
+        entity->activator = q1_ref_from(g, activator);
     }
     return q1_map_train_think(g, entity, Q1_MAP_TRAIN_NEXT, error);
 }
@@ -173,7 +173,7 @@ bool q1_map_train_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, q
         }
     }
     if (hipnotic)
-        entity->map->pending.mover.goal = node_id;
+        entity->map->pending.mover.goal = q1_ref_from(g, node_id);
     q1_map_action done = hipnotic && entity->wait == 0 ? Q1_MAP_TRAIN_NEXT : Q1_MAP_TRAIN_WAIT;
     qa_body_state node, body;
     if (!qa_world_body_read(g->services.world, node_id, &node, error))

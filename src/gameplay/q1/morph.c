@@ -1,7 +1,7 @@
 #include "internal.h"
 
 static bool setup(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    q1_actor *owner = q1_entity(g, entity->owner);
+    q1_actor *owner = q1_entity(g, q1_ref_actor(g, entity->owner));
     qa_body_state body;
     qa_combat_state combat;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error) ||
@@ -57,7 +57,7 @@ bool q1_morph_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
            wake(g, entity, error);
 }
 static bool child(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    if (entity->owner.registry ||
+    if (q1_ref_present(entity->owner) ||
         entity->state.monster.source.morph.children > 1u + g->options.skill)
         return true;
     qa_actor_id marker;
@@ -97,7 +97,7 @@ static bool laser(qa_q1_game *g, q1_actor *entity, qa_vec3 origin, qa_vec3 direc
                                qa_vec_scale(qa_vec_normalize(direction), 600), &shot, error);
 }
 static bool attack(qa_q1_game *g, q1_actor *entity, bool stab, qa_error *error) {
-    qa_actor_id enemy = entity->state.monster.enemy;
+    qa_actor_id enemy = q1_ref_actor(g, entity->state.monster.enemy);
     if (stab) {
         bool visible;
         if (!q1_alive(g, enemy))
@@ -154,7 +154,7 @@ static bool attack(qa_q1_game *g, q1_actor *entity, bool stab, qa_error *error) 
            laser(g, entity, origin, qa_vec_sub(direction, qa_vec_scale(g->right, spread)), error);
 }
 static bool smack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    qa_actor_id enemy = entity->state.monster.enemy;
+    qa_actor_id enemy = q1_ref_actor(g, entity->state.monster.enemy);
     if (!q1_alive(g, enemy))
         return true;
     bool visible;
@@ -234,7 +234,7 @@ bool q1_morph_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa
     case Q1_ACTION_MORPH_MORPH_WAKE1: {
         if (!q1_sound(g, entity->id, "guard/see1.wav", 2, 1, error))
             return false;
-        q1_actor *owner = q1_entity(g, entity->owner);
+        q1_actor *owner = q1_entity(g, q1_ref_actor(g, entity->owner));
         if (!owner || owner->kind != Q1_MONSTER)
             return true;
         ++g->total_monsters;
@@ -255,7 +255,7 @@ bool q1_morph_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa
         combat.can_take_damage = true;
         if (!qa_combat_set_traits(g->services.combat, entity->id, &combat, error))
             return false;
-        if (entity->owner.registry) {
+        if (q1_ref_present(entity->owner)) {
             entity->state.monster.next_frame = q1_frame_index("morph_run1");
             if (!q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error))
                 return false;

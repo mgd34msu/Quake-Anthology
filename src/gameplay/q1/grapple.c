@@ -8,10 +8,10 @@ static q1_player *owner_state(qa_q1_game *g, qa_actor_id actor) {
     return player && qa_actor_id_equal(player->id, actor) ? player : NULL;
 }
 static bool reset(qa_q1_game *g, q1_actor *hook, qa_error *error) {
-    q1_player *player = owner_state(g, hook->owner);
+    q1_player *player = owner_state(g, q1_ref_actor(g, hook->owner));
     bool ctf = threewave(hook);
-    if (player && qa_actor_id_equal(player->hook, hook->id)) {
-        player->hook = (qa_actor_id){0};
+    if (player && q1_ref_equal(player->hook, q1_ref_from(g, hook->id))) {
+        player->hook = (q1_ref){0};
         player->grapple_pulling = false;
         if (!ctf) {
             player->weapon_frame = 0;
@@ -19,16 +19,16 @@ static bool reset(qa_q1_game *g, q1_actor *hook, qa_error *error) {
             player->animation_at = -1;
         }
     }
-    if (q1_alive(g, hook->owner)) {
+    if (q1_alive(g, q1_ref_actor(g, hook->owner))) {
         if (ctf && g->options.edition == QA_Q1_CLASSIC &&
-            !q1_sound(g, hook->owner, "weapons/bounce2.wav", 1, 1, error))
+            !q1_sound(g, q1_ref_actor(g, hook->owner), "weapons/bounce2.wav", 1, 1, error))
             return false;
         if (!ctf && player && player->weapon == QA_Q1_ROGUE_GRAPPLE &&
             !q1_weapon_event(g, player, 0, 0, error))
             return false;
     }
     for (unsigned i = 0; i < 3; ++i) {
-        q1_actor *link = q1_entity(g, hook->state.projectile.links[i]);
+        q1_actor *link = q1_entity(g, q1_ref_actor(g, hook->state.projectile.links[i]));
         if (link && !q1_remove(g, link, error))
             return false;
     }
@@ -38,37 +38,41 @@ static bool reset(qa_q1_game *g, q1_actor *hook, qa_error *error) {
 }
 bool qa_q1_grapple_release(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     q1_player *player = g ? owner_state(g, actor) : NULL;
-    q1_actor *hook = player ? q1_entity(g, player->hook) : NULL;
+    q1_actor *hook = player ? q1_entity(g, q1_ref_actor(g, player->hook)) : NULL;
     if (player) {
         player->grapple_pulling = false;
-        q1_actor *timer = q1_entity(g, player->grapple_weapon.animation);
-        player->grapple_weapon.animation = (qa_actor_id){0};
+        q1_actor *timer = q1_entity(g, q1_ref_actor(g, player->grapple_weapon.animation));
+        player->grapple_weapon.animation = (q1_ref){0};
         if (timer && !q1_remove(g, timer, error))
             return false;
     }
     return !hook || reset(g, hook, error);
 }
-void q1_grapple_released(qa_q1_game *g, qa_actor_id actor) {
+void q1_grapple_released(qa_q1_game *g, qa_actor_record released) {
+    qa_actor_id actor = released.id;
+    q1_ref reference = g->wire && released.owner == g->options.provider && released.has_source ?
+        q1_ref_source(g, released.source_slot) : qa_actor_reference_lifetime(actor);
     q1_player *player = owner_state(g, actor);
     if (player)
         (void)qa_q1_grapple_release(g, actor, NULL);
     q1_actor *entity = actor.slot < g->capacity ? g->actors[actor.slot] : NULL;
     if (entity && qa_actor_id_equal(entity->id, actor) && entity->kind == Q1_TIMER &&
-        q1_classnamed(g, actor, "ctf_hook_animation")) {
-        q1_player *owner = owner_state(g, entity->owner);
-        if (owner && qa_actor_id_equal(owner->grapple_weapon.animation, actor))
-            owner->grapple_weapon.animation = (qa_actor_id){0};
+        !strcmp(qa_strings_cstr(qa_session_strings(g->services.session), entity->classname),
+            "ctf_hook_animation")) {
+        q1_player *owner = owner_state(g, q1_ref_actor(g, entity->owner));
+        if (owner && q1_ref_equal(owner->grapple_weapon.animation, reference))
+            owner->grapple_weapon.animation = (q1_ref){0};
     }
     if (entity && qa_actor_id_equal(entity->id, actor) && entity->kind == Q1_PROJECTILE &&
         (entity->state.projectile.kind == Q1_ROGUE_HOOK ||
          entity->state.projectile.kind == Q1_CTF_HOOK)) {
-        q1_player *owner = owner_state(g, entity->owner);
-        if (owner && qa_actor_id_equal(owner->hook, actor)) {
-            owner->hook = (qa_actor_id){0};
+        q1_player *owner = owner_state(g, q1_ref_actor(g, entity->owner));
+        if (owner && q1_ref_equal(owner->hook, reference)) {
+            owner->hook = (q1_ref){0};
             owner->grapple_pulling = false;
         }
         for (unsigned i = 0; i < 3; ++i) {
-            q1_actor *link = q1_entity(g, entity->state.projectile.links[i]);
+            q1_actor *link = q1_entity(g, q1_ref_actor(g, entity->state.projectile.links[i]));
             if (link)
                 (void)q1_remove(g, link, NULL);
         }
@@ -120,12 +124,12 @@ static bool allowed(qa_q1_game *g, q1_actor *hook, qa_actor_id actor, bool pulse
                          "Threewave grapple needs selected team policy");
             return false;
         }
-        *out = g->host.grapple_allowed(g->host.context, hook->owner, actor, pulse);
+        *out = g->host.grapple_allowed(g->host.context, q1_ref_actor(g, hook->owner), actor, pulse);
     } else {
         qa_q1_target target;
         qa_combat_state owner, enemy;
         bool is_player = q1_target(g, actor, &target) && target.player;
-        *out = !is_player || !qa_combat_read(g->services.combat, hook->owner, &owner, NULL) ||
+        *out = !is_player || !qa_combat_read(g->services.combat, q1_ref_actor(g, hook->owner), &owner, NULL) ||
                !qa_combat_read(g->services.combat, actor, &enemy, NULL) || owner.team != enemy.team;
     }
     return true;
@@ -164,8 +168,8 @@ static bool pull_velocity(qa_q1_game *g, q1_actor *hook, q1_player *player, bool
            qa_world_link(g->services.world, player->id, NULL, error);
 }
 static bool position_link(qa_q1_game *g, q1_actor *link, qa_error *error) {
-    q1_actor *hook = q1_entity(g, link->owner);
-    q1_player *player = hook ? q1_player_get(g, hook->owner) : NULL;
+    q1_actor *hook = q1_entity(g, q1_ref_actor(g, link->owner));
+    q1_player *player = hook ? q1_player_get(g, q1_ref_actor(g, hook->owner)) : NULL;
     if (!hook || !player)
         return q1_remove(g, link, error);
     qa_body_state body, head, chain;
@@ -191,7 +195,7 @@ bool qa_q1_grapple_fire(qa_q1_game *g, qa_actor_id actor, bool ctf, const qa_q1_
         return true;
     if (!ctf)
         player->attack_finished = g->time + 0.1;
-    if (q1_entity(g, player->hook)) {
+    if (q1_entity(g, q1_ref_actor(g, player->hook))) {
         if (ctf)
             return true;
         player->weapon_frame = 2;
@@ -208,11 +212,11 @@ bool qa_q1_grapple_fire(qa_q1_game *g, qa_actor_id actor, bool ctf, const qa_q1_
     q1_actor *hook;
     if (!q1_create(g, ctf ? "ctf_hook" : "hook", Q1_PROJECTILE, actor, &hook, error))
         return false;
-    player->hook = hook->id;
+    player->hook = q1_ref_from(g, hook->id);
     hook->state.projectile.kind = ctf ? Q1_CTF_HOOK : Q1_ROGUE_HOOK;
     hook->state.projectile.weapon = ctf ? QA_Q1_CTF_GRAPPLE : QA_Q1_ROGUE_GRAPPLE;
     const qa_q1_weapon_view *shape=q1_weapon_shape(hook->state.projectile.weapon);
-    hook->state.projectile.activator = actor;
+    hook->state.projectile.activator = q1_ref_from(g, actor);
     hook->state.projectile.expires = g->time + shape->lifetime;
     hook->state.projectile.attack = q1_attack(g, actor, hook->id, hook->state.projectile.weapon);
     hook->state.projectile.attack.projectile = hook->id;
@@ -242,7 +246,7 @@ bool qa_q1_grapple_fire(qa_q1_game *g, qa_actor_id actor, bool ctf, const qa_q1_
             q1_actor *link;
             if (!q1_create(g, "ctf_hook_link", Q1_TIMER, hook->id, &link, error))
                 return false;
-            hook->state.projectile.links[number - 1] = link->id;
+            hook->state.projectile.links[number - 1] = q1_ref_from(g, link->id);
             link->count = (float)number / 4;
             link->physics.motion = QA_PHYSICS_NOCLIP;
             link->physics.angular_velocity = qa_v3(310, 410, 510);
@@ -266,7 +270,7 @@ bool q1_grapple_touch(qa_q1_game *g, q1_actor *hook, qa_actor_id actor,
                       const qa_touch_contact *contact, qa_error *error) {
     if (hook->state.projectile.count)
         return true;
-    q1_player *player = q1_player_get(g, hook->owner);
+    q1_player *player = q1_player_get(g, q1_ref_actor(g, hook->owner));
     if (!player)
         return reset(g, hook, error);
     if (qa_actor_id_equal(actor, player->id))
@@ -365,7 +369,7 @@ bool q1_grapple_touch(qa_q1_game *g, q1_actor *hook, qa_actor_id actor,
             return false;
     }
     hook->state.projectile.count = 1;
-    hook->state.projectile.enemy = actor;
+    hook->state.projectile.enemy = q1_ref_from(g, actor);
     if (!q1_link(g, hook, error))
         return false;
     return q1_schedule(g, hook, ctf ? 0.1 : 0, Q1_THINK_HOOK_TRACK, error);
@@ -373,14 +377,14 @@ bool q1_grapple_touch(qa_q1_game *g, q1_actor *hook, qa_actor_id actor,
 bool q1_grapple_think(qa_q1_game *g, q1_actor *hook, q1_think_kind kind, qa_error *error) {
     if (kind == Q1_THINK_HOOK_LINK)
         return position_link(g, hook, error);
-    q1_player *player = q1_player_get(g, hook->owner);
+    q1_player *player = q1_player_get(g, q1_ref_actor(g, hook->owner));
     if (kind == Q1_THINK_HOOK_RESET || !player)
         return reset(g, hook, error);
     if (kind == Q1_THINK_HOOK_FLY)
         return g->time >= hook->state.projectile.expires || player->grapple_release
                    ? reset(g, hook, error)
                    : q1_schedule(g, hook, 0.1, kind, error);
-    qa_actor_id enemy = hook->state.projectile.enemy;
+    qa_actor_id enemy = q1_ref_actor(g, hook->state.projectile.enemy);
     bool ctf = threewave(hook), solid, centered, target_player;
     qa_error local = {0};
     qa_actor_id hook_id = hook->id, player_id = player->id;
@@ -472,7 +476,7 @@ bool q1_grapple_think(qa_q1_game *g, q1_actor *hook, q1_think_kind kind, qa_erro
     return q1_schedule(g, hook, 0.1, Q1_THINK_HOOK_TRACK, error);
 }
 bool q1_grapple_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
-    q1_actor *hook = q1_entity(g, player->hook);
+    q1_actor *hook = q1_entity(g, q1_ref_actor(g, player->hook));
     if (!hook)
         return true;
     bool ctf = threewave(hook);

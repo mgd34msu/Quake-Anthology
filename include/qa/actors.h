@@ -15,6 +15,27 @@ typedef struct qa_actor_id {
     uint32_t slot;
 } qa_actor_id;
 
+/* Source entity pointers name a physical slot, including while it is free.
+ * Lifetime references retain the exact actor for cross-Source services. */
+typedef enum qa_actor_reference_kind {
+    QA_ACTOR_REFERENCE_NONE,
+    QA_ACTOR_REFERENCE_LIFETIME,
+    QA_ACTOR_REFERENCE_SOURCE
+} qa_actor_reference_kind;
+typedef struct qa_actor_reference {
+    qa_actor_reference_kind kind;
+    union {
+        qa_actor_id actor;
+        struct { qa_actor_owner owner; uint32_t slot; } source;
+    } value;
+} qa_actor_reference;
+
+qa_actor_reference qa_actor_reference_lifetime(qa_actor_id);
+qa_actor_reference qa_actor_reference_source(qa_actor_owner, uint32_t);
+bool qa_actor_reference_present(qa_actor_reference);
+bool qa_actor_reference_equal(qa_actor_reference, qa_actor_reference);
+qa_actor_id qa_actor_reference_resolve(const qa_actor_registry *, qa_actor_reference);
+
 typedef struct qa_actor_record {
     qa_actor_id id;
     qa_actor_owner owner;

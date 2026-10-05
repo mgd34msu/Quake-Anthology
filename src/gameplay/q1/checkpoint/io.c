@@ -117,6 +117,9 @@ bool q1_save_actor(q1_save_io *io, qa_actor_id *value) {
     }
     return true;
 }
+bool q1_save_ref(q1_save_io *io, q1_ref *value) {
+    return qa_source_save_actor_reference(&io->values, value);
+}
 
 bool q1_save_literal(q1_save_io *io, const char **value) {
     uint32_t index = 0;

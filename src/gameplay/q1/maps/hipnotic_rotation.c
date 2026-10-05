@@ -93,11 +93,11 @@ static bool link_targets(qa_q1_game *g, qa_actor_id id, qa_error *error) {
         qa_vec3 center = wall ? qa_vec_add(body.origin,
             qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), .5f)) : body.origin;
         qa_vec3 relative = qa_vec_sub(center, self.origin);
-        g->maps->rotated_targets[actor.slot] = (q1_rotate_target){.actor = actor, .owner = id,
+        g->maps->rotated_targets[actor.slot] = (q1_rotate_target){.actor = actor, .owner = q1_ref_from(g, id),
             .original = relative, .current = relative, .type = wall ? 1 : object ? 0 : 2};
         q1_actor *native = q1_entity(g, actor);
         if ((wall || object) && native)
-            native->owner = id;
+            native->owner = q1_ref_from(g, id);
     }
     qa_builtin_snapshot_release(list);
     return ok;
@@ -313,7 +313,7 @@ bool q1_map_rotation_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, bool b
                             qa_error *error) {
     if (e->map->kind != Q1_MAP_MOVEWALL || (blocked && e->physics.solid != QA_PHYSICS_BRUSH))
         return true;
-    qa_actor_id id = e->id, owner_id = e->owner;
+    qa_actor_id id = e->id, owner_id = q1_ref_actor(g, e->owner);
     q1_actor *owner = rotation(g, owner_id);
     if (!owner || g->time < owner->map->cooldown)
         return true;
@@ -344,7 +344,7 @@ static bool clock_tick(qa_q1_game *g, qa_actor_id id, qa_error *error) {
             return q1_map_fail(error, "Hipnotic clock target owner is unavailable");
         fields.target = e->map->event;
         fields.message = (qa_string_id){0};
-        qa_target_use use = {.source = id, .activator = e->activator,
+        qa_target_use use = {.source = id, .activator = q1_ref_actor(g, e->activator),
                              .dialect = g->options.quakeworld ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE,
                              .fields = fields, .time_ns = g->time_ns};
         if (!qa_targets_use_request(g->maps->options.targets, &use, error))
@@ -618,7 +618,7 @@ static bool event_targets(qa_q1_game *g, qa_actor_id id, qa_string_id target,
         return q1_map_fail(error, "Hipnotic train target owner is unavailable");
     fields.target = target;
     fields.message = message;
-    qa_target_use use = {.source = id, .activator = e->activator,
+    qa_target_use use = {.source = id, .activator = q1_ref_actor(g, e->activator),
         .dialect = g->options.quakeworld ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE,
         .fields = fields, .time_ns = g->time_ns};
     return qa_targets_use_request(g->maps->options.targets, &use, error);
@@ -647,7 +647,7 @@ static bool train_find(qa_q1_game *g, qa_actor_id id, qa_error *error) {
         return true;
     r = &e->map->pending.rotation;
     r->phase = 3;
-    r->goal = goal;
+    r->goal = q1_ref_from(g, goal);
     if (path.flags & 2) {
         body.angles = path.body.angles;
         r->final_angle = normalized(path.body.angles);
@@ -669,7 +669,7 @@ static bool train_stop(qa_q1_game *g, qa_actor_id id, bool wait, qa_error *error
     if (!e)
         return true;
     rotate_path path;
-    if (!path_read(g, e->map->pending.rotation.goal, &path, error))
+    if (!path_read(g, q1_ref_actor(g, e->map->pending.rotation.goal), &path, error))
         return false;
     e = rotation(g, id);
     if (!e)
@@ -713,7 +713,7 @@ static bool train_next(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     if (!e)
         return true;
     e->map->pending.rotation.phase = 4;
-    qa_actor_id goal_id = e->map->pending.rotation.goal, next_id;
+    qa_actor_id goal_id = q1_ref_actor(g, e->map->pending.rotation.goal), next_id;
     qa_string_id next_name = e->map->path;
     if (!qa_targets_first(g->maps->options.targets, next_name, &next_id))
         return q1_map_fail(error, "Hipnotic rotating train has no next path");
@@ -733,7 +733,7 @@ static bool train_next(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     if (!e)
         return true;
     q1_map_rotation *r = &e->map->pending.rotation;
-    r->goal = next_id;
+    r->goal = q1_ref_from(g, next_id);
     e->map->path = next.fields.target;
     r->next = next.flags & 4 ? ROTATE_TRAIN_STOP : next.wait != 0 ? ROTATE_TRAIN_WAIT : ROTATE_TRAIN_NEXT;
     if (!event_targets(g, id, current.event, current.fields.message, error))

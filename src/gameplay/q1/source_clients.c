@@ -33,10 +33,10 @@ bool qa_q1_source_client_read(const qa_q1_game *game,qa_actor_id actor,qa_q1_sou
     *out=(qa_q1_source_client_view){.actor=actor,.slot=player->client_slot,.name=name && *name?name:"unconnected",
         .frags=player->source_frags,.team=player->source_team,.shirt=color(info(game,player,"topcolor")),
         .pants=color(info(game,player,"bottomcolor")),.observer=player->source_observer,
-        .spectator_goal=player->source_spectator_goal,
-        .spectator_track=player->source_spectator_track,
-        .spectator_goal_ordinal=player->source_spectator_goal_ordinal,
-        .spectator_track_slot=player->source_spectator_track_slot,
+        .spectator_goal=q1_ref_actor(game, player->source_spectator_goal),
+        .spectator_track=q1_ref_actor(game, player->source_spectator_track),
+        .spectator_goal_ordinal=q1_ref_ordinal(player->source_spectator_goal),
+        .spectator_track_slot=q1_ref_ordinal(player->source_spectator_track),
         .no_target=player->source_no_target,.god_mode=player->source_god_mode,.impulse=player->source_impulse,
         .use=player->source_use,.death_recorded=player->source_death_recorded,
         .respawn_requested_at=player->source_respawn_requested_at};return true;
@@ -209,13 +209,13 @@ bool qa_q1_source_spectator_goal_reset(qa_q1_game *game,qa_actor_id actor,qa_err
     if(!qa_q1_game_operation_begin(game,&operation,error)) return false;
     q1_player *player=spectator(game,actor,error);
     if(player) {
-        player->source_spectator_goal=(qa_actor_id){0};
-        player->source_spectator_goal_ordinal=0;
+        player->source_spectator_goal=(q1_ref){0};
+
     }
     qa_q1_game_operation_end(&operation);return player!=NULL;
 }
 static bool spectator_find(qa_q1_game *game,uint32_t ordinal,qa_actor_id *out,
-    uint32_t *out_ordinal,qa_error *error) {
+    qa_error *error) {
     qa_actor_id first={0};uint32_t first_slot=UINT32_MAX;
     for(uint32_t i=0;i<game->capacity;++i) {
         const q1_actor *entity=game->actors[i];
@@ -230,7 +230,7 @@ static bool spectator_find(qa_q1_game *game,uint32_t ordinal,qa_actor_id *out,
             first=entity->id;first_slot=record->source_slot;
         }
     }
-    *out=first;*out_ordinal=first.registry?first_slot:0;return true;
+    *out=first;return true;
 }
 bool qa_q1_source_spectator_goal_next(qa_q1_game *game,qa_actor_id actor,
     qa_actor_id *out,bool *found,qa_error *error) {
@@ -238,16 +238,16 @@ bool qa_q1_source_spectator_goal_next(qa_q1_game *game,qa_actor_id actor,
     qa_q1_game_operation operation={0};
     if(!qa_q1_game_operation_begin(game,&operation,error)) return false;
     q1_player *player=spectator(game,actor,error);
-    qa_actor_id next;uint32_t ordinal;
-    bool okay=player && spectator_find(game,player->source_spectator_goal_ordinal,&next,&ordinal,error);
+    qa_actor_id next;
+    bool okay=player && spectator_find(game,q1_ref_ordinal(player->source_spectator_goal),&next,error);
     if(okay) {
-        player->source_spectator_goal=next;
-        player->source_spectator_goal_ordinal=ordinal;
+        player->source_spectator_goal=q1_ref_from(game, next);
+
         if(!next.registry) {
-            okay=spectator_find(game,0,&next,&ordinal,error);
+            okay=spectator_find(game,0,&next,error);
             if(okay) {
-                player->source_spectator_goal=next;
-                player->source_spectator_goal_ordinal=ordinal;
+                player->source_spectator_goal=q1_ref_from(game, next);
+
             }
         }
         if(okay) {*out=next;*found=next.registry!=0;}
@@ -260,20 +260,18 @@ bool qa_q1_source_spectator_track(qa_q1_game *game,qa_actor_id actor,qa_actor_id
     q1_player *player=(q1_player *)client_const(game,actor);
     bool okay=player && game->options.quakeworld;
     if(!okay) qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,"Spectator tracking needs its actual QW source client");
-    uint32_t track_slot=0;
     if(okay && target.registry) {
         const q1_player *tracked=client_const(game,target);
         if(!tracked || tracked->source_observer || tracked->client_slot>=game->options.max_clients) {
             qa_error_set(error,QA_ERROR_ARGUMENT,target.slot,"Spectator tracking needs its actual playing source client");
             okay=false;
         }
-        else track_slot=tracked->client_slot+1;
     }
     if(okay) {
-        player->source_spectator_track=target;
-        player->source_spectator_track_slot=track_slot;
-        player->source_spectator_goal=target;
-        player->source_spectator_goal_ordinal=track_slot;
+        player->source_spectator_track=q1_ref_from(game, target);
+
+        player->source_spectator_goal=q1_ref_from(game, target);
+
     }
     qa_q1_game_operation_end(&operation);return okay;
 }

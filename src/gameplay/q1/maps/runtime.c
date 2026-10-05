@@ -77,8 +77,8 @@ bool qa_q1_game_rogue_runes_claim(qa_q1_game *g, bool *newly_claimed, qa_error *
         : g->services.physics ? g->services.physics->world_actor : (qa_actor_id){0};
     if (g->options.program == QA_Q1_ROGUE && g->options.deathmatch != 0 &&
         (g->options.gamecfg & 1u) && q1_alive(g, world)) {
-        if (!qa_actor_id_equal(g->rogue_runes_world, world)) {
-            g->rogue_runes_world = world;
+        if (!q1_ref_equal(g->rogue_runes_world, q1_ref_from(g, world))) {
+            g->rogue_runes_world = q1_ref_from(g, world);
             g->rogue_runes_started = false;
         }
         if (!g->rogue_runes_started) {
@@ -144,8 +144,8 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
     g->authored_gremlins = g->spawned_gremlins = 0;
     g->source_captures[0] = g->source_captures[1] = 0;
     g->qw_rj = g->options.quakeworld ? 1 : 0;
-    g->sight_actor = g->horn_charmer = (qa_actor_id){0};
-    g->rogue_runes_world = (qa_actor_id){0};
+    g->sight_actor = g->horn_charmer = (q1_ref){0};
+    g->rogue_runes_world = (q1_ref){0};
     g->rogue_runes_started = false;
     g->time_ns = Q1_SOURCE_INITIAL_TIME_NS;
     g->time = (double)g->time_ns / 1000000000.0;
@@ -706,8 +706,6 @@ bool q1_map_clone(qa_q1_game *g, const q1_actor *source, q1_actor *destination, 
     *copy = *source->map;
     copy->allocated_next = allocated;
     copy->pool_next = NULL;
-    if (copy->action == Q1_MAP_DELAYED_USE)
-        copy->pending.delayed.source = destination->id;
     if (g->maps->rotated_targets) {
         q1_rotate_target *row = &g->maps->rotated_targets[source->id.slot];
         if (qa_actor_id_equal(row->actor, source->id)) {
@@ -1444,7 +1442,7 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
     if (entity->map->kind == Q1_MAP_CANCEL_PAUSE || entity->map->kind == Q1_MAP_SWITCH_PATH)
         return q1_map_path_use(g, entity, error);
     if (entity->map->kind == Q1_MAP_SACRIFICE) {
-        entity->activator = activator;
+        entity->activator = q1_ref_from(g, activator);
         return q1_map_sacrifice_gib(g, entity, error);
     }
     if (q1_map_is_mover(entity->map->kind))
@@ -1574,7 +1572,7 @@ bool q1_map_reaction(qa_q1_game *g, q1_actor *entity, const qa_damage_outcome *o
                q1_map_multi_fire(g, entity, outcome->request.attack.attacker, error);
     if (entity->map->kind != Q1_MAP_BARREL)
         return true;
-    entity->activator = outcome->request.attack.attacker;
+    entity->activator = q1_ref_from(g, outcome->request.attack.attacker);
     return qa_builtin_resource(&g->services, "explo_box", &entity->classname, error) &&
            q1_map_damageable(g, entity, false, error) &&
            q1_map_schedule(g, entity, .3, Q1_MAP_BARREL_EXPLODE, error);
@@ -1588,7 +1586,7 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (action == Q1_MAP_FOREIGN_REMOVE) {
         if (state->kind != Q1_MAP_DELAY || !g->maps->options.retire_actor)
             return q1_map_fail(error, "invalid Q1 foreign removal continuation owner");
-        qa_actor_id helper = entity->id, target = entity->owner;
+        qa_actor_id helper = entity->id, target = q1_ref_actor(g, entity->owner);
         if (q1_alive(g, target) &&
             !g->maps->options.retire_actor(g->maps->options.context, target, error))
             return false;
@@ -1668,8 +1666,14 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         }
         return q1_link(g, entity, error);
     case Q1_MAP_DELAYED_USE: {
-        qa_target_use use = state->pending.delayed;
-        use.time_ns = g->time_ns;
+        qa_target_use use = {.source = entity->id,
+            .activator = q1_ref_actor(g, entity->activator),
+            .dialect = state->pending.delayed.dialect,
+            .fields = {.classname = entity->classname, .target = entity->target,
+                .killtarget = entity->killtarget, .message = entity->message,
+                .shader_old = state->pending.delayed.shader_old,
+                .shader_new = state->pending.delayed.shader_new},
+            .time_ns = g->time_ns};
         if (!qa_targets_use_now(g->maps->options.targets, &use, error))
             return false;
         return !q1_alive(g, entity->id) || q1_remove(g, entity, error);
@@ -1678,7 +1682,7 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (g->options.program == QA_Q1_DOPA || g->options.program == QA_Q1_MG1 ||
             g->options.program == QA_Q1_MG3)
             return q1_map_addon_changelevel_begin(g, entity, error);
-        return qa_q1_level_begin(g->maps->options.level, state->map, entity->activator, g->time,
+        return qa_q1_level_begin(g->maps->options.level, state->map, q1_ref_actor(g, entity->activator), g->time,
                                  error);
     case Q1_MAP_PENDING_LEVEL:
         if (!qa_q1_level_begin_pending(g->maps->options.level, g->time, error))
@@ -1690,7 +1694,7 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             return false;
         return !q1_alive(g, entity->id) || q1_remove(g, entity, error);
     case Q1_MAP_BARREL_EXPLODE: {
-        if (!q1_radius(g, entity->id, entity->activator, 160, (qa_actor_id){0}, QA_Q1_WEAPON_COUNT,
+        if (!q1_radius(g, entity->id, q1_ref_actor(g, entity->activator), 160, (qa_actor_id){0}, QA_Q1_WEAPON_COUNT,
                        error))
             return false;
         if (!q1_alive(g, entity->id))
@@ -1731,12 +1735,10 @@ bool qa_q1_game_map_defer_targets(qa_q1_game *g, const qa_target_use *use, qa_er
     q1_actor *entity;
     if (!q1_map_timer(g, "DelayedUse", &entity, error))
         return false;
-    entity->map->pending.delayed = *use;
-    entity->map->pending.delayed.source = entity->id;
-    entity->map->pending.delayed.fields.classname = entity->classname;
-    entity->map->pending.delayed.fields.delay_seconds = 0;
-    entity->map->pending.delayed.live_fields = false;
-    entity->activator = use->activator;
+    entity->map->pending.delayed.dialect = use->dialect;
+    entity->map->pending.delayed.shader_old = use->fields.shader_old;
+    entity->map->pending.delayed.shader_new = use->fields.shader_new;
+    entity->activator = q1_ref_from(g, use->activator);
     entity->target = use->fields.target;
     entity->killtarget = use->fields.killtarget;
     entity->message = use->fields.message;
@@ -1767,7 +1769,7 @@ bool qa_q1_game_map_defer_remove(qa_q1_game *g, qa_actor_id target, double delay
     q1_actor *entity = NULL;
     bool ok = q1_map_timer(g, "DelayedRemove", &entity, error);
     if (ok) {
-        entity->owner = target;
+        entity->owner = q1_ref_from(g, target);
         ok = q1_map_schedule(g, entity, delay, Q1_MAP_FOREIGN_REMOVE, error);
         if (!ok && q1_alive(g, entity->id))
             (void)q1_remove(g, entity, NULL);

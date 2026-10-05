@@ -624,7 +624,7 @@ static bool classic_dodge(q2m_context *context, qa_actor_id attacker,
     return true;
   if (monster->enemy.registry == 0) {
     monster->enemy = attacker;
-    context->actor->physics.enemy = attacker;
+    context->actor->physics.enemy = qa_actor_reference_lifetime(attacker);
   }
 
   if (context->game->options.product == QA_Q2_XATRIX && species == Q2M_GEKK) {
@@ -1057,8 +1057,8 @@ bool qa_q2_monster_turret_admit(qa_q2_game *game, qa_actor_id id,
   monster->attack_ns = 0;
   monster->enemy = (qa_actor_id){0};
   monster->goal = (qa_actor_id){0};
-  context.actor->physics.enemy = (qa_actor_id){0};
-  context.actor->physics.goal = (qa_actor_id){0};
+  context.actor->physics.enemy = (qa_actor_reference){0};
+  context.actor->physics.goal = (qa_actor_reference){0};
   context.actor->physics.motion = QA_PHYSICS_PUSH;
   context.actor->physics.solid = QA_PHYSICS_BOX;
   qa_combat_state traits;
@@ -1109,8 +1109,8 @@ bool qa_q2_monster_turret_aim(qa_q2_game *game, qa_actor_id id,
         combat.health <= 0.0f) {
       monster->enemy = (qa_actor_id){0};
       monster->goal = (qa_actor_id){0};
-      context.actor->physics.enemy = (qa_actor_id){0};
-      context.actor->physics.goal = (qa_actor_id){0};
+      context.actor->physics.enemy = (qa_actor_reference){0};
+      context.actor->physics.goal = (qa_actor_reference){0};
     }
   }
 
@@ -1211,7 +1211,7 @@ bool qa_q2_monster_route_advance(qa_q2_game *game, qa_actor_id id, qa_actor_id g
   q2m_context context;
   if (!public_monster_context(game, id, &context, error)) return false;
   if (!context.actor) return true;
-  context.monster->goal = context.monster->move_target = context.actor->physics.goal = goal;
+  context.monster->goal = context.monster->move_target = qa_actor_reference_resolve(qa_session_actors(game->services.session), context.actor->physics.goal = qa_actor_reference_lifetime(goal));
   context.monster->pause_ns = pause_until_ns;
   context.monster->stand_ground = hold;
   if (goal.registry) {
@@ -1230,7 +1230,7 @@ bool qa_q2_monster_follow_begin(qa_q2_game *game, qa_actor_id id,
   if (!public_monster_context(game, id, &context, error)) return false;
   if (!context.actor) return true;
   context.monster->old_enemy = previous_enemy;
-  context.monster->enemy = context.actor->physics.enemy = (qa_actor_id){0};
+  context.monster->enemy = qa_actor_reference_resolve(qa_session_actors(game->services.session), context.actor->physics.enemy = (qa_actor_reference){0});
   return q2m_set_move(&context, context.monster->definition->walk_move, false, error);
 }
 
@@ -1285,7 +1285,7 @@ bool qa_q2_monster_touch_path_corner(qa_q2_game *game, qa_actor_id id,
     context.monster->ideal_yaw =
         atan2f(direction.y, direction.x) * 57.29577951308232f;
   }
-  context.actor->physics.goal = context.monster->goal;
+  context.actor->physics.goal = qa_actor_reference_lifetime(context.monster->goal);
   *accepted = true;
   return true;
 }
@@ -1328,7 +1328,7 @@ bool qa_q2_monster_touch_combat_point(qa_q2_game *game, qa_actor_id id,
     context.monster->combat_point = false;
     *finished = true;
   }
-  context.actor->physics.goal = context.monster->goal;
+  context.actor->physics.goal = qa_actor_reference_lifetime(context.monster->goal);
   *accepted = true;
   return true;
 }
@@ -1467,8 +1467,8 @@ static bool initialize_body(qa_q2_game *game, q2_actor *actor,
   actor->physics.gravity_scale = 1.0f;
   actor->physics.ideal_yaw = body.angles.y;
   actor->physics.yaw_speed = monster->yaw_speed;
-  actor->physics.enemy = monster->enemy;
-  actor->physics.goal = monster->goal;
+  actor->physics.enemy = qa_actor_reference_lifetime(monster->enemy);
+  actor->physics.goal = qa_actor_reference_lifetime(monster->goal);
   actor->physics_bound = true;
   monster->ideal_yaw = body.angles.y;
   return true;
@@ -2349,8 +2349,8 @@ bool q2_monster_reaction(qa_q2_game *game, const qa_damage_outcome *outcome,
         return false;
       monster->enemy = attacker;
       monster->goal = attacker;
-      actor->physics.enemy = attacker;
-      actor->physics.goal = attacker;
+      actor->physics.enemy = qa_actor_reference_lifetime(attacker);
+      actor->physics.goal = qa_actor_reference_lifetime(attacker);
     }
     monster->pending_death = true;
   } else if (outcome->result.reaction == QA_REACTION_PAIN &&

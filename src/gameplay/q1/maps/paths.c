@@ -5,19 +5,19 @@ bool qa_q1_game_path_read(const qa_q1_game *g, qa_actor_id actor, qa_q1_path_sta
     const q1_actor *entity = g ? q1_entity_const(g, actor) : NULL;
     if (!entity || !entity->native || !out)
         return false;
-    *out = (qa_q1_path_state){.owner = entity->owner};
+    *out = (qa_q1_path_state){.owner = q1_ref_actor(g, entity->owner)};
     if (entity->map &&
         (entity->map->kind == Q1_MAP_ENDING_ACTOR || entity->map->kind == Q1_MAP_BUZZSAW)) {
-        out->move_target = entity->map->pending.follower.move_target;
+        out->move_target = q1_ref_actor(g, entity->map->pending.follower.move_target);
         out->pause_until = entity->map->pause_time;
         out->path = entity->target;
     }
     if (entity->kind == Q1_MONSTER) {
         const q1_monster *m = &entity->state.monster;
-        out->move_target = m->move_target;
-        out->enemy = m->enemy;
-        out->old_enemy = m->old_enemy;
-        out->previous_corner = m->previous_corner;
+        out->move_target = q1_ref_actor(g, m->move_target);
+        out->enemy = q1_ref_actor(g, m->enemy);
+        out->old_enemy = q1_ref_actor(g, m->old_enemy);
+        out->previous_corner = q1_ref_actor(g, m->previous_corner);
         out->path = m->path;
         out->pause_until = m->pause_until;
         out->follow_until = m->follow_until;
@@ -35,7 +35,7 @@ bool qa_q1_game_path_change(qa_q1_game *g, qa_actor_id actor, const qa_q1_path_c
         change->kind > QA_Q1_PATH_FOUND)
         return q1_map_fail(error, "invalid Q1 path change");
     if (change->kind == QA_Q1_PATH_OWNER) {
-        entity->owner = change->reference;
+        entity->owner = q1_ref_from(g, change->reference);
         return true;
     }
     if (entity->kind != Q1_MONSTER)
@@ -43,7 +43,7 @@ bool qa_q1_game_path_change(qa_q1_game *g, qa_actor_id actor, const qa_q1_path_c
     q1_monster *m = &entity->state.monster;
     switch (change->kind) {
     case QA_Q1_PATH_VISIT:
-        m->previous_corner = change->reference;
+        m->previous_corner = q1_ref_from(g, change->reference);
         return true;
     case QA_Q1_PATH_DESTINATION: {
         qa_body_state self, destination = {0};
@@ -64,7 +64,7 @@ bool qa_q1_game_path_change(qa_q1_game *g, qa_actor_id actor, const qa_q1_path_c
             return true;
         m = &entity->state.monster;
         m->path = change->reference.registry ? change->target : QA_STRING_NONE;
-        entity->physics.goal = m->move_target = change->reference;
+        entity->physics.goal = m->move_target = q1_ref_from(g, change->reference);
         if (g->maps && !change->combat_route) qa_targets_monster_route(g->maps->options.targets, actor,
             m->path, change->reference);
         qa_vec3 direction = qa_vec_sub(destination.origin, self.origin);
@@ -88,8 +88,8 @@ bool qa_q1_game_path_change(qa_q1_game *g, qa_actor_id actor, const qa_q1_path_c
         uint16_t frame = q1_frame_index(m->species->walk);
         if (frame == UINT16_MAX)
             return q1_map_fail(error, "Q1 follow target has no walk continuation");
-        m->old_enemy = change->reference;
-        m->enemy = entity->physics.enemy = (qa_actor_id){0};
+        m->old_enemy = q1_ref_from(g, change->reference);
+        m->enemy = entity->physics.enemy = (q1_ref){0};
         m->next_frame = frame;
         entity->think = Q1_THINK_MONSTER_FRAME;
         return true;
@@ -148,7 +148,7 @@ bool q1_map_path_touch(qa_q1_game *g, q1_actor *corner, qa_actor_id actor, qa_er
     corner = q1_entity(g, corner_id);
     if (!corner || !corner->map || corner->map->kind != Q1_MAP_PATH || !q1_alive(g, actor))
         return true;
-    corner->owner = actor;
+    corner->owner = q1_ref_from(g, actor);
     qa_q1_path_state previous;
     if (q1_classnamed(g, mover.previous_corner, "path_corner") &&
         read_path(g, mover.previous_corner, &previous) &&

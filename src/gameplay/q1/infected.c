@@ -88,8 +88,8 @@ static bool gibs(qa_q1_game *g, q1_actor *entity, qa_vec3 origin, float health, 
 }
 static bool retarget(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_monster *m = &entity->state.monster;
-    if (!m->enemy.registry ||
-        !q1_classnamed(g, m->enemy,
+    if (!q1_ref_present(m->enemy) ||
+        !q1_classnamed(g, q1_ref_actor(g, m->enemy),
                        m->species->species == QA_Q1_ZOMBIE ? "monster_zombie" : "monster_demon1"))
         return true;
     qa_builtin_snapshot_frame *snapshot;
@@ -104,14 +104,14 @@ static bool retarget(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_builtin_snapshot_release(snapshot);
     if (!player.registry)
         return true;
-    q1_actor *rival = q1_entity(g, m->enemy);
+    q1_actor *rival = q1_entity(g, q1_ref_actor(g, m->enemy));
     if (rival && rival->kind == Q1_MONSTER &&
-        qa_actor_id_equal(rival->state.monster.enemy, entity->id)) {
-        rival->state.monster.enemy = player;
-        rival->physics.enemy = player;
+        q1_ref_equal(rival->state.monster.enemy, q1_ref_from(g, entity->id))) {
+        rival->state.monster.enemy = q1_ref_from(g, player);
+        rival->physics.enemy = q1_ref_from(g, player);
     }
-    m->enemy = player;
-    entity->physics.enemy = player;
+    m->enemy = q1_ref_from(g, player);
+    entity->physics.enemy = q1_ref_from(g, player);
     return true;
 }
 bool q1_infected_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
@@ -186,7 +186,7 @@ bool q1_infected_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return q1_monster_play(g, entity, zombie ? "zombie_paina1" : "demon1_pain1", error);
     m->counted_death = true;
     m->dead = true;
-    if (!q1_monster_death_report(g, entity, m->enemy, true, error))
+    if (!q1_monster_death_report(g, entity, q1_ref_actor(g, m->enemy), true, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;

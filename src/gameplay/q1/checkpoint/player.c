@@ -113,20 +113,20 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
     Q1_SAVE(io, u32, player->mg3_progress.rockets);
     Q1_SAVE(io, u32, player->mg3_progress.cells);
     Q1_SAVE(io, u32, player->mg3_progress.bloody);
-    Q1_SAVE(io, actor, player->mg3_hammer_target);
+    Q1_SAVE(io, ref, player->mg3_hammer_target);
     Q1_SAVE(io, double, player->mg3_hammer_until);
     Q1_SAVE(io, double, player->horde_axe_chain_until);
     Q1_SAVE(io, u32, player->horde_axe_chain);
     Q1_SAVE(io, i32, player->mg3_hammer_body);
     Q1_SAVE(io, bool, player->mg3_infinite_ammo);
     Q1_SAVE(io, bool, player->mg3_hammer_glow);
-    Q1_SAVE(io, actor, player->killer);
-    Q1_SAVE(io, actor, player->hook);
+    Q1_SAVE(io, ref, player->killer);
+    Q1_SAVE(io, ref, player->hook);
     if (!input(io, &player->grapple_input))
         return false;
     Q1_SAVE(io, bool, player->grapple_release);
     Q1_SAVE(io, bool, player->grapple_pulling);
-    Q1_SAVE(io, actor, player->grapple_weapon.animation);
+    Q1_SAVE(io, ref, player->grapple_weapon.animation);
     Q1_SAVE(io, double, player->grapple_weapon.attack_finished);
     Q1_SAVE(io, double, player->grapple_weapon.release_time);
     Q1_SAVE(io, i32, player->grapple_weapon.frame);
@@ -159,14 +159,12 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
     Q1_SAVE(io, float, player->source_frags);
     Q1_SAVE(io, float, player->source_team);
     Q1_SAVE(io, bool, player->source_observer);
-    Q1_SAVE(io, actor, player->source_spectator_goal);
-    Q1_SAVE(io, actor, player->source_spectator_track);
-    Q1_SAVE(io, u32, player->source_spectator_goal_ordinal);
-    Q1_SAVE(io, u32, player->source_spectator_track_slot);
-    if(player->source_spectator_track_slot>io->game->options.max_clients)
+    Q1_SAVE(io, ref, player->source_spectator_goal);
+    Q1_SAVE(io, ref, player->source_spectator_track);
+    if(q1_ref_ordinal(player->source_spectator_track)>io->game->options.max_clients)
         return q1_save_fail(io,"Spectator tracker exceeds its actual physical client table");
-    if((player->source_spectator_goal.registry || player->source_spectator_track.registry ||
-        player->source_spectator_goal_ordinal || player->source_spectator_track_slot) &&
+    if((q1_ref_present(player->source_spectator_goal) || q1_ref_present(player->source_spectator_track) ||
+        q1_ref_ordinal(player->source_spectator_goal) || q1_ref_ordinal(player->source_spectator_track)) &&
        (!player->source_client || !io->game->options.quakeworld))
         return q1_save_fail(io,"Spectator goal has no actual QW source client");
     Q1_SAVE(io, bool, player->source_no_target);

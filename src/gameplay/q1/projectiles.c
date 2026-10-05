@@ -68,7 +68,7 @@ bool q1_projectile_spawn(qa_q1_game *g, qa_actor_id owner, qa_q1_weapon weapon,
         return false;
     entity->state.projectile = (q1_projectile){.kind = kind,
                                                .weapon = weapon,
-                                               .activator = owner,
+                                               .activator = q1_ref_from(g, owner),
                                                .attack = q1_attack(g, owner, entity->id, weapon)};
     entity->state.projectile.attack.projectile = entity->id;
     if (!qa_attack_next(&g->attack_sequence, &entity->state.projectile.attack, error))
@@ -164,14 +164,14 @@ bool q1_explode(qa_q1_game *g, q1_actor *entity, qa_actor_id direct, qa_error *e
         if (target && target->kind == Q1_MONSTER &&
             target->state.monster.species->species == QA_Q1_SHAMBLER)
             amount *= 0.5f;
-        if (!q1_damage(g, direct, entity->id, entity->owner, amount, projectile.weapon, error))
+        if (!q1_damage(g, direct, entity->id, q1_ref_actor(g, entity->owner), amount, projectile.weapon, error))
             return false;
         if (!q1_alive(g, entity->id))
             return true;
     }
     float radius = projectile.kind == Q1_OGRE_GRENADE || projectile.kind == Q1_VORE_BALL
                        ? 40 : q1_weapon_shape(QA_Q1_ROCKET)->blast_damage;
-    if (!q1_radius(g, entity->id, entity->owner, radius, direct, projectile.weapon, error))
+    if (!q1_radius(g, entity->id, q1_ref_actor(g, entity->owner), radius, direct, projectile.weapon, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
@@ -205,7 +205,7 @@ bool q1_projectile_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
         return q1_lavaman_touch(g, entity, other, error);
     if (entity->state.projectile.kind >= Q1_HIP_LASER)
         return q1_expansion_touch(g, entity, other, contact, error);
-    if (qa_actor_id_equal(other, entity->owner))
+    if (q1_ref_equal(q1_ref_from(g, other), entity->owner))
         return true;
     q1_actor *target = q1_entity(g, other);
     if (target && target->physics.solid == QA_PHYSICS_TRIGGER)
@@ -247,7 +247,7 @@ bool q1_projectile_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
                                           ? QA_Q1_SUPER_NAILGUN : QA_Q1_NAILGUN)->damage;
         if (q1_damageable(g, other)) {
             if (!q1_effect(g, QA_BUILTIN_IMPACT, other, body.origin, amount, 1, error) ||
-                !q1_damage(g, other, entity->id, entity->owner, amount, projectile.weapon, error))
+                !q1_damage(g, other, entity->id, q1_ref_actor(g, entity->owner), amount, projectile.weapon, error))
                 return false;
         } else if (!q1_effect(g, QA_BUILTIN_IMPACT, entity->id, body.origin, 0,
                               projectile.kind == Q1_WIZARD_SPIKE   ? 7
@@ -264,7 +264,7 @@ bool q1_projectile_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
             return false;
         if (q1_health(g, other) != 0) {
             if (!q1_effect(g, QA_BUILTIN_IMPACT, other, hit, 15, 1, error) ||
-                !q1_damage(g, other, entity->id, entity->owner, 15, projectile.weapon, error))
+                !q1_damage(g, other, entity->id, q1_ref_actor(g, entity->owner), 15, projectile.weapon, error))
                 return false;
         } else if (!q1_effect(g, QA_BUILTIN_IMPACT, entity->id, hit, 1, 2, error))
             return false;
@@ -272,7 +272,7 @@ bool q1_projectile_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     }
     case Q1_ZOMBIE_GRENADE:
         if (q1_damageable(g, other))
-            return q1_damage(g, other, entity->id, entity->owner,
+            return q1_damage(g, other, entity->id, q1_ref_actor(g, entity->owner),
                              q1_classnamed(g, entity->id, "mummy_grenade") ? 15 + q1_random(g) * 15
                                                                            : 10,
                              projectile.weapon, error) &&
@@ -305,8 +305,8 @@ bool q1_projectile_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     }
     q1_projectile projectile = entity->state.projectile;
     qa_body_state target, body;
-    if (!qa_world_body_read(g->services.world, projectile.enemy, &target, NULL) ||
-        q1_health(g, projectile.enemy) < 1)
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, projectile.enemy), &target, NULL) ||
+        q1_health(g, q1_ref_actor(g, projectile.enemy)) < 1)
         return q1_remove(g, entity, error);
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
@@ -323,10 +323,10 @@ bool q1_projectile_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return q1_schedule(g, entity, 0.2, Q1_THINK_VORE, error);
     }
     if (think == Q1_THINK_WIZARD) {
-        if (q1_health(g, entity->owner) > 0) {
+        if (q1_health(g, q1_ref_actor(g, entity->owner)) > 0) {
             qa_body_state owner;
-            if (qa_world_body_read(g->services.world, entity->owner, &owner, NULL) &&
-                !q1_effect(g, QA_BUILTIN_MUZZLE, entity->owner, owner.origin, 0, 0, error))
+            if (qa_world_body_read(g->services.world, q1_ref_actor(g, entity->owner), &owner, NULL) &&
+                !q1_effect(g, QA_BUILTIN_MUZZLE, q1_ref_actor(g, entity->owner), owner.origin, 0, 0, error))
                 return false;
             qa_vec3 angles = target.angles;
             if (g->options.edition == QA_Q1_RERELEASE)
@@ -336,7 +336,7 @@ bool q1_projectile_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                 qa_vec_sub(target.origin, qa_vec_scale(projectile.right, 13)), body.origin));
             q1_actor *missile;
             if (!q1_sound(g, entity->id, "wizard/wattack.wav", 1, 1, error) ||
-                !q1_projectile_spawn(g, entity->owner, QA_Q1_WEAPON_COUNT, Q1_WIZARD_SPIKE,
+                !q1_projectile_spawn(g, q1_ref_actor(g, entity->owner), QA_Q1_WEAPON_COUNT, Q1_WIZARD_SPIKE,
                                      body.origin, qa_vec_scale(direction, 600), &missile, error))
                 return false;
         }

@@ -61,7 +61,7 @@ static bool rearm(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 }
 static q1_actor *door_master(qa_q1_game *g, q1_actor *entity) {
     const q1_door_group *group = entity->map->pending.mover.group;
-    return group ? q1_entity(g, group->members[0]) : entity;
+    return group ? q1_entity(g, q1_ref_actor(g, group->members[0])) : entity;
 }
 bool q1_map_door_down(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!q1_sound(g, entity->id, q1_map_door_sound(entity, true), 2, 1, error))
@@ -89,7 +89,7 @@ static bool door_up(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!q1_map_move(g, entity, move->pos2, Q1_MAP_DOOR_TOP, error))
         return false;
     entity = q1_entity(g, id);
-    return !entity || !entity->map || q1_map_targets(g, entity, entity->activator, error);
+    return !entity || !entity->map || q1_map_targets(g, entity, q1_ref_actor(g, entity->activator), error);
 }
 static bool door_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
     q1_actor *master = door_master(g, entity);
@@ -102,11 +102,11 @@ static bool door_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_
     size_t count = group ? group->count : 1;
     qa_actor_id single = master->id;
     for (size_t i = 0; i < count; ++i) {
-        q1_actor *door = q1_entity(g, group ? group->members[i] : single);
+        q1_actor *door = q1_entity(g, q1_ref_actor(g, group ? group->members[i] : q1_ref_from(g, single)));
         if (!door || !door->map)
             continue;
         door->message = QA_STRING_NONE;
-        door->activator = activator;
+        door->activator = q1_ref_from(g, activator);
         if (!(down ? q1_map_door_down(g, door, error) : door_up(g, door, error)))
             return false;
     }
@@ -194,7 +194,7 @@ static bool button_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, 
     q1_map_movement *move = &entity->map->pending.mover;
     if (move->position == Q1_MAP_UP || move->position == Q1_MAP_TOP)
         return true;
-    entity->activator = activator;
+    entity->activator = q1_ref_from(g, activator);
     move->position = Q1_MAP_UP;
     return q1_sound(g, entity->id, q1_map_button_sound(entity), 2, 1, error) &&
            (!q1_alive(g, entity->id) ||
@@ -452,7 +452,7 @@ bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
                     ok = q1_map_fail(error, "Q1 door group capacity overflow");
                     break;
                 }
-                qa_actor_id *members = realloc(group->members, next * sizeof(*members));
+                q1_ref *members = realloc(group->members, next * sizeof(*members));
                 if (!members) {
                     qa_error_set(error, QA_ERROR_MEMORY, 0, "growing Q1 door group");
                     ok = false;
@@ -461,7 +461,7 @@ bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
                 group->members = members;
                 capacity = next;
             }
-            group->members[group->count++] = candidate->id;
+            group->members[group->count++] = q1_ref_from(g, candidate->id);
             candidate->map->pending.mover.group = group;
             previous = body.bounds;
             bounds = qa_bounds_union(bounds, body.bounds);
@@ -585,7 +585,7 @@ static bool horde_door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     const q1_door_group *group = master->map->pending.mover.group;
     if (group) {
         for (size_t i = 0; i < group->count; ++i) {
-            q1_actor *door = q1_entity(g, group->members[i]);
+            q1_actor *door = q1_entity(g, q1_ref_actor(g, group->members[i]));
             if (door && door->map)
                 door->map->touch_enabled = false;
         }
@@ -635,7 +635,7 @@ static bool door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_er
     const q1_door_group *group = master->map->pending.mover.group;
     if (group) {
         for (size_t i = 0; i < group->count; ++i) {
-            q1_actor *door = q1_entity(g, group->members[i]);
+            q1_actor *door = q1_entity(g, q1_ref_actor(g, group->members[i]));
             if (door && door->map)
                 door->map->touch_enabled = false;
         }
@@ -666,7 +666,7 @@ bool q1_map_mover_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_e
     case Q1_MAP_DOOR_TRIGGER: {
         if (q1_health(g, other) <= 0 || state->cooldown > g->time)
             return true;
-        q1_actor *master = q1_entity(g, entity->owner);
+        q1_actor *master = q1_entity(g, q1_ref_actor(g, entity->owner));
         if (!master || !master->map)
             return true;
         state->cooldown = g->time + 1;
@@ -675,7 +675,7 @@ bool q1_map_mover_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_e
     case Q1_MAP_PLAT_TRIGGER: {
         if (!q1_map_player(g, other) || q1_health(g, other) <= 0)
             return true;
-        q1_actor *plat = q1_entity(g, entity->owner);
+        q1_actor *plat = q1_entity(g, q1_ref_actor(g, entity->owner));
         if (!plat || !plat->map)
             return true;
         if (plat->map->pending.mover.position == Q1_MAP_BOTTOM)
@@ -786,7 +786,7 @@ bool q1_map_mover_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, q
         if (entity->wait >= 0 &&
             !q1_map_schedule(g, entity, entity->wait, Q1_MAP_BUTTON_RETURN, error))
             return false;
-        if (!q1_map_targets(g, entity, entity->activator, error))
+        if (!q1_map_targets(g, entity, q1_ref_actor(g, entity->activator), error))
             return false;
         if (q1_alive(g, entity->id))
             entity->frame = 1;

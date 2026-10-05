@@ -23,6 +23,7 @@ static void state_free(q1_wire_state *wire) {
     free(wire->sounds.rows);
     free(wire->damage);
     free(wire->board);
+    free(wire->edicts);
     free(wire);
 }
 void q1_wire_destroy(qa_q1_game *g) {
@@ -39,7 +40,7 @@ void q1_wire_map_reset(qa_q1_game *g) {
 void q1_wire_actor_released(qa_q1_game *g, qa_actor_record released) {
     q1_wire_state *wire = g->wire;
     qa_actor_id actor = released.id;
-    if (wire && wire->edict_limit && released.owner == g->options.provider && released.has_source &&
+    if (wire && released.owner == g->options.provider && released.has_source &&
         released.source_slot < wire->next_dynamic &&
         (!released.source_slot || released.source_slot > g->options.max_clients)) {
         wire->edicts[released.source_slot].free = true;
@@ -137,6 +138,10 @@ bool qa_q1_wire_begin_world(qa_q1_game *g, const char *path, uint32_t inline_mod
         return fail(error, "Q1 physical Source clients exceed their engine edict capacity");
     }
     wire->next_dynamic = g->options.max_clients + 1;
+    if (!q1_wire_edict_extent(wire, wire->next_dynamic, error)) {
+        state_free(wire);
+        return false;
+    }
     wire->loading = true;
     wire->id1 = id1(g);
     if (g->options.max_clients) {
@@ -189,12 +194,33 @@ bool qa_q1_wire_freeze(qa_q1_game *g, qa_error *error) {
     if (g->wire) { g->wire->loading = false; q1_wire_changed(g->wire); }
     return true;
 }
+bool q1_wire_edict_extent(q1_wire_state *wire, uint32_t count, qa_error *error) {
+    if (count <= wire->edict_capacity) return true;
+    uint32_t capacity = wire->edict_capacity ? wire->edict_capacity : 16;
+    while (capacity < count) {
+        if (capacity > UINT32_MAX / 2) { capacity = count; break; }
+        capacity *= 2;
+    }
+    if (wire->edict_limit && capacity > wire->edict_limit) capacity = wire->edict_limit;
+    if (capacity < count || sizeof(*wire->edicts) > SIZE_MAX / capacity)
+        return fail(error, "Q1 physical source edict allocation exceeds its extent");
+    q1_wire_edict *edicts = realloc(wire->edicts, (size_t)capacity * sizeof(*edicts));
+    if (!edicts) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Growing Q1 physical source edict state");
+        return false;
+    }
+    memset(edicts + wire->edict_capacity, 0,
+        (size_t)(capacity - wire->edict_capacity) * sizeof(*edicts));
+    wire->edicts = edicts;
+    wire->edict_capacity = capacity;
+    return true;
+}
 bool q1_wire_allocate_slot(qa_q1_game *g, bool *has_source, uint32_t *slot, qa_error *error) {
     *has_source = g->wire != NULL;
     if (!g->wire) return true;
     q1_wire_state *wire = g->wire;
     uint32_t physical = wire->next_dynamic;
-    for (uint32_t i = g->options.max_clients + 1; wire->edict_limit && i < wire->next_dynamic; ++i)
+    for (uint32_t i = g->options.max_clients + 1; i < wire->next_dynamic; ++i)
         if (wire->edicts[i].free &&
             (wire->edicts[i].freetime < 2 || g->time - wire->edicts[i].freetime > 0.5)) {
             physical = i;
@@ -218,18 +244,16 @@ bool q1_wire_allocate_slot(qa_q1_game *g, bool *has_source, uint32_t *slot, qa_e
     }
     if (physical == UINT32_MAX)
         return fail(error, "Q1 physical source entity extent exhausted");
+    if (!q1_wire_edict_extent(wire, physical + 1, error)) return false;
     if (physical == wire->next_dynamic) ++wire->next_dynamic;
-    if (wire->edict_limit) {
-        wire->edicts[physical].free = false;
-        wire->edicts[physical].released = (qa_actor_id){0};
-    }
+    wire->edicts[physical].free = false;
+    wire->edicts[physical].released = (qa_actor_id){0};
     *slot = physical;
     q1_wire_changed(wire);
     return true;
 }
 bool q1_wire_spawn_slot_valid(const qa_q1_game *g, uint32_t slot) {
-    return !g->wire || (slot < g->wire->next_dynamic &&
-        (!g->wire->edict_limit || !g->wire->edicts[slot].free));
+    return !g->wire || (slot < g->wire->next_dynamic && !g->wire->edicts[slot].free);
 }
 bool qa_q1_wire_authored_allocate(qa_q1_game *g, size_t ordinal, uint32_t *out, qa_error *error) {
     if (!g || !g->wire || !g->wire->loading || !out ||
@@ -252,7 +276,7 @@ bool qa_q1_wire_slot_free(qa_q1_game *g, uint32_t slot, qa_error *error) {
         (slot && slot <= g->options.max_clients) ||
         qa_actors_at_source(qa_session_actors(g->services.session), g->options.provider, slot))
         return fail(error, "Q1 unbound Source free requires its reached allocated physical row");
-    if (g->wire->edict_limit && !g->wire->edicts[slot].free) {
+    if (!g->wire->edicts[slot].free) {
         g->wire->edicts[slot].free = true;
         g->wire->edicts[slot].freetime = (float)g->time;
         q1_wire_changed(g->wire);

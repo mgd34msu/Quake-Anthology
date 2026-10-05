@@ -96,7 +96,7 @@ static bool mummy_fire(qa_q1_game *g, q1_actor *entity, qa_vec3 offset, qa_error
     if (!q1_monster_face(g, entity, error))
         return false;
     qa_body_state self, target;
-    if (!qa_world_body_read(g->services.world, entity->state.monster.enemy, &target, NULL))
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, entity->state.monster.enemy), &target, NULL))
         return true;
     if (!qa_world_body_read(g->services.world, entity->id, &self, error))
         return false;
@@ -198,12 +198,12 @@ bool q1_mission_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action 
     case Q1_ACTION_EEL_EEL_ATTACK12: {
         entity->skin = 5;
         qa_body_state self, target;
-        if (qa_world_body_read(g->services.world, m->enemy, &target, NULL)) {
+        if (qa_world_body_read(g->services.world, q1_ref_actor(g, m->enemy), &target, NULL)) {
             qa_trace_result trace;
             if (!qa_world_body_read(g->services.world, entity->id, &self, error) ||
                 !q1_trace(g, self.origin, target.origin, entity->id, true, &trace, error))
                 return false;
-            if (trace.hit == QA_TRACE_HIT_ACTOR && qa_actor_id_equal(trace.actor, m->enemy) &&
+            if (trace.hit == QA_TRACE_HIT_ACTOR && q1_ref_equal(q1_ref_from(g, trace.actor), m->enemy) &&
                 !(trace.in_open && trace.in_water) && !eel_zap(g, entity, error))
                 return false;
         }
@@ -412,7 +412,7 @@ bool q1_mission_monster_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (m->species->species == QA_Q1_WRATH)
         return q1_monster_play(g, entity, "wrath_die02", error);
     if (m->species->species == QA_Q1_SCOURGE) {
-        q1_actor *trigger = q1_entity(g, m->source.scourge.trigger);
+        q1_actor *trigger = q1_entity(g, q1_ref_actor(g, m->source.scourge.trigger));
         if (trigger && !q1_remove(g, trigger, error))
             return false;
         m->source.scourge.silent = false;

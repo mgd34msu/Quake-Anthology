@@ -1,5 +1,10 @@
 #include "internal.h"
 
+static bool q1_entity_present(qa_actor_reference reference) {
+    return reference.kind == QA_ACTOR_REFERENCE_SOURCE ? reference.value.source.slot != 0 :
+        qa_actor_reference_present(reference);
+}
+
 static bool monster_trace(qa_physics *p, qa_actor_id actor,
                            const qa_physics_properties *props, qa_vec3 start,
                            qa_vec3 end, const qa_bounds *bounds,
@@ -213,10 +218,11 @@ static bool monster_step_state(qa_physics *p, qa_actor_id actor, qa_vec3 move,
         }
         for (unsigned attempt = 0; attempt < 2; ++attempt) {
             destination = qa_vec_add(body.origin, move);
-            bool enemy = ph_live(p, props.enemy);
+            bool enemy = (!q1 || q1_entity_present(props.enemy)) &&
+                ph_live(p, qa_physics_actor_reference(p, props.enemy));
             if (attempt == 0 && enemy) {
-                qa_actor_id goal = q1 ? props.enemy : props.goal.registry ? props.goal : props.enemy;
-                if (!q1 && !props.goal.registry) {
+                qa_actor_id goal = qa_physics_actor_reference(p, q1 ? props.enemy : qa_actor_reference_present(props.goal) ? props.goal : props.enemy);
+                if (!q1 && !qa_actor_reference_present(props.goal)) {
                     props.goal = props.enemy;
                     if (!ph_properties(p, actor, &props, error)) return false;
                 }
@@ -548,7 +554,7 @@ bool qa_physics_q1_move_to_goal(qa_physics *p, qa_actor_id actor, qa_actor_id go
     int read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) return read == 0;
     if (!(props.flags & (QA_PHYSICS_ONGROUND | QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING))) return true;
-    if (!contact && props.enemy.registry && qa_physics_close_enough(p, actor, goal, distance)) return true;
+    if (!contact && q1_entity_present(props.enemy) && qa_physics_close_enough(p, actor, goal, distance)) return true;
     if (!p->services.random_integer) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 goal move requires the game's random source"); return false;
     }

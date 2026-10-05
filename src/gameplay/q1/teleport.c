@@ -56,15 +56,15 @@ bool q1_spawn_teledeath(qa_q1_game *g, qa_vec3 origin, qa_actor_id owner, double
     return true;
 }
 bool q1_teledeath_touch(qa_q1_game *g, q1_actor *death, qa_actor_id victim, qa_error *error) {
-    if (!death->owner.registry || qa_actor_id_equal(victim, death->owner))
+    if (!q1_ref_present(death->owner) || q1_ref_equal(q1_ref_from(g, victim), death->owner))
         return true;
     qa_q1_target target, owner;
     if (q1_target(g, victim, &target) && target.player) {
         if (qa_q1_game_invulnerable(g, victim) &&
             !qa_builtin_resource(&g->services, "teledeath2", &death->classname, error))
             return false;
-        if (!q1_target(g, death->owner, &owner) || !owner.player)
-            return q1_damage_typed(g, death->owner, death->id, death->id, 50000, QA_Q1_WEAPON_COUNT,
+        if (!q1_target(g, q1_ref_actor(g, death->owner), &owner) || !owner.player)
+            return q1_damage_typed(g, q1_ref_actor(g, death->owner), death->id, death->id, 50000, QA_Q1_WEAPON_COUNT,
                                    QA_Q1_ARMOR_NORMAL, death->classname, error);
     }
     return q1_health(g, victim) == 0 ||

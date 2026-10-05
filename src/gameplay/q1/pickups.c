@@ -996,7 +996,7 @@ static bool item_complete(void *context, const qa_pickup_offer *offer, bool take
     if (touch->external)
         return true;
     if (mg3_special(item)) {
-        entity->activator = touch->recipient;
+        entity->activator = q1_ref_from(g, touch->recipient);
         if (item->kind >= Q1_ITEM_MG3_SHARD) {
             if (!dispatch_targets(touch, error))
                 return false;
@@ -1054,7 +1054,7 @@ static bool item_complete(void *context, const qa_pickup_offer *offer, bool take
         (item->kind == Q1_ITEM_WEAPON || item->kind == Q1_ITEM_AMMO || item->kind == Q1_ITEM_ARMOR))
         respawns = false;
     if (item->mega && g->options.edition == QA_Q1_CLASSIC) {
-        item->holder = touch->recipient;
+        item->holder = q1_ref_from(g, touch->recipient);
         if (!q1_schedule(g, entity, 5, Q1_THINK_MEGA_ROT, error))
             return false;
     } else if (respawns) {
@@ -1065,10 +1065,10 @@ static bool item_complete(void *context, const qa_pickup_offer *offer, bool take
         entity->think = Q1_THINK_NONE;
     }
     if (item->kind == Q1_ITEM_HORN) {
-        qa_actor_id previous = g->horn_charmer;
-        g->horn_charmer = touch->recipient;
+        qa_actor_id previous = q1_ref_actor(g, g->horn_charmer);
+        g->horn_charmer = q1_ref_from(g, touch->recipient);
         bool result = dispatch_targets(touch, error);
-        g->horn_charmer = previous;
+        g->horn_charmer = q1_ref_from(g, previous);
         return result;
     }
     return dispatch_targets(touch, error);
@@ -1174,7 +1174,7 @@ bool q1_pickup_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient, qa_
     if (entity->state.pickup.drop != Q1_DROP_NONE)
         return q1_drop_touch(g, entity, recipient, error);
     q1_pickup *item = &entity->state.pickup;
-    if (qa_actor_id_equal(entity->owner, recipient) &&
+    if (q1_ref_equal(entity->owner, q1_ref_from(g, recipient)) &&
         entity->next_think - g->time > 120 - item->owner_delay)
         return true;
     if (item->kind == Q1_ITEM_MG3_UPGRADE || item->kind == Q1_ITEM_MG3_BLOODY) {
@@ -1291,10 +1291,10 @@ bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return q1_schedule(g, entity, 0.2, Q1_THINK_ITEM_PLACE, error);
     }
     if (kind == Q1_THINK_MEGA_ROT) {
-        q1_player *player = q1_player_get(g, item->holder);
-        float health = q1_health(g, item->holder);
+        q1_player *player = q1_player_get(g, q1_ref_actor(g, item->holder));
+        float health = q1_health(g, q1_ref_actor(g, item->holder));
         if (player && health > player->max_health)
-            return qa_combat_set_health(g->services.combat, item->holder, health - 1, error) &&
+            return qa_combat_set_health(g->services.combat, q1_ref_actor(g, item->holder), health - 1, error) &&
                    q1_schedule(g, entity, 1, Q1_THINK_MEGA_ROT, error);
         return g->options.deathmatch != 1 || q1_schedule(g, entity, 20, Q1_THINK_RESPAWN, error);
     }
@@ -1667,7 +1667,7 @@ static bool pickup_inspect(void *context, qa_actor_id pickup, qa_actor_id actor,
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
     q1_pickup item = e->state.pickup;
-    qa_actor_id owner = e->owner;
+    qa_actor_id owner = q1_ref_actor(g, e->owner);
     double owner_wait = e->next_think - g->time;
     *offer = (qa_pickup_offer){.pickup = pickup, .recipient = actor,
                                .source = g->options.provider, .item = item.item,

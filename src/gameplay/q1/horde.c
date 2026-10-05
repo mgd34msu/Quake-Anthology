@@ -122,15 +122,15 @@ bool qa_q1_horde_spawn(qa_q1_game *g, const char *classname, qa_vec3 origin, qa_
     entity->state.monster.horde = true;
     entity->state.monster.addon.waiting = false;
     entity->state.monster.addon.started = true;
-    entity->state.monster.enemy = enemy;
-    entity->owner = manager;
+    entity->state.monster.enemy = q1_ref_from(g, enemy);
+    entity->owner = q1_ref_from(g, manager);
     entity->aimed_damage = true;
     entity->physics.solid = QA_PHYSICS_BOX;
     entity->physics.motion = QA_PHYSICS_STEP;
     entity->physics.flags |= QA_PHYSICS_MONSTER;
     entity->physics.yaw_speed = 20;
-    entity->physics.enemy = enemy;
-    entity->physics.goal = enemy;
+    entity->physics.enemy = q1_ref_from(g, enemy);
+    entity->physics.goal = q1_ref_from(g, enemy);
     if (species->species == QA_Q1_WIZARD)
         entity->physics.flags |= QA_PHYSICS_FLYING;
     float offset = species->species == QA_Q1_DEMON ? 48

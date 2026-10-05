@@ -6,7 +6,7 @@ static bool body(qa_q1_game *g, q1_actor *e, qa_body_state *out, qa_error *error
 }
 static qa_vec3 target(qa_q1_game *g, q1_actor *e) {
     qa_body_state value;
-    return qa_world_body_read(g->services.world, e->state.monster.enemy, &value, NULL)
+    return qa_world_body_read(g->services.world, q1_ref_actor(g, e->state.monster.enemy), &value, NULL)
                ? value.origin
                : qa_v3(0, 0, 0);
 }
@@ -18,15 +18,15 @@ static qa_vec3 angles(qa_vec3 direction) {
 static float signed_random(qa_q1_game *g) { return 2 * q1_random(g) - 1; }
 static bool bloody(qa_q1_game *g) { return (qa_q1_game_campaign_flags(g) & 64) != 0; }
 static bool remove_child(qa_q1_game *g, q1_actor *e, qa_error *error) {
-    q1_actor *child = q1_entity(g, e->state.monster.source.heavy.child);
-    e->state.monster.source.heavy.child = (qa_actor_id){0};
-    return !child || !qa_actor_id_equal(child->owner, e->id) ||
+    q1_actor *child = q1_entity(g, q1_ref_actor(g, e->state.monster.source.heavy.child));
+    e->state.monster.source.heavy.child = (q1_ref){0};
+    return !child || !q1_ref_equal(child->owner, q1_ref_from(g, e->id)) ||
            !q1_classnamed(g, child->id, "lightning_child") || q1_remove(g, child, error);
 }
 static bool child_frame(qa_q1_game *g, q1_actor *e, int32_t frame) {
     e->effects |= 2;
-    q1_actor *child = q1_entity(g, e->state.monster.source.heavy.child);
-    if (child && qa_actor_id_equal(child->owner, e->id) &&
+    q1_actor *child = q1_entity(g, q1_ref_actor(g, e->state.monster.source.heavy.child));
+    if (child && q1_ref_equal(child->owner, q1_ref_from(g, e->id)) &&
         q1_classnamed(g, child->id, "lightning_child"))
         child->frame = frame;
     return true;
@@ -45,7 +45,7 @@ static bool lightning_child(qa_q1_game *g, q1_actor *e, bool fast, qa_error *err
     if (!q1_create(g, fast ? "" : "lightning_child", Q1_TIMER, fast ? (qa_actor_id){0} : e->id,
                    &child, error))
         return false;
-    e->state.monster.source.heavy.child = child->id;
+    e->state.monster.source.heavy.child = q1_ref_from(g, child->id);
     qa_body_state value = {.origin = parent.origin, .angles = parent.angles};
     if (!q1_model(g, child, "progs/s_light.mdl", error) ||
         !qa_world_body_write(g->services.world, child->id, &value, error) ||
@@ -169,7 +169,7 @@ static bool blast(qa_q1_game *g, q1_actor *e, qa_vec3 offset, bool hands, qa_err
     return hands || q1_sound(g, e->id, "zombie/z_shot1.wav", 1, 1, error);
 }
 static bool claw(qa_q1_game *g, q1_actor *e, float side, qa_error *error) {
-    if (!e->state.monster.enemy.registry)
+    if (!q1_ref_present(e->state.monster.enemy))
         return true;
     if (!q1_monster_ai(g, e, Q1_AI_CHARGE, 10, error))
         return false;
@@ -197,7 +197,7 @@ static bool claw(qa_q1_game *g, q1_actor *e, float side, qa_error *error) {
 static bool smash(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!blast(g, e, qa_v3(0, 0, 0), false, error))
         return false;
-    if (!q1_alive(g, e->id) || !e->state.monster.enemy.registry)
+    if (!q1_alive(g, e->id) || !q1_ref_present(e->state.monster.enemy))
         return true;
     if (!q1_monster_ai(g, e, Q1_AI_CHARGE, 0, error))
         return false;
@@ -209,7 +209,7 @@ static bool smash(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (qa_vec_length(qa_vec_sub(target(g, e), value.origin)) > 100)
         return true;
     bool visible;
-    if (!q1_can_damage(g, e->state.monster.enemy, e->id, &visible, error))
+    if (!q1_can_damage(g, q1_ref_actor(g, e->state.monster.enemy), e->id, &visible, error))
         return false;
     if (!visible)
         return true;
@@ -330,7 +330,7 @@ static bool cleanup_orbs(qa_q1_game *g, q1_actor *e, qa_error *error) {
     bool ok = true;
     for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
         q1_actor *child = q1_entity(g, snapshot->snapshot.ids[i]);
-        if (child && qa_actor_id_equal(child->owner, e->id) &&
+        if (child && q1_ref_equal(child->owner, q1_ref_from(g, e->id)) &&
             q1_classnamed(g, child->id, "monster_super_shambler") &&
             !q1_schedule(g, child, .1, Q1_THINK_HEAVY_SOURCE_DIE, error)) {
             ok = false;
@@ -344,19 +344,19 @@ static bool cleanup_orbs(qa_q1_game *g, q1_actor *e, qa_error *error) {
 bool q1_heavy_check_attack(qa_q1_game *g, q1_actor *e, bool *attacking, qa_error *error) {
     *attacking = false;
     q1_monster *m = &e->state.monster;
-    if (!m->enemy.registry)
+    if (!q1_ref_present(m->enemy))
         return true;
     qa_body_state self, other;
     if (!body(g, e, &self, error) ||
-        !qa_world_body_read(g->services.world, m->enemy, &other, error))
+        !qa_world_body_read(g->services.world, q1_ref_actor(g, m->enemy), &other, error))
         return false;
     qa_q1_target traits;
-    float eye = q1_target(g, m->enemy, &traits) ? traits.view_height : 25;
+    float eye = q1_target(g, q1_ref_actor(g, m->enemy), &traits) ? traits.view_height : 25;
     qa_trace_result trace;
     if (!q1_trace(g, qa_vec_add(self.origin, qa_v3(0, 0, 25)),
                   qa_vec_add(other.origin, qa_v3(0, 0, eye)), e->id, true, &trace, error))
         return false;
-    if (trace.hit != QA_TRACE_HIT_ACTOR || !qa_actor_id_equal(trace.actor, m->enemy) ||
+    if (trace.hit != QA_TRACE_HIT_ACTOR || !q1_ref_equal(q1_ref_from(g, trace.actor), m->enemy) ||
         (trace.in_open && trace.in_water))
         return true;
     unsigned range = q1_mg3_range(e, qa_vec_length(qa_vec_sub(other.origin, self.origin)));
@@ -654,7 +654,7 @@ bool q1_heavy_die(qa_q1_game *g, q1_actor *e, qa_error *error) {
 }
 
 bool q1_heavy_spike_touch(qa_q1_game *g, q1_actor *shot, qa_actor_id other, qa_error *error) {
-    if (qa_actor_id_equal(shot->owner, other))
+    if (q1_ref_equal(shot->owner, q1_ref_from(g, other)))
         return true;
     qa_physics_properties physics;
     if (g->services.physics && g->services.physics->services.read &&
@@ -674,7 +674,7 @@ bool q1_heavy_spike_touch(qa_q1_game *g, q1_actor *shot, qa_actor_id other, qa_e
         return q1_remove(g, shot, error);
     if (q1_damageable(g, other)) {
         if (!q1_effect(g, QA_BUILTIN_IMPACT, other, value.origin, 9, 1, error) ||
-            !q1_damage(g, other, shot->id, shot->owner, 9, QA_Q1_WEAPON_COUNT, error))
+            !q1_damage(g, other, shot->id, q1_ref_actor(g, shot->owner), 9, QA_Q1_WEAPON_COUNT, error))
             return false;
     } else if (!q1_effect(g, QA_BUILTIN_IMPACT, shot->id, value.origin, 0, 8, error))
         return false;

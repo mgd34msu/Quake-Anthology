@@ -112,7 +112,7 @@ bool q1_boss_child_spawn(qa_q1_game *g, q1_actor *owner, q1_boss_child_kind kind
         delay = .025;
     } else {
         e->state.boss_child.enemy = q1_boss_enemy(owner);
-        if (!e->state.boss_child.enemy.registry &&
+        if (!q1_ref_present(e->state.boss_child.enemy) &&
             !q1_boss_first_player(g, &e->state.boss_child.enemy, error))
             goto fail;
     }
@@ -155,7 +155,7 @@ static bool eye_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_error *
         if (!q1_alive(g, e->id))
             return true;
         e->physics.flags &= ~(uint32_t)(QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING);
-        e->state.boss_child.enemy = attacker;
+        e->state.boss_child.enemy = q1_ref_from(g, attacker);
         if (!q1_boss_targets(g, e, attacker, e->target, error))
             return false;
     }
@@ -212,7 +212,7 @@ static bool eye_chase(qa_q1_game *g, q1_actor *e, qa_error *error) {
 }
 static bool blaster(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_q1_target traits;
-    if ((!q1_target(g, e->state.boss_child.enemy, &traits) || !traits.player) &&
+    if ((!q1_target(g, q1_ref_actor(g, e->state.boss_child.enemy), &traits) || !traits.player) &&
         !q1_boss_first_player(g, &e->state.boss_child.enemy, error))
         return false;
     qa_body_state body;
@@ -245,7 +245,7 @@ static bool spammer(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_body_state body, owner = {0};
     if (!read(g, e, &body, error))
         return false;
-    (void)qa_world_body_read(g->services.world, e->owner, &owner, NULL);
+    (void)qa_world_body_read(g->services.world, q1_ref_actor(g, e->owner), &owner, NULL);
     body.angles = owner.angles;
     if (!qa_world_body_write(g->services.world, e->id, &body, error))
         return false;
@@ -259,7 +259,7 @@ static bool spammer(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_vec3 velocity = qa_vec_scale(g->forward, oomph + 25 * e->count);
     velocity.z = 200;
     q1_actor *shot;
-    if (!q1_boss_child_create(g, "spam", Q1_CHILD_SPAM, e->owner, &shot, error))
+    if (!q1_boss_child_create(g, "spam", Q1_CHILD_SPAM, q1_ref_actor(g, e->owner), &shot, error))
         return false;
     shot->physics.solid = QA_PHYSICS_BOX;
     shot->physics.motion = QA_PHYSICS_TOSS;
@@ -302,8 +302,8 @@ static bool swiper(qa_q1_game *g, q1_actor *e, qa_error *error) {
                   &trace, error))
         return false;
     if (trace.hit == QA_TRACE_HIT_ACTOR && q1_health(g, trace.actor) != 0 &&
-        !q1_damage(g, trace.actor, e->owner.registry ? e->owner : g->services.physics->world_actor,
-                   e->owner, q1_classnamed(g, trace.actor, "monster_szombie") ? 100 : 25,
+        !q1_damage(g, trace.actor, q1_ref_actor(g, q1_ref_present(e->owner) ? e->owner : q1_ref_from(g, g->services.physics->world_actor)),
+                   q1_ref_actor(g, e->owner), q1_classnamed(g, trace.actor, "monster_szombie") ? 100 : 25,
                    QA_Q1_WEAPON_COUNT, error))
         return false;
     if (!q1_alive(g, e->id))
@@ -384,12 +384,12 @@ bool q1_boss_child_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error
         return q1_boss_teledeath_touch(g, e, other, error);
     case Q1_CHILD_EYE:
         if (qa_actor_id_equal(other, g->services.physics->world_actor) ||
-            qa_actor_id_equal(other, e->owner))
+            q1_ref_equal(q1_ref_from(g, other), e->owner))
             return true;
         return q1_health(g, other) == 0 ||
-               q1_damage(g, other, e->id, e->owner, 500, QA_Q1_WEAPON_COUNT, error);
+               q1_damage(g, other, e->id, q1_ref_actor(g, e->owner), 500, QA_Q1_WEAPON_COUNT, error);
     case Q1_CHILD_SPAM: {
-        if (qa_actor_id_equal(other, e->owner))
+        if (q1_ref_equal(q1_ref_from(g, other), e->owner))
             return true;
         if (qa_actor_id_equal(other, g->services.physics->world_actor)) {
             qa_body_state body;
@@ -404,7 +404,7 @@ bool q1_boss_child_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error
                    q1_boss_child_schedule(g, e, Q1_CHILD_SPAM_BEAM, 2, error);
         }
         return (q1_health(g, other) == 0 ||
-                q1_damage(g, other, e->owner.registry ? e->owner : g->services.physics->world_actor,
+                q1_damage(g, other, q1_ref_actor(g, q1_ref_present(e->owner) ? e->owner : q1_ref_from(g, g->services.physics->world_actor)),
                           e->id, 10, QA_Q1_WEAPON_COUNT, error)) &&
                (!q1_alive(g, e->id) || q1_remove(g, e, error));
     }
@@ -415,7 +415,7 @@ bool q1_boss_child_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error
 bool q1_boss_blast_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error) {
     if (qa_actor_id_equal(other, g->services.physics->world_actor))
         return q1_remove(g, e, error);
-    if (qa_actor_id_equal(e->owner, other) || q1_classnamed(g, other, "sphere"))
+    if (q1_ref_equal(e->owner, q1_ref_from(g, other)) || q1_classnamed(g, other, "sphere"))
         return true;
     if (q1_classnamed(g, other, "monster_oldone_new"))
         return q1_remove(g, e, error);
@@ -424,6 +424,6 @@ bool q1_boss_blast_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error
         p.solid == QA_PHYSICS_TRIGGER)
         return true;
     return (q1_health(g, other) == 0 ||
-            q1_damage(g, other, e->id, e->owner, 15, QA_Q1_WEAPON_COUNT, error)) &&
+            q1_damage(g, other, e->id, q1_ref_actor(g, e->owner), 15, QA_Q1_WEAPON_COUNT, error)) &&
            (!q1_alive(g, e->id) || q1_remove(g, e, error));
 }

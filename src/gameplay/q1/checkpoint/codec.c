@@ -137,8 +137,8 @@ static bool groups(q1_save_io *io, qa_q1_game *g, q1_door_group ***out, size_t *
                 goto fail;
         }
         for (uint32_t j = 0; j < members; ++j)
-            if (!q1_save_actor(io, &group->members[j]) || !group->members[j].registry) {
-                if (!group->members[j].registry)
+            if (!q1_save_ref(io, &group->members[j]) || !q1_ref_present(group->members[j])) {
+                if (!q1_ref_present(group->members[j]))
                     q1_save_fail(io, "Null Q1 door group member");
                 goto fail;
             }
@@ -320,28 +320,28 @@ static bool payload(q1_save_io *io, qa_q1_game *g) {
     for (uint32_t i = 0; ok && i < g->capacity; ++i) {
         const q1_actor *actor = g->actors[i];
         if (!actor) continue;
-        if ((actor->rogue_next_update != 0 || actor->rogue_tag_owner.registry ||
-             actor->rogue_runes_spawned != 0 || actor->rogue_rune_spawn.registry) &&
+        if ((actor->rogue_next_update != 0 || q1_ref_present(actor->rogue_tag_owner) ||
+             actor->rogue_runes_spawned != 0 || q1_ref_present(actor->rogue_rune_spawn)) &&
             (!g->maps || !qa_actor_id_equal(g->maps->world_actor, actor->id)))
             ok = q1_save_fail(io, "Rogue timer word differs from the actual source world");
         if ((actor->ctf_last_capture != 0 || actor->ctf_last_capture_team != 0 ||
-             actor->ctf_runes_spawned != 0 || actor->ctf_rune_spawn.registry) &&
+             actor->ctf_runes_spawned != 0 || q1_ref_present(actor->ctf_rune_spawn)) &&
             (!g->maps || !qa_actor_id_equal(g->maps->world_actor, actor->id)))
             ok = q1_save_fail(io, "CTF words differ from the actual source world");
         if (actor->kind != Q1_ROGUE_TEAM_STATE) continue;
         const qa_actor_record *owner = qa_actors_get(qa_session_actors(g->services.session),
-            actor->owner);
+            q1_ref_actor(g, actor->owner));
         if (owner) {
-            const q1_player *player = actor->owner.slot < g->capacity ?
-                g->players[actor->owner.slot] : NULL;
+            const q1_player *player = q1_ref_actor(g, actor->owner).slot < g->capacity ?
+                g->players[q1_ref_actor(g, actor->owner).slot] : NULL;
             if (!player || !player->source_client || !player->active ||
-                !qa_actor_id_equal(player->id, actor->owner))
+                !q1_ref_equal(q1_ref_from(g, player->id), actor->owner))
                 ok = q1_save_fail(io, "Rogue state has no matching physical source client");
         }
         for (uint32_t j = 0; ok && j < i; ++j) {
             const q1_actor *prior = g->actors[j];
             if (prior && prior->kind == Q1_ROGUE_TEAM_STATE &&
-                qa_actor_id_equal(prior->owner, actor->owner))
+                q1_ref_equal(prior->owner, actor->owner))
                 ok = q1_save_fail(io, "Duplicate Rogue player state continuation");
         }
     }

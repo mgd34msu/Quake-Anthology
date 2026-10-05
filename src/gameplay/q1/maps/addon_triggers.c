@@ -7,7 +7,7 @@ static q1_actor *trigger(qa_q1_game *g, qa_actor_id id) {
     return e && e->map && q1_map_is_addon_trigger(e->map->kind) ? e : NULL;
 }
 static bool targets(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_error *error) {
-    e->activator = activator;
+    e->activator = q1_ref_from(g, activator);
     return q1_map_targets(g, e, activator, error);
 }
 static bool counter_message(qa_q1_game *g, q1_actor *e, qa_actor_id activator,
@@ -77,13 +77,13 @@ static bool repeat(qa_q1_game *g, q1_actor *e, qa_error *error) {
 static bool explosion(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;
     e->delay = 0;
-    if (!targets(g, e, e->activator, error))
+    if (!targets(g, e, q1_ref_actor(g, e->activator), error))
         return false;
     e = trigger(g, id);
     if (!e)
         return true;
     if (!(e->spawnflags & 1) &&
-        !q1_radius(g, id, e->owner, 120, id, QA_Q1_WEAPON_COUNT, error))
+        !q1_radius(g, id, q1_ref_actor(g, e->owner), 120, id, QA_Q1_WEAPON_COUNT, error))
         return false;
     e = trigger(g, id);
     if (!e)
@@ -223,7 +223,7 @@ bool q1_map_addon_trigger_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator,
     case Q1_MAP_ADDON_SACRIFICE_COUNTER:
         return counter_use(g, e, activator, error);
     case Q1_MAP_ADDON_REPEATER:
-        e->activator = activator;
+        e->activator = q1_ref_from(g, activator);
         e->spawnflags ^= 1;
         if (!(e->spawnflags & 1)) {
             q1_map_cancel(g, e);
@@ -231,7 +231,7 @@ bool q1_map_addon_trigger_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator,
         }
         return repeat(g, e, error);
     case Q1_MAP_ADDON_EXPLOSION:
-        e->activator = activator;
+        e->activator = q1_ref_from(g, activator);
         return e->delay > 0 ? q1_map_schedule(g, e, e->delay, Q1_MAP_ADDON_EXPLOSION_FIRE, error)
                            : explosion(g, e, error);
     case Q1_MAP_ADDON_CHANGE_TARGET:
@@ -242,7 +242,7 @@ bool q1_map_addon_trigger_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator,
         uint32_t required = e->spawnflags & 15;
         if ((*g->maps->options.server_flags & required) != required)
             return true;
-        e->activator = activator;
+        e->activator = q1_ref_from(g, activator);
         return q1_map_schedule(g, e, .1, Q1_MAP_ADDON_TARGETS, error);
     }
     case Q1_MAP_ADDON_RUNE_COUNTER:
@@ -321,16 +321,16 @@ bool q1_map_addon_trigger_think(qa_q1_game *g, q1_actor *e, q1_map_action action
         e->count = e->map->counter_value;
         return true;
     case Q1_MAP_ADDON_REPEAT_TICK:
-        if (!targets(g, e, e->activator, error))
+        if (!targets(g, e, q1_ref_actor(g, e->activator), error))
             return false;
         e = trigger(g, id);
         return !e || repeat(g, e, error);
     case Q1_MAP_ADDON_MULTITOUCH_EMPTY:
         e->wait = 0;
         return e->map->kind == Q1_MAP_ADDON_CHECK_SACRIFICES || (e->spawnflags & 32) ||
-               targets(g, e, e->activator, error);
+               targets(g, e, q1_ref_actor(g, e->activator), error);
     case Q1_MAP_ADDON_TARGETS:
-        return targets(g, e, e->activator, error);
+        return targets(g, e, q1_ref_actor(g, e->activator), error);
     case Q1_MAP_ADDON_EXPLOSION_FIRE:
         return explosion(g, e, error);
     default:

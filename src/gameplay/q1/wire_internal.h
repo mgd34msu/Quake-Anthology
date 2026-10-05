@@ -42,7 +42,8 @@ typedef struct q1_wire_state {
     qa_string_id lightstyles[64];
     double qw_client_stats[32][16];
     q1_qw_fraglog qw_fraglog;
-    q1_wire_edict edicts[768];
+    q1_wire_edict *edicts;
+    uint32_t edict_capacity;
     uint32_t next_dynamic, authored_entities, authored_cursor, inline_models, edict_limit;
     bool loading, id1;
 } q1_wire_state;
@@ -54,5 +55,6 @@ bool q1_wire_allocate_slot(qa_q1_game *, bool *, uint32_t *, qa_error *);
 bool q1_wire_spawn_slot_valid(const qa_q1_game *, uint32_t);
 bool q1_wire_spawn_declarations(qa_q1_game *, const qa_q1_spawn *, qa_error *);
 void q1_wire_changed(q1_wire_state *);
+bool q1_wire_edict_extent(q1_wire_state *, uint32_t, qa_error *);
 
 #endif

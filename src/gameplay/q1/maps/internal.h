@@ -306,7 +306,7 @@ typedef enum q1_map_position { Q1_MAP_BOTTOM, Q1_MAP_UP, Q1_MAP_TOP, Q1_MAP_DOWN
 typedef enum q1_time_reaction { Q1_TIME_NO_REACTION, Q1_TIME_PAIN, Q1_TIME_CRASH } q1_time_reaction;
 typedef struct q1_door_group {
     struct q1_door_group *next;
-    qa_actor_id *members;
+    q1_ref *members;
     size_t count;
 } q1_door_group;
 typedef struct q1_map_rogue_platform {
@@ -320,20 +320,21 @@ typedef struct q1_map_movement {
     q1_door_group *group;
     q1_map_action done;
     q1_map_position position;
-    qa_actor_id goal;
+    q1_ref goal;
     float next_speed;
     bool moving, activated;
     q1_map_rogue_platform rogue;
 } q1_map_movement;
 typedef struct q1_rotate_target {
-    qa_actor_id actor, owner;
+    qa_actor_id actor;
+    q1_ref owner;
     qa_vec3 original, current;
     uint8_t type;
 } q1_rotate_target;
 typedef struct q1_map_rotation {
     qa_vec3 origin, rate, dest1, dest2, destination;
     qa_vec3 final_angle, final_destination;
-    qa_actor_id goal;
+    q1_ref goal;
     double last_time, end_time;
     double progress_start, inverse_duration;
     uint8_t phase;
@@ -342,8 +343,8 @@ typedef struct q1_map_rotation {
 } q1_map_rotation;
 typedef struct q1_addon_contact {
     qa_actor_id actor;
-    qa_actor_id fog_active;
-    qa_actor_id secret_marker, exit_marker;
+    q1_ref fog_active;
+    q1_ref secret_marker, exit_marker;
     qa_vec3 fog_color;
     float fog_density;
     double fly_sound, lore_active, voted;
@@ -381,15 +382,18 @@ struct q1_map_state {
         bool valid;
     } spawn_template;
     union {
-        qa_target_use delayed;
+        struct {
+            qa_clock_kind dialect;
+            qa_string_id shader_old, shader_new;
+        } delayed;
         qa_q1_campaign_timer finale;
         q1_map_movement mover;
         qa_vec3 push_origin;
-        qa_actor_id spawn_master;
+        q1_ref spawn_master;
         uint8_t pendulum_step;
         q1_time_reaction time_reaction;
         struct {
-            qa_actor_id move_target;
+            q1_ref move_target;
             qa_vec3 view_angles;
             float rockets;
             uint8_t fire_stage;
@@ -407,7 +411,7 @@ struct q1_map_state {
             unsigned plane;
         } particles;
         struct {
-            qa_actor_id enemy, last_victim;
+            q1_ref enemy, last_victim;
             qa_vec3 endpoint;
             double search_until, pulse_until, cycle_until, sound_after, switch_due;
             uint8_t attack;
@@ -415,7 +419,7 @@ struct q1_map_state {
         } hazard;
         q1_map_rotation rotation;
         struct {
-            qa_actor_id chain;
+            q1_ref chain;
             qa_vec3 origin;
             uint8_t phase;
         } addon;
@@ -434,8 +438,9 @@ struct q1_map_runtime {
     qa_actor_id *frame_ticks;
     q1_addon_contact *addon_contacts;
     uint32_t frame_tick_count;
-    qa_actor_id world_actor, electrodes[2];
-    qa_actor_id time_machine, ending_actor;
+    qa_actor_id world_actor;
+    q1_ref electrodes[2];
+    q1_ref time_machine, ending_actor;
     double lightning_end;
     float pendulum_impact, elevator_direction;
     qa_q1_map_finale_view finale;
@@ -443,7 +448,7 @@ struct q1_map_runtime {
     double earthquake_end;
     bool quake_active;
     bool dump_coordinates;
-    qa_actor_id ctf_vote_leader;
+    q1_ref ctf_vote_leader;
     double ctf_vote_exit_time;
     bool final_new_game_travel;
     bool rogue_cutscene, rogue_ending_started;

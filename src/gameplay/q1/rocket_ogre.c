@@ -12,7 +12,7 @@ bool q1_rocket_ogre_override(const char *name) {
 static bool fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_monster *monster = &entity->state.monster;
     qa_body_state self, target;
-    if (!qa_world_body_read(g->services.world, monster->enemy, &target, NULL))
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, monster->enemy), &target, NULL))
         return true;
     if (!qa_world_body_read(g->services.world, entity->id, &self, error))
         return false;
@@ -66,7 +66,7 @@ bool q1_rocket_ogre_frame(qa_q1_game *g, q1_actor *entity, const char *name, qa_
     return true;
 }
 bool q1_rocket_ogre_touch(qa_q1_game *g, q1_actor *missile, qa_actor_id other, qa_error *error) {
-    if (qa_actor_id_equal(missile->owner, other))
+    if (q1_ref_equal(missile->owner, q1_ref_from(g, other)))
         return true;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, missile->id, &body, error))
@@ -80,7 +80,7 @@ bool q1_rocket_ogre_touch(qa_q1_game *g, q1_actor *missile, qa_actor_id other, q
         return q1_remove(g, missile, error);
     if (missile->state.projectile.expires > g->time) {
         if (!q1_effect(g, QA_BUILTIN_IMPACT, other, body.origin, 18, 1, error) ||
-            !q1_damage(g, other, missile->id, missile->owner, 20, QA_Q1_WEAPON_COUNT, error))
+            !q1_damage(g, other, missile->id, q1_ref_actor(g, missile->owner), 20, QA_Q1_WEAPON_COUNT, error))
             return false;
         if (!q1_alive(g, missile->id))
             return true;
@@ -91,12 +91,12 @@ bool q1_rocket_ogre_touch(qa_q1_game *g, q1_actor *missile, qa_actor_id other, q
         float damage = q1_classnamed(g, other, "monster_shambler") ? 20
                        : q1_classnamed(g, other, "monster_zombie") ? 60
                                                                    : 40;
-        if (!q1_damage(g, other, missile->id, missile->owner, damage, QA_Q1_WEAPON_COUNT, error))
+        if (!q1_damage(g, other, missile->id, q1_ref_actor(g, missile->owner), damage, QA_Q1_WEAPON_COUNT, error))
             return false;
         if (!q1_alive(g, missile->id))
             return true;
     }
-    if (!q1_radius(g, missile->id, missile->owner, 40, other, QA_Q1_WEAPON_COUNT, error))
+    if (!q1_radius(g, missile->id, q1_ref_actor(g, missile->owner), 40, other, QA_Q1_WEAPON_COUNT, error))
         return false;
     if (!q1_alive(g, missile->id))
         return true;

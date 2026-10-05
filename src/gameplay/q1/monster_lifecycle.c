@@ -2,7 +2,7 @@
 
 static bool retaliate(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_error *error) {
     q1_monster *m = &entity->state.monster;
-    if (qa_actor_id_equal(attacker, m->charmer))
+    if (q1_ref_equal(q1_ref_from(g, attacker), m->charmer))
         return true;
     if (!q1_alive(g, attacker) || qa_actor_id_equal(attacker, entity->id))
         return true;
@@ -20,10 +20,10 @@ static bool retaliate(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_
     qa_bytes text = qa_strings_text(qa_session_strings(g->services.session), classname);
     if (text.size == 10 && !memcmp(text.data, "worldspawn", 10))
         return true;
-    if (qa_actor_id_equal(m->enemy, attacker))
+    if (q1_ref_equal(m->enemy, q1_ref_from(g, attacker)))
         return true;
     qa_q1_target previous;
-    if (q1_target(g, m->enemy, &previous) && previous.player)
+    if (q1_target(g, q1_ref_actor(g, m->enemy), &previous) && previous.player)
         m->old_enemy = m->enemy;
     return q1_monster_found(g, entity, attacker, error);
 }
@@ -338,16 +338,16 @@ bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
     const q1_species *spec = m->species;
     if (m->addon.boss != Q1_BOSS_NONE)
         return q1_boss_die(g, entity, attacker, error);
-    if (m->charmer.registry)
+    if (q1_ref_present(m->charmer))
         entity->effects &= ~8u;
     if (m->counted_death)
         return true;
     m->dead = true;
     bool foundation =
         !m->addon.enabled && (spec->species == QA_Q1_ARMY || spec->species == QA_Q1_DOG);
-    qa_actor_id killer = foundation && m->enemy.registry ? m->enemy : attacker;
+    qa_actor_id killer = q1_ref_actor(g, foundation && q1_ref_present(m->enemy) ? m->enemy : q1_ref_from(g, attacker));
     if (!foundation) {
-        m->enemy = attacker;
+        m->enemy = q1_ref_from(g, attacker);
         if (q1_health(g, entity->id) < -99 &&
             !qa_combat_set_health(g->services.combat, entity->id, -99, error))
             return false;
@@ -487,7 +487,7 @@ bool q1_monster_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_e
             return q1_monster_start(g, entity, error);
         if (m->addon.path_wait) {
             m->addon.path_wait = false;
-            if (q1_health(g, entity->id) <= 0 || m->enemy.registry)
+            if (q1_health(g, entity->id) <= 0 || q1_ref_present(m->enemy))
                 return true;
             m->pause_until = 0;
             return q1_monster_play(g, entity, m->species->walk, error);
@@ -515,7 +515,7 @@ bool q1_monster_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_e
             !qa_world_body_read(g->services.world, entity->id, &body, error))
             return false;
         combat.can_take_damage = false;
-        m->enemy = activator;
+        m->enemy = q1_ref_from(g, activator);
         return qa_combat_set_traits(g->services.combat, entity->id, &combat, error) &&
                qa_combat_set_health(g->services.combat, entity->id, g->options.skill == 0 ? 1 : 3,
                                     error) &&
@@ -524,9 +524,9 @@ bool q1_monster_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_e
                q1_link(g, entity, error) && q1_monster_play(g, entity, "boss_rise1", error);
     }
     qa_q1_target target;
-    if (m->enemy.registry || q1_health(g, entity->id) <= 0 || !q1_target(g, activator, &target) ||
+    if (q1_ref_present(m->enemy) || q1_health(g, entity->id) <= 0 || !q1_target(g, activator, &target) ||
         !target.player || target.invisible || target.notarget)
         return true;
-    m->enemy = activator;
+    m->enemy = q1_ref_from(g, activator);
     return q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FOUND, error);
 }

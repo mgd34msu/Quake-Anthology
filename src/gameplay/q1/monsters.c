@@ -37,7 +37,7 @@ qa_actor_id q1_monster_route(const qa_q1_game *g, const q1_actor *entity) {
     return q1_find_target(g, entity->state.monster.path);
 }
 static bool target_body(qa_q1_game *g, q1_actor *entity, qa_body_state *out) {
-    return qa_world_body_read(g->services.world, entity->state.monster.enemy, out, NULL);
+    return qa_world_body_read(g->services.world, q1_ref_actor(g, entity->state.monster.enemy), out, NULL);
 }
 static float range(qa_q1_game *g, q1_actor *entity, bool eyes) {
     qa_body_state self, other;
@@ -46,7 +46,7 @@ static float range(qa_q1_game *g, q1_actor *entity, bool eyes) {
     qa_vec3 delta = qa_vec_sub(other.origin, self.origin);
     if (eyes) {
         qa_q1_target target;
-        delta.z += q1_target(g, entity->state.monster.enemy, &target) ? target.view_height : 25;
+        delta.z += q1_target(g, q1_ref_actor(g, entity->state.monster.enemy), &target) ? target.view_height : 25;
         delta.z -= entity->state.monster.species->species == QA_Q1_FISH ? 10 : 25;
     }
     return qa_vec_length(delta);
@@ -98,18 +98,18 @@ bool q1_monster_visible(qa_q1_game *g, q1_actor *entity, qa_actor_id target, boo
 bool q1_monster_found(qa_q1_game *g, q1_actor *entity, qa_actor_id target, qa_error *error) {
     q1_monster *monster = &entity->state.monster;
     q1_actor *native_target = q1_entity(g, target);
-    if (monster->charmer.registry &&
-        (qa_actor_id_equal(target, monster->charmer) ||
+    if (q1_ref_present(monster->charmer) &&
+        (q1_ref_equal(q1_ref_from(g, target), monster->charmer) ||
          (native_target && native_target->kind == Q1_MONSTER &&
-          qa_actor_id_equal(native_target->state.monster.charmer, monster->charmer)))) {
-        monster->enemy = (qa_actor_id){0};
+          q1_ref_equal(native_target->state.monster.charmer, monster->charmer)))) {
+        monster->enemy = (q1_ref){0};
         return true;
     }
-    monster->enemy = target;
+    monster->enemy = q1_ref_from(g, target);
     bool mg3 = monster->addon.enabled && g->options.program == QA_Q1_MG3;
     qa_q1_target observation;
     if (q1_target(g, target, &observation) && observation.player) {
-        g->sight_actor = entity->id;
+        g->sight_actor = q1_ref_from(g, entity->id);
         g->sight_time = g->time;
     }
     if (mg3 && monster->species->species == QA_Q1_HELLKNIGHT &&
@@ -117,9 +117,9 @@ bool q1_monster_found(qa_q1_game *g, q1_actor *entity, qa_actor_id target, qa_er
         return true;
     monster->search_until = g->time + 5;
     monster->refired = false;
-    entity->physics.enemy = target;
-    entity->physics.goal = target;
-    if (g->options.program == QA_Q1_HIPNOTIC || mg3 || monster->charmer.registry)
+    entity->physics.enemy = q1_ref_from(g, target);
+    entity->physics.goal = q1_ref_from(g, target);
+    if (g->options.program == QA_Q1_HIPNOTIC || mg3 || q1_ref_present(monster->charmer))
         monster->hostile_until = g->time + 1;
     if (g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3 || mg3)
         monster->attack_finished = g->time + 1;
@@ -137,7 +137,7 @@ bool q1_monster_found(qa_q1_game *g, q1_actor *entity, qa_actor_id target, qa_er
         qa_monster_combat_route route;
         if (!mission.found_target(mission.context, entity->id, error) ||
             !mission.combat_route(mission.context, entity->id, &route, error)) return false;
-        if (route.goal.registry) monster->move_target = entity->physics.goal = route.goal;
+        if (route.goal.registry) monster->move_target = entity->physics.goal = q1_ref_from(g, route.goal);
         if (route.stand_ground) monster->pause_until = 99999999;
     }
     if (g->host.monster_found && !g->host.monster_found(g->host.context, entity->id, target, error))
@@ -172,7 +172,7 @@ bool q1_monster_found(qa_q1_game *g, q1_actor *entity, qa_actor_id target, qa_er
 }
 bool q1_monster_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *error) {
     *out = false;
-    if (entity->state.monster.charmer.registry)
+    if (q1_ref_present(entity->state.monster.charmer))
         return q1_charmed_find_target(g, entity, out, error);
     bool mg3 = entity->state.monster.addon.enabled && g->options.program == QA_Q1_MG3;
     bool hipnotic = g->options.program == QA_Q1_HIPNOTIC || mg3;
@@ -186,12 +186,12 @@ bool q1_monster_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error
         }
     }
     qa_actor_id candidate = {0};
-    q1_actor *sight = q1_entity(g, g->sight_actor);
+    q1_actor *sight = q1_entity(g, q1_ref_actor(g, g->sight_actor));
     if (sight && sight->kind == Q1_MONSTER && g->sight_time >= g->time - 0.1 &&
         !(entity->spawnflags & 3)) {
-        if (hipnotic && qa_actor_id_equal(sight->state.monster.enemy, entity->state.monster.enemy))
+        if (hipnotic && q1_ref_equal(sight->state.monster.enemy, entity->state.monster.enemy))
             return true;
-        candidate = hipnotic ? sight->id : sight->state.monster.enemy;
+        candidate = q1_ref_actor(g, hipnotic ? q1_ref_from(g, sight->id) : sight->state.monster.enemy);
     } else if (g->host.check_client)
         (void)g->host.check_client(g->host.context, entity->id, &candidate);
     else {
@@ -201,7 +201,7 @@ bool q1_monster_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error
     }
     qa_q1_target observation;
     if (!candidate.registry || (!hipnotic && q1_health(g, candidate) <= 0) ||
-        (hipnotic && qa_actor_id_equal(candidate, entity->state.monster.enemy)) ||
+        (hipnotic && q1_ref_equal(q1_ref_from(g, candidate), entity->state.monster.enemy)) ||
         !q1_target(g, candidate, &observation) || observation.notarget || observation.invisible)
         return true;
     qa_body_state self, other;
@@ -237,8 +237,8 @@ bool q1_monster_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error
         q1_actor *native = q1_entity(g, candidate);
         if (!native || native->kind != Q1_MONSTER)
             return true;
-        if (!native->state.monster.charmer.registry) {
-            candidate = native->state.monster.enemy;
+        if (!q1_ref_present(native->state.monster.charmer)) {
+            candidate = q1_ref_actor(g, native->state.monster.enemy);
             if (!q1_target(g, candidate, &observation) || !observation.player)
                 return true;
         }
@@ -334,13 +334,13 @@ static bool clear_shot(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
         return false;
     qa_q1_target observation;
     float height =
-        q1_target(g, entity->state.monster.enemy, &observation) ? observation.view_height : 25;
+        q1_target(g, q1_ref_actor(g, entity->state.monster.enemy), &observation) ? observation.view_height : 25;
     qa_trace_result trace;
     if (!q1_trace(g, qa_vec_add(self.origin, qa_v3(0, 0, 25)),
                   qa_vec_add(target.origin, qa_v3(0, 0, height)), entity->id, true, &trace, error))
         return false;
     *out = trace.hit == QA_TRACE_HIT_ACTOR &&
-           qa_actor_id_equal(trace.actor, entity->state.monster.enemy) &&
+           q1_ref_equal(q1_ref_from(g, trace.actor), entity->state.monster.enemy) &&
            (entity->state.monster.species->species == QA_Q1_WIZARD ||
             !(trace.in_open && trace.in_water));
     return true;
@@ -387,12 +387,12 @@ static bool try_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
         qa_q1_target traits;
         qa_vec3 delta = qa_vec_sub(
             qa_vec_add(other.origin,
-                       qa_v3(0, 0, q1_target(g, m->enemy, &traits) ? traits.view_height : 25)),
+                       qa_v3(0, 0, q1_target(g, q1_ref_actor(g, m->enemy), &traits) ? traits.view_height : 25)),
             qa_vec_add(self.origin, qa_v3(0, 0, 25)));
         distance = qa_vec_length(delta);
         bool visible;
         if (distance <= 100) {
-            if (!q1_can_damage(g, m->enemy, entity->id, &visible, error))
+            if (!q1_can_damage(g, q1_ref_actor(g, m->enemy), entity->id, &visible, error))
                 return false;
             if (visible) {
                 m->attack_state = 1;
@@ -403,7 +403,7 @@ static bool try_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
         if (g->time < m->attack_finished || delta.z > 64 || delta.z < -200 || distance > 1000 ||
             distance < 150)
             return true;
-        if (!q1_monster_visible(g, entity, m->enemy, &visible, error))
+        if (!q1_monster_visible(g, entity, q1_ref_actor(g, m->enemy), &visible, error))
             return false;
         if (!visible)
             return true;
@@ -461,7 +461,7 @@ static bool try_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
         spec->melee || (mg3 && spec->species == QA_Q1_ZOMBIE && (entity->spawnflags & 128));
     if (category == 0 && melee) {
         bool allowed = true;
-        if (specialized && !q1_can_damage(g, m->enemy, entity->id, &allowed, error))
+        if (specialized && !q1_can_damage(g, q1_ref_actor(g, m->enemy), entity->id, &allowed, error))
             return false;
         if (allowed) {
             *out = true;
@@ -548,11 +548,11 @@ static bool try_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
 bool q1_monster_melee(qa_q1_game *g, q1_actor *entity, float maximum, float scale, unsigned rolls,
                       bool sight, qa_error *error) {
     q1_monster *m = &entity->state.monster;
-    if (!m->enemy.registry || range(g, entity, false) > maximum)
+    if (!q1_ref_present(m->enemy) || range(g, entity, false) > maximum)
         return true;
     if (sight) {
         bool visible;
-        if (!q1_can_damage(g, m->enemy, entity->id, &visible, error))
+        if (!q1_can_damage(g, q1_ref_actor(g, m->enemy), entity->id, &visible, error))
             return false;
         if (!visible)
             return true;
@@ -560,7 +560,7 @@ bool q1_monster_melee(qa_q1_game *g, q1_actor *entity, float maximum, float scal
     float damage = 0;
     for (unsigned i = 0; i < rolls; ++i)
         damage += q1_random(g);
-    return q1_damage(g, m->enemy, entity->id, entity->id, damage * scale, QA_Q1_WEAPON_COUNT,
+    return q1_damage(g, q1_ref_actor(g, m->enemy), entity->id, entity->id, damage * scale, QA_Q1_WEAPON_COUNT,
                      error);
 }
 bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa_error *error) {
@@ -587,7 +587,7 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
             return false;
         return found_target || q1_monster_face(g, entity, error);
     case Q1_AI_WALK: {
-        if (m->charmer.registry)
+        if (q1_ref_present(m->charmer))
             return q1_charmed_walk(g, entity, distance, error);
         if (!q1_monster_find_target(g, entity, &found_target, error))
             return false;
@@ -612,19 +612,19 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
         }
         if (m->addon.enabled && g->options.program == QA_Q1_MG3)
             m->hostile_until = g->time + 1;
-        if (m->charmer.registry && (!m->enemy.registry || qa_actor_id_equal(m->enemy, m->charmer) ||
-                                    q1_health(g, m->enemy) <= 0)) {
-            m->enemy = (qa_actor_id){0};
+        if (q1_ref_present(m->charmer) && (!q1_ref_present(m->enemy) || q1_ref_equal(m->enemy, m->charmer) ||
+                                    q1_health(g, q1_ref_actor(g, m->enemy)) <= 0)) {
+            m->enemy = (q1_ref){0};
             return q1_charmed_hunt(g, entity, false, error);
         }
-        if (!eligible(g, m->enemy)) {
+        if (!eligible(g, q1_ref_actor(g, m->enemy))) {
             m->attack_state = 0;
-            if (eligible(g, m->old_enemy)) {
+            if (eligible(g, q1_ref_actor(g, m->old_enemy))) {
                 m->enemy = m->old_enemy;
-                m->old_enemy = (qa_actor_id){0};
+                m->old_enemy = (q1_ref){0};
             } else {
-                m->enemy = (qa_actor_id){0};
-                m->old_enemy = (qa_actor_id){0};
+                m->enemy = (q1_ref){0};
+                m->old_enemy = (q1_ref){0};
                 return q1_monster_play(g, entity,
                                        q1_monster_route(g, entity).registry ? m->species->walk
                                                                             : m->species->stand,
@@ -632,13 +632,13 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
             }
         }
         bool seen;
-        if (!q1_monster_visible(g, entity, m->enemy, &seen, error))
+        if (!q1_monster_visible(g, entity, q1_ref_actor(g, m->enemy), &seen, error))
             return false;
         if (m->addon.enabled && g->options.program == QA_Q1_MG3)
             g->enemy_visible = seen;
         if (seen)
             m->search_until = g->time + 5;
-        if (g->options.coop && !m->charmer.registry && m->search_until < g->time) {
+        if (g->options.coop && !q1_ref_present(m->charmer) && m->search_until < g->time) {
             if (!q1_monster_find_target(g, entity, &found_target, error))
                 return false;
             if (found_target)
@@ -717,7 +717,7 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
             return qa_physics_walk_move(g->services.physics, entity->id, yaw + 180, distance,
                                         (float)g->elapsed, true, true, &moved, error);
         }
-        if ((g->options.program == QA_Q1_HIPNOTIC || m->charmer.registry) && g->run_straight &&
+        if ((g->options.program == QA_Q1_HIPNOTIC || q1_ref_present(m->charmer)) && g->run_straight &&
             g->time > m->straight_after) {
             g->run_straight = false;
             if (!body(g, entity, &self, error) ||
@@ -735,8 +735,8 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
     case Q1_AI_CHARGE:
         if (!q1_monster_face(g, entity, error))
             return false;
-        return !m->enemy.registry || qa_physics_q1_move_to_goal(g->services.physics, entity->id,
-                                                                m->enemy, distance, false, error);
+        return !q1_ref_present(m->enemy) || qa_physics_q1_move_to_goal(g->services.physics, entity->id,
+                                                                q1_ref_actor(g, m->enemy), distance, false, error);
     case Q1_AI_CHARGE_SIDE:
     case Q1_AI_MELEE_SIDE: {
         qa_body_state target;
@@ -814,13 +814,13 @@ bool q1_monster_mission_turn(qa_q1_game *g, q1_actor *entity, bool *active, qa_e
 }
 bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_monster *m = &entity->state.monster;
-    if (m->addon.boss != Q1_BOSS_FINAL && q1_health(g, entity->id) > 0 && m->enemy.registry &&
-        !eligible(g, m->enemy) &&
+    if (m->addon.boss != Q1_BOSS_FINAL && q1_health(g, entity->id) > 0 && q1_ref_present(m->enemy) &&
+        !eligible(g, q1_ref_actor(g, m->enemy)) &&
         !(m->species->species == QA_Q1_GREMLIN && m->source.gremlin.gorging)) {
-        m->enemy = eligible(g, m->old_enemy) ? m->old_enemy : (qa_actor_id){0};
-        m->old_enemy = (qa_actor_id){0};
+        m->enemy = eligible(g, q1_ref_actor(g, m->old_enemy)) ? m->old_enemy : (q1_ref){0};
+        m->old_enemy = (q1_ref){0};
         m->attack_state = 0;
-        const char *next = m->enemy.registry                      ? m->species->run
+        const char *next = q1_ref_present(m->enemy)                      ? m->species->run
                            : q1_monster_route(g, entity).registry ? m->species->walk
                                                                   : m->species->stand;
         m->next_frame = q1_frame_index(next);
@@ -1164,7 +1164,7 @@ bool q1_become_decoy(qa_q1_game *g, qa_vec3 origin, qa_string_id target,
     if (!q1_alive(g, id))
         return true;
     qa_actor_id goal = q1_monster_route(g, decoy);
-    decoy->state.monster.move_target = decoy->physics.goal = goal;
+    decoy->state.monster.move_target = decoy->physics.goal = q1_ref_from(g, goal);
     if (goal.registry) {
         qa_body_state destination;
         if (!qa_world_body_read(g->services.world, goal, &destination, error))
@@ -1270,12 +1270,12 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (has_mission) {
         if (!mission.route(mission.context, entity->id, &goal, error) ||
             !mission.started(mission.context, entity->id, error)) return false;
-        m->move_target = entity->physics.goal = goal;
+        m->move_target = entity->physics.goal = q1_ref_from(g, goal);
         m->path = goal.registry ? entity->target : 0;
     }
     if (!addon && m->species->species >= QA_Q1_GREMLIN) {
-        m->move_target = goal;
-        entity->physics.goal = goal;
+        m->move_target = q1_ref_from(g, goal);
+        entity->physics.goal = q1_ref_from(g, goal);
     }
     if (addon) {
         qa_actor_id authored;
@@ -1286,8 +1286,8 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     }
     if (addon) {
         m->path = goal.registry ? entity->target : QA_STRING_NONE;
-        m->move_target = goal;
-        entity->physics.goal = goal;
+        m->move_target = q1_ref_from(g, goal);
+        entity->physics.goal = q1_ref_from(g, goal);
         if (goal.registry && qa_world_body_read(g->services.world, goal, &state, NULL)) {
             qa_body_state self;
             if (!body(g, entity, &self, error))
@@ -1318,7 +1318,7 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                     break;
                 }
         }
-        return !(entity->spawnflags & 8) || q1_monster_use(g, entity, entity->activator, error);
+        return !(entity->spawnflags & 8) || q1_monster_use(g, entity, q1_ref_actor(g, entity->activator), error);
     }
     if (addon || !(entity->physics.flags & QA_PHYSICS_FLYING))
         return q1_schedule(g, entity, entity->next_think - g->time + q1_random(g) * 0.5,

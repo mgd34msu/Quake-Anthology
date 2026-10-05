@@ -552,7 +552,7 @@ bool q1_spawn_bubble(qa_q1_game *g, qa_vec3 origin, qa_vec3 velocity, bool split
            q1_link(g, bubble, error) && q1_schedule(g, bubble, 0.5, Q1_THINK_BUBBLE, error);
 }
 bool q1_character_bubbles(qa_q1_game *g, q1_actor *timer, qa_error *error) {
-    q1_player *player = q1_player_get(g, timer->owner);
+    q1_player *player = q1_player_get(g, q1_ref_actor(g, timer->owner));
     if (!player)
         return q1_remove(g, timer, error);
     uint8_t water_level =
@@ -560,7 +560,7 @@ bool q1_character_bubbles(qa_q1_game *g, q1_actor *timer, qa_error *error) {
     if (water_level != 3)
         return true;
     qa_body_state body;
-    if (!qa_world_body_read(g->services.world, timer->owner, &body, error))
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, timer->owner), &body, error))
         return false;
     if (!q1_spawn_bubble(g, qa_vec_add(body.origin, qa_v3(0, 0, 24)), qa_v3(0, 0, 15), false,
                          error))

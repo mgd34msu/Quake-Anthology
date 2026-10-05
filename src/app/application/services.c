@@ -1615,6 +1615,19 @@ static bool builtin_motion_changed(void *opaque, qa_actor_id actor,
                                               error);
 }
 
+static qa_actor_id physics_reference(void *opaque, qa_actor_reference reference)
+{
+    qa_application *application = opaque;
+    qa_actor_id actor = qa_actor_reference_resolve(qa_session_actors(application->session), reference);
+    if (actor.registry || reference.kind != QA_ACTOR_REFERENCE_SOURCE || !reference.value.source.slot)
+        return actor;
+    application_provider *provider = provider_owned(application, reference.value.source.owner);
+    if (provider && provider->constructed && provider->kind == APPLICATION_PROVIDER_Q1 &&
+        qa_q1_source_client_actor(provider->state.q1, reference.value.source.slot - 1, &actor))
+        return actor;
+    return (qa_actor_id){0};
+}
+
 qa_physics_services application_physics_services(qa_application *application)
 {
     return (qa_physics_services){.context = application,
@@ -1630,7 +1643,8 @@ qa_physics_services application_physics_services(qa_application *application)
                                      physics_q1_water_transition,
                                  .accept_ground = physics_accept_ground,
                                  .before_monster_step =
-                                     physics_before_monster_step};
+                                     physics_before_monster_step,
+                                 .resolve_reference = physics_reference};
 }
 
 static uint64_t power_seconds(double seconds)

@@ -7,10 +7,10 @@ bool q1_hipnotic_lightning_claimed(const qa_q1_game *g, qa_actor_id actor) {
             continue;
         if (e->kind == Q1_TIMER && e->think == Q1_THINK_HAMMER_BOLT &&
             e->state.projectile.count == 1 &&
-            qa_actor_id_equal(e->state.projectile.enemy, actor))
+            q1_ref_equal(e->state.projectile.enemy, q1_ref_from(g, actor)))
             return true;
         if (e->map && e->map->kind == Q1_MAP_TESLA_BOLT && e->count == 1 &&
-            qa_actor_id_equal(e->map->pending.hazard.enemy, actor))
+            q1_ref_equal(e->map->pending.hazard.enemy, q1_ref_from(g, actor)))
             return true;
     }
     return false;
@@ -117,14 +117,14 @@ static bool bolt(qa_q1_game *g, q1_actor *e, bool tesla, qa_error *error) {
     q1_map_state *s = e->map;
     qa_body_state body, target;
     if (tesla) {
-        q1_actor *owner = q1_entity(g, e->owner);
+        q1_actor *owner = q1_entity(g, q1_ref_actor(g, e->owner));
         if (owner && owner->map && (owner->map->kind == Q1_MAP_TESLA ||
                                     owner->map->kind == Q1_MAP_GODS_WRATH))
             owner->map->pending.hazard.attack = 2;
     }
     bool expired = g->time > s->active_until;
     if (!expired && tesla)
-        expired = !qa_world_body_read(g->services.world, s->pending.hazard.enemy, &target, NULL);
+        expired = !qa_world_body_read(g->services.world, q1_ref_actor(g, s->pending.hazard.enemy), &target, NULL);
     if (!q1_alive(g, id))
         return true;
     if (expired)
@@ -140,7 +140,7 @@ static bool bolt(qa_q1_game *g, q1_actor *e, bool tesla, qa_error *error) {
             return false;
         if (!q1_alive(g, id))
             return true;
-        if (trace.fraction != 1 || q1_health(g, s->pending.hazard.enemy) <= 0 ||
+        if (trace.fraction != 1 || q1_health(g, q1_ref_actor(g, s->pending.hazard.enemy)) <= 0 ||
             qa_vec_length(qa_vec_sub(body.origin, target.origin)) > s->distance + 10)
             return q1_remove(g, e, error);
         end = trace.end;
@@ -150,7 +150,7 @@ static bool bolt(qa_q1_game *g, q1_actor *e, bool tesla, qa_error *error) {
         return false;
     if (!q1_alive(g, id))
         return true;
-    if (!electric(g, e, body.origin, end, s->pending.hazard.last_victim, error))
+    if (!electric(g, e, body.origin, end, q1_ref_actor(g, s->pending.hazard.last_victim), error))
         return false;
     return !q1_alive(g, id) || q1_map_schedule(g, e, .1,
              tesla ? Q1_MAP_TESLA_BOLT_TICK : Q1_MAP_HIP_BOLT_TICK, error);
@@ -160,7 +160,7 @@ static bool make_bolt(qa_q1_game *g, q1_actor *e, bool tesla, qa_vec3 start, qa_
                        qa_actor_id enemy, qa_error *error) {
     qa_actor_id source = e->id;
     float distance = e->map->distance, duration = e->map->duration, damage = e->damage;
-    qa_actor_id from = tesla ? e->map->pending.hazard.last_victim : source;
+    qa_actor_id from = q1_ref_actor(g, tesla ? e->map->pending.hazard.last_victim : q1_ref_from(g, source));
     q1_actor *created;
     if (!q1_create(g, tesla ? "hipnotic_tesla_lightning" : "hipnotic_lightning", Q1_MAP,
                     tesla ? source : (qa_actor_id){0}, &created, error))
@@ -177,9 +177,9 @@ static bool make_bolt(qa_q1_game *g, q1_actor *e, bool tesla, qa_vec3 start, qa_
     s->kind = tesla ? Q1_MAP_TESLA_BOLT : Q1_MAP_HIP_BOLT;
     s->distance = distance;
     s->active_until = g->time + (tesla && duration <= 0 ? 9999 : duration);
-    s->pending.hazard.enemy = enemy;
+    s->pending.hazard.enemy = q1_ref_from(g, enemy);
     s->pending.hazard.endpoint = end;
-    s->pending.hazard.last_victim = from;
+    s->pending.hazard.last_victim = q1_ref_from(g, from);
     created->damage = damage;
     created->count = tesla ? 1 : 0;
     qa_body_state body = {.origin = start};
@@ -215,7 +215,7 @@ static bool lightning_use(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return true;
     qa_vec3 start = body.origin, end;
     if (q1_map_text(g, e->target)) {
-        qa_actor_id enemy = s->pending.hazard.enemy;
+        qa_actor_id enemy = q1_ref_actor(g, s->pending.hazard.enemy);
         if (!q1_alive(g, enemy))
             enemy = g->maps->world_actor;
         if (!qa_world_body_read(g->services.world, enemy, &target, error))
@@ -369,10 +369,10 @@ static bool mine_home(qa_q1_game *g, q1_actor *e, qa_error *error) {
             return false;
         if (!q1_alive(g, id))
             return true;
-        s->pending.hazard.enemy = selected;
+        s->pending.hazard.enemy = q1_ref_from(g, selected);
         s->pending.hazard.search_until = g->time + 1.3;
     }
-    bool target_exists = qa_world_body_read(g->services.world, s->pending.hazard.enemy, &target, NULL);
+    bool target_exists = qa_world_body_read(g->services.world, q1_ref_actor(g, s->pending.hazard.enemy), &target, NULL);
     if (!q1_alive(g, id))
         return true;
     if (!target_exists) {
@@ -512,7 +512,7 @@ bool q1_map_hip_hazard_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa
         qa_q1_target target;
         if (q1_target(g, activator, &target) && q1_alive(g, id) &&
             target.player && !target.invisible) {
-            s->pending.hazard.enemy = activator;
+            s->pending.hazard.enemy = q1_ref_from(g, activator);
             return q1_map_schedule(g, e, .1, Q1_MAP_MINE_HOME, error);
         }
         return true;
@@ -521,7 +521,7 @@ bool q1_map_hip_hazard_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa
         if (s->pending.hazard.attack)
             return true;
         s->pending.hazard.search_until = g->time + e->delay;
-        s->pending.hazard.last_victim = activator;
+        s->pending.hazard.last_victim = q1_ref_from(g, activator);
         return tesla_tick(g, e, error);
     }
     if (s->kind == Q1_MAP_TESLA || s->kind == Q1_MAP_HIP_LIGHTNING_SWITCHED) {
@@ -598,8 +598,9 @@ bool q1_map_hip_hazard_think(qa_q1_game *g, q1_actor *e, q1_map_action action,
     case Q1_MAP_HIP_LIGHTNING_FIRST: {
         if (q1_map_text(g, e->target)) {
             qa_target_cursor cursor = {0};
-            (void)qa_targets_next(g->maps->options.targets, e->target, &cursor,
-                                  &s->pending.hazard.enemy);
+            qa_actor_id target = {0};
+            (void)qa_targets_next(g->maps->options.targets, e->target, &cursor, &target);
+            s->pending.hazard.enemy = q1_ref_from(g, target);
         }
         if (s->kind == Q1_MAP_HIP_LIGHTNING_TRIGGERED) {
             q1_map_cancel(g, e);

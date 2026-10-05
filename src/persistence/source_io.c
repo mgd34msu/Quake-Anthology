@@ -83,13 +83,13 @@ bool qa_source_save_owned_text(qa_source_save_io *io, char **value)
     }
     return true;
 }
-bool qa_source_save_actor(qa_source_save_io *io, qa_actor_id *value)
+static bool actor_payload(qa_source_save_io *io, bool present, qa_actor_id *value)
 {
     if (!io || !value || !io->session) return persistence_io_fail(io, QA_ERROR_ARGUMENT, "missing source actor owner");
-    bool present = io->direction == QA_SOURCE_SAVE_WRITE && value->registry != 0;
     qa_saved_actor_id saved = {0};
-    if (present && !qa_actors_save_reference(qa_session_actors(io->session), *value, &saved, io->error)) { io->failed = true; return false; }
-    if (!qa_source_save_bool(io, &present) || !qa_source_save_u64(io, &saved.generation) ||
+    if (io->direction == QA_SOURCE_SAVE_WRITE && present &&
+        !qa_actors_save_reference(qa_session_actors(io->session), *value, &saved, io->error)) { io->failed = true; return false; }
+    if (!qa_source_save_u64(io, &saved.generation) ||
         !qa_source_save_u32(io, &saved.slot)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) {
         if (!present) {
@@ -98,6 +98,26 @@ bool qa_source_save_actor(qa_source_save_io *io, qa_actor_id *value)
         } else if (!qa_actors_reference_saved(qa_session_actors(io->session), saved, true, value, io->error)) { io->failed = true; return false; }
     }
     return true;
+}
+
+bool qa_source_save_actor(qa_source_save_io *io, qa_actor_id *value)
+{
+    if (!io || !value) return persistence_io_fail(io, QA_ERROR_ARGUMENT, "missing source actor");
+    bool present = io->direction == QA_SOURCE_SAVE_WRITE && value->registry != 0;
+    return qa_source_save_bool(io, &present) && actor_payload(io, present, value);
+}
+
+bool qa_source_save_actor_reference(qa_source_save_io *io, qa_actor_reference *value)
+{
+    if (!io || !value) return persistence_io_fail(io, QA_ERROR_ARGUMENT, "missing source actor reference");
+    uint8_t kind = io->direction == QA_SOURCE_SAVE_WRITE ? (uint8_t)value->kind : 0;
+    if (!qa_source_save_u8(io, &kind) || kind > QA_ACTOR_REFERENCE_SOURCE)
+        return persistence_io_fail(io, QA_ERROR_FORMAT, "invalid source actor reference domain");
+    if (io->direction == QA_SOURCE_SAVE_READ) *value = (qa_actor_reference){.kind = kind};
+    if (kind == QA_ACTOR_REFERENCE_SOURCE)
+        return qa_source_save_string(io, &value->value.source.owner) &&
+            qa_source_save_u32(io, &value->value.source.slot);
+    return actor_payload(io, kind == QA_ACTOR_REFERENCE_LIFETIME, &value->value.actor);
 }
 
 bool qa_persistence_physics(qa_source_save_io *io, qa_physics_properties *value)
@@ -122,7 +142,7 @@ bool qa_persistence_physics(qa_source_save_io *io, qa_physics_properties *value)
         qa_source_save_f32(io, &value->gravity_scale) && qa_source_save_f32(io, &value->delta_yaw) &&
         qa_source_save_f32(io, &value->ideal_yaw) && qa_source_save_f32(io, &value->yaw_speed) &&
         qa_source_save_i32(io, &value->water_level) && qa_source_save_i32(io, &value->water_type) &&
-        qa_source_save_actor(io, &value->enemy) && qa_source_save_actor(io, &value->goal) &&
+        qa_source_save_actor_reference(io, &value->enemy) && qa_source_save_actor_reference(io, &value->goal) &&
         qa_source_save_f64(io, &value->q1_pusher.local_seconds) &&
         qa_source_save_f64(io, &value->q1_pusher.next_think_seconds);
 }

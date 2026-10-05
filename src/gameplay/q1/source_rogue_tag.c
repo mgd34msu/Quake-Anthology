@@ -71,8 +71,8 @@ static bool take(qa_q1_game *game, q1_actor *source, qa_actor_id player,
     double delay, qa_error *error) {
     q1_actor *actual_world = world(game, error);
     if (!actual_world || !current(game, source->id, source, error)) return false;
-    actual_world->rogue_tag_owner = player;
-    source->owner = player;
+    actual_world->rogue_tag_owner = q1_ref_from(game, player);
+    source->owner = q1_ref_from(game, player);
     if (!write_value(game, source, true, 0, error) ||
         !write_value(game, source, false, game->time + delay, error)) return false;
     source->physics.solid = QA_PHYSICS_NOT_SOLID;
@@ -94,8 +94,8 @@ static bool respawn(qa_q1_game *game, q1_actor *source, qa_error *error) {
         !current(game, actor, source, error)) return false;
     q1_actor *actual_world = world(game, error);
     if (!actual_world) return false;
-    actual_world->rogue_tag_owner = (qa_actor_id){0};
-    source->owner = (qa_actor_id){0};
+    actual_world->rogue_tag_owner = (q1_ref){0};
+    source->owner = (q1_ref){0};
     source->physics.solid = QA_PHYSICS_TRIGGER;
     source->touch_disabled = false;
     source->think = Q1_THINK_NONE;
@@ -174,7 +174,7 @@ bool q1_source_rogue_tag_think(qa_q1_game *game, q1_actor *source,
             drop_floor(game, source, &placed, error) &&
             q1_schedule(game, source, 30, Q1_THINK_SOURCE_ROGUE_TAG_RESPAWN, error);
     }
-    qa_actor_id owner = source->owner;
+    qa_actor_id owner = q1_ref_actor(game, source->owner);
     qa_combat_state combat = {0};
     if (owner.registry && qa_combat_storage_serial(game->services.combat, owner) &&
         (!qa_combat_read(game->services.combat, owner, &combat, error) ||
@@ -197,7 +197,7 @@ bool q1_source_rogue_tag_think(qa_q1_game *game, q1_actor *source,
     if (!write_value(game, source, true, 0, error)) return false;
     source->physics.solid = QA_PHYSICS_TRIGGER;
     source->touch_disabled = false;
-    source->owner = (qa_actor_id){0};
+    source->owner = (q1_ref){0};
     return q1_link(game, source, error) && current(game, actor, source, error) &&
         q1_schedule(game, source, .1, Q1_THINK_SOURCE_ROGUE_TAG_FALL, error);
 }
@@ -223,7 +223,7 @@ bool qa_q1_source_rogue_tag_score(qa_q1_game *game, qa_actor_id victim,
     if (!okay || !source) goto finish;
     okay = current(game, source->id, source, error);
     if (!okay) goto finish;
-    qa_actor_id owner = world(game, error)->rogue_tag_owner;
+    qa_actor_id owner = q1_ref_actor(game, world(game, error)->rogue_tag_owner);
     if (owner.registry && qa_actor_id_equal(attacker, owner)) {
         okay = write_value(game, source, true, source->state.source_tag.frags + 1, error);
         double frags = source->state.source_tag.frags;

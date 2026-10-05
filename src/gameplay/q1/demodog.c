@@ -2,7 +2,7 @@
 
 bool q1_demodog_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa_error *error) {
     if (action == Q1_ACTION_DEMODOG_BITE) {
-        if (!entity->state.monster.enemy.registry)
+        if (!q1_ref_present(entity->state.monster.enemy))
             return true;
         return q1_monster_ai(g, entity, Q1_AI_CHARGE, 10, error) &&
                (!q1_alive(g, entity->id) || q1_monster_melee(g, entity, 100, 8, 3, true, error));
@@ -130,7 +130,7 @@ bool q1_demodog_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return q1_gib_head(g, entity, "h_dog", -50, error);
 }
 bool q1_demodog_explode(qa_q1_game *g, q1_actor *entity, qa_actor_id ignore, qa_error *error) {
-    if (!q1_radius(g, entity->id, entity->owner, entity->state.projectile.damage, ignore,
+    if (!q1_radius(g, entity->id, q1_ref_actor(g, entity->owner), entity->state.projectile.damage, ignore,
                    QA_Q1_WEAPON_COUNT, error))
         return false;
     if (!q1_alive(g, entity->id))
@@ -142,13 +142,13 @@ bool q1_demodog_explode(qa_q1_game *g, q1_actor *entity, qa_actor_id ignore, qa_
     return !q1_alive(g, entity->id) || q1_remove(g, entity, error);
 }
 bool q1_demodog_grenade_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
-    if (qa_actor_id_equal(entity->owner, other))
+    if (q1_ref_equal(entity->owner, q1_ref_from(g, other)))
         return true;
     qa_q1_target target;
     if (q1_target(g, other, &target) && (target.aimed_damage || target.player)) {
         if (q1_classnamed(g, other, "monster_boss") ||
             q1_classnamed(g, other, "monster_oldone_new")) {
-            if (!q1_damage(g, other, entity->id, entity->owner, entity->state.projectile.damage,
+            if (!q1_damage(g, other, entity->id, q1_ref_actor(g, entity->owner), entity->state.projectile.damage,
                            QA_Q1_WEAPON_COUNT, error))
                 return false;
             return !q1_alive(g, entity->id) || q1_demodog_explode(g, entity, other, error);

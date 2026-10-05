@@ -48,14 +48,14 @@ bool qa_q1_grapple_weapon_tick(qa_q1_game *g, qa_actor_id actor, const qa_q1_inp
         return true;
     if (input->attack && available && player->grapple_weapon.attack_finished <= g->time) {
         player->grapple_weapon.attack_finished = g->time + 0.1;
-        if (q1_entity(g, player->hook)) {
+        if (q1_entity(g, q1_ref_actor(g, player->hook))) {
             if (!moving_frame(g, player, error))
                 return false;
-        } else if (!q1_entity(g, player->grapple_weapon.animation)) {
+        } else if (!q1_entity(g, q1_ref_actor(g, player->grapple_weapon.animation))) {
             q1_actor *timer;
             if (!q1_create(g, "ctf_hook_animation", Q1_TIMER, actor, &timer, error))
                 return false;
-            player->grapple_weapon.animation = timer->id;
+            player->grapple_weapon.animation = q1_ref_from(g, timer->id);
             player->grapple_weapon.frame = 2;
             if (!q1_schedule(g, timer, 0.1, Q1_THINK_HOOK_LAUNCH, error))
                 return false;
@@ -80,7 +80,7 @@ static bool frame_event(qa_q1_game *g, q1_player *player, int32_t frame, qa_erro
 }
 bool q1_grapple_weapon_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
     qa_actor_id actor = player->id;
-    q1_actor *hook = q1_entity(g, player->hook);
+    q1_actor *hook = q1_entity(g, q1_ref_actor(g, player->hook));
     if (hook && hook->kind == Q1_PROJECTILE && hook->state.projectile.kind == Q1_CTF_HOOK) {
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, actor, &body, error))
@@ -91,7 +91,7 @@ bool q1_grapple_weapon_frame(qa_q1_game *g, q1_player *player, qa_error *error) 
         int32_t next = qa_vec_length(body.velocity) >= 750 ? 4 : 3;
         return next == player->grapple_weapon.frame || frame_event(g, player, next, error);
     }
-    if (!q1_entity(g, player->grapple_weapon.animation) && player->grapple_weapon.frame != 0) {
+    if (!q1_entity(g, q1_ref_actor(g, player->grapple_weapon.animation)) && player->grapple_weapon.frame != 0) {
         if (player->grapple_weapon.frame != 5) {
             if (!frame_event(g, player, 5, error))
                 return false;
@@ -121,9 +121,9 @@ bool qa_q1_grapple_weapon_frame(qa_q1_game *g, qa_actor_id actor, qa_error *erro
     return ok;
 }
 bool q1_grapple_weapon_launch(qa_q1_game *g, q1_actor *timer, qa_error *error) {
-    q1_player *player = q1_player_get(g, timer->owner);
+    q1_player *player = q1_player_get(g, q1_ref_actor(g, timer->owner));
     if (player) {
-        player->grapple_weapon.animation = (qa_actor_id){0};
+        player->grapple_weapon.animation = (q1_ref){0};
         if (q1_health(g, player->id) > 0 && player->grapple_weapon.selected) {
             player->grapple_weapon.frame = 3;
             if (player->grapple_weapon.available &&
@@ -140,7 +140,7 @@ bool qa_q1_grapple_weapon_read(const qa_q1_game *g, qa_actor_id actor,
     const q1_player *player = g->players[actor.slot];
     if (!player || !player->active || !qa_actor_id_equal(player->id, actor))
         return false;
-    const q1_actor *hook = q1_entity_const(g, player->hook);
+    const q1_actor *hook = q1_entity_const(g, q1_ref_actor(g, player->hook));
     int32_t frame = player->grapple_weapon.frame;
     *out = (qa_q1_grapple_weapon_view){
         .weapon_frame = frame,
@@ -154,7 +154,7 @@ bool qa_q1_grapple_weapon_read(const qa_q1_game *g, qa_actor_id actor,
         .release_time = player->grapple_weapon.release_time,
         .selected = player->grapple_weapon.selected,
         .available = player->grapple_weapon.available,
-        .animating = q1_entity_const(g, player->grapple_weapon.animation) != NULL,
+        .animating = q1_entity_const(g, q1_ref_actor(g, player->grapple_weapon.animation)) != NULL,
         .pulling = player->grapple_pulling,
         .axe_pose = true};
     return true;

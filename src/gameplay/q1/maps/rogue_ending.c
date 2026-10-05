@@ -24,7 +24,7 @@ static bool first_target(qa_q1_game *g, const char *name, qa_actor_id *out, qa_e
 }
 static q1_actor *machine(qa_q1_game *g, qa_error *error) {
     q1_actor *entity =
-        q1_alive(g, g->maps->world_actor) ? q1_entity(g, g->maps->time_machine) : NULL;
+        q1_alive(g, g->maps->world_actor) ? q1_entity(g, q1_ref_actor(g, g->maps->time_machine)) : NULL;
     if (!entity || !entity->map || entity->map->kind != Q1_MAP_TIME_MACHINE) {
         q1_map_fail(error, "End sequence time machine is missing");
         return NULL;
@@ -129,7 +129,7 @@ static bool set_goal(qa_q1_game *g, qa_actor_id id, const char *target, qa_error
     }
     actor = ending_actor(g, id);
     if (actor)
-        actor->physics.goal = actor->map->pending.follower.move_target = next;
+        actor->physics.goal = actor->map->pending.follower.move_target = q1_ref_from(g, next);
     return true;
 }
 static bool control(qa_q1_game *g, qa_actor_id id, qa_error *error) {
@@ -145,7 +145,7 @@ static bool control(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     }
     if (stage == 3) {
         if (!qa_builtin_resource(&g->services, "timepod", &actor->target, error) ||
-            !q1_map_targets(g, actor, actor->activator, error))
+            !q1_map_targets(g, actor, q1_ref_actor(g, actor->activator), error))
             return false;
         if (!ending_actor(g, id))
             return true;
@@ -175,7 +175,7 @@ bool qa_q1_game_rogue_path_touch(qa_q1_game *g, qa_actor_id corner, qa_actor_id 
     q1_actor *actor = q1_entity(g, follower);
     if (!actor || !actor->map ||
         (actor->map->kind != Q1_MAP_ENDING_ACTOR && actor->map->kind != Q1_MAP_BUZZSAW) ||
-        !qa_actor_id_equal(actor->map->pending.follower.move_target, corner))
+        !q1_ref_equal(actor->map->pending.follower.move_target, q1_ref_from(g, corner)))
         return true;
     q1_map_kind kind = actor->map->kind;
     qa_authored_target fields;
@@ -185,9 +185,9 @@ bool qa_q1_game_rogue_path_touch(qa_q1_game *g, qa_actor_id corner, qa_actor_id 
     (void)qa_targets_first(g->maps->options.targets, fields.target, &next);
     actor = q1_entity(g, follower);
     if (!actor || !actor->map || actor->map->kind != kind || !q1_alive(g, corner) ||
-        !qa_actor_id_equal(actor->map->pending.follower.move_target, corner))
+        !q1_ref_equal(actor->map->pending.follower.move_target, q1_ref_from(g, corner)))
         return true;
-    actor->physics.goal = actor->map->pending.follower.move_target = next;
+    actor->physics.goal = actor->map->pending.follower.move_target = q1_ref_from(g, next);
     qa_body_state to = {0}, from;
     if (next.registry && !qa_world_body_read(g->services.world, next, &to, error))
         return false;
@@ -214,7 +214,7 @@ static bool run(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     q1_actor *actor = ending_actor(g, id);
     if (!actor)
         return true;
-    qa_actor_id goal = actor->physics.goal;
+    qa_actor_id goal = q1_ref_actor(g, actor->physics.goal);
     qa_authored_target fields;
     if (qa_targets_read(g->maps->options.targets, goal, &fields)) {
         const char *name =
@@ -247,7 +247,7 @@ static bool fire_rocket(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     q1_actor *actor = ending_actor(g, id);
     if (!actor)
         return true;
-    actor->physics.goal = target_id;
+    actor->physics.goal = q1_ref_from(g, target_id);
     target->map->pending.time_reaction = Q1_TIME_CRASH;
     if (!qa_combat_set_health(g->services.combat, target_id, 1, error))
         return false;
@@ -371,7 +371,7 @@ bool q1_map_ending_think(qa_q1_game *g, q1_actor *actor, q1_map_action action, q
         return q1_map_schedule(g, actor, 999999, Q1_MAP_IDLE, error);
     }
     case Q1_MAP_CAMERA_TRACK: {
-        qa_actor_id player = actor->owner, tracked = g->maps->ending_actor;
+        qa_actor_id player = q1_ref_actor(g, actor->owner), tracked = q1_ref_actor(g, g->maps->ending_actor);
         if (!ending_actor(g, tracked) || !q1_alive(g, player) ||
             !qa_world_body_storage_serial(g->services.world, player))
             return q1_remove(g, actor, error);
@@ -441,7 +441,7 @@ bool q1_map_rogue_ending(qa_q1_game *g, qa_actor_id player, qa_error *error) {
         return false;
     qa_actor_id id = actor->id;
     actor->map->kind = Q1_MAP_ENDING_ACTOR;
-    actor->owner = player;
+    actor->owner = q1_ref_from(g, player);
     actor->max_health = 100;
     actor->physics.solid = QA_PHYSICS_BOX;
     actor->physics.motion = QA_PHYSICS_STEP;
@@ -474,7 +474,7 @@ bool q1_map_rogue_ending(qa_q1_game *g, qa_actor_id player, qa_error *error) {
     actor->physics.flags |= QA_PHYSICS_MONSTER;
     actor->physics.ideal_yaw = body.angles.y;
     actor->physics.yaw_speed = 20;
-    maps->ending_actor = id;
+    maps->ending_actor = q1_ref_from(g, id);
     if (!escape_lava(g, id, error))
         return false;
     actor = ending_actor(g, id);
@@ -494,6 +494,6 @@ bool q1_map_rogue_ending(qa_q1_game *g, qa_actor_id player, qa_error *error) {
     if (!q1_map_timer(g, "rogue_camera_tracker", &tracker, error))
         return false;
     tracker->map->kind = Q1_MAP_CAMERA_TRACKER;
-    tracker->owner = player;
+    tracker->owner = q1_ref_from(g, player);
     return q1_map_schedule(g, tracker, .05, Q1_MAP_CAMERA_TRACK, error);
 }

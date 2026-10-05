@@ -21,7 +21,7 @@ static bool commit(qa_q1_game *g, qa_actor_id actor, const qa_body_state *body, 
 }
 static bool through_door(qa_q1_game *g, qa_actor_id actor, q1_actor *door, qa_error *error) {
     const q1_door_group *group = door->map->pending.mover.group;
-    q1_actor *master = q1_entity(g, group ? group->members[0] : door->owner);
+    q1_actor *master = q1_entity(g, q1_ref_actor(g, group ? group->members[0] : door->owner));
     if (!master || !master->map || master->map->pending.mover.position != Q1_MAP_BOTTOM)
         return true;
     qa_actor_id master_id = master->id;
@@ -31,7 +31,7 @@ static bool through_door(qa_q1_game *g, qa_actor_id actor, q1_actor *door, qa_er
     size_t count = group ? group->count : 1;
     bool found = false;
     for (size_t i = 0; i < count; ++i) {
-        qa_actor_id id = group ? group->members[i] : master->id;
+        qa_actor_id id = q1_ref_actor(g, group ? group->members[i] : q1_ref_from(g, master->id));
         if (!q1_alive(g, id))
             continue;
         qa_body_state body;

@@ -122,7 +122,7 @@ bool q1_map_sacrifice_gib(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return false;
     entity = sacrifice(g, id);
     if (!entity) return true;
-    if (!q1_map_targets(g, entity, entity->activator, error)) return false;
+    if (!q1_map_targets(g, entity, q1_ref_actor(g, entity->activator), error)) return false;
     entity = sacrifice(g, id);
     return !entity || q1_remove(g, entity, error);
 }

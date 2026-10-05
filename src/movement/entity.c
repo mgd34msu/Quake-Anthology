@@ -1,6 +1,13 @@
 #include "entity/internal.h"
 #include "qa/movement.h"
 
+qa_actor_id qa_physics_actor_reference(const qa_physics *physics,
+    qa_actor_reference reference) {
+    if (physics->services.resolve_reference)
+        return physics->services.resolve_reference(physics->services.context, reference);
+    return qa_actor_reference_resolve(qa_world_actors(physics->world), reference);
+}
+
 qa_physics_properties qa_physics_properties_default(qa_collision_family family) {
     qa_physics_properties p = {0};
     p.family = family;

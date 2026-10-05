@@ -42,7 +42,7 @@ typedef struct qa_physics_properties {
     qa_vec3 angular_velocity, gravity_direction;
     float gravity_scale, delta_yaw, ideal_yaw, yaw_speed;
     int32_t water_level, water_type;
-    qa_actor_id enemy, goal;
+    qa_actor_reference enemy, goal;
     qa_q1_pusher_clock q1_pusher;
 } qa_physics_properties;
 
@@ -79,6 +79,7 @@ typedef struct qa_physics_services {
      * walk eligibility/yaw, including source probes with commit=false. */
     bool (*before_monster_step)(void *, qa_actor_id, qa_vec3 *displacement,
                                 bool *handled, qa_error *);
+    qa_actor_id (*resolve_reference)(void *, qa_actor_reference);
 } qa_physics_services;
 typedef struct qa_physics {
     qa_world *world;
@@ -94,6 +95,7 @@ typedef struct qa_physics {
      * destruction require this to be NULL. Owned by the active call. */
     struct qa_physics_transaction *push_transaction;
 } qa_physics;
+qa_actor_id qa_physics_actor_reference(const qa_physics *, qa_actor_reference);
 typedef enum qa_physics_status {
     QA_PHYSICS_MOVED, QA_PHYSICS_STOPPED, QA_PHYSICS_REMOVED,
     QA_PHYSICS_UNMANAGED, QA_PHYSICS_SLAVE, QA_PHYSICS_BLOCKED

@@ -61,7 +61,7 @@ static bool saw_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity = hazard(g, id);
     if (!entity)
         return true;
-    entity->physics.goal = entity->map->pending.follower.move_target = target;
+    entity->physics.goal = entity->map->pending.follower.move_target = q1_ref_from(g, target);
     return q1_map_schedule(
         g, entity, .1, q1_map_text(g, entity->target) ? Q1_MAP_SAW_FLY : Q1_MAP_SAW_STAND, error);
 }
@@ -89,7 +89,7 @@ static bool saw_frame(qa_q1_game *g, q1_actor *entity, bool flying, qa_error *er
         entity = hazard(g, id);
         if (!entity)
             return true;
-        qa_actor_id goal = goal_or_world(g, entity->physics.goal);
+        qa_actor_id goal = goal_or_world(g, q1_ref_actor(g, entity->physics.goal));
         if (!q1_alive(g, goal))
             return q1_map_fail(error, "Buzzsaw requires worldspawn");
         qa_body_state destination;
@@ -152,7 +152,7 @@ static bool saw_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_err
     entity = hazard(g, id);
     if (!entity || !q1_alive(g, other) || !qa_world_body_storage_serial(g->services.world, other))
         return true;
-    qa_actor_id goal = goal_or_world(g, entity->physics.goal);
+    qa_actor_id goal = goal_or_world(g, q1_ref_actor(g, entity->physics.goal));
     if (!q1_alive(g, goal))
         return true;
     qa_body_state body, destination, self;
@@ -246,7 +246,7 @@ bool q1_map_rogue_hazard_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     }
     if (entity->map->kind == Q1_MAP_BUZZSAW)
         return saw_start(g, entity, error);
-    entity->activator = activator;
+    entity->activator = q1_ref_from(g, activator);
     if (entity->spawnflags & 1) {
         bool end = q1_classnamed(g, other, "ltrail_end");
         entity = hazard(g, id);
@@ -334,7 +334,7 @@ bool q1_map_rogue_hazard_think(qa_q1_game *g, q1_actor *entity, q1_map_action ac
         return trail_fire(g, entity, error);
     case Q1_MAP_LTRAIL_CHAIN: {
         qa_actor_id id = entity->id;
-        if (!q1_map_targets(g, entity, entity->activator, error))
+        if (!q1_map_targets(g, entity, q1_ref_actor(g, entity->activator), error))
             return false;
         entity = hazard(g, id);
         if (entity) {

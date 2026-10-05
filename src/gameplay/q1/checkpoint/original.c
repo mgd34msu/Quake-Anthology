@@ -11,7 +11,7 @@
 typedef enum original_storage {
     ORIGINAL_FLOAT, ORIGINAL_DOUBLE, ORIGINAL_I32, ORIGINAL_U32,
     ORIGINAL_U16, ORIGINAL_U8, ORIGINAL_BOOL, ORIGINAL_VECTOR,
-    ORIGINAL_STRING, ORIGINAL_ACTOR
+    ORIGINAL_STRING, ORIGINAL_ACTOR, ORIGINAL_REF
 } original_storage;
 typedef struct original_field {
     const char *name;
@@ -29,7 +29,7 @@ static const original_field entity_fields[] = {
     FIELD(q1_actor, spawnflags, "spawnflags", U32),
     FIELD(q1_actor, target, "target", STRING),
     FIELD(q1_actor, targetname, "targetname", STRING),
-    FIELD(q1_actor, owner, "owner", ACTOR),
+    FIELD(q1_actor, owner, "owner", REF),
     FIELD(q1_actor, message, "message", STRING),
     FIELD(q1_actor, killtarget, "killtarget", STRING),
     FIELD(q1_actor, speed, "speed", FLOAT),
@@ -54,8 +54,8 @@ static const original_field physics_fields[] = {
     FIELD(qa_physics_properties, water_type, "watertype", I32),
     FIELD(qa_physics_properties, ideal_yaw, "ideal_yaw", FLOAT),
     FIELD(qa_physics_properties, yaw_speed, "yaw_speed", FLOAT),
-    FIELD(qa_physics_properties, enemy, "enemy", ACTOR),
-    FIELD(qa_physics_properties, goal, "goalentity", ACTOR),
+    FIELD(qa_physics_properties, enemy, "enemy", REF),
+    FIELD(qa_physics_properties, goal, "goalentity", REF),
     FIELD(qa_physics_properties, q1_pusher.local_seconds, "ltime", DOUBLE)
 };
 static const original_field player_fields[] = {
@@ -93,9 +93,9 @@ static const original_field character_fields[] = {
     FIELD(q1_character, fall_speed, "jump_flag", FLOAT)
 };
 static const original_field monster_fields[] = {
-    FIELD(q1_monster, enemy, "enemy", ACTOR),
-    FIELD(q1_monster, old_enemy, "oldenemy", ACTOR),
-    FIELD(q1_monster, move_target, "movetarget", ACTOR),
+    FIELD(q1_monster, enemy, "enemy", REF),
+    FIELD(q1_monster, old_enemy, "oldenemy", REF),
+    FIELD(q1_monster, move_target, "movetarget", REF),
     FIELD(q1_monster, pause_until, "pausetime", DOUBLE),
     FIELD(q1_monster, attack_finished, "attack_finished", DOUBLE),
     FIELD(q1_monster, pain_finished, "pain_finished", DOUBLE),
@@ -148,18 +148,32 @@ static bool text(qa_q1_save_record *record, const char *key, const char *value,
     qa_q1_save_value field = {.kind = kind, .value.text = value};
     return qa_q1_save_record_value(record, key, &field, error);
 }
-static bool actor(qa_q1_wire_receipt *receipt, qa_q1_save_record *record,
+static bool actor_id(qa_q1_wire_receipt *receipt, qa_q1_save_record *record,
     const char *key, qa_actor_id id, bool required, qa_error *error) {
     uint32_t slot = 0;
     if (id.registry && !qa_q1_wire_actor_slot(receipt, id, &slot)) {
         const q1_wire_state *wire = receipt->operation.game->wire;
         uint32_t candidate = receipt->client_slots + 1;
-        while (wire->edict_limit && candidate < receipt->entity_slots &&
+        while (candidate < receipt->entity_slots &&
             (!wire->edicts[candidate].free || !qa_actor_id_equal(wire->edicts[candidate].released,id))) ++candidate;
-        if (!wire->edict_limit || candidate == receipt->entity_slots)
+        if (candidate == receipt->entity_slots)
             return fail(error, "Original field refers outside its physical Source edicts");
         slot = candidate;
     }
+    if (!required && !slot) return true;
+    qa_q1_save_value field = {.kind = QA_Q1_SAVE_ENTITY, .value.entity = slot};
+    return qa_q1_save_record_value(record, key, &field, error);
+}
+static bool actor(qa_q1_wire_receipt *receipt, qa_q1_save_record *record,
+    const char *key, q1_ref reference, bool required, qa_error *error) {
+    uint32_t slot = 0;
+    if (reference.kind == QA_ACTOR_REFERENCE_SOURCE) {
+        if (reference.value.source.owner != receipt->operation.game->options.provider ||
+            reference.value.source.slot >= receipt->entity_slots)
+            return fail(error, "Original reference leaves its actual physical Source edicts");
+        slot = reference.value.source.slot;
+    } else if (reference.kind == QA_ACTOR_REFERENCE_LIFETIME)
+        return actor_id(receipt, record, key, reference.value.actor, required, error);
     if (!required && !slot) return true;
     qa_q1_save_value field = {.kind = QA_Q1_SAVE_ENTITY, .value.entity = slot};
     return qa_q1_save_record_value(record, key, &field, error);
@@ -185,7 +199,8 @@ static bool fields(qa_q1_wire_receipt *receipt, qa_q1_save_record *record,
             const char *value = id ? qa_strings_cstr(strings, id) : NULL;
             okay = (!id || value) && text(record, field->name, value, QA_Q1_SAVE_STRING, error); break;
         }
-        case ORIGINAL_ACTOR: okay = actor(receipt, record, field->name, *(const qa_actor_id *)p, false, error); break;
+        case ORIGINAL_ACTOR: okay = actor_id(receipt, record, field->name, *(const qa_actor_id *)p, false, error); break;
+        case ORIGINAL_REF: okay = actor(receipt, record, field->name, *(const q1_ref *)p, false, error); break;
         default: okay = false; break;
         }
         if (!okay) return false;
@@ -362,7 +377,7 @@ static bool monster_functions(const q1_monster *monster, qa_q1_save_record *reco
         callback(record, "th_run", species->run, error) && callback(record, "th_missile", missile, error) &&
         callback(record, "th_melee", index < sizeof(melee) / sizeof(*melee) ? melee[index] : NULL, error) &&
         callback(record, "th_pain", pain[index], error) && callback(record, "th_die", die[index], error) &&
-        callback(record, "use", monster->enemy.registry || monster->dead ? "SUB_Null" : "monster_use", error);
+        callback(record, "use", q1_ref_present(monster->enemy) || monster->dead ? "SUB_Null" : "monster_use", error);
 }
 
 typedef struct original_player_animation {
@@ -443,7 +458,7 @@ static bool pickup_fields(qa_q1_wire_receipt *receipt, const q1_actor *entity,
     if (p->kind == 0 && !number(record, "healamount", p->count, false, error)) return false;
     if (p->kind == 2 && !number(record, "aflag", p->count, false, error)) return false;
     if (p->kind == 0 && !number(record,"healtype",p->mega?2:p->count==25?1:0,false,error)) return false;
-    if (p->holder.registry && !actor(receipt,record,"owner",p->holder,false,error)) return false;
+    if (q1_ref_present(p->holder) && !actor(receipt,record,"owner",p->holder,false,error)) return false;
     if (p->kind == 6) {
         static const char *const ammo[] = {"ammo_shells","ammo_nails","ammo_rockets","ammo_cells"};
         uint32_t bit = 0;
@@ -573,7 +588,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
     if (entity->map) {
         if (entity->map->kind == Q1_MAP_BARREL && !callback(record,"th_die","barrel_explode",error)) return false;
         if (entity->map->kind == Q1_MAP_WORLD && !number(record,"worldtype",game->options.world_type,false,error)) return false;
-        if (entity->map->kind == Q1_MAP_DELAY && !actor(receipt,record,"enemy",entity->map->pending.delayed.activator,false,error)) return false;
+        if (entity->map->action == Q1_MAP_DELAYED_USE &&
+            !actor(receipt,record,"enemy",entity->activator,false,error)) return false;
         if (!FIELDS(receipt, record, entity->map, map_fields, error) ||
             !mover_sounds(entity,record,error) || !map_functions(entity, record, error)) return false;
         if (q1_map_is_mover(entity->map->kind)) {
@@ -581,7 +597,7 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
             static const unsigned state[] = {1, 2, 0, 3};
             if (entity->map->kind == Q1_MAP_DOOR && move->group && move->group->count) {
                 size_t member = 0;
-                while (member < move->group->count && !qa_actor_id_equal(move->group->members[member],entity->id)) ++member;
+                while (member < move->group->count && !q1_ref_equal(move->group->members[member],q1_ref_from(game,entity->id))) ++member;
                 if (member == move->group->count) return fail(error,"Source door lost its actual retained group");
                 if (!actor(receipt,record,"owner",move->group->members[0],false,error) ||
                     !actor(receipt,record,"enemy",move->group->members[(member+1)%move->group->count],false,error)) return false;
@@ -693,6 +709,14 @@ static bool saved_actor(const char *value, const qa_actor_id *slots, size_t coun
     *out = slot ? slots[slot] : (qa_actor_id){0};
     return true;
 }
+static bool saved_ref(qa_q1_game *game, const char *value, size_t count,
+    q1_ref *out, qa_error *error) {
+    uint32_t slot;
+    if (!qa_q1_save_entity_decode(value ? value : "0", &slot, error) || slot >= count)
+        return fail(error, "Original reference exceeds its actual physical edict extent");
+    *out = q1_ref_source(game, slot);
+    return true;
+}
 static bool restore_fields(qa_q1_game *game, const qa_q1_save_record *record,
     void *owner, const original_field *table, size_t count,
     const qa_actor_id *slots, size_t slot_count, qa_error *error) {
@@ -726,6 +750,7 @@ static bool restore_fields(qa_q1_game *game, const qa_q1_save_record *record,
         case ORIGINAL_BOOL: *(bool *)p = number != 0; break;
         case ORIGINAL_VECTOR: if (!saved_vector(value, (qa_vec3 *)p, error)) return false; break;
         case ORIGINAL_ACTOR: if (!saved_actor(value, slots, slot_count, (qa_actor_id *)p, error)) return false; break;
+        case ORIGINAL_REF: if (!saved_ref(game,value,slot_count,(q1_ref *)p,error)) return false; break;
         case ORIGINAL_STRING: {
             qa_string_id id = 0;
             if (value && *value) {
@@ -995,7 +1020,7 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
     entity->touch_disabled = !saved(record,"touch");
     const char *source_think = saved(record,"think");
     if (source_think && !strcmp(source_think,"Wiz_FastFire") &&
-        (!saved_actor(saved(record,"enemy"),slots,count,&entity->state.projectile.enemy,error) ||
+        (!saved_ref(game,saved(record,"enemy"),count,&entity->state.projectile.enemy,error) ||
          !saved_vector(saved(record,"movedir"),&entity->state.projectile.right,error))) return false;
     if (source_think && !strcmp(source_think,"bubble_bob")) entity->count = saved_number(record,"cnt");
     if (source_think && !strcmp(source_think,"DeathBubblesSpawn"))
@@ -1036,11 +1061,9 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
                 if (!strcmp(done, map_callbacks[i].name)) move->done = map_callbacks[i].action;
             move->group = NULL;
         }
-        if (map->kind == Q1_MAP_DELAY) {
-            qa_actor_id activator;
-            if (!saved_actor(saved(record,"enemy"),slots,count,&activator,error)) return false;
-            map->pending.delayed = (qa_target_use){.source = id,.activator = activator,
-                .dialect = QA_CLOCK_NETQUAKE,.fields = {.target = entity->target,.killtarget = entity->killtarget,.message = entity->message}};
+        if (map->action == Q1_MAP_DELAYED_USE) {
+            if (!saved_ref(game,saved(record,"enemy"),count,&entity->activator,error)) return false;
+            map->pending.delayed.dialect = QA_CLOCK_NETQUAKE;
         }
     }
     if (entity->kind == Q1_PICKUP) {
@@ -1058,8 +1081,8 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
     }
     if (entity->kind == Q1_PROJECTILE) {
         q1_projectile *p = &entity->state.projectile;
-        if (!saved_actor(saved(record,"enemy"),slots,count,&p->enemy,error)) return false;
-        p->activator = entity->owner; p->attack = q1_attack(game,entity->owner,id,p->weapon);
+        if (!saved_ref(game,saved(record,"enemy"),count,&p->enemy,error)) return false;
+        p->activator = entity->owner; p->attack = q1_attack(game,q1_ref_actor(game,entity->owner),id,p->weapon);
         p->attack.projectile = id;
         if (!qa_attack_next(&game->attack_sequence,&p->attack,error)) return false;
         p->remove_touch = saved(record,"touch") && !strcmp(saved(record,"touch"),"SUB_Remove");
@@ -1089,9 +1112,9 @@ static bool restore_groups(qa_q1_game *game, const qa_q1_save_data *save,
             if (!door || !door->map || door->map->kind != Q1_MAP_DOOR || door->map->pending.mover.group ||
                 group->count >= save->entity_count)
                 return fail(error,"Original door ring differs from its actual physical members");
-            qa_actor_id *members = realloc(group->members,(group->count+1)*sizeof(*members));
+            q1_ref *members = realloc(group->members,(group->count+1)*sizeof(*members));
             if (!members) { qa_error_set(error,QA_ERROR_MEMORY,0,"Restoring Source door members"); return false; }
-            group->members = members; group->members[group->count++] = door->id;
+            group->members = members; group->members[group->count++] = q1_ref_from(game,door->id);
             door->map->pending.mover.group = group;
             uint32_t next = 0;
             const char *link = saved(save->entities+member,"enemy");
@@ -1129,10 +1152,12 @@ bool qa_q1_game_original_restore(qa_q1_game *game, const qa_qc_program *program,
     qa_q1_wire_read_end(&receipt);
     if (okay && (!slots[0].registry || !slots[1].registry)) okay=fail(error,"Original candidate lost its actual world/player edicts");
     if (okay) {
-        game->wire->next_dynamic = (uint32_t)save->entity_count;
-        if (game->wire->edict_limit)
-            for (size_t i=2; i<game->wire->edict_limit; ++i)
-                game->wire->edicts[i] = (q1_wire_edict){.free = i>=save->entity_count || !save->entities[i].count};
+        okay = q1_wire_edict_extent(game->wire, (uint32_t)save->entity_count, error);
+        if (okay) {
+            game->wire->next_dynamic = (uint32_t)save->entity_count;
+            for (size_t i=2; i<save->entity_count; ++i)
+                game->wire->edicts[i] = (q1_wire_edict){.free = !save->entities[i].count};
+        }
         for (uint32_t slot=2; okay && slot<save->entity_count; ++slot) {
             if (!save->entities[slot].count || slots[slot].registry) continue;
             q1_actor *entity;
@@ -1154,9 +1179,9 @@ bool qa_q1_game_original_restore(qa_q1_game *game, const qa_qc_program *program,
         game->sight_time = saved_number(&save->globals,"sight_entity_time");
         game->hellknight_melee = (uint32_t)saved_number(&save->globals,"hknight_type");
         game->maps->lightning_end = saved_number(&save->globals,"lightning_end");
-        okay = saved_actor(saved(&save->globals,"sight_entity"),slots,save->entity_count,&game->sight_actor,error) &&
-            saved_actor(saved(&save->globals,"le1"),slots,save->entity_count,&game->maps->electrodes[0],error) &&
-            saved_actor(saved(&save->globals,"le2"),slots,save->entity_count,&game->maps->electrodes[1],error);
+        okay = saved_ref(game,saved(&save->globals,"sight_entity"),save->entity_count,&game->sight_actor,error) &&
+            saved_ref(game,saved(&save->globals,"le1"),save->entity_count,&game->maps->electrodes[0],error) &&
+            saved_ref(game,saved(&save->globals,"le2"),save->entity_count,&game->maps->electrodes[1],error);
         qa_vec3 *basis[] = {&game->forward,&game->up,&game->right};
         static const char *const names[] = {"v_forward_x","v_forward_y","v_forward_z", "v_up_x","v_up_y","v_up_z","v_right_x","v_right_y","v_right_z"};
         for (unsigned i=0; i<3; ++i) *basis[i]=qa_v3(saved_number(&save->globals,names[i*3]),

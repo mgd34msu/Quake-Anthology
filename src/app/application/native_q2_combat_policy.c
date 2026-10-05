@@ -241,7 +241,7 @@ static bool describe(void *opaque, const qa_damage_request *request,
             .screen_facing_dot = qa_vec_dot(forward, contact)},
         .game.q2 = {.player = target.player, .monster = target.monster,
             .attacker_player = attacker.player,
-            .has_enemy = target_q2.character ? target_q2.has_enemy : physical.enemy.registry != 0,
+            .has_enemy = target_q2.character ? target_q2.has_enemy : qa_actor_reference_present(physical.enemy) != 0,
             .easy_skill = rules.skill == 0, .deathmatch = rules.deathmatch,
             .rerelease = rules.edition == QA_Q2_RERELEASE,
             .defender_sphere = defender, .team_damage_enabled = early_team,
@@ -325,7 +325,7 @@ static bool source_effect(void *opaque, qa_combat *combat, qa_damage_effect_stag
             !provider->application->physics->services.read(provider->application->physics->services.context,
                                                             request->target, &physical))
             return application_fail(error, QA_ERROR_UNSUPPORTED, "Q2 surprise lost its actual character enemy");
-        has_enemy = physical.enemy.registry != 0;
+        has_enemy = qa_actor_reference_present(physical.enemy) != 0;
     }
     bool bonus;
     if (!qa_q2_combat_surprise(provider->state.q2, request->target, has_enemy, &bonus, error)) return false;

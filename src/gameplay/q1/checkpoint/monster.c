@@ -34,12 +34,12 @@ bool q1_save_monster(q1_save_io *io, q1_monster *m) {
     if ((m->current_frame != UINT16_MAX && m->current_frame >= q1_frame_count) ||
         (m->next_frame != UINT16_MAX && m->next_frame >= q1_frame_count))
         return q1_save_fail(io, "Invalid Q1 monster frame continuation");
-    Q1_SAVE(io, actor, m->enemy);
-    Q1_SAVE(io, actor, m->old_enemy);
-    Q1_SAVE(io, actor, m->charmer);
-    Q1_SAVE(io, actor, m->charm_goal);
-    Q1_SAVE(io, actor, m->move_target);
-    Q1_SAVE(io, actor, m->previous_corner);
+    Q1_SAVE(io, ref, m->enemy);
+    Q1_SAVE(io, ref, m->old_enemy);
+    Q1_SAVE(io, ref, m->charmer);
+    Q1_SAVE(io, ref, m->charm_goal);
+    Q1_SAVE(io, ref, m->move_target);
+    Q1_SAVE(io, ref, m->previous_corner);
     Q1_SAVE(io, double, m->pause_until);
     Q1_SAVE(io, double, m->attack_finished);
     Q1_SAVE(io, double, m->pain_finished);
@@ -98,7 +98,7 @@ bool q1_save_monster(q1_save_io *io, q1_monster *m) {
         for (size_t i = 0; i < 4; ++i)
             Q1_SAVE(io, string, m->source.boss.waves[i]);
     } else if (m->addon.heavy) {
-        Q1_SAVE(io, actor, m->source.heavy.child);
+        Q1_SAVE(io, ref, m->source.heavy.child);
         Q1_SAVE(io, u32, m->source.heavy.lightning_count);
         Q1_SAVE(io, i32, m->source.heavy.nails);
     } else
@@ -114,7 +114,7 @@ bool q1_save_monster(q1_save_io *io, q1_monster *m) {
             Q1_SAVE(io, bool, m->source.sword.pain_disabled);
             break;
         case QA_Q1_SCOURGE:
-            Q1_SAVE(io, actor, m->source.scourge.trigger);
+            Q1_SAVE(io, ref, m->source.scourge.trigger);
             Q1_SAVE(io, double, m->source.scourge.dodge_until);
             Q1_SAVE(io, bool, m->source.scourge.initialized);
             Q1_SAVE(io, bool, m->source.scourge.silent);
@@ -131,7 +131,7 @@ bool q1_save_monster(q1_save_io *io, q1_monster *m) {
             Q1_SAVE(io, bool, m->source.dragon.attacking);
             break;
         case QA_Q1_ARMAGON:
-            Q1_SAVE(io, actor, m->source.armagon.body);
+            Q1_SAVE(io, ref, m->source.armagon.body);
             Q1_SAVE(io, vector, m->source.armagon.old_origin);
             Q1_SAVE(io, float, m->source.armagon.torso_yaw);
             Q1_SAVE(io, float, m->source.armagon.aim_threshold);
@@ -140,8 +140,8 @@ bool q1_save_monster(q1_save_io *io, q1_monster *m) {
             Q1_SAVE(io, bool, m->source.armagon.behind);
             break;
         case QA_Q1_GREMLIN:
-            Q1_SAVE(io, actor, m->source.gremlin.last_victim);
-            Q1_SAVE(io, actor, m->source.gremlin.flee_goal);
+            Q1_SAVE(io, ref, m->source.gremlin.last_victim);
+            Q1_SAVE(io, ref, m->source.gremlin.flee_goal);
             Q1_SAVE(io, vector, m->source.gremlin.view_angles);
             Q1_SAVE_ENUM(io, m->source.gremlin.weapon, QA_Q1_WEAPON_COUNT);
             Q1_SAVE(io, float, m->source.gremlin.current_ammo);

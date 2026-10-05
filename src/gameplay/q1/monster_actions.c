@@ -18,7 +18,7 @@ static bool meat(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) {
                          error);
 }
 static bool chainsaw(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) {
-    qa_actor_id enemy = entity->state.monster.enemy;
+    qa_actor_id enemy = q1_ref_actor(g, entity->state.monster.enemy);
     if (!enemy.registry)
         return true;
     bool visible;
@@ -104,7 +104,7 @@ bool q1_monster_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_err
 }
 static bool lightning(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_body_state body, other;
-    if (!qa_world_body_read(g->services.world, entity->state.monster.enemy, &other, NULL))
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, entity->state.monster.enemy), &other, NULL))
         return true;
     if (!q1_monster_face(g, entity, error) || !state_body(g, entity, &body, error))
         return false;
@@ -135,7 +135,7 @@ static bool lightning(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 }
 static bool knight_shot(qa_q1_game *g, q1_actor *entity, int offset, qa_error *error) {
     qa_body_state body, target;
-    if (!qa_world_body_read(g->services.world, entity->state.monster.enemy, &target, NULL))
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, entity->state.monster.enemy), &target, NULL))
         return true;
     if (!state_body(g, entity, &body, error))
         return false;
@@ -154,7 +154,7 @@ static bool knight_shot(qa_q1_game *g, q1_actor *entity, int offset, qa_error *e
            q1_sound(g, entity->id, "hknight/attack1.wav", 1, 1, error);
 }
 static bool wizard_fast(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    qa_actor_id enemy = entity->state.monster.enemy;
+    qa_actor_id enemy = q1_ref_actor(g, entity->state.monster.enemy);
     if (!enemy.registry)
         return true;
     qa_body_state body;
@@ -168,7 +168,7 @@ static bool wizard_fast(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         q1_actor *timer;
         if (!q1_create(g, "wizard_fastfire", Q1_TIMER, entity->id, &timer, error))
             return false;
-        timer->state.projectile.enemy = enemy;
+        timer->state.projectile.enemy = q1_ref_from(g, enemy);
         timer->state.projectile.right = qa_vec_scale(right, side);
         qa_body_state state = {
             .origin = qa_vec_add(
@@ -183,8 +183,8 @@ static bool wizard_fast(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 }
 static bool boss_face(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_monster *m = &entity->state.monster;
-    if (!m->enemy.registry || q1_health(g, m->enemy) <= 0 || q1_random(g) < 0.02f) {
-        uint32_t start = m->enemy.registry ? m->enemy.slot + 1 : 0;
+    if (!q1_ref_present(m->enemy) || q1_health(g, q1_ref_actor(g, m->enemy)) <= 0 || q1_random(g) < 0.02f) {
+        uint32_t start = q1_ref_present(m->enemy) ? q1_ref_actor(g, m->enemy).slot + 1 : 0;
         unsigned considered = 0;
         for (uint32_t offset = 0; offset < g->capacity && considered < 4; ++offset) {
             uint32_t slot = (start + offset) % g->capacity;
@@ -198,7 +198,7 @@ static bool boss_face(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                 continue;
             ++considered;
             if (q1_health(g, record->id) > 0) {
-                m->enemy = record->id;
+                m->enemy = q1_ref_from(g, record->id);
                 break;
             }
         }
@@ -207,7 +207,7 @@ static bool boss_face(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 }
 static bool boss_missile(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) {
     qa_body_state self, target;
-    if (!qa_world_body_read(g->services.world, entity->state.monster.enemy, &target, NULL))
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, entity->state.monster.enemy), &target, NULL))
         return true;
     if (!state_body(g, entity, &self, error))
         return false;
@@ -232,7 +232,7 @@ static bool boss_missile(qa_q1_game *g, q1_actor *entity, float side, qa_error *
                              &missile, error) ||
         !q1_sound(g, entity->id, "boss1/throw.wav", 1, 1, error))
         return false;
-    return q1_health(g, entity->state.monster.enemy) > 0 ||
+    return q1_health(g, q1_ref_actor(g, entity->state.monster.enemy)) > 0 ||
            q1_monster_play(g, entity, "boss_idle1", error);
 }
 
@@ -255,7 +255,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
     }
     q1_monster *m = &entity->state.monster;
     if (action >= Q1_ACTION_BOSS_IDLE1 && action <= Q1_ACTION_BOSS_IDLE9) {
-        if (action == Q1_ACTION_BOSS_IDLE1 && m->enemy.registry && q1_health(g, m->enemy) > 0)
+        if (action == Q1_ACTION_BOSS_IDLE1 && q1_ref_present(m->enemy) && q1_health(g, q1_ref_actor(g, m->enemy)) > 0)
             return q1_monster_play(g, entity, "boss_missile1", error);
         return boss_face(g, entity, error);
     }
@@ -297,7 +297,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
     qa_body_state body, target;
     if (!state_body(g, entity, &body, error))
         return false;
-    bool has_target = qa_world_body_read(g->services.world, m->enemy, &target, NULL);
+    bool has_target = qa_world_body_read(g->services.world, q1_ref_actor(g, m->enemy), &target, NULL);
     q1_actor *missile;
     bool visible, moved;
     switch (action) {
@@ -335,7 +335,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
     case Q1_ACTION_ENF_ATK14:
     case Q1_ACTION_GRUNT_ARMY_ATK7:
         if (g->options.skill == 3 && !m->refired) {
-            if (!q1_monster_visible(g, entity, m->enemy, &visible, error))
+            if (!q1_monster_visible(g, entity, q1_ref_actor(g, m->enemy), &visible, error))
                 return false;
             if (visible) {
                 m->refired = true;
@@ -389,10 +389,10 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         if (!has_target || !state_body(g, entity, &body, error) ||
             qa_vec_length(qa_vec_sub(target.origin, body.origin)) > 100)
             return true;
-        if (!q1_can_damage(g, m->enemy, entity->id, &visible, error))
+        if (!q1_can_damage(g, q1_ref_actor(g, m->enemy), entity->id, &visible, error))
             return false;
         return !visible || (q1_sound(g, entity->id, "demon/dhit2.wav", 1, 1, error) &&
-                            q1_damage(g, m->enemy, entity->id, entity->id, 10 + 5 * q1_random(g),
+                            q1_damage(g, q1_ref_actor(g, m->enemy), entity->id, entity->id, 10 + 5 * q1_random(g),
                                       QA_Q1_WEAPON_COUNT, error) &&
                             meat(g, entity, action == Q1_ACTION_DEMON1_ATTA5 ? 200 : -200, error));
     case Q1_ACTION_OGRE_SWING5:
@@ -448,7 +448,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         if (action == Q1_ACTION_HKNIGHT_RUN1 && has_target && g->time >= m->attack_finished &&
             fabsf(body.origin.z - target.origin.z) <= 20 &&
             qa_vec_length(qa_vec_sub(body.origin, target.origin)) >= 80) {
-            if (!q1_monster_visible(g, entity, m->enemy, &visible, error))
+            if (!q1_monster_visible(g, entity, q1_ref_actor(g, m->enemy), &visible, error))
                 return false;
             if (visible) {
                 m->refired = false;
@@ -476,7 +476,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             return false;
         if (!has_target || qa_vec_length(qa_vec_sub(body.origin, target.origin)) > 100)
             return true;
-        if (!q1_can_damage(g, m->enemy, entity->id, &visible, error))
+        if (!q1_can_damage(g, q1_ref_actor(g, m->enemy), entity->id, &visible, error))
             return false;
         return !visible || (q1_monster_melee(g, entity, 100, 40, 3, false, error) &&
                             q1_sound(g, entity->id, "shambler/smack.wav", 2, 1, error) &&
@@ -503,18 +503,18 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             !q1_monster_face(g, entity, error) ||
             !q1_create(g, "shambler_light", Q1_TIMER, entity->id, &missile, error))
             return false;
-        entity->owner = missile->id;
+        entity->owner = q1_ref_from(g, missile->id);
         return q1_model(g, missile, "progs/s_light.mdl", error) &&
                qa_world_body_write(g->services.world, missile->id, &body, error) &&
                q1_link(g, missile, error) && q1_schedule(g, missile, 0.7, Q1_THINK_REMOVE, error);
     case Q1_ACTION_SHAM_MAGIC4:
     case Q1_ACTION_SHAM_MAGIC5:
-        missile = q1_entity(g, entity->owner);
+        missile = q1_entity(g, q1_ref_actor(g, entity->owner));
         if (missile)
             missile->frame = action == Q1_ACTION_SHAM_MAGIC4 ? 1 : 2;
         return q1_effect(g, QA_BUILTIN_MUZZLE, entity->id, body.origin, 0, 0, error);
     case Q1_ACTION_SHAM_MAGIC6:
-        missile = q1_entity(g, entity->owner);
+        missile = q1_entity(g, q1_ref_actor(g, entity->owner));
         if (missile && !q1_remove(g, missile, error))
             return false;
         return lightning(g, entity, error) &&
@@ -541,7 +541,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         m->refired = false;
         if (g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3)
             m->attack_finished = g->time + 2;
-        if (!q1_monster_visible(g, entity, m->enemy, &visible, error))
+        if (!q1_monster_visible(g, entity, q1_ref_actor(g, m->enemy), &visible, error))
             return false;
         m->sliding =
             has_target && qa_vec_length(qa_vec_sub(body.origin, target.origin)) < 500 && visible;

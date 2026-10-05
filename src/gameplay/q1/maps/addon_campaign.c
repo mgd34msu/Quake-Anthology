@@ -323,9 +323,9 @@ bool q1_map_addon_electrode_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
 bool q1_map_addon_campaign_think(qa_q1_game *g, q1_actor *e, q1_map_action action,
                                  qa_error *error) {
     if (action == Q1_MAP_CAMPAIGN_USE_TARGETS)
-        return q1_map_targets(g, e, e->activator, error);
+        return q1_map_targets(g, e, q1_ref_actor(g, e->activator), error);
     if (action == Q1_MAP_SIGIL_FIX)
-        return q1_map_addon_campaign_use(g, e, e->activator, error);
+        return q1_map_addon_campaign_use(g, e, q1_ref_actor(g, e->activator), error);
     return q1_map_fail(error, "invalid Q1 addon campaign action");
 }
 
@@ -367,7 +367,7 @@ bool q1_map_addon_changelevel_begin(qa_q1_game *g, q1_actor *e, qa_error *error)
     qa_actor_id id = e->id;
     qa_string_id map = e->map->map;
     bool finale = (e->spawnflags & 1) != 0;
-    if (!qa_q1_level_begin(g->maps->options.level, map, e->activator, g->time, error))
+    if (!qa_q1_level_begin(g->maps->options.level, map, q1_ref_actor(g, e->activator), g->time, error))
         return false;
     if (!finale || !campaign_actor(g, id))
         return true;

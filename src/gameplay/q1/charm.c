@@ -10,27 +10,27 @@ bool qa_q1_monster_charm(qa_q1_game *g, qa_actor_id actor, qa_actor_id charmer, 
     if (!qa_actors_save_reference(qa_session_actors(g->services.session), charmer, &reference,
                                   error))
         return false;
-    entity->state.monster.charmer = charmer;
+    entity->state.monster.charmer = q1_ref_from(g, charmer);
     return true;
 }
 static bool update_goal(qa_q1_game *g, q1_actor *entity, q1_actor **out, qa_error *error) {
     q1_monster *m = &entity->state.monster;
     qa_body_state owner, body;
     *out = NULL;
-    if (!qa_world_body_read(g->services.world, m->charmer, &owner, NULL))
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, m->charmer), &owner, NULL))
         return true;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    q1_actor *goal = q1_entity(g, m->charm_goal);
+    q1_actor *goal = q1_entity(g, q1_ref_actor(g, m->charm_goal));
     if (m->hunting_charmer == 1) {
         if (!q1_create(g, "charmed_goal", Q1_ENTITY, (qa_actor_id){0}, &goal, error))
             return false;
         qa_body_state destination = {.origin = owner.origin};
         if (!qa_world_body_write(g->services.world, goal->id, &destination, error))
             return false;
-        m->charm_goal = goal->id;
+        m->charm_goal = q1_ref_from(g, goal->id);
         m->hunting_charmer = 2;
-        entity->physics.goal = goal->id;
+        entity->physics.goal = q1_ref_from(g, goal->id);
     }
     if (!goal)
         return true;
@@ -76,7 +76,7 @@ bool q1_charmed_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error
     q1_monster *m = &entity->state.monster;
     qa_body_state body, owner;
     *out = false;
-    if (!qa_world_body_read(g->services.world, m->charmer, &owner, NULL))
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, m->charmer), &owner, NULL))
         return true;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
@@ -94,7 +94,7 @@ bool q1_charmed_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error
                 return true;
             if (goal && m->hunting_charmer > 1 && !q1_remove(g, goal, error))
                 return false;
-            entity->physics.goal = (qa_actor_id){0};
+            entity->physics.goal = (q1_ref){0};
             m->hunting_charmer = 0;
             m->next_frame = q1_frame_index(m->species->stand);
             *out = true;
@@ -124,9 +124,9 @@ bool q1_charmed_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error
                                  foreign.monster;
         qa_q1_target traits;
         if (!monster || !q1_target(g, actor, &traits) || traits.notarget ||
-            qa_actor_id_equal(actor, entity->id) || qa_actor_id_equal(actor, m->charmer) ||
+            qa_actor_id_equal(actor, entity->id) || q1_ref_equal(q1_ref_from(g, actor), m->charmer) ||
             (candidate && candidate->kind == Q1_MONSTER &&
-             qa_actor_id_equal(candidate->state.monster.charmer, m->charmer)) ||
+             q1_ref_equal(candidate->state.monster.charmer, m->charmer)) ||
             q1_health(g, actor) <= 0)
             continue;
         bool visible;
@@ -151,7 +151,7 @@ bool q1_charmed_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error
     if (!ok)
         return false;
     qa_q1_target traits;
-    if (!selected.registry || qa_actor_id_equal(selected, m->enemy) || best >= 1000 ||
+    if (!selected.registry || q1_ref_equal(q1_ref_from(g, selected), m->enemy) || best >= 1000 ||
         (q1_target(g, selected, &traits) && traits.invisible))
         return true;
     *out = true;
@@ -164,7 +164,7 @@ bool q1_charmed_walk(qa_q1_game *g, q1_actor *entity, float distance, qa_error *
     if (found || !q1_alive(g, entity->id))
         return true;
     qa_actor_id goal =
-        q1_alive(g, entity->physics.goal) ? entity->physics.goal : q1_monster_route(g, entity);
+        q1_ref_actor(g, q1_alive(g, q1_ref_actor(g, entity->physics.goal)) ? entity->physics.goal : q1_ref_from(g, q1_monster_route(g, entity)));
     if (goal.registry &&
         !qa_physics_q1_move_to_goal(g->services.physics, entity->id, goal, distance, false, error))
         return false;

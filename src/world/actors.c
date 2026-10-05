@@ -99,6 +99,46 @@ bool qa_actor_id_equal(qa_actor_id left, qa_actor_id right)
         && left.slot == right.slot;
 }
 
+qa_actor_reference qa_actor_reference_lifetime(qa_actor_id actor)
+{
+    return actor.registry ? (qa_actor_reference){.kind = QA_ACTOR_REFERENCE_LIFETIME,
+        .value.actor = actor} : (qa_actor_reference){0};
+}
+
+qa_actor_reference qa_actor_reference_source(qa_actor_owner owner, uint32_t slot)
+{
+    return (qa_actor_reference){.kind = QA_ACTOR_REFERENCE_SOURCE,
+        .value.source = {.owner = owner, .slot = slot}};
+}
+
+bool qa_actor_reference_present(qa_actor_reference reference)
+{
+    return reference.kind == QA_ACTOR_REFERENCE_SOURCE ||
+        (reference.kind == QA_ACTOR_REFERENCE_LIFETIME && reference.value.actor.registry);
+}
+
+bool qa_actor_reference_equal(qa_actor_reference left, qa_actor_reference right)
+{
+    if (left.kind != right.kind) return false;
+    if (left.kind == QA_ACTOR_REFERENCE_NONE) return true;
+    if (left.kind == QA_ACTOR_REFERENCE_SOURCE)
+        return left.value.source.owner == right.value.source.owner &&
+            left.value.source.slot == right.value.source.slot;
+    return qa_actor_id_equal(left.value.actor, right.value.actor);
+}
+
+qa_actor_id qa_actor_reference_resolve(const qa_actor_registry *registry,
+    qa_actor_reference reference)
+{
+    if (reference.kind == QA_ACTOR_REFERENCE_LIFETIME) return reference.value.actor;
+    if (reference.kind == QA_ACTOR_REFERENCE_SOURCE) {
+        const qa_actor_record *record = qa_actors_at_source(registry,
+            reference.value.source.owner, reference.value.source.slot);
+        if (record) return record->id;
+    }
+    return (qa_actor_id){0};
+}
+
 bool qa_actors_create(uint32_t capacity, qa_actor_release_fn release,
                       void *context, qa_actor_registry **out, qa_error *error)
 {

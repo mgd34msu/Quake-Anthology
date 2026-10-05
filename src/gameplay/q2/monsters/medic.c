@@ -37,7 +37,7 @@ static q2_actor *native_actor(qa_q2_game *g, qa_actor_id id) {
 
 static void enemy(q2m_context *c, qa_actor_id id) {
     c->monster->enemy = id;
-    c->actor->physics.enemy = id;
+    c->actor->physics.enemy = qa_actor_reference_lifetime(id);
     if (c->actor->entity)
         c->actor->entity->enemy = id;
 }
@@ -125,7 +125,7 @@ static bool restore_enemy(q2m_context *c, bool *restored, qa_error *error) {
     }
     enemy(c, (qa_actor_id){0});
     c->monster->goal = c->monster->old_enemy = (qa_actor_id){0};
-    c->actor->physics.goal = (qa_actor_id){0};
+    c->actor->physics.goal = (qa_actor_reference){0};
     if (!q2m_find_target(c, restored, error))
         return false;
     if (!q2m_alive(c) || *restored)

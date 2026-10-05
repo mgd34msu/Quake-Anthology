@@ -97,15 +97,15 @@ bool q1_map_hip_spawner_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn
     entity->physics.motion = QA_PHYSICS_STATIONARY;
     entity->model = QA_STRING_NONE;
     entity->map->use_enabled = true;
-    entity->map->pending.spawn_master = master;
+    entity->map->pending.spawn_master = q1_ref_from(g, master);
     return q1_link(g, entity, error);
 }
 bool q1_map_hip_spawner_use(qa_q1_game *g, q1_actor *mold, qa_error *error) {
-    qa_actor_id mold_id = mold->id, id = mold->map->pending.spawn_master;
+    qa_actor_id mold_id = mold->id, id = q1_ref_actor(g, mold->map->pending.spawn_master);
     q1_actor *entity = q1_entity(g, id);
     if (!entity || !entity->map || !entity->map->spawn_template.valid)
         return q1_map_fail(error, "Q1 func_spawn lost its initialized master");
-    qa_actor_id charmer = g->horn_charmer;
+    qa_actor_id charmer = q1_ref_actor(g, g->horn_charmer);
     if (mold->map->spawn_multi == 1 || charmer.registry) {
         if (!qa_q1_game_clone(g, id, &id, error))
             return false;

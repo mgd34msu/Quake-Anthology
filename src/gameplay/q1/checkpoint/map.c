@@ -1,22 +1,5 @@
 #include "internal.h"
 
-static bool target_use(q1_save_io *io, qa_target_use *use) {
-    Q1_SAVE(io, actor, use->source);
-    Q1_SAVE(io, actor, use->activator);
-    Q1_SAVE_ENUM(io, use->dialect, QA_CLOCK_Q3);
-    Q1_SAVE(io, string, use->fields.classname);
-    Q1_SAVE(io, string, use->fields.targetname);
-    Q1_SAVE(io, string, use->fields.target);
-    Q1_SAVE(io, string, use->fields.killtarget);
-    Q1_SAVE(io, string, use->fields.message);
-    Q1_SAVE(io, string, use->fields.shader_old);
-    Q1_SAVE(io, string, use->fields.shader_new);
-    Q1_SAVE(io, float, use->fields.delay_seconds);
-    Q1_SAVE(io, float, use->fields.wait_seconds);
-    Q1_SAVE(io, u64, use->time_ns);
-    Q1_SAVE(io, bool, use->live_fields);
-    return true;
-}
 static bool movement(q1_save_io *io, q1_map_movement *m, q1_door_group **groups, size_t count) {
     Q1_SAVE(io, vector, m->pos1);
     Q1_SAVE(io, vector, m->pos2);
@@ -40,7 +23,7 @@ static bool movement(q1_save_io *io, q1_map_movement *m, q1_door_group **groups,
         m->group = group ? groups[group - 1] : NULL;
     Q1_SAVE_ENUM(io, m->done, Q1_MAP_CTF_NEXTLEVEL);
     Q1_SAVE_ENUM(io, m->position, Q1_MAP_DOWN);
-    Q1_SAVE(io, actor, m->goal);
+    Q1_SAVE(io, ref, m->goal);
     Q1_SAVE(io, float, m->next_speed);
     Q1_SAVE(io, bool, m->moving);
     Q1_SAVE(io, bool, m->activated);
@@ -160,7 +143,7 @@ bool q1_save_map(q1_save_io *io, q1_map_state *m, q1_door_group **groups, size_t
         !q1_map_addon_effect_action_matches(m->kind, m->action))
         return q1_save_fail(io, "Addon effect callback belongs to a different map continuation");
     if (m->kind == Q1_MAP_ADDON_EXPLOSION_REPEATER) {
-        Q1_SAVE(io, actor, m->pending.addon.chain);
+        Q1_SAVE(io, ref, m->pending.addon.chain);
         return true;
     }
     if (q1_map_is_addon_brush(m->kind)) {
@@ -169,8 +152,12 @@ bool q1_save_map(q1_save_io *io, q1_map_state *m, q1_door_group **groups, size_t
         unsigned maximum = m->kind == Q1_MAP_ADDON_BOB || m->kind == Q1_MAP_ADDON_HURT ? 1 : 3;
         return m->pending.brush.phase <= maximum || q1_save_fail(io,"Invalid addon brush phase");
     }
-    if (m->action == Q1_MAP_DELAYED_USE)
-        return target_use(io, &m->pending.delayed);
+    if (m->action == Q1_MAP_DELAYED_USE) {
+        Q1_SAVE_ENUM(io, m->pending.delayed.dialect, QA_CLOCK_Q3);
+        Q1_SAVE(io, string, m->pending.delayed.shader_old);
+        Q1_SAVE(io, string, m->pending.delayed.shader_new);
+        return true;
+    }
     if (m->action == Q1_MAP_FINALE_TIMER) {
         Q1_SAVE_ENUM(io, m->pending.finale, QA_Q1_CAMPAIGN_FINISH_FINALE);
         return true;
@@ -178,7 +165,7 @@ bool q1_save_map(q1_save_io *io, q1_map_state *m, q1_door_group **groups, size_t
     if (q1_map_is_mover(m->kind) || q1_map_is_rogue_plat(m->kind))
         return movement(io, &m->pending.mover, groups, count);
     if (q1_map_is_addon_visual(m->kind)) {
-        Q1_SAVE(io, actor, m->pending.addon.chain);
+        Q1_SAVE(io, ref, m->pending.addon.chain);
         Q1_SAVE(io, vector, m->pending.addon.origin);
         Q1_SAVE(io, u8, m->pending.addon.phase);
         return m->pending.addon.phase <= 3 || q1_save_fail(io, "Invalid Q1 light ramp state");
@@ -192,7 +179,7 @@ bool q1_save_map(q1_save_io *io, q1_map_state *m, q1_door_group **groups, size_t
         Q1_SAVE(io, vector, r->destination);
         Q1_SAVE(io, vector, r->final_angle);
         Q1_SAVE(io, vector, r->final_destination);
-        Q1_SAVE(io, actor, r->goal);
+        Q1_SAVE(io, ref, r->goal);
         Q1_SAVE(io, double, r->last_time);
         Q1_SAVE(io, double, r->end_time);
         Q1_SAVE(io, double, r->progress_start);
@@ -204,8 +191,8 @@ bool q1_save_map(q1_save_io *io, q1_map_state *m, q1_door_group **groups, size_t
                q1_save_fail(io, "Invalid Hipnotic rotation phase");
     }
     if (q1_map_is_hip_hazard(m->kind)) {
-        Q1_SAVE(io, actor, m->pending.hazard.enemy);
-        Q1_SAVE(io, actor, m->pending.hazard.last_victim);
+        Q1_SAVE(io, ref, m->pending.hazard.enemy);
+        Q1_SAVE(io, ref, m->pending.hazard.last_victim);
         Q1_SAVE(io, vector, m->pending.hazard.endpoint);
         Q1_SAVE(io, double, m->pending.hazard.search_until);
         Q1_SAVE(io, double, m->pending.hazard.pulse_until);
@@ -228,7 +215,7 @@ bool q1_save_map(q1_save_io *io, q1_map_state *m, q1_door_group **groups, size_t
         Q1_SAVE(io, vector, m->pending.push_origin);
         break;
     case Q1_MAP_SPAWNER:
-        Q1_SAVE(io, actor, m->pending.spawn_master);
+        Q1_SAVE(io, ref, m->pending.spawn_master);
         break;
     case Q1_MAP_PENDULUM:
         Q1_SAVE(io, u8, m->pending.pendulum_step);
@@ -243,7 +230,7 @@ bool q1_save_map(q1_save_io *io, q1_map_state *m, q1_door_group **groups, size_t
         break;
     case Q1_MAP_ENDING_ACTOR:
     case Q1_MAP_BUZZSAW:
-        Q1_SAVE(io, actor, m->pending.follower.move_target);
+        Q1_SAVE(io, ref, m->pending.follower.move_target);
         Q1_SAVE(io, vector, m->pending.follower.view_angles);
         Q1_SAVE(io, float, m->pending.follower.rockets);
         Q1_SAVE(io, u8, m->pending.follower.fire_stage);
@@ -282,9 +269,9 @@ bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
     Q1_SAVE(io, bool, m->options.registered);
     Q1_SAVE(io, actor, m->world_actor);
     for (size_t i = 0; i < 2; ++i)
-        Q1_SAVE(io, actor, m->electrodes[i]);
-    Q1_SAVE(io, actor, m->time_machine);
-    Q1_SAVE(io, actor, m->ending_actor);
+        Q1_SAVE(io, ref, m->electrodes[i]);
+    Q1_SAVE(io, ref, m->time_machine);
+    Q1_SAVE(io, ref, m->ending_actor);
     Q1_SAVE(io, double, m->lightning_end);
     Q1_SAVE(io, float, m->pendulum_impact);
     Q1_SAVE(io, float, m->elevator_direction);
@@ -299,7 +286,7 @@ bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
     Q1_SAVE(io, double, m->earthquake_end);
     Q1_SAVE(io, bool, m->quake_active);
     Q1_SAVE(io, bool, m->dump_coordinates);
-    Q1_SAVE(io, actor, m->ctf_vote_leader);
+    Q1_SAVE(io, ref, m->ctf_vote_leader);
     Q1_SAVE(io, double, m->ctf_vote_exit_time);
     Q1_SAVE(io, bool, m->final_new_game_travel);
     Q1_SAVE(io, bool, m->rogue_cutscene);
@@ -351,7 +338,7 @@ bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
             row = &m->rotated_targets[next++];
         }
         Q1_SAVE(io, actor, row->actor);
-        Q1_SAVE(io, actor, row->owner);
+        Q1_SAVE(io, ref, row->owner);
         Q1_SAVE(io, vector, row->original);
         Q1_SAVE(io, vector, row->current);
         Q1_SAVE(io, u8, row->type);
@@ -387,9 +374,9 @@ bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
             row = &m->addon_contacts[next++];
         }
         Q1_SAVE(io, actor, row->actor);
-        Q1_SAVE(io, actor, row->fog_active);
-        Q1_SAVE(io, actor, row->secret_marker);
-        Q1_SAVE(io, actor, row->exit_marker);
+        Q1_SAVE(io, ref, row->fog_active);
+        Q1_SAVE(io, ref, row->secret_marker);
+        Q1_SAVE(io, ref, row->exit_marker);
         Q1_SAVE(io, vector, row->fog_color);
         Q1_SAVE(io, float, row->fog_density);
         Q1_SAVE(io, double, row->fly_sound);

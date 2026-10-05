@@ -35,9 +35,9 @@ static bool grenade_explode(qa_q1_game *g, q1_actor *grenade, bool mini, qa_erro
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, grenade->id, &body, error))
         return false;
-    float amount = mini ? is_player(g, grenade->owner) ? 90 : 60
+    float amount = mini ? is_player(g, q1_ref_actor(g, grenade->owner)) ? 90 : 60
                          : q1_weapon_shape(QA_Q1_MULTI_GRENADE)->blast_damage;
-    if (!q1_radius(g, grenade->id, grenade->owner, amount, (qa_actor_id){0}, QA_Q1_MULTI_GRENADE,
+    if (!q1_radius(g, grenade->id, q1_ref_actor(g, grenade->owner), amount, (qa_actor_id){0}, QA_Q1_MULTI_GRENADE,
                    error))
         return false;
     return !q1_alive(g, grenade->id) ||
@@ -53,12 +53,12 @@ static bool rocket_explode(qa_q1_game *g, q1_actor *rocket, qa_actor_id direct, 
         if (q1_classnamed(g, direct, "monster_shambler") ||
             q1_classnamed(g, direct, "monster_dragon"))
             damage *= 0.5f;
-        if (!q1_damage(g, direct, rocket->id, rocket->owner, damage, QA_Q1_MULTI_ROCKET, error))
+        if (!q1_damage(g, direct, rocket->id, q1_ref_actor(g, rocket->owner), damage, QA_Q1_MULTI_ROCKET, error))
             return false;
         if (!q1_alive(g, rocket->id))
             return true;
     }
-    if (!q1_radius(g, rocket->id, rocket->owner,
+    if (!q1_radius(g, rocket->id, q1_ref_actor(g, rocket->owner),
                    q1_weapon_shape(QA_Q1_MULTI_ROCKET)->blast_damage, direct, QA_Q1_MULTI_ROCKET, error))
         return false;
     if (!q1_alive(g, rocket->id))
@@ -69,8 +69,8 @@ static bool rocket_explode(qa_q1_game *g, q1_actor *rocket, qa_actor_id direct, 
 }
 static bool rocket_home(qa_q1_game *g, q1_actor *rocket, qa_error *error) {
     qa_body_state self, target;
-    if (!qa_world_body_read(g->services.world, rocket->state.projectile.enemy, &target, NULL) ||
-        q1_health(g, rocket->state.projectile.enemy) < 1)
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, rocket->state.projectile.enemy), &target, NULL) ||
+        q1_health(g, q1_ref_actor(g, rocket->state.projectile.enemy)) < 1)
         return q1_remove(g, rocket, error);
     if (!qa_world_body_read(g->services.world, rocket->id, &self, error))
         return false;
@@ -88,7 +88,7 @@ static bool rocket_acquire(qa_q1_game *g, q1_actor *rocket, qa_error *error) {
     if (!qa_world_body_read(g->services.world, rocket->id, &body, error))
         return false;
     qa_vec3 direction = qa_vec_normalize(body.velocity);
-    if (q1_alive(g, rocket->owner)) {
+    if (q1_alive(g, q1_ref_actor(g, rocket->owner))) {
         qa_builtin_angle_vectors(rocket->state.projectile.launch_angles, &g->forward, &g->right,
                                  &g->up);
         if (!q1_aim(g, rocket->id, g->forward, &direction, error))
@@ -99,7 +99,7 @@ static bool rocket_acquire(qa_q1_game *g, q1_actor *rocket, qa_error *error) {
                   rocket->id, true, &trace, error))
         return false;
     if (trace.hit == QA_TRACE_HIT_ACTOR && is_monster(g, trace.actor)) {
-        rocket->state.projectile.enemy = trace.actor;
+        rocket->state.projectile.enemy = q1_ref_from(g, trace.actor);
         return rocket_home(g, rocket, error);
     }
     rocket->state.projectile.launch_angles = qa_v3(
@@ -109,7 +109,7 @@ static bool rocket_acquire(qa_q1_game *g, q1_actor *rocket, qa_error *error) {
     return q1_schedule(g, rocket, 0.2, Q1_THINK_MULTI_ACQUIRE, error);
 }
 static bool split_grenade(qa_q1_game *g, q1_actor *grenade, qa_error *error) {
-    if (!grenade->owner.registry)
+    if (!q1_ref_present(grenade->owner))
         return q1_remove(g, grenade, error);
     for (unsigned i = 0; i < 5; ++i) {
         qa_vec3 angles = grenade->state.projectile.launch_angles;
@@ -123,7 +123,7 @@ static bool split_grenade(qa_q1_game *g, q1_actor *grenade, qa_error *error) {
         if (!qa_world_body_read(g->services.world, grenade->id, &body, error))
             return false;
         q1_actor *mini;
-        if (!q1_projectile_spawn(g, grenade->owner, QA_Q1_MULTI_GRENADE, Q1_MULTI_GRENADE,
+        if (!q1_projectile_spawn(g, q1_ref_actor(g, grenade->owner), QA_Q1_MULTI_GRENADE, Q1_MULTI_GRENADE,
                                  body.origin, velocity, &mini, error))
             return false;
         if (!qa_builtin_resource(&g->services, "MiniGrenade", &mini->classname, error))
@@ -144,7 +144,7 @@ static bool plasma_damage(qa_q1_game *g, q1_actor *plasma, qa_vec3 end, qa_error
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, plasma->id, &body, error))
         return false;
-    return q1_lightning_rays(g, plasma->owner, plasma->id, body.origin, end, 50, 200, 225,
+    return q1_lightning_rays(g, q1_ref_actor(g, plasma->owner), plasma->id, body.origin, end, 50, 200, 225,
                              qa_v3(0, 0, 100), Q1_LIGHTNING_REMEMBER_ALL | Q1_LIGHTNING_PARTICLES,
                              QA_Q1_PLASMA, NULL, error);
 }
@@ -158,12 +158,12 @@ static bool plasma_explode(qa_q1_game *g, q1_actor *plasma, qa_actor_id other, q
     if (q1_health(g, other) != 0) {
         if (q1_classnamed(g, other, "monster_shambler"))
             damage *= 0.5f;
-        if (!q1_damage(g, other, plasma->id, plasma->owner, damage, QA_Q1_PLASMA, error))
+        if (!q1_damage(g, other, plasma->id, q1_ref_actor(g, plasma->owner), damage, QA_Q1_PLASMA, error))
             return false;
         if (!q1_alive(g, plasma->id))
             return true;
     }
-    if (!q1_radius(g, plasma->id, plasma->owner,
+    if (!q1_radius(g, plasma->id, q1_ref_actor(g, plasma->owner),
                    q1_weapon_shape(QA_Q1_PLASMA)->blast_damage, other, QA_Q1_PLASMA, error))
         return false;
     if (!q1_alive(g, plasma->id))
@@ -177,7 +177,7 @@ static bool plasma_explode(qa_q1_game *g, q1_actor *plasma, qa_actor_id other, q
     bool result = true;
     for (size_t i = snapshot->snapshot.count; i > 0; --i) {
         qa_actor_id target = snapshot->snapshot.ids[i - 1];
-        if (qa_actor_id_equal(target, plasma->owner) ||
+        if (q1_ref_equal(q1_ref_from(g, target), plasma->owner) ||
             (!is_player(g, target) && !is_monster(g, target)))
             continue;
         qa_body_state body;
@@ -218,7 +218,7 @@ static bool plasma_explode(qa_q1_game *g, q1_actor *plasma, qa_actor_id other, q
 }
 bool q1_rogue_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
     q1_projectile *p = &entity->state.projectile;
-    if (qa_actor_id_equal(entity->owner, other))
+    if (q1_ref_equal(entity->owner, q1_ref_from(g, other)))
         return true;
     q1_actor *native = q1_entity(g, other);
     if (p->kind == Q1_LAVA_SPIKE && native && native->physics.solid == QA_PHYSICS_TRIGGER)
@@ -229,7 +229,7 @@ bool q1_rogue_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error
     if (p->kind == Q1_MULTI_GRENADE) {
         qa_q1_target target;
         if (q1_target(g, other, &target) && (target.player || target.aimed_damage))
-            return grenade_explode(g, entity, p->mini || !is_player(g, entity->owner), error);
+            return grenade_explode(g, entity, p->mini || !is_player(g, q1_ref_actor(g, entity->owner)), error);
         if (!q1_sound(g, entity->id, "weapons/bounce.wav", 1, 1, error))
             return false;
         if (qa_vec_length(body.velocity) == 0)
@@ -258,7 +258,7 @@ bool q1_rogue_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error
                 qa_string_id cause;
                 if (!qa_builtin_resource(&g->services, powered ? "rogue:super-lava" : "rogue:lava",
                                          &cause, error) ||
-                    !q1_damage_typed(g, other, entity->id, entity->owner, damage, p->weapon,
+                    !q1_damage_typed(g, other, entity->id, q1_ref_actor(g, entity->owner), damage, p->weapon,
                                      player ? powered ? QA_Q1_ARMOR_HALF : QA_Q1_ARMOR_BYPASS
                                             : QA_Q1_ARMOR_NORMAL,
                                      cause, error))
@@ -379,7 +379,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
                               error))
                     return false;
                 if (trace.hit == QA_TRACE_HIT_ACTOR && is_monster(g, trace.actor)) {
-                    projectile->state.projectile.enemy = trace.actor;
+                    projectile->state.projectile.enemy = q1_ref_from(g, trace.actor);
                     qa_scheduler_cancel(qa_session_scheduler(g->services.session), projectile->id);
                     projectile->think = Q1_THINK_MULTI_HOME;
                     projectile->next_think = 0;

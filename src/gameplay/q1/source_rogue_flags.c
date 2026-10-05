@@ -66,7 +66,7 @@ bool qa_q1_source_rogue_flag_read(qa_q1_game *g, qa_actor_id actor,
     if (!e || !out) return false;
     value.team = e->state.rogue_flag.values[0];
     value.count = e->state.rogue_flag.values[1];
-    value.owner = e->owner;
+    value.owner = q1_ref_actor(g, e->owner);
     value.base = e->kind == Q1_SOURCE_ROGUE_FLAG_BASE;
     value.placed = e->state.rogue_flag.placed;
     *out = value;
@@ -127,7 +127,7 @@ bool qa_q1_source_rogue_flag_return(qa_q1_game *g, qa_actor_id actor, qa_error *
             current(g, actor, e, error) && write(g, e, 1, 0, error);
     }
     if (okay) {
-        e->owner = (qa_actor_id){0};
+        e->owner = (q1_ref){0};
         okay = q1_link(g, e, error) && current(g, actor, e, error);
     }
     if (!okay && (!error || error->code == QA_OK)) fail(error, actor, "Rogue return needs a placed source flag");
@@ -140,7 +140,7 @@ bool qa_q1_source_rogue_flag_drop(qa_q1_game *g, qa_actor_id actor, qa_error *er
     q1_actor *e = flag(g, actor, error);
     qa_body_state body, owner;
     bool okay = e && e->kind == Q1_SOURCE_ROGUE_FLAG && current(g, actor, e, error) &&
-        qa_world_body_read(g->services.world, e->owner, &owner, error) &&
+        qa_world_body_read(g->services.world, q1_ref_actor(g, e->owner), &owner, error) &&
         qa_world_body_read(g->services.world, actor, &body, error) && current(g, actor, e, error);
     if (okay) {
         body.origin = qa_vec_add(owner.origin, qa_v3(0, 0, -24));
@@ -166,7 +166,7 @@ bool qa_q1_source_rogue_flag_carry(qa_q1_game *g, qa_actor_id actor,
     q1_actor *e = flag(g, actor, error);
     bool okay = e && e->kind == Q1_SOURCE_ROGUE_FLAG && current(g, actor, e, error);
     if (okay) {
-        e->owner = player;
+        e->owner = q1_ref_from(g, player);
         e->physics.motion = QA_PHYSICS_NOCLIP;
         e->physics.solid = QA_PHYSICS_NOT_SOLID;
         okay = write(g, e, 1, 1, error) && q1_link(g, e, error) && current(g, actor, e, error);
@@ -279,7 +279,7 @@ bool q1_source_rogue_flag_think(qa_q1_game *g, q1_actor *e,
     }
     if (count != 1) return fail(error, actor, "Rogue flag has an invalid source count");
     bool carrier;
-    qa_actor_id owner = e->owner;
+    qa_actor_id owner = q1_ref_actor(g, e->owner);
     if (!g->source_rogue_flags.carrier(g->source_rogue_flags.context, actor, owner, &carrier, error) ||
         !current(g, actor, e, error)) return false;
     if (!carrier) return g->source_rogue_flags.drop_flag(g->source_rogue_flags.context, actor, error) &&
@@ -289,7 +289,7 @@ bool q1_source_rogue_flag_think(qa_q1_game *g, q1_actor *e,
     if (!qa_world_body_read(g->services.world, actor, &body, error) ||
         !qa_world_body_read(g->services.world, owner, &held, error) ||
         !g->source_rogue_flags.player_frame(g->source_rogue_flags.context, owner, &frame, error) ||
-        !current(g, actor, e, error) || !qa_actor_id_equal(e->owner, owner)) return false;
+        !current(g, actor, e, error) || !q1_ref_equal(e->owner, q1_ref_from(g, owner))) return false;
     static const unsigned offsets[] = {2, 8, 12, 11, 10, 4, 2, 10, 10, 8, 4, 2};
     float distance = 14;
     if (frame >= 29 && frame <= 40 && floor(frame) == frame) distance += (float)offsets[(size_t)frame - 29];

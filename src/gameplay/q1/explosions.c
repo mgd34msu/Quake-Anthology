@@ -25,7 +25,7 @@ bool q1_multi_explosion_think(qa_q1_game *g, q1_actor *entity, qa_error *error) 
     qa_vec3 low = qa_vec_add(body.origin, body.bounds.mins),
             high = qa_vec_add(body.origin, body.bounds.maxs);
     q1_actor *explosion;
-    if (!q1_create(g, "hip_explosion", Q1_TIMER, entity->owner, &explosion, error))
+    if (!q1_create(g, "hip_explosion", Q1_TIMER, q1_ref_actor(g, entity->owner), &explosion, error))
         return false;
     qa_actor_id child = explosion->id;
     entity = q1_entity(g, parent);
@@ -58,7 +58,7 @@ bool q1_multi_explosion_think(qa_q1_game *g, q1_actor *entity, qa_error *error) 
     explosion = q1_entity(g, child);
     if (!entity || !explosion)
         goto retired;
-    if (!q1_radius(g, child, entity->owner, entity->damage, parent, QA_Q1_WEAPON_COUNT, error))
+    if (!q1_radius(g, child, q1_ref_actor(g, entity->owner), entity->damage, parent, QA_Q1_WEAPON_COUNT, error))
         goto failed;
     entity = q1_entity(g, parent);
     explosion = q1_entity(g, child);

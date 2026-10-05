@@ -25,7 +25,7 @@ static bool gib(qa_q1_game *g, q1_actor *entity, float damage, qa_error *error) 
 }
 static bool resume(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_monster *m = &entity->state.monster;
-    if (m->old_enemy.registry && q1_health(g, m->old_enemy) > 0) {
+    if (q1_ref_present(m->old_enemy) && q1_health(g, q1_ref_actor(g, m->old_enemy)) > 0) {
         m->enemy = m->old_enemy;
         entity->physics.goal = m->enemy;
         m->next_frame = q1_frame_index(m->species->run);
@@ -54,7 +54,7 @@ static bool melee(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) 
     if (!entity)
         return true;
     qa_body_state body, target;
-    qa_actor_id enemy = entity->state.monster.enemy;
+    qa_actor_id enemy = q1_ref_actor(g, entity->state.monster.enemy);
     if (!enemy.registry)
         return true;
     if (!qa_world_body_read(g->services.world, enemy, &target, NULL))
@@ -69,7 +69,7 @@ static bool melee(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) 
     if (qa_vec_length(qa_vec_sub(target.origin, body.origin)) > 100)
         return true;
     bool visible;
-    if (!q1_can_damage(g, entity->state.monster.enemy, source, &visible, error))
+    if (!q1_can_damage(g, q1_ref_actor(g, entity->state.monster.enemy), source, &visible, error))
         return false;
     entity = melee_source(g, source);
     if (!entity || !visible)
@@ -79,7 +79,7 @@ static bool melee(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) 
     entity = melee_source(g, source);
     if (!entity)
         return true;
-    if (!q1_damage(g, entity->state.monster.enemy, source, source, 10 + 5 * q1_random(g),
+    if (!q1_damage(g, q1_ref_actor(g, entity->state.monster.enemy), source, source, 10 + 5 * q1_random(g),
                    QA_Q1_WEAPON_COUNT, error))
         return false;
     if (!melee_source(g, source))
@@ -186,7 +186,7 @@ static bool split(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         !qa_world_body_write(g->services.world, id, &body, error) ||
         !q1_monster_play(g, child, "gremlin_spawn1", error))
         return false;
-    child->state.monster.enemy = (qa_actor_id){0};
+    child->state.monster.enemy = (q1_ref){0};
     child->state.monster.source.gremlin.gorging = false;
     return true;
 }
@@ -211,7 +211,7 @@ static bool gorge_damage(qa_q1_game *g, q1_actor *entity, qa_actor_id target, fl
     return qa_combat_set_health(g->services.combat, target, combat.health - damage, error);
 }
 static bool gorge(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) {
-    qa_actor_id target = entity->state.monster.enemy;
+    qa_actor_id target = q1_ref_actor(g, entity->state.monster.enemy);
     if (!q1_alive(g, target))
         return true;
     if (!q1_sound(g, entity->id, "demon/dhit2.wav", 1, 1, error) ||
@@ -245,7 +245,7 @@ static bool gorge(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) 
         if (!split(g, entity, error))
             return false;
     }
-    entity->state.monster.enemy = (qa_actor_id){0};
+    entity->state.monster.enemy = (q1_ref){0};
     entity->state.monster.source.gremlin.gorging = false;
     return q1_monster_play(g, entity, "gremlin_look1", error);
 }
@@ -258,7 +258,7 @@ bool q1_gremlin_melee(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return false;
     }
     qa_q1_target target;
-    if (q1_target(g, entity->state.monster.enemy, &target) && target.player &&
+    if (q1_target(g, q1_ref_actor(g, entity->state.monster.enemy), &target) && target.player &&
         q1_random(g) < 0.4f) {
         bool stolen;
         if (!q1_gremlin_steal(g, entity, &stolen, error))
@@ -305,7 +305,7 @@ bool q1_gremlin_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_e
         return true;
     if (q1_random(g) < 0.8f) {
         m->source.gremlin.gorging = false;
-        m->enemy = attacker;
+        m->enemy = q1_ref_from(g, attacker);
         if (attacker.registry && !q1_monster_found(g, entity, attacker, error))
             return false;
     }

@@ -15,7 +15,7 @@ static bool sound(qa_q1_game *g, q1_actor *entity, const char *path, int32_t cha
            qa_builtin_emit(&g->services, &event, error);
 }
 static bool sync_body(qa_q1_game *g, q1_actor *entity, bool walking, qa_error *error) {
-    q1_actor *part = q1_entity(g, entity->state.monster.source.armagon.body);
+    q1_actor *part = q1_entity(g, q1_ref_actor(g, entity->state.monster.source.armagon.body));
     if (!part) {
         qa_error_set(error, QA_ERROR_FORMAT, entity->id.slot,
                      "Armagon lost its source body entity");
@@ -42,12 +42,12 @@ static void turn(q1_actor *entity, float difference, float target) {
 }
 static qa_vec3 enemy_origin(qa_q1_game *g, q1_actor *entity, bool eyes) {
     qa_body_state body;
-    if (!qa_world_body_read(g->services.world, entity->state.monster.enemy, &body, NULL))
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, entity->state.monster.enemy), &body, NULL))
         return qa_v3(0, 0, 0);
     qa_q1_target traits;
     if (eyes)
         body.origin.z +=
-            q1_target(g, entity->state.monster.enemy, &traits) ? traits.view_height : 25;
+            q1_target(g, q1_ref_actor(g, entity->state.monster.enemy), &traits) ? traits.view_height : 25;
     return body.origin;
 }
 static bool idle(qa_q1_game *g, q1_actor *entity, qa_error *error) {
@@ -86,7 +86,7 @@ static bool think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return true;
     if (!idle(g, entity, error))
         return false;
-    q1_actor *part = q1_entity(g, entity->state.monster.source.armagon.body);
+    q1_actor *part = q1_entity(g, q1_ref_actor(g, entity->state.monster.source.armagon.body));
     if (part && g->options.edition == QA_Q1_RERELEASE &&
         qa_vec_length(qa_vec_sub(entity->state.monster.source.armagon.old_origin, body.origin)) >
             50)
@@ -131,7 +131,7 @@ static bool launch(qa_q1_game *g, q1_actor *entity, float offset, unsigned turn_
                                                             qa_vec_scale(forward, 84))));
     qa_vec3 target = enemy_origin(g, entity, true);
     if (g->options.skill) {
-        (void)qa_world_body_read(g->services.world, entity->state.monster.enemy, &enemy, NULL);
+        (void)qa_world_body_read(g->services.world, q1_ref_actor(g, entity->state.monster.enemy), &enemy, NULL);
         target = qa_vec_add(
             target, qa_vec_scale(enemy.velocity, qa_vec_length(qa_vec_sub(target, origin)) / 1000));
     }
@@ -204,8 +204,8 @@ static bool clear_shot(qa_q1_game *g, q1_actor *entity, bool *clear, bool *water
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
     qa_vec3 start = qa_vec_add(body.origin, qa_v3(0, 0, 25)), end = enemy_origin(g, entity, true);
-    qa_actor_id enemy = entity->state.monster.enemy.registry ? entity->state.monster.enemy
-                                                             : g->services.physics->world_actor;
+    qa_actor_id enemy = q1_ref_actor(g, q1_ref_present(entity->state.monster.enemy) ? entity->state.monster.enemy
+                                                             : q1_ref_from(g, g->services.physics->world_actor));
     qa_trace_result trace;
     if (!q1_trace(g, start, end, entity->id, true, &trace, error))
         return false;
@@ -289,7 +289,7 @@ static bool stand_attack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (g->time < entity->state.monster.attack_finished)
         return true;
     qa_q1_target traits;
-    if (distance < 200 && q1_target(g, entity->state.monster.enemy, &traits) && traits.player)
+    if (distance < 200 && q1_target(g, q1_ref_actor(g, entity->state.monster.enemy), &traits) && traits.player)
         return repulse(g, entity, error);
     entity->state.monster.source.armagon.repulse_state = 0;
     if (distance > 450)
@@ -307,7 +307,7 @@ bool q1_armagon_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
     float distance;
     if (!clear_shot(g, entity, &clear, &water, &distance, error))
         return false;
-    if ((!clear && !entity->state.monster.charmer.registry) || water ||
+    if ((!clear && !q1_ref_present(entity->state.monster.charmer)) || water ||
         g->time < entity->state.monster.attack_finished)
         return true;
     qa_body_state body;
@@ -317,7 +317,7 @@ bool q1_armagon_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
     float delta = entity->physics.ideal_yaw -
                   (body.angles.y + entity->state.monster.source.armagon.torso_yaw);
     if ((fabsf(delta) > 10 && distance > 200) ||
-        !q1_target(g, entity->state.monster.enemy, &traits) || !traits.player)
+        !q1_target(g, q1_ref_actor(g, entity->state.monster.enemy), &traits) || !traits.player)
         return true;
     if (distance < 400) {
         *out = true;
@@ -338,7 +338,7 @@ bool q1_armagon_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     part->physics.solid = QA_PHYSICS_NOT_SOLID;
     if (g->options.edition == QA_Q1_CLASSIC)
         part->physics.motion = QA_PHYSICS_STEP;
-    entity->state.monster.source.armagon.body = part->id;
+    entity->state.monster.source.armagon.body = q1_ref_from(g, part->id);
     entity->state.monster.source.armagon.old_origin = source.origin;
     entity->state.monster.source.armagon.aim_threshold = g->options.skill == 0   ? 0.9f
                                                          : g->options.skill == 1 ? 0.85f
@@ -369,7 +369,7 @@ static bool final_death(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity->consumed_corpse = true;
     body.bounds = (qa_bounds){{-32, -32, -24}, {32, 32, 32}};
     entity->wait = (float)(g->time + 5);
-    q1_actor *part = q1_entity(g, entity->state.monster.source.armagon.body);
+    q1_actor *part = q1_entity(g, q1_ref_actor(g, entity->state.monster.source.armagon.body));
     if (!part) {
         qa_error_set(error, QA_ERROR_FORMAT, entity->id.slot, "Armagon lost its body during death");
         return false;

@@ -33,6 +33,7 @@ bool q1_save_bounds(q1_save_io *, qa_bounds *);
 bool q1_save_string(q1_save_io *, qa_string_id *);
 bool q1_save_literal(q1_save_io *, const char **);
 bool q1_save_actor(q1_save_io *, qa_actor_id *);
+bool q1_save_ref(q1_save_io *, q1_ref *);
 bool q1_save_owned_actor(q1_save_io *, qa_actor_id *);
 bool q1_save_attack(q1_save_io *, qa_attack *);
 bool q1_save_physics(q1_save_io *, qa_physics_properties *);

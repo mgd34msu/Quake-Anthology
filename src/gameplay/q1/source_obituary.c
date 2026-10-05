@@ -45,7 +45,7 @@ bool qa_q1_source_obituary_read(const qa_q1_game *game, qa_actor_id actor,
     }
     qa_strings *strings = qa_session_strings(game->services.session);
     qa_q1_source_obituary_actor result = {
-        .owner = entity ? entity->owner : (qa_actor_id){0},
+        .owner = q1_ref_actor(game, entity ? entity->owner : (q1_ref){0}),
         .classname = entity ? entity->classname : 0,
         .kill_string = entity ? entity->source_kill_string : 0,
         .death_type = entity ? entity->source_death_type : 0,

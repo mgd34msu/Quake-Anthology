@@ -174,11 +174,11 @@ bool qa_q2_actor_capture(qa_q2_game *g, qa_actor_id id, qa_q2_actor_checkpoint *
         !q2_save_reference(g, p->owner, &saved->owner, e) ||
         !q2_save_reference(g, p->enemy, &saved->enemy, e) ||
         !q2_save_reference(g, p->child, &saved->child, e) ||
-        !q2_save_reference(g, a->physics.enemy, &snapshot.physics_enemy, e) ||
-        !q2_save_reference(g, a->physics.goal, &snapshot.physics_goal, e))
+        !q2_save_reference(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), a->physics.enemy), &snapshot.physics_enemy, e) ||
+        !q2_save_reference(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), a->physics.goal), &snapshot.physics_goal, e))
         return false;
     saved->attack.attacker = saved->attack.inflictor = saved->attack.projectile = (qa_actor_id){0};
-    snapshot.physics.enemy = snapshot.physics.goal = (qa_actor_id){0};
+    snapshot.physics.enemy = snapshot.physics.goal = (qa_actor_reference){0};
     for (unsigned i = 0; i < 2; ++i) {
         snapshot.grapples[i] = a->grapples[i];
         if (!q2_save_reference(g, a->grapples[i].hook, &snapshot.grapple_hooks[i], e))
@@ -231,8 +231,8 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
         !qa_vec_finite(s->physics.angular_velocity) ||
         !qa_vec_finite(s->physics.gravity_direction) || !isfinite(s->physics.gravity_scale) ||
         !isfinite(s->physics.delta_yaw) || !isfinite(s->physics.ideal_yaw) ||
-        !isfinite(s->physics.yaw_speed) || s->physics.enemy.registry != 0 ||
-        s->physics.goal.registry != 0) {
+        !isfinite(s->physics.yaw_speed) || qa_actor_reference_present(s->physics.enemy) != 0 ||
+        qa_actor_reference_present(s->physics.goal) != 0) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 actor checkpoint");
         return false;
     }
@@ -304,15 +304,18 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
                               .gekk = p->gekk,
                               .dodgeable = p->dodgeable};
     qa_physics_properties physics = s->physics;
+    qa_actor_id physics_enemy, physics_goal;
     if (!q2_resolve_reference(g, p->attacker, &restored.attack.attacker, e) ||
         !q2_resolve_reference(g, p->inflictor, &restored.attack.inflictor, e) ||
         !q2_resolve_reference(g, p->projectile, &restored.attack.projectile, e) ||
         !q2_resolve_reference(g, p->owner, &restored.owner, e) ||
         !q2_resolve_reference(g, p->enemy, &restored.enemy, e) ||
         !q2_resolve_reference(g, p->child, &restored.child, e) ||
-        !q2_resolve_reference(g, s->physics_enemy, &physics.enemy, e) ||
-        !q2_resolve_reference(g, s->physics_goal, &physics.goal, e))
+        !q2_resolve_reference(g, s->physics_enemy, &physics_enemy, e) ||
+        !q2_resolve_reference(g, s->physics_goal, &physics_goal, e))
         return false;
+    physics.enemy = qa_actor_reference_lifetime(physics_enemy);
+    physics.goal = qa_actor_reference_lifetime(physics_goal);
     qa_q2_grapple_state grapples[2];
     for (unsigned i = 0; i < 2; ++i) {
         grapples[i] = s->grapples[i];

@@ -126,7 +126,7 @@ static bool pain(qa_q1_game *g, q1_actor *machine, qa_error *error) {
 }
 bool qa_q1_game_time_machine_crash(qa_q1_game *g, qa_error *error) {
     q1_actor *machine = g && g->maps && q1_alive(g, g->maps->world_actor)
-                            ? time_actor(g, g->maps->time_machine)
+                            ? time_actor(g, q1_ref_actor(g, g->maps->time_machine))
                             : NULL;
     if (!machine)
         return q1_map_fail(error, "Rogue time_crash requires item_time_machine");
@@ -154,16 +154,16 @@ bool qa_q1_game_time_machine_crash(qa_q1_game *g, qa_error *error) {
     if (!q1_map_schedule(g, machine, .1, Q1_MAP_TIME_FALL, error) ||
         !qa_builtin_resource(&g->services, "timeramp", &machine->target, error))
         return false;
-    return q1_map_targets(g, machine, machine->activator, error);
+    return q1_map_targets(g, machine, q1_ref_actor(g, machine->activator), error);
 }
 static bool boom(qa_q1_game *g, q1_actor *explosion, qa_error *error) {
     qa_actor_id id = explosion->id;
-    if (!q1_map_targets(g, explosion, explosion->activator, error))
+    if (!q1_map_targets(g, explosion, q1_ref_actor(g, explosion->activator), error))
         return false;
     explosion = time_actor(g, id);
     if (!explosion)
         return true;
-    qa_actor_id machine_id = explosion->owner;
+    qa_actor_id machine_id = q1_ref_actor(g, explosion->owner);
     q1_actor *machine = time_actor(g, machine_id);
     if (!machine)
         return q1_map_fail(error, "Time machine explosion lost its machine");
@@ -257,7 +257,7 @@ bool q1_map_time_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             return true;
         entity->map->pending.time_reaction = Q1_TIME_PAIN;
         if (q1_alive(g, g->maps->world_actor))
-            g->maps->time_machine = id;
+            g->maps->time_machine = q1_ref_from(g, id);
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, id, &body, error))
             return false;
@@ -292,7 +292,7 @@ bool q1_map_time_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, qa
     if (action == Q1_MAP_TIME_CRASH_THINK)
         return qa_q1_game_time_machine_crash(g, error);
     if (action == Q1_MAP_TIME_STOP_SHAKE) {
-        if (!q1_map_targets(g, entity, entity->activator, error))
+        if (!q1_map_targets(g, entity, q1_ref_actor(g, entity->activator), error))
             return false;
         return !q1_alive(g, id) || qa_session_release(g->services.session, id, error);
     }

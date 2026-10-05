@@ -1,11 +1,11 @@
 #include "boss_internal.h"
 
-qa_actor_id q1_boss_enemy(const q1_actor *e) {
+q1_ref q1_boss_enemy(const q1_actor *e) {
     return e->kind == Q1_MONSTER ? e->state.monster.enemy : e->state.boss_child.enemy;
 }
 qa_vec3 q1_boss_target(qa_q1_game *g, const q1_actor *e) {
     qa_body_state value;
-    return qa_world_body_read(g->services.world, q1_boss_enemy(e), &value, NULL) ? value.origin
+    return qa_world_body_read(g->services.world, q1_ref_actor(g, q1_boss_enemy(e)), &value, NULL) ? value.origin
                                                                                  : qa_v3(0, 0, 0);
 }
 bool q1_boss_child_create(qa_q1_game *g, const char *classname, q1_boss_child_kind kind,
@@ -59,12 +59,12 @@ bool q1_boss_sphere_manager(qa_q1_game *g, q1_actor *source, int32_t maximum, bo
         state->sign = 1;
         state->maximum = maximum;
         state->enemy = q1_boss_enemy(source);
-        if (!state->enemy.registry && !q1_boss_first_player(g, &state->enemy, error))
+        if (!q1_ref_present(state->enemy) && !q1_boss_first_player(g, &state->enemy, error))
             goto fail;
         body.angles = owner.angles;
     } else {
-        if (!q1_boss_enemy(source).registry) {
-            qa_actor_id player;
+        if (!q1_ref_present(q1_boss_enemy(source))) {
+            q1_ref player;
             if (!q1_boss_first_player(g, &player, error))
                 goto fail;
             if (source->kind == Q1_MONSTER)
@@ -90,11 +90,11 @@ fail:
 }
 bool q1_boss_autogun(qa_q1_game *g, q1_actor *source, qa_vec3 origin, float offset,
                      qa_error *error) {
-    qa_actor_id player;
+    q1_ref player;
     qa_body_state target = {0};
     if (!q1_boss_first_player(g, &player, error))
         return false;
-    (void)qa_world_body_read(g->services.world, player, &target, NULL);
+    (void)qa_world_body_read(g->services.world, q1_ref_actor(g, player), &target, NULL);
     qa_vec3 direction = qa_vec_normalize(qa_vec_sub(target.origin, origin));
     if (offset != 0)
         direction = qa_vec_add(qa_vec_scale(qa_vec_cross(direction, qa_v3(0, 0, 1)), offset),
@@ -108,7 +108,7 @@ bool q1_boss_autogun(qa_q1_game *g, q1_actor *source, qa_vec3 origin, float offs
     return true;
 }
 bool q1_boss_sphere_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error) {
-    if (qa_actor_id_equal(e->owner, other))
+    if (q1_ref_equal(e->owner, q1_ref_from(g, other)))
         return true;
     if (q1_classnamed(g, other, "oldnew_child") || q1_classnamed(g, other, "oldnew_eye") ||
         q1_classnamed(g, other, "monster_szombie"))
@@ -128,11 +128,11 @@ bool q1_boss_sphere_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_erro
     if (contents.contents == -6)
         return q1_remove(g, e, error);
     return (!q1_damageable(g, other) ||
-            q1_damage(g, other, e->id, e->owner, 18, QA_Q1_WEAPON_COUNT, error)) &&
+            q1_damage(g, other, e->id, q1_ref_actor(g, e->owner), 18, QA_Q1_WEAPON_COUNT, error)) &&
            (!q1_alive(g, e->id) || q1_remove(g, e, error));
 }
 static bool actual_sphere(qa_q1_game *g, q1_actor *e, qa_error *error) {
-    if (!e->state.boss_child.enemy.registry &&
+    if (!q1_ref_present(e->state.boss_child.enemy) &&
         !q1_boss_first_player(g, &e->state.boss_child.enemy, error))
         return false;
     qa_body_state body;
@@ -149,7 +149,7 @@ static bool actual_sphere(qa_q1_game *g, q1_actor *e, qa_error *error) {
         qa_vec3 origin =
             qa_vec_add(qa_vec_add(body.origin, qa_v3(0, 0, 32)), qa_vec_scale(point, 32));
         q1_actor *shot;
-        if (!q1_boss_shot(g, e->owner, origin, aim, qa_vec_scale(aim, 800),
+        if (!q1_boss_shot(g, q1_ref_actor(g, e->owner), origin, aim, qa_vec_scale(aim, 800),
                           "progs/rogue/sphere.mdl", Q1_BOSS_SPHERE_SHOT, &shot, error))
             return false;
         shot->damage = 18;
@@ -192,7 +192,7 @@ bool q1_boss_sphere_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
     }
     if (!q1_sound(g, e->id, "weapons/spike2.wav", 1, 1, error))
         return false;
-    if (!chunk && !state->enemy.registry && !q1_boss_first_player(g, &state->enemy, error))
+    if (!chunk && !q1_ref_present(state->enemy) && !q1_boss_first_player(g, &state->enemy, error))
         return false;
     for (int y = -1; y < (chunk ? 1 : 2); ++y) {
         for (int x = 0; x < (!chunk && y == 0 ? 44 : 45); ++x) {
@@ -210,7 +210,7 @@ bool q1_boss_sphere_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
                 qa_vec_add(body.origin, qa_vec_scale(g->forward, 64)),
                 qa_vec_add(qa_vec_scale(g->up, (float)y * 16), qa_v3(0, 0, chunk ? 8 : 24)));
             q1_actor *shot;
-            if (!q1_boss_shot(g, e->owner, origin, qa_vec_scale(g->forward, 200),
+            if (!q1_boss_shot(g, q1_ref_actor(g, e->owner), origin, qa_vec_scale(g->forward, 200),
                               qa_vec_scale(qa_vec_normalize(g->forward), 400), "progs/diamond.mdl",
                               Q1_BOSS_SPHERE_SHOT, &shot, error))
                 return false;
@@ -229,7 +229,7 @@ bool q1_boss_sphere_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
             return false;
     }
     if (++e->count > (float)state->maximum) {
-        q1_actor *owner = q1_entity(g, e->owner);
+        q1_actor *owner = q1_entity(g, q1_ref_actor(g, e->owner));
         if (!chunk && owner && owner->kind == Q1_MONSTER)
             owner->state.monster.source.boss.immune = false;
         return q1_remove(g, e, error);
@@ -262,7 +262,7 @@ fail:
     return false;
 }
 bool q1_boss_teledeath_touch(qa_q1_game *g, q1_actor *death, qa_actor_id other, qa_error *error) {
-    if (qa_actor_id_equal(death->owner, other))
+    if (q1_ref_equal(death->owner, q1_ref_from(g, other)))
         return true;
     qa_q1_target traits, owner;
     bool player = q1_target(g, other, &traits) && traits.player;
@@ -270,8 +270,8 @@ bool q1_boss_teledeath_touch(qa_q1_game *g, q1_actor *death, qa_actor_id other, 
         if (qa_q1_game_invulnerable(g, other) &&
             !qa_builtin_resource(&g->services, "teledeath2", &death->classname, error))
             return false;
-        if (!q1_target(g, death->owner, &owner) || !owner.player)
-            return !death->owner.registry || q1_damage(g, death->owner, death->id, death->id, 50000,
+        if (!q1_target(g, q1_ref_actor(g, death->owner), &owner) || !owner.player)
+            return !q1_ref_present(death->owner) || q1_damage(g, q1_ref_actor(g, death->owner), death->id, death->id, 50000,
                                                        QA_Q1_WEAPON_COUNT, error);
     }
     return q1_health(g, other) == 0 ||

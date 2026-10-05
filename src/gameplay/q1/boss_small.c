@@ -5,7 +5,7 @@ static bool body(qa_q1_game *g, q1_actor *e, qa_body_state *out, qa_error *error
 }
 static qa_vec3 enemy_origin(qa_q1_game *g, q1_actor *e) {
     qa_body_state value;
-    return qa_world_body_read(g->services.world, e->state.monster.enemy, &value, NULL)
+    return qa_world_body_read(g->services.world, q1_ref_actor(g, e->state.monster.enemy), &value, NULL)
                ? value.origin
                : qa_v3(0, 0, 0);
 }
@@ -13,10 +13,10 @@ qa_vec3 q1_boss_angles(qa_vec3 v) {
     return qa_v3(qa_builtin_angle_mod(atan2f(v.z, hypotf(v.x, v.y)) * 57.29577951308232f),
                  qa_builtin_angle_mod(atan2f(v.y, v.x) * 57.29577951308232f), 0);
 }
-bool q1_boss_first_player(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
+bool q1_boss_first_player(qa_q1_game *g, q1_ref *out, qa_error *error) {
     qa_builtin_snapshot_frame *snapshot;
     if (!q1_snapshot_players(g, &snapshot, error)) return false;
-    *out = snapshot->snapshot.count ? snapshot->snapshot.ids[0] : (qa_actor_id){0};
+    *out = snapshot->snapshot.count ? q1_ref_from(g, snapshot->snapshot.ids[0]) : (q1_ref){0};
     qa_builtin_snapshot_release(snapshot);
     return true;
 }
@@ -65,7 +65,7 @@ bool q1_boss_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *error) {
     e->physics.motion = ghost ? QA_PHYSICS_FLY : QA_PHYSICS_STEP;
     if (!ghost) {
         qa_body_state owner;
-        value.origin = qa_world_body_read(g->services.world, e->owner, &owner, NULL)
+        value.origin = qa_world_body_read(g->services.world, q1_ref_actor(g, e->owner), &owner, NULL)
                            ? owner.origin
                            : qa_v3(0, 0, 0);
         e->physics.flags |= QA_PHYSICS_MONSTER;
@@ -146,7 +146,7 @@ bool q1_boss_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_error *err
     }
     if (m->counted_death)
         return true;
-    m->enemy = attacker;
+    m->enemy = q1_ref_from(g, attacker);
     m->source.boss.touch = false;
     if (!q1_boss_damageable(g, e, false, error) || !q1_monster_count_kill(g, e, attacker, error))
         return false;
@@ -196,10 +196,10 @@ bool q1_boss_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *erro
 }
 bool q1_ghost_bubbles(qa_q1_game *g, q1_actor *timer, qa_error *error) {
     qa_physics_properties owner;
-    if (!actor_physics(g, timer->owner, &owner) || owner.water_level != 3)
+    if (!actor_physics(g, q1_ref_actor(g, timer->owner), &owner) || owner.water_level != 3)
         return true;
     qa_body_state value;
-    if (!qa_world_body_read(g->services.world, timer->owner, &value, error) ||
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, timer->owner), &value, error) ||
         !q1_spawn_bubble(g, qa_vec_add(value.origin, qa_v3(0, 0, 24)), qa_v3(0, 0, 15), false,
                          error))
         return false;
@@ -280,17 +280,17 @@ bool q1_orb_check_attack(qa_q1_game *g, q1_actor *e, bool *out, qa_error *error)
         return true;
     }
     qa_body_state self, other;
-    if (!qa_world_body_read(g->services.world, m->enemy, &other, NULL))
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, m->enemy), &other, NULL))
         return true;
     if (!body(g, e, &self, error))
         return false;
     qa_q1_target traits;
-    float eye = q1_target(g, m->enemy, &traits) ? traits.view_height : 25;
+    float eye = q1_target(g, q1_ref_actor(g, m->enemy), &traits) ? traits.view_height : 25;
     qa_trace_result trace;
     if (!q1_trace(g, qa_vec_add(self.origin, qa_v3(0, 0, 25)),
                   qa_vec_add(other.origin, qa_v3(0, 0, eye)), e->id, true, &trace, error))
         return false;
-    if (trace.hit != QA_TRACE_HIT_ACTOR || !qa_actor_id_equal(trace.actor, m->enemy)) {
+    if (trace.hit != QA_TRACE_HIT_ACTOR || !q1_ref_equal(q1_ref_from(g, trace.actor), m->enemy)) {
         if (m->sliding || m->attack_state) {
             m->sliding = false;
             m->attack_state = 0;
@@ -321,7 +321,7 @@ static bool orb_blast(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_body_state value, target = {0};
     if (!body(g, e, &value, error))
         return false;
-    (void)qa_world_body_read(g->services.world, e->state.monster.enemy, &target, NULL);
+    (void)qa_world_body_read(g->services.world, q1_ref_actor(g, e->state.monster.enemy), &target, NULL);
     float speed = g->options.skill > 2 ? 500 : g->options.skill > 0 ? 450 : 400;
     unsigned count = 4 + (unsigned)floorf(q1_random(g) * 2 + .5f);
     qa_builtin_angle_vectors(q1_boss_angles(qa_vec_sub(target.origin, value.origin)), &g->forward,
@@ -634,7 +634,7 @@ bool q1_boss_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_error
     return false;
 }
 bool q1_orb_rock_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error) {
-    if (qa_actor_id_equal(e->owner, other))
+    if (q1_ref_equal(e->owner, q1_ref_from(g, other)))
         return true;
     if (q1_classnamed(g, other, "monster_orb") || q1_classnamed(g, other, "monster_lava_man") ||
         q1_classnamed(g, other, "monster_super_shambler"))
@@ -655,7 +655,7 @@ bool q1_orb_rock_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *
         return q1_remove(g, e, error);
     if (q1_damageable(g, other)) {
         if (!q1_effect(g, QA_BUILTIN_IMPACT, other, value.origin, 18, 1, error) ||
-            !q1_damage(g, other, e->id, e->owner, 18, QA_Q1_WEAPON_COUNT, error))
+            !q1_damage(g, other, e->id, q1_ref_actor(g, e->owner), 18, QA_Q1_WEAPON_COUNT, error))
             return false;
     } else if (e->count != 0 && !q1_effect(g, QA_BUILTIN_IMPACT, e->id, value.origin, 0, 8, error))
         return false;
@@ -664,12 +664,12 @@ bool q1_orb_rock_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *
 bool q1_shub_grenade_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error) {
     if (e->state.projectile.remove_touch)
         return q1_remove(g, e, error);
-    if (qa_actor_id_equal(e->owner, other))
+    if (q1_ref_equal(e->owner, q1_ref_from(g, other)))
         return true;
     if (q1_classnamed(g, other, "monster_oldone_new") || q1_classnamed(g, other, "oldnew_child"))
         return q1_remove(g, e, error);
     if (q1_damageable(g, other))
-        return q1_damage(g, other, e->id, e->owner, 10, QA_Q1_WEAPON_COUNT, error) &&
+        return q1_damage(g, other, e->id, q1_ref_actor(g, e->owner), 10, QA_Q1_WEAPON_COUNT, error) &&
                (!q1_alive(g, e->id) ||
                 (q1_sound(g, e->id, "zombie/z_hit.wav", 1, 1, error) && q1_remove(g, e, error)));
     if (!q1_sound(g, e->id, "zombie/z_miss.wav", 1, 1, error))
@@ -727,13 +727,12 @@ bool q1_spawn_homing_flame(qa_q1_game *g, q1_actor *source, qa_actor_id *out, qa
     qa_body_state value, target = {0};
     if (!body(g, source, &value, error))
         return false;
-    qa_actor_id enemy =
-        source->kind == Q1_MONSTER ? source->state.monster.enemy : source->physics.enemy;
+    q1_ref enemy = source->kind == Q1_MONSTER ? source->state.monster.enemy : source->physics.enemy;
     qa_q1_target traits;
-    if ((!q1_target(g, enemy, &traits) || !traits.player) &&
+    if ((!q1_target(g, q1_ref_actor(g, enemy), &traits) || !traits.player) &&
         !q1_boss_first_player(g, &enemy, error))
         return false;
-    (void)qa_world_body_read(g->services.world, enemy, &target, NULL);
+    (void)qa_world_body_read(g->services.world, q1_ref_actor(g, enemy), &target, NULL);
     qa_vec3 origin = qa_vec_add(value.origin, qa_v3(0, 0, 4));
     q1_actor *flame;
     if (!q1_projectile_spawn(g, (qa_actor_id){0}, QA_Q1_WEAPON_COUNT, Q1_SPIKE, origin,
@@ -768,7 +767,7 @@ bool q1_homing_flame_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_body_state value, target = {0};
     if (!body(g, e, &value, error))
         return false;
-    (void)qa_world_body_read(g->services.world, e->state.projectile.enemy, &target, NULL);
+    (void)qa_world_body_read(g->services.world, q1_ref_actor(g, e->state.projectile.enemy), &target, NULL);
     e->speed = fmaxf(0, e->speed - 10);
     value.velocity = qa_vec_scale(
         qa_vec_add(qa_vec_scale(qa_vec_normalize(qa_vec_sub(target.origin, value.origin)), .3f),

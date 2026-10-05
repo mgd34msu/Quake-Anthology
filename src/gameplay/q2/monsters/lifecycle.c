@@ -140,7 +140,7 @@ static bool set_route(q2m_context *context, qa_actor_id goal, bool spawn_dead, q
     }
     struct qa_q2_monster *monster = context->monster;
     monster->move_target = monster->goal = goal;
-    context->actor->physics.goal = goal;
+    context->actor->physics.goal = qa_actor_reference_lifetime(goal);
     if (goal.registry == 0) {
         monster->pause_ns = q2m_after(context->game->now_ns, 100000000.0);
         return spawn_dead || q2m_set_move(context, monster->definition->stand_move, false, error);
@@ -339,7 +339,7 @@ static bool trigger_spawn(q2m_context *context, qa_error *error) {
         if (!q2m_found_target(context, monster->enemy, error))
             return false;
     } else {
-        monster->enemy = context->actor->physics.enemy = (qa_actor_id){0};
+        monster->enemy = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.enemy = (qa_actor_reference){0});
     }
     return !q2m_alive(context) || q2m_link(context, error);
 }
@@ -397,7 +397,7 @@ bool q2m_lifecycle_use(q2m_context *context, qa_actor_id activator, qa_error *er
         if (!q2m_alive(context))
             return true;
         if (player)
-            monster->enemy = context->actor->physics.enemy = activator;
+            monster->enemy = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.enemy = qa_actor_reference_lifetime(activator));
         return true;
     }
     qa_monster_mission mission;
@@ -454,7 +454,7 @@ bool q2m_lifecycle_killed(q2m_context *context, qa_error *error) {
     if (!q2m_alive(context))
         return true;
     qa_actor_id attacker = monster->last_attack.attacker;
-    monster->enemy = context->actor->physics.enemy = attacker;
+    monster->enemy = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.enemy = qa_actor_reference_lifetime(attacker));
     qa_physics_motion motion = context->actor->physics.motion;
     if (context->game->options.edition == QA_Q2_CLASSIC &&
         (motion == QA_PHYSICS_PUSH || motion == QA_PHYSICS_STOP || motion == QA_PHYSICS_STATIONARY))
@@ -516,7 +516,7 @@ bool q2m_lifecycle_route(q2m_context *context, bool found_target, bool *routed, 
             monster->stand_ground = true;
         if (route.goal.registry) {
             monster->combat_point = true;
-            monster->goal = monster->move_target = context->actor->physics.goal = route.goal;
+            monster->goal = monster->move_target = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.goal = qa_actor_reference_lifetime(route.goal));
             monster->pause_ns = 0;
             *routed = true;
             return !found_target || q2m_set_move(context, monster->definition->run_move, false, error);
@@ -524,7 +524,7 @@ bool q2m_lifecycle_route(q2m_context *context, bool found_target, bool *routed, 
         if (!found_target && monster->combat_point) {
             monster->combat_point = false;
             monster->move_target = (qa_actor_id){0};
-            monster->goal = context->actor->physics.goal = monster->enemy;
+            monster->goal = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.goal = qa_actor_reference_lifetime(monster->enemy));
         }
     }
     if (!found_target)
@@ -538,7 +538,7 @@ bool q2m_lifecycle_route(q2m_context *context, bool found_target, bool *routed, 
         return true;
     monster->combat_target = 0;
     monster->combat_point = true;
-    monster->move_target = monster->goal = context->actor->physics.goal = target;
+    monster->move_target = monster->goal = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.goal = qa_actor_reference_lifetime(target));
     monster->pause_ns = 0;
     if (context->game->options.edition == QA_Q2_CLASSIC) {
         if (!qa_targets_set_targetname(context->game->entity_runtime->services.targets,

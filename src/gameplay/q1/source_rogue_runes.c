@@ -82,7 +82,7 @@ static q1_actor *world(qa_q1_game *g, qa_error *error) {
 static bool next_spawn(qa_q1_game *g, qa_vec3 *out, qa_error *error) {
     q1_actor *owner = world(g, error);
     if (!owner || !current(g, error) || world(g, error) != owner) return false;
-    const q1_actor *previous = q1_entity_const(g, owner->rogue_rune_spawn);
+    const q1_actor *previous = q1_entity_const(g, q1_ref_actor(g, owner->rogue_rune_spawn));
     const qa_actor_registry *actors = qa_session_actors(g->services.session);
     const qa_actor_record *before = previous && previous->native &&
         q1_classnamed(g, previous->id, "info_player_deathmatch") ? qa_actors_get(actors, previous->id) : NULL;
@@ -101,7 +101,7 @@ static bool next_spawn(qa_q1_game *g, qa_vec3 *out, qa_error *error) {
     const qa_actor_record *chosen = next ? next : first;
     if (!chosen) return fail(error, (qa_actor_id){0}, "Rogue runes require an actual deathmatch spawn");
     qa_actor_id selected = chosen->id;
-    owner->rogue_rune_spawn = selected;
+    owner->rogue_rune_spawn = q1_ref_from(g, selected);
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, selected, &body, error) ||
         !current(g, error) || world(g, error) != owner) return false;

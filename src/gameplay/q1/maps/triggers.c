@@ -212,7 +212,7 @@ bool q1_map_multi_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, q
                 return true;
         }
     }
-    entity->activator = activator;
+    entity->activator = q1_ref_from(g, activator);
     if (!q1_map_damageable(g, entity, false, error))
         return false;
     entity = q1_entity(g, id);
@@ -383,7 +383,7 @@ static bool changelevel(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_e
         return qa_q1_level_travel(
             options->level, same_level != 0 ? options->current_map : entity->map->map, other, error);
     entity->map->touch_enabled = false;
-    entity->activator = other;
+    entity->activator = q1_ref_from(g, other);
     return q1_map_schedule(g, entity, .1, Q1_MAP_BEGIN_LEVEL, error);
 }
 static bool path(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
@@ -411,7 +411,7 @@ static bool path(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *e
     q1_actor *follower = q1_entity(g, other);
     if (!follower || follower->kind != Q1_MONSTER ||
         follower->state.monster.path != entity->targetname ||
-        follower->state.monster.enemy.registry)
+        q1_ref_present(follower->state.monster.enemy))
         return true;
     qa_actor_id next = {0};
     (void)qa_targets_first(g->maps->options.targets, entity->target, &next);
@@ -420,7 +420,7 @@ static bool path(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *e
     if (!entity || !entity->map || !follower || follower->kind != Q1_MONSTER)
         return true;
     follower->state.monster.path = next.registry ? entity->target : QA_STRING_NONE;
-    follower->physics.goal = next;
+    follower->physics.goal = q1_ref_from(g, next);
     if (!next.registry) {
         follower->state.monster.pause_until = g->time + 999999;
         return !follower->state.monster.path_end ||

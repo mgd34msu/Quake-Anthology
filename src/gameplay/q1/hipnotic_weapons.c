@@ -128,7 +128,7 @@ static bool proximity_explode(qa_q1_game *g, q1_actor *mine, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, mine->id, &body, error))
         return false;
-    if (!q1_radius(g, mine->id, mine->state.projectile.activator,
+    if (!q1_radius(g, mine->id, q1_ref_actor(g, mine->state.projectile.activator),
                    q1_weapon_shape(QA_Q1_PROXIMITY)->blast_damage, (qa_actor_id){0},
                    QA_Q1_PROXIMITY, error))
         return false;
@@ -170,12 +170,12 @@ bool q1_hipnotic_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
             return false;
         entity->physics.motion = QA_PHYSICS_STATIONARY;
         p->count = 1;
-        p->surface = other;
+        p->surface = q1_ref_from(g, other);
         body.bounds = (qa_bounds){{-8, -8, -8}, {8, 8, 8}};
         return qa_world_body_write(g->services.world, entity->id, &body, error) &&
                q1_link(g, entity, error);
     }
-    entity->owner = (qa_actor_id){0};
+    entity->owner = (q1_ref){0};
     ++p->count;
     qa_point_query query = {.point = body.origin,
                             .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
@@ -194,10 +194,10 @@ bool q1_hipnotic_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     if (!qa_world_body_write(g->services.world, entity->id, &body, error))
         return false;
     if (q1_health(g, other) != 0) {
-        if (qa_actor_id_equal(p->activator, other))
+        if (q1_ref_equal(p->activator, q1_ref_from(g, other)))
             p->damage *= 0.5f;
         if (!q1_effect(g, QA_BUILTIN_IMPACT, other, trace.end, p->damage, 1, error) ||
-            !q1_damage(g, other, entity->id, p->activator, p->damage, p->weapon, error))
+            !q1_damage(g, other, entity->id, q1_ref_actor(g, p->activator), p->damage, p->weapon, error))
             return false;
     } else if (p->count == 3 || q1_random(g) < 0.15f) {
         if (!q1_effect(g, QA_BUILTIN_IMPACT, entity->id, trace.end, 0, 0, error))
@@ -229,11 +229,11 @@ static bool proximity_watch(qa_q1_game *g, q1_actor *mine, qa_error *error) {
     }
     qa_body_state surface, body;
     bool moving =
-        qa_world_body_read(g->services.world, mine->state.projectile.surface, &surface, NULL) &&
+        qa_world_body_read(g->services.world, q1_ref_actor(g, mine->state.projectile.surface), &surface, NULL) &&
         qa_vec_length(surface.velocity) > 0;
     if (g->time > mine->state.projectile.expires || mines > 15 || moving)
         return proximity_explode(g, mine, error);
-    mine->owner = (qa_actor_id){0};
+    mine->owner = (q1_ref){0};
     qa_combat_state combat;
     if (!qa_combat_read_traits(g->services.combat, mine->id, &combat, error) ||
         !qa_world_body_read(g->services.world, mine->id, &body, error))
@@ -309,7 +309,7 @@ bool q1_hipnotic_hammer_base(qa_q1_game *g, q1_player *player, qa_vec3 origin, q
         q1_actor *bolt;
         if (!q1_create(g, "hipnotic_mjolnir_lightning", Q1_TIMER, base->id, &bolt, error))
             return false;
-        bolt->state.projectile.activator = player->id;
+        bolt->state.projectile.activator = q1_ref_from(g, player->id);
         bolt->state.projectile.weapon = weapon;
         bolt->state.projectile.expires = g->time + 0.8;
         bolt->state.projectile.launch_angles = qa_v3(0, player->input.view_angles.y, 0);
@@ -323,7 +323,7 @@ bool q1_hipnotic_hammer_base(qa_q1_game *g, q1_player *player, qa_vec3 origin, q
     return true;
 }
 static bool hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
-    q1_player *player = q1_player_get(g, strike->owner);
+    q1_player *player = q1_player_get(g, q1_ref_actor(g, strike->owner));
     if (!player)
         return q1_remove(g, strike, error);
     qa_body_state body;
@@ -379,8 +379,8 @@ static bool hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
 }
 static bool hammer_bolt(qa_q1_game *g, q1_actor *bolt, qa_error *error) {
     q1_projectile *p = &bolt->state.projectile;
-    q1_actor *base = q1_entity(g, bolt->owner);
-    if (g->time > p->expires || !base || !q1_alive(g, p->activator))
+    q1_actor *base = q1_entity(g, q1_ref_actor(g, bolt->owner));
+    if (g->time > p->expires || !base || !q1_alive(g, q1_ref_actor(g, p->activator)))
         return q1_remove(g, bolt, error);
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, base->id, &body, error))
@@ -388,7 +388,7 @@ static bool hammer_bolt(qa_q1_game *g, q1_actor *bolt, qa_error *error) {
     qa_vec3 origin = body.origin;
     uint32_t old_state = p->count;
     if (!p->count) {
-        p->enemy = (qa_actor_id){0};
+        p->enemy = (q1_ref){0};
         float best = 350;
         qa_builtin_snapshot_frame *snapshot;
         if (!q1_radius_snapshot(g, origin, 350, &snapshot, error))
@@ -396,7 +396,7 @@ static bool hammer_bolt(qa_q1_game *g, q1_actor *bolt, qa_error *error) {
         bool result = true;
         for (size_t i = snapshot->snapshot.count; i > 0; --i) {
             qa_actor_id actor = snapshot->snapshot.ids[i - 1];
-            if (qa_actor_id_equal(actor, p->activator) || q1_health(g, actor) <= 0 ||
+            if (q1_ref_equal(q1_ref_from(g, actor), p->activator) || q1_health(g, actor) <= 0 ||
                 !creature(g, actor))
                 continue;
             q1_actor *native = q1_entity(g, actor);
@@ -416,12 +416,12 @@ static bool hammer_bolt(qa_q1_game *g, q1_actor *bolt, qa_error *error) {
             if (trace.fraction != 1 || (trace.in_open && trace.in_water))
                 continue;
             best = distance;
-            p->enemy = actor;
+            p->enemy = q1_ref_from(g, actor);
         }
         qa_builtin_snapshot_release(snapshot);
         if (!result)
             return false;
-        if (!p->enemy.registry) {
+        if (!q1_ref_present(p->enemy)) {
             qa_builtin_angle_vectors(p->launch_angles, &g->forward, &g->right, &g->up);
             qa_vec3 end = qa_vec_add(qa_vec_add(origin, qa_vec_scale(g->forward, 200)),
                                      qa_vec_scale(g->right, 400 * q1_random(g) - 200));
@@ -441,7 +441,7 @@ static bool hammer_bolt(qa_q1_game *g, q1_actor *bolt, qa_error *error) {
         }
         p->count = 1;
     }
-    if (!qa_world_body_read(g->services.world, p->enemy, &body, NULL)) {
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, p->enemy), &body, NULL)) {
         p->count = 0;
         return q1_schedule(g, bolt, 0.1, Q1_THINK_HAMMER_BOLT, error);
     }
@@ -449,9 +449,9 @@ static bool hammer_bolt(qa_q1_game *g, q1_actor *bolt, qa_error *error) {
         qa_vec_add(body.origin, body.bounds.mins),
         qa_vec_scale(qa_vec_sub(body.bounds.maxs, body.bounds.mins), 0.25f + q1_random(g) * 0.5f));
     qa_trace_result trace;
-    if (!q1_trace(g, origin, end, p->activator, false, &trace, error))
+    if (!q1_trace(g, origin, end, q1_ref_actor(g, p->activator), false, &trace, error))
         return false;
-    if (trace.fraction != 1 || q1_health(g, p->enemy) <= 0) {
+    if (trace.fraction != 1 || q1_health(g, q1_ref_actor(g, p->enemy)) <= 0) {
         p->count = 0;
         return q1_schedule(g, bolt, 0.1, Q1_THINK_HAMMER_BOLT, error);
     }
@@ -467,7 +467,7 @@ static bool hammer_bolt(qa_q1_game *g, q1_actor *bolt, qa_error *error) {
     float facing = qa_vec_dot(qa_vec_normalize(qa_vec_sub(body.origin, origin)),
                               base->state.projectile.movedir);
     if (!qa_builtin_emit(&g->services, &beam, error) ||
-        !hammer_damage(g, p->activator, origin, trace.end, facing > 0.3f ? damage : damage * 0.5f,
+        !hammer_damage(g, q1_ref_actor(g, p->activator), origin, trace.end, facing > 0.3f ? damage : damage * 0.5f,
                        p->weapon, error))
         return false;
     return !q1_alive(g, bolt->id) || q1_schedule(g, bolt, 0.2, Q1_THINK_HAMMER_BOLT, error);

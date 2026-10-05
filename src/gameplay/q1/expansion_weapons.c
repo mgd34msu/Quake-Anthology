@@ -3,10 +3,10 @@
 bool q1_launch_behavior(qa_q1_game *g, q1_actor *entity, qa_builtin_projectile_role role,
                         qa_error *error) {
     qa_q1_target shooter;
-    if (!q1_target(g, entity->state.projectile.activator, &shooter) || !shooter.player)
+    if (!q1_target(g, q1_ref_actor(g, entity->state.projectile.activator), &shooter) || !shooter.player)
         return true;
     qa_builtin_weapon_launch launch = {.projectile = entity->id,
-                                       .shooter = entity->state.projectile.activator,
+                                       .shooter = q1_ref_actor(g, entity->state.projectile.activator),
                                        .weapon = entity->state.projectile.attack.weapon,
                                        .provider = g->options.provider,
                                        .role = role,

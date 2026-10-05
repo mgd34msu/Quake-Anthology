@@ -113,7 +113,7 @@ bool qa_q1_game_rules_read(const qa_q1_game *g, int32_t *deathmatch, uint32_t *g
 bool qa_q1_game_rogue_runes_read(const qa_q1_game *g, qa_actor_id *world, bool *started) {
     if (!g || g->destroy_pending || !world || !started)
         return false;
-    *world = g->rogue_runes_world;
+    *world = q1_ref_actor(g, g->rogue_runes_world);
     *started = g->rogue_runes_started;
     return true;
 }
@@ -147,6 +147,38 @@ const q1_actor *q1_entity_const(const qa_q1_game *g, qa_actor_id actor) {
         return NULL;
     const q1_actor *entity = g->actors[actor.slot];
     return entity && entity->active && qa_actor_id_equal(entity->id, actor) ? entity : NULL;
+}
+q1_ref q1_ref_source(const qa_q1_game *g, uint32_t slot) {
+    return qa_actor_reference_source(g->options.provider, slot);
+}
+q1_ref q1_ref_from(const qa_q1_game *g, qa_actor_id actor) {
+    if (!actor.registry) return (q1_ref){0};
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), actor);
+    if (g->wire && record && record->owner == g->options.provider && record->has_source)
+        return q1_ref_source(g, record->source_slot);
+    if (g->wire && record && actor.slot < g->capacity) {
+        const q1_player *player = g->players[actor.slot];
+        if (player && player->active && player->source_client &&
+            qa_actor_id_equal(player->id, actor) && player->client_slot < g->options.max_clients)
+            return q1_ref_source(g, player->client_slot + 1);
+    }
+    return qa_actor_reference_lifetime(actor);
+}
+qa_actor_id q1_ref_actor(const qa_q1_game *g, q1_ref reference) {
+    qa_actor_id actor = qa_actor_reference_resolve(qa_session_actors(g->services.session), reference);
+    if (actor.registry) return actor;
+    if (reference.kind == QA_ACTOR_REFERENCE_SOURCE &&
+        reference.value.source.owner == g->options.provider &&
+        reference.value.source.slot && reference.value.source.slot <= g->options.max_clients) {
+        uint32_t slot = reference.value.source.slot - 1;
+        for (uint32_t i = 0; i < g->capacity; ++i) {
+            const q1_player *player = g->players[i];
+            if (player && player->active && player->source_client && player->client_slot == slot &&
+                qa_actors_get(qa_session_actors(g->services.session), player->id)) return player->id;
+        }
+        return (qa_actor_id){0};
+    }
+    return actor;
 }
 bool qa_q1_player_source_present(const qa_q1_game *g, qa_actor_id actor) {
     if (!g || g->destroy_pending || g->continuation_pending || actor.slot >= g->capacity ||
@@ -808,7 +840,7 @@ void qa_q1_game_actor_released(qa_q1_game *g, qa_actor_record actor) {
         g->host.monster_path_release(g->host.context, actor.id);
     q1_wire_actor_released(g, actor);
     q1_source_rogue_runes_release(g, actor.id);
-    q1_grapple_released(g, actor.id);
+    q1_grapple_released(g, actor);
     q1_map_rotation_released(g, actor.id);
     q1_map_addon_released(g, actor.id);
     q1_actor *entity = g->actors[actor.id.slot];
@@ -871,7 +903,7 @@ static bool create_state(qa_q1_game *g, const char *classname, q1_entity_kind ki
         (void)qa_session_release(g->services.session, actor, NULL);
         return false;
     }
-    entity->owner = owner;
+    entity->owner = q1_ref_from(g, owner);
     entity->classname = name;
     entity->kind = kind;
     entity->native = true;
@@ -901,7 +933,7 @@ bool q1_link(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_actor_collision collision = {.family = QA_COLLISION_Q1,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = -2,
-                                    .owner = entity->owner,
+                                    .owner = q1_ref_actor(g, entity->owner),
                                     .monster = (entity->physics.flags & QA_PHYSICS_MONSTER) != 0,
                                     .q1_corpse = entity->physics.solid == QA_PHYSICS_CORPSE,
                                     .role = entity->physics.solid == QA_PHYSICS_TRIGGER
@@ -1079,8 +1111,8 @@ bool q1_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     case Q1_THINK_MONSTER_FRAME:
         return q1_monster_frame(g, entity, error);
     case Q1_THINK_MONSTER_FOUND:
-        return !entity->state.monster.enemy.registry ||
-               q1_monster_found(g, entity, entity->state.monster.enemy, error);
+        return !q1_ref_present(entity->state.monster.enemy) ||
+               q1_monster_found(g, entity, q1_ref_actor(g, entity->state.monster.enemy), error);
     case Q1_THINK_GHOST_BUBBLES:
         return q1_ghost_bubbles(g, entity, error);
     case Q1_THINK_BOSS_CHILD:
@@ -1530,7 +1562,7 @@ static bool use_inner(qa_q1_game *g, qa_actor_id actor, qa_actor_id other, qa_ac
     if (entity && entity->kind == Q1_MAP)
         return q1_map_use(g, entity, other, activator, error);
     if (entity)
-        entity->activator = activator;
+        entity->activator = q1_ref_from(g, activator);
     if (entity && q1_classnamed(g, actor, "trigger_boss_teleport"))
         return q1_final_teleport(g, (entity->spawnflags & 1) != 0, error);
     if (entity && entity->kind == Q1_PICKUP)
@@ -1738,7 +1770,7 @@ bool qa_q1_game_actor_traits(const qa_q1_game *g, qa_actor_id actor, qa_builtin_
     bool is_player = player && (player->source_client || player->character || player->arsenal);
     *out = (qa_builtin_actor_traits){
         .classname = entity ? entity->classname : 0,
-        .owner = entity ? entity->owner : (qa_actor_id){0},
+        .owner = q1_ref_actor(g, entity ? entity->owner : (q1_ref){0}),
         .player = is_player,
         .has_life = (player && player->character) || (entity && entity->kind == Q1_MONSTER),
         .birth_epoch = player && player->character ? player->character_state.birth_epoch
@@ -1794,6 +1826,10 @@ bool qa_q1_game_physics_write(qa_q1_game *g, qa_actor_id actor, const qa_physics
         return false;
     }
     entity->physics = *state;
+    if (state->enemy.kind == QA_ACTOR_REFERENCE_LIFETIME)
+        entity->physics.enemy = q1_ref_from(g, state->enemy.value.actor);
+    if (state->goal.kind == QA_ACTOR_REFERENCE_LIFETIME)
+        entity->physics.goal = q1_ref_from(g, state->goal.value.actor);
     entity->next_think = state->q1_pusher.next_think_seconds;
     entity->physics.q1_pusher.next_think_seconds = 0;
     return true;

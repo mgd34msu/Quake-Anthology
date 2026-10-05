@@ -627,7 +627,7 @@ static bool player_weapon_frame(qa_q1_game *g, qa_actor_id actor, qa_error *erro
     if (player->weapon == QA_Q1_CTF_GRAPPLE)
         return q1_grapple_weapon_frame(g, player, error);
     if (player->weapon == QA_Q1_ROGUE_GRAPPLE) {
-        q1_actor *hook = q1_entity(g, player->hook);
+        q1_actor *hook = q1_entity(g, q1_ref_actor(g, player->hook));
         if (hook && hook->kind == Q1_PROJECTILE &&
             hook->state.projectile.kind == Q1_ROGUE_HOOK && player->weapon_frame == 1 &&
             g->time >= player->animation_at + 0.1) {
@@ -889,8 +889,8 @@ bool q1_aim(qa_q1_game *g, qa_actor_id actor, qa_vec3 forward, qa_vec3 *out, qa_
     return true;
 }
 static bool qw_apply_multi_damage(qa_q1_game *g,qa_actor_id actor,qa_q1_weapon weapon,qa_error *error) {
-    return !g->qw_multi_entity.registry || !q1_alive(g,g->qw_multi_entity) ||
-        q1_damage(g,g->qw_multi_entity,actor,actor,g->qw_multi_damage,weapon,error);
+    return !q1_ref_present(g->qw_multi_entity) || !q1_alive(g,q1_ref_actor(g, g->qw_multi_entity)) ||
+        q1_damage(g,q1_ref_actor(g, g->qw_multi_entity),actor,actor,g->qw_multi_damage,weapon,error);
 }
 static bool qw_multi_impact(qa_q1_game *g,qa_actor_id actor,qa_vec3 origin,float count,
     int32_t code,qa_error *error) {
@@ -902,7 +902,7 @@ static bool qw_multi_impact(qa_q1_game *g,qa_actor_id actor,qa_vec3 origin,float
 }
 static bool qw_bullets(qa_q1_game *g,qa_actor_id actor,qa_vec3 source,qa_vec3 direction,
     unsigned count,float spread_x,float spread_y,qa_q1_weapon weapon,qa_error *error) {
-    g->qw_multi_entity=(qa_actor_id){0};g->qw_multi_damage=0;
+    g->qw_multi_entity=(q1_ref){0};g->qw_multi_damage=0;
     g->qw_blood_count=0;g->qw_puff_count=0;
     qa_trace_result center;
     if (!q1_trace(g,source,qa_vec_add(source,qa_vec_scale(direction,2048)),actor,true,&center,error)) return false;
@@ -919,9 +919,9 @@ static bool qw_bullets(qa_q1_game *g,qa_actor_id actor,qa_vec3 source,qa_vec3 di
         if (q1_damageable(g,trace.actor)) {
             g->qw_blood_count+=1;
             g->qw_blood_origin=qa_vec_sub(trace.end,qa_vec_scale(ray,4));
-            if (!qa_actor_id_equal(trace.actor,g->qw_multi_entity)) {
+            if (!q1_ref_equal(q1_ref_from(g, trace.actor), g->qw_multi_entity)) {
                 if (!qw_apply_multi_damage(g,actor,weapon,error)) return false;
-                g->qw_multi_damage=4;g->qw_multi_entity=trace.actor;
+                g->qw_multi_damage=4;g->qw_multi_entity=q1_ref_from(g, trace.actor);
             } else g->qw_multi_damage+=4;
         } else g->qw_puff_count+=1;
     }
@@ -1280,7 +1280,7 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error 
         return qa_q1_player_select(g, player->id, q1_best_weapon(g, player), error);
     if (weapon > QA_Q1_LIGHTNING) {
         bool held_hook = (weapon == QA_Q1_ROGUE_GRAPPLE || weapon == QA_Q1_CTF_GRAPPLE) &&
-            q1_entity(g, player->hook);
+            q1_entity(g,q1_ref_actor(g, player->hook));
         bool okay = before_fire(g, player, error) && q1_expansion_fire(g, player, error);
         if (okay && !held_hook) *fired = true;
         return okay;
@@ -1431,7 +1431,7 @@ bool q1_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
     return ok;
 }
 bool q1_axe_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
-    q1_player *player = q1_player_get(g, strike->owner);
+    q1_player *player = q1_player_get(g,q1_ref_actor(g, strike->owner));
     if (!player)
         return q1_remove(g, strike, error);
     qa_body_state body;

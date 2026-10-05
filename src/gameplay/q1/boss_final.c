@@ -18,7 +18,7 @@ static bool rock(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, qa_vec3 direc
 }
 static bool face(qa_q1_game *g, q1_actor *e, qa_error *error) {
     q1_monster *m = &e->state.monster;
-    if (q1_health(g, m->enemy) <= 0 || q1_random(g) < .02f) {
+    if (q1_health(g, q1_ref_actor(g, m->enemy)) <= 0 || q1_random(g) < .02f) {
         qa_builtin_snapshot_frame *snapshot;
         if (!q1_snapshot_players(g, &snapshot, error))
             return false;
@@ -27,14 +27,14 @@ static bool face(qa_q1_game *g, q1_actor *e, qa_error *error) {
             qa_actor_id id = snapshot->snapshot.ids[i];
             if (!first.registry || id.slot < first.slot)
                 first = id;
-            if (id.slot > (m->enemy.registry ? m->enemy.slot : 0) &&
+            if (id.slot > (q1_ref_present(m->enemy) ? q1_ref_actor(g, m->enemy).slot : 0) &&
                 (!next.registry || id.slot < next.slot))
                 next = id;
         }
         qa_builtin_snapshot_release(snapshot);
-        m->enemy = next.registry ? next : first;
+        m->enemy = q1_ref_from(g, next.registry ? next : first);
     }
-    return q1_health(g, m->enemy) <= 0 || q1_monster_face(g, e, error);
+    return q1_health(g, q1_ref_actor(g, m->enemy)) <= 0 || q1_monster_face(g, e, error);
 }
 bool q1_final_awake(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_error *error) {
     qa_body_state body;
@@ -45,7 +45,7 @@ bool q1_final_awake(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_error 
     e->physics.motion = QA_PHYSICS_STEP;
     e->aimed_damage = true;
     m->attack_finished = g->time + 3;
-    m->enemy = activator;
+    m->enemy = q1_ref_from(g, activator);
     m->source.boss.awake = true;
     body.bounds = m->species->bounds;
     e->max_health = 12000;
@@ -128,7 +128,7 @@ static bool blast(qa_q1_game *g, q1_actor *e, qa_vec3 offset, float spread, bool
     qa_body_state body, target = {0};
     if (!read(g, e, &body, error))
         return false;
-    (void)qa_world_body_read(g->services.world, e->state.monster.enemy, &target, NULL);
+    (void)qa_world_body_read(g->services.world, q1_ref_actor(g, e->state.monster.enemy), &target, NULL);
     float speed = g->options.skill > 2 ? 500 : g->options.skill > 0 ? 450 : 400;
     float width = .15f + .2f * fabsf(spread);
     unsigned count = (unsigned)floorf(q1_random(g) * 6 + .5f);
@@ -236,7 +236,7 @@ static bool missile(qa_q1_game *g, q1_actor *e, qa_vec3 offset, qa_error *error)
     shot->physics.angular_velocity = qa_v3(200, 100, 300);
     if (!q1_sound(g, e->id, "boss1/throw.wav", 1, 1, error))
         return false;
-    return !q1_alive(g, e->id) || q1_health(g, e->state.monster.enemy) > 0 ||
+    return !q1_alive(g, e->id) || q1_health(g, q1_ref_actor(g, e->state.monster.enemy)) > 0 ||
            q1_monster_play(g, e, "boss_final_idle1", error);
 }
 static bool upgrade(qa_q1_game *g, q1_actor *e, qa_error *error) {
@@ -250,7 +250,7 @@ static bool upgrade(qa_q1_game *g, q1_actor *e, qa_error *error) {
         if (!q1_schedule(g, e, 0, Q1_THINK_NONE, error))
             return false;
     }
-    if (index >= 0 && !q1_boss_targets(g, e, e->activator, m->source.boss.waves[index], error))
+    if (index >= 0 && !q1_boss_targets(g, e, q1_ref_actor(g, e->activator), m->source.boss.waves[index], error))
         return false;
     if (!q1_alive(g, e->id))
         return true;
@@ -295,12 +295,12 @@ static bool death_finish(qa_q1_game *g, q1_actor *e, qa_error *error) {
     q1_monster *m = &e->state.monster;
     if (!m->counted_death) {
         m->counted_death = true;
-        if (!q1_monster_death_report(g, e, m->enemy, true, error))
+        if (!q1_monster_death_report(g, e, q1_ref_actor(g, m->enemy), true, error))
             return false;
     }
     ++m->source.boss.stage;
     while (m->source.boss.stage < 5) {
-        if (!q1_boss_targets(g, e, e->activator, e->target, error))
+        if (!q1_boss_targets(g, e, q1_ref_actor(g, e->activator), e->target, error))
             return false;
         if (!q1_alive(g, e->id))
             return true;
@@ -318,7 +318,7 @@ bool q1_final_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_erro
         if (!face(g, e, error))
             return false;
         return action != Q1_ACTION_BOSS_FINAL_IDLE31 ||
-               q1_monster_play(g, e, m->enemy.registry ? "boss_final_missile1" : "boss_final_idle1",
+               q1_monster_play(g, e, q1_ref_present(m->enemy) ? "boss_final_missile1" : "boss_final_idle1",
                                error);
     }
     switch (action) {
@@ -391,7 +391,7 @@ bool q1_final_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_erro
 }
 bool q1_final_rock_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
                          const qa_touch_contact *contact, qa_error *error) {
-    if (qa_actor_id_equal(e->owner, other))
+    if (q1_ref_equal(e->owner, q1_ref_from(g, other)))
         return true;
     if (q1_classnamed(g, other, "monster_orb") || q1_classnamed(g, other, "monster_lava_man"))
         return q1_remove(g, e, error);
@@ -427,19 +427,19 @@ bool q1_final_rock_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
                                   .code = 73,
                                   .count = 36};
         if (!qa_builtin_emit(&g->services, &event, error) ||
-            !q1_damage(g, other, e->id, e->owner, 18, QA_Q1_WEAPON_COUNT, error))
+            !q1_damage(g, other, e->id, q1_ref_actor(g, e->owner), 18, QA_Q1_WEAPON_COUNT, error))
             return false;
     } else if (e->count != 0 && !q1_effect(g, QA_BUILTIN_IMPACT, e->id, body.origin, 0, 8, error))
         return false;
     return !q1_alive(g, e->id) || q1_remove(g, e, error);
 }
 bool q1_final_end(qa_q1_game *g, qa_error *error) {
-    qa_actor_id first;
+    q1_ref first;
     if (!q1_boss_first_player(g, &first, error))
         return false;
     if (g->destroy_pending)
         return true;
-    if (!g->options.coop && q1_health(g, first) <= 0)
+    if (!g->options.coop && q1_health(g, q1_ref_actor(g, first)) <= 0)
         return true;
     qa_builtin_snapshot_frame *snapshot;
     if (!q1_snapshot_players(g, &snapshot, error))
@@ -517,7 +517,7 @@ bool q1_final_child_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
         q1_actor *shot;
         qa_vec3 origin =
             spiral ? qa_vec_add(body.origin, qa_vec_scale(direction, 100)) : body.origin;
-        if (!rock(g, spiral ? e->owner : e->id, origin, direction, direction,
+        if (!rock(g, q1_ref_actor(g, spiral ? e->owner : q1_ref_from(g, e->id)), origin, direction, direction,
                   spiral ? "progs/rogue/plasma.mdl" : "progs/rogue/sphere.mdl", &shot, error))
             return false;
         qa_body_state projectile;
@@ -535,7 +535,7 @@ bool q1_final_child_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!spiral)
         return q1_remove(g, e, error);
     e->count--;
-    return q1_health(g, e->owner) <= 0 ? q1_remove(g, e, error)
+    return q1_health(g, q1_ref_actor(g, e->owner)) <= 0 ? q1_remove(g, e, error)
                                        : q1_schedule(g, e, e->delay, Q1_THINK_BOSS_CHILD, error);
 }
 bool q1_final_map_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *error) {

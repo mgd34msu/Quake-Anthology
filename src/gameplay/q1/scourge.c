@@ -6,7 +6,7 @@ static bool locomotion_sound(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         q1_actor *trigger;
         if (!q1_create(g, "scourge_trigger", Q1_TIMER, entity->id, &trigger, error))
             return false;
-        monster->source.scourge.trigger = trigger->id;
+        monster->source.scourge.trigger = q1_ref_from(g, trigger->id);
         monster->source.scourge.initialized = true;
         trigger->physics.solid = QA_PHYSICS_TRIGGER;
         qa_body_state body;
@@ -39,7 +39,7 @@ static bool shoot(qa_q1_game *g, q1_actor *entity, float offset, qa_error *error
     if (!q1_monster_face(g, entity, error))
         return false;
     qa_body_state body, target;
-    if (!qa_world_body_read(g->services.world, entity->state.monster.enemy, &target, NULL))
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, entity->state.monster.enemy), &target, NULL))
         return true;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
@@ -63,7 +63,7 @@ static bool turn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error))
         return false;
     qa_body_state body, target;
-    if (!qa_world_body_read(g->services.world, entity->state.monster.enemy, &target, NULL))
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, entity->state.monster.enemy), &target, NULL))
         return true;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
@@ -78,7 +78,7 @@ static bool tail(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!q1_monster_face(g, entity, error))
         return false;
     qa_body_state body, target;
-    qa_actor_id enemy = entity->state.monster.enemy;
+    qa_actor_id enemy = q1_ref_actor(g, entity->state.monster.enemy);
     if (!qa_world_body_read(g->services.world, enemy, &target, NULL))
         return true;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
@@ -101,7 +101,7 @@ static bool tail(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return q1_meat_spray(g, entity, origin, velocity, error);
 }
 bool q1_scourge_trigger(qa_q1_game *g, q1_actor *trigger, qa_actor_id actor, qa_error *error) {
-    q1_actor *owner = q1_entity(g, trigger->owner);
+    q1_actor *owner = q1_entity(g, q1_ref_actor(g, trigger->owner));
     if (!owner || owner->kind != Q1_MONSTER || q1_health(g, owner->id) <= 0)
         return q1_remove(g, trigger, error);
     qa_body_state body, source;
@@ -202,7 +202,7 @@ bool q1_scourge_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             return false;
         bool visible;
         if (g->options.skill == 3 && !monster->refired) {
-            if (!q1_monster_visible(g, entity, monster->enemy, &visible, error))
+            if (!q1_monster_visible(g, entity, q1_ref_actor(g, monster->enemy), &visible, error))
                 return false;
             if (visible) {
                 monster->refired = true;

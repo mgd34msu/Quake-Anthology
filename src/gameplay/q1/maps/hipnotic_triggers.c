@@ -22,7 +22,7 @@ static bool counter_tick(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity->map->pending.counter.ticks = count;
     entity->map->counter_value =
         entity->spawnflags & 16 ? floorf(q1_random(g) * entity->count) + 1 : count;
-    if (!q1_map_targets(g, entity, entity->activator, error))
+    if (!q1_map_targets(g, entity, q1_ref_actor(g, entity->activator), error))
         return false;
     entity = trigger(g, id);
     if (!entity)
@@ -43,7 +43,7 @@ static bool counter_tick(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return true;
 }
 static bool counter_start(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
-    entity->activator = activator;
+    entity->activator = q1_ref_from(g, activator);
     entity->map->pending.counter.stop_after_cycle = false;
     entity->map->pending.counter.running = true;
     entity->map->use_enabled = (entity->spawnflags & 1) != 0;

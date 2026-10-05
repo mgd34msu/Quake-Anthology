@@ -77,7 +77,7 @@ bool q1_major_boss_effect(qa_q1_game *g, qa_damage_effect_stage stage,
 static bool wave(qa_q1_game *g, q1_actor *e, unsigned index, qa_error *error) {
     qa_string_id target = e->state.monster.source.boss.waves[index];
     return !qa_strings_text(qa_session_strings(g->services.session), target).size ||
-           q1_boss_targets(g, e, e->activator, target, error);
+           q1_boss_targets(g, e, q1_ref_actor(g, e->activator), target, error);
 }
 bool q1_major_boss_pain(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, float damage,
                         qa_error *error) {
@@ -128,7 +128,7 @@ bool q1_major_boss_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_erro
     q1_monster *m = &e->state.monster;
     if (m->counted_death)
         return true;
-    m->enemy = attacker;
+    m->enemy = q1_ref_from(g, attacker);
     m->source.boss.touch = false;
     if (!q1_boss_damageable(g, e, false, error))
         return false;
@@ -214,10 +214,10 @@ static bool finish(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return false;
     if (!q1_alive(g, e->id))
         return true;
-    qa_actor_id player;
+    q1_ref player;
     if (!q1_boss_first_player(g, &player, error))
         return false;
-    if (!g->options.coop && q1_health(g, player) <= 0)
+    if (!g->options.coop && q1_health(g, q1_ref_actor(g, player)) <= 0)
         return q1_monster_play(g, e, "oldnew_idle1", error);
     if (!q1_boss_gib_vectors(g, e, error) || !q1_remove(g, e, error))
         return false;

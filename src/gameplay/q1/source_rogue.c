@@ -18,7 +18,7 @@ static const q1_actor *state_const(const qa_q1_game *game, qa_actor_id actor,
     qa_bytes classname = state ?
         qa_strings_text(qa_session_strings(game->services.session), state->classname) : (qa_bytes){0};
     if (!state || !state->native || state->kind != Q1_ROGUE_TEAM_STATE ||
-        !state->owner.registry || classname.size != sizeof("rogue_team_state") - 1 ||
+        !q1_ref_present(state->owner) || classname.size != sizeof("rogue_team_state") - 1 ||
         memcmp(classname.data, "rogue_team_state", classname.size)) {
         fail(error, actor, "Rogue word has no genuine team-state actor");
         return NULL;
@@ -33,7 +33,7 @@ bool qa_q1_rogue_state_find(const qa_q1_game *game, qa_actor_id player,
     for (uint32_t i = 0; i < game->capacity; ++i) {
         const q1_actor *state = game->actors[i];
         if (!state || state->kind != Q1_ROGUE_TEAM_STATE ||
-            !qa_actor_id_equal(state->owner, player)) continue;
+            !q1_ref_equal(state->owner, q1_ref_from(game, player))) continue;
         if (!state_const(game, state->id, error)) return false;
         if (*found) return fail(error, player, "Rogue source retains duplicate player state");
         *found = true;
@@ -44,7 +44,7 @@ bool qa_q1_rogue_state_find(const qa_q1_game *game, qa_actor_id player,
 bool qa_q1_rogue_state_current(const qa_q1_game *game, qa_actor_id player,
     qa_actor_id state, qa_error *error) {
     const q1_actor *actual = state_const(game, state, error);
-    return actual && (qa_actor_id_equal(actual->owner, player) ||
+    return actual && (q1_ref_equal(actual->owner, q1_ref_from(game, player)) ||
         fail(error, state, "Rogue state names a different full source player"));
 }
 static bool player_current(qa_q1_game_operation *operation, qa_actor_id actor,

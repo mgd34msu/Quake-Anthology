@@ -129,7 +129,7 @@ static bool burst(qa_q1_game *g, q1_actor *entity, const char *const *models, un
     return true;
 }
 static bool smash(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    qa_actor_id enemy = entity->state.monster.enemy;
+    qa_actor_id enemy = q1_ref_actor(g, entity->state.monster.enemy);
     if (!q1_alive(g, enemy))
         return true;
     bool visible;

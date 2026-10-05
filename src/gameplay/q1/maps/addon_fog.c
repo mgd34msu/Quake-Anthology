@@ -8,7 +8,7 @@ bool qa_q1_game_map_fog_read(const qa_q1_game *g, qa_actor_id player, qa_q1_fog_
     const q1_addon_contact *row = &g->maps->addon_contacts[player.slot];
     if (!qa_actor_id_equal(row->actor, player))
         return false;
-    *out = (qa_q1_fog_state){row->fog_active, row->fog_density, row->fog_color};
+    *out = (qa_q1_fog_state){q1_ref_actor(g, row->fog_active), row->fog_density, row->fog_color};
     return true;
 }
 static q1_actor *fog_actor(qa_q1_game *g, qa_actor_id id) {
@@ -150,9 +150,9 @@ bool q1_map_addon_fog_activate(qa_q1_game *g, q1_actor *e, qa_actor_id player,
     q1_addon_contact *row = q1_map_addon_contact(g, player, true, error);
     if (!row)
         return !q1_alive(g, player);
-    if (qa_actor_id_equal(row->fog_active, id))
+    if (q1_ref_equal(row->fog_active, q1_ref_from(g, id)))
         return true;
-    row->fog_active = id;
+    row->fog_active = q1_ref_from(g, id);
     qa_string_id name = e->map->fog_info_entity;
     float delay = e->delay;
     fog_value value;

@@ -3,7 +3,7 @@
 unsigned q1_mg3_range(const q1_actor *entity, float distance) {
     if (!(entity->spawnflags & 8192))
         return distance < 120 ? 0 : distance < 500 ? 1 : distance < 1000 ? 2 : 3;
-    if (!entity->state.monster.enemy.registry)
+    if (!q1_ref_present(entity->state.monster.enemy))
         return distance < 120 ? 0 : distance < 300 ? 1 : distance < 340 ? 2 : 3;
     return distance < 96 ? 0 : distance < 400 ? 1 : distance < 800 ? 2 : 3;
 }
@@ -68,7 +68,7 @@ bool q1_addon_move(qa_q1_game *g, q1_actor *entity, float distance, bool seen, q
     if (g->options.program == QA_Q1_MG3 && monster->addon.allow_path && g->host.horde &&
         g->host.horde(g->host.context)) {
         qa_body_state self, other;
-        if (!qa_world_body_read(g->services.world, monster->enemy, &other, NULL))
+        if (!qa_world_body_read(g->services.world, q1_ref_actor(g, monster->enemy), &other, NULL))
             return true;
         if (!qa_world_body_read(g->services.world, entity->id, &self, error))
             return false;
@@ -88,6 +88,6 @@ bool q1_addon_move(qa_q1_game *g, q1_actor *entity, float distance, bool seen, q
                 return true;
         }
     }
-    return qa_physics_q1_move_to_goal(g->services.physics, entity->id, monster->enemy, distance,
+    return qa_physics_q1_move_to_goal(g->services.physics, entity->id, q1_ref_actor(g, monster->enemy), distance,
                                       false, error);
 }

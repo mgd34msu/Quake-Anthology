@@ -10,7 +10,7 @@ static bool stop_attack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_body_state body, goal = {0};
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    (void)qa_world_body_read(g->services.world, m->move_target, &goal, NULL);
+    (void)qa_world_body_read(g->services.world, q1_ref_actor(g, m->move_target), &goal, NULL);
     qa_trace_result trace;
     if (!q1_trace(g, body.origin, goal.origin, g->services.physics->world_actor, false, &trace,
                   error))
@@ -32,17 +32,17 @@ static bool check_attack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (m->source.dragon.attacking || m->source.dragon.missile == UINT16_MAX ||
         m->attack_finished > g->time)
         return true;
-    if (m->enemy.registry && q1_health(g, m->enemy) < 0)
-        m->enemy = (qa_actor_id){0};
+    if (q1_ref_present(m->enemy) && q1_health(g, q1_ref_actor(g, m->enemy)) < 0)
+        m->enemy = (q1_ref){0};
     qa_q1_target traits;
-    if (q1_target(g, m->enemy, &traits) && traits.notarget)
+    if (q1_target(g, q1_ref_actor(g, m->enemy), &traits) && traits.notarget)
         return true;
-    if (!m->enemy.registry) {
+    if (!q1_ref_present(m->enemy)) {
         bool found;
         return q1_monster_find_target(g, entity, &found, error);
     }
     qa_body_state body, enemy;
-    if (!qa_world_body_read(g->services.world, m->enemy, &enemy, NULL))
+    if (!qa_world_body_read(g->services.world, q1_ref_actor(g, m->enemy), &enemy, NULL))
         return true;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
@@ -72,11 +72,11 @@ static bool move(qa_q1_game *g, q1_actor *entity, float distance, qa_error *erro
     qa_body_state body, target = {0};
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    qa_actor_id previous = m->enemy;
-    qa_actor_id goal = m->source.dragon.attacking ? m->enemy : m->move_target;
+    qa_actor_id previous = q1_ref_actor(g, m->enemy);
+    qa_actor_id goal = q1_ref_actor(g, m->source.dragon.attacking ? m->enemy : m->move_target);
     (void)qa_world_body_read(g->services.world, goal, &target, NULL);
     if (!m->source.dragon.attacking)
-        m->enemy = goal;
+        m->enemy = q1_ref_from(g, goal);
     qa_vec3 direction = qa_vec_sub(target.origin, body.origin);
     float desired = qa_builtin_angle_mod(atan2f(direction.y, direction.x) * 57.29577951308232f);
     float yaw = body.angles.y, roll = body.angles.z;
@@ -123,11 +123,11 @@ static bool move(qa_q1_game *g, q1_actor *entity, float distance, qa_error *erro
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
     if (body.origin.x == before.x && body.origin.y == before.y && body.origin.z == before.z &&
-        q1_alive(g, entity->physics.goal) &&
-        !qa_physics_q1_move_to_goal(g->services.physics, entity->id, entity->physics.goal, distance,
+        q1_alive(g, q1_ref_actor(g, entity->physics.goal)) &&
+        !qa_physics_q1_move_to_goal(g->services.physics, entity->id, q1_ref_actor(g, entity->physics.goal), distance,
                                     false, error))
         return false;
-    m->enemy = previous;
+    m->enemy = q1_ref_from(g, previous);
     return true;
 }
 bool q1_dragon_launch_fireball(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, qa_vec3 direction,
@@ -142,7 +142,7 @@ bool q1_dragon_launch_fireball(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin,
         (q1_projectile){.kind = Q1_DRAGON_FIREBALL,
                         .weapon = QA_Q1_WEAPON_COUNT,
                         .enemy = source && source->kind == Q1_MONSTER ? source->state.monster.enemy
-                                                                      : (qa_actor_id){0},
+                                                                      : (q1_ref){0},
                         .attack = q1_attack(g, owner, shot->id, QA_Q1_WEAPON_COUNT)};
     shot->state.projectile.attack.projectile = shot->id;
     shot->physics.motion = QA_PHYSICS_FLY_MISSILE;
@@ -154,11 +154,11 @@ bool q1_dragon_launch_fireball(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin,
            q1_schedule(g, shot, 6, Q1_THINK_REMOVE, error) && q1_link(g, shot, error);
 }
 bool q1_dragon_fireball_touch(qa_q1_game *g, q1_actor *shot, qa_actor_id other, qa_error *error) {
-    if (qa_actor_id_equal(other, shot->owner))
+    if (q1_ref_equal(q1_ref_from(g, other), shot->owner))
         return true;
-    bool dragon = q1_classnamed(g, shot->owner, "monster_dragon");
-    if (!q1_radius(g, shot->id, shot->owner, dragon ? 90 : 30,
-                   dragon ? shot->owner : g->services.physics->world_actor, QA_Q1_WEAPON_COUNT,
+    bool dragon = q1_classnamed(g, q1_ref_actor(g, shot->owner), "monster_dragon");
+    if (!q1_radius(g, shot->id, q1_ref_actor(g, shot->owner), dragon ? 90 : 30,
+                   q1_ref_actor(g, dragon ? shot->owner : q1_ref_from(g, g->services.physics->world_actor)), QA_Q1_WEAPON_COUNT,
                    error))
         return false;
     if (!q1_alive(g, shot->id))
@@ -187,7 +187,7 @@ static bool fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             return true;
         float distortion = (q1_random(g) - 0.5f) * 0.25f;
         target = (qa_body_state){0};
-        (void)qa_world_body_read(g->services.world, entity->state.monster.enemy, &target, NULL);
+        (void)qa_world_body_read(g->services.world, q1_ref_actor(g, entity->state.monster.enemy), &target, NULL);
         qa_vec3 direction = qa_vec_normalize(qa_vec_sub(target.origin, origin));
         qa_builtin_angle_vectors(direction, &g->forward, &g->right, &g->up);
         qa_vec3 aim = qa_vec_add(direction, qa_vec_scale(g->right, distortion));
@@ -198,7 +198,7 @@ static bool fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return true;
 }
 static bool tail(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    qa_actor_id enemy = entity->state.monster.enemy;
+    qa_actor_id enemy = q1_ref_actor(g, entity->state.monster.enemy);
     if (!q1_alive(g, enemy))
         return true;
     bool visible;
@@ -275,7 +275,7 @@ static bool finish_death(qa_q1_game *g, q1_actor *entity, unsigned count, qa_err
         return false;
     }
     if (!qa_builtin_resource(&g->services, "dragondoor", &entity->target, error) ||
-        !g->services.use_targets(g->services.context, entity->id, entity->activator, entity->target,
+        !g->services.use_targets(g->services.context, entity->id, q1_ref_actor(g, entity->activator), entity->target,
                                  entity->killtarget, entity->delay, error))
         return false;
     return !q1_alive(g, entity->id) || q1_remove(g, entity, error);
@@ -325,11 +325,11 @@ bool q1_dragon_corner_touch(qa_q1_game *g, q1_actor *corner, qa_actor_id other, 
     if (!entity || entity->kind != Q1_MONSTER ||
         entity->state.monster.species->species != QA_Q1_DRAGON ||
         !q1_classnamed(g, other, "monster_dragon") ||
-        !qa_actor_id_equal(entity->state.monster.move_target, corner->id))
+        !q1_ref_equal(entity->state.monster.move_target, q1_ref_from(g, corner->id)))
         return true;
     qa_actor_id goal = q1_find_target(g, corner->target);
-    entity->state.monster.move_target = goal;
-    entity->physics.goal = goal;
+    entity->state.monster.move_target = q1_ref_from(g, goal);
+    entity->physics.goal = q1_ref_from(g, goal);
     entity->target = corner->target;
     if (goal.registry)
         return true;
@@ -411,7 +411,7 @@ bool q1_dragon_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, q
             !qa_physics_walk_move(g->services.physics, entity->id, 0, 0, (float)g->elapsed, true,
                                   true, &moved, error))
             return false;
-        m->move_target = q1_find_target(g, entity->target);
+        m->move_target = q1_ref_from(g, q1_find_target(g, entity->target));
         entity->physics.goal = m->move_target;
         return qa_strings_text(qa_session_strings(g->services.session), entity->targetname).size ||
                q1_dragon_use(g, entity, error);

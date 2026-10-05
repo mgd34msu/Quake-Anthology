@@ -28,7 +28,7 @@ bool qa_q1_game_map_horde_manager_read(qa_q1_game *g, qa_actor_id id,
     if (!e || !e->native || e->map->kind != Q1_MAP_HORDE_MANAGER)
         return true;
     *target = e->target;
-    *activator = e->activator;
+    *activator = q1_ref_actor(g, e->activator);
     *found = true;
     return true;
 }

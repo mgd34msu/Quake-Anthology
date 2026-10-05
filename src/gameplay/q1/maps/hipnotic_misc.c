@@ -162,13 +162,13 @@ bool q1_map_multi_explosion_begin(qa_q1_game *g, q1_actor *entity, qa_error *err
     entity->map->effect_active = true;
     entity->state.effect.expires = g->time + entity->map->duration;
     entity->state.effect.volume = entity->map->volume;
-    return q1_map_targets(g, entity, entity->activator, error);
+    return q1_map_targets(g, entity, q1_ref_actor(g, entity->activator), error);
 }
 static bool explode(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_actor_id id = entity->id;
     if (q1_classnamed(g, entity->id, "func_multi_exploder"))
         return q1_multi_explosion_think(g, entity, error);
-    if (!q1_map_targets(g, entity, entity->activator, error))
+    if (!q1_map_targets(g, entity, q1_ref_actor(g, entity->activator), error))
         return false;
     entity = q1_entity(g, id);
     if (!entity)
@@ -182,7 +182,7 @@ static bool explode(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity = q1_entity(g, id);
     if (!entity)
         return true;
-    if (!q1_radius(g, entity->id, entity->owner, entity->damage, entity->id, QA_Q1_WEAPON_COUNT,
+    if (!q1_radius(g, entity->id, q1_ref_actor(g, entity->owner), entity->damage, entity->id, QA_Q1_WEAPON_COUNT,
                    error))
         return false;
     entity = q1_entity(g, id);
@@ -372,7 +372,7 @@ bool q1_map_hip_misc_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator,
     case Q1_MAP_SOUND:
         return play_sound(g, entity, error);
     case Q1_MAP_EXPLODER: {
-        entity->activator = activator;
+        entity->activator = q1_ref_from(g, activator);
         if (entity->delay == 0)
             return explode(g, entity, error);
         float delay = entity->delay;
@@ -406,7 +406,7 @@ bool q1_map_hip_misc_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, q
     if (local_time < entity->map->cooldown ||
         !qa_combat_read(g->services.combat, other, &combat, NULL) || !combat.can_take_damage)
         return true;
-    if (!q1_damage(g, other, entity->id, entity->owner, 10, QA_Q1_WEAPON_COUNT, error))
+    if (!q1_damage(g, other, entity->id, q1_ref_actor(g, entity->owner), 10, QA_Q1_WEAPON_COUNT, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
@@ -421,7 +421,7 @@ bool q1_map_hip_misc_think(qa_q1_game *g, q1_actor *entity, q1_map_action action
         const char *function = qa_strings_cstr(qa_session_strings(g->services.session),
                                                entity->map->spawn_function);
         if (function && !strcmp(function, "info_startendtext_use"))
-            return start_endtext(g, entity, entity->activator, error);
+            return start_endtext(g, entity, q1_ref_actor(g, entity->activator), error);
         if (function && !strcmp(function, "effect_finale_use"))
             return effect_finale(g, entity, error);
         if (function && !strcmp(function, "SUB_Remove"))

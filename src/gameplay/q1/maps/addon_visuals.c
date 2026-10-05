@@ -38,7 +38,7 @@ void q1_map_frame_tick_remove(qa_q1_game *g, qa_actor_id id) {
         }
 }
 static bool ramp_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
-    qa_actor_id id = e->id, owner = e->owner;
+    qa_actor_id id = e->id, owner = q1_ref_actor(g, e->owner);
     uint8_t phase = e->map->pending.addon.phase;
     double delta = g->elapsed * e->delay;
     if (fabs(delta) <= FLT_MAX)
@@ -116,7 +116,7 @@ static bool rope_segment(qa_q1_game *g, qa_actor_id parent_id, bool *published,
     if (!parent || !child)
         goto retired;
     child->map->pending.addon.chain = parent->map->pending.addon.chain;
-    parent->map->pending.addon.chain = child_id;
+    parent->map->pending.addon.chain = q1_ref_from(g, child_id);
     ++parent->count;
     *published = true;
     return true;
@@ -153,15 +153,15 @@ static bool rope_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (models > 32)
         models = 32;
     while (e->count > (float)models) {
-        qa_actor_id first_id = e->map->pending.addon.chain;
+        qa_actor_id first_id = q1_ref_actor(g, e->map->pending.addon.chain);
         q1_actor *first = visual(g, first_id);
-        qa_actor_id following = first ? first->map->pending.addon.chain : (qa_actor_id){0};
+        qa_actor_id following = q1_ref_actor(g, first ? first->map->pending.addon.chain : (q1_ref){0});
         if (first && first->map->kind == Q1_MAP_ROPE_SEGMENT && !q1_remove(g, first, error))
             return false;
         e = visual(g, id);
         if (!e)
             return true;
-        e->map->pending.addon.chain = following;
+        e->map->pending.addon.chain = q1_ref_from(g, following);
         --e->count;
     }
     while (e->count < (float)models) {
@@ -173,12 +173,12 @@ static bool rope_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
             return true;
     }
     qa_vec3 position = bottom.end;
-    qa_actor_id child_id = e->map->pending.addon.chain;
+    qa_actor_id child_id = q1_ref_actor(g, e->map->pending.addon.chain);
     for (int32_t i = 0; i < models; ++i) {
         q1_actor *child = visual(g, child_id);
         if (!child || child->map->kind != Q1_MAP_ROPE_SEGMENT)
             return q1_map_fail(error, "Q1 rope lost its segment chain");
-        qa_actor_id following = child->map->pending.addon.chain;
+        qa_actor_id following = q1_ref_actor(g, child->map->pending.addon.chain);
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, child_id, &body, error))
             return false;
@@ -255,7 +255,7 @@ bool q1_map_addon_visual_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!isfinite(flags) || flags < 0 || flags > UINT32_MAX || floor(flags) != flags)
         return q1_map_fail(error, "Invalid Q1 light owner flags");
     bool off = ((uint32_t)flags & 1) != 0;
-    e->owner = owner;
+    e->owner = q1_ref_from(g, owner);
     e->map->pending.addon.phase = off ? 0 : 2;
     e->map->counter_value = off ? 0 : 1;
     e->map->use_enabled = true;

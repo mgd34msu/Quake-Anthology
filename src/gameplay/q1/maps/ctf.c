@@ -125,7 +125,7 @@ static bool vote_touch(qa_q1_game *g, qa_actor_id id, qa_actor_id actor, qa_erro
         return true;
     if (entity->count > most || (entity->count == most && q1_random(g) > .5f))
         leader = id;
-    g->maps->ctf_vote_leader = leader;
+    g->maps->ctf_vote_leader = q1_ref_from(g, leader);
     if (leader.registry && g->maps->ctf_vote_exit_time == 0)
         g->maps->ctf_vote_exit_time = g->time + 60;
     return vote_teleport(g, id, actor, error);
@@ -235,7 +235,7 @@ bool q1_map_ctf_frame(qa_q1_game *g, qa_error *error) {
     if (!q1_alive(g, g->maps->world_actor) || state.pregame_over || !state.start_map ||
         g->maps->ctf_vote_exit_time == 0 || g->time <= g->maps->ctf_vote_exit_time)
         return true;
-    q1_actor *leader = exit_actor(g, g->maps->ctf_vote_leader);
+    q1_actor *leader = exit_actor(g, q1_ref_actor(g, g->maps->ctf_vote_leader));
     return !leader || leader->map->kind != Q1_MAP_CTF_VOTE_EXIT ||
            nextlevel(g, leader->map->map, error);
 }

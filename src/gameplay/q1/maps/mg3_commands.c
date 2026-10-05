@@ -96,10 +96,10 @@ static bool marker_update(qa_q1_game *g, qa_actor_id player, qa_actor_id target,
     q1_addon_contact *row = q1_map_addon_contact(g, target, true, error);
     if (!row)
         return false;
-    qa_actor_id id = secret ? row->secret_marker : row->exit_marker;
+    qa_actor_id id = q1_ref_actor(g, secret ? row->secret_marker : row->exit_marker);
     const char *name = secret ? "secret_marker" : "exit_marker";
     q1_actor *marker = q1_entity(g, id);
-    if (marker && (!marker->native || !qa_actor_id_equal(marker->owner, target) ||
+    if (marker && (!marker->native || !q1_ref_equal(marker->owner, q1_ref_from(g, target)) ||
                    !classname(g, marker->classname, name)))
         return q1_map_fail(error, "MG3 marker continuation has a different owner");
     bool created = !marker;
@@ -150,9 +150,9 @@ static bool marker_update(qa_q1_game *g, qa_actor_id player, qa_actor_id target,
     row = q1_map_addon_contact(g, target, false, NULL);
     if (row && q1_alive(g, id)) {
         if (secret)
-            row->secret_marker = id;
+            row->secret_marker = q1_ref_from(g, id);
         else
-            row->exit_marker = id;
+            row->exit_marker = q1_ref_from(g, id);
     }
     return true;
 }
@@ -164,7 +164,7 @@ static bool marker_frame(qa_q1_game *g, qa_actor_id player, qa_vec3 eye,
         qa_actor_id id = snapshot->snapshot.ids[i];
         q1_actor *marker = q1_entity(g, id);
         if (marker && marker->native && classname(g, marker->classname, marker_name) &&
-            !target_class(g, marker->owner, target_name)) {
+            !target_class(g, q1_ref_actor(g, marker->owner), target_name)) {
             marker = q1_entity(g, id);
             if (marker && !q1_remove(g, marker, error))
                 return false;

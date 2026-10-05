@@ -238,7 +238,7 @@ bool q1_map_addon_brush_reaction(qa_q1_game *g, q1_actor *e,
     qa_actor_id id = e->id;
     qa_reaction reaction = outcome->result.reaction;
     if (e->map->kind == Q1_MAP_ADDON_EXPLODE && reaction == QA_REACTION_DEATH) {
-        e->activator = outcome->request.attack.attacker;
+        e->activator = q1_ref_from(g, outcome->request.attack.attacker);
         if (!q1_map_damageable(g,e,false,error))
             return false;
         e = brush(g,id);
@@ -400,7 +400,7 @@ bool q1_map_addon_brush_think(qa_q1_game *g, q1_actor *e, q1_map_action action,
     }
     case Q1_MAP_ADDON_EXPLODE_FIRE: {
         qa_vec3 position = qa_vec_scale(qa_vec_add(body.bounds.mins,body.bounds.maxs),.5f);
-        qa_actor_id activator = e->activator;
+        qa_actor_id activator = q1_ref_actor(g, e->activator);
         e->model = QA_STRING_NONE;
         body.origin = position;
         if (!publish(g,id,&body,error))

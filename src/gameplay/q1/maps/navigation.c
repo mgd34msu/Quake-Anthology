@@ -47,12 +47,12 @@ static bool activator(qa_q1_game *g, qa_actor_id actor, qa_q1_map_mover_view *vi
     if (!e)
         return true;
     if (e->map->kind == Q1_MAP_DOOR && e->map->pending.mover.group) {
-        actor = e->map->pending.mover.group->members[0];
+        actor = q1_ref_actor(g, e->map->pending.mover.group->members[0]);
         e = mapped(g, actor);
         if (!e)
             return true;
     } else if (e->map->kind == Q1_MAP_MOVEWALL || e->map->kind == Q1_MAP_ROTATE_OBJECT) {
-        actor = e->owner;
+        actor = q1_ref_actor(g, e->owner);
         e = mapped(g, actor);
         if (!e)
             return true;
@@ -115,8 +115,8 @@ static bool train_stops(qa_q1_game *g, qa_actor_id actor, q1_map_kind kind,
     if (!stops || capacity < g->capacity)
         return q1_map_fail(error, "Q1 train observation needs registry-sized stop storage");
     qa_string_id next_name = kind == Q1_MAP_ROTATE_TRAIN ? e->map->path : e->target;
-    qa_actor_id node = kind == Q1_MAP_ROTATE_TRAIN ? e->map->pending.rotation.goal
-                       : kind == Q1_MAP_TRAIN2 ? e->map->pending.mover.goal : (qa_actor_id){0};
+    qa_actor_id node = q1_ref_actor(g, kind == Q1_MAP_ROTATE_TRAIN ? e->map->pending.rotation.goal
+                       : kind == Q1_MAP_TRAIN2 ? e->map->pending.mover.goal : (q1_ref){0});
     if (!q1_alive(g, node) && !qa_targets_first(g->maps->options.targets, next_name, &node))
         return true;
     while (q1_alive(g, node) && *count < capacity) {
@@ -177,7 +177,7 @@ static bool mover_read(qa_q1_game *g, qa_actor_id actor, qa_q1_map_mover_view *o
     bool has_inline_model = state->has_inline_model;
     bool enabled = !state->dormant && e->physics.solid != QA_PHYSICS_NOT_SOLID;
     if (state->kind == Q1_MAP_MOVEWALL || state->kind == Q1_MAP_ROTATE_OBJECT) {
-        q1_actor *controller = mapped(g, e->owner);
+        q1_actor *controller = mapped(g, q1_ref_actor(g, e->owner));
         if (controller && controller->map->kind == Q1_MAP_ROTATE_TRAIN) {
             source_actor = controller->id;
             qa_body_state controller_body;

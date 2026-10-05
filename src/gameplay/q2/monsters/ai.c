@@ -799,7 +799,7 @@ bool q2m_hunt_target(q2m_context *context, bool animate_state, qa_error *error) 
   qa_actor_id id = context->monster->enemy;
   if (!q2_actor_live(context->game, id))
     return true;
-  context->monster->goal = context->actor->physics.goal = id;
+  context->monster->goal = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.goal = qa_actor_reference_lifetime(id));
   if (animate_state) {
     bool actor_callback = context->monster->definition->species == Q2M_ACTOR;
     if (actor_callback && !q2m_callback_run(context,
@@ -896,8 +896,8 @@ bool q2m_found_target(q2m_context *context, qa_actor_id id, qa_error *error) {
                                    : context->game->options.skill == 1 ? 0.2
                                                                        : 0.0);
   }
-  context->actor->physics.enemy = id;
-  context->actor->physics.goal = id;
+  context->actor->physics.enemy = qa_actor_reference_lifetime(id);
+  context->actor->physics.goal = qa_actor_reference_lifetime(id);
   bool routed;
   if (!q2m_lifecycle_route(context, true, &routed, error))
     return false;
@@ -956,8 +956,8 @@ static bool target_tesla(q2m_context *context, qa_actor_id tesla,
   monster->old_enemy = monster->enemy;
   monster->enemy = tesla;
   monster->goal = tesla;
-  context->actor->physics.enemy = tesla;
-  context->actor->physics.goal = tesla;
+  context->actor->physics.enemy = qa_actor_reference_lifetime(tesla);
+  context->actor->physics.goal = qa_actor_reference_lifetime(tesla);
   if ((monster->definition->flags & Q2M_HAS_RANGED) == 0)
     return q2m_found_target(context, tesla, error);
   return context->combat.health <= 0.0f || q2m_source_attack(context, false, error);
@@ -1012,7 +1012,7 @@ bool qa_q2_before_monster_step(qa_q2_game *game, qa_actor_id id, qa_vec3 *displa
     if (monster->old_enemy.registry) {
       qa_actor_id previous = monster->old_enemy;
       monster->enemy = monster->goal = previous;
-      actor->physics.enemy = actor->physics.goal = previous;
+      actor->physics.enemy = actor->physics.goal = qa_actor_reference_lifetime(previous);
       if (!q2m_found_target(&context, previous, error))
         return false;
       *handled = true;
@@ -1221,8 +1221,8 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
 
   monster->enemy = chosen;
   monster->goal = chosen;
-  context->actor->physics.enemy = chosen;
-  context->actor->physics.goal = chosen;
+  context->actor->physics.enemy = qa_actor_reference_lifetime(chosen);
+  context->actor->physics.goal = qa_actor_reference_lifetime(chosen);
   return monster->ducked || q2m_found_target(context, chosen, error);
 }
 
@@ -1280,8 +1280,8 @@ static bool hear_target(q2m_context *context, bool *found, qa_error *error) {
   monster->saved_goal = noise.origin;
   monster->has_saved_goal = true;
   monster->hostile_ns = q2m_after(context->game->now_ns, 1.0);
-  context->actor->physics.enemy = noise.owner;
-  context->actor->physics.goal = noise.owner;
+  context->actor->physics.enemy = qa_actor_reference_lifetime(noise.owner);
+  context->actor->physics.goal = qa_actor_reference_lifetime(noise.owner);
   *found = true;
   return q2m_set_move(context,
                       monster->stand_ground ? monster->definition->stand_move
@@ -1511,7 +1511,7 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
 }
 
 static void attack_enemy(q2m_context *context, qa_actor_id enemy) {
-  context->monster->enemy = context->actor->physics.enemy = enemy;
+  context->monster->enemy = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.enemy = qa_actor_reference_lifetime(enemy));
   if (context->actor->entity != NULL)
     context->actor->entity->enemy = enemy;
 }
@@ -1903,7 +1903,7 @@ bool q2m_check_attack(q2m_context *context, bool *selected, bool *started, qa_er
       return true;
     }
     if (qa_actor_id_equal(monster->goal, monster->enemy))
-      monster->goal = context->actor->physics.goal = monster->move_target;
+      monster->goal = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.goal = qa_actor_reference_lifetime(monster->move_target));
     monster->sound_target.present = false;
     if (monster->temporary_stand_ground)
       monster->stand_ground = monster->temporary_stand_ground = false;
@@ -1931,7 +1931,7 @@ bool q2m_check_attack(q2m_context *context, bool *selected, bool *started, qa_er
     attack_enemy(context, (qa_actor_id){0});
     monster->close_sight_tripped = false;
     if (rerelease)
-      monster->goal = context->actor->physics.goal = (qa_actor_id){0};
+      monster->goal = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.goal = (qa_actor_reference){0});
     qa_actor_id restored = monster->old_enemy;
     if (!attack_health(context, restored, &health, error))
       return false;
@@ -1961,7 +1961,7 @@ bool q2m_check_attack(q2m_context *context, bool *selected, bool *started, qa_er
       bool walk = monster->move_target.registry != 0 &&
                   (rogue || !rerelease || !monster->stand_ground);
       if (walk)
-        monster->goal = context->actor->physics.goal = monster->move_target;
+        monster->goal = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.goal = qa_actor_reference_lifetime(monster->move_target));
       else
         monster->pause_ns = q2m_after(context->game->now_ns, 100000000);
       *selected = *started = true;
@@ -3076,8 +3076,8 @@ bool q2m_move_to_goal(q2m_context *context, float distance, qa_error *error) {
   if (!has_goal)
     return true;
   monster->ideal_yaw = vector_yaw(qa_vec_sub(goal, context->body.origin));
-  context->actor->physics.goal = goal_actor;
-  context->actor->physics.enemy = monster->enemy;
+  context->actor->physics.goal = qa_actor_reference_lifetime(goal_actor);
+  context->actor->physics.enemy = qa_actor_reference_lifetime(monster->enemy);
   context->actor->physics.ideal_yaw = monster->ideal_yaw;
   if (ordinary_enemy && qa_world_body_read(context->game->services.world,
                                            monster->enemy, &target, &ignored) &&
