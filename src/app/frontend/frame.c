@@ -172,6 +172,8 @@ static bool control_binding(qa_frontend *frontend,frontend_seat *seat,qa_actor_i
         if (!qa_ui_rankings_reset_binding(seat->rankings, error)) return false;
         if (!qa_input_seat_release(seat->input, now, error) || !qa_input_seat_profile(seat->input, profile, error)) return false;
         qa_input_command_clear(&seat->builder); seat->builder.kind = kind; seat->actor = actor;
+        if (!remote && seat->sequence < state->command_sequence)
+            seat->sequence = state->command_sequence;
         if (!qa_input_command_angles(&seat->builder,
             remote?state->view_angles:state->command_angles,error)) return false;
     }
