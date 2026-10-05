@@ -157,7 +157,11 @@ static bool create_application(const qa_application_options *options,
         *saved_content = NULL;
     }
     application->state = QA_APPLICATION_READY;
-    application->command_generation = 1;
+    application->command_generation = current_unit ? current_unit->command_generation : 1;
+    if (current_unit) {
+        application->publication_generation = current_unit->publication_generation;
+        application->frame_revision = current_unit->frame_revision;
+    }
     application->native_runner = options->native_runner;
     application->native_runtime = options->native_runtime;
     qa_native_runtime_retain(application->native_runtime);
@@ -204,6 +208,7 @@ static bool create_application(const qa_application_options *options,
         options->startup_command_count, &application->q3_product, error)) goto fail;
     qa_builtin_random_seed(&application->random,
                            (uint32_t)options->catalog_generation ^ UINT32_C(0x71616e74));
+    if (current_unit) application->random = current_unit->random;
     application->content_root = copy_text(options->content_root, error);
     application->user_root = copy_text(options->user_root, error);
     application->ranking_game_key = copy_text(options->ranking_game_key, error);

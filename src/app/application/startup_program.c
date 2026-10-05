@@ -14,7 +14,7 @@ typedef struct program_actor {
 struct application_startup_program {
     struct application_startup_program *next;
     struct application_startup_program *next_application;
-    qa_application *application;
+    qa_application *application, *previous_application;
     application_publication *publication;
     const qa_launch_snapshot *previous, *candidate;
     qa_launch_instance_lease *previous_lease, *candidate_lease;
@@ -24,7 +24,7 @@ struct application_startup_program {
     qa_console_program *program;
     program_actor *actors;
     uint64_t previous_generation;
-    bool retained, parked;
+    bool retained, parked, restoring, engine;
 };
 
 struct application_startup_program_roster {
@@ -52,6 +52,24 @@ static bool physical(application_provider *provider, const qa_application_startu
 static bool current(void *context, const qa_console *source, const qa_console *target, qa_error *error)
 {
     application_startup_program *owner = context;
+    if (owner->restoring) {
+        qa_application *previous = owner->previous_application, *candidate = owner->application;
+        if (qa_application_launch(previous) != owner->previous ||
+            qa_application_launch(candidate) != owner->candidate ||
+            previous->operation != APPLICATION_PERSISTING ||
+            (candidate->operation != APPLICATION_PERSISTING && candidate->operation != APPLICATION_IDLE) ||
+            previous->destroy_requested || candidate->destroy_requested ||
+            previous->state == QA_APPLICATION_FAULTED || candidate->state == QA_APPLICATION_FAULTED ||
+            source != owner->source.console || target != owner->target.console)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Live command continuation changed its actual current unit or restored world");
+        if (owner->engine)
+            return (source == previous->console && target == candidate->console &&
+                owner->source.cvars == previous->cvars && owner->target.cvars == candidate->cvars) ||
+                application_fail(error, QA_ERROR_ARGUMENT, "Live ENGINE continuation lost its actual console tuple");
+        return owner->source_provider->attached && owner->target_provider->attached &&
+            physical(owner->source_provider, &owner->source, error) &&
+            physical(owner->target_provider, &owner->target, error);
+    }
     bool candidate = qa_application_startup_candidate(owner->application) == owner->candidate;
     if (owner->publication) {
         application_publication *publication = owner->publication;
@@ -87,7 +105,7 @@ static bool identity(void *context, qa_console_program_identity kind, uint64_t s
         *out = owner->target.scope.provider; return true;
     }
     bool handled = false;
-    if (!owner->parked && !application_guest_q3_program_identity(owner->source_provider, owner->target_provider,
+    if (!owner->parked && !owner->engine && !application_guest_q3_program_identity(owner->source_provider, owner->target_provider,
         &owner->source, &owner->target, kind, source, out, &handled, error)) return false;
     if (handled) return true;
     if (kind == QA_CONSOLE_PROGRAM_OWNER && source == owner->source.declaration_owner) {
@@ -119,7 +137,7 @@ static bool command_context(void *context, const qa_command_context *source,
         !identity(owner, QA_CONSOLE_PROGRAM_CLIENT, source->client, &target.client, error)) return false;
     if (source->actor.registry) {
         uint32_t seat;
-        if (qa_application_player_seat(owner->application, source->actor, &seat)) {
+        if (qa_application_player_seat(owner->previous_application, source->actor, &seat)) {
             program_actor *row = owner->actors;
             while (row && !qa_actor_id_equal(row->source, source->actor)) row = row->next;
             if (!row) {
@@ -131,6 +149,21 @@ static bool command_context(void *context, const qa_command_context *source,
         }
     }
     *out = target; return true;
+}
+
+static bool context_retained(void *context, const qa_command_context *source,
+    bool *retained, qa_error *error)
+{
+    (void)error;
+    application_startup_program *owner = context;
+    *retained = true;
+    if (owner->restoring && source->actor.registry) {
+        uint32_t seat;
+        qa_actor_id carried;
+        *retained = qa_application_player_seat(owner->previous_application, source->actor, &seat) &&
+            qa_application_player_actor(owner->application, seat, &carried);
+    }
+    return true;
 }
 
 static bool published_context(void *context, const qa_command_context *source,
@@ -156,8 +189,9 @@ static bool published_candidate_context(void *context, const qa_command_context 
 {
     application_startup_program *owner = context;
     if (qa_configuration_current(owner->application->configuration) != owner->candidate ||
-        !owner->target_provider->attached || captured->session != owner->target.command.session ||
-        !physical(owner->target_provider, &owner->target, error))
+        captured->session != owner->target.command.session ||
+        (owner->engine ? owner->target.console != owner->application->console :
+            !owner->target_provider->attached || !physical(owner->target_provider, &owner->target, error)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Init command lost its actual published source");
     qa_command_context target = *captured;
     target.registry = target.generation = 0;
@@ -177,9 +211,10 @@ static bool published(void *context, const qa_command_context *basis,
     application_startup_program *owner = context;
     if (!basis || target != owner->target.console ||
         qa_configuration_current(owner->application->configuration) != owner->candidate ||
-        owner->application->state == QA_APPLICATION_FAULTED || !owner->target_provider->attached)
+        owner->application->state == QA_APPLICATION_FAULTED ||
+        (owner->engine ? target != owner->application->console : !owner->target_provider->attached))
         return application_fail(error, QA_ERROR_ARGUMENT, "Command program requires its actual successful publication");
-    return physical(owner->target_provider, &owner->target, error);
+    return owner->engine || physical(owner->target_provider, &owner->target, error);
 }
 
 static bool retained_abort(void *context, bool *restore_original, qa_error *error)
@@ -214,50 +249,62 @@ static void dispose(application_startup_program *owner)
     free(owner);
 }
 
-static bool prepare_program(qa_application *app, const qa_launch_snapshot *candidate,
+static bool prepare_program(qa_application *app, qa_application *previous_app,
+    const qa_launch_snapshot *candidate,
     const qa_application_startup_source *source, const qa_application_startup_source *target,
     application_publication *publication, application_startup_program **out, qa_error *error)
 {
+    bool restoring = app != previous_app;
     const qa_application_startup_hooks *hooks=app?app->startup_hooks:NULL;
     qa_application_console_scope origin=source?source->scope:(qa_application_console_scope){0};
-    uint64_t generation=app?app->command_generation:0;
-    bool parked=source && source->scope.kind==QA_APPLICATION_CONSOLE_ENGINE && hooks &&
+    uint64_t generation=previous_app?previous_app->command_generation:0;
+    bool parked=!restoring && source && source->scope.kind==QA_APPLICATION_CONSOLE_ENGINE && hooks &&
         hooks->parked_program_source_current &&
         hooks->parked_program_source_current(hooks->context,app,source,&origin,&generation,error);
-    if (!app || !candidate || !source || !target || !out || !source->descriptor || !target->descriptor ||
+    bool engine=restoring && source && source->scope.kind==QA_APPLICATION_CONSOLE_ENGINE;
+    if (!app || !previous_app || !candidate || !source || !target || !out ||
+        (!engine && (!source->descriptor || !target->descriptor)) ||
         !source->console || !target->console ||
         (!parked && source->scope.kind != target->scope.kind) || source->scope.seat != target->scope.seat)
         return application_fail(error, QA_ERROR_ARGUMENT, "Command program needs its compatible physical source pair");
     *out = NULL;
     application_startup_program *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Retaining source command continuation");
-    owner->application = app; owner->candidate = candidate;
+    owner->application = app; owner->previous_application = previous_app; owner->candidate = candidate;
+    owner->restoring = restoring; owner->engine = engine;
     owner->publication = publication; owner->parked=parked;
     owner->previous_generation = generation; owner->origin_scope=origin;
-    owner->previous = qa_configuration_current(app->configuration);
+    owner->previous = qa_configuration_current(previous_app->configuration);
     qa_launch_snapshot_retain(owner->previous); qa_launch_snapshot_retain(candidate);
-    const qa_launch_instance *old = owner->previous
-        ? qa_launch_snapshot_find(owner->previous, source->descriptor->selection.instance) : parked?source->descriptor:NULL;
-    const qa_launch_instance *selected = qa_launch_snapshot_find(candidate, target->descriptor->selection.instance);
-    bool ok = old && selected && old->storage == source->descriptor->storage &&
-        selected->storage == target->descriptor->storage && (parked || old->state) && selected->state;
-    if (!ok) application_fail(error, QA_ERROR_ARGUMENT, "Command continuation lost its retained actual descriptors");
-    if (ok) {
-        owner->source_provider = parked?NULL:old->state; owner->target_provider = selected->state;
-        owner->retained = source->console == target->console;
-        if (owner->retained && (owner->source_provider != owner->target_provider ||
-            source->cvars != target->cvars || !same_scope(source->scope, target->scope))) {
-            dispose(owner);
-            return application_fail(error, QA_ERROR_ARGUMENT, "Retained program selected another physical lifetime");
+    owner->source = *source; owner->target = *target;
+    bool ok = true;
+    if (!engine) {
+        const qa_launch_instance *old = owner->previous
+            ? qa_launch_snapshot_find(owner->previous, source->descriptor->selection.instance) : parked?source->descriptor:NULL;
+        const qa_launch_instance *selected = qa_launch_snapshot_find(candidate, target->descriptor->selection.instance);
+        ok = old && selected && old->storage == source->descriptor->storage &&
+            selected->storage == target->descriptor->storage && (parked || old->state) && selected->state;
+        if (!ok) application_fail(error, QA_ERROR_ARGUMENT, "Command continuation lost its retained actual descriptors");
+        if (ok) {
+            owner->source_provider = parked?NULL:old->state; owner->target_provider = selected->state;
+            owner->retained = source->console == target->console;
+            if (owner->retained && (owner->source_provider != owner->target_provider ||
+                source->cvars != target->cvars || !same_scope(source->scope, target->scope))) {
+                dispose(owner);
+                return application_fail(error, QA_ERROR_ARGUMENT, "Retained program selected another physical lifetime");
+            }
+            ok = qa_launch_instance_retain_metadata(old, &owner->previous_lease, error) &&
+                qa_launch_instance_retain_metadata(selected, &owner->candidate_lease, error);
         }
-        owner->source = *source; owner->target = *target;
-        ok = qa_launch_instance_retain_metadata(old, &owner->previous_lease, error) &&
-            qa_launch_instance_retain_metadata(selected, &owner->candidate_lease, error);
     }
     if (ok) {
-        owner->source.descriptor = qa_launch_instance_lease_view(owner->previous_lease);
-        owner->target.descriptor = qa_launch_instance_lease_view(owner->candidate_lease);
-        qa_console_program_resolvers resolve = {.context = owner, .identity = identity,
+        if (!engine) {
+            owner->source.descriptor = qa_launch_instance_lease_view(owner->previous_lease);
+            owner->target.descriptor = qa_launch_instance_lease_view(owner->candidate_lease);
+        }
+        qa_console_program_resolvers resolve = {.context = owner, .fresh_namespace = restoring,
+            .context_retained = restoring ? context_retained : NULL,
+            .identity = identity,
             .command_context = command_context, .published_context = published_context,
             .published_candidate_context = published_candidate_context,
             .current = current, .published = published, .retained_abort = retained_abort};
@@ -274,7 +321,7 @@ static bool prepare_program(qa_application *app, const qa_launch_snapshot *candi
 bool application_startup_program_prepare(qa_application *app, const qa_launch_snapshot *candidate,
     const qa_application_startup_source *source, const qa_application_startup_source *target,
     application_startup_program **out, qa_error *error)
-{ return prepare_program(app, candidate, source, target, NULL, out, error); }
+{ return prepare_program(app, app, candidate, source, target, NULL, out, error); }
 
 bool application_startup_program_refresh(application_startup_program *owner,
     const qa_application_startup_source *target, qa_error *error)
@@ -324,7 +371,8 @@ bool application_startup_program_adopt(application_startup_program **slot, qa_er
     qa_application_startup_source ordinal_source=owner->source;
     ordinal_source.scope=owner->origin_scope;
     if (!application_startup_program_queue_ready(owner->application, &ordinal_source, &owner->target,
-        owner->previous_generation, error) || !qa_console_program_adopt(owner->program, error)) return false;
+        owner->previous_generation, error)) return false;
+    if (!qa_console_program_adopt(owner->program, error)) return false;
     application_startup_program_queue_publish(owner->application, &ordinal_source, &owner->target,
         owner->previous_generation);
     *slot = NULL; dispose(owner); return true;
@@ -335,6 +383,84 @@ bool application_startup_program_abort(application_startup_program **slot, qa_er
     if (!owner) return true;
     if (!qa_console_program_abort(owner->program, error)) return false;
     *slot = NULL; dispose(owner); return true;
+}
+
+static bool roster_prepare(qa_application *app, qa_application *previous,
+    const qa_launch_snapshot *candidate, const qa_application_startup_source *source,
+    const qa_application_startup_source *target, application_publication *publication,
+    application_startup_program_roster **out, qa_error *error)
+{
+    if (!*out) {
+        *out = calloc(1, sizeof(**out));
+        if (!*out) return application_fail(error, QA_ERROR_MEMORY, "Retaining live command programs");
+    }
+    application_startup_program *program = NULL;
+    if (!prepare_program(app, previous, candidate, source, target, publication, &program, error)) return false;
+    if ((*out)->tail) (*out)->tail->next = program;
+    else (*out)->head = program;
+    (*out)->tail = program;
+    return true;
+}
+
+static bool restore_source(qa_application *app, qa_console *console,
+    qa_application_console_scope scope, qa_application_startup_source *out, qa_error *error)
+{
+    if (scope.kind == QA_APPLICATION_CONSOLE_ENGINE) {
+        *out = (qa_application_startup_source){.scope=scope, .console=console, .cvars=app->cvars};
+        return console == app->console && qa_console_context_read(console, &out->command, error);
+    }
+    const char *instance = qa_application_provider_instance(app, scope.provider);
+    const qa_launch_instance *selected = instance ? qa_launch_snapshot_find(qa_application_launch(app), instance) : NULL;
+    application_provider *provider = selected ? selected->state : NULL;
+    if (!provider) return application_fail(error, QA_ERROR_ARGUMENT, "Live command source lost its selected GAME instance");
+    for (size_t i=0;;++i) {
+        qa_application_startup_source actual;
+        bool found;
+        if (!application_provider_startup_source_at(provider, i, &actual, &found, error)) return false;
+        if (!found) break;
+        if (actual.console == console && same_scope(actual.scope, scope)) {
+            *out=actual; out->descriptor=selected; return true;
+        }
+    }
+    return application_fail(error, QA_ERROR_ARGUMENT, "Live command source lost its actual GAME console tuple");
+}
+
+bool application_startup_program_restore_prepare(qa_application *candidate, qa_application *previous,
+    application_startup_program_roster **out, qa_error *error)
+{
+    if (!candidate || !previous || candidate == previous || !out || *out ||
+        previous->operation != APPLICATION_PERSISTING || candidate->operation != APPLICATION_IDLE ||
+        !qa_application_launch(candidate) || !qa_application_launch(previous))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Live unit commands require their completed restored GAME and current source");
+    size_t previous_count=qa_application_console_count(previous);
+    for (size_t i=0,count=qa_application_console_count(candidate);i<count;++i) {
+        qa_console *target_console=qa_application_console_at(candidate,i,NULL);
+        qa_application_console_scope target_scope;
+        if (!qa_application_console_scope_read(candidate,target_console,&target_scope))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Restored GAME console has no actual source scope");
+        if (target_scope.kind==QA_APPLICATION_CONSOLE_CLIENT ||
+            target_scope.kind==QA_APPLICATION_CONSOLE_Q3_CGAME || target_scope.kind==QA_APPLICATION_CONSOLE_Q3_UI) continue;
+        const char *target_instance=target_scope.provider?
+            qa_application_provider_instance(candidate,target_scope.provider):"";
+        if (!target_instance) return application_fail(error, QA_ERROR_ARGUMENT, "Restored command source has no actual instance");
+        for (size_t j=0;j<previous_count;++j) {
+            qa_console *source_console=qa_application_console_at(previous,j,NULL);
+            qa_application_console_scope source_scope;
+            if (!qa_application_console_scope_read(previous,source_console,&source_scope))
+                return application_fail(error, QA_ERROR_ARGUMENT, "Current GAME console has no actual source scope");
+            const char *source_instance=source_scope.provider?
+                qa_application_provider_instance(previous,source_scope.provider):"";
+            if (source_scope.kind!=target_scope.kind || source_scope.seat!=target_scope.seat ||
+                !source_instance || strcmp(source_instance,target_instance)) continue;
+            qa_application_startup_source source, target;
+            if (!restore_source(previous,source_console,source_scope,&source,error) ||
+                !restore_source(candidate,target_console,target_scope,&target,error) ||
+                !roster_prepare(candidate,previous,qa_application_launch(candidate),&source,&target,NULL,out,error))
+                return false;
+            break;
+        }
+    }
+    return true;
 }
 
 bool application_startup_program_publication_prepare(qa_application *app, application_publication *publication,
@@ -364,16 +490,7 @@ bool application_startup_program_publication_prepare(qa_application *app, applic
             if (!hooks->program_source(hooks->context, app, publication->candidate,
                 &target, &previous, &inherited, error)) return false;
             if (!inherited) continue;
-            if (!*out) {
-                *out = calloc(1, sizeof(**out));
-                if (!*out) return application_fail(error, QA_ERROR_MEMORY, "Retaining replacement command programs");
-            }
-            application_startup_program *program = NULL;
-            if (!prepare_program(app, publication->candidate, &previous, &target,
-                publication, &program, error)) return false;
-            if ((*out)->tail) (*out)->tail->next = program;
-            else (*out)->head = program;
-            (*out)->tail = program;
+            if (!roster_prepare(app,app,publication->candidate,&previous,&target,publication,out,error)) return false;
         }
     }
     return true;

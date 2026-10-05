@@ -764,10 +764,12 @@ bool application_guest_q3_program_identity(application_provider *old, applicatio
     *handled = false;
     struct application_q3_guest *source = q3g_engine(old), *target = q3g_engine(fresh);
     if (!source || !target) return true;
+    bool separate = old->application != fresh->application;
     if (!old_tuple || !new_tuple || (unsigned)kind > QA_CONSOLE_PROGRAM_CLIENT || old == fresh ||
-        old->application != fresh->application || old->owner != fresh->owner || !old->constructed ||
-        !old->attached || old->close_pending || fresh->attached || fresh->close_pending ||
-        source->provider != old || target->provider != fresh || target->role_sequence < source->role_sequence ||
+        (!separate && old->owner != fresh->owner) || !old->constructed ||
+        !old->attached || old->close_pending || (!separate && fresh->attached) || fresh->close_pending ||
+        source->provider != old || target->provider != fresh ||
+        (!separate && target->role_sequence < source->role_sequence) ||
         source->calls || target->calls || source->restore_pending || target->restore_pending ||
         source->constructing_role || target->constructing_role ||
         old_tuple->scope.kind != new_tuple->scope.kind || old_tuple->scope.seat != new_tuple->scope.seat ||
@@ -786,7 +788,7 @@ bool application_guest_q3_program_identity(application_provider *old, applicatio
         }
     q3g_role *replacement = NULL;
     for (q3g_role *role = target->roles; role; role = role->next) {
-        if (!live && role->service_owner == old_id)
+        if (!separate && !live && role->service_owner == old_id)
             return application_fail(error, QA_ERROR_ARGUMENT, "Historical Q3 lifetime collides with a fresh actual role");
         if (live && role->kind == live->kind && (live->kind == QA_QVM_GAME || role->seat == live->seat) &&
             role->ready && !role->retired && role->host && !role->activation_failed &&
@@ -797,7 +799,7 @@ bool application_guest_q3_program_identity(application_provider *old, applicatio
     }
     if (live) {
         if (!fresh->constructed || !replacement || !replacement->service_owner ||
-            replacement->service_sequence <= source->role_sequence)
+            (!separate && replacement->service_sequence <= source->role_sequence))
             return application_fail(error, QA_ERROR_ARGUMENT, "Live Q3 program lifetime has no genuine fresh role");
         *new_id = replacement->service_owner;
     }

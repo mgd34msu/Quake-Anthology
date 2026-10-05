@@ -1,5 +1,6 @@
 #include "save_private.h"
 #include "startup_flow.h"
+#include "startup_program.h"
 #include "control_frame.h"
 #include "guest_qc_internal.h"
 #include "guest_qc_objectives.h"
@@ -612,12 +613,15 @@ bool application_save_metadata_restore(qa_application *candidate, qa_bytes bytes
     /* Candidate-only publication: all allocations and product resolution have
      * succeeded. Mode codec validation still checks these actual identities. */
     free(candidate->mode_ids); candidate->mode_ids = ids; candidate->mode_count = count;
-    candidate->catalog_generation = catalog; candidate->publication_generation = publication;
-    candidate->command_generation = commands; candidate->map_revision = revision;
-    candidate->frame_revision = frame_revision;
+    if (!candidate->native_restore_current) {
+        candidate->catalog_generation = catalog; candidate->publication_generation = publication;
+        candidate->command_generation = commands; candidate->frame_revision = frame_revision;
+        candidate->random = random; candidate->discover_mods = (flags & 1u) != 0;
+    }
+    candidate->map_revision = revision;
     candidate->current_map = map; candidate->state = state; candidate->primary_mode = primary;
-    candidate->random = random; candidate->map_geometry = geometry; candidate->map_presentation = presentation;
-    candidate->discover_mods = (flags & 1u) != 0; candidate->physics_ready = (flags & 2u) != 0;
+    candidate->map_geometry = geometry; candidate->map_presentation = presentation;
+    candidate->physics_ready = (flags & 2u) != 0;
     candidate->primary_mode_ready = (flags & 4u) != 0; candidate->map_view_ready = (flags & 8u) != 0;
     candidate->map_force_reload = (flags & 16u) != 0;
     candidate->q1_paused = (flags & 32u) != 0;
@@ -671,6 +675,7 @@ typedef struct application_persistence {
     qa_buffer configuration;
     qa_buffer progression;
     qa_application_content_graph *content_graph;
+    application_startup_program_roster *programs;
     uint64_t configuration_generation, publication_generation, actor_revision;
     uint64_t restored_command_generation;
     qa_save_purpose purpose;
@@ -1905,6 +1910,10 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
     if (ok) ok = application_unified_events_restore_finish(candidate, error);
     if (ok && operation->ops->complete_state)
         ok=operation->ops->complete_state(operation->ops->context,candidate,image,error);
+    if (ok && operation->purpose==QA_SAVE_TRANSITION)
+        ok=application_startup_program_restore_prepare(candidate,operation->active,&operation->programs,error) &&
+            application_startup_program_publication_seal(operation->programs,error) &&
+            application_startup_program_publication_adopt(&operation->programs,error);
     if (ok) ok = operation->ops->validate(operation->ops->context, candidate, image, error);
     if (ok && operation->ops->replay) {
         ok = operation->ops->replay(operation->ops->context, candidate, image, error);
@@ -1967,6 +1976,10 @@ static void persistence_discard(void *opaque, void *value)
 {
     application_persistence *operation = opaque;
     qa_application *candidate = value;
+    if (!application_startup_program_publication_abort(&operation->programs,NULL)) {
+        operation->retained = value;
+        return;
+    }
     candidate->native_restore_image = NULL;
     candidate->native_restore_current = NULL;
     candidate->native_restore_resources = NULL;

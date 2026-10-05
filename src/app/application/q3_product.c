@@ -473,21 +473,25 @@ bool qa_application_startup_console_queued(const qa_application *app, const qa_c
 bool application_startup_program_queue_ready(qa_application *app,const qa_application_startup_source *previous,
     const qa_application_startup_source *target,uint64_t generation,qa_error *error)
 {
-    if (!app || !previous || !target || !previous->descriptor || !target->descriptor || !target->console ||
+    bool engine=previous && target && previous->scope.kind==QA_APPLICATION_CONSOLE_ENGINE &&
+        target->scope.kind==QA_APPLICATION_CONSOLE_ENGINE;
+    if (!app || !previous || !target || !target->console ||
         previous->scope.kind!=target->scope.kind || previous->scope.seat!=target->scope.seat ||
-        strcmp(previous->descriptor->selection.instance,target->descriptor->selection.instance))
+        (!engine && (!previous->descriptor || !target->descriptor ||
+            strcmp(previous->descriptor->selection.instance,target->descriptor->selection.instance))))
         return application_fail(error,QA_ERROR_ARGUMENT,"Startup ordinal adoption requires its actual compatible source pair");
     const qa_launch_snapshot *published=qa_application_launch(app);
-    const qa_launch_instance *selected=qa_launch_snapshot_find(published,target->descriptor->selection.instance);
+    const qa_launch_instance *selected=engine?NULL:qa_launch_snapshot_find(published,target->descriptor->selection.instance);
     qa_application_console_scope scope;
-    if (!selected || selected->storage!=target->descriptor->storage || selected->state!=target->descriptor->state ||
+    if ((!engine && (!selected || selected->storage!=target->descriptor->storage || selected->state!=target->descriptor->state)) ||
         !qa_application_console_scope_read(app,target->console,&scope) || scope.provider!=target->scope.provider ||
         scope.kind!=target->scope.kind || scope.seat!=target->scope.seat)
         return application_fail(error,QA_ERROR_ARGUMENT,"Startup ordinal target has not actually published");
+    const char *instance=engine?"":previous->descriptor->selection.instance;
     for (size_t i=0;app->startup && i<app->startup->count;++i) {
         const application_startup_row *row=app->startup->rows+i;
         if (row->queued_instance && row->queued_kind==(uint32_t)previous->scope.kind &&
-            row->queued_seat==previous->scope.seat && !strcmp(row->queued_instance,previous->descriptor->selection.instance) &&
+            row->queued_seat==previous->scope.seat && !strcmp(row->queued_instance,instance) &&
             row->queued_generation!=generation)
             return application_fail(error,QA_ERROR_FORMAT,"Startup ordinal lost its retained source program generation");
     }
@@ -497,11 +501,12 @@ void application_startup_program_queue_publish(qa_application *app,const qa_appl
     const qa_application_startup_source *target,uint64_t generation)
 {
     (void)target;
+    const char *instance=previous->scope.kind==QA_APPLICATION_CONSOLE_ENGINE?"":previous->descriptor->selection.instance;
     for (size_t i=0;app->startup && i<app->startup->count;++i) {
         application_startup_row *row=app->startup->rows+i;
         if (row->queued_instance && row->queued_generation==generation &&
             row->queued_kind==(uint32_t)previous->scope.kind && row->queued_seat==previous->scope.seat &&
-            !strcmp(row->queued_instance,previous->descriptor->selection.instance)) row->queued_generation=app->command_generation;
+            !strcmp(row->queued_instance,instance)) row->queued_generation=app->command_generation;
     }
 }
 

@@ -305,8 +305,9 @@ qa_console_program *qa_console_program_prepare(qa_console *source, qa_console *c
     bool ok = state_capture(source, &program->original, error) && state_capture(candidate, &fresh, error) &&
         resolve->current(resolve->context, source, candidate, error) &&
         aliases_copy(program->original.aliases, &inherited.aliases, error) &&
-        ids_copy(program->original.owners, &inherited.owners, error) &&
-        ids_copy(program->original.clients, &inherited.clients, error) &&
+        (resolve->fresh_namespace ||
+            (ids_copy(program->original.owners, &inherited.owners, error) &&
+             ids_copy(program->original.clients, &inherited.clients, error))) &&
         map_ids(program, inherited.owners, QA_CONSOLE_PROGRAM_OWNER, error) &&
         map_ids(program, inherited.clients, QA_CONSOLE_PROGRAM_CLIENT, error) &&
         map_aliases(program, inherited.aliases, inherited.owners, error) &&
@@ -439,6 +440,39 @@ static void filter_tail(const qa_console *candidate, program_state *tail)
     }
 }
 
+static bool filter_source_chunks(qa_console_program *program, command_chunk **head,
+    command_chunk **tail, size_t *bytes, qa_error *error)
+{
+    command_chunk **link = head; *tail = NULL;
+    while (*link) {
+        command_chunk *chunk = *link;
+        bool retained = true, caller = true;
+        if (!program->resolve.context_retained(program->resolve.context, &chunk->context, &retained, error) ||
+            (chunk->completion && !program->resolve.context_retained(program->resolve.context,
+                &chunk->caller, &caller, error))) return false;
+        if (!retained || !caller) {
+            *link = chunk->next; *bytes -= chunk->length - chunk->offset;
+            chunk->next = NULL; chunks_free(chunk);
+        } else { *tail = chunk; link = &chunk->next; }
+    }
+    return true;
+}
+
+static bool filter_source_tail(qa_console_program *program, program_state *tail, qa_error *error)
+{
+    if (!program->resolve.context_retained) return true;
+    bool retained = true;
+    if (!filter_source_chunks(program, &tail->head, &tail->tail, &tail->queued_bytes, error) ||
+        !filter_source_chunks(program, &tail->deferred, &tail->deferred_tail, &tail->deferred_bytes, error) ||
+        (tail->wait && !program->resolve.context_retained(program->resolve.context,
+            &tail->wait_context, &retained, error))) return false;
+    if (!retained) {
+        free((char *)tail->wait_context.script);
+        tail->wait_context = (qa_command_context){0}; tail->wait = 0;
+    }
+    return true;
+}
+
 bool qa_console_program_preflight(qa_console_program *program, qa_error *error)
 {
     if (!program || program->busy || program->ready || !state_current(&program->original, program->source) ||
@@ -447,7 +481,8 @@ bool qa_console_program_preflight(qa_console_program *program, qa_error *error)
     program->busy = true; program_state prefix = {0};
     bool ok = state_capture(program->candidate, &prefix, error) &&
         program->resolve.current(program->resolve.context, program->source, program->candidate, error) &&
-        state_capture(program->source, &program->prepared, error);
+        state_capture(program->source, &program->prepared, error) &&
+        filter_source_tail(program, &program->prepared, error);
     command_chunk *lists[] = {program->prepared.head, program->prepared.deferred};
     for (size_t i = 0; ok && i < 2; ++i)
         for (command_chunk *chunk = lists[i]; ok && chunk; chunk = chunk->next) {

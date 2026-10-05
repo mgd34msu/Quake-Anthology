@@ -9,6 +9,12 @@ typedef enum qa_console_program_identity {
 } qa_console_program_identity;
 typedef struct qa_console_program_resolvers {
     void *context;
+    /* A genuine new console namespace re-admits live owners through identity.
+     * Its old namespace's retired numeric IDs cannot retire fresh handlers. */
+    bool fresh_namespace;
+    /* Retire work tied to an actor whose world lifetime ended. Optional for
+     * a retained world; a false retained value discards only that queued work. */
+    bool (*context_retained)(void *, const qa_command_context *, bool *retained, qa_error *);
     /* Resolve actual candidate declarations, including retired lifetime IDs.
      * Zero retains its engine/absent meaning. These callbacks never dispatch. */
     bool (*identity)(void *, qa_console_program_identity, uint64_t source,

@@ -19,6 +19,10 @@ void application_startup_program_bound_client(qa_application *, application_prov
  * program loans return. A failed preparation may retain the roster in *out. */
 bool application_startup_program_publication_prepare(qa_application *, application_publication *,
     application_startup_program_roster **out, qa_error *);
+/* A cached level borrows the current unit's live command continuation after
+ * its actual GAME admission and carried-player reentry have completed. */
+bool application_startup_program_restore_prepare(qa_application *candidate, qa_application *current,
+    application_startup_program_roster **out, qa_error *);
 bool application_startup_program_publication_seal(application_startup_program_roster *, qa_error *);
 bool application_startup_program_publication_adopt(application_startup_program_roster **, qa_error *);
 bool application_startup_program_publication_abort(application_startup_program_roster **, qa_error *);
