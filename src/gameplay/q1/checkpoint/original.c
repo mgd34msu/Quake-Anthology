@@ -5,6 +5,7 @@
 #include "qa/q1_text.h"
 #include "qa/text.h"
 #include "qa/game_q1_travel.h"
+#include "qa/game_q1_bots.h"
 #include "qa/qc_text_save.h"
 #include <stdio.h>
 #include <stddef.h>
@@ -730,7 +731,9 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
             !number(record, "weapon", wire.weapon, false, error) ||
             !text(record, "weaponmodel", qa_strings_cstr(qa_session_strings(game->services.session), wire.weapon_model),
                 QA_Q1_SAVE_STRING, error)) return false;
-        if (!text(record,"netname",qa_strings_cstr(qa_session_strings(game->services.session),game->wire->board[player->client_slot].name),QA_Q1_SAVE_STRING,error)) return false;
+        const char *name=NULL;
+        if (!qa_q1_source_client_info(game,player->id,"name",&name) ||
+            !text(record,"netname",name?name:"",QA_Q1_SAVE_STRING,error)) return false;
         return player_functions(player, record, error);
     }
     const char *think = entity->think == Q1_THINK_EXPLODE &&
@@ -1244,6 +1247,11 @@ static bool admit_word(original_admission *admission,const char *name,qa_error *
         return unsupported(error,"Source word has no lossless native state");
     admitted_key(admission,name);return true;
 }
+static bool admit_string(original_admission *admission,const char *name,qa_error *error) {
+    const char *value=saved(admission->record,name);char *decoded=NULL;
+    if (!qa_q1_save_string_decode(value?value:"",&decoded,error)) return false;
+    free(decoded);admitted_key(admission,name);return true;
+}
 static bool admit_text(original_admission *admission,const char *name,
     const char *expected,qa_error *error) {
     const char *value=saved(admission->record,name);
@@ -1381,8 +1389,8 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
             admitted_key(admission,name);
         }
         if (!admit_number(admission,"items2",0,error) || !admit_number(admission,"deadflag",0,error) ||
-            !admit_number(admission,"colormap",1,error) || !admit_text(admission,"netname","",error) ||
-            !admit_text(admission,"weaponmodel","",error)) goto done;
+            !admit_number(admission,"colormap",1,error) || !admit_string(admission,"netname",error) ||
+            !admit_string(admission,"weaponmodel",error)) goto done;
         if (!isfinite(saved_number(record,"max_health")) || !isfinite(saved_number(record,"idealpitch"))) {
             unsupported(error,"Source player scalar has no finite native state");goto done;
         }
@@ -1487,6 +1495,16 @@ bool qa_q1_game_original_admit(qa_q1_program native_program,qa_q1_edition editio
     *supported=okay;return true;
 }
 
+static bool restore_player_name(qa_q1_game *game,const q1_player *player,
+    const qa_q1_save_record *record,qa_error *error) {
+    const char *value=saved(record,"netname"),*current=NULL;char *name=NULL;
+    if (!qa_q1_save_string_decode(value?value:"",&name,error)) return false;
+    bool okay=qa_q1_source_client_info(game,player->id,"name",&current);
+    if (okay && strcmp(name,current?current:""))
+        okay=qa_q1_source_client_name(game,player->id,name,error);
+    free(name);return okay;
+}
+
 static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player,
     const qa_q1_save_record *record, const qa_actor_id *slots, size_t count, qa_movement_state *movement, qa_error *error) {
     qa_actor_id id = player ? player->id : entity->id;
@@ -1552,7 +1570,8 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
             .hit = flags & 512 ? world_ground ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_ACTOR : QA_TRACE_HIT_NONE};
         if (!saved_vector(saved(record,"movedir"),&movement->data.nq.water_jump_direction,error)) return false;
         return game->services.physics && game->services.physics->services.write &&
-            game->services.physics->services.write(game->services.physics->services.context, id, &physics, error);
+            game->services.physics->services.write(game->services.physics->services.context, id, &physics, error) &&
+            restore_player_name(game,player,record,error);
     }
     qa_string_id native_classname = entity->classname;
     if (!RESTORE_FIELDS(game, record, entity, entity_fields, slots, count, error)) return false;
@@ -1709,6 +1728,16 @@ static bool original_precache_fits(qa_q1_game *game,const qa_q1_save_data *save,
         return unsupported(error,"Original player model globals differ from the constructed Source precache");
     for (size_t i=0;i<save->entity_count;++i)
         if (save->entities[i].count && !original_model_fits(receipt,strings,save->entities+i,error)) return false;
+    const qa_q1_save_record *record=save->entities+1;q1_player player={0};
+    float selected=saved_number(record,"weapon");
+    if (!isfinite(selected) || selected<=0 || selected>=4294967296.0 || truncf(selected)!=selected ||
+        !qa_q1_weapon_source(game->options.program,(uint32_t)selected,&player.weapon))
+        return unsupported(error,"Original selected weapon lacks its compiled model identity");
+    const char *value=saved(record,"weaponmodel");char *model=NULL;
+    if (!qa_q1_save_string_decode(value?value:"",&model,error)) return false;
+    const char *expected=qa_strings_cstr(strings,q1_weapon_model(game,&player));
+    bool equal=!strcmp(model,expected?expected:"");free(model);
+    if (!equal) return unsupported(error,"Original weapon model differs from its compiled Source weapon");
     return true;
 }
 bool qa_q1_game_original_fit(qa_q1_game *game,const qa_q1_save_data *save,
