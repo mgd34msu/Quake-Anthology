@@ -1,7 +1,6 @@
 #ifndef QA_Q3_CINEMATIC_HANDLES_PRIVATE_H
 #define QA_Q3_CINEMATIC_HANDLES_PRIVATE_H
 #include "qa/q3_cinematic_handles.h"
-#include "qa/cinematic_restore.h"
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>

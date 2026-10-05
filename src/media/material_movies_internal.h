@@ -15,6 +15,6 @@ struct qa_material_movies {
     qa_scene_frame *prepared;
     uint64_t sequence;
     struct qa_material_movies_stage *pending;
-    bool busy, restore_pending, stage_sealed;
+    bool busy, stage_sealed;
 };
 #endif

@@ -241,7 +241,7 @@ static bool prepare(frontend_cinematic *owner,qa_error *error)
         .audio_audience={.kind=QA_CINEMATIC_AUDIO_WORLD},.context=owner,
         .complete=completed,.diagnostic=diagnostic};
     qa_cinematic_source source=qa_cinematic_asset_source(owner->asset);
-    ok=qa_cinematic_create(&source,&options,NULL,&owner->movie,error);
+    ok=qa_cinematic_create(&source,&options,&owner->movie,error);
     if (ok) ok=frontend_ui_cinematic_prepare(f,owner->request.files,owner->request.path,owner->request.seat,error);
     qa_audio_stream_cut *cut=NULL;
     if (ok) ok=qa_cinematic_audio_rebind_ready(owner->movie,staging,QA_FRONTEND_COMMAND_OWNER,error);

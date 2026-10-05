@@ -152,7 +152,7 @@ bool qa_q3_presentation_movie_play(qa_q3_presentation *p, const char *path, qa_s
     if (flags & 16u) options.target.id.material = bus; else options.target.id.seat = p->options.seat;
     qa_cinematic_source source = qa_cinematic_asset_source(asset); source.name = name;
     qa_cinematic *movie = NULL;
-    bool ok = qa_cinematic_create(&source, &options, NULL, &movie, error);
+    bool ok = qa_cinematic_create(&source, &options, &movie, error);
     if (ok) {
         p->movies[slot] = (q3p_movie){.kind = Q3P_MOVIE_LOCAL, .local = movie,
             .asset = asset, .rect = rect, .path = name, .flags = flags};

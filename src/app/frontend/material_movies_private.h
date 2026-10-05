@@ -2,7 +2,6 @@
 #define QA_FRONTEND_MATERIAL_MOVIES_PRIVATE_H
 #include "material_movies.h"
 #include "internal.h"
-#include "qa/cinematic_restore.h"
 #include "qa/media_library_save.h"
 #include "qa/material_library_save.h"
 #include "qa/scene_resource_save.h"

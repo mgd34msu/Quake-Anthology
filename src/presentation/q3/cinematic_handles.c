@@ -377,7 +377,7 @@ bool q3cin_play_into(qa_q3_cinematic_source *source,q3cin_movie slots[16],qa_med
             movie->bus=source->options.audio_bus(source->options.context);
             qa_cinematic_options options=q3cin_options(source,flags,movie->bus);
             options.roq_scratch=scratch;
-            ok=qa_cinematic_create(&asset,&options,NULL,&movie->playback,&local);
+            ok=qa_cinematic_create(&asset,&options,&movie->playback,&local);
             if (!ok && local.code==QA_ERROR_FORMAT) {
                 qa_cinematic_destroy(movie->playback); movie->playback=NULL;
                 movie->pending=false; movie->status=0; *out=-1; return true;

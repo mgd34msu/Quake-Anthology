@@ -25,7 +25,7 @@ bool qa_material_movies_stage_prepare(qa_material_movies *owner, qa_scene_resour
     qa_material_movies_stage **out, qa_error *error)
 {
     qa_scene_resources *images = qa_scene_resource_policy_destination(bank);
-    if (!out || *out || !images || !qa_material_movies_idle(owner) || owner->restore_pending ||
+    if (!out || *out || !images || !qa_material_movies_idle(owner) ||
         owner->resources != qa_scene_resource_policy_source(bank))
         return cinematic_fail(error, "Movie staging requires its true provider resource bank");
     qa_material_movies_stage *stage = calloc(1, sizeof(*stage));
@@ -59,7 +59,7 @@ bool qa_material_movies_stage_ready(qa_material_movies_stage *stage, qa_error *e
         merged[i] = i < stage->count ? stage->owner->movies[i] : stage->destination->movies[i - stage->count];
         const qa_cinematic *movie = merged[i].playback;
         if (!merged[i].initial ||
-            !movie || movie->busy || movie->faulted || movie->restore_pending ||
+            !movie || movie->busy || movie->faulted ||
             movie->options.target.kind != QA_CINEMATIC_MATERIAL || !movie->options.target.id.material) {
             free(merged); return cinematic_fail(error, "Prepared movie roster has an invalid physical owner");
         }

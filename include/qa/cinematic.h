@@ -68,22 +68,6 @@ typedef struct qa_cinematic_options {
     void (*complete)(void *, qa_cinematic_target, qa_cinematic_end);
     void (*diagnostic)(void *, const char *);
 } qa_cinematic_options;
-typedef struct qa_cinematic_checkpoint {
-    char *source;
-    qa_cinematic_format format;
-    qa_cinematic_target target;
-    qa_cinematic_audio_audience audio_audience;
-    double elapsed_ms;
-    qa_media_status status, decoder_status;
-    uint64_t revision, audio_loop;
-    bool loop, hold, silent, paused, dirty, completed, focus_paused, audio_attached;
-    qa_buffer audio;
-    union {
-        qa_cin_playback_checkpoint cin;
-        qa_roq_playback_checkpoint roq;
-        qa_ogv_checkpoint ogv;
-    } decoder;
-} qa_cinematic_checkpoint;
 typedef struct qa_cinematic qa_cinematic;
 typedef struct qa_media_library qa_media_library;
 /* One asset cache can serve multiple independently ordered VFS views. Resolve
@@ -106,10 +90,9 @@ void qa_cinematic_asset_release(qa_cinematic_asset *);
 qa_cinematic_source qa_cinematic_asset_source(const qa_cinematic_asset *);
 void qa_cinematic_asset_dimensions(const qa_cinematic_asset *, uint32_t *width, uint32_t *height);
 /* Sources are borrowed only during construction; private codec instances
- * retain shared assets. Restore builds a new movie without output callbacks.
- * Its bus ID must be reserved for this movie in the candidate audio engine. */
+ * retain shared assets. */
 bool qa_cinematic_create(const qa_cinematic_source *, const qa_cinematic_options *,
-                         const qa_cinematic_checkpoint *, qa_cinematic **out, qa_error *);
+                         qa_cinematic **out, qa_error *);
 void qa_cinematic_destroy(qa_cinematic *);
 bool qa_cinematic_tick(qa_cinematic *, qa_media_tick *, qa_error *);
 bool qa_cinematic_pause(qa_cinematic *, bool, qa_error *);
@@ -133,13 +116,8 @@ bool qa_cinematic_roq_restart(qa_cinematic *, qa_error *);
 bool qa_cinematic_roq_scratch_rebind_ready(const qa_cinematic *, const qa_roq_scratch *, qa_error *);
 void qa_cinematic_roq_scratch_rebind(qa_cinematic *, qa_roq_scratch *);
 uint64_t qa_cinematic_revision(const qa_cinematic *);
-/* Retained decoder revision, including a qualified cold candidate whose live
- * playback operations remain unavailable until commit. */
-bool qa_cinematic_checkpoint_revision_read(const qa_cinematic *, uint64_t *);
 bool qa_cinematic_time(qa_cinematic *, double *elapsed_ms, double *source_ms, uint64_t *loop,
                        qa_error *);
-bool qa_cinematic_capture(qa_cinematic *, qa_cinematic_checkpoint *, qa_error *);
-void qa_cinematic_checkpoint_free(qa_cinematic_checkpoint *);
 /* Reconnect a separately restored engine without replacing its retained raw
  * queue. Qualify all movies before applying any owner pointer exchanges. */
 bool qa_cinematic_audio_rebind_ready(qa_cinematic *, qa_audio_engine *, uint64_t bus, qa_error *);

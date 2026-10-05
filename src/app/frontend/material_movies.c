@@ -370,7 +370,7 @@ bool frontend_material_movie_row_create(frontend_material_movies *owner, qa_medi
     if (ok) {
         qa_cinematic_source source = qa_cinematic_asset_source(row->asset); source.name = row->path;
         qa_cinematic_options options = frontend_material_movie_options(owner, target);
-        ok = qa_cinematic_create(&source, &options, NULL, &row->playback, &failure);
+        ok = qa_cinematic_create(&source, &options, &row->playback, &failure);
     }
     if (ok) ok = qa_material_movies_add(registry, row->playback, &row->publication, &row->initial, &failure);
     if (ok) qa_scene_image_retain(row->initial);

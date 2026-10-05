@@ -7,7 +7,7 @@
 #include <string.h>
 bool qa_cinematic_shader_frame(const qa_cinematic *movie, qa_media_frame *out, qa_error *error)
 {
-    if (!movie || !out || movie->restore_pending || !movie->has_picture ||
+    if (!movie || !out || !movie->has_picture ||
         movie->options.target.kind!=QA_CINEMATIC_MATERIAL)
         return cinematic_fail(error,"Shader upload requires its actual decoded material cinematic");
     return qa_cinematic_upload_frame(movie,true,out,error);
@@ -26,7 +26,7 @@ bool qa_cinematic_upload_frame(const qa_cinematic *movie, bool shader, qa_media_
 bool qa_cinematic_source_ui_frame(qa_cinematic *movie, uint32_t width, uint32_t height,
     bool dirty, qa_media_frame *out, qa_error *error)
 {
-    if (!movie || !out || movie->busy || movie->faulted || movie->restore_pending ||
+    if (!movie || !out || movie->busy || movie->faulted ||
         !movie->has_picture || movie->format!=QA_CINEMATIC_ROQ || !movie->options.roq_scratch)
         return cinematic_fail(error,"Source UI upload requires its reached shared RoQ owner");
     return qa_roq_playback_image(movie->movie.roq,false,width,height,dirty,out,error);
@@ -55,7 +55,7 @@ bool qa_cinematic_material_owner_is(const qa_cinematic *movie, const qa_cinemati
 
 static bool publish_image(qa_cinematic *movie, qa_scene_resources *resources, qa_scene_frame *frame,
                           bool initial, const qa_scene_image **out, qa_error *error) {
-    if (!movie || !resources || !frame || !out || movie->busy || movie->faulted || movie->restore_pending)
+    if (!movie || !resources || !frame || !out || movie->busy || movie->faulted)
         return cinematic_fail(error, "Cinematic image publication is unavailable");
     if (initial && (movie->options.target.kind != QA_CINEMATIC_MATERIAL || movie->image ||
         movie->image_frame || movie->image_revision != UINT64_MAX || movie->revision == UINT64_MAX))
@@ -125,7 +125,7 @@ bool qa_cinematic_image(qa_cinematic *movie, qa_scene_resources *resources, qa_s
 bool qa_cinematic_fullscreen(qa_cinematic *movie, qa_cinematic_focus focus, qa_scene_rect viewport,
                              qa_scene_resources *resources, qa_scene_frame *frame, bool *blank,
                              qa_error *error) {
-    if (!movie || !blank || !resources || !frame || movie->busy || movie->faulted || movie->restore_pending ||
+    if (!movie || !blank || !resources || !frame || movie->busy || movie->faulted ||
         !viewport.width || !viewport.height ||
         movie->options.target.kind != QA_CINEMATIC_SEAT || focus < QA_CINEMATIC_GAME ||
         focus > QA_CINEMATIC_MENU)

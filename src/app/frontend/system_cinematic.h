@@ -43,10 +43,6 @@ bool frontend_system_cinematic_view_current(const qa_frontend *,const qa_vfs *,c
  * lower handle removes its retained row; checked teardown requires no rows. */
 bool frontend_system_cinematic_stop_all(qa_frontend *,qa_error *);
 bool frontend_system_cinematic_destroy(qa_frontend *,qa_error *);
-/* All cold row/decoder/PCM owners qualify before the enclosing candidate's
- * no-fail publication. No playback, commands or output occur during restore. */
-bool frontend_system_cinematic_publish_ready(const qa_frontend *,qa_error *);
-void frontend_system_cinematic_publish(qa_frontend *);
 bool frontend_system_cinematic_rebind_ready(const qa_frontend *,const qa_frontend *,qa_error *);
 void frontend_system_cinematic_rebind(qa_frontend *,qa_frontend *);
 bool frontend_system_cinematic_content_visit(const qa_frontend *,const qa_application_content_visitor *,qa_error *);
