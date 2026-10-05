@@ -1,6 +1,7 @@
 #ifndef QA_UNIFIED_SESSION_INTERNAL_H
 #define QA_UNIFIED_SESSION_INTERNAL_H
 #include "qa/network_unified_session.h"
+#include "qa/network_unified_control.h"
 #include "qa/network_unified_frame_pool.h"
 #include "value_internal.h"
 
@@ -60,7 +61,6 @@ bool qa_unified_session_queue_inputs(qa_unified_session *, qa_error *);
 bool qa_unified_session_receive_resume(qa_unified_session *, qa_error *);
 void qa_unified_session_ack(qa_unified_session *, int64_t);
 bool qa_unified_session_player_read(const qa_unified_session *, qa_unified_session_player *, qa_error *);
-bool qa_unified_session_document_epoch(const qa_unified_document *, uint32_t *, qa_error *);
 qa_json_id qa_unified_session_value(const qa_unified_document *);
 bool qa_unified_session_kind(const qa_unified_document *, const char *);
 void qa_unified_session_release(qa_unified_session *);

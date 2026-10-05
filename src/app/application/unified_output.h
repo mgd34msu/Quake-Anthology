@@ -2,6 +2,7 @@
 #define QA_APPLICATION_UNIFIED_OUTPUT_H
 
 #include "network_unified.h"
+#include "qa/network_unified_control.h"
 #include "qa/network_unified_frame.h"
 #include "qa/unified_frame_metadata.h"
 
@@ -56,6 +57,6 @@ void application_unified_output_dispose(application_unified_output *);
 bool application_unified_resource_key(const qa_product *, const char *, const qa_resource *,
     qa_unified_document **key, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], qa_error *);
 bool application_unified_resource_control(uint32_t epoch,
-    const qa_unified_document *const *keys, size_t count, qa_unified_document **, qa_error *);
+    const qa_unified_resource_declaration *, size_t count, qa_unified_document **, qa_error *);
 
 #endif

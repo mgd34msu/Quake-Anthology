@@ -1,4 +1,5 @@
 #include "session_internal.h"
+#include "qa/network_unified_control.h"
 #include "qa/network_unified_frame.h"
 #include "qa/unified_frame_events.h"
 #include "qa/network_unified_save.h"
@@ -23,7 +24,7 @@ bool qa_unified_session_client_receipt(const qa_unified_session *s, uint32_t epo
     if (epoch > s->epoch) {
         uint32_t offered = 0;
         if (!offer || !receiving_offer || head->source_finished ||
-            !qa_unified_session_document_epoch(head->document, &offered, e) || offered != epoch)
+            !qa_unified_document_epoch(head->document, &offered, e) || offered != epoch)
             return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Readonly Source publication has no actual unfinished offer");
     }
     if (admitted != s->admitted && !(admitted ?
@@ -43,13 +44,11 @@ bool qa_unified_session_client_receipt(const qa_unified_session *s, uint32_t epo
 }
 static bool local_reason(const qa_unified_session *s, const qa_unified_document *d, qa_error *e)
 {
-    const qa_json_document *json = qa_unified_document_json(d);
-    qa_json_id reason = qa_json_get(json, qa_unified_session_value(d), "reason");
-    if (s->close_cause == 1) return qa_json_string_equal(json, reason, "Connection timed out");
-    qa_buffer text = {0};
-    if (!qa_json_string(json, reason, &text, e)) return false;
-    bool okay = text.size <= 4096 && (!text.size || !memchr(text.data, 0, text.size));
-    qa_buffer_free(&text); return okay;
+    const qa_unified_control *control=qa_unified_document_control(d);
+    if (!control || control->kind!=QA_UNIFIED_CONTROL_DISCONNECT || !control->value.disconnect)
+        return qa_unified_session_fail(e,QA_ERROR_FORMAT,"Retained close has no actual typed reason");
+    if (s->close_cause==1) return !strcmp(control->value.disconnect,"Connection timed out");
+    return strlen(control->value.disconnect)<=4096;
 }
 
 bool qa_unified_session_qualified(const qa_unified_session *s, const qa_net_client *client, qa_error *e)
@@ -138,7 +137,7 @@ bool qa_unified_session_qualified(const qa_unified_session *s, const qa_net_clie
         uint32_t epoch;
         if (!frame->sequence || frame->sequence % QA_UNIFIED_FRAME_BACKUP != i ||
             qa_unified_document_type(frame->document) != QA_UNIFIED_FRAME_DOCUMENT ||
-            !qa_unified_session_document_epoch(frame->document, &epoch, e) || epoch != s->epoch ||
+            !qa_unified_document_epoch(frame->document, &epoch, e) || epoch != s->epoch ||
             (s->server ? frame->sequence >= progress.next_frame : frame->sequence > progress.frame_admitted) ||
             frame->bytes != qa_unified_document_memory(frame->document) ||
             frame->bytes > QA_UNIFIED_FRAME_HISTORY_BYTES - frame_bytes)

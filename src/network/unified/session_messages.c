@@ -2,6 +2,7 @@
 #include "qa/network_unified_frame.h"
 #include "qa/unified_frame_events.h"
 #include "qa/unified_frame_metadata.h"
+#include "qa/network_unified_control.h"
 #include "channel_internal.h"
 #include "value_internal.h"
 
@@ -17,28 +18,12 @@ qa_json_id qa_unified_session_value(const qa_unified_document *d)
 
 bool qa_unified_session_kind(const qa_unified_document *d, const char *kind)
 {
-    if (qa_unified_document_events(d)) return !strcmp(kind, "events");
-    if (qa_unified_document_metadata(d)) return !strcmp(kind, "metadata");
-    return d && qa_unified_document_type(d) == QA_UNIFIED_CONTROL_DOCUMENT &&
-        qa_json_string_equal(qa_unified_document_json(d),
-            qa_json_get(qa_unified_document_json(d), qa_unified_session_value(d), "kind"), kind);
+    static const char *const names[] = {"ready", "admitted", "resources", "userinfo", "command",
+        "source-command", "disconnect", "offer", "components", "component-command", "events", "metadata"};
+    qa_unified_control_kind actual=qa_unified_document_control_type(d);
+    return actual<QA_UNIFIED_CONTROL_INVALID && !strcmp(kind,names[actual]);
 }
 
-bool qa_unified_session_document_epoch(const qa_unified_document *d, uint32_t *out, qa_error *e)
-{
-    if (!d || !out) return false;
-    const qa_unified_frame *frame=qa_unified_document_frame(d);
-    const qa_unified_input_batch *inputs=qa_unified_document_inputs(d);
-    const qa_unified_frame_events *events=qa_unified_document_events(d);
-    const qa_unified_frame_metadata *metadata=qa_unified_document_metadata(d);
-    if (frame || inputs || events || metadata) { *out=frame?frame->epoch:inputs?inputs->epoch:events?events->epoch:metadata->epoch; return *out!=0; }
-    double epoch;
-    if ( !qa_unified_document_number(d,
-        qa_json_get(qa_unified_document_json(d), qa_unified_session_value(d), "epoch"), &epoch, e)) return false;
-    if (epoch < 1 || epoch > UINT32_MAX)
-        return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Production epoch exceeds the control namespace");
-    *out = (uint32_t)epoch; return true;
-}
 
 static bool server_control(const qa_unified_document *d)
 {
@@ -61,7 +46,7 @@ bool qa_unified_session_reply_valid(const qa_unified_session *s, const qa_unifie
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Source reply changes its authenticated control direction");
     if (qa_unified_session_kind(d, "disconnect")) return true;
     uint32_t epoch;
-    if (!qa_unified_session_document_epoch(d, &epoch, e)) return false;
+    if (!qa_unified_document_epoch(d, &epoch, e)) return false;
     return epoch == s->epoch || qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Source reply changes its retained control epoch");
 }
 
@@ -73,7 +58,7 @@ static bool outgoing_control(const qa_unified_session *s, const qa_unified_docum
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production control changes its authenticated direction");
     *offer = qa_unified_session_kind(d, "offer"); *disconnect = qa_unified_session_kind(d, "disconnect");
     *epoch = s->epoch;
-    if (!*disconnect && !qa_unified_session_document_epoch(d, epoch, e)) return false;
+    if (!*disconnect && !qa_unified_document_epoch(d, epoch, e)) return false;
     if (!*disconnect && (*offer ? *epoch <= s->epoch : *epoch != s->epoch))
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production control changes its retained world epoch");
     return true;
@@ -136,7 +121,7 @@ bool qa_unified_session_frame(qa_unified_session *s, const qa_unified_document *
         !d || qa_unified_document_type(d) != QA_UNIFIED_FRAME_DOCUMENT)
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production frame lacks an admitted server producer");
     uint32_t epoch;
-    if (!qa_unified_session_document_epoch(d, &epoch, e)) return false;
+    if (!qa_unified_document_epoch(d, &epoch, e)) return false;
     if (epoch != s->epoch) return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production frame belongs to another epoch");
     const qa_unified_frame *frame=qa_unified_document_frame(d);
     if (!frame) return false;
@@ -229,7 +214,7 @@ static bool process_control(qa_unified_session *s, qa_unified_held *held, bool *
     if (!disconnect && !s->server && !server_control(d))
         return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Received production control changes its authenticated direction");
     uint32_t epoch = s->epoch;
-    if (!disconnect && !qa_unified_session_document_epoch(d, &epoch, e)) return false;
+    if (!disconnect && !qa_unified_document_epoch(d, &epoch, e)) return false;
     bool ok = true;
     if (!held->source_finished) {
         if (!disconnect && (offer ? epoch <= s->epoch : epoch != s->epoch)) return true;
@@ -282,7 +267,7 @@ static bool process_frame(qa_unified_session *s, qa_unified_held *held, bool *wa
 {
     const qa_unified_document *d = held->document;
     uint32_t epoch;
-    if (!qa_unified_session_document_epoch(d, &epoch, e)) return false;
+    if (!qa_unified_document_epoch(d, &epoch, e)) return false;
     if (!held->source_finished && (epoch != s->epoch || !s->admitted)) return true;
     const qa_unified_frame *frame=qa_unified_document_frame(d);
     if (!frame) return false;
@@ -361,7 +346,7 @@ bool qa_unified_session_offer_ready(const qa_unified_session *s, const qa_unifie
         qa_unified_session_retiring(s) || !qa_unified_session_kind(offer, "offer") || s->epoch == UINT32_MAX)
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production offer admission lacks its returned server epoch");
     uint32_t epoch;
-    if (!qa_unified_session_document_epoch(offer, &epoch, e)) return false;
+    if (!qa_unified_document_epoch(offer, &epoch, e)) return false;
     if (epoch != s->epoch + 1)
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production offer changes its actual next wire epoch");
     for (const qa_unified_held *held = s->held; held; held = held->next)
@@ -377,13 +362,13 @@ bool qa_unified_session_process(qa_unified_session *s, bool *waiting, qa_error *
     *waiting = false; s->processing = true;
     bool ok = qa_unified_session_receive_resume(s, e);
     if (ok && s->timeout_pending && !s->closing && !s->disconnected) {
-        static const char json[] = "{\"schema\":\"qts-control\",\"version\":1,\"value\":{\"kind\":\"disconnect\",\"reason\":\"Connection timed out\"}}";
+        const qa_unified_control timeout={.kind=QA_UNIFIED_CONTROL_DISCONNECT,
+            .value.disconnect="Connection timed out"};
         if (!s->timeout_delivery) {
             s->timeout_delivery = calloc(1, sizeof(*s->timeout_delivery));
             if (!s->timeout_delivery) ok = qa_unified_session_fail(e, QA_ERROR_MEMORY, "Retaining actual timeout control continuation");
             if (ok) s->timeout_delivery->kind = QA_UNIFIED_CONTROL_DOCUMENT;
-            if (ok) ok = qa_unified_document_create(QA_UNIFIED_CONTROL_DOCUMENT,
-                (qa_bytes){(const uint8_t *)json, sizeof(json) - 1}, &s->timeout_delivery->document, e);
+            if (ok) ok = qa_unified_document_create_control(&timeout, &s->timeout_delivery->document, e);
             if (ok) ok = qa_unified_document_encode(s->timeout_delivery->document, &s->timeout_delivery->wire, e);
             if (ok) s->timeout_delivery->bytes = s->timeout_delivery->wire.size;
             else { qa_unified_session_delivery_free(s->timeout_delivery); s->timeout_delivery = NULL; }
@@ -413,7 +398,7 @@ bool qa_unified_session_process(qa_unified_session *s, bool *waiting, qa_error *
         bool obsolete = false;
         if (!skipped && !held->source_finished && !s->server && !qa_unified_session_kind(held->document, "disconnect")) {
             uint32_t epoch;
-            ok = qa_unified_session_document_epoch(held->document, &epoch, e);
+            ok = qa_unified_document_epoch(held->document, &epoch, e);
             if (!ok) break;
             obsolete = qa_unified_session_kind(held->document, "offer") ? epoch <= s->epoch : epoch != s->epoch;
             if (kind == QA_UNIFIED_FRAME_DOCUMENT && !s->admitted) obsolete = true;

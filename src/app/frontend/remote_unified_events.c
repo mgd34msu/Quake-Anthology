@@ -4,6 +4,7 @@
 #include "../application/unified_output.h"
 #include "qa/binary.h"
 #include "qa/network_unified_frame.h"
+#include "qa/network_unified_control.h"
 
 #include <math.h>
 
@@ -255,23 +256,54 @@ static bool resource_read(frontend_unified_events *o,const qa_unified_document *
         frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified resource is outside its admitted recipe dictionary"); }
     qa_buffer_free(&content); qa_buffer_free(&path); qa_buffer_free(&hash); return okay;
 }
-static bool declare_resources(frontend_unified_events *o,const qa_unified_document *doc,qa_json_id array,qa_error *e)
+static bool resource_read_typed(frontend_unified_events *o, const qa_unified_resource_declaration *row,
+    unified_event_resource **out, qa_error *e)
 {
-    const qa_json_document *j=qa_unified_document_json(doc);
+    const qa_unified_resource_state *key=&row->resource;
+    qa_launch_resource held; qa_vfs *files; const qa_vfs_acquisition *opening;
+    const qa_product *product=NULL; qa_vfs *actual;
+    qa_executable_recipe *recipe=frontend_remote_unified_recipe(o->replica);
+    bool okay=qa_executable_recipe_find_resource(recipe,key->content,key->path,&key->digest,key->byte_length,&held,&files,&opening) &&
+        qa_executable_recipe_content_read(recipe,key->content,&actual,&product) && actual==files;
+    unified_event_resource *r=okay?calloc(1,sizeof(*r)):NULL;
+    if (okay && !r) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining declared Source resource");
+    if (okay) {
+        size_t content_size=strlen(key->content)+1,path_size=strlen(key->path)+1;
+        r->content=malloc(content_size); r->path=malloc(path_size);
+        okay=r->content && r->path;
+        if (!okay) frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining declared Source resource names");
+        else {
+            memcpy(r->content,key->content,content_size); memcpy(r->path,key->path,path_size);
+            memcpy(r->id,row->identity,sizeof(r->id)); r->resource=held.resource;
+            r->family=product->family==QA_GAME_Q1?QA_AUDIO_Q1:product->family==QA_GAME_Q2?QA_AUDIO_Q2:QA_AUDIO_Q3;
+            *out=r;
+        }
+    }
+    if (!okay) { if (r) resource_free(r); if (!e || e->code==QA_OK)
+        frontend_unified_fail(e,QA_ERROR_FORMAT,"Declared Source resource is outside its actual admitted recipe"); }
+    return okay;
+}
+static bool declare_resources(frontend_unified_events *o, const qa_unified_resources_control *resources, qa_error *e)
+{
     unified_event_resource *head=NULL,**tail=&head;
     bool okay=true;
-    for (size_t i=0;okay && i<qa_json_size(j,array);++i) {
-        qa_unified_document *key=NULL; unified_event_resource *r=NULL;
-        okay=qa_unified_document_create(QA_UNIFIED_CHECKPOINT,qa_json_source(j,qa_json_at(j,array,i)),&key,e) &&
-            resource_read(o,key,&r,e);
-        qa_unified_document_destroy(key);
+    for (size_t i=0;okay && i<resources->count;++i) {
+        unified_event_resource *r=NULL;
+        okay=resource_read_typed(o,resources->values+i,&r,e);
         if (okay) { *tail=r; tail=&r->next; }
     }
     if (!okay) { while (head) { unified_event_resource *r=head; head=r->next; resource_free(r); } return false; }
     while (head) {
         unified_event_resource *r=head; head=r->next; unified_event_resource *same=o->resources;
         while (same && strcmp(same->id,r->id)) same=same->next;
-        if (same) resource_free(r); else { r->next=o->resources; o->resources=r; }
+        if (same) {
+            bool equal=same->resource==r->resource && !strcmp(same->content,r->content) && !strcmp(same->path,r->path);
+            resource_free(r);
+            if (!equal) {
+                while (head) { r=head; head=r->next; resource_free(r); }
+                return frontend_unified_fail(e,QA_ERROR_FORMAT,"Source resource reference changed its admitted declaration");
+            }
+        } else { r->next=o->resources; o->resources=r; }
     }
     return true;
 }
@@ -333,15 +365,21 @@ bool frontend_unified_events_control(frontend_unified_events *o,const qa_unified
         if (!qa_unified_document_retain(doc,&batch->document,e)) { free(batch); return false; }
         *o->tail=batch; o->tail=&batch->next; return true;
     }
-    /* Only reliable initial resource/component setup uses JSON. */
+    const qa_unified_control *control=qa_unified_document_control(doc);
+    if (control) {
+        if (control->epoch!=o->epoch)
+            return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified setup control changed its Source epoch");
+        if (control->kind==QA_UNIFIED_CONTROL_RESOURCES) return declare_resources(o,&control->value.resources,e);
+        return true;
+    }
+    /* Remaining component setup owns its existing configuration document. */
     const qa_json_document *j=qa_unified_document_json(doc);
-    qa_json_id value=field(j,qa_unified_document_root(doc),"value"),kind=field(j,value,"kind");
+    qa_json_id value=field(j,qa_unified_document_root(doc),"value");
     uint64_t epoch;
-    if (!qa_json_u64(j,field(j,value,"epoch"),&epoch,e) || epoch!=o->epoch)
-        return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified setup control changed its source epoch");
-    if (qa_json_string_equal(j,kind,"resources")) return declare_resources(o,doc,field(j,value,"resources"),e);
-    return true;
+    return (qa_json_u64(j,field(j,value,"epoch"),&epoch,e) && epoch==o->epoch) ||
+        frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified setup control changed its Source epoch");
 }
+
 static bool frame_values(const qa_unified_document *document,uint32_t *epoch,uint64_t *number,
     double *seconds,qa_error *error)
 {
@@ -641,7 +679,17 @@ static bool fields(qa_source_save_io *io,frontend_unified_events *o,const fronte
     unified_event_resource *r=o->resources,**resource_tail=&o->resources;
     for (size_t i=0;i<count;++i) {
         qa_unified_document *key=reading?NULL:r->key;
-        if (!document(io,QA_UNIFIED_CHECKPOINT,&key)) { if (reading) qa_unified_document_destroy(key); return false; }
+        bool temporary=false;
+        if (!reading && !key) {
+            qa_vfs *files; const qa_product *product; char identity[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
+            if (!qa_executable_recipe_content_read(frontend_remote_unified_recipe(o->replica),r->content,&files,&product) ||
+                !application_unified_resource_key(product,r->path,r->resource,&key,identity,io->error)) return false;
+            if (strcmp(identity,r->id)) { qa_unified_document_destroy(key);
+                return frontend_unified_fail(io->error,QA_ERROR_FORMAT,"Saved resource differs from its admitted Source identity"); }
+            temporary=true;
+        }
+        if (!document(io,QA_UNIFIED_CHECKPOINT,&key)) { if (reading || temporary) qa_unified_document_destroy(key); return false; }
+        if (temporary) qa_unified_document_destroy(key);
         if (reading) {
             unified_event_resource *next=NULL;
             bool okay=resource_read(o,key,&next,io->error); qa_unified_document_destroy(key);

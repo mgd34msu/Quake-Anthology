@@ -1,4 +1,5 @@
 #include "remote_unified_private.h"
+#include "qa/network_unified_control.h"
 #include "remote_unified_presentation.h"
 #include "remote_unified_render.h"
 #include "remote_unified_events.h"
@@ -387,10 +388,7 @@ static bool control(void *context, frontend_remote_unified *replica, const qa_un
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified control has no prepared CLIENT consumers");
     if (qa_unified_document_metadata(doc)) return frontend_remote_unified_metadata_control(replica,doc,error);
     if (qa_unified_document_events(doc)) return frontend_unified_events_control(p->events,doc,error);
-    const qa_json_document *json = qa_unified_document_json(doc);
-    qa_json_id value = qa_json_get(json,qa_unified_document_root(doc),"value");
-    qa_json_id kind = qa_json_get(json,value,"kind");
-    if (qa_json_string_equal(json,kind,"components"))
+    if (qa_unified_document_control_type(doc)==QA_UNIFIED_CONTROL_COMPONENTS)
         return frontend_unified_q2_components_control(p->q2,doc,error) &&
             frontend_unified_components_control(p->components,doc,error);
     return frontend_unified_events_control(p->events,doc,error);

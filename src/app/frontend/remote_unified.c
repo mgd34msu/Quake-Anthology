@@ -1,6 +1,7 @@
 #include "remote_unified_private.h"
 #include "../application/unified_output_json.h"
 #include "qa/network_unified_save.h"
+#include "qa/network_unified_control.h"
 #include "qa/unified_frame_prediction.h"
 #include "qa/unified_frame_player.h"
 #include "qa/unified_frame_events.h"
@@ -239,14 +240,7 @@ bool frontend_unified_document_restore_bind(qa_unified_document **retained,
     if (!qa_unified_document_retain(canonical,&bound,error)) return false;
     qa_unified_document_destroy(*retained); *retained=bound; return true;
 }
-static bool wire_actor(const qa_json_document *json, qa_json_id id, qa_saved_actor_id *out, qa_error *error)
-{
-    uint64_t slot, generation;
-    if (!qa_json_u64(json, qa_json_get(json, id, "slot"), &slot, error) || slot > UINT32_MAX ||
-        !qa_json_u64(json, qa_json_get(json, id, "generation"), &generation, error))
-        return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified actor leaves its actual wire identity domain");
-    *out = (qa_saved_actor_id){.slot = (uint32_t)slot, .generation = generation}; return true;
-}
+
 
 static void staged_metadata_clear(frontend_remote_unified *owner)
 {
@@ -388,44 +382,29 @@ static bool prepare(void *context, qa_net_client_id client, const qa_unified_doc
     bool okay = true;
     if (qa_unified_document_type(document) == QA_UNIFIED_FRAME_DOCUMENT)
         okay = prepare_frame(owner, document, ready, error);
-    else if (!qa_unified_document_events(document) && !qa_unified_document_metadata(document) && qa_json_string_equal(qa_unified_document_json(document),
-        qa_json_get(qa_unified_document_json(document), value(document), "kind"), "offer"))
+    else if (qa_unified_document_control_type(document)==QA_UNIFIED_CONTROL_OFFER)
         okay = prepare_offer(owner, document, ready, error);
     owner->busy = false; return okay;
 }
 
 static bool ready_document(frontend_remote_unified *owner, qa_unified_document **out, qa_error *error)
 {
-    const char *userinfo = NULL;
-    if (!owner->options.userinfo(owner->options.context, &owner->options.domain, &userinfo, error) || !userinfo) return false;
-    char digest[72] = "sha256:"; qa_sha256_hex(qa_executable_recipe_digest(owner->recipe), digest + 7);
-    application_unified_json json = {0};
-    bool okay = application_unified_json_text(&json, "{\"schema\":\"qts-control\",\"version\":1,\"value\":{\"kind\":\"ready\",\"epoch\":", error) &&
-        application_unified_json_natural(&json, owner->epoch, error) &&
-        application_unified_json_text(&json, ",\"composition\":", error) && application_unified_json_string(&json, digest, error) &&
-        application_unified_json_text(&json, ",\"userinfo\":", error) && application_unified_json_string(&json, userinfo, error) &&
-        application_unified_json_text(&json, "}}", error) && qa_unified_document_create(QA_UNIFIED_CONTROL_DOCUMENT,
-            (qa_bytes){json.bytes.data, json.bytes.size}, out, error);
-    application_unified_json_dispose(&json); return okay;
+    const char *userinfo=NULL;
+    if (!owner->options.userinfo(owner->options.context,&owner->options.domain,&userinfo,error) || !userinfo) return false;
+    qa_unified_control value={.kind=QA_UNIFIED_CONTROL_READY,.epoch=owner->epoch,
+        .value.ready={.composition=*qa_executable_recipe_digest(owner->recipe),.userinfo=(char *)userinfo}};
+    return qa_unified_document_create_control(&value,out,error);
 }
 
 static bool resources(frontend_remote_unified *owner, const qa_unified_document *document, qa_error *error)
 {
-    const qa_json_document *json = qa_unified_document_json(document);
-    qa_json_id rows = qa_json_get(json, value(document), "resources");
-    for (size_t i = 0; i < qa_json_size(json, rows); ++i) {
-        qa_json_id key = qa_json_at(json, rows, i);
-        qa_buffer content = {0}, path = {0}, digest = {0}; uint64_t length;
-        qa_sha256_digest hash; qa_launch_resource actual; qa_vfs *view; const qa_vfs_acquisition *receipt;
-        bool okay = qa_json_string(json, qa_json_get(json, key, "content"), &content, error) &&
-            qa_json_string(json, qa_json_get(json, key, "path"), &path, error) &&
-            qa_json_string(json, qa_json_get(json, key, "digest"), &digest, error) &&
-            qa_sha256_parse((const char *)digest.data, &hash, error) &&
-            qa_json_u64(json, qa_json_get(json, key, "byteLength"), &length, error) &&
-            qa_executable_recipe_acquire_resource(owner->recipe, (const char *)content.data, (const char *)path.data,
-                &hash, length, &actual, &view, &receipt, error);
-        qa_buffer_free(&content); qa_buffer_free(&path); qa_buffer_free(&digest);
-        if (!okay) return false;
+    const qa_unified_control *control=qa_unified_document_control(document);
+    if (!control || control->kind!=QA_UNIFIED_CONTROL_RESOURCES) return false;
+    for (size_t i=0;i<control->value.resources.count;++i) {
+        const qa_unified_resource_state *key=&control->value.resources.values[i].resource;
+        qa_launch_resource actual; qa_vfs *view; const qa_vfs_acquisition *receipt;
+        if (!qa_executable_recipe_acquire_resource(owner->recipe,key->content,key->path,&key->digest,
+                key->byte_length,&actual,&view,&receipt,error)) return false;
     }
     return true;
 }
@@ -445,18 +424,18 @@ static bool control(void *context, qa_network_runtime *runtime, qa_net_client_id
             owner->options.consumers.context, owner, document, error);
         owner->busy = false; commit->applied = applied; return applied;
     }
-    const qa_json_document *json = qa_unified_document_json(document);
-    qa_json_id v = value(document), kind = qa_json_get(json, v, "kind");
+    qa_unified_control_kind type=qa_unified_document_control_type(document);
+    const qa_unified_control *packet=qa_unified_document_control(document);
     bool pending_disconnect=false;
     if (epoch!=owner->epoch && owner->offer &&
-        qa_json_string_equal(json,kind,"disconnect")) {
+        type==QA_UNIFIED_CONTROL_DISCONNECT) {
         if (!qa_unified_session_client_disconnect_pending(owner->session,runtime,client,epoch,
             document,owner->offer,error) || !transport_continue(owner,owner->offer,error)) return false;
         pending_disconnect=true;
     }
     if (!transport_continue(owner,document,error) || !frontend_remote_unified_current(owner,error)) return false;
     owner->busy = true; bool okay = true;
-    if (qa_json_string_equal(json, kind, "offer")) {
+    if (type==QA_UNIFIED_CONTROL_OFFER) {
         if (owner->epoch != epoch) {
             okay = owner->prepared && owner->preparing_recipe && frontend_unified_document_equal(owner->offer, document) &&
                 epoch == qa_executable_recipe_epoch(owner->preparing_recipe) &&
@@ -487,27 +466,23 @@ static bool control(void *context, qa_network_runtime *runtime, qa_net_client_id
         if (okay) okay = ready_document(owner, &commit->reply, error);
         if (okay) { qa_unified_document_destroy(owner->offer); owner->offer = NULL; commit->applied = true; }
     } else if (epoch != owner->epoch && !pending_disconnect) okay = true;
-    else if (qa_json_string_equal(json, kind, "admitted")) {
-        qa_saved_actor_id actor, wire_client; uint64_t source, registry;
-        qa_json_id source_actor = qa_json_get(json, v, "actor");
-        okay = wire_actor(json, source_actor, &actor, error) &&
-            qa_json_u64(json, qa_json_get(json, source_actor, "registry"), &registry, error) && registry &&
-            wire_actor(json, qa_json_get(json, v, "client"), &wire_client, error) &&
-            qa_json_u64(json, qa_json_get(json, v, "sourceEntity"), &source, error) && source <= UINT32_MAX &&
-            (!owner->admitted || (owner->wire_player.registry == registry && owner->wire_player.slot == actor.slot &&
-                owner->wire_player.generation == actor.generation)) &&
-            frontend_remote_unified_actor(owner, actor.slot, actor.generation, &owner->player, error);
-        if (okay) { owner->wire_player = (qa_actor_id){.registry = registry, .slot = actor.slot, .generation = actor.generation}; owner->wire_client = wire_client;
-            owner->source_entity = (uint32_t)source; owner->admitted = true; commit->applied = true; }
-    } else if (qa_json_string_equal(json, kind, "resources")) {
-        okay = owner->recipe && resources(owner, document, error);
-        if (okay) okay = owner->options.consumers.control(owner->options.consumers.context, owner, document, error);
-        commit->applied = okay;
-    } else if (qa_json_string_equal(json, kind, "disconnect")) {
-        qa_buffer reason = {0};
-        okay = qa_json_string(json, qa_json_get(json, v, "reason"), &reason, error) &&
-            owner->options.disconnected(owner->options.context, &owner->options.domain, (const char *)reason.data, error);
-        qa_buffer_free(&reason); if (okay) owner->retired = true; commit->applied = okay;
+    else if (type==QA_UNIFIED_CONTROL_ADMITTED) {
+        const qa_unified_admitted_control *admitted=packet?&packet->value.admitted:NULL;
+        okay=admitted && (!owner->admitted || qa_actor_id_equal(owner->wire_player,admitted->actor)) &&
+            frontend_remote_unified_actor(owner,admitted->actor.slot,admitted->actor.generation,&owner->player,error);
+        if (okay) {
+            owner->wire_player=admitted->actor;
+            owner->wire_client=(qa_saved_actor_id){.slot=admitted->client.slot,.generation=admitted->client.generation};
+            owner->source_entity=admitted->source_entity; owner->admitted=true; commit->applied=true;
+        }
+    } else if (type==QA_UNIFIED_CONTROL_RESOURCES) {
+        okay=owner->recipe && resources(owner,document,error);
+        if (okay) okay=owner->options.consumers.control(owner->options.consumers.context,owner,document,error);
+        commit->applied=okay;
+    } else if (type==QA_UNIFIED_CONTROL_DISCONNECT) {
+        okay=packet && owner->options.disconnected(owner->options.context,&owner->options.domain,packet->value.disconnect,error);
+        if (okay) owner->retired=true;
+        commit->applied=okay;
     } else { okay = owner->recipe && owner->options.consumers.control(owner->options.consumers.context,
         owner, document, error); commit->applied = okay; }
     owner->busy = false; return okay;
@@ -605,20 +580,24 @@ static bool command_document(frontend_remote_unified *owner, const char *name,
 {
     if (!owner || owner->busy || !owner->admitted || !owner->session || (count && !args) || count > 128 ||
         !qa_unified_session_idle(owner->session) || !frontend_remote_unified_current(owner, error)) return false;
-    application_unified_json json = {0}; qa_unified_document *document = NULL;
-    bool okay = application_unified_json_text(&json, "{\"schema\":\"qts-control\",\"version\":1,\"value\":{\"kind\":", error) &&
-        application_unified_json_string(&json, component ? "component-command" : "command", error) &&
-        application_unified_json_text(&json, ",\"epoch\":", error) && application_unified_json_natural(&json, owner->epoch, error);
-    if (okay && component) okay = application_unified_json_text(&json, ",\"owner\":", error) &&
-        application_unified_json_document(&json, component, error) && application_unified_json_text(&json, ",\"generation\":", error) &&
-        application_unified_json_natural(&json, generation, error);
-    else if (okay) okay = name && application_unified_json_text(&json, ",\"name\":", error) && application_unified_json_string(&json, name, error);
-    if (okay) okay = application_unified_json_text(&json, ",\"args\":[", error);
-    for (size_t i = 0; okay && i < count; ++i) okay = args[i] &&
-        (!i || application_unified_json_text(&json, ",", error)) && application_unified_json_string(&json, args[i], error);
-    if (okay) okay = application_unified_json_text(&json, "]}}", error) && qa_unified_document_create(QA_UNIFIED_CONTROL_DOCUMENT,
-        (qa_bytes){json.bytes.data, json.bytes.size}, &document, error) && qa_unified_session_control(owner->session, document, error);
+    if (!component) {
+        qa_unified_control value={.kind=QA_UNIFIED_CONTROL_COMMAND,.epoch=owner->epoch,
+            .value.command={.name=(char *)name,.arguments={.values=(char **)args,.count=count}}};
+        qa_unified_document *document=NULL;
+        bool okay=qa_unified_document_create_control(&value,&document,error) && qa_unified_session_control(owner->session,document,error);
+        qa_unified_document_destroy(document); return okay;
+    }
+    application_unified_json json={0}; qa_unified_document *document=NULL;
+    bool okay=application_unified_json_text(&json,"{\"schema\":\"qts-control\",\"version\":1,\"value\":{\"kind\":\"component-command\",\"epoch\":",error) &&
+        application_unified_json_natural(&json,owner->epoch,error) && application_unified_json_text(&json,",\"owner\":",error) &&
+        application_unified_json_document(&json,component,error) && application_unified_json_text(&json,",\"generation\":",error) &&
+        application_unified_json_natural(&json,generation,error) && application_unified_json_text(&json,",\"args\":[",error);
+    for (size_t i=0;okay && i<count;++i) okay=args[i] && (!i || application_unified_json_text(&json,",",error)) &&
+        application_unified_json_string(&json,args[i],error);
+    if (okay) okay=application_unified_json_text(&json,"]}}",error) && qa_unified_document_create(QA_UNIFIED_CONTROL_DOCUMENT,
+        (qa_bytes){json.bytes.data,json.bytes.size},&document,error) && qa_unified_session_control(owner->session,document,error);
     qa_unified_document_destroy(document); application_unified_json_dispose(&json); return okay;
+
 }
 bool frontend_remote_unified_source_disconnect(frontend_remote_unified *owner,const char *reason,qa_error *error)
 {

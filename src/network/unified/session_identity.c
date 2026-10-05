@@ -30,7 +30,7 @@ bool qa_unified_session_restart_admit(const qa_unified_session *s, const qa_netw
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production restart admission lacks its actual canonical peer and offer");
     if (!qa_unified_session_qualified(s, client, e)) return false;
     uint32_t epoch;
-    if (!qa_unified_session_document_epoch(offer, &epoch, e)) return false;
+    if (!qa_unified_document_epoch(offer, &epoch, e)) return false;
     if (s->server) {
         if (s->processing || s->epoch == UINT32_MAX || epoch != s->epoch + 1)
             return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Server restart admission changes its prepared next offer epoch");
@@ -74,7 +74,7 @@ bool qa_unified_session_client_disconnect_pending(const qa_unified_session *s,
     const qa_net_client *client = qa_net_connections_get(qa_network_connections(runtime), id);
     if (!qa_unified_session_qualified(s, client, e)) return false;
     uint32_t offered;
-    if (!qa_unified_session_document_epoch(offer, &offered, e)) return false;
+    if (!qa_unified_document_epoch(offer, &offered, e)) return false;
     qa_bytes actual = qa_json_source(qa_unified_document_json(held->document), qa_unified_document_root(held->document));
     qa_bytes retained = qa_json_source(qa_unified_document_json(offer), qa_unified_document_root(offer));
     return (offered > epoch && actual.size == retained.size &&

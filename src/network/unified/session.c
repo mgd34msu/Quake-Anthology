@@ -258,7 +258,7 @@ static bool restart_peer(void *state, uint64_t epoch, const qa_sha256_digest *co
     if (ok && (!offer || !qa_unified_session_kind(offer, "offer")))
         ok = qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production restart did not produce an actual offer");
     uint32_t offered = 0;
-    if (ok) ok = qa_unified_session_document_epoch(offer, &offered, e);
+    if (ok) ok = qa_unified_document_epoch(offer, &offered, e);
     if (ok && offered != next_wire_epoch)
         ok = qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production restart offer changed its requested epoch");
     if (ok) ok = qa_unified_session_queue_control(s, offer, e);

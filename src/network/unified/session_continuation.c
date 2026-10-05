@@ -31,7 +31,7 @@ bool qa_unified_session_continuation_valid(const qa_unified_session *s, const qa
     if (kind == QA_UNIFIED_CONTROL_DOCUMENT) {
         if (qa_unified_session_kind(held->document, "offer")) {
             uint32_t epoch;
-            if (!commit->applied || s->server || !qa_unified_session_document_epoch(held->document, &epoch, e) || epoch != s->epoch)
+            if (!commit->applied || s->server || !qa_unified_document_epoch(held->document, &epoch, e) || epoch != s->epoch)
                 return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Retained offer commit changes its published epoch");
         }
         if (qa_unified_session_kind(held->document, "ready") && commit->applied &&

@@ -4,6 +4,7 @@
 #include "unified_output_capture.h"
 #include "unified_events.h"
 #include "qa/network_unified_save.h"
+#include "qa/network_unified_control.h"
 #include "unified_output_json.h"
 #include "native_q3_wire_state.h"
 #include "qa/game_q3_clients.h"
@@ -219,43 +220,30 @@ static bool resource_declarations(application_unified_server *owner, size_t firs
     qa_unified_document **out, qa_error *error)
 {
     if (!count) return true;
-    qa_unified_document **keys = calloc(count, sizeof(*keys));
-    if (!keys) return application_fail(error, QA_ERROR_MEMORY, "Retaining newly registered Source dictionary");
-    bool okay = true;
-    for (size_t i = 0; okay && i < count; ++i) {
-        const application_unified_event_resource *row = application_unified_event_resource_at(owner->application, first + i);
-        okay = row && qa_unified_document_create(QA_UNIFIED_CHECKPOINT,
-            (qa_bytes){row->key.data, row->key.size}, keys + i, error);
+    qa_unified_resource_declaration *rows=calloc(count,sizeof(*rows));
+    if (!rows) return application_fail(error,QA_ERROR_MEMORY,"Retaining newly registered Source dictionary");
+    bool okay=true;
+    qa_strings *strings=qa_session_strings(owner->offered.session);
+    for (size_t i=0;okay && i<count;++i) {
+        const application_unified_event_resource *row=application_unified_event_resource_at(owner->application,first+i);
+        if (!row || !row->resource || !qa_resource_digest(row->resource)) {
+            okay=application_fail(error,QA_ERROR_ARGUMENT,"Source dictionary lost its actual resource hold"); break;
+        }
+        rows[i]=(qa_unified_resource_declaration){.identity=(char *)row->id,
+            .resource={.content=(char *)qa_strings_cstr(strings,row->content),
+                .path=(char *)qa_strings_cstr(strings,row->path),.digest=*qa_resource_digest(row->resource),
+                .byte_length=qa_resource_bytes(row->resource).size}};
     }
-    if (okay) okay = application_unified_resource_control(owner->epoch,
-        (const qa_unified_document *const *)keys, count, out, error);
-    for (size_t i = 0; i < count; ++i) qa_unified_document_destroy(keys[i]);
-    free(keys); return okay;
+    if (okay) okay=application_unified_resource_control(owner->epoch,rows,count,out,error);
+    free(rows); return okay;
 }
 
 static bool admitted_document(application_unified_server *owner, const qa_unified_session_player *player,
     qa_unified_document **out, qa_error *error)
 {
-    application_unified_json json = {0};
-    bool okay = application_unified_json_text(&json, "{\"schema\":\"qts-control\",\"version\":1,\"value\":{\"kind\":\"admitted\",\"epoch\":", error) &&
-        application_unified_json_natural(&json, owner->epoch, error) &&
-        application_unified_json_text(&json, ",\"client\":{\"slot\":", error) &&
-        application_unified_json_natural(&json, owner->client.slot, error) &&
-        application_unified_json_text(&json, ",\"generation\":", error) &&
-        application_unified_json_natural(&json, owner->client.generation, error) &&
-        application_unified_json_text(&json, "},\"actor\":{\"registry\":", error) &&
-        application_unified_json_natural(&json, player->actor.registry, error) &&
-        application_unified_json_text(&json, ",\"slot\":", error) &&
-        application_unified_json_natural(&json, player->actor.slot, error) &&
-        application_unified_json_text(&json, ",\"generation\":", error) &&
-        application_unified_json_natural(&json, player->actor.generation, error) &&
-        application_unified_json_text(&json, "}", error) &&
-        application_unified_json_text(&json, ",\"sourceEntity\":", error) &&
-        application_unified_json_natural(&json, player->source_slot, error) &&
-        application_unified_json_text(&json, "}}", error) &&
-        qa_unified_document_create(QA_UNIFIED_CONTROL_DOCUMENT,
-            (qa_bytes){json.bytes.data, json.bytes.size}, out, error);
-    application_unified_json_dispose(&json); return okay;
+    qa_unified_control value={.kind=QA_UNIFIED_CONTROL_ADMITTED,.epoch=owner->epoch,
+        .value.admitted={.client=owner->client,.actor=player->actor,.source_entity=player->source_slot}};
+    return qa_unified_document_create_control(&value,out,error);
 }
 
 static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_client_id client,
@@ -264,31 +252,26 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
     application_unified_server *owner = context;
     if (!peer_is(owner, runtime, client) || !commit)
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified control lost its actual Source peer");
-    const qa_json_document *json = qa_unified_document_json(document);
-    qa_json_id value = control_value(document), kind = qa_json_get(json, value, "kind");
+    qa_unified_control_kind type=qa_unified_document_control_type(document);
+    const qa_unified_control *packet=qa_unified_document_control(document);
     qa_unified_session *installed = NULL;
     if (epoch != owner->epoch && !(epoch != UINT32_MAX && owner->epoch == epoch + 1 &&
-        qa_json_string_equal(json, kind, "disconnect") && !owner->admitted && !owner->inputs &&
+        type==QA_UNIFIED_CONTROL_DISCONNECT && !owner->admitted && !owner->inputs &&
         !owner->components && !owner->pending_capture && !owner->pending.frame &&
         !owner->admitted_receipt && offered_current(owner) && owner->session &&
         qa_unified_session_find(runtime,client,&installed,error) && installed==owner->session))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified control changes its authentic Source epoch");
-    if (qa_json_string_equal(json, kind, "ready")) {
-        char digest[72] = "sha256:"; qa_sha256_hex(&owner->composition, digest + 7);
-        if (!qa_json_string_equal(json, qa_json_get(json, value, "composition"), digest) ||
-            !offered_current(owner))
+    if (type==QA_UNIFIED_CONTROL_READY) {
+        if (!packet || !qa_sha256_equal(&packet->value.ready.composition,&owner->composition) || !offered_current(owner))
             return application_fail(error, QA_ERROR_ARGUMENT, "Unified readiness changes its retained Source recipe");
-        qa_buffer userinfo = {0};
-        if (!qa_json_string(json, qa_json_get(json, value, "userinfo"), &userinfo, error)) return false;
         qa_application_remote_player_request request = {.client = client, .seat = owner->seat,
             .application_seat = owner->application_seat, .source_slot = UINT32_MAX,
-            .userinfo = (const char *)userinfo.data};
+            .userinfo = packet->value.ready.userinfo};
         qa_unified_session_player actual;
         qa_actor_id carried;
         bool exists = qa_application_remote_player_actor(owner->application, client, owner->seat, &carried);
         bool okay = exists ? application_unified_player_read(owner->application, client, owner->seat, &actual, error) :
             application_unified_player_admit(owner->application, runtime, &request, &actual, error);
-        qa_buffer_free(&userinfo);
         if (okay) owner->player_attached = true;
         if (okay) okay=player_receipt_retain(owner,&actual,error);
         if (okay && !owner->components) okay = application_unified_components_create(owner->application,
@@ -325,49 +308,32 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
         if (okay) { owner->admitted = true; commit->applied = true; }
         return okay;
     }
-    if (qa_json_string_equal(json, kind, "userinfo")) {
-        qa_buffer text = {0};
-        bool okay = owner->admitted && qa_json_string(json, qa_json_get(json, value, "value"), &text, error) &&
-            application_unified_player_userinfo(owner->application, client, owner->seat, (const char *)text.data, error);
-        qa_buffer_free(&text); commit->applied = okay; return okay;
+    if (type==QA_UNIFIED_CONTROL_USERINFO) {
+        bool okay=owner->admitted && packet && application_unified_player_userinfo(owner->application,
+            client,owner->seat,packet->value.userinfo,error);
+        commit->applied=okay; return okay;
     }
-    if (qa_json_string_equal(json, kind, "command")) {
-        qa_json_id arguments = qa_json_get(json, value, "args");
-        size_t count = qa_json_size(json, arguments);
-        if (!owner->admitted || count > 128)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Unified command has no admitted physical Source recipient");
-        qa_buffer name = {0}, retained[128] = {0};
-        const char *words[128];
-        bool okay = qa_json_string(json, qa_json_get(json, value, "name"), &name, error);
-        for (size_t i = 0; okay && i < count; ++i) {
-            okay = qa_json_string(json, qa_json_at(json, arguments, i), retained + i, error);
-            if (okay) words[i] = (const char *)retained[i].data;
-        }
-        if (okay) okay = application_unified_player_command(owner->application, client, owner->seat,
-            (const char *)name.data, words, count, error);
-        for (size_t i = 0; i < count; ++i) qa_buffer_free(retained + i);
-        qa_buffer_free(&name); commit->applied = okay; return okay;
+    if (type==QA_UNIFIED_CONTROL_COMMAND) {
+        if (!owner->admitted || !packet)
+            return application_fail(error,QA_ERROR_ARGUMENT,"Unified command has no admitted physical Source recipient");
+        const qa_unified_command_control *command=&packet->value.command;
+        bool okay=application_unified_player_command(owner->application,client,owner->seat,
+            command->name,(const char *const *)command->arguments.values,command->arguments.count,error);
+        commit->applied=okay; return okay;
     }
-    if (qa_json_string_equal(json,kind,"source-command")) {
-        qa_json_id arguments=qa_json_get(json,value,"args"), activation=qa_json_get(json,value,"activation");
-        size_t count=qa_json_size(json,arguments);
-        if (!owner->admitted || !count || count>128)
+    if (type==QA_UNIFIED_CONTROL_SOURCE_COMMAND) {
+        if (!owner->admitted || !packet)
             return application_fail(error,QA_ERROR_ARGUMENT,"Source command has no admitted physical recipient");
-        qa_buffer instance={0}, retained[128]={0}; const char *words[128];
-        qa_unified_source_command command={.argument_count=count,.arguments=words};
-        bool okay=qa_json_string(json,qa_json_get(json,value,"instance"),&instance,error) &&
-            qa_json_u64(json,qa_json_get(json,activation,"publication"),&command.publication,error) &&
-            qa_json_u64(json,qa_json_get(json,activation,"mapRevision"),&command.map_revision,error);
-        command.instance=(const char *)instance.data;
-        for (size_t i=0;okay && i<count;++i) {
-            okay=qa_json_string(json,qa_json_at(json,arguments,i),retained+i,error);
-            if (okay) words[i]=(const char *)retained[i].data;
-        }
-        if (okay) okay=application_unified_source_command(owner->application,client,owner->seat,&command,error);
-        for (size_t i=0;i<count;++i) qa_buffer_free(retained+i);
-        qa_buffer_free(&instance); commit->applied=okay; return okay;
+        const qa_unified_source_command_control *source=&packet->value.source_command;
+        qa_unified_source_command command={.instance=source->instance,.publication=source->publication,
+            .map_revision=source->map_revision,.arguments=(const char *const *)source->arguments.values,
+            .argument_count=source->arguments.count};
+        bool okay=application_unified_source_command(owner->application,client,owner->seat,&command,error);
+        commit->applied=okay; return okay;
     }
-    if (qa_json_string_equal(json, kind, "component-command")) {
+    if (type==QA_UNIFIED_CONTROL_COMPONENT_COMMAND) {
+        const qa_json_document *json=qa_unified_document_json(document);
+        qa_json_id value=control_value(document);
         qa_json_id arguments = qa_json_get(json, value, "args");
         size_t count = qa_json_size(json, arguments); uint64_t generation;
         if (!owner->admitted || !count || count > 128)
@@ -386,7 +352,7 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
         for (size_t i = 0; i < count; ++i) qa_buffer_free(retained + i);
         qa_unified_document_destroy(component); commit->applied = okay; return okay;
     }
-    if (qa_json_string_equal(json, kind, "disconnect")) {
+    if (type==QA_UNIFIED_CONTROL_DISCONNECT) {
         if ((owner->inputs && owner->inputs->advancing) ||
             (!owner->pending_capture && !application_unified_components_idle(owner->components)))
             return application_fail(error,QA_ERROR_ARGUMENT,"Unified disconnect retains an entered Source publication child");

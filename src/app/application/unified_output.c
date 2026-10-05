@@ -354,20 +354,11 @@ bool application_unified_resource_key(const qa_product *product, const char *pat
 }
 
 bool application_unified_resource_control(uint32_t epoch,
-    const qa_unified_document *const *keys, size_t count, qa_unified_document **out, qa_error *error)
+    const qa_unified_resource_declaration *resources, size_t count, qa_unified_document **out, qa_error *error)
 {
-    if (!out || !epoch || (count && !keys) || count > 32768)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Unified resource control has an invalid actual dictionary extent");
-    application_unified_json j = {0};
-    bool ok = text(&j, "{\"schema\":\"qts-control\",\"version\":1,\"value\":{\"kind\":\"resources\",\"epoch\":", error) &&
-        application_unified_json_natural(&j, epoch, error) && text(&j, ",\"resources\":[", error);
-    for (size_t i = 0; ok && i < count; ++i) {
-        if (!keys[i] || qa_unified_document_type(keys[i]) != QA_UNIFIED_CHECKPOINT)
-            ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified dictionary member lacks its actual key projection");
-        else ok = (!i || text(&j, ",", error)) && application_unified_json_document(&j, keys[i], error);
-    }
-    if (ok) ok = text(&j, "]}}", error) && qa_unified_document_create(QA_UNIFIED_CONTROL_DOCUMENT,
-        (qa_bytes){j.bytes.data, j.bytes.size}, out, error);
-    application_unified_json_dispose(&j);
-    return ok;
+    if (!out || !epoch || (count && !resources) || count>32768)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Unified resource control has an invalid actual dictionary extent");
+    qa_unified_control value={.kind=QA_UNIFIED_CONTROL_RESOURCES,.epoch=epoch,
+        .value.resources={.values=(qa_unified_resource_declaration *)resources,.count=count}};
+    return qa_unified_document_create_control(&value,out,error);
 }

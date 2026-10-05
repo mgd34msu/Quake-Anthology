@@ -3,6 +3,7 @@
 
 #include "qa/network_unified_frame.h"
 #include "value_internal.h"
+#include "qa/network_unified_control.h"
 
 typedef enum qa_unified_field_kind {
     QA_UNIFIED_FIELD_BOOL,
@@ -77,6 +78,8 @@ extern const qa_unified_record_layout qa_unified_component_frame_layout;
 extern const qa_unified_record_layout qa_unified_frame_layout;
 extern const qa_unified_record_layout qa_unified_inputs_layout;
 extern const qa_unified_record_layout qa_unified_handshake_layout;
+extern const qa_unified_record_layout qa_unified_control_layout;
+bool qa_unified_control_check(const qa_unified_control *, size_t *, qa_error *);
 extern const qa_unified_record_layout qa_unified_events_layout;
 extern const qa_unified_record_layout qa_unified_metadata_layout;
 extern const qa_unified_record_layout qa_unified_q3_configuration_layout;

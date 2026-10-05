@@ -1,5 +1,7 @@
 #include "network_unified_save.h"
 #include "network_unified_private.h"
+#include "qa/network_unified_control.h"
+#include "qa/unified_frame_player.h"
 #include "network_unified_inputs_save.h"
 #include "unified_components_save.h"
 #include "unified_output_capture_save.h"
@@ -103,23 +105,18 @@ static bool output_valid(const application_unified_server *owner,
         if (owner->pending_first || owner->pending_last) return false;
     } else if (!owner->pending_first || owner->pending_last < owner->pending_first ||
         (uint64_t)owner->pending_last - owner->pending_first + 1 != owner->control_cursor) return false;
-    const qa_json_document *json = qa_unified_document_json(owner->pending.frame);
-    qa_json_id root = qa_unified_document_root(owner->pending.frame);
-    uint64_t epoch, slot, generation, frame;
-    int64_t acknowledged;
-    qa_json_id actor = qa_json_get(json, qa_json_get(json, root, "player"), "actor");
-    qa_json_id snapshot = qa_json_get(json, qa_json_get(json, root, "output"), "snapshot");
-    if (!qa_json_u64(json, qa_json_get(json, root, "epoch"), &epoch, e) || epoch != owner->epoch ||
-        !qa_json_i64(json, qa_json_get(json, root, "acknowledgedInput"), &acknowledged, e) ||
-        acknowledged != owner->acknowledged ||
-        !qa_json_u64(json, qa_json_get(json, actor, "slot"), &slot, e) || slot != player->actor.slot ||
-        !qa_json_u64(json, qa_json_get(json, actor, "generation"), &generation, e) || generation != player->actor.generation ||
-        !qa_json_u64(json, qa_json_get(json, qa_json_get(json, snapshot, "frame"), "frame"), &frame, e) ||
-        frame != source->frame.number) return false;
-    for (size_t i = 0; i < owner->pending.control_count; ++i) {
-        const qa_json_document *control = qa_unified_document_json(owner->pending.controls[i]);
-        qa_json_id value = qa_json_get(control, qa_unified_document_root(owner->pending.controls[i]), "value");
-        if (!qa_json_u64(control, qa_json_get(control, value, "epoch"), &epoch, e) || epoch != owner->epoch) return false;
+    const qa_unified_frame *frame=qa_unified_document_frame(owner->pending.frame);
+    qa_actor_id actor=frame&&frame->player?frame->player->actor:(qa_actor_id){0};
+    /* Retained wire cuts keep their original namespace across cold import. */
+    if (actor.registry && actor.registry!=player->actor.registry &&
+        !qa_actors_reference_saved(qa_session_actors(source->session),
+            (qa_saved_actor_id){actor.generation,actor.slot},true,&actor,e)) return false;
+    if (!frame || frame->epoch!=owner->epoch || frame->acknowledged_input!=owner->acknowledged ||
+        !frame->player || !qa_actor_id_equal(actor,player->actor) ||
+        !frame->world || frame->world->source.number!=source->frame.number) return false;
+    for (size_t i=0;i<owner->pending.control_count;++i) {
+        uint32_t epoch;
+        if (!qa_unified_document_epoch(owner->pending.controls[i],&epoch,e) || epoch!=owner->epoch) return false;
     }
     return true;
 }

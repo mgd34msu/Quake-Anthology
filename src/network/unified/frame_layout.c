@@ -2104,3 +2104,122 @@ bool qa_unified_metadata_check(const qa_unified_frame_metadata *value, size_t *b
     }
     return true;
 }
+
+static const qa_unified_field control_string_fields[] = {{QA_UNIFIED_FIELD_STRING, 0, NULL, 0, 8192, NULL}};
+static const qa_unified_record_layout control_string_layout = {sizeof(char *), control_string_fields, 1, SIZE_MAX, QA_UNIFIED_KEY_NONE};
+static const qa_unified_field control_arguments_fields[] = {
+    QA_UNIFIED_ARRAY(qa_unified_control_arguments, values, count, control_string_layout, 128),
+};
+static const qa_unified_record_layout control_arguments_layout = QA_UNIFIED_LAYOUT(qa_unified_control_arguments, control_arguments_fields);
+static const qa_unified_field control_ready_fields[] = {
+    QA_UNIFIED_RAW(qa_unified_ready_control, composition),
+    {QA_UNIFIED_FIELD_STRING, offsetof(qa_unified_ready_control, userinfo), NULL, 0, 8192, NULL},
+};
+static const qa_unified_record_layout control_ready_layout = QA_UNIFIED_LAYOUT(qa_unified_ready_control, control_ready_fields);
+static const qa_unified_field control_client_fields[] = {
+    QA_UNIFIED_FIELD(qa_net_client_id, owner, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_net_client_id, slot, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_net_client_id, generation, QA_UNIFIED_FIELD_U64),
+};
+static const qa_unified_record_layout control_client_layout = QA_UNIFIED_LAYOUT(qa_net_client_id, control_client_fields);
+static const qa_unified_field control_admitted_fields[] = {
+    QA_UNIFIED_RECORD(qa_unified_admitted_control, client, control_client_layout),
+    QA_UNIFIED_RECORD(qa_unified_admitted_control, actor, qa_unified_actor_layout),
+    QA_UNIFIED_FIELD(qa_unified_admitted_control, source_entity, QA_UNIFIED_FIELD_U32),
+};
+static const qa_unified_record_layout control_admitted_layout = QA_UNIFIED_LAYOUT(qa_unified_admitted_control, control_admitted_fields);
+static const qa_unified_field control_resource_fields[] = {
+    {QA_UNIFIED_FIELD_STRING, offsetof(qa_unified_resource_declaration, identity), NULL, 0, sizeof("resource:unified:") + 64 - 1, NULL},
+    QA_UNIFIED_RECORD(qa_unified_resource_declaration, resource, qa_unified_resource_state_layout),
+};
+static const qa_unified_record_layout control_resource_layout = QA_UNIFIED_LAYOUT(qa_unified_resource_declaration, control_resource_fields);
+static const qa_unified_field control_resources_fields[] = {
+    QA_UNIFIED_ARRAY(qa_unified_resources_control, values, count, control_resource_layout, 32768),
+};
+static const qa_unified_record_layout control_resources_layout = QA_UNIFIED_LAYOUT(qa_unified_resources_control, control_resources_fields);
+static const qa_unified_field control_command_fields[] = {
+    {QA_UNIFIED_FIELD_STRING, offsetof(qa_unified_command_control, name), NULL, 0, 128, NULL},
+    QA_UNIFIED_RECORD(qa_unified_command_control, arguments, control_arguments_layout),
+};
+static const qa_unified_record_layout control_command_layout = QA_UNIFIED_LAYOUT(qa_unified_command_control, control_command_fields);
+static const qa_unified_field control_source_command_fields[] = {
+    {QA_UNIFIED_FIELD_STRING, offsetof(qa_unified_source_command_control, instance), NULL, 0, 8192, NULL},
+    QA_UNIFIED_FIELD(qa_unified_source_command_control, publication, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_unified_source_command_control, map_revision, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_RECORD(qa_unified_source_command_control, arguments, control_arguments_layout),
+};
+static const qa_unified_record_layout control_source_command_layout = QA_UNIFIED_LAYOUT(qa_unified_source_command_control, control_source_command_fields);
+static const qa_unified_field control_disconnect_fields[] = {{QA_UNIFIED_FIELD_STRING, 0, NULL, 0, 4096, NULL}};
+static const qa_unified_record_layout control_disconnect_layout = {sizeof(char *), control_disconnect_fields, 1, SIZE_MAX, QA_UNIFIED_KEY_NONE};
+static const qa_unified_record_layout *const control_variants[] = {
+    &control_ready_layout, &control_admitted_layout, &control_resources_layout,
+    &control_string_layout, &control_command_layout, &control_source_command_layout,
+    &control_disconnect_layout,
+};
+static const qa_unified_field control_fields[] = {
+    QA_UNIFIED_FIELD(qa_unified_control, kind, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_unified_control, epoch, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_VARIANT(qa_unified_control, value, kind, control_variants),
+};
+const qa_unified_record_layout qa_unified_control_layout = QA_UNIFIED_LAYOUT(qa_unified_control, control_fields);
+
+static bool control_arguments_check(const qa_unified_control_arguments *args, bool required, qa_error *error)
+{
+    if ((required && !args->count) || args->count>128 || (args->count && !args->values))
+        return frame_bad(error,"Unified control has an invalid actual argument extent");
+    for (size_t i=0;i<args->count;++i)
+        if (!args->values[i]) return frame_bad(error,"Unified control has an absent lexical argument");
+    return true;
+}
+bool qa_unified_control_check(const qa_unified_control *v, size_t *bytes, qa_error *error)
+{
+    if (!v || !bytes || (unsigned)v->kind>QA_UNIFIED_CONTROL_DISCONNECT ||
+        (v->kind!=QA_UNIFIED_CONTROL_DISCONNECT && !v->epoch) ||
+        !qa_unified_record_measure(&qa_unified_control_layout,v,bytes,error))
+        return frame_bad(error,"Unified control requires its actual typed kind and epoch");
+    switch (v->kind) {
+    case QA_UNIFIED_CONTROL_READY:
+        return v->value.ready.userinfo || frame_bad(error,"Unified readiness has no real userinfo");
+    case QA_UNIFIED_CONTROL_ADMITTED:
+        return (v->value.admitted.client.owner && v->value.admitted.client.generation &&
+            v->value.admitted.actor.registry) || frame_bad(error,"Unified admission has no actual Source identity");
+    case QA_UNIFIED_CONTROL_RESOURCES:
+        for (size_t i=0;i<v->value.resources.count;++i) {
+            const qa_unified_resource_declaration *row=v->value.resources.values+i;
+            const char *path=row->resource.path;
+            static const char prefix[]="resource:unified:";
+            if (!row->identity || strlen(row->identity)!=sizeof(prefix)-1+64 || memcmp(row->identity,prefix,sizeof(prefix)-1) ||
+                !row->resource.content || !*row->resource.content || !path || !*path || *path=='/' || strchr(path,'\\'))
+                return frame_bad(error,"Unified declaration has an invalid actual resource identity or path");
+            for (size_t digit=sizeof(prefix)-1;digit<sizeof(prefix)-1+64;++digit)
+                if (!((row->identity[digit]>='0' && row->identity[digit]<='9') ||
+                    (row->identity[digit]>='a' && row->identity[digit]<='f')))
+                    return frame_bad(error,"Unified resource identity is not its canonical Source reference");
+            for (const char *at=path;*at;) {
+                const char *end=strchr(at,'/'); size_t size=end?(size_t)(end-at):strlen(at);
+                if (!size || (size==1 && *at=='.') || (size==2 && at[0]=='.' && at[1]=='.') || (end && !end[1]))
+                    return frame_bad(error,"Unified declaration is outside its relative resource path");
+                if (!end) break;
+                at=end+1;
+            }
+        }
+        return true;
+    case QA_UNIFIED_CONTROL_USERINFO:
+        return v->value.userinfo || frame_bad(error,"Unified userinfo control has no actual text");
+    case QA_UNIFIED_CONTROL_COMMAND:
+        if (!v->value.command.name || !*v->value.command.name)
+            return frame_bad(error,"Unified command has no actual command name");
+        for (const unsigned char *p=(const unsigned char *)v->value.command.name;*p;++p)
+            if (!((*p>='a' && *p<='z') || (*p>='A' && *p<='Z') || *p=='_' || *p=='+' ||
+                (p!=(const unsigned char *)v->value.command.name && (*p=='-' || (*p>='0' && *p<='9')))))
+                return frame_bad(error,"Unified command name is outside its Source namespace");
+        return control_arguments_check(&v->value.command.arguments,false,error);
+    case QA_UNIFIED_CONTROL_SOURCE_COMMAND:
+        return (v->value.source_command.instance && *v->value.source_command.instance &&
+            v->value.source_command.publication && control_arguments_check(&v->value.source_command.arguments,true,error)) ||
+            frame_bad(error,"Unified Source command has no actual activation");
+    case QA_UNIFIED_CONTROL_DISCONNECT:
+        return v->value.disconnect || frame_bad(error,"Unified disconnect has no actual reason");
+    default: return false;
+    }
+}
