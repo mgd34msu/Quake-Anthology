@@ -67,7 +67,6 @@ void frontend_fx_q2_rail_spiral(frontend_fx_particles *, qa_builtin_random *, qa
     double seconds, double lifetime_seconds, float radius, uint32_t rgba);
 void frontend_fx_q2_bubbles(frontend_fx_particles *, qa_builtin_random *, qa_vec3, qa_vec3, double);
 /* Pure fields. Decode into detached candidate state before owner adoption. */
-bool frontend_fx_particles_fields(qa_source_save_io *, frontend_fx_particles *);
 bool frontend_fx_q2_sample(const frontend_fx_q2_particle *, double milliseconds, qa_vec3 *, float *alpha);
 
 #endif

@@ -94,15 +94,6 @@ typedef struct frontend_remote_q2_effects_sample {
     float footsteps;
     const qa_scene_world_input *world_input;
 } frontend_remote_q2_effects_sample;
-typedef struct frontend_remote_q2_effects_refs {
-    void *context;
-    bool (*image_encode)(void *, const qa_scene_image *, uint64_t *, qa_error *);
-    bool (*image_decode)(void *, uint64_t, const qa_scene_image **, qa_error *);
-    bool (*actor_encode)(void *, qa_actor_id, qa_saved_actor_id *, qa_error *);
-    bool (*actor_decode)(void *, qa_saved_actor_id, qa_actor_id *, qa_error *);
-    bool (*light_encode)(void *, uint64_t identity, uint64_t *, qa_error *);
-    bool (*light_decode)(void *, uint64_t saved, uint64_t *, qa_error *);
-} frontend_remote_q2_effects_refs;
 
 bool frontend_remote_q2_effects_color(const char *, uint32_t *rgba);
 
@@ -180,8 +171,4 @@ bool frontend_remote_q2_effects_draw(frontend_remote_q2_effects *,
 bool frontend_remote_q2_effects_entity_beam(frontend_remote_q2_effects *,
     const qa_scene_view *, qa_vec3 start, qa_vec3 end, uint32_t packed_colors,
     int32_t width, qa_scene_frame *, qa_error *);
-bool frontend_remote_q2_effects_checkpoint(const frontend_remote_q2_effects *,
-    const frontend_remote_q2_effects_refs *, qa_buffer *, qa_error *);
-bool frontend_remote_q2_effects_restore(const frontend_remote_q2_effects_source *,
-    const frontend_remote_q2_effects_refs *, qa_bytes, frontend_remote_q2_effects **, qa_error *);
 #endif

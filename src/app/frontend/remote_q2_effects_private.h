@@ -137,10 +137,6 @@ bool q2fx_controls(frontend_remote_q2_effects *, frontend_remote_q2_effects_cont
 bool q2fx_frame_milliseconds(frontend_remote_q2_effects *, double *, qa_error *);
 qa_vec3 q2fx_random_direction(frontend_remote_q2_effects *);
 bool q2fx_model_admit(frontend_remote_q2_effects *, q2fx_model, qa_error *);
-bool q2fx_state_fields(qa_source_save_io *, frontend_remote_q2_effects *, const frontend_remote_q2_effects_refs *);
-bool q2fx_actor_fields(qa_source_save_io *, qa_actor_id *, const frontend_remote_q2_effects_refs *);
-bool q2fx_light_identity_fields(qa_source_save_io *, uint64_t *, const frontend_remote_q2_effects_refs *);
-bool q2fx_semantic_fields(qa_source_save_io *, frontend_remote_q2_effects *, const frontend_remote_q2_effects_refs *);
 bool q2fx_semantic_prepare(frontend_remote_q2_effects *, const frontend_remote_q2_effects_sample *,
     const frontend_remote_q2_effects_controls *, bool, qa_error *);
 bool q2fx_prepare_beams(frontend_remote_q2_effects *, q2fx_beam *, size_t,

@@ -1747,7 +1747,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/selected_character_lifetime.c
     src/app/frontend/selected_effects.c
     src/app/frontend/source_effects.c
-    src/app/frontend/selected_effects_particles_save.c
     src/app/frontend/selected_effects_q1_particles.c
     src/app/frontend/selected_effects_q2_particles.c
     src/app/frontend/source.c
@@ -1810,7 +1809,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/network_q1_skin_commands.c
     src/app/frontend/network_unified.c
     src/app/frontend/remote_q2_effects_entities.c
-    src/app/frontend/remote_q2_effects_save.c
     src/app/frontend/remote_unified_presentation.c
     src/app/frontend/remote_unified_q1.c
     src/app/frontend/remote_unified_q2.c
