@@ -76,10 +76,7 @@ static bool global_reference(struct application_qc_state *engine, const char *na
 }
 static uint32_t source_flags(float value)
 {
-    if (!isfinite(value)) return 0;
-    double bits = fmod(trunc((double)value), 4294967296.0);
-    if (bits < 0) bits += 4294967296.0;
-    return (uint32_t)bits;
+    return (uint32_t)qa_source_float_to_i32(value);
 }
 static bool check_client_eye_reference(struct application_qc_state *engine, int32_t reference,
     qa_vec3 *out, qa_error *error) {

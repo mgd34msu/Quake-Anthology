@@ -1,6 +1,7 @@
 #include "guest_q3_control.h"
 #include "client_outputs.h"
 #include "control_frame.h"
+#include "qa/text.h"
 
 struct application_guest_q3_control {
     q3g_role *role;
@@ -174,12 +175,11 @@ static bool duck(void *context, const qa_qvm_call *call, int32_t *result, qa_err
     bool ok;
     if (scope->fixed_pose) {
         uint32_t flags;
-        double height = fmod(trunc((double)scope->pose.view_height), 4294967296.0);
-        if (height < 0) height += 4294967296.0;
+        uint32_t height = (uint32_t)qa_source_float_to_i32(scope->pose.view_height);
         ok = word(owner, scope->player + 12, &flags, error) &&
             write_word(owner, scope, call, scope->player + 12,
                 (flags & ~UINT32_C(1)) | (scope->fixed_crouched ? 1u : 0u), error) &&
-            write_word(owner, scope, call, scope->player + 164, (uint32_t)height, error) &&
+            write_word(owner, scope, call, scope->player + 164, height, error) &&
             write_bounds(owner, scope, call, scope->pose.bounds, error);
         if (ok) *result = 0;
     } else {

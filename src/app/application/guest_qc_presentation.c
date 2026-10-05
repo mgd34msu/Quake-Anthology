@@ -329,9 +329,7 @@ static bool source_word(double value,uint32_t *out,qa_error *error)
 {
     if(!isfinite(value))
         return application_fail(error,QA_ERROR_FORMAT,"QC UI item word is nonfinite");
-    double word=fmod(trunc(value),4294967296.0);
-    if(word<0) word+=4294967296.0;
-    *out=(uint32_t)word;
+    *out=(uint32_t)qa_source_float_to_i32((float)value);
     return true;
 }
 static bool hipnotic_ui(const qa_qc_program *program)

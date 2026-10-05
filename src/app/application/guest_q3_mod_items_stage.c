@@ -1,6 +1,4 @@
 #include "guest_q3_mod_items_private.h"
-static int32_t wrapped(double value)
-{double n=fmod(trunc(value),4294967296.0);if(n<0)n+=4294967296.0;uint32_t bits=(uint32_t)n;int32_t out;memcpy(&out,&bits,4);return out;}
 static bool word_write(item_actor *a,item_field f,int32_t value,qa_error *e)
 {uint32_t address;uint8_t bytes[4];qa_store_u32le(bytes,(uint32_t)value);return q3items_address(a,f,&address,e)&&qa_qvm_write(a->owner->mod->vm,address,(qa_bytes){bytes,4},e);}
 static bool pointer(application_q3_mod_items *o,const mod_pointer *p,const qa_qvm_call *call,uint32_t *out,qa_error *e)
@@ -75,8 +73,13 @@ bool application_q3_mod_items_apply(application_q3_mod_items_application *a,uint
     a->applied=true;
     const application_q3_mod_value *time=values->values+Q3_MOD_TIME,*elapsed=values->values+Q3_MOD_ELAPSED;
     if(time->kind!=Q3_MOD_VALUE_SCALAR||elapsed->kind!=Q3_MOD_VALUE_SCALAR||!isfinite(time->as.scalar)||
-        !isfinite(elapsed->as.scalar)||elapsed->as.scalar<0||!isfinite(time->as.scalar*1000)||!isfinite(elapsed->as.scalar*1000))return false;
-    return word_write(q3items_actor(a->owner,a->actor),s->clock,wrapped(trunc(time->as.scalar*1000)-trunc(elapsed->as.scalar*1000)),e);
+        !isfinite(elapsed->as.scalar)||elapsed->as.scalar<0)return false;
+    double milliseconds=time->as.scalar*1000, duration=elapsed->as.scalar*1000;
+    if(milliseconds < -0x1p63 || milliseconds >= 0x1p63 || !(duration >= 0 && duration < 0x1p63))
+        return q3mod_fail(e,QA_ERROR_ARGUMENT,"Weapon input clock exceeds native millisecond storage");
+    uint32_t bits=(uint32_t)(int64_t)milliseconds-(uint32_t)(int64_t)duration;
+    int32_t clock;memcpy(&clock,&bits,sizeof(clock));
+    return word_write(q3items_actor(a->owner,a->actor),s->clock,clock,e);
 }
 bool application_q3_mod_items_applies(const application_q3_mod_items *o,uint32_t entry)
 {return o&&o->profile->stage&&entry==o->profile->stage->input_entry;}
@@ -137,10 +140,11 @@ bool application_q3_mod_items_entry_end(application_q3_mod_items_entry **in,bool
         if(entry->request&&!entry->accepted){bool accepted;ok=q3items_tests(a,s->accepted,s->accepted_count,&accepted,e);
             if(ok&&accepted&&a->request.id&&a->status==Q3_ITEM_REQUEST_PENDING){int32_t value;bool present;ok=application_q3_mod_items_requested(o,a->actor,&value,&present,e);if(ok&&present&&value==entry->requested)a->status=Q3_ITEM_REQUEST_ACCEPTED;}}
         if(ok&&entry->dispatcher&&a->request.id&&a->status==Q3_ITEM_REQUEST_PENDING){qa_item_id active;ok=q3items_active(a,&active,e);if(ok){if(active==a->request.item)a->status=Q3_ITEM_REQUEST_ACCEPTED;else if(a->attempted)a->status=Q3_ITEM_REQUEST_REFUSED;}}
-        if(ok&&entry->continuation&&entry->continued){qa_bounds bounds;double height;int32_t ground;
+        if(ok&&entry->continuation&&entry->continued){qa_bounds bounds;double height;int32_t ground, view_height;
             ok=o->services.posture(o->services.context,a->actor,&bounds,&height,&ground,e)&&isfinite(height)&&q3items_current(a,e)&&
+                q3mod_scalar_word(height,MOD_INT32,&view_height,e)&&
                 vector_write(entry,s->minimum,bounds.mins,e)&&vector_write(entry,s->maximum,bounds.maxs,e)&&
-                word_write(a,s->view_height,wrapped(height),e)&&word_write(a,s->ground,ground,e);
+                word_write(a,s->view_height,view_height,e)&&word_write(a,s->ground,ground,e);
             for(size_t i=0;ok&&i<s->call_count;++i){if(!q3items_current(a,e)){ok=cancel(entry,&entry->call,e);break;}
                 application_q3_mod_inputs values={0};bool found=false;double result;
                 ok=application_q3_mod_input_current(o->mod,a->actor,&values,&found,e)&&found&&application_q3_mod_call_run(o->mod,s->calls[i].call,&values,&result,e);

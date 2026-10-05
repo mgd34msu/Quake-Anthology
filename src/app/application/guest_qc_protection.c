@@ -3,6 +3,7 @@
 #include "guest_mod_item_definition.h"
 #include "guest_qc_armor.h"
 #include "qa/qc_observation.h"
+#include "qa/text.h"
 #include <float.h>
 #include <limits.h>
 
@@ -297,9 +298,7 @@ static bool require(protection_channel *row, int32_t *reference, qa_error *error
 }
 static uint32_t source_integer(float value)
 {
-    double word = fmod(trunc((double)value), 4294967296.0);
-    if (word < 0) word += 4294967296.0;
-    return (uint32_t)word;
+    return (uint32_t)qa_source_float_to_i32(value);
 }
 static bool scalar(protection_channel *row, int32_t reference, const qa_qc_definition *field,
     const qa_qc_store_event *before, float *out, qa_error *error)
@@ -324,7 +323,11 @@ static bool read_at(protection_channel *row, int32_t reference, const qa_qc_stor
     if (definition->selection) {
         float value;
         if (!scalar(row, reference, definition->selection, before, &value, error)) return false;
-        if (definition->mask) value = (float)(source_integer(value) & definition->mask);
+        if (definition->mask) {
+            uint32_t bits = source_integer(value) & definition->mask;
+            int32_t integer; memcpy(&integer, &bits, sizeof(integer));
+            value = (float)integer;
+        }
         size_t i = 0;
         while (i < definition->value_count && definition->values[i].value != value) ++i;
         if (i == definition->value_count)
@@ -390,8 +393,9 @@ static bool write_binding(void *context, const qa_armor *next, qa_error *error)
         if (definition->mask) {
             float current;
             if (!scalar(row, reference, definition->selection, NULL, &current, error)) return false;
-            uint32_t bits = (source_integer(current) & ~definition->mask) | (uint32_t)value;
-            value = (float)(int32_t)bits;
+            uint32_t bits = (source_integer(current) & ~definition->mask) | source_integer(value);
+            int32_t integer; memcpy(&integer, &bits, sizeof(integer));
+            value = (float)integer;
             if (source_integer(value) != bits)
                 return fail(error, QA_ERROR_ARGUMENT, "QC protection masked write would discard other source bits");
         }

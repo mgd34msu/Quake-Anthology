@@ -1,15 +1,13 @@
 #include "internal.h"
+#include "qa/text.h"
 
-static uint32_t bits(double value) {
-    if (!isfinite(value))
-        return 0;
-    value = fmod(trunc(value), 4294967296.0);
-    return (uint32_t)(value < 0 ? value + 4294967296.0 : value);
+static uint32_t bits(float value) {
+    return (uint32_t)qa_source_float_to_i32(value);
 }
 uint32_t q2_entity_color(const char *text) {
     if (!strchr(text, ' '))
-        return bits(strtod(text, NULL));
-    double c[4] = {0, 0, 0, 1};
+        return (uint32_t)strtoll(text, NULL, 10);
+    float c[4] = {0, 0, 0, 1};
     const char *p = text;
     for (unsigned i = 0; i < 4; i++) {
         while (isspace((unsigned char)*p))
@@ -17,7 +15,7 @@ uint32_t q2_entity_color(const char *text) {
         if (!*p)
             break;
         char *end;
-        c[i] = strtod(p, &end);
+        c[i] = (float)strtod(p, &end);
         if (end == p) {
             c[i] = 0;
             while (*p && !isspace((unsigned char)*p))
@@ -25,7 +23,7 @@ uint32_t q2_entity_color(const char *text) {
         } else
             p = end;
     }
-    double multiplier = c[0] > 1 || c[1] > 1 || c[2] > 1 || c[3] > 1 ? 1 : 255;
+    float multiplier = c[0] > 1 || c[1] > 1 || c[2] > 1 || c[3] > 1 ? 1 : 255;
     return bits(c[3] * multiplier) | (bits(c[2] * multiplier) << 8) |
            (bits(c[1] * multiplier) << 16) | (bits(c[0] * multiplier) << 24);
 }
@@ -53,7 +51,7 @@ static bool show(qa_q2_game *g, q2_actor *a, qa_error *e) {
         light.resolution = bits(q2_field_float(g, s, "shadowlightresolution", 0));
         light.fade_start = q2_field_float(g, s, "shadowlightstartfadedistance", 0);
         light.fade_end = q2_field_float(g, s, "shadowlightendfadedistance", 0);
-        light.style = (int32_t)bits(q2_field_float(g, s, "shadowlightstyle", -1));
+        light.style = qa_source_float_to_i32(q2_field_float(g, s, "shadowlightstyle", -1));
         qa_actor_id style;
         if (q2_map_find(g, NULL, q2_field_id(g, s, "shadowlightstyletarget"), 0, &style)) {
             q2_actor *owner = q2_ent(g, style);

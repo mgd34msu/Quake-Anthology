@@ -1,4 +1,5 @@
 #include "guest_q3_mod_private.h"
+#include "qa/text.h"
 
 typedef struct store_delivery {
     struct store_delivery *next;
@@ -38,13 +39,6 @@ static bool read_scalar(application_q3_mod *o, uint32_t address, mod_scalar enco
     if (!isfinite(value)) return q3mod_fail(e,QA_ERROR_FORMAT,"Original protection storage is nonfinite");
     *out=value; return true;
 }
-static uint32_t source_integer(double value)
-{
-    if (!isfinite(value)) return 0;
-    double integer=fmod(trunc(value),4294967296.0);
-    if (integer<0) integer+=4294967296.0;
-    return (uint32_t)integer;
-}
 static bool read_at(mod_actor_channel *c, uint32_t count_address, uint32_t selection_address,
     qa_armor *out, qa_error *e)
 {
@@ -55,7 +49,11 @@ static bool read_at(mod_actor_channel *c, uint32_t count_address, uint32_t selec
         if (!qa_qvm_read(o->vm,selection_address,bytes,sizeof(bytes),e)) return false;
         double value=d->selection.field.encoding==MOD_INT32?
             (double)qa_load_i32le(bytes):qa_load_f32le(bytes);
-        if (d->selection.masked) value=source_integer(value)&d->selection.mask;
+        if (d->selection.masked) {
+            uint32_t bits=d->selection.field.encoding==MOD_INT32?
+                (uint32_t)qa_load_i32le(bytes):(uint32_t)qa_source_float_to_i32(qa_load_f32le(bytes));
+            value=bits&d->selection.mask;
+        }
         size_t i=0; while (i<d->selection.count && d->selection.values[i].value!=value) ++i;
         if (i==d->selection.count) return q3mod_fail(e,QA_ERROR_FORMAT,"Original protection selection is undeclared");
         selected=d->selection.values[i].selected;

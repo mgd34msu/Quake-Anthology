@@ -437,14 +437,14 @@ bool application_qc_project_declared(struct application_qc_state *engine, qa_qc_
             ok = qa_qc_entity_float(vm, access->reference, def->offset, &previous, error) && isfinite(previous);
             uint32_t bits = 0;
             if (ok) {
-                double wrapped = fmod(trunc((double)previous), 4294967296.0); if (wrapped < 0) wrapped += 4294967296.0;
-                bits = (uint32_t)wrapped & field->private_mask;
+                bits = (uint32_t)qa_source_float_to_i32(previous) & field->private_mask;
                 if (client) bits |= 8u | (traits.no_target ? 128u : 0u);
                 if (client && field->grounded) {
                     ok = qa_world_body_read(engine->world, access->binding.actor, &body, error);
                     if (ok && body.ground.registry) bits |= 512u;
                 }
-                value.value.number = (float)bits;
+                int32_t integer; memcpy(&integer, &bits, sizeof(integer));
+                value.value.number = (float)integer;
             }
             break;
         }
