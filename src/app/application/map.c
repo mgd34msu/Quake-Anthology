@@ -1044,21 +1044,64 @@ static bool q1_begin_map(application_provider *provider,
     return true;
 }
 
-static bool q1_spawn_entity(application_provider *provider,
-                            const qa_entities *entities, size_t index,
-                            qa_arena *arena, qa_q1_wire_binding *binding, qa_error *error)
+static application_provider *active_provider_named(qa_application *application,
+                                                    const char *name)
 {
-    uint32_t source_slot;
-    if (!qa_q1_wire_authored_allocate(provider->state.q1, index, &source_slot, error))
-        return false;
-    *binding = (qa_q1_wire_binding){.source_slot = source_slot};
-    qa_bytes authored_classname;
-    if (!qa_entity_value(entities, index, "classname", &authored_classname))
-        return application_fail(error, QA_ERROR_FORMAT,
-                                "Q1 map entity has no classname");
-    char *classname = arena_text(arena, authored_classname, error);
-    if (classname == NULL)
-        return false;
+    if (name == NULL)
+        return NULL;
+    for (size_t index = 0; index < application->provider_count; ++index) {
+        application_provider *provider = application->providers[index];
+        if (provider != NULL && provider->attached && provider->launch != NULL &&
+            strcmp(provider->launch->selection.instance, name) == 0)
+            return provider;
+    }
+    return NULL;
+}
+
+static bool monster_route(application_provider *map_provider,
+                             const qa_launch_choices *choices,
+                             const char *authored,
+                             application_provider **provider_out,
+                             const char **classname_out, bool *monster_out,
+                             qa_error *error)
+{
+    *provider_out = map_provider;
+    *classname_out = authored;
+    *monster_out = strncmp(authored, "monster_", 8) == 0;
+    const qa_launch_monster *selection = NULL, *fallback = NULL;
+    for (size_t index = 0; index < choices->monster_count; ++index) {
+        const qa_launch_monster *candidate = &choices->monsters[index];
+        if (!*candidate->authored_classname) fallback = candidate;
+        if (!strcmp(candidate->authored_classname, authored)) { selection = candidate; break; }
+    }
+    if (!selection && *monster_out) selection = fallback;
+    if (selection && !selection->map_defined) {
+        application_provider *selected = active_provider_named(
+            map_provider->application, selection->instance);
+        if (selected == NULL)
+            return application_fail(error, QA_ERROR_NOT_FOUND,
+                                    "selected monster provider is absent");
+        *provider_out = selected;
+        *classname_out = selection->classname;
+        *monster_out = true;
+    }
+    if (*classname_out == NULL || (*classname_out)[0] == '\0')
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "selected monster classname is empty");
+    return true;
+}
+
+static bool native_entity_spawn(application_provider *map_provider,
+    application_provider *actor_provider, const char *authored,
+    const char *selected_classname, bool monster, const qa_entities *entities,
+    size_t index, bool has_source, uint32_t source_slot, qa_arena *arena, qa_actor_id *out,
+    qa_error *error);
+
+static bool q1_spawn_entity(application_provider *provider,
+    const qa_entities *entities, size_t index, qa_arena *arena,
+    const char *classname, bool has_source, uint32_t source_slot,
+    qa_actor_id *out, qa_error *error)
+{
     qa_q1_map_fields fields = {0};
     qa_q1_boss_fields boss = {0};
     const char *target, *targetname, *killtarget, *message;
@@ -1121,7 +1164,7 @@ static bool q1_spawn_entity(application_provider *provider,
         .killtarget = killtarget,
         .message = message,
         .source_slot = source_slot,
-        .has_source = true,
+        .has_source = has_source,
         .map_fields = &fields,
         .boss_fields = &boss,
     };
@@ -1215,29 +1258,18 @@ static bool q1_spawn_entity(application_provider *provider,
                     error))
         return false;
 
-    qa_q1_options source_options;
-    double source_seconds;
-    if (!qa_q1_source_respawn_options_read(provider->state.q1, &source_options, &source_seconds, error))
-        return false;
-    bool inhibited = source_options.quakeworld ? (spawn.spawnflags & 2048u) != 0 :
-        source_options.edition == QA_Q1_CLASSIC &&
-        (source_options.deathmatch ? (spawn.spawnflags & 2048u) != 0 :
-            (spawn.spawnflags & (source_options.skill == 0 ? 256u :
-                source_options.skill == 1 ? 512u : 1024u)) != 0);
-    if (inhibited) return qa_q1_wire_slot_free(provider->state.q1, source_slot, error);
     qa_actor_id actor;
     if (!qa_q1_game_spawn(provider->state.q1, &spawn, &actor, error))
         return false;
-    if (!actor.registry && !qa_q1_wire_slot_free(provider->state.q1, source_slot, error))
-        return false;
-    binding->actor = actor;
+    *out = actor;
     if (strcmp(classname, "worldspawn") == 0 && actor.registry)
         provider->application->physics->world_actor = actor;
     return true;
 }
 
 static bool q1_spawn_map(application_provider *provider,
-                         const qa_entities *entities, application_player_travel *travel, qa_error *error)
+    const qa_launch_choices *choices, const qa_entities *entities,
+    application_player_travel *travel, qa_error *error)
 {
     if (!entities->count || sizeof(qa_q1_wire_binding) > SIZE_MAX / entities->count)
         return application_fail(error, QA_ERROR_MEMORY, "Q1 authored binding extent is exhausted");
@@ -1246,17 +1278,41 @@ static bool q1_spawn_map(application_provider *provider,
         return application_fail(error, QA_ERROR_MEMORY, "cannot retain actual Q1 authored spawn results");
     qa_arena arena;
     qa_arena_init(&arena, 4096);
+    qa_q1_options source;
+    double seconds;
     bool ok = true;
-    for (size_t index = 0; index < entities->count; ++index) {
+    for (size_t index = 0; ok && index < entities->count; ++index) {
         qa_arena_reset(&arena);
-        if (!q1_spawn_entity(provider, entities, index, &arena, &bindings[index], error)) {
+        qa_q1_wire_binding *binding = bindings + index;
+        qa_bytes name;
+        uint32_t flags;
+        if (!qa_q1_wire_authored_allocate(provider->state.q1, index, &binding->source_slot, error) ||
+            !qa_entity_value(entities, index, "classname", &name) ||
+            !entity_u32(entities, index, "spawnflags", 0, &flags, error) ||
+            !qa_q1_source_respawn_options_read(provider->state.q1, &source, &seconds, error)) {
+            if (!error || !error->message[0])
+                application_fail(error, QA_ERROR_FORMAT, "Q1 map entity has no classname");
             ok = false;
             break;
         }
+        bool inhibited = source.quakeworld ? (flags & 2048u) != 0 :
+            source.edition == QA_Q1_CLASSIC &&
+            (source.deathmatch ? (flags & 2048u) != 0 :
+                (flags & (source.skill == 0 ? 256u : source.skill == 1 ? 512u : 1024u)) != 0);
+        if (inhibited) {
+            ok = qa_q1_wire_slot_free(provider->state.q1, binding->source_slot, error);
+            continue;
+        }
+        const char *authored = arena_text(&arena, name, error), *classname;
+        application_provider *selected;
+        bool monster;
+        ok = authored && monster_route(provider, choices, authored, &selected, &classname, &monster, error) &&
+            native_entity_spawn(provider, selected, authored, classname, monster,
+                entities, index, true, binding->source_slot, &arena, &binding->actor, error);
+        if (ok && (!binding->actor.registry || selected != provider))
+            ok = qa_q1_wire_slot_free(provider->state.q1, binding->source_slot, error);
     }
     qa_arena_destroy(&arena);
-    qa_q1_options source;
-    double seconds;
     ok = ok && qa_q1_game_maps_finish(provider->state.q1, error) &&
         qa_q1_source_respawn_options_read(provider->state.q1, &source, &seconds, error) &&
         application_players_q1_points(travel, source.max_clients, bindings, entities->count, error) &&
@@ -1518,65 +1574,6 @@ static qa_q2_entity_services q2_entity_services(application_provider *provider,
     };
 }
 
-static application_provider *active_provider_named(qa_application *application,
-                                                    const char *name)
-{
-    if (name == NULL)
-        return NULL;
-    for (size_t index = 0; index < application->provider_count; ++index) {
-        application_provider *provider = application->providers[index];
-        if (provider != NULL && provider->attached && provider->launch != NULL &&
-            strcmp(provider->launch->selection.instance, name) == 0)
-            return provider;
-    }
-    return NULL;
-}
-
-static bool monster_route(application_provider *map_provider,
-                             const qa_launch_choices *choices,
-                             const char *authored,
-                             application_provider **provider_out,
-                             const char **classname_out, bool *monster_out,
-                             qa_error *error)
-{
-    *provider_out = map_provider;
-    *classname_out = authored;
-    *monster_out = strncmp(authored, "monster_", 8) == 0;
-    const qa_launch_monster *selection = NULL, *fallback = NULL;
-    for (size_t index = 0; index < choices->monster_count; ++index) {
-        const qa_launch_monster *candidate = &choices->monsters[index];
-        if (!*candidate->authored_classname) fallback = candidate;
-        if (!strcmp(candidate->authored_classname, authored)) { selection = candidate; break; }
-    }
-    if (!selection && *monster_out) selection = fallback;
-    if (selection && !selection->map_defined) {
-        application_provider *selected = active_provider_named(
-            map_provider->application, selection->instance);
-        if (selected == NULL)
-            return application_fail(error, QA_ERROR_NOT_FOUND,
-                                    "selected monster provider is absent");
-        *provider_out = selected;
-        *classname_out = selection->classname;
-        *monster_out = true;
-    }
-    if (*classname_out == NULL || (*classname_out)[0] == '\0')
-        return application_fail(error, QA_ERROR_ARGUMENT,
-                                "selected monster classname is empty");
-    return true;
-}
-
-static bool q2_monster_route(application_provider *map_provider,
-    const qa_launch_choices *choices, const char *authored,
-    application_provider **provider_out, const char **classname_out,
-    bool *monster_out, qa_error *error)
-{
-    if (!monster_route(map_provider, choices, authored, provider_out, classname_out, monster_out, error)) return false;
-    if (*monster_out && (*provider_out)->kind != APPLICATION_PROVIDER_Q2)
-        return application_fail(error, QA_ERROR_UNSUPPORTED,
-                                "selected monster provider has no Q2 authored adapter");
-    return true;
-}
-
 static bool q2_property_id(application_provider *provider,
                            const qa_entities *entities, size_t index,
                            const char *key, qa_string_id *out,
@@ -1589,33 +1586,15 @@ static bool q2_property_id(application_provider *provider,
                              value, out, error);
 }
 
-static bool q2_spawn_fields(application_provider *map_provider,
-                            const qa_launch_choices *choices,
-                            const qa_entities *entities, size_t index,
-                            bool has_source, uint32_t source_slot,
-                            qa_actor_id *out, qa_error *error)
+static bool q2_spawn_native_fields(application_provider *map_provider,
+    application_provider *actor_provider, const char *authored,
+    const char *selected_classname, bool monster, const qa_entities *entities,
+    size_t index, bool has_source, uint32_t source_slot, qa_actor_id *out,
+    qa_error *error)
 {
-    qa_arena arena;
-    qa_arena_init(&arena, 256);
-    qa_bytes authored_classname;
-    if (!qa_entity_value(entities, index, "classname", &authored_classname)) {
-        qa_arena_destroy(&arena);
-        return application_fail(error, QA_ERROR_FORMAT,
-                                "Q2 map entity has no classname");
-    }
-    char *authored = arena_text(&arena, authored_classname, error);
-    if (authored == NULL) {
-        qa_arena_destroy(&arena);
-        return false;
-    }
-    application_provider *actor_provider;
-    const char *selected_classname;
-    bool monster;
-    if (!q2_monster_route(map_provider, choices, authored, &actor_provider,
-                          &selected_classname, &monster, error)) {
-        qa_arena_destroy(&arena);
-        return false;
-    }
+    *out = (qa_actor_id){0};
+    application_provider *entity_provider = map_provider->kind == APPLICATION_PROVIDER_Q2 ?
+        map_provider : actor_provider;
     qa_string_id definition;
     qa_body_state body = {0};
     float angle;
@@ -1630,7 +1609,6 @@ static bool q2_spawn_fields(application_provider *map_provider,
                        &body.velocity, NULL, error) ||
         !entity_float(entities, index, "angle", body.angles.y, &angle,
                        error)) {
-        qa_arena_destroy(&arena);
         return false;
     }
     qa_bytes authored_angles;
@@ -1644,11 +1622,10 @@ static bool q2_spawn_fields(application_provider *map_provider,
             &builtins,
             &(qa_builtin_spawn){.owner = actor_provider->owner,
                                 .definition = definition,
-                                .has_source = has_source,
+                                .has_source = has_source && map_provider == actor_provider,
                                 .source_slot = source_slot,
                                 .body = body},
             &actor, error)) {
-        qa_arena_destroy(&arena);
         return false;
     }
 
@@ -1657,10 +1634,10 @@ static bool q2_spawn_fields(application_provider *map_provider,
         entity_properties(entities, index, &property_count);
     bool handled = false;
     bool ok = qa_q2_entity_spawn(
-        map_provider->state.q2, actor,
+        entity_provider->state.q2, actor,
         &(qa_q2_map_fields){.properties = properties,
                             .count = property_count,
-                            .ordinal = source_slot},
+                            .ordinal = has_source && entity_provider == map_provider ? source_slot : UINT32_MAX},
         &handled, error);
     if (ok && !handled &&
         qa_actors_get(qa_session_actors(map_provider->application->session),
@@ -1682,7 +1659,7 @@ static bool q2_spawn_fields(application_provider *map_provider,
             ok = false;
         } else {
             item.count = count;
-            ok = qa_q2_item_spawn_actor(map_provider->state.q2, actor, &item,
+            ok = qa_q2_item_spawn_actor(entity_provider->state.q2, actor, &item,
                                         &handled, error);
         }
     }
@@ -1729,6 +1706,46 @@ static bool q2_spawn_fields(application_provider *map_provider,
     }
     if (ok)
         *out = actor;
+    return ok;
+}
+
+static bool native_entity_spawn(application_provider *map_provider,
+    application_provider *actor_provider, const char *authored,
+    const char *selected_classname, bool monster, const qa_entities *entities,
+    size_t index, bool has_source, uint32_t source_slot, qa_arena *arena, qa_actor_id *out,
+    qa_error *error)
+{
+    *out = (qa_actor_id){0};
+    if (actor_provider->kind == APPLICATION_PROVIDER_Q2)
+        return q2_spawn_native_fields(map_provider, actor_provider, authored,
+            selected_classname, monster, entities, index, has_source, source_slot, out, error);
+    if (actor_provider->kind != APPLICATION_PROVIDER_Q1)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Selected authored monster has no native Q1 or Q2 constructor");
+    bool ok = q1_spawn_entity(actor_provider, entities, index, arena,
+        selected_classname, has_source && map_provider == actor_provider,
+        source_slot, out, error);
+    if (!ok && out->registry && qa_actors_get(qa_session_actors(map_provider->application->session), *out))
+        (void)qa_session_release(map_provider->application->session, *out, NULL);
+    return ok;
+}
+
+static bool q2_spawn_fields(application_provider *map_provider,
+    const qa_launch_choices *choices, const qa_entities *entities, size_t index,
+    bool has_source, uint32_t source_slot, qa_actor_id *out, qa_error *error)
+{
+    qa_arena arena;
+    qa_arena_init(&arena, 256);
+    qa_bytes name;
+    const char *authored = NULL, *classname = NULL;
+    application_provider *selected = NULL;
+    bool monster = false;
+    bool ok = qa_entity_value(entities, index, "classname", &name);
+    if (!ok) application_fail(error, QA_ERROR_FORMAT, "Q2 map entity has no classname");
+    if (ok) ok = (authored = arena_text(&arena, name, error)) != NULL;
+    if (ok) ok = monster_route(map_provider, choices, authored, &selected, &classname, &monster, error) &&
+        native_entity_spawn(map_provider, selected, authored, classname, monster,
+            entities, index, has_source, source_slot, &arena, out, error);
     qa_arena_destroy(&arena);
     return ok;
 }
@@ -2296,7 +2313,7 @@ bool application_map_publish(qa_application *application,
                 choices->world.map, (uint32_t)(models - 1),
                 (uint32_t)publication->entities.count, error))
             return false;
-        spawned = q1_spawn_map(publication->map_provider,
+        spawned = q1_spawn_map(publication->map_provider, choices,
                             &publication->entities, publication->players, error);
         break;
     }
@@ -2329,6 +2346,15 @@ bool application_map_publish(qa_application *application,
         if (instance == NULL || instance->state != provider)
             return application_fail(error, QA_ERROR_NOT_FOUND,
                                     "map provider has no current launch instance");
+        if (instance->roles & QA_ROLE_BIT(QA_ROLE_MONSTERS)) {
+            if (provider->kind == APPLICATION_PROVIDER_Q1 &&
+                (!qa_q1_game_maps_finish(provider->state.q1, error) ||
+                 !application_native_q1_wire_resources_prepare(provider, error)))
+                return false;
+            if (provider->kind == APPLICATION_PROVIDER_Q2 &&
+                !qa_q2_entities_post_spawn(provider->state.q2, error))
+                return false;
+        }
         if (instance->roles == 0 &&
             !(provider->kind == APPLICATION_PROVIDER_QC && provider->state.qc.qualified))
             continue;

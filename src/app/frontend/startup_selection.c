@@ -466,12 +466,10 @@ static qa_game_family map_family(qa_ui_library *library)
     return p ? p->family : QA_GAME_Q3;
 }
 
-static const char *monster_adapter_unavailable(qa_ui_library *library, const qa_monster_catalog_source *source)
+static const char *monster_adapter_unavailable(qa_ui_library *library)
 {
-    qa_game_family family = map_family(library);
-    if (family == QA_GAME_Q3) return "This map has no supported authored monster roster";
-    return family == QA_GAME_Q1 || (source && source->family != QA_GAME_Q2) ?
-        "This monster source has no admitted native map replacement adapter" : NULL;
+    return map_family(library) == QA_GAME_Q3 ?
+        "This map has no supported authored monster roster" : NULL;
 }
 
 static bool monster_choices(frontend_startup_selection *s, qa_ui_library *library,
@@ -494,7 +492,7 @@ static bool monster_choices(frontend_startup_selection *s, qa_ui_library *librar
     for (size_t i = 0; i < count; ++i) {
         const qa_monster_catalog_source *source = sources + i;
         const qa_product *p = monster_product(library, source);
-        const char *reason = unavailable(p), *adapter = monster_adapter_unavailable(library, source);
+        const char *reason = unavailable(p), *adapter = monster_adapter_unavailable(library);
         if (!reason) reason = adapter;
         const char *edition = source->edition == QA_EDITION_CLASSIC ? "classic" : "rerelease";
         const char *family = source->family == QA_GAME_Q1 ? "Q1" : "Q2";
@@ -617,6 +615,11 @@ bool frontend_startup_selection_choices(void *context, qa_ui_library *library, q
                 custom |= !c->monsters[i].map_defined && strcmp(c->monsters[i].instance, "startup:monster-source");
             if (custom) *selected = "custom";
             ok = s->choices[0].label && append(s, "custom", "Custom roster", map_family(library) == QA_GAME_Q3 ? "This map has no supported authored monster roster" : NULL, e);
+            if (ok) {
+                qa_ui_library_choice custom_choice = s->choices[s->count - 1];
+                memmove(s->choices + 2, s->choices + 1, (s->count - 2) * sizeof(*s->choices));
+                s->choices[1] = custom_choice;
+            }
         }
         break;
     }

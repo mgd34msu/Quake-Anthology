@@ -14,7 +14,6 @@ typedef struct stock_product {
 #define Q3(key,title,campaign,base,edition) \
     {key,title,campaign,"q3a/" campaign,base,NULL,QA_GAME_Q3,edition,1}
 static const stock_product stock[] = {
-    Q1("q1-demo-id1", "Quake Shareware", "id1", "q1/id1", NULL, QA_EDITION_DEMO, 1, "maps/e1m1.bsp"),
     Q1("q1-classic-id1", "Quake", "id1", "q1/id1", NULL, QA_EDITION_CLASSIC, 2, NULL),
     Q1("q1-classic-hipnotic", "Scourge of Armagon", "hipnotic", "q1/hipnotic", "q1-classic-id1", QA_EDITION_CLASSIC, 1, NULL),
     Q1("q1-classic-rogue", "Dissolution of Eternity", "rogue", "q1/rogue", "q1-classic-id1", QA_EDITION_CLASSIC, 1, NULL),
