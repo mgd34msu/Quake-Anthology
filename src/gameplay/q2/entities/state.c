@@ -208,7 +208,8 @@ bool qa_q2_game_target_binding(qa_q2_game *g, qa_actor_id id, qa_target_binding 
                                .field = field,
                                .set_targetname = set_targetname,
                                .set_target = set_target,
-                               .set_delay = set_delay};
+                               .set_delay = set_delay,
+                               .before_remove = q2_entity_before_remove};
     return true;
 }
 bool q2_entity_bind(qa_q2_game *g, q2_actor *a, qa_error *e) {

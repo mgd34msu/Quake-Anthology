@@ -12,7 +12,8 @@ static qa_vec3 vector_angles(qa_vec3 direction) {
 }
 static float snap(float value) { return truncf(value * 8 + (value > 0 ? .5f : -.5f)) * .125f; }
 static q2_actor *master(qa_q2_game *g, q2_actor *a) {
-    q2_actor *root = q2_ent(g, a->entity->team_master);
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
+    q2_actor *root = q2_ent(g, qa_actor_reference_resolve(actors, a->entity->team_master));
     return root ? root : a;
 }
 static bool fire(qa_q2_game *g, q2_actor *a, q2_actor *driver, const qa_body_state *body,
@@ -47,6 +48,7 @@ static bool fire(qa_q2_game *g, q2_actor *a, q2_actor *driver, const qa_body_sta
                            e);
 }
 static bool breach_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     q2_turret *t = s->turret;
     qa_body_state body;
@@ -74,7 +76,7 @@ static bool breach_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
               0);
     a->physics.motion = QA_PHYSICS_PUSH;
     q2_actor *root = master(g, a);
-    for (q2_actor *part = root; part; part = q2_ent(g, part->entity->team_next)) {
+    for (q2_actor *part = root; part; part = q2_ent(g, qa_actor_reference_resolve(actors, part->entity->team_next))) {
         part->physics.angular_velocity.y = a->physics.angular_velocity.y;
         part->physics.motion = QA_PHYSICS_PUSH;
     }
@@ -109,6 +111,7 @@ static bool breach_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return q2_entity_schedule(g, a, Q2ET_TURRET, frame);
 }
 static bool driver_link(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     q2_turret *t = s->turret;
     qa_actor_id found;
@@ -120,19 +123,19 @@ static bool driver_link(qa_q2_game *g, q2_actor *a, qa_error *e) {
     t->breach = found;
     breach->entity->owner = a->id;
     q2_actor *root = master(g, breach), *last = root;
-    while (q2_actor_live(g, last->entity->team_next)) {
-        q2_actor *next = q2_ent(g, last->entity->team_next);
+    while (q2_actor_live(g, qa_actor_reference_resolve(actors, last->entity->team_next))) {
+        q2_actor *next = q2_ent(g, qa_actor_reference_resolve(actors, last->entity->team_next));
         if (!next || next == a)
             break;
         last = next;
     }
     root->entity->owner = a->id;
-    root->entity->team_master = root->id;
-    if (root != a && !qa_actor_id_equal(last->entity->team_next, a->id)) {
-        last->entity->team_next = a->id;
-        s->team_next = (qa_actor_id){0};
+    root->entity->team_master = qa_actor_reference_from_actor(actors, g->options.owner, root->id);
+    if (root != a && !qa_actor_id_equal(qa_actor_reference_resolve(actors, last->entity->team_next), a->id)) {
+        last->entity->team_next = qa_actor_reference_from_actor(actors, g->options.owner, a->id);
+        s->team_next = (qa_actor_reference){0};
     }
-    s->team_master = root->id;
+    s->team_master = qa_actor_reference_from_actor(actors, g->options.owner, root->id);
     qa_body_state body, target;
     if (!qa_world_body_read(g->services.world, a->id, &body, e) ||
         !qa_world_body_read(g->services.world, found, &target, e))
@@ -197,6 +200,7 @@ bool q2_turret_think(qa_q2_game *g, q2_actor *a, q2_entity_think think, qa_error
     return true;
 }
 bool q2_turret_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     const char *name = qa_strings_cstr(qa_session_strings(g->services.session), s->classname);
     *handled = true;
@@ -212,7 +216,7 @@ bool q2_turret_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     }
     if (s->kind == Q2E_TURRET_DRIVER && g->options.deathmatch)
         return qa_session_release(g->services.session, a->id, e);
-    s->team_master = a->id;
+    s->team_master = qa_actor_reference_from_actor(actors, g->options.owner, a->id);
     if (s->kind != Q2E_TURRET_BASE) {
         s->turret = calloc(1, sizeof(*s->turret));
         if (!s->turret) {
@@ -273,14 +277,10 @@ bool qa_q2_turret_driver_detach(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         breach->entity->owner = (qa_actor_id){0};
         q2_actor *root = master(g, breach);
         root->entity->owner = (qa_actor_id){0};
-        for (q2_actor *m = root; m; m = q2_ent(g, m->entity->team_next))
-            if (qa_actor_id_equal(m->entity->team_next, id)) {
-                m->entity->team_next = s->team_next;
-                break;
-            }
+        q2_entity_team_unlink(g, a);
     }
     s->turret->breach = (qa_actor_id){0};
-    s->team_master = s->team_next = (qa_actor_id){0};
+    s->team_master = s->team_next = (qa_actor_reference){0};
     a->physics.flags &= ~(uint32_t)QA_PHYSICS_TEAM_SLAVE;
     a->physics.angular_velocity = qa_v3(0, 0, 0);
     a->physics.motion = QA_PHYSICS_STEP;

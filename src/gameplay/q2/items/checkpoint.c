@@ -31,7 +31,6 @@ bool qa_q2_item_capture(qa_q2_game *g, qa_actor_id id, qa_q2_item_checkpoint *ou
         s.definition = v->definition ? v->definition->classname_id : 0;
         s.spawn = v->spawn;
         s.spawn.classname = NULL;
-        s.spawn.team_master = s.spawn.team_next = (qa_actor_id){0};
         s.due_ns = v->due_ns;
         s.expires_ns = v->expires_ns;
         s.think = (uint32_t)v->think;
@@ -47,9 +46,6 @@ bool qa_q2_item_capture(qa_q2_game *g, qa_actor_id id, qa_q2_item_checkpoint *ou
             return false;
         s.picked_slots = copy;
         s.owner = v->owner;
-        if (!q2_save_reference(g, v->spawn.team_master, &s.team_master, e) ||
-            !q2_save_reference(g, v->spawn.team_next, &s.team_next, e))
-            goto fail;
         if (v->companion) {
             q2_companion *c = v->companion;
             s.companion = (qa_q2_companion_checkpoint){.kind = (uint32_t)c->kind,
@@ -92,7 +88,7 @@ fail:
 }
 static bool valid_item(qa_q2_game *g, const qa_q2_item_checkpoint *s, qa_error *e) {
     if ((s->temporary && s->think != Q2_ITEM_DROPPED) || s->think > Q2_ITEM_MEGA ||
-        s->spawn.classname || s->spawn.team_master.registry || s->spawn.team_next.registry ||
+        s->spawn.classname ||
         !isfinite(s->spawn.delay) || !q2_saved_visual(g, &s->visual) ||
         !q2_saved_resource(g, s->definition) || !q2_saved_resource(g, s->spawn.target) ||
         !q2_saved_resource(g, s->spawn.killtarget) || !q2_saved_resource(g, s->spawn.message) ||
@@ -160,9 +156,6 @@ bool qa_q2_item_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_item_checkpoi
             goto fail;
         v->picked_slots = copy;
         v->owner = s->owner;
-        if (!q2_resolve_reference(g, s->team_master, &v->spawn.team_master, e) ||
-            !q2_resolve_reference(g, s->team_next, &v->spawn.team_next, e))
-            goto fail;
         if (s->companion.kind != Q2_COMPANION_NONE) {
             v->companion = calloc(1, sizeof(*v->companion));
             if (!v->companion)

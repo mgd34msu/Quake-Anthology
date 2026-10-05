@@ -77,6 +77,7 @@ static bool platform_trigger(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return q2_entity_solid(g, trigger, QA_PHYSICS_TRIGGER, e);
 }
 static bool platform_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     q2_mover *m = s->mover;
     bool second = is_second(g, a, "func_plat2");
@@ -98,7 +99,7 @@ static bool platform_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     m->end = b.origin;
     m->start = b.origin;
     m->start.z -= height - (second ? lip : 0);
-    s->team_master = a->id;
+    s->team_master = qa_actor_reference_from_actor(actors, g->options.owner, a->id);
     b.angles = qa_v3(0, 0, 0);
     s->usable = true;
     s->visual.visible = true;
@@ -156,6 +157,7 @@ static bool platform_operate(qa_q2_game *g, q2_actor *trigger, qa_actor_id who, 
     return q2_entity_schedule(g, a, s->style == 1 ? Q2ET_PLAT_UP : Q2ET_PLAT_DOWN, pause);
 }
 static bool platform_finished(qa_q2_game *g, q2_actor *a, bool top, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     s->mover->phase = top ? 2 : 0;
     if (!platform_sound(g, a, false, e))
@@ -181,7 +183,7 @@ static bool platform_finished(qa_q2_game *g, q2_actor *a, bool top, qa_error *e)
         for (q2_actor *area = g->first_actor; area;) {
             q2_actor *next = area->live_next;
             if (area->projectile.kind == Q2_BAD_AREA &&
-                qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(g->services.session), area->projectile.owner), a->id) &&
+                qa_actor_id_equal(qa_actor_reference_resolve(actors, area->projectile.owner), a->id) &&
                 !qa_session_release(g->services.session, area->id, e))
                 return false;
             if (!q2_actor_live(g, a->id))
@@ -191,6 +193,7 @@ static bool platform_finished(qa_q2_game *g, q2_actor *a, bool top, qa_error *e)
     return q2_entity_targets(g, a, a->id, false, e);
 }
 static bool secret_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     q2_mover *m = s->mover;
     bool second = is_second(g, a, "func_door_secret2");
@@ -222,7 +225,7 @@ static bool secret_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     }
     b.angles = qa_v3(0, 0, 0);
     a->physics.motion = QA_PHYSICS_PUSH;
-    s->team_master = a->id;
+    s->team_master = qa_actor_reference_from_actor(actors, g->options.owner, a->id);
     if (s->damage == 0)
         s->damage = 2;
     if (s->wait == 0)
@@ -261,6 +264,7 @@ static bool secret_next(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return false;
 }
 static bool secret_use(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     bool second = is_second(g, a, "func_door_secret2");
     if (second && (a->physics.flags & QA_PHYSICS_TEAM_SLAVE))
@@ -277,13 +281,13 @@ static bool secret_use(qa_q2_game *g, q2_actor *a, qa_error *e) {
         q2_mover *m = q2_mover_state(part, e);
         if (!m)
             return false;
-        qa_actor_id next = part->entity->team_next;
+        qa_actor_reference next = part->entity->team_next;
         m->stage = 0;
         if (!q2_move_start(g, part, m->intermediate, false, Q2MD_SECRET_NEXT, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
-        part = second ? q2_ent(g, next) : NULL;
+        part = second ? q2_ent(g, qa_actor_reference_resolve(actors, next)) : NULL;
     }
     return second || q2_mover_portals(g, a, true, e);
 }
@@ -645,6 +649,7 @@ bool q2_brush_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e
                                 : s->mover->phase != 3 || platform_move(g, a, true, e);
 }
 bool q2_brush_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *o, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     if (a->entity->kind != Q2E_SECRET_DOOR || o->result.reaction != QA_REACTION_DEATH)
         return true;
     qa_combat_state health;
@@ -657,7 +662,7 @@ bool q2_brush_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *o, q
     if (!qa_combat_set_traits(g->services.combat, a->id, &health, e))
         return false;
     if (second && (a->physics.flags & QA_PHYSICS_TEAM_SLAVE)) {
-        q2_actor *master = q2_ent(g, a->entity->team_master);
+        q2_actor *master = q2_ent(g, qa_actor_reference_resolve(actors, a->entity->team_master));
         if (master && qa_combat_read_traits(g->services.combat, master->id, &health, e) &&
             health.can_take_damage)
             return q2_brush_reaction(g, master, o, e);

@@ -246,6 +246,7 @@ q2_mover *q2_mover_state(q2_actor *a, qa_error *e) {
 }
 bool q2_move_start(qa_q2_game *g, q2_actor *a, qa_vec3 destination, bool angular, q2_move_done done,
                    qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     if (!qa_vec_finite(destination) || s->speed <= 0 || s->accel <= 0 || s->decel <= 0 ||
         !g->frame_ns) {
@@ -285,7 +286,7 @@ bool q2_move_start(qa_q2_game *g, q2_actor *a, qa_vec3 destination, bool angular
         }
         return schedule_ns(g, a, Q2ET_MOVE_ACCEL, g->frame_ns);
     }
-    qa_actor_id owner = s->team_master.registry ? s->team_master : a->id;
+    qa_actor_id owner = qa_actor_reference_present(s->team_master) ? qa_actor_reference_resolve(actors, s->team_master) : a->id;
     return qa_actor_id_equal(qa_q2_current_actor(g), owner)
                ? begin(g, a, e)
                : schedule_ns(g, a, Q2ET_MOVE_BEGIN, g->frame_ns);

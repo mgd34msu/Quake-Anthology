@@ -111,6 +111,8 @@ static bool break_apart(qa_q2_game *g, q2_actor *a, qa_actor_id inflictor, qa_ac
         if (!q2_actor_live(g, a->id))
             return true;
     }
+    if (rerelease || g->options.product == QA_Q2_ROGUE)
+        q2_entity_team_unlink(g, a);
     if (!q2_entity_targets(g, a, attacker, false, e))
         return false;
     if (rerelease && q2_actor_live(g, a->id)) {

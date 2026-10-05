@@ -32,6 +32,10 @@ typedef struct qa_actor_reference {
 
 qa_actor_reference qa_actor_reference_lifetime(qa_actor_id);
 qa_actor_reference qa_actor_reference_source(qa_actor_owner, uint32_t);
+/* A Source field follows physical reuse only within its own owner. Foreign
+ * actors and already-retired IDs retain their exact lifetime identity. */
+qa_actor_reference qa_actor_reference_from_actor(const qa_actor_registry *, qa_actor_owner,
+                                                qa_actor_id);
 bool qa_actor_reference_present(qa_actor_reference);
 bool qa_actor_reference_equal(qa_actor_reference, qa_actor_reference);
 qa_actor_id qa_actor_reference_resolve(const qa_actor_registry *, qa_actor_reference);

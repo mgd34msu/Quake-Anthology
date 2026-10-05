@@ -56,13 +56,10 @@ bool qa_q2_entity_capture(qa_q2_game *g, qa_actor_id id, qa_q2_entity_checkpoint
     if (!q2_save_reference(g, s->activator, &saved.activator, e) ||
         !q2_save_reference(g, s->owner, &saved.owner, e) ||
         !q2_save_reference(g, s->enemy, &saved.enemy, e) ||
-        !q2_save_reference(g, s->goal, &saved.goal, e) ||
-        !q2_save_reference(g, s->team_master, &saved.master, e) ||
-        !q2_save_reference(g, s->team_next, &saved.next, e))
+        !q2_save_reference(g, s->goal, &saved.goal, e))
         goto fail;
     saved.value.activator = saved.value.owner = saved.value.enemy = saved.value.goal =
         (qa_actor_id){0};
-    saved.value.team_master = saved.value.team_next = (qa_actor_id){0};
     if (s->mover) {
         if (!q2_save_reference(g, s->mover->destination, &saved.destination, e))
             goto fail;
@@ -102,8 +99,9 @@ static bool valid_mover(const q2_mover *m) {
 static bool valid_state(qa_q2_game *g, const q2_entity_state *s, qa_error *e) {
     if ((unsigned)s->kind > Q2E_DELAYED_USE || (unsigned)s->think > Q2ET_LIGHT_FLICKER ||
         (unsigned)s->scenery > Q2S_MAL_LASER || s->dispatching || s->activator.registry ||
-        s->owner.registry || s->enemy.registry || s->goal.registry || s->team_master.registry ||
-        s->team_next.registry || (unsigned)s->collision.owner.kind > QA_ACTOR_REFERENCE_SOURCE ||
+        s->owner.registry || s->enemy.registry || s->goal.registry ||
+        (unsigned)s->team_master.kind > QA_ACTOR_REFERENCE_SOURCE ||
+        (unsigned)s->team_next.kind > QA_ACTOR_REFERENCE_SOURCE || (unsigned)s->collision.owner.kind > QA_ACTOR_REFERENCE_SOURCE ||
         (unsigned)s->collision.role > QA_COLLISION_BOTH ||
         (unsigned)s->collision.shape > QA_SHAPE_CAPSULE ||
         (s->collision.family && s->collision.family != QA_COLLISION_Q2) || !s->classname ||
@@ -192,9 +190,7 @@ bool qa_q2_entity_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_entity_chec
     if (!q2_resolve_reference(g, saved->activator, &s->activator, e) ||
         !q2_resolve_reference(g, saved->owner, &s->owner, e) ||
         !q2_resolve_reference(g, saved->enemy, &s->enemy, e) ||
-        !q2_resolve_reference(g, saved->goal, &s->goal, e) ||
-        !q2_resolve_reference(g, saved->master, &s->team_master, e) ||
-        !q2_resolve_reference(g, saved->next, &s->team_next, e))
+        !q2_resolve_reference(g, saved->goal, &s->goal, e))
         goto fail;
     if (s->mover && !q2_resolve_reference(g, saved->destination, &s->mover->destination, e))
         goto fail;
@@ -398,8 +394,10 @@ bool qa_q2_entities_validate_links(qa_q2_game *g, qa_error *e) {
     }
     for (q2_actor *a = g->first_actor; a; a = a->live_next) {
         for (unsigned chain = 0; chain < 2; ++chain) {
-            qa_actor_id next = chain == 0 ? (a->entity ? a->entity->team_next : (qa_actor_id){0})
-                                          : (a->item ? a->item->spawn.team_next : (qa_actor_id){0});
+            qa_actor_reference link = chain == 0 ?
+                (a->entity ? a->entity->team_next : (qa_actor_reference){0}) :
+                (a->item ? a->item->spawn.team_next : (qa_actor_reference){0});
+            qa_actor_id next = qa_actor_reference_resolve(qa_session_actors(g->services.session), link);
             size_t visited = 0;
             while (q2_actor_live(g, next)) {
                 q2_actor *part = q2_actor_get(g, next, false, NULL);
@@ -408,8 +406,10 @@ bool qa_q2_entities_validate_links(qa_q2_game *g, qa_error *e) {
                     qa_error_set(e, QA_ERROR_FORMAT, a->id.slot, "Invalid Q2 entity team chain");
                     return false;
                 }
-                next = chain == 0 ? (part->entity ? part->entity->team_next : (qa_actor_id){0})
-                                  : (part->item ? part->item->spawn.team_next : (qa_actor_id){0});
+                link = chain == 0 ?
+                    (part->entity ? part->entity->team_next : (qa_actor_reference){0}) :
+                    (part->item ? part->item->spawn.team_next : (qa_actor_reference){0});
+                next = qa_actor_reference_resolve(qa_session_actors(g->services.session), link);
             }
         }
     }

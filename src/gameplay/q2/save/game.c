@@ -315,7 +315,8 @@ bool qa_q2_game_restore_finish(qa_q2_game *g, qa_error *e) {
                 actual.context != expected.context || actual.source != expected.source ||
                 actual.read != expected.read || actual.use != expected.use ||
                 actual.field != expected.field || actual.set_targetname != expected.set_targetname ||
-                actual.set_target != expected.set_target || actual.set_delay != expected.set_delay) {
+                actual.set_target != expected.set_target || actual.set_delay != expected.set_delay ||
+                actual.before_remove != expected.before_remove) {
                 qa_error_set(e, QA_ERROR_FORMAT, a->id.slot, "Q2 authored target binding was not restored");
                 return false;
             }

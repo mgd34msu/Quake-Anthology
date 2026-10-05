@@ -61,6 +61,8 @@ typedef struct qa_target_binding {
     bool (*set_targetname)(void *, qa_actor_id, qa_string_id, qa_error *);
     bool (*set_target)(void *, qa_actor_id, qa_string_id, qa_error *);
     bool (*set_delay)(void *, qa_actor_id, float seconds, qa_error *);
+    /* Source killtarget removal may splice an actor out of its native team. */
+    bool (*before_remove)(void *, qa_actor_id, qa_error *);
     /* Native source shader targets retain their own AddRemap registry and
      * source clock. This callback belongs to the exact actor binding. */
     bool (*remap_shader)(void *, qa_actor_id source, qa_string_id old_name,

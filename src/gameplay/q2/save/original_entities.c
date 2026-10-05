@@ -265,12 +265,17 @@ static bool entity_strings(qa_q2_game *g, q2_original_record_io *io, q2_entity_s
     return true;
 }
 
+static bool entity_team_references(qa_q2_game *g, q2_original_record_io *io, q2_entity_state *s)
+{
+    return q2_original_source_reference(g, io, "teammaster", 564, &s->team_master) &&
+        q2_original_source_reference(g, io, "teamchain", 560, &s->team_next);
+}
+
 static bool entity_references(qa_q2_game *g, q2_original_record_io *io, q2_entity_state *s)
 {
     if (s->kind == Q2E_TURRET_DRIVER)
         return q2_original_reference(g, io, "owner", 256, &s->owner) &&
-            q2_original_reference(g, io, "teammaster", 564, &s->team_master) &&
-            q2_original_reference(g, io, "teamchain", 560, &s->team_next) &&
+            entity_team_references(g, io, s) &&
             q2_original_reference(g, io, "target_ent", 324, &s->turret->breach);
     qa_actor_id *goal = s->kind == Q2E_ELEVATOR ? &s->enemy : &s->goal;
     bool move_target = s->kind == Q2E_ELEVATOR || s->kind == Q2E_CAMERA;
@@ -280,8 +285,7 @@ static bool entity_references(qa_q2_game *g, q2_original_record_io *io, q2_entit
         q2_original_reference(g, io, "enemy", 540, &s->enemy) &&
         q2_original_reference(g, io, "activator", 548, &s->activator) &&
         q2_original_reference(g, io, goal_name, goal_offset, goal) &&
-        q2_original_reference(g, io, "teammaster", 564, &s->team_master) &&
-        q2_original_reference(g, io, "teamchain", 560, &s->team_next) &&
+        entity_team_references(g, io, s) &&
         (!s->mover || q2_original_reference(g, io, "target_ent", 324, &s->mover->destination));
 }
 
@@ -945,8 +949,9 @@ bool q2_original_entity_record(qa_q2_game *g, q2_original_record_io *io, q2_acto
     if (a->client || a->item || a->projectile.kind != Q2_PROJECTILE_NONE) return true;
     bool driver = a->monster && a->monster->definition->species == Q2M_TURRET_DRIVER;
     if (a->monster && !driver) {
-        if (!io->reading || io->references_only) return true;
-        return read_entity(g, io, a) && entity_strings(g, io, a->entity);
+        if (io->reading && !io->references_only &&
+            (!read_entity(g, io, a) || !entity_strings(g, io, a->entity))) return false;
+        return !a->entity || entity_team_references(g, io, a->entity);
     }
     if (io->reading && !io->references_only && !read_entity(g, io, a)) return false;
     q2_entity_state *s = a->entity;

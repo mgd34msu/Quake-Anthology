@@ -71,7 +71,8 @@ static bool push_team(qa_q2_game *g, q2_actor *a, qa_error *e) {
             parts[count++] = (qa_physics_push){.actor = part->id,
                 .displacement = qa_vec_scale(body.velocity, seconds),
                 .angular_displacement = qa_vec_scale(part->physics.angular_velocity, seconds)};
-            qa_actor_id next = part->entity ? part->entity->team_next : (qa_actor_id){0};
+            qa_actor_reference link = part->entity ? part->entity->team_next : (qa_actor_reference){0};
+            qa_actor_id next = qa_actor_reference_resolve(qa_session_actors(g->services.session), link);
             part = next.registry ? q2_actor_get(g, next, false, NULL) : NULL;
             if (next.registry && (!part || !part->entity || !part->physics_bound)) {
                 qa_error_set(e, QA_ERROR_FORMAT, leader.slot, "Q2 pusher team lost its source part");

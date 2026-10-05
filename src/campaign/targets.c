@@ -131,10 +131,15 @@ static bool monster_delay(void *opaque, qa_actor_id actor, float seconds, qa_err
     ((target_monster *)opaque)->authored.fields.delay_seconds = seconds;
     return true;
 }
+static bool monster_before_remove(void *opaque, qa_actor_id actor, qa_error *error) {
+    qa_target_binding native = ((target_monster *)opaque)->native;
+    return !native.before_remove || native.before_remove(native.context, actor, error);
+}
 static qa_target_binding monster_binding(target_monster *monster) {
     return (qa_target_binding){.actor = monster->native.actor, .source = monster->authored.source,
         .context = monster, .read = monster_read, .use = monster_use, .field = monster_field,
-        .set_targetname = monster_targetname, .set_target = monster_target, .set_delay = monster_delay};
+        .set_targetname = monster_targetname, .set_target = monster_target, .set_delay = monster_delay,
+        .before_remove = monster_before_remove};
 }
 void qa_targets_monsters_configure(qa_targets *targets, void *context,
     bool (*resolve)(void *, qa_actor_owner, qa_monster_mission *, qa_error *)) {
@@ -587,6 +592,12 @@ static bool use_now(qa_targets *targets, qa_target_use request, qa_error *error)
         if (!snapshot(targets, request.fields.killtarget, &victims, &count, error))
             return false;
         for (size_t i = 0; i < count; ++i) {
+            const qa_target_binding *entry = binding(targets, victims[i]);
+            if (entry && entry->before_remove) {
+                qa_target_binding current = *entry;
+                if (!current.before_remove(current.context, victims[i], error))
+                    return false;
+            }
             if (live(targets, victims[i]) &&
                 !qa_session_release(targets->options.session, victims[i], error))
                 return false;

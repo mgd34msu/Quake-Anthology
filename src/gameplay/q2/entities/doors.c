@@ -24,6 +24,7 @@ bool q2_mover_portals(qa_q2_game *g, q2_actor *a, bool open, qa_error *e) {
     return true;
 }
 static bool sound(qa_q2_game *g, q2_actor *a, bool start, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     bool water = s->kind == Q2E_WATER, button = s->kind == Q2E_BUTTON;
     int sounds = (int)q2_field_float(g, s, "sounds", 0);
@@ -50,7 +51,7 @@ static bool sound(qa_q2_game *g, q2_actor *a, bool start, qa_error *e) {
                             : 3;
     if (attenuation == -1)
         attenuation = 0;
-    if ((!s->team_master.registry || qa_actor_id_equal(s->team_master, a->id)) &&
+    if ((!qa_actor_reference_present(s->team_master) || qa_actor_id_equal(qa_actor_reference_resolve(actors, s->team_master), a->id)) &&
         !q2_entity_sound(g, a, edge, 2, 1, attenuation, 0, e))
         return false;
     return !q2_actor_live(g, a->id) ||
@@ -113,9 +114,10 @@ static bool up(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e) {
            q2_mover_portals(g, a, true, e);
 }
 bool q2_door_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     q2_mover *m = s->mover;
-    if (s->team_master.registry && !qa_actor_id_equal(s->team_master, a->id))
+    if (qa_actor_reference_present(s->team_master) && !qa_actor_id_equal(qa_actor_reference_resolve(actors, s->team_master), a->id))
         return true;
     if (g->options.edition == QA_Q2_RERELEASE && m->angular && (s->spawnflags & 0x10000) &&
         !m->activated) {
@@ -161,7 +163,7 @@ bool q2_door_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e)
         q2_actor *part = q2_ent(g, id);
         if (!part)
             break;
-        qa_actor_id next = part->entity->team_next;
+        qa_actor_reference next = part->entity->team_next;
         if (!q2_mover_state(part, e))
             return false;
         part->entity->message = 0;
@@ -170,7 +172,7 @@ bool q2_door_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e)
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
-        id = next;
+        id = qa_actor_reference_resolve(actors, next);
     }
     return true;
 }
@@ -204,9 +206,10 @@ bool q2_door_finished(qa_q2_game *g, q2_actor *a, bool top, qa_error *e) {
            !(s->spawnflags & 1) || q2_mover_portals(g, a, false, e);
 }
 bool q2_door_prepare(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     q2_mover *m = s->mover;
-    if (s->team_master.registry && !qa_actor_id_equal(s->team_master, a->id))
+    if (qa_actor_reference_present(s->team_master) && !qa_actor_id_equal(qa_actor_reference_resolve(actors, s->team_master), a->id))
         return true;
     if (g->options.edition == QA_Q2_RERELEASE && !m->angular && (s->spawnflags & 1) &&
         !q2_mover_portals(g, a, true, e))
@@ -225,7 +228,7 @@ bool q2_door_prepare(qa_q2_game *g, q2_actor *a, qa_error *e) {
                             fminf(bounds.mins.z, lo.z));
         bounds.maxs = qa_v3(fmaxf(bounds.maxs.x, hi.x), fmaxf(bounds.maxs.y, hi.y),
                             fmaxf(bounds.maxs.z, hi.z));
-        part = q2_ent(g, part->entity->team_next);
+        part = q2_ent(g, qa_actor_reference_resolve(actors, part->entity->team_next));
     }
     float time = shortest / s->speed;
     if (time > 0)
@@ -236,7 +239,7 @@ bool q2_door_prepare(qa_q2_game *g, q2_actor *a, qa_error *e) {
             p->accel *= ratio;
             p->decel *= ratio;
             p->speed = speed;
-            part = q2_ent(g, p->team_next);
+            part = q2_ent(g, qa_actor_reference_resolve(actors, p->team_next));
         }
     if (s->health > 0 || (s->targetname && !m->activated))
         return true;
@@ -255,6 +258,7 @@ bool q2_door_prepare(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return !(s->spawnflags & 1) || q2_mover_portals(g, a, true, e);
 }
 bool q2_door_smart_water(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     q2_mover *m = s->mover;
     qa_body_state b;
@@ -276,7 +280,7 @@ bool q2_door_smart_water(qa_q2_game *g, q2_actor *a, qa_error *e) {
     float height = 999999;
     uint32_t cursor = 0;
     const qa_actor_record *record;
-    while (qa_actors_next(qa_session_actors(g->services.session), &cursor, &record)) {
+    while (qa_actors_next(actors, &cursor, &record)) {
         qa_builtin_actor_traits traits = {0};
         qa_combat_state combat;
         qa_body_state player;
@@ -312,6 +316,7 @@ bool q2_door_smart_water(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return q2_entity_schedule(g, a, Q2ET_SMART_WATER, (float)g->frame_ns / Q2_NS);
 }
 bool q2_door_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     q2_mover *m = s->mover;
     bool button = s->kind == Q2E_BUTTON, water = s->kind == Q2E_WATER;
@@ -365,7 +370,7 @@ bool q2_door_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
         } else
             b.origin = m->start;
     }
-    s->team_master = a->id;
+    s->team_master = qa_actor_reference_from_actor(actors, g->options.owner, a->id);
     if (water) {
         s->accel = s->decel = s->speed;
         if (s->wait == -1)
@@ -430,6 +435,7 @@ bool q2_door_touch(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e) {
     return !q2_actor_live(g, a->id) || q2_entity_sound(g, a, "misc/talk1.wav", 0, 1, 1, 0, e);
 }
 bool q2_door_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     bool creature;
     if (!q2_target_creature(g, other, &creature, NULL, e))
@@ -449,34 +455,35 @@ bool q2_door_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e)
     if (smart || (s->spawnflags & 4) || s->wait < 0)
         return true;
     bool reverse = s->mover->phase == 3;
-    q2_actor *master = q2_ent(g, s->team_master);
+    q2_actor *master = q2_ent(g, qa_actor_reference_resolve(actors, s->team_master));
     if (!master)
         master = a;
     for (q2_actor *part = master; part;) {
-        qa_actor_id next = part->entity->team_next;
+        qa_actor_reference next = part->entity->team_next;
         if (!q2_mover_state(part, e))
             return false;
         if (!(reverse ? up(g, part, part->entity->activator, e) : q2_door_down(g, part, e)))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
-        part = q2_ent(g, next);
+        part = q2_ent(g, qa_actor_reference_resolve(actors, next));
     }
     return true;
 }
 bool q2_door_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *o, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     if (o->result.reaction != QA_REACTION_DEATH)
         return true;
-    q2_actor *master = q2_ent(g, a->entity->team_master);
+    q2_actor *master = q2_ent(g, qa_actor_reference_resolve(actors, a->entity->team_master));
     if (!master)
         master = a;
     for (q2_actor *part = master; part;) {
-        qa_actor_id next = part->entity->team_next;
+        qa_actor_reference next = part->entity->team_next;
         if (!health(g, part, false, e))
             return false;
         if (!q2_actor_live(g, master->id))
             return true;
-        part = q2_ent(g, next);
+        part = q2_ent(g, qa_actor_reference_resolve(actors, next));
     }
     return q2_door_use(g, master, o->request.attack.attacker, e);
 }

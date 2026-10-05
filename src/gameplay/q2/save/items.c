@@ -2,7 +2,9 @@
 
 static bool spawn(q2_save_io *io, qa_q2_item_spawn *s) {
     Q2U(spawnflags); Q2I(count); Q2N(target); Q2N(killtarget); Q2N(message); Q2N(team);
-    Q2F(delay); return true;
+    Q2F(delay);
+    return q2_save_actor_pointer(io, &s->team_master) &&
+           q2_save_actor_pointer(io, &s->team_next);
 }
 static bool companion(q2_save_io *io, qa_q2_companion_checkpoint *s) {
     Q2U(kind);
@@ -15,7 +17,7 @@ bool q2_save_item(q2_save_io *io, qa_q2_item_checkpoint *s) {
     Q2B(present); Q2B(powers_present); Q2N(definition);
     if (!spawn(io, &s->spawn)) return false;
     if (!q2_save_actor_pointer(io, &s->owner)) return false;
-    Q2R(team_master); Q2R(team_next); Q2R(sphere);
+    Q2R(sphere);
     Q2T(due_ns); Q2T(expires_ns); Q2U(think); Q2B(targets_used); Q2B(retained);
     Q2B(visible); Q2B(touchable); Q2B(temporary);
     void *slots = s->picked_slots;

@@ -111,6 +111,15 @@ qa_actor_reference qa_actor_reference_source(qa_actor_owner owner, uint32_t slot
         .value.source = {.owner = owner, .slot = slot}};
 }
 
+qa_actor_reference qa_actor_reference_from_actor(const qa_actor_registry *registry,
+                                                 qa_actor_owner owner, qa_actor_id actor)
+{
+    const qa_actor_record *record = qa_actors_get(registry, actor);
+    return record && record->owner == owner && record->has_source
+        ? qa_actor_reference_source(owner, record->source_slot)
+        : qa_actor_reference_lifetime(actor);
+}
+
 bool qa_actor_reference_present(qa_actor_reference reference)
 {
     return reference.kind == QA_ACTOR_REFERENCE_SOURCE ||

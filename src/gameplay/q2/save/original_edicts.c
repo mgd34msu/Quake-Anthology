@@ -496,6 +496,12 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
         (actor->physics.flags & QA_PHYSICS_MONSTER ? 4u : 0) |
         (actor->physics.flags & QA_PHYSICS_DEAD ? 2u : 0);
     if (!io->reading && io->edition == QA_Q2_RERELEASE) {
+        qa_actor_reference master = actor->item && (actor->item->think != Q2_ITEM_FLOOR || !actor->entity)
+            ? actor->item->spawn.team_master : actor->entity ? actor->entity->team_master : (qa_actor_reference){0};
+        bool teamed = (actor->item && actor->item->spawn.team) || (actor->entity && actor->entity->team);
+        if (teamed && !(actor->physics.flags & QA_PHYSICS_TEAM_SLAVE) &&
+            qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(game->services.session), master), actor->id))
+            flags |= UINT64_C(1) << 29;
         flags |= actor->physics.flags & QA_PHYSICS_ALWAYS_TOUCH ? UINT64_C(1) << 28 : 0;
         flags |= actor->character_no_damage_effects ? UINT64_C(1) << 20 : 0;
         if (actor->client && !actor->client->corpse) svflags |= 8u;

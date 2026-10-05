@@ -299,7 +299,8 @@ static bool respawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     size_t count = 1;
     if (item->spawn.team) {
         count = 0;
-        qa_actor_id cursor = item->spawn.team_master;
+        qa_actor_id cursor = qa_actor_reference_resolve(qa_session_actors(g->services.session),
+            item->spawn.team_master);
         while (q2_actor_live(g, cursor)) {
             q2_actor *member = q2_actor_get(g, cursor, false, NULL);
             if (!member || (!member->item && !member->entity))
@@ -308,7 +309,8 @@ static bool respawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 qa_error_set(e, QA_ERROR_FORMAT, a->id.slot, "Cyclic Q2 item team chain");
                 return false;
             }
-            cursor = member->item ? member->item->spawn.team_next : (qa_actor_id){0};
+            cursor = member->item ? qa_actor_reference_resolve(qa_session_actors(g->services.session),
+                member->item->spawn.team_next) : (qa_actor_id){0};
         }
     }
     float choice = q2_random(g);
@@ -316,12 +318,14 @@ static bool respawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
         size_t index = (size_t)(choice * (float)count);
         if (index >= count)
             index = count - 1;
-        qa_actor_id cursor = item->spawn.team_master;
+        qa_actor_id cursor = qa_actor_reference_resolve(qa_session_actors(g->services.session),
+            item->spawn.team_master);
         for (size_t i = 0; i <= index; ++i) {
             selected = q2_actor_get(g, cursor, false, e);
             if (!selected)
                 return false;
-            cursor = selected->item ? selected->item->spawn.team_next : (qa_actor_id){0};
+            cursor = selected->item ? qa_actor_reference_resolve(qa_session_actors(g->services.session),
+                selected->item->spawn.team_next) : (qa_actor_id){0};
         }
     }
     if (selected->item && selected->item->definition && g->options.edition == QA_Q2_CLASSIC &&
@@ -389,11 +393,12 @@ static bool floor_item(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (a->entity) {
             a->item->spawn.team_master = a->entity->team_master;
             a->item->spawn.team_next = a->entity->team_next;
-            a->entity->team_next = (qa_actor_id){0};
+            a->entity->team_next = (qa_actor_reference){0};
         }
         a->item->visible = false;
         solid = QA_PHYSICS_NOT_SOLID;
-        if (qa_actor_id_equal(a->item->spawn.team_master, a->id)) {
+        if (qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(g->services.session),
+                a->item->spawn.team_master), a->id)) {
             a->item->think = Q2_ITEM_RESPAWN;
             a->item->due_ns = q2_deadline(g->now_ns, g->frame_ns);
         }

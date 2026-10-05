@@ -48,7 +48,9 @@ static bool state(q2_save_io *io, qa_q2_entity_state *s) {
     s->fields = fields;
     for (size_t i = 0; i < s->field_count; ++i) { Q2N(fields[i].key); Q2N(fields[i].value); }
     Q2U(ordinal); Q2U(spawnflags);
-    if (!q2_save_visual(io, &s->visual) || !collision(io, &s->collision)) return false;
+    if (!q2_save_visual(io, &s->visual) || !collision(io, &s->collision) ||
+        !q2_save_actor_pointer(io, &s->team_master) ||
+        !q2_save_actor_pointer(io, &s->team_next)) return false;
     Q2V(direction); Q2V(beam_end); Q2V(multicast_origin);
     Q2F(speed); Q2F(accel); Q2F(decel); Q2F(wait);
     Q2F(delay); Q2F(damage); Q2F(health); Q2F(random); Q2F(volume); Q2F(attenuation);
@@ -74,7 +76,7 @@ bool q2_save_entity(q2_save_io *io, qa_q2_entity_checkpoint *s) {
     Q2B(present);
     if (s->present && !state(io, &s->value)) return false;
     Q2R(activator); Q2R(owner); Q2R(enemy); Q2R(goal);
-    Q2R(master); Q2R(next); Q2R(destination); Q2R(turret_breach); return true;
+    Q2R(destination); Q2R(turret_breach); return true;
 }
 static bool campaign_level(q2_save_io *io, qa_q2_campaign_level *s) {
     Q2N(map); Q2N(name); Q2U(visit_order); Q2U(total_secrets); Q2U(found_secrets);

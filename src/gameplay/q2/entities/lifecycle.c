@@ -292,9 +292,9 @@ bool q2_entity_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e
 bool qa_q2_entity_blocked(qa_q2_game *g, qa_actor_id id, qa_actor_id obstacle, qa_error *e) {
     q2_actor *a = q2_ent(g, id);
     if (a && g->options.edition == QA_Q2_CLASSIC) {
-        qa_actor_id root = a->entity->team_master.registry ? a->entity->team_master : id;
+        qa_actor_id root = qa_actor_reference_present(a->entity->team_master) ? qa_actor_reference_resolve(qa_session_actors(g->services.session), a->entity->team_master) : id;
         size_t count = 0;
-        for (q2_actor *part = q2_ent(g, root); part; part = q2_ent(g, part->entity->team_next)) {
+        for (q2_actor *part = q2_ent(g, root); part; part = q2_ent(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), part->entity->team_next))) {
             if (++count > g->capacity) {
                 qa_error_set(e, QA_ERROR_FORMAT, id.slot, "Cyclic Q2 blocked pusher team");
                 return false;
@@ -328,8 +328,44 @@ bool qa_q2_entity_team(qa_q2_game *g, qa_actor_id id, qa_actor_id *master, qa_ac
     q2_actor *a = q2_ent(g, id);
     if (!a || !master || !next)
         return false;
-    *master = a->entity->team_master;
-    *next = a->entity->team_next;
+    *master = qa_actor_reference_resolve(qa_session_actors(g->services.session), a->entity->team_master);
+    *next = qa_actor_reference_resolve(qa_session_actors(g->services.session), a->entity->team_next);
+    return true;
+}
+void q2_entity_team_unlink(qa_q2_game *g, q2_actor *a) {
+    if (!a || !a->entity || !(a->physics.flags & QA_PHYSICS_TEAM_SLAVE))
+        return;
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
+    q2_entity_state *s = a->entity;
+    for (q2_actor *part = q2_ent(g, qa_actor_reference_resolve(actors, s->team_master)); part;
+         part = q2_ent(g, qa_actor_reference_resolve(actors, part->entity->team_next))) {
+        if (qa_actor_id_equal(qa_actor_reference_resolve(actors, part->entity->team_next), a->id)) {
+            part->entity->team_next = s->team_next;
+            break;
+        }
+    }
+}
+bool q2_entity_before_remove(void *context, qa_actor_id id, qa_error *e) {
+    qa_q2_game *g = context;
+    q2_actor *a = q2_ent(g, id);
+    (void)e;
+    if (!a || (g->options.edition != QA_Q2_RERELEASE && g->options.product != QA_Q2_ROGUE))
+        return true;
+    if (a->physics.flags & QA_PHYSICS_TEAM_SLAVE) {
+        q2_entity_team_unlink(g, a);
+    } else if (g->options.edition == QA_Q2_RERELEASE && a->entity->team) {
+        const qa_actor_registry *actors = qa_session_actors(g->services.session);
+        if (!qa_actor_id_equal(qa_actor_reference_resolve(actors, a->entity->team_master), id))
+            return true;
+        q2_actor *next = q2_ent(g, qa_actor_reference_resolve(actors, a->entity->team_next));
+        if (next) {
+            qa_actor_reference master = qa_actor_reference_from_actor(actors, g->options.owner, next->id);
+            next->physics.flags &= ~(uint32_t)QA_PHYSICS_TEAM_SLAVE;
+            for (q2_actor *part = next; part;
+                 part = q2_ent(g, qa_actor_reference_resolve(actors, part->entity->team_next)))
+                part->entity->team_master = master;
+        }
+    }
     return true;
 }
 typedef struct team_member {
@@ -356,8 +392,8 @@ bool qa_q2_entities_post_spawn(qa_q2_game *g, qa_error *e) {
         if (!a->entity || a->projectile.kind != Q2_PROJECTILE_NONE)
             continue;
         q2_entity_state *s = a->entity;
-        s->team_master = a->id;
-        s->team_next = (qa_actor_id){0};
+        s->team_master = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, a->id);
+        s->team_next = (qa_actor_reference){0};
         if (a->item)
             a->item->spawn.team = s->team;
         a->physics.flags &= ~(uint32_t)QA_PHYSICS_TEAM_SLAVE;
@@ -394,8 +430,8 @@ bool qa_q2_entities_post_spawn(qa_q2_game *g, qa_error *e) {
             if (members[i].order == members[first].order)
                 continue;
             q2_actor *member = members[i].actor;
-            last->entity->team_next = member->id;
-            member->entity->team_master = master->id;
+            last->entity->team_next = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, member->id);
+            member->entity->team_master = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, master->id);
             member->physics.flags |= QA_PHYSICS_TEAM_SLAVE;
             last = member;
         }
@@ -409,17 +445,17 @@ bool qa_q2_entities_post_spawn(qa_q2_game *g, qa_error *e) {
                                                         train->entity->classname);
                 if (strcmp(classname, "func_train"))
                     continue;
-                train->entity->team_master = train->id;
-                train->entity->team_next = (qa_actor_id){0};
+                train->entity->team_master = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, train->id);
+                train->entity->team_next = (qa_actor_reference){0};
                 train->physics.flags &= ~(uint32_t)QA_PHYSICS_TEAM_SLAVE;
                 last = train;
                 for (size_t j = first; j < end; ++j) {
                     q2_actor *member = members[j].actor;
                     if (member == train)
                         continue;
-                    last->entity->team_next = member->id;
-                    member->entity->team_master = train->id;
-                    member->entity->team_next = (qa_actor_id){0};
+                    last->entity->team_next = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, member->id);
+                    member->entity->team_master = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, train->id);
+                    member->entity->team_next = (qa_actor_reference){0};
                     member->entity->speed = train->entity->speed;
                     member->physics.flags |= QA_PHYSICS_TEAM_SLAVE;
                     member->physics.motion = QA_PHYSICS_PUSH;

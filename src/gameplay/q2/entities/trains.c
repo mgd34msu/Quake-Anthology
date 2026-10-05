@@ -29,6 +29,7 @@ static bool target_fields(qa_q2_game *g, qa_actor_id id, qa_string_id *target, u
     return false;
 }
 bool q2_train_next(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     q2_mover *m = s->mover;
     bool teleported = false;
@@ -82,9 +83,9 @@ bool q2_train_next(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (!q2_move_start(g, a, goal, false, Q2MD_TRAIN_WAIT, e))
             return false;
         if (g->options.edition == QA_Q2_RERELEASE && (s->spawnflags & 8))
-            for (q2_actor *part = q2_ent(g, s->team_next); part;) {
+            for (q2_actor *part = q2_ent(g, qa_actor_reference_resolve(actors, s->team_next)); part;) {
                 q2_entity_state *p = part->entity;
-                qa_actor_id next = p->team_next;
+                qa_actor_reference next = p->team_next;
                 if (!qa_world_body_read(g->services.world, part->id, &body, e))
                     return false;
                 p->speed = s->speed;
@@ -95,7 +96,7 @@ bool q2_train_next(qa_q2_game *g, q2_actor *a, qa_error *e) {
                     return false;
                 if (!q2_actor_live(g, a->id))
                     return true;
-                part = q2_ent(g, next);
+                part = q2_ent(g, qa_actor_reference_resolve(actors, next));
             }
         return true;
     }
@@ -216,13 +217,14 @@ bool q2_train_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e
                                                    : q2_train_next(g, a, e);
 }
 bool q2_train_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     const char *name = qa_strings_cstr(qa_session_strings(g->services.session), s->classname);
     s->mover->ship = strcmp(name, "func_train") != 0;
     bool crash = !strcmp(name, "misc_crashviper") || !strcmp(name, "misc_transport");
     if (s->mover->ship && !s->target)
         return qa_session_release(g->services.session, a->id, e);
-    s->team_master = a->id;
+    s->team_master = qa_actor_reference_from_actor(actors, g->options.owner, a->id);
     qa_body_state b;
     if (!qa_world_body_read(g->services.world, a->id, &b, e))
         return false;

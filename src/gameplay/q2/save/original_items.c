@@ -219,9 +219,24 @@ bool q2_original_item_record(qa_q2_game *game, q2_original_record_io *io,
         if (!qa_q2_item_restore(game, actor->id, &saved, error)) return false;
     }
     q2_item_state *state = actor->item;
+    if (io->reading && !io->references_only) {
+        bool known = false;
+        for (size_t i = 0; i < sizeof(item_thinks) / sizeof(item_thinks[0]); ++i) {
+            bool matches;
+            if (!q2_original_function_matches(game, io, "think", 436, item_thinks[i], &matches)) return false;
+            if (matches) { state->think = (q2_item_think)i; known = true; break; }
+        }
+        if (!known) return item_error(error, 436, "Original Q2 item has an unimplemented Source think callback");
+    }
+    bool pending_floor = state->think == Q2_ITEM_FLOOR;
+    qa_actor_reference *master = pending_floor && actor->entity ?
+        &actor->entity->team_master : &state->spawn.team_master;
+    qa_actor_reference *next = pending_floor && actor->entity ?
+        &actor->entity->team_next : &state->spawn.team_next;
     if (!q2_original_source_reference(game, io, "owner", 256, &state->owner) ||
-        !q2_original_reference(game, io, "teammaster", 564, &state->spawn.team_master) ||
-        !q2_original_reference(game, io, "teamchain", 560, &state->spawn.team_next)) return false;
+        !q2_original_source_reference(game, io, "teammaster", 564, master) ||
+        !q2_original_source_reference(game, io, pending_floor ? "teamchain" : "chain",
+            pending_floor ? 560 : 536, next)) return false;
     if (io->references_only) return true;
     if (!picked_slots(io, state, game->wire_clients)) return false;
     int32_t count = state->spawn.count;
@@ -250,13 +265,6 @@ bool q2_original_item_record(qa_q2_game *game, q2_original_record_io *io,
             !q2_original_string(game, io, "killtarget", 304, &state->spawn.killtarget) ||
             !q2_original_string(game, io, "message", 276, &state->spawn.message) ||
             !q2_original_string(game, io, "team", 308, &state->spawn.team)) return false;
-        bool known = false;
-        for (size_t i = 0; i < sizeof(item_thinks) / sizeof(item_thinks[0]); ++i) {
-            bool matches;
-            if (!q2_original_function_matches(game, io, "think", 436, item_thinks[i], &matches)) return false;
-            if (matches) { state->think = (q2_item_think)i; known = true; break; }
-        }
-        if (!known) return item_error(error, 436, "Original Q2 item has an unimplemented Source think callback");
         bool touch, temporary, empty;
         if (!q2_original_function_matches(game, io, "touch", 444, "Touch_Item", &touch) ||
             !q2_original_function_matches(game, io, "touch", 444, "drop_temp_touch", &temporary) ||

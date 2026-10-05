@@ -38,6 +38,8 @@ bool q2_campaign_monster_count(qa_q2_game *, qa_q2_monster_count, qa_error *);
 bool q2_campaign_saved_valid(qa_q2_game *, const qa_q2_entities_checkpoint *, qa_error *);
 
 q2_actor *q2_ent(qa_q2_game *, qa_actor_id);
+void q2_entity_team_unlink(qa_q2_game *, q2_actor *);
+bool q2_entity_before_remove(void *, qa_actor_id, qa_error *);
 qa_string_id q2_actor_field(qa_q2_game *, qa_actor_id, const char *);
 float q2_actor_field_float(qa_q2_game *, qa_actor_id, const char *, float);
 uint32_t q2_actor_field_flags(qa_q2_game *, qa_actor_id, const char *);

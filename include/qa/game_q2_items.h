@@ -87,7 +87,7 @@ typedef struct qa_q2_item_spawn {
     int count;
     qa_string_id target, killtarget, message, team;
     float delay;
-    qa_actor_id team_master, team_next;
+    qa_actor_reference team_master, team_next;
 } qa_q2_item_spawn;
 typedef struct qa_q2_drop_options {
     bool immediate_touch, player_death;
@@ -135,7 +135,7 @@ typedef struct qa_q2_item_checkpoint {
     qa_string_id definition;
     qa_q2_item_spawn spawn;
     qa_actor_reference owner;
-    qa_q2_saved_reference team_master, team_next, sphere;
+    qa_q2_saved_reference sphere;
     uint64_t due_ns, expires_ns;
     uint32_t think;
     bool targets_used, retained, visible, touchable, temporary;

@@ -146,6 +146,7 @@ static bool route(mover_query *query, qa_actor_id controller, qa_vec3 offset,
 static bool inspect(void *opaque, qa_actor_id actor, qa_error *error) {
     mover_query *query = opaque;
     qa_q2_game *g = query->game;
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_actor *a = q2_ent(g, actor);
     qa_q2_map_mover_kind kind;
     if (!a || !mover_kind(a->entity, &kind)) return true;
@@ -159,8 +160,8 @@ static bool inspect(void *opaque, qa_actor_id actor, qa_error *error) {
             .bounds = qa_bounds_translate(body.bounds, body.origin), .velocity = body.velocity}};
     qa_linked_body linked;
     if (qa_world_linked(g->services.world, actor, &linked)) view.navigation.bounds = linked.absolute_bounds;
-    if (a->entity->team_master.registry && q2_ent(g, a->entity->team_master))
-        view.controller = a->entity->team_master;
+    if (qa_actor_reference_present(a->entity->team_master) && q2_ent(g, qa_actor_reference_resolve(actors, a->entity->team_master)))
+        view.controller = qa_actor_reference_resolve(actors, a->entity->team_master);
     qa_body_state source = body;
     if (!qa_actor_id_equal(view.controller, actor) &&
         !qa_world_body_read(g->services.world, view.controller, &source, error)) return false;
