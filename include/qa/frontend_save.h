@@ -14,28 +14,23 @@ bool qa_frontend_persistence_capture(qa_frontend *, const qa_application_persist
  * active pointer during this call; in-run requests drain at a driver boundary. */
 bool qa_frontend_persistence_restore(qa_frontend **active, const qa_application_persistence_ops *,
     const qa_save_image *, qa_frontend **displaced, qa_frontend **retained, qa_error *);
-/* Build the genuine selected original source and fresh frontend owners, then
- * publish their shared continuation through the same native transaction. Both
- * failed source and final candidate graphs remain independently reachable.
- * Publication may succeed while source retirement transfers to retained_source. */
+/* Build the selected original source through the normal frontend constructor.
+ * Its private replacement window stays hidden until the imported game is ready. */
 typedef struct qa_frontend_original_restore qa_frontend_original_restore;
 typedef struct qa_frontend_original_save {
     qa_game_family family;
-    union { const qa_q1_save_data *q1; const qa_q2_save_data *q2; } state;
+    union { qa_q1_save_data *q1; qa_q2_save_data *q2; } state;
 } qa_frontend_original_save;
-/* Begin owns a genuine fresh frontend and exact application save copy. A
- * partially constructed operation can be returned on failure; dispose it.
- * Services remain borrowed until disposal. The active frontend is untouched. */
+/* Once an operation is returned, it consumes and clears the decoded save.
+ * Dispose a partially constructed operation even when begin fails. Services
+ * remain borrowed until disposal; the active frontend remains installed. */
 bool qa_frontend_original_restore_begin(qa_frontend *active,const qa_application_persistence_ops *,
-    const qa_frontend_original_save *,const char *product,qa_frontend_original_restore **,qa_error *);
+    qa_frontend_original_save *,const char *product,qa_frontend_original_restore **,qa_error *);
 /* Call once after each real driver frame, retaining the operation while
  * complete is false. Startup script waits advance before raw import; the
  * candidate receives no gameplay frame before raw state is installed. */
 bool qa_frontend_original_restore_advance(qa_frontend_original_restore *,qa_frontend **active,
     bool *complete,qa_frontend **displaced,qa_frontend **retained_candidate,qa_error *);
-/* Only the final shared capture/publication transaction is admitted. Pending
- * startup phases remain excluded from ordinary save capture. */
-bool qa_frontend_original_restore_capture_ready(const qa_frontend_original_restore *);
 /* Always consumes the operation. A constructor that rejects cancellation or
  * retirement transfers whole to the distinct empty retained_source output. */
 bool qa_frontend_original_restore_dispose(qa_frontend_original_restore *,qa_frontend **retained_source,qa_error *);

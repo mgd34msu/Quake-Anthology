@@ -47,7 +47,7 @@
 #include <SDL.h>
 
 typedef struct frontend_persistence {
-    qa_frontend *active,*candidate,*constructor;
+    qa_frontend *active,*candidate;
     qa_frontend **slot;
     const qa_application_persistence_ops *services;
     qa_application_persistence_ops ops;
@@ -71,7 +71,7 @@ static bool content_visit(void *context,const qa_application *application,
 static bool prepare_services(void *context,qa_application *candidate,const qa_save_image *image,qa_error *error)
 {
     frontend_persistence *operation=context; qa_frontend *f=operation->candidate;
-    qa_frontend *source=operation->constructor?operation->constructor:operation->active;
+    qa_frontend *source=operation->active;
     if (!f || f->application || !candidate)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend rebuild needs its fresh application owner");
     f->application=candidate;
@@ -103,7 +103,7 @@ static bool reconnect(void *context,qa_application *candidate,const qa_save_imag
 static bool complete_state(void *context,qa_application *candidate,const qa_save_image *image,qa_error *error)
 {
     frontend_persistence *operation=context; qa_frontend *f=operation->candidate;
-    qa_frontend *source=operation->constructor?operation->constructor:operation->active;
+    qa_frontend *source=operation->active;
     if (operation->services && operation->services->complete_state &&
         !operation->services->complete_state(operation->services->context,candidate,image,error)) return false;
     const qa_save_metadata *metadata=qa_save_image_metadata(image);
@@ -229,7 +229,7 @@ static bool discard_services(void *context,qa_application *candidate,qa_error *e
 static bool publish_ready(void *context,qa_application *active,qa_application *candidate,qa_error *error)
 {
     frontend_persistence *operation=context; qa_frontend *f=operation->candidate;
-    qa_frontend *source=operation->constructor?operation->constructor:operation->active;
+    qa_frontend *source=operation->active;
     if (!operation->finished || !operation->slot || *operation->slot!=operation->active ||
         operation->active->application!=active || !f || f->application!=candidate ||
         !frontend_owners_idle(operation->active) || !frontend_owners_idle(f) ||
@@ -257,7 +257,7 @@ static bool publish_ready(void *context,qa_application *active,qa_application *c
 static void publish(void *context,qa_application *active,qa_application *candidate)
 {
     frontend_persistence *operation=context; qa_frontend *f=operation->candidate;
-    qa_frontend *source=operation->constructor?operation->constructor:operation->active;
+    qa_frontend *source=operation->active;
     if (operation->services && operation->services->publish)
         operation->services->publish(operation->services->context,active,candidate);
     frontend_network_transport_exchange(source,f);
@@ -329,25 +329,17 @@ bool frontend_persistence_capture(qa_frontend *f,const qa_application_persistenc
         qa_application_persistence_capture(f->application,&operation.ops,purpose,out,error);
     native_capture_close(&operation); operation_close(&operation); return ok;
 }
-bool frontend_persistence_capture_detached(qa_frontend *f,const qa_application_persistence_ops *services,
-    const frontend_persistence_native *native,qa_save_purpose purpose,qa_save_image **out,qa_error *error)
-{
-    if (!f || !native || (!!f->input!=!!native->input) || (!!f->device!=!!native->device) ||
-        (!!f->display!=!!native->display) || (!!f->gl!=!!native->gl))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Detached save needs its actual native ownership guards");
-    return frontend_persistence_capture(f,services,purpose,out,error);
-}
 static bool restore_frontend(qa_frontend **slot,const qa_application_persistence_ops *services,
-    qa_frontend *constructor,const qa_save_image *image,void *replay_context,frontend_persistence_replay_fn replay_fn,
+    const qa_save_image *image,void *replay_context,frontend_persistence_replay_fn replay_fn,
     qa_frontend **displaced,qa_frontend **retained,qa_error *error)
 {
     if (!slot || !*slot || !image || !displaced || !retained || *retained ||
         slot==displaced || slot==retained || displaced==retained)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend restore needs distinct active, displaced and empty retained owner slots");
-    frontend_persistence operation={.slot=slot,.constructor=constructor,.replay_context=replay_context,.replay=replay_fn,
+    frontend_persistence operation={.slot=slot,.replay_context=replay_context,.replay=replay_fn,
         .native_resources={.image=image}};
     bool ok=operation_init(&operation,*slot,services,error);
-    const qa_frontend *source=constructor?constructor:operation.active;
+    const qa_frontend *source=operation.active;
     if (ok) {
         operation.candidate=calloc(1,sizeof(*operation.candidate));
         if (!operation.candidate) ok=frontend_fail(error,QA_ERROR_MEMORY,"Allocating stable detached frontend owner");
@@ -402,21 +394,13 @@ static bool restore_frontend(qa_frontend **slot,const qa_application_persistence
 }
 bool frontend_persistence_restore(qa_frontend **slot,const qa_application_persistence_ops *services,
     const qa_save_image *image,qa_frontend **displaced,qa_frontend **retained,qa_error *error)
-{ return restore_frontend(slot,services,NULL,image,NULL,NULL,displaced,retained,error); }
+{ return restore_frontend(slot,services,image,NULL,NULL,displaced,retained,error); }
 bool frontend_persistence_restore_replay(qa_frontend **slot,const qa_application_persistence_ops *services,
     const qa_save_image *image,void *context,frontend_persistence_replay_fn replay_fn,
     qa_frontend **displaced,qa_frontend **retained,qa_error *error)
 {
     if (!replay_fn) return frontend_fail(error,QA_ERROR_ARGUMENT,"Recovery restore requires its actual replay producer");
-    return restore_frontend(slot,services,NULL,image,context,replay_fn,displaced,retained,error);
-}
-bool frontend_persistence_restore_original(qa_frontend **slot,const qa_application_persistence_ops *services,
-    qa_frontend *source,const qa_save_image *image,qa_frontend **displaced,qa_frontend **retained,qa_error *error)
-{
-    if (!slot || !*slot || !source || source==*slot || !source->application ||
-        source->stepping || source->preparing || source->capture || source->options.seats!=1)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Original publication needs its real finished isolated singleplayer frontend");
-    return restore_frontend(slot,services,source,image,NULL,NULL,displaced,retained,error);
+    return restore_frontend(slot,services,image,context,replay_fn,displaced,retained,error);
 }
 bool qa_frontend_persistence_capture(qa_frontend *f,const qa_application_persistence_ops *services,
     qa_save_purpose purpose,qa_save_image **out,qa_error *error)

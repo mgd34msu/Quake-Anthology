@@ -303,8 +303,7 @@ bool frontend_save_commands_restoring(const qa_frontend *f)
 bool frontend_save_commands_capture_ready(const qa_frontend *f)
 {
     return f && f->save_commands && !cleanup_pending(f->save_commands)
-        && (!f->save_commands->original || (f->save_commands->draining &&
-            qa_frontend_original_restore_capture_ready(f->save_commands->original)))
+        && !f->save_commands->original
         && (!f->save_commands->draining || !f->save_commands->pending);
 }
 bool frontend_save_commands_destroy(qa_frontend *f, qa_error *error)
@@ -790,8 +789,11 @@ static bool restore_saved(qa_frontend **slot, frontend_save_commands *owner,
         original=(qa_frontend_original_save){.family=QA_GAME_Q2,.state.q2=*q2};
     }
     free(path);
-    return ok && qa_frontend_original_restore_begin(f,f->options.persistence_services,&original,
+    if (ok) ok=qa_frontend_original_restore_begin(f,f->options.persistence_services,&original,
         product->key,&owner->original,error);
+    if (original.family==QA_GAME_Q1) *source=original.state.q1;
+    else *q2=original.state.q2;
+    return ok;
 }
 
 static bool write_game(qa_frontend *f,qa_fs_root *root,const char *name,

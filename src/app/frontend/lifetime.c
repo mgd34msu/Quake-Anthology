@@ -446,7 +446,7 @@ void frontend_console_print(void *context, const qa_command_context *source, con
             fprintf(stderr, "console output: %s\n", error.message);
     }
 }
-struct frontend_constructor { qa_error failure; bool outputs_entered,outputs_completed; };
+struct frontend_constructor { qa_error failure; bool outputs_entered,outputs_completed,launch_game; };
 static bool outputs_create(qa_frontend *frontend,frontend_shared_settings *prepared,
     qa_frontend *active,frontend_persistence_native *native,qa_error *error)
 {
@@ -505,7 +505,7 @@ static bool outputs_create(qa_frontend *frontend,frontend_shared_settings *prepa
                             &frontend->device,&native->device,error)) return false;
                 } else {
                     if (!qa_audio_device_open(&device, &frontend->device, error)) return false;
-                    qa_audio_device_pause(frontend->device, false);
+                    qa_audio_device_pause(frontend->device,frontend->constructor && !frontend->constructor->launch_game);
                 }
             }
         }
@@ -557,14 +557,22 @@ bool frontend_constructor_advance(qa_frontend *f,uint64_t elapsed_ns,bool *compl
         owner->outputs_completed=true;
     }
     bool started=false;
-    if (!frontend_startup_advance(f,&started,error)) { if (error) owner->failure=*error; return false; }
+    bool ok;
+    if (owner->launch_game) ok=frontend_startup_advance(f,&started,error);
+    else {
+        f->preparing=true;
+        ok=qa_application_startup_advance(f->application,&started,error);
+        f->preparing=false;
+    }
+    if (!ok) { if (error) owner->failure=*error; return false; }
     if (!started) return true;
     if (!f->options.dedicated && f->options.menu && qa_application_launch(f->application) &&
         !frontend_game_menu(&f->seats[0],error)) { if (error) owner->failure=*error; return false; }
     f->constructor=NULL; free(owner); *complete=true; return true;
 }
 
-bool qa_frontend_create(const qa_frontend_options *options, qa_frontend **out, qa_error *error)
+static bool create_frontend(const qa_frontend_options *options,bool launch_game,
+    qa_native_runtime *native_runtime,qa_frontend **out,qa_error *error)
 {
     if (!options || !out || !options->seats || options->seats > 4)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend options");
@@ -581,7 +589,11 @@ bool qa_frontend_create(const qa_frontend_options *options, qa_frontend **out, q
     }
     qa_scene_frame_init(&frontend->frame, QA_FRONTEND_COMMAND_OWNER);
     if (!frontend_input_profile_default_options(frontend,error)) goto fail;
-    {
+    if (native_runtime) {
+        frontend->native_runtime=native_runtime;
+        qa_native_runtime_retain(native_runtime);
+        frontend->options.application.native_runner=qa_native_runtime_config(native_runtime);
+    } else {
         char *executable=SDL_GetBasePath();
         if (!executable) { qa_error_set(error,QA_ERROR_IO,0,"Reading native executable directory: %s",SDL_GetError()); goto fail; }
         qa_native_runtime_options native={.executable_directory=executable,.root=options->native_runtime_root,
@@ -648,6 +660,7 @@ bool qa_frontend_create(const qa_frontend_options *options, qa_frontend **out, q
     }
     frontend->constructor=calloc(1,sizeof(*frontend->constructor));
     if (!frontend->constructor) { frontend_fail(error,QA_ERROR_MEMORY,"Retaining first native output construction"); goto fail; }
+    frontend->constructor->launch_game=launch_game;
     if (!qa_application_startup_bootstrap(frontend->application,error)) goto fail;
     bool complete=false;
     if (!frontend_constructor_advance(frontend,0,&complete,error)) goto fail;
@@ -661,6 +674,11 @@ fail: {
     }
     return false;
 }}
+bool qa_frontend_create(const qa_frontend_options *options,qa_frontend **out,qa_error *error)
+{ return create_frontend(options,true,NULL,out,error); }
+bool frontend_create_for_import(const qa_frontend_options *options,qa_native_runtime *runtime,
+    qa_frontend **out,qa_error *error)
+{ return create_frontend(options,false,runtime,out,error); }
 bool frontend_save_image_release(qa_frontend *frontend,qa_save_image **image,qa_error *error)
 {
     if (!frontend || !image) return frontend_fail(error,QA_ERROR_ARGUMENT,"Save image release requires its actual frontend custody");

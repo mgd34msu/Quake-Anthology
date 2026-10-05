@@ -1,23 +1,10 @@
-#include "qc_messages.h"
-#include "restart_binding.h"
-#include "source_renderer_runtime.h"
 #include "original_frontend.h"
 #include "internal.h"
 #include "persistence.h"
+#include "constructor.h"
 #include "capture.h"
 #include "input_profile.h"
-#include "save_commands.h"
-#include "ui_features.h"
 #include "campaign_cinematic.h"
-#include "config_store.h"
-#include "keys.h"
-#include "equipment_events.h"
-#include "shared_register.h"
-#include "network_declarations.h"
-#include "view_bindings.h"
-#include "q1_sky.h"
-#include "music_sources.h"
-#include "global_settings_storage.h"
 #include "qa/application_q1_save.h"
 #include "qa/application_q2_save.h"
 #include <SDL.h>
@@ -25,17 +12,16 @@
 struct qa_frontend_original_restore {
     qa_frontend *active,*source;
     const qa_application_persistence_ops *services;
-    frontend_persistence_native native;
-    bool begun,finished,final_cut;
-    qa_game_family family;
+    qa_frontend_original_save save;
+    char *product;
+    uint64_t wall_time_ns;
+    bool begun,import_begun,imported,finished,visible;
 };
-static void native_guards_destroy(frontend_persistence_native *native)
+static void save_destroy(qa_frontend_original_restore *operation)
 {
-    qa_input_platform_restore_guard_destroy(native->input);
-    qa_audio_device_restore_guard_destroy(native->device);
-    qa_gl_restore_guard_destroy(native->gl);
-    qa_display_restore_guard_destroy(native->display);
-    *native=(frontend_persistence_native){0};
+    if (operation->save.family==QA_GAME_Q1) qa_q1_save_destroy(operation->save.state.q1);
+    else qa_q2_save_destroy(operation->save.state.q2);
+    operation->save.state.q1=NULL;
 }
 bool frontend_graphics_create(qa_frontend *f,qa_frontend *active,
     frontend_persistence_native *native,qa_error *error)
@@ -68,115 +54,88 @@ bool frontend_graphics_create(qa_frontend *f,qa_frontend *active,
     }
     return true;
 }
-static bool graphics_create(qa_frontend *f,qa_frontend *active,
-    frontend_persistence_native *native,qa_error *error)
+static bool original_create(qa_frontend_original_restore *operation,qa_error *error)
 {
-    if (!frontend_graphics_create(f,active,native,error)) return false;
-    if (!frontend_resources(f,error) || !frontend_seats_create(f,error)) return false;
-    qa_audio_engine_options audio; frontend_audio_engine_options(f,&audio);
-    if (!qa_audio_engine_create(&audio,&f->audio,error) ||
-        (active->device && !qa_audio_device_create_detached(active->device,f->audio,&f->device,&native->device,error))) return false;
-    qa_input_platform_options input={.cvars=qa_application_cvars(f->application),.user=f,.print=frontend_print};
-    f->input=qa_input_platform_create_detached(&input,error);
-    qa_input_seat *seats[4]={f->seats[0].input}; qa_controller_selection controllers[4]={0};
-    return f->input && qa_input_platform_prepare_fresh(f->input,active->input,seats,controllers,0,f->display,0,
-        &native->input,error);
-}
-static bool original_create(qa_frontend *active,const qa_frontend_original_save *save,const char *product,
-    qa_frontend **out,frontend_persistence_native *native,qa_error *error)
-{
-    qa_frontend *f=calloc(1,sizeof(*f));
-    if (!f) return frontend_fail(error,QA_ERROR_MEMORY,"Allocating original source frontend");
-    f->seats=calloc(QA_INPUT_LOCAL_SEATS,sizeof(*f->seats));
-    if (!f->seats) {
-        free(f); return frontend_fail(error,QA_ERROR_MEMORY,"Allocating original source seat");
-    }
-    *out=f;
-    f->options=active->options;
-    f->native_runtime=active->native_runtime;
-    qa_native_runtime_retain(f->native_runtime);
-    f->options.game=NULL; f->options.map=NULL; f->options.map_game=NULL;
-    f->options.movement=NULL; f->options.character=NULL;
-    f->options.mods=NULL; f->options.mod_count=0; f->options.startup=NULL; f->options.startup_count=0;
-    f->options.seats=1; f->options.menu=false;
-    f->options.network_host=NULL; f->options.network_connect=NULL; f->options.network_port=0;
-    f->options.network_protocol=(qa_net_protocol_id){save->family==QA_GAME_Q1?QA_NET_NQ15:QA_NET_Q2_34,0,0};
-    f->options.application.player_profile_root=NULL;
-    f->options.application.actor_capacity=qa_actors_capacity(
+    qa_frontend *active=operation->active;
+    qa_frontend_options options=active->options;
+    options.game=operation->product; options.map=NULL; options.map_game=NULL;
+    options.movement=NULL; options.character=NULL;
+    options.mods=NULL; options.mod_count=0; options.startup=NULL; options.startup_count=0;
+    options.seats=1; options.menu=false;
+    options.network_host=NULL; options.network_connect=NULL; options.network_port=0;
+    options.network_protocol=(qa_net_protocol_id){operation->save.family==QA_GAME_Q1?QA_NET_NQ15:QA_NET_Q2_34,0,0};
+    options.application.player_profile_root=NULL;
+    options.application.actor_capacity=qa_actors_capacity(
         qa_session_actors(qa_application_session(active->application)));
-    if (active->default_user_root) {
-        f->default_user_root=SDL_strdup(active->default_user_root);
-        if (!f->default_user_root) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining original frontend user directory");
-        f->options.application.user_root=f->default_user_root;
+    if (active->default_user_root) options.application.user_root=NULL;
+    if (!options.dedicated) {
+        qa_display_info display;
+        if (!qa_display_info_get(active->display,&display,error)) return false;
+        options.display.width=display.logical_width; options.display.height=display.logical_height;
+        operation->visible=display.visible;
+        options.display.hidden=true;
+        if ((active->cpu && !qa_cpu_gamma_read(active->cpu,&options.gamma,error)) ||
+            (active->gl && !qa_gl_gamma_read(active->gl,&options.gamma,error))) return false;
     }
-    f->seats[0].frontend=f; f->seats[0].id=0;
-    qa_scene_frame_init(&f->frame,QA_FRONTEND_COMMAND_OWNER);
-    f->keys=frontend_keys_create(error);
-    if (!f->keys) return false;
-    if (!frontend_global_settings_storage_create(f->options.application.user_root,&f->global_settings_storage,error)) return false;
-    f->config_store=frontend_config_store_create(f,error);
-    if (!f->config_store) return false;
-    qa_application_options options=f->options.application;
-    frontend_application_options(f,&options);
-    if (!qa_application_create(&options,&f->application,error)) return false;
-    const qa_product *selected=frontend_product_selection(qa_application_catalog(f->application),product);
-    if (!selected || selected->availability!=QA_CONTENT_INSTALLED || selected->family!=save->family)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Original ENGINE settings lack their selected Source product");
-    qa_console_dialect dialect=selected->family==QA_GAME_Q2?QA_CONSOLE_Q2:
-        selected->edition==QA_EDITION_QUAKEWORLD?QA_CONSOLE_QW:QA_CONSOLE_Q1;
-    qa_audio_output_format output=active->device?qa_audio_device_requested_configuration(active->device).format:
-        active->audio_output_format;
-    f->audio_output_format=output;
-    if ((active->cpu && !qa_cpu_gamma_read(active->cpu,&f->options.gamma,error)) ||
-        (active->gl && !qa_gl_gamma_read(active->gl,&f->options.gamma,error)) ||
-        !frontend_shared_register(qa_application_cvars(f->application),&dialect,output,f->options.gamma,error) ||
-        !frontend_network_declarations(qa_application_cvars(f->application),error) ||
-        (!f->options.dedicated && !frontend_q1_sky_create(f,&f->q1_sky,error)) ||
-        !frontend_qc_messages_create(f,&f->qc_messages,error) ||
-        !frontend_view_bindings_create(f,error) ||
-        !frontend_equipment_events_create(f,&f->gear_events,error) || !frontend_commands(f,error)) return false;
-    if (f->options.dedicated) {
-        f->terminal=qa_dedicated_console_create(error);
-        if (!f->terminal || !frontend_ui_features_prepare(f,error)) return false;
-    } else {
-        /* The selected source supplies the genuine new UI font view; it never
-         * becomes a constructor startup command or a retained option borrow. */
-        f->options.game=product;
-        bool ready=graphics_create(f,active,native,error);
-        f->options.game=NULL;
-        if (!ready) return false;
+    bool created=frontend_create_for_import(&options,active->native_runtime,&operation->source,error);
+    qa_frontend *source=operation->source;
+    if (source) {
+        const qa_product *product=source->application?
+            qa_catalog_find(qa_application_catalog(source->application),operation->product):NULL;
+        source->options.game=product?product->key:NULL;
     }
-    f->options.game=product;
-    bool music_ready=frontend_music_sources_create(f,&f->music_sources,error);
-    f->options.game=NULL;
-    if (!music_ready) return false;
-    if (!frontend_source_renderer_runtime_bind(f,error) ||
-        !frontend_tools_create(f,error) || !frontend_save_commands_create(f,error)) return false;
-    if (!frontend_restart_binding_create(f,error)) return false;
-    if (!f->options.dedicated) {
-        if (!qa_ui_llm_create(f->seats[0].ui,frontend_tools_llm(f),FRONTEND_ASSISTANCE,
-            &f->seats[0].assistance,error)) return false;
-    }
-    if (!frontend_input_profile_bind_product(f,qa_application_catalog(f->application),
-        selected->id,error)) return false;
-    return save->family==QA_GAME_Q1?qa_application_q1_save_import(f->application,save->state.q1,product,error):
-        qa_application_q2_save_import(f->application,save->state.q2,product,error);
+    return created;
 }
 bool qa_frontend_original_restore_begin(qa_frontend *active,const qa_application_persistence_ops *services,
-    const qa_frontend_original_save *save,const char *product,qa_frontend_original_restore **out,qa_error *error)
+    qa_frontend_original_save *save,const char *product,qa_frontend_original_restore **out,qa_error *error)
 {
     if (!active || !active->application || !save ||
         (save->family!=QA_GAME_Q1 && save->family!=QA_GAME_Q2) ||
         (save->family==QA_GAME_Q1?!save->state.q1:!save->state.q2) || !product || !*product || !out || *out ||
+        (services && ((services->owner_count && !services->owners) ||
+            ((services->publish_ready!=NULL)!=(services->publish!=NULL)))) ||
         active->stepping || active->preparing || active->round || !frontend_owners_idle(active) ||
         !frontend_seat_callbacks_idle(active) || !frontend_cinematic_capture_ready(active))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Original frontend import needs its idle driver and empty operation output");
     qa_frontend_original_restore *operation=calloc(1,sizeof(*operation));
     if (!operation) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining original frontend preparation");
-    operation->active=active; operation->services=services;operation->family=save->family;
+    operation->product=SDL_strdup(product);
+    if (!operation->product) {
+        free(operation); return frontend_fail(error,QA_ERROR_MEMORY,"Retaining selected original product");
+    }
+    operation->active=active; operation->services=services; operation->wall_time_ns=active->wall_time_ns;
+    operation->save=*save; save->state.q1=NULL;
     *out=operation;
-    operation->begun=original_create(active,save,product,&operation->source,&operation->native,error);
+    operation->begun=original_create(operation,error);
     return operation->begun;
+}
+static bool publish_ready(qa_frontend_original_restore *operation,qa_error *error)
+{
+    qa_frontend *source=operation->source,*active=operation->active;
+    if (!frontend_owners_idle(source) || !frontend_seat_callbacks_idle(source) ||
+        !frontend_cinematic_capture_ready(source) ||
+        qa_application_get_state(source->application)!=QA_APPLICATION_RUNNING ||
+        !frontend_network_world_change_ready(source,error) || !frontend_network_world_change_ready(active,error))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Original publication requires its completed candidate and returned owners");
+    if (source->display) {
+        qa_display_info display;
+        if (!qa_display_info_get(source->display,&display,error)) return false;
+        if (display.visible) return frontend_fail(error,QA_ERROR_ARGUMENT,"Original candidate window became visible before publication");
+    }
+    return !operation->services || !operation->services->publish_ready ||
+        operation->services->publish_ready(operation->services->context,active->application,source->application,error);
+}
+static void publish(qa_frontend_original_restore *operation,qa_frontend **slot,qa_frontend **displaced)
+{
+    qa_frontend *source=operation->source,*active=operation->active;
+    if (operation->services && operation->services->publish)
+        operation->services->publish(operation->services->context,active->application,source->application);
+    active->archive_enabled=false;
+    source->archive_enabled=true; source->archive_saved=false;
+    source->options.display.hidden=!operation->visible;
+    if (source->display) (void)qa_display_set_visible(source->display,operation->visible,NULL);
+    if (source->device) qa_audio_device_pause(source->device,false);
+    *slot=source; *displaced=active; operation->source=NULL;
 }
 bool qa_frontend_original_restore_advance(qa_frontend_original_restore *operation,qa_frontend **slot,
     bool *complete,qa_frontend **displaced,qa_frontend **retained_candidate,qa_error *error)
@@ -185,47 +144,59 @@ bool qa_frontend_original_restore_advance(qa_frontend_original_restore *operatio
         !complete || !displaced || *displaced || !retained_candidate || *retained_candidate ||
         slot==displaced || slot==retained_candidate || displaced==retained_candidate ||
         operation->active->stepping || operation->active->preparing || operation->active->round ||
+        operation->active->wall_time_ns<operation->wall_time_ns ||
         !frontend_owners_idle(operation->active) || !frontend_seat_callbacks_idle(operation->active) ||
         !frontend_cinematic_capture_ready(operation->active))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Original preparation advance lost its actual idle driver and owner outputs");
     *complete=false;
     qa_frontend *source=operation->source;
-    bool imported=false;
-    bool advanced=operation->family==QA_GAME_Q1?qa_application_q1_save_import_advance(source->application,&imported,error):
-        qa_application_q2_save_import_advance(source->application,&imported,error);
-    if (!advanced) {
-        operation->finished=true; return false;
+    uint64_t elapsed=operation->active->wall_time_ns-operation->wall_time_ns;
+    operation->wall_time_ns=operation->active->wall_time_ns;
+    if (frontend_constructor_pending(source)) {
+        bool constructed=false;
+        if (!frontend_constructor_advance(source,elapsed,&constructed,error)) goto failed;
+        if (!constructed) return true;
+    } else if (elapsed>UINT64_MAX-source->wall_time_ns) {
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Original candidate clock exceeds its native extent"); goto failed;
+    } else source->wall_time_ns+=elapsed;
+    if (!operation->import_begun) {
+        source->options.game=NULL;
+        bool begun=operation->save.family==QA_GAME_Q1?
+            qa_application_q1_save_import(source->application,operation->save.state.q1,operation->product,error):
+            qa_application_q2_save_import(source->application,operation->save.state.q2,operation->product,error);
+        if (!begun) goto failed;
+        operation->import_begun=true;
+        save_destroy(operation);
     }
-    if (!imported) return true;
-    operation->finished=true;
-    qa_save_image *image=NULL;
-    bool ok=frontend_network_create(source,error) &&
-        frontend_input_profile_bind(source,error) && frontend_tools_sync(source,error) &&
-        (source->options.dedicated || frontend_scene_sync(source,error)) &&
-        qa_application_rankings_start(source->application,error);
-    if (ok) {
-        operation->final_cut=true;
-        ok=frontend_persistence_capture_detached(source,operation->services,&operation->native,QA_SAVE_MANUAL,&image,error) &&
-            frontend_persistence_restore_original(slot,operation->services,source,image,displaced,retained_candidate,error);
-        operation->final_cut=false;
+    if (!operation->imported) {
+        bool advanced=operation->save.family==QA_GAME_Q1?
+            qa_application_q1_save_import_advance(source->application,&operation->imported,error):
+            qa_application_q2_save_import_advance(source->application,&operation->imported,error);
+        if (!advanced) goto failed;
+        if (!operation->imported) return true;
     }
-    qa_error cleanup={0};
-    if (!frontend_save_image_release(source,&image,ok?error:&cleanup)) ok=false;
-    *complete=ok;
-    return ok;
+    bool started=false;
+    if (!frontend_startup_advance(source,&started,error)) goto failed;
+    if (!started) return true;
+    if (!frontend_input_profile_bind(source,error) || !frontend_tools_sync(source,error) ||
+        (!source->options.dedicated && !frontend_scene_sync(source,error)) ||
+        !publish_ready(operation,error)) goto failed;
+    publish(operation,slot,displaced);
+    operation->finished=true; *complete=true;
+    return true;
+failed:
+    operation->finished=true; return false;
 }
-bool qa_frontend_original_restore_capture_ready(const qa_frontend_original_restore *operation)
-{ return operation && operation->begun && operation->finished && operation->final_cut; }
 bool qa_frontend_original_restore_dispose(qa_frontend_original_restore *operation,qa_frontend **retained_source,qa_error *error)
 {
     if (!retained_source || *retained_source)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Original preparation disposal needs an empty retained source output");
     if (!operation) return true;
-    native_guards_destroy(&operation->native);
+    save_destroy(operation);
     qa_frontend *source=operation->source;
     bool ok=!source || ((!source->application || !qa_application_startup_pending(source->application) ||
         qa_application_startup_abort(source->application,error)) && qa_frontend_destroy(source,error));
     if (!ok) *retained_source=source;
-    free(operation);
+    SDL_free(operation->product); free(operation);
     return ok;
 }
