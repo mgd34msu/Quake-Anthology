@@ -268,10 +268,14 @@ void frontend_view_q1_damage(const frontend_q1_motion_settings *settings, qa_vec
     state->damage_time = settings->kick_time;
 }
 qa_scene_vec4 frontend_view_q1_blend(const frontend_q1_motion_settings *settings,
-    const frontend_q1_view_motion *state, int32_t contents, bool quakeworld)
+    const frontend_q1_view_motion *state, int32_t contents, bool quakeworld, uint32_t items)
 {
-    qa_vec3 colors[2] = {{0}, state->damage_color};
-    int32_t percents[2] = {0, state->damage_percent};
+    qa_vec3 colors[3] = {{0,0,0}, state->damage_color, {0,0,0}};
+    int32_t percents[3] = {0, state->damage_percent, 0};
+    if (items & 4194304u) { colors[2] = qa_v3(0,0,255); percents[2] = 30; }
+    else if (items & 2097152u) { colors[2] = qa_v3(0,255,0); percents[2] = 20; }
+    else if (items & 524288u) { colors[2] = qa_v3(100,100,100); percents[2] = 100; }
+    else if (items & 1048576u) { colors[2] = qa_v3(255,255,0); percents[2] = 30; }
     if (settings->contents_blend && contents != -1 && (quakeworld || contents != -2)) {
         if (contents == -5) { colors[0] = qa_v3(255,80,0); percents[0] = 150; }
         else if (contents == -4 || (quakeworld && contents == -2)) {
@@ -279,7 +283,7 @@ qa_scene_vec4 frontend_view_q1_blend(const frontend_q1_motion_settings *settings
         } else { colors[0] = qa_v3(130,80,50); percents[0] = 128; }
     }
     qa_vec3 color = {0}; float alpha = 0;
-    for (unsigned i = 0; i < 2; ++i) {
+    for (unsigned i = 0; i < 3; ++i) {
         if (settings->cshift_percent == 0) continue;
         float weight = (float)(((float)percents[i] * settings->cshift_percent / 100.0) / 255.0);
         if (weight == 0) continue;

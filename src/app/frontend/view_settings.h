@@ -45,7 +45,7 @@ bool frontend_view_settings_q1_motion_sample(const qa_cvars *,bool quakeworld,
 void frontend_view_q1_damage(const frontend_q1_motion_settings *,qa_vec3 origin,qa_vec3 angles,
     uint8_t armor,uint8_t blood,qa_vec3 from,double seconds,frontend_q1_view_motion *);
 qa_scene_vec4 frontend_view_q1_blend(const frontend_q1_motion_settings *,
-    const frontend_q1_view_motion *,int32_t contents,bool quakeworld);
+    const frontend_q1_view_motion *,int32_t contents,bool quakeworld,uint32_t items);
 const char *frontend_view_q1_face(int32_t health,uint32_t items,double seconds,
     const frontend_q1_view_motion *);
 bool frontend_view_q1_damage_origin(uint8_t armor,uint8_t blood,const double from[3],qa_vec3 *,qa_error *);

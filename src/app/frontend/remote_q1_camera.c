@@ -225,6 +225,6 @@ bool remote_q1_camera_contents_blend(frontend_remote_q1 *row,const qa_scene_view
     bool quakeworld=qa_q1_is_qw(row->options.domain.protocol);
     frontend_q1_motion_settings settings;
     if (!frontend_view_settings_q1_motion_sample(row->options.domain.cvars,quakeworld,&settings,error)) return false;
-    *out=frontend_view_q1_blend(&settings,&row->view_motion,contents,quakeworld);
+    *out=frontend_view_q1_blend(&settings,&row->view_motion,contents,quakeworld,row->has_data ? row->data.items : 0);
     return remote_q1_live(row,error);
 }

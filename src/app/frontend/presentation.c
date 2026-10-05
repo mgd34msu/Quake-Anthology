@@ -247,7 +247,7 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
     frontend_camera_axes(angles, scene->axis);
     int32_t contents;
     if (!qa_scene_world_q1_contents(f->scene_world,scene->origin,&contents,error)) return false;
-    seat->q1_blend=frontend_view_q1_blend(&settings,&seat->q1_view_motion,contents,qw);
+    seat->q1_blend=frontend_view_q1_blend(&settings,&seat->q1_view_motion,contents,qw,client.items);
     return true;
 }
 static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
