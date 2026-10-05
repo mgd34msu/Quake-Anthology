@@ -276,6 +276,9 @@ q3_service_result q3_game_spatial(q3_call *call, int32_t *result, qa_error *erro
     if (call->host->options.role != QA_QVM_GAME) return Q3_UNHANDLED;
     int32_t code = call->service;
     if ((code < 23 || code > 33) && code != 43 && code != 44) return Q3_UNHANDLED;
+    bool scoped = code == 24 || code == 25 || code == 32 || code == 43;
+    q3_entity_span span;
+    if (scoped && !q3_entity_span_begin(call, &span, error)) return Q3_FAILED;
     bool ok = true; qa_collision_geometry *geometry = qa_world_geometry(call->host->options.world);
     switch (code) {
     case 23: ok = brush_model(call, error); break;
@@ -315,5 +318,6 @@ q3_service_result q3_game_spatial(q3_call *call, int32_t *result, qa_error *erro
     case 33: case 44: ok = contact(call, code == 44, result, error); break;
     default: return Q3_UNHANDLED;
     }
+    if (scoped) ok = q3_entity_span_end(call, &span, ok, error);
     return ok ? Q3_COMPLETED : Q3_FAILED;
 }

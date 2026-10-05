@@ -107,13 +107,49 @@ static bool record_write(void *context, size_t offset, qa_bytes bytes, qa_error 
     return q3_write(record->call, record->address + offset, bytes, error);
 }
 
+static bool entity_span_current(const q3_call *call, const q3_entity_span *span)
+{
+    const q3_game_data *game = call->host->game;
+    return span && game && span->vm == call->vm && game->entities == span->address &&
+        game->entity_count == span->count && game->entity_stride == span->stride;
+}
+
+bool q3_entity_span_begin(q3_call *call, q3_entity_span *span, qa_error *error)
+{
+    *span = (q3_entity_span){0};
+    q3_game_data *game = call->host->game;
+    if (!call->vm || !game || !game->entities || !game->entity_count) return true;
+    uint64_t size = (uint64_t)game->entity_count * game->entity_stride;
+    if (size > SIZE_MAX)
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 entity table exceeds its VM span");
+    qa_bytes bytes;
+    if (!q3_vm_span(call->vm, game->entities, (size_t)size, &bytes, error)) return false;
+    *span = (q3_entity_span){.previous = call->host->entity_span, .vm = call->vm,
+        .address = game->entities, .count = game->entity_count, .stride = game->entity_stride,
+        .bytes = bytes};
+    call->host->entity_span = span;
+    return true;
+}
+
+bool q3_entity_span_end(q3_call *call, q3_entity_span *span, bool okay, qa_error *error)
+{
+    if (!span->vm) return okay;
+    bool ordered = call->host->entity_span == span;
+    call->host->entity_span = span->previous;
+    return ordered ? okay : q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 entity spans unwound out of order");
+}
+
 bool q3_record_open(const q3_call *call, uint64_t address, size_t size,
                      q3_record *record, qa_error *error)
 {
     *record = (q3_record){.call = call, .address = address};
     qa_bytes bytes;
     if (call->vm) {
-        if (!q3_vm_span(call->vm, address, size, &bytes, error))
+        const q3_entity_span *span = call->host->entity_span;
+        if (entity_span_current(call, span) && address >= span->address &&
+            address - span->address <= span->bytes.size && size <= span->bytes.size - (size_t)(address - span->address))
+            bytes = (qa_bytes){span->bytes.data + (size_t)(address - span->address), size};
+        else if (!q3_vm_span(call->vm, address, size, &bytes, error))
             return false;
     } else {
         uint8_t *copy = size ? qa_arena_alloc(&call->host->scratch, size, 1, error) : NULL;

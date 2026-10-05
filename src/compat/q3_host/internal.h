@@ -74,6 +74,14 @@ typedef struct q3_game_data {
     size_t portal_count, portal_capacity;
 } q3_game_data;
 
+typedef struct q3_entity_span {
+    struct q3_entity_span *previous;
+    qa_qvm *vm;
+    uint64_t address;
+    uint32_t count, stride;
+    qa_bytes bytes;
+} q3_entity_span;
+
 typedef struct q3_cvar_binding {
     qa_q3_host_cvar_namespace reference;
     size_t handle;
@@ -132,6 +140,7 @@ struct qa_q3_host {
     bool retired, restore_pending, bots_shutdown;
     struct q3_collision_binding *collision_scene;
     size_t collision_holds;
+    q3_entity_span *entity_span;
 };
 
 typedef struct q3_call {
@@ -189,6 +198,8 @@ float q3_float(const q3_call *, size_t);
 bool q3_vector(const q3_call *, uint64_t, qa_vec3 *, qa_error *);
 bool q3_write_vector(const q3_call *, uint64_t, qa_vec3, qa_error *);
 bool q3_record_open(const q3_call *, uint64_t, size_t, q3_record *, qa_error *);
+bool q3_entity_span_begin(q3_call *, q3_entity_span *, qa_error *);
+bool q3_entity_span_end(q3_call *, q3_entity_span *, bool, qa_error *);
 bool q3_signature_find(qa_qvm_role, qa_qvm_abi, int32_t, const q3_signature **,
                         int32_t *, qa_error *);
 bool q3_ql_service(int32_t source, int32_t *canonical, qa_error *);
