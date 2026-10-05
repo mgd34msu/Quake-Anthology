@@ -217,7 +217,7 @@ static bool clear_shot(qa_q1_game *g, q1_actor *entity, bool *clear, bool *water
 static void attack_finished(qa_q1_game *g, q1_actor *entity, double delay) {
     if (g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3)
         entity->state.monster.attack_finished = g->time + delay;
-    entity->state.monster.refired = false;
+    entity->state.monster.counter = 0;
 }
 static bool repulse(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!think(g, entity, error))

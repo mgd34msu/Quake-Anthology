@@ -333,11 +333,11 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
                    &missile, error);
     case Q1_ACTION_ENF_ATK14:
     case Q1_ACTION_GRUNT_ARMY_ATK7:
-        if (g->options.skill == 3 && !m->refired) {
+        if (g->options.skill == 3 && m->counter != 1) {
             if (!q1_monster_visible(g, entity, q1_ref_actor(g, m->enemy), &visible, error))
                 return false;
             if (visible) {
-                m->refired = true;
+                m->counter = 1;
                 m->next_frame =
                     q1_frame_index(action == Q1_ACTION_ENF_ATK14 ? "enf_atk1" : "army_atk1");
             }
@@ -450,7 +450,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             if (!q1_monster_visible(g, entity, q1_ref_actor(g, m->enemy), &visible, error))
                 return false;
             if (visible) {
-                m->refired = false;
+                m->counter = 0;
                 if (g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3)
                     m->attack_finished = g->time + 2;
                 return q1_monster_play(g, entity, "hknight_char_a1", error);
@@ -459,7 +459,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         return true;
     case Q1_ACTION_HKNIGHT_CHAR_B1:
         if (g->time > m->attack_finished) {
-            m->refired = false;
+            m->counter = 0;
             if (g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3)
                 m->attack_finished = g->time + 3;
             if (!q1_monster_play(g, entity, "hknight_run1", error))
@@ -537,7 +537,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
     case Q1_ACTION_WIZ_FAST1:
         return wizard_fast(g, entity, error);
     case Q1_ACTION_WIZ_FAST10:
-        m->refired = false;
+        m->counter = 0;
         if (g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3)
             m->attack_finished = g->time + 2;
         if (!q1_monster_visible(g, entity, q1_ref_actor(g, m->enemy), &visible, error))

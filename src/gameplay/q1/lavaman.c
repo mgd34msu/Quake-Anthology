@@ -24,7 +24,7 @@ bool q1_lavaman_attack(qa_q1_game *g, q1_actor *entity, bool *attacking, qa_erro
     float delay = 1 + q1_random(g);
     if (mg3 || g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3)
         monster->attack_finished = g->time + delay;
-    monster->refired = false;
+    monster->counter = 0;
     *attacking = true;
     return true;
 }

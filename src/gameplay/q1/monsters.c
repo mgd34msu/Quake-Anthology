@@ -116,7 +116,7 @@ bool q1_monster_found(qa_q1_game *g, q1_actor *entity, qa_actor_id target, qa_er
         (entity->spawnflags & (65536u | 8388608u)) && monster->pain_finished > g->time)
         return true;
     monster->search_until = g->time + 5;
-    monster->refired = false;
+    monster->counter = 0;
     entity->physics.enemy = q1_ref_from(g, target);
     entity->physics.goal = q1_ref_from(g, target);
     if (g->options.program == QA_Q1_HIPNOTIC || mg3 || q1_ref_present(monster->charmer))
@@ -317,7 +317,7 @@ static bool melee_attack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             if (g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3)
                 entity->state.monster.attack_finished = g->time + delay;
         }
-        entity->state.monster.refired = false;
+        entity->state.monster.counter = 0;
         return true;
     default:
         return true;
@@ -414,7 +414,7 @@ static bool try_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
         float delay = 2 + 2 * q1_random(g);
         if (g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3)
             m->attack_finished = g->time + delay;
-        m->refired = false;
+        m->counter = 0;
         m->attack_state = 2;
         *out = true;
         return true;
@@ -497,7 +497,7 @@ static bool try_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
         float delay = (spec->species == QA_Q1_SHAMBLER ? 2 : 1) + 2 * q1_random(g);
         if (g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3 || mg3)
             m->attack_finished = g->time + delay;
-        m->refired = false;
+        m->counter = 0;
         m->attack_state = 2;
         *out = true;
         return true;
@@ -536,7 +536,7 @@ static bool try_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
     if (g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3 ||
         spec->species == QA_Q1_ARMY || mg3)
         m->attack_finished = g->time + delay;
-    m->refired = false;
+    m->counter = 0;
     if (spec->species == QA_Q1_ARMY) {
         float value = q1_random(g);
         if (m->addon.enabled && value < 0.3f)

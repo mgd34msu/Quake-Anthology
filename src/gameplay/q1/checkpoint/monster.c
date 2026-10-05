@@ -54,7 +54,6 @@ bool q1_save_monster(q1_save_io *io, q1_monster *m) {
     Q1_SAVE(io, u8, m->attack_state);
     Q1_SAVE(io, u8, m->in_pain);
     Q1_SAVE(io, u8, m->hunting_charmer);
-    Q1_SAVE(io, bool, m->refired);
     Q1_SAVE(io, bool, m->sliding);
     Q1_SAVE(io, bool, m->lefty);
     Q1_SAVE(io, bool, m->counted_death);

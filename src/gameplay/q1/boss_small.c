@@ -406,7 +406,7 @@ static bool orb_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_er
     case Q1_ACTION_ORB_ORB_FAST5:
         if (!q1_monster_face(g, e, error))
             return false;
-        m->refired = false;
+        m->counter = 0;
         m->attack_finished = g->time + 2;
         m->attack_state = 0;
         m->sliding = g->enemy_range < 2 && g->enemy_visible;

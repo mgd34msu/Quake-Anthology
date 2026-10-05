@@ -378,7 +378,7 @@ bool q1_heavy_check_attack(qa_q1_game *g, q1_actor *e, bool *attacking, qa_error
         return false;
     if (!q1_alive(g, e->id))
         return true;
-    m->refired = false;
+    m->counter = 0;
     m->attack_finished = g->time + 2 * q1_random(g);
     *attacking = true;
     return true;

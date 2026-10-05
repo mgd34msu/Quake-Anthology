@@ -191,7 +191,7 @@ bool q1_scourge_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             monster->attack_finished = g->time + 4 * q1_random(g);
         else
             (void)q1_random(g);
-        monster->refired = false;
+        monster->counter = 0;
         return true;
     case Q1_ACTION_HIPSCRGE_SCOURGE_MELEE1:
         monster->source.scourge.silent = false;
@@ -201,11 +201,11 @@ bool q1_scourge_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         if (!q1_monster_face(g, entity, error))
             return false;
         bool visible;
-        if (g->options.skill == 3 && !monster->refired) {
+        if (g->options.skill == 3 && monster->counter != 1) {
             if (!q1_monster_visible(g, entity, q1_ref_actor(g, monster->enemy), &visible, error))
                 return false;
             if (visible) {
-                monster->refired = true;
+                monster->counter = 1;
                 monster->next_frame = q1_frame_index("scourge_melee1");
             }
         }

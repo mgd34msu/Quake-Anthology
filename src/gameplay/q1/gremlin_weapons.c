@@ -378,7 +378,7 @@ bool q1_gremlin_weapon_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_err
         return true;
     if (g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3)
         entity->state.monster.attack_finished = g->time + 1;
-    entity->state.monster.refired = false;
+    entity->state.monster.counter = 0;
     return weapon != QA_Q1_LIGHTNING || q1_sound(g, entity->id, "weapons/lstart.wav", 0, 1, error);
 }
 bool q1_gremlin_backpack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
