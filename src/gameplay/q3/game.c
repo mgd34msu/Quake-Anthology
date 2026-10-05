@@ -71,7 +71,7 @@ bool qa_q3_source_memory_write(qa_q3_game *game, uint32_t offset, const void *by
 }
 bool qa_q3_source_memory_span(qa_q3_game *game, uint32_t offset, uint32_t size,
                              uint8_t **out, qa_error *error) {
-    if (!game || !out || game->source_restored || offset > QA_Q3_SOURCE_MEMORY_BYTES ||
+    if (!game || !out || offset > QA_Q3_SOURCE_MEMORY_BYTES ||
         size > QA_Q3_SOURCE_MEMORY_BYTES - offset)
         return q3_fail(error, "Q3 source byte span exceeds its real mutable GAME pool");
     *out = game->memory.pool + offset;
