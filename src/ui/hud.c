@@ -780,15 +780,18 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
     if (data.crosshair_visible && !frame->show_scores && !frame->show_inventory) {
         float size=data.crosshair_size>0?data.crosshair_size:8;
         if (!isfinite(size) || size<2 || size>32) return ui_fail(error,"Invalid HUD crosshair size");
+        qa_scene_rect view = frame->viewport.width && frame->viewport.height ? frame->viewport : target;
+        float center_x = ((float)view.x + (float)view.width * .5f - ui->bias_x) / ui->scale;
+        float center_y = ((float)view.y + (float)view.height * .5f - ui->bias_y) / ui->scale;
         if (data.crosshair) {
             float picture_size=data.crosshair_size>0?size:16;
-            qa_scene_rect_f pixels = {ui->bias_x + (320-picture_size*.5f) * ui->scale,
-                ui->bias_y + (240-picture_size*.5f) * ui->scale,
+            qa_scene_rect_f pixels = {ui->bias_x + (center_x-picture_size*.5f) * ui->scale,
+                ui->bias_y + (center_y-picture_size*.5f) * ui->scale,
                 picture_size * ui->scale, picture_size * ui->scale};
             if (!qa_scene_frame_picture_f(scene, data.crosshair, target, pixels,
                 (qa_scene_vec4){0, 0, 1, 1}, data.crosshair_color, error)) return false;
-        } else if (!ui_fill(ui, scene, target, (qa_scene_rect_f){320-size*.125f, 240-size*.5f, size*.25f, size}, data.crosshair_color, error) ||
-                   !ui_fill(ui, scene, target, (qa_scene_rect_f){320-size*.5f, 240-size*.125f, size, size*.25f}, data.crosshair_color, error)) return false;
+        } else if (!ui_fill(ui, scene, target, (qa_scene_rect_f){center_x-size*.125f, center_y-size*.5f, size*.25f, size}, data.crosshair_color, error) ||
+                   !ui_fill(ui, scene, target, (qa_scene_rect_f){center_x-size*.5f, center_y-size*.125f, size, size*.25f}, data.crosshair_color, error)) return false;
     }
     if (frame->show_inventory && frame->actor.registry) {
         size_t count = 0;

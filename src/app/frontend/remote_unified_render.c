@@ -550,6 +550,8 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
         }
     }
     if (okay) view=world.view;
+    qa_scene_rect output = frontend_viewport(r->frontend, d->physical_seat);
+    if (okay) okay=frontend_view_background(r->frontend,output,&view,e);
     if (okay && children && children->lights)
         okay=children->lights(children->context,&view,&world,&world.lights,&world.light_count,e);
     unified_scene_context context={.renderer=r,.predicted=predicted,.children=children,.player=player,.predicting=predicting};
@@ -566,7 +568,7 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
     if(okay && children && children->status_replacement)
         okay=children->status_replacement(children->context,&source_status,e);
     if (okay) okay=qa_hud_draw(r->hud,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,
-        .time_ns=(uint64_t)(r->seconds*1e9),.viewport=view.viewport,.safe_area=view.viewport,.scale=1,.visible=true,
+        .time_ns=(uint64_t)(r->seconds*1e9),.viewport=view.viewport,.safe_area=output,.scale=1,.visible=true,
         .source_status_native=source_status},&r->frontend->frame,e);
     if (okay && children && children->hud)
         okay=children->hud(children->context,r->frontend->seats[d->physical_seat].ui,view.viewport,&r->frontend->frame,e);

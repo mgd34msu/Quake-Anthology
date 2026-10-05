@@ -67,6 +67,18 @@ void frontend_camera_axes(qa_vec3 angles, qa_vec3 axis[3])
     axis[1] = qa_v3(sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, sr * cp);
     axis[2] = qa_v3(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp);
 }
+bool frontend_view_background(qa_frontend *frontend, qa_scene_rect output,
+    const qa_scene_view *view, qa_error *error)
+{
+    if (view->viewport.x == output.x && view->viewport.y == output.y &&
+        view->viewport.width == output.width && view->viewport.height == output.height) return true;
+    qa_scene_command clear = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = *view};
+    clear.data.view.viewport = output;
+    clear.data.view.clear_color = clear.data.view.clear_depth = true;
+    clear.data.view.color = (qa_scene_vec4){0, 0, 0, 1};
+    clear.data.view.depth = 1;
+    return qa_scene_frame_emit(&frontend->frame, &clear, error);
+}
 static qa_scene_rect q1_view_rectangle(qa_scene_rect viewport,
     const frontend_q1_view_settings *settings, bool intermission)
 {
@@ -135,13 +147,14 @@ static bool remote_q1_present(qa_frontend *f,unsigned seat,const qa_scene_view *
     frontend_camera_axes(angles,view.axis);
     view.viewport = q1_view_rectangle(view.viewport, &settings, player.intermission);
     if (!q1_view_projection(f, &view, fov, error)) return false;
+    if (!frontend_view_background(f, fallback->viewport, &view, error)) return false;
     if (!frontend_remote_q1_draw(selected,&view,listener,rendered,error)) return false;
     frontend_seat *physical=&f->seats[seat];
     bool component_status=false;
     if (!source_status_native(f,seat,player.actor,&component_status,error)) return false;
     if (!qa_hud_draw(physical->hud,&(qa_hud_frame){.seat=seat,.actor=player.actor,
         .source_status_native=component_status,
-        .time_ns=f->time_ns,.viewport=fallback->viewport,.safe_area=fallback->viewport,
+        .time_ns=f->time_ns,.viewport=view.viewport,.safe_area=fallback->viewport,
         .scale=preferences->hud_scale,.show_scores=physical->scores,.visible=visible},&f->frame,error)) return false;
     *hud_drawn=true; return true;
 }
@@ -342,6 +355,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
             if (!q1_view_projection(frontend, &view, ordinary_fov, error)) return false;
         }
         if (!frontend_tools_camera(frontend, i, false, &view, error)) return false;
+        if (!frontend_view_background(frontend, rect, &view, error)) return false;
         qa_scene_command begin = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = view};
         if (!qa_scene_frame_emit(&frontend->frame, &begin, error)) return false;
         if (!frontend_source_frame(frontend, i, rect, error) ||
@@ -428,7 +442,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (live && !source_status_native(frontend,i,actor,&component_status,error)) return false;
         if (live && !common_hud_drawn && (!native_rendered || source_weapon_status || qc_status) && !qa_hud_draw(seat->hud, &(qa_hud_frame){.seat = i, .actor = actor,
             .weapon_only=native_rendered && !qc_status,.source_status_native=component_status,
-            .time_ns = frontend->time_ns, .viewport = rect, .safe_area = rect,
+            .time_ns = frontend->time_ns, .viewport = view.viewport, .safe_area = rect,
             .scale = preferences.hud_scale, .show_scores = seat->scores || (seat->q2_view_ready && !seat->q2_help && (seat->q2_view.layouts & 1)),
             .show_inventory = seat->q2_inventory, .visible = !ui.fullscreen && game_focus}, &frontend->frame, error)) return false;
         if (live && !ui.fullscreen && game_focus && !qa_hud_wheel_draw(seat->wheel,

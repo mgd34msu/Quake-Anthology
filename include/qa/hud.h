@@ -25,7 +25,7 @@ typedef struct qa_hud_frame {
     uint32_t seat;
     qa_actor_id actor;
     uint64_t time_ns;
-    qa_scene_rect viewport, safe_area;
+    qa_scene_rect viewport, safe_area; /* World view and full seat UI region. */
     float scale;
     bool show_scores, show_inventory, visible, weapon_only, source_status_native;
 } qa_hud_frame;
