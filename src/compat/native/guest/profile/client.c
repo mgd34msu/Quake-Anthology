@@ -234,7 +234,7 @@ static void flush_executable(const profile_scope *row)
             !dr_unlink_flush_region((app_pc)(ptr_uint_t)mapping->base, (size_t)mapping->bytes)) dr_abort();
     }
 }
-static void scope_changed(const profile_scope *before, const profile_scope *after)
+static void scope_changed(const profile_scope *before, const profile_scope *after, bool flush_entry)
 {
     if (scope_stores(before) != scope_stores(after)) {
         flush_executable(before); flush_executable(after);
@@ -243,7 +243,7 @@ static void scope_changed(const profile_scope *before, const profile_scope *afte
     if (scope_stores(after)) return;
     uint64_t old_entry = before ? before->entry : 0, new_entry = after ? after->entry : 0;
     uint64_t old_stop = before ? before->stop : 0, new_stop = after ? after->stop : 0;
-    if (old_entry != new_entry) { flush_point(old_entry); flush_point(new_entry); }
+    if (flush_entry && old_entry != new_entry) { flush_point(old_entry); flush_point(new_entry); }
     if (old_stop != new_stop) { flush_point(old_stop); flush_point(new_stop); }
     size_t old_callbacks = before ? before->callback_count : 0;
     size_t new_callbacks = after ? after->callback_count : 0;
@@ -291,7 +291,7 @@ static bool control_apply(guest_profile_guard_control *control)
     if (control->operation == GUEST_PROFILE_GUARD_LEAVE) {
         if (!scope || scope->id != control->scope || scope->phase != PROFILE_STOPPED) return false;
         profile_scope *retired = scope; scope = scope->parent;
-        scope_changed(retired, scope); scope_free(retired); return true;
+        scope_changed(retired, scope, true); scope_free(retired); return true;
     }
     if (scope && scope->phase != PROFILE_STOPPED) return false;
     if (control->operation == GUEST_PROFILE_GUARD_RESUME && (!scope || scope->id != control->scope)) return false;
@@ -307,7 +307,7 @@ static bool control_apply(guest_profile_guard_control *control)
             next->boundary_bypass = scope->boundary_bypass;
         scope->pending = NULL;
     } else next->parent = scope;
-    scope = next; scope_changed(previous, next);
+    scope = next; scope_changed(previous, next, control->operation != GUEST_PROFILE_GUARD_RESUME);
     if (control->operation == GUEST_PROFILE_GUARD_RESUME) scope_free(previous);
     return true;
 }
@@ -704,6 +704,15 @@ static dr_signal_action_t signal_event(void *context, dr_siginfo_t *information)
     (void)information;
     return DR_SIGNAL_DELIVER;
 }
+static void kernel_xfer(void *context, const dr_kernel_xfer_info_t *information)
+{
+    if (scope && scope->phase == PROFILE_ARMED &&
+        information->type == DR_XFER_SIGNAL_RETURN &&
+        information->target_pc == (app_pc)(ptr_uint_t)scope->entry) {
+        if (dr_get_thread_id(context) != owner_thread) dr_abort();
+        scope->phase = PROFILE_ACTIVE;
+    }
+}
 static bool syscall_filter(void *context, int number)
 {
     (void)context; (void)number;
@@ -730,6 +739,7 @@ static void process_exit(void)
         dr_global_free(instructions, sizeof(*instructions)); instructions = next;
     }
     drmgr_unregister_signal_event(signal_event); drmgr_unregister_module_load_event(module_load);
+    drmgr_unregister_kernel_xfer_event(kernel_xfer);
     drmgr_unregister_pre_syscall_event(syscall_pre); drmgr_unregister_filter_syscall_event(syscall_filter);
     drmgr_unregister_bb_app2app_event(app2app); drmgr_unregister_bb_insertion_event(instrument);
     drmgr_unregister_bb_instru2instru_event(meta_branches);
@@ -754,6 +764,7 @@ DR_EXPORT void dr_client_main(client_id_t id, int argc, const char *argv[])
     dr_track_where_am_i();
     if (!dr_using_all_private_caches() || !drmgr_init() || !drutil_init() ||
         !drmgr_register_module_load_event(module_load) || !drmgr_register_signal_event(signal_event) ||
+        !drmgr_register_kernel_xfer_event(kernel_xfer) ||
         !drmgr_register_filter_syscall_event(syscall_filter) || !drmgr_register_pre_syscall_event(syscall_pre) ||
         !drmgr_register_bb_app2app_event(app2app, NULL) || !drmgr_register_bb_instrumentation_event(NULL, instrument, NULL) ||
         !drmgr_register_bb_instru2instru_event(meta_branches, NULL) ||
