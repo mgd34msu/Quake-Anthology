@@ -928,10 +928,12 @@ static bool alias_diffuse(const qa_scene_model_input *input, const float normal[
 }
 
 static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *input, uint32_t index,
-                           qa_scene_frame *frame, qa_scene_mesh *out, qa_error *error) {
+                           bool cull, qa_scene_frame *frame, qa_scene_mesh *out, bool *visible,
+                           qa_error *error) {
     const qa_model_mesh *source = &model->source->meshes[index];
     scene_model_mesh *retained = &model->meshes[index];
     *out = retained->retained;
+    *visible = true;
     if (model->source_topology && out->vertex_count != source->vertex_count) {
         qa_error_set(error, QA_ERROR_FORMAT, index, "Source model lost its physical vertex extent"); return false;
     }
@@ -941,8 +943,7 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
         qa_error_set(error, QA_ERROR_MEMORY, index, "model frame geometry exceeds addressable storage"); return false;
     }
     qa_model_vertex *sampled = retained->sampled;
-    qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage, out->vertex_count * sizeof(*vertices), _Alignof(qa_scene_vertex), error);
-    if (!sampled || !vertices) return false;
+    if (!sampled) return false;
     bool alias = model->source->format == QA_MODEL_MDL || model->source->format == QA_MODEL_MD2;
     if (alias) {
         qa_vec3 delta = qa_v3(0, 0, 0);
@@ -964,10 +965,43 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
             retained->sampled_pose = NULL;
             if (!qa_model_skin_md5(model->source, index, input->pose, input->pose_count,
                                     sampled, source->vertex_count, error)) return false;
+            retained->sampled_bounds = model_bounds_empty();
+            retained->sampled_shell_ready = false;
+            for (size_t i = 0; i < out->vertex_count; ++i) {
+                uint32_t source_index = retained->sources[i];
+                if (source_index >= source->vertex_count) {
+                    qa_error_set(error, QA_ERROR_FORMAT, index, "Source model lost its physical vertex order"); return false;
+                }
+                model_bounds_add(&retained->sampled_bounds, model_vec(sampled[source_index].position));
+            }
             if (reusable) retained->sampled_pose = input->pose;
         }
     } else if (!qa_model_sample_mesh(model->source, index, input->frame, input->old_frame,
                                       input->back_lerp, sampled, source->vertex_count, error)) return false;
+    bool shell = scene_model_has_shell(input);
+    if (shell && model->source->format == QA_MODEL_MD5 && !retained->sampled_shell_ready) {
+        retained->sampled_shell_bounds = model_bounds_empty();
+        for (size_t i = 0; i < out->vertex_count; ++i) {
+            const qa_model_vertex *point = &sampled[retained->sources[i]];
+            model_bounds_add(&retained->sampled_shell_bounds,
+                qa_vec_add(model_vec(point->position), qa_vec_scale(model_vec(point->normal), 4)));
+        }
+        retained->sampled_shell_ready = true;
+    }
+    if (cull && model->source->format == QA_MODEL_MD5) {
+        qa_bounds bounds = shell ? retained->sampled_shell_bounds : retained->sampled_bounds;
+        qa_model_bounds local = {{bounds.mins.x, bounds.mins.y, bounds.mins.z},
+                                {bounds.maxs.x, bounds.maxs.y, bounds.maxs.z}}, world;
+        qa_model_transform_bounds(&input->transform, &local, &world);
+        qa_scene_plane planes[6];
+        size_t count = qa_scene_frustum(&input->view, planes);
+        if (!qa_scene_bounds_visible((qa_bounds){model_vec(world.min), model_vec(world.max)}, planes, count)) {
+            *visible = false; return true;
+        }
+    }
+    qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage, out->vertex_count * sizeof(*vertices),
+        _Alignof(qa_scene_vertex), error);
+    if (!vertices) return false;
     qa_scene_model_input lighting = *input;
     if (input->family == QA_SCENE_Q3 && model->options.family != QA_SCENE_Q3) {
         lighting.family = model->options.family;
@@ -975,12 +1009,12 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
     }
     qa_vec3 light = input->alias_lighting == QA_ALIAS_PREPARED_LIGHT ?
         input->alias_light : scene_model_alias_light(&lighting);
-    bool shell = scene_model_has_shell(input);
     scene_model_shading shading = {0};
     if (!input->shadow_only && input->alias_lighting != QA_ALIAS_Q3_DIFFUSE &&
         lighting.family != QA_SCENE_Q3 && !shell)
         shading = scene_model_shade_prepare(&lighting);
-    out->bounds = model_bounds_empty();
+    out->bounds = model->source->format == QA_MODEL_MD5 ?
+        shell ? retained->sampled_shell_bounds : retained->sampled_bounds : model_bounds_empty();
     for (size_t i = 0; i < out->vertex_count; ++i) {
         uint32_t source_index = retained->sources[i];
         if (source_index >= source->vertex_count || (model->source_topology && source_index != i)) {
@@ -1016,7 +1050,7 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
             vertices[i].color.y *= light.y * shade;
             vertices[i].color.z *= light.z * shade;
         }
-        model_bounds_add(&out->bounds, vertices[i].position);
+        if (model->source->format != QA_MODEL_MD5) model_bounds_add(&out->bounds, vertices[i].position);
     }
     out->identity = 0; out->revision = frame->sequence; out->vertices = vertices;
     return true;
@@ -1316,6 +1350,9 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
         }
         for (uint32_t i = first; i < first + count; ++i) {
             qa_scene_mesh mesh;
+            bool mesh_visible = true;
+            bool weapon = input.family == QA_SCENE_Q2 && (input.view_model || (input.flags & 4));
+            bool cull = !source_md3 && !input.no_cull && !input.shadow_only && !weapon;
             scene_model_source_pose *pose = NULL;
             scene_model_image *image;
             scene_model_image external = {0};
@@ -1324,10 +1361,10 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
                 if (!pose) return false;
                 *pose = (scene_model_source_pose){.model = model, .surface = i, .input = *original};
                 mesh = model->meshes[i].retained;
-            } else if (!mesh_geometry(model, &input, i, frame, &mesh, error)) return false;
+            } else if (!mesh_geometry(model, &input, i, cull, frame, &mesh, &mesh_visible, error)) return false;
+            if (!mesh_visible) continue;
             if (!select_image(model, &input, i, &external, &image, error)) return false;
-            bool weapon = input.family == QA_SCENE_Q2 && (input.view_model || (input.flags & 4));
-            if (!source_md3 && !input.no_cull && !input.shadow_only && !weapon && mesh.vertex_count) {
+            if (model->source->format != QA_MODEL_MD5 && cull && mesh.vertex_count) {
                 qa_model_bounds local = cull_bounds(model, original, &mesh), world;
                 qa_model_transform_bounds(&input.transform, &local, &world);
                 qa_bounds bounds = {model_vec(world.min), model_vec(world.max)};

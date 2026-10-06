@@ -27,6 +27,8 @@ typedef struct scene_model_mesh {
     scene_model_image **shaders;
     qa_model_vertex *sampled;
     const qa_model_pose *sampled_pose;
+    qa_bounds sampled_bounds, sampled_shell_bounds;
+    bool sampled_shell_ready;
 } scene_model_mesh;
 
 typedef struct scene_model_shadow_identity {
