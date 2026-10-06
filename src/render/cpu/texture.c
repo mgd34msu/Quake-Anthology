@@ -99,6 +99,27 @@ static void sample_level(const cpu_sampler *sampler, size_t index, double u,
           sx1 = texel_axis(image->wrap, level->width, x0 + 1),
           sy0 = texel_axis(image->wrap, level->height, y0),
           sy1 = texel_axis(image->wrap, level->height, y0 + 1);
+  if (!target && image->kind != QA_SCENE_DEPTH32F && sampler->components &&
+      sx0 >= 0 && sx1 >= 0 && sy0 >= 0 && sy1 >= 0 &&
+      sx0 < level->width && sx1 < level->width &&
+      sy0 < level->height && sy1 < level->height) {
+    const uint8_t *pixels = level->pixels;
+    const uint8_t *taps[4] = {
+        pixels + ((size_t)sy0 * level->width + (size_t)sx0) * 4,
+        pixels + ((size_t)sy0 * level->width + (size_t)sx1) * 4,
+        pixels + ((size_t)sy1 * level->width + (size_t)sx0) * 4,
+        pixels + ((size_t)sy1 * level->width + (size_t)sx1) * 4};
+    const double *components = sampler->components;
+    for (size_t c = 0; c < (sampler->alpha ? 4u : 3u); ++c)
+      out[c] = components[taps[0][c]] * (1 - fx) * (1 - fy) +
+               components[taps[1][c]] * fx * (1 - fy) +
+               components[taps[2][c]] * (1 - fx) * fy +
+               components[taps[3][c]] * fx * fy;
+    if (!sampler->alpha)
+      out[3] = (1 - fx) * (1 - fy) + fx * (1 - fy) +
+               (1 - fx) * fy + fx * fy;
+    return;
+  }
   double taps[4][4];
   texel(sampler, level, target, sx0, sy0, taps[0]);
   texel(sampler, level, target, sx1, sy0, taps[1]);
