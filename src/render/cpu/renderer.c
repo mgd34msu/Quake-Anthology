@@ -473,6 +473,8 @@ static bool update_image(qa_cpu_renderer *renderer, const qa_scene_image *image,
   return true;
 }
 static void clear_view(qa_cpu_renderer *renderer, const qa_scene_view *view) {
+  if (view->clear_color) renderer->clear_color = view->color;
+  if (!view->clear_color && !view->clear_depth && !view->clear_stencil) return;
   cpu_framebuffer *buffer = renderer->current;
   int64_t right = (int64_t)view->viewport.x + view->viewport.width;
   int64_t bottom = (int64_t)view->viewport.y + view->viewport.height;
@@ -480,20 +482,35 @@ static void clear_view(qa_cpu_renderer *renderer, const qa_scene_view *view) {
   int64_t y0 = view->viewport.y > 0 ? view->viewport.y : 0;
   int64_t x1 = right < buffer->width ? right : buffer->width;
   int64_t y1 = bottom < buffer->height ? bottom : buffer->height;
-  if (view->clear_color) renderer->clear_color=view->color;
-  uint8_t color[4] = {cpu_byte(view->color.x), cpu_byte(view->color.y),
-                      cpu_byte(view->color.z),
-                      buffer->alpha ? cpu_byte(view->color.w) : 255};
-  for (int64_t y = y0; y < y1; ++y)
-    for (int64_t x = x0; x < x1; ++x) {
-      size_t index = (size_t)y * buffer->width + (size_t)x;
-      if (view->clear_color && buffer->color)
-        memcpy(buffer->color + index * 4, color, 4);
-      if (view->clear_depth)
-        buffer->depth[index] = cpu_clamp(view->depth);
-      if (view->clear_stencil && buffer->stencil)
-        buffer->stencil[index] = 0;
+  if (x1 <= x0 || y1 <= y0) return;
+  size_t count = (size_t)(x1 - x0), stride = buffer->width;
+  if (view->clear_color && buffer->color) {
+    uint8_t color[4] = {cpu_byte(view->color.x), cpu_byte(view->color.y),
+                        cpu_byte(view->color.z),
+                        buffer->alpha ? cpu_byte(view->color.w) : 255};
+    uint32_t packed;
+    memcpy(&packed, color, sizeof(packed));
+    uint32_t block[4] = {packed, packed, packed, packed};
+    for (int64_t y = y0; y < y1; ++y) {
+      uint8_t *row = buffer->color + ((size_t)y * stride + (size_t)x0) * 4;
+      size_t x = 0;
+      for (; x + 4 <= count; x += 4) memcpy(row + x * 4, block, sizeof(block));
+      for (; x < count; ++x) memcpy(row + x * 4, &packed, sizeof(packed));
     }
+  }
+  if (view->clear_depth) {
+    double depth = cpu_clamp(view->depth), block[2] = {depth, depth};
+    for (int64_t y = y0; y < y1; ++y) {
+      double *row = buffer->depth + (size_t)y * stride + (size_t)x0;
+      for (size_t x = 0; x < count / 2; ++x)
+        memcpy(row + x * 2, block, sizeof(block));
+      if (count % 2) row[count - 1] = depth;
+    }
+  }
+  if (view->clear_stencil && buffer->stencil)
+    for (int64_t y = y0; y < y1; ++y)
+      memset(buffer->stencil + (size_t)y * stride + (size_t)x0, 0,
+             count * sizeof(*buffer->stencil));
 }
 static bool begin_opacity(qa_cpu_renderer *renderer, float opacity,
                           qa_error *error) {
