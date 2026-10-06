@@ -658,14 +658,7 @@ static bool write_game(qa_frontend *f,qa_fs_root *root,const char *name,
             qa_application_q2_save_capture(f->application,purpose,configs,count,q2,error) &&
             qa_q2_save_directory_write(root,name,*q2,nonce,error);
     }
-    if (original) {
-        if (written) return true;
-        if (!error || error->code!=QA_ERROR_UNSUPPORTED) return false;
-        qa_console_emit(qa_application_console(f->application),NULL,"Original save cannot represent this state: ");
-        qa_console_emit(qa_application_console(f->application),NULL,error->message);
-        qa_console_emit(qa_application_console(f->application),NULL,". Saving shared game state.\n");
-        *error=(qa_error){0};
-    }
+    if (original) return written;
     return (*image || qa_frontend_persistence_capture(f,f->options.persistence_services,purpose,image,error)) &&
         qa_save_write(root,name,*image,nonce,error);
 }
