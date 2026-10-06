@@ -168,3 +168,41 @@ The next shared shader change batches their unrelated texture reads while
 retaining per-pixel state/store order and framebuffer feedback. These sample
 percentages diagnose cost; they are not timing percentiles. Evidence:
 `d01326c6-current-q3-wayland-cpu640-dvh_1fcn/result.json`.
+
+## Installed `10b63336`: shared generic texture packets
+
+All twelve stationary native cases reached their requested retail map and
+drawable, measured 600 presents after warm-up and quit zero. Both full compiler
+builds and their registered checks passed. Affinity, seven CPU workers, enabled
+dummy audio, RTX 3090 GL swap interval zero and real-time simulation match the
+preceding suite. No compiler, debugger, profiler or other Anthology live check
+overlapped. The whole-host monitor flagged activity in every case: six had
+only the other project on disjoint physical cores; the remaining six also had
+browser, desktop-agent or application activity overlapping this affinity.
+None qualifies the strict whole-host quiet requirement; the numbers below are
+observations, not a claimed qualified speedup. One-second monitoring cannot
+exclude shorter interference.
+
+| Game | Output | Median frame (ms) | p99 frame (ms) | Mean scene / render (ms) | Overlapping CPU activity |
+| --- | --- | ---: | ---: | ---: | --- |
+| Q1 classic | GL 1920×1080 | 0.960 | 1.822 | 0.511 / 0.329 | Yes |
+| Q1 classic | CPU 640×400 | 4.034 | 7.170 | 0.498 / 3.145 | None sampled; disjoint project active |
+| Q1 classic | CPU 320×200 | 2.169 | 3.185 | 0.482 / 1.500 | None sampled; disjoint project active |
+| Q2 classic | GL 1920×1080 | 1.137 | 2.072 | 0.500 / 0.412 | None sampled; disjoint project active |
+| Q2 classic | CPU 640×400 | 4.361 | 5.663 | 0.538 / 3.348 | None sampled; disjoint project active |
+| Q2 classic | CPU 320×200 | 2.951 | 3.940 | 0.527 / 2.108 | Yes |
+| Q2 rerelease | GL 1920×1080 | 1.404 | 2.628 | 0.653 / 0.507 | None sampled; disjoint project active |
+| Q2 rerelease | CPU 640×400 | 6.843 | 10.041 | 0.742 / 5.701 | Yes |
+| Q2 rerelease | CPU 320×200 | 4.623 | 6.914 | 0.692 / 3.587 | Yes |
+| Q3 | GL 1920×1080 | 1.964 | 2.363 | 1.096 / 0.703 | Yes |
+| Q3 | CPU 640×400 | 12.513 | 14.420 | 1.239 / 10.644 | None sampled; disjoint project active |
+| Q3 | CPU 320×200 | 5.999 | 6.758 | 1.159 / 4.729 | Yes |
+
+Q3 CPU 640×400 remains the largest case at 12.513/14.420 ms median/p99
+with 10.644 ms mean render time. The preceding suite recorded
+12.914/15.756 ms and 11.217 ms render time. This modest difference does not
+meet the 4 ms target and the background condition differs. Every CPU case
+remains over budget. GL medians remain below 2 ms, but only Q1 has a p99
+below 2 ms in this suite. No all-game tail-latency success is claimed.
+Receipts: `suite-10b63336.json`, `10b63336-run-index.json` and
+`10b63336-background-observations.json`.

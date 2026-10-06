@@ -98,3 +98,46 @@ of unrelated allocations/mappings. `00644e83` simplifies that existing
 shared mutation path. The new installed startup retry remains required; no
 Original rerelease gameplay is claimed. Receipt:
 `original-rr-import-boundary-jwbs8ojy/summary.json`.
+## Original Q2 rerelease, installed `6f430efa`
+
+The shared VM change passed full GCC/Clang builds and registered checks before
+installation. A 40-second stock `base1` retry reached `InitGame` and progressed
+beyond the earlier tiny-free loop, but produced no public frame. Its retained
+stop metadata identifies a CFG dispatch thunk; sampled stop occupancy alone
+does not establish the dominant CPU cost. All recorded processes and the
+private display were removed. Receipt:
+`original-rr-import-boundary-4rmn69xt/summary.json`.
+
+A longer bounded retry then exited naturally with status 1 at 61.998 seconds.
+The DLL emitted its entity-spawning and team-repair output before the first
+application failure at 61.897 seconds: its physical client contained nonfinite
+SDK motion. The error preceded cleanup; no public frame was produced. Actual
+retail disassembly confirms the decoded player-state offsets, so neither an
+invented offset change nor a zero-value fallback is justified. The failing
+producer remains unresolved. The actual processes and private display were
+removed. Receipt: `original-rr-import-boundary-axzwk5ka/summary.json`.
+
+
+## Installed `10b63336`: owner routes after texture batching
+
+All eleven current-build checks passed, using the same bounded routes as the
+preceding fidelity suite. Default Space and the owner's raw mouse3 jump,
+mouse2 forward/release, Normal slipgate cleanup and original v5
+save→move away→load→resave passed through CPU CLI, GL CLI and genuine GL menu
+launch. Player origin, angles, health, weapon, ammo and items were restored
+exactly, with the stock 25-shell HUD. Owner settings stayed unchanged.
+
+Separate visual checks retained invisible classic e1m1 triggers, rerelease
+base1 glass at both CPU resolutions, the MG3 grate openings, Native Q3
+world/HUD, Original Q3 transparent center/chat/score graphics and genuine
+map restart, plus Q1 and Q2 rerelease stock weapon particles. Effect and
+navigation cheats stayed separate from movement acceptance. Root inspected
+current owner jump/load images, the near grate, delivered Q3 chat and
+rerelease glass. The far grate's aligned backing and wall-occluded side
+trigger photograph do not independently establish visibility.
+
+All actual public quits exited zero, all owned processes/private display were
+removed and the installed artifact remained unchanged. The nonfatal classic
+load demo-recording warning remains. Audio, Original RR gameplay and CPU speed
+are not qualified by these visuals. Receipt:
+`owner-cpu-renderer-10b63336-proof.json`.
