@@ -102,3 +102,16 @@ error; its offending import and pre-cleanup timing were not captured, so it is
 not assigned as the startup cause. All owned processes and the private display
 were removed. This is not an Original-module startup or speedup pass. Evidence:
 `original-rr-after-continuation-jku4z47t/summary.json`.
+
+## Installed `8ba209ad`: actual Original startup failure
+
+The no-debugger retry identified the missing import before cleanup:
+`Bot_UnRegisterEdict`, GAME slot 49. The application reported it at 26.128
+seconds and exited with status 1 at 26.229 seconds, before the 40-second
+startup bound. The DLL's save registry initialized after 14.375 seconds, but
+no public frame was reached. This is an Original-module startup failure,
+not a performance result or a failure caused by the timed cleanup.
+
+All owned processes and the private display were removed. Receipt:
+`original-rr-import-boundary-9uqtcidf/summary.json`. The actual registration
+services and their shared bot-observation integration remain to be implemented.

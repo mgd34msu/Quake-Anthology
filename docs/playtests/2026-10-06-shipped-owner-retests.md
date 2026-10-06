@@ -42,3 +42,23 @@ The current installed `b9140af8` (139,652,928 bytes) passed the eight MIKE-17/20
 The checks used genuine keyboard/mouse input and existing public commands, with private settings and displays. Weapon tests used stock equipment cheats. All eight public quits exited 0; every actual game process and the private display were removed, and the installed artifact remained unchanged. Root inspected selected grate, glass, shotgun, rocket, rail and BFG images. `owner-alpha-effects-b914-proof.json` records the actions, selected images and cleanup. Audio was disabled; these results establish the listed local visual effects, not audio, frame times, every effect, or Original RR startup.
 
 MIKE-19 was also rechecked on installed `b9140af8`: Original Q3 `q3dm1`, CPU and GL 640×400, stock centerprint, typed chat, colored received chat, notification expiry, HUD numbers/head and score panels. Text was readable and transparent, with no black font rectangles. Genuine `/map_restart 0` console input produced a second game initialization and a restored world/HUD in both cases. Both public quits exited 0 and removed the actual processes/private display; the artifact stayed unchanged. Root inspected the CPU received-chat and GL restored-HUD images. `owner-q3-font-chat-restart-b914-proof.json` contains both qualified cases. An earlier private-helper run omitted the slash and sent chat instead; it is retained and excluded from restart proof. Audio was disabled. These qualify the listed Original Q3 display/restart paths, not all native Q3 menu/preset paths or audio.
+
+## Installed `8ba209ad`: Native Q3 input after control changes
+
+Fresh Native `q3dm1` preset/map sessions passed actual keyboard and mouse
+checks in CPU and GL at 640×400. W moved 67.99 and 67.57 units respectively;
+release cleared the raw forward command from 127 to zero. After the authored
+ledge fall and landing, velocity and additional settled drift were zero.
+Mouse input changed the view from `(0, -45, 0)` to
+`(-2.37305, -49.75159, 0)`. That orientation persisted while idle and matched
+the presentation camera. Genuine Mouse1 firing reduced stock machinegun
+ammunition from 100 to 95 in both cases.
+
+Both public quits exited zero, with no observer errors. The installed
+executable stayed unchanged, and every owned game/debugger process and the
+private display were removed. Receipt: `native-q3-input-8ba-proof.json`.
+The existing read-only debugger observer recorded these state values without
+inferior calls or writes; these runs are excluded from performance timings.
+Earlier stale-helper-field and airborne-stop-predicate attempts are retained
+and excluded. This check does not qualify Original Q3, pickups, audio,
+multiplayer, split-screen or every map/weapon.

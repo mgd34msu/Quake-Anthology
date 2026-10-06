@@ -283,3 +283,30 @@ display were removed; owner settings and the installed artifact were unchanged.
 Evidence: `owner-jump-save-visibility-brush-0a327175-proof.json`,
 `shipped-0a327175.json` and `shipped-runtime-0a327175.json`.
 The nonfatal demo warning after classic load remains open.
+
+## Installed `8ba209ad`: input lifecycle regression check
+
+After the occupied-control and equipment changes, CPU CLI, GL CLI and the
+genuine GL menu repeated the unchanged owner keyboard path. Default Space and
+raw mouse button 3 jumped, released and landed. Forward input released normally;
+Normal-slipgate travel survived fog expiry. Loading original v5 after real
+S-key movement restored the exact saved player state and stock 25-shell HUD.
+
+| Entry | Renderer | Y after moving away | Y restored by load |
+| --- | --- | ---: | ---: |
+| CLI | CPU | 1857.505371 | 2015.968750 |
+| CLI | GL | 1856.016479 | 2015.968750 |
+| Actual menu/preset | GL | 1860.671265 | 2015.968750 |
+
+Original saves were 32,654–33,051 bytes. The separate `e1m1` CPU visibility
+route again showed no textured trigger volumes at the corridor and slipgate;
+its private noclip navigation is excluded from movement acceptance. Q2
+rerelease CPU spawn views remained coherent at both sizes, including the
+see-through machinery window. A Native Q3 CPU spawn image retained transparent
+HUD text, but that snapshot alone does not qualify input or weapon behavior.
+
+All seven public quits returned zero. Settings and the installed executable
+were unchanged, and the private display and processes were removed. Complete
+GCC/Clang builds and their registered checks passed before installation.
+Receipt: `owner-jump-save-visibility-brush-8ba209ad-proof.json`. The nonfatal
+demo warning remains open; this is not full-campaign or all-save qualification.

@@ -79,3 +79,45 @@ per-fragment rounding-mode query was 5.29%. Moving that query out of the pixel
 loop and batching texture work are the next CPU targets. Sampling percentages
 are diagnostic and are not frame-time percentiles. Evidence:
 `0a327175-current-q3-wayland-cpu640-l08r9c8i/result.json`.
+
+## Installed `8ba209ad`: occupied actors and Q3 settings reuse
+
+All twelve cases repeated the same quiet native stationary-spawn workload,
+affinity, seven CPU workers, enabled dummy audio, RTX 3090 GL swap interval
+zero and 600 measured presents. Warm-up and inclusive timer-report limits
+above still apply. Complete GCC and Clang builds and their registered checks
+passed before installation. No debugger, profiler, compiler or other game
+test ran alongside these measurements.
+
+| Game | Output | Median frame (ms) | p99 frame (ms) | Mean scene build (ms) | Mean render (ms) |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Q1 classic | GL 1920×1080 | 0.877 | 1.607 | 0.446 | 0.311 |
+| Q1 classic | CPU 640×400 | 4.150 | 6.367 | 0.547 | 3.133 |
+| Q1 classic | CPU 320×200 | 2.154 | 3.257 | 0.499 | 1.440 |
+| Q2 classic | GL 1920×1080 | 1.085 | 1.983 | 0.474 | 0.399 |
+| Q2 classic | CPU 640×400 | 4.219 | 5.719 | 0.537 | 3.166 |
+| Q2 classic | CPU 320×200 | 2.963 | 4.308 | 0.589 | 2.038 |
+| Q2 rerelease | GL 1920×1080 | 1.336 | 2.718 | 0.624 | 0.481 |
+| Q2 rerelease | CPU 640×400 | 6.702 | 9.479 | 0.752 | 5.430 |
+| Q2 rerelease | CPU 320×200 | 4.441 | 6.420 | 0.680 | 3.415 |
+| Q3 | GL 1920×1080 | 1.944 | 2.341 | 1.088 | 0.692 |
+| Q3 | CPU 640×400 | 13.467 | 15.632 | 1.279 | 11.259 |
+| Q3 | CPU 320×200 | 6.074 | 7.574 | 1.166 | 4.677 |
+
+Against the preceding `0a327175` five-case suite, Q3 GL median/p99 fell from
+2.536/3.085 to 1.944/2.341 ms. Its mean application scope fell from 0.240 to
+0.067 ms and scene build from 1.423 to 1.088 ms. Q3 CPU 640×400 median is
+essentially unchanged, 13.477 to 13.467 ms; moving the rounding query alone
+does not solve its rendering cost. CPU 320×200 fell from 6.653/7.972 to
+6.074/7.574 ms. Q2 rerelease CPU fell from 7.226/10.677 to 6.702/9.479 ms
+at 640×400 and from 4.975/7.019 to 4.441/6.420 ms at 320×200.
+
+These are measurements of the combined source group, not isolated gains for
+each commit. Simulation remains real-time. Q1 and classic Q2 GL meet the 2 ms
+target at median and p99; Q2 rerelease and Q3 meet it only at median. Every
+CPU case remains over budget. Q3 CPU rendering is still the largest measured
+cost, so the next change replaces double pixel attributes/depth with native
+float/fixed data and processes adjacent pixels with SIMD in the existing
+shared renderer. All runs reached the actual requested map and drawable,
+quit normally and preserved the installed artifact. Receipt:
+`suite-8ba209ad.json`.
