@@ -223,6 +223,8 @@ static int raster_physical_cores(void) {
 #if defined(__linux__)
   cpu_set_t allowed;
   if (sched_getaffinity(0, sizeof(allowed), &allowed) == 0) {
+    int logical = CPU_COUNT(&allowed);
+    if (logical < 2) return logical;
     int packages[CPU_SETSIZE], cores[CPU_SETSIZE], count = 0;
     for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
       if (!CPU_ISSET((size_t)cpu, &allowed)) continue;
@@ -231,23 +233,24 @@ static int raster_physical_cores(void) {
       (void)snprintf(path, sizeof(path),
           "/sys/devices/system/cpu/cpu%d/topology/physical_package_id", cpu);
       FILE *file = fopen(path, "r");
-      if (!file) return SDL_GetCPUCount();
+      if (!file) return logical;
       int parsed = fscanf(file, "%d", &package);
       fclose(file);
-      if (parsed != 1) return SDL_GetCPUCount();
+      if (parsed != 1) return logical;
       (void)snprintf(path, sizeof(path),
           "/sys/devices/system/cpu/cpu%d/topology/core_id", cpu);
       file = fopen(path, "r");
-      if (!file) return SDL_GetCPUCount();
+      if (!file) return logical;
       parsed = fscanf(file, "%d", &core);
       fclose(file);
-      if (parsed != 1) return SDL_GetCPUCount();
+      if (parsed != 1) return logical;
       int i = 0;
       while (i < count && (packages[i] != package || cores[i] != core)) ++i;
       if (i == count) { packages[count] = package; cores[count++] = core; }
     }
-    if (count) return count;
+    return count ? count : logical;
   }
+  return 1;
 #elif defined(__APPLE__)
   int count = 0;
   size_t size = sizeof(count);
