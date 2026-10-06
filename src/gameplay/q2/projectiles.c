@@ -65,6 +65,8 @@ bool q2_projectile_event(qa_q2_game *g, qa_actor_id id, qa_builtin_event_kind ki
                               .volume = 1,
                               .attenuation = 1,
                               .code = code};
+    if (kind == QA_BUILTIN_BEAM)
+        event.q2_multicast=(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PHS,origin};
     if (kind == QA_BUILTIN_SOUND || kind == QA_BUILTIN_STOP_SOUND)
         event.channel = code;
     if (path != NULL && !qa_builtin_resource(&g->services, path, &event.resource, e))
