@@ -829,7 +829,8 @@ static bool entity_callbacks(qa_q2_game *g, q2_original_record_io *io, q2_actor 
 
 static bool entity_turret(qa_q2_game *g, q2_original_record_io *io, q2_entity_state *s)
 {
-    if (s->kind != Q2E_TURRET_BREACH && s->kind != Q2E_TURRET_DRIVER) return true;
+    if (s->kind != Q2E_TURRET_BREACH && s->kind != Q2E_TURRET_DRIVER &&
+        !(io->edition == QA_Q2_RERELEASE && s->kind == Q2E_TURRET_BASE)) return true;
     if (!s->turret) {
         s->turret = calloc(1, sizeof(*s->turret));
         if (!s->turret) {
@@ -838,6 +839,9 @@ static bool entity_turret(qa_q2_game *g, q2_original_record_io *io, q2_entity_st
         }
     }
     q2_turret *t = s->turret;
+    if (io->edition == QA_Q2_RERELEASE && s->kind != Q2E_TURRET_DRIVER &&
+        !scalar(io, "dmg_radius", Q2_ORIGINAL_F32, 524, &t->rocket_scale)) return false;
+    if (s->kind == Q2E_TURRET_BASE) return true;
     if (s->kind == Q2E_TURRET_DRIVER) {
         qa_vec3 offset = qa_v3(t->radius, t->yaw_offset, t->height);
         if (!scalar(io, "move_origin", Q2_ORIGINAL_VECTOR, 616, &offset)) return false;

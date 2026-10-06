@@ -259,7 +259,7 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
         !isfinite(p->kick) || !isfinite(p->radius_damage) || !isfinite(p->radius) ||
         p->radius < 0 || !isfinite(p->gravity) || !isfinite(p->speed) || p->speed < 0 ||
         !isfinite(p->delay) || !isfinite(p->captured_mass) || !isfinite(p->turn_fraction) ||
-        !isfinite(p->scale) || p->scale < 0 || !isfinite(p->alpha) ||
+        !isfinite(p->scale) || !isfinite(p->alpha) ||
         !valid_resource(g, p->classname) ||
         !valid_resource(g, p->model) || !valid_resource(g, p->loop_sound) ||
         !valid_resource(g, s->weapon.loop_sound) || !valid_resource(g, s->weapon.view_model) ||

@@ -290,6 +290,7 @@ typedef struct q2_turret {
     qa_vec3 goal, muzzle;
     float pitch_min, pitch_max, yaw_min, yaw_max;
     float radius, yaw_offset, height;
+    float rocket_scale;
     qa_actor_id breach;
 } q2_turret;
 typedef struct q2_q64 {

@@ -26,9 +26,29 @@ static bool fire(qa_q2_game *g, q2_actor *a, q2_actor *driver, const qa_body_sta
         qa_vec_add(qa_vec_add(qa_vec_scale(forward, s->muzzle.x), qa_vec_scale(right, s->muzzle.y)),
                    qa_vec_scale(up, s->muzzle.z)));
     float damage = truncf(100 + q2_random(g) * 50), speed = (float)(550 + 50 * g->options.skill);
+    float rocket_scale = 0;
+    bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+    if (rerelease) {
+        q2_actor *root = q2_ent(g, qa_actor_reference_resolve(qa_session_actors(g->services.session),
+            a->entity->team_master));
+        if (root && root->entity->turret)
+            rocket_scale = root->entity->turret->rocket_scale;
+    }
+    qa_actor_id rocket;
     if (!q2_fire_actor_rocket(g, driver->id, driver->id, start, forward, damage, speed, damage, 150,
-                              8, 9, e))
+                              8, 9, &rocket, e))
         return false;
+    if (rerelease && q2_actor_live(g, rocket)) {
+        q2_actor *projectile = q2_actor_get(g, rocket, false, e);
+        if (!projectile) return false;
+        bool changed = projectile->projectile.scale != rocket_scale;
+        projectile->projectile.scale = rocket_scale;
+        if (changed) {
+            qa_q2_visual visual;
+            if (!qa_q2_presentation_read(g, rocket, &visual) || !q2_publish_visual(g, rocket, &visual, e))
+                return false;
+        }
+    }
     if (!q2_actor_live(g, a->id))
         return true;
     qa_string_id sound;
@@ -171,7 +191,10 @@ bool q2_turret_think(qa_q2_game *g, q2_actor *a, q2_entity_think think, qa_error
             if (!q2_actor_live(g, a->id))
                 return true;
         }
-        master(g, a)->entity->damage = s->damage;
+        q2_actor *root = master(g, a);
+        root->entity->damage = s->damage;
+        if (g->options.edition == QA_Q2_RERELEASE && root->entity->turret)
+            root->entity->turret->rocket_scale = t->rocket_scale;
         return breach_tick(g, a, e);
     }
     if (think == Q2ET_TURRET)
@@ -217,7 +240,7 @@ bool q2_turret_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     if (s->kind == Q2E_TURRET_DRIVER && g->options.deathmatch)
         return qa_session_release(g->services.session, a->id, e);
     s->team_master = qa_actor_reference_from_actor(actors, g->options.owner, a->id);
-    if (s->kind != Q2E_TURRET_BASE) {
+    if (s->kind != Q2E_TURRET_BASE || g->options.edition == QA_Q2_RERELEASE) {
         s->turret = calloc(1, sizeof(*s->turret));
         if (!s->turret) {
             qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 turret");
@@ -244,6 +267,10 @@ bool q2_turret_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         if (!qa_world_body_read(g->services.world, a->id, &body, e))
             return false;
         q2_turret *t = s->turret;
+        if (g->options.edition == QA_Q2_RERELEASE) {
+            t->rocket_scale = s->visual.scale;
+            s->visual.scale = 0;
+        }
         t->goal = qa_v3(0, body.angles.y, 0);
         float minimum = q2_field_float(g, s, "minpitch", -30),
               maximum = q2_field_float(g, s, "maxpitch", 30);

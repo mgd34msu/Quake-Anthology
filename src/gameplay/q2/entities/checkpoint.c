@@ -138,7 +138,7 @@ static bool valid_state(qa_q2_game *g, const q2_entity_state *s, qa_error *e) {
     if (s->turret) {
         const q2_turret *t = s->turret;
         const float numbers[] = {t->pitch_min, t->pitch_max,  t->yaw_min, t->yaw_max,
-                                 t->radius,    t->yaw_offset, t->height};
+                                 t->radius,    t->yaw_offset, t->height, t->rocket_scale};
         for (size_t i = 0; i < sizeof(numbers) / sizeof(*numbers); i++)
             if (!isfinite(numbers[i]))
                 return false;

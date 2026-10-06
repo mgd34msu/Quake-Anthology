@@ -417,7 +417,7 @@ bool q2_fire_actor_loogie(qa_q2_game *, qa_actor_id source, qa_vec3 start, qa_ve
 bool q2_fire_actor_rocket(qa_q2_game *, qa_actor_id source, qa_actor_id credited_owner,
                           qa_vec3 start, qa_vec3 direction, float damage, float speed,
                           float splash_damage, float radius, int direct_mod, int splash_mod,
-                          qa_error *);
+                          qa_actor_id *out, qa_error *);
 bool q2_green_touch(qa_q2_game *, q2_actor *, const qa_touch_contact *, qa_error *);
 bool q2_heat_rocket_think(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_grapple_weapon(q2_weapon_call *, qa_error *);

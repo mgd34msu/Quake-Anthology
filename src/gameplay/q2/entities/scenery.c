@@ -834,7 +834,7 @@ bool q2_scenery_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id a
         qa_vec3 direction = qa_vec_normalize(qa_vec_sub(to.origin, from.origin));
         s->enemy = target;
         if (!q2_fire_actor_rocket(g, a->id, a->id, from.origin, direction, s->damage, 500,
-                                  s->damage, s->damage + 20, 8, 9, e))
+                                  s->damage, s->damage + 20, 8, 9, NULL, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;

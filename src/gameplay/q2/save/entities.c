@@ -21,7 +21,7 @@ static bool mover(q2_save_io *io, q2_mover *s) {
 }
 static bool turret(q2_save_io *io, q2_turret *s) {
     Q2V(goal); Q2V(muzzle); Q2F(pitch_min); Q2F(pitch_max); Q2F(yaw_min); Q2F(yaw_max);
-    Q2F(radius); Q2F(yaw_offset); Q2F(height); return true;
+    Q2F(radius); Q2F(yaw_offset); Q2F(height); Q2F(rocket_scale); return true;
 }
 static bool q64(q2_save_io *io, q2_q64 *s) {
     Q2V(neutral); Q2V(eye_position); Q2V(angles); Q2F(vision_cone); Q2F(remaining);

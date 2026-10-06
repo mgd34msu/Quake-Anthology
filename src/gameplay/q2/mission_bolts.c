@@ -96,7 +96,8 @@ bool q2_fire_actor_loogie(qa_q2_game *g, qa_actor_id source, qa_vec3 start,
 bool q2_fire_actor_rocket(qa_q2_game *g, qa_actor_id source, qa_actor_id credited_owner,
                           qa_vec3 start, qa_vec3 direction, float damage, float speed,
                           float splash_damage, float radius, int direct_mod, int splash_mod,
-                          qa_error *e) {
+                          qa_actor_id *out, qa_error *e) {
+    if (out) *out = (qa_actor_id){0};
     if (!qa_vec_finite(start) || !qa_vec_finite(direction) || !isfinite(damage) ||
         !isfinite(speed) || speed <= 0 || !isfinite(splash_damage) || !isfinite(radius) ||
         radius < 0) {
@@ -115,7 +116,8 @@ bool q2_fire_actor_rocket(qa_q2_game *g, qa_actor_id source, qa_actor_id credite
                            .rerelease = g->options.edition == QA_Q2_RERELEASE,
                            .input = {.gravity = 800, .players_collide = true},
                            .has_attack_owner = true,
-                           .attack_owner = credited_owner};
+                           .attack_owner = credited_owner,
+                           .spawned_projectile = out};
     return q2_projectile_spawn(&call, Q2_ROCKET, start, direction, damage, 0, speed, radius,
                                splash_damage, 8000 / speed, direct_mod, splash_mod, false, false,
                                e);
