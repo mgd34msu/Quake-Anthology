@@ -232,51 +232,68 @@ static uint32_t stencil_operation(uint32_t current,
   }
   return current;
 }
-static void sample_fragment_texture(const cpu_sampler *sampler,
-    const cpu_derivative *derivative, const float uv[2], float out[4]) {
-  cpu_texture_coordinates coordinates = {.u = {uv[0]}, .v = {uv[1]},
-      .dudx = {derivative->dudx}, .dvdx = {derivative->dvdx},
-      .dudy = {derivative->dudy}, .dvdy = {derivative->dvdy}, .active = 1};
-  cpu_texture_color color;
-  cpu_sample_texture(sampler, &coordinates, &color);
-  for (size_t c = 0; c < 4; ++c) out[c] = color.channel[c][0];
-}
 static void packet_color(const qa_scene_draw *draw, const cpu_sampler samplers[2],
     const cpu_fragment_packet *packet, size_t texture_count,
-    qa_scene_texture_environment environment, cpu_texture_color *color) {
-  cpu_texture_color texel[2];
-  for (size_t unit = 0; unit < texture_count; ++unit)
-    cpu_sample_texture(samplers + unit, packet->texture + unit, texel + unit);
+    const cpu_texture_color texel[2], cpu_texture_color *color) {
+  qa_scene_texture_environment environment = draw->environment;
   bool lightmap = environment >= QA_TEXTURE_LIGHTMAP_MODULATE;
 #if defined(__SSE2__)
   if (packet->active & (packet->active - 1u)) {
-  for (size_t c = 0; c < 4; ++c) {
-    __m128 value = _mm_loadu_ps(packet->color[c]);
-    if (texture_count && draw->textures[0]) value = _mm_mul_ps(value, _mm_loadu_ps(texel[0].channel[c]));
-    if (texture_count > 1 && draw->textures[1]) {
-      __m128 light = c == 3 && draw->lighting == QA_LIGHT_Q2_WORLD && lightmap ?
-          _mm_set1_ps(1) : _mm_loadu_ps(texel[1].channel[c]);
-      if (lightmap) {
-        __m128 first = _mm_add_ps(_mm_mul_ps(cpu_clamp_four(value), _mm_set1_ps(255)), _mm_set1_ps(.5f));
-        first = _mm_div_ps(_mm_cvtepi32_ps(_mm_cvttps_epi32(first)), _mm_set1_ps(255));
-        if (environment == QA_TEXTURE_LIGHTMAP_INVERT_ALPHA)
-          light = draw->lighting == QA_LIGHT_Q2_WORLD ? _mm_set1_ps(1) : _mm_loadu_ps(texel[1].channel[3]);
-        light = cpu_clamp_four(light);
-        if (environment != QA_TEXTURE_LIGHTMAP_MODULATE) light = _mm_sub_ps(_mm_set1_ps(1), light);
-        value = _mm_mul_ps(first, light);
-      } else if (c != 3 || samplers[1].alpha) value = _mm_mul_ps(value, light);
+    __m128 luminance = _mm_set1_ps(1);
+    if (!lightmap && draw->luminance_alpha && texture_count && draw->textures[0]) {
+      luminance = _mm_add_ps(_mm_add_ps(_mm_loadu_ps(texel[0].channel[0]),
+          _mm_loadu_ps(texel[0].channel[1])), _mm_loadu_ps(texel[0].channel[2]));
+      luminance = _mm_mul_ps(_mm_div_ps(luminance, _mm_set1_ps(3)),
+          _mm_loadu_ps(packet->color[3]));
     }
-    _mm_storeu_ps(color->channel[c], value);
-  }
+    for (size_t c = 0; c < 4; ++c) {
+      __m128 value = _mm_loadu_ps(packet->color[c]);
+      if (texture_count && draw->textures[0]) {
+        __m128 base = _mm_loadu_ps(texel[0].channel[c]);
+        if (c < 3 && !lightmap && draw->luminance_alpha)
+          base = _mm_mul_ps(base, luminance);
+        value = _mm_mul_ps(value, base);
+      }
+      if (texture_count > 1 && draw->textures[1]) {
+        __m128 light = c == 3 && draw->lighting == QA_LIGHT_Q2_WORLD && lightmap ?
+            _mm_set1_ps(1) : _mm_loadu_ps(texel[1].channel[c]);
+        if (lightmap) {
+          __m128 first = _mm_add_ps(_mm_mul_ps(cpu_clamp_four(value), _mm_set1_ps(255)), _mm_set1_ps(.5f));
+          first = _mm_div_ps(_mm_cvtepi32_ps(_mm_cvttps_epi32(first)), _mm_set1_ps(255));
+          if (environment == QA_TEXTURE_LIGHTMAP_INVERT_ALPHA)
+            light = draw->lighting == QA_LIGHT_Q2_WORLD ? _mm_set1_ps(1) : _mm_loadu_ps(texel[1].channel[3]);
+          light = cpu_clamp_four(light);
+          if (environment != QA_TEXTURE_LIGHTMAP_MODULATE) light = _mm_sub_ps(_mm_set1_ps(1), light);
+          value = _mm_mul_ps(first, light);
+        } else if (c < 3) {
+          if (environment == QA_TEXTURE_MODULATE) value = _mm_mul_ps(value, light);
+          else if (environment == QA_TEXTURE_ADD) value = cpu_clamp_four(_mm_add_ps(value, light));
+          else value = light;
+        } else if (samplers[1].alpha) {
+          value = environment == QA_TEXTURE_REPLACE ? light : _mm_mul_ps(value, light);
+        }
+      }
+      _mm_storeu_ps(color->channel[c], value);
+    }
     return;
   }
 #endif
-
-  for (size_t c = 0; c < 4; ++c)
-    for (size_t lane = 0; lane < CPU_PIXEL_LANES; ++lane) {
-      if (!(packet->active & (1u << lane))) { color->channel[c][lane] = 0; continue; }
+  for (size_t lane = 0; lane < CPU_PIXEL_LANES; ++lane) {
+    if (!(packet->active & (1u << lane))) {
+      for (size_t c = 0; c < 4; ++c) color->channel[c][lane] = 0;
+      continue;
+    }
+    float luminance = 1;
+    if (!lightmap && draw->luminance_alpha && texture_count && draw->textures[0])
+      luminance = (texel[0].channel[0][lane] + texel[0].channel[1][lane] +
+          texel[0].channel[2][lane]) / 3 * packet->color[3][lane];
+    for (size_t c = 0; c < 4; ++c) {
       float value = packet->color[c][lane];
-      if (texture_count && draw->textures[0]) value *= texel[0].channel[c][lane];
+      if (texture_count && draw->textures[0]) {
+        float base = texel[0].channel[c][lane];
+        if (c < 3 && !lightmap && draw->luminance_alpha) base *= luminance;
+        value *= base;
+      }
       if (texture_count > 1 && draw->textures[1]) {
         float light = c == 3 && draw->lighting == QA_LIGHT_Q2_WORLD && lightmap ? 1 : texel[1].channel[c][lane];
         if (lightmap) {
@@ -286,15 +303,67 @@ static void packet_color(const qa_scene_draw *draw, const cpu_sampler samplers[2
           light = cpu_clamp(light);
           if (environment != QA_TEXTURE_LIGHTMAP_MODULATE) light = 1 - light;
           value = first * light;
-        } else if (c != 3 || samplers[1].alpha) value *= light;
+        } else if (c < 3) {
+          if (environment == QA_TEXTURE_MODULATE) value *= light;
+          else if (environment == QA_TEXTURE_ADD) value = cpu_clamp(value + light);
+          else value = light;
+        } else if (samplers[1].alpha) {
+          value = environment == QA_TEXTURE_REPLACE ? light : value * light;
+        }
       }
       color->channel[c][lane] = value;
     }
-
+  }
 }
-static void opaque_fragment_color(const qa_scene_draw *draw, const cpu_sampler samplers[2],
-    const cpu_fragment *fragment, size_t texture_count,
-    qa_scene_texture_environment environment, float color[4]) {
+static void packet_sample(const qa_scene_draw *draw, const cpu_sampler samplers[2],
+    const cpu_fragment_packet *packet, size_t texture_count,
+    cpu_texture_color texel[2], cpu_texture_color *color) {
+  for (size_t unit = 0; unit < texture_count; ++unit)
+    cpu_sample_texture(samplers + unit, packet->texture + unit, texel + unit);
+  if (draw->lighting == QA_LIGHT_VERTEX || draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE)
+    packet_color(draw, samplers, packet, texture_count, texel, color);
+}
+static inline bool fragment_color(const qa_cpu_renderer *renderer, const qa_scene_draw *draw,
+    const cpu_sampler samplers[2], const cpu_fragment *fragment,
+    size_t texture_count, const cpu_texture_color texel[2],
+    const cpu_texture_color *prepared, size_t lane, float color[4]) {
+  const qa_scene_state *state = &draw->state;
+  if (draw->lighting == QA_LIGHT_VERTEX || draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE) {
+    for (size_t c = 0; c < 4; ++c) color[c] = prepared->channel[c][lane];
+    if (draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE) return true;
+  } else {
+    float base[4] = {1, 1, 1, 1};
+    if (texture_count && draw->textures[0]) {
+      for (size_t c = 0; c < 4; ++c) base[c] = texel[0].channel[c][lane];
+      if (draw->luminance_alpha) {
+        float luminance = (base[0] + base[1] + base[2]) / 3 * fragment->color[3];
+        for (size_t c = 0; c < 3; ++c) base[c] *= luminance;
+      }
+    }
+    shade(renderer, draw, fragment, base, color);
+    if (texture_count > 1 && draw->textures[1]) {
+      for (size_t c = 0; c < 3; ++c) {
+        float light = texel[1].channel[c][lane];
+        if (draw->environment == QA_TEXTURE_MODULATE) color[c] *= light;
+        else if (draw->environment == QA_TEXTURE_ADD) color[c] = cpu_clamp(color[c] + light);
+        else color[c] = light;
+      }
+      if (samplers[1].alpha)
+        color[3] = draw->environment == QA_TEXTURE_REPLACE ?
+            texel[1].channel[3][lane] : color[3] * texel[1].channel[3][lane];
+    }
+  }
+  cpu_fog_color(&draw->fog, fragment->eye_depth, color);
+  if ((state->alpha_test == QA_ALPHA_GT0 && !(color[3] > 0)) ||
+      (state->alpha_test == QA_ALPHA_LT128 && !(color[3] < 0.5f)) ||
+      (state->alpha_test == QA_ALPHA_GE128 && !(color[3] >= 0.5f)) ||
+      (state->alpha_test == QA_ALPHA_GT666 && !(color[3] > (float)0.666f)))
+    return false;
+  return true;
+}
+static bool fragment_color_single(const qa_cpu_renderer *renderer, const qa_scene_draw *draw,
+    const cpu_sampler samplers[2], const cpu_fragment *fragment, size_t texture_count,
+    float color[4]) {
   cpu_fragment_packet packet;
   packet.active = 1;
   for (size_t c = 0; c < 4; ++c) packet.color[c][0] = fragment->color[c];
@@ -305,61 +374,9 @@ static void opaque_fragment_color(const qa_scene_draw *draw, const cpu_sampler s
     texture->dudx[0] = fragment->derivative[unit].dudx; texture->dvdx[0] = fragment->derivative[unit].dvdx;
     texture->dudy[0] = fragment->derivative[unit].dudy; texture->dvdy[0] = fragment->derivative[unit].dvdy;
   }
-  cpu_texture_color sampled;
-  packet_color(draw, samplers, &packet, texture_count, environment, &sampled);
-  for (size_t c = 0; c < 4; ++c) color[c] = sampled.channel[c][0];
-}
-static inline void lightmap_color(const qa_scene_draw *draw, const cpu_sampler samplers[2],
-    const cpu_fragment *fragment, qa_scene_texture_environment environment, float color[4]) {
-  opaque_fragment_color(draw, samplers, fragment, 2, environment, color);
-}
-static inline bool fragment_color(const qa_cpu_renderer *renderer, const qa_scene_draw *draw,
-    const cpu_sampler samplers[2], const cpu_fragment *fragment, bool vertex_opaque,
-    size_t texture_count, float color[4]) {
-  if (vertex_opaque) {
-    opaque_fragment_color(draw, samplers, fragment, texture_count, QA_TEXTURE_MODULATE, color);
-    return true;
-  }
-  const qa_scene_state *state = &draw->state;
-  if (draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE) {
-    lightmap_color(draw, samplers, fragment, draw->environment, color);
-    return true;
-  }
-  float texel[4] = {1, 1, 1, 1};
-  if (texture_count && draw->textures[0]) {
-    sample_fragment_texture(&samplers[0], &fragment->derivative[0],
-                            fragment->uv[0], texel);
-    if (!vertex_opaque && draw->luminance_alpha) {
-      float luminance =
-          (texel[0] + texel[1] + texel[2]) / 3 * fragment->color[3];
-      for (size_t c = 0; c < 3; ++c)
-        texel[c] *= luminance;
-    }
-  }
-  if (vertex_opaque) vertex_shade(fragment, texel, color);
-  else shade(renderer, draw, fragment, texel, color);
-  if (texture_count > 1 && draw->textures[1]) {
-    sample_fragment_texture(&samplers[1], &fragment->derivative[1],
-                            fragment->uv[1], texel);
-    for (size_t c = 0; c < 3; ++c) {
-      if (vertex_opaque || draw->environment == QA_TEXTURE_MODULATE)
-        color[c] *= texel[c];
-      else if (draw->environment == QA_TEXTURE_ADD)
-        color[c] = cpu_clamp(color[c] + texel[c]);
-      else
-        color[c] = texel[c];
-    }
-    if (samplers[1].alpha)
-      color[3] = !vertex_opaque && draw->environment == QA_TEXTURE_REPLACE
-                     ? texel[3] : color[3] * texel[3];
-  }
-  if (!vertex_opaque) cpu_fog_color(&draw->fog, fragment->eye_depth, color);
-  if (!vertex_opaque && ((state->alpha_test == QA_ALPHA_GT0 && !(color[3] > 0)) ||
-      (state->alpha_test == QA_ALPHA_LT128 && !(color[3] < 0.5f)) ||
-      (state->alpha_test == QA_ALPHA_GE128 && !(color[3] >= 0.5f)) ||
-      (state->alpha_test == QA_ALPHA_GT666 && !(color[3] > (float)0.666f))))
-    return false;
-  return true;
+  cpu_texture_color texel[2], prepared;
+  packet_sample(draw, samplers, &packet, texture_count, texel, &prepared);
+  return fragment_color(renderer, draw, samplers, fragment, texture_count, texel, &prepared, 0, color);
 }
 
 static inline void clamp_color(float color[4]) {
@@ -435,7 +452,7 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     const cpu_sampler samplers[2], const cpu_fragment *fragment, cpu_fragment_admission admission) {
   if (!admission.depth_passed && !admission.stencil) return;
   float color[4];
-  if (!fragment_color(renderer, draw, samplers, fragment, false, draw->texture_count, color)) return;
+  if (!fragment_color_single(renderer, draw, samplers, fragment, draw->texture_count, color)) return;
   fragment_store(renderer, draw, fragment, admission, color,
       draw->state.depth_write && draw->state.depth_test != QA_DEPTH_DISABLED);
 }
@@ -520,11 +537,12 @@ static void fragment_row(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     uint32_t left, uint32_t right, uint32_t y, cpu_fragment_kernel kernel, size_t texture_count, bool ordinary) {
   cpu_triangle_row row = cpu_triangle_row_prepare(attributes, draw, texture_count, y);
   bool stencil = cpu_stencil_active(renderer, &draw->state), derivatives[2] = {false, false};
+  bool feedback = false, generic = kernel == cpu_write_fragment;
   for (size_t unit = 0; unit < texture_count; ++unit) {
     if (draw->textures[unit]) derivatives[unit] = cpu_sampler_requires_derivatives(samplers + unit);
-    if (samplers[unit].target == renderer->current) ordinary = false;
+    if (samplers[unit].target == renderer->current) feedback = true;
   }
-  ordinary = ordinary && !stencil;
+  ordinary = ordinary && !stencil && !feedback;
   qa_cpu_statistics *statistics = cpu_row_statistics;
   uint64_t fragments = 0;
   bool depth_blocks = !stencil && attributes->depth_range == 0 &&
@@ -543,16 +561,31 @@ static void fragment_row(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     if (!stencil) packet.active = packet_depth_admit(&draw->state, packet.depth, stored_depth + x, count, packet.active);
     if (packet.active) {
       cpu_triangle_packet_attributes(attributes, &row, draw, texture_count, derivatives, x, y, &packet);
+      cpu_texture_color texel[2], prepared;
+      if (!feedback) packet_sample(draw, samplers, &packet, texture_count, texel, &prepared);
       if (ordinary) {
-        cpu_texture_color color;
-        packet_color(draw, samplers, &packet, texture_count, draw->environment, &color);
-        packet_store(renderer, draw, &packet, &color, (size_t)y * renderer->current->width + x, count);
+        packet_store(renderer, draw, &packet, &prepared, (size_t)y * renderer->current->width + x, count);
       } else {
         for (unsigned lane = 0; lane < count; ++lane) {
           if (!(packet.active & (1u << lane))) continue;
           cpu_fragment fragment = cpu_fragment_packet_lane(&packet, draw, derivatives, x + lane, y, lane);
           cpu_fragment_admission admission = cpu_fragment_admit(renderer, &draw->state, &fragment, stencil);
-          kernel(renderer, draw, samplers, &fragment, admission);
+          if (feedback) {
+            kernel(renderer, draw, samplers, &fragment, admission);
+            continue;
+          }
+          if (!admission.depth_passed && !(generic && admission.stencil)) continue;
+          float color[4];
+          if (!fragment_color(renderer, draw, samplers, &fragment, texture_count,
+              texel, &prepared, lane, color)) continue;
+          if (generic) fragment_store(renderer, draw, &fragment, admission, color,
+              draw->state.depth_write && draw->state.depth_test != QA_DEPTH_DISABLED);
+          else {
+            replace_color(renderer->current, admission.index, color);
+            if (draw->state.depth_write && draw->state.depth_test != QA_DEPTH_DISABLED)
+              renderer->current->depth[admission.index] = fragment.depth;
+            if (statistics) ++statistics->generic_written;
+          }
         }
       }
       if (statistics) for (unsigned lane = 0; lane < count; ++lane) fragments += (packet.active >> lane) & 1u;
@@ -569,44 +602,30 @@ static void fragment_row(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   }
 ROW_KERNEL(generic_row, cpu_write_fragment, draw->texture_count)
 
-#define OPAQUE_KERNEL(name, textures, write_depth) \
+#define REPLACE_KERNEL(name, textures, write_depth) \
   static void name(qa_cpu_renderer *renderer, const qa_scene_draw *draw, \
       const cpu_sampler samplers[2], const cpu_fragment *fragment, cpu_fragment_admission admission) { \
     if (!admission.depth_passed) return; \
     float color[4]; \
-    if (!fragment_color(renderer, draw, samplers, fragment, true, textures, color)) return; \
-    clamp_color(color); \
+    if (!fragment_color_single(renderer, draw, samplers, fragment, textures, color)) return; \
     replace_color(renderer->current, admission.index, color); \
     if (write_depth) renderer->current->depth[admission.index] = fragment->depth; \
     if (cpu_row_statistics) ++cpu_row_statistics->generic_written; \
   } \
   ROW_KERNEL(name##_row, name, textures)
-OPAQUE_KERNEL(opaque_color, 0, false)
-OPAQUE_KERNEL(opaque_color_depth, 0, true)
-OPAQUE_KERNEL(opaque_texture, 1, false)
-OPAQUE_KERNEL(opaque_texture_depth, 1, true)
-OPAQUE_KERNEL(opaque_lightmap, 2, false)
-OPAQUE_KERNEL(opaque_lightmap_depth, 2, true)
-#undef OPAQUE_KERNEL
-
-#define LIGHTMAP_KERNEL(name, environment, write_depth) \
-  static void name(qa_cpu_renderer *renderer, const qa_scene_draw *draw, \
-      const cpu_sampler samplers[2], const cpu_fragment *fragment, cpu_fragment_admission admission) { \
-    if (!admission.depth_passed) return; \
-    float color[4]; \
-    lightmap_color(draw, samplers, fragment, environment, color); \
-    replace_color(renderer->current, admission.index, color); \
-    if (write_depth) renderer->current->depth[admission.index] = fragment->depth; \
-    if (cpu_row_statistics) ++cpu_row_statistics->generic_written; \
-  } \
-  ROW_KERNEL(name##_row, name, 2)
-LIGHTMAP_KERNEL(lightmap_modulate, QA_TEXTURE_LIGHTMAP_MODULATE, false)
-LIGHTMAP_KERNEL(lightmap_modulate_depth, QA_TEXTURE_LIGHTMAP_MODULATE, true)
-LIGHTMAP_KERNEL(lightmap_invert_color, QA_TEXTURE_LIGHTMAP_INVERT_COLOR, false)
-LIGHTMAP_KERNEL(lightmap_invert_color_depth, QA_TEXTURE_LIGHTMAP_INVERT_COLOR, true)
-LIGHTMAP_KERNEL(lightmap_invert_alpha, QA_TEXTURE_LIGHTMAP_INVERT_ALPHA, false)
-LIGHTMAP_KERNEL(lightmap_invert_alpha_depth, QA_TEXTURE_LIGHTMAP_INVERT_ALPHA, true)
-#undef LIGHTMAP_KERNEL
+REPLACE_KERNEL(opaque_color, 0, false)
+REPLACE_KERNEL(opaque_color_depth, 0, true)
+REPLACE_KERNEL(opaque_texture, 1, false)
+REPLACE_KERNEL(opaque_texture_depth, 1, true)
+REPLACE_KERNEL(opaque_lightmap, 2, false)
+REPLACE_KERNEL(opaque_lightmap_depth, 2, true)
+REPLACE_KERNEL(lightmap_modulate, 2, false)
+REPLACE_KERNEL(lightmap_modulate_depth, 2, true)
+REPLACE_KERNEL(lightmap_invert_color, 2, false)
+REPLACE_KERNEL(lightmap_invert_color_depth, 2, true)
+REPLACE_KERNEL(lightmap_invert_alpha, 2, false)
+REPLACE_KERNEL(lightmap_invert_alpha_depth, 2, true)
+#undef REPLACE_KERNEL
 #undef ROW_KERNEL
 
 cpu_fragment_row_kernel cpu_fragment_row_select(cpu_fragment_kernel kernel) {
