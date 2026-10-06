@@ -1,0 +1,514 @@
+{
+  "date": "2026-10-05",
+  "item": "MIKE-04",
+  "artifact": "qa-c",
+  "fixed_by": [
+    "59c89987",
+    "0f6d5671"
+  ],
+  "observation": "Mapped native X11 screenshots and read-only GDB. Game input uses real XTest keyboard/mouse and public console commands.",
+  "hud_and_video_runs": [
+    {
+      "build": "6b4d8123",
+      "product": "q2-rerelease-baseq2",
+      "renderer": "cpu",
+      "map": "base1",
+      "artifact_bytes": 137692856,
+      "normal_movement_type": 0,
+      "continued_frames": 60,
+      "application_exit": 0,
+      "source_weapon": "QA_Q2_SHOTGUN",
+      "source_ammo_count": 10,
+      "source_ammo_icon": 1473,
+      "hud": {
+        "spawn-observation": {
+          "phase": "spawn-observation",
+          "source_vitals": true,
+          "vitals": [
+            {
+              "label": "Health",
+              "value": 100.0
+            },
+            {
+              "label": "Armor",
+              "value": 0.0
+            }
+          ],
+          "weapon": {
+            "present": true,
+            "native_status": false,
+            "finite_ammo": false,
+            "ammo_count": 0.0,
+            "label": "Blaster"
+          }
+        },
+        "finite-ammo-hud": {
+          "phase": "finite-ammo-hud",
+          "source_vitals": true,
+          "vitals": [
+            {
+              "label": "Health",
+              "value": 100.0
+            },
+            {
+              "label": "Armor",
+              "value": 0.0
+            }
+          ],
+          "weapon": {
+            "present": true,
+            "native_status": false,
+            "finite_ammo": true,
+            "ammo_count": 10.0,
+            "label": "Shotgun"
+          }
+        },
+        "continued-world": {
+          "phase": "continued-world",
+          "source_vitals": true,
+          "vitals": [
+            {
+              "label": "Health",
+              "value": 100.0
+            },
+            {
+              "label": "Armor",
+              "value": 0.0
+            }
+          ],
+          "weapon": {
+            "present": true,
+            "native_status": false,
+            "finite_ammo": true,
+            "ammo_count": 10.0,
+            "label": "Shotgun"
+          }
+        }
+      },
+      "commands": [
+        "/give shotgun",
+        "/use shotgun",
+        "/quit"
+      ],
+      "source_receipt": "actual-q2-rerelease-baseq2-cpu-s7um08fe",
+      "screenshots": [
+        "spawn.png",
+        "world-after-walking.png",
+        "finite-ammo-hud.png",
+        "continued-world.png"
+      ]
+    },
+    {
+      "build": "6b4d8123",
+      "product": "q2-rerelease-baseq2",
+      "renderer": "gl",
+      "map": "base1",
+      "artifact_bytes": 137692856,
+      "normal_movement_type": 0,
+      "continued_frames": 60,
+      "application_exit": 0,
+      "source_weapon": "QA_Q2_SHOTGUN",
+      "source_ammo_count": 10,
+      "source_ammo_icon": 1473,
+      "hud": {
+        "spawn-observation": {
+          "phase": "spawn-observation",
+          "source_vitals": true,
+          "vitals": [
+            {
+              "label": "Health",
+              "value": 100.0
+            },
+            {
+              "label": "Armor",
+              "value": 0.0
+            }
+          ],
+          "weapon": {
+            "present": true,
+            "native_status": false,
+            "finite_ammo": false,
+            "ammo_count": 0.0,
+            "label": "Blaster"
+          }
+        },
+        "finite-ammo-hud": {
+          "phase": "finite-ammo-hud",
+          "source_vitals": true,
+          "vitals": [
+            {
+              "label": "Health",
+              "value": 100.0
+            },
+            {
+              "label": "Armor",
+              "value": 0.0
+            }
+          ],
+          "weapon": {
+            "present": true,
+            "native_status": false,
+            "finite_ammo": true,
+            "ammo_count": 10.0,
+            "label": "Shotgun"
+          }
+        },
+        "continued-world": {
+          "phase": "continued-world",
+          "source_vitals": true,
+          "vitals": [
+            {
+              "label": "Health",
+              "value": 100.0
+            },
+            {
+              "label": "Armor",
+              "value": 0.0
+            }
+          ],
+          "weapon": {
+            "present": true,
+            "native_status": false,
+            "finite_ammo": true,
+            "ammo_count": 10.0,
+            "label": "Shotgun"
+          }
+        }
+      },
+      "commands": [
+        "/give shotgun",
+        "/use shotgun",
+        "/quit"
+      ],
+      "source_receipt": "actual-q2-rerelease-baseq2-gl-qhu08mwp",
+      "screenshots": [
+        "spawn.png",
+        "world-after-walking.png",
+        "finite-ammo-hud.png",
+        "continued-world.png"
+      ]
+    },
+    {
+      "build": "6b4d8123",
+      "product": "q2-classic-baseq2",
+      "renderer": "cpu",
+      "map": "base1",
+      "artifact_bytes": 137692856,
+      "normal_movement_type": 0,
+      "continued_frames": 60,
+      "application_exit": 0,
+      "source_weapon": "QA_Q2_SHOTGUN",
+      "source_ammo_count": 10,
+      "source_ammo_icon": 1090,
+      "hud": {
+        "spawn-observation": {
+          "phase": "spawn-observation",
+          "source_vitals": true,
+          "vitals": [
+            {
+              "label": "Health",
+              "value": 100.0
+            },
+            {
+              "label": "Armor",
+              "value": 0.0
+            }
+          ],
+          "weapon": {
+            "present": true,
+            "native_status": false,
+            "finite_ammo": false,
+            "ammo_count": 0.0,
+            "label": "Blaster"
+          }
+        },
+        "finite-ammo-hud": {
+          "phase": "finite-ammo-hud",
+          "source_vitals": true,
+          "vitals": [
+            {
+              "label": "Health",
+              "value": 100.0
+            },
+            {
+              "label": "Armor",
+              "value": 0.0
+            }
+          ],
+          "weapon": {
+            "present": true,
+            "native_status": false,
+            "finite_ammo": true,
+            "ammo_count": 10.0,
+            "label": "Shotgun"
+          }
+        },
+        "continued-world": {
+          "phase": "continued-world",
+          "source_vitals": true,
+          "vitals": [
+            {
+              "label": "Health",
+              "value": 100.0
+            },
+            {
+              "label": "Armor",
+              "value": 0.0
+            }
+          ],
+          "weapon": {
+            "present": true,
+            "native_status": false,
+            "finite_ammo": true,
+            "ammo_count": 10.0,
+            "label": "Shotgun"
+          }
+        }
+      },
+      "commands": [
+        "/give shotgun",
+        "/use shotgun",
+        "/quit"
+      ],
+      "source_receipt": "actual-q2-classic-baseq2-cpu-7wbozc3e",
+      "screenshots": [
+        "spawn.png",
+        "world-after-walking.png",
+        "finite-ammo-hud.png",
+        "continued-world.png"
+      ]
+    },
+    {
+      "build": "6b4d8123",
+      "product": "q2-classic-baseq2",
+      "renderer": "gl",
+      "map": "base1",
+      "artifact_bytes": 137692856,
+      "normal_movement_type": 0,
+      "continued_frames": 60,
+      "application_exit": 0,
+      "source_weapon": "QA_Q2_SHOTGUN",
+      "source_ammo_count": 10,
+      "source_ammo_icon": 1090,
+      "hud": {
+        "spawn-observation": {
+          "phase": "spawn-observation",
+          "source_vitals": true,
+          "vitals": [
+            {
+              "label": "Health",
+              "value": 100.0
+            },
+            {
+              "label": "Armor",
+              "value": 0.0
+            }
+          ],
+          "weapon": {
+            "present": true,
+            "native_status": false,
+            "finite_ammo": false,
+            "ammo_count": 0.0,
+            "label": "Blaster"
+          }
+        },
+        "finite-ammo-hud": {
+          "phase": "finite-ammo-hud",
+          "source_vitals": true,
+          "vitals": [
+            {
+              "label": "Health",
+              "value": 100.0
+            },
+            {
+              "label": "Armor",
+              "value": 0.0
+            }
+          ],
+          "weapon": {
+            "present": true,
+            "native_status": false,
+            "finite_ammo": true,
+            "ammo_count": 10.0,
+            "label": "Shotgun"
+          }
+        },
+        "continued-world": {
+          "phase": "continued-world",
+          "source_vitals": true,
+          "vitals": [
+            {
+              "label": "Health",
+              "value": 100.0
+            },
+            {
+              "label": "Armor",
+              "value": 0.0
+            }
+          ],
+          "weapon": {
+            "present": true,
+            "native_status": false,
+            "finite_ammo": true,
+            "ammo_count": 10.0,
+            "label": "Shotgun"
+          }
+        }
+      },
+      "commands": [
+        "/give shotgun",
+        "/use shotgun",
+        "/quit"
+      ],
+      "source_receipt": "actual-q2-classic-baseq2-gl-yrl2l13a",
+      "screenshots": [
+        "spawn.png",
+        "world-after-walking.png",
+        "finite-ammo-hud.png",
+        "continued-world.png"
+      ]
+    }
+  ],
+  "classic_view_weapon_config": {
+    "installed_file": "q2/baseq2/config.cfg",
+    "line": 82,
+    "installed_value": "2",
+    "registered_default": "0",
+    "source_default": "src/app/frontend/shared_register.c:353",
+    "source_hidden_gun_gate": "src/app/frontend/visuals.c:1136",
+    "startup_reached": "src/app/frontend/startup_config.c:46 -> src/app/frontend/config_scripts.c:FRONTEND_SCRIPT_USER -> installed selected content; runtime execing config.cfg; fresh private user root",
+    "short_public_hand0_runs": [
+      {
+        "build": "6b4d8123",
+        "product": "q2-classic-baseq2",
+        "renderer": "cpu",
+        "public_command": "/hand 0",
+        "source_weapon": "QA_Q2_BLASTER",
+        "continued_frames": 12,
+        "application_exit": 0,
+        "source_receipt": "actual-q2-classic-baseq2-cpu-3qqct_t6",
+        "screenshot": "visible-view-weapon.png",
+        "visually_checked_blaster_model": true
+      },
+      {
+        "build": "6b4d8123",
+        "product": "q2-classic-baseq2",
+        "renderer": "gl",
+        "public_command": "/hand 0",
+        "source_weapon": "QA_Q2_BLASTER",
+        "continued_frames": 12,
+        "application_exit": 0,
+        "source_receipt": "actual-q2-classic-baseq2-gl-dn_pz8o3",
+        "screenshot": "visible-view-weapon.png",
+        "visually_checked_blaster_model": true
+      }
+    ]
+  },
+  "rerelease_natural_combat": {
+    "build": "f504",
+    "product": "q2-rerelease-baseq2",
+    "renderer": "gl",
+    "map": "base1",
+    "ordinary_movement_aim_fire": true,
+    "commands": [
+      "/hand 0",
+      "/quit"
+    ],
+    "barrel_deaths": [
+      {
+        "actor": [
+          1,
+          341,
+          0
+        ],
+        "attacker": [
+          1,
+          535,
+          0
+        ],
+        "damage": 15.0,
+        "phase": "fire-barrel"
+      },
+      {
+        "actor": [
+          1,
+          341,
+          0
+        ],
+        "attacker": [
+          1,
+          535,
+          0
+        ],
+        "damage": 15.0,
+        "phase": "fire-barrel"
+      },
+      {
+        "actor": [
+          1,
+          340,
+          0
+        ],
+        "attacker": [
+          1,
+          535,
+          0
+        ],
+        "damage": 108.0,
+        "phase": "fire-barrel"
+      }
+    ],
+    "barrel_releases": [
+      {
+        "actor": [
+          1,
+          341,
+          0
+        ],
+        "registry_live": false,
+        "body_present": false,
+        "source_present": false,
+        "phase": "fire-barrel"
+      }
+    ],
+    "continued_frames": 251,
+    "application_exit": 0,
+    "gdb_exit": 0,
+    "gdb_inferior_mutations": false,
+    "audio_started": [
+      {
+        "name": "sound/weapons/blastf1a.wav",
+        "voice": 8,
+        "actor": 1,
+        "owner": 1,
+        "channel": 1,
+        "volume": 1.0,
+        "output_frame": 440485,
+        "phase": "fire-barrel"
+      },
+      {
+        "name": "sound/weapons/blastf1a.wav",
+        "voice": 9,
+        "actor": 1,
+        "owner": 1,
+        "channel": 1,
+        "volume": 1.0,
+        "output_frame": 560668,
+        "phase": "fire-barrel"
+      },
+      {
+        "name": "sound/world/brkglas.wav",
+        "voice": 10,
+        "actor": 70,
+        "owner": 1,
+        "channel": 2,
+        "volume": 1.0,
+        "output_frame": 642974,
+        "phase": "fire-barrel"
+      }
+    ],
+    "accepted_nonzero_dummy_pcm_queues": 78,
+    "source_receipt": "actual-q2-rerelease-baseq2-gl-96umu__f"
+  },
+  "limits": "base1 startup, walking, empty/finite-ammo HUD and rerelease natural barrel fire with continued frames. Debugger observations affect timing, so no performance claim. Dummy PCM does not prove physical speaker output. No whole-campaign or whole-menu claim."
+}
