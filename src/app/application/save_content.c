@@ -40,12 +40,10 @@ typedef struct content_reference {
     uint64_t pool, resource, view, package;
     const char *path;
     const qa_resource *value;
-    qa_sha256_digest digest;
     bool retained;
 } content_reference;
 typedef struct content_package {
     const char *name;
-    qa_sha256_digest digest;
 } content_package;
 typedef struct content_source {
     uint64_t catalog, content, base, authority;
@@ -226,7 +224,7 @@ static bool reference_add(qa_application_content_graph *g, uint64_t pool,
     }
     r->path = copy_text(path ? path : qa_resource_path(value), error);
     if (!r->path) return false;
-    r->value = value; r->digest = *qa_resource_digest(value);
+    r->value = value;
     qa_resource_retain((qa_resource *)value); r->retained = true;
     return true;
 }
@@ -741,16 +739,15 @@ static bool reference_scope(qa_application_content_graph *g,content_reference *r
     }
     if (!r->view || r->view>g->view_count) return fail(error,QA_ERROR_FORMAT,"Used resource has no installed Source file scope");
     g->views[r->view-1].needed=true;
-    const char *name=NULL; const qa_sha256_digest *digest=NULL;
-    if (!qa_resource_package_identity(r->value,&name,&digest,error)) return false;
+    const char *name=qa_resource_package_name(r->value);
     if (!name) { r->package=0; return true; }
     for (size_t i=0;i<g->package_count;++i)
-        if (!strcmp(g->packages[i].name,name) && qa_sha256_equal(&g->packages[i].digest,digest)) {
+        if (!strcmp(g->packages[i].name,name)) {
             r->package=i+1; return true;
         }
     if (!append((void **)&g->packages,&g->package_count,sizeof(*g->packages),error)) return false;
     content_package *p=g->packages+g->package_count-1;
-    p->name=copy_text(name,error); p->digest=*digest; r->package=g->package_count;
+    p->name=copy_text(name,error); r->package=g->package_count;
     return p->name!=NULL;
 }
 static bool prepare_manifest(qa_application_content_graph *g,qa_error *error)
@@ -859,19 +856,18 @@ static bool manifest_fields(qa_source_save_io *io,qa_application_content_graph *
         if (!product_field(io,g,s->catalog,&s->value.product) ||
             !qa_source_save_bool(io,&s->value.changed) || !text_field(io,&s->value.directory)) return false;
     }
-    if (!table_field(io,(void **)&g->packages,&g->package_count,sizeof(*g->packages),40)) return false;
+    if (!table_field(io,(void **)&g->packages,&g->package_count,sizeof(*g->packages),8)) return false;
     for (size_t i=0;i<g->package_count;++i) {
-        if (!text_field(io,&g->packages[i].name) ||
-            !qa_source_save_bytes(io,&g->packages[i].digest,sizeof(g->packages[i].digest))) return false;
+        if (!text_field(io,&g->packages[i].name)) return false;
         const char *name=g->packages[i].name;
         if (!name || !*name || strpbrk(name,"/\\:") || !strcmp(name,".") || !strcmp(name,".."))
-            return fail(io->error,QA_ERROR_FORMAT,"Used package identity requires its logical filename");
+            return fail(io->error,QA_ERROR_FORMAT,"Used package requires its logical filename");
     }
-    if (!table_field(io,(void **)&g->references,&g->reference_count,sizeof(*g->references),72)) return false;
+    if (!table_field(io,(void **)&g->references,&g->reference_count,sizeof(*g->references),40)) return false;
     for (size_t i=0;i<g->reference_count;++i) {
         content_reference *r=g->references+i;
         FIELD(u64,r,pool); FIELD(u64,r,resource); FIELD(u64,r,view); FIELD(u64,r,package);
-        if (!text_field(io,&r->path) || !qa_source_save_bytes(io,&r->digest,sizeof(r->digest))) return false;
+        if (!text_field(io,&r->path)) return false;
     }
     if (!table_field(io,(void **)&g->instances,&g->instance_count,sizeof(*g->instances),128)) return false;
     for (size_t i=0;i<g->instance_count;++i) if (!instance_fields(io,g,g->instances+i)) return false;
@@ -973,13 +969,10 @@ typedef struct manifest_scope {
     const qa_application_content_graph *graph;
     const qa_vfs *view;
     uint64_t package;
-    qa_error error;
-    bool failed;
 } manifest_scope;
 static bool manifest_mount(qa_mount_id id,void *opaque)
 {
     manifest_scope *scope=opaque;
-    if (scope->failed) return false;
     const qa_archive *archive=qa_vfs_archive(scope->view,id);
     if (!scope->package) return archive==NULL;
     if (!archive) return false;
@@ -987,10 +980,7 @@ static bool manifest_mount(qa_mount_id id,void *opaque)
     const char *path=qa_vfs_mount_path(scope->view,id),*leaf=path;
     if (!path) return false;
     for (const char *p=path;*p;++p) if (*p=='/' || *p=='\\') leaf=p+1;
-    if (strcmp(leaf,expected->name)) return false;
-    const qa_sha256_digest *digest=NULL;
-    if (!qa_archive_digest((qa_archive *)archive,&digest,&scope->error)) { scope->failed=true; return false; }
-    return qa_sha256_equal(digest,&expected->digest);
+    return !strcmp(leaf,expected->name);
 }
 static bool resolve_manifest(qa_application_content_graph *g,const qa_application_options *options,qa_error *error)
 {
@@ -1052,20 +1042,8 @@ static bool resolve_manifest(qa_application_content_graph *g,const qa_applicatio
         bool safe=normal && *normal && !strcmp(normal,r->path); free(normal);
         if (!safe || !r->resource || !view || r->package>g->package_count ||
             qa_vfs_resources(view)!=qa_application_content_pool(g,r->pool)) return false;
-        if (!qa_vfs_acquire_filtered(view,r->path,manifest_mount,&scope,&resource,NULL,error)) {
-            if (scope.failed && error) *error=scope.error;
-            return false;
-        }
+        if (!qa_vfs_acquire_filtered(view,r->path,manifest_mount,&scope,&resource,NULL,error)) return false;
         r->value=resource; r->retained=true;
-        if (!qa_sha256_equal(&r->digest,qa_resource_digest(resource)))
-            return fail(error,QA_ERROR_FORMAT,"Installed map or module content differs from the save");
-        const char *package=NULL; const qa_sha256_digest *digest=NULL;
-        if (r->package>g->package_count || !qa_resource_package_identity(resource,&package,&digest,error)) return false;
-        if (r->package) {
-            const content_package *expected=g->packages+r->package-1;
-            if (!package || strcmp(package,expected->name) || !qa_sha256_equal(digest,&expected->digest))
-                return fail(error,QA_ERROR_FORMAT,"An installed used package differs from the save");
-        } else if (package) return fail(error,QA_ERROR_FORMAT,"Installed loose content changed its package origin");
         for (size_t j=0;j<i;++j) if (g->references[j].pool==r->pool && g->references[j].resource==r->resource) return false;
     }
     for (size_t i=0;i<g->instance_count;++i) {

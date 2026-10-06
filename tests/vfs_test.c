@@ -224,11 +224,13 @@ int main(void)
     CHECK(qa_vfs_acquire(vfs, "MAPS\\ITEM.TXT", &pak_resource, &resolved, &error));
     CHECK(resolved == pak_id);
     expect_text(pak_resource, "first");
+    CHECK(strcmp(qa_resource_package_name(pak_resource), "test.pak") == 0);
     CHECK(qa_vfs_acquire_from(other, other_pak, "maps/item.txt", &again, &error));
     CHECK(again == pak_resource && qa_resource_id(again) == qa_resource_id(pak_resource));
     qa_resource_release(again);
     CHECK(qa_vfs_acquire_from(vfs, zip_id, "maps/item.txt", &zip_resource, &error));
     expect_text(zip_resource, "zip-last");
+    CHECK(strcmp(qa_resource_package_name(zip_resource), "test.pk3") == 0);
     CHECK(qa_vfs_acquire_from(other, other_zip, "maps/item.txt", &again, &error));
     CHECK(again == zip_resource && qa_resource_bytes(again).data == qa_resource_bytes(zip_resource).data);
     qa_resource_release(again);
@@ -259,6 +261,7 @@ int main(void)
     CHECK(qa_vfs_acquire(vfs, "maps/item.txt", &loose_resource, &resolved, &error));
     CHECK(resolved == loose_id);
     expect_text(loose_resource, "loose");
+    CHECK(qa_resource_package_name(loose_resource) == NULL);
     qa_mount_id invalid_order[] = {pak_id, pak_id, zip_id};
     CHECK(!qa_vfs_set_order(vfs, invalid_order, 3, &error));
     qa_mount_id prefix_order[] = {zip_id, pak_id, loose_id};
@@ -336,6 +339,8 @@ int main(void)
     expect_text(pak_resource, "first");
     expect_text(zip_resource, "zip-last");
     expect_text(loose_resource, "loose");
+    CHECK(strcmp(qa_resource_package_name(pak_resource), "test.pak") == 0);
+    CHECK(strcmp(qa_resource_package_name(zip_resource), "test.pk3") == 0);
     qa_resource_retain(pak_resource);
     qa_resource_release(pak_resource);
     qa_resource_release(pak_resource);

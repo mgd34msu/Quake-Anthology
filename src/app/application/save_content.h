@@ -14,7 +14,7 @@ typedef struct application_saved_instance_content {
 bool application_save_content_collect(qa_application *,
     qa_application_content_visit_fn, void *, qa_application_content_graph **,
     qa_error *);
-/* Stores only identities of used installed content. */
+/* Stores names and paths of used installed content. */
 bool application_save_content_encode(const qa_application_content_graph *,
     qa_buffer *, qa_error *);
 bool application_save_content_prepare(qa_bytes, const qa_application_options *,

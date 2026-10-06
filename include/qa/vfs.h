@@ -9,10 +9,9 @@ typedef struct qa_resource_pool qa_resource_pool;
 typedef struct qa_resource qa_resource;
 typedef struct qa_vfs qa_vfs;
 typedef struct qa_vfs_file qa_vfs_file;
-/* Loose resources return NULL package identity. Names are archive basenames,
- * never host paths; returned values belong to the retained resource owner. */
-bool qa_resource_package_identity(const qa_resource *, const char **,
-    const qa_sha256_digest **, qa_error *);
+/* Loose resources return NULL. Archive basenames belong to the retained
+ * resource owner and contain no host path. */
+const char *qa_resource_package_name(const qa_resource *);
 typedef uint64_t qa_mount_id;
 
 /* Shared resource admission without opening a file. The owned result uses
