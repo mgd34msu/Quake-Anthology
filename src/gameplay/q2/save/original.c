@@ -689,13 +689,13 @@ static bool original_weapon(qa_q2_game *g, q2_original_record_io *io, const char
 bool q2_original_config_layout(qa_q2_edition edition, const qa_q2_save_level *level,
     qa_q2_config_layout *layout, qa_error *error)
 {
-    if (!level || level->rerelease != (edition == QA_Q2_RERELEASE)) {
+    if (level && level->rerelease != (edition == QA_Q2_RERELEASE)) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Original Q2 resource table differs from its actual GAME edition");
         return false;
     }
     /* The shared layout reads only protocol and wire_flags, not frame state. */
     qa_q2_codec codec;
-    codec.protocol = (qa_net_protocol_id){.kind = level->rerelease ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34};
+    codec.protocol = (qa_net_protocol_id){.kind = edition == QA_Q2_RERELEASE ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34};
     codec.wire_flags = 0;
     return qa_q2_config_layout_read(&codec, layout, error);
 }
@@ -713,11 +713,11 @@ bool q2_original_resource(qa_q2_game *g, q2_original_record_io *io,
         case 544: table_base = layout.images; count = layout.max_images; break;
         default: return fail(io, table_base, "Original Q2 resource has no actual engine namespace");
     }
-    uint32_t width = qa_q2_save_configstring_width(level);
+    uint32_t width = io->edition == QA_Q2_RERELEASE ? QA_Q2_SAVE_RERELEASE_CONFIGSTRING_BYTES : QA_Q2_SAVE_CONFIGSTRING_BYTES;
     int32_t index = 0;
     if (!io->reading && *resource) {
         const char *text = qa_strings_cstr(qa_session_strings(g->services.session), *resource);
-        if (!text) return fail(io, *resource, "Q2 original resource has no actual engine table");
+        if (!level || !text) return fail(io, *resource, "Q2 original resource has no actual engine table");
         for (uint32_t i = 1; i < count; ++i)
             if (!strcmp(qa_q2_save_configstring(level, table_base + i), text)) {
                 index = (int32_t)i; break;
@@ -733,6 +733,7 @@ bool q2_original_resource(qa_q2_game *g, q2_original_record_io *io,
         if (index < 0 || (uint32_t)index >= count) return fail(io, (size_t)(uint32_t)index,
             "Original Q2 resource exceeds its engine table");
         if (!index) { *resource = 0; return true; }
+        if (!level) return fail(io, (size_t)index, "Original Q2 resource has no saved engine table");
         const char *text = qa_q2_save_configstring(level, table_base + (uint32_t)index);
         if (!*text || !memchr(text, 0, width)) return fail(io, (size_t)index,
             "Original Q2 resource index has no terminated engine string");
@@ -989,6 +990,16 @@ void q2_original_client_free(q2_original_client_state *state)
     free(state->player.spawn_inventory);
     free(state->player.help_points);
     *state = (q2_original_client_state){0};
+}
+
+bool qa_q2_game_original_builtin_game(qa_bytes bytes)
+{
+    if (!bytes.data || bytes.size<16) return false;
+    for (unsigned product=QA_Q2_BASE;product<=QA_Q2_ROGUE;++product) {
+        const q2_original_library *library=q2_original_library_for((qa_q2_product)product);
+        if (!memcmp(bytes.data,library->date,sizeof(library->date))) return true;
+    }
+    return false;
 }
 
 bool q2_original_game_open(qa_q2_game *g, qa_bytes bytes,

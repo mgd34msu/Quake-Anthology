@@ -494,7 +494,9 @@ bool qa_application_q2_save_import(qa_application *app,const qa_q2_save_data *sa
         world.explicit_spawn_point=true;
         ok=qa_launch_set_world(draft,&world,error) &&
             qa_launch_set_seat(draft,&(qa_launch_seat){.id=0,.name="Player 1",.local=true},error);
-        if (ok && !product->builtin && product->program && *product->program) ok=qa_launch_select_original(draft,"native:primary",error);
+        if (ok && (!product->builtin || (!save->server.rerelease &&
+            !qa_q2_game_original_builtin_game((qa_bytes){save->game.data,save->game.size}))))
+            ok=qa_launch_select_original(draft,"native:primary",error);
     }
     if (ok) { app->q2_original_save=stage; stage=NULL; ok=qa_application_apply(app,draft,error); }
     qa_launch_draft_destroy(draft);
