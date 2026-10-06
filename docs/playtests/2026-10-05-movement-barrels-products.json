@@ -1,0 +1,196 @@
+{
+  "artifact": "qfiles/qa-c",
+  "input": "XTest through actual SDL; debugger reads only",
+  "limits": "Local installed maps and reported behavior. Debugger timing is not performance evidence; SDL dummy output does not prove speakers. Custom launches were still failing during the shareware-menu checks.",
+  "MIKE-01": [
+    {
+      "product": "q1-classic-id1",
+      "artifact": "qfiles/qa-c",
+      "commit": "79b43a30",
+      "real_input": "XTest keyboard through normal SDL input; GDB observation only",
+      "checks": {
+        "normal_speed": true,
+        "grounded_while_walking": true,
+        "key_release_neutral": true,
+        "stock_friction_stops": true,
+        "jump": true,
+        "lands_grounded": true,
+        "clean_exit": true
+      },
+      "peak_walk_speed": 200.00000000000003,
+      "release_speed": 0.0,
+      "jump_vz": 252.2206268310547,
+      "all_passed": true
+    },
+    {
+      "product": "q1-rerelease-id1",
+      "artifact": "qfiles/qa-c",
+      "commit": "79b43a30",
+      "real_input": "XTest keyboard through normal SDL input; GDB observation only",
+      "checks": {
+        "normal_speed": true,
+        "grounded_while_walking": true,
+        "key_release_neutral": true,
+        "stock_friction_stops": true,
+        "jump": true,
+        "lands_grounded": true,
+        "clean_exit": true
+      },
+      "peak_walk_speed": 200.0,
+      "release_speed": 0.0,
+      "jump_vz": 247.80487060546875,
+      "all_passed": true
+    }
+  ],
+  "MIKE-03": [
+    {
+      "revision": "f5049e9a",
+      "product": "q2-classic-baseq2",
+      "renderer": "cpu",
+      "deaths": [
+        {
+          "actor": [
+            1,
+            342,
+            0
+          ],
+          "attacker": [
+            1,
+            388,
+            0
+          ],
+          "damage": 10.0,
+          "phase": "fire-barrel"
+        },
+        {
+          "actor": [
+            1,
+            341,
+            0
+          ],
+          "attacker": [
+            1,
+            388,
+            0
+          ],
+          "damage": 108.0,
+          "phase": "fire-barrel"
+        }
+      ],
+      "retirement": [
+        {
+          "actor": [
+            1,
+            342,
+            0
+          ],
+          "registry_live": false,
+          "body_present": false,
+          "source_present": false,
+          "phase": "fire-barrel"
+        }
+      ],
+      "continued_frames": 249,
+      "started_assets": [
+        "sound/weapons/blastf1a.wav",
+        "sound/world/brkglas.wav"
+      ],
+      "actual_exit": 0,
+      "barrel_pass": true
+    },
+    {
+      "revision": "f5049e9a",
+      "product": "q2-rerelease-baseq2",
+      "renderer": "gl",
+      "deaths": [
+        {
+          "actor": [
+            1,
+            341,
+            0
+          ],
+          "attacker": [
+            1,
+            535,
+            0
+          ],
+          "damage": 15.0,
+          "phase": "fire-barrel"
+        },
+        {
+          "actor": [
+            1,
+            341,
+            0
+          ],
+          "attacker": [
+            1,
+            535,
+            0
+          ],
+          "damage": 15.0,
+          "phase": "fire-barrel"
+        },
+        {
+          "actor": [
+            1,
+            340,
+            0
+          ],
+          "attacker": [
+            1,
+            535,
+            0
+          ],
+          "damage": 108.0,
+          "phase": "fire-barrel"
+        }
+      ],
+      "retirement": [
+        {
+          "actor": [
+            1,
+            341,
+            0
+          ],
+          "registry_live": false,
+          "body_present": false,
+          "source_present": false,
+          "phase": "fire-barrel"
+        }
+      ],
+      "continued_frames": 251,
+      "started_assets": [
+        "sound/weapons/blastf1a.wav",
+        "sound/world/brkglas.wav"
+      ],
+      "actual_exit": 0,
+      "barrel_pass": true
+    }
+  ],
+  "MIKE-08": {
+    "revision": "9c9e841b",
+    "cases": [
+      {
+        "case": "q1-q2-monsters",
+        "classic_quake_options": 1,
+        "extra_shareware_options": 0
+      },
+      {
+        "case": "q2-q1-monsters",
+        "classic_quake_options": 1,
+        "extra_shareware_options": 0
+      },
+      {
+        "case": "q1-q2-arsenal",
+        "classic_quake_options": 1,
+        "extra_shareware_options": 0
+      },
+      {
+        "case": "q1-q3-arsenal",
+        "classic_quake_options": 1,
+        "extra_shareware_options": 0
+      }
+    ]
+  }
+}
