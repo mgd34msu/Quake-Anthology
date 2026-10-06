@@ -3,6 +3,7 @@
 #include "qa/input.h"
 #include "qa/inventory.h"
 #include "qa/source_save.h"
+#include "qa/settings.h"
 
 typedef struct frontend_authored_bindings frontend_authored_bindings;
 
@@ -27,7 +28,10 @@ bool frontend_authored_bindings_secondary(frontend_authored_bindings *,
  * authored/selected Reset metadata stays with the candidate. */
 bool frontend_authored_bindings_restore_previous(frontend_authored_bindings *,
     const frontend_authored_bindings *,const qa_input_seat *,qa_input_seat *,qa_error *);
-void frontend_authored_bindings_profile(frontend_authored_bindings *);
+bool frontend_authored_bindings_profile(frontend_authored_bindings *,qa_input_seat *,
+    const qa_seat_settings *,qa_error *);
+/* Borrow the actual selected-default and override metadata for settings encode. */
+void frontend_authored_bindings_archive(const frontend_authored_bindings *,qa_seat_settings *);
 void frontend_authored_bindings_finish(frontend_authored_bindings *);
 bool frontend_authored_bindings_ready(const frontend_authored_bindings *);
 bool frontend_authored_bindings_completed(const frontend_authored_bindings *);

@@ -215,8 +215,66 @@ bool frontend_authored_bindings_restore_previous(frontend_authored_bindings *own
     owner->all_chosen=previous->all_chosen; owner->selection_applied=false;
     return true;
 }
-void frontend_authored_bindings_profile(frontend_authored_bindings *owner)
-{ if (owner) owner->all_chosen=true; }
+static bool retain_choices(const binding_set *defaults,const qa_input_seat *input,
+    qa_physical_input **overridden,size_t *count,qa_error *error)
+{
+    binding_set live={0}; bool ok=true;
+    for (size_t i=0;ok && i<qa_input_seat_binding_count(input);++i) {
+        qa_input_binding binding=*qa_input_seat_binding_at(input,i);
+        binding.input=canonical_input(binding.input);
+        ok=put(&live,&binding,true,error);
+    }
+    for (size_t i=0;ok && i<defaults->count;++i) {
+        const qa_input_binding *expected=defaults->rows+i;
+        size_t actual=find(&live,canonical_input(expected->input));
+        if (actual==live.count || !same_target(expected,live.rows+actual))
+            ok=override_add(overridden,count,expected->input,error);
+    }
+    for (size_t i=0;ok && i<live.count;++i) {
+        size_t expected=find(defaults,live.rows[i].input);
+        if (expected==defaults->count || !same_target(defaults->rows+expected,live.rows+i))
+            ok=override_add(overridden,count,live.rows[i].input,error);
+    }
+    clear(&live); return ok;
+}
+bool frontend_authored_bindings_profile(frontend_authored_bindings *owner,qa_input_seat *input,
+    const qa_seat_settings *settings,qa_error *error)
+{
+    if (!owner || !owner->initialized || !input || !settings)
+        return fail(error,QA_ERROR_ARGUMENT,"Binding profile requires its actual defaults and input seat");
+    if (!settings->has_binding_defaults || !settings->binding_default_count) {
+        owner->all_chosen=true; return true;
+    }
+    binding_set previous={settings->binding_defaults,settings->binding_default_count};
+    qa_physical_input *overridden=NULL; size_t count=0;
+    bool ok=true;
+    for (size_t i=0;ok && i<settings->binding_override_count;++i)
+        ok=override_add(&overridden,&count,settings->binding_overrides[i],error);
+    if (ok) ok=retain_choices(&previous,input,&overridden,&count,error);
+    binding_set live={0};
+    if (ok) ok=seat_set(&live,input,false,error);
+    for (size_t i=0;ok && i<owner->selected.count;++i) {
+        const qa_input_binding *binding=owner->selected.rows+i;
+        bool chosen=false;
+        for (size_t j=0;j<count;++j)
+            if (same_input(overridden[j],canonical_input(binding->input))) { chosen=true; break; }
+        if (!chosen) ok=put(&live,binding,true,error);
+    }
+    if (ok) ok=qa_input_seat_replace_bindings(input,live.rows,live.count,error);
+    clear(&live);
+    if (!ok) { free(overridden); return false; }
+    free(owner->overridden); owner->overridden=overridden; owner->overridden_count=count;
+    owner->all_chosen=false; owner->selection_applied=true; return true;
+}
+void frontend_authored_bindings_archive(const frontend_authored_bindings *owner,qa_seat_settings *settings)
+{
+    if (!owner || !settings) return;
+    settings->has_binding_defaults=true;
+    settings->binding_defaults=owner->all_chosen?NULL:owner->selected.rows;
+    settings->binding_default_count=owner->all_chosen?0:owner->selected.count;
+    settings->binding_overrides=owner->all_chosen?NULL:owner->overridden;
+    settings->binding_override_count=owner->all_chosen?0:owner->overridden_count;
+}
 void frontend_authored_bindings_finish(frontend_authored_bindings *owner)
 { if (owner) owner->collecting=false; }
 bool frontend_authored_bindings_ready(const frontend_authored_bindings *owner)
@@ -329,6 +387,8 @@ bool frontend_authored_bindings_select(frontend_authored_bindings *owner,qa_inpu
     if (owner->selection_applied && selected_unchanged(&owner->selected,dialect,strings,items,count)) return true;
     binding_set next={0},live={0};
     bool ok=selected(&next,dialect,strings,items,count,error);
+    if (ok && !owner->all_chosen && owner->selection_applied)
+        ok=retain_choices(&owner->selected,input,&owner->overridden,&owner->overridden_count,error);
     if (ok && !owner->all_chosen) ok=seat_set(&live,input,false,error);
     for (size_t i=0;ok && !owner->all_chosen && i<next.count;++i) {
         bool overridden=false;
@@ -355,11 +415,11 @@ bool frontend_authored_bindings_reset(frontend_authored_bindings *owner,qa_input
         }
     for (size_t i=0;ok && i<owner->selected.count;++i) {
         qa_input_binding binding=remap(owner->selected.rows[i],controller);
-        ok=put(&reset,&binding,false,error);
+        ok=put(&reset,&binding,true,error);
     }
     if (ok) ok=qa_input_seat_replace_bindings(input,reset.rows,reset.count,error);
     clear(&reset);
-    if (ok) { owner->all_chosen=owner->selection_applied=true; free(owner->overridden); owner->overridden=NULL; owner->overridden_count=0; }
+    if (ok) { owner->all_chosen=false; owner->selection_applied=true; free(owner->overridden); owner->overridden=NULL; owner->overridden_count=0; }
     return ok;
 }
 static bool physical_fields(qa_source_save_io *io,qa_physical_input *input)

@@ -1765,7 +1765,7 @@ static bool seat_settings_apply(config_seat *seat,qa_error *error)
     if (seat->found) {
         if (!qa_input_seat_replace_bindings(seat->input,seat->settings.bindings,seat->settings.binding_count,error) ||
             !qa_input_mouse_settings_write(seat->mouse,&seat->settings.mouse,error)) return false;
-        frontend_authored_bindings_profile(seat->authored);
+        if (!frontend_authored_bindings_profile(seat->authored,seat->input,&seat->settings,error)) return false;
         *qa_input_seat_gamepad_tuning(seat->input)=seat->settings.gamepad;
         if (seat->settings.has_always_run && !qa_cvars_set_flags(seat->mouse,"cl_run",
             seat->settings.always_run?"1":"0",QA_CVAR_ARCHIVE,error)) return false;
@@ -3708,6 +3708,7 @@ bool frontend_config_store_save(frontend_config_store *manager,qa_error *error)
             qa_seat_settings settings=seat->settings;
             if (ok) {
                 settings.bindings=bindings; settings.binding_count=count;
+                frontend_authored_bindings_archive(seat->authored,&settings);
                 settings.mouse=tuning.mouse; settings.gamepad=*qa_input_seat_gamepad_tuning(active);
                 settings.has_always_run=true; settings.always_run=tuning.view.always_run;
                 settings.history=lines; settings.history_count=history_count;

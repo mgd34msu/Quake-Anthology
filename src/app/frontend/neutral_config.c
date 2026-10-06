@@ -346,7 +346,7 @@ static bool archive(void *context,qa_error *e)
     *qa_input_seat_gamepad_tuning(row->input)=row->settings.gamepad;
     if (row->settings.has_always_run && !qa_cvars_set_flags(row->mouse,"cl_run",
         row->settings.always_run?"1":"0",QA_CVAR_ARCHIVE,e)) return false;
-    frontend_authored_bindings_profile(row->authored); return true;
+    return frontend_authored_bindings_profile(row->authored,row->input,&row->settings,e);
 }
 static bool launch(void *context,qa_error *e)
 { (void)context; (void)e; return true; }
@@ -1159,6 +1159,7 @@ bool frontend_neutral_configs_save(frontend_neutral_configs *owner,qa_error *e)
         bool ok=qa_input_settings_read_routed(row->mouse,row->movement,row->kind,&tuning,e);
         qa_seat_settings settings={.bindings=bindings,.binding_count=count,
             .history=lines,.history_count=history_count,.gamepad=*qa_input_seat_gamepad_tuning(live)};
+        frontend_authored_bindings_archive(row->authored,&settings);
         if (ok) { settings.mouse=tuning.mouse; settings.has_always_run=true; settings.always_run=tuning.view.always_run; }
         qa_input_platform *platform=owner->frontend->input;
         qa_haptic_player *haptics=platform?qa_input_platform_haptics(platform,row->physical_seat):NULL;

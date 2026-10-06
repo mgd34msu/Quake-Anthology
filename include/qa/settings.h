@@ -7,6 +7,13 @@
 typedef struct qa_seat_settings {
     qa_input_binding *bindings;
     size_t binding_count;
+    /* Optional provenance of the selected engine defaults. Missing metadata
+     * preserves every legacy binding as an explicit choice. */
+    qa_input_binding *binding_defaults;
+    size_t binding_default_count;
+    qa_physical_input *binding_overrides;
+    size_t binding_override_count;
+    bool has_binding_defaults;
     qa_gamepad_tuning gamepad;
     qa_mouse_tuning mouse;
     char **history;

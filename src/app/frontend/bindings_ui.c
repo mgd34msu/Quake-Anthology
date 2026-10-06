@@ -382,8 +382,6 @@ static bool menu(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
     for (size_t i=0;i<bound_count;++i) resolved[i]=weapon_item(binding_text(qa_input_seat_binding_at(seat->input,i)),weapons,weapon_count);
     size_t action_count = sizeof(shared_actions)/sizeof(*shared_actions), custom_count = 0;
     memcpy(actions, shared_actions, sizeof(shared_actions));
-    bool q1 = dialect == QA_CONSOLE_Q1 || dialect == QA_CONSOLE_QW;
-    if (!q1) actions[4].command = "+moveup";
     actions[action_count++] = (binding_action){"Show scores", entities_family == QA_GAME_Q2 ? "score" : "+scores"};
     if (entities_family != QA_GAME_Q1) {
         actions[action_count++] = (binding_action){"Chat", "messagemode"};

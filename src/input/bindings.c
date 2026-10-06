@@ -237,7 +237,7 @@ static const char *const default_rows[][2] = {{"w", "+forward"},
                                           {"s", "+back"},
                                           {"a", "+moveleft"},
                                           {"d", "+moveright"},
-                                          {"SPACE", "+moveup"},
+                                          {"SPACE", "+jump"},
                                           {"CTRL", "+movedown"},
                                           {"SHIFT", "+speed"},
                                           {"MOUSE1", "+attack"},
@@ -246,7 +246,7 @@ static const char *const default_rows[][2] = {{"w", "+forward"},
                                           {"MWHEELDOWN", "weapnext"},
                                           {"q", "+weaponwheel"},
                                           {"GAMEPAD_RIGHT_TRIGGER", "+attack"},
-                                          {"GAMEPAD_A_BUTTON", "+moveup"},
+                                          {"GAMEPAD_A_BUTTON", "+jump"},
                                           {"GAMEPAD_B_BUTTON", "+movedown"},
                                           {"GAMEPAD_X_BUTTON", "+use"},
                                           {"GAMEPAD_LEFT_SHOULDER", "weapprev"},
@@ -257,7 +257,6 @@ bool qa_input_default_binding_at(qa_console_dialect dialect, int32_t device, siz
     if (!out || (unsigned)dialect > QA_CONSOLE_Q3 || device < 0 ||
         index >= sizeof(default_rows) / sizeof(*default_rows)) return false;
     qa_input_binding binding = {.kind = QA_BIND_COMMAND, .command = default_rows[index][1]};
-    if (dialect <= QA_CONSOLE_QW && (index == 4 || index == 13)) binding.command = "+jump";
     if (!qa_input_physical_parse(default_rows[index][0], device, &binding.input)) return false;
     *out = binding; return true;
 }

@@ -192,21 +192,19 @@ static void gamepad_write(qa_json_writer *w, const qa_gamepad_tuning *pad) {
     qa_json_writer_end(w);
     qa_json_writer_end(w);
 }
-static bool binding_read(const qa_json_document *d, qa_json_id id, qa_input_binding *out,
-                         qa_error *e) {
+static bool physical_read(const qa_json_document *d, qa_json_id input, qa_physical_input *out,
+                          qa_error *e) {
     unsigned kind;
-    qa_json_id input = qa_json_get(d, id, "input"), target = qa_json_get(d, id, "target");
-    if (!settings_object(d, id, e) || !settings_object(d, input, e) ||
-        !settings_object(d, target, e) ||
+    if (!settings_object(d, input, e) ||
         !settings_choice(d, qa_json_get(d, input, "kind"), physical_names, COUNT(physical_names),
                          &kind, e))
         return false;
-    out->input.kind = (qa_physical_kind)kind;
+    out->kind = (qa_physical_kind)kind;
     if (kind == QA_PHYSICAL_BUTTON || kind == QA_PHYSICAL_AXIS) {
         uint32_t device;
         if (!settings_u32(d, qa_json_get(d, input, "device"), &device, e) || device > INT32_MAX)
             return settings_fail(e, "Invalid controller device ID");
-        out->input.device = (int32_t)device;
+        out->device = (int32_t)device;
     }
     if (kind == QA_PHYSICAL_AXIS) {
         unsigned axis, direction;
@@ -215,13 +213,20 @@ static bool binding_read(const qa_json_document *d, qa_json_id id, qa_input_bind
                              e) ||
             !settings_choice(d, qa_json_get(d, input, "direction"), directions, 2, &direction, e))
             return false;
-        out->input.code = axis;
-        out->input.positive = direction != 0;
+        out->code = axis;
+        out->positive = direction != 0;
     } else if (!settings_u32(d, qa_json_get(d, input, kind == QA_PHYSICAL_KEY ? "code" : "button"),
-                             &out->input.code, e))
+                             &out->code, e))
         return false;
-    if (!qa_input_physical_valid(out->input))
+    if (!qa_input_physical_valid(*out))
         return settings_fail(e, "Invalid physical input binding");
+    return true;
+}
+static bool binding_read(const qa_json_document *d, qa_json_id id, qa_input_binding *out,
+                         qa_error *e) {
+    qa_json_id input = qa_json_get(d, id, "input"), target = qa_json_get(d, id, "target");
+    if (!settings_object(d, id, e) || !settings_object(d, target, e) ||
+        !physical_read(d, input, &out->input, e)) return false;
     if (qa_json_string_equal(d, qa_json_get(d, target, "kind"), "action")) {
         unsigned action;
         if (!settings_choice(d, qa_json_get(d, target, "action"), actions, COUNT(actions), &action,
@@ -245,19 +250,22 @@ static bool binding_valid(const qa_input_binding *binding) {
              binding->action < QA_INPUT_ACTION_COUNT) ||
             (binding->kind == QA_BIND_COMMAND && binding->command));
 }
+static void physical_write(qa_json_writer *w, const qa_physical_input *input) {
+    qa_json_writer_object(w);
+    settings_key_string(w, "kind", physical_names[input->kind]);
+    if (input->kind == QA_PHYSICAL_BUTTON || input->kind == QA_PHYSICAL_AXIS)
+        settings_key_number(w, "device", input->device);
+    if (input->kind == QA_PHYSICAL_AXIS) {
+        settings_key_string(w, "axis", axis_names[input->code]);
+        settings_key_string(w, "direction", input->positive ? "positive" : "negative");
+    } else
+        settings_key_number(w, input->kind == QA_PHYSICAL_KEY ? "code" : "button", input->code);
+    qa_json_writer_end(w);
+}
 static void binding_write(qa_json_writer *w, const qa_input_binding *b) {
     qa_json_writer_object(w);
     qa_json_writer_key(w, "input");
-    qa_json_writer_object(w);
-    settings_key_string(w, "kind", physical_names[b->input.kind]);
-    if (b->input.kind == QA_PHYSICAL_BUTTON || b->input.kind == QA_PHYSICAL_AXIS)
-        settings_key_number(w, "device", b->input.device);
-    if (b->input.kind == QA_PHYSICAL_AXIS) {
-        settings_key_string(w, "axis", axis_names[b->input.code]);
-        settings_key_string(w, "direction", b->input.positive ? "positive" : "negative");
-    } else
-        settings_key_number(w, b->input.kind == QA_PHYSICAL_KEY ? "code" : "button", b->input.code);
-    qa_json_writer_end(w);
+    physical_write(w, &b->input);
     qa_json_writer_key(w, "target");
     qa_json_writer_object(w);
     settings_key_string(w, "kind", b->kind == QA_BIND_ACTION ? "action" : "command");
@@ -319,9 +327,13 @@ void qa_seat_settings_free(qa_seat_settings *s) {
         return;
     for (size_t i = 0; i < s->binding_count; ++i)
         free((void *)s->bindings[i].command);
+    for (size_t i = 0; i < s->binding_default_count; ++i)
+        free((void *)s->binding_defaults[i].command);
     for (size_t i = 0; i < s->history_count; ++i)
         free(s->history[i]);
     free(s->bindings);
+    free(s->binding_defaults);
+    free(s->binding_overrides);
     free(s->history);
     free((void *)s->controller.serial);
     *s = (qa_seat_settings){0};
@@ -358,6 +370,33 @@ bool qa_seat_settings_parse(qa_bytes bytes, qa_seat_settings *out, qa_error *e) 
         if (ok)
             ++result.binding_count;
     }
+    qa_json_id defaults = qa_json_get(d, root, "bindingDefaults"),
+               overrides = qa_json_get(d, root, "bindingOverrides");
+    result.has_binding_defaults = defaults != QA_JSON_NONE;
+    if (ok && result.has_binding_defaults) {
+        if (qa_json_type(d, defaults) != QA_JSON_ARRAY || qa_json_type(d, overrides) != QA_JSON_ARRAY)
+            ok = settings_fail(e, "Expected binding provenance lists");
+        size_t nd = qa_json_size(d, defaults), no = qa_json_size(d, overrides);
+        if (ok && (nd > SIZE_MAX / sizeof(*result.binding_defaults) ||
+                   no > SIZE_MAX / sizeof(*result.binding_overrides)))
+            ok = settings_fail(e, "Binding provenance exceeds native size");
+        if (ok) {
+            result.binding_defaults = nd ? calloc(nd, sizeof(*result.binding_defaults)) : NULL;
+            result.binding_overrides = no ? calloc(no, sizeof(*result.binding_overrides)) : NULL;
+            if ((nd && !result.binding_defaults) || (no && !result.binding_overrides)) {
+                qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating binding provenance"); ok = false;
+            }
+        }
+        for (size_t i = 0; ok && i < nd; ++i) {
+            ok = binding_read(d, qa_json_at(d, defaults, i), &result.binding_defaults[i], e);
+            if (ok) ++result.binding_default_count;
+        }
+        for (size_t i = 0; ok && i < no; ++i) {
+            ok = physical_read(d, qa_json_at(d, overrides, i), &result.binding_overrides[i], e);
+            if (ok) ++result.binding_override_count;
+        }
+    } else if (ok && overrides != QA_JSON_NONE)
+        ok = settings_fail(e, "Binding overrides require their default provenance");
     for (size_t i = 0; ok && i < nh; ++i) {
         ok = settings_string(d, qa_json_at(d, history, i), &result.history[i], e);
         if (ok)
@@ -387,6 +426,9 @@ done:
 }
 bool qa_seat_settings_encode(const qa_seat_settings *s, qa_buffer *out, qa_error *e) {
     if (!s || !out || (s->binding_count && !s->bindings) || (s->history_count && !s->history) ||
+        (s->binding_default_count && !s->binding_defaults) ||
+        (s->binding_override_count && !s->binding_overrides) ||
+        (!s->has_binding_defaults && (s->binding_default_count || s->binding_override_count)) ||
         !qa_gamepad_tuning_valid(&s->gamepad) || !qa_mouse_tuning_valid(&s->mouse) ||
         !controller_valid(&s->controller) || !isfinite(s->rumble_strength) ||
         s->rumble_strength < 0 || s->rumble_strength > 1)
@@ -394,6 +436,12 @@ bool qa_seat_settings_encode(const qa_seat_settings *s, qa_buffer *out, qa_error
     for (size_t i = 0; i < s->binding_count; ++i)
         if (!binding_valid(&s->bindings[i]))
             return settings_fail(e, "Invalid input binding");
+    for (size_t i = 0; i < s->binding_default_count; ++i)
+        if (!binding_valid(&s->binding_defaults[i]))
+            return settings_fail(e, "Invalid default binding provenance");
+    for (size_t i = 0; i < s->binding_override_count; ++i)
+        if (!qa_input_physical_valid(s->binding_overrides[i]))
+            return settings_fail(e, "Invalid binding override provenance");
     qa_json_writer w = {0};
     qa_json_writer_object(&w);
     settings_key_number(&w, "version", 1);
@@ -402,6 +450,18 @@ bool qa_seat_settings_encode(const qa_seat_settings *s, qa_buffer *out, qa_error
     for (size_t i = 0; i < s->binding_count; ++i)
         binding_write(&w, &s->bindings[i]);
     qa_json_writer_end(&w);
+    if (s->has_binding_defaults) {
+        qa_json_writer_key(&w, "bindingDefaults");
+        qa_json_writer_array(&w);
+        for (size_t i = 0; i < s->binding_default_count; ++i)
+            binding_write(&w, &s->binding_defaults[i]);
+        qa_json_writer_end(&w);
+        qa_json_writer_key(&w, "bindingOverrides");
+        qa_json_writer_array(&w);
+        for (size_t i = 0; i < s->binding_override_count; ++i)
+            physical_write(&w, &s->binding_overrides[i]);
+        qa_json_writer_end(&w);
+    }
     qa_json_writer_key(&w, "gamepad");
     gamepad_write(&w, &s->gamepad);
     qa_json_writer_key(&w, "mouse");
