@@ -1828,6 +1828,14 @@ static bool monster_route(application_provider *map_provider,
     *provider_out = map_provider;
     *classname_out = authored;
     *monster_out = strncmp(authored, "monster_", 8) == 0;
+    if (!*monster_out) {
+        qa_bounds bounds;
+        uint32_t flags;
+        if (map_provider->kind == APPLICATION_PROVIDER_Q1)
+            *monster_out = qa_q1_monster_shape(authored, &bounds, &flags);
+        else if (map_provider->kind == APPLICATION_PROVIDER_Q2)
+            *monster_out = qa_q2_monster_shape(map_provider->state.q2, authored, &bounds, &flags);
+    }
     const qa_launch_monster *selection = NULL, *fallback = NULL;
     for (size_t index = 0; index < choices->monster_count; ++index) {
         const qa_launch_monster *candidate = &choices->monsters[index];
