@@ -269,6 +269,7 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
 static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
 {
     *render = false;
+    qa_scene_frame_reset(&frontend->frame, frontend->frame_number);
     bool ready;
     if (!frontend_display_ready(frontend, &ready, error)) return false;
     if (!ready) return true;
@@ -279,7 +280,6 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
     bool native_ready = qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING &&
         qa_application_map_read(frontend->application, &native_map);
     if (native_ready && !frontend_native_q3_sync(frontend, &native_factory, error)) return false;
-    qa_scene_frame_reset(&frontend->frame, frontend->frame_number);
     if (!frontend_q3_texture_mode_begin_frame(frontend,error)) return false;
     if (!qa_scene_frame_material_order(&frontend->frame, frontend->order, error)) return false;
     qa_audio_listener listeners[4]; size_t listener_count = 0;

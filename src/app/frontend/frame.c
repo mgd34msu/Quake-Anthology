@@ -650,6 +650,9 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *
         frontend->frame_number == UINT64_MAX ||
         elapsed_ns > UINT64_MAX - frontend->wall_time_ns)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend frame duration or reentry");
+    if (!frontend->capture && !frontend->resource_inventory && !frontend->source_restoring &&
+        !frontend->frame.source_pending)
+        qa_scene_frame_reset(&frontend->frame, frontend->frame_number);
     if (!frontend_shared_resource_policy_live_retire(frontend,error) ||
         !frontend_player_sources_drain(frontend,error)) return false;
     if (frontend->server_stopped) {
