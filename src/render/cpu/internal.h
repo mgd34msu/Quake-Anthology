@@ -60,6 +60,8 @@ struct qa_cpu_renderer {
   struct cpu_vertex *vertices;
   size_t vertex_capacity;
   struct cpu_raster_pool *raster_pool;
+  struct cpu_brush_context *brush_spans;
+  struct cpu_surface_cache *surface_cache;
   const qa_scene_image *bound[2];
   cpu_source_image source_images[CPU_SOURCE_IMAGES_QA];
   qa_render_resource_index source_image_index;

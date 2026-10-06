@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "brush_spans.h"
+#include "surface_cache.h"
 #include "particles.h"
 #include <limits.h>
 #include <stdio.h>
@@ -155,6 +157,8 @@ void qa_cpu_destroy(qa_cpu_renderer *renderer) {
     return;
   if (renderer->surface_ticket || renderer->controls.ticket || renderer->controls.image_ticket || renderer->controls.source.entered) { renderer->destroy_pending=true; return; }
   cpu_raster_pool_destroy(renderer);
+  cpu_brush_destroy(renderer);
+  cpu_surface_cache_destroy(renderer);
   material_source_release(&renderer->controls.source);
   qa_render_source_texture_release(&renderer->controls.zero_texture);
   for (size_t i = 0; i < 2; ++i)
@@ -738,7 +742,13 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
   }
   for (size_t i = first; i < frame->command_count; ++i) {
     const qa_scene_command *command = &frame->commands[i];
-    if (command->kind != QA_SCENE_COMMAND_DRAW) cpu_raster_flush(renderer);
+    if (command->kind != QA_SCENE_COMMAND_DRAW) {
+      if (!cpu_brush_flush(renderer, error)) {
+        cpu_brush_clear(renderer);
+        return false;
+      }
+      cpu_raster_flush(renderer);
+    }
     bool ok = true;
     switch (command->kind) {
     case QA_SCENE_COMMAND_VIEW:
@@ -852,6 +862,7 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
     }
     if (!ok) {
       cpu_raster_flush(renderer);
+      cpu_brush_clear(renderer);
       if (renderer->opacity_active) {
         if (renderer->opacity_value != 1)
           renderer->current = renderer->opacity_parent;
@@ -860,6 +871,10 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
       }
       return false;
     }
+  }
+  if (!cpu_brush_flush(renderer, error)) {
+    cpu_brush_clear(renderer);
+    return false;
   }
   cpu_raster_flush(renderer);
   if (finish && renderer->opacity_active) {

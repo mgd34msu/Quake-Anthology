@@ -841,6 +841,8 @@ target_link_libraries(qa_scene PUBLIC qa_world qa_persistence qa_q3_presentation
 add_library(qa_render_cpu STATIC
     src/render/cpu/renderer.c
     src/render/cpu/raster.c
+    src/render/cpu/brush_spans.c
+    src/render/cpu/surface_cache.c
     src/render/cpu/texture.c
     src/render/cpu/particles.c
     src/render/cpu/fragment.c

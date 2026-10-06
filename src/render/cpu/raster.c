@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "brush_spans.h"
 #include "../normal_matrix.h"
 #include <limits.h>
 #include <fenv.h>
@@ -60,6 +61,8 @@ typedef struct cpu_raster_job {
   size_t command_count, completed_commands;
   int rounding;
   bool completed;
+  cpu_brush_rows_fn row_kernel;
+  void *row_context;
 } cpu_raster_job;
 typedef struct cpu_raster_worker {
   SDL_Thread *thread;
@@ -148,7 +151,12 @@ static int SDLCALL raster_worker(void *context) {
   for (;;) {
     SDL_SemWait(worker->start);
     if (worker->stop) return 0;
-    if (worker->job.command_count) {
+    if (worker->job.row_kernel) {
+      worker->job.completed = fesetround(worker->job.rounding) == 0;
+      if (worker->job.completed)
+        worker->job.row_kernel(worker->job.renderer, worker->job.row_context,
+            worker->job.bounds.y0, worker->job.bounds.y1);
+    } else if (worker->job.command_count) {
       struct cpu_raster_pool *pool = worker->job.renderer->raster_pool;
       if (pool->slice_count) raster_slices(pool);
       else worker->job.completed = raster_commands(&worker->job);
@@ -1135,6 +1143,33 @@ static unsigned raster_worker_count(const struct cpu_raster_pool *pool,
   if (active < 2) return 0;
   return (unsigned)(active < bands ? active : bands) - 1;
 }
+void cpu_raster_rows(qa_cpu_renderer *renderer, int64_t first, int64_t last,
+                    cpu_brush_rows_fn kernel, void *context) {
+  if (last < first) return;
+  cpu_raster_flush(renderer);
+  struct cpu_raster_pool *pool = renderer->raster_pool;
+  int rounding = fegetround();
+  unsigned workers = pool && rounding >= 0
+      ? raster_worker_count(pool, renderer->current->height, last - first + 1) : 0;
+  int64_t rows = last - first + 1;
+  unsigned bands = workers + 1;
+  for (unsigned i = 0; i < workers; ++i) {
+    cpu_raster_worker *worker = &pool->workers[i];
+    worker->job = (cpu_raster_job){.renderer = renderer, .rounding = rounding,
+        .row_kernel = kernel, .row_context = context,
+        .bounds = {.y0 = first + rows * i / bands,
+                   .y1 = first + rows * (i + 1) / bands - 1}};
+    SDL_SemPost(worker->start);
+  }
+  kernel(renderer, context, first + rows * workers / bands, last);
+  for (unsigned i = 0; i < workers; ++i) {
+    cpu_raster_worker *worker = &pool->workers[i];
+    SDL_SemWait(worker->done);
+    if (!worker->job.completed)
+      kernel(renderer, context, worker->job.bounds.y0, worker->job.bounds.y1);
+    memset(&worker->job, 0, sizeof(worker->job));
+  }
+}
 static unsigned raster_prepared_bounds(cpu_raster_job *job) {
   struct cpu_raster_pool *pool = job->renderer->raster_pool;
   int64_t full_rows = job->bounds.y1 - job->bounds.y0 + 1;
@@ -1334,7 +1369,10 @@ static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
       !input->source_retain_depth_range &&
       input->source_direct == QA_SOURCE_DIRECT_NONE &&
       input->mesh.primitive == QA_SCENE_TRIANGLES && !input->state.wireframe;
-  if (!batchable) cpu_raster_flush(renderer);
+  if (!batchable) {
+    if (!cpu_brush_flush(renderer, error)) return false;
+    cpu_raster_flush(renderer);
+  }
   qa_scene_draw resolved = *input;
   if ((unsigned)input->source_direct>QA_SOURCE_DIRECT_IMAGE_GRID) {
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Source direct draw provenance");
@@ -1391,23 +1429,31 @@ static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
     if (!cpu_sampler_prepare(renderer, resolved.textures[i], &samplers[i]))
       resolved.textures[i] = NULL;
   if (mode == QA_RENDER_PRIMITIVES_NONE) return true;
-  if (draw->mesh.index_count && !transform(renderer, draw, mode, error)) return false;
-  cpu_raster_job job = {.renderer = renderer, .draw = draw,
-      .samplers = samplers, .kernel = cpu_fragment_select(renderer, draw),
-      .mode = mode, .bounds = scissor(renderer)};
-  for (size_t i = 0; batchable && i < draw->texture_count; ++i)
-    if (draw->textures[i] && samplers[i].target == renderer->current)
-      batchable = false;
-  if (draw->shadow_atlas &&
-      cpu_target_find(renderer, draw->shadow_atlas) == renderer->current)
-    batchable = false;
-  if (!batchable) {
+  bool brush_handled = false;
+  if (draw->brush.present && mode == QA_RENDER_PRIMITIVES_INDEXED) {
     cpu_raster_flush(renderer);
-    raster_draw(&job);
-  } else if (!raster_queue(&job)) {
-    cpu_raster_flush(renderer);
-    raster_prepared_draw(&job);
+    if (!cpu_brush_draw_queued(renderer, draw, error, &brush_handled)) return false;
   }
+  if (!brush_handled) {
+    if (!cpu_brush_flush(renderer, error)) return false;
+    if (draw->mesh.index_count && !transform(renderer, draw, mode, error)) return false;
+    cpu_raster_job job = {.renderer = renderer, .draw = draw,
+        .samplers = samplers, .kernel = cpu_fragment_select(renderer, draw),
+        .mode = mode, .bounds = scissor(renderer)};
+    for (size_t i = 0; batchable && i < draw->texture_count; ++i)
+      if (draw->textures[i] && samplers[i].target == renderer->current)
+        batchable = false;
+    if (draw->shadow_atlas &&
+        cpu_target_find(renderer, draw->shadow_atlas) == renderer->current)
+      batchable = false;
+    if (!batchable) {
+      cpu_raster_flush(renderer);
+      raster_draw(&job);
+    } else if (!raster_queue(&job)) {
+      cpu_raster_flush(renderer);
+      raster_prepared_draw(&job);
+    }
+  } else if (!queued && !cpu_brush_flush(renderer, error)) return false;
   if (mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS || mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS) {
     qa_render_source_attributes_finish(&renderer->controls,draw,mode);
     return true;
@@ -1433,6 +1479,9 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
 bool cpu_draw_queued(qa_cpu_renderer *renderer, const qa_scene_draw *input,
                      qa_error *error) {
   bool ok = cpu_draw_impl(renderer, input, error, true);
-  if (!ok) cpu_raster_flush(renderer);
+  if (!ok) {
+    cpu_raster_flush(renderer);
+    cpu_brush_clear(renderer);
+  }
   return ok;
 }

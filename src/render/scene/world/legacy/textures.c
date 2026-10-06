@@ -43,6 +43,18 @@ static bool embedded_texture(qa_scene_world *world, qawl_texture *texture,
         recipe.widths[mip] = width; recipe.heights[mip] = height; ++count;
     }
     if (!count) { qa_error_set(error, QA_ERROR_FORMAT, 0, "Embedded brush texture has no pixels"); return false; }
+    if (fullbright) {
+        fullbright = false;
+        for (size_t mip = 0; mip < count && !fullbright; ++mip)
+            for (size_t i = 0; i < levels[mip].indices.size; ++i) {
+                unsigned index = levels[mip].indices.data[i];
+                if (index >= first_fullbright &&
+                    !(recipe.options.transparent && index == 255)) {
+                    fullbright = true;
+                    break;
+                }
+            }
+    }
     recipe.level_count = (uint8_t)count;
     qa_palette_options options = {.transparent_index = recipe.options.transparent ? 255 : -1,
         .fullbright_first = first_fullbright < 256 ? (int)first_fullbright : -1,
