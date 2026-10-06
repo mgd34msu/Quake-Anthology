@@ -3432,6 +3432,7 @@ bool qa_application_control_read(const qa_application *application,
         .command_angles = record->command_angles,
         .view_offset = record->view_offset,
         .command_sequence = record->command_sequence,
+        .command_angle_revision = record->command_angle_revision,
         .buttons = record->buttons,
         .previous_buttons = record->previous_buttons,
         .water_level = record->water_level,
@@ -4008,8 +4009,10 @@ bool application_control_motion_changed(
         if (active && active != &record->state)
             force_state_view(active, change->view_angles, command_view, command);
         record->view_angles = change->view_angles;
-        if (!change->preserve_command_angles)
+        if (!change->preserve_command_angles) {
             record->command_angles = change->view_angles;
+            ++record->command_angle_revision;
+        }
     }
     return true;
 }

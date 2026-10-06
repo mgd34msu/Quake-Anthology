@@ -177,7 +177,7 @@ typedef struct application_control_record {
     qa_movement_ground ground;
     qa_vec3 view_angles, command_angles, view_offset, saved_view_offset;
     qa_vec3 q2r_pml_origin;
-    uint64_t command_sequence;
+    uint64_t command_sequence, command_angle_revision;
     uint32_t buttons, previous_buttons;
     int32_t water_level, water_type;
     float view_height, gravity_multiplier;

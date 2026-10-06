@@ -187,6 +187,7 @@ static bool control_binding(qa_frontend *frontend,frontend_seat *seat,qa_actor_i
             seat->sequence = state->command_sequence;
         if (!qa_input_command_angles(&seat->builder,
             remote?state->view_angles:state->command_angles,error)) return false;
+        seat->command_angle_revision=state->command_angle_revision;
     }
     return true;
 }
@@ -363,9 +364,12 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
         seat->client_frame_ns=source_duration;
         qa_movement_kind kind = state.profile.kind;
         if (!control_binding(frontend,seat,actor,&state,remote,error)) return false;
-        /* Q3 client angles survive commands that do not advance server movement. */
-        if (!remote && (kind!=QA_MOVEMENT_Q3 || state.cutscene) &&
-            !qa_input_command_angles(&seat->builder, state.command_angles, error)) return false;
+        if (!remote && ((kind!=QA_MOVEMENT_Q3 && kind!=QA_MOVEMENT_Q2_CLASSIC &&
+                kind!=QA_MOVEMENT_Q2_RERELEASE) || state.cutscene ||
+                seat->command_angle_revision!=state.command_angle_revision)) {
+            if (!qa_input_command_angles(&seat->builder, state.command_angles, error)) return false;
+            seat->command_angle_revision=state.command_angle_revision;
+        }
         qa_seat_input_sample sample;
         qa_input_command_tuning tuning;
         qa_movement_kind configured_kind;
@@ -402,6 +406,12 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
         qa_input_command_frame frame = {.kind = kind, .sequence = ++seat->sequence,
             .server_time_ms = server_time_ms,
             .sensitivity = 1, .attack_allowed = true, .grounded = state.ground.hit != QA_TRACE_HIT_NONE};
+        if (kind==QA_MOVEMENT_Q2_CLASSIC) {
+            const int16_t *delta=state.state.data.q2.delta_angle_shorts;
+            frame.delta_angles=qa_v3((float)delta[0]*(360.f/65536.f),
+                (float)delta[1]*(360.f/65536.f),(float)delta[2]*(360.f/65536.f));
+        } else if (kind==QA_MOVEMENT_Q2_RERELEASE)
+            frame.delta_angles=state.state.data.q2r.delta_angles;
         if (!remote && kind==QA_MOVEMENT_Q3) {
             bool present;
             if (!qa_application_q3_input_values_read(frontend->application,launch_seat,actor,

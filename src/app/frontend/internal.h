@@ -137,7 +137,7 @@ typedef struct frontend_seat {
     qa_font_selection fonts;
     qa_input_command_builder builder;
     qa_actor_id actor;
-    uint64_t sequence;
+    uint64_t sequence, command_angle_revision;
     uint64_t client_clock_ns, client_frame_ns;
     qa_ui_control controls[96];
     qa_ui_row *binding_rows;

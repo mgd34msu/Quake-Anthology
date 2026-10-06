@@ -251,7 +251,9 @@ bool qa_application_qc_message_angles(qa_application *app,const qa_application_q
     if(!control->active || control->moving || control->retired || control->application!=app ||
         !qa_actor_id_equal(control->actor,actor))
         return application_fail(error,QA_ERROR_ARGUMENT,"QC SETANGLE lost its returned full-generation selected control");
-    control->view_angles=angles; control->command_angles=angles; return true;
+    control->view_angles=angles; control->command_angles=angles;
+    ++control->command_angle_revision;
+    return true;
 }
 bool qa_application_qc_message_view_offset(qa_application *app,const qa_application_qc_message_source *source,
     qa_actor_id actor,qa_vec3 *out,qa_error *error)

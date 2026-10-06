@@ -178,7 +178,7 @@ typedef struct qa_application_control_view {
     qa_bounds bounds;
     qa_movement_ground ground;
     qa_vec3 view_angles, command_angles, view_offset;
-    uint64_t command_sequence;
+    uint64_t command_sequence, command_angle_revision;
     uint32_t buttons, previous_buttons;
     int32_t water_level, water_type;
     float view_height, gravity_multiplier;
