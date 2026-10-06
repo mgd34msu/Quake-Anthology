@@ -171,29 +171,41 @@ char *qa_material_string(const char *value, qa_error *error)
     return copy;
 }
 
-char *qa_material_name(const char *value, qa_error *error)
+enum { MATERIAL_NAME_BYTES = 1024 };
+
+static size_t material_name_write(const char *value, char out[MATERIAL_NAME_BYTES],
+    qa_error *error)
 {
     if (!value || !*value) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material name is empty");
-        return NULL;
+        return 0;
     }
     /* COM_StripExtension stops at the first dot. Q_stricmp does not fold
      * separators, even though the source hash function does. */
     size_t length = strcspn(value, ".");
-    if (!length || length >= 1024) {
+    if (!length || length >= MATERIAL_NAME_BYTES) {
         qa_error_set(error, QA_ERROR_ARGUMENT, length, "Invalid material name length");
-        return NULL;
+        return 0;
     }
+    for (size_t i = 0; i < length; ++i) {
+        unsigned char c = (unsigned char)value[i];
+        out[i] = (char)(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
+    }
+    out[length] = 0;
+    return length;
+}
+
+char *qa_material_name(const char *value, qa_error *error)
+{
+    char key[MATERIAL_NAME_BYTES];
+    size_t length = material_name_write(value, key, error);
+    if (!length) return NULL;
     char *copy = malloc(length + 1);
     if (!copy) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating material name");
         return NULL;
     }
-    for (size_t i = 0; i < length; ++i) {
-        unsigned char c = (unsigned char)value[i];
-        copy[i] = (char)(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
-    }
-    copy[length] = 0;
+    memcpy(copy, key, length + 1);
     return copy;
 }
 
@@ -221,14 +233,8 @@ bool qa_material_library_script_read(const qa_material_library *library, const c
     qa_material_script_view *out)
 {
     if (!library || !library->catalog_ready || !name || !out) return false;
-    size_t length = strcspn(name, ".");
-    if (!length || length >= 1024) return false;
-    char key[1024];
-    for (size_t i = 0; i < length; ++i) {
-        unsigned char c = (unsigned char)name[i];
-        key[i] = (char)(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
-    }
-    key[length] = 0;
+    char key[MATERIAL_NAME_BYTES];
+    if (!material_name_write(name, key, NULL)) return false;
     for (const qa_material_script *script = library->scripts[qa_material_hash(key)]; script; script = script->next) {
         if (strcmp(script->name, key)) continue;
         if (!script->source || script->source_offset > script->source->bytes.size ||
@@ -1595,24 +1601,22 @@ bool qa_material_library_animate(qa_material_library *library, double seconds,
 const qa_material *qa_material_find(const qa_material_library *library, const char *name)
 {
     if (!library) return NULL;
-    char *key = qa_material_name(name, NULL);
-    if (!key) return NULL;
+    char key[MATERIAL_NAME_BYTES];
+    if (!material_name_write(name, key, NULL)) return NULL;
     const qa_material *result = NULL;
     for (qa_material_record *record = library->records[qa_material_hash(key)]; record; record = record->next)
         if (!record->source_variant_parent && !strcmp(record->material.name, key) && (!result || record->material.registration < result->registration))
             result = &record->material;
-    free(key);
     return result;
 }
 
 bool qa_material_has_authored(const qa_material_library *library, const char *name)
 {
     if (!library) return false;
-    char *key = qa_material_name(name, NULL);
-    if (!key) return false;
+    char key[MATERIAL_NAME_BYTES];
+    if (!material_name_write(name, key, NULL)) return false;
     const qa_material_script *script = library->scripts[qa_material_hash(key)];
     while (script && strcmp(script->name, key)) script = script->next;
-    free(key);
     return script != NULL;
 }
 
