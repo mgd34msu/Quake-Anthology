@@ -246,7 +246,7 @@ bool qa_application_native_q2_presentation_sample(qa_application *app,
         value.previous_origin=qa_v3(state->old_origin[0],state->old_origin[1],state->old_origin[2]);
         value.models[0]=state->modelindex; value.models[1]=state->modelindex2;
         value.models[2]=state->modelindex3; value.models[3]=state->modelindex4;
-        value.frame=state->frame; value.render_flags=state->renderfx;
+        value.frame=state->frame; value.old_frame=state->old_frame; value.render_flags=state->renderfx;
         value.event=state->event; value.effects=state->effects;
         solid=state->solid;
     } else {
@@ -256,6 +256,7 @@ bool qa_application_native_q2_presentation_sample(qa_application *app,
         if (state->has_visual) {
             memcpy(value.models,state->visual.models,sizeof(value.models));
             value.frame=state->visual.frame>=0 ? (uint32_t)state->visual.frame : 0;
+            value.old_frame=state->visual.old_frame>=0 ? (uint32_t)state->visual.old_frame : value.frame;
             value.render_flags=state->visual.render_flags; value.effects=state->visual.effects;
         }
         value.event=state->event;

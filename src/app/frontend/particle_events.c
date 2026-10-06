@@ -6,6 +6,7 @@
 #include "qa/application_native_q2_client.h"
 #include "particle_clock.h"
 #include "q2_client_lerp.h"
+#include "q2_animation.h"
 #include "particle_delivery.h"
 #include "particle_audio.h"
 #include "native_q2_messages.h"
@@ -90,6 +91,7 @@ typedef struct frontend_particle_owner {
     qa_scene_light entity_lights[32];
     size_t entity_light_count;
     uint64_t entity_frame, entity_server_frame;
+    double animation_server_ms, animation_client_ms;
     double entity_milliseconds;
     float entity_frame_seconds;
     bool entity_sampled, entity_advance, entity_events_ready, entity_events;
@@ -104,11 +106,13 @@ typedef struct frontend_particle_owner {
 typedef struct frontend_q2_client_sample {
     qa_application_native_q2_client client;
     qa_application_native_q2_player_sample player, previous;
+    frontend_q2_animation gun_animation;
     uint32_t physical_seat;
     uint64_t frame;
 } frontend_q2_client_sample;
 typedef struct frontend_q2_entity_sample {
     qa_application_native_q2_entity_sample current, previous;
+    frontend_q2_animation animation;
     uint64_t frame;
 } frontend_q2_entity_sample;
 typedef struct frontend_q1_trail {
@@ -122,6 +126,14 @@ typedef struct frontend_visual_sample {
     qa_application_visual_view view;
     qa_actor_id actor;
     frontend_particle_owner *q2_owners[4];
+    frontend_q2_animation animation;
+    qa_actor_owner animation_provider;
+    const char *animation_models[4];
+    qa_vec3 animation_origin;
+    uint64_t animation_source_frame, animation_sample_frame;
+    double animation_server_ms, animation_client_ms, animation_tick_ms;
+    uint32_t animation_previous_frame;
+    qa_q2_edition animation_edition;
     uint64_t frame;
     bool found, sampled;
 } frontend_visual_sample;
@@ -138,6 +150,7 @@ struct frontend_particle_state {
     frontend_q2_client_sample *source_clients;
     size_t source_client_count;
     bool source_ready;
+    qa_q2_edition source_edition;
     frontend_q1_trail *q1_trails;
     size_t q1_trail_capacity;
     frontend_visual_sample *visual_samples;
@@ -182,8 +195,10 @@ bool frontend_particle_visual_read(qa_frontend *frontend,qa_actor_id actor,
             if (error) *error=observed;
             return false;
         }
-        *sample=(frontend_visual_sample){.actor=actor,.frame=frontend->frame_number,
-            .found=present,.sampled=true};
+        if (!sample->sampled || !qa_actor_id_equal(sample->actor,actor))
+            *sample=(frontend_visual_sample){.actor=actor};
+        sample->frame=frontend->frame_number;sample->found=present;sample->sampled=true;
+        memset(sample->q2_owners,0,sizeof(sample->q2_owners));
         if (present) sample->view=view;
     }
     *found=sample->found;
@@ -284,6 +299,9 @@ bool frontend_particle_source_complete(qa_frontend *frontend, qa_error *error)
             bool continuous=state->source_ready && held->frame+1==source.clock.frame.number &&
                 present && qa_actor_id_equal(held->current.actor,entity.actor) &&
                 frontend_q2_lerp_entity_continuous(&held->current,&entity);
+            frontend_q2_animation_commit(&held->animation,entity.frame,
+                entity.render_flags&(UINT32_C(1)<<22)?entity.old_frame:held->current.frame,
+                entity.render_flags,(double)source.server_time_ns/1000000.0,continuous);
             held->previous=continuous ? held->current : entity;
             if (!continuous && present && entity.event!=7) held->previous.origin=entity.previous_origin;
             held->current=entity; held->frame=source.clock.frame.number;
@@ -310,6 +328,9 @@ bool frontend_particle_source_complete(qa_frontend *frontend, qa_error *error)
                 continuous=(!entity || (entity->event!=6 && entity->event!=7)) &&
                     !((held->player.render_flags^player.render_flags)&16u);
             }
+            frontend_q2_animation_commit(&held->gun_animation,player.gun_frame,held->player.gun_frame,0,
+                (double)source.server_time_ns/1000000.0,
+                continuous && player.gun_model==held->player.gun_model && player.gun_frame!=0);
             held->previous=continuous ? held->player : player;
             held->player=player; held->client=client; held->physical_seat=physical;
             held->frame=source.clock.frame.number;
@@ -318,6 +339,7 @@ bool frontend_particle_source_complete(qa_frontend *frontend, qa_error *error)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 Source sample changed its completed frame");
         state->source_ready=true;
     }
+    state->source_edition=source.edition;
     uint64_t lower = source.server_time_ns > state->client_interval_ns ?
         source.server_time_ns - state->client_interval_ns : 0;
     if (state->client_ns > source.server_time_ns) state->client_ns = source.server_time_ns;
@@ -366,6 +388,11 @@ bool frontend_particle_q2_player_sample(qa_frontend *frontend, uint32_t seat, qa
     if (!client->player.present || !qa_actor_id_equal(client->client.actor,actor)) return true;
     *back_lerp=(float)((double)(state->server_ns-state->client_ns)/(double)state->client_interval_ns);
     frontend_q2_lerp_player(&client->previous,&client->player,1-*back_lerp,out,old_gun_frame);
+    frontend_q2_animation_sample animation=frontend_q2_animation_lerp(&client->gun_animation,
+        client->player.edition==QA_Q2_RERELEASE,true,out->gun_frame,*old_gun_frame,0,
+        (double)state->client_ns/1000000.0,(double)state->client_interval_ns/1000000.0,
+        1000.0/(client->player.gun_rate>0?client->player.gun_rate:10),*back_lerp);
+    out->gun_frame=animation.frame;*old_gun_frame=animation.old_frame;*back_lerp=animation.back_lerp;
     *found=true;
     return true;
 }
@@ -376,22 +403,45 @@ bool frontend_particle_q2_entity_sample(qa_frontend *frontend, qa_application_vi
     if (!view || !back_lerp) return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 client entity requires its view");
     *back_lerp=0;
     frontend_particle_state *state=frontend->particles;
-    if (!state || !state->client_clock || !state->source_ready || state->client_pending ||
-        !view->actor.registry) return true;
-    const qa_actor_record *record=qa_actors_get(qa_world_actors(qa_application_world(frontend->application)),view->actor);
-    if (!record || record->owner!=state->clock_source || !record->has_source ||
-        record->source_slot>=state->source_entity_count) return true;
-    const frontend_q2_entity_sample *held=state->source_entities+record->source_slot;
-    if (!qa_actor_id_equal(held->current.actor,view->actor)) return true;
-    qa_application_native_q2_entity_sample sample;
-    uint32_t old_frame;
-    *back_lerp=(float)((double)(state->server_ns-state->client_ns)/(double)state->client_interval_ns);
-    frontend_q2_lerp_entity(&held->previous,&held->current,1-*back_lerp,&sample,&old_frame);
-    view->body.origin=sample.origin; view->body.angles=sample.angles;
-    view->previous_origin=sample.previous_origin;
-    if (view->family==QA_GAME_Q2 && view->provider==state->clock_source) {
-        view->frame=(int32_t)sample.frame; view->old_frame=(int32_t)old_frame;
-    } else *back_lerp=0;
+    if (!state || !view->actor.registry) return true;
+    const qa_actor_record *record=state->client_clock && state->source_ready && !state->client_pending ?
+        qa_actors_get(qa_world_actors(qa_application_world(frontend->application)),view->actor):NULL;
+    if (record &&
+        record->owner==state->clock_source && record->has_source &&
+        record->source_slot<state->source_entity_count) {
+        const frontend_q2_entity_sample *held=state->source_entities+record->source_slot;
+        if (!qa_actor_id_equal(held->current.actor,view->actor)) return true;
+        qa_application_native_q2_entity_sample sample;
+        uint32_t old_frame;
+        *back_lerp=(float)((double)(state->server_ns-state->client_ns)/(double)state->client_interval_ns);
+        frontend_q2_lerp_entity(&held->previous,&held->current,1-*back_lerp,&sample,&old_frame);
+        view->body.origin=sample.origin;view->body.angles=sample.angles;
+        view->previous_origin=sample.previous_origin;
+        if (view->family==QA_GAME_Q2 && view->provider==state->clock_source) {
+            frontend_q2_animation_sample animation=frontend_q2_animation_lerp(&held->animation,
+                state->source_edition==QA_Q2_RERELEASE,false,sample.frame,
+                sample.render_flags&(UINT32_C(1)<<22)?sample.old_frame:old_frame,sample.render_flags,
+                (double)state->client_ns/1000000.0,(double)state->client_interval_ns/1000000.0,100,*back_lerp);
+            view->frame=(int32_t)animation.frame;view->old_frame=(int32_t)animation.old_frame;
+            *back_lerp=animation.back_lerp;
+            return true;
+        }
+        *back_lerp=0;
+    }
+    if (view->family==QA_GAME_Q2 && (size_t)view->actor.slot<state->visual_sample_capacity) {
+        const frontend_visual_sample *held=state->visual_samples+view->actor.slot;
+        if (qa_actor_id_equal(held->actor,view->actor) &&
+            held->animation_sample_frame==frontend->frame_number && held->animation_provider==view->provider) {
+            frontend_q2_animation_sample animation=frontend_q2_animation_lerp(&held->animation,
+                held->animation_edition==QA_Q2_RERELEASE,false,
+                view->frame>=0?(uint32_t)view->frame:0,
+                view->render_flags&(UINT32_C(1)<<22)?(view->old_frame>=0?(uint32_t)view->old_frame:0):held->animation_previous_frame,
+                view->render_flags,held->animation_client_ms,held->animation_tick_ms,100,
+                (float)((held->animation_server_ms-held->animation_client_ms)/held->animation_tick_ms));
+            view->frame=(int32_t)animation.frame;view->old_frame=(int32_t)animation.old_frame;
+            *back_lerp=animation.back_lerp;
+        }
+    }
     return true;
 }
 
@@ -668,7 +718,7 @@ static bool q2_visual_entity_admit(qa_frontend *frontend,uint32_t seat,
     const frontend_q2_controls *controls,frontend_particle_owner **out,qa_error *error)
 {
     *out=NULL;
-    if (view->family!=QA_GAME_Q2 || (!view->effects && !(view->render_flags&128u))) return true;
+    if (view->family!=QA_GAME_Q2) return true;
     qa_actor_id recipient;
     if (!frontend_seat_actor_read(frontend,seat,&recipient)) return true;
     qa_collision_geometry *geometry=qa_world_geometry(qa_application_world(frontend->application));
@@ -690,11 +740,40 @@ static bool q2_visual_entity_admit(qa_frontend *frontend,uint32_t seat,
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 effects lost their emitting Source clock");
         owner->entity_events=!owner->entity_events_ready || owner->entity_server_frame!=source.frame.number;
         owner->entity_server_frame=source.frame.number;owner->entity_events_ready=true;
+        uint64_t lower=source.frame.time_ns>owner->q2_interval_ns ?
+            source.frame.time_ns-owner->q2_interval_ns:0;
+        uint64_t fraction=source.debt_ns<owner->q2_interval_ns?source.debt_ns:owner->q2_interval_ns;
+        owner->animation_server_ms=(double)source.frame.time_ns/1000000.0;
+        owner->animation_client_ms=(double)(lower+fraction)/1000000.0;
         owner->entity_event_sample=frontend->frame_number;
     }
+    frontend_particle_state *state=frontend->particles;
+    frontend_visual_sample *visual=state->visual_samples+view->actor.slot;
+    if (qa_actor_id_equal(visual->actor,view->actor) &&
+        (!visual->animation.ready || visual->animation_sample_frame!=frontend->frame_number)) {
+        const qa_application_visual_view *raw=&visual->view;
+        bool continuous=visual->animation.ready && visual->animation_provider==raw->provider &&
+            (visual->animation_source_frame==owner->entity_server_frame ||
+             visual->animation_source_frame+1==owner->entity_server_frame) &&
+            !memcmp(visual->animation_models,raw->models,sizeof(raw->models)) &&
+            frontend_q2_lerp_near(visual->animation_origin,raw->body.origin,512);
+        if (!continuous || visual->animation_source_frame!=owner->entity_server_frame) {
+            visual->animation_previous_frame=continuous?visual->animation.frame:(raw->frame>=0?(uint32_t)raw->frame:0);
+            frontend_q2_animation_commit(&visual->animation,raw->frame>=0?(uint32_t)raw->frame:0,
+                raw->render_flags&(UINT32_C(1)<<22)?(raw->old_frame>=0?(uint32_t)raw->old_frame:0):visual->animation.frame,
+                raw->render_flags,owner->animation_server_ms,continuous);
+        }
+        visual->animation_provider=raw->provider;visual->animation_source_frame=owner->entity_server_frame;
+        memcpy(visual->animation_models,raw->models,sizeof(raw->models));
+        visual->animation_origin=raw->body.origin;visual->animation_server_ms=owner->animation_server_ms;
+        visual->animation_client_ms=owner->animation_client_ms;
+        visual->animation_tick_ms=(double)owner->q2_interval_ns/1000000.0;
+        visual->animation_edition=owner->q2_edition;visual->animation_sample_frame=frontend->frame_number;
+    }
+    *out=owner;
+    if (!view->effects && !(view->render_flags&128u)) return true;
     uint32_t model=0,event=0;
     const qa_actor_record *record=qa_actors_get(qa_world_actors(qa_application_world(frontend->application)),view->actor);
-    frontend_particle_state *state=frontend->particles;
     if (state->source_ready && record && record->owner==state->clock_source && record->has_source &&
         record->source_slot<state->source_entity_count &&
         qa_actor_id_equal(state->source_entities[record->source_slot].current.actor,view->actor)) {
@@ -1803,6 +1882,12 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
     for (size_t i = 0; i < qa_application_event_count(frontend->application); ++i) {
         qa_builtin_event event;
         if (!qa_application_event_at(frontend->application, i, &event)) return frontend_fail(error, QA_ERROR_ARGUMENT, "particle event queue changed");
+        if (event.family==QA_GAME_Q2 && (event.kind==QA_BUILTIN_TELEPORT ||
+            (event.kind==QA_BUILTIN_Q2_ENTITY_EVENT && (event.code==6 || event.code==7))) &&
+            frontend->particles && (size_t)event.actor.slot<frontend->particles->visual_sample_capacity) {
+            frontend_visual_sample *visual=frontend->particles->visual_samples+event.actor.slot;
+            if (qa_actor_id_equal(visual->actor,event.actor)) visual->animation.ready=false;
+        }
         if (event.family == QA_GAME_Q1) {
             if (!q1_particle_event(frontend, &event, error)) return false;
         } else if (event.family == QA_GAME_Q2 && event.kind == QA_BUILTIN_PARTICLES) {

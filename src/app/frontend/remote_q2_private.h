@@ -5,6 +5,7 @@
 #include "qa/hud_q2.h"
 #include "qa/font.h"
 #include "model_inventory.h"
+#include "q2_animation.h"
 
 typedef struct remote_q2_model {
     struct remote_q2_model *next;
@@ -39,6 +40,10 @@ struct frontend_remote_q2_image_policy;
 struct frontend_remote_q2_effects;
 struct frontend_q2_entity_pose;
 struct remote_q2_footsteps;
+typedef struct remote_q2_entity_animation {
+    frontend_q2_animation animation;
+    int32_t server_frame;
+} remote_q2_entity_animation;
 typedef struct remote_q2_sent_command {
     bool valid;
     uint32_t packet_sequence;
@@ -82,9 +87,9 @@ struct frontend_remote_q2 {
     double sample_frame_seconds, demo_ms;
     double height_changed_ms;
     bool height_set;
-    bool gun_set;
-    uint32_t gun_frame, gun_previous_frame;
-    int32_t gun_server_frame;
+    frontend_q2_animation gun_animation;
+    remote_q2_entity_animation *entity_animations;
+    size_t entity_animation_capacity;
     uint32_t hit_marker_count;
     int32_t hit_marker_frame;
     uint64_t hit_marker_ns;

@@ -65,8 +65,7 @@ bool frontend_remote_q2_initial_clear(qa_frontend *frontend, uint32_t seat,
 }
 static const qa_q2_entity *entity(const qa_q2_wire_frame *frame, uint32_t number)
 {
-    for (size_t i = 0; i < frame->entity_count; ++i) if (frame->entities[i].number == number) return &frame->entities[i];
-    return NULL;
+    return remote_q2_frame_entity(frame,number);
 }
 static qa_vec3 player_origin(const frontend_remote_q2 *row, const qa_q2_player *player)
 {
@@ -473,13 +472,25 @@ static bool submit_model(frontend_remote_q2 *row, const char *path, const char *
     const qa_cvar_view *hand = qa_cvars_find(row->options.domain.cvars, "hand");
     if (view_model && hand && isfinite(hand->number) && hand->number >= 0 && hand->number <= 2)
         input.left_hand = (uint8_t)hand->number;
-    if (view_model && remote_q2_rerelease_presentation(row) && row->gun_set) {
-        const qa_q2_frame_player *player = frame_player(row, &row->frame);
-        double interval = 1000.0 / (player->player.gunrate ? player->player.gunrate : 10);
-        double milliseconds = world->seconds * 1000;
-        double back_lerp = 1 - (milliseconds - ((double)row->gun_server_frame - 1) * row->frame_ms) / interval;
-        input.frame = row->gun_frame; input.old_frame = row->gun_previous_frame;
-        input.back_lerp = (float)fmax(0, fmin(1, back_lerp));
+    if (remote_q2_rerelease_presentation(row)) {
+        const frontend_q2_animation *retained=NULL;
+        uint32_t source_flags=current->renderfx,source_old_frame=current->old_frame;
+        double window=100;
+        if (view_model) {
+            const qa_q2_frame_player *player=frame_player(row,&row->frame);
+            retained=&row->gun_animation;
+            window=1000.0/(player->player.gunrate?player->player.gunrate:10);
+        } else if ((size_t)current->number<row->entity_animation_capacity) {
+            retained=&row->entity_animations[current->number].animation;
+            const qa_q2_entity *source=remote_q2_frame_entity(&row->frame,current->number);
+            if (source) { source_flags=source->renderfx;source_old_frame=source->old_frame; }
+        }
+        if (retained) {
+            frontend_q2_animation_sample animation=frontend_q2_animation_lerp(retained,true,view_model,
+                input.frame,source_flags&(UINT32_C(1)<<22)?source_old_frame:input.old_frame,source_flags,
+                world->seconds*1000,row->frame_ms,window,input.back_lerp);
+            input.frame=animation.frame;input.old_frame=animation.old_frame;input.back_lerp=animation.back_lerp;
+        }
     }
     qa_vec3 ambient = qa_v3(1, 1, 1), directed = qa_v3(0, 0, 0), direction = qa_v3(0, 0, 1);
     if (!world->no_world) {

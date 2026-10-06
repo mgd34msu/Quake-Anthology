@@ -1,5 +1,6 @@
 #include "remote_q2_private.h"
 #include "remote_q2_source.h"
+#include "q2_client_lerp.h"
 #include "qa/persistence_content.h"
 #include "qa/media_resource.h"
 #include "qa/scene_world_save.h"
@@ -143,7 +144,9 @@ static bool content_clear(frontend_remote_q2 *row, qa_error *error)
     qa_vfs_destroy(row->content.mounts); qa_catalog_release(row->content.catalog);
     row->content = (frontend_remote_q2_content){0}; row->selected = row->content_admitted = false; row->height_set = false;
     row->sample_frame_seconds = 0;
-    row->gun_set = false; row->gun_frame = row->gun_previous_frame = 0; row->gun_server_frame = 0;
+    row->gun_animation=(frontend_q2_animation){0};
+    if (row->entity_animations) memset(row->entity_animations,0,
+        row->entity_animation_capacity*sizeof(*row->entity_animations));
     row->fog_start = row->fog_end = (qa_scene_fog){0};
     row->fog_started_ms = 0; row->fog_duration_ms = 0; row->fog_received = false;
     memset(row->sent, 0, sizeof(row->sent)); row->sent_set = row->input_set = false;
@@ -310,18 +313,52 @@ static bool hook_frame(void *context, qa_net_client_id id, const qa_q2_wire_fram
     row->frame_ms = row->data.server_fps ? 1000.0f / (float)row->data.server_fps : 100;
     if (remote_q2_rerelease_presentation(row)) {
         uint32_t seat;
-        if (!frontend_remote_q2_wire_seat(row, &seat, error) || seat >= row->frame.player_count) return false;
-        const qa_q2_player *player = &row->frame.players[seat].player;
-        const qa_q2_player *previous = row->previous.valid && seat < row->previous.player_count ?
-            &row->previous.players[seat].player : player;
-        if (previous->gunindex != player->gunindex) {
-            row->gun_frame = row->gun_previous_frame = player->gunframe;
-            row->gun_server_frame = row->frame.server_frame;
-        } else if (!row->gun_set || row->gun_frame != player->gunframe) {
-            row->gun_frame = player->gunframe; row->gun_previous_frame = previous->gunframe;
-            row->gun_server_frame = row->frame.server_frame;
+        if (!frontend_remote_q2_wire_seat(row,&seat,error) || seat>=row->frame.player_count) return false;
+        const qa_q2_player *player=&row->frame.players[seat].player;
+        const qa_q2_player *previous=row->previous.valid && seat<row->previous.player_count ?
+            &row->previous.players[seat].player:player;
+        bool continuous=row->previous.valid && seat<row->previous.player_count &&
+            (int64_t)row->previous.server_frame+1==row->frame.server_frame &&
+            previous->gunindex==player->gunindex && player->gunframe!=0;
+        frontend_q2_animation_commit(&row->gun_animation,player->gunframe,previous->gunframe,0,
+            (double)row->frame.server_frame*row->frame_ms,continuous);
+        size_t extent=0;
+        for (size_t i=0;i<row->frame.entity_count;++i)
+            if ((size_t)row->frame.entities[i].number>=extent) extent=(size_t)row->frame.entities[i].number+1;
+        if (extent>row->entity_animation_capacity) {
+            size_t capacity=row->entity_animation_capacity?row->entity_animation_capacity:128;
+            while (capacity<extent) {
+                if (capacity>SIZE_MAX/2) return remote_q2_fail(error,QA_ERROR_MEMORY,"Q2 animation table overflow");
+                capacity*=2;
+            }
+            if (capacity>SIZE_MAX/sizeof(*row->entity_animations))
+                return remote_q2_fail(error,QA_ERROR_MEMORY,"Q2 animation table overflow");
+            remote_q2_entity_animation *rows=realloc(row->entity_animations,capacity*sizeof(*rows));
+            if (!rows) return remote_q2_fail(error,QA_ERROR_MEMORY,"Retaining Q2 animation frames");
+            memset(rows+row->entity_animation_capacity,0,(capacity-row->entity_animation_capacity)*sizeof(*rows));
+            row->entity_animations=rows;row->entity_animation_capacity=capacity;
         }
-        row->gun_set = true;
+        size_t previous_index=0;
+        for (size_t i=0;i<row->frame.entity_count;++i) {
+            const qa_q2_entity *entity=&row->frame.entities[i];
+            while (previous_index<row->previous.entity_count &&
+                row->previous.entities[previous_index].number<entity->number) ++previous_index;
+            const qa_q2_entity *before=previous_index<row->previous.entity_count &&
+                row->previous.entities[previous_index].number==entity->number ?
+                &row->previous.entities[previous_index]:NULL;
+            remote_q2_entity_animation *animation= row->entity_animations+entity->number;
+            bool entity_continuous=before && row->previous.valid &&
+                (int64_t)animation->server_frame+1==row->frame.server_frame &&
+                before->modelindex==entity->modelindex && before->modelindex2==entity->modelindex2 &&
+                before->modelindex3==entity->modelindex3 && before->modelindex4==entity->modelindex4 &&
+                entity->event!=6 && entity->event!=7 &&
+                frontend_q2_lerp_near(qa_v3(before->origin[0],before->origin[1],before->origin[2]),
+                    qa_v3(entity->origin[0],entity->origin[1],entity->origin[2]),512);
+            frontend_q2_animation_commit(&animation->animation,entity->frame,
+                entity->renderfx&(UINT32_C(1)<<22)?entity->old_frame:before?before->frame:entity->frame,
+                entity->renderfx,(double)row->frame.server_frame*row->frame_ms,entity_continuous);
+            animation->server_frame=row->frame.server_frame;
+        }
     }
     ++row->busy;
     bool ok = remote_q2_player_fog_receive(row, error);
@@ -613,7 +650,7 @@ bool frontend_remote_q2_destroy(frontend_remote_q2 **owned, qa_error *error)
         qa_network_connections(row->options.domain.runtime), row->options.domain.client))
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 receiver still owns its attached transport callbacks");
     if (!content_clear(row, error)) return false;
-    qa_catalog_release(row->options.domain.catalog); free(row->configs); free(row->effect_poses);
+    qa_catalog_release(row->options.domain.catalog); free(row->configs); free(row->effect_poses); free(row->entity_animations);
     frontend_remote_q2 **link = &row->frontend->remote_q2;
     while (*link != row) link = &(*link)->next;
     *link = row->next; free(row); *owned = NULL; return true;
