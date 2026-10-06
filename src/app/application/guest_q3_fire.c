@@ -162,9 +162,10 @@ bool application_q3_guest_fire_read(application_provider *provider, qa_actor_id 
 {
     struct application_q3_guest *engine = q3g_engine(provider);
     uint32_t slot;
-    if (!out || !engine || engine->calls || engine->restore_pending ||
+    if (!out || !engine || engine->restore_pending ||
         !provider->constructed || !provider->attached || provider->close_pending ||
         !application_q3_guest_actor_client(provider, actor, &slot) || !engine->game->vm ||
+        !qa_qvm_source_returned(engine->game->vm) ||
         !actor_current(engine->game, slot, actor) ||
         !q3g_fire_valid(&engine->clients[slot].fire, actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q3 fire stamp requires its idle actual physical actor");
