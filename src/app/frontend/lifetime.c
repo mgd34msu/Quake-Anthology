@@ -926,7 +926,7 @@ bool qa_frontend_run(qa_frontend **slot, qa_error *error)
         qa_frontend *frontend=*slot;
         uint64_t now = SDL_GetPerformanceCounter(), ticks = now - last;
         last = now;
-        uint64_t elapsed;
+        uint64_t elapsed = 0;
         if (!run_elapsed(ticks, frequency, &elapsed, error)) { ok = false; break; }
         if (!frontend_save_commands_restoring(frontend))
             ok = qa_frontend_step(frontend, elapsed, error);
