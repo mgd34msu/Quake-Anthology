@@ -61,10 +61,11 @@ static bool change(qa_native_guest *guest, uint64_t base, size_t bytes,
             return guest_fail(error, QA_ERROR_ARGUMENT, address, "retire the actual callback before changing its executable trap");
     }
     if (remove) for (size_t i = 0; i < guest->allocation_count; ++i) {
-        const guest_allocation *allocation = &guest->allocations[i]; size_t rounded = 0;
-        if (!guest_allocation_storage(guest, allocation, NULL, &rounded, error)) return false;
-        if (overlaps(base, bytes, allocation->address, rounded))
-            return guest_fail(error, QA_ERROR_ARGUMENT, allocation->address, "free actual allocator storage before removing its pages");
+        const guest_allocation *allocation = &guest->allocations[i];
+        size_t rounded = (allocation->bytes + QA_NATIVE_GUEST_PAGE - 1) & ~(size_t)(QA_NATIVE_GUEST_PAGE - 1);
+        if (!overlaps(base, bytes, allocation->address, rounded)) continue;
+        if (!guest_allocation_storage(guest, allocation, NULL, NULL, error)) return false;
+        return guest_fail(error, QA_ERROR_ARGUMENT, allocation->address, "free actual allocator storage before removing its pages");
     }
     size_t affected = 0;
     for (size_t i = 0; i < guest->mapping_count; ++i)
@@ -98,24 +99,26 @@ static bool change(qa_native_guest *guest, uint64_t base, size_t bytes,
         if (overlaps(base, bytes, mapping->base, mapping->bytes))
             okay = guest_backend_change(guest, mapping, 0, true, error);
     }
-    for (size_t i = 0; okay && i < count; ++i) {
-        const qa_native_guest_mapping *mapping = &records[i];
-        bool replacement = false;
-        for (size_t j = 0; j < guest->mapping_count; ++j) {
-            const qa_native_guest_mapping *source = &guest->mappings[j];
-            if (overlaps(base, bytes, source->base, source->bytes) &&
-                mapping->base >= source->base && mapping->base < source->base + source->bytes)
-                replacement = true;
-        }
-        if (replacement) {
-            okay = guest_backend_map(guest, mapping, error);
-        }
+    size_t cursor = 0;
+    for (size_t i = 0; okay && i < guest->mapping_count; ++i) {
+        const qa_native_guest_mapping *source = &guest->mappings[i];
+        if (!overlaps(base, bytes, source->base, source->bytes)) { ++cursor; continue; }
+        uint64_t limit = source->base + source->bytes;
+        while (okay && cursor < count && records[cursor].base >= source->base && records[cursor].base < limit)
+            okay = guest_backend_map(guest, &records[cursor++], error);
     }
     if (!okay) { free(records); return false; }
+    cursor = 0;
+    for (size_t i = 0; i < guest->mapping_count; ++i) {
+        const qa_native_guest_mapping *source = &guest->mappings[i];
+        if (!overlaps(base, bytes, source->base, source->bytes)) { ++cursor; continue; }
+        size_t first = cursor; uint64_t limit = source->base + source->bytes;
+        while (cursor < count && records[cursor].base >= source->base && records[cursor].base < limit) ++cursor;
+        guest_backing *backing = guest_backing_at(guest, source->backing);
+        --backing->references; backing->references += cursor - first;
+    }
     free(guest->mappings); guest->mappings = records;
     guest->mapping_count = count; guest->mapping_capacity = capacity; guest->next_mapping = next;
-    for (size_t i = 0; i < guest->backing_count; ++i) guest->backings[i].references = 0;
-    for (size_t i = 0; i < count; ++i) ++guest_backing_at(guest, records[i].backing)->references;
     for (size_t i = 0; i < guest->backing_count; ) {
         guest_backing *backing = &guest->backings[i];
         if (backing->references) { ++i; continue; }
