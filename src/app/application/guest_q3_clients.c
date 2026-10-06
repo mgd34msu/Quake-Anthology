@@ -633,8 +633,9 @@ bool q3g_arsenal_client_admit(application_provider *provider, uint32_t slot, qa_
     if (!engine || !app || slot >= 64 || !engine->game || !engine->game->vm || !app->q3_client_prepare)
         return true;
     q3g_client *client = engine->clients + slot;
-    if (!client->connected || !client->begun || client->pending_retirement || client->bot ||
-        application_provider_for(app, client->actor, QA_ROLE_ARSENAL, "") != provider) return true;
+    if (!client->connected || !client->begun || client->pending_retirement || client->bot) return true;
+    bool hud = application_provider_for(app, client->actor, QA_ROLE_HUD, "") == provider;
+    if (!hud && application_provider_for(app, client->actor, QA_ROLE_ARSENAL, "") != provider) return true;
     uint32_t seat;
     if (!qa_application_player_seat(app, client->actor, &seat) || engine->seats[slot] != seat ||
         engine->calls || engine->restore_pending || !engine->map_ready || !client->gamestate)
@@ -652,25 +653,27 @@ bool q3g_arsenal_client_admit(application_provider *provider, uint32_t slot, qa_
     if (!cgame) {
         bool found; uint64_t size;
         if (!qa_vfs_probe(provider->launch->content, "cgame-weapon-models.json", &found, &size, error)) return false;
-        if (!found) return true;
+        if (!found && !hud) return true;
         qa_resource *declaration = NULL; qa_vfs_acquisition acquisition = {0};
         qa_json_document *document = NULL; qa_buffer path = {0}; char *normalized = NULL;
-        bool ok = qa_vfs_acquire_receipt(provider->launch->content, "cgame-weapon-models.json",
+        bool ok = !found || (qa_vfs_acquire_receipt(provider->launch->content, "cgame-weapon-models.json",
             &declaration, &acquisition, error) && qa_json_parse(qa_resource_bytes(declaration), &document, error) &&
-            qa_json_string(document, qa_json_get(document, qa_json_root(document), "artifactPath"), &path, error);
-        if (ok && memchr(path.data, 0, path.size))
+            qa_json_string(document, qa_json_get(document, qa_json_root(document), "artifactPath"), &path, error));
+        if (ok && found && memchr(path.data, 0, path.size))
             ok = application_fail(error, QA_ERROR_FORMAT, "Arsenal CG declaration path contains a NUL");
-        if (ok) { normalized = qa_vfs_normalize_path((const char *)path.data, error); ok = normalized != NULL; }
-        if (ok) ok = q3g_role_create_client(engine, QA_QVM_CGAME, seat, normalized, false, provider, &cgame, error);
+        if (ok && found) { normalized = qa_vfs_normalize_path((const char *)path.data, error); ok = normalized != NULL; }
+        if (ok) ok = q3g_role_create_client(engine, QA_QVM_CGAME, seat,
+            found ? normalized : "vm/cgame.qvm", false, provider, &cgame, error);
         free(normalized); qa_buffer_free(&path); qa_json_destroy(document);
         qa_vfs_acquisition_dispose(&acquisition); qa_resource_release(declaration);
         if (!ok) return false;
         cgame->next = engine->roles; engine->roles = cgame;
     }
-    if (cgame->ready && !cgame->retired && cgame->artifact &&
+    if (!hud && cgame->ready && !cgame->retired && cgame->artifact &&
         !cgame->artifact->weapon_models_profile.present && !cgame->weapon_models) return true;
-    if (!cgame->ready || cgame->retired || cgame->client_source != provider ||
-        cgame->client_engine != engine || cgame->client != slot || !cgame->weapon_models)
+    if (!cgame->ready || cgame->retired || !cgame->artifact || cgame->client_source != provider ||
+        cgame->client_engine != engine || cgame->client != slot ||
+        ((!hud || cgame->artifact->weapon_models_profile.present) && !cgame->weapon_models))
         return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal CG changed its genuine matching GAME and registry");
     if (!ui) {
         if (!application_guest_q3_source_ui_create(engine, seat, &ui, error)) return false;
