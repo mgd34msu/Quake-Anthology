@@ -90,6 +90,19 @@ static __m128 fog_select_four(__m128 mask, __m128 yes, __m128 no) {
   return _mm_or_ps(_mm_and_ps(mask, yes), _mm_andnot_ps(mask, no));
 }
 
+#if defined(__GNUC__)
+__attribute__((noinline))
+#endif
+static __m128 fog_exp_repair_four(__m128 attenuation, __m128 value,
+                                  unsigned mask) {
+  float inputs[4], values[4];
+  _mm_storeu_ps(inputs, attenuation);
+  _mm_storeu_ps(values, value);
+  for (size_t i = 0; i < 4; ++i)
+    if ((mask & (1u << i)) == 0) values[i] = cpu_fog_exp(inputs[i]);
+  return _mm_loadu_ps(values);
+}
+
 static __m128 fog_exp_four(__m128 attenuation) {
   const __m128 zero = _mm_setzero_ps(), one = _mm_set1_ps(1);
   __m128 ordinary = _mm_and_ps(_mm_cmpgt_ps(attenuation, _mm_set1_ps(-89)),
@@ -114,14 +127,14 @@ static __m128 fog_exp_four(__m128 attenuation) {
   __m128i index = _mm_cvttps_epi32(position);
   index = _mm_add_epi32(index, _mm_cmpeq_epi32(index, _mm_set1_epi32(256)));
   __m128 fraction = _mm_sub_ps(position, _mm_cvtepi32_ps(index));
-  uint32_t indices[4];
-  float left_values[4], right_values[4];
-  _mm_storeu_si128((__m128i *)(void *)indices, index);
-  for (size_t i = 0; i < 4; ++i) {
-    left_values[i] = cpu_fog_exp_table[indices[i]];
-    right_values[i] = cpu_fog_exp_table[indices[i] + 1];
-  }
-  __m128 left = _mm_loadu_ps(left_values), right = _mm_loadu_ps(right_values);
+  int i0 = _mm_cvtsi128_si32(index);
+  int i1 = _mm_cvtsi128_si32(_mm_shuffle_epi32(index, _MM_SHUFFLE(1, 1, 1, 1)));
+  int i2 = _mm_cvtsi128_si32(_mm_shuffle_epi32(index, _MM_SHUFFLE(2, 2, 2, 2)));
+  int i3 = _mm_cvtsi128_si32(_mm_shuffle_epi32(index, _MM_SHUFFLE(3, 3, 3, 3)));
+  __m128 left = _mm_set_ps(cpu_fog_exp_table[i3], cpu_fog_exp_table[i2],
+      cpu_fog_exp_table[i1], cpu_fog_exp_table[i0]);
+  __m128 right = _mm_set_ps(cpu_fog_exp_table[i3 + 1], cpu_fog_exp_table[i2 + 1],
+      cpu_fog_exp_table[i1 + 1], cpu_fog_exp_table[i0 + 1]);
   __m128 difference = _mm_sub_ps(right, left);
   __m128 value = CPU_FOG_EXP_CURVE(left, right, fraction, difference,
       _mm_set1_ps(CPU_FOG_EXP_STEP), _mm_set1_ps(2), _mm_set1_ps(3));
@@ -136,16 +149,8 @@ static __m128 fog_exp_four(__m128 attenuation) {
   value = _mm_mul_ps(value, scale);
   value = _mm_mul_ps(value, fog_select_four(_mm_castsi128_ps(subnormal),
       _mm_set1_ps(0x1p-126f), one));
-  if (_mm_movemask_ps(ordinary) != 15) {
-    float inputs[4], values[4];
-    _mm_storeu_ps(inputs, attenuation);
-    _mm_storeu_ps(values, value);
-    unsigned mask = (unsigned)_mm_movemask_ps(ordinary);
-    for (size_t i = 0; i < 4; ++i)
-      if ((mask & (1u << i)) == 0) values[i] = cpu_fog_exp(inputs[i]);
-    value = _mm_loadu_ps(values);
-  }
-  return value;
+  unsigned mask = (unsigned)_mm_movemask_ps(ordinary);
+  return mask == 15 ? value : fog_exp_repair_four(attenuation, value, mask);
 }
 
 static __m128i fog_bytes_four(__m128 value) {
