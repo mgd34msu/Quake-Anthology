@@ -138,12 +138,8 @@ static bool q3_provider_models(qa_application *app, const application_unified_so
             paths[1] = items[row.state.modelindex].secondary_model;
         } else if (row.state.eType == 3) paths[0] = missile(row.state.weapon);
         else {
-            qa_actor_collision collision;
-            qa_error observed = {0};
-            bool colliding = qa_world_get_collision(source->world, row.binding.actor, &collision, &observed);
-            if (!colliding && observed.code != QA_OK) { if (error) *error = observed; return false; }
-            if (colliding && collision.inline_model) {
-                int written = snprintf(inline_path, sizeof(inline_path), "*%u", collision.model);
+            if (row.state.eType == 4 && row.state.solid == 0xffffff) {
+                int written = snprintf(inline_path, sizeof(inline_path), "*%u", (uint32_t)row.state.modelindex);
                 if (written < 0 || (size_t)written >= sizeof(inline_path))
                     return application_fail(error, QA_ERROR_FORMAT, "Unified native inline model exceeds its authored path");
                 paths[0] = inline_path;
@@ -152,6 +148,12 @@ static bool q3_provider_models(qa_application *app, const application_unified_so
                     return application_fail(error, QA_ERROR_FORMAT, "Unified native model exceeds the source model configstrings");
                 if (!qa_q3_configstring_read(game, 32u + (uint32_t)row.state.modelindex,
                         &paths[0], error)) return false;
+            }
+            if (row.state.eType == 4 && row.state.modelindex2 > 0) {
+                if ((uint32_t)row.state.modelindex2 >= 256)
+                    return application_fail(error, QA_ERROR_FORMAT, "Unified native model exceeds the source model configstrings");
+                if (!qa_q3_configstring_read(game, 32u + (uint32_t)row.state.modelindex2,
+                        &paths[1], error)) return false;
             }
         }
         qa_application_visual_view v = {.actor = row.binding.actor, .family = QA_GAME_Q3,
