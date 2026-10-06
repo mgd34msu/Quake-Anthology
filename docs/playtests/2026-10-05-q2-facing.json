@@ -1,0 +1,73 @@
+{
+  "date": "2026-10-05",
+  "item": "MIKE-02",
+  "artifact": "qa-c",
+  "input": "genuine XTest keyboard input",
+  "observation": "read-only GDB and native mapped-window captures",
+  "runs": [
+    {
+      "item": "MIKE-02",
+      "build": "59c89987",
+      "product": "q2-classic-baseq2",
+      "renderer": "cpu",
+      "map": "base1",
+      "artifact_bytes": 137713880,
+      "authored_yaw": 135.0,
+      "control_yaw": 135.0,
+      "rendered_yaw": 135.0,
+      "command_plus_delta_yaw": 135.0,
+      "continued_frames": 60,
+      "application_exit": 0,
+      "ordinary_walking": true,
+      "source_receipt": "actual-q2-classic-baseq2-cpu-ge8llm5p"
+    },
+    {
+      "item": "MIKE-02",
+      "build": "59c89987",
+      "product": "q2-classic-baseq2",
+      "renderer": "gl",
+      "map": "base1",
+      "artifact_bytes": 137713880,
+      "authored_yaw": 135.0,
+      "control_yaw": 135.0,
+      "rendered_yaw": 135.0,
+      "command_plus_delta_yaw": 135.0,
+      "continued_frames": 60,
+      "application_exit": 0,
+      "ordinary_walking": true,
+      "source_receipt": "actual-q2-classic-baseq2-gl-hspss7yp"
+    },
+    {
+      "item": "MIKE-02",
+      "build": "59c89987",
+      "product": "q2-rerelease-baseq2",
+      "renderer": "cpu",
+      "map": "base1",
+      "artifact_bytes": 137713880,
+      "authored_yaw": 135.0,
+      "control_yaw": 135.0,
+      "rendered_yaw": 135.0,
+      "command_plus_delta_yaw": 135.0,
+      "continued_frames": 120,
+      "application_exit": 0,
+      "ordinary_walking": true,
+      "source_receipt": "actual-q2-rerelease-baseq2-cpu-caac63v_"
+    },
+    {
+      "item": "MIKE-02",
+      "build": "f504",
+      "product": "q2-rerelease-baseq2",
+      "renderer": "gl",
+      "map": "base1",
+      "artifact_bytes": 137689552,
+      "authored_yaw": 135.0,
+      "control_yaw": 135.0,
+      "rendered_yaw": 135.0,
+      "command_plus_delta_yaw": 135.0,
+      "continued_frames": 120,
+      "application_exit": 0,
+      "ordinary_walking": true,
+      "source_receipt": "actual-q2-rerelease-baseq2-gl-vp5yvjz7"
+    }
+  ]
+}
