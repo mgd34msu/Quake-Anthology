@@ -608,10 +608,12 @@ static bool transform(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     renderer->vertex_capacity = capacity;
   }
   const float *model = draw->model.m;
+  bool normal_required = draw->lighting != QA_LIGHT_VERTEX;
+  bool world_required = normal_required || renderer->view.clip_enabled;
   /* Inverse transpose keeps fragment normals correct for scaled model
    * instances. */
   double normal[9];
-  qa_render_normal_matrix(&draw->model, normal);
+  if (normal_required) qa_render_normal_matrix(&draw->model, normal);
   const qa_model_vertex *sampled = NULL;
   const uint32_t *sources = NULL;
   int rounding = 0, admitted = 0;
@@ -644,12 +646,12 @@ static bool transform(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                      (double)m[c + 4] * v->position.y +
                      (double)m[c + 8] * v->position.z + m[c + 12];
     for (size_t c = 0; c < 3; ++c) {
-      out->world[c] = (double)model[c] * v->position.x +
+      out->world[c] = world_required ? (double)model[c] * v->position.x +
                       (double)model[c + 4] * v->position.y +
-                      (double)model[c + 8] * v->position.z + model[c + 12];
-      out->normal[c] = normal[c * 3] * v->normal.x +
+                      (double)model[c + 8] * v->position.z + model[c + 12] : 0;
+      out->normal[c] = normal_required ? normal[c * 3] * v->normal.x +
                        normal[c * 3 + 1] * v->normal.y +
-                       normal[c * 3 + 2] * v->normal.z;
+                       normal[c * 3 + 2] * v->normal.z : 0;
     }
     qa_scene_vec4 color; qa_scene_vec2 uv[2];
     qa_render_source_attributes_vertex(&renderer->controls,draw,mode,i,v,&color,uv);
