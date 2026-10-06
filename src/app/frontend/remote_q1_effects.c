@@ -356,16 +356,13 @@ static bool entities(frontend_remote_q1 *row, double seconds, qa_error *error)
         remote_trail *trail=fx->trails+at; qa_vec3 start=trail->origin,delta=qa_vec_sub(point,start);
         if(trail->model!=entity->model || fabsf(delta.x)>100 || fabsf(delta.y)>100 || fabsf(delta.z)>100) start=point;
         *trail=(remote_trail){entity->number,entity->model,point,fx->sample};
-        if(entity->effects&1) frontend_fx_q1_entity(&fx->particles,&fx->random,point,seconds);
         const qa_product *product=qa_catalog_product(row->content.catalog,row->content.product);
         uint32_t flags=model->source?(uint32_t)model->source->flags:0;
         qa_vec3 light_origin;
         frontend_fx_q1_light_recipe recipe;
-        bool lit=frontend_fx_q1_entity_light(&fx->random,point,angles,entity->effects,flags,
-            qa_q1_is_qw(row->protocol),product && product->edition==QA_EDITION_RERELEASE,
-            seconds,&light_origin,&recipe);
-        int type=frontend_fx_q1_model_trail(flags,qa_q1_is_qw(row->protocol));
-        if(type>=0) frontend_fx_q1_trail(&fx->particles,&fx->random,start,point,(uint32_t)type,seconds);
+        bool lit=frontend_fx_q1_entity_effects(&fx->particles,&fx->random,start,point,angles,
+            entity->effects,flags,qa_q1_is_qw(row->protocol),
+            product && product->edition==QA_EDITION_RERELEASE,seconds,&light_origin,&recipe);
         if(lit) light_at(row,entity->number,light_origin,recipe.radius,recipe.duration,
             recipe.decay,recipe.minimum,recipe.color,seconds);
     }

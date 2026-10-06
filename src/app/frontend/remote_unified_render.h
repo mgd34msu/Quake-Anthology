@@ -18,6 +18,15 @@ typedef struct frontend_unified_render_equipment {
  * binding. This receipt does not claim that a model draw has completed. */
 bool frontend_unified_render_equipment_read(const frontend_unified_render *,qa_actor_id,
     frontend_unified_render_equipment *,bool *present,qa_error *);
+typedef struct frontend_unified_render_entity_effects {
+    qa_actor_id actor;
+    const qa_product *product;
+    const qa_model *model;
+    qa_scene_family family;
+    qa_vec3 origin, angles;
+    uint64_t effects;
+    uint32_t q1_effects;
+} frontend_unified_render_entity_effects;
 typedef struct frontend_unified_render_children {
     void *context;
     bool (*camera)(void *,qa_scene_view *,float *source_fov,bool *owned,qa_error *);
@@ -25,6 +34,7 @@ typedef struct frontend_unified_render_children {
     bool (*source_model)(void *,qa_actor_id,uint32_t provider,const char *instance,bool *owned,qa_error *);
     bool (*equipment_model)(void *,qa_actor_id,uint32_t provider,const char *instance,bool slot,bool *owned,qa_error *);
     bool (*view_origin)(void *,qa_actor_id,qa_vec3,float player_fov,qa_error *);
+    bool (*entity_effects)(void *,const frontend_unified_render_entity_effects *,double,qa_error *);
     bool (*world_input)(void *, qa_scene_world_input *, qa_error *);
     bool (*lights)(void *, const qa_scene_view *, const qa_scene_world_input *,
         const qa_scene_light **, size_t *, qa_error *);

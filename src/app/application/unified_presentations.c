@@ -53,7 +53,7 @@ static bool model(qa_unified_frame *frame, size_t *capacity,
     qa_unified_model_state *row = out->models + out->model_count++;
     *row = (qa_unified_model_state){.actor = v->actor, .family = v->family,
         .frame = v->frame, .old_frame = v->old_frame < 0 ? v->frame : v->old_frame,
-        .skin = v->skin, .effects = v->effects, .render_flags = v->render_flags,
+        .skin = v->skin, .effects = v->effects, .render_flags = v->render_flags, .q1_effects = v->q1_effects,
         .origin = v->body.origin, .angles = v->body.angles, .scale = v->scale,
         .visible = v->visible, .view_weapon = view_weapon,
         .has_previous_origin = (v->render_flags & 128u) && v->family == QA_GAME_Q2,

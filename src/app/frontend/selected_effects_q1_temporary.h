@@ -20,4 +20,9 @@ typedef struct frontend_fx_q1_beam_cursor {
 } frontend_fx_q1_beam_cursor;
 void frontend_fx_q1_beam_begin(frontend_fx_q1_beam_cursor *, qa_vec3 start, qa_vec3 end);
 bool frontend_fx_q1_beam_next(frontend_fx_q1_beam_cursor *, qa_builtin_random *, qa_model_transform *);
+bool frontend_fx_q1_entity_effects(frontend_fx_particles *, qa_builtin_random *,
+    qa_vec3 start, qa_vec3 origin, qa_vec3 angles, uint32_t effects, uint32_t model_flags,
+    bool quakeworld, bool rerelease, double seconds, qa_vec3 *light_origin,
+    frontend_fx_q1_light_recipe *);
+
 #endif

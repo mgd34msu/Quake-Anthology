@@ -1087,6 +1087,12 @@ static bool blend(void *context,const qa_scene_world_input *input_value,qa_scene
 {
     return frontend_unified_q1_world_blend(((unified_presentation *)context)->q1,input_value,overlay,frame_value,error);
 }
+static bool entity_effects(void *context,const frontend_unified_render_entity_effects *entity,
+    double seconds,qa_error *error)
+{
+    unified_presentation *p=context;
+    return frontend_unified_q1_entity_effects(p->q1,entity,seconds,error);
+}
 static bool world_input(void *context, qa_scene_world_input *input, qa_error *error)
 {
     unified_presentation *p=context;
@@ -1181,7 +1187,7 @@ static bool draw(void *context, frontend_remote_unified *replica, float stereo, 
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified drawing awaits its actual received frame");
     frontend_unified_prediction_view prediction;
     bool source_listener=false;
-    frontend_unified_render_children children = {.context=p,.camera=camera,.status_replacement=status_replacement,.source_model=source_model,.equipment_model=equipment_model,.view_origin=view_origin,.world_input=world_input,.lights=lights,.reflected_lights=reflected_lights,
+    frontend_unified_render_children children = {.context=p,.camera=camera,.status_replacement=status_replacement,.source_model=source_model,.equipment_model=equipment_model,.view_origin=view_origin,.entity_effects=entity_effects,.world_input=world_input,.lights=lights,.reflected_lights=reflected_lights,
         .world=world,.reflected_world=reflected_world,.world_models=world_models,.particles=particles,.dlights=dlights,.blend=blend,
         .player_blend=player_blend,.hud=hud,.model=model,.model_after=model_after};
     bool okay=frontend_remote_unified_prediction_read(p->prediction,&prediction,error) &&

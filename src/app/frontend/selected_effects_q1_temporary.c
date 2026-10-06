@@ -145,3 +145,16 @@ bool frontend_fx_q1_beam_next(frontend_fx_q1_beam_cursor *cursor, qa_builtin_ran
     cursor->remaining -= 30;
     return true;
 }
+
+bool frontend_fx_q1_entity_effects(frontend_fx_particles *particles, qa_builtin_random *random,
+    qa_vec3 start, qa_vec3 origin, qa_vec3 angles, uint32_t effects, uint32_t model_flags,
+    bool quakeworld, bool rerelease, double seconds, qa_vec3 *light_origin,
+    frontend_fx_q1_light_recipe *recipe)
+{
+    if (effects & 1u) frontend_fx_q1_entity(particles, random, origin, seconds);
+    bool lit=frontend_fx_q1_entity_light(random,origin,angles,effects,model_flags,
+        quakeworld,rerelease,seconds,light_origin,recipe);
+    int type=frontend_fx_q1_model_trail(model_flags,quakeworld);
+    if (type>=0) frontend_fx_q1_trail(particles,random,start,origin,(uint32_t)type,seconds);
+    return lit;
+}

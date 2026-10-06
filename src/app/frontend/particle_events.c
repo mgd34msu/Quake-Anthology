@@ -1155,7 +1155,7 @@ bool frontend_particle_q1_entity(qa_frontend *frontend, const qa_application_vis
     const qa_model *model, qa_error *error)
 {
     uint32_t effects = view->q1_effects | (view->family == QA_GAME_Q1 ? (uint32_t)view->effects : 0);
-    uint32_t flags = model ? (uint32_t)model->flags : 0;
+    uint32_t flags = model && model->format == QA_MODEL_MDL ? (uint32_t)model->flags : 0;
     if (!(effects & UINT32_C(0xff)) && !(flags & UINT32_C(0xf7))) return true;
     if (!particle_state(frontend, error)) return false;
     frontend_particle_state *state = frontend->particles;
@@ -1180,13 +1180,11 @@ bool frontend_particle_q1_entity(qa_frontend *frontend, const qa_application_vis
     frontend_particle_owner *owner;
     if (!particle_owner(frontend, view->provider, QA_GAME_Q1, 0, 0, (qa_actor_id){0}, &owner, error)) return false;
     double seconds = (double)state->sample_ns / 1e9;
-    if (effects & 1u) frontend_fx_q1_entity(owner->q1, &owner->random, origin, seconds);
     qa_vec3 light_origin;
     frontend_fx_q1_light_recipe recipe;
-    bool light_present=frontend_fx_q1_entity_light(&owner->random,origin,view->body.angles,
-        effects,flags,owner->q1_quakeworld,owner->q1_rerelease,seconds,&light_origin,&recipe);
-    int type = frontend_fx_q1_model_trail(flags,owner->q1_quakeworld);
-    if (type >= 0) frontend_fx_q1_trail(owner->q1, &owner->random, start, origin, (uint32_t)type, seconds);
+    bool light_present=frontend_fx_q1_entity_effects(owner->q1,&owner->random,start,origin,
+        view->body.angles,effects,flags,owner->q1_quakeworld,owner->q1_rerelease,
+        seconds,&light_origin,&recipe);
     if (light_present) {
         frontend_q1_temporary_light *light=q1_light(owner,view->actor,seconds);
         light->origin=light_origin; light->recipe=recipe; light->die=seconds+recipe.duration;

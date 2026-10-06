@@ -1,6 +1,7 @@
 #ifndef QA_FRONTEND_REMOTE_UNIFIED_Q1_H
 #define QA_FRONTEND_REMOTE_UNIFIED_Q1_H
 #include "remote_unified_media.h"
+#include "remote_unified_render.h"
 #include "qa/hud.h"
 #include "remote_unified_events.h"
 #include "qa/unified_frame_events.h"
@@ -29,6 +30,7 @@ bool frontend_unified_q1_world_models(frontend_unified_q1 *,const qa_scene_world
 bool frontend_unified_q1_world_particles(frontend_unified_q1 *,const qa_scene_world_input *,qa_scene_frame *,qa_error *);
 bool frontend_unified_q1_world_dlights(frontend_unified_q1 *,const qa_scene_world_input *,qa_scene_frame *,qa_scene_vec4 *,qa_error *);
 bool frontend_unified_q1_world_blend(frontend_unified_q1 *,const qa_scene_world_input *,qa_scene_vec4,qa_scene_frame *,qa_error *);
+bool frontend_unified_q1_entity_effects(frontend_unified_q1 *,const frontend_unified_render_entity_effects *,double,qa_error *);
 bool frontend_unified_q1_world_input(frontend_unified_q1 *,qa_scene_world_input *,qa_error *);
 bool frontend_unified_q1_audio_detach(frontend_unified_q1 *,qa_error *);
 bool frontend_unified_q1_hud(frontend_unified_q1 *,qa_ui *,qa_scene_rect,qa_scene_frame *,qa_error *);

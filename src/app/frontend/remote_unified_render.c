@@ -29,7 +29,8 @@ typedef struct unified_render_model {
     bool source_client,submitted;
     uint32_t source_provider;
     char *source_instance;
-    uint64_t submitted_cycle;
+    uint64_t submitted_cycle, effects;
+    uint32_t q1_effects;
     bool equipment,equipment_slot;
     uint32_t equipment_provider;
     char *equipment_instance;
@@ -166,7 +167,7 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
     qa_scene_family kind=source->family==QA_GAME_Q1?QA_SCENE_Q1:source->family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q3;
     bool okay=model_source_read(source,m,e) && model_equipment_read(source,m,e) &&
         frontend_remote_unified_source_actor(r->replica,qa_unified_document_frame(r->frame),source->actor,false,&m->actor,e);
-    m->origin=source->origin; m->angles=source->angles; m->scale=source->scale; m->visible=source->visible;
+    m->origin=source->origin; m->angles=source->angles; m->scale=source->scale; m->visible=source->visible; m->effects=source->effects; m->q1_effects=source->q1_effects;
     m->input.frame=source->frame<0?0:(uint32_t)source->frame;
     m->input.old_frame=source->old_frame<0?m->input.frame:(uint32_t)source->old_frame;
     qa_scene_image_options images={.family=kind,.usage=QA_IMAGE_USAGE_SKIN,.wrap=QA_SCENE_REPEAT,
@@ -502,6 +503,14 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
         else q2[style->index]=qa_v3(value,value,value);
     }
     world.q1_styles=q1; world.q2_styles=q2; world.style_count=256;
+    for (size_t i=0;okay && children && children->entity_effects && i<r->model_count;++i) {
+        const unified_render_model *model=r->models+i;
+        if (!model->visible || model->input.view_model) continue;
+        frontend_unified_render_entity_effects entity={.actor=model->actor,.product=model->product,
+            .model=model->media.model,.family=model->input.family,.origin=model->origin,
+            .angles=model->angles,.effects=model->effects,.q1_effects=model->q1_effects};
+        okay=children->entity_effects(children->context,&entity,world.seconds,e);
+    }
     if (okay && children && children->world_input)
         okay=children->world_input(children->context,&world,e);
     qa_executable_recipe *recipe=frontend_unified_media_recipe(r->media);

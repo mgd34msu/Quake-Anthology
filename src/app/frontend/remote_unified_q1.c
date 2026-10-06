@@ -46,7 +46,8 @@ typedef struct q1_activation {
     bool retired;
 } q1_activation;
 typedef struct q1_light {
-    qa_vec3 origin;
+    qa_actor_id actor;
+    qa_vec3 origin,color;
     double born,until;
     float radius,decay,minimum;
     uint64_t identity;
@@ -74,6 +75,14 @@ typedef struct q1_ambient {
     float volume,attenuation;
     uint64_t identity;
 } q1_ambient;
+typedef struct q1_entity_trail {
+    qa_actor_id actor;
+    const qa_model *model;
+    const qa_product *product;
+    qa_vec3 origin;
+    uint64_t frame;
+    bool present;
+} q1_entity_trail;
 typedef struct q1_group {
     frontend_unified_q1 *parent;
     frontend_received_music *music;
@@ -133,6 +142,8 @@ struct frontend_unified_q1 {
     double seconds,prepared_seconds,bonus_until,capture_until;
     bool has_frame,prepared,busy,ctf_present;
     bool monsters_present,secrets_present;
+    q1_entity_trail *trails;
+    size_t trail_capacity;
     qa_scene_light *scene_lights;
     size_t scene_capacity;
     float scene_styles[256];
@@ -369,11 +380,17 @@ static bool clone_row(const qa_unified_presentation_event *row,qa_unified_presen
 }
 static qa_scene_image_options model_options(void)
 { return (qa_scene_image_options){.family=QA_SCENE_Q1,.usage=QA_IMAGE_USAGE_SKIN,.wrap=QA_SCENE_REPEAT,.filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255}; }
-static q1_light *light(q1_group *g,qa_vec3 origin,double seconds,float radius,float decay,double duration)
+static q1_light *light(q1_group *g,qa_actor_id actor,qa_vec3 origin,double seconds,float radius,float decay,double duration)
 {
-    size_t i=0;while(i<Q1_LIGHTS && g->lights[i].until>seconds) ++i;if(i==Q1_LIGHTS) i=0;
+    size_t i=0;
+    if (actor.registry) while(i<Q1_LIGHTS && !qa_actor_id_equal(g->lights[i].actor,actor)) ++i;
+    if (!actor.registry || i==Q1_LIGHTS) {
+        i=0;while(i<Q1_LIGHTS && g->lights[i].identity && g->lights[i].until>=seconds) ++i;
+        if(i==Q1_LIGHTS) i=0;
+    }
     uint64_t identity=g->lights[i].identity;if(!identity) identity=qa_scene_identity();
-    g->lights[i]=(q1_light){.origin=origin,.born=seconds,.until=seconds+duration,.radius=radius,.decay=decay,.identity=identity};
+    g->lights[i]=(q1_light){.actor=actor,.origin=origin,.color={1,1,1},.born=seconds,
+        .until=seconds+duration,.radius=radius,.decay=decay,.identity=identity};
     return g->lights+i;
 }
 static bool effect_sound(frontend_unified_q1 *o,const q1_event *p,const char *path,qa_error *e)
@@ -404,7 +421,7 @@ static bool effect(frontend_unified_q1 *o,q1_group *g,const q1_event *p,qa_error
         bool direction=p->muzzle;
         if(!p->muzzle && p->actor_present && !pose_angles(o,p->actor,&angles,&direction,e))return false;
         if(direction){frontend_camera_axes(angles,axes);origin=qa_vec_add(origin,qa_vec_scale(axes[0],18));}
-        light(g,origin,time,200+(float)(qa_builtin_random_integer(&o->random)&31),0,.1)->minimum=32;
+        light(g,(qa_actor_id){0},origin,time,200+(float)(qa_builtin_random_integer(&o->random)&31),0,.1)->minimum=32;
         return true;
     }
     if(!strcmp(k,"pickup")) return true;
@@ -428,7 +445,7 @@ static bool effect(frontend_unified_q1 *o,q1_group *g,const q1_event *p,qa_error
         return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 effect recipe is not installed");
     frontend_fx_q1_light_recipe recipe;
     if(frontend_fx_q1_temporary_light(&temporary,&recipe))
-        light(g,p->origin,time,recipe.radius,recipe.decay,recipe.duration)->minimum=recipe.minimum;
+        light(g,(qa_actor_id){0},p->origin,time,recipe.radius,recipe.decay,recipe.duration)->minimum=recipe.minimum;
     const char *path=frontend_fx_q1_temporary_sound(&temporary,&o->random);
     return !path || effect_sound(o,p,path,e);
 }
@@ -603,7 +620,7 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
             ok=frontend_fx_q1_temporary_particles(&g->particles,&o->random,&temporary,false,p.seconds);
             frontend_fx_q1_light_recipe recipe;
             if(ok && frontend_fx_q1_temporary_light(&temporary,&recipe))
-                light(g,p.origin,p.seconds,recipe.radius,recipe.decay,recipe.duration)->minimum=recipe.minimum;
+                light(g,(qa_actor_id){0},p.origin,p.seconds,recipe.radius,recipe.decay,recipe.duration)->minimum=recipe.minimum;
             const char *path=ok?frontend_fx_q1_temporary_sound(&temporary,&o->random):NULL;
             if(ok && path)ok=effect_sound(o,&p,path,e);}
         if(!ok){g->particles.count=original_count;o->random=original_random;memcpy(g->lights,original_lights,sizeof(original_lights));}
@@ -743,6 +760,49 @@ void frontend_unified_q1_frame_commit(frontend_unified_q1 *o)
 }
 void frontend_unified_q1_frame_abort(frontend_unified_q1 *o)
 {if(o && !o->busy){o->prepared=false;o->preparing_document=NULL;}}
+bool frontend_unified_q1_entity_effects(frontend_unified_q1 *o,
+    const frontend_unified_render_entity_effects *entity,double seconds,qa_error *e)
+{
+    uint32_t flags=entity->model && entity->model->format==QA_MODEL_MDL ? (uint32_t)entity->model->flags:0;
+    uint32_t effects=entity->q1_effects | (entity->family==QA_SCENE_Q1 ? (uint32_t)entity->effects:0);
+    if (!(effects&UINT32_C(0xff)) && !(flags&UINT32_C(0xf7))) return true;
+    if (!o || !mutable(o,e)) return false;
+    const qa_product *product=entity->product;
+    if (product->family!=QA_GAME_Q1) {
+        const qa_recipe_provider *source=frontend_remote_unified_provider(o->replica,QA_ROLE_ENTITIES,"");
+        product=source?qa_catalog_product(qa_executable_recipe_catalog(
+            frontend_remote_unified_recipe(o->replica)),source->selection.product):NULL;
+        if (!product || product->family!=QA_GAME_Q1) return true;
+    }
+    q1_group *g;
+    if (!group(o,product->identity,NULL,&g,e)) return false;
+    size_t slot=entity->actor.slot;
+    if (slot>=o->trail_capacity) {
+        size_t extent=qa_actors_capacity(frontend_remote_unified_registry(o->replica));
+        size_t capacity=o->trail_capacity?o->trail_capacity:64;
+        while(capacity<=slot && capacity<extent) capacity=capacity>extent/2?extent:capacity*2;
+        q1_entity_trail *trails=realloc(o->trails,capacity*sizeof(*trails));
+        if (!trails) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining received Q1 entity trail origins");
+        memset(trails+o->trail_capacity,0,(capacity-o->trail_capacity)*sizeof(*trails));
+        o->trails=trails;o->trail_capacity=capacity;
+    }
+    q1_entity_trail *trail=o->trails+slot;
+    bool actor_same=trail->present && qa_actor_id_equal(trail->actor,entity->actor);
+    if (actor_same && trail->frame==o->frontend->frame_number) return true;
+    bool same=actor_same && trail->model==entity->model && trail->product==product;
+    qa_vec3 start=same?trail->origin:entity->origin;
+    qa_vec3 delta=qa_vec_sub(entity->origin,start);
+    if (fabsf(delta.x)>100 || fabsf(delta.y)>100 || fabsf(delta.z)>100) start=entity->origin;
+    *trail=(q1_entity_trail){.actor=entity->actor,.model=entity->model,.product=product,.origin=entity->origin,
+        .frame=o->frontend->frame_number,.present=true};
+    frontend_fx_q1_light_recipe recipe;qa_vec3 origin;
+    if (frontend_fx_q1_entity_effects(&g->particles,&o->random,start,entity->origin,entity->angles,
+        effects,flags,false,g->product->edition==QA_EDITION_RERELEASE,seconds,&origin,&recipe)) {
+        q1_light *value=light(g,entity->actor,origin,seconds,recipe.radius,recipe.decay,recipe.duration);
+        value->minimum=recipe.minimum;value->color=recipe.color;
+    }
+    return true;
+}
 bool frontend_unified_q1_world_input(frontend_unified_q1 *o,qa_scene_world_input *input,qa_error *e)
 {
     if(!o || !input || o->busy || o->prepared || !o->has_frame || !mutable(o,e))return false;
@@ -756,7 +816,7 @@ bool frontend_unified_q1_world_input(frontend_unified_q1 *o,qa_scene_world_input
     for(size_t i=0;i<256;++i)o->scene_styles[i]=input->q1_styles && i<input->style_count?input->q1_styles[i]:256;
     for(q1_group *g=o->groups;g;g=g->next){
         for(size_t i=0;i<Q1_LIGHTS;++i){q1_light *l=g->lights+i;if(l->until<=input->seconds)continue;float radius=fmaxf(0,l->radius-(float)(input->seconds-l->born)*l->decay);
-            if(radius>0)o->scene_lights[count++]=(qa_scene_light){.family=QA_SCENE_Q1,.origin=l->origin,.color={1,1,1},.radius=radius,.minimum=l->minimum,.scale=1,.additive=true,.identity=l->identity};}
+            if(radius>0)o->scene_lights[count++]=(qa_scene_light){.family=QA_SCENE_Q1,.origin=l->origin,.color=l->color,.radius=radius,.minimum=l->minimum,.scale=1,.additive=true,.identity=l->identity};}
         for(size_t i=0;i<256;++i)if(g->styles[i] && (!received[i] || g->style_sequences[i]>=sequences[i])){
             float value=frontend_legacy_lightstyle_sample(QA_GAME_Q1,g->styles[i],input->seconds);
             received[i]=true;sequences[i]=g->style_sequences[i];o->scene_styles[i]=value;}
@@ -875,7 +935,7 @@ bool frontend_unified_q1_world_dlights(frontend_unified_q1 *o,const qa_scene_wor
         qa_scene_light lights[Q1_LIGHTS];size_t count=0;
         for(size_t i=0;i<Q1_LIGHTS;++i){q1_light *l=g->lights+i;if(l->until<=world->seconds)continue;
             float radius=fmaxf(0,l->radius-(float)(world->seconds-l->born)*l->decay);
-            if(radius>0)lights[count++]=(qa_scene_light){.family=QA_SCENE_Q1,.origin=l->origin,.color={1,1,1},
+            if(radius>0)lights[count++]=(qa_scene_light){.family=QA_SCENE_Q1,.origin=l->origin,.color=l->color,
                 .radius=radius,.minimum=l->minimum,.scale=1,.additive=true,.identity=l->identity};}
         frontend_legacy_render_policy policy;qa_scene_vec4 blend={0};
         if(count){const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
@@ -968,5 +1028,5 @@ bool frontend_unified_q1_destroy(frontend_unified_q1 **slot,qa_error *e)
     while(o->groups){q1_group *g=o->groups;o->groups=g->next;group_free(g);}
     while(o->activations){q1_activation *a=o->activations;o->activations=a->next;free(a->provider);free(a);}
     prompt_clear(o);retained_free(o->weapon);retained_free(o->finale);qa_scene_image_release(o->finale_image);
-    qa_localization_pool_destroy(o->localizations);free(o->scene_lights);free(o->scores);free(o);*slot=NULL;return true;
+    qa_localization_pool_destroy(o->localizations);free(o->trails);free(o->scene_lights);free(o->scores);free(o);*slot=NULL;return true;
 }

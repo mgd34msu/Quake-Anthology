@@ -22,7 +22,7 @@ typedef struct qa_unified_model_state {
     char *content, *path, *skin_path, *weapon_item;
     int64_t frame, old_frame, skin;
     uint64_t effects;
-    uint32_t render_flags;
+    uint32_t render_flags, q1_effects;
     qa_vec3 origin, angles, previous_origin;
     float scale, alpha, back_lerp;
     bool visible, view_weapon, native_held_weapon, has_previous_origin, has_alpha, has_player_colors;

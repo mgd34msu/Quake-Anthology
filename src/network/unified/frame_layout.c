@@ -457,6 +457,7 @@ static const qa_unified_field qa_unified_model_state_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_model_state, old_frame, QA_UNIFIED_FIELD_I64),
     QA_UNIFIED_FIELD(qa_unified_model_state, skin, QA_UNIFIED_FIELD_I64),
     QA_UNIFIED_FIELD(qa_unified_model_state, effects, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_unified_model_state, q1_effects, QA_UNIFIED_FIELD_U32),
     QA_UNIFIED_FIELD(qa_unified_model_state, render_flags, QA_UNIFIED_FIELD_U32),
     QA_UNIFIED_RECORD(qa_unified_model_state, origin, qa_unified_vector_layout),
     QA_UNIFIED_RECORD(qa_unified_model_state, angles, qa_unified_vector_layout),
