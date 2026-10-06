@@ -156,6 +156,11 @@ typedef struct q3_call {
     qa_native_host *native_host;
 } q3_call;
 
+enum {
+    Q3_CGAME_MEMORY_REMAINING = 58, Q3_CGAME_REGISTER_FONT = 59,
+    Q3_UI_MEMORY_REMAINING = 52, Q3_UI_REGISTER_FONT = 55
+};
+
 void q3_collision_scene_close(qa_q3_host *);
 bool q3_collision_scene_services(const qa_q3_host *, qa_source_save_io *);
 

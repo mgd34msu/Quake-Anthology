@@ -21,13 +21,6 @@
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
-#ifdef _WIN32
-#include <windows.h>
-#elif defined(__APPLE__)
-#include <mach/mach.h>
-#else
-#include <sys/sysinfo.h>
-#endif
 
 typedef struct remote_trace_receipt {
     const qa_trace_result *output;
@@ -252,22 +245,8 @@ static bool remap(void *context,const char *from,const char *to,float offset,qa_
 }
 static int32_t memory_remaining(void *context)
 {
-    (void)context; uint64_t available=0;
-#ifdef _WIN32
-    MEMORYSTATUSEX state={.dwLength=sizeof(state)};
-    if(GlobalMemoryStatusEx(&state))available=state.ullAvailPhys;
-#elif defined(__APPLE__)
-    mach_port_t host=mach_host_self(); vm_size_t page=0;
-    vm_statistics64_data_t statistics; mach_msg_type_number_t count=HOST_VM_INFO64_COUNT;
-    if(host_page_size(host,&page)==KERN_SUCCESS &&
-       host_statistics64(host,HOST_VM_INFO64,(host_info64_t)&statistics,&count)==KERN_SUCCESS)
-        available=(uint64_t)statistics.free_count*(uint64_t)page;
-    mach_port_deallocate(mach_task_self(),host);
-#else
-    struct sysinfo information;
-    if(sysinfo(&information)==0)available=(uint64_t)information.freeram*information.mem_unit;
-#endif
-    return available>INT32_MAX?INT32_MAX:(int32_t)available;
+    (void)context;
+    return qa_memory_available();
 }
 static bool renderer_name(const char *text,const char *name)
 {

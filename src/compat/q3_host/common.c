@@ -30,6 +30,10 @@ q3_service_result q3_common(q3_call *call, int32_t *result, qa_error *error)
         memcpy(result, &word, sizeof(word));
         return Q3_COMPLETED;
     }
+    if (!game && trap == (ui ? Q3_UI_MEMORY_REMAINING : Q3_CGAME_MEMORY_REMAINING)) {
+        *result = qa_memory_available();
+        return Q3_COMPLETED;
+    }
     if (trap == (ui ? 10 : game ? 8 : 7) || trap == (ui ? 11 : game ? 9 : 8) ||
         (!ui && !game && trap == 9)) {
         qa_native_host_command_view args = {0};

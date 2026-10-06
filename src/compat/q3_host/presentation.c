@@ -313,9 +313,9 @@ q3_service_result q3_presentation(q3_call *call, int32_t *result, qa_error *erro
     int32_t service = call->service;
     int32_t first_movie = ui ? 75 : 74;
     bool owned = ui ? ((service >= 18 && service <= 29) || service == 31 || service == 32 ||
-                       service == 43 || service == 44 || service == 55 || service == 56 || service == 62 ||
+                       service == 43 || service == 44 || service == Q3_UI_REGISTER_FONT || service == 56 || service == 62 ||
                        service == 63 || (service >= 75 && service <= 80))
-                   : ((service >= 28 && service <= 49) || service == 57 || service == 58 ||
+                   : ((service >= 28 && service <= 49) || service == 57 || service == Q3_CGAME_REGISTER_FONT ||
                        service == 69 || service == 73 || (service >= 74 && service <= 81) ||
                        service == 85 || service == 87 || service == 88 || service == 17);
     if (!owned)
@@ -420,7 +420,7 @@ q3_service_result q3_presentation(q3_call *call, int32_t *result, qa_error *erro
             q3_write_vector(call, call->arguments[2], bounds.maxs, error);
     } else if (service == (ui ? 29 : 48)) {
         ok = tag(call, assets, ui, result, error);
-    } else if (service == (ui ? 55 : 58)) {
+    } else if (service == (ui ? Q3_UI_REGISTER_FONT : Q3_CGAME_REGISTER_FONT)) {
         ok = font(call, error);
     } else if (service == (ui ? 80 : 79)) {
         ok = remap(call, seat, error);

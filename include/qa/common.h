@@ -35,6 +35,8 @@ void qa_error_set(qa_error *error, qa_status code, size_t offset,
                   const char *format, ...);
 /* Frees owned data and clears the buffer. Passing NULL is permitted. */
 void qa_buffer_free(qa_buffer *buffer);
+/* Available physical backing for native heaps, saturated to a signed byte count. */
+int32_t qa_memory_available(void);
 /* Publishes an owned buffer on success; leaves out unchanged on failure.
  * Release any previous out buffer before replacing it. Empty files use NULL. */
 bool qa_file_read_all(const char *path, qa_buffer *out, qa_error *error);
