@@ -1,0 +1,200 @@
+{
+  "date": "2026-10-05",
+  "item": "MIKE-15",
+  "artifact": "qa-c",
+  "input_movie": "video/ntro.cin",
+  "independent_decoder": "ffmpeg retail CIN decoder",
+  "reference_sampling": "QA_SCENE_CLAMP zero border, bilinear, opaque white vertex color, neutral gamma",
+  "production_change": "None: current tested output matches the retail colors",
+  "checkpoints": [
+    {
+      "build": "59c89987",
+      "renderer": "cpu",
+      "output_size": [
+        320,
+        200
+      ],
+      "reference_frame": 5,
+      "maximum_rgb_channel_error": 0.5000000000005684,
+      "mean_rgb_channel_error": 0.0025109375000000444,
+      "rgb_channels_checked": 192000,
+      "gamma": 1.0,
+      "quad_color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "application_exit": 0,
+      "source_receipt": "actual-q2-classic-baseq2-cpu-ge8llm5p/cinematic-checkpoint-0.json"
+    },
+    {
+      "build": "59c89987",
+      "renderer": "cpu",
+      "output_size": [
+        320,
+        200
+      ],
+      "reference_frame": 10,
+      "maximum_rgb_channel_error": 0.5000000000005969,
+      "mean_rgb_channel_error": 0.04377395833333212,
+      "rgb_channels_checked": 192000,
+      "gamma": 1.0,
+      "quad_color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "application_exit": 0,
+      "source_receipt": "actual-q2-classic-baseq2-cpu-ge8llm5p/cinematic-checkpoint-1.json"
+    },
+    {
+      "build": "59c89987",
+      "renderer": "cpu",
+      "output_size": [
+        320,
+        200
+      ],
+      "reference_frame": 16,
+      "maximum_rgb_channel_error": 0.5000000000007958,
+      "mean_rgb_channel_error": 0.015022395833333814,
+      "rgb_channels_checked": 192000,
+      "gamma": 1.0,
+      "quad_color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "application_exit": 0,
+      "source_receipt": "actual-q2-classic-baseq2-cpu-ge8llm5p/cinematic-checkpoint-2.json"
+    },
+    {
+      "build": "59c89987",
+      "renderer": "gl",
+      "output_size": [
+        640,
+        400
+      ],
+      "reference_frame": 8,
+      "maximum_rgb_channel_error": 0.6499999999996611,
+      "mean_rgb_channel_error": 0.0074823567708329425,
+      "rgb_channels_checked": 768000,
+      "gamma": 1.0,
+      "quad_color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "application_exit": 0,
+      "source_receipt": "actual-q2-classic-baseq2-gl-hspss7yp/cinematic-checkpoint-0.json"
+    },
+    {
+      "build": "59c89987",
+      "renderer": "gl",
+      "output_size": [
+        640,
+        400
+      ],
+      "reference_frame": 14,
+      "maximum_rgb_channel_error": 0.7000000000001663,
+      "mean_rgb_channel_error": 0.026234700520834684,
+      "rgb_channels_checked": 768000,
+      "gamma": 1.0,
+      "quad_color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "application_exit": 0,
+      "source_receipt": "actual-q2-classic-baseq2-gl-hspss7yp/cinematic-checkpoint-1.json"
+    },
+    {
+      "build": "59c89987",
+      "renderer": "gl",
+      "output_size": [
+        640,
+        400
+      ],
+      "reference_frame": 19,
+      "maximum_rgb_channel_error": 0.8000000000005301,
+      "mean_rgb_channel_error": 0.026450846354167674,
+      "rgb_channels_checked": 768000,
+      "gamma": 1.0,
+      "quad_color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "application_exit": 0,
+      "source_receipt": "actual-q2-classic-baseq2-gl-hspss7yp/cinematic-checkpoint-2.json"
+    },
+    {
+      "build": "f504",
+      "renderer": "gl",
+      "output_size": [
+        640,
+        400
+      ],
+      "reference_frame": 31,
+      "maximum_rgb_channel_error": 0.800000000000594,
+      "mean_rgb_channel_error": 0.02602565104166788,
+      "rgb_channels_checked": 768000,
+      "gamma": 1.0,
+      "quad_color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "application_exit": 0,
+      "source_receipt": "actual-q2-classic-baseq2-gl-fgre31o9/cinematic-checkpoint-0.json"
+    },
+    {
+      "build": "f504",
+      "renderer": "gl",
+      "output_size": [
+        640,
+        400
+      ],
+      "reference_frame": 55,
+      "maximum_rgb_channel_error": 0.799999999999887,
+      "mean_rgb_channel_error": 0.023952994791667934,
+      "rgb_channels_checked": 768000,
+      "gamma": 1.0,
+      "quad_color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "application_exit": 0,
+      "source_receipt": "actual-q2-classic-baseq2-gl-fgre31o9/cinematic-checkpoint-1.json"
+    },
+    {
+      "build": "f504",
+      "renderer": "gl",
+      "output_size": [
+        640,
+        400
+      ],
+      "reference_frame": 81,
+      "maximum_rgb_channel_error": 0.9500000000000384,
+      "mean_rgb_channel_error": 0.02635651041666916,
+      "rgb_channels_checked": 768000,
+      "gamma": 1.0,
+      "quad_color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "application_exit": 0,
+      "source_receipt": "actual-q2-classic-baseq2-gl-fgre31o9/cinematic-checkpoint-2.json"
+    }
+  ]
+}
