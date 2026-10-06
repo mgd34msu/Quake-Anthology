@@ -244,50 +244,6 @@ bool qa_scene_sprite_geometry(qa_scene_frame *frame, const qa_scene_view *view, 
     return true;
 }
 
-bool qa_scene_particle(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3 origin,
-                       float radius, float rotation, qa_scene_vec4 color,
-                       const qa_scene_image *image, bool additive, qa_error *error)
-{
-    qa_scene_mesh mesh;
-    if (!qa_scene_sprite_geometry(frame, view, origin, radius, rotation, color, &mesh, error)) return false;
-    qa_scene_draw draw;
-    qa_effect_draw(&draw, view, &mesh, image, additive);
-    return qa_scene_frame_draw(frame, &draw, error);
-}
-
-bool qa_scene_indexed_particle(qa_scene_frame *frame, const qa_scene_view *view,
-                               qa_scene_family family, qa_vec3 origin, float size,
-                               qa_scene_vec4 color, const qa_scene_image *image, qa_error *error)
-{
-    if (!frame || !view || (family != QA_SCENE_Q1 && family != QA_SCENE_Q2) ||
-        !qa_vec_finite(origin) || !isfinite(size) || !isfinite(color.w)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid indexed particle parameters");
-        return false;
-    }
-    float depth = qa_vec_dot(qa_vec_sub(origin, view->origin), view->axis[0]);
-    float scale = (depth < 20 ? 1 : 1 + depth * 0.004f) * size;
-    float uv = family == QA_SCENE_Q2 ? 0.0625f : 0;
-    qa_scene_mesh mesh;
-    qa_scene_vertex *vertices;
-    uint32_t *indices;
-    if (!qa_effect_mesh(frame, 3, 3, &mesh, &vertices, &indices, error)) return false;
-    if (family == QA_SCENE_Q1) color.w = 1;
-    else color.w = (float)(uint8_t)(uint32_t)qa_source_float_to_i32(color.w * 255.0f) / 255.0f;
-    vertices[0].position = origin;
-    vertices[1].position = qa_vec_add(origin, qa_vec_scale(view->axis[2], 1.5f * scale));
-    vertices[2].position = qa_vec_add(origin, qa_vec_scale(view->axis[1], -1.5f * scale));
-    for (size_t i = 0; i < 3; ++i) {
-        vertices[i].normal = qa_vec_scale(view->axis[0], -1);
-        vertices[i].texcoord = (qa_scene_vec2){uv + (i == 1 ? 1 : 0), uv + (i == 2 ? 1 : 0)};
-        vertices[i].color = color;
-        indices[i] = (uint32_t)i;
-    }
-    qa_effect_bounds(&mesh);
-    qa_scene_draw draw;
-    qa_effect_draw(&draw, view, &mesh, image, false);
-    draw.state.depth_write = family == QA_SCENE_Q1;
-    return qa_scene_frame_draw(frame, &draw, error);
-}
 
 bool qa_scene_beam(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3 start,
                    qa_vec3 end, float width, qa_scene_vec4 color,

@@ -11,9 +11,8 @@ bool qa_scene_portal_surface_visible(const qa_scene_mesh *, const qa_scene_view 
 bool qa_scene_legacy_dlights(qa_scene_frame *, const qa_scene_view *, qa_scene_family,
                              bool quakeworld, const qa_scene_light *, size_t,
                              qa_scene_vec4 *view_blend, qa_error *);
-bool qa_scene_indexed_particle(qa_scene_frame *, const qa_scene_view *, qa_scene_family,
-                               qa_vec3 origin, float size, qa_scene_vec4,
-                               const qa_scene_image *, qa_error *);
+qa_scene_particle_sample *qa_scene_particles_alloc(qa_scene_frame *, size_t, qa_error *);
+bool qa_scene_particles(qa_scene_frame *, const qa_scene_particle_batch *, qa_error *);
 
 typedef struct qa_scene_sky_bounds { float min_s, min_t, max_s, max_t; } qa_scene_sky_bounds;
 void qa_scene_sky_bounds_reset(qa_scene_sky_bounds bounds[6]);

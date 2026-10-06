@@ -821,6 +821,7 @@ add_library(qa_scene STATIC
     src/render/scene/world/q3/patch.c
     src/render/scene/effects.c
     src/render/scene/effects/particles.c
+    src/render/scene/effects/particle_batch.c
     src/render/scene/effects/primitives.c
     src/render/scene/effects/shadows.c
     src/render/scene/effects/sky.c
@@ -841,6 +842,7 @@ add_library(qa_render_cpu STATIC
     src/render/cpu/renderer.c
     src/render/cpu/raster.c
     src/render/cpu/texture.c
+    src/render/cpu/particles.c
     src/render/cpu/fragment.c
     src/render/cpu/fog.c)
 target_link_libraries(qa_render_cpu PUBLIC qa_scene PRIVATE SDL2::SDL2)
@@ -854,6 +856,7 @@ add_library(qa_render_gl STATIC
     src/render/gl/resources.c
     src/render/gl/save.c
     src/render/gl/passes.c
+    src/render/gl/particles.c
     src/render/gl/renderer.c)
 target_link_libraries(qa_render_gl PUBLIC qa_scene qa_display PRIVATE SDL2::SDL2)
 

@@ -853,8 +853,13 @@ bool frontend_unified_q1_world_particles(frontend_unified_q1 *o,const qa_scene_w
         }
         if(ok && g->particles.count && !g->particle_image)ok=qa_scene_particle_image(g->images,QA_SCENE_Q1,&g->particle_image,e);
         qa_bytes palette={0};if(ok && g->particles.count)ok=qa_scene_resources_palette(g->images,QA_SCENE_Q1,&palette,e) && palette.size>=768;
+        qa_scene_particle_sample *particles=ok?qa_scene_particles_alloc(frame,g->particles.count,e):NULL;
+        if(ok && g->particles.count && !particles)ok=false;
+        qa_scene_particle_batch batch={.view=*view,.family=QA_SCENE_Q1,.image=g->particle_image,.samples=particles};
         for(size_t i=g->particles.count;ok && i>0;--i) {const qa_scene_q1_particle_state *p=g->particles.values.q1+i-1;if(p->die<world->seconds)continue;
-            uint32_t color=(p->color&255)*3;ok=qa_scene_indexed_particle(frame,view,QA_SCENE_Q1,p->origin,1,(qa_scene_vec4){palette.data[color]/255.0f,palette.data[color+1]/255.0f,palette.data[color+2]/255.0f,1},g->particle_image,e);}
+            uint32_t color=(p->color&255)*3;particles[batch.count++]=(qa_scene_particle_sample){.origin=p->origin,
+                .color={palette.data[color]/255.0f,palette.data[color+1]/255.0f,palette.data[color+2]/255.0f,1}};}
+        if(ok && batch.count)ok=qa_scene_particles(frame,&batch,e);
     }
     o->busy=false;return ok && mutable(o,e);
 }

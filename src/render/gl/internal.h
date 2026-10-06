@@ -247,6 +247,9 @@ struct qa_gl_renderer {
     gl_mesh_entry *meshes;
     qa_render_resource_index mesh_index;
     gl_stream_buffers stream;
+    qa_scene_vertex *particle_vertices;
+    uint32_t *particle_indices;
+    size_t particle_capacity;
     GLuint bound_vertex_array;
     gl_output_target output;
     gl_opacity_target opacity;

@@ -214,7 +214,7 @@ static bool lightmap_fold(qa_scene_frame *frame, const qa_scene_draw *lightmap)
 bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command, qa_error *error)
 {
     if (frame == NULL || command == NULL || command->kind < QA_SCENE_COMMAND_VIEW ||
-        command->kind > QA_SCENE_COMMAND_IMAGE_STREAM) {
+        command->kind > QA_SCENE_COMMAND_PARTICLES) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid scene command");
         return false;
     }
@@ -223,7 +223,7 @@ bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command,
     frame->picture_view_end = 0;
     if (frame->source_pending && (copied.kind == QA_SCENE_COMMAND_VIEW || copied.kind == QA_SCENE_COMMAND_TARGET ||
         copied.kind == QA_SCENE_COMMAND_OPACITY_BEGIN || copied.kind == QA_SCENE_COMMAND_OUTPUT_DOMAIN ||
-        copied.kind == QA_SCENE_COMMAND_PREBLEND_GAMMA) &&
+        copied.kind == QA_SCENE_COMMAND_PREBLEND_GAMMA || copied.kind == QA_SCENE_COMMAND_PARTICLES) &&
         !qa_material_source_picture_end(frame->source_pending, frame, error)) return false;
     if (frame->command_count == SIZE_MAX) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "scene command count overflow");
@@ -282,6 +282,8 @@ bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command,
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Stream admission requires an actual image"); return false;
         }
         if (!pin(frame, copied.data.image_stream->image, error)) return false;
+    } else if (copied.kind == QA_SCENE_COMMAND_PARTICLES) {
+        if (!pin(frame, copied.data.particles.image, error)) return false;
     } else if (copied.kind == QA_SCENE_COMMAND_TARGET) {
         if (copied.data.target.image != NULL && copied.data.target.image->kind != QA_SCENE_DEPTH32F) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "scene depth target requires depth pixels");

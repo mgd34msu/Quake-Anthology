@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "particles.h"
 #include <limits.h>
 #include <stdio.h>
 #include <SDL_timer.h>
@@ -775,6 +776,9 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
       break;
     case QA_SCENE_COMMAND_DRAW:
       ok = execute_draw(renderer, &command->data.draw, i, error);
+      break;
+    case QA_SCENE_COMMAND_PARTICLES:
+      ok = cpu_particles(renderer, &command->data.particles, error);
       break;
     case QA_SCENE_COMMAND_TARGET:
       ok = select_target(renderer, command->data.target.image, error);

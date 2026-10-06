@@ -545,6 +545,17 @@ typedef struct qa_scene_view {
     qa_scene_plane clip_plane;
     uint32_t seat;
 } qa_scene_view;
+typedef struct qa_scene_particle_sample {
+    qa_vec3 origin;
+    qa_scene_vec4 color;
+} qa_scene_particle_sample;
+typedef struct qa_scene_particle_batch {
+    qa_scene_view view;
+    qa_scene_family family;
+    const qa_scene_image *image;
+    const qa_scene_particle_sample *samples; /* owned by the frame arena */
+    size_t count;
+} qa_scene_particle_batch;
 typedef enum qa_scene_draw_buffer { QA_DRAW_FRONT, QA_DRAW_BACK, QA_DRAW_BACK_LEFT, QA_DRAW_BACK_RIGHT } qa_scene_draw_buffer;
 typedef enum qa_scene_command_kind {
     QA_SCENE_COMMAND_VIEW, QA_SCENE_COMMAND_DRAW, QA_SCENE_COMMAND_TARGET,
@@ -552,7 +563,7 @@ typedef enum qa_scene_command_kind {
     QA_SCENE_COMMAND_FOG, QA_SCENE_COMMAND_DRAW_BUFFER, QA_SCENE_COMMAND_SWAP,
     QA_SCENE_COMMAND_IMAGE, QA_SCENE_COMMAND_OUTPUT_DOMAIN,
     QA_SCENE_COMMAND_PREBLEND_GAMMA, QA_SCENE_COMMAND_IMAGE_REGION,
-    QA_SCENE_COMMAND_IMAGE_STREAM
+    QA_SCENE_COMMAND_IMAGE_STREAM, QA_SCENE_COMMAND_PARTICLES
 } qa_scene_command_kind;
 typedef struct qa_scene_image_region {
     const qa_scene_image *image;
@@ -581,6 +592,7 @@ typedef struct qa_scene_command {
         const qa_scene_image *image;
         qa_scene_image_region image_region;
         const qa_scene_image_stream *image_stream;
+        qa_scene_particle_batch particles;
         /* An actual renderer recipient chooses this region's upload/output
          * domain. Source RGB already owns software gamma in its image upload. */
         struct { qa_scene_rect rect; bool source; } output_domain;
@@ -961,9 +973,6 @@ bool qa_scene_world_portal_view(qa_scene_world *, const qa_scene_world_input *,
                                 qa_vec3 *pvs_origin, bool *found, qa_error *);
 bool qa_scene_portal_view(const qa_scene_view *, qa_scene_plane, const qa_scene_portal *,
                           double seconds, qa_scene_view *, qa_vec3 *pvs_origin);
-bool qa_scene_particle(qa_scene_frame *, const qa_scene_view *, qa_vec3 origin,
-                       float radius, float rotation, qa_scene_vec4 color,
-                       const qa_scene_image *, bool additive, qa_error *);
 bool qa_scene_beam(qa_scene_frame *, const qa_scene_view *, qa_vec3 start, qa_vec3 end,
                    float width, qa_scene_vec4 color, const qa_scene_image *, qa_error *);
 bool qa_scene_sky(qa_scene_frame *, const qa_scene_view *,

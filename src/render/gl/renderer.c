@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "particles.h"
 #include "qa/render_gl_save.h"
 #include "qa/display_settings.h"
 #include "qa/q3_source_scene_bank.h"
@@ -370,6 +371,7 @@ void qa_gl_destroy(qa_gl_renderer *renderer)
     material_source_release(&renderer->controls.source);
     qa_render_source_texture_release(&renderer->controls.zero_texture);
     renderer->closed = true;
+    gl_particles_destroy(renderer);
     qa_output_domains_destroy(&renderer->output_domains);
     qa_error ignored = {0};
     if (!renderer->gl.DeleteTextures || !qa_display_make_current(renderer->options.display, &ignored)) {
@@ -1107,6 +1109,12 @@ static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *fra
             ok = renderer->opacity.skip ||
                  draw_scene(renderer, &command->data.draw, error);
             break;
+        case QA_SCENE_COMMAND_PARTICLES: {
+            qa_scene_draw draw;
+            ok = gl_particles_prepare(renderer, &command->data.particles, &draw, error) &&
+                draw_scene(renderer, &draw, error);
+            break;
+        }
         case QA_SCENE_COMMAND_TARGET:
             ok = gl_select_target(renderer, command->data.target.image, error);
             break;

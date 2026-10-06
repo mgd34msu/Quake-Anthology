@@ -1672,7 +1672,12 @@ bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene
             if (!qa_scene_beam(&frontend->frame, view, laser->start, laser->end,
                     4, color, NULL, error)) return false;
         }
-        for (size_t i = owner->q1 ? owner->q1->count : owner->count; i > 0; --i) {
+        size_t particle_count = owner->q1 ? owner->q1->count : owner->count;
+        qa_scene_particle_sample *particles = qa_scene_particles_alloc(&frontend->frame, particle_count, error);
+        if (particle_count && !particles) return false;
+        qa_scene_particle_batch batch = {.view = *view, .family = family,
+            .image = owner->particle_image, .samples = particles};
+        for (size_t i = particle_count; i > 0; --i) {
             qa_vec3 origin; float alpha = 1; uint32_t index;
             if (owner->q1) {
                 const qa_scene_q1_particle_state *particle = &owner->q1->values.q1[i - 1];
@@ -1685,10 +1690,11 @@ bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene
             }
             qa_scene_vec4 color = {palette.data[index * 3] / 255.0f, palette.data[index * 3 + 1] / 255.0f,
                 palette.data[index * 3 + 2] / 255.0f, alpha};
-            if (!qa_scene_indexed_particle(&frontend->frame, view, family, origin, 1, color, owner->particle_image, error)) return false;
+            particles[batch.count++] = (qa_scene_particle_sample){.origin = origin, .color = color};
             if (owner->q2 && owner->q2[i-1].alpha_velocity==-10000)
                 owner->q2[i-1].alpha=0;
         }
+        if (!qa_scene_particles(&frontend->frame, &batch, error)) return false;
     }
     return true;
 }

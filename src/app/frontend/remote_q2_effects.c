@@ -1233,6 +1233,9 @@ bool frontend_remote_q2_effects_draw(frontend_remote_q2_effects *o,
         ok=qa_scene_beam(frame,&s->view,row->start,row->end,row->width,color,o->source.white,e);
     }
     if (entities && ok) ok=q2fx_semantic_draw(o,s,frame,e);
+    qa_scene_particle_sample *particle_samples=ok && particles?qa_scene_particles_alloc(frame,o->particles.count,e):NULL;
+    if (ok && particles && o->particles.count && !particle_samples) ok=false;
+    qa_scene_particle_batch batch={.view=s->view,.family=QA_SCENE_Q2,.image=o->particle_image,.samples=particle_samples};
     if (particles) for (size_t i=o->particles.count;ok && i>0;--i) {
         const frontend_fx_q2_particle *row=&o->particles.values.q2[i-1]; qa_vec3 origin; float alpha;
         if (!frontend_fx_q2_sample(row,s->milliseconds,&origin,&alpha)) continue;
@@ -1240,8 +1243,9 @@ bool frontend_remote_q2_effects_draw(frontend_remote_q2_effects *o,
         if (row->color==UINT32_MAX) color=(qa_scene_vec4){(float)(row->rgba&255)/255.f,(float)((row->rgba>>8)&255)/255.f,
             (float)((row->rgba>>16)&255)/255.f,floorf((float)(row->rgba>>24)*alpha)/255.f};
         else color=(qa_scene_vec4){palette.data[index*3]/255.f,palette.data[index*3+1]/255.f,palette.data[index*3+2]/255.f,alpha};
-        ok=qa_scene_indexed_particle(frame,&s->view,QA_SCENE_Q2,origin,1,color,o->particle_image,e);
+        particle_samples[batch.count++]=(qa_scene_particle_sample){.origin=origin,.color=color};
     }
+    if (ok && batch.count) ok=qa_scene_particles(frame,&batch,e);
     --o->busy; return ok && q2fx_source_current(o,e);
 }
 bool frontend_remote_q2_effects_entity_beam(frontend_remote_q2_effects *o,

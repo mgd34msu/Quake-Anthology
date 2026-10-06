@@ -489,13 +489,17 @@ bool remote_q1_effects_draw(frontend_remote_q1 *row,const qa_scene_view *view,
     if(!fx->image && !qa_scene_particle_image(row->images,QA_SCENE_Q1,&fx->image,error)) return false;
     qa_bytes palette;
     if(!qa_scene_resources_palette(row->images,QA_SCENE_Q1,&palette,error) || palette.size<768) return false;
+    qa_scene_particle_sample *particles=qa_scene_particles_alloc(&row->frontend->frame,fx->particles.count,error);
+    if(fx->particles.count && !particles) return false;
+    qa_scene_particle_batch batch={.view=*view,.family=QA_SCENE_Q1,.image=fx->image,.samples=particles};
     for(size_t i=fx->particles.count;i>0;--i) {
         qa_scene_q1_particle_state *p=fx->particles.values.q1+i-1;
         if(p->die<world->seconds) continue;
         uint32_t n=(p->color&255)*3;
         qa_scene_vec4 color={palette.data[n]/255.0f,palette.data[n+1]/255.0f,palette.data[n+2]/255.0f,1};
-        if(!qa_scene_indexed_particle(&row->frontend->frame,view,QA_SCENE_Q1,p->origin,1,color,fx->image,error)) return false;
+        particles[batch.count++]=(qa_scene_particle_sample){.origin=p->origin,.color=color};
     }
+    if(!qa_scene_particles(&row->frontend->frame,&batch,error)) return false;
     double elapsed=fmax(0,fx->sampled_seconds-fx->previous_sample);
     size_t retained=0;
     for(size_t i=0;i<fx->particles.count;++i) {
