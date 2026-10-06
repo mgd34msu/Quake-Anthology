@@ -91,6 +91,11 @@ void qa_spatial_dispose(qa_world *world)
         world->sectors[index].head=NULL; world->sectors[index].tail=NULL;
     }
     recycle_retired(world);
+    while(world->snapshot_frames!=NULL) {
+        qa_world_snapshot_frame *frame=world->snapshot_frames;
+        world->snapshot_frames=frame->next;
+        free(frame->actors); free(frame);
+    }
     while(world->spare_members!=NULL) {
         qa_spatial_member *member=world->spare_members;
         world->spare_members=member->retired_next; free(member);
@@ -188,6 +193,78 @@ bool qa_world_query(qa_world *world,qa_bounds bounds,qa_collision_role role,qa_a
     *count=context.count; *overflow=context.overflow; return true;
 }
 
+static qa_spatial_visit snapshot_actor(void *opaque,const qa_spatial_actor *actor)
+{
+    qa_world_actor_snapshot *snapshot=opaque;
+    if(snapshot->count==snapshot->capacity) {
+        size_t maximum=SIZE_MAX/sizeof(*snapshot->actors);
+        size_t capacity=snapshot->capacity<=maximum/2?snapshot->capacity*2:maximum;
+        if(capacity<=snapshot->count) {
+            snapshot->failed=true;
+            (void)fail(snapshot->error,QA_ERROR_MEMORY,"Spatial snapshot is too large");
+            return QA_SPATIAL_STOP;
+        }
+        qa_world_snapshot_frame *frame=snapshot->frame;
+        if(frame==NULL) {
+            qa_world_snapshot_frame **slot=&snapshot->world->snapshot_frames;
+            while(*slot!=NULL && (*slot)->active) slot=&(*slot)->next;
+            frame=*slot;
+            if(frame==NULL) {
+                frame=calloc(1,sizeof(*frame));
+                if(frame==NULL) {
+                    snapshot->failed=true;
+                    (void)fail(snapshot->error,QA_ERROR_MEMORY,"Cannot allocate spatial snapshot");
+                    return QA_SPATIAL_STOP;
+                }
+                *slot=frame;
+            }
+            frame->active=true;
+            snapshot->frame=frame;
+        }
+        if(capacity>frame->capacity) {
+            qa_actor_id *actors=realloc(frame->actors,capacity*sizeof(*actors));
+            if(actors==NULL) {
+                snapshot->failed=true;
+                (void)fail(snapshot->error,QA_ERROR_MEMORY,"Cannot allocate spatial snapshot");
+                return QA_SPATIAL_STOP;
+            }
+            frame->actors=actors;
+            frame->capacity=capacity;
+        }
+        if(snapshot->actors==snapshot->local)
+            memcpy(frame->actors,snapshot->local,snapshot->count*sizeof(*snapshot->actors));
+        snapshot->actors=frame->actors;
+        snapshot->capacity=frame->capacity;
+    }
+    snapshot->actors[snapshot->count++]=actor->body.actor;
+    return QA_SPATIAL_CONTINUE;
+}
+
+void qa_world_snapshot_release(qa_world_actor_snapshot *snapshot)
+{
+    if(snapshot->frame!=NULL) snapshot->frame->active=false;
+}
+
+bool qa_world_snapshot_capture(qa_world *world,qa_bounds bounds,qa_collision_role role,
+                               qa_world_actor_snapshot *out,qa_error *error)
+{
+    out->actors=out->local;
+    out->count=0;
+    out->capacity=sizeof(out->local)/sizeof(out->local[0]);
+    out->world=world;
+    out->frame=NULL;
+    out->error=error;
+    out->failed=false;
+    bool ok=role==QA_COLLISION_BOTH?
+        qa_spatial_visit_raw(world,bounds,snapshot_actor,out,error):
+        qa_world_visit(world,bounds,role,snapshot_actor,out,error);
+    if(!ok || out->failed) {
+        qa_world_snapshot_release(out);
+        return false;
+    }
+    return true;
+}
+
 typedef struct trigger_context {
     qa_world *world;
     qa_actor_id actor;
@@ -241,13 +318,10 @@ bool qa_world_touch_triggers(qa_world *world,qa_actor_id actor,qa_collision_fami
         if(context.failed && error!=NULL) *error=context.error;
         return !context.failed;
     }
-    size_t capacity=world->capacity;
-    if(capacity>SIZE_MAX/sizeof(qa_actor_id)) return fail(error,QA_ERROR_MEMORY,"Trigger snapshot too large");
-    qa_actor_id *candidates=malloc(capacity*sizeof(*candidates));
-    if(candidates==NULL) return fail(error,QA_ERROR_MEMORY,"Cannot allocate trigger snapshot");
-    size_t count=0; bool overflow=false;
-    bool ok=qa_world_query(world,moving.absolute_bounds,QA_COLLISION_TRIGGER,candidates,capacity,&count,&overflow,error);
-    if(ok) for(size_t i=0;i<count && !context.failed && qa_actors_get(world->actors,actor)!=NULL;++i) touch_candidate(&context,candidates[i]);
-    if(context.failed) { if(error!=NULL) *error=context.error; ok=false; }
-    free(candidates); return ok;
+    qa_world_actor_snapshot candidates;
+    if(!qa_world_snapshot_capture(world,moving.absolute_bounds,QA_COLLISION_TRIGGER,&candidates,error)) return false;
+    for(size_t i=0;i<candidates.count && !context.failed && qa_actors_get(world->actors,actor)!=NULL;++i) touch_candidate(&context,candidates.actors[i]);
+    bool ok=!context.failed;
+    if(context.failed && error!=NULL) *error=context.error;
+    qa_world_snapshot_release(&candidates); return ok;
 }

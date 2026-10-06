@@ -42,6 +42,20 @@ struct qa_spatial_member {
     uint32_t sector;
     qa_spatial_member *previous, *next, *retired_next;
 };
+typedef struct qa_world_snapshot_frame {
+    struct qa_world_snapshot_frame *next;
+    qa_actor_id *actors;
+    size_t capacity;
+    bool active;
+} qa_world_snapshot_frame;
+typedef struct qa_world_actor_snapshot {
+    qa_actor_id local[8], *actors;
+    size_t count, capacity;
+    qa_world *world;
+    qa_world_snapshot_frame *frame;
+    qa_error *error;
+    bool failed;
+} qa_world_actor_snapshot;
 struct qa_world {
     qa_actor_registry *actors;
     qa_collision_geometry *geometry;
@@ -54,6 +68,7 @@ struct qa_world {
     uint64_t attachment_order, body_serial;
     qa_actor_id collision_link_actor;
     qa_world_geometry_admission *geometry_admission;
+    qa_world_snapshot_frame *snapshot_frames;
 };
 static inline qa_collision_geometry *qa_world_model_geometry(const qa_world *world,
     const qa_actor_collision *collision)
@@ -68,5 +83,10 @@ void qa_spatial_dispose(qa_world *);
 typedef qa_spatial_visit (*qa_spatial_raw_fn)(void *, const qa_spatial_actor *);
 bool qa_spatial_visit_raw(qa_world *, qa_bounds, qa_spatial_raw_fn, void *, qa_error *);
 bool qa_world_refresh(qa_world *, const qa_spatial_actor *, qa_spatial_actor *, qa_error *);
+
+/* BOTH captures raw links; filtered roles retain current provider readers. */
+bool qa_world_snapshot_capture(qa_world *, qa_bounds, qa_collision_role,
+                               qa_world_actor_snapshot *, qa_error *);
+void qa_world_snapshot_release(qa_world_actor_snapshot *);
 
 #endif
