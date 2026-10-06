@@ -26,6 +26,7 @@
 #include "qa/media_library_prepare.h"
 #include "particle_clock.h"
 #include "q2_client_lerp.h"
+#include "particle_delivery.h"
 #include <limits.h>
 
 typedef struct frontend_visual_content {
@@ -1386,6 +1387,8 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
             frontend_model *model;
             if (!model_read(frontend, owner, path, view.model_resources[part], view.model_openings[part],
                 view.family == QA_GAME_Q1 && view.has_player_colors, view.player_colors, &model, error)) return false;
+            if (part == 0 && (view.family == QA_GAME_Q1 || view.q1_effects || model->model->format == QA_MODEL_MDL) &&
+                !frontend_particle_q1_entity(frontend, &view, model->model, error)) return false;
             qa_scene_model_input input = {.view = world->view, .transform = placement,
                 .previous_origin = view.previous_origin, .color = color, .family = owner->family,
                 .model_beam = view.model_beam, .beam_segment_length = (float)view.frame,

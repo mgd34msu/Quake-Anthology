@@ -4,6 +4,7 @@
 #include "config_store.h"
 #include "view_settings.h"
 #include "save_private.h"
+#include "particle_delivery.h"
 #include "qa/network_q1_decoder_save.h"
 #include "qa/application_network_qw.h"
 #include "qa/application_network.h"
@@ -202,6 +203,7 @@ static bool read_message(qa_net_protocol_id protocol,qc_decoder decoder,qa_net_r
     case QA_QW_SET_ANGLE:out->op=QA_NQ_SETANGLE;memcpy(out->data.angles,source.data.angles,sizeof(out->data.angles));break;
     case QA_QW_INTERMISSION:out->op=QA_NQ_INTERMISSION;break;
     case QA_QW_FINALE:out->op=QA_NQ_FINALE;break;
+    case QA_QW_TEMPORARY_ENTITY:out->op=QA_NQ_TEMPENTITY;out->data.temporary=source.data.temporary;break;
     default:break;
     }
     return true;
@@ -236,6 +238,9 @@ static bool project(frontend_qc_messages *owner,qc_recipient *row,const qa_nq_me
     /* Native control/stats remain with their Source owners; this decoder
      * delivers only the actor-qualified transient view effects. */
     if(row->native) return true;
+    if(message->op==QA_NQ_TEMPENTITY && row->camera.recipient.registry)
+        return frontend_particle_q1_temporary(owner->frontend,row->camera.source.provider,
+            row->camera.recipient,&message->data.temporary,qa_q1_is_qw(row_protocol(row)),error);
     if(message->op==QA_NQ_STAT) {
         if(message->data.indexed.index>=32)
             return frontend_fail(error,QA_ERROR_FORMAT,"QC client stat exceeds its actual protocol roster");

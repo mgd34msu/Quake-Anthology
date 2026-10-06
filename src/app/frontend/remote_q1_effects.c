@@ -171,7 +171,7 @@ static void light(frontend_remote_q1 *row,uint32_t entity,qa_vec3 origin,
 static bool temporary(frontend_remote_q1 *row, const qa_q1_temp *event, qa_error *error)
 {
     frontend_remote_q1_effects *fx = row->effects;
-    qa_vec3 origin = vector(event->origin), zero = qa_v3(0,0,0);
+    qa_vec3 origin = vector(event->origin);
     const char *path = NULL;
     if (event->kind == QA_Q1_TEMP_BEAM) {
         size_t slot = BEAMS;
@@ -184,37 +184,23 @@ static bool temporary(frontend_remote_q1 *row, const qa_q1_temp *event, qa_error
             event->entity, event->type, true};
         return true;
     }
+    if (!frontend_fx_q1_temporary_particles(&fx->particles, &fx->random, event,
+            qa_q1_is_qw(row->options.domain.protocol), row->seconds))
+        return remote_q1_fail(error, QA_ERROR_FORMAT, "Unsupported received Q1 temporary effect");
     if (event->kind == QA_Q1_TEMP_COLORS) {
-        if (!event->color_length) return remote_q1_fail(error, QA_ERROR_FORMAT, "Q1 explosion has an empty palette range");
-        frontend_fx_q1_color_explosion(&fx->particles, &fx->random, origin, row->seconds,
-            event->color_start, event->color_length);
         light(row, 0, origin, 350, .5, 300, 0, qa_v3(1,1,1));
         path = "weapons/r_exp3.wav";
     } else switch (event->type) {
     case 0: case 1:
-        frontend_fx_q1_impact(&fx->particles, &fx->random, origin, zero, 0,
-            event->type ? 20 : 10, row->seconds);
         if (qa_builtin_random_integer(&fx->random) % 5) path = "weapons/tink1.wav";
         else { uint32_t n = qa_builtin_random_integer(&fx->random) & 3;
             path = n == 1 ? "weapons/ric1.wav" : n == 2 ? "weapons/ric2.wav" : "weapons/ric3.wav"; }
         break;
-    case 2: frontend_fx_q1_impact(&fx->particles, &fx->random, origin, zero, 0,
-        qa_q1_is_qw(row->options.domain.protocol)?20*event->count:20, row->seconds); break;
     case 3: case 4:
-        frontend_fx_q1_explosion(&fx->particles, &fx->random, origin, row->seconds, event->type == 4);
         if (event->type == 3) light(row, 0, origin, 350, .5, 300, 0, qa_v3(1,1,1));
         path = "weapons/r_exp3.wav"; break;
-    case 7: case 8:
-        frontend_fx_q1_impact(&fx->particles, &fx->random, origin, zero,
-            event->type == 7 ? 20 : 226, event->type == 7 ? 30 : 20, row->seconds);
-        path = event->type == 7 ? "wizard/hit.wav" : "hknight/hit.wav"; break;
-    case 10: case 11: frontend_fx_q1_splash(&fx->particles, &fx->random, origin, row->seconds, event->type == 10); break;
-    case 12: case 13:
-        if(!qa_q1_is_qw(row->options.domain.protocol))
-            return remote_q1_fail(error,QA_ERROR_FORMAT,"NQ blood effect lacks its genuine protocol form");
-        frontend_fx_q1_impact(&fx->particles,&fx->random,origin,zero,event->type==12?73:225,
-            event->type==12?20*event->count:50,row->seconds); break;
-    default: return remote_q1_fail(error, QA_ERROR_FORMAT, "Unsupported received Q1 temporary effect");
+    case 7: case 8: path = event->type == 7 ? "wizard/hit.wav" : "hknight/hit.wav"; break;
+    default: break;
     }
     return !path || sound(row, path, 0, origin, 0, 1, 1, false, false, error);
 }
@@ -249,9 +235,9 @@ bool remote_q1_effects_service(frontend_remote_q1 *row, const qa_nq_message *mes
     }
     case QA_NQ_PARTICLE:
         if (!owner(row,error)) return false;
-        frontend_fx_q1_impact(&row->effects->particles, &row->effects->random,
+        frontend_fx_q1_particle_event(&row->effects->particles, &row->effects->random,
             vector(message->data.particle.origin), vector(message->data.particle.direction),
-            message->data.particle.color, message->data.particle.count == 255 ? 1024 : message->data.particle.count, row->seconds);
+            message->data.particle.color, message->data.particle.count, row->seconds);
         return true;
     case QA_NQ_TEMPENTITY: return owner(row,error) && temporary(row,&message->data.temporary,error);
     case QA_NQ_BONUSFLASH:

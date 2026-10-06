@@ -4,6 +4,7 @@
 #include "qa/builtin.h"
 #include "qa/scene_effects.h"
 #include "qa/source_save.h"
+#include "qa/network_q1_nq.h"
 
 enum { FRONTEND_FX_PARTICLE_CAPACITY = 4096 };
 typedef struct frontend_fx_q2_particle {
@@ -36,6 +37,10 @@ typedef enum frontend_fx_q2_trail {
  * content group retains its own append array and source tracer/angular state. */
 void frontend_fx_q1_impact(frontend_fx_particles *, qa_builtin_random *, qa_vec3, qa_vec3,
     uint32_t color, int32_t count, double seconds);
+void frontend_fx_q1_particle_event(frontend_fx_particles *, qa_builtin_random *, qa_vec3,
+    qa_vec3, int32_t color, int32_t count, double seconds);
+bool frontend_fx_q1_temporary_particles(frontend_fx_particles *, qa_builtin_random *,
+    const qa_q1_temp *, bool quakeworld, double seconds);
 void frontend_fx_q1_entity(frontend_fx_particles *, qa_builtin_random *, qa_vec3, double);
 void frontend_fx_q1_trail(frontend_fx_particles *, qa_builtin_random *, qa_vec3, qa_vec3,
     uint32_t type, double);

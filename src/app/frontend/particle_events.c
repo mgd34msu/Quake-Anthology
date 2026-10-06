@@ -12,6 +12,8 @@
 #include "qa/application_native_q2_delivery.h"
 #include "qa/application_selected_effects.h"
 #include "source_client_registry.h"
+#include "selected_effects_particles.h"
+#include "qa/game_q1_weapons.h"
 
 enum { FRONTEND_PARTICLE_CAPACITY = 4096, FRONTEND_STEAM_CAPACITY = 32,
        FRONTEND_Q2_IMPACT_CAPACITY = 32, FRONTEND_Q2_LASER_CAPACITY = 32,
@@ -57,7 +59,8 @@ typedef struct frontend_particle_owner {
     float gravity;
     uint64_t q2_interval_ns;
     qa_q2_edition q2_edition;
-    qa_scene_q1_particle_state *q1;
+    frontend_fx_particles *q1;
+    bool q1_quakeworld;
     qa_scene_q2_particle_state *q2;
     size_t count;
     frontend_q2_impact impacts[FRONTEND_Q2_IMPACT_CAPACITY];
@@ -77,9 +80,16 @@ typedef struct frontend_q2_entity_sample {
     qa_application_native_q2_entity_sample current, previous;
     uint64_t frame;
 } frontend_q2_entity_sample;
+typedef struct frontend_q1_trail {
+    qa_actor_id actor;
+    qa_actor_owner provider;
+    const qa_model *model;
+    qa_vec3 origin;
+    uint64_t frame;
+} frontend_q1_trail;
 struct frontend_particle_state {
     frontend_particle_owner *owners;
-    uint64_t sample_ns;
+    uint64_t sample_ns, previous_sample_ns;
     qa_actor_owner clock_source;
     qa_session *clock_session;
     uint64_t clock_map_revision, clock_generation, client_ns, client_host_ns, server_ns, server_frame;
@@ -90,6 +100,8 @@ struct frontend_particle_state {
     frontend_q2_client_sample *source_clients;
     size_t source_client_count;
     bool source_ready;
+    frontend_q1_trail *q1_trails;
+    size_t q1_trail_capacity;
 };
 static bool particle_state(qa_frontend *frontend, qa_error *error)
 {
@@ -97,7 +109,8 @@ static bool particle_state(qa_frontend *frontend, qa_error *error)
     frontend->particles = calloc(1, sizeof(*frontend->particles));
     if (!frontend->particles)
         return frontend_fail(error, QA_ERROR_MEMORY, "allocating frontend particle continuation");
-    frontend->particles->sample_ns = qa_session_elapsed(qa_application_session(frontend->application));
+    frontend->particles->sample_ns = frontend->particles->previous_sample_ns =
+        qa_session_elapsed(qa_application_session(frontend->application));
     return true;
 }
 
@@ -411,7 +424,14 @@ static bool particle_owner(qa_frontend *frontend, qa_actor_owner provider, qa_ga
         }
     }
     qa_builtin_random_seed(&owner->random, 1);
-    if (family == QA_GAME_Q1) owner->q1 = calloc(FRONTEND_PARTICLE_CAPACITY, sizeof(*owner->q1));
+    if (family == QA_GAME_Q1) {
+        owner->q1 = calloc(1, sizeof(*owner->q1));
+        if (owner->q1) owner->q1->family = family;
+        const char *instance = qa_application_provider_instance(frontend->application, provider);
+        const qa_launch_instance *source = instance ?
+            qa_launch_snapshot_find(qa_application_launch(frontend->application), instance) : NULL;
+        owner->q1_quakeworld = source && source->selection.clock.kind == QA_CLOCK_QUAKEWORLD;
+    }
     else owner->q2 = calloc(FRONTEND_PARTICLE_CAPACITY, sizeof(*owner->q2));
     bool ok = (owner->q1 || owner->q2) && frontend_event_images(frontend, provider, family, &owner->images, error) &&
         qa_scene_particle_image(owner->images, family == QA_GAME_Q1 ? QA_SCENE_Q1 : QA_SCENE_Q2, &owner->particle_image, error);
@@ -431,6 +451,7 @@ void frontend_particle_retire(qa_frontend *frontend)
     }
     free(frontend->particles->source_entities);
     free(frontend->particles->source_clients);
+    free(frontend->particles->q1_trails);
     free(frontend->particles); frontend->particles = NULL;
 }
 void frontend_particle_reset_round(qa_frontend *frontend)
@@ -439,13 +460,15 @@ void frontend_particle_reset_round(qa_frontend *frontend)
     if (!state) return;
     for (frontend_particle_owner *owner = state->owners; owner; owner = owner->next) {
         owner->count = 0;
+        if (owner->q1) owner->q1->count = 0;
         memset(owner->impacts, 0, sizeof(owner->impacts));
         memset(owner->lasers, 0, sizeof(owner->lasers));
         memset(owner->lights, 0, sizeof(owner->lights));
         owner->steam_count = 0;
         memset(owner->steam, 0, sizeof(owner->steam));
     }
-    state->sample_ns = qa_session_elapsed(qa_application_session(frontend->application));
+    state->sample_ns = state->previous_sample_ns = qa_session_elapsed(qa_application_session(frontend->application));
+    if (state->q1_trails) memset(state->q1_trails, 0, state->q1_trail_capacity * sizeof(*state->q1_trails));
 }
 static uint32_t particle_random(frontend_particle_owner *owner)
 { return qa_builtin_random_integer(&owner->random); }
@@ -639,35 +662,109 @@ static bool q2_damage_particles(qa_frontend *frontend, frontend_particle_owner *
     if (sound && !q2_fixed_sound(frontend, owner, event, seat, sound, attenuation, error)) return false;
     return true;
 }
-static void q1_particles(frontend_particle_owner *owner, const qa_builtin_event *event)
+static bool q1_temporary(const qa_builtin_event *event, const char *resource, qa_q1_temp *out)
 {
-    double seconds = (double)event->time_ns / 1e9;
-    for (int i = 0; i < event->count && owner->count < FRONTEND_PARTICLE_CAPACITY; ++i) {
-        qa_scene_q1_particle_state *particle = &owner->q1[owner->count++];
-        if (event->count == 1024) {
-            float ramp = (float)(particle_random(owner) & 3);
-            qa_vec3 origin, velocity;
-            origin.x = event->origin.x + (float)(particle_random(owner) % 32) - 16;
-            velocity.x = (float)(particle_random(owner) % 512) - 256;
-            origin.y = event->origin.y + (float)(particle_random(owner) % 32) - 16;
-            velocity.y = (float)(particle_random(owner) % 512) - 256;
-            origin.z = event->origin.z + (float)(particle_random(owner) % 32) - 16;
-            velocity.z = (float)(particle_random(owner) % 512) - 256;
-            *particle = (qa_scene_q1_particle_state){.origin = origin, .velocity = velocity,
-                .ramp = ramp, .color = 111, .die = seconds + 5,
-                .kind = (i & 1) ? QA_Q1_PARTICLE_EXPLODE : QA_Q1_PARTICLE_EXPLODE2};
-        } else {
-            double die = seconds + .1 * (particle_random(owner) % 5);
-            uint32_t color = ((uint32_t)event->code & ~7u) + (particle_random(owner) & 7);
-            qa_vec3 jitter;
-            jitter.x = (float)(particle_random(owner) & 15) - 8;
-            jitter.y = (float)(particle_random(owner) & 15) - 8;
-            jitter.z = (float)(particle_random(owner) & 15) - 8;
-            *particle = (qa_scene_q1_particle_state){.origin = qa_vec_add(event->origin, jitter),
-                .velocity = qa_vec_scale(event->direction, 15), .color = color, .die = die,
-                .kind = QA_Q1_PARTICLE_SLOW_GRAVITY};
-        }
+    *out = (qa_q1_temp){.kind = QA_Q1_TEMP_POINT, .count = 1};
+    qa_vec3 origin = event->origin;
+    switch (event->kind) {
+    case QA_BUILTIN_IMPACT:
+        if (event->code == 2) {
+            out->type = 2;
+            out->count = (uint8_t)(int32_t)event->value;
+            if (event->flags & QA_Q1_IMPACT_GROUPED) {
+                origin = event->end;
+            }
+        } else if (event->code == 3) out->type = 0;
+        else if (event->code == 4) out->type = 1;
+        else if (event->code == 7 || event->code == 8 || event->code == 10)
+            out->type = (uint8_t)event->code;
+        else return false;
+        break;
+    case QA_BUILTIN_EXPLOSION: out->type = event->code == 1 ? 4 : event->code == 10 ? 10 : 3; break;
+    case QA_BUILTIN_TELEPORT: out->type = 11; break;
+    case QA_BUILTIN_EFFECT:
+        if (!resource || strcmp(resource, "colored-explosion") || event->count <= 0) return false;
+        out->kind = QA_Q1_TEMP_COLORS;
+        out->color_start = (uint8_t)event->code; out->color_length = (uint8_t)event->count;
+        break;
+    default: return false;
     }
+    out->origin[0] = origin.x; out->origin[1] = origin.y; out->origin[2] = origin.z;
+    return true;
+}
+
+static bool q1_particle_event(qa_frontend *frontend, const qa_builtin_event *event, qa_error *error)
+{
+    qa_q1_temp temporary;
+    const char *resource = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), event->resource);
+    bool raw = event->kind == QA_BUILTIN_PARTICLES;
+    bool blood = event->kind == QA_BUILTIN_IMPACT && event->code == 1;
+    if (!raw && !blood && !q1_temporary(event, resource, &temporary)) return true;
+    frontend_particle_owner *owner;
+    if (!particle_owner(frontend, event->provider, QA_GAME_Q1, 0, 0,
+            (qa_actor_id){0}, &owner, error)) return false;
+    double seconds = (double)frontend->particles->sample_ns / 1e9;
+    if (raw) frontend_fx_q1_particle_event(owner->q1, &owner->random, event->origin,
+        event->direction, event->code, event->count, seconds);
+    else if (blood) {
+        if (owner->q1_quakeworld) {
+            temporary = (qa_q1_temp){.kind = QA_Q1_TEMP_POINT, .type = 12,
+                .count = event->flags & QA_Q1_IMPACT_GROUPED ? (uint8_t)(int32_t)event->value : 1,
+                .origin = {event->origin.x, event->origin.y, event->origin.z}};
+            (void)frontend_fx_q1_temporary_particles(owner->q1, &owner->random, &temporary, true, seconds);
+        } else frontend_fx_q1_particle_event(owner->q1, &owner->random, event->origin,
+            qa_v3(0, 0, 0), 73, (int32_t)(event->value * 2), seconds);
+    } else (void)frontend_fx_q1_temporary_particles(owner->q1, &owner->random, &temporary,
+        owner->q1_quakeworld, seconds);
+    return true;
+}
+
+bool frontend_particle_q1_temporary(qa_frontend *frontend, qa_actor_owner provider,
+    qa_actor_id recipient, const qa_q1_temp *temporary, bool quakeworld, qa_error *error)
+{
+    if (temporary->kind == QA_Q1_TEMP_BEAM) return true;
+    frontend_particle_owner *owner;
+    if (!particle_owner(frontend, provider, QA_GAME_Q1, provider, frontend->map_revision,
+            recipient, &owner, error)) return false;
+    double seconds = (double)qa_session_elapsed(qa_application_session(frontend->application)) / 1e9;
+    return frontend_fx_q1_temporary_particles(owner->q1, &owner->random, temporary, quakeworld, seconds) ||
+        frontend_fail(error, QA_ERROR_FORMAT, "Q1 temporary effect has no Source particle recipe");
+}
+
+bool frontend_particle_q1_entity(qa_frontend *frontend, const qa_application_visual_view *view,
+    const qa_model *model, qa_error *error)
+{
+    uint32_t effects = view->q1_effects | (view->family == QA_GAME_Q1 ? (uint32_t)view->effects : 0);
+    uint32_t flags = (uint32_t)model->flags;
+    if (!(effects & 1u) && !(flags & UINT32_C(0xf7))) return true;
+    if (!particle_state(frontend, error)) return false;
+    frontend_particle_state *state = frontend->particles;
+    size_t slot = view->actor.slot;
+    if (slot >= state->q1_trail_capacity) {
+        size_t extent = (size_t)qa_actors_capacity(qa_world_actors(qa_application_world(frontend->application)));
+        size_t capacity = state->q1_trail_capacity ? state->q1_trail_capacity : 64;
+        while (capacity <= slot && capacity < extent) capacity = capacity > extent / 2 ? extent : capacity * 2;
+        frontend_q1_trail *trails = realloc(state->q1_trails, capacity * sizeof(*trails));
+        if (!trails) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining Source entity trail origins");
+        memset(trails + state->q1_trail_capacity, 0, (capacity - state->q1_trail_capacity) * sizeof(*trails));
+        state->q1_trails = trails; state->q1_trail_capacity = capacity;
+    }
+    frontend_q1_trail *trail = state->q1_trails + slot;
+    bool same = qa_actor_id_equal(trail->actor, view->actor) && trail->provider == view->provider && trail->model == model;
+    if (same && trail->frame == frontend->frame_number) return true;
+    qa_vec3 origin = view->body.origin, start = same ? trail->origin : origin;
+    qa_vec3 delta = qa_vec_sub(origin, start);
+    if (fabsf(delta.x) > 100 || fabsf(delta.y) > 100 || fabsf(delta.z) > 100) start = origin;
+    *trail = (frontend_q1_trail){.actor = view->actor, .provider = view->provider,
+        .model = model, .origin = origin, .frame = frontend->frame_number};
+    frontend_particle_owner *owner;
+    if (!particle_owner(frontend, view->provider, QA_GAME_Q1, 0, 0, (qa_actor_id){0}, &owner, error)) return false;
+    double seconds = (double)state->sample_ns / 1e9;
+    if (effects & 1u) frontend_fx_q1_entity(owner->q1, &owner->random, origin, seconds);
+    int type = flags & 4u ? 2 : flags & 32u ? 4 : flags & 16u ? 3 : flags & 64u ? 5 :
+        flags & 1u ? 0 : flags & 2u ? 1 : flags & 128u ? 6 : -1;
+    if (type >= 0) frontend_fx_q1_trail(owner->q1, &owner->random, start, origin, (uint32_t)type, seconds);
+    return true;
 }
 static bool steam_particles(frontend_particle_owner *owner, const qa_q2_map_event *event,
     uint64_t now, bool smoke)
@@ -1348,6 +1445,8 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
 bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
 {
     particle_clients_retire(frontend);
+    if (frontend->particles) frontend->particles->sample_ns =
+        qa_session_elapsed(qa_application_session(frontend->application));
     uint64_t q2_sample, server;
     float back_lerp;
     bool physical;
@@ -1356,15 +1455,10 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
     for (size_t i = 0; i < qa_application_event_count(frontend->application); ++i) {
         qa_builtin_event event;
         if (!qa_application_event_at(frontend->application, i, &event)) return frontend_fail(error, QA_ERROR_ARGUMENT, "particle event queue changed");
-        if (event.kind != QA_BUILTIN_PARTICLES ||
-            (event.family != QA_GAME_Q1 && event.family != QA_GAME_Q2) ||
-            (event.family == QA_GAME_Q1 && event.count <= 0)) continue;
-        frontend_particle_owner *owner;
         if (event.family == QA_GAME_Q1) {
-            if (!particle_owner(frontend, event.provider, event.family, 0, 0,
-                    (qa_actor_id){0}, &owner, error)) return false;
-            q1_particles(owner, &event);
-        } else {
+            if (!q1_particle_event(frontend, &event, error)) return false;
+        } else if (event.family == QA_GAME_Q2 && event.kind == QA_BUILTIN_PARTICLES) {
+            frontend_particle_owner *owner;
             qa_application_q2_audience audience;
             if (!qa_application_event_q2_audience_at(frontend->application, i, &audience) ||
                 !audience.captured || audience.source != event.provider)
@@ -1506,6 +1600,11 @@ bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene
     double seconds = (double)now / 1e9;
     for (frontend_particle_owner *owner = frontend->particles->owners; owner; owner = owner->next) {
         frontend_q2_sample sample = {0};
+        if (owner->q1 && owner->recipient.registry) {
+            qa_actor_id recipient;
+            if (!frontend_seat_actor_read(frontend, seat, &recipient) ||
+                !qa_actor_id_equal(recipient, owner->recipient)) continue;
+        }
         if (owner->q2) {
             qa_actor_id recipient;
             if (!frontend_seat_actor_read(frontend, seat, &recipient) ||
@@ -1573,10 +1672,10 @@ bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene
             if (!qa_scene_beam(&frontend->frame, view, laser->start, laser->end,
                     4, color, NULL, error)) return false;
         }
-        for (size_t i = owner->count; i > 0; --i) {
+        for (size_t i = owner->q1 ? owner->q1->count : owner->count; i > 0; --i) {
             qa_vec3 origin; float alpha = 1; uint32_t index;
             if (owner->q1) {
-                const qa_scene_q1_particle_state *particle = &owner->q1[i - 1];
+                const qa_scene_q1_particle_state *particle = &owner->q1->values.q1[i - 1];
                 if (particle->die < seconds) continue;
                 origin = particle->origin; index = particle->color & 255;
             } else {
@@ -1604,8 +1703,8 @@ bool frontend_particle_advance(qa_frontend *frontend, qa_error *error)
             return frontend_fail(error, QA_ERROR_NOT_FOUND, "particle provider has no authoritative gravity");
     uint64_t now = qa_session_elapsed(qa_application_session(frontend->application));
     double seconds = (double)now / 1e9;
-    double elapsed = now >= state->sample_ns ? (double)(now - state->sample_ns) / 1e9 : 0;
-    state->sample_ns = now;
+    double elapsed = now >= state->previous_sample_ns ? (double)(now - state->previous_sample_ns) / 1e9 : 0;
+    state->sample_ns = state->previous_sample_ns = now;
     for (frontend_particle_owner *owner = state->owners; owner; owner = owner->next) {
         frontend_q2_sample sample = {0};
         if (owner->q2 && !q2_owner_sample(frontend, owner, &sample, error)) return false;
@@ -1616,12 +1715,12 @@ bool frontend_particle_advance(qa_frontend *frontend, qa_error *error)
                 *impact = (frontend_q2_impact){0};
         }
         size_t retained = 0;
-        for (size_t i = 0; i < owner->count; ++i) {
+        for (size_t i = 0; i < (owner->q1 ? owner->q1->count : owner->count); ++i) {
             if (owner->q1) {
-                qa_scene_q1_particle_state particle = owner->q1[i];
+                qa_scene_q1_particle_state particle = owner->q1->values.q1[i];
                 if (particle.die < seconds) continue;
                 qa_scene_q1_particle_advance(&particle, elapsed, owner->gravity);
-                owner->q1[retained++] = particle;
+                owner->q1->values.q1[retained++] = particle;
             } else {
                 qa_vec3 origin; float alpha;
                 if (owner->q2[i].alpha_velocity!=-10000 &&
@@ -1629,7 +1728,8 @@ bool frontend_particle_advance(qa_frontend *frontend, qa_error *error)
                 owner->q2[retained++] = owner->q2[i];
             }
         }
-        owner->count = retained;
+        if (owner->q1) owner->q1->count = retained;
+        else owner->count = retained;
     }
     return true;
 }

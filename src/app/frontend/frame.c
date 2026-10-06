@@ -483,8 +483,7 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
     }
     /* Network, demos and tools also consume application events. Their owner
      * must drain its projections before this shared queue is released. */
-    return (!frontend->qc_messages || frontend_qc_messages_drain(frontend->qc_messages,error)) &&
-        frontend_equipment_events_drain(frontend->gear_events,error) &&
+    return frontend_equipment_events_drain(frontend->gear_events,error) &&
         (frontend->round ? frontend_round_clear_events(frontend,error) :
          qa_application_clear_events(frontend->application, error));
 }
@@ -852,11 +851,14 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *
                 frontend_remote_q2_sample(frontend,frontend->wall_time_ns,error) && frontend_network_publish(frontend, error) && frontend_source_times_sync(frontend, false, error) &&
                 frontend_input_profile_bind(frontend,error) && frontend_campaign_drain(frontend,error), error);
         }
-        if (ok && !frontend->options.dedicated) {
+        if (ok) {
             ok = qa_profiler_push(profiler, "scene_updates", error);
-            if (ok) ok = frontend_profiler_end(profiler, frontend_scene_sync(frontend, error) &&
-                frontend_particle_source_complete(frontend, error) &&
-                frontend_map_events(frontend, error) && frontend_particle_events(frontend, error) && frontend_player_events(frontend, error), error);
+            if (ok) ok = frontend_profiler_end(profiler,
+                (frontend->options.dedicated || (frontend_scene_sync(frontend, error) &&
+                    frontend_particle_source_complete(frontend, error) && frontend_map_events(frontend, error))) &&
+                (!frontend->qc_messages || frontend_qc_messages_drain(frontend->qc_messages, error)) &&
+                (frontend->options.dedicated || (frontend_particle_events(frontend, error) &&
+                    frontend_player_events(frontend, error))), error);
         }
         if (ok && !frontend->options.dedicated) {
             ok = qa_profiler_push(profiler, "presentation", error);

@@ -43,6 +43,52 @@ void frontend_fx_q1_impact(frontend_fx_particles *state, qa_builtin_random *rand
     }
 }
 
+void frontend_fx_q1_particle_event(frontend_fx_particles *state, qa_builtin_random *random,
+    qa_vec3 origin, qa_vec3 direction, int32_t color, int32_t count, double seconds)
+{
+    float *axes[3] = {&direction.x, &direction.y, &direction.z};
+    for (unsigned i = 0; i < 3; ++i) {
+        float encoded = truncf(*axes[i] * 16);
+        *axes[i] = fminf(127, fmaxf(-128, encoded)) / 16;
+    }
+    uint8_t wire_count = (uint8_t)count;
+    frontend_fx_q1_impact(state, random, origin, direction, (uint8_t)color,
+        wire_count == 255 ? 1024 : wire_count, seconds);
+}
+
+bool frontend_fx_q1_temporary_particles(frontend_fx_particles *state, qa_builtin_random *random,
+    const qa_q1_temp *event, bool quakeworld, double seconds)
+{
+    qa_vec3 origin = qa_v3(event->origin[0], event->origin[1], event->origin[2]);
+    if (event->kind == QA_Q1_TEMP_COLORS) {
+        if (!event->color_length) return false;
+        frontend_fx_q1_color_explosion(state, random, origin, seconds,
+            event->color_start, event->color_length);
+        return true;
+    }
+    if (event->kind != QA_Q1_TEMP_POINT) return false;
+    qa_vec3 zero = qa_v3(0, 0, 0);
+    switch (event->type) {
+    case 0: case 1:
+        frontend_fx_q1_impact(state, random, origin, zero, 0, event->type ? 20 : 10, seconds); break;
+    case 2:
+        frontend_fx_q1_impact(state, random, origin, zero, 0, quakeworld ? 20 * event->count : 20, seconds); break;
+    case 3: case 4:
+        frontend_fx_q1_explosion(state, random, origin, seconds, event->type == 4); break;
+    case 7: case 8:
+        frontend_fx_q1_impact(state, random, origin, zero, event->type == 7 ? 20 : 226,
+            event->type == 7 ? 30 : 20, seconds); break;
+    case 10: case 11:
+        frontend_fx_q1_splash(state, random, origin, seconds, event->type == 10); break;
+    case 12: case 13:
+        if (!quakeworld) return false;
+        frontend_fx_q1_impact(state, random, origin, zero, event->type == 12 ? 73 : 225,
+            event->type == 12 ? 20 * event->count : 50, seconds); break;
+    default: return false;
+    }
+    return true;
+}
+
 void frontend_fx_q1_entity(frontend_fx_particles *state, qa_builtin_random *random,
     qa_vec3 origin, double seconds)
 {
