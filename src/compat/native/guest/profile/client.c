@@ -14,7 +14,7 @@ typedef enum profile_phase { PROFILE_ARMED, PROFILE_ACTIVE, PROFILE_STOPPED } pr
 typedef struct profile_store { uint64_t instruction, address, bytes; } profile_store;
 typedef struct profile_scope {
     struct profile_scope *parent;
-    uint64_t id, entry, stop, fs_base, gs_base;
+    uint64_t id, entry, stop, fs_base, gs_base, inventory_sequence;
     bool syscalls;
     profile_phase phase;
     guest_profile_guard_mapping *mappings;
@@ -118,31 +118,44 @@ static bool fp_original(void *context, byte *fp)
     memcpy(fp + 8, &saved, sizeof(saved));
     return true;
 }
-static profile_scope *scope_read(const guest_profile_guard_control *control)
+static bool scope_state_read(profile_scope *row, const guest_profile_guard_control *control)
 {
     if (!control->scope || !control->entry || (!control->stop && !control->syscalls) || !control->fault ||
         !control->mapping_count || control->mapping_count > SIZE_MAX / sizeof(guest_profile_guard_mapping) ||
         control->callback_count > SIZE_MAX / sizeof(guest_profile_guard_callback) ||
-        control->interest_count > SIZE_MAX / sizeof(guest_profile_interest)) return NULL;
-    profile_scope *row = dr_global_alloc(sizeof(*row));
-    if (!row) return NULL;
-    memset(row, 0, sizeof(*row));
+        control->interest_count > SIZE_MAX / sizeof(guest_profile_interest)) return false;
     row->id = control->scope; row->entry = control->entry; row->stop = control->stop;
+    row->inventory_sequence = control->inventory_sequence;
     row->fs_base = control->fs_base; row->gs_base = control->gs_base;
     row->syscalls = control->syscalls;
     row->fault = control->fault; row->phase = PROFILE_ARMED;
     row->mapping_count = control->mapping_count; row->callback_count = control->callback_count;
     row->interest_count = control->interest_count; row->bypass = control->bypass;
+    row->pkru = 0; row->pkru_active = false;
     if (pkru_offset) {
         uint64_t active;
         if (!control->xsave || control->xsave_bytes < 576 ||
             pkru_offset > control->xsave_bytes || sizeof(row->pkru) > control->xsave_bytes - pkru_offset ||
             !copy_from_app(control->xsave + 512, &active, sizeof(active)) ||
-            !copy_from_app(control->xsave + pkru_offset, &row->pkru, sizeof(row->pkru))) {
-            scope_free(row); return NULL;
-        }
+            !copy_from_app(control->xsave + pkru_offset, &row->pkru, sizeof(row->pkru))) return false;
         row->pkru_active = (active & (UINT64_C(1) << 9)) != 0;
     }
+    return true;
+}
+static bool scope_entry_valid(const profile_scope *row)
+{
+    byte trap;
+    return scope_range(row, row->entry, 1, QA_NATIVE_GUEST_EXECUTE, NULL) &&
+        (!row->stop || (scope_range(row, row->stop, 1, QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE, NULL) &&
+        copy_from_app((void *)(ptr_uint_t)row->stop, &trap, 1) && trap == 0xcc));
+}
+static profile_scope *scope_read(const guest_profile_guard_control *control)
+{
+    profile_scope initial = {0};
+    if (!scope_state_read(&initial, control)) return NULL;
+    profile_scope *row = dr_global_alloc(sizeof(*row));
+    if (!row) return NULL;
+    *row = initial;
     row->mappings = dr_global_alloc(row->mapping_count * sizeof(*row->mappings));
     row->callbacks = row->callback_count ? dr_global_alloc(row->callback_count * sizeof(*row->callbacks)) : NULL;
     row->interests = row->interest_count ? dr_global_alloc(row->interest_count * sizeof(*row->interests)) : NULL;
@@ -169,10 +182,7 @@ static profile_scope *scope_read(const guest_profile_guard_control *control)
         for (size_t j = 0; okay && j < i; ++j)
             okay = row->interests[j].kind != interest->kind || row->interests[j].id != interest->id;
     }
-    byte trap;
-    okay = okay && scope_range(row, row->entry, 1, QA_NATIVE_GUEST_EXECUTE, NULL) &&
-        (!row->stop || (scope_range(row, row->stop, 1, QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE, NULL) &&
-        copy_from_app((void *)(ptr_uint_t)row->stop, &trap, 1) && trap == 0xcc));
+    okay = okay && scope_entry_valid(row);
     if (!okay) { scope_free(row); return NULL; }
     return row;
 }
@@ -295,6 +305,18 @@ static bool control_apply(guest_profile_guard_control *control)
     }
     if (scope && scope->phase != PROFILE_STOPPED) return false;
     if (control->operation == GUEST_PROFILE_GUARD_RESUME && (!scope || scope->id != control->scope)) return false;
+    if (control->operation == GUEST_PROFILE_GUARD_RESUME &&
+        scope->inventory_sequence == control->inventory_sequence &&
+        scope->stop == control->stop && scope->syscalls == control->syscalls &&
+        scope->fault == control->fault && scope->bypass == control->bypass &&
+        scope->mapping_count == control->mapping_count &&
+        scope->callback_count == control->callback_count && scope->interest_count == control->interest_count) {
+        profile_scope resumed = *scope;
+        if (!scope_state_read(&resumed, control) || !scope_entry_valid(&resumed)) return false;
+        if (control->entry != scope->boundary_bypass) resumed.boundary_bypass = 0;
+        *scope = resumed;
+        return true;
+    }
     profile_scope *next = scope_read(control);
     if (!next) return false;
     profile_scope *previous = scope;

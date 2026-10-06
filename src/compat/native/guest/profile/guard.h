@@ -46,6 +46,7 @@ typedef struct guest_profile_guard_control {
     uint32_t operation, status, reserved;
     guest_profile_guard_receipt installed;
     uint64_t scope, entry, stop, fs_base, gs_base;
+    uint64_t inventory_sequence; /* Latest successful child inventory mutation request. */
     bool syscalls; /* Actual invocation owns a stopped Linux syscall service. */
     const guest_profile_guard_mapping *mappings;
     size_t mapping_count;

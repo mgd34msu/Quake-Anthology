@@ -50,7 +50,7 @@ typedef struct host_server {
     guest_profile_guard_mapping *mappings; size_t mapping_count,mapping_capacity;
     host_callback *callbacks; size_t callback_count,callback_capacity;
     guest_profile_interest *interests; size_t interest_count,interest_capacity;
-    uint64_t stop,run_sequence,bypass;
+    uint64_t stop,run_sequence,bypass,inventory_sequence;
     guest_host_x86_64_capabilities capability;
     guest_host_x86_64_state state;
     guest_profile_guard_receipt profile;
@@ -216,6 +216,7 @@ static bool server_profile(host_server *server,guest_profile_guard_operation ope
         .entry=cpu?cpu->instruction:0,.stop=server->stop,.fs_base=cpu?cpu->fs_base:0,
         .gs_base=cpu?cpu->gs_base:0,.syscalls=server->syscalls,.fault=&server->profile_fault,
         .interests=server->interests,.interest_count=server->interest_count,.bypass=server->bypass,
+        .inventory_sequence=server->inventory_sequence,
         .xsave=cpu?cpu->xsave.data:NULL,.xsave_bytes=cpu?cpu->xsave.size:0};
     if(operation==GUEST_PROFILE_GUARD_ENTER || operation==GUEST_PROFILE_GUARD_RESUME) {
         control.mappings=server->mappings;control.mapping_count=server->mapping_count;
@@ -324,8 +325,8 @@ static bool server_stop(void *context,int number,void *opaque,guest_host_x86_64_
             okay=packet.sequence==server->run_sequence && packet.descriptor<0 &&
                 state_decode((qa_bytes){packet.body.data,packet.body.size},&server->capability,&next,error);
             packet_free(&packet);
-            if(okay)okay=server_profile(server,GUEST_PROFILE_GUARD_RESUME,&next,error);
             if(okay)okay=guest_profile_cpu_current(&server->domain,&server->capability,&next,error);
+            if(okay)okay=server_profile(server,GUEST_PROFILE_GUARD_RESUME,&next,error);
             if(okay) {guest_host_x86_64_state_free(state);*state=next;*resume=true;server->stopped=false;return true;}
             guest_host_x86_64_state_free(&next);break;
         }
@@ -394,7 +395,8 @@ static bool server_dispatch(host_server *server,host_packet *packet,bool *comple
         for(size_t i=0;i<server->mapping_count;++i) if(server->mappings[i].mapping.id==mapping.id) okay=false;
         if(!okay || !grow((void **)&server->mappings,&server->mapping_capacity,server->mapping_count+1,sizeof(*server->mappings),&failure) ||
             !guest_host_memory_child_map(backing->descriptor,&mapping,&failure)) {okay=false;break;}
-        server->mappings[server->mapping_count++]=(guest_profile_guard_mapping){mapping,backing->view.file,backing->view.source.accessible_bytes};break;
+        server->mappings[server->mapping_count++]=(guest_profile_guard_mapping){mapping,backing->view.file,backing->view.source.accessible_bytes};
+        server->inventory_sequence=packet->sequence;break;
     }
     case HOST_CHANGE: {
         if(bytes!=49 || data[48]>1 || packet->descriptor>=0) {okay=fail(&failure,QA_ERROR_FORMAT,0,"child mapping change is invalid");break;}
@@ -406,14 +408,16 @@ static bool server_dispatch(host_server *server,host_packet *packet,bool *comple
         if(!guest_host_memory_child_change(&expected,rights,data[48]!=0,&failure)) {okay=false;break;}
         if(data[48]) {memmove(server->mappings+index,server->mappings+index+1,(server->mapping_count-index-1)*sizeof(*server->mappings));--server->mapping_count;}
         else server->mappings[index].mapping.permissions=rights;
-        break;
+        server->inventory_sequence=packet->sequence;break;
     }
     case HOST_INTEREST: {
         if(bytes!=29 || data[28]>1 || packet->descriptor>=0) {okay=false;break;}
         guest_profile_interest interest={(guest_profile_interest_kind)qa_load_u32le(data),
             qa_load_u64le(data+4),qa_load_u64le(data+12),qa_load_u64le(data+20),1};
         okay=interest_change(&server->interests,&server->interest_count,&server->interest_capacity,
-            &interest,data[28]!=0,&failure);break;
+            &interest,data[28]!=0,&failure);
+        if(okay)server->inventory_sequence=packet->sequence;
+        break;
     }
     case HOST_BIND: {
         if(bytes!=16 || packet->descriptor>=0) {okay=fail(&failure,QA_ERROR_FORMAT,0,"child callback binding is invalid");break;}
@@ -421,13 +425,14 @@ static bool server_dispatch(host_server *server,host_packet *packet,bool *comple
         if(!callback.id || !callback.address) {okay=false;break;}
         for(size_t i=0;i<server->callback_count;++i) if(server->callbacks[i].id==callback.id || server->callbacks[i].address==callback.address) okay=false;
         if(!okay || !grow((void **)&server->callbacks,&server->callback_capacity,server->callback_count+1,sizeof(callback),&failure)) {okay=false;break;}
-        server->callbacks[server->callback_count++]=callback;break;
+        server->callbacks[server->callback_count++]=callback;server->inventory_sequence=packet->sequence;break;
     }
     case HOST_UNBIND: {
         if(bytes!=8 || packet->descriptor>=0) {okay=false;break;}
         size_t index=server->callback_count;for(size_t i=0;i<server->callback_count;++i) if(server->callbacks[i].id==qa_load_u64le(data)) index=i;
         if(index==server->callback_count) {okay=fail(&failure,QA_ERROR_NOT_FOUND,0,"child callback is absent");break;}
-        memmove(server->callbacks+index,server->callbacks+index+1,(server->callback_count-index-1)*sizeof(*server->callbacks));--server->callback_count;break;
+        memmove(server->callbacks+index,server->callbacks+index+1,(server->callback_count-index-1)*sizeof(*server->callbacks));--server->callback_count;
+        server->inventory_sequence=packet->sequence;break;
     }
     case HOST_RUN: {
         if(bytes<17 || data[8]>1 || packet->descriptor>=0 || server->failed) {okay=false;break;}
