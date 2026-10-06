@@ -30,10 +30,11 @@ static const GLenum gl_pack_names[4]={GL_PACK_ALIGNMENT,GL_PACK_ROW_LENGTH,GL_PA
 static const GLenum gl_unpack_names[4]={GL_UNPACK_ALIGNMENT,GL_UNPACK_ROW_LENGTH,GL_UNPACK_SKIP_ROWS,GL_UNPACK_SKIP_PIXELS};
 static void gl_cut_read(qa_gl_renderer *renderer,gl_native_cut *cut)
 {
+    gl_state_invalidate(renderer);
     gl_api *gl=&renderer->gl;
     gl->GetIntegerv(GL_CURRENT_PROGRAM,&cut->program); gl->GetIntegerv(GL_ACTIVE_TEXTURE,&cut->active);
-    for (size_t i=0;i<3;++i) { gl->ActiveTexture(GL_TEXTURE0+(GLenum)i); gl->GetIntegerv(GL_TEXTURE_BINDING_2D,cut->texture+i); }
-    gl->ActiveTexture((GLenum)cut->active);
+    for (size_t i=0;i<3;++i) { gl_state_active_texture(renderer, GL_TEXTURE0+(GLenum)i); gl->GetIntegerv(GL_TEXTURE_BINDING_2D,cut->texture+i); }
+    gl_state_active_texture(renderer, (GLenum)cut->active);
     gl->GetIntegerv(GL_ARRAY_BUFFER_BINDING,&cut->array); gl->GetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING,&cut->element);
     gl->GetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING,&cut->pack_buffer); gl->GetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING,&cut->unpack_buffer);
     gl->GetIntegerv(GL_RENDERBUFFER_BINDING,&cut->renderbuffer);
@@ -45,19 +46,20 @@ static void gl_cut_read(qa_gl_renderer *renderer,gl_native_cut *cut)
 }
 static void gl_cut_restore(qa_gl_renderer *renderer,const gl_native_cut *cut)
 {
+    gl_state_invalidate(renderer);
     gl_api *gl=&renderer->gl;
-    gl->UseProgram((GLuint)cut->program);
-    for (size_t i=0;i<3;++i) { gl->ActiveTexture(GL_TEXTURE0+(GLenum)i); gl->BindTexture(GL_TEXTURE_2D,(GLuint)cut->texture[i]); }
-    gl->ActiveTexture((GLenum)cut->active);
+    gl_state_program(renderer, (GLuint)cut->program);
+    for (size_t i=0;i<3;++i) { gl_state_active_texture(renderer, GL_TEXTURE0+(GLenum)i); gl_state_bind_texture(renderer, GL_TEXTURE_2D,(GLuint)cut->texture[i]); }
+    gl_state_active_texture(renderer, (GLenum)cut->active);
     gl->BindBuffer(GL_ARRAY_BUFFER,(GLuint)cut->array); gl->BindBuffer(GL_ELEMENT_ARRAY_BUFFER,(GLuint)cut->element);
     gl->BindBuffer(GL_PIXEL_PACK_BUFFER,(GLuint)cut->pack_buffer); gl->BindBuffer(GL_PIXEL_UNPACK_BUFFER,(GLuint)cut->unpack_buffer);
     gl->BindRenderbuffer(GL_RENDERBUFFER,(GLuint)cut->renderbuffer);
-    gl->BindFramebuffer(GL_READ_FRAMEBUFFER,(GLuint)cut->read_framebuffer); gl->ReadBuffer((GLenum)cut->read_buffer);
-    gl->BindFramebuffer(GL_DRAW_FRAMEBUFFER,(GLuint)cut->draw_framebuffer); gl->DrawBuffer((GLenum)cut->draw_buffer);
+    gl_state_framebuffer(renderer, GL_READ_FRAMEBUFFER,(GLuint)cut->read_framebuffer); gl_state_read_buffer(renderer, (GLenum)cut->read_buffer);
+    gl_state_framebuffer(renderer, GL_DRAW_FRAMEBUFFER,(GLuint)cut->draw_framebuffer); gl_state_draw_buffer(renderer, (GLenum)cut->draw_buffer);
     for (size_t i=0;i<4;++i) { gl->PixelStorei(gl_pack_names[i],cut->pack[i]); gl->PixelStorei(gl_unpack_names[i],cut->unpack[i]); }
     gl->Viewport(cut->viewport[0],cut->viewport[1],cut->viewport[2],cut->viewport[3]);
     gl->Scissor(cut->scissor[0],cut->scissor[1],cut->scissor[2],cut->scissor[3]);
-    if (cut->scissor_enabled) gl->Enable(GL_SCISSOR_TEST); else gl->Disable(GL_SCISSOR_TEST);
+    if (cut->scissor_enabled) gl_state_enable(renderer, GL_SCISSOR_TEST, true); else gl_state_enable(renderer, GL_SCISSOR_TEST, false);
 }
 static void gl_tight_pixels(qa_gl_renderer *renderer)
 {
@@ -88,7 +90,7 @@ static bool gl_surface_capture(qa_gl_renderer *renderer,GLuint framebuffer,GLenu
         (color && !gl_save_allocate(&saved->color,size,error)) ||
         (depth && !gl_save_allocate(&saved->depth,size,error)) ||
         (depth && renderer->capabilities.stencil_bits && !gl_save_allocate(&saved->stencil,size,error))) return false;
-    gl_api *gl=&renderer->gl; gl->BindFramebuffer(GL_READ_FRAMEBUFFER,framebuffer); gl->ReadBuffer(buffer);
+    gl_api *gl=&renderer->gl; gl_state_framebuffer(renderer, GL_READ_FRAMEBUFFER,framebuffer); gl_state_read_buffer(renderer, buffer);
     if (!gl_check(renderer,"Selecting actual GPU capture buffer",error)) return false;
     gl_tight_pixels(renderer);
     if (color) {
@@ -110,8 +112,8 @@ static void gl_surface_free(qa_gl_renderer *renderer,gl_saved_surface *saved)
 {
     if (renderer && renderer->gl.DeleteTextures) {
         if (saved->framebuffer) renderer->gl.DeleteFramebuffers(1,&saved->framebuffer);
-        if (saved->color_texture) renderer->gl.DeleteTextures(1,&saved->color_texture);
-        if (saved->depth_texture) renderer->gl.DeleteTextures(1,&saved->depth_texture);
+        if (saved->color_texture) gl_state_delete_textures(renderer, 1,&saved->color_texture);
+        if (saved->depth_texture) gl_state_delete_textures(renderer, 1,&saved->depth_texture);
     }
     qa_buffer_free(&saved->color); qa_buffer_free(&saved->depth); qa_buffer_free(&saved->stencil);
     memset(saved,0,sizeof(*saved));
@@ -138,12 +140,12 @@ static bool gl_gpu_capture(qa_gl_renderer *renderer,gl_restore_storage *saved,qa
     if (!gl_dimensions(renderer,&saved->width,&saved->height,error)) return false;
     gl_native_cut cut={0}; gl_cut_read(renderer,&cut); renderer->capturing=true;
     GLint native_read_buffer=0;
-    renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,0); renderer->gl.GetIntegerv(GL_READ_BUFFER,&native_read_buffer);
+    gl_state_framebuffer(renderer, GL_READ_FRAMEBUFFER,0); renderer->gl.GetIntegerv(GL_READ_BUFFER,&native_read_buffer);
     bool ok=true;
     for (size_t i=0;ok && i<4;++i) if (renderer->capabilities.native_buffer_mask&(1u<<i))
         ok=gl_surface_capture(renderer,0,gl_native_buffer(renderer->capabilities.stereo,i),saved->width,saved->height,
             true,i==2,saved->native+i,error);
-    renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,0); renderer->gl.ReadBuffer((GLenum)native_read_buffer);
+    gl_state_framebuffer(renderer, GL_READ_FRAMEBUFFER,0); gl_state_read_buffer(renderer, (GLenum)native_read_buffer);
     gl_cut_restore(renderer,&cut); renderer->capturing=false;
     return ok && gl_check(renderer,"Restoring renderer bindings after video rollback capture",error);
 }
@@ -192,22 +194,22 @@ static bool gl_saved_surface_upload(qa_gl_renderer *renderer,gl_saved_surface *s
 {
     gl_api *gl=&renderer->gl; gl->GenFramebuffers(1,&surface->framebuffer);
     if (!surface->framebuffer) return gl_save_error(error,QA_ERROR_MEMORY,"Preparing separate completed GPU framebuffer");
-    gl->BindFramebuffer(GL_FRAMEBUFFER,surface->framebuffer);
+    gl_state_framebuffer(renderer, GL_FRAMEBUFFER,surface->framebuffer);
     if (surface->color.size) {
         gl->GenTextures(1,&surface->color_texture);
         if (!surface->color_texture) return gl_save_error(error,QA_ERROR_MEMORY,"Preparing video rollback texture");
-        gl->ActiveTexture(GL_TEXTURE0); gl->BindTexture(GL_TEXTURE_2D,surface->color_texture);
+        gl_state_active_texture(renderer, GL_TEXTURE0); gl_state_bind_texture(renderer, GL_TEXTURE_2D,surface->color_texture);
         gl_saved_texture_parameters(renderer);
         gl->TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)surface->width,(GLsizei)surface->height,0,
             GL_RGBA,GL_UNSIGNED_BYTE,surface->color.data);
         if (!gl_check(renderer,"Uploading video rollback color",error)) return false;
         gl->FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,surface->color_texture,0);
-        gl->ReadBuffer(GL_COLOR_ATTACHMENT0); gl->DrawBuffer(GL_COLOR_ATTACHMENT0);
-    } else { gl->ReadBuffer(GL_NONE); gl->DrawBuffer(GL_NONE); }
+        gl_state_read_buffer(renderer, GL_COLOR_ATTACHMENT0); gl_state_draw_buffer(renderer, GL_COLOR_ATTACHMENT0);
+    } else { gl_state_read_buffer(renderer, GL_NONE); gl_state_draw_buffer(renderer, GL_NONE); }
     if (surface->depth.size) {
         gl->GenTextures(1,&surface->depth_texture);
         if (!surface->depth_texture) return gl_save_error(error,QA_ERROR_MEMORY,"Preparing completed GPU depth/stencil pixels");
-        gl->BindTexture(GL_TEXTURE_2D,surface->depth_texture); gl_saved_texture_parameters(renderer);
+        gl_state_bind_texture(renderer, GL_TEXTURE_2D,surface->depth_texture); gl_saved_texture_parameters(renderer);
         GLenum format=GL_DEPTH_COMPONENT,type=surface->floating_depth?GL_FLOAT:GL_UNSIGNED_INT;
         const void *pixels=surface->depth.data; void *packed=NULL;
         if (surface->stencil.size) {
@@ -260,10 +262,10 @@ bool qa_gl_handoff_prepare(qa_gl_restore_guard *guard,qa_error *error)
     if (!qa_display_make_current(renderer->options.display,error)) return false;
     guard->attempted=true; renderer->gl=guard->active->gl;
     gl_native_cut cut={0}; gl_cut_read(renderer,&cut); renderer->preparing=true;
-    gl_tight_pixels(renderer); renderer->gl.Disable(GL_SCISSOR_TEST);
+    gl_tight_pixels(renderer); gl_state_enable(renderer, GL_SCISSOR_TEST, false);
     bool ok=gl_programs_create(renderer,error) && gl_resources_create(renderer,error) &&
         gl_output_gamma_prepare(renderer,renderer->gamma,false,error) && gl_check(renderer,"Preparing fresh GPU renderer",error);
-    gl_cut_restore(renderer,&cut); renderer->preparing=false;
+    gl_cut_restore(renderer,&cut); gl_state_invalidate(guard->active); renderer->preparing=false;
     if (ok) ok=gl_check(renderer,"Restoring active GPU bindings after fresh preparation",error);
     guard->prepared=ok;
     return ok;
@@ -277,7 +279,8 @@ void qa_gl_handoff(qa_gl_restore_guard *guard)
 {
     if (!guard || !guard->prepared || guard->transferred) return;
     qa_gl_renderer *renderer=guard->candidate; gl_restore_storage *saved=guard->saved; gl_api *gl=&renderer->gl;
-    gl->ActiveTexture(GL_TEXTURE0); gl->BindTexture(GL_TEXTURE_2D,0);
+    gl_state_invalidate(renderer); gl_state_invalidate(guard->active);
+    gl_state_active_texture(renderer, GL_TEXTURE0); gl_state_bind_texture(renderer, GL_TEXTURE_2D,0);
     gl_tight_pixels(renderer);
     for (size_t i=0;i<guard->active->controls.zero_texture.count;++i)
         gl->TexImage2D(GL_TEXTURE_2D,(GLint)i,GL_RGBA8,0,0,0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
@@ -287,24 +290,24 @@ void qa_gl_handoff(qa_gl_restore_guard *guard)
     gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_REPEAT);
     gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,1000);
     gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_COMPARE_MODE,GL_NONE);
-    gl->Disable(GL_SCISSOR_TEST);
-    gl->BindFramebuffer(GL_FRAMEBUFFER,0);
-    gl->ReadBuffer(gl_draw_buffer_name(renderer->draw_buffer)); gl->DrawBuffer(gl_draw_buffer_name(renderer->draw_buffer));
+    gl_state_enable(renderer, GL_SCISSOR_TEST, false);
+    gl_state_framebuffer(renderer, GL_FRAMEBUFFER,0);
+    gl_state_read_buffer(renderer, gl_draw_buffer_name(renderer->draw_buffer)); gl_state_draw_buffer(renderer, gl_draw_buffer_name(renderer->draw_buffer));
     uint32_t height=saved->height;
     if (renderer->target) {
-        gl->BindFramebuffer(GL_FRAMEBUFFER,renderer->target_framebuffer);
-        gl->ReadBuffer(GL_NONE); gl->DrawBuffer(GL_NONE);
+        gl_state_framebuffer(renderer, GL_FRAMEBUFFER,renderer->target_framebuffer);
+        gl_state_read_buffer(renderer, GL_NONE); gl_state_draw_buffer(renderer, GL_NONE);
         height=renderer->target->levels[0].height;
     } else if (renderer->output.enabled && renderer->output.color_ready[gl_draw_buffer_index(renderer->draw_buffer)]) {
-        gl->BindFramebuffer(GL_FRAMEBUFFER,renderer->output.framebuffer);
+        gl_state_framebuffer(renderer, GL_FRAMEBUFFER,renderer->output.framebuffer);
         gl->FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
             renderer->output.color[gl_draw_buffer_index(renderer->draw_buffer)],0);
-        gl->ReadBuffer(GL_COLOR_ATTACHMENT0); gl->DrawBuffer(GL_COLOR_ATTACHMENT0);
+        gl_state_read_buffer(renderer, GL_COLOR_ATTACHMENT0); gl_state_draw_buffer(renderer, GL_COLOR_ATTACHMENT0);
     }
     GLint bottom=(GLint)((int64_t)height-renderer->view.viewport.y-renderer->view.viewport.height);
     gl->Viewport(renderer->view.viewport.x,bottom,(GLsizei)renderer->view.viewport.width,(GLsizei)renderer->view.viewport.height);
     gl->Scissor(renderer->view.viewport.x,bottom,(GLsizei)renderer->view.viewport.width,(GLsizei)renderer->view.viewport.height);
-    gl->Enable(GL_SCISSOR_TEST);
+    gl_state_enable(renderer, GL_SCISSOR_TEST, true);
     gl_source_pipeline_restore(renderer);
     renderer->detached=false; guard->transferred=true; guard->saved=NULL;
     gl_restore_storage_destroy(renderer);
@@ -353,7 +356,7 @@ bool gl_presentation_capture(qa_gl_renderer *renderer,gl_presentation_snapshot *
         if (i<5) get_attribute((GLuint)i,GL_VERTEX_ATTRIB_ARRAY_ENABLED,snapshot->attributes+i);
     }
     if (!gl_check(renderer,"Reading actual native presentation state",error)) return false;
-    gl->BindFramebuffer(GL_FRAMEBUFFER,0);
+    gl_state_framebuffer(renderer, GL_FRAMEBUFFER,0);
     GLint samples=0;
     gl->GetIntegerv(GL_SAMPLES,&samples);
     gl->GetIntegerv(GL_READ_BUFFER,&snapshot->native_read);
@@ -381,17 +384,17 @@ bool gl_presentation_restore_bindings(qa_gl_renderer *renderer,const gl_presenta
 {
     if (!snapshot || !snapshot->cut_valid) return true;
     gl_api *gl=&renderer->gl;
-    gl->BindFramebuffer(GL_FRAMEBUFFER,0);
-    gl->ReadBuffer((GLenum)snapshot->native_read); gl->DrawBuffer((GLenum)snapshot->native_draw);
+    gl_state_framebuffer(renderer, GL_FRAMEBUFFER,0);
+    gl_state_read_buffer(renderer, (GLenum)snapshot->native_read); gl_state_draw_buffer(renderer, (GLenum)snapshot->native_draw);
     gl_cut_restore(renderer,&snapshot->cut);
-    gl->DepthMask(snapshot->depth_mask?GL_TRUE:GL_FALSE);
-    gl->ColorMask(snapshot->color_mask[0]?GL_TRUE:GL_FALSE,snapshot->color_mask[1]?GL_TRUE:GL_FALSE,
+    gl_state_depth_mask(renderer, snapshot->depth_mask?GL_TRUE:GL_FALSE);
+    gl_state_color_mask(renderer, snapshot->color_mask[0]?GL_TRUE:GL_FALSE,snapshot->color_mask[1]?GL_TRUE:GL_FALSE,
         snapshot->color_mask[2]?GL_TRUE:GL_FALSE,snapshot->color_mask[3]?GL_TRUE:GL_FALSE);
-    gl->PolygonMode(GL_FRONT,(GLenum)snapshot->polygon[0]);
-    gl->PolygonMode(GL_BACK,(GLenum)snapshot->polygon[1]);
+    gl_state_polygon_mode(renderer, GL_FRONT,(GLenum)snapshot->polygon[0]);
+    gl_state_polygon_mode(renderer, GL_BACK,(GLenum)snapshot->polygon[1]);
     for (size_t i=0;i<6;++i) {
-        if (snapshot->enabled[i]) gl->Enable(gl_presentation_enables[i]);
-        else gl->Disable(gl_presentation_enables[i]);
+        if (snapshot->enabled[i]) gl_state_enable(renderer, gl_presentation_enables[i], true);
+        else gl_state_enable(renderer, gl_presentation_enables[i], false);
         if (i<5) {
             if (snapshot->attributes[i]) gl->EnableVertexAttribArray((GLuint)i);
             else gl->DisableVertexAttribArray((GLuint)i);
@@ -406,7 +409,7 @@ static bool gl_presentation_surface_delete(qa_gl_renderer *renderer,gl_saved_sur
     GLuint *names[3]={&surface->framebuffer,&surface->color_texture,&surface->depth_texture};
     for (size_t j=0;j<3;++j) if (*names[j]) {
         if (!gl_check(renderer,"Preparing checked native presentation retirement",error)) return false;
-        if (!j) gl->DeleteFramebuffers(1,names[j]); else gl->DeleteTextures(1,names[j]);
+        if (!j) gl->DeleteFramebuffers(1,names[j]); else gl_state_delete_textures(renderer, 1,names[j]);
         if (!gl_check(renderer,"Retiring native presentation storage",error)) return false;
         *names[j]=0;
     }
@@ -419,7 +422,7 @@ bool gl_presentation_copy(qa_gl_renderer *renderer,gl_presentation_snapshot *sna
     if (!snapshot || !snapshot->captured) return true;
     gl_restore_storage *saved=snapshot->saved;
     gl_api *gl=&renderer->gl;
-    gl_tight_pixels(renderer); gl->Disable(GL_SCISSOR_TEST);
+    gl_tight_pixels(renderer); gl_state_enable(renderer, GL_SCISSOR_TEST, false);
     for (size_t i=0;i<4;++i) if (saved->native[i].width) {
         gl_saved_surface *surface=saved->native+i;
         if (!snapshot->uploaded[i]) {
@@ -431,8 +434,8 @@ bool gl_presentation_copy(qa_gl_renderer *renderer,gl_presentation_snapshot *sna
         }
         if (!surface->color_texture || (i==2 && !surface->depth_texture))
             return gl_save_error(error,QA_ERROR_ARGUMENT,"Native presentation upload is incomplete");
-        gl->BindFramebuffer(GL_READ_FRAMEBUFFER,surface->framebuffer); gl->ReadBuffer(GL_COLOR_ATTACHMENT0);
-        gl->BindFramebuffer(GL_DRAW_FRAMEBUFFER,0); gl->DrawBuffer(gl_native_buffer(renderer->capabilities.stereo,i));
+        gl_state_framebuffer(renderer, GL_READ_FRAMEBUFFER,surface->framebuffer); gl_state_read_buffer(renderer, GL_COLOR_ATTACHMENT0);
+        gl_state_framebuffer(renderer, GL_DRAW_FRAMEBUFFER,0); gl_state_draw_buffer(renderer, gl_native_buffer(renderer->capabilities.stereo,i));
         gl->BlitFramebuffer(0,0,(GLint)saved->width,(GLint)saved->height,0,0,(GLint)width,(GLint)height,
             GL_COLOR_BUFFER_BIT,GL_NEAREST);
         if (i==2) {

@@ -333,6 +333,7 @@ static bool uniform(qa_gl_renderer *renderer, GLuint program, const char *name,
 static bool stage_uniforms(qa_gl_renderer *renderer, qa_error *error)
 {
     gl_programs *p = &renderer->programs;
+    gl_state_invalidate(renderer);
     STAGE_UNIFORM(mvp, "u_mvp");
     STAGE_UNIFORM(model, "u_model");
     STAGE_UNIFORM(normal_matrix, "u_normal_matrix");
@@ -414,6 +415,7 @@ static bool fog_uniforms(qa_gl_renderer *renderer, unsigned pass,
 bool gl_programs_create(qa_gl_renderer *renderer, qa_error *error)
 {
     gl_programs *p = &renderer->programs;
+    gl_state_invalidate(renderer);
     if (!compile_program(renderer, stage_vertex, stage_fragment, 3, true,
                          &p->stage, error) ||
         !stage_uniforms(renderer, error) ||
@@ -439,19 +441,20 @@ bool gl_programs_create(qa_gl_renderer *renderer, qa_error *error)
         if (!compile_program(renderer, fog_vertex, fog_fragments+i, 1, false,
                              &p->fog[i], error) ||
             !fog_uniforms(renderer, i, error)) return false;
-    renderer->gl.UseProgram(p->stage);
+    gl_state_program(renderer, p->stage);
     renderer->gl.Uniform1i(p->stage_uniform.primary, 0);
     renderer->gl.Uniform1i(p->stage_uniform.secondary, 1);
     renderer->gl.Uniform1i(p->stage_uniform.shadow_map, 2);
     renderer->gl.Uniform1i(p->stage_uniform.preblend_table, 2);
-    renderer->gl.UseProgram(0);
+    gl_state_program(renderer, 0);
     return gl_check(renderer, "OpenGL program initialization", error);
 }
 
 void gl_programs_destroy(qa_gl_renderer *renderer)
 {
     gl_programs *p = &renderer->programs;
-    if (!renderer->detached) renderer->gl.UseProgram(0);
+    gl_state_invalidate(renderer);
+    if (!renderer->detached) gl_state_program(renderer, 0);
     if (p->stage != 0) renderer->gl.DeleteProgram(p->stage);
     if (p->opacity != 0) renderer->gl.DeleteProgram(p->opacity);
     if (p->gamma != 0) renderer->gl.DeleteProgram(p->gamma);
@@ -484,10 +487,50 @@ static int fog_mode(const qa_scene_fog *fog)
     return 0;
 }
 
+static gl_cached_value *stage_value(qa_gl_renderer *renderer, const GLint *location)
+{
+    size_t index = (size_t)((const unsigned char *)location -
+        (const unsigned char *)&renderer->programs.stage_uniform) / sizeof(GLint);
+    return &renderer->stage_values[index];
+}
+static void stage_uniform_1i(qa_gl_renderer *renderer, const GLint *location, GLint v0)
+{
+    const GLint value[] = {v0};
+    if (*location >= 0 && gl_state_changed(stage_value(renderer, location), value, sizeof(value)))
+        renderer->gl.Uniform1i(*location, v0);
+}
+static void stage_uniform_1f(qa_gl_renderer *renderer, const GLint *location, GLfloat v0)
+{
+    const GLfloat value[] = {v0};
+    if (*location >= 0 && gl_state_changed(stage_value(renderer, location), value, sizeof(value)))
+        renderer->gl.Uniform1f(*location, v0);
+}
+static void stage_uniform_3f(qa_gl_renderer *renderer, const GLint *location, GLfloat v0, GLfloat v1, GLfloat v2)
+{
+    const GLfloat value[] = {v0, v1, v2};
+    if (*location >= 0 && gl_state_changed(stage_value(renderer, location), value, sizeof(value)))
+        renderer->gl.Uniform3f(*location, v0, v1, v2);
+}
+static void stage_uniform_4f(qa_gl_renderer *renderer, const GLint *location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3)
+{
+    const GLfloat value[] = {v0, v1, v2, v3};
+    if (*location >= 0 && gl_state_changed(stage_value(renderer, location), value, sizeof(value)))
+        renderer->gl.Uniform4f(*location, v0, v1, v2, v3);
+}
+static void stage_uniform_matrix3(qa_gl_renderer *renderer, const GLint *location, const GLfloat *value)
+{
+    if (*location >= 0 && gl_state_changed(stage_value(renderer, location), value, 9 * sizeof(*value)))
+        renderer->gl.UniformMatrix3fv(*location, 1, GL_FALSE, value);
+}
+static void stage_uniform_matrix4(qa_gl_renderer *renderer, const GLint *location, const GLfloat *value)
+{
+    if (*location >= 0 && gl_state_changed(stage_value(renderer, location), value, 16 * sizeof(*value)))
+        renderer->gl.UniformMatrix4fv(*location, 1, GL_FALSE, value);
+}
+
 bool gl_program_stage(qa_gl_renderer *renderer, const qa_scene_draw *draw,
                       qa_error *error)
 {
-    gl_api *gl = &renderer->gl;
     gl_stage_uniforms *u = &renderer->programs.stage_uniform;
     bool preblend=renderer->preblend_gamma && renderer->gamma!=1 &&
         !qa_display_gamma_applied_is(renderer->options.display);
@@ -495,31 +538,31 @@ bool gl_program_stage(qa_gl_renderer *renderer, const qa_scene_draw *draw,
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Generic overlay gamma requires its retained table and unlit primitive");
         return false;
     }
-    gl->UseProgram(renderer->programs.stage);
-    gl->Uniform1i(u->preblend_gamma,preblend?1:0);
-    gl->UniformMatrix4fv(u->mvp, 1, GL_FALSE, draw->mvp.m);
-    gl->UniformMatrix4fv(u->model, 1, GL_FALSE, draw->model.m);
+    gl_state_program(renderer, renderer->programs.stage);
+    stage_uniform_1i(renderer, &u->preblend_gamma,preblend?1:0);
+    stage_uniform_matrix4(renderer, &u->mvp, draw->mvp.m);
+    stage_uniform_matrix4(renderer, &u->model, draw->model.m);
     GLfloat normal[9];
     normal_matrix(&draw->model, normal);
-    gl->UniformMatrix3fv(u->normal_matrix, 1, GL_FALSE, normal);
-    gl->Uniform1i(u->clip_enabled, renderer->view.clip_enabled ? 1 : 0);
-    gl->Uniform4f(u->clip_plane, renderer->view.clip_plane.normal.x,
+    stage_uniform_matrix3(renderer, &u->normal_matrix, normal);
+    stage_uniform_1i(renderer, &u->clip_enabled, renderer->view.clip_enabled ? 1 : 0);
+    stage_uniform_4f(renderer, &u->clip_plane, renderer->view.clip_plane.normal.x,
                   renderer->view.clip_plane.normal.y,
                   renderer->view.clip_plane.normal.z,
                   -renderer->view.clip_plane.distance);
-    gl->Uniform1i(u->secondary_mode,
+    stage_uniform_1i(renderer, &u->secondary_mode,
                   draw->texture_count < 2 || !draw->textures[1] ? 0 :
                   draw->environment == QA_TEXTURE_MODULATE ? 1 :
                   draw->environment == QA_TEXTURE_ADD ? 2 : 3);
-    gl->Uniform1i(u->primary_enabled,draw->texture_count>0 && draw->textures[0]!=NULL);
-    gl->Uniform1i(u->secondary_alpha,draw->texture_count>1 && draw->textures[1] &&
+    stage_uniform_1i(renderer, &u->primary_enabled,draw->texture_count>0 && draw->textures[0]!=NULL);
+    stage_uniform_1i(renderer, &u->secondary_alpha,draw->texture_count>1 && draw->textures[1] &&
         qa_render_source_texture_alpha(draw->textures[1]));
-    gl->Uniform1i(u->alpha_mode, (GLint)draw->state.alpha_test);
+    stage_uniform_1i(renderer, &u->alpha_mode, (GLint)draw->state.alpha_test);
     int mode = fog_mode(&draw->fog);
-    gl->Uniform1i(u->fog_mode, mode);
-    gl->Uniform3f(u->fog_color, draw->fog.color.x, draw->fog.color.y,
+    stage_uniform_1i(renderer, &u->fog_mode, mode);
+    stage_uniform_3f(renderer, &u->fog_color, draw->fog.color.x, draw->fog.color.y,
                   draw->fog.color.z);
-    gl->Uniform1f(u->fog_amount,
+    stage_uniform_1f(renderer, &u->fog_amount,
                   draw->fog.kind == QA_FOG_EXP2 ? draw->fog.density :
                                                   draw->fog.amount);
     int lighting = 0;
@@ -528,48 +571,48 @@ bool gl_program_stage(qa_gl_renderer *renderer, const qa_scene_draw *draw,
         lighting = draw->light_pass == QA_LIGHT_PASS_LIGHTMAP ? 1 :
                    draw->light_pass == QA_LIGHT_PASS_MATERIAL_LIGHTMAP ? 4 :
                    draw->light_pass == QA_LIGHT_PASS_MODEL ? 5 : 2;
-    gl->Uniform1i(u->lighting_mode, lighting);
-    gl->Uniform1i(u->luminance_alpha, draw->luminance_alpha ? 1 : 0);
-    gl->Uniform1i(u->model_shade_enabled,
+    stage_uniform_1i(renderer, &u->lighting_mode, lighting);
+    stage_uniform_1i(renderer, &u->luminance_alpha, draw->luminance_alpha ? 1 : 0);
+    stage_uniform_1i(renderer, &u->model_shade_enabled,
                   draw->model_shade_scale ? 1 : 0);
-    gl->Uniform1f(u->shade_scale, draw->shade_scale);
+    stage_uniform_1f(renderer, &u->shade_scale, draw->shade_scale);
     if (draw->light_count > GL_MAX_LIGHTS_QA) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                      "OpenGL draw exceeds eight selected lights");
         return false;
     }
-    gl->Uniform1i(u->light_count, (GLint)draw->light_count);
+    stage_uniform_1i(renderer, &u->light_count, (GLint)draw->light_count);
     if (draw->shadow_atlas != NULL) {
         const qa_scene_image_level *level = &draw->shadow_atlas->levels[0];
-        gl->Uniform1f(u->shadow_texel, 1.0f / (float)level->width);
-        gl->Uniform1f(u->shadow_near, draw->shadow_near);
+        stage_uniform_1f(renderer, &u->shadow_texel, 1.0f / (float)level->width);
+        stage_uniform_1f(renderer, &u->shadow_near, draw->shadow_near);
     } else {
-        gl->Uniform1f(u->shadow_texel, 1);
-        gl->Uniform1f(u->shadow_near, 1);
+        stage_uniform_1f(renderer, &u->shadow_texel, 1);
+        stage_uniform_1f(renderer, &u->shadow_near, 1);
     }
     for (size_t i = 0; i < draw->light_count; ++i) {
         const qa_scene_shadow_light *shadow = &draw->lights[i];
         const qa_scene_light *light = &shadow->light;
-        gl->Uniform3f(u->light_position[i], light->origin.x, light->origin.y,
+        stage_uniform_3f(renderer, &u->light_position[i], light->origin.x, light->origin.y,
                       light->origin.z);
-        gl->Uniform1f(u->light_radius[i], light->radius);
-        gl->Uniform3f(u->light_color[i], light->color.x, light->color.y,
+        stage_uniform_1f(renderer, &u->light_radius[i], light->radius);
+        stage_uniform_3f(renderer, &u->light_color[i], light->color.x, light->color.y,
                       light->color.z);
-        gl->Uniform1f(u->light_scale[i], light->scale);
-        gl->Uniform1i(u->light_spot[i], light->spot ? 1 : 0);
-        gl->Uniform3f(u->light_direction[i], light->direction.x,
+        stage_uniform_1f(renderer, &u->light_scale[i], light->scale);
+        stage_uniform_1i(renderer, &u->light_spot[i], light->spot ? 1 : 0);
+        stage_uniform_3f(renderer, &u->light_direction[i], light->direction.x,
                       light->direction.y, light->direction.z);
-        gl->Uniform1f(u->light_cone[i], light->cos_half_angle);
-        gl->Uniform3f(u->light_fraction[i], shadow->model_fraction.x,
+        stage_uniform_1f(renderer, &u->light_cone[i], light->cos_half_angle);
+        stage_uniform_3f(renderer, &u->light_fraction[i], shadow->model_fraction.x,
                       shadow->model_fraction.y, shadow->model_fraction.z);
-        gl->Uniform1f(u->light_shadow[i], !shadow->shadow_valid ? 0 :
+        stage_uniform_1f(renderer, &u->light_shadow[i], !shadow->shadow_valid ? 0 :
                       shadow->point_shadow ? 2 : 1);
         if (shadow->shadow_valid) {
-            gl->Uniform4f(u->light_atlas[i], shadow->atlas_rect.x,
+            stage_uniform_4f(renderer, &u->light_atlas[i], shadow->atlas_rect.x,
                           shadow->atlas_rect.y, shadow->atlas_rect.z,
                           shadow->atlas_rect.w);
             if (!shadow->point_shadow)
-                gl->UniformMatrix4fv(u->light_matrix[i], 1, GL_FALSE,
+                stage_uniform_matrix4(renderer, &u->light_matrix[i],
                                      shadow->shadow_matrix.m);
         }
     }
@@ -586,7 +629,7 @@ bool gl_program_fog(qa_gl_renderer *renderer, unsigned pass,
     }
     gl_api *gl = &renderer->gl;
     gl_fog_uniforms *u = &renderer->programs.fog_uniform[pass];
-    gl->UseProgram(renderer->programs.fog[pass]);
+    gl_state_program(renderer, renderer->programs.fog[pass]);
     gl->Uniform1i(u->depth, 0);
     gl->Uniform1f(u->far_depth, fog->far_depth);
     if (pass != 2) {

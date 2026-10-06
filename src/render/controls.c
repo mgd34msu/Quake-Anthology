@@ -962,6 +962,7 @@ bool material_source_enter(qa_material_source_scratch *source, qa_error *error)
     if (!source_current(owner) || &owner->source != source || owner->ticket || source->submitting ||
         (source->entered && !source->dispatching))
         return fail(error, "Source tess lost its actual available renderer owner");
+    if (!source->entered && owner->backend == QA_RENDER_CONTROLS_GL) qa_gl_render_controls_enter(owner);
     source->entered = source->submitting = true; return true;
 }
 bool qa_material_source_vertices(qa_material_source_scratch *source,

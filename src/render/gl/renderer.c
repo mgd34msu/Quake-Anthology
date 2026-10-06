@@ -50,6 +50,9 @@ bool qa_gl_render_controls_current(const qa_render_controls *controls)
     const qa_gl_renderer *renderer = controls_idle_owner(controls);
     return renderer && !renderer->detached && (!renderer->preparing || renderer->surface_ticket);
 }
+void qa_gl_render_controls_enter(qa_render_controls *controls)
+{ gl_state_invalidate(controls->owner.gl); }
+
 bool qa_gl_render_controls_callback_candidate(const qa_render_controls *controls)
 {
     const qa_gl_renderer *renderer = controls_idle_owner(controls);
@@ -160,7 +163,7 @@ static bool gl_native_depth(qa_gl_renderer *renderer,bool *floating,qa_error *er
     GLint draw=0,read=0,value=-1;
     gl->GetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw); gl->GetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&read);
     if (!gl_check(renderer,"Reading bindings for native depth discovery",error)) return false;
-    gl->BindFramebuffer(GL_FRAMEBUFFER,0);
+    gl_state_framebuffer(renderer, GL_FRAMEBUFFER,0);
     bool ok=true;
     if (standard_fbo) {
         gl->GetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER,GL_DEPTH,GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE,&value);
@@ -180,7 +183,7 @@ static bool gl_native_depth(qa_gl_renderer *renderer,bool *floating,qa_error *er
         *floating=false;
 #endif
     }
-    gl->BindFramebuffer(GL_DRAW_FRAMEBUFFER,(GLuint)draw); gl->BindFramebuffer(GL_READ_FRAMEBUFFER,(GLuint)read);
+    gl_state_framebuffer(renderer, GL_DRAW_FRAMEBUFFER,(GLuint)draw); gl_state_framebuffer(renderer, GL_READ_FRAMEBUFFER,(GLuint)read);
     if (!gl_check(renderer,"Discovering actual native depth and restoring bindings",error)) return false;
     if (ok && *floating && major<3 && !gl_extension(extensions,"GL_ARB_depth_buffer_float")) {
         qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Actual native floating depth lacks the renderer's standard retained formats"); return false;
@@ -204,7 +207,7 @@ static bool gl_native_buffers(qa_gl_renderer *renderer,bool stereo,uint32_t *mas
     gl_api *gl=&renderer->gl; GLint framebuffer=0,read_buffer=0;
     gl->GetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&framebuffer);
     if (!gl_check(renderer,"Reading native color buffer bindings",error)) return false;
-    gl->BindFramebuffer(GL_READ_FRAMEBUFFER,0);
+    gl_state_framebuffer(renderer, GL_READ_FRAMEBUFFER,0);
     gl->GetIntegerv(GL_READ_BUFFER,&read_buffer);
     if (!gl_check(renderer,"Beginning native color buffer discovery",error)) return false;
     bool ok=true; *mask=0;
@@ -215,7 +218,7 @@ static bool gl_native_buffers(qa_gl_renderer *renderer,bool stereo,uint32_t *mas
          * even when selecting GL_FRONT succeeds. Retain the completed back image. */
         if (back_only && i<2) continue;
         if (!stereo && (i&1)) continue;
-        gl->ReadBuffer(gl_native_buffer(stereo,i));
+        gl_state_read_buffer(renderer, gl_native_buffer(stereo,i));
         GLenum status=gl->GetError();
         if (status==GL_NO_ERROR) *mask|=1u<<i;
         else if (status!=GL_INVALID_OPERATION) {
@@ -223,8 +226,8 @@ static bool gl_native_buffers(qa_gl_renderer *renderer,bool stereo,uint32_t *mas
                 (unsigned)gl_native_buffer(stereo,i),(unsigned)status); ok=false; break;
         }
     }
-    gl->ReadBuffer((GLenum)read_buffer);
-    gl->BindFramebuffer(GL_READ_FRAMEBUFFER,(GLuint)framebuffer);
+    gl_state_read_buffer(renderer, (GLenum)read_buffer);
+    gl_state_framebuffer(renderer, GL_READ_FRAMEBUFFER,(GLuint)framebuffer);
     if (!gl_check(renderer,"Restoring native color buffer discovery bindings",error)) return false;
     uint32_t required=stereo?12u:4u;
     if (ok && (*mask&required)!=required) {
@@ -343,19 +346,19 @@ qa_gl_renderer *qa_gl_create(const qa_gl_options *input, qa_error *error)
         free(renderer);
         return NULL;
     }
-    renderer->gl.FrontFace(GL_CCW);
-    renderer->gl.Disable(GL_BLEND);
-    renderer->gl.Disable(GL_CULL_FACE);
-    renderer->gl.Disable(GL_STENCIL_TEST);
-    renderer->gl.Disable(GL_POLYGON_OFFSET_FILL);
-    renderer->gl.Enable(GL_DEPTH_TEST);
-    renderer->gl.DepthMask(GL_TRUE);
-    renderer->gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    gl_state_front_face(renderer, GL_CCW);
+    gl_state_enable(renderer, GL_BLEND, false);
+    gl_state_enable(renderer, GL_CULL_FACE, false);
+    gl_state_enable(renderer, GL_STENCIL_TEST, false);
+    gl_state_enable(renderer, GL_POLYGON_OFFSET_FILL, false);
+    gl_state_enable(renderer, GL_DEPTH_TEST, true);
+    gl_state_depth_mask(renderer, GL_TRUE);
+    gl_state_color_mask(renderer, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     renderer->gl.ClearStencil(0);
     renderer->gl.ClearDepth(renderer->clear_depth);
-    renderer->gl.StencilMask(UINT_MAX);
-    renderer->gl.PolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-    renderer->gl.LineWidth(1);
+    gl_state_stencil_mask(renderer, UINT_MAX);
+    gl_state_polygon_mode(renderer, GL_FRONT_AND_BACK, GL_FILL);
+    gl_state_line_width(renderer, 1);
     if (!gl_bind_destination(renderer, error) ||
         !gl_check(renderer, "OpenGL renderer initialization", error)) {
         qa_gl_destroy(renderer);
@@ -409,11 +412,11 @@ void qa_gl_destroy(qa_gl_renderer *renderer)
     gl_output_destroy(renderer);
     if (renderer->presented_target.framebuffer)
         renderer->gl.DeleteFramebuffers(1,&renderer->presented_target.framebuffer);
-    renderer->gl.DeleteTextures(2,renderer->presented_target.color);
+    gl_state_delete_textures(renderer, 2,renderer->presented_target.color);
     if (renderer->target_framebuffer != 0)
         renderer->gl.DeleteFramebuffers(1, &renderer->target_framebuffer);
     if (renderer->fog_depth != 0)
-        renderer->gl.DeleteTextures(1, &renderer->fog_depth);
+        gl_state_delete_textures(renderer, 1, &renderer->fog_depth);
     gl_resources_destroy(renderer);
     gl_programs_destroy(renderer);
     free(renderer);
@@ -439,6 +442,7 @@ static void draw_state(qa_gl_renderer *,const qa_scene_state *,qa_scene_primitiv
 static bool begin_view(qa_gl_renderer *renderer, const qa_scene_view *view, bool source_backend,
                        qa_error *error)
 {
+    gl_api *gl = &renderer->gl;
     if (view->viewport.width == 0 || view->viewport.height == 0 ||
         view->viewport.width > INT_MAX || view->viewport.height > INT_MAX ||
         !isfinite(view->depth) ||
@@ -461,7 +465,6 @@ static bool begin_view(qa_gl_renderer *renderer, const qa_scene_view *view, bool
     }
     renderer->view = *view;
     if (renderer->opacity.skip) return true;
-    gl_api *gl = &renderer->gl;
     if (view->clear_depth) {
         if (renderer->controls.frame_values.finish==1 && !renderer->controls.finish_called) {
             gl->Finish(); renderer->controls.finish_called=true;
@@ -476,21 +479,21 @@ static bool begin_view(qa_gl_renderer *renderer, const qa_scene_view *view, bool
     gl->Viewport(view->viewport.x, (GLint)bottom,
                  (GLsizei)view->viewport.width,
                  (GLsizei)view->viewport.height);
-    gl->Enable(GL_SCISSOR_TEST);
+    gl_state_enable(renderer, GL_SCISSOR_TEST, true);
     gl->Scissor(view->viewport.x, (GLint)bottom,
                 (GLsizei)view->viewport.width,
                 (GLsizei)view->viewport.height);
     GLbitfield clear = 0;
     if (view->clear_color) {
         renderer->pipeline.color_write=true;
-        gl->ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        gl_state_color_mask(renderer, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         gl->ClearColor(view->color.x, view->color.y, view->color.z,
                        view->color.w);
         clear |= GL_COLOR_BUFFER_BIT;
     }
     if (view->clear_depth) {
         renderer->pipeline.depth_write=true;
-        gl->DepthMask(GL_TRUE);
+        gl_state_depth_mask(renderer, GL_TRUE);
         renderer->clear_depth=fminf(1,fmaxf(0,view->depth));
         gl->ClearDepth(renderer->clear_depth);
         clear |= GL_DEPTH_BUFFER_BIT;
@@ -501,7 +504,7 @@ static bool begin_view(qa_gl_renderer *renderer, const qa_scene_view *view, bool
                          "OpenGL view requested unavailable stencil storage");
             return false;
         }
-        gl->StencilMask(UINT_MAX);
+        gl_state_stencil_mask(renderer, UINT_MAX);
         gl->ClearStencil(0);
         clear |= GL_STENCIL_BUFFER_BIT;
     }
@@ -528,63 +531,61 @@ static GLenum stencil_operation(qa_scene_stencil_op operation)
 }
 static void stage_state_bits(qa_gl_renderer *renderer,const qa_scene_state *state)
 {
-    gl_api *gl=&renderer->gl;
-    if (state->depth_test==QA_DEPTH_DISABLED) gl->Disable(GL_DEPTH_TEST); else gl->Enable(GL_DEPTH_TEST);
-    gl->DepthFunc(state->depth_test==QA_DEPTH_ALWAYS?GL_ALWAYS:
+    if (state->depth_test==QA_DEPTH_DISABLED) gl_state_enable(renderer, GL_DEPTH_TEST, false); else gl_state_enable(renderer, GL_DEPTH_TEST, true);
+    gl_state_depth_func(renderer, state->depth_test==QA_DEPTH_ALWAYS?GL_ALWAYS:
         state->depth_test==QA_DEPTH_LEQUAL || state->depth_test==QA_DEPTH_DISABLED?GL_LEQUAL:
         state->depth_test==QA_DEPTH_EQUAL?GL_EQUAL:state->depth_test==QA_DEPTH_GEQUAL?GL_GEQUAL:GL_LESS);
-    gl->DepthMask(state->depth_write?GL_TRUE:GL_FALSE);
-    if (state->blend_source==QA_BLEND_ONE && state->blend_destination==QA_BLEND_ZERO) gl->Disable(GL_BLEND);
-    else { gl->Enable(GL_BLEND); gl->BlendFunc(blend_factor(state->blend_source),blend_factor(state->blend_destination)); }
-    gl->PolygonMode(GL_FRONT_AND_BACK,state->wireframe?GL_LINE:GL_FILL);
+    gl_state_depth_mask(renderer, state->depth_write?GL_TRUE:GL_FALSE);
+    if (state->blend_source==QA_BLEND_ONE && state->blend_destination==QA_BLEND_ZERO) gl_state_enable(renderer, GL_BLEND, false);
+    else { gl_state_enable(renderer, GL_BLEND, true); gl_state_blend_func(renderer, blend_factor(state->blend_source),blend_factor(state->blend_destination)); }
+    gl_state_polygon_mode(renderer, GL_FRONT_AND_BACK,state->wireframe?GL_LINE:GL_FILL);
 }
 
 static void draw_state(qa_gl_renderer *renderer, const qa_scene_state *state,
                        qa_scene_primitive primitive)
 {
     renderer->pipeline=*state;
-    gl_api *gl = &renderer->gl;
     stage_state_bits(renderer,state);
-    gl->ColorMask(state->color_write ? GL_TRUE : GL_FALSE,
+    gl_state_color_mask(renderer, state->color_write ? GL_TRUE : GL_FALSE,
                   state->color_write ? GL_TRUE : GL_FALSE,
                   state->color_write ? GL_TRUE : GL_FALSE,
                   state->color_write ? GL_TRUE : GL_FALSE);
-    if (state->cull == QA_CULL_NONE) gl->Disable(GL_CULL_FACE);
+    if (state->cull == QA_CULL_NONE) gl_state_enable(renderer, GL_CULL_FACE, false);
     else {
-        gl->Enable(GL_CULL_FACE);
-        gl->CullFace(state->cull == QA_CULL_FRONT ? GL_FRONT : GL_BACK);
+        gl_state_enable(renderer, GL_CULL_FACE, true);
+        gl_state_cull_face(renderer, state->cull == QA_CULL_FRONT ? GL_FRONT : GL_BACK);
     }
-    gl->DepthRange(state->depth_near, state->depth_far);
+    gl_state_depth_range(renderer, state->depth_near, state->depth_far);
     if (state->polygon_offset) {
-        gl->Enable(GL_POLYGON_OFFSET_FILL);
-        gl->PolygonOffset(state->offset_factor, state->offset_units);
-    } else gl->Disable(GL_POLYGON_OFFSET_FILL);
-    gl->LineWidth(primitive == QA_SCENE_LINES || state->wireframe
+        gl_state_enable(renderer, GL_POLYGON_OFFSET_FILL, true);
+        gl_state_polygon_offset(renderer, state->offset_factor, state->offset_units);
+    } else gl_state_enable(renderer, GL_POLYGON_OFFSET_FILL, false);
+    gl_state_line_width(renderer, primitive == QA_SCENE_LINES || state->wireframe
                       ? state->line_width : 1);
     if (renderer->overdraw) {
-        gl->Enable(GL_STENCIL_TEST);
-        gl->StencilMask(UINT_MAX);
-        gl->StencilFunc(GL_ALWAYS, 0, UINT_MAX);
-        gl->StencilOp(GL_KEEP, GL_INCR, GL_INCR);
+        gl_state_enable(renderer, GL_STENCIL_TEST, true);
+        gl_state_stencil_mask(renderer, UINT_MAX);
+        gl_state_stencil_func(renderer, GL_ALWAYS, 0, UINT_MAX);
+        gl_state_stencil_op(renderer, GL_KEEP, GL_INCR, GL_INCR);
     } else if (state->stencil_enabled) {
-        gl->Enable(GL_STENCIL_TEST);
+        gl_state_enable(renderer, GL_STENCIL_TEST, true);
         GLenum test = state->stencil_test == QA_STENCIL_ALWAYS ? GL_ALWAYS :
                       state->stencil_test == QA_STENCIL_EQUAL ? GL_EQUAL :
                                                                 GL_NOTEQUAL;
-        gl->StencilMask(state->stencil_write_mask);
-        gl->StencilFunc(test, (GLint)state->stencil_reference,
+        gl_state_stencil_mask(renderer, state->stencil_write_mask);
+        gl_state_stencil_func(renderer, test, (GLint)state->stencil_reference,
                         state->stencil_compare_mask);
-        gl->StencilOp(stencil_operation(state->stencil_fail),
+        gl_state_stencil_op(renderer, stencil_operation(state->stencil_fail),
                       stencil_operation(state->stencil_depth_fail),
                       stencil_operation(state->stencil_depth_pass));
-    } else gl->Disable(GL_STENCIL_TEST);
+    } else gl_state_enable(renderer, GL_STENCIL_TEST, false);
 }
 
 void gl_source_pipeline_restore(qa_gl_renderer *renderer)
 {
     gl_api *gl=&renderer->gl;
     draw_state(renderer,&renderer->pipeline,QA_SCENE_TRIANGLES);
-    gl->LineWidth(renderer->pipeline.line_width);
+    gl_state_line_width(renderer, renderer->pipeline.line_width);
     gl->ClearDepth(renderer->clear_depth);
     qa_render_source_attributes *attributes=&renderer->controls.attributes;
     for (uint32_t unit=0;unit<2;++unit) {
@@ -593,14 +594,14 @@ void gl_source_pipeline_restore(qa_gl_renderer *renderer)
             const gl_texture_entry *entry = gl_texture_resident(renderer, renderer->bound[unit]);
             if (entry && entry->image == renderer->bound[unit]) name = entry->name;
         }
-        gl->ActiveTexture(GL_TEXTURE0+unit);
-        gl->BindTexture(GL_TEXTURE_2D,name);
+        gl_state_active_texture(renderer, GL_TEXTURE0+unit);
+        gl_state_bind_texture(renderer, GL_TEXTURE_2D,name);
         if (!name) {
             const qa_scene_vec4 *border=&attributes->zero_border;
             GLfloat values[4]={border->x,border->y,border->z,border->w};
             gl->TexParameterfv(GL_TEXTURE_2D,GL_TEXTURE_BORDER_COLOR,values);
         }
-        if (attributes->texture_enabled[unit]) gl->Enable(GL_TEXTURE_2D); else gl->Disable(GL_TEXTURE_2D);
+        if (attributes->texture_enabled[unit]) gl_state_enable(renderer, GL_TEXTURE_2D, true); else gl_state_enable(renderer, GL_TEXTURE_2D, false);
         gl->TexEnvi(GL_TEXTURE_ENV,GL_TEXTURE_ENV_MODE,
             attributes->environment[unit]==QA_TEXTURE_ADD?GL_ADD:
             attributes->environment[unit]==QA_TEXTURE_REPLACE?GL_REPLACE:GL_MODULATE);
@@ -617,7 +618,7 @@ void gl_source_pipeline_restore(qa_gl_renderer *renderer)
         gl->Color4f(color.x,color.y,color.z,color.w);
         gl->VertexAttrib4f(4,color.x,color.y,color.z,color.w);
     }
-    gl->ActiveTexture(GL_TEXTURE0+attributes->texture_unit);
+    gl_state_active_texture(renderer, GL_TEXTURE0+attributes->texture_unit);
     gl->ClientActiveTexture(GL_TEXTURE0+attributes->texture_unit);
 }
 
@@ -819,7 +820,7 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
         if (draw.retain_texture[unit]) draw.textures[unit]=renderer->bound[destination];
     }
     draw_state(renderer,&draw.state,draw.mesh.primitive);
-    if (draw.source_stage_state) renderer->gl.LineWidth(draw.state.line_width);
+    if (draw.source_stage_state) gl_state_line_width(renderer, draw.state.line_width);
     if (!qa_render_source_attributes_resolve(&renderer->controls,&draw,renderer->bound,mode,error)) {
         if (mode==QA_RENDER_PRIMITIVES_DISCRETE_STRIPS && renderer->controls.attributes.texture_unit!=0 &&
             renderer->controls.attributes.color_known) {
@@ -849,17 +850,15 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
         !gl_program_stage(renderer, &draw, error)) return false;
     for (unsigned unit = 0; unit < draw.texture_count; ++unit) {
         if (!source_pipeline && textures[unit] != NULL) {
-            renderer->gl.ActiveTexture(GL_TEXTURE0 + unit);
-            renderer->gl.BindTexture(GL_TEXTURE_2D, textures[unit]->name);
+            gl_state_texture_2d(renderer, GL_TEXTURE0 + unit, textures[unit]->name);
         }
     }
-    renderer->gl.ActiveTexture(GL_TEXTURE2);
-    renderer->gl.BindTexture(GL_TEXTURE_2D,
+    gl_state_texture_2d(renderer, GL_TEXTURE2,
                              renderer->preblend_gamma && renderer->gamma!=1 &&
                                !qa_display_gamma_applied_is(renderer->options.display) ? renderer->output.table :
                              shadow == NULL ? renderer->white_texture :
                                               shadow->name);
-    renderer->gl.ActiveTexture(GL_TEXTURE0+renderer->controls.attributes.texture_unit);
+    gl_state_active_texture(renderer, GL_TEXTURE0+renderer->controls.attributes.texture_unit);
     size_t vertex_storage=draw.source_vertex_storage?draw.source_vertex_storage:draw.mesh.vertex_count;
     if (draw.source_arrays && vertex_storage<=QA_SOURCE_TESS_VERTICES) {
         for (size_t i=0;i<vertex_storage;++i) {
@@ -923,20 +922,22 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
         qa_scene_vec4 color=renderer->controls.attributes.color;
         renderer->gl.Color4f(color.x,color.y,color.z,color.w);
     }
-    gl_mesh_unbind(renderer);
-    if (renderer->controls.attributes.color_array) renderer->gl.EnableVertexAttribArray(4);
-    for (uint32_t unit=0;unit<2;++unit)
-        if (renderer->controls.attributes.coordinate_array[unit]) renderer->gl.EnableVertexAttribArray(2+unit);
+    if (source_pipeline || draw.source_primitives || !renderer->gl.GenVertexArrays) {
+        gl_mesh_unbind(renderer);
+        if (renderer->controls.attributes.color_array) renderer->gl.EnableVertexAttribArray(4);
+        for (uint32_t unit=0;unit<2;++unit)
+            if (renderer->controls.attributes.coordinate_array[unit]) renderer->gl.EnableVertexAttribArray(2+unit);
+    }
     if (draw.source_direct==QA_SOURCE_DIRECT_AXIS) {
-        renderer->gl.LineWidth(1);
+        gl_state_line_width(renderer, 1);
         renderer->pipeline.line_width=1;
     }
     if (draw.source_direct==QA_SOURCE_DIRECT_SHADOW_FINISH) {
-        renderer->gl.Disable(GL_STENCIL_TEST);
+        gl_state_enable(renderer, GL_STENCIL_TEST, false);
         renderer->pipeline.stencil_enabled=false;
     }
     if (draw.source_direct==QA_SOURCE_DIRECT_SHADOW_VOLUME_END) {
-        renderer->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+        gl_state_color_mask(renderer, GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
         renderer->pipeline.color_write=true;
     }
     return gl_check(renderer, "OpenGL scene draw", error);
@@ -952,12 +953,13 @@ static bool select_draw_buffer(qa_gl_renderer *renderer,
                      "OpenGL draw buffer is unavailable");
         return false;
     }
+    if (renderer->draw_buffer != buffer) renderer->native_state.destination_valid = false;
     renderer->draw_buffer = buffer;
     if (!gl_bind_destination(renderer, error)) return false;
     if (clear && !renderer->opacity.skip) {
         renderer->pipeline.color_write=renderer->pipeline.depth_write=true;
-        renderer->gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-        renderer->gl.DepthMask(GL_TRUE);
+        gl_state_color_mask(renderer, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        gl_state_depth_mask(renderer, GL_TRUE);
         renderer->gl.ClearColor(1, 0, 0.5f, 1);
         renderer->clear_depth=1;
         renderer->gl.ClearDepth(renderer->clear_depth);
@@ -981,19 +983,19 @@ static bool gl_presented_retain(qa_gl_renderer *renderer,qa_error *error)
     if ((renderer->capabilities.native_buffer_mask&front_mask)==front_mask) return true;
     GLint read=0,draw=0,buffer=0,active=0,texture=0,unpack=0;
     gl->GetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&read); gl->GetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw);
-    gl->GetIntegerv(GL_ACTIVE_TEXTURE,&active); gl->ActiveTexture(GL_TEXTURE0);
+    gl->GetIntegerv(GL_ACTIVE_TEXTURE,&active); gl_state_active_texture(renderer, GL_TEXTURE0);
     gl->GetIntegerv(GL_TEXTURE_BINDING_2D,&texture);
     gl->GetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING,&unpack); gl->BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
-    gl->BindFramebuffer(GL_READ_FRAMEBUFFER,0); gl->GetIntegerv(GL_READ_BUFFER,&buffer);
+    gl_state_framebuffer(renderer, GL_READ_FRAMEBUFFER,0); gl->GetIntegerv(GL_READ_BUFFER,&buffer);
     if (!target->framebuffer) gl->GenFramebuffers(1,&target->framebuffer);
     bool ok=target->framebuffer!=0;
     bool resized=target->width!=renderer->presented_width || target->height!=renderer->presented_height;
-    gl->BindFramebuffer(GL_DRAW_FRAMEBUFFER,target->framebuffer); gl->DrawBuffer(GL_COLOR_ATTACHMENT0);
-    GLboolean scissor=gl->IsEnabled(GL_SCISSOR_TEST); gl->Disable(GL_SCISSOR_TEST);
+    gl_state_framebuffer(renderer, GL_DRAW_FRAMEBUFFER,target->framebuffer); gl_state_draw_buffer(renderer, GL_COLOR_ATTACHMENT0);
+    GLboolean scissor=gl->IsEnabled(GL_SCISSOR_TEST); gl_state_enable(renderer, GL_SCISSOR_TEST, false);
     for (size_t eye=0;ok && eye<(renderer->capabilities.stereo?2u:1u);++eye) {
         if (!target->color[eye]) { gl->GenTextures(1,target->color+eye); resized=true; }
         if (!target->color[eye]) { ok=false; break; }
-        gl->BindTexture(GL_TEXTURE_2D,target->color[eye]);
+        gl_state_bind_texture(renderer, GL_TEXTURE_2D,target->color[eye]);
         if (resized) {
             gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
             gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
@@ -1003,15 +1005,15 @@ static bool gl_presented_retain(qa_gl_renderer *renderer,qa_error *error)
         gl->FramebufferTexture2D(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,target->color[eye],0);
         ok=gl->CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE;
         if (ok) {
-            gl->ReadBuffer(gl_native_buffer(renderer->capabilities.stereo,2+eye));
+            gl_state_read_buffer(renderer, gl_native_buffer(renderer->capabilities.stereo,2+eye));
             gl->BlitFramebuffer(0,0,(GLint)renderer->presented_width,(GLint)renderer->presented_height,
                 0,0,(GLint)renderer->presented_width,(GLint)renderer->presented_height,GL_COLOR_BUFFER_BIT,GL_NEAREST);
         }
     }
-    if (scissor) gl->Enable(GL_SCISSOR_TEST);
-    gl->ReadBuffer((GLenum)buffer); gl->BindFramebuffer(GL_READ_FRAMEBUFFER,(GLuint)read);
-    gl->BindFramebuffer(GL_DRAW_FRAMEBUFFER,(GLuint)draw);
-    gl->BindTexture(GL_TEXTURE_2D,(GLuint)texture); gl->ActiveTexture((GLenum)active);
+    if (scissor) gl_state_enable(renderer, GL_SCISSOR_TEST, true);
+    gl_state_read_buffer(renderer, (GLenum)buffer); gl_state_framebuffer(renderer, GL_READ_FRAMEBUFFER,(GLuint)read);
+    gl_state_framebuffer(renderer, GL_DRAW_FRAMEBUFFER,(GLuint)draw);
+    gl_state_bind_texture(renderer, GL_TEXTURE_2D,(GLuint)texture); gl_state_active_texture(renderer, (GLenum)active);
     gl->BindBuffer(GL_PIXEL_UNPACK_BUFFER,(GLuint)unpack);
     if (!gl_check(renderer,"Retaining presented color before native swap",error)) return false;
     if (!ok) { qa_error_set(error,QA_ERROR_IO,0,"Allocating actual presented color target"); return false; }
@@ -1079,6 +1081,9 @@ static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *fra
     if (frame->source_backend) renderer->source_frame=true;
     if (frame->source_backend && frame->source_skip_backend) return true;
     if (!qa_display_make_current(renderer->options.display, error)) return false;
+    /* A fresh frame may follow a guest renderer or a changed drawable.
+     * Source prefixes share their entered owner and its tracked state. */
+    if (begin || !frame->source_backend) gl_state_invalidate(renderer);
     if (begin && frame->source_backend && frame->source_clear_draw_buffer) {
         if (!select_draw_buffer(renderer, renderer->draw_buffer, false, error)) return false;
         if (!source_draw_buffer_clear(renderer,error)) return false;
@@ -1169,10 +1174,18 @@ static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *fra
             break;
         }
         if (!ok) {
+            gl_mesh_unbind(renderer);
+            gl_state_invalidate(renderer);
             gl_opacity_abort(renderer);
             if (error != NULL) error->offset = i;
             return false;
         }
+    }
+    if (renderer->bound_vertex_array) {
+        gl_mesh_unbind(renderer);
+        if (renderer->controls.attributes.color_array) renderer->gl.EnableVertexAttribArray(4);
+        for (uint32_t unit=0;unit<2;++unit)
+            if (renderer->controls.attributes.coordinate_array[unit]) renderer->gl.EnableVertexAttribArray(2+unit);
     }
     if (finish && renderer->opacity.active) {
         gl_opacity_abort(renderer);
@@ -1214,7 +1227,7 @@ bool qa_gl_source_depth_range(qa_render_controls *controls,float near_depth,floa
     if (!qa_display_make_current(renderer->options.display,error)) return false;
     renderer->pipeline.depth_near=near_depth;
     renderer->pipeline.depth_far=far_depth;
-    renderer->gl.DepthRange(near_depth,far_depth);
+    gl_state_depth_range(renderer, near_depth,far_depth);
     return gl_check(renderer,"Source depth range",error);
 }
 bool qa_gl_source_polygon_offset(qa_render_controls *controls,bool enabled,float factor,float units,
@@ -1231,9 +1244,9 @@ bool qa_gl_source_polygon_offset(qa_render_controls *controls,bool enabled,float
     if (enabled) {
         renderer->pipeline.offset_factor=factor;
         renderer->pipeline.offset_units=units;
-        renderer->gl.Enable(GL_POLYGON_OFFSET_FILL);
-        renderer->gl.PolygonOffset(factor,units);
-    } else renderer->gl.Disable(GL_POLYGON_OFFSET_FILL);
+        gl_state_enable(renderer, GL_POLYGON_OFFSET_FILL, true);
+        gl_state_polygon_offset(renderer, factor,units);
+    } else gl_state_enable(renderer, GL_POLYGON_OFFSET_FILL, false);
     return gl_check(renderer,"Source polygon offset",error);
 }
 bool qa_gl_source_cull(qa_render_controls *controls,qa_scene_cull cull,qa_error *error)
@@ -1246,10 +1259,10 @@ bool qa_gl_source_cull(qa_render_controls *controls,qa_scene_cull cull,qa_error 
     qa_gl_renderer *renderer=controls->owner.gl;
     if (!qa_display_make_current(renderer->options.display,error)) return false;
     renderer->pipeline.cull=cull;
-    if (cull==QA_CULL_NONE) renderer->gl.Disable(GL_CULL_FACE);
+    if (cull==QA_CULL_NONE) gl_state_enable(renderer, GL_CULL_FACE, false);
     else {
-        renderer->gl.Enable(GL_CULL_FACE);
-        renderer->gl.CullFace(cull==QA_CULL_FRONT?GL_FRONT:GL_BACK);
+        gl_state_enable(renderer, GL_CULL_FACE, true);
+        gl_state_cull_face(renderer, cull==QA_CULL_FRONT?GL_FRONT:GL_BACK);
     }
     return gl_check(renderer,"Source cull",error);
 }
@@ -1276,7 +1289,7 @@ bool qa_gl_source_texture_select(qa_render_controls *controls,uint32_t unit,qa_e
 {
     if (!source_texture_owner(controls,error) || unit>1) return false;
     qa_gl_renderer *renderer=controls->owner.gl;
-    renderer->gl.ActiveTexture(GL_TEXTURE0+unit);
+    gl_state_active_texture(renderer, GL_TEXTURE0+unit);
     renderer->gl.ClientActiveTexture(GL_TEXTURE0+unit);
     controls->attributes.texture_unit=unit;
     return gl_check(renderer,"Source texture-unit selection",error);
@@ -1285,8 +1298,8 @@ bool qa_gl_source_texture_enable(qa_render_controls *controls,bool enabled,qa_er
 {
     if (!source_texture_owner(controls,error)) return false;
     qa_gl_renderer *renderer=controls->owner.gl;
-    renderer->gl.ActiveTexture(GL_TEXTURE0+controls->attributes.texture_unit);
-    if (enabled) renderer->gl.Enable(GL_TEXTURE_2D); else renderer->gl.Disable(GL_TEXTURE_2D);
+    gl_state_active_texture(renderer, GL_TEXTURE0+controls->attributes.texture_unit);
+    if (enabled) gl_state_enable(renderer, GL_TEXTURE_2D, true); else gl_state_enable(renderer, GL_TEXTURE_2D, false);
     controls->attributes.texture_enabled[controls->attributes.texture_unit]=enabled;
     return gl_check(renderer,"Source texture-unit enable",error);
 }
@@ -1294,7 +1307,7 @@ bool qa_gl_source_texture_environment(qa_render_controls *controls,qa_scene_text
 {
     if (!source_texture_owner(controls,error) || (unsigned)environment>QA_TEXTURE_REPLACE) return false;
     qa_gl_renderer *renderer=controls->owner.gl;
-    renderer->gl.ActiveTexture(GL_TEXTURE0+controls->attributes.texture_unit);
+    gl_state_active_texture(renderer, GL_TEXTURE0+controls->attributes.texture_unit);
     renderer->gl.TexEnvi(GL_TEXTURE_ENV,GL_TEXTURE_ENV_MODE,
         environment==QA_TEXTURE_ADD?GL_ADD:environment==QA_TEXTURE_REPLACE?GL_REPLACE:GL_MODULATE);
     controls->attributes.environment[controls->attributes.texture_unit]=environment;
@@ -1475,22 +1488,22 @@ static bool capture(qa_gl_renderer *renderer, bool presented, qa_buffer *out,
     }
     GLint parent_read=0,native_read=0;
     renderer->gl.GetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&parent_read);
-    renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,0);
+    gl_state_framebuffer(renderer, GL_READ_FRAMEBUFFER,0);
     renderer->gl.GetIntegerv(GL_READ_BUFFER,&native_read);
-    renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,read_framebuffer);
+    gl_state_framebuffer(renderer, GL_READ_FRAMEBUFFER,read_framebuffer);
     if (read_framebuffer) {
         size_t eye=renderer->draw_buffer==QA_DRAW_BACK_RIGHT?1u:0u;
         renderer->gl.FramebufferTexture2D(GL_READ_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
             renderer->presented_target.color[eye],0);
     }
-    renderer->gl.ReadBuffer(read_buffer);
+    gl_state_read_buffer(renderer, read_buffer);
     bool ok=pack_state(renderer,1,error);
     if (ok) {
         renderer->gl.ReadPixels(0,0,(GLsizei)width,(GLsizei)height,GL_RGBA,GL_UNSIGNED_BYTE,pixels);
         ok=gl_check(renderer,"OpenGL color readback",error);
     }
-    renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,0); renderer->gl.ReadBuffer((GLenum)native_read);
-    renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,(GLuint)parent_read);
+    gl_state_framebuffer(renderer, GL_READ_FRAMEBUFFER,0); gl_state_read_buffer(renderer, (GLenum)native_read);
+    gl_state_framebuffer(renderer, GL_READ_FRAMEBUFFER,(GLuint)parent_read);
     if (!gl_check(renderer,"Restoring color capture bindings",error)) ok=false;
     if (!ok) { free(pixels); free(row); return false; }
     for (size_t y = 0; y < height / 2; ++y) {
@@ -1569,8 +1582,8 @@ bool qa_gl_capture_depth_image(qa_gl_renderer *renderer,
                      "Allocating OpenGL depth-image capture");
         return false;
     }
-    renderer->gl.ActiveTexture(GL_TEXTURE2);
-    renderer->gl.BindTexture(GL_TEXTURE_2D, texture->name);
+    gl_state_active_texture(renderer, GL_TEXTURE2);
+    gl_state_bind_texture(renderer, GL_TEXTURE_2D, texture->name);
     if (!pack_state(renderer, 1, error)) { free(pixels); return false; }
     renderer->gl.GetTexImage(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, GL_FLOAT,
                              pixels);
@@ -1753,7 +1766,7 @@ static bool gl_surface_prepare(qa_gl_surface_ticket *ticket,qa_display *display,
     bool resized=ticket->width!=ticket->original_width || ticket->height!=ticket->original_height;
     ticket->replace_output=resized || gamma!=renderer->gamma;
     ticket->replace_opacity=resized && renderer->opacity.allocated;
-    ticket->targets=*renderer; ticket->targets.options.display=display;
+    ticket->targets=*renderer; gl_state_invalidate(&ticket->targets); ticket->targets.options.display=display;
     ticket->targets.surface_ticket=NULL; ticket->targets.destroy_pending=false; ticket->targets.preparing=false;
     if (ticket->replace_output) ticket->targets.output=(gl_output_target){0};
     if (ticket->replace_opacity) {
@@ -1778,6 +1791,7 @@ static bool gl_surface_prepare(qa_gl_surface_ticket *ticket,qa_display *display,
         !gl_surface_targets_prepare(&ticket->targets,renderer,gamma,ticket->replace_output,
             ticket->replace_opacity,&ticket->reader,error) ||
         !gl_presentation_restore_bindings(renderer,ticket->native,error)) return false;
+    gl_state_invalidate(&ticket->targets);
     if (ticket->replace_output && !gl_bind_destination(&ticket->targets,error)) return false;
     if (!gl_check(renderer,"Completing compatible surface target preparation",error)) return false;
     ticket->prepared=true;
@@ -1884,6 +1898,7 @@ void qa_gl_surface_publish(qa_gl_surface_ticket *ticket)
     if (ticket->replace_opacity) {
         gl_opacity_target retired=renderer->opacity; renderer->opacity=ticket->targets.opacity; ticket->targets.opacity=retired;
     }
+    gl_state_invalidate(renderer);
     renderer->options.display=ticket->candidate_display; renderer->gamma=ticket->gamma;
     if (ticket->width!=ticket->original_width || ticket->height!=ticket->original_height) {
         ticket->retired_domains=renderer->output_domains; renderer->output_domains=(qa_output_domains){0};
@@ -1896,6 +1911,7 @@ void qa_gl_surface_publish(qa_gl_surface_ticket *ticket)
 static bool gl_surface_objects_release(qa_gl_surface_ticket *ticket,qa_error *error)
 {
     qa_gl_renderer *renderer=ticket->renderer;
+    gl_state_invalidate(renderer);
     if (!gl_surface_targets_delete(&ticket->targets,ticket->replace_output,ticket->replace_opacity,error)) return false;
     if (ticket->reader) {
         if (!gl_check(renderer,"Preparing retained surface reader retirement",error)) return false;
@@ -1973,10 +1989,10 @@ bool qa_gl_source_overdraw(qa_render_controls *controls,bool enabled,qa_error *e
     if (!qa_display_make_current(renderer->options.display,error)) return false;
     renderer->overdraw=enabled;
     if (enabled) {
-        renderer->gl.Enable(GL_STENCIL_TEST); renderer->gl.StencilMask(UINT_MAX);
-        renderer->gl.ClearStencil(0); renderer->gl.StencilFunc(GL_ALWAYS,0,UINT_MAX);
-        renderer->gl.StencilOp(GL_KEEP,GL_INCR,GL_INCR);
-    } else renderer->gl.Disable(GL_STENCIL_TEST);
+        gl_state_enable(renderer, GL_STENCIL_TEST, true); gl_state_stencil_mask(renderer, UINT_MAX);
+        renderer->gl.ClearStencil(0); gl_state_stencil_func(renderer, GL_ALWAYS,0,UINT_MAX);
+        gl_state_stencil_op(renderer, GL_KEEP,GL_INCR,GL_INCR);
+    } else gl_state_enable(renderer, GL_STENCIL_TEST, false);
     return gl_check(renderer,"Source frame overdraw policy",error);
 }
 bool qa_gl_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error *error)
@@ -1996,7 +2012,7 @@ bool qa_gl_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error 
         renderer->view=(qa_scene_view){.viewport=target,.depth=1};
         renderer->gl.Viewport(0,0,(GLsizei)width,(GLsizei)height);
         renderer->gl.Scissor(0,0,(GLsizei)width,(GLsizei)height);
-        renderer->gl.Enable(GL_SCISSOR_TEST);
+        gl_state_enable(renderer, GL_SCISSOR_TEST, true);
         controls->source.projection_2d=true;
         controls->source.picture_milliseconds=controls->frame_values.milliseconds;
     }

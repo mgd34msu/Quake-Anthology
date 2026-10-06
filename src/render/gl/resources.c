@@ -22,6 +22,7 @@ static bool finite4(qa_scene_vec4 value)
 
 static bool error_report(qa_gl_renderer *renderer,GLenum code,const char *operation,qa_error *error)
 {
+    gl_state_invalidate(renderer);
     qa_error_set(error, QA_ERROR_IO, 0, "%s failed with OpenGL error 0x%x",
                  operation, (unsigned)code);
     while (renderer->gl.GetError() != GL_NO_ERROR) {}
@@ -86,6 +87,11 @@ bool gl_dimensions(qa_gl_renderer *renderer, uint32_t *width, uint32_t *height,
                      "OpenGL renderer requires a valid GL drawable");
         return false;
     }
+    if (renderer->native_state.drawable_width != info.drawable_width ||
+        renderer->native_state.drawable_height != info.drawable_height)
+        renderer->native_state.destination_valid = false;
+    renderer->native_state.drawable_width = info.drawable_width;
+    renderer->native_state.drawable_height = info.drawable_height;
     *width = info.drawable_width;
     *height = info.drawable_height;
     return true;
@@ -226,18 +232,18 @@ static bool texture_upload(qa_gl_renderer *renderer,
     gl_api *gl = &renderer->gl;
     GLint active=0,binding=0;
     gl->GetIntegerv(GL_ACTIVE_TEXTURE,&active);
-    gl->ActiveTexture(GL_TEXTURE0);
+    gl_state_active_texture(renderer, GL_TEXTURE0);
     gl->GetIntegerv(GL_TEXTURE_BINDING_2D,&binding);
     GLuint texture = 0;
     gl->GenTextures(1, &texture);
     if (texture == 0) {
-        gl->ActiveTexture((GLenum)active);
+        gl_state_active_texture(renderer, (GLenum)active);
         qa_error_set(error, QA_ERROR_MEMORY, 0,
                      "OpenGL could not allocate a texture");
         return false;
     }
-    gl->ActiveTexture(GL_TEXTURE0);
-    gl->BindTexture(GL_TEXTURE_2D, texture);
+    gl_state_active_texture(renderer, GL_TEXTURE0);
+    gl_state_bind_texture(renderer, GL_TEXTURE_2D, texture);
     gl->BindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     gl->PixelStorei(GL_UNPACK_ALIGNMENT, 1);
     gl->PixelStorei(GL_UNPACK_ROW_LENGTH, 0);
@@ -257,10 +263,10 @@ static bool texture_upload(qa_gl_renderer *renderer,
     }
     texture_parameters(renderer, image);
     bool ok=gl_check(renderer, "OpenGL texture upload", error);
-    gl->BindTexture(GL_TEXTURE_2D,(GLuint)binding);
-    gl->ActiveTexture((GLenum)active);
+    gl_state_bind_texture(renderer, GL_TEXTURE_2D,(GLuint)binding);
+    gl_state_active_texture(renderer, (GLenum)active);
     if (!ok) {
-        gl->DeleteTextures(1, &texture);
+        gl_state_delete_textures(renderer, 1, &texture);
         return false;
     }
     *out = texture;
@@ -273,11 +279,10 @@ bool gl_source_texture_bind(qa_gl_renderer *renderer,const qa_scene_image *image
     if (object && object->source_admitted)
         renderer->controls.image_used[object->source_ordinal] = true;
     uint32_t unit=renderer->controls.attributes.texture_unit;
-    renderer->gl.ActiveTexture(GL_TEXTURE0+unit);
-    if (renderer->bound[unit]==image) return gl_check(renderer,"Source cached texture binding",error);
+    gl_state_active_texture(renderer, GL_TEXTURE0+unit);
     gl_texture_entry *texture=NULL;
     if (image && !gl_texture_get(renderer,image,&texture,error)) return false;
-    renderer->gl.BindTexture(GL_TEXTURE_2D,texture?texture->name:0);
+    gl_state_bind_texture(renderer, GL_TEXTURE_2D,texture?texture->name:0);
     qa_scene_image_retain(image); qa_scene_image_release(renderer->bound[unit]); renderer->bound[unit]=image;
     renderer->controls.attributes.actual_empty[unit]=image==NULL;
     return gl_check(renderer,"Source texture binding",error);
@@ -450,19 +455,19 @@ bool qa_gl_source_image_admit(qa_render_controls *controls,const qa_scene_image 
     entry->source_admitted=true; renderer->source_images[renderer->source_image_count++]=entry;
     source_index_admit(renderer, entry);
     controls->attributes.texture_unit=unit;
-    renderer->gl.ActiveTexture(GL_TEXTURE0+unit); renderer->gl.ClientActiveTexture(GL_TEXTURE0+unit);
+    gl_state_active_texture(renderer, GL_TEXTURE0+unit); renderer->gl.ClientActiveTexture(GL_TEXTURE0+unit);
     if (!gl_source_texture_bind(renderer,binding,error)) return false;
     if (!selected) selected=entry;
     qa_render_source_texture *texture=controls->attributes.actual_empty[unit]?&controls->zero_texture:&selected->source_texture;
     qa_scene_filter filter=image->source_mipmap?controls->source_filter:image->filter;
     if (!qa_render_source_texture_upload(texture,image,owner,filter,error) || !source_upload_bound(renderer,image,error)) return false;
     if (texture==&selected->source_texture) selected->source_filter=filter;
-    renderer->gl.BindTexture(GL_TEXTURE_2D,0);
+    gl_state_bind_texture(renderer, GL_TEXTURE_2D,0);
     qa_scene_image_release(renderer->bound[unit]);
     renderer->bound[unit]=NULL;
     controls->attributes.actual_empty[unit]=true;
     if (unit==1) {
-        renderer->gl.ActiveTexture(GL_TEXTURE0); renderer->gl.ClientActiveTexture(GL_TEXTURE0);
+        gl_state_active_texture(renderer, GL_TEXTURE0); renderer->gl.ClientActiveTexture(GL_TEXTURE0);
         controls->attributes.texture_unit=0;
     }
     return gl_check(renderer,"Source completed image admission",error);
@@ -472,7 +477,7 @@ bool qa_gl_source_texture_border(qa_render_controls *controls,qa_scene_vec4 colo
     qa_gl_renderer *renderer=controls->owner.gl;
     if (!qa_display_make_current(renderer->options.display,error)) return false;
     GLfloat values[4]={color.x,color.y,color.z,color.w};
-    renderer->gl.ActiveTexture(GL_TEXTURE0+controls->attributes.texture_unit);
+    gl_state_active_texture(renderer, GL_TEXTURE0+controls->attributes.texture_unit);
     renderer->gl.TexParameterfv(GL_TEXTURE_2D,GL_TEXTURE_BORDER_COLOR,values);
     controls->attributes.zero_border=color;
     controls->zero_texture.border=color;
@@ -596,7 +601,7 @@ bool qa_gl_source_images_prepare(qa_render_controls *controls,qa_scene_resource_
     for (size_t i=0;i<4;++i) renderer->gl.GetIntegerv(unpack_names[i],unpack+i);
     bool ok=gl_check(renderer,"Reading actual Source upload preparation state",error);
     GLint active=0,binding=0;
-    renderer->gl.GetIntegerv(GL_ACTIVE_TEXTURE,&active); renderer->gl.ActiveTexture(GL_TEXTURE0);
+    renderer->gl.GetIntegerv(GL_ACTIVE_TEXTURE,&active); gl_state_active_texture(renderer, GL_TEXTURE0);
     renderer->gl.GetIntegerv(GL_TEXTURE_BINDING_2D,&binding);
     for (size_t i=0;ok && i<ticket->count;++i) {
         gl_source_prepared_image *row=ticket->rows+i;
@@ -650,7 +655,7 @@ bool qa_gl_source_images_prepare(qa_render_controls *controls,qa_scene_resource_
     }
     for (size_t i=0;ok && i<ticket->count;++i) {
         gl_texture_entry *entry=ticket->rows[i].entry;
-        renderer->gl.BindTexture(GL_TEXTURE_2D,entry->name);
+        gl_state_bind_texture(renderer, GL_TEXTURE_2D,entry->name);
         ok=source_storage_apply_bound(renderer,&entry->source_texture,0,error);
         entry->source_filter=entry->source_texture.filter;
     }
@@ -658,15 +663,15 @@ bool qa_gl_source_images_prepare(qa_render_controls *controls,qa_scene_resource_
         gl_source_prepared_update *update=ticket->updates+i;
         renderer->gl.GenTextures(1,&update->name);
         if (!update->name) { qa_error_set(error,QA_ERROR_MEMORY,i,"Creating prepared replacement Source object"); ok=false; break; }
-        renderer->gl.BindTexture(GL_TEXTURE_2D,update->name);
+        gl_state_bind_texture(renderer, GL_TEXTURE_2D,update->name);
         ok=source_storage_apply_bound(renderer,&update->texture,0,error);
     }
     if (ok) {
-        renderer->gl.BindTexture(GL_TEXTURE_2D,0);
+        gl_state_bind_texture(renderer, GL_TEXTURE_2D,0);
         ticket->zero_prepared=true;
         ok=source_storage_apply_bound(renderer,&ticket->zero_texture,controls->zero_texture.count,error);
     }
-    renderer->gl.BindTexture(GL_TEXTURE_2D,(GLuint)binding); renderer->gl.ActiveTexture((GLenum)active);
+    gl_state_bind_texture(renderer, GL_TEXTURE_2D,(GLuint)binding); gl_state_active_texture(renderer, (GLenum)active);
     renderer->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,(GLuint)unpack_buffer);
     for (size_t i=0;i<4;++i) renderer->gl.PixelStorei(unpack_names[i],unpack[i]);
     qa_error restored={0};
@@ -717,7 +722,7 @@ void qa_gl_source_images_publish(qa_gl_source_images_ticket *ticket)
         while (*cursor) {
             gl_texture_entry *entry=*cursor;
             if (!entry->source_admitted) { cursor=&entry->next; continue; }
-            *cursor=entry->next; renderer->gl.DeleteTextures(1,&entry->name);
+            *cursor=entry->next; gl_state_delete_textures(renderer, 1,&entry->name);
             qa_render_source_texture_release(&entry->source_texture);
             qa_scene_image_release(entry->image); qa_scene_resources_destroy(entry->source_owner); free(entry);
         }
@@ -741,7 +746,7 @@ void qa_gl_source_images_publish(qa_gl_source_images_ticket *ticket)
     }
     for (size_t i=0;i<ticket->update_count;++i) {
         gl_source_prepared_update *update=ticket->updates+i;
-        renderer->gl.DeleteTextures(1,&update->original->name); update->original->name=update->name; update->name=0;
+        gl_state_delete_textures(renderer, 1,&update->original->name); update->original->name=update->name; update->name=0;
         qa_render_source_texture_release(&update->original->source_texture);
         update->original->source_texture=update->texture; update->original->source_filter=update->texture.filter;
         qa_render_source_texture_init(&update->texture);
@@ -777,13 +782,13 @@ bool qa_gl_source_images_abort(qa_gl_source_images_ticket **out,qa_error *error)
     if (ticket->zero_prepared) {
         GLint active=0,binding=0,unpack_buffer=0,unpack[4]={0};
         const GLenum names[4]={GL_UNPACK_ALIGNMENT,GL_UNPACK_ROW_LENGTH,GL_UNPACK_SKIP_ROWS,GL_UNPACK_SKIP_PIXELS};
-        renderer->gl.GetIntegerv(GL_ACTIVE_TEXTURE,&active); renderer->gl.ActiveTexture(GL_TEXTURE0);
+        renderer->gl.GetIntegerv(GL_ACTIVE_TEXTURE,&active); gl_state_active_texture(renderer, GL_TEXTURE0);
         renderer->gl.GetIntegerv(GL_TEXTURE_BINDING_2D,&binding);
         renderer->gl.GetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING,&unpack_buffer);
         for (uint32_t i=0;i<4;++i) renderer->gl.GetIntegerv(names[i],unpack+i);
-        renderer->gl.BindTexture(GL_TEXTURE_2D,0);
+        gl_state_bind_texture(renderer, GL_TEXTURE_2D,0);
         bool ok=source_storage_apply_bound(renderer,&renderer->controls.zero_texture,ticket->zero_texture.count,error);
-        renderer->gl.BindTexture(GL_TEXTURE_2D,(GLuint)binding); renderer->gl.ActiveTexture((GLenum)active);
+        gl_state_bind_texture(renderer, GL_TEXTURE_2D,(GLuint)binding); gl_state_active_texture(renderer, (GLenum)active);
         renderer->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,(GLuint)unpack_buffer);
         for (uint32_t i=0;i<4;++i) renderer->gl.PixelStorei(names[i],unpack[i]);
         if (!ok || !gl_check(renderer,"Restoring actual Source zero object after rejected preparation",error)) return false;
@@ -794,7 +799,7 @@ bool qa_gl_source_images_abort(qa_gl_source_images_ticket **out,qa_error *error)
         if (!entry) continue;
         if (entry->name) {
             if (!gl_check(renderer,"Preparing native Source image abort",error)) return false;
-            renderer->gl.DeleteTextures(1,&entry->name);
+            gl_state_delete_textures(renderer, 1,&entry->name);
             if (!gl_check(renderer,"Retiring prepared native Source image",error)) return false;
             entry->name=0;
         }
@@ -805,7 +810,7 @@ bool qa_gl_source_images_abort(qa_gl_source_images_ticket **out,qa_error *error)
     for (size_t i=0;i<ticket->update_count;++i) {
         gl_source_prepared_update *update=ticket->updates+i;
         if (update->name) {
-            renderer->gl.DeleteTextures(1,&update->name);
+            gl_state_delete_textures(renderer, 1,&update->name);
             if (!gl_check(renderer,"Retiring rejected Source object replacement",error)) return false;
             update->name=0;
         }
@@ -836,7 +841,7 @@ bool gl_texture_get(qa_gl_renderer *renderer, const qa_scene_image *image,
     if (!texture_upload(renderer, image, &name, error)) return false;
     entry = calloc(1, sizeof(*entry));
     if (entry == NULL) {
-        renderer->gl.DeleteTextures(1, &name);
+        gl_state_delete_textures(renderer, 1, &name);
         qa_error_set(error, QA_ERROR_MEMORY, 0,
                      "Allocating OpenGL texture registry entry");
         return false;
@@ -900,9 +905,9 @@ bool gl_image_region_update(qa_gl_renderer *renderer, const qa_scene_image_regio
     gl_api *gl = &renderer->gl;
     GLint active = 0, binding = 0;
     gl->GetIntegerv(GL_ACTIVE_TEXTURE, &active);
-    gl->ActiveTexture(GL_TEXTURE0);
+    gl_state_active_texture(renderer, GL_TEXTURE0);
     gl->GetIntegerv(GL_TEXTURE_BINDING_2D, &binding);
-    gl->BindTexture(GL_TEXTURE_2D, entry->name);
+    gl_state_bind_texture(renderer, GL_TEXTURE_2D, entry->name);
     gl->BindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     gl->PixelStorei(GL_UNPACK_ALIGNMENT, 1);
     gl->PixelStorei(GL_UNPACK_ROW_LENGTH, 0);
@@ -913,8 +918,8 @@ bool gl_image_region_update(qa_gl_renderer *renderer, const qa_scene_image_regio
         GL_RGBA, GL_UNSIGNED_BYTE, region->pixels);
     bool ok = gl_check(renderer, "OpenGL lightmap region upload", error);
     if (ok) entry->stream_writes = region->writes;
-    gl->BindTexture(GL_TEXTURE_2D, (GLuint)binding);
-    gl->ActiveTexture((GLenum)active);
+    gl_state_bind_texture(renderer, GL_TEXTURE_2D, (GLuint)binding);
+    gl_state_active_texture(renderer, (GLenum)active);
     return ok;
 }
 
@@ -954,7 +959,7 @@ void gl_textures_prune(qa_gl_renderer *renderer)
             if (gl_texture_resident(renderer, entry->image) == entry)
                 render_resource_remove(&renderer->texture_index, entry->image->identity,
                                        entry->image->revision, NULL);
-            renderer->gl.DeleteTextures(1, &entry->name);
+            gl_state_delete_textures(renderer, 1, &entry->name);
             qa_scene_image_release(entry->image);
             free(entry);
         } else link = &entry->next;
@@ -1094,7 +1099,11 @@ fail:
 
 static void mesh_buffers_delete(qa_gl_renderer *renderer,gl_mesh_entry *entry)
 {
-    if (entry->array.name) renderer->gl.DeleteVertexArrays(1,&entry->array.name);
+    if (entry->array.name) {
+        if (!renderer->vertex_array_known || renderer->bound_vertex_array == entry->array.name)
+            gl_state_vertex_array(renderer, 0);
+        renderer->gl.DeleteVertexArrays(1,&entry->array.name);
+    }
     renderer->gl.DeleteBuffers(1,&entry->vertex_buffer);
     renderer->gl.DeleteBuffers(1,&entry->index_buffer);
 }
@@ -1158,6 +1167,9 @@ bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
     size_t vertex_offset;
     gl_mesh_entry *stored;
     *base_vertex=0;
+    /* Uploading element data must not change an already retained VAO's index binding. */
+    if ((!resident || !cached_arrays) && renderer->gl.BindVertexArray)
+        gl_state_vertex_array(renderer, 0);
     if (!mesh_storage(renderer,mesh,resident,&stored,&vertices,&indices,&vertex_offset,index_offset,error)) return false;
     gl_api *gl=&renderer->gl;
     if (cached_arrays && gl->GenVertexArrays) {
@@ -1176,7 +1188,7 @@ bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
             qa_error_set(error,QA_ERROR_MEMORY,0,"OpenGL could not allocate a mesh vertex array");
             return false;
         }
-        gl->BindVertexArray(array->name);
+        gl_state_vertex_array(renderer, array->name);
         renderer->bound_vertex_array=array->name;
         if (fresh) {
             mesh_array_setup(gl,vertices,indices,vertex_offset,inputs->swap_uv);
@@ -1206,10 +1218,7 @@ bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
 
 void gl_mesh_unbind(qa_gl_renderer *renderer)
 {
-    if (renderer->bound_vertex_array) {
-        renderer->gl.BindVertexArray(0);
-        renderer->bound_vertex_array=0;
-    }
+    if (renderer->gl.BindVertexArray) gl_state_vertex_array(renderer, 0);
     for (GLuint attribute = 0; attribute < 5; ++attribute)
         renderer->gl.DisableVertexAttribArray(attribute);
     renderer->gl.BindBuffer(GL_ARRAY_BUFFER, 0);
@@ -1225,8 +1234,8 @@ bool gl_resources_create(qa_gl_renderer *renderer, qa_error *error)
                      "OpenGL could not allocate its white texture");
         return false;
     }
-    renderer->gl.ActiveTexture(GL_TEXTURE0);
-    renderer->gl.BindTexture(GL_TEXTURE_2D, renderer->white_texture);
+    gl_state_active_texture(renderer, GL_TEXTURE0);
+    gl_state_bind_texture(renderer, GL_TEXTURE_2D, renderer->white_texture);
     renderer->gl.PixelStorei(GL_UNPACK_ALIGNMENT, 1);
     renderer->gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA,
                             GL_UNSIGNED_BYTE, white);
@@ -1253,7 +1262,7 @@ void gl_resources_destroy(qa_gl_renderer *renderer)
     while (renderer->textures != NULL) {
         gl_texture_entry *entry = renderer->textures;
         renderer->textures = entry->next;
-        renderer->gl.DeleteTextures(1, &entry->name);
+        gl_state_delete_textures(renderer, 1, &entry->name);
         qa_scene_image_release(entry->image);
         qa_scene_resources_destroy(entry->source_owner);
         qa_render_source_texture_release(&entry->source_texture);
@@ -1273,7 +1282,7 @@ void gl_resources_destroy(qa_gl_renderer *renderer)
     if (renderer->stream.index_buffer != 0)
         renderer->gl.DeleteBuffers(1, &renderer->stream.index_buffer);
     if (renderer->white_texture != 0)
-        renderer->gl.DeleteTextures(1, &renderer->white_texture);
+        gl_state_delete_textures(renderer, 1, &renderer->white_texture);
     memset(&renderer->stream, 0, sizeof(renderer->stream));
     renderer->white_texture = 0;
 }

@@ -170,6 +170,19 @@ typedef struct gl_programs {
     gl_fog_uniforms fog_uniform[3];
 } gl_programs;
 
+typedef struct gl_cached_value {
+    unsigned char value[16 * sizeof(GLfloat)];
+    uint8_t size;
+} gl_cached_value;
+typedef struct gl_native_state {
+    gl_cached_value values[13];
+    unsigned enable_known, enabled, polygon_known, texture_known;
+    GLenum polygon[2], active;
+    GLuint texture[3];
+    uint32_t drawable_width, drawable_height;
+    bool active_known, destination_valid;
+} gl_native_state;
+
 typedef struct gl_texture_entry {
     uint64_t stream_writes;
     const qa_scene_image *image;
@@ -251,6 +264,9 @@ struct qa_gl_renderer {
     uint32_t *particle_indices;
     size_t particle_capacity;
     GLuint bound_vertex_array;
+    bool vertex_array_known;
+    gl_native_state native_state;
+    gl_cached_value stage_values[sizeof(gl_stage_uniforms) / sizeof(GLint)];
     gl_output_target output;
     gl_opacity_target opacity;
     gl_presented_target presented_target;
@@ -274,6 +290,8 @@ struct qa_gl_renderer {
     bool destroy_pending;
     gl_restore_storage *restore;
 };
+#include "state.h"
+
 void gl_restore_storage_destroy(qa_gl_renderer *);
 qa_gl_renderer *gl_renderer_allocate(const qa_gl_options *, const qa_display_info *, qa_error *);
 

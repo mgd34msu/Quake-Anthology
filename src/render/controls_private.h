@@ -76,6 +76,7 @@ void qa_render_controls_init_gl(qa_render_controls *, qa_gl_renderer *);
 /* Real renderer bodies qualify the embedded owner without entering GL or SDL. */
 bool qa_cpu_render_controls_current(const qa_render_controls *);
 bool qa_gl_render_controls_current(const qa_render_controls *);
+void qa_gl_render_controls_enter(qa_render_controls *);
 /* Retained detached decode owners may bind callbacks, but cannot issue GPU work. */
 bool qa_gl_render_controls_callback_candidate(const qa_render_controls *);
 bool qa_cpu_source_scratch_current(const qa_render_controls *);
