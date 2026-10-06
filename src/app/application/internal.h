@@ -646,6 +646,7 @@ bool application_control_ensure(qa_application *, qa_actor_id, qa_vec3,
                                 application_control_record **, qa_error *);
 bool application_control_cutscene(qa_application *, qa_actor_id, qa_vec3,
                                   qa_vec3, qa_vec3, qa_error *);
+bool application_control_set_angles(qa_application *, qa_actor_id, qa_vec3, qa_error *);
 bool application_control_motion_changed(qa_application *, qa_actor_id,
                                         const qa_builtin_motion_change *,
                                         qa_error *);

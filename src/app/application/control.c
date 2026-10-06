@@ -3411,6 +3411,20 @@ bool qa_application_q3_input_values_read(qa_application *app,uint32_t seat,qa_ac
     return true;
 }
 
+bool application_control_set_angles(qa_application *app, qa_actor_id actor,
+    qa_vec3 angles, qa_error *error)
+{
+    if (!app || !qa_vec_finite(angles) || actor.slot >= app->control_capacity)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source view reset requires its existing recipient control");
+    application_control_record *control = &app->controls[actor.slot];
+    if (!control->active || control->moving || control->retired || control->application != app ||
+        !qa_actor_id_equal(control->actor, actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source view reset lost its returned selected control");
+    control->view_angles = angles; control->command_angles = angles;
+    ++control->command_angle_revision;
+    return true;
+}
+
 bool qa_application_control_read(const qa_application *application,
                                  qa_actor_id actor,
                                  qa_application_control_view *out)

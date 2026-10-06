@@ -780,7 +780,7 @@ bool application_native_q1_wire_feedback(qa_application *app, qa_actor_id actor,
     qa_application_network_q1_feedback *out, qa_error *error) {
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 feedback consumption");
     application_native_q1_wire_source source = {0};
-    if (!application_native_q1_wire_begin(app, 0, &source, error)) return false;
+    if (!observation_begin(app, 0, &source, error)) return false;
     uint32_t slot; application_control_record *row = control(app, actor);
     const application_player_record *connection = roster(app, actor);
     qa_q1_wire_feedback feedback;
@@ -798,11 +798,15 @@ bool application_native_q1_wire_feedback(qa_application *app, qa_actor_id actor,
     if (okay) {
         qa_application_network_q1_feedback value = {.damage = feedback.armor != 0 || feedback.blood != 0,
             .armor = source_byte(feedback.armor), .blood = source_byte(feedback.blood),
-            .set_angle = row->state.data.nq.fix_angle};
+            .set_angle = row->state.kind == QA_MOVEMENT_NETQUAKE && row->state.data.nq.fix_angle};
         memcpy(value.origin, feedback.origin, sizeof(value.origin));
-        vector(value.angles, row->state.data.nq.angles);
-        row->state.data.nq.fix_angle = false;
-        *out = value;
+        if (value.set_angle) {
+            vector(value.angles, row->state.data.nq.angles);
+            okay = application_control_set_angles(app, actor,
+                qa_v3(value.angles[0], value.angles[1], value.angles[2]), error);
+            if (okay) row->state.data.nq.fix_angle = false;
+        }
+        if (okay) *out = value;
     } else if (error && error->code == QA_OK)
         application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 feedback requires an actual spawned source client");
     application_native_q1_wire_end(&source); return okay;

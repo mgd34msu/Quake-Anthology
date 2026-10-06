@@ -543,9 +543,10 @@ bool qa_application_network_q1_consume_feedback(qa_application *app, qa_actor_id
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 client feedback output");
     uint32_t slot; struct application_qc_state *engine = application_network_q1_qc_observation(app, 0, error);
     if (!engine || !application_network_q1_qc_client(engine, player, &slot, error)) return false;
-    if ((engine->profile != QA_QC_NETQUAKE && engine->profile != QA_QC_RERELEASE) || !engine->clients[slot].spawned ||
+    if ((engine->profile != QA_QC_NETQUAKE && engine->profile != QA_QC_RERELEASE &&
+        engine->profile != QA_QC_QUAKEWORLD) || !engine->clients[slot].spawned ||
         !application_qc_input_idle(engine->provider))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 feedback requires its idle spawned NetQuake source client");
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 feedback requires its idle spawned source client");
     qa_application_network_q1_feedback value = {0}; int32_t reference;
     float armor, blood, fixangle;
     if (!q1_entity_reference(engine, player, &reference, error) ||
@@ -567,7 +568,9 @@ bool qa_application_network_q1_consume_feedback(qa_application *app, qa_actor_id
         for (unsigned axis = 0; axis < 3; ++axis)
             value.origin[axis] = (double)origin[axis] + ((double)minimum[axis] + maximum[axis]) * 0.5;
     }
-    if (value.set_angle && !q1_wire_vector(engine, reference, "angles", value.angles, error)) return false;
+    if (value.set_angle && (!q1_wire_vector(engine, reference, "angles", value.angles, error) ||
+        !application_control_set_angles(app, player,
+            qa_v3(value.angles[0], value.angles[1], value.angles[2]), error))) return false;
     /* Consume the returned Source fields after reading their complete typed state. */
     if ((value.damage && (!application_qc_set_float(engine, reference, "dmg_save", 0, error) ||
         !application_qc_set_float(engine, reference, "dmg_take", 0, error))) ||

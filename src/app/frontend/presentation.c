@@ -228,9 +228,12 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
     if (!qa_actor_id_equal(seat->q1_view_actor, actor)) {
         seat->q1_view_motion = (frontend_q1_view_motion){0}; seat->q1_view_actor = actor;
     }
-    if (!qw && source.product->program_kind == QA_PROGRAM_BUILTIN) {
+    qa_vec3 angles = camera->angles;
+    {
         qa_application_network_q1_feedback feedback;
         if (!qa_application_network_q1_consume_feedback(f->application, actor, &feedback, error)) return false;
+        if (feedback.set_angle && !camera->cutscene)
+            angles = qa_v3(feedback.angles[0], feedback.angles[1], feedback.angles[2]);
         if (feedback.damage) {
             qa_vec3 from;
             if (!frontend_view_q1_damage_origin(feedback.origin,&from,error)) return false;
@@ -238,8 +241,8 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
                 feedback.armor, feedback.blood, from, seconds, &seat->q1_view_motion);
         }
     }
-    frontend_q1_motion_input input = {.origin = camera->origin, .angles = camera->angles,
-        .entity_angles = qa_v3(-camera->angles.x, camera->angles.y, body.angles.z),
+    frontend_q1_motion_input input = {.origin = camera->origin, .angles = angles,
+        .entity_angles = qa_v3(-angles.x, angles.y, body.angles.z),
         .velocity = body.velocity, .punch = equipment.kick_angles, .seconds = seconds,
         .frame_seconds = (double)seat->client_frame_ns / 1000000000.0,
         .view_height = camera->view_height, .view_size = (float)view->size, .quakeworld = qw,
@@ -252,10 +255,10 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
     if (!qa_application_provider_owner(f->application,source.descriptor->selection.instance,&provider) ||
         !frontend_equipment_media_q1_faces_prepare(f,provider,!strcmp(source.product->campaign,"rogue"),error)) return false;
     seat->q1_view_ready = true;
-    scene->origin = seat->q1_view_pose.origin; qa_vec3 angles = seat->q1_view_pose.angles;
+    scene->origin = seat->q1_view_pose.origin; angles = seat->q1_view_pose.angles;
     seat->q1_chase = !qw && view->chase && !camera->cutscene;
     if (seat->q1_chase && !frontend_view_q1_chase(view,
-        qa_world_geometry(qa_application_world(f->application)),scene->origin,camera->angles,
+        qa_world_geometry(qa_application_world(f->application)),scene->origin,input.angles,
         &scene->origin,&angles,error)) return false;
     frontend_camera_axes(angles, scene->axis);
     int32_t contents;

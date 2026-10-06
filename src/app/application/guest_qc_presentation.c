@@ -244,16 +244,8 @@ bool qa_application_qc_message_angles(qa_application *app,const qa_application_q
     qa_actor_id actor,qa_vec3 angles,qa_error *error)
 {
     uint32_t slot;
-    if(!qa_vec_finite(angles) || !qa_application_qc_message_client(app,source,actor,&slot,error) ||
-        actor.slot>=app->control_capacity)
-        return application_fail(error,QA_ERROR_ARGUMENT,"QC SETANGLE requires its existing recipient control");
-    application_control_record *control=&app->controls[actor.slot];
-    if(!control->active || control->moving || control->retired || control->application!=app ||
-        !qa_actor_id_equal(control->actor,actor))
-        return application_fail(error,QA_ERROR_ARGUMENT,"QC SETANGLE lost its returned full-generation selected control");
-    control->view_angles=angles; control->command_angles=angles;
-    ++control->command_angle_revision;
-    return true;
+    return qa_application_qc_message_client(app,source,actor,&slot,error) &&
+        application_control_set_angles(app,actor,angles,error);
 }
 bool qa_application_qc_message_view_offset(qa_application *app,const qa_application_qc_message_source *source,
     qa_actor_id actor,qa_vec3 *out,qa_error *error)
