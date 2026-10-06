@@ -19,17 +19,36 @@ struct qa_equipment {
     uint32_t capacity;
     size_t operation_depth;
     qa_weapon_slot **slots;
+    uint32_t *occupied;
+    size_t occupied_count;
 };
+static bool equipment_occupied(const qa_equipment *g, uint32_t slot) {
+    return g->actors[slot].active || g->actors[slot].configuring || g->slots[slot];
+}
+static void equipment_index_sync(qa_equipment *g, uint32_t slot) {
+    bool occupied = equipment_occupied(g, slot);
+    for (size_t i = 0; i < g->occupied_count; ++i) {
+        if (g->occupied[i] != slot) continue;
+        if (!occupied) g->occupied[i] = g->occupied[--g->occupied_count];
+        return;
+    }
+    if (occupied) g->occupied[g->occupied_count++] = slot;
+}
+static void equipment_index_rebuild(qa_equipment *g) {
+    g->occupied_count = 0;
+    for (uint32_t i = 0; i < g->capacity; ++i)
+        if (equipment_occupied(g, i)) g->occupied[g->occupied_count++] = i;
+}
 static bool equipment_slot_ensure(qa_equipment *,qa_actor_id,qa_error *);
 static bool equipment_slot_sync_grapple(qa_equipment *,equipment_actor *,qa_error *);
 bool qa_equipment_idle(const qa_equipment *g) {
     if (!g || g->operation_depth)
         return false;
-    for (uint32_t i = 0; i < g->capacity; ++i)
-        if (g->actors[i].configuring)
-            return false;
-    for (uint32_t i=0;i<g->capacity;++i)
-        if (g->slots[i]&&!qa_weapon_slot_idle(g->slots[i])) return false;
+    for (size_t i = 0; i < g->occupied_count; ++i) {
+        uint32_t slot = g->occupied[i];
+        if (g->actors[slot].configuring ||
+            (g->slots[slot] && !qa_weapon_slot_idle(g->slots[slot]))) return false;
+    }
     return !g->options.source_idle || g->options.source_idle(g->options.source_context);
 }
 static equipment_actor *equipment_get(qa_equipment *g, qa_actor_id actor) {
@@ -200,8 +219,9 @@ bool qa_equipment_create(const qa_equipment_options *options, qa_equipment **out
     g->capacity = qa_actors_capacity(qa_session_actors(options->services.session));
     g->actors = calloc(g->capacity, sizeof(*g->actors));
     g->slots = calloc(g->capacity, sizeof(*g->slots));
-    if (!g->actors || !g->slots) {
-        free(g->actors); free(g->slots);
+    g->occupied = calloc(g->capacity, sizeof(*g->occupied));
+    if (!g->actors || !g->slots || !g->occupied) {
+        free(g->actors); free(g->slots); free(g->occupied);
         free(g);
         qa_error_set(e, QA_ERROR_MEMORY, 0, "allocating equipment players");
         return false;
@@ -216,11 +236,15 @@ bool qa_equipment_destroy_checked(qa_equipment *g, qa_error *e) {
     if (!g)
         return true;
     if (!qa_equipment_idle(g)) return mode_fail(e, "equipment destruction retains a source operation");
-    for(uint32_t i=0;i<g->capacity;++i)
-        if(!qa_weapon_slot_destroy(&g->slots[i],e)) return false;
+    for(uint32_t i=0;i<g->capacity;++i) {
+        bool okay = qa_weapon_slot_destroy(&g->slots[i],e);
+        equipment_index_sync(g, i);
+        if (!okay) return false;
+    }
     if (g->options.source_destroy && !g->options.source_destroy(g->options.source_context, e)) return false;
     free(g->actors);
     free(g->slots);
+    free(g->occupied);
     free(g);
     return true;
 }
@@ -262,7 +286,10 @@ static bool equipment_admit(qa_equipment *g, qa_actor_id actor, const qa_equipme
         return mode_fail(e, "invalid equipment admission");
     if (equipment_get(g, actor))
         return qa_equipment_configure_sources(g, actor, selection, sources, e);
-    if(!qa_weapon_slot_destroy(&g->slots[actor.slot],e))return false;
+    if(!qa_weapon_slot_destroy(&g->slots[actor.slot],e)) {
+        equipment_index_sync(g, actor.slot);return false;
+    }
+    equipment_index_sync(g, actor.slot);
     qa_equipment_selection wanted = *selection;
     qa_equipment_source_selection selected_sources = *sources;
     selection = &wanted;
@@ -270,6 +297,7 @@ static bool equipment_admit(qa_equipment *g, qa_actor_id actor, const qa_equipme
     equipment_actor *p = &g->actors[actor.slot];
     equipment_actor before = *p;
     *p = (equipment_actor){.configuring = true, .state.actor = actor};
+    equipment_index_sync(g, actor.slot);
     equipment_admission admission = {0};
     bool ok = admission_prepare(g, actor, selection, sources, &admission, e) &&
               admission_commit(g, actor, &admission, e);
@@ -286,6 +314,7 @@ static bool equipment_admit(qa_equipment *g, qa_actor_id actor, const qa_equipme
         else
             *p = before;
     }
+    equipment_index_sync(g, actor.slot);
     return ok;
 }
 static bool equipment_configure(qa_equipment *g, qa_actor_id actor,
@@ -299,6 +328,7 @@ static bool equipment_configure(qa_equipment *g, qa_actor_id actor,
     selection = &wanted;
     sources = &selected_sources;
     p->configuring = true;
+    equipment_index_sync(g, actor.slot);
     equipment_admission admission = {0};
     bool ok = false;
     if (!admission_prepare(g, actor, selection, sources, &admission, e))
@@ -339,6 +369,7 @@ finished: {
         p = equipment_get(g, actor);
         if (p)
             p->configuring = false;
+        equipment_index_sync(g, actor.slot);
         return ok;
     }
 }
@@ -349,6 +380,7 @@ static bool equipment_respawn(qa_equipment *g, qa_actor_id actor, qa_error *e) {
     qa_equipment_source_selection sources = p->state.configuration_pending ? p->state.pending_sources : p->state.sources;
     bool resume = p->state.slot_requested || p->state.slot_active || p->state.slot_holstering || p->state.slot_lowering;
     p->configuring = true;
+    equipment_index_sync(g, actor.slot);
     bool okay = release_grapple(g, actor, true, e);
     p = equipment_get(g, actor);
     if (okay && p && resume) okay = g->options.primary_resume(g->options.context, actor, e);
@@ -362,6 +394,7 @@ static bool equipment_respawn(qa_equipment *g, qa_actor_id actor, qa_error *e) {
     p = equipment_get(g, actor);
     if (!p) return true;
     p->configuring = true;
+    equipment_index_sync(g, actor.slot);
     if (p->state.selection.binding == QA_EQUIPMENT_WEAPON_SLOT) {
         if (p->state.selection.grapple == QA_GRAPPLE_THREEWAVE)
             okay = qa_q1_grapple_weapon_holster(p->grapple.q1, actor, e);
@@ -562,8 +595,10 @@ static bool equipment_slot_ensure(qa_equipment *g,qa_actor_id actor,qa_error *e)
         .holstered=slot_primary_holstered,.resume=slot_primary_resume};
     if(!qa_weapon_slot_create(qa_session_actors(g->options.services.session),actor,&primary,
         p->state.weapon_slot_present?&p->state.weapon_slot:NULL,&g->slots[actor.slot],e))return false;
+    equipment_index_sync(g, actor.slot);
     if(!equipment_slot_sync_grapple(g,p,e)) {
-        qa_weapon_slot_destroy(&g->slots[actor.slot],NULL);return false;
+        qa_weapon_slot_destroy(&g->slots[actor.slot],NULL);
+        equipment_index_sync(g, actor.slot);return false;
     }
     p->state.weapon_slot_present=true;p->state.primary_weapon_owner=owner;
     return qa_weapon_slot_snapshot(g->slots[actor.slot],&p->state.weapon_slot);
@@ -967,6 +1002,7 @@ void qa_equipment_actor_released(qa_equipment *g, qa_actor_record actor) {
     if ((p->active || p->configuring) && qa_actor_id_equal(p->state.actor, actor.id)) {
         if(!qa_weapon_slot_destroy(&g->slots[actor.id.slot],NULL))return;
         *p = (equipment_actor){0};
+        equipment_index_sync(g, actor.id.slot);
     }
 }
 
@@ -1169,7 +1205,10 @@ bool qa_equipment_restore_bytes(qa_equipment *g, qa_bytes input, qa_error *e) {
     }
     if (okay) okay = qa_source_save_finish(io, NULL);
     qa_source_save_dispose(io);
-    if (okay) { free(g->actors); g->actors = candidate; }
+    if (okay) {
+        free(g->actors); g->actors = candidate;
+        equipment_index_rebuild(g);
+    }
     else free(candidate);
     return okay;
 }
