@@ -9,6 +9,7 @@ bool frontend_ui_features_destroy(qa_frontend *, qa_error *);
 bool frontend_ui_features_idle(const qa_frontend *);
 bool frontend_ui_features_sync(qa_frontend *, qa_error *);
 void frontend_ui_audio_event(void *, const qa_audio_voice_event *);
+void frontend_ui_sound(void *, uint32_t, qa_ui_sound);
 bool frontend_ui_features_assets_read(const qa_frontend *, qa_audio_asset ***, size_t *, qa_error *);
 bool frontend_ui_features_content_visit(const qa_frontend *, const qa_application_content_visitor *, qa_error *);
 bool frontend_ui_features_captions(frontend_seat *, const qa_active_caption **, size_t *, qa_error *);

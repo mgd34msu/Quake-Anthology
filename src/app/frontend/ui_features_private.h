@@ -51,6 +51,7 @@ struct frontend_ui_features {
     qa_error audio_error;
     bool handling;
     qa_localization_profile ui_profile;
+    qa_audio_bank *sounds;
 };
 frontend_ui_seat_features *frontend_ui_features_seat(frontend_seat *);
 #endif

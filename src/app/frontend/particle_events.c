@@ -1130,20 +1130,19 @@ static bool q1_temporary_apply(qa_frontend *frontend, frontend_particle_owner *o
         light->origin=qa_v3(event->origin[0],event->origin[1],event->origin[2]);
         light->recipe=recipe; light->die=seconds+recipe.duration;
     }
-    if (received) {
-        const char *path = frontend_fx_q1_temporary_sound(event, &owner->random);
-        if (path) {
-            qa_string_id resource;
-            if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(frontend->application)),
-                    path, &resource, error)) return false;
-            qa_builtin_event sound = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q1,
-                .provider = owner->provider, .resource = resource,
-                .origin = {event->origin[0], event->origin[1], event->origin[2]}, .volume = 1, .attenuation = 1};
-            for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
-                qa_actor_id recipient;
-                if (frontend_seat_actor_read(frontend, seat, &recipient) && qa_actor_id_equal(recipient, owner->recipient))
-                    return frontend_particle_sound(frontend, &sound, seat, recipient, error);
-            }
+    const char *path = frontend_fx_q1_temporary_sound(event, &owner->random);
+    if (path) {
+        qa_string_id resource;
+        if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(frontend->application)),
+                path, &resource, error)) return false;
+        qa_builtin_event sound = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q1,
+            .provider = owner->provider, .resource = resource,
+            .origin = {event->origin[0], event->origin[1], event->origin[2]}, .volume = 1, .attenuation = 1};
+        if (!received) return frontend_event_sound(frontend, &sound, error);
+        for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
+            qa_actor_id recipient;
+            if (frontend_seat_actor_read(frontend, seat, &recipient) && qa_actor_id_equal(recipient, owner->recipient))
+                return frontend_particle_sound(frontend, &sound, seat, recipient, error);
         }
     }
     return true;

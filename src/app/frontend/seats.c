@@ -588,7 +588,8 @@ static bool seats_create(qa_frontend *frontend, unsigned first, qa_error *error)
             !frontend_menu_font_selection(frontend, i, preferences.typeface == QA_UI_TYPEFACE_BOLD, &seat->fonts, error)) return false;
         qa_ui_options ui = {.seat = i, .input = seat->input, .fonts = seat->fonts,
             .art = frontend->menu_art,
-            .white = qa_scene_white(frontend->ui_images), .context = seat, .clipboard = ui_clipboard, .localize = frontend_ui_localize,
+            .white = qa_scene_white(frontend->ui_images), .context = seat, .sound = frontend_ui_sound,
+            .clipboard = ui_clipboard, .localize = frontend_ui_localize,
             .binding = frontend_binding_capture, .binding_cancel = frontend_binding_cancel,
             .input_now_ms=input_now_ms};
         if (!frontend_menu_font_selection(frontend, i, true, &ui.title_fonts, error)) return false;

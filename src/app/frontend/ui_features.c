@@ -33,7 +33,7 @@ bool frontend_ui_features_prepare(qa_frontend *f, qa_error *error)
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating actual UI feature owner");
     owner->frontend = f; f->ui_features = owner;
     owner->tracks = qa_caption_library_create(error); owner->catalogs = qa_localization_pool_create(error);
-    if (!owner->tracks || !owner->catalogs) return false;
+    if (!owner->tracks || !owner->catalogs || !qa_audio_bank_create(f->ui_mounts, &owner->sounds, error)) return false;
     for (unsigned i = 0; !f->options.dedicated && i < QA_INPUT_LOCAL_SEATS; ++i) {
         qa_sound_caption_options options = {.captions = {.seat = i, .kind = QA_CAPTION_SOUND,
             .tracks = owner->tracks, .catalogs = owner->catalogs,
@@ -71,8 +71,29 @@ bool frontend_ui_features_destroy(qa_frontend *f, qa_error *error)
         free(owner->seats[i].campaign_rows); free(owner->seats[i].campaign_labels);
         free(owner->seats[i].campaign_instance); free(owner->seats[i].shown_instance);
     }
+    qa_audio_bank_destroy(owner->sounds);
     qa_caption_library_destroy(owner->tracks); qa_localization_pool_destroy(owner->catalogs);
     free(owner->fallbacks); free(owner); f->ui_features = NULL; return true;
+}
+void frontend_ui_sound(void *context, uint32_t physical, qa_ui_sound event)
+{
+    frontend_seat *seat = context;
+    qa_frontend *f = seat ? seat->frontend : NULL;
+    frontend_ui_seat_features *features = frontend_ui_features_seat(seat);
+    if (!features || physical != seat->id || !f->audio || !f->ui_features->sounds ||
+        f->ui_features->audio_error.code != QA_OK) return;
+    const char *name = event == QA_UI_MOVE ? "misc/menu1.wav" :
+        event == QA_UI_CHANGE ? "misc/menu3.wav" : "misc/menu2.wav";
+    qa_audio_asset *asset = NULL;
+    qa_error *error = &f->ui_features->audio_error;
+    if (!qa_audio_bank_register(f->ui_features->sounds, name, QA_AUDIO_Q1, &asset, error) || !asset) return;
+    qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
+        .name = name, .family = QA_AUDIO_Q1, .actor = QA_AUDIO_NO_ACTOR,
+        .owner = QA_AUDIO_NO_OWNER, .audience = physical, .origin_kind = QA_AUDIO_LOCAL,
+        .channel = -1, .volume = 1, .attenuation = 0};
+    (void)qa_audio_engine_play(f->audio, &sound,
+        (int32_t)((f->time_ns / 1000000) & INT32_MAX), error);
+    qa_audio_asset_release(asset);
 }
 void frontend_ui_audio_event(void *context, const qa_audio_voice_event *event)
 {

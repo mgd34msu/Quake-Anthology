@@ -440,6 +440,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                     real_milliseconds, &common_hud_drawn, error)) return false;
         if (!frontend_native_q2_world_text(frontend, i, &view, error) ||
             !frontend_qc_rerelease_draw(frontend, i, &view, error)) return false;
+        size_t audio_seat_count = listener_count;
         if (remote_rendered && frontend->audio) {
             if (remote_listener_present) listeners[listener_count++]=remote_listener;
         } else if ((live || native_rendered) && frontend->audio) {
@@ -455,6 +456,9 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                 frontend_source_listener(frontend, i, listener);
             }
         }
+        if (frontend->audio && listener_count == audio_seat_count)
+            listeners[listener_count++] = (qa_audio_listener){.seat = i, .actor = QA_AUDIO_NO_ACTOR,
+                .axis = {{1,0,0},{0,1,0},{0,0,1}}, .gain = 1.0f / (float)frontend->options.seats};
         if (live && !ui.fullscreen && !source.source_world && !native_rendered && seat->q1_view_ready &&
                 qa_actor_id_equal(actor,seat->q1_view_actor) && seat->q1_blend.w>0 && !preferences.reduced_flashes) {
             frontend_legacy_render_policy policy;
