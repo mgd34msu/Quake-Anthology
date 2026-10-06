@@ -8,7 +8,7 @@ static qa_q3_host *role_host(qa_application *app,
         !wanted->frontend_lifetime || (wanted->role != QA_QVM_CGAME && wanted->role != QA_QVM_UI) ||
         app->destroy_requested || app->state == QA_APPLICATION_FAULTED ||
         (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_CONFIGURING &&
-         app->operation != APPLICATION_PERSISTING)) {
+         app->operation != APPLICATION_PERSISTING && app->operation != APPLICATION_DESTROYING)) {
         application_fail(error, QA_ERROR_ARGUMENT, "Q3 scene exchange requires its idle actual role lease");
         return NULL;
     }
