@@ -374,7 +374,7 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
         if (second_binding && !material_source_texture_select(source, 0, error)) return false;
         if (!material_source_client_coordinate_pointer(source,
             iterator == QA_MATERIAL_GENERIC || iterator == QA_MATERIAL_SKY ? MATERIAL_SOURCE_COORDINATES_STAGE : MATERIAL_SOURCE_COORDINATES_TESS,
-            first_binding == stage ? 0 : 1, error)) return false;
+            iterator == QA_MATERIAL_LIGHTMAPPED ? 0 : first_binding == stage ? 0 : 1, error)) return false;
     }
     bool vertex_lightmap = source && iterator == QA_MATERIAL_GENERIC && !second_binding &&
         first_binding->vertex_lightmap && context->source_diagnostics.lightmap &&
@@ -400,7 +400,7 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
             !material_source_texture_environment(source, environment, error) ||
             !material_source_client_coordinate_pointer(source,
                 iterator == QA_MATERIAL_LIGHTMAPPED ? MATERIAL_SOURCE_COORDINATES_TESS : MATERIAL_SOURCE_COORDINATES_STAGE,
-                second_binding == stage ? 0 : 1, error))) return false;
+                iterator == QA_MATERIAL_LIGHTMAPPED ? 1 : second_binding == stage ? 0 : 1, error))) return false;
         if (!texture(material, second_binding, context, time, &draw.textures[1], error)) return false;
         draw.retain_texture[1] = second_binding->retain_texture || (source && !draw.textures[1]);
         draw.texture_count = 2;
