@@ -161,6 +161,7 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
 bool cpu_draw_queued(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                      qa_error *error);
 void cpu_raster_flush(qa_cpu_renderer *renderer);
+bool cpu_raster_image_pending(const qa_cpu_renderer *, const qa_scene_image *);
 void cpu_raster_pool_create(qa_cpu_renderer *renderer);
 void cpu_raster_pool_destroy(qa_cpu_renderer *renderer);
 void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,

@@ -400,6 +400,7 @@ bool cpu_image_region_update(qa_cpu_renderer *renderer, const qa_scene_image_reg
   if (!cpu_stream_image_admit(renderer, region->image, error)) return false;
   cpu_stream_image *entry = render_resource_get(&renderer->stream_image_index,
       region->image->identity, region->image->revision, NULL);
+  if (cpu_raster_image_pending(renderer, &entry->view)) cpu_raster_flush(renderer);
   size_t pitch = (size_t)entry->level.width * 4;
   size_t source_pitch = (size_t)region->rect.width * 4;
   uint8_t *pixels = (uint8_t *)entry->level.pixels +
@@ -417,6 +418,7 @@ bool cpu_image_stream_admit(qa_cpu_renderer *renderer, const qa_scene_image_stre
       stream->image->identity, stream->image->revision, NULL);
   if (entry && entry->writes == stream->initial_writes) return true;
   if (entry) {
+    if (cpu_raster_image_pending(renderer, &entry->view)) cpu_raster_flush(renderer);
     memcpy((void *)entry->level.pixels, stream->image->levels[0].pixels, entry->level.bytes);
   } else {
     if (!cpu_stream_image_admit(renderer, stream->image, error)) return false;
@@ -829,7 +831,9 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
       bool view_only = command->kind == QA_SCENE_COMMAND_VIEW &&
           !command->data.view.clear_color && !command->data.view.clear_depth &&
           !command->data.view.clear_stencil;
-      if (!view_only && command->kind != QA_SCENE_COMMAND_FOG)
+      if (!view_only && command->kind != QA_SCENE_COMMAND_FOG &&
+          command->kind != QA_SCENE_COMMAND_IMAGE_STREAM &&
+          command->kind != QA_SCENE_COMMAND_IMAGE_REGION)
         cpu_raster_flush(renderer);
     }
     bool ok = true;

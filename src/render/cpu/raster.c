@@ -1365,6 +1365,30 @@ static bool raster_slice_prepare(struct cpu_raster_pool *pool,
   atomic_store_explicit(&pool->next_slice, 0, memory_order_relaxed);
   return true;
 }
+static bool raster_image_aliases(const qa_scene_image *sampled,
+                                 const qa_scene_image *updated) {
+  if (sampled == updated) return true;
+  if (!sampled) return false;
+  for (size_t i = 0; i < sampled->level_count; ++i)
+    for (size_t j = 0; j < updated->level_count; ++j)
+      if (sampled->levels[i].pixels == updated->levels[j].pixels) return true;
+  return false;
+}
+bool cpu_raster_image_pending(const qa_cpu_renderer *renderer,
+                               const qa_scene_image *image) {
+  const struct cpu_raster_pool *pool = renderer->raster_pool;
+  if (!pool || !image) return false;
+  for (size_t i = 0; i < pool->command_count; ++i) {
+    const cpu_raster_command *command = &pool->commands[i];
+    /* Brush rows retain pinned, baked RGBA. Postprocess rows drain at their
+     * compositor boundary and do not sample streamed image storage. */
+    if (command->row_kernel) continue;
+    for (size_t unit = 0; unit < command->draw.texture_count; ++unit)
+      if (raster_image_aliases(command->samplers[unit].image, image)) return true;
+    if (raster_image_aliases(command->draw.shadow_atlas, image)) return true;
+  }
+  return false;
+}
 void cpu_raster_flush(qa_cpu_renderer *renderer) {
   struct cpu_raster_pool *pool = renderer->raster_pool;
   if (!pool || !pool->command_count) return;
