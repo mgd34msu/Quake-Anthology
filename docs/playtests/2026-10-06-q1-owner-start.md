@@ -225,3 +225,38 @@ classic load remains open.
 
 Receipt: `owner-jump-save-visibility-brush-694ccc53-proof.json`. Full GCC and
 Clang builds and all registered checks passed before this installation.
+
+## Installed `ff437555`: current owner acceptance
+
+Complete GCC and Clang builds and their registered checks passed. The shipped
+executable and 12 sibling runtime files match the GCC build byte for byte.
+Three fresh owner paths passed on that installed copy: CPU CLI, GL CLI, and
+actual GL menu/preset. Real default Space and raw mouse button 3 jumped,
+released and landed; raw mouse button 2 retained forward movement. No bindings,
+noclip, god mode or debugger were used in these movement checks.
+
+| Entry | Renderer | Y after moving away | Y restored by load |
+| --- | --- | ---: | ---: |
+| CLI | CPU | 1861.689941 | 2015.968750 |
+| CLI | GL | 1861.969727 | 2015.968750 |
+| Actual menu/preset | GL | 1859.779419 | 2015.968750 |
+
+All three Normal-slipgate runs survived teleport-fog expiry. Manual and
+level-entry saves used original v5 text, 32,654–33,056 bytes. Loading after real
+S-key movement restored the exact saved origin, angles, health, weapon,
+ammunition and item flags. Inspected images retained the stock 25-shell HUD.
+These checks do not qualify a physical controller or every original-progs save.
+The nonfatal demo warning after classic load remains open.
+
+A separate classic `e1m1` CPU visibility check showed no textured trigger
+volumes in the corridor and slipgate view. It used temporary private navigation
+bindings and noclip, so it is excluded from movement acceptance. Its
+wall-occluded side view adds no visibility evidence. Two retail Q2 rerelease
+`base1` CPU spawn views at 640×400 and 320×200 retained textured geometry,
+pickup models and the see-through machinery window; these are bounded image
+checks, not whole-map rendering parity.
+
+All six public quits exited zero. Processes and the private display were
+removed; owner settings and the installed artifact stayed unchanged. Evidence:
+`owner-jump-save-visibility-brush-ff437555-proof.json`, `shipped-ff437555.json`
+and `shipped-runtime-ff437555.json`.

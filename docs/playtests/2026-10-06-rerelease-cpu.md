@@ -1,6 +1,6 @@
 # Q2 rerelease CPU rendering, 2026-10-06
 
-The installed `694ccc53` executable still misses both CPU frame-time targets.
+The installed `ff437555` executable still misses both CPU frame-time targets.
 Builds `41c128d0`, `acf06fa7` and `694ccc53` ran retail `base1` from the
 stationary authored spawn, with swap interval zero and dummy audio delivery.
 Each case excluded 119 presented warm-up frames and measured the next 600.
@@ -13,9 +13,11 @@ timing runs. The executable remained unchanged throughout each run.
 | `41c128d0` | 640×400 | 11.209 | 37.976 | 8.946 |
 | `acf06fa7` | 640×400 | 11.077 | 40.083 | 8.279 |
 | `694ccc53` | 640×400 | 8.292 | 11.785 | 6.281 |
+| `ff437555` | 640×400 | 7.918 | 11.347 | 5.797 |
 | `41c128d0` | 320×200 | 6.279 | 10.208 | 4.710 |
 | `acf06fa7` | 320×200 | 5.711 | 9.034 | 4.203 |
 | `694ccc53` | 320×200 | 5.809 | 9.210 | 3.992 |
+| `ff437555` | 320×200 | 5.089 | 8.420 | 3.655 |
 
 The latest group defers triangle attribute math until depth admission, fills
 cleared viewports in bulk, and evaluates ordinary fog attenuation with native
@@ -54,3 +56,24 @@ and retained the receipt-qualified installed artifact. Private run receipts:
 `q2-rerelease-baseq2-cpu-n0ajw24_/result.json`, and
 `q2-rerelease-baseq2-cpu-noq3o337/result.json` under the qualified timing folder.
 The diagnostic receipt is `acf06fa7-current-rr-cpu640-d9gz_azs/result.json`.
+
+## Installed `ff437555`: shared contact and raster changes
+
+The next group reuses world-contact snapshots, runs ordinary native instructions
+in hardware, rejects constant-depth covered blocks before fragment math, and
+skips fog operations that cannot change rounded RGBA. These changes preserve
+existing fallbacks, texture filtering, depth tests and alpha behavior. They
+were installed after complete GCC/Clang builds and their registered checks.
+
+Against `694ccc53`, the measured median fell 4.5% at 640×400 and 12.4% at
+320×200. Both targets remain open. Dynamic simulation and the combined source
+group prevent attribution of the full-frame difference to a single change.
+Receipts: `q2-rerelease-baseq2-cpu-e22y8im1/result.json` and
+`q2-rerelease-baseq2-cpu-02zjqdhs/result.json`.
+
+A separate successful six-second userspace sample ranked span shading at
+10.96%, depth fog rows at 10.65%, mip sampling at 7.97%, packed fog
+exponentiation at 6.32%, generic fragment writing at 6.10%, and texture sampling
+at 5.82%. Percentages use the total sampled userspace CPU across all threads;
+they are not percentages of wall frame time. This diagnostic is excluded from
+the timing table. Receipt: `ff437555-current-rr-cpu640-z0lq7kvi/result.json`.
