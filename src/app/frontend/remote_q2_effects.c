@@ -710,6 +710,56 @@ static bool weapon_muzzle(frontend_remote_q2_effects *o, qa_actor_id actor_id, u
         .offset=offset,.scale=scale,.roll=roll,.start=server-interval};
     return true;
 }
+bool frontend_q2_player_muzzle_sounds(qa_builtin_random *random, uint32_t flash,
+    bool silenced, bool rerelease, bool rerelease_effects,
+    frontend_q2_muzzle_sound_fn emit, void *context, qa_error *e)
+{
+    if (!random || !emit || !((flash<=20 && flash!=15) || (flash>=30 && flash<=39)))
+        return q2fx_fail(e,QA_ERROR_FORMAT,"Player muzzle lacks its Source sound definition");
+    float volume=silenced?.2f:1; const char *path=NULL; const char *reload=NULL;
+    if (flash==0 || flash==34) path="weapons/blastf1a.wav";
+    else if (flash==14 || flash==17) path="weapons/hyprbf1a.wav";
+    else if (flash==2) { path="weapons/shotgf1b.wav"; reload="weapons/shotgr1b.wav"; }
+    else if (flash==13) path="weapons/sshotf1b.wav";
+    else if (flash==6) path="weapons/railgf1a.wav";
+    else if (flash==7) { path="weapons/rocklf1a.wav"; reload="weapons/rocklr1b.wav"; }
+    else if (flash==8 || flash==31) { path="weapons/grenlf1a.wav"; reload=flash==31?"weapons/proxlr1a.wav":"weapons/grenlr1b.wav"; }
+    else if (flash==12) path="weapons/bfg__f1y.wav";
+    else if (flash>=9 && flash<=11) {
+        path="weapons/grenlf1a.wav"; volume=1;
+    } else if (flash==16) path="weapons/rippfire.wav";
+    else if (flash==18) path="weapons/plasshot.wav";
+    else if (flash==30) path="weapons/nail1.wav";
+    else if (flash==32) {
+        path=rerelease?"weapons/nail1.wav":"weapons/shotg2.wav";
+    }
+    else if (flash==35) path="weapons/disint2.wav";
+    if (flash==1 || (flash>=3 && flash<=5)) {
+        unsigned shots=flash==4?2:flash==5?3:1;
+        for (unsigned i=0;i<shots;++i) {
+            char name[48]; snprintf(name,sizeof(name),"weapons/machgf%ub.wav",qa_builtin_random_integer(random)%5+1);
+            if (!emit(context,name,1,volume,1,flash==4?i*.05:flash==5?i*.033:0,e)) return false;
+        }
+    }
+    if (path && !emit(context,path,1,volume,1,0,e)) return false;
+    if (reload && !emit(context,reload,0,volume,1,
+        rerelease && rerelease_effects?(flash==2?.35:.15):.1,e)) return false;
+    return !(rerelease && rerelease_effects && flash==6) ||
+        emit(context,"weapons/railgr1b.wav",7,volume,1,.4,e);
+}
+typedef struct muzzle_audio {
+    frontend_remote_q2_effects *owner;
+    qa_actor_id actor;
+    qa_vec3 origin;
+    double milliseconds;
+} muzzle_audio;
+static bool muzzle_sound(void *context, const char *path, int32_t channel,
+    float volume, float attenuation, double delay, qa_error *e)
+{
+    muzzle_audio *audio=context;
+    return sound(audio->owner,path,audio->origin,audio->actor,audio->milliseconds,
+        channel,volume,attenuation,delay,e);
+}
 static bool player_muzzle(frontend_remote_q2_effects *o, frontend_remote_q2_effects_pose pose,
     uint32_t flash, bool silenced, double time, double server, qa_error *e)
 {
@@ -732,38 +782,12 @@ static bool player_muzzle(frontend_remote_q2_effects *o, frontend_remote_q2_effe
         flash>=9 && flash<=11?1:flash==4 || flash==5?.1:0;
     bool suppress=extended && (controls.dlight_hacks&4) && (flash==1 || (flash>=3 && flash<=5));
     light(o,pose.actor,origin,time,suppress?0:radius,duration,color,0,extended?0:32);
-    float volume=silenced?.2f:1; const char *path=NULL; const char *reload=NULL;
-    if (flash==0 || flash==34) path="weapons/blastf1a.wav";
-    else if (flash==14 || flash==17) path="weapons/hyprbf1a.wav";
-    else if (flash==2) { path="weapons/shotgf1b.wav"; reload="weapons/shotgr1b.wav"; }
-    else if (flash==13) path="weapons/sshotf1b.wav";
-    else if (flash==6) path="weapons/railgf1a.wav";
-    else if (flash==7) { path="weapons/rocklf1a.wav"; reload="weapons/rocklr1b.wav"; }
-    else if (flash==8 || flash==31) { path="weapons/grenlf1a.wav"; reload=flash==31?"weapons/proxlr1a.wav":"weapons/grenlr1b.wav"; }
-    else if (flash==12) path="weapons/bfg__f1y.wav";
-    else if (flash>=9 && flash<=11) {
-        path="weapons/grenlf1a.wav"; volume=1;
+    if (flash>=9 && flash<=11)
         frontend_fx_q2_respawn_particles(&o->particles,&o->random,pose.origin,time*.001,
             flash==9?FRONTEND_FX_Q2_LOGIN:flash==10?FRONTEND_FX_Q2_LOGOUT:FRONTEND_FX_Q2_RESPAWN);
-    } else if (flash==16) path="weapons/rippfire.wav";
-    else if (flash==18) path="weapons/plasshot.wav";
-    else if (flash==30) path="weapons/nail1.wav";
-    else if (flash==32) {
-        path=extended?"weapons/nail1.wav":"weapons/shotg2.wav";
-    }
-    else if (flash==35) path="weapons/disint2.wav";
-    if (flash==1 || (flash>=3 && flash<=5)) {
-        unsigned shots=flash==4?2:flash==5?3:1;
-        for (unsigned i=0;i<shots;++i) {
-            char name[48]; snprintf(name,sizeof(name),"weapons/machgf%ub.wav",random_word(o)%5+1);
-            if (!sound(o,name,origin,pose.actor,time,1,volume,1,flash==4?i*.05:flash==5?i*.033:0,e)) return false;
-        }
-    }
-    if (path && !sound(o,path,origin,pose.actor,time,1,volume,1,0,e)) return false;
-    if (reload && !sound(o,reload,origin,pose.actor,time,0,volume,1,
-        extended && controls.rerelease_effects?(flash==2?.35:.15):.1,e)) return false;
-    if (extended && controls.rerelease_effects && flash==6 &&
-        !sound(o,"weapons/railgr1b.wav",origin,pose.actor,time,7,volume,1,.4,e)) return false;
+    muzzle_audio audio={o,pose.actor,origin,time};
+    if (!frontend_q2_player_muzzle_sounds(&o->random,flash,silenced,extended,
+        controls.rerelease_effects,muzzle_sound,&audio,e)) return false;
     return weapon_muzzle(o,pose.actor,flash,&controls,server,interval,e);
 }
 bool frontend_remote_q2_effects_muzzle(frontend_remote_q2_effects *o,

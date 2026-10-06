@@ -9,6 +9,9 @@
 #include "shared_resource_policy.h"
 #include "q1_sky.h"
 #include "qa/text.h"
+#include "remote_q2_effects.h"
+#include "source_client_registry.h"
+#include "qa/application_native_q2_presentation.h"
 #include <stdio.h>
 
 enum { FRONTEND_STYLES = 256 };
@@ -893,9 +896,66 @@ bool frontend_particle_sound(qa_frontend *frontend, const qa_builtin_event *even
     else ok = qa_audio_engine_play(frontend->audio, &sound, milliseconds, error);
     qa_audio_asset_release(asset); return ok;
 }
+typedef struct builtin_muzzle_audio {
+    qa_frontend *frontend;
+    frontend_event_state *state;
+    const qa_builtin_event *event;
+    uint32_t seat;
+} builtin_muzzle_audio;
+static bool builtin_muzzle_sound(void *context, const char *name, int32_t channel,
+    float volume, float attenuation, double delay, qa_error *error)
+{
+    builtin_muzzle_audio *audio=context;
+    qa_frontend *frontend=audio->frontend;
+    const qa_builtin_event *event=audio->event;
+    frontend_event_resources *resources;
+    if (!resources_read(frontend,event->provider,QA_AUDIO_Q2,&resources,error)) return false;
+    qa_audio_asset *asset=NULL;
+    if (!qa_audio_bank_register(resources->sounds,name,QA_AUDIO_Q2,&asset,error)) return false;
+    if (!asset) return true;
+    uint64_t actor=frontend_audio_actor(frontend,event->actor,error);
+    qa_body_state body;
+    bool ok=actor!=QA_AUDIO_NO_ACTOR &&
+        qa_world_body_read(qa_application_world(frontend->application),event->actor,&body,error) &&
+        qa_audio_engine_position(frontend->audio,actor,body.origin,error);
+    qa_audio_play sound={.sample=qa_audio_asset_sample(asset),.asset=asset,.name=name,
+        .family=QA_AUDIO_Q2,.actor=actor,.owner=event->provider,.audience=audio->seat,
+        .origin_kind=QA_AUDIO_ACTOR,.origin_actor=actor,.channel=channel,
+        .volume=volume,.attenuation=attenuation,.delay_seconds=delay};
+    if (ok) { sound.origin=body.origin; ok=audio_play(frontend,audio->state,event->actor,&sound,error); }
+    qa_audio_asset_release(asset); return ok;
+}
+static bool builtin_player_muzzle(qa_frontend *frontend, const qa_builtin_event *event,
+    qa_error *error)
+{
+    if (event->resource) return true;
+    qa_q2_edition edition;
+    bool found;
+    if (!qa_application_native_q2_source_profile_read(frontend->application,event->provider,
+        &edition,&found,error) || !found)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Player muzzle lost its emitting Q2 Source profile");
+    frontend_event_state *state;
+    if (!state_read(frontend,&state,error)) return false;
+    for (uint32_t seat=0;seat<frontend->options.seats;++seat) {
+        qa_actor_id recipient;
+        if (!frontend_seat_actor_read(frontend,seat,&recipient)) continue;
+        frontend_source_client_registry client;
+        if (!frontend_source_client_registry_read(frontend,seat,&client,&found,error)) return false;
+        const qa_cvar_view *effects=found?qa_cvars_find(client.cvars,"cl_rerelease_effects"):NULL;
+        bool modern=effects && effects->integer!=0;
+        if (found && !frontend_source_client_registry_current(frontend,&client))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Player muzzle lost its physical CLIENT controls");
+        builtin_muzzle_audio audio={frontend,state,event,seat};
+        if (!frontend_q2_player_muzzle_sounds(&state->light_random,(uint32_t)event->code,
+            (event->flags&128u)!=0,edition==QA_Q2_RERELEASE,modern,builtin_muzzle_sound,&audio,error)) return false;
+    }
+    return true;
+}
 bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, qa_error *error)
 {
     if (!frontend->audio) return true;
+    if (event->family==QA_GAME_Q2 && event->kind==QA_BUILTIN_MUZZLE)
+        return builtin_player_muzzle(frontend,event,error);
     if (event->kind == QA_BUILTIN_EFFECT && event->family == QA_GAME_Q2 &&
         (event->code == 2 || event->code == 8 || event->code == 9)) {
         const char *resource = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), event->resource);
