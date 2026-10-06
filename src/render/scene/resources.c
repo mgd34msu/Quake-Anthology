@@ -1810,7 +1810,7 @@ static bool indexed_rgba(qa_scene_resources *resources, qa_image *image,
         .fullbright_first = -1, .fullbright_last = -1,
         .translation = options->translation.size == 256 ? options->translation.data : NULL,
         .layer = QA_PALETTE_COMBINED};
-    if (options->family == QA_SCENE_Q2 && pcx) conversion.transparent_index = 255;
+    if (options->family == QA_SCENE_Q2) conversion.transparent_index = 255;
     qa_image expanded = {0};
     qa_indexed_level indexed = {.width = image->width, .height = image->height, .indices = image->indices};
     if (!qa_image_expand_indexed(&indexed, palette, &conversion, &expanded, error)) return false;
@@ -1820,7 +1820,7 @@ static bool indexed_rgba(qa_scene_resources *resources, qa_image *image,
             memset(expanded.rgba.data+i*4, 0, 4);
     }
     /* Preserve source Q2 RGB beside transparent texels for filtered edges. */
-    if (pcx && options->family == QA_SCENE_Q2 && !q2_indexed) {
+    if (options->family == QA_SCENE_Q2) {
         size_t count = image->indices.size;
         for (size_t i = 0; i < count; ++i) if (image->indices.data[i] == 255) {
             size_t adjacent[4] = {i > image->width ? i-image->width : SIZE_MAX,
