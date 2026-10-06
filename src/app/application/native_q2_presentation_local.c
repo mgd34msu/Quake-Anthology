@@ -89,8 +89,12 @@ bool qa_application_native_q2_presentation_player(qa_application *app,
         if (view.present) {
             qa_q2_wire_movement movement;
             if (!qa_q2_wire_movement_read(source->source.game,client->actor,&movement,error)) return false;
-            qa_q2_weapon_state weapon;
-            if (!qa_q2_weapon_read((qa_q2_game *)source->source.game,client->actor,&weapon,error)) return false;
+            application_provider *arsenal = application_provider_for(app, client->actor, QA_ROLE_ARSENAL, "");
+            if (!arsenal || !arsenal->constructed || !arsenal->attached || arsenal->close_pending)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Q2 player sample lost its selected arsenal");
+            qa_q2_weapon_state weapon = {0};
+            if (arsenal->kind == APPLICATION_PROVIDER_Q2 &&
+                !qa_q2_weapon_read(arsenal->state.q2, client->actor, &weapon, error)) return false;
             value=(qa_application_native_q2_player_sample){.origin=qa_movement_origin(&movement.state),
                 .view_angles=view.view.angles,.view_offset=view.view.offset,
                 .kick_angles=view.view.kick_angles,.gun_angles=view.view.gun_angles,
