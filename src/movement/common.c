@@ -339,14 +339,18 @@ static bool move_stage(const qa_movement_input *input, const qa_movement_service
         !isfinite(input->environment.speed_multiplier)||input->environment.speed_multiplier<0) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid movement input, selected family or services"); return false;
     }
-    qa_movement_result result={.contacts=out->contacts,.contact_capacity=out->contact_capacity,
-        .actor=input->actor,.command_sequence=input->command.sequence,.state=input->state,
-        .bounds=input->has_current_bounds?input->current_bounds:input->shape.bounds,.view_height=input->standing.view_height,.view_offset=input->view_offset};
-    if (input->shape.kind==QA_SHAPE_POINT) result.bounds=(qa_bounds){0};
+    qa_movement_result previous=*out;
     qa_movement_input active_input=*input;
-    qa_move_context c={.input=&active_input,.services=services,.result=&result,.state=&result.state,.command=input->command,.error=error,
-        .milliseconds=input->command.milliseconds,.time_ns=input->time_ns,.dt=(float)((double)input->elapsed_ns/1000000000.0)};
-    bool q2=input->profile.kind==QA_MOVEMENT_Q2_CLASSIC||input->profile.kind==QA_MOVEMENT_Q2_RERELEASE;
+    *out=(qa_movement_result){.contacts=previous.contacts,.contact_capacity=previous.contact_capacity,
+        .actor=active_input.actor,.command_sequence=active_input.command.sequence,.state=active_input.state,
+        .bounds=active_input.has_current_bounds?active_input.current_bounds:active_input.shape.bounds,
+        .view_height=active_input.standing.view_height,.view_offset=active_input.view_offset};
+    if (active_input.shape.kind==QA_SHAPE_POINT) out->bounds=(qa_bounds){0};
+    /* Authoritative callbacks borrow the caller's state through publication,
+     * rather than a kernel-local state that expires on return. */
+    qa_move_context c={.input=&active_input,.services=services,.result=out,.state=&out->state,.command=active_input.command,.error=error,
+        .milliseconds=active_input.command.milliseconds,.time_ns=active_input.time_ns,.dt=(float)((double)active_input.elapsed_ns/1000000000.0)};
+    bool q2=active_input.profile.kind==QA_MOVEMENT_Q2_CLASSIC||active_input.profile.kind==QA_MOVEMENT_Q2_RERELEASE;
     if (q2) {
         if (c.milliseconds>255) fail(&c,"Q2 command duration must fit its source byte");
         c.dt=(float)c.milliseconds*0.001f;
@@ -356,7 +360,7 @@ static bool move_stage(const qa_movement_input *input, const qa_movement_service
         if (!c.failed&&!c.removed) (void)qa_move_apply_stance(&c);
     }
     bool ok=true;
-    if (!c.failed&&!c.removed) switch (input->profile.kind) {
+    if (!c.failed&&!c.removed) switch (active_input.profile.kind) {
     case QA_MOVEMENT_NETQUAKE: ok=stage==1?qa_move_nq_prepare(&c):stage==2?qa_move_nq_physics(&c):qa_move_nq(&c); break;
     case QA_MOVEMENT_QUAKEWORLD: ok=qa_move_qw(&c); break;
     case QA_MOVEMENT_Q2_CLASSIC: ok=qa_move_q2(&c); break;
@@ -366,12 +370,13 @@ static bool move_stage(const qa_movement_input *input, const qa_movement_service
     if (!ok&&!c.removed) c.failed=true;
     if (c.input_open) (void)qa_move_phase(&c,c.failed?QA_MOVE_INPUT_ABORT:QA_MOVE_INPUT_END);
     if (c.failed) {
-        out->contacts=result.contacts; out->contact_capacity=result.contact_capacity;
-        out->contact_count=0;
+        previous.contacts=out->contacts; previous.contact_capacity=out->contact_capacity;
+        previous.contact_count=0;
+        *out=previous;
         return false;
     }
-    result.status=c.removed?QA_MOVEMENT_ACTOR_REMOVED:QA_MOVEMENT_ACTIVE;
-    *out=result; return true;
+    out->status=c.removed?QA_MOVEMENT_ACTOR_REMOVED:QA_MOVEMENT_ACTIVE;
+    return true;
 }
 
 bool qa_movement_move(const qa_movement_input *in, const qa_movement_services *services, qa_movement_result *out, qa_error *error) {

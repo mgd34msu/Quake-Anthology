@@ -1088,23 +1088,30 @@ static bool builtin_traits(void *opaque, qa_actor_id actor,
     qa_application *application = opaque;
     application_provider *provider = application_provider_for(
         application, actor, QA_ROLE_CHARACTER, "");
-    if (provider_traits(provider, actor, out))
-        return true;
-    application_provider **providers = application->routing_providers != NULL
-                                           ? application->routing_providers
-                                           : application->providers;
-    size_t count = application->routing_providers != NULL
-                       ? application->routing_provider_count
-                       : application->provider_count;
-    for (size_t index = 0; index < count; ++index)
-        if (providers[index] != provider &&
-            provider_traits(providers[index], actor, out)) {
-            out->has_life = false;
-            out->birth_epoch = 0;
-            out->dead = false;
-            return true;
-        }
-    return false;
+    bool matched = provider_traits(provider, actor, out);
+    if (!matched) {
+        application_provider **providers = application->routing_providers != NULL
+                                               ? application->routing_providers
+                                               : application->providers;
+        size_t count = application->routing_providers != NULL
+                           ? application->routing_provider_count
+                           : application->provider_count;
+        for (size_t index = 0; index < count; ++index)
+            if (providers[index] != provider &&
+                provider_traits(providers[index], actor, out)) {
+                out->has_life = false;
+                out->birth_epoch = 0;
+                out->dead = false;
+                matched = true;
+                break;
+            }
+    }
+    if (!matched) return false;
+    qa_physics_properties physical;
+    if (out->player && application->physics && application->physics->services.read(
+            application->physics->services.context, actor, &physical))
+        out->grounded = (physical.flags & QA_PHYSICS_ONGROUND) != 0;
+    return true;
 }
 
 static application_provider *target_source(qa_application *app, qa_actor_id actor)
