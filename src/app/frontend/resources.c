@@ -66,5 +66,5 @@ bool frontend_resources(qa_frontend *frontend, qa_error *error)
         frontend->ui_features->bold = frontend->primary;
     }
     frontend->order = qa_material_order_create(error);
-    return frontend->order != NULL;
+    return frontend->order && qa_scene_frame_material_order(&frontend->frame,frontend->order,error);
 }
