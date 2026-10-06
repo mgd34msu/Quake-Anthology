@@ -55,6 +55,7 @@ void qa_scene_frame_reset(qa_scene_frame *frame, uint64_t sequence)
     }
     for (size_t i = 0; i < frame->image_count; ++i) qa_scene_image_release(frame->images[i]);
     frame->image_count = 0;
+    frame->image_epoch = 0;
     frame->stream_images = NULL;
     for (size_t i = 0; i < frame->geometry_count; ++i)
         qa_scene_geometry_release(frame->geometries[i]);
@@ -89,8 +90,14 @@ void qa_scene_frame_destroy(qa_scene_frame *frame)
 static bool pin(qa_scene_frame *frame, const qa_scene_image *image, qa_error *error)
 {
     if (image == NULL) return true;
-    for (size_t i = 0; i < frame->image_count; ++i)
-        if (frame->images[i] == image) return true;
+    if (!frame->image_epoch) frame->image_epoch = qa_scene_identity();
+    owned_image *owned = (owned_image *)image;
+    if (frame->image_epoch) {
+        if (owned->frame_pin_epoch == frame->image_epoch) return true;
+    } else {
+        for (size_t i = 0; i < frame->image_count; ++i)
+            if (frame->images[i] == image) return true;
+    }
     if (frame->image_count == SIZE_MAX) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "scene image reference count overflow");
         return false;
@@ -101,6 +108,7 @@ static bool pin(qa_scene_frame *frame, const qa_scene_image *image, qa_error *er
     frame->images = data;
     qa_scene_image_retain(image);
     frame->images[frame->image_count++] = image;
+    owned->frame_pin_epoch = frame->image_epoch;
     return true;
 }
 

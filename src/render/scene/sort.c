@@ -139,16 +139,22 @@ bool qa_scene_frame_finish(qa_scene_frame *frame, const qa_scene_view *view,
         return false;
     }
     if (frame->group_count != 0) {
-        bool source = false;
+        bool source = false, ordered = true;
         for (size_t i = 0; i < frame->group_count; ++i)
-            if (frame->groups[i].kind == QA_SCENE_GROUP_SOURCE) { source = true; break; }
+            if (frame->groups[i].kind != QA_SCENE_GROUP_SEQUENCE) {
+                ordered = false;
+                if (frame->groups[i].kind == QA_SCENE_GROUP_SOURCE) source = true;
+            }
+        if (ordered) frame->group_count = 0;
         if (source && !qa_material_order_prepare(frame->material_order, error)) return false;
+    }
+    if (frame->group_count != 0) {
         if (frame->group_count > (size_t)PTRDIFF_MAX / 3 / sizeof(qa_scene_group *) ||
             frame->command_count > (size_t)PTRDIFF_MAX / sizeof(qa_scene_command)) {
             qa_error_set(error, QA_ERROR_MEMORY, 0, "scene sorting storage overflow"); return false;
         }
         size_t group_capacity = frame->group_count*3;
-        size_t command_capacity = frame->command_count != 0 ? frame->command_count : 1;
+        size_t command_capacity = frame->command_capacity != 0 ? frame->command_capacity : 1;
         if (group_capacity > frame->sort_group_capacity) {
             qa_scene_group **grown = realloc(frame->sort_groups, group_capacity*sizeof(*grown));
             if (grown == NULL) {
@@ -165,19 +171,28 @@ bool qa_scene_frame_finish(qa_scene_frame *frame, const qa_scene_view *view,
         }
         qa_scene_group **scratch = frame->sort_groups;
         qa_scene_command *commands = frame->sort_commands;
-        if (frame->command_count != 0)
-            memcpy(commands, frame->commands, frame->command_count*sizeof(*commands));
         bool ok = true;
+        size_t copied = 0;
         for (size_t first = 0; first < frame->group_count;) {
             size_t end = first+1;
             while (end < frame->group_count && frame->groups[end].first ==
                 frame->groups[end-1].first+frame->groups[end-1].count) ++end;
+            size_t begin = frame->groups[first].first;
+            if (begin > copied)
+                memcpy(commands+copied, frame->commands+copied, (begin-copied)*sizeof(*commands));
             if (!finish_range(frame, first, end, scratch, commands, error)) { ok = false; break; }
+            copied = frame->groups[end-1].first+frame->groups[end-1].count;
             first = end;
         }
         if (ok) {
-            if (frame->command_count != 0)
-                memcpy(frame->commands, commands, frame->command_count*sizeof(*commands));
+            if (frame->command_count > copied)
+                memcpy(commands+copied, frame->commands+copied,
+                    (frame->command_count-copied)*sizeof(*commands));
+            frame->sort_commands = frame->commands;
+            frame->commands = commands;
+            size_t capacity = frame->command_capacity;
+            frame->command_capacity = frame->sort_command_capacity;
+            frame->sort_command_capacity = capacity;
             frame->group_count = 0;
         }
         if (!ok) return false;
