@@ -2,22 +2,6 @@
 #include "qa/text.h"
 #include "qa/game_q2_monsters.h"
 
-static bool beam(qa_q2_game *g, q2_actor *a, qa_vec3 start, qa_vec3 end, bool visible,
-                 qa_error *e) {
-    q2_entity_state *s = a->entity;
-    return qa_builtin_emit(&g->services,
-                           &(qa_builtin_event){.kind = QA_BUILTIN_BEAM,
-                                               .family = QA_GAME_Q2,
-                                               .provider = g->options.owner,
-                                               .actor = a->id,
-                                               .origin = start,
-                                               .end = end,
-                                               .value = (float)s->visual.frame,
-                                               .code = s->visual.skin,
-                                               .flags = visible ? 1u : 0u,
-                                               .time_ns = g->now_ns},
-                           e);
-}
 bool q2_laser_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_entity_state *s = a->entity;
     int sparks = (s->spawnflags & 0x80000000u) ? 8 : 4;
@@ -112,8 +96,6 @@ bool q2_laser_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         goto out;
     }
     s->beam_end = terminal;
-    if (!beam(g, a, body.origin, terminal, true, e))
-        goto out;
     okay = !q2_actor_live(g, a->id) ||
            q2_entity_schedule(g, a, Q2ET_LASER, (float)g->frame_ns / Q2_NS);
 out:
@@ -131,10 +113,7 @@ static bool laser_switch(qa_q2_game *g, q2_actor *a, bool on, qa_error *e) {
     }
     s->spawnflags &= ~1u;
     q2_entity_schedule(g, a, Q2ET_NONE, 0);
-    qa_body_state b;
-    if (!qa_world_body_read(g->services.world, a->id, &b, e) || !q2_entity_show(g, a, e))
-        return false;
-    return !q2_actor_live(g, a->id) || beam(g, a, b.origin, b.origin, false, e);
+    return q2_entity_show(g, a, e);
 }
 static bool laser_start(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_entity_state *s = a->entity;

@@ -1,6 +1,7 @@
 #include "qa/network_unified_control.h"
 #include "remote_unified_private.h"
 #include "remote_unified_q2.h"
+#include "q2_entity_effects.h"
 #include "remote_unified_q2_hud.h"
 #include "remote_unified_presentation.h"
 #include "remote_unified_save.h"
@@ -77,6 +78,7 @@ typedef struct q2_bank {
     qa_scene_resources *images;
     qa_material_library *materials;
     frontend_remote_q2_effects *effects;
+    qa_builtin_random entity_random;
     frontend_q2_footsteps *footsteps;
     frontend_received_music *music;
     qa_audio_bank *sounds;
@@ -618,6 +620,7 @@ static bool bank(frontend_unified_q2 *o,const char *content,q2_activation *activ
         b=calloc(1,sizeof(*b));
         if (!b) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Q2 CLIENT content");
         b->owner=o; b->activation=activation_owner; b->profile=profile;
+        qa_builtin_random_seed(&b->entity_random,1);
         b->content=malloc(strlen(content)+1);
         if (!b->content) { free(b); return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q2 content identity"); }
         strcpy(b->content,content);
@@ -1261,8 +1264,7 @@ static bool builtin_receive(frontend_unified_q2 *o,const qa_unified_presentation
         qa_scene_image_release(image);return okay;}
     case QA_BUILTIN_BEAM:{if (!source_actor(o,v->actor,&a,e) || !source_bank(o,row,true,&b,e))return false;
         const char *name=v->resource;double ms=row->seconds*1000;
-        if (!name)return frontend_remote_q2_effects_source_beam(b->effects,a,v->origin,v->end,(float)v->value,(uint32_t)v->code,(v->flags&1)!=0,e) &&
-            effect_replace(o,b,a,(v->flags&1)?FRONTEND_REMOTE_Q2_ORDINARY_BEAM:FRONTEND_REMOTE_Q2_ALL_BEAMS,e);
+        if (!name)return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 entity beam requires its received entity state");
         if (!strcmp(name,"q2:parasite") || !strcmp(name,"q2:medic-cable"))return frontend_remote_q2_effects_monster_beam(b->effects,a,v->origin,v->end,ms,e) &&
             effect_replace(o,b,a,FRONTEND_REMOTE_Q2_MONSTER_BEAM,e);
         if (!strcmp(name,"q2:grapple-cable")){qa_unified_q2_temp_field fields[4]={
@@ -1434,6 +1436,19 @@ void frontend_unified_q2_frame_abort(frontend_unified_q2 *o)
         frontend_unified_q2_rr_frame_abort(o->rr_hud);
         qa_unified_document_destroy(o->prepared_frame); o->prepared_frame=NULL;
     }
+}
+bool frontend_unified_q2_entity_beam(frontend_unified_q2 *o,const char *content,
+    const qa_scene_view *view,qa_vec3 start,qa_vec3 end,uint32_t colors,int32_t width,
+    qa_scene_frame *frame,qa_error *e)
+{
+    if (!o || o->busy || !current(o,e)) return false;
+    q2_bank *b=NULL; qa_bytes palette={0};
+    if (!bank(o,content,NULL,NULL,0,false,&b,e) ||
+        !qa_scene_resources_palette(b->images,QA_SCENE_Q2,&palette,e)) return false;
+    ++o->busy;
+    bool okay=frontend_q2_entity_beam(&b->entity_random,palette,qa_scene_white(b->images),
+        view,start,end,colors,width,frame,e);
+    --o->busy; return okay && current(o,e);
 }
 bool frontend_unified_q2_model(frontend_unified_q2 *o,qa_actor_id a,const char *content,const char *path,
     qa_scene_model_input *input,qa_error *e)

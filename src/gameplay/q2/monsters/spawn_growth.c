@@ -13,21 +13,6 @@ static bool show_growth(qa_q2_game *game, q2_actor *actor, qa_error *error) {
     return q2_publish_visual(game, actor->id, &visual, error);
 }
 
-static bool show_beam(qa_q2_game *game, q2_actor *actor, qa_vec3 origin, bool visible,
-                      qa_error *error) {
-    qa_builtin_event event = {.kind = QA_BUILTIN_BEAM,
-                              .family = QA_GAME_Q2,
-                              .provider = game->options.owner,
-                              .actor = actor->id,
-                              .time_ns = game->now_ns,
-                              .origin = origin,
-                              .end = actor->projectile.movedir,
-                              .value = 1,
-                              .code = 0x30303030,
-                              .flags = visible ? 1u : 0u};
-    return qa_builtin_emit(&game->services, &event, error);
-}
-
 static bool beam_tick(qa_q2_game *game, q2_actor *beam, qa_error *error) {
     qa_actor_id id = beam->id;
     qa_q2_visual owner = {0};
@@ -47,7 +32,7 @@ static bool beam_tick(qa_q2_game *game, q2_actor *beam, qa_error *error) {
         return false;
     if (!q2_actor_live(game, id))
         return true;
-    if (!show_beam(game, beam, body.origin, true, error))
+    if (!show_growth(game, beam, error))
         return false;
     if (q2_actor_live(game, id))
         beam->projectile.next_ns = q2_deadline(game->now_ns, Q2_MS);
@@ -64,11 +49,6 @@ bool q2m_rerelease_growth_tick(qa_q2_game *game, q2_actor *actor, qa_error *erro
         q2_actor *beam = q2_actor_get(game, qa_actor_reference_resolve(qa_session_actors(game->services.session), actor->projectile.child), false, NULL);
         if (beam) {
             qa_actor_id beam_id = beam->id;
-            qa_body_state body;
-            if (!qa_world_body_read(game->services.world, beam_id, &body, error))
-                return false;
-            if (q2_actor_live(game, beam_id) && !show_beam(game, beam, body.origin, false, error))
-                return false;
             if (q2_actor_live(game, beam_id) &&
                 !qa_session_release(game->services.session, beam_id, error))
                 return false;

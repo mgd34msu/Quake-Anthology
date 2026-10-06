@@ -35,6 +35,8 @@ typedef struct frontend_unified_render_children {
     bool (*equipment_model)(void *,qa_actor_id,uint32_t provider,const char *instance,bool slot,bool *owned,qa_error *);
     bool (*view_origin)(void *,qa_actor_id,qa_vec3,float player_fov,qa_error *);
     bool (*entity_effects)(void *,const frontend_unified_render_entity_effects *,double,qa_error *);
+    bool (*entity_beam)(void *,const char *,const qa_scene_view *,qa_vec3,qa_vec3,
+        uint32_t,int32_t,qa_scene_frame *,qa_error *);
     bool (*world_input)(void *, qa_scene_world_input *, qa_error *);
     bool (*lights)(void *, const qa_scene_view *, const qa_scene_world_input *,
         const qa_scene_light **, size_t *, qa_error *);

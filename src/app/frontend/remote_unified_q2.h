@@ -30,6 +30,8 @@ bool frontend_unified_q2_player_blend(frontend_unified_q2 *, qa_actor_id, bool, 
     bool, const qa_scene_vec4 *, qa_scene_rect, qa_scene_frame *, qa_error *);
 bool frontend_unified_q2_lights(frontend_unified_q2 *, const qa_scene_view *, const qa_scene_world_input *, const qa_scene_light **, size_t *, qa_error *);
 bool frontend_unified_q2_hud(frontend_unified_q2 *, qa_ui *, qa_scene_rect, qa_scene_frame *, qa_error *);
+bool frontend_unified_q2_entity_beam(frontend_unified_q2 *,const char *,const qa_scene_view *,
+    qa_vec3,qa_vec3,uint32_t,int32_t,qa_scene_frame *,qa_error *);
 bool frontend_unified_q2_model(frontend_unified_q2 *, qa_actor_id, const char *, const char *, qa_scene_model_input *, qa_error *);
 bool frontend_unified_q2_model_after(frontend_unified_q2 *, qa_actor_id, const char *, const char *, const qa_scene_model_input *, qa_scene_frame *, qa_error *);
 bool frontend_unified_q2_idle(const frontend_unified_q2 *);

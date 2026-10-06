@@ -1118,6 +1118,12 @@ static bool hud(void *context, qa_ui *ui, qa_scene_rect viewport, qa_scene_frame
     }
     return true;
 }
+static bool entity_beam(void *context,const char *content,const qa_scene_view *view,
+    qa_vec3 start,qa_vec3 end,uint32_t colors,int32_t width,qa_scene_frame *frame,qa_error *error)
+{
+    return frontend_unified_q2_entity_beam(((unified_presentation *)context)->q2,
+        content,view,start,end,colors,width,frame,error);
+}
 static bool model(void *context, qa_actor_id actor, const char *content, const char *path,
     qa_scene_model_input *input, qa_error *error)
 {
@@ -1187,7 +1193,7 @@ static bool draw(void *context, frontend_remote_unified *replica, float stereo, 
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified drawing awaits its actual received frame");
     frontend_unified_prediction_view prediction;
     bool source_listener=false;
-    frontend_unified_render_children children = {.context=p,.camera=camera,.status_replacement=status_replacement,.source_model=source_model,.equipment_model=equipment_model,.view_origin=view_origin,.entity_effects=entity_effects,.world_input=world_input,.lights=lights,.reflected_lights=reflected_lights,
+    frontend_unified_render_children children = {.context=p,.camera=camera,.status_replacement=status_replacement,.source_model=source_model,.equipment_model=equipment_model,.view_origin=view_origin,.entity_effects=entity_effects,.entity_beam=entity_beam,.world_input=world_input,.lights=lights,.reflected_lights=reflected_lights,
         .world=world,.reflected_world=reflected_world,.world_models=world_models,.particles=particles,.dlights=dlights,.blend=blend,
         .player_blend=player_blend,.hud=hud,.model=model,.model_after=model_after};
     bool okay=frontend_remote_unified_prediction_read(p->prediction,&prediction,error) &&

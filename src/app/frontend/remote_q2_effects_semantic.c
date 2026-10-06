@@ -34,8 +34,7 @@ static bool beam_set(frontend_remote_q2_effects *o, const q2fx_source_beam *valu
 {
     size_t index=o->source_beam_count;
     for (size_t i=0;i<o->source_beam_count;++i)
-        if (o->source_beams[i].persistent==value->persistent &&
-            qa_actor_id_equal(o->source_beams[i].beam.actor,value->beam.actor)) { index=i; break; }
+        if (qa_actor_id_equal(o->source_beams[i].beam.actor,value->beam.actor)) { index=i; break; }
     if (index==o->source_beam_count) {
         q2fx_source_beam *rows=reserve(o->source_beams,&o->source_beam_capacity,o->source_beam_count,sizeof(*rows),e);
         if (!rows) return false;
@@ -43,19 +42,6 @@ static bool beam_set(frontend_remote_q2_effects *o, const q2fx_source_beam *valu
     }
     if (index<o->source_beam_count) beam_remove(o,index);
     o->source_beams[o->source_beam_count++]=*value; o->dirty=true; return true;
-}
-bool frontend_remote_q2_effects_source_beam(frontend_remote_q2_effects *o, qa_actor_id actor,
-    qa_vec3 start, qa_vec3 end, float width, uint32_t color, bool visible, qa_error *e)
-{
-    if (!intake(o,actor,e) || !qa_vec_finite(start) || !qa_vec_finite(end) || !isfinite(width)) return false;
-    if (!visible) {
-        for (size_t i=0;i<o->source_beam_count;)
-            if (qa_actor_id_equal(o->source_beams[i].beam.actor,actor)) beam_remove(o,i); else ++i;
-        o->dirty=true; return true;
-    }
-    q2fx_source_beam value={.beam={.active=true,.actor=actor,.start=start,.end=end},
-        .width=width,.color=color&255,.persistent=true};
-    return beam_set(o,&value,e);
 }
 bool frontend_remote_q2_effects_monster_beam(frontend_remote_q2_effects *o, qa_actor_id actor,
     qa_vec3 start, qa_vec3 end, double time, qa_error *e)
@@ -146,8 +132,7 @@ bool frontend_remote_q2_effects_remove_actor_presentation(frontend_remote_q2_eff
     bool changed=false;
     if (kind<=FRONTEND_REMOTE_Q2_ALL_BEAMS) for (size_t i=0;i<o->source_beam_count;) {
         q2fx_source_beam *b=o->source_beams+i;
-        if (qa_actor_id_equal(b->beam.actor,actor) && (kind==FRONTEND_REMOTE_Q2_ALL_BEAMS ||
-            (b->persistent?FRONTEND_REMOTE_Q2_ORDINARY_BEAM:FRONTEND_REMOTE_Q2_MONSTER_BEAM)==kind)) {
+        if (qa_actor_id_equal(b->beam.actor,actor) && (kind==FRONTEND_REMOTE_Q2_ALL_BEAMS || kind==FRONTEND_REMOTE_Q2_MONSTER_BEAM)) {
             beam_remove(o,i); changed=true;
         } else ++i;
     }
@@ -175,8 +160,6 @@ bool frontend_remote_q2_effects_presentation_actor_at(const frontend_remote_q2_e
     if (kind<=FRONTEND_REMOTE_Q2_ALL_BEAMS) {
         for (size_t i=0;i<o->source_beam_count;++i) {
             const q2fx_source_beam *row=o->source_beams+i;
-            if (kind!=FRONTEND_REMOTE_Q2_ALL_BEAMS &&
-                (row->persistent?FRONTEND_REMOTE_Q2_ORDINARY_BEAM:FRONTEND_REMOTE_Q2_MONSTER_BEAM)!=kind) continue;
             if (!index--) { *out=row->beam.actor; return true; }
         }
     } else if (kind==FRONTEND_REMOTE_Q2_FLASHLIGHT) {
@@ -221,8 +204,8 @@ bool q2fx_semantic_prepare(frontend_remote_q2_effects *o, const frontend_remote_
 {
     for (size_t i=0;i<o->source_beam_count;) {
         q2fx_source_beam *b=o->source_beams+i;
-        if (!b->persistent && b->beam.die<s->milliseconds) { beam_remove(o,i); continue; }
-        if (!b->persistent && !q2fx_prepare_beams(o,&b->beam,1,s,controls,advance,e)) return false;
+        if (b->beam.die<s->milliseconds) { beam_remove(o,i); continue; }
+        if (!q2fx_prepare_beams(o,&b->beam,1,s,controls,advance,e)) return false;
         ++i;
     }
     for (size_t i=0;i<o->source_light_count;) {
@@ -310,18 +293,4 @@ bool frontend_remote_q2_effects_view_lights(frontend_remote_q2_effects *o,
     ++o->busy; bool okay=lights(o,s,e); --o->busy;
     if (!okay || !q2fx_source_current(o,e)) return false;
     *out=o->sampled_lights; *count=o->light_count; return true;
-}
-bool q2fx_semantic_draw(frontend_remote_q2_effects *o, const frontend_remote_q2_effects_sample *s,
-    qa_scene_frame *frame, qa_error *e)
-{
-    qa_bytes palette={0};
-    if (o->source_beam_count && (!qa_scene_resources_palette_read(o->source.images,QA_SCENE_Q2,&palette) || palette.size<768)) return false;
-    for (size_t i=0;i<o->source_beam_count;++i) {
-        const q2fx_source_beam *b=o->source_beams+i;
-        if (!b->persistent || b->width<=0) continue;
-        uint32_t color=b->color&255;
-        qa_scene_vec4 rgba={palette.data[color*3]/255.f,palette.data[color*3+1]/255.f,palette.data[color*3+2]/255.f,.3f};
-        if (!qa_scene_beam(frame,&s->view,b->beam.start,b->beam.end,b->width,rgba,o->source.white,e)) return false;
-    }
-    return true;
 }

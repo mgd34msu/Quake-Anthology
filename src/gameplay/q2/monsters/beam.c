@@ -839,15 +839,7 @@ static bool show_source_beam(q2m_context *context, q2_actor *child,
     return false;
   if (!controller_live(game, child, controller, Q2M_CONTROLLER_VISUAL_CHILD))
     return true;
-  bool model_beam = qa_q2_model_beam(game->options.edition, child->entity->visual.render_flags,
-      child->entity->visual.models[0] != QA_STRING_NONE);
-  qa_builtin_event event = {.kind = QA_BUILTIN_BEAM, .family = QA_GAME_Q2,
-    .provider = game->options.owner, .actor = id, .time_ns = game->now_ns,
-    .origin = start, .end = end, .value = (float)child->entity->visual.frame,
-    .code = child->entity->visual.skin, .flags = 1};
-  return q2_entity_show(game, child, error) &&
-      (model_beam || !controller_live(game, child, controller, Q2M_CONTROLLER_VISUAL_CHILD) ||
-       qa_builtin_emit(&game->services, &event, error));
+  return q2_entity_show(game, child, error);
 }
 
 bool q2m_source_visuals_release(q2m_context *context, qa_error *error) {

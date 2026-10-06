@@ -1018,7 +1018,6 @@ bool frontend_remote_q2_effects_draw(frontend_remote_q2_effects *o,
         } else color=(qa_scene_vec4){palette.data[index*3]/255.f,palette.data[index*3+1]/255.f,palette.data[index*3+2]/255.f,.3f};
         ok=qa_scene_beam(frame,&s->view,row->start,row->end,row->width,color,o->source.white,e);
     }
-    if (entities && ok) ok=q2fx_semantic_draw(o,s,frame,e);
     qa_scene_particle_sample *particle_samples=ok && particles?qa_scene_particles_alloc(frame,o->particles.count,e):NULL;
     if (ok && particles && o->particles.count && !particle_samples) ok=false;
     qa_scene_particle_batch batch={.view=s->view,.family=QA_SCENE_Q2,.image=o->particle_image,.samples=particle_samples};

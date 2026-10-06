@@ -358,7 +358,9 @@ bool application_unified_presentations_build(qa_application *app, const applicat
                 if (!content) { ok = application_fail(error, QA_ERROR_NOT_FOUND, "Unified model lost its actual content product"); break; }
                 qa_application_map_view map;
                 if (!qa_application_map_read(app, &map)) { ok = false; break; }
-                for (unsigned i = 0; ok && i < 4; ++i)
+                if (v.family == QA_GAME_Q2 && (v.render_flags & 128u) && !v.model_beam)
+                    ok = model(frame, &model_capacity, &v, "", content->identity, NULL, false,NULL,NULL,error);
+                else for (unsigned i = 0; ok && i < 4; ++i)
                     if (v.models[i] && v.models[i][0] && strcmp(v.models[i], qa_resource_path(map.resource)))
                         ok = model(frame, &model_capacity, &v, v.models[i], content->identity, NULL, false,NULL,NULL,error);
                 if (ok && v.q2_flare.present)

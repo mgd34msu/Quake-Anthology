@@ -38,7 +38,7 @@ typedef struct frontend_remote_q2_effects_shadow_light {
     bool visible, cone;
 } frontend_remote_q2_effects_shadow_light;
 typedef enum frontend_remote_q2_effects_presentation_kind {
-    FRONTEND_REMOTE_Q2_ORDINARY_BEAM, FRONTEND_REMOTE_Q2_MONSTER_BEAM, FRONTEND_REMOTE_Q2_ALL_BEAMS,
+    FRONTEND_REMOTE_Q2_MONSTER_BEAM, FRONTEND_REMOTE_Q2_ALL_BEAMS,
     FRONTEND_REMOTE_Q2_SHADOW_LIGHT, FRONTEND_REMOTE_Q2_SOURCE_LIGHT, FRONTEND_REMOTE_Q2_FLASHLIGHT
 } frontend_remote_q2_effects_presentation_kind;
 typedef struct frontend_remote_q2_effects_source {
@@ -138,8 +138,6 @@ bool frontend_remote_q2_effects_named_effect(frontend_remote_q2_effects *,
 bool frontend_remote_q2_effects_named_beam(frontend_remote_q2_effects *,
     const char *recipe, qa_actor_id, qa_vec3 start, qa_vec3 end, double duration_seconds,
     double milliseconds, qa_error *);
-bool frontend_remote_q2_effects_source_beam(frontend_remote_q2_effects *, qa_actor_id,
-    qa_vec3 start, qa_vec3 end, float width, uint32_t color, bool visible, qa_error *);
 bool frontend_remote_q2_effects_monster_beam(frontend_remote_q2_effects *, qa_actor_id,
     qa_vec3 start, qa_vec3 end, double milliseconds, qa_error *);
 bool frontend_remote_q2_effects_shadow_light_set(frontend_remote_q2_effects *,

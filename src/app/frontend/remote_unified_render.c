@@ -26,7 +26,7 @@ typedef struct unified_render_model {
     qa_vec3 previous_origin;
     float scale;
     bool visible, has_previous_origin,native_held_weapon;
-    bool source_client,submitted;
+    bool source_client,submitted,flat_beam;
     uint32_t source_provider;
     char *source_instance;
     uint64_t submitted_cycle, effects;
@@ -159,12 +159,15 @@ static bool model_beam_read(unified_render_model *m, qa_error *e)
         qa_q2_model_beam(m->product->edition == QA_EDITION_RERELEASE ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
             m->input.flags, m->media.scene != NULL);
     m->input.beam_segment_length = (float)m->input.frame;
-    return !m->input.model_beam || m->has_previous_origin ||
-        frontend_unified_fail(e, QA_ERROR_FORMAT, "Q2 model beam lost its actual Source endpoint");
+    if (m->flat_beam && m->input.frame > INT32_MAX)
+        return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 entity beam exceeds its Source width");
+    return !(m->input.model_beam || m->flat_beam) || m->has_previous_origin ||
+        frontend_unified_fail(e, QA_ERROR_FORMAT, "Q2 beam lost its actual Source endpoint");
 }
 static bool model_read(frontend_unified_render *r,const qa_unified_model_state *source,
     unified_render_model *m,qa_error *e)
 {
+    m->flat_beam=source->family==QA_GAME_Q2 && (source->render_flags&128u) && source->path && !*source->path;
     qa_scene_family kind=source->family==QA_GAME_Q1?QA_SCENE_Q1:source->family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q3;
     bool okay=model_source_read(source,m,e) && model_equipment_read(source,m,e) &&
         frontend_remote_unified_source_actor(r->replica,qa_unified_document_frame(r->frame),source->actor,false,&m->actor,e);
@@ -186,9 +189,9 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
     qa_vfs *files;
     if (okay) okay=qa_executable_recipe_content(frontend_remote_unified_recipe(r->replica),source->content,&files,&m->product,e) &&
         frontend_unified_media_bank(r->media,source->content,&bank,&materials,&fonts,&sounds,e) &&
-        frontend_unified_media_model(r->media,source->content,source->path,kind,&images,&m->media,e) && copy_text(source->path,&m->path,e);
+        (m->flat_beam || frontend_unified_media_model(r->media,source->content,source->path,kind,&images,&m->media,e)) && copy_text(source->path,&m->path,e);
     if (okay) {
-        m->input.family=kind; m->input.skin=source->skin<0?0:(uint32_t)source->skin;
+        m->input.family=kind; m->input.skin=source->skin<0 && !m->flat_beam?0:(uint32_t)source->skin;
         m->input.flags=source->render_flags;
         m->input.entity=m->actor.slot; m->input.material_library=frontend_unified_model_materials(m->media.scene); m->input.source_path=m->path;
         m->input.color=(qa_scene_vec4){1,1,1,source->has_alpha?source->alpha:1}; m->input.seconds=r->seconds;
@@ -326,7 +329,13 @@ static bool unified_scene_visuals(void *context,const qa_scene_world_input *worl
             input.transform.axes[a][2]=axes[a].z; input.transform.scale[a]=scale; }
         input.previous_origin=previous; input.ambient=qa_v3(1,1,1); input.identity_light=world->identity_light;
         input.video_frame=frontend_material_movies_frontend_resolve; input.video_context=r->frontend;
-        if (m->media.brush_world) okay=qa_scene_world_submit_model(m->media.brush_world,m->media.inline_model,
+        if (m->flat_beam) {
+            if (!children || !children->entity_beam)
+                return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 entity beam has no entered renderer");
+            okay=children->entity_beam(children->context,m->product->identity,&world->view,
+                position,previous,m->input.skin,(int32_t)m->input.frame,frame,e);
+        }
+        else if (m->media.brush_world) okay=qa_scene_world_submit_model(m->media.brush_world,m->media.inline_model,
             &input.transform,world,m->actor.slot,input.color,&r->frontend->frame,e);
         else {
             okay=qa_scene_world_sample_light_input(frontend_unified_media_world(r->media),world,position,

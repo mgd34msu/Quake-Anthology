@@ -346,22 +346,7 @@ static bool mal_switch(qa_q2_game *g, q2_actor *a, bool on, qa_error *e) {
     if (!q2_actor_live(g, a->id))
         return true;
     q2_entity_schedule(g, a, on ? Q2ET_SCENERY : Q2ET_NONE, s->wait + s->delay);
-    if (on)
-        return true;
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, a->id, &body, e))
-        return false;
-    return qa_builtin_emit(&g->services,
-                           &(qa_builtin_event){.kind = QA_BUILTIN_BEAM,
-                                               .family = QA_GAME_Q2,
-                                               .provider = g->options.owner,
-                                               .actor = a->id,
-                                               .origin = body.origin,
-                                               .end = body.origin,
-                                               .value = (float)s->visual.frame,
-                                               .code = s->visual.skin,
-                                               .time_ns = g->now_ns},
-                           e);
+    return true;
 }
 static bool nuke(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_builtin_snapshot_frame *frame = q2_scratch_acquire(g, e);

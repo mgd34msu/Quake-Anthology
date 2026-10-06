@@ -3,6 +3,7 @@
 #include "unified_frame_private.h"
 #include "internal.h"
 #include "map_players_private.h"
+#include "qa/game_q2.h"
 
 static bool replacement_arsenal(qa_application *app, qa_actor_id actor,
     qa_actor_owner source, bool *out, qa_error *error)
@@ -24,7 +25,7 @@ static bool replacement_arsenal(qa_application *app, qa_actor_id actor,
 
 static bool model(qa_unified_frame_lease *lease, qa_unified_frame_visuals *out,
     const application_native_q2_appearance *view, unsigned index,
-    const char *content, bool held, qa_error *error)
+    const char *content, const char *path, bool held, qa_error *error)
 {
     const qa_q2_entity *state = &view->entity.state;
     bool rerelease = view->source.edition == QA_Q2_RERELEASE;
@@ -39,8 +40,8 @@ static bool model(qa_unified_frame_lease *lease, qa_unified_frame_visuals *out,
         .alpha = rerelease ? state->alpha != 0 ? state->alpha : (state->renderfx & 32u) ? .3f : 1 : 1,
         .has_previous_origin = true, .has_alpha = true, .visible = true, .native_held_weapon = held};
     return application_unified_frame_string(lease, &row->content, content, error) &&
-        application_unified_frame_string(lease, &row->path, view->models[index], error) &&
-        application_unified_frame_string(lease, &row->skin_path, index ? NULL : view->skin_path, error);
+        application_unified_frame_string(lease, &row->path, path, error) &&
+        application_unified_frame_string(lease, &row->skin_path, index || !*path ? NULL : view->skin_path, error);
 }
 
 bool application_unified_native_q2_models(qa_application *app,
@@ -89,9 +90,14 @@ bool application_unified_native_q2_models(qa_application *app,
             ok = application_native_q2_appearance_read(app, &cut, slot, &appearance, error);
             bool replacement = false;
             if (ok) ok = replacement_arsenal(app, row.binding.actor, source->owner, &replacement, error);
-            for (unsigned i = 0; ok && i < 4; ++i)
+            bool flat_beam = (appearance.entity.state.renderfx & 128u) &&
+                !qa_q2_model_beam(appearance.source.edition, appearance.entity.state.renderfx,
+                    appearance.entity.state.modelindex > 1);
+            if (ok && flat_beam)
+                ok = model(target->lease, out, &appearance, 0, product->identity, "", false, error);
+            else for (unsigned i = 0; ok && i < 4; ++i)
                 if (appearance.models[i] && appearance.models[i][0])
-                    ok = model(target->lease, out, &appearance, i, product->identity, i == 1 && replacement, error);
+                    ok = model(target->lease, out, &appearance, i, product->identity, appearance.models[i], i == 1 && replacement, error);
             if (ok && !application_native_q2_appearance_current(app, &appearance))
                 ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified Q2 appearance changed while serializing");
             application_native_q2_appearance_dispose(&appearance);

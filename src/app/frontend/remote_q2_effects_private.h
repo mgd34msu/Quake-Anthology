@@ -48,9 +48,6 @@ typedef struct q2fx_weapon_muzzle {
 } q2fx_weapon_muzzle;
 typedef struct q2fx_source_beam {
     q2fx_beam beam;
-    float width;
-    uint32_t color;
-    bool persistent;
 } q2fx_source_beam;
 typedef struct q2fx_source_light {
     frontend_remote_q2_effects_shadow_light light;
@@ -112,7 +109,6 @@ bool q2fx_semantic_prepare(frontend_remote_q2_effects *, const frontend_remote_q
     const frontend_remote_q2_effects_controls *, bool, qa_error *);
 bool q2fx_prepare_beams(frontend_remote_q2_effects *, q2fx_beam *, size_t,
     const frontend_remote_q2_effects_sample *, const frontend_remote_q2_effects_controls *, bool, qa_error *);
-bool q2fx_semantic_draw(frontend_remote_q2_effects *, const frontend_remote_q2_effects_sample *, qa_scene_frame *, qa_error *);
 bool q2fx_entities(frontend_remote_q2_effects *, const frontend_remote_q2_effects_sample *,
     bool advance, qa_error *);
 void q2fx_sampled_light(frontend_remote_q2_effects *, qa_vec3, float, qa_vec3, float);
