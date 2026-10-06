@@ -63,6 +63,23 @@ static bool q1_native_owner(qa_actor_owner owner, qa_error *error)
     return owner || application_fail(error, QA_ERROR_ARGUMENT,
         "Q1 host observation requires its installed source owner");
 }
+static struct application_qc_state *q1_qc_observation(qa_application *app,
+    qa_actor_owner expected_owner, qa_error *error)
+{
+    application_provider *primary = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    qa_application_qc_message_source source; bool found;
+    if (!primary || (expected_owner && primary->owner != expected_owner) ||
+        qa_application_get_state(app) != QA_APPLICATION_RUNNING) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Q1 observation lost its primary Source owner");
+        return NULL;
+    }
+    if (!qa_application_qc_message_source_read(app, primary->owner, &source, &found, error)) return NULL;
+    if (!found) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Q1 observation has no QC Source");
+        return NULL;
+    }
+    return primary->state.qc.engine;
+}
 static struct application_qc_state *q1_source(qa_application *app, qa_actor_id player,
     uint32_t *source_slot, qa_error *error)
 {
@@ -277,14 +294,9 @@ bool qa_application_network_q1_world_read(qa_application *app, qa_actor_owner ow
     if (q1_native(app)) return q1_native_owner(owner, error) &&
         application_native_q1_wire_world(app, owner, out, error);
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 world observation output");
-    application_provider *primary = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
-    qa_application_qc_message_source source; bool found;
-    if (!primary || primary->owner != owner ||
-        qa_application_get_state(app) != QA_APPLICATION_RUNNING)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 world observation lost its primary Source owner");
-    if (!qa_application_qc_message_source_read(app, owner, &source, &found, error)) return false;
-    if (!found) return application_fail(error, QA_ERROR_ARGUMENT, "Q1 world observation has no QC Source");
-    struct application_qc_state *engine = primary->state.qc.engine;
+    if (!q1_native_owner(owner, error)) return false;
+    struct application_qc_state *engine = q1_qc_observation(app, owner, error);
+    if (!engine) return false;
     qa_application_network_q1_world value = {.protocol = engine->protocol, .max_clients = engine->max_clients};
     const qa_cvar_view *deathmatch = qa_cvars_find(engine->cvars, "deathmatch");
     const qa_qc_definition *mapname = qa_qc_program_find_global(engine->provider->state.qc.program, "mapname");
@@ -312,8 +324,8 @@ bool qa_application_network_q1_clientdata(qa_application *app, qa_actor_id playe
 {
     if (q1_native(app)) return application_native_q1_wire_clientdata(app, player, out, error);
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 clientdata observation output");
-    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
-    if (!engine) return false;
+    uint32_t slot; struct application_qc_state *engine = q1_qc_observation(app, 0, error);
+    if (!engine || !application_network_q1_qc_client(engine, player, &slot, error)) return false;
     int32_t reference; qa_q1_clientdata value = {0}; float vec[3], scalar; uint32_t flags, extra;
     if (!qa_qc_actor_reference(engine->provider->state.qc.instance, player, false, &reference, error) ||
         !q1_wire_vector(engine, reference, "view_ofs", vec, error)) return false;
@@ -337,14 +349,10 @@ bool qa_application_network_q1_clientdata(qa_application *app, qa_actor_id playe
     value.inwater = scalar >= 2;
     const char *names[] = {"weaponframe", "armorvalue", "currentammo", "ammo_shells", "ammo_nails", "ammo_rockets", "ammo_cells"};
     uint32_t *fields[] = {&value.weapon_frame, &value.armor, &value.ammo, &value.shells, &value.nails, &value.rockets, &value.cells};
-    for (size_t i = 0; i < 7; ++i) if (!q1_wire_scalar(engine, reference, names[i], 255, fields[i], error)) return false;
+    for (size_t i = 0; i < 7; ++i) if (!q1_wire_scalar(engine, reference, names[i], UINT32_MAX, fields[i], error)) return false;
     if (!application_qc_float(engine, reference, "health", &scalar, error) ||
-        !q1_wire_integer(scalar, INT16_MIN, INT16_MAX, &value.health, error) ||
+        !q1_wire_integer(scalar, INT32_MIN, INT32_MAX, &value.health, error) ||
         !application_qc_float(engine, reference, "weapon", &scalar, error) || !q1_wire_bits(scalar, &value.weapon, error)) return false;
-    bool standard;
-    if (!q1_standard_quake(app, engine, &standard, error)) return false;
-    if ((standard && value.weapon > 255) || (!standard && value.weapon && (value.weapon & (value.weapon - 1))))
-        return application_fail(error, QA_ERROR_FORMAT, "Q1 source active weapon differs from its product dialect");
     const char *weapon_model;
     if (!q1_wire_string(engine, reference, "weaponmodel", &weapon_model, error)) return false;
     if (*weapon_model) {
@@ -352,13 +360,9 @@ bool qa_application_network_q1_clientdata(qa_application *app, qa_actor_id playe
             const application_qc_resource *r = &engine->resources[i];
             if (r->kind == QA_QC_RESOURCE_MODEL && !strcmp(r->name, weapon_model)) { value.weapon_model = r->value.index; break; }
         }
-        if (!value.weapon_model || value.weapon_model > 255)
+        if (!value.weapon_model)
             return application_fail(error, QA_ERROR_FORMAT, "Q1 source weapon model is not in its ordered precache");
     }
-    /* Apply the native writer's actual numeric/dialect guards before publishing
-     * a source observation to any caller. The bytes are bounded scratch only. */
-    uint8_t bytes[64]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
-    if (!qa_nq_write_clientdata(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15}, &value, standard)) return false;
     *out = value; return true;
 }
 bool qa_application_network_q1_status(qa_application *app, qa_actor_owner owner,
@@ -548,9 +552,9 @@ bool qa_application_network_q1_consume_feedback(qa_application *app, qa_actor_id
 {
     if (q1_native(app)) return application_native_q1_wire_feedback(app, player, out, error);
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 client feedback output");
-    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
-    if (!engine) return false;
-    if (engine->profile != QA_QC_NETQUAKE || !engine->clients[slot].spawned ||
+    uint32_t slot; struct application_qc_state *engine = q1_qc_observation(app, 0, error);
+    if (!engine || !application_network_q1_qc_client(engine, player, &slot, error)) return false;
+    if ((engine->profile != QA_QC_NETQUAKE && engine->profile != QA_QC_RERELEASE) || !engine->clients[slot].spawned ||
         !application_qc_input_idle(engine->provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 feedback requires its idle spawned NetQuake source client");
     qa_application_network_q1_feedback value = {0}; int32_t reference;

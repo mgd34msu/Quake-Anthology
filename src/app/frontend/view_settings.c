@@ -394,9 +394,9 @@ bool frontend_view_q1_local_damage(qa_frontend *f, qa_actor_id actor, uint8_t ar
             if (!qa_application_network_qw_source_read(f->application, &clock, error)) return false;
             seconds = (double)clock.source_time_ns / 1000000000.0;
         } else {
-            qa_actor_owner owner; uint32_t slot; qa_net_protocol_id protocol;
+            qa_actor_owner owner;
             qa_application_network_q1_world clock;
-            if (!qa_application_network_q1_source(f->application,actor,&owner,&slot,&protocol,error) ||
+            if (!qa_application_provider_owner(f->application,source.descriptor->selection.instance,&owner) ||
                 !qa_application_network_q1_world_read(f->application,owner,&clock,error)) return false;
             seconds = clock.seconds;
         }
