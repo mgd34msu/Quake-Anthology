@@ -145,6 +145,29 @@ bool q3g_set_configstring(q3g_role *role, uint32_t index, const char *text, qa_e
     return true;
 }
 
+bool q3g_publish_information(q3g_role *role, bool force, qa_error *error)
+{
+    qa_cvars *cvars = NULL;
+    if (!qa_q3_host_console(role->host, &cvars, NULL) || !cvars)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 server information requires its GAME registry");
+    const uint32_t masks[] = {QA_CVAR_SERVERINFO, QA_CVAR_SYSTEMINFO};
+    const uint32_t information = masks[0] | masks[1];
+    uint32_t modified = qa_cvars_take_modified_flags(cvars);
+    qa_cvars_mark_modified_flags(cvars, modified & ~information);
+    for (uint32_t index = 0; index < 2; ++index) {
+        if (!force && !(modified & masks[index])) continue;
+        qa_buffer text = {0};
+        bool ok = qa_cvars_info(cvars, masks[index], index ? 8192 : 1024, &text, error) &&
+            q3g_set_configstring(role, index, (const char *)text.data, error);
+        qa_buffer_free(&text);
+        if (!ok) {
+            qa_cvars_mark_modified_flags(cvars, modified & information);
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool set_configstring(void *context, uint32_t index, const char *text, qa_error *error)
 {
     return q3g_set_configstring(context, index, text, error);

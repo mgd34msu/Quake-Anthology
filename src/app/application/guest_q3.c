@@ -131,6 +131,7 @@ static bool begin_frame(void *state, qa_session *session, const qa_source_frame 
     qa_cvars *cvars = NULL;
     qa_q3_host_console(engine->game->host, &cvars, NULL);
     const qa_cvar_view *bots = cvars ? qa_cvars_find(cvars, "bot_enable") : NULL;
+    if (!q3g_publish_information(engine->game, false, error)) return false;
     if (bots && bots->integer && application_bots_guest_runtime(engine->provider->application, engine->provider) &&
         !q3g_call(engine->game, 10, &engine->milliseconds, 1, &result, error)) return false;
     bool ok = q3g_call(engine->game, 8, &engine->milliseconds, 1, &result, error);
@@ -463,6 +464,7 @@ bool application_q3_guest_spawn_map(application_provider *provider, const qa_bsp
     int32_t arguments[] = {engine->milliseconds, engine->random_seed, engine->startup_restart ? 1 : 0}, result;
     bool ok = q3g_call(engine->game, 0, arguments, 3, &result, error);
     if (ok) { engine->game->initialized = true; engine->startup_restart = false; }
+    if (ok) ok = q3g_publish_information(engine->game, true, error);
     if (ok) ok = application_guest_clients_drain(provider, error);
     if (ok) {
         qa_cvars *cvars = NULL;

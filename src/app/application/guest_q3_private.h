@@ -222,6 +222,7 @@ void application_guest_q3_save_clear(struct application_q3_guest *);
 bool q3g_client_effect(q3g_role *, qa_application_q3_client_effect,
                         const char *, qa_error *);
 bool q3g_set_configstring(q3g_role *, uint32_t, const char *, qa_error *);
+bool q3g_publish_information(q3g_role *, bool, qa_error *);
 bool q3g_round_fail(struct application_q3_guest *, const qa_error *, qa_error *);
 bool q3g_round_call(q3g_role *, int32_t, const int32_t *, size_t, int32_t *, qa_error *);
 

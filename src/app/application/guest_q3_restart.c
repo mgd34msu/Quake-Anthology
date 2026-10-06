@@ -499,6 +499,7 @@ bool application_q3_guest_round_reset(application_provider *provider, qa_error *
         ok = q3g_round_call(game, 0, arguments, 3, &result, error);
     }
     if (!ok) return q3g_round_fail(engine, error, error);
+    if (!q3g_publish_information(game, true, error)) return q3g_round_fail(engine, error, error);
     qa_q3_host_game_data data;
     if (!qa_q3_host_game_data_read(game->host, &data) || !data.entities_address ||
         !data.clients_address || !data.entity_stride || !data.client_stride)
@@ -526,6 +527,7 @@ bool application_q3_guest_round_frame(application_provider *provider, qa_error *
     engine->milliseconds = (int32_t)(uint32_t)(frame.time_ns / UINT64_C(1000000));
     engine->round.last_frame = frame.number;
     int32_t result;
+    if (!q3g_publish_information(engine->game, false, error)) return q3g_round_fail(engine, error, error);
     if (!q3g_round_call(engine->game, 8, &engine->milliseconds, 1, &result, error))
         return q3g_round_fail(engine, error, error);
     bool prior = engine->round.source_entry;
