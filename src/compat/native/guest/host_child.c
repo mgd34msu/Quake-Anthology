@@ -47,7 +47,7 @@ typedef struct host_server_backing { guest_host_backing_view view; int descripto
 typedef struct host_server {
     int descriptor;
     host_server_backing *backings; size_t backing_count,backing_capacity;
-    qa_native_guest_mapping *mappings; size_t mapping_count,mapping_capacity;
+    guest_profile_guard_mapping *mappings; size_t mapping_count,mapping_capacity;
     host_callback *callbacks; size_t callback_count,callback_capacity;
     guest_profile_interest *interests; size_t interest_count,interest_capacity;
     uint64_t stop,run_sequence,bypass;
@@ -217,22 +217,13 @@ static bool server_profile(host_server *server,guest_profile_guard_operation ope
         .gs_base=cpu?cpu->gs_base:0,.syscalls=server->syscalls,.fault=&server->profile_fault,
         .interests=server->interests,.interest_count=server->interest_count,.bypass=server->bypass,
         .xsave=cpu?cpu->xsave.data:NULL,.xsave_bytes=cpu?cpu->xsave.size:0};
-    guest_profile_guard_mapping *mappings=NULL;
     if(operation==GUEST_PROFILE_GUARD_ENTER || operation==GUEST_PROFILE_GUARD_RESUME) {
-        if(server->mapping_count>SIZE_MAX/sizeof(*mappings))return fail(error,QA_ERROR_MEMORY,0,"guard mapping inventory overflows");
-        mappings=server->mapping_count?malloc(server->mapping_count*sizeof(*mappings)):NULL;
-        if(server->mapping_count && !mappings)return fail(error,QA_ERROR_MEMORY,0,"copying actual child guard mappings");
-        for(size_t i=0;i<server->mapping_count;++i) {
-            host_server_backing *backing=server_backing(server,server->mappings[i].backing);
-            if(!backing){free(mappings);return fail(error,QA_ERROR_ARGUMENT,i,"guard mapping lost actual backing");}
-            mappings[i]=(guest_profile_guard_mapping){server->mappings[i],backing->view.file,backing->view.source.accessible_bytes};
-        }
-        control.mappings=mappings;control.mapping_count=server->mapping_count;
+        control.mappings=server->mappings;control.mapping_count=server->mapping_count;
         control.callbacks=server->callbacks;
         control.callback_count=server->callback_count;
         memset(&server->profile_fault,0,sizeof(server->profile_fault));
     }
-    bool okay=guest_profile_guard_control_call(&control,error);free(mappings);
+    bool okay=guest_profile_guard_control_call(&control,error);
     if(okay && operation==GUEST_PROFILE_GUARD_PROBE)server->profile=control.installed;
     return okay;
 }
@@ -389,7 +380,7 @@ static bool server_dispatch(host_server *server,host_packet *packet,bool *comple
         if(bytes!=8 || packet->descriptor>=0) {okay=fail(&failure,QA_ERROR_FORMAT,0,"child backing release is invalid");break;}
         host_server_backing *backing=server_backing(server,qa_load_u64le(data));
         if(!backing) {okay=fail(&failure,QA_ERROR_NOT_FOUND,0,"child backing is absent");break;}
-        for(size_t i=0;i<server->mapping_count;++i) if(server->mappings[i].backing==backing->view.id) okay=false;
+        for(size_t i=0;i<server->mapping_count;++i) if(server->mappings[i].mapping.backing==backing->view.id) okay=false;
         if(!okay) {fail(&failure,QA_ERROR_ARGUMENT,backing->view.id,"child backing still owns aliases");break;}
         int result=close(backing->descriptor);backing->descriptor=-1;
         if(result!=0) {okay=fail(&failure,QA_ERROR_IO,backing->view.id,"closing actual child backing failed");break;}
@@ -400,21 +391,21 @@ static bool server_dispatch(host_server *server,host_packet *packet,bool *comple
         if(bytes!=44 || packet->descriptor>=0) {okay=fail(&failure,QA_ERROR_FORMAT,0,"child map is invalid");break;}
         qa_native_guest_mapping mapping=mapping_decode(data);host_server_backing *backing=server_backing(server,mapping.backing);
         if(!backing || mapping.backing_offset>backing->view.bytes.size || mapping.bytes>backing->view.bytes.size-mapping.backing_offset) {okay=fail(&failure,QA_ERROR_ARGUMENT,mapping.id,"child map has no actual backing span");break;}
-        for(size_t i=0;i<server->mapping_count;++i) if(server->mappings[i].id==mapping.id) okay=false;
-        if(!okay || !grow((void **)&server->mappings,&server->mapping_capacity,server->mapping_count+1,sizeof(mapping),&failure) ||
+        for(size_t i=0;i<server->mapping_count;++i) if(server->mappings[i].mapping.id==mapping.id) okay=false;
+        if(!okay || !grow((void **)&server->mappings,&server->mapping_capacity,server->mapping_count+1,sizeof(*server->mappings),&failure) ||
             !guest_host_memory_child_map(backing->descriptor,&mapping,&failure)) {okay=false;break;}
-        server->mappings[server->mapping_count++]=mapping;break;
+        server->mappings[server->mapping_count++]=(guest_profile_guard_mapping){mapping,backing->view.file,backing->view.source.accessible_bytes};break;
     }
     case HOST_CHANGE: {
         if(bytes!=49 || data[48]>1 || packet->descriptor>=0) {okay=fail(&failure,QA_ERROR_FORMAT,0,"child mapping change is invalid");break;}
         qa_native_guest_mapping expected=mapping_decode(data);size_t index=server->mapping_count;
-        for(size_t i=0;i<server->mapping_count;++i) if(server->mappings[i].id==expected.id) index=i;
-        uint8_t actual[44];if(index<server->mapping_count)mapping_encode(actual,server->mappings+index);
+        for(size_t i=0;i<server->mapping_count;++i) if(server->mappings[i].mapping.id==expected.id) index=i;
+        uint8_t actual[44];if(index<server->mapping_count)mapping_encode(actual,&server->mappings[index].mapping);
         if(index==server->mapping_count || memcmp(actual,data,44)) {okay=fail(&failure,QA_ERROR_ARGUMENT,expected.id,"child mapping witness was replaced");break;}
         uint32_t rights=qa_load_u32le(data+44);
         if(!guest_host_memory_child_change(&expected,rights,data[48]!=0,&failure)) {okay=false;break;}
-        if(data[48]) {memmove(server->mappings+index,server->mappings+index+1,(server->mapping_count-index-1)*sizeof(expected));--server->mapping_count;}
-        else server->mappings[index].permissions=rights;
+        if(data[48]) {memmove(server->mappings+index,server->mappings+index+1,(server->mapping_count-index-1)*sizeof(*server->mappings));--server->mapping_count;}
+        else server->mappings[index].mapping.permissions=rights;
         break;
     }
     case HOST_INTEREST: {
