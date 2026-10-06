@@ -1,4 +1,5 @@
 #include "startup_menus.h"
+#include "commands.h"
 #include "startup_selection.h"
 #include "startup_arena.h"
 #include "host_menu.h"
@@ -165,6 +166,8 @@ bool frontend_startup_menus_create(frontend_seat *seat, qa_error *error)
 }
 bool frontend_startup_menus_pump(qa_frontend *f, qa_error *error)
 {
+    /* Source command callbacks return before invoking presentation or UI factories. */
+    if (!frontend_commands_menus_pump(f,error)) return false;
     for (unsigned i = 0; i < f->options.seats; ++i)
         if (f->seats[i].library_services &&
             !frontend_content_library_services_pump(f->seats[i].library_services, error)) return false;

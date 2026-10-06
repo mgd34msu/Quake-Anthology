@@ -108,6 +108,9 @@ typedef struct frontend_seat {
     qa_input_seat *input;
     qa_seat_console *console;
     qa_ui *ui;
+    qa_ui_id command_menu;
+    bool command_game_menu;
+    qa_command_context command_menu_context;
     bool player_sources_registered;
     qa_hud *hud;
     qa_hud_wheel *wheel;

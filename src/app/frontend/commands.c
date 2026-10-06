@@ -16,6 +16,38 @@ static const char *const client_menus[]={"toggleconsole","menu","messagemode","m
     "menu_anthology","library","mods","settings","rankings","assistance","controls","quit","togglemenu","help"};
 static const qa_ui_id menu_destinations[] = {FRONTEND_HOME, FRONTEND_LIBRARY, FRONTEND_MODS,
     FRONTEND_OPTIONS, FRONTEND_RANKINGS, FRONTEND_ASSISTANCE, FRONTEND_CONTROLS};
+static bool menu_command(frontend_seat *seat, const qa_command_context *context,
+    qa_ui_id destination, bool game, qa_error *error)
+{
+    qa_command_context target;
+    if (!qa_application_capture_command_context(seat->frontend->application,context,&target,error)) return false;
+    target.script=NULL;
+    seat->command_menu=destination;
+    seat->command_game_menu=game;
+    seat->command_menu_context=target;
+    return true;
+}
+bool frontend_commands_menus_pump(qa_frontend *frontend, qa_error *error)
+{
+    for (unsigned i=0;i<frontend->options.seats;++i) {
+        frontend_seat *seat=frontend->seats+i;
+        qa_ui_id destination=seat->command_menu;
+        if (!destination) continue;
+        bool game=seat->command_game_menu;
+        qa_command_context context=seat->command_menu_context;
+        seat->command_menu=0;
+        seat->command_game_menu=false;
+        seat->command_menu_context=(qa_command_context){0};
+        uint32_t physical;
+        if (!frontend_command_seat_read(frontend,&context,&physical) || physical!=i) continue;
+        bool opened;
+        if (game) opened=frontend_game_menu(seat,error);
+        else if (destination==FRONTEND_Q1_HELP) opened=frontend_q1_help_open(seat,error);
+        else opened=frontend_menu_open(seat,destination,error);
+        if (!opened) return false;
+    }
+    return true;
+}
 struct frontend_client_commands {
     qa_frontend *frontend;
     qa_console *console;
@@ -149,7 +181,8 @@ static bool client_menu_command(void *context,const qa_command_invocation *comma
         owner->physical>=f->options.seats || f->seats[owner->physical].frontend!=f)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT menu command lost its actual physical namespace");
     frontend_seat *seat=f->seats+owner->physical;
-    if (client_name(command->argv[0],"help"))return frontend_q1_help_open(seat,error);
+    if (client_name(command->argv[0],"help"))
+        return menu_command(seat,&command->context,FRONTEND_Q1_HELP,false,error);
     if (command->context.origin==QA_COMMAND_REMOTE) {
         frontend_console_print(f,&command->context,"Menu commands require the local client.\n"); return true;
     }
@@ -157,10 +190,11 @@ static bool client_menu_command(void *context,const qa_command_invocation *comma
     size_t kind=0;
     while (kind<sizeof(client_menus)/sizeof(*client_menus) && !client_name(command->argv[0],client_menus[kind])) ++kind;
     if (kind==0) return qa_seat_console_toggle(seat->console,false,false,error);
-    if (kind==1 || client_name(command->argv[0],"togglemenu")) return frontend_game_menu(seat,error);
+    if (kind==1 || client_name(command->argv[0],"togglemenu"))
+        return menu_command(seat,&command->context,FRONTEND_HOME,true,error);
     if (kind==2 || kind==3) return qa_seat_console_message(seat->console,kind==3,false,0,error);
     if (kind >= 4 && kind - 4 < sizeof(menu_destinations)/sizeof(*menu_destinations))
-        return frontend_menu_open(seat, menu_destinations[kind-4], error);
+        return menu_command(seat,&command->context,menu_destinations[kind-4],false,error);
     return frontend_fail(error,QA_ERROR_ARGUMENT,"Unknown registered CLIENT menu command");
 }
 bool frontend_commands_client_unbind(frontend_client_commands **slot,qa_error *error)
@@ -270,12 +304,13 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
     if (!frontend_command_seat_read(frontend,&invocation->context,&slot))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "command requires a local player");
     frontend_seat *seat = &frontend->seats[slot];
-    if (!strcmp(name,"help"))return frontend_q1_help_open(seat,error);
+    if (!strcmp(name,"help"))return menu_command(seat,&invocation->context,FRONTEND_Q1_HELP,false,error);
     if (!strcmp(name, "toggleconsole")) return qa_seat_console_toggle(seat->console, false, false, error);
-    if (!strcmp(name, "menu") || !strcmp(name,"togglemenu")) return frontend_game_menu(seat, error);
+    if (!strcmp(name, "menu") || !strcmp(name,"togglemenu"))
+        return menu_command(seat,&invocation->context,FRONTEND_HOME,true,error);
     const char *menus[] = {"menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls"};
     for (unsigned i = 0; i < sizeof(menus) / sizeof(*menus); ++i)
-        if (!strcmp(name, menus[i])) return frontend_menu_open(seat, menu_destinations[i], error);
+        if (!strcmp(name, menus[i])) return menu_command(seat,&invocation->context,menu_destinations[i],false,error);
     if (!strcmp(name, "weapnext") || !strcmp(name, "weapprev"))
         return qa_hud_wheel_cycle(seat->wheel, !strcmp(name, "weapnext") ? 1 : -1, frontend->time_ns, error);
     if (!strcmp(name, "messagemode") || !strcmp(name, "messagemode2"))
