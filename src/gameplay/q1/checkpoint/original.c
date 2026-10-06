@@ -173,6 +173,7 @@ static const original_field world_fields[] = {
     FIELD(qa_q1_options, world_type, "worldtype", I32)
 };
 static const original_field game_globals[] = {
+    FIELD(qa_q1_game, elapsed, "frametime", DOUBLE),
     FIELD(qa_q1_game, force_retouch, "force_retouch", U32),
     FIELD(qa_q1_game, total_monsters, "total_monsters", U32),
     FIELD(qa_q1_game, killed_monsters, "killed_monsters", U32),
@@ -819,7 +820,6 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
     }
     qa_q1_save_record *globals = &save->globals;
     if (okay) okay = number(globals, "time", game->time, true, error) &&
-        number(globals, "frametime", game->elapsed, true, error) &&
         text(globals, "mapname", save->map, QA_Q1_SAVE_STRING, error) &&
         number(globals, "deathmatch", game->options.deathmatch, true, error) &&
         number(globals, "coop", game->options.coop, true, error) &&
@@ -1340,7 +1340,6 @@ static bool admit_globals(original_admission *admission,const qa_qc_program *pro
         !ADMIT_FIELDS(admission,&flags,server_globals,error) ||
         !admit_fields(admission,&game,enemy_globals+(edition==QA_Q1_RERELEASE),1,error)) return false;
     if (!admit_number(admission,"time",(float)save->time,error) ||
-        !admit_number(admission,"frametime",0,error) ||
         !admit_text(admission,"mapname",save->map,error) ||
         !admit_number(admission,"deathmatch",0,error) || !admit_number(admission,"coop",0,error) ||
         !admit_number(admission,"teamplay",0,error) || !admit_number(admission,"skill",(float)save->skill,error)) return false;
@@ -1352,25 +1351,44 @@ static bool admit_globals(original_admission *admission,const qa_qc_program *pro
      * ordered precache owner before the inverse can mutate an edict. */
     if (!admit_word(admission,"modelindex_eyes",error) ||
         !admit_word(admission,"modelindex_player",error)) return false;
+    qa_qc_program_info info=qa_qc_program_describe(program);
     for (size_t i=0;i<admission->record->count;++i) {
-        if (admission->consumed[i]) continue;
         const qa_q1_save_pair *pair=admission->record->pairs+i;
-        const qa_qc_definition *definition=qa_qc_program_find_global(program,pair->key);
+        size_t occurrence=0;
+        for (size_t j=0;j<i;++j)
+            if (!strcmp(admission->record->pairs[j].key,pair->key)) ++occurrence;
+        const qa_qc_definition *definition=NULL;
+        for (uint32_t j=0;j<info.global_count;++j) {
+            const qa_qc_definition *candidate=qa_qc_program_global(program,j);
+            if (!candidate->save || (candidate->type!=QA_QC_FLOAT &&
+                candidate->type!=QA_QC_STRING && candidate->type!=QA_QC_ENTITY) ||
+                strcmp(candidate->name,pair->key)) continue;
+            if (!occurrence) { definition=candidate;break; }
+            --occurrence;
+        }
+        if (!definition)
+            return unsupported(error,"Source global lacks its actual saved definition occurrence");
+        if (admission->consumed[i]) continue;
         int32_t initial;
-        if (!definition || !qa_qc_program_initial_int(program,definition->offset,&initial,error)) return false;
+        if (!qa_qc_program_initial_int(program,definition->offset,&initial,error)) return false;
         if (definition->type==QA_QC_FLOAT) {
             float expected;memcpy(&expected,&initial,sizeof(expected));
-            float actual=saved_number(admission->record,pair->key);
+            double parsed;
+            if (!qa_parse_atof(pair->value,&parsed,error)) return false;
+            float actual=(float)parsed;
             uint32_t expected_bits,actual_bits;
             memcpy(&expected_bits,&expected,4);memcpy(&actual_bits,&actual,4);
             if (actual_bits!=expected_bits)
                 return unsupported(error,"Mutable Source global lacks its paired native inverse");
         } else if (definition->type==QA_QC_ENTITY) {
             uint32_t slot;
-            if (initial || !qa_q1_save_entity_decode(saved(admission->record,pair->key),&slot,error) || slot)
+            if (initial || !qa_q1_save_entity_decode(pair->value,&slot,error) || slot)
                 return unsupported(error,"Mutable Source reference global lacks its paired native inverse");
         } else if (definition->type==QA_QC_STRING) {
-            if (initial || !admit_text(admission,pair->key,"",error))
+            char *decoded=NULL;
+            if (!qa_q1_save_string_decode(pair->value,&decoded,error)) return false;
+            bool empty=!*decoded;free(decoded);
+            if (initial || !empty)
                 return unsupported(error,"Mutable Source string global lacks its paired native inverse");
         } else return unsupported(error,"Source global has no native state representation");
         admission->consumed[i]=1;
@@ -1845,7 +1863,7 @@ bool qa_q1_game_original_restore(qa_q1_game *game, const qa_qc_program *program,
         }
     }
     if (okay) {
-        game->time = (float)save->time; game->elapsed = 0;
+        game->time = (float)save->time;
         game->time_ns = (uint64_t)ceil((double)(float)save->time*1e9);
         char queue_name[32];original_field queue_global=body_queue_global(game,queue_name);
         okay=restore_fields(qa_session_strings(game->services.session),game->options.provider,&save->globals,
