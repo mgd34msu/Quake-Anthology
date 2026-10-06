@@ -1,5 +1,6 @@
 #include "chat.h"
 #include "network_recipient.h"
+#include "qa/application_startup_prepare.h"
 #include "qa/q1_chat_commands.h"
 #include <stdio.h>
 
@@ -17,6 +18,7 @@ bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
     if (!remote && !frontend_network_client_recipient_read(frontend,seat->id,
         &recipient,&client_source,error)) return false;
     qa_console_dialect dialect = QA_CONSOLE_Q3;
+    qa_console *source_console = qa_application_console(frontend->application);
     qa_command_context context = {.seat = seat->id, .origin = QA_COMMAND_SEAT, .direct = true};
     if (client_source) {
         const qa_net_client *client=qa_net_connections_get(qa_network_connections(recipient.source.runtime),
@@ -30,17 +32,25 @@ bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
         if (seat->id != 0 || frontend->options.seats != 1 || !frontend_network_client_ready(frontend))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Chat requires the admitted remote Q3 client seat");
     } else {
-        qa_application_visual_view visual;
+        qa_actor_owner owner;
+        const qa_cvars *source_variables;
         if (!frontend_seat_launch_id_read(frontend,seat->id,&context.seat) ||
             !qa_application_player_actor(frontend->application, context.seat, &context.actor))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Chat requires the current admitted player actor");
-        if (!qa_application_visual_read(frontend->application, context.actor, &visual, error)) return false;
-        const qa_product *character = qa_catalog_product(qa_application_catalog(frontend->application), visual.character_content);
-        if (character && character->family == QA_GAME_Q1)
-            dialect = character->edition == QA_EDITION_QUAKEWORLD ? QA_CONSOLE_QW : QA_CONSOLE_Q1;
-        else if (character && character->family == QA_GAME_Q2)
-            dialect = character->edition == QA_EDITION_RERELEASE ? QA_CONSOLE_Q2_RERELEASE : QA_CONSOLE_Q2;
-        context.dialect = dialect;
+        if (!qa_application_control_source_read(frontend->application,context.actor,
+            &owner,&source_variables,error)) return false;
+        const qa_launch_snapshot *publication=qa_application_launch(frontend->application);
+        const char *instance=qa_application_provider_instance(frontend->application,owner);
+        const qa_launch_instance *source=instance?qa_launch_snapshot_find(publication,instance):NULL;
+        if (!source)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Chat lost its current GAME command recipient");
+        qa_command_context command;
+        qa_cvars *variables;
+        if (!qa_application_startup_source_read(frontend->application,publication,
+            source,&source_console,&variables,&command,error)) return false;
+        command.seat=context.seat; command.actor=context.actor;
+        command.origin=QA_COMMAND_SEAT; command.direct=true;
+        context=command; dialect=context.dialect;
         if (!qa_application_capture_command_context(frontend->application, &context, &context, error)) return false;
     }
     if (targeted && dialect != QA_CONSOLE_Q3)
@@ -59,7 +69,7 @@ bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
     else snprintf(raw, prefix + size + 1, "%s %s", name, text);
     const char *argv[] = {name, targeted ? target_text : text, text};
     qa_command_invocation command = {.console = client_source ? recipient.source.context.console :
-            qa_application_console(frontend->application),
+            source_console,
         .context = context, .argc = targeted ? 3 : 2, .argv = argv,
         .args_text = raw + strlen(name) + 1, .raw = raw};
     /* This is one source invocation. Engine separators in chat text are never
