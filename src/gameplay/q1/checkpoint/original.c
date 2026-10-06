@@ -1197,6 +1197,41 @@ static bool restore_monster_callbacks(q1_monster *monster,
     return true;
 }
 
+static bool restore_map(qa_strings *strings,qa_actor_owner source,
+    const qa_q1_save_record *record,q1_actor *entity,const qa_actor_id *slots,
+    size_t count,qa_error *error) {
+    q1_map_state *map = entity->map;
+    map->touch_enabled = saved(record,"touch") != NULL; map->use_enabled = saved(record,"use") != NULL;
+    map->original_model = entity->model; map->dormant = saved(record,"use") && !strcmp(saved(record,"use"),"plat_use");
+    const char *model = qa_strings_cstr(strings, entity->model);
+    if (model && *model == '*') {
+        char *end; unsigned long index = strtoul(model + 1, &end, 10);
+        if (*end || index > UINT32_MAX) return fail(error, "Original brush has invalid physical inline model");
+        map->has_inline_model = true; map->inline_model = (uint32_t)index;
+    }
+    if (q1_map_is_mover(map->kind)) {
+        q1_map_movement *move = &map->pending.mover;
+        if (!saved_vector(saved(record,"pos1"), &move->pos1, error) ||
+            !saved_vector(saved(record,"pos2"), &move->pos2, error) ||
+            !saved_vector(saved(record,"dest1"), &move->dest1, error) ||
+            !saved_vector(saved(record,"dest2"), &move->dest2, error) ||
+            !saved_vector(saved(record,"finaldest"), &move->destination, error)) return false;
+        float position = saved_number(record,"state");
+        move->position = position == 0 ? Q1_MAP_TOP : position == 1 ? Q1_MAP_BOTTOM :
+            position == 2 ? Q1_MAP_UP : Q1_MAP_DOWN;
+        move->moving = position == 2 || position == 3 || (saved(record,"think") && !strcmp(saved(record,"think"),"SUB_CalcMoveDone")); move->done = Q1_MAP_IDLE;
+        const char *done = saved(record,"think1");
+        for (size_t i = 0; done && i < sizeof(map_callbacks) / sizeof(*map_callbacks); ++i)
+            if (!strcmp(done, map_callbacks[i].name)) move->done = map_callbacks[i].action;
+        move->group = NULL;
+    }
+    if (map->action == Q1_MAP_DELAYED_USE) {
+        original_field activator={"enemy",ORIGINAL_REF,offsetof(q1_actor,activator)};
+        if (!restore_fields(strings,source,record,entity,&activator,1,slots,count,error)) return false;
+        map->pending.delayed.dialect = QA_CLOCK_NETQUAKE;
+    }
+    return true;
+}
 typedef struct original_admission {
     qa_strings *strings;
     qa_actor_owner source;
@@ -1409,8 +1444,9 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
     } else {
         original_class source;
         if (!original_classify(record,&source,error)) goto done;
-        if (source.kind==Q1_PICKUP || (source.map!=Q1_MAP_FIELDS && source.map!=Q1_MAP_WORLD) ||
-            source.kind==Q1_ENTITY) {
+        bool map_supported=source.map==Q1_MAP_FIELDS || source.map==Q1_MAP_WORLD ||
+            source.map==Q1_MAP_POINT || source.map==Q1_MAP_PATH || source.map==Q1_MAP_DESTINATION;
+        if (source.kind==Q1_PICKUP || !map_supported || source.kind==Q1_ENTITY) {
             unsupported(error,"Source map/item state still lacks its complete paired native inverse");goto done;
         }
         q1_actor entity={.kind=source.kind};q1_map_state map={.kind=source.map};
@@ -1432,10 +1468,17 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
                 unsupported(error,"Source body continuation differs from its persistent native queue");goto done;
             }
         } else if (entity.map) {
-            qa_q1_options options={0};
-            if (slot || !admit_text(admission,"classname","worldspawn",error) ||
-                !ADMIT_FIELDS(admission,&map,map_fields,error) || !ADMIT_FIELDS(admission,&options,world_fields,error) ||
-                !map_functions(&entity,&callbacks,error)) goto done;
+            if (!ADMIT_FIELDS(admission,&map,map_fields,error) ||
+                !restore_map(admission->strings,admission->source,record,&entity,NULL,admission->slots,error)) goto done;
+            if (source.map==Q1_MAP_WORLD) {
+                qa_q1_options options={0};
+                if (slot || !admit_text(admission,"classname","worldspawn",error) ||
+                    !ADMIT_FIELDS(admission,&options,world_fields,error)) goto done;
+            } else if (!slot || entity.think!=Q1_THINK_NONE || entity.next_think!=0 ||
+                saved_number(record,"movetype")==3 || saved_number(record,"solid")==3) {
+                unsupported(error,"Source map point has an unrepresented scheduled continuation");goto done;
+            }
+            if (!map_functions(&entity,&callbacks,error)) goto done;
         } else if (source.projectile) {
             entity.state.projectile.kind=source.projectile->kind;
             if (source.projectile->kind==Q1_HIP_LASER && !ADMIT_FIELDS(admission,&entity.state.projectile,hip_laser_fields,error)) goto done;
@@ -1608,38 +1651,11 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         if (target && !qa_strings_intern_cstr(qa_session_strings(game->services.session), target, &monster->path, error)) return false;
     }
     if (entity->map) {
-        q1_map_state *map = entity->map;
-        if (map->kind==Q1_MAP_WORLD &&
+        if (!RESTORE_FIELDS(game,record,entity->map,map_fields,slots,count,error) ||
+            !restore_map(qa_session_strings(game->services.session),game->options.provider,
+                record,entity,slots,count,error)) return false;
+        if (entity->map->kind==Q1_MAP_WORLD &&
             !RESTORE_FIELDS(game,record,&game->options,world_fields,slots,count,error)) return false;
-        if (!RESTORE_FIELDS(game, record, map, map_fields, slots, count, error)) return false;
-        map->touch_enabled = saved(record,"touch") != NULL; map->use_enabled = saved(record,"use") != NULL;
-        map->original_model = entity->model; map->dormant = saved(record,"use") && !strcmp(saved(record,"use"),"plat_use");
-        const char *model = qa_strings_cstr(qa_session_strings(game->services.session), entity->model);
-        if (model && *model == '*') {
-            char *end; unsigned long index = strtoul(model + 1, &end, 10);
-            if (*end || index > UINT32_MAX) return fail(error, "Original brush has invalid physical inline model");
-            map->has_inline_model = true; map->inline_model = (uint32_t)index;
-        }
-        if (q1_map_is_mover(map->kind)) {
-            q1_map_movement *move = &map->pending.mover;
-            if (!saved_vector(saved(record,"pos1"), &move->pos1, error) ||
-                !saved_vector(saved(record,"pos2"), &move->pos2, error) ||
-                !saved_vector(saved(record,"dest1"), &move->dest1, error) ||
-                !saved_vector(saved(record,"dest2"), &move->dest2, error) ||
-                !saved_vector(saved(record,"finaldest"), &move->destination, error)) return false;
-            float position = saved_number(record,"state");
-            move->position = position == 0 ? Q1_MAP_TOP : position == 1 ? Q1_MAP_BOTTOM :
-                position == 2 ? Q1_MAP_UP : Q1_MAP_DOWN;
-            move->moving = position == 2 || position == 3 || (saved(record,"think") && !strcmp(saved(record,"think"),"SUB_CalcMoveDone")); move->done = Q1_MAP_IDLE;
-            const char *done = saved(record,"think1");
-            for (size_t i = 0; done && i < sizeof(map_callbacks) / sizeof(*map_callbacks); ++i)
-                if (!strcmp(done, map_callbacks[i].name)) move->done = map_callbacks[i].action;
-            move->group = NULL;
-        }
-        if (map->action == Q1_MAP_DELAYED_USE) {
-            if (!saved_ref(game,saved(record,"enemy"),count,&entity->activator,error)) return false;
-            map->pending.delayed.dialect = QA_CLOCK_NETQUAKE;
-        }
     }
     if (entity->kind==Q1_BODY &&
         !RESTORE_FIELDS(game,record,entity,body_queue_fields,slots,count,error)) return false;
