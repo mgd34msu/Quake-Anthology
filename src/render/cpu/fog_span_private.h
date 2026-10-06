@@ -24,7 +24,7 @@ static inline cpu_fog_span_style cpu_fog_span_style_prepare(const qa_scene_fog *
 
 static inline double cpu_fog_span_amount(double density, double q) {
   double scaled = density / q;
-  return 1 - cpu_fog_exp(scaled * scaled);
+  return 1 - cpu_fog_exp((float)(scaled * scaled));
 }
 
 static inline cpu_fog_span cpu_fog_span_prepare(const cpu_fog_span_style *style,
@@ -60,27 +60,23 @@ static inline cpu_fog_span cpu_fog_span_prepare(const cpu_fog_span_style *style,
       (float)(2 * c2 * square + 6 * c3 * cube), (float)(6 * c3 * cube), count};
 }
 
-static inline uint8_t cpu_fog_span_byte(float value) {
-  return value <= 0 || isnan(value) ? 0 : value >= 255 ? 255 : (uint8_t)(value + .5f);
-}
-
 static inline void cpu_fog_span_apply(uint8_t *pixel,
     const cpu_fog_span_style *style, float amount, bool alpha) {
   switch (style->effect) {
   case QA_FOG_COLOR:
     for (size_t c = 0; c < 3; ++c)
-      pixel[c] = cpu_fog_span_byte(pixel[c] + (style->color[c] - pixel[c]) * amount);
+      pixel[c] = cpu_fog_byte(pixel[c] + (style->color[c] - pixel[c]) * amount);
     break;
   case QA_FOG_RGB: case QA_FOG_RGBA:
-    for (size_t c = 0; c < 3; ++c) pixel[c] = cpu_fog_span_byte(pixel[c] * (1 - amount));
+    for (size_t c = 0; c < 3; ++c) pixel[c] = cpu_fog_byte(pixel[c] * (1 - amount));
     break;
   case QA_FOG_OVERLAY:
-    for (size_t c = 0; c < 3; ++c) pixel[c] = cpu_fog_span_byte(style->color[c]);
+    for (size_t c = 0; c < 3; ++c) pixel[c] = cpu_fog_byte(style->color[c]);
     break;
   case QA_FOG_ALPHA: case QA_FOG_NO_EFFECT: break;
   }
   if (alpha && (style->effect == QA_FOG_ALPHA || style->effect == QA_FOG_RGBA || style->effect == QA_FOG_OVERLAY))
-    pixel[3] = cpu_fog_span_byte(pixel[3] * (style->effect == QA_FOG_OVERLAY ? amount : 1 - amount));
+    pixel[3] = cpu_fog_byte(pixel[3] * (style->effect == QA_FOG_OVERLAY ? amount : 1 - amount));
   if (!alpha) pixel[3] = 255;
 }
 
