@@ -1,6 +1,7 @@
 #include "gameplay_fixture.h"
 #include "qa/game_q1.h"
 #include "qa/game_q1_wire.h"
+#include "qa/movement.h"
 
 typedef struct q1_fixture {
     gameplay_map map;
@@ -233,9 +234,96 @@ static void edition_damage(qa_q1_edition edition)
     fixture_destroy(&fixture);
 }
 
+
+typedef struct movement_fixture {
+    qa_collision_geometry *geometry;
+    qa_movement_result *output;
+    qa_movement_state *borrowed;
+    bool fail_after_contact;
+} movement_fixture;
+
+static bool movement_trace(void *context, const qa_trace_query *query,
+    qa_trace_result *result, qa_error *error)
+{
+    return qa_collision_trace(((movement_fixture *)context)->geometry,
+        query, result, error);
+}
+
+static bool movement_contents(void *context, const qa_point_query *query,
+    qa_point_contents *result, qa_error *error)
+{
+    return qa_collision_point_contents(((movement_fixture *)context)->geometry,
+        query, result, error);
+}
+
+static qa_movement_control movement_phase(void *context, qa_movement_phase phase,
+    qa_movement_call *call, qa_error *error)
+{
+    movement_fixture *fixture = context;
+    /* This loan is read during publication after the kernel returns. */
+    if (call->state != &fixture->output->state) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Movement callback has temporary state storage");
+        return QA_MOVEMENT_ERROR;
+    }
+    fixture->borrowed = call->state;
+    return fixture->fail_after_contact && phase == QA_MOVE_POSTTHINK
+        ? QA_MOVEMENT_ERROR : QA_MOVEMENT_CONTINUE;
+}
+
+static void movement_output_owner(void)
+{
+    qa_error error = {0};
+    gameplay_map map;
+    gameplay_map_create(&map);
+    movement_fixture fixture = {.geometry = map.geometry};
+    qa_movement_services services = {.context = &fixture,
+        .trace = movement_trace, .point_contents = movement_contents,
+        .phase = movement_phase};
+    for (qa_movement_kind kind = QA_MOVEMENT_NETQUAKE; kind <= QA_MOVEMENT_Q3; ++kind) {
+        qa_movement_input input = qa_movement_input_default(kind, (qa_actor_id){0});
+        input.elapsed_ns = UINT64_C(14000000);
+        input.command.milliseconds = 14;
+        input.command.server_time_ms = 14;
+        GAME_CHECK(qa_movement_set_origin(&input.state, qa_v3(0, 0, 64), &error));
+        qa_movement_result output = {0};
+        fixture.output = &output;
+        fixture.borrowed = NULL;
+        GAME_CHECK(qa_movement_move(&input, &services, &output, &error));
+        GAME_CHECK(fixture.borrowed == &output.state);
+        GAME_CHECK(output.status == QA_MOVEMENT_ACTIVE);
+        GAME_CHECK(fixture.borrowed->kind == kind);
+        qa_movement_result_free(&output);
+    }
+    qa_movement_input input = qa_movement_input_default(QA_MOVEMENT_NETQUAKE,
+        (qa_actor_id){0});
+    input.elapsed_ns = UINT64_C(14000000);
+    input.command.milliseconds = 14;
+    input.command.sequence = 77;
+    qa_movement_result output = {.status = QA_MOVEMENT_ACTOR_REMOVED,
+        .state = input.state, .command_sequence = 900, .view_height = 19,
+        .effect_count = 38, .render_flags = 987};
+    output.state.data.nq.flags = 123;
+    output.state.data.nq.origin = qa_v3(11, 12, 13);
+    fixture.output = &output;
+    fixture.fail_after_contact = true;
+    GAME_CHECK(!qa_movement_physics_netquake(&input, &services, &output, &error));
+    GAME_CHECK(fixture.borrowed == &output.state);
+    GAME_CHECK(output.status == QA_MOVEMENT_ACTOR_REMOVED);
+    GAME_CHECK(output.command_sequence == 900 && output.view_height == 19);
+    GAME_CHECK(output.state.data.nq.flags == 123);
+    GAME_CHECK(output.state.data.nq.origin.x == 11 &&
+        output.state.data.nq.origin.y == 12 && output.state.data.nq.origin.z == 13);
+    GAME_CHECK(output.effect_count == 38 && output.render_flags == 987);
+    GAME_CHECK(output.contacts != NULL && output.contact_capacity > 0);
+    GAME_CHECK(output.contact_count == 0);
+    qa_movement_result_free(&output);
+    qa_collision_destroy(map.geometry);
+}
+
 void test_q1_gameplay(void);
 void test_q1_gameplay(void)
 {
+    movement_output_owner();
     armor_and_protection();
     pain_cooldown(1);
     pain_cooldown(3);
