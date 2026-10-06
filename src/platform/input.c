@@ -175,11 +175,56 @@ static bool discover(qa_input_platform *p, int index, qa_error *error) {
         if (instance < 0 || device(p, instance))
             continue;
         SDL_GameController *handle = SDL_GameControllerOpen(i);
-        if (!handle)
-            return failed(error, "Opening controller");
+        if (!handle) {
+            qa_error opening = {0};
+            (void)failed(&opening, "Opening controller");
+            SDL_PumpEvents();
+            int remaining = SDL_NumJoysticks();
+            bool present = false;
+            for (int j = 0; j < remaining; ++j)
+                if (SDL_JoystickGetDeviceInstanceID(j) == instance) {
+                    present = true;
+                    break;
+                }
+            if (remaining < 0 || present) {
+                if (error) *error = opening;
+                return false;
+            }
+            continue;
+        }
+        if (!SDL_GameControllerGetAttached(handle)) {
+            SDL_GameControllerClose(handle);
+            continue;
+        }
+        instance = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(handle));
+        if (instance < 0) {
+            SDL_GameControllerClose(handle);
+            return failed(error, "Reading opened controller instance");
+        }
+        if (device(p, instance)) {
+            SDL_GameControllerClose(handle);
+            continue;
+        }
+        SDL_LockJoysticks();
+        int current = SDL_NumJoysticks(), opened_index = -1;
+        for (int j = 0; j < current; ++j)
+            if (SDL_JoystickGetDeviceInstanceID(j) == instance) {
+                opened_index = j;
+                break;
+            }
+        bool virtual_device = opened_index >= 0 && SDL_JoystickIsVirtual(opened_index) == SDL_TRUE;
+        SDL_UnlockJoysticks();
+        if (current < 0) {
+            SDL_GameControllerClose(handle);
+            return failed(error, "Enumerating opened controller");
+        }
+        if (opened_index < 0) {
+            SDL_GameControllerClose(handle);
+            continue;
+        }
         struct device next = {
             .handle = handle,
-            .info = {.instance = instance, .virtual_device = SDL_JoystickIsVirtual(i) == SDL_TRUE}};
+            .info = {.instance = instance, .virtual_device = virtual_device}};
         describe(&next);
         for (unsigned ordinal = 0;; ++ordinal) {
             bool used = false;
