@@ -308,8 +308,12 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
             qa_buffer_free(&text); return ok;
         }
     }
-    if (source->profile != QA_NATIVE_Q2_CGAME_API2023)
-        return frontend_fail(error, QA_ERROR_UNSUPPORTED, "native Q2 import requires canonical application service");
+    if (source->profile != QA_NATIVE_Q2_CGAME_API2023) {
+        qa_error_set(error, QA_ERROR_UNSUPPORTED, import->slot,
+            "native Q2 import %s (slot %u) requires canonical application service",
+            import->name, import->slot);
+        return false;
+    }
     if (!strcmp(import->name, "Localize")) return localize(source, call, result, error);
     if (import->slot == 20) {
         if (!seat_ready(source, error)) return false;
