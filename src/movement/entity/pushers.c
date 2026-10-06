@@ -20,6 +20,46 @@ struct qa_physics_transaction {
     ph_pushed *entries;
     size_t count, capacity;
 };
+struct qa_physics_push_frame {
+    struct qa_physics_push_frame *next;
+    qa_actor_id *candidates;
+    size_t candidate_capacity;
+    struct qa_physics_transaction pushed;
+    bool active;
+};
+
+static struct qa_physics_push_frame *push_frame(qa_physics *p, qa_error *error) {
+    struct qa_physics_push_frame **slot = &p->push_frames;
+    while (*slot && (*slot)->active) slot = &(*slot)->next;
+    struct qa_physics_push_frame *frame = *slot;
+    if (!frame) {
+        frame = calloc(1, sizeof(*frame));
+        if (!frame) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Pusher frame allocation failed"); return NULL; }
+        *slot = frame;
+    }
+    frame->active = true;
+    frame->pushed.count = 0;
+    return frame;
+}
+
+bool qa_physics_dispose(qa_physics *p, qa_error *error) {
+    if (!p) return true;
+    if (p->push_transaction) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Physics disposal requires an idle pusher transaction"); return false;
+    }
+    for (struct qa_physics_push_frame *frame = p->push_frames; frame; frame = frame->next)
+        if (frame->active) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Physics disposal requires idle pusher frames"); return false;
+        }
+    while (p->push_frames) {
+        struct qa_physics_push_frame *frame = p->push_frames;
+        p->push_frames = frame->next;
+        free(frame->candidates);
+        free(frame->pushed.entries);
+        free(frame);
+    }
+    return true;
+}
 
 static int candidate_order(qa_physics *p, qa_actor_id a, qa_actor_id b) {
     if (p->services.source_order) return p->services.source_order(p->services.context, a, b);
@@ -32,21 +72,37 @@ static int candidate_order(qa_physics *p, qa_actor_id a, qa_actor_id b) {
     return a.slot < b.slot ? -1 : a.slot > b.slot;
 }
 
-static bool candidates(qa_physics *p, qa_actor_id **out, size_t *count, qa_error *error) {
+static bool candidates(qa_physics *p, struct qa_physics_push_frame *frame,
+                         qa_actor_id **out, size_t *count, qa_error *error) {
     size_t capacity = qa_actors_count(qa_world_actors(p->world));
     *count = 0;
     *out = NULL;
     if (!capacity) return true;
-    if (capacity > SIZE_MAX/(2*sizeof(qa_actor_id))) {
+    size_t limit = SIZE_MAX/(2*sizeof(qa_actor_id));
+    if (capacity > limit) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Pusher candidate count overflow"); return false;
     }
-    qa_actor_id *list = malloc(capacity*2*sizeof(*list));
-    if (!list) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Pusher candidates allocation failed"); return false; }
+    if (capacity > frame->candidate_capacity) {
+        size_t grown = frame->candidate_capacity ? frame->candidate_capacity : 32;
+        while (grown < capacity) {
+            if (grown > limit/2) { grown = capacity; break; }
+            grown *= 2;
+        }
+        if (grown > limit) grown = capacity;
+        qa_actor_id *list = realloc(frame->candidates, grown*2*sizeof(*list));
+        if (!list) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Pusher candidates allocation failed"); return false; }
+        frame->candidates = list;
+        frame->candidate_capacity = grown;
+    }
+    qa_actor_id *list = frame->candidates;
     const qa_actor_record *record;
     uint32_t cursor = 0;
     while (*count < capacity && qa_actors_next(qa_world_actors(p->world), &cursor, &record)) list[(*count)++] = record->id;
-    qa_actor_id *temporary = list+capacity;
-    for (size_t width = 1; width < *count; width *= 2) {
+    bool ordered = true;
+    for (size_t i = 1; i < *count; ++i)
+        if (candidate_order(p, list[i-1], list[i]) > 0) { ordered = false; break; }
+    qa_actor_id *temporary = list+frame->candidate_capacity;
+    for (size_t width = 1; !ordered && width < *count; width *= 2) {
         for (size_t start = 0; start < *count; start += 2*width) {
             size_t middle = start+width < *count ? start+width : *count;
             size_t end = middle+width < *count ? middle+width : *count;
@@ -110,7 +166,7 @@ static qa_vec3 rotated_delta(qa_vec3 origin, qa_vec3 pusher_origin, qa_vec3 move
 }
 
 static bool q1_push(qa_physics *p, const qa_physics_push *input,
-                     qa_physics_result *result, qa_error *error) {
+                     struct qa_physics_push_frame *frame, qa_physics_result *result, qa_error *error) {
     qa_body_state original, body;
     qa_physics_properties props;
     int read = ph_read(p, input->actor, &original, &props, error);
@@ -137,8 +193,8 @@ static bool q1_push(qa_physics *p, const qa_physics_push *input,
     ph_axes(qa_vec_scale(input->angular_displacement, -1), &forward, &right, &up);
     qa_actor_id *list;
     size_t count;
-    if (!candidates(p, &list, &count, error)) return false;
-    struct qa_physics_transaction saved = {0};
+    if (!candidates(p, frame, &list, &count, error)) return false;
+    struct qa_physics_transaction *saved = &frame->pushed;
     bool ok = true;
     for (size_t i = 0; i < count && ok; ++i) {
         qa_actor_id actor = list[i];
@@ -160,7 +216,7 @@ static bool q1_push(qa_physics *p, const qa_physics_push *input,
             if (props.family != QA_COLLISION_Q1) body.ground = (qa_actor_reference){0};
             if (!ph_properties(p, actor, &props, error) || !ph_write(p, actor, &body, error)) { ok = false; break; }
         }
-        if (!save_push(&saved, actor, &body, &props, error)) { ok = false; break; }
+        if (!save_push(saved, actor, &body, &props, error)) { ok = false; break; }
         qa_vec3 original_position = body.origin;
         qa_vec3 delta = rotating ? rotated_delta(body.origin, pusher_origin, input->displacement, forward, right, up) : input->displacement;
         /* Source disables this brush during push, including nested touches. */
@@ -214,8 +270,8 @@ static bool q1_push(qa_physics *p, const qa_physics_push *input,
         result->status = QA_PHYSICS_BLOCKED;
         result->obstacle = actor;
         if (p->services.blocked && !p->services.blocked(p->services.context, input->actor, actor, error)) { ok = false; break; }
-        for (size_t j = 0; j < saved.count; ++j) {
-            ph_pushed entry = saved.entries[j];
+        for (size_t j = 0; j < saved->count; ++j) {
+            ph_pushed entry = saved->entries[j];
             read = ph_read(p, entry.actor, &body, &props, error);
             if (read < 0) { ok = false; break; }
             if (!read) continue;
@@ -226,15 +282,13 @@ static bool q1_push(qa_physics *p, const qa_physics_push *input,
         if (!ph_live(p, input->actor)) result->status = QA_PHYSICS_REMOVED;
         break;
     }
-    free(saved.entries);
-    free(list);
     return ok;
 }
 
 static float snap_eighth(float v) { return truncf(v*8+(v > 0 ? 0.5f : -0.5f))*0.125f; }
 
 static bool q2_push(qa_physics *p, const qa_physics_push *input,
-                     struct qa_physics_transaction *saved, bool touch,
+                     struct qa_physics_push_frame *frame, struct qa_physics_transaction *saved, bool touch,
                      qa_physics_result *result, qa_error *error) {
     qa_body_state body;
     qa_physics_properties props;
@@ -255,7 +309,7 @@ static bool q2_push(qa_physics *p, const qa_physics_push *input,
     ph_axes(qa_vec_scale(input->angular_displacement, -1), &forward, &right, &up);
     qa_actor_id *list;
     size_t count;
-    if (!candidates(p, &list, &count, error)) return false;
+    if (!candidates(p, frame, &list, &count, error)) return false;
     bool ok = true;
     for (size_t i = 0; i < count && ok; ++i) {
         qa_actor_id actor = list[i];
@@ -307,7 +361,6 @@ static bool q2_push(qa_physics *p, const qa_physics_push *input,
             ok = p->services.blocked(p->services.context, input->actor, actor, error);
         break;
     }
-    free(list);
     if (ok && touch && result->status == QA_PHYSICS_MOVED)
         for (size_t j = saved->count; j > 0; --j)
             if (!qa_physics_touch_triggers(p, saved->entries[j-1].actor, error)) return false;
@@ -325,11 +378,15 @@ bool qa_physics_push_pusher(qa_physics *p, const qa_physics_push *input,
     qa_physics_properties props;
     int read = ph_read(p, input->actor, &body, &props, error);
     if (read <= 0) { result->status = ph_live(p, input->actor) ? QA_PHYSICS_UNMANAGED : QA_PHYSICS_REMOVED; return read == 0; }
-    if (props.family == QA_COLLISION_Q1) return q1_push(p, input, result, error);
-    struct qa_physics_transaction local = {0};
-    struct qa_physics_transaction *saved = p->push_transaction ? p->push_transaction : &local;
-    bool ok = q2_push(p, input, saved, !p->push_transaction, result, error);
-    free(local.entries);
+    struct qa_physics_push_frame *frame = push_frame(p, error);
+    if (!frame) return false;
+    bool ok;
+    if (props.family == QA_COLLISION_Q1) ok = q1_push(p, input, frame, result, error);
+    else {
+        struct qa_physics_transaction *saved = p->push_transaction ? p->push_transaction : &frame->pushed;
+        ok = q2_push(p, input, frame, saved, !p->push_transaction, result, error);
+    }
+    frame->active = false;
     return ok;
 }
 
@@ -344,8 +401,11 @@ bool qa_physics_push_team(qa_physics *p, const qa_physics_push *parts, size_t co
             qa_error_set(error, QA_ERROR_ARGUMENT, i, "Invalid pusher team displacement"); return false;
         }
     *result = (qa_physics_result){.status = QA_PHYSICS_MOVED};
-    struct qa_physics_transaction saved = {0};
-    p->push_transaction = &saved;
+    if (!count) return true;
+    struct qa_physics_push_frame *frame = push_frame(p, error);
+    if (!frame) return false;
+    struct qa_physics_transaction *saved = &frame->pushed;
+    p->push_transaction = saved;
     bool ok = true;
     for (size_t i = 0; i < count; ++i) {
         if (!ph_live(p, parts[i].actor)) continue;
@@ -355,9 +415,9 @@ bool qa_physics_push_team(qa_physics *p, const qa_physics_push *parts, size_t co
     }
     p->push_transaction = NULL;
     if (ok && result->status != QA_PHYSICS_BLOCKED)
-        for (size_t i = saved.count; i > 0; --i)
-            if (!qa_physics_touch_triggers(p, saved.entries[i-1].actor, error)) { ok = false; break; }
-    free(saved.entries);
+        for (size_t i = saved->count; i > 0; --i)
+            if (!qa_physics_touch_triggers(p, saved->entries[i-1].actor, error)) { ok = false; break; }
+    frame->active = false;
     return ok;
 }
 

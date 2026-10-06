@@ -255,6 +255,8 @@ bool application_finalize(qa_application *application, qa_error *error)
         (application->world != NULL && !qa_world_idle(application->world)))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "application session still has active calls or admissions");
+    if (!qa_physics_dispose(application->physics, error))
+        return false;
     if (!application_bots_destroy(application, error))
         return false;
     if (!application_match_intents_idle(application->match_intents))

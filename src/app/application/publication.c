@@ -852,6 +852,10 @@ static bool publication_dispose_checked(qa_application *application,
             return false;
     }
     bool discarded_initial_world = publication->initial_world != NULL;
+    bool discard_physics = publication->physics_initialized &&
+        (!publication->published || discarded_initial_world);
+    if (discard_physics && !qa_physics_dispose(application->physics, error))
+        return false;
     if (discarded_initial_world &&
         !qa_world_destroy(publication->initial_world, error))
         return false;
@@ -862,8 +866,7 @@ static bool publication_dispose_checked(qa_application *application,
     qa_collision_destroy(publication->geometry);
     qa_map_sidecars_release(publication->map_sidecars);
     qa_resource_release(publication->map_resource);
-    if (publication->physics_initialized &&
-        (!publication->published || discarded_initial_world)) {
+    if (discard_physics) {
         *application->physics = (qa_physics){0};
         application->physics_ready = false;
     }

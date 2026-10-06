@@ -94,6 +94,8 @@ typedef struct qa_physics {
     /* Non-NULL only during a synchronous pusher-team transaction. Saves and
      * destruction require this to be NULL. Owned by the active call. */
     struct qa_physics_transaction *push_transaction;
+    /* Retained candidate/rollback frames, borrowed by synchronous calls. */
+    struct qa_physics_push_frame *push_frames;
 } qa_physics;
 qa_actor_id qa_physics_actor_reference(const qa_physics *, qa_actor_reference);
 typedef enum qa_physics_status {
@@ -107,8 +109,11 @@ typedef struct qa_physics_result {
 } qa_physics_result;
 
 qa_physics_properties qa_physics_properties_default(qa_collision_family);
+/* Initialize fresh storage; dispose retained scratch before reinitializing. */
 bool qa_physics_init(qa_physics *, qa_world *, qa_actor_id world_actor,
                      const qa_physics_services *, qa_error *);
+/* Frees retained scratch at an idle point; leaves the world/services intact. */
+bool qa_physics_dispose(qa_physics *, qa_error *);
 /* One kinematic step. The caller runs source prethink/think/postthink and
  * team-chain decisions. No clock advances, actor traversal or attachment
  * transport happens here. Callback mutations are committed, not rolled back

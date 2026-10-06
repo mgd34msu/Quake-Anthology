@@ -168,6 +168,7 @@ static void fixture_destroy(q1_fixture *fixture)
     qa_q1_level_destroy(fixture->level);
     GAME_CHECK(qa_inventory_destroy(fixture->inventory, &error));
     GAME_CHECK(qa_combat_destroy(fixture->combat, &error));
+    GAME_CHECK(qa_physics_dispose(&fixture->physics, &error));
     GAME_CHECK(qa_world_destroy(fixture->world, &error));
     GAME_CHECK(qa_session_destroy(fixture->session, &error));
     qa_collision_destroy(fixture->map.geometry);
