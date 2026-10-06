@@ -3,10 +3,44 @@
 These results do not meet the performance targets. The latest CPU result is
 lower, but its rendering scope still exceeds the complete-frame target.
 
-The latest measured executable was built from `efe9e317` with GCC, RelWithDebInfo and
+The latest measured executable was built from `92acfd4a` with GCC, RelWithDebInfo and
 warnings treated as errors. The complete GCC and Clang builds and their six
 registered CTest checks each passed. The testing copy, `qa-c`, was compared byte
 for byte with that build after installation.
+
+The latest four-game group used each retail starting view: Q1 `e1m1`, Q2 and
+Q2 rerelease `base1`, and Q3 `q3dm1`. Every run completed normally with the
+installed artifact unchanged, 120 warm-up frames and 600 measured intervals.
+GL used the RTX 3090 with swap interval zero. These are default native sessions.
+
+| Game | Output | Resolution | Median, ms | p99, ms | Target, ms |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Q1 | GL | 1920×1080 | 1.777 | 3.320 | <2 |
+| Q1 | CPU | 640×400 | 11.091 | 13.888 | <4 |
+| Q1 | CPU | 320×200 | 6.652 | 8.309 | <2 |
+| Q2 | GL | 1920×1080 | 1.959 | 3.350 | <2 |
+| Q2 | CPU | 640×400 | 9.734 | 12.662 | <4 |
+| Q2 | CPU | 320×200 | 6.853 | 8.837 | <2 |
+| Q2 rerelease | GL | 1920×1080 | 3.620 | 6.493 | <2 |
+| Q2 rerelease | CPU | 640×400 | 21.760 | 50.777 | <4 |
+| Q2 rerelease | CPU | 320×200 | 15.915 | 29.074 | <2 |
+| Q3 | GL | 1920×1080 | 3.512 | 4.269 | <2 |
+| Q3 | CPU | 640×400 | 18.584 | 21.222 | <4 |
+| Q3 | CPU | 320×200 | 9.154 | 11.300 | <2 |
+
+This project's other games, debuggers and compiler jobs were stopped for this
+group. One-second process observations found no outside process exceeding half
+a core in the Q1 GL, Q2 GL and Q2 CPU 640×400 runs. Outside activity was observed
+in the other nine runs. Activity below the threshold or between samples is not
+excluded. The results do not establish an isolated speedup from the prepared
+triangle rows, image-update dependencies or exact point-light cache.
+
+In this group Q2 rerelease GL spent an inclusive mean of 2.167 ms building the
+scene and 0.863 ms submitting GL work. CPU 640×400 spent 17.221 ms rendering and
+2.748 ms building the scene. A separate 199 Hz user-CPU profile of the same
+installed artifact, including its renderer threads, attributed 26.86% of samples
+to `depth_fog_rows` and 5.26% to `blend_fog`. That diagnostic run exited normally
+after 900 frames; its sampled timings are not frame-time evidence.
 
 The workload was stationary at the retail Q2 rerelease `base1` spawn. Each run
 excluded 120 warm-up frames and measured 600 presentation intervals, using real
