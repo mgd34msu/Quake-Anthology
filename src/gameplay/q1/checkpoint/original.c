@@ -54,6 +54,18 @@ static const original_field entity_fields[] = {
     FIELD(q1_actor, source_netname, "netname", STRING),
     FIELD(q1_actor, source_death_type, "deathtype", STRING)
 };
+static const original_field pickup_model_fields[] = {
+    FIELD(q1_pickup, original_model, "mdl", STRING)
+};
+static const original_field pickup_sound_fields[] = {
+    FIELD(q1_pickup, sound, "noise", STRING)
+};
+static const original_field pickup_health_fields[] = {
+    FIELD(q1_pickup, count, "healamount", FLOAT)
+};
+static const original_field pickup_ammo_fields[] = {
+    FIELD(q1_pickup, count, "aflag", FLOAT)
+};
 static const original_field body_queue_fields[] = {
     FIELD(q1_actor, state.body.color_map, "colormap", I32)
 };
@@ -617,31 +629,84 @@ static bool projectile_fields(qa_q1_wire_receipt *receipt, const q1_actor *entit
         actor(receipt, record, "enemy", p->enemy, false, error) &&
         actor(receipt, record, "owner", entity->owner, false, error);
 }
+static const char *const pickup_touches[] = {
+    "health_touch", "armor_touch", "ammo_touch", "weapon_touch",
+    "key_touch", "powerup_touch", "BackpackTouch"
+};
+static uint32_t pickup_kind(const char *touch) {
+    for (uint32_t i=0; i<sizeof(pickup_touches)/sizeof(*pickup_touches); ++i)
+        if (touch && !strcmp(touch,pickup_touches[i])) return i;
+    return UINT32_MAX;
+}
+static bool pickup_mutable_noise(uint32_t kind) {
+    return kind==0 || kind==4 || kind==5;
+}
+static uint32_t pickup_weapon_bits(qa_q1_program program,qa_q1_weapon selected) {
+    for (unsigned i=0; i<32; ++i) {
+        qa_q1_weapon weapon;
+        if (qa_q1_weapon_source(program,UINT32_C(1)<<i,&weapon) && weapon==selected)
+            return UINT32_C(1)<<i;
+    }
+    return 0;
+}
+static uint32_t pickup_source_weapon(const qa_q1_game *game,const q1_pickup *item) {
+    if (item->kind==2) {
+        for (unsigned i=0; i<4; ++i)
+            if (item->item==game->ammo[i]) return i+1;
+        return 0;
+    }
+    if (game->options.edition==QA_Q1_CLASSIC &&
+        (item->weapon==QA_Q1_GRENADE || item->weapon==QA_Q1_ROCKET ||
+            item->weapon==QA_Q1_LIGHTNING)) return 3;
+    return pickup_weapon_bits(game->options.program,item->weapon);
+}
+static bool pickup_items(const qa_q1_game *game,const q1_pickup *item,
+    uint32_t *items,uint32_t *items2,qa_error *error) {
+    *items=*items2=0;
+    if (item->kind==6) *items=pickup_weapon_bits(game->options.program,item->weapon);
+    else if (item->kind==4) {
+        const char *id=qa_strings_cstr(qa_session_strings(game->services.session),item->item);
+        if (id && !strcmp(id,"q1:key/silver")) *items=131072u;
+        else if (id && !strcmp(id,"q1:key/gold")) *items=262144u;
+        else return fail(error,"Original key lacks its actual native inventory identity");
+    } else if (item->kind==5) {
+        if (!isfinite(item->count) || item->count<0 || item->count>=(float)QA_Q1_POWER_COUNT ||
+            truncf(item->count)!=item->count)
+            return fail(error,"Original powerup lacks its actual native power identity");
+        double powers[QA_Q1_POWER_COUNT]={0};
+        powers[(unsigned)item->count]=1;
+        q1_wire_player_items(game->options.program,QA_Q1_AXE,powers,0,&(qa_armor){0},
+            0,false,items,items2);
+        if (!*items && !*items2)
+            return fail(error,"Original powerup has no compiled Source inventory bit");
+    }
+    return true;
+}
 static bool pickup_fields(qa_q1_wire_receipt *receipt, const q1_actor *entity,
     qa_q1_save_record *record, qa_error *error) {
-    const q1_pickup *p = &entity->state.pickup;
-    static const char *const touches[] = {"health_touch","armor_touch","ammo_touch", "weapon_touch",
-        "key_touch","powerup_touch","BackpackTouch"};
-    if (p->kind >= sizeof(touches) / sizeof(*touches))
-        return fail(error, "Original item requires its actual Source callback projection");
-    const qa_strings *strings = qa_session_strings(receipt->operation.game->services.session);
-    if (!callback(record, "touch", touches[p->kind], error) ||
-        !text(record, "mdl", qa_strings_cstr(strings, p->original_model), QA_Q1_SAVE_STRING, error) ||
-        !text(record, "noise", qa_strings_cstr(strings, p->sound), QA_Q1_SAVE_STRING, error)) return false;
-    if (p->kind == 0 && !number(record, "healamount", p->count, false, error)) return false;
-    if (p->kind == 2 && !number(record, "aflag", p->count, false, error)) return false;
-    if (p->kind == 0 && !number(record,"healtype",p->mega?2:p->count==25?1:0,false,error)) return false;
+    const q1_pickup *p=&entity->state.pickup;
+    if (p->kind>=sizeof(pickup_touches)/sizeof(*pickup_touches))
+        return fail(error,"Original item requires its actual Source callback projection");
+    q1_pickup source=*p;
+    if ((entity->think==Q1_THINK_ITEM_PLACE && entity->next_think>0) || p->kind==6)
+        source.original_model=0;
+    if (!callback(record,"touch",pickup_touches[p->kind],error) ||
+        !FIELDS(receipt,record,&source,pickup_model_fields,error) ||
+        (pickup_mutable_noise(p->kind) && !FIELDS(receipt,record,p,pickup_sound_fields,error))) return false;
+    if (p->kind==0 && (!FIELDS(receipt,record,p,pickup_health_fields,error) ||
+        !number(record,"healtype",p->mega?2:p->count==25?1:0,false,error))) return false;
+    if (p->kind==2 && !FIELDS(receipt,record,p,pickup_ammo_fields,error)) return false;
+    if ((p->kind==2 || p->kind==3) &&
+        !number(record,"weapon",pickup_source_weapon(receipt->operation.game,p),false,error)) return false;
     if (q1_ref_present(p->holder) && !actor(receipt,record,"owner",p->holder,false,error)) return false;
-    if (p->kind == 6) {
-        uint32_t bit = 0;
-        for (unsigned i = 0; i < 32; ++i) { qa_q1_weapon weapon;
-            if (qa_q1_weapon_source(receipt->operation.game->options.program, UINT32_C(1) << i, &weapon) &&
-                weapon == p->weapon) bit = UINT32_C(1) << i;
-        }
-        if (!number(record, "items", bit, false, error)) return false;
-        for (unsigned i = 0; i < QA_Q1_AMMO_COUNT; ++i)
-            if (!number(record, ammo_field(receipt->operation.game,i), p->ammo[i], false, error)) return false;
+    if (p->kind==4 || p->kind==5 || p->kind==6) {
+        uint32_t items,items2;
+        if (!pickup_items(receipt->operation.game,p,&items,&items2,error) ||
+            !number(record,"items",items,false,error) || !number(record,"items2",items2,false,error)) return false;
     }
+    if (p->kind==6)
+        for (unsigned i=0; i<QA_Q1_AMMO_COUNT; ++i)
+            if (!number(record,ammo_field(receipt->operation.game,i),p->ammo[i],false,error)) return false;
     return true;
 }
 static bool mover_sounds(const q1_actor *entity, qa_q1_save_record *record, qa_error *error) {
@@ -729,6 +794,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         return fail(error, "Original player lost its actual Source character");
     uint32_t model = 0;
     qa_string_id model_name = player ? visible.model : entity->model;
+    if (!player && entity->kind == Q1_PICKUP && entity->state.pickup.hidden)
+        model_name = entity->state.pickup.original_model;
     if (model_name && !qa_q1_wire_index(receipt, true, model_name, &model))
         return fail(error, "Original model is outside its real Source precache");
     if (!number(record, "movetype", player ? movement->data.nq.move_type : motion[physics.motion], false, error) ||
@@ -1181,9 +1248,7 @@ static bool original_classify(const qa_q1_save_record *record, original_class *o
     if (think && (!strcmp(think,"Wiz_FastFire") || !strcmp(think,"DeathBubblesSpawn") ||
         !strcmp(think,"bubble_bob") || !strcmp(think,"ScourgeTriggerThink") || !strncmp(think,"s_explode",9))) kind = Q1_TIMER;
     if (explosion) kind = Q1_TIMER;
-    if (touch && (!strcmp(touch,"health_touch") || !strcmp(touch,"armor_touch") ||
-        !strcmp(touch,"ammo_touch") || !strcmp(touch,"weapon_touch") || !strcmp(touch,"key_touch") ||
-        !strcmp(touch,"powerup_touch") || !strcmp(touch,"BackpackTouch"))) kind = Q1_PICKUP;
+    if (pickup_kind(touch)!=UINT32_MAX) kind=Q1_PICKUP;
     if (projectile) name = projectile->native_classname;
     if (!name || !*name) {
         if (kind == Q1_PICKUP && touch && !strcmp(touch,"BackpackTouch")) name = "item_backpack";
@@ -1458,6 +1523,49 @@ static bool admit_globals(original_admission *admission,const qa_qc_program *pro
     }
     return true;
 }
+static bool admit_pickup(original_admission *admission,qa_q1_program program,
+    q1_actor *entity,qa_q1_save_record *callbacks,qa_error *error) {
+    q1_pickup *item=&entity->state.pickup;
+    item->kind=pickup_kind(saved(admission->record,"touch"));
+    if (item->kind==UINT32_MAX || !ADMIT_FIELDS(admission,item,pickup_model_fields,error) ||
+        !admit_string(admission,"noise",error)) return false;
+    if (!pickup_mutable_noise(item->kind) && !admit_text(admission,"noise","",error)) return false;
+    if (!isfinite(entity->next_think) ||
+        (entity->think==Q1_THINK_NONE && entity->next_think>0) ||
+        (entity->think!=Q1_THINK_NONE && entity->think!=Q1_THINK_ITEM_PLACE &&
+            entity->think!=Q1_THINK_RESPAWN && entity->think!=Q1_THINK_MEGA_ROT &&
+            !(item->kind==6 && entity->think==Q1_THINK_REMOVE)))
+        return unsupported(error,"Source pickup lacks its paired scheduled continuation");
+    if (item->kind==0) {
+        if (!ADMIT_FIELDS(admission,item,pickup_health_fields,error) || item->count<0 ||
+            !admit_word(admission,"healtype",error) || saved_number(admission->record,"healtype")>2)
+            return unsupported(error,"Source health lacks its native quantity/type inverse");
+    } else if (item->kind==2) {
+        if (!ADMIT_FIELDS(admission,item,pickup_ammo_fields,error) || item->count<0 ||
+            !admit_word(admission,"weapon",error) || saved_number(admission->record,"weapon")<1 ||
+            saved_number(admission->record,"weapon")>4)
+            return unsupported(error,"Source ammunition lacks its native quantity/identity inverse");
+    } else if (item->kind==3) {
+        if (!admit_word(admission,"weapon",error) || saved_number(admission->record,"weapon")==0)
+            return unsupported(error,"Source weapon pickup lacks its native identity inverse");
+    } else if (item->kind==4 || item->kind==5 || item->kind==6) {
+        if (!admit_word(admission,"items",error) || !admit_word(admission,"items2",error)) return false;
+        if (item->kind==6) {
+            if (!admit_number(admission,"items2",0,error)) return false;
+            float bits=saved_number(admission->record,"items");
+            if (bits!=0 && !qa_q1_weapon_source(program,(uint32_t)bits,&item->weapon))
+                return unsupported(error,"Source backpack weapon lacks its native cargo identity");
+            qa_q1_game settings={.options={.program=program}};
+            for (unsigned i=0; i<QA_Q1_AMMO_COUNT; ++i) {
+                const char *name=ammo_field(&settings,i);float amount=saved_number(admission->record,name);
+                if (!isfinite(amount) || amount<0)
+                    return unsupported(error,"Source backpack ammunition lacks its native cargo inverse");
+                admitted_key(admission,name);
+            }
+        }
+    }
+    return callback(callbacks,"touch",pickup_touches[item->kind],error);
+}
 static bool original_map_supported(q1_map_kind kind) {
     switch (kind) {
     case Q1_MAP_WORLD: case Q1_MAP_POINT: case Q1_MAP_PATH: case Q1_MAP_DESTINATION:
@@ -1589,8 +1697,7 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
     } else {
         original_class source;
         if (!original_classify(record,&source,error)) goto done;
-        if (source.kind==Q1_PICKUP ||
-            (source.map!=Q1_MAP_FIELDS && !original_map_supported(source.map)) ||
+        if ((source.map!=Q1_MAP_FIELDS && !original_map_supported(source.map)) ||
             source.kind==Q1_ENTITY) {
             unsupported(error,"Source map/item state still lacks its complete paired native inverse");goto done;
         }
@@ -1608,6 +1715,8 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
             if (source.species->species==QA_Q1_SCOURGE && !ADMIT_FIELDS(admission,monster,scourge_fields,error)) goto done;
             if (!restore_monster_callbacks(monster,record,error)) goto done;
             if (!monster_functions(monster,&callbacks,error)) goto done;
+        } else if (entity.kind==Q1_PICKUP) {
+            if (!admit_pickup(admission,program,&entity,&callbacks,error)) goto done;
         } else if (entity.kind==Q1_BODY) {
             if (!ADMIT_FIELDS(admission,&entity,body_queue_fields,error) ||
                 entity.think!=Q1_THINK_NONE || entity.next_think!=0 || physics.solid!=QA_PHYSICS_NOT_SOLID ||
@@ -1848,9 +1957,13 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         !RESTORE_FIELDS(game,record,entity,body_queue_fields,slots,count,error)) return false;
     if (entity->kind == Q1_PICKUP) {
         q1_pickup *item = &entity->state.pickup;
+        if (!RESTORE_FIELDS(game,record,item,pickup_model_fields,slots,count,error) ||
+            (pickup_mutable_noise(item->kind) &&
+                !RESTORE_FIELDS(game,record,item,pickup_sound_fields,slots,count,error)) ||
+            (item->kind==0 && !RESTORE_FIELDS(game,record,item,pickup_health_fields,slots,count,error)) ||
+            (item->kind==2 && !RESTORE_FIELDS(game,record,item,pickup_ammo_fields,slots,count,error))) return false;
         item->hidden = !entity->model; item->holder = entity->owner;
-        if (item->kind == 0 && saved(record,"healamount")) item->count = saved_number(record,"healamount");
-        if (item->kind == 2 && saved(record,"aflag")) item->count = saved_number(record,"aflag");
+        if (item->kind==0) item->mega=saved_number(record,"healtype")==2;
         if (item->kind == 6) {
             for (unsigned i = 0; i < QA_Q1_AMMO_COUNT; ++i) item->ammo[i] = saved_number(record,ammo_field(game,i));
             uint32_t bits = (uint32_t)saved_number(record,"items");
@@ -1933,8 +2046,78 @@ static bool original_model_fits(const qa_q1_wire_receipt *receipt,
             if (expected && !strcmp(model,expected)) { equal=true;break; }
         }
     }
+    if (!equal && index && !*model && pickup_kind(saved(record,"touch"))!=UINT32_MAX) {
+        char *mdl=NULL;value=saved(record,"mdl");
+        if (!qa_q1_save_string_decode(value?value:"",&mdl,error)) {free(model);return false;}
+        equal=!strcmp(mdl,expected?expected:"");free(mdl);
+    }
     free(model);
     return equal || unsupported(error,"Original model name differs from its constructed Source ordinal");
+}
+static bool original_pickup_text_fits(const qa_q1_save_record *record,const char *name,
+    const char *expected,qa_error *error) {
+    char *text=NULL;const char *value=saved(record,name);
+    if (!qa_q1_save_string_decode(value?value:"",&text,error)) return false;
+    bool equal=!strcmp(text,expected?expected:"");free(text);
+    return equal || unsupported(error,"Original pickup differs from its actual constructed Source definition");
+}
+static bool original_pickup_fits(qa_q1_game *game,const qa_q1_save_data *save,
+    const qa_q1_wire_receipt *receipt,qa_error *error) {
+    const qa_strings *strings=qa_session_strings(game->services.session);
+    for (size_t slot=2; slot<save->entity_count; ++slot) {
+        const qa_q1_save_record *record=save->entities+slot;
+        if (!record->count || pickup_kind(saved(record,"touch"))==UINT32_MAX) continue;
+        original_class source;qa_actor_id id;
+        if (slot>UINT32_MAX) return unsupported(error,"Original pickup leaves its physical Source ordinals");
+        if (!original_classify(record,&source,error)) return false;
+        const q1_actor *entity=qa_q1_wire_actor_at(receipt,(uint32_t)slot,&id)?q1_entity(game,id):NULL;
+        if (!entity || entity->kind!=Q1_PICKUP ||
+            strcmp(source.name,qa_strings_cstr(strings,entity->classname)))
+            return unsupported(error,"Original pickup lacks its retained same-class native definition");
+        const q1_pickup *item=&entity->state.pickup;
+        if (item->kind!=pickup_kind(saved(record,"touch")))
+            return unsupported(error,"Original pickup touch differs from its actual native kind");
+        const char *think=saved(record,"think");
+        bool placing=think && !strcmp(think,"PlaceItem") && saved_number(record,"nextthink")>0;
+        const char *model=qa_strings_cstr(strings,item->original_model?item->original_model:entity->model);
+        if (!original_pickup_text_fits(record,"mdl",placing || item->kind==6?"":model,error)) return false;
+        char *visible=NULL;const char *value=saved(record,"model");
+        if (!qa_q1_save_string_decode(value?value:"",&visible,error)) return false;
+        bool hidden=!*visible,model_equal=hidden || !strcmp(visible,model?model:"");free(visible);
+        if (!model_equal) return unsupported(error,"Original pickup model differs from its actual native definition");
+        if (pickup_mutable_noise(item->kind)) {
+            char *noise=NULL;value=saved(record,"noise");
+            if (!qa_q1_save_string_decode(value?value:"",&noise,error)) return false;
+            bool found=false;
+            for (size_t i=1; i<receipt->sound_count; ++i) {
+                const char *sound=qa_strings_cstr(strings,receipt->sounds[i]);
+                if (sound && !strcmp(noise,sound)) {found=true;break;}
+            }
+            free(noise);
+            if (!found) return unsupported(error,"Original pickup noise leaves its actual constructed Source precache");
+        } else if (!original_pickup_text_fits(record,"noise","",error)) return false;
+        if (item->kind==0) {
+            float count=saved_number(record,"healamount"),type=saved_number(record,"healtype");
+            float expected=item->mega?2:item->count==25?1:0;
+            if (!isfinite(count) || count<0 || type!=expected || type!=(item->mega?2:count==25?1:0))
+                return unsupported(error,"Original health type is not preserved by its actual native quantity/kind");
+        }
+        if (item->kind==1 && saved_number(record,"skin")!=(float)entity->skin)
+            return unsupported(error,"Original armor differs from its actual native class definition");
+        if ((item->kind==2 || item->kind==3) &&
+            saved_number(record,"weapon")!=(float)pickup_source_weapon(game,item))
+            return unsupported(error,"Original pickup differs from its actual native weapon/ammunition identity");
+        if (item->kind==4 || item->kind==5) {
+            uint32_t items,items2;
+            if (!pickup_items(game,item,&items,&items2,error)) return false;
+            if (saved_number(record,"items")!=(float)items || saved_number(record,"items2")!=(float)items2)
+                return unsupported(error,"Original pickup bit differs from its actual native inventory identity");
+        }
+        if (think && !strcmp(think,"item_megahealth_rot") &&
+            (!item->mega || !hidden || saved_number(record,"owner")!=1))
+            return unsupported(error,"Original megahealth lacks its actual hidden local-player custody");
+    }
+    return true;
 }
 static bool original_precache_fits(qa_q1_game *game,const qa_q1_save_data *save,
     const qa_q1_wire_receipt *receipt,qa_error *error) {
@@ -1957,7 +2140,7 @@ static bool original_precache_fits(qa_q1_game *game,const qa_q1_save_data *save,
     const char *expected=qa_strings_cstr(strings,q1_weapon_model(game,&player));
     bool equal=!strcmp(model,expected?expected:"");free(model);
     if (!equal) return unsupported(error,"Original weapon model differs from its compiled Source weapon");
-    return true;
+    return original_pickup_fits(game,save,receipt,error);
 }
 bool qa_q1_game_original_fit(qa_q1_game *game,const qa_q1_save_data *save,
     bool *supported,qa_error *error) {

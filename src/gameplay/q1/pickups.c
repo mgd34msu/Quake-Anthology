@@ -976,7 +976,9 @@ static bool item_complete(void *context, const qa_pickup_offer *offer, bool take
         .time_ns = g->time_ns,
         .resource = item->sound,
         .channel =
-            item->mission && item->kind != Q1_ITEM_AMMO && item->kind != Q1_ITEM_WEAPON ? 2 : 3,
+            item->kind == Q1_ITEM_POWER ||
+                    (item->mission && item->kind != Q1_ITEM_AMMO && item->kind != Q1_ITEM_WEAPON)
+                ? 2 : 3,
         .volume = 1,
         .attenuation = item->kind == Q1_ITEM_HORN ? 0 : 1};
     if (!qa_builtin_emit(&g->services, &sound, error))
@@ -1075,7 +1077,9 @@ static bool item_complete(void *context, const qa_pickup_offer *offer, bool take
             return false;
     } else {
         qa_scheduler_cancel(qa_session_scheduler(g->services.session), entity->id);
-        entity->think = Q1_THINK_NONE;
+        if (g->options.program == QA_Q1_ID1 && g->options.edition == QA_Q1_CLASSIC)
+            entity->think = item->kind <= Q1_ITEM_WEAPON ? Q1_THINK_RESPAWN : entity->think;
+        else entity->think = Q1_THINK_NONE;
     }
     if (item->kind == Q1_ITEM_HORN) {
         qa_actor_id previous = q1_ref_actor(g, g->horn_charmer);
@@ -1278,7 +1282,6 @@ bool qa_q1_pickup_spawn_external(qa_q1_game *g, const qa_q1_spawn *spawn, const 
 bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_pickup *item = &entity->state.pickup;
     q1_think_kind kind = entity->think;
-    entity->think = Q1_THINK_NONE;
     if (kind == Q1_THINK_MG3_ITEM_START) {
         if (item->kind == Q1_ITEM_MG3_BLOODY &&
             !(qa_q1_game_campaign_flags(g) & QA_Q1_BLOODY_NIGHTMARE_NEWGAME))
@@ -1329,6 +1332,7 @@ bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                q1_link(g, entity, error);
     }
     if (kind == Q1_THINK_ITEM_PLACE) {
+        item->original_model = entity->model;
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, entity->id, &body, error))
             return false;
