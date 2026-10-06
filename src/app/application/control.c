@@ -1558,7 +1558,14 @@ static qa_movement_control move_effect_body(void *opaque,
         if (result != QA_MOVEMENT_CONTINUE)
             return result;
     }
-    if (effect->kind != QA_MOVE_EFFECT_SOUND || effect->sound == NULL)
+    const char *sound = effect->kind == QA_MOVE_EFFECT_SOUND ? effect->sound : NULL;
+    int32_t channel = 0;
+    if (control_family(move->control->state.kind) == QA_GAME_Q1 &&
+        effect->kind == QA_MOVE_EFFECT_PLAYER_ACTION && effect->value == QA_MOVE_JUMP) {
+        sound = "player/plyrjmp8.wav";
+        channel = 4;
+    }
+    if (sound == NULL)
         return live(move->application, move->control->actor)
                    ? QA_MOVEMENT_CONTINUE
                    : QA_MOVEMENT_REMOVED;
@@ -1566,7 +1573,7 @@ static qa_movement_control move_effect_body(void *opaque,
         move->application, move->application->world,
         move->application->physics);
     qa_string_id resource;
-    if (!qa_builtin_resource(&services, effect->sound, &resource, error))
+    if (!qa_builtin_resource(&services, sound, &resource, error))
         return QA_MOVEMENT_ERROR;
     qa_body_state body;
     if (!qa_world_body_read(move->application->world, move->control->actor,
@@ -1584,6 +1591,7 @@ static qa_movement_control move_effect_body(void *opaque,
                                       : move->movement->owner,
                       .actor = move->control->actor,
                       .time_ns = effect->time_ns,
+                      .channel = channel,
                       .resource = resource,
                       .origin = body.origin,
                       .volume = 1.0f,
