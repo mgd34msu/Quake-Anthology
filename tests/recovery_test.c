@@ -201,8 +201,23 @@ static int recovery_run(const char *root,const char *binary,const char *user_roo
         float distance=qa_vec_length(qa_vec_sub(before.origin,after.origin));
         printf("REAL_MOVEMENT distance=%g held=%d\n",distance,qa_input_seat_has_held(f->seats[0].input));fflush(stdout);
         if (distance<1 || qa_input_seat_has_held(f->seats[0].input) ||
-            !observation(f,&observed,user_root,!strcmp(phase,"record"),&error) || !write_observation(user_root,"expected-source.sav",(qa_bytes){observed.data,observed.size},&error)) goto done;
-        if (!command(f,"give h 13",&error)) goto done;
+            !command(f,"save recovery-checkpoint",&error) || !frontend_save_commands_drain(&f,&error) ||
+            !observation(f,&observed,user_root,true,&error) ||
+            !write_observation(user_root,"expected-source.sav",(qa_bytes){observed.data,observed.size},&error)) goto done;
+        qa_buffer_free(&observed);
+        char recovery_path[4096];
+        int recovery_length=snprintf(recovery_path,sizeof(recovery_path),"%s/saves/recovery.qdemo",user_root);
+        qa_buffer checkpoint_before={0},checkpoint_after={0};
+        if (recovery_length<0 || (size_t)recovery_length>=sizeof(recovery_path) ||
+            !qa_file_read_all(recovery_path,&checkpoint_before,&error) || !frames(&f,512,&error) ||
+            !command(f,"give h 13",&error) || !frames(&f,1,&error) ||
+            !qa_file_read_all(recovery_path,&checkpoint_after,&error)) {
+            qa_buffer_free(&checkpoint_before);qa_buffer_free(&checkpoint_after);goto done;
+        }
+        bool unchanged=checkpoint_before.size==checkpoint_after.size && !memcmp(checkpoint_before.data,checkpoint_after.data,checkpoint_before.size);
+        printf("RECOVERY_FRAME_WRITES_NONE equal=%d bytes=%zu\n",unchanged,checkpoint_before.size);fflush(stdout);
+        qa_buffer_free(&checkpoint_before);qa_buffer_free(&checkpoint_after);
+        if (!unchanged) { fail(&error,"Ordinary frames changed the explicit recovery checkpoint");goto done; }
         qa_q1_save_data *tail=NULL;double tail_health=0;bool tail_god=false;
         qa_q1_save_client client;
         bool tail_okay=frontend_q1_save_client_read(f,0,&client,&error) &&
@@ -210,9 +225,9 @@ static int recovery_run(const char *root,const char *binary,const char *user_roo
             source_health(tail,&tail_health,&tail_god,&error);
         qa_q1_save_destroy(tail);
         if (!tail_okay || tail_health!=13 || !tail_god) {
-            fail(&error,"Unfinished actual Source command was not executed");goto done;
+            fail(&error,"Unsaved actual Source command was not executed");goto done;
         }
-        puts("UNCLEAN_EXIT unfinished_health=13 expected_completed_health=73");fflush(stdout);
+        puts("UNCLEAN_EXIT unsaved_health=13 checkpoint_health=73");fflush(stdout);
         _Exit(0);
     }
     if (!available || !qa_ui_open(f->seats[0].ui,FRONTEND_LOAD,(double)f->time_ns/1000000.0,&error)) goto done;
@@ -303,6 +318,6 @@ void test_recovery(const char *self)
     printf("LIVE_RECOVERY_START user_root=%s\n",user_root);fflush(stdout);
     recovery_child(self,"record",root,binary,user_root);
     recovery_child(self,"recover",root,binary,user_root);
-    printf("LIVE_RECOVERY_PASS source=equal origin=equal input_sequence=equal unfinished_tail=excluded shutdown=complete user_root=%s\n",user_root);
+    printf("LIVE_RECOVERY_PASS source=equal origin=equal input_sequence=equal unsaved_changes=excluded ordinary_frame_writes=none shutdown=complete user_root=%s\n",user_root);
     fflush(stdout);
 }

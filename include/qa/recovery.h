@@ -36,27 +36,18 @@ typedef struct qa_recovery_input {
     uint32_t seat;
     qa_movement_command command;
 } qa_recovery_input;
-bool qa_recovery_input_encode(const qa_recovery_input *, qa_buffer *, qa_error *);
-/* Append the same fields to an owner's reusable canonical writer. */
-bool qa_recovery_input_write(qa_source_save_io *, const qa_recovery_input *);
 bool qa_recovery_input_decode(qa_bytes, qa_recovery_input *, qa_error *);
 /* Missing and cleanly closed journals are not recovery candidates. A corrupt
  * complete record is an error; only an incomplete final block is discarded. */
 bool qa_recovery_available(qa_fs_root *, const char *, bool *, qa_error *);
-/* Recovery uses one shared checkpoint plus typed demo/journal records. Only
- * committed input/frame effects belong in the log. A record failure faults
- * recording and the valid prefix remains recoverable; it is never replayed
- * into the live application as an automatic retry. */
+/* Recovery stores the latest explicit save or level-entry checkpoint.
+ * Ordinary frame execution never appends input or simulation records.
+ * Existing recorded tails remain readable at startup. */
 /* A committed level-entry image is also the recovery checkpoint; its payload
  * does not need a second capture just to change the purpose label. */
 bool qa_recovery_begin(qa_fs_root *, const char *relative_name, const qa_save_image *,
                         qa_recovery **, qa_error *);
-bool qa_recovery_append(qa_recovery *, qa_demo_record_kind, uint64_t elapsed_ns,
-                         qa_net_protocol_id, qa_bytes, qa_error *);
 bool qa_recovery_checkpoint(qa_recovery *, const qa_save_image *, qa_error *);
-/* Check at a completed frame; rotation replaces the old checkpoint and tail. */
-bool qa_recovery_checkpoint_due(const qa_recovery *);
-bool qa_recovery_flush(qa_recovery *, qa_error *);
 bool qa_recovery_close_clean(qa_recovery *, qa_error *);
 void qa_recovery_destroy(qa_recovery *);
 bool qa_recovery_restore(qa_fs_root *, const char *, void *, const qa_demo_seek_ops *,

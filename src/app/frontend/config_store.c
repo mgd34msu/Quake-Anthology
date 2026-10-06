@@ -1216,7 +1216,6 @@ static bool engine_source_command(void *context,qa_application *application,
     if (registry && qa_cvars_find(registry,name)) owned=true;
     if (!owned) return true;
     if (!qa_console_append(source.console,&command,call->raw,error)) return false;
-    if (!qa_console_defer_invocation(call->console,call,error)) return false;
     *handled=true; return true;
 }
 bool frontend_config_store_admin_dispatch(frontend_config_store *manager,const qa_command_invocation *call,

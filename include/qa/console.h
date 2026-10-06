@@ -415,16 +415,6 @@ bool qa_console_idle(const qa_console *);
 bool qa_console_context_read(qa_console *,qa_command_context *,qa_error *);
 /* Pure exact innermost invocation identity, including post-dispatch receipt. */
 bool qa_console_invocation_current(const qa_console *,const qa_command_invocation *);
-/* One optional borrowed observation owner, independent of options.post_dispatch.
- * Binding and removal require returned callbacks. The observer receives only
- * the outer invocation of this console; it must not mutate console state. */
-typedef bool (*qa_console_dispatch_observer)(void *,const qa_command_invocation *,bool,qa_error *);
-bool qa_console_observe_dispatch(qa_console *,void *,qa_console_dispatch_observer,qa_error *);
-bool qa_console_unobserve_dispatch(qa_console *,void *,qa_error *);
-/* A real producer marks an entered request after queueing its execution in a
- * different console. Observers then record the receiving execution once. */
-bool qa_console_defer_invocation(qa_console *,const qa_command_invocation *,qa_error *);
-bool qa_console_invocation_deferred(const qa_console *,const qa_command_invocation *);
 /* Borrow the original wire text of an entered invocation. Explicit cmd uses
  * its untouched argument tail; each Source retains its own admission policy. */
 bool qa_console_forward_text(const qa_command_invocation *,const char **text,

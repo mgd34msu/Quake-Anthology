@@ -843,7 +843,6 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *
             if (ok && source_ready && !client_only && !paused) {
                 ok=qa_profiler_push(profiler, "application", error);
                 if (ok) ok=frontend_profiler_end(profiler, qa_application_advance(frontend->application, application_duration, error), error);
-                if (ok) frontend_save_commands_recovery_advanced(frontend,application_duration);
             }
         }
         if (ok) {
@@ -904,7 +903,6 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *
         ok=qa_profiler_push(profiler,"frame_completion",error);
         if (ok) ok=frontend_profiler_end(profiler,
             qa_application_complete_frame(frontend->application, error),error);
-        if (ok) frontend_save_commands_recovery_completed(frontend);
     }
     if (ok) {
         ok=qa_profiler_push(profiler,"source_events",error);
@@ -913,7 +911,6 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *
     }
     if (ok) ++frontend->frame_number;
     if (!ok) return false;
-    if (!frontend_save_commands_recovery_complete_frame(frontend,error)) return false;
     qa_application_map_view previous, current;
     bool mapped=qa_application_map_read(frontend->application,&previous);
     if (!frontend_travel(frontend,error)) return false;
@@ -922,8 +919,7 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *
 }
 bool qa_frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,qa_error *error)
 {
-    if (!frontend_save_commands_recovery_begin_frame(frontend,error)) return false;
     bool ok=frontend_step(frontend,elapsed_ns,error);
     if (!ok) frontend_save_commands_recovery_abandon(frontend);
-    return ok && frontend_save_commands_recovery_complete_frame(frontend,error);
+    return ok;
 }

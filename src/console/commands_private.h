@@ -58,7 +58,6 @@ typedef struct retired_id {
 typedef struct command_frame {
     const qa_command_invocation *invocation;
     struct command_frame *parent;
-    bool deferred;
 } command_frame;
 typedef struct output_frame {
     void (*print)(void *, const qa_command_context *, const char *);
@@ -101,8 +100,6 @@ struct qa_console {
     bool release_advancing;
     const qa_command_context *release_dispatch_context;
     struct qac_cvar_scope *cvar_scope;
-    void *dispatch_observer_context;
-    qa_console_dispatch_observer dispatch_observer;
 };
 bool qac_console_context_capture(qa_console *, const qa_command_context *, qa_command_context *, qa_error *);
 bool qac_console_context_current(const qa_console *, const qa_command_context *, qa_error *);

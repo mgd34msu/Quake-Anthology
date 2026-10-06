@@ -32,14 +32,8 @@ struct frontend_save_commands {
     qa_save_image *campaign;
     qa_frontend *retained[3];
     bool pending, draining;
-    uint64_t recovery_time_ns,recovery_flush_ns,recovery_duration_ns;
     bool recovery_checked,recovery_available,recovery_pending,recovery_resume;
-    bool recovery_abandoned,recovery_data,recovery_advanced;
-    uint64_t recovery_bind_generation;
-    uint64_t recovery_checkpoint_generation;
-    uint64_t recovery_frame_number;
-    bool recovery_bound,recovery_completed;
-    qa_source_save_io recovery_encoding;
+    bool recovery_abandoned;
 };
 
 typedef enum recovery_journal_kind { RECOVERY_COMMAND, RECOVERY_FRAME } recovery_journal_kind;
@@ -62,11 +56,7 @@ static bool recovery_checkpoint(qa_frontend *f,const qa_save_image *image,qa_err
     bool ok=owner->recovery?qa_recovery_checkpoint(owner->recovery,image,error):
         qa_recovery_begin(owner->level_root,"recovery.qdemo",image,&owner->recovery,error);
     if (ok) {
-        owner->recovery_time_ns=qa_save_image_metadata(image)->elapsed_ns;
-        owner->recovery_flush_ns=f->wall_time_ns;
-        owner->recovery_checkpoint_generation=qa_application_configuration_generation(f->application);
-        owner->recovery_bound=false;owner->recovery_data=false;
-        owner->recovery_advanced=false;owner->recovery_completed=false;
+        owner->recovery_abandoned=false;
     }
     return ok;
 }
@@ -99,154 +89,8 @@ static void recovery_fault(qa_frontend *f,const qa_error *error)
     frontend_console_print(f,NULL,error->message);
     frontend_console_print(f,NULL,"\n");
 }
-static bool recovery_active(const qa_frontend *f)
-{
-    return f && f->save_commands && f->save_commands->recovery &&
-        !f->save_commands->recovery_abandoned && !f->options.dedicated &&
-        frontend_network_save_authority(f)==QA_SAVE_OFFLINE;
-}
-static bool recovery_append(qa_frontend *f,qa_demo_record_kind kind,uint64_t elapsed_ns,qa_bytes bytes)
-{
-    qa_error local={0};
-    if (!qa_recovery_append(f->save_commands->recovery,kind,elapsed_ns,
-        (qa_net_protocol_id){QA_NET_UNIFIED_1,0,0},bytes,&local)) {
-        recovery_fault(f,&local); return false;
-    }
-    f->save_commands->recovery_data=true;
-    return true;
-}
-static qa_source_save_io *recovery_writer(frontend_save_commands *owner,qa_error *error)
-{
-    qa_source_save_io *io=&owner->recovery_encoding;
-    qa_buffer storage=io->output;size_t capacity=io->capacity;
-    (void)qa_source_save_writer(io,NULL,error);
-    io->output=storage;io->output.size=0;io->capacity=capacity;
-    return io;
-}
-static bool recovery_written(qa_frontend *f,qa_demo_record_kind kind,qa_source_save_io *io)
-{
-    return !io->failed && recovery_append(f,kind,0,(qa_bytes){io->output.data,io->output.size});
-}
-static bool recovery_observe(void *context,const qa_command_invocation *call,bool success,qa_error *error)
-{
-    qa_frontend *f=context;
-    (void)error;
-    if (!success || !recovery_active(f) || !call->argc || !call->context.direct || call->context.script ||
-        (call->context.origin!=QA_COMMAND_LOCAL && call->context.origin!=QA_COMMAND_SEAT) ||
-        qa_console_invocation_deferred(call->console,call)) return true;
-    const qa_console_entry *entry=qa_console_find(call->console,&call->context,call->argv[0]);
-    if (entry && entry->engine_command) return true;
-    if (call->argv[0][0]=='+' || call->argv[0][0]=='-') return true;
-    qa_application_travel_view travel;
-    if (qa_application_startup_pending(f->application) || qa_application_travel_read(f->application,&travel)) return true;
-    qa_command_context actual;
-    qa_application_console_scope scope;
-    uint32_t physical,logical;
-    qa_error local={0};
-    if (!qa_application_capture_command_context(f->application,&call->context,&actual,&local) ||
-        !frontend_command_seat_read(f,&actual,&physical) ||
-        !frontend_seat_launch_id_read(f,physical,&logical) ||
-        !qa_application_console_scope_read(f->application,call->console,&scope)) return true;
-    const char *instance=scope.provider?qa_application_provider_instance(f->application,scope.provider):"";
-    if (!instance) return true;
-    recovery_command command={.seat=logical,.kind=(uint32_t)scope.kind,.dialect=(uint32_t)actual.dialect,
-        .origin=(uint32_t)actual.origin,.wall_ns=f->wall_time_ns,.time_ns=f->time_ns,
-        .frame_number=f->frame_number,
-        .instance=(char *)instance,.text=(char *)call->raw,.direct=actual.direct,.console_text=actual.console_text};
-    qa_source_save_io *io=recovery_writer(f->save_commands,&local);uint32_t kind=RECOVERY_COMMAND;
-    bool ok=qa_source_save_u32(io,&kind) && command_fields(io,&command);
-    if (ok) (void)recovery_written(f,QA_DEMO_JOURNAL,io);
-    else recovery_fault(f,&local);
-    return true;
-}
-bool frontend_save_commands_recovery_begin_frame(qa_frontend *f,qa_error *error)
-{
-    if (!f || !f->save_commands) return true;
-    f->save_commands->recovery_advanced=false;
-    f->save_commands->recovery_duration_ns=0;
-    f->save_commands->recovery_completed=false;
-    f->save_commands->recovery_frame_number=f->frame_number;
-    if (!recovery_active(f)) return true;
-    frontend_save_commands *owner=f->save_commands;
-    uint64_t generation=qa_application_configuration_generation(f->application);
-    if (owner->recovery_bound && owner->recovery_bind_generation==generation) return true;
-    size_t count=qa_application_console_count(f->application);
-    for (size_t i=0;i<count;++i) {
-        qa_console *console=qa_application_console_at(f->application,i,NULL);
-        qa_error local={0};
-        if (!qa_console_observe_dispatch(console,f,recovery_observe,&local)) {
-            recovery_fault(f,&local);return true;
-        }
-    }
-    owner->recovery_bound=true;owner->recovery_bind_generation=generation;
-    (void)error;
-    return true;
-}
-void frontend_save_commands_recovery_advanced(qa_frontend *f,uint64_t duration_ns)
-{
-    if (!recovery_active(f)) return;
-    f->save_commands->recovery_advanced=true;
-    f->save_commands->recovery_duration_ns=duration_ns;
-}
-void frontend_save_commands_recovery_completed(qa_frontend *f)
-{ if (recovery_active(f)) f->save_commands->recovery_completed=true; }
-void frontend_save_commands_recovery_input(qa_frontend *f,uint32_t logical,const qa_movement_command *command)
-{
-    if (!recovery_active(f)) return;
-    qa_recovery_input input={.seat=logical,.command=*command};
-    qa_error error={0};qa_source_save_io *io=recovery_writer(f->save_commands,&error);
-    if (qa_recovery_input_write(io,&input))
-        (void)recovery_written(f,QA_DEMO_INPUT,io);
-    else recovery_fault(f,&error);
-}
 void frontend_save_commands_recovery_abandon(qa_frontend *f)
 { if (f && f->save_commands) f->save_commands->recovery_abandoned=true; }
-bool frontend_save_commands_recovery_complete_frame(qa_frontend *f,qa_error *error)
-{
-    (void)error;
-    if (!recovery_active(f)) return true;
-    frontend_save_commands *owner=f->save_commands;
-    uint64_t now=qa_session_elapsed(qa_application_session(f->application));
-    if (!owner->recovery_data && !owner->recovery_advanced && !owner->recovery_completed &&
-        now==owner->recovery_time_ns) return true;
-    qa_error local={0};
-    if (now<owner->recovery_time_ns || f->wall_time_ns<owner->recovery_flush_ns) {
-        frontend_fail(&local,QA_ERROR_ARGUMENT,"Recovery frame clock moved backwards");
-        recovery_fault(f,&local);return true;
-    }
-    qa_source_save_io *io=recovery_writer(owner,&local);
-    uint32_t kind=RECOVERY_FRAME;
-    recovery_frame frame={.wall_ns=f->wall_time_ns,.time_ns=f->time_ns,
-        .duration_ns=owner->recovery_advanced?owner->recovery_duration_ns:now-owner->recovery_time_ns,
-        .advanced=owner->recovery_advanced || now!=owner->recovery_time_ns,
-        .completed=owner->recovery_completed,.frame_before=owner->recovery_frame_number,.frame_after=f->frame_number};
-    bool ok=qa_source_save_u32(io,&kind) && frame_fields(io,&frame);
-    if (ok) ok=recovery_written(f,QA_DEMO_JOURNAL,io) &&
-        recovery_append(f,QA_DEMO_ADVANCE,now-owner->recovery_time_ns,(qa_bytes){0});
-    if (ok && f->wall_time_ns-owner->recovery_flush_ns>=UINT64_C(1000000000))
-        ok=qa_recovery_flush(owner->recovery,&local);
-    if (!ok) {
-        if (local.code==QA_OK) frontend_fail(&local,QA_ERROR_ARGUMENT,"Recovery frame clock moved backwards");
-        recovery_fault(f,&local);
-    } else {
-        if (f->wall_time_ns-owner->recovery_flush_ns>=UINT64_C(1000000000))
-            owner->recovery_flush_ns=f->wall_time_ns;
-        owner->recovery_time_ns=now;owner->recovery_data=false;owner->recovery_advanced=false;
-        owner->recovery_completed=false;
-        if (frame.completed && qa_recovery_checkpoint_due(owner->recovery) &&
-            !frontend_save_commands_pending(f)) {
-            qa_save_image *image=NULL;qa_error cleanup={0};
-            owner->draining=true;
-            ok=qa_frontend_persistence_capture(f,f->options.persistence_services,QA_SAVE_RECOVERY,&image,&local) &&
-                recovery_checkpoint(f,image,&local);
-            if (!frontend_save_image_release(f,&image,ok?&local:&cleanup)) ok=false;
-            owner->draining=false;
-            if (!ok) recovery_fault(f,&local);
-        }
-    }
-    return true;
-}
-
 static char *copy_text(const char *text, qa_error *error)
 {
     if (!text) return NULL;
@@ -322,14 +166,11 @@ bool frontend_save_commands_destroy(qa_frontend *f, qa_error *error)
         owner->draining = false;
         if (!disposed) return false;
     }
-    for (size_t i=0;i<qa_application_console_count(f->application);++i)
-        if (!qa_console_unobserve_dispatch(qa_application_console_at(f->application,i,NULL),f,error)) return false;
     if (owner->recovery && !owner->recovery_abandoned) {
         qa_error local={0};
         if (!qa_recovery_close_clean(owner->recovery,&local)) recovery_fault(f,&local);
     }
     qa_recovery_destroy(owner->recovery);
-    qa_source_save_dispose(&owner->recovery_encoding);
     request_free(&owner->request); qa_fs_root_close(owner->level_root); qa_fs_root_close(owner->root);
     free(owner); f->save_commands = NULL; return true;
 }
@@ -545,8 +386,7 @@ bool frontend_save_commands_recovery_queue(qa_frontend *f,bool resume,qa_error *
 static bool recovery_start(qa_frontend *f,qa_error *error)
 {
     frontend_save_commands *owner=f->save_commands;
-    uint64_t generation=qa_application_configuration_generation(f->application);
-    if (!owner || (owner->recovery && owner->recovery_checkpoint_generation==generation) ||
+    if (!owner || owner->recovery ||
         owner->recovery_available || owner->recovery_abandoned ||
         f->options.dedicated || f->source_restoring || frontend_network_save_authority(f)!=QA_SAVE_OFFLINE ||
         qa_application_startup_pending(f->application) || qa_application_should_stop(f->application) ||
@@ -917,6 +757,14 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
         else {
             uint64_t nonce = owner->next_nonce++;
             ok=write_game(f,owner->root,request.name,QA_SAVE_MANUAL,nonce,&image,&source,&q2,&local);
+            if (ok && !owner->recovery_available && !f->options.dedicated &&
+                frontend_network_save_authority(f)==QA_SAVE_OFFLINE) {
+                qa_error recovery_error={0};
+                bool recorded=recovery_directory(owner,true,&recovery_error) &&
+                    (image || qa_frontend_persistence_capture(f,f->options.persistence_services,
+                        QA_SAVE_MANUAL,&image,&recovery_error)) && recovery_checkpoint(f,image,&recovery_error);
+                if (!recorded) recovery_fault(f,&recovery_error);
+            }
         }
     }
     if (!frontend_save_image_release(f,&image,ok?&local:&cleanup)) ok=false;
@@ -994,7 +842,7 @@ bool frontend_save_commands_autosave(qa_frontend *f, qa_error *error)
         }
     }
     bool recovered=false;
-    if (ok && !owner->recovery_available && !owner->recovery_abandoned) {
+    if (ok && !owner->recovery_available) {
         ok=recovery_checkpoint(f,image,&local);
         if (ok) {
             recovered=true;
