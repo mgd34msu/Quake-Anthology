@@ -1,4 +1,5 @@
 #include "native_character.h"
+#include "native_q3_client_internal.h"
 #include "selected_character_lifetime.h"
 #include <stdlib.h>
 #include <string.h>
@@ -27,7 +28,7 @@ static bool current(const frontend_native_character *owner, const q3n_frame *fra
         frame->application == owner->frontend->application && frame->reader == owner->owners.reader &&
         frame->assets == owner->owners.assets && frame->presentation == owner->owners.presentation &&
         frame->seat == owner->owners.launch_seat && frame->physical_presentation_seat == owner->owners.seat &&
-        qa_actor_id_equal(frame->viewing_actor, owner->owners.actor) &&
+        qa_actor_id_equal(frame->viewing_actor, frontend_native_q3_actor(owner->row)) &&
         qa_application_native_q3_presentation_current(frame->application, &frame->source);
 }
 static bool recipient_current(void *context)

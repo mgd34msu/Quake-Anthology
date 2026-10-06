@@ -1329,8 +1329,11 @@ bool qa_session_round_step(qa_session *session, qa_actor_owner owner, uint64_t e
         component_state *other = &session->components[i];
         if (other->active && other != entry) other->clock.host_origin_ns += elapsed_ns;
     }
+    /* Native Q3 components use the same end-of-interval source time as normal
+     * admission. A supplied GAME callback preserves SV_MapRestart's entry time. */
+    uint64_t source_time = callback ? start : start + elapsed_ns;
     entry->clock.frame = (qa_source_frame){owner, QA_CLOCK_Q3, QA_FRAME_ENTRY,
-        ++entry->clock.frame_number, start, elapsed_ns, start};
+        ++entry->clock.frame_number, start, elapsed_ns, source_time};
     entry->clock.elapsed_ns += elapsed_ns;
     entry->in_frame = true;
     session->stepping = true;

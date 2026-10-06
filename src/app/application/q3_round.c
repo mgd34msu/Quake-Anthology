@@ -291,7 +291,7 @@ static bool settle(application_round *cut, qa_error *error)
         okay = qa_q3_source_clock(cut->provider->state.q3, &source_time, error) &&
             qa_session_clock(app->session, cut->provider->owner, &clock);
         if (okay && (clock.frame.phase != QA_FRAME_EXIT ||
-            (uint32_t)(clock.frame.start_ns / UINT64_C(1000000)) != (uint32_t)source_time))
+            (uint32_t)(clock.frame.time_ns / UINT64_C(1000000)) != (uint32_t)source_time))
             okay = application_fail(error, QA_ERROR_ARGUMENT,
                 "Q3 settlement mode frame differs from its actual source entry");
     }
