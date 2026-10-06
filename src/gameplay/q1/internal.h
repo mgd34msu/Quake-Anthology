@@ -613,6 +613,7 @@ float q1_actor_view_height(const q1_actor *, bool player);
 bool q1_target(qa_q1_game *, qa_actor_id, qa_q1_target *);
 bool q1_classnamed(qa_q1_game *, qa_actor_id, const char *);
 bool q1_model(qa_q1_game *, q1_actor *, const char *, qa_error *);
+const char *q1_door_key_sound(int32_t world_type, bool accepted);
 bool q1_sound(qa_q1_game *, qa_actor_id, const char *, int32_t channel, float attenuation,
               qa_error *);
 bool q1_sound_resource(qa_q1_game *, qa_actor_id, qa_string_id, int32_t channel, float attenuation,

@@ -372,6 +372,9 @@ static const char *entity_think(const q1_actor *entity) {
     if (entity->think == Q1_THINK_NONE) {
         if (entity->map && q1_map_is_mover(entity->map->kind) &&
             entity->map->pending.mover.done != Q1_MAP_IDLE) return map_think(Q1_MAP_MOVE_DONE);
+        if (entity->map && entity->map->kind == Q1_MAP_DOOR &&
+            entity->map->pending.mover.group &&
+            entity->map->pending.mover.group->count) return "LinkDoors";
         return NULL;
     }
     if (entity->think == Q1_THINK_MAP) return entity->map ? map_think(entity->map->action) : NULL;
@@ -712,11 +715,13 @@ static bool pickup_fields(qa_q1_wire_receipt *receipt, const q1_actor *entity,
             if (!number(record,ammo_field(receipt->operation.game,i),p->ammo[i],false,error)) return false;
     return true;
 }
-static bool mover_sounds(const q1_actor *entity, qa_q1_save_record *record, qa_error *error) {
+static bool mover_sounds(const q1_actor *entity, int32_t world_type, qa_q1_save_record *record, qa_error *error) {
     switch (entity->map->kind) {
     case Q1_MAP_DOOR:
         return text(record,"noise1",q1_map_door_sound(entity,false),QA_Q1_SAVE_STRING,error) &&
-            text(record,"noise2",q1_map_door_sound(entity,true),QA_Q1_SAVE_STRING,error);
+            text(record,"noise2",q1_map_door_sound(entity,true),QA_Q1_SAVE_STRING,error) &&
+            text(record,"noise3",q1_door_key_sound(world_type,false),QA_Q1_SAVE_STRING,error) &&
+            text(record,"noise4",q1_door_key_sound(world_type,true),QA_Q1_SAVE_STRING,error);
     case Q1_MAP_SECRET_DOOR:
         return text(record,"noise1",q1_map_secret_first_sound(entity),QA_Q1_SAVE_STRING,error) &&
             text(record,"noise2",q1_map_secret_sound(entity,true),QA_Q1_SAVE_STRING,error) &&
@@ -744,6 +749,21 @@ static const char *sprite_classname(const qa_q1_game *game, const q1_actor *enti
 static bool original_hidden_map_model(q1_map_kind kind, bool dormant) {
     return kind == Q1_MAP_COUNTER || kind == Q1_MAP_RELAY ||
         (kind == Q1_MAP_MULTI && dormant);
+}
+static bool original_door_trigger(const qa_q1_wire_receipt *receipt,
+    qa_actor_id master, qa_actor_id *out, qa_error *error) {
+    qa_q1_game *game=receipt->operation.game;
+    *out=(qa_actor_id){0};
+    for (uint32_t slot=receipt->client_slots+1;slot<receipt->entity_slots;++slot) {
+        qa_actor_id id;
+        if (!qa_q1_wire_actor_at(receipt,slot,&id)) continue;
+        const q1_actor *helper=q1_entity(game,id);
+        if (!helper || !helper->map || helper->map->kind!=Q1_MAP_DOOR_TRIGGER ||
+            !qa_actor_id_equal(q1_ref_actor(game,helper->owner),master)) continue;
+        if (out->registry) return fail(error,"Original door has more than one actual trigger helper");
+        *out=id;
+    }
+    return true;
 }
 static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
     q1_player *player, const qa_movement_state *movement, qa_q1_save_record *record, qa_error *error) {
@@ -883,7 +903,7 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         if (entity->map->action == Q1_MAP_DELAYED_USE &&
             !actor(receipt,record,"enemy",entity->activator,false,error)) return false;
         if (!FIELDS(receipt, record, entity->map, map_fields, error) ||
-            !mover_sounds(entity,record,error) || !map_functions(qa_session_strings(game->services.session), entity, combat.can_take_damage, record, error)) return false;
+            !mover_sounds(entity,game->options.world_type,record,error) || !map_functions(qa_session_strings(game->services.session), entity, combat.can_take_damage, record, error)) return false;
         if (q1_map_is_mover(entity->map->kind)) {
             const q1_map_movement *move = &entity->map->pending.mover;
             if (entity->map->kind == Q1_MAP_DOOR && move->group && move->group->count) {
@@ -892,6 +912,11 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
                 if (member == move->group->count) return fail(error,"Source door lost its actual retained group");
                 if (!actor(receipt,record,"owner",move->group->members[0],false,error) ||
                     !actor(receipt,record,"enemy",move->group->members[(member+1)%move->group->count],false,error)) return false;
+                if (!member) {
+                    qa_actor_id helper;
+                    if (!original_door_trigger(receipt,entity->id,&helper,error) ||
+                        !actor_id(receipt,record,"trigger_field",helper,false,error)) return false;
+                }
             }
             q1_map_movement source_move = *move;
             if (entity->map->kind == Q1_MAP_SECRET_DOOR) source_move.pos1 = qa_v3(0,0,0);
@@ -1125,6 +1150,13 @@ static bool restore_think(qa_q1_game *game, q1_actor *entity,
         if (!strcmp(name, "FoundTarget")) { entity->think = Q1_THINK_MONSTER_FOUND; return true; }
     }
     if (entity->map) {
+        if (entity->map->kind == Q1_MAP_DOOR && !strcmp(name, "LinkDoors")) {
+            if (entity->next_think != 0 || !q1_ref_present(entity->owner) ||
+                !q1_ref_present(entity->physics.enemy))
+                return fail(error, "Original LinkDoors has not completed its actual door links");
+            entity->map->action = Q1_MAP_IDLE;
+            return true;
+        }
         for (size_t i = 0; i < sizeof(map_callbacks) / sizeof(*map_callbacks); ++i)
             if (!strcmp(name, map_callbacks[i].name)) {
                 entity->think = Q1_THINK_MAP; entity->map->action = map_callbacks[i].action; return true;
@@ -1362,6 +1394,7 @@ typedef struct original_admission {
     qa_actor_owner source;
     size_t slots;
     double seconds;
+    int32_t world_type;
     const qa_q1_save_record *record;
     uint8_t *consumed;
 } original_admission;
@@ -1739,6 +1772,7 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
                 if (slot || !admit_text(admission,"classname","worldspawn",error) ||
                     !ADMIT_FIELDS(admission,&options,world_fields,error) ||
                     (program >= QA_Q1_ID1 && program <= QA_Q1_CTF && !admit_string(admission,"wad",error))) goto done;
+                admission->world_type=options.world_type;
             } else if (!slot || !isfinite(entity.next_think) ||
                 (entity.think==Q1_THINK_NONE && entity.next_think!=0) ||
                 (entity.think!=Q1_THINK_NONE && (entity.think!=Q1_THINK_MAP ||
@@ -1762,10 +1796,14 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
                     (move->position!=Q1_MAP_UP || entity.think!=Q1_THINK_NONE)) {
                     unsupported(error,"Source dormant platform differs from its native activation");goto done;
                 }
-                if (!mover_sounds(&entity,&callbacks,error)) goto done;
-                static const char *const sounds[]={"noise","noise1","noise2","noise3"};
-                for (size_t i=0;i<sizeof(sounds)/sizeof(*sounds);++i)
+                if (source.map==Q1_MAP_DOOR && !admit_word(admission,"trigger_field",error)) goto done;
+                if (!mover_sounds(&entity,admission->world_type,&callbacks,error)) goto done;
+                static const char *const sounds[]={"noise","noise1","noise2","noise3","noise4"};
+                for (size_t i=0;i<sizeof(sounds)/sizeof(*sounds);++i) {
+                    if (source.map==Q1_MAP_DOOR && i>=3 && !(entity.spawnflags&24) &&
+                        saved_number(record,"items")==0 && !saved(record,sounds[i])) continue;
                     if (!admit_text(admission,sounds[i],saved(&callbacks,sounds[i]),error)) goto done;
+                }
             }
             const char *classname=saved(record,"classname");
             if (classname && !strcmp(classname,source.name) &&
@@ -2125,6 +2163,61 @@ static bool original_pickup_fits(qa_q1_game *game,const qa_q1_save_data *save,
     }
     return true;
 }
+static bool original_door_fits(qa_q1_game *game,const qa_q1_save_data *save,
+    const qa_q1_wire_receipt *receipt,qa_error *error) {
+    for (size_t slot=2;slot<save->entity_count;++slot) {
+        const qa_q1_save_record *record=save->entities+slot;
+        if (!record->count) continue;
+        original_class source;qa_actor_id id;
+        if (!original_classify(record,&source,error)) return false;
+        if (source.map!=Q1_MAP_DOOR) continue;
+        const q1_actor *entity=qa_q1_wire_actor_at(receipt,(uint32_t)slot,&id)?q1_entity(game,id):NULL;
+        if (!entity || !entity->map || entity->map->kind!=Q1_MAP_DOOR)
+            return unsupported(error,"Original door lacks its actual constructed native owner");
+        const q1_door_group *group=entity->map->pending.mover.group;
+        if (!group || !group->count)
+            return unsupported(error,"Original door lacks its actual constructed native group");
+        size_t member=0;
+        while (member<group->count &&
+            !qa_actor_id_equal(q1_ref_actor(game,group->members[member]),id)) ++member;
+        uint32_t master,next,owner,enemy,trigger=0;
+        if (member==group->count ||
+            !qa_q1_wire_actor_slot(receipt,q1_ref_actor(game,group->members[0]),&master) ||
+            !qa_q1_wire_actor_slot(receipt,q1_ref_actor(game,group->members[(member+1)%group->count]),&next))
+            return unsupported(error,"Original door leaves its actual retained native group");
+        if (!qa_q1_save_entity_decode(saved(record,"owner")?saved(record,"owner"):"0",&owner,error) ||
+            !qa_q1_save_entity_decode(saved(record,"enemy")?saved(record,"enemy"):"0",&enemy,error) ||
+            !qa_q1_save_entity_decode(saved(record,"trigger_field")?saved(record,"trigger_field"):"0",&trigger,error)) return false;
+        if (owner!=master || enemy!=next || master>=save->entity_count || next>=save->entity_count ||
+            !save->entities[master].count || !save->entities[next].count)
+            return unsupported(error,"Original door links differ from its actual native group");
+        qa_actor_id helper={0};
+        if (!member && !original_door_trigger(receipt,id,&helper,error)) return false;
+        if (helper.registry) {
+            if (!saved(record,"trigger_field")) {
+                for (uint32_t candidate=2;candidate<save->entity_count;++candidate) {
+                    const qa_q1_save_record *row=save->entities+candidate;
+                    const char *touch=saved(row,"touch");uint32_t helper_owner;
+                    if (!touch || strcmp(touch,"door_trigger_touch")) continue;
+                    if (!qa_q1_save_entity_decode(saved(row,"owner")?saved(row,"owner"):"0",&helper_owner,error)) return false;
+                    if (helper_owner!=master) continue;
+                    if (trigger) return unsupported(error,"Original door has multiple Source trigger helpers");
+                    trigger=candidate;
+                }
+            }
+            if (!trigger || trigger>=save->entity_count || !save->entities[trigger].count)
+                return unsupported(error,"Original door lost its actual native helper relationship");
+            const qa_q1_save_record *row=save->entities+trigger;original_class trigger_source;uint32_t helper_owner;
+            if (!original_classify(row,&trigger_source,error) ||
+                !qa_q1_save_entity_decode(saved(row,"owner")?saved(row,"owner"):"0",&helper_owner,error)) return false;
+            if (trigger_source.map!=Q1_MAP_DOOR_TRIGGER || helper_owner!=master)
+                return unsupported(error,"Original door helper differs from its actual native owner");
+        } else if (trigger) {
+            return unsupported(error,"Original door has no matching constructed native helper");
+        }
+    }
+    return true;
+}
 static bool original_precache_fits(qa_q1_game *game,const qa_q1_save_data *save,
     const qa_q1_wire_receipt *receipt,qa_error *error) {
     const qa_strings *strings=qa_session_strings(game->services.session);
@@ -2146,7 +2239,7 @@ static bool original_precache_fits(qa_q1_game *game,const qa_q1_save_data *save,
     const char *expected=qa_strings_cstr(strings,q1_weapon_model(game,&player));
     bool equal=!strcmp(model,expected?expected:"");free(model);
     if (!equal) return unsupported(error,"Original weapon model differs from its compiled Source weapon");
-    return original_pickup_fits(game,save,receipt,error);
+    return original_door_fits(game,save,receipt,error) && original_pickup_fits(game,save,receipt,error);
 }
 bool qa_q1_game_original_fit(qa_q1_game *game,const qa_q1_save_data *save,
     bool *supported,qa_error *error) {

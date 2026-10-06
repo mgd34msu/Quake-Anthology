@@ -33,6 +33,13 @@ bool q1_map_move(qa_q1_game *g, q1_actor *entity, qa_vec3 destination, q1_map_ac
     return !entity || !entity->map ||
            q1_map_schedule(g, entity, fmax(.1, duration), Q1_MAP_MOVE_DONE, error);
 }
+const char *q1_door_key_sound(int32_t world_type, bool accepted) {
+    if (accepted)
+        return world_type == 2 ? "doors/baseuse.wav" :
+            world_type == 1 ? "doors/runeuse.wav" : "doors/meduse.wav";
+    return world_type == 2 ? "doors/basetry.wav" :
+        world_type == 1 ? "doors/runetry.wav" : "doors/medtry.wav";
+}
 const char *q1_map_door_sound(const q1_actor *entity, bool moving) {
     static const char *const sounds[][2] = {{"misc/null.wav", "misc/null.wav"},
                                             {"doors/drclos4.wav", "doors/doormv1.wav"},
@@ -565,9 +572,7 @@ static bool horde_door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     if (!q1_alive(g, id) || !q1_alive(g, master_id) || !q1_alive(g, other))
         return true;
     if ((silver && !has_silver) || (gold && !has_gold)) {
-        if (!q1_sound(g, id, g->options.world_type == 2 ? "doors/basetry.wav"
-                           : g->options.world_type == 1 ? "doors/runetry.wav"
-                                                        : "doors/medtry.wav", 2, 1, error))
+        if (!q1_sound(g, id, q1_door_key_sound(g->options.world_type, false), 2, 1, error))
             return false;
         if (silver == gold || !q1_alive(g, other))
             return true;
@@ -629,9 +634,7 @@ static bool door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_er
             return false;
         return !q1_alive(g, entity->id) ||
                q1_sound(g, entity->id,
-                        g->options.world_type == 2   ? "doors/basetry.wav"
-                        : g->options.world_type == 1 ? "doors/runetry.wav"
-                                                     : "doors/medtry.wav",
+                        q1_door_key_sound(g->options.world_type, false),
                         2, 1, error);
     }
     const q1_door_group *group = master->map->pending.mover.group;
@@ -644,9 +647,7 @@ static bool door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_er
     } else
         master->map->touch_enabled = false;
     return q1_sound(g, entity->id,
-                    g->options.world_type == 2   ? "doors/baseuse.wav"
-                    : g->options.world_type == 1 ? "doors/runeuse.wav"
-                                                 : "doors/meduse.wav",
+                    q1_door_key_sound(g->options.world_type, true),
                     3, 1, error) &&
            (!q1_alive(g, master->id) || door_use(g, master, other, error));
 }
