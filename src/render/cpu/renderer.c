@@ -914,6 +914,11 @@ bool cpu_skin_geometry(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     }
   } else if (!skin_descriptor(draw, &geometry, error)) return false;
   const qa_scene_skinning *skin = draw->skinning;
+  if (geometry.skeletal.vertex_count != draw->mesh.vertex_count ||
+      (skin->sample && (skin->sample->count < geometry.skeletal.source_vertex_count ||
+          (draw->mesh.vertex_count && (!skin->sample->vertices || !geometry.skeletal.sources))))) {
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "CPU model draw lost its admitted sample extent"); return false;
+  }
   *rounding = skin->sample ? skin->sample->rounding : fegetround();
   *sources = skin->sample ? geometry.skeletal.sources : NULL;
   if (skin->sample && skin->sample->ready) {
