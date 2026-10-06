@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "guest_qc_internal.h"
 #include "qa/application_selected_effects.h"
 #include "qa/game_q2_bots.h"
 #include "qa/persistence_content.h"
@@ -55,6 +56,8 @@ static bool primary_clock(qa_application *app, application_provider *primary,
             return application_fail(error, QA_ERROR_ARGUMENT, "Effect sampling needs its actual idle Q3 world source");
         return qa_q3_source_clock(view->primary_native.q3, &view->sample_time_ms, error);
     case APPLICATION_PROVIDER_QC:
+        view->primary_time_ns = primary->state.qc.engine->source_time_ns;
+        break;
     case APPLICATION_PROVIDER_QVM:
     case APPLICATION_PROVIDER_NATIVE:
         view->primary_time_ns = clock.frame.time_ns;
@@ -112,6 +115,8 @@ static bool observe(qa_application *app, application_provider *provider,
             return application_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 effects source is not idle");
         break;
     case APPLICATION_PROVIDER_QC:
+        view.source_time_ns = provider->state.qc.engine->source_time_ns;
+        break;
     case APPLICATION_PROVIDER_QVM:
     case APPLICATION_PROVIDER_NATIVE:
         view.source_time_ns = clock.frame.time_ns;

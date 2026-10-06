@@ -5,6 +5,9 @@
 #include "qa/application_equipment_content.h"
 #include "particle_audio.h"
 #include "particle_delivery.h"
+#include "particle_clock.h"
+#include "legacy_render_policy.h"
+#include "qa/application_selected_effects.h"
 #include "resource_bindings.h"
 #include "shared_resource_policy.h"
 #include "q1_sky.h"
@@ -82,6 +85,7 @@ typedef struct frontend_q1_fog {
 } frontend_q1_fog;
 typedef struct frontend_event_view {
     char *q1_patterns[FRONTEND_STYLES], *q2_patterns[FRONTEND_STYLES];
+    qa_actor_owner q1_style_owners[FRONTEND_STYLES], q2_style_owners[FRONTEND_STYLES];
     float q1_styles[FRONTEND_STYLES];
     qa_vec3 q2_styles[FRONTEND_STYLES];
     qa_q2_fog fog_start, fog_target;
@@ -523,8 +527,11 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
             }
         }
         if (event.kind != QA_BUILTIN_LIGHT || event.family != QA_GAME_Q1 || event.code < 0 || event.code >= FRONTEND_STYLES) continue;
-        for (unsigned seat = 0; seat < frontend->options.seats; ++seat)
-            if (!pattern_set(&state->views[seat].q1_patterns[event.code], qa_strings_cstr(strings, event.resource), error)) return false;
+        for (unsigned seat = 0; seat < frontend->options.seats; ++seat) {
+            frontend_event_view *view=&state->views[seat];
+            if (!pattern_set(&view->q1_patterns[event.code], qa_strings_cstr(strings, event.resource), error)) return false;
+            view->q1_style_owners[event.code]=event.provider;
+        }
     }
     for (size_t i = 0; i < qa_application_q2_map_event_count(frontend->application); ++i) {
         qa_application_q2_map_event source;
@@ -582,8 +589,10 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
             frontend_event_view *view = &state->views[seat];
             switch (event->kind) {
             case QA_Q2_MAP_LIGHTSTYLE:
-                if (event->style >= 0 && event->style < FRONTEND_STYLES &&
-                    !pattern_set(&view->q2_patterns[event->style], qa_strings_cstr(strings, event->text), error)) return false;
+                if (event->style >= 0 && event->style < FRONTEND_STYLES) {
+                    if (!pattern_set(&view->q2_patterns[event->style], qa_strings_cstr(strings, event->text), error)) return false;
+                    view->q2_style_owners[event->style]=source.provider;
+                }
                 break;
             case QA_Q2_MAP_FOG:
                 if (event->duration != 0) { view->fog_start = view->fog_target; view->fog_time = source.time_ns; }
@@ -609,6 +618,21 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
     }
     return true;
 }
+static bool lightstyle_source(qa_frontend *frontend,qa_actor_owner owner,qa_game_family family,
+    double *seconds,qa_error *error)
+{
+    if (family==QA_GAME_Q2) {
+        bool found;
+        if (!frontend_particle_q2_client_time(frontend,owner,seconds,&found,error)) return false;
+        if (found) return true;
+    }
+    qa_application_selected_effects source;
+    if (!qa_application_effects_producer_read(frontend->application,owner,&source,error)) return false;
+    *seconds=(double)source.source_time_ns/1000000000.0;
+    if (family==QA_GAME_Q1 && source.launch->selection.clock.kind!=QA_CLOCK_QUAKEWORLD)
+        *seconds=(float)*seconds;
+    return true;
+}
 bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_input *world, qa_error *error)
 {
     if (!frontend || seat >= frontend->options.seats || !world || frontend->resource_inventory)
@@ -630,13 +654,21 @@ bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_i
             .density = density, .color = color, .sky_factor = view->q1_fog.sky_factor, .far_depth = 1};
     }
     uint64_t now = qa_session_elapsed(qa_application_session(frontend->application));
-    uint64_t sample = now / UINT64_C(100000000);
+    qa_actor_owner q1_owner=0,q2_owner=0;
+    double q1_seconds=0,q2_seconds=0;
     for (unsigned i = 0; i < FRONTEND_STYLES; ++i) {
         const char *q1 = view->q1_patterns[i], *q2 = view->q2_patterns[i];
-        size_t n1 = q1 ? strlen(q1) : 0, n2 = q2 ? strlen(q2) : 0;
-        view->q1_styles[i] = n1 ? ((unsigned char)q1[sample % n1] - 97) * 22.0f : 256;
-        float scale = n2 ? ((unsigned char)q2[sample % n2] - 97) / 12.0f : 1;
-        view->q2_styles[i] = qa_v3(scale, scale, scale);
+        if (q1 && *q1 && view->q1_style_owners[i]!=q1_owner) {
+            q1_owner=view->q1_style_owners[i];
+            if (!lightstyle_source(frontend,q1_owner,QA_GAME_Q1,&q1_seconds,error)) return false;
+        }
+        if (q2 && *q2 && view->q2_style_owners[i]!=q2_owner) {
+            q2_owner=view->q2_style_owners[i];
+            if (!lightstyle_source(frontend,q2_owner,QA_GAME_Q2,&q2_seconds,error)) return false;
+        }
+        view->q1_styles[i]=frontend_legacy_lightstyle_sample(QA_GAME_Q1,q1,q1_seconds);
+        float scale=frontend_legacy_lightstyle_sample(QA_GAME_Q2,q2,q2_seconds);
+        view->q2_styles[i]=qa_v3(scale,scale,scale);
     }
     world->q1_styles = view->q1_styles; world->q2_styles = view->q2_styles; world->style_count = FRONTEND_STYLES;
     if (view->sky_received) {

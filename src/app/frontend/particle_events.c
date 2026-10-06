@@ -375,6 +375,17 @@ static bool client_sample(qa_frontend *frontend, uint64_t *sample, uint64_t *ser
     *back_lerp = (float)((double)(state->server_ns - state->client_ns) / (double)state->client_interval_ns);
     return true;
 }
+bool frontend_particle_q2_client_time(qa_frontend *frontend,qa_actor_owner owner,
+    double *seconds,bool *found,qa_error *error)
+{
+    frontend_particle_state *state=frontend->particles;
+    *found=state && state->client_clock && state->clock_source==owner;
+    if (!*found) return true;
+    uint64_t sample,server;float back_lerp;bool physical;
+    if (!client_sample(frontend,&sample,&server,&back_lerp,&physical,error)) return false;
+    *seconds=(double)(sample/UINT64_C(1000000))/1000.0;
+    return true;
+}
 bool frontend_particle_q2_player_sample(qa_frontend *frontend, uint32_t seat, qa_actor_id actor,
     qa_application_native_q2_player_sample *out, uint32_t *old_gun_frame,
     float *back_lerp, bool *found, qa_error *error)
