@@ -441,8 +441,8 @@ typedef struct qa_scene_state {
 } qa_scene_state;
 typedef enum qa_scene_texture_environment {
     QA_TEXTURE_MODULATE, QA_TEXTURE_ADD, QA_TEXTURE_REPLACE,
-    /* Opaque framebuffer base pass, then the original EQUAL-depth lightmap
-     * blend. The base color is quantized to RGBA8 before this secondary pass. */
+    /* Opaque base/lightmap combination. Native GL evaluates both texture units
+     * before destination conversion; CPU retains its byte framebuffer rules. */
     QA_TEXTURE_LIGHTMAP_MODULATE, QA_TEXTURE_LIGHTMAP_INVERT_COLOR,
     QA_TEXTURE_LIGHTMAP_INVERT_ALPHA
 } qa_scene_texture_environment;

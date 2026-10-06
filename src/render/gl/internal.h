@@ -201,11 +201,24 @@ typedef struct gl_vertex_array {
     bool swap_uv, color_array;
 } gl_vertex_array;
 
+typedef struct gl_world_page {
+    GLuint vertex_buffer;
+    size_t vertex_capacity, vertex_count, references;
+    gl_vertex_array array;
+    struct gl_world_page *next;
+} gl_world_page;
+typedef struct gl_world_group {
+    gl_world_page *page;
+    size_t index_count;
+} gl_world_group;
+
 typedef struct gl_mesh_entry {
     uint64_t identity, revision;
     const qa_scene_geometry *geometry;
     size_t vertex_count, index_count;
     GLuint vertex_buffer, index_buffer;
+    size_t vertex_offset;
+    gl_world_page *world_page;
     gl_vertex_array array;
     struct gl_mesh_entry *next;
 } gl_mesh_entry;
@@ -260,6 +273,10 @@ struct qa_gl_renderer {
     gl_mesh_entry *meshes;
     qa_render_resource_index mesh_index;
     gl_stream_buffers stream;
+    gl_world_page *world_pages;
+    GLuint world_index_buffer;
+    uint32_t *world_indices;
+    size_t world_index_capacity, world_index_bytes, world_index_cursor;
     qa_scene_vertex *particle_vertices;
     uint32_t *particle_indices;
     size_t particle_capacity;
@@ -290,6 +307,27 @@ struct qa_gl_renderer {
     bool destroy_pending;
     gl_restore_storage *restore;
 };
+/* The scene fold admits opaque base/lightmap pairs. Native multitexture
+ * computes their product before the destination's one color conversion. */
+static inline bool gl_lightmap_combined(const qa_scene_draw *draw)
+{
+    return draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE &&
+        draw->environment <= QA_TEXTURE_LIGHTMAP_INVERT_ALPHA &&
+        draw->single_coverage && draw->texture_count == 2 && draw->textures[0] && draw->textures[1] &&
+        draw->state.blend_source == QA_BLEND_ONE && draw->state.blend_destination == QA_BLEND_ZERO &&
+        draw->state.depth_test == QA_DEPTH_LEQUAL && draw->state.depth_write && draw->state.color_write &&
+        draw->state.alpha_test == QA_ALPHA_NONE && !draw->state.stencil_enabled &&
+        !draw->state.polygon_offset && !draw->state.wireframe && !draw->luminance_alpha &&
+        !draw->source_primitives && !draw->source_arrays && !draw->source_direct && !draw->source_stage_state &&
+        !draw->source_retain_depth_range && !draw->source_retain_polygon_offset && !draw->source_vertex_storage &&
+        !draw->retain_texture[0] && !draw->retain_texture[1] && !draw->light_count && !draw->shadow_atlas &&
+        (draw->lighting == QA_LIGHT_VERTEX ||
+         (draw->lighting == QA_LIGHT_Q2_WORLD && draw->light_pass == QA_LIGHT_PASS_LIGHTMAP)) &&
+        (draw->fog.kind == QA_FOG_NONE || draw->fog.kind == QA_FOG_Q2 ||
+         (draw->fog.kind == QA_FOG_EXP2 && draw->fog.density == 0 && draw->fog.height_density == 0 &&
+          draw->fog.effect != QA_FOG_OVERLAY));
+}
+
 #include "state.h"
 
 void gl_restore_storage_destroy(qa_gl_renderer *);
@@ -322,6 +360,11 @@ bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
                   gl_mesh_entry *, const qa_scene_vertex_inputs *, bool cached_arrays,
                   size_t *index_offset, GLint *base_vertex, qa_error *error);
 void gl_mesh_unbind(qa_gl_renderer *renderer);
+bool gl_world_group_prepare(qa_gl_renderer *, const qa_scene_command *, size_t,
+                            gl_world_group *, size_t *, qa_error *);
+bool gl_world_group_bind(qa_gl_renderer *, const gl_world_group *,
+                         const qa_scene_vertex_inputs *, size_t *, qa_error *);
+void gl_world_pages_destroy(qa_gl_renderer *, bool native);
 
 bool gl_bind_destination(qa_gl_renderer *renderer, qa_error *error);
 bool gl_select_target(qa_gl_renderer *renderer, const qa_scene_image *image,

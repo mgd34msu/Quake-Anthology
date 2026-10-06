@@ -1049,6 +1049,17 @@ static bool mesh_storage(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
                          "OpenGL retained mesh identity changed storage");
             return false;
         }
+        if (!resident->index_buffer) {
+            if (renderer->gl.BindVertexArray) gl_state_vertex_array(renderer, 0);
+            renderer->gl.GenBuffers(1, &resident->index_buffer);
+            if (!resident->index_buffer) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating retained world index buffer"); return false; }
+            renderer->gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, resident->index_buffer);
+            renderer->gl.BufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)index_bytes, mesh->indices, GL_STATIC_DRAW);
+            if (!gl_check(renderer, "OpenGL retained world index admission", error)) {
+                renderer->gl.DeleteBuffers(1, &resident->index_buffer); resident->index_buffer = 0; return false;
+            }
+        }
+        *vertex_offset = resident->vertex_offset;
         *vertices = resident->vertex_buffer;
         *indices = resident->index_buffer;
         return true;
@@ -1097,6 +1108,146 @@ fail:
     return false;
 }
 
+static void world_page_delete(qa_gl_renderer *renderer, gl_world_page *page, bool native)
+{
+    if (native) {
+        if (page->array.name) {
+            if (!renderer->vertex_array_known || renderer->bound_vertex_array == page->array.name)
+                gl_state_vertex_array(renderer, 0);
+            renderer->gl.DeleteVertexArrays(1, &page->array.name);
+        }
+        renderer->gl.DeleteBuffers(1, &page->vertex_buffer);
+    }
+    free(page);
+}
+static void world_pages_prune(qa_gl_renderer *renderer)
+{
+    gl_world_page **link = &renderer->world_pages;
+    while (*link) {
+        gl_world_page *page = *link;
+        if (page->references) { link = &page->next; continue; }
+        *link = page->next;
+        world_page_delete(renderer, page, true);
+    }
+}
+void gl_world_pages_destroy(qa_gl_renderer *renderer, bool native)
+{
+    while (renderer->world_pages) {
+        gl_world_page *page = renderer->world_pages;
+        renderer->world_pages = page->next;
+        world_page_delete(renderer, page, native);
+    }
+    if (native && renderer->world_index_buffer)
+        renderer->gl.DeleteBuffers(1, &renderer->world_index_buffer);
+    free(renderer->world_indices);
+    renderer->world_indices = NULL;
+    renderer->world_index_buffer = 0;
+    renderer->world_index_capacity = renderer->world_index_bytes = renderer->world_index_cursor = 0;
+}
+static bool world_mesh(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
+                        gl_world_page *preferred, gl_mesh_entry **out, qa_error *error)
+{
+    *out = NULL;
+    gl_mesh_entry *entry = gl_mesh_resident(renderer, mesh);
+    if (entry && !gl_mesh_storage_matches(entry, mesh)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "OpenGL retained world identity changed storage");
+        return false;
+    }
+    if (entry && entry->world_page) {
+        if (!preferred || entry->world_page == preferred) *out = entry;
+        return true;
+    }
+    if (mesh->vertex_count > UINT32_MAX || mesh->vertex_count > (size_t)PTRDIFF_MAX / sizeof(*mesh->vertices)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "OpenGL world vertices exceed supported storage");
+        return false;
+    }
+    gl_world_page *page = preferred;
+    if (page && mesh->vertex_count > page->vertex_capacity - page->vertex_count) return true;
+    if (!page) {
+        for (page = renderer->world_pages; page; page = page->next)
+            if (mesh->vertex_count <= page->vertex_capacity - page->vertex_count) break;
+    }
+    if (!page) {
+        page = calloc(1, sizeof(*page));
+        if (!page) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating OpenGL resident world page"); return false; }
+        page->vertex_capacity = mesh->vertex_count > 65536 ? mesh->vertex_count : 65536;
+        renderer->gl.GenBuffers(1, &page->vertex_buffer);
+        if (!page->vertex_buffer) { free(page); qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating OpenGL world vertex buffer"); return false; }
+        renderer->gl.BindBuffer(GL_ARRAY_BUFFER, page->vertex_buffer);
+        renderer->gl.BufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(page->vertex_capacity * sizeof(*mesh->vertices)), NULL, GL_STATIC_DRAW);
+        if (!gl_check(renderer, "OpenGL resident world page allocation", error)) {
+            renderer->gl.DeleteBuffers(1, &page->vertex_buffer); free(page); return false;
+        }
+        page->next = renderer->world_pages;
+        renderer->world_pages = page;
+    }
+    if (!entry) {
+        if (!render_resource_reserve(&renderer->mesh_index, renderer->mesh_index.count + 1, error)) return false;
+        entry = calloc(1, sizeof(*entry));
+        if (!entry) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating OpenGL world mesh admission"); return false; }
+    }
+    size_t vertex_offset = page->vertex_count * sizeof(*mesh->vertices);
+    renderer->gl.BindBuffer(GL_ARRAY_BUFFER, page->vertex_buffer);
+    renderer->gl.BufferSubData(GL_ARRAY_BUFFER, (GLintptr)vertex_offset,
+                              (GLsizeiptr)(mesh->vertex_count * sizeof(*mesh->vertices)), mesh->vertices);
+    if (!gl_check(renderer, "OpenGL resident world vertex admission", error)) {
+        if (!entry->geometry) free(entry);
+        return false;
+    }
+    if (entry->geometry) {
+        if (entry->array.name) {
+            if (!renderer->vertex_array_known || renderer->bound_vertex_array == entry->array.name)
+                gl_state_vertex_array(renderer, 0);
+            renderer->gl.DeleteVertexArrays(1, &entry->array.name);
+            entry->array = (gl_vertex_array){0};
+        }
+        renderer->gl.DeleteBuffers(1, &entry->vertex_buffer);
+    } else {
+        entry->identity = mesh->identity; entry->revision = mesh->revision; entry->geometry = mesh->geometry;
+        entry->vertex_count = mesh->vertex_count; entry->index_count = mesh->index_count;
+        qa_scene_geometry_cache_retain(entry->geometry);
+        entry->next = renderer->meshes; renderer->meshes = entry;
+        render_resource_put(&renderer->mesh_index, entry->identity, entry->revision, NULL, entry);
+    }
+    entry->vertex_buffer = page->vertex_buffer; entry->vertex_offset = vertex_offset; entry->world_page = page;
+    page->vertex_count += mesh->vertex_count; ++page->references;
+    *out = entry;
+    return true;
+}
+static bool world_index_reserve(qa_gl_renderer *renderer, size_t required, qa_error *error)
+{
+    if (required <= renderer->world_index_capacity) return true;
+    size_t capacity = renderer->world_index_capacity ? renderer->world_index_capacity : 4096;
+    while (capacity < required && capacity <= (size_t)INT_MAX / 2) capacity *= 2;
+    if (capacity < required) capacity = required;
+    if (capacity > (size_t)INT_MAX || capacity > SIZE_MAX / sizeof(*renderer->world_indices)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "OpenGL world index run exceeds supported storage"); return false;
+    }
+    uint32_t *indices = realloc(renderer->world_indices, capacity * sizeof(*indices));
+    if (!indices) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating OpenGL world index scratch"); return false; }
+    renderer->world_indices = indices; renderer->world_index_capacity = capacity;
+    return true;
+}
+bool gl_world_group_prepare(qa_gl_renderer *renderer, const qa_scene_command *commands, size_t count,
+                            gl_world_group *group, size_t *consumed, qa_error *error)
+{
+    *group = (gl_world_group){0}; *consumed = 0;
+    for (size_t i = 0; i < count; ++i) {
+        const qa_scene_mesh *mesh = &commands[i].data.draw.mesh;
+        if (mesh->index_count > (size_t)INT_MAX - group->index_count) break;
+        gl_mesh_entry *entry;
+        if (!world_mesh(renderer, mesh, group->page, &entry, error)) return false;
+        if (!entry) break;
+        group->page = entry->world_page;
+        if (!world_index_reserve(renderer, group->index_count + mesh->index_count, error)) return false;
+        uint32_t first_vertex = (uint32_t)(entry->vertex_offset / sizeof(*mesh->vertices));
+        for (size_t j = 0; j < mesh->index_count; ++j)
+            renderer->world_indices[group->index_count + j] = first_vertex + mesh->indices[j];
+        group->index_count += mesh->index_count; ++*consumed;
+    }
+    return true;
+}
+
 static void mesh_buffers_delete(qa_gl_renderer *renderer,gl_mesh_entry *entry)
 {
     if (entry->array.name) {
@@ -1104,8 +1255,9 @@ static void mesh_buffers_delete(qa_gl_renderer *renderer,gl_mesh_entry *entry)
             gl_state_vertex_array(renderer, 0);
         renderer->gl.DeleteVertexArrays(1,&entry->array.name);
     }
-    renderer->gl.DeleteBuffers(1,&entry->vertex_buffer);
-    renderer->gl.DeleteBuffers(1,&entry->index_buffer);
+    if (entry->world_page) --entry->world_page->references;
+    else renderer->gl.DeleteBuffers(1,&entry->vertex_buffer);
+    if (entry->index_buffer) renderer->gl.DeleteBuffers(1,&entry->index_buffer);
 }
 
 void gl_meshes_prune(qa_gl_renderer *renderer)
@@ -1123,6 +1275,7 @@ void gl_meshes_prune(qa_gl_renderer *renderer)
         qa_scene_geometry_cache_release(entry->geometry);
         free(entry);
     }
+    world_pages_prune(renderer);
 }
 
 static void mesh_uv_pointers(gl_api *gl,size_t vertex_offset,bool swap_uv)
@@ -1159,29 +1312,12 @@ static void mesh_array_setup(gl_api *gl,GLuint vertices,GLuint indices,size_t ve
     mesh_pointers(gl,vertex_offset,swap_uv);
 }
 
-bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
-                  gl_mesh_entry *resident, const qa_scene_vertex_inputs *inputs,
-                  bool cached_arrays,size_t *index_offset,GLint *base_vertex,qa_error *error)
+static bool mesh_array_bind(qa_gl_renderer *renderer, gl_vertex_array *array,
+                            GLuint vertices, GLuint indices, size_t vertex_offset,
+                            const qa_scene_vertex_inputs *inputs, bool cached_arrays, qa_error *error)
 {
-    GLuint vertices,indices;
-    size_t vertex_offset;
-    gl_mesh_entry *stored;
-    *base_vertex=0;
-    /* Uploading element data must not change an already retained VAO's index binding. */
-    if ((!resident || !cached_arrays) && renderer->gl.BindVertexArray)
-        gl_state_vertex_array(renderer, 0);
-    if (!mesh_storage(renderer,mesh,resident,&stored,&vertices,&indices,&vertex_offset,index_offset,error)) return false;
     gl_api *gl=&renderer->gl;
     if (cached_arrays && gl->GenVertexArrays) {
-        gl_vertex_array *array=stored?&stored->array:&renderer->stream.array;
-        /* The stream stores whole vertices. Base-vertex drawing keeps its
-         * pointers fixed at zero and leaves the original local indices intact. */
-        size_t first_vertex=vertex_offset/sizeof(qa_scene_vertex);
-        if (!stored && gl->DrawElementsBaseVertex && first_vertex<=INT_MAX &&
-            (!mesh->vertex_count || mesh->vertex_count-1<=UINT32_MAX-first_vertex)) {
-            *base_vertex=(GLint)first_vertex;
-            vertex_offset=0;
-        }
         bool fresh=array->name==0;
         if (fresh) gl->GenVertexArrays(1,&array->name);
         if (!array->name) {
@@ -1214,6 +1350,47 @@ bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
     if (inputs->constant_color)
         gl->VertexAttrib4f(4,inputs->color.x,inputs->color.y,inputs->color.z,inputs->color.w);
     return true;
+}
+
+bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
+                  gl_mesh_entry *resident, const qa_scene_vertex_inputs *inputs,
+                  bool cached_arrays,size_t *index_offset,GLint *base_vertex,qa_error *error)
+{
+    GLuint vertices,indices;
+    size_t vertex_offset;
+    gl_mesh_entry *stored;
+    *base_vertex=0;
+    /* Uploading element data must not change an already retained VAO's index binding. */
+    if ((!resident || !cached_arrays) && renderer->gl.BindVertexArray)
+        gl_state_vertex_array(renderer, 0);
+    if (!mesh_storage(renderer,mesh,resident,&stored,&vertices,&indices,&vertex_offset,index_offset,error)) return false;
+    gl_vertex_array *array=stored?&stored->array:&renderer->stream.array;
+    if (cached_arrays && renderer->gl.GenVertexArrays) {
+        /* The stream stores whole vertices. Base-vertex drawing keeps its
+         * pointers fixed at zero and leaves the original local indices intact. */
+        size_t first_vertex=vertex_offset/sizeof(qa_scene_vertex);
+        if (!stored && renderer->gl.DrawElementsBaseVertex && first_vertex<=INT_MAX &&
+            (!mesh->vertex_count || mesh->vertex_count-1<=UINT32_MAX-first_vertex)) {
+            *base_vertex=(GLint)first_vertex;
+            vertex_offset=0;
+        }
+    }
+    return mesh_array_bind(renderer,array,vertices,indices,vertex_offset,inputs,cached_arrays,error);
+}
+
+bool gl_world_group_bind(qa_gl_renderer *renderer, const gl_world_group *group,
+                         const qa_scene_vertex_inputs *inputs, size_t *index_offset, qa_error *error)
+{
+    if (renderer->gl.BindVertexArray) gl_state_vertex_array(renderer, 0);
+    if (!renderer->world_index_buffer) renderer->gl.GenBuffers(1, &renderer->world_index_buffer);
+    if (!renderer->world_index_buffer) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating OpenGL world index buffer"); return false; }
+    size_t bytes = group->index_count * sizeof(*renderer->world_indices);
+    if (!reserve_stream(renderer, GL_ELEMENT_ARRAY_BUFFER, renderer->world_index_buffer, bytes,
+        &renderer->world_index_bytes, &renderer->world_index_cursor, index_offset, error)) return false;
+    renderer->gl.BufferSubData(GL_ELEMENT_ARRAY_BUFFER, (GLintptr)*index_offset, (GLsizeiptr)bytes, renderer->world_indices);
+    if (!gl_check(renderer, "OpenGL world index run upload", error)) return false;
+    return mesh_array_bind(renderer, &group->page->array, group->page->vertex_buffer,
+        renderer->world_index_buffer, 0, inputs, true, error);
 }
 
 void gl_mesh_unbind(qa_gl_renderer *renderer)
@@ -1275,6 +1452,7 @@ void gl_resources_destroy(qa_gl_renderer *renderer)
         qa_scene_geometry_cache_release(entry->geometry);
         free(entry);
     }
+    gl_world_pages_destroy(renderer, true);
     if (renderer->stream.array.name)
         renderer->gl.DeleteVertexArrays(1,&renderer->stream.array.name);
     if (renderer->stream.vertex_buffer != 0)

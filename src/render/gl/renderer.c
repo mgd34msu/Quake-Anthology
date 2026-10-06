@@ -400,6 +400,7 @@ void qa_gl_destroy(qa_gl_renderer *renderer)
             qa_scene_geometry_cache_release(entry->geometry);
             free(entry);
         }
+        gl_world_pages_destroy(renderer, false);
         render_resource_destroy(&renderer->texture_index);
         render_resource_destroy(&renderer->source_image_index);
         render_resource_destroy(&renderer->mesh_index);
@@ -634,7 +635,7 @@ static bool draw_valid(const qa_gl_renderer *renderer,
                           state->stencil_depth_pass == QA_STENCIL_INCREMENT ||
                           state->stencil_depth_pass == QA_STENCIL_DECREMENT;
     if (draw->texture_count > 2 ||
-        (unsigned)draw->environment > QA_TEXTURE_REPLACE ||
+        (unsigned)draw->environment > QA_TEXTURE_LIGHTMAP_INVERT_ALPHA ||
         (unsigned)draw->lighting > QA_LIGHT_Q2_MODEL_SHADOW ||
         (unsigned)draw->light_pass > QA_LIGHT_PASS_MODEL ||
         (unsigned)draw->mesh.primitive > QA_SCENE_LINES ||
@@ -785,13 +786,11 @@ static void draw_source_strips(qa_gl_renderer *renderer, const qa_scene_draw *dr
 }
 
 static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
-                       qa_error *error)
+                       const gl_world_group *group, qa_error *error)
 {
     qa_scene_draw base, lightmap;
-    /* Hardware framebuffer conversion is not the CPU's byte conversion;
-     * preserve the original intermediate native color and blend operations. */
-    if (qa_scene_draw_lightmap_split(source, &base, &lightmap))
-        return draw_scene(renderer, &base, error) && draw_scene(renderer, &lightmap, error);
+    if (!gl_lightmap_combined(source) && qa_scene_draw_lightmap_split(source, &base, &lightmap))
+        return draw_scene(renderer, &base, NULL, error) && draw_scene(renderer, &lightmap, NULL, error);
     qa_scene_draw draw = *source;
     gl_mesh_entry *resident = NULL;
     qa_render_source_direct_state(&draw.state,&renderer->pipeline,source);
@@ -875,8 +874,11 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
     qa_scene_mesh uploaded=draw.mesh;
     if (draw.source_vertex_storage) uploaded.vertex_count=draw.source_vertex_storage;
     size_t index_offset;
-    GLint base_vertex;
-    if (!gl_mesh_bind(renderer, &uploaded, resident, &draw.vertex_inputs,
+    GLint base_vertex = 0;
+    size_t index_count = group ? group->index_count : draw.mesh.index_count;
+    if (group) {
+        if (!gl_world_group_bind(renderer, group, &draw.vertex_inputs, &index_offset, error)) return false;
+    } else if (!gl_mesh_bind(renderer, &uploaded, resident, &draw.vertex_inputs,
                       !source_pipeline && !draw.source_primitives,&index_offset,&base_vertex,error)) return false;
     if (source_pipeline && draw.mesh.vertex_count) {
         qa_scene_vec4 color; qa_scene_vec2 uv[2];
@@ -904,12 +906,12 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
                 return false;
             }
     if (locked) renderer->gl.LockArraysEXT(0, (GLsizei)draw.mesh.vertex_count);
-    if (mode == QA_RENDER_PRIMITIVES_INDEXED && draw.mesh.index_count != 0) {
+    if (mode == QA_RENDER_PRIMITIVES_INDEXED && index_count != 0) {
         GLenum primitive=draw.mesh.primitive==QA_SCENE_LINES?GL_LINES:GL_TRIANGLES;
         if (base_vertex)
-            renderer->gl.DrawElementsBaseVertex(primitive,(GLsizei)draw.mesh.index_count,
+            renderer->gl.DrawElementsBaseVertex(primitive,(GLsizei)index_count,
                 GL_UNSIGNED_INT,(const void *)(uintptr_t)index_offset,base_vertex);
-        else renderer->gl.DrawElements(primitive,(GLsizei)draw.mesh.index_count,
+        else renderer->gl.DrawElements(primitive,(GLsizei)index_count,
                 GL_UNSIGNED_INT,(const void *)(uintptr_t)index_offset);
     }
     else if (mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS || mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS)
@@ -941,6 +943,89 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
         renderer->pipeline.color_write=true;
     }
     return gl_check(renderer, "OpenGL scene draw", error);
+}
+
+static bool world_draw(const qa_scene_draw *draw)
+{
+    return draw->light_count <= GL_MAX_LIGHTS_QA && (!draw->light_count || draw->lights) &&
+        draw->single_coverage && draw->mesh.identity && draw->mesh.geometry &&
+        draw->mesh.vertex_count && draw->mesh.index_count && draw->mesh.primitive == QA_SCENE_TRIANGLES &&
+        draw->state.blend_source == QA_BLEND_ONE && draw->state.blend_destination == QA_BLEND_ZERO &&
+        draw->state.depth_test == QA_DEPTH_LEQUAL && draw->state.depth_write && draw->state.color_write &&
+        !draw->state.stencil_enabled && !draw->state.wireframe && !draw->state.polygon_offset &&
+        !draw->source_primitives && !draw->source_arrays && !draw->source_direct && !draw->source_stage_state &&
+        !draw->source_retain_depth_range && !draw->source_retain_polygon_offset && !draw->source_vertex_storage &&
+        !draw->retain_texture[0] && !draw->retain_texture[1] &&
+        (draw->environment <= QA_TEXTURE_REPLACE || gl_lightmap_combined(draw));
+}
+static bool world_draw_matches(const qa_scene_draw *first, const qa_scene_draw *next)
+{
+    if (!world_draw(next)) return false;
+#define SAME(field) do { if (first->field != next->field) return false; } while (0)
+    SAME(texture_count); SAME(environment); SAME(lighting);
+    SAME(light_pass); SAME(light_count); SAME(shadow_atlas);
+    SAME(shadow_near); SAME(shade_scale); SAME(model_shade_scale);
+    SAME(luminance_alpha); SAME(entity); SAME(fog_index);
+    SAME(light_mask); SAME(vertex_inputs.constant_color); SAME(vertex_inputs.swap_uv);
+    SAME(state.blend_source); SAME(state.blend_destination); SAME(state.depth_test);
+    SAME(state.alpha_test); SAME(state.cull); SAME(state.depth_write);
+    SAME(state.color_write); SAME(state.polygon_offset); SAME(state.wireframe);
+    SAME(state.depth_near); SAME(state.depth_far); SAME(state.offset_factor);
+    SAME(state.offset_units); SAME(state.line_width); SAME(state.stencil_enabled);
+    SAME(state.stencil_test); SAME(state.stencil_reference); SAME(state.stencil_compare_mask);
+    SAME(state.stencil_write_mask); SAME(state.stencil_fail); SAME(state.stencil_depth_fail);
+    SAME(state.stencil_depth_pass); SAME(fog.kind); SAME(fog.effect);
+    SAME(fog.density); SAME(fog.amount); SAME(fog.sky_factor);
+    SAME(fog.height_density); SAME(fog.height_start); SAME(fog.height_end);
+    SAME(fog.height_falloff); SAME(fog.far_depth); SAME(fog.sky_drawn);
+#undef SAME
+    if (first->textures[0] != next->textures[0] || first->textures[1] != next->textures[1] ||
+        memcmp(&first->vertex_inputs.color, &next->vertex_inputs.color, sizeof(first->vertex_inputs.color)) ||
+        memcmp(first->model.m, next->model.m, sizeof(first->model.m)) ||
+        memcmp(first->mvp.m, next->mvp.m, sizeof(first->mvp.m)) ||
+        memcmp(&first->fog.color, &next->fog.color, sizeof(first->fog.color)) ||
+        memcmp(&first->fog.height_color, &next->fog.height_color, sizeof(first->fog.height_color)) ||
+        memcmp(&first->fog.height_end_color, &next->fog.height_end_color, sizeof(first->fog.height_end_color))) return false;
+    for (size_t i = 0; i < first->light_count; ++i) {
+        const qa_scene_shadow_light *a = first->lights + i, *b = next->lights + i;
+#define LIGHT(field) do { if (a->field != b->field) return false; } while (0)
+        LIGHT(light.radius); LIGHT(light.minimum); LIGHT(light.scale); LIGHT(light.cos_half_angle);
+        LIGHT(light.additive); LIGHT(light.spot); LIGHT(light.casts_shadow); LIGHT(light.identity); LIGHT(light.revision);
+        LIGHT(light.shadow_resolution); LIGHT(light.family); LIGHT(point_shadow); LIGHT(shadow_valid);
+#undef LIGHT
+        if (memcmp(&a->light.origin, &b->light.origin, sizeof(a->light.origin)) ||
+            memcmp(&a->light.color, &b->light.color, sizeof(a->light.color)) ||
+            memcmp(&a->light.direction, &b->light.direction, sizeof(a->light.direction)) ||
+            memcmp(&a->atlas_rect, &b->atlas_rect, sizeof(a->atlas_rect)) ||
+            memcmp(a->shadow_matrix.m, b->shadow_matrix.m, sizeof(a->shadow_matrix.m)) ||
+            memcmp(&a->model_fraction, &b->model_fraction, sizeof(a->model_fraction))) return false;
+    }
+    return true;
+}
+
+static bool world_draw_run(qa_gl_renderer *renderer, const qa_scene_frame *frame,
+                            size_t first, size_t *consumed, qa_error *error)
+{
+    *consumed = 1;
+    const qa_scene_draw *draw = &frame->commands[first].data.draw;
+    size_t count = 1;
+    if (world_draw(draw))
+        while (count < frame->command_count - first &&
+               frame->commands[first + count].kind == QA_SCENE_COMMAND_DRAW &&
+               world_draw_matches(draw, &frame->commands[first + count].data.draw)) ++count;
+    if (count == 1) return draw_scene(renderer, draw, NULL, error);
+    for (size_t i = 0; i < count; ++i) {
+        gl_mesh_entry *resident;
+        if (!draw_valid(renderer, &frame->commands[first + i].data.draw, &resident, error)) {
+            renderer->frame_command = first + i;
+            if (error) error->offset = first + i;
+            return false;
+        }
+    }
+    gl_world_group group;
+    if (!gl_world_group_prepare(renderer, frame->commands + first, count, &group, consumed, error)) return false;
+    if (*consumed < 2) { *consumed = 1; return draw_scene(renderer, draw, NULL, error); }
+    return draw_scene(renderer, draw, &group, error);
 }
 
 static bool select_draw_buffer(qa_gl_renderer *renderer,
@@ -1110,14 +1195,16 @@ static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *fra
         case QA_SCENE_COMMAND_VIEW:
             ok = begin_view(renderer, &command->data.view, frame->source_backend, error);
             break;
-        case QA_SCENE_COMMAND_DRAW:
-            ok = renderer->opacity.skip ||
-                 draw_scene(renderer, &command->data.draw, error);
+        case QA_SCENE_COMMAND_DRAW: {
+            size_t consumed = 1;
+            ok = renderer->opacity.skip || world_draw_run(renderer, frame, i, &consumed, error);
+            if (ok) i += consumed - 1;
             break;
+        }
         case QA_SCENE_COMMAND_PARTICLES: {
             qa_scene_draw draw;
             ok = gl_particles_prepare(renderer, &command->data.particles, &draw, error) &&
-                draw_scene(renderer, &draw, error);
+                draw_scene(renderer, &draw, NULL, error);
             break;
         }
         case QA_SCENE_COMMAND_TARGET:
@@ -1177,7 +1264,7 @@ static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *fra
             gl_mesh_unbind(renderer);
             gl_state_invalidate(renderer);
             gl_opacity_abort(renderer);
-            if (error != NULL) error->offset = i;
+            if (error != NULL) error->offset = renderer->frame_command;
             return false;
         }
     }
@@ -2046,7 +2133,7 @@ bool qa_gl_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error 
             if (frame.commands[c].kind!=QA_SCENE_COMMAND_DRAW) continue;
       qa_scene_draw *draw=&frame.commands[c].data.draw;
             draw->source_direct=QA_SOURCE_DIRECT_IMAGE_GRID;
-            ok=draw_scene(renderer,draw,error);
+            ok=draw_scene(renderer,draw,NULL,error);
         }
     }
     if (ok && renderer->source_image_count) {

@@ -164,7 +164,8 @@ static const char *const stage_fragment[] = {
     "  vec4 texel=primaryEnabled!=0?texture2D(primaryTexture,coordinates0):vec4(1.0);\n"
     "  if(u_luminance_alpha!=0) texel.rgb*=(texel.r+texel.g+texel.b)/3.0*vertexColor.a;\n"
     "  vec4 color=clamp(texel*vertexColor,0.0,1.0);\n"
-    "  if(u_lighting_mode==1) color=vec4(texel.rgb+dynamicLights(),1.0);\n"
+    "  if(secondaryMode>=4) { }\n"
+    "  else if(u_lighting_mode==1) color=vec4(texel.rgb+dynamicLights(),1.0);\n"
     "  else if(u_lighting_mode==2) color.rgb+=dynamicLights();\n"
     "  else if(u_lighting_mode==3) color=modelShadow(texel);\n"
     "  else if(u_lighting_mode==4) color=vec4((texel.rgb+dynamicLights())*vertexColor.rgb,texel.a*vertexColor.a);\n"
@@ -175,7 +176,12 @@ static const char *const stage_fragment[] = {
     "  if(secondaryMode!=0) { vec4 second=texture2D(secondaryTexture,coordinates1);\n"
     "    if(secondaryMode==1) color*=second;\n"
     "    else if(secondaryMode==2) color=vec4(color.rgb+second.rgb,color.a*second.a);\n"
-    "    else color=vec4(second.rgb,secondaryAlpha!=0?second.a:color.a); color=clamp(color,0.0,1.0); }\n"
+    "    else if(secondaryMode==3) color=vec4(second.rgb,secondaryAlpha!=0?second.a:color.a);\n"
+    "    else {\n"
+    "      if(u_lighting_mode==1) second=vec4(second.rgb+dynamicLights(),1.0);\n"
+    "      second=clamp(second,0.0,1.0);\n"
+    "      color*=secondaryMode==4?second:secondaryMode==5?vec4(1.0)-second:vec4(1.0-second.a);\n"
+    "    } color=clamp(color,0.0,1.0); }\n"
     "  float fogAmount=u_fog_mode==2?u_fog_amount:0.0;\n"
     "  if(u_fog_mode!=0&&u_fog_mode!=2) { float d=u_fog_amount/(64.0*gl_FragCoord.w); fogAmount=1.0-exp(-(d*d)); }\n"
     "  if(u_fog_mode!=0) color.rgb=clamp(color.rgb,0.0,1.0);\n"
@@ -552,6 +558,8 @@ bool gl_program_stage(qa_gl_renderer *renderer, const qa_scene_draw *draw,
                   -renderer->view.clip_plane.distance);
     stage_uniform_1i(renderer, &u->secondary_mode,
                   draw->texture_count < 2 || !draw->textures[1] ? 0 :
+                  draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE ?
+                      4 + (GLint)(draw->environment - QA_TEXTURE_LIGHTMAP_MODULATE) :
                   draw->environment == QA_TEXTURE_MODULATE ? 1 :
                   draw->environment == QA_TEXTURE_ADD ? 2 : 3);
     stage_uniform_1i(renderer, &u->primary_enabled,draw->texture_count>0 && draw->textures[0]!=NULL);
