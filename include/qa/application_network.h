@@ -116,8 +116,8 @@ typedef struct qa_application_network_q1_feedback {
     double origin[3];
     float angles[3];
 } qa_application_network_q1_feedback;
-/* Consume the source damage and fixangle fields once, after complete native
- * wire qualification. Requires a spawned classic NetQuake client. */
+/* Consume the returned source damage and fixangle fields once.
+ * Requires a spawned NetQuake or rerelease client. */
 bool qa_application_network_q1_consume_feedback(qa_application *, qa_actor_id,
     qa_application_network_q1_feedback *, qa_error *);
 bool qa_application_network_q1_baseline(qa_application *, qa_actor_id,

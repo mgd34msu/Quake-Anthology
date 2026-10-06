@@ -233,7 +233,7 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
         if (!qa_application_network_q1_consume_feedback(f->application, actor, &feedback, error)) return false;
         if (feedback.damage) {
             qa_vec3 from;
-            if (!frontend_view_q1_damage_origin(feedback.armor,feedback.blood,feedback.origin,&from,error)) return false;
+            if (!frontend_view_q1_damage_origin(feedback.origin,&from,error)) return false;
             frontend_view_q1_damage(&settings, body.origin, body.angles,
                 feedback.armor, feedback.blood, from, seconds, &seat->q1_view_motion);
         }

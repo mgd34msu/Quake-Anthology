@@ -353,18 +353,11 @@ const char *frontend_view_q1_face(int32_t health, uint32_t items, double seconds
     unsigned level = health >= 100 ? 4 : health > 0 ? (unsigned)health / 20 : 0;
     return faces[level][seconds <= state->face_until];
 }
-bool frontend_view_q1_damage_origin(uint8_t armor, uint8_t blood, const double from[3], qa_vec3 *out, qa_error *error)
+bool frontend_view_q1_damage_origin(const double from[3], qa_vec3 *out, qa_error *error)
 {
-    /* Local feedback traverses the same original fixed-coordinate kernel
-     * as the actual svc_damage written to remote peers and demos. */
-    uint8_t bytes[9]; qa_net_writer writer;
-    qa_net_writer_init(&writer,bytes,sizeof(bytes),error);
-    if (!qa_nq_write_damage(&writer,armor,blood,from)) return false;
-    qa_net_reader reader; qa_net_reader_init(&reader,(qa_bytes){bytes+3,qa_net_writer_size(&writer)-3},error);
-    qa_net_protocol_id protocol={.kind=QA_NET_NQ15};
-    float x=qa_q1_read_coord(&reader,protocol),y=qa_q1_read_coord(&reader,protocol),z=qa_q1_read_coord(&reader,protocol);
-    if (!qa_net_reader_finish(&reader)) return false;
-    *out=qa_v3(x,y,z); return true;
+    qa_vec3 value=qa_v3((float)from[0],(float)from[1],(float)from[2]);
+    if (!qa_vec_finite(value)) return frontend_fail(error,QA_ERROR_FORMAT,"Nonfinite Q1 Source damage center");
+    *out=value; return true;
 }
 bool frontend_view_q1_local_damage(qa_frontend *f, qa_actor_id actor, uint8_t armor, uint8_t blood,
     qa_vec3 from, qa_error *error)

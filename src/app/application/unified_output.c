@@ -94,7 +94,7 @@ static bool metadata_revision(qa_application *app, const application_unified_sou
     if (p->kind == APPLICATION_PROVIDER_Q2)
         return qa_q2_wire_lightstyle_revision(p->state.q2, &out->style_revision, error);
     if (p->kind == APPLICATION_PROVIDER_QC) {
-        struct application_qc_state *engine = application_network_q1_qc_source(app, p->owner, error);
+        struct application_qc_state *engine = application_network_q1_qc_observation(app, p->owner, error);
         if (!engine) return false;
         out->style_revision = engine->lightstyle_revision;
     } else if (p->kind == APPLICATION_PROVIDER_NATIVE && source->family == QA_GAME_Q2) {
@@ -113,7 +113,7 @@ static bool styles(qa_application *app, const application_unified_source *source
     out->styles = extent ? calloc(extent, sizeof(*out->styles)) : NULL;
     if (extent && !out->styles) return application_fail(error, QA_ERROR_MEMORY, "Retaining changed Source lightstyle patterns");
     struct application_qc_state *qc = p->kind == APPLICATION_PROVIDER_QC ?
-        application_network_q1_qc_source(app, p->owner, error) : NULL;
+        application_network_q1_qc_observation(app, p->owner, error) : NULL;
     if (p->kind == APPLICATION_PROVIDER_QC && !qc) return false;
     struct application_native_q2 *native = p->kind == APPLICATION_PROVIDER_NATIVE && source->family == QA_GAME_Q2 ?
         p->state.native.q2_engine : NULL;

@@ -52,7 +52,7 @@ qa_scene_vec4 frontend_view_q1_blend(const frontend_q1_motion_settings *,
     const frontend_q1_view_motion *,int32_t contents,bool quakeworld,uint32_t items);
 const char *frontend_view_q1_face(int32_t health,uint32_t items,double seconds,
     const frontend_q1_view_motion *);
-bool frontend_view_q1_damage_origin(uint8_t armor,uint8_t blood,const double from[3],qa_vec3 *,qa_error *);
+bool frontend_view_q1_damage_origin(const double from[3],qa_vec3 *,qa_error *);
 bool frontend_view_q1_local_damage(qa_frontend *,qa_actor_id,uint8_t armor,uint8_t blood,
     qa_vec3 from,qa_error *);
 bool frontend_view_q1_chase(const frontend_q1_view_settings *,qa_collision_geometry *,

@@ -1315,7 +1315,7 @@ static bool static_models_submit(qa_frontend *frontend, qa_actor_owner exclude,
     const qa_launch_instance *source = binding ? qa_launch_snapshot_find(launch, binding->instance) : NULL;
     const qa_product *product = source ? qa_catalog_product(qa_application_catalog(frontend->application),
         source->selection.product) : NULL;
-    if (product && product->family == QA_GAME_Q1 && product->program_kind == QA_PROGRAM_BUILTIN &&
+    if (product && product->family == QA_GAME_Q1 && source->selection.runtime == QA_PROGRAM_BUILTIN &&
         (source->selection.clock.kind == QA_CLOCK_NETQUAKE || source->selection.clock.kind == QA_CLOCK_QUAKEWORLD)) {
         qa_actor_owner provider;
         if (!qa_application_provider_owner(frontend->application, source->selection.instance, &provider))

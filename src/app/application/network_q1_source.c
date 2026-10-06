@@ -1,6 +1,25 @@
 #include "network_q1_source.h"
 #include "native_q1_wire.h"
 #include "qa/application_network.h"
+#include "qa/application_qc_presentation.h"
+
+struct application_qc_state *application_network_q1_qc_observation(qa_application *app,
+    qa_actor_owner expected_owner, qa_error *error)
+{
+    application_provider *primary = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    qa_application_qc_message_source source; bool found;
+    if (!primary || (expected_owner && primary->owner != expected_owner) ||
+        qa_application_get_state(app) != QA_APPLICATION_RUNNING) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Q1 observation lost its primary Source owner");
+        return NULL;
+    }
+    if (!qa_application_qc_message_source_read(app, primary->owner, &source, &found, error)) return NULL;
+    if (!found) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Q1 observation has no QC Source");
+        return NULL;
+    }
+    return primary->state.qc.engine;
+}
 
 struct application_qc_state *application_network_q1_qc_source(qa_application *app,
     qa_actor_owner expected_owner, qa_error *error)

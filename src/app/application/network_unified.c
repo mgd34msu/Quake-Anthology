@@ -48,7 +48,7 @@ static bool capacity(application_provider *source, uint32_t *out, bool checkpoin
     if (source->kind == APPLICATION_PROVIDER_Q3)
         return qa_q3_source_max_clients(source->state.q3, out, error);
     if (source->kind == APPLICATION_PROVIDER_QC) {
-        struct application_qc_state *engine = application_network_q1_qc_source(source->application,
+        struct application_qc_state *engine = application_network_q1_qc_observation(source->application,
             source->owner, error);
         if (!engine) return false;
         *out = engine->max_clients;
@@ -367,7 +367,7 @@ static bool physical_player(application_provider *source, const application_play
         return true;
     }
     if (source->kind == APPLICATION_PROVIDER_QC) {
-        struct application_qc_state *engine = application_network_q1_qc_source(source->application,
+        struct application_qc_state *engine = application_network_q1_qc_observation(source->application,
             source->owner, error);
         if (!engine || !application_network_q1_qc_client(engine, row->actor, &slot, error) ||
             slot != row->client_slot + 1) return false;
