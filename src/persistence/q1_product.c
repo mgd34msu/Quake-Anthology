@@ -37,7 +37,7 @@ static bool game_directory(const qa_q1_save_data *save,const char **game,size_t 
     return *game!=NULL || failure(error,"Source save has no game directory");
 }
 bool qa_q1_save_select_product(const qa_catalog *catalog,const qa_q1_save_data *save,
-    const char *path,const qa_product **out,qa_error *error)
+    const char *path,const qa_product *preferred,const qa_product **out,qa_error *error)
 {
     if (!catalog || !path || !out || !qa_q1_save_singleplayer(save,error)) return false;
     const char *game=NULL; size_t game_size=0;
@@ -55,7 +55,7 @@ bool qa_q1_save_select_product(const qa_catalog *catalog,const qa_q1_save_data *
         while (parent>path && parent[-1]!='/' && parent[-1]!='\\') --parent;
         parent_size=(size_t)(end-parent);
     }
-    const qa_product *only=NULL,*contextual=NULL;
+    const qa_product *only=NULL,*contextual=NULL,*preferred_match=NULL;
     qa_error mismatch={0};
     size_t count=0,context_count=0;
     for (size_t i=0;i<qa_catalog_count(catalog);++i) {
@@ -83,35 +83,40 @@ bool qa_q1_save_select_product(const qa_catalog *catalog,const qa_q1_save_data *
             mismatch=observed;continue;
         }
         ++count; only=product;
+        if (product==preferred) preferred_match=product;
         if ((product->key && equal(product->key,strlen(product->key),parent,parent_size)) ||
             (product->directory && equal(basename(product->directory),strlen(basename(product->directory)),parent,parent_size)))
             { ++context_count; contextual=product; }
     }
     free(map);
     if (context_count==1) { *out=contextual; return true; }
+    if (preferred_match) { *out=preferred_match; return true; }
     if (count==1) { *out=only; return true; }
     if (!count && mismatch.code!=QA_OK) { if (error) *error=mismatch;return false; }
     return failure(error,count?"Original save matches several installed games; its content does not identify one":
         "Required original save game content is not installed");
 }
 bool qa_q2_save_select_product(const qa_catalog *catalog,const qa_q2_save_data *save,
-    const qa_product **out,qa_error *error)
+    const qa_product *preferred,const qa_product **out,qa_error *error)
 {
     if (!catalog || !save || !out) return failure(error,"Original Quake II save requires its actual catalog and state");
     const char *game="baseq2";
     for (size_t i=0;i<save->server.cvar_count;++i)
         if (!strcmp(save->server.cvars[i].name,"game"))
             game=*save->server.cvars[i].value?basename(save->server.cvars[i].value):"baseq2";
-    const qa_product *selected=NULL;
+    const qa_product *selected=NULL,*preferred_match=NULL;
+    size_t count=0;
     for (size_t i=0;i<qa_catalog_count(catalog);++i) {
         const qa_product *product=qa_catalog_at(catalog,i);
         if (!product || product->family!=QA_GAME_Q2 || product->edition!=QA_EDITION_CLASSIC ||
             product->availability!=QA_CONTENT_INSTALLED || !product->directory) continue;
         const char *directory=basename(product->directory);
         if (!equal(game,strlen(game),directory,strlen(directory))) continue;
-        if (selected) return failure(error,"Original Quake II save matches several installed game directories");
-        selected=product;
+        ++count;selected=product;
+        if (product==preferred) preferred_match=product;
     }
+    if (preferred_match) { *out=preferred_match;return true; }
+    if (count>1) return failure(error,"Original Quake II save matches several installed game directories");
     if (!selected) return failure(error,"Required original Quake II game directory is not installed");
     *out=selected;return true;
 }

@@ -618,14 +618,14 @@ static bool restore_saved(qa_frontend **slot, frontend_save_commands *owner,
         return qa_frontend_persistence_restore(slot,f->options.persistence_services,
             *image,displaced,retained_candidate,error);
     }
-    const qa_product *product=NULL;
+    const qa_product *product=NULL,*preferred=qa_application_save_original_product(f->application);
     qa_frontend_original_save original={0};
     bool ok=false;
     if (*source) {
-        ok=qa_q1_save_select_product(qa_application_catalog(f->application),*source,path,&product,error);
+        ok=qa_q1_save_select_product(qa_application_catalog(f->application),*source,path,preferred,&product,error);
         original=(qa_frontend_original_save){.family=QA_GAME_Q1,.state.q1=*source};
     } else {
-        ok=qa_q2_save_select_product(qa_application_catalog(f->application),*q2,&product,error) &&
+        ok=qa_q2_save_select_product(qa_application_catalog(f->application),*q2,preferred,&product,error) &&
             qa_application_q2_save_import_ready(f->application,*q2,product->key,error);
         original=(qa_frontend_original_save){.family=QA_GAME_Q2,.state.q2=*q2};
     }

@@ -34,9 +34,10 @@ static bool select_product(frontend_seat *seat,const qa_q1_save_data *source,con
     const qa_product **out,qa_error *error)
 {
     qa_application *application=seat->frontend->application;
-    return source?(qa_q1_save_select_product(qa_application_catalog(application),source,path,out,error) &&
+    const qa_product *preferred=qa_application_save_original_product(application);
+    return source?(qa_q1_save_select_product(qa_application_catalog(application),source,path,preferred,out,error) &&
         qa_application_q1_save_import_ready(application,source,(*out)->key,error)):
-        (qa_q2_save_select_product(qa_application_catalog(application),q2,out,error) &&
+        (qa_q2_save_select_product(qa_application_catalog(application),q2,preferred,out,error) &&
          qa_application_q2_save_import_ready(application,q2,(*out)->key,error));
 }
 static bool refresh(frontend_seat *seat, qa_error *error)
