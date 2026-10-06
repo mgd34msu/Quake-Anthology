@@ -246,8 +246,7 @@ void cpu_sample_texture(const cpu_sampler *sampler, double u, double v,
 static bool nearest_mip_level(const cpu_sampler *sampler, const double axes[4],
                                size_t *out) {
 #if FLT_RADIX == 2 && DBL_MANT_DIG == 53 && DBL_MAX_EXP == 1024
-  if (!sampler->nearest_mip || sizeof(double) != sizeof(uint64_t) ||
-      fegetround() != FE_TONEAREST) return false;
+  if (!sampler->nearest_mip || sizeof(double) != sizeof(uint64_t)) return false;
   for (size_t i = 0; i < 4; ++i) {
     double value = fabs(axes[i]);
     if (!isfinite(value) || (value != 0 &&

@@ -129,6 +129,7 @@ static cpu_raster_job raster_command_job(const cpu_raster_job *batch,
   cpu_raster_job job = *batch;
   job.draw = &command->draw;
   job.samplers = command->samplers;
+  job.rounding = command->rounding;
   job.kernel = command->kernel;
   job.triangles = command->row_kernel ? NULL : batch->triangles + command->first;
   job.row_kernel = command->row_kernel;
@@ -1328,6 +1329,17 @@ static void raster_geometry(const cpu_raster_job *job, cpu_triangle_output *outp
   }
 }
 static void raster_prepared_draw(const cpu_raster_job *job) {
+  cpu_raster_job entered;
+  cpu_sampler samplers[2];
+  if (job->rounding != FE_TONEAREST) {
+    entered = *job;
+    for (size_t i = 0; i < job->draw->texture_count; ++i) {
+      samplers[i] = job->samplers[i];
+      samplers[i].nearest_mip = false;
+    }
+    entered.samplers = samplers;
+    job = &entered;
+  }
   if (!job->triangles) {
     raster_geometry(job, NULL);
     return;
@@ -1406,7 +1418,6 @@ static void raster_draw(cpu_raster_job *job) {
     raster_prepared_draw(job);
     return;
   }
-  job->rounding = fegetround();
   if (job->rounding < 0) {
     raster_prepared_draw(job);
     return;
@@ -1621,7 +1632,7 @@ static bool raster_queue(cpu_raster_job *job) {
   raster_geometry(job, &output);
   cpu_raster_command command = {.draw = *job->draw, .kernel = job->kernel, .bounds = job->bounds,
       .first = first, .count = pool->triangle_count - first};
-  command.rounding = fegetround();
+  command.rounding = job->rounding;
   if (output.failed || command.rounding < 0) {
     pool->triangle_count = first;
     return false;
@@ -1720,7 +1731,7 @@ static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
     if (draw->mesh.index_count && !transform(renderer, draw, mode, error)) return false;
     cpu_raster_job job = {.renderer = renderer, .draw = draw,
         .samplers = samplers, .kernel = cpu_fragment_select(renderer, draw),
-        .mode = mode, .bounds = scissor(renderer)};
+        .mode = mode, .bounds = scissor(renderer), .rounding = fegetround()};
     for (size_t i = 0; batchable && i < draw->texture_count; ++i)
       if (draw->textures[i] && samplers[i].target == renderer->current)
         batchable = false;

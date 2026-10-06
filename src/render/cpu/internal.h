@@ -120,7 +120,8 @@ typedef struct cpu_sampler {
   const cpu_framebuffer *target;
   const double *components, *target_components;
   size_t level_count;
-  bool linear, magnification_linear, blend, alpha, nearest_mip;
+  bool linear, magnification_linear, blend, alpha;
+  bool nearest_mip; /* Nearest rounding in the entered sampling scope. */
   double magnification_limit;
 } cpu_sampler;
 static inline bool cpu_sampler_requires_derivatives(const cpu_sampler *sampler) {
