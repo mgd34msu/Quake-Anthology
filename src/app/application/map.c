@@ -939,23 +939,17 @@ static bool q1_campaign_schedule(void *opaque, qa_q1_campaign_timer timer,
 
 static bool q1_campaign_source_options(
     application_provider *provider, const qa_product *product,
-    const qa_launch_choices *choices, qa_string_id current_map,
-    qa_q1_campaign_source_options *out, qa_error *error)
+    qa_string_id current_map, qa_q1_campaign_source_options *out, qa_error *error)
 {
-    qa_mode_rules mode = {0};
-    bool has_mode = choices->mode_count != 0;
-    if (has_mode) {
-        size_t selected = 0;
-        for (size_t index = 0; index < choices->mode_count; ++index)
-            if (choices->modes[index].primary_score) {
-                selected = index;
-                break;
-            }
-        mode = choices->modes[selected].rules;
+    qa_q1_options source;
+    if (provider->application->operation == APPLICATION_PERSISTING) {
+        if (!qa_q1_source_respawn_options_prepared(provider->state.q1, &source, error))
+            return false;
+    } else {
+        double seconds;
+        if (!qa_q1_source_respawn_options_read(provider->state.q1, &source, &seconds, error))
+            return false;
     }
-    int32_t skill = choices->world.skill < 0
-                        ? 0
-                        : choices->world.skill > 3 ? 3 : choices->world.skill;
     bool registered;
     if (!qa_catalog_q1_registered(provider->application->catalog, product->id, &registered, error))
         return false;
@@ -966,12 +960,11 @@ static bool q1_campaign_source_options(
         .world = provider->application->physics->world_actor,
         .server_flags = &provider->q1_server_flags,
         .rerelease = product->edition == QA_EDITION_RERELEASE,
-        .coop = has_mode && mode.kind == QA_MODE_COOPERATIVE,
-        .deathmatch = has_mode && mode.kind != QA_MODE_COOPERATIVE &&
-                      mode.kind != QA_MODE_SINGLE_PLAYER,
+        .coop = source.coop,
+        .deathmatch = source.deathmatch != 0,
         .registered = registered,
         .official_campaign = product->builtin,
-        .skill = skill,
+        .skill = source.skill,
         .context = provider,
         .read_text = q1_campaign_read,
         .write_text = q1_campaign_write,
@@ -1004,7 +997,6 @@ static bool q1_schedule_remove(void *opaque, qa_actor_id actor, double delay,
 
 static bool q1_map_options(application_provider *provider,
                            const qa_product *product,
-                           const qa_launch_choices *choices,
                            qa_string_id current_map,
                            qa_q1_campaign_source **source_out,
                            qa_q1_level **level_out,
@@ -1013,7 +1005,7 @@ static bool q1_map_options(application_provider *provider,
     *source_out = NULL;
     *level_out = NULL;
     qa_q1_campaign_source_options source_options;
-    if (!q1_campaign_source_options(provider, product, choices, current_map,
+    if (!q1_campaign_source_options(provider, product, current_map,
                                     &source_options, error))
         return false;
     qa_q1_intermission_rule rule;
@@ -1095,13 +1087,12 @@ failed:
 
 static bool q1_begin_map(application_provider *provider,
                          const qa_product *product,
-                         const qa_launch_choices *choices,
                          qa_string_id current_map, qa_error *error)
 {
     qa_q1_campaign_source *source;
     qa_q1_level *level;
     qa_q1_map_options options;
-    if (!q1_map_options(provider, product, choices, current_map, &source,
+    if (!q1_map_options(provider, product, current_map, &source,
                         &level, &options, error))
         return false;
     if (!application_bots_npc_idle(provider)) {
@@ -2078,9 +2069,8 @@ static bool q1_spawn_map(application_provider *provider,
             break;
         }
         bool inhibited = source.quakeworld ? (flags & 2048u) != 0 :
-            source.edition == QA_Q1_CLASSIC &&
-            (source.deathmatch ? (flags & 2048u) != 0 :
-                (flags & (source.skill == 0 ? 256u : source.skill == 1 ? 512u : 1024u)) != 0);
+            source.deathmatch ? (flags & 2048u) != 0 :
+            (flags & (source.skill == 0 ? 256u : source.skill == 1 ? 512u : 1024u)) != 0;
         if (inhibited) {
             ok = qa_q1_wire_slot_free(provider->state.q1, binding->source_slot, error);
             continue;
@@ -2864,7 +2854,7 @@ bool application_map_restore_bind(qa_application *application,
             return application_fail(error, QA_ERROR_ARGUMENT,
                                     "restored map binding requires fresh attached providers");
         if (provider->kind == APPLICATION_PROVIDER_Q1) {
-            if (!q1_begin_map(provider, provider->product, choices,
+            if (!q1_begin_map(provider, provider->product,
                                application->current_map, error))
                 return false;
         } else if (provider->kind == APPLICATION_PROVIDER_Q2) {
@@ -3087,7 +3077,7 @@ bool application_map_publish(qa_application *application,
                 return application_fail(error, QA_ERROR_NOT_FOUND,
                                         "provider product disappeared during map publication");
             if (provider->kind == APPLICATION_PROVIDER_Q1) {
-                if (!q1_begin_map(provider, product, choices, current_map, error))
+                if (!q1_begin_map(provider, product, current_map, error))
                     return false;
             } else if (provider->kind == APPLICATION_PROVIDER_Q2) {
                 if (unit && !qa_q2_campaign_leave_unit(provider->state.q2, error))

@@ -968,9 +968,6 @@ bool application_native_q1_console_create(application_provider *provider,
             owner->info_initialized = true;
         }
     }
-    if (okay) okay = qa_cvars_set(cvars, "skill", skill, true, error) &&
-        qa_cvars_set(cvars, "deathmatch", deathmatch, true, error) &&
-        qa_cvars_set(cvars, "coop", coop, true, error);
     if (!okay) application_native_q1_console_destroy(provider, NULL);
     return okay;
 }
