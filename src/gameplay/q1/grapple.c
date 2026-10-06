@@ -53,12 +53,11 @@ void q1_grapple_released(qa_q1_game *g, qa_actor_record released) {
     q1_ref reference = g->wire && released.owner == g->options.provider && released.has_source ?
         q1_ref_source(g, released.source_slot) : qa_actor_reference_lifetime(actor);
     q1_player *player = owner_state(g, actor);
-    if (player)
+    if (player && (q1_ref_present(player->hook) ||
+                   q1_ref_present(player->grapple_weapon.animation) || player->grapple_pulling))
         (void)qa_q1_grapple_release(g, actor, NULL);
     q1_actor *entity = actor.slot < g->capacity ? g->actors[actor.slot] : NULL;
-    if (entity && qa_actor_id_equal(entity->id, actor) && entity->kind == Q1_TIMER &&
-        !strcmp(qa_strings_cstr(qa_session_strings(g->services.session), entity->classname),
-            "ctf_hook_animation")) {
+    if (entity && qa_actor_id_equal(entity->id, actor) && entity->kind == Q1_TIMER) {
         q1_player *owner = owner_state(g, q1_ref_actor(g, entity->owner));
         if (owner && q1_ref_equal(owner->grapple_weapon.animation, reference))
             owner->grapple_weapon.animation = (q1_ref){0};
