@@ -7,6 +7,8 @@ q3n_mission_hud *q3nm_active(void) { return q3menu_active()->owner; }
 void q3nm_result(bool result)
 { q3menu_context *context=q3menu_active(); q3n_mission_hud *o=context->owner;
     if(!result || (o->frame&&!q3nm_current(o,o->frame,context->error)))context->failed=true; }
+static const qa_application_q3_client_context *recipient(const q3n_mission_hud *o)
+{ return o->native_recipient ? o->native_recipient : &o->options.recipient; }
 bool q3nm_current(q3n_mission_hud *o, const q3n_frame *f, qa_error *e)
 {
     if(o&&o->options.compiled_source) {
@@ -20,7 +22,7 @@ bool q3nm_current(q3n_mission_hud *o, const q3n_frame *f, qa_error *e)
         return true;
     }
     if(o&&o->options.remote_client) {
-        const qa_application_q3_client_context *expected=&o->options.recipient;
+        const qa_application_q3_client_context *expected=recipient(o);
         const qa_application_q3_client_context *actual=f&&f->remote?&f->remote->source.basis.client:NULL;
         if(!f||!f->remote||f->compiled||!actual||f->application!=o->options.application||
            f->remote->client!=o->options.remote_client||f->remote->source.owner!=o->options.remote_source||
@@ -41,16 +43,16 @@ bool q3nm_current(q3n_mission_hud *o, const q3n_frame *f, qa_error *e)
     if (!o || !f || f->remote || f->compiled || f->application != o->options.application || f->source.source_game != o->source_game ||
         f->source.product != QA_Q3_TEAM_ARENA || f->source.publication_generation != o->publication_generation ||
         f->source.map_revision != o->map_revision || f->assets != o->options.assets || f->presentation != o->options.presentation || f->seat != o->options.seat ||
-        f->viewing_client != o->options.recipient.source_client ||
-        !qa_actor_id_equal(f->viewing_actor, o->options.recipient.source_actor) ||
+        f->viewing_client != recipient(o)->source_client ||
+        !qa_actor_id_equal(f->viewing_actor, recipient(o)->source_actor) ||
         !qa_application_native_q3_presentation_current(o->options.application, &f->source) ||
         !qa_native_q3_client_context_read(o->options.client, &context, e) ||
-        context.session != o->options.recipient.session || context.receiver != o->options.recipient.receiver ||
-        context.source_owner != o->options.recipient.source_owner || context.seat != o->options.seat ||
-        context.source_client != o->options.recipient.source_client || !qa_actor_id_equal(context.source_actor,o->options.recipient.source_actor) ||
-        context.service_owner != o->options.recipient.service_owner || context.console != o->options.recipient.console ||
-        context.frontend_lifetime != o->options.recipient.frontend_lifetime || context.cvars != o->options.recipient.cvars ||
-        context.source_cvars != o->options.recipient.source_cvars || !context.native_source ||
+        context.session != recipient(o)->session || context.receiver != recipient(o)->receiver ||
+        context.source_owner != recipient(o)->source_owner || context.seat != o->options.seat ||
+        context.source_client != recipient(o)->source_client || !qa_actor_id_equal(context.source_actor,recipient(o)->source_actor) ||
+        context.service_owner != recipient(o)->service_owner || context.console != recipient(o)->console ||
+        context.frontend_lifetime != recipient(o)->frontend_lifetime || context.cvars != recipient(o)->cvars ||
+        context.source_cvars != recipient(o)->source_cvars || !context.native_source ||
         f->client_service != o->options.client || f->reader!=o->options.reader || !qa_native_q3_wire_reader_current(o->options.reader))
         return q3ne_fail(e, QA_ERROR_ARGUMENT, "Mission HUD left its private CGAME recipient or native source");
     return true;
@@ -77,7 +79,7 @@ bool q3nm_console(q3n_mission_hud *o,const char *text,qa_error *e)
         qa_native_q3_client_console(o->options.client,text,e);
 }
 qa_cvars *q3nm_registry(const q3n_mission_hud *o)
-{ return o->options.compiled_source?o->options.compiled_cvars:o->options.recipient.cvars; }
+{ return o->options.compiled_source?o->options.compiled_cvars:recipient(o)->cvars; }
 const qa_q3_player *q3nm_player(const q3n_mission_hud *o)
 { return q3n_frame_snapshot_player(o->frame); }
 const qa_q3_player *q3nm_require_player(q3n_mission_hud *o)
@@ -291,7 +293,8 @@ static bool create(const q3n_mission_hud_options *options,const qa_native_q3_cli
 static bool allocate(const q3n_mission_hud_options *options,const qa_native_q3_client_basis *basis,q3n_mission_hud **out,qa_error *e)
 {
     q3n_mission_hud *o=calloc(1,sizeof(*o)); if(!o)return q3ne_fail(e,QA_ERROR_MEMORY,"Allocating native mission HUD");
-    o->options=*options; o->options.source=NULL;
+    const qa_native_q3_client_services *services=options->client ? qa_native_q3_client_services_read(options->client) : NULL;
+    o->options=*options; o->native_recipient=services ? &services->client : NULL; o->options.source=NULL;
     if(basis) { o->source_game=basis->source_game;
         o->publication_generation=basis->publication_generation; o->map_revision=basis->map_revision; }
     o->scoreboard_menu=o->captured_menu=-1; o->spectator_width=-1; o->spectator_paint_x2=-1;

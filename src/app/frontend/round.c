@@ -1,6 +1,7 @@
 #include "remote_q1_effects.h"
 #include "internal.h"
 #include "round.h"
+#include "native_q3_client.h"
 #include "network_q3_restart.h"
 #include "source_restore.h"
 #include "native_q2_save.h"
@@ -362,6 +363,8 @@ static bool admit_client(qa_application_q3_round_cut *cut,
         if ((!local->bound || local->movement != QA_MOVEMENT_Q3) &&
             !qa_input_command_angles(&seat->builder, control.command_angles, error)) return false;
         seat->builder.kind = control.profile.kind; seat->actor = actor;
+        if (!frontend_native_q3_round_admit(cut->frontend, cut->source,
+                client->seat, client->source_slot, client->previous_actor, actor, error)) return false;
     }
     cut->resolved[i] = true; return true;
 }

@@ -70,6 +70,8 @@ bool qa_native_q3_client_source_basis_read(qa_application *,
 bool qa_native_q3_client_service_create(qa_application *,
     const qa_application_native_q3_presentation *, qa_native_q3_client_services *,
     qa_native_q3_character_selection *, qa_native_q3_client_service **, qa_error *);
+bool qa_native_q3_client_service_admit(qa_native_q3_client_service *,
+    qa_actor_id previous, qa_actor_id admitted, qa_error *);
 bool qa_native_q3_client_service_destroy(qa_native_q3_client_service *, qa_error *);
 bool qa_native_q3_client_service_current(const qa_native_q3_client_service *);
 bool qa_native_q3_client_service_idle(const qa_native_q3_client_service *);

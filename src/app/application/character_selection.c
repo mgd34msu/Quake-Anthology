@@ -78,7 +78,6 @@ bool qa_application_player_userinfo_register(qa_cvars *cvars,uint32_t seat,const
 
 typedef struct character_selection_owner {
     qa_application *application;
-    qa_actor_id actor;
     uint32_t seat;
     qa_launch_instance_lease *metadata;
     qa_native_q3_character_selection selection;
@@ -348,7 +347,7 @@ static bool selection_current(void *context, const qa_native_q3_character_select
     bool found;
     if (!app || !selection || app->destroy_requested || app->routing_snapshot ||
         app->state == QA_APPLICATION_FAULTED || app->publication_generation != owner->selection.publication_generation ||
-        !qa_application_player_actor(app, owner->seat, &actor) || !qa_actor_id_equal(actor, owner->actor) ||
+        !qa_application_player_actor(app, owner->seat, &actor) ||
         !published(app, owner->seat, actor, &declaration, &found, NULL) || !found) return false;
     application_provider *provider = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
     qa_native_q3_character_declaration retained = {owner->model, owner->skin, owner->head_model, owner->head_skin};
@@ -403,7 +402,7 @@ bool qa_native_q3_character_selection_create(qa_application *app, uint32_t seat,
         return application_fail(error, QA_ERROR_ARGUMENT, "Character declaration does not name its actual live provider");
     character_selection_owner *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Retaining selected CHARACTER declaration");
-    owner->application = app; owner->actor = actor; owner->seat = seat;
+    owner->application = app; owner->seat = seat;
     owner->definition = copy_text(declaration.definition); owner->model = copy_text(constructor->model);
     owner->skin = copy_text(constructor->skin); owner->head_model = copy_text(constructor->head_model);
     owner->head_skin = copy_text(constructor->head_skin);

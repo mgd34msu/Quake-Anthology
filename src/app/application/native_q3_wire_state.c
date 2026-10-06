@@ -65,7 +65,6 @@ struct application_native_q3_wire_client_lease {
     qa_command_tokens owned_arguments;
     qa_q3_game *game;
     qa_cvars *registry;
-    qa_actor_id actor;
     uint64_t publication_generation, map_revision;
     int32_t initial_command_sequence, receipt_sequence;
     size_t calls;
@@ -1207,9 +1206,8 @@ static native_q3_wire_client *leased_client(application_native_q3_wire_client_le
             application_native_q3_console_registry(provider) != lease->registry ||
             app->publication_generation != lease->publication_generation ||
             app->map_revision != lease->map_revision ||
-            !qa_actor_id_equal(client->actor, lease->actor) ||
             !qa_application_player_actor(app, lease->seat, &physical) ||
-            !qa_actor_id_equal(physical, lease->actor) ||
+            !qa_actor_id_equal(physical, client->actor) ||
             !qa_q3_source_binding_read(lease->game, lease->slot, &binding, error) ||
             !binding.in_use || !binding.body_attached ||
             !qa_q3_client_slot_read(lease->game, lease->slot, &source, error) ||
@@ -1623,7 +1621,6 @@ bool qa_native_q3_wire_reader_acquire(qa_application *app, qa_actor_owner receiv
     if (!lease) return false;
     lease->builtin = true;
     lease->arguments = &lease->owned_arguments;
-    lease->actor = actor;
     lease->game = provider->state.q3;
     lease->registry = application_native_q3_console_registry(provider);
     lease->publication_generation = app->publication_generation;
@@ -1665,7 +1662,7 @@ bool qa_native_q3_wire_reader_basis(const qa_native_q3_wire_reader *reader,
     *out = (qa_native_q3_wire_basis){.application = provider->application,
         .session = provider->application->session, .source_game = reader->game,
         .source_cvars = reader->registry, .source_owner = provider->owner,
-        .receiver = reader->receiver, .actor = reader->actor, .product = product,
+        .receiver = reader->receiver, .actor = reader->wire->clients[reader->slot].actor, .product = product,
         .seat = reader->seat, .physical_client = reader->slot,
         .publication_generation = reader->publication_generation, .map_revision = reader->map_revision};
     return true;
@@ -1713,7 +1710,7 @@ bool qa_native_q3_wire_reader_command(qa_native_q3_wire_reader *reader, int32_t 
         reader->receipt_sequence = sequence;
         reader->receipt_present = present;
         reader->has_receipt = true;
-        *out = (qa_native_q3_wire_receipt){.reader = reader, .actor = reader->actor,
+        *out = (qa_native_q3_wire_receipt){.reader = reader, .actor = reader->wire->clients[reader->slot].actor,
             .publication_generation = reader->publication_generation, .map_revision = reader->map_revision,
             .sequence = sequence, .present = present, .arguments = reader->arguments};
     }
@@ -1727,7 +1724,7 @@ bool qa_native_q3_wire_receipt_current(const qa_native_q3_wire_receipt *receipt)
         receipt->present == reader->receipt_present && receipt->sequence == reader->receipt_sequence &&
         receipt->arguments == reader->arguments &&
         receipt->publication_generation == reader->publication_generation &&
-        receipt->map_revision == reader->map_revision && qa_actor_id_equal(receipt->actor, reader->actor) &&
+        receipt->map_revision == reader->map_revision && qa_actor_id_equal(receipt->actor, reader->wire->clients[reader->slot].actor) &&
         receipt->sequence == reader->wire->clients[reader->slot].consumed_server_command;
 }
 bool qa_native_q3_wire_reader_configstring(const qa_native_q3_wire_reader *reader,

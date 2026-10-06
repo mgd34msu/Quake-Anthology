@@ -77,7 +77,7 @@ bool frontend_native_q3_current(const frontend_native_q3 *row)
         b.application==row->frontend->application && b.receiver==row->view.receiver &&
         b.session==qa_application_session(row->frontend->application) && b.product==row->view.product &&
         b.source_owner==row->view.source_owner && b.seat==row->view.launch_seat &&
-        b.physical_client==row->view.physical_client && qa_actor_id_equal(b.actor,row->view.actor) &&
+        b.physical_client==row->view.physical_client && qa_actor_id_equal(b.actor,frontend_native_q3_actor(row)) &&
         row->view.seat<row->frontend->options.seats && row->view.input &&
         frontend_client_registry_matches(row->view.registry,row->view.source_launch,row->view.launch_seat) &&
         row->view.cvars==frontend_client_registry_cvars(row->view.registry);
@@ -101,14 +101,17 @@ bool frontend_native_q3_cut(frontend_native_q3 *row,const q3n_frame *f,qa_error 
     return f && frontend_native_q3_current(row) && f->application==row->frontend->application &&
         f->reader==row->view.reader && f->presentation==row->view.presentation &&
         f->seat==row->view.launch_seat && f->physical_presentation_seat==row->view.seat &&
-        f->viewing_client==row->view.physical_client && qa_actor_id_equal(f->viewing_actor,row->view.actor) &&
+        f->viewing_client==row->view.physical_client && qa_actor_id_equal(f->viewing_actor,frontend_native_q3_actor(row)) &&
         qa_application_native_q3_presentation_current(f->application,&f->source) ? true :
         frontend_fail(e,QA_ERROR_ARGUMENT,"Native frontend callback lost its real source cut or physical seat");
 }
 static void print_row(void *context,const char *text)
 {
     frontend_native_q3 *row=context;
-    if(row->console)qa_console_emit(row->console,&row->command,text);
+    if(row->console) {
+        qa_command_context origin=row->command; origin.actor=frontend_native_q3_actor(row);
+        qa_console_emit(row->console,&origin,text);
+    }
 }
 static void print_client(void *context,const char *text)
 {
@@ -144,7 +147,7 @@ static bool reliable(void *context,const qa_command_context *origin,const char *
 {
     frontend_native_q3 *row=context;
     if(!frontend_native_q3_current(row) || origin->seat!=row->view.launch_seat ||
-        !qa_actor_id_equal(origin->actor,row->view.actor))return frontend_fail(e,QA_ERROR_ARGUMENT,"Native reliable command lost its actual viewing actor");
+        !qa_actor_id_equal(origin->actor,frontend_native_q3_actor(row)))return frontend_fail(e,QA_ERROR_ARGUMENT,"Native reliable command lost its actual viewing actor");
     ++row->callbacks;
     bool ok=qa_native_q3_wire_reader_reliable(row->view.reader,text,e);
     --row->callbacks; return ok && frontend_native_q3_current(row);
@@ -153,7 +156,7 @@ static bool console_command(void *context,const qa_command_context *origin,const
 {
     frontend_native_q3 *row=context;
     return frontend_native_q3_current(row) && origin->seat==row->view.launch_seat &&
-        qa_actor_id_equal(origin->actor,row->view.actor) && qa_console_append(row->console,origin,text,e);
+        qa_actor_id_equal(origin->actor,frontend_native_q3_actor(row)) && qa_console_append(row->console,origin,text,e);
 }
 static bool command_values(void *context,int32_t weapon,float sensitivity,qa_error *e)
 {
@@ -178,7 +181,7 @@ static bool status_visible(void *context)
 static void release_services(void *context)
 {
     frontend_native_q3 *row=context;
-    row->service_released=true;
+    row->service_released=true; row->recipient=NULL;
     /* The real row keeps source registries alive through renderer teardown.
      * Service observers are already detached before this release callback. */
 }
@@ -356,7 +359,7 @@ static bool select_asset(void *context,const char *name,qa_q3_asset_kind kind,
         !strncmp(name,"models/ammo/",12))role=QA_ROLE_ARSENAL;
     else return true;
     qa_application_q3_asset_selection selected; bool found;
-    if(!qa_application_q3_asset_selection_read(row->frontend->application,row->view.actor,role,&selected,&found,e))return false;
+    if(!qa_application_q3_asset_selection_read(row->frontend->application,frontend_native_q3_actor(row),role,&selected,&found,e))return false;
     if(!found || selected.family!=QA_GAME_Q3)return true;
     frontend_visual_owner_view media;
     if(!frontend_visual_media_acquire(row->frontend,selected.provider,QA_GAME_Q3,&media,e) ||
@@ -428,7 +431,7 @@ static bool frame_settings(void *context,const q3n_native *core,
     if(!status_visible(row))out->hud.draw_2d=false;
     if(row->frontend->qc_messages) {
         qa_application_qc_client_presentation qc; bool found=false;
-        if(!frontend_qc_messages_client_vitals(row->frontend->qc_messages,row->view.actor,&qc,&found,e))return false;
+        if(!frontend_qc_messages_client_vitals(row->frontend->qc_messages,frontend_native_q3_actor(row),&qc,&found,e))return false;
         if(found)out->hud.draw_status=false;
     }
     return frontend_native_q3_current(row);
@@ -462,7 +465,7 @@ static bool recipient_current(void *context,const q3n_frame *f,const qa_applicat
         recipient->frontend_lifetime==row && recipient->service_owner==row->view.service_owner &&
         recipient->receiver==row->view.receiver && recipient->source_owner==row->view.source_owner &&
         recipient->seat==row->view.launch_seat && recipient->source_client==row->view.physical_client &&
-        qa_actor_id_equal(recipient->source_actor,row->view.actor) && recipient->cvars==row->view.cvars &&
+        qa_actor_id_equal(recipient->source_actor,frontend_native_q3_actor(row)) && recipient->cvars==row->view.cvars &&
         recipient->source_cvars==s->client.source_cvars && recipient->source_frame.number==f->source.source_frame.number &&
         recipient->source_milliseconds==f->source.source_time_ms;
 }
@@ -777,9 +780,11 @@ bool frontend_native_q3_effect(qa_frontend *f,qa_application *application,qa_act
             qa_input_command_clear(&target->builder); target->builder.kind=kind; target->builder.angles=angles;
             ok=qa_q3_presentation_clear(row->view.presentation,e); break;
         }
-        case QA_APPLICATION_Q3_LEVEL_SHOT:
+        case QA_APPLICATION_Q3_LEVEL_SHOT: {
+            qa_command_context origin=row->command; origin.actor=frontend_native_q3_actor(row);
             ok=qa_seat_console_open(f->seats[row->view.seat].console,false,e) &&
-                qa_tools_capture_levelshot(frontend_tools_owner(f),&row->command,e); break;
+                qa_tools_capture_levelshot(frontend_tools_owner(f),&origin,e); break;
+        }
         case QA_APPLICATION_Q3_DISCONNECT: {
             char *copy=malloc(strlen(text)+1);
             if(!copy)frontend_fail(e,QA_ERROR_MEMORY,"Retaining actual native disconnect");
@@ -831,7 +836,7 @@ static bool row_identity(frontend_native_q3 *row,qa_error *e)
     if(!qa_strings_intern_cstr(strings,name,&row->view.service_owner,e)) { free(name); return false; }
     free(name);
     row->command=(qa_command_context){.owner=row->view.source_owner,.seat=row->view.launch_seat,.dialect=QA_CONSOLE_Q3,
-        .origin=QA_COMMAND_SEAT,.actor=row->view.actor};
+        .origin=QA_COMMAND_SEAT,.actor=frontend_native_q3_actor(row)};
     return qa_application_capture_command_context(f->application,&row->command,&row->command,e);
 }
 static bool shader_movies_current(void *context,const frontend_material_movie_source *view)
@@ -1042,6 +1047,11 @@ bool frontend_native_q3_create(qa_frontend *f,const qa_application_native_q3_pre
     if(ok)ok=frontend_native_q3_service_options(row,&services,e) &&
         qa_native_q3_client_service_create(f->application,source,&services,&character,&row->view.client,e);
     if(ok) {
+        const qa_native_q3_client_services *retained=qa_native_q3_client_services_read(row->view.client);
+        if(!retained)ok=frontend_fail(e,QA_ERROR_ARGUMENT,"Native client has no retained recipient");
+        else row->recipient=&retained->client;
+    }
+    if(ok) {
         const qa_launch_choices *choices=qa_launch_snapshot_choices(source->publication);
         const char *name=NULL;
         for(size_t i=0;choices && i<choices->seat_count;++i)if(choices->seats[i].id==seat)name=choices->seats[i].name;
@@ -1082,6 +1092,30 @@ static frontend_native_q3 *row_at(const qa_frontend *f,size_t index)
     while(row && index--)row=row->next;
     return row;
 }
+bool frontend_native_q3_round_admit(qa_frontend *f, qa_actor_owner source,
+    uint32_t launch_seat, uint32_t physical_client, qa_actor_id previous,
+    qa_actor_id admitted, qa_error *e)
+{
+    frontend_native_q3 *selected = NULL;
+    for (frontend_native_q3 *row = f ? f->native_q3 : NULL; row; row = row->next)
+        if (row->view.source_owner == source && row->view.launch_seat == launch_seat) {
+            if (selected) return frontend_fail(e, QA_ERROR_FORMAT,
+                "Native round has duplicate retained local recipients");
+            selected = row;
+        }
+    if (!selected) return true;
+    uint32_t ordinal;
+    if (!selected->constructed || !row_idle(selected) || !selected->recipient ||
+        selected->view.physical_client != physical_client ||
+        !frontend_seat_ordinal_read(f, launch_seat, &ordinal) || selected->view.seat != ordinal ||
+        !qa_actor_id_equal(frontend_native_q3_actor(selected), previous) ||
+        !qa_native_q3_client_service_admit(selected->view.client, previous, admitted, e))
+        return frontend_fail(e, QA_ERROR_ARGUMENT,
+            "Native round lost its retained physical recipient");
+    selected->view.has_listener = false;
+    return true;
+}
+
 bool frontend_native_q3_sync(qa_frontend *f,const frontend_native_q3_factory *factory,qa_error *e)
 {
     if(!f || f->capture || f->source_restoring || !factory || !factory->compose)
@@ -1110,7 +1144,7 @@ bool frontend_native_q3_sync(qa_frontend *f,const frontend_native_q3_factory *fa
             }
         if(installed) {
             if(!installed->constructed || installed->view.seat!=ordinal ||
-                installed->view.physical_client!=physical || !qa_actor_id_equal(installed->view.actor,actor) ||
+                installed->view.physical_client!=physical || !qa_actor_id_equal(frontend_native_q3_actor(installed),actor) ||
                 !frontend_native_q3_current(installed))
                 return frontend_fail(e,QA_ERROR_ARGUMENT,"Native recipient no longer owns its published physical actor and seat");
         } else if(!frontend_native_q3_create(f,&source,seat,factory,&installed,e))return false;
@@ -1133,7 +1167,7 @@ bool frontend_native_q3_read(const qa_frontend *f,size_t index,frontend_native_q
     if(!f || !out || f->stepping || !row || row->frontend!=f || row->frame_active || row->callbacks ||
         row->service_released || !row->constructed)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native inventory requires its actual inactive physical row");
-    *out=row->view;
+    *out=row->view; out->actor=frontend_native_q3_actor(row);
     if(out->music_attached)out->music=qa_audio_engine_bus_music(f->audio,out->identity);
     return true;
 }
@@ -1150,7 +1184,7 @@ bool frontend_native_q3_factory_view(const frontend_native_q3 *row,frontend_nati
         assets.provider.images!=row->view.images || assets.provider.materials!=row->view.materials ||
         assets.sounds!=row->view.sounds || assets.movies!=row->view.movies)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native composition factory requires its actual installed constructor heaps and physical seat");
-    *out=row->view; return true;
+    *out=row->view; out->actor=frontend_native_q3_actor(row); return true;
 }
 static bool row_idle(const frontend_native_q3 *row)
 {

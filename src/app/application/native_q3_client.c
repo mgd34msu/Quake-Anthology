@@ -2,6 +2,7 @@
 #include "internal.h"
 #include "native_q3_console.h"
 #include "native_q3_wire_state.h"
+#include "qa/application_q3_round.h"
 #include "qa/game_q3_clients.h"
 #include "qa/console_cvar_observer.h"
 #include <stdlib.h>
@@ -171,6 +172,31 @@ bool qa_native_q3_client_service_create(qa_application *app,const qa_application
     *services=(qa_native_q3_client_services){0}; *character=(qa_native_q3_character_selection){0};
     *out=service; return true;
 }
+bool qa_native_q3_client_service_admit(qa_native_q3_client_service *service,
+    qa_actor_id previous, qa_actor_id admitted, qa_error *error)
+{
+    application_provider *provider = service ? physical_source(service) : NULL;
+    qa_actor_id local;
+    application_native_q3_wire_client_view transport;
+    bool present;
+    if (!provider || !service->application->q3_round_active ||
+        !qa_application_q3_round_callback_ready(service->application, provider->owner, error) ||
+        !qa_native_q3_client_service_idle(service) ||
+        !qa_actor_id_equal(service->services.client.source_actor, previous) ||
+        admitted.registry != previous.registry || qa_actor_id_equal(admitted, previous) ||
+        !qa_application_player_actor(service->application, service->services.client.seat, &local) ||
+        !qa_actor_id_equal(local, admitted) ||
+        !application_native_q3_wire_client_admission_read(provider,
+            service->services.client.source_client, &transport, &present, error) || !present ||
+        !transport.begun || transport.bot || transport.seat != service->services.client.seat ||
+        !qa_actor_id_equal(transport.actor, admitted) ||
+        !service->character.current(service->character.lifetime, &service->character))
+        return native_client_fail(error, QA_ERROR_ARGUMENT,
+            "Native round admission requires its retained client and fresh physical actor");
+    service->services.client.source_actor = admitted;
+    return true;
+}
+
 bool qa_native_q3_client_service_destroy(qa_native_q3_client_service *service,qa_error *error)
 {
     if (!service) return true;
@@ -226,6 +252,7 @@ bool qa_native_q3_client_context_read(qa_native_q3_client_service *service,
     qa_application_native_q3_presentation source;
     if (!qa_application_native_q3_presentation_read(service->application,service->services.client.source_owner,&source,error)) return false;
     qa_application_q3_client_context client=service->services.client;
+    client.command_context.actor=client.source_actor;
     client.source_frame=source.source_frame; client.source_milliseconds=source.source_time_ms;
     *out=client; return true;
 }
@@ -274,7 +301,9 @@ bool qa_native_q3_client_reliable(qa_native_q3_client_service *service,const cha
     if (!text || !qa_native_q3_client_service_current(service) || service->action_busy==SIZE_MAX)
         return native_client_fail(error,QA_ERROR_ARGUMENT,"Native CGAME reliable command lacks its actual local caller");
     ++service->action_busy;
-    bool ok=service->services.reliable(service->services.context,&service->services.reliable_origin,text,error);
+    qa_command_context origin = service->services.reliable_origin;
+    origin.actor = service->services.client.source_actor;
+    bool ok=service->services.reliable(service->services.context,&origin,text,error);
     --service->action_busy;
     return ok && qa_native_q3_client_service_current(service);
 }
@@ -283,6 +312,7 @@ bool qa_native_q3_client_console(qa_native_q3_client_service *service,const char
     if (!text || !qa_native_q3_client_service_current(service) || service->action_busy==SIZE_MAX)
         return native_client_fail(error,QA_ERROR_ARGUMENT,"Native CGAME console command lacks its actual input receipt");
     qa_command_context origin=service->services.console_origin;
+    origin.actor=service->services.client.source_actor;
     origin.script="q3-cgame"; origin.direct=false; origin.console_text=false;
     ++service->action_busy;
     bool ok=service->services.console(service->services.context,&origin,text,error);

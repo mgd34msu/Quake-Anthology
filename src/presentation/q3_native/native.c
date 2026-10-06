@@ -70,7 +70,7 @@ static bool structure_current(const q3n_native *o)
         services->client.session==o->session &&
         services->client.source_owner==o->source_owner && services->map_revision==o->map_revision &&
         services->client.seat==o->seat && services->client.source_client==o->physical_client &&
-        qa_actor_id_equal(services->client.source_actor,o->viewing_actor);
+        o->recipient==&services->client;
 }
 bool q3n_native_current(const q3n_native *o)
 { return o && !o->faulted && structure_current(o); }
@@ -98,7 +98,7 @@ bool q3n_native_owners_read(const q3n_native *o,q3n_native_owners *out,qa_error 
         .source_launch=qa_launch_instance_lease_view(o->source_lease),
         .content=qa_launch_instance_lease_view(o->source_lease)->content,.source_owner=o->source_owner,
         .seat=o->seat,.physical_client=o->physical_client,.physical_presentation_seat=o->physical_presentation_seat,
-        .viewing_actor=o->viewing_actor};
+        .viewing_actor=o->recipient->source_actor};
     return true;
 }
 static bool particle_explosion(void *context,const q3n_frame *f,const char *name,
@@ -135,7 +135,7 @@ bool q3nn_allocate(const q3n_native_options *options,bool restoring,q3n_native *
     o->options=*options; o->options.view.source=NULL; o->options.player_state.source=NULL; o->options.hud.source=NULL;
     o->source_game=basis.source_game; o->session=basis.session; o->source_owner=basis.source_owner;
     o->content_product=basis.content_product; o->product=basis.product; o->map_revision=basis.map_revision;
-    o->seat=services->client.seat; o->physical_client=services->client.source_client; o->viewing_actor=services->client.source_actor;
+    o->seat=services->client.seat; o->physical_client=services->client.source_client; o->recipient=&services->client;
     o->physical_presentation_seat=options->physical_presentation_seat;
     o->assets=qa_q3_presentation_resources(options->presentation);
     q3n_client_options clients={.content=basis.content,.assets=o->assets,.product=o->product,.reader=options->reader,
@@ -178,7 +178,7 @@ static q3n_frame frame_base(q3n_native *o,const qa_application_native_q3_present
         .particles=o->particles,.view=o->view,.player_state=o->player_state,.server_commands=o->commands,
         .client_service=o->options.client,.reader=o->options.reader,.entities=o->entities,.seat=o->seat,.viewing_client=o->physical_client,
         .physical_presentation_seat=o->physical_presentation_seat,
-        .viewing_actor=o->viewing_actor,.time=source->source_time_ms,.frame_milliseconds=o->frame_milliseconds,
+        .viewing_actor=o->recipient->source_actor,.time=source->source_time_ms,.frame_milliseconds=o->frame_milliseconds,
         .client_frame=o->client_frame,.refdef=o->previous_refdef,.view_angles=o->previous_view_angles};
 }
 bool q3n_native_command_frame(q3n_native *o,q3n_frame *out,qa_error *e)
@@ -188,7 +188,7 @@ bool q3n_native_command_frame(q3n_native *o,q3n_frame *out,qa_error *e)
     if(!o || !out || !o->initialized || !q3n_native_idle(o) || !q3nn_source(o,&source,e) ||
         !qa_application_native_q3_presentation_local(o->options.application,&source,o->seat,
             &physical,&actor,&player,&found,e) || !found || physical!=o->physical_client ||
-        !qa_actor_id_equal(actor,o->viewing_actor))
+        !qa_actor_id_equal(actor,o->recipient->source_actor))
         return q3nn_fail(e,QA_ERROR_ARGUMENT,"Native console requires its idle completed source and actual local player");
     *out=frame_base(o,&source); out->local_player=player; out->has_local_player=true;
     return true;
@@ -368,7 +368,7 @@ static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,
     qa_application_native_q3_view local; bool found;
     if(!qa_application_native_q3_presentation_visible(f->application,&source,o->seat,&local,&found,e))return false;
     if(!found)return true;
-    if(local.physical_client!=o->physical_client || !qa_actor_id_equal(local.actor,o->viewing_actor))
+    if(local.physical_client!=o->physical_client || !qa_actor_id_equal(local.actor,o->recipient->source_actor))
         return q3nn_fail(e,QA_ERROR_ARGUMENT,"Native visible frame differs from its actual installed recipient");
     f->local_player=local.player; f->has_local_player=true;
     if(f->local_player.clientNum<0 || (uint32_t)f->local_player.clientNum>=source.max_clients)

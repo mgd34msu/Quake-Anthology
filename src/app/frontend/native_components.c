@@ -229,7 +229,7 @@ bool frontend_native_components_hud(frontend_native_q3 *row,qa_error *error)
         if(!frontend_component_scene_read(f,i,&view,error)) return false;
         if(view.retired || view.origin!=APPLICATION_Q3_COMPONENT_SCENE_LOCAL || !view.begun ||
             view.physical_seat!=row->view.seat || view.sequence!=source.source_frame.number ||
-            !qa_actor_id_equal(view.viewer,row->view.actor)) continue;
+            !qa_actor_id_equal(view.viewer,frontend_native_q3_actor(row))) continue;
         if(!qa_application_q3_component_scene_hud(f->application,view.identity,view.physical_seat,view.viewer,view.sequence,error) ||
             !frontend_component_scene_pictures(f,view.identity,view.sequence,row->view.presentation,&f->frame,error)) return false;
     }

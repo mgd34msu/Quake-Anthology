@@ -74,6 +74,9 @@ bool frontend_native_q3_create(qa_frontend *, const qa_application_native_q3_pre
     uint32_t launch_seat, const frontend_native_q3_factory *, frontend_native_q3 **, qa_error *);
 /* Install genuine local recipients after the published world is prepared.
  * An already installed original CGAME keeps its physical display recipient. */
+bool frontend_native_q3_round_admit(qa_frontend *, qa_actor_owner source,
+    uint32_t launch_seat, uint32_t physical_client, qa_actor_id previous,
+    qa_actor_id admitted, qa_error *);
 bool frontend_native_q3_sync(qa_frontend *,const frontend_native_q3_factory *,qa_error *);
 bool frontend_native_q3_frame(qa_frontend *, uint32_t physical_seat, qa_scene_rect,
     bool *rendered, qa_error *);

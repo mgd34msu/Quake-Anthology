@@ -47,6 +47,8 @@ static bool identity(const qa_application_q3_client_context *a,
         a->client_time_cvars == b->client_time_cvars && a->client_time_owner == b->client_time_owner &&
         a->native_source == b->native_source;
 }
+static const qa_application_q3_client_context *recipient(const q3n_server_commands *o)
+{ return o->native_recipient ? o->native_recipient : &o->options.recipient; }
 static bool compiled_identity(const qa_command_context *a,const qa_command_context *b)
 {
     return a->session==b->session && a->owner==b->owner && a->client==b->client && a->seat==b->seat &&
@@ -88,7 +90,7 @@ bool q3nc_current(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
             !q3n_clients_remote_current(o->options.clients, &f->remote->source, e) ||
             basis.application != o->options.application || basis.application != f->application ||
             basis.product != o->options.product || basis.content != o->options.content ||
-            !identity(&basis.client, &o->options.recipient) ||
+            !identity(&basis.client, recipient(o)) ||
             f->seat != basis.client.seat || f->viewing_client != basis.physical_client ||
             !qa_actor_id_equal(f->viewing_actor, f->remote->source.publication.viewer) ||
             f->assets != o->options.assets || f->presentation != o->options.presentation ||
@@ -106,16 +108,16 @@ bool q3nc_current(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
         f->source.product != o->options.product || f->source.content != o->options.content ||
         f->source.publication_generation != o->options.publication_generation ||
         f->source.map_revision != o->options.map_revision ||
-        f->source.session != o->options.recipient.session ||
-        f->source.source_owner != o->options.recipient.source_owner ||
-        f->seat != o->options.recipient.seat || f->viewing_client != o->options.recipient.source_client ||
-        !qa_actor_id_equal(f->viewing_actor, o->options.recipient.source_actor) ||
+        f->source.session != recipient(o)->session ||
+        f->source.source_owner != recipient(o)->source_owner ||
+        f->seat != recipient(o)->seat || f->viewing_client != recipient(o)->source_client ||
+        !qa_actor_id_equal(f->viewing_actor, recipient(o)->source_actor) ||
         f->assets != o->options.assets || f->presentation != o->options.presentation ||
         f->media != o->options.media || f->clients != o->options.clients || f->events != o->options.events ||
         !qa_application_native_q3_presentation_current(f->application, &f->source) ||
         !services || services->wire_reader != o->options.reader ||
         !qa_native_q3_client_context_read(o->options.client, &client, e) ||
-        !identity(&client, &o->options.recipient) ||
+        !identity(&client, recipient(o)) ||
         !qa_native_q3_wire_reader_basis(o->options.reader, &wire, e) ||
         wire.application != f->application || wire.session != f->source.session ||
         wire.source_game != f->source.source_game || wire.source_cvars != client.source_cvars ||
@@ -152,7 +154,7 @@ static bool integer_cvar(q3n_server_commands *o, const char *symbol, int32_t *ou
 static bool set(q3n_server_commands *o, const q3n_frame *f, const char *name, const char *value, qa_error *e)
 {
     return q3nc_current(o, f, e) &&
-        qa_cvars_set(o->options.compiled_source?o->options.compiled_cvars:o->options.recipient.cvars, name, value, true, e) && q3nc_current(o, f, e);
+        qa_cvars_set(o->options.compiled_source?o->options.compiled_cvars:recipient(o)->cvars, name, value, true, e) && q3nc_current(o, f, e);
 }
 static bool set_number(q3n_server_commands *o, const q3n_frame *f, const char *name, int32_t value, qa_error *e)
 { char text[16]; snprintf(text, sizeof(text), "%d", value); return set(o, f, name, text, e); }
@@ -268,7 +270,7 @@ static bool create(const q3n_server_command_options *options, unsigned domain,
     }
     q3n_server_commands *o = calloc(1, sizeof(*o));
     if (!o) return q3nc_fail(e, QA_ERROR_MEMORY, "Allocating native CGAME server commands");
-    o->options = *options;
+    o->options = *options; o->native_recipient = services ? &services->client : NULL;
     for (unsigned i = 0; i < 8; ++i) o->voice.lists[i].gender = QA_MODEL_MALE;
     *out = o; return true;
 }
@@ -826,16 +828,16 @@ static bool receipt(q3n_server_commands *o, const q3n_frame *f, const q3n_server
             r->remote.sequence == sequence && r->sequence == sequence &&
             r->remote.present == r->present && (!r->present || r->remote.tokens) &&
             q3n_remote_command_current(o->options.remote_source, &r->remote) &&
-            identity(&r->recipient, &o->options.recipient) &&
+            identity(&r->recipient, recipient(o)) &&
             o->options.receipt_current(o->options.context, f, r) && q3nc_current(o, f, e) ? true :
             q3nc_fail(e, QA_ERROR_ARGUMENT, "Remote command receipt lost its actual Network claim or recipient");
     }
     return r->wire.reader == o->options.reader && r->wire.sequence == sequence &&
         r->wire.publication_generation == r->publication_generation && r->wire.map_revision == r->map_revision &&
-        qa_actor_id_equal(r->wire.actor, o->options.recipient.source_actor) &&
+        qa_actor_id_equal(r->wire.actor, recipient(o)->source_actor) &&
         r->wire.present == r->present && r->wire.arguments == r->arguments &&
         qa_native_q3_wire_receipt_current(&r->wire) &&
-        r->sequence == sequence && identity(&r->recipient, &o->options.recipient) &&
+        r->sequence == sequence && identity(&r->recipient, recipient(o)) &&
         r->recipient.source_milliseconds == f->source.source_time_ms &&
         r->recipient.source_frame.provider == f->source.source_frame.provider &&
         r->recipient.source_frame.kind == f->source.source_frame.kind &&

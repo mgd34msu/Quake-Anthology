@@ -214,7 +214,7 @@ static bool handle(void *context,const qa_command_invocation *command,qa_error *
     for(size_t i=0;i<command->argc;++i) { size_t n=strlen(command->argv[i]); if(n>=9216-bytes)return false; bytes+=n+1; }
     for(frontend_native_q3 *row=d->frontend->native_q3;row;row=row->next)
         if(row->constructed && row->console==d->console && row->view.source_owner==d->source &&
-            row->view.launch_seat==command->context.seat && qa_actor_id_equal(row->view.actor,command->context.actor)) {
+            row->view.launch_seat==command->context.seat && qa_actor_id_equal(frontend_native_q3_actor(row),command->context.actor)) {
             if(o)return frontend_fail(e,QA_ERROR_FORMAT,"Native console has duplicate actual recipients");
             o=row->commands;
         }

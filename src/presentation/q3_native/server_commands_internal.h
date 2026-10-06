@@ -11,6 +11,7 @@
 
 struct q3n_server_commands {
     q3n_server_command_options options;
+    const qa_application_q3_client_context *native_recipient;
     q3n_command_state state;
     q3n_voice voice;
     const q3n_compiled_source_rebind_ticket *rebind;

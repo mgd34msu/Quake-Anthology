@@ -15,7 +15,7 @@ struct q3n_native {
     qa_q3_product product;
     uint64_t map_revision;
     uint32_t seat, physical_client, physical_presentation_seat;
-    qa_actor_id viewing_actor;
+    const qa_application_q3_client_context *recipient;
     qa_q3_presentation_assets *assets;
     q3n_clients *clients;
     q3n_media *media;
