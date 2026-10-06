@@ -1112,13 +1112,13 @@ static qa_scene_fog fog_record(const qa_q2_fog *from)
     return (qa_scene_fog){.kind=QA_FOG_Q2,.color=fog_color(from->color),.density=from->density,.sky_factor=fog_fraction(from->sky_factor),
         .height_color=fog_color(from->start_color),.height_end_color=fog_color(from->end_color),
         .height_start=(float)qa_source_float_to_i32(from->start_distance),.height_end=(float)qa_source_float_to_i32(from->end_distance),
-        .height_falloff=from->falloff,.height_density=from->height_density};
+        .height_falloff=from->falloff,.height_density=from->height_density,.far_depth=1};
 }
 static qa_scene_fog fog_sample(frontend_unified_q2 *o,double seconds)
 {
     double elapsed=seconds*1000-o->fog_started_ms;
     double front=o->fog_duration_ms==0 || elapsed>o->fog_duration_ms?1:elapsed/o->fog_duration_ms,back=1-front;
-    qa_scene_fog a=o->fog_start,b=o->fog_target,result={.kind=QA_FOG_Q2};
+    qa_scene_fog a=o->fog_start,b=o->fog_target,result={.kind=QA_FOG_Q2,.far_depth=1};
     result.color=qa_v3((float)(a.color.x*back+b.color.x*front),(float)(a.color.y*back+b.color.y*front),(float)(a.color.z*back+b.color.z*front));
     result.height_color=qa_v3((float)(a.height_color.x*back+b.height_color.x*front),
         (float)(a.height_color.y*back+b.height_color.y*front),(float)(a.height_color.z*back+b.height_color.z*front));
