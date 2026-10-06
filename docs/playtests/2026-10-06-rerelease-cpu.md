@@ -1,7 +1,7 @@
 # Q2 rerelease CPU rendering, 2026-10-06
 
-The installed `acf06fa7` executable still misses both CPU frame-time targets.
-The preceding `41c128d0` build and this build ran retail `base1` from the
+The installed `694ccc53` executable still misses both CPU frame-time targets.
+Builds `41c128d0`, `acf06fa7` and `694ccc53` ran retail `base1` from the
 stationary authored spawn, with swap interval zero and dummy audio delivery.
 Each case excluded 119 presented warm-up frames and measured the next 600.
 All game threads used physical cores 0–7 through affinity `0-7,12-19`, with
@@ -12,11 +12,18 @@ timing runs. The executable remained unchanged throughout each run.
 | --- | --- | ---: | ---: | ---: |
 | `41c128d0` | 640×400 | 11.209 | 37.976 | 8.946 |
 | `acf06fa7` | 640×400 | 11.077 | 40.083 | 8.279 |
+| `694ccc53` | 640×400 | 8.292 | 11.785 | 6.281 |
 | `41c128d0` | 320×200 | 6.279 | 10.208 | 4.710 |
 | `acf06fa7` | 320×200 | 5.711 | 9.034 | 4.203 |
+| `694ccc53` | 320×200 | 5.809 | 9.210 | 3.992 |
 
-The 320×200 case improved, but remains above the 2 ms target. At 640×400 the
-median barely changed and the tail became worse; the 4 ms target remains open.
+The latest group defers triangle attribute math until depth admission, fills
+cleared viewports in bulk, and evaluates ordinary fog attenuation with native
+SIMD arithmetic. At 640×400 the median fell by 25.1% from `acf06fa7`, and p99
+fell from 40.083 ms to 11.785 ms. The 320×200 full frame did not improve, despite
+its lower mean rendering time. Neither case meets its target, 4 ms at 640×400
+and 2 ms at 320×200. The group also contains Q1 state-admission and original
+module startup changes; this comparison does not isolate each rendering edit.
 Wall-clock frames include simulation, scene construction, rendering,
 presentation and pacing. CPU render means are differences between the two
 inclusive `timers report` tables, not per-frame percentiles. The simulation
@@ -38,10 +45,12 @@ planarity fallback to four world candidates per frame. The span path wrote
 raster queue dispatches per frame. The remaining bottleneck is no longer the
 earlier repeated MD5 pose construction.
 
-All four timing cases reached the requested drawable and `base1`, exited zero,
+All six timing cases reached the requested drawable and `base1`, exited zero,
 and retained the receipt-qualified installed artifact. Private run receipts:
 `q2-rerelease-baseq2-cpu-cd24u_5b/result.json`,
 `q2-rerelease-baseq2-cpu-zrl09at5/result.json`,
 `q2-rerelease-baseq2-cpu-0v58dhur/result.json`, and
-`q2-rerelease-baseq2-cpu-5hwpc8di/result.json` under the qualified timing folder.
+`q2-rerelease-baseq2-cpu-5hwpc8di/result.json`,
+`q2-rerelease-baseq2-cpu-n0ajw24_/result.json`, and
+`q2-rerelease-baseq2-cpu-noq3o337/result.json` under the qualified timing folder.
 The diagnostic receipt is `acf06fa7-current-rr-cpu640-d9gz_azs/result.json`.

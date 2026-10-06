@@ -195,3 +195,33 @@ whole-map or pixel-perfect rendering parity. The existing nonfatal demo
 warning after classic load remains open.
 
 Receipt: `owner-jump-slipgate-save-brush-acf06fa7-proof.json`.
+
+## Installed `694ccc53`: keyboard and rendering regression checks
+
+CPU CLI, GL CLI and the actual GL menu passed default Space and raw mouse
+button 3 jump/release/landing, retained raw mouse button 2 forward movement,
+and survived Normal-slipgate travel beyond fog teardown. Original v5 saves
+restored exact player origin, angles, health, weapon, ammunition and item flags
+after real S-key movement. The stock 25-shell HUD remained visible.
+
+| Entry | Renderer | Y after moving away | Y restored by load |
+| --- | --- | ---: | ---: |
+| CLI | CPU | 1858.866821 | 2015.968750 |
+| CLI | GL | 1860.134888 | 2015.968750 |
+| Actual menu/preset | GL | 1858.188721 | 2015.968750 |
+
+All manual and level-entry saves were original text, 32,626–33,028 bytes.
+A separate visibility check on classic `e1m1` showed no textured trigger
+volumes in the corridor or slipgate view. That check used temporary noclip
+navigation and private bindings; it is excluded from movement acceptance.
+Its occluded side view adds no visibility evidence.
+
+Two Q2 rerelease `base1` CPU spawn captures at 640×400 and 320×200 retained
+lit world textures, pickup models and a see-through machinery window. These
+are bounded image checks, not whole-map parity. All six public quits exited
+zero, processes and the private display were removed, and owner settings and
+the installed artifact remained unchanged. The nonfatal demo warning after
+classic load remains open.
+
+Receipt: `owner-jump-save-visibility-brush-694ccc53-proof.json`. Full GCC and
+Clang builds and all registered checks passed before this installation.
