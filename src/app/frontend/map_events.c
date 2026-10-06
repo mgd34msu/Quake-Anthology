@@ -965,6 +965,9 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
         }
     }
     if (event->kind != QA_BUILTIN_SOUND && event->kind != QA_BUILTIN_STOP_SOUND) return true;
+    if (event->kind == QA_BUILTIN_SOUND && (event->flags & 1u) && event->actor.registry &&
+        !qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), event->actor))
+        return true;
     frontend_event_state *state;
     if (!state_read(frontend, &state, error)) return false;
     uint64_t actor = frontend_audio_actor(frontend, event->actor, error);
