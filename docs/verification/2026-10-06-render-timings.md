@@ -3,7 +3,7 @@
 These results do not meet the performance targets. The latest CPU result is
 lower, but its rendering scope still exceeds the complete-frame target.
 
-The latest measured executable was built from `c8d26292` with GCC, RelWithDebInfo and
+The latest measured executable was built from `efe9e317` with GCC, RelWithDebInfo and
 warnings treated as errors. The complete GCC and Clang builds and their six
 registered CTest checks each passed. The testing copy, `qa-c`, was compared byte
 for byte with that build after installation.
@@ -22,14 +22,20 @@ has an RTX 5060 Ti; these GL results are not measurements of that GPU.
 | `d10d5a05`, GL | 1920×1080 | 7.880 | 11.334 | <2 |
 | `c334bd85`, GL | 1920×1080 | 4.326 | 7.424 | <2 |
 | `c8d26292`, GL | 1920×1080 | 3.666 | 6.414 | <2 |
+| `b95ea767`, GL | 1920×1080 | 3.635 | 6.383 | <2 |
+| `efe9e317`, GL | 1920×1080 | 3.920 | 6.841 | <2 |
 | `b60ef5e3`, CPU | 640×400 | 47.744 | 60.916 | <4 |
 | `d10d5a05`, CPU | 640×400 | 52.881 | 108.189 | <4 |
 | `c334bd85`, CPU | 640×400 | 49.505 | 78.423 | <4 |
 | `c8d26292`, CPU | 640×400 | 23.280 | 52.069 | <4 |
+| `b95ea767`, CPU | 640×400 | 23.489 | 52.056 | <4 |
+| `efe9e317`, CPU | 640×400 | 22.574 | 50.915 | <4 |
 | `b60ef5e3`, CPU | 320×200 | 25.835 | 38.862 | <2 |
 | `d10d5a05`, CPU | 320×200 | 26.561 | 39.388 | <2 |
 | `c334bd85`, CPU | 320×200 | 24.420 | 37.030 | <2 |
 | `c8d26292`, CPU | 320×200 | 16.659 | 28.633 | <2 |
+| `b95ea767`, CPU | 320×200 | 16.955 | 29.040 | <2 |
+| `efe9e317`, CPU | 320×200 | 16.004 | 28.694 | <2 |
 
 The `d10d5a05` runs waited for active compilers and debuggers to exit before
 starting. A separate project's CPU-intensive test process was observed after
@@ -98,7 +104,9 @@ Q1 classic `e1m1`, with no fog, used the same artifact and measurement procedure
 | `c334bd85` | 640×400 | 14.927 | 17.824 | 12.341 | 1.134 | <4 |
 | `c334bd85` | 320×200 | 7.704 | 9.746 | 6.042 | 0.993 | <2 |
 | `c8d26292` | 640×400 | 11.479 | 14.290 | 9.328 | 1.094 | <4 |
+| `efe9e317` | 640×400 | 11.152 | 13.511 | 9.269 | 0.951 | <4 |
 | `c8d26292` | 320×200 | 6.881 | 8.404 | 5.326 | 0.949 | <2 |
+| `efe9e317` | 320×200 | 6.997 | 9.072 | 5.431 | 0.901 | <2 |
 
 Fog alone therefore does not account for the slow CPU path. A separate bounded
 counter capture on a private, coherently linked `315c9708` Clang renderer found
@@ -131,3 +139,48 @@ The builds include several changes: brush spans, recovery frame-path removal,
 GL state caching, menu/UI fixes and restored entity effects. Real elapsed time
 also changes simulation progress between runs. The table does not attribute
 the entire difference to any one commit.
+
+The `b95ea767` PVS-subtree change did not produce a convincing frame-time gain
+on this stationary map. Its GL warmed `gl_submit` and `scene_build` means were
+0.905 and 2.159 ms. CPU 640×400 recorded `cpu_render` 18.629 ms and `scene_build`
+2.788 ms; CPU 320×200 recorded 12.058 and 2.731 ms. All three runs retained the
+artifact, exited normally and measured 600 intervals. The process monitor
+observed browser and assistant activity above half a core during these runs;
+they do not establish a fully isolated performance change.
+
+A separate 199 Hz user-CPU profile on actual `c8d26292` rerelease 640×400
+attributed 25.92% of samples to depth fog rows and 13.88% to fog blending.
+It captured all render workers and retained the authored world draws. This is
+a sampling profile, separate from the unprofiled timing procedure. Commit
+`a45cd440` replaces the hot fog math with native floats and prepared color
+blending. Its shipped whole-frame and post-change observations are recorded below.
+
+The `efe9e317` five-run group completed normally with unchanged installed
+artifact and 600 intervals per run. This project's other games, debuggers and
+compilers were stopped. One-second observations still found outside assistant,
+browser or desktop-agent CPU activity above half a core during every run.
+These limits prevent a fully isolated speedup claim. All targets remain unmet.
+
+| Warmed scope | GL 1080p, ms | CPU 640×400, ms | CPU 320×200, ms |
+| --- | ---: | ---: | ---: |
+| `gl_submit` | 0.947 | — | — |
+| `scene_build` | 2.283 | 2.849 | 2.578 |
+| `cpu_render` | — | 17.602 | 11.633 |
+| `application` | 0.585 | 1.945 | 1.310 |
+| `window_present` | 0.036 | 0.408 | 0.121 |
+
+Actual post-change image checks retained the world draws. Q1 and classic Q2
+had four matching state/clock captures each with zero RGB changes. Rerelease
+Q2 matched gameplay state on all four captures with differing frontend clocks;
+266–913 pixels changed out of 307,200, with maximum RGB difference 3. Q3's
+later two matching gameplay-state captures had identical RGBA; earlier weapon
+animation and picture clocks differed. No general animation equivalence is
+claimed. Public CPU counter enable, disable retention and reset checks passed
+for all four presets.
+
+A separate short Q1 trace identified 68 image-update drains whose updated
+storage was absent from the queued draw samplers. Cached brush rows already
+retain pinned baked pixels. These are unnecessary global barriers. Image
+updates must drain only draws that read the affected storage; real texture
+and compositor dependencies still require ordering. This trace changes timing
+and is not a frame-time result.
