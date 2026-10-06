@@ -62,9 +62,14 @@ static bool model_submit(frontend_remote_q1 *row, const frontend_remote_q1_entit
     const qa_scene_view *view, const qa_scene_world_input *world, qa_error *error)
 {
     if (!entity->entity.model || !entity->visible) return true;
+    remote_q1_model *model = NULL;
+    if (entity->model[0] != '*' && !remote_q1_model_read(row, entity, &model, error)) return false;
     qa_model_transform transform; qa_model_transform_identity(&transform);
     qa_vec3 origin = qa_v3(entity->entity.origin[0], entity->entity.origin[1], entity->entity.origin[2]);
     qa_vec3 angles = qa_v3(entity->entity.angles[0], entity->entity.angles[1], entity->entity.angles[2]), axes[3];
+    if (model && !entity->view_weapon && entity->entity.number < 65536)
+        angles = frontend_legacy_entity_angles(QA_SCENE_Q1, QA_EDITION_CLASSIC, model->source,
+            0, angles, world->seconds, 0);
     frontend_camera_axes(angles, axes);
     transform.origin[0] = origin.x; transform.origin[1] = origin.y; transform.origin[2] = origin.z;
     for (unsigned i = 0; i < 3; ++i) {
@@ -79,8 +84,6 @@ static bool model_submit(frontend_remote_q1 *row, const frontend_remote_q1_entit
         return qa_scene_world_submit_model(row->world, (uint32_t)number, &transform, world,
             entity->entity.number, color, &row->frontend->frame, error);
     }
-    remote_q1_model *model = NULL;
-    if (!remote_q1_model_read(row, entity, &model, error)) return false;
     if (model->world) return qa_scene_world_submit_model(model->world, 0, &transform, world,
         entity->entity.number, color, &row->frontend->frame, error);
     qa_scene_model_input input = {.view = *view, .transform = transform, .previous_origin = origin,

@@ -4,6 +4,8 @@
 #include "internal.h"
 
 float frontend_legacy_lightstyle_sample(qa_game_family, const char *pattern, double seconds);
+qa_vec3 frontend_legacy_entity_angles(qa_scene_family, qa_product_edition,
+    const qa_model *, uint64_t effects, qa_vec3 angles, double seconds, int64_t milliseconds);
 
 typedef struct frontend_legacy_render_policy {
     qa_scene_family family;

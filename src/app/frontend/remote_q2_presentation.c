@@ -668,7 +668,9 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         else if (current->effects & (UINT64_C(1) << 11)) packet.frame = 2 + (auto_frame & 1);
         else if (current->effects & (UINT64_C(1) << 12)) packet.frame = auto_frame;
         else if (current->effects & (UINT64_C(1) << 13)) packet.frame = (uint32_t)(milliseconds / 100);
-        if (current->effects & 1) direction = qa_v3(0, (float)fmod(time * .1, 360), 0);
+        if (current->effects & 1) direction = frontend_legacy_entity_angles(QA_SCENE_Q2,
+            remote_q2_rerelease_presentation(row) ? QA_EDITION_RERELEASE : QA_EDITION_CLASSIC,
+            NULL, current->effects, direction, world.seconds, milliseconds);
         else if (current->effects & (UINT64_C(1) << 23)) direction = qa_v3(0, (float)fmod(time * .5, 360) + current->angles[1], 180);
         uint32_t shell_flags = packet.renderfx;
         bool shell = (current->effects & 256) != 0;

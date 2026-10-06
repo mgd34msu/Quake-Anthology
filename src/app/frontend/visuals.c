@@ -17,6 +17,7 @@
 #include "config_store.h"
 #include "qa/application_equipment.h"
 #include "qa/application_network.h"
+#include "qa/application_selected_effects.h"
 #include "qa/application_visual_visibility.h"
 #include "qa/application_network_qw.h"
 #include "qa/application_qc_presentation.h"
@@ -1043,11 +1044,34 @@ bool frontend_visual_model_admission(void *context, qa_application *application,
     *out = result; return true;
 }
 
-static qa_model_transform transform(const qa_application_visual_view *view)
+static bool entity_angles(qa_frontend *frontend, const qa_application_visual_view *view,
+    const qa_model *model, qa_vec3 *angles, qa_error *error)
+{
+    *angles = view->body.angles;
+    bool rotates = view->family == QA_GAME_Q2 ? (view->effects & 1) != 0 :
+        view->family == QA_GAME_Q1 && model && model->format == QA_MODEL_MDL && (model->flags & 8);
+    if (!rotates) return true;
+    qa_application_selected_effects source;
+    if (!qa_application_effects_producer_read(frontend->application, view->provider, &source, error)) return false;
+    const qa_product *product = qa_catalog_product(qa_application_catalog(frontend->application), view->content);
+    if (!product) return frontend_fail(error, QA_ERROR_NOT_FOUND, "Rotating entity lost its actual content product");
+    double seconds = (double)source.source_time_ns / 1000000000.0;
+    int64_t milliseconds = (int64_t)(source.source_time_ns / UINT64_C(1000000));
+    if (view->family == QA_GAME_Q2) {
+        bool found;
+        if (!frontend_particle_q2_client_time(frontend, view->provider, &seconds, &found, error)) return false;
+        if (found) milliseconds = llround(seconds * 1000);
+    }
+    *angles = frontend_legacy_entity_angles(view->family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q1,
+        product->edition, model, view->effects, *angles, seconds, milliseconds);
+    return true;
+}
+
+static qa_model_transform transform(const qa_application_visual_view *view, qa_vec3 angles)
 {
     qa_model_transform value;
     qa_model_transform_identity(&value);
-    qa_vec3 axes[3]; frontend_camera_axes(view->body.angles, axes);
+    qa_vec3 axes[3]; frontend_camera_axes(angles, axes);
     value.origin[0] = view->body.origin.x; value.origin[1] = view->body.origin.y; value.origin[2] = view->body.origin.z;
     for (unsigned i = 0; i < 3; ++i) {
         value.axes[i][0] = axes[i].x; value.axes[i][1] = axes[i].y; value.axes[i][2] = axes[i].z;
@@ -1392,7 +1416,9 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
         }
         if (view.family == QA_GAME_Q2 && view.scale == 0) view.scale = 1;
         if (view.alpha <= 0 || view.scale == 0) continue;
-        qa_model_transform placement = transform(&view);
+        qa_vec3 angles;
+        if (!entity_angles(frontend, &view, NULL, &angles, error)) return false;
+        qa_model_transform placement = transform(&view, angles);
         qa_scene_vec4 color = {1, 1, 1, view.alpha};
         if (view.has_inline_model) {
             if (!qa_scene_world_submit_model(frontend->scene_world, view.inline_model,
@@ -1415,7 +1441,12 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
                 view.family == QA_GAME_Q1 && view.has_player_colors, view.player_colors, &model, error)) return false;
             if (part == 0 && (view.family == QA_GAME_Q1 || view.q1_effects || model->model->format == QA_MODEL_MDL) &&
                 !frontend_particle_q1_entity(frontend, &view, model->model, error)) return false;
-            qa_scene_model_input input = {.view = world->view, .transform = placement,
+            qa_model_transform model_placement = placement;
+            if (view.family == QA_GAME_Q1 && model->model->format == QA_MODEL_MDL && (model->model->flags & 8)) {
+                if (!entity_angles(frontend, &view, model->model, &angles, error)) return false;
+                model_placement = transform(&view, angles);
+            }
+            qa_scene_model_input input = {.view = world->view, .transform = model_placement,
                 .previous_origin = view.previous_origin, .color = color, .family = owner->family,
                 .model_beam = view.model_beam, .beam_segment_length = (float)view.frame,
                 .frame = view.frame >= 0 ? (uint32_t)view.frame : 0,

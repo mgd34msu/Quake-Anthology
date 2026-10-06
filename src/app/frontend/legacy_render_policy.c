@@ -19,6 +19,20 @@ float frontend_legacy_lightstyle_sample(qa_game_family family,const char *patter
     return family==QA_GAME_Q1?(float)(value*22):(float)value/12.0f;
 }
 
+qa_vec3 frontend_legacy_entity_angles(qa_scene_family family, qa_product_edition edition,
+    const qa_model *model, uint64_t effects, qa_vec3 angles, double seconds, int64_t milliseconds)
+{
+    if (family == QA_SCENE_Q1 && model && model->format == QA_MODEL_MDL && (model->flags & 8))
+        angles.y = qa_angle_mod((float)(100 * seconds));
+    else if (family == QA_SCENE_Q2 && (effects & 1)) {
+        uint32_t bits = (uint32_t)milliseconds;
+        int32_t time; memcpy(&time, &bits, sizeof(time));
+        float yaw = edition == QA_EDITION_RERELEASE ? (float)time * .1f : (float)(time / 10);
+        angles = qa_v3(0, qa_angle_mod(yaw), 0);
+    }
+    return angles;
+}
+
 static bool number(const qa_cvars *registry, const char *name, float *out, qa_error *error)
 {
     const qa_cvar_view *row = qa_cvars_find(registry, name);
