@@ -56,7 +56,7 @@ typedef struct application_move_call {
     bool mixed_source_outer;
     bool in_source_outer;
     bool external_nq_physics;
-    uint64_t application_elapsed_ns;
+    uint64_t application_elapsed_ns, command_angle_revision;
 } application_move_call;
 
 struct application_control_turn {
@@ -741,17 +741,22 @@ bool application_control_q1_source_prethink(qa_application *app, qa_actor_id act
     return !live(app, actor) || application_control_frames_q1_complete(app, actor, map->owner, error);
 }
 
-static qa_vec3 command_angle_feedback(const qa_movement_command *command)
+static void command_angle_feedback(const application_move_call *move,
+                                   const qa_movement_command *command)
 {
-    if (command->kind != QA_MOVEMENT_Q3 && command->kind != QA_MOVEMENT_Q2_CLASSIC)
-        return command->angles;
-    float angles[3];
-    for (size_t i = 0; i < 3; ++i) {
-        uint32_t bits = (uint32_t)command->angle_words[i] & UINT32_C(65535);
-        int32_t word = bits < UINT32_C(32768) ? (int32_t)bits : (int32_t)bits - 65536;
-        angles[i] = (float)word * (360.0f / 65536.0f);
+    if (move->control->command_angle_revision != move->command_angle_revision)
+        return;
+    qa_vec3 angles = command->angles;
+    if (command->kind == QA_MOVEMENT_Q3 || command->kind == QA_MOVEMENT_Q2_CLASSIC) {
+        float words[3];
+        for (size_t i = 0; i < 3; ++i) {
+            uint32_t bits = (uint32_t)command->angle_words[i] & UINT32_C(65535);
+            int32_t word = bits < UINT32_C(32768) ? (int32_t)bits : (int32_t)bits - 65536;
+            words[i] = (float)word * (360.0f / 65536.0f);
+        }
+        angles = qa_v3(words[0], words[1], words[2]);
     }
-    return qa_v3(angles[0], angles[1], angles[2]);
+    move->control->command_angles = angles;
 }
 
 typedef struct application_control_mod_input {
@@ -2643,6 +2648,7 @@ static bool control_move(qa_application *application,
     application_move_call move = {
         .application = application,
         .control = record,
+        .command_angle_revision = record->command_angle_revision,
         .input = &input,
         .movement = movement,
         .character = application_provider_for(application, actor,
@@ -2850,7 +2856,7 @@ static bool control_move(qa_application *application,
         record->water_type = record->result.water_type;
         record->previous_buttons = record->buttons;
         record->buttons = command->buttons;
-        record->command_angles = command_angle_feedback(command);
+        command_angle_feedback(&move, command);
         bool received; uint64_t sequence;
         (void)application_control_frames_sequence(application, actor, &received, &sequence);
         if (!context->source_usercmd && !context->source_guestcmd && !context->source_qwcmd && !context->source_nqcmd && !context->source_q2cmd &&
@@ -2879,7 +2885,7 @@ static bool control_move(qa_application *application,
                         move.application_elapsed_ns, error);
         if (ok && live(application, actor)) {
             record->buttons = effective_command.buttons;
-            record->command_angles = command_angle_feedback(&effective_command);
+            command_angle_feedback(&move, &effective_command);
         }
     }
     qa_error cleanup = {0};
@@ -3219,6 +3225,7 @@ static bool guest_complete(qa_application *application, qa_actor_id actor,
     input.time_ns = application_control_time(context);
     input.elapsed_ns = (uint64_t)command->milliseconds * UINT64_C(1000000);
     application_move_call move = {.application = application, .control = record, .input = &input,
+        .command_angle_revision = record->command_angle_revision,
         .movement = application_provider_for(application, actor, QA_ROLE_MOVEMENT, ""),
         .arsenal = application_provider_for(application, actor, QA_ROLE_ARSENAL, ""),
         .character = application_provider_for(application, actor, QA_ROLE_CHARACTER, ""),
@@ -3269,7 +3276,7 @@ static bool guest_complete(qa_application *application, qa_actor_id actor,
         record->view_offset = qa_v3(0, 0, state->view_height);
         if (!stage) {
             record->previous_buttons = record->buttons; record->buttons = command->buttons;
-            record->command_angles = command_angle_feedback(command);
+            command_angle_feedback(&move, command);
         }
         if (!stage && !context->source_guestcmd) {
             record->command_sequence = command->sequence; record->command_seen = true;
@@ -3953,7 +3960,8 @@ static void force_state_view(qa_movement_state *state, qa_vec3 view,
     float angles[3] = {delta.x, delta.y, delta.z};
     switch (state->kind) {
     case QA_MOVEMENT_NETQUAKE:
-        state->data.nq.view_angles = view;
+        state->data.nq.angles = state->data.nq.view_angles = view;
+        state->data.nq.fix_angle = true;
         break;
     case QA_MOVEMENT_QUAKEWORLD:
         state->data.qw.angles = view;
