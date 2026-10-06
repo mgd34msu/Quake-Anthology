@@ -45,6 +45,7 @@
 #include "native_q3_log.h"
 #include "native_q3_postgame.h"
 #include "unified_q1_events.h"
+#include "unified_q2_native_events.h"
 #include "unified_q3_events.h"
 #include "unified_events.h"
 #include "native_q3_team_combat.h"
@@ -860,6 +861,7 @@ static bool construct_q2(qa_application *application,
     if (!qa_q2_wire_configure(provider->state.q2, (uint32_t)capacity, (uint32_t)clients, error))
         return false;
     qa_q2_item_options items = {.context = provider, .supply_for = application_supplies_source_for,
+        .visibility = application_unified_q2_native_item_visibility,
         .instanced_coop = options.edition == QA_Q2_RERELEASE, .weapon_respawn_seconds = 30};
     if (!qa_q2_monsters_bind_missions(provider->state.q2,
         &(qa_monster_missions){.context = application->targets,

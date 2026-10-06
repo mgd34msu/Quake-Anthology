@@ -28,6 +28,20 @@ static bool was_picked(const q2_item_state *item, uint32_t player) {
             return true;
     return false;
 }
+bool qa_q2_item_visible_to(qa_q2_game *g, qa_actor_id pickup, qa_actor_id player,
+    bool *out, qa_error *e) {
+    if (!g || !out || !q2_actor_live(g, pickup)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 pickup visibility observation");
+        return false;
+    }
+    const q2_item_state *item = g->actors[pickup.slot]->item;
+    *out = !item || item->visible;
+    if (!*out || !item || !instanced(g)) return true;
+    uint32_t index;
+    if (!slot(g, player, &index, e)) return false;
+    *out = q2_actor_live(g, pickup) && q2_actor_live(g, player) && !was_picked(item, index);
+    return true;
+}
 static bool mark_picked(q2_item_state *item, uint32_t player, qa_error *e) {
     if (was_picked(item, player))
         return true;
@@ -67,15 +81,7 @@ bool q2_item_eligible(qa_q2_game *g, q2_actor *actor, qa_actor_id recipient,
         return false;
     if (!live(call) || combat.health < 1)
         return true;
-    if (instanced(g)) {
-        uint32_t player;
-        if (!slot(g, call->player, &player, e))
-            return false;
-        if (!live(call) || was_picked(item, player))
-            return true;
-    }
-    *allowed = true;
-    return true;
+    return qa_q2_item_visible_to(g, actor->id, recipient, allowed, e);
 }
 static bool eligible(void *context, const qa_pickup_offer *offer, bool *allowed, qa_error *e) {
     (void)offer;

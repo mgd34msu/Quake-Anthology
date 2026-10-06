@@ -164,6 +164,15 @@ bool application_unified_q2_native_visual(application_provider *p, qa_actor_id i
         .value.visibility = {.actor = id, .visible = v->visible}};
     return emit(p, &payload, NULL, id, (qa_actor_id){0}, clock.frame.time_ns, NULL, e);
 }
+bool application_unified_q2_native_item_visibility(void *context, qa_actor_id player,
+    qa_actor_id pickup, bool visible, qa_error *e)
+{
+    application_provider *p = context; qa_clock_state clock;
+    if (!source(p, &clock, e)) return false;
+    qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_VISIBILITY,
+        .value.visibility = {.actor = pickup, .visible = visible}};
+    return emit(p, &payload, NULL, pickup, player, clock.frame.time_ns, NULL, e);
+}
 
 static bool damage_effect(int code)
 {

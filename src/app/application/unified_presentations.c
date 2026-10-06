@@ -11,6 +11,7 @@
 #include "qa/game_q3_configstrings.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q1_bots.h"
+#include "qa/game_q2_items.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -354,6 +355,13 @@ bool application_unified_presentations_build(qa_application *app, const applicat
                 ok = false; break;
             }
             if (visible) {
+                if (body->kind == APPLICATION_PROVIDER_Q2) {
+                    bool item_visible;
+                    if (!qa_q2_item_visible_to(body->state.q2, id, player->actor, &item_visible, error)) {
+                        ok = false; break;
+                    }
+                    v.visible = v.visible && item_visible;
+                }
                 const qa_product *content = qa_catalog_product(qa_launch_snapshot_catalog(source->launch), v.content);
                 if (!content) { ok = application_fail(error, QA_ERROR_NOT_FOUND, "Unified model lost its actual content product"); break; }
                 qa_application_map_view map;

@@ -120,6 +120,8 @@ bool qa_q2_player_quad(qa_q2_game *, qa_actor_id, uint64_t duration_ns, qa_error
 /* Extend the actual Quad deadline; the invoking source owns activation audio. */
 bool qa_q2_player_quad_stack(qa_q2_game *, qa_actor_id, uint64_t duration_ns, qa_error *);
 bool qa_q2_items_publish_visibility(qa_q2_game *, qa_actor_id, qa_error *);
+bool qa_q2_item_visible_to(qa_q2_game *, qa_actor_id pickup, qa_actor_id player,
+    bool *, qa_error *);
 bool qa_q2_pickups_rebind(qa_q2_game *, qa_error *);
 typedef struct qa_q2_companion_checkpoint {
     uint32_t kind;
