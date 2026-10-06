@@ -5,6 +5,8 @@
 #include "qa/game_q3_wire.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q2_bots.h"
+#include "qa/native_host_q2_wire.h"
+#include "guest_native_q2_private.h"
 #include "bot_world.h"
 #include "bots_knowledge.h"
 #include <limits.h>
@@ -248,8 +250,42 @@ bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa
     }
     return true;
 }
+static bool original_q2_entity(application_bots *bots,qa_actor_id actor,
+    qa_bot_entity *out,bool *handled,qa_error *error)
+{
+    qa_application *app=bots->application;
+    const qa_actor_record *record=qa_actors_get(qa_session_actors(app->session),actor);
+    *handled=false;
+    if(!record || !record->has_source) return true;
+    application_provider *source=application_actor_source_provider(app,actor);
+    if(!source || source->owner!=record->owner || source->kind!=APPLICATION_PROVIDER_NATIVE ||
+       !source->product || source->product->family!=QA_GAME_Q2 || !source->state.native.q2_engine ||
+       source->state.native.q2_engine->profile!=QA_NATIVE_Q2_GAME_API2023) return true;
+    *handled=true;
+    qa_native_host_q2_entity view;
+    if(!qa_native_host_q2_bot_entity(source->state.native.host,record->source_slot,&view,error)) return false;
+    *out=(qa_bot_entity){0};
+    if(!view.in_use || !view.bot.registered || !qa_actor_id_equal(view.binding.actor,actor)) return true;
+    if(!application_bot_entity_number(bots,actor,&out->number,error)) return false;
+    out->present=true;out->linked=view.linked;
+    out->hidden=(view.bot.flags&(UINT64_C(1)<<10))!=0;
+    out->proximity_trigger=(view.bot.flags&(UINT64_C(1)<<27))!=0;
+    out->observation=(qa_bot_entity_update){.actor=actor,
+        .type=view.bot.player?1:(view.bot.flags&(UINT64_C(1)<<6))?2:out->proximity_trigger?3:0,
+        .flags=(view.bot.player || (view.server_flags&4u)) && view.bot.health<=0?1:0,
+        .origin=source_vector(view.state.origin),.old_origin=source_vector(view.state.old_origin),
+        .angles=view.bot.player?view.bot.view_angles:source_vector(view.state.angles),
+        .mins=view.bounds.mins,.maxs=view.bounds.maxs,.ground_entity=-1,.solid=view.solid,
+        .model_index=(int32_t)view.state.modelindex,.model_index2=(int32_t)view.state.modelindex2,
+        .frame=(int32_t)view.state.frame};
+    return true;
+}
+
 bool application_bot_entity(void *opaque,qa_actor_id actor,qa_bot_entity *out,qa_error *error) {
     application_bots *bots=opaque;qa_application *application=bots->application;
+    bool original;
+    if(!original_q2_entity(bots,actor,out,&original,error)) return false;
+    if(original) return true;
     application_provider *source=application_bot_source(bots);
     if(bots->shared_world) {
         int32_t number;application_bot_world_entity actual;

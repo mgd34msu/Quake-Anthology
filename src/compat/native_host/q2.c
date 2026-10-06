@@ -517,6 +517,10 @@ bool native_host_q2_import(qa_native_host *host, const qa_native_import_call *ca
         return add_command(host, call, error);
     if (!strcmp(name, "GetExtension"))
         return extension_import(host, call, result, error);
+    if (host->profile == QA_NATIVE_Q2_GAME_API2023 &&
+        (!strcmp(name, "Bot_RegisterEdict") || !strcmp(name, "Bot_UnRegisterEdict")))
+        return native_host_q2_bot_register(host, native_argument_address(call, 0),
+            !strcmp(name, "Bot_RegisterEdict"), error);
     if (!strcmp(name, "ServerFrame")) {
         result->as.u32 = host->engine.server_frame
                              ? host->engine.server_frame(host->engine.context)

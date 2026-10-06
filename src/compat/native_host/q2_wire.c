@@ -24,8 +24,9 @@ static bool import_ready(qa_native_host *host, qa_error *error)
 }
 
 typedef enum q2_observation {
-    Q2_OBSERVE_IDLE, Q2_OBSERVE_IMPORT, Q2_OBSERVE_END_FRAME
+    Q2_OBSERVE_IDLE, Q2_OBSERVE_IMPORT, Q2_OBSERVE_END_FRAME, Q2_OBSERVE_RETURNED
 } q2_observation;
+static bool source_returned(qa_native_host *, qa_error *);
 
 static bool frame_equal(const qa_source_frame *a,const qa_source_frame *b)
 {
@@ -75,6 +76,7 @@ static bool stage_current(qa_native_host *host, const qa_source_frame *before, q
 static bool observation_ready(qa_native_host *host, q2_observation mode, qa_error *error)
 {
     if (mode == Q2_OBSERVE_IMPORT) return import_ready(host, error);
+    if (mode == Q2_OBSERVE_RETURNED) return source_returned(host, error);
     if (mode == Q2_OBSERVE_END_FRAME) return stage_ready(host, NULL, error);
     return ready(host, error);
 }
@@ -185,6 +187,21 @@ static bool entity_read(qa_native_host *host, uint32_t slot,
         value.creation_present = true;
         memcpy(value.origins, lifetime->origins, sizeof(value.origins));
     }
+    if (!classic && slot < host->q2_lifetime_capacity &&
+        host->q2_lifetimes[slot].bot_registered &&
+        qa_actor_id_equal(host->q2_lifetimes[slot].actor, value.binding.actor)) {
+        const uint8_t *sv = bytes + NATIVE_Q2_RR_SV;
+        value.bot = (qa_native_host_q2_bot_state){.registered = true,
+            .player = qa_load_u64le(bytes + NATIVE_Q2_RR_CLIENT) != 0,
+            .flags = qa_load_u64le(sv + 8), .item_id = qa_load_i32le(sv + 24),
+            .armor = qa_load_i32le(sv + 32), .health = qa_load_i32le(sv + 36),
+            .max_health = qa_load_i32le(sv + 40), .weapon = qa_load_i32le(sv + 48),
+            .team = qa_load_i32le(sv + 52), .view_height = qa_load_i32le(sv + 64),
+            .water_level = sv[72],
+            .view_angles = qa_v3(qa_load_f32le(sv + 76), qa_load_f32le(sv + 80), qa_load_f32le(sv + 84)),
+            .velocity = qa_v3(qa_load_f32le(sv + 100), qa_load_f32le(sv + 104), qa_load_f32le(sv + 108)),
+            .classname = qa_load_u64le(sv + 152), .targetname = qa_load_u64le(sv + 160)};
+    }
     value.areas[0] = qa_load_i32le(bytes + layout->area);
     value.areas[1] = qa_load_i32le(bytes + layout->area2);
     value.absolute_bounds.mins = qa_v3(qa_load_f32le(bytes + layout->absmin),
@@ -245,6 +262,10 @@ static bool entity_read(qa_native_host *host, uint32_t slot,
 bool qa_native_host_q2_wire_entity(qa_native_host *host, uint32_t slot,
     qa_native_host_q2_entity *out, qa_error *error)
 { return entity_read(host, slot, out, Q2_OBSERVE_IDLE, error); }
+
+bool qa_native_host_q2_bot_entity(qa_native_host *host, uint32_t slot,
+    qa_native_host_q2_entity *out, qa_error *error)
+{ return entity_read(host, slot, out, Q2_OBSERVE_RETURNED, error); }
 
 bool qa_native_host_q2_wire_entity_import(qa_native_host *host, uint32_t slot,
     qa_native_host_q2_entity *out, qa_error *error)
@@ -336,13 +357,13 @@ bool qa_native_host_q2_entity_visible_completed(qa_native_host *host,const qa_so
     host->q2_observation_frame=NULL;return ok;
 }
 
-static bool character_returned(qa_native_host *host, qa_error *error)
+static bool source_returned(qa_native_host *host, qa_error *error)
 {
     return (host && host->kind == NATIVE_HOST_Q2_GAME && host->instance && host->edict &&
         !host->destroying && !host->restoring && !host->reconstruction && !host->callback_depth &&
         !host->filter_depth && !qa_native_terminal(host->instance) && qa_native_can_destroy(host->instance) &&
         host->world.session && host->world.world) ||
-        native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Q2 CHARACTER frame requires its returned actual GAME owner");
+        native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Q2 public prefix requires its returned actual GAME owner");
 }
 
 bool qa_native_host_q2_character_frame(qa_native_host *host, uint32_t slot,
@@ -351,7 +372,7 @@ bool qa_native_host_q2_character_frame(qa_native_host *host, uint32_t slot,
     qa_native_entity_table table, after;
     qa_native_slot_binding binding, current;
     qa_native_address address; uint8_t frame[4], inuse[4] = {0};
-    if (!out || !actor.registry || !character_returned(host, error) ||
+    if (!out || !actor.registry || !source_returned(host, error) ||
         !qa_native_entity_table_get(host->instance, &table, error)) return false;
     if (slot >= table.count || table.stride < host->edict->bytes ||
         !binding_current(host, slot, &binding, error) || binding.kind == QA_NATIVE_SLOT_FREE ||
@@ -363,7 +384,7 @@ bool qa_native_host_q2_character_frame(qa_native_host *host, uint32_t slot,
         !native_host_read(host, address + host->edict->inuse, inuse, classic ? 4u : 1u, error)) return false;
     if (!(classic ? qa_load_i32le(inuse) != 0 : inuse[0] != 0))
         return native_host_fail(error, QA_ERROR_ARGUMENT, slot, "Q2 CHARACTER frame names an inactive Source edict");
-    if (!character_returned(host, error) || !qa_native_entity_table_get(host->instance, &after, error) ||
+    if (!source_returned(host, error) || !qa_native_entity_table_get(host->instance, &after, error) ||
         !binding_current(host, slot, &current, error)) return false;
     if (table.base != after.base || table.stride != after.stride || table.count != after.count ||
         table.capacity != after.capacity || !binding_equal(binding, current))

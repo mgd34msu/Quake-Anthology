@@ -56,7 +56,7 @@ typedef struct native_host_q2_lifetime {
     qa_vec3 creation_origin;
     uint64_t creation_frame;
     qa_native_host_q2_origin origins[8];
-    bool present, linked;
+    bool present, linked, bot_registered;
 } native_host_q2_lifetime;
 
 typedef struct native_host_edict_layout {
@@ -124,6 +124,7 @@ struct qa_native_host {
 enum {
     NATIVE_Q2_RR_EDICT_BYTES = 1472,
     NATIVE_Q2_RR_CLIENT = 120,
+    NATIVE_Q2_RR_SV = 128,
     NATIVE_Q2_RR_INUSE = 1376,
     NATIVE_Q2_RR_LINKED = 1377,
     NATIVE_Q2_RR_LINKCOUNT = 1380,
@@ -183,6 +184,7 @@ bool native_host_address_for_actor(qa_native_host *, qa_actor_id, qa_native_addr
                                    qa_error *);
 bool native_host_reconcile(qa_native_host *, qa_error *);
 bool native_host_link(qa_native_host *, qa_native_address, qa_error *);
+bool native_host_q2_bot_register(qa_native_host *, qa_native_address, bool, qa_error *);
 bool native_host_unlink(qa_native_host *, qa_native_address, qa_error *);
 bool native_host_trace(qa_native_host *, const qa_native_import_call *, qa_native_value *,
                        bool, qa_error *);

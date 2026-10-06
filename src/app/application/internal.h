@@ -682,6 +682,7 @@ bool application_control_physics_write(qa_application *, qa_actor_id,
 bool application_control_velocity(qa_application *, qa_actor_id, qa_vec3, qa_error *);
 application_provider *application_world_provider(qa_application *, qa_launch_role,
                                                   const char *);
+application_provider *application_actor_source_provider(qa_application *, qa_actor_id);
 application_provider *application_provider_for(qa_application *, qa_actor_id,
                                                qa_launch_role, const char *selector);
 void application_actor_routes_clear(qa_application *);

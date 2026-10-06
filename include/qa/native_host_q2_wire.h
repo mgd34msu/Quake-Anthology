@@ -9,9 +9,17 @@ typedef struct qa_native_host_q2_origin {
     qa_vec3 origin;
     bool present;
 } qa_native_host_q2_origin;
+typedef struct qa_native_host_q2_bot_state {
+    uint64_t flags;
+    int32_t item_id, health, max_health, armor, weapon, team, view_height, water_level;
+    qa_vec3 view_angles, velocity;
+    qa_native_address classname, targetname;
+    bool registered, player;
+} qa_native_host_q2_bot_state;
 typedef struct qa_native_host_q2_entity {
     qa_native_slot_binding binding;
     qa_q2_entity state;
+    qa_native_host_q2_bot_state bot;
     qa_bounds bounds, absolute_bounds;
     uint32_t server_flags, owner_slot, link_count;
     uint64_t creation_frame;
@@ -25,6 +33,10 @@ typedef struct qa_native_host_q2_entity {
  * source bindings. They neither reconcile actors nor invoke the module. */
 bool qa_native_host_q2_wire_count(qa_native_host *, uint32_t *, qa_error *);
 bool qa_native_host_q2_wire_entity(qa_native_host *, uint32_t,
+    qa_native_host_q2_entity *, qa_error *);
+/* Shared AI reads the returned original GAME's current registration and sv
+ * metadata through the same public-prefix decoder, without another registry. */
+bool qa_native_host_q2_bot_entity(qa_native_host *, uint32_t,
     qa_native_host_q2_entity *, qa_error *);
 /* This borrows the actual SDK row during a genuine GAME import callback.
  * New Source rows can be observed before the completed table count advances. */

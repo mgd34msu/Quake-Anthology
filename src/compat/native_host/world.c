@@ -618,6 +618,28 @@ static bool lifetime_capacity(qa_native_host *host, uint32_t slot, qa_error *err
     return true;
 }
 
+bool native_host_q2_bot_register(qa_native_host *host, qa_native_address address,
+    bool registered, qa_error *error)
+{
+    uint32_t slot;
+    if (!registered) {
+        if (!address || !host->q2_lifetime_capacity) return true;
+        if (!qa_native_entity_slot(host->instance, address, &slot, error)) return false;
+        if (slot < host->q2_lifetime_capacity) host->q2_lifetimes[slot].bot_registered = false;
+        return true;
+    }
+    qa_actor_id actor;
+    if (!native_host_actor_for_address(host, address, true, &actor, &slot, error) ||
+        !lifetime_capacity(host, slot, error)) return false;
+    if (!actor.registry)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
+            "Q2 bot registration requires an active source edict");
+    native_host_q2_lifetime *row = &host->q2_lifetimes[slot];
+    if (!qa_actor_id_equal(row->actor, actor)) *row = (native_host_q2_lifetime){.actor = actor};
+    row->bot_registered = true;
+    return true;
+}
+
 bool native_host_link(qa_native_host *host, qa_native_address address, qa_error *error)
 {
     if (host && host->filter_depth)
@@ -773,10 +795,13 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
         !native_host_write_u8(host, address + NATIVE_Q2_RR_LINKED, 1u, error))
         return false;
     if (link_count == 0) {
-        host->q2_lifetimes[slot] = (native_host_q2_lifetime){0};
+        bool bot_registered = host->q2_lifetimes[slot].bot_registered &&
+            qa_actor_id_equal(host->q2_lifetimes[slot].actor, actor);
+        host->q2_lifetimes[slot] = (native_host_q2_lifetime){.actor = actor, .bot_registered = bot_registered};
         if (host->engine.source_frame)
             host->q2_lifetimes[slot] = (native_host_q2_lifetime){.actor = actor,
-                .creation_origin = origin, .creation_frame = host->engine.source_frame(host->engine.context), .present = true};
+                .creation_origin = origin, .creation_frame = host->engine.source_frame(host->engine.context),
+                .present = true, .bot_registered = bot_registered};
         bool copy_origin = host->profile == QA_NATIVE_Q2_GAME_API3;
         if (!copy_origin) {
             uint32_t render_effects;

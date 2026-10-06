@@ -313,7 +313,7 @@ static const application_actor_routes *actor_routes(qa_application *application,
     return routes;
 }
 
-static application_provider *actor_source_provider(qa_application *application, qa_actor_id actor)
+application_provider *application_actor_source_provider(qa_application *application, qa_actor_id actor)
 {
     const application_actor_routes *routes = actor_routes(application,
         qa_application_launch(application), actor, "");
@@ -340,7 +340,7 @@ const qa_launch_instance *qa_application_selected_instance(qa_application *appli
     const qa_launch_binding *binding = selected_binding(application,
         qa_launch_snapshot_choices(snapshot), actor, role, selector);
     if (binding) return qa_launch_snapshot_find(snapshot, binding->instance);
-    application_provider *source = actor_source_provider(application, actor);
+    application_provider *source = application_actor_source_provider(application, actor);
     return source && source->launch ?
         qa_launch_snapshot_find(snapshot, source->launch->selection.instance) : NULL;
 }
@@ -359,7 +359,7 @@ application_provider *application_provider_for(qa_application *application,
     const qa_launch_binding *binding = selected_binding(application,
         active_choices(application), actor, role, selector);
     return binding ? provider_named(application, binding->instance) :
-        actor_source_provider(application, actor);
+        application_actor_source_provider(application, actor);
 }
 
 static void remember_failure(bool result, const qa_error *current,
@@ -1258,7 +1258,7 @@ qa_target_options application_target_options(qa_application *application)
 static application_provider *entity_physics_owner(qa_application *app,qa_actor_id actor,
     qa_physics_properties *out)
 {
-    application_provider *source=actor_source_provider(app,actor);
+    application_provider *source=application_actor_source_provider(app,actor);
     if(!source||!source->constructed||!source->attached||source->close_pending)return NULL;
     bool owned=false;
     switch(source->kind) {
