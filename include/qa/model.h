@@ -39,6 +39,14 @@ typedef struct qa_model_weight {
 typedef struct qa_model_weight_range {
     uint32_t first, count;
 } qa_model_weight_range;
+/* Borrowed admitted MD5 influence tables and the strided bind-normal attribute. */
+typedef struct qa_model_md5_view {
+    const void *vertices;
+    size_t vertex_stride, normal_offset;
+    const qa_model_weight *weights;
+    const qa_model_weight_range *ranges;
+    size_t vertex_count, weight_count, bone_count;
+} qa_model_md5_view;
 typedef struct qa_model_mesh {
     char name[65];
     int32_t flags;
@@ -141,6 +149,9 @@ bool qa_model_lerp_tag(const qa_model *model, const char *name, uint32_t from, u
 bool qa_model_skin_md5(const qa_model *model, uint32_t mesh, const qa_model_pose *pose,
                        size_t joint_count, qa_model_vertex *vertices, size_t count,
                        qa_error *error);
+bool qa_model_skin_md5_view(const qa_model_md5_view *view, const qa_model_pose *pose,
+                            size_t joint_count, qa_model_vertex *vertices, size_t count,
+                            qa_error *error);
 uint32_t qa_model_group_sample(const qa_model_group *group, double seconds, double sync_base);
 typedef struct qa_model_animation_joint {
     qa_model_bone bone;

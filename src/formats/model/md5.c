@@ -61,21 +61,16 @@ static bool record_index(model_reader *r, const char *kind, uint32_t count, bool
     seen[*index] = true;
     return true;
 }
-static void skin_vertex(const qa_model_mesh *s, uint32_t vertex, const qa_model_pose *pose,
-                        qa_model_vertex *out, bool bind) {
+static void skin_bind_vertex(const qa_model_mesh *s, uint32_t vertex, const qa_model_pose *pose,
+                             qa_model_vertex *out) {
     memset(out, 0, sizeof(*out));
     qa_model_weight_range range = s->vertex_weights[vertex];
     for (uint32_t i = 0; i < range.count; ++i) {
         const qa_model_weight *w = &s->weights[range.first + i];
         const qa_model_pose *p = &pose[w->bone];
         float position[3], normal[3];
-        if (bind) {
-            rotate(p->orientation, w->offset, position);
-            rotate(p->orientation, s->vertices[vertex].normal, normal);
-        } else {
-            rotate_axis(p->orientation, w->offset, position);
-            rotate_axis(p->orientation, s->vertices[vertex].normal, normal);
-        }
+        rotate(p->orientation, w->offset, position);
+        rotate(p->orientation, s->vertices[vertex].normal, normal);
         for (unsigned k = 0; k < 3; ++k) {
             out->position[k] += w->bias * (p->position[k] + p->scale * position[k]);
             out->normal[k] += w->bias * normal[k];
@@ -99,20 +94,23 @@ static __m128 skin_rotate(const md5_skin_joint *joint, const float p[3]) {
     return _mm_add_ps(_mm_add_ps(first, second), third);
 }
 #endif
-static void skin_prepared(const qa_model_mesh *mesh, const qa_model_pose *pose,
-                           qa_model_vertex *out) {
+static void skin_prepared(const qa_model_md5_view *view, const qa_model_pose *pose,
+                           qa_model_vertex *out, bool prepare) {
     md5_skin_joint joints[256];
     bool ready[256] = {false};
-    for (uint32_t v = 0; v < mesh->vertex_count; ++v) {
+    for (size_t v = 0; v < view->vertex_count; ++v) {
         memset(&out[v], 0, sizeof(out[v]));
 #if defined(__SSE2__)
         __m128 position = _mm_setzero_ps(), normal = _mm_setzero_ps();
 #endif
-        qa_model_weight_range range = mesh->vertex_weights[v];
+        qa_model_weight_range range = view->ranges[v];
         for (uint32_t i = 0; i < range.count; ++i) {
-            const qa_model_weight *weight = &mesh->weights[range.first + i];
+            const qa_model_weight *weight = &view->weights[range.first + i];
             const qa_model_pose *p = &pose[weight->bone];
-            if (!ready[weight->bone]) {
+            float input_normal[3];
+            memcpy(input_normal, (const uint8_t *)view->vertices +
+                v * view->vertex_stride + view->normal_offset, sizeof(input_normal));
+            if (prepare && !ready[weight->bone]) {
                 md5_axis axis = prepare_axis(p->orientation);
 #if defined(__SSE2__)
                 for (unsigned k = 0; k < 3; ++k)
@@ -124,30 +122,36 @@ static void skin_prepared(const qa_model_mesh *mesh, const qa_model_pose *pose,
 #endif
                 ready[weight->bone] = true;
             }
-            const md5_skin_joint *joint = &joints[weight->bone];
 #if defined(__SSE2__)
-            __m128 transformed = skin_rotate(joint, weight->offset);
-            transformed = _mm_add_ps(joint->position, _mm_mul_ps(joint->scale, transformed));
-            __m128 bias = _mm_set1_ps(weight->bias);
-            position = _mm_add_ps(position, _mm_mul_ps(bias, transformed));
-            normal = _mm_add_ps(normal, _mm_mul_ps(bias,
-                skin_rotate(joint, mesh->vertices[v].normal)));
-#else
-            float position[3], normal[3];
-            rotate_prepared(&joint->axis, weight->offset, position);
-            rotate_prepared(&joint->axis, mesh->vertices[v].normal, normal);
-            for (unsigned k = 0; k < 3; ++k) {
-                out[v].position[k] += weight->bias * (p->position[k] + p->scale * position[k]);
-                out[v].normal[k] += weight->bias * normal[k];
+            if (prepare) {
+                const md5_skin_joint *joint = &joints[weight->bone];
+                __m128 transformed = skin_rotate(joint, weight->offset);
+                transformed = _mm_add_ps(joint->position, _mm_mul_ps(joint->scale, transformed));
+                __m128 bias = _mm_set1_ps(weight->bias);
+                position = _mm_add_ps(position, _mm_mul_ps(bias, transformed));
+                normal = _mm_add_ps(normal, _mm_mul_ps(bias, skin_rotate(joint, input_normal)));
+                continue;
             }
+            md5_axis axis = prepare_axis(p->orientation);
+#else
+            md5_axis axis = prepare ? joints[weight->bone].axis : prepare_axis(p->orientation);
 #endif
+            float transformed_position[3], transformed_normal[3];
+            rotate_prepared(&axis, weight->offset, transformed_position);
+            rotate_prepared(&axis, input_normal, transformed_normal);
+            for (unsigned k = 0; k < 3; ++k) {
+                out[v].position[k] += weight->bias * (p->position[k] + p->scale * transformed_position[k]);
+                out[v].normal[k] += weight->bias * transformed_normal[k];
+            }
         }
 #if defined(__SSE2__)
-        float values[4];
-        _mm_storeu_ps(values, position);
-        memcpy(out[v].position, values, sizeof(out[v].position));
-        _mm_storeu_ps(values, normal);
-        memcpy(out[v].normal, values, sizeof(out[v].normal));
+        if (prepare) {
+            float values[4];
+            _mm_storeu_ps(values, position);
+            memcpy(out[v].position, values, sizeof(out[v].position));
+            _mm_storeu_ps(values, normal);
+            memcpy(out[v].normal, values, sizeof(out[v].normal));
+        }
 #endif
     }
 }
@@ -177,7 +181,7 @@ static bool bind_normals(model_reader *r, qa_model *m, qa_model_mesh *s) {
     }
     for (uint32_t i = 0; i < s->vertex_count; ++i) {
         qa_model_vertex v;
-        skin_vertex(s, i, m->bind_pose, &v, true);
+        skin_bind_vertex(s, i, m->bind_pose, &v);
         for (unsigned k = 0; k < 3; ++k)
             if (!isfinite(v.position[k])) {
                 model_fail(r, "MD5 bind position overflows");
@@ -370,13 +374,31 @@ bool model_md5(model_reader *r, qa_model *m) {
 }
 bool qa_model_skin_md5(const qa_model *m, uint32_t index, const qa_model_pose *pose, size_t joints,
                        qa_model_vertex *out, size_t count, qa_error *error) {
-    if (!m || m->format != QA_MODEL_MD5 || index >= m->mesh_count || !pose ||
-        joints < m->bone_count || count < m->meshes[index].vertex_count ||
-        (!out && m->meshes[index].vertex_count)) {
+    if (!m || m->format != QA_MODEL_MD5 || index >= m->mesh_count) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid MD5 skinning spans");
         return false;
     }
-    for (uint32_t i = 0; i < m->bone_count; ++i) {
+    const qa_model_mesh *mesh = &m->meshes[index];
+    qa_model_md5_view view = {.vertices = mesh->vertices,
+        .vertex_stride = sizeof(qa_model_vertex), .normal_offset = offsetof(qa_model_vertex, normal),
+        .weights = mesh->weights, .ranges = mesh->vertex_weights,
+        .vertex_count = mesh->vertex_count, .weight_count = mesh->weight_count,
+        .bone_count = m->bone_count};
+    return qa_model_skin_md5_view(&view, pose, joints, out, count, error);
+}
+bool qa_model_skin_md5_view(const qa_model_md5_view *view, const qa_model_pose *pose,
+                            size_t joints, qa_model_vertex *out, size_t count, qa_error *error) {
+    if (!view || !pose || joints < view->bone_count || count < view->vertex_count ||
+        (view->weight_count && !view->weights) ||
+        (view->vertex_count && (!out || !view->vertices || !view->ranges ||
+            view->vertex_stride < sizeof(float[3]) ||
+            view->normal_offset > view->vertex_stride - sizeof(float[3]) ||
+            view->vertex_count - 1 > (SIZE_MAX - view->normal_offset - sizeof(float[3])) /
+                view->vertex_stride))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid MD5 skinning spans");
+        return false;
+    }
+    for (size_t i = 0; i < view->bone_count; ++i) {
         for (unsigned k = 0; k < 3; ++k)
             if (!isfinite(pose[i].position[k]))
                 goto invalid;
@@ -386,16 +408,10 @@ bool qa_model_skin_md5(const qa_model *m, uint32_t index, const qa_model_pose *p
         if (!isfinite(pose[i].scale))
             goto invalid;
     }
-    const qa_model_mesh *mesh = &m->meshes[index];
-    if (!mesh->vertex_count) return true;
+    if (!view->vertex_count) return true;
     /* Loaded MD5 models admit at most 256 joints. Keep the original path for
      * larger externally supplied models and in-place bind vertex output. */
-    if (m->bone_count <= 256 && out != mesh->vertices) {
-        skin_prepared(mesh, pose, out);
-    } else {
-        for (uint32_t i = 0; i < mesh->vertex_count; ++i)
-            skin_vertex(mesh, i, pose, &out[i], false);
-    }
+    skin_prepared(view, pose, out, view->bone_count <= 256 && (const void *)out != view->vertices);
     return true;
 invalid:
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "non-finite MD5 pose");
