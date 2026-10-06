@@ -56,6 +56,16 @@ typedef struct cpu_stream_image {
   qa_scene_image_level level;
   struct cpu_stream_image *next;
 } cpu_stream_image;
+typedef struct cpu_skin_binding {
+  qa_scene_skin_sample *sample;
+  size_t offset;
+} cpu_skin_binding;
+typedef struct cpu_skin_slot {
+  const void *owner;
+  const qa_scene_skin_pose *pose;
+  uint64_t epoch;
+  size_t job;
+} cpu_skin_slot;
 struct qa_cpu_renderer {
   qa_cpu_options options;
   qa_render_controls controls;
@@ -79,6 +89,14 @@ struct qa_cpu_renderer {
   struct cpu_vertex *vertices;
   size_t vertex_capacity;
   qa_render_workers *raster_pool;
+  qa_render_model_job *skin_jobs;
+  cpu_skin_binding *skin_bindings;
+  cpu_skin_slot *skin_slots;
+  qa_model_vertex *skin_transient;
+  size_t skin_job_count, skin_job_capacity, skin_slot_capacity;
+  size_t skin_transient_capacity;
+  uint64_t skin_epoch;
+  bool skin_frame_prepared;
   struct cpu_brush_context *brush_spans;
   struct cpu_surface_cache *surface_cache;
   const qa_scene_image *bound[2];
@@ -165,6 +183,8 @@ void cpu_raster_flush(qa_cpu_renderer *renderer);
 bool cpu_raster_image_pending(const qa_cpu_renderer *, const qa_scene_image *);
 void cpu_raster_pool_destroy(qa_cpu_renderer *renderer);
 bool cpu_raster_acquire(qa_cpu_renderer *, qa_error *);
+bool cpu_skin_geometry(qa_cpu_renderer *, const qa_scene_draw *,
+    const qa_model_vertex **, const uint32_t **, int *, qa_error *);
 void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                         const cpu_sampler samplers[2], const cpu_fragment *fragment,
                         cpu_fragment_admission admission);

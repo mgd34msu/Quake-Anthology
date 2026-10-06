@@ -612,9 +612,25 @@ static bool transform(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
    * instances. */
   double normal[9];
   qa_render_normal_matrix(&draw->model, normal);
+  const qa_model_vertex *sampled = NULL;
+  const uint32_t *sources = NULL;
+  int rounding = 0, admitted = 0;
+  if (draw->skinning) {
+    rounding = admitted = fegetround();
+    if (!cpu_skin_geometry(renderer, draw, &sampled, &sources, &admitted, error)) return false;
+  }
   for (size_t i = 0; i < count; ++i) {
     if (draw->source_vertex_storage && i>=draw->mesh.vertex_count && !referenced[i]) continue;
     const qa_scene_vertex *v = &draw->mesh.vertices[i];
+    qa_scene_vertex skinned;
+    if (sampled) {
+      if (admitted != rounding && fesetround(admitted) != 0) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, i, "CPU model shading lost its admitted rounding mode"); return false;
+      }
+      qa_scene_skin_apply(draw->skinning, sampled + (sources ? sources[i] : i), v, &skinned);
+      if (admitted != rounding) (void)fesetround(rounding);
+      v = &skinned;
+    }
     if (!finite3(v->position) || !finite3(v->normal) || !finite4(v->color) ||
         !isfinite(v->texcoord.x) || !isfinite(v->texcoord.y) ||
         !isfinite(v->lightmap.x) || !isfinite(v->lightmap.y)) {
