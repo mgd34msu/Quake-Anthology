@@ -37,7 +37,6 @@ bool qa_gl_resident_images(const qa_gl_renderer *, qa_arena *,
  * synchronous; callers may reset the frame after it returns. */
 bool qa_gl_execute(qa_gl_renderer *renderer, const qa_scene_frame *frame,
                    qa_error *error);
-bool qa_gl_finish(qa_gl_renderer *renderer, qa_error *error);
 bool qa_gl_swap(qa_gl_renderer *renderer, qa_error *error);
 bool qa_gl_set_gamma(qa_gl_renderer *renderer, float gamma, qa_error *error);
 /* Read the actual renderer-owned scalar without entering the native context. */

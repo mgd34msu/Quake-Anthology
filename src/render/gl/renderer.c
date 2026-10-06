@@ -1348,20 +1348,6 @@ size_t qa_gl_source_images_metadata_count(const qa_render_controls *controls)
 { return controls->owner.gl->source_image_count; }
 const qa_scene_image *qa_gl_source_image_metadata_at(const qa_render_controls *controls,size_t ordinal)
 { return controls->owner.gl->source_images[ordinal]->image; }
-bool qa_gl_finish(qa_gl_renderer *renderer, qa_error *error)
-{
-    if (!gl_surface_idle(renderer,error)) return false;
-    if (renderer == NULL || renderer->closed || renderer->detached ||
-        !qa_display_make_current(renderer->options.display, error) ||
-        !gl_output_resolve(renderer, error)) {
-        if (renderer == NULL || renderer->closed)
-            qa_error_set(error, QA_ERROR_ARGUMENT, 0,
-                         "Invalid OpenGL renderer finish");
-        return false;
-    }
-    renderer->gl.Finish();
-    return gl_check(renderer, "OpenGL finish", error);
-}
 bool qa_gl_swap(qa_gl_renderer *renderer, qa_error *error)
 {
     if (!gl_surface_idle(renderer,error)) return false;

@@ -187,13 +187,6 @@ bool frontend_frame_present(qa_frontend *frontend, qa_error *error)
             qa_gl_execute(frontend->gl, &frontend->frame, error);
         if (profiling) ok = frontend_profiler_end(profiler, ok, error);
     }
-    if (ok && frontend->gl && !frontend->frame.source_backend) {
-        if (profiling) ok = qa_profiler_push(profiler, "gl_completion", error);
-        if (ok) {
-            ok = qa_gl_finish(frontend->gl, error);
-            if (profiling) ok = frontend_profiler_end(profiler, ok, error);
-        }
-    }
     if (ok && profiling) ok = qa_profiler_push(profiler, "window_present", error);
     if (ok) {
         ok = frontend->cpu ? qa_cpu_present_frame(frontend->cpu, error) : qa_gl_swap(frontend->gl, error);
