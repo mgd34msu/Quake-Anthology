@@ -440,6 +440,8 @@ bool qa_application_map_read(const qa_application *, qa_application_map_view *);
 bool qa_application_map_origin_read(const qa_application *, qa_launch_resource_origin *);
 bool qa_application_visual_read(qa_application *, qa_actor_id,
                                   qa_application_visual_view *, qa_error *);
+bool qa_application_visual_visible_to(qa_application *, qa_actor_id, qa_actor_id recipient,
+                                     bool *, qa_error *);
 bool qa_application_weapon_read(qa_application *, qa_actor_id, qa_item_id *, qa_error *);
 bool qa_application_present(qa_application *, uint32_t seat,
                              uint32_t real_milliseconds,

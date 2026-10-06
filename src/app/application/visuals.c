@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "guest_qc_visual.h"
 #include "qa/game_q2_wire.h"
+#include "qa/game_q2_items.h"
 #include "qa/game_q1_bots.h"
 #include <math.h>
 #include <string.h>
@@ -123,6 +124,21 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
         return false;
     }
     return false;
+}
+
+bool qa_application_visual_visible_to(qa_application *application, qa_actor_id actor,
+    qa_actor_id recipient, bool *out, qa_error *error)
+{
+    if (!application || !out ||
+        !qa_actors_get(qa_session_actors(application->session), actor))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Visual actor is missing");
+    application_provider *body = application_provider_for(application, actor, QA_ROLE_BODY, "");
+    if (!body || !body->constructed || body->close_pending)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Selected body owner is missing");
+    if (body->kind == APPLICATION_PROVIDER_Q2)
+        return qa_q2_item_visible_to(body->state.q2, actor, recipient, out, error);
+    *out = true;
+    return true;
 }
 
 bool qa_application_visual_read(qa_application *application, qa_actor_id actor,

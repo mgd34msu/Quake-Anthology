@@ -1354,6 +1354,10 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
         if (!found) continue;
         if (!view.visible) continue;
         if (exclude && view.provider == exclude) continue;
+        bool recipient_visible;
+        if (!qa_application_visual_visible_to(frontend->application,actor,local,
+                &recipient_visible,error)) return false;
+        if (!recipient_visible) continue;
         float q2_back_lerp=0;
         if (!frontend_particle_q2_entity_sample(frontend,&view,&q2_back_lerp,error)) return false;
         bool q2_beam=false;
