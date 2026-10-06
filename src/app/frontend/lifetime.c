@@ -144,9 +144,10 @@ static bool shutdown_inputs(qa_frontend *f,qa_error *error)
             if(!okay) shutdown_failure(owner,&release);
         }
         qa_error fault={0};
-        if(!qa_application_startup_pending(f->application) || qa_application_startup_abort(f->application,&fault))
+        if(!qa_application_startup_pending(f->application) || qa_application_startup_abort(f->application,&fault)) {
+            if(!qa_application_startup_import_abort(f->application,error)) return false;
             owner->phase=SHUTDOWN_CLIENTS;
-        else {
+        } else {
             const qa_launch_snapshot *candidate=qa_application_startup_candidate(f->application);
             frontend_shared_settings *shared=frontend_config_store_shared(f->config_store,f->application,candidate);
             const qa_cvars_edit *values=shared?
@@ -178,6 +179,7 @@ static bool shutdown_inputs(qa_frontend *f,qa_error *error)
     }
     if(owner->phase==SHUTDOWN_ABORT_CANDIDATE) {
         if(qa_application_startup_pending(f->application) && !qa_application_startup_abort(f->application,error)) return false;
+        if(!qa_application_startup_import_abort(f->application,error)) return false;
         if(qa_application_engine_shutdown_owner(f->engine_shutdown)!=f->application ||
             qa_application_engine_shutdown_candidate(f->engine_shutdown) || f->input_settings || f->input_shutdown ||
             !frontend_seat_callbacks_idle(f) || (f->input && !qa_input_platform_settings_idle(f->input)))

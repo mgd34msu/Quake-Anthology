@@ -160,6 +160,9 @@ typedef struct qa_application_startup_hooks {
 bool qa_application_startup_pending(const qa_application *);
 bool qa_application_startup_advance(qa_application *, bool *complete, qa_error *);
 bool qa_application_startup_abort(qa_application *, qa_error *);
+/* Release original-save staging after startup cancellation has completed.
+ * Import advancement and native-to-QC reconfiguration keep this custody. */
+bool qa_application_startup_import_abort(qa_application *,qa_error *);
 /* Retain source-free ENGINE configuration without a synthetic launch. */
 bool qa_application_startup_bootstrap(qa_application *, qa_error *);
 /* Drive only the retained images programme before first output construction.

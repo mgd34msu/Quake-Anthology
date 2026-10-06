@@ -9,6 +9,8 @@
 #include "startup_program.h"
 #include "engine_shutdown.h"
 #include "rankings.h"
+#include "guest_qc_original_save.h"
+#include "guest_native_q2_original_save.h"
 #include "qa/console_cvar_observer.h"
 #include <stdlib.h>
 
@@ -809,6 +811,20 @@ bool qa_application_startup_abort(qa_application *app, qa_error *error)
 fail:
     flow->advancing = false;
     return false;
+}
+
+bool qa_application_startup_import_abort(qa_application *app,qa_error *error)
+{
+    if (!app) return application_fail(error,QA_ERROR_ARGUMENT,"Original import cleanup requires its application");
+    if (!app->q1_original_save && !app->q2_original_save) return true;
+    if (app->startup_flow || app->operation!=APPLICATION_IDLE || app->q3_round_active ||
+        app->frame_preparing || app->publication_started || app->destroy_requested || app->finalizing ||
+        !application_guests_idle(app) || !qa_console_idle(app->console) ||
+        (app->session && !qa_session_safe(app->session)) || (app->world && !qa_world_idle(app->world)))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Original import cleanup requires completed startup cancellation");
+    application_q1_original_dispose(app);
+    application_q2_original_dispose(app);
+    return true;
 }
 
 static void abort_failed_startup(qa_application *app, qa_error *error)

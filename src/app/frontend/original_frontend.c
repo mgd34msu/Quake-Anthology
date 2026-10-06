@@ -194,8 +194,7 @@ bool qa_frontend_original_restore_dispose(qa_frontend_original_restore *operatio
     if (!operation) return true;
     save_destroy(operation);
     qa_frontend *source=operation->source;
-    bool ok=!source || ((!source->application || !qa_application_startup_pending(source->application) ||
-        qa_application_startup_abort(source->application,error)) && qa_frontend_destroy(source,error));
+    bool ok=!source || qa_frontend_destroy(source,error);
     if (!ok) *retained_source=source;
     SDL_free(operation->product); free(operation);
     return ok;

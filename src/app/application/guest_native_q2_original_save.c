@@ -250,14 +250,19 @@ void application_q2_original_dispose(qa_application *app)
 
 bool application_q2_original_source(const application_provider *provider)
 {
-    const struct application_q2_original_save *stage=provider && provider->application?
-        provider->application->q2_original_save:NULL;
-    return provider && provider->application && provider->launch && provider->product &&
-        provider->product->family==QA_GAME_Q2 && provider->product->edition==QA_EDITION_CLASSIC &&
-        application_world_provider(provider->application,QA_ROLE_ENTITIES,"")==provider &&
-        ((stage && stage->product==provider->product->id) ||
-         application_campaign_q2_level(provider->application)) &&
-        !strcmp(provider->launch->selection.instance,"native:primary");
+    if (!provider || !provider->application || !provider->launch || !provider->product ||
+        provider->product->family!=QA_GAME_Q2 || provider->product->edition!=QA_EDITION_CLASSIC ||
+        strcmp(provider->launch->selection.instance,"native:primary")) return false;
+    qa_application *app=provider->application;
+    const struct application_q2_original_save *stage=app->q2_original_save;
+    if ((!stage || stage->product!=provider->product->id) && !application_campaign_q2_level(app)) return false;
+    const qa_launch_snapshot *snapshot=app->routing_snapshot;
+    if (!snapshot) snapshot=qa_application_startup_candidate(app);
+    if (!snapshot) snapshot=qa_application_launch(app);
+    const qa_launch_binding *binding=qa_launch_binding_for(qa_launch_snapshot_choices(snapshot),
+        (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
+    const qa_launch_instance *selected=binding?qa_launch_snapshot_find(snapshot,binding->instance):NULL;
+    return selected && selected->state==provider && selected->storage==provider->launch->storage;
 }
 
 static const qa_q2_save_level *current_level(const struct application_q2_original_save *stage)
