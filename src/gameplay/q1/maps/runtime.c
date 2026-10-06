@@ -1206,6 +1206,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     state->electrode_button = *handled && !strcmp(spawn->classname, "mge2m2_electrode_button");
     if (!fields(g, entity, spawn->map_fields, error))
         return false;
+    if (kind == Q1_MAP_LIGHT && q1_classnamed(g, entity->id, "light_fluorospark") && !state->style)
+        state->style = 10;
     if (!*handled)
         return true;
     entity->kind = Q1_MAP;

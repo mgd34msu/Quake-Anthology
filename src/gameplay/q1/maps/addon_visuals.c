@@ -301,11 +301,8 @@ bool q1_map_addon_light_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_erro
     e = visual(g, id);
     if (!e)
         return true;
-    if (spark) {
-        if (!e->map->style)
-            e->map->style = 10;
+    if (spark)
         return q1_map_ambient(g, body.origin, "ambience/buzz1.wav", .5f, error);
-    }
     const char *model = q1_classnamed(g, id, "light_torch_small_walltorch")
         ? "progs/flame.mdl" : "progs/flame2.mdl";
     if (!q1_model(g, e, model, error))

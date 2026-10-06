@@ -9,6 +9,7 @@
 #include "qa/qc_text_save.h"
 #include <stdio.h>
 #include <stddef.h>
+#include <float.h>
 
 typedef enum original_storage {
     ORIGINAL_FLOAT, ORIGINAL_DOUBLE, ORIGINAL_I32, ORIGINAL_U32, ORIGINAL_I16,
@@ -1766,6 +1767,14 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
                 !restore_map(admission->strings,admission->source,record,&entity,NULL,admission->slots,error)) goto done;
             if (source.map==Q1_MAP_PLAT_TRIGGER && saved(record,"enemy") && saved_number(record,"owner")!=0) {
                 unsupported(error,"Source platform helper has an unrepresented independent owner");goto done;
+            }
+            if (source.map==Q1_MAP_LIGHT) {
+                const char *value=saved(record,"light_lev");double ignored=0;
+                if (value && !qa_parse_number((qa_bytes){(const uint8_t *)value,strlen(value)},&ignored,error)) goto done;
+                if (!isfinite(ignored) || ignored < -FLT_MAX || ignored > FLT_MAX) {
+                    unsupported(error,"Source light compiler value is not finite");goto done;
+                }
+                admitted_key(admission,"light_lev");
             }
             if (source.map==Q1_MAP_WORLD) {
                 qa_q1_options options={0};
