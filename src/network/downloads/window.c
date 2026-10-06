@@ -1,6 +1,4 @@
 #include "qa/downloads.h"
-#include "qa/network_downloads_save.h"
-#include "../service_save_fields.h"
 #include <stdlib.h>
 
 typedef struct window_slot { uint64_t sequence, sent_ns; bool sent; } window_slot;
@@ -66,70 +64,3 @@ bool qa_download_window_acknowledge(qa_download_window *window, uint64_t sequenc
     slot->sent = false; ++window->base; return true;
 }
 bool qa_download_window_complete(const qa_download_window *window) { return window && window->base == window->blocks; }
-
-static bool window_checkpoint_valid(const qa_download_window *w)
-{
-    if (!w || !w->block_bytes || !w->capacity || !w->slots || !w->retry_ns ||
-        (w->content.size && !w->content.data) || w->base > w->next || w->next > w->blocks ||
-        w->next - w->base > w->capacity) return false;
-    uint64_t blocks = w->content.size / w->block_bytes + (w->content.size % w->block_bytes != 0);
-    if (blocks == UINT64_MAX || w->blocks != blocks + 1) return false;
-    for (uint32_t i = 0; i < w->capacity; ++i) {
-        const window_slot *slot = &w->slots[i];
-        if (slot->sequence >= w->blocks || (slot->sent &&
-            (slot->sequence < w->base || slot->sequence >= w->next || slot->sequence % w->capacity != i))) return false;
-    }
-    for (uint64_t i = w->base; i < w->next; ++i)
-        if (!w->slots[i % w->capacity].sent || w->slots[i % w->capacity].sequence != i) return false;
-    return true;
-}
-bool qa_download_window_checkpoint(const qa_download_window *window, qa_buffer *out, qa_error *error)
-{
-    if (!out || !window_checkpoint_valid(window) || (size_t)17 > (SIZE_MAX - 92) / (size_t)window->capacity)
-        return fail(error, "Invalid reliable download window continuation");
-    size_t capacity = 92 + (size_t)window->capacity * 17;
-    uint8_t *data = malloc(capacity);
-    if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding download window continuation"); return false; }
-    qa_sha256_digest digest; qa_sha256(window->content, &digest);
-    qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x57444151)) &&
-        qa_net_write_u64(&w, window->content.size) && qa_net_write_data(&w, digest.bytes, sizeof(digest.bytes)) &&
-        qa_net_write_u64(&w, window->block_bytes) && qa_net_write_u32(&w, window->capacity) &&
-        qa_net_write_u64(&w, window->retry_ns) && qa_net_write_u64(&w, window->base) &&
-        qa_net_write_u64(&w, window->next) && qa_net_write_u64(&w, window->blocks);
-    for (uint32_t i = 0; ok && i < window->capacity; ++i) {
-        const window_slot *slot = &window->slots[i];
-        ok = qa_net_write_u64(&w, slot->sequence) && qa_net_write_u64(&w, slot->sent_ns) && qa_net_write_u8(&w, slot->sent);
-    }
-    if (!ok || w.failed) { free(data); return false; }
-    *out = (qa_buffer){data, qa_net_writer_size(&w)}; return true;
-}
-bool qa_download_window_restore_checkpoint(qa_bytes record, qa_bytes content,
-    qa_download_window **out, qa_error *error)
-{
-    if (!out || *out || (record.size && !record.data) || (content.size && !content.data))
-        return fail(error, "Invalid reliable download window restore output/content");
-    qa_net_reader r; qa_net_reader_init(&r, record, error);
-    if (qa_net_read_u32(&r) != UINT32_C(0x57444151) || qa_net_read_u64(&r) != content.size)
-        return fail(error, "Download window continuation schema/content size differs");
-    qa_sha256_digest saved = {0}, actual; qa_sha256(content, &actual);
-    if (!qa_net_read_data(&r, saved.bytes, sizeof(saved.bytes)) || !qa_sha256_equal(&saved, &actual))
-        return fail(error, "Download window content digest differs from candidate resource");
-    uint64_t block = qa_net_read_u64(&r); uint32_t capacity = qa_net_read_u32(&r);
-    uint64_t retry = qa_net_read_u64(&r), base = qa_net_read_u64(&r), next = qa_net_read_u64(&r), blocks = qa_net_read_u64(&r);
-    if (r.failed || !block || block > SIZE_MAX || !capacity || sizeof(window_slot) > SIZE_MAX / (size_t)capacity ||
-        (uint64_t)capacity > qa_net_reader_remaining(&r) / 17 || qa_net_reader_remaining(&r) != (size_t)capacity * 17)
-        return fail(error, "Invalid download window continuation slot extent");
-    qa_download_window *window = NULL;
-    if (!qa_download_window_create(content, (size_t)block, capacity, retry, &window, error)) return false;
-    if (window->blocks != blocks) { qa_download_window_destroy(window); return fail(error, "Download window block extent differs"); }
-    window->base = base; window->next = next;
-    for (uint32_t i = 0; !r.failed && i < capacity; ++i) {
-        window_slot *slot = &window->slots[i]; slot->sequence = qa_net_read_u64(&r);
-        slot->sent_ns = qa_net_read_u64(&r); slot->sent = q3_save_bool(&r);
-    }
-    if (!qa_net_reader_finish(&r) || !window_checkpoint_valid(window)) {
-        qa_download_window_destroy(window); return fail(error, "Invalid restored reliable download window ownership");
-    }
-    *out = window; return true;
-}

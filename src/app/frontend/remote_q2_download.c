@@ -64,7 +64,7 @@ static bool download_resource(void *context, const qa_download_request *request,
         !request->path || !view->path || strcmp(request->path, row->download_path) ||
         strcmp(view->path, row->download_path) || request->stage_nonce != row->download_logical_nonce ||
         view->stage_nonce != row->download_logical_nonce || request->maximum_bytes != INT32_MAX ||
-        request->expected_bytes || request->exact_identity || request->resume ||
+        request->expected_bytes || request->exact_length || request->resume ||
         view->received != remote_q2_download_extent(row) || view->received > INT32_MAX || view->limit != INT32_MAX ||
         view->state != QA_DOWNLOAD_RECEIVING || view->published || view->mounted ||
         row->download_root != remote_q2_download_destination(row, row->download_path) ||

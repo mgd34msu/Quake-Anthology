@@ -2,7 +2,6 @@
 #define QA_DOWNLOADS_H
 #include "qa/http.h"
 #include "qa/filesystem.h"
-#include "qa/hash.h"
 
 typedef struct qa_downloads qa_downloads;
 typedef uint64_t qa_download_id;
@@ -12,8 +11,7 @@ typedef enum qa_download_state {
 typedef struct qa_download_request {
     const char *path;
     uint64_t maximum_bytes, expected_bytes;
-    qa_sha256_digest digest;
-    bool exact_identity;
+    bool exact_length;
     uint64_t stage_nonce;
     bool resume;
 } qa_download_request;
@@ -24,7 +22,6 @@ typedef struct qa_download_view {
     qa_download_state state;
     qa_error failure;
     bool published, mounted;
-    qa_sha256_digest digest;
     uint64_t stage_nonce;
     /* Inspection completed; the exact sealed publication still needs retry. */
     bool publication_pending;
@@ -36,7 +33,7 @@ typedef struct qa_download_hooks {
     bool (*inspect)(void *, const char *path, qa_fs_stage *, uint64_t bytes, qa_error *);
     /* Application invalidates/resolves content and resumes signon here. Failure
      * reports published=true, mounted=false; installed content is retained. */
-    bool (*remount)(void *, const char *path, const qa_sha256_digest *, qa_error *);
+    bool (*remount)(void *, const char *path, qa_error *);
     void (*changed)(void *, const qa_download_view *);
 } qa_download_hooks;
 typedef struct qa_download_options {

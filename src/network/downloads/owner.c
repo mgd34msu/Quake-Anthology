@@ -141,22 +141,11 @@ static bool finish(download_job *job, qa_error *error) {
     if (job->view.publication_pending) return publish(job,error);
     uint64_t bytes;
     if (!qa_fs_stage_size(job->stage, &bytes, error)) return false;
-    if (bytes != job->view.received || (job->request.exact_identity && bytes != job->request.expected_bytes) ||
+    if (bytes != job->view.received || (job->request.exact_length && bytes != job->request.expected_bytes) ||
         (job->has_http_total && bytes != job->http_total))
         return fail(error, "Download length differs from admitted completion");
     qa_fs_identity identity;
     if (!qa_fs_stage_seal(job->stage, &identity, error)) return false;
-    qa_sha256_context hash; qa_sha256_init(&hash);
-    uint8_t scratch[65536]; uint64_t offset = 0;
-    while (offset < bytes) {
-        size_t count = bytes - offset > sizeof(scratch) ? sizeof(scratch) : (size_t)(bytes - offset), read = 0;
-        if (!qa_fs_stage_read(job->stage, offset, scratch, count, &read, error)) return false;
-        if (read != count) return fail(error, "Staged download changed during digest verification");
-        qa_sha256_update(&hash, (qa_bytes){scratch, read}); offset += read;
-    }
-    qa_sha256_final(&hash, &job->view.digest);
-    if (job->request.exact_identity && !qa_sha256_equal(&job->view.digest, &job->request.digest))
-        return fail(error, "Download digest differs from expected identity");
     bool previous = owner->callback; owner->callback = true;
     bool ok = owner->options.hooks.inspect(owner->options.hooks.context, job->view.path, job->stage, bytes, error);
     owner->callback = previous;
@@ -178,7 +167,7 @@ bool qa_downloads_pump(qa_downloads *owner, qa_error *error) {
         }
         if (!job->view.id || job->view.state != QA_DOWNLOAD_INSTALLING) continue;
         qa_error failure = {0}; owner->callback = true;
-        bool ok = owner->options.hooks.remount(owner->options.hooks.context, job->view.path, &job->view.digest, &failure);
+        bool ok = owner->options.hooks.remount(owner->options.hooks.context, job->view.path, &failure);
         owner->callback = false;
         job->view.mounted = ok;
         if (ok) job->view.state = QA_DOWNLOAD_COMPLETE;
@@ -204,7 +193,7 @@ static bool headers(void *context, qa_http_request_id id, const qa_http_response
     if (job->http_start || response->status == 206) {
         if (response->status != 206 || !response->has_range || response->range_first != job->http_start ||
             response->range_total > job->view.limit || response->range_last != response->range_total - 1 ||
-            (job->request.exact_identity && response->range_total != job->request.expected_bytes))
+            (job->request.exact_length && response->range_total != job->request.expected_bytes))
             return fail(error, "HTTP range does not match retained download identity");
         job->http_total = response->range_total; job->has_http_total = true; return true;
     }
@@ -235,7 +224,7 @@ bool qa_downloads_begin(qa_downloads *owner, const qa_download_request *request,
                          qa_download_id *out, qa_error *error) {
     if (!owner || owner->callback || !request || !request->path || !out || !owner->next_id ||
         request->maximum_bytes > INT64_MAX || request->maximum_bytes > owner->options.maximum_pending_bytes - owner->reserved ||
-        (request->exact_identity && request->expected_bytes > request->maximum_bytes) ||
+        (request->exact_length && request->expected_bytes > request->maximum_bytes) ||
         (request->resume && !request->stage_nonce)) return fail(error, "Invalid download request or shared staging capacity");
     download_job *job = NULL;
     for (uint32_t i = 0; i < owner->options.jobs; ++i) if (!owner->jobs[i].view.id) { job = &owner->jobs[i]; break; }
@@ -252,14 +241,14 @@ bool qa_downloads_begin(qa_downloads *owner, const qa_download_request *request,
     qa_fs_stage *stage; uint64_t initial;
     uint64_t nonce = request->stage_nonce ? request->stage_nonce : owner->next_id;
     if (!qa_fs_stage_open(owner->root, path, nonce, request->resume, &stage, &initial, error)) { free(path); return false; }
-    if (initial > request->maximum_bytes || (request->exact_identity && initial > request->expected_bytes)) {
+    if (initial > request->maximum_bytes || (request->exact_length && initial > request->expected_bytes)) {
         qa_fs_stage_close(stage, false); free(path); return fail(error, "Resumed download exceeds admitted identity");
     }
     *job = (download_job){.owner = owner, .request = normalized, .stage = stage, .native_stage_nonce = nonce, .http_start = initial,
         .view = {.id = owner->next_id++, .path = path, .received = initial, .limit = request->maximum_bytes,
                  .state = QA_DOWNLOAD_RECEIVING, .stage_nonce = nonce}};
     owner->reserved += request->maximum_bytes;
-    if (url && !(request->exact_identity && initial == request->expected_bytes)) {
+    if (url && !(request->exact_length && initial == request->expected_bytes)) {
         if (strlen(url) > 65535) {
             discard_stage(job, request->resume); free(path); memset(job, 0, sizeof(*job));
             return fail(error, "HTTP download address exceeds retained recipe capacity");
@@ -281,7 +270,7 @@ bool qa_downloads_begin(qa_downloads *owner, const qa_download_request *request,
         }
     }
     *out = job->view.id; notify(job);
-    if (url && request->exact_identity && initial == request->expected_bytes) {
+    if (url && request->exact_length && initial == request->expected_bytes) {
         if (!finish(job, error)) { rejected(job, error, false); return false; }
     }
     return true;
@@ -340,7 +329,7 @@ static bool download_job_valid(const qa_downloads *owner, const download_job *jo
             (unsigned)view->state > QA_DOWNLOAD_CANCELED || (unsigned)view->failure.code > QA_ERROR_NOT_FOUND ||
             !memchr(view->failure.message, 0, sizeof(view->failure.message)) ||
             request->maximum_bytes != view->limit || view->limit > INT64_MAX || view->received > view->limit ||
-            (request->exact_identity && request->expected_bytes > view->limit) ||
+            (request->exact_length && request->expected_bytes > view->limit) ||
             (request->resume && !request->stage_nonce) || !view->stage_nonce ||
             (request->stage_nonce && request->stage_nonce != view->stage_nonce) || job->http_start > view->received ||
             (job->has_http_total && (job->http_total > view->limit || job->http_start > job->http_total)) ||
@@ -355,8 +344,8 @@ static bool download_job_valid(const qa_downloads *owner, const download_job *jo
             (view->state == QA_DOWNLOAD_COMPLETE && (!view->published || !view->mounted)) ||
             (view->mounted && view->state != QA_DOWNLOAD_COMPLETE) ||
             (staged && ((view->published && !view->publication_pending) || view->mounted)) ||
-            (view->published && request->exact_identity &&
-                (view->received != request->expected_bytes || !qa_sha256_equal(&view->digest, &request->digest)))) return false;
+            (view->published && request->exact_length &&
+                view->received != request->expected_bytes)) return false;
     char *normalized = qa_vfs_normalize_path(view->path, NULL);
     bool path_ok = normalized && !strcmp(normalized, view->path); free(normalized); return path_ok;
 }
@@ -390,13 +379,13 @@ static bool download_save_job(qa_net_writer *w, const download_job *job)
     size_t length = strlen(view->path);
     return qa_net_write_u64(w, view->id) && qa_net_write_u64(w, length) && qa_net_write_data(w, view->path, length) &&
         qa_net_write_u64(w, request->maximum_bytes) && qa_net_write_u64(w, request->expected_bytes) &&
-        qa_net_write_data(w, request->digest.bytes, sizeof(request->digest.bytes)) && qa_net_write_u8(w, request->exact_identity) &&
+        qa_net_write_u8(w, request->exact_length) &&
         qa_net_write_u64(w, request->stage_nonce) && qa_net_write_u8(w, request->resume) &&
         qa_net_write_u64(w, view->received) && qa_net_write_u64(w, view->limit) && qa_net_write_u32(w, view->state) &&
         qa_net_write_u32(w, view->failure.code) && qa_net_write_u64(w, view->failure.offset) &&
         qa_net_write_data(w, view->failure.message, sizeof(view->failure.message)) &&
         qa_net_write_u8(w, view->published) && qa_net_write_u8(w, view->mounted) &&
-        qa_net_write_data(w, view->digest.bytes, sizeof(view->digest.bytes)) && qa_net_write_u64(w, view->stage_nonce) &&
+        qa_net_write_u64(w, view->stage_nonce) &&
         qa_net_write_u64(w, job->http_start) && qa_net_write_u64(w, job->http_total) && qa_net_write_u8(w, job->has_http_total) &&
         qa_net_write_u64(w, job->http_id) && qa_net_write_u8(w, job->http_url != NULL) &&
         (!job->http_url || qa_net_write_string(w, job->http_url)) && qa_net_write_u8(w, job->retained_stage) &&
@@ -404,9 +393,9 @@ static bool download_save_job(qa_net_writer *w, const download_job *job)
 }
 bool qa_downloads_checkpoint(const qa_downloads *owner, qa_buffer *out, qa_error *error)
 {
-    if (!out || !download_checkpoint_valid(owner) || (size_t)531 > (SIZE_MAX - 36) / (size_t)owner->options.jobs)
+    if (!out || !download_checkpoint_valid(owner) || (size_t)467 > (SIZE_MAX - 36) / (size_t)owner->options.jobs)
         return fail(error, "Download continuation requires idle native jobs and HTTP callbacks");
-    size_t capacity = 36 + (size_t)owner->options.jobs * 531;
+    size_t capacity = 36 + (size_t)owner->options.jobs * 467;
     for (uint32_t i = 0; i < owner->options.jobs; ++i) {
         const download_job *job = &owner->jobs[i]; if (!job->view.id) continue;
         size_t length = strlen(job->view.path);
@@ -469,14 +458,12 @@ static bool download_restore_job(qa_net_reader *r, download_job *job)
         return qa_net_reader_fail(r, "Embedded NUL in download continuation path");
     path[length] = 0;
     request->maximum_bytes = qa_net_read_u64(r); request->expected_bytes = qa_net_read_u64(r);
-    if (!qa_net_read_data(r, request->digest.bytes, sizeof(request->digest.bytes))) return false;
-    request->exact_identity = q3_save_bool(r); request->stage_nonce = qa_net_read_u64(r); request->resume = q3_save_bool(r);
+    request->exact_length = q3_save_bool(r); request->stage_nonce = qa_net_read_u64(r); request->resume = q3_save_bool(r);
     view->received = qa_net_read_u64(r); view->limit = qa_net_read_u64(r); view->state = (qa_download_state)qa_net_read_u32(r);
     view->failure.code = (qa_status)qa_net_read_u32(r); uint64_t failure_offset = qa_net_read_u64(r);
     if (failure_offset > SIZE_MAX || !qa_net_read_data(r, view->failure.message, sizeof(view->failure.message)))
         return qa_net_reader_fail(r, "Invalid download continuation error extent");
     view->failure.offset = (size_t)failure_offset; view->published = q3_save_bool(r); view->mounted = q3_save_bool(r);
-    if (!qa_net_read_data(r, view->digest.bytes, sizeof(view->digest.bytes))) return false;
     view->stage_nonce = qa_net_read_u64(r); job->http_start = qa_net_read_u64(r); job->http_total = qa_net_read_u64(r);
     job->has_http_total = q3_save_bool(r); job->http_id = qa_net_read_u64(r);
     bool has_url = q3_save_bool(r);
@@ -546,11 +533,8 @@ bool qa_downloads_restore_checkpoint(qa_bytes bytes, qa_http *http, qa_fs_root *
                     ok = ok && (job->view.published || (nonce && nonce != job->view.stage_nonce)) &&
                         download_stage_matches(stage,prefixes[i],!job->view.published,error);
                     if (ok) job->native_stage_nonce = nonce;
-                    if(ok && job->view.publication_pending) {
-                        qa_sha256_digest digest; qa_sha256(prefixes[i],&digest);
-                        ok=qa_sha256_equal(&digest,&job->view.digest);
-                        if(ok && !job->view.published) ok=qa_fs_stage_seal(stage,&job->publication_identity,error);
-                    }
+                    if(ok && job->view.publication_pending && !job->view.published)
+                        ok=qa_fs_stage_seal(stage,&job->publication_identity,error);
                 }
             } else if (ok) ok = false;
         }

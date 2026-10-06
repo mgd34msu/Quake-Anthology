@@ -3374,8 +3374,8 @@ static bool menu_preferences_direct(qa_frontend_network *n,qa_net_protocol_id pr
 static bool download_permit(void *context, const qa_download_request *request, const char *url, qa_error *error)
 {
     (void)context;
-    if (!request->exact_identity || !url || request->maximum_bytes > UINT64_C(2147483648))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "download requires explicit URL, exact content digest and bounded size");
+    if (!request->exact_length || !url || request->maximum_bytes > UINT64_C(2147483648))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "download requires explicit URL and bounded exact file length");
     qa_archive_kind kind = qa_archive_kind_for_path(request->path);
     const char *extension = strrchr(request->path, '.');
     return kind != QA_ARCHIVE_AUTO || (extension && !strcmp(extension, ".bsp")) ||
@@ -3442,10 +3442,9 @@ static bool download_catalog_receipt(qa_frontend_network *n, const char *path, q
         "published download was not admitted by the user content catalog");
     return true;
 }
-static bool download_remount(void *context, const char *path, const qa_sha256_digest *digest, qa_error *error)
+static bool download_remount(void *context, const char *path, qa_error *error)
 {
     qa_frontend_network *n = context;
-    (void)digest;
     qa_application *application = n->frontend->application;
     if (!qa_application_rediscover(application, n->frontend->options.application.discover_mods, error)) return false;
     if (!download_catalog_receipt(n, path, error)) return false;
@@ -3811,11 +3810,11 @@ static bool command(void *context, const qa_command_invocation *call, qa_error *
     if (!operator_command(n,call,0,&handled,error)) return false;
     if (handled) return true;
     if (!strcmp(name, "download")) {
-        if (call->argc < 5 || call->argc > 6) return frontend_fail(error, QA_ERROR_ARGUMENT, "usage: download path url sha256 bytes [resume-nonce]");
-        qa_download_request request = {.path = call->argv[1], .exact_identity = true};
-        if (!qa_sha256_parse(call->argv[3], &request.digest, error) || !unsigned_text(call->argv[4], &request.expected_bytes, error)) return false;
+        if (call->argc < 4 || call->argc > 5) return frontend_fail(error, QA_ERROR_ARGUMENT, "usage: download path url bytes [resume-nonce]");
+        qa_download_request request = {.path = call->argv[1], .exact_length = true};
+        if (!unsigned_text(call->argv[3], &request.expected_bytes, error)) return false;
         request.maximum_bytes = request.expected_bytes; request.stage_nonce = ++n->nonce;
-        if (call->argc == 6) { request.resume = true; if (!unsigned_text(call->argv[5], &request.stage_nonce, error)) return false; }
+        if (call->argc == 5) { request.resume = true; if (!unsigned_text(call->argv[4], &request.stage_nonce, error)) return false; }
         qa_download_id id;
         if (!downloads_ready(n, error) || !qa_downloads_begin(n->downloads, &request, call->argv[2], &id, error)) return false;
         char line[128]; snprintf(line, sizeof(line), "download %" PRIu64 " stage %" PRIu64 "\n", id, request.stage_nonce); emit(call, line); return true;

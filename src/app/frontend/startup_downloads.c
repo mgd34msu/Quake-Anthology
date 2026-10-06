@@ -12,7 +12,7 @@ typedef struct download_row {
 } download_row;
 typedef struct download_context { frontend_startup_downloads *owner; qa_ui_id menu; } download_context;
 typedef struct download_draft {
-    char path[512],url[2049],digest[65],bytes[21],status[256];
+    char path[512],url[2049],bytes[21],status[256];
     size_t selected;
 } download_draft;
 struct frontend_startup_downloads {
@@ -126,16 +126,15 @@ static bool execute(download_context *context,qa_ui_id id,const qa_ui_action *ev
             switch(id) {
             case 1:return field_copy(o->draft.path,sizeof(o->draft.path),event,e);
             case 2:return field_copy(o->draft.url,sizeof(o->draft.url),event,e);
-            case 3:return field_copy(o->draft.digest,sizeof(o->draft.digest),event,e);
-            case 4:return field_copy(o->draft.bytes,sizeof(o->draft.bytes),event,e);
+            case 3:return field_copy(o->draft.bytes,sizeof(o->draft.bytes),event,e);
             default:return true;
             }
         }
-        if(id==6 && event->kind==QA_UI_ACTIVATE)return qa_ui_close(o->ui,now(o),e);
-        if(id!=5 || event->kind!=QA_UI_ACTIVATE)return true;
-        qa_download_request request={.path=o->draft.path,.exact_identity=true};
+        if(id==5 && event->kind==QA_UI_ACTIVATE)return qa_ui_close(o->ui,now(o),e);
+        if(id!=4 || event->kind!=QA_UI_ACTIVATE)return true;
+        qa_download_request request={.path=o->draft.path,.exact_length=true};
         if(!o->draft.path[0] || !o->draft.url[0])return fail(e,QA_ERROR_ARGUMENT,"Enter a destination path and download URL");
-        if(!byte_count(o->draft.bytes,&request.expected_bytes,e) || !qa_sha256_parse(o->draft.digest,&request.digest,e))return false;
+        if(!byte_count(o->draft.bytes,&request.expected_bytes,e))return false;
         request.maximum_bytes=request.expected_bytes;
         frontend_network_menu_view view; qa_download_id job;
         if(!read(o,&view,e) || !frontend_network_menu_download_begin(f,&view,&request,o->draft.url,&job,e))return false;
@@ -193,17 +192,17 @@ static bool factory(void *context,uint32_t seat,qa_ui_menu *out,qa_error *e)
     download_context *c=context; frontend_startup_downloads *o=c?c->owner:NULL;
     if(!out || !bound(o) || seat!=o->seat->id || o->retiring)return fail(e,QA_ERROR_ARGUMENT,"Downloads lost their physical UI owner");
     if(c->menu==o->contexts[1].menu) {
-        static const char *labels[]={"Destination path","HTTP or HTTPS URL","Expected SHA-256","Expected size (bytes)"};
-        const char *texts[]={o->draft.path,o->draft.url,o->draft.digest,o->draft.bytes};
-        const size_t limits[]={sizeof(o->draft.path)-1,sizeof(o->draft.url)-1,sizeof(o->draft.digest)-1,sizeof(o->draft.bytes)-1};
-        for(unsigned i=0;i<4;++i) {
+        static const char *labels[]={"Destination path","HTTP or HTTPS URL","Expected size (bytes)"};
+        const char *texts[]={o->draft.path,o->draft.url,o->draft.bytes};
+        const size_t limits[]={sizeof(o->draft.path)-1,sizeof(o->draft.url)-1,sizeof(o->draft.bytes)-1};
+        for(unsigned i=0;i<3;++i) {
             o->controls[i]=control(c,i+1,labels[i],112+(float)i*56,true); o->controls[i].kind=QA_UI_FIELD;
             o->controls[i].value.field.text=texts[i]; o->controls[i].value.field.maximum=limits[i];
         }
-        o->controls[4]=control(c,5,"Download and verify",352,true);
-        o->controls[5]=control(c,6,"Back",388,true);
-        o->controls[6]=control(c,7,o->draft.status[0]?o->draft.status:"Use a publisher's file size and SHA-256. Existing files are preserved.",432,false);
-        *out=(qa_ui_menu){.id=c->menu,.title="Add verified download",.controls=o->controls,.count=7}; return true;
+        o->controls[3]=control(c,4,"Download",296,true);
+        o->controls[4]=control(c,5,"Back",332,true);
+        o->controls[5]=control(c,6,o->draft.status[0]?o->draft.status:"Enter the publisher's file size in bytes.",376,false);
+        *out=(qa_ui_menu){.id=c->menu,.title="Add download",.controls=o->controls,.count=6}; return true;
     }
     frontend_network_menu_view view; frontend_network_menu_download_policy policy; bool present;
     if(!read(o,&view,e) || !refresh(o,&view,e) ||
@@ -211,12 +210,12 @@ static bool factory(void *context,uint32_t seat,qa_ui_menu *out,qa_error *e)
     const qa_download_view *job=o->count?&o->jobs[o->draft.selected].view:NULL;
     o->controls[0]=control(c,1,"Allow automatic client downloads",108,present); o->controls[0].kind=QA_UI_TOGGLE;
     o->controls[0].value.checked=present && policy.allowed;
-    o->controls[1]=control(c,2,o->count?"Verified package downloads":"No verified package downloads",148,o->count!=0);
+    o->controls[1]=control(c,2,o->count?"Package downloads":"No package downloads",148,o->count!=0);
     o->controls[1].kind=o->count?QA_UI_LIST:QA_UI_BUTTON; o->controls[1].rect.height=154;
     o->controls[1].value.list.rows=o->rows; o->controls[1].value.list.count=o->count;
     o->controls[1].value.list.selected=o->draft.selected; o->controls[1].value.list.row_height=38;
     o->controls[1].value.list.revision=o->revision;
-    o->controls[2]=control(c,3,"Add verified download",310,true);
+    o->controls[2]=control(c,3,"Add download",310,true);
     o->controls[3]=control(c,4,"Cancel selected",344,job && !job->published &&
         (job->state==QA_DOWNLOAD_RECEIVING || job->state==QA_DOWNLOAD_INSTALLING));
     o->controls[3].rect.width=248;
@@ -225,8 +224,8 @@ static bool factory(void *context,uint32_t seat,qa_ui_menu *out,qa_error *e)
     o->controls[4].rect.x=328; o->controls[4].rect.width=248;
     o->controls[5]=control(c,6,"Back",378,true);
     snprintf(o->receipt,sizeof(o->receipt),"%.*s",(int)sizeof(o->receipt)-1,
-        job?job->failure.message[0]?job->failure.message:job->mounted?"Verified and installed":job->published?
-        "Verified file installed; content activation is pending":state(job):present?"Select a download to see its result":
+        job?job->failure.message[0]?job->failure.message:job->mounted?"Installed":job->published?
+        "File installed; content activation is pending":state(job):present?"Select a download to see its result":
         "Connect a client to change automatic downloads");
     o->controls[6]=control(c,7,o->receipt,416,false);
     o->controls[7]=control(c,8,o->draft.status,446,false);
@@ -280,7 +279,7 @@ static bool fields(qa_source_save_io *io,const frontend_startup_downloads *o,dow
     if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QDMN",4) || !qa_source_save_u32(io,&physical) || physical!=o->seat->id)return false;
     for(unsigned i=0;i<2;++i) { uint64_t menu=o->contexts[i].menu; if(!qa_source_save_u64(io,&menu) || menu!=o->contexts[i].menu)return false; }
     return qa_source_save_count(io,&draft->selected,SIZE_MAX) && text_field(io,draft->path,sizeof(draft->path)) &&
-        text_field(io,draft->url,sizeof(draft->url)) && text_field(io,draft->digest,sizeof(draft->digest)) &&
+        text_field(io,draft->url,sizeof(draft->url)) &&
         text_field(io,draft->bytes,sizeof(draft->bytes)) && text_field(io,draft->status,sizeof(draft->status));
 }
 bool frontend_startup_downloads_checkpoint(const frontend_startup_downloads *o,qa_buffer *out,qa_error *e)

@@ -138,13 +138,12 @@ static bool path_report(qa_vfs *files, diagnostic_text *text, qa_error *error) {
 const char *frontend_tools_output_root(const qa_frontend *frontend)
 { return frontend && frontend->tools ? frontend->tools->output_root : NULL; }
 static bool resource_report(qa_vfs *files, diagnostic_text *text, qa_error *error) {
-    if (!append(text, error, "identity bytes readers sha256 path\n")) return false;
+    if (!append(text, error, "identity bytes readers path\n")) return false;
     size_t count = qa_vfs_resource_count(files);
     for (size_t i = 0; i < count; ++i) {
         size_t readers = 0; const qa_resource *resource = qa_vfs_resource_at(files, i, &readers);
         if (!resource) return frontend_fail(error, QA_ERROR_ARGUMENT, "resource inventory changed during observation");
-        char digest[65]; qa_sha256_hex(qa_resource_digest(resource), digest);
-        if (!append(text, error, "%" PRIu64 " %zu %zu %s %s\n", qa_resource_id(resource), qa_resource_bytes(resource).size, readers, digest, qa_resource_path(resource))) return false;
+        if (!append(text, error, "%" PRIu64 " %zu %zu %s\n", qa_resource_id(resource), qa_resource_bytes(resource).size, readers, qa_resource_path(resource))) return false;
     }
     return append(text, error, "%zu cached opened resources\n", count);
 }

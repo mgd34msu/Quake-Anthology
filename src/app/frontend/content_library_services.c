@@ -19,7 +19,7 @@ typedef struct library_rows {
 } library_rows;
 typedef struct addon_mapping { char *from, *to; } addon_mapping;
 typedef struct addon_package {
-    char *sha, *title, *filename, *group, *url, *start, *game;
+    char *id, *title, *filename, *group, *url, *start, *game;
     char **tags;
     size_t tag_count;
     addon_mapping *mappings;
@@ -29,7 +29,7 @@ typedef struct addon_package {
     bool local;
 } addon_package;
 typedef struct addon_installed {
-    char *directory, *product, *title, *group, *sha, *start;
+    char *directory, *product, *title, *group, *id, *start;
 } addon_installed;
 typedef struct addon_library {
     library_rows view;
@@ -220,16 +220,18 @@ static bool json_text(const qa_json_document *doc, qa_json_id id, char **out, qa
     }
     *out = (char *)text.data; return true;
 }
-static bool lower_digest(const char *text, qa_sha256_digest *digest, qa_error *error)
+static bool package_id_valid(const char *id)
 {
-    if (strlen(text) != 64) return false;
-    for (size_t i = 0; i < 64; ++i)
-        if (!((text[i] >= '0' && text[i] <= '9') || (text[i] >= 'a' && text[i] <= 'f'))) return false;
-    return qa_sha256_parse(text, digest, error);
+    size_t size = strlen(id);
+    if (!size || size > 64) return false;
+    for (size_t i = 0; i < size; ++i)
+        if (!((id[i] >= 'a' && id[i] <= 'z') || (id[i] >= '0' && id[i] <= '9') ||
+            id[i] == '-' || id[i] == '_')) return false;
+    return true;
 }
 static void package_clear(addon_package *package)
 {
-    free(package->sha); free(package->title); free(package->filename); free(package->group);
+    free(package->id); free(package->title); free(package->filename); free(package->group);
     free(package->url); free(package->start); free(package->game); free(package->unavailable);
     if (package->tags) for (size_t i = 0; i < package->tag_count; ++i) free(package->tags[i]);
     free(package->tags);
@@ -242,7 +244,7 @@ static void installed_clear(addon_library *library)
 {
     for (size_t i = 0; i < library->installed_count; ++i) {
         addon_installed *value = library->installed + i;
-        free(value->directory); free(value->product); free(value->title); free(value->group); free(value->sha); free(value->start);
+        free(value->directory); free(value->product); free(value->title); free(value->group); free(value->id); free(value->start);
     }
     free(library->installed); library->installed = NULL; library->installed_count = 0;
 }
@@ -376,16 +378,15 @@ static bool catalog_parse(addon_library *library, qa_bytes bytes, qa_error *erro
         const char *filename = tag_at(&package, "filename", 0);
         if (!okay || !has_tag(&package, "game=quake") || !has_tag(&package, "game_mode=singleplayer") ||
             !filename || !suffix(filename, ".zip")) { package_clear(&package); continue; }
-        okay = json_text(doc, qa_json_get(doc, row, "sha256"), &package.sha, error) &&
+        okay = json_text(doc, qa_json_get(doc, row, "sha256"), &package.id, error) &&
             qa_json_u64(doc, qa_json_get(doc, row, "bytes"), &package.bytes, error);
-        qa_sha256_digest digest;
         if (okay && (!package.bytes || package.bytes > UINT64_C(9007199254740991) ||
-            !lower_digest(package.sha, &digest, error)))
+            !package_id_valid(package.id)))
             okay = frontend_fail(error, QA_ERROR_FORMAT, "Invalid Quaddicted package identity");
         qa_json_id urls = qa_json_get(doc, row, "urls");
         if (okay && urls != QA_JSON_NONE && qa_json_type(doc, urls) != QA_JSON_ARRAY)
             okay = frontend_fail(error, QA_ERROR_FORMAT, "Invalid Quaddicted URL list");
-        char prefix[160]; if (okay) snprintf(prefix, sizeof(prefix), "https://www.quaddicted.com/files/by-sha256/%.2s/%s/", package.sha, package.sha);
+        char prefix[160]; if (okay) snprintf(prefix, sizeof(prefix), "https://www.quaddicted.com/files/by-sha256/%.2s/%s/", package.id, package.id);
         for (size_t j = 0; okay && urls != QA_JSON_NONE && j < qa_json_size(doc, urls); ++j) {
             char *url = NULL; okay = json_text(doc, qa_json_at(doc, urls, j), &url, error);
             if (okay && !package.url && !strncmp(url, prefix, strlen(prefix))) { package.url = url; url = NULL; }
@@ -424,10 +425,10 @@ static bool catalog_parse(addon_library *library, qa_bytes bytes, qa_error *erro
     qa_json_destroy(doc);
     if (!okay) { for (size_t i = 0; i < used; ++i) package_clear(packages + i); free(packages); return false; }
     char selected[65] = {0};
-    if (library->selected < library->package_count) snprintf(selected, sizeof(selected), "%s", library->packages[library->selected].sha);
+    if (library->selected < library->package_count) snprintf(selected, sizeof(selected), "%s", library->packages[library->selected].id);
     for (size_t i = 0; i < library->package_count; ++i) package_clear(library->packages + i);
     free(library->packages); library->packages = packages; library->package_count = used; library->selected = SIZE_MAX;
-    for (size_t i = 0; i < used; ++i) if (!strcmp(selected, packages[i].sha)) library->selected = i;
+    for (size_t i = 0; i < used; ++i) if (!strcmp(selected, packages[i].id)) library->selected = i;
     return true;
 }
 static bool root_read(qa_fs_root *root, const char *path, qa_buffer *out, qa_error *error)
@@ -456,9 +457,10 @@ static bool addon_prepare(frontend_content_library_services *owner, qa_error *er
 }
 static bool managed_name(const char *name)
 {
-    if (strlen(name) != 44 || strncmp(name, "qd_", 3) || name[23] != '_') return false;
-    for (size_t i = 3; i < 44; ++i) if (i != 23 && !((name[i] >= '0' && name[i] <= '9') ||
-        (name[i] >= 'a' && name[i] <= 'f'))) return false;
+    if (strncmp(name, "qd_", 3) || !name[3]) return false;
+    for (const char *p = name + 3; *p; ++p)
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+            (*p >= '0' && *p <= '9') || *p == '_' || *p == '-')) return false;
     return true;
 }
 static bool installed_load(frontend_content_library_services *owner, qa_error *error)
@@ -485,13 +487,14 @@ static bool installed_load(frontend_content_library_services *owner, qa_error *e
             bool valid = root_read(library->root, path, &bytes, &metadata) &&
                 qa_json_parse((qa_bytes){bytes.data, bytes.size}, &doc, &metadata);
             qa_json_id row = valid ? qa_json_root(doc) : QA_JSON_NONE;
-            if (valid) valid = json_text(doc, qa_json_get(doc, row, "sha256"), &value.sha, &metadata) &&
+            qa_json_id package_id = valid ? qa_json_get(doc, row, "id") : QA_JSON_NONE;
+            if (valid && package_id == QA_JSON_NONE) package_id = qa_json_get(doc, row, "sha256");
+            if (valid) valid = json_text(doc, package_id, &value.id, &metadata) &&
                 json_text(doc, qa_json_get(doc, row, "title"), &value.title, &metadata) &&
                 json_text(doc, qa_json_get(doc, row, "group"), &value.group, &metadata);
             qa_json_id start = valid ? qa_json_get(doc, row, "start") : QA_JSON_NONE;
             if (valid && qa_json_type(doc, start) != QA_JSON_NULL) valid = json_text(doc, start, &value.start, &metadata);
-            qa_sha256_digest digest;
-            if (valid) valid = lower_digest(value.sha, &digest, &metadata);
+            if (valid) valid = package_id_valid(value.id);
             if (valid) {
                 value.directory = copy_string(product->directory);
                 value.product = copy_string(product->key);
@@ -502,7 +505,7 @@ static bool installed_load(frontend_content_library_services *owner, qa_error *e
                 else { next.installed[next.installed_count++] = value; value = (addon_installed){0}; }
             } else if (metadata.code == QA_ERROR_MEMORY || metadata.code == QA_ERROR_IO) { if (error) *error = metadata; okay = false; }
         }
-        free(value.directory); free(value.product); free(value.title); free(value.group); free(value.sha); free(value.start);
+        free(value.directory); free(value.product); free(value.title); free(value.group); free(value.id); free(value.start);
         qa_json_destroy(doc); qa_buffer_free(&bytes); free(path);
     }
     if (!okay) { installed_clear(&next); return false; }
@@ -541,10 +544,10 @@ static bool addon_rows(addon_library *library, qa_error *error)
     } else if (library->selected < library->package_count) {
         addon_package *package = library->packages + library->selected;
         addon_installed *installed = installed_group(library, package->group);
-        snprintf(library->scope, sizeof(library->scope), "package:%s", package->sha);
+        snprintf(library->scope, sizeof(library->scope), "package:%s", package->id);
         if (installed) okay = row_add(&next, "play", "Play", installed->title, true, error) &&
             row_add(&next, "remove", "Remove installed add-on", "Only this managed copy", true, error);
-        if (okay && (!installed || strcmp(installed->sha, package->sha))) {
+        if (okay && (!installed || strcmp(installed->id, package->id))) {
             char detail[512]; snprintf(detail, sizeof(detail), "%s — %" PRIu64 " KiB", package->title,
                 package->bytes / 1024 + (package->bytes % 1024 != 0));
             okay = row_add(&next, "install", installed ? "Update" : "Install",
@@ -556,7 +559,7 @@ static bool addon_rows(addon_library *library, qa_error *error)
         for (size_t i = 0; okay && i < library->installed_count; ++i) {
             addon_installed *installed = library->installed + i; bool listed = false;
             for (size_t j = 0; j < library->package_count; ++j)
-                if (!library->packages[j].local && !strcmp(installed->sha, library->packages[j].sha)) { listed = true; break; }
+                if (!library->packages[j].local && !strcmp(installed->id, library->packages[j].id)) { listed = true; break; }
             if (listed) continue;
             char key[512]; snprintf(key, sizeof(key), "local:%s", installed->directory);
             okay = row_add(&next, key, installed->title, "Installed — play", true, error);
@@ -564,7 +567,7 @@ static bool addon_rows(addon_library *library, qa_error *error)
         for (size_t i = 0; okay && i < library->package_count; ++i) {
             addon_package *package = library->packages + i;
             if (package->local) continue;
-            okay = row_add(&next, package->sha, package->title,
+            okay = row_add(&next, package->id, package->title,
                 installed_group(library, package->group) ? "Installed" : "Quaddicted", true, error);
         }
     }
@@ -628,7 +631,11 @@ static bool relative_path(const char *first, const char *second, char **out, qa_
     *out = qa_vfs_normalize_path(path, error); free(path); return *out != NULL;
 }
 static bool cache_name(const addon_package *package, char out[78])
-{ return snprintf(out, 78, ".addons/%s.zip", package->sha) == 76; }
+{
+    if (!package_id_valid(package->id)) return false;
+    int size = snprintf(out, 78, ".addons/%s.zip", package->id);
+    return size > 0 && size < 78;
+}
 static bool archive_admit(qa_fs_root *root, const char *path, qa_archive **out, qa_error *error)
 {
     qa_fs_file *file = NULL; qa_fs_identity identity;
@@ -643,25 +650,10 @@ static bool cached_package(addon_library *library, const addon_package *package,
     qa_fs_entry_kind kind; qa_fs_identity identity;
     if (!qa_fs_root_status(library->root, path, &kind, &identity, error)) return false;
     if (kind == QA_FS_MISSING) return true;
-    qa_fs_file *file = NULL;
     if (kind != QA_FS_REGULAR || qa_fs_identity_size(&identity) != package->bytes)
         return qa_fs_root_remove(library->root, path, error);
-    if (!qa_fs_root_file_open(library->root, path, &file, &identity, error)) return false;
-    qa_sha256_context hash; qa_sha256_init(&hash); uint8_t bytes[65536];
-    bool okay = package->bytes <= SIZE_MAX;
-    if (!okay) frontend_fail(error, QA_ERROR_FORMAT, "Add-on package exceeds the native archive extent");
-    for (size_t offset = 0; okay && offset < (size_t)package->bytes;) {
-        size_t count = (size_t)package->bytes - offset;
-        if (count > sizeof(bytes)) count = sizeof(bytes);
-        okay = qa_fs_file_read_range(file, &identity, offset, bytes, count, error);
-        if (okay) qa_sha256_update(&hash, (qa_bytes){bytes, count});
-        offset += count;
-    }
-    qa_fs_file_close(file); qa_sha256_digest digest, expected;
-    qa_sha256_final(&hash, &digest);
-    if (okay) okay = qa_sha256_parse(package->sha, &expected, error);
-    if (!okay) return false;
-    if (!qa_sha256_equal(&digest, &expected)) return qa_fs_root_remove(library->root, path, error);
+    if (package->bytes > SIZE_MAX)
+        return frontend_fail(error, QA_ERROR_FORMAT, "Add-on package exceeds the native archive extent");
     *found = true; return true;
 }
 static bool download_permit(void *context, const qa_download_request *request, const char *url, qa_error *error)
@@ -672,7 +664,7 @@ static bool download_permit(void *context, const qa_download_request *request, c
     const addon_package *package = library->packages + library->plan[library->plan_cursor]; char path[78];
     bool same_url = url && package->url ? !strcmp(url, package->url) : url == package->url;
     return (cache_name(package, path) && !strcmp(request->path, path) && same_url &&
-        request->exact_identity && request->expected_bytes == package->bytes) ||
+        request->exact_length && request->expected_bytes == package->bytes) ||
         frontend_fail(error, QA_ERROR_ARGUMENT, "Add-on download differs from its actual package identity");
 }
 static bool download_inspect(void *context, const char *path, qa_fs_stage *stage, uint64_t bytes, qa_error *error)
@@ -685,9 +677,9 @@ static bool download_inspect(void *context, const char *path, qa_fs_stage *stage
         qa_archive_open_memory(qa_fs_stage_mapping_bytes(mapping), QA_ARCHIVE_ZIP, &archive, error);
     qa_archive_close(archive); qa_fs_stage_unmap(mapping); return okay;
 }
-static bool download_cached(void *context, const char *path, const qa_sha256_digest *digest, qa_error *error)
+static bool download_cached(void *context, const char *path, qa_error *error)
 {
-    (void)path; (void)digest; frontend_content_library_services *owner = context;
+    (void)path; frontend_content_library_services *owner = context;
     return (bound(owner) && !owner->addons.canceled) ||
         frontend_fail(error, QA_ERROR_ARGUMENT, "Add-on cache publication lost its actual owner");
 }
@@ -743,7 +735,7 @@ static bool dependency_list(const addon_library *library, size_t index, size_t *
             size_t match = SIZE_MAX;
             for (size_t j = 0; j < library->package_count; ++j) {
                 const addon_package *candidate = library->packages + j; size_t length = strlen(dependency);
-                if (!strcmp(candidate->sha, dependency) || !strcmp(candidate->filename, dependency) ||
+                if (!strcmp(candidate->id, dependency) || !strcmp(candidate->filename, dependency) ||
                     (strlen(candidate->filename) == length + 4 && !memcmp(candidate->filename, dependency, length) && suffix(candidate->filename, ".zip"))) { match = j; break; }
             }
             if (match == SIZE_MAX) { qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Missing dependency: %s", dependency); return false; }
@@ -838,9 +830,21 @@ static bool marker(addon_library *library, const char *directory, bool hidden, q
 }
 static bool package_directory(addon_library *library, const addon_package *package, char **out, qa_error *error)
 {
-    qa_sha256_digest digest; qa_sha256((qa_bytes){(const uint8_t *)package->group, strlen(package->group)}, &digest);
-    char hash[65], name[45]; qa_sha256_hex(&digest, hash);
-    snprintf(name, sizeof(name), "qd_%.20s_%.20s", hash, package->sha);
+    for (size_t i = 0; i < library->installed_count; ++i) {
+        if (!strcmp(library->installed[i].id, package->id)) {
+            *out = copy_string(library->installed[i].directory);
+            return *out != NULL || frontend_fail(error, QA_ERROR_MEMORY, "Retaining managed add-on directory");
+        }
+    }
+    char group[49], name[117]; size_t size = strlen(package->group);
+    if (size > sizeof(group) - 1) size = sizeof(group) - 1;
+    for (size_t i = 0; i < size; ++i) {
+        unsigned char c = (unsigned char)package->group[i];
+        group[i] = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' ? (char)c : '_';
+    }
+    group[size] = 0;
+    snprintf(name, sizeof(name), "qd_%s_%s", group, package->id);
     return relative_path(library->parent, name, out, error);
 }
 static bool mapped_member(const addon_package *package, const char *member, char **out, qa_error *error)
@@ -882,8 +886,8 @@ static bool metadata_write(addon_library *library, const addon_package *package,
     const char *directory, qa_error *error)
 {
     qa_source_save_io io = {0}; qa_buffer bytes = {0}; char *path = NULL;
-    bool okay = qa_source_save_writer(&io, NULL, error) && writer_text(&io, "{\"sha256\":") &&
-        writer_json(&io, package->sha) && writer_text(&io, ",\"title\":") && writer_json(&io, package->title) &&
+    bool okay = qa_source_save_writer(&io, NULL, error) && writer_text(&io, "{\"id\":") &&
+        writer_json(&io, package->id) && writer_text(&io, ",\"title\":") && writer_json(&io, package->title) &&
         writer_text(&io, ",\"group\":") && writer_json(&io, package->group) && writer_text(&io, ",\"start\":") &&
         writer_json(&io, package->start) && writer_text(&io, "}\n") && qa_source_save_finish(&io, &bytes) &&
         relative_path(directory, ".quaddicted.json", &path, error) &&
@@ -906,7 +910,8 @@ static bool install_plan(frontend_content_library_services *owner, qa_error *err
             qa_error existing = {0};
             bool admitted = root_read(library->root, path, &bytes, &existing) &&
                 qa_json_parse((qa_bytes){bytes.data, bytes.size}, &doc, &existing) &&
-                qa_json_string_equal(doc, qa_json_get(doc, qa_json_root(doc), "sha256"), selected->sha);
+                (qa_json_string_equal(doc, qa_json_get(doc, qa_json_root(doc), "id"), selected->id) ||
+                 qa_json_string_equal(doc, qa_json_get(doc, qa_json_root(doc), "sha256"), selected->id));
             already = admitted;
             if (admitted) {
                 char *hidden = NULL; qa_fs_entry_kind marker_kind;
@@ -986,8 +991,8 @@ static bool download_next(frontend_content_library_services *owner, qa_error *er
         if (!cached_package(library, package, &cached, error)) return false;
         if (cached) { ++library->plan_cursor; continue; }
         qa_download_request request = {.expected_bytes = package->bytes, .maximum_bytes = package->bytes,
-            .exact_identity = true, .stage_nonce = ++library->nonce}; char path[78];
-        if (!cache_name(package, path) || !qa_sha256_parse(package->sha, &request.digest, error)) return false;
+            .exact_length = true, .stage_nonce = ++library->nonce}; char path[78];
+        if (!cache_name(package, path)) return false;
         request.path = path;
         return qa_downloads_begin(library->downloads, &request, package->url, &library->download, error);
     }
@@ -1045,7 +1050,7 @@ static bool addons_activate(void *context, const char *id, qa_error *error)
             if (!okay) plan_clear(library);
             return okay;
         }
-    } else for (size_t i = 0; i < library->package_count; ++i) if (!strcmp(id, library->packages[i].sha)) {
+    } else for (size_t i = 0; i < library->package_count; ++i) if (!strcmp(id, library->packages[i].id)) {
         library->selected = i; return addon_rows(library, error);
     }
     return frontend_fail(error, QA_ERROR_NOT_FOUND, "Add-on entry is no longer listed");
@@ -1094,26 +1099,32 @@ static bool addons_import(void *context, const char *path, qa_error *error)
     qa_fs_file *file = NULL; qa_fs_identity identity; qa_archive *archive = NULL;
     bool okay = qa_fs_file_open(path, &file, &identity, error) &&
         qa_archive_open_retained(file, &identity, QA_ARCHIVE_ZIP, &archive, error);
-    addon_package value = {0}; qa_sha256_context hash; qa_sha256_init(&hash); uint8_t block[65536];
+    addon_package value = {0}; uint8_t block[65536];
     uint64_t size = okay ? qa_fs_identity_size(&identity) : 0;
     if (okay && (size == 0 || size > SIZE_MAX)) okay = frontend_fail(error, QA_ERROR_FORMAT, "Imported ZIP exceeds its native extent");
-    for (size_t offset = 0; okay && offset < (size_t)size;) {
-        size_t count = (size_t)size - offset; if (count > sizeof(block)) count = sizeof(block);
-        okay = qa_fs_file_read_range(file, &identity, offset, block, count, error);
-        if (okay) qa_sha256_update(&hash, (qa_bytes){block, count});
-        offset += count;
+    char id[23] = {0};
+    bool available = false;
+    while (okay && !available) {
+        if (library->nonce == UINT64_MAX) { okay = frontend_fail(error, QA_ERROR_ARGUMENT, "Local add-on identifiers exhausted"); break; }
+        snprintf(id, sizeof(id), "local-%016" PRIx64, ++library->nonce);
+        addon_package candidate = {.id = id}; char cache[78]; qa_fs_entry_kind kind;
+        okay = cache_name(&candidate, cache) && qa_fs_root_status(library->root, cache, &kind, NULL, error);
+        available = okay && kind == QA_FS_MISSING;
+        for (size_t i = 0; available && i < library->package_count; ++i)
+            if (!strcmp(library->packages[i].id, id)) available = false;
+        for (size_t i = 0; available && i < library->installed_count; ++i)
+            if (!strcmp(library->installed[i].id, id)) available = false;
     }
-    qa_sha256_digest digest; qa_sha256_final(&hash, &digest); char sha[65]; qa_sha256_hex(&digest, sha);
     const char *name = strrchr(path, '/'); name = name ? name + 1 : path;
     const char *backslash = strrchr(name, '\\'); if (backslash) name = backslash + 1;
     qa_buffer folded = {0};
     if (okay) okay = local_game(archive, &value.game, error) &&
         qa_utf8_lower((qa_bytes){(const uint8_t *)name, strlen(name)}, &folded, error);
     if (okay) {
-        value.sha = copy_string(sha); value.filename = copy_string(name); value.title = copy_string(name);
+        value.id = copy_string(id); value.filename = copy_string(name); value.title = copy_string(name);
         value.group = folded.size <= SIZE_MAX - 7 ? malloc(folded.size + 7) : NULL;
         value.mappings = calloc(1, sizeof(*value.mappings)); value.bytes = size;
-        if (!value.sha || !value.filename || !value.title || !value.group || !value.mappings)
+        if (!value.id || !value.filename || !value.title || !value.group || !value.mappings)
             okay = frontend_fail(error, QA_ERROR_MEMORY, "Retaining imported Quake ZIP");
         else {
             memcpy(value.group, "local:", 6); memcpy(value.group + 6, folded.data, folded.size); value.group[folded.size + 6] = 0;
@@ -1142,9 +1153,9 @@ static bool addons_import(void *context, const char *path, qa_error *error)
     if (okay && cached) okay = download_next(owner, error);
     else if (okay) {
         const addon_package *package = library->packages + selected; char cache[78];
-        /* A local import feeds the same checksum/inspection/publication owner. */
+        /* A local import feeds the same length/inspection/publication owner. */
         qa_download_request request = {.maximum_bytes = size, .expected_bytes = size,
-            .digest = digest, .exact_identity = true, .stage_nonce = ++library->nonce};
+            .exact_length = true, .stage_nonce = ++library->nonce};
         okay = cache_name(package, cache); request.path = cache;
         if (okay) okay = qa_downloads_begin(library->downloads, &request, NULL, &library->download, error);
         for (size_t offset = 0; okay && offset < (size_t)size;) {
