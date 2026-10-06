@@ -1595,14 +1595,14 @@ static bool world_submit_model(qa_scene_world *world, uint32_t model_index,
     qa_model_transform inverse;
     if (!qa_model_transform_inverse(transform, &inverse))
         return world_error(error, QA_ERROR_ARGUMENT, "inline model transform is singular");
-    if (world->bsp.family != QA_BSP_Q3 && !qawl_light_styles(world, input, error)) return false;
-    if (!begin_admission(world, frame, error)) return false;
     const qaw_model *model = &world->models[model_index];
     qa_scene_plane planes[6];
     size_t plane_count = input->no_cull ? 0 : qa_scene_frustum(&input->view, planes);
+    if (plane_count && !qa_scene_bounds_visible(qaw_transformed_bounds(bsp_bounds(model->source.bounds), transform),
+        planes, plane_count)) return true;
     if (world->bsp.family == QA_BSP_Q3 && plane_count > 4) plane_count = 4;
-    if (world->bsp.family == QA_BSP_Q3
-        && !local_bounds_visible(bsp_bounds(model->source.bounds), transform, planes, plane_count)) return true;
+    if (world->bsp.family != QA_BSP_Q3 && !qawl_light_styles(world, input, error)) return false;
+    if (!begin_admission(world, frame, error)) return false;
     qa_material_context context = world_context(world, input);
     q2_alpha_batch *alpha_batch = NULL;
     if (!fragment_context(world, input, frame, &context, error)) return false;
