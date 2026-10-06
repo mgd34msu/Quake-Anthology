@@ -680,7 +680,8 @@ typedef struct qa_q3_entity_view {
     const char *model, *secondary_model;
     float alpha;
     qa_q3_entity source_entity;
-    bool has_source_entity;
+    uint32_t inline_model;
+    bool has_source_entity, has_inline_model;
 } qa_q3_entity_view;
 bool qa_q3_entity_read(const qa_q3_game *, qa_actor_id, qa_q3_entity_view *, qa_error *);
 /* Unified presentation extension; finite authored fade overshoot is retained. */

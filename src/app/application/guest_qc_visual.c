@@ -77,6 +77,8 @@ bool application_qc_visual(application_provider *provider, qa_actor_id actor,
         out->models[0] = resource->name;
         out->model_resources[0] = resource->source;
         out->model_openings[0] = resource->source ? &resource->acquisition : NULL;
+        out->has_inline_model = out->visible && resource->has_inline_model;
+        out->inline_model = resource->inline_model;
         if (resource->name[0] != '*' && !resource->source)
             return application_fail(error, QA_ERROR_NOT_FOUND, "QC appearance precache has no retained model resource");
     }

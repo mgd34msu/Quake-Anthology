@@ -113,6 +113,7 @@ bool q1_map_trigger_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         state->use_enabled = true;
         return true;
     case Q1_MAP_RELAY:
+        entity->model = QA_STRING_NONE;
         state->use_enabled = true;
         return true;
     case Q1_MAP_TELEPORT: {

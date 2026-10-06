@@ -257,8 +257,9 @@ typedef struct qa_q1_presentation {
     qa_actor_id actor;
     qa_string_id classname, model, targetname;
     int32_t frame, skin, color_map;
-    uint32_t effects;
+    uint32_t effects, inline_model;
     float alpha, scale;
+    bool has_inline_model;
 } qa_q1_presentation;
 typedef struct qa_q1_player_view {
     qa_q1_weapon weapon;

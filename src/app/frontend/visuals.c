@@ -1370,10 +1370,9 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
         if (view.has_inline_model) {
             if (!qa_scene_world_submit_model(frontend->scene_world, view.inline_model,
                 &placement, world, actor.slot, color, frame, error)) return false;
-            continue;
         }
         frontend_visual_owner *owner = NULL;
-        for (unsigned part = 0; part < 4; ++part) {
+        for (unsigned part = view.has_inline_model ? 1 : 0; part < 4; ++part) {
             const char *path = view.models[part];
             if (!path || !*path) continue;
             if (!owner && !visual_owner(frontend, &view, &owner, error)) return false;

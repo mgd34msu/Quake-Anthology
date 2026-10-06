@@ -35,10 +35,12 @@ static bool source_only_view(const qa_q3_game *game, uint32_t slot,
             break;
         case 4:
             view->kind = QA_Q3_ENTITY_MOVER;
-            /* SOLID_BMODEL uses the actual inline-model collision owner, not
-             * the CS_MODELS namespace. The complete ES retains its index. */
-            if (s->solid != 0xffffff &&
-                !source_model(game, s->modelindex, &view->model, error)) return false;
+            /* CG_Mover selects the retained inline draw model independently
+             * of the actor's currently published collision. */
+            if (s->solid == 0xffffff) {
+                view->has_inline_model = true;
+                view->inline_model = (uint32_t)s->modelindex;
+            } else if (!source_model(game, s->modelindex, &view->model, error)) return false;
             if (!source_model(game, s->modelindex2, &view->secondary_model, error)) return false;
             break;
         case 5: view->kind = QA_Q3_ENTITY_BEAM; break;
@@ -115,6 +117,8 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
         view.alpha = map->alpha;
         q3_map_mover_presentation(game, actor, &view.model, &view.secondary_model,
                                   &view.constant_light);
+        view.has_inline_model = map->has_inline_model;
+        view.inline_model = map->inline_model;
         *out = view;
         return true;
     }

@@ -347,6 +347,8 @@ bool qa_q2_presentation_read(qa_q2_game *g, qa_actor_id id, qa_q2_visual *out) {
         view = a->entity->visual;
     else
         return false;
+    view.has_inline_model = a->entity && a->entity->has_inline && view.models[0] != QA_STRING_NONE;
+    view.inline_model = view.has_inline_model ? a->entity->collision.model : 0;
     view.effects |= qa_q2_actor_extra_effects(g, id);
     *out = view;
     return true;

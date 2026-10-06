@@ -262,6 +262,7 @@ static void dormant_trigger_activation(void)
     qa_actor_collision collision;
     GAME_CHECK(qa_q1_game_presentation(fixture.game, trigger, &visible));
     GAME_CHECK(visible.model == QA_STRING_NONE);
+    GAME_CHECK(!visible.has_inline_model);
     GAME_CHECK(qa_q1_game_physics_read(fixture.game, trigger, &physics));
     GAME_CHECK(physics.solid == QA_PHYSICS_NOT_SOLID);
     GAME_CHECK(!qa_world_get_collision(fixture.world, trigger, &collision, &error));
@@ -272,6 +273,7 @@ static void dormant_trigger_activation(void)
     GAME_CHECK(qa_q1_game_use(fixture.game, trigger, (qa_actor_id){0}, &error));
     GAME_CHECK(qa_q1_game_presentation(fixture.game, trigger, &visible));
     GAME_CHECK(visible.model == QA_STRING_NONE);
+    GAME_CHECK(!visible.has_inline_model);
     GAME_CHECK(qa_q1_game_physics_read(fixture.game, trigger, &physics));
     GAME_CHECK(physics.solid == QA_PHYSICS_TRIGGER && physics.motion == QA_PHYSICS_STATIONARY);
     GAME_CHECK(qa_world_get_collision(fixture.world, trigger, &collision, &error));
@@ -279,6 +281,52 @@ static void dormant_trigger_activation(void)
     GAME_CHECK(qa_world_body_read(fixture.world, trigger, &body, &error));
     GAME_CHECK(body.angles.y == 0);
     GAME_CHECK(body.bounds.mins.x == -1024 && body.bounds.maxs.x == 1024);
+    fixture_destroy(&fixture);
+}
+
+static void nonsolid_inline_appearance(void)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create(&fixture, QA_Q1_RERELEASE, 1, false, QA_Q1_MG1);
+    fixture_bind_maps(&fixture);
+    qa_actor_id actor;
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "rotate_object_continuously", .spawnflags = 1,
+        .map_fields = &(qa_q1_map_fields){.model = "*0"}}, &actor, &error));
+    qa_q1_presentation visual;
+    qa_physics_properties physics;
+    qa_actor_collision collision;
+    GAME_CHECK(qa_q1_game_presentation(fixture.game, actor, &visual));
+    GAME_CHECK(visual.model != QA_STRING_NONE && visual.has_inline_model && visual.inline_model == 0);
+    GAME_CHECK(qa_q1_game_physics_read(fixture.game, actor, &physics));
+    GAME_CHECK(physics.solid == QA_PHYSICS_NOT_SOLID);
+    GAME_CHECK(!qa_world_get_collision(fixture.world, actor, &collision, &error));
+    GAME_CHECK(error.code == QA_OK);
+    GAME_CHECK(qa_q1_game_use(fixture.game, actor, (qa_actor_id){0}, &error));
+    GAME_CHECK(qa_q1_game_presentation(fixture.game, actor, &visual));
+    GAME_CHECK(visual.model != QA_STRING_NONE && visual.has_inline_model && visual.inline_model == 0);
+    GAME_CHECK(!qa_world_get_collision(fixture.world, actor, &collision, &error));
+    GAME_CHECK(error.code == QA_OK);
+    fixture_destroy(&fixture);
+}
+
+static void relay_template_unpublished(void)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create(&fixture, QA_Q1_CLASSIC, 1, false, QA_Q1_ID1);
+    fixture_bind_maps(&fixture);
+    qa_actor_id actor;
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "trigger_relay", .targetname = "relay",
+        .map_fields = &(qa_q1_map_fields){.model = "*0"}}, &actor, &error));
+    qa_q1_presentation visual;
+    GAME_CHECK(qa_q1_game_presentation(fixture.game, actor, &visual));
+    GAME_CHECK(visual.model == QA_STRING_NONE && !visual.has_inline_model);
+    GAME_CHECK(qa_q1_game_use(fixture.game, actor, (qa_actor_id){0}, &error));
+    GAME_CHECK(qa_q1_game_presentation(fixture.game, actor, &visual));
+    GAME_CHECK(visual.model == QA_STRING_NONE && !visual.has_inline_model);
     fixture_destroy(&fixture);
 }
 
@@ -539,6 +587,8 @@ void test_q1_gameplay(void);
 void test_q1_gameplay(void)
 {
     dormant_trigger_activation();
+    nonsolid_inline_appearance();
+    relay_template_unpublished();
     movement_output_owner();
     donor_check_client();
     armor_and_protection();

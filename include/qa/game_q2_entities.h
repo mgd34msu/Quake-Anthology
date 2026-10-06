@@ -8,9 +8,9 @@ typedef struct qa_q2_visual {
     qa_string_id models[4];
     int frame, old_frame, skin;
     uint64_t effects;
-    uint32_t render_flags;
+    uint32_t render_flags, inline_model;
     float scale, alpha;
-    bool visible;
+    bool visible, has_inline_model;
 } qa_q2_visual;
 typedef struct qa_q2_map_fields {
     const qa_entity_property *properties;

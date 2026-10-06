@@ -9,22 +9,6 @@ static const char *resource_text(qa_application *application, qa_string_id id) {
     return id ? qa_strings_cstr(qa_session_strings(application->session), id) : NULL;
 }
 
-static bool visual_collision(qa_application *application, qa_actor_id actor,
-                             qa_application_visual_view *view, qa_error *error) {
-    qa_actor_collision collision;
-    qa_error observed = {0};
-    if (!qa_world_get_collision(application->world, actor, &collision, &observed)) {
-        if (observed.code == QA_OK)
-            return true;
-        if (error)
-            *error = observed;
-        return false;
-    }
-    view->inline_model = collision.model;
-    view->has_inline_model = collision.inline_model;
-    return true;
-}
-
 static bool native_visual(application_provider *provider, qa_actor_id actor,
                            qa_application_visual_view *out, qa_error *error) {
     qa_application *application = provider->application;
@@ -43,12 +27,15 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
             out->alpha = source.alpha;
             out->scale = source.scale;
             out->visible = source.model != QA_STRING_NONE;
+            out->has_inline_model = source.has_inline_model;
+            out->inline_model = source.inline_model;
         }
         if (out->character == provider->owner &&
             qa_q1_character_read(provider->state.q1, actor, &character)) {
             out->models[0] = resource_text(application, character.model);
             out->frame = character.frame;
             out->visible = character.model != QA_STRING_NONE;
+            out->has_inline_model = false;
             found = true;
         }
         qa_q1_source_client_view client;
@@ -80,6 +67,8 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
         out->alpha = source.alpha;
         out->scale = source.scale;
         out->visible = source.visible;
+        out->has_inline_model = source.has_inline_model;
+        out->inline_model = source.inline_model;
         if (source.render_flags & (0x200000u | 128u)) {
             qa_q2_wire_binding binding;
             qa_q2_wire_source_entity entity;
@@ -119,6 +108,8 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
         out->alpha = source.alpha;
         out->source_entity = source.source_entity;
         out->has_source_entity = source.has_source_entity;
+        out->has_inline_model = source.has_inline_model;
+        out->inline_model = source.inline_model;
         out->source_number = source.has_source_entity ? source.source_number : -1;
         out->source_client = source.has_source_entity ? source.source_client : -1;
         if (source.has_source_entity) out->frame = source.source_entity.frame;
@@ -153,8 +144,7 @@ bool qa_application_visual_read(qa_application *application, qa_actor_id actor,
             .skin = object.skin, .effects = object.effects, .visible = object.visible,
             .family = mode.rules.source <= QA_MODE_Q1_HORDE ? QA_GAME_Q1
                 : mode.rules.source < QA_MODE_Q3 ? QA_GAME_Q2 : QA_GAME_Q3};
-        if (!qa_world_body_read(application->world, actor, &view.body, error) ||
-            !visual_collision(application, actor, &view, error))
+        if (!qa_world_body_read(application->world, actor, &view.body, error))
             return false;
         view.previous_origin = view.body.origin;
         if (!qa_actors_get(qa_session_actors(application->session), actor))
@@ -189,8 +179,6 @@ bool qa_application_visual_read(qa_application *application, qa_actor_id actor,
     application_provider *map = application_world_provider(application, QA_ROLE_ENTITIES, "");
     if (map != NULL && map->constructed && map->kind == APPLICATION_PROVIDER_Q1)
         (void)qa_q1_game_map_effects(map->state.q1, actor, &view.q1_effects);
-    if (!visual_collision(application, actor, &view, error))
-        return false;
     if (!qa_actors_get(qa_session_actors(application->session), actor))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Visual actor retired during observation");
     *out = view;

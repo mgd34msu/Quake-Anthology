@@ -1758,7 +1758,10 @@ bool qa_q1_game_presentation(const qa_q1_game *g, qa_actor_id actor, qa_q1_prese
                                     entity->kind == Q1_BODY ? entity->state.body.color_map : 0,
                                 .effects = entity->effects,
                                 .alpha = entity->alpha,
-                                .scale = entity->scale};
+                                .scale = entity->scale,
+                                .has_inline_model = entity->map && entity->map->has_inline_model &&
+                                    entity->model != QA_STRING_NONE && entity->model == entity->map->original_model,
+                                .inline_model = entity->map ? entity->map->inline_model : 0};
     return true;
 }
 static uint64_t hostile_deadline_ns(double seconds) {
