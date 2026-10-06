@@ -1,9 +1,61 @@
 # Retail render measurements, 2026-10-06
 
-These results do not meet the performance targets. Outside activity prevents an
-isolated speedup claim for the latest group.
+The performance targets are still unmet. The latest measured executable was
+`f116babd`, including packed texture sampling, material lookup cleanup and the
+portable native runtime package. Full GCC and Clang builds and the six
+registered checks for each passed. The installed `qa-c` matched its build byte
+for byte.
 
-The latest measured executable was built from `733077cb`, including the prepared
+## Measurements with corrected CPU affinity
+
+Every process was started with `taskset -c 0-7,12-19`. Those logical CPUs share
+eight physical cores. Actual CPU-renderer observations showed seven raster
+workers, leaving one physical core for the submitting thread. The remaining
+physical cores were reserved for the other project's work.
+
+All twelve runs exited normally with unchanged artifacts and collected 600
+presentation intervals after at least 120 warm-up frames. Q3 also excluded its
+map-entry waiting frames. GL used the RTX 3090 at swap interval zero. These were
+the same retail starting views and native presets as below, with enabled dummy
+audio, real elapsed time and no debugger or sampling profiler attached.
+
+| Game | Output | Resolution | Median, ms | p99, ms | Target, ms |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Q1 | GL | 1920×1080 | 1.879 | 3.427 | <2 |
+| Q1 | CPU | 640×400 | 9.886 | 12.246 | <4 |
+| Q1 | CPU | 320×200 | 5.505 | 7.291 | <2 |
+| Q2 | GL | 1920×1080 | 2.035 | 3.434 | <2 |
+| Q2 | CPU | 640×400 | 9.181 | 11.966 | <4 |
+| Q2 | CPU | 320×200 | 5.915 | 7.952 | <2 |
+| Q2 rerelease | GL | 1920×1080 | 3.760 | 6.818 | <2 |
+| Q2 rerelease | CPU | 640×400 | 18.685 | 46.868 | <4 |
+| Q2 rerelease | CPU | 320×200 | 13.164 | 21.782 | <2 |
+| Q3 | GL | 1920×1080 | 3.706 | 5.101 | <2 |
+| Q3 | CPU | 640×400 | 20.504 | 23.054 | <4 |
+| Q3 | CPU | 320×200 | 9.264 | 12.092 | <2 |
+
+One-second process monitoring found no outside process exceeding half a core
+in the Q1 GL and Q1 CPU 640×400 runs. Browser or assistant activity exceeded
+that threshold in the other ten runs. Activity below the threshold or between
+samples is not excluded. Pinning separates the other project's physical cores;
+it does not establish that the host is fully quiet.
+
+A preceding Q1-only pinned GL run measured 1.873 ms median and 3.403 ms p99.
+The earlier 5.018 ms slowdown did not recur. These measurements do not establish
+an isolated improvement from texture sampling: affinity and outside activity
+changed, and Q3 CPU results remain slower than the preceding group.
+
+The latest Q2 rerelease inclusive scope means were 2.201 ms in `scene_build`
+and 0.984 ms in `gl_submit`. Its CPU 640×400 run spent 14.304 ms in `cpu_render`,
+2.675 ms in `scene_build` and 1.499 ms in `application`. Q3 GL scene building
+remained 2.432 ms; its CPU 640×400 rendering was 16.776 ms. These are the largest
+remaining measured costs, not achieved budgets.
+
+## Earlier unpinned measurements
+
+Outside activity prevents an isolated speedup claim for this earlier group.
+
+This earlier executable was built from `733077cb`, including the prepared
 four-pixel fog arithmetic, vertex clipping/projection reuse and exact world
 visibility reuse. GCC and Clang full builds and their registered checks passed.
 The installed testing executable matched the build byte for byte.
