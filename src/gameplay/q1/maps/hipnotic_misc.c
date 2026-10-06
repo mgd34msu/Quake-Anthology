@@ -19,9 +19,8 @@ bool qa_q1_game_map_coordinate_dump(qa_q1_game *g, qa_actor_id actor,
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
     qa_actor_id client = {0};
-    bool ok = true;
-    if (g->host.check_client(g->host.context, actor, &client) &&
-        q1_alive(g, actor) && q1_alive(g, client)) {
+    bool ok = g->host.check_client(g->host.context, actor, &client, error);
+    if (ok && q1_alive(g, actor) && q1_alive(g, client)) {
         qa_body_state body;
         ok = qa_world_body_read(g->services.world, client, &body, error);
         if (ok && q1_alive(g, actor) && q1_alive(g, client)) {

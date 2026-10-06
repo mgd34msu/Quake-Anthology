@@ -108,8 +108,8 @@ static bool seen_beam(qa_q1_game *g, q1_actor *e, qa_vec3 start, qa_vec3 end,
     qa_actor_id client = {0}, id = e->id;
     if (!g->host.check_client)
         return q1_map_fail(error, "Hipnotic lightning requires client visibility service");
-    bool visible = g->host.check_client(g->host.context, id, &client);
-    return !q1_alive(g, id) || !visible || !client.registry || beam(g, e, start, end, error);
+    if (!g->host.check_client(g->host.context, id, &client, error)) return false;
+    return !q1_alive(g, id) || !client.registry || beam(g, e, start, end, error);
 }
 
 static bool bolt(qa_q1_game *g, q1_actor *e, bool tesla, qa_error *error) {

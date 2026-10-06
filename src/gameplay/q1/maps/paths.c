@@ -332,7 +332,7 @@ bool q1_map_follow_touch(qa_q1_game *g, q1_actor *trigger, qa_actor_id actor, qa
     if (!g->host.check_client)
         return q1_map_fail(error, "Q1 follow needs source check-client service");
     qa_actor_id client = {0};
-    (void)g->host.check_client(g->host.context, actor, &client);
+    if (!g->host.check_client(g->host.context, actor, &client, error)) return false;
     /* Source FoundTarget is entered for checkclient's world/null result. */
     if (!client.registry && q1_alive(g, world))
         return change_path(

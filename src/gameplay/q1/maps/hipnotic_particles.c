@@ -117,8 +117,8 @@ static bool particle_field(qa_q1_game *g, q1_actor *entity, qa_actor_id other, q
     qa_actor_id viewer = {0};
     if (!g->host.check_client)
         return q1_map_fail(error, "Q1 particle field requires check_client");
-    if (!g->host.check_client(g->host.context, entity->id, &viewer) || !viewer.registry)
-        return true;
+    if (!g->host.check_client(g->host.context, entity->id, &viewer, error)) return false;
+    if (!viewer.registry) return true;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;

@@ -110,8 +110,8 @@ static bool walk_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                      "Armagon requires source check-client admission");
         return false;
     }
-    if (!g->host.check_client(g->host.context, entity->id, &client) || !client.registry)
-        return true;
+    if (!g->host.check_client(g->host.context, entity->id, &client, error)) return false;
+    if (!client.registry) return true;
     return q1_monster_visible(g, entity, client, &visible, error) &&
            (!visible || q1_monster_found(g, entity, client, error));
 }
