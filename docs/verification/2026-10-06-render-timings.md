@@ -1,6 +1,6 @@
 # Retail render measurements, 2026-10-06
 
-The performance targets are still unmet. The latest measured executable was
+The performance targets are still unmet. The latest full four-game group used
 `f116babd`, including packed texture sampling, material lookup cleanup and the
 portable native runtime package. Full GCC and Clang builds and the six
 registered checks for each passed. The installed `qa-c` matched its build byte
@@ -50,6 +50,34 @@ and 0.984 ms in `gl_submit`. Its CPU 640×400 run spent 14.304 ms in `cpu_render
 2.675 ms in `scene_build` and 1.499 ms in `application`. Q3 GL scene building
 remained 2.432 ms; its CPU 640×400 rendering was 16.776 ms. These are the largest
 remaining measured costs, not achieved budgets.
+
+## Packed attenuation follow-up
+
+The installed `c188c86c` build adds maintained Q3 admission accounting and packed
+fog attenuation. GCC and Clang full builds and registered checks passed; both
+executable and packaged runtime matched their installation sources. The Q2
+rerelease `base1` follow-up used the corrected affinity, seven CPU workers,
+600 measured intervals after 120 warm-up frames, and no debugger or profiler.
+
+| Output | Resolution | Median, ms | p99, ms | Render mean, ms | Scene mean, ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| GL, RTX 3090 swap0 | 1920×1080 | 3.822 | 6.764 | 0.982 | 2.227 |
+| CPU | 640×400 | 18.318 | 46.690 | 13.874 | 2.722 |
+| CPU | 320×200 | 13.264 | 24.349 | 8.896 | 2.641 |
+
+All three exited normally with unchanged artifacts. One-second monitoring found
+no outside process above half a core in GL; browser and assistant activity was
+observed during both CPU runs. Those processes' affinity included the timing
+cores. The packed calculation preserves the earlier production RGBA, depth and
+stencil output in component checks, but this follow-up does not show a
+convincing whole-frame performance gain. The frame budgets remain unmet.
+
+A separate warmed six-second, 199 Hz all-thread diagnostic on this installed
+build found `frontend_visuals_submit` at 37.04% inclusive CPU samples and
+`mesh_geometry` at 27.36%, including MD5 skinning at 11.87%. The current retained
+mesh path already avoids copying static world geometry, so that old audit claim
+is not the next scene target. This profile identifies work to inspect; it does
+not prove a speedup or replace unprofiled timings.
 
 ## Earlier unpinned measurements
 
