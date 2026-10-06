@@ -15,6 +15,7 @@
 #include "client_events.h"
 #include "qa/application_network.h"
 #include "qa/application_network_qw.h"
+#include "qa/application_qc_presentation.h"
 #include "qa/network_q3_prediction_scene.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_round.h"
@@ -276,8 +277,14 @@ bool qa_application_network_q1_world_read(qa_application *app, qa_actor_owner ow
     if (q1_native(app)) return q1_native_owner(owner, error) &&
         application_native_q1_wire_world(app, owner, out, error);
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 world observation output");
-    struct application_qc_state *engine = q1_host(app, owner, error);
-    if (!engine) return false;
+    application_provider *primary = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    qa_application_qc_message_source source; bool found;
+    if (!primary || primary->owner != owner ||
+        qa_application_get_state(app) != QA_APPLICATION_RUNNING)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 world observation lost its primary Source owner");
+    if (!qa_application_qc_message_source_read(app, owner, &source, &found, error)) return false;
+    if (!found) return application_fail(error, QA_ERROR_ARGUMENT, "Q1 world observation has no QC Source");
+    struct application_qc_state *engine = primary->state.qc.engine;
     qa_application_network_q1_world value = {.protocol = engine->protocol, .max_clients = engine->max_clients};
     const qa_cvar_view *deathmatch = qa_cvars_find(engine->cvars, "deathmatch");
     const qa_qc_definition *mapname = qa_qc_program_find_global(engine->provider->state.qc.program, "mapname");

@@ -354,10 +354,10 @@ static bool world_publish(frontend_qc_messages *owner,qa_error *error)
     const qa_launch_instance *instance=binding?qa_launch_snapshot_find(launch,binding->instance):NULL;
     const qa_product *product=instance?qa_catalog_product(qa_application_catalog(owner->application),instance->selection.product):NULL;
     if(!product || product->family!=QA_GAME_Q1) return true;
-    qa_application_network_q1_host host;
+    qa_actor_owner source_owner;
     qa_application_network_q1_world world;
-    if(!qa_application_network_q1_host_source(owner->application,&host,error) ||
-        !qa_application_network_q1_world_read(owner->application,host.owner,&world,error)) return false;
+    if(!qa_application_provider_owner(owner->application,instance->selection.instance,&source_owner) ||
+        !qa_application_network_q1_world_read(owner->application,source_owner,&world,error)) return false;
     const qa_unified_q1_world_state metadata={.level=(char *)world.level,.total_secrets=world.total_secrets,
         .total_monsters=world.total_monsters,.found_secrets=world.found_secrets,.killed_monsters=world.killed_monsters};
     for(uint32_t seat=0;seat<f->options.seats;++seat) {
@@ -366,7 +366,7 @@ static bool world_publish(frontend_qc_messages *owner,qa_error *error)
             !qa_application_player_actor(owner->application,logical,&actor)) continue;
         qc_recipient *recipient=NULL;
         for(qc_recipient *row=owner->recipients;row;row=row->next)
-            if(row_provider(row)==host.owner && qa_actor_id_equal(row_actor(row),actor)) {
+            if(row_provider(row)==source_owner && qa_actor_id_equal(row_actor(row),actor)) {
                 recipient=row;if(!row->native)break;
             }
         if(!recipient) continue;
