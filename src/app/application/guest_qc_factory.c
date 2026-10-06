@@ -71,8 +71,10 @@ bool application_qc_console_prepare(qa_application *app, application_provider *p
         {"timelimit", QA_CVAR_SAVE_GAMEPLAY},
         {"fraglimit", QA_CVAR_SAVE_GAMEPLAY},
         {"gamecfg", QA_CVAR_SAVE_GAMEPLAY}};
+    bool registered;
+    if (!qa_catalog_q1_registered(app->catalog, product->id, &registered, error)) return false;
     const char *values[] = {"1", "0", "0", "0", "800", selected == QA_QC_QUAKEWORLD ? "2" : "0.93", "320",
-        maximum, "1", "0", "0", "0", "0", "0", "0"};
+        maximum, registered ? "1" : "0", "0", "0", "0", "0", "0", "0"};
     for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i)
         if (!qa_cvars_register(engine->cvars, names[i].name, values[i], 0, provider->owner, NULL, error) ||
             !qa_cvars_declare_save_policy(engine->cvars, names[i].name, names[i].policy, error)) return false;

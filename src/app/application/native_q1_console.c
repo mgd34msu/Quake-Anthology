@@ -896,8 +896,11 @@ bool application_native_q1_console_create(application_provider *provider,
     snprintf(gamecfg, sizeof(gamecfg), "%u", rules->gamecfg);
     snprintf(maximum, sizeof(maximum), "%u", rules->quakeworld ? 8u : rules->max_clients);
     snprintf(aim, sizeof(aim), "%.9g", (double)rules->aim_threshold);
+    bool registered;
+    if (!qa_catalog_q1_registered(provider->application->catalog, provider->product->id,
+            &registered, error)) return false;
     const char *values[] = {skill, deathmatch, coop, teamplay, gravity, "320", "0", "0", "0", gamecfg,
-        "0", "1", maximum, "1", "0", aim, rules->quakeworld ? "unnamed" : "UNNAMED"};
+        "0", "1", maximum, registered ? "1" : "0", "0", aim, rules->quakeworld ? "unnamed" : "UNNAMED"};
     for (size_t i = 0; okay && i < sizeof(names) / sizeof(*names); ++i) {
         if (!qa_cvars_find(cvars, names[i].name))
             okay = qa_cvars_register(cvars, names[i].name, values[i], 0, provider->owner, NULL, error);

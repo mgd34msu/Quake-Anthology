@@ -956,6 +956,9 @@ static bool q1_campaign_source_options(
     int32_t skill = choices->world.skill < 0
                         ? 0
                         : choices->world.skill > 3 ? 3 : choices->world.skill;
+    bool registered;
+    if (!qa_catalog_q1_registered(provider->application->catalog, product->id, &registered, error))
+        return false;
     *out = (qa_q1_campaign_source_options){
         .session = provider->application->session,
         .program = application_q1_program(product->campaign),
@@ -966,7 +969,7 @@ static bool q1_campaign_source_options(
         .coop = has_mode && mode.kind == QA_MODE_COOPERATIVE,
         .deathmatch = has_mode && mode.kind != QA_MODE_COOPERATIVE &&
                       mode.kind != QA_MODE_SINGLE_PLAYER,
-        .registered = product->edition != QA_EDITION_DEMO,
+        .registered = registered,
         .official_campaign = product->builtin,
         .skill = skill,
         .context = provider,

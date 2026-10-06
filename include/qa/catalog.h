@@ -170,6 +170,8 @@ bool qa_catalog_mod_key(const char *key);
 /* A scoped view includes only this product and its base, with native search
  * precedence. It retains pool resources independently of the catalog. */
 bool qa_catalog_open(const qa_catalog *, qa_product_id, qa_vfs **, qa_error *);
+/* Original Quake registration comes from the selected mounted gfx/pop.lmp. */
+bool qa_catalog_q1_registered(const qa_catalog *, qa_product_id, bool *, qa_error *);
 /* Pure qualification against the retained product recipe. Does not recreate
  * a view, reopen native paths or change resource/read ownership. */
 bool qa_catalog_product_view_current(const qa_catalog *, qa_product_id, const qa_vfs *);

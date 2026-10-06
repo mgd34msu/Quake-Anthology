@@ -53,6 +53,53 @@ bool qa_catalog_open(const qa_catalog *c, qa_product_id id, qa_vfs **out, qa_err
     return catalog_view(c, c->products[id - 1].mounts, c->products[id - 1].mount_count, out, error);
 }
 
+bool qa_catalog_q1_registered(const qa_catalog *catalog, qa_product_id id,
+    bool *out, qa_error *error)
+{
+    const qa_product *product = qa_catalog_product(catalog, id);
+    if (!product || product->family != QA_GAME_Q1 || !out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Quake registration requires its installed product");
+        return false;
+    }
+    *out = false;
+    /* COM_CheckRegistered's 128 big-endian words from gfx/pop.lmp. */
+    static const uint16_t pop[128] = {
+        0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,
+        0x0000,0x0000,0x6600,0x0000,0x0000,0x0000,0x6600,0x0000,
+        0x0000,0x0066,0x0000,0x0000,0x0000,0x0000,0x0067,0x0000,
+        0x0000,0x6665,0x0000,0x0000,0x0000,0x0000,0x0065,0x6600,
+        0x0063,0x6561,0x0000,0x0000,0x0000,0x0000,0x0061,0x6563,
+        0x0064,0x6561,0x0000,0x0000,0x0000,0x0000,0x0061,0x6564,
+        0x0064,0x6564,0x0000,0x6469,0x6969,0x6400,0x0064,0x6564,
+        0x0063,0x6568,0x6200,0x0064,0x6864,0x0000,0x6268,0x6563,
+        0x0000,0x6567,0x6963,0x0064,0x6764,0x0063,0x6967,0x6500,
+        0x0000,0x6266,0x6769,0x6a68,0x6768,0x6a69,0x6766,0x6200,
+        0x0000,0x0062,0x6566,0x6666,0x6666,0x6666,0x6562,0x0000,
+        0x0000,0x0000,0x0062,0x6364,0x6664,0x6362,0x0000,0x0000,
+        0x0000,0x0000,0x0000,0x0062,0x6662,0x0000,0x0000,0x0000,
+        0x0000,0x0000,0x0000,0x0061,0x6661,0x0000,0x0000,0x0000,
+        0x0000,0x0000,0x0000,0x0000,0x6500,0x0000,0x0000,0x0000,
+        0x0000,0x0000,0x0000,0x0000,0x6400,0x0000,0x0000,0x0000
+    };
+    qa_vfs *files = NULL;
+    qa_resource *resource = NULL;
+    bool okay = qa_catalog_open(catalog, id, &files, error) &&
+        catalog_optional_resource(files, "gfx/pop.lmp", &resource, error);
+    if (okay && resource) {
+        qa_bytes bytes = qa_resource_bytes(resource);
+        bool valid = bytes.size >= sizeof(pop);
+        for (size_t i = 0; valid && i < sizeof(pop)/sizeof(*pop); ++i)
+            valid = ((uint16_t)bytes.data[2*i] << 8 | bytes.data[2*i+1]) == pop[i];
+        if (!valid) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Corrupted Quake registration data");
+            okay = false;
+        } else *out = true;
+    }
+    qa_resource_release(resource);
+    qa_vfs_destroy(files);
+    return okay;
+}
+
 bool qa_catalog_product_view_current(const qa_catalog *c, qa_product_id id, const qa_vfs *view)
 {
     const qa_product *product = qa_catalog_product(c, id);
