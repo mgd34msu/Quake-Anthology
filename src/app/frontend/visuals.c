@@ -314,6 +314,8 @@ static bool visual_owner(qa_frontend *frontend, const qa_application_visual_view
                 return frontend_fail(error, QA_ERROR_ARGUMENT, "Visual resource construction retains refused cleanup");
             *out = owner; return true;
         }
+    if (!frontend_visuals_idle(frontend))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Appearance resources require idle admission owners");
     frontend_visual_owner *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "allocating appearance resources");
     owner->owner = view->provider;
@@ -523,8 +525,8 @@ static bool brush_read(frontend_visual_owner *owner, const char *path, const qa_
     }
     brush->next=owner->brushes; owner->brushes=brush; *out=brush; return true;
 }
-static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, const char *path, const qa_resource *source,
-    const qa_vfs_acquisition *source_opening, bool colored, uint8_t colors, frontend_model **out, qa_error *error)
+static frontend_model *model_cached(frontend_visual_owner *owner, const char *path,
+    const qa_resource *source, bool colored, uint8_t colors)
 {
     uint8_t translation[256];
     if (colored) player_translation(colors, translation);
@@ -534,10 +536,20 @@ static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, cons
         bool translated = colored && model->model->format == QA_MODEL_MDL;
         if (options && options->translation.size == (translated ? sizeof(translation) : 0) &&
             (!translated || !memcmp(options->translation.data, translation, sizeof(translation)))) {
-            *out = model;
-            return true;
+            return model;
         }
     }
+    return NULL;
+}
+static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, const char *path, const qa_resource *source,
+    const qa_vfs_acquisition *source_opening, bool colored, uint8_t colors, frontend_model **out, qa_error *error)
+{
+    frontend_model *cached = model_cached(owner, path, source, colored, colors);
+    if (cached) { *out = cached; return true; }
+    if (!frontend_visuals_idle(frontend))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Decoded appearance requires idle admission owners");
+    uint8_t translation[256];
+    if (colored) player_translation(colors, translation);
     size_t length = strlen(path);
     if (length > SIZE_MAX - sizeof(frontend_model) - 1)
         return frontend_fail(error, QA_ERROR_MEMORY, "appearance path exceeds native storage");
@@ -945,8 +957,8 @@ static bool live_owner(qa_frontend *frontend, qa_actor_owner provider,
     if (!visual_owner(frontend, &request, &owner, error)) return false;
     qa_scene_family expected = family == QA_GAME_Q1 ? QA_SCENE_Q1
         : family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3;
-    if (owner->family != expected || !frontend_visuals_idle(frontend))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Live model admission differs from its idle appearance owner");
+    if (owner->family != expected)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Live model admission differs from its appearance owner");
     *out = owner; return true;
 }
 bool frontend_visual_media_acquire(qa_frontend *frontend, qa_actor_owner provider,
@@ -954,6 +966,8 @@ bool frontend_visual_media_acquire(qa_frontend *frontend, qa_actor_owner provide
 {
     frontend_visual_owner *owner;
     if (!out || !live_owner(frontend, provider, family, &owner, error)) return false;
+    if (!frontend_visuals_idle(frontend))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Live media admission requires idle appearance owners");
     *out = (frontend_visual_owner_view){owner->owner, owner->family, owner->mounts, owner->images, owner->materials,
         owner->media, owner->shader_movies};
     return true;
@@ -1005,6 +1019,8 @@ bool frontend_visual_model_admission(void *context, qa_application *application,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Model palette admission requires its actual frontend BODY acquisition");
     frontend_visual_owner *owner;
     if (!live_owner(frontend, request->provider, request->family, &owner, error)) return false;
+    if (!frontend_visuals_idle(frontend))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Model palette admission requires idle appearance owners");
     if (!qa_vfs_lookup_equal(request->view, owner->mounts))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Model palette admission differs from its actual appearance scope");
     frontend_model *model;
