@@ -15,7 +15,7 @@ typedef struct frontend_native_q3_view {
     qa_actor_owner receiver, source_owner;
     uint32_t seat, launch_seat, physical_client;
     qa_q3_product product;
-    qa_actor_id actor;
+    const qa_application_q3_client_context *recipient;
     const qa_launch_instance *source_launch;
     qa_vfs *source_files, *mounts;
     qa_scene_resources *images;

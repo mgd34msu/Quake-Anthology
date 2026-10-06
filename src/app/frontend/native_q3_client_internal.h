@@ -6,7 +6,6 @@ struct frontend_native_q3 {
     frontend_native_q3 *next;
     qa_frontend *frontend;
     frontend_native_q3_view view;
-    const qa_application_q3_client_context *recipient;
     frontend_native_q3_composition composition;
     qa_launch_instance_lease *source_lease;
     struct frontend_material_movies *shader_movies;
@@ -21,7 +20,12 @@ struct frontend_native_q3 {
     struct frontend_native_components *components;
 };
 static inline qa_actor_id frontend_native_q3_actor(const frontend_native_q3 *row)
-{ return row->recipient ? row->recipient->source_actor : row->view.actor; }
+{
+    if (row->view.recipient) return row->view.recipient->source_actor;
+    qa_actor_id actor = {0};
+    qa_application_player_actor(row->frontend->application, row->view.launch_seat, &actor);
+    return actor;
+}
 bool frontend_native_q3_video_row_close(frontend_native_q3 *,qa_error *);
 bool frontend_native_q3_video_row_reopen(frontend_native_q3 *,qa_error *);
 bool frontend_native_q3_current(const frontend_native_q3 *);

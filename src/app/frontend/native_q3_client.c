@@ -181,7 +181,7 @@ static bool status_visible(void *context)
 static void release_services(void *context)
 {
     frontend_native_q3 *row=context;
-    row->service_released=true; row->recipient=NULL;
+    row->service_released=true; row->view.recipient=NULL;
     /* The real row keeps source registries alive through renderer teardown.
      * Service observers are already detached before this release callback. */
 }
@@ -1030,7 +1030,7 @@ bool frontend_native_q3_create(qa_frontend *f,const qa_application_native_q3_pre
     frontend_native_q3 *row=calloc(1,sizeof(*row));
     if(!row)return frontend_fail(e,QA_ERROR_MEMORY,"Allocating actual native frontend row");
     row->frontend=f; row->view=(frontend_native_q3_view){.source_owner=source->source_owner,.receiver=source->source_owner,
-        .seat=ordinal,.launch_seat=seat,.physical_client=physical,.product=source->product,.actor=actor,.source_launch=source->launch,.source_files=source->content};
+        .seat=ordinal,.launch_seat=seat,.physical_client=physical,.product=source->product,.source_launch=source->launch,.source_files=source->content};
     if(!frontend_source_identity_allocate(f,&row->view.identity,e)) { free(row); return false; }
     row->next=f->native_q3; f->native_q3=row;
     row->owns_services=true;
@@ -1049,7 +1049,7 @@ bool frontend_native_q3_create(qa_frontend *f,const qa_application_native_q3_pre
     if(ok) {
         const qa_native_q3_client_services *retained=qa_native_q3_client_services_read(row->view.client);
         if(!retained)ok=frontend_fail(e,QA_ERROR_ARGUMENT,"Native client has no retained recipient");
-        else row->recipient=&retained->client;
+        else row->view.recipient=&retained->client;
     }
     if(ok) {
         const qa_launch_choices *choices=qa_launch_snapshot_choices(source->publication);
@@ -1105,7 +1105,7 @@ bool frontend_native_q3_round_admit(qa_frontend *f, qa_actor_owner source,
         }
     if (!selected) return true;
     uint32_t ordinal;
-    if (!selected->constructed || !row_idle(selected) || !selected->recipient ||
+    if (!selected->constructed || !row_idle(selected) || !selected->view.recipient ||
         selected->view.physical_client != physical_client ||
         !frontend_seat_ordinal_read(f, launch_seat, &ordinal) || selected->view.seat != ordinal ||
         !qa_actor_id_equal(frontend_native_q3_actor(selected), previous) ||
@@ -1165,9 +1165,9 @@ bool frontend_native_q3_read(const qa_frontend *f,size_t index,frontend_native_q
 {
     frontend_native_q3 *row=row_at(f,index);
     if(!f || !out || f->stepping || !row || row->frontend!=f || row->frame_active || row->callbacks ||
-        row->service_released || !row->constructed)
+        row->service_released || !row->constructed || !row->view.recipient)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native inventory requires its actual inactive physical row");
-    *out=row->view; out->actor=frontend_native_q3_actor(row);
+    *out=row->view;
     if(out->music_attached)out->music=qa_audio_engine_bus_music(f->audio,out->identity);
     return true;
 }
@@ -1175,7 +1175,7 @@ bool frontend_native_q3_factory_view(const frontend_native_q3 *row,frontend_nati
 {
     qa_q3_presentation_binding binding; qa_q3_presentation_asset_options assets;
     qa_scene_world *world; qa_collision_geometry *geometry;
-    if(!out || !frontend_native_q3_current(row) || !row->view.assets || !row->view.presentation ||
+    if(!out || !frontend_native_q3_current(row) || !row->view.recipient || !row->view.assets || !row->view.presentation ||
         !qa_q3_presentation_binding_read(row->view.presentation,&binding,e) ||
         !qa_q3_assets_services(row->view.assets,&assets,&world,&geometry,e) ||
         binding.options.context!=row || binding.options.seat!=row->view.seat ||
@@ -1184,7 +1184,7 @@ bool frontend_native_q3_factory_view(const frontend_native_q3 *row,frontend_nati
         assets.provider.images!=row->view.images || assets.provider.materials!=row->view.materials ||
         assets.sounds!=row->view.sounds || assets.movies!=row->view.movies)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native composition factory requires its actual installed constructor heaps and physical seat");
-    *out=row->view; out->actor=frontend_native_q3_actor(row); return true;
+    *out=row->view; return true;
 }
 static bool row_idle(const frontend_native_q3 *row)
 {

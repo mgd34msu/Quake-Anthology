@@ -21,7 +21,8 @@ static bool current(const equipment_native *owner, const q3n_frame *frame)
         frame->reader == owner->owners.reader && frame->seat == owner->owners.launch_seat &&
         frame->physical_presentation_seat == owner->owners.seat &&
         frame->viewing_client == owner->owners.physical_client &&
-        qa_actor_id_equal(frame->viewing_actor, owner->owners.actor) &&
+        owner->owners.recipient &&
+        qa_actor_id_equal(frame->viewing_actor, owner->owners.recipient->source_actor) &&
         qa_application_native_q3_presentation_current(frame->application, &frame->source);
 }
 static bool borrow(void *row, qa_application_q3_client_context *out, qa_error *error)

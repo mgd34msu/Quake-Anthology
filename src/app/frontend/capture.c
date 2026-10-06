@@ -409,7 +409,7 @@ static bool resource_scopes(frontend_resource_inventory *inventory,qa_error *err
         if (!(inventory->video?frontend_native_q3_video_read(f,i,&v,error):frontend_native_q3_read(f,i,&v,error)) || !scope_add(inventory,(resource_scope){
             .kind=RESOURCE_NATIVE_Q3,.ordinal=i,.owner=frontend_native_q3_at(f,i),.descriptor=v.source_launch,
             .provider=v.source_owner,.receiver=v.receiver,.service_owner=v.service_owner,.identity=v.identity,
-            .seat=v.seat,.launch_seat=v.launch_seat,.actor=v.actor,.source_files=v.source_files,.mounts=v.mounts},error)) return false;
+            .seat=v.seat,.launch_seat=v.launch_seat,.actor=v.recipient->source_actor,.source_files=v.source_files,.mounts=v.mounts},error)) return false;
     }
     for (size_t i=0;i<frontend_native_q2_owner_count(f);++i) {
         frontend_native_q2_owner_view v;
