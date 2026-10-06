@@ -238,9 +238,19 @@ static bool project(frontend_qc_messages *owner,qc_recipient *row,const qa_nq_me
     /* Native control/stats remain with their Source owners; this decoder
      * delivers only the actor-qualified transient view effects. */
     if(row->native) return true;
-    if(message->op==QA_NQ_TEMPENTITY && row->camera.recipient.registry)
+    if(message->op==QA_NQ_TEMPENTITY && row->camera.recipient.registry) {
+        qa_actor_id beam_actor={0};
+        if(message->data.temporary.kind==QA_Q1_TEMP_BEAM) {
+            for(size_t i=0;i<event->reference_count;++i)
+                if(event->references[i].offset==start+2 && !event->references[i].packed_sound) {
+                    beam_actor=event->references[i].actor;break;
+                }
+            if(!beam_actor.registry && message->data.temporary.entity==row->camera.source_slot)
+                beam_actor=row->camera.recipient;
+        }
         return frontend_particle_q1_temporary(owner->frontend,row->camera.source.provider,
-            row->camera.recipient,&message->data.temporary,qa_q1_is_qw(row_protocol(row)),error);
+            row->camera.recipient,&message->data.temporary,beam_actor,qa_q1_is_qw(row_protocol(row)),error);
+    }
     if(message->op==QA_NQ_STAT) {
         if(message->data.indexed.index>=32)
             return frontend_fail(error,QA_ERROR_FORMAT,"QC client stat exceeds its actual protocol roster");

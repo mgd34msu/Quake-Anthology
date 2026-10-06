@@ -356,7 +356,7 @@ static bool native_particles(void *context, const qa_scene_world_input *input,
     native_scene_context *value = context;
     if (frame != &value->frontend->frame)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy particles lost their physical frame");
-    return frontend_particle_draw(value->frontend, value->seat, &input->view, error);
+    return frontend_particle_draw(value->frontend, value->seat, input, error);
 }
 
 bool frontend_legacy_scene_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owner exclude,

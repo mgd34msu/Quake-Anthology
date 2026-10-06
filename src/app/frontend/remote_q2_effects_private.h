@@ -50,13 +50,7 @@ typedef struct q2fx_sustain {
     qa_vec3 origin, direction;
     double end, next;
 } q2fx_sustain;
-typedef struct q2fx_trail {
-    qa_actor_id actor;
-    qa_vec3 origin;
-    int32_t count;
-    double fly_end;
-    float flashlight_fraction;
-} q2fx_trail;
+
 typedef struct q2fx_model_draw {
     uint8_t model;
     qa_vec3 origin, angles;
@@ -103,8 +97,7 @@ struct frontend_remote_q2_effects {
     q2fx_laser lasers[Q2FX_LASER_CAPACITY];
     q2fx_light lights[Q2FX_POOL];
     q2fx_sustain sustains[Q2FX_POOL];
-    q2fx_trail *trails;
-    size_t trail_count;
+    frontend_q2_entity_cache entity_trails;
     size_t sampled_particle_count;
     qa_scene_light *sampled_lights;
     size_t light_count, light_capacity, transient_light_count;
@@ -143,6 +136,6 @@ bool q2fx_prepare_beams(frontend_remote_q2_effects *, q2fx_beam *, size_t,
     const frontend_remote_q2_effects_sample *, const frontend_remote_q2_effects_controls *, bool, qa_error *);
 bool q2fx_semantic_draw(frontend_remote_q2_effects *, const frontend_remote_q2_effects_sample *, qa_scene_frame *, qa_error *);
 bool q2fx_entities(frontend_remote_q2_effects *, const frontend_remote_q2_effects_sample *,
-    q2fx_trail *, bool advance, qa_error *);
+    bool advance, qa_error *);
 void q2fx_sampled_light(frontend_remote_q2_effects *, qa_vec3, float, qa_vec3, float);
 #endif

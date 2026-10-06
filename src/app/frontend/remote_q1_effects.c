@@ -3,6 +3,7 @@
 #include "remote_q1_hud.h"
 #include "internal.h"
 #include "selected_effects_particles.h"
+#include "selected_effects_q1_temporary.h"
 #include "legacy_render_policy.h"
 #include "received_music.h"
 #include "q1_help.h"
@@ -187,21 +188,11 @@ static bool temporary(frontend_remote_q1 *row, const qa_q1_temp *event, qa_error
     if (!frontend_fx_q1_temporary_particles(&fx->particles, &fx->random, event,
             qa_q1_is_qw(row->options.domain.protocol), row->seconds))
         return remote_q1_fail(error, QA_ERROR_FORMAT, "Unsupported received Q1 temporary effect");
-    if (event->kind == QA_Q1_TEMP_COLORS) {
-        light(row, 0, origin, 350, .5, 300, 0, qa_v3(1,1,1));
-        path = "weapons/r_exp3.wav";
-    } else switch (event->type) {
-    case 0: case 1:
-        if (qa_builtin_random_integer(&fx->random) % 5) path = "weapons/tink1.wav";
-        else { uint32_t n = qa_builtin_random_integer(&fx->random) & 3;
-            path = n == 1 ? "weapons/ric1.wav" : n == 2 ? "weapons/ric2.wav" : "weapons/ric3.wav"; }
-        break;
-    case 3: case 4:
-        if (event->type == 3) light(row, 0, origin, 350, .5, 300, 0, qa_v3(1,1,1));
-        path = "weapons/r_exp3.wav"; break;
-    case 7: case 8: path = event->type == 7 ? "wizard/hit.wav" : "hknight/hit.wav"; break;
-    default: break;
-    }
+    frontend_fx_q1_light_recipe recipe;
+    if (frontend_fx_q1_temporary_light(event, &recipe))
+        light(row, 0, origin, recipe.radius, recipe.duration, recipe.decay,
+            recipe.minimum, recipe.color);
+    path = frontend_fx_q1_temporary_sound(event, &fx->random);
     return !path || sound(row, path, 0, origin, 0, 1, 1, false, false, error);
 }
 bool remote_q1_effects_service(frontend_remote_q1 *row, const qa_nq_message *message, qa_error *error)
@@ -366,22 +357,17 @@ static bool entities(frontend_remote_q1 *row, double seconds, qa_error *error)
         if(trail->model!=entity->model || fabsf(delta.x)>100 || fabsf(delta.y)>100 || fabsf(delta.z)>100) start=point;
         *trail=(remote_trail){entity->number,entity->model,point,fx->sample};
         if(entity->effects&1) frontend_fx_q1_entity(&fx->particles,&fx->random,point,seconds);
-        if(entity->effects&2) { qa_vec3 forward; qa_builtin_angle_vectors(angles,&forward,NULL,NULL);
-            light_at(row,entity->number,qa_vec_add(qa_vec_add(point,qa_v3(0,0,16)),qa_vec_scale(forward,18)),
-                200+(float)(qa_builtin_random_integer(&fx->random)&31),.1,0,32,qa_v3(1,1,1),seconds); }
-        if(entity->effects&4) light_at(row,entity->number,qa_vec_add(point,qa_v3(0,0,16)),400+(float)(qa_builtin_random_integer(&fx->random)&31),.001,0,0,qa_v3(1,1,1),seconds);
-        if(entity->effects&8) light_at(row,entity->number,point,200+(float)(qa_builtin_random_integer(&fx->random)&31),.001,0,0,qa_v3(1,1,1),seconds);
         const qa_product *product=qa_catalog_product(row->content.catalog,row->content.product);
-        if(product && product->edition==QA_EDITION_RERELEASE) {
-            if(entity->effects&16) light_at(row,entity->number,point,200+(float)(qa_builtin_random_integer(&fx->random)&31),.001,0,0,qa_v3(.25f,.25f,1),seconds);
-            if(entity->effects&32) light_at(row,entity->number,point,200+(float)(qa_builtin_random_integer(&fx->random)&31),.001,0,0,qa_v3(1,.25f,.25f),seconds);
-            if(entity->effects&64) light_at(row,entity->number,point,64+(float)(qa_builtin_random_integer(&fx->random)&31),
-                (double)(float)(seconds+.001)-seconds,0,0,qa_v3(1,192.0f/255,120.0f/255),seconds);
-        }
         uint32_t flags=model->source?(uint32_t)model->source->flags:0;
-        int type=flags&4?2:flags&32?4:flags&16?3:flags&64?5:flags&1?0:flags&2?1:flags&128?6:-1;
+        qa_vec3 light_origin;
+        frontend_fx_q1_light_recipe recipe;
+        bool lit=frontend_fx_q1_entity_light(&fx->random,point,angles,entity->effects,flags,
+            qa_q1_is_qw(row->protocol),product && product->edition==QA_EDITION_RERELEASE,
+            seconds,&light_origin,&recipe);
+        int type=frontend_fx_q1_model_trail(flags,qa_q1_is_qw(row->protocol));
         if(type>=0) frontend_fx_q1_trail(&fx->particles,&fx->random,start,point,(uint32_t)type,seconds);
-        if(type==0) light_at(row,entity->number,point,200,.01,0,0,qa_v3(1,1,1),seconds);
+        if(lit) light_at(row,entity->number,light_origin,recipe.radius,recipe.duration,
+            recipe.decay,recipe.minimum,recipe.color,seconds);
     }
     size_t retained=0;
     for(size_t i=0;i<fx->trail_count;++i) if(fx->trails[i].sample==fx->sample) fx->trails[retained++]=fx->trails[i];
@@ -413,27 +399,22 @@ bool remote_q1_effects_scene(frontend_remote_q1 *row,double seconds,
 static bool beam(frontend_remote_q1 *row,const remote_beam *value,const qa_scene_view *view,
     const qa_scene_world_input *world,qa_vec3 viewer_origin,qa_error *error)
 {
-    const char *path=value->type==5?"progs/bolt.mdl":value->type==6?"progs/bolt2.mdl":value->type==9?"progs/bolt3.mdl":"progs/beam.mdl";
+    const char *path=frontend_fx_q1_beam_model(value->type);
+    if(!path) return remote_q1_fail(error,QA_ERROR_FORMAT,"Q1 beam has no Source model");
     remote_q1_model *model;
     if(!remote_q1_model_read(row,&(frontend_remote_q1_entity_view){.model=path},&model,error)) return false;
-    qa_vec3 start=value->start,end=value->end;
+    qa_vec3 start=value->start;
     if(value->entity==row->view_entity) start=viewer_origin;
-    qa_vec3 delta=qa_vec_sub(end,start); float distance=qa_vec_length(delta);
-    qa_vec3 direction=distance!=0.0f?qa_vec_scale(delta,1/distance):qa_v3(0,0,0);
-    qa_vec3 angles=qa_v3((float)(atan2(delta.z,sqrt(delta.x*delta.x+delta.y*delta.y))*180/3.141592653589793),
-        (float)(atan2(delta.y,delta.x)*180/3.141592653589793),0);
-    while(distance>0) {
-        angles.z=(float)(qa_builtin_random_integer(&row->effects->random)%360);
-        qa_vec3 axes[3]; frontend_camera_axes(angles,axes);
-        qa_model_transform transform; qa_model_transform_identity(&transform);
-        transform.origin[0]=start.x; transform.origin[1]=start.y; transform.origin[2]=start.z;
-        for(unsigned i=0;i<3;++i) { transform.axes[i][0]=axes[i].x; transform.axes[i][1]=axes[i].y; transform.axes[i][2]=axes[i].z; }
-        qa_scene_model_input input={.view=*view,.transform=transform,.previous_origin=start,.color={1,1,1,1},
+    frontend_fx_q1_beam_cursor cursor;
+    frontend_fx_q1_beam_begin(&cursor,start,value->end);
+    qa_model_transform transform;
+    while(frontend_fx_q1_beam_next(&cursor,&row->effects->random,&transform)) {
+        qa_vec3 point=qa_v3(transform.origin[0],transform.origin[1],transform.origin[2]);
+        qa_scene_model_input input={.view=*view,.transform=transform,.previous_origin=point,.color={1,1,1,1},
             .family=QA_SCENE_Q1,.seconds=world->seconds,.source_path=path,.entity=value->entity,.identity_light=1};
         if(!frontend_legacy_model_input(row->world,world,&input,error) ||
             !remote_q1_model_lighting(row,world,&input,error) ||
             !qa_scene_model_submit(model->scene,&input,&row->frontend->frame,error)) return false;
-        start=qa_vec_add(start,qa_vec_scale(direction,30)); distance-=30;
     }
     return true;
 }

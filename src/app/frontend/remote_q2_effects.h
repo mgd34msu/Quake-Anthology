@@ -5,6 +5,7 @@
 #include "qa/source_save.h"
 #include "qa/builtin.h"
 #include "qa/collision.h"
+#include "q2_entity_effects.h"
 
 typedef struct frontend_remote_q2_effects frontend_remote_q2_effects;
 typedef struct frontend_remote_q2_effects_policy frontend_remote_q2_effects_policy;
@@ -28,16 +29,7 @@ typedef struct frontend_remote_q2_effects_controls {
     float rail_radius;
     uint32_t rail_core_rgba, rail_spiral_rgba;
 } frontend_remote_q2_effects_controls;
-typedef struct frontend_remote_q2_effects_pose {
-    qa_actor_id actor;
-    uint32_t number, event, model_index;
-    uint64_t effects;
-    int32_t frame;
-    qa_vec3 origin, angles;
-    qa_bounds bounds;
-    float radius, scale;
-    bool bounds_present, model_present;
-} frontend_remote_q2_effects_pose;
+typedef frontend_q2_entity_pose frontend_remote_q2_effects_pose;
 typedef struct frontend_remote_q2_effects_shadow_light {
     qa_actor_id actor;
     qa_vec3 origin, color, direction;

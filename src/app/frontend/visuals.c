@@ -1349,16 +1349,16 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
             !qa_scene_world_q1_mirror_scope(frontend->scene_world, world, frame)) {
             if (!frontend->seats[seat].q1_chase) continue;
         }
-        qa_application_visual_view view; qa_error observed = {0};
-        if (!qa_application_visual_read(frontend->application, actor, &view, &observed)) {
-            if (observed.code == QA_ERROR_NOT_FOUND) continue;
-            if (error) *error = observed;
-            return false;
-        }
+        qa_application_visual_view view;bool found;
+        if (!frontend_particle_visual_read(frontend,actor,&view,&found,error)) return false;
+        if (!found) continue;
         if (!view.visible) continue;
         if (exclude && view.provider == exclude) continue;
         float q2_back_lerp=0;
         if (!frontend_particle_q2_entity_sample(frontend,&view,&q2_back_lerp,error)) return false;
+        bool q2_beam=false;
+        if (!frontend_particle_q2_entity(frontend,seat,&view,world,frame,&q2_beam,error)) return false;
+        if (q2_beam) continue;
         if (view.q2_flare.present) {
             if (!visual_flare(frontend, &view, world, frame, error)) return false;
             continue;

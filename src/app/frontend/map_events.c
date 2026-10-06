@@ -72,11 +72,6 @@ typedef struct frontend_retained_bounds {
     unsigned color;
     bool depth;
 } frontend_retained_bounds;
-typedef struct frontend_q1_light {
-    qa_actor_id actor;
-    qa_scene_light light;
-    double die;
-} frontend_q1_light;
 typedef struct frontend_q1_fog {
     qa_actor_owner owner;
     qa_actor_id recipient;
@@ -107,7 +102,6 @@ struct frontend_event_state {
     frontend_retained_sound *sounds;
     frontend_retained_light *lights;
     frontend_retained_bounds *bounds;
-    frontend_q1_light q1_lights[32];
     qa_builtin_random light_random;
     uint32_t step_random[624], step_cursor;
     qa_audio_asset *last_step;
@@ -393,7 +387,6 @@ void frontend_event_reset_round(qa_frontend *frontend)
     while (state->bounds) {
         frontend_retained_bounds *entry = state->bounds; state->bounds = entry->next; free(entry);
     }
-    memset(state->q1_lights, 0, sizeof(state->q1_lights));
     for (unsigned i = 0; i < QA_INPUT_LOCAL_SEATS; ++i) {
         frontend_event_view *view = &state->views[i];
         view->fog_start = view->fog_target = (qa_q2_fog){0};
@@ -457,48 +450,6 @@ static bool pattern_set(char **out, const char *pattern, qa_error *error)
     char *copy = malloc(strlen(pattern) + 1);
     if (!copy) return frontend_fail(error, QA_ERROR_MEMORY, "retaining source lightstyle");
     strcpy(copy, pattern); free(*out); *out = copy; return true;
-}
-static bool q1_effects(qa_frontend *frontend, frontend_event_state *state, qa_error *error)
-{
-    double seconds = (double)qa_session_elapsed(qa_application_session(frontend->application)) / 1e9;
-    const qa_actor_record *record; uint32_t cursor = 0;
-    qa_actor_registry *actors = qa_world_actors(qa_application_world(frontend->application));
-    while (qa_actors_next(actors, &cursor, &record)) {
-        qa_application_visual_view view; qa_error observed = {0};
-        if (!qa_application_visual_read(frontend->application, record->id, &view, &observed)) {
-            if (observed.code == QA_ERROR_NOT_FOUND) continue;
-            if (error) *error = observed;
-            return false;
-        }
-        uint32_t effects = view.q1_effects | (view.family == QA_GAME_Q1 ? (uint32_t)view.effects : 0);
-        if (!(effects & 14)) continue;
-        frontend_q1_light *entry = NULL;
-        for (unsigned i = 0; i < 32; ++i)
-            if (qa_actor_id_equal(state->q1_lights[i].actor, record->id)) { entry = &state->q1_lights[i]; break; }
-        if (!entry) for (unsigned i = 0; i < 32; ++i)
-            if (!state->q1_lights[i].actor.registry || state->q1_lights[i].die < seconds) { entry = &state->q1_lights[i]; break; }
-        if (!entry) entry = &state->q1_lights[0];
-        entry->actor = record->id;
-        qa_vec3 origin = view.body.origin; float radius = 0, minimum = 0;
-        if (effects & 2) {
-            qa_vec3 axes[3]; frontend_camera_axes(view.body.angles, axes);
-            origin.z += 16; origin = qa_vec_add(origin, qa_vec_scale(axes[0], 18));
-            radius = 200 + (float)(qa_builtin_random_integer(&state->light_random) & 31); minimum = 32;
-            entry->die = seconds + .1;
-        }
-        if (effects & 4) {
-            origin = view.body.origin; origin.z += 16;
-            radius = 400 + (float)(qa_builtin_random_integer(&state->light_random) & 31);
-            minimum = 0; entry->die = seconds + .001;
-        }
-        if (effects & 8) {
-            origin = view.body.origin; radius = 200 + (float)(qa_builtin_random_integer(&state->light_random) & 31);
-            minimum = 0; entry->die = seconds + .001;
-        }
-        entry->light = (qa_scene_light){.origin = origin, .color = {1, 1, 1}, .radius = radius,
-            .minimum = minimum, .scale = 1, .identity = qa_scene_identity(), .revision = 1, .family = QA_SCENE_Q1};
-    }
-    return true;
 }
 static float fog_fraction(float value)
 {
@@ -656,7 +607,7 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
         }
         for (unsigned face = 0; face < 6; ++face) qa_scene_image_release(sky[face]);
     }
-    return q1_effects(frontend, state, error);
+    return true;
 }
 bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_input *world, qa_error *error)
 {
@@ -707,10 +658,6 @@ bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_i
 #undef COLOR
     }
     size_t count = 0;
-    double seconds = (double)now / 1e9;
-    for (unsigned i = 0; i < 32; ++i)
-        if (state->q1_lights[i].actor.registry && state->q1_lights[i].die >= seconds &&
-            qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), state->q1_lights[i].actor)) ++count;
     for (frontend_retained_light *light = state->lights; light; light = light->next)
         if (light->event.visible && seat_receives(frontend, seat, light->event.recipient) &&
             qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), light->event.actor)) ++count;
@@ -721,10 +668,6 @@ bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_i
     if (!lights) return false;
     if (world->light_count) memcpy(lights, world->lights, world->light_count * sizeof(*lights));
     size_t used = world->light_count;
-    for (unsigned i = 0; i < 32; ++i)
-        if (state->q1_lights[i].actor.registry && state->q1_lights[i].die >= seconds &&
-            qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), state->q1_lights[i].actor))
-            lights[used++] = state->q1_lights[i].light;
     for (frontend_retained_light *light = state->lights; light; light = light->next) {
         const qa_q2_map_event *event = &light->event;
         if (!event->visible || !seat_receives(frontend, seat, event->recipient) ||
@@ -871,21 +814,22 @@ bool frontend_particle_sound(qa_frontend *frontend, const qa_builtin_event *even
     uint32_t seat, qa_actor_id recipient, qa_error *error)
 {
     qa_actor_id current;
-    if (!frontend || !event || event->family != QA_GAME_Q2 || event->kind != QA_BUILTIN_SOUND ||
+    if (!frontend || !event || (event->family != QA_GAME_Q1 && event->family != QA_GAME_Q2) || event->kind != QA_BUILTIN_SOUND ||
         event->actor.registry || !recipient.registry || seat >= frontend->options.seats ||
         !frontend_seat_actor_read(frontend, seat, &current) || !qa_actor_id_equal(current, recipient))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 particle sound requires its actual delivered physical client");
     if (!frontend->audio) return true;
     const char *name = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), event->resource);
     if (!name || !*name) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 particle sound has no source resource name");
+    qa_audio_family family=event->family==QA_GAME_Q1?QA_AUDIO_Q1:QA_AUDIO_Q2;
     frontend_event_state *state; frontend_event_resources *resources;
     if (!state_read(frontend, &state, error) ||
-        !resources_read(frontend, event->provider, QA_AUDIO_Q2, &resources, error)) return false;
+        !resources_read(frontend, event->provider, family, &resources, error)) return false;
     qa_audio_asset *asset = NULL;
-    if (!qa_audio_bank_register(resources->sounds, name, QA_AUDIO_Q2, &asset, error)) return false;
+    if (!qa_audio_bank_register(resources->sounds, name, family, &asset, error)) return false;
     if (!asset) return true;
     qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset, .name = name,
-        .family = QA_AUDIO_Q2, .actor = QA_AUDIO_NO_ACTOR, .owner = event->provider, .audience = seat,
+        .family = family, .actor = QA_AUDIO_NO_ACTOR, .owner = event->provider, .audience = seat,
         .origin_kind = QA_AUDIO_FIXED, .origin_actor = QA_AUDIO_NO_ACTOR, .origin = event->origin,
         .channel = event->channel, .volume = event->volume, .attenuation = event->attenuation};
     int32_t milliseconds = (int32_t)((frontend->time_ns / 1000000) & INT32_MAX);

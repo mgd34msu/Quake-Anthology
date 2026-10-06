@@ -833,7 +833,7 @@ bool frontend_source_submit_scene(qa_frontend *frontend,uint32_t seat,qa_actor_o
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source scene submission requires its actual owner, frame and physical seat");
     if (options->world.no_world) return true;
     return frontend_visuals_submit(frontend,seat,owner,&options->world,frame,error) &&
-        frontend_particle_draw(frontend,seat,&options->world.view,error) &&
+        frontend_particle_draw(frontend,seat,&options->world,error) &&
         frontend_event_debug(frontend,&options->world.view,error) &&
         frontend_tools_debug(frontend,&options->world.view,error);
 }

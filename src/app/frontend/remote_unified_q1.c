@@ -3,6 +3,7 @@
 #include "remote_unified_metadata.h"
 #include "remote_unified_save.h"
 #include "selected_effects_particles.h"
+#include "selected_effects_q1_temporary.h"
 #include "legacy_render_policy.h"
 #include "q1_help.h"
 #include "scene_identity.h"
@@ -425,19 +426,11 @@ static bool effect(frontend_unified_q1 *o,q1_group *g,const q1_event *p,qa_error
     else return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 effect recipe is not installed");
     if(!frontend_fx_q1_temporary_particles(&g->particles,&o->random,&temporary,false,time))
         return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 effect recipe is not installed");
-    if(temporary.type==3 || temporary.type==4) {
-        if(temporary.type==3)light(g,p->origin,time,350,300,.5);
-        return effect_sound(o,p,"weapons/r_exp3.wav",e);
-    }
-    if(temporary.type==0 || temporary.type==1) {
-        const char *path="weapons/tink1.wav";
-        if(qa_builtin_random_integer(&o->random)%5==0){uint32_t n=qa_builtin_random_integer(&o->random)&3;
-            path=n==1?"weapons/ric1.wav":n==2?"weapons/ric2.wav":"weapons/ric3.wav";}
-        return effect_sound(o,p,path,e);
-    }
-    if(temporary.type==7 || temporary.type==8)
-        return effect_sound(o,p,temporary.type==7?"wizard/hit.wav":"hknight/hit.wav",e);
-    return true;
+    frontend_fx_q1_light_recipe recipe;
+    if(frontend_fx_q1_temporary_light(&temporary,&recipe))
+        light(g,p->origin,time,recipe.radius,recipe.decay,recipe.duration)->minimum=recipe.minimum;
+    const char *path=frontend_fx_q1_temporary_sound(&temporary,&o->random);
+    return !path || effect_sound(o,p,path,e);
 }
 static bool hud_read(void *context,const qa_hud_frame *frame,qa_hud_data *out,qa_error *e)
 {
@@ -605,8 +598,14 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         size_t original_count=g->particles.count;qa_builtin_random original_random=o->random;q1_light original_lights[Q1_LIGHTS];
         memcpy(original_lights,g->lights,sizeof(original_lights));
         if(p.kind==Q1_EFFECT)ok=effect(o,g,&p,e);
-        else {frontend_fx_q1_color_explosion(&g->particles,&o->random,p.origin,p.seconds,(uint32_t)p.a,(uint32_t)p.b);
-            light(g,p.origin,p.seconds,350,300,.5);ok=effect_sound(o,&p,"weapons/r_exp3.wav",e);}
+        else {qa_q1_temp temporary={.kind=QA_Q1_TEMP_COLORS,.origin={p.origin.x,p.origin.y,p.origin.z},
+                .color_start=(uint8_t)p.a,.color_length=(uint8_t)p.b};
+            ok=frontend_fx_q1_temporary_particles(&g->particles,&o->random,&temporary,false,p.seconds);
+            frontend_fx_q1_light_recipe recipe;
+            if(ok && frontend_fx_q1_temporary_light(&temporary,&recipe))
+                light(g,p.origin,p.seconds,recipe.radius,recipe.decay,recipe.duration)->minimum=recipe.minimum;
+            const char *path=ok?frontend_fx_q1_temporary_sound(&temporary,&o->random):NULL;
+            if(ok && path)ok=effect_sound(o,&p,path,e);}
         if(!ok){g->particles.count=original_count;o->random=original_random;memcpy(g->lights,original_lights,sizeof(original_lights));}
         if(ok && p.kind==Q1_EFFECT && !strcmp((char *)p.name.data,"pickup") && owns(o,&p,e))o->bonus_until=p.seconds+.5;
         break;}
@@ -822,17 +821,18 @@ bool frontend_unified_q1_world_models(frontend_unified_q1 *o,const qa_scene_worl
             else {ok=qa_scene_world_sample_light_input(frontend_unified_media_world(o->media),world,s->origin,&input.ambient,&input.directed,&input.light_direction,e) &&
                 frontend_legacy_model_input(frontend_unified_media_world(o->media),world,&input,e) && qa_scene_model_submit(s->model.scene,&input,frame,e);}
         }
-        static const char *const models[]={"progs/bolt.mdl","progs/bolt2.mdl","progs/bolt3.mdl","progs/beam.mdl"};
+        static const uint8_t types[]={5,6,9,13};
         for(size_t i=0;ok && i<Q1_BEAMS;++i) {q1_beam *b=g->beams+i;if(b->until<=world->seconds)continue;qa_actor_id actual;
             ok=frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(frontend_remote_unified_frame(o->replica)),b->actor,false,&actual,e);if(!ok)break;
-            frontend_unified_model model;qa_scene_image_options images=model_options();ok=frontend_unified_media_model(o->media,g->content,models[b->kind],QA_SCENE_Q1,&images,&model,e);if(!ok)break;
-            qa_vec3 direction=qa_vec_sub(b->end,b->start);float length=qa_vec_length(direction);if(length<=0)continue;direction=qa_vec_scale(direction,1/length);
-            qa_vec3 angles=qa_v3(-atan2f(direction.z,hypotf(direction.x,direction.y))*57.29577951308232f,atan2f(direction.y,direction.x)*57.29577951308232f,0);
+            frontend_unified_model model;qa_scene_image_options images=model_options();ok=frontend_unified_media_model(o->media,g->content,frontend_fx_q1_beam_model(types[b->kind]),QA_SCENE_Q1,&images,&model,e);if(!ok)break;
+            frontend_fx_q1_beam_cursor cursor;frontend_fx_q1_beam_begin(&cursor,b->start,b->end);
             qa_builtin_random roll;qa_builtin_random_seed(&roll,b->roll_seed);
-            for(float step=0;ok && step<length;step+=30) {qa_scene_model_input input={.view=*view,.family=QA_SCENE_Q1,.source_path=models[b->kind],.material_library=frontend_unified_model_materials(model.scene),
+            qa_model_transform placement;
+            while(ok && frontend_fx_q1_beam_next(&cursor,&roll,&placement)) {
+                qa_scene_model_input input={.view=*view,.transform=placement,.family=QA_SCENE_Q1,
+                    .source_path=frontend_fx_q1_beam_model(types[b->kind]),.material_library=frontend_unified_model_materials(model.scene),
                     .seconds=world->seconds,.identity_light=world->identity_light,.color={1,1,1,1},.ambient={1,1,1},.entity=actual.slot,
                     .video_frame=world->video_frame,.video_context=world->video_context};
-                angles.z=(float)(qa_builtin_random_integer(&roll)%360);transform(&input.transform,qa_vec_add(b->start,qa_vec_scale(direction,step)),angles);
                 ok=frontend_legacy_model_input(frontend_unified_media_world(o->media),world,&input,e) && qa_scene_model_submit(model.scene,&input,frame,e);}
         }
     }

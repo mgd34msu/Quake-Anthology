@@ -110,13 +110,8 @@ bool frontend_remote_q2_effects_create(const frontend_remote_q2_effects_source *
     frontend_remote_q2_effects *owner = calloc(1, sizeof(*owner));
     if (!owner) return q2fx_fail(error, QA_ERROR_MEMORY, "Allocating remote Q2 effect pools");
     owner->source = *source; owner->particles.family = QA_GAME_Q2; qa_builtin_random_seed(&owner->random, 1);
-    if (source->profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE)
-        for (size_t i=0;i<QA_BYTE_NORMAL_COUNT;++i) {
-            float x=(float)(qa_builtin_random_integer(&owner->random)&255)*.01f;
-            float y=(float)(qa_builtin_random_integer(&owner->random)&255)*.01f;
-            float z=(float)(qa_builtin_random_integer(&owner->random)&255)*.01f;
-            owner->particles.angular[i]=qa_v3(x,y,z);
-        }
+    frontend_q2_effect_particles_initialize(&owner->particles,&owner->random,
+        source->profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE);
     *out = owner;
     owner->sampled_lights=calloc(Q2FX_LIGHT_CAPACITY,sizeof(*owner->sampled_lights));
     if (!owner->sampled_lights) return q2fx_fail(error,QA_ERROR_MEMORY,"Allocating actual Q2 sampled light rows");
@@ -137,7 +132,7 @@ bool frontend_remote_q2_effects_destroy(frontend_remote_q2_effects **slot, qa_er
     frontend_remote_q2_effects *owner = *slot;
     if (!owner) return true;
     if (!frontend_remote_q2_effects_idle(owner)) return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 effects still own an active source callback or policy");
-    qa_scene_image_release(owner->particle_image); free(owner->trails); free(owner->draws);
+    qa_scene_image_release(owner->particle_image); free(owner->entity_trails.rows); free(owner->draws);
     free(owner->sampled_lights); free(owner->source_beams); free(owner->source_lights); free(owner->flashlights);
     free(owner); *slot = NULL; return true;
 }
@@ -145,16 +140,7 @@ static uint32_t random_word(frontend_remote_q2_effects *o) { return qa_builtin_r
 static double random_unit(frontend_remote_q2_effects *o) { return (double)(random_word(o) & 32767) / 32767; }
 static float random_signed(frontend_remote_q2_effects *o) { return (float)(2 * random_unit(o) - 1); }
 qa_vec3 q2fx_random_direction(frontend_remote_q2_effects *o)
-{
-    if (o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE) {
-        float x,y,square;
-        do { x=random_signed(o); y=random_signed(o); square=x*x+y*y; } while (square>1);
-        float scale=2*sqrtf(1-square);
-        return qa_v3(x*scale,y*scale,-1+2*square);
-    }
-    float x = random_signed(o), y = random_signed(o), z = random_signed(o);
-    return qa_vec_normalize(qa_v3(x, y, z));
-}
+{ return frontend_q2_effect_random_direction(&o->random,o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE); }
 static void axes(qa_vec3 a, qa_vec3 out[3])
 {
     float p = a.x * .017453292519943295f, y = a.y * .017453292519943295f, r = a.z * .017453292519943295f;
@@ -1112,7 +1098,7 @@ bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *o,
     if (!o || !frontend_remote_q2_effects_idle(o) || !s || !lights_out || !count_out || !isfinite(s->milliseconds) || !isfinite(s->server_milliseconds) ||
         !isfinite(s->fraction) || s->fraction<0 || s->fraction>1 || !isfinite(s->frame_seconds) || s->frame_seconds<0 ||
         (s->entity_count && !s->entities) ||
-        s->entity_count>SIZE_MAX/sizeof(q2fx_trail) || !q2fx_source_current(o,e)) return false;
+        !q2fx_source_current(o,e)) return false;
     if (o->sampled && s->milliseconds<o->time) return q2fx_fail(e,QA_ERROR_ARGUMENT,"Remote Q2 source time rewound without replacing its effects owner");
     uint64_t render_wall, render_frame;
     if (!o->source.render_clock(o->source.context,&render_wall,&render_frame,e) || !q2fx_source_current(o,e)) return false;
@@ -1126,8 +1112,6 @@ bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *o,
     bool policy_changed=o->sampled_dlight_hacks!=controls.dlight_hacks || o->sampled_disable_particles!=controls.disable_particles ||
         o->sampled_gun!=controls.gun || o->sampled_gun_fov!=controls.gun_fov;
     if (advance || events || o->dirty || policy_changed || o->render_frame!=render_frame) {
-        q2fx_trail *trails=s->entity_count?calloc(s->entity_count,sizeof(*trails)):NULL;
-        if (s->entity_count && !trails) return q2fx_fail(e,QA_ERROR_MEMORY,"Retaining received Q2 entity trails");
         ++o->busy; o->light_count=0; o->draw_count=0;
         size_t retained=0, sampled_retained=0;
         for (size_t i=0;i<o->particles.count;++i) {
@@ -1159,7 +1143,7 @@ bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *o,
             else radius=(float)(row->radius-(s->milliseconds-row->born)*.001*row->decay);
             q2fx_sampled_light(o,row->origin,radius,row->color,row->minimum);
         }
-        bool ok=q2fx_entities(o,s,trails,advance,e) && q2fx_prepare_beams(o,o->beams,Q2FX_POOL,s,&controls,advance,e) &&
+        bool ok=q2fx_entities(o,s,advance,e) && q2fx_prepare_beams(o,o->beams,Q2FX_POOL,s,&controls,advance,e) &&
             q2fx_prepare_beams(o,o->player_beams,Q2FX_POOL,s,&controls,advance,e) &&
             q2fx_semantic_prepare(o,s,&controls,advance,e);
         for (size_t i=0;ok && i<Q2FX_POOL;++i) {
@@ -1185,8 +1169,7 @@ bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *o,
         }
         o->transient_light_count=o->light_count;
         --o->busy;
-        if (!ok) { free(trails); return false; }
-        free(o->trails); o->trails=trails; o->trail_count=s->entity_count;
+        if (!ok) return false;
         o->sampled_particle_count=o->particles.count; o->time=s->milliseconds; o->server_time=s->server_milliseconds;
         o->frame_sequence=s->frame_sequence; o->sampled=true; o->dirty=false;
         o->render_frame=render_frame;
@@ -1257,9 +1240,7 @@ bool frontend_remote_q2_effects_entity_beam(frontend_remote_q2_effects *o,
     qa_bytes palette={0};
     if (!qa_scene_resources_palette_read(o->source.images,QA_SCENE_Q2,&palette) || palette.size<768) return false;
     ++o->busy;
-    uint32_t color=(packed_colors>>((random_word(o)%4)*8))&255;
-    qa_scene_vec4 rgba={palette.data[color*3]/255.f,palette.data[color*3+1]/255.f,palette.data[color*3+2]/255.f,.3f};
-    float diameter=(float)(width/2)*2;
-    bool ok=qa_scene_beam(frame,view,start,end,diameter,rgba,o->source.white,e);
+    bool ok=frontend_q2_entity_beam(&o->random,palette,o->source.white,
+        view,start,end,packed_colors,width,frame,e);
     --o->busy; return ok && q2fx_source_current(o,e);
 }
