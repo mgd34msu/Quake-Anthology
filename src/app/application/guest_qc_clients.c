@@ -344,6 +344,12 @@ static bool parms(struct application_qc_state *engine, application_qc_client *cl
     }
     return true;
 }
+static bool source_spawn_colors(struct application_qc_state *engine, int32_t reference,
+    uint32_t slot, uint8_t colors, qa_error *error)
+{
+    return application_qc_set_float(engine, reference, "colormap", (float)slot, error) &&
+        application_qc_set_float(engine, reference, "team", (float)((colors & 15u) + 1u), error);
+}
 static bool bind_player(application_provider *provider, uint32_t slot, uint32_t seat,
                                  qa_actor_id actor, const char *name, bool spectator,
                                  bool new_player, bool primary_character, bool reserve, qa_error *error)
@@ -433,6 +439,7 @@ static bool bind_player(application_provider *provider, uint32_t slot, uint32_t 
     if (classic_qw(engine))
         return application_qc_prepare_player(provider, actor, error) &&
             application_qc_begin_player(provider, actor, error);
+    if (!source_spawn_colors(engine, reference, slot, client->colors, error)) return false;
     if (!parms(engine, client, false, error) || !(spectator ?
         application_qc_spectator_callback(engine, connect, actor, error) : application_qc_named(engine, connect, actor, error))) return false;
     if (!spectator && !application_qc_named(engine, "PutClientInServer", actor, error)) return false;
@@ -520,8 +527,7 @@ bool application_qc_begin_player(application_provider *provider, qa_actor_id act
             return application_fail(error, QA_ERROR_ARGUMENT, "QC source begin lacks its retained actor or spawn parameters");
         int32_t reference;
         if (!application_qc_reference(engine, actor, &reference, error)) return false;
-        if (!classic_qw(engine) && (!application_qc_set_float(engine, reference, "colormap", (float)slot, error) ||
-            !application_qc_set_float(engine, reference, "team", (float)((client->colors & 15u) + 1u), error))) return false;
+        if (!classic_qw(engine) && !source_spawn_colors(engine, reference, slot, client->colors, error)) return false;
         if (!parms(engine, client, false, error) || !(client->spectator ?
             application_qc_spectator_callback(engine, "SpectatorConnect", actor, error) :
             application_qc_named(engine, "ClientConnect", actor, error))) return false;
