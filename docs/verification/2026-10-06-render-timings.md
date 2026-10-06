@@ -1,9 +1,51 @@
 # Retail render measurements, 2026-10-06
 
-These results do not meet the performance targets. The latest CPU result is
-lower, but its rendering scope still exceeds the complete-frame target.
+These results do not meet the performance targets. Outside activity prevents an
+isolated speedup claim for the latest group.
 
-The latest measured executable was built from `92acfd4a` with GCC, RelWithDebInfo and
+The latest measured executable was built from `733077cb`, including the prepared
+four-pixel fog arithmetic, vertex clipping/projection reuse and exact world
+visibility reuse. GCC and Clang full builds and their registered checks passed.
+The installed testing executable matched the build byte for byte.
+
+The twelve retail cases each exited normally with an unchanged artifact,
+120 warm-up frames and 600 measured presentation intervals. GL used the RTX 3090
+at swap interval zero. The starting views were Q1 `e1m1`, Q2 and Q2 rerelease
+`base1`, and Q3 `q3dm1`. These are default native sessions with enabled dummy
+audio delivery, real elapsed time, and no debugger or profiler attached.
+
+| Game | Output | Resolution | Median, ms | p99, ms | Target, ms |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Q1 | GL | 1920×1080 | 5.018 | 9.199 | <2 |
+| Q1 | CPU | 640×400 | 10.837 | 13.359 | <4 |
+| Q1 | CPU | 320×200 | 6.222 | 8.502 | <2 |
+| Q2 | GL | 1920×1080 | 2.082 | 3.363 | <2 |
+| Q2 | CPU | 640×400 | 9.069 | 12.745 | <4 |
+| Q2 | CPU | 320×200 | 6.003 | 8.010 | <2 |
+| Q2 rerelease | GL | 1920×1080 | 3.720 | 6.438 | <2 |
+| Q2 rerelease | CPU | 640×400 | 18.858 | 48.951 | <4 |
+| Q2 rerelease | CPU | 320×200 | 13.505 | 25.444 | <2 |
+| Q3 | GL | 1920×1080 | 3.445 | 4.528 | <2 |
+| Q3 | CPU | 640×400 | 17.737 | 20.674 | <4 |
+| Q3 | CPU | 320×200 | 8.634 | 10.566 | <2 |
+
+This project's other games, debuggers and compilers were stopped. One-second
+process observations detected outside activity above half a CPU core in every
+case. Another project's test used approximately 19–20 cores during the Q1 GL
+run; that result does not establish a renderer regression. Nice 19 does not
+make a host quiet, and the monitor cannot exclude short activity between samples.
+
+Q2 rerelease CPU 640×400 recorded warmed inclusive means of 14.170 ms in
+`cpu_render`, 2.824 ms in `scene_build`, and 1.593 ms in `application`. At
+320×200, rendering remained 8.917 ms and scene building 2.681 ms. Q3 GL spent
+2.342 ms building the scene and 0.671 ms submitting GL work. These are still
+implementation targets, not achieved frame budgets. The lower CPU observations
+measure a group of changes under different outside activity and simulation
+progress; no isolated improvement is attributed to one commit.
+
+## Earlier measurements
+
+The earlier measured executable was built from `92acfd4a` with GCC, RelWithDebInfo and
 warnings treated as errors. The complete GCC and Clang builds and their six
 registered CTest checks each passed. The testing copy, `qa-c`, was compared byte
 for byte with that build after installation.
