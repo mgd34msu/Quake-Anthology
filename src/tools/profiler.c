@@ -16,9 +16,16 @@ struct qa_profiler {
     qa_timer_stamp *stamps;
     size_t total_count, total_capacity, stack_count, stack_capacity;
     size_t stamp_count, stamp_capacity, stamp_first;
+    size_t disabled_depth;
     double epoch;
-    bool enabled, busy, pending_restore;
+    bool enabled, busy, pending_restore, mode_pending, next_enabled;
 };
+static void mode_commit(qa_profiler *p) {
+    if (!p->stack_count && !p->disabled_depth && p->mode_pending) {
+        p->enabled = p->next_enabled;
+        p->mode_pending = false;
+    }
+}
 static bool clock_read(qa_profiler *p, double *out, qa_error *error) {
     p->busy = true; double value = p->clock(p->context); p->busy = false;
     if (!isfinite(value)) {
@@ -55,8 +62,9 @@ bool qa_profiler_destroy(qa_profiler *p, qa_error *error) {
     clear(p); free(p->totals); free(p->stack); free(p->stamps); free(p); return true;
 }
 bool qa_profiler_enable(qa_profiler *p, bool enabled, qa_error *error) {
-    if (!p || p->pending_restore || p->busy || p->stack_count) return tools_fail(error, "cannot change pending profiler mode or an active scope");
-    p->enabled = enabled; return true;
+    if (!p || p->pending_restore || p->busy) return tools_fail(error, "cannot change pending profiler mode or an active callback");
+    p->next_enabled = enabled; p->mode_pending = true;
+    mode_commit(p); return true;
 }
 bool qa_profiler_reset(qa_profiler *p, qa_error *error) {
     if (!p || p->pending_restore || p->busy || p->stack_count) return tools_fail(error, "cannot reset pending profiler or an active scope");
@@ -65,7 +73,11 @@ bool qa_profiler_reset(qa_profiler *p, qa_error *error) {
 }
 bool qa_profiler_push(qa_profiler *p, const char *name, qa_error *error) {
     if (!p || !name || p->pending_restore || p->busy) return tools_fail(error, "invalid or pending profiler scope admission");
-    if (!p->enabled) return true;
+    if (!p->enabled) {
+        if (p->disabled_depth == SIZE_MAX) return tools_fail(error, "profiler scope depth exceeds native range");
+        ++p->disabled_depth;
+        return true;
+    }
     if (p->stack_count == p->stack_capacity) {
         void *copy = grow(p->stack, &p->stack_capacity, sizeof(*p->stack), error); if (!copy) return false; p->stack = copy;
     }
@@ -75,7 +87,12 @@ bool qa_profiler_push(qa_profiler *p, const char *name, qa_error *error) {
 }
 bool qa_profiler_pop(qa_profiler *p, qa_error *error) {
     if (!p || p->pending_restore || p->busy) return tools_fail(error, "invalid or pending profiler scope retirement");
-    if (!p->enabled) return true;
+    if (!p->enabled) {
+        if (!p->disabled_depth) return tools_fail(error, "unbalanced profiler pop");
+        --p->disabled_depth;
+        mode_commit(p);
+        return true;
+    }
     if (!p->stack_count) return tools_fail(error, "unbalanced profiler pop");
     double now; if (!clock_read(p, &now, error)) return false;
     timer_scope scope = p->stack[p->stack_count - 1]; size_t index = 0;
@@ -94,7 +111,8 @@ bool qa_profiler_pop(qa_profiler *p, qa_error *error) {
     total = &p->totals[index];
     --p->stack_count;
     if (p->stack_count) p->stack[p->stack_count - 1].children += elapsed;
-    ++total->calls; total->total_ms += elapsed; total->self_ms += self; total->maximum_ms = fmax(total->maximum_ms, elapsed); return true;
+    ++total->calls; total->total_ms += elapsed; total->self_ms += self; total->maximum_ms = fmax(total->maximum_ms, elapsed);
+    mode_commit(p); return true;
 }
 bool qa_profiler_stamp(qa_profiler *p, const char *name, qa_error *error) {
     if (!p || !name || p->pending_restore || p->busy) return tools_fail(error, "invalid or pending profiler stamp");
@@ -146,7 +164,14 @@ bool tools_profiler_rebind_ready(const qa_profiler *p, const void *context, qa_e
 }
 void tools_profiler_rebind(qa_profiler *p, void *context) { p->context = context; }
 void tools_profiler_exchange(qa_profiler *stable, qa_profiler *candidate) {
+    size_t disabled_depth = stable->disabled_depth;
     qa_profiler old = *stable; *stable = *candidate; *candidate = old;
+    candidate->disabled_depth = 0; candidate->mode_pending = false;
+    if (disabled_depth) {
+        stable->disabled_depth = disabled_depth;
+        stable->next_enabled = stable->enabled; stable->mode_pending = true;
+        stable->enabled = false;
+    }
 }
 bool tools_profiler_fields(qa_source_save_io *io, qa_profiler **holder, const qa_tools_options *options) {
     qa_profiler *p = *holder;

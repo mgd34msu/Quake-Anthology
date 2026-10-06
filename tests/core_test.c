@@ -7,6 +7,7 @@
 #include "qa/campaign.h"
 #include "qa/recovery.h"
 #include "qa/q1_save.h"
+#include "qa/tools.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -459,11 +460,76 @@ void test_guest(void);
 bool test_recovery_child(int, char **, int *);
 void test_recovery(const char *);
 
+typedef struct profiler_clock { double now; unsigned calls; } profiler_clock;
+static double test_profiler_clock(void *context)
+{
+    profiler_clock *clock = context;
+    ++clock->calls;
+    return clock->now;
+}
+static void test_profiler_mode_changes(void)
+{
+    qa_error error = {0}; qa_profiler *profiler = NULL;
+    profiler_clock clock = {0};
+    CHECK(qa_profiler_create(test_profiler_clock, &clock, 8, &profiler, &error));
+    CHECK(qa_profiler_push(profiler, "disabled_outer", &error));
+    CHECK(qa_profiler_push(profiler, "disabled_inner", &error));
+    CHECK(qa_profiler_enable(profiler, true, &error));
+    CHECK(!qa_profiler_enabled(profiler) && qa_profiler_idle(profiler));
+    CHECK(qa_profiler_pop(profiler, &error));
+    CHECK(!qa_profiler_enabled(profiler));
+    CHECK(qa_profiler_push(profiler, "disabled_sibling", &error));
+    CHECK(qa_profiler_pop(profiler, &error));
+    CHECK(!qa_profiler_enabled(profiler) && clock.calls == 1);
+    CHECK(qa_profiler_pop(profiler, &error));
+    CHECK(qa_profiler_enabled(profiler) && qa_profiler_idle(profiler));
+
+    clock.now = 1;
+    CHECK(qa_profiler_push(profiler, "outer", &error));
+    clock.now = 2;
+    CHECK(qa_profiler_push(profiler, "inner", &error));
+    CHECK(qa_profiler_enable(profiler, false, &error));
+    CHECK(qa_profiler_enabled(profiler) && !qa_profiler_idle(profiler));
+    clock.now = 5;
+    CHECK(qa_profiler_pop(profiler, &error));
+    CHECK(qa_profiler_enabled(profiler));
+    clock.now = 6;
+    CHECK(qa_profiler_push(profiler, "sibling", &error));
+    clock.now = 7;
+    CHECK(qa_profiler_pop(profiler, &error));
+    CHECK(qa_profiler_enabled(profiler));
+    clock.now = 8;
+    CHECK(qa_profiler_pop(profiler, &error));
+    CHECK(!qa_profiler_enabled(profiler) && qa_profiler_idle(profiler));
+    CHECK(!qa_profiler_pop(profiler, &error));
+    CHECK(error.code == QA_ERROR_ARGUMENT);
+
+    qa_arena scratch = {0}; const qa_timer_report *rows = NULL; size_t count = 0;
+    CHECK(qa_profiler_report(profiler, &scratch, &rows, &count, &error));
+    CHECK(count == 3);
+    for (size_t i = 0; i < count; ++i) {
+        CHECK(rows[i].calls == 1);
+        if (!strcmp(rows[i].name, "outer")) CHECK(rows[i].total_ms == 7 && rows[i].self_ms == 3);
+        else if (!strcmp(rows[i].name, "inner")) CHECK(rows[i].total_ms == 3 && rows[i].self_ms == 3);
+        else CHECK(!strcmp(rows[i].name, "sibling") && rows[i].total_ms == 1 && rows[i].self_ms == 1);
+    }
+    qa_arena_destroy(&scratch);
+    CHECK(qa_profiler_enable(profiler, true, &error));
+    CHECK(!qa_profiler_pop(profiler, &error));
+    CHECK(qa_profiler_push(profiler, "last_request", &error));
+    CHECK(qa_profiler_enable(profiler, false, &error));
+    CHECK(qa_profiler_enable(profiler, true, &error));
+    CHECK(qa_profiler_pop(profiler, &error));
+    CHECK(qa_profiler_enabled(profiler));
+    CHECK(qa_profiler_destroy(profiler, &error));
+}
+
 int main(int argc, char **argv)
 {
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
+    test_profiler_mode_changes();
     test_binary();
     test_spans();
     test_arena();
