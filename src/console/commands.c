@@ -943,13 +943,16 @@ static qa_command_result fallback_call(qa_console *console, qa_command_fallback 
     return handler == NULL ? QA_COMMAND_UNHANDLED : handler(console->options.user, command, error);
 }
 
-static bool fallback(qa_console *console, const qa_command_invocation *command, qa_error *error)
+static bool cvar_command(qa_console *console, const qa_command_invocation *command,
+                         bool *handled, qa_error *error)
 {
+    *handled = false;
     qa_cvars *registry = cvar_owner(console, &command->context, command->argv[0]);
     cvar_access access;
     if (!cvar_access_read(console,&command->context,registry,&access,error)) return false;
     const qa_cvar_view *variable = cvar_find(access, command->argv[0]);
     if (variable != NULL) {
+        *handled = true;
         if (command->argc > 1) return cvar_apply(access,&(qa_cvars_edit_command){
             .kind=QA_CVARS_EDIT_SET,.name=variable->name,.value=command->argv[1]},error);
         output_value(console, &command->context, variable->name, variable->value);
@@ -965,6 +968,14 @@ static bool fallback(qa_console *console, const qa_command_invocation *command, 
         }
         return true;
     }
+    return true;
+}
+
+static bool fallback(qa_console *console, const qa_command_invocation *command, qa_error *error)
+{
+    bool handled;
+    if (!cvar_command(console, command, &handled, error)) return false;
+    if (handled) return true;
     if (command->context.dialect == QA_CONSOLE_Q3) {
         qa_command_fallback callbacks[] = {console->options.client_game, console->options.server_game, console->options.ui};
         for (size_t i = 0; i < sizeof(callbacks) / sizeof(callbacks[0]); ++i) {
@@ -1070,6 +1081,25 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
         if (!success || handled) goto done;
     }
     command_entry *entry = select_command(console, context, tokens.values[0]);
+    if (entry == NULL && context->dialect != QA_CONSOLE_Q3) {
+        for (alias_entry *alias = console->aliases; alias != NULL; alias = alias->next) {
+            if (alias->view.owner != context->owner || !qac_equal(alias->view.name, tokens.values[0])) continue;
+            if (qac_q2(context->dialect) && ++console->alias_count == 16) {
+                output(console, context, "ALIAS_LOOP_COUNT\n");
+                goto done;
+            }
+            qa_command_context derived = *context;
+            derived.direct = false;
+            derived.dialect = alias->dialect;
+            derived.console_text = alias->console_text;
+            success = qa_console_insert(console, &derived, alias->view.alias_text, error);
+            goto done;
+        }
+    }
+    if (entry == NULL || (context->dialect == QA_CONSOLE_Q3 && entry->handler == NULL)) {
+        success = cvar_command(console, &command, &handled, error);
+        if (!success || handled) goto done;
+    }
     if (entry == NULL || !entry->view.engine_command) {
         qa_command_result result = fallback_call(console, console->options.source_command, &command, error);
         if (result != QA_COMMAND_UNHANDLED) { success = result == QA_COMMAND_HANDLED; goto done; }
@@ -1094,21 +1124,6 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
             success = result != QA_COMMAND_FAILED;
         } else success = fallback(console, &command, error);
         goto done;
-    }
-    if (context->dialect != QA_CONSOLE_Q3) {
-        for (alias_entry *alias = console->aliases; alias != NULL; alias = alias->next) {
-            if (alias->view.owner != context->owner || !qac_equal(alias->view.name, tokens.values[0])) continue;
-            if (qac_q2(context->dialect) && ++console->alias_count == 16) {
-                output(console, context, "ALIAS_LOOP_COUNT\n");
-                goto done;
-            }
-            qa_command_context derived = *context;
-            derived.direct = false;
-            derived.dialect = alias->dialect;
-            derived.console_text = alias->console_text;
-            success = qa_console_insert(console, &derived, alias->view.alias_text, error);
-            goto done;
-        }
     }
     success = fallback(console, &command, error);
 done:
