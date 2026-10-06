@@ -174,6 +174,9 @@ static bool hud_weapon_data(frontend_seat *seat, const qa_hud_frame *frame, qa_h
         .suppress_active_warning = provider.size >= 3 && !memcmp(provider.data, "q3:", 3),
         .aggregate_low = aggregate && equipment.warning == QA_APPLICATION_AMMO_LOW,
         .aggregate_empty = aggregate && equipment.warning == QA_APPLICATION_AMMO_EMPTY};
+    if (!out->weapon.native_status && out->weapon.finite_ammo &&
+        out->source_vitals && out->vital_count == 3)
+        out->vital_count = 2;
     return true;
 }
 static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out, qa_error *error)
@@ -186,7 +189,7 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
         if (!received.retired && received.bound && received.domain.physical_seat==seat->id) {
             bool source_slot = false;
             return frontend_remote_q1_hud_read(row,frame,out,error) &&
-                hud_weapon_data(seat,frame,out,true,false,&source_slot,error);
+                hud_weapon_data(seat,frame,out,false,false,&source_slot,error);
         }
     }
     qa_application_presentation_view source = {0};
@@ -212,7 +215,7 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
     }
     if (!source.source_hud && seat->q2_view_ready && qa_actor_id_equal(frame->actor, seat->q2_actor)) {
         out->source_vitals = true;
-        out->vitals = seat->q2_vitals; out->vital_count = 3;
+        out->vitals = seat->q2_vitals; out->vital_count = seat->q2_view.ammo_icon ? 3 : 2;
         out->timers = &seat->q2_timer; out->timer_count = seat->q2_timer.until_ns > frame->time_ns;
         out->scores = seat->q2_scores; out->score_count = seat->q2_score_count;
         if (seat->q2_help) { out->help_title = "Objectives"; out->help_lines = seat->q2_help_lines; out->help_count = 2; }
@@ -254,7 +257,7 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
         }
     }
     bool source_slot = false;
-    if (!hud_weapon_data(seat,frame,out,source.source_hud || out->source_vitals,
+    if (!hud_weapon_data(seat,frame,out,source.source_hud,
         !source.source_hud,&source_slot,error)) return false;
     if (source_slot) return true;
     return qa_application_weapon_read(seat->frontend->application, frame->actor, &out->selected_weapon, error);
