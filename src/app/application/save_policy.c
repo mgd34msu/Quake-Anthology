@@ -3,6 +3,7 @@
 #include "guest_native_q2_private.h"
 #include "guest_q3_private.h"
 #include "guest_qc_original_save.h"
+#include "guest_qc_internal.h"
 #include "qa/application_save_policy.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q3_source.h"
@@ -31,6 +32,30 @@ static bool stock_provider(const qa_catalog *catalog,const qa_launch_provider *s
     return selection->runtime==original && product->program && selection->artifact &&
         !strcmp(selection->artifact,product->program);
 }
+static bool original_q1_roster(const qa_application *app,const application_provider *source,
+    const qa_launch_choices *choices)
+{
+    if (choices->seat_count!=1 || !choices->seats[0].local ||
+        choices->seats[0].bot || choices->seats[0].spectator) return false;
+    if (app->players && app->players->map_provider==source) {
+        if (qa_application_player_count(app)>1) return false;
+        for (size_t i=0;i<app->players->count;++i) {
+            const application_player_record *row=app->players->records+i;
+            if (!row->retiring && (row->remote || row->bot || row->spectator || row->client_slot!=0))
+                return false;
+        }
+    }
+    qa_mode_view mode;
+    if (app->primary_mode_ready && qa_modes_read(app->modes,app->primary_mode,&mode,NULL) &&
+        mode.rules.kind!=QA_MODE_SINGLE_PLAYER) return false;
+    if (source->kind==APPLICATION_PROVIDER_Q1) {
+        uint32_t maximum;
+        return !qa_q1_bot_max_clients(source->state.q1,&maximum,NULL) || maximum<=1;
+    }
+    const struct application_qc_state *engine=source->kind==APPLICATION_PROVIDER_QC?
+        source->state.qc.engine:NULL;
+    return !engine || engine->max_clients<=1;
+}
 const qa_product *qa_application_save_original_product(const qa_application *app)
 {
     const qa_launch_snapshot *snapshot=app?qa_application_launch(app):NULL;
@@ -41,6 +66,7 @@ const qa_product *qa_application_save_original_product(const qa_application *app
         choices->world.geometry!=product->id || choices->world.presentation!=product->id ||
         !stock_provider(app->catalog,&source->launch->selection,product)) return NULL;
     if (source->kind==APPLICATION_PROVIDER_QC && source->state.qc.qualified) return NULL;
+    if (product->family==QA_GAME_Q1 && !original_q1_roster(app,source,choices)) return NULL;
     for (size_t i=0;i<choices->binding_count;++i) {
         const qa_launch_binding *binding=choices->bindings+i;
         const qa_launch_provider *selected=NULL;
