@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "fog_private.h"
 
 static double bound(double value, double low, double high) {
   return fmin(high, fmax(low, value));
@@ -291,33 +292,7 @@ static inline bool fragment_color(const qa_cpu_renderer *renderer, const qa_scen
       color[3] = !vertex_opaque && draw->environment == QA_TEXTURE_REPLACE
                      ? texel[3] : color[3] * texel[3];
   }
-  const qa_scene_fog *fog = &draw->fog;
-  if (!vertex_opaque && (fog->kind == QA_FOG_CONSTANT || fog->kind == QA_FOG_EXP2)) {
-    double d = fog->density * fragment->eye_depth / 64;
-    double amount =
-        fog->kind == QA_FOG_CONSTANT ? fog->amount : 1 - exp(-d * d);
-    qa_scene_fog_effect effect =
-        fog->kind == QA_FOG_CONSTANT ? QA_FOG_COLOR : fog->effect;
-    if (effect != QA_FOG_NO_EFFECT)
-      for (size_t c = 0; c < 3; ++c)
-        color[c] = cpu_clamp(color[c]);
-    if (effect == QA_FOG_COLOR) {
-      color[0] += (fog->color.x - color[0]) * amount;
-      color[1] += (fog->color.y - color[1]) * amount;
-      color[2] += (fog->color.z - color[2]) * amount;
-    }
-    if (effect == QA_FOG_RGB || effect == QA_FOG_RGBA)
-      for (size_t c = 0; c < 3; ++c)
-        color[c] *= 1 - amount;
-    if (effect == QA_FOG_ALPHA || effect == QA_FOG_RGBA)
-      color[3] *= 1 - amount;
-    if (effect == QA_FOG_OVERLAY) {
-      color[0] = fog->color.x;
-      color[1] = fog->color.y;
-      color[2] = fog->color.z;
-      color[3] *= amount;
-    }
-  }
+  if (!vertex_opaque) cpu_fog_color(&draw->fog, fragment->eye_depth, color);
   if (!vertex_opaque && ((state->alpha_test == QA_ALPHA_GT0 && !(color[3] > 0)) ||
       (state->alpha_test == QA_ALPHA_LT128 && !(color[3] < 0.5)) ||
       (state->alpha_test == QA_ALPHA_GE128 && !(color[3] >= 0.5)) ||
@@ -391,6 +366,8 @@ static inline void fragment_store(qa_cpu_renderer *renderer, const qa_scene_draw
   }
   if (depth_write)
     buffer->depth[index] = fragment->depth;
+  if (cpu_row_statistics && ((state->color_write && buffer->color) || depth_write))
+    ++cpu_row_statistics->generic_written;
 }
 
 void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
@@ -411,6 +388,7 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     clamp_color(color); \
     replace_color(renderer->current, admission.index, color); \
     if (write_depth) renderer->current->depth[admission.index] = fragment->depth; \
+    if (cpu_row_statistics) ++cpu_row_statistics->generic_written; \
   }
 OPAQUE_KERNEL(opaque_color, 0, false)
 OPAQUE_KERNEL(opaque_color_depth, 0, true)
@@ -428,6 +406,7 @@ OPAQUE_KERNEL(opaque_lightmap_depth, 2, true)
     lightmap_color(draw, samplers, fragment, environment, color); \
     replace_color(renderer->current, admission.index, color); \
     if (write_depth) renderer->current->depth[admission.index] = fragment->depth; \
+    if (cpu_row_statistics) ++cpu_row_statistics->generic_written; \
   }
 LIGHTMAP_KERNEL(lightmap_modulate, QA_TEXTURE_LIGHTMAP_MODULATE, false)
 LIGHTMAP_KERNEL(lightmap_modulate_depth, QA_TEXTURE_LIGHTMAP_MODULATE, true)

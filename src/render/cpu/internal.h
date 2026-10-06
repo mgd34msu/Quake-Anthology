@@ -7,6 +7,24 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#define CPU_STATISTICS_FIELDS(X) \
+  X(draws) X(brush_candidates) X(brush_predicate_rejects) \
+  X(brush_planarity_rejects) X(brush_cache_rejects) X(brush_queued) \
+  X(brush_batches) X(brush_spans) X(brush_covered) X(brush_written) \
+  X(generic_batches) X(generic_commands) X(generic_triangles) \
+  X(generic_covered) X(generic_fragments) X(generic_written) \
+  X(worker_dispatches) X(worker_posts) X(worker_joins)
+extern _Thread_local qa_cpu_statistics *cpu_row_statistics;
+#define CPU_STATS_ADD(renderer, field, value) do { \
+  if ((renderer)->statistics_enabled) \
+    (renderer)->statistics.field += (uint64_t)(value); \
+} while (0)
+static inline void cpu_statistics_merge(qa_cpu_statistics *to,
+                                        const qa_cpu_statistics *from) {
+#define CPU_STATS_MERGE(field) to->field += from->field;
+  CPU_STATISTICS_FIELDS(CPU_STATS_MERGE)
+#undef CPU_STATS_MERGE
+}
 
 typedef struct cpu_framebuffer {
   uint32_t width, height;
@@ -70,6 +88,8 @@ struct qa_cpu_renderer {
   uint32_t source_image_count;
   double texture_components[3][256];
   bool texture_components_ready;
+  qa_cpu_statistics statistics;
+  bool statistics_enabled;
 };
 typedef struct cpu_derivative {
   double dudx, dvdx, dudy, dvdy;

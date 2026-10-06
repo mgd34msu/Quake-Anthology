@@ -214,6 +214,16 @@ bool tools_profiler_fields(qa_source_save_io *io, qa_profiler **holder, const qa
     return true;
 }
 
+static bool timer_diagnostic(qa_tools *tools, const qa_command_invocation *call, qa_error *error) {
+    if (!tools->options.diagnostic) return true;
+    qa_buffer text = {0};
+    bool ok = tools->options.diagnostic(tools->options.context, call, &text, error);
+    if (ok && text.size && (!text.data || memchr(text.data, 0, text.size)))
+        ok = tools_fail(error, "timer diagnostic returned invalid console text");
+    if (ok && text.size) tools_print(tools, &call->context, (const char *)text.data);
+    qa_buffer_free(&text); return ok;
+}
+
 bool tools_timer_command(qa_tools *tools, const qa_command_invocation *call, qa_error *error) {
     if (call->argv[0][0] == 't' || call->argv[0][0] == 'T') {
         size_t n = strlen(call->argv[0]);
@@ -236,8 +246,10 @@ bool tools_timer_command(qa_tools *tools, const qa_command_invocation *call, qa_
         }
     }
     const char *action = call->argc > 1 ? call->argv[1] : "report";
-    if (!strcmp(action, "on") || !strcmp(action, "off")) return qa_profiler_enable(tools->profiler, !strcmp(action, "on"), error);
-    if (!strcmp(action, "reset")) return qa_profiler_reset(tools->profiler, error);
+    if (!strcmp(action, "on") || !strcmp(action, "off"))
+        return qa_profiler_enable(tools->profiler, !strcmp(action, "on"), error) && timer_diagnostic(tools, call, error);
+    if (!strcmp(action, "reset"))
+        return qa_profiler_reset(tools->profiler, error) && timer_diagnostic(tools, call, error);
     qa_arena scratch = {0}; bool success = false;
     if (!strcmp(action, "report")) {
         const qa_timer_report *rows = NULL; size_t count = 0;
@@ -254,7 +266,7 @@ bool tools_timer_command(qa_tools *tools, const qa_command_invocation *call, qa_
             tools_print(tools, &call->context, self); tools_print(tools, &call->context, "\t");
             tools_print(tools, &call->context, maximum); tools_print(tools, &call->context, "\n");
         }
-        success = true;
+        success = timer_diagnostic(tools, call, error);
     } else if (!strcmp(action, "stamps")) {
         const qa_timer_stamp *rows = NULL; size_t count = 0;
         if (!qa_profiler_stamps(tools->profiler, &scratch, &rows, &count, error)) goto done;

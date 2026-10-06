@@ -215,11 +215,43 @@ static bool model_report(qa_frontend *f, const qa_command_context *source, bool 
     }
     return append(text, error, "%zu registered %s\n", count, skin ? "skins" : "models");
 }
+static bool cpu_statistics_sync(qa_frontend *f, qa_error *error) {
+    return !f->cpu || qa_cpu_statistics_enable(f->cpu,
+        qa_profiler_enabled(qa_tools_profiler(f->tools->owner)), error);
+}
+static bool timers_report(qa_frontend *f, const qa_command_invocation *call, diagnostic_text *text, qa_error *error) {
+    if (!f->cpu) return true;
+    if (!cpu_statistics_sync(f, error)) return false;
+    const char *action = call->argc > 1 ? call->argv[1] : "report";
+    if (!strcmp(action, "reset")) return qa_cpu_statistics_reset(f->cpu, error);
+    if (strcmp(action, "report")) return true;
+    qa_cpu_statistics stats;
+    if (!qa_cpu_statistics_read(f->cpu, &stats, error)) return false;
+    return append(text, error, "CPU renderer totals\n") &&
+        append(text, error, "cpu_brush draws=%" PRIu64 " candidates=%" PRIu64 " predicate_rejects=%" PRIu64
+            " planarity_rejects=%" PRIu64 " cache_rejects=%" PRIu64 "\n",
+            stats.draws, stats.brush_candidates, stats.brush_predicate_rejects,
+            stats.brush_planarity_rejects, stats.brush_cache_rejects) &&
+        append(text, error, "cpu_spans batches=%" PRIu64 " queued=%" PRIu64 " spans=%" PRIu64
+            " covered=%" PRIu64 " written=%" PRIu64 "\n",
+            stats.brush_batches, stats.brush_queued, stats.brush_spans, stats.brush_covered, stats.brush_written) &&
+        append(text, error, "cpu_triangles batches=%" PRIu64 " commands=%" PRIu64 " triangles=%" PRIu64
+            " covered=%" PRIu64 " fragments=%" PRIu64 " written=%" PRIu64 "\n",
+            stats.generic_batches, stats.generic_commands, stats.generic_triangles,
+            stats.generic_covered, stats.generic_fragments, stats.generic_written) &&
+        append(text, error, "cpu_workers dispatches=%" PRIu64 " posts=%" PRIu64 " joins=%" PRIu64 "\n",
+            stats.worker_dispatches, stats.worker_posts, stats.worker_joins);
+}
 static bool diagnostic(void *context, const qa_command_invocation *call, qa_buffer *out, qa_error *error) {
     qa_frontend *f = context; diagnostic_text text = {0}; qa_arena scratch = {0}; bool ok = false;
     const qa_console_entry *entry = qa_console_find(call->console, &call->context, call->argv[0]);
     if (!entry) return frontend_fail(error, QA_ERROR_ARGUMENT, "diagnostic command registration retired");
     const char *name = entry->name;
+    if (!strcmp(name, "timers")) {
+        ok = timers_report(f, call, &text, error);
+        if (ok) { *out = text.bytes; text.bytes = (qa_buffer){0}; }
+        qa_buffer_free(&text.bytes); return ok;
+    }
     qa_mount_id unused; qa_vfs *files;
     if (!files_for_context(context, &call->context, &files, &unused, error)) return false;
     if (!strcmp(name, "path")) ok = path_report(files, &text, error);
@@ -449,6 +481,7 @@ bool frontend_tools_sync(qa_frontend *f, qa_error *error) {
 bool frontend_tools_pump(qa_frontend *f, qa_error *error) {
     if (!f || !f->tools) return true;
     if (!frontend_tools_sync(f, error)) return false;
+    if (!cpu_statistics_sync(f, error)) return false;
     return qa_http_pump(f->tools->http, error) && qa_llm_tick(f->tools->llm, error);
 }
 bool frontend_tools_camera(qa_frontend *f, uint32_t seat, bool portal, qa_scene_view *view, qa_error *error) {

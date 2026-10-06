@@ -4,8 +4,8 @@
 #include "internal.h"
 
 typedef void (*cpu_brush_rows_fn)(qa_cpu_renderer *, void *, int64_t, int64_t);
-void cpu_raster_rows(qa_cpu_renderer *, int64_t, int64_t,
-                     cpu_brush_rows_fn, void *);
+void cpu_raster_queue_rows(qa_cpu_renderer *, int64_t, int64_t,
+    cpu_brush_rows_fn, void *, void (*retire)(qa_cpu_renderer *, void *), int);
 bool cpu_brush_draw_queued(qa_cpu_renderer *, const qa_scene_draw *, qa_error *,
                            bool *handled);
 bool cpu_brush_flush(qa_cpu_renderer *, qa_error *);

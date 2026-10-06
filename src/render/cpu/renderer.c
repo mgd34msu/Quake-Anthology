@@ -3,6 +3,7 @@
 #include "surface_cache.h"
 #include "particles.h"
 #include <limits.h>
+#include <fenv.h>
 #include <stdio.h>
 #include <SDL_timer.h>
 #include "qa/display.h"
@@ -30,7 +31,10 @@ struct qa_cpu_surface_ticket {
 };
 
 static bool cpu_surface_idle(const qa_cpu_renderer *renderer, qa_error *error) {
-  if (renderer && !renderer->surface_ticket && !renderer->controls.ticket && !renderer->controls.image_ticket && !renderer->controls.source.entered) return true;
+  if (renderer && !renderer->surface_ticket && !renderer->controls.ticket && !renderer->controls.image_ticket && !renderer->controls.source.entered) {
+    cpu_raster_flush((qa_cpu_renderer *)renderer);
+    return true;
+  }
   qa_error_set(error, QA_ERROR_ARGUMENT, 0, "CPU renderer has a retained settings ticket");
   return false;
 }
@@ -45,6 +49,39 @@ bool qa_cpu_render_controls_current(const qa_render_controls *controls) {
       &renderer->controls == controls && !renderer->destroy_pending &&
       !renderer->executing && !renderer->presenting && !renderer->capturing &&
       !renderer->opacity_active && !renderer->opacity_parent;
+}
+static bool statistics_idle(const qa_cpu_renderer *renderer, qa_error *error) {
+  if (renderer && qa_cpu_render_controls_current(&renderer->controls) &&
+      !renderer->surface_ticket && !renderer->controls.ticket &&
+      !renderer->controls.image_ticket && !renderer->controls.source.entered) return true;
+  qa_error_set(error, QA_ERROR_ARGUMENT, 0,
+      "CPU statistics require the returned renderer");
+  return false;
+}
+bool qa_cpu_statistics_enable(qa_cpu_renderer *renderer, bool enabled,
+                               qa_error *error) {
+  if (!statistics_idle(renderer, error)) return false;
+  if (renderer->statistics_enabled == enabled) return true;
+  cpu_raster_flush(renderer);
+  renderer->statistics_enabled = enabled;
+  return true;
+}
+bool qa_cpu_statistics_read(const qa_cpu_renderer *renderer,
+                             qa_cpu_statistics *out, qa_error *error) {
+  if (!out) {
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "CPU statistics require a destination");
+    return false;
+  }
+  if (!statistics_idle(renderer, error)) return false;
+  cpu_raster_flush((qa_cpu_renderer *)renderer);
+  *out = renderer->statistics;
+  return true;
+}
+bool qa_cpu_statistics_reset(qa_cpu_renderer *renderer, qa_error *error) {
+  if (!statistics_idle(renderer, error)) return false;
+  cpu_raster_flush(renderer);
+  memset(&renderer->statistics, 0, sizeof(renderer->statistics));
+  return true;
 }
 void qa_cpu_render_controls_close(qa_render_controls *controls) {
   qa_cpu_renderer *renderer = controls->owner.cpu;
@@ -522,6 +559,7 @@ bool qa_cpu_set_gamma(qa_cpu_renderer *renderer, float gamma, qa_error *error) {
                  "CPU gamma must be within 0.5..3");
     return false;
   }
+  if (gamma == renderer->gamma_value) return true;
   renderer->gamma_enabled = gamma != 1;
   for (size_t i = 0; i < 256; ++i)
     renderer->gamma[i] =
@@ -550,21 +588,52 @@ bool qa_cpu_output_domain_read(const qa_cpu_renderer *renderer,qa_scene_rect rec
   }
   return qa_output_domains_rect_read(&renderer->output_domains,rect,QA_DRAW_BACK,out,error);
 }
+static void gamma_rows(qa_cpu_renderer *renderer, void *context,
+                        int64_t first, int64_t last) {
+  (void)context;
+  const qa_output_domains *domains = &renderer->output_domains;
+  uint32_t width = renderer->display.width;
+  for (int64_t y = first; y <= last; ++y) {
+    uint32_t x = 0;
+    while (x < width) {
+      uint32_t end = width;
+      for (size_t i = 0; i < domains->count; ++i) {
+        const qa_output_domain_region *region = &domains->regions[i];
+        if (region->buffer != QA_DRAW_BACK || y < region->rect.y ||
+            (uint64_t)y - (uint32_t)region->rect.y >= region->rect.height) continue;
+        uint32_t left = (uint32_t)region->rect.x;
+        uint32_t right = left + region->rect.width;
+        if (left > x && left < end) end = left;
+        if (right > x && right < end) end = right;
+      }
+      size_t index = ((size_t)y * width + x) * 4;
+      size_t bytes = (size_t)(end - x) * 4;
+      if (qa_output_domains_source(domains, x, (uint32_t)y, QA_DRAW_BACK))
+        memcpy(renderer->output + index, renderer->display.color + index, bytes);
+      else {
+        size_t stop = index + bytes;
+        for (; index < stop; index += 4) {
+          for (size_t c = 0; c < 3; ++c)
+            renderer->output[index + c] = renderer->gamma[renderer->display.color[index + c]];
+          renderer->output[index + 3] = renderer->display.color[index + 3];
+        }
+      }
+      x = end;
+    }
+  }
+}
 qa_bytes qa_cpu_pixels(qa_cpu_renderer *renderer) {
   if (!renderer || renderer->surface_ticket)
     return (qa_bytes){0};
+  cpu_raster_flush(renderer);
   size_t count = (size_t)renderer->display.width * renderer->display.height;
   bool native_gamma = renderer->options.present == qa_display_present_cpu &&
       qa_display_gamma_applied_is(renderer->options.present_context);
   if (!renderer->gamma_enabled || native_gamma)
     return (qa_bytes){renderer->display.color, count * 4};
-  for (size_t i = 0; i < count; ++i) {
-    for (size_t c = 0; c < 3; ++c)
-      renderer->output[i * 4 + c] = qa_output_domains_source(&renderer->output_domains,
-          (uint32_t)(i % renderer->display.width), (uint32_t)(i / renderer->display.width), QA_DRAW_BACK)
-          ? renderer->display.color[i * 4 + c] : renderer->gamma[renderer->display.color[i * 4 + c]];
-    renderer->output[i * 4 + 3] = renderer->display.color[i * 4 + 3];
-  }
+  cpu_raster_queue_rows(renderer, 0, (int64_t)renderer->display.height - 1,
+      gamma_rows, NULL, NULL, fegetround());
+  cpu_raster_flush(renderer);
   return (qa_bytes){renderer->output, count * 4};
 }
 bool qa_cpu_capture(qa_cpu_renderer *renderer, qa_buffer *out,
@@ -701,7 +770,17 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
     return false;
   }
   if (frame->source_backend) renderer->source_frame=true;
-  if (frame->source_backend && frame->source_skip_backend) return true;
+  if (frame->source_backend && frame->source_skip_backend) {
+    if (finish) {
+      if (!cpu_brush_flush(renderer, error)) {
+        cpu_brush_clear(renderer);
+        return false;
+      }
+      cpu_raster_flush(renderer);
+    }
+    return true;
+  }
+  if (begin) cpu_raster_flush(renderer);
   if (begin && frame->source_backend && frame->source_clear_draw_buffer) {
     qa_scene_view clear = renderer->view;
     clear.clear_color = renderer->pipeline.color_write;
@@ -747,7 +826,11 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
         cpu_brush_clear(renderer);
         return false;
       }
-      cpu_raster_flush(renderer);
+      bool view_only = command->kind == QA_SCENE_COMMAND_VIEW &&
+          !command->data.view.clear_color && !command->data.view.clear_depth &&
+          !command->data.view.clear_stencil;
+      if (!view_only && command->kind != QA_SCENE_COMMAND_FOG)
+        cpu_raster_flush(renderer);
     }
     bool ok = true;
     switch (command->kind) {
@@ -876,7 +959,8 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
     cpu_brush_clear(renderer);
     return false;
   }
-  cpu_raster_flush(renderer);
+  if (finish) cpu_raster_flush(renderer);
+
   if (finish && renderer->opacity_active) {
     if (renderer->opacity_value != 1)
       renderer->current = renderer->opacity_parent;
@@ -1025,6 +1109,7 @@ bool qa_cpu_source_texture_upload(qa_render_controls *controls,const qa_scene_im
   }
   cpu_source_bind(renderer,selected->image);
   if (!dirty && !redefine) return true;
+  cpu_raster_flush(renderer);
   uint32_t unit=controls->attributes.texture_unit;
   qa_render_source_texture *texture=controls->attributes.actual_empty[unit]?&controls->zero_texture:&selected->texture;
   if (redefine) {
@@ -1049,6 +1134,7 @@ bool qa_cpu_source_texture_filter_apply(qa_render_controls *controls,bool no_bin
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source filter lost its real idle CPU image owner"); return false;
   }
   qa_cpu_renderer *renderer=controls->owner.cpu;
+  cpu_raster_flush(renderer);
   const qa_scene_image *dlight=NULL;
   if (no_bind && !qa_render_controls_source_dlight_read(controls,&dlight,error)) return false;
   uint32_t unit=controls->attributes.texture_unit;
@@ -1099,6 +1185,7 @@ bool qa_cpu_source_image_admit(qa_render_controls *controls,const qa_scene_image
   cpu_source_bind(renderer,binding);
   cpu_source_image *selected=cpu_source_object(renderer,binding);
   qa_render_source_texture *texture=controls->attributes.actual_empty[unit]?&controls->zero_texture:&selected->texture;
+  cpu_raster_flush(renderer);
   if (!qa_render_source_texture_upload(texture,image,owner,requested->filter,error)) return false;
   if (texture==&selected->texture) selected->filter=texture->filter;
   controls->attributes.actual_empty[unit]=true;

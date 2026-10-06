@@ -8,6 +8,14 @@ typedef struct qa_cpu_surface_ticket qa_cpu_surface_ticket;
 typedef struct qa_cpu_capabilities {
   uint32_t color_bits, alpha_bits, depth_bits, stencil_bits;
 } qa_cpu_capabilities;
+typedef struct qa_cpu_statistics {
+  uint64_t draws, brush_candidates, brush_predicate_rejects;
+  uint64_t brush_planarity_rejects, brush_cache_rejects, brush_queued;
+  uint64_t brush_batches, brush_spans, brush_covered, brush_written;
+  uint64_t generic_batches, generic_commands, generic_triangles;
+  uint64_t generic_covered, generic_fragments, generic_written;
+  uint64_t worker_dispatches, worker_posts, worker_joins;
+} qa_cpu_statistics;
 /* Present receives borrowed RGBA8 rows from top to bottom. The callback must
  * consume them before returning and must not reenter the renderer. */
 typedef bool (*qa_cpu_present)(void *context, qa_bytes rgba, uint32_t width,
@@ -22,6 +30,12 @@ typedef struct qa_cpu_options {
 void qa_cpu_options_default(qa_cpu_options *options);
 qa_cpu_renderer *qa_cpu_create(const qa_cpu_options *options, qa_error *error);
 bool qa_cpu_capabilities_read(const qa_cpu_renderer *, qa_cpu_capabilities *, qa_error *);
+/* Optional totals retained until reset. Disabled collection preserves totals.
+ * Read/reset require returned render jobs; fragments count kernel calls and
+ * written pixels count accepted color/depth stores. */
+bool qa_cpu_statistics_enable(qa_cpu_renderer *, bool, qa_error *);
+bool qa_cpu_statistics_read(const qa_cpu_renderer *, qa_cpu_statistics *, qa_error *);
+bool qa_cpu_statistics_reset(qa_cpu_renderer *, qa_error *);
 /* A retained surface ticket defers destruction until checked close. */
 void qa_cpu_destroy(qa_cpu_renderer *renderer);
 bool qa_cpu_resize(qa_cpu_renderer *renderer, uint32_t width, uint32_t height,

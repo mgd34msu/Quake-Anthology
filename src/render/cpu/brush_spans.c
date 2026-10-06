@@ -3,6 +3,7 @@
 
 #include <float.h>
 #include <limits.h>
+#include <fenv.h>
 
 /* r_edge.c resolves brush visibility before r_scan.c samples a lit surface.
  * The shared framebuffer keeps normalized depth for models and depth fog. */
@@ -39,8 +40,17 @@ struct cpu_brush_context {
   size_t *rows;
   size_t row_capacity;
   int64_t first, last;
-  bool pinned;
+  int rounding;
+  bool pinned, queued;
+  struct cpu_brush_context *next;
 };
+
+static bool cache_pinned(const qa_cpu_renderer *renderer) {
+  for (const struct cpu_brush_context *context = renderer->brush_spans;
+       context; context = context->next)
+    if (context->pinned) return true;
+  return false;
+}
 
 static bool reserve(void **storage, size_t *capacity, size_t count,
                      size_t stride, qa_error *error) {
@@ -282,22 +292,41 @@ static bool prepare_mips(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
 bool cpu_brush_draw_queued(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                            qa_error *error, bool *handled) {
   *handled = false;
-  if (!ordinary_brush(renderer, draw)) return true;
+  CPU_STATS_ADD(renderer, brush_candidates, 1);
+  if (!ordinary_brush(renderer, draw)) {
+    CPU_STATS_ADD(renderer, brush_predicate_rejects, 1);
+    return true;
+  }
   struct cpu_brush_context *context = renderer->brush_spans;
+  struct cpu_brush_context **link = &renderer->brush_spans;
+  while (context && context->queued) {
+    link = &context->next;
+    context = context->next;
+  }
+  int rounding = fegetround();
+  if (rounding < 0) return true;
+  if (context && context->surface_count && context->rounding != rounding) {
+    if (!cpu_brush_flush(renderer, error)) return false;
+    return cpu_brush_draw_queued(renderer, draw, error, handled);
+  }
   if (!context) {
     context = calloc(1, sizeof(*context));
     if (!context) {
       qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating CPU brush owner");
       return false;
     }
-    renderer->brush_spans = context;
+    *link = context;
   }
+  context->rounding = rounding;
   brush_vertex *vertices;
   size_t count;
   if (!clip_brush(renderer, draw, context, &vertices, &count, error)) return false;
   if (count < 3) { *handled = true; return true; }
   brush_surface surface = {0};
-  if (!prepare_surface(&surface, vertices, count)) return true;
+  if (!prepare_surface(&surface, vertices, count)) {
+    CPU_STATS_ADD(renderer, brush_planarity_rejects, 1);
+    return true;
+  }
   double subpixel = (double)(UINT32_C(1) << renderer->options.subpixel_bits);
   for (size_t i = 0; i < count; ++i) {
     vertices[i].x = snap_coordinate(vertices[i].x, subpixel);
@@ -323,11 +352,12 @@ bool cpu_brush_draw_queued(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
       !reserve((void **)&context->edges, &context->edge_capacity,
                context->edge_count + count, sizeof(*context->edges), error)) return false;
   if (!context->pinned) {
-    cpu_surface_cache_begin(renderer);
+    if (!cache_pinned(renderer)) cpu_surface_cache_begin(renderer);
     context->pinned = true;
   }
   qa_error cache_error = {0};
   if (!prepare_mips(renderer, draw, vertices, count, &surface, &cache_error)) {
+    CPU_STATS_ADD(renderer, brush_cache_rejects, 1);
     if (cache_error.code != QA_OK) {
       if (error) *error = cache_error;
       return false;
@@ -359,6 +389,7 @@ bool cpu_brush_draw_queued(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   }
   if (context->edge_count != start)
     context->surfaces[context->surface_count++] = surface;
+  CPU_STATS_ADD(renderer, brush_queued, context->edge_count != start);
   *handled = true;
   return true;
 }
@@ -530,6 +561,8 @@ static const uint8_t *mip_point(const cpu_surface_mip *mip, int64_t s, int64_t t
 }
 static void shade_span(qa_cpu_renderer *renderer, const brush_surface *surface,
                         const brush_span *span) {
+  qa_cpu_statistics *statistics = cpu_row_statistics;
+  uint64_t written = 0;
   cpu_framebuffer *buffer = renderer->current;
   size_t index = (size_t)span->y * buffer->width + span->x;
   float x = (float)span->x + 0.5f, y = (float)span->y + 0.5f;
@@ -592,11 +625,13 @@ static void shade_span(qa_cpu_renderer *renderer, const brush_surface *surface,
         }
         if (!buffer->alpha) output[3] = 255;
         buffer->depth[index] = written_depth;
+        if (statistics) ++written;
       }
       s += ds; t += dt;
     }
     s = next_s; t = next_t;
   }
+  if (statistics) statistics->brush_written += written;
 }
 static void shade_rows(qa_cpu_renderer *renderer, void *owner,
                         int64_t first, int64_t last) {
@@ -606,29 +641,50 @@ static void shade_rows(qa_cpu_renderer *renderer, void *owner,
   for (size_t i = begin; i < end; ++i)
     shade_span(renderer, &context->surfaces[context->spans[i].surface], &context->spans[i]);
 }
-void cpu_brush_clear(qa_cpu_renderer *renderer) {
-  struct cpu_brush_context *context = renderer->brush_spans;
-  if (!context) return;
-  if (context->pinned) cpu_surface_cache_end(renderer);
+static void retire_brush(qa_cpu_renderer *renderer, void *owner) {
+  struct cpu_brush_context *context = owner;
+  bool pinned = context->pinned;
+  context->queued = false;
   context->pinned = false;
   context->surface_count = context->edge_count = context->span_count = 0;
+  if (pinned && !cache_pinned(renderer)) cpu_surface_cache_end(renderer);
+}
+void cpu_brush_clear(qa_cpu_renderer *renderer) {
+  for (struct cpu_brush_context *context = renderer->brush_spans;
+       context; context = context->next)
+    if (!context->queued) retire_brush(renderer, context);
 }
 bool cpu_brush_flush(qa_cpu_renderer *renderer, qa_error *error) {
   struct cpu_brush_context *context = renderer->brush_spans;
+  while (context && context->queued) context = context->next;
   if (!context || !context->surface_count) { cpu_brush_clear(renderer); return true; }
   bool okay = generate_spans(renderer, context, error);
-  if (okay) cpu_raster_rows(renderer, context->first, context->last, shade_rows, context);
-  cpu_brush_clear(renderer);
+  CPU_STATS_ADD(renderer, brush_batches, 1);
+  CPU_STATS_ADD(renderer, brush_spans, context->span_count);
+  if (renderer->statistics_enabled) {
+    uint64_t covered = 0;
+    for (size_t i = 0; i < context->span_count; ++i) covered += context->spans[i].count;
+    renderer->statistics.brush_covered += covered;
+  }
+  if (okay) {
+    context->queued = true;
+    cpu_raster_queue_rows(renderer, context->first, context->last, shade_rows,
+        context, retire_brush, context->rounding);
+  } else cpu_brush_clear(renderer);
   return okay;
 }
 void cpu_brush_destroy(qa_cpu_renderer *renderer) {
+  cpu_raster_flush(renderer);
   struct cpu_brush_context *context = renderer->brush_spans;
-  if (!context) return;
   cpu_brush_clear(renderer);
-  free(context->surfaces); free(context->edges);
-  free(context->clip[0]); free(context->clip[1]);
-  free(context->active_edges); free(context->active_surfaces); free(context->events);
-  free(context->spans); free(context->rows);
-  free(context);
+  while (context) {
+    struct cpu_brush_context *next = context->next;
+    free(context->surfaces); free(context->edges);
+    free(context->clip[0]); free(context->clip[1]);
+    free(context->active_edges); free(context->active_surfaces); free(context->events);
+    free(context->spans); free(context->rows);
+    free(context);
+    context = next;
+  }
   renderer->brush_spans = NULL;
 }
