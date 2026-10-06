@@ -29,3 +29,14 @@ The installed Original RR retry now passes the earlier operand-monitor failure a
 The additional Q1 classic `e1m1` MIKE-20 check passed on installed `82e5cc4f`, CPU and GL at 640×400. Public `god`, `notarget` and `impulse` commands equipped the stock shotgun and rocket launcher; genuine Mouse1 input produced white shotgun impact puffs, orange rocket explosion particles, fire/light and gray smoke. Shells fell 100→99 at the first photographed shot; rockets fell 100→96 after the firing sequence. Root inspected both rocket images. Both runs quit with exit 0 and removed their processes/private display. Audio was disabled. `owner-q1-effects-82-proof.json` records these bounded local effect checks.
 
 Installed `bf27a858` includes the SDK callback-registry fix. A bounded Original RR retry reached `==== InitGame ====`, with the native child consuming CPU and the parent waiting for its response. The window remained black and no public gameplay frame was observed. The earlier CFG failure did not recur in that run; successful Original RR startup and gameplay remain unproven. Its diagnostic processes were terminated and removed.
+
+The current installed `b9140af8` (139,652,928 bytes) passed the eight MIKE-17/20 checks below at 640×400. Both full compiler builds and their six registered checks passed before installation. The executable and twelve runtime files matched the installation receipts.
+
+| Item | Current installed check | Result in CPU and GL |
+|---|---|---|
+| MIKE-17 | Q1 rerelease MG3 `hub`, near grate | Slime visible through the actual grate holes; no opaque sheet or pink fringe. Far views have recorded camera/geometry occlusion and do not establish a clean distant-view result. |
+| MIKE-17 | Q2 rerelease `base1`, spawn TRANS33 glass | Machinery and orange fixture visible through the glass; three floor pickup models remain visible. |
+| MIKE-20 | Q1 classic `e1m1`, shotgun and rocket launcher | White shotgun impacts; orange rocket explosion, gray smoke and illumination. Shells 100→99 at the first shot and 100→97 after the sequence; rockets 100→96. |
+| MIKE-20 | Q2 rerelease `base1`, blaster, rocket, rail and BFG | Yellow blaster projectile/light, orange and gray rocket particles, blue rail spiral/white impact, green BFG particles/light. Rockets 100→96, rail 100→97, BFG cells 300→150. The GL capture also shows green BFG beams. |
+
+The checks used genuine keyboard/mouse input and existing public commands, with private settings and displays. Weapon tests used stock equipment cheats. All eight public quits exited 0; every actual game process and the private display were removed, and the installed artifact remained unchanged. Root inspected selected grate, glass, shotgun, rocket, rail and BFG images. `owner-alpha-effects-b914-proof.json` records the actions, selected images and cleanup. Audio was disabled; these results establish the listed local visual effects, not audio, frame times, every effect, or Original RR startup.
