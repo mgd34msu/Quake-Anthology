@@ -5,6 +5,7 @@
 #endif
 #include "internal.h"
 #include "brush_spans.h"
+#include "triangle_private.h"
 #include "../normal_matrix.h"
 #include <limits.h>
 #include <fenv.h>
@@ -40,13 +41,10 @@ typedef struct cpu_scissor {
   int64_t x0, y0, x1, y1;
 } cpu_scissor;
 typedef struct cpu_triangle {
-  cpu_vertex values[3];
   screen_vertex vertices[3];
-  edge_equation coverage[3], attributes[3];
+  edge_equation coverage[3];
   cpu_scissor bounds;
-  double inverse_area, near_depth, far_depth, q_dx, q_dy, offset;
-  double uv[2][2][3], uv_dx[2][2], uv_dy[2][2];
-  bool constant_depth, unit_color;
+  cpu_triangle_attributes attributes;
 } cpu_triangle;
 static const double unit_color[4] = {1, 1, 1, 1};
 typedef struct cpu_triangle_output {
@@ -671,6 +669,19 @@ static void trim(int64_t *left, int64_t *right, edge_equation edge, double y) {
     *right = x;
   }
 }
+static cpu_attribute_plane attribute_plane(const edge_equation edges[3],
+    const double values[3], double inverse_area) {
+  cpu_attribute_plane plane = {0};
+  for (size_t i = 0; i < 3; ++i) {
+    plane.x += values[i] * edges[i].x;
+    plane.y += values[i] * edges[i].y;
+    plane.c += values[i] * edges[i].c;
+  }
+  plane.x *= inverse_area;
+  plane.y *= inverse_area;
+  plane.c *= inverse_area;
+  return plane;
+}
 static bool triangle_prepare(cpu_triangle *out, const qa_scene_draw *draw,
                      screen_vertex a, screen_vertex b, screen_vertex c,
                      const screen_vertex *interpolation, cpu_scissor bounds) {
@@ -702,13 +713,20 @@ static bool triangle_prepare(cpu_triangle *out, const qa_scene_draw *draw,
       1 / evaluate(attributes[2], vertices[2].x, vertices[2].y);
   double near_depth = cpu_clamp(draw->state.depth_near),
          far_depth = cpu_clamp(draw->state.depth_far);
-  double slope_x = 0, slope_y = 0, q_dx = 0, q_dy = 0;
-  double uv[2][2][3] = {{{0}}}, uv_dx[2][2] = {{0}}, uv_dy[2][2] = {{0}};
+  double slope_x = 0, slope_y = 0;
+  double q[3], color[4][3], uv[2][2][3] = {{{0}}};
+  double world[3][3] = {{0}}, normal[3][3] = {{0}};
   for (size_t i = 0; i < 3; ++i) {
     slope_x += vertices[i].z * attributes[i].x;
     slope_y += vertices[i].z * attributes[i].y;
-    q_dx += vertices[i].q * attributes[i].x;
-    q_dy += vertices[i].q * attributes[i].y;
+    q[i] = vertices[i].q;
+    for (size_t channel = 0; channel < 4; ++channel)
+      color[channel][i] = vertices[i].vertex->color[channel] * q[i];
+    if (draw->lighting != QA_LIGHT_VERTEX)
+      for (size_t axis = 0; axis < 3; ++axis) {
+        world[axis][i] = vertices[i].vertex->world[axis] * q[i];
+        normal[axis][i] = vertices[i].vertex->normal[axis] * q[i];
+      }
     for (size_t unit = 0; unit < draw->texture_count; ++unit) {
       if (!draw->textures[unit])
         continue;
@@ -716,8 +734,6 @@ static bool triangle_prepare(cpu_triangle *out, const qa_scene_draw *draw,
         uv[unit][axis][i] = (vertices[i].vertex->uv[unit][axis] -
                              vertices[0].vertex->uv[unit][axis]) *
                             vertices[i].q;
-        uv_dx[unit][axis] += uv[unit][axis][i] * attributes[i].x;
-        uv_dy[unit][axis] += uv[unit][axis][i] * attributes[i].y;
       }
     }
   }
@@ -727,61 +743,51 @@ static bool triangle_prepare(cpu_triangle *out, const qa_scene_draw *draw,
                       ? slope * draw->state.offset_factor +
                             0x1p-24 * draw->state.offset_units
                       : 0;
-  q_dx *= inverse_area;
-  q_dy *= inverse_area;
-  for (size_t unit = 0; unit < draw->texture_count; ++unit) {
-    if (!draw->textures[unit])
-      continue;
-    for (size_t axis = 0; axis < 2; ++axis) {
-      uv_dx[unit][axis] *= inverse_area;
-      uv_dy[unit][axis] *= inverse_area;
-    }
-  }
   bool constant_depth =
       vertices[0].z == vertices[1].z && vertices[1].z == vertices[2].z;
   *out = (cpu_triangle){
       .bounds = {(int64_t)min_x, (int64_t)min_y, (int64_t)max_x, (int64_t)max_y},
-      .inverse_area = inverse_area, .near_depth = near_depth,
-      .far_depth = far_depth, .q_dx = q_dx, .q_dy = q_dy,
-      .offset = offset, .constant_depth = constant_depth, .unit_color = true};
+      .attributes = {.inverse_area = inverse_area, .near_depth = near_depth,
+          .depth_range = far_depth - near_depth, .scale = vertices[0].scale,
+          .q = attribute_plane(attributes, q, inverse_area), .offset = offset,
+          .constant_depth = constant_depth, .unit_color = true}};
   memcpy(out->coverage, coverage, sizeof(coverage));
-  memcpy(out->attributes, attributes, sizeof(attributes));
-  memcpy(out->uv, uv, sizeof(uv));
-  memcpy(out->uv_dx, uv_dx, sizeof(uv_dx));
-  memcpy(out->uv_dy, uv_dy, sizeof(uv_dy));
   for (size_t i = 0; i < 3; ++i) {
-    out->values[i] = *vertices[i].vertex;
-    if (memcmp(out->values[i].color, unit_color, sizeof(unit_color)) != 0)
-      out->unit_color = false;
+    out->attributes.weights[i] = (cpu_attribute_plane){
+        attributes[i].x, attributes[i].y, attributes[i].c};
+    out->attributes.z[i] = vertices[i].z;
+    if (memcmp(vertices[i].vertex->color, unit_color, sizeof(unit_color)) != 0)
+      out->attributes.unit_color = false;
     out->vertices[i] = vertices[i];
     out->vertices[i].vertex = NULL;
   }
+  if (!out->attributes.unit_color)
+    for (size_t channel = 0; channel < 4; ++channel)
+      out->attributes.color[channel] = attribute_plane(attributes, color[channel], inverse_area);
+  for (size_t unit = 0; unit < draw->texture_count; ++unit)
+    if (draw->textures[unit])
+      for (size_t axis = 0; axis < 2; ++axis) {
+        out->attributes.uv[unit][axis] = attribute_plane(attributes, uv[unit][axis], inverse_area);
+        out->attributes.uv_anchor[unit][axis] = vertices[0].vertex->uv[unit][axis];
+      }
+  if (draw->lighting != QA_LIGHT_VERTEX)
+    for (size_t axis = 0; axis < 3; ++axis) {
+      out->attributes.world[axis] = attribute_plane(attributes, world[axis], inverse_area);
+      out->attributes.normal[axis] = attribute_plane(attributes, normal[axis], inverse_area);
+    }
   return true;
 }
 static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                           const cpu_sampler samplers[2], cpu_fragment_kernel kernel,
                           const cpu_triangle *triangle, cpu_scissor bounds) {
   qa_cpu_statistics *statistics = cpu_row_statistics;
-  uint64_t audit_covered = 0, audit_fragments = 0;
+  uint64_t audit_covered = 0;
   int64_t min_y = triangle->bounds.y0 > bounds.y0 ? triangle->bounds.y0 : bounds.y0;
   int64_t max_y = triangle->bounds.y1 < bounds.y1 ? triangle->bounds.y1 : bounds.y1;
   if (min_y > max_y) return;
   int64_t min_x = triangle->bounds.x0, max_x = triangle->bounds.x1;
-  const edge_equation *coverage = triangle->coverage, *attributes = triangle->attributes;
-  const screen_vertex *vertices = triangle->vertices;
-  const cpu_vertex *values = triangle->values;
-  double inverse_area = triangle->inverse_area, near_depth = triangle->near_depth,
-      far_depth = triangle->far_depth, q_dx = triangle->q_dx, q_dy = triangle->q_dy,
-      offset = triangle->offset;
-  double depth_range = far_depth - near_depth;
-  const double (*uv)[2][3] = triangle->uv;
-  const double (*uv_dx)[2] = triangle->uv_dx, (*uv_dy)[2] = triangle->uv_dy;
-  bool constant_depth = triangle->constant_depth;
-  bool stencil = cpu_stencil_active(renderer, &draw->state);
-  bool derivatives[2] = {false, false};
-  for (size_t unit = 0; unit < draw->texture_count; ++unit)
-    if (draw->textures[unit])
-      derivatives[unit] = cpu_sampler_requires_derivatives(&samplers[unit]);
+  const edge_equation *coverage = triangle->coverage;
+  cpu_fragment_row_kernel row_kernel = cpu_fragment_row_select(kernel);
   for (int64_t y = (int64_t)min_y; y <= (int64_t)max_y; ++y) {
     int64_t left = (int64_t)min_x, right = (int64_t)max_x;
     double pixel_y = (double)y + 0.5;
@@ -789,93 +795,11 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
       trim(&left, &right, coverage[i], pixel_y);
     if (left > right) continue;
     if (statistics) audit_covered += (uint64_t)(right - left + 1);
-    double row_attributes[3];
-    for (size_t i = 0; i < 3; ++i)
-      row_attributes[i] = attributes[i].y * pixel_y;
-    for (int64_t x = left; x <= right; ++x) {
-      double weight[3], q = 0, z = 0;
-      double pixel_x = (double)x + 0.5;
-      for (size_t i = 0; i < 3; ++i) {
-        weight[i] = (attributes[i].x * pixel_x + row_attributes[i] +
-                     attributes[i].c) * inverse_area;
-        q += vertices[i].q * weight[i];
-        z += vertices[i].z * weight[i];
-      }
-      if (q == 0 || !isfinite(q))
-        continue;
-      double reciprocal = 1 / q;
-      cpu_fragment fragment;
-      fragment.x = (uint32_t)x;
-      fragment.y = (uint32_t)y;
-      fragment.eye_depth = vertices[0].scale * reciprocal;
-      fragment.depth = cpu_clamp(
-          cpu_clamp((constant_depth ? vertices[0].z : z) * 0.5 + 0.5) *
-              depth_range +
-          near_depth + offset);
-      cpu_fragment_admission admission = {0};
-      if (!stencil) {
-        admission = cpu_fragment_admit(renderer, &draw->state, &fragment, false);
-        if (!admission.depth_passed) continue;
-      }
-      if (triangle->unit_color) {
-        double color = cpu_clamp(q * reciprocal);
-        for (size_t channel = 0; channel < 4; ++channel)
-          fragment.color[channel] = color;
-      } else {
-        for (size_t channel = 0; channel < 4; ++channel) {
-          double color = 0;
-          for (size_t i = 0; i < 3; ++i)
-            color +=
-                values[i].color[channel] * vertices[i].q * weight[i];
-          fragment.color[channel] = cpu_clamp(color * reciprocal);
-        }
-      }
-      for (size_t unit = 0; unit < draw->texture_count; ++unit) {
-        if (!draw->textures[unit])
-          continue;
-        double derivative_x[2], derivative_y[2];
-        for (size_t axis = 0; axis < 2; ++axis) {
-          double coordinate = 0;
-          for (size_t i = 0; i < 3; ++i)
-            coordinate += uv[unit][axis][i] * weight[i];
-          coordinate *= reciprocal;
-          fragment.uv[unit][axis] =
-              values[0].uv[unit][axis] + coordinate;
-          if (derivatives[unit]) {
-            derivative_x[axis] =
-                (uv_dx[unit][axis] - coordinate * q_dx) * reciprocal;
-            derivative_y[axis] =
-                (uv_dy[unit][axis] - coordinate * q_dy) * reciprocal;
-          }
-        }
-        if (derivatives[unit])
-          fragment.derivative[unit] = (cpu_derivative){
-              derivative_x[0], derivative_x[1], derivative_y[0], derivative_y[1]};
-      }
-      if (draw->lighting != QA_LIGHT_VERTEX) {
-        double perspective[3];
-        for (size_t i = 0; i < 3; ++i)
-          perspective[i] = vertices[i].q * weight[i] * reciprocal;
-        double position[3] = {0}, normal[3] = {0};
-        for (size_t axis = 0; axis < 3; ++axis)
-          for (size_t i = 0; i < 3; ++i) {
-            position[axis] += values[i].world[axis] * perspective[i];
-            normal[axis] += values[i].normal[axis] * perspective[i];
-          }
-        fragment.world_position = (qa_vec3){
-            (float)position[0], (float)position[1], (float)position[2]};
-        fragment.world_normal =
-            (qa_vec3){(float)normal[0], (float)normal[1], (float)normal[2]};
-      }
-      if (stencil)
-        admission = cpu_fragment_admit(renderer, &draw->state, &fragment, true);
-      kernel(renderer, draw, samplers, &fragment, admission);
-      if (statistics) ++audit_fragments;
-    }
+    row_kernel(renderer, draw, samplers, &triangle->attributes,
+               (uint32_t)left, (uint32_t)right, (uint32_t)y);
   }
   if (statistics) {
     statistics->generic_covered += audit_covered;
-    statistics->generic_fragments += audit_fragments;
   }
 }
 static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,

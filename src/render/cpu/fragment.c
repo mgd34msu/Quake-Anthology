@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "fog_private.h"
+#include "triangle_private.h"
 
 static double bound(double value, double low, double high) {
   return fmin(high, fmax(low, value));
@@ -379,6 +380,36 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
       draw->state.depth_write && draw->state.depth_test != QA_DEPTH_DISABLED);
 }
 
+#define ROW_KERNEL(name, pixel_kernel, sample_count) \
+  static void name(qa_cpu_renderer *renderer, const qa_scene_draw *draw, \
+      const cpu_sampler samplers[2], const cpu_triangle_attributes *attributes, \
+      uint32_t left, uint32_t right, uint32_t y) { \
+    size_t texture_count = (sample_count); \
+    cpu_triangle_row row = cpu_triangle_row_prepare(attributes, draw, texture_count, y); \
+    bool stencil = cpu_stencil_active(renderer, &draw->state); \
+    bool derivatives[2] = {false, false}; \
+    for (size_t unit = 0; unit < texture_count; ++unit) \
+      if (draw->textures[unit]) \
+        derivatives[unit] = cpu_sampler_requires_derivatives(&samplers[unit]); \
+    qa_cpu_statistics *statistics = cpu_row_statistics; \
+    uint64_t fragments = 0; \
+    for (uint32_t x = left; x <= right; ++x) { \
+      cpu_fragment fragment; double reciprocal; \
+      if (!cpu_triangle_fragment_depth(attributes, &row, x, y, &fragment, &reciprocal)) continue; \
+      cpu_fragment_admission admission = {0}; \
+      if (!stencil) { \
+        admission = cpu_fragment_admit(renderer, &draw->state, &fragment, false); \
+        if (!admission.depth_passed) continue; \
+      } \
+      cpu_triangle_fragment_attributes(attributes, &row, draw, texture_count, derivatives, reciprocal, &fragment); \
+      if (stencil) admission = cpu_fragment_admit(renderer, &draw->state, &fragment, true); \
+      pixel_kernel(renderer, draw, samplers, &fragment, admission); \
+      if (statistics) ++fragments; \
+    } \
+    if (statistics) statistics->generic_fragments += fragments; \
+  }
+ROW_KERNEL(generic_row, cpu_write_fragment, draw->texture_count)
+
 #define OPAQUE_KERNEL(name, textures, write_depth) \
   static void name(qa_cpu_renderer *renderer, const qa_scene_draw *draw, \
       const cpu_sampler samplers[2], const cpu_fragment *fragment, cpu_fragment_admission admission) { \
@@ -389,7 +420,8 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     replace_color(renderer->current, admission.index, color); \
     if (write_depth) renderer->current->depth[admission.index] = fragment->depth; \
     if (cpu_row_statistics) ++cpu_row_statistics->generic_written; \
-  }
+  } \
+  ROW_KERNEL(name##_row, name, textures)
 OPAQUE_KERNEL(opaque_color, 0, false)
 OPAQUE_KERNEL(opaque_color_depth, 0, true)
 OPAQUE_KERNEL(opaque_texture, 1, false)
@@ -407,7 +439,8 @@ OPAQUE_KERNEL(opaque_lightmap_depth, 2, true)
     replace_color(renderer->current, admission.index, color); \
     if (write_depth) renderer->current->depth[admission.index] = fragment->depth; \
     if (cpu_row_statistics) ++cpu_row_statistics->generic_written; \
-  }
+  } \
+  ROW_KERNEL(name##_row, name, 2)
 LIGHTMAP_KERNEL(lightmap_modulate, QA_TEXTURE_LIGHTMAP_MODULATE, false)
 LIGHTMAP_KERNEL(lightmap_modulate_depth, QA_TEXTURE_LIGHTMAP_MODULATE, true)
 LIGHTMAP_KERNEL(lightmap_invert_color, QA_TEXTURE_LIGHTMAP_INVERT_COLOR, false)
@@ -415,6 +448,25 @@ LIGHTMAP_KERNEL(lightmap_invert_color_depth, QA_TEXTURE_LIGHTMAP_INVERT_COLOR, t
 LIGHTMAP_KERNEL(lightmap_invert_alpha, QA_TEXTURE_LIGHTMAP_INVERT_ALPHA, false)
 LIGHTMAP_KERNEL(lightmap_invert_alpha_depth, QA_TEXTURE_LIGHTMAP_INVERT_ALPHA, true)
 #undef LIGHTMAP_KERNEL
+#undef ROW_KERNEL
+
+cpu_fragment_row_kernel cpu_fragment_row_select(cpu_fragment_kernel kernel) {
+#define ROW_FOR(name) if (kernel == name) return name##_row;
+  ROW_FOR(opaque_color)
+  ROW_FOR(opaque_color_depth)
+  ROW_FOR(opaque_texture)
+  ROW_FOR(opaque_texture_depth)
+  ROW_FOR(opaque_lightmap)
+  ROW_FOR(opaque_lightmap_depth)
+  ROW_FOR(lightmap_modulate)
+  ROW_FOR(lightmap_modulate_depth)
+  ROW_FOR(lightmap_invert_color)
+  ROW_FOR(lightmap_invert_color_depth)
+  ROW_FOR(lightmap_invert_alpha)
+  ROW_FOR(lightmap_invert_alpha_depth)
+#undef ROW_FOR
+  return generic_row;
+}
 
 cpu_fragment_kernel cpu_fragment_select(const qa_cpu_renderer *renderer, const qa_scene_draw *draw) {
   const qa_scene_state *state = &draw->state;
