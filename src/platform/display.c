@@ -1606,11 +1606,10 @@ bool qa_display_surface_prepare(qa_display *active, const qa_display_settings *s
     if (!surface_owner(ticket, error) || !qa_display_info_get(active, &ticket->original, error)) {
         active->surface_ticket = NULL; free(ticket); return false;
     }
-    if (active->backend == QA_DISPLAY_CPU && active->native.cpu.has_frame &&
-        (active->native.cpu.width != ticket->original.drawable_width ||
-         active->native.cpu.height != ticket->original.drawable_height)) {
-        active->surface_ticket = NULL; free(ticket); return display_save_error(error, QA_ERROR_ARGUMENT,
-            "CPU native presentation does not match the completed drawable");
+    if (active->backend == QA_DISPLAY_CPU &&
+        !resize_cpu_frame(active, ticket->original.drawable_width,
+            ticket->original.drawable_height, error)) {
+        active->surface_ticket = NULL; free(ticket); return false;
     }
     SDL_GetWindowPosition(active->window, &ticket->x, &ticket->y);
     if (SDL_GetWindowDisplayMode(active->window, &ticket->original_mode) < 0) {
