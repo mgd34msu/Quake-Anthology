@@ -78,14 +78,24 @@ static const float cpu_fog_exp_table[257] = {
     0x1.0000000000000p-1f,
 };
 
+#define CPU_FOG_INVERSE_LOG_TWO 0x1.715476p+0f
+#define CPU_FOG_LOG_TWO_HIGH 0x1.62e400p-1f
+#define CPU_FOG_LOG_TWO_LOW 0x1.7f7d1cp-20f
+#define CPU_FOG_EXP_STEP 0x1.62e430p-9f
+
+/* Scalar and packed evaluation share the same ordered interpolation. */
+#define CPU_FOG_EXP_CURVE(left, right, fraction, difference, step, two, three) \
+  ((left) + (fraction) * (-(step) * (left) + (fraction) * \
+      ((three) * (difference) + (step) * ((two) * (left) + (right)) + \
+       (fraction) * (-(two) * (difference) - (step) * ((left) + (right))))))
+
 static inline float cpu_fog_exp(float attenuation) {
   if (isnan(attenuation)) return attenuation;
   if (attenuation >= 104) return 0;
   if (attenuation <= -89) return INFINITY;
-  const float inverse_log_two = 0x1.715476p+0f;
-  const float log_two_high = 0x1.62e400p-1f;
-  const float log_two_low = 0x1.7f7d1cp-20f;
-  const float step = 0x1.62e430p-9f;
+  const float inverse_log_two = CPU_FOG_INVERSE_LOG_TWO;
+  const float log_two_high = CPU_FOG_LOG_TWO_HIGH;
+  const float log_two_low = CPU_FOG_LOG_TWO_LOW;
   float scaled = attenuation * inverse_log_two;
   int exponent = (int)scaled;
   if ((float)exponent > scaled) --exponent;
@@ -99,9 +109,8 @@ static inline float cpu_fog_exp(float attenuation) {
   float left = cpu_fog_exp_table[index];
   float right = cpu_fog_exp_table[index + 1];
   float difference = right - left;
-  float value = left + fraction * (-step * left + fraction *
-      (3 * difference + step * (2 * left + right) + fraction *
-       (-2 * difference - step * (left + right))));
+  float value = CPU_FOG_EXP_CURVE(left, right, fraction, difference,
+      CPU_FOG_EXP_STEP, 2, 3);
   int power = -exponent;
   if (power > 127) { value *= 2; --power; }
   bool subnormal = power < -126;

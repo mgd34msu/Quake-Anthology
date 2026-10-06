@@ -91,10 +91,61 @@ static __m128 fog_select_four(__m128 mask, __m128 yes, __m128 no) {
 }
 
 static __m128 fog_exp_four(__m128 attenuation) {
-  float values[4];
-  _mm_storeu_ps(values, attenuation);
-  for (size_t i = 0; i < 4; ++i) values[i] = cpu_fog_exp(values[i]);
-  return _mm_loadu_ps(values);
+  const __m128 zero = _mm_setzero_ps(), one = _mm_set1_ps(1);
+  __m128 ordinary = _mm_and_ps(_mm_cmpgt_ps(attenuation, _mm_set1_ps(-89)),
+                               _mm_cmplt_ps(attenuation, _mm_set1_ps(104)));
+  __m128 input = fog_select_four(ordinary, attenuation, zero);
+  __m128 scaled = _mm_mul_ps(input, _mm_set1_ps(CPU_FOG_INVERSE_LOG_TWO));
+  __m128i exponent = _mm_cvttps_epi32(scaled);
+  exponent = _mm_sub_epi32(exponent, _mm_and_si128(
+      _mm_castps_si128(_mm_cmpgt_ps(_mm_cvtepi32_ps(exponent), scaled)),
+      _mm_set1_epi32(1)));
+  __m128 exponent_float = _mm_cvtepi32_ps(exponent);
+  __m128 position = _mm_mul_ps(_mm_sub_ps(_mm_sub_ps(input,
+      _mm_mul_ps(exponent_float, _mm_set1_ps(CPU_FOG_LOG_TWO_HIGH))),
+      _mm_mul_ps(exponent_float, _mm_set1_ps(CPU_FOG_LOG_TWO_LOW))),
+      _mm_set1_ps(256 * CPU_FOG_INVERSE_LOG_TWO));
+  __m128 low_position = _mm_cmplt_ps(position, zero);
+  __m128 high_position = _mm_cmpgt_ps(position, _mm_set1_ps(256));
+  /* Keep scalar endpoint folding at range-reduction rounding boundaries. */
+  ordinary = _mm_andnot_ps(_mm_or_ps(low_position, high_position), ordinary);
+  position = fog_select_four(low_position, zero, position);
+  position = fog_select_four(high_position, _mm_set1_ps(256), position);
+  __m128i index = _mm_cvttps_epi32(position);
+  index = _mm_add_epi32(index, _mm_cmpeq_epi32(index, _mm_set1_epi32(256)));
+  __m128 fraction = _mm_sub_ps(position, _mm_cvtepi32_ps(index));
+  uint32_t indices[4];
+  float left_values[4], right_values[4];
+  _mm_storeu_si128((__m128i *)(void *)indices, index);
+  for (size_t i = 0; i < 4; ++i) {
+    left_values[i] = cpu_fog_exp_table[indices[i]];
+    right_values[i] = cpu_fog_exp_table[indices[i] + 1];
+  }
+  __m128 left = _mm_loadu_ps(left_values), right = _mm_loadu_ps(right_values);
+  __m128 difference = _mm_sub_ps(right, left);
+  __m128 value = CPU_FOG_EXP_CURVE(left, right, fraction, difference,
+      _mm_set1_ps(CPU_FOG_EXP_STEP), _mm_set1_ps(2), _mm_set1_ps(3));
+  __m128i power = _mm_sub_epi32(_mm_setzero_si128(), exponent);
+  __m128i high = _mm_cmpgt_epi32(power, _mm_set1_epi32(127));
+  value = _mm_mul_ps(value, fog_select_four(_mm_castsi128_ps(high), _mm_set1_ps(2), one));
+  power = _mm_add_epi32(power, high);
+  __m128i subnormal = _mm_cmpgt_epi32(_mm_set1_epi32(-126), power);
+  power = _mm_add_epi32(power, _mm_and_si128(subnormal, _mm_set1_epi32(126)));
+  __m128 scale = _mm_castsi128_ps(_mm_slli_epi32(_mm_add_epi32(power,
+      _mm_set1_epi32(127)), 23));
+  value = _mm_mul_ps(value, scale);
+  value = _mm_mul_ps(value, fog_select_four(_mm_castsi128_ps(subnormal),
+      _mm_set1_ps(0x1p-126f), one));
+  if (_mm_movemask_ps(ordinary) != 15) {
+    float inputs[4], values[4];
+    _mm_storeu_ps(inputs, attenuation);
+    _mm_storeu_ps(values, value);
+    unsigned mask = (unsigned)_mm_movemask_ps(ordinary);
+    for (size_t i = 0; i < 4; ++i)
+      if ((mask & (1u << i)) == 0) values[i] = cpu_fog_exp(inputs[i]);
+    value = _mm_loadu_ps(values);
+  }
+  return value;
 }
 
 static __m128i fog_bytes_four(__m128 value) {
