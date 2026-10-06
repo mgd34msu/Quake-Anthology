@@ -434,7 +434,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         uint32_t real_milliseconds = (uint32_t)((frontend->time_ns / 1000000) & UINT32_MAX);
         if (local_presentation && !frontend_source_present(frontend, i, launch_seat, real_milliseconds,
                 frontend_network_remote(frontend) ? frontend_network_client_time(frontend) :
-                    real_milliseconds, error)) return false;
+                    real_milliseconds, &common_hud_drawn, error)) return false;
         if (!frontend_native_q2_world_text(frontend, i, &view, error) ||
             !frontend_qc_rerelease_draw(frontend, i, &view, error)) return false;
         if (remote_rendered && frontend->audio) {

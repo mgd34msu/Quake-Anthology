@@ -2454,7 +2454,7 @@ static bool component_pictures(frontend_source_lease *lease,qa_error *error)
     return true;
 }
 bool frontend_source_present(qa_frontend *f,uint32_t physical,uint32_t seat,
-    uint32_t real_time,uint32_t client_time,qa_error *error)
+    uint32_t real_time,uint32_t client_time,bool *hud_drawn,qa_error *error)
 {
     qa_application_presentation_view selected;
     if (!f || physical>=f->options.seats || f->capture || !frontend_sources_idle(f) ||
@@ -2514,6 +2514,7 @@ bool frontend_source_present(qa_frontend *f,uint32_t physical,uint32_t seat,
         return false;
     }
     if (!drawn || !refreshed) { if (error) *error=drawn?refresh_error:draw_error; return false; }
+    *hud_drawn=true;
     return true;
 }
 bool frontend_source_listener(qa_frontend *frontend, uint32_t seat, qa_audio_listener *out)

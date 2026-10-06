@@ -471,7 +471,7 @@ bool frontend_network_client_map_read(const qa_frontend *,qa_application *,qa_ac
     uint32_t,const qa_vfs *,const qa_resource **,bool *,qa_error *);
 bool frontend_source_frame(qa_frontend *, uint32_t, qa_scene_rect, qa_error *);
 bool frontend_source_present(qa_frontend *,uint32_t physical,uint32_t authored_seat,
-    uint32_t real_milliseconds,uint32_t client_milliseconds,qa_error *);
+    uint32_t real_milliseconds,uint32_t client_milliseconds,bool *hud_drawn,qa_error *);
 bool frontend_source_retire_world(qa_frontend *, qa_error *);
 bool frontend_source_publish_world(qa_frontend *, qa_error *);
 /* Imported scene roots and Q3 backend bindings precede the host borrow exchange;
