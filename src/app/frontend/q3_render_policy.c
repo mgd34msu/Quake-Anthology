@@ -228,6 +228,7 @@ bool frontend_q3_source_begin_frame(qa_frontend *f,int32_t stereo_frame,qa_error
     bool stereo=caps && caps->stereo;
     if (stereo ? stereo_frame==0 : stereo_frame!=0)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source BeginFrame eye differs from its actual stereo visual");
+    if (!frontend_q3_source_color_begin_frame(f,error)) return false;
     if (!frontend_source_renderer_policy(f,error)) return false;
     qa_render_controls *controls=f->cpu?qa_cpu_render_controls(f->cpu):f->gl?qa_gl_render_controls(f->gl):NULL;
     if (controls && !qa_render_controls_source_begin_frame(controls,error)) return false;

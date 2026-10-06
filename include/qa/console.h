@@ -147,6 +147,9 @@ const qa_cvar_view *qa_cvars_at(const qa_cvars *registry, size_t ordinal);
  * Alias projections and rows from another registry are not physical cursors. */
 const qa_cvar_view *qa_cvars_next(const qa_cvars *registry, const qa_cvar_view *previous);
 const qa_cvar_view *qa_cvars_handle(const qa_cvars *registry, size_t handle);
+/* Same-process borrowed row receipt. Zero excludes an entered mutation,
+ * observer drain or prepared publication; every live mutation invalidates it. */
+uint64_t qa_cvars_revision(const qa_cvars *registry);
 size_t qa_cvars_count(const qa_cvars *registry);
 size_t qa_cvars_handle_count(const qa_cvars *registry);
 bool qa_cvars_register(qa_cvars *registry, const char *name, const char *default_value,

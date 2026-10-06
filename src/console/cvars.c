@@ -212,6 +212,10 @@ bool qa_cvars_observer_idle(const qa_cvars *registry)
         !registry->draining && !registry->post_first && !registry->ready_edit &&
         !registry->edit_first && !registry->edit_bindings_pending;
 }
+uint64_t qa_cvars_revision(const qa_cvars *registry)
+{
+    return qa_cvars_observer_idle(registry) ? registry->mutation_revision : 0;
+}
 static void observer_release(qa_cvars *registry, cvar_observer *observer)
 {
     if (observer->active || observer->references) return;

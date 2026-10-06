@@ -19,7 +19,11 @@ struct frontend_q3_color {
     qa_q3_image_upload_options upload;
     qa_q3_color_lighting lighting;
     frontend_q3_color_ticket *ticket;
-    bool initializing, lighting_ready, initialized;
+    qa_display_endpoint device_endpoint;
+    const qa_cvars *device_registry, *bits_registry;
+    const qa_cvar_view *bits_row;
+    uint64_t device_sequence, device_revision, bits_revision;
+    bool initializing, lighting_ready, initialized, device_admitted;
 };
 
 struct frontend_q3_color_ticket {
@@ -205,6 +209,69 @@ static bool profile_device_current(frontend_q3_color *owner,qa_display *display,
     return true;
 }
 
+static void device_admitted(frontend_q3_color *owner, qa_cvars *registry)
+{
+    owner->device_admitted = false;
+    uint64_t revision = qa_cvars_revision(registry);
+    if (!revision || !qa_display_endpoint_read(owner->display, &owner->device_endpoint)) return;
+    owner->device_registry = registry;
+    owner->device_revision = revision;
+    owner->device_sequence = owner->frontend->frame.sequence;
+    owner->device_admitted = true;
+}
+
+bool frontend_q3_source_color_begin_frame(qa_frontend *f, qa_error *error)
+{
+    frontend_q3_color *owner = f ? f->source_color : NULL;
+    if (!owner || !owner->initialized) return true;
+    owner->device_admitted = false;
+    frontend_q3_color_ticket *ticket = owner->ticket;
+    bool candidate = ticket && ticket->prepared && !ticket->published;
+    if (!profile_device_current(owner, candidate ? ticket->target : owner->display,
+        candidate ? &ticket->upload : &owner->upload, error)) return false;
+    if (!ticket) device_admitted(owner, qa_application_cvars(owner->application));
+    return true;
+}
+
+static bool upload_device_current(frontend_q3_color *owner, qa_display *display,
+    const qa_q3_image_upload_options *profile, qa_error *error)
+{
+    qa_frontend *f = owner->frontend;
+    qa_cvars *registry = qa_application_cvars(owner->application);
+    uint64_t revision = qa_cvars_revision(registry);
+    bool entered = f->stepping && f->frame.source_begin_frame && !f->preparing &&
+        !f->capture && !f->source_restoring && !f->resource_inventory && !owner->ticket && display == owner->display;
+    if (entered && owner->device_admitted && owner->device_sequence == f->frame.sequence &&
+        owner->device_registry == registry && revision && owner->device_revision == revision &&
+        qa_display_endpoint_is(display, &owner->device_endpoint) &&
+        (!profile->color.device.hardware_gamma || qa_display_gamma_applied_is(display))) return true;
+    owner->device_admitted = false;
+    if (!profile_device_current(owner, display, profile, error)) return false;
+    if (entered) device_admitted(owner, registry);
+    return true;
+}
+
+static bool upload_bits(frontend_q3_color *owner, const qa_cvars_edit *edit,
+    const qa_cvar_view **out, qa_error *error)
+{
+    if (edit) return record(owner->frontend, edit, "r_texturebits", out, error);
+    qa_cvars *registry = qa_application_cvars(owner->application);
+    uint64_t revision = qa_cvars_revision(registry);
+    if (revision && owner->bits_registry == registry && owner->bits_revision == revision && owner->bits_row) {
+        *out = owner->bits_row;
+        return true;
+    }
+    owner->bits_revision = 0;
+    owner->bits_row = NULL;
+    if (!record(owner->frontend, NULL, "r_texturebits", out, error)) return false;
+    if (revision) {
+        owner->bits_registry = registry;
+        owner->bits_revision = revision;
+        owner->bits_row = *out;
+    }
+    return true;
+}
+
 bool frontend_q3_source_upload_read(void *context, bool allow_picmip, bool mipmap,
     qa_q3_image_upload_options *out, qa_error *error)
 {
@@ -214,10 +281,10 @@ bool frontend_q3_source_upload_read(void *context, bool allow_picmip, bool mipma
     frontend_q3_color_ticket *ticket = f->source_color->ticket;
     bool candidate=ticket && ticket->prepared && !ticket->published;
     const qa_q3_image_upload_options *profile=candidate?&ticket->upload:&f->source_color->upload;
-    if (!profile_device_current(f->source_color,candidate?ticket->target:f->display,profile,error)) return false;
+    if (!upload_device_current(f->source_color,candidate?ticket->target:f->display,profile,error)) return false;
     qa_q3_image_upload_options next=*profile;
     const qa_cvar_view *bits;
-    if (!record(f,candidate?ticket->edit:NULL,"r_texturebits",&bits,error)) return false;
+    if (!upload_bits(f->source_color,candidate?ticket->edit:NULL,&bits,error)) return false;
     next.texture_bits=bits->integer;
     next.allow_picmip = allow_picmip; next.mipmap = mipmap;
     *out=next;
@@ -232,8 +299,8 @@ bool frontend_q3_source_output(qa_frontend *f,const qa_material_library *materia
             frontend_q3_source_image_admit,f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source output lost its actual color-upload owner");
     if (!frontend_q3_source_color_ensure(f,error)) return false;
-    if (!profile_device_current(f->source_color,f->display,&f->source_color->upload,error)) return false;
     return frontend_q3_source_begin_frame(f,0,error) &&
+        upload_device_current(f->source_color,f->display,&f->source_color->upload,error) &&
         qa_scene_frame_output_domain(&f->frame,rect,true,error);
 }
 
@@ -260,7 +327,7 @@ bool frontend_q3_generic_overlay_begin(qa_frontend *f,qa_scene_rect rect,qa_erro
     bool preblend=false;
     if (source) {
         if (!f->source_color || !current(f->source_color,error) ||
-            !profile_device_current(f->source_color,f->display,&f->source_color->upload,error)) return false;
+            !upload_device_current(f->source_color,f->display,&f->source_color->upload,error)) return false;
         preblend=!f->source_color->upload.color.device.hardware_gamma;
     }
     return qa_scene_frame_preblend_gamma(&f->frame,preblend,error);
@@ -298,7 +365,7 @@ bool frontend_q3_source_recipient(qa_frontend *f, qa_scene_world_input *input, q
 {
     if (!f || !input || !f->source_color || !f->source_color->initialized ||
         !current(f->source_color, error) ||
-        !profile_device_current(f->source_color, f->display, &f->source_color->upload, error)) return false;
+        !upload_device_current(f->source_color, f->display, &f->source_color->upload, error)) return false;
     input->source_recipient_image = recipient_image;
     input->source_recipient_context = f;
     return true;
@@ -372,6 +439,7 @@ bool frontend_q3_source_color_prepare(qa_frontend *f, const qa_cvars_edit *edit,
     frontend_q3_color_ticket *ticket = calloc(1, sizeof(*ticket));
     if (!ticket) return frontend_fail(error, QA_ERROR_MEMORY, "Preparing Source color authority");
     ticket->owner = f->source_color; ticket->edit = edit; ticket->target = target;
+    ticket->owner->device_admitted = false;
     ticket->owner->ticket = ticket; *out = ticket;
     if (!profile_read(ticket->owner, edit, target, &ticket->upload, error) ||
         !qa_q3_color_lighting_read(&ticket->upload.color.device,
@@ -395,6 +463,7 @@ bool frontend_q3_source_color_restore_prepare(qa_frontend *f,qa_display *target,
     frontend_q3_color_ticket *ticket=calloc(1,sizeof(*ticket));
     if (!ticket) return frontend_fail(error,QA_ERROR_MEMORY,"Preparing imported Source color publication");
     ticket->owner=f->source_color; ticket->edit=edit; ticket->target=target; ticket->restored=true;
+    ticket->owner->device_admitted=false;
     ticket->upload=ticket->owner->upload; ticket->lighting=ticket->owner->lighting;
     ticket->owner->ticket=ticket; *out=ticket;
     if (ticket->upload.color.device.hardware_gamma &&
@@ -441,6 +510,7 @@ void frontend_q3_source_color_publish(frontend_q3_color_ticket *ticket)
     if (f->display != ticket->target || qa_display_gamma_borrow(f->display) != ticket->owner->gamma) return;
     if (ticket->native) qa_display_gamma_publish(ticket->native);
     ticket->owner->display = f->display;
+    ticket->owner->device_admitted = false;
     ticket->owner->upload = ticket->upload; ticket->owner->lighting = ticket->lighting;
     ticket->ready = false; ticket->published = true;
 }

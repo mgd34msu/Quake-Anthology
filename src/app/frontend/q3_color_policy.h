@@ -12,6 +12,8 @@ bool frontend_q3_source_color_ensure(qa_frontend *, qa_error *);
 bool frontend_q3_source_color_lighting_read(qa_frontend *, const qa_cvars_edit *,
     qa_q3_color_lighting *, qa_error *);
 bool frontend_q3_source_color_device_read(qa_frontend *, qa_q3_color_device *, qa_error *);
+/* Re-observe the native device at genuine Source BeginFrame, before draws. */
+bool frontend_q3_source_color_begin_frame(qa_frontend *, qa_error *);
 bool frontend_q3_source_upload_read(void *frontend, bool allow_picmip, bool mipmap,
     qa_q3_image_upload_options *, qa_error *);
 bool frontend_q3_source_output(qa_frontend *, const qa_material_library *, qa_scene_rect, qa_error *);
