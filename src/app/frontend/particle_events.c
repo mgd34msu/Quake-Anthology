@@ -15,6 +15,7 @@
 #include "source_client_registry.h"
 #include "selected_effects_particles.h"
 #include "q2_entity_effects.h"
+#include "q2_temporary_beams.h"
 #include "selected_effects_q1_temporary.h"
 #include "legacy_render_policy.h"
 #include "native_q3_client.h"
@@ -87,6 +88,11 @@ typedef struct frontend_particle_owner {
     qa_scene_model *q1_beam_models[4]; /* borrowed from the actual appearance owner */
     frontend_fx_particles *q2_particles;
     frontend_fx_q2_particle *q2;
+    frontend_q2_temporary_beam beams[32],player_beams[32];
+    qa_scene_model *beam_models[Q2FX_MODEL_COUNT];
+    frontend_q2_beam_random beam_random;
+    double beam_sample_ms;
+    bool beam_sampled,beam_active;
     frontend_q2_entity_cache entity_trails;
     qa_scene_light entity_lights[32];
     size_t entity_light_count;
@@ -616,6 +622,9 @@ void frontend_particle_reset_round(qa_frontend *frontend)
         }
         if (owner->q1) owner->q1->count = 0;
         memset(owner->q1_lights, 0, sizeof(owner->q1_lights));
+        memset(owner->beams,0,sizeof(owner->beams));memset(owner->player_beams,0,sizeof(owner->player_beams));
+        memset(owner->beam_models,0,sizeof(owner->beam_models));owner->beam_random=(frontend_q2_beam_random){0};
+        owner->beam_sampled=owner->beam_active=false;
         memset(owner->q1_beams, 0, sizeof(owner->q1_beams));
         memset(owner->q1_beam_models, 0, sizeof(owner->q1_beam_models));
         memset(owner->impacts, 0, sizeof(owner->impacts));
@@ -635,15 +644,13 @@ static float particle_unit(frontend_particle_owner *owner)
 { return qa_builtin_random_unit(&owner->random); }
 static float particle_signed(frontend_particle_owner *owner)
 { return particle_unit(owner) * 2 - 1; }
-static const char *impact_path(const frontend_particle_owner *owner, uint8_t kind)
+static const char *impact_path(const frontend_particle_owner *owner,uint8_t kind)
 {
-    if (kind==11) return "models/objects/explode/tris.md2";
-    if (kind==5 && owner->q2_edition==QA_Q2_RERELEASE) return "models/objects/r_explode/tris.md2";
-    static const char *const paths[]={"models/objects/smoke/tris.md2","models/objects/flash/tris.md2",
-        "models/objects/r_explode/tris.md2","sprites/s_bfg2.sp2","models/objects/r_explode2/tris.md2",
-        "models/objects/explode/tris.md2","models/objects/explode/tris.md2","models/objects/explode/tris.md2",
-        "models/objects/explode/tris.md2"};
-    return kind>=1 && kind<=9 ? paths[kind-1] : NULL;
+    if (kind==11) return q2fx_model_paths[Q2FX_EXPLODE];
+    if (kind==5 && owner->q2_edition==QA_Q2_RERELEASE) return q2fx_model_paths[Q2FX_ROCKET];
+    static const q2fx_model models[]={Q2FX_SMOKE,Q2FX_FLASH,Q2FX_ROCKET,Q2FX_BFG,Q2FX_BIG,
+        Q2FX_EXPLODE,Q2FX_EXPLODE,Q2FX_EXPLODE,Q2FX_EXPLODE};
+    return kind>=1 && kind<=9?q2fx_model_paths[models[kind-1]]:NULL;
 }
 static uint32_t impact_frames(const frontend_q2_impact *impact)
 { return impact->kind==1 ? 4u : impact->kind==2 ? 2u : impact->frames; }
@@ -724,6 +731,34 @@ static bool q2_entity_admit(qa_frontend *frontend,frontend_particle_owner *owner
     if (!frontend_q2_entity_effect(&effects,&sample,pose,trail,owner->entity_advance,error)) return false;
     trail->sample_frame=frontend->frame_number;return true;
 }
+static bool q2_emitting_clock(qa_frontend *frontend,frontend_particle_owner *owner,qa_error *error)
+{
+    if (!owner->entity_events_ready || owner->entity_event_sample!=frontend->frame_number) {
+        qa_clock_state source;
+        if (!qa_session_clock(qa_application_session(frontend->application),owner->provider,&source))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 effects lost their emitting Source clock");
+        owner->entity_events=!owner->entity_events_ready || owner->entity_server_frame!=source.frame.number;
+        owner->entity_server_frame=source.frame.number;owner->entity_events_ready=true;
+        uint64_t lower=source.frame.time_ns>owner->q2_interval_ns ?
+            source.frame.time_ns-owner->q2_interval_ns:0;
+        uint64_t fraction=source.debt_ns<owner->q2_interval_ns?source.debt_ns:owner->q2_interval_ns;
+        owner->animation_server_ms=(double)source.frame.time_ns/1000000.0;
+        owner->animation_client_ms=(double)(lower+fraction)/1000000.0;
+        owner->entity_event_sample=frontend->frame_number;
+    }
+    return true;
+}
+static bool q2_beam_clock(qa_frontend *frontend,frontend_particle_owner *owner,
+    uint64_t native_sample,bool physical,double *milliseconds,qa_error *error)
+{
+    if (physical && owner->provider==frontend->particles->clock_source) {
+        *milliseconds=(double)native_sample/1000000.0;
+        return true;
+    }
+    if (!q2_emitting_clock(frontend,owner,error)) return false;
+    *milliseconds=owner->animation_client_ms;
+    return true;
+}
 static bool q2_visual_entity_admit(qa_frontend *frontend,uint32_t seat,
     const qa_application_visual_view *view,const qa_scene_world_input *world,
     const frontend_q2_controls *controls,frontend_particle_owner **out,qa_error *error)
@@ -745,19 +780,7 @@ static bool q2_visual_entity_admit(qa_frontend *frontend,uint32_t seat,
     if (!q2_owner_sample(frontend,owner,&sample,error)) return false;
     if (sample.negative) return true;
     q2_entity_clock(frontend,owner,sample.milliseconds);
-    if (!owner->entity_events_ready || owner->entity_event_sample!=frontend->frame_number) {
-        qa_clock_state source;
-        if (!qa_session_clock(qa_application_session(frontend->application),view->provider,&source))
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 effects lost their emitting Source clock");
-        owner->entity_events=!owner->entity_events_ready || owner->entity_server_frame!=source.frame.number;
-        owner->entity_server_frame=source.frame.number;owner->entity_events_ready=true;
-        uint64_t lower=source.frame.time_ns>owner->q2_interval_ns ?
-            source.frame.time_ns-owner->q2_interval_ns:0;
-        uint64_t fraction=source.debt_ns<owner->q2_interval_ns?source.debt_ns:owner->q2_interval_ns;
-        owner->animation_server_ms=(double)source.frame.time_ns/1000000.0;
-        owner->animation_client_ms=(double)(lower+fraction)/1000000.0;
-        owner->entity_event_sample=frontend->frame_number;
-    }
+    if (!q2_emitting_clock(frontend,owner,error)) return false;
     frontend_particle_state *state=frontend->particles;
     frontend_visual_sample *visual=state->visual_samples+view->actor.slot;
     if (qa_actor_id_equal(visual->actor,view->actor) &&
@@ -1568,6 +1591,30 @@ static void q2_tracker_explosion(frontend_particle_owner *owner,qa_vec3 origin,u
         owner->q2[owner->q2_particles->count++]=particle;
     }
 }
+static bool q2_temporary_beam_admit(qa_frontend *frontend,frontend_particle_owner *owner,
+    uint32_t seat,const frontend_q2_beam_recipe *recipe,qa_actor_id actor,qa_actor_id destination,
+    qa_vec3 start,qa_vec3 end,double milliseconds,qa_error *error)
+{
+    if (!owner->beam_models[recipe->model]) {
+        frontend_visual_model_view model;
+        if (!frontend_visual_model_acquire(frontend,owner->provider,QA_GAME_Q2,
+            q2fx_model_paths[recipe->model],NULL,&model,error)) return false;
+        owner->beam_models[recipe->model]=model.scene;
+    }
+    bool rerelease=owner->q2_edition==QA_Q2_RERELEASE;
+    frontend_q2_temporary_beam *beam=frontend_q2_beam_retain(recipe->player?owner->player_beams:owner->beams,
+        32,rerelease,recipe,actor,destination,start,end,milliseconds);
+    if (beam) owner->beam_active=true;
+    if (recipe->lightning_sound && frontend_q2_beam_lightning_sound(beam,rerelease,milliseconds)) {
+        qa_string_id resource;
+        if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(frontend->application)),
+            "weapons/tesla.wav",&resource,error)) return false;
+        qa_builtin_event audio={.kind=QA_BUILTIN_SOUND,.family=QA_GAME_Q2,.provider=owner->provider,
+            .resource=resource,.actor=actor,.origin=start,.channel=1,.volume=1,.attenuation=1,.time_ns=(uint64_t)(milliseconds*1000000.0)};
+        if (!frontend_particle_sound(frontend,&audio,seat,owner->recipient,error)) return false;
+    }
+    return true;
+}
 static bool temporary_actor(const qa_application_protocol_event *message,const qa_q2_temp_entity *temporary,
     const qa_q2_temp_field *field,qa_actor_id *out,qa_error *error)
 {
@@ -1594,6 +1641,8 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
     const qa_q2_temp_entity *temporary, qa_error *error)
 {
     int code=-1;
+    frontend_q2_beam_recipe beam_recipe;
+    bool beam_effect=frontend_q2_beam_recipe_read(temporary->type,(qa_vec3){0},&beam_recipe);
     switch (temporary->type) {
     case QA_Q2_TE_GUNSHOT: code=QA_Q2_TE_GUNSHOT; break;
     case QA_Q2_TE_SHOTGUN: code=QA_Q2_TE_SHOTGUN; break;
@@ -1640,12 +1689,12 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
         temporary->type==QA_Q2_TE_BFG_EXPLOSION;
     /* Other decoded TE recipes remain available in the retained raw message;
      * they need their actual beam/explosion owners before they can submit. */
-    if (code<0 && !steam && !widow && !nuke && !wall && !smoke && !heat && !trail && !burst && !laser && !poly && !blaster && !hyper && !tracker && !flashlight && !berserk && !power) return true;
+    if (code<0 && !steam && !widow && !nuke && !wall && !smoke && !heat && !trail && !burst && !laser && !poly && !blaster && !hyper && !tracker && !flashlight && !berserk && !power && !beam_effect) return true;
     if (!audience->captured || audience->source!=message->provider)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Original Q2 effect has no actual delivery receipt");
     const qa_q2_temp_field *position=temporary_field(temporary,QA_Q2_TEMP_POSITION1,QA_Q2_TEMP_VECTOR);
     const qa_q2_temp_field *direction=temporary_field(temporary,
-        wall || trail || laser || temporary->type==QA_Q2_TE_BLUEHYPERBLASTER ?
+        wall || trail || laser || beam_effect || temporary->type==QA_Q2_TE_BLUEHYPERBLASTER ?
             QA_Q2_TEMP_POSITION2:QA_Q2_TEMP_DIRECTION,QA_Q2_TEMP_VECTOR);
     if (!power && (!position || (!smoke && !burst && !poly && !tracker && !flashlight && !widow && !nuke && !direction)))
         return frontend_fail(error,QA_ERROR_FORMAT,"Original Q2 effect lost its source vector fields");
@@ -1692,6 +1741,18 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
         if (!event.slot) return true;
         duration=widow?2100:1000;
     }
+    qa_actor_id beam_actor={0},beam_destination={0};
+    if (beam_effect) {
+        const qa_q2_temp_field *actor=temporary_field(temporary,QA_Q2_TEMP_ENTITY1,QA_Q2_TEMP_INTEGER);
+        if (!temporary_actor(message,temporary,actor,&beam_actor,error)) return false;
+        if (beam_recipe.destination && !temporary_actor(message,temporary,
+            temporary_field(temporary,QA_Q2_TEMP_ENTITY2,QA_Q2_TEMP_INTEGER),&beam_destination,error)) return false;
+        if (temporary->type==QA_Q2_TE_GRAPPLE_CABLE) {
+            const qa_q2_temp_field *offset=temporary_field(temporary,QA_Q2_TEMP_OFFSET,QA_Q2_TEMP_VECTOR);
+            if (!offset) return frontend_fail(error,QA_ERROR_FORMAT,"Q2 grapple lost its Source offset");
+            beam_recipe.offset=qa_v3(offset->value.vector[0],offset->value.vector[1],offset->value.vector[2]);
+        }
+    }
     qa_actor_id flashlight_actor={0};
     const qa_q2_temp_field *flashlight_entity=NULL;
     if (flashlight || power) {
@@ -1733,7 +1794,12 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
                 audience->map_identity,recipient,&owner,error)) return false;
         uint64_t birth=physical && owner->provider==frontend->particles->clock_source ?
             sample:audience->source_time_ns;
-        if (code>=0) {
+        if (beam_effect) {
+            double beam_time;
+            if (!q2_beam_clock(frontend,owner,sample,physical,&beam_time,error) ||
+                !q2_temporary_beam_admit(frontend,owner,seat,&beam_recipe,beam_actor,beam_destination,
+                    effect.origin,effect.direction,beam_time,error)) return false;
+        } else if (code>=0) {
             if (temporary->type==QA_Q2_TE_BLOOD && (controls.disable_particles&16u)) continue;
             if (electric_splash) {
                 frontend_q2_particle_recipe first=recipe,second=recipe;
@@ -1878,6 +1944,26 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
     return true;
 }
 
+static bool q2_builtin_beam(qa_frontend *frontend,const qa_builtin_event *event,
+    const qa_application_q2_audience *audience,const frontend_q2_beam_recipe *recipe,
+    uint64_t sample,bool physical,qa_error *error)
+{
+    for (uint32_t seat=0;seat<frontend->options.seats;++seat) {
+        qa_actor_id recipient;if (!frontend_seat_actor_read(frontend,seat,&recipient)) continue;
+        bool received=false;
+        for (size_t i=0;i<audience->count;++i)
+            received=received || qa_actor_id_equal(recipient,audience->recipients[i].actor);
+        if (!received) continue;
+        frontend_particle_owner *owner;
+        if (!particle_owner(frontend,event->provider,QA_GAME_Q2,audience->world_source,
+            audience->map_identity,recipient,&owner,error)) return false;
+        double beam_time;
+        if (!q2_beam_clock(frontend,owner,sample,physical,&beam_time,error) ||
+            !q2_temporary_beam_admit(frontend,owner,seat,recipe,event->actor,event->other,
+                event->origin,event->end,beam_time,error)) return false;
+    }
+    return true;
+}
 bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
 {
     particle_clients_retire(frontend);
@@ -1899,6 +1985,16 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
         }
         if (event.family == QA_GAME_Q1) {
             if (!q1_particle_event(frontend, &event, error)) return false;
+        } else if (event.family==QA_GAME_Q2 && event.kind==QA_BUILTIN_BEAM) {
+            const char *resource=qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)),event.resource);
+            frontend_q2_beam_recipe recipe;
+            if (frontend_q2_beam_named_recipe(resource,event.direction,event.value,&recipe)) {
+                qa_application_q2_audience audience;
+                if (!qa_application_event_q2_audience_at(frontend->application,i,&audience) ||
+                    !audience.captured || audience.source!=event.provider)
+                    return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 beam lost its captured Source audience");
+                if (!q2_builtin_beam(frontend,&event,&audience,&recipe,q2_sample,physical,error)) return false;
+            }
         } else if (event.family == QA_GAME_Q2 && event.kind == QA_BUILTIN_PARTICLES) {
             frontend_particle_owner *owner;
             qa_application_q2_audience audience;
@@ -2047,6 +2143,76 @@ bool frontend_particle_world(qa_frontend *frontend, uint32_t seat,
     }
     return true;
 }
+typedef struct q2_beam_draw_context {
+    qa_frontend *frontend;
+    frontend_particle_owner *owner;
+    const qa_scene_world_input *world;
+    double milliseconds;
+} q2_beam_draw_context;
+static bool local_beam_model_ready(void *context,q2fx_model model)
+{ return ((q2_beam_draw_context *)context)->owner->beam_models[model]!=NULL; }
+static bool local_beam_model_draw(void *context,const frontend_q2_beam_draw *draw,qa_error *error)
+{
+    q2_beam_draw_context *output=context;
+    qa_model_transform placement;qa_model_transform_identity(&placement);
+    placement.origin[0]=draw->origin.x;placement.origin[1]=draw->origin.y;placement.origin[2]=draw->origin.z;
+    qa_vec3 axes[3];frontend_camera_axes(draw->angles,axes);
+    for (size_t i=0;i<3;++i) {
+        placement.axes[i][0]=axes[i].x;placement.axes[i][1]=axes[i].y;placement.axes[i][2]=axes[i].z;
+        placement.scale[i]=i==0?draw->scale.x:i==1?draw->scale.y:draw->scale.z;
+    }
+    qa_scene_model_input input={.view=output->world->view,.transform=placement,.previous_origin=draw->origin,
+        .family=QA_SCENE_Q2,.frame=(uint32_t)draw->frame,.old_frame=(uint32_t)draw->old_frame,
+        .skin=(uint32_t)draw->skin,.flags=draw->flags,.back_lerp=draw->back_lerp,.color={1,1,1,draw->alpha},
+        .seconds=output->milliseconds*.001,.ambient={1,1,1},.identity_light=output->world->identity_light,
+        .source_path=q2fx_model_paths[draw->model],.video_frame=output->world->video_frame,.video_context=output->world->video_context};
+    if (output->frontend->scene_world && !qa_scene_world_sample_light_input(output->frontend->scene_world,
+        output->world,draw->origin,&input.ambient,&input.directed,&input.light_direction,error)) return false;
+    return frontend_legacy_model_input(output->frontend->scene_world,output->world,&input,error) &&
+        qa_scene_model_submit(output->owner->beam_models[draw->model],&input,&output->frontend->frame,error);
+}
+static bool local_beam_render_clock(void *context,uint64_t *wall,uint64_t *frame,qa_error *error)
+{
+    (void)error;qa_frontend *frontend=((q2_beam_draw_context *)context)->frontend;
+    *wall=frontend->wall_time_ns/UINT64_C(1000000);*frame=frontend->frame_number;return true;
+}
+static bool q2_beams_draw(qa_frontend *frontend,frontend_particle_owner *owner,uint32_t seat,
+    const qa_scene_world_input *world,const frontend_q2_sample *sample,qa_error *error)
+{
+    if (!owner->beam_active) return true;
+    double beam_time;
+    if (!q2_beam_clock(frontend,owner,sample->time_ns,sample->physical,&beam_time,error)) return false;
+    frontend_q2_beam_view view={.milliseconds=beam_time,.view=world->view,.viewer=owner->recipient,
+        .hardware=frontend->gl!=NULL,.player_fov=atanf(1/world->view.projection.m[0])*114.59155902616464f};
+    frontend_source_client_registry source;bool found;
+    if (!frontend_source_client_registry_read(frontend,seat,&source,&found,error)) return false;
+    if (found) {
+        const qa_cvar_view *setting=qa_cvars_find(source.cvars,"hand");if (setting) view.hand=setting->integer;
+        setting=qa_cvars_find(source.cvars,"cl_gun");if (setting) view.gun=setting->integer;
+        setting=qa_cvars_find(source.cvars,"cl_gunfov");if (setting) view.gun_fov=(float)setting->number;
+    }
+    qa_application_native_q2_player_sample player;uint32_t old_frame;float back_lerp;
+    if (!frontend_particle_q2_player_sample(frontend,seat,owner->recipient,&player,&old_frame,&back_lerp,&found,error)) return false;
+    if (found) {
+        view.gun_offset=player.gun_offset;view.player_fov=player.fov;view.viewer_origin=player.origin;view.viewer_origin_present=true;
+    } else {
+        const frontend_seat *recipient=frontend->seats+seat;
+        if (recipient->q2_view_ready && qa_actor_id_equal(recipient->q2_actor,owner->recipient)) {
+            view.gun_offset=recipient->q2_view.gun_offset;view.player_fov=recipient->q2_view.fov;
+        }
+        qa_application_visual_view appearance;
+        if (!frontend_particle_visual_read(frontend,owner->recipient,&appearance,&found,error)) return false;
+        if (found) { view.viewer_origin=appearance.body.origin;view.viewer_origin_present=true; }
+    }
+    q2_beam_draw_context output={frontend,owner,world,view.milliseconds};
+    frontend_q2_beam_context context={.rerelease=owner->q2_edition==QA_Q2_RERELEASE,
+        .particles=owner->q2_particles,.random=&owner->random,.roll=&owner->beam_random,.context=&output,
+        .model_ready=local_beam_model_ready,.draw=local_beam_model_draw,.render_clock=local_beam_render_clock};
+    bool advance=!owner->beam_sampled || view.milliseconds>owner->beam_sample_ms;
+    if (!frontend_q2_beams_prepare(&context,owner->beams,32,&view,advance,error) ||
+        !frontend_q2_beams_prepare(&context,owner->player_beams,32,&view,advance,error)) return false;
+    owner->beam_sample_ms=view.milliseconds;owner->beam_sampled=true;owner->beam_active=context.active_beams!=0;return true;
+}
 bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene_world_input *world, qa_error *error)
 {
     if (!frontend || !world || seat >= frontend->options.seats)
@@ -2099,6 +2265,7 @@ bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene
                 !qa_actor_id_equal(recipient, owner->recipient) ||
                 !delivery_world_current(frontend, owner->world_source, owner->map_identity)) continue;
             if (!q2_owner_sample(frontend, owner, &sample, error)) return false;
+            if (!q2_beams_draw(frontend,owner,seat,world,&sample,error)) return false;
             q2_sustains_sample(owner,&sample);
             /* The Source allocates sustain particles before AddParticles
              * frees instant particles sampled by the preceding scene. */

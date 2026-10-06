@@ -1754,6 +1754,8 @@ add_library(qa_frontend STATIC
     src/app/frontend/selected_effects_q2_particles.c
     src/app/frontend/selected_effects_q1_temporary.c
     src/app/frontend/q2_entity_effects.c
+    src/app/frontend/q2_effect_models.c
+    src/app/frontend/q2_temporary_beams.c
     src/app/frontend/source.c
     src/app/frontend/startup_server_browser.c
     src/app/frontend/startup_downloads.c

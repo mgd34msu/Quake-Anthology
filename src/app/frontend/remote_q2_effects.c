@@ -6,19 +6,6 @@
 #include <string.h>
 #include <stdio.h>
 
-const char *const q2fx_model_paths[Q2FX_MODEL_COUNT] = {
-    "models/objects/explode/tris.md2", "models/objects/smoke/tris.md2",
-    "models/objects/flash/tris.md2", "models/monsters/parasite/segment/tris.md2",
-    "models/ctf/segment/tris.md2", "models/objects/r_explode/tris.md2",
-    "sprites/s_bfg2.sp2", "models/proj/lightning/tris.md2",
-    "models/proj/beam/tris.md2", "models/objects/r_explode2/tris.md2",
-    "models/weapons/v_machn/flash/tris.md2", "models/weapons/v_shotg2/flash/tris.md2",
-    "models/weapons/v_shotg/flash/tris.md2", "models/weapons/v_rocket/flash/tris.md2",
-    "models/weapons/v_rail/flash/tris.md2", "models/weapons/v_launch/flash/tris.md2",
-    "models/weapons/v_etf_rifle/flash/tris.md2", "models/weapons/v_dist/flash/tris.md2",
-    "models/weapons/v_boomer/flash/tris.md2", "models/weapons/v_blast/flash/tris.md2",
-    "models/weapons/v_bfg/flash/tris.md2", "models/weapons/v_beamer/flash/tris.md2"
-};
 bool q2fx_fail(qa_error *error, qa_status code, const char *message)
 { if (error) { error->code = code; snprintf(error->message, sizeof(error->message), "%s", message); } return false; }
 static int color_hex(char c)
@@ -209,25 +196,6 @@ static bool field_actor(frontend_remote_q2_effects *o, const qa_q2_temp_entity *
     if (!o->source.actor(o->source.context, (uint32_t)f->value.integer, &pose, e) || !q2fx_source_current(o, e)) return false;
     *out = pose.actor; return out->registry;
 }
-static q2fx_beam *beam(frontend_remote_q2_effects *o, qa_actor_id actor, qa_actor_id destination,
-    qa_vec3 start, qa_vec3 end, qa_vec3 offset, double time, q2fx_model model, bool player, bool monster)
-{
-    q2fx_beam *pool = player ? o->player_beams : o->beams, *row = NULL;
-    for (size_t i = 0; i < Q2FX_POOL; ++i)
-        if (pool[i].active && qa_actor_id_equal(pool[i].actor, actor) &&
-            (player || (o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC && model!=Q2FX_LIGHTNING) ||
-                qa_actor_id_equal(pool[i].destination, destination))) { row = &pool[i]; break; }
-    double duration = player && (o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE || !row) ? 100 : 200;
-    if (!row) for (size_t i = 0; i < Q2FX_POOL; ++i)
-        if (!pool[i].active || pool[i].die < time) { row = &pool[i]; break; }
-    if (row) {
-        double sound_until=row->sound_until;
-        *row = (q2fx_beam){.active=true,.player=player,.monster=monster,.model=(uint8_t)model,
-            .actor=actor,.destination=destination,.start=start,.end=end,.offset=offset,
-            .die=time+duration,.sound_until=sound_until};
-    }
-    return row;
-}
 static void laser(frontend_remote_q2_effects *o, qa_vec3 start, qa_vec3 end, double time)
 {
     size_t capacity=o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE?Q2FX_LASER_CAPACITY:Q2FX_POOL;
@@ -237,19 +205,11 @@ static void laser(frontend_remote_q2_effects *o, qa_vec3 start, qa_vec3 end, dou
         o->lasers[i] = (q2fx_laser){.active=true,.start=start,.end=end,.born=time,.die=time+100,.color=color,.width=4}; return;
     }
 }
-static void radial_particles(frontend_remote_q2_effects *o, qa_vec3 origin, double time,
-    int32_t count, float radius, float speed, uint32_t palette, bool instant)
+static void radial_particles(frontend_remote_q2_effects *o,qa_vec3 origin,double time,
+    int32_t count,float radius,float speed,uint32_t palette,bool instant)
 {
-    static const uint32_t colors[4] = {16,104,168,144};
-    for (int32_t i = 0; i < count && o->particles.count < FRONTEND_FX_PARTICLE_CAPACITY; ++i) {
-        uint32_t index = palette == 0xe0 ? 0 : random_word(o) & 3;
-        frontend_fx_q2_particle p = {.spawn_milliseconds = time, .alpha = 1,
-            .color = palette == 0 ? colors[index] : palette + (palette == 110 ? index * 2 : index)};
-        qa_vec3 dir = q2fx_random_direction(o); p.origin = qa_vec_add(origin, qa_vec_scale(dir, radius));
-        p.velocity = qa_vec_scale(dir, speed);
-        p.alpha_velocity = instant ? -10000 : (float)((palette == 208 ? -1 : -.8) / (.5 + random_unit(o) * .3));
-        o->particles.values.q2[o->particles.count++] = p;
-    }
+    frontend_q2_temporary_radial(&o->particles,&o->random,
+        o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE,origin,time,count,radius,speed,palette,instant);
 }
 static void special_trail(frontend_remote_q2_effects *o, qa_vec3 start, qa_vec3 end, double time, bool bubbles)
 {
@@ -400,17 +360,12 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         if (!field_actor(o,t,QA_Q2_TEMP_ENTITY1,actors,&actor,e)) return false;
         if (t->type==QA_Q2_TE_LIGHTNING && !field_actor(o,t,QA_Q2_TEMP_ENTITY2,actors,&destination,e)) return false;
         if (t->type==QA_Q2_TE_GRAPPLE_CABLE && !vector_field(t,QA_Q2_TEMP_OFFSET,&offset,e)) return false;
-        bool player=t->type==QA_Q2_TE_HEATBEAM || t->type==QA_Q2_TE_MONSTER_HEATBEAM || t->type==QA_Q2_TE_GRAPPLE_CABLE_2 || t->type==QA_Q2_TE_LIGHTNING_BEAM;
-        bool heat=t->type==QA_Q2_TE_HEATBEAM || t->type==QA_Q2_TE_MONSTER_HEATBEAM;
-        q2fx_model model=heat?Q2FX_HEAT:t->type==QA_Q2_TE_LIGHTNING || t->type==QA_Q2_TE_LIGHTNING_BEAM?Q2FX_LIGHTNING:t->type==QA_Q2_TE_GRAPPLE_CABLE || t->type==QA_Q2_TE_GRAPPLE_CABLE_2?Q2FX_CABLE:Q2FX_PARASITE;
-        if (!q2fx_model_admit(o,model,e)) return false;
-        if (t->type==QA_Q2_TE_HEATBEAM) offset=qa_v3(2,7,-3);
-        if (t->type==QA_Q2_TE_GRAPPLE_CABLE_2) offset=qa_v3(9,12,-3);
-        if (t->type==QA_Q2_TE_LIGHTNING_BEAM) offset=qa_v3(0,12,-12);
-        q2fx_beam *retained=beam(o,actor,destination,pos,end,offset,time,model,player,t->type==QA_Q2_TE_MONSTER_HEATBEAM);
-        if (t->type==QA_Q2_TE_LIGHTNING && (!rerelease || (retained && retained->sound_until<time))) {
+        frontend_q2_beam_recipe recipe;
+        if (!frontend_q2_beam_recipe_read(t->type,offset,&recipe) || !q2fx_model_admit(o,recipe.model,e)) return false;
+        q2fx_beam *retained=frontend_q2_beam_retain(recipe.player?o->player_beams:o->beams,Q2FX_POOL,
+            rerelease,&recipe,actor,destination,pos,end,time);
+        if (recipe.lightning_sound && frontend_q2_beam_lightning_sound(retained,rerelease,time)) {
             if (!sound(o,"weapons/tesla.wav",pos,actor,time,1,1,1,0,e)) return false;
-            if (rerelease) retained->sound_until=time+500;
         }
         break;
     }
@@ -514,23 +469,16 @@ bool frontend_remote_q2_effects_named_beam(frontend_remote_q2_effects *o,
             o->lasers[i]=(q2fx_laser){.active=true,.start=start,.end=end,.born=time,.die=die,.color=0xd0+(random_word(o)&3),.width=4}; break;
         }
         if (!strcmp(name,"bfg-zap")) bfg_explosion(o,end,time,interval);
-    } else if (!strcmp(name,"bfg-lightning")) {
-        if (!q2fx_model_admit(o,Q2FX_LIGHTNING,e)) ok=false;
-        else {
-            for (size_t i=0;i<Q2FX_POOL;++i) if (!o->beams[i].active || o->beams[i].die<time) {
-                o->beams[i]=(q2fx_beam){.active=true,.unkeyed=!actor_id.registry,.model=Q2FX_LIGHTNING,.actor=actor_id,
-                    .start=start,.end=end,.die=die}; break;
-            }
-        }
-    } else if (!strcmp(name,"heatbeam") || !strcmp(name,"monster-heatbeam")) {
-        if (!actor_id.registry) ok=q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized player beam lost its full actor");
-        else if (!q2fx_model_admit(o,Q2FX_HEAT,e)) ok=false;
-        else {
-            bool monster=!strcmp(name,"monster-heatbeam");
-            beam(o,actor_id,(qa_actor_id){0},start,end,monster?qa_v3(0,0,0):qa_v3(2,7,-3),time,Q2FX_HEAT,true,monster);
-            for (size_t i=0;i<Q2FX_POOL;++i) if (o->player_beams[i].active && qa_actor_id_equal(o->player_beams[i].actor,actor_id)) o->player_beams[i].die=die;
-        }
-    } else ok=q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized beam has no source recipe");
+    } else {
+        frontend_q2_beam_recipe recipe;
+        if (!frontend_q2_beam_named_recipe(name,(qa_vec3){0},duration,&recipe))
+            ok=q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized beam has no source recipe");
+        else if (recipe.player && !actor_id.registry)
+            ok=q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized player beam lost its full actor");
+        else if (!q2fx_model_admit(o,recipe.model,e)) ok=false;
+        else (void)frontend_q2_beam_retain(recipe.player?o->player_beams:o->beams,Q2FX_POOL,
+            o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE,&recipe,actor_id,(qa_actor_id){0},start,end,time);
+    }
     o->dirty=true; --o->busy; return ok && q2fx_source_current(o,e);
 }
 static bool soldier_flash(uint32_t flash, unsigned kind)
@@ -919,178 +867,33 @@ static bool model_draw(frontend_remote_q2_effects *o, q2fx_model model, qa_vec3 
     }
     o->draws[o->draw_count++]=(q2fx_model_draw){(uint8_t)model,origin,angles,frame,old_frame,skin,flags,alpha,back_lerp,{scale,scale,scale}}; return true;
 }
-static bool slow_prepare(frontend_remote_q2_effects *o, qa_error *e)
+static bool beam_model_ready(void *context,q2fx_model model)
+{ return ((frontend_remote_q2_effects *)context)->models[model]!=NULL; }
+static bool beam_model_draw(void *context,const frontend_q2_beam_draw *draw,qa_error *error)
 {
-    if (o->source.profile!=FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE) return true;
-    uint64_t wall, frame;
-    if (!o->source.render_clock(o->source.context,&wall,&frame,e) || !q2fx_source_current(o,e)) return false;
-    uint32_t bin=(uint32_t)wall/16;
-    if (o->slow_bin!=bin) { o->slow_bin=bin; o->slow_base=random_word(o); }
-    if (o->slow_frame!=frame) { o->slow_frame=frame; o->slow_seed=o->slow_base; }
+    frontend_remote_q2_effects *owner=context;size_t first=owner->draw_count;
+    if (!model_draw(owner,(q2fx_model)draw->model,draw->origin,draw->angles,draw->frame,
+        draw->old_frame,draw->back_lerp,draw->skin,draw->flags,draw->alpha,1,error)) return false;
+    if (owner->draw_count>first) owner->draws[first].scale=draw->scale;
     return true;
 }
-static bool beam_roll(frontend_remote_q2_effects *o, uint32_t *out, qa_error *e)
+static bool beam_render_clock(void *context,uint64_t *wall,uint64_t *frame,qa_error *error)
 {
-    if (o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC) { *out=random_word(o)%360; return true; }
-    if (!slow_prepare(o,e)) return false;
-    uint32_t value=o->slow_seed;
-    value^=value<<13; value^=value>>17; value^=value<<5;
-    o->slow_seed=value;
-    *out=value%360;
-    return true;
+    frontend_remote_q2_effects *owner=context;
+    return owner->source.render_clock(owner->source.context,wall,frame,error) && q2fx_source_current(owner,error);
 }
-static bool rerelease_regular_beam(frontend_remote_q2_effects *o, const q2fx_beam *beam_row,
-    qa_vec3 start, qa_vec3 delta, qa_vec3 angles, qa_error *e)
+bool q2fx_prepare_beams(frontend_remote_q2_effects *owner,q2fx_beam *pool,size_t count,
+    const frontend_remote_q2_effects_sample *sample,const frontend_remote_q2_effects_controls *controls,
+    bool advance,qa_error *error)
 {
-    float remaining=qa_vec_length(delta), segment=beam_row->model==Q2FX_LIGHTNING?35:30;
-    if (!isfinite(remaining)) return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 beam length exceeds its source vector");
-    double steps=ceil((double)remaining/segment);
-    if (steps>(double)(SIZE_MAX/sizeof(*o->draws)))
-        return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 beam exceeds its physical model draw capacity");
-    qa_vec3 direction=qa_vec_normalize(delta);
-    bool lightning=beam_row->model==Q2FX_LIGHTNING;
-    if (lightning) { angles.x=-angles.x; angles.y+=180; }
-    while (remaining>0) {
-        float used=fminf(remaining,segment), longitudinal=used/segment;
-        if (!lightning) start=qa_vec_add(start,qa_vec_scale(direction,.5f*used));
-        uint32_t roll;
-        if (!beam_roll(o,&roll,e)) return false;
-        angles.z=(float)roll;
-        size_t first=o->draw_count;
-        if (!model_draw(o,(q2fx_model)beam_row->model,start,angles,0,0,0,0,
-            lightning?8|8192:8192,1,1,e)) return false;
-        if (o->draw_count>first) o->draws[first].scale.x=longitudinal;
-        start=qa_vec_add(start,qa_vec_scale(direction,(lightning?1:.5f)*segment));
-        float next=remaining-segment;
-        if (next>=remaining) return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 beam segment exceeds its source float precision");
-        remaining=next;
-    }
-    return true;
-}
-static void heat_particles(frontend_remote_q2_effects *o, qa_vec3 origin, qa_vec3 direction,
-    const frontend_remote_q2_effects_sample *s)
-{
-    if (qa_vec_length(direction)==0) return;
-    qa_vec3 right=qa_vec_scale(s->view.axis[1],-1), up=s->view.axis[2], move=origin;
-    if (s->hardware) move=qa_vec_sub(move,qa_vec_scale(qa_vec_add(right,up),.5f));
-    float begin=fmodf((float)(s->milliseconds*.096),32);
-    move=qa_vec_add(move,qa_vec_scale(direction,begin));
-    for (float distance=begin;distance<4096 && distance<=160;distance+=32) {
-        for (double rotation=0;rotation<6.283185307179586;rotation+=.3141592653589793) {
-            if (o->particles.count==FRONTEND_FX_PARTICLE_CAPACITY) return;
-            float taper=distance<10?distance/10:1;
-            qa_vec3 radial=qa_vec_add(qa_vec_scale(right,(float)cos(rotation)*.5f*taper),qa_vec_scale(up,(float)sin(rotation)*.5f*taper));
-            frontend_fx_q2_particle p={.spawn_milliseconds=s->milliseconds,.origin=qa_vec_add(move,qa_vec_scale(radial,3)),
-                .color=223-(random_word(o)&7),.alpha=.5f,.alpha_velocity=-1000};
-            o->particles.values.q2[o->particles.count++]=p;
-        }
-        move=qa_vec_add(move,qa_vec_scale(direction,32));
-    }
-}
-static qa_vec3 beam_angles(const frontend_remote_q2_effects *o, qa_vec3 delta)
-{
-    float horizontal=hypotf(delta.x,delta.y), yaw=horizontal==0?0:atan2f(delta.y,delta.x)*57.29577951308232f;
-    bool rerelease=o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE;
-    float pitch=horizontal==0?(delta.z>0?90:270):atan2f(delta.z,horizontal)*(rerelease?57.29577951308232f:-57.29577951308232f);
-    if (yaw<0) yaw+=360;
-    if (pitch<0) pitch+=360;
-    return qa_v3(rerelease?-pitch:pitch,yaw,0);
-}
-bool q2fx_prepare_beams(frontend_remote_q2_effects *o, q2fx_beam *pool, size_t count,
-    const frontend_remote_q2_effects_sample *s, const frontend_remote_q2_effects_controls *controls,
-    bool advance, qa_error *e)
-{
-    for (size_t i=0;i<count;++i) {
-        q2fx_beam *b=&pool[i];
-        if (!b->active) continue;
-        if (b->die<s->milliseconds) { b->active=false; continue; }
-        if (!o->models[b->model]) continue;
-        qa_vec3 start=b->start, offset=b->offset, delta;
-        bool local=!b->unkeyed && b->actor.registry && s->viewer.registry && qa_actor_id_equal(b->actor,s->viewer);
-        bool heat=b->model==Q2FX_HEAT, lightning=b->model==Q2FX_LIGHTNING;
-        bool rerelease=o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE;
-        float hand=s->hand==2?0:s->hand==1?-1:1;
-        if (rerelease && controls->gun==3) hand=-1;
-        else if (rerelease && controls->gun==2) hand=1;
-        if (b->player && local) {
-            if (rerelease && controls->gun_fov>0) {
-                float tangent=tanf(fminf(160,fmaxf(30,controls->gun_fov))*.008726646259971648f);
-                if (!isfinite(s->player_fov) || s->player_fov<=0 || s->player_fov>=180)
-                    return q2fx_fail(e,QA_ERROR_ARGUMENT,"Q2 player beam lost its actual player field of view");
-                float ratio=tanf(s->player_fov*.008726646259971648f)/tangent;
-                offset.x*=ratio;
-                offset.z*=ratio;
-            }
-            start=qa_vec_add(s->view.origin,s->gun_offset);
-            start=qa_vec_add(start,qa_vec_scale(s->view.axis[1],-hand*offset.x));
-            start=qa_vec_add(start,qa_vec_scale(s->view.axis[0],offset.y));
-            start=qa_vec_add(start,qa_vec_scale(s->view.axis[2],offset.z));
-            if (hand==0) start=qa_vec_sub(start,s->view.axis[2]);
-        } else if (!b->player && local) {
-            if (o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE) {
-                if (!s->viewer_origin_present || !qa_vec_finite(s->viewer_origin))
-                    return q2fx_fail(e,QA_ERROR_ARGUMENT,"Q2 beam lost its actual rendered player body origin");
-                start=qa_vec_add(s->viewer_origin,offset);
-            } else { start=s->view.origin; start.z-=22; start=qa_vec_add(start,offset); }
-        }
-        else if (!(rerelease && b->player)) start=qa_vec_add(start,offset);
-        delta=qa_vec_sub(b->end,start);
-        if (rerelease && b->player && !local) {
-            if (offset.x!=0 || offset.y!=0 || offset.z!=0) {
-                qa_vec3 rotation=beam_angles(o,delta), axis[3];
-                axes(qa_v3(-rotation.x,rotation.y+180,0),axis);
-                start=qa_vec_add(start,qa_vec_scale(axis[1],offset.x-1));
-                start=qa_vec_sub(start,qa_vec_scale(axis[0],offset.y));
-                start=qa_vec_add(start,qa_vec_scale(axis[2],-offset.z-10));
-            } else if (heat && advance) radial_particles(o,b->start,s->milliseconds,40,10,0,0xe0,true);
-            delta=qa_vec_sub(b->end,start);
-        }
-        if (rerelease && b->player && local && b->model!=Q2FX_CABLE)
-            delta=qa_vec_scale(s->view.axis[0],qa_vec_length(delta));
-        else if (!rerelease && heat && local) {
-            delta=qa_vec_scale(s->view.axis[0],qa_vec_length(delta));
-            delta=qa_vec_sub(delta,qa_vec_scale(s->view.axis[1],hand*offset.x));
-            delta=qa_vec_add(delta,qa_vec_scale(s->view.axis[0],offset.y));
-            delta=qa_vec_add(delta,qa_vec_scale(s->view.axis[2],offset.z));
-            if (s->hand==2) start=qa_vec_sub(start,s->view.axis[2]);
-        }
-        qa_vec3 rotation=beam_angles(o,delta);
-        float yaw=rotation.y,pitch=rotation.x;
-        if (!b->player && o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE) {
-            if (!rerelease_regular_beam(o,b,start,delta,qa_v3(pitch,yaw,0),e)) return false;
-            continue;
-        }
-        qa_vec3 direction=qa_vec_normalize(delta);
-        if (!rerelease && heat && !local) {
-            if (!b->monster) {
-                qa_vec3 axis[3]; axes(qa_v3(-pitch,yaw+180,0),axis);
-                start=qa_vec_add(start,qa_vec_scale(axis[1],offset.x-1));
-                start=qa_vec_sub(start,qa_vec_scale(axis[0],offset.y));
-                start=qa_vec_add(start,qa_vec_scale(axis[2],-offset.z-10));
-            } else if (advance) radial_particles(o,b->start,s->milliseconds,40,10,0,0xe0,true);
-        }
-        if (heat && local && advance) heat_particles(o,start,direction,s);
-        float length=qa_vec_length(delta)-(lightning?20:0), segment=heat?32:lightning?35:30;
-        if (rerelease && b->player && local && b->model==Q2FX_CABLE && hand!=0) {
-            start=qa_vec_add(start,qa_vec_scale(direction,segment*.5f));
-            length-=segment*.5f;
-        }
-        bool short_lightning=lightning && length<=segment;
-        if (length<=0 && !short_lightning) continue;
-        double steps=short_lightning?1:ceil((double)length/segment);
-        if (!isfinite(steps) || steps>(double)(SIZE_MAX/sizeof(*o->draws))) return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 beam exceeds physical model draw capacity");
-        float spacing=steps>1?(length-segment)/(float)(steps-1):0;
-        for (size_t j=0;j<(size_t)steps;++j) {
-            qa_vec3 origin=short_lightning?b->end:qa_vec_add(start,qa_vec_scale(direction,(float)j*spacing));
-            uint32_t roll=0;
-            if (!heat && !beam_roll(o,&roll,e)) return false;
-            qa_vec3 angles=qa_v3(short_lightning || (!lightning && !heat)?pitch:-pitch,
-                short_lightning || (!lightning && !heat)?yaw:yaw+180,heat?(float)fmod(s->milliseconds,360):(float)roll);
-            int32_t frame=heat?(local?1:2):0;
-            if (!model_draw(o,(q2fx_model)b->model,origin,angles,frame,frame,0,0,heat || lightning?8:rerelease?8192:0,1,1,e)) return false;
-        }
-    }
-    return true;
+    frontend_q2_beam_context context={.rerelease=owner->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE,
+        .particles=&owner->particles,.random=&owner->random,.roll=&owner->beam_random,.context=owner,
+        .model_ready=beam_model_ready,.draw=beam_model_draw,.render_clock=beam_render_clock};
+    frontend_q2_beam_view view={.milliseconds=sample->milliseconds,.view=sample->view,.viewer=sample->viewer,
+        .viewer_origin=sample->viewer_origin,.viewer_origin_present=sample->viewer_origin_present,
+        .gun_offset=sample->gun_offset,.player_fov=sample->player_fov,.hand=sample->hand,.hardware=sample->hardware,
+        .gun=controls->gun,.gun_fov=controls->gun_fov};
+    return frontend_q2_beams_prepare(&context,pool,count,&view,advance,error);
 }
 bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *o,
     const frontend_remote_q2_effects_sample *s, const qa_scene_light **lights_out, size_t *count_out, qa_error *e)

@@ -2,17 +2,9 @@
 #define QA_FRONTEND_REMOTE_Q2_EFFECTS_PRIVATE_H
 #include "remote_q2_effects.h"
 #include "selected_effects_particles.h"
+#include "q2_temporary_beams.h"
 
 enum { Q2FX_POOL = 32, Q2FX_LASER_CAPACITY = 256, Q2FX_LIGHT_CAPACITY = 32 };
-typedef enum q2fx_model {
-    Q2FX_EXPLODE, Q2FX_SMOKE, Q2FX_FLASH, Q2FX_PARASITE, Q2FX_CABLE,
-    Q2FX_ROCKET, Q2FX_BFG, Q2FX_LIGHTNING, Q2FX_HEAT, Q2FX_BIG,
-    Q2FX_MUZZLE_MACHINE, Q2FX_MUZZLE_SSHOTGUN, Q2FX_MUZZLE_SHOTGUN,
-    Q2FX_MUZZLE_ROCKET, Q2FX_MUZZLE_RAIL, Q2FX_MUZZLE_LAUNCH,
-    Q2FX_MUZZLE_ETF, Q2FX_MUZZLE_DIST, Q2FX_MUZZLE_BOOMER,
-    Q2FX_MUZZLE_BLAST, Q2FX_MUZZLE_BFG, Q2FX_MUZZLE_BEAM,
-    Q2FX_MODEL_COUNT
-} q2fx_model;
 typedef struct q2fx_explosion {
     bool active;
     uint8_t kind, model;
@@ -22,13 +14,7 @@ typedef struct q2fx_explosion {
     double start;
     float light, scale;
 } q2fx_explosion;
-typedef struct q2fx_beam {
-    bool active, player, monster, unkeyed;
-    uint8_t model;
-    qa_actor_id actor, destination;
-    qa_vec3 start, end, offset;
-    double die, sound_until;
-} q2fx_beam;
+typedef frontend_q2_temporary_beam q2fx_beam;
 typedef struct q2fx_laser {
     bool active;
     qa_vec3 start, end;
@@ -51,14 +37,7 @@ typedef struct q2fx_sustain {
     double end, next;
 } q2fx_sustain;
 
-typedef struct q2fx_model_draw {
-    uint8_t model;
-    qa_vec3 origin, angles;
-    int32_t frame, old_frame, skin;
-    uint32_t flags;
-    float alpha, back_lerp;
-    qa_vec3 scale;
-} q2fx_model_draw;
+typedef frontend_q2_beam_draw q2fx_model_draw;
 typedef struct q2fx_weapon_muzzle {
     bool active;
     uint8_t model;
@@ -119,10 +98,9 @@ struct frontend_remote_q2_effects {
     uint32_t sampled_dlight_hacks, sampled_disable_particles;
     int32_t sampled_gun;
     float sampled_gun_fov;
-    uint32_t slow_bin, slow_base, slow_seed;
-    uint64_t slow_frame, render_frame;
+    frontend_q2_beam_random beam_random;
+    uint64_t render_frame;
 };
-extern const char *const q2fx_model_paths[Q2FX_MODEL_COUNT];
 bool q2fx_fail(qa_error *, qa_status, const char *);
 bool q2fx_source_valid(const frontend_remote_q2_effects_source *);
 bool q2fx_source_current(const frontend_remote_q2_effects *, qa_error *);
