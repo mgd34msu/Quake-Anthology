@@ -246,11 +246,14 @@ static bool prepare_surface(brush_surface *surface, const brush_vertex *vertices
   const brush_vertex *a = &vertices[0], *b = NULL, *c = NULL;
   double area = 0;
   for (size_t i = 1; i + 1 < count; ++i) {
-    b = &vertices[i]; c = &vertices[i + 1];
-    area = (b->x - a->x) * (c->y - a->y) - (c->x - a->x) * (b->y - a->y);
-    if (area != 0 && isfinite(area)) break;
+    const brush_vertex *next_b = &vertices[i], *next_c = &vertices[i + 1];
+    double candidate = (next_b->x - a->x) * (next_c->y - a->y) -
+                       (next_c->x - a->x) * (next_b->y - a->y);
+    if (isfinite(candidate) && fabs(candidate) > fabs(area)) {
+      area = candidate; b = next_b; c = next_c;
+    }
   }
-  if (!isfinite(area) || area == 0) return false;
+  if (area == 0) return false;
   double inverse = 1 / area;
   double qa = 1 / a->clip[3], qb = 1 / b->clip[3], qc = 1 / c->clip[3];
   surface->s = plane_from_vertices(a, b, c, a->texel[0] * qa,
