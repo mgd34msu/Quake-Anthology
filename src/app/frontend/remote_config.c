@@ -509,7 +509,7 @@ static bool apply_archive(void *context,qa_error *error)
         *qa_input_seat_gamepad_tuning(row->input)=row->settings.gamepad;
         if (row->settings.has_always_run && !qa_cvars_set_flags(row->q3_mouse,"cl_run",
             row->settings.always_run?"1":"0",QA_CVAR_ARCHIVE,error)) return false;
-        frontend_authored_bindings_profile(row->authored);
+        if (!frontend_authored_bindings_profile(row->authored,row->input,&row->settings,error)) return false;
     }
     return true;
 }
@@ -1097,6 +1097,7 @@ static bool save_input(frontend_remote_config *row,qa_error *error)
     qa_seat_settings settings=row->settings;
     if (ok) {
         settings.bindings=bindings; settings.binding_count=count;
+        frontend_authored_bindings_archive(row->authored,&settings);
         settings.history=lines; settings.history_count=lines_count;
         settings.mouse=tuning.mouse; settings.gamepad=*qa_input_seat_gamepad_tuning(input);
         settings.has_always_run=true; settings.always_run=tuning.view.always_run;
