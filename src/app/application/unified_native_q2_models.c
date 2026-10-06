@@ -45,7 +45,8 @@ static bool model(qa_unified_frame_lease *lease, qa_unified_frame_visuals *out,
 }
 
 bool application_unified_native_q2_models(qa_application *app,
-    const application_unified_source *source, qa_unified_frame *target,
+    const application_unified_source *source, const qa_application_visual_visibility *visibility,
+    qa_unified_frame *target,
     qa_unified_frame_visuals *out, qa_error *error)
 {
     if (!target || !target->lease || !out || (out->model_count && !out->models) ||
@@ -86,6 +87,11 @@ bool application_unified_native_q2_models(qa_application *app,
             if (!actor || actor->owner != source->owner || !actor->has_source || actor->source_slot != slot) {
                 ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified Q2 model lost its full physical source actor"); break;
             }
+            bool visible;
+            if (!qa_application_visual_visibility_actor(visibility, row.binding.actor, NULL, &visible, error)) {
+                ok = false; break;
+            }
+            if (!visible) continue;
             application_native_q2_appearance appearance = {0};
             ok = application_native_q2_appearance_read(app, &cut, slot, &appearance, error);
             bool replacement = false;

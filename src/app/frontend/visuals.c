@@ -17,6 +17,7 @@
 #include "config_store.h"
 #include "qa/application_equipment.h"
 #include "qa/application_network.h"
+#include "qa/application_visual_visibility.h"
 #include "qa/application_network_qw.h"
 #include "qa/application_qc_presentation.h"
 #include "view_settings.h"
@@ -1356,6 +1357,12 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
     uint32_t launch_seat;
     if(frontend_seat_launch_id_read(frontend,seat,&launch_seat))
         (void)qa_application_player_actor(frontend->application, launch_seat, &local);
+    size_t visibility_bytes = qa_application_visual_visibility_bytes(frontend->application);
+    void *visibility_storage = qa_arena_alloc(&frame->storage, visibility_bytes, _Alignof(max_align_t), error);
+    qa_application_visual_visibility *visibility;
+    if (!visibility_storage || !qa_application_visual_visibility_prepare(frontend->application, local,
+        world->use_pvs_origin ? world->pvs_origin : world->view.origin, world->no_vis,
+        visibility_storage, visibility_bytes, &visibility, error)) return false;
     const qa_actor_record *record; uint32_t cursor = 0;
     qa_actor_registry *actors = qa_world_actors(qa_application_world(frontend->application));
     while (qa_actors_next(actors, &cursor, &record)) {
@@ -1371,8 +1378,8 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
         if (!view.visible) continue;
         if (exclude && view.provider == exclude) continue;
         bool recipient_visible;
-        if (!qa_application_visual_visible_to(frontend->application,actor,local,
-                &recipient_visible,error)) return false;
+        if (!qa_application_visual_visibility_actor(visibility, actor, &view,
+            &recipient_visible, error)) return false;
         if (!recipient_visible) continue;
         float q2_back_lerp=0;
         if (!frontend_particle_q2_entity_sample(frontend,&view,&q2_back_lerp,error)) return false;

@@ -106,7 +106,8 @@ static const char *missile(int32_t weapon)
 }
 
 static bool q3_provider_models(qa_application *app, const application_unified_source *source,
-    application_provider *provider, uint64_t actors, qa_unified_frame *frame,
+    application_provider *provider, const qa_application_visual_visibility *visibility,
+    uint64_t actors, qa_unified_frame *frame,
     size_t *capacity, qa_error *error)
 {
     qa_q3_game *game = provider->state.q3;
@@ -129,6 +130,9 @@ static bool q3_provider_models(qa_application *app, const application_unified_so
         if (!qa_q3_wire_entity_read(game, slot, &row.state, &row.visibility, error)) return false;
         if (!row.visibility.present || row.binding.client_slot >= 0 ||
             !row.visibility.linked || (row.visibility.server_flags & 1u) || ((uint32_t)row.state.eFlags & 128u)) continue;
+        bool visible;
+        if (!qa_application_visual_visibility_actor(visibility, row.binding.actor, NULL, &visible, error)) return false;
+        if (!visible) continue;
         const char *paths[2] = {0};
         char inline_path[32];
         if (row.state.eType == 2) {
@@ -175,12 +179,13 @@ static bool q3_provider_models(qa_application *app, const application_unified_so
 }
 
 static bool q3_models(qa_application *app, const application_unified_source *source,
-    uint64_t actors, qa_unified_frame *frame, size_t *capacity, qa_error *error)
+    const qa_application_visual_visibility *visibility, uint64_t actors,
+    qa_unified_frame *frame, size_t *capacity, qa_error *error)
 {
     for (size_t i = 0; i < app->provider_count; ++i) {
         application_provider *p = app->providers[i];
         if (p->kind == APPLICATION_PROVIDER_Q3 && p->constructed && p->attached && !p->close_pending &&
-            !q3_provider_models(app, source, p, actors, frame, capacity, error)) return false;
+            !q3_provider_models(app, source, p, visibility, actors, frame, capacity, error)) return false;
     }
     return true;
 }
@@ -300,15 +305,24 @@ bool application_unified_presentations_build(qa_application *app, const applicat
     qa_unified_frame_visuals *visuals = application_unified_frame_alloc(frame->lease, 1, sizeof(*visuals), error);
     if (!visuals) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Unified visuals");
     frame->visuals = visuals; candidate.value = visuals;
+    qa_application_camera_view camera;
+    if (!qa_application_control_camera(app, player->actor, &camera))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Unified model visibility lost its actual Source camera");
+    size_t visibility_bytes = qa_application_visual_visibility_bytes(app);
+    void *visibility_storage = application_unified_frame_alloc(frame->lease, visibility_bytes, 1, error);
+    qa_application_visual_visibility *visibility;
+    if (!visibility_storage || !qa_application_visual_visibility_prepare(app, player->actor,
+        qa_vec_add(camera.origin, camera.view_offset), false,
+        visibility_storage, visibility_bytes, &visibility, error)) return false;
     size_t count = qa_actors_count(qa_session_actors(source->session));
     visuals->characters = count ? application_unified_frame_alloc(frame->lease, count, sizeof(*visuals->characters), error) : NULL;
     if (count && !visuals->characters) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual character roster");
     qa_application_native_q2_presentation q2;
     bool q2_found = false;
     bool ok = qa_application_native_q2_presentation_selected(app, &q2, &q2_found, error) &&
-        application_unified_native_q2_models(app, source, frame, visuals, error);
+        application_unified_native_q2_models(app, source, visibility, frame, visuals, error);
     size_t model_capacity = visuals->model_count;
-    if (ok) ok = q3_models(app, source, candidate.actors_revision, frame, &model_capacity, error);
+    if (ok) ok = q3_models(app, source, visibility, candidate.actors_revision, frame, &model_capacity, error);
     uint32_t cursor = 0; const qa_actor_record *record;
     while (ok && qa_actors_next(qa_session_actors(source->session), &cursor, &record)) {
         qa_actor_id id = record->id;
@@ -317,6 +331,9 @@ bool application_unified_presentations_build(qa_application *app, const applicat
         qa_application_selected_q3_character c; bool found;
         if (!qa_application_selected_q3_character_read(app, id, &c, &found, error)) { ok = false; break; }
         if (found && c.present) {
+            bool visible;
+            if (!qa_application_visual_visibility_actor(visibility, id, NULL, &visible, error)) { ok = false; break; }
+            if (!visible) continue;
             qa_application_q3_asset_selection appearance; bool appearance_found;
             if (!qa_application_q3_asset_selection_read(app, id, QA_ROLE_SKIN,
                     &appearance, &appearance_found, error)) { ok = false; break; }
@@ -355,10 +372,10 @@ bool application_unified_presentations_build(qa_application *app, const applicat
             }
             if (visible) {
                 bool recipient_visible;
-                if (!qa_application_visual_visible_to(app, id, player->actor, &recipient_visible, error)) {
+                if (!qa_application_visual_visibility_actor(visibility, id, &v, &recipient_visible, error)) {
                     ok = false; break;
                 }
-                v.visible = v.visible && recipient_visible;
+                if (!recipient_visible) continue;
                 const qa_product *content = qa_catalog_product(qa_launch_snapshot_catalog(source->launch), v.content);
                 if (!content) { ok = application_fail(error, QA_ERROR_NOT_FOUND, "Unified model lost its actual content product"); break; }
                 qa_application_map_view map;

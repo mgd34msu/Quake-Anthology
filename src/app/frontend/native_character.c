@@ -1,5 +1,6 @@
 #include "native_character.h"
 #include "selected_character_lifetime.h"
+#include "qa/application_visual_visibility.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -59,12 +60,23 @@ bool frontend_native_character_begin(frontend_native_character *owner, const q3n
     uint32_t difference = (uint32_t)frame->time - (uint32_t)owner->previous_time;
     int32_t elapsed; memcpy(&elapsed, &difference, sizeof(elapsed));
     owner->frame_milliseconds = elapsed < 0 ? 0 : elapsed;
+    size_t visibility_bytes = qa_application_visual_visibility_bytes(frame->application);
+    void *visibility_storage = qa_arena_alloc(&owner->frontend->frame.storage,
+        visibility_bytes, _Alignof(max_align_t), error);
+    qa_application_visual_visibility *visibility;
+    qa_vec3 eye = qa_v3(frame->local_player.origin[0], frame->local_player.origin[1],
+        frame->local_player.origin[2] + (float)frame->local_player.viewheight);
+    if (!visibility_storage || !qa_application_visual_visibility_prepare(frame->application,
+        frame->viewing_actor, eye, false, visibility_storage, visibility_bytes, &visibility, error)) return false;
     qa_actor_registry *actors = qa_world_actors(qa_application_world(frame->application));
     const qa_actor_record *record; uint32_t cursor = 0, order = 0;
     while (qa_actors_next(actors, &cursor, &record)) {
         qa_actor_id actor = record->id; qa_application_selected_q3_character source; bool found;
         if (!qa_application_selected_q3_character_read(frame->application, actor, &source, &found, error)) return false;
         if (!found) continue;
+        bool visible;
+        if (!qa_application_visual_visibility_actor(visibility, actor, NULL, &visible, error)) return false;
+        if (!visible) continue;
         qa_application_q3_asset_selection appearance; bool appearance_found;
         if (!qa_application_q3_asset_selection_read(frame->application, actor, QA_ROLE_SKIN,
             &appearance, &appearance_found, error)) return false;

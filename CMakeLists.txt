@@ -1360,6 +1360,7 @@ add_library(qa_application STATIC
     src/app/application/save_native_q2_record.c
     src/app/application/save_resolvers.c
     src/app/application/visuals.c
+    src/app/application/visual_visibility.c
     src/app/application/network_q2_hooks.c
     src/app/application/native_q2_rotation.c
     src/app/application/view_preferences.c
