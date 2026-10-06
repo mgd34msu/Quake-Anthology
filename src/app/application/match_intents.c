@@ -266,7 +266,7 @@ bool application_match_intents_prepare(application_match_intents *state, qa_appl
     state->busy = true;
     bool okay = prepare_inner(state, app, consumed, error);
     state->busy = false;
-    if (okay && !*consumed && state->stage == MATCH_MAP_EMPTY)
+    if (okay && !*consumed && state->stage == MATCH_MAP_EMPTY && app->frame_preparing)
         okay = application_q3_restart_prepare(state->restart, app, consumed, error);
     return okay;
 }
