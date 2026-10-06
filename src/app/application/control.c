@@ -4197,7 +4197,9 @@ bool application_control_physics_read(const qa_application *application,
     out->motion = record->cutscene ? QA_PHYSICS_STATIONARY : QA_PHYSICS_STEP;
     out->solid = QA_PHYSICS_BOX;
     out->flags = QA_PHYSICS_PLAYER;
-    if (record->ground.hit != QA_TRACE_HIT_NONE)
+    const qa_movement_state *active = application_control_frames_state_current(application, actor);
+    qa_movement_ground ground = state_ground(active ? active : &record->state, record->ground);
+    if (ground.hit != QA_TRACE_HIT_NONE)
         out->flags |= QA_PHYSICS_ONGROUND;
     if (record->flight)
         out->flags |= QA_PHYSICS_FLYING;
