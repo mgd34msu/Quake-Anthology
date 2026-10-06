@@ -1208,34 +1208,78 @@ static bool native_q1_capture(application_provider *provider, qa_save_purpose pu
     return ok;
 }
 
-static bool native_q1_restore(application_provider *provider, qa_bytes bytes, qa_error *error)
+typedef struct native_q1_record {
+    qa_bytes game, registry, npc;
+} native_q1_record;
+
+static bool native_q1_record_read(qa_bytes bytes, bool transition,
+    native_q1_record *out, qa_error *error)
 {
     if (!bytes.data || bytes.size < 28 || memcmp(bytes.data, "QAN1", 4))
         return application_fail(error, QA_ERROR_FORMAT, "Invalid native Q1 source owner bundle");
-    application_provider *current=application_save_current_provider(provider);
     uint64_t game_size = qa_load_u64le(bytes.data + 4), cvars_size = qa_load_u64le(bytes.data + 12);
     uint64_t npc_size = qa_load_u64le(bytes.data + 20);
-    if (!game_size || game_size > bytes.size - 28 || (!current && !cvars_size) ||
-        (current && cvars_size) ||
+    if (!game_size || game_size > bytes.size - 28 || (!transition && !cvars_size) ||
+        (transition && cvars_size) ||
         cvars_size > bytes.size - 28 - (size_t)game_size || !npc_size ||
         npc_size != bytes.size - 28 - (size_t)game_size - (size_t)cvars_size)
         return application_fail(error, QA_ERROR_FORMAT, "Invalid native Q1 source owner lengths");
-    qa_buffer settings={0};
-    qa_bytes registry={bytes.data + 28 + (size_t)game_size, (size_t)cvars_size};
-    bool ok=!current || (current->kind==APPLICATION_PROVIDER_Q1 &&
-        application_native_q1_console_capture(current,&settings,error));
-    if (ok && current) registry=(qa_bytes){settings.data,settings.size};
-    qa_q1_restore *ticket = NULL;
-    ok = ok && application_native_q1_console_restore(provider,registry,error) &&
-        qa_q1_game_restore_prepare_source(provider->state.q1,
-            (qa_bytes){bytes.data + 28, (size_t)game_size}, current?current->state.q1:NULL,
-            &ticket, error) &&
-        qa_q1_game_restore_commit(ticket, error);
-    if (!ok) qa_q1_game_restore_abort(ticket);
+    *out = (native_q1_record){
+        .game = {bytes.data + 28, (size_t)game_size},
+        .registry = {bytes.data + 28 + (size_t)game_size, (size_t)cvars_size},
+        .npc = {bytes.data + 28 + (size_t)game_size + (size_t)cvars_size, (size_t)npc_size},
+    };
+    return true;
+}
+
+bool application_native_q1_checkpoint_prepare(application_provider *provider, qa_error *error)
+{
+    const qa_save_image *image = provider->application->native_restore_image;
+    const qa_save_record *saved = image ? qa_save_image_find(image, QA_SAVE_PROVIDER,
+        provider->launch->selection.instance) : NULL;
+    qa_bytes bytes = saved ? saved->payload : (qa_bytes){0};
+    if (provider->kind != APPLICATION_PROVIDER_Q1 || !provider->constructed ||
+        provider->state.q1 || provider->attached || provider->close_pending ||
+        provider->application->operation != APPLICATION_PERSISTING ||
+        provider->native_q1_restore_game.data || provider->native_q1_restore_npc.data ||
+        !saved || strcmp(saved->owner.schema, "qa.q1.native") || saved->owner.backend[0] ||
+        !bytes.data || bytes.size < 28 || memcmp(bytes.data, "QAPV", 4) ||
+        qa_load_u32le(bytes.data + 4) != APPLICATION_PROVIDER_Q1 ||
+        qa_load_u32le(bytes.data + 8) > 1 || qa_load_u64le(bytes.data + 20) != bytes.size - 28)
+        return application_fail(error, QA_ERROR_FORMAT, "Missing actual native Q1 GAME constructor record");
+    bool transition = qa_save_image_metadata(image)->purpose == QA_SAVE_TRANSITION;
+    application_provider *current = application_save_current_provider(provider);
+    if (transition && (!current || current->kind != APPLICATION_PROVIDER_Q1 ||
+        !current->constructed || !current->attached || current->close_pending))
+        return application_fail(error, QA_ERROR_FORMAT, "Q1 level restore lacks its current unit Source settings");
+    native_q1_record record;
+    if (!native_q1_record_read((qa_bytes){bytes.data + 28, bytes.size - 28}, transition, &record, error))
+        return false;
+    qa_buffer settings = {0};
+    bool okay = !current || application_native_q1_console_capture(current, &settings, error);
+    if (okay && current) record.registry = (qa_bytes){settings.data, settings.size};
+    okay = okay && application_native_q1_console_restore(provider, record.registry, error);
     qa_buffer_free(&settings);
-    if (ok) ok = application_bots_npc_restore(provider,
-        (qa_bytes){bytes.data + 28 + (size_t)game_size + (size_t)cvars_size, (size_t)npc_size}, error);
-    return ok;
+    if (okay) {
+        provider->native_q1_restore_game = record.game;
+        provider->native_q1_restore_npc = record.npc;
+    }
+    return okay;
+}
+
+static bool native_q1_restore(application_provider *provider, qa_error *error)
+{
+    qa_bytes game = provider->native_q1_restore_game, npc = provider->native_q1_restore_npc;
+    if (!provider->application->native_restore_image || !game.data || !npc.data)
+        return application_fail(error, QA_ERROR_FORMAT, "Native Q1 inverse lost its prepared Source record");
+    provider->native_q1_restore_game = (qa_bytes){0};
+    provider->native_q1_restore_npc = (qa_bytes){0};
+    application_provider *current = application_save_current_provider(provider);
+    qa_q1_restore *ticket = NULL;
+    bool okay = qa_q1_game_restore_prepare_source(provider->state.q1, game,
+        current ? current->state.q1 : NULL, &ticket, error) && qa_q1_game_restore_commit(ticket, error);
+    if (!okay) qa_q1_game_restore_abort(ticket);
+    return okay && application_bots_npc_restore(provider, npc, error);
 }
 
 static bool provider_capture(application_provider *provider, qa_save_purpose purpose,
@@ -1286,7 +1330,7 @@ static bool provider_restore(application_persistence *operation,
     qa_bytes state = {bytes.data + 28, bytes.size - 28};
     bool ok;
     if (provider->kind == APPLICATION_PROVIDER_Q1) {
-        ok = native_q1_restore(provider, state, error);
+        ok = native_q1_restore(provider, error);
     } else if (provider->kind == APPLICATION_PROVIDER_Q2)
         ok = application_native_q2_checkpoint_restore(provider, state, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q3)

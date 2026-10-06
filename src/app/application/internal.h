@@ -56,6 +56,8 @@ typedef struct application_provider {
     struct application_native_client_role *native_client_roles;
     struct application_native_q1_console *native_q1_console;
     struct application_native_q1_wire *native_q1_wire;
+    /* Borrowed from native_restore_image between constructor and inverse. */
+    qa_bytes native_q1_restore_game, native_q1_restore_npc;
     struct application_native_q2_console *native_q2_console;
     struct application_native_q3_console *native_q3_console;
     struct application_native_q3_remote_role *native_q3_remote_roles;

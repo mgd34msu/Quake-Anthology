@@ -22,6 +22,7 @@
 #include "native_q2_combat_policy.h"
 #include "bots_npc.h"
 #include "startup_flow.h"
+#include "save_private.h"
 #include "engine_shutdown.h"
 #include "supplies.h"
 #include "equipment_actions.h"
@@ -540,8 +541,6 @@ static bool construct_q1(qa_application *application,
     bool console_created = provider->native_q1_console ||
         application_native_q1_console_create(provider, &options, error);
     if (!console_created || !native_console_preinit(provider, error)) return false;
-    if (application->operation != APPLICATION_PERSISTING &&
-        !q1_final_options(provider, choices, &options, error)) return false;
     for (size_t i = 0; i < choices->mode_count; ++i)
         if (choices->modes[i].rules.enabled && choices->modes[i].rules.source == QA_MODE_Q1_HORDE &&
             !strcmp(choices->modes[i].instance, provider->launch->selection.instance)) {
@@ -551,6 +550,9 @@ static bool construct_q1(qa_application *application,
                 !qa_cvars_declare_save_policy(cvars, "horde", QA_CVAR_SAVE_GAMEPLAY, error) ||
                 !qa_cvars_set(cvars, "horde", "1", true, error)) return false;
         }
+    if ((application->operation == APPLICATION_PERSISTING &&
+         !application_native_q1_checkpoint_prepare(provider, error)) ||
+        !q1_final_options(provider, choices, &options, error)) return false;
     if (!application_native_q1_wire_create(provider, error)) return false;
     qa_targets_monsters_configure(application->targets, application, application_monster_mission);
     qa_q1_host host = {.context = provider,
@@ -1629,6 +1631,10 @@ bool application_provider_deconstruct(application_provider *provider, qa_error *
         application_unified_event_owner_bound_is(app, provider))
         provider->event_activation_bound = true;
     bool ok = deconstruct_provider(provider, error);
+    if (ok && provider) {
+        provider->native_q1_restore_game = (qa_bytes){0};
+        provider->native_q1_restore_npc = (qa_bytes){0};
+    }
     if (ok && provider) application_network_q2_capture_dispose(provider);
     if (ok && provider) application_q3_wire_capture_dispose(provider);
     if (ok) application_network_q2_retire_source_bindings(provider);
