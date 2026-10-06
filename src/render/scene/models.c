@@ -187,6 +187,7 @@ static void replacement_destroy(qa_scene_model *model) {
 void qa_scene_model_destroy(qa_scene_model *model) {
     if (!model) return;
     if (model->replacement_parent || !qa_scene_model_idle(model)) return;
+    if (model->frame_references) { model->destroy_pending = true; return; }
     replacement_destroy(model);
     scene_model_topology_destroy(model);
     free(model->sampled_pose);
@@ -198,6 +199,38 @@ void qa_scene_model_destroy(qa_scene_model *model) {
     if (model->replacement_source_lease.release) model->replacement_source_lease.release(model->replacement_source_lease.context);
     if (model->source_lease.release) model->source_lease.release(model->source_lease.context);
     free(model);
+}
+
+bool scene_model_frame_retain(qa_scene_model_pin *pin, qa_scene_model *model,
+    const qa_model_pose *pose, qa_error *error)
+{
+    unsigned index = SCENE_MODEL_TRANSIENT_SAMPLE;
+    if (pose && pose == model->source->bind_pose) index = SCENE_MODEL_BIND_SAMPLE;
+    else for (unsigned i = 0; i < SCENE_MODEL_POSE_VARIANTS; ++i)
+        if (model->poses[i].ready && pose == model->poses[i].pose) { index = i; break; }
+    if (index == SCENE_MODEL_TRANSIENT_SAMPLE || model->destroy_pending || pin->model ||
+        !model->source_lease.context || !model->source_lease.release)
+        return fail(error, QA_ERROR_ARGUMENT, "scene model pin requires its retained pose slot");
+    unsigned *references = index == SCENE_MODEL_BIND_SAMPLE ?
+        &model->bind_frame_references : &model->poses[index].frame_references;
+    if (*references == UINT_MAX || model->frame_references == UINT_MAX)
+        return fail(error, QA_ERROR_MEMORY, "scene model frame reference count overflow");
+    *pin = (qa_scene_model_pin){.model = model, .pose = pose};
+    ++model->frame_references;
+    ++*references;
+    return true;
+}
+
+void scene_model_frame_release(qa_scene_model_pin *pin)
+{
+    qa_scene_model *model = pin->model;
+    if (!model) return;
+    if (pin->pose == model->source->bind_pose) --model->bind_frame_references;
+    else for (unsigned i = 0; i < SCENE_MODEL_POSE_VARIANTS; ++i)
+        if (pin->pose == model->poses[i].pose) { --model->poses[i].frame_references; break; }
+    --model->frame_references;
+    *pin = (qa_scene_model_pin){0};
+    if (!model->frame_references && model->destroy_pending) qa_scene_model_destroy(model);
 }
 
 uint32_t qa_scene_model_effect_flags(const qa_scene_model *model) {
@@ -1012,6 +1045,102 @@ static bool md5_bounds_visible(const qa_scene_model_input *input, qa_bounds boun
     return qa_scene_bounds_visible(transformed, planes, count);
 }
 
+static unsigned md5_sample_index(const qa_scene_model *model, const qa_scene_model_input *input,
+    uint32_t mesh, bool *reusable)
+{
+    *reusable = false;
+    if (!input->pose || input->pose_count != model->source->bone_count) return SCENE_MODEL_TRANSIENT_SAMPLE;
+    unsigned index = SCENE_MODEL_TRANSIENT_SAMPLE, references = 0;
+    if (input->pose == model->source->bind_pose) {
+        index = SCENE_MODEL_BIND_SAMPLE; references = model->bind_frame_references;
+    } else for (unsigned i = 0; i < SCENE_MODEL_POSE_VARIANTS; ++i)
+        if (model->poses[i].ready && input->pose == model->poses[i].pose) {
+            index = i; references = model->poses[i].frame_references; break;
+        }
+    if (index == SCENE_MODEL_TRANSIENT_SAMPLE) return index;
+    const scene_model_sample *sample = &model->meshes[mesh].samples[index];
+    if (references && sample->pose && sample->skin.rounding != fegetround()) return SCENE_MODEL_TRANSIENT_SAMPLE;
+    *reusable = true;
+    return index;
+}
+
+static void md5_sample_prepare(scene_model_sample *sample, const qa_scene_model_input *input, bool reusable)
+{
+    int rounding = fegetround();
+    if (!reusable || sample->pose != input->pose || sample->skin.rounding != rounding) {
+        sample->pose = reusable ? input->pose : NULL;
+        sample->skin.rounding = rounding;
+        sample->skin.error = (qa_error){0};
+        sample->skin.ready = sample->bounds_ready = sample->shell_ready = false;
+    }
+}
+
+static bool md5_deferred_allowed(const qa_scene_model *model, const qa_scene_model_input *input,
+    const qa_scene_model_input *original, unsigned depth)
+{
+    if (model->source->format != QA_MODEL_MD5 || depth || model->active_submissions > 1 || original->pose ||
+        (input->family != QA_SCENE_Q1 && input->family != QA_SCENE_Q2) ||
+        !model->source_lease.context || !model->source_lease.release ||
+        (input->animation && (!model->animation_lease.context || !model->animation_lease.release ||
+            !model->replacement_source || input->animation != model->replacement_source->animation)) ||
+        input->alias_lighting == QA_ALIAS_Q3_DIFFUSE || input->custom_material || input->planar_shadow ||
+        input->shadow_only || input->shadow_light_count || input->source_order || input->source_scratch ||
+        input->source_model_owner || input->source_model_retain || input->source_model_release ||
+        input->source_recipient_image) return false;
+    return true;
+}
+
+static bool md5_deferred_mesh(qa_scene_model *model, const qa_scene_model_input *input, uint32_t index,
+    bool cull, qa_scene_mesh *mesh, unsigned *sample_index, bool *visible)
+{
+    bool reusable;
+    *sample_index = md5_sample_index(model, input, index, &reusable);
+    if (!reusable) return false;
+    const scene_model_mesh *retained = &model->meshes[index];
+    if (!retained->retained.geometry || !retained->retained.vertex_count || !retained->retained.index_count) return false;
+    bool shell = scene_model_has_shell(input);
+    const scene_model_sample *sample = &retained->samples[*sample_index];
+    bool same = sample->pose == input->pose && sample->skin.rounding == fegetround();
+    qa_bounds bounds;
+    if (same && sample->skin.ready && (shell ? sample->shell_ready : sample->bounds_ready))
+        bounds = shell ? sample->shell_bounds : sample->bounds;
+    else if (!md5_influence_bounds(model, index, input, shell, &bounds)) return false;
+    *mesh = retained->retained;
+    mesh->bounds = bounds;
+    *visible = !cull || md5_bounds_visible(input, bounds);
+    return true;
+}
+
+static bool md5_deferred_skin(qa_scene_model *model, const qa_scene_model_input *input, uint32_t index,
+    unsigned sample_index, size_t ordinal, const qa_scene_skin_pose **pose, qa_scene_frame *frame,
+    const qa_scene_skinning **out, qa_error *error)
+{
+    if (!qa_scene_frame_model(frame, model, input->pose, error)) return false;
+    if (!*pose) {
+        size_t bytes = input->pose_count * sizeof(*input->pose);
+        qa_scene_skin_pose *prepared = qa_arena_alloc(&frame->storage, sizeof(*prepared),
+            _Alignof(qa_scene_skin_pose), error);
+        qa_model_pose *joints = qa_arena_alloc(&frame->storage, bytes, _Alignof(qa_model_pose), error);
+        if (!prepared || !joints) return false;
+        memcpy(joints, input->pose, bytes);
+        *prepared = (qa_scene_skin_pose){.joints = joints, .count = input->pose_count, .ordinal = ordinal};
+        *pose = prepared;
+    }
+    scene_model_sample *sample = &model->meshes[index].samples[sample_index];
+    md5_sample_prepare(sample, input, true);
+    qa_scene_skinning *skin = qa_arena_alloc(&frame->storage, sizeof(*skin), _Alignof(qa_scene_skinning), error);
+    if (!skin) return false;
+    bool shell = scene_model_has_shell(input);
+    qa_vec3 light = input->alias_lighting == QA_ALIAS_PREPARED_LIGHT ? input->alias_light : scene_model_alias_light(input);
+    scene_model_shading shading = {0};
+    if (!shell) shading = scene_model_shade_prepare(input);
+    *skin = (qa_scene_skinning){.pose = *pose, .sample = &sample->skin,
+        .shade_direction = shading.direction, .light = light, .tint = input->color,
+        .shell = shell ? 4 : 0, .shade = !shell};
+    *out = skin;
+    return true;
+}
+
 static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *input, uint32_t index,
                            bool cull, qa_scene_frame *frame, qa_scene_mesh *out, bool *visible,
                            qa_error *error) {
@@ -1029,16 +1158,9 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
     }
     unsigned sample_index = 0;
     bool reusable = false;
-    if (model->source->format == QA_MODEL_MD5) {
-        sample_index = SCENE_MODEL_POSE_VARIANTS;
-        reusable = input->pose && input->pose_count == model->source->bone_count && input->pose == model->source->bind_pose;
-        for (unsigned i = 0; i < SCENE_MODEL_POSE_VARIANTS; ++i)
-            if (model->poses[i].ready && input->pose_count == model->source->bone_count && input->pose == model->poses[i].pose) {
-                sample_index = i; reusable = true; break;
-            }
-    }
+    if (model->source->format == QA_MODEL_MD5) sample_index = md5_sample_index(model, input, index, &reusable);
     scene_model_sample *sample = &retained->samples[sample_index];
-    qa_model_vertex *sampled = sample->vertices;
+    qa_model_vertex *sampled = sample->skin.vertices;
     if (!sampled) return false;
     bool shell = scene_model_has_shell(input);
     bool alias = model->source->format == QA_MODEL_MDL || model->source->format == QA_MODEL_MD2;
@@ -1056,16 +1178,23 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
         if (!qa_model_sample_alias(model->source, input->frame, input->old_frame, input->back_lerp,
                                     delta, sampled, source->vertex_count, error)) return false;
     } else if (model->source->format == QA_MODEL_MD5) {
-        if (!reusable || sample->pose != input->pose || sample->rounding != fegetround()) {
-            sample->pose = NULL;
+        md5_sample_prepare(sample, input, reusable);
+        if (!sample->skin.ready) {
             qa_bounds bounds;
             if (cull && md5_influence_bounds(model, index, input, shell, &bounds) && !md5_bounds_visible(input, bounds)) {
                 *visible = false; return true;
             }
             if (!qa_model_skin_md5(model->source, index, input->pose, input->pose_count,
                                     sampled, source->vertex_count, error)) return false;
+            sample->skin.error = (qa_error){0};
+            sample->skin.ready = true;
+        }
+        if (sample->skin.error.code != QA_OK) {
+            if (error) *error = sample->skin.error;
+            return false;
+        }
+        if (!sample->bounds_ready) {
             sample->bounds = model_bounds_empty();
-            sample->shell_ready = false;
             for (size_t i = 0; i < out->vertex_count; ++i) {
                 uint32_t source_index = retained->sources[i];
                 if (source_index >= source->vertex_count) {
@@ -1073,8 +1202,7 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
                 }
                 model_bounds_add(&sample->bounds, model_vec(sampled[source_index].position));
             }
-            sample->rounding = fegetround();
-            if (reusable) sample->pose = input->pose;
+            sample->bounds_ready = true;
         }
     } else if (!qa_model_sample_mesh(model->source, index, input->frame, input->old_frame,
                                       input->back_lerp, sampled, source->vertex_count, error)) return false;
@@ -1342,8 +1470,8 @@ static bool sample_animation_pose(qa_scene_model *model, qa_scene_model_input *i
     }
     unsigned index = model->next_pose;
     unsigned scanned = 0;
-    while (scanned < SCENE_MODEL_POSE_VARIANTS && model->poses[index].ready &&
-        model->poses[index].frame_sequence == frame->sequence) {
+    while (scanned < SCENE_MODEL_POSE_VARIANTS && (model->poses[index].frame_references ||
+        (model->poses[index].ready && model->poses[index].frame_sequence == frame->sequence))) {
         index = (index + 1) % SCENE_MODEL_POSE_VARIANTS;
         ++scanned;
     }
@@ -1472,12 +1600,18 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
             uint32_t lod = input.lod < model->source->lod_count ? input.lod : model->source->lod_count - 1;
             first = model->source->lods[lod].first_mesh; count = model->source->lods[lod].mesh_count;
         }
+        bool defer = md5_deferred_allowed(model, &input, original, depth);
+        size_t ordinal = frame->command_count;
+        const qa_scene_skin_pose *skin_pose = NULL;
         for (uint32_t i = first; i < first + count; ++i) {
             qa_scene_mesh mesh;
             bool mesh_visible = true;
             bool weapon = input.family == QA_SCENE_Q2 && (input.view_model || (input.flags & 4));
             bool cull = !source_md3 && !input.no_cull && !input.shadow_only && !weapon;
             scene_model_source_pose *pose = NULL;
+            const qa_scene_skinning *skinning = NULL;
+            unsigned sample_index = SCENE_MODEL_TRANSIENT_SAMPLE;
+            bool deferred_mesh = false;
             scene_model_image *image;
             scene_model_image external = {0};
             if (model->source_topology && input.source_scratch && input.source_model_owner && !input.shadow_only) {
@@ -1485,9 +1619,20 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
                 if (!pose) return false;
                 *pose = (scene_model_source_pose){.model = model, .surface = i, .input = *original};
                 mesh = model->meshes[i].retained;
-            } else if (!mesh_geometry(model, &input, i, cull, frame, &mesh, &mesh_visible, error)) return false;
+            } else {
+                deferred_mesh = defer && md5_deferred_mesh(model, &input, i, cull,
+                    &mesh, &sample_index, &mesh_visible);
+                if (!deferred_mesh && !mesh_geometry(model, &input, i, cull, frame, &mesh, &mesh_visible, error)) return false;
+            }
             if (!mesh_visible) continue;
             if (!select_image(model, &input, i, &external, &image, error)) return false;
+            if (deferred_mesh) {
+                if (image && image->material && !scene_model_has_shell(&input)) {
+                    if (!mesh_geometry(model, &input, i, cull, frame, &mesh, &mesh_visible, error)) return false;
+                    if (!mesh_visible) continue;
+                } else if (!md5_deferred_skin(model, &input, i, sample_index, ordinal, &skin_pose,
+                    frame, &skinning, error)) return false;
+            }
             if (model->source->format != QA_MODEL_MD5 && cull && mesh.vertex_count) {
                 qa_model_bounds local = cull_bounds(model, original, &mesh), world;
                 qa_model_transform_bounds(&input.transform, &local, &world);
@@ -1496,7 +1641,8 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
                 size_t plane_count = qa_scene_frustum(&input.view, planes);
                 if (!qa_scene_bounds_visible(bounds, planes, plane_count)) continue;
             }
-            if (!scene_model_emit(model, &input, &mesh, image, scene_model_has_shell(&input), false, pose, frame, error)) return false;
+            if (!scene_model_emit(model, &input, &mesh, image, scene_model_has_shell(&input), false,
+                pose, skinning, frame, error)) return false;
         }
     }
     return submit_attachments(model, &input, frame, depth, error);
@@ -1505,7 +1651,7 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
 static bool model_submit(qa_scene_model *model, const qa_scene_model_input *input,
                          qa_scene_frame *frame, unsigned depth, qa_error *error) {
     for (const qa_scene_model *owner = model; owner; owner = owner->replacement_parent)
-        if (owner->checkpoint_active || owner->capture) {
+        if (owner->checkpoint_active || owner->capture || owner->destroy_pending) {
             qa_error_set(error, QA_ERROR_ARGUMENT, depth, "model owner checkpoint is active");
             return false;
         }

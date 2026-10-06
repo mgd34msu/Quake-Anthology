@@ -1,5 +1,6 @@
 #include "qa/scene.h"
 #include "resources_internal.h"
+#include "models/internal.h"
 #include "qa/material_source_scratch.h"
 #include "../material/source_scratch_private.h"
 
@@ -60,6 +61,9 @@ void qa_scene_frame_reset(qa_scene_frame *frame, uint64_t sequence)
     for (size_t i = 0; i < frame->geometry_count; ++i)
         qa_scene_geometry_release(frame->geometries[i]);
     frame->geometry_count = 0;
+    for (size_t i = 0; i < frame->model_count; ++i)
+        scene_model_frame_release(&frame->models[i]);
+    frame->model_count = 0;
     frame->command_count = 0;
     frame->picture_view_end = 0;
     frame->group_count = 0;
@@ -81,6 +85,7 @@ void qa_scene_frame_destroy(qa_scene_frame *frame)
     free(frame->commands);
     free(frame->images);
     free(frame->geometries);
+    free(frame->models);
     free(frame->groups);
     free(frame->sort_groups);
     free(frame->sort_commands);
@@ -130,6 +135,29 @@ bool qa_scene_frame_geometry(qa_scene_frame *frame, const qa_scene_geometry *geo
     frame->geometries = data;
     qa_scene_geometry_retain(geometry);
     frame->geometries[frame->geometry_count++] = geometry;
+    return true;
+}
+
+bool qa_scene_frame_model(qa_scene_frame *frame, qa_scene_model *model,
+    const qa_model_pose *pose, qa_error *error)
+{
+    if (!frame || !model) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "scene model pin requires its frame and owner");
+        return false;
+    }
+    for (size_t i = 0; i < frame->model_count; ++i)
+        if (frame->models[i].model == model && frame->models[i].pose == pose) return true;
+    if (frame->model_count == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "scene model reference count overflow");
+        return false;
+    }
+    void *data = frame->models;
+    if (!reserve(&data, &frame->model_capacity, frame->model_count + 1,
+        sizeof(*frame->models), error)) return false;
+    frame->models = data;
+    qa_scene_model_pin pin = {0};
+    if (!scene_model_frame_retain(&pin, model, pose, error)) return false;
+    frame->models[frame->model_count++] = pin;
     return true;
 }
 

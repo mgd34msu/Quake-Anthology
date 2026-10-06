@@ -230,7 +230,8 @@ static bool recipient_image(const qa_scene_model *model, const qa_scene_model_in
 
 bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
                        const qa_scene_mesh *mesh, const scene_model_image *image,
-                       bool unlit, bool world, scene_model_source_pose *pose, qa_scene_frame *frame, qa_error *error) {
+                       bool unlit, bool world, scene_model_source_pose *pose,
+                       const qa_scene_skinning *skinning, qa_scene_frame *frame, qa_error *error) {
     const qa_scene_model_input *original = input;
     qa_scene_model_input eyes;
     qa_model_format format = model->source->format;
@@ -306,6 +307,7 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
     size_t begin = frame->command_count;
     qa_scene_draw draw = {0};
     draw.mesh = *mesh;
+    draw.skinning = skinning;
     if (world) qa_scene_matrix_identity(&draw.model);
     else draw.model = qa_scene_model_matrix(&input->transform);
     draw.mvp = qa_scene_matrix_multiply(input->view.projection,

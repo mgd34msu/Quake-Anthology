@@ -657,6 +657,10 @@ typedef struct qa_scene_group {
     float priority;
     uint32_t entity, fog, dlight, source_sort;
 } qa_scene_group;
+typedef struct qa_scene_model_pin {
+    qa_scene_model *model;
+    const qa_model_pose *pose;
+} qa_scene_model_pin;
 /* Owns its arrays; do not shallow-copy a frame. Reset only once every consuming
  * backend has completed it. Commands are contiguous; transient geometry lives
  * in storage. Frame geometry pins survive command rollback until reset. */
@@ -681,6 +685,8 @@ typedef struct qa_scene_frame {
     size_t image_count, image_capacity;
     const qa_scene_geometry **geometries;
     size_t geometry_count, geometry_capacity;
+    qa_scene_model_pin *models;
+    size_t model_count, model_capacity;
     qa_scene_group *groups;
     size_t group_count, group_capacity;
     qa_scene_group **sort_groups;
@@ -699,6 +705,7 @@ bool qa_scene_frame_draw(qa_scene_frame *, const qa_scene_draw *, qa_error *);
 /* Pin borrowed retained geometry, including intermediate shadow-caster data,
  * until reset. No command is emitted. NULL geometry needs no reference. */
 bool qa_scene_frame_geometry(qa_scene_frame *, const qa_scene_geometry *, qa_error *);
+bool qa_scene_frame_model(qa_scene_frame *, qa_scene_model *, const qa_model_pose *, qa_error *);
 bool qa_scene_frame_image(qa_scene_frame *, const qa_scene_image *, qa_error *);
 bool qa_scene_frame_image_region(qa_scene_frame *, const qa_scene_image *, qa_scene_rect,
                                  qa_error *);

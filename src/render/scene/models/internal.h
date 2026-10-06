@@ -18,20 +18,20 @@ typedef struct scene_model_image {
     struct scene_model_image *next;
 } scene_model_image;
 
-enum { SCENE_MODEL_POSE_VARIANTS = 8 };
+enum { SCENE_MODEL_POSE_VARIANTS = 8, SCENE_MODEL_BIND_SAMPLE = 8, SCENE_MODEL_TRANSIENT_SAMPLE = 9 };
 typedef struct scene_model_pose_variant {
     qa_model_pose *pose, *frames;
     float back_lerp;
     int rounding;
     uint64_t frame_sequence;
+    unsigned frame_references;
     bool ready, frames_equal;
 } scene_model_pose_variant;
 typedef struct scene_model_sample {
-    qa_model_vertex *vertices;
+    qa_scene_skin_sample skin;
     const qa_model_pose *pose;
     qa_bounds bounds, shell_bounds;
-    int rounding;
-    bool shell_ready;
+    bool bounds_ready, shell_ready;
 } scene_model_sample;
 typedef struct scene_model_influence {
     qa_bounds offsets, normals;
@@ -45,7 +45,7 @@ typedef struct scene_model_mesh {
     uint8_t *normal_indices;
     scene_model_image **shaders;
     qa_model_vertex *sampled;
-    scene_model_sample samples[SCENE_MODEL_POSE_VARIANTS + 1];
+    scene_model_sample samples[SCENE_MODEL_POSE_VARIANTS + 2];
     scene_model_influence *influences;
     double min_bias_sum, max_bias_sum;
     uint32_t max_weights;
@@ -72,6 +72,8 @@ struct qa_scene_model {
     qa_model_pose *sampled_pose, *sampled_pose_frames;
     scene_model_pose_variant poses[SCENE_MODEL_POSE_VARIANTS];
     unsigned next_pose;
+    unsigned frame_references, bind_frame_references;
+    bool destroy_pending;
     scene_model_image **skins, **sprites;
     scene_model_image *images;
     struct qa_scene_model *replacement;
@@ -112,6 +114,8 @@ bool scene_model_indexed_override(qa_scene_model *, const qa_scene_model_indexed
 void scene_model_images_destroy(qa_scene_model *);
 bool scene_model_topology(qa_scene_model *, uint32_t, qa_error *);
 void scene_model_topology_destroy(qa_scene_model *);
+bool scene_model_frame_retain(qa_scene_model_pin *, qa_scene_model *, const qa_model_pose *, qa_error *);
+void scene_model_frame_release(qa_scene_model_pin *);
 uint8_t scene_model_normal_index(const float normal[3]);
 qa_vec3 scene_model_shell_color(uint32_t flags);
 bool scene_model_has_shell(const qa_scene_model_input *);
@@ -134,6 +138,6 @@ bool scene_model_source_pose_retain(void *, qa_error *);
 void scene_model_source_pose_release(void *);
 bool scene_model_emit(qa_scene_model *, const qa_scene_model_input *, const qa_scene_mesh *,
                        const scene_model_image *, bool unlit, bool world,
-                       scene_model_source_pose *, qa_scene_frame *, qa_error *);
+                       scene_model_source_pose *, const qa_scene_skinning *, qa_scene_frame *, qa_error *);
 
 #endif

@@ -67,11 +67,17 @@ bool scene_model_topology(qa_scene_model *model, uint32_t mesh_index, qa_error *
     mesh->sources = calloc(allocated_vertices ? allocated_vertices : 1, sizeof(*mesh->sources));
     mesh->indices = calloc(corners ? corners : 1, sizeof(*mesh->indices));
     mesh->shaders = calloc(source->shader_count ? source->shader_count : 1, sizeof(*mesh->shaders));
-    size_t sample_count = model->source->format == QA_MODEL_MD5 ? SCENE_MODEL_POSE_VARIANTS + 1 : 1;
+    size_t sample_count = model->source->format == QA_MODEL_MD5 ? SCENE_MODEL_POSE_VARIANTS + 2 : 1;
     if (source_vertices > SIZE_MAX / sample_count / sizeof(*mesh->sampled)) goto too_large;
     mesh->sampled = calloc(source_vertices ? source_vertices * sample_count : 1, sizeof(*mesh->sampled));
     if (!mesh->vertices || !mesh->sources || !mesh->indices || !mesh->shaders || !mesh->sampled) goto memory;
-    for (size_t i = 0; i < sample_count; ++i) mesh->samples[i].vertices = mesh->sampled + i * source_vertices;
+    for (size_t i = 0; i < sample_count; ++i) {
+        mesh->samples[i].skin = (qa_scene_skin_sample){.vertices = mesh->sampled + i * source_vertices,
+            .count = source_vertices, .view = {.vertices = source->vertices,
+                .vertex_stride = sizeof(qa_model_vertex), .normal_offset = offsetof(qa_model_vertex, normal),
+                .weights = source->weights, .ranges = source->vertex_weights, .vertex_count = source_vertices,
+                .weight_count = source->weight_count, .bone_count = model->source->bone_count}};
+    }
     if (model->source->format == QA_MODEL_MD5) {
         size_t joints = model->source->bone_count;
         if (joints > SIZE_MAX / sizeof(*mesh->influences)) goto too_large;
