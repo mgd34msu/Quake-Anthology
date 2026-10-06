@@ -24,6 +24,8 @@
 #include "remote_q2_client.h"
 #include "qa/media_library_save.h"
 #include "qa/media_library_prepare.h"
+#include "particle_clock.h"
+#include "q2_client_lerp.h"
 #include <limits.h>
 
 typedef struct frontend_visual_content {
@@ -1103,6 +1105,10 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
         return false;
     if (!present || source.product->family != weapon.family) return true;
     qa_vec3 origin, angles;
+    qa_application_native_q2_player_sample q2_client_view={0};
+    uint32_t old_gun_frame=0;
+    float q2_back_lerp=0;
+    bool q2_client_view_ready=false;
     uint8_t left_hand = 0;
     if (weapon.family == QA_GAME_Q1) {
         const qa_cvar_view *gun = qa_cvars_find(source.registry, "r_drawviewmodel");
@@ -1130,9 +1136,12 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
         if (gun->number == 0 || hand->number == 2 ||
             (source.product->edition == QA_EDITION_CLASSIC && recipient->q2_view.fov > 90)) return true;
         if (hand->number >= 0 && hand->number <= 2) left_hand = (uint8_t)hand->number;
-        origin = qa_vec_add(world->view.origin, recipient->q2_view.gun_offset);
-        angles = qa_vec_add(qa_vec_add(recipient->q2_view.angles,
-            recipient->q2_view.kick_angles), recipient->q2_view.gun_angles);
+        if (!frontend_particle_q2_player_sample(frontend,seat,actor,&q2_client_view,&old_gun_frame,
+            &q2_back_lerp,&q2_client_view_ready,error)) return false;
+        origin=qa_vec_add(world->view.origin,q2_client_view_ready ? q2_client_view.gun_offset : recipient->q2_view.gun_offset);
+        qa_vec3 view_angles=q2_client_view_ready ? frontend_q2_lerp_camera_angles(&q2_client_view,camera.angles) :
+            qa_vec_add(camera.angles,recipient->q2_view.kick_angles);
+        angles=qa_vec_add(view_angles,q2_client_view_ready ? q2_client_view.gun_angles : recipient->q2_view.gun_angles);
     }
     frontend_visual_owner_view media;
     frontend_visual_model_view model;
@@ -1146,12 +1155,13 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
     for (size_t i = 0; i < 3; ++i) {
         placement.axes[i][0] = axes[i].x; placement.axes[i][1] = axes[i].y; placement.axes[i][2] = axes[i].z;
     }
-    uint32_t model_frame = weapon.frame >= 0 ? (uint32_t)weapon.frame : 0;
+    uint32_t model_frame=q2_client_view_ready ? q2_client_view.gun_frame : weapon.frame>=0 ? (uint32_t)weapon.frame : 0;
     qa_scene_model_input input = {.view = world->view, .transform = placement,
         .previous_origin = origin, .color = {1, 1, 1, 1},
         .family = weapon.family == QA_GAME_Q1 ? QA_SCENE_Q1 : QA_SCENE_Q2,
         .view_model = true, .flags = weapon.family == QA_GAME_Q2 ? 1 | 4 | 16 : 0,
-        .frame = model_frame, .old_frame = model_frame,
+        .frame=model_frame,.old_frame=q2_client_view_ready ? old_gun_frame : model_frame,
+        .back_lerp=q2_back_lerp,
         .skin = weapon.has_skin ? (uint32_t)weapon.skin : 0, .entity = actor.slot,
         .identity_light = world->identity_light, .seconds = world->seconds, .ambient = {1, 1, 1},
         .fog = world->fog, .source_path = model.path,
@@ -1346,6 +1356,8 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
         }
         if (!view.visible) continue;
         if (exclude && view.provider == exclude) continue;
+        float q2_back_lerp=0;
+        if (!frontend_particle_q2_entity_sample(frontend,&view,&q2_back_lerp,error)) return false;
         if (view.q2_flare.present) {
             if (!visual_flare(frontend, &view, world, frame, error)) return false;
             continue;
@@ -1380,6 +1392,7 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
                 .frame = view.frame >= 0 ? (uint32_t)view.frame : 0,
                 .old_frame = view.old_frame >= 0 ? (uint32_t)view.old_frame : view.frame >= 0 ? (uint32_t)view.frame : 0,
                 .skin = view.skin >= 0 ? (uint32_t)view.skin : 0, .flags = view.render_flags,
+                .back_lerp=q2_back_lerp,
                 .entity = actor.slot, .identity_light = world->identity_light, .seconds = world->seconds,
                 .ambient = {1, 1, 1}, .fog = world->fog, .source_path = path,
                 .video_frame = frontend_material_movies_frontend_resolve, .video_context = frontend};

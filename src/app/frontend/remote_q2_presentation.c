@@ -1,4 +1,5 @@
 #include "remote_q2_private.h"
+#include "q2_client_lerp.h"
 #include "remote_q2_effects_bridge.h"
 #include "remote_q2_clientinfo.h"
 #include "remote_q2_material_movies_bridge.h"
@@ -14,9 +15,7 @@
 static qa_vec3 vector(const float v[3]) { return qa_v3(v[0], v[1], v[2]); }
 static qa_vec3 angles_lerp(const float a[3], const float b[3], float t)
 {
-    float out[3];
-    for (size_t i = 0; i < 3; ++i) { float delta = fmodf(b[i] - a[i], 360); if (delta > 180) delta -= 360; if (delta < -180) delta += 360; out[i] = a[i] + t * delta; }
-    return vector(out);
+    return frontend_q2_lerp_angles(vector(a),vector(b),t);
 }
 static void axes(qa_vec3 angles, qa_vec3 out[3])
 {
@@ -75,7 +74,7 @@ static qa_vec3 player_origin(const frontend_remote_q2 *row, const qa_q2_player *
     return qa_v3((float)player->pmove.origin[0] * 0.125f, (float)player->pmove.origin[1] * 0.125f, (float)player->pmove.origin[2] * 0.125f);
 }
 static bool near(qa_vec3 a, qa_vec3 b, float limit)
-{ return fabsf(a.x - b.x) <= limit && fabsf(a.y - b.y) <= limit && fabsf(a.z - b.z) <= limit; }
+{ return frontend_q2_lerp_near(a,b,limit); }
 static void fog_receive(frontend_remote_q2 *row, const qa_q2_wire_fog *wire)
 {
     row->fog_duration_ms = wire->bits & 16u ? wire->time : 0;
@@ -539,8 +538,8 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
             (double)(row->sample_ns - row->prediction_step_ns) / 1000000 : 100;
         if (elapsed < 100) origin.z -= row->prediction_step * (1 - (float)elapsed * .01f);
     }
-    bool angular = frame->player.pmove.type < (remote_q2_float_movement(row) ? 4 : 2) &&
-        !(remote_q2_float_movement(row) && (frame->player.pmove.flags & 256));
+    bool angular=frontend_q2_lerp_live_angles(remote_q2_float_movement(row) ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
+        frame->player.pmove.type,(uint32_t)frame->player.pmove.flags);
     qa_vec3 local = row->input.angles; bool local_set = row->input_set;
     if (!local_set && row->sent_set) {
         const remote_q2_sent_command *sent = &row->sent[row->last_sent & 63];

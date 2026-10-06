@@ -26,6 +26,8 @@
 #include "shared_render_controls.h"
 #include "legacy_render_policy.h"
 #include "particle_delivery.h"
+#include "particle_clock.h"
+#include "q2_client_lerp.h"
 #include "qc_messages.h"
 #include "config_store.h"
 #include "qa/application_network.h"
@@ -339,6 +341,14 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                 view.clear_color=policy.lighting.clear;
             }
         }
+        qa_application_native_q2_player_sample q2_client_view={0};
+        uint32_t old_gun_frame=0;
+        float q2_back_lerp=0;
+        bool q2_client_view_ready=false;
+        if (live && !source.source_world && !camera.cutscene && seat->q2_view_ready &&
+            qa_actor_id_equal(actor,seat->q2_actor) &&
+            !frontend_particle_q2_player_sample(frontend,i,actor,&q2_client_view,&old_gun_frame,
+                &q2_back_lerp,&q2_client_view_ready,error)) return false;
         if (live) {
             view.origin = qa_vec_add(camera.origin, camera.view_offset);
             qa_vec3 angles = camera.angles;
@@ -347,9 +357,21 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                 qa_application_visual_view appearance;
                 if (!qa_application_visual_read(frontend->application, actor, &appearance, error)) return false;
                 const qa_product *character = qa_catalog_product(qa_application_catalog(frontend->application), appearance.character_content);
-                view.origin = qa_vec_add(camera.origin, seat->q2_view.offset);
+                qa_vec3 offset=q2_client_view_ready ? q2_client_view.view_offset : seat->q2_view.offset;
+                qa_vec3 origin=camera.origin;
+                if (q2_client_view_ready) {
+                    uint32_t authored;
+                    frontend_config_legacy_view input_source;
+                    bool found;
+                    if (!frontend_seat_launch_id_read(frontend,i,&authored) ||
+                        !frontend_config_store_primary_legacy_read(frontend->config_store,authored,&input_source,&found,error)) return false;
+                    const qa_cvar_view *predict=found ? qa_cvars_find(input_source.registry,"cl_predict") : NULL;
+                    if ((predict && predict->number==0) || (q2_client_view.movement_flags&64u)) origin=q2_client_view.origin;
+                    angles=frontend_q2_lerp_camera_angles(&q2_client_view,camera.angles);
+                } else angles=qa_vec_add(seat->q2_view.health>0 && !seat->q2_view.spectator ?
+                    camera.angles : seat->q2_view.angles,seat->q2_view.kick_angles);
+                view.origin=qa_vec_add(origin,offset);
                 if (character && character->edition == QA_EDITION_RERELEASE) view.origin.z += camera.view_height;
-                angles = qa_vec_add(seat->q2_view.angles, seat->q2_view.kick_angles);
             }
             frontend_camera_axes(angles, view.axis);
         }
@@ -359,7 +381,8 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Local camera lost its actual published view preference");
         (void)explicit_override;
         float fov_x = live && !source.source_world && seat->q2_view_ready &&
-            qa_actor_id_equal(actor, seat->q2_actor) ? seat->q2_view.fov : (float)ordinary_fov;
+            qa_actor_id_equal(actor, seat->q2_actor) ?
+            (q2_client_view_ready ? q2_client_view.fov : seat->q2_view.fov) : (float)ordinary_fov;
         float fov_y = 2 * atanf(tanf(fov_x * .008726646259971648f) * (float)rect.height / (float)rect.width) * 57.29577951308232f;
         view.projection = qa_scene_projection(fov_x, fov_y, 4, 16384);
         const qa_product *local_product = live && native_ready && !source.source_world ?

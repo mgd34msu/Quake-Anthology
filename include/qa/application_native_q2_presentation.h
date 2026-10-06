@@ -47,7 +47,9 @@ typedef struct qa_application_native_q2_entity_prefix {
 typedef struct qa_application_native_q2_entity_sample {
     qa_actor_id actor;
     uint32_t source_slot;
-    qa_vec3 origin, angles;
+    qa_vec3 origin, angles, previous_origin;
+    uint32_t models[4], frame, render_flags, event;
+    uint64_t effects;
     qa_bounds solid_bounds;
     float solid_radius;
 } qa_application_native_q2_entity_sample;

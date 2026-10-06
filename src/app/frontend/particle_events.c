@@ -5,6 +5,7 @@
 #include "qa/application_native_q2_presentation.h"
 #include "qa/application_native_q2_client.h"
 #include "particle_clock.h"
+#include "q2_client_lerp.h"
 #include "particle_delivery.h"
 #include "particle_audio.h"
 #include "native_q2_messages.h"
@@ -68,20 +69,27 @@ typedef struct frontend_particle_owner {
 } frontend_particle_owner;
 typedef struct frontend_q2_client_sample {
     qa_application_native_q2_client client;
-    qa_application_native_q2_player_sample player;
+    qa_application_native_q2_player_sample player, previous;
     uint32_t physical_seat;
+    uint64_t frame;
 } frontend_q2_client_sample;
+typedef struct frontend_q2_entity_sample {
+    qa_application_native_q2_entity_sample current, previous;
+    uint64_t frame;
+} frontend_q2_entity_sample;
 struct frontend_particle_state {
     frontend_particle_owner *owners;
     uint64_t sample_ns;
     qa_actor_owner clock_source;
-    uint64_t clock_map_revision, client_ns, client_host_ns, server_ns, server_frame;
+    qa_session *clock_session;
+    uint64_t clock_map_revision, clock_generation, client_ns, client_host_ns, server_ns, server_frame;
     uint64_t client_frame, client_interval_ns;
     bool client_clock, client_pending;
-    qa_application_native_q2_entity_sample *source_entities;
-    size_t source_entity_count;
+    frontend_q2_entity_sample *source_entities;
+    size_t source_entity_count, source_entity_capacity;
     frontend_q2_client_sample *source_clients;
     size_t source_client_count;
+    bool source_ready;
 };
 static bool particle_state(qa_frontend *frontend, qa_error *error)
 {
@@ -126,10 +134,13 @@ bool frontend_particle_source_begin(qa_frontend *frontend, uint64_t elapsed_ns, 
     if (state->client_pending)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 client sampling has an uncompleted committed frame");
     if (!state->client_clock || state->clock_source != source.source_owner ||
-        state->clock_map_revision != source.map_revision) {
+        state->clock_map_revision != source.map_revision || state->clock_session!=source.session ||
+        state->clock_generation!=source.publication_generation) {
         state->client_ns = 0;
+        state->source_ready = false;
         state->clock_source = source.source_owner;
         state->clock_map_revision = source.map_revision;
+        state->clock_session=source.session; state->clock_generation=source.publication_generation;
         state->client_clock = true;
     }
     state->client_interval_ns=source.clock_config.interval_ns;
@@ -155,48 +166,68 @@ bool frontend_particle_source_complete(qa_frontend *frontend, qa_error *error)
         !qa_application_native_q2_presentation_selected(frontend->application, &source, &found, error) ||
         !found || source.clock_config.interval_ns!=state->client_interval_ns ||
         source.source_owner != state->clock_source ||
-        source.map_revision != state->clock_map_revision)
+        source.map_revision != state->clock_map_revision || source.session!=state->clock_session ||
+        source.publication_generation!=state->clock_generation)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 client sampling lost its committed physical source frame");
-    uint32_t extent;
-    if (!qa_application_native_q2_presentation_extent(frontend->application,&source,&extent,error)) return false;
-    if ((uint64_t)extent*sizeof(*state->source_entities)>SIZE_MAX ||
-        (uint64_t)frontend->options.seats*sizeof(*state->source_clients)>SIZE_MAX)
-        return frontend_fail(error,QA_ERROR_MEMORY,"Q2 Source sample exceeds native storage");
-    qa_application_native_q2_entity_sample *entities=extent?calloc(extent,sizeof(*entities)):NULL;
-    frontend_q2_client_sample *clients=calloc(frontend->options.seats,sizeof(*clients));
-    if ((extent && !entities) || !clients) {
-        free(entities); free(clients);
-        return frontend_fail(error,QA_ERROR_MEMORY,"Retaining completed local Q2 Source samples");
-    }
-    size_t entity_count=0,client_count=0;
-    bool ok=true;
-    for (uint32_t slot=0;ok && slot<extent;++slot) {
-        qa_application_native_q2_entity_sample entity;
-        bool present;
-        ok=qa_application_native_q2_presentation_sample(frontend->application,&source,slot,&entity,&present,error);
-        if (ok && present) entities[entity_count++]=entity;
-    }
-    for (uint32_t physical=0;ok && physical<frontend->options.seats;++physical) {
-        uint32_t seat;
-        if (!frontend_seat_launch_id_read(frontend,physical,&seat)) continue;
-        qa_application_native_q2_client client;
-        bool present;
-        ok=qa_application_native_q2_presentation_local(frontend->application,&source,seat,&client,&present,error);
-        if (ok && present) {
-            frontend_q2_client_sample sample={.client=client,.physical_seat=physical};
-            ok=qa_application_native_q2_presentation_player(frontend->application,&source,&client,&sample.player,error);
-            if (ok) clients[client_count++]=sample;
+    if (!state->source_ready || source.clock.frame.number!=state->server_frame) {
+        uint32_t extent;
+        if (!qa_application_native_q2_presentation_extent(frontend->application,&source,&extent,error)) return false;
+        if ((uint64_t)extent*sizeof(*state->source_entities)>SIZE_MAX ||
+            (uint64_t)frontend->options.seats*sizeof(*state->source_clients)>SIZE_MAX)
+            return frontend_fail(error,QA_ERROR_MEMORY,"Q2 Source sample exceeds native storage");
+        if (extent>state->source_entity_capacity) {
+            frontend_q2_entity_sample *entities=realloc(state->source_entities,(size_t)extent*sizeof(*entities));
+            if (!entities) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining completed Q2 entity samples");
+            memset(entities+state->source_entity_capacity,0,
+                ((size_t)extent-state->source_entity_capacity)*sizeof(*entities));
+            state->source_entities=entities; state->source_entity_capacity=extent;
         }
+        if (!state->source_clients) {
+            state->source_clients=calloc(frontend->options.seats,sizeof(*state->source_clients));
+            if (!state->source_clients) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining completed Q2 player samples");
+        }
+        for (uint32_t slot=0;slot<extent;++slot) {
+            qa_application_native_q2_entity_sample entity={0};
+            bool present;
+            if (!qa_application_native_q2_presentation_sample(frontend->application,&source,slot,&entity,&present,error)) return false;
+            frontend_q2_entity_sample *held=state->source_entities+slot;
+            bool continuous=state->source_ready && held->frame+1==source.clock.frame.number &&
+                present && qa_actor_id_equal(held->current.actor,entity.actor) &&
+                frontend_q2_lerp_entity_continuous(&held->current,&entity);
+            held->previous=continuous ? held->current : entity;
+            if (!continuous && present && entity.event!=7) held->previous.origin=entity.previous_origin;
+            held->current=entity; held->frame=source.clock.frame.number;
+        }
+        state->source_entity_count=extent;
+        state->source_client_count=frontend->options.seats;
+        for (uint32_t physical=0;physical<frontend->options.seats;++physical) {
+            frontend_q2_client_sample *held=state->source_clients+physical;
+            uint32_t seat;
+            qa_application_native_q2_client client={0};
+            qa_application_native_q2_player_sample player={0};
+            bool present=false;
+            if (frontend_seat_launch_id_read(frontend,physical,&seat)) {
+                if (!qa_application_native_q2_presentation_local(frontend->application,&source,seat,&client,&present,error)) return false;
+                if (present && !qa_application_native_q2_presentation_player(frontend->application,&source,&client,&player,error)) return false;
+            }
+            bool continuous=state->source_ready && held->frame+1==source.clock.frame.number &&
+                player.present && held->player.present && qa_actor_id_equal(held->client.actor,client.actor) &&
+                frontend_q2_lerp_near(held->player.origin,player.origin,256);
+            if (continuous && player.edition==QA_Q2_RERELEASE) {
+                const qa_application_native_q2_entity_sample *entity=client.client_slot+1<extent &&
+                    state->source_entities[client.client_slot+1].current.actor.registry ?
+                    &state->source_entities[client.client_slot+1].current : NULL;
+                continuous=(!entity || (entity->event!=6 && entity->event!=7)) &&
+                    !((held->player.render_flags^player.render_flags)&16u);
+            }
+            held->previous=continuous ? held->player : player;
+            held->player=player; held->client=client; held->physical_seat=physical;
+            held->frame=source.clock.frame.number;
+        }
+        if (!qa_application_native_q2_presentation_current(frontend->application,&source))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 Source sample changed its completed frame");
+        state->source_ready=true;
     }
-    for (size_t i=0;ok && i<entity_count;++i)
-        if (!qa_actors_get(qa_session_actors(source.session),entities[i].actor))
-            ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 Source sample retired an earlier captured actor");
-    if (ok && !qa_application_native_q2_presentation_current(frontend->application,&source))
-        ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 Source sample changed its completed frame");
-    if (!ok) { free(entities); free(clients); return false; }
-    free(state->source_entities); free(state->source_clients);
-    state->source_entities=entities; state->source_entity_count=entity_count;
-    state->source_clients=clients; state->source_client_count=client_count;
     uint64_t lower = source.server_time_ns > state->client_interval_ns ?
         source.server_time_ns - state->client_interval_ns : 0;
     if (state->client_ns > source.server_time_ns) state->client_ns = source.server_time_ns;
@@ -232,6 +263,48 @@ static bool client_sample(qa_frontend *frontend, uint64_t *sample, uint64_t *ser
     *back_lerp = (float)((double)(state->server_ns - state->client_ns) / (double)state->client_interval_ns);
     return true;
 }
+bool frontend_particle_q2_player_sample(qa_frontend *frontend, uint32_t seat, qa_actor_id actor,
+    qa_application_native_q2_player_sample *out, uint32_t *old_gun_frame,
+    float *back_lerp, bool *found, qa_error *error)
+{
+    if (!out || !old_gun_frame || !back_lerp || !found)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 client view requires its output fields");
+    *found=false; *back_lerp=0;
+    frontend_particle_state *state=frontend->particles;
+    if (!state || !state->client_clock || !state->source_ready || state->client_pending || seat>=state->source_client_count) return true;
+    const frontend_q2_client_sample *client=state->source_clients+seat;
+    if (!client->player.present || !qa_actor_id_equal(client->client.actor,actor)) return true;
+    *back_lerp=(float)((double)(state->server_ns-state->client_ns)/(double)state->client_interval_ns);
+    frontend_q2_lerp_player(&client->previous,&client->player,1-*back_lerp,out,old_gun_frame);
+    *found=true;
+    return true;
+}
+
+bool frontend_particle_q2_entity_sample(qa_frontend *frontend, qa_application_visual_view *view,
+    float *back_lerp, qa_error *error)
+{
+    if (!view || !back_lerp) return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 client entity requires its view");
+    *back_lerp=0;
+    frontend_particle_state *state=frontend->particles;
+    if (!state || !state->client_clock || !state->source_ready || state->client_pending ||
+        !view->actor.registry) return true;
+    const qa_actor_record *record=qa_actors_get(qa_world_actors(qa_application_world(frontend->application)),view->actor);
+    if (!record || record->owner!=state->clock_source || !record->has_source ||
+        record->source_slot>=state->source_entity_count) return true;
+    const frontend_q2_entity_sample *held=state->source_entities+record->source_slot;
+    if (!qa_actor_id_equal(held->current.actor,view->actor)) return true;
+    qa_application_native_q2_entity_sample sample;
+    uint32_t old_frame;
+    *back_lerp=(float)((double)(state->server_ns-state->client_ns)/(double)state->client_interval_ns);
+    frontend_q2_lerp_entity(&held->previous,&held->current,1-*back_lerp,&sample,&old_frame);
+    view->body.origin=sample.origin; view->body.angles=sample.angles;
+    view->previous_origin=sample.previous_origin;
+    if (view->family==QA_GAME_Q2 && view->provider==state->clock_source) {
+        view->frame=(int32_t)sample.frame; view->old_frame=(int32_t)old_frame;
+    } else *back_lerp=0;
+    return true;
+}
+
 static bool impact_model(qa_frontend *, frontend_particle_owner *, uint8_t,
     bool acquire, qa_scene_model **, qa_error *);
 static bool delivery_world_current(qa_frontend *frontend, qa_actor_owner world_source,
@@ -798,7 +871,7 @@ static bool q2_entity_sample(qa_frontend *frontend,const frontend_particle_owner
     }
     if (!recipient) return true;
     for (size_t i=0;i<state->source_entity_count;++i) {
-        const qa_application_native_q2_entity_sample *entity=state->source_entities+i;
+        const qa_application_native_q2_entity_sample *entity=&state->source_entities[i].current;
         if (entity->source_slot!=slot || !qa_actor_id_equal(entity->actor,actor)) continue;
         *out=entity; *found=true; break;
     }

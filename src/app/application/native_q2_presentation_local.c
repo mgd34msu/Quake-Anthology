@@ -67,7 +67,7 @@ bool qa_application_native_q2_presentation_player(qa_application *app,
         !qa_application_native_q2_presentation_local(app,source,client->seat,&actual,&found,error) ||
         !found || actual.client_slot!=client->client_slot || !qa_actor_id_equal(actual.actor,client->actor))
         return application_fail(error,QA_ERROR_ARGUMENT,"Q2 player sample lost its physical local client");
-    qa_application_native_q2_player_sample value={0};
+    qa_application_native_q2_player_sample value={.edition=source->edition};
     if (source->kind==QA_APPLICATION_NATIVE_Q2_ORIGINAL) {
         qa_q2_player player;
         if (!qa_native_host_q2_wire_player((qa_native_host *)source->source.original.host,
@@ -76,16 +76,29 @@ bool qa_application_native_q2_presentation_player(qa_application *app,
             .origin={player.pmove.origin_f[0],player.pmove.origin_f[1],player.pmove.origin_f[2]},
             .view_angles={player.viewangles[0],player.viewangles[1],player.viewangles[2]},
             .view_offset={player.viewoffset[0],player.viewoffset[1],player.viewoffset[2]},
-            .gun_offset={player.gunoffset[0],player.gunoffset[1],player.gunoffset[2]},.present=true};
+            .gun_offset={player.gunoffset[0],player.gunoffset[1],player.gunoffset[2]},
+            .kick_angles={player.kick_angles[0],player.kick_angles[1],player.kick_angles[2]},
+            .gun_angles={player.gunangles[0],player.gunangles[1],player.gunangles[2]},
+            .gun_model=player.gunindex,.gun_frame=player.gunframe,
+            .fov=player.fov,.view_height=(float)player.pmove.viewheight,
+            .movement_type=player.pmove.type,.movement_flags=(uint32_t)player.pmove.flags,
+            .render_flags=player.rdflags,.edition=source->edition,.present=true};
     } else {
         qa_q2_wire_view view;
         if (!qa_q2_wire_view_read(source->source.game,client->actor,&view,error)) return false;
         if (view.present) {
             qa_q2_wire_movement movement;
             if (!qa_q2_wire_movement_read(source->source.game,client->actor,&movement,error)) return false;
+            qa_q2_weapon_state weapon;
+            if (!qa_q2_weapon_read((qa_q2_game *)source->source.game,client->actor,&weapon,error)) return false;
             value=(qa_application_native_q2_player_sample){.origin=qa_movement_origin(&movement.state),
                 .view_angles=view.view.angles,.view_offset=view.view.offset,
-                .gun_offset=view.view.gun_offset,.present=true};
+                .kick_angles=view.view.kick_angles,.gun_angles=view.view.gun_angles,
+                .gun_offset=view.view.gun_offset,.fov=view.view.fov,
+                .gun_model=weapon.view_model,.gun_frame=weapon.frame>=0 ? (uint32_t)weapon.frame : 0,
+                .movement_type=source->edition==QA_Q2_CLASSIC ? movement.state.data.q2.type : movement.state.data.q2r.type,
+                .movement_flags=source->edition==QA_Q2_CLASSIC ? movement.state.data.q2.flags : movement.state.data.q2r.flags,
+                .view_height=movement.view_height,.edition=source->edition,.present=true};
         }
     }
     if (!qa_vec_finite(value.origin) || !qa_vec_finite(value.view_angles) ||

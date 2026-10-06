@@ -9,7 +9,11 @@ typedef struct qa_application_native_q2_client {
 } qa_application_native_q2_client;
 
 typedef struct qa_application_native_q2_player_sample {
-    qa_vec3 origin, view_angles, view_offset, gun_offset;
+    qa_vec3 origin, view_angles, view_offset, kick_angles, gun_angles, gun_offset;
+    float fov, view_height;
+    uint32_t gun_model, gun_frame, movement_flags, render_flags;
+    int32_t movement_type;
+    qa_q2_edition edition;
     bool present;
 } qa_application_native_q2_player_sample;
 

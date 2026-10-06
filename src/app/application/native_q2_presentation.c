@@ -243,10 +243,22 @@ bool qa_application_native_q2_presentation_sample(qa_application *app,
         const qa_q2_entity *state=&prefix.source.original.state;
         value.origin=qa_v3(state->origin[0],state->origin[1],state->origin[2]);
         value.angles=qa_v3(state->angles[0],state->angles[1],state->angles[2]);
+        value.previous_origin=qa_v3(state->old_origin[0],state->old_origin[1],state->old_origin[2]);
+        value.models[0]=state->modelindex; value.models[1]=state->modelindex2;
+        value.models[2]=state->modelindex3; value.models[3]=state->modelindex4;
+        value.frame=state->frame; value.render_flags=state->renderfx;
+        value.event=state->event; value.effects=state->effects;
         solid=state->solid;
     } else {
         const qa_q2_wire_source_entity *state=&prefix.source.builtin;
         value.origin=state->body.origin; value.angles=state->body.angles;
+        value.previous_origin=state->previous_origin;
+        if (state->has_visual) {
+            memcpy(value.models,state->visual.models,sizeof(value.models));
+            value.frame=state->visual.frame>=0 ? (uint32_t)state->visual.frame : 0;
+            value.render_flags=state->visual.render_flags; value.effects=state->visual.effects;
+        }
+        value.event=state->event;
         if (!qa_vec_finite(state->body.bounds.mins) || !qa_vec_finite(state->body.bounds.maxs))
             return application_fail(error,QA_ERROR_FORMAT,"Q2 Source solid has nonfinite bounds");
         if (state->solid==QA_PHYSICS_BRUSH) solid=31;
