@@ -718,7 +718,7 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
     if (okay) {
         qa_q1_clientdata value = {.viewheight = row->view_height,
             .idealpitch = row->state.kind == QA_MOVEMENT_NETQUAKE ? row->state.data.nq.ideal_pitch : 0,
-            .items = player.weapons | player.powers | player.ammo_items | player.extra_items |
+            .items = player.items | (player.items2 << 23) |
                 ((source.receipt.program == QA_Q1_HIPNOTIC || source.receipt.program == QA_Q1_ROGUE)
                     ? 0 : world.server_flags << 28),
             .onground = row->ground.hit != QA_TRACE_HIT_NONE, .inwater = row->water_level >= 2,
@@ -734,13 +734,6 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
         vector(value.punch, row->state.kind == QA_MOVEMENT_NETQUAKE
             ? row->state.data.nq.punch_angles : equipment.kick_angles);
         vector(value.velocity, body.velocity);
-        if (combat.armor.regular.kind != QA_ARMOR_NONE) {
-            unsigned armor = combat.armor.regular.kind == QA_ARMOR_Q1 &&
-                combat.armor.regular.protection.q1_absorption >= .8f ? 2u :
-                combat.armor.regular.kind == QA_ARMOR_Q1 &&
-                combat.armor.regular.protection.q1_absorption >= .6f ? 1u : 0u;
-            value.items |= (source.receipt.program == QA_Q1_ROGUE ? 1u << 23 : 8192u) << armor;
-        }
         *out = value;
     } else if (error && error->code == QA_OK)
         application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q1 clientdata lacks its selected source movement or arsenal");

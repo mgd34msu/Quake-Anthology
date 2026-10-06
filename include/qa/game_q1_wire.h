@@ -34,7 +34,7 @@ typedef struct qa_q1_wire_world {
 typedef struct qa_q1_wire_player {
     qa_string_id weapon_model;
     int32_t weapon_frame;
-    uint32_t weapon, weapons, powers, ammo_items, extra_items;
+    uint32_t weapon, items, items2;
     double ammo, shells, nails, rockets, cells;
 } qa_q1_wire_player;
 typedef struct qa_q1_wire_board_change {

@@ -28,6 +28,7 @@ bool qa_q1_source_inventory_initialize(qa_q1_game *game, qa_actor_id actor, qa_e
     uint32_t slot;
     bool ok = qa_q1_native_client_slot(game, actor, &slot, error) &&
         source_current(&operation, actor, player, error);
+    if (ok) player->source_superhealth = false;
     if (ok && !qa_inventory_has(game->services.inventory, actor))
         ok = qa_inventory_create_actor(game->services.inventory, actor, NULL, 0, error) &&
             source_current(&operation, actor, player, error);

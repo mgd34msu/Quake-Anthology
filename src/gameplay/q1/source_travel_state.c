@@ -534,7 +534,7 @@ bool qa_q1_travel_admit(qa_q1_game *game, qa_actor_id actor, qa_q1_travel_state 
     if (ok) {
         call.player->max_health = decoded->max_health;
         ok = qa_q1_player_powers_clear(game, actor, error) && current(&call, error);
-        if (ok) call.player->mega_rot_at = -1;
+        if (ok) {call.player->mega_rot_at = -1;call.player->source_superhealth = false;}
     }
     qa_q1_weapon weapon = decoded->weapon;
     if (game->options.program == QA_Q1_ROGUE && weapon == QA_Q1_ROGUE_GRAPPLE &&

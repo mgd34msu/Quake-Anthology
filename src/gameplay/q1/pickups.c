@@ -175,6 +175,7 @@ bool qa_q1_selected_arsenal_spawn(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon
         player->primary_holstered = false;
         player->hostile_until = player->drown_at = player->hazard_at = 0;
         player->mega_rot_at = -1;
+        player->source_superhealth = false;
         player->air_finished = g->time + 12;
         player->drown_damage = 2;
         q1_powers_forget(player);
@@ -963,8 +964,10 @@ static bool item_complete(void *context, const qa_pickup_offer *offer, bool take
                                                     : item->kind == Q1_ITEM_KEY && g->options.coop;
     q1_player *player = q1_player_get(g, touch->recipient);
     bool player_rot = g->options.program == QA_Q1_ID1 && g->options.edition == QA_Q1_RERELEASE;
-    if (player_rot && item->mega && player)
+    if (player_rot && item->mega && player) {
         player->mega_rot_at = g->time + 5;
+        player->source_superhealth = true;
+    }
     qa_builtin_event sound = {
         .kind = QA_BUILTIN_SOUND,
         .family = QA_GAME_Q1,
@@ -1063,6 +1066,7 @@ static bool item_complete(void *context, const qa_pickup_offer *offer, bool take
         item_rot = !(rune & 8u);
     }
     if (item_rot) {
+        if (player && g->options.program != QA_Q1_HIPNOTIC) player->source_superhealth = true;
         item->holder = q1_ref_from(g, touch->recipient);
         if (!q1_schedule(g, entity, 5, Q1_THINK_MEGA_ROT, error))
             return false;
@@ -1310,6 +1314,7 @@ bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (health > max_health)
             return qa_combat_set_health(g->services.combat, holder, health - 1, error) &&
                    q1_schedule(g, entity, 1, Q1_THINK_MEGA_ROT, error);
+        if (player) player->source_superhealth = false;
         bool respawn = g->options.edition == QA_Q1_CLASSIC ? g->options.deathmatch == 1 :
             g->options.deathmatch != 0 && g->options.deathmatch != 2;
         return !respawn || q1_schedule(g, entity, 20, Q1_THINK_RESPAWN, error);

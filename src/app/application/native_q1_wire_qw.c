@@ -177,10 +177,7 @@ static bool client_read(application_native_q1_wire_source *held,qa_actor_id acto
                 value.stats[5]=player.weapon_frame; value.stats[6]=trunc(player.shells);value.stats[7]=trunc(player.nails);
                 value.stats[8]=trunc(player.rockets);value.stats[9]=trunc(player.cells);
                 if (!value.spectator) value.stats[10]=player.weapon;
-                uint32_t items=player.weapons|player.powers|player.ammo_items|player.extra_items|(world.server_flags<<28);
-                if (combat.armor.regular.kind!=QA_ARMOR_NONE) items |=
-                    combat.armor.regular.kind==QA_ARMOR_Q1 && combat.armor.regular.protection.q1_absorption>=.8f?32768u:
-                    combat.armor.regular.kind==QA_ARMOR_Q1 && combat.armor.regular.protection.q1_absorption>=.6f?16384u:8192u;
+                uint32_t items=player.items|(player.items2<<23)|(world.server_flags<<28);
                 int32_t signed_items;memcpy(&signed_items,&items,sizeof(items));value.stats[15]=signed_items;
             }
         }

@@ -28,6 +28,10 @@ static const char *ammo_field(const qa_q1_game *game, unsigned index) {
     static const char *const rogue_base[] = {"ammo_shells1", "ammo_nails1", "ammo_rockets1", "ammo_cells1"};
     return game->options.program == QA_Q1_ROGUE && index < 4 ? rogue_base[index] : ammo_fields[index];
 }
+static unsigned rogue_display_ammo(uint32_t weapon, unsigned index) {
+    static const unsigned powered[] = {QA_Q1_SHELLS, QA_Q1_LAVA_NAILS, QA_Q1_MULTI_ROCKETS, QA_Q1_PLASMA_CELLS};
+    return weapon >= 4096u ? powered[index] : index;
+}
 #define FIELD(type, member, name, storage) {name, ORIGINAL_##storage, offsetof(type, member)}
 static const original_field entity_fields[] = {
     FIELD(q1_actor, classname, "classname", STRING),
@@ -710,19 +714,6 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
             !number(record, "colormap", player->client_slot + 1, false, error) ||
             !number(record, "idealpitch", movement->data.nq.ideal_pitch, false, error) ||
             !vector(record,"movedir",movement->data.nq.water_jump_direction,error)) return false;
-        uint32_t items = wire.weapons | wire.powers | wire.ammo_items;
-        if (combat.armor.regular.points > 0 && game->options.program != QA_Q1_ROGUE)
-            items |= combat.armor.regular.protection.q1_absorption >= .8f ? 32768u :
-                combat.armor.regular.protection.q1_absorption >= .6f ? 16384u : 8192u;
-        uint32_t extra_items = wire.extra_items >> 23;
-        if (game->options.program == QA_Q1_ROGUE) {
-            if (combat.armor.regular.points > 0)
-                extra_items |= combat.armor.regular.protection.q1_absorption >= .8f ? 4u :
-                    combat.armor.regular.protection.q1_absorption >= .6f ? 2u : 1u;
-            if (player->power_expires[QA_Q1_ANTIGRAV] > game->time) extra_items |= 128u;
-        } else if (game->options.program == QA_Q1_ID1 &&
-                   game->options.edition == QA_Q1_RERELEASE && player->mega_rot_at >= 0)
-            items |= 65536u;
         double ammo[QA_Q1_AMMO_COUNT] = {0};
         unsigned ammo_count = game->options.program == QA_Q1_ROGUE ? QA_Q1_AMMO_COUNT : 4;
         for (unsigned i=0; i<ammo_count; ++i) {
@@ -730,11 +721,10 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
                 !number(record,ammo_field(game,i),ammo[i],false,error)) return false;
         }
         if (game->options.program == QA_Q1_ROGUE) {
-            static const unsigned powered[] = {0,QA_Q1_LAVA_NAILS,QA_Q1_MULTI_ROCKETS,QA_Q1_PLASMA_CELLS};
             for (unsigned i=0; i<4; ++i)
-                if (!number(record,ammo_fields[i],ammo[wire.weapon>=4096u?powered[i]:i],false,error)) return false;
+                if (!number(record,ammo_fields[i],ammo[rogue_display_ammo(wire.weapon,i)],false,error)) return false;
         }
-        if (!number(record, "items", items, false, error) || !number(record,"items2",extra_items,false,error) ||
+        if (!number(record, "items", wire.items, false, error) || !number(record,"items2",wire.items2,false,error) ||
             !number(record, "weapon", wire.weapon, false, error) ||
             !text(record, "weaponmodel", qa_strings_cstr(qa_session_strings(game->services.session), wire.weapon_model),
                 QA_Q1_SAVE_STRING, error)) return false;
@@ -1244,6 +1234,7 @@ typedef struct original_admission {
     qa_strings *strings;
     qa_actor_owner source;
     size_t slots;
+    double seconds;
     const qa_q1_save_record *record;
     uint8_t *consumed;
 } original_admission;
@@ -1456,40 +1447,40 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
         if (!admit_text(admission,"classname","player",error) ||
             !ADMIT_FIELDS(admission,&player,player_fields,error) ||
             !ADMIT_FIELDS(admission,&player.character_state,character_fields,error) ||
-            !admit_word(admission,"items",error) || !admit_word(admission,"weapon",error)) goto done;
+            !admit_word(admission,"items",error) || !admit_word(admission,"items2",error) ||
+            !admit_word(admission,"weapon",error)) goto done;
         float selected=saved_number(record,"weapon");
         if (selected<=0 || !qa_q1_weapon_source(program,(uint32_t)selected,&player.weapon)) {
             unsupported(error,"Source weapon has no compiled identity");goto done;
         }
-        uint32_t ammo_items,ammo_items2;
-        q1_wire_ammo_items(program,player.weapon,&ammo_items,&ammo_items2);
-        uint32_t ammo_mask=program==QA_Q1_ROGUE?128u|256u|512u|1024u:256u|512u|1024u|2048u;
-        uint32_t source_items=(uint32_t)saved_number(record,"items");
-        if ((source_items&ammo_mask)!=ammo_items) {
-            unsupported(error,"Source ammunition icon differs from its selected native weapon");goto done;
-        }
-        /* Weapons, keys and the selected ammunition icon have paired owners.
-         * Other item bits still require their complete native state inverse. */
-        uint32_t represented=131072u|262144u|ammo_items;
+        uint32_t inventory_mask=131072u|262144u;
         for (unsigned shift=0;shift<32;++shift) {
             qa_q1_weapon weapon;
-            if (qa_q1_weapon_source(program,UINT32_C(1)<<shift,&weapon)) represented|=UINT32_C(1)<<shift;
+            if (qa_q1_weapon_source(program,UINT32_C(1)<<shift,&weapon)) inventory_mask|=UINT32_C(1)<<shift;
         }
-        if ((uint32_t)saved_number(record,"items") & ~represented) {
-            unsupported(error,"Source inventory bit lacks its paired native inverse");goto done;
+        uint32_t source_items=(uint32_t)saved_number(record,"items"),items,items2;
+        uint32_t source_items2=(uint32_t)saved_number(record,"items2");
+        player.source_superhealth=program!=QA_Q1_HIPNOTIC &&
+            (program==QA_Q1_ROGUE?source_items2&256u:source_items&65536u)!=0;
+        q1_wire_player_items(program,player.weapon,player.power_expires,admission->seconds,
+            &combat.armor,source_items&inventory_mask,player.source_superhealth,&items,&items2);
+        if (items!=source_items || !admit_number(admission,"items2",(float)items2,error)) {
+            unsupported(error,"Source item flags differ from their actual native inventory, armor or timers");goto done;
         }
+        float ammo[QA_Q1_AMMO_COUNT]={0};
         for (unsigned i=0;i<(program==QA_Q1_ROGUE?QA_Q1_AMMO_COUNT:4);++i) {
             qa_q1_game settings={.options={.program=program}};
             const char *name=ammo_field(&settings,i);
-            if (!isfinite(saved_number(record,name)) || saved_number(record,name)<0) {
+            ammo[i]=saved_number(record,name);
+            if (!isfinite(ammo[i]) || ammo[i]<0) {
                 unsupported(error,"Source ammunition has no native inventory state");goto done;
             }
             admitted_key(admission,name);
         }
-        if (ammo_items2) {
-            unsupported(error,"Source powered ammunition needs its extra item inverse");goto done;
-        }
-        if (!admit_number(admission,"items2",0,error) || !admit_number(admission,"deadflag",0,error) ||
+        if (program==QA_Q1_ROGUE)
+            for (unsigned i=0;i<4;++i)
+                if (!admit_number(admission,ammo_fields[i],ammo[rogue_display_ammo((uint32_t)selected,i)],error)) goto done;
+        if (!admit_number(admission,"deadflag",0,error) ||
             !admit_number(admission,"colormap",1,error) || !admit_string(admission,"netname",error) ||
             !admit_string(admission,"weaponmodel",error)) goto done;
         if (!isfinite(saved_number(record,"max_health")) || !isfinite(saved_number(record,"idealpitch"))) {
@@ -1609,7 +1600,8 @@ bool qa_q1_game_original_admit(qa_q1_program native_program,qa_q1_edition editio
     uint8_t *consumed=count?calloc(count,1):NULL;qa_strings *strings=NULL;
     if (count && !consumed) {qa_error_set(error,QA_ERROR_MEMORY,0,"Reading original native state domains");return false;}
     if (!qa_strings_create(&strings,error)) {free(consumed);return false;}
-    original_admission admission={strings,1,save->entity_count,&save->globals,consumed};qa_error local={0};
+    original_admission admission={.strings=strings,.source=1,.slots=save->entity_count,
+        .seconds=(double)(float)save->time,.record=&save->globals,.consumed=consumed};qa_error local={0};
     bool okay=admit_globals(&admission,program,native_program,edition,save,&local) &&
         admit_body_queue(native_program,edition,save,&local);
     for (size_t slot=0;okay && slot<save->entity_count;++slot) {
@@ -1658,8 +1650,12 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
             !restore_inventory(game, player, record, error)) return false;
         player->source_god_mode = (flags & 64u) != 0;
         player->source_no_target = (flags & 128u) != 0;
+        player->source_superhealth=game->options.program!=QA_Q1_HIPNOTIC &&
+            ((uint32_t)saved_number(record,
+            game->options.program==QA_Q1_ROGUE?"items2":"items") &
+                (game->options.program==QA_Q1_ROGUE?256u:65536u))!=0;
         if (game->options.program != QA_Q1_ID1 || game->options.edition != QA_Q1_RERELEASE ||
-            !((uint32_t)saved_number(record, "items") & 65536u)) player->mega_rot_at = -1;
+            !player->source_superhealth) player->mega_rot_at = -1;
         player->power_sequence = 0;
         player->power_warned = player->power_lost = 0;
         for (unsigned i=0; i<QA_Q1_POWER_COUNT; ++i) {

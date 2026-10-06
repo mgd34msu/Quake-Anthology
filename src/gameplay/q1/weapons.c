@@ -604,6 +604,7 @@ bool qa_q1_player_travel_reset(qa_q1_game *g, qa_actor_id actor, float max_healt
     player->max_health = max_health;
     if (!qa_q1_player_powers_clear(g, actor, error)) return false;
     player->mega_rot_at = -1;
+    player->source_superhealth = false;
     return true;
 }
 bool qa_q1_game_invulnerable(const qa_q1_game *g, qa_actor_id actor) {
@@ -739,8 +740,10 @@ static bool player_prethink(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
             if (!q1_alive(g, actor))
                 return true;
             player->mega_rot_at = g->time + 1;
-        } else
+        } else {
             player->mega_rot_at = -1;
+            player->source_superhealth = false;
+        }
     }
     if (!q1_powers_expire(g, actor, seconds, error)) return false;
     float magnitude = qa_vec_length(player->punch);

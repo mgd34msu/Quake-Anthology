@@ -430,7 +430,7 @@ typedef struct q1_player {
     q1_source_info *source_info;
     size_t source_info_count;
     float source_frags,source_team;
-    bool source_observer,source_no_target,source_god_mode;
+    bool source_observer,source_no_target,source_god_mode,source_superhealth;
     q1_ref source_spectator_goal,source_spectator_track;
     int32_t source_impulse;
     bool source_use,source_death_recorded;

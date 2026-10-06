@@ -54,7 +54,8 @@ void q1_wire_actor_released(qa_q1_game *, qa_actor_record);
 bool q1_wire_allocate_slot(qa_q1_game *, bool *, uint32_t *, qa_error *);
 bool q1_wire_spawn_slot_valid(const qa_q1_game *, uint32_t);
 bool q1_wire_spawn_declarations(qa_q1_game *, const qa_q1_spawn *, qa_error *);
-void q1_wire_ammo_items(qa_q1_program,qa_q1_weapon,uint32_t *items,uint32_t *items2);
+void q1_wire_player_items(qa_q1_program,qa_q1_weapon,const double powers[QA_Q1_POWER_COUNT],
+    double,const qa_armor *,uint32_t,bool,uint32_t *items,uint32_t *items2);
 void q1_wire_changed(q1_wire_state *);
 bool q1_wire_edict_extent(q1_wire_state *, uint32_t, qa_error *);
 

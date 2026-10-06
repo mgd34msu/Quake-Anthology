@@ -80,6 +80,7 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
     Q1_SAVE(io, double, player->lightning_sound_at);
     Q1_SAVE(io, double, player->hostile_until);
     Q1_SAVE(io, double, player->mega_rot_at);
+    Q1_SAVE(io, bool, player->source_superhealth);
     Q1_SAVE(io, double, player->air_finished);
     Q1_SAVE(io, double, player->drown_at);
     Q1_SAVE(io, double, player->hazard_at);
