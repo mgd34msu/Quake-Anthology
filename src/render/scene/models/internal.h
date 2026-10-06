@@ -18,6 +18,25 @@ typedef struct scene_model_image {
     struct scene_model_image *next;
 } scene_model_image;
 
+enum { SCENE_MODEL_POSE_VARIANTS = 8 };
+typedef struct scene_model_pose_variant {
+    qa_model_pose *pose, *frames;
+    float back_lerp;
+    int rounding;
+    uint64_t frame_sequence;
+    bool ready, frames_equal;
+} scene_model_pose_variant;
+typedef struct scene_model_sample {
+    qa_model_vertex *vertices;
+    const qa_model_pose *pose;
+    qa_bounds bounds, shell_bounds;
+    int rounding;
+    bool shell_ready;
+} scene_model_sample;
+typedef struct scene_model_influence {
+    qa_bounds offsets, normals;
+    bool used;
+} scene_model_influence;
 typedef struct scene_model_mesh {
     qa_scene_mesh retained;
     qa_scene_vertex *vertices;
@@ -26,9 +45,11 @@ typedef struct scene_model_mesh {
     uint8_t *normal_indices;
     scene_model_image **shaders;
     qa_model_vertex *sampled;
-    const qa_model_pose *sampled_pose;
-    qa_bounds sampled_bounds, sampled_shell_bounds;
-    bool sampled_shell_ready;
+    scene_model_sample samples[SCENE_MODEL_POSE_VARIANTS + 1];
+    scene_model_influence *influences;
+    double min_bias_sum, max_bias_sum;
+    uint32_t max_weights;
+    bool influence_bounds_ready;
 } scene_model_mesh;
 
 typedef struct scene_model_shadow_identity {
@@ -49,8 +70,8 @@ struct qa_scene_model {
     uint64_t identity;
     scene_model_mesh *meshes;
     qa_model_pose *sampled_pose, *sampled_pose_frames;
-    float sampled_back_lerp;
-    bool sampled_pose_ready, sampled_frames_equal;
+    scene_model_pose_variant poses[SCENE_MODEL_POSE_VARIANTS];
+    unsigned next_pose;
     scene_model_image **skins, **sprites;
     scene_model_image *images;
     struct qa_scene_model *replacement;

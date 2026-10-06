@@ -2,6 +2,8 @@
 #include "resources_internal.h"
 #include "../controls_private.h"
 #include "qa/scene_model_save.h"
+#include <fenv.h>
+#include <float.h>
 #include <limits.h>
 #include <stdio.h>
 
@@ -122,13 +124,18 @@ bool qa_scene_model_create(const qa_model *source, qa_scene_resources *resources
     }
     void *allocation;
     if (source->format == QA_MODEL_MD5) {
-        if (source->bone_count > UINT32_MAX / 2) {
+        size_t joints = source->bone_count;
+        if (joints > SIZE_MAX / (2 * SCENE_MODEL_POSE_VARIANTS * sizeof(*model->sampled_pose_frames))) {
             qa_error_set(error, QA_ERROR_MEMORY, 0, "model pose storage exceeds addressable extent"); goto fail;
         }
-        if (!model_array(source->bone_count, sizeof(*model->sampled_pose), &allocation, error)) goto fail;
+        if (!model_array((size_t)source->bone_count * SCENE_MODEL_POSE_VARIANTS, sizeof(*model->sampled_pose), &allocation, error)) goto fail;
         model->sampled_pose = allocation;
-        if (!model_array(source->bone_count * 2, sizeof(*model->sampled_pose_frames), &allocation, error)) goto fail;
+        if (!model_array((size_t)source->bone_count * 2 * SCENE_MODEL_POSE_VARIANTS, sizeof(*model->sampled_pose_frames), &allocation, error)) goto fail;
         model->sampled_pose_frames = allocation;
+        for (unsigned i = 0; i < SCENE_MODEL_POSE_VARIANTS; ++i) {
+            model->poses[i].pose = model->sampled_pose + (size_t)i * source->bone_count;
+            model->poses[i].frames = model->sampled_pose_frames + (size_t)i * source->bone_count * 2;
+        }
     }
     if (!model_array(source->mesh_count, sizeof(*model->meshes), &allocation, error)) goto fail;
     model->meshes = allocation;
@@ -927,6 +934,84 @@ static bool alias_diffuse(const qa_scene_model_input *input, const float normal[
     return true;
 }
 
+static bool md5_influence_bounds(const qa_scene_model *model, uint32_t index,
+    const qa_scene_model_input *input, bool shell, qa_bounds *bounds)
+{
+    const scene_model_mesh *mesh = &model->meshes[index];
+    if (!mesh->influence_bounds_ready || !input->pose || input->pose_count < model->source->bone_count) return false;
+    double lower[3] = {INFINITY, INFINITY, INFINITY}, upper[3] = {-INFINITY, -INFINITY, -INFINITY};
+    double magnitude[3] = {0, 0, 0};
+    bool used = false;
+    for (uint32_t joint = 0; joint < model->source->bone_count; ++joint) {
+        const qa_model_pose *pose = &input->pose[joint];
+        if (!qa_vec_finite(model_vec(pose->position)) || !isfinite(pose->scale)) return false;
+        for (unsigned k = 0; k < 4; ++k) if (!isfinite(pose->orientation[k])) return false;
+        const scene_model_influence *influence = &mesh->influences[joint];
+        if (!influence->used) continue;
+        used = true;
+        const float *q = pose->orientation;
+        for (unsigned k = 0; k < 4; ++k) if ((double)q[k] * q[k] > FLT_MAX / 8.0) return false;
+        double rotation[3][3] = {
+            {2 * (q[3] * q[3] + q[0] * q[0]) - 1, 2.0 * (q[0] * q[1] - q[3] * q[2]), 2.0 * (q[0] * q[2] + q[3] * q[1])},
+            {2.0 * (q[0] * q[1] + q[3] * q[2]), 2 * (q[3] * q[3] + q[1] * q[1]) - 1, 2.0 * (q[1] * q[2] - q[3] * q[0])},
+            {2.0 * (q[0] * q[2] - q[3] * q[1]), 2.0 * (q[1] * q[2] + q[3] * q[0]), 2 * (q[3] * q[3] + q[2] * q[2]) - 1}
+        };
+        float offset_min[3], offset_max[3], normal_min[3], normal_max[3];
+        model_store(offset_min, influence->offsets.mins); model_store(offset_max, influence->offsets.maxs);
+        model_store(normal_min, influence->normals.mins); model_store(normal_max, influence->normals.maxs);
+        for (unsigned axis = 0; axis < 3; ++axis) {
+            double low = 0, high = 0, normal_low = 0, normal_high = 0, absolute = 0, normal_absolute = 0;
+            for (unsigned k = 0; k < 3; ++k) {
+                if (fabs(offset_min[k]) > FLT_MAX / 2.0 || fabs(offset_max[k]) > FLT_MAX / 2.0 ||
+                    fabs(normal_min[k]) > FLT_MAX / 2.0 || fabs(normal_max[k]) > FLT_MAX / 2.0) return false;
+                double a = rotation[axis][k] * offset_min[k], b = rotation[axis][k] * offset_max[k];
+                low += fmin(a, b); high += fmax(a, b); absolute += fmax(fabs(a), fabs(b));
+                if (shell) {
+                    a = rotation[axis][k] * normal_min[k]; b = rotation[axis][k] * normal_max[k];
+                    normal_low += fmin(a, b); normal_high += fmax(a, b); normal_absolute += fmax(fabs(a), fabs(b));
+                }
+            }
+            double scaled_low = pose->scale * low, scaled_high = pose->scale * high;
+            double point_low = pose->position[axis] + fmin(scaled_low, scaled_high) + 4 * normal_low;
+            double point_high = pose->position[axis] + fmax(scaled_low, scaled_high) + 4 * normal_high;
+            double point_absolute = fabs(pose->position[axis]) + fabs(pose->scale) * absolute + 4 * normal_absolute;
+            if (absolute > FLT_MAX / 8.0 || normal_absolute > FLT_MAX / 8.0 || point_absolute > FLT_MAX / 8.0) return false;
+            lower[axis] = fmin(lower[axis], point_low); upper[axis] = fmax(upper[axis], point_high);
+            magnitude[axis] = fmax(magnitude[axis], point_absolute);
+        }
+    }
+    double operations = ((double)mesh->max_weights + 32) * FLT_EPSILON;
+    if (operations >= 0.5) return false;
+    double gamma = operations / (1 - operations);
+    float mins[3], maxs[3];
+    /* Nonnegative weights form a convex combination scaled by their actual
+     * sum. The interval also covers ordered float accumulation and shells. */
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        if (!used) lower[axis] = upper[axis] = 0;
+        double absolute = magnitude[axis] * mesh->max_bias_sum;
+        if (!isfinite(absolute) || absolute > FLT_MAX / 8.0) return false;
+        double error = gamma * absolute + ((double)mesh->max_weights + 32) * 64 * FLT_TRUE_MIN * (mesh->max_bias_sum + 1);
+        double lo = lower[axis] * (lower[axis] < 0 ? mesh->max_bias_sum : mesh->min_bias_sum) - error;
+        double hi = upper[axis] * (upper[axis] > 0 ? mesh->max_bias_sum : mesh->min_bias_sum) + error;
+        mins[axis] = nextafterf((float)lo, -INFINITY); maxs[axis] = nextafterf((float)hi, INFINITY);
+        if (!isfinite(mins[axis]) || !isfinite(maxs[axis])) return false;
+    }
+    *bounds = (qa_bounds){model_vec(mins), model_vec(maxs)};
+    return true;
+}
+
+static bool md5_bounds_visible(const qa_scene_model_input *input, qa_bounds bounds)
+{
+    qa_model_bounds local = {{bounds.mins.x, bounds.mins.y, bounds.mins.z},
+                            {bounds.maxs.x, bounds.maxs.y, bounds.maxs.z}}, world;
+    qa_model_transform_bounds(&input->transform, &local, &world);
+    qa_bounds transformed = {model_vec(world.min), model_vec(world.max)};
+    if (!qa_vec_finite(transformed.mins) || !qa_vec_finite(transformed.maxs)) return true;
+    qa_scene_plane planes[6];
+    size_t count = qa_scene_frustum(&input->view, planes);
+    return qa_scene_bounds_visible(transformed, planes, count);
+}
+
 static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *input, uint32_t index,
                            bool cull, qa_scene_frame *frame, qa_scene_mesh *out, bool *visible,
                            qa_error *error) {
@@ -942,8 +1027,20 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
     if (source_vertex_count > SIZE_MAX / sizeof(qa_model_vertex) || out->vertex_count > SIZE_MAX / sizeof(qa_scene_vertex)) {
         qa_error_set(error, QA_ERROR_MEMORY, index, "model frame geometry exceeds addressable storage"); return false;
     }
-    qa_model_vertex *sampled = retained->sampled;
+    unsigned sample_index = 0;
+    bool reusable = false;
+    if (model->source->format == QA_MODEL_MD5) {
+        sample_index = SCENE_MODEL_POSE_VARIANTS;
+        reusable = input->pose && input->pose_count == model->source->bone_count && input->pose == model->source->bind_pose;
+        for (unsigned i = 0; i < SCENE_MODEL_POSE_VARIANTS; ++i)
+            if (model->poses[i].ready && input->pose_count == model->source->bone_count && input->pose == model->poses[i].pose) {
+                sample_index = i; reusable = true; break;
+            }
+    }
+    scene_model_sample *sample = &retained->samples[sample_index];
+    qa_model_vertex *sampled = sample->vertices;
     if (!sampled) return false;
+    bool shell = scene_model_has_shell(input);
     bool alias = model->source->format == QA_MODEL_MDL || model->source->format == QA_MODEL_MD2;
     if (alias) {
         qa_vec3 delta = qa_v3(0, 0, 0);
@@ -959,37 +1056,39 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
         if (!qa_model_sample_alias(model->source, input->frame, input->old_frame, input->back_lerp,
                                     delta, sampled, source->vertex_count, error)) return false;
     } else if (model->source->format == QA_MODEL_MD5) {
-        bool reusable = input->pose && input->pose_count == model->source->bone_count &&
-            (input->pose == model->sampled_pose || input->pose == model->source->bind_pose);
-        if (!reusable || retained->sampled_pose != input->pose) {
-            retained->sampled_pose = NULL;
+        if (!reusable || sample->pose != input->pose || sample->rounding != fegetround()) {
+            sample->pose = NULL;
+            qa_bounds bounds;
+            if (cull && md5_influence_bounds(model, index, input, shell, &bounds) && !md5_bounds_visible(input, bounds)) {
+                *visible = false; return true;
+            }
             if (!qa_model_skin_md5(model->source, index, input->pose, input->pose_count,
                                     sampled, source->vertex_count, error)) return false;
-            retained->sampled_bounds = model_bounds_empty();
-            retained->sampled_shell_ready = false;
+            sample->bounds = model_bounds_empty();
+            sample->shell_ready = false;
             for (size_t i = 0; i < out->vertex_count; ++i) {
                 uint32_t source_index = retained->sources[i];
                 if (source_index >= source->vertex_count) {
                     qa_error_set(error, QA_ERROR_FORMAT, index, "Source model lost its physical vertex order"); return false;
                 }
-                model_bounds_add(&retained->sampled_bounds, model_vec(sampled[source_index].position));
+                model_bounds_add(&sample->bounds, model_vec(sampled[source_index].position));
             }
-            if (reusable) retained->sampled_pose = input->pose;
+            sample->rounding = fegetround();
+            if (reusable) sample->pose = input->pose;
         }
     } else if (!qa_model_sample_mesh(model->source, index, input->frame, input->old_frame,
                                       input->back_lerp, sampled, source->vertex_count, error)) return false;
-    bool shell = scene_model_has_shell(input);
-    if (shell && model->source->format == QA_MODEL_MD5 && !retained->sampled_shell_ready) {
-        retained->sampled_shell_bounds = model_bounds_empty();
+    if (shell && model->source->format == QA_MODEL_MD5 && !sample->shell_ready) {
+        sample->shell_bounds = model_bounds_empty();
         for (size_t i = 0; i < out->vertex_count; ++i) {
             const qa_model_vertex *point = &sampled[retained->sources[i]];
-            model_bounds_add(&retained->sampled_shell_bounds,
+            model_bounds_add(&sample->shell_bounds,
                 qa_vec_add(model_vec(point->position), qa_vec_scale(model_vec(point->normal), 4)));
         }
-        retained->sampled_shell_ready = true;
+        sample->shell_ready = true;
     }
     if (cull && model->source->format == QA_MODEL_MD5) {
-        qa_bounds bounds = shell ? retained->sampled_shell_bounds : retained->sampled_bounds;
+        qa_bounds bounds = shell ? sample->shell_bounds : sample->bounds;
         qa_model_bounds local = {{bounds.mins.x, bounds.mins.y, bounds.mins.z},
                                 {bounds.maxs.x, bounds.maxs.y, bounds.maxs.z}}, world;
         qa_model_transform_bounds(&input->transform, &local, &world);
@@ -1014,7 +1113,7 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
         lighting.family != QA_SCENE_Q3 && !shell)
         shading = scene_model_shade_prepare(&lighting);
     out->bounds = model->source->format == QA_MODEL_MD5 ?
-        shell ? retained->sampled_shell_bounds : retained->sampled_bounds : model_bounds_empty();
+        shell ? sample->shell_bounds : sample->bounds : model_bounds_empty();
     for (size_t i = 0; i < out->vertex_count; ++i) {
         uint32_t source_index = retained->sources[i];
         if (source_index >= source->vertex_count || (model->source_topology && source_index != i)) {
@@ -1219,7 +1318,8 @@ static bool submit_attachments(qa_scene_model *model, const qa_scene_model_input
     return true;
 }
 
-static bool sample_animation_pose(qa_scene_model *model, qa_scene_model_input *input, qa_error *error)
+static bool sample_animation_pose(qa_scene_model *model, qa_scene_model_input *input,
+    qa_scene_frame *frame, qa_error *error)
 {
     const qa_model_animation *animation = input->animation;
     if (!animation->frame_count || animation->joint_count != model->source->bone_count) {
@@ -1229,21 +1329,45 @@ static bool sample_animation_pose(qa_scene_model *model, qa_scene_model_input *i
     const qa_model_pose *current = animation->poses + (size_t)(input->frame % animation->frame_count) * count;
     const qa_model_pose *old = animation->poses + (size_t)(input->old_frame % animation->frame_count) * count;
     bool frames_equal = input->frame == input->old_frame;
-    if (!model->sampled_pose_ready || model->sampled_frames_equal != frames_equal ||
-        (!frames_equal && memcmp(&model->sampled_back_lerp, &input->back_lerp, sizeof(input->back_lerp))) ||
-        memcmp(model->sampled_pose_frames, current, bytes) ||
-        memcmp(model->sampled_pose_frames + count, old, bytes)) {
-        model->sampled_pose_ready = false;
-        for (uint32_t i = 0; i < model->source->mesh_count; ++i) model->meshes[i].sampled_pose = NULL;
-        if (!qa_model_animation_sample(animation, input->frame, input->old_frame,
-            input->back_lerp, model->sampled_pose, count, error)) return false;
-        memcpy(model->sampled_pose_frames, current, bytes);
-        memcpy(model->sampled_pose_frames + count, old, bytes);
-        model->sampled_back_lerp = input->back_lerp;
-        model->sampled_frames_equal = frames_equal;
-        model->sampled_pose_ready = true;
+    int rounding = fegetround();
+    for (unsigned i = 0; i < SCENE_MODEL_POSE_VARIANTS; ++i) {
+        scene_model_pose_variant *pose = &model->poses[i];
+        if (pose->ready && pose->rounding == rounding && pose->frames_equal == frames_equal &&
+            (frames_equal || !memcmp(&pose->back_lerp, &input->back_lerp, sizeof(input->back_lerp))) &&
+            !memcmp(pose->frames, current, bytes) && !memcmp(pose->frames + count, old, bytes)) {
+            input->pose = pose->pose; input->pose_count = count;
+            pose->frame_sequence = frame->sequence;
+            return true;
+        }
     }
-    input->pose = model->sampled_pose;
+    unsigned index = model->next_pose;
+    unsigned scanned = 0;
+    while (scanned < SCENE_MODEL_POSE_VARIANTS && model->poses[index].ready &&
+        model->poses[index].frame_sequence == frame->sequence) {
+        index = (index + 1) % SCENE_MODEL_POSE_VARIANTS;
+        ++scanned;
+    }
+    if (scanned == SCENE_MODEL_POSE_VARIANTS) {
+        qa_model_pose *transient = qa_arena_alloc(&frame->storage, bytes, _Alignof(qa_model_pose), error);
+        if (!transient || !qa_model_animation_sample(animation, input->frame, input->old_frame,
+            input->back_lerp, transient, count, error)) return false;
+        input->pose = transient; input->pose_count = count;
+        return true;
+    }
+    model->next_pose = (index + 1) % SCENE_MODEL_POSE_VARIANTS;
+    scene_model_pose_variant *pose = &model->poses[index];
+    pose->ready = false;
+    for (uint32_t i = 0; i < model->source->mesh_count; ++i) model->meshes[i].samples[index].pose = NULL;
+    if (!qa_model_animation_sample(animation, input->frame, input->old_frame,
+        input->back_lerp, pose->pose, count, error)) return false;
+    memcpy(pose->frames, current, bytes);
+    memcpy(pose->frames + count, old, bytes);
+    pose->back_lerp = input->back_lerp;
+    pose->frames_equal = frames_equal;
+    pose->rounding = rounding;
+    pose->frame_sequence = frame->sequence;
+    pose->ready = true;
+    input->pose = pose->pose;
     input->pose_count = count;
     return true;
 }
@@ -1327,7 +1451,7 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
                 if (!pose || !qa_model_animation_sample(input.animation, input.frame, input.old_frame,
                     input.back_lerp, pose, count, error)) return false;
                 input.pose = pose; input.pose_count = count;
-            } else if (!sample_animation_pose(model, &input, error)) return false;
+            } else if (!sample_animation_pose(model, &input, frame, error)) return false;
         } else { input.pose = model->source->bind_pose; input.pose_count = model->source->bone_count; }
     }
     bool visible = true;

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <float.h>
 #include <stdio.h>
 
 typedef struct corner_entry {
@@ -13,6 +14,41 @@ static size_t corner_hash(uint32_t vertex, uint32_t texcoord, bool seam, size_t 
     key *= UINT64_C(0xd6e8feb86659fd93);
     key ^= key >> 32;
     return (size_t)key & mask;
+}
+
+static void influence_bounds(const qa_model *model, uint32_t index, scene_model_mesh *mesh)
+{
+    const qa_model_mesh *source = &model->meshes[index];
+    if (!source->vertex_weights || !source->weights || !source->vertex_count) return;
+    mesh->min_bias_sum = INFINITY;
+    for (uint32_t vertex = 0; vertex < source->vertex_count; ++vertex) {
+        qa_model_weight_range range = source->vertex_weights[vertex];
+        if (range.first > source->weight_count || range.count > source->weight_count - range.first) return;
+        qa_vec3 normal = model_vec(source->vertices[vertex].normal);
+        if (!qa_vec_finite(normal)) return;
+        double sum = 0;
+        for (uint32_t i = 0; i < range.count; ++i) {
+            const qa_model_weight *weight = &source->weights[range.first + i];
+            if (weight->bone >= model->bone_count || !isfinite(weight->bias) ||
+                weight->bias < 0 || weight->bias > 1) return;
+            qa_vec3 offset = model_vec(weight->offset);
+            if (!qa_vec_finite(offset)) return;
+            scene_model_influence *influence = &mesh->influences[weight->bone];
+            if (!influence->used) {
+                influence->offsets = influence->normals = model_bounds_empty();
+                influence->used = true;
+            }
+            model_bounds_add(&influence->offsets, offset);
+            model_bounds_add(&influence->normals, normal);
+            sum += weight->bias;
+        }
+        double error = sum * ((double)range.count * DBL_EPSILON) /
+            (1 - (double)range.count * DBL_EPSILON) + (double)range.count * DBL_TRUE_MIN;
+        mesh->min_bias_sum = fmin(mesh->min_bias_sum, fmax(0, nextafter(sum - error, -INFINITY)));
+        mesh->max_bias_sum = fmax(mesh->max_bias_sum, nextafter(sum + error, INFINITY));
+        if (range.count > mesh->max_weights) mesh->max_weights = range.count;
+    }
+    mesh->influence_bounds_ready = true;
 }
 
 bool scene_model_topology(qa_scene_model *model, uint32_t mesh_index, qa_error *error) {
@@ -31,8 +67,18 @@ bool scene_model_topology(qa_scene_model *model, uint32_t mesh_index, qa_error *
     mesh->sources = calloc(allocated_vertices ? allocated_vertices : 1, sizeof(*mesh->sources));
     mesh->indices = calloc(corners ? corners : 1, sizeof(*mesh->indices));
     mesh->shaders = calloc(source->shader_count ? source->shader_count : 1, sizeof(*mesh->shaders));
-    mesh->sampled = calloc(source->vertex_count ? source->vertex_count : 1, sizeof(*mesh->sampled));
+    size_t sample_count = model->source->format == QA_MODEL_MD5 ? SCENE_MODEL_POSE_VARIANTS + 1 : 1;
+    if (source_vertices > SIZE_MAX / sample_count / sizeof(*mesh->sampled)) goto too_large;
+    mesh->sampled = calloc(source_vertices ? source_vertices * sample_count : 1, sizeof(*mesh->sampled));
     if (!mesh->vertices || !mesh->sources || !mesh->indices || !mesh->shaders || !mesh->sampled) goto memory;
+    for (size_t i = 0; i < sample_count; ++i) mesh->samples[i].vertices = mesh->sampled + i * source_vertices;
+    if (model->source->format == QA_MODEL_MD5) {
+        size_t joints = model->source->bone_count;
+        if (joints > SIZE_MAX / sizeof(*mesh->influences)) goto too_large;
+        mesh->influences = calloc(joints ? joints : 1, sizeof(*mesh->influences));
+        if (!mesh->influences) goto memory;
+        influence_bounds(model->source, mesh_index, mesh);
+    }
     size_t capacity = 0;
     corner_entry *table = NULL;
     if (!model->source_topology) {
@@ -141,6 +187,7 @@ void scene_model_topology_destroy(qa_scene_model *model) {
         free(mesh->sources);
         free(mesh->normal_indices); free(mesh->shaders);
         free(mesh->sampled);
+        free(mesh->influences);
     }
     free(model->meshes);
 }
