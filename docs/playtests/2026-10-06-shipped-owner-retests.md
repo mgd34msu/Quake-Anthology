@@ -13,3 +13,19 @@ These used the installed executable on private displays, without a debugger. The
 Local evidence identifiers: `world-q1-classic-id1-cpu-685cab51-isbxad34` (`02-corridor.png`, `03-slipgate.png`) and `native-original-q3-685-proof.json`, whose three cases include exact actions, exit codes and screenshots. Evidence remains outside the repository; no installed game archives or assets are committed.
 
 Still open in this round: MIKE-17 Q1/Q2 transparency and MIKE-20 particle retests on the latest artifact. Original Q2 rerelease still fails during guest startup: the GS null-context fault is replaced by a structured operand-monitor failure at guest PC `0x18013808d`. Its startup and effects are not qualified.
+
+Additional installed artifact: `82e5cc4f`, 139,409,432 bytes. Both full compiler builds and their six registered checks passed; main executable and twelve runtime files matched the installed receipts.
+
+| Item | Additional actual check | Result |
+|---|---|---|
+| MIKE-17 | Native Q1 rerelease MG3 `hub`, near/far grate views, CPU and GL 640×400 | Slime visible through grate holes, without an opaque sheet or pink edges. |
+| MIKE-17 | Native Q2 rerelease `base1`, right-hand TRANS33 window, CPU and GL 640×400 | Machinery and orange fixture visible through the glass. |
+| MIKE-20 | Native Q2 rerelease `base1`, stock `give all`/`use` commands with startup cheats enabled and genuine Mouse1 input, CPU and GL | Yellow blaster particles, gray rocket smoke/light, blue rail spiral/white impacts, and green BFG beams/particles. Rocket ammunition 100→98; rail 100→99; BFG cells 300→150 after three shots. |
+
+All six qualified runs exited 0, kept the executable unchanged and removed their processes/private display. Root also inspected the CPU grate, both glass images, CPU rail and GL BFG images. `owner-alpha-effects-82-proof.json` records every case, command, selected photograph and cleanup. Audio was disabled. These do not qualify other surfaces/maps, Q1 particles, Original RR or frame-time targets. An earlier effect trial omitted the stock cheats setting and is excluded because it did not equip the requested weapons.
+
+The installed Original RR retry now passes the earlier operand-monitor failure and executes `default.cfg`, then stops before public frames at an SDK callback CFG mismatch. Commit `dce85a30` fixes the registry lookup and passes bounded guest callback checks; its installed retry remains pending.
+
+The additional Q1 classic `e1m1` MIKE-20 check passed on installed `82e5cc4f`, CPU and GL at 640×400. Public `god`, `notarget` and `impulse` commands equipped the stock shotgun and rocket launcher; genuine Mouse1 input produced white shotgun impact puffs, orange rocket explosion particles, fire/light and gray smoke. Shells fell 100→99 at the first photographed shot; rockets fell 100→96 after the firing sequence. Root inspected both rocket images. Both runs quit with exit 0 and removed their processes/private display. Audio was disabled. `owner-q1-effects-82-proof.json` records these bounded local effect checks.
+
+Installed `bf27a858` includes the SDK callback-registry fix. A bounded Original RR retry reached `==== InitGame ====`, with the native child consuming CPU and the parent waiting for its response. The window remained black and no public gameplay frame was observed. The earlier CFG failure did not recur in that run; successful Original RR startup and gameplay remain unproven. Its diagnostic processes were terminated and removed.

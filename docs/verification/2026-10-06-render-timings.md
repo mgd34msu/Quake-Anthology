@@ -340,3 +340,30 @@ retain pinned baked pixels. These are unnecessary global barriers. Image
 updates must drain only draws that read the affected storage; real texture
 and compositor dependencies still require ordering. This trace changes timing
 and is not a frame-time result.
+
+Installed `82e5cc4f` and `bf27a858` were measured on native Q2 rerelease
+`base1`, pinned to `0-7,12-19`. Each case excluded startup warm-up and
+measured 600 presentation intervals, with swap interval 0, no debugger or
+sampling profiler, dummy audio delivery and this project's other build/game
+jobs quiet. GL used the RTX 3090. Each artifact stayed unchanged and exited 0.
+
+| Output | `82e5cc4f` median / p99, ms | `bf27a858` median / p99, ms | Target median, ms |
+| --- | ---: | ---: | ---: |
+| GL 1920×1080 | 4.479 / 11.154 | 2.384 / 4.752 | <2 |
+| CPU 640×400 | 17.716 / 46.260 | 17.665 / 46.855 | <4 |
+| CPU 320×200 | 12.879 / 22.166 | 12.226 / 21.326 | <2 |
+
+The native producer now admits retained MD5 poses to the shared CPU skinning
+batch and resident GL weight/bone path. Warmed `scene_build` means fell
+2.181→1.082 ms in GL, 2.048→1.530 ms at CPU 640×400 and 1.890→1.366 ms
+at CPU 320×200. GL submission fell 1.325→0.837 ms. CPU rendering itself
+remains expensive: 14.224 ms at 640×400 and 9.251 ms at 320×200 after the
+change. CPU 640×400 has no convincing whole-frame improvement; all three
+targets remain unmet. Live simulation follows real wall time, so these
+stationary-spawn runs do not establish identical instruction/event sequences.
+
+Raw result identifiers, in table order, before then after:
+`q2-rerelease-baseq2-gl-ea56msvb`, `q2-rerelease-baseq2-gl-q15sv5j5`;
+`q2-rerelease-baseq2-cpu-yzqt4ev6`, `q2-rerelease-baseq2-cpu-7l7sbm6s`;
+`q2-rerelease-baseq2-cpu-zi16gdq7`, `q2-rerelease-baseq2-cpu-t0sz7g_e`.
+An earlier GL trial overlapped a component check and is excluded.
