@@ -671,6 +671,10 @@ static const char *sprite_classname(const qa_q1_game *game, const q1_actor *enti
         if (!strcmp(name,projectiles[i].native_classname)) return projectiles[i].classname;
     return name;
 }
+static bool original_hidden_map_model(q1_map_kind kind, bool dormant) {
+    return kind == Q1_MAP_COUNTER || kind == Q1_MAP_RELAY ||
+        (kind == Q1_MAP_MULTI && dormant);
+}
 static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
     q1_player *player, const qa_movement_state *movement, qa_q1_save_record *record, qa_error *error) {
     qa_q1_game *game = receipt->operation.game; qa_body_state body; qa_combat_state combat;
@@ -697,7 +701,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
                 physics.enemy = entity->owner; source_entity.owner = (q1_ref){0};
             }
         }
-        if (entity->map && entity->map->kind == Q1_MAP_MULTI && entity->map->dormant)
+        if (entity->map && !entity->model &&
+            original_hidden_map_model(entity->map->kind, entity->map->dormant))
             source_entity.model = entity->map->original_model;
         if (entity->kind == Q1_PROJECTILE || entity->think == Q1_THINK_WIZARD ||
             entity->think == Q1_THINK_DEATH_BUBBLES || entity->think == Q1_THINK_SCOURGE_TRIGGER ||
@@ -1255,7 +1260,7 @@ static bool restore_map(qa_strings *strings,qa_actor_owner source,
         if (*end || index > UINT32_MAX) return fail(error, "Original brush has invalid physical inline model");
         map->has_inline_model = true; map->inline_model = (uint32_t)index;
     }
-    if (map->kind == Q1_MAP_MULTI && map->dormant && saved_number(record,"modelindex") == 0)
+    if (original_hidden_map_model(map->kind, map->dormant) && saved_number(record,"modelindex") == 0)
         entity->model = QA_STRING_NONE;
     if (q1_map_is_mover(map->kind)) {
         q1_map_movement *move = &map->pending.mover;
@@ -1508,6 +1513,13 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
     if (!admit_word(admission,"modelindex",error)) return false;
     if (saved(record,"size") && !admit_vector(admission,"size",qa_vec_sub(body.bounds.maxs,body.bounds.mins),error)) return false;
     admitted_key(admission,"size");
+    static const char *const link_bounds[] = {"absmin", "absmax"};
+    for (size_t i = 0; i < sizeof(link_bounds) / sizeof(*link_bounds); ++i) {
+        const char *value = saved(record, link_bounds[i]);
+        qa_vec3 ignored;
+        if (value && !saved_vector(value, &ignored, error)) return false;
+        admitted_key(admission, link_bounds[i]);
+    }
     qa_combat_state combat={0};combat.armor.regular.kind=QA_ARMOR_Q1;
     if (!ADMIT_FIELDS(admission,&combat,combat_fields,error) || !qa_armor_validate(&combat.armor,error)) return false;
     if (body.bounds.mins.x>body.bounds.maxs.x || body.bounds.mins.y>body.bounds.maxs.y || body.bounds.mins.z>body.bounds.maxs.z)
@@ -1609,7 +1621,8 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
             if (source.map==Q1_MAP_WORLD) {
                 qa_q1_options options={0};
                 if (slot || !admit_text(admission,"classname","worldspawn",error) ||
-                    !ADMIT_FIELDS(admission,&options,world_fields,error)) goto done;
+                    !ADMIT_FIELDS(admission,&options,world_fields,error) ||
+                    (program >= QA_Q1_ID1 && program <= QA_Q1_CTF && !admit_string(admission,"wad",error))) goto done;
             } else if (!slot || !isfinite(entity.next_think) ||
                 (entity.think==Q1_THINK_NONE && entity.next_think!=0) ||
                 (entity.think!=Q1_THINK_NONE && (entity.think!=Q1_THINK_MAP ||
@@ -1911,7 +1924,7 @@ static bool original_model_fits(const qa_q1_wire_receipt *receipt,
     bool equal=!strcmp(model,expected?expected:"");
     const char *use=saved(record,"use"),*classname=saved(record,"classname");
     if (!equal && index==0 && model[0]=='*' && classname &&
-        q1_map_classify(classname)==Q1_MAP_MULTI && use && !strcmp(use,"trigger_multiple") &&
+        original_hidden_map_model(q1_map_classify(classname), use && !strcmp(use,"trigger_multiple")) &&
         saved_number(record,"solid")==0 && saved_number(record,"movetype")==0) {
         for (size_t i=1;i<receipt->model_count;++i) {
             expected=qa_strings_cstr(strings,receipt->models[i]);
