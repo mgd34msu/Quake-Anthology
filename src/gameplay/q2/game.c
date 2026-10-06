@@ -302,6 +302,12 @@ bool qa_q2_actor_tick(qa_q2_game *g, qa_actor_id id, uint64_t now, uint64_t elap
 static void close_game(void *context) {
     qa_q2_game *g = context;
     qa_builtin_snapshot_pool_free(&g->trace_frames);
+    while (g->push_frames) {
+        q2_push_frame *frame = g->push_frames;
+        g->push_frames = frame->next;
+        free(frame->parts);
+        free(frame);
+    }
     while (g->all_actors != NULL) {
         q2_actor *next = g->all_actors->all_next;
         q2_monster_release_state(g->all_actors);

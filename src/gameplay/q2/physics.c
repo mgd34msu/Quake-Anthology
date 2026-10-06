@@ -37,11 +37,19 @@ static qa_source_frame source_frame(const qa_q2_game *g) {
 static bool push_team(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (a->physics.flags & QA_PHYSICS_TEAM_SLAVE) return true;
     qa_actor_id leader = a->id;
-    qa_physics_push *parts = calloc(g->capacity, sizeof(*parts));
-    if (!parts) {
-        qa_error_set(e, QA_ERROR_MEMORY, leader.slot, "Capturing Q2 pusher team");
-        return false;
+    q2_push_frame **slot = &g->push_frames;
+    while (*slot && (*slot)->active) slot = &(*slot)->next;
+    q2_push_frame *frame = *slot;
+    if (!frame) {
+        frame = calloc(1, sizeof(*frame));
+        if (!frame) {
+            qa_error_set(e, QA_ERROR_MEMORY, leader.slot, "Capturing Q2 pusher team");
+            return false;
+        }
+        *slot = frame;
     }
+    frame->active = true;
+    qa_physics_push *parts = frame->parts;
     bool ok = true;
     size_t count = 0;
     for (;;) {
@@ -62,6 +70,22 @@ static bool push_team(qa_q2_game *g, q2_actor *a, qa_error *e) {
                     break;
                 }
             if (!ok) break;
+            if (count == frame->capacity) {
+                size_t capacity = frame->capacity ? frame->capacity * 2 : 8;
+                if (capacity < frame->capacity || capacity > SIZE_MAX / sizeof(*parts)) {
+                    qa_error_set(e, QA_ERROR_MEMORY, leader.slot, "Q2 pusher team size overflow");
+                    ok = false;
+                    break;
+                }
+                qa_physics_push *grown = realloc(parts, capacity * sizeof(*parts));
+                if (!grown) {
+                    qa_error_set(e, QA_ERROR_MEMORY, leader.slot, "Capturing Q2 pusher team");
+                    ok = false;
+                    break;
+                }
+                parts = frame->parts = grown;
+                frame->capacity = capacity;
+            }
             qa_body_state body;
             if (!qa_world_body_read(g->services.world, part->id, &body, e)) {
                 ok = false;
@@ -109,7 +133,7 @@ static bool push_team(qa_q2_game *g, q2_actor *a, qa_error *e) {
         }
         break;
     }
-    free(parts);
+    frame->active = false;
     return ok;
 }
 

@@ -133,6 +133,12 @@ typedef struct q2_wire_reference {
     qa_actor_id actor;
     uint32_t number;
 } q2_wire_reference;
+typedef struct q2_push_frame {
+    struct q2_push_frame *next;
+    qa_physics_push *parts;
+    size_t capacity;
+    bool active;
+} q2_push_frame;
 struct qa_q2_game {
     q2_monsters_runtime *monster_runtime;
     qa_builtin_services services;
@@ -180,6 +186,7 @@ struct qa_q2_game {
     uint32_t wire_shadow_count;
     qa_string_id wire_music;
     bool wire_music_present;
+    q2_push_frame *push_frames;
 };
 typedef struct q2_weapon_call {
     qa_q2_game *game;
