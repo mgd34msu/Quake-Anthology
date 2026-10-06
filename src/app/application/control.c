@@ -371,7 +371,6 @@ static void state_body(application_control_record *record,
             record->state.data.nq.flags |= APPLICATION_Q1_ONGROUND;
         break;
     case QA_MOVEMENT_QUAKEWORLD:
-        record->state.data.qw.angles = record->view_angles;
         record->state.data.qw.dead = health <= 0;
         record->ground = contact;
         record->state.data.qw.ground = record->ground;
