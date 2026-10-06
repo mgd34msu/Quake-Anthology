@@ -182,7 +182,6 @@ static inline void qc_store_float(uint8_t *bytes, uint32_t word, float value)
 char *qc_strdup(const char *text, qa_error *error);
 bool qc_span(size_t offset, size_t count, size_t stride, size_t size,
              size_t *bytes, qa_error *error);
-uint16_t qc_crc16(qa_bytes bytes);
 
 bool qc_strings_create(qc_strings *strings, qa_bytes program, bool quakeworld,
                        qa_error *error);

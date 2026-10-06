@@ -45,13 +45,7 @@ uint8_t qa_qw_checksum(qa_bytes bytes, uint32_t sequence)
     data[count+1]=checksum_table[offset+1];
     data[count+2]=(uint8_t)(sequence>>8)^checksum_table[offset+2];
     data[count+3]=checksum_table[offset+3];
-    uint16_t crc=65535;
-    for (size_t i=0;i<count+4;++i) {
-        crc=(uint16_t)(crc^((uint16_t)data[i]<<8));
-        for (unsigned bit=0;bit<8;++bit)
-            crc=(uint16_t)(((uint32_t)crc<<1)^((crc&32768)?0x1021u:0u));
-    }
-    return (uint8_t)crc;
+    return (uint8_t)qa_crc_block((qa_bytes){data, count + 4});
 }
 bool qa_qw_map_checksum2(qa_bytes bytes, uint32_t *out, qa_error *e)
 {

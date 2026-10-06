@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/hash.h"
 
 #define QC_PROGRAM_VERSION 6
 #define QC_NETQUAKE_SYSTEM_CRC 5927
@@ -39,21 +40,6 @@ bool qc_span(size_t offset, size_t count, size_t stride, size_t size,
         return qc_fail(error, QA_ERROR_FORMAT, offset, "byte span exceeds input");
     *bytes = count * stride;
     return true;
-}
-
-uint16_t qc_crc16(qa_bytes bytes)
-{
-    uint16_t crc = UINT16_C(0xffff);
-    for (size_t index = 0; index < bytes.size; ++index) {
-        crc ^= (uint16_t)bytes.data[index] << 8;
-        for (unsigned bit = 0; bit < 8; ++bit) {
-            if ((crc & UINT16_C(0x8000)) != 0)
-                crc = (uint16_t)((crc << 1) ^ UINT16_C(0x1021));
-            else
-                crc = (uint16_t)(crc << 1);
-        }
-    }
-    return crc;
 }
 
 static bool read_section(qa_bytes input, size_t header_offset, size_t stride,
@@ -400,7 +386,7 @@ bool qa_qc_program_load(qa_bytes bytes, const char *source,
         .global_count = globals.count,
         .field_count = fields.count,
         .function_count = functions.count,
-        .file_crc = qc_crc16(bytes)
+        .file_crc = qa_crc_block(bytes)
     };
     program->string_bytes = strings.count;
 

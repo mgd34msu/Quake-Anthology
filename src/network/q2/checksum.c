@@ -32,12 +32,13 @@ static const uint8_t table[1024] = {
     0xe5, 0xcb, 0x32,
 };
 uint8_t qa_q2_sequence_checksum(qa_bytes bytes, uint32_t sequence) {
-    size_t length=bytes.size<60?bytes.size:60;
-    uint16_t crc=0xffff;uint32_t sum=0;
-    for(size_t i=0;i<length+4;i++) {
-        uint8_t byte=i<length?bytes.data[i]:table[sequence%1020+i-length];
-        sum+=byte;crc^=(uint16_t)((uint16_t)byte<<8);
-        for(unsigned bit=0;bit<8;bit++)crc=(uint16_t)((crc<<1)^((crc&0x8000)?0x1021:0));
+    size_t length = bytes.size < 60 ? bytes.size : 60;
+    uint8_t data[64];
+    uint32_t sum = 0;
+    for (size_t i = 0; i < length + 4; ++i) {
+        uint8_t byte = i < length ? bytes.data[i] : table[sequence % 1020 + i - length];
+        data[i] = byte;
+        sum += byte;
     }
-    return (uint8_t)(crc^sum);
+    return (uint8_t)(qa_crc_block((qa_bytes){data, length + 4}) ^ sum);
 }

@@ -30,6 +30,9 @@ void qa_sha256_hex(const qa_sha256_digest *digest, char out[65]);
 /* Accepts 64 hex digits with an optional "sha256:" prefix. */
 bool qa_sha256_parse(const char *text, qa_sha256_digest *out, qa_error *error);
 
+/* Original CRC_Block: CRC-16-CCITT with initial value 0xffff. */
+uint16_t qa_crc_block(qa_bytes bytes);
+
 /* MD4 is required by original content/network checksums, not authentication. */
 void qa_md4_init(qa_md4_context *context);
 void qa_md4_update(qa_md4_context *context, qa_bytes bytes);
