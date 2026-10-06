@@ -1,0 +1,300 @@
+{
+  "date": "2026-10-05",
+  "items": [
+    "MIKE-09",
+    "MIKE-10"
+  ],
+  "artifact": "qfiles/qa-c",
+  "latest_shipped_source": "fe1c0a07",
+  "source_fixes": [
+    "fd9ca798",
+    "b16d1754",
+    "e2c936c8",
+    "7c50434a",
+    "fe1c0a07"
+  ],
+  "available_creature_choices": 396,
+  "installed_content_sets": 16,
+  "method": "Drawn public menus and genuine XTest input; read-only native state and completed presentation observations. No game state writes through GDB.",
+  "cases": [
+    {
+      "case": "q1-q2-arsenal",
+      "renderer": "cpu",
+      "copied_commit": "09bf85f7",
+      "presentation_count": 108,
+      "native_monsters": 23,
+      "monster_products": [
+        "q1-classic-id1"
+      ],
+      "animated_actors": 23,
+      "selected_arsenal": "q2-classic-baseq2",
+      "movement": {
+        "before": [
+          480.0,
+          -352.0,
+          88.03125
+        ],
+        "after": [
+          480.0,
+          -263.6430969238281,
+          73.70285034179688
+        ],
+        "distance": 89.51114655715917
+      },
+      "inferior_exit": 0,
+      "source_receipt": "external-q1-q2-arsenal-b6w_vocb"
+    },
+    {
+      "case": "q1-q2-arsenal",
+      "renderer": "gl",
+      "copied_commit": "09bf85f7",
+      "presentation_count": 108,
+      "native_monsters": 23,
+      "monster_products": [
+        "q1-classic-id1"
+      ],
+      "animated_actors": 23,
+      "selected_arsenal": "q2-classic-baseq2",
+      "movement": {
+        "before": [
+          480.0,
+          -352.0,
+          88.03125
+        ],
+        "after": [
+          480.0,
+          -263.7939758300781,
+          74.84151458740234
+        ],
+        "distance": 89.18672446120652
+      },
+      "inferior_exit": 0,
+      "source_receipt": "external-q1-q2-arsenal-lwh3pv_0"
+    },
+    {
+      "case": "q1-q2-monsters",
+      "renderer": "gl",
+      "copied_commit": "09bf85f7",
+      "presentation_count": 108,
+      "native_monsters": 23,
+      "monster_products": [
+        "q2-classic-baseq2"
+      ],
+      "animated_actors": 23,
+      "selected_arsenal": "q1-classic-id1",
+      "movement": {
+        "before": [
+          480.0,
+          -352.0,
+          88.03125
+        ],
+        "after": [
+          480.0,
+          -261.8984069824219,
+          72.03125
+        ],
+        "distance": 91.51118546005883
+      },
+      "inferior_exit": 0,
+      "source_receipt": "external-q1-q2-monsters-34u2nmz8"
+    },
+    {
+      "case": "q1-q2-monsters",
+      "renderer": "cpu",
+      "copied_commit": "09bf85f7",
+      "presentation_count": 108,
+      "native_monsters": 23,
+      "monster_products": [
+        "q2-classic-baseq2"
+      ],
+      "animated_actors": 23,
+      "selected_arsenal": "q1-classic-id1",
+      "movement": {
+        "before": [
+          480.0,
+          -352.0,
+          88.03125
+        ],
+        "after": [
+          480.0,
+          -261.3984069824219,
+          72.03125
+        ],
+        "distance": 92.00352524399737
+      },
+      "inferior_exit": 0,
+      "source_receipt": "external-q1-q2-monsters-wrv0bf21"
+    },
+    {
+      "case": "q1-q2-roster",
+      "renderer": "cpu",
+      "copied_commit": "fe1c0a07",
+      "presentation_count": 108,
+      "native_monsters": 23,
+      "monster_products": [
+        "q1-classic-id1",
+        "q2-classic-baseq2"
+      ],
+      "animated_actors": 23,
+      "selected_arsenal": "q1-classic-id1",
+      "movement": {
+        "before": [
+          480.0,
+          -352.0,
+          88.03125
+        ],
+        "after": [
+          480.0,
+          -259.1914978027344,
+          72.03125
+        ],
+        "distance": 94.17758799257845
+      },
+      "inferior_exit": 0,
+      "source_receipt": "external-q1-q2-roster-tm8yts0e"
+    },
+    {
+      "case": "q1-q2-roster",
+      "renderer": "gl",
+      "copied_commit": "fe1c0a07",
+      "presentation_count": 108,
+      "native_monsters": 23,
+      "monster_products": [
+        "q1-classic-id1",
+        "q2-classic-baseq2"
+      ],
+      "animated_actors": 23,
+      "selected_arsenal": "q1-classic-id1",
+      "movement": {
+        "before": [
+          480.0,
+          -352.0,
+          88.03125
+        ],
+        "after": [
+          480.0,
+          -256.4373474121094,
+          72.03125
+        ],
+        "distance": 96.89283033142276
+      },
+      "inferior_exit": 0,
+      "source_receipt": "external-q1-q2-roster-zpqet1eq"
+    },
+    {
+      "case": "q1-q3-arsenal",
+      "renderer": "gl",
+      "copied_commit": "09bf85f7",
+      "presentation_count": 108,
+      "native_monsters": 23,
+      "monster_products": [
+        "q1-classic-id1"
+      ],
+      "animated_actors": 23,
+      "selected_arsenal": "q3-baseq3",
+      "movement": {
+        "before": [
+          480.0,
+          -352.0,
+          88.03125
+        ],
+        "after": [
+          480.0,
+          -259.9391784667969,
+          72.03125
+        ],
+        "distance": 93.44086291001531
+      },
+      "inferior_exit": 0,
+      "source_receipt": "external-q1-q3-arsenal-6k80fh_2"
+    },
+    {
+      "case": "q1-q3-arsenal",
+      "renderer": "cpu",
+      "copied_commit": "09bf85f7",
+      "presentation_count": 108,
+      "native_monsters": 23,
+      "monster_products": [
+        "q1-classic-id1"
+      ],
+      "animated_actors": 23,
+      "selected_arsenal": "q3-baseq3",
+      "movement": {
+        "before": [
+          480.0,
+          -352.0,
+          88.03125
+        ],
+        "after": [
+          480.0,
+          -261.7867126464844,
+          72.37539672851562
+        ],
+        "distance": 91.56168935087551
+      },
+      "inferior_exit": 0,
+      "source_receipt": "external-q1-q3-arsenal-fndnqjdy"
+    },
+    {
+      "case": "q2-q1-monsters",
+      "renderer": "gl",
+      "copied_commit": "fe1c0a07",
+      "presentation_count": 108,
+      "native_monsters": 19,
+      "monster_products": [
+        "q1-classic-id1"
+      ],
+      "animated_actors": 17,
+      "selected_arsenal": "q2-classic-baseq2",
+      "movement": {
+        "before": [
+          -1768.0,
+          1536.0,
+          120.125
+        ],
+        "after": [
+          -1704.125,
+          1536.0,
+          120.125
+        ],
+        "distance": 63.875
+      },
+      "inferior_exit": 0,
+      "source_receipt": "external-q2-q1-monsters-fvnnpzfh"
+    },
+    {
+      "case": "q2-q1-monsters",
+      "renderer": "cpu",
+      "copied_commit": "fe1c0a07",
+      "presentation_count": 108,
+      "native_monsters": 19,
+      "monster_products": [
+        "q1-classic-id1"
+      ],
+      "animated_actors": 17,
+      "selected_arsenal": "q2-classic-baseq2",
+      "movement": {
+        "before": [
+          -1768.0,
+          1536.0,
+          120.125
+        ],
+        "after": [
+          -1704.125,
+          1536.0,
+          120.125
+        ],
+        "distance": 63.875
+      },
+      "inferior_exit": 0,
+      "source_receipt": "external-q2-q1-monsters-sp9qvee1"
+    }
+  ],
+  "limits": [
+    "Real qfiles/qa-c, external XTest input, read-only GDB; no inferior calls or state writes.",
+    "CPU and GL for four map/monster/arsenal mixtures plus one per-class mixed roster; 108 presented gameplay observations each.",
+    "Selector contains 396 available creatures in 16 installed Q1/Q2 sets. Availability is not a claim that every individual monster attack was live-tested.",
+    "Runs use --no-audio; sound verification is assigned separately.",
+    "The reverse GL 04-creature-choices.png is excluded because it captured the preceding roster panel before presentation completed. Choice metadata and gameplay images remain valid."
+  ]
+}
