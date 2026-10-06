@@ -9,6 +9,7 @@ void frontend_fx_q1_explosion(frontend_fx_particles *state, qa_builtin_random *r
     qa_vec3 origin, double seconds, bool blob)
 {
     for (unsigned i = 0; i < 1024; ++i) {
+        if (state->count == FRONTEND_FX_PARTICLE_CAPACITY) return;
         qa_scene_q1_particle_state value = {0};
         value.die = seconds + (blob ? 1 + (draw(random) & 8) * .05 : 5);
         value.ramp = blob ? 0 : (float)(draw(random) & 3);
@@ -21,7 +22,6 @@ void frontend_fx_q1_explosion(frontend_fx_particles *state, qa_builtin_random *r
         value.velocity.z = (float)(draw(random) % 512) - 256;
         value.kind = blob ? ((i & 1) ? QA_Q1_PARTICLE_BLOB : QA_Q1_PARTICLE_BLOB2)
             : ((i & 1) ? QA_Q1_PARTICLE_EXPLODE : QA_Q1_PARTICLE_EXPLODE2);
-        if (state->count == FRONTEND_FX_PARTICLE_CAPACITY) return;
         append(state, value);
     }
 }
@@ -31,6 +31,7 @@ void frontend_fx_q1_impact(frontend_fx_particles *state, qa_builtin_random *rand
 {
     if (count == 1024) { frontend_fx_q1_explosion(state, random, origin, seconds, false); return; }
     for (int32_t i = 0; i < count; ++i) {
+        if (state->count == FRONTEND_FX_PARTICLE_CAPACITY) return;
         qa_scene_q1_particle_state value = {.kind = QA_Q1_PARTICLE_SLOW_GRAVITY,
             .velocity = qa_vec_scale(direction, 15)};
         value.die = seconds + .1 * (draw(random) % 5);
@@ -38,7 +39,6 @@ void frontend_fx_q1_impact(frontend_fx_particles *state, qa_builtin_random *rand
         value.origin.x = origin.x + ((float)(draw(random) & 15) - 8);
         value.origin.y = origin.y + ((float)(draw(random) & 15) - 8);
         value.origin.z = origin.z + ((float)(draw(random) & 15) - 8);
-        if (state->count == FRONTEND_FX_PARTICLE_CAPACITY) return;
         append(state, value);
     }
 }
@@ -171,6 +171,7 @@ void frontend_fx_q1_splash(frontend_fx_particles *state, qa_builtin_random *rand
     int step = lava ? 1 : 4;
     for (int i = -16; i < 16; i += step) for (int j = -16; j < 16; j += step)
         for (int k = lava ? 0 : -24; k < (lava ? 1 : 32); k += 4) {
+            if (state->count == FRONTEND_FX_PARTICLE_CAPACITY) return;
             qa_scene_q1_particle_state value = {.kind = QA_Q1_PARTICLE_SLOW_GRAVITY};
             value.die = seconds + (lava ? 2 + (draw(random) & 31) * .02 : .2 + (draw(random) & 7) * .02);
             value.color = (lava ? 224u : 7u) + (draw(random) & 7);
@@ -184,7 +185,6 @@ void frontend_fx_q1_splash(frontend_fx_particles *state, qa_builtin_random *rand
                 value.origin.z = origin.z + (float)k + (float)(draw(random) & 3);
             }
             value.velocity = qa_vec_scale(qa_vec_normalize(direction), (float)(50 + (draw(random) & 63)));
-            if (state->count == FRONTEND_FX_PARTICLE_CAPACITY) return;
             append(state, value);
         }
 }
