@@ -41,7 +41,7 @@ static qa_q3_host *role_host(qa_application *app,
             selected = role;
         }
     qa_q3_host_client_context context;
-    if (!selected || selected->engine != engine || !selected->ready || selected->retired || !selected->host ||
+    if (!selected || selected->engine != engine || !selected->ready || !selected->host ||
         !qa_q3_host_client_context_read(selected->host, &context) || context.session != app->session ||
         context.role != wanted->role || context.owner != wanted->receiver ||
         context.service_owner != wanted->service_owner || context.frontend_lifetime != wanted->frontend_lifetime ||
