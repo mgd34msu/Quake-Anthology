@@ -315,9 +315,10 @@ bool qa_application_network_q1_clientdata(qa_application *app, qa_actor_id playe
     if (!qa_qc_actor_reference(engine->provider->state.qc.instance, player, false, &reference, error) ||
         !q1_wire_vector(engine, reference, "view_ofs", vec, error)) return false;
     value.viewheight = vec[2];
-    if (!application_qc_float(engine, reference, "idealpitch", &value.idealpitch, error) ||
-        !q1_wire_vector(engine, reference, "punchangle", value.punch, error) ||
-        !q1_wire_vector(engine, reference, "velocity", value.velocity, error) ||
+    if (engine->profile != QA_QC_QUAKEWORLD &&
+        (!application_qc_float(engine, reference, "idealpitch", &value.idealpitch, error) ||
+         !q1_wire_vector(engine, reference, "punchangle", value.punch, error))) return false;
+    if (!q1_wire_vector(engine, reference, "velocity", value.velocity, error) ||
         !application_qc_float(engine, reference, "items", &scalar, error) || !q1_wire_bits(scalar, &value.items, error)) return false;
     const qa_qc_definition *items2 = qa_qc_program_find_field(engine->provider->state.qc.program, "items2");
     if (items2) {
