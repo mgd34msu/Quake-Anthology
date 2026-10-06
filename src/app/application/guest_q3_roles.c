@@ -512,6 +512,8 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             options.client.user_command != bound_client.user_command ||
             options.client.command_values != bound_client.command_values ||
             options.client.source_actor != bound_client.source_actor ||
+            options.client.ui_state_context != bound_client.ui_state_context ||
+            options.client.ui_state != bound_client.ui_state ||
             options.frontend_lifetime != bound_services.frontend_lifetime ||
             options.release_frontend != bound_services.release_frontend ||
             options.client_time_cvars != bound_services.client_time_cvars ||

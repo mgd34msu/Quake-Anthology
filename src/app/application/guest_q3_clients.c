@@ -559,6 +559,92 @@ application_provider *q3g_native_game_source(qa_application *application)
     return source && source->kind == APPLICATION_PROVIDER_Q3 ? source : NULL;
 }
 
+static bool ui_client_state(void *context, const qa_q3_host *host,
+    qa_q3_ui_client_state *out, qa_error *error)
+{
+    q3g_role *role = context;
+    struct application_q3_guest *engine = role ? role->engine : NULL;
+    application_provider *receiver = engine ? engine->provider : NULL;
+    application_provider *source = role ? role->client_source : NULL;
+    qa_q3_host_client_context actual;
+    if (!out || !receiver || !source || !role->ready || role->retired ||
+        !role->local_client || role->kind != QA_QVM_UI || host != role->host || role->client >= 64 ||
+        engine->restore_pending || (role->source_cleared && engine->initializing_role != role) ||
+        role->source_owner != source->owner ||
+        receiver->application != source->application || !receiver->constructed || !receiver->attached ||
+        receiver->close_pending || !source->constructed || !source->attached || source->close_pending ||
+        !qa_q3_host_client_context_read(host, &actual) || actual.role != QA_QVM_UI ||
+        actual.session != receiver->application->session || actual.owner != receiver->owner ||
+        actual.service_owner != role->service_owner || actual.command_context.owner != receiver->owner ||
+        actual.command_context.seat != role->seat || actual.command_context.dialect != QA_CONSOLE_Q3)
+        return application_fail(error, QA_ERROR_ARGUMENT, "UI client state lost its actual local role and GAME source");
+    bool retained = false;
+    for (q3g_role *row = engine->roles; row; row = row->next) if (row == role) retained = true;
+    if (!retained)
+        return application_fail(error, QA_ERROR_ARGUMENT, "UI client state lost its retained physical role");
+    qa_actor_id actor = {0};
+    bool connected;
+    if (role->native_client) {
+        application_native_q3_wire_client_topology topology;
+        application_native_q3_wire_client_view client;
+        if (!application_native_q3_wire_client_topology_read(role->native_client, &topology, error)) return false;
+        if (topology.source != source || topology.source_owner != role->source_owner ||
+            topology.receiver != receiver->owner || topology.seat != role->seat || topology.source_slot != role->client)
+            return application_fail(error, QA_ERROR_ARGUMENT, "UI client state changed its retained native GAME topology");
+        if (!application_native_q3_wire_client_admission_read(source, role->client, &client, &connected, error)) return false;
+        if (connected && (client.seat != role->seat || client.bot))
+            return application_fail(error, QA_ERROR_ARGUMENT, "UI client state changed its admitted native GAME seat");
+        actor = client.actor;
+    } else {
+        struct application_q3_guest *owner = role->client_engine;
+        if (!owner || owner->provider != source || owner->restore_pending || owner->seats[role->client] != role->seat)
+            return application_fail(error, QA_ERROR_ARGUMENT, "UI client state changed its actual original GAME seat");
+        const q3g_client *client = owner->clients + role->client;
+        connected = client->connected && !client->pending_retirement;
+        actor = client->actor;
+    }
+    qa_q3_ui_client_state state = {.phase = connected ? 5 : 1};
+    memcpy(state.server_name, "localhost", sizeof("localhost"));
+    if (connected) {
+        const qa_q3_host_client_services *client = &role->client_services;
+        if (!client->gamestate || !client->current_snapshot || !client->snapshot)
+            return application_fail(error, QA_ERROR_ARGUMENT, "UI client state lost its retained GAME observations");
+        const qa_q3_gamestate *gamestate = client->gamestate(client->context);
+        if (gamestate) {
+            if (gamestate->client_number != (int32_t)role->client)
+                return application_fail(error, QA_ERROR_ARGUMENT, "UI gamestate changed its physical GAME client ordinal");
+            state.client_number = gamestate->client_number;
+            application_provider *hud = application_provider_for(receiver->application, actor, QA_ROLE_HUD, "");
+            struct application_q3_guest *presentation = engine;
+            bool own_cgame = false;
+            for (q3g_role *row = engine->roles; row; row = row->next)
+                if (row->kind == QA_QVM_CGAME && row->seat == role->seat) own_cgame = true;
+            if (!own_cgame) presentation = q3g_engine(hud);
+            q3g_role *cgame = NULL;
+            for (q3g_role *row = presentation ? presentation->roles : NULL; row; row = row->next)
+                if (row->kind == QA_QVM_CGAME && row->seat == role->seat && row->ready && !row->retired &&
+                    row->local_client && row->client_source == source && row->client == role->client) {
+                    if (cgame) return application_fail(error, QA_ERROR_ARGUMENT, "UI client state has ambiguous actual CGAME loads");
+                    cgame = row;
+                }
+            bool loaded = cgame && cgame->initialized && cgame->init_succeeded;
+            if (cgame && cgame->committed && !loaded) state.phase = 6;
+            if (loaded) {
+                state.phase = 7;
+                int32_t number, time, ping;
+                const qa_q3_snapshot *snapshot = NULL;
+                if (!client->current_snapshot(client->context, &number, &time, error) ||
+                    !client->snapshot(client->context, number, &snapshot, &ping, error)) return false;
+                if (snapshot && snapshot->valid && !(snapshot->flags & 2)) {
+                    state.phase = 8;
+                    state.client_number = snapshot->player.clientNum;
+                }
+            }
+        }
+    }
+    *out = state; return true;
+}
+
 bool q3g_client_bind(q3g_role *role, qa_q3_host_options *options, qa_error *error)
 {
     if (role->kind == QA_QVM_GAME || options->client.gamestate) {
@@ -613,6 +699,10 @@ bool q3g_client_bind(q3g_role *role, qa_q3_host_options *options, qa_error *erro
         options->client_time_cvars = actual;
         options->client_time_owner = role->source_owner;
         options->client_time_from_game = false;
+    }
+    if (role->kind == QA_QVM_UI) {
+        options->client.ui_state_context = role;
+        options->client.ui_state = ui_client_state;
     }
     return true;
 }
