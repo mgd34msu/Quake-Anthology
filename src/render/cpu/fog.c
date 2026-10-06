@@ -2,6 +2,9 @@
 #include "fog_private.h"
 #include <fenv.h>
 #include <float.h>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 static void blend_fog(uint8_t *pixel, const float color[3], float amount,
                       bool alpha) {
@@ -71,6 +74,125 @@ static cpu_fog_distance_span fog_distance_span(const cpu_fog_rows *rows,
       ray[2], step[2], count};
 }
 
+static void fog_distance_step(cpu_fog_distance_span *span) {
+  span->length += span->first;
+  span->first += span->second;
+  span->second += span->third;
+  span->z += span->z_step;
+}
+
+#if defined(__SSE2__)
+static __m128 fog_clamp_four(__m128 value) {
+  return _mm_min_ps(_mm_max_ps(value, _mm_setzero_ps()), _mm_set1_ps(1));
+}
+
+static __m128 fog_select_four(__m128 mask, __m128 yes, __m128 no) {
+  return _mm_or_ps(_mm_and_ps(mask, yes), _mm_andnot_ps(mask, no));
+}
+
+static __m128 fog_exp_four(__m128 attenuation) {
+  float values[4];
+  _mm_storeu_ps(values, attenuation);
+  for (size_t i = 0; i < 4; ++i) values[i] = cpu_fog_exp(values[i]);
+  return _mm_loadu_ps(values);
+}
+
+static __m128i fog_bytes_four(__m128 value) {
+  value = _mm_min_ps(_mm_max_ps(value, _mm_setzero_ps()), _mm_set1_ps(255));
+  return _mm_cvttps_epi32(_mm_add_ps(value, _mm_set1_ps(.5f)));
+}
+
+static void fog_blend_four(__m128 color[4], const __m128 fog_color[3],
+                           __m128 amount, __m128 admitted, bool alpha) {
+  __m128 factor = fog_clamp_four(amount);
+  __m128 inverse = _mm_sub_ps(_mm_set1_ps(1), factor);
+  for (size_t c = 0; c < 4; ++c) {
+    __m128 blended;
+    if (c < 3)
+      blended = _mm_add_ps(_mm_mul_ps(fog_color[c], factor),
+                           _mm_mul_ps(color[c], inverse));
+    else if (alpha)
+      blended = _mm_add_ps(_mm_mul_ps(_mm_mul_ps(factor, factor), _mm_set1_ps(255)),
+                           _mm_mul_ps(color[c], inverse));
+    else blended = _mm_set1_ps(255);
+    color[c] = fog_select_four(admitted, _mm_cvtepi32_ps(fog_bytes_four(blended)), color[c]);
+  }
+}
+
+/* Four adjacent pixels retain the scalar operation order and both byte
+ * rounding boundaries when global and height fog are applied together. */
+static void q2_fog_four(const cpu_fog_rows *rows, size_t index,
+                        cpu_fog_distance_span *span) {
+  const qa_scene_fog *fog = rows->fog;
+  cpu_framebuffer *buffer = rows->buffer;
+  const double *depths = buffer->depth + index;
+  __m128 depth = _mm_cvtpd_ps(_mm_loadu_pd(depths));
+  depth = _mm_movelh_ps(depth, _mm_cvtpd_ps(_mm_loadu_pd(depths + 2)));
+  __m128 sky = _mm_cmpge_ps(depth, _mm_set1_ps(fog->far_depth));
+  __m128 geometry = _mm_cmpnge_ps(depth, _mm_set1_ps(fog->far_depth));
+  const __m128 one = _mm_set1_ps(1), zero = _mm_setzero_ps();
+  uint8_t *pixels = buffer->color + index * 4;
+  __m128i packed = _mm_loadu_si128((const __m128i *)(const void *)pixels);
+  __m128 color[4];
+  for (size_t c = 0; c < 4; ++c) {
+    __m128i channel = _mm_and_si128(packed, _mm_set1_epi32(255));
+    color[c] = _mm_cvtepi32_ps(channel);
+    packed = _mm_srli_epi32(packed, 8);
+  }
+  __m128 global_color[3];
+  for (size_t c = 0; c < 3; ++c) global_color[c] = _mm_set1_ps(rows->color[c]);
+  if (rows->sky)
+    fog_blend_four(color, global_color, _mm_set1_ps(fog->sky_factor), sky, buffer->alpha);
+  if (_mm_movemask_ps(geometry) != 0 && (rows->global || rows->height)) {
+    depth = fog_select_four(geometry, depth, zero);
+    __m128 eye = _mm_div_ps(_mm_set1_ps(rows->b),
+        _mm_sub_ps(_mm_set1_ps(rows->a), _mm_sub_ps(_mm_mul_ps(_mm_set1_ps(2), depth), one)));
+    __m128 fragment_depth = _mm_mul_ps(depth, eye);
+    if (rows->global) {
+      __m128 scaled = _mm_mul_ps(_mm_set1_ps(rows->density), fragment_depth);
+      fog_blend_four(color, global_color,
+          _mm_sub_ps(one, fog_exp_four(_mm_mul_ps(scaled, scaled))), geometry, buffer->alpha);
+    }
+    if (rows->height) {
+      float ray_z[4], ray_length[4];
+      for (size_t i = 0; i < 4; ++i) {
+        ray_z[i] = span->z;
+        ray_length[i] = span->length;
+        fog_distance_step(span);
+      }
+      __m128 z = _mm_loadu_ps(ray_z);
+      __m128 world_z = _mm_add_ps(_mm_set1_ps(rows->view->origin.z), _mm_mul_ps(z, eye));
+      __m128 direction = _mm_div_ps(z, _mm_loadu_ps(ray_length));
+      direction = fog_select_four(_mm_cmplt_ps(eye, zero), _mm_sub_ps(zero, direction), direction);
+      direction = fog_select_four(_mm_cmpeq_ps(direction, zero), _mm_set1_ps(.00001f), direction);
+      __m128 extinction_density = _mm_div_ps(
+          _mm_sub_ps(_mm_set1_ps(rows->origin_extinction),
+              fog_exp_four(_mm_mul_ps(_mm_set1_ps(fog->height_falloff),
+                  _mm_sub_ps(world_z, _mm_set1_ps(fog->height_start))))),
+          _mm_mul_ps(_mm_set1_ps(fog->height_falloff), direction));
+      __m128 extinction = _mm_sub_ps(one, fog_clamp_four(fog_exp_four(extinction_density)));
+      __m128 fraction = fog_clamp_four(_mm_mul_ps(
+          _mm_sub_ps(world_z, _mm_set1_ps(2 * fog->height_start)), _mm_set1_ps(rows->height_inverse)));
+      const float start[3] = {fog->height_color.x, fog->height_color.y, fog->height_color.z};
+      const float end[3] = {fog->height_end_color.x, fog->height_end_color.y, fog->height_end_color.z};
+      __m128 height_color[3];
+      for (size_t c = 0; c < 3; ++c)
+        height_color[c] = _mm_mul_ps(_mm_set1_ps(255), fog_clamp_four(_mm_mul_ps(
+            _mm_add_ps(_mm_set1_ps(start[c]), _mm_mul_ps(_mm_set1_ps(end[c] - start[c]), fraction)), extinction)));
+      __m128 amount = _mm_mul_ps(_mm_sub_ps(one,
+          fog_exp_four(_mm_mul_ps(_mm_set1_ps(fog->height_density), fragment_depth))), extinction);
+      fog_blend_four(color, height_color, amount, geometry, buffer->alpha);
+    }
+  } else if (rows->height) {
+    for (size_t i = 0; i < 4; ++i) fog_distance_step(span);
+  }
+  packed = fog_bytes_four(color[3]);
+  for (size_t c = 3; c-- > 0;)
+    packed = _mm_or_si128(_mm_slli_epi32(packed, 8), fog_bytes_four(color[c]));
+  _mm_storeu_si128((__m128i *)(void *)pixels, packed);
+}
+#endif
+
 static void depth_fog_rows(qa_cpu_renderer *renderer, void *context,
                           int64_t first, int64_t last) {
   (void)renderer;
@@ -87,7 +209,13 @@ static void depth_fog_rows(qa_cpu_renderer *renderer, void *context,
         span = fog_distance_span(rows, start, y, count);
         count = span.count;
       }
-      for (int64_t x = start; x < start + count; ++x) {
+      int64_t x = start;
+#if defined(__SSE2__)
+      if (rows->q2)
+        for (; x + 4 <= start + count; x += 4)
+          q2_fog_four(rows, (size_t)y * buffer->width + (size_t)x, &span);
+#endif
+      for (; x < start + count; ++x) {
         size_t index = (size_t)y * buffer->width + (size_t)x;
         uint8_t *pixel = buffer->color + index * 4;
         float depth = (float)buffer->depth[index];
@@ -130,10 +258,7 @@ static void depth_fog_rows(qa_cpu_renderer *renderer, void *context,
           }
         }
         if (rows->height) {
-          span.length += span.first;
-          span.first += span.second;
-          span.second += span.third;
-          span.z += span.z_step;
+          fog_distance_step(&span);
         }
       }
       start += count;
