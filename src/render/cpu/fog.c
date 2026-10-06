@@ -20,7 +20,7 @@ typedef struct cpu_fog_rows {
   int64_t x0, x1;
   float a, b, tan_x, tan_y, density, color[3], origin_extinction;
   float height_inverse;
-  bool q2, global, height, sky;
+  bool q2, global, height, sky, height_colors_normalized;
 } cpu_fog_rows;
 
 typedef struct cpu_fog_distance_span {
@@ -153,6 +153,34 @@ static __m128 fog_exp_four(__m128 attenuation) {
   return mask == 15 ? value : fog_exp_repair_four(attenuation, value, mask);
 }
 
+/* Reduced exp(-x) uses a degree-seven Taylor polynomial on [-ln(2)/2,
+ * ln(2)/2]. Its real-arithmetic remainder is below 8e-9. Keep zero, tiny,
+ * negative, nonfinite and subnormal-result inputs on the existing path.
+ * The lower bound keeps every Horner intermediate above the normal floor. */
+static __m128 fog_attenuation_four(__m128 attenuation) {
+  __m128 ordinary = _mm_and_ps(_mm_cmpgt_ps(attenuation, _mm_set1_ps(0x1p-64f)),
+                               _mm_cmplt_ps(attenuation, _mm_set1_ps(80)));
+  if (_mm_movemask_ps(ordinary) != 15) return fog_exp_four(attenuation);
+  __m128 scaled = _mm_add_ps(_mm_mul_ps(attenuation,
+      _mm_set1_ps(CPU_FOG_INVERSE_LOG_TWO)), _mm_set1_ps(.5f));
+  __m128i exponent = _mm_cvttps_epi32(scaled);
+  __m128 power = _mm_cvtepi32_ps(exponent);
+  __m128 reduced = _mm_sub_ps(_mm_sub_ps(attenuation,
+      _mm_mul_ps(power, _mm_set1_ps(CPU_FOG_LOG_TWO_HIGH))),
+      _mm_mul_ps(power, _mm_set1_ps(CPU_FOG_LOG_TWO_LOW)));
+  __m128 value = _mm_set1_ps(-1.0f / 5040.0f);
+  value = _mm_add_ps(_mm_mul_ps(value, reduced), _mm_set1_ps(1.0f / 720.0f));
+  value = _mm_add_ps(_mm_mul_ps(value, reduced), _mm_set1_ps(-1.0f / 120.0f));
+  value = _mm_add_ps(_mm_mul_ps(value, reduced), _mm_set1_ps(1.0f / 24.0f));
+  value = _mm_add_ps(_mm_mul_ps(value, reduced), _mm_set1_ps(-1.0f / 6.0f));
+  value = _mm_add_ps(_mm_mul_ps(value, reduced), _mm_set1_ps(.5f));
+  value = _mm_add_ps(_mm_mul_ps(value, reduced), _mm_set1_ps(-1));
+  value = _mm_add_ps(_mm_mul_ps(value, reduced), _mm_set1_ps(1));
+  __m128 scale = _mm_castsi128_ps(_mm_slli_epi32(
+      _mm_sub_epi32(_mm_set1_epi32(127), exponent), 23));
+  return _mm_mul_ps(value, scale);
+}
+
 static __m128i fog_bytes_four(__m128 value) {
   value = _mm_min_ps(_mm_max_ps(value, _mm_setzero_ps()), _mm_set1_ps(255));
   return _mm_cvttps_epi32(_mm_add_ps(value, _mm_set1_ps(.5f)));
@@ -207,7 +235,7 @@ static void q2_fog_four(const cpu_fog_rows *rows, size_t index,
     if (rows->global) {
       __m128 scaled = _mm_mul_ps(_mm_set1_ps(rows->density), fragment_depth);
       fog_blend_four(color, global_color,
-          _mm_sub_ps(one, fog_exp_four(_mm_mul_ps(scaled, scaled))), geometry, buffer->alpha);
+          _mm_sub_ps(one, fog_attenuation_four(_mm_mul_ps(scaled, scaled))), geometry, buffer->alpha);
     }
     if (rows->height) {
       float ray_z[4], ray_length[4];
@@ -226,7 +254,9 @@ static void q2_fog_four(const cpu_fog_rows *rows, size_t index,
               fog_exp_four(_mm_mul_ps(_mm_set1_ps(fog->height_falloff),
                   _mm_sub_ps(world_z, _mm_set1_ps(fog->height_start))))),
           _mm_mul_ps(_mm_set1_ps(fog->height_falloff), direction));
-      __m128 extinction = _mm_sub_ps(one, fog_clamp_four(fog_exp_four(extinction_density)));
+      __m128 extinction_attenuation = rows->height_colors_normalized
+          ? fog_attenuation_four(extinction_density) : fog_exp_four(extinction_density);
+      __m128 extinction = _mm_sub_ps(one, fog_clamp_four(extinction_attenuation));
       __m128 fraction = fog_clamp_four(_mm_mul_ps(
           _mm_sub_ps(world_z, _mm_set1_ps(2 * fog->height_start)), _mm_set1_ps(rows->height_inverse)));
       const float start[3] = {fog->height_color.x, fog->height_color.y, fog->height_color.z};
@@ -235,8 +265,10 @@ static void q2_fog_four(const cpu_fog_rows *rows, size_t index,
       for (size_t c = 0; c < 3; ++c)
         height_color[c] = _mm_mul_ps(_mm_set1_ps(255), fog_clamp_four(_mm_mul_ps(
             _mm_add_ps(_mm_set1_ps(start[c]), _mm_mul_ps(_mm_set1_ps(end[c] - start[c]), fraction)), extinction)));
-      __m128 amount = _mm_mul_ps(_mm_sub_ps(one,
-          fog_exp_four(_mm_mul_ps(_mm_set1_ps(fog->height_density), fragment_depth))), extinction);
+      __m128 height_distance = _mm_mul_ps(_mm_set1_ps(fog->height_density), fragment_depth);
+      __m128 height_attenuation = rows->height_colors_normalized
+          ? fog_attenuation_four(height_distance) : fog_exp_four(height_distance);
+      __m128 amount = _mm_mul_ps(_mm_sub_ps(one, height_attenuation), extinction);
       fog_blend_four(color, height_color, amount, geometry, buffer->alpha);
     }
   } else if (rows->height) {
@@ -378,6 +410,12 @@ bool cpu_depth_fog(qa_cpu_renderer *renderer, const qa_scene_fog *fog,
       .height_inverse = fog->height_end == fog->height_start ? 0 : 1 / (fog->height_end - fog->height_start),
       .q2 = q2, .global = global,
       .height = height, .sky = sky,
+      .height_colors_normalized = fog->height_color.x >= 0 && fog->height_color.x <= 1 &&
+          fog->height_color.y >= 0 && fog->height_color.y <= 1 &&
+          fog->height_color.z >= 0 && fog->height_color.z <= 1 &&
+          fog->height_end_color.x >= 0 && fog->height_end_color.x <= 1 &&
+          fog->height_end_color.y >= 0 && fog->height_end_color.y <= 1 &&
+          fog->height_end_color.z >= 0 && fog->height_end_color.z <= 1,
       .origin_extinction = height ? cpu_fog_exp(fog->height_falloff *
           (view->origin.z - fog->height_start)) : 0};
   cpu_raster_queue_rows(renderer, y0, y1 - 1, depth_fog_rows, &rows,
