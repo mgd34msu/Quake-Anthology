@@ -1,0 +1,94 @@
+--- a/core/unix/os.c
++++ b/core/unix/os.c
+@@ -8526,9 +8526,17 @@
+ 
+ #    if defined(X86) && defined(X64)
+     case SYS_arch_prctl: {
+-        /* we handle arch_prctl in post_syscall */
+         dcontext->sys_param0 = sys_param(dcontext, 0);
+         dcontext->sys_param1 = sys_param(dcontext, 1);
++        if (INTERNAL_OPTION(mangle_app_seg) && dcontext->sys_param0 == ARCH_SET_GS) {
++            ptr_int_t result = tls_handle_set_gs(dcontext, dcontext->sys_param1);
++            if (result < 0) {
++                set_failure_return_val(dcontext, (uint)-result);
++                DODEBUG({ dcontext->expect_last_syscall_to_fail = true; });
++            } else
++                set_success_return_val(dcontext, (reg_t)result);
++            execute_syscall = false;
++        }
+         break;
+     }
+ #    endif
+--- a/core/unix/tls.h
++++ b/core/unix/tls.h
+@@ -402,6 +402,9 @@
+ tls_min_index(void);
+ 
+ #    if defined(LINUX) && defined(X64)
++ptr_int_t
++tls_handle_set_gs(dcontext_t *dcontext, reg_t base);
++
+ void
+ tls_handle_post_arch_prctl(dcontext_t *dcontext, int code, reg_t base);
+ #    endif
+--- a/core/unix/tls_linux_x86.c
++++ b/core/unix/tls_linux_x86.c
+@@ -871,6 +871,31 @@
+     ASSERT(res >= 0);
+ }
+ 
++ptr_int_t
++tls_handle_set_gs(dcontext_t *dcontext, reg_t base)
++{
++    os_local_state_t *os_tls = get_os_tls();
++    os_thread_data_t *ostd = dcontext->os_field;
++    our_modify_ldt_t *desc = ostd->app_thread_areas;
++    ptr_int_t result = dynamorio_syscall(SYS_arch_prctl, 2, ARCH_SET_GS, base);
++    if (result < 0)
++        return result;
++    /* The cache-return sequence reads DR's dcontext through GS.  Execute the
++     * kernel operation here and restore DR's segment before returning to it.
++     * Keep the actual selector and thread area produced by the kernel. */
++    if (TLS_REG_LIB == SEG_GS) {
++        os_tls->app_lib_tls_reg = read_thread_register(SEG_GS);
++        os_tls->app_lib_tls_base = (void *)base;
++    } else {
++        os_tls->app_alt_tls_reg = read_thread_register(SEG_GS);
++        os_tls->app_alt_tls_base = (void *)base;
++    }
++    desc[GS_TLS].entry_number = tls_min_index() + GS_TLS;
++    dynamorio_syscall(SYS_get_thread_area, 1, &desc[GS_TLS]);
++    os_set_dr_seg(dcontext, SEG_GS);
++    return result;
++}
++
+ void
+ tls_handle_post_arch_prctl(dcontext_t *dcontext, int code, reg_t base)
+ {
+@@ -906,26 +931,6 @@
+         }
+         break;
+     }
+-    case ARCH_SET_GS: {
+-        os_thread_data_t *ostd;
+-        our_modify_ldt_t *desc;
+-        /* update new value set by app */
+-        if (TLS_REG_LIB == SEG_GS) {
+-            os_tls->app_lib_tls_reg = read_thread_register(SEG_GS);
+-            os_tls->app_lib_tls_base = (void *)base;
+-        } else {
+-            os_tls->app_alt_tls_reg = read_thread_register(SEG_GS);
+-            os_tls->app_alt_tls_base = (void *)base;
+-        }
+-        /* update the app_thread_areas */
+-        ostd = (os_thread_data_t *)dcontext->os_field;
+-        desc = ostd->app_thread_areas;
+-        desc[GS_TLS].entry_number = tls_min_index() + GS_TLS;
+-        dynamorio_syscall(SYS_get_thread_area, 1, &desc[GS_TLS]);
+-        /* set the value back to the value we are actually using */
+-        os_set_dr_seg(dcontext, SEG_GS);
+-        break;
+-    }
+     case ARCH_GET_GS: {
+         safe_write_ex((void *)base, sizeof(void *), &os_tls->app_alt_tls_base, NULL);
+         break;

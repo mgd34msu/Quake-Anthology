@@ -56,6 +56,22 @@ if(QA_NATIVE_PLATFORM STREQUAL "linux" AND QA_NATIVE_ARCH STREQUAL "x86_64")
             -DBUILD_TESTS:BOOL=OFF
             -DDISABLE_DRGUI:BOOL=ON)
 
+    if(CMAKE_VERSION VERSION_LESS 3.27)
+        set(QA_NATIVE_PROFILE_PATCH_DEPENDEE patch)
+    else()
+        set(QA_NATIVE_PROFILE_PATCH_DEPENDEE patch_disconnected)
+    endif()
+    ExternalProject_Add_Step(qa-native-profile-sdk app-segment-patch
+        COMMAND "${CMAKE_COMMAND}"
+            "-DQA_SOURCE_DIR:PATH=<SOURCE_DIR>"
+            "-DQA_PATCH:FILEPATH=${CMAKE_CURRENT_LIST_DIR}/native-profile/arch-set-gs.patch"
+            -P "${CMAKE_CURRENT_LIST_DIR}/native-profile/ApplyPatch.cmake"
+        DEPENDEES ${QA_NATIVE_PROFILE_PATCH_DEPENDEE}
+        DEPENDERS configure
+        DEPENDS
+            "${CMAKE_CURRENT_LIST_DIR}/native-profile/arch-set-gs.patch"
+            "${CMAKE_CURRENT_LIST_DIR}/native-profile/ApplyPatch.cmake")
+
     ExternalProject_Add(qa-native-profile-build
         PREFIX "${QA_NATIVE_PROFILE_ROOT}/client-project"
         SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/native-profile"
