@@ -6,7 +6,7 @@
 /* Capture runs under the real executing GAME or canonical combat caller.
  * Temporary recipient storage is released by the caller after arena copy. */
 bool application_native_q2_delivery_capture(application_provider *, const qa_builtin_q2_multicast *,
-    qa_application_q2_audience *, qa_error *);
+    qa_vec3 line_end, qa_application_q2_audience *, qa_error *);
 struct application_native_q2;
 bool application_native_q2_message_capture(struct application_native_q2 *,
     const qa_native_host_message *, qa_application_q2_protocol_delivery *, qa_error *);

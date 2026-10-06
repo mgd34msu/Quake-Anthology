@@ -336,8 +336,31 @@ bool qa_q2_wire_view_read(const qa_q2_game *g, qa_actor_id id,
     qa_q2_wire_view *out, qa_error *error)
 {
     qa_q2_wire_binding binding;
-    if (!out || !qa_q2_wire_actor(g, id, &binding, error)) return false;
-    const q2_actor *a = g->actors[id.slot];
+    if (!g || !out || g->restoring_continuation || g->continuation_pending ||
+        g->continuation_failed || g->release_failed) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 VIEW requires its live GAME owner");
+        return false;
+    }
+    if (g->current_actor.registry || !qa_session_safe(g->services.session) ||
+        !qa_world_idle(g->services.world)) {
+        qa_clock_state clock;
+        if ((g->current_actor.registry &&
+             !qa_actors_get(qa_session_actors(g->services.session),g->current_actor)) ||
+            !qa_session_clock(g->services.session,g->options.owner,&clock) ||
+            clock.frame.provider!=g->options.owner || clock.frame.time_ns!=g->now_ns ||
+            clock.frame.kind!=(g->options.edition==QA_Q2_RERELEASE?
+                QA_CLOCK_Q2_RERELEASE:QA_CLOCK_Q2_CLASSIC)) {
+            qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 VIEW lost its executing Source clock");
+            return false;
+        }
+    }
+    const q2_actor *a=id.slot<g->capacity?g->actors[id.slot]:NULL;
+    if (!a || !qa_actor_id_equal(a->id,id) || !a->wire_bound ||
+        !current(g,a->wire_slot,&binding,error)) {
+        if (!error || error->code==QA_OK)
+            qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Actor has no admitted Q2 physical source edict");
+        return false;
+    }
     if (!a->client || !a->client->info.connected || binding.source_slot != a->client->info.slot + 1) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 VIEW has no physical admitted source player");
         return false;

@@ -80,7 +80,7 @@ static bool valid_event(qa_application *application,
         !isfinite(event->attenuation) || !isfinite(event->value))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "gameplay emitted an invalid event");
-    if ((unsigned)event->q2_multicast.kind>QA_BUILTIN_Q2_MULTICAST_ALL ||
+    if ((unsigned)event->q2_multicast.kind>QA_BUILTIN_Q2_MULTICAST_PHS_LINE ||
         !qa_vec_finite(event->q2_multicast.origin) ||
         (event->q2_multicast.kind!=QA_BUILTIN_Q2_MULTICAST_NONE &&
          (event->family!=QA_GAME_Q2 || !event->provider)))
@@ -286,7 +286,8 @@ bool application_emit_q2_map(application_provider *provider,
              !qa_q2_force_wall_multicast_origin(provider->state.q2,event->actor,&multicast_origin)))
             return application_fail(error,QA_ERROR_ARGUMENT,"Forcewall delivery lost its genuine spawn midpoint");
         if (!application_native_q2_delivery_capture(provider,
-                &(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PVS,multicast_origin},&audience,error)) return false;
+                &(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PVS,multicast_origin},
+                (qa_vec3){0},&audience,error)) return false;
     }
     bool ready=reserve_q2_map_event(application,error) &&
         application_event_journal_reserve(application,error) &&
@@ -511,7 +512,8 @@ bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *err
             if (provider->owner==event->provider && provider->constructed && provider->attached && !provider->close_pending) {
                 source=provider; break;
             }
-        if (!application_native_q2_delivery_capture(source,&event->q2_multicast,&audience,error)) return false;
+        if (!application_native_q2_delivery_capture(source,&event->q2_multicast,event->end,
+                &audience,error)) return false;
     }
     bool ok=emit_event(application,event,&audience,error);
     application_native_q2_delivery_dispose(&audience);

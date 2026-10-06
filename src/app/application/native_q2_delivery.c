@@ -1,8 +1,10 @@
 #include "native_q2_delivery.h"
 #include "map_players_private.h"
 #include "guest_native_q2_private.h"
+#include "control_frame.h"
 #include "qa/game_q2_bots.h"
 #include "qa/game_q2_combat.h"
+#include "qa/game_q2_wire.h"
 #include "qa/application_network_q2.h"
 
 static bool roster_row_equal(const application_player_record *a,
@@ -35,27 +37,87 @@ static bool source_current(qa_application *app, application_provider *source,
         !physical->close_pending && physical->map_bound;
 }
 
-static bool capture(application_provider *source, qa_vec3 origin,
+static bool positional_point(qa_collision_geometry *geometry, const qa_collision_leaf *viewer,
+    qa_vec3 point, bool *out, qa_error *error)
+{
+    qa_collision_leaf leaf; bool visible;
+    *out=false;
+    if (!qa_collision_point_leaf(geometry,point,&leaf,error) ||
+        !qa_collision_cluster_visible(geometry,(int32_t)viewer->cluster,
+            (int32_t)leaf.cluster,true,&visible,error)) return false;
+    return !visible || qa_collision_areas_connected(geometry,(int32_t)viewer->area,
+        (int32_t)leaf.area,out,error);
+}
+
+static bool positional_midpoints(qa_collision_geometry *geometry, const qa_collision_leaf *viewer,
+    qa_vec3 start, qa_vec3 end, unsigned splits, bool *out, qa_error *error)
+{
+    qa_vec3 mid=qa_vec_scale(qa_vec_add(start,end),.5f);
+    if (!positional_point(geometry,viewer,mid,out,error)) return false;
+    if (*out || !splits) return true;
+    if (!positional_midpoints(geometry,viewer,start,mid,splits-1,out,error)) return false;
+    if (*out) return true;
+    return positional_midpoints(geometry,viewer,mid,end,splits-1,out,error);
+}
+
+static bool positional_visible(qa_collision_geometry *geometry, qa_vec3 eye,
+    qa_vec3 start, qa_vec3 end, bool *out, qa_error *error)
+{
+    qa_collision_leaf viewer;
+    if (!qa_collision_point_leaf(geometry,eye,&viewer,error)) return false;
+    if (!positional_point(geometry,&viewer,start,out,error)) return false;
+    if (*out) return true;
+    if (!positional_point(geometry,&viewer,end,out,error)) return false;
+    return *out || positional_midpoints(geometry,&viewer,start,end,3,out,error);
+}
+
+static bool player_eye(qa_application *app, application_provider *physical, qa_actor_id actor,
+    qa_vec3 origin, bool rerelease, qa_vec3 *out, qa_error *error)
+{
+    qa_vec3 offset;
+    if (physical->kind==APPLICATION_PROVIDER_Q2) {
+        qa_q2_wire_view view; qa_q2_player_info player;
+        if (!qa_q2_player_read(physical->state.q2,actor,&player))
+            return application_fail(error,QA_ERROR_NOT_FOUND,"Q2 rail recipient lost its Source player");
+        if (!qa_q2_wire_view_read(physical->state.q2,actor,&view,error)) return false;
+        offset=view.view.offset;
+        if (rerelease) offset.z+=player.view_height;
+    } else {
+        qa_application_control_view control; application_client_outputs outputs;
+        if (!qa_application_control_read(app,actor,&control))
+            return application_fail(error,QA_ERROR_NOT_FOUND,"Q2 rail recipient lost its selected view");
+        if (!application_control_outputs(app,actor,&outputs,error)) return false;
+        offset=outputs.has_view_offset?outputs.view_offset:control.view_offset;
+        if (!outputs.has_view_offset && control.state.kind==QA_MOVEMENT_Q2_RERELEASE)
+            offset.z+=control.view_height;
+    }
+    *out=qa_vec_add(origin,offset);
+    return qa_vec_finite(*out) || application_fail(error,QA_ERROR_ARGUMENT,"Q2 rail recipient lost its actual eye");
+}
+
+static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_end,
     qa_builtin_q2_multicast_kind kind, const qa_native_host_message *message, qa_application_q2_audience *out, qa_error *error)
 {
     qa_application *app=source?source->application:NULL;
     struct application_native_q2 *engine=source && source->kind==APPLICATION_PROVIDER_NATIVE ?
         source->state.native.q2_engine:NULL;
     bool original=message!=NULL;
+    bool positional=!original && kind==QA_BUILTIN_Q2_MULTICAST_PHS_LINE;
     bool positioned=!original || message->positioned;
     qa_application_q2_delivery_kind delivery=!original ?
         (kind==QA_BUILTIN_Q2_MULTICAST_ALL ? QA_APPLICATION_Q2_ALL :
-         kind==QA_BUILTIN_Q2_MULTICAST_PHS ? QA_APPLICATION_Q2_PHS : QA_APPLICATION_Q2_PVS) :
+         kind==QA_BUILTIN_Q2_MULTICAST_PHS || positional ? QA_APPLICATION_Q2_PHS : QA_APPLICATION_Q2_PVS) :
         message->target==QA_NATIVE_HOST_UNICAST ? QA_APPLICATION_Q2_UNICAST :
         message->destination==0 ? QA_APPLICATION_Q2_ALL :
         message->destination==1 ? QA_APPLICATION_Q2_PHS : QA_APPLICATION_Q2_PVS;
     if (!out || !app || !app->session || !app->world || !app->players ||
-        !qa_vec_finite(origin) || !source->product || source->product->family!=QA_GAME_Q2 ||
+        !qa_vec_finite(origin) || (positional && !qa_vec_finite(line_end)) ||
+        !source->product || source->product->family!=QA_GAME_Q2 ||
         (original ? (!engine || !engine->calls || !engine->initialized || !engine->map_ready ||
             engine->world!=app->world) :
             (source->kind!=APPLICATION_PROVIDER_Q2 || !source->state.q2 ||
              (qa_session_safe(app->session) && qa_combat_idle(app->combat)))) ||
-        (!original && (kind<QA_BUILTIN_Q2_MULTICAST_PVS || kind>QA_BUILTIN_Q2_MULTICAST_ALL)) ||
+        (!original && (kind<QA_BUILTIN_Q2_MULTICAST_PVS || kind>QA_BUILTIN_Q2_MULTICAST_PHS_LINE)) ||
         (original && message->target==QA_NATIVE_HOST_MULTICAST &&
             (message->destination<0 || message->destination>2)) ||
         ((delivery==QA_APPLICATION_Q2_PVS || delivery==QA_APPLICATION_Q2_PHS) && !positioned))
@@ -88,15 +150,24 @@ static bool capture(application_provider *source, qa_vec3 origin,
              engine->frame.start_ns!=clock.frame.start_ns || engine->frame.elapsed_ns!=clock.frame.elapsed_ns)))
         return application_fail(error,QA_ERROR_ARGUMENT,"Q2 delivery lost its real world or source clock");
     now=clock.frame.time_ns;
+    bool physical_rerelease=false;
+    if (positional && physical->kind==APPLICATION_PROVIDER_Q2) {
+        qa_q2_combat_rules physical_rules;
+        if (physical==source) physical_rules=rules;
+        else if (!qa_q2_combat_rules_read(physical->state.q2,&physical_rules))
+            return application_fail(error,QA_ERROR_ARGUMENT,"Q2 rail recipient lost its actual physical edition");
+        physical_rerelease=physical_rules.edition==QA_Q2_RERELEASE;
+    }
     qa_collision_leaf from={0};
     if (positioned && !qa_collision_point_leaf(geometry,origin,&from,error)) return false;
     bool masked=delivery==QA_APPLICATION_Q2_PVS || delivery==QA_APPLICATION_Q2_PHS;
+    bool cached_areas=masked && !positional;
     bool before_begin=original && (message->reliable || delivery==QA_APPLICATION_Q2_UNICAST);
     uint32_t area_count=qa_collision_area_count(geometry);
-    uint8_t *connected=masked && area_count?malloc(area_count):NULL;
-    if (masked && area_count && !connected)
+    uint8_t *connected=cached_areas && area_count?malloc(area_count):NULL;
+    if (cached_areas && area_count && !connected)
         return application_fail(error,QA_ERROR_MEMORY,"Retaining emission-time area connectivity");
-    for (uint32_t area=0;masked && area<area_count;++area) {
+    for (uint32_t area=0;cached_areas && area<area_count;++area) {
         bool present;
         if (!qa_collision_areas_connected(geometry,(int32_t)from.area,(int32_t)area,&present,error)) {
             free(connected); return false;
@@ -180,6 +251,10 @@ static bool capture(application_provider *source, qa_vec3 origin,
             break;
         }
         if (!qa_world_body_read(world,row.actor,&body,error)) { ok=false; break; }
+        qa_vec3 eye={0};
+        if (positional && !player_eye(app,physical,row.actor,body.origin,physical_rerelease,&eye,error)) {
+            ok=false; break;
+        }
         if (!source_current(app,source,world,roster,physical,publication,revision,geometry,routing,preparing) ||
             roster->count!=count || !roster_row_equal(&roster->records[i],&row) ||
             !qa_actors_get(qa_session_actors(app->session),row.actor) ||
@@ -189,11 +264,12 @@ static bool capture(application_provider *source, qa_vec3 origin,
         }
         qa_collision_leaf to; bool pvs=false;
         if (!qa_collision_point_leaf(geometry,body.origin,&to,error) ||
-            (masked && !qa_collision_cluster_visible(geometry,(int32_t)from.cluster,(int32_t)to.cluster,
+            (positional && !positional_visible(geometry,eye,origin,line_end,&pvs,error)) ||
+            (!positional && masked && !qa_collision_cluster_visible(geometry,(int32_t)from.cluster,(int32_t)to.cluster,
                 delivery==QA_APPLICATION_Q2_PHS,&pvs,error))) {
             ok=false; break;
         }
-        if (!masked || (to.area<area_count && connected[to.area] && pvs)) {
+        if (!masked || (positional?pvs:(to.area<area_count && connected[to.area] && pvs))) {
             for (size_t j=0;j<receipt.count;++j)
                 if (qa_actor_id_equal(recipients[j].actor,row.actor)) {
                     ok=application_fail(error,QA_ERROR_FORMAT,"Q2 audience repeats a full physical client");
@@ -229,10 +305,10 @@ static bool capture(application_provider *source, qa_vec3 origin,
 }
 
 bool application_native_q2_delivery_capture(application_provider *source,
-    const qa_builtin_q2_multicast *multicast, qa_application_q2_audience *out, qa_error *error)
+    const qa_builtin_q2_multicast *multicast, qa_vec3 line_end, qa_application_q2_audience *out, qa_error *error)
 {
     if (!multicast) return application_fail(error,QA_ERROR_ARGUMENT,"Q2 delivery has no Source multicast");
-    return capture(source,multicast->origin,multicast->kind,NULL,out,error);
+    return capture(source,multicast->origin,line_end,multicast->kind,NULL,out,error);
 }
 
 bool application_native_q2_message_capture(struct application_native_q2 *engine,
@@ -256,7 +332,8 @@ bool application_native_q2_message_capture(struct application_native_q2 *engine,
             (message->target==QA_NATIVE_HOST_UNICAST ?
                 (message->client.registry && qa_actor_id_equal(engine->clients[slot].actor,message->client)) :
                 engine->clients[slot].connected));
-    if (connected && !capture(engine->provider,message->origin,QA_BUILTIN_Q2_MULTICAST_NONE,message,&result.audience,error)) return false;
+    if (connected && !capture(engine->provider,message->origin,(qa_vec3){0},
+            QA_BUILTIN_Q2_MULTICAST_NONE,message,&result.audience,error)) return false;
     *out=result;
     return true;
 }

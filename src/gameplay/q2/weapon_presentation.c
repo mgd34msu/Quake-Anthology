@@ -20,6 +20,9 @@ bool q2_event_named(q2_weapon_call *c, qa_builtin_event_kind kind, const char *p
                 qa_vec_scale(qa_vec_add(origin,end),.5f)};
         else if (!strcmp(path,"q2:rail-water"))
             event.q2_multicast=(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PHS,end};
+        else if (c->rerelease && !strcmp(path,"q2:rail"))
+            event.q2_multicast=(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PHS_LINE,
+                origin};
         else if (!strcmp(path,"q2:heatbeam") || !strcmp(path,"q2:monster-heatbeam") ||
                  (!c->rerelease && !strcmp(path,"q2:rail"))) {
             qa_body_state body;

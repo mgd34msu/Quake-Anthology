@@ -87,7 +87,8 @@ typedef enum qa_builtin_q2_multicast_kind {
     QA_BUILTIN_Q2_MULTICAST_NONE,
     QA_BUILTIN_Q2_MULTICAST_PVS,
     QA_BUILTIN_Q2_MULTICAST_PHS,
-    QA_BUILTIN_Q2_MULTICAST_ALL
+    QA_BUILTIN_Q2_MULTICAST_ALL,
+    QA_BUILTIN_Q2_MULTICAST_PHS_LINE
 } qa_builtin_q2_multicast_kind;
 
 typedef struct qa_builtin_q2_multicast {
