@@ -16,6 +16,7 @@ typedef struct qa_cpu_statistics {
   uint64_t generic_batches, generic_commands, generic_triangles;
   uint64_t generic_covered, generic_fragments, generic_written;
   uint64_t worker_dispatches, worker_posts, worker_joins;
+  uint64_t skin_jobs, skin_vertices, skin_cached_draws;
 } qa_cpu_statistics;
 /* Present receives borrowed RGBA8 rows from top to bottom. The callback must
  * consume them before returning and must not reenter the renderer. */

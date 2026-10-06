@@ -869,6 +869,7 @@ static bool skin_frame_prepare(qa_cpu_renderer *renderer, const qa_scene_frame *
     const qa_scene_skinning *skin = draw->skinning;
     if (skin->sample && skin->sample->ready) {
       if (skin->sample->error.code != QA_OK) { if (error) *error = skin->sample->error; return false; }
+      CPU_STATS_ADD(renderer, skin_cached_draws, 1);
       continue;
     }
     const void *owner = skin->sample ? (const void *)skin->sample : (const void *)draw->mesh.geometry;
@@ -896,7 +897,14 @@ static bool skin_frame_prepare(qa_cpu_renderer *renderer, const qa_scene_frame *
       renderer->skin_jobs[i].vertices = renderer->skin_transient ?
           renderer->skin_transient + renderer->skin_bindings[i].offset : NULL;
   if (!qa_render_workers_skin_batch(renderer->raster_pool, renderer->skin_jobs, renderer->skin_job_count, error)) return false;
-  for (size_t i = 0; i < renderer->skin_job_count; ++i) skin_publish(renderer->skin_bindings[i].sample, &renderer->skin_jobs[i]);
+  for (size_t i = 0; i < renderer->skin_job_count; ++i) {
+    const qa_render_model_job *job = &renderer->skin_jobs[i];
+    skin_publish(renderer->skin_bindings[i].sample, job);
+    if (renderer->statistics_enabled && job->completed && job->error.code == QA_OK) {
+      ++renderer->statistics.skin_jobs;
+      renderer->statistics.skin_vertices += (uint64_t)job->view.vertex_count;
+    }
+  }
   for (size_t i = 0; i < renderer->skin_job_count; ++i)
     if (!renderer->skin_jobs[i].completed || renderer->skin_jobs[i].error.code != QA_OK) {
       if (error) *error = renderer->skin_jobs[i].error;
@@ -943,6 +951,8 @@ bool cpu_skin_geometry(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   if (!qa_render_workers_skin_batch(NULL, &job, 1, error)) return false;
   skin_publish(skin->sample, &job);
   if (!job.completed || job.error.code != QA_OK) { if (error) *error = job.error; return false; }
+  CPU_STATS_ADD(renderer, skin_jobs, 1);
+  CPU_STATS_ADD(renderer, skin_vertices, job.view.vertex_count);
   *vertices = job.vertices;
   return true;
 }

@@ -13,7 +13,8 @@
   X(brush_batches) X(brush_spans) X(brush_covered) X(brush_written) \
   X(generic_batches) X(generic_commands) X(generic_triangles) \
   X(generic_covered) X(generic_fragments) X(generic_written) \
-  X(worker_dispatches) X(worker_posts) X(worker_joins)
+  X(worker_dispatches) X(worker_posts) X(worker_joins) \
+  X(skin_jobs) X(skin_vertices) X(skin_cached_draws)
 extern _Thread_local qa_cpu_statistics *cpu_row_statistics;
 #define CPU_STATS_ADD(renderer, field, value) do { \
   if ((renderer)->statistics_enabled) \

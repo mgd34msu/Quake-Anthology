@@ -240,7 +240,9 @@ static bool timers_report(qa_frontend *f, const qa_command_invocation *call, dia
             stats.generic_batches, stats.generic_commands, stats.generic_triangles,
             stats.generic_covered, stats.generic_fragments, stats.generic_written) &&
         append(text, error, "cpu_workers dispatches=%" PRIu64 " posts=%" PRIu64 " joins=%" PRIu64 "\n",
-            stats.worker_dispatches, stats.worker_posts, stats.worker_joins);
+            stats.worker_dispatches, stats.worker_posts, stats.worker_joins) &&
+        append(text, error, "cpu_skin jobs=%" PRIu64 " vertices=%" PRIu64 " cached_draws=%" PRIu64 "\n",
+            stats.skin_jobs, stats.skin_vertices, stats.skin_cached_draws);
 }
 static bool diagnostic(void *context, const qa_command_invocation *call, qa_buffer *out, qa_error *error) {
     qa_frontend *f = context; diagnostic_text text = {0}; qa_arena scratch = {0}; bool ok = false;
