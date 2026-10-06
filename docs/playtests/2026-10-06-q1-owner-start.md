@@ -260,3 +260,26 @@ All six public quits exited zero. Processes and the private display were
 removed; owner settings and the installed artifact stayed unchanged. Evidence:
 `owner-jump-save-visibility-brush-ff437555-proof.json`, `shipped-ff437555.json`
 and `shipped-runtime-ff437555.json`.
+
+## Installed `0a327175`: repeated keyboard and save checks
+
+CPU CLI, GL CLI and genuine GL menu launches repeated the owner `start.bsp`
+path with unchanged saved bindings. Real Space and raw mouse button 3 jumped
+and landed; raw mouse button 2 moved forward. Each Normal slipgate survived
+teleport-fog expiry. Original v5 saves were 32,654–33,407 bytes. After actual
+S-key movement, all three loads restored the exact saved player-state fields
+and the stock 25-shell HUD. No cheats or rebinding were used for these checks.
+
+The separate `e1m1` CPU visibility route again showed no textured trigger
+volume in the corridor or slipgate view. Its private noclip/navigation setup
+does not qualify movement. Two Q2 rerelease CPU spawn captures remained
+coherent at 640×400 and 320×200. One additional native Q3 CPU 640×400 spawn
+capture had visible textured world geometry, weapon, HUD text and score box,
+without solid black font rectangles; it does not qualify Original CGAME,
+restart, a whole map or gameplay behavior.
+
+All seven public quits returned zero. Recorded processes and the private
+display were removed; owner settings and the installed artifact were unchanged.
+Evidence: `owner-jump-save-visibility-brush-0a327175-proof.json`,
+`shipped-0a327175.json` and `shipped-runtime-0a327175.json`.
+The nonfatal demo warning after classic load remains open.

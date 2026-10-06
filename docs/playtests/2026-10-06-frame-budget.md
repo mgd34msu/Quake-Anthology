@@ -47,3 +47,35 @@ succeeded without lost samples, but the helper timed out while waiting for its
 final timer report; cleanup exited zero. Its retained samples support bottleneck
 ranking only. They do not constitute another passing timing or public-quit
 check. Evidence: `ff437555-current-q3-cpu640-ixpogdee/sampling-recovery.json`.
+
+## Installed `0a327175`: shared nearest-mip sampling
+
+Five cases repeated the same quiet stationary-spawn measurements on the shipped
+build after `98b1248f`. Resolution, physical-core affinity, seven raster workers,
+dummy audio, swap interval, warm-up and 600 measured presents were unchanged.
+The GL device was again RTX 3090. No compiler, debugger or sampling profiler ran
+alongside the timing cases. Native built-in sessions were measured; the separate
+external-module continuation change is not an Original-module speed claim.
+
+| Game / output | Before median / p99 (ms) | Current median / p99 (ms) | Current mean scene / render (ms) |
+| --- | ---: | ---: | ---: |
+| Q3 CPU 640×400 | 15.104 / 17.236 | 13.477 / 16.824 | 1.572 / 11.476 |
+| Q3 CPU 320×200 | 7.401 / 10.059 | 6.653 / 7.972 | 1.433 / 4.753 |
+| Q2 rerelease CPU 640×400 | 7.918 / 11.347 | 7.226 / 10.677 | 0.830 / 5.567 |
+| Q2 rerelease CPU 320×200 | 5.089 / 8.420 | 4.975 / 7.019 | 0.769 / 3.527 |
+| Q3 GL 1920×1080 | 2.532 / 2.949 | 2.536 / 3.085 | 1.423 / 0.735 |
+
+All five cases passed actual map, drawable, installed-artifact and normal-quit
+checks. Receipt: `suite-0a327175.json`. CPU medians improved, but every case in
+this table still misses its requested frame budget. The real-time simulation
+limit above still applies; these are comparable workloads, not identical frozen
+game-state replays. Q3 GL provides a control for the CPU-only sampling change.
+
+A separate six-second Q3 CPU 640×400 profile ran after 261 warm presents and
+finished with both public timer reports and a normal quit. Its 5K userspace
+samples had no lost samples. Sample-level texture work remained the largest
+self cost at 21.53% across all threads; fragment writes were 11.74%, and the
+per-fragment rounding-mode query was 5.29%. Moving that query out of the pixel
+loop and batching texture work are the next CPU targets. Sampling percentages
+are diagnostic and are not frame-time percentiles. Evidence:
+`0a327175-current-q3-wayland-cpu640-l08r9c8i/result.json`.

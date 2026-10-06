@@ -77,3 +77,28 @@ exponentiation at 6.32%, generic fragment writing at 6.10%, and texture sampling
 at 5.82%. Percentages use the total sampled userspace CPU across all threads;
 they are not percentages of wall frame time. This diagnostic is excluded from
 the timing table. Receipt: `ff437555-current-rr-cpu640-z0lq7kvi/result.json`.
+
+## Installed `0a327175`: shared nearest-mip sampling
+
+Quiet 600-present measurements after warm-up used the same stationary `base1`
+spawn, physical-core affinity, seven raster workers and enabled dummy audio.
+The CPU 640×400 median/p99 changed from 7.918/11.347 to 7.226/10.677 ms;
+320×200 changed from 5.089/8.420 to 4.975/7.019 ms. Both requested budgets
+remain open. The scene is simulated in real time, so this is not an identical
+frozen-state comparison. Receipts: `q2-rerelease-baseq2-cpu-8xdftt7s/result.json`
+and `q2-rerelease-baseq2-cpu-06rnqpun/result.json`.
+
+Separate installed-build spawn images at both sizes retained lit metal walls,
+floor, pickup models and the translucent machinery window. Those bounded
+image checks do not establish whole-map parity. The small black beam cap was
+also present in the earlier accepted image. Evidence:
+`owner-jump-save-visibility-brush-0a327175-proof.json`.
+
+The external Original rerelease DLL remains unqualified. A separate no-debugger
+startup check reached its initialized save registry after 14.778 seconds and
+progressed to later native callbacks, but had no public frames by the 25-second
+cutoff. The final cleanup log contained an unsupported canonical-service import
+error; its offending import and pre-cleanup timing were not captured, so it is
+not assigned as the startup cause. All owned processes and the private display
+were removed. This is not an Original-module startup or speedup pass. Evidence:
+`original-rr-after-continuation-jku4z47t/summary.json`.
