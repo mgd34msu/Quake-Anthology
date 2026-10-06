@@ -56,7 +56,7 @@ static bool display_options(frontend_restart *owner,qa_display_backend backend,q
     if (width==0) width=(float)(f->cpu?f->width:info.logical_width);
     if (height==0) height=(float)(f->cpu?f->height:info.logical_height);
     float fullscreen=number(owner,"r_fullscreen",info.fullscreen!=QA_DISPLAY_WINDOWED);
-    float swap=number(owner,"r_swapInterval",1); *gamma=number(owner,"r_gamma",f->options.gamma);
+    float swap=number(owner,"r_swapInterval",0); *gamma=number(owner,"r_gamma",f->options.gamma);
     if (!isfinite(width) || !isfinite(height) || floorf(width)!=width || floorf(height)!=height ||
         width<64 || width>16384 || height<64 || height>16384 ||
         (fullscreen!=0 && fullscreen!=1) || (swap!=0 && swap!=1) || !isfinite(*gamma) || *gamma<.5f || *gamma>3)

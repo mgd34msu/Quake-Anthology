@@ -134,7 +134,7 @@ static const shared_declaration declarations[]={
     {"r_customwidth","0","Window width; zero uses current width",QA_CVAR_ARCHIVE,ANY},
     {"r_customheight","0","Window height; zero uses current height",QA_CVAR_ARCHIVE,ANY},
     {"r_fullscreen","0","Borderless desktop fullscreen",QA_CVAR_ARCHIVE,ANY},
-    {"r_swapInterval","1","GL vertical synchronization",QA_CVAR_ARCHIVE,ANY},
+    {"r_swapInterval","0","GL vertical synchronization",QA_CVAR_ARCHIVE,ANY},
     {"r_smp","0","Render worker selection applied by video restart",QA_CVAR_ARCHIVE,TOGGLE},
 #ifdef __APPLE__
     {"r_inGameVideo","0","Original in-world cinematic playback",QA_CVAR_ARCHIVE,ANY},
