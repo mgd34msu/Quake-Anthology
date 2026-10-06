@@ -7,6 +7,7 @@
 #include "qa/json.h"
 #include "qa/json_writer.h"
 #include "qa/q2_save.h"
+#include "qa/network_q2.h"
 
 typedef enum q2_original_record_kind {
     Q2_ORIGINAL_PERSISTENT,
@@ -106,6 +107,7 @@ bool q2_original_scalar(q2_original_record_io *, const char *, q2_original_field
     uint16_t, uint16_t, uint16_t, void *);
 bool q2_original_item(qa_q2_game *, q2_original_record_io *, const char *,
     uint16_t, uint16_t, uint16_t, qa_item_id *);
+bool q2_original_config_layout(qa_q2_edition, const qa_q2_save_level *, qa_q2_config_layout *, qa_error *);
 bool q2_original_resource(qa_q2_game *, q2_original_record_io *, const qa_q2_save_level *,
     const char *, uint16_t, uint16_t, uint16_t, uint32_t, qa_string_id *);
 bool q2_original_object_begin(q2_original_record_io *, const char *, q2_original_record_io *, bool *);
