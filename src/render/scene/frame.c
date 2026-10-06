@@ -132,6 +132,7 @@ bool qa_scene_draw_lightmap_split(const qa_scene_draw *draw, qa_scene_draw *base
         draw->environment > QA_TEXTURE_LIGHTMAP_INVERT_ALPHA) return false;
     if (base) {
         *base = *draw;
+        base->brush.present = false;
         base->texture_count = 1;
         base->textures[1] = NULL;
         base->environment = QA_TEXTURE_MODULATE;
@@ -142,6 +143,7 @@ bool qa_scene_draw_lightmap_split(const qa_scene_draw *draw, qa_scene_draw *base
     }
     if (lightmap) {
         *lightmap = *draw;
+        lightmap->brush = (qa_scene_brush_surface){0};
         lightmap->texture_count = 1;
         lightmap->textures[0] = draw->textures[1];
         lightmap->textures[1] = NULL;
@@ -204,6 +206,7 @@ static bool lightmap_fold(qa_scene_frame *frame, const qa_scene_draw *lightmap)
     /* Replaying this projection must recover both admitted commands exactly;
      * otherwise preserve the original independent passes. */
     if (memcmp(base, &first, sizeof(first)) || memcmp(lightmap, &second, sizeof(second))) return false;
+    fused.brush.present = fused.brush.polygon_vertices != 0;
     *base = fused;
     return true;
 }

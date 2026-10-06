@@ -498,9 +498,15 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
             draw.vertex_inputs.swap_uv = true;
         }
     }
+    if (legacy->brush.polygon_vertices && !texture->fullbright && !diagnostic && !blended &&
+        !paired && !draw.light_count && !draw.vertex_inputs.swap_uv) {
+        draw.brush = legacy->brush;
+        draw.brush.present = !lightmapped;
+    }
     if (!qa_scene_frame_draw(frame, &draw, error)) return false;
     if (lightmapped && !paired && !diagnostic) {
         qa_scene_draw light_draw = draw;
+        light_draw.brush = (qa_scene_brush_surface){0};
         light_draw.mesh = surface->mesh;
         light_draw.vertex_inputs = (qa_scene_vertex_inputs){.constant_color = true,
             .swap_uv = true, .color = {1, 1, 1, 1}};
@@ -529,6 +535,7 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
     }
     if (texture->fullbright && !diagnostic) {
         qa_scene_draw bright_draw = draw;
+        bright_draw.brush = (qa_scene_brush_surface){0};
         bright_draw.mesh = surface->mesh;
         bright_draw.vertex_inputs = (qa_scene_vertex_inputs){.constant_color = true,
             .color = {context->entity_color.x, context->entity_color.y, context->entity_color.z, alpha}};

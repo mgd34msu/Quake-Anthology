@@ -31,6 +31,7 @@ typedef struct qawl_light_atlas {
 } qawl_light_atlas;
 
 struct qaw_legacy {
+    qa_scene_brush_surface brush;
     size_t texture;
     size_t *frames, frame_count;
     bool warp, flowing, fence, lightmapped, decoupled;

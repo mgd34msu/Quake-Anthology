@@ -482,8 +482,21 @@ typedef struct qa_scene_vertex_inputs {
     qa_scene_vec4 color;
     bool constant_color, swap_uv;
 } qa_scene_vertex_inputs;
+typedef struct qa_scene_brush_surface {
+    bool present;
+    uint32_t polygon_vertices;
+    qa_scene_plane plane;
+    float texel_projection[2][4];
+    float texture_mins[2];
+    uint32_t texture_extents[2], texture_size[2];
+    /* Absolute diffuse texels to the face's local light sample grid. */
+    float lightmap_from_texel[2][3];
+    qa_scene_rect lightmap_rect;
+    uint64_t light_revision;
+} qa_scene_brush_surface;
 typedef struct qa_scene_draw {
     qa_scene_mesh mesh;
+    qa_scene_brush_surface brush;
     qa_scene_vertex_inputs vertex_inputs;
     qa_scene_matrix model, mvp;
     const qa_scene_image *textures[2];

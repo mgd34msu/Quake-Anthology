@@ -547,6 +547,7 @@ bool qawl_light_update(qa_scene_world *world, qaw_surface *surface, const qa_mat
     light->light_cache_dynamic = dynamic;
     light->light_cache_monolightmap = mono;
     light->light_cache_valid = true;
+    ++light->brush.light_revision;
     return true;
 }
 
