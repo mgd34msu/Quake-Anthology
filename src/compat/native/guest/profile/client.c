@@ -602,7 +602,12 @@ static dr_emit_flags_t instrument(void *context, void *tag, instrlist_t *list, i
     }
     row->operands = operands ? instr_clone(context, operands) : NULL;
     if (operands && !row->operands) dr_abort();
-    if (row->operands) instr_make_persistent(context, row->operands);
+    if (row->operands) {
+        (void)instr_num_srcs(row->operands);
+        instr_make_persistent(context, row->operands);
+        /* Raw-byte relocation invalidates operands; retain their app addresses. */
+        instr_set_operands_valid(row->operands, true);
+    }
     row->next = instructions; instructions = row;
     dr_insert_clean_call_ex(context, list, where, (void *)clean,
         DR_CLEANCALL_READS_APP_CONTEXT | DR_CLEANCALL_WRITES_APP_CONTEXT, 1, OPND_CREATE_INTPTR(row));
