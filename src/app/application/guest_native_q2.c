@@ -152,19 +152,18 @@ bool application_native_q2_frames_exit(void *context,qa_session *session,
     qa_application *app=context;
     if(!app||app->session!=session||(count&&!frames))
         return application_fail(error,QA_ERROR_ARGUMENT,"Native source exit lost its actual session boundary");
-    application_provider *primary=application_world_provider(app,QA_ROLE_ENTITIES,"");
     const qa_source_frame *frame=NULL;
-    for(size_t i=0;primary&&i<count;++i) if(frames[i].provider==primary->owner) {
-        if(frame) return application_fail(error,QA_ERROR_ARGUMENT,"Native source exit repeats the primary clock");
-        frame=frames+i;
-    }
-    if(!frame) return true;
-    if(frame->phase!=QA_FRAME_EXIT||frame->time_ns!=frame->start_ns+frame->elapsed_ns)
-        return application_fail(error,QA_ERROR_ARGUMENT,"Native source cadence requires the advanced primary exit clock");
     for(size_t i=0;i<app->provider_count;++i) {
         application_provider *p=app->providers[i];
         struct application_native_q2 *n=p&&p->kind==APPLICATION_PROVIDER_NATIVE?p->state.native.q2_engine:NULL;
         if(!n||!n->callbacks||!n->initialized||!n->map_ready||!p->constructed||!p->attached||p->close_pending)continue;
+        if(!frame) {
+            application_provider *primary=application_world_provider(app,QA_ROLE_ENTITIES,"");
+            for(size_t j=0;primary&&j<count;++j) if(frames[j].provider==primary->owner) {
+                frame=frames+j;break;
+            }
+            if(!frame)return true;
+        }
         n->frame=*frame;n->frame.provider=p->owner;n->frame.kind=p->component.clock.kind;
         if(!application_native_q2_stages_advance(n,frame,error)||
             !application_native_q2_visibility_complete(n,error))return false;
