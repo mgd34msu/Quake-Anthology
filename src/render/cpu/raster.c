@@ -676,6 +676,7 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   double inverse_area = triangle->inverse_area, near_depth = triangle->near_depth,
       far_depth = triangle->far_depth, q_dx = triangle->q_dx, q_dy = triangle->q_dy,
       offset = triangle->offset;
+  double depth_range = far_depth - near_depth;
   const double (*uv)[2][3] = triangle->uv;
   const double (*uv_dx)[2] = triangle->uv_dx, (*uv_dy)[2] = triangle->uv_dy;
   bool constant_depth = triangle->constant_depth;
@@ -686,12 +687,19 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
       derivatives[unit] = cpu_sampler_requires_derivatives(&samplers[unit]);
   for (int64_t y = (int64_t)min_y; y <= (int64_t)max_y; ++y) {
     int64_t left = (int64_t)min_x, right = (int64_t)max_x;
+    double pixel_y = (double)y + 0.5;
     for (size_t i = 0; i < 3; ++i)
-      trim(&left, &right, coverage[i], (double)y + 0.5);
+      trim(&left, &right, coverage[i], pixel_y);
+    if (left > right) continue;
+    double row_attributes[3];
+    for (size_t i = 0; i < 3; ++i)
+      row_attributes[i] = attributes[i].y * pixel_y;
     for (int64_t x = left; x <= right; ++x) {
       double weight[3], q = 0, z = 0;
+      double pixel_x = (double)x + 0.5;
       for (size_t i = 0; i < 3; ++i) {
-        weight[i] = evaluate(attributes[i], (double)x + 0.5, (double)y + 0.5) * inverse_area;
+        weight[i] = (attributes[i].x * pixel_x + row_attributes[i] +
+                     attributes[i].c) * inverse_area;
         q += vertices[i].q * weight[i];
         z += vertices[i].z * weight[i];
       }
@@ -704,7 +712,7 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
       fragment.eye_depth = vertices[0].scale * reciprocal;
       fragment.depth = cpu_clamp(
           cpu_clamp((constant_depth ? vertices[0].z : z) * 0.5 + 0.5) *
-              (far_depth - near_depth) +
+              depth_range +
           near_depth + offset);
       cpu_fragment_admission admission = {0};
       if (!stencil) {
