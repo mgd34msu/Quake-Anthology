@@ -707,6 +707,9 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
         qa_strings_cstr(qa_session_strings(provider->application->session), name), source_entities,
         spawn ? qa_strings_cstr(qa_session_strings(provider->application->session), spawn) : "", error);
     qa_buffer_free(&declared_entities);
+    if (ok && spawn_entities && !engine->callbacks)
+        ok = qa_native_host_run_frame(provider->state.native.host, false, error) &&
+            qa_native_host_run_frame(provider->state.native.host, false, error);
     if (ok && original) ok = application_q2_original_level(provider,error);
     if(ok) ok=application_native_q2_callbacks_arrays_validate(engine,error);
     if(ok)ok=declared_initialize(engine,error);
