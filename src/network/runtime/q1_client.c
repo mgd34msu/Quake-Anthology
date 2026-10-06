@@ -294,7 +294,7 @@ static bool command(void *context, const qa_network_command *value, qa_error *e)
     }
     return enqueue_move(c, c->qw ? NULL : &nq, c->qw ? &qw : NULL, e);
 }
-static bool restart(void *context, uint64_t epoch, const qa_sha256_digest *composition, qa_error *e)
+static bool restart(void *context, uint64_t epoch, const uint64_t *composition, qa_error *e)
 { (void)context; (void)epoch; (void)composition; return qa_network_fail(e, "Q1 CLIENT travel must arrive from its original server"); }
 static bool rebind(void *context, const qa_net_address *address, qa_error *e)
 { (void)context; (void)address; return qa_network_fail(e, "Q1 CLIENT endpoint requires a genuine connection admission"); }
@@ -415,7 +415,7 @@ static bool source_loading(q1_runtime_client *c, qa_error *e)
     const qa_net_client *client = qa_net_connections_get(c->runtime->connections, c->id);
     qa_network_peer *peer = qa_network_peer_get(c->runtime, c->id, e);
     if (!client || !peer) return false;
-    qa_sha256_digest composition = client->composition;
+    uint64_t composition = client->composition;
     qa_net_connections_restart_commit(c->runtime->connections, c->id, &composition);
     qa_network_history_clear(peer); queue_clear(c); c->command_count = c->moves = 0;
     c->active = c->has_delta = c->waiting_skins = false; c->signon.stage = 0;

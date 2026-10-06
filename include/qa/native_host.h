@@ -134,7 +134,6 @@ typedef struct qa_native_host_engine_services {
 
 typedef struct qa_native_host_instance_options {
     const qa_native_declaration *declaration;
-    const qa_sha256_digest *declaration_digest;
     const qa_native_dependency *dependencies;
     size_t dependency_count;
     const qa_native_runner_config *runner;
@@ -438,6 +437,6 @@ bool qa_native_host_reconstruction_destroy(qa_native_host_reconstruction *, bool
 /* Application-side content adapter. Portable helpers link qa_native_module_load
  * and do not need the VFS implementation. */
 bool qa_native_host_module_open(qa_vfs *, const char *, qa_native_profile,
-                                const qa_sha256_digest *, qa_native_module **, qa_error *);
+                                qa_native_module **, qa_error *);
 
 #endif

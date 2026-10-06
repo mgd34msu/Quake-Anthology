@@ -124,8 +124,7 @@ static bool same_target(const qa_native_target *a, const qa_native_target *b)
 static bool same_image(const qa_native_image_info *a, const qa_native_image_info *b)
 {
     return same_target(&a->target, &b->target) && a->format == b->format &&
-        a->preferred_base == b->preferred_base && a->image_bytes == b->image_bytes &&
-        qa_sha256_equal(&a->digest, &b->digest);
+        a->preferred_base == b->preferred_base && a->image_bytes == b->image_bytes;
 }
 static bool options_valid(const qa_native_sysv_process_options *options, qa_error *error)
 {

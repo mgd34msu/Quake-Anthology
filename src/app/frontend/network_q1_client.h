@@ -75,7 +75,7 @@ typedef struct frontend_network_q1_client_view {
     /* A nonzero client carries the actual admitted endpoint/composition,
      * including NQ's accepted server port; the single seat is retained. */
     qa_net_address connected_remote;
-    qa_sha256_digest composition;
+    uint64_t composition;
     qa_net_seat_id seat;
 } frontend_network_q1_client_view;
 /* Retained constructor topology, including genuine pending configuration.

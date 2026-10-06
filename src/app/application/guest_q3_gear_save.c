@@ -15,13 +15,10 @@ static bool blob(qa_source_save_io *io, qa_buffer *bytes)
 static bool header(qa_source_save_io *io, application_q3_gear *gear)
 {
     uint8_t magic[4] = {'Q','A','G','E'};
-    qa_sha256_digest digest = *qa_qvm_image_digest(gear->image);
     const char *profile = gear->definition->id, *path = gear->path;
     const char *owner = qa_strings_cstr(qa_session_strings(gear->options.host.session), gear->options.host.owner);
     uint64_t service_owner = gear->options.host.service_owner;
     bool okay = qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAGE", 4) &&
-        qa_source_save_bytes(io, digest.bytes, sizeof(digest.bytes)) &&
-        qa_sha256_equal(&digest, qa_qvm_image_digest(gear->image)) &&
         qa_source_save_text(io, &profile) && profile && !strcmp(profile, gear->definition->id) &&
         qa_source_save_text(io, &path) && path && !strcmp(path, gear->path) &&
         qa_source_save_text(io, &owner) && owner &&

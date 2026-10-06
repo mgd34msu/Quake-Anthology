@@ -224,7 +224,7 @@ bool application_guest_q3_control_attach(q3g_role *role, const application_guest
     if (!profile->input_present || profile->source != application_q3_weapons_profile(role->weapons) ||
         !role->vm || !role->image || role->retired || qa_qvm_get_role(role->vm) != QA_QVM_GAME ||
         qa_qvm_get_abi(role->vm) != role->abi ||
-        !qa_sha256_equal(qa_qvm_digest(role->vm), qa_qvm_image_digest(role->image)))
+        (qa_qvm_image_of(role->vm) != role->image))
         return application_fail(error, QA_ERROR_FORMAT, "Original body control has no admitted QVM movement declaration");
     uint32_t scratch;
     if (profile->source->body_trace &&

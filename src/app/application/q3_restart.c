@@ -14,13 +14,13 @@ struct application_q3_restart {
     qa_mode_id mode;
     qa_actor_owner owner;
     qa_string_id source_command, product_identity;
-    qa_sha256_digest source_identity;
+    uint64_t source_serial;
     qa_buffer selection_identity;
     size_t selection_index;
     application_next_map_plan plan;
     int32_t delay_seconds, requested_ms, due_ms;
     uint64_t last_frame;
-    bool pending, warmup_enabled, scheduled, announced, has_last_frame, busy;
+    bool pending, warmup_enabled, scheduled, announced, has_last_frame, busy, restoring;
 };
 
 static const qa_launch_snapshot *snapshot(qa_application *app) {
@@ -94,7 +94,6 @@ static bool qualify(application_q3_restart *state, qa_application *app, qa_error
         app->mode_ids[state->selection_index].slot != state->mode.slot ||
         app->mode_ids[state->selection_index].generation != state->mode.generation ||
         strcmp(choices->modes[state->selection_index].instance, provider->launch->selection.instance) ||
-        !qa_sha256_equal(&provider->launch->identity, &state->source_identity) ||
         !qa_application_command_context_active(app, &state->plan.context))
         return application_fail(error, QA_ERROR_ARGUMENT, "pending Q3 restart source retired");
     qa_buffer encoded = {0};
@@ -103,6 +102,10 @@ static bool qualify(application_q3_restart *state, qa_application *app, qa_error
         !memcmp(encoded.data, state->selection_identity.data, encoded.size);
     qa_buffer_free(&encoded);
     if (!equal) return application_fail(error, QA_ERROR_ARGUMENT, "pending Q3 restart selection changed");
+    if (state->restoring) state->source_serial = provider->launch->identity;
+    if (!state->source_serial || state->source_serial != provider->launch->identity)
+        return application_fail(error, QA_ERROR_ARGUMENT, "pending Q3 restart source retired");
+    state->restoring = false;
     return true;
 }
 static bool boundary(qa_application *app, qa_error *error) {
@@ -131,7 +134,7 @@ bool application_q3_restart_enqueue(application_q3_restart *state, qa_applicatio
         provider->product->family != QA_GAME_Q3 || !provider->product->identity)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 restart has no selected GAME provider");
     application_q3_restart next = {.mode = intent->mode, .owner = provider->owner,
-        .source_command = intent->source_command, .source_identity = provider->launch->identity,
+        .source_command = intent->source_command, .source_serial = provider->launch->identity,
         .last_frame = state->last_frame, .has_last_frame = state->has_last_frame};
     while (next.selection_index < app->mode_count &&
         (app->mode_ids[next.selection_index].slot != intent->mode.slot ||
@@ -257,12 +260,12 @@ bool application_q3_restart_stream(qa_source_save_io *io, application_q3_restart
         !qa_source_save_bool(io, &state->has_last_frame) || !qa_source_save_u64(io, &state->last_frame) ||
         (!state->has_last_frame && state->last_frame) || !qa_source_save_bool(io, &state->pending)) return false;
     if (!state->pending) return true;
+    if (io->direction == QA_SOURCE_SAVE_READ) state->restoring = true;
     size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? io->input.size : SIZE_MAX;
     uint32_t scope_kind = state->plan.scope.kind;
     if (!qa_source_save_u32(io, &state->mode.slot) || !qa_source_save_u64(io, &state->mode.generation) ||
         !qa_source_save_string(io, &state->owner) || !qa_source_save_string(io, &state->source_command) ||
         !qa_source_save_string(io, &state->product_identity) ||
-        !qa_source_save_bytes(io, state->source_identity.bytes, sizeof(state->source_identity.bytes)) ||
         !qa_source_save_count(io, &state->selection_index, SIZE_MAX) ||
         !qa_source_save_count(io, &state->selection_identity.size, maximum)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ && state->selection_identity.size) {

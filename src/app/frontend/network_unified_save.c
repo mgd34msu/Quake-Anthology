@@ -26,7 +26,7 @@ static bool request_equal(const qa_net_connect *a, const qa_net_connect *b)
         a->seat_count == 1 && b->seat_count == 1 && a->seats && b->seats &&
         a->seats[0].seat.owner == b->seats[0].seat.owner && a->seats[0].seat.index == b->seats[0].seat.index &&
         !a->seats[0].remote_index && !b->seats[0].remote_index &&
-        qa_net_address_equal(&a->endpoint, &b->endpoint, true) && qa_sha256_equal(&a->composition, &b->composition);
+        qa_net_address_equal(&a->endpoint, &b->endpoint, true) && (a->composition == b->composition);
 }
 bool frontend_network_unified_import_admit(frontend_network_unified *owner,
     const qa_net_connect *request, qa_error *e)
@@ -83,7 +83,7 @@ static bool server_children(const frontend_network_unified *owner, qa_network_ru
         bool retiring = qa_unified_session_retiring(peer->session);
         if (peer->travel_prepared ? (!owner->traveling || i != owner->travel_cursor || wire_epoch == UINT32_MAX ||
             child->epoch != wire_epoch + 1) : (child->epoch != wire_epoch &&
-                !(retiring && wire_epoch != UINT32_MAX && child->epoch == wire_epoch + 1)))
+                retiring && wire_epoch != UINT32_MAX && child->epoch != wire_epoch + 1))
             return bad(e, "Unified travel differs from its actual prepared offer continuation");
         if (owner->traveling && i < owner->travel_cursor && !retiring &&
             application_unified_save_source_obsolete(source, &child->offered))

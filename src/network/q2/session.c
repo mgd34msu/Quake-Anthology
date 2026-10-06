@@ -186,7 +186,7 @@ static bool command(void *state, const qa_network_command *command, qa_error *er
     return !session->server ? (session->state.client.policy.messages.demo || q2_client_submit(session, command, error)) :
         q2_fail(error, QA_ERROR_ARGUMENT, "Host Q2 input belongs to the actual Source player owner");
 }
-static bool restart(void *state, uint64_t epoch, const qa_sha256_digest *composition, qa_error *error)
+static bool restart(void *state, uint64_t epoch, const uint64_t *composition, qa_error *error)
 {
     (void)epoch; (void)composition;
     q2_session *session = state;

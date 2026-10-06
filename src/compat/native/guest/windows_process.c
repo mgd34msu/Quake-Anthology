@@ -111,7 +111,7 @@ bool windows_process_same_image(const qa_native_image_info *a, const qa_native_i
     return a->format == b->format && a->target.os == b->target.os &&
         a->target.arch == b->target.arch && a->target.abi == b->target.abi &&
         a->target.pointer_bytes == b->target.pointer_bytes && a->preferred_base == b->preferred_base &&
-        a->image_bytes == b->image_bytes && qa_sha256_equal(&a->digest, &b->digest);
+        a->image_bytes == b->image_bytes;
 }
 bool windows_process_artifacts(qa_native_windows_process *owner, bool fresh, qa_error *error)
 {

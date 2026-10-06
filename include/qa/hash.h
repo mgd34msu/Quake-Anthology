@@ -3,15 +3,7 @@
 
 #include "qa/common.h"
 
-typedef struct qa_sha256_digest { uint8_t bytes[32]; } qa_sha256_digest;
 typedef struct qa_md4_digest { uint8_t bytes[16]; } qa_md4_digest;
-
-typedef struct qa_sha256_context {
-    uint32_t state[8];
-    uint64_t length;
-    size_t used;
-    uint8_t block[64];
-} qa_sha256_context;
 
 typedef struct qa_md4_context {
     uint32_t state[4];
@@ -19,16 +11,6 @@ typedef struct qa_md4_context {
     size_t used;
     uint8_t block[64];
 } qa_md4_context;
-
-/* Update accepts checked byte spans. Final consumes and clears the context. */
-void qa_sha256_init(qa_sha256_context *context);
-void qa_sha256_update(qa_sha256_context *context, qa_bytes bytes);
-void qa_sha256_final(qa_sha256_context *context, qa_sha256_digest *out);
-void qa_sha256(qa_bytes bytes, qa_sha256_digest *out);
-bool qa_sha256_equal(const qa_sha256_digest *left, const qa_sha256_digest *right);
-void qa_sha256_hex(const qa_sha256_digest *digest, char out[65]);
-/* Accepts 64 hex digits with an optional "sha256:" prefix. */
-bool qa_sha256_parse(const char *text, qa_sha256_digest *out, qa_error *error);
 
 /* Original CRC_Block: CRC-16-CCITT with initial value 0xffff. */
 uint16_t qa_crc_block(qa_bytes bytes);

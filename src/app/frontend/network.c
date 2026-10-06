@@ -154,7 +154,7 @@ struct qa_frontend_network {
     uint64_t q3_generation;
     int32_t q3_server_id, q3_restarted_server_id, q3_checksum_feed;
     uint8_t q3_server_bit;
-    qa_sha256_digest composition;
+    uint64_t composition;
     const qa_q3_accepted_connect *q3_reconnect;
     qa_q3_client_admission q3_client_admission;
     qa_net_client_id q3_client, q3_client_previous;
@@ -286,10 +286,7 @@ static bool q2_local_groups_prepare(qa_frontend_network *n,qa_error *error)
     qa_application_native_q2_presentation source; bool found=false;
     if(!qa_application_native_q2_presentation_selected(f->application,&source,&found,error)) return false;
     if(!found) return true;
-    qa_buffer identity={0};
-    if(!qa_launch_identity_encode(qa_application_launch(f->application),
-        qa_session_actors(qa_application_session(f->application)),&identity,error)) return false;
-    qa_sha256((qa_bytes){identity.data,identity.size},&n->composition); qa_buffer_free(&identity);
+    n->composition=qa_application_configuration_generation(f->application);
     frontend_network_q2_host_options groups={.frontend=f,.runtime=n->runtime,.admin=n->admin,
         .protocol={.kind=source.edition==QA_Q2_RERELEASE?QA_NET_Q2REPRO_1038:QA_NET_Q2_34},
         .composition=n->composition,.context=n,.current=q2_host_current,.random=random_rotation,.local_only=true};
@@ -803,7 +800,7 @@ static bool remote_player(qa_application *application, qa_actor_id *out, qa_erro
 }
 static bool admit(void *context, const qa_net_connect *request, qa_error *error)
 {
-    qa_frontend_network *n = context; qa_buffer identity = {0};
+    qa_frontend_network *n = context;
     if(n->q1_client_owner) {
         bool recognized=false;
         if(!frontend_network_q1_client_admit(n->q1_client_owner,request,&recognized,error)) return false;
@@ -827,11 +824,8 @@ static bool admit(void *context, const qa_net_connect *request, qa_error *error)
         if(!ok) return false;
         if(recognized) return true;
     }
-    if (!qa_launch_identity_encode(qa_application_launch(n->frontend->application),
-        qa_session_actors(qa_application_session(n->frontend->application)), &identity, error)) return false;
-    qa_sha256_digest digest; qa_sha256((qa_bytes){identity.data, identity.size}, &digest); qa_buffer_free(&identity);
-    if (!qa_sha256_equal(&digest, &request->composition))
-        return frontend_fail(error, QA_ERROR_FORMAT, "remote launch identity differs from the complete selected composition");
+    if (request->composition != n->composition)
+        return frontend_fail(error, QA_ERROR_FORMAT, "remote launch generation differs from the selected composition");
     if (n->q3_client_requested && request->protocol.kind == QA_NET_Q3_68) {
         qa_actor_id actor; qa_actor_owner owner; qa_q3_product product; uint32_t seat;
         return remote_player(n->frontend->application, &actor, error) &&
@@ -1619,10 +1613,7 @@ static bool q3_prepare(qa_frontend_network *n, qa_error *error)
         ++n->q3_server_id; n->q3_server_bit ^= 4u;
         n->q3_restarted_server_id = n->q3_server_id;
     }
-    qa_buffer identity = {0};
-    if (!qa_launch_identity_encode(qa_application_launch(n->frontend->application),
-        qa_session_actors(qa_application_session(n->frontend->application)), &identity, error)) return false;
-    qa_sha256((qa_bytes){identity.data, identity.size}, &n->composition); qa_buffer_free(&identity);
+    n->composition = generation;
     n->q3_generation = generation;
     qa_application_network_q3_package_view packages; qa_q3_server_world prepared;
     if (!frontend_q3_packages_view(n->q3_packages, &packages, error) ||
@@ -2910,7 +2901,7 @@ bool frontend_network_client_previous_configuration_read(const qa_frontend *f, u
     const qa_launch_instance *descriptor = qa_launch_snapshot_find(qa_application_launch(f->application),
         view.receiver->selection.instance);
     if (!descriptor || descriptor->storage != view.receiver->storage || descriptor->content != view.receiver->content ||
-        !qa_sha256_equal(&descriptor->identity, &view.receiver->identity))
+        descriptor != view.receiver)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Published CLIENT archive lost its retained configuration descriptor");
     *out = view; *present = true; return true;
 }
@@ -3872,7 +3863,7 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
         udp.bind.kind=q2_remote.kind; udp.ipv6_only=false; udp.broadcast=q2_remote.kind==QA_NET_IPV4;
     }
     if (n->q3_client_requested) {
-        qa_actor_id actor; qa_net_address address; qa_buffer identity = {0};
+        qa_actor_id actor; qa_net_address address;
         if (f->options.dedicated || f->options.seats != 1) {
             frontend_fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 remote client requires one presentation seat"); goto failed;
         }
@@ -3896,9 +3887,7 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
             if (!qa_application_control_prediction_read(f->application,actor,&initial,error) ||
                 !frontend_network_predictor_create(f,&initial,&n->q3_predictor,error)) goto failed;
         }
-        if (!qa_launch_identity_encode(qa_application_launch(f->application),
-            qa_session_actors(qa_application_session(f->application)), &identity, error)) goto failed;
-        qa_sha256((qa_bytes){identity.data, identity.size}, &n->composition); qa_buffer_free(&identity);
+        n->composition = n->q3_client_generation;
     }
     if (f->options.network_host) {
         if (!qa_net_address_parse(f->options.network_host, f->options.network_port, false, &udp.bind, error)) goto failed;
@@ -3921,10 +3910,7 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
                 !qa_application_network_q3_round_prepare(f->application, owner, n->q3_server_id,
                     n->q3_restarted_server_id, n->q3_checksum_feed, &packages, &world, error)) goto failed;
         } else {
-            qa_buffer identity = {0};
-            if (!qa_launch_identity_encode(qa_application_launch(f->application),
-                qa_session_actors(qa_application_session(f->application)), &identity, error)) goto failed;
-            qa_sha256((qa_bytes){identity.data, identity.size}, &n->composition); qa_buffer_free(&identity);
+            n->composition = qa_application_configuration_generation(f->application);
         }
     }
     qa_net_transport *transport = NULL;
@@ -4335,7 +4321,7 @@ static bool network_runtime_check(qa_frontend_network *n, bool complete_world, b
                 client->attachment != QA_NET_REMOTE || client->protocol.kind != QA_NET_Q3_68 ||
                 client->protocol.revision || client->protocol.flags || client->seat_count != 1 || client->seats[0].remote_index ||
                 client->seats[0].seat.owner != p->seat.owner || client->seats[0].seat.index != p->seat.index ||
-                !qa_sha256_equal(&client->composition, &n->composition) ||
+                client->composition != n->composition ||
                 !qa_network_q3_state(n->runtime, client->id, &state, error) || !network_host_player(n, p, &row, error) ||
                 (!p->retiring && ((state.phase == QA_Q3_ACTIVE && row.source_begin_pending) ||
                     state.phase == QA_Q3_ZOMBIE || state.phase == QA_Q3_FREE)))
@@ -4356,7 +4342,7 @@ static bool network_runtime_check(qa_frontend_network *n, bool complete_world, b
         if (!n->q3_client_attached || !qa_net_client_id_equal(client->id, n->q3_client) || !peer ||
             qa_q3_client_peer_product(peer) != n->q3_client_product ||
             !qa_net_address_equal(&client->endpoint, &n->q3_client_admission.address, true) ||
-            !qa_sha256_equal(&client->composition, &n->composition) ||
+            client->composition != n->composition ||
             (client->phase >= QA_NET_PRIMED && !n->q3_client_gamestate) ||
             (n->q3_client_entered && !qa_q3_client_peer_usercmd_number(peer)))
             return frontend_fail(error, QA_ERROR_FORMAT, "frontend client state differs from its actual native connection owner");
@@ -5072,7 +5058,7 @@ bool frontend_network_client_domain_metadata_current(const qa_frontend *f,
     const qa_launch_instance *actual=metadata.source.descriptor,*held=source->source.descriptor;
     return actual && held && qa_application_q3_remote_source_current(f->application,&metadata.source) &&
         qa_application_q3_remote_source_current(f->application,&source->source) &&
-        actual->storage==held->storage && actual->content==held->content && qa_sha256_equal(&actual->identity,&held->identity) &&
+        actual->storage==held->storage && actual->content==held->content && (actual == held) &&
         metadata.source.configuration_generation==source->source.configuration_generation &&
         metadata.source.connection_epoch==source->epoch &&
         source->source.receiver.session==receiver.session && source->source.receiver.console==receiver.console &&

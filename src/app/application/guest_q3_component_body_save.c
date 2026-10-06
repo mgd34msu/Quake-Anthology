@@ -10,10 +10,7 @@ static bool fields(qa_source_save_io *io, const application_q3_body_profile *pro
     uint8_t magic[8] = {'Q','A','G','3','C','B',0,0};
     uint32_t player = profile->submissions[0].entry,
         mesh = profile->submissions[0].mesh_entry;
-    qa_sha256_digest digest = profile->artifact;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QAG3CB\0\0", sizeof(magic)) ||
-        !qa_source_save_bytes(io, digest.bytes, sizeof(digest.bytes)) ||
-        !qa_sha256_equal(&digest, &profile->artifact) ||
         !qa_source_save_u32(io, &player) || player != profile->submissions[0].entry ||
         !qa_source_save_u32(io, &mesh) || mesh != profile->submissions[0].mesh_entry ||
         !qa_source_save_u64(io, bindings) || !qa_source_save_u64(io, bindings + 1) ||

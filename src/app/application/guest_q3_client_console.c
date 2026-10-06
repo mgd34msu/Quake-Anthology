@@ -155,9 +155,8 @@ bool application_guest_q3_client_console_prepare(struct application_q3_guest *en
     struct application_guest_q3_client_console *row = calloc(1, sizeof(*row));
     if (!row) return application_fail(error, QA_ERROR_MEMORY, "Retaining private CLIENT console");
     row->engine = engine; row->kind = kind; row->seat = seat; row->owns_cvars = true;
-    char identity[65], name[160];
-    qa_sha256_hex(&engine->provider->launch->identity, identity);
-    snprintf(name, sizeof(name), "q3-client-globals:%u:%s:%u", engine->provider->owner, identity, seat);
+    char name[160];
+    snprintf(name, sizeof(name), "q3-client-globals:%u:%s:%u", engine->provider->owner, engine->provider->launch->selection.instance, seat);
     if (!qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session), name,
         &row->script_globals_owner, error) || !qa_bot_memory_create(NULL,&row->script_memory,error) ||
         !qa_script_defines_create(&row->script_globals, error) ||
@@ -327,7 +326,7 @@ bool application_guest_q3_client_console_entered(struct application_q3_guest *en
     return found && source->descriptor->storage == actual.descriptor->storage &&
         source->descriptor->content == actual.descriptor->content &&
         source->descriptor->roles == actual.descriptor->roles &&
-        qa_sha256_equal(&source->descriptor->identity, &actual.descriptor->identity) &&
+        (source->descriptor->identity == actual.descriptor->identity) &&
         source->scope.provider == actual.scope.provider && source->scope.kind == actual.scope.kind &&
         source->scope.seat == actual.scope.seat && source->console == actual.console && source->cvars == actual.cvars &&
         source->declaration_owner == actual.declaration_owner && qa_console_cvars(row->console) == row->cvars &&
@@ -361,7 +360,7 @@ bool application_guest_q3_client_console_retirement(application_provider *provid
     return source->descriptor->storage == held->descriptor->storage &&
         source->descriptor->content == held->descriptor->content &&
         source->descriptor->roles == held->descriptor->roles &&
-        qa_sha256_equal(&source->descriptor->identity, &held->descriptor->identity) && source->console == held->console &&
+        (source->descriptor->identity == held->descriptor->identity) && source->console == held->console &&
         source->cvars == held->cvars && source->scope.provider == held->scope.provider &&
         source->scope.kind == held->scope.kind && source->scope.seat == held->scope.seat &&
         source->declaration_owner == held->declaration_owner && source->command.owner == held->command.owner &&

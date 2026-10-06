@@ -34,7 +34,7 @@ static bool transport_source(const qa_native_q3_remote_client_transport *transpo
             held->connection_epoch, &actual, NULL) || !qa_application_q3_remote_source_current(transport->application, &actual)) return false;
     const qa_application_q3_client_context *a = &actual.receiver, *b = &held->receiver;
     if (actual.descriptor->storage != held->descriptor->storage || actual.descriptor->content != held->descriptor->content ||
-        !qa_sha256_equal(&actual.descriptor->identity, &held->descriptor->identity) ||
+        actual.descriptor->identity != held->descriptor->identity ||
         actual.configuration_generation != held->configuration_generation || a->session != b->session ||
         a->receiver != b->receiver || a->seat != b->seat || a->service_owner != b->service_owner ||
         a->frontend_lifetime != b->frontend_lifetime || a->console != b->console || a->cvars != b->cvars ||

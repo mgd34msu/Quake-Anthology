@@ -258,12 +258,10 @@ static bool save_file(qa_source_save_io *writer, size_t slot, const q3_file *fil
     qa_bytes bytes = {0};
     const char *path;
     q3_write_file_state state = {0};
-    qa_sha256_digest digest = {0};
     if (file->kind == Q3_FILE_READ) {
         bytes = file->resource ? qa_resource_bytes(file->resource) :
                                   (qa_bytes){file->restored_bytes.data, file->restored_bytes.size};
         path = file->resource ? qa_resource_path(file->resource) : file->restored_path;
-        digest = file->resource ? *qa_resource_digest(file->resource) : file->restored_digest;
         state.position = file->position;
     } else {
         state = q3_write_file_capture(file->writable); path = state.path;
@@ -271,24 +269,24 @@ static bool save_file(qa_source_save_io *writer, size_t slot, const q3_file *fil
     if (!path || strlen(path) >= UINT32_MAX)
         return q3_fail(error, QA_ERROR_FORMAT, slot, "invalid Q3 checkpoint file path");
     size_t length = strlen(path) + 1;
-    uint8_t row[144] = {0};
+    uint8_t row[112] = {0};
     qa_store_u32le(row, (uint32_t)slot); qa_store_u32le(row + 4, (uint32_t)file->kind);
     qa_store_u32le(row + 8, file->zip); qa_store_u32le(row + 12, state.mode);
     qa_store_u64le(row + 16, state.position); qa_store_u64le(row + 24, bytes.size);
-    qa_store_u32le(row + 32, (uint32_t)length); memcpy(row + 40, digest.bytes, sizeof(digest.bytes));
-    qa_store_u64le(row + 72, file->serial);
+    qa_store_u32le(row + 32, (uint32_t)length);
+    qa_store_u64le(row + 40, file->serial);
     if (file->kind==Q3_FILE_WRITE) {
         if (!qa_fs_stream_reference_valid(&state.reference,error)) return false;
         char *normalized=qa_vfs_normalize_path(state.path,error);
         if (!normalized) return false;
         bool same_path=!strcmp(normalized,state.path); free(normalized);
         if (!same_path) return q3_fail(error,QA_ERROR_FORMAT,slot,"Writable checkpoint path is not normalized");
-        qa_store_u32le(row+80,state.reference.root.platform);
-        qa_store_u32le(row+84,state.reference.object.platform);
-        qa_store_u32le(row+88,state.reference.mode);
+        qa_store_u32le(row+48,state.reference.root.platform);
+        qa_store_u32le(row+52,state.reference.object.platform);
+        qa_store_u32le(row+56,state.reference.mode);
         for (unsigned i=0;i<3;++i) {
-            qa_store_u64le(row+96+i*8,state.reference.root.words[i]);
-            qa_store_u64le(row+120+i*8,state.reference.object.words[i]);
+            qa_store_u64le(row+64+i*8,state.reference.root.words[i]);
+            qa_store_u64le(row+88+i*8,state.reference.object.words[i]);
         }
     }
     return append(writer, row, sizeof(row)) && append(writer, path, length) &&
@@ -381,12 +379,12 @@ static bool decode_file(qa_source_save_io *reader, q3_file staged[64],
                            q3_write_file_state writable[64], uint64_t file_serial, qa_error *error)
 {
     qa_bytes row, path, bytes;
-    if (!qa_source_save_span(reader, 144, &row)) return false;
+    if (!qa_source_save_span(reader, 112, &row)) return false;
     uint32_t slot = qa_load_u32le(row.data), kind = qa_load_u32le(row.data + 4);
     uint32_t zip = qa_load_u32le(row.data + 8), mode = qa_load_u32le(row.data + 12);
     uint64_t position = qa_load_u64le(row.data + 16), length = qa_load_u64le(row.data + 24);
     uint32_t path_length = qa_load_u32le(row.data + 32);
-    uint64_t serial = qa_load_u64le(row.data + 72);
+    uint64_t serial = qa_load_u64le(row.data + 40);
     if (!slot || slot >= 64 || staged[slot].kind != Q3_FILE_CLOSED ||
         (kind != Q3_FILE_READ && kind != Q3_FILE_WRITE) || zip > 1 || !path_length ||
         length > SIZE_MAX || qa_load_u32le(row.data + 36) || !serial || serial > file_serial ||
@@ -404,14 +402,14 @@ static bool decode_file(qa_source_save_io *reader, q3_file staged[64],
     if (kind == Q3_FILE_WRITE) {
         q3_write_file_state state = {.path=(const char *)path.data,.mode=(qa_fs_stream_mode)mode,
             .position=position,.reference={.path=(const char *)path.data,
-                .root.platform=qa_load_u32le(row.data+80),
-                .object.platform=qa_load_u32le(row.data+84),
-                .mode=(qa_fs_stream_mode)qa_load_u32le(row.data+88)}};
-        if (qa_load_u32le(row.data+92))
+                .root.platform=qa_load_u32le(row.data+48),
+                .object.platform=qa_load_u32le(row.data+52),
+                .mode=(qa_fs_stream_mode)qa_load_u32le(row.data+56)}};
+        if (qa_load_u32le(row.data+60))
             return q3_fail(error,QA_ERROR_FORMAT,slot,"Invalid writable native reference padding");
         for (unsigned i=0;i<3;++i) {
-            state.reference.root.words[i]=qa_load_u64le(row.data+96+i*8);
-            state.reference.object.words[i]=qa_load_u64le(row.data+120+i*8);
+            state.reference.root.words[i]=qa_load_u64le(row.data+64+i*8);
+            state.reference.object.words[i]=qa_load_u64le(row.data+88+i*8);
         }
         if (!qa_fs_stream_reference_valid(&state.reference,error)) return false;
         if (state.reference.mode!=(mode==QA_FS_STREAM_APPEND_SYNC?QA_FS_STREAM_APPEND:mode))
@@ -422,16 +420,10 @@ static bool decode_file(qa_source_save_io *reader, q3_file staged[64],
         free(normalized);
         if (!same_path)
             return q3_fail(error, QA_ERROR_FORMAT, slot, "Writable checkpoint path is not normalized");
-        for (size_t i=40;i<72;++i) if (row.data[i])
-            return q3_fail(error,QA_ERROR_FORMAT,slot,"Writable file carries immutable read digest");
         writable[slot]=state; return true;
     }
-    for (size_t i=80;i<144;++i) if (row.data[i])
+    for (size_t i=48;i<112;++i) if (row.data[i])
         return q3_fail(error,QA_ERROR_FORMAT,slot,"Read-only file carries writable native reference");
-    memcpy(file->restored_digest.bytes, row.data + 40, sizeof(file->restored_digest.bytes));
-    qa_sha256_digest actual; qa_sha256(bytes, &actual);
-    if (!qa_sha256_equal(&actual, &file->restored_digest))
-        return q3_fail(error, QA_ERROR_FORMAT, slot, "Q3 retained file digest mismatch");
     file->restored_path = malloc(path.size);
     file->restored_bytes.data = bytes.size ? malloc(bytes.size) : NULL;
     if (!file->restored_path || (bytes.size && !file->restored_bytes.data))

@@ -20,7 +20,7 @@ static bool current(void *context,const qa_application_q3_remote_source *source)
     const qa_application_q3_client_context *a=&actual->receiver,*b=&source->receiver;
     return source->descriptor->storage==actual->descriptor->storage &&
         source->descriptor->content==actual->descriptor->content &&
-        qa_sha256_equal(&source->descriptor->identity,&actual->descriptor->identity) &&
+        source->descriptor->identity==actual->descriptor->identity &&
         source->configuration_generation==actual->configuration_generation &&
         source->connection_epoch==resources.domain.epoch && b->native_source &&
         a->session==b->session && a->receiver==b->receiver && a->seat==b->seat &&

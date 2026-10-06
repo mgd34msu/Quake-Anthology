@@ -68,10 +68,10 @@ typedef struct qa_catalog_mod {
     const char *const *requires, *const *conflicts;
     size_t requires_count, conflicts_count;
     const char *declaration_path, *program_path;
-    qa_sha256_digest declaration_digest, program_digest;
-    qa_bytes declaration;
+    const qa_resource *declaration_resource, *program_resource;
+    qa_bytes declaration; /* Borrowed from the retained declaration_resource. */
     const char *unavailable;
-    /* A matching digest is discovery evidence. B25 must qualify the complete
+    /* Retained resources are discovery evidence. B25 must qualify the complete
      * declaration against the program before constructing its private state. */
 } qa_catalog_mod;
 typedef struct qa_catalog_weapon_behavior {
@@ -80,7 +80,7 @@ typedef struct qa_catalog_weapon_behavior {
     qa_program_kind runtime;
     qa_builtin_projectile_role role;
     const char *declaration_path;
-    qa_sha256_digest declaration_digest, artifact_digest;
+    const qa_resource *declaration_resource, *artifact_resource;
     /* Exact detached entry bytes; B25 qualifies its
      * source functions and fields before it is executable. */
     qa_bytes entry;

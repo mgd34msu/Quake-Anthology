@@ -36,16 +36,14 @@ static bool drop_request(qa_source_save_io *io, application_unified_server *owne
     if (writing && !owner->drop_source_launch) return false;
     char *decoded = NULL;
     const char *instance = writing ? owner->drop_source_launch->selection.instance : NULL;
-    qa_sha256_digest identity = writing ? owner->drop_source_launch->identity : (qa_sha256_digest){0};
     bool okay = writing ? qa_source_save_text(io, &instance) : qa_source_save_owned_text(io, &decoded);
     if (!writing) instance = decoded;
     okay = okay && instance &&
-        qa_source_save_bytes(io, identity.bytes, sizeof(identity.bytes)) &&
         qa_source_save_u32(io, &owner->drop_source_slot) &&
         qa_source_save_bool(io, &owner->drop_player_detached);
     const qa_launch_instance *launch = okay ? qa_launch_snapshot_find(source->launch, instance) : NULL;
     application_provider *provider = NULL;
-    okay = okay && launch && qa_sha256_equal(&identity, &launch->identity);
+    okay = okay && launch;
     for (size_t i = 0; okay && i < owner->application->provider_count; ++i) {
         application_provider *candidate = owner->application->providers[i];
         if (!candidate->launch || strcmp(candidate->launch->selection.instance, instance)) continue;
@@ -73,13 +71,11 @@ static bool offer_valid(const application_unified_server *owner, const qa_net_cl
         !qa_json_string_equal(json, qa_json_get(json, value, "kind"), "offer") ||
         !qa_json_u64(json, qa_json_get(json, value, "epoch"), &epoch, e) || epoch != owner->epoch) return false;
     qa_json_id composition = qa_json_get(json, value, "composition");
-    qa_unified_composition canonical = {0};
-    bool okay = qa_unified_composition_create(qa_json_source(json,
-        qa_json_get(json, composition, "composition")), &canonical, e);
-    if (okay) okay = qa_sha256_equal(&canonical.digest, &owner->composition) &&
-        (qa_sha256_equal(&peer->composition, &owner->composition) ||
+    uint64_t generation;
+    bool okay = qa_json_u64(json, qa_json_get(json, composition, "generation"), &generation, e) &&
+        generation == owner->composition &&
+        (peer->composition == owner->composition ||
             (!owner->admitted && !owner->admitted_receipt && !owner->inputs && !owner->components && !owner->pending.frame));
-    qa_unified_composition_free(&canonical);
     return okay;
 }
 static bool peer_valid(const application_unified_server *owner, const qa_net_client *peer)
@@ -156,7 +152,7 @@ static bool receipts_valid(const application_unified_server *owner, const qa_uni
     const qa_net_client *peer = qa_net_connections_get(qa_network_connections(owner->runtime), owner->client);
     if (!peer_valid(owner, peer)) return false;
     if (wire_epoch == owner->epoch) {
-        if (!qa_sha256_equal(&peer->composition, &owner->composition)) return false;
+        if (peer->composition != owner->composition) return false;
     } else {
         application_unified_source current;
         if (!application_unified_save_source_read(owner->application, &current, e) ||
@@ -188,7 +184,7 @@ static bool fields(qa_source_save_io *io, application_unified_server *owner,
         !qa_source_save_u32(io, &seat_index) || seat_index != peer->seats[0].seat.index ||
         !qa_source_save_u32(io, &owner->application_seat) ||
         !qa_source_save_u32(io, &owner->epoch) || !owner->epoch ||
-        !qa_source_save_bytes(io, owner->composition.bytes, sizeof(owner->composition.bytes)) ||
+        !qa_source_save_u64(io, &owner->composition) || !owner->composition ||
         !application_unified_save_document(io, &owner->offer, QA_UNIFIED_CONTROL_DOCUMENT) || !owner->offer ||
         !qa_source_save_bool(io, &owner->bound) || !qa_source_save_bool(io, &owner->admitted) ||
         !qa_source_save_bool(io, &owner->player_attached) || !qa_source_save_bool(io, &owner->preparing_frame) ||

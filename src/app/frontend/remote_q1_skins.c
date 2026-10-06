@@ -2,6 +2,7 @@
 #include "remote_q1_private.h"
 #include "qa/image.h"
 #include "qa/binary.h"
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -126,8 +127,8 @@ static bool load(frontend_remote_q1_skins *o, skin_entry *entry, qa_error *e)
         size_t width = image.width < 296 ? image.width : 296;
         memcpy(entry->pixels.data + (size_t)y * 296, image.indices.data + (size_t)y * image.width, width);
     }
-    qa_sha256_digest digest; char hex[65]; qa_sha256(bytes, &digest); qa_sha256_hex(&digest, hex);
-    snprintf(entry->name, sizeof(entry->name), "qw-skin:%s:crop:0,0,296,194:stride320", hex);
+    snprintf(entry->name, sizeof(entry->name), "qw-skin:%p:%" PRIu64 ":crop:0,0,296,194:stride320",
+        (void *)qa_vfs_resources(o->files), qa_resource_id(entry->resource));
     qa_image_free(&image); return true;
 }
 static bool prepare(frontend_remote_q1_skins *o, qa_error *e)

@@ -114,7 +114,7 @@ static bool source_equal(const qa_application_client_source *a, const qa_applica
 {
     const qa_application_client_context *x = &a->context, *y = &b->context;
     return a->descriptor && b->descriptor && a->descriptor->storage == b->descriptor->storage &&
-        a->descriptor->content == b->descriptor->content && qa_sha256_equal(&a->descriptor->identity, &b->descriptor->identity) &&
+        a->descriptor->content == b->descriptor->content && a->descriptor->identity == b->descriptor->identity &&
         x->session == y->session && x->receiver == y->receiver && x->entity_owner == y->entity_owner &&
         x->entity_definition == y->entity_definition &&
         x->seat == y->seat && x->physical_seat == y->physical_seat && x->console == y->console && x->cvars == y->cvars &&
@@ -188,7 +188,6 @@ static bool create(qa_application *app, const qa_application_client_options *o,
             strncmp(name, prefix, (size_t)prefix_length) || !name[prefix_length] ||
             saved->receiver != o->receiver || saved->seat != o->seat || saved->physical_seat != o->physical_seat ||
             saved->configuration_generation != o->configuration_generation ||
-            !qa_sha256_equal(&saved->descriptor_identity, &o->descriptor->identity) ||
             saved->actor_count > qa_actors_capacity(qa_session_actors(app->session)) ||
             (saved->actor_count && (!saved->actors || !saved->entity_generation))) qualified = false;
         if (qualified) for (const char *digit = name + prefix_length; *digit; ++digit)
@@ -513,8 +512,7 @@ static bool client_capture(qa_application *app, const qa_application_client_sour
         !source_equal(source, &r->source) || r->retiring || !row_idle(r) ||
         !(retired?qa_application_client_retirement_current(app,source):qa_application_client_current(app,source)))
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT capture requires its returned physical namespace");
-    qa_application_client_state state = {.descriptor_identity = source->descriptor->identity,
-        .receiver = source->context.receiver, .entity_owner = source->context.entity_owner,
+    qa_application_client_state state = {.receiver = source->context.receiver, .entity_owner = source->context.entity_owner,
         .seat = source->context.seat, .physical_seat = source->context.physical_seat,
         .configuration_generation = source->configuration_generation, .connection_epoch = source->connection_epoch,
         .entity_generation = r->entity_generation, .client = source->client, .network_seat = source->network_seat,

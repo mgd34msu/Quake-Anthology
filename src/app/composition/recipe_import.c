@@ -224,7 +224,8 @@ static bool interfaces_check(const qa_recipe_provider *instance, bool admission,
         qa_resource *actual = NULL; qa_error reason = {0};
         bool exists = qa_vfs_acquire(instance->content, paths[i], &actual, NULL, &reason);
         if ((!exists && reason.code != QA_ERROR_NOT_FOUND) || exists != (offered != NULL) ||
-            (exists && (qa_resource_bytes(actual).size != qa_resource_bytes(offered).size || !qa_sha256_equal(qa_resource_digest(actual), qa_resource_digest(offered))))) {
+            (exists && (qa_resource_bytes(actual).size != qa_resource_bytes(offered).size ||
+                memcmp(qa_resource_bytes(actual).data, qa_resource_bytes(offered).data, qa_resource_bytes(actual).size)))) {
             qa_resource_release(actual); if (!exists && reason.code != QA_ERROR_NOT_FOUND && error) *error = reason;
             return recipe_fail(error, "Actual provider interface inventory differs from offer");
         }
@@ -269,8 +270,8 @@ static bool execution_read(qa_executable_recipe *r, const qa_json_document *json
     instance->declaration = resource_index(&reader, declaration, s->product, mod ? mod->declaration_path : NULL, true);
     if (!mod && instance->declaration) return recipe_fail(error, "Executable has an undeclared component declaration");
     if (s->runtime == QA_PROGRAM_BUILTIN ? instance->artifact != NULL : instance->artifact == NULL) return recipe_fail(error, "Executable kind and held artifact disagree");
-    if (mod && (!instance->artifact || !instance->declaration || !qa_sha256_equal(qa_resource_digest(instance->artifact), &mod->program_digest) ||
-        !qa_sha256_equal(qa_resource_digest(instance->declaration), &mod->declaration_digest))) return recipe_fail(error, "Local authored component identity differs from offer");
+    if (mod && (!instance->artifact || !instance->declaration || instance->artifact != mod->program_resource ||
+        instance->declaration != mod->declaration_resource)) return recipe_fail(error, "Local authored component identity differs from offer");
     size_t interface_count, behavior_count;
     if (!array(&reader, interfaces, &interface_count) || !array(&reader, behaviors, &behavior_count)) return false;
     qa_launch_resource *interface_rows = interface_count ? qa_arena_alloc(&r->arena, interface_count * sizeof(*interface_rows), _Alignof(qa_launch_resource), error) : NULL;
@@ -284,22 +285,21 @@ static bool execution_read(qa_executable_recipe *r, const qa_json_document *json
         for (size_t j = 0; j < i; ++j) if (!strcmp(interface_rows[j].path, interface_rows[i].path)) return recipe_fail(error, "Duplicate executable interface");
     }
     for (size_t i = 0; i < behavior_count; ++i) {
-        if (!recipe_record(&reader, qa_json_at(json, behaviors, i), 9)) return false;
+        if (!recipe_record(&reader, qa_json_at(json, behaviors, i), 7)) return false;
         qa_product_id product = recipe_product(&reader); const char *name = recipe_text(&reader);
         qa_program_kind runtime = recipe_unsigned(&reader); qa_builtin_projectile_role role = recipe_unsigned(&reader);
-        const char *path = recipe_text(&reader); qa_sha256_digest artifact_digest, declaration_digest;
-        recipe_digest_read(&reader, &artifact_digest); const char *declaration_path = recipe_text(&reader); recipe_digest_read(&reader, &declaration_digest); qa_bytes entry = recipe_binary(&reader);
+        const char *path = recipe_text(&reader);
+        const char *declaration_path = recipe_text(&reader); qa_bytes entry = recipe_binary(&reader);
         const qa_catalog_weapon_behavior *actual = qa_catalog_weapon_behavior_find(r->catalog, product, name);
         if (reader.failed || !actual || actual->unavailable || product != s->product || actual->runtime != runtime || actual->role != role ||
             strcmp(actual->artifact_path, path) || strcmp(actual->declaration_path ? actual->declaration_path : "", declaration_path) ||
-            !qa_sha256_equal(&actual->artifact_digest, &artifact_digest) || !qa_sha256_equal(&actual->declaration_digest, &declaration_digest) ||
             actual->entry.size != entry.size || (entry.size && memcmp(actual->entry.data, entry.data, entry.size))) return recipe_fail(error, "Installed trajectory declaration differs from offered executable");
         for (size_t j = 0; j < i; ++j) if (behavior_rows[j] == actual) return recipe_fail(error, "Repeated executable trajectory descriptor");
-        if (!instance->artifact || !qa_sha256_equal(qa_resource_digest(instance->artifact), &artifact_digest)) return recipe_fail(error, "Trajectory does not belong to the held executable");
+        if (!instance->artifact || instance->artifact != actual->artifact_resource) return recipe_fail(error, "Trajectory does not belong to the held executable");
         if (admission && *declaration_path) {
             qa_resource *declaration_resource = NULL;
             if (!qa_vfs_acquire(instance->content, declaration_path, &declaration_resource, NULL, error)) return false;
-            bool same = qa_sha256_equal(qa_resource_digest(declaration_resource), &declaration_digest); qa_resource_release(declaration_resource);
+            bool same = declaration_resource == actual->declaration_resource; qa_resource_release(declaration_resource);
             if (!same) return recipe_fail(error, "Trajectory declaration bytes differ from offered identity");
         }
         behavior_rows[i] = actual;
@@ -476,7 +476,9 @@ static bool local_identity(qa_executable_recipe *r, const qa_json_document *json
     qa_json_writer_key(&w, "snapshotSchema"); qa_json_writer_string(&w, "qts:snapshot-v10"); qa_json_writer_key(&w, "actorConfigurations"); qa_json_writer_array(&w); qa_json_writer_end(&w);
     qa_json_writer_key(&w, "sidecars"); if (ok) ok = recipe_copy_json(&w, json, qa_json_get(json, composition, "sidecars"), error); qa_json_writer_end(&w);
     if (ok) ok = qa_json_writer_finish(&w, &buffer, error) && qa_unified_composition_create((qa_bytes){buffer.data, buffer.size}, &actual, error);
-    if (ok && !qa_sha256_equal(&actual.digest, &r->digest)) ok = recipe_fail(error, "Rebound local composition differs from offered canonical identity");
+    if (ok && (actual.canonical.size != r->composition.size ||
+        memcmp(actual.canonical.data, r->composition.data, r->composition.size)))
+        ok = recipe_fail(error, "Rebound local composition differs from offered canonical identity");
     qa_json_writer_destroy(&w); qa_buffer_free(&buffer); qa_unified_composition_free(&actual); return ok;
 }
 static bool sidecars_check(const qa_executable_recipe *r, const qa_json_document *json, qa_json_id id, qa_error *error)
@@ -491,11 +493,10 @@ static bool sidecars_check(const qa_executable_recipe *r, const qa_json_document
         if (!s->resource) {
             if (qa_json_type(json, key) != QA_JSON_NULL) return recipe_fail(error, "Composition changes actual sidecar miss");
         } else {
-            char digest[72] = "sha256:"; qa_sha256_hex(qa_resource_digest(s->resource), digest + 7); uint64_t size;
-            if (qa_json_type(json, key) != QA_JSON_OBJECT || qa_json_size(json, key) != 4 ||
+            uint64_t size;
+            if (qa_json_type(json, key) != QA_JSON_OBJECT || qa_json_size(json, key) != 3 ||
                 !qa_json_string_equal(json, qa_json_get(json, key, "content"), product->identity) ||
                 !qa_json_string_equal(json, qa_json_get(json, key, "path"), s->path) ||
-                !qa_json_string_equal(json, qa_json_get(json, key, "digest"), digest) ||
                 !qa_json_u64(json, qa_json_get(json, key, "byteLength"), &size, error) || size != qa_resource_bytes(s->resource).size)
                 return recipe_fail(error, "Composition changes actual held sidecar bytes");
         }
@@ -524,14 +525,14 @@ bool qa_executable_recipe_prepare(const qa_unified_document *offer, qa_catalog *
     r->catalog = catalog; qa_catalog_retain(catalog); r->pool = pool; qa_resource_pool_retain(pool); r->catalog_generation = qa_catalog_generation(catalog);
     bool ok = unsigned_field(json, qa_json_get(json, value, "epoch"), &r->epoch, error) && r->epoch &&
         unsigned_field(json, qa_json_get(json, value, "maxClients"), &r->max_clients, error) && r->max_clients && r->max_clients <= 256;
-    qa_buffer mode = {0}, digest = {0};
+    qa_buffer mode = {0};
     if (ok) ok = qa_json_string(json, qa_json_get(json, value, "mode"), &mode, error) && !memchr(mode.data, 0, mode.size) &&
         (!strcmp((const char *)mode.data, "singleplayer") || !strcmp((const char *)mode.data, "coop") || !strcmp((const char *)mode.data, "deathmatch"));
     if (ok) { char *copy = qa_arena_alloc(&r->arena, mode.size + 1, 1, error); ok = copy != NULL; if (copy) { memcpy(copy, mode.data, mode.size + 1); r->mode = copy; } }
-    if (ok) ok = qa_json_string(json, qa_json_get(json, identity, "digest"), &digest, error) && digest.size == 71 && !memcmp(digest.data, "sha256:", 7) && qa_sha256_parse((const char *)digest.data + 7, &r->digest, error);
-    qa_buffer_free(&mode); qa_buffer_free(&digest);
+    if (ok) ok = qa_json_u64(json, qa_json_get(json, identity, "generation"), &r->generation, error) && r->generation;
+    qa_buffer_free(&mode);
     qa_unified_composition canonical = {0};
-    if (ok) ok = qa_unified_composition_create(qa_json_source(json, composition), &canonical, error) && qa_sha256_equal(&canonical.digest, &r->digest);
+    if (ok) ok = qa_unified_composition_create(qa_json_source(json, composition), &canonical, error);
     if (ok) { r->composition = canonical.canonical; canonical.canonical = (qa_buffer){0}; }
     qa_unified_composition_free(&canonical);
     if (ok) ok = recipe_choices_read(r, json, qa_json_get(json, recipe, "choices"), error);
@@ -676,7 +677,7 @@ bool qa_executable_recipe_content_visit(const qa_executable_recipe *recipe, cons
     if (ok) ok = qa_executable_recipe_current(r, r->catalog) || recipe_fail(error, "Recipe content changed during actual graph enumeration");
     r->visiting = false; return ok;
 }
-const qa_sha256_digest *qa_executable_recipe_digest(const qa_executable_recipe *r) { return r ? &r->digest : NULL; }
+const uint64_t *qa_executable_recipe_generation(const qa_executable_recipe *r) { return r ? &r->generation : NULL; }
 uint32_t qa_executable_recipe_epoch(const qa_executable_recipe *r) { return r ? r->epoch : 0; }
 const char *qa_executable_recipe_mode(const qa_executable_recipe *r) { return r ? r->mode : NULL; }
 uint32_t qa_executable_recipe_max_clients(const qa_executable_recipe *r) { return r ? r->max_clients : 0; }
@@ -699,12 +700,12 @@ bool qa_executable_recipe_resource(const qa_executable_recipe *r, size_t index, 
     const recipe_resource *entry = r->resources[index]; *out = entry->value; *files = r->views[entry->view].files; *receipt = &entry->acquisition; return true;
 }
 bool qa_executable_recipe_find_resource(const qa_executable_recipe *r, const char *identity, const char *path,
-    const qa_sha256_digest *digest, uint64_t length, qa_launch_resource *out, qa_vfs **files, const qa_vfs_acquisition **receipt)
+    uint64_t length, qa_launch_resource *out, qa_vfs **files, const qa_vfs_acquisition **receipt)
 {
-    if (!r || !identity || !path || !digest) return false;
+    if (!r || !identity || !path) return false;
     const qa_product *product = qa_catalog_find(r->catalog, identity); if (!product || strcmp(product->identity, identity)) return false;
     for (size_t i = 0; i < r->resource_count; ++i) { const qa_launch_resource *resource = &r->resources[i]->value;
-        if (resource->product == product->id && !strcmp(resource->path, path) && qa_resource_bytes(resource->resource).size == length && qa_sha256_equal(qa_resource_digest(resource->resource), digest))
+        if (resource->product == product->id && !strcmp(resource->path, path) && qa_resource_bytes(resource->resource).size == length)
             return qa_executable_recipe_resource(r, i, out, files, receipt); }
     return false;
 }
@@ -751,12 +752,12 @@ bool qa_executable_recipe_content(qa_executable_recipe *r, const char *identity,
     *files = r->views[view].files; *actual_product = product; return true;
 }
 bool qa_executable_recipe_acquire_resource(qa_executable_recipe *r, const char *identity, const char *path,
-    const qa_sha256_digest *digest, uint64_t length, qa_launch_resource *out, qa_vfs **files,
+    uint64_t length, qa_launch_resource *out, qa_vfs **files,
     const qa_vfs_acquisition **receipt, qa_error *error)
 {
-    if (!r || r->visiting || !identity || !digest || !out || !files || !receipt || !recipe_path(path, error) ||
+    if (!r || r->visiting || !identity || !out || !files || !receipt || !recipe_path(path, error) ||
         !qa_executable_recipe_current(r, r->catalog)) return recipe_fail(error, "Wire resource requires its admitted current recipe");
-    if (qa_executable_recipe_find_resource(r, identity, path, digest, length, out, files, receipt)) return true;
+    if (qa_executable_recipe_find_resource(r, identity, path, length, out, files, receipt)) return true;
     qa_vfs *content = NULL; const qa_product *product;
     if (!qa_executable_recipe_content(r, identity, &content, &product, error)) return false;
     size_t view = SIZE_MAX;
@@ -764,7 +765,7 @@ bool qa_executable_recipe_acquire_resource(qa_executable_recipe *r, const char *
     if (view == SIZE_MAX) return recipe_fail(error, "Resolved content lost its actual recipe holder");
     qa_resource *actual = NULL;
     if (!qa_vfs_acquire(content, path, &actual, NULL, error)) return false;
-    if (qa_resource_bytes(actual).size != length || !qa_sha256_equal(qa_resource_digest(actual), digest)) {
+    if (qa_resource_bytes(actual).size != length) {
         qa_resource_release(actual); return recipe_fail(error, "Actual remote resource bytes differ from wire key");
     }
     size_t index; bool ok = recipe_resource_add_from(r, product->id, path, actual, view, &index, error); qa_resource_release(actual);

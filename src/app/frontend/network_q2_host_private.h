@@ -36,7 +36,7 @@ typedef struct q2_local_peer {
     qa_net_seat_binding binding;
     qa_net_client_id client;
     uint32_t physical,authored;
-    qa_sha256_digest composition;
+    uint64_t composition;
     bool admitting,travel_restarted;
     uint64_t map_revision;
     bool import_historical;

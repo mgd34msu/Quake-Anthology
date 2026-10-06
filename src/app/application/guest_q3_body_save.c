@@ -31,7 +31,6 @@ static bool profile_fields(qa_source_save_io *io, const qa_qvm_image *image,
     uint32_t abi = profile->abi;
     size_t instructions = 0; qa_qvm_image_instructions(image, &instructions);
     if (!signature(io, "QAG3BP\0\0") || !text(io, &profile->artifact_path) ||
-        !qa_source_save_bytes(io, profile->artifact.bytes, sizeof(profile->artifact.bytes)) ||
         !qa_source_save_u32(io, &abi) || abi > QA_QVM_Q3_116N ||
         !qa_source_save_bool(io, &profile->present) ||
         !qa_source_save_count(io, &profile->count, instructions)) return false;
@@ -90,7 +89,7 @@ bool application_q3_body_profile_restore(const qa_qvm_image *image, qa_qvm_abi a
 {
     if (!image || !path || !out || out->artifact_path || out->submissions || out->count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Body profile import requires an empty candidate owner");
-    application_q3_body_profile profile = {0}; qa_source_save_io io = {0};
+    application_q3_body_profile profile = {.image = image}; qa_source_save_io io = {0};
     bool okay = qa_source_save_reader(&io, NULL, bytes, error) && profile_fields(&io, image, &profile) &&
         qa_source_save_finish(&io, NULL) && application_q3_body_profile_qualify(image, abi, path, &profile, error);
     qa_source_save_dispose(&io);
@@ -102,14 +101,9 @@ static bool body_fields(qa_source_save_io *io, const application_q3_body_profile
     application_q3_body_saved *saved)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    qa_sha256_digest digest = {{0}};
-    if (!reading && profile) digest = profile->artifact;
     if (!signature(io, "QAG3BD\0\0") || !qa_source_save_bool(io, &saved->present) ||
-        !qa_source_save_bytes(io, digest.bytes, sizeof(digest.bytes)) ||
         !qa_source_save_bool(io, &saved->enabled)) return false;
     if (saved->present != (profile != NULL) ||
-        (profile ? !qa_sha256_equal(&digest, &profile->artifact) :
-            memcmp(digest.bytes, (uint8_t[32]){0}, 32) != 0) ||
         (saved->enabled && (!profile || !profile->present)))
         return application_fail(io->error, QA_ERROR_FORMAT, "Body continuation differs from its artifact owner");
     size_t expected = saved->enabled ? application_q3_body_profile_hooks(profile) : 0;

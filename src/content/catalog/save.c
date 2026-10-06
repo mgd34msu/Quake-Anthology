@@ -264,14 +264,12 @@ static bool mod_fields(qa_source_save_io *io, qa_catalog *catalog, qa_catalog_mo
     return strings(io, catalog, (const char ***)&mod->requires, &mod->requires_count) &&
         strings(io, catalog, (const char ***)&mod->conflicts, &mod->conflicts_count) &&
         text(io, catalog, &mod->declaration_path) && text(io, catalog, &mod->program_path) &&
-        qa_source_save_bytes(io, &mod->declaration_digest, sizeof(mod->declaration_digest)) &&
-        qa_source_save_bytes(io, &mod->program_digest, sizeof(mod->program_digest)) &&
         skip_payload(io) && text(io, catalog, &mod->unavailable);
 }
 static bool mods(qa_source_save_io *io, qa_catalog *catalog)
 {
     size_t count = 0;
-    size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? (io->input.size - io->offset) / 103 : 0;
+    size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? (io->input.size - io->offset) / 39 : 0;
     if (!qa_source_save_count(io, &count, maximum)) return false;
     for (size_t i = 0; i < count; ++i) {
         qa_catalog_mod mod = {0};
@@ -284,7 +282,7 @@ static bool mods(qa_source_save_io *io, qa_catalog *catalog)
 static bool behaviors(qa_source_save_io *io, qa_catalog *catalog)
 {
     size_t count = 0;
-    size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? (io->input.size - io->offset) / 92 : 0;
+    size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? (io->input.size - io->offset) / 28 : 0;
     if (!qa_source_save_count(io, &count, maximum)) return false;
     for (size_t i = 0; i < count; ++i) {
         qa_catalog_weapon_behavior behavior = {0}; FIELD(u32, &behavior, product);
@@ -292,8 +290,6 @@ static bool behaviors(qa_source_save_io *io, qa_catalog *catalog)
             !text(io, catalog, &behavior.artifact_path)) return false;
         ENUM(&behavior, runtime, QA_PROGRAM_NATIVE); ENUM(&behavior, role, QA_BUILTIN_GRAPPLE);
         if (!text(io, catalog, &behavior.declaration_path) ||
-            !qa_source_save_bytes(io, &behavior.declaration_digest, sizeof(behavior.declaration_digest)) ||
-            !qa_source_save_bytes(io, &behavior.artifact_digest, sizeof(behavior.artifact_digest)) ||
             !skip_payload(io) || !text(io, catalog, &behavior.unavailable)) return false;
     }
     return true;

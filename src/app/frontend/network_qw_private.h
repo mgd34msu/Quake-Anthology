@@ -45,7 +45,7 @@ struct frontend_qw_host {
     qa_actor_id action_actor;
     uint32_t random, checksum, player_model, nail_model, supernail_model, active_limit;
     int32_t server_count;
-    qa_sha256_digest composition;
+    uint64_t composition;
     qa_qw_challenges *challenges;
     qw_frontend_peer peers[QW_CLIENTS];
     qw_pending_control pending[QW_PENDING];

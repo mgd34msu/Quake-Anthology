@@ -42,7 +42,7 @@ struct qa_executable_recipe {
     qa_bsp_view bsp;
     qa_collision_geometry *geometry;
     qa_buffer composition;
-    qa_sha256_digest digest;
+    uint64_t generation;
     uint32_t epoch, max_clients;
     const char *mode;
 };
@@ -68,8 +68,6 @@ qa_product_id recipe_product(recipe_reader *);
 qa_bytes recipe_binary(recipe_reader *);
 bool recipe_choices_read(qa_executable_recipe *, const qa_json_document *, qa_json_id, qa_error *);
 bool recipe_copy_json(qa_json_writer *, const qa_json_document *, qa_json_id, qa_error *);
-void recipe_digest_write(qa_json_writer *, const qa_sha256_digest *);
-bool recipe_digest_read(recipe_reader *, qa_sha256_digest *);
 bool recipe_path(const char *, qa_error *);
 bool recipe_resource_add(qa_executable_recipe *, qa_product_id, const char *,
     const qa_resource *, size_t *, qa_error *);

@@ -1171,9 +1171,6 @@ static bool encode_load(qa_native_instance *instance, native_wire_buffer *payloa
         !native_wire_put_u32(payload, (uint32_t)instance->options.q3_role, error) ||
         !native_wire_put_u8(payload, instance->has_declaration ? 1u : 0u, error) ||
         !native_wire_put_u8(payload, instance->options.observe || instance->region_count ? 1u : 0u, error) ||
-        !native_wire_put_raw(payload, instance->declaration.bytes,
-                             sizeof(instance->declaration.bytes), error) ||
-        !native_wire_put_raw(payload, image->digest.bytes, sizeof(image->digest.bytes), error) ||
         !native_wire_put_string(payload, instance->module->source, error) ||
         !native_wire_put_bytes(payload, (qa_bytes){instance->module->bytes, instance->module->size},
                                error) ||
@@ -1303,7 +1300,6 @@ bool qa_native_create_runner(qa_native_module *module, const qa_native_options *
         return false;
     }
     instance->options.declaration = NULL;
-    instance->options.declaration_digest = NULL;
     qa_native_module_retain(module);
     if (!native_profile_prepare_remote(instance, error) ||
         !native_runner_open(instance, runner, error)) {

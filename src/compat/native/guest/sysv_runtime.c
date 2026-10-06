@@ -884,8 +884,7 @@ static bool codec_image_identity(qa_source_save_io *io,qa_native_image_info *ima
 {
     uint32_t format = image->format;
     if (!qa_source_save_u32(io,&format) || !codec_target(io,&image->target) ||
-        !qa_source_save_u64(io,&image->preferred_base) || !qa_source_save_u64(io,&image->image_bytes) ||
-        !qa_source_save_bytes(io,&image->digest,sizeof(image->digest))) return false;
+        !qa_source_save_u64(io,&image->preferred_base) || !qa_source_save_u64(io,&image->image_bytes)) return false;
     if (format != QA_NATIVE_IMAGE_ELF32 && format != QA_NATIVE_IMAGE_ELF64)
         return sysv_fail(io->error,QA_ERROR_FORMAT,"System V provider is not an ELF image");
     image->format = (qa_native_image_format)format;

@@ -393,19 +393,26 @@ bool application_unified_event_resource_register_acquired(qa_application *app, q
     const char *registration_path = opening->path;
     if (!pool || qa_resource_pool_find(pool, qa_resource_id(resource)) != resource)
         return application_fail(error, QA_ERROR_FORMAT, "Source acquired registration is outside its retained resource pool");
-    qa_unified_document *key = NULL;
-    char actual_id[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
-    if (!application_unified_resource_key(source.product, registration_path, resource, &key, actual_id, error)) return false;
     for (size_t i = 0; i < app->unified_event_resource_count; ++i) {
-        if (!strcmp(app->unified_event_resources[i].id, actual_id)) {
+        application_unified_event_resource *old = app->unified_event_resources + i;
+        bool same = old->resource == resource && opening_equal(&old->opening, opening);
+        for (size_t j = 0; !same && j < old->custody_count; ++j)
+            same = old->custodies[j].resource == resource && opening_equal(&old->custodies[j].opening, opening);
+        if (same && !strcmp(qa_strings_cstr(qa_session_strings(app->session), old->content), source.product->identity) &&
+            !strcmp(qa_strings_cstr(qa_session_strings(app->session), old->path), registration_path)) {
             uint64_t custody;
             bool ok = custody_retain(app->unified_event_resources + i, view, resource, opening, &custody, error) &&
                 registration_bind(app, owner, kind, path, i, custody, error);
-            if (ok) memcpy(id, actual_id, QA_APPLICATION_RESOURCE_KEY_CAPACITY);
-            qa_unified_document_destroy(key);
+            if (ok) memcpy(id, old->id, QA_APPLICATION_RESOURCE_KEY_CAPACITY);
             return ok;
         }
     }
+    if (app->unified_event_resource_count == UINT64_MAX)
+        return application_fail(error, QA_ERROR_MEMORY, "Source resource dictionary serial exhausted");
+    qa_unified_document *key = NULL;
+    char actual_id[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
+    if (!application_unified_resource_key((uint64_t)app->unified_event_resource_count + 1,
+        source.product, registration_path, resource, &key, actual_id, error)) return false;
     application_unified_event_resource row = {.provider = owner, .resource = (qa_resource *)resource, .pool = pool};
     qa_bytes bytes = qa_json_source(qa_unified_document_json(key), qa_unified_document_root(key));
     row.key.data = malloc(bytes.size);

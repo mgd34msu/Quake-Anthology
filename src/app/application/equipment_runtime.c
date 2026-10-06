@@ -48,7 +48,7 @@ static bool source_current(void *context)
         provider_current(source->runtime, source->runtime->options.world_source) &&
         source->provider->owner == source->view.selected_owner &&
         source->provider->launch &&
-        qa_sha256_equal(&source->provider->launch->identity, &source->view.descriptor->identity);
+        source->provider->launch->identity == source->view.descriptor->identity;
 }
 bool application_equipment_runtime_owner_current(const application_equipment_runtime *runtime,
     qa_actor_owner owner)
@@ -448,7 +448,6 @@ typedef struct saved_source {
     qa_actor_owner selected, owner;
     qa_item_id weapon_item;
     qa_string_id service_owner;
-    qa_sha256_digest descriptor, image;
     uint64_t attack_sequence;
     int32_t milliseconds, frame;
     bool gear, prepared;
@@ -457,13 +456,11 @@ typedef struct saved_source {
 static bool source_fields(qa_source_save_io *io, saved_source *saved)
 {
     if (!qa_source_save_string(io, &saved->selected) || !saved->selected ||
-        !qa_source_save_bytes(io, saved->descriptor.bytes, sizeof(saved->descriptor.bytes)) ||
         !qa_source_save_bool(io, &saved->gear)) return false;
     if (!saved->gear) return true;
     return qa_source_save_string(io, &saved->owner) && saved->owner &&
         qa_source_save_string(io, &saved->weapon_item) && saved->weapon_item &&
         qa_source_save_string(io, &saved->service_owner) && saved->service_owner &&
-        qa_source_save_bytes(io, saved->image.bytes, sizeof(saved->image.bytes)) &&
         qa_source_save_u64(io, &saved->attack_sequence) &&
         qa_source_save_i32(io, &saved->milliseconds) && saved->milliseconds >= 0 &&
         qa_source_save_i32(io, &saved->frame) && saved->frame >= 0 &&
@@ -480,8 +477,7 @@ static bool decode_roster(application_equipment_runtime *runtime, qa_bytes bytes
         qa_source_save_count(&io, &count, runtime->count) && count == runtime->count;
     for (size_t i = 0; okay && i < count; ++i) {
         equipment_source *source = &runtime->sources[i];
-        okay = source_fields(&io, &rows[i]) && rows[i].selected == source->view.selected_owner &&
-            qa_sha256_equal(&rows[i].descriptor, &source->view.descriptor->identity);
+        okay = source_fields(&io, &rows[i]) && rows[i].selected == source->view.selected_owner;
         if (okay && rows[i].gear) {
             const char *item = qa_strings_cstr(qa_session_strings(runtime->options.services.session), rows[i].weapon_item);
             okay = item && !strcmp(item, "q3:weapon/grapple");
@@ -535,14 +531,16 @@ static int32_t calendar(void *context, qa_q3_host_calendar *out)
 static bool names(equipment_source *source, const saved_source *saved, qa_error *error)
 {
     qa_strings *strings = qa_session_strings(source->runtime->options.services.session);
-    char digest[65], name[160], service[192]; qa_sha256_hex(&source->view.descriptor->identity, digest);
+    const char *instance = source->view.descriptor->selection.instance;
+    size_t instance_size = strlen(instance);
+    if (instance_size > SIZE_MAX-sizeof("q3-gear::18446744073709551615:services"))
+        return application_fail(error, QA_ERROR_MEMORY, "Gear namespace exceeds its string capacity");
+    size_t capacity = instance_size+sizeof("q3-gear::18446744073709551615:services");
+    char *name = malloc(capacity);
+    if (!name) return application_fail(error, QA_ERROR_MEMORY, "Allocating selected gear namespace");
     if (saved) {
-        source->view.gear_owner = saved->owner; source->view.service_owner = saved->service_owner;
         const char *text = qa_strings_cstr(strings, saved->owner);
-        if (!text) return application_fail(error, QA_ERROR_FORMAT, "Saved gear namespace is absent");
-        snprintf(service, sizeof(service), "%s:services", text);
-        if (qa_strings_find(strings, (qa_bytes){(const uint8_t *)service, strlen(service)}) != saved->service_owner)
-            return application_fail(error, QA_ERROR_FORMAT, "Saved gear services differ from its true namespace");
+        if (!text) { free(name); return application_fail(error, QA_ERROR_FORMAT, "Saved gear namespace is absent"); }
         const char *suffix = strrchr(text, ':'); uint64_t generation = 0;
         bool valid = suffix && suffix[1] >= '1' && suffix[1] <= '9';
         for (const char *digit = suffix ? suffix+1 : ""; valid && *digit; ++digit) {
@@ -550,20 +548,29 @@ static bool names(equipment_source *source, const saved_source *saved, qa_error 
             else generation = generation*10+(uint64_t)(*digit-'0');
         }
         if (valid) {
-            snprintf(name, sizeof(name), "q3-gear:%u:%s:%llu", source->view.selected_owner,
-                digest, (unsigned long long)generation);
-            if (!strcmp(text, name)) return true;
+            int written = snprintf(name, capacity, "q3-gear:%s:%llu", instance, (unsigned long long)generation);
+            if (written >= 0 && (size_t)written <= capacity-sizeof(":services") && !strcmp(text, name)) {
+                memcpy(name+(size_t)written, ":services", sizeof(":services"));
+                valid = qa_strings_find(strings, (qa_bytes){(const uint8_t *)name, (size_t)written+sizeof(":services")-1}) == saved->service_owner;
+                free(name);
+                if (!valid) return application_fail(error, QA_ERROR_FORMAT, "Saved gear services differ from its true namespace");
+                source->view.gear_owner = saved->owner; source->view.service_owner = saved->service_owner;
+                return true;
+            }
         }
+        free(name);
         return application_fail(error, QA_ERROR_FORMAT, "Saved gear namespace differs from its immutable selected source");
     }
     for (uint64_t generation = 1; generation; ++generation) {
-        snprintf(name, sizeof(name), "q3-gear:%u:%s:%llu", source->view.selected_owner,
-            digest, (unsigned long long)generation);
-        if (qa_strings_find(strings, (qa_bytes){(const uint8_t *)name, strlen(name)})) continue;
-        snprintf(service, sizeof(service), "%s:services", name);
-        return qa_strings_intern_cstr(strings, name, &source->view.gear_owner, error) &&
-            qa_strings_intern_cstr(strings, service, &source->view.service_owner, error);
+        int written = snprintf(name, capacity, "q3-gear:%s:%llu", instance, (unsigned long long)generation);
+        if (written < 0 || (size_t)written > capacity-sizeof(":services")) break;
+        if (qa_strings_find(strings, (qa_bytes){(const uint8_t *)name, (size_t)written})) continue;
+        bool okay = qa_strings_intern_cstr(strings, name, &source->view.gear_owner, error);
+        memcpy(name+(size_t)written, ":services", sizeof(":services"));
+        okay = okay && qa_strings_intern_cstr(strings, name, &source->view.service_owner, error);
+        free(name); return okay;
     }
+    free(name);
     return application_fail(error, QA_ERROR_MEMORY, "Gear namespace generation exhausted");
 }
 
@@ -580,7 +587,7 @@ static bool create_gear(equipment_source *source, const saved_source *saved, qa_
     if (!application_q3_grapple_profile_create(artifact->image, artifact->kind, artifact->abi,
         artifact->path, &profile, error)) return false;
     if (!profile) return application_fail(error, QA_ERROR_UNSUPPORTED, "Selected GAME artifact declares no supported grapple profile");
-    bool okay = (!saved || (saved->gear && qa_sha256_equal(&saved->image, qa_qvm_image_digest(artifact->image)))) &&
+    bool okay = (!saved || saved->gear) &&
         names(source, saved, error) && qa_vfs_acquisition_copy(&artifact->acquisition, &source->acquisition, error);
     if (okay) {
         source->artifact = artifact->resource; source->view.artifact = artifact->resource; qa_resource_retain(artifact->resource);
@@ -643,14 +650,13 @@ static bool source_capture(void *context, qa_buffer *out, qa_error *error)
         runtime_header(&io) && qa_source_save_count(&io, &count, SIZE_MAX);
     for (size_t i = 0; i < count && okay; ++i) {
         equipment_source *source = &runtime->sources[i]; qa_buffer executor = {0};
-        saved_source saved = {.selected = source->view.selected_owner, .descriptor = source->view.descriptor->identity,
-            .gear = source->view.gear != NULL};
+        saved_source saved = {.selected = source->view.selected_owner, .gear = source->view.gear != NULL};
         okay = source_current(source);
         if (okay && saved.gear) {
             okay = source->attached && application_q3_gear_checkpoint(source->view.gear, &executor, error);
             saved.owner = source->view.gear_owner; saved.service_owner = source->view.service_owner;
             saved.weapon_item = source->source.weapon_item;
-            saved.image = *qa_qvm_image_digest(source->view.gear->image); saved.attack_sequence = source->attack_sequence;
+            saved.attack_sequence = source->attack_sequence;
             saved.milliseconds = source->milliseconds; saved.frame = source->frame; saved.prepared = source->prepared;
             saved.entities = (qa_bytes){source->view.gear->entities.data, source->view.gear->entities.size};
             saved.executor = (qa_bytes){executor.data, executor.size};
@@ -712,7 +718,6 @@ static bool source_restore(void *context, qa_bytes bytes, qa_error *error)
         okay = source->attached && source->view.gear_owner == saved[i].owner &&
             source->source.weapon_item == saved[i].weapon_item &&
             source->view.service_owner == saved[i].service_owner &&
-            qa_sha256_equal(&saved[i].image, qa_qvm_image_digest(gear->image)) &&
             source->attack_sequence == saved[i].attack_sequence &&
             source->milliseconds == saved[i].milliseconds && source->frame == saved[i].frame &&
             source->prepared == saved[i].prepared && gear->entities.size == saved[i].entities.size &&

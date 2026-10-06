@@ -107,7 +107,7 @@ bool guest_profile_artifacts_match(const guest_profile_artifacts *owner,
 }
 
 /* Wire records own original artifacts, not relocated image buffers. Image
- * target/digest/metadata are derived again by the genuine inert parser. */
+ * target/metadata are derived again by the genuine inert parser. */
 bool guest_profile_artifacts_checkpoint(const guest_profile_artifacts *owner,
     qa_buffer *out, qa_error *error)
 {

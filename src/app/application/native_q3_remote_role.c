@@ -238,8 +238,9 @@ static bool prepare_seat(application_provider *provider, const qa_launch_choices
     struct application_native_q3_remote_role *row = calloc(1, sizeof(*row));
     if (!row) return application_fail(error, QA_ERROR_MEMORY, "Retaining native CLIENT console");
     row->provider = provider; row->seat = seat->id; row->owns_cvars = true;
-    char identity[65], name[160]; qa_sha256_hex(&provider->launch->identity, identity);
-    snprintf(name, sizeof(name), "q3-native-client:%u:%s:%u", provider->owner, identity, seat->id);
+    char name[160];
+    snprintf(name, sizeof(name), "q3-native-client:%u:%llu:%u", provider->owner,
+        (unsigned long long)provider->launch->identity, seat->id);
     qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3, .user = row, .print = cvar_print, .cheats_allowed = cheats};
     row->cvars = qa_cvars_create(&cvars, error);
     qa_console_options options = {.context = {.owner = provider->owner, .seat = seat->id,
@@ -531,7 +532,7 @@ bool application_native_q3_remote_role_source_current(application_provider *prov
     qa_application_q3_remote_source actual;
     return source && application_native_q3_remote_role_source_read(provider, source->receiver.seat, source->connection_epoch, &actual, NULL) &&
         source->descriptor && source->descriptor->storage == actual.descriptor->storage && source->descriptor->content == actual.descriptor->content &&
-        qa_sha256_equal(&source->descriptor->identity, &actual.descriptor->identity) &&
+        source->descriptor->identity == actual.descriptor->identity &&
         source->configuration_generation == actual.configuration_generation &&
         application_native_q3_remote_role_current(provider, &source->receiver);
 }
@@ -637,7 +638,7 @@ bool application_native_q3_remote_role_modules_retained(application_provider *pr
     const qa_application_q3_client_context *receiver = &source->receiver;
     const qa_command_context *command = &receiver->command_context;
     return source->descriptor->storage == descriptor->storage && source->descriptor->content == descriptor->content &&
-        qa_sha256_equal(&source->descriptor->identity, &descriptor->identity) &&
+        source->descriptor->identity == descriptor->identity &&
         receiver->session == provider->application->session && receiver->receiver == provider->owner &&
         receiver->seat == row->seat && receiver->service_owner == row->service_owner &&
         receiver->frontend_lifetime == row && receiver->console == row->console && receiver->cvars == row->cvars &&

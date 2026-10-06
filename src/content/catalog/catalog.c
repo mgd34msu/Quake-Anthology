@@ -314,10 +314,13 @@ void qa_catalog_release(qa_catalog *catalog)
     for (size_t i = 0; i < catalog->mod_count; ++i) {
         qa_catalog_mod *m = &catalog->mods[i];
         free((void *)m->requires); free((void *)m->conflicts);
-        free((void *)m->declaration.data);
+        qa_resource_release((qa_resource *)m->declaration_resource);
+        qa_resource_release((qa_resource *)m->program_resource);
     }
     for (size_t i = 0; i < catalog->behavior_count; ++i) {
         free((void *)catalog->behaviors[i].entry.data);
+        qa_resource_release((qa_resource *)catalog->behaviors[i].declaration_resource);
+        qa_resource_release((qa_resource *)catalog->behaviors[i].artifact_resource);
     }
     free(catalog->behaviors);
     for (size_t i = 0; i < catalog->physical_count; ++i) free(catalog->physical[i].members);

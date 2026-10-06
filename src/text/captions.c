@@ -30,7 +30,7 @@ struct qa_captions {
 };
 typedef struct caption_asset {
     struct caption_asset *next;
-    qa_sha256_digest digest;
+    qa_resource *resource;
     qa_caption_kind kind;
     char *path;
     qa_caption_track *track;
@@ -474,6 +474,7 @@ qa_caption_library *qa_caption_library_create(qa_error *e) {
 }
 static void free_asset(caption_asset *asset) {
     qa_caption_track_release(asset->track);
+    qa_resource_release(asset->resource);
     free(asset->path);
     free(asset);
 }
@@ -543,7 +544,7 @@ bool qa_caption_library_load(qa_caption_library *library, qa_vfs *view, const ch
     caption_asset *asset;
     for (asset = library->first; asset; asset = asset->next)
         if (asset->kind == kind && !strcmp(asset->path, path) &&
-            qa_sha256_equal(&asset->digest, qa_resource_digest(resource)))
+            asset->resource == resource)
             break;
     if (!asset) {
         asset = calloc(1, sizeof(*asset));
@@ -557,7 +558,8 @@ bool qa_caption_library_load(qa_caption_library *library, qa_vfs *view, const ch
             asset->path = path;
             path = NULL;
             asset->kind = kind;
-            asset->digest = *qa_resource_digest(resource);
+            asset->resource = resource;
+            qa_resource_retain(resource);
             asset->next = library->first;
             library->first = asset;
         }

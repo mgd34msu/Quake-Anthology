@@ -194,12 +194,8 @@ bool qa_lobbies_host(qa_lobbies *service, qa_local_account account, const char *
         !selection->composition->canonical.data || !selection->composition->canonical.size ||
         !text_valid(selection->snapshot_schema, true) || service->serial == UINT64_MAX)
         return fail(error, "Invalid local lobby settings");
-    qa_sha256_digest digest;
     qa_bytes bytes = {selection->composition->canonical.data,
                       selection->composition->canonical.size};
-    qa_sha256(bytes, &digest);
-    if (!qa_sha256_equal(&digest, &selection->composition->digest))
-        return fail(error, "Lobby composition identity differs from its bytes");
     const char *owner, *owner_name, *room_name, *schema;
     if (!intern(service, account.id, &owner, error) ||
         !intern(service, account.name, &owner_name, error) ||
@@ -234,7 +230,7 @@ bool qa_lobbies_host(qa_lobbies *service, qa_local_account account, const char *
     definition->references = 1;
     definition->strings = service->strings;
     ++service->strings->references;
-    definition->composition = (qa_unified_composition){{composition, bytes.size}, digest};
+    definition->composition = (qa_unified_composition){{composition, bytes.size}};
     room->references = room->member_capacity = 1;
     room->definition = definition;
     room->members = members;
@@ -336,12 +332,16 @@ bool qa_lobbies_publish(qa_lobbies *service, qa_lobby_id id, const char *owner, 
     if (!qa_net_address_format(endpoint, address, sizeof(address), error))
         return false;
     bool unified = wire->protocol.kind == QA_NET_UNIFIED_1;
-    if (unified && (!qa_sha256_equal(&wire->composition, &room->definition->composition.digest) ||
+    const qa_buffer *prepared = &room->definition->composition.canonical;
+    if (unified && (!wire->composition || !wire->composition_bytes.data ||
+                    wire->composition_bytes.size != prepared->size ||
+                    memcmp(wire->composition_bytes.data, prepared->data, prepared->size) ||
                     !wire->snapshot_schema ||
                     strcmp(wire->snapshot_schema, room->view.selection.snapshot_schema)))
         return fail(error, "Bound lobby wire differs from its prepared composition");
     qa_net_address bound = *endpoint;
     qa_lobby_wire selected = *wire;
+    selected.composition_bytes = unified ? (qa_bytes){prepared->data, prepared->size} : (qa_bytes){0};
     selected.snapshot_schema = unified ? room->view.selection.snapshot_schema : NULL;
     room = edit(service, index, room->view.member_count, error);
     if (!room)

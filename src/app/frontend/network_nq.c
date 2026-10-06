@@ -421,7 +421,7 @@ bool frontend_nq_source_hooks(frontend_nq_host *host, const qa_net_client *clien
         client->protocol.flags != host->frontend->options.network_protocol.flags ||
         client->protocol.revision != host->frontend->options.network_protocol.revision || client->seat_count != 1 || client->seats[0].remote_index ||
         client->seats[0].seat.owner != peer->seat.owner || client->seats[0].seat.index != peer->seat.index ||
-        !qa_sha256_equal(&client->composition, &host->composition))
+        client->composition != host->composition)
         return frontend_fail(error, QA_ERROR_FORMAT, "Restored NetQuake source is not its declared native connection seat");
     size_t cursor = 0; qa_application_network_player row; bool found = false;
     while (qa_application_network_player_next(host->frontend->application, &cursor, &row)) {
@@ -570,7 +570,7 @@ static bool source_observer_create(qa_frontend *frontend,qa_network_runtime *run
     *out = host; return true;
 }
 bool frontend_nq_create(qa_frontend *frontend, qa_network_runtime *runtime,
-    const qa_sha256_digest *composition, frontend_nq_host **out, qa_error *error)
+    const uint64_t *composition, frontend_nq_host **out, qa_error *error)
 {
     if (!frontend || !runtime || !composition || !out || *out || !frontend->application ||
         frontend->options.network_protocol.kind > QA_NET_RMQ999 ||
@@ -621,10 +621,9 @@ bool frontend_nq_prepare(frontend_nq_host *host, qa_error *error)
     }
     uint64_t generation = qa_application_configuration_generation(host->frontend->application);
     if (generation != host->generation) {
-        qa_actor_id actor; qa_buffer identity = {0};
-        if (!host_source(host, error) || !qa_launch_identity_encode(qa_application_launch(host->frontend->application),
-            qa_session_actors(qa_application_session(host->frontend->application)), &identity, error)) return false;
-        qa_sha256((qa_bytes){identity.data, identity.size}, &host->composition); qa_buffer_free(&identity);
+        qa_actor_id actor;
+        if (!host_source(host, error)) return false;
+        host->composition = generation;
         host->generation = generation; host->submillisecond_ns = 0;
         for (size_t i = 0; i < 256; ++i) { free(host->board[i].name); host->board[i] = (nq_status_cache){0}; }
         for (size_t i = 0; i < 64; ++i) { free(host->styles[i]); host->styles[i] = NULL; }
@@ -1147,12 +1146,8 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
     if (!qa_application_network_q1_extents(host->frontend->application, host->owner, &client_slots, &entity_slots, error) ||
         !qa_application_network_q1_precache(host->frontend->application, host->owner, true, models, &model_count, error)) return false;
     for (size_t i = 0; i < model_count; ++i) if (!strcmp(models[i], "progs/player.mdl")) player_model = (uint32_t)i + 1;
-    qa_buffer identity = {0}; qa_sha256_digest digest;
-    if (!qa_launch_identity_encode(qa_application_launch(host->frontend->application),
-        qa_session_actors(qa_application_session(host->frontend->application)), &identity, error)) return false;
-    qa_sha256((qa_bytes){identity.data, identity.size}, &digest); qa_buffer_free(&identity);
-    if (!qa_sha256_equal(&digest, &host->composition))
-        return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake host changes its complete launch composition");
+    if (host->composition != host->generation)
+        return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake host changes its launch generation");
     for (size_t i = 0; i < NQ_CLIENTS; ++i) {
         const nq_frontend_peer *p = host->peers + i;
         if ((p->host && p->host != host) || (p->client.owner && p->client.owner != QA_NETWORK_COMMAND_OWNER) ||

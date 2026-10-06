@@ -304,8 +304,7 @@ static bool retained(const guest_elf_memory *owner, const elf_extent *extent,
         return guest_fail(error, QA_ERROR_FORMAT, extent->base, "ELF attachment backing differs from its historical source extent");
     const guest_elf_view *image = guest_elf_describe(owner->image);
     if (backing->file && (backing->source.bytes != image->artifact.size ||
-        backing->source.offset != page->file_offset ||
-        !qa_sha256_equal(&backing->source.digest, &image->image.digest)))
+        backing->source.offset != page->file_offset || backing->source.capability))
         return guest_fail(error, QA_ERROR_FORMAT, extent->base, "ELF attachment file provenance differs from its retained artifact");
     if (extent->kernel_changed) return true;
     size_t offset = 0;
@@ -321,7 +320,7 @@ static bool retained(const guest_elf_memory *owner, const elf_extent *extent,
     return true;
 }
 
-enum { ELF_MEMORY_HEADER = 116, ELF_MEMORY_ROW = 40 };
+enum { ELF_MEMORY_HEADER = 84, ELF_MEMORY_ROW = 40 };
 
 static void identity_write(uint8_t *data, const guest_elf_memory *owner)
 {
@@ -333,10 +332,9 @@ static void identity_write(uint8_t *data, const guest_elf_memory *owner)
     data[22] = owner->options.read_implies_execute;
     qa_store_u32le(data + 24, owner->options.anonymous_permissions);
     qa_store_u64le(data + 28, image->preferred_base); qa_store_u64le(data + 36, image->image_bytes);
-    memcpy(data + 44, image->digest.bytes, 32);
-    qa_store_u64le(data + 76, owner->view.base); qa_store_u64le(data + 84, owner->view.bytes);
-    qa_store_u64le(data + 92, guest_elf_describe(owner->image)->bias);
-    qa_store_u64le(data + 100, owner->installed); qa_store_u64le(data + 108, owner->extent_count);
+    qa_store_u64le(data + 44, owner->view.base); qa_store_u64le(data + 52, owner->view.bytes);
+    qa_store_u64le(data + 60, guest_elf_describe(owner->image)->bias);
+    qa_store_u64le(data + 68, owner->installed); qa_store_u64le(data + 76, owner->extent_count);
 }
 
 bool guest_elf_memory_checkpoint(const guest_elf_memory *owner, qa_buffer *out, qa_error *error)
@@ -377,7 +375,7 @@ bool guest_elf_memory_restore_prepare(const guest_elf *elf,
     owner->image = elf;
     owner->options = (guest_elf_memory_options){qa_load_u32le(encoded.data + 24), encoded.data[22] != 0};
     bool okay = prepare(owner, &owner->options, false, error);
-    uint64_t rows = qa_load_u64le(encoded.data + 108);
+    uint64_t rows = qa_load_u64le(encoded.data + 76);
     size_t stride = ELF_MEMORY_ROW;
     if (okay && (rows > owner->page_count || rows > (encoded.size - ELF_MEMORY_HEADER) / stride ||
         encoded.size - ELF_MEMORY_HEADER != rows * stride))
@@ -435,7 +433,7 @@ bool guest_elf_memory_pristine(const guest_elf_memory *owner, uint64_t backing,
             okay = guest_fail(error, QA_ERROR_FORMAT, backing, "ELF backing differs from its actual attachment kind or extent");
             break;
         }
-        if (file && (file->capability || !qa_sha256_equal(&file->digest, &image->image.digest) ||
+        if (file && (file->capability ||
             file->bytes != image->artifact.size || file->offset != page->file_offset)) {
             okay = guest_fail(error, QA_ERROR_FORMAT, backing, "ELF private file baseline differs from its actual installed artifact");
             break;
@@ -502,3 +500,6 @@ qa_native_guest *guest_elf_memory_guest(guest_elf_memory *owner)
 { return owner && owner->complete ? owner->guest : NULL; }
 const guest_elf_memory_view *guest_elf_memory_describe(const guest_elf_memory *owner)
 { return owner ? &owner->view : NULL; }
+
+const guest_elf *guest_elf_memory_artifact(const guest_elf_memory *owner)
+{ return owner ? owner->image : NULL; }

@@ -2,7 +2,6 @@
 #define QA_QVM_H
 
 #include "qa/common.h"
-#include "qa/hash.h"
 #include "qa/math.h"
 
 typedef enum qa_qvm_opcode {
@@ -32,7 +31,11 @@ typedef struct qa_vfs qa_vfs;
 bool qa_qvm_image_load(qa_bytes bytes, qa_qvm_image **out, qa_error *error);
 void qa_qvm_image_retain(qa_qvm_image *image);
 void qa_qvm_image_release(qa_qvm_image *image);
-const qa_sha256_digest *qa_qvm_image_digest(const qa_qvm_image *image);
+typedef struct qa_qvm_image_info {
+    size_t source_bytes, instruction_count;
+    uint32_t code_length, data_length, literal_length, bss_length;
+} qa_qvm_image_info;
+qa_qvm_image_info qa_qvm_image_describe(const qa_qvm_image *image);
 const qa_qvm_instruction *qa_qvm_image_instructions(const qa_qvm_image *image, size_t *count);
 /* Borrowed original data/literal bytes; excludes BSS and allocation padding. */
 qa_bytes qa_qvm_image_initialized_data(const qa_qvm_image *image);
@@ -50,10 +53,10 @@ typedef struct qa_qvm_compatibility {
     qa_buffer primary, equipment_presentation, collision_scene; /* Owned JSON values, if declared. */
 } qa_qvm_compatibility;
 bool qa_qvm_compatibility_parse(qa_bytes json, const char *artifact_path,
-                                 const qa_sha256_digest *, qa_qvm_role,
+                                 qa_qvm_role,
                                  qa_qvm_compatibility *, qa_error *);
 bool qa_qvm_compatibility_read(qa_vfs *, const char *artifact_path,
-                                const qa_sha256_digest *, qa_qvm_role,
+                                qa_qvm_role,
                                 qa_qvm_compatibility *, qa_error *);
 void qa_qvm_compatibility_free(qa_qvm_compatibility *);
 bool qa_qvm_image_open(qa_vfs *, const char *artifact_path, qa_qvm_role,
@@ -116,7 +119,7 @@ uint32_t qa_qvm_api_version(const qa_qvm *);
 bool qa_qvm_classify_syscall(qa_qvm_role, qa_qvm_abi, int32_t trap,
                              int32_t *canonical, bool *engine, qa_error *);
 size_t qa_qvm_memory_size(const qa_qvm *);
-const qa_sha256_digest *qa_qvm_digest(const qa_qvm *);
+const qa_qvm_image *qa_qvm_image_of(const qa_qvm *);
 bool qa_qvm_call_argument(const qa_qvm_call *, size_t index, int32_t *, qa_error *);
 bool qa_qvm_call_set_argument(const qa_qvm_call *, size_t index, int32_t, qa_error *);
 

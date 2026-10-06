@@ -212,7 +212,7 @@ static bool resource_read_typed(frontend_unified_events *o, const qa_unified_res
     qa_launch_resource held; qa_vfs *files; const qa_vfs_acquisition *opening;
     const qa_product *product=NULL; qa_vfs *actual;
     qa_executable_recipe *recipe=frontend_remote_unified_recipe(o->replica);
-    bool okay=qa_executable_recipe_find_resource(recipe,key->content,key->path,&key->digest,key->byte_length,&held,&files,&opening) &&
+    bool okay=qa_executable_recipe_find_resource(recipe,key->content,key->path,key->byte_length,&held,&files,&opening) &&
         qa_executable_recipe_content_read(recipe,key->content,&actual,&product) && actual==files;
     unified_event_resource *r=okay?calloc(1,sizeof(*r)):NULL;
     if (okay && !r) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining declared Source resource");
@@ -407,7 +407,7 @@ static bool sound(frontend_unified_events *o,const qa_unified_sound_event *event
             !qa_audio_bank_register(bank,r->path,r->family,&r->asset,e)) return false;
         if (!r->asset) return frontend_unified_fail(e,QA_ERROR_NOT_FOUND,"Declared Unified sound is absent from its actual bank");
         const qa_resource *resource=qa_audio_asset_resource(r->asset);
-        if (!qa_sha256_equal(qa_resource_digest(resource),qa_resource_digest(r->resource)) ||
+        if (resource!=r->resource ||
             qa_resource_bytes(resource).size!=qa_resource_bytes(r->resource).size)
             return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified sound bank differs from its declared resource authority");
     }

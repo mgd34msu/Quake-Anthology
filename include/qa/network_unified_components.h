@@ -10,7 +10,6 @@
 typedef struct qa_unified_component_identity {
     qa_program_kind runtime;
     char *product, *id, *provider, *content;
-    qa_sha256_digest declaration_digest;
     qa_unified_mod_identity module;
 } qa_unified_component_identity;
 typedef struct qa_unified_control_arguments {

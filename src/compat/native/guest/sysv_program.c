@@ -87,7 +87,12 @@ static bool options_valid(const qa_native_sysv_program_options *o, qa_error *err
         o->process_id > INT32_MAX || o->thread_id > INT32_MAX)
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Linux program needs its actual ELF64 kernel authority and execution policy");
     if (o->program.image.format != o->guest.image.format ||
-        !qa_sha256_equal(&o->program.image.digest, &o->guest.image.digest))
+        o->program.image.target.os != o->guest.image.target.os ||
+        o->program.image.target.arch != o->guest.image.target.arch ||
+        o->program.image.target.abi != o->guest.image.target.abi ||
+        o->program.image.target.pointer_bytes != o->guest.image.target.pointer_bytes ||
+        o->program.image.preferred_base != o->guest.image.preferred_base ||
+        o->program.image.image_bytes != o->guest.image.image_bytes)
         return guest_fail(error, QA_ERROR_ARGUMENT, o->program.provider, "Linux program primary differs from its source image");
     if (o->interpreter.provider && (o->interpreter.role != QA_NATIVE_SYSV_PROGRAM ||
         o->interpreter.provider == o->program.provider))

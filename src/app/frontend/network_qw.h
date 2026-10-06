@@ -6,7 +6,7 @@
 #include "qa/server_admin.h"
 typedef struct frontend_qw_host frontend_qw_host;
 bool frontend_qw_create(qa_frontend *, qa_network_runtime *, qa_server_admin *,
-    const qa_sha256_digest *, frontend_qw_host **, qa_error *);
+    const uint64_t *, frontend_qw_host **, qa_error *);
 void frontend_qw_destroy(frontend_qw_host *);
 void frontend_qw_disconnected(frontend_qw_host *, qa_net_client_id);
 bool frontend_qw_receive(frontend_qw_host *, const qa_net_datagram *, bool *, qa_error *);

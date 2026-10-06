@@ -1,4 +1,5 @@
 #include "guest_q3_grapple_profile.h"
+#include "guest_q3_reference.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -15,11 +16,11 @@ static const application_q3_grapple_cvar threewave_cvars[] = {
 static const application_q3_grapple_attachment threewave_attachments[] = {
     {"models/weapons2/grapple/grapple_hand.md3", "tag_hook"}};
 typedef struct profile_card {
-    const char *digest;
+    application_q3_reference reference;
     application_q3_grapple_definition definition;
 } profile_card;
 static const profile_card cards[] = {
-    {"sha256:9751bad99a2d138f96a9b0436d2ea2d965b86214175dc33e4cea95e059419337", {
+    {Q3_REFERENCE_THREEWAVE_GAME, {
         .id = "threewave-1.7", .title = "Threewave CTF (Quake 3)", .entity_stride = 876, .client_stride = 944,
         .fields = {.inuse = 520, .client = 516, .parent = 600, .target = 768, .mover = UINT32_MAX,
             .health = 732, .takedamage = 736, .hook = 816, .event_time = 552, .free_after_event = 556},
@@ -40,7 +41,7 @@ static const profile_card cards[] = {
             .cable_hold = "models/weapons2/grapple/grapple1_cord_f.md3", .cable_segment_length = 14,
             .fire_sound = "sound/cctf/grapple/grapple_fire.wav", .attach_sound = "sound/cctf/grapple/grapple_hit.wav",
             .pull_sound = "sound/cctf/grapple/grapple_pull.wav", .hang_sound = "sound/cctf/grapple/grapple_hang.wav"}}},
-    {"sha256:b9e396cf5ed2b913548cd92e2b0886ad5992653c8903fa3f9ed0b1f4167ca43e", {
+    {Q3_REFERENCE_LRCTF_GAME, {
         .id = "lrctf-1.2", .title = "LRCTF (Quake 3)", .entity_stride = 856, .client_stride = 872,
         .fields = {.inuse = 520, .client = 516, .parent = 600, .target = 784, .mover = 836,
             .health = 748, .takedamage = 752, .hook = 840, .event_time = 552, .free_after_event = 556},
@@ -105,9 +106,7 @@ bool application_q3_grapple_profile_create(qa_qvm_image *image, qa_qvm_role role
         return fail(error, QA_ERROR_ARGUMENT, "Grapple metadata requires its actual GAME artifact and empty owner");
     const application_q3_grapple_definition *definition = NULL;
     for (size_t i = 0; i < sizeof(cards) / sizeof(cards[0]); ++i) {
-        qa_sha256_digest digest;
-        if (!qa_sha256_parse(cards[i].digest, &digest, error)) return false;
-        if (qa_sha256_equal(&digest, qa_qvm_image_digest(image))) { definition = &cards[i].definition; break; }
+        if (application_q3_reference_image(image, cards[i].reference)) { definition = &cards[i].definition; break; }
     }
     if (!definition) return true;
     if (abi != QA_QVM_Q3_MODERN)

@@ -84,18 +84,13 @@ bool native_instance_setup_identity(qa_native_instance *instance, const qa_nativ
     if (options->dependency_count && !options->dependencies)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native dependency count requires dependency records");
-    const qa_sha256_digest *declared =
-        options->declaration ? &options->declaration->digest : options->declaration_digest;
-    if (options->declaration && options->declaration_digest &&
-        !qa_sha256_equal(&options->declaration->digest, options->declaration_digest))
-        return native_fail(error, QA_ERROR_FORMAT, 0, "native declaration digest options disagree");
-    if (declared) {
-        instance->declaration = *declared;
-        instance->has_declaration = true;
-    }
-    if (!original_dependencies_copy(instance, options, error)) return false;
-    if (native_regions_copy(instance, options->declaration, error)) return true;
+    instance->declaration_ref = options->declaration;
+    instance->has_declaration = options->declaration != NULL;
+    if (options->declaration) ++((qa_native_declaration *)options->declaration)->references;
+    if (original_dependencies_copy(instance, options, error) &&
+        native_regions_copy(instance, options->declaration, error)) return true;
     native_original_dependencies_destroy(instance);
+    native_regions_destroy(instance);
     return false;
 }
 
@@ -149,7 +144,6 @@ bool qa_native_create_direct(qa_native_module *module, const qa_native_options *
         return false;
     }
     instance->options.declaration = NULL;
-    instance->options.declaration_digest = NULL;
     instance->lifecycle = QA_NATIVE_LOADED;
     qa_native_module_retain(module);
     if (!native_direct_open(instance, error))
@@ -223,7 +217,7 @@ static bool create_process(qa_native_module *module, const qa_native_options *op
         native_process_open(instance, options->process, error) && native_profile_bind(instance, error);
     instance->active_depth = 0; native_active_instance = previous;
     instance->options.process = NULL;
-    instance->options.declaration = NULL; instance->options.declaration_digest = NULL;
+    instance->options.declaration = NULL;
     instance->options.dependencies = NULL; instance->options.dependency_count = 0;
     if (okay && options->process->continuation.size && options->process->defer_host_restore) {
         instance->process_host_pending = true;

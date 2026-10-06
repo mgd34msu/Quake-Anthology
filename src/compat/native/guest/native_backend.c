@@ -32,7 +32,7 @@ bool guest_native_map(qa_native_guest *guest,
             (actual.source.bytes != backing->source.bytes ||
              actual.source.offset != backing->source.offset ||
              actual.source.accessible_bytes != backing->source.accessible_bytes ||
-             !qa_sha256_equal(&actual.source.digest, &backing->source.digest)))) {
+             actual.source.capability != backing->source.capability))) {
             guest->failed = true;
             return guest_fail(error, QA_ERROR_FORMAT, backing->id,
                 "native child backing differs from its actual owner");

@@ -20,7 +20,8 @@ typedef struct qa_lobby_member {
 typedef enum qa_lobby_phase { QA_LOBBY_OPEN, QA_LOBBY_STARTING, QA_LOBBY_PLAYING } qa_lobby_phase;
 typedef struct qa_lobby_wire {
     qa_net_protocol_id protocol;
-    qa_sha256_digest composition;
+    uint64_t composition;
+    qa_bytes composition_bytes; /* Canonical selection returned by the host. */
     const char *snapshot_schema; /* Required only for the unified wire. */
 } qa_lobby_wire;
 typedef struct qa_lobby_selection {

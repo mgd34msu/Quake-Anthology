@@ -99,14 +99,13 @@ bool application_q3_weapon_models_current(const application_q3_weapon_models *ow
         owner->module.assets, error)) return false;
     if (qa_qvm_get_role(owner->module.vm) != QA_QVM_CGAME ||
         qa_qvm_get_abi(owner->module.vm) != owner->module.profile->abi ||
-        !qa_sha256_equal(qa_qvm_digest(owner->module.vm), &owner->module.profile->artifact))
+        qa_qvm_image_of(owner->module.vm) != owner->module.profile->image)
         return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon receipt lost its actual module or model registry");
     if (owner->module.profile->present && (!owner->module.game_vm || !owner->module.game_image ||
         !owner->module.game_artifact_path ||
         qa_qvm_get_role(owner->module.game_vm) != QA_QVM_GAME ||
         qa_qvm_get_abi(owner->module.game_vm) != owner->module.profile->game_abi ||
-        !qa_sha256_equal(qa_qvm_digest(owner->module.game_vm), &owner->module.profile->game_artifact) ||
-        !qa_sha256_equal(qa_qvm_image_digest(owner->module.game_image), &owner->module.profile->game_artifact)))
+        qa_qvm_image_of(owner->module.game_vm) != owner->module.game_image))
         return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon model owner changed its actual GAME namespace");
     if (owner->module.profile->present && !application_q3_weapon_models_profile_namespace(owner->module.profile,
         owner->module.game_image, qa_qvm_get_abi(owner->module.game_vm), owner->module.game_artifact_path, error)) return false;

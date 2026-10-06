@@ -1,3 +1,4 @@
+#include "guest_q3_reference.h"
 #include "guest_inventory_profile.h"
 #include "qa/binary.h"
 #include <limits.h>
@@ -61,7 +62,7 @@ bool application_guest_public_inventory_profile_read(const qa_qvm_image *image, 
     const qa_json_document *doc, qa_json_id id, guest_public_inventory_profile *out, qa_error *error)
 {
     if (!image || !vm || !doc || !out || qa_qvm_get_role(vm) != QA_QVM_GAME || qa_qvm_get_abi(vm) != abi ||
-        memcmp(qa_qvm_digest(vm), qa_qvm_image_digest(image), sizeof(qa_sha256_digest)))
+        qa_qvm_image_of(vm) != image)
         return fail(error, "Original inventory profile lacks its admitted GAME image");
     guest_public_inventory_profile p = {.image = image, .vm = vm, .abi = abi};
     bool ok = word(doc, qa_json_get(doc, id, "weaponsOffset"), &p.weapons_offset, error) &&
@@ -314,12 +315,12 @@ bool application_guest_public_inventory_profile_default(const qa_qvm_image *imag
     qa_qvm_abi abi, guest_public_inventory_profile *out, bool *found, qa_error *error)
 {
     if (!image || !vm || !out || !found || qa_qvm_get_role(vm) != QA_QVM_GAME ||
-        qa_qvm_get_abi(vm) != abi || !qa_sha256_equal(qa_qvm_digest(vm), qa_qvm_image_digest(image)))
+        qa_qvm_get_abi(vm) != abi || (qa_qvm_image_of(vm) != image))
         return fail(error, "Original inventory default lacks its actual GAME owner");
-    char digest[65]; qa_sha256_hex(qa_qvm_image_digest(image), digest);
-    bool stock = !strcmp(digest, "57c52bf22e4f528c064f8af1553a7103723bab0a02276bb11eed944bf829b219");
-    bool threewave = !strcmp(digest, "9751bad99a2d138f96a9b0436d2ea2d965b86214175dc33e4cea95e059419337");
-    bool lrctf = !strcmp(digest, "b9e396cf5ed2b913548cd92e2b0886ad5992653c8903fa3f9ed0b1f4167ca43e");
+
+    bool stock = application_q3_reference_image(image, Q3_REFERENCE_BASE_GAME);
+    bool threewave = application_q3_reference_image(image, Q3_REFERENCE_THREEWAVE_GAME);
+    bool lrctf = application_q3_reference_image(image, Q3_REFERENCE_LRCTF_GAME);
     if (!stock && !threewave && !lrctf) { *found = false; return true; }
     if (abi != QA_QVM_Q3_MODERN) return fail(error, "Qualified original inventory requires the modern GAME ABI");
     guest_public_inventory_profile p = {.image = image, .vm = vm, .abi = abi,
@@ -384,7 +385,7 @@ bool application_guest_public_inventory_capacity(const guest_public_inventory_pr
     qa_qvm *vm, const guest_inventory_source *source, int32_t *out, qa_error *error)
 {
     if (!p || !source || !out || !vm || p->vm != vm || !p->image || qa_qvm_get_role(vm) != QA_QVM_GAME ||
-        qa_qvm_get_abi(vm) != p->abi || memcmp(qa_qvm_digest(vm), qa_qvm_image_digest(p->image), sizeof(qa_sha256_digest)) ||
+        qa_qvm_get_abi(vm) != p->abi || qa_qvm_image_of(vm) != p->image ||
         source->weapon < 1 || source->weapon > 15 || source->client > INT32_MAX || source->entity > INT32_MAX || source->client_number > INT32_MAX)
         return fail(error, "Original inventory capacity lost its actual GAME source");
     if (!qa_qvm_read(vm, 0, NULL, 0, error)) return false;
@@ -450,7 +451,7 @@ bool application_guest_public_inventory_acquire(const guest_public_inventory_pro
 {
     if (!p || !source || !words || !word_count || !p->acquisition_entry ||
         vm != p->vm || qa_qvm_get_role(vm) != QA_QVM_GAME || qa_qvm_get_abi(vm) != p->abi ||
-        !qa_sha256_equal(qa_qvm_digest(vm), qa_qvm_image_digest(p->image)) ||
+        (qa_qvm_image_of(vm) != p->image) ||
         source->weapon < 1 || source->weapon > 15 || source->entity > INT32_MAX)
         return fail(error, "Original acquisition lacks its actual GAME and counter");
     uint64_t primary = (uint64_t)source->client + p->ammo_offset + source->weapon * 4;

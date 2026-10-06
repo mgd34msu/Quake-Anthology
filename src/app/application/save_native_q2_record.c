@@ -1,6 +1,7 @@
 #include "save_native_q2_record.h"
 #include "save_native_q2.h"
 #include "guest_native_q2_private.h"
+#include "guest_native_q2_baseline.h"
 #include "startup_flow.h"
 #include "qa/binary.h"
 #include "qa/map_sidecars.h"
@@ -159,7 +160,7 @@ bool application_native_q2_save_restore(application_provider *provider, applicat
         ok = live && current != provider && current->application != app &&
             current->constructed && current->attached && !current->close_pending &&
             current->owner == provider->owner && current->launch &&
-            qa_sha256_equal(&current->launch->identity, &provider->launch->identity) &&
+            application_native_q2_launch_matches(current->launch, provider->launch) &&
             live->initialized && live->map_ready && live->profile == engine->profile &&
             current->state.native.host && application_native_q2_idle(current);
         if (!ok)

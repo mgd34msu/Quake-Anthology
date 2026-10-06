@@ -402,7 +402,7 @@ bool application_q2_control_prepare(struct application_native_q2 *engine, qa_err
     if (!raw_only && kind != QA_JSON_OBJECT) return application_fail(error, QA_ERROR_FORMAT, "Native body movement declaration is not an object");
     if (engine->source_control) return application_fail(error, QA_ERROR_ARGUMENT, "Native movement producer is already prepared");
     qa_native_module_info info = qa_native_module_describe(engine->provider->state.native.module);
-    /* declaration_load already checked the selected artifact path and digest. */
+    /* declaration_load already checked the selected artifact path and API. */
     if (info.profile != QA_NATIVE_Q2_GAME_API2023 || info.image.target.pointer_bytes != 8 ||
         info.image.target.arch != QA_NATIVE_ARCH_X86_64)
         return application_fail(error, QA_ERROR_FORMAT, "Native body movement declaration differs from its original API2023 artifact");

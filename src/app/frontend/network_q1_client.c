@@ -96,7 +96,7 @@ static bool connection(void *context,const qa_application_client_source *source)
         qa_net_client_owns_seat(client,source->network_seat) && !client->seats[0].remote_index &&
         same_protocol(client->protocol,o->options.protocol) &&
         qa_net_address_equal(&client->endpoint,&o->attachment.endpoint,true) &&
-        qa_sha256_equal(&client->composition,&o->attachment.composition);
+        (client->composition == o->attachment.composition);
 }
 static bool retirement(void *context,const qa_application_client_source *source)
 {
@@ -509,7 +509,7 @@ static bool complete_configuration(frontend_network_q1_client *o,qa_error *error
         qa_buffer_free(&info); if(!ok) return false;
     } else if(!qa_nq_connect_create(&o->nq,error)) return false;
     o->attachment=(qa_net_connect){.attachment=o->options.demo_playback ? QA_NET_LOCAL_SEAT : QA_NET_REMOTE,.endpoint=o->options.remote,
-        .protocol=o->options.protocol,.seats=&o->binding,.seat_count=1,.composition=physical.source.descriptor->identity};
+        .protocol=o->options.protocol,.seats=&o->binding,.seat_count=1,.composition=physical.source.configuration_generation};
     if (o->options.demo_playback) o->attachment.endpoint = (qa_net_address){.kind=QA_NET_LOOPBACK};
     o->configured=true; return true;
 }
@@ -603,7 +603,7 @@ bool frontend_network_q1_client_admit(frontend_network_q1_client *o,const qa_net
         request->seat_count==1 && request->seats[0].seat.owner==o->binding.seat.owner &&
         request->seats[0].seat.index==o->binding.seat.index && !request->seats[0].remote_index &&
         qa_net_address_equal(&request->endpoint,&o->attachment.endpoint,true) &&
-        qa_sha256_equal(&request->composition,&o->attachment.composition)) ||
+        (request->composition == o->attachment.composition)) ||
         frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 attach differs from its actual reached Source claim");
 }
 static bool attach(frontend_network_q1_client *o,qa_error *error)

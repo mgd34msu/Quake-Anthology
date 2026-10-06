@@ -5,12 +5,14 @@
 #include "qa/launch_client.h"
 #include "qa/catalog_save.h"
 #include <stdio.h>
+#include <stdatomic.h>
 
 typedef struct qa_launch_instance_storage {
     size_t references, leases;
     qa_launch_instance view;
     qa_launch_draft *identity;
     qa_configuration_hooks hooks;
+    qa_buffer configuration;
     bool prepared, closing;
     qa_vfs_acquisition artifact_acquisition;
 } instance_owner;
@@ -79,6 +81,7 @@ static void owner_dispose(instance_owner *owner)
     free((void *)owner->view.behaviors);
     qa_vfs_destroy(owner->view.content);
     qa_launch_draft_destroy(owner->identity);
+    qa_buffer_free(&owner->configuration);
     free(owner);
 }
 static void owner_release(instance_owner *owner)
@@ -258,70 +261,72 @@ bool qa_launch_source_files_current(const qa_launch_source_files *files,qa_error
     return valid || error_message(error,"Addon Source packages differ from the actual contiguous pakN recipe");
 }
 
-static void hash_u64(qa_sha256_context *h, uint64_t value)
-{
-    uint8_t bytes[8];
-    for (unsigned i = 0; i < 8; ++i) bytes[i] = (uint8_t)(value >> (8 * i));
-    qa_sha256_update(h, (qa_bytes){bytes, sizeof(bytes)});
-}
-static void hash_text(qa_sha256_context *h, const char *text)
-{
-    size_t length = strlen(text);
-    hash_u64(h, length); qa_sha256_update(h, (qa_bytes){(const uint8_t *)text, length});
-}
-static void hash_resource(qa_sha256_context *h, const qa_resource *resource)
-{
-    hash_u64(h, resource != NULL);
-    if (!resource) return;
-    const qa_sha256_digest *digest = qa_resource_digest(resource);
-    qa_sha256_update(h, (qa_bytes){digest->bytes, sizeof(digest->bytes)});
-}
 static bool instance_identity(instance_owner *owner, const qa_launch_choices *choices,
                                qa_error *error)
 {
-    qa_launch_instance *v = &owner->view;
-    const qa_launch_provider *p = &v->selection;
-    const qa_product *product = qa_catalog_product(owner->identity->catalog, p->product);
-    qa_sha256_context h; qa_sha256_init(&h);
-    hash_text(&h, "anthology-provider-v3"); hash_text(&h, p->instance);
-    hash_text(&h, product->identity); hash_text(&h, p->implementation);
-    hash_text(&h, p->artifact); hash_text(&h, p->component);
-    hash_u64(&h, p->runtime);
-    hash_u64(&h, qa_catalog_generation(owner->identity->catalog));
-    const qa_clock_config *clock = &p->clock;
-    hash_u64(&h, clock->kind); hash_u64(&h, clock->initial_time_ns);
-    hash_u64(&h, clock->interval_ns); hash_u64(&h, clock->minimum_frame_ns);
-    hash_u64(&h, clock->maximum_frame_ns); hash_u64(&h, clock->initial_lead_ns);
-    hash_u64(&h, clock->maximum_steps);
-    hash_u64(&h, p->options.size); qa_sha256_update(&h, p->options);
-    hash_u64(&h, owner->hooks.instance_configuration != NULL);
-    if (owner->hooks.instance_configuration) {
-        qa_sha256_digest configuration = {0};
-        if (!owner->hooks.instance_configuration(owner->hooks.context, v, choices,
-                                                  &configuration, error))
-            return false;
-        qa_sha256_update(&h, (qa_bytes){configuration.bytes, sizeof(configuration.bytes)});
+    qa_buffer configuration = {0};
+    if (owner->hooks.instance_configuration &&
+        !owner->hooks.instance_configuration(owner->hooks.context, &owner->view, choices,
+            &configuration, error)) {
+        qa_buffer_free(&configuration);
+        return false;
     }
-    hash_resource(&h, v->artifact); hash_resource(&h, v->declaration);
-    hash_u64(&h, v->interface_count);
-    for (size_t i = 0; i < v->interface_count; ++i) {
-        hash_text(&h, v->interfaces[i].path); hash_resource(&h, v->interfaces[i].resource);
+    qa_buffer_free(&owner->configuration);
+    owner->configuration = configuration;
+    if (owner->view.identity) return true;
+    static _Atomic uint64_t next = 0;
+    uint64_t prior = atomic_load_explicit(&next, memory_order_relaxed);
+    do {
+        if (prior == UINT64_MAX) return error_message(error, "launch instance serials are exhausted");
+    } while (!atomic_compare_exchange_weak_explicit(&next, &prior, prior + 1,
+        memory_order_relaxed, memory_order_relaxed));
+    owner->view.identity = prior + 1;
+    return true;
+}
+
+static bool selection_equal(const qa_launch_provider *a, const qa_launch_provider *b)
+{
+    const qa_clock_config *x = &a->clock, *y = &b->clock;
+    return a->product == b->product && a->runtime == b->runtime &&
+        !strcmp(a->instance, b->instance) && !strcmp(a->implementation, b->implementation) &&
+        !strcmp(a->artifact, b->artifact) && !strcmp(a->component, b->component) &&
+        a->options.size == b->options.size &&
+        (!a->options.size || !memcmp(a->options.data, b->options.data, a->options.size)) &&
+        x->kind == y->kind && x->initial_time_ns == y->initial_time_ns &&
+        x->interval_ns == y->interval_ns && x->minimum_frame_ns == y->minimum_frame_ns &&
+        x->maximum_frame_ns == y->maximum_frame_ns && x->initial_lead_ns == y->initial_lead_ns &&
+        x->maximum_steps == y->maximum_steps;
+}
+
+static bool instance_equal(const instance_owner *a, const instance_owner *b)
+{
+    const qa_launch_instance *x = &a->view, *y = &b->view;
+    const qa_product *left = qa_catalog_product(a->identity->catalog, x->selection.product);
+    const qa_product *right = qa_catalog_product(b->identity->catalog, y->selection.product);
+    if (qa_catalog_generation(a->identity->catalog) != qa_catalog_generation(b->identity->catalog) ||
+        strcmp(left->identity, right->identity) ||
+        a->hooks.instance_configuration != b->hooks.instance_configuration ||
+        !selection_equal(&x->selection, &y->selection) ||
+        x->artifact != y->artifact || x->declaration != y->declaration ||
+        x->interface_count != y->interface_count || x->behavior_count != y->behavior_count ||
+        a->configuration.size != b->configuration.size ||
+        (a->configuration.size && memcmp(a->configuration.data, b->configuration.data, a->configuration.size)) ||
+        !qa_vfs_lookup_equal(x->content, y->content)) return false;
+    for (size_t i = 0; i < x->interface_count; ++i)
+        if (x->interfaces[i].product != y->interfaces[i].product ||
+            x->interfaces[i].resource != y->interfaces[i].resource ||
+            strcmp(x->interfaces[i].path, y->interfaces[i].path)) return false;
+    for (size_t i = 0; i < x->behavior_count; ++i) {
+        const qa_catalog_weapon_behavior *u = x->behaviors[i], *v = y->behaviors[i];
+        if (u == v) continue;
+        if (u->product != v->product || u->runtime != v->runtime || u->role != v->role ||
+            strcmp(u->id, v->id) || strcmp(u->artifact_path, v->artifact_path) ||
+            u->artifact_resource != v->artifact_resource || u->declaration_resource != v->declaration_resource ||
+            ((u->declaration_path != NULL) != (v->declaration_path != NULL)) ||
+            (u->declaration_path && strcmp(u->declaration_path, v->declaration_path)) ||
+            u->entry.size != v->entry.size ||
+            (u->entry.size && memcmp(u->entry.data, v->entry.data, u->entry.size))) return false;
     }
-    hash_u64(&h, v->behavior_count);
-    for (size_t i = 0; i < v->behavior_count; ++i) {
-        const qa_catalog_weapon_behavior *b = v->behaviors[i];
-        hash_text(&h, b->id);
-        qa_sha256_update(&h, (qa_bytes){b->artifact_digest.bytes, sizeof(b->artifact_digest.bytes)});
-        qa_sha256_update(&h, (qa_bytes){b->declaration_digest.bytes, sizeof(b->declaration_digest.bytes)});
-    }
-    size_t mounts = qa_vfs_mount_count(v->content);
-    hash_u64(&h, mounts);
-    for (size_t i = 0; i < mounts; ++i) {
-        qa_vfs_mount_info mount;
-        qa_vfs_mount_at(v->content, i, &mount);
-        hash_u64(&h, mount.is_archive); hash_u64(&h, mount.format);
-    }
-    qa_sha256_final(&h, &v->identity);
     return true;
 }
 
@@ -353,13 +358,13 @@ static bool selected_behaviors(instance_owner *owner, const qa_launch_choices *c
         if (!s->enabled || strcmp(s->instance, owner->view.selection.instance)) continue;
         const qa_catalog_weapon_behavior *b = qa_catalog_weapon_behavior_find(owner->identity->catalog,
             owner->view.selection.product, s->behavior);
-        if (!b || !owner->view.artifact ||
-            !qa_sha256_equal(&b->artifact_digest, qa_resource_digest(owner->view.artifact)))
+        if (!b || b->unavailable || !owner->view.artifact ||
+            b->artifact_resource != owner->view.artifact)
             return error_message(error, "trajectory executable changed since catalog discovery");
         if (b->declaration_path) {
             qa_resource *current;
             if (!qa_vfs_acquire(owner->view.content, b->declaration_path, &current, NULL, error)) return false;
-            bool same = qa_sha256_equal(qa_resource_digest(current), &b->declaration_digest);
+            bool same = current == b->declaration_resource;
             qa_resource_release(current);
             if (!same) return error_message(error, "trajectory declaration changed since catalog discovery");
         }
@@ -464,9 +469,7 @@ static bool restored_instance_content(qa_configuration_transaction *transaction,
         qa_resource_retain((qa_resource *)value->resource);
     }
     if (!selected_behaviors(owner, &transaction->candidate->draft->choices, error)) return false;
-    if (!instance_identity(owner, &transaction->candidate->draft->choices, error)) return false;
-    return qa_sha256_equal(&owner->view.identity, &saved.identity) ||
-        error_message(error, "saved provider implementation identity disagrees with retained content");
+    return instance_identity(owner, &transaction->candidate->draft->choices, error);
 }
 
 static bool prepare_instance(qa_configuration_transaction *transaction, const qa_launch_provider *selection,
@@ -497,13 +500,13 @@ static bool prepare_instance(qa_configuration_transaction *transaction, const qa
     if (*selection->component) {
         const qa_catalog_mod *mod = qa_catalog_mod_find(candidate->draft->catalog, selection->component);
         if (!mod || mod->unavailable || !mod->declaration.data || !owner->view.artifact ||
-            !qa_sha256_equal(&mod->program_digest, qa_resource_digest(owner->view.artifact))) {
+            mod->program_resource != owner->view.artifact) {
             error_message(error, "component executable changed since catalog discovery"); goto fail;
         }
         qa_resource *declaration;
         if (!qa_vfs_acquire(owner->view.content, mod->declaration_path, &declaration, NULL, error)) goto fail;
         owner->view.declaration = declaration;
-        if (!qa_sha256_equal(qa_resource_digest(declaration), &mod->declaration_digest)) {
+        if (declaration != mod->declaration_resource) {
             error_message(error, "component declaration changed since catalog discovery"); goto fail;
         }
     }
@@ -524,8 +527,7 @@ static bool prepare_instance(qa_configuration_transaction *transaction, const qa
     if (!instance_identity(owner, &candidate->draft->choices, error)) goto fail;
     if (!transaction->replacing && transaction->previous) for (size_t i = 0; i < transaction->previous->instance_count; ++i) {
         instance_owner *previous = transaction->previous->instances[i].owner;
-        if (strcmp(previous->view.selection.instance, selection->instance) ||
-            !qa_sha256_equal(&previous->view.identity, &owner->view.identity)) continue;
+        if (!instance_equal(previous, owner)) continue;
         ++previous->references; owner_release(owner); owner = previous;
         bind_instance(candidate,owner,roles); return true;
     }
@@ -581,13 +583,13 @@ bool qa_launch_instance_prepare_client_metadata(const qa_launch_instance *source
     owner->view.artifact_acquisition = &owner->artifact_acquisition;
     if (ok && component) {
         if (component->unavailable || !component->declaration_path ||
-            !qa_sha256_equal(&component->program_digest, qa_resource_digest(artifact)))
+            component->program_resource != artifact)
             ok = error_message(error, "Client artifact differs from its actual selected profile");
         qa_resource *declaration = NULL;
         if (ok) ok = qa_vfs_acquire(owner->view.content, component->declaration_path,
             &declaration, NULL, error);
         owner->view.declaration = declaration;
-        if (ok && !qa_sha256_equal(&component->declaration_digest, qa_resource_digest(declaration)))
+        if (ok && component->declaration_resource != declaration)
             ok = error_message(error, "Client profile changed since actual content discovery");
     }
     if (ok) ok = read_interfaces(owner, error) &&
@@ -656,8 +658,7 @@ bool qa_launch_instance_restore_client_metadata(const qa_launch_instance *source
             qa_resource_retain((qa_resource *)resource->resource);
         }
     }
-    if (ok) ok = instance_identity(owner, &owner->identity->choices, error) &&
-        qa_sha256_equal(&owner->view.identity, &saved->identity);
+    if (ok) ok = instance_identity(owner, &owner->identity->choices, error);
     if (!ok && error && error->code == QA_OK)
         error_message(error, "Restored private descriptor identity differs from its actual retained content");
     if (ok) ok = qa_launch_instance_retain_metadata(&owner->view, out, error);
@@ -733,8 +734,7 @@ bool qa_launch_instance_restore_builtin_client_metadata(const qa_launch_instance
         qa_launch_set_provider(owner->identity, b, error);
     if (ok) {
         owner->view.selection = owner->identity->choices.providers[0];
-        ok = instance_identity(owner, &owner->identity->choices, error) &&
-            qa_sha256_equal(&owner->view.identity, &saved->identity);
+        ok = instance_identity(owner, &owner->identity->choices, error);
     }
     if (!ok && error && error->code == QA_OK)
         error_message(error, "Restored builtin client identity differs from its actual retained content");
@@ -804,7 +804,6 @@ bool qa_launch_instance_restore_q2_client_metadata(const qa_launch_q2_client_met
         !saved->artifact && !saved->artifact_acquisition && !saved->declaration &&
         !saved->interface_count && !saved->behavior_count && q2_client_identity(owner, request, &expected, error);
     if (ok) ok = instance_identity(owner, &owner->identity->choices, error) &&
-        qa_sha256_equal(&owner->view.identity, &saved->identity) &&
         qa_launch_instance_retain_metadata(&owner->view, out, error);
     if (!ok && error && error->code == QA_OK) error_message(error, "Saved Q2 CLIENT descriptor leaves its genuine source recipe");
     owner_release(owner); return ok;
@@ -877,7 +876,6 @@ bool qa_launch_instance_restore_client_profile(const qa_launch_client_metadata *
         !saved->artifact && !saved->artifact_acquisition && !saved->declaration &&
         !saved->interface_count && !saved->behavior_count && client_profile_identity(owner, request, &expected, error);
     if (ok) ok = instance_identity(owner, &owner->identity->choices, error) &&
-        qa_sha256_equal(&owner->view.identity, &saved->identity) &&
         qa_launch_instance_retain_metadata(&owner->view, out, error);
     if (!ok && error && error->code == QA_OK) error_message(error, "Saved CLIENT metadata differs from its actual selected profile");
     owner_release(owner); return ok;

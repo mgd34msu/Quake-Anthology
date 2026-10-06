@@ -111,7 +111,7 @@ struct qa_native_instance {
     qa_native_module *module;
     qa_native_options options;
     qa_native_backend backend;
-    qa_sha256_digest declaration;
+    const qa_native_declaration *declaration_ref;
     bool has_declaration;
     qa_native_lifecycle lifecycle;
     void *loader_handle;
@@ -220,7 +220,7 @@ struct native_region_slot {
 };
 
 struct qa_native_declaration {
-    qa_sha256_digest digest;
+    size_t references;
     uint8_t *json;
     size_t json_size;
     size_t primary_offset, primary_size;

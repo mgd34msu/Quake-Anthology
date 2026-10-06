@@ -56,22 +56,6 @@ static bool normalize_path(qa_bytes input, char **out, qa_error *error) {
     return true;
 }
 
-static bool digest_text(qa_bytes text, qa_sha256_digest *out, qa_error *error) {
-    if (text.size != 71 || memcmp(text.data, "sha256:", 7))
-        return native_fail(error, QA_ERROR_FORMAT, 0,
-                           "native artifact digest must be lowercase sha256 text");
-    char encoded[72];
-    memcpy(encoded, text.data, text.size);
-    encoded[text.size] = 0;
-    for (size_t index = 7; index < text.size; ++index) {
-        uint8_t byte = text.data[index];
-        if (!((byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'f')))
-            return native_fail(error, QA_ERROR_FORMAT, index,
-                               "native artifact digest is not lowercase hexadecimal");
-    }
-    return qa_sha256_parse(encoded, out, error);
-}
-
 static bool required_primary(const qa_json_document *document, qa_json_id primary,
                              qa_error *error) {
     static const char *required[] = {"weapons", "player",  "commands", "inventory",
@@ -93,9 +77,8 @@ static bool callback_document(qa_native_declaration *declaration, const char *pa
     qa_json_id root = qa_json_root(d), program = qa_json_get(d, root, "program"),
         target = qa_json_get(d, root, "target"), api = qa_json_get(d, target, "api"),
         abi = qa_json_get(d, target, "abi");
-    qa_buffer declared_path = {0}, digest = {0};
+    qa_buffer declared_path = {0};
     char *normalized = NULL;
-    qa_sha256_digest expected;
     uint64_t version, pointer_bytes;
     bool classic = module->info.profile == QA_NATIVE_Q2_GAME_API3;
     bool ok = qa_json_u64(d, qa_json_get(d, root, "version"), &version, error) && version == 1 &&
@@ -103,9 +86,6 @@ static bool callback_document(qa_native_declaration *declaration, const char *pa
         qa_json_string(d, qa_json_get(d, program, "path"), &declared_path, error) &&
         normalize_path((qa_bytes){declared_path.data, declared_path.size}, &normalized, error) &&
         !strcmp(normalized, path) &&
-        qa_json_string(d, qa_json_get(d, program, "digest"), &digest, error) &&
-        digest_text((qa_bytes){digest.data, digest.size}, &expected, error) &&
-        qa_sha256_equal(&expected, &module->info.image.digest) &&
         qa_json_string_equal(d, qa_json_get(d, api, "kind"),
             classic ? "q2-classic-game" : "q2-rerelease-game") &&
         qa_json_u64(d, qa_json_get(d, api, "version"), &version, error) &&
@@ -124,7 +104,7 @@ static bool callback_document(qa_native_declaration *declaration, const char *pa
     qa_json_id spawn = qa_json_get(d, root, "spawnEntities"), entity = qa_json_get(d, root, "entityRecord");
     if (ok) ok = (qa_json_type(d, spawn) == QA_JSON_NULL || qa_json_type(d, spawn) == QA_JSON_STRING) &&
         (qa_json_type(d, entity) == QA_JSON_NULL || qa_json_type(d, entity) == QA_JSON_STRING);
-    free(normalized); qa_buffer_free(&declared_path); qa_buffer_free(&digest);
+    free(normalized); qa_buffer_free(&declared_path);
     if (!ok && (!error || error->code == QA_OK))
         native_fail(error, QA_ERROR_FORMAT, 0, "native callbacks differ from the acquired artifact or declared target");
     declaration->callbacks = ok;
@@ -380,6 +360,7 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
         free(selected_path);
         return native_fail(error, QA_ERROR_MEMORY, 0, "allocating native declaration");
     }
+    declaration->references = 1;
     if (json.size)
         memcpy(declaration->json, json.data, json.size);
     declaration->json_size = json.size;
@@ -395,7 +376,6 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
         bool valid = callback_document(declaration, selected_path, module, error);
         if (valid) {
             declaration->primary = root;
-            qa_sha256(owned_json, &declaration->digest);
             valid = collect_regions(declaration, module, root, "", 0, error);
         }
         free(selected_path);
@@ -434,12 +414,10 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
             valid = false;
             break;
         }
-        qa_buffer path_text = {0}, digest = {0};
+        qa_buffer path_text = {0};
         int64_t api_version;
         qa_json_id primary = qa_json_get(document, entry, "primary");
         valid = qa_json_string(document, qa_json_get(document, entry, "artifactPath"), &path_text,
-                               error) &&
-                qa_json_string(document, qa_json_get(document, entry, "artifactDigest"), &digest,
                                error) &&
                 qa_json_i64(document, qa_json_get(document, entry, "apiVersion"), &api_version,
                             error) &&
@@ -456,18 +434,11 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
                 valid = false;
             }
         }
-        qa_sha256_digest declared;
-        if (valid && !digest_text((qa_bytes){digest.data, digest.size}, &declared, error))
-            valid = false;
         if (valid && !strcmp(paths[index], selected_path)) {
             int64_t expected_api = module->info.profile == QA_NATIVE_Q2_GAME_API3 ? 3 : 2023;
             if (api_version != expected_api) {
                 qa_error_set(error, QA_ERROR_FORMAT, index,
                              "native declaration API does not match its selected module");
-                valid = false;
-            } else if (!qa_sha256_equal(&declared, &module->info.image.digest)) {
-                qa_error_set(error, QA_ERROR_FORMAT, index,
-                             "native declaration digest does not match its selected module");
                 valid = false;
             } else {
                 valid = required_primary(document, primary, error);
@@ -476,7 +447,6 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
             }
         }
         qa_buffer_free(&path_text);
-        qa_buffer_free(&digest);
     }
     if (valid && selected_primary == QA_JSON_NONE) {
         qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "native declaration has no entry for %s",
@@ -488,7 +458,6 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
         declaration->primary = selected_primary;
         declaration->primary_offset = (size_t)(primary_source.data - declaration->json);
         declaration->primary_size = primary_source.size;
-        qa_sha256(owned_json, &declaration->digest);
         valid = collect_regions(declaration, module, selected_primary, "", 0, error) &&
             inventory_regions(declaration, module, selected_primary, error);
     }
@@ -505,7 +474,7 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
 }
 
 void qa_native_declaration_destroy(qa_native_declaration *declaration) {
-    if (!declaration)
+    if (!declaration || --declaration->references)
         return;
     qa_json_destroy(declaration->document);
     for (size_t index = 0; index < declaration->region_count; ++index)
@@ -514,10 +483,6 @@ void qa_native_declaration_destroy(qa_native_declaration *declaration) {
     free(declaration->json);
     memset(declaration, 0, sizeof(*declaration));
     free(declaration);
-}
-
-const qa_sha256_digest *qa_native_declaration_digest(const qa_native_declaration *declaration) {
-    return declaration ? &declaration->digest : NULL;
 }
 
 qa_bytes qa_native_declaration_primary(const qa_native_declaration *declaration) {

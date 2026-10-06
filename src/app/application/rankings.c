@@ -28,7 +28,7 @@ typedef struct ranking_client {
 } ranking_client;
 struct application_rankings {
     qa_actor_owner provider;
-    qa_sha256_digest identity;
+    uint64_t source_serial;
     uint64_t map_revision;
     bool enabled, ended, busy, restoring, backend_failed;
     ranking_report *reports, **report_tail;
@@ -75,7 +75,7 @@ static bool agreement(qa_application *app, application_rankings *owner, qa_error
     application_provider *provider = source(app);
     return (provider && provider->launch && owner->provider == provider->owner &&
         owner->map_revision == app->map_revision &&
-        !memcmp(&owner->identity, &provider->launch->identity, sizeof(owner->identity))) ||
+        owner->source_serial && owner->source_serial == provider->launch->identity) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Ranked source outlived its actual Q3 map owner");
 }
 bool application_rankings_warmup(void *context)
@@ -474,7 +474,7 @@ bool application_rankings_frame(qa_application *app, qa_error *error)
     if (!owner) {
         owner=calloc(1,sizeof(*owner));
         if (!owner) return application_fail(error,QA_ERROR_MEMORY,"Allocating native ranked match owner");
-        owner->provider=provider->owner; owner->identity=provider->launch->identity;
+        owner->provider=provider->owner; owner->source_serial=provider->launch->identity;
         owner->map_revision=app->map_revision; owner->enabled=enabled;
         owner->report_tail=&owner->reports; owner->client_tail=&owner->clients;
         app->ranked_source=owner;
@@ -652,7 +652,6 @@ static bool owner_fields(qa_source_save_io *io, application_rankings **value)
     }
     application_rankings *owner=*value;
     if (!qa_source_save_string(io,&owner->provider) || !owner->provider ||
-        !qa_source_save_bytes(io,&owner->identity,sizeof(owner->identity)) ||
         !qa_source_save_u64(io,&owner->map_revision) ||
         !qa_source_save_bool(io,&owner->enabled) || !qa_source_save_bool(io,&owner->ended)) return false;
     size_t count=owner->report_count;
@@ -757,7 +756,15 @@ bool application_rankings_restore(qa_application *app, const qa_application_pers
     }
     if (ok) ok=qa_source_save_reader(&io,app->session,record.owner,error) && owner_fields(&io,&owner) &&
         qa_source_save_finish(&io,NULL);
-    if (ok && owner) ok=agreement(app,owner,error);
+    if (ok && owner) {
+        application_provider *provider=source(app);
+        if (!provider || !provider->launch || provider->owner!=owner->provider)
+            ok=application_fail(error,QA_ERROR_FORMAT,"Saved ranked source owner is absent");
+        else {
+            owner->source_serial=provider->launch->identity;
+            ok=agreement(app,owner,error);
+        }
+    }
     if (ok) { app->ranked_source=owner; owner=NULL; }
     owner_free(owner); free(record.key); qa_source_save_dispose(&io);
     if (!ok && error && error->code==QA_OK) application_fail(error,QA_ERROR_FORMAT,"Invalid ranked source continuation");

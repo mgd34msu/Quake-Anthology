@@ -26,7 +26,7 @@ static bool current(const application_q3_component_source *s)
     qa_q3_host_client_context host;
     return s&&s->options.vm&&s->options.host&&s->options.current(s->options.context)&&qa_qvm_get_role(s->options.vm)==QA_QVM_GAME&&
         qa_qvm_get_abi(s->options.vm)==s->options.abi&&
-        qa_sha256_equal(qa_qvm_digest(s->options.vm),qa_qvm_image_digest(s->options.image))&&
+        (qa_qvm_image_of(s->options.vm) == s->options.image)&&
         qa_q3_host_client_context_read(s->options.host,&host)&&host.session==s->options.session&&host.owner==s->options.owner;
 }
 bool application_q3_component_source_idle(const application_q3_component_source *s)

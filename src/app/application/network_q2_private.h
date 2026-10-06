@@ -50,7 +50,7 @@ typedef struct application_q2_image_receipt {
 typedef struct application_q2_held_resource {
     qa_actor_owner provider;
     char *instance, *path, *wire_path;
-    qa_sha256_digest identity;
+    uint64_t identity, serial;
     qa_vfs *view;
     qa_resource *resource;
     qa_vfs_acquisition opening;
@@ -59,13 +59,13 @@ typedef struct application_q2_held_resource {
     bool model_scope;
     char *model_scope_path;
     qa_buffer model_scope_bytes;
-    qa_sha256_digest authority;
+    uint64_t authority;
     qa_buffer wire_bytes;
     size_t *dependencies, dependency_count;
     char *script_name, *sky_base;
     size_t source_offset, script_size, name_offset, name_size;
     qa_buffer catalog_bytes;
-    qa_sha256_digest sky_group;
+    uint64_t sky_group;
     uint8_t sky_face;
     qa_native_host_resource_kind event_kind;
     char event_key[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
@@ -73,13 +73,11 @@ typedef struct application_q2_held_resource {
     qa_scene_image_options image_options;
     qa_buffer image_palette, image_translation;
     size_t image_palette_dependency;
-    qa_sha256_digest image_palette_source;
     char *image_request, *image_logical_path;
     size_t image_logical_dependency;
-    qa_sha256_digest image_logical_source;
     bool image_palette_attempted;
     qa_status image_rejection, image_palette_error;
-    qa_sha256_digest receipt_source;
+    uint64_t receipt_source;
 } application_q2_held_resource;
 
 typedef struct application_q2_resource_table {
@@ -89,8 +87,6 @@ typedef struct application_q2_resource_table {
 struct qa_application_network_q2 {
     qa_application *app;
     qa_application_network_q2_host host;
-    qa_sha256_digest identity;
-    qa_sha256_digest map_identity;
     char *source_instance, *source_map;
     int32_t server_count;
     uint32_t config_count, item_base, skin_base, light_base;
@@ -120,6 +116,7 @@ struct qa_application_network_q2 {
     struct application_q2_recipient_binding *recipient_binding;
     application_q2_held_resource *held_resources;
     size_t held_resource_count, held_resource_capacity;
+    uint64_t held_resource_serial;
 };
 
 bool application_network_q2_current(qa_application_network_q2 *, qa_error *);

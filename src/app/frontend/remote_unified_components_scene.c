@@ -183,7 +183,7 @@ bool q3remote_component_open(remote_component *r,qa_error *e)
         qa_json_string(d,qa_json_get(d,qa_json_get(d,presentation,"cgame"),"path"),&path,e)&&!memchr(path.data,0,path.size)&&
         qa_vfs_acquire_receipt(files,(const char *)path.data,&r->artifact,&r->acquisition,e)&&
         qa_vfs_acquire_receipt(files,r->state.mod->program_path,&r->gameplay,&r->gameplay_acquisition,e)&&
-        qa_sha256_equal(qa_resource_digest(r->gameplay),&r->state.mod->program_digest)&&
+        r->gameplay==r->state.mod->program_resource&&
         qa_qvm_image_load(qa_resource_bytes(r->artifact),&r->image,e)&&qa_qvm_image_load(qa_resource_bytes(r->gameplay),&r->gameplay_image,e)&&
         application_q3_scene_profile_create(r->image,r->state.abi,(const char *)path.data,r->gameplay_image,r->state.mod->program_path,
             qa_json_source(d,presentation),&r->profile,e);

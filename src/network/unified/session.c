@@ -233,7 +233,7 @@ bool qa_unified_session_flush(qa_unified_session *s, uint64_t now, qa_error *e)
     return flush_peer(s, s->runtime, s->id, now, e);
 }
 
-static bool restart_peer(void *state, uint64_t epoch, const qa_sha256_digest *composition, qa_error *e)
+static bool restart_peer(void *state, uint64_t epoch, const uint64_t *composition, qa_error *e)
 {
     qa_unified_session *s = state;
     if (!s->bound_source)

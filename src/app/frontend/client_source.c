@@ -42,7 +42,7 @@ static const qa_launch_instance *descriptor(const frontend_client_source *s)
 bool frontend_client_source_descriptor_equal(const qa_launch_instance *a, const qa_launch_instance *b)
 {
     return a && b && a->storage == b->storage && a->state == b->state &&
-        a->content == b->content && a->roles == b->roles && qa_sha256_equal(&a->identity, &b->identity);
+        a->content == b->content && a->roles == b->roles && a->identity == b->identity;
 }
 static qa_cvars *registry(const frontend_client_source *s)
 { return s && s->registry ? frontend_client_registry_cvars(s->registry) : s ? s->pending_cvars : NULL; }
@@ -114,7 +114,7 @@ static bool physical_current(void *context, const qa_launch_instance *d, qa_cons
     frontend_client_source *s = context;
     const qa_launch_instance *actual = descriptor(s);
     return linked(s) && !s->closing && actual && d && d->storage == actual->storage &&
-        d->content == actual->content && qa_sha256_equal(&d->identity, &actual->identity) &&
+        d->content == actual->content && d->identity == actual->identity &&
         s->registry && frontend_client_registry_matches(s->registry, actual, s->options.metadata.seat) &&
         cvars == registry(s) && console == s->console && tuple(command, &s->command, true);
 }
@@ -722,7 +722,6 @@ typedef struct client_source_prefix {
     uint64_t catalog, content;
     qa_product_id profile, selected;
     qa_launch_provider selection;
-    qa_sha256_digest identity;
     frontend_client_source_state state;
 } client_source_prefix;
 static bool clock_fields(qa_source_save_io *io, qa_clock_config *clock)
@@ -783,9 +782,7 @@ static bool prefix_fields(qa_source_save_io *io, client_source_prefix *p)
         !selection_text(io, &p->selection.instance) || !p->selection.instance || !*p->selection.instance ||
         !qa_source_save_u32(io, &p->selection.product) || !p->selection.product ||
         !selection_text(io, &p->selection.implementation) || !p->selection.implementation ||
-        !clock_fields(io, &p->selection.clock) || !qa_source_save_bytes(io, p->identity.bytes, sizeof(p->identity.bytes)) ||
-        !qa_source_save_bytes(io, a->descriptor_identity.bytes, sizeof(a->descriptor_identity.bytes)) ||
-        !qa_sha256_equal(&p->identity, &a->descriptor_identity) ||
+        !clock_fields(io, &p->selection.clock) ||
         !qa_source_save_string(io, &a->receiver) || !a->receiver ||
         !qa_source_save_string(io, &a->entity_owner) || !a->entity_owner ||
         !qa_source_save_u32(io, &a->seat) || !qa_source_save_u32(io, &a->physical_seat) ||
@@ -825,7 +822,7 @@ bool frontend_client_source_checkpoint(frontend_client_source *s, const qa_appli
     const qa_launch_instance *d = descriptor(s);
     client_source_prefix p = {.catalog = qa_application_content_catalog_id(graph, qa_launch_instance_catalog(d)),
         .content = qa_application_content_view_id(graph, d->content), .profile = s->options.metadata.profile,
-        .selected = s->options.metadata.selected, .selection = d->selection, .identity = d->identity};
+        .selected = s->options.metadata.selected, .selection = d->selection};
     qa_source_save_io io = {0};
     bool ok = frontend_client_source_capture(s, &p.state, error) &&
         qa_source_save_writer(&io, qa_application_session(s->frontend->application), error) &&
@@ -858,7 +855,7 @@ bool frontend_client_source_restore_prefix(qa_frontend *f, const frontend_client
     if (ok) ok = qa_application_content_claim_view(graph, p.content, &claimed, error);
     if (ok) {
         qa_launch_restored_instance restored = {.catalog = catalog, .selection = p.selection,
-            .content = claimed, .identity = p.identity};
+            .content = claimed};
         ok = frontend_client_source_restore(f, options, &restored, &p.state, resolvers, out, error);
         /* Metadata restoration takes the real claim even on partial failure
          * once its arguments are admitted. A rejected outer call owns it. */
@@ -895,7 +892,7 @@ bool frontend_client_source_prefix_read(qa_frontend *f, qa_application_content_g
     *out = (frontend_client_source_prefix){
         .recipe = {catalog, p.profile, p.selected, view, p.selection.instance,
             p.state.application.seat, p.selection.clock.kind},
-        .descriptor = {.catalog = catalog, .selection = p.selection, .content = view, .identity = p.identity},
+        .descriptor = {.catalog = catalog, .selection = p.selection, .content = view},
         .state = p.state, .content_id = p.content};
     return true;
 }

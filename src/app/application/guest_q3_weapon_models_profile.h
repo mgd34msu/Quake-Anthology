@@ -12,8 +12,7 @@ typedef enum application_q3_weapon_model_field {
 typedef struct application_q3_weapon_models_profile {
     char *artifact_path;
     char *game_artifact_path;
-    qa_sha256_digest artifact;
-    qa_sha256_digest game_artifact;
+    const qa_qvm_image *image;
     qa_qvm_abi abi, game_abi;
     uint32_t registration, weapon_argument;
     uint32_t base, count, stride, weapon_offset, registered_offset;

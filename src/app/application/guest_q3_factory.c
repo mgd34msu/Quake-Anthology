@@ -18,8 +18,8 @@ bool q3g_compatibility(const qa_launch_instance *descriptor, const char *path,
         if (!strcmp(descriptor->interfaces[i].path, "qvm-compatibility.json"))
             declaration = descriptor->interfaces[i].resource;
     if (!declaration) { *out = (qa_qvm_compatibility){.abi = QA_QVM_Q3_MODERN}; return true; }
-    return qa_qvm_compatibility_parse(qa_resource_bytes(declaration), path,
-        qa_qvm_image_digest(image), kind, out, error);
+    (void)image;
+    return qa_qvm_compatibility_parse(qa_resource_bytes(declaration), path, kind, out, error);
 }
 
 static application_provider *receiver_provider(qa_application *app, qa_actor_owner owner)
@@ -39,7 +39,7 @@ static bool same_descriptor(const qa_launch_instance *actual, const qa_launch_in
 {
     return actual && retained && actual->storage == retained->storage &&
         actual->content == retained->content && actual->roles == retained->roles &&
-        qa_sha256_equal(&actual->identity, &retained->identity);
+        (actual->identity == retained->identity);
 }
 
 bool qa_application_q3_client_configuration_read(qa_application *app, qa_actor_owner receiver,

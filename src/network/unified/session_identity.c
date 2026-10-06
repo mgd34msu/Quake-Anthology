@@ -49,13 +49,10 @@ bool qa_unified_session_restart_admit(const qa_unified_session *s, const qa_netw
     }
     const qa_json_document *json = qa_unified_document_json(offer);
     qa_json_id composition = qa_json_get(json, qa_unified_session_value(offer), "composition");
-    qa_unified_composition canonical = {0};
-    bool okay = qa_unified_composition_create(qa_json_source(json,
-        qa_json_get(json, composition, "composition")), &canonical, e);
-    bool same = okay && qa_sha256_equal(&request->composition, &canonical.digest);
-    qa_unified_composition_free(&canonical);
-    if (!okay) return false;
-    return same || qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production restart admission changes the actual offered composition");
+    uint64_t generation;
+    if (!qa_json_u64(json, qa_json_get(json, composition, "generation"), &generation, e) || !generation) return false;
+    return request->composition == generation ||
+        qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production restart admission changes the actual offered generation");
 }
 bool qa_unified_session_client_disconnect_pending(const qa_unified_session *s,
     qa_network_runtime *runtime, qa_net_client_id id, uint32_t epoch,

@@ -449,7 +449,7 @@ static bool capture_factory(frontend_qw_host *host, qa_error *error)
 }
 
 bool frontend_qw_create(qa_frontend *frontend, qa_network_runtime *runtime, qa_server_admin *admin,
-    const qa_sha256_digest *composition, frontend_qw_host **out, qa_error *error)
+    const uint64_t *composition, frontend_qw_host **out, qa_error *error)
 {
     if (!frontend || !runtime || !admin || !composition || !out || *out || !frontend->application ||
         frontend->options.network_protocol.kind != QA_NET_QW28 || frontend->options.network_protocol.flags ||
@@ -695,16 +695,13 @@ bool frontend_qw_prepare(frontend_qw_host *host, qa_error *error)
         if (host->server_count == INT32_MAX)
             return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld source server count exhausted");
         qa_application_network_qw_source source;
-        qa_buffer identity = {0};
-        if (!qa_application_network_qw_source_read(host->frontend->application, &source, error) ||
-            !qa_launch_identity_encode(qa_application_launch(host->frontend->application),
-                qa_session_actors(qa_application_session(host->frontend->application)), &identity, error)) return false;
+        if (!qa_application_network_qw_source_read(host->frontend->application, &source, error)) return false;
         frontend_qw_host *factory = calloc(1, sizeof(*factory));
-        if (!factory) { qa_buffer_free(&identity); return frontend_fail(error, QA_ERROR_MEMORY, "Capturing replacement QuakeWorld factory"); }
+        if (!factory) return frontend_fail(error, QA_ERROR_MEMORY, "Capturing replacement QuakeWorld factory");
         factory->frontend = host->frontend; factory->owner = source.owner; factory->generation = generation;
         bool ok = capture_factory(factory, error);
-        if (!ok) { qa_buffer_free(&identity); frontend_qw_destroy(factory); return false; }
-        qa_sha256((qa_bytes){identity.data, identity.size}, &host->composition); qa_buffer_free(&identity);
+        if (!ok) { frontend_qw_destroy(factory); return false; }
+        host->composition = generation;
         for (size_t i = 0; i < 255; ++i) {
             free(host->models[i]); free(host->sounds[i]);
             host->models[i] = factory->models[i]; host->sounds[i] = factory->sounds[i];
@@ -1017,7 +1014,7 @@ bool frontend_qw_source_hooks(frontend_qw_host *host, const qa_net_client *clien
 {
     if (!host || !client || !policy || !hooks || !downloads || client->attachment != QA_NET_REMOTE ||
         client->protocol.kind != QA_NET_QW28 || client->protocol.flags || client->protocol.revision || client->seat_count != 1 ||
-        client->seats[0].remote_index || !qa_sha256_equal(&client->composition, &host->composition))
+        client->seats[0].remote_index || client->composition != host->composition)
         return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld restored source changes its admitted protocol or composition");
     qw_frontend_peer *peer = NULL; size_t index = 0;
     for (size_t i = 0; i < QW_CLIENTS; ++i) if (host->peers[i].occupied && qa_net_client_id_equal(host->peers[i].client, client->id)) { peer = host->peers + i; index = i; }

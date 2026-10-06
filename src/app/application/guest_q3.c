@@ -190,9 +190,9 @@ bool application_guest_q3_create_empty(qa_application *application, application_
                 old_engine->provider != old || !old->constructed || !old->attached || old->close_pending ||
                 old_engine->calls || old_engine->restore_pending || !qa_world_idle(old_engine->world) ||
                 !old->launch || previous->storage != old->launch->storage ||
-                !qa_sha256_equal(&previous->identity, &old->launch->identity) || !selected ||
+                (previous->identity != old->launch->identity) || !selected ||
                 selected->state != provider || selected->storage != provider->launch->storage ||
-                !qa_sha256_equal(&selected->identity, &provider->launch->identity) ||
+                (selected->identity != provider->launch->identity) ||
                 old_engine->role_sequence == UINT64_MAX) {
                 free(engine);
                 return application_fail(error, QA_ERROR_ARGUMENT,

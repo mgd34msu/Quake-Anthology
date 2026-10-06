@@ -392,7 +392,7 @@ static bool ready_document(frontend_remote_unified *owner, qa_unified_document *
     const char *userinfo=NULL;
     if (!owner->options.userinfo(owner->options.context,&owner->options.domain,&userinfo,error) || !userinfo) return false;
     qa_unified_control value={.kind=QA_UNIFIED_CONTROL_READY,.epoch=owner->epoch,
-        .value.ready={.composition=*qa_executable_recipe_digest(owner->recipe),.userinfo=(char *)userinfo}};
+        .value.ready={.composition=*qa_executable_recipe_generation(owner->recipe),.userinfo=(char *)userinfo}};
     return qa_unified_document_create_control(&value,out,error);
 }
 
@@ -403,7 +403,7 @@ static bool resources(frontend_remote_unified *owner, const qa_unified_document 
     for (size_t i=0;i<control->value.resources.count;++i) {
         const qa_unified_resource_state *key=&control->value.resources.values[i].resource;
         qa_launch_resource actual; qa_vfs *view; const qa_vfs_acquisition *receipt;
-        if (!qa_executable_recipe_acquire_resource(owner->recipe,key->content,key->path,&key->digest,
+        if (!qa_executable_recipe_acquire_resource(owner->recipe,key->content,key->path,
                 key->byte_length,&actual,&view,&receipt,error)) return false;
     }
     return true;
@@ -459,7 +459,7 @@ static bool control(void *context, qa_network_runtime *runtime, qa_net_client_id
         if (okay) okay = owner->options.consumers.offer_ready(owner->options.consumers.context,
             owner, owner->recipe, error);
         if (okay && !owner->transport_restarted) {
-            okay = qa_network_restart(runtime, client, qa_executable_recipe_digest(owner->recipe), error);
+            okay = qa_network_restart(runtime, client, qa_executable_recipe_generation(owner->recipe), error);
             if (okay) owner->transport_restarted = true;
         }
         if (okay) okay=transport_continue(owner,document,error);

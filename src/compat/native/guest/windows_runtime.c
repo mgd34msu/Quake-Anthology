@@ -734,6 +734,14 @@ static bool lifecycle_failure(guest_windows *owner)
     return false;
 }
 
+static bool image_identity(const qa_native_image_info *a, const qa_native_image_info *b)
+{
+    return a->format == b->format && a->target.os == b->target.os &&
+        a->target.arch == b->target.arch && a->target.abi == b->target.abi &&
+        a->target.pointer_bytes == b->target.pointer_bytes &&
+        a->preferred_base == b->preferred_base && a->image_bytes == b->image_bytes;
+}
+
 bool guest_windows_inventory(guest_windows *owner, const guest_windows_image *inputs,
     size_t count, qa_error *error)
 {
@@ -759,11 +767,11 @@ bool guest_windows_inventory(guest_windows *owner, const guest_windows_image *in
             }
         if (!okay) break;
         records[i] = (windows_image_record){.id = input->id, .base = image->base,
-            .digest = image->image.digest, .image = input->image};
+            .preferred_base = image->image.preferred_base, .image_bytes = image->image.image_bytes, .image = input->image};
         records[i].path = copy_text(input->path, error);
         okay = records[i].path != NULL;
         if (input->id == owner->primary_image) {
-            primary = qa_sha256_equal(&image->image.digest, &owner->guest->options.image.digest);
+            primary = image_identity(&image->image, &owner->guest->options.image);
             if (!primary) okay = guest_fail(error, QA_ERROR_ARGUMENT, input->id, "Windows primary artifact differs from the actual lower image witness");
         }
     }
@@ -1150,13 +1158,14 @@ static bool codec_owner(windows_codec *io, guest_windows *owner,
         owner->requested_count,sizeof(*owner->requested),io->error)) return false;
     if (io->reading && owner->requested_count) memset(owner->requested,0,owner->requested_count*sizeof(*owner->requested));
     for (size_t i = 0; i < owner->requested_count; ++i) if (!codec_text(io,owner->requested + i)) return false;
-    if (!codec_count(io,&owner->image_count,78)) return false;
+    if (!codec_count(io,&owner->image_count,62)) return false;
     if (io->reading && !guest_grow((void **)&owner->images,&owner->image_capacity,
         owner->image_count,sizeof(*owner->images),io->error)) return false;
     if (io->reading && owner->image_count) memset(owner->images,0,owner->image_count*sizeof(*owner->images));
     for (size_t i = 0; i < owner->image_count; ++i) {
         windows_image_record *record = owner->images + i;
-        if (!codec_u64(io,&record->id) || !codec_u64(io,&record->base) || !codec_bytes(io,record->digest.bytes,32) ||
+        if (!codec_u64(io,&record->id) || !codec_u64(io,&record->base) ||
+            !codec_u64(io,&record->preferred_base) || !codec_u64(io,&record->image_bytes) ||
             !codec_text(io,&record->path) || !codec_u64(io,&record->tls_block) || !codec_u32(io,&record->tls_index) ||
             !codec_u64(io,&record->references) || !codec_bool(io,&record->prepared) || !codec_bool(io,&record->initialized)) return false;
     }
@@ -1201,8 +1210,9 @@ static bool records_valid(guest_windows *owner, qa_error *error)
         return guest_fail(error, QA_ERROR_FORMAT, 0, "Windows continuation differs from its actual execution policy");
     if (!owner->primary_image || !windows_image_at(owner, owner->primary_image))
         return guest_fail(error, QA_ERROR_FORMAT, owner->primary_image, "Windows continuation has no actual primary image");
-    if (owner->guest && !qa_sha256_equal(&windows_image_at(owner, owner->primary_image)->digest,
-        &owner->guest->options.image.digest))
+    const windows_image_record *primary = windows_image_at(owner, owner->primary_image);
+    if (owner->guest && (primary->preferred_base != owner->guest->options.image.preferred_base ||
+        primary->image_bytes != owner->guest->options.image.image_bytes))
         return guest_fail(error, QA_ERROR_FORMAT, owner->primary_image, "Windows primary differs from its retained lower artifact witness");
     /* Open acquisition failures retain close owners, but the corresponding
      * source callback makes the CPU terminal. They have no healthy cold cut. */
@@ -1301,10 +1311,10 @@ static bool resolve_images(guest_windows *owner, guest_windows_image_resolve_fn 
 {
     for (size_t i = 0; i < owner->image_count; ++i) {
         windows_image_record *record = owner->images + i; guest_windows_image actual = {0};
-        if (!resolve || !resolve(context,record->id,&record->digest,record->base,&actual,error)) return false;
+        if (!resolve || !resolve(context,record->id,record->base,&actual,error)) return false;
         const guest_pe_view *pe = guest_pe_describe(actual.image);
         if (!pe || actual.id != record->id || !actual.path || strcmp(actual.path,record->path) || pe->base != record->base ||
-            !qa_sha256_equal(&pe->image.digest,&record->digest) || pe->image.target.os != owner->target.os || pe->image.target.arch != owner->target.arch ||
+            pe->image.preferred_base != record->preferred_base || pe->image.image_bytes != record->image_bytes || pe->image.target.os != owner->target.os || pe->image.target.arch != owner->target.arch ||
             pe->image.target.abi != owner->target.abi || pe->image.target.pointer_bytes != owner->target.pointer_bytes ||
             (record->tls_block && !pe->tls.present) || (record->prepared && pe->tls.present && !record->tls_block))
             return guest_fail(error,QA_ERROR_FORMAT,record->id,"Windows image resolver returned a different actual immutable owner");

@@ -148,8 +148,7 @@ void q3remote_component_frame_free(remote_component_frame *f)
 { if(!f) return; if(!f->packet) free((void *)f->snapshot.entities); qa_unified_document_destroy(f->packet); free(f->actors); q3remote_component_state_free(&f->source); free(f); }
 static bool module_matches(const qa_unified_mod_identity *a,const qa_unified_mod_identity *b)
 {
-    return !strcmp(a->id,b->id)&&!strcmp(a->artifact_path,b->artifact_path)&&
-        !strcmp(a->digest,b->digest)&&!strcmp(a->revision,b->revision);
+    return !strcmp(a->id,b->id)&&!strcmp(a->artifact_path,b->artifact_path);
 }
 static bool player_event_read(frontend_unified_components *o,const qa_unified_presentation_event *row,
     remote_component **target,remote_component_event *out,bool *handled,qa_error *e)

@@ -14,7 +14,6 @@ typedef struct application_q3_components_video application_q3_components_video;
 typedef struct component_saved_row {
     const char *instance,*key;
     uint64_t owner,generation,services;
-    qa_sha256_digest program,declaration;
     qa_buffer game;
 } component_saved_row;
 typedef struct component_game_row {

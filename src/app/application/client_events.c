@@ -19,7 +19,7 @@ typedef struct client_listener {
     application_equipment_runtime_source gear;
     void *engine;
     qa_actor_owner owner;
-    qa_sha256_digest identity;
+    uint64_t identity;
     uint32_t slot;
     size_t component_index;
 } client_listener;
@@ -90,7 +90,7 @@ static bool provider_current(const qa_application *app, const client_listener *r
         if (p != row->provider) continue;
         return p->application == app && p->constructed && p->attached &&
             !p->close_pending && p->launch && p->owner == row->owner &&
-            qa_sha256_equal(&p->launch->identity, &row->identity);
+            p->launch->identity == row->identity;
     }
     return false;
 }

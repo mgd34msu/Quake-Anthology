@@ -194,16 +194,6 @@ const char *qa_resource_path(const qa_resource *resource)
     return resource == NULL ? NULL : resource->path;
 }
 
-const qa_sha256_digest *qa_resource_digest(const qa_resource *resource)
-{
-    if (!resource) return NULL;
-    if (!resource->digest_ready) {
-        qa_resource *owned = (qa_resource *)resource;
-        qa_sha256(resource->data.bytes, &owned->digest);
-        owned->digest_ready = true;
-    }
-    return &resource->digest;
-}
 const char *qa_resource_package_name(const qa_resource *resource)
 {
     if (!resource || !resource->archive) return NULL;

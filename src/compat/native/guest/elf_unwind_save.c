@@ -6,13 +6,13 @@ static bool header(qa_source_save_io *io, const guest_elf *artifact)
     const guest_elf_view *image = guest_elf_describe(artifact);
     uint8_t magic[4] = {'Q','E','U','W'};
     const uint8_t expected[4] = {'Q','E','U','W'};
-    qa_sha256_digest digest = image->image.digest;
+    uint64_t image_bytes = image->image.image_bytes;
     uint64_t bias = image->bias; uint32_t role = image->role;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) ||
-        !qa_source_save_bytes(io, digest.bytes, sizeof(digest.bytes)) ||
+        !qa_source_save_u64(io, &image_bytes) ||
         !qa_source_save_u64(io, &bias) || !qa_source_save_u32(io, &role)) return false;
     return (!memcmp(magic, expected, sizeof(magic)) &&
-        qa_sha256_equal(&digest, &image->image.digest) && bias == image->bias &&
+        image_bytes == image->image.image_bytes && bias == image->bias &&
         role == (uint32_t)image->role) ||
         guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "unwind capsule differs from its actual source artifact identity");
 }

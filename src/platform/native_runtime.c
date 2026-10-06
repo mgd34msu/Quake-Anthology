@@ -17,7 +17,6 @@ typedef struct runtime_file {
     char *path;
     qa_fs_file *file;
     qa_fs_identity identity;
-    qa_sha256_digest digest;
 } runtime_file;
 struct qa_native_runtime {
     size_t references;
@@ -183,7 +182,6 @@ static bool open_slot(qa_native_runtime *runtime, size_t index,
     if (okay && slot->program && image.target.os == qa_native_host_target().os)
         okay = executable_path(file, error);
     if (okay) {
-        file->digest = image.digest;
         const char *published = file->path;
         memcpy((uint8_t *)&runtime->config + slot->field, &published, sizeof(published));
     }
@@ -342,12 +340,9 @@ static bool fields(qa_source_save_io *io, const qa_native_runtime *runtime)
         if (!present) continue;
         if (!unchanged(file, io->error) || !text(io, file->path)) return false;
         qa_fs_identity identity = file->identity;
-        qa_sha256_digest digest = file->digest;
         for (size_t word = 0; word < QA_FS_IDENTITY_WORDS; ++word)
             if (!qa_source_save_u64(io, &identity.words[word])) return false;
-        if (!qa_source_save_bytes(io, &digest, sizeof(digest)) ||
-            !qa_fs_identity_equal(&identity, &file->identity) ||
-            memcmp(&digest, &file->digest, sizeof(digest))) return false;
+        if (!qa_fs_identity_equal(&identity, &file->identity)) return false;
     }
     return true;
 }

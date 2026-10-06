@@ -25,7 +25,7 @@ typedef struct application_q3_weapon_team_command {
     size_t argument_count;
 } application_q3_weapon_team_command;
 typedef struct application_q3_weapon_profile {
-    qa_sha256_digest digest;
+    const qa_qvm_image *image;
     qa_qvm_abi abi;
     uint32_t entity_stride, client_stride, client_pointer;
     uint32_t dispatcher, request, request_argument, selection_offset;

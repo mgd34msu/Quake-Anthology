@@ -23,7 +23,6 @@ typedef struct saved_module {
 typedef struct saved_modules {
     uint64_t catalog, view, generation, epoch, physical_owner;
     uint32_t receiver, seat;
-    qa_sha256_digest identity;
     bool pure;
     qa_buffer script_globals;
     saved_module ui, cgame;
@@ -90,7 +89,7 @@ static bool fields(qa_source_save_io *io, saved_modules *saved)
     return signature(io) && qa_source_save_u64(io, &saved->catalog) && qa_source_save_u64(io, &saved->view) &&
         qa_source_save_u64(io, &saved->generation) && qa_source_save_u64(io, &saved->epoch) &&
         qa_source_save_u64(io, &saved->physical_owner) && qa_source_save_u32(io, &saved->receiver) &&
-        qa_source_save_u32(io, &saved->seat) && qa_source_save_bytes(io, saved->identity.bytes, sizeof(saved->identity.bytes)) &&
+        qa_source_save_u32(io, &saved->seat) &&
         qa_source_save_bool(io, &saved->pure) && blob(io, &saved->script_globals) &&
         module_fields(io, &saved->ui) && module_fields(io, &saved->cgame) &&
         ((saved->catalog && saved->view && saved->generation && saved->epoch && saved->physical_owner &&
@@ -174,7 +173,7 @@ static bool capture(application_native_q3_client_modules *owner, qa_buffer *out,
     qa_application_content_graph *graph = qa_application_content_graph_read(owner->app);
     saved_modules saved = {.generation = source.configuration_generation, .epoch = source.connection_epoch,
         .physical_owner = source.receiver.service_owner, .receiver = source.receiver.receiver,
-        .seat = source.receiver.seat, .identity = source.descriptor->identity, .pure = owner->pure};
+        .seat = source.receiver.seat, .pure = owner->pure};
     if (!graph || !(saved.catalog = qa_application_content_catalog_id(graph, qa_launch_instance_catalog(source.descriptor))) ||
         !(saved.view = qa_application_content_view_id(graph, source.descriptor->content)))
         return application_fail(error, QA_ERROR_FORMAT, "Acquired CLIENT descriptor lacks its real content graph");
@@ -277,7 +276,6 @@ bool qa_application_native_q3_client_modules_restore(qa_application *app,
     if (okay) okay = graph && source->descriptor && saved.receiver == source->receiver.receiver &&
         saved.seat == source->receiver.seat && saved.physical_owner == source->receiver.service_owner &&
         saved.generation == source->configuration_generation && saved.epoch == source->connection_epoch &&
-        qa_sha256_equal(&saved.identity, &source->descriptor->identity) &&
         qa_application_content_catalog(graph, saved.catalog) == qa_launch_instance_catalog(source->descriptor) &&
         qa_application_content_view(graph, saved.view) == source->descriptor->content;
     if (okay) okay = native_client_modules_policy(options->gamestate, saved.pure, error);

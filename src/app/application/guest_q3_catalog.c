@@ -1,3 +1,4 @@
+#include "guest_q3_reference.h"
 #include "guest_q3_catalog.h"
 #include "guest_projection_private.h"
 #include "guest_q3_native_catalog.h"
@@ -17,6 +18,7 @@ struct application_q3_catalog {
     qa_qvm *vm;
     qa_qvm_abi abi;
     qa_strings *strings;
+    char *instance, *artifact_path;
     catalog_locator address, count;
     uint32_t stride, fields[4];
     int32_t weapon_type, ammo_type;
@@ -196,14 +198,13 @@ static bool item_id(application_q3_catalog *c, const application_q3_catalog_reco
     int32_t tag = 0;
     for (size_t i = 1; i < count; ++i)
         if (stock[i].kind == (weapon ? QA_Q3_ITEM_WEAPON : QA_Q3_ITEM_AMMO) && !strcmp(stock[i].classname, record->class_name)) { tag = stock[i].tag; break; }
-    char digest[65]; qa_sha256_hex(qa_qvm_image_digest(c->image), digest);
-    size_t capacity = strlen(record->class_name) + 96;
+    size_t capacity = strlen(record->class_name) + strlen(c->instance) + strlen(c->artifact_path) + 96;
     char *text = malloc(capacity);
     if (!text) return fail(e, QA_ERROR_MEMORY, "Retaining original catalog identity");
     const char *canonical = qa_q3_weapon_identity_name((qa_q3_weapon)tag);
     if (canonical)
         snprintf(text, capacity, "q3:%s/%s", weapon ? "weapon" : "ammo", canonical);
-    else snprintf(text, capacity, "q3:guest/sha256:%s/%s", digest, record->class_name);
+    else snprintf(text, capacity, "q3:guest/%s/%s/%s", c->instance, c->artifact_path, record->class_name);
     bool ok = qa_strings_intern_cstr(c->strings, text, out, e); free(text); return ok;
 }
 static bool stored(const application_q3_catalog *c, qa_item_id item)
@@ -299,7 +300,7 @@ bool application_q3_catalog_current(const application_q3_catalog *c, const qa_qv
 {
     return c && image && vm && c->image == image && c->vm == vm && c->abi == abi &&
         qa_qvm_get_role(vm) == QA_QVM_GAME && qa_qvm_get_abi(vm) == abi &&
-        qa_sha256_equal(qa_qvm_digest(vm), qa_qvm_image_digest(image)) &&
+        (qa_qvm_image_of(vm) == image) &&
         qa_qvm_read(vm, 0, NULL, 0, NULL);
 }
 bool application_q3_catalog_role_current(const application_q3_catalog *c, const q3g_role *role)
@@ -330,25 +331,28 @@ bool application_q3_catalog_native_restore_validate(application_q3_catalog *c,
     return application_q3_native_catalog_restore_validate(c->native, role, error);
 }
 bool application_q3_catalog_create(qa_qvm_image *image, qa_qvm *vm, qa_qvm_abi abi,
-    qa_strings *strings, qa_bytes declared, qa_bytes items, bool missionpack,
+    const char *instance, const char *artifact_path, qa_strings *strings, qa_bytes declared, qa_bytes items, bool missionpack,
     application_q3_catalog **out, qa_error *e)
 {
-    if (!image || !vm || !strings || !out || *out || (declared.size && !declared.data) || (items.size && !items.data) ||
-        qa_qvm_get_role(vm) != QA_QVM_GAME || qa_qvm_get_abi(vm) != abi || !qa_sha256_equal(qa_qvm_digest(vm), qa_qvm_image_digest(image)))
+    if (!image || !vm || !instance || !artifact_path || !strings || !out || *out || (declared.size && !declared.data) || (items.size && !items.data) ||
+        qa_qvm_get_role(vm) != QA_QVM_GAME || qa_qvm_get_abi(vm) != abi || (qa_qvm_image_of(vm) != image))
         return fail(e, QA_ERROR_ARGUMENT, "Catalog requires its actual GAME image, executor and empty owner");
     if (!qa_qvm_read(vm, 0, NULL, 0, e)) return false;
     application_q3_catalog *c = calloc(1, sizeof(*c));
     if (!c) return fail(e, QA_ERROR_MEMORY, "Retaining original source catalog");
     qa_qvm_image_retain(image); c->image = image; c->vm = vm; c->abi = abi; c->strings = strings;
+    c->instance = malloc(strlen(instance) + 1); c->artifact_path = malloc(strlen(artifact_path) + 1);
+    if (!c->instance || !c->artifact_path) { application_q3_catalog_destroy(c); return fail(e, QA_ERROR_MEMORY, "Retaining source catalog namespace"); }
+    strcpy(c->instance, instance); strcpy(c->artifact_path, artifact_path);
     bool source_roster = false; uint32_t roster_first = 0;
     if (!declared.size && abi == QA_QVM_Q3_MODERN) {
-        char digest[65]; qa_sha256_hex(qa_qvm_image_digest(image), digest);
-        if (!strcmp(digest, "57c52bf22e4f528c064f8af1553a7103723bab0a02276bb11eed944bf829b219")) {
+
+        if (application_q3_reference_image(image, Q3_REFERENCE_BASE_GAME)) {
             c->source_address = 2552; c->source_count = 36;
-        } else if (!strcmp(digest, "9751bad99a2d138f96a9b0436d2ea2d965b86214175dc33e4cea95e059419337")) {
+        } else if (application_q3_reference_image(image, Q3_REFERENCE_THREEWAVE_GAME)) {
             c->source_address = 5304; c->source_count = 50;
             source_roster = true; roster_first = 1;
-        } else if (!strcmp(digest, "b9e396cf5ed2b913548cd92e2b0886ad5992653c8903fa3f9ed0b1f4167ca43e")) {
+        } else if (application_q3_reference_image(image, Q3_REFERENCE_LRCTF_GAME)) {
             c->source_address = 2140; c->source_count = 43;
             source_roster = true;
         }
@@ -356,14 +360,9 @@ bool application_q3_catalog_create(qa_qvm_image *image, qa_qvm *vm, qa_qvm_abi a
     qa_json_document *doc = NULL; bool ok = true;
     if (declared.size) ok = qa_json_parse(declared, &doc, e) && primary(c, doc, e);
     else if (items.size) {
-        uint32_t version; qa_buffer digest = {0}; qa_sha256_digest expected;
+        uint32_t version;
         ok = qa_json_parse(items, &doc, e) &&
-            word(doc, qa_json_get(doc, qa_json_root(doc), "version"), &version, e) && version == 1 &&
-            qa_json_string(doc, qa_json_get(doc, qa_json_root(doc), "artifactDigest"), &digest, e);
-        if (ok) ok = !memchr(digest.data, 0, digest.size) &&
-            qa_sha256_parse((char *)digest.data, &expected, e) &&
-            qa_sha256_equal(&expected, qa_qvm_image_digest(image));
-        qa_buffer_free(&digest);
+            word(doc, qa_json_get(doc, qa_json_root(doc), "version"), &version, e) && version == 1;
         if (ok) ok = layout(c, doc, qa_json_get(doc, qa_json_root(doc), "items"), e) && !c->live;
         if (!ok && (!e || !e->code)) fail(e, QA_ERROR_FORMAT,
             "Item declaration is not an immutable matching artifact receipt");
@@ -409,7 +408,8 @@ void application_q3_catalog_destroy(application_q3_catalog *c)
     records_free(c->records, c->record_count);
     records_free(c->source_records, c->source_record_count);
     free(c->weapons); free(c->inventory); free(c->selection); free(c->stored);
-    qa_qvm_image_release(c->image); free(c);
+    qa_qvm_image_release(c->image);
+    free(c->instance); free(c->artifact_path); free(c);
 }
 bool application_q3_catalog_records(application_q3_catalog *c,
     const application_q3_catalog_record **out, size_t *count, qa_error *e)

@@ -514,10 +514,9 @@ static bool live_guest_run(const live_guest_case *test, const char *root,
                 qa_error_set(&error, QA_ERROR_FORMAT, 0, "Live guest lacks real BSP entities or primary Source clock");
                 goto cleanup;
             }
-            char digest[65];
-            qa_sha256_hex(qa_resource_digest(instance->artifact), digest);
-            printf("LIVE_GUEST_READY case=%s artifact=%s sha256=%s map=%s bsp=%s primary=%u frame=%llu\n",
-                test->name, test->artifact, digest, map.name, qa_bsp_format_name(bsp.format),
+            printf("LIVE_GUEST_READY case=%s artifact=%s resource=%llu bytes=%zu map=%s bsp=%s primary=%u frame=%llu\n",
+                test->name, test->artifact, (unsigned long long)qa_resource_id(instance->artifact),
+                qa_resource_bytes(instance->artifact).size, map.name, qa_bsp_format_name(bsp.format),
                 primary, (unsigned long long)initial.frame_number);
             fflush(stdout);
             ready = true;

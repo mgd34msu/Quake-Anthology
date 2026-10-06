@@ -145,7 +145,7 @@ typedef struct qa_unified_q2_protocol_event {
 } qa_unified_q2_protocol_event;
 
 typedef struct qa_unified_mod_identity {
-    char *id, *artifact_path, *digest, *revision;
+    char *id, *artifact_path;
 } qa_unified_mod_identity;
 typedef enum qa_unified_q3_event_kind {
     QA_UNIFIED_Q3_PRINT, QA_UNIFIED_Q3_LOG, QA_UNIFIED_Q3_SERVER_COMMAND,

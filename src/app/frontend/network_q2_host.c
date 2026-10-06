@@ -429,7 +429,7 @@ bool frontend_network_q2_host_admit(frontend_network_q2_host *host,const qa_net_
             if(!local->player.actor.registry || request->seat_count!=1 || !request->seats ||
                 request->seats[0].seat.owner!=local->binding.seat.owner ||
                 request->seats[0].seat.index!=local->binding.seat.index || request->seats[0].remote_index!=0 ||
-                !qa_sha256_equal(&request->composition,&host->options.composition)) continue;
+                request->composition != host->options.composition) continue;
             qa_net_connect expected;
             if(!frontend_network_q2_host_local_request(host,local,&expected,error)) return false;
             if(!qa_net_address_equal(&request->endpoint,&expected.endpoint,true)) continue;
@@ -445,13 +445,13 @@ bool frontend_network_q2_host_admit(frontend_network_q2_host *host,const qa_net_
             if(client && request->attachment==client->attachment && request->seats==client->seats &&
                 request->seat_count==client->seat_count && qa_net_address_equal(&request->endpoint,&client->endpoint,true) &&
                 request->protocol.kind==client->protocol.kind && request->protocol.revision==client->protocol.revision &&
-                request->protocol.flags==client->protocol.flags && qa_sha256_equal(&request->composition,&host->options.composition))
+                request->protocol.flags==client->protocol.flags && (request->composition == host->options.composition))
                 return true;
         }
         if(!peer->reserved || peer->committed || request->seat_count!=claim->seat_count ||
             !qa_net_address_equal(&request->endpoint,&claim->endpoint,true) ||
             request->protocol.kind!=claim->protocol.kind || request->protocol.revision!=claim->protocol.revision ||
-            request->protocol.flags!=claim->protocol.flags || !qa_sha256_equal(&request->composition,&claim->composition)) continue;
+            request->protocol.flags!=claim->protocol.flags || request->composition != claim->composition) continue;
         bool same=true;
         for(size_t s=0;s<request->seat_count;++s) same=same && request->seats[s].seat.owner==peer->bindings[s].seat.owner &&
             request->seats[s].seat.index==peer->bindings[s].seat.index && request->seats[s].remote_index==s;
@@ -513,10 +513,7 @@ static bool refresh_source(frontend_network_q2_host *host,qa_error *error)
             .input=host_input,.drop=host_drop,.recipient_context=host,.recipient=recipient,.unicast=unicast};
         qa_network_q2_server_hooks hooks;
         if(!qa_application_network_q2_hooks(host->travel_discovery,&bindings,&hooks,error)) return false;
-        qa_buffer identity={0};
-        if(!qa_launch_identity_encode(qa_application_launch(host->options.frontend->application),
-            qa_session_actors(qa_application_session(host->options.frontend->application)),&identity,error)) return false;
-        qa_sha256((qa_bytes){identity.data,identity.size},&host->options.composition); qa_buffer_free(&identity);
+        host->options.composition=qa_application_configuration_generation(host->options.frontend->application);
         qa_application_network_q2_destroy(host->discovery); host->discovery=host->travel_discovery;
         host->travel_discovery=NULL; host->source=actual; ++host->server_count;
         host->travel_discovery_installed=true;

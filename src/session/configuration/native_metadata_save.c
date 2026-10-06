@@ -41,7 +41,6 @@ bool qa_launch_instance_restore_native_metadata(const qa_launch_instance *source
     const qa_product *product = catalog ? qa_catalog_product(catalog, source->selection.product) : NULL;
     if (!product || product->family != QA_GAME_Q3 || catalog != saved->catalog ||
         source->content != saved->content || !selection_equal(&source->selection, &saved->selection) ||
-        !qa_sha256_equal(&source->identity, &saved->identity) ||
         source->artifact != saved->artifact || source->declaration != saved->declaration ||
         !receipt_equal(source->artifact_acquisition, saved->artifact_acquisition) ||
         source->interface_count != saved->interface_count || source->behavior_count != saved->behavior_count ||

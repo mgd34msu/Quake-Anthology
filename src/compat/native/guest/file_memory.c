@@ -95,34 +95,24 @@ bool guest_file_prepare(qa_native_guest *guest, uint64_t base, size_t bytes,
     if (!data) return guest_fail(error, QA_ERROR_MEMORY, base, "owning native private file pages");
     uint64_t available = offset < file_bytes ? file_bytes - offset : 0;
     size_t copied = available > bytes ? bytes : (size_t)available;
-    qa_sha256_digest digest;
     if (file->read) {
-        uint8_t scratch[65536]; qa_sha256_context hash;
-        qa_sha256_init(&hash);
-        for (size_t position = 0; position < file_bytes;) {
-            size_t amount = file_bytes - position;
-            if (amount > sizeof(scratch)) amount = sizeof(scratch);
-            if (!file->read(file->context, position, scratch, amount, error)) {
+        for (size_t position = 0; position < copied;) {
+            size_t amount = copied - position;
+            if (amount > 65536) amount = 65536;
+            if (!file->read(file->context, (size_t)offset + position,
+                data + position, amount, error)) {
                 free(data); return false;
             }
-            qa_sha256_update(&hash, (qa_bytes){scratch, amount});
-            uint64_t first = position > offset ? position : offset;
-            uint64_t end = position + amount;
-            if (end > offset && end - offset > copied) end = offset + copied;
-            if (first < end) memcpy(data + (size_t)(first - offset),
-                scratch + (size_t)(first - position), (size_t)(end - first));
             position += amount;
         }
-        qa_sha256_final(&hash, &digest);
     } else {
         if (copied) memcpy(data, file->bytes.data + (size_t)offset, copied);
-        qa_sha256(file->bytes, &digest);
     }
     size_t admitted = copied;
     if (admitted % QA_NATIVE_GUEST_PAGE)
         admitted += QA_NATIVE_GUEST_PAGE - admitted % QA_NATIVE_GUEST_PAGE;
     *out = (guest_backing){.data = data, .bytes = bytes, .file = true,
-        .source = {.digest = digest, .bytes = file_bytes, .offset = offset,
+        .source = {.bytes = file_bytes, .offset = offset,
             .accessible_bytes = admitted, .capability = capability}};
     return true;
 }

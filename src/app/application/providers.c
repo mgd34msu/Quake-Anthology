@@ -257,12 +257,10 @@ static bool native_profile(const qa_launch_instance *launch,
     return true;
 }
 
-static void profile_word(qa_sha256_context *hash, uint64_t value)
+static void profile_word(uint8_t *encoded, size_t *size, uint64_t value)
 {
-    uint8_t encoded[8];
-    for (size_t index = 0; index < sizeof(encoded); ++index)
-        encoded[index] = (uint8_t)(value >> (index * 8));
-    qa_sha256_update(hash, (qa_bytes){encoded, sizeof(encoded)});
+    for (size_t index = 0; index < 8; ++index)
+        encoded[(*size)++] = (uint8_t)(value >> (index * 8));
 }
 
 static bool q2_selected_options(const qa_launch_provider *, uint64_t, const qa_product *,
@@ -271,33 +269,31 @@ static bool q2_selected_options(const qa_launch_provider *, uint64_t, const qa_p
 bool application_instance_configuration(void *opaque,
                                         const qa_launch_instance *launch,
                                         const qa_launch_choices *choices,
-                                        qa_sha256_digest *out,
+                                        qa_buffer *out,
                                         qa_error *error)
 {
     (void)opaque;
-    if (out == NULL)
+    if (out == NULL || out->data || out->size)
         return application_fail(error, QA_ERROR_ARGUMENT,
-                                "provider configuration needs digest output");
+                                "provider configuration needs empty byte output");
     application_native_profile profile;
     if (!native_profile(launch, choices, &profile, error))
         return false;
-    qa_sha256_context hash;
-    qa_sha256_init(&hash);
-    static const uint8_t domain[] = "application-native-profile-v2";
-    qa_sha256_update(&hash, (qa_bytes){domain, sizeof(domain) - 1});
-    profile_word(&hash, profile.family);
+    uint8_t encoded[9 * 8];
+    size_t size = 0;
+    profile_word(encoded, &size, profile.family);
     switch (profile.family) {
     case QA_GAME_Q1:
-        profile_word(&hash, (uint32_t)profile.skill);
-        profile_word(&hash, (uint32_t)profile.teamplay);
-        profile_word(&hash, profile.cooperative);
-        profile_word(&hash, profile.deathmatch);
-        profile_word(&hash, profile.gamecfg);
+        profile_word(encoded, &size, (uint32_t)profile.skill);
+        profile_word(encoded, &size, (uint32_t)profile.teamplay);
+        profile_word(encoded, &size, profile.cooperative);
+        profile_word(encoded, &size, profile.deathmatch);
+        profile_word(encoded, &size, profile.gamecfg);
         break;
     case QA_GAME_Q2:
-        profile_word(&hash, (uint32_t)profile.skill);
-        profile_word(&hash, profile.cooperative);
-        profile_word(&hash, profile.deathmatch);
+        profile_word(encoded, &size, (uint32_t)profile.skill);
+        profile_word(encoded, &size, profile.cooperative);
+        profile_word(encoded, &size, profile.deathmatch);
         if (launch->selection.runtime == QA_PROGRAM_BUILTIN) {
             qa_catalog *catalog = qa_launch_instance_catalog(launch);
             const qa_product *product = catalog
@@ -305,19 +301,22 @@ bool application_instance_configuration(void *opaque,
             qa_q2_options selected = {0};
             if (!q2_selected_options(&launch->selection, launch->roles, product, choices, &selected, error))
                 return false;
-            profile_word(&hash, selected.arsenal_rules);
-            profile_word(&hash, selected.native_hook);
-            profile_word(&hash, selected.hook_edition);
-            profile_word(&hash, selected.equipment_hook_rules);
-            profile_word(&hash, selected.equipment_hook_edition);
+            profile_word(encoded, &size, selected.arsenal_rules);
+            profile_word(encoded, &size, selected.native_hook);
+            profile_word(encoded, &size, selected.hook_edition);
+            profile_word(encoded, &size, selected.equipment_hook_rules);
+            profile_word(encoded, &size, selected.equipment_hook_edition);
         }
         break;
     case QA_GAME_Q3:
-        profile_word(&hash, profile.mode_kind);
-        profile_word(&hash, profile.friendly_fire);
+        profile_word(encoded, &size, profile.mode_kind);
+        profile_word(encoded, &size, profile.friendly_fire);
         break;
     }
-    qa_sha256_final(&hash, out);
+    uint8_t *copy = malloc(size);
+    if (!copy) return application_fail(error, QA_ERROR_MEMORY, "Retaining provider configuration bytes");
+    memcpy(copy, encoded, size);
+    *out = (qa_buffer){copy, size};
     return true;
 }
 

@@ -40,7 +40,6 @@ typedef struct qa_unified_configuration_state {
 } qa_unified_configuration_state;
 typedef struct qa_unified_resource_state {
     char *content, *path;
-    qa_sha256_digest digest;
     uint64_t byte_length;
 } qa_unified_resource_state;
 

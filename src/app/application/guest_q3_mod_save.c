@@ -5,12 +5,9 @@ bool q3mod_saved_declaration(const application_q3_mod_profile *profile,
 {
     uint8_t magic[4]; memcpy(magic,identity,sizeof(magic));
     uint32_t abi=(uint32_t)profile->abi;
-    uint8_t digest[32]; memcpy(digest,qa_qvm_image_digest(profile->image),sizeof(digest));
-    uint8_t original_digest[32]; memcpy(original_digest,digest,sizeof(digest));
     size_t bytes=profile->declaration.size;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,identity,4) ||
         !qa_source_save_u32(io,&abi) || abi!=(uint32_t)profile->abi ||
-        !qa_source_save_bytes(io,digest,sizeof(digest)) || memcmp(digest,original_digest,sizeof(digest)) ||
         !qa_source_save_count(io,&bytes,profile->declaration.size) || bytes!=profile->declaration.size)
         return q3mod_fail(io->error,QA_ERROR_FORMAT,"Generic source continuation header differs from its actual declaration");
     if (io->direction==QA_SOURCE_SAVE_WRITE) return qa_source_save_bytes(io,profile->declaration.data,bytes);

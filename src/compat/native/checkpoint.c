@@ -1,6 +1,6 @@
 #include "internal.h"
 
-#define CHECKPOINT_HEADER_BYTES 156u
+#define CHECKPOINT_HEADER_BYTES 100u
 
 static bool checkpoint_kind_matches_profile(const qa_native_checkpoint *checkpoint) {
     if ((unsigned)checkpoint->q3_role > QA_QVM_UI ||
@@ -282,10 +282,11 @@ bool qa_native_checkpoint_capture(qa_native_instance *instance,
         .profile = profile,
         .q3_role = instance->options.q3_role,
         .image = instance->module->info.image,
-        .declaration = instance->declaration,
         .has_declaration = instance->has_declaration,
         .autosave = request.autosave,
         .transition = request.transition};
+    if (!native_copy_bytes((qa_bytes){(const uint8_t *)instance->module->source,
+        strlen(instance->module->source)}, &checkpoint.source, error)) return false;
     instance->checkpointing = true;
     bool ok;
     if (profile == QA_NATIVE_Q2_GAME_API3)
@@ -325,10 +326,12 @@ static bool same_identity(const qa_native_instance *instance,
         checkpoint->image.target.arch != image->target.arch ||
         checkpoint->image.target.abi != image->target.abi ||
         checkpoint->image.target.pointer_bytes != image->target.pointer_bytes ||
-        !qa_sha256_equal(&checkpoint->image.digest, &image->digest) ||
-        checkpoint->has_declaration != instance->has_declaration ||
-        (checkpoint->has_declaration &&
-         !qa_sha256_equal(&checkpoint->declaration, &instance->declaration)))
+        checkpoint->image.preferred_base != image->preferred_base ||
+        checkpoint->image.image_bytes != image->image_bytes ||
+        checkpoint->source.size != strlen(instance->module->source) ||
+        (checkpoint->source.size && (!checkpoint->source.data ||
+         memcmp(checkpoint->source.data, instance->module->source, checkpoint->source.size))) ||
+        checkpoint->has_declaration != instance->has_declaration)
         return native_fail(error, QA_ERROR_FORMAT, 0,
                            "native checkpoint identity does not match the loaded module");
     return true;
@@ -440,6 +443,7 @@ bool qa_native_checkpoint_restore(qa_native_instance *instance,
 void qa_native_checkpoint_free(qa_native_checkpoint *checkpoint) {
     if (!checkpoint)
         return;
+    qa_buffer_free(&checkpoint->source);
     qa_buffer_free(&checkpoint->game);
     qa_buffer_free(&checkpoint->level);
     qa_buffer_free(&checkpoint->host);
@@ -462,7 +466,9 @@ bool qa_native_checkpoint_encode(const qa_native_checkpoint *checkpoint, qa_buff
     if (!checkpoint || !out)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native checkpoint and encoded output are required");
-    if ((checkpoint->game.size && !checkpoint->game.data) ||
+    if ((checkpoint->source.size && !checkpoint->source.data) ||
+        (checkpoint->source.size && memchr(checkpoint->source.data, 0, checkpoint->source.size)) ||
+        (checkpoint->game.size && !checkpoint->game.data) ||
         (checkpoint->level.size && !checkpoint->level.data) ||
         (checkpoint->host.size && !checkpoint->host.data) ||
         (checkpoint->process.size && !checkpoint->process.data))
@@ -485,7 +491,8 @@ bool qa_native_checkpoint_encode(const qa_native_checkpoint *checkpoint, qa_buff
          checkpoint->image.target.pointer_bytes != 8))
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native checkpoint metadata is invalid");
     size_t size = CHECKPOINT_HEADER_BYTES;
-    if (!native_size_add(size, checkpoint->game.size, &size) ||
+    if (!native_size_add(size, checkpoint->source.size, &size) ||
+        !native_size_add(size, checkpoint->game.size, &size) ||
         !native_size_add(size, checkpoint->level.size, &size) ||
         !native_size_add(size, checkpoint->host.size, &size) ||
         !native_size_add(size, checkpoint->process.size, &size))
@@ -506,19 +513,20 @@ bool qa_native_checkpoint_encode(const qa_native_checkpoint *checkpoint, qa_buff
     store_u32(&cursor, checkpoint->image.target.pointer_bytes);
     store_u64(&cursor, checkpoint->image.preferred_base);
     store_u64(&cursor, checkpoint->image.image_bytes);
-    memcpy(cursor, checkpoint->image.digest.bytes, 32);
-    cursor += 32;
-    memcpy(cursor, checkpoint->declaration.bytes, 32);
-    cursor += 32;
     uint32_t flags = (checkpoint->has_declaration ? 1u : 0u) | (checkpoint->autosave ? 2u : 0u) |
                      (checkpoint->transition ? 4u : 0u) | (checkpoint->has_game ? 8u : 0u) |
                      (checkpoint->has_level ? 16u : 0u) | (checkpoint->has_host ? 32u : 0u) |
                      (checkpoint->has_process ? 64u : 0u);
     store_u32(&cursor, flags);
+    store_u64(&cursor, checkpoint->source.size);
     store_u64(&cursor, checkpoint->game.size);
     store_u64(&cursor, checkpoint->level.size);
     store_u64(&cursor, checkpoint->host.size);
     store_u64(&cursor, checkpoint->process.size);
+    if (checkpoint->source.size) {
+        memcpy(cursor, checkpoint->source.data, checkpoint->source.size);
+        cursor += checkpoint->source.size;
+    }
     if (checkpoint->game.size) {
         memcpy(cursor, checkpoint->game.data, checkpoint->game.size);
         cursor += checkpoint->game.size;
@@ -582,16 +590,17 @@ bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa
     checkpoint.image.target.pointer_bytes = (uint8_t)pointer_bytes;
     checkpoint.image.preferred_base = load_u64(&cursor);
     checkpoint.image.image_bytes = load_u64(&cursor);
-    memcpy(checkpoint.image.digest.bytes, cursor, 32);
-    cursor += 32;
-    memcpy(checkpoint.declaration.bytes, cursor, 32);
-    cursor += 32;
     uint32_t flags = load_u32(&cursor);
+    uint64_t source_size = load_u64(&cursor);
     uint64_t game_size = load_u64(&cursor);
     uint64_t level_size = load_u64(&cursor);
     uint64_t host_size = load_u64(&cursor);
     uint64_t process_size = load_u64(&cursor);
-    uint64_t payload = game_size;
+    uint64_t payload = source_size;
+    if (UINT64_MAX - payload < game_size)
+        return native_fail(error, QA_ERROR_FORMAT, CHECKPOINT_HEADER_BYTES,
+                           "native checkpoint source length overflows");
+    payload += game_size;
     if (UINT64_MAX - payload < level_size) {
         return native_fail(error, QA_ERROR_FORMAT, CHECKPOINT_HEADER_BYTES,
                            "native checkpoint payload length overflows");
@@ -634,9 +643,13 @@ bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa
         (!checkpoint.has_host && host_size) || (!checkpoint.has_process && process_size) ||
         (checkpoint.has_process && (!process_size || !checkpoint.has_host)) ||
         (checkpoint.kind == QA_NATIVE_CHECKPOINT_OWNED_PROCESS && !checkpoint.has_process))
-        return native_fail(error, QA_ERROR_FORMAT, 120,
+        return native_fail(error, QA_ERROR_FORMAT, 60,
                            "native checkpoint contains an undeclared part");
-    if (!decode_buffer(&cursor, (size_t)game_size, &checkpoint.game, error) ||
+    if (source_size && memchr(cursor, 0, (size_t)source_size))
+        return native_fail(error, QA_ERROR_FORMAT, CHECKPOINT_HEADER_BYTES,
+                           "native checkpoint source name contains an embedded terminator");
+    if (!decode_buffer(&cursor, (size_t)source_size, &checkpoint.source, error) ||
+        !decode_buffer(&cursor, (size_t)game_size, &checkpoint.game, error) ||
         !decode_buffer(&cursor, (size_t)level_size, &checkpoint.level, error) ||
         !decode_buffer(&cursor, (size_t)host_size, &checkpoint.host, error) ||
         !decode_buffer(&cursor, (size_t)process_size, &checkpoint.process, error)) {

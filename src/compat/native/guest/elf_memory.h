@@ -49,5 +49,6 @@ bool guest_elf_memory_close(guest_elf_memory **, qa_error *);
 void guest_elf_memory_abandon(guest_elf_memory **);
 qa_native_guest *guest_elf_memory_guest(guest_elf_memory *);
 const guest_elf_memory_view *guest_elf_memory_describe(const guest_elf_memory *);
+const guest_elf *guest_elf_memory_artifact(const guest_elf_memory *);
 
 #endif

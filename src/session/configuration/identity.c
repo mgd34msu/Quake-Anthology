@@ -39,8 +39,6 @@ static void binary(qa_json_writer *w, qa_bytes bytes)
     for (size_t i = 0; i < bytes.size; ++i) { encoded[i * 2] = hex[bytes.data[i] >> 4]; encoded[i * 2 + 1] = hex[bytes.data[i] & 15]; }
     encoded[bytes.size * 2] = 0; text(w, encoded); free(encoded);
 }
-static void digest(qa_json_writer *w, const qa_sha256_digest *v)
-{ char hex[65]; if (!v) { writer_fail(w, "Launch resource lacks immutable content digest"); return; } qa_sha256_hex(v, hex); text(w, hex); }
 static void actor(qa_json_writer *w, const qa_actor_registry *registry, qa_actor_id v)
 {
     if (!v.registry) { qa_json_writer_null(w); return; }
@@ -106,7 +104,7 @@ bool qa_launch_mode_identity_encode(const qa_launch_snapshot *snapshot,
 static void resource_write(qa_json_writer *w, qa_catalog *catalog, const qa_launch_resource *v)
 {
     qa_json_writer_array(w); product(w, catalog, v->product); text(w, v->path);
-    digest(w, qa_resource_digest(v->resource)); word(w, qa_resource_bytes(v->resource).size);
+    word(w, qa_resource_bytes(v->resource).size);
     qa_json_writer_end(w);
 }
 bool qa_launch_identity_encode(const qa_launch_snapshot *snapshot, const qa_actor_registry *registry,
@@ -176,7 +174,7 @@ bool qa_launch_identity_encode(const qa_launch_snapshot *snapshot, const qa_acto
     END;
     BEGIN("instances", qa_launch_snapshot_instance_count(snapshot));
         const qa_launch_instance *p = qa_launch_snapshot_instance(snapshot, i);
-        text(&w, p->selection.instance); digest(&w, &p->identity); word(&w, p->roles);
+        text(&w, p->selection.instance); word(&w, p->roles);
         qa_json_writer_array(&w);
         for (size_t j = 0; j < p->interface_count; ++j) resource_write(&w, catalog, &p->interfaces[j]);
         qa_json_writer_end(&w);
@@ -184,8 +182,8 @@ bool qa_launch_identity_encode(const qa_launch_snapshot *snapshot, const qa_acto
         for (size_t j = 0; j < p->behavior_count; ++j) {
             const qa_catalog_weapon_behavior *b = p->behaviors[j];
             qa_json_writer_array(&w); product(&w, catalog, b->product); text(&w, b->id); number(&w, b->runtime);
-            number(&w, b->role); text(&w, b->artifact_path); digest(&w, &b->artifact_digest);
-            text(&w, b->declaration_path); digest(&w, &b->declaration_digest); binary(&w, b->entry); qa_json_writer_end(&w);
+            number(&w, b->role); text(&w, b->artifact_path);
+            text(&w, b->declaration_path); binary(&w, b->entry); qa_json_writer_end(&w);
         }
         qa_json_writer_end(&w);
     END;
@@ -357,10 +355,9 @@ static qa_mode_rules read_rules(identity_reader *r)
 }
 static bool metadata_resource(identity_reader *r, qa_json_id id)
 {
-    identity_reader s = *r; qa_sha256_digest value;
-    if (!record(&s, id, 4)) { r->failed = true; return false; }
-    (void)read_product(&s); (void)read_text(&s); const char *hex = read_text(&s);
-    if (strlen(hex) != 64 || !qa_sha256_parse(hex, &value, s.error)) s.failed = true;
+    identity_reader s = *r;
+    if (!record(&s, id, 3)) { r->failed = true; return false; }
+    (void)read_product(&s); (void)read_text(&s);
     (void)read_word(&s); r->failed |= s.failed; return !r->failed;
 }
 static bool metadata(identity_reader *r, qa_json_id root)
@@ -372,10 +369,9 @@ static bool metadata(identity_reader *r, qa_json_id root)
     for (size_t i = 0; i < qa_json_size(r->document, resources); ++i)
         if (!metadata_resource(r, qa_json_at(r->document, resources, i))) return false;
     for (size_t i = 0; i < qa_json_size(r->document, instances); ++i) {
-        identity_reader s = *r; qa_sha256_digest value;
-        if (!record(&s, qa_json_at(r->document, instances, i), 5)) return false;
-        (void)read_text(&s); const char *hex = read_text(&s);
-        if (strlen(hex) != 64 || !qa_sha256_parse(hex, &value, s.error)) return false;
+        identity_reader s = *r;
+        if (!record(&s, qa_json_at(r->document, instances, i), 4)) return false;
+        (void)read_text(&s);
         (void)read_word(&s); qa_json_id interfaces = take(&s), behaviors = take(&s);
         if (qa_json_type(s.document, interfaces) != QA_JSON_ARRAY || qa_json_type(s.document, behaviors) != QA_JSON_ARRAY ||
             qa_json_size(s.document, interfaces) > IDENTITY_MAX_RECORDS || qa_json_size(s.document, behaviors) > IDENTITY_MAX_RECORDS)
@@ -384,12 +380,9 @@ static bool metadata(identity_reader *r, qa_json_id root)
             if (!metadata_resource(&s, qa_json_at(s.document, interfaces, j))) return false;
         for (size_t j = 0; j < qa_json_size(s.document, behaviors); ++j) {
             identity_reader b = s;
-            if (!record(&b, qa_json_at(s.document, behaviors, j), 9)) return false;
+            if (!record(&b, qa_json_at(s.document, behaviors, j), 7)) return false;
             (void)read_product(&b); (void)read_text(&b); (void)read_unsigned(&b); (void)read_unsigned(&b);
-            (void)read_text(&b); hex = read_text(&b);
-            if (strlen(hex) != 64 || !qa_sha256_parse(hex, &value, b.error)) return false;
-            (void)read_text(&b); hex = read_text(&b);
-            if (strlen(hex) != 64 || !qa_sha256_parse(hex, &value, b.error)) return false;
+            (void)read_text(&b); (void)read_text(&b);
             (void)read_binary(&b); if (b.failed) return false;
         }
         if (s.failed) return false;

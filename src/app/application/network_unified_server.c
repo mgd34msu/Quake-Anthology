@@ -89,9 +89,8 @@ bool application_unified_server_offer(application_unified_server *owner, uint32_
         source.max_clients, sidecars, count, &offer, error)) return false;
     const qa_json_document *json = qa_unified_document_json(offer);
     qa_json_id composition = qa_json_get(json, control_value(offer), "composition");
-    qa_unified_composition canonical = {0};
-    bool okay = qa_unified_composition_create(qa_json_source(json,
-        qa_json_get(json, composition, "composition")), &canonical, error) &&
+    uint64_t generation;
+    bool okay = qa_json_u64(json, qa_json_get(json, composition, "generation"), &generation, error) && generation &&
         application_unified_source_current(owner->application, &source) && qa_unified_document_retain(offer, &copy, error);
     if (okay) okay = application_unified_components_destroy(&owner->components, error);
     if (okay && owner->inputs) {
@@ -99,18 +98,18 @@ bool application_unified_server_offer(application_unified_server *owner, uint32_
         if (okay) owner->inputs = NULL;
     }
     if (!okay) {
-        qa_unified_composition_free(&canonical); qa_unified_document_destroy(offer);
+        qa_unified_document_destroy(offer);
         qa_unified_document_destroy(copy); return false;
     }
     owner->inputs = NULL;
     player_receipt_clear(owner);
     qa_unified_document_destroy(owner->offer);
-    owner->offer = offer; owner->composition = canonical.digest; owner->offered = source;
+    owner->offer = offer; owner->composition = generation; owner->offered = source;
     owner->epoch = epoch; owner->acknowledged = -1; owner->admitted = false;
     owner->preparing_frame = false; owner->published_frame = source.frame.number;
     owner->declared_resources = owner->pending_declared_resources = 0;
     metadata_clear(owner);
-    qa_unified_composition_free(&canonical); *out = copy; return true;
+    *out = copy; return true;
 }
 
 bool application_unified_server_create(qa_application *app, qa_network_runtime *runtime,
@@ -131,7 +130,7 @@ bool application_unified_server_create(qa_application *app, qa_network_runtime *
     *out = owner; return true;
 }
 
-const qa_sha256_digest *application_unified_server_composition(const application_unified_server *owner)
+const uint64_t *application_unified_server_composition(const application_unified_server *owner)
 {
     return owner && owner->offer ? &owner->composition : NULL;
 }
@@ -144,7 +143,7 @@ bool application_unified_server_bind(application_unified_server *owner, qa_net_c
     if (!owner || owner->bound || !session || !qa_unified_session_idle(session) || !peer ||
         peer->protocol.kind != QA_NET_UNIFIED_1 || peer->seat_count != 1 ||
         peer->seats[0].seat.owner != owner->seat.owner || peer->seats[0].seat.index != owner->seat.index ||
-        !qa_sha256_equal(&peer->composition, &owner->composition) ||
+        peer->composition != owner->composition ||
         !offered_current(owner) || !qa_unified_session_find(owner->runtime, client, &installed, error) || installed != session)
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified binding changes its authentic Source offer or peer");
     owner->client = client; owner->session = session; owner->bound = true; return true;
@@ -188,7 +187,7 @@ static bool source_custody_ready(void *context,qa_network_runtime *runtime,qa_ne
             !owner->pending.frame && !owner->admitted_receipt) ||
             application_fail(error,QA_ERROR_ARGUMENT,"Unified Source custody has no genuine prepared travel offer");
     }
-    if (!qa_sha256_equal(&peer->composition,&owner->composition))
+    if (peer->composition != owner->composition)
         return application_fail(error,QA_ERROR_ARGUMENT,"Unified Source custody changed its admitted composition");
     if (owner->source_dropped)
         return current && qa_unified_session_source_close_pending(owner->session) &&
@@ -226,12 +225,12 @@ static bool resource_declarations(application_unified_server *owner, size_t firs
     qa_strings *strings=qa_session_strings(owner->offered.session);
     for (size_t i=0;okay && i<count;++i) {
         const application_unified_event_resource *row=application_unified_event_resource_at(owner->application,first+i);
-        if (!row || !row->resource || !qa_resource_digest(row->resource)) {
+        if (!row || !row->resource) {
             okay=application_fail(error,QA_ERROR_ARGUMENT,"Source dictionary lost its actual resource hold"); break;
         }
         rows[i]=(qa_unified_resource_declaration){.identity=(char *)row->id,
             .resource={.content=(char *)qa_strings_cstr(strings,row->content),
-                .path=(char *)qa_strings_cstr(strings,row->path),.digest=*qa_resource_digest(row->resource),
+                .path=(char *)qa_strings_cstr(strings,row->path),
                 .byte_length=qa_resource_bytes(row->resource).size}};
     }
     if (okay) okay=application_unified_resource_control(owner->epoch,rows,count,out,error);
@@ -262,7 +261,7 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
         qa_unified_session_find(runtime,client,&installed,error) && installed==owner->session))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified control changes its authentic Source epoch");
     if (type==QA_UNIFIED_CONTROL_READY) {
-        if (!packet || !qa_sha256_equal(&packet->value.ready.composition,&owner->composition) || !offered_current(owner))
+        if (!packet || packet->value.ready.composition != owner->composition || !offered_current(owner))
             return application_fail(error, QA_ERROR_ARGUMENT, "Unified readiness changes its retained Source recipe");
         qa_application_remote_player_request request = {.client = client, .seat = owner->seat,
             .application_seat = owner->application_seat, .source_slot = UINT32_MAX,
@@ -383,11 +382,11 @@ static bool input(void *context, qa_network_runtime *runtime, qa_net_client_id c
 }
 
 static bool restart(void *context, qa_network_runtime *runtime, qa_net_client_id client,
-    uint32_t epoch, const qa_sha256_digest *composition, qa_unified_document **offer, qa_error *error)
+    uint32_t epoch, const uint64_t *composition, qa_unified_document **offer, qa_error *error)
 {
     application_unified_server *owner = context;
     return peer_is(owner, runtime, client) && epoch == owner->epoch && composition &&
-        qa_sha256_equal(composition, &owner->composition) &&
+        (*composition == owner->composition) &&
         offered_current(owner) &&
         qa_unified_document_retain(owner->offer, offer, error);
 }

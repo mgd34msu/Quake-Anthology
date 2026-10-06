@@ -67,7 +67,7 @@ struct application_unified_output_external;
 bool application_unified_server_create(qa_application *, qa_network_runtime *, qa_net_seat_id,
     uint32_t application_seat, uint32_t epoch, const qa_recipe_sidecar *, size_t,
     application_unified_server **, qa_unified_document **owned_offer, qa_error *);
-const qa_sha256_digest *application_unified_server_composition(const application_unified_server *);
+const uint64_t *application_unified_server_composition(const application_unified_server *);
 qa_unified_session_hooks application_unified_server_hooks(application_unified_server *);
 bool application_unified_server_bind(application_unified_server *, qa_net_client_id,
     qa_unified_session *, qa_error *);

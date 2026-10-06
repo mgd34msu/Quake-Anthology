@@ -29,7 +29,7 @@ static bool image_read(const guest_elf_program_image *row, qa_native_guest *gues
         memory->image.format != image->image.format ||
         memory->image.preferred_base != image->image.preferred_base ||
         memory->image.image_bytes != image->image.image_bytes ||
-        !qa_sha256_equal(&memory->image.digest, &image->image.digest))
+        guest_elf_memory_artifact(row->memory) != row->artifact)
         return guest_fail(error, QA_ERROR_ARGUMENT, row->provider,
             "ELF program image differs from its actual raw process attachment");
     unsigned width = image->image.target.pointer_bytes;
@@ -53,8 +53,7 @@ static bool images_read(guest_elf_program *owner, bool fresh, qa_error *error)
         !image_read(&owner->images.program, owner->guest, &program, error)) return false;
     if (program->image.format != owner->guest->options.image.format ||
         program->image.preferred_base != owner->guest->options.image.preferred_base ||
-        program->image.image_bytes != owner->guest->options.image.image_bytes ||
-        !qa_sha256_equal(&program->image.digest, &owner->guest->options.image.digest))
+        program->image.image_bytes != owner->guest->options.image.image_bytes)
         return guest_fail(error, QA_ERROR_ARGUMENT, owner->images.program.provider,
             "ELF startup program differs from the actual primary process artifact");
     if (program->interpreter) {
@@ -371,7 +370,7 @@ bool guest_elf_program_stack_changed(guest_elf_program *owner, uint64_t base, si
 bool guest_elf_program_stack_owned(const guest_elf_program *owner)
 { return owner && owner->complete && owner->stack_transferred; }
 
-enum { PROGRAM_RECORD = 204 };
+enum { PROGRAM_RECORD = 140 };
 
 static bool receipt_read(const guest_elf_program *owner, qa_error *error)
 {
@@ -399,7 +398,6 @@ static bool receipt_read(const guest_elf_program *owner, qa_error *error)
 static void record(uint8_t data[PROGRAM_RECORD], const guest_elf_program *owner)
 {
     const guest_elf_view *program = guest_elf_describe(owner->images.program.artifact);
-    const guest_elf_view *interpreter = guest_elf_describe(owner->images.interpreter.artifact);
     memset(data, 0, PROGRAM_RECORD); memcpy(data, "QEPG", 4);
     qa_store_u64le(data + 4, owner->view.program); qa_store_u64le(data + 12, owner->view.interpreter);
     qa_store_u64le(data + 20, owner->view.stack); qa_store_u64le(data + 28, owner->view.stack_bytes);
@@ -410,9 +408,7 @@ static void record(uint8_t data[PROGRAM_RECORD], const guest_elf_program *owner)
     qa_store_u64le(data + 100, owner->interpreter_base); qa_store_u32le(data + 108, (uint32_t)owner->view.stack_tag);
     qa_store_u32le(data + 112, program->image.target.arch); data[116] = program->image.target.pointer_bytes;
     data[117] = owner->stack_transferred; data[118] = owner->stack_changed;
-    memcpy(data + 124, program->image.digest.bytes, 32);
-    if (interpreter) memcpy(data + 156, interpreter->image.digest.bytes, 32);
-    qa_store_u64le(data + 188, owner->stack_mapping); qa_store_u64le(data + 196, owner->stack_backing);
+    qa_store_u64le(data + 124, owner->stack_mapping); qa_store_u64le(data + 132, owner->stack_backing);
 }
 
 bool guest_elf_program_checkpoint(const guest_elf_program *owner, qa_buffer *out, qa_error *error)
@@ -447,7 +443,7 @@ bool guest_elf_program_adopt(const guest_elf_program_images *images, qa_bytes en
     owner->view.environment_count = (size_t)qa_load_u64le(encoded.data + 60);
     owner->view.stack_tag = (int32_t)qa_load_u32le(encoded.data + 108);
     owner->stack_transferred = encoded.data[117] != 0; owner->stack_changed = encoded.data[118] != 0;
-    owner->stack_mapping = qa_load_u64le(encoded.data + 188); owner->stack_backing = qa_load_u64le(encoded.data + 196);
+    owner->stack_mapping = qa_load_u64le(encoded.data + 124); owner->stack_backing = qa_load_u64le(encoded.data + 132);
     bool okay = images_read(owner, false, error) && stack_read(owner, false, error);
     if (okay) okay = receipt_read(owner, error);
     uint8_t expected[PROGRAM_RECORD];

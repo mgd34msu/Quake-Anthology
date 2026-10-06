@@ -68,7 +68,7 @@ bool application_network_q2_current(qa_application_network_q2 *owner, qa_error *
         saved->edition == now->edition && saved->kind == now->kind &&
         saved->publication_generation == now->publication_generation && saved->map_revision == now->map_revision &&
         owner->host.cvars == actual.cvars && owner->host.client_slots == actual.client_slots &&
-        owner->host.entity_slots == actual.entity_slots && qa_sha256_equal(&owner->identity, &now->launch->identity);
+        owner->host.entity_slots == actual.entity_slots;
     if (same) same = now->kind == QA_APPLICATION_NATIVE_Q2_BUILTIN ?
         saved->source.game == now->source.game : saved->source.original.host == now->source.original.host;
     if (!same) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 publication belongs to a retired physical GAME");
@@ -327,8 +327,6 @@ bool qa_application_network_q2_create(qa_application *app, qa_net_protocol_id pr
     owner->app = app; owner->server_count = server_count;
     bool ok = qa_application_network_q2_host_source(app, protocol, &owner->host, error);
     if (ok) {
-        owner->identity = owner->host.source.launch->identity;
-        owner->map_identity = *qa_resource_digest(app->map_resource);
         const char *map = qa_strings_cstr(qa_session_strings(app->session), app->current_map);
         owner->source_instance = application_network_q2_copy(owner->host.source.launch->selection.instance, error);
         owner->source_map = map ? application_network_q2_copy(map, error) : NULL;
@@ -422,7 +420,6 @@ bool qa_application_network_q2_metadata_read(const qa_application_network_q2 *ow
     *out = (qa_application_network_q2_metadata){.source_owner = source->source_owner, .kind = source->kind,
         .edition = source->edition, .protocol = owner->host.protocol, .client_slots = owner->host.client_slots,
         .entity_slots = owner->host.entity_slots, .server_count = owner->server_count,
-        .identity = owner->identity, .map_identity = owner->map_identity,
         .instance = owner->source_instance, .map = owner->source_map,
         .clock_config = source->clock_config, .clock = source->clock, .server_time_ns = source->server_time_ns,
         .publication_generation = source->publication_generation, .map_revision = source->map_revision,

@@ -2,7 +2,6 @@
 #define QA_NATIVE_H
 
 #include "qa/actors.h"
-#include "qa/hash.h"
 #include "qa/json.h"
 #include "qa/qvm.h"
 
@@ -61,7 +60,6 @@ typedef struct qa_native_image_info {
     qa_native_target target;
     uint64_t preferred_base;
     uint64_t image_bytes;
-    qa_sha256_digest digest;
 } qa_native_image_info;
 
 /* Inspection never executes the artifact. PE and ELF structural metadata is
@@ -82,8 +80,7 @@ typedef struct qa_native_module_info {
 /* Modules own immutable artifact bytes. Instances retain the module and load a
  * distinct image so file-scope guest globals are never shared accidentally. */
 bool qa_native_module_load(qa_bytes image, const char *source, qa_native_profile profile,
-                           const qa_sha256_digest *expected_digest, qa_native_module **out,
-                           qa_error *error);
+                           qa_native_module **out, qa_error *error);
 /* Immutable image metadata must identify one writable, non-executable source
  * section/load segment; ELF RELRO is excluded. No source code executes. */
 bool qa_native_module_mutable_range(const qa_native_module *, uint64_t rva, uint64_t bytes, qa_error *);
@@ -186,7 +183,7 @@ typedef bool (*qa_native_host_restore_fn)(void *context, qa_bytes state, qa_erro
 
 /* context and callback functions remain valid until instance destruction.
  * Dependency bytes and paths are borrowed only during creation. Declaration
- * identity and region records are copied into the instance. */
+ * ownership is retained and region records are copied into the instance. */
 typedef struct qa_native_options {
     void *context;
     qa_qvm_role q3_role;
@@ -196,7 +193,6 @@ typedef struct qa_native_options {
     qa_native_host_checkpoint_fn checkpoint;
     qa_native_host_restore_fn restore;
     const qa_native_declaration *declaration;
-    const qa_sha256_digest *declaration_digest;
     const qa_native_dependency *dependencies;
     size_t dependency_count;
     uint32_t tick_rate;
@@ -443,7 +439,7 @@ typedef struct qa_native_checkpoint {
     qa_native_profile profile;
     qa_qvm_role q3_role;
     qa_native_image_info image;
-    qa_sha256_digest declaration;
+    qa_buffer source;
     bool has_declaration;
     bool autosave;
     bool transition;
@@ -494,14 +490,13 @@ bool qa_native_checkpoint_encode(const qa_native_checkpoint *checkpoint, qa_buff
 bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa_error *error);
 
 /* The caller acquires a declaration from the artifact's own content directory.
- * Loading validates version, normalized artifact path, exact digest/API and
+ * Loading validates version, normalized artifact path, API and
  * all required primary sections. The typed composition layer validates each
  * section's complete field/region schema before Init. */
 bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
                                 const qa_native_module *module, qa_native_declaration **out,
                                 qa_error *error);
 void qa_native_declaration_destroy(qa_native_declaration *declaration);
-const qa_sha256_digest *qa_native_declaration_digest(const qa_native_declaration *declaration);
 qa_bytes qa_native_declaration_primary(const qa_native_declaration *declaration);
 /* The original callback document is a distinct contract. A primary wrapper
  * has no callback document, and a callback document has no primary wrapper. */

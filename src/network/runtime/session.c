@@ -234,7 +234,7 @@ bool qa_network_pump(qa_network_runtime *runtime, uint64_t now, qa_error *error)
     runtime->pumping = false; return ok;
 }
 bool qa_network_restart(qa_network_runtime *runtime, qa_net_client_id id,
-                         const qa_sha256_digest *composition, qa_error *error) {
+                         const uint64_t *composition, qa_error *error) {
     if (!runtime || runtime->callback || runtime->pumping || !composition)
         return qa_network_fail(error, "Invalid network travel boundary");
     qa_network_peer *peer = qa_network_peer_get(runtime, id, error);

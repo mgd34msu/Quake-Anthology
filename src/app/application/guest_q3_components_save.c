@@ -19,7 +19,6 @@ static bool fields(qa_source_save_io *io,component_saved_row *row)
     if(!qa_source_save_text(io,&row->instance)||!row->instance||!qa_source_save_text(io,&row->key)||!row->key||
         !qa_source_save_u64(io,&row->owner)||!row->owner||!qa_source_save_u64(io,&row->generation)||!row->generation||
         !qa_source_save_u64(io,&row->services)||!row->services||row->services==row->owner||
-        !qa_source_save_bytes(io,row->program.bytes,32)||!qa_source_save_bytes(io,row->declaration.bytes,32)||
         !qa_source_save_count(io,&size,UINT32_MAX)||!size) return false;
     if(io->direction==QA_SOURCE_SAVE_READ) {
         row->game.data=malloc(size); row->game.size=size;
@@ -96,8 +95,7 @@ bool application_q3_components_checkpoint(qa_application *app,qa_buffer *out,qa_
     for(size_t i=0;ok&&i<count;++i) {
         component_game_row *row=owner->rows[i];
         component_saved_row saved={.instance=row->publication.descriptor->selection.instance,.key=row->publication.metadata->key,
-            .owner=row->publication.owner,.generation=row->publication.generation,.services=row->services,
-            .program=row->publication.metadata->program_digest,.declaration=row->publication.metadata->declaration_digest};
+            .owner=row->publication.owner,.generation=row->publication.generation,.services=row->services};
         ok=row->attached&&row->initialized&&application_q3_component_checkpoint(row->publication.game,&saved.game,e)&&
             fields(&io,&saved);
         qa_buffer_free(&saved.game);

@@ -48,7 +48,6 @@ struct frontend_neutral_config {
     qa_cvar_archive client_archive, mouse_archive, movement_archive, shared_archive;
     qa_seat_settings settings;
     char *saved_instance;
-    qa_sha256_digest saved_identity;
     uint32_t physical_seat, saved_seat;
     uint64_t namespace_revision;
     qa_movement_kind kind;
@@ -439,7 +438,6 @@ static bool install(void *context,const qa_application_client_source *source,boo
     if (restoring) {
         if (!row->imported || !row->saved_instance ||
             strcmp(row->saved_instance,source->descriptor->selection.instance) ||
-            !qa_sha256_equal(&row->saved_identity,&source->descriptor->identity) ||
             source->context.command.dialect!=row->dialect || source->context.seat!=row->saved_seat ||
             !qa_launch_instance_retain_metadata(source->descriptor,&row->metadata,e))
             return fail(e,QA_ERROR_FORMAT,"Neutral import differs from its saved physical CLIENT");
@@ -1220,10 +1218,9 @@ static bool row_fields(frontend_neutral_config *row,qa_source_save_io *io,
     bool writing=io->direction==QA_SOURCE_SAVE_WRITE;
     const qa_launch_instance *held=descriptor(row);
     char *name=writing?(char *)held->selection.instance:NULL;
-    qa_sha256_digest identity=writing?held->identity:(qa_sha256_digest){0};
     uint32_t dialect=row->dialect,movement=row->kind,logical=writing?row->command.seat:0;
     bool ok=qa_source_save_owned_text(io,&name) && name && *name &&
-        qa_source_save_bytes(io,&identity,sizeof(identity)) && qa_source_save_u32(io,&dialect) && dialect<=QA_CONSOLE_Q3 &&
+        qa_source_save_u32(io,&dialect) && dialect<=QA_CONSOLE_Q3 &&
         qa_source_save_u32(io,&movement) && movement<=QA_MOVEMENT_Q3 && qa_source_save_u32(io,&logical) &&
         qa_source_save_u32(io,&row->physical_seat) && row->physical_seat<row->owner->frontend->options.seats &&
         qa_source_save_u64(io,&row->namespace_revision) && row->namespace_revision &&
@@ -1236,7 +1233,7 @@ static bool row_fields(frontend_neutral_config *row,qa_source_save_io *io,
         (!row->retiring || row->recipient_returned) &&
         (!release || (row->retirement_started && !row->recipient_returned && !row->retiring));
     if (!writing) row->retirement_release_saved=release;
-    if (!writing) { row->saved_instance=name; row->saved_identity=identity;
+    if (!writing) { row->saved_instance=name;
         row->saved_seat=logical; row->dialect=(qa_console_dialect)dialect; row->kind=(qa_movement_kind)movement; }
     qa_buffer files={0}; qa_bytes bytes={0};
     if (ok && writing) { ok=frontend_config_files_checkpoint(row->files,graph,&files,io->error);

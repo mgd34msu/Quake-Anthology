@@ -184,7 +184,7 @@ typedef struct qa_launch_instance {
     size_t interface_count;
     const qa_catalog_weapon_behavior *const *behaviors;
     size_t behavior_count;
-    qa_sha256_digest identity; /* Implementation/configuration identity, excluding roles. */
+    uint64_t identity; /* Runtime serial, retained when implementation state is reused. */
     void *state;
     /* Private immutable storage identity used by detached metadata leases. */
     qa_launch_instance_storage *storage;
@@ -282,12 +282,13 @@ bool qa_launch_instance_restore_builtin_client_metadata(const qa_launch_instance
 typedef struct qa_configuration_hooks {
     void *context;
     bool (*safe)(void *);
-    /* Optional pure construction fingerprint, computed before state reuse.
+    /* Optional pure construction configuration, computed before state reuse.
      * Include only choice-derived inputs consumed by provider construction;
      * use the same normalized values in the constructor. User options already
-     * participate in identity. Routing roles alone must not reset state. */
+     * participate in reuse. Routing roles alone must not reset state.
+     * Transfers exact canonical bytes to an empty output, also on failure. */
     bool (*instance_configuration)(void *, const qa_launch_instance *,
-                                    const qa_launch_choices *, qa_sha256_digest *, qa_error *);
+                                    const qa_launch_choices *, qa_buffer *, qa_error *);
     /* Borrow an actual Source filesystem before world resource acquisition.
      * No provider construction or publication runs through this callback. */
     bool (*resource_files)(void *,const qa_launch_choices *,qa_product_id,const char *,
@@ -315,9 +316,9 @@ const qa_launch_snapshot *qa_configuration_current(const qa_configuration *);
 bool qa_configuration_prepare(qa_configuration *, const qa_launch_draft *,
                                qa_configuration_transaction **, qa_error *);
 /* A full world replacement constructs fresh instance owners even when their
- * immutable identities equal the current selections. Abort retains the old
+ * configurations equal the current selections. Abort retains the old
  * owners; publication retires them through the ordinary checked lifecycle.
- * The resulting identities still permit ordinary later configuration reuse. */
+ * Ordinary later configuration changes can reuse the resulting owners. */
 bool qa_configuration_prepare_replacing(qa_configuration *, const qa_launch_draft *,
                                          qa_configuration_transaction **, qa_error *);
 bool qa_configuration_validate(qa_configuration_transaction *, qa_error *);

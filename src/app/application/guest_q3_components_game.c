@@ -103,8 +103,7 @@ bool q3components_create_game(component_game_row *row,qa_error *e)
     if(!valid) return application_fail(e,QA_ERROR_FORMAT,"Component GAME declaration has no actual admitted ABI");
     row->publication.abi=layout;
     application_q3_component_options create={.program=row->program,.declaration=row->declaration,
-        .program_path=row->publication.metadata->program_path,.program_digest=row->publication.metadata->program_digest,
-        .declaration_digest=row->publication.metadata->declaration_digest,.image=row->image,.abi=layout,
+        .program_path=row->publication.metadata->program_path,.image=row->image,.abi=layout,
         .map_path=qa_launch_snapshot_choices(options->snapshot)->world.map,
         .host={.role=QA_QVM_GAME,.abi=layout,.session=options->application->session,.world=options->world,
             .owner=row->publication.owner,.service_owner=row->services,.mounts=row->publication.content,

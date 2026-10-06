@@ -1,3 +1,4 @@
+#include "guest_q3_reference.h"
 #include "guest_q3_weapon_profile.h"
 #include "guest_q3_private.h"
 #include "qa/json.h"
@@ -352,8 +353,8 @@ static bool qualify(q3g_role *role, application_q3_weapon_profile *p, qa_error *
 static bool stock(q3g_role *role, const application_q3_weapon_catalog_entry *catalog, size_t count,
     application_q3_weapon_profile *p, qa_error *error)
 {
-    char digest[65]; qa_sha256_hex(qa_qvm_image_digest(role->image), digest);
-    if (strcmp(digest, "9751bad99a2d138f96a9b0436d2ea2d965b86214175dc33e4cea95e059419337")) return true;
+
+    if (!application_q3_reference_image(role->image, Q3_REFERENCE_THREEWAVE_GAME)) return true;
     *p = (application_q3_weapon_profile){.present = true, .entity_stride = 876, .client_stride = 944, .client_pointer = 516,
         .dispatcher = 33648, .request = 33226, .selection_offset = 144,
         .pointer_global = true, .pointer_base = 1091860, .indirection_count = 1,
@@ -413,7 +414,7 @@ bool application_q3_weapon_profile_read(q3g_role *role, qa_bytes primary,
     application_q3_weapon_profile p = {0};
     bool ok = primary.size ? (p.present = true, declared(role, primary, &p, error)) : stock(role, catalog, count, &p, error);
     if (ok && p.present) {
-        p.digest = *qa_qvm_image_digest(role->image); p.abi = role->abi;
+        p.image = role->image; p.abi = role->abi;
         if (catalog) ok = application_q3_weapon_profile_catalog(&p, catalog, count, error);
         if (ok) ok = qualify(role, &p, error);
     }

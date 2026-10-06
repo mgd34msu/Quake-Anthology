@@ -12,7 +12,7 @@ struct application_q3_native_catalog {
     q3g_role *role;
     qa_native_module *module;
     qa_native_module_info info;
-    qa_sha256_digest declaration_digest;
+    qa_resource *items_resource;
     native_catalog_locator address, count;
     uint32_t stride, fields[4], string_limit;
     int32_t weapon_type, ammo_type;
@@ -88,7 +88,7 @@ void application_q3_native_catalog_destroy(application_q3_native_catalog *c)
 {
     if (!c) return;
     records_free(c->records, c->record_count); free(c->weapons);
-    qa_native_module_release(c->module); free(c);
+    qa_native_module_release(c->module); qa_resource_release(c->items_resource); free(c);
 }
 
 bool application_q3_native_catalog_create(q3g_role *role, qa_bytes bytes,
@@ -101,9 +101,10 @@ bool application_q3_native_catalog_create(q3g_role *role, qa_bytes bytes,
     application_q3_native_catalog *c = calloc(1, sizeof(*c));
     if (!c) return fail(error, QA_ERROR_MEMORY, "Retaining declared native Q3 catalog");
     c->role = role; c->module = role->module; qa_native_module_retain(c->module);
-    c->info = qa_native_module_describe(c->module); qa_sha256(bytes, &c->declaration_digest);
-    if (!qa_sha256_equal(&c->declaration_digest, qa_resource_digest(role->artifact->items_resource)) ||
-        !qa_sha256_equal(&c->info.image.digest, qa_resource_digest(role->artifact->resource))) {
+    c->info = qa_native_module_describe(c->module);
+    c->items_resource = role->artifact->items_resource; qa_resource_retain(c->items_resource);
+    qa_bytes opening = qa_resource_bytes(c->items_resource);
+    if (opening.size != bytes.size || memcmp(opening.data, bytes.data, bytes.size)) {
         application_q3_native_catalog_destroy(c);
         return fail(error, QA_ERROR_FORMAT, "Native catalog bytes differ from their actual source openings");
     }
@@ -112,9 +113,8 @@ bool application_q3_native_catalog_create(q3g_role *role, qa_bytes bytes,
         application_q3_native_catalog_destroy(c);
         return fail(error, QA_ERROR_UNSUPPORTED, "Native item catalog needs its actual Q3 vmMain pointer ABI");
     }
-    qa_json_document *doc = NULL; qa_buffer path = {0}, digest = {0};
+    qa_json_document *doc = NULL; qa_buffer path = {0};
     uint32_t version = 0, pointer_bytes = 0, source_abi = 0;
-    qa_sha256_digest expected;
     bool ok = qa_json_parse(bytes, &doc, error);
     qa_json_id root = doc ? qa_json_root(doc) : QA_JSON_NONE;
     ok = ok && u32(doc, qa_json_get(doc, root, "version"), &version, error) && version == 1 &&
@@ -123,10 +123,7 @@ bool application_q3_native_catalog_create(q3g_role *role, qa_bytes bytes,
         pointer_bytes == c->info.image.target.pointer_bytes &&
         u32(doc, qa_json_get(doc, root, "abi"), &source_abi, error) && source_abi == (uint32_t)c->info.image.target.abi &&
         qa_json_string(doc, qa_json_get(doc, root, "artifactPath"), &path, error) &&
-        !memchr(path.data, 0, path.size) && path.size == strlen(role->path) && !memcmp(path.data, role->path, path.size) &&
-        qa_json_string(doc, qa_json_get(doc, root, "artifactDigest"), &digest, error) &&
-        !memchr(digest.data, 0, digest.size) && qa_sha256_parse((const char *)digest.data, &expected, error) &&
-        qa_sha256_equal(&expected, &c->info.image.digest);
+        !memchr(path.data, 0, path.size) && path.size == strlen(role->path) && !memcmp(path.data, role->path, path.size);
     qa_json_id items = qa_json_get(doc, root, "items"), fields = qa_json_get(doc, items, "fields");
     if (ok) ok = qa_json_string_equal(doc, qa_json_get(doc, items, "source"), "live") &&
         locator(c, doc, qa_json_get(doc, items, "address"), false, &c->address, error) &&
@@ -148,7 +145,7 @@ bool application_q3_native_catalog_create(q3g_role *role, qa_bytes bytes,
         ok = c->address.value <= c->info.image.image_bytes &&
             extent <= c->info.image.image_bytes - c->address.value;
     }
-    qa_buffer_free(&path); qa_buffer_free(&digest); qa_json_destroy(doc);
+    qa_buffer_free(&path); qa_json_destroy(doc);
     if (!ok) {
         if (!error || !error->code) fail(error, QA_ERROR_FORMAT, "Native item declaration differs from its actual artifact and pointer layout");
         application_q3_native_catalog_destroy(c); return false;
@@ -164,7 +161,7 @@ static bool retained_current(const application_q3_native_catalog *c, const q3g_r
         !role->engine || role->engine->game != role ||
         role->module != c->module || !role->artifact || role->artifact->module != c->module ||
         !opening_current(role) ||
-        !qa_sha256_equal(qa_resource_digest(role->artifact->items_resource), &c->declaration_digest)) return false;
+        role->artifact->items_resource != c->items_resource) return false;
     application_provider *provider = role->engine->provider;
     qa_native_instance *instance = qa_native_host_instance(role->native);
     if (restoring) {
@@ -238,13 +235,13 @@ static bool identity(application_q3_native_catalog *c, const application_q3_cata
         if (known[i].kind == (weapon ? QA_Q3_ITEM_WEAPON : QA_Q3_ITEM_AMMO) &&
             !strcmp(known[i].classname, record->class_name) && known[i].tag > 0)
             canonical = qa_q3_weapon_identity_name((qa_q3_weapon)known[i].tag);
-    char digest[65]; qa_sha256_hex(&c->info.image.digest, digest);
-    size_t length = strlen(record->class_name);
+    const char *instance = c->role->engine->provider->launch->selection.instance;
+    size_t length = strlen(record->class_name) + strlen(instance) + strlen(c->role->path);
     if (length > SIZE_MAX - 96) return fail(error, QA_ERROR_MEMORY, "Native item identity exceeds storage");
     char *text = malloc(length + 96);
     if (!text) return fail(error, QA_ERROR_MEMORY, "Retaining native Source item identity");
     if (canonical) snprintf(text, length + 96, "q3:%s/%s", weapon ? "weapon" : "ammo", canonical);
-    else snprintf(text, length + 96, "q3:guest/sha256:%s/%s", digest, record->class_name);
+    else snprintf(text, length + 96, "q3:guest/%s/%s/%s", instance, c->role->path, record->class_name);
     bool ok = qa_strings_intern_cstr(qa_session_strings(c->role->engine->provider->application->session), text, out, error);
     free(text); return ok;
 }

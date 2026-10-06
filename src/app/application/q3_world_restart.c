@@ -144,10 +144,7 @@ static bool same_program(const application_q3_world_restart_state *state,
             next->selection.options.data, old->selection.options.size)) ||
         (old->artifact != NULL) != (next->artifact != NULL) ||
         (old->declaration != NULL) != (next->declaration != NULL)) return false;
-    return (!old->artifact || qa_sha256_equal(qa_resource_digest(old->artifact),
-        qa_resource_digest(next->artifact))) &&
-        (!old->declaration || qa_sha256_equal(qa_resource_digest(old->declaration),
-        qa_resource_digest(next->declaration)));
+    return old->artifact == next->artifact && old->declaration == next->declaration;
 }
 
 bool application_q3_world_restart_active(const qa_application *app)
@@ -587,7 +584,7 @@ bool application_q3_world_restart_prepared(qa_application *app,
     if (state->prepared || !publication || !publication->travel ||
         publication->previous != state->launch || !same_program(state, publication->map_provider) ||
         !publication->map_resource || !app->map_resource ||
-        !qa_sha256_equal(qa_resource_digest(publication->map_resource), qa_resource_digest(app->map_resource)) ||
+        publication->map_resource != app->map_resource ||
         publication->next_count != app->provider_count ||
         publication->removed_count != app->provider_count || !retained(state, error))
         return application_fail(error, QA_ERROR_ARGUMENT,

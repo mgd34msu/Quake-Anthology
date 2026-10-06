@@ -2,19 +2,27 @@
 #include "guest_qc_internal.h"
 #include "guest_q3_save.h"
 #include "qa/binary.h"
+#include "qa/source_save.h"
 
-enum { GUEST_CHECKPOINT_IDENTITY = 108,
-       GUEST_CHECKPOINT_HEADER = GUEST_CHECKPOINT_IDENTITY + sizeof(uint64_t) };
-
-static void identity(const application_provider *provider, uint8_t *out)
+static bool identity(const application_provider *provider, qa_buffer *out, qa_error *error)
 {
-    memcpy(out, "QAGC", 4);
-    qa_store_u32le(out + 4, provider->kind);
-    memcpy(out + 12, provider->launch->identity.bytes, 32);
-    const qa_sha256_digest *artifact = qa_resource_digest(provider->launch->artifact);
-    const qa_sha256_digest *declaration = qa_resource_digest(provider->launch->declaration);
-    if (artifact) memcpy(out + 44, artifact->bytes, 32);
-    if (declaration) memcpy(out + 76, declaration->bytes, 32);
+    const qa_launch_instance *launch = provider->launch;
+    uint32_t kind = provider->kind, product = launch->selection.product;
+    uint64_t artifact_bytes = qa_resource_bytes(launch->artifact).size;
+    uint64_t declaration_bytes = qa_resource_bytes(launch->declaration).size;
+    uint8_t magic[4] = {'Q','A','G','C'};
+    qa_source_save_io io = {0};
+    bool ok = qa_source_save_writer(&io, NULL, error) &&
+        qa_source_save_bytes(&io, magic, sizeof(magic)) &&
+        qa_source_save_u32(&io, &kind) && qa_source_save_u32(&io, &product) &&
+        qa_source_save_text_assert(&io, launch->selection.instance) &&
+        qa_source_save_text_assert(&io, launch->selection.artifact) &&
+        qa_source_save_text_assert(&io, launch->selection.component) &&
+        qa_source_save_text_assert(&io, qa_resource_path(launch->declaration)) &&
+        qa_source_save_u64(&io, &artifact_bytes) && qa_source_save_u64(&io, &declaration_bytes) &&
+        qa_source_save_finish(&io, out);
+    qa_source_save_dispose(&io);
+    return ok;
 }
 
 static bool checkpoint_owner(application_provider *provider, qa_error *error)
@@ -45,19 +53,26 @@ bool application_guest_checkpoint_capture(application_provider *provider,
          qa_qc_checkpoint_encode(snapshot, &encoded, error));
     qa_qc_checkpoint_destroy(snapshot);
     if (!ok) return false;
-    if (encoded.size > SIZE_MAX - GUEST_CHECKPOINT_HEADER) {
+    qa_buffer owner = {0};
+    if (!identity(provider, &owner, error)) { qa_buffer_free(&encoded); return false; }
+    if (owner.size > SIZE_MAX - sizeof(uint64_t) ||
+        encoded.size > SIZE_MAX - owner.size - sizeof(uint64_t)) {
+        qa_buffer_free(&owner);
         qa_buffer_free(&encoded);
         return application_fail(error, QA_ERROR_MEMORY, "Guest checkpoint extent overflow");
     }
-    qa_buffer bytes = {.size = GUEST_CHECKPOINT_HEADER + encoded.size};
+    size_t header = owner.size + sizeof(uint64_t);
+    qa_buffer bytes = {.size = header + encoded.size};
     bytes.data = calloc(1, bytes.size);
     if (!bytes.data) {
+        qa_buffer_free(&owner);
         qa_buffer_free(&encoded);
         return application_fail(error, QA_ERROR_MEMORY, "Allocating guest continuation");
     }
-    identity(provider, bytes.data);
-    qa_store_u64le(bytes.data + GUEST_CHECKPOINT_IDENTITY, encoded.size);
-    if (encoded.size) memcpy(bytes.data + GUEST_CHECKPOINT_HEADER, encoded.data, encoded.size);
+    memcpy(bytes.data, owner.data, owner.size);
+    qa_store_u64le(bytes.data + owner.size, encoded.size);
+    if (encoded.size) memcpy(bytes.data + header, encoded.data, encoded.size);
+    qa_buffer_free(&owner);
     qa_buffer_free(&encoded);
     *out = bytes;
     return true;
@@ -68,13 +83,16 @@ bool application_guest_checkpoint_body(const application_provider *provider,
 {
     if (!provider || !provider->launch || !out)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing guest checkpoint identity");
-    uint8_t expected[GUEST_CHECKPOINT_HEADER] = {0};
-    identity(provider, expected);
-    if (!bytes.data || bytes.size < GUEST_CHECKPOINT_HEADER ||
-        memcmp(bytes.data, expected, GUEST_CHECKPOINT_IDENTITY) ||
-        qa_load_u64le(bytes.data + GUEST_CHECKPOINT_IDENTITY) != bytes.size - GUEST_CHECKPOINT_HEADER)
+    qa_buffer expected = {0};
+    if (!identity(provider, &expected, error)) return false;
+    size_t header = expected.size + sizeof(uint64_t);
+    bool ok = bytes.data && bytes.size >= header &&
+        !memcmp(bytes.data, expected.data, expected.size) &&
+        qa_load_u64le(bytes.data + expected.size) == bytes.size - header;
+    qa_buffer_free(&expected);
+    if (!ok)
         return application_fail(error, QA_ERROR_FORMAT, "Guest backend/content checkpoint identity differs");
-    *out = (qa_bytes){bytes.data + GUEST_CHECKPOINT_HEADER, bytes.size - GUEST_CHECKPOINT_HEADER};
+    *out = (qa_bytes){bytes.data + header, bytes.size - header};
     return true;
 }
 

@@ -1,3 +1,4 @@
+#include "guest_q3_reference.h"
 #include "guest_q3_equipment_profile.h"
 #include "internal.h"
 #include "qa/json.h"
@@ -171,10 +172,9 @@ static bool declared(qa_bytes bytes, application_q3_equipment_profile *profile, 
 
 static bool stock(const qa_qvm_image *image, application_q3_equipment_profile *profile, qa_error *error)
 {
-    char digest[65];
-    qa_sha256_hex(qa_qvm_image_digest(image), digest);
-    bool first = !strcmp(digest, "a4744482c9b93852cc71f4d7ce03b3e4337e5d89844d27d272c2c16d74df07fa");
-    bool second = !strcmp(digest, "14858804fb98609ed8b3b3c3b825f0a7cb544063f7e43735c884cd5e4a51157c");
+
+    bool first = application_q3_reference_image(image, Q3_REFERENCE_LRCTF_CGAME);
+    bool second = application_q3_reference_image(image, Q3_REFERENCE_THREEWAVE_CGAME);
     if (!first && !second) return true;
     profile->present = true; profile->view_taken = true; profile->warning_low = 1; profile->warning_empty = 2;
     profile->parent_argument = 0; profile->state_argument = 1; profile->entity_argument = 2;

@@ -100,14 +100,6 @@ qa_bytes recipe_binary(recipe_reader *r)
     }
     return (qa_bytes){bytes, count / 2};
 }
-bool recipe_digest_read(recipe_reader *r, qa_sha256_digest *out)
-{
-    const char *text = recipe_text(r);
-    if (strlen(text) != 64 || !qa_sha256_parse(text, out, r->error)) r->failed = true;
-    for (size_t i = 0; !r->failed && i < 64; ++i)
-        if (!strchr("0123456789abcdef", text[i])) { r->failed = true; recipe_fail(r->error, "Noncanonical recipe digest"); }
-    return !r->failed;
-}
 bool recipe_path(const char *path, qa_error *error)
 {
     char *normalized = qa_vfs_normalize_path(path, error);
@@ -348,5 +340,3 @@ bool recipe_copy_json(qa_json_writer *w, const qa_json_document *json, qa_json_i
     }
     return !w->failed;
 }
-void recipe_digest_write(qa_json_writer *w, const qa_sha256_digest *digest)
-{ char hex[65]; qa_sha256_hex(digest, hex); qa_json_writer_string(w, hex); }

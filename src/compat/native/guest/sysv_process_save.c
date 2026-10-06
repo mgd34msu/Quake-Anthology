@@ -42,8 +42,7 @@ static bool image_fields(qa_source_save_io *io, qa_native_image_info *image)
         !qa_source_save_u32(io, &arch) || !qa_source_save_u32(io, &abi) ||
         !qa_source_save_u8(io, &image->target.pointer_bytes) ||
         !qa_source_save_u64(io, &image->preferred_base) ||
-        !qa_source_save_u64(io, &image->image_bytes) ||
-        !qa_source_save_bytes(io, image->digest.bytes, sizeof(image->digest.bytes))) return false;
+        !qa_source_save_u64(io, &image->image_bytes)) return false;
     image->format = (qa_native_image_format)format;
     image->target = (qa_native_target){(qa_native_os)os, (qa_native_arch)arch,
         (qa_native_abi)abi, image->target.pointer_bytes};
@@ -299,9 +298,8 @@ bool qa_native_sysv_process_restore(qa_bytes encoded,
         const qa_native_sysv_artifact *source = NULL;
         for (size_t j = 0; okay && j < bindings->artifact_count; ++j) {
             const qa_native_sysv_artifact *actual = bindings->artifacts + j;
-            if (!actual->provider || actual->load_bias != record->bias ||
-                (uint32_t)actual->role != record->role ||
-                !qa_sha256_equal(&actual->image.digest, &record->image.digest)) continue;
+            if (actual->provider != record->provider || actual->load_bias != record->bias ||
+                (uint32_t)actual->role != record->role) continue;
             if (source || record->maximum > actual->maximum_image_bytes) {
                 okay = guest_fail(error, QA_ERROR_FORMAT, i, "System V saved image differs from its installed source");
                 break;
@@ -316,8 +314,7 @@ bool qa_native_sysv_process_restore(qa_bytes encoded,
         const qa_native_image_info *a = &record->image, *b = &owner->options.guest.image;
         if (a->format == b->format && a->target.os == b->target.os && a->target.arch == b->target.arch &&
             a->target.abi == b->target.abi && a->target.pointer_bytes == b->target.pointer_bytes &&
-            a->preferred_base == b->preferred_base && a->image_bytes == b->image_bytes &&
-            qa_sha256_equal(&a->digest, &b->digest)) primary_present = true;
+            a->preferred_base == b->preferred_base && a->image_bytes == b->image_bytes) primary_present = true;
     }
     if (okay && !primary_present)
         okay = guest_fail(error, QA_ERROR_FORMAT, 0, "System V cold process image witness lacks its actual source artifact");

@@ -28,8 +28,6 @@ static bool header_write(qa_application_network_q2 *owner, bool archival, qa_net
         qa_net_write_u64(writer, source->clock_config.maximum_frame_ns) &&
         qa_net_write_u64(writer, source->clock_config.initial_lead_ns) &&
         qa_net_write_u32(writer, source->clock_config.maximum_steps) &&
-        qa_net_write_data(writer, owner->identity.bytes, sizeof(owner->identity.bytes)) &&
-        qa_net_write_data(writer, owner->map_identity.bytes, sizeof(owner->map_identity.bytes)) &&
         qa_net_write_string(writer, owner->source_instance) && qa_net_write_string(writer, owner->source_map);
 }
 
@@ -135,7 +133,6 @@ static bool header_read(qa_application_network_q2 *owner, qa_net_reader *reader,
     qa_clock_state clock = {0};
     qa_clock_config policy = {0};
     int32_t server_count;
-    qa_sha256_digest identity, saved_map, actual_map;
     char instance[1024], map[1024];
     if (!qa_net_read_data(reader, magic, sizeof(magic))) return false;
     uint8_t archival = qa_net_read_u8(reader);
@@ -159,9 +156,7 @@ static bool header_read(qa_application_network_q2 *owner, qa_net_reader *reader,
     policy.initial_time_ns = qa_net_read_u64(reader);
     policy.minimum_frame_ns = qa_net_read_u64(reader); policy.maximum_frame_ns = qa_net_read_u64(reader);
     policy.initial_lead_ns = qa_net_read_u64(reader); policy.maximum_steps = qa_net_read_u32(reader);
-    if (!qa_net_read_data(reader, identity.bytes, sizeof(identity.bytes)) ||
-        !qa_net_read_data(reader, saved_map.bytes, sizeof(saved_map.bytes)) ||
-        !qa_net_read_string(reader, instance, sizeof(instance)) || !qa_net_read_string(reader, map, sizeof(map))) return false;
+    if (!qa_net_read_string(reader, instance, sizeof(instance)) || !qa_net_read_string(reader, map, sizeof(map))) return false;
     if (reader->failed || memcmp(magic, "QAQ2WIRE", 8) || archival > 1 || paused > 1 ||
         !source_owner || (uint32_t)clock.frame.kind > QA_CLOCK_Q3 || (uint32_t)clock.frame.phase > QA_FRAME_EXIT ||
         (uint32_t)policy.kind > QA_CLOCK_Q3 ||
@@ -183,13 +178,11 @@ static bool header_read(qa_application_network_q2 *owner, qa_net_reader *reader,
         owner->host.source.map_revision = map_revision; owner->host.source.clock = clock;
         owner->host.source.server_time_ns = time;
         policy.interval_ns = interval; owner->host.source.clock_config = policy;
-        owner->identity = identity; owner->map_identity = saved_map;
         owner->materials_bound = materials_bound != 0; owner->materials_capability = materials_capability != 0;
         owner->source_instance = application_network_q2_copy(instance, error);
         owner->source_map = application_network_q2_copy(map, error);
         return owner->source_instance && owner->source_map;
     }
-    actual_map = *qa_resource_digest(owner->app->map_resource);
     const char *name = qa_strings_cstr(qa_session_strings(owner->app->session), owner->app->current_map);
     const qa_application_native_q2_presentation *source = &owner->host.source;
     if (owner->materials_bound != (materials_bound != 0) || owner->materials_capability != (materials_capability != 0) ||
@@ -207,7 +200,6 @@ static bool header_read(qa_application_network_q2 *owner, qa_net_reader *reader,
         policy.maximum_frame_ns != source->clock_config.maximum_frame_ns ||
         policy.initial_lead_ns != source->clock_config.initial_lead_ns ||
         policy.maximum_steps != source->clock_config.maximum_steps ||
-        !qa_sha256_equal(&identity, &owner->identity) || !qa_sha256_equal(&saved_map, &actual_map) ||
         strcmp(instance, source->launch->selection.instance) || !name || strcmp(map, name))
         return application_fail(error, QA_ERROR_FORMAT, "Q2 wire continuation differs from its restored physical Source");
     return true;
@@ -390,6 +382,7 @@ bool qa_application_network_q2_restore(qa_application_network_q2 *owner, qa_byte
         owner->held_resources = candidate->held_resources; candidate->held_resources = NULL;
         owner->held_resource_count = candidate->held_resource_count; candidate->held_resource_count = 0;
         owner->held_resource_capacity = candidate->held_resource_capacity; candidate->held_resource_capacity = 0;
+        owner->held_resource_serial = candidate->held_resource_serial;
         owner->event_frame = candidate->event_frame; owner->initialized = owner->restored = true;
     }
     qa_application_network_q2_destroy(candidate);

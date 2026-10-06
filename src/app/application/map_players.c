@@ -2887,7 +2887,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             bool continued = false;
             for (size_t k = 0; k < carry->guest_count; ++k)
                 continued |= carry->guests[k].owner == provider->owner &&
-                    qa_sha256_equal(&carry->guests[k].identity, &provider->launch->identity);
+                    carry->guests[k].identity == provider->launch->identity;
             if (provider->kind == APPLICATION_PROVIDER_QC) {
                 if (provider->component.clock.kind == QA_CLOCK_QUAKEWORLD &&
                     !qw_initial_userinfo(application, record, error)) return false;
@@ -4491,7 +4491,7 @@ bool application_players_guest_attach(qa_application *application,
         for (size_t j = 0; j < roster->records[i].guest_count; ++j) {
             application_player_guest_binding *binding = &roster->records[i].guests[j];
             if (binding->owner != provider->owner || binding->source_slot != slot) continue;
-            if (i != index || !qa_sha256_equal(&binding->identity, &provider->launch->identity))
+            if (i != index || binding->identity != provider->launch->identity)
                 return application_fail(error, QA_ERROR_ARGUMENT, "guest source slot already belongs to another generation");
             return true;
         }
@@ -4597,7 +4597,7 @@ bool application_players_guest_detach(qa_application *application,
         for (size_t j = 0; j < record->guest_count; ++j) {
             application_player_guest_binding *binding = &record->guests[j];
             if (binding->owner != provider->owner || binding->source_slot != slot) continue;
-            if (!qa_sha256_equal(&binding->identity, &provider->launch->identity))
+            if (binding->identity != provider->launch->identity)
                 return application_fail(error, QA_ERROR_ARGUMENT, "guest roster detach has another provider identity");
             memmove(binding, binding + 1, (record->guest_count - j - 1) * sizeof(*binding));
             --record->guest_count;
@@ -4618,7 +4618,7 @@ bool application_players_guest_detach(qa_application *application,
 #define PLAYER_CHECKPOINT_RECORD 120u
 #define PLAYER_CHECKPOINT_POINT 60u
 #define PLAYER_CHECKPOINT_Q1_POINT 16u
-#define PLAYER_CHECKPOINT_GUEST 40u
+#define PLAYER_CHECKPOINT_GUEST 8u
 
 static bool roster_size(size_t *size, size_t count, size_t width, qa_error *error)
 {
@@ -4798,7 +4798,6 @@ bool application_players_checkpoint_capture(qa_application *application, qa_buff
         qa_net_write_f32(&writer, record->bot_skill); qa_net_write_i32(&writer, record->bot_delay_ms);
         for (size_t j = 0; j < record->guest_count; ++j) {
             qa_net_write_u32(&writer, record->guests[j].owner);
-            qa_net_write_data(&writer, record->guests[j].identity.bytes, 32);
             qa_net_write_u32(&writer, record->guests[j].source_slot);
         }
         qa_net_write_u32(&writer, (uint32_t)entries[i].size);
@@ -4944,11 +4943,11 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
         for (size_t j = 0; ok && j < guests; ++j) {
             application_player_guest_binding *binding = &record->guests[j];
             binding->owner = qa_net_read_u32(&reader);
-            qa_net_read_data(&reader, binding->identity.bytes, 32);
             binding->source_slot = qa_net_read_u32(&reader);
             application_provider *provider = roster_provider(candidate, binding->owner);
-            if (reader.failed || !provider || !qa_sha256_equal(&provider->launch->identity, &binding->identity))
+            if (reader.failed || !provider || !provider->launch)
                 { ok = false; break; }
+            binding->identity = provider->launch->identity;
             for (size_t k = 0; k < i; ++k)
                 for (size_t l = 0; l < roster->records[k].guest_count; ++l)
                     if (roster->records[k].guests[l].owner == binding->owner &&

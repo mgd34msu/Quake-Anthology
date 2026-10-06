@@ -21,7 +21,7 @@ typedef struct qa_unified_resource_declaration {
     qa_unified_resource_state resource;
 } qa_unified_resource_declaration;
 typedef struct qa_unified_ready_control {
-    qa_sha256_digest composition;
+    uint64_t composition;
     char *userinfo;
 } qa_unified_ready_control;
 typedef struct qa_unified_admitted_control {

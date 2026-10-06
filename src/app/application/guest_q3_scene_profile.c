@@ -51,16 +51,14 @@ static bool addresses(const qa_json_document *d, qa_json_id id, application_q3_s
     return true;
 }
 static bool program(const qa_json_document *d, qa_json_id id, const char *actual_path,
-    const qa_qvm_image *image, qa_qvm_abi abi, char **path, qa_sha256_digest *digest, qa_error *e)
+    qa_qvm_abi abi, char **path, qa_error *e)
 {
-    char *raw = NULL, *hex = NULL, *actual = NULL;
-    bool ok = text(d, qa_json_get(d, id, "path"), &raw, e) &&
-        text(d, qa_json_get(d, id, "digest"), &hex, e);
+    char *raw = NULL, *actual = NULL;
+    bool ok = text(d, qa_json_get(d, id, "path"), &raw, e);
     if (ok) { *path = qa_vfs_normalize_path(raw, e); actual = qa_vfs_normalize_path(actual_path, e); }
-    if (ok) ok = *path && actual && !strcmp(*path, actual) && qa_sha256_parse(hex, digest, e) &&
-        qa_sha256_equal(digest, qa_qvm_image_digest(image)) &&
+    if (ok) ok = *path && actual && !strcmp(*path, actual) &&
         qa_json_string_equal(d, qa_json_get(d, id, "abiProfile"), abi == QA_QVM_Q3_MODERN ? "q3-modern" : "q3-1.16n-base");
-    free(raw); free(hex); free(actual);
+    free(raw); free(actual);
     return ok || fail(e, QA_ERROR_FORMAT, "Component scene differs from its held executable identity");
 }
 static bool call_row(const qa_json_document *d, qa_json_id row, application_q3_scene_profile *p,
@@ -135,7 +133,7 @@ void application_q3_scene_profile_destroy(application_q3_scene_profile *p)
 }
 static bool body(const qa_json_document *d, qa_json_id id, application_q3_scene_profile *p, qa_error *e)
 {
-    p->body = (application_q3_body_profile){.artifact = p->cgame_digest, .abi = p->abi, .present = true, .count = 1};
+    p->body = (application_q3_body_profile){.image = p->image, .abi = p->abi, .present = true, .count = 1};
     p->body.artifact_path = qa_vfs_normalize_path(p->cgame_path, e);
     p->body.submissions = calloc(1, sizeof(*p->body.submissions));
     if (!p->body.artifact_path || !p->body.submissions) return fail(e, QA_ERROR_MEMORY, "Retaining component body declaration");
@@ -178,14 +176,14 @@ bool application_q3_scene_profile_create(qa_qvm_image *image, qa_qvm_abi abi,
     if (!qa_json_parse(bytes, &d, e)) return false;
     application_q3_scene_profile *p = calloc(1, sizeof(*p));
     if (!p) { qa_json_destroy(d); return fail(e, QA_ERROR_MEMORY, "Owning component scene profile"); }
-    p->image = image; qa_qvm_image_retain(image); p->abi = abi; qa_sha256(bytes, &p->declaration_digest);
+    p->image = image; qa_qvm_image_retain(image); p->abi = abi;
     qa_json_id root = qa_json_root(d), storage = qa_json_get(d, root, "storage"), ents = qa_json_get(d, storage, "centities");
     p->player_events=qa_json_string_equal(d,qa_json_get(d,root,"runtime"),"qvm-player-events");
     uint64_t version;
     bool ok = qa_json_u64(d, qa_json_get(d, root, "version"), &version, e) && version == 1 &&
         (p->player_events||qa_json_string_equal(d, qa_json_get(d, root, "runtime"), "qvm-scene")) &&
-        program(d, qa_json_get(d, root, "gameplay"), gameplay_path, gameplay, abi, &p->gameplay_path, &p->gameplay_digest, e) &&
-        program(d, qa_json_get(d, root, "cgame"), path, image, abi, &p->cgame_path, &p->cgame_digest, e) &&
+        program(d, qa_json_get(d, root, "gameplay"), gameplay_path, abi, &p->gameplay_path, e) &&
+        program(d, qa_json_get(d, root, "cgame"), path, abi, &p->cgame_path, e) &&
         field(d, storage, "gameState", &p->game_state, e) && qa_qvm_qualify_source_span(image, p->game_state, 20100, e) &&
         (p->player_events||(field(d, storage, "serverCommandSequence", &p->command_sequence, e) && qa_qvm_qualify_source_span(image, p->command_sequence, 4, e))) &&
         field(d, ents, "address", &p->entities, e) && field(d, ents, "stride", &p->stride, e) &&

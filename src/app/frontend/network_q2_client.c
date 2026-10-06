@@ -69,7 +69,6 @@ static bool retirement_custody(void *context,const qa_application_client_source 
             source->context.entity_owner==saved->entity_owner && source->context.lifetime &&
             source->context.seat==saved->seat && source->context.physical_seat==saved->physical_seat &&
             source->configuration_generation==saved->configuration_generation &&
-            qa_sha256_equal(&source->descriptor->identity,&saved->descriptor_identity) &&
             qa_net_client_id_equal(source->client,saved->client) &&
             qa_net_client_id_equal(source->client,owner->domain.client) &&
             source->connection_epoch==saved->connection_epoch && source->connection_epoch==owner->domain.epoch &&
@@ -474,7 +473,7 @@ bool frontend_network_q2_client_admit(frontend_network_q2_client *owner,const qa
         qa_net_address_equal(&request->endpoint,&held->endpoint,true) && protocol_equal(request->protocol,held->protocol) &&
         request->seat_count==1 && request->seats && request->seats[0].seat.owner==owner->binding.seat.owner &&
         request->seats[0].seat.index==owner->binding.seat.index && request->seats[0].remote_index==0 &&
-        qa_sha256_equal(&request->composition,&held->composition)) ||
+        request->composition==held->composition) ||
         frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 attach lacks its authentic pending Source claim");
 }
 bool frontend_network_q2_client_receive(frontend_network_q2_client *owner,const qa_net_datagram *packet,

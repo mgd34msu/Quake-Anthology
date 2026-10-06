@@ -17,7 +17,6 @@ typedef struct qa_launch_restored_instance {
     size_t interface_count;
     const qa_catalog_weapon_behavior *const *behaviors;
     size_t behavior_count;
-    qa_sha256_digest identity;
 } qa_launch_restored_instance;
 typedef struct qa_launch_restore_content {
     void *context;

@@ -96,7 +96,7 @@ typedef struct qa_network_peer_ops {
     bool (*command)(void *, const qa_network_command *, qa_error *);
     /* Queue signon/travel through source reliability, retire stale wire deltas.
      * Failure after restart faults this connection and disconnects it. */
-    bool (*restart)(void *, uint64_t epoch, const qa_sha256_digest *, qa_error *);
+    bool (*restart)(void *, uint64_t epoch, const uint64_t *, qa_error *);
     bool (*rebind)(void *, const qa_net_address *, qa_error *);
     void (*close)(void *);
     /* Pure held-decoder predicate. The sole receiver stops polling and
@@ -148,7 +148,7 @@ bool qa_network_accept_unified_input(qa_network_runtime *,qa_net_client_id,qa_ne
 bool qa_network_snapshot_apply(qa_network_runtime *, qa_net_client_id,
                                 const qa_network_snapshot *, qa_error *);
 bool qa_network_restart(qa_network_runtime *, qa_net_client_id,
-                         const qa_sha256_digest *, qa_error *);
+                         const uint64_t *, qa_error *);
 bool qa_network_reconnect(qa_network_runtime *, qa_net_client_id,
                            const qa_net_address *, qa_bytes proof, uint64_t now_ns, qa_error *);
 #endif

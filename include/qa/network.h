@@ -252,7 +252,7 @@ typedef struct qa_net_client {
     const qa_net_seat_binding *seats;
     size_t seat_count;
     uint64_t connected_ns, received_ns;
-    qa_sha256_digest composition;
+    uint64_t composition;
 } qa_net_client;
 typedef struct qa_net_connect {
     qa_net_attachment attachment;
@@ -260,7 +260,7 @@ typedef struct qa_net_connect {
     qa_net_protocol_id protocol;
     const qa_net_seat_binding *seats;
     size_t seat_count;
-    qa_sha256_digest composition;
+    uint64_t composition;
 } qa_net_connect;
 /* Source admission is mandatory: native protocols cannot silently omit mixed
  * state. The caller compares representability against its resolved recipe. */
@@ -276,7 +276,7 @@ bool qa_net_connections_phase(qa_net_connections *, qa_net_client_id, qa_net_pha
 /* Re-admits a changed world/composition and starts gamestate sign-on while
  * retaining the connection identity and seats. Rejection leaves it unchanged. */
 bool qa_net_connections_restart(qa_net_connections *, qa_net_client_id,
-                                 const qa_sha256_digest *, qa_error *);
+                                 const uint64_t *, qa_error *);
 bool qa_net_connections_received(qa_net_connections *, qa_net_client_id, uint64_t, qa_error *);
 bool qa_net_connections_rebind(qa_net_connections *, qa_net_client_id, const qa_net_address *, qa_error *);
 bool qa_net_connections_remove(qa_net_connections *, qa_net_client_id, qa_error *);

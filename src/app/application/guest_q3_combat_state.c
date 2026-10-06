@@ -24,7 +24,7 @@ bool application_q3_combat_actor_current(const application_q3_combat_actor *a, q
         role->abi != application_q3_combat_profile_abi(a->profile) ||
         !role->path || strcmp(role->path, application_q3_combat_profile_path(a->profile)) ||
         qa_qvm_get_role(role->vm) != QA_QVM_GAME || qa_qvm_get_abi(role->vm) != role->abi ||
-        !qa_sha256_equal(qa_qvm_digest(role->vm), qa_qvm_image_digest(role->image)) ||
+        (qa_qvm_image_of(role->vm) != role->image) ||
         !qa_q3_host_game_data_read(role->host, &table) || !table_equal(table, a->table) || a->slot >= table.entity_count)
         return fail(error, QA_ERROR_NOT_FOUND, "Original Q3 combat executor or located table changed");
     return qa_qvm_read(role->vm, 0, NULL, 0, error) &&

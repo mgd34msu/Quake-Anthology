@@ -10,17 +10,12 @@ static bool signature(qa_source_save_io *io, const application_q3_weapon_models 
     uint8_t magic[8] = {'Q','A','G','3','W','M',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','W','M',0,0};
     uint32_t abi = owner->module.profile->abi;
-    qa_sha256_digest digest = owner->module.profile->artifact;
-    qa_sha256_digest game_digest = owner->module.profile->game_artifact;
     uint32_t game_abi = owner->module.profile->game_abi;
     bool present = owner->module.profile->present;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) ||
-        !qa_source_save_bytes(io, digest.bytes, sizeof(digest.bytes)) || !qa_source_save_u32(io, &abi) ||
-        !qa_source_save_bytes(io, game_digest.bytes, sizeof(game_digest.bytes)) || !qa_source_save_u32(io, &game_abi) ||
+        !qa_source_save_u32(io, &abi) || !qa_source_save_u32(io, &game_abi) ||
         !qa_source_save_bool(io, &present)) return false;
     return (!memcmp(magic, expected, sizeof(magic)) && abi == (uint32_t)owner->module.profile->abi &&
-        qa_sha256_equal(&digest, &owner->module.profile->artifact) &&
-        qa_sha256_equal(&game_digest, &owner->module.profile->game_artifact) &&
         game_abi == (uint32_t)owner->module.profile->game_abi && present == owner->module.profile->present) ||
         application_fail(io->error, QA_ERROR_FORMAT, "CG weapon model continuation differs from its actual artifact");
 }

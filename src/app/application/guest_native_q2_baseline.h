@@ -3,6 +3,9 @@
 #include "qa/native_host.h"
 struct application_provider;
 struct application_native_q2_baseline;
+struct qa_launch_instance;
+bool application_native_q2_launch_matches(const struct qa_launch_instance *,
+    const struct qa_launch_instance *);
 /* The outer save producer owns both isolated applications until end or abort.
  * Original GAME restore precedes begin; original LEVEL restore runs after spawn
  * while this phase remains active. HOST restore follows successful end. */

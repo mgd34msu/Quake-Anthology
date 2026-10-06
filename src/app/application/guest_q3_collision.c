@@ -22,7 +22,7 @@ static bool collision_current(void *context, const qa_q3_host *host, const qa_qv
         role->kind != QA_QVM_CGAME || role->host != host || role->vm != vm || role->image != image ||
         !role->artifact || !role->descriptor || !descriptor ||
         descriptor->storage != role->descriptor->storage || descriptor->content != role->descriptor->content ||
-        !qa_sha256_equal(&descriptor->identity, &role->descriptor->identity) ||
+        (descriptor->identity != role->descriptor->identity) ||
         role->artifact->view != descriptor->content || role->artifact->image != image ||
         !role->collision_services.geometry ||
         role->collision_services.geometry(role->collision_services.context) != geometry ||
@@ -80,7 +80,7 @@ bool qa_application_q3_collision_scene_hold(qa_application *app, qa_actor_owner 
         !qa_q3_host_client_context_read(found->host, &host) || !source.descriptor || !found->descriptor ||
         source.descriptor->storage != found->descriptor->storage ||
         source.descriptor->content != found->descriptor->content ||
-        !qa_sha256_equal(&source.descriptor->identity, &found->descriptor->identity) ||
+        (source.descriptor->identity != found->descriptor->identity) ||
         host.session != app->session || host.owner != receiver || host.service_owner != service_owner ||
         host.role != QA_QVM_CGAME || host.command_context.seat != seat ||
         host.console != source.console || host.cvars != source.cvars || !host.frontend_lifetime)

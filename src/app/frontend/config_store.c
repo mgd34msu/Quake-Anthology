@@ -58,7 +58,6 @@ struct frontend_config_source {
     const qa_launch_snapshot *candidate;
     qa_launch_instance_lease *metadata;
     char *saved_instance;
-    qa_sha256_digest saved_identity;
     qa_console *console;
     qa_cvars *cvars,*movement,*fallback;
     frontend_config_files *files;
@@ -1713,7 +1712,7 @@ bool frontend_config_source_cvar_entered(void *context,const qa_q3_host *host,co
     if (!qa_application_q3_game_configuration_entered_read(source->application,host,&entered,error)) return false;
     return (entered.descriptor && entered.descriptor->storage==tuple.descriptor->storage &&
         entered.descriptor->content==tuple.descriptor->content && entered.descriptor->roles==tuple.descriptor->roles &&
-        qa_sha256_equal(&entered.descriptor->identity,&tuple.descriptor->identity) &&
+        entered.descriptor->identity==tuple.descriptor->identity &&
         same_scope(entered.scope,tuple.scope) && entered.console==tuple.console && entered.cvars==tuple.cvars &&
         same_command(command,&entered.command)) ||
         fail(error,QA_ERROR_ARGUMENT,"Named GAME cvar entry differs from its retained physical configuration");
@@ -2087,8 +2086,7 @@ static bool same_text(const char *left,const char *right)
 { return (!left && !right) || (left && right && !strcmp(left,right)); }
 static bool same_resource(const qa_resource *left,const qa_resource *right)
 {
-    return (!left && !right) || (left && right &&
-        qa_sha256_equal(qa_resource_digest(left),qa_resource_digest(right)));
+    return left==right;
 }
 static bool primary_source(const qa_launch_snapshot *snapshot,const qa_launch_instance *selected)
 {
@@ -2152,8 +2150,8 @@ static bool same_profile(const qa_launch_instance *previous,const qa_launch_inst
         const qa_catalog_weapon_behavior *x=previous->behaviors[i],*y=selected->behaviors[i];
         if (!same_text(x->id,y->id) || x->runtime!=y->runtime || x->role!=y->role ||
             !same_text(x->artifact_path,y->artifact_path) ||
-            !qa_sha256_equal(&x->declaration_digest,&y->declaration_digest) ||
-            !qa_sha256_equal(&x->artifact_digest,&y->artifact_digest)) return false;
+            !same_resource(x->declaration_resource,y->declaration_resource) ||
+            !same_resource(x->artifact_resource,y->artifact_resource)) return false;
     }
     return true;
 }

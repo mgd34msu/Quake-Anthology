@@ -802,7 +802,6 @@ static bool input_recipient_fields(void *context,qa_source_save_io *io,qa_input_
     qa_command_context command=reading?(qa_command_context){0}:options->context;
     uint32_t physical=reading?0:options->seat,dialect=command.dialect,origin=command.origin;
     uint64_t registry=reading?0:command.registry,generation=0;
-    qa_sha256_digest identity={{0}};
     qa_application_client_source source;
     if (!saved_seat_ready(seat) || (!reading &&
         (!command.owner || command.owner>UINT32_MAX ||
@@ -810,9 +809,9 @@ static bool input_recipient_fields(void *context,qa_source_save_io *io,qa_input_
              command.seat,&source,io->error) || !qa_application_client_associated(seat->frontend->application,&source) ||
          source.context.physical_seat!=seat->id || options->console!=source.context.console ||
          options->cvars!=source.context.cvars || !same_recipient_command(&command,&source.context.command)))) return false;
-    if (!reading) { identity=source.descriptor->identity; generation=source.configuration_generation; }
+    if (!reading) generation=source.configuration_generation;
     if (!qa_source_save_u32(io,&physical) || physical!=seat->id ||
-        !qa_source_save_bytes(io,&identity,sizeof(identity)) || !qa_source_save_u64(io,&generation) ||
+        !qa_source_save_u64(io,&generation) ||
         !qa_source_save_u64(io,&registry) || !registry ||
         !qa_source_save_u64(io,&command.owner) || !command.owner || command.owner>UINT32_MAX ||
         !qa_source_save_u64(io,&command.session) || !qa_source_save_u64(io,&command.client) ||
@@ -828,8 +827,7 @@ static bool input_recipient_fields(void *context,qa_source_save_io *io,qa_input_
         if (!seat->frontend->source_restoring ||
             !qa_application_client_physical_read(seat->frontend->application,(qa_actor_owner)command.owner,
                 command.seat,&source,io->error) || !qa_application_client_associated(seat->frontend->application,&source) ||
-            source.context.physical_seat!=seat->id || source.configuration_generation!=generation ||
-            !qa_sha256_equal(&source.descriptor->identity,&identity)) return false;
+            source.context.physical_seat!=seat->id || source.configuration_generation!=generation) return false;
         command.registry=source.context.command.registry;
         if (!same_recipient_command(&command,&source.context.command)) return false;
         *options=(qa_input_seat_options){.seat=physical,.context=source.context.command,

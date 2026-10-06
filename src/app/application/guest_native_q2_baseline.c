@@ -1,6 +1,50 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_baseline.h"
 
+static bool same_text(const char *left, const char *right)
+{
+    return left == right || (left && right && !strcmp(left, right));
+}
+static bool same_resource(const qa_resource *left, const qa_resource *right)
+{
+    return left == right || (left && right &&
+        same_text(qa_resource_path(left), qa_resource_path(right)) &&
+        qa_resource_bytes(left).size == qa_resource_bytes(right).size);
+}
+bool application_native_q2_launch_matches(const qa_launch_instance *left, const qa_launch_instance *right)
+{
+    const qa_launch_provider *a = &left->selection, *b = &right->selection;
+    const qa_clock_config *x = &a->clock, *y = &b->clock;
+    if (a->product != b->product || a->runtime != b->runtime ||
+        !same_text(a->instance, b->instance) || !same_text(a->implementation, b->implementation) ||
+        !same_text(a->artifact, b->artifact) || !same_text(a->component, b->component) ||
+        a->options.size != b->options.size ||
+        (a->options.size && memcmp(a->options.data, b->options.data, a->options.size)) ||
+        x->kind != y->kind || x->initial_time_ns != y->initial_time_ns ||
+        x->interval_ns != y->interval_ns || x->minimum_frame_ns != y->minimum_frame_ns ||
+        x->maximum_frame_ns != y->maximum_frame_ns || x->initial_lead_ns != y->initial_lead_ns ||
+        x->maximum_steps != y->maximum_steps ||
+        !same_resource(left->artifact, right->artifact) ||
+        !same_resource(left->declaration, right->declaration) ||
+        left->interface_count != right->interface_count || left->behavior_count != right->behavior_count)
+        return false;
+    for (size_t i = 0; i < left->interface_count; ++i)
+        if (left->interfaces[i].product != right->interfaces[i].product ||
+            !same_text(left->interfaces[i].path, right->interfaces[i].path) ||
+            !same_resource(left->interfaces[i].resource, right->interfaces[i].resource)) return false;
+    for (size_t i = 0; i < left->behavior_count; ++i) {
+        const qa_catalog_weapon_behavior *a_behavior = left->behaviors[i], *b_behavior = right->behaviors[i];
+        if (a_behavior->product != b_behavior->product || a_behavior->runtime != b_behavior->runtime ||
+            a_behavior->role != b_behavior->role || !same_text(a_behavior->id, b_behavior->id) ||
+            !same_resource(a_behavior->artifact_resource, b_behavior->artifact_resource) ||
+            !same_resource(a_behavior->declaration_resource, b_behavior->declaration_resource) ||
+            a_behavior->entry.size != b_behavior->entry.size ||
+            (a_behavior->entry.size && memcmp(a_behavior->entry.data, b_behavior->entry.data, a_behavior->entry.size)))
+            return false;
+    }
+    return true;
+}
+
 struct application_native_q2_baseline {
     application_provider *target, *baseline;
     qa_native_host *baseline_host;
@@ -54,7 +98,7 @@ bool application_native_q2_baseline_begin(application_provider *target, applicat
         source->definition != temporary->definition || source->profile != temporary->profile ||
         source->profile == QA_NATIVE_Q2_CGAME_API2023 || !source->initialized ||
         !target->state.native.host || !baseline->state.native.host ||
-        !qa_sha256_equal(&target->launch->identity, &baseline->launch->identity) ||
+        !application_native_q2_launch_matches(target->launch, baseline->launch) ||
         !application_native_q2_idle(target) || !application_native_q2_idle(baseline))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native baseline requires two isolated prepared matching application owners");
     *out = NULL;
@@ -63,10 +107,15 @@ bool application_native_q2_baseline_begin(application_provider *target, applicat
      * public ABI while SpawnEntities uses isolated baseline services. */
     qa_native_module_info target_info = qa_native_module_describe(target->state.native.module);
     qa_native_module_info baseline_info = qa_native_module_describe(baseline->state.native.module);
-    if (!qa_sha256_equal(&target_info.image.digest, &baseline_info.image.digest) ||
-        (target->launch->declaration != NULL) != (baseline->launch->declaration != NULL) ||
-        (target->launch->declaration && !qa_sha256_equal(qa_resource_digest(target->launch->declaration),
-            qa_resource_digest(baseline->launch->declaration))))
+    if (target_info.profile != baseline_info.profile ||
+        target_info.image.format != baseline_info.image.format ||
+        target_info.image.target.os != baseline_info.image.target.os ||
+        target_info.image.target.arch != baseline_info.image.target.arch ||
+        target_info.image.target.abi != baseline_info.image.target.abi ||
+        target_info.image.target.pointer_bytes != baseline_info.image.target.pointer_bytes ||
+        target_info.image.preferred_base != baseline_info.image.preferred_base ||
+        target_info.image.image_bytes != baseline_info.image.image_bytes ||
+        !same_text(target_info.source, baseline_info.source))
         return application_fail(error, QA_ERROR_FORMAT, "Native baseline artifact or declaration differs from the target owner");
     if (!application_native_q2_prepare_restore(target, error) ||
         !application_native_q2_prepare_restore(baseline, error)) return false;

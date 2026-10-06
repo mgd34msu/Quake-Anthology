@@ -15,7 +15,7 @@ struct qa_qvm_image {
     qa_qvm_instruction *instructions;
     qvm_code_word *code;
     qa_buffer initialized;
-    qa_sha256_digest digest;
+    size_t source_bytes;
 };
 struct qa_qvm_write_watch;
 struct qa_qvm {
@@ -30,7 +30,7 @@ struct qa_qvm {
     uint32_t api_version;
     bool retired;
     bool candidate_inventory, candidate_inventory_invalid;
-    qa_sha256_digest candidate_inventory_digest;
+    qa_buffer candidate_inventory_state;
     void *execution; /* Executor owns all invocation, operand and hook state. */
 };
 

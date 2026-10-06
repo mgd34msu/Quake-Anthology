@@ -82,7 +82,7 @@ static bool process_current(void *context, const qa_launch_instance *descriptor,
     if (!provider || !provider->application || !provider->launch || !descriptor ||
         provider->state.native.q2_engine != engine || !engine->prepared ||
         receiver != provider->owner || service_owner != provider->owner ||
-        !qa_sha256_equal(&descriptor->identity, &provider->launch->identity) ||
+        descriptor->identity != provider->launch->identity ||
         !descriptor->artifact || !provider->launch->artifact ||
         qa_resource_id(descriptor->artifact) != qa_resource_id(provider->launch->artifact))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 process lost its prepared source identity");
@@ -310,7 +310,7 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 has no native cgame API");
     if (!qa_native_module_load(qa_resource_bytes(provider->launch->artifact),
             provider->launch->selection.artifact, engine->profile,
-            qa_resource_digest(provider->launch->artifact), &provider->state.native.module, error)) return false;
+            &provider->state.native.module, error)) return false;
     if (provider->launch->declaration && !qa_native_declaration_load(
             qa_resource_bytes(provider->launch->declaration), provider->launch->selection.artifact,
             provider->state.native.module, &engine->declaration, error)) return false;
@@ -487,7 +487,6 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
         .observe = engine->source_attack != NULL || engine->source_combat != NULL ||
             engine->source_control != NULL || engine->primary_inventory != NULL ||
             application_native_q2_callbacks_observation_required(engine->callbacks),
-        .declaration_digest = qa_native_declaration_digest(engine->declaration),
         .runner = provider->application->native_runner,
         .tick_rate = interval ? (uint32_t)(UINT64_C(1000000000) / interval) : 0,
         .frame_seconds = (float)interval / 1000000000.f,

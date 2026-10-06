@@ -39,7 +39,7 @@ static bool image(qa_source_save_io *io, qa_native_image_info *saved)
     uint32_t format = saved->format, os = saved->target.os, arch = saved->target.arch, abi = saved->target.abi;
     if (!qa_source_save_u32(io, &format) || !qa_source_save_u32(io, &os) || !qa_source_save_u32(io, &arch) || !qa_source_save_u32(io, &abi) ||
         !qa_source_save_bytes(io, &saved->target.pointer_bytes, 1) || !qa_source_save_u64(io, &saved->preferred_base) ||
-        !qa_source_save_u64(io, &saved->image_bytes) || !qa_source_save_bytes(io, saved->digest.bytes, sizeof(saved->digest.bytes))) return false;
+        !qa_source_save_u64(io, &saved->image_bytes)) return false;
     saved->format = (qa_native_image_format)format;
     saved->target.os = (qa_native_os)os;
     saved->target.arch = (qa_native_arch)arch;
@@ -52,8 +52,7 @@ static bool same_image(const qa_native_image_info *saved, const qa_native_image_
     return saved->format == expected->format && saved->target.os == expected->target.os &&
         saved->target.arch == expected->target.arch && saved->target.abi == expected->target.abi &&
         saved->target.pointer_bytes == expected->target.pointer_bytes &&
-        saved->preferred_base == expected->preferred_base && saved->image_bytes == expected->image_bytes &&
-        qa_sha256_equal(&saved->digest, &expected->digest);
+        saved->preferred_base == expected->preferred_base && saved->image_bytes == expected->image_bytes;
 }
 
 static bool cpu(qa_source_save_io *io, qa_native_guest_cpu *state)
@@ -155,8 +154,7 @@ bool qa_native_guest_checkpoint(qa_native_guest *guest, const qa_native_guest_ba
         guest_backing *backing = &guest->backings[i]; uint64_t length = backing->bytes;
         uint32_t file = backing->file ? 1 : 0;
         okay = qa_source_save_u64(&io, &backing->id) && qa_source_save_u64(&io, &length) && qa_source_save_u32(&io, &file);
-        if (okay && file) okay = qa_source_save_bytes(&io, backing->source.digest.bytes, 32) &&
-            qa_source_save_u64(&io, &backing->source.bytes) && qa_source_save_u64(&io, &backing->source.offset) &&
+        if (okay && file) okay = qa_source_save_u64(&io, &backing->source.bytes) && qa_source_save_u64(&io, &backing->source.offset) &&
             qa_source_save_u64(&io, &backing->source.accessible_bytes) &&
             qa_source_save_u64(&io, &backing->source.capability);
         if (okay) okay = backing_delta(&io, backing->data, backing->id, backing->bytes,
@@ -192,7 +190,7 @@ static bool restore_backings(qa_source_save_io *io, qa_native_guest *guest,
         uint64_t id = 0, length = 0; uint32_t file = 0;
         qa_native_guest_file source = {0};
         if (!qa_source_save_u64(io, &id) || !qa_source_save_u64(io, &length) || !qa_source_save_u32(io, &file) || file > 1) return false;
-        if (file && (!qa_source_save_bytes(io, source.digest.bytes, 32) || !qa_source_save_u64(io, &source.bytes) ||
+        if (file && (!qa_source_save_u64(io, &source.bytes) ||
             !qa_source_save_u64(io, &source.offset) || !qa_source_save_u64(io, &source.accessible_bytes) ||
             !qa_source_save_u64(io, &source.capability))) return false;
         if (!id || id >= guest->next_backing || guest_backing_at(guest, id) ||

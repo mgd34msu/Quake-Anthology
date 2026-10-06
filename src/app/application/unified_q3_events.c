@@ -51,7 +51,7 @@ bool application_unified_q3_component_player(qa_application *app, const applicat
 {
     if (!app || !p || !event || event->time_ms < 0 || !event->actor.registry || !p->product || !p->metadata)
         return application_fail(e, QA_ERROR_ARGUMENT, "Original player event lost its actual component delivery");
-    if (!p->module || !p->module->id || !p->module->artifact_path || !p->module->digest || !p->module->revision)
+    if (!p->module || !p->module->id || !p->module->artifact_path)
         return application_fail(e, QA_ERROR_ARGUMENT, "Original player event lost its admitted module identity owner");
     qa_unified_q3_event value = {.kind = QA_UNIFIED_Q3_PLAYER_EVENT, .actor = event->actor,
         .player = event->player, .event = event->event, .parameter = event->parameter,

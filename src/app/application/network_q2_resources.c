@@ -10,33 +10,6 @@
 #include <limits.h>
 #include <stdio.h>
 
-static bool acquisition_copy(const qa_vfs_acquisition *source, qa_vfs_acquisition *out, qa_error *error)
-{
-    *out = *source;
-    out->path = out->lookup_path = out->link_source = out->link_target = NULL;
-    out->opening.order = NULL; out->opening.prefix = NULL;
-    const char *texts[] = {source->path, source->lookup_path, source->link_source, source->link_target, source->opening.prefix};
-    char **copies[] = {&out->path, &out->lookup_path, &out->link_source, &out->link_target};
-    for (size_t i = 0; i < 5; ++i) {
-        if (!texts[i]) continue;
-        char *copy = application_network_q2_copy(texts[i], error);
-        if (!copy) { qa_vfs_acquisition_dispose(out); return false; }
-        if (i < 4) *copies[i] = copy;
-        else out->opening.prefix = copy;
-    }
-    if (source->opening.order_count) {
-        if (!source->opening.order || source->opening.order_count > SIZE_MAX / sizeof(qa_mount_id)) {
-            qa_vfs_acquisition_dispose(out);
-            return application_fail(error, QA_ERROR_FORMAT, "Q2 resource acquisition lost its genuine opening order");
-        }
-        qa_mount_id *order = malloc(source->opening.order_count * sizeof(*order));
-        if (!order) { qa_vfs_acquisition_dispose(out); return application_fail(error, QA_ERROR_MEMORY, "Retaining Q2 resource opening order"); }
-        memcpy(order, source->opening.order, source->opening.order_count * sizeof(*order));
-        out->opening.order = order;
-    }
-    return true;
-}
-
 static void held_free(application_q2_held_resource *held)
 {
     qa_resource_release(held->resource); qa_vfs_acquisition_dispose(&held->opening);
@@ -83,103 +56,68 @@ static bool held_append(qa_application_network_q2 *owner, application_q2_held_re
     *held = (application_q2_held_resource){0}; return true;
 }
 
-static void hash_number(qa_sha256_context *hash, uint64_t number)
+static bool text_equal(const char *a, const char *b)
+{ return a == b || (a && b && !strcmp(a, b)); }
+
+static bool bytes_equal(qa_bytes a, qa_bytes b)
+{ return a.size == b.size && (!a.size || !memcmp(a.data, b.data, a.size)); }
+
+static bool acquisition_equal(const qa_vfs_acquisition *a, const qa_vfs_acquisition *b)
 {
-    uint8_t bytes[8]; qa_store_u64le(bytes, number);
-    qa_sha256_update(hash, (qa_bytes){bytes, sizeof(bytes)});
+    return a->mount == b->mount && a->resource_id == b->resource_id &&
+        text_equal(a->path, b->path) && text_equal(a->lookup_path, b->lookup_path) &&
+        text_equal(a->link_source, b->link_source) && text_equal(a->link_target, b->link_target) &&
+        a->opening_present == b->opening_present && a->opening.rank == b->opening.rank &&
+        text_equal(a->opening.prefix, b->opening.prefix) && a->opening.user_overlay == b->opening.user_overlay &&
+        a->opening.order_count == b->opening.order_count && (!a->opening.order_count ||
+        !memcmp(a->opening.order, b->opening.order, a->opening.order_count * sizeof(*a->opening.order)));
 }
 
-static void hash_text(qa_sha256_context *hash, const char *text)
+static bool image_options_equal(const qa_scene_image_options *a, const qa_scene_image_options *b)
 {
-    hash_number(hash, text ? (uint64_t)strlen(text) + 1 : 0);
-    if (text) qa_sha256_update(hash, (qa_bytes){(const uint8_t *)text, strlen(text)});
+    return a->family == b->family && a->wrap == b->wrap && a->filter == b->filter && a->usage == b->usage &&
+        a->mipmap == b->mipmap && a->transparent == b->transparent && a->fullbright_only == b->fullbright_only &&
+        a->transparent_index == b->transparent_index && a->source_q3 == b->source_q3 &&
+        (!a->source_q3 || qa_q3_image_upload_options_equal(&a->source_upload, &b->source_upload));
 }
 
-static void hash_float(qa_sha256_context *hash, float value)
+static bool held_same(const application_q2_held_resource *a, const application_q2_held_resource *b, bool derived)
 {
-    uint32_t bits; memcpy(&bits, &value, sizeof(bits)); hash_number(hash, bits);
+    if (a->identity != b->identity || a->provider != b->provider || a->kind != b->kind ||
+        a->missing != b->missing || a->authority != b->authority || !text_equal(a->path, b->path) ||
+        a->resource != b->resource || !qa_vfs_lookup_equal(a->view, b->view) ||
+        (a->resource && !acquisition_equal(&a->opening, &b->opening))) return false;
+    if (a->kind == APPLICATION_Q2_HELD_MATERIAL && (!text_equal(a->script_name, b->script_name) ||
+        a->source_offset != b->source_offset || a->script_size != b->script_size ||
+        a->name_offset != b->name_offset || a->name_size != b->name_size || (!a->resource &&
+        !bytes_equal((qa_bytes){a->catalog_bytes.data, a->catalog_bytes.size},
+                     (qa_bytes){b->catalog_bytes.data, b->catalog_bytes.size})))) return false;
+    if (a->kind == APPLICATION_Q2_HELD_EVENT && (a->event_kind != b->event_kind ||
+        !text_equal(a->event_key, b->event_key) || a->event_custody != b->event_custody)) return false;
+    bool images = a->kind == APPLICATION_Q2_HELD_IMAGE || a->kind == APPLICATION_Q2_HELD_MATERIAL ||
+        a->kind == APPLICATION_Q2_HELD_ALIAS || (derived && a->kind == APPLICATION_Q2_HELD_MODEL && a->model_scope);
+    if (images && (!image_options_equal(&a->image_options, &b->image_options) ||
+        a->image_palette_dependency != b->image_palette_dependency ||
+        !bytes_equal((qa_bytes){a->image_palette.data, a->image_palette.size},
+                     (qa_bytes){b->image_palette.data, b->image_palette.size}) ||
+        !bytes_equal((qa_bytes){a->image_translation.data, a->image_translation.size},
+                     (qa_bytes){b->image_translation.data, b->image_translation.size}))) return false;
+    if (a->kind == APPLICATION_Q2_HELD_ALIAS && (!text_equal(a->image_request, b->image_request) ||
+        !text_equal(a->image_logical_path, b->image_logical_path) ||
+        a->image_palette_attempted != b->image_palette_attempted || a->image_rejection != b->image_rejection ||
+        a->image_palette_error != b->image_palette_error || a->image_logical_dependency != b->image_logical_dependency)) return false;
+    if (a->kind == APPLICATION_Q2_HELD_IMAGE_RECEIPT && a->receipt_source != b->receipt_source) return false;
+    return !derived || (a->model_scope == b->model_scope && bytes_equal(
+        (qa_bytes){a->wire_bytes.data, a->wire_bytes.size}, (qa_bytes){b->wire_bytes.data, b->wire_bytes.size}));
 }
 
-static void hash_image_options(qa_sha256_context *hash, const qa_scene_image_options *options)
+static bool held_serial(qa_application_network_q2 *owner, application_q2_held_resource *held, qa_error *error)
 {
-    hash_number(hash, (uint64_t)options->family); hash_number(hash, (uint64_t)options->wrap);
-    hash_number(hash, (uint64_t)options->filter); hash_number(hash, (uint64_t)options->usage);
-    hash_number(hash, options->mipmap); hash_number(hash, options->transparent);
-    hash_number(hash, options->fullbright_only); hash_number(hash, (uint64_t)(int64_t)options->transparent_index);
-    hash_number(hash, options->source_q3);
-    if (options->source_q3) {
-        const qa_q3_image_upload_options *upload = &options->source_upload;
-        hash_number(hash, upload->color.device.hardware_gamma); hash_number(hash, upload->color.device.fullscreen);
-        hash_number(hash, (uint64_t)(int64_t)upload->color.device.color_bits);
-        hash_number(hash, (uint64_t)(int64_t)upload->color.requested_overbright_bits);
-        hash_float(hash, upload->color.gamma); hash_float(hash, upload->color.intensity);
-        hash_number(hash, (uint64_t)(int64_t)upload->picmip); hash_number(hash, upload->maximum_texture_size);
-        hash_number(hash, upload->round_down); hash_number(hash, upload->simple_mips);
-        hash_number(hash, upload->color_mips); hash_number(hash, upload->allow_picmip); hash_number(hash, upload->mipmap);
-    }
-}
-
-static void qualified_digest(const application_q2_held_resource *held, bool derived, qa_sha256_digest *digest)
-{
-    qa_sha256_context hash;
-    qa_sha256_init(&hash);
-    qa_sha256_update(&hash, (qa_bytes){held->identity.bytes, sizeof(held->identity.bytes)});
-    hash_number(&hash, (uint64_t)held->kind); hash_number(&hash, held->missing);
-    if (held->kind != APPLICATION_Q2_HELD_MODEL)
-        qa_sha256_update(&hash, (qa_bytes){held->authority.bytes, sizeof(held->authority.bytes)});
-    hash_text(&hash, held->path);
-    if (held->resource) {
-        qa_sha256_update(&hash, (qa_bytes){qa_resource_digest(held->resource)->bytes, 32});
-        hash_number(&hash, held->opening.mount); hash_number(&hash, held->opening.resource_id);
-        hash_text(&hash, held->opening.lookup_path); hash_text(&hash, held->opening.link_source);
-        hash_text(&hash, held->opening.link_target); hash_number(&hash, (uint64_t)held->opening.opening.rank);
-        hash_text(&hash, held->opening.opening.prefix); hash_number(&hash, held->opening.opening.user_overlay);
-        hash_number(&hash, held->opening.opening.order_count);
-        for (size_t i = 0; i < held->opening.opening.order_count; ++i) hash_number(&hash, held->opening.opening.order[i]);
-    }
-    if (held->kind == APPLICATION_Q2_HELD_MATERIAL) {
-        hash_text(&hash, held->script_name); hash_number(&hash, held->source_offset);
-        hash_number(&hash, held->script_size); hash_number(&hash, held->name_offset); hash_number(&hash, held->name_size);
-        if (!held->resource) qa_sha256_update(&hash, (qa_bytes){held->catalog_bytes.data, held->catalog_bytes.size});
-    }
-    if (held->kind == APPLICATION_Q2_HELD_EVENT) {
-        hash_number(&hash, (uint64_t)held->event_kind);
-        hash_text(&hash, held->event_key); hash_number(&hash, held->event_custody);
-    }
-    if (held->kind == APPLICATION_Q2_HELD_IMAGE || held->kind == APPLICATION_Q2_HELD_MATERIAL ||
-        held->kind == APPLICATION_Q2_HELD_ALIAS) {
-        hash_image_options(&hash, &held->image_options);
-        qa_sha256_update(&hash, (qa_bytes){held->image_palette_source.bytes, sizeof(held->image_palette_source.bytes)});
-        hash_number(&hash, held->image_palette.size);
-        qa_sha256_update(&hash, (qa_bytes){held->image_palette.data, held->image_palette.size});
-        hash_number(&hash, held->image_translation.size);
-        qa_sha256_update(&hash, (qa_bytes){held->image_translation.data, held->image_translation.size});
-    }
-    if (held->kind == APPLICATION_Q2_HELD_ALIAS) {
-        hash_text(&hash, held->image_request);
-        hash_text(&hash, held->image_logical_path);
-        hash_number(&hash, held->image_palette_attempted);
-        hash_number(&hash, (uint64_t)held->image_rejection); hash_number(&hash, (uint64_t)held->image_palette_error);
-        qa_sha256_update(&hash, (qa_bytes){held->image_logical_source.bytes, sizeof(held->image_logical_source.bytes)});
-    }
-    if (held->kind == APPLICATION_Q2_HELD_IMAGE_RECEIPT)
-        qa_sha256_update(&hash, (qa_bytes){held->receipt_source.bytes, sizeof(held->receipt_source.bytes)});
-    if (derived) {
-        if (held->kind == APPLICATION_Q2_HELD_MODEL) {
-            hash_number(&hash, held->model_scope);
-            if (held->model_scope) {
-                hash_image_options(&hash, &held->image_options);
-                qa_sha256_update(&hash, (qa_bytes){held->image_palette_source.bytes, 32});
-                hash_number(&hash, held->image_palette.size);
-                qa_sha256_update(&hash, (qa_bytes){held->image_palette.data, held->image_palette.size});
-                hash_number(&hash, held->image_translation.size);
-                qa_sha256_update(&hash, (qa_bytes){held->image_translation.data, held->image_translation.size});
-            }
-        }
-        hash_number(&hash, held->wire_bytes.size);
-        qa_sha256_update(&hash, (qa_bytes){held->wire_bytes.data, held->wire_bytes.size});
-    }
-    qa_sha256_final(&hash, digest);
+    if (held->serial) return true;
+    if (owner->held_resource_serial == UINT64_MAX)
+        return application_fail(error, QA_ERROR_MEMORY, "Q2 resource serial space is exhausted");
+    held->serial = ++owner->held_resource_serial;
+    return true;
 }
 
 static bool qualified_name(const application_q2_held_resource *held, char alias[64], qa_error *error)
@@ -193,17 +131,17 @@ static bool qualified_name(const application_q2_held_resource *held, char alias[
         held->kind != APPLICATION_Q2_HELD_IMAGE_RECEIPT) &&
         separator && extension < separator) || strlen(extension) > 8)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 mixed resource has no genuine bounded file extension");
-    qa_sha256_digest digest; char hex[65];
+    uint64_t serial = held->serial;
     if (held->sky_face) {
         if (held->sky_face > 6 || !held->sky_base)
             return application_fail(error, QA_ERROR_FORMAT, "Q2 sky dependency lost its genuine face receipt");
-        digest = held->sky_group;
-    } else qualified_digest(held, held->kind != APPLICATION_Q2_HELD_IMAGE_RECEIPT, &digest);
-    qa_sha256_hex(&digest, hex);
+        serial = held->sky_group;
+    }
+    if (!serial) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 alias has no actual resource serial");
     const char *category = held->kind == APPLICATION_Q2_HELD_EVENT && held->event_kind == QA_NATIVE_HOST_SOUND ?
         "sound" : !strncmp(held->sky_base ? held->sky_base : held->path, "players/", 8) ? "players" : "models";
-    if (held->sky_face) snprintf(alias, 64, "%s/qa/%.32s_%s%s", category, hex, faces[held->sky_face - 1], extension);
-    else snprintf(alias, 64, "%s/qa/%.32s%s", category, hex, extension);
+    if (held->sky_face) snprintf(alias, 64, "%s/qa/%016llx_%s%s", category, (unsigned long long)serial, faces[held->sky_face - 1], extension);
+    else snprintf(alias, 64, "%s/qa/%016llx%s", category, (unsigned long long)serial, extension);
     return true;
 }
 
@@ -224,17 +162,15 @@ static bool model_scope_finish(qa_application_network_q2 *owner,
 static bool held_store(qa_application_network_q2 *owner, application_q2_held_resource *held,
     size_t *out, qa_error *error)
 {
-    char alias[64];
-    if (!qualified_name(held, alias, error)) return false;
     for (size_t i = 0; i < owner->held_resource_count; ++i) {
         const application_q2_held_resource *old = &owner->held_resources[i];
-        if (strcmp(old->wire_path, alias)) continue;
-        qa_sha256_digest actual, retained; qualified_digest(held, true, &actual); qualified_digest(old, true, &retained);
-        if (!qa_sha256_equal(&actual, &retained) || held->sky_face != old->sky_face ||
-            !qa_sha256_equal(&held->sky_group, &old->sky_group) || !qa_vfs_lookup_equal(old->view, held->view))
-            return application_fail(error, QA_ERROR_FORMAT, "Q2 qualified dependency collides with another genuine acquisition");
-        *out = i; return true;
+        if (held_same(held, old, held->kind != APPLICATION_Q2_HELD_IMAGE_RECEIPT) &&
+            held->sky_face == old->sky_face && held->sky_group == old->sky_group) {
+            *out = i; return true;
+        }
     }
+    char alias[64];
+    if (!held_serial(owner, held, error) || !qualified_name(held, alias, error)) return false;
     held->wire_path = application_network_q2_copy(alias, error);
     if (!held->wire_path) return false;
     if (!model_scope_finish(owner, held, error)) return false;
@@ -245,8 +181,8 @@ static bool retained_opening(const qa_vfs *view, const char *path, const qa_reso
     const qa_vfs_acquisition *source, qa_vfs_acquisition *out, qa_error *error)
 {
     if (source) return source->resource_id == qa_resource_id(resource) &&
-        qa_vfs_acquisition_retained(view, source, error) && acquisition_copy(source, out, error);
-    bool found = false; qa_sha256_digest first = {0};
+        qa_vfs_acquisition_retained(view, source, error) && qa_vfs_acquisition_copy(source, out, error);
+    bool found = false;
     for (size_t i = 0; i < qa_vfs_retained_read_count(view); ++i) {
         qa_vfs_read_reference row;
         if (!qa_vfs_retained_read_at(view, i, &row) || row.resource != resource || !row.path ||
@@ -255,15 +191,13 @@ static bool retained_opening(const qa_vfs *view, const char *path, const qa_reso
             .path = (char *)row.path, .lookup_path = (char *)row.lookup_path,
             .link_source = (char *)row.link_source, .link_target = (char *)row.link_target,
             .opening = row.opening, .opening_present = true};
-        application_q2_held_resource receipt = {.path = (char *)row.path, .resource = (qa_resource *)resource, .opening = actual};
-        qa_sha256_digest digest; qualified_digest(&receipt, false, &digest);
-        if (found && !qa_sha256_equal(&first, &digest)) {
+        if (found && !acquisition_equal(out, &actual)) {
             qa_vfs_acquisition_dispose(out);
             return application_fail(error, QA_ERROR_ARGUMENT, "Q2 dependency has ambiguous actual historical opening recipes");
         }
         if (!found) {
-            if (!qa_vfs_acquisition_retained(view, &actual, error) || !acquisition_copy(&actual, out, error)) return false;
-            first = digest; found = true;
+            if (!qa_vfs_acquisition_retained(view, &actual, error) || !qa_vfs_acquisition_copy(&actual, out, error)) return false;
+            found = true;
         }
     }
     return found || application_fail(error, QA_ERROR_ARGUMENT, "Q2 dependency lost its actual retained opening receipt");
@@ -275,7 +209,7 @@ static bool dependency_prepare(const application_q2_held_resource *model, const 
 {
     *held = (application_q2_held_resource){.provider = model->provider, .identity = model->identity,
         .kind = APPLICATION_Q2_HELD_DEPENDENCY, .missing = resource == NULL};
-    qualified_digest(model, false, &held->authority);
+    held->authority = model->serial;
     held->path = qa_scene_model_image_path(name, error);
     held->instance = application_network_q2_copy(model->instance, error);
     if (!held->path || !held->instance || !qa_vfs_retain(model->view, error)) return false;
@@ -302,10 +236,9 @@ bool application_network_q2_dependency_of(const application_q2_held_resource *mo
     const application_q2_held_resource *dependency)
 {
     if (!model || !dependency || !model->view || !dependency->view ||
-        model->provider != dependency->provider || !qa_sha256_equal(&model->identity, &dependency->identity) ||
+        model->provider != dependency->provider || model->identity != dependency->identity ||
         !qa_vfs_lookup_equal(model->view, dependency->view)) return false;
-    qa_sha256_digest authority; qualified_digest(model, false, &authority);
-    return qa_sha256_equal(&authority, &dependency->authority);
+    return model->serial && model->serial == dependency->authority;
 }
 
 static bool buffer_copy(qa_bytes bytes, qa_buffer *out, qa_error *error)
@@ -338,7 +271,7 @@ bool application_network_q2_dependency_image(qa_application_network_q2 *owner,
     if (ok && palette_resource) {
         ok = application_network_q2_dependency_receipt(owner, model, palette_path, palette_resource,
             palette_opening, &held.image_palette_dependency, error);
-        if (ok) qualified_digest(&owner->held_resources[held.image_palette_dependency], false, &held.image_palette_source);
+
     }
     if (ok) {
         held.image_options.palette_rgb = (qa_bytes){held.image_palette.data, held.image_palette.size};
@@ -371,14 +304,14 @@ static bool alias_prepare(qa_application_network_q2 *owner, const application_q2
     if (ok && receipt->palette_source) {
         ok = application_network_q2_dependency_receipt(owner, model, receipt->palette_source->opening->path,
             receipt->palette_source->resource, receipt->palette_source->opening, &held->image_palette_dependency, error);
-        if (ok) qualified_digest(&owner->held_resources[held->image_palette_dependency], false, &held->image_palette_source);
+
     }
     if (ok && receipt->logical_source) {
         held->image_logical_path = qa_scene_model_image_path(receipt->logical_path, error);
         ok = held->image_logical_path && receipt->logical_opening && receipt->logical_opening->path &&
             application_network_q2_dependency_receipt(owner, model, receipt->logical_opening->path, receipt->logical_source,
             receipt->logical_opening, &held->image_logical_dependency, error);
-        if (ok) qualified_digest(&owner->held_resources[held->image_logical_dependency], false, &held->image_logical_source);
+
     }
     held->image_options.palette_rgb = (qa_bytes){held->image_palette.data, held->image_palette.size};
     held->image_options.translation = (qa_bytes){held->image_translation.data, held->image_translation.size};
@@ -396,14 +329,6 @@ bool application_network_q2_dependency_alias(qa_application_network_q2 *owner,
     held_free(&held); return ok;
 }
 
-static void image_receipt_digest(const application_q2_held_resource *alias, qa_sha256_digest *digest)
-{
-    qa_sha256_digest source; qualified_digest(alias, false, &source);
-    qa_sha256_context hash; qa_sha256_init(&hash);
-    qa_sha256_update(&hash, (qa_bytes){source.bytes, sizeof(source.bytes)});
-    hash_text(&hash, alias->wire_path); qa_sha256_final(&hash, digest);
-}
-
 bool application_network_q2_dependency_image_receipt(qa_application_network_q2 *owner,
     const application_q2_held_resource *model, size_t alias_index, size_t *out, qa_error *error)
 {
@@ -416,13 +341,13 @@ bool application_network_q2_dependency_image_receipt(qa_application_network_q2 *
     bool ok = dependency_prepare(model, model->path, model->resource, &model->opening, &held, error);
     held.kind = APPLICATION_Q2_HELD_IMAGE_RECEIPT;
     if (ok) {
-        image_receipt_digest(alias, &held.receipt_source);
+        held.receipt_source = alias->serial;
         held.dependencies = malloc(sizeof(*held.dependencies));
         if (!held.dependencies) ok = application_fail(error, QA_ERROR_MEMORY, "Retaining Q2 actual image receipt dependency");
         else { held.dependencies[0] = alias_index; held.dependency_count = 1; }
     }
     char name[64];
-    if (ok) ok = qualified_name(&held, name, error) &&
+    if (ok) ok = held_serial(owner, &held, error) && qualified_name(&held, name, error) &&
         application_network_q2_materials_image_receipt_encode(owner, alias, name, &held.wire_bytes, error) &&
         held_store(owner, &held, out, error);
     held_free(&held); return ok;
@@ -447,7 +372,7 @@ bool application_network_q2_material_resource(qa_application_network_q2 *owner,
         .kind = APPLICATION_Q2_HELD_MATERIAL, .source_offset = script->source_offset,
         .script_size = script->body.size, .name_offset = script->name_offset, .name_size = script->name_size,
         .image_options = {.family = family}, .image_palette_dependency = SIZE_MAX};
-    qualified_digest(model, false, &held.authority);
+    held.authority = model->serial;
     held.instance = application_network_q2_copy(model->instance, error);
     held.script_name = application_network_q2_copy(script->name, error);
     bool ok = held.instance && held.script_name && qa_vfs_retain(model->view, error);
@@ -481,11 +406,47 @@ bool application_network_q2_material_resource(qa_application_network_q2 *owner,
     if (ok && palette_source) {
         ok = application_network_q2_dependency_receipt(owner, model, palette_source->opening->path,
             palette_source->resource, palette_source->opening, &held.image_palette_dependency, error);
-        if (ok) qualified_digest(&owner->held_resources[held.image_palette_dependency], false, &held.image_palette_source);
+
     }
     held.image_options.palette_rgb = (qa_bytes){held.image_palette.data, held.image_palette.size};
     if (ok) ok = held_store(owner, &held, out, error);
     held_free(&held); return ok;
+}
+
+static bool sky_store(qa_application_network_q2 *owner, application_q2_held_resource faces[6],
+    const char *normalized, size_t out[6], char alias_base[64], qa_error *error)
+{
+    uint64_t group = 0;
+    for (size_t candidate = 0; candidate < owner->held_resource_count; ++candidate) {
+        const application_q2_held_resource *first = &owner->held_resources[candidate];
+        if (first->sky_face != 1 || !text_equal(first->sky_base, normalized) || !held_same(first, &faces[0], false)) continue;
+        bool same = true;
+        for (size_t face = 0; same && face < 6; ++face) {
+            bool found = false;
+            for (size_t i = 0; i < owner->held_resource_count; ++i) {
+                const application_q2_held_resource *old = &owner->held_resources[i];
+                if (old->sky_group == first->sky_group && old->sky_face == face + 1 &&
+                    text_equal(old->sky_base, normalized) && held_same(old, &faces[face], false)) {
+                    out[face] = i; found = true; break;
+                }
+            }
+            same = found;
+        }
+        if (same) { group = first->sky_group; break; }
+    }
+    if (!group) {
+        application_q2_held_resource receipt = {0};
+        if (!held_serial(owner, &receipt, error)) return false;
+        group = receipt.serial;
+        for (size_t i = 0; i < 6; ++i) {
+            faces[i].sky_base = application_network_q2_copy(normalized, error);
+            faces[i].sky_face = (uint8_t)(i + 1); faces[i].sky_group = group;
+            if (!faces[i].sky_base || !held_store(owner, &faces[i], &out[i], error)) return false;
+        }
+    }
+    snprintf(alias_base, 64, "%s/qa/%016llx", !strncmp(normalized, "players/", 8) ? "players" : "models",
+        (unsigned long long)group);
+    return true;
 }
 
 bool application_network_q2_sky_dependencies(qa_application_network_q2 *owner,
@@ -498,26 +459,9 @@ bool application_network_q2_sky_dependencies(qa_application_network_q2 *owner,
     application_q2_held_resource faces[6] = {0};
     char *normalized = qa_scene_model_image_path(base, error);
     bool ok = normalized != NULL;
-    qa_sha256_context hash; qa_sha256_digest group, authority;
-    qualified_digest(model, false, &authority); qa_sha256_init(&hash);
-    qa_sha256_update(&hash, (qa_bytes){authority.bytes, sizeof(authority.bytes)}); hash_text(&hash, normalized);
-    for (size_t i = 0; ok && i < 6; ++i) {
+    for (size_t i = 0; ok && i < 6; ++i)
         ok = paths[i] && dependency_prepare(model, paths[i], resources[i], openings ? openings[i] : NULL, &faces[i], error);
-        if (ok) {
-            qa_sha256_digest source; qualified_digest(&faces[i], false, &source);
-            qa_sha256_update(&hash, (qa_bytes){source.bytes, sizeof(source.bytes)});
-        }
-    }
-    qa_sha256_final(&hash, &group);
-    for (size_t i = 0; ok && i < 6; ++i) {
-        faces[i].sky_base = application_network_q2_copy(normalized, error);
-        faces[i].sky_face = (uint8_t)(i + 1); faces[i].sky_group = group;
-        ok = faces[i].sky_base && held_store(owner, &faces[i], &out[i], error);
-    }
-    if (ok) {
-        char hex[65]; qa_sha256_hex(&group, hex);
-        snprintf(alias_base, 64, "%s/qa/%.32s", !strncmp(normalized, "players/", 8) ? "players" : "models", hex);
-    }
+    if (ok) ok = sky_store(owner, faces, normalized, out, alias_base, error);
     for (size_t i = 0; i < 6; ++i) held_free(&faces[i]);
     free(normalized); return ok;
 }
@@ -528,24 +472,12 @@ bool application_network_q2_sky_aliases(qa_application_network_q2 *owner,
 {
     if (!owner || !model || !base || !receipts || !out || !alias_base)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 sky aliases need their six actual Source image admissions");
-    application_q2_held_resource faces[6] = {0}; char *normalized = qa_scene_model_image_path(base, error);
+    application_q2_held_resource faces[6] = {0};
+    char *normalized = qa_scene_model_image_path(base, error);
     bool ok = normalized != NULL;
-    qa_sha256_digest authority, group; qualified_digest(model, false, &authority);
-    qa_sha256_context hash; qa_sha256_init(&hash);
-    qa_sha256_update(&hash, (qa_bytes){authority.bytes, sizeof(authority.bytes)}); hash_text(&hash, normalized);
-    for (size_t i = 0; ok && i < 6; ++i) {
+    for (size_t i = 0; ok && i < 6; ++i)
         ok = alias_prepare(owner, model, &receipts[i], &faces[i], error);
-        if (ok) { qa_sha256_digest source; qualified_digest(&faces[i], false, &source);
-            qa_sha256_update(&hash, (qa_bytes){source.bytes, sizeof(source.bytes)}); }
-    }
-    qa_sha256_final(&hash, &group);
-    for (size_t i = 0; ok && i < 6; ++i) {
-        faces[i].sky_base = application_network_q2_copy(normalized, error);
-        faces[i].sky_face = (uint8_t)(i + 1); faces[i].sky_group = group;
-        ok = faces[i].sky_base && held_store(owner, &faces[i], &out[i], error);
-    }
-    if (ok) { char hex[65]; qa_sha256_hex(&group, hex);
-        snprintf(alias_base, 64, "%s/qa/%.32s", !strncmp(normalized, "players/", 8) ? "players" : "models", hex); }
+    if (ok) ok = sky_store(owner, faces, normalized, out, alias_base, error);
     for (size_t i = 0; i < 6; ++i) held_free(&faces[i]);
     free(normalized); return ok;
 }
@@ -557,11 +489,11 @@ bool application_network_q2_dependency(qa_application_network_q2 *owner,
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 dependency needs its genuine acquired model owner");
     char *path = qa_scene_model_image_path(name, error);
     if (!path) return false;
-    qa_sha256_digest authority; qualified_digest(model, false, &authority);
+    uint64_t authority = model->serial;
     for (size_t i = 0; i < owner->held_resource_count; ++i) {
         const application_q2_held_resource *old = &owner->held_resources[i];
         if (old->kind == APPLICATION_Q2_HELD_DEPENDENCY && old->provider == model->provider &&
-            qa_sha256_equal(&old->identity, &model->identity) && qa_sha256_equal(&old->authority, &authority) &&
+            old->identity == model->identity && old->authority == authority &&
             !strcmp(old->path, path) && qa_vfs_lookup_equal(old->view, model->view)) {
             free(path); *out = i; return true;
         }
@@ -581,17 +513,7 @@ bool application_network_q2_dependency(qa_application_network_q2 *owner,
             else { if (error) *error = acquisition_error; ok = false; }
         }
     }
-    if (ok) {
-        char alias[64]; ok = qualified_name(&held, alias, error);
-        if (ok) { held.wire_path = application_network_q2_copy(alias, error); ok = held.wire_path != NULL; }
-    }
-    if (ok) {
-        for (size_t i = 0; i < owner->held_resource_count; ++i)
-            if (!strcmp(owner->held_resources[i].wire_path, held.wire_path)) {
-                ok = application_fail(error, QA_ERROR_FORMAT, "Q2 dependency alias collides with another actual Source receipt"); break;
-            }
-    }
-    if (ok) { *out = owner->held_resource_count; ok = held_append(owner, &held, error); }
+    if (ok) ok = held_store(owner, &held, out, error);
     held_free(&held); return ok;
 }
 
@@ -667,7 +589,6 @@ static bool model_palette_admission(qa_application_network_q2 *owner,
                 admission.palette_source.opening->path, admission.palette_source.resource,
                 admission.palette_source.opening, &held->image_palette_dependency, error);
         if (ok) {
-            qualified_digest(&owner->held_resources[held->image_palette_dependency], false, &held->image_palette_source);
             held->image_options.palette_rgb = (qa_bytes){held->image_palette.data, held->image_palette.size};
             held->image_options.translation = (qa_bytes){held->image_translation.data, held->image_translation.size};
         }
@@ -743,13 +664,10 @@ bool application_network_q2_visual_resource(qa_application_network_q2 *owner,
         const application_q2_held_resource *old = &owner->held_resources[i];
         if (old->kind == APPLICATION_Q2_HELD_MODEL && old->provider == visual->provider && !strcmp(old->path, path) &&
             (!visual->model_resources[model] || old->resource == visual->model_resources[model]) &&
-            qa_sha256_equal(&old->identity, &provider->launch->identity) && qa_vfs_lookup_equal(old->view, files) &&
+            old->identity == provider->launch->identity && qa_vfs_lookup_equal(old->view, files) &&
             model_colors_current(old, visual)) {
             if (visual->model_openings[model]) {
-                application_q2_held_resource actual = *old; actual.opening = *visual->model_openings[model];
-                qa_sha256_digest expected, retained;
-                qualified_digest(&actual, false, &expected); qualified_digest(old, false, &retained);
-                if (!qa_sha256_equal(&expected, &retained)) continue;
+                if (!acquisition_equal(&old->opening, visual->model_openings[model])) continue;
             }
             return application_network_q2_resource(owner, 0, old->wire_path, out, error);
         }
@@ -763,10 +681,11 @@ bool application_network_q2_visual_resource(qa_application_network_q2 *owner,
     if (ok && visual->model_resources[model]) {
         const qa_vfs_acquisition *opening = visual->model_openings[model];
         ok = opening && opening->resource_id == qa_resource_id(visual->model_resources[model]) &&
-            qa_vfs_acquisition_retained(held.view, opening, error) && acquisition_copy(opening, &held.opening, error);
+            qa_vfs_acquisition_retained(held.view, opening, error) && qa_vfs_acquisition_copy(opening, &held.opening, error);
         if (ok) { held.resource = (qa_resource *)visual->model_resources[model]; qa_resource_retain(held.resource); }
     } else if (ok) ok = qa_vfs_acquire_receipt(held.view, path, &held.resource, &held.opening, error);
     size_t dependency_start = owner->held_resource_count;
+    if (ok) ok = held_serial(owner, &held, error);
     if (ok) ok = model_derivation(owner, &held, visual->family,
         visual->has_player_colors, visual->player_colors, error);
     if (ok) {
@@ -777,20 +696,6 @@ bool application_network_q2_visual_resource(qa_application_network_q2 *owner,
             ok = held.wire_path != NULL;
         }
         if (ok) ok = model_scope_finish(owner, &held, error);
-        for (size_t i = 0; ok && i < owner->held_resource_count; ++i) {
-            const application_q2_held_resource *old = &owner->held_resources[i];
-            if (!strcmp(old->wire_path, held.wire_path)) {
-                qa_sha256_digest expected, retained;
-                qualified_digest(&held, true, &expected); qualified_digest(old, true, &retained);
-                if (qa_sha256_equal(&expected, &retained) && qa_vfs_lookup_equal(old->view, held.view)) {
-                    while (owner->held_resource_count > dependency_start)
-                        held_free(&owner->held_resources[--owner->held_resource_count]);
-                    held_free(&held);
-                    return application_network_q2_resource(owner, 0, old->wire_path, out, error);
-                }
-                ok = application_fail(error, QA_ERROR_FORMAT, "Q2 qualified resource name collides with another actual acquisition");
-            }
-        }
     }
     if (ok && (!qa_application_command_context_active(owner->app, &captured) ||
         qa_application_context_files(owner->app, &captured, NULL) != files ||
@@ -871,14 +776,24 @@ bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, 
     bool ok = held.instance && held.path && held.view;
     if (ok && receipt) {
         ok = qa_vfs_acquisition_retained(held.view, captured_opening, error) &&
-            acquisition_copy(captured_opening, &held.opening, error);
+            qa_vfs_acquisition_copy(captured_opening, &held.opening, error);
         if (ok) { held.resource = (qa_resource *)captured; qa_resource_retain(held.resource); }
     }
     size_t dependency_start = owner->held_resource_count;
-    if (ok && held.kind == APPLICATION_Q2_HELD_MODEL)
-        ok = model_derivation(owner, &held, source.product->family, false, 0, error);
     size_t index = 0;
-    if (ok) ok = held_store(owner, &held, &index, error);
+    bool reused = false;
+    if (ok && held.kind == APPLICATION_Q2_HELD_MODEL) {
+        const qa_application_visual_view colors = {0};
+        for (size_t i = 0; i < owner->held_resource_count; ++i)
+            if (held_same(&held, &owner->held_resources[i], false) &&
+                model_colors_current(&owner->held_resources[i], &colors)) {
+                index = i; reused = true; break;
+            }
+    }
+    if (ok && !reused) ok = held_serial(owner, &held, error);
+    if (ok && !reused && held.kind == APPLICATION_Q2_HELD_MODEL)
+        ok = model_derivation(owner, &held, source.product->family, false, 0, error);
+    if (ok && !reused) ok = held_store(owner, &held, &index, error);
     if (ok) {
         const char *wire = owner->held_resources[index].wire_path;
         char config[66];
@@ -943,7 +858,7 @@ bool application_network_q2_download_resource(void *context, const char *path, c
             *status = QA_Q2_DOWNLOAD_MISSING; return true;
         }
         if (held->resource && (!qa_vfs_acquisition_retained(held->view, &held->opening, error) ||
-            !acquisition_copy(&held->opening, opening, error))) return false;
+            !qa_vfs_acquisition_copy(&held->opening, opening, error))) return false;
         if (!held->resource) {
             if (held->kind != APPLICATION_Q2_HELD_MATERIAL || !held->catalog_bytes.size)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Q2 memory artifact lost its true catalog Source");
@@ -1012,8 +927,7 @@ static bool image_fields(qa_source_save_io *io, application_q2_held_resource *he
         (options->source_q3 && !qa_q3_image_upload_options_codec(io, &options->source_upload)) ||
         !buffer_field(io, &held->image_palette, 768) || (held->image_palette.size && held->image_palette.size != 768) ||
         !buffer_field(io, &held->image_translation, 256) || (held->image_translation.size && held->image_translation.size != 256) ||
-        !qa_source_save_u64(io, &palette) || palette > UINT32_MAX ||
-        !qa_source_save_bytes(io, held->image_palette_source.bytes, sizeof(held->image_palette_source.bytes))) return false;
+        !qa_source_save_u64(io, &palette) || palette > UINT32_MAX) return false;
     options->family = (qa_scene_family)family; options->wrap = (qa_scene_wrap)wrap;
     options->filter = (qa_scene_filter)filter; options->usage = (qa_scene_image_usage)usage;
     options->palette_rgb = (qa_bytes){held->image_palette.data, held->image_palette.size};
@@ -1030,7 +944,6 @@ static bool alias_fields(qa_source_save_io *io, application_q2_held_resource *he
     if (!qa_source_save_owned_text(io, &held->image_request) || !held->image_request || !*held->image_request ||
         !qa_source_save_owned_text(io, &held->image_logical_path) ||
         !qa_source_save_u64(io, &logical) || logical > UINT32_MAX ||
-        !qa_source_save_bytes(io, held->image_logical_source.bytes, sizeof(held->image_logical_source.bytes)) ||
         !qa_source_save_bool(io, &held->image_palette_attempted) ||
         !qa_source_save_u32(io, &rejection) || rejection > QA_ERROR_NOT_FOUND || rejection == QA_ERROR_MEMORY ||
         !qa_source_save_u32(io, &palette_error) || palette_error > QA_ERROR_NOT_FOUND || palette_error == QA_ERROR_MEMORY) return false;
@@ -1062,7 +975,7 @@ static bool holder_fields(qa_application_network_q2 *owner, qa_source_save_io *i
         (held->model_scope && (held->kind != APPLICATION_Q2_HELD_MODEL || held->missing))) return false;
     if (!qa_source_save_bool(io, &memory) || (memory && (held->kind != APPLICATION_Q2_HELD_MATERIAL || held->missing))) return false;
     if (!qa_source_save_owned_text(io, &held->instance) || !qa_source_save_owned_text(io, &held->path) || !qa_source_save_owned_text(io, &held->wire_path) ||
-        !qa_source_save_bytes(io, held->identity.bytes, 32) || !qa_source_save_bytes(io, held->authority.bytes, 32) ||
+        !qa_source_save_u64(io, &held->serial) || !held->serial || !qa_source_save_u64(io, &held->authority) ||
         !qa_source_save_u64(io, &view) ||
         !qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &resource)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) {
@@ -1075,14 +988,15 @@ static bool holder_fields(qa_application_network_q2 *owner, qa_source_save_io *i
             }
         }
         const qa_resource *actual = held->missing || memory ? NULL : qa_application_content_resource(graph, pool, resource);
-        if ((!owner->archival && (!provider || !qa_sha256_equal(&held->identity, &provider->launch->identity))) ||
+        if ((!owner->archival && !provider) ||
             (held->missing || memory ? pool || resource : !actual) ||
             !held->path || !*held->path || !held->wire_path ||
             (strncmp(held->wire_path, "models/qa/", 10) && strncmp(held->wire_path, "players/qa/", 11) &&
                 strncmp(held->wire_path, "sound/qa/", 9)) ||
             !qa_application_content_retain_view(graph, view, &held->view, io->error))
             return application_fail(io->error, QA_ERROR_FORMAT, "Q2 restored holder lost its real provider or immutable bytes");
-        held->provider = provider && qa_sha256_equal(&held->identity, &provider->launch->identity) ? provider->owner : 0;
+        held->provider = !owner->archival && provider ? provider->owner : 0;
+        held->identity = !owner->archival && provider ? provider->launch->identity : 0;
         held->resource = (qa_resource *)actual;
         if (held->resource) qa_resource_retain(held->resource);
     }
@@ -1094,7 +1008,7 @@ static bool holder_fields(qa_application_network_q2 *owner, qa_source_save_io *i
         opening->resource_id != qa_resource_id(held->resource) ||
         !qa_vfs_acquisition_retained(held->view, opening, io->error))) return false;
     if (!qa_source_save_owned_text(io, &held->script_name) || !qa_source_save_owned_text(io, &held->sky_base) ||
-        !qa_source_save_bytes(io, held->sky_group.bytes, sizeof(held->sky_group.bytes)) ||
+        !qa_source_save_u64(io, &held->sky_group) ||
         !qa_source_save_u8(io, &held->sky_face) || held->sky_face > 6 ||
         !qa_source_save_count(io, &held->source_offset, INT32_MAX) ||
         !qa_source_save_count(io, &held->script_size, INT32_MAX) ||
@@ -1108,7 +1022,7 @@ static bool holder_fields(qa_application_network_q2 *owner, qa_source_save_io *i
         !qa_source_save_u64(io, &held->event_custody)) return false;
     held->event_kind = (qa_native_host_resource_kind)event_kind;
     if (held->kind == APPLICATION_Q2_HELD_IMAGE_RECEIPT &&
-        !qa_source_save_bytes(io, held->receipt_source.bytes, sizeof(held->receipt_source.bytes))) return false;
+        !qa_source_save_u64(io, &held->receipt_source)) return false;
     if ((held->model_scope || held->kind == APPLICATION_Q2_HELD_IMAGE || held->kind == APPLICATION_Q2_HELD_MATERIAL ||
         held->kind == APPLICATION_Q2_HELD_ALIAS) &&
         (!image_fields(io, held) || (io->direction == QA_SOURCE_SAVE_READ &&
@@ -1151,7 +1065,8 @@ bool application_network_q2_resources_capture(qa_application_network_q2 *owner, 
     qa_source_save_io io;
     if (!qa_source_save_writer(&io, owner->app->session, error)) return false;
     size_t count = owner->held_resource_count;
-    bool ok = qa_source_save_count(&io, &count, UINT32_MAX);
+    bool ok = qa_source_save_u64(&io, &owner->held_resource_serial) &&
+        qa_source_save_count(&io, &count, UINT32_MAX);
     for (size_t i = 0; ok && i < count; ++i)
         ok = holder_fields(owner, &io, &owner->held_resources[i]);
     if (ok) ok = qa_source_save_finish(&io, out);
@@ -1167,13 +1082,17 @@ bool application_network_q2_resources_restore(qa_application_network_q2 *owner, 
     qa_source_save_io io;
     if (!qa_source_save_reader(&io, owner->app->session, bytes, error)) return false;
     size_t count = 0;
-    bool ok = qa_source_save_count(&io, &count, UINT32_MAX);
+    bool ok = qa_source_save_u64(&io, &owner->held_resource_serial) &&
+        qa_source_save_count(&io, &count, UINT32_MAX);
     for (size_t i = 0; ok && i < count; ++i) {
         application_q2_held_resource held = {0};
         ok = holder_fields(owner, &io, &held);
         for (size_t j = 0; ok && j < owner->held_resource_count; ++j)
-            if (!strcmp(held.wire_path, owner->held_resources[j].wire_path))
+            if (held.serial == owner->held_resources[j].serial || !strcmp(held.wire_path, owner->held_resources[j].wire_path))
                 ok = application_fail(error, QA_ERROR_FORMAT, "Q2 restored holders alias a qualified wire path");
+        if (ok && (held.serial > owner->held_resource_serial || held.authority > owner->held_resource_serial ||
+            held.sky_group > owner->held_resource_serial || held.receipt_source > owner->held_resource_serial))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Q2 saved holder serial exceeds its actual namespace");
         if (ok) ok = held_append(owner, &held, error);
         held_free(&held);
     }

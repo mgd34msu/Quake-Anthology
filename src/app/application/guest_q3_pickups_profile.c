@@ -1,3 +1,4 @@
+#include "guest_q3_reference.h"
 #include "guest_q3_pickups_profile.h"
 #include "guest_q3_private.h"
 #include "qa/json.h"
@@ -124,9 +125,9 @@ static bool one_call(application_q3_pickup_function *f,uint32_t entry,uint32_t a
 }
 static bool known(q3g_role *role,application_q3_pickup_profile *p,qa_error *e)
 {
-    char digest[65];qa_sha256_hex(qa_qvm_image_digest(role->image),digest);
-    bool stock=!strcmp(digest,"57c52bf22e4f528c064f8af1553a7103723bab0a02276bb11eed944bf829b219");
-    bool three=!strcmp(digest,"9751bad99a2d138f96a9b0436d2ea2d965b86214175dc33e4cea95e059419337");
+
+    bool stock=application_q3_reference_image(role->image, Q3_REFERENCE_BASE_GAME);
+    bool three=application_q3_reference_image(role->image, Q3_REFERENCE_THREEWAVE_GAME);
     if(!stock&&!three)return true;
     if(role->abi!=QA_QVM_Q3_MODERN)return application_fail(e,QA_ERROR_FORMAT,"Known pickup executable has a different ABI");
     p->present=true;p->entity_stride=stock?808:876;p->client_stride=stock?776:944;

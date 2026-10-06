@@ -45,7 +45,7 @@ typedef struct application_q3_grapple_definition {
 } application_q3_grapple_definition;
 
 typedef struct application_q3_grapple_profile application_q3_grapple_profile;
-/* The two genuine authored GAME profiles are admitted by executable digest,
+/* The two genuine authored GAME profiles are admitted by original source layout,
  * original ABI/layout/global/function entries and reserved scratch capacity.
  * Unknown artifacts succeed with no profile. No source code or Init runs. */
 bool application_q3_grapple_profile_create(qa_qvm_image *, qa_qvm_role, qa_qvm_abi,

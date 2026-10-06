@@ -37,7 +37,7 @@ struct application_unified_server {
     application_unified_source offered;
     qa_unified_session_player admitted_player;
     qa_buffer admitted_arsenal;
-    qa_sha256_digest composition;
+    uint64_t composition;
     qa_unified_document *offer;
     application_unified_output pending;
     size_t control_cursor;

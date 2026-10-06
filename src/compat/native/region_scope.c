@@ -59,7 +59,7 @@ bool qa_native_region_scope_open(qa_native_instance *instance,
     const qa_native_declaration *declaration, uint32_t id, qa_native_address target,
     qa_native_region_scope_fn callback, void *context, qa_native_region_scope **out, qa_error *error) {
     if (!instance || !declaration || !callback || !out || *out ||
-        !instance->has_declaration || !qa_sha256_equal(&instance->declaration, &declaration->digest) ||
+        !instance->has_declaration || instance->declaration_ref != declaration ||
         id >= declaration->region_count || id >= instance->region_count ||
         instance->failed || instance->checkpointing || instance->destroying || instance->unloading ||
         instance->write_depth || instance->lifecycle != QA_NATIVE_INITIALIZED || instance->process_host_pending ||

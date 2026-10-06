@@ -5,7 +5,6 @@
 
 typedef struct client_registry_saved {
     char *instance;
-    qa_sha256_digest identity;
     uint64_t catalog,view;
     qa_product_id product;
     uint32_t seat,dialect;
@@ -61,7 +60,6 @@ bool frontend_client_registry_create(qa_frontend *f,const qa_launch_instance *so
         if (!saved || saved->owner || saved->product!=source->selection.product ||
             qa_application_content_catalog(import->graph,saved->catalog)!=qa_launch_instance_catalog(source) ||
             qa_application_content_view(import->graph,saved->view)!=source->content ||
-            memcmp(saved->identity.bytes,source->identity.bytes,sizeof(source->identity.bytes)) ||
             saved->dialect!=(uint32_t)qa_cvars_dialect(*owned))
             return frontend_fail(error,QA_ERROR_FORMAT,"Restored client registry differs from its actual source constructor");
         qa_cvars_restore *ticket=NULL;
@@ -180,7 +178,6 @@ static void import_free(frontend_client_registry_import *import)
 static bool saved_fields(qa_source_save_io *io,client_registry_saved *row)
 {
     if (!qa_source_save_owned_text(io,&row->instance) || !row->instance || !*row->instance ||
-        !qa_source_save_bytes(io,row->identity.bytes,sizeof(row->identity.bytes)) ||
         !qa_source_save_u64(io,&row->catalog) || !row->catalog ||
         !qa_source_save_u64(io,&row->view) || !row->view ||
         !qa_source_save_u32(io,&row->product) || !row->product ||
@@ -225,7 +222,7 @@ bool frontend_client_registries_checkpoint(const qa_frontend *f,
     for (const frontend_client_registry *row=f->client_registries;ok && row;row=row->next) {
         const qa_launch_instance *source=qa_launch_instance_lease_view(row->metadata);
         if (!source || !row->cvars || !row->references || !qa_cvars_observer_idle(row->cvars)) { ok=false; break; }
-        client_registry_saved saved={.instance=(char *)source->selection.instance,.identity=source->identity,
+        client_registry_saved saved={.instance=(char *)source->selection.instance,
             .catalog=qa_application_content_catalog_id(graph,qa_launch_instance_catalog(source)),
             .view=qa_application_content_view_id(graph,source->content),.product=source->selection.product,
             .seat=row->launch_seat,.dialect=(uint32_t)qa_cvars_dialect(row->cvars)};

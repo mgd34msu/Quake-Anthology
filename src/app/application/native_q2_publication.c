@@ -29,9 +29,7 @@ static bool storage(const application_native_q2_publication *p)
     return n && v && v->state.native.q2_engine == n && held && v->launch &&
         held->storage == v->launch->storage && n->declaration && v->state.native.module &&
         held->artifact == v->launch->artifact && held->declaration == v->launch->declaration &&
-        p->metadata && p->identity.module.id &&
-        qa_sha256_equal(qa_resource_digest(held->artifact), &p->metadata->program_digest) &&
-        qa_sha256_equal(qa_resource_digest(held->declaration), &p->metadata->declaration_digest);
+        p->metadata && p->identity.module.id;
 }
 
 static bool identity(application_native_q2_publication *p,qa_error *e)
@@ -46,11 +44,11 @@ static bool namespace_text(const application_native_q2_publication *p, uint64_t 
     application_unified_json *j, qa_error *e)
 {
     const qa_launch_instance *d = qa_launch_instance_lease_view(p->lease);
-    char digest[65], suffix[40]; qa_sha256_hex(&p->metadata->declaration_digest, digest);
+    char suffix[40];
     snprintf(suffix, sizeof(suffix), ":%llu", (unsigned long long)generation);
     return application_unified_json_text(j, "native-component:", e) && application_unified_json_percent_encoded(j, d->selection.instance, e) &&
         application_unified_json_text(j, ":", e) && application_unified_json_percent_encoded(j, p->metadata->key, e) &&
-        application_unified_json_text(j, ":", e) && application_unified_json_text(j, digest, e) &&
+        application_unified_json_text(j, ":", e) && application_unified_json_percent_encoded(j, p->metadata->declaration_path, e) &&
         application_unified_json_text(j, suffix, e);
 }
 
@@ -62,11 +60,9 @@ bool application_native_q2_publication_create(struct application_native_q2 *n,
     const qa_launch_instance *d = n->provider->launch;
     if (!d->selection.component || !*d->selection.component || n->profile == QA_NATIVE_Q2_CGAME_API2023) return true;
     const qa_catalog_mod *m = qa_catalog_mod_find(qa_launch_instance_catalog(d), d->selection.component);
-    qa_native_module_info module = qa_native_module_describe(n->provider->state.native.module);
     if (!m || m->unavailable || m->runtime != QA_PROGRAM_NATIVE || !n->declaration || !d->declaration ||
         m->product != d->selection.product || strcmp(m->program_path, d->selection.artifact) ||
-        !qa_sha256_equal(&module.image.digest, &m->program_digest) ||
-        !qa_sha256_equal(qa_native_declaration_digest(n->declaration), &m->declaration_digest))
+        m->program_resource != d->artifact || m->declaration_resource != d->declaration)
         return application_fail(e, QA_ERROR_FORMAT, "Native publication differs from its admitted component declaration");
     application_native_q2_publication *p = calloc(1, sizeof(*p));
     if (!p) return application_fail(e, QA_ERROR_MEMORY, "Retaining native component registration");
@@ -197,25 +193,24 @@ bool application_native_q2_publication_capture(struct application_native_q2 *n, 
         return application_fail(e, QA_ERROR_ARGUMENT, "Native publication lost its actual namespace string");
     size_t length = name ? strlen(name) : 0;
     if (length > 65535) return application_fail(e, QA_ERROR_FORMAT, "Native registration namespace is too long");
-    qa_buffer bytes = {.data = calloc(1, 60 + length), .size = 60 + length};
+    qa_buffer bytes = {.data = calloc(1, 28 + length), .size = 28 + length};
     if (!bytes.data) return application_fail(e, QA_ERROR_MEMORY, "Retaining native publication continuation");
     memcpy(bytes.data, "NQ2P", 4); bytes.data[4] = p != NULL;
     bytes.data[5] = p && p->active;
     if (p) {
         qa_store_u64le(bytes.data + 8, p->activation_generation); qa_store_u64le(bytes.data + 16, p->generation);
-        memcpy(bytes.data + 24, qa_launch_instance_lease_view(p->lease)->identity.bytes, 32);
     }
-    qa_store_u32le(bytes.data + 56, (uint32_t)length); if (length) memcpy(bytes.data + 60, name, length);
+    qa_store_u32le(bytes.data + 24, (uint32_t)length); if (length) memcpy(bytes.data + 28, name, length);
     *out = bytes;
     return true;
 }
 bool application_native_q2_publication_restore_prepare(struct application_native_q2 *n, qa_bytes bytes, bool map_ready,
     application_native_q2_publication_restore **out, qa_error *e)
 {
-    if (!n || !out || *out || !bytes.data || bytes.size < 60 || memcmp(bytes.data, "NQ2P", 4) ||
+    if (!n || !out || *out || !bytes.data || bytes.size < 28 || memcmp(bytes.data, "NQ2P", 4) ||
         bytes.data[4] > 1 || bytes.data[5] > 1 ||
-        bytes.data[6] || bytes.data[7] || qa_load_u32le(bytes.data + 56) != bytes.size - 60 ||
-        bytes.size - 60 > 65535 || memchr(bytes.data + 60, 0, bytes.size - 60) ||
+        bytes.data[6] || bytes.data[7] || qa_load_u32le(bytes.data + 24) != bytes.size - 28 ||
+        bytes.size - 28 > 65535 || memchr(bytes.data + 28, 0, bytes.size - 28) ||
         (bytes.data[4] != 0) != (n->publication != NULL))
         return application_fail(e, QA_ERROR_FORMAT, "Native publication continuation differs from its declared owner");
     application_native_q2_publication *p = n->publication;
@@ -226,11 +221,10 @@ bool application_native_q2_publication_restore_prepare(struct application_native
     if (p) {
         application_unified_json expected = {0};
         bool ok = activation && storage(p) &&
-            !memcmp(bytes.data + 24, qa_launch_instance_lease_view(p->lease)->identity.bytes, 32) &&
-            namespace_text(p, activation, &expected, e) && expected.bytes.size == bytes.size - 60 &&
-            !memcmp(expected.bytes.data, bytes.data + 60, expected.bytes.size);
+            namespace_text(p, activation, &expected, e) && expected.bytes.size == bytes.size - 28 &&
+            !memcmp(expected.bytes.data, bytes.data + 28, expected.bytes.size);
         if (ok) namespace = qa_strings_find(qa_session_strings(n->provider->application->session),
-            (qa_bytes){bytes.data + 60, bytes.size - 60});
+            (qa_bytes){bytes.data + 28, bytes.size - 28});
         application_unified_json_dispose(&expected);
         if (!ok || !namespace) return application_fail(e, QA_ERROR_FORMAT, "Native publication lost its saved registration namespace");
     } else {

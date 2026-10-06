@@ -245,8 +245,7 @@ static bool instance_collect(qa_application_content_graph *g, const qa_launch_in
     const application_provider *provider, qa_error *error)
 {
     for (size_t i=0; source && i<g->instance_count; ++i)
-        if (!strcmp(g->instances[i].value.source.selection.instance,source->selection.instance) &&
-            qa_sha256_equal(&g->instances[i].value.source.identity,&source->identity)) return true;
+        if (!strcmp(g->instances[i].value.source.selection.instance,source->selection.instance)) return true;
     qa_catalog *catalog = qa_launch_instance_catalog(source);
     if (!catalog || !provider || !provider->product_catalog || !provider->product ||
         !add_catalog(g, catalog, error) || !add_catalog(g, provider->product_catalog, error) ||
@@ -260,7 +259,7 @@ static bool instance_collect(qa_application_content_graph *g, const qa_launch_in
         return fail(error, QA_ERROR_FORMAT, "Provider product has no actual retained catalog");
     row->value.view = qa_application_content_view_id(g, source->content);
     qa_launch_restored_instance *value = &row->value.source;
-    value->catalog = catalog; value->content = source->content; value->identity = source->identity;
+    value->catalog = catalog; value->content = source->content;
     value->selection = source->selection;
     value->selection.instance = value->selection.implementation = value->selection.artifact = value->selection.component = NULL;
     value->selection.options = (qa_bytes){0};
@@ -697,8 +696,7 @@ static bool instance_fields(qa_source_save_io *io,qa_application_content_graph *
     p->options=(qa_bytes){row->options.data,row->options.size};
     FIELD(u64,row,artifact_pool); FIELD(u64,row,artifact);
     FIELD(u64,row,declaration_pool); FIELD(u64,row,declaration);
-    if (!qa_source_save_bytes(io,&v->identity,sizeof(v->identity)) ||
-        !table_field(io,(void **)&row->interfaces,&v->interface_count,sizeof(*row->interfaces),24)) return false;
+    if (!table_field(io,(void **)&row->interfaces,&v->interface_count,sizeof(*row->interfaces),24)) return false;
     for (size_t i=0;i<v->interface_count;++i)
         if (!resource_fields(io,g,row->catalog,row->interfaces+i)) return false;
     return true;

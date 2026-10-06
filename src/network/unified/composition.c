@@ -257,10 +257,10 @@ bool qa_unified_composition_create(qa_bytes json, qa_unified_composition *out, q
     qa_json_destroy(d);
     if (!ok) { free(b.data); return false; }
     qa_unified_composition result={.canonical={b.data,b.size}};
-    qa_sha256((qa_bytes){b.data,b.size},&result.digest); *out=result; return true;
+    *out=result; return true;
 }
 
 void qa_unified_composition_free(qa_unified_composition *c) {
     if (!c) return;
-    qa_buffer_free(&c->canonical); memset(&c->digest,0,sizeof(c->digest));
+    qa_buffer_free(&c->canonical);
 }

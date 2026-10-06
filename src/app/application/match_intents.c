@@ -22,12 +22,12 @@ struct application_match_intents {
     qa_actor_owner owner;
     qa_product_id product;
     char *product_identity;
-    qa_sha256_digest source_identity;
+    uint64_t source_serial;
     qa_buffer selection_identity;
     size_t selection_index, cursor;
     uint64_t revision;
     application_next_map_plan plan;
-    bool busy;
+    bool busy, restoring;
 };
 
 static char *copy_text(const char *text, qa_error *error) {
@@ -97,8 +97,7 @@ static bool qualify(application_match_intents *state, qa_application *app,
     const qa_launch_choices *choices = qa_launch_snapshot_choices(current);
     if (!p || !p->product->identity || !state->product_identity || !choices ||
         state->selection_index >= choices->mode_count ||
-        strcmp(p->product->identity, state->product_identity) ||
-        !qa_sha256_equal(&p->launch->identity, &state->source_identity))
+        strcmp(p->product->identity, state->product_identity))
         return application_fail(error, QA_ERROR_ARGUMENT, "match map source selection changed");
     if (original_mode && (state->selection_index >= app->mode_count ||
         app->mode_ids[state->selection_index].slot != state->mode.slot ||
@@ -111,6 +110,10 @@ static bool qualify(application_match_intents *state, qa_application *app,
         !memcmp(identity.data, state->selection_identity.data, identity.size);
     qa_buffer_free(&identity);
     if (!equal) return application_fail(error, QA_ERROR_ARGUMENT, "match map mode configuration changed");
+    if (state->restoring) state->source_serial = p->launch->identity;
+    if (!state->source_serial || state->source_serial != p->launch->identity)
+        return application_fail(error, QA_ERROR_ARGUMENT, "match map source selection changed");
+    state->restoring = false;
     state->product = p->product->id;
     return true;
 }
@@ -191,7 +194,7 @@ bool application_match_intents_enqueue(application_match_intents *state, qa_appl
     application_match_intents next = {.restart = state->restart, .stage = MATCH_MAP_UNRESOLVED,
         .kind = intent->kind, .source_command = intent->source_command,
         .mode = intent->mode, .cause = intent->actor, .owner = p->owner,
-        .product = p->product->id, .source_identity = p->launch->identity};
+        .product = p->product->id, .source_serial = p->launch->identity};
     while (next.selection_index < app->mode_count &&
         (app->mode_ids[next.selection_index].slot != intent->mode.slot ||
          app->mode_ids[next.selection_index].generation != intent->mode.generation)) ++next.selection_index;
@@ -361,6 +364,7 @@ static bool stream(qa_source_save_io *io, application_match_intents *state) {
         !qa_source_save_u32(io, &stage) || stage > MATCH_MAP_AFTER) return false;
     state->stage = (match_map_stage)stage;
     if (state->stage == MATCH_MAP_EMPTY) return true;
+    if (io->direction == QA_SOURCE_SAVE_READ) state->restoring = true;
     uint32_t kind = state->kind;
     if (!qa_source_save_u32(io, &kind) ||
         (kind != QA_MATCH_NEXT_MAP && kind != QA_MATCH_SELECTED_MAP && !config_intent((qa_match_intent_kind)kind)) ||
@@ -374,7 +378,6 @@ static bool stream(qa_source_save_io *io, application_match_intents *state) {
     if (!qa_source_save_u32(io, &state->mode.slot) || !qa_source_save_u64(io, &state->mode.generation) ||
         !qa_source_save_actor(io, &state->cause) || !qa_source_save_string(io, &state->owner) ||
         !text_field(io, &state->product_identity) ||
-        !qa_source_save_bytes(io, state->source_identity.bytes, sizeof(state->source_identity.bytes)) ||
         !qa_source_save_count(io, &state->selection_index, SIZE_MAX) ||
         !qa_source_save_count(io, &state->selection_identity.size, maximum)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ && state->selection_identity.size) {

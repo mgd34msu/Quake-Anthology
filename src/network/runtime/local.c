@@ -38,7 +38,7 @@ static bool command(void *context,const qa_network_command *input,qa_error *erro
     return current(peer,error) && qa_actor_id_equal(input->actor,peer->player.actor) &&
         qa_network_accept(peer->runtime,input,error);
 }
-static bool restart(void *context,uint64_t epoch,const qa_sha256_digest *composition,qa_error *error)
+static bool restart(void *context,uint64_t epoch,const uint64_t *composition,qa_error *error)
 { (void)epoch; (void)composition; return current(context,error); }
 static bool rebind(void *context,const qa_net_address *address,qa_error *error)
 { return address && address->kind==QA_NET_LOOPBACK && current(context,error); }

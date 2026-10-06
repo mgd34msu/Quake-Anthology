@@ -585,14 +585,12 @@ bool application_q3_mod_profile_create(qa_qvm_image *image, qa_qvm_abi abi, cons
     bool ok=qa_json_parse(declaration,&d,e);
     if (ok) {
         qa_json_id root=qa_json_root(d), program=qa_json_get(d,root,"program"); uint32_t version;
-        char digest[72]="sha256:"; qa_sha256_hex(qa_qvm_image_digest(image),digest+7);
         char *declared_path=NULL, *normalized_path=NULL;
         ok=text(d,qa_json_get(d,program,"path"),&declared_path,e);
         if (ok) { normalized_path=qa_vfs_normalize_path(declared_path,e); ok=normalized_path!=NULL; }
         ok=ok && word(d,qa_json_get(d,root,"version"),&version,e) && version==1 &&
             qa_json_string_equal(d,qa_json_get(d,root,"runtime"),"qvm") &&
             !strcmp(normalized_path,path) &&
-            qa_json_string_equal(d,qa_json_get(d,program,"digest"),digest) &&
             qa_json_string_equal(d,qa_json_get(d,root,"abiProfile"),abi==QA_QVM_Q3_MODERN?"q3-modern":"q3-1.16n-base");
         free(declared_path); free(normalized_path);
         if (!ok) q3mod_fail(e,QA_ERROR_FORMAT,"Generic declaration does not qualify this actual QVM artifact");

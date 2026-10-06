@@ -25,7 +25,6 @@ typedef struct application_q3_component_options {
      * The owner retains both; the host borrows that same selected content view. */
     qa_resource *program,*declaration;
     const char *program_path;
-    qa_sha256_digest program_digest,declaration_digest;
     qa_qvm_image *image;
     qa_qvm_abi abi;
     qa_q3_host_options host;

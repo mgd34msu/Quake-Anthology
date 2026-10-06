@@ -8,7 +8,7 @@
 
 typedef struct application_guest_carry {
     qa_actor_owner owner;
-    qa_sha256_digest identity;
+    uint64_t identity;
 } application_guest_carry;
 typedef struct application_player_carry {
     qa_combat_state combat;
@@ -34,7 +34,7 @@ typedef struct application_player_carry {
 } application_player_carry;
 typedef struct application_player_guest_binding {
     qa_actor_owner owner;
-    qa_sha256_digest identity;
+    uint64_t identity;
     uint32_t source_slot;
 } application_player_guest_binding;
 typedef struct application_player_record {

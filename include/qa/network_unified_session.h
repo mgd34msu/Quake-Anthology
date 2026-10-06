@@ -53,7 +53,7 @@ typedef struct qa_unified_session_hooks {
     bool (*frame)(void *, qa_network_runtime *, qa_net_client_id,
         const qa_unified_document *, qa_unified_session_commit *, qa_error *);
     bool (*restart)(void *, qa_network_runtime *, qa_net_client_id, uint32_t epoch,
-        const qa_sha256_digest *, qa_unified_document **offer, qa_error *);
+        const uint64_t *, qa_unified_document **offer, qa_error *);
     bool (*source_ready)(void *, qa_network_runtime *, qa_net_client_id, uint32_t wire_epoch, qa_error *);
     void (*closed)(void *, qa_net_client_id);
 } qa_unified_session_hooks;
@@ -84,7 +84,7 @@ bool qa_unified_session_offer_ready(const qa_unified_session *, const qa_unified
 bool qa_unified_session_control_ready(const qa_unified_session *, const qa_unified_document *,
     bool *ready, qa_error *);
 /* Admission runs inside the actual generic restart callback. It joins the
- * canonical table's seat storage to the true pending offer and its digest;
+ * canonical table's seat storage to the true pending offer and its generation;
  * CLIENT offers must be the exact unfinished receive head being committed. */
 bool qa_unified_session_restart_admit(const qa_unified_session *, const qa_network_runtime *,
     const qa_net_connect *, const qa_unified_document *actual_offer, qa_error *);

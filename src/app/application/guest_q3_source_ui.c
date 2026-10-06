@@ -54,7 +54,7 @@ static bool native_artifact(struct application_q3_guest *engine, q3g_role *cgame
     if (!ok) { artifact_free(artifact); return false; }
     qa_error qualification = {0};
     if (!qa_native_module_load(qa_resource_bytes(artifact->resource), path,
-        QA_NATIVE_Q3_VMMAIN, NULL, &artifact->module, &qualification)) {
+        QA_NATIVE_Q3_VMMAIN, &artifact->module, &qualification)) {
         artifact_free(artifact);
         if (qualification.code == QA_ERROR_MEMORY) { if (error) *error = qualification; return false; }
         return true;

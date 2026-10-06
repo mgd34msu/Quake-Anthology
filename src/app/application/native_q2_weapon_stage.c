@@ -730,11 +730,10 @@ bool application_native_q2_weapon_stage_capture(application_native_q2_weapon_sta
 {
     if(!o||!out||!application_native_q2_weapon_stage_idle(o)) return fail(e,QA_ERROR_ARGUMENT,"Native weapon capture requires its returned source owner");
     qa_source_save_io io={0}; uint8_t tag[6]={'Q','A','N','2','W','S'}; size_t count=0;
-    qa_actor_owner owner=o->options.owner; qa_sha256_digest definition;
-    qa_sha256(qa_json_source(document(o),o->definition),&definition);
+    qa_actor_owner owner=o->options.owner;
     for(stage_actor *a=o->actors;a;a=a->next) if(a->request) ++count;
     bool ok=qa_source_save_writer(&io,o->options.session,e)&&qa_source_save_bytes(&io,tag,sizeof(tag))&&
-        qa_source_save_string(&io,&owner)&&qa_source_save_bytes(&io,definition.bytes,sizeof(definition.bytes))&&
+        qa_source_save_string(&io,&owner)&&
         qa_source_save_u64(&io,&o->next_request)&&qa_source_save_count(&io,&count,256);
     for(stage_actor *a=o->actors;ok&&a;a=a->next) if(a->request) {
         stage_request_row row={a->actor,a->request,a->requested,a->status}; ok=current(a,e)&&row_fields(&io,&row);
@@ -746,10 +745,9 @@ bool application_native_q2_weapon_stage_restore(application_native_q2_weapon_sta
 {
     if(!o||!application_native_q2_weapon_stage_idle(o)||o->next_request) return fail(e,QA_ERROR_ARGUMENT,"Native weapon restore requires an isolated empty request owner");
     qa_source_save_io io={0}; uint8_t tag[6]={0}; const uint8_t expected[6]={'Q','A','N','2','W','S'}; uint64_t next=0; size_t count=0;
-    qa_actor_owner owner=0; qa_sha256_digest definition={0},actual;
-    qa_sha256(qa_json_source(document(o),o->definition),&actual);
+    qa_actor_owner owner=0;
     bool ok=qa_source_save_reader(&io,o->options.session,bytes,e)&&qa_source_save_bytes(&io,tag,sizeof(tag))&&!memcmp(tag,expected,sizeof(tag))&&
-        qa_source_save_string(&io,&owner)&&owner==o->options.owner&&qa_source_save_bytes(&io,definition.bytes,sizeof(definition.bytes))&&qa_sha256_equal(&definition,&actual)&&
+        qa_source_save_string(&io,&owner)&&owner==o->options.owner&&
         qa_source_save_u64(&io,&next)&&next<=UINT64_C(9007199254740991)&&qa_source_save_count(&io,&count,256);
     stage_request_row *rows=ok&&count?calloc(count,sizeof(*rows)):NULL;
     if(ok&&count&&!rows) ok=fail(e,QA_ERROR_MEMORY,"Decoding native weapon request continuation");

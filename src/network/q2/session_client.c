@@ -111,7 +111,7 @@ static bool loading(q2_session *session, qa_error *error)
     const qa_net_client *connection = qa_net_connections_get(session->runtime->connections, session->id);
     if (!connection) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 loading lost its admitted connection");
     if (connection->phase != QA_NET_CONNECTED) {
-        qa_sha256_digest composition = connection->composition;
+        uint64_t composition = connection->composition;
         if (!qa_net_connections_restart(session->runtime->connections, session->id, &composition, error)) return false;
         qa_network_history_clear(&session->runtime->peers[session->id.slot]);
     }

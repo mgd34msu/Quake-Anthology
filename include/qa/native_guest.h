@@ -59,7 +59,6 @@ typedef struct qa_native_guest_mapping {
  * through aliases and after protection changes. Execution uses owned mapped
  * pages; cold reconstruction borrows the actual resource owner's baseline. */
 typedef struct qa_native_guest_file {
-    qa_sha256_digest digest;
     uint64_t bytes, offset, accessible_bytes, capability;
 } qa_native_guest_file;
 typedef enum qa_native_guest_fault_kind {

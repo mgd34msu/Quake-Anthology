@@ -310,8 +310,8 @@ static bool native_file(application_provider *provider, qa_bytes bytes,
     qa_native_module_info module=qa_native_module_describe(provider->state.native.module);
     qa_native_checkpoint value={.kind=QA_NATIVE_CHECKPOINT_Q2_CLASSIC,
         .profile=module.profile,.q3_role=QA_QVM_GAME,.image=module.image,
+        .source={(uint8_t *)module.source,strlen(module.source)},
         .has_declaration=engine->declaration!=NULL};
-    if (engine->declaration) value.declaration=*qa_native_declaration_digest(engine->declaration);
     qa_buffer file={(uint8_t *)bytes.data,bytes.size};
     if (part==QA_NATIVE_RESTORE_GAME) { value.game=file; value.has_game=true; }
     else { value.level=file; value.has_level=true; }

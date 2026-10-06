@@ -74,9 +74,9 @@ bool q3_weapons_actor(application_q3_weapons *w, qa_actor_id actor, q3_weapon_ac
     uint32_t slot;
     if (!w || !out || !w->role || w->role->retired || w->role->kind != QA_QVM_GAME ||
         w->role->weapons != w || !w->role->vm || !w->role->host || w->role->image == NULL ||
-        !qa_sha256_equal(qa_qvm_image_digest(w->role->image), &w->profile.digest) || w->role->abi != w->profile.abi ||
+        w->role->image != w->profile.image || w->role->abi != w->profile.abi ||
         qa_qvm_get_role(w->role->vm) != QA_QVM_GAME || qa_qvm_get_abi(w->role->vm) != w->profile.abi ||
-        !qa_sha256_equal(qa_qvm_digest(w->role->vm), &w->profile.digest) ||
+        qa_qvm_image_of(w->role->vm) != w->profile.image ||
         !qa_q3_host_actor_slot(w->role->host, actor, &slot, error) || !located(w, slot, out, error))
         return (error && error->code != QA_OK) ? false :
             application_fail(error, QA_ERROR_NOT_FOUND, "Original weapon actor lost its retained GAME runtime");
@@ -97,8 +97,8 @@ static bool restoration_current(application_q3_weapons *w, const q3_weapon_actor
     return role && role->weapons == w && role->vm && role->host && role->image &&
         role->abi == w->profile.abi && qa_qvm_get_role(role->vm) == QA_QVM_GAME &&
         qa_qvm_get_abi(role->vm) == w->profile.abi &&
-        qa_sha256_equal(qa_qvm_image_digest(role->image), &w->profile.digest) &&
-        qa_sha256_equal(qa_qvm_digest(role->vm), &w->profile.digest) &&
+        role->image == w->profile.image &&
+        qa_qvm_image_of(role->vm) == w->profile.image &&
         located(w, actor->slot, &actual, NULL) && qa_actor_id_equal(actual.actor, actor->actor) &&
         actual.entity == actor->entity && actual.player == actor->player &&
         actual.data.entity_stride == actor->data.entity_stride && actual.data.client_stride == actor->data.client_stride;
@@ -389,7 +389,7 @@ bool application_q3_weapons_create(q3g_role *role, application_q3_weapon_profile
     const application_q3_weapon_services *services, application_q3_weapons **out, qa_error *error)
 {
     if (!role || !role->vm || !role->image || role->kind != QA_QVM_GAME || !profile || !services || !out || *out ||
-        (profile->present && (!qa_sha256_equal(&profile->digest, qa_qvm_image_digest(role->image)) || profile->abi != role->abi ||
+        (profile->present && (profile->image != role->image || profile->abi != role->abi ||
          !services->selected || !services->attempted || !services->accepted || !services->completed ||
          !services->give || !services->give_item || !services->drop)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original weapons require their genuine qualified actions and source owner");
@@ -414,7 +414,7 @@ bool application_q3_weapons_catalog_refresh(application_q3_weapons *w,
     const application_q3_weapon_catalog_entry *entries, size_t count, qa_error *error)
 {
     if (!w || !w->role->image || !w->role->vm || w->role->abi != w->profile.abi ||
-        !qa_sha256_equal(qa_qvm_image_digest(w->role->image), &w->profile.digest))
+        w->role->image != w->profile.image)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original weapon catalog lost its retained source owner");
     return application_q3_weapon_profile_catalog(&w->profile, entries, count, error);
 }

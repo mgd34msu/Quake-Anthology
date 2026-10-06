@@ -4,7 +4,7 @@
 #include "qa/qvm.h"
 
 /* Borrow the host payload after structural QAVM header and extent admission.
- * This view does not qualify the checksum, artifact, profile or callbacks. */
+ * This view does not qualify the source profile or callbacks. */
 bool qa_qvm_checkpoint_host(qa_bytes, qa_bytes *, qa_error *);
 
 /* Restore source counters exactly into a newly constructed isolated executor.

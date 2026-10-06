@@ -47,7 +47,7 @@ static bool retained_valid(const frontend_remote_unified *owner, const qa_net_cl
     for (size_t i = 0; i < 3; ++i) if (recipes[i] && !qa_executable_recipe_current(recipes[i], owner->options.domain.catalog))
         return bad(e, "Unified replica recipe belongs to another catalog graph");
     if (owner->recipe && (qa_executable_recipe_epoch(owner->recipe) != owner->epoch ||
-        (owner->transport_restarted && !qa_sha256_equal(qa_executable_recipe_digest(owner->recipe), &peer->composition))))
+        (owner->transport_restarted && *qa_executable_recipe_generation(owner->recipe) != peer->composition)))
         return bad(e, "Unified replica installed recipe differs from its actual publication");
     if (owner->offer) {
         const qa_json_document *json = qa_unified_document_json(owner->offer);
@@ -59,12 +59,11 @@ static bool retained_valid(const frontend_remote_unified *owner, const qa_net_cl
         const qa_executable_recipe *offered = owner->preparing_recipe ? owner->preparing_recipe :
             epoch == owner->epoch ? owner->recipe : NULL;
         if (offered) {
-            qa_unified_composition canonical = {0};
+            uint64_t generation;
             bool okay = qa_executable_recipe_epoch(offered) == epoch &&
-                qa_unified_composition_create(qa_json_source(json, qa_json_get(json,
-                    qa_json_get(json, value, "composition"), "composition")), &canonical, e) &&
-                qa_sha256_equal(&canonical.digest, qa_executable_recipe_digest(offered));
-            qa_unified_composition_free(&canonical);
+                qa_json_u64(json, qa_json_get(json,
+                    qa_json_get(json, value, "composition"), "generation"), &generation, e) &&
+                generation == *qa_executable_recipe_generation(offered);
             if (!okay) return bad(e, "Unified replica pending recipe changes its retained offer");
         }
     }

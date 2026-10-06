@@ -179,7 +179,7 @@ bool application_q3_component_body_create(const application_q3_component_body_op
     if (!options || !options->vm || !options->image || !options->profile || !options->owner ||
         !options->assets || !options->source.context || !options->source.actor || !options->source.live ||
         !options->source.current || !out || *out || qa_qvm_get_role(options->vm) != QA_QVM_CGAME ||
-        !qa_sha256_equal(qa_qvm_digest(options->vm), qa_qvm_image_digest(options->image)) ||
+        (qa_qvm_image_of(options->vm) != options->image) ||
         !application_q3_body_profile_qualify(options->image, qa_qvm_get_abi(options->vm),
             options->profile->artifact_path, options->profile, error) ||
         !options->profile->present || options->profile->count != 1 ||

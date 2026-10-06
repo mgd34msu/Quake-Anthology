@@ -235,7 +235,7 @@ bool application_q3_body_create_module(const application_q3_body_module *module,
 {
     if (!module || !module->session || !module->vm || !module->image || !module->profile || !module->receiver ||
         !out || *out || qa_qvm_get_role(module->vm) != QA_QVM_CGAME ||
-        !qa_sha256_equal(qa_qvm_digest(module->vm), qa_qvm_image_digest(module->image)) ||
+        (qa_qvm_image_of(module->vm) != module->image) ||
         !application_q3_body_profile_qualify(module->image, qa_qvm_get_abi(module->vm),
             module->profile->artifact_path, module->profile, error) ||
         (module->profile->present && (!module->client.context || !module->client.source_actor)) ||

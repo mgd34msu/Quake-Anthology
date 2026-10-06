@@ -553,7 +553,7 @@ bool guest_elf_open(qa_bytes source, const qa_native_image_info *expected, guest
         image.format != expected->format || image.target.os != expected->target.os ||
         image.target.arch != expected->target.arch || image.target.abi != expected->target.abi ||
         image.target.pointer_bytes != expected->target.pointer_bytes || image.preferred_base != expected->preferred_base ||
-        image.image_bytes != expected->image_bytes || memcmp(image.digest.bytes, expected->digest.bytes, sizeof(image.digest.bytes)))
+        image.image_bytes != expected->image_bytes)
         return guest_fail(error, QA_ERROR_FORMAT, 0, "ELF artifact differs from its actual caller-qualified image witness");
     guest_elf *elf = calloc(1, sizeof(*elf));
     if (!elf) return guest_fail(error, QA_ERROR_MEMORY, 0, "allocating inert ELF owner");

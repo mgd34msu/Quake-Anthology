@@ -26,7 +26,7 @@ bool application_q3_weapon_models_profile_namespace(const application_q3_weapon_
     const qa_qvm_image *image, qa_qvm_abi abi, const char *path, qa_error *error)
 {
     if (!profile || !profile->present || !profile->game_artifact_path || !image || !path ||
-        profile->game_abi != abi || !qa_sha256_equal(&profile->game_artifact, qa_qvm_image_digest(image)))
+        profile->game_abi != abi)
         return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon receipt has a different actual GAME namespace");
     char *normalized = qa_vfs_normalize_path(path, error);
     bool same = normalized && !strcmp(normalized, profile->game_artifact_path);
@@ -37,7 +37,7 @@ bool application_q3_weapon_models_profile_qualify(const qa_qvm_image *image, qa_
     const char *path, const application_q3_weapon_models_profile *profile, qa_error *error)
 {
     if (!image || !path || !profile || !profile->artifact_path || (unsigned)abi > QA_QVM_Q3_116N ||
-        profile->abi != abi || !qa_sha256_equal(&profile->artifact, qa_qvm_image_digest(image)))
+        profile->abi != abi || profile->image != image)
         return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon model profile lost its actual artifact");
     char *normalized = qa_vfs_normalize_path(path, error);
     bool same = normalized && !strcmp(normalized, profile->artifact_path);
@@ -45,7 +45,6 @@ bool application_q3_weapon_models_profile_qualify(const qa_qvm_image *image, qa_
     if (!same) return application_fail(error, QA_ERROR_FORMAT, "CG weapon models name different artifact bytes");
     if (!profile->present) {
         if (profile->game_artifact_path || profile->game_abi ||
-            memcmp(profile->game_artifact.bytes, (uint8_t[32]){0}, 32) ||
             profile->registration || profile->weapon_argument || profile->base || profile->count ||
             profile->stride || profile->weapon_offset || profile->registered_offset ||
             profile->index_base || profile->indexed)
@@ -98,7 +97,7 @@ bool application_q3_weapon_models_profile_read(const qa_qvm_image *image, qa_qvm
     if (!image || role != QA_QVM_CGAME || !path || !out || out->artifact_path || out->game_artifact_path ||
         (unsigned)abi > QA_QVM_Q3_116N || (bytes && (!bytes->data || !bytes->size)))
         return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon model declaration needs its actual bytecode opening");
-    application_q3_weapon_models_profile profile = {.artifact = *qa_qvm_image_digest(image), .abi = abi,
+    application_q3_weapon_models_profile profile = {.image = image, .abi = abi,
         .present = bytes != NULL};
     profile.artifact_path = qa_vfs_normalize_path(path, error);
     if (!profile.artifact_path) return false;
@@ -109,23 +108,18 @@ bool application_q3_weapon_models_profile_read(const qa_qvm_image *image, qa_qvm
             models = qa_json_get(doc, table, "models");
         uint32_t version = 0;
         qa_buffer declared_path = {0}; char *normalized = NULL;
-        char hex[65], digest[72]; qa_sha256_hex(&profile.artifact, hex);
-        memcpy(digest, "sha256:", 7); memcpy(digest + 7, hex, 65);
         ok = number(doc, root, "version", &version, error) && version == 1 &&
             qa_json_string(doc, qa_json_get(doc, root, "artifactPath"), &declared_path, error);
         if (ok && memchr(declared_path.data, 0, declared_path.size)) ok = false;
         if (ok) normalized = qa_vfs_normalize_path((const char *)declared_path.data, error);
-        if (ok) ok = normalized && !strcmp(normalized, profile.artifact_path) &&
-            qa_json_string_equal(doc, qa_json_get(doc, root, "artifactDigest"), digest);
+        if (ok) ok = normalized && !strcmp(normalized, profile.artifact_path);
         free(normalized); qa_buffer_free(&declared_path);
         if (!ok && (!error || error->code == QA_OK))
             application_fail(error, QA_ERROR_FORMAT, "CG weapon models belong to a different artifact opening");
         qa_json_id game = qa_json_get(doc, root, "game");
-        qa_buffer game_path = {0}, game_digest = {0};
-        if (ok) ok = qa_json_string(doc, qa_json_get(doc, game, "artifactPath"), &game_path, error) &&
-            qa_json_string(doc, qa_json_get(doc, game, "artifactDigest"), &game_digest, error);
-        if (ok) ok = !memchr(game_path.data, 0, game_path.size) && !memchr(game_digest.data, 0, game_digest.size) &&
-            qa_sha256_parse((const char *)game_digest.data, &profile.game_artifact, error);
+        qa_buffer game_path = {0};
+        if (ok) ok = qa_json_string(doc, qa_json_get(doc, game, "artifactPath"), &game_path, error);
+        if (ok) ok = !memchr(game_path.data, 0, game_path.size);
         if (ok) profile.game_artifact_path = qa_vfs_normalize_path((const char *)game_path.data, error);
         if (ok) ok = profile.game_artifact_path != NULL;
         if (ok) {
@@ -134,7 +128,7 @@ bool application_q3_weapon_models_profile_read(const qa_qvm_image *image, qa_qvm
             else if (qa_json_string_equal(doc, game_abi, "q3-1.16n-base")) profile.game_abi = QA_QVM_Q3_116N;
             else ok = application_fail(error, QA_ERROR_FORMAT, "CG weapon namespace declares an unknown GAME ABI");
         }
-        qa_buffer_free(&game_path); qa_buffer_free(&game_digest);
+        qa_buffer_free(&game_path);
         if (ok) ok = number(doc, root, "registrationEntry", &profile.registration, error) &&
             number(doc, root, "weaponArgument", &profile.weapon_argument, error) &&
             number(doc, table, "base", &profile.base, error) && number(doc, table, "count", &profile.count, error) &&
@@ -191,14 +185,12 @@ static bool profile_fields(qa_source_save_io *io, application_q3_weapon_models_p
     if (memcmp(magic, "QAG3MP\0\0", sizeof(magic)))
         return application_fail(io->error, QA_ERROR_FORMAT, "Unknown CG weapon model profile signature");
     if (!profile_text(io, &profile->artifact_path) ||
-        !qa_source_save_bytes(io, profile->artifact.bytes, sizeof(profile->artifact.bytes)) ||
         !qa_source_save_u32(io, &abi) || !qa_source_save_bool(io, &profile->present)) return false;
     if (abi > QA_QVM_Q3_116N)
         return application_fail(io->error, QA_ERROR_FORMAT, "CG weapon model profile has an unknown ABI");
     if (reading) profile->abi = (qa_qvm_abi)abi;
     if (!profile->present) return true;
     if (!profile_text(io, &profile->game_artifact_path) ||
-        !qa_source_save_bytes(io, profile->game_artifact.bytes, sizeof(profile->game_artifact.bytes)) ||
         !qa_source_save_u32(io, &game_abi)) return false;
     if (game_abi > QA_QVM_Q3_116N)
         return application_fail(io->error, QA_ERROR_FORMAT, "CG weapon model profile has an unknown GAME ABI");
@@ -232,7 +224,7 @@ bool application_q3_weapon_models_profile_restore(const qa_qvm_image *image, qa_
 {
     if (!image || !path || !out || out->artifact_path || out->game_artifact_path || out->present)
         return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon model profile import requires an empty candidate owner");
-    application_q3_weapon_models_profile profile = {0};
+    application_q3_weapon_models_profile profile = {.image = image};
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) && profile_fields(&io, &profile) &&
         qa_source_save_finish(&io, NULL) &&

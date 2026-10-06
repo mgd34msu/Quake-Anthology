@@ -26,7 +26,7 @@ static bool same_source(const qa_application_q3_remote_source *a,
     return a && b && a->descriptor && b->descriptor &&
         a->descriptor->storage == b->descriptor->storage &&
         a->descriptor->content == b->descriptor->content &&
-        qa_sha256_equal(&a->descriptor->identity, &b->descriptor->identity) &&
+        a->descriptor->identity == b->descriptor->identity &&
         a->configuration_generation == b->configuration_generation &&
         a->connection_epoch == b->connection_epoch &&
         a->receiver.receiver == b->receiver.receiver && a->receiver.seat == b->receiver.seat &&
@@ -72,7 +72,9 @@ static bool process_current(void *context, const qa_launch_instance *descriptor,
     if (!owner || !descriptor || !owner->source.descriptor || !role->module ||
         !role->artifact.resource || receiver_owner != owner->source.receiver.receiver ||
         service_owner != role->service_owner ||
-        !qa_sha256_equal(&descriptor->identity, &owner->source.descriptor->identity))
+        descriptor->identity != owner->source.descriptor->identity ||
+        descriptor->storage != owner->source.descriptor->storage ||
+        descriptor->content != owner->source.descriptor->content)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT process lost its actual acquired identity");
     if (owner->retiring)
         return application_native_q3_remote_role_modules_retained(owner->provider, &owner->source, owner) ||
@@ -189,7 +191,7 @@ bool native_client_module_qualify(native_client_module *role, qa_error *error)
         qa_qvm_compatibility compatibility = {0};
         bool okay = !role->declaration.resource || qa_qvm_compatibility_parse(
             qa_resource_bytes(role->declaration.resource), role->artifact.path,
-            qa_qvm_image_digest(role->image), role->kind, &compatibility, error);
+            role->kind, &compatibility, error);
         if (okay) {
             role->abi = compatibility.abi;
             if (role->kind == QA_QVM_CGAME) okay = application_q3_equipment_profile_read(role->image,
@@ -213,7 +215,7 @@ static bool declaration_open(native_client_module *role, bool bytecode, qa_error
         if (mod->product != source->selection.product || mod->unavailable || !mod->declaration_path ||
             !mod->program_path || strcmp(mod->program_path, role->artifact.path) ||
             mod->runtime != (bytecode ? QA_PROGRAM_QVM : QA_PROGRAM_NATIVE) ||
-            !qa_sha256_equal(&mod->program_digest, qa_resource_digest(role->artifact.resource))) continue;
+            mod->program_resource != role->artifact.resource) continue;
         if (path && strcmp(path, mod->declaration_path))
             return application_fail(error, QA_ERROR_FORMAT, "Ambiguous acquired CLIENT declaration");
         path = mod->declaration_path;
@@ -270,7 +272,7 @@ static bool artifact_open(native_client_module *role, bool native_ui, qa_error *
             if (!opening(role, path, &role->artifact, error)) return false;
             qa_error native_error = {0};
             bool admitted = qa_native_module_load(qa_resource_bytes(role->artifact.resource), path,
-                QA_NATIVE_Q3_VMMAIN, NULL, &role->module, &native_error);
+                QA_NATIVE_Q3_VMMAIN, &role->module, &native_error);
             if (!admitted && native_error.code == QA_ERROR_MEMORY) { if (error) *error = native_error; return false; }
             if (admitted) {
                 qa_native_target target = qa_native_module_describe(role->module).image.target;
@@ -421,7 +423,6 @@ bool native_client_module_construct(native_client_module *role, bool restoring, 
             actual.receiver.seat, &native.instance, error)) return false;
         if (role->native_declaration) {
             native.instance.declaration = role->native_declaration;
-            native.instance.declaration_digest = qa_native_declaration_digest(role->native_declaration);
         }
         qa_native_module_info module = qa_native_module_describe(role->module);
         qa_native_process_resource_artifact artifact = {.resource = role->artifact.resource,

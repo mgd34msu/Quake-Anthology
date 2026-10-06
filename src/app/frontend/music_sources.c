@@ -376,16 +376,13 @@ bool frontend_music_sources_restore_origin_matches(const frontend_music_sources 
     const char *instance = origin && origin->descriptor ? origin->descriptor->selection.instance :
         origin && origin->recipe_provider ? origin->recipe_provider->selection.instance :
         origin ? origin->recipe_content : NULL;
-    const qa_sha256_digest *identity = origin && origin->descriptor ? &origin->descriptor->identity :
-        origin && origin->recipe ? qa_executable_recipe_digest(origin->recipe) : NULL;
     return frontend_music_sources_current(owner) && owner->restoring && owner->frontend->source_restoring &&
-        owner->has_origin && origin && product && instance && identity && owner->origin_instance && owner->origin_product &&
+        owner->has_origin && origin && product && instance && owner->origin_instance && owner->origin_product &&
         owner->origin_recipe == (origin->recipe != NULL) &&
         (owner->origin_recipe ? recipe_origin(origin) : origin->descriptor && !origin->recipe_provider) &&
         origin->kind == owner->origin.kind && origin->bus == owner->buses[FRONTEND_MUSIC_WORLD] &&
         origin->physical_seat == owner->origin.physical_seat && origin->receiver == owner->origin.receiver &&
-        !strcmp(instance, owner->origin_instance) && !strcmp(product->key, owner->origin_product) &&
-        qa_sha256_equal(identity, &owner->origin_identity);
+        !strcmp(instance, owner->origin_instance) && !strcmp(product->key, owner->origin_product);
 }
 bool frontend_music_sources_restore_origin(frontend_music_sources *owner, const frontend_music_origin *origin, qa_error *e) {
     if (!owner || !owner->restoring || !owner->frontend->source_restoring || !owner->has_origin || owner->origin_bound ||

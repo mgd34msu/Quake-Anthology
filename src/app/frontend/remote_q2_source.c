@@ -121,7 +121,7 @@ bool frontend_remote_q2_source_owner_current(const frontend_remote_q2_source *so
     if (!source || source->closing || source->frontend->application != source->domain.application ||
         !source->registry || !actual || !descriptor ||
         descriptor->storage != actual->storage || descriptor->content != actual->content ||
-        !qa_sha256_equal(&descriptor->identity, &actual->identity) || console != source->console ||
+        descriptor->identity != actual->identity || console != source->console ||
         registry != source->domain.cvars || registry != frontend_client_registry_cvars(source->registry) ||
         !frontend_client_registry_matches(source->registry,
             qa_launch_instance_lease_view(source->constructor_metadata), source->options.metadata.seat) ||

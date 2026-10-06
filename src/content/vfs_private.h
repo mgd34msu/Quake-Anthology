@@ -26,8 +26,6 @@ struct qa_resource {
     package *archive;
     size_t ordinal;
     qa_fs_identity identity;
-    qa_sha256_digest digest;
-    bool digest_ready;
     qa_archive_data data;
 };
 struct qa_resource_pool {

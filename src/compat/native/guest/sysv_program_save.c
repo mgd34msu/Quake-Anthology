@@ -34,8 +34,7 @@ static bool image_fields(qa_source_save_io *io, qa_native_image_info *image)
     if (!qa_source_save_u32(io, &format) || !qa_source_save_u32(io, &os) ||
         !qa_source_save_u32(io, &arch) || !qa_source_save_u32(io, &abi) ||
         !qa_source_save_u8(io, &image->target.pointer_bytes) ||
-        !qa_source_save_u64(io, &image->preferred_base) || !qa_source_save_u64(io, &image->image_bytes) ||
-        !qa_source_save_bytes(io, image->digest.bytes, 32)) return false;
+        !qa_source_save_u64(io, &image->preferred_base) || !qa_source_save_u64(io, &image->image_bytes)) return false;
     image->format = (qa_native_image_format)format;
     image->target = (qa_native_target){(qa_native_os)os, (qa_native_arch)arch, (qa_native_abi)abi, image->target.pointer_bytes};
     return (format == QA_NATIVE_IMAGE_ELF64 && os == QA_NATIVE_OS_LINUX &&
@@ -219,7 +218,7 @@ bool qa_native_sysv_program_restore(qa_bytes bytes, const qa_native_sysv_program
             image_fields(&io, &row->image) && qa_source_save_count(&io, &row->maximum_image_bytes, bindings->maximum_image_bytes);
         if (okay && (!row->provider || !row->maximum_image_bytes ||
             row->load_bias != source->load_bias || source->role != QA_NATIVE_SYSV_PROGRAM ||
-            !qa_sha256_equal(&row->image.digest, &source->image.digest) ||
+            row->provider != source->provider ||
             row->maximum_image_bytes > source->maximum_image_bytes))
             okay = guest_fail(error, QA_ERROR_FORMAT, i, "Linux saved program differs from its installed source");
         if (okay) okay = guest_elf_open(source->bytes, &row->image, GUEST_ELF_PROGRAM,

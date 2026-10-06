@@ -16,12 +16,11 @@ static bool blob(qa_source_save_io *io,qa_buffer *buffer)
 static bool fields(application_q3_component *c,qa_source_save_io *io,qa_buffer children[9],qa_qvm_binding *ids,qa_qvm_binding *resolver)
 {
     uint8_t magic[4]={'Q','G','C','M'},expected[4]={'Q','G','C','M'}; uint32_t abi=(uint32_t)c->options.abi;
-    uint8_t program[32],declaration[32]; memcpy(program,&c->options.program_digest,32); memcpy(declaration,&c->options.declaration_digest,32);
     uint64_t owner=c->options.host.owner,services=c->options.host.service_owner,generation=c->options.generation;
     const char *path=c->options.program_path; size_t count=c->hook_count;
     if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,expected,4)||
-        !qa_source_save_u32(io,&abi)||abi!=(uint32_t)c->options.abi||!qa_source_save_bytes(io,program,32)||memcmp(program,&c->options.program_digest,32)||
-        !qa_source_save_bytes(io,declaration,32)||memcmp(declaration,&c->options.declaration_digest,32)||!qa_source_save_text(io,&path)||!path||strcmp(path,c->options.program_path)||
+        !qa_source_save_u32(io,&abi)||abi!=(uint32_t)c->options.abi||
+        !qa_source_save_text(io,&path)||!path||strcmp(path,c->options.program_path)||
         !qa_source_save_u64(io,&owner)||owner!=c->options.host.owner||!qa_source_save_u64(io,&services)||services!=c->options.host.service_owner||
         !qa_source_save_u64(io,&generation)||generation!=c->options.generation||!qa_source_save_i32(io,&c->milliseconds)||c->milliseconds<0||
         !qa_source_save_count(io,&count,c->hook_count)||count!=c->hook_count) return q3records_fail(io->error,QA_ERROR_FORMAT,"Component continuation differs from its actual source artifacts or namespaces");

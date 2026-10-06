@@ -20,7 +20,6 @@ typedef struct q3_file {
     qa_resource *resource;
     qa_buffer restored_bytes;
     char *restored_path;
-    qa_sha256_digest restored_digest;
     qa_q3_host_write_file *writable;
     uint64_t position;
     bool zip;

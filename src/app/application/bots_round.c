@@ -81,7 +81,7 @@ static bool original_text(const char *a,const char *b) {
     return a && b?!strcmp(a,b):a==b;
 }
 static bool original_resource(const qa_resource *a,const qa_resource *b) {
-    return a && b?qa_sha256_equal(qa_resource_digest(a),qa_resource_digest(b)):a==b;
+    return a==b;
 }
 static bool original_library_ready(const qa_cvars *configuration,bool initialized,bool loaded,qa_error *error) {
     const qa_cvar_view *enabled=configuration?qa_cvars_find(configuration,"bot_enable"):NULL;

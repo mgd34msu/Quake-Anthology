@@ -377,9 +377,9 @@ static bool server_dispatch(host_server *server,host_packet *packet,bool *comple
         return packet_send(server->descriptor,HOST_CPU_CLOCK|HOST_REPLY,0,packet->sequence,(qa_bytes){reply,sizeof(reply)},-1,error);
     }
     case HOST_BACKING: {
-        if(bytes!=73 || packet->descriptor<0) {okay=fail(&failure,QA_ERROR_FORMAT,0,"child backing descriptor is absent");break;}
+        if(bytes!=49 || packet->descriptor<0) {okay=fail(&failure,QA_ERROR_FORMAT,0,"child backing descriptor is absent");break;}
         guest_host_backing_view view={.id=qa_load_u64le(data),.bytes={NULL,(size_t)qa_load_u64le(data+8)},.file=data[16]!=0};
-        memcpy(view.source.digest.bytes,data+17,32);view.source.bytes=qa_load_u64le(data+49);view.source.offset=qa_load_u64le(data+57);view.source.accessible_bytes=qa_load_u64le(data+65);
+        view.source.bytes=qa_load_u64le(data+17);view.source.offset=qa_load_u64le(data+25);view.source.accessible_bytes=qa_load_u64le(data+33);view.source.capability=qa_load_u64le(data+41);
         if(data[16]>1 || !view.bytes.size || (view.bytes.size&4095) || server_backing(server,view.id) ||
             !guest_host_memory_child_backing(packet->descriptor,&view,&failure) ||
             !grow((void **)&server->backings,&server->backing_capacity,server->backing_count+1,sizeof(*server->backings),&failure)) {okay=false;break;}
@@ -647,8 +647,8 @@ bool guest_host_child_backing(guest_host_child *child,const guest_host_backing_v
     if(!usable(child) || !guest_host_memory_backing(child->memory,view,error))return false;
     guest_host_backing_view actual;int descriptor;
     if(!guest_host_memory_backing_at(child->memory,guest_host_memory_backing_count(child->memory)-1,&actual,&descriptor,error))return false;
-    uint8_t data[73];qa_store_u64le(data,actual.id);qa_store_u64le(data+8,actual.bytes.size);data[16]=actual.file?1:0;
-    memcpy(data+17,actual.source.digest.bytes,32);qa_store_u64le(data+49,actual.source.bytes);qa_store_u64le(data+57,actual.source.offset);qa_store_u64le(data+65,actual.source.accessible_bytes);
+    uint8_t data[49];qa_store_u64le(data,actual.id);qa_store_u64le(data+8,actual.bytes.size);data[16]=actual.file?1:0;
+    qa_store_u64le(data+17,actual.source.bytes);qa_store_u64le(data+25,actual.source.offset);qa_store_u64le(data+33,actual.source.accessible_bytes);qa_store_u64le(data+41,actual.source.capability);
     return request(child,HOST_BACKING,(qa_bytes){data,sizeof(data)},descriptor,error);
 }
 size_t guest_host_child_backing_count(const guest_host_child *child) {return child?guest_host_memory_backing_count(child->memory):0;}

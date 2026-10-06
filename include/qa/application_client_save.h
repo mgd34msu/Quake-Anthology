@@ -6,7 +6,6 @@
  * frontend codec owns descriptor, registry, connection and callback imports;
  * this state retains only the physical CLIENT's private observer namespace. */
 typedef struct qa_application_client_state {
-    qa_sha256_digest descriptor_identity;
     qa_actor_owner receiver, entity_owner;
     uint32_t seat, physical_seat;
     uint64_t configuration_generation, connection_epoch, entity_generation;

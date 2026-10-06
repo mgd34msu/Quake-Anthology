@@ -110,7 +110,7 @@ bool frontend_network_unified_admit(frontend_network_unified *owner,
                     remote->options.domain.runtime != owner->options.runtime ||
                     !qa_net_client_id_equal(remote->options.domain.client, peer->client) || !remote->recipe ||
                     remote->epoch != qa_executable_recipe_epoch(remote->recipe) || remote->transport_restarted ||
-                    !qa_sha256_equal(&request->composition, qa_executable_recipe_digest(remote->recipe)))
+                    request->composition != *qa_executable_recipe_generation(remote->recipe))
                     return fail(error, "Unified restart admission lost its genuine received CLIENT recipe publication");
                 offer = remote->offer;
             }
@@ -122,7 +122,7 @@ bool frontend_network_unified_admit(frontend_network_unified *owner,
             request->protocol.kind != pending->protocol.kind ||
             request->protocol.revision != pending->protocol.revision ||
             request->protocol.flags != pending->protocol.flags ||
-            !qa_sha256_equal(&request->composition, &pending->composition) ||
+            request->composition != pending->composition ||
             request->seat_count != 1 || request->seat_count != pending->seat_count || !request->seats ||
             request->seats[0].seat.owner != peer->binding.seat.owner ||
             request->seats[0].seat.index != peer->binding.seat.index ||
@@ -133,8 +133,8 @@ bool frontend_network_unified_admit(frontend_network_unified *owner,
             return fail(error, "Unified admission changed its staged canonical transport seat");
         if (owner->options.server) {
             application_unified_source source;
-            const qa_sha256_digest *composition = application_unified_server_composition(peer->server);
-            return composition && qa_sha256_equal(composition, &request->composition) &&
+            const uint64_t *composition = application_unified_server_composition(peer->server);
+            return composition && (*composition == request->composition) &&
                 application_unified_source_read(owner->options.frontend->application, &source, error);
         }
         return peer->remote && qa_net_address_equal(&request->endpoint, &owner->options.remote, true);

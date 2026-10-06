@@ -15,19 +15,13 @@ static bool artifact(qa_catalog *c, qa_vfs *view, const qa_json_document *doc,
                       qa_catalog_weapon_behavior *behavior, qa_error *error)
 {
     const char *path = catalog_json_string(c, doc, qa_json_get(doc, row, "artifactPath"), default_path, error);
-    const char *digest_text = catalog_json_string(c, doc, qa_json_get(doc, row, "artifactDigest"), NULL, error);
-    qa_sha256_digest digest;
-    if (!path || !digest_text || !qa_sha256_parse(digest_text, &digest, error)) return false;
+    if (!path) return false;
     char *normalized = qa_archive_normalize_path(path, error);
     if (!normalized) return false;
     behavior->artifact_path = catalog_string(c, normalized, error); free(normalized);
     qa_resource *program;
     if (!behavior->artifact_path || !qa_vfs_acquire(view, behavior->artifact_path, &program, NULL, error)) return false;
-    behavior->artifact_digest = *qa_resource_digest(program);
-    qa_resource_release(program);
-    if (!qa_sha256_equal(&digest, &behavior->artifact_digest)) {
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "trajectory executable differs from its declaration"); return false;
-    }
+    behavior->artifact_resource = program;
     return true;
 }
 static bool read_document(qa_catalog *c, catalog_product *p, qa_vfs *view,
@@ -80,8 +74,9 @@ static bool read_document(qa_catalog *c, catalog_product *p, qa_vfs *view,
         memcpy(copy, entry.data, entry.size);
         *b = (qa_catalog_weapon_behavior){.product = p->view.id, .id = id, .title = title,
             .runtime = runtime, .role = (qa_builtin_projectile_role)role,
-            .declaration_path = path, .declaration_digest = *qa_resource_digest(resource),
+            .declaration_path = path, .declaration_resource = resource,
             .entry = {copy, entry.size}};
+        qa_resource_retain(resource);
         qa_error issue = {0};
         if (!artifact(c, view, doc, row, default_path, b, &issue)) {
             if (issue.code == QA_ERROR_MEMORY) { if (error) *error = issue; goto done; }
@@ -116,15 +111,12 @@ bool catalog_read_behaviors(qa_catalog *c, catalog_product *p, qa_error *error)
         qa_resource *program;
         ok = catalog_optional_resource(view, "game_x64.dll", &program, error);
         if (ok && program) {
-            qa_sha256_digest known;
-            ok = qa_sha256_parse("b60b79f7fb6f115218681a9cbab8765267e34f72466975526df05ad288925dde", &known, error);
-            if (ok && qa_sha256_equal(&known, qa_resource_digest(program))) {
-                ok = catalog_grow((void **)&c->behaviors, &c->behavior_capacity, c->behavior_count + 1, sizeof(*c->behaviors), error);
-                if (ok) {
-                    c->behaviors[c->behavior_count++] = (qa_catalog_weapon_behavior){.product = p->view.id,
-                        .id = "native:rocket-trajectory", .title = "Faster rockets", .artifact_path = "game_x64.dll",
-                        .runtime = QA_PROGRAM_NATIVE, .role = QA_BUILTIN_ROCKET, .artifact_digest = *qa_resource_digest(program)};
-                }
+            ok = catalog_grow((void **)&c->behaviors, &c->behavior_capacity, c->behavior_count + 1, sizeof(*c->behaviors), error);
+            if (ok) {
+                c->behaviors[c->behavior_count++] = (qa_catalog_weapon_behavior){.product = p->view.id,
+                    .id = "native:rocket-trajectory", .title = "Faster rockets", .artifact_path = "game_x64.dll",
+                    .runtime = QA_PROGRAM_NATIVE, .role = QA_BUILTIN_ROCKET, .artifact_resource = program};
+                qa_resource_retain(program);
             }
             qa_resource_release(program);
         }

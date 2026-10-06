@@ -98,11 +98,11 @@ static bool graph_fields(qa_source_save_io *io, qa_executable_recipe *recipe,
         !qa_source_save_u32(io, &recipe->max_clients) || !recipe->max_clients || recipe->max_clients > 256 ||
         !text(io, recipe, &recipe->mode) || (strcmp(recipe->mode, "singleplayer") &&
             strcmp(recipe->mode, "coop") && strcmp(recipe->mode, "deathmatch")) ||
-        !qa_source_save_bytes(io, recipe->digest.bytes, sizeof(recipe->digest.bytes)) ||
+        !qa_source_save_u64(io, &recipe->generation) || !recipe->generation ||
         !buffer(io, &recipe->composition) || !recipe->composition.size) return false;
     qa_unified_composition canonical = {0};
     bool matched = qa_unified_composition_create((qa_bytes){recipe->composition.data, recipe->composition.size},
-        &canonical, io->error) && qa_sha256_equal(&canonical.digest, &recipe->digest) &&
+        &canonical, io->error) &&
         canonical.canonical.size == recipe->composition.size &&
         !memcmp(canonical.canonical.data, recipe->composition.data, recipe->composition.size);
     qa_unified_composition_free(&canonical);

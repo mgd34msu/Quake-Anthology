@@ -871,7 +871,6 @@ static const qa_unified_record_layout qa_unified_world_frame_layout = QA_UNIFIED
 static const qa_unified_field qa_unified_resource_state_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_resource_state, content, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_FIELD(qa_unified_resource_state, path, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_RAW(qa_unified_resource_state, digest),
     QA_UNIFIED_FIELD(qa_unified_resource_state, byte_length, QA_UNIFIED_FIELD_U64),
 };
 static const qa_unified_record_layout qa_unified_resource_state_layout = QA_UNIFIED_LAYOUT(qa_unified_resource_state, qa_unified_resource_state_fields);
@@ -1482,8 +1481,6 @@ static const qa_unified_record_layout qa_unified_q2_protocol_event_layout = QA_U
 static const qa_unified_field qa_unified_mod_identity_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_mod_identity, id, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_FIELD(qa_unified_mod_identity, artifact_path, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_mod_identity, digest, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_mod_identity, revision, QA_UNIFIED_FIELD_STRING),
 };
 static const qa_unified_record_layout qa_unified_mod_identity_layout = QA_UNIFIED_LAYOUT(qa_unified_mod_identity, qa_unified_mod_identity_fields);
 
@@ -2016,7 +2013,7 @@ static bool presentation_check(const qa_unified_presentation_event *row, qa_erro
         const qa_unified_q3_event *event=&payload->value.q3;
         okay=event->kind>=QA_UNIFIED_Q3_PRINT && event->kind<=QA_UNIFIED_Q3_SOUND;
         if (okay && event->kind==QA_UNIFIED_Q3_PLAYER_EVENT)
-            okay=event->module.id && event->module.artifact_path && event->module.digest && event->module.revision &&
+            okay=event->module.id && event->module.artifact_path &&
                 (event->abi==QA_QVM_Q3_MODERN || event->abi==QA_QVM_Q3_116N) && event->time_ms>=0 &&
                 finite_record(&qa_q3_player_layout,&event->player) && finite_record(&qa_unified_vector_layout,&event->origin);
         if (okay && event->kind==QA_UNIFIED_Q3_ENTITY_EVENT)
@@ -2146,7 +2143,6 @@ static const qa_unified_field component_identity_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_component_identity, id, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_FIELD(qa_unified_component_identity, provider, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_FIELD(qa_unified_component_identity, content, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_RAW(qa_unified_component_identity, declaration_digest),
     QA_UNIFIED_RECORD(qa_unified_component_identity, module, qa_unified_mod_identity_layout),
 };
 static const qa_unified_record_layout component_identity_layout = QA_UNIFIED_LAYOUT(qa_unified_component_identity, component_identity_fields);
@@ -2212,7 +2208,7 @@ bool qa_unified_component_identity_read(qa_bytes bytes,qa_unified_component_iden
 { return out && qa_unified_record_delta_decode(&component_identity_layout,bytes,NULL,out,NULL,error); }
 
 static const qa_unified_field control_ready_fields[] = {
-    QA_UNIFIED_RAW(qa_unified_ready_control, composition),
+    QA_UNIFIED_FIELD(qa_unified_ready_control, composition, QA_UNIFIED_FIELD_U64),
     {QA_UNIFIED_FIELD_STRING, offsetof(qa_unified_ready_control, userinfo), NULL, 0, 8192, NULL},
 };
 static const qa_unified_record_layout control_ready_layout = QA_UNIFIED_LAYOUT(qa_unified_ready_control, control_ready_fields);
@@ -2229,7 +2225,7 @@ static const qa_unified_field control_admitted_fields[] = {
 };
 static const qa_unified_record_layout control_admitted_layout = QA_UNIFIED_LAYOUT(qa_unified_admitted_control, control_admitted_fields);
 static const qa_unified_field control_resource_fields[] = {
-    {QA_UNIFIED_FIELD_STRING, offsetof(qa_unified_resource_declaration, identity), NULL, 0, sizeof("resource:unified:") + 64 - 1, NULL},
+    {QA_UNIFIED_FIELD_STRING, offsetof(qa_unified_resource_declaration, identity), NULL, 0, sizeof("resource:unified:") + 20 - 1, NULL},
     QA_UNIFIED_RECORD(qa_unified_resource_declaration, resource, qa_unified_resource_state_layout),
 };
 static const qa_unified_record_layout control_resource_layout = QA_UNIFIED_LAYOUT(qa_unified_resource_declaration, control_resource_fields);
@@ -2281,8 +2277,7 @@ static bool component_identity_check(const qa_unified_component_identity *identi
     return (identity->runtime==QA_PROGRAM_QVM || identity->runtime==QA_PROGRAM_NATIVE) &&
         identity->product && *identity->product && identity->id && *identity->id &&
         identity->provider && *identity->provider && identity->content && *identity->content &&
-        identity->module.id && *identity->module.id && identity->module.artifact_path && *identity->module.artifact_path &&
-        identity->module.digest && *identity->module.digest && identity->module.revision && *identity->module.revision;
+        identity->module.id && *identity->module.id && identity->module.artifact_path && *identity->module.artifact_path;
 }
 static bool control_components_check(const qa_unified_components_control *update,qa_error *error)
 {
@@ -2343,13 +2338,18 @@ bool qa_unified_control_check(const qa_unified_control *v, size_t *bytes, qa_err
             const qa_unified_resource_declaration *row=v->value.resources.values+i;
             const char *path=row->resource.path;
             static const char prefix[]="resource:unified:";
-            if (!row->identity || strlen(row->identity)!=sizeof(prefix)-1+64 || memcmp(row->identity,prefix,sizeof(prefix)-1) ||
+            if (!row->identity || strncmp(row->identity,prefix,sizeof(prefix)-1) ||
                 !row->resource.content || !*row->resource.content || !path || !*path || *path=='/' || strchr(path,'\\'))
                 return frame_bad(error,"Unified declaration has an invalid actual resource identity or path");
-            for (size_t digit=sizeof(prefix)-1;digit<sizeof(prefix)-1+64;++digit)
-                if (!((row->identity[digit]>='0' && row->identity[digit]<='9') ||
-                    (row->identity[digit]>='a' && row->identity[digit]<='f')))
-                    return frame_bad(error,"Unified resource identity is not its canonical Source reference");
+            const unsigned char *serial_text=(const unsigned char *)row->identity+sizeof(prefix)-1;
+            if (*serial_text<'1' || *serial_text>'9')
+                return frame_bad(error,"Unified resource identity has no canonical nonzero Source serial");
+            uint64_t serial=0;
+            for (;*serial_text;++serial_text) {
+                if (*serial_text<'0' || *serial_text>'9' || serial>(UINT64_MAX-(uint64_t)(*serial_text-'0'))/10)
+                    return frame_bad(error,"Unified resource identity is outside its Source serial range");
+                serial=serial*10+(uint64_t)(*serial_text-'0');
+            }
             for (const char *at=path;*at;) {
                 const char *end=strchr(at,'/'); size_t size=end?(size_t)(end-at):strlen(at);
                 if (!size || (size==1 && *at=='.') || (size==2 && at[0]=='.' && at[1]=='.') || (end && !end[1]))

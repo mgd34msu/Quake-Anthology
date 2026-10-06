@@ -121,7 +121,6 @@ static bool provider_retained(const guest_elf_loaded *owner, qa_error *error)
         saved->target.os != actual->target.os || saved->target.arch != actual->target.arch ||
         saved->target.abi != actual->target.abi || saved->target.pointer_bytes != actual->target.pointer_bytes ||
         saved->preferred_base != actual->preferred_base || saved->image_bytes != actual->image_bytes ||
-        !qa_sha256_equal(&saved->digest, &actual->digest) ||
         !text_equal(provider->soname, artifact->soname) || provider->needed_count != artifact->needed_count)
         return guest_fail(error, QA_ERROR_FORMAT, owner->provider, "ELF loaded provider differs from its actual retained artifact");
     for (size_t i = 0; i < artifact->needed_count; ++i)

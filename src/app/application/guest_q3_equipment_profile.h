@@ -20,7 +20,7 @@ typedef struct application_q3_equipment_profile {
 } application_q3_equipment_profile;
 
 /* Declaration bytes are the exact artifact-matched compatibility value. With
- * no declaration, only the genuine stock cgame digests supply a boundary. */
+ * no declaration, only the qualified original cgame layouts supply a boundary. */
 bool application_q3_equipment_profile_read(const qa_qvm_image *, qa_qvm_role,
     qa_qvm_abi, qa_bytes, application_q3_equipment_profile *, qa_error *);
 void application_q3_equipment_profile_free(application_q3_equipment_profile *);

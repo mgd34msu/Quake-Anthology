@@ -50,14 +50,9 @@ static bool component(qa_catalog *c, qa_vfs *view, const qa_json_document *doc,
         !strings(c, doc, qa_json_get(doc, row, "conflicts"), &mod->conflicts, &mod->conflicts_count, error)) return false;
     qa_resource *declaration;
     if (!qa_vfs_acquire(view, mod->declaration_path, &declaration, NULL, error)) return false;
-    mod->declaration_digest = *qa_resource_digest(declaration);
-    qa_bytes bytes = qa_resource_bytes(declaration);
-    uint8_t *copy = malloc(bytes.size ? bytes.size : 1);
-    if (!copy) { qa_resource_release(declaration); qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain component declaration metadata"); return false; }
-    memcpy(copy, bytes.data, bytes.size);
-    mod->declaration = (qa_bytes){copy, bytes.size};
+    mod->declaration_resource = declaration;
+    mod->declaration = qa_resource_bytes(declaration);
     qa_json_document *decl;
-    qa_resource_release(declaration);
     if (!qa_json_parse(mod->declaration, &decl, error)) return false;
     bool ok = false;
     qa_json_id root = qa_json_root(decl), runtime = qa_json_get(decl, root, "runtime");
@@ -67,16 +62,10 @@ static bool component(qa_catalog *c, qa_vfs *view, const qa_json_document *doc,
     else { qa_error_set(error, QA_ERROR_FORMAT, 0, "unknown component execution runtime"); goto done; }
     qa_json_id program = qa_json_get(decl, root, "program");
     mod->program_path = resource_path(c, decl, qa_json_get(decl, program, "path"), error);
-    const char *digest_text = catalog_json_string(c, decl, qa_json_get(decl, program, "digest"), NULL, error);
-    qa_sha256_digest expected;
-    if (!mod->program_path || !digest_text || !qa_sha256_parse(digest_text, &expected, error)) goto done;
+    if (!mod->program_path) goto done;
     qa_resource *artifact;
     if (!qa_vfs_acquire(view, mod->program_path, &artifact, NULL, error)) goto done;
-    mod->program_digest = *qa_resource_digest(artifact);
-    qa_resource_release(artifact);
-    if (!qa_sha256_equal(&expected, &mod->program_digest)) {
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "component executable differs from its callback declaration"); goto done;
-    }
+    mod->program_resource = artifact;
     ok = true;
 done:
     qa_json_destroy(decl); return ok;

@@ -22,7 +22,6 @@ typedef struct q3scene_cvar { char *name, *value; } q3scene_cvar;
 typedef struct application_q3_scene_profile {
     qa_qvm_image *image;
     char *gameplay_path, *cgame_path;
-    qa_sha256_digest gameplay_digest, cgame_digest, declaration_digest;
     qa_qvm_abi abi;
     uint32_t game_state, command_sequence;
     uint32_t entities, stride, capacity, state, previous_event, snapshot_time;

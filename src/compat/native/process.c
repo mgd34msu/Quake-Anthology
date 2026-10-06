@@ -28,7 +28,7 @@ static bool source_matches(const qa_native_instance *instance, const qa_native_i
         image->target.arch == expected->target.arch && image->target.abi == expected->target.abi &&
         image->target.pointer_bytes == expected->target.pointer_bytes &&
         image->preferred_base == expected->preferred_base && image->image_bytes == expected->image_bytes &&
-        qa_sha256_equal(&image->digest, &expected->digest) && bytes.size == module->size &&
+        bytes.size == module->size &&
         bytes.data && !memcmp(bytes.data, module->bytes, bytes.size);
 }
 
@@ -345,21 +345,35 @@ static bool capsule_fields(qa_source_save_io *io, qa_native_instance *instance)
     uint8_t magic[] = {'Q','N','P','R'}, expected[] = {'Q','N','P','R'};
     uint32_t profile = instance->module->info.profile, role = instance->options.q3_role;
     uint32_t kind = instance->process_kind, lifecycle = instance->lifecycle;
-    qa_sha256_digest image = instance->module->info.image.digest, declaration = instance->declaration;
+    qa_native_image_info image = instance->module->info.image;
+    uint32_t format = image.format, os = image.target.os, arch = image.target.arch,
+        abi = image.target.abi;
+    uint64_t artifact_bytes = instance->module->size;
     bool has_declaration = instance->has_declaration;
     if (!qa_source_save_bytes(io, magic, sizeof(magic))) return false;
     if (memcmp(magic, expected, sizeof(magic)))
         return native_fail(io->error, QA_ERROR_FORMAT, io->offset, "native process capsule signature differs");
     if (!qa_source_save_u32(io, &profile) || !qa_source_save_u32(io, &role) ||
         !qa_source_save_u32(io, &kind) || !qa_source_save_u32(io, &lifecycle) ||
-        !qa_source_save_bytes(io, image.bytes, sizeof(image.bytes)) ||
-        !qa_source_save_bool(io, &has_declaration) ||
-        !qa_source_save_bytes(io, declaration.bytes, sizeof(declaration.bytes))) return false;
+        !qa_source_save_text_assert(io, instance->module->source) ||
+        !qa_source_save_u32(io, &format) || !qa_source_save_u32(io, &os) ||
+        !qa_source_save_u32(io, &arch) || !qa_source_save_u32(io, &abi) ||
+        !qa_source_save_u8(io, &image.target.pointer_bytes) ||
+        !qa_source_save_u64(io, &image.preferred_base) ||
+        !qa_source_save_u64(io, &image.image_bytes) ||
+        !qa_source_save_u64(io, &artifact_bytes) ||
+        !qa_source_save_bool(io, &has_declaration)) return false;
     if (profile != (uint32_t)instance->module->info.profile || role != (uint32_t)instance->options.q3_role ||
         kind > QA_NATIVE_PROCESS_WINDOWS || lifecycle > QA_NATIVE_RESTART_READY ||
-        !qa_sha256_equal(&image, &instance->module->info.image.digest) ||
-        has_declaration != instance->has_declaration ||
-        (has_declaration && !qa_sha256_equal(&declaration, &instance->declaration)))
+        format != (uint32_t)instance->module->info.image.format ||
+        os != (uint32_t)instance->module->info.image.target.os ||
+        arch != (uint32_t)instance->module->info.image.target.arch ||
+        abi != (uint32_t)instance->module->info.image.target.abi ||
+        image.target.pointer_bytes != instance->module->info.image.target.pointer_bytes ||
+        image.preferred_base != instance->module->info.image.preferred_base ||
+        image.image_bytes != instance->module->info.image.image_bytes ||
+        artifact_bytes != instance->module->size ||
+        has_declaration != instance->has_declaration)
         return native_fail(io->error, QA_ERROR_FORMAT, io->offset, "native process capsule differs from its actual module profile");
     instance->process_kind = (qa_native_process_kind)kind; instance->lifecycle = (qa_native_lifecycle)lifecycle;
     uint32_t tick_rate = instance->options.tick_rate, milliseconds = instance->options.frame_milliseconds;

@@ -24,7 +24,7 @@ typedef struct application_q3_catalog_weapon {
  * image. A complete primary takes precedence over the optional items receipt.
  * known_missionpack is an admitted executable profile, not a content family. */
 bool application_q3_catalog_create(qa_qvm_image *, qa_qvm *, qa_qvm_abi,
-    qa_strings *, qa_bytes primary, qa_bytes items_declaration,
+    const char *instance, const char *artifact_path, qa_strings *, qa_bytes primary, qa_bytes items_declaration,
     bool known_missionpack, application_q3_catalog **, qa_error *);
 /* The native receipt names this module's actual item RVAs, pointer fields and
  * source type values. Absence is represented by no owner, never a QVM roster. */

@@ -397,40 +397,46 @@ static bool pose_angles(frontend_unified_q1 *o,qa_actor_id actor,qa_vec3 *angles
 }
 static bool effect(frontend_unified_q1 *o,q1_group *g,const q1_event *p,qa_error *e)
 {
-    const char *k=(char *)p->name.data;qa_vec3 zero=qa_v3(0,0,0);double time=p->seconds;
-    if(!strcmp(k,"explosion") || !strcmp(k,"tar-explosion")) {
-        frontend_fx_q1_explosion(&g->particles,&o->random,p->origin,time,!strcmp(k,"tar-explosion"));
-        if(!strcmp(k,"explosion"))light(g,p->origin,time,350,300,.5);
-        return effect_sound(o,p,"weapons/r_exp3.wav",e);
-    }
-    else if(!strcmp(k,"teleport") || !strcmp(k,"lava-splash")) frontend_fx_q1_splash(&g->particles,&o->random,p->origin,time,!strcmp(k,"lava-splash"));
-    else if(!strcmp(k,"muzzleflash")) {
+    const char *k=(char *)p->name.data;double time=p->seconds;
+    if(!strcmp(k,"muzzleflash")) {
         qa_vec3 axes[3],angles=p->angles,origin=p->muzzle?p->end:qa_vec_add(p->origin,qa_v3(0,0,16));
         bool direction=p->muzzle;
         if(!p->muzzle && p->actor_present && !pose_angles(o,p->actor,&angles,&direction,e))return false;
         if(direction){frontend_camera_axes(angles,axes);origin=qa_vec_add(origin,qa_vec_scale(axes[0],18));}
         light(g,origin,time,200+(float)(qa_builtin_random_integer(&o->random)&31),0,.1)->minimum=32;
+        return true;
     }
-    else if(!strcmp(k,"pickup")) return true;
-    else {
-        int32_t count;uint32_t color=0;
-        if(!strcmp(k,"blood") || !strcmp(k,"meat-spray")) {color=73;count=(int32_t)p->a;}
-        else if(!strcmp(k,"gunshot")) count=20;
-        else if(!strcmp(k,"spike")) count=10;
-        else if(!strcmp(k,"superspike")) count=20;
-        else if(!strcmp(k,"wizard-spike")) {count=30;color=20;}
-        else if(!strcmp(k,"knight-spike")) {count=20;color=226;}
-        else return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 effect recipe is not installed");
-        frontend_fx_q1_impact(&g->particles,&o->random,p->origin,zero,color,count,time);
-        if(!strcmp(k,"spike") || !strcmp(k,"superspike")) {
-            const char *path="weapons/tink1.wav";
-            if(qa_builtin_random_integer(&o->random)%5==0){uint32_t n=qa_builtin_random_integer(&o->random)&3;
-                path=n==1?"weapons/ric1.wav":n==2?"weapons/ric2.wav":"weapons/ric3.wav";}
-            return effect_sound(o,p,path,e);
-        }
-        if(!strcmp(k,"wizard-spike") || !strcmp(k,"knight-spike"))
-            return effect_sound(o,p,!strcmp(k,"wizard-spike")?"wizard/hit.wav":"hknight/hit.wav",e);
+    if(!strcmp(k,"pickup")) return true;
+    if(!strcmp(k,"blood") || !strcmp(k,"meat-spray")) {
+        frontend_fx_q1_particle_event(&g->particles,&o->random,p->origin,qa_v3(0,0,0),73,(int32_t)p->a,time);
+        return true;
     }
+    qa_q1_temp temporary={.kind=QA_Q1_TEMP_POINT,.count=1,
+        .origin={p->origin.x,p->origin.y,p->origin.z}};
+    if(!strcmp(k,"spike")) temporary.type=0;
+    else if(!strcmp(k,"superspike")) temporary.type=1;
+    else if(!strcmp(k,"gunshot")) temporary.type=2;
+    else if(!strcmp(k,"explosion")) temporary.type=3;
+    else if(!strcmp(k,"tar-explosion")) temporary.type=4;
+    else if(!strcmp(k,"wizard-spike")) temporary.type=7;
+    else if(!strcmp(k,"knight-spike")) temporary.type=8;
+    else if(!strcmp(k,"lava-splash")) temporary.type=10;
+    else if(!strcmp(k,"teleport")) temporary.type=11;
+    else return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 effect recipe is not installed");
+    if(!frontend_fx_q1_temporary_particles(&g->particles,&o->random,&temporary,false,time))
+        return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 effect recipe is not installed");
+    if(temporary.type==3 || temporary.type==4) {
+        if(temporary.type==3)light(g,p->origin,time,350,300,.5);
+        return effect_sound(o,p,"weapons/r_exp3.wav",e);
+    }
+    if(temporary.type==0 || temporary.type==1) {
+        const char *path="weapons/tink1.wav";
+        if(qa_builtin_random_integer(&o->random)%5==0){uint32_t n=qa_builtin_random_integer(&o->random)&3;
+            path=n==1?"weapons/ric1.wav":n==2?"weapons/ric2.wav":"weapons/ric3.wav";}
+        return effect_sound(o,p,path,e);
+    }
+    if(temporary.type==7 || temporary.type==8)
+        return effect_sound(o,p,temporary.type==7?"wizard/hit.wav":"hknight/hit.wav",e);
     return true;
 }
 static bool hud_read(void *context,const qa_hud_frame *frame,qa_hud_data *out,qa_error *e)
@@ -594,7 +600,7 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         local=owns(o,&p,e);if(!local && e && e->code!=QA_OK) {event_free(&p);return false;}}
     if(!local) {event_free(&p);return true;}
     switch(p.kind) {
-    case Q1_PARTICLES:frontend_fx_q1_impact(&g->particles,&o->random,p.origin,p.end,(uint32_t)p.a,(int32_t)p.b,p.seconds);break;
+    case Q1_PARTICLES:frontend_fx_q1_particle_event(&g->particles,&o->random,p.origin,p.end,(int32_t)p.a,(int32_t)p.b,p.seconds);break;
     case Q1_EFFECT:case Q1_COLORS: {
         size_t original_count=g->particles.count;qa_builtin_random original_random=o->random;q1_light original_lights[Q1_LIGHTS];
         memcpy(original_lights,g->lights,sizeof(original_lights));

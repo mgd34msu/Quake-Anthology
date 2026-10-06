@@ -67,7 +67,7 @@ typedef struct guest_windows_image {
     const char *path;
 } guest_windows_image;
 typedef bool (*guest_windows_image_resolve_fn)(void *, uint64_t,
-    const qa_sha256_digest *, uint64_t, guest_windows_image *, qa_error *);
+    uint64_t, guest_windows_image *, qa_error *);
 
 /* A failed fresh construction retains any partial owner in the output. Check
  * file retirement while the lower guest is retained, then destroy that guest
@@ -131,9 +131,8 @@ typedef struct windows_service {
 typedef struct windows_heap_allocation { uint64_t address, heap, requested; } windows_heap_allocation;
 typedef struct windows_library { char *name; uint64_t handle, references; } windows_library;
 typedef struct windows_image_record {
-    uint64_t id, base, tls_block, references;
+    uint64_t id, base, tls_block, references, preferred_base, image_bytes;
     uint32_t tls_index;
-    qa_sha256_digest digest;
     char *path;
     const guest_pe *image;
     bool prepared, initialized;

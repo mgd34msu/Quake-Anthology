@@ -46,22 +46,13 @@ bool native_copy_bytes(qa_bytes source, qa_buffer *out, qa_error *error) {
 }
 
 bool qa_native_module_load(qa_bytes image, const char *source, qa_native_profile profile,
-                           const qa_sha256_digest *expected_digest, qa_native_module **out,
-                           qa_error *error) {
+                           qa_native_module **out, qa_error *error) {
     if (!out || !source || (!image.data && image.size))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native module source, bytes and output are required");
     qa_native_image_info inspected;
     if (!qa_native_inspect(image, &inspected, error))
         return false;
-    if (expected_digest && !qa_sha256_equal(&inspected.digest, expected_digest)) {
-        char actual[65], expected[65];
-        qa_sha256_hex(&inspected.digest, actual);
-        qa_sha256_hex(expected_digest, expected);
-        qa_error_set(error, QA_ERROR_FORMAT, 0,
-                     "native artifact digest %s does not match declared %s", actual, expected);
-        return false;
-    }
     const native_profile_spec *spec = native_profile(profile);
     if (!spec)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "unknown native API profile");

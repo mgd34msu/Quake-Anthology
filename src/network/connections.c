@@ -190,7 +190,7 @@ bool qa_net_connections_received(qa_net_connections *table, qa_net_client_id id,
 }
 
 bool qa_net_connections_restart_ready(qa_net_connections *table, qa_net_client_id id,
-                                 const qa_sha256_digest *composition, qa_error *error)
+                                 const uint64_t *composition, qa_error *error)
 {
     client_slot *slot = lookup(table, id);
     if (slot == NULL || table->admitting || composition == NULL)
@@ -205,14 +205,14 @@ bool qa_net_connections_restart_ready(qa_net_connections *table, qa_net_client_i
     return admitted;
 }
 void qa_net_connections_restart_commit(qa_net_connections *table,qa_net_client_id id,
-    const qa_sha256_digest *composition)
+    const uint64_t *composition)
 {
     client_slot *slot=lookup(table,id);
     slot->client.composition = *composition;
     slot->client.phase = QA_NET_CONNECTED;
 }
 bool qa_net_connections_restart(qa_net_connections *table,qa_net_client_id id,
-    const qa_sha256_digest *composition,qa_error *error)
+    const uint64_t *composition,qa_error *error)
 {
     if(!qa_net_connections_restart_ready(table,id,composition,error)) return false;
     qa_net_connections_restart_commit(table,id,composition);
@@ -265,7 +265,7 @@ bool qa_net_connections_checkpoint(const qa_net_connections *table, qa_net_write
             !qa_net_write_u32(w, c->protocol.kind) || !qa_net_write_u32(w, c->protocol.revision) ||
             !qa_net_write_u32(w, c->protocol.flags) ||
             !qa_net_write_u32(w, c->phase) || !qa_net_write_u64(w, c->connected_ns) ||
-            !qa_net_write_u64(w, c->received_ns) || !qa_net_write_data(w, c->composition.bytes, 32) ||
+            !qa_net_write_u64(w, c->received_ns) || !qa_net_write_u64(w, c->composition) ||
             !qa_net_write_u32(w, (uint32_t)c->seat_count)) return false;
         for (size_t j = 0; j < c->seat_count; ++j)
             if (!qa_net_write_u32(w, c->seats[j].seat.index) || !qa_net_write_u32(w, c->seats[j].remote_index)) return false;
@@ -298,7 +298,7 @@ bool qa_net_connections_restore(qa_net_reader *r, uint64_t owner, uint32_t capac
         c->protocol.flags = qa_net_read_u32(r);
         c->phase = (qa_net_phase)qa_net_read_u32(r); c->connected_ns = qa_net_read_u64(r);
         c->received_ns = qa_net_read_u64(r);
-        if (!qa_net_read_data(r, c->composition.bytes, 32)) goto failure;
+        c->composition = qa_net_read_u64(r);
         c->seat_count = qa_net_read_u32(r);
         char endpoint[256];
         if (r->failed || c->seat_count > qa_network_protocol_seat_capacity(c->protocol) || (unsigned)c->phase > QA_NET_ACTIVE ||

@@ -19,7 +19,7 @@ typedef struct application_q3_body_submission {
 } application_q3_body_submission;
 typedef struct application_q3_body_profile {
     char *artifact_path;
-    qa_sha256_digest artifact;
+    const qa_qvm_image *image;
     qa_qvm_abi abi;
     application_q3_body_submission *submissions;
     size_t count;

@@ -39,7 +39,6 @@ struct frontend_remote_config {
     const qa_launch_snapshot *candidate;
     qa_launch_instance_lease *metadata;
     char *saved_instance,*saved_registry;
-    qa_sha256_digest saved_identity;
     qa_application_console_scope scope;
     qa_command_context command;
     qa_application_startup_source retarget_origin;
@@ -1176,20 +1175,19 @@ static bool fields(frontend_remote_config *row,qa_source_save_io *io,frontend_ke
     const qa_launch_instance *held=descriptor(row),*physical=NULL;
     char *name=writing?(char *)held->selection.instance:NULL;
     char *registry=NULL;
-    qa_sha256_digest identity=writing?held->identity:(qa_sha256_digest){0};
     uint32_t scope=row->scope.kind,movement=row->movement,seat=row->scope.seat;
     uint64_t key=frontend_key_profile_id(row->keys);
     if (writing && (!frontend_client_registry_source(row->registry,&physical,&seat) || seat!=row->scope.seat)) return false;
     if (writing) registry=(char *)physical->selection.instance;
     bool ok=qa_source_save_owned_text(io,&name) && name && *name &&
-        qa_source_save_bytes(io,&identity,sizeof(identity)) && qa_source_save_u32(io,&scope) &&
+        qa_source_save_u32(io,&scope) &&
         (scope==QA_APPLICATION_CONSOLE_Q3_CGAME || scope==QA_APPLICATION_CONSOLE_Q3_UI) &&
         qa_source_save_u32(io,&row->scope.seat) && qa_source_save_u32(io,&row->physical_seat) &&
         row->physical_seat<row->owner->frontend->options.seats && qa_source_save_u32(io,&movement) && movement<=QA_MOVEMENT_Q3 &&
         qa_source_save_bool(io,&row->hosted) && qa_source_save_u64(io,&key) && key &&
         qa_source_save_owned_text(io,&registry) && registry && *registry;
     if (!writing) {
-        row->saved_instance=name; row->saved_registry=registry; row->saved_identity=identity;
+        row->saved_instance=name; row->saved_registry=registry;
         row->scope.kind=(qa_application_console_kind)scope; row->movement=(qa_movement_kind)movement;
         row->keys=ok?frontend_keys_profile(keys,key):NULL;
         if (ok) ok=row->keys && frontend_key_profile_retain(row->keys,io->error);
@@ -1276,8 +1274,7 @@ bool frontend_remote_config_bind_restored(frontend_remote_configs *owner,qa_appl
     frontend_remote_config *row=owner->rows;
     while (row && (!row->saved_instance || strcmp(row->saved_instance,source->descriptor->selection.instance) ||
         row->scope.seat!=source->scope.seat)) row=row->next;
-    if (!row || row->application!=application || row->scope.kind!=source->scope.kind ||
-        !qa_sha256_equal(&row->saved_identity,&source->descriptor->identity))
+    if (!row || row->application!=application || row->scope.kind!=source->scope.kind)
         return fail(error,QA_ERROR_FORMAT,"Decoded CLIENT configuration differs from its physical receiver");
     if (!row->imported) return (row->console==source->console && row->cvars==source->cvars &&
         descriptor(row)->storage==source->descriptor->storage) ||

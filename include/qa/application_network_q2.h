@@ -42,7 +42,6 @@ typedef struct qa_application_network_q2_metadata {
     qa_net_protocol_id protocol;
     uint32_t client_slots, entity_slots;
     int32_t server_count;
-    qa_sha256_digest identity, map_identity;
     const char *instance, *map;
     qa_clock_config clock_config;
     qa_clock_state clock;

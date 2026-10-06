@@ -8,7 +8,7 @@ bool native_regions_copy(qa_native_instance *instance, const qa_native_declarati
                            "native instance is required for region setup");
     if (!declaration)
         return true;
-    if (!qa_sha256_equal(&declaration->digest, &instance->declaration))
+    if (declaration != instance->declaration_ref)
         return native_fail(error, QA_ERROR_FORMAT, 0,
                            "native declaration identity changed during creation");
     if (!declaration->region_count)
@@ -47,6 +47,8 @@ void native_regions_destroy(qa_native_instance *instance) {
     free(instance->regions);
     instance->regions = NULL;
     instance->region_count = 0;
+    qa_native_declaration_destroy((qa_native_declaration *)instance->declaration_ref);
+    instance->declaration_ref = NULL;
 }
 
 size_t qa_native_region_count(const qa_native_instance *instance) {
@@ -295,7 +297,7 @@ bool native_regions_descriptor(const qa_native_instance *instance, qa_buffer *ou
     if (name_size > UINT32_MAX)
         return native_fail(error, QA_ERROR_MEMORY, name_size,
                            "native region module name is too long");
-    size_t size = 64u;
+    size_t size = 32u;
     size_t records;
     if (!native_size_multiply(instance->region_count, 24u, &records) ||
         !native_size_add(size, records, &size) || !native_size_add(size, name_size, &size))
@@ -306,12 +308,11 @@ bool native_regions_descriptor(const qa_native_instance *instance, qa_buffer *ou
     memcpy(bytes, "QANHOOK\0", 8);
     qa_store_u32le(bytes + 8u, 1u);
     qa_store_u32le(bytes + 12u, (uint32_t)instance->module->info.image.target.arch);
-    memcpy(bytes + 16u, instance->module->info.image.digest.bytes, 32u);
-    qa_store_u32le(bytes + 48u, (uint32_t)instance->region_count);
-    qa_store_u32le(bytes + 52u, instance->module->info.image.target.pointer_bytes);
-    qa_store_u64le(bytes + 56u, instance->module->info.image.image_bytes);
+    qa_store_u32le(bytes + 16u, (uint32_t)instance->region_count);
+    qa_store_u32le(bytes + 20u, instance->module->info.image.target.pointer_bytes);
+    qa_store_u64le(bytes + 24u, instance->module->info.image.image_bytes);
     for (size_t index = 0; index < instance->region_count; ++index) {
-        uint8_t *record = bytes + 64u + index * 24u;
+        uint8_t *record = bytes + 32u + index * 24u;
         const qa_native_declared_region *region = &instance->regions[index].definition;
         qa_store_u32le(record, region->id);
         qa_store_u32le(record + 4u, region->entry_rva);
@@ -320,7 +321,7 @@ bool native_regions_descriptor(const qa_native_instance *instance, qa_buffer *ou
         qa_store_u32le(record + 16u, region->frame_entry_rva);
         qa_store_u32le(record + 20u, region->frame_exit_rva);
     }
-    memcpy(bytes + 64u + records, name, name_size);
+    memcpy(bytes + 32u + records, name, name_size);
     *out = (qa_buffer){bytes, size};
     return true;
 }

@@ -211,8 +211,7 @@ static bool same_map_configuration(const qa_launch_snapshot *previous,
     const qa_launch_resource *b = map_resource(candidate);
     if (a == NULL || b == NULL || a->product != b->product ||
         !same_text(a->path, b->path) ||
-        !qa_sha256_equal(qa_resource_digest(a->resource),
-                         qa_resource_digest(b->resource)) ||
+        a->resource != b->resource ||
         left->world.preset != right->world.preset ||
         left->world.presentation != right->world.presentation ||
         left->world.campaign != right->world.campaign ||

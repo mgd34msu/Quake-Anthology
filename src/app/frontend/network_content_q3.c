@@ -597,7 +597,7 @@ static bool role_receipt(frontend_q3_content *content,
         !receipt->service_owner || receipt->configuration_generation != content->configuration_generation ||
         receipt->connection_epoch != content->connection_epoch || !receipt->descriptor ||
         receipt->descriptor->content != descriptor->content || receipt->descriptor->state != descriptor->state ||
-        !qa_sha256_equal(&receipt->descriptor->identity, &descriptor->identity) ||
+        receipt->descriptor->identity != descriptor->identity ||
         !receipt->artifact || !receipt->acquisition || !receipt->artifact_view || !receipt->current ||
         (receipt->media_view_count && !receipt->media_views) ||
         (role == QA_QVM_CGAME && receipt->service_owner != content->receiver.service_owner) ||
@@ -633,7 +633,7 @@ static bool native_receipt(frontend_q3_content *content,
         basis.epoch != content->connection_epoch || basis.configuration_generation != content->configuration_generation ||
         !basis.descriptor || basis.descriptor->storage != descriptor->storage ||
         basis.descriptor->content != descriptor->content || basis.descriptor->selection.runtime != QA_PROGRAM_BUILTIN ||
-        basis.descriptor->artifact || !qa_sha256_equal(&basis.descriptor->identity, &descriptor->identity) ||
+        basis.descriptor->artifact || basis.descriptor->identity != descriptor->identity ||
         basis.content != descriptor->content || basis.content_product != content->selected || basis.map != content->map ||
         !basis.gamestate || basis.gamestate->client_number != content->gamestate->client_number ||
         basis.gamestate->checksum_feed != content->gamestate->checksum_feed ||
@@ -679,7 +679,7 @@ static bool module_receipt(frontend_q3_content *content,
         receipt->descriptor->storage != actual.descriptor->storage ||
         receipt->descriptor->content != actual.descriptor->content ||
         receipt->descriptor->state != actual.descriptor->state ||
-        !qa_sha256_equal(&receipt->descriptor->identity, &actual.descriptor->identity) ||
+        receipt->descriptor->identity != actual.descriptor->identity ||
         receipt->artifact != actual.artifact || receipt->acquisition != actual.acquisition ||
         receipt->artifact_view != actual.artifact_view || !receipt->current ||
         (receipt->media_view_count && !receipt->media_views) ||
@@ -828,7 +828,6 @@ bool frontend_q3_content_visit(const frontend_q3_content *content,
 typedef struct content_saved {
     uint32_t phase, selected, base, seat;
     uint64_t generation, epoch, receiver, service_owner, catalog, view, descriptor_view;
-    qa_sha256_digest descriptor_identity;
     qa_buffer gamestate, references;
     qa_mount_id *order;
     size_t order_count;
@@ -875,7 +874,6 @@ static bool saved_fields(qa_source_save_io *io, content_saved *saved)
     if (saved->phase > FRONTEND_Q3_CONTENT_MEDIA_READY || !saved->selected || !saved->base ||
         !saved->generation || !saved->epoch || !saved->receiver || !saved->service_owner ||
         !saved->catalog || !saved->view || !saved->descriptor_view ||
-        !qa_source_save_bytes(io, &saved->descriptor_identity, sizeof(saved->descriptor_identity)) ||
         !saved_blob(io, &saved->gamestate) || !saved->gamestate.size ||
         !qa_source_save_count(io, &saved->order_count, QA_Q3_SEARCH_PATHS)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) {
@@ -944,7 +942,7 @@ static bool initialized_cut(frontend_q3_content *content, qa_error *error)
             !ui.service_owner || ui.configuration_generation != content->configuration_generation ||
             ui.connection_epoch != content->connection_epoch || !ui.descriptor ||
             ui.descriptor->content != descriptor->content || ui.descriptor->state != descriptor->state ||
-            !qa_sha256_equal(&ui.descriptor->identity, &descriptor->identity) ||
+            ui.descriptor->identity != descriptor->identity ||
             !ui.artifact || !ui.acquisition || !ui.artifact_view || !ui.current ||
             (ui.media_view_count && !ui.media_views) ||
             ui.acquisition->resource_id != qa_resource_id(ui.artifact) ||
@@ -976,7 +974,7 @@ static bool initialized_cut(frontend_q3_content *content, qa_error *error)
             receipt.configuration_generation != content->configuration_generation ||
             receipt.connection_epoch != content->connection_epoch || !receipt.artifact || !receipt.acquisition ||
             !receipt.descriptor || receipt.descriptor->content != descriptor->content ||
-            !qa_sha256_equal(&receipt.descriptor->identity, &descriptor->identity) ||
+            receipt.descriptor->identity != descriptor->identity ||
             (roles[i] == QA_QVM_CGAME && receipt.service_owner != content->receiver.service_owner) ||
             receipt.acquisition->resource_id != qa_resource_id(receipt.artifact) ||
             !qa_vfs_acquisition_retained(receipt.artifact_view, receipt.acquisition, error) ||
@@ -1047,7 +1045,7 @@ bool frontend_q3_content_checkpoint(const frontend_q3_content *content,
         .catalog = qa_application_content_catalog_id(graph, content->catalog),
         .view = qa_application_content_view_id(graph, content->mounts),
         .descriptor_view = qa_application_content_view_id(graph, descriptor->content),
-        .descriptor_identity = descriptor->identity, .order_count = content->mount_count, .has_map = content->map != NULL};
+        .order_count = content->mount_count, .has_map = content->map != NULL};
     saved.order = calloc(saved.order_count ? saved.order_count : 1, sizeof(*saved.order));
     size_t capacity = sizeof(qa_q3_gamestate) * 2 + 1024;
     saved.gamestate.data = malloc(capacity);
@@ -1095,7 +1093,6 @@ static bool restore(const frontend_q3_content_request *binding,
     if (ok && (saved.generation != binding->configuration_generation || saved.epoch != binding->connection_epoch ||
         saved.receiver != binding->receiver.receiver || saved.seat != binding->receiver.seat ||
         saved.service_owner != binding->receiver.service_owner ||
-        !qa_sha256_equal(&saved.descriptor_identity, &binding->descriptor->identity) ||
         qa_application_content_view(graph, saved.descriptor_view) != binding->descriptor->content ||
         (binding->catalog && qa_application_content_catalog(graph, saved.catalog) != binding->catalog)))
         ok = fail(error, QA_ERROR_FORMAT, "Saved remote content differs from its real restored private source");
@@ -1182,7 +1179,7 @@ bool frontend_q3_content_rebind(frontend_q3_content *content,
         content->configuration_generation != binding->configuration_generation ||
         content->connection_epoch != binding->connection_epoch || content->receiver.receiver != binding->receiver.receiver ||
         content->receiver.seat != binding->receiver.seat || content->receiver.service_owner != binding->receiver.service_owner ||
-        !qa_sha256_equal(&qa_launch_instance_lease_view(content->descriptor)->identity, &binding->descriptor->identity))
+        qa_launch_instance_lease_view(content->descriptor)->identity != binding->descriptor->identity)
         return fail(error, QA_ERROR_FORMAT, "Remote content rebind changes its genuine saved source cut");
     qa_launch_instance_lease *descriptor = NULL;
     if (!qa_launch_instance_retain_metadata(binding->descriptor, &descriptor, error)) return false;

@@ -36,7 +36,7 @@ static bool new_client(q2_session *session, qa_error *error)
     const qa_net_client *client = qa_net_connections_get(session->runtime->connections, session->id);
     if (!client) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 signon lost its physical connection");
     bool restart = client->phase != QA_NET_CONNECTED;
-    qa_sha256_digest composition = client->composition;
+    uint64_t composition = client->composition;
     if (restart && !qa_net_connections_restart_ready(session->runtime->connections,
         session->id, &composition, error)) return false;
     qa_q2_game_state borrowed = {0};

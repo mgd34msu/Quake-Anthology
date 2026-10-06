@@ -47,7 +47,12 @@ static bool choices(reader r, const char *values) {
 static bool control(reader r) {
     reader kind=field(r,"kind");
     if (!integer(field(r,"epoch"),1,4294967295.0)) return false;
-    if (is(kind,"offer")) return record(field(r,"composition")) && choices(field(r,"mode"),"singleplayer coop deathmatch") && integer(field(r,"maxClients"),1,256);
+    if (is(kind,"offer")) {
+        reader composition=field(r,"composition"); uint64_t generation;
+        return record(composition) && record(field(composition,"composition")) &&
+            qa_json_u64(r.json,field(composition,"generation").id,&generation,r.error) && generation &&
+            choices(field(r,"mode"),"singleplayer coop deathmatch") && integer(field(r,"maxClients"),1,256);
+    }
     return fail(r,"unknown control variant");
 }
 

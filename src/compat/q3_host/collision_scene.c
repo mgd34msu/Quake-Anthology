@@ -84,7 +84,7 @@ bool qa_q3_host_collision_scene_bind(qa_q3_host *host, qa_qvm *vm, const qa_qvm_
         qa_qvm_get_abi(vm) != host->options.abi || !profile || !profile->present || !current ||
         !host->options.session || !host->options.owner || !host->options.service_owner ||
         !host->options.collision.geometry || !host->options.client.source_actor ||
-        !qa_sha256_equal(qa_qvm_digest(vm), qa_qvm_image_digest(image)))
+        (qa_qvm_image_of(vm) != image))
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Collision cache binding requires its idle declared CGAME module");
     if (!qa_q3_host_collision_profile_qualify(image, QA_QVM_CGAME, host->options.abi, profile, error)) return false;
     q3_collision_binding *binding = calloc(1, sizeof(*binding));
@@ -132,7 +132,7 @@ static bool binding_current(const qa_q3_host_collision_scene *scene, qa_error *e
     if (!host || host->retired || host->restore_pending || !host->collision_holds ||
         !binding || host->collision_scene != binding || host->vm != binding->vm ||
         qa_qvm_get_role(binding->vm) != QA_QVM_CGAME || qa_qvm_get_abi(binding->vm) != host->options.abi ||
-        !qa_sha256_equal(qa_qvm_digest(binding->vm), qa_qvm_image_digest(binding->image)))
+        (qa_qvm_image_of(binding->vm) != binding->image))
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Held CG collision module is no longer current");
     qa_collision_geometry *geometry = host->options.collision.geometry(host->options.collision.context);
     if (!geometry || geometry != scene->geometry)

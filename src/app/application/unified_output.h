@@ -53,8 +53,8 @@ bool application_unified_output_build(qa_application *, const application_unifie
 void application_unified_output_dispose(application_unified_output *);
 
 /* The caller supplies a genuine retained resource acquisition and its owning
- * product/requested path. IDs use the donor's exact ResourceKey tuple. */
-bool application_unified_resource_key(const qa_product *, const char *, const qa_resource *,
+ * product/requested path. The dictionary assigns the serial before publication. */
+bool application_unified_resource_key(uint64_t serial, const qa_product *, const char *, const qa_resource *,
     qa_unified_document **key, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], qa_error *);
 bool application_unified_resource_control(uint32_t epoch,
     const qa_unified_resource_declaration *, size_t count, qa_unified_document **, qa_error *);

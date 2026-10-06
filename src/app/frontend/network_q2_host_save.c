@@ -12,7 +12,7 @@ static bool protocol_equal(qa_net_protocol_id a,qa_net_protocol_id b)
 static bool request_equal(const qa_net_connect *a,const qa_net_connect *b)
 {
     if(!a || !b || a->attachment!=b->attachment || !protocol_equal(a->protocol,b->protocol) ||
-        !qa_net_address_equal(&a->endpoint,&b->endpoint,true) || !qa_sha256_equal(&a->composition,&b->composition) ||
+        !qa_net_address_equal(&a->endpoint,&b->endpoint,true) || a->composition != b->composition ||
         !a->seats || !b->seats || !a->seat_count || a->seat_count!=b->seat_count) return false;
     for(size_t i=0;i<a->seat_count;++i) if(a->seats[i].seat.owner!=b->seats[i].seat.owner ||
         a->seats[i].seat.index!=b->seats[i].seat.index || a->seats[i].remote_index!=b->seats[i].remote_index) return false;

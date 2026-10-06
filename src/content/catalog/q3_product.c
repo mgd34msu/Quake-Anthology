@@ -93,7 +93,9 @@ static bool copy_mod(qa_catalog *catalog, const qa_catalog_mod *source,
     qa_catalog_mod *mod, qa_error *error)
 {
     *mod = *source;
-    mod->requires = NULL; mod->conflicts = NULL; mod->declaration.data = NULL;
+    mod->requires = NULL; mod->conflicts = NULL;
+    qa_resource_retain((qa_resource *)mod->declaration_resource);
+    qa_resource_retain((qa_resource *)mod->program_resource);
 #define TEXT(name) do { if (!copy_text(catalog, &mod->name, error)) return false; } while (0)
     TEXT(key); TEXT(id); TEXT(title); TEXT(declaration_path);
     TEXT(program_path); TEXT(unavailable);
@@ -101,15 +103,15 @@ static bool copy_mod(qa_catalog *catalog, const qa_catalog_mod *source,
     return copy_text_array(catalog, source->requires, &mod->requires,
             mod->requires_count, error) &&
         copy_text_array(catalog, source->conflicts, &mod->conflicts,
-            mod->conflicts_count, error) &&
-        copy_array((void **)&mod->declaration.data, source->declaration.data,
-            mod->declaration.size, 1, error);
+            mod->conflicts_count, error);
 }
 
 static bool copy_behavior(qa_catalog *catalog, const qa_catalog_weapon_behavior *source,
     qa_catalog_weapon_behavior *behavior, qa_error *error)
 {
     *behavior = *source; behavior->entry.data = NULL;
+    qa_resource_retain((qa_resource *)behavior->declaration_resource);
+    qa_resource_retain((qa_resource *)behavior->artifact_resource);
 #define TEXT(name) do { if (!copy_text(catalog, &behavior->name, error)) return false; } while (0)
     TEXT(id); TEXT(title); TEXT(artifact_path); TEXT(declaration_path); TEXT(unavailable);
 #undef TEXT

@@ -117,7 +117,7 @@ bool qa_qvm_image_load(qa_bytes bytes, qa_qvm_image **out, qa_error *error)
     image->memory_size = memory;
     image->initialized.size = initialized;
     if (initialized > 0) memcpy(image->initialized.data,bytes.data + data_offset,initialized);
-    qa_sha256(bytes,&image->digest);
+    image->source_bytes = bytes.size;
     *out = image;
     return true;
 failed:
@@ -155,7 +155,11 @@ void qa_qvm_image_release(qa_qvm_image *image)
     free(image->instructions); free(image->code); qa_buffer_free(&image->initialized); free(image);
 }
 
-const qa_sha256_digest *qa_qvm_image_digest(const qa_qvm_image *image) { return image == NULL ? NULL : &image->digest; }
+qa_qvm_image_info qa_qvm_image_describe(const qa_qvm_image *image)
+{
+    return image ? (qa_qvm_image_info){image->source_bytes, image->instruction_count,
+        image->code_length, image->data_length, image->literal_length, image->bss_length} : (qa_qvm_image_info){0};
+}
 const qa_qvm_instruction *qa_qvm_image_instructions(const qa_qvm_image *image, size_t *count)
 {
     if (count != NULL) *count = image == NULL ? 0 : image->instruction_count;

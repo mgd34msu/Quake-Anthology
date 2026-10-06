@@ -6,7 +6,7 @@
 
 typedef struct application_q1_signon_record {
     qa_application_protocol_event event;
-    qa_sha256_digest identity;
+    uint64_t source_serial;
     uint64_t source_revision;
 } application_q1_signon_record;
 struct application_q1_signon {
@@ -100,7 +100,7 @@ bool application_q1_signon_retain(application_provider *provider,
     }
     if (event->payload.size) memcpy(bytes, event->payload.data, event->payload.size);
     if (event->reference_count) memcpy(refs, event->references, event->reference_count * sizeof(*refs));
-    application_q1_signon_record record = {.event = *event, .identity = provider->launch->identity,
+    application_q1_signon_record record = {.event = *event, .source_serial = provider->launch->identity,
         .source_revision = app->map_revision};
     record.event.payload = (qa_bytes){bytes, event->payload.size}; record.event.references = refs;
     owner->records[owner->count++] = record; return true;
@@ -116,7 +116,7 @@ static bool record_valid(const qa_application *app, const application_q1_signon_
 {
     application_provider *p = source_owner(app, record->event.provider);
     if (!p || (p->kind != APPLICATION_PROVIDER_QC && !native_source(p)) || p->launch->selection.clock.kind != record->event.dialect ||
-        !qa_sha256_equal(&p->launch->identity, &record->identity) || record->source_revision > app->map_revision)
+        !record->source_serial || p->launch->identity != record->source_serial || record->source_revision > app->map_revision)
         return application_fail(error, QA_ERROR_FORMAT, "Retained Q1 signon source generation is not admitted");
     return event_valid(&record->event, error);
 }
@@ -137,8 +137,7 @@ static bool record_fields(qa_source_save_io *io, application_q1_signon_record *r
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     uint32_t dialect = reading ? 0 : (uint32_t)r->event.dialect;
-    if (!qa_source_save_u32(io, &r->event.provider) || !qa_source_save_u32(io, &dialect) ||
-        !qa_source_save_bytes(io, r->identity.bytes, sizeof(r->identity.bytes)) ||
+    if (!qa_source_save_string(io, &r->event.provider) || !qa_source_save_u32(io, &dialect) ||
         !qa_source_save_u64(io, &r->source_revision) || !qa_source_save_u64(io, &r->event.time_ns) ||
         !qa_source_save_actor(io, &r->event.recipient) || !qa_source_save_vec3(io, &r->event.origin) ||
         !qa_source_save_i32(io, &r->event.destination) || !qa_source_save_bool(io, &r->event.reliable) ||
@@ -189,7 +188,7 @@ bool application_q1_signon_restore(qa_application *app, qa_bytes bytes, qa_error
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 signon restore requires an empty isolated application owner");
     qa_source_save_io io; if (!qa_source_save_reader(&io, app->session, bytes, error)) return false;
     uint8_t magic[4]; size_t count = 0;
-    size_t maximum = bytes.size >= 12 ? (bytes.size - 12) / 104 : 0;
+    size_t maximum = bytes.size >= 12 ? (bytes.size - 12) / 78 : 0;
     if (maximum > SIZE_MAX / sizeof(application_q1_signon_record)) maximum = SIZE_MAX / sizeof(application_q1_signon_record);
     bool ok = qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QAQS", 4) &&
         qa_source_save_count(&io, &count, maximum);
@@ -202,7 +201,17 @@ bool application_q1_signon_restore(qa_application *app, qa_bytes bytes, qa_error
     }
     for (size_t i = 0; ok && i < count; ++i) {
         owner->count = i + 1;
-        ok = record_fields(&io, &owner->records[i]) && record_valid(app, &owner->records[i], error);
+        application_q1_signon_record *record = &owner->records[i];
+        ok = record_fields(&io, record);
+        if (ok) {
+            application_provider *provider = source_owner(app, record->event.provider);
+            if (!provider)
+                ok = application_fail(error, QA_ERROR_FORMAT, "Saved Q1 signon source owner is absent");
+            else {
+                record->source_serial = provider->launch->identity;
+                ok = record_valid(app, record, error);
+            }
+        }
     }
     if (ok) ok = qa_source_save_finish(&io, NULL);
     if (ok) { app->q1_signon = owner; owner = NULL; }

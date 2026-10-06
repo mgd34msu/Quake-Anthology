@@ -179,7 +179,6 @@ static bool inspect_pe(qa_bytes bytes, bool program, qa_native_image_info *out, 
                                   .target = target,
                                   .preferred_base = preferred,
                                   .image_bytes = image_bytes};
-    qa_sha256(bytes, &out->digest);
     return true;
 }
 
@@ -253,7 +252,6 @@ static bool inspect_elf(qa_bytes bytes, bool executable, qa_native_image_info *o
                                   .target = target,
                                   .preferred_base = first,
                                   .image_bytes = end};
-    qa_sha256(bytes, &out->digest);
     return true;
 }
 

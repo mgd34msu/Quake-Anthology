@@ -625,7 +625,7 @@ bool application_provider_prepare(qa_application *, const qa_launch_instance *,
                                   application_provider **, qa_error *);
 bool application_instance_configuration(void *, const qa_launch_instance *,
                                         const qa_launch_choices *,
-                                        qa_sha256_digest *, qa_error *);
+                                        qa_buffer *, qa_error *);
 qa_q1_program application_q1_program(const char *);
 bool application_provider_construct(qa_application *, application_provider *,
                                     qa_world *, qa_catalog *, const qa_product *,

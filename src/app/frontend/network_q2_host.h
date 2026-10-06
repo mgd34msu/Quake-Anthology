@@ -14,7 +14,7 @@ typedef struct frontend_network_q2_host_options {
     qa_network_runtime *runtime;
     qa_server_admin *admin;
     qa_net_protocol_id protocol;
-    qa_sha256_digest composition;
+    uint64_t composition;
     void *context;
     bool (*current)(void *,const frontend_network_q2_host *);
     qa_q2_random_fn random;

@@ -86,7 +86,7 @@ bool qa_executable_recipe_close(qa_executable_recipe *, qa_error *);
 /* Enumerates every genuine holder, including admitted lookup-policy views. */
 bool qa_executable_recipe_content_visit(const qa_executable_recipe *,
     const struct qa_application_content_visitor *, qa_error *);
-const qa_sha256_digest *qa_executable_recipe_digest(const qa_executable_recipe *);
+const uint64_t *qa_executable_recipe_generation(const qa_executable_recipe *);
 uint32_t qa_executable_recipe_epoch(const qa_executable_recipe *);
 const char *qa_executable_recipe_mode(const qa_executable_recipe *);
 uint32_t qa_executable_recipe_max_clients(const qa_executable_recipe *);
@@ -113,12 +113,12 @@ size_t qa_executable_recipe_resource_count(const qa_executable_recipe *);
 bool qa_executable_recipe_resource(const qa_executable_recipe *, size_t,
     qa_launch_resource *, qa_vfs **, const qa_vfs_acquisition **);
 bool qa_executable_recipe_find_resource(const qa_executable_recipe *,
-    const char *content_identity, const char *path, const qa_sha256_digest *, uint64_t byte_length,
+    const char *content_identity, const char *path, uint64_t byte_length,
     qa_launch_resource *, qa_vfs **, const qa_vfs_acquisition **);
 /* Resolves a subsequent wire resource through the admitted content policy and
  * retains the actual matching bytes. The caller borrows the result until close. */
 bool qa_executable_recipe_acquire_resource(qa_executable_recipe *,
-    const char *content_identity, const char *path, const qa_sha256_digest *, uint64_t byte_length,
+    const char *content_identity, const char *path, uint64_t byte_length,
     qa_launch_resource *, qa_vfs **, const qa_vfs_acquisition **, qa_error *);
 size_t qa_executable_recipe_sidecar_count(const qa_executable_recipe *);
 const qa_recipe_sidecar *qa_executable_recipe_sidecar(const qa_executable_recipe *, size_t);

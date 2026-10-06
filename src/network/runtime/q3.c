@@ -66,7 +66,7 @@ static bool client_command(void *context, const qa_network_command *command, qa_
     memcpy(value.angles, move->angle_words, sizeof(value.angles));
     return qa_q3_client_peer_usercmd(p->source, &value, error);
 }
-static bool client_restart(void *context, uint64_t epoch, const qa_sha256_digest *composition, qa_error *error)
+static bool client_restart(void *context, uint64_t epoch, const uint64_t *composition, qa_error *error)
 {
     (void)context; (void)epoch; (void)composition;
     return qa_network_fail(error, "Q3 client travel must arrive through the original server gamestate");
@@ -314,7 +314,7 @@ static bool local_command(void *context, const qa_network_command *command, qa_e
     (void)context; (void)command;
     return qa_network_fail(error, "A Q3 server peer cannot submit client movement");
 }
-static bool restart(void *context, uint64_t epoch, const qa_sha256_digest *composition, qa_error *error)
+static bool restart(void *context, uint64_t epoch, const uint64_t *composition, qa_error *error)
 {
     q3_runtime_peer *p = context; (void)epoch; (void)composition;
     qa_q3_server_state *state = qa_q3_server_peer_state(p->source);

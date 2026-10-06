@@ -7,7 +7,7 @@ bool q3component_storage(void *context,qa_error *e)
     application_q3_component *c=context;
     return (c&&c->vm&&c->host&&c->options.storage_current(c->options.context)&&
         qa_qvm_get_role(c->vm)==QA_QVM_GAME&&qa_qvm_get_abi(c->vm)==c->options.abi&&
-        qa_sha256_equal(qa_qvm_digest(c->vm),qa_qvm_image_digest(c->options.image)))||
+        (qa_qvm_image_of(c->vm) == c->options.image))||
         q3records_fail(e,QA_ERROR_ARGUMENT,"Component storage left its retained GAME executor");
 }
 bool q3component_current(void *context,qa_error *e)
@@ -84,9 +84,7 @@ bool application_q3_component_create(const application_q3_component_options *o,b
 {
     if(!o||!out||*out||!o->program||!o->declaration||!o->program_path||!o->image||!o->current||!o->storage_current||!o->generation||
         !o->host.session||!o->host.world||!o->host.owner||!o->host.service_owner||!o->host.mounts||o->host.role!=QA_QVM_GAME||o->host.abi!=o->abi||
-        !o->combat||!o->inventory||o->host.cvars||o->host.console||o->host.frontend_lifetime||
-        !qa_sha256_equal(&o->program_digest,qa_resource_digest(o->program))||!qa_sha256_equal(&o->program_digest,qa_qvm_image_digest(o->image))||
-        !qa_sha256_equal(&o->declaration_digest,qa_resource_digest(o->declaration)))
+        !o->combat||!o->inventory||o->host.cvars||o->host.console||o->host.frontend_lifetime)
         return q3records_fail(e,QA_ERROR_ARGUMENT,"Component construction requires its genuinely retained artifacts and source namespace");
     application_q3_component *c=calloc(1,sizeof(*c)); if(!c) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining external component GAME owner");
     c->options=*o; c->restoring=restoring; c->entity_record=c->player_record=SIZE_MAX; *out=c;

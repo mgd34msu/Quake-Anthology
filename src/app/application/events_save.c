@@ -1326,7 +1326,11 @@ static bool resource_bindings(event_store *store, qa_application *app, qa_error 
         const qa_resource *actual = qa_application_content_resource(app->content_graph, row->saved_pool, row->saved_resource);
         qa_unified_document *key = NULL;
         char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
-        if (!application_unified_resource_key(&product, path, actual, &key, id, error)) return false;
+        if (!application_unified_resource_key((uint64_t)i + 1, &product, path, actual, &key, id, error)) return false;
+        if (strcmp(row->id, id)) {
+            qa_unified_document_destroy(key);
+            return application_fail(error, QA_ERROR_FORMAT, "Saved Source resource dictionary changes its serial order");
+        }
         qa_bytes bytes = qa_json_source(qa_unified_document_json(key), qa_unified_document_root(key));
         row->key.data = malloc(bytes.size); row->key.size = bytes.size;
         if (row->key.data) memcpy(row->key.data, bytes.data, bytes.size);

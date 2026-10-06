@@ -25,7 +25,7 @@ static bool process_current(void *context, const qa_launch_instance *descriptor,
     q3g_role *role = context;
     if (!role || !role->engine || !role->engine->provider || !role->descriptor ||
         !descriptor || receiver != role->engine->provider->owner || service_owner != role->service_owner ||
-        !qa_sha256_equal(&descriptor->identity, &role->descriptor->identity) ||
+        (descriptor->identity != role->descriptor->identity) ||
         descriptor->storage!=role->descriptor->storage || descriptor->content!=role->descriptor->content ||
         !role->artifact || !role->artifact->resource || !role->module ||
         role->artifact->module!=role->module || role->artifact->kind!=role->kind ||
@@ -223,10 +223,9 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         application_fail(error, QA_ERROR_FORMAT, "Restored Q3 role leaves its actual source registration generation");
         goto failed;
     }
-    char identity[65], service_name[160];
-    qa_sha256_hex(&descriptor->identity, identity);
+    char service_name[160];
     snprintf(service_name, sizeof(service_name), "q3-service:%u:%s:%llu",
-        provider->owner, identity, (unsigned long long)(saved_owner ? saved_sequence : ++engine->role_sequence));
+        provider->owner, descriptor->selection.instance, (unsigned long long)(saved_owner ? saved_sequence : ++engine->role_sequence));
     qa_strings *strings = qa_session_strings(provider->application->session);
     if (saved_owner) {
         qa_string_id admitted = qa_strings_find(strings,
@@ -387,7 +386,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             if (primary && descriptor == provider->launch && provider->state.native.module) {
                 role->module = provider->state.native.module; qa_native_module_retain(role->module);
             } else if (!qa_native_module_load(qa_resource_bytes(shared->resource), path,
-                QA_NATIVE_Q3_VMMAIN, NULL, &role->module, error)) goto failed;
+                QA_NATIVE_Q3_VMMAIN, &role->module, error)) goto failed;
             if (primary && descriptor == provider->launch && !provider->state.native.module) {
                 provider->state.native.module = role->module; qa_native_module_retain(role->module);
             }
@@ -576,7 +575,6 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         if (!application_q3_guest_native_options(app, provider, kind, seat, &native.instance, error)) goto failed;
         if (role->declaration) {
             native.instance.declaration = role->declaration;
-            native.instance.declaration_digest = qa_native_declaration_digest(role->declaration);
         }
         qa_native_module_info module = qa_native_module_describe(role->module);
         qa_native_process_resource_artifact artifact = {.resource = role->artifact->resource,
@@ -612,7 +610,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             application_fail(error, QA_ERROR_FORMAT, "Restored Q3 item declaration is empty"); goto failed;
         }
         if (!application_q3_catalog_create(role->image, role->vm, role->abi,
-            qa_session_strings(provider->application->session), primary_bytes,
+            provider->launch->selection.instance, role->path, qa_session_strings(provider->application->session), primary_bytes,
             qa_resource_bytes(role->artifact->items_resource), false, &role->catalog, error)) goto failed;
         if (!application_guest_projection_prepare(role, primary_bytes, error)) goto failed;
         if (role->projection && role->projection->inventory_public) {

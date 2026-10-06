@@ -7,8 +7,7 @@ static bool image_equal(const qa_native_image_info *left, const qa_native_image_
     return left->format == right->format && left->target.os == right->target.os &&
         left->target.arch == right->target.arch && left->target.abi == right->target.abi &&
         left->target.pointer_bytes == right->target.pointer_bytes &&
-        left->preferred_base == right->preferred_base && left->image_bytes == right->image_bytes &&
-        qa_sha256_equal(&left->digest, &right->digest);
+        left->preferred_base == right->preferred_base && left->image_bytes == right->image_bytes;
 }
 static bool metadata(qa_source_save_io *io, qa_native_module_info *info)
 {
@@ -24,8 +23,7 @@ static bool metadata(qa_source_save_io *io, qa_native_module_info *info)
         !qa_source_save_u8(io, &info->image.target.pointer_bytes) ||
         (info->image.target.pointer_bytes != 4 && info->image.target.pointer_bytes != 8) ||
         !qa_source_save_u64(io, &info->image.preferred_base) ||
-        !qa_source_save_u64(io, &info->image.image_bytes) ||
-        !qa_source_save_bytes(io, info->image.digest.bytes, sizeof(info->image.digest.bytes))) return false;
+        !qa_source_save_u64(io, &info->image.image_bytes)) return false;
     info->profile = (qa_native_profile)profile;
     info->image.format = (qa_native_image_format)format;
     info->image.target.os = (qa_native_os)os;
@@ -79,7 +77,7 @@ bool qa_native_module_restore(qa_bytes state, qa_bytes artifact,
     if (okay) okay = qa_native_inspect(artifact, &actual, error);
     if (okay && !image_equal(&saved.image, &actual))
         okay = native_fail(error, QA_ERROR_FORMAT, 0, "saved native cache differs from its held artifact ABI");
-    if (okay) okay = qa_native_module_load(artifact, name, saved.profile, &saved.image.digest, out, error);
+    if (okay) okay = qa_native_module_load(artifact, name, saved.profile, out, error);
     free(name);
     if (!okay && error && error->code == QA_OK)
         native_fail(error, QA_ERROR_FORMAT, 0, "saved native module cache record is invalid");

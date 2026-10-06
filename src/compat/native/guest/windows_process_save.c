@@ -45,8 +45,7 @@ static bool image_fields(qa_source_save_io *io, qa_native_image_info *image)
         !qa_source_save_u32(io, &arch) || !qa_source_save_u32(io, &abi) ||
         !qa_source_save_u8(io, &image->target.pointer_bytes) ||
         !qa_source_save_u64(io, &image->preferred_base) ||
-        !qa_source_save_u64(io, &image->image_bytes) ||
-        !qa_source_save_bytes(io, image->digest.bytes, sizeof(image->digest.bytes))) return false;
+        !qa_source_save_u64(io, &image->image_bytes)) return false;
     image->format = (qa_native_image_format)format;
     image->target = (qa_native_target){(qa_native_os)os, (qa_native_arch)arch,
         (qa_native_abi)abi, image->target.pointer_bytes};
@@ -118,7 +117,7 @@ static bool runtime_matches(const qa_native_windows_process *owner, qa_error *er
         const windows_image_record *image = r->images + i;
         if (!pe || image->id != row->id || image->image != row->artifact || !image->prepared ||
             strcmp(image->path, row->path) || image->base != pe->base ||
-            !qa_sha256_equal(&image->digest, &pe->image.digest))
+            image->preferred_base != pe->image.preferred_base || image->image_bytes != pe->image.image_bytes)
             return guest_fail(error, QA_ERROR_FORMAT, i, "Windows process source graph differs from its prepared runtime inventory");
         size_t alignment = pe->tls.alignment < 16 ? 16 : pe->tls.alignment;
         if (pe->tls.present && (!image->tls_block || image->tls_block % alignment))
@@ -173,14 +172,14 @@ bool qa_native_windows_process_checkpoint(qa_native_windows_process *owner, qa_b
     owner->busy = false; return okay;
 }
 
-static bool image_resolve(void *context, uint64_t id, const qa_sha256_digest *digest,
-    uint64_t base, guest_windows_image *out, qa_error *error)
+static bool image_resolve(void *context, uint64_t id, uint64_t base,
+    guest_windows_image *out, qa_error *error)
 {
     qa_native_windows_process *owner = context;
     for (size_t i = 0; i < owner->image_count; ++i) {
         const windows_process_image *row = owner->images + i;
         const guest_pe_view *pe = guest_pe_describe(row->artifact);
-        if (row->id == id && pe && pe->base == base && qa_sha256_equal(digest, &pe->image.digest)) {
+        if (row->id == id && pe && pe->base == base) {
             *out = (guest_windows_image){id, row->artifact, row->path}; return true;
         }
     }

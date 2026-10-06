@@ -8,7 +8,7 @@ bool q3mod_current(application_q3_mod *o, qa_error *e)
     if (!o || o->closing || o->restoring || o->failed_scope || !o->services.current(o->services.context,e))
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Generic source operation has no current installed owner");
     return qa_qvm_get_role(o->vm)==QA_QVM_GAME && qa_qvm_get_abi(o->vm)==o->profile->abi &&
-        qa_sha256_equal(qa_qvm_digest(o->vm),qa_qvm_image_digest(o->profile->image)) ? true :
+        (qa_qvm_image_of(o->vm) == o->profile->image) ? true :
         q3mod_fail(e,QA_ERROR_ARGUMENT,"Generic source operation left its actual executor");
 }
 bool q3mod_storage_current(application_q3_mod *o, qa_error *e)
@@ -16,7 +16,7 @@ bool q3mod_storage_current(application_q3_mod *o, qa_error *e)
     if (!o || !o->services.storage_current(o->services.context,e))
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Generic source storage has no retained physical owner");
     return qa_qvm_get_role(o->vm)==QA_QVM_GAME && qa_qvm_get_abi(o->vm)==o->profile->abi &&
-        qa_sha256_equal(qa_qvm_digest(o->vm),qa_qvm_image_digest(o->profile->image)) ? true :
+        (qa_qvm_image_of(o->vm) == o->profile->image) ? true :
         q3mod_fail(e,QA_ERROR_ARGUMENT,"Generic storage left its actual retained executor");
 }
 bool q3mod_address(application_q3_mod *o, qa_actor_id actor, const char *name,
@@ -268,7 +268,7 @@ bool application_q3_mod_create(application_q3_mod_profile *p, qa_qvm *vm, qa_ses
         !s->eligible_actor || (p->clients && (!s->live_client || !s->client_slot || !s->player_state)) || !s->time ||
         !s->source_prepare || !s->source_enter || !s->source_leave ||
         (p->pickup_count && !s->pickups) || (p->protection_count && !combat) || qa_qvm_get_role(vm)!=QA_QVM_GAME ||
-        qa_qvm_get_abi(vm)!=p->abi || !qa_sha256_equal(qa_qvm_digest(vm),qa_qvm_image_digest(p->image)))
+        qa_qvm_get_abi(vm)!=p->abi || (qa_qvm_image_of(vm) != p->image))
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Generic runtime requires its exact artifact and genuine source services");
     application_q3_mod *o=calloc(1,sizeof(*o));
     if (!o) return q3mod_fail(e,QA_ERROR_MEMORY,"Owning generic source runtime");

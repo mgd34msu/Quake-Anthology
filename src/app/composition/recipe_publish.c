@@ -302,8 +302,8 @@ static bool execution_write(qa_json_writer *w, qa_executable_recipe *r, const qa
         const qa_catalog_weapon_behavior *b = instance->behaviors[i]; qa_json_writer_array(w);
         if (!product_write(w, qa_launch_instance_catalog(instance), b->product, error)) return false;
         qa_json_writer_string(w, b->id); qa_json_writer_number(w, b->runtime); qa_json_writer_number(w, b->role);
-        qa_json_writer_string(w, b->artifact_path); recipe_digest_write(w, &b->artifact_digest);
-        qa_json_writer_string(w, b->declaration_path ? b->declaration_path : ""); recipe_digest_write(w, &b->declaration_digest);
+        qa_json_writer_string(w, b->artifact_path);
+        qa_json_writer_string(w, b->declaration_path ? b->declaration_path : "");
         bytes_write(w, b->entry); qa_json_writer_end(w);
     }
     qa_json_writer_end(w); qa_json_writer_end(w); return !w->failed;
@@ -343,8 +343,6 @@ static bool sidecars_write(qa_json_writer *w, const qa_catalog *catalog, const q
         else {
             qa_json_writer_object(w); qa_json_writer_key(w, "content"); if (!product_write(w, catalog, s->product, error)) return false;
             qa_json_writer_key(w, "path"); qa_json_writer_string(w, s->path);
-            char digest[72] = "sha256:"; qa_sha256_hex(qa_resource_digest(s->resource), digest + 7);
-            qa_json_writer_key(w, "digest"); qa_json_writer_string(w, digest);
             qa_json_writer_key(w, "byteLength"); qa_json_writer_number(w, (double)qa_resource_bytes(s->resource).size); qa_json_writer_end(w);
         }
         qa_json_writer_end(w);
@@ -451,7 +449,7 @@ bool qa_application_unified_offer(qa_application *app, uint32_t epoch, const cha
         qa_json_writer_key(&offer, "kind"); qa_json_writer_string(&offer, "offer"); qa_json_writer_key(&offer, "epoch"); qa_json_writer_number(&offer, epoch);
         qa_json_writer_key(&offer, "composition"); qa_json_writer_object(&offer); qa_json_writer_key(&offer, "composition");
         if (ok) ok = recipe_copy_json(&offer, composition, qa_json_root(composition), error);
-        qa_json_writer_key(&offer, "digest"); char digest[72] = "sha256:"; qa_sha256_hex(&canonical.digest, digest + 7); qa_json_writer_string(&offer, digest); qa_json_writer_end(&offer);
+        qa_json_writer_key(&offer, "generation"); qa_json_writer_u64(&offer, generation); qa_json_writer_end(&offer);
         qa_json_writer_key(&offer, "mode"); qa_json_writer_string(&offer, mode); qa_json_writer_key(&offer, "maxClients"); qa_json_writer_number(&offer, max_clients); qa_json_writer_end(&offer); qa_json_writer_end(&offer);
         if (ok) ok = qa_json_writer_finish(&offer, &encoded, error);
         qa_json_destroy(composition);

@@ -433,7 +433,7 @@ static bool read_descriptor(const char *path) {
     if (file == INVALID_FILE)
         return false;
     uint64_t file_size;
-    bool ok = dr_file_size(file, &file_size) && file_size >= 64u &&
+    bool ok = dr_file_size(file, &file_size) && file_size >= 32u &&
               file_size <= QA_HOOK_MAX_FRAME && hook_u64_fits_size(file_size);
     uint8_t *bytes = ok ? dr_global_alloc((size_t)file_size) : NULL;
     if (!bytes)
@@ -446,17 +446,17 @@ static bool read_descriptor(const char *path) {
             dr_global_free(bytes, (size_t)file_size);
         return false;
     }
-    uint32_t count = load_u32(bytes + 48u);
-    uint32_t pointer_bytes = load_u32(bytes + 52u);
+    uint32_t count = load_u32(bytes + 16u);
+    uint32_t pointer_bytes = load_u32(bytes + 20u);
     uint64_t records_size = (uint64_t)count * 24u;
     if (memcmp(bytes, "QANHOOK\0", 8u) || load_u32(bytes + 8u) != 1u ||
         load_u32(bytes + 12u) > 1u || pointer_bytes != sizeof(void *) ||
-        records_size > file_size - 64u || file_size - 64u - records_size == 0u) {
+        records_size > file_size - 32u || file_size - 32u - records_size == 0u) {
         dr_global_free(bytes, (size_t)file_size);
         return false;
     }
     regions = dr_global_alloc((size_t)count * sizeof(*regions));
-    size_t name_size = (size_t)(file_size - 64u - records_size);
+    size_t name_size = (size_t)(file_size - 32u - records_size);
     module_name = dr_global_alloc(name_size + 1u);
     if ((!regions && count) || !module_name) {
         if (regions)
@@ -465,7 +465,7 @@ static bool read_descriptor(const char *path) {
         return false;
     }
     for (uint32_t index = 0; index < count; ++index) {
-        const uint8_t *record = bytes + 64u + (size_t)index * 24u;
+        const uint8_t *record = bytes + 32u + (size_t)index * 24u;
         regions[index] =
             (hook_region){load_u32(record),       load_u32(record + 4u),  load_u32(record + 8u),
                           load_u32(record + 12u), load_u32(record + 16u), load_u32(record + 20u)};
@@ -479,9 +479,9 @@ static bool read_descriptor(const char *path) {
             return false;
         }
     }
-    memcpy(module_name, bytes + 64u + (size_t)records_size, name_size);
+    memcpy(module_name, bytes + 32u + (size_t)records_size, name_size);
     module_name[name_size] = 0;
-    module_image_bytes = load_u64(bytes + 56u);
+    module_image_bytes = load_u64(bytes + 24u);
     region_count = count;
     dr_global_free(bytes, (size_t)file_size);
     return true;

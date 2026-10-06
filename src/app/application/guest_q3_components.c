@@ -38,16 +38,15 @@ static bool selected_row(application_q3_components *owner,component_game_row *ro
         application_provider *selected=provider(owner,selection->instance);
         const qa_catalog_mod *metadata=selected?qa_catalog_mod_find(selected->product_catalog,selection->component):NULL;
         return selected==row->provider&&metadata&&!metadata->unavailable&&metadata->runtime==QA_PROGRAM_QVM&&
-            qa_sha256_equal(&metadata->program_digest,&row->publication.metadata->program_digest)&&
-            qa_sha256_equal(&metadata->declaration_digest,&row->publication.metadata->declaration_digest)&&
-            qa_sha256_equal(&selected->launch->identity,&row->publication.descriptor->identity);
+            metadata->program_resource == row->program&&
+            metadata->declaration_resource == row->declaration&&
+            (selected->launch->identity == row->publication.descriptor->identity);
     }
     return false;
 }
 static bool namespace(component_game_row *row,qa_error *e)
 {
     qa_strings *strings=qa_session_strings(row->roster->options.application->session);
-    char digest[65]; qa_sha256_hex(&row->publication.metadata->declaration_digest,digest);
     const char *component=row->publication.metadata->key;
     size_t size=strlen(component)+strlen(row->provider->launch->selection.instance)+160;
     char *name=malloc(size),*service=malloc(size+16);
@@ -57,12 +56,10 @@ static bool namespace(component_game_row *row,qa_error *e)
         for(size_t i=0;i<row->roster->saved_count;++i) {
             component_saved_row *saved=row->roster->saved+i;
             if(strcmp(saved->instance,row->provider->launch->selection.instance)||strcmp(saved->key,component)) continue;
-            int n=snprintf(name,size,"qvm-component:%s:%s:%s:%llu",saved->instance,component,digest,(unsigned long long)saved->generation);
+            int n=snprintf(name,size,"qvm-component:%s:%s:%llu",saved->instance,component,(unsigned long long)saved->generation);
             snprintf(service,size+16,"%s:services",name);
             ok=saved->owner<=UINT32_MAX&&n>=0&&(size_t)n<size&&qa_strings_find(strings,(qa_bytes){(const uint8_t *)name,(size_t)n})==saved->owner&&
-                qa_strings_find(strings,(qa_bytes){(const uint8_t *)service,strlen(service)})==saved->services&&
-                qa_sha256_equal(&saved->program,&row->publication.metadata->program_digest)&&
-                qa_sha256_equal(&saved->declaration,&row->publication.metadata->declaration_digest);
+                qa_strings_find(strings,(qa_bytes){(const uint8_t *)service,strlen(service)})==saved->services;
             if(ok) { row->publication.owner=(qa_actor_owner)saved->owner; row->publication.generation=saved->generation; row->services=saved->services; }
             break;
         }
@@ -70,7 +67,7 @@ static bool namespace(component_game_row *row,qa_error *e)
         return ok||application_fail(e,QA_ERROR_FORMAT,"Saved component namespace differs from its exact retained declaration");
     }
     for(uint64_t generation=1;generation;++generation) {
-        int n=snprintf(name,size,"qvm-component:%s:%s:%s:%llu",row->provider->launch->selection.instance,component,digest,(unsigned long long)generation);
+        int n=snprintf(name,size,"qvm-component:%s:%s:%llu",row->provider->launch->selection.instance,component,(unsigned long long)generation);
         if(n<0||(size_t)n>=size) break;
         if(qa_strings_find(strings,(qa_bytes){(const uint8_t *)name,(size_t)n})) continue;
         qa_string_id owner,services;
@@ -152,7 +149,7 @@ bool application_q3_components_create(const application_q3_components_options *o
         if(!qa_vfs_acquire_receipt(row->publication.content,metadata->program_path,&row->program,&row->program_acquisition,e)||
             !qa_vfs_acquire_receipt(row->publication.content,metadata->declaration_path,&row->declaration,&row->declaration_acquisition,e)) return false;
         row->publication.program=row->program; row->publication.declaration=row->declaration;
-        if(!qa_sha256_equal(qa_resource_digest(row->program),&metadata->program_digest)||!qa_sha256_equal(qa_resource_digest(row->declaration),&metadata->declaration_digest))
+        if(row->program != metadata->program_resource || row->declaration != metadata->declaration_resource)
             return application_fail(e,QA_ERROR_FORMAT,"Enabled component resources differ from the actual catalog discovery");
         if(!qa_qvm_image_load(qa_resource_bytes(row->program),&row->image,e)||!namespace(row,e)||!q3components_identity(row,e)||!q3components_create_game(row,e)||
             (options->restoring&&!q3components_saved_import(row,e))) return false;

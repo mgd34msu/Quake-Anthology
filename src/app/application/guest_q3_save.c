@@ -389,11 +389,9 @@ typedef struct saved_artifact {
     bool qvm;
     qa_bytes module;
     qa_buffer module_storage;
-    qa_sha256_digest digest, primary_digest;
     uint64_t pool, resource;
     qa_vfs_acquisition acquisition;
     uint64_t items_pool, items_resource;
-    qa_sha256_digest items_digest;
     qa_vfs_acquisition items_acquisition;
     q3g_artifact *actual;
 } saved_artifact;
@@ -545,8 +543,6 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved, const applic
             !qa_source_save_u32(io, &artifact->abi) || artifact->abi > QA_QVM_Q3_116N ||
             !qa_source_save_bool(io, &artifact->qvm) ||
             (!artifact->qvm && !blob(io, &artifact->module, 12)) ||
-            !qa_source_save_bytes(io, artifact->digest.bytes, 32) ||
-            !qa_source_save_bytes(io, artifact->primary_digest.bytes, 32) ||
             !qa_source_save_u64(io, &artifact->pool) || !artifact->pool ||
             !qa_source_save_u64(io, &artifact->resource) || !artifact->resource)
             return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 source artifact declaration");
@@ -558,7 +554,6 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved, const applic
             (artifact->kind != QA_QVM_GAME ||
              !qa_source_save_u64(io, &artifact->items_pool) || !artifact->items_pool ||
              !qa_source_save_u64(io, &artifact->items_resource) || !artifact->items_resource ||
-             !qa_source_save_bytes(io, artifact->items_digest.bytes, 32) ||
              !acquisition(io, graph, view, artifact->items_pool, artifact->items_resource, &artifact->items_acquisition) ||
              strcmp(artifact->items_acquisition.path, artifact->qvm ? "qvm-items.json" : "native-q3-items.json"))))
             return state_fail(io, QA_ERROR_FORMAT, "Invalid retained Q3 item catalog declaration");
@@ -690,11 +685,11 @@ static bool saved_collect(application_provider *provider,
             saved_free(saved); return application_fail(error, QA_ERROR_FORMAT,
                 "GAME grapple metadata leaves its retained immutable artifact");
         }
-        if (!a->resource || !qa_resource_digest(a->resource)) {
+        if (!a->resource) {
             saved_free(saved); return application_fail(error, QA_ERROR_FORMAT, "Q3 artifact lost its retained immutable bytes");
         }
         saved->artifacts[i] = (saved_artifact){.path = a->path, .kind = a->kind,
-            .abi = a->abi, .qvm = a->qvm, .digest = *qa_resource_digest(a->resource), .actual = a,
+            .abi = a->abi, .qvm = a->qvm, .actual = a,
             .acquisition = a->acquisition};
         if (!a->resource || !qa_vfs_acquisition_retained(a->view, &a->acquisition, error) ||
             !qa_application_content_resource_id(graph, a->resource,
@@ -708,11 +703,9 @@ static bool saved_collect(application_provider *provider,
             }
             row->module = (qa_bytes){row->module_storage.data, row->module_storage.size};
         }
-        qa_sha256((qa_bytes){a->primary.data, a->primary.size}, &saved->artifacts[i].primary_digest);
         if (a->items_resource) {
             saved_artifact *row = saved->artifacts + i;
             row->items_acquisition = a->items_acquisition;
-            row->items_digest = *qa_resource_digest(a->items_resource);
             if (a->kind != QA_QVM_GAME || a->primary.size ||
                 strcmp(a->items_acquisition.path, a->qvm ? "qvm-items.json" : "native-q3-items.json") ||
                 qa_resource_id(a->items_resource) != a->items_acquisition.resource_id ||
@@ -861,7 +854,7 @@ static bool clients_agree(application_provider *provider, qa_error *error)
                 if (!qa_actor_id_equal(player->actor, client->actor)) continue;
                 for (size_t k = 0; k < player->guest_count; ++k)
                     if (player->guests[k].owner == provider->owner && player->guests[k].source_slot == i &&
-                        qa_sha256_equal(&player->guests[k].identity, &provider->launch->identity)) admitted = true;
+                        player->guests[k].identity == provider->launch->identity) admitted = true;
             }
             if (!admitted)
                 return application_fail(error, QA_ERROR_FORMAT, "Q3 source bot attachment is absent from its exact saved roster");
@@ -995,13 +988,11 @@ static bool qualify_content(application_provider *provider, q3g_restore *saved, 
         qa_vfs *view = provider->launch->content;
         const qa_resource *resource = qa_application_content_resource(graph, a->pool, a->resource);
         if (!view || !resource || qa_application_content_pool(graph, a->pool) != qa_vfs_resources(view) ||
-            !qa_sha256_equal(qa_resource_digest(resource), &a->digest) ||
             strcmp(a->path, a->acquisition.path) || !qa_vfs_acquisition_retained(view, &a->acquisition, error))
             return application_fail(error, QA_ERROR_FORMAT, "Q3 artifact changes its true opening recipe");
         if (a->items_resource) {
             const qa_resource *items = qa_application_content_resource(graph, a->items_pool, a->items_resource);
             if (!items || qa_application_content_pool(graph, a->items_pool) != qa_vfs_resources(view) ||
-                !qa_sha256_equal(qa_resource_digest(items), &a->items_digest) ||
                 !qa_vfs_acquisition_retained(view, &a->items_acquisition, error))
                 return application_fail(error, QA_ERROR_FORMAT,
                     "Q3 item catalog changes its retained source view or bytes");
@@ -1040,16 +1031,12 @@ static bool prepare_artifact(application_provider *provider, struct application_
             !qa_vfs_acquisition_copy(&saved->items_acquisition, &artifact->items_acquisition, error)) return false;
     }
     if (!saved->qvm) {
-        qa_sha256_digest empty;
-        qa_sha256((qa_bytes){0}, &empty);
-        if (!qa_sha256_equal(&saved->primary_digest, &empty))
-            return application_fail(error, QA_ERROR_FORMAT, "Native Q3 artifact contains a QVM-only declaration child");
         if (!qa_native_module_restore(saved->module, qa_resource_bytes(artifact->resource),
             &artifact->module, error)) return false;
         artifact->abi = (qa_qvm_abi)saved->abi;
         qa_native_module_info actual = qa_native_module_describe(artifact->module);
         if (actual.profile != QA_NATIVE_Q3_VMMAIN || !actual.source || strcmp(actual.source, artifact->path) ||
-            artifact->abi != QA_QVM_Q3_MODERN || !qa_sha256_equal(&actual.image.digest, &saved->digest))
+            artifact->abi != QA_QVM_Q3_MODERN)
             return application_fail(error, QA_ERROR_FORMAT, "Native Q3 cache changed its actual module profile, opening or ABI");
         if (primary && source == provider->launch) {
             if (provider->kind != APPLICATION_PROVIDER_NATIVE || provider->state.native.module)
@@ -1069,11 +1056,7 @@ static bool prepare_artifact(application_provider *provider, struct application_
                 !strcmp(saved->path, source->selection.artifact), &compatibility, error);
     }
     if (ok) {
-        qa_sha256_digest primary_digest;
-        qa_sha256((qa_bytes){compatibility.primary.data, compatibility.primary.size}, &primary_digest);
-        ok = compatibility.abi == (qa_qvm_abi)saved->abi &&
-            qa_sha256_equal(qa_qvm_image_digest(artifact->image), &saved->digest) &&
-            qa_sha256_equal(&primary_digest, &saved->primary_digest);
+        ok = compatibility.abi == (qa_qvm_abi)saved->abi;
         if (!ok) application_fail(error, QA_ERROR_FORMAT, "Q3 artifact or source declaration differs from saved content");
     }
     if (ok) {
@@ -1189,8 +1172,8 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
                 role->seat != seat)
                 ok = application_fail(error, QA_ERROR_FORMAT, "Q3 primary role differs from its selected source artifact");
         }
-        char identity[65], name[160]; qa_sha256_hex(&source->identity, identity);
-        snprintf(name, sizeof(name), "q3-service:%u:%s:%llu", provider->owner, identity,
+        char name[160];
+        snprintf(name, sizeof(name), "q3-service:%u:%s:%llu", provider->owner, source->selection.instance,
             (unsigned long long)role->sequence);
         if (qa_strings_find(qa_session_strings(provider->application->session),
             (qa_bytes){(const uint8_t *)name, strlen(name)}) != role->owner)

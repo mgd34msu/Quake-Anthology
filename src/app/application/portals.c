@@ -4,7 +4,7 @@
 
 typedef struct application_portal_claim {
     qa_actor_owner provider;
-    qa_sha256_digest identity;
+    uint64_t source_serial;
     uint64_t map_identity;
     qa_collision_family family;
     uint32_t first, second, portal, contributions;
@@ -28,7 +28,7 @@ static bool claim_valid(qa_application *app, const application_portal_claim *c,
                           qa_error *error)
 {
     application_provider *p = claim_provider(app, c->provider);
-    if (!p || !p->launch || !qa_sha256_equal(&p->launch->identity, &c->identity) ||
+    if (!p || !p->launch || !c->source_serial || p->launch->identity != c->source_serial ||
         c->map_identity != qa_collision_map_identity(app->geometry) ||
         c->family != qa_collision_geometry_family(app->geometry))
         return application_fail(error, QA_ERROR_FORMAT,
@@ -62,7 +62,7 @@ static bool change(application_provider *provider, application_portal_claim key,
     if (!app || !app->geometry || !provider->launch || !provider->constructed)
         return application_fail(error, QA_ERROR_ARGUMENT, "Portal mutation has no live native owner");
     key.provider = provider->owner;
-    key.identity = provider->launch->identity;
+    key.source_serial = provider->launch->identity;
     key.map_identity = qa_collision_map_identity(app->geometry);
     if (!claim_valid(app, &key, error))
         return false;
@@ -317,15 +317,20 @@ static bool row_fields(qa_source_save_io *io, qa_application *app,
                          application_portal_claim *c)
 {
     uint32_t family = (uint32_t)c->family;
-    if (!qa_source_save_u32(io, &c->provider) ||
-        !qa_source_save_bytes(io, c->identity.bytes, sizeof(c->identity.bytes)) ||
+    if (!qa_source_save_string(io, &c->provider) ||
         !qa_source_save_u64(io, &c->map_identity) || !qa_source_save_u32(io, &family) ||
         !qa_source_save_u32(io, &c->first) || !qa_source_save_u32(io, &c->second) ||
         !qa_source_save_u32(io, &c->portal) || !qa_source_save_u32(io, &c->contributions))
         return false;
     c->family = (qa_collision_family)family;
-    if (io->direction == QA_SOURCE_SAVE_READ && c->family == QA_COLLISION_Q2)
-        c->contributions = c->contributions != 0;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        application_provider *provider = claim_provider(app, c->provider);
+        if (!provider || !provider->launch)
+            return application_fail(io->error, QA_ERROR_FORMAT, "Saved portal source owner is absent");
+        c->source_serial = provider->launch->identity;
+        if (c->family == QA_COLLISION_Q2)
+            c->contributions = c->contributions != 0;
+    }
     return claim_valid(app, c, io->error);
 }
 
@@ -385,7 +390,7 @@ bool application_portals_capture(qa_application *app, qa_buffer *out, qa_error *
     bool present = app->portals != NULL;
     size_t count = present ? app->portals->count : 0;
     size_t capacity = present ? app->portals->capacity : 0;
-    bool ok = qa_source_save_writer(&io, NULL, error) && header(&io, &present, &count, &capacity);
+    bool ok = qa_source_save_writer(&io, app->session, error) && header(&io, &present, &count, &capacity);
     for (size_t i = 0; ok && i < count; ++i) {
         application_portal_claim copy = app->portals->claims[i];
         ok = row_fields(&io, app, &copy);
@@ -399,16 +404,16 @@ bool application_portals_capture(qa_application *app, qa_buffer *out, qa_error *
 
 bool application_portals_restore(qa_application *app, qa_bytes bytes, qa_error *error)
 {
-    if (!app || !app->geometry || app->portals)
+    if (!app || !app->session || !app->geometry || app->portals)
         return application_fail(error, QA_ERROR_ARGUMENT, "Portal import requires an empty actual candidate owner");
     qa_source_save_io io = {0};
     bool present = false;
     struct application_portals *owner = calloc(1, sizeof(*owner));
     if (!owner)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating restored native portal owner");
-    bool ok = qa_source_save_reader(&io, NULL, bytes, error) &&
+    bool ok = qa_source_save_reader(&io, app->session, bytes, error) &&
         header(&io, &present, &owner->count, &owner->capacity);
-    if (ok && owner->count > (bytes.size - io.offset) / 64)
+    if (ok && owner->count > (bytes.size - io.offset) / 36)
         ok = application_fail(error, QA_ERROR_FORMAT, "Native portal journal byte extent disagrees");
     if (ok && owner->capacity) {
         owner->claims = calloc(owner->capacity, sizeof(*owner->claims));

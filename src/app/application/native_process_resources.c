@@ -333,27 +333,6 @@ static bool program_file_baseline(void *context, uint64_t id,
     if (okay) okay = opened && qa_fs_opened_file_size(row->baseline, &bytes, error);
     if (okay && bytes != expected->bytes)
         okay = fail(error, QA_ERROR_FORMAT, "Mapped-file baseline differs from its original source length");
-    qa_sha256_context hash;
-    qa_sha256_init(&hash);
-    uint8_t scratch[65536];
-    for (uint64_t offset = 0; okay && offset < bytes;) {
-        size_t amount = bytes - offset > sizeof(scratch) ? sizeof(scratch) : (size_t)(bytes - offset);
-        size_t completed = 0;
-        while (okay && completed < amount) {
-            size_t done = 0;
-            okay = qa_fs_opened_file_read(row->baseline, offset + completed,
-                scratch + completed, amount - completed, &done, error);
-            if (done > amount - completed) { okay = fail(error, QA_ERROR_FORMAT, "Mapped-file baseline read reported impossible completion"); break; }
-            completed += done;
-            if (okay && !done) okay = fail(error, QA_ERROR_IO, "Mapped-file baseline ended before its actual extent");
-        }
-        if (okay) qa_sha256_update(&hash, (qa_bytes){scratch, amount});
-        offset += amount;
-    }
-    qa_sha256_digest digest;
-    qa_sha256_final(&hash, &digest);
-    if (okay && !qa_sha256_equal(&digest, &expected->digest))
-        okay = fail(error, QA_ERROR_FORMAT, "Mapped-file baseline differs from its original source bytes");
     if (okay) okay = qa_fs_opened_file_current(row->baseline, error) &&
         qa_native_process_resources_current(owner, error);
     resource_native_filesystem(owner);
@@ -1060,7 +1039,10 @@ static bool resource_fields(qa_source_save_io *io, const qa_native_process_resou
     for (size_t i = 0; i < owner->artifact_count; ++i) {
         const process_artifact *row = owner->artifacts + i;
         if (!match_text(io, row->path) ||
-            !match_bytes(io, &row->image.digest, sizeof(row->image.digest)) ||
+            !match_u32(io, row->image.format) || !match_u32(io, row->image.target.os) ||
+            !match_u32(io, row->image.target.arch) || !match_u32(io, row->image.target.abi) ||
+            !match_u32(io, row->image.target.pointer_bytes) ||
+            !match_u64(io, row->image.preferred_base) || !match_u64(io, row->image.image_bytes) ||
             !match_u64(io, row->base)) return false;
     }
     if (!match_u64(io, owner->root_count)) return false;
@@ -1290,7 +1272,7 @@ bool qa_native_process_resources_rebind(const qa_native_process_resources *captu
 {
     if (!capture || !bindings || !bindings->descriptor || !bindings->current || !out || *out ||
         bindings->receiver != capture->options.receiver || bindings->service_owner != capture->options.service_owner ||
-        !qa_sha256_equal(&bindings->descriptor->identity, &capture->descriptor->identity) ||
+        bindings->descriptor->identity != capture->descriptor->identity ||
         !bindings->current(bindings->context, bindings->descriptor, bindings->receiver, bindings->service_owner, error))
         return fail(error, QA_ERROR_ARGUMENT, "Cold native resource binding differs from its prepared source");
     /* The capture's original execution row can already be retired. Its held

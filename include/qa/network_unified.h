@@ -94,7 +94,6 @@ typedef struct qa_unified_arsenal {
 } qa_unified_arsenal;
 typedef struct qa_unified_composition {
     qa_buffer canonical;
-    qa_sha256_digest digest;
 } qa_unified_composition;
 /* Canonicalizes JSON using the donor's UTF-16 key order and number syntax. */
 bool qa_unified_composition_create(qa_bytes json, qa_unified_composition *, qa_error *);

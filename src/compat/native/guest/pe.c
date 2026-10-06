@@ -547,7 +547,7 @@ bool guest_pe_open(qa_bytes bytes, const qa_native_image_info *expected,
     qa_native_image_info actual;
     if (!qa_native_inspect(bytes, &actual, error)) return false;
     if ((actual.format != QA_NATIVE_IMAGE_PE32 && actual.format != QA_NATIVE_IMAGE_PE32_PLUS) ||
-        actual.target.arch == QA_NATIVE_ARCH_AARCH64 || !qa_sha256_equal(&actual.digest, &expected->digest) ||
+        actual.target.arch == QA_NATIVE_ARCH_AARCH64 ||
         actual.format != expected->format || actual.target.os != expected->target.os ||
         actual.target.arch != expected->target.arch || actual.target.abi != expected->target.abi ||
         actual.target.pointer_bytes != expected->target.pointer_bytes || actual.preferred_base != expected->preferred_base ||

@@ -36,7 +36,7 @@ typedef struct nq_status_cache {
 struct frontend_nq_host {
     qa_frontend *frontend;
     qa_network_runtime *runtime;
-    qa_sha256_digest composition;
+    uint64_t composition;
     qa_actor_owner owner;
     uint64_t generation, submillisecond_ns, published_source_time_ns, next_admission_order;
     nq_frontend_peer peers[NQ_CLIENTS];

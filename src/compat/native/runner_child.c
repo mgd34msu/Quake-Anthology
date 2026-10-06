@@ -443,7 +443,6 @@ static bool child_load(native_child_state *state, native_wire_reader *reader,
     uint32_t profile, os, arch, abi, pointer_bytes, tick_rate, frame_bits, frame_milliseconds,
         q3_role;
     uint8_t has_declaration, instrumented;
-    const uint8_t *digest_bytes;
     qa_buffer source = {0};
     qa_bytes image;
     uint64_t dependency_count;
@@ -456,7 +455,6 @@ static bool child_load(native_child_state *state, native_wire_reader *reader,
         !native_wire_get_u32(reader, &q3_role, error) ||
         !native_wire_get_u8(reader, &has_declaration, error) ||
         !native_wire_get_u8(reader, &instrumented, error) ||
-        !native_wire_get_raw(reader, 64u, &digest_bytes, error) ||
         !native_wire_get_string(reader, &source, error) ||
         !native_wire_get_bytes(reader, &image, error) ||
         !native_wire_get_u64(reader, &dependency_count, error) ||
@@ -493,12 +491,9 @@ static bool child_load(native_child_state *state, native_wire_reader *reader,
     if (ok && !child_targets_equal(requested, qa_native_host_target()))
         ok = native_fail(error, QA_ERROR_UNSUPPORTED, arch,
                          "native runner executable has the wrong target ABI");
-    qa_sha256_digest declaration = {0}, artifact = {0};
-    memcpy(declaration.bytes, digest_bytes, 32u);
-    memcpy(artifact.bytes, digest_bytes + 32u, 32u);
     if (ok)
         ok = qa_native_module_load(image, (const char *)source.data, (qa_native_profile)profile,
-                                   &artifact, &state->module, error);
+                                   &state->module, error);
     qa_native_options options = {.context = state,
                                  .q3_role = (qa_qvm_role)q3_role,
                                  .import = child_import,
@@ -506,7 +501,6 @@ static bool child_load(native_child_state *state, native_wire_reader *reader,
                                  .syscall = child_syscall,
                                  .checkpoint = child_checkpoint,
                                  .restore = child_restore,
-                                 .declaration_digest = has_declaration ? &declaration : NULL,
                                  .dependencies = dependencies,
                                  .dependency_count = (size_t)dependency_count,
                                  .tick_rate = tick_rate,
@@ -515,6 +509,7 @@ static bool child_load(native_child_state *state, native_wire_reader *reader,
     if (ok)
         ok = qa_native_create_direct(state->module, &options, &state->instance, error);
     if (ok) {
+        state->instance->has_declaration = has_declaration != 0;
         state->instance->instrumented_child = instrumented != 0;
         if (instrumented) {
             native_hook_control admitted_image = {.operation = NATIVE_HOOK_IMAGE};

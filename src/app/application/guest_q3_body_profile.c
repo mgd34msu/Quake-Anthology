@@ -1,3 +1,4 @@
+#include "guest_q3_reference.h"
 #include "guest_q3_body_profile.h"
 #include "internal.h"
 #include "qa/json.h"
@@ -78,7 +79,7 @@ bool application_q3_body_profile_qualify(const qa_qvm_image *image, qa_qvm_abi a
 {
     if (!image || !artifact_path || !profile || !profile->artifact_path ||
         (unsigned)abi > QA_QVM_Q3_116N || profile->abi != abi ||
-        !qa_sha256_equal(&profile->artifact, qa_qvm_image_digest(image)))
+        profile->image != image)
         return application_fail(error, QA_ERROR_ARGUMENT, "CGAME body profile lost its actual bytecode artifact");
     char *normalized = qa_vfs_normalize_path(artifact_path, error);
     bool matches = normalized && !strcmp(normalized, profile->artifact_path);
@@ -155,14 +156,11 @@ static bool declaration(const qa_qvm_image *image, qa_bytes bytes,
     qa_json_id root = qa_json_root(doc);
     int64_t version = 0;
     qa_buffer path = {0}; char *normalized = NULL;
-    char hex[65], digest[72]; qa_sha256_hex(&profile->artifact, hex);
-    memcpy(digest, "sha256:", 7); memcpy(digest + 7, hex, 65);
     bool okay = integer(doc, qa_json_get(doc, root, "version"), -BODY_SAFE_INTEGER, &version, error) &&
         version == 1 && qa_json_string(doc, qa_json_get(doc, root, "artifactPath"), &path, error);
     if (okay && memchr(path.data, 0, path.size)) okay = false;
     if (okay) normalized = qa_vfs_normalize_path((const char *)path.data, error);
-    if (okay) okay = normalized && !strcmp(normalized, profile->artifact_path) &&
-        qa_json_string_equal(doc, qa_json_get(doc, root, "artifactDigest"), digest);
+    if (okay) okay = normalized && !strcmp(normalized, profile->artifact_path);
     if (!okay && (!error || error->code == QA_OK))
         application_fail(error, QA_ERROR_FORMAT, "Body presentation belongs to different cgame bytes");
     free(normalized); qa_buffer_free(&path);
@@ -211,9 +209,9 @@ static bool declaration(const qa_qvm_image *image, qa_bytes bytes,
 
 static bool stock(application_q3_body_profile *profile, qa_error *error)
 {
-    char digest[65]; qa_sha256_hex(&profile->artifact, digest);
-    bool first = !strcmp(digest, "a4744482c9b93852cc71f4d7ce03b3e4337e5d89844d27d272c2c16d74df07fa"),
-        second = !strcmp(digest, "14858804fb98609ed8b3b3c3b825f0a7cb544063f7e43735c884cd5e4a51157c");
+
+    bool first = application_q3_reference_image(profile->image, Q3_REFERENCE_LRCTF_CGAME),
+        second = application_q3_reference_image(profile->image, Q3_REFERENCE_THREEWAVE_CGAME);
     if (!first && !second) return true;
     static const uint32_t a[] = {45608,81284,46022,47069,47502,47708,47822,48149,47699,45882,45800};
     static const uint32_t b[] = {36612,62937,36804,38561,39712,39826,39870,39534,40520};
@@ -244,7 +242,7 @@ bool application_q3_body_profile_read(const qa_qvm_image *image, qa_qvm_role rol
         !artifact_path || !out || out->artifact_path || out->submissions || out->count ||
         (bytes && bytes->size && !bytes->data))
         return application_fail(error, QA_ERROR_ARGUMENT, "Body presentation requires its admitted CGAME bytecode");
-    application_q3_body_profile profile = {.artifact = *qa_qvm_image_digest(image), .abi = abi};
+    application_q3_body_profile profile = {.image = image, .abi = abi};
     profile.artifact_path = qa_vfs_normalize_path(artifact_path, error);
     if (!profile.artifact_path) return false;
     profile.present = bytes != NULL;

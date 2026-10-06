@@ -3,7 +3,6 @@
 
 #include "qa/archive.h"
 #include "qa/filesystem.h"
-#include "qa/hash.h"
 
 typedef struct qa_resource_pool qa_resource_pool;
 typedef struct qa_resource qa_resource;
@@ -287,8 +286,6 @@ qa_bytes qa_resource_bytes(const qa_resource *resource);
 /* IDs are unique within their resource pool. Paths retain source spelling. */
 uint64_t qa_resource_id(const qa_resource *resource);
 const char *qa_resource_path(const qa_resource *resource);
-/* Persistent content identity, independent of process-local numeric handles. */
-const qa_sha256_digest *qa_resource_digest(const qa_resource *resource);
 bool qa_resource_archive_origin(const qa_resource *resource,
                                   qa_fs_identity *archive_identity,
                                   size_t *member_ordinal);

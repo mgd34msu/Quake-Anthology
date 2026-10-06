@@ -1,3 +1,4 @@
+#include "guest_q3_reference.h"
 #include "guest_input_private.h"
 #include "qa/json.h"
 
@@ -70,8 +71,8 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
     application_guest_input_profile p = {.source = application_q3_weapons_profile(role->weapons)};
     if (!role->image) { *out = p; return true; }
     if (!primary.size) {
-        char digest[65]; qa_sha256_hex(qa_qvm_image_digest(role->image), digest);
-        if (!strcmp(digest, "b9e396cf5ed2b913548cd92e2b0886ad5992653c8903fa3f9ed0b1f4167ca43e")) {
+
+        if (application_q3_reference_image(role->image, Q3_REFERENCE_LRCTF_GAME)) {
             static const application_q3_weapon_profile source = {
                 .entity_stride = 856, .client_stride = 872, .client_pointer = 516,
                 .movement_move = 22369, .movement_slice = 21620};
@@ -79,7 +80,7 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
                 .client_think = 114858, .run_client = 114917, .client_spawn = 125027,
                 .input_present = true, .has_modes = true, .normal_mode = 0,
                 .noclip_mode = 1, .freeze_mode = 4};
-        } else if (!strcmp(digest, "9751bad99a2d138f96a9b0436d2ea2d965b86214175dc33e4cea95e059419337")) {
+        } else if (application_q3_reference_image(role->image, Q3_REFERENCE_THREEWAVE_GAME)) {
             p.client_think = 120292; p.run_client = 120383; p.client_spawn = 132015;
             p.input_present = p.has_modes = true;
             p.normal_mode = 0; p.noclip_mode = 1; p.freeze_mode = 4;

@@ -11,6 +11,7 @@
 #include "qa/application_network.h"
 #include "qa/game_q1_wire.h"
 #include "qa/game_q2_wire.h"
+#include <stdio.h>
 
 
 static bool text(application_unified_json *j, const char *s, qa_error *e)
@@ -29,13 +30,10 @@ static bool current(qa_application *app, const application_unified_source *sourc
 static bool resource(application_unified_json *j, const qa_product *product, const char *path,
     const qa_resource *r, qa_error *error)
 {
-    if (!product || !product->identity || !path || !r || !qa_resource_digest(r))
+    if (!product || !product->identity || !path || !r)
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified resource lost its immutable Source provenance");
-    char digest[72] = "sha256:";
-    qa_sha256_hex(qa_resource_digest(r), digest + 7);
     return text(j, "{\"content\":", error) && string(j, product->identity, error) &&
         text(j, ",\"path\":", error) && string(j, path, error) &&
-        text(j, ",\"digest\":", error) && string(j, digest, error) &&
         text(j, ",\"byteLength\":", error) &&
         application_unified_json_natural(j, qa_resource_bytes(r).size, error) && text(j, "}", error);
 }
@@ -263,10 +261,10 @@ bool application_unified_output_world(qa_application *app, const application_uni
         }
     }
     const qa_product *product = qa_catalog_product(qa_launch_snapshot_catalog(source->launch), map.geometry);
-    if (ok && (!product || !qa_resource_digest(map.resource)))
+    if (ok && (!product || !map.resource))
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified world lost its installed resource provenance");
     if (ok) {
-        v->world->digest = *qa_resource_digest(map.resource); v->world->byte_length = qa_resource_bytes(map.resource).size;
+        v->world->byte_length = qa_resource_bytes(map.resource).size;
         ok = application_unified_frame_string(v->lease, &v->world->content, product->identity, error) &&
             application_unified_frame_string(v->lease, &v->world->path, qa_resource_path(map.resource), error) &&
             current(app, source, revision, error);
@@ -359,34 +357,23 @@ void application_unified_output_dispose(application_unified_output *out)
     *out = (application_unified_output){0};
 }
 
-bool application_unified_resource_key(const qa_product *product, const char *path,
+bool application_unified_resource_key(uint64_t serial, const qa_product *product, const char *path,
     const qa_resource *r, qa_unified_document **out, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], qa_error *error)
 {
-    if (!out || !id || !product || !product->identity || !path || !r || !qa_resource_digest(r))
+    if (!serial || !out || !id || !product || !product->identity || !path || !r)
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified resource needs its actual retained acquisition");
-    application_unified_json key = {0}, tuple = {0};
-    qa_buffer canonical = {0};
-    char digest[72] = "sha256:";
-    qa_sha256_hex(qa_resource_digest(r), digest + 7);
-    bool ok = resource(&key, product, path, r, error) && text(&tuple, "[", error) &&
-        string(&tuple, product->identity, error) && text(&tuple, ",", error) && string(&tuple, path, error) &&
-        text(&tuple, ",", error) && string(&tuple, digest, error) && text(&tuple, ",", error) &&
-        application_unified_json_natural(&tuple, qa_resource_bytes(r).size, error) && text(&tuple, "]", error);
+    application_unified_json key = {0};
+    bool ok = resource(&key, product, path, r, error);
     qa_unified_document *candidate = NULL;
-    if (ok) ok = qa_unified_value_canonical((qa_bytes){tuple.bytes.data, tuple.bytes.size}, &canonical, error) &&
-        qa_unified_document_create(QA_UNIFIED_CHECKPOINT,
+    if (ok) ok = qa_unified_document_create(QA_UNIFIED_CHECKPOINT,
         (qa_bytes){key.bytes.data, key.bytes.size}, &candidate, error);
     if (ok) {
-        qa_sha256_digest hash;
-        char actual_id[QA_APPLICATION_RESOURCE_KEY_CAPACITY] = "resource:unified:";
-        qa_sha256((qa_bytes){canonical.data, canonical.size}, &hash);
-        qa_sha256_hex(&hash, actual_id + sizeof("resource:unified:") - 1);
+        char actual_id[QA_APPLICATION_RESOURCE_KEY_CAPACITY] = {0};
+        snprintf(actual_id, sizeof(actual_id), "resource:unified:%llu", (unsigned long long)serial);
         memcpy(id, actual_id, sizeof(actual_id));
         *out = candidate;
     }
     application_unified_json_dispose(&key);
-    application_unified_json_dispose(&tuple);
-    qa_buffer_free(&canonical);
     return ok;
 }
 
