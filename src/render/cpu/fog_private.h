@@ -139,13 +139,4 @@ static inline void cpu_fog_color(const qa_scene_fog *fog, double distance,
   }
 }
 
-static inline void cpu_fog_span_color(uint8_t *pixel, const qa_scene_fog *fog,
-                                      double distance, bool alpha) {
-  double color[4];
-  for (size_t c = 0; c < 4; ++c) color[c] = pixel[c] / 255.0;
-  cpu_fog_color(fog, distance, color);
-  for (size_t c = 0; c < 4; ++c) pixel[c] = cpu_byte(color[c]);
-  if (!alpha) pixel[3] = 255;
-}
-
 #endif

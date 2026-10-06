@@ -252,8 +252,9 @@ static bool surface_supported(const qa_cpu_renderer *renderer,
       !draw->brush.texture_extents[0] || !draw->brush.texture_extents[1] ||
       draw->texture_count == 0 || draw->texture_count > 2)
     return false;
-  bool lightmapped = draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE;
-  if (lightmapped ? draw->texture_count != 2 :
+  bool lightmapped = draw->texture_count == 2;
+  bool paired = lightmapped && draw->environment == QA_TEXTURE_MODULATE && draw->lighting == QA_LIGHT_VERTEX;
+  if (lightmapped ? (!paired && draw->environment < QA_TEXTURE_LIGHTMAP_MODULATE) :
       draw->texture_count != 1 || draw->environment != QA_TEXTURE_MODULATE ||
       draw->lighting != QA_LIGHT_VERTEX)
     return false;
@@ -349,7 +350,8 @@ static void surface_build(const qa_scene_draw *draw, unsigned mip,
               : draw->environment == QA_TEXTURE_LIGHTMAP_INVERT_COLOR
                               ? 1 - cpu_clamp(illumination[c])
                               : cpu_clamp(illumination[c]);
-          value = (cpu_byte(value) / 255.0) * factor;
+          value = draw->environment == QA_TEXTURE_MODULATE ? value * factor :
+              (cpu_byte(value) / 255.0) * factor;
         }
         pixel[c] = cpu_byte(value);
       }

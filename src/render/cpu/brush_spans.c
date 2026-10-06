@@ -1,5 +1,6 @@
 #include "brush_spans.h"
 #include "surface_cache.h"
+#include "fog_span_private.h"
 
 #include <float.h>
 #include <limits.h>
@@ -16,6 +17,7 @@ typedef struct brush_surface {
   cpu_surface_mip mips[2];
   double mip_blend;
   bool linear;
+  cpu_fog_span_style fog;
 } brush_surface;
 typedef struct brush_edge {
   int64_t first, last;
@@ -205,6 +207,14 @@ static double snap_coordinate(double coordinate, double subpixel) {
   return (fraction < 0.5 || (fraction == 0.5 && fmod(lower, 2) == 0) ?
           lower : lower + 1) / subpixel;
 }
+static bool span_fog_supported(const qa_scene_fog *fog) {
+  if (fog->kind == QA_FOG_NONE || fog->kind == QA_FOG_Q2) return true;
+  if (fog->kind != QA_FOG_CONSTANT && fog->kind != QA_FOG_EXP2) return false;
+  return fog->color.x >= 0 && fog->color.x <= 1 &&
+      fog->color.y >= 0 && fog->color.y <= 1 &&
+      fog->color.z >= 0 && fog->color.z <= 1 &&
+      (fog->kind != QA_FOG_CONSTANT || (fog->amount >= 0 && fog->amount <= 1));
+}
 static bool ordinary_brush(const qa_cpu_renderer *renderer, const qa_scene_draw *draw) {
   const qa_scene_state *state = &draw->state;
   return draw->brush.present && draw->brush.polygon_vertices >= 3 &&
@@ -223,10 +233,9 @@ static bool ordinary_brush(const qa_cpu_renderer *renderer, const qa_scene_draw 
       !draw->vertex_inputs.swap_uv && draw->texture_count && draw->textures[0] &&
       draw->textures[0]->kind != QA_SCENE_DEPTH32F && !draw->textures[0]->streamed &&
       ((draw->texture_count == 1 && draw->environment == QA_TEXTURE_MODULATE) ||
-       (draw->texture_count == 2 && draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE)) &&
-      (draw->fog.kind == QA_FOG_NONE || draw->fog.kind == QA_FOG_Q2 ||
-       (draw->fog.kind == QA_FOG_EXP2 && draw->fog.density == 0 &&
-        draw->fog.height_density == 0 && draw->fog.effect != QA_FOG_OVERLAY)) &&
+       (draw->texture_count == 2 && (draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE ||
+         (draw->environment == QA_TEXTURE_MODULATE && draw->lighting == QA_LIGHT_VERTEX)))) &&
+      span_fog_supported(&draw->fog) &&
       renderer->current->color && renderer->current->depth;
 }
 static bool prepare_surface(brush_surface *surface, const brush_vertex *vertices,
@@ -322,7 +331,7 @@ bool cpu_brush_draw_queued(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   size_t count;
   if (!clip_brush(renderer, draw, context, &vertices, &count, error)) return false;
   if (count < 3) { *handled = true; return true; }
-  brush_surface surface = {0};
+  brush_surface surface = {.fog = cpu_fog_span_style_prepare(&draw->fog)};
   if (!prepare_surface(&surface, vertices, count)) {
     CPU_STATS_ADD(renderer, brush_planarity_rejects, 1);
     return true;
@@ -587,6 +596,7 @@ static void shade_span(qa_cpu_renderer *renderer, const brush_surface *surface,
     uint32_t count = remaining >= 8 ? 8 : remaining;
     remaining -= count;
     uint32_t advance = remaining ? count : count - 1;
+    float fog_q = q;
     sdivw += sdx * (float)advance;
     tdivw += tdx * (float)advance;
     q += qdx * (float)advance;
@@ -596,7 +606,13 @@ static void shade_span(qa_cpu_renderer *renderer, const brush_surface *surface,
     int64_t next_t = fixed_texel(tdivw * reciprocal, first->height, 8);
     int64_t ds = remaining ? (next_s - s) >> 3 : advance ? (next_s - s) / advance : 0;
     int64_t dt = remaining ? (next_t - t) >> 3 : advance ? (next_t - t) / advance : 0;
+    cpu_fog_span fog = {0};
+    uint32_t fog_end = 0;
     for (uint32_t i = 0; i < count; ++i, ++index, depth += depth_step) {
+      if (surface->fog.enabled && i == fog_end) {
+        fog = cpu_fog_span_prepare(&surface->fog, fog_q + qdx * (float)i, qdx, count - i);
+        fog_end = i + fog.count;
+      }
       float written_depth = depth < 0 ? 0 : depth > 1 ? 1 : depth;
       if ((double)written_depth <= buffer->depth[index]) {
         uint8_t *output = buffer->color + index * 4;
@@ -623,10 +639,13 @@ static void shade_span(qa_cpu_renderer *renderer, const brush_surface *surface,
           for (size_t channel = 0; channel < 4; ++channel)
             output[channel] = (uint8_t)(color[channel] + 0.5f);
         }
+        if (surface->fog.enabled)
+          cpu_fog_span_apply(output, &surface->fog, fog.amount, buffer->alpha);
         if (!buffer->alpha) output[3] = 255;
         buffer->depth[index] = written_depth;
         if (statistics) ++written;
       }
+      if (surface->fog.enabled) cpu_fog_span_step(&fog);
       s += ds; t += dt;
     }
     s = next_s; t = next_t;

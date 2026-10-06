@@ -506,9 +506,10 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
         }
     }
     if (legacy->brush.polygon_vertices && !texture->fullbright && !diagnostic && !blended &&
-        !paired && !draw.light_count && !draw.vertex_inputs.swap_uv) {
+        (!paired || draw.lighting == QA_LIGHT_VERTEX) && !draw.light_count &&
+        !draw.shadow_atlas && !draw.vertex_inputs.swap_uv) {
         draw.brush = legacy->brush;
-        draw.brush.present = !lightmapped;
+        draw.brush.present = !lightmapped || paired;
     }
     if (!qa_scene_frame_draw(frame, &draw, error)) return false;
     if (lightmapped && !paired && !diagnostic) {
