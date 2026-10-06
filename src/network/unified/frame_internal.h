@@ -101,6 +101,7 @@ bool qa_unified_record_delta_write(const qa_unified_record_layout *, const void 
 bool qa_unified_record_delta_decode(const qa_unified_record_layout *, qa_bytes,
     const void *baseline, void *zeroed_output, qa_unified_frame_lease *, qa_error *);
 bool qa_unified_record_measure(const qa_unified_record_layout *, const void *, size_t *, qa_error *);
+bool qa_unified_world_frame_clock_check(const qa_unified_world_frame *,qa_error *);
 bool qa_unified_frame_check(const qa_unified_frame *, size_t *, qa_error *);
 struct qa_unified_frame_events;
 bool qa_unified_events_check(const struct qa_unified_frame_events *, size_t *, qa_error *);

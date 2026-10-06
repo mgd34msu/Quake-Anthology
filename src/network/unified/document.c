@@ -388,6 +388,7 @@ bool qa_unified_document_create_frame(qa_unified_frame **owned, qa_unified_docum
     if (!owned || !*owned || !out || *out || !(*owned)->world)
         return bad(error,"Unified FRAME transfer requires its actual owned world cut");
     qa_unified_frame *frame=*owned;
+    if (!qa_unified_world_frame_clock_check(frame->world,error)) return false;
     if (!frame->lease && !qa_unified_record_measure(&qa_unified_frame_layout,frame,&bytes,error)) return false;
     qa_unified_document *d=typed_document(QA_UNIFIED_FRAME_DOCUMENT,bytes,frame->lease,error);
     if (!d) return false;

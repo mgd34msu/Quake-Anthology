@@ -227,8 +227,14 @@ bool application_unified_output_world(qa_application *app, const application_uni
     if (!qa_application_effects_producer_read(app,source->owner,&clock,error)) {
         qa_unified_world_frame_destroy(v);return false;
     }
-    v->presentation_seconds=clock.kind==QA_APPLICATION_EFFECTS_Q3 ? (double)clock.q3_time_ms/1000.0 :
-        (double)clock.source_time_ns/1000000000.0;
+    if (source->family==QA_GAME_Q3) {
+        int32_t milliseconds=clock.q3_time_ms;
+        if (clock.kind!=QA_APPLICATION_EFFECTS_Q3) {
+            uint32_t bits=(uint32_t)(clock.source_time_ns/UINT64_C(1000000));
+            memcpy(&milliseconds,&bits,sizeof(milliseconds));
+        }
+        v->presentation_seconds=(double)milliseconds/1000;
+    } else v->presentation_seconds=(double)clock.source_time_ns/1000000000.0;
     if (source->family==QA_GAME_Q1 && clock.launch->selection.clock.kind!=QA_CLOCK_QUAKEWORLD)
         v->presentation_seconds=(float)v->presentation_seconds;
     v->actors = count ? application_unified_frame_alloc(v->lease, count, sizeof(*v->actors), error) : NULL;

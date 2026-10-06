@@ -734,7 +734,7 @@ bool frontend_unified_q1_frame_prepare(frontend_unified_q1 *o,const qa_unified_d
     const qa_unified_frame *frame=qa_unified_document_frame(d);
     if(!frame || !frame->world || frame->epoch!=o->epoch) return fail(e,"Q1 received frame lost its typed Source owner");
     uint64_t n=frame->world->source.number;
-    double seconds=(double)frame->world->source.time_ns/1e9;
+    double seconds=frame->world->presentation_seconds;
     if(o->has_frame && n<=o->frame) return fail(e,"Q1 frame publication does not advance its actual receipt");
     o->prepared_frame=n;o->prepared_seconds=seconds;o->preparing_document=d;o->prepared=true;return true;
 }

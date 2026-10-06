@@ -596,8 +596,8 @@ static bool frame_clock(const qa_unified_document *d, double *seconds, qa_error 
     if (!d || qa_unified_document_type(d)!=QA_UNIFIED_FRAME_DOCUMENT) return fail(e,"RR HUD clock lacks its actual committed frame");
     const qa_unified_frame *frame=qa_unified_document_frame(d);
     if (!frame || !frame->world) return fail(e,"RR HUD clock lost its typed Source frame");
-    *seconds=(double)frame->world->source.time_ns/1e9;
-    return *seconds>=0 && isfinite(*seconds*1000);
+    *seconds=frame->world->presentation_seconds;
+    return true;
 }
 bool frontend_unified_q2_rr_frame_prepare(frontend_unified_q2_rr_hud *o, const qa_unified_document *d, qa_error *e)
 {

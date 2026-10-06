@@ -51,6 +51,7 @@ struct frontend_unified_render {
     qa_scene_vec4 blend,damage_blend;
     float height;
     double seconds, field_of_view;
+    int64_t milliseconds;
     bool explicit_fov, source_view_offset, busy;
     bool has_blend,has_damage_blend;
 };
@@ -191,7 +192,7 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
         m->input.flags=source->render_flags;
         m->input.entity=m->actor.slot; m->input.material_library=frontend_unified_model_materials(m->media.scene); m->input.source_path=m->path;
         m->input.color=(qa_scene_vec4){1,1,1,source->has_alpha?source->alpha:1}; m->input.seconds=r->seconds;
-        m->input.has_milliseconds=true; m->input.milliseconds=(int64_t)(r->seconds*1000);
+        m->input.has_milliseconds=true; m->input.milliseconds=r->milliseconds;
         m->input.view_model=source->view_weapon; m->native_held_weapon=source->native_held_weapon; m->previous_origin=source->previous_origin;
         m->has_previous_origin=source->has_previous_origin; m->input.back_lerp=source->back_lerp;
         if (source->skin_path) okay=qa_material_register(materials,source->skin_path,&images,false,&m->input.custom_material,e);
@@ -229,7 +230,7 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     bool okay=received && received->world && received->player && received->visuals && qa_unified_document_retain(frame,&r->frame,e);
     if (!okay) { free(r); return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified renderer requires its actual typed world/player/visual frame"); }
     r->seconds=received->world->presentation_seconds;
-    if (r->seconds*1e9>=18446744073709551616.0) okay=frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified received clock exceeds renderer time storage");
+    r->milliseconds=qa_unified_world_frame_milliseconds(received->world);
     if (okay && received->world->area_bits.size) {
         r->area_bits.data=malloc(received->world->area_bits.size);
         if (!r->area_bits.data) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining received world area visibility");
@@ -487,7 +488,7 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
     }
     view.origin=qa_vec_add(view.origin,qa_vec_scale(view.axis[1],stereo));
     r->busy=true;
-    qa_scene_world_input world={.view=view,.seconds=r->seconds,.milliseconds=(int64_t)(r->seconds*1000),.identity_light=1,
+    qa_scene_world_input world={.view=view,.seconds=r->seconds,.milliseconds=r->milliseconds,.identity_light=1,
         .no_world=native_camera && (native_camera->render_flags&1)!=0};
     world.video_frame=frontend_material_movies_frontend_resolve; world.video_context=r->frontend;
     world.visible_areas=r->area_bits.data; world.visible_area_bytes=r->area_bits.size;

@@ -81,6 +81,7 @@ typedef struct qa_unified_frame {
     qa_unified_frame_components *components;
 } qa_unified_frame;
 
+int64_t qa_unified_world_frame_milliseconds(const qa_unified_world_frame *);
 qa_unified_world_frame *qa_unified_world_frame_create(qa_unified_frame_pool *, qa_error *);
 bool qa_unified_world_frame_retain(qa_unified_world_frame *, qa_error *);
 void qa_unified_world_frame_destroy(qa_unified_world_frame *);

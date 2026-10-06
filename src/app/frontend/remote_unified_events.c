@@ -332,7 +332,7 @@ static bool frame_values(const qa_unified_document *document,uint32_t *epoch,uin
     const qa_unified_frame *frame=qa_unified_document_frame(document);
     if (!frame) return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified event frame has no actual typed Source observation");
     *epoch=frame->epoch; *number=frame->world->source.number;
-    *seconds=(double)frame->world->source.time_ns/1e9;
+    *seconds=frame->world->presentation_seconds;
     return true;
 }
 bool frontend_unified_events_frame_prepare(frontend_unified_events *o,const qa_unified_document *doc,qa_error *e)

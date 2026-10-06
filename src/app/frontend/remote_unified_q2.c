@@ -1395,7 +1395,7 @@ bool frontend_unified_q2_frame_prepare(frontend_unified_q2 *o,const qa_unified_d
     if (!o || o->busy || o->prepared_frame || !d || !current(o,e)) return false;
     const qa_unified_frame *frame=qa_unified_document_frame(d);
     if (!frame || !frame->world || !native_frame_read(o,d,e)) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 received frame lost its typed Source owner");
-    double seconds=(double)frame->world->source.time_ns/1e9;
+    double seconds=frame->world->presentation_seconds;
     uint64_t n=frame->world->source.number;
     if (!qa_unified_document_retain(d,&o->prepared_frame,e)) return false;
     if (!frontend_unified_q2_rr_frame_prepare(o->rr_hud,d,e)) {
@@ -1424,7 +1424,7 @@ bool frontend_unified_q2_frame_ready(frontend_unified_q2 *o,const qa_unified_doc
     if (!frontend_unified_q2_rr_frame_ready(o->rr_hud,d,e)) return false;
     const qa_unified_frame *frame=qa_unified_document_frame(d);
     if (!frame || !frame->world || !native_frame_read(o,d,e)) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 prepared frame lost its typed Source owner");
-    double seconds=(double)frame->world->source.time_ns/1e9;
+    double seconds=frame->world->presentation_seconds;
     return (frame->epoch==frontend_remote_unified_epoch(o->replica) && frame->world->source.number==o->prepared_number && seconds==o->prepared_seconds) ||
         frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 prepared frame differs from publication");
 }

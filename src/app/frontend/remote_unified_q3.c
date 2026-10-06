@@ -286,7 +286,7 @@ static bool frame_read(frontend_unified_q3 *o, const qa_unified_document *d, int
         frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified Q3 clock lost its actual typed Source frame");
         return false;
     }
-    uint32_t word=(uint32_t)(frame->world->source.time_ns/UINT64_C(1000000));
+    uint32_t word=(uint32_t)qa_unified_world_frame_milliseconds(frame->world);
     memcpy(time,&word,sizeof(word)); return true;
 }
 bool frontend_unified_q3_create(qa_frontend *f, frontend_remote_unified *r,

@@ -1107,6 +1107,12 @@ static const qa_unified_field movement_profile_fields[] = {
 };
 static const qa_unified_record_layout qa_movement_profile_layout = QA_UNIFIED_LAYOUT(qa_movement_profile, movement_profile_fields);
 
+int64_t qa_unified_world_frame_milliseconds(const qa_unified_world_frame *world)
+{
+    double milliseconds=world->presentation_seconds*1000;
+    return world->source.kind==QA_CLOCK_Q3 ? llround(milliseconds) : (int64_t)milliseconds;
+}
+
 qa_unified_world_frame *qa_unified_world_frame_create(qa_unified_frame_pool *pool, qa_error *error)
 {
     qa_unified_frame_lease *lease = pool ? qa_unified_frame_lease_acquire(pool, error) : NULL;
@@ -1936,6 +1942,15 @@ static bool components_check(const qa_unified_frame_components *section, uint64_
     }
     return true;
 }
+bool qa_unified_world_frame_clock_check(const qa_unified_world_frame *world,qa_error *error)
+{
+    double seconds=world->presentation_seconds;
+    bool valid=isfinite(seconds) && (world->source.kind==QA_CLOCK_Q3 ?
+        seconds>=(double)INT32_MIN/1000 && seconds<=(double)INT32_MAX/1000 :
+        seconds>=0 && seconds*1e9<18446744073709551616.0);
+    return valid || frame_bad(error,"Unified Source game time is outside its native clock domain");
+}
+
 bool qa_unified_frame_check(const qa_unified_frame *frame, size_t *bytes, qa_error *error)
 {
     if (!frame || !frame->epoch || frame->acknowledged_input < -1 ||
@@ -1943,6 +1958,7 @@ bool qa_unified_frame_check(const qa_unified_frame *frame, size_t *bytes, qa_err
         !qa_unified_record_measure(&qa_unified_frame_layout, frame, bytes, error))
         return frame_bad(error, "Unified FRAME requires its actual typed Source cut and recipient");
     const qa_unified_world_frame *world = frame->world;
+    if (!qa_unified_world_frame_clock_check(world,error)) return false;
     if (!world->actor_count || !world->source.provider || world->source.kind < QA_CLOCK_NETQUAKE || world->source.kind > QA_CLOCK_Q3 ||
         world->source.phase < QA_FRAME_ENTRY || world->source.phase > QA_FRAME_EXIT)
         return frame_bad(error, "Unified FRAME lost its actual Source roster or completed clock");
