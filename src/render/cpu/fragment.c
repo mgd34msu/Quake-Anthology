@@ -1,6 +1,9 @@
 #include "internal.h"
 #include "fog_private.h"
 #include "triangle_private.h"
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 static double bound(double value, double low, double high) {
   return fmin(high, fmax(low, value));
@@ -380,6 +383,29 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
       draw->state.depth_write && draw->state.depth_test != QA_DEPTH_DISABLED);
 }
 
+static inline bool depth_block_rejected(qa_scene_depth test, double depth,
+                                        const double *stored) {
+#if defined(__SSE2__)
+  __m128d mapped = _mm_set1_pd(depth), passed = _mm_setzero_pd();
+  for (size_t i = 0; i < 8; i += 2) {
+    __m128d previous = _mm_loadu_pd(stored + i), comparison;
+    switch (test) {
+    case QA_DEPTH_LEQUAL: comparison = _mm_cmple_pd(mapped, previous); break;
+    case QA_DEPTH_EQUAL: comparison = _mm_cmpeq_pd(mapped, previous); break;
+    case QA_DEPTH_LESS: comparison = _mm_cmplt_pd(mapped, previous); break;
+    case QA_DEPTH_GEQUAL: comparison = _mm_cmpge_pd(mapped, previous); break;
+    default: return false;
+    }
+    passed = _mm_or_pd(passed, comparison);
+  }
+  return _mm_movemask_pd(passed) == 0;
+#else
+  for (size_t i = 0; i < 8; ++i)
+    if (cpu_depth_passes(test, depth, stored[i])) return false;
+  return true;
+#endif
+}
+
 #define ROW_KERNEL(name, pixel_kernel, sample_count) \
   static void name(qa_cpu_renderer *renderer, const qa_scene_draw *draw, \
       const cpu_sampler samplers[2], const cpu_triangle_attributes *attributes, \
@@ -393,7 +419,19 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
         derivatives[unit] = cpu_sampler_requires_derivatives(&samplers[unit]); \
     qa_cpu_statistics *statistics = cpu_row_statistics; \
     uint64_t fragments = 0; \
+    bool depth_blocks = !stencil && attributes->depth_range == 0 && \
+        draw->state.depth_test != QA_DEPTH_ALWAYS && draw->state.depth_test != QA_DEPTH_DISABLED; \
+    /* The inner clamp is finite, so a zero range removes interpolated z. */ \
+    double mapped_depth = depth_blocks ? cpu_clamp(attributes->near_depth + attributes->offset) : 0; \
+    const double *stored_depth = renderer->current->depth + (size_t)y * renderer->current->width; \
+    uint64_t next_block = left; \
     for (uint32_t x = left; x <= right; ++x) { \
+      if (depth_blocks && x == next_block && right - x >= 7) { \
+        next_block = (uint64_t)x + 8; \
+        if (depth_block_rejected(draw->state.depth_test, mapped_depth, stored_depth + x)) { \
+          x += 7; continue; \
+        } \
+      } \
       cpu_fragment fragment; double q; \
       if (!cpu_triangle_fragment_depth(attributes, &row, x, y, &fragment, &q)) continue; \
       cpu_fragment_admission admission = {0}; \
