@@ -168,3 +168,30 @@ acceptance of MIKE-01, MIKE-21 and the owner start-map MIKE-22 path, without a
 private provider-pointer instrument, audio or performance qualification.
 The nonfatal demo warning after load remains. Actual original-progs import on
 other maps is a separate compatibility check and is not established here.
+
+## Installed `acf06fa7`: repeat after span and fog changes
+
+The same three owner paths passed on the newly installed executable: CPU CLI,
+GL CLI and actual GL menu. Real default Space and raw mouse button 3 jumped
+and landed; raw mouse button 2 retained forward movement. Each Normal slipgate
+run continued beyond teleport-fog release, with no crash.
+
+| Entry | Renderer | Y after moving away | Y restored by load |
+| --- | --- | ---: | ---: |
+| CLI | CPU | 1854.344238 | 2015.968750 |
+| CLI | GL | 1854.947632 | 2015.968750 |
+| Actual menu/preset | GL | 1860.025757 | 2015.968750 |
+
+All manual and level-entry files used original v5 text, between 32,208 and
+32,972 bytes. Resaving after load retained the exact player origin, angles,
+health, weapon, ammunition and item flags. The stock 25-shell HUD remained
+visible. All three public quits exited zero; settings and the installed
+artifact remained unchanged, and the private display was removed.
+
+Two further bounded retail Q2 rerelease `base1` CPU captures at 640×400 and
+320×200 retained coherent world geometry, lit textures, visible pickups and
+the see-through machinery window. These spawn views do not establish
+whole-map or pixel-perfect rendering parity. The existing nonfatal demo
+warning after classic load remains open.
+
+Receipt: `owner-jump-slipgate-save-brush-acf06fa7-proof.json`.

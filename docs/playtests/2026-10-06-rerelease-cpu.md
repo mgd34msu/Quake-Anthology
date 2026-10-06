@@ -24,11 +24,13 @@ continues in real time, so these runs are not identical frozen-state replays.
 
 A separate six-second userspace profile on installed `acf06fa7` located the
 remaining work. It is diagnostic and is excluded from the timing table.
-Of raster-thread samples, packed fog exponentiation accounted for 15.51%,
-depth fog rows 8.07%, triangle depth interpolation 7.22%, cached span shading
-6.14% and mip sampling 5.34%. The largest main-thread entry was viewport clear
-at 4.21% of that thread's samples. These percentages have separate thread
-denominators and must not be added together.
+Raster-thread entries accounted for these shares of all sampled userspace CPU
+time: packed fog exponentiation 15.51%, depth fog rows 8.07%, triangle depth
+interpolation 7.22%, cached span shading 6.14% and mip sampling 5.34%. The
+largest main-thread entry was viewport clear, at 4.21% of all sampled CPU time
+or 12.12% when the report is normalized to that thread. The original reports
+use perf's absolute percentages despite filtering by thread; the denominator
+is shared across the main and raster reports.
 
 Across the profile's 1,200 warmed frames, the stable-plane change reduced
 planarity fallback to four world candidates per frame. The span path wrote
