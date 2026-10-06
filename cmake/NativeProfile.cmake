@@ -74,9 +74,9 @@ if(QA_NATIVE_PLATFORM STREQUAL "linux" AND QA_NATIVE_ARCH STREQUAL "x86_64")
     add_dependencies(qa-native-runner qa-native-profile-build)
     install(PROGRAMS "${QA_NATIVE_PROFILE_SDK}/bin64/drrun"
         DESTINATION "${QA_NATIVE_INSTALL_DIR}/dynamorio/bin64")
-    install(FILES
-        "${QA_NATIVE_PROFILE_SDK}/lib64/release/libdynamorio.so"
-        "${QA_NATIVE_PROFILE_SDK}/lib64/release/libdrpreload.so"
+    install(PROGRAMS "${QA_NATIVE_PROFILE_SDK}/lib64/release/libdynamorio.so"
+        DESTINATION "${QA_NATIVE_INSTALL_DIR}/dynamorio/lib64/release")
+    install(FILES "${QA_NATIVE_PROFILE_SDK}/lib64/release/libdrpreload.so"
         DESTINATION "${QA_NATIVE_INSTALL_DIR}/dynamorio/lib64/release")
     install(FILES
         "${QA_NATIVE_PROFILE_SDK}/ext/lib64/release/libdrmgr.so"
