@@ -159,6 +159,27 @@ bool qa_source_save_count(qa_source_save_io *io, size_t *value, size_t maximum)
     return true;
 }
 
+bool qa_source_save_text_assert(qa_source_save_io *io, const char *expected)
+{
+    if (!io) return persistence_io_fail(io, QA_ERROR_ARGUMENT, "missing source text assertion");
+    size_t length = expected ? strlen(expected) : 0;
+    bool present = io->direction == QA_SOURCE_SAVE_WRITE && expected != NULL;
+    if (!qa_source_save_bool(io, &present)) return false;
+    qa_bytes bytes = {0};
+    if (present) {
+        size_t size = io->direction == QA_SOURCE_SAVE_WRITE ? length : 0;
+        if (!qa_source_save_count(io, &size, SIZE_MAX)) return false;
+        if (io->direction == QA_SOURCE_SAVE_WRITE)
+            return qa_source_save_bytes(io, (void *)expected, size);
+        if (!qa_source_save_span(io, size, &bytes)) return false;
+    }
+    if (io->direction == QA_SOURCE_SAVE_WRITE) return true;
+    if (present != (expected != NULL) ||
+        (present && (bytes.size != length || (length && memcmp(bytes.data, expected, length)))))
+        return persistence_io_fail(io, QA_ERROR_FORMAT, "source text differs from its actual owner");
+    return true;
+}
+
 static bool memory_delta_read(qa_source_save_io *io, uint8_t *memory, size_t extent)
 {
     size_t end = 0;
