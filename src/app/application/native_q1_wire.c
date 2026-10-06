@@ -1332,16 +1332,42 @@ static bool check_client_source(application_provider *p, qa_error *error) {
     qa_application *app = p ? p->application : NULL;
     return (app && !app->destroy_requested && !app->finalizing && app->session && app->world &&
         p->kind == APPLICATION_PROVIDER_Q1 && p->constructed && p->attached &&
-        !p->close_pending && p->state.q1 && app->players && app->players->map_provider == p &&
-        application_world_provider(app, QA_ROLE_ENTITIES, "") == p) ||
+        !p->close_pending && p->state.q1 && app->players && app->players->map_provider &&
+        application_world_provider(app, QA_ROLE_ENTITIES, "") == app->players->map_provider) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Check-client lost its actual native Q1 Source owner");
+}
+static bool check_client_player(void *context, uint32_t slot, bool selection,
+    qa_actor_id *actor, qa_builtin_check_client_row *out, qa_error *error) {
+    application_provider *p = context;
+    if (!actor || !out || !check_client_source(p, error)) return false;
+    *actor = (qa_actor_id){0};
+    *out = (qa_builtin_check_client_row){0};
+    qa_application *app = p->application;
+    for (size_t i = 0; i < app->players->count; ++i) {
+        const application_player_record *row = app->players->records + i;
+        if (row->client_slot != slot || row->retiring || row->deferred || row->source_begin_pending)
+            continue;
+        if (!qa_actors_get(qa_session_actors(app->session), row->actor))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Check-client roster lost its actual actor");
+        qa_combat_state combat;
+        if (!qa_combat_read(app->combat, row->actor, &combat, error)) return false;
+        *actor = row->actor;
+        *out = (qa_builtin_check_client_row){.present = true, .health = combat.health};
+        if (selection && !(combat.health <= 0)) {
+            qa_builtin_services services = application_builtin_services(app, app->world, app->physics);
+            qa_builtin_actor_traits traits;
+            if (!services.actor_traits || !services.actor_traits(services.context, row->actor, &traits))
+                return application_fail(error, QA_ERROR_ARGUMENT, "Check-client lost selected player traits");
+            out->no_target = traits.no_target;
+        }
+        break;
+    }
+    return true;
 }
 static bool check_client_eye(void *context, qa_actor_id actor, qa_vec3 *out, qa_error *error) {
     application_provider *p = context;
     if (!out || !check_client_source(p, error)) return false;
     qa_application *app = p->application;
-    uint32_t slot;
-    if (!qa_q1_native_client_slot(p->state.q1, actor, &slot, error)) return false;
     const application_player_record *row = NULL;
     for (size_t i = 0; i < app->players->count; ++i)
         if (!app->players->records[i].retiring &&
@@ -1349,29 +1375,28 @@ static bool check_client_eye(void *context, qa_actor_id actor, qa_vec3 *out, qa_
             row = app->players->records + i;
             break;
         }
-    if (!row || row->client_slot != slot || row->source_slot != slot + 1)
+    if (!row)
         return application_fail(error, QA_ERROR_ARGUMENT, "Check-client eye lost its physical Source roster binding");
     if (row->source_begin_pending || row->deferred)
-        return qa_q1_check_client_eye_read(p->state.q1, slot, out, error);
+        return qa_q1_check_client_eye_read(p->state.q1, row->client_slot, out, error);
     qa_application_control_view movement;
     qa_body_state body;
     uint64_t serial = qa_world_body_storage_serial(app->world, actor);
     if (!qa_application_control_read(app, actor, &movement) || !serial ||
         !qa_world_body_read(app->world, actor, &body, error) ||
         !check_client_source(p, error) || qa_world_body_storage_serial(app->world, actor) != serial ||
-        !qa_q1_native_client_slot(p->state.q1, actor, &slot, error) ||
         !qa_application_control_read(app, actor, &movement))
         return application_fail(error, QA_ERROR_ARGUMENT, "Check-client eye lost its actual selected movement and body");
     *out = qa_vec_add(body.origin, movement.view_offset);
     return true;
 }
-bool application_native_q1_check_client(void *context, qa_actor_id observer, qa_actor_id *out) {
+bool application_native_q1_check_client(void *context, qa_actor_id observer, qa_actor_id *out,
+    qa_error *error) {
     application_provider *p = context;
-    qa_error error = {0};
-    bool okay = out && check_client_source(p, &error) &&
-        qa_q1_game_check_client(p->state.q1, observer, check_client_eye, p, out, &error);
-    if (!okay && p && p->application) application_fault(p->application, &error);
-    return okay;
+    qa_q1_check_client_source source = {.context = p, .player = check_client_player,
+                                      .eye = check_client_eye};
+    return out && check_client_source(p, error) &&
+        qa_q1_game_check_client(p->state.q1, observer, &source, out, error);
 }
 bool application_native_q1_check_client_retire(application_provider *p, qa_actor_id actor,
     qa_error *error) {

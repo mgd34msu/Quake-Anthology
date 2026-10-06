@@ -165,7 +165,7 @@ typedef struct qa_q1_host {
     /* Read the admitted source client's current selected attack input. */
     bool (*client_attack)(void *, qa_actor_id, bool *);
     bool (*target)(void *, qa_actor_id, qa_q1_target *);
-    bool (*check_client)(void *, qa_actor_id observer, qa_actor_id *);
+    bool (*check_client)(void *, qa_actor_id observer, qa_actor_id *, qa_error *);
     bool (*find_target)(void *, qa_string_id targetname, qa_actor_id *);
     bool (*find_targets)(void *, qa_string_id, qa_actor_id *, size_t capacity, size_t *count,
                          qa_error *);
@@ -483,8 +483,14 @@ bool qa_q1_game_invulnerable(const qa_q1_game *, qa_actor_id);
 double qa_q1_game_power_expires(const qa_q1_game *, qa_actor_id, qa_q1_power);
 bool qa_q1_game_actor_traits(const qa_q1_game *, qa_actor_id, qa_builtin_actor_traits *);
 typedef bool (*qa_q1_check_client_eye)(void *, qa_actor_id, qa_vec3 *, qa_error *);
+typedef struct qa_q1_check_client_source {
+    void *context;
+    bool (*player)(void *, uint32_t client_slot, bool selection, qa_actor_id *,
+                   qa_builtin_check_client_row *, qa_error *);
+    qa_q1_check_client_eye eye;
+} qa_q1_check_client_source;
 bool qa_q1_game_check_client(qa_q1_game *, qa_actor_id observer,
-    qa_q1_check_client_eye, void *, qa_actor_id *, qa_error *);
+    const qa_q1_check_client_source *, qa_actor_id *, qa_error *);
 bool qa_q1_check_client_eye_read(const qa_q1_game *, uint32_t client_slot, qa_vec3 *, qa_error *);
 bool qa_q1_check_client_eye_store(qa_q1_game *, qa_actor_id, qa_vec3, qa_error *);
 bool qa_q1_check_client_eye_clear(qa_q1_game *, qa_actor_id, qa_error *);

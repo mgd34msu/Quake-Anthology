@@ -1,6 +1,7 @@
 #include "gameplay_fixture.h"
 #include "qa/game_q1.h"
 #include "qa/game_q1_wire.h"
+#include "qa/game_q1_bots.h"
 #include "qa/movement.h"
 
 typedef struct q1_fixture {
@@ -63,13 +64,30 @@ static bool client_eye(void *context, qa_actor_id actor, qa_vec3 *eye, qa_error 
     return true;
 }
 
-static bool check_client(void *context, qa_actor_id observer, qa_actor_id *target)
+static bool client_player(void *context, uint32_t slot, bool selection,
+    qa_actor_id *actor, qa_builtin_check_client_row *row, qa_error *error)
 {
-    qa_error error = {0};
     q1_fixture *fixture = context;
-    GAME_CHECK(qa_q1_game_check_client(fixture->game, observer, client_eye, fixture,
-        target, &error));
+    *row = (qa_builtin_check_client_row){0};
+    *actor = (qa_actor_id){0};
+    if (!qa_q1_source_client_actor(fixture->game, slot, actor)) return true;
+    qa_combat_state combat;
+    if (!qa_combat_read(fixture->combat, *actor, &combat, error)) return false;
+    *row = (qa_builtin_check_client_row){.present = true, .health = combat.health};
+    if (selection && !(row->health <= 0)) {
+        qa_q1_source_client_view client;
+        if (!qa_q1_source_client_read(fixture->game, *actor, &client)) return false;
+        row->no_target = client.no_target;
+    }
     return true;
+}
+
+static bool check_client(void *context, qa_actor_id observer, qa_actor_id *target, qa_error *error)
+{
+    q1_fixture *fixture = context;
+    qa_q1_check_client_source source = {.context = fixture, .player = client_player,
+                                      .eye = client_eye};
+    return qa_q1_game_check_client(fixture->game, observer, &source, target, error);
 }
 
 static bool released(void *context, qa_session *session, qa_actor_record actor, qa_error *error)
@@ -235,6 +253,70 @@ static void edition_damage(qa_q1_edition edition)
 }
 
 
+typedef struct mixed_check_client {
+    q1_fixture *fixture;
+    qa_actor_id player;
+    bool no_target;
+} mixed_check_client;
+
+static bool mixed_client_player(void *context, uint32_t slot, bool selection,
+    qa_actor_id *actor, qa_builtin_check_client_row *row, qa_error *error)
+{
+    mixed_check_client *mixed = context;
+    *actor = (qa_actor_id){0};
+    *row = (qa_builtin_check_client_row){0};
+    if (slot != 0 || !qa_actors_get(qa_session_actors(mixed->fixture->session), mixed->player))
+        return true;
+    qa_combat_state combat;
+    if (!qa_combat_read(mixed->fixture->combat, mixed->player, &combat, error)) return false;
+    *actor = mixed->player;
+    *row = (qa_builtin_check_client_row){.present = true, .health = combat.health,
+                                       .no_target = selection && mixed->no_target};
+    return true;
+}
+
+static bool mixed_client_eye(void *context, qa_actor_id actor, qa_vec3 *out, qa_error *error)
+{
+    mixed_check_client *mixed = context;
+    qa_body_state body;
+    if (!qa_world_body_read(mixed->fixture->world, actor, &body, error)) return false;
+    *out = qa_vec_add(body.origin, qa_v3(0, 0, 22));
+    return true;
+}
+
+static void donor_check_client(void)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create(&fixture, QA_Q1_CLASSIC, 1);
+    qa_actor_id observer = spawn(&fixture, "monster_knight");
+    qa_builtin_services services = {.session = fixture.session, .world = fixture.world,
+        .combat = fixture.combat, .inventory = fixture.inventory,
+        .physics = &fixture.physics, .emit = emitted, .context = &fixture};
+    qa_combat_state combat = {.health = 100, .can_take_damage = true};
+    qa_string_id definition;
+    GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture.session),
+        "test:foreign-player", &definition, &error));
+    qa_builtin_spawn native = {.owner = fixture.owner, .definition = definition,
+        .body = {.origin = {32, 0, 64}}, .combat = &combat};
+    mixed_check_client mixed = {.fixture = &fixture};
+    GAME_CHECK(qa_builtin_spawn_actor(&services, &native, &mixed.player, &error));
+    uint32_t slot;
+    GAME_CHECK(!qa_q1_native_client_slot(fixture.game, mixed.player, &slot, NULL));
+    qa_q1_check_client_source source = {.context = &mixed, .player = mixed_client_player,
+                                      .eye = mixed_client_eye};
+    qa_actor_id target;
+    GAME_CHECK(qa_q1_game_check_client(fixture.game, observer, &source, &target, &error));
+    GAME_CHECK(qa_actor_id_equal(target, mixed.player));
+    GAME_CHECK(qa_combat_set_health(fixture.combat, mixed.player, 0, &error));
+    GAME_CHECK(qa_q1_game_check_client(fixture.game, observer, &source, &target, &error));
+    GAME_CHECK(!target.registry);
+    GAME_CHECK(qa_session_release(fixture.session, mixed.player, &error));
+    GAME_CHECK(qa_q1_game_check_client(fixture.game, observer, &source, &target, &error));
+    GAME_CHECK(!target.registry);
+    fixture_destroy(&fixture);
+}
+
 typedef struct movement_fixture {
     qa_collision_geometry *geometry;
     qa_movement_result *output;
@@ -324,6 +406,7 @@ void test_q1_gameplay(void);
 void test_q1_gameplay(void)
 {
     movement_output_owner();
+    donor_check_client();
     armor_and_protection();
     pain_cooldown(1);
     pain_cooldown(3);

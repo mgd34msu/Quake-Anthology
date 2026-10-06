@@ -26,12 +26,6 @@ bool qa_q1_check_client_eye_store(qa_q1_game *g, qa_actor_id actor, qa_vec3 eye,
 bool qa_q1_check_client_eye_clear(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     return qa_q1_check_client_eye_store(g, actor, qa_v3(0, 0, 0), error);
 }
-static bool client_health(qa_q1_game *g, qa_actor_id actor, float *out, qa_error *error) {
-    qa_combat_state combat;
-    if (!qa_combat_read(g->services.combat, actor, &combat, error)) return false;
-    *out = combat.health;
-    return true;
-}
 static bool observer_eye(qa_q1_game *g, qa_actor_id actor, qa_q1_check_client_eye read,
     void *context, qa_vec3 *out, qa_error *error) {
     uint32_t slot;
@@ -55,42 +49,33 @@ static bool observer_eye(qa_q1_game *g, qa_actor_id actor, qa_q1_check_client_ey
 typedef struct q1_check_client_context {
     qa_q1_game *game;
     qa_actor_id observer;
-    qa_q1_check_client_eye read;
-    void *host;
+    const qa_q1_check_client_source *source;
 } q1_check_client_context;
 static bool check_client_row(void *opaque, uint32_t slot, bool selection,
     qa_builtin_check_client_row *out, qa_error *error) {
     q1_check_client_context *context = opaque;
     qa_actor_id actor;
-    *out = (qa_builtin_check_client_row){
-        .present = qa_q1_source_client_actor(context->game, slot - 1, &actor)};
-    if (!out->present) return true;
-    if (!client_health(context->game, actor, &out->health, error)) return false;
-    if (selection && !(out->health <= 0)) {
-        qa_q1_source_client_view client;
-        if (!qa_q1_source_client_read(context->game, actor, &client)) {
-            qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 check-client lost its actual Source player");
-            return false;
-        }
-        out->no_target = client.no_target;
-    }
-    return true;
+    return context->source->player(context->source->context, slot - 1, selection,
+                                   &actor, out, error);
 }
 static bool check_client_eye(void *opaque, uint32_t slot, qa_vec3 *out, qa_error *error) {
     q1_check_client_context *context = opaque;
     qa_actor_id actor;
-    if (!qa_q1_source_client_actor(context->game, slot - 1, &actor))
-        return qa_q1_check_client_eye_read(context->game, slot - 1, out, error);
-    return context->read(context->host, actor, out, error) &&
-        qa_q1_check_client_eye_store(context->game, actor, *out, error);
+    qa_builtin_check_client_row row;
+    if (!context->source->player(context->source->context, slot - 1, false,
+                                 &actor, &row, error)) return false;
+    if (!row.present) return qa_q1_check_client_eye_read(context->game, slot - 1, out, error);
+    if (!context->source->eye(context->source->context, actor, out, error)) return false;
+    context->game->wire->board[slot - 1].eye = *out;
+    return true;
 }
 static bool check_client_observer_eye(void *opaque, qa_vec3 *out, qa_error *error) {
     q1_check_client_context *context = opaque;
-    return observer_eye(context->game, context->observer, context->read, context->host, out, error);
+    return observer_eye(context->game, context->observer, context->source->eye, context->source->context, out, error);
 }
 bool qa_q1_game_check_client(qa_q1_game *g, qa_actor_id observer,
-    qa_q1_check_client_eye read, void *context, qa_actor_id *out, qa_error *error) {
-    if (!read || !out) {
+    const qa_q1_check_client_source *source, qa_actor_id *out, qa_error *error) {
+    if (!source || !source->player || !source->eye || !out) {
         qa_error_set(error, QA_ERROR_ARGUMENT, observer.slot, "Q1 check-client requires its actual eye reader and result");
         return false;
     }
@@ -99,7 +84,7 @@ bool qa_q1_game_check_client(qa_q1_game *g, qa_actor_id observer,
     if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
     bool okay = g->wire && g->wire->board;
     if (!okay) qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 check-client requires its physical Source clients");
-    q1_check_client_context actual = {g, observer, read, context};
+    q1_check_client_context actual = {g, observer, source};
     qa_builtin_check_client_query query = {.session = g->services.session,
         .provider = g->options.provider, .world = g->services.world,
         .capacity = g->options.max_clients, .slot = &g->check_client_slot,
@@ -108,9 +93,13 @@ bool qa_q1_game_check_client(qa_q1_game *g, qa_actor_id observer,
         .observer_eye = check_client_observer_eye};
     uint32_t slot;
     if (okay) okay = qa_builtin_check_client(&query, &slot, error);
-    if (okay && slot && !qa_q1_source_client_actor(g, slot - 1, out)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, slot, "Q1 check-client lost its returned physical Source player");
-        okay = false;
+    if (okay && slot) {
+        qa_builtin_check_client_row row;
+        okay = source->player(source->context, slot - 1, false, out, &row, error);
+        if (okay && (!row.present || !out->registry)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, slot, "Q1 check-client lost its returned physical Source player");
+            okay = false;
+        }
     }
     if (okay && !qa_q1_game_operation_live(&operation)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, observer.slot, "Q1 check-client lost its retained Source operation");

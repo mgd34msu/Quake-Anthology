@@ -26,7 +26,7 @@ bool application_native_q1_wire_entity(qa_application *, qa_actor_id, qa_actor_i
 bool application_native_q1_wire_entity_next(qa_application *, qa_actor_id, uint32_t *, bool *,
     qa_actor_id *, qa_q1_entity *, qa_error *);
 bool application_native_q1_wire_eye(qa_application *, qa_actor_id, qa_vec3 *, qa_error *);
-bool application_native_q1_check_client(void *, qa_actor_id, qa_actor_id *);
+bool application_native_q1_check_client(void *, qa_actor_id, qa_actor_id *, qa_error *);
 bool application_native_q1_check_client_retire(application_provider *, qa_actor_id, qa_error *);
 bool application_native_q1_wire_bounds(qa_application *, qa_actor_id, qa_actor_id,
     qa_bounds *, bool *, qa_error *);

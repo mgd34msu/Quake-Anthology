@@ -192,9 +192,9 @@ bool q1_monster_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error
         if (hipnotic && q1_ref_equal(sight->state.monster.enemy, entity->state.monster.enemy))
             return true;
         candidate = q1_ref_actor(g, hipnotic ? q1_ref_from(g, sight->id) : sight->state.monster.enemy);
-    } else if (g->host.check_client)
-        (void)g->host.check_client(g->host.context, entity->id, &candidate);
-    else {
+    } else if (g->host.check_client) {
+        if (!g->host.check_client(g->host.context, entity->id, &candidate, error)) return false;
+    } else {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                      "Q1 monsters require shared source check-client admission");
         return false;
