@@ -62,3 +62,39 @@ inferior calls or writes; these runs are excluded from performance timings.
 Earlier stale-helper-field and airborne-stop-predicate attempts are retained
 and excluded. This check does not qualify Original Q3, pickups, audio,
 multiplayer, split-screen or every map/weapon.
+
+## Native CPU precision, installed `d01326c6`
+
+Eleven real installed-build checks passed after the shared float-depth and
+four-pixel renderer migration. The owner paths used the copied owner profile
+and genuine default Space, mouse3 jump and mouse2 forward, without rebinding.
+CPU CLI, GL CLI and genuine GL menu launch all survived the Normal slipgate
+and fog cleanup, wrote original v5 saves, moved away with S, loaded and
+resaved the exact origin/angles/health/weapon/ammo/items. The stock ammo 25
+HUD remained. Saves measured 32,650–33,403 bytes.
+
+Separate rendering routes inspected classic e1m1 corridor/slipgate trigger
+visibility; Q2 rerelease base1 glass/world/HUD at CPU 640×400 and 320×200;
+Native Q3 spawn textures/HUD; the MG3 hub grate; Original Q3 centerprint,
+typed/delivered colored chat, expiry and score panels plus genuine public
+map restart; Q1 shotgun/rocket particles; and Q2 rerelease blaster, rocket,
+rail and BFG effects. The near grate exposes its green backing through holes;
+its aligned far backing limits independent depth evidence. Brief residual
+rocket smoke is documented. Effect/navigation cheats and private bindings
+were separate from owner movement acceptance. Root inspected the stock
+post-load HUD, rerelease spawn/glass, Q3 world/HUD and chat, and near grate.
+
+All eleven actual quits exited zero, removed their processes/private display,
+and preserved the owner settings and installed executable. These are bounded
+views and actions, not all maps/campaigns/audio or a speed qualification. The
+nonfatal demo-recording warning after classic load remains. Receipt:
+`owner-cpu-renderer-d01326c6-proof.json`.
+
+The actual Original Q2 rerelease retry no longer hit unsupported
+`Bot_UnRegisterEdict` slot 49 within its bound, but still produced no public frame
+in 40 seconds. Its parent repeatedly handled a retail CRT 24-byte node free
+while the native child waited; the shared VM range code did quadratic scans
+of unrelated allocations/mappings. `00644e83` simplifies that existing
+shared mutation path. The new installed startup retry remains required; no
+Original rerelease gameplay is claimed. Receipt:
+`original-rr-import-boundary-jwbs8ojy/summary.json`.

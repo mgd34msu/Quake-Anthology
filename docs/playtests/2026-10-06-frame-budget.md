@@ -121,3 +121,50 @@ float/fixed data and processes adjacent pixels with SIMD in the existing
 shared renderer. All runs reached the actual requested map and drawable,
 quit normally and preserved the installed artifact. Receipt:
 `suite-8ba209ad.json`.
+
+## Installed `d01326c6`: native pixel precision
+
+The twelve cases repeated the same native stationary spawns, resolutions,
+physical-core affinity, seven CPU workers, enabled dummy audio and 600 measured
+presents. No compiler, debugger or other game check overlapped. The actual GL
+device remained RTX 3090 with swap interval zero. A one-second process monitor
+identified browser CPU activity during five cases; these are marked below and
+are not quiet speed qualifications. The other seven passed that monitor. Short
+activity between samples is not excluded. Warm-up and real-time simulation
+limits above still apply.
+
+| Game | Output | Median frame (ms) | p99 frame (ms) | Mean scene / render (ms) | Quiet monitor |
+| --- | --- | ---: | ---: | ---: | --- |
+| Q1 classic | GL 1920×1080 | 0.886 | 1.789 | 0.456 / 0.316 | Browser activity |
+| Q1 classic | CPU 640×400 | 4.372 | 7.062 | 0.502 / 3.482 | Yes |
+| Q1 classic | CPU 320×200 | 2.255 | 3.404 | 0.469 / 1.623 | Yes |
+| Q2 classic | GL 1920×1080 | 1.102 | 2.058 | 0.484 / 0.404 | Yes |
+| Q2 classic | CPU 640×400 | 4.857 | 6.433 | 0.548 / 3.835 | Yes |
+| Q2 classic | CPU 320×200 | 3.058 | 4.153 | 0.510 / 2.289 | Yes |
+| Q2 rerelease | GL 1920×1080 | 1.329 | 2.761 | 0.624 / 0.487 | Yes |
+| Q2 rerelease | CPU 640×400 | 7.017 | 9.366 | 0.736 / 5.742 | Browser activity |
+| Q2 rerelease | CPU 320×200 | 4.753 | 6.817 | 0.673 / 3.741 | Browser activity |
+| Q3 | GL 1920×1080 | 1.943 | 2.318 | 1.086 / 0.700 | Browser activity |
+| Q3 | CPU 640×400 | 12.914 | 15.756 | 1.219 / 11.217 | Yes |
+| Q3 | CPU 320×200 | 6.211 | 7.141 | 1.138 / 4.963 | Browser activity |
+
+The quiet Q3 CPU 640×400 render scope is essentially unchanged from `8ba209ad`,
+11.259 to 11.217 ms. Its median/p99 is 12.914/15.756 ms versus
+13.467/15.632 ms. Quiet Q1 CPU 640×400 worsened from 4.150/6.367 to
+4.372/7.062 ms, and Q2 classic from 4.219/5.719 to 4.857/6.433 ms.
+Native precision and ordinary four-pixel dispatch have not delivered the
+required CPU budget. All CPU cases remain above their targets; this group
+is not claimed as a renderer speedup. All twelve reached their actual map
+and drawable, quit zero and retained the installed artifact. Receipts:
+`suite-d01326c6.json`, `d01326c6-run-index.json`.
+
+A separate six-second userspace profile of the installed Q3 CPU 640×400
+case completed with both public timer reports and a normal quit. Raster
+thread self samples put `sample_levels` at 36.78%, `cpu_sample_texture` at
+12.04%, `fragment_row` at 15.31% and `cpu_write_fragment` at 10.42%. The
+actual generic row still unpacks each lane and samples it separately, which
+bypasses batched texture work for draws needing blending, gamma or lighting.
+The next shared shader change batches their unrelated texture reads while
+retaining per-pixel state/store order and framebuffer feedback. These sample
+percentages diagnose cost; they are not timing percentiles. Evidence:
+`d01326c6-current-q3-wayland-cpu640-dvh_1fcn/result.json`.
