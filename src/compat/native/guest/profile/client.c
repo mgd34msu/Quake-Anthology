@@ -176,6 +176,88 @@ static profile_scope *scope_read(const guest_profile_guard_control *control)
     if (!okay) { scope_free(row); return NULL; }
     return row;
 }
+static bool scope_stores(const profile_scope *row)
+{
+    if (row) for (size_t i = 0; i < row->interest_count; ++i)
+        if (row->interests[i].kind == GUEST_PROFILE_INTEREST_STORE) return true;
+    return false;
+}
+static bool scope_store_code(const profile_scope *row, app_pc pc)
+{
+    return scope_stores(row) && scope_range(row, (uint64_t)(ptr_uint_t)pc,
+        1, QA_NATIVE_GUEST_EXECUTE, NULL);
+}
+static bool synthetic_callback(uint64_t address)
+{
+    byte trap;
+    return copy_from_app((void *)(ptr_uint_t)address, &trap, 1) && trap == 0xcc;
+}
+static bool scope_synthetic_callback(const profile_scope *row, app_pc pc)
+{
+    uint64_t address = (uint64_t)(ptr_uint_t)pc;
+    if (row) for (size_t i = 0; i < row->callback_count; ++i)
+        if (row->callbacks[i].address == address) return synthetic_callback(address);
+    return false;
+}
+static bool scope_point(const profile_scope *row, app_pc pc)
+{
+    uint64_t address = (uint64_t)(ptr_uint_t)pc;
+    if (!row) return false;
+    if (address == row->entry || address == row->stop) return true;
+    for (size_t i = 0; i < row->callback_count; ++i)
+        if (row->callbacks[i].address == address && !synthetic_callback(address)) return true;
+    for (size_t i = 0; i < row->interest_count; ++i)
+        if (row->interests[i].kind == GUEST_PROFILE_INTEREST_INSTRUCTION &&
+            row->interests[i].address == address) return true;
+    return false;
+}
+static void flush_point(uint64_t address)
+{
+    if (address && !dr_unlink_flush_region((app_pc)(ptr_uint_t)address, 1)) dr_abort();
+}
+static void flush_callbacks(const profile_scope *row)
+{
+    if (row) for (size_t i = 0; i < row->callback_count; ++i)
+        if (!synthetic_callback(row->callbacks[i].address)) flush_point(row->callbacks[i].address);
+}
+static void flush_interests(const profile_scope *row)
+{
+    if (row) for (size_t i = 0; i < row->interest_count; ++i)
+        if (row->interests[i].kind == GUEST_PROFILE_INTEREST_INSTRUCTION)
+            flush_point(row->interests[i].address);
+}
+static void flush_executable(const profile_scope *row)
+{
+    if (row) for (size_t i = 0; i < row->mapping_count; ++i) {
+        const qa_native_guest_mapping *mapping = &row->mappings[i].mapping;
+        if ((mapping->permissions & QA_NATIVE_GUEST_EXECUTE) &&
+            !dr_unlink_flush_region((app_pc)(ptr_uint_t)mapping->base, (size_t)mapping->bytes)) dr_abort();
+    }
+}
+static void scope_changed(const profile_scope *before, const profile_scope *after)
+{
+    if (scope_stores(before) != scope_stores(after)) {
+        flush_executable(before); flush_executable(after);
+        return;
+    }
+    if (scope_stores(after)) return;
+    uint64_t old_entry = before ? before->entry : 0, new_entry = after ? after->entry : 0;
+    uint64_t old_stop = before ? before->stop : 0, new_stop = after ? after->stop : 0;
+    if (old_entry != new_entry) { flush_point(old_entry); flush_point(new_entry); }
+    if (old_stop != new_stop) { flush_point(old_stop); flush_point(new_stop); }
+    size_t old_callbacks = before ? before->callback_count : 0;
+    size_t new_callbacks = after ? after->callback_count : 0;
+    if (old_callbacks != new_callbacks || (old_callbacks &&
+        memcmp(before->callbacks, after->callbacks, old_callbacks * sizeof(*before->callbacks)))) {
+        flush_callbacks(before); flush_callbacks(after);
+    }
+    size_t old_interests = before ? before->interest_count : 0;
+    size_t new_interests = after ? after->interest_count : 0;
+    if (old_interests != new_interests || (old_interests &&
+        memcmp(before->interests, after->interests, old_interests * sizeof(*before->interests)))) {
+        flush_interests(before); flush_interests(after);
+    }
+}
 static bool control_apply(guest_profile_guard_control *control)
 {
     if (control->magic != GUEST_PROFILE_GUARD_MAGIC || control->reserved ||
@@ -208,12 +290,14 @@ static bool control_apply(guest_profile_guard_control *control)
     }
     if (control->operation == GUEST_PROFILE_GUARD_LEAVE) {
         if (!scope || scope->id != control->scope || scope->phase != PROFILE_STOPPED) return false;
-        profile_scope *retired = scope; scope = scope->parent; scope_free(retired); return true;
+        profile_scope *retired = scope; scope = scope->parent;
+        scope_changed(retired, scope); scope_free(retired); return true;
     }
     if (scope && scope->phase != PROFILE_STOPPED) return false;
     if (control->operation == GUEST_PROFILE_GUARD_RESUME && (!scope || scope->id != control->scope)) return false;
     profile_scope *next = scope_read(control);
     if (!next) return false;
+    profile_scope *previous = scope;
     if (control->operation == GUEST_PROFILE_GUARD_RESUME) {
         next->parent = scope->parent;
         next->pending = scope->pending; next->pending_count = scope->pending_count;
@@ -221,9 +305,10 @@ static bool control_apply(guest_profile_guard_control *control)
         next->bypass = scope->bypass;
         if (control->entry == scope->boundary_bypass)
             next->boundary_bypass = scope->boundary_bypass;
-        scope->pending = NULL; scope_free(scope);
+        scope->pending = NULL;
     } else next->parent = scope;
-    scope = next;
+    scope = next; scope_changed(previous, next);
+    if (control->operation == GUEST_PROFILE_GUARD_RESUME) scope_free(previous);
     return true;
 }
 static void redirect(dr_mcontext_t *context, byte *fp, app_pc target)
@@ -335,63 +420,6 @@ static void environment_store(profile_instruction *description, dr_mcontext_t *c
     if (!copy_to_app((void *)(ptr_uint_t)address, saved.data, bytes)) dr_abort();
     redirect(cpu, fp, description->pc + description->size);
 }
-static void double_shift(profile_instruction *description, dr_mcontext_t *cpu, byte *fp)
-{
-    /* The real decoder lists Gv, count, Ev as sources and Ev as destination.
-     * Source count-zero only reads Ev: skip the hardware RMW altogether. */
-    opnd_t destination = instr_get_dst(description->operands, 0);
-    opnd_t count_operand = instr_get_src(description->operands, 1);
-    size_t bytes = opnd_size_in_bytes(opnd_get_size(destination));
-    if (bytes != 2 && bytes != 4 && bytes != 8) dr_abort();
-    uint64_t raw;
-    if (opnd_is_immed_int(count_operand)) raw = (uint64_t)opnd_get_immed_int(count_operand);
-    else if (opnd_is_reg(count_operand)) raw = (uint64_t)reg_get_value(opnd_get_reg(count_operand), cpu);
-    else { dr_abort(); return; }
-    uint64_t count = raw & (bytes == 8 ? 63u : 31u);
-    if (count > bytes * 8)
-        reject(cpu, fp, description->pc, GUEST_PROFILE_GUARD_INSTRUCTION, 0, 0, 0, description->size);
-    uint64_t value = 0, address = 0;
-    if (opnd_is_memory_reference(destination)) {
-        address = operand_address(description, destination, cpu, bytes);
-        uint64_t bad = address;
-        if (!canonical(address))
-            reject(cpu, fp, description->pc, GUEST_PROFILE_GUARD_PROCESSOR, 0, 13, address, bytes);
-        if (count && !range(address, bytes, QA_NATIVE_GUEST_WRITE, &bad))
-            reject(cpu, fp, description->pc, GUEST_PROFILE_GUARD_OPERAND, QA_NATIVE_GUEST_WRITE, 0, bad, bytes);
-        if (!range(address, bytes, QA_NATIVE_GUEST_READ, &bad))
-            reject(cpu, fp, description->pc, GUEST_PROFILE_GUARD_OPERAND, QA_NATIVE_GUEST_READ, 0, bad, bytes);
-        if (!copy_from_app((void *)(ptr_uint_t)address, &value, bytes)) dr_abort();
-    } else if (opnd_is_reg(destination))
-        value = (uint64_t)reg_get_value(opnd_get_reg(destination), cpu);
-    else dr_abort();
-    if (count) {
-        opnd_t source = instr_get_src(description->operands, 0);
-        if (!opnd_is_reg(source)) dr_abort();
-        uint64_t other = (uint64_t)reg_get_value(opnd_get_reg(source), cpu);
-        uint64_t mask = bytes == 8 ? UINT64_MAX : (UINT64_C(1) << (bytes * 8)) - 1;
-        bool right = instr_get_opcode(description->operands) == OP_shrd;
-        uint64_t result = (right ? (value >> count) | (other << (bytes * 8 - count)) :
-            (value << count) | (other >> (bytes * 8 - count))) & mask;
-        uint64_t carry = (value >> (right ? count - 1 : bytes * 8 - count)) & 1;
-        unsigned low = (unsigned)result & 255u;
-        low ^= low >> 4;
-        uint64_t flags = carry | ((UINT64_C(0x9669) >> (low & 15u)) & 1u) << 2 |
-            (!result ? 0x40u : 0) | ((result >> (bytes * 8 - 1)) & 1u) << 7;
-        uint64_t changed = 0xc5;
-        /* Source retains AF, and OF when count != 1. Hardware leaves these
-         * undefined, so compute only the actual source-owned flag fields. */
-        if (count == 1) { changed |= 0x800; flags |= ((value ^ result) >> (bytes * 8 - 1) & 1u) << 11; }
-        cpu->xflags = (cpu->xflags & ~(reg_t)changed) | (reg_t)flags;
-        if (opnd_is_memory_reference(destination)) {
-            if (!copy_to_app((void *)(ptr_uint_t)address, &result, bytes)) dr_abort();
-        } else {
-            reg_id_t full = reg_resize_to_opsz(opnd_get_reg(destination), OPSZ_8);
-            uint64_t original = (uint64_t)reg_get_value(full, cpu);
-            reg_set_value(full, cpu, (reg_t)(bytes == 2 ? (original & ~mask) | result : result));
-        }
-    }
-    redirect(cpu, fp, description->pc + description->size);
-}
 static void clean(ptr_uint_t encoded)
 {
     profile_instruction *description = (profile_instruction *)encoded;
@@ -463,22 +491,13 @@ static void clean(ptr_uint_t encoded)
         scope->boundary_bypass = interest->address;
         redirect(&cpu, fp, import_entry);
     }
-    if (!range((uint64_t)(ptr_uint_t)pc, description->size, QA_NATIVE_GUEST_EXECUTE, &bad)) reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_FETCH, QA_NATIVE_GUEST_EXECUTE, 0, bad, description->size);
-    byte actual[15];
-    if (!copy_from_app(pc, actual, description->size)) reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_FETCH, QA_NATIVE_GUEST_EXECUTE, 0, (uint64_t)(ptr_uint_t)pc, description->size);
-    if (memcmp(actual, description->bytes, description->size)) {
-        if (!dr_unlink_flush_region(pc, description->size)) dr_abort();
-        redirect(&cpu, fp, pc);
-    }
-    if ((uint64_t)(ptr_uint_t)pc == scope->stop && description->size == 1 && actual[0] == 0xcc) {
+    if ((uint64_t)(ptr_uint_t)pc == scope->stop && description->size == 1 && description->opcode == 0xcc) {
         guest_profile_guard_fault returned = {GUEST_PROFILE_GUARD_RETURN, 0, 0, scope->id,
             scope->stop, scope->stop, 1, scope->stop};
         if (!copy_to_app(scope->fault, &returned, sizeof(returned))) dr_abort();
         redirect(&cpu, fp, import_entry);
     }
-    guest_profile_instruction policy = guest_profile_x64_instruction((qa_bytes){actual, description->size});
-    if (policy.kind == GUEST_PROFILE_UNSUPPORTED) reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_INSTRUCTION, 0, 0, 0, description->size);
-    if (policy.kind == GUEST_PROFILE_PROCESSOR_FAULT) reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_PROCESSOR, 0, policy.vector, 0, description->size);
+    guest_profile_instruction policy = guest_profile_x64_instruction((qa_bytes){description->bytes, description->size});
     if (policy.kind == GUEST_PROFILE_SYSCALL) {
         if (!scope->syscalls || description->size != 2)
             reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_INSTRUCTION, 0, 0, 0, description->size);
@@ -494,71 +513,31 @@ static void clean(ptr_uint_t encoded)
     }
     byte op = description->opcode, modrm = description->modrm;
     unsigned group = (modrm >> 3) & 7;
-    bool numeric = op == 0x9b || (op >= 0xd8 && op <= 0xdf);
-    bool no_wait = (op == 0xdb && (modrm == 0xe2 || modrm == 0xe3)) ||
-        (op == 0xdf && modrm == 0xe0) ||
-        ((op == 0xd9 || op == 0xdd) && modrm < 0xc0 && (group == 6 || group == 7));
-    uint16_t control, status;
-    memcpy(&control, fp, 2); memcpy(&status, fp + 2, 2);
-    if (numeric && !no_wait && (status & ~control & 63))
-        reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_PROCESSOR, 0, 16, 0, description->size);
-    size_t popped = 0;
-    int opcode = description->operands ? instr_get_opcode(description->operands) : OP_INVALID;
-    if (opcode == OP_pop && opnd_is_memory_reference(instr_get_dst(description->operands, 0))) {
-        popped = drutil_opnd_mem_size_in_bytes(instr_get_dst(description->operands, 0), description->operands);
-        bad = (uint64_t)cpu.xsp;
-        if (!canonical(bad)) reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_PROCESSOR, 0, 13, bad, popped);
-        if (!popped || !range((uint64_t)cpu.xsp, popped, QA_NATIVE_GUEST_READ, &bad))
-            reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_OPERAND, QA_NATIVE_GUEST_READ, 0, bad, popped);
-    }
-    /* Source PUSH/CALL and MOVS read their actual source before checking the
-     * destination. DR's address iterator lists destinations first. */
-    bool source_first = opcode == OP_push || opcode == OP_call || opcode == OP_call_ind ||
-        op == 0xa4 || op == 0xa5;
-    if (description->operands) for (unsigned pass = 0; pass < (source_first ? 2u : 1u); ++pass) {
-        if (pass && (opcode == OP_call || opcode == OP_call_ind)) {
-            /* The real source reads and validates its target before its stack
-             * write. Use DR's actual decoded target operand, never a guessed ABI. */
-            opnd_t operand = instr_get_target(description->operands);
-            uint64_t target;
-            if (opnd_is_pc(operand)) target = (uint64_t)(ptr_uint_t)opnd_get_pc(operand);
-            else if (opnd_is_reg(operand)) target = (uint64_t)reg_get_value(opnd_get_reg(operand), &cpu);
-            else if (opnd_is_memory_reference(operand)) {
-                uint64_t address = operand_address(description, operand, &cpu, sizeof(target));
-                if (!copy_from_app((void *)(ptr_uint_t)address, &target, sizeof(target))) dr_abort();
-            } else dr_abort();
-            if (!canonical(target)) reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_PROCESSOR, 0, 13, target, description->size);
-        }
+    if (scope_stores(scope) && description->operands) {
+        int opcode = instr_get_opcode(description->operands);
+        size_t popped = opcode == OP_pop &&
+            opnd_is_memory_reference(instr_get_dst(description->operands, 0)) ?
+            drutil_opnd_mem_size_in_bytes(instr_get_dst(description->operands, 0), description->operands) : 0;
         for (uint index = 0;; ++index) {
             app_pc address; bool write; uint position;
             if (!instr_compute_address_ex_pos(description->operands, &cpu, index, &address, &write, &position)) break;
-            if (source_first && write != (pass != 0)) continue;
-            opnd_t operand = write ? instr_get_dst(description->operands, (int)position) : instr_get_src(description->operands, (int)position);
+            if (!write) continue;
+            opnd_t operand = instr_get_dst(description->operands, (int)position);
             size_t bytes = drutil_opnd_mem_size_in_bytes(operand, description->operands);
             dr_mcontext_t operand_cpu = cpu;
-            if (write && popped) operand_cpu.xsp += popped;
+            if (popped) operand_cpu.xsp += popped;
             uint64_t actual_address = operand_address(description, operand, &operand_cpu, bytes);
-            uint32_t rights = write ? QA_NATIVE_GUEST_WRITE : QA_NATIVE_GUEST_READ;
-            bad = actual_address;
-            if (!canonical(actual_address))
-                reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_PROCESSOR, 0, 13, bad, bytes);
-            if (!bytes || !range(actual_address, bytes, rights, &bad)) {
-                /* Source execution restores the pre-instruction GPR bank on an
-                 * operand fault, including POP/LEAVE's intermediate SP changes. */
-                reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_OPERAND, rights, 0, bad, bytes);
-            }
-            if (write) store_interest((uint64_t)(ptr_uint_t)pc, actual_address, bytes);
+            if (bytes) store_interest((uint64_t)(ptr_uint_t)pc, actual_address, bytes);
         }
     }
-    if (opcode == OP_shld || opcode == OP_shrd) double_shift(description, &cpu, fp);
     if ((op == 0xd9 || op == 0xdd) && modrm < 0xc0 && group == 6)
         environment_store(description, &cpu, fp, op);
     proc_restore_fpstate(fp);
 }
 static dr_emit_flags_t app2app(void *context, void *tag, instrlist_t *list, bool trace, bool translating)
 {
-    (void)tag; (void)trace; (void)translating;
-    if (!drutil_expand_rep_string(context, list)) dr_abort();
+    (void)trace; (void)translating;
+    if (scope_store_code(scope, (app_pc)tag) && !drutil_expand_rep_string(context, list)) dr_abort();
     return DR_EMIT_DEFAULT;
 }
 static dr_emit_flags_t instrument(void *context, void *tag, instrlist_t *list, instr_t *where,
@@ -577,6 +556,11 @@ static dr_emit_flags_t instrument(void *context, void *tag, instrlist_t *list, i
         original = emulated->instr; pc = emulated->pc;
     }
     if (!pc) return DR_EMIT_DEFAULT;
+    int opcode = instr_get_opcode(original);
+    bool adapted = opcode == OP_syscall || opcode == OP_cpuid ||
+        opcode == OP_fnstenv || opcode == OP_fnsave;
+    if (pc != control_entry && pc != fault_entry && pc != import_entry &&
+        !adapted && !scope_store_code(scope, pc) && !scope_point(scope, pc)) return DR_EMIT_DEFAULT;
     profile_instruction *row = dr_global_alloc(sizeof(*row));
     if (!row) dr_abort();
     memset(row, 0, sizeof(*row)); row->pc = pc;
@@ -649,9 +633,27 @@ static dr_signal_action_t signal_event(void *context, dr_siginfo_t *information)
         app_pc original = dr_app_pc_from_cache_pc(information->raw_mcontext->xip - 1);
         byte opcode;
         if (original && (original == import_entry ||
-            original == (app_pc)(ptr_uint_t)scope->stop) &&
+            original == (app_pc)(ptr_uint_t)scope->stop ||
+            scope_synthetic_callback(scope, original)) &&
             copy_from_app(original, &opcode, 1) && opcode == 0xcc)
             information->mcontext->xip = original + 1;
+    }
+    if (scope && information->sig == SIGTRAP && information->mcontext &&
+        information->mcontext->xip && information->mcontext->xip != import_entry + 1) {
+        uint64_t trap = (uint64_t)(ptr_uint_t)(information->mcontext->xip - 1);
+        if (scope->phase == PROFILE_ACTIVE ||
+            (scope->phase == PROFILE_ARMED && trap == scope->entry)) {
+            for (size_t i = 0; i < scope->callback_count; ++i)
+                if (scope->callbacks[i].address == trap && synthetic_callback(trap)) {
+                    if (scope->callbacks[i].id == scope->bypass) { scope->bypass = 0; break; }
+                    guest_profile_guard_fault entry = {GUEST_PROFILE_GUARD_ENTRY, 0, 0,
+                        scope->id, trap, trap, 1, trap};
+                    if (!copy_to_app(scope->fault, &entry, sizeof(entry))) dr_abort();
+                    scope->phase = PROFILE_ACTIVE;
+                    information->mcontext->xip = import_entry;
+                    return DR_SIGNAL_REDIRECT;
+                }
+        }
     }
     /* DR's decoder can forge SIGILL before presenting an invalid first
      * instruction to a bb callback (core/arch/interp.c bb_process_invalid_instr).
@@ -743,9 +745,7 @@ DR_EXPORT void dr_client_main(client_id_t id, int argc, const char *argv[])
         pkru_offset = b;
     }
     uint64 setting;
-    /* A direct branch elided before client instrumentation would omit its
-     * source fetch/canonical-target admission. Qualify the real engine values,
-     * including its actual virtualized app segments, before writing PROBE. */
+    /* Published point hooks require real block boundaries and app segments. */
     if (!dr_get_integer_option("max_elide_jmp", &setting) || setting ||
         !dr_get_integer_option("max_elide_call", &setting) || setting ||
         !dr_get_integer_option("disable_traces", &setting) || !setting ||
