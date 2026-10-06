@@ -372,6 +372,7 @@ static bool source_upload_bound(qa_gl_renderer *renderer,const qa_scene_image *i
             image->kind==QA_SCENE_DEPTH32F?GL_DEPTH_COMPONENT:GL_RGBA,
             image->kind==QA_SCENE_DEPTH32F?GL_FLOAT:GL_UNSIGNED_BYTE,level->pixels);
     }
+    gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,(GLint)(image->level_count-1));
     texture_filter(renderer,image->source_mipmap?renderer->controls.source_filter:image->filter);
     gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,image->wrap==QA_SCENE_REPEAT?GL_REPEAT:GL_CLAMP);
     gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,image->wrap==QA_SCENE_REPEAT?GL_REPEAT:GL_CLAMP);
@@ -399,7 +400,7 @@ static bool source_storage_apply_bound(qa_gl_renderer *renderer,const qa_render_
     GLenum wrap=texture->wrap==QA_SCENE_REPEAT?GL_REPEAT:GL_CLAMP;
     gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,(GLint)wrap);
     gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,(GLint)wrap);
-    gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,1000);
+    gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,texture->count?(GLint)(texture->count-1):0);
     GLfloat border[4]={texture->border.x,texture->border.y,texture->border.z,texture->border.w};
     gl->TexParameterfv(GL_TEXTURE_2D,GL_TEXTURE_BORDER_COLOR,border);
     return gl_check(renderer,"Preparing actual Source texture object levels and sampler",error);
@@ -457,6 +458,8 @@ bool qa_gl_source_image_admit(qa_render_controls *controls,const qa_scene_image 
     if (!qa_render_source_texture_upload(texture,image,owner,filter,error) || !source_upload_bound(renderer,image,error)) return false;
     if (texture==&selected->source_texture) selected->source_filter=filter;
     renderer->gl.BindTexture(GL_TEXTURE_2D,0);
+    qa_scene_image_release(renderer->bound[unit]);
+    renderer->bound[unit]=NULL;
     controls->attributes.actual_empty[unit]=true;
     if (unit==1) {
         renderer->gl.ActiveTexture(GL_TEXTURE0); renderer->gl.ClientActiveTexture(GL_TEXTURE0);
