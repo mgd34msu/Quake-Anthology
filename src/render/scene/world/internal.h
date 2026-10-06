@@ -34,6 +34,23 @@ typedef struct qaw_pending { int32_t child; uint32_t lights, planes; } qaw_pendi
 typedef struct qaw_visibility_parent { uint32_t node, next; } qaw_visibility_parent;
 typedef struct qaw_admission_change { uint32_t surface; uint64_t previous; } qaw_admission_change;
 
+typedef struct qaw_visibility_light { qa_vec3 origin; float radius; } qaw_visibility_light;
+typedef struct qaw_visibility_cache {
+    qa_vec3 origin, axis[3], pvs_origin;
+    float projection[2];
+    qa_scene_plane clip_plane;
+    qa_bounds bounds_start, bounds;
+    qaw_visibility_light lights[32];
+    size_t light_count, surface_count, area_bytes;
+    uint64_t leaf_visits;
+    uint32_t visibility_generation, node_generation;
+    int32_t eye, pvs_selector, pvs_secondary;
+    bool valid, source, no_cull, no_vis, clip_enabled, pvs_all;
+    bool areas_present, bounds_valid;
+    uint8_t *areas;
+    size_t area_limit, area_capacity;
+} qaw_visibility_cache;
+
 struct qa_scene_world {
     const qa_resource *source_resource;
     size_t references;
@@ -93,6 +110,8 @@ struct qa_scene_world {
     uint32_t *pvs_node_marks, *source_node_marks;
     uint32_t pvs_node_generation;
     bool pvs_nodes_cached;
+    /* Borrows this world's current visible arrays and surface marks. */
+    qaw_visibility_cache visible_cache;
 };
 
 struct qa_scene_source_world_view {

@@ -584,7 +584,17 @@ static bool world_topology(qa_scene_world *world, qa_error *error)
         int64_t cluster = world->leaves[i].cluster;
         if (cluster > INT32_MAX) return world_error(error, QA_ERROR_FORMAT, "world cluster exceeds signed visibility index");
         if (cluster >= 0 && (uint64_t)cluster >= world->cluster_count) world->cluster_count = (uint32_t)cluster + 1;
+        if (world->bsp.family != QA_BSP_Q1 && world->leaves[i].area >= 0) {
+            size_t bytes = (size_t)((uint64_t)world->leaves[i].area / 8) + 1;
+            if (bytes > world->visible_cache.area_limit) world->visible_cache.area_limit = bytes;
+        }
     }
+    world->visible_cache.area_capacity = world->visible_cache.area_limit;
+    if (world->bsp.family == QA_BSP_Q3 &&
+        world->visible_cache.area_capacity > sizeof(world->source_area_mask))
+        world->visible_cache.area_capacity = sizeof(world->source_area_mask);
+    world->visible_cache.areas = world_array(world->visible_cache.area_capacity, 1, error);
+    if (world->visible_cache.area_capacity && !world->visible_cache.areas) return false;
     for (size_t i = 0; i < world->leaf_surface_count; ++i) {
         int64_t index;
         if (!qa_bsp_read_index(&world->bsp, QA_BSP_LEAF_FACES, i, &index, error)) return false;
@@ -712,6 +722,7 @@ void qa_scene_world_destroy(qa_scene_world *world)
     free(world->admission_changes); free(world->pending);
     free(world->visibility_parent_heads); free(world->visibility_parents);
     free(world->pvs_node_marks); free(world->source_node_marks);
+    free(world->visible_cache.areas);
     free(world->pvs); free(world->secondary_pvs); free(world->sky_name);
     qa_buffer_free(&world->bytes); qa_buffer_free(&world->lit_bytes); qa_buffer_free(&world->entity_bytes);
     qa_buffer_free(&world->palette_bytes); qa_buffer_free(&world->translation_bytes);
@@ -922,13 +933,39 @@ static const qa_scene_light *projected_lights(const qa_scene_world *world,
     return *count != 0 ? input->lights : NULL;
 }
 
+static bool visibility_matches(const qa_scene_world *world, const qa_scene_world_input *input,
+    qa_vec3 pvs_origin, int32_t eye, bool source, uint32_t node_generation,
+    const qa_scene_light *lights, size_t light_count, const uint8_t *areas,
+    size_t area_bytes, const qa_bounds *bounds)
+{
+    const qaw_visibility_cache *cache = &world->visible_cache;
+    if (!cache->valid || cache->visibility_generation != world->visibility_generation ||
+        cache->source != source || cache->no_cull != input->no_cull || cache->no_vis != input->no_vis ||
+        cache->eye != eye || cache->node_generation != node_generation ||
+        cache->pvs_selector != world->pvs_selector || cache->pvs_secondary != world->pvs_secondary ||
+        cache->pvs_all != world->pvs_all || cache->clip_enabled != input->view.clip_enabled ||
+        memcmp(&cache->projection[0], &input->view.projection.m[0], sizeof(float)) ||
+        memcmp(&cache->projection[1], &input->view.projection.m[5], sizeof(float)) ||
+        memcmp(&cache->origin, &input->view.origin, sizeof(cache->origin)) ||
+        memcmp(cache->axis, input->view.axis, sizeof(cache->axis)) ||
+        memcmp(&cache->pvs_origin, &pvs_origin, sizeof(pvs_origin)) ||
+        (cache->clip_enabled && memcmp(&cache->clip_plane, &input->view.clip_plane, sizeof(cache->clip_plane))) ||
+        cache->areas_present != (areas != NULL) || cache->area_bytes != area_bytes ||
+        (area_bytes && memcmp(cache->areas, areas, area_bytes)) || cache->light_count != light_count ||
+        (bounds && (!cache->bounds_valid || memcmp(&cache->bounds_start, bounds, sizeof(*bounds))))) return false;
+    for (size_t i = 0; i < light_count; ++i)
+        if (memcmp(&cache->lights[i].origin, &lights[i].origin, sizeof(lights[i].origin)) ||
+            memcmp(&cache->lights[i].radius, &lights[i].radius, sizeof(float))) return false;
+    return true;
+}
+
 static bool world_visible(qa_scene_world *world, const qa_scene_world_input *input,
     qa_bounds *visible_bounds, qa_error *error)
 {
     world->visible_count = 0;
     qa_vec3 origin = input->use_pvs_origin ? input->pvs_origin : input->view.origin;
     int32_t eye = qa_scene_world_leaf(world, origin);
-    if (eye < 0) return true;
+    if (eye < 0) { world->visible_cache.valid = false; return true; }
     bool source = world->bsp.family == QA_BSP_Q3 && input->source_order;
     if (source) {
         if (input->source_scratch) input->source_scratch->owner->counters.view_cluster=(int32_t)world->leaves[eye].cluster;
@@ -938,6 +975,24 @@ static bool world_visible(qa_scene_world *world, const qa_scene_world_input *inp
     if (prune_pvs) mark_pvs_nodes(world);
     const uint32_t *node_marks = source ? world->source_node_marks : prune_pvs ? world->pvs_node_marks : NULL;
     uint32_t node_generation = source ? world->source_vis_generation : world->pvs_node_generation;
+    size_t light_count;
+    const qa_scene_light *lights = projected_lights(world, input, &light_count);
+    const uint8_t *areas = !source && world->bsp.family != QA_BSP_Q1 ? input->visible_areas : NULL;
+    qaw_visibility_cache *cache = &world->visible_cache;
+    size_t area_bytes = areas ? input->visible_area_bytes : 0;
+    if (area_bytes > cache->area_limit) area_bytes = cache->area_limit;
+    bool cacheable = area_bytes <= cache->area_capacity;
+    if (cacheable && visibility_matches(world, input, origin, eye, source, node_generation,
+        lights, light_count, areas, area_bytes, visible_bounds)) {
+        world->visible_count = cache->surface_count;
+        if (visible_bounds) *visible_bounds = cache->bounds;
+        if (source && input->source_scratch)
+            input->source_scratch->owner->counters.leaves += cache->leaf_visits;
+        return true;
+    }
+    cache->valid = false;
+    if (visible_bounds) cache->bounds_start = *visible_bounds;
+    uint64_t leaf_visits = 0;
     if (++world->visibility_generation == 0) {
         memset(world->surface_marks, 0, world->surface_count * sizeof(*world->surface_marks));
         world->visibility_generation = 1;
@@ -946,8 +1001,6 @@ static bool world_visible(qa_scene_world *world, const qa_scene_world_input *inp
     size_t plane_count = input->no_cull ? 0 : qa_scene_frustum(&input->view, planes);
     if (world->bsp.family == QA_BSP_Q3 && plane_count > 4) plane_count = 4;
     size_t pending = 1;
-    size_t light_count;
-    const qa_scene_light *lights = projected_lights(world, input, &light_count);
     world->pending[0] = (qaw_pending){world->node_count == 0 ? -1 : 0,
         all_lights(light_count), (UINT32_C(1) << plane_count) - 1};
     while (pending != 0) {
@@ -987,7 +1040,10 @@ static bool world_visible(qa_scene_world *world, const qa_scene_world_input *inp
                 || (world->pvs[(size_t)bit / 8] & (1u << ((unsigned)bit & 7))) == 0) continue;
         }
         if (!remaining_planes(bsp_bounds(leaf->bounds), planes, plane_count, &item.planes)) continue;
-        if (source && input->source_scratch) ++input->source_scratch->owner->counters.leaves;
+        if (source) {
+            ++leaf_visits;
+            if (input->source_scratch) ++input->source_scratch->owner->counters.leaves;
+        }
         if (visible_bounds) *visible_bounds = qa_bounds_union(*visible_bounds, bsp_bounds(leaf->bounds));
         for (size_t i = leaf->faces.first; i < (size_t)leaf->faces.first + leaf->faces.count; ++i) {
             uint32_t surface = world->leaf_surfaces[i];
@@ -996,6 +1052,29 @@ static bool world_visible(qa_scene_world *world, const qa_scene_world_input *inp
             world->surface_lights[surface] = item.lights;
             world->visible_surfaces[world->visible_count++] = surface;
         }
+    }
+    if (cacheable) {
+        cache->origin = input->view.origin;
+        memcpy(cache->axis, input->view.axis, sizeof(cache->axis));
+        cache->pvs_origin = origin;
+        cache->projection[0] = input->view.projection.m[0];
+        cache->projection[1] = input->view.projection.m[5];
+        cache->clip_enabled = input->view.clip_enabled;
+        if (cache->clip_enabled) cache->clip_plane = input->view.clip_plane;
+        cache->source = source; cache->no_cull = input->no_cull; cache->no_vis = input->no_vis;
+        cache->eye = eye; cache->node_generation = node_generation;
+        cache->pvs_selector = world->pvs_selector; cache->pvs_secondary = world->pvs_secondary;
+        cache->pvs_all = world->pvs_all;
+        cache->areas_present = areas != NULL; cache->area_bytes = area_bytes;
+        if (area_bytes) memcpy(cache->areas, areas, area_bytes);
+        cache->light_count = light_count;
+        for (size_t i = 0; i < light_count; ++i)
+            cache->lights[i] = (qaw_visibility_light){lights[i].origin, lights[i].radius};
+        cache->bounds_valid = visible_bounds != NULL;
+        if (visible_bounds) cache->bounds = *visible_bounds;
+        cache->surface_count = world->visible_count; cache->leaf_visits = leaf_visits;
+        cache->visibility_generation = world->visibility_generation;
+        cache->valid = true;
     }
     return true;
 }
