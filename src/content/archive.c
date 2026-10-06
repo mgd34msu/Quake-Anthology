@@ -1,6 +1,7 @@
 #include "qa/archive.h"
 #include "qa/binary.h"
 #include "qa/filesystem.h"
+#include "qa/hash.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -61,6 +62,39 @@ bool qa_archive_source_current(const qa_archive *archive, qa_error *error)
     return qa_fs_identity_equal(&archive->identity, &actual) ||
         fail(error, QA_ERROR_IO, 0, "archive source changed after admission");
 }
+bool qa_archive_q3_checksums(const qa_archive *archive, uint32_t feed,
+    uint32_t *checksum, uint32_t *pure_checksum, qa_error *error)
+{
+    if (!archive || archive->kind == QA_ARCHIVE_PAK)
+        return fail(error, QA_ERROR_ARGUMENT, 0, "Q3 checksums require a ZIP-family archive");
+    if (!checksum && !pure_checksum) return true;
+    qa_md4_context ordinary, pure;
+    uint8_t word[4];
+    if (checksum) qa_md4_init(&ordinary);
+    if (pure_checksum) {
+        qa_md4_init(&pure);
+        qa_store_u32le(word, feed);
+        qa_md4_update(&pure, (qa_bytes){word, sizeof(word)});
+    }
+    for (size_t i = 0; i < archive->count; ++i) {
+        const qa_archive_entry *entry = archive->entries + i;
+        if (!entry->size) continue;
+        qa_store_u32le(word, entry->crc32);
+        if (checksum) qa_md4_update(&ordinary, (qa_bytes){word, sizeof(word)});
+        if (pure_checksum) qa_md4_update(&pure, (qa_bytes){word, sizeof(word)});
+    }
+    qa_md4_digest digest;
+    if (checksum) {
+        qa_md4_final(&ordinary, &digest);
+        *checksum = qa_md4_fold(&digest);
+    }
+    if (pure_checksum) {
+        qa_md4_final(&pure, &digest);
+        *pure_checksum = qa_md4_fold(&digest);
+    }
+    return true;
+}
+
 static bool archive_snapshot(qa_archive *archive, qa_error *error)
 {
     if (archive->bytes.data) return true;

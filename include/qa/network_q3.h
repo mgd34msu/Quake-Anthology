@@ -334,9 +334,6 @@ typedef struct qa_q3_pure_server {
 } qa_q3_pure_server;
 typedef enum qa_q3_pure_result { QA_Q3_PURE_DISABLED, QA_Q3_PURE_OUTDATED, QA_Q3_PURE_AUTHENTIC, QA_Q3_PURE_REJECTED } qa_q3_pure_result;
 bool qa_q3_verify_pure(const qa_q3_pure_server *, const qa_q3_tokens *, qa_q3_pure_result *, qa_error *);
-/* CRC list order is the ZIP central directory order; omit zero-length files. */
-bool qa_q3_package_checksums(const uint32_t *crc, const uint64_t *sizes, size_t count,
-                              uint32_t feed, uint32_t *checksum, uint32_t *pure_checksum, qa_error *);
 bool qa_q3_download_name(const char *, qa_error *);
 /* 0 custom, 1 baseq3, 2 missionpack. */
 unsigned qa_q3_stock_package(const char *);

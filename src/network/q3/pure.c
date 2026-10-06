@@ -74,32 +74,6 @@ bool qa_q3_verify_pure(const qa_q3_pure_server *server, const qa_q3_tokens *toke
     return true;
 }
 
-bool qa_q3_package_checksums(const uint32_t *crc, const uint64_t *sizes, size_t count,
-                              uint32_t feed, uint32_t *checksum, uint32_t *pure_checksum,
-                              qa_error *error)
-{
-    if (checksum == NULL || pure_checksum == NULL || (count != 0 && (crc == NULL || sizes == NULL)))
-        return fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 package checksum input");
-    qa_md4_context ordinary, pure;
-    qa_md4_init(&ordinary);
-    qa_md4_init(&pure);
-    uint8_t word[4];
-    qa_store_u32le(word, feed);
-    qa_md4_update(&pure, (qa_bytes){ word, sizeof(word) });
-    for (size_t index = 0; index < count; ++index) {
-        if (sizes[index] == 0) continue;
-        qa_store_u32le(word, crc[index]);
-        qa_md4_update(&ordinary, (qa_bytes){ word, sizeof(word) });
-        qa_md4_update(&pure, (qa_bytes){ word, sizeof(word) });
-    }
-    qa_md4_digest ordinary_digest, pure_digest;
-    qa_md4_final(&ordinary, &ordinary_digest);
-    qa_md4_final(&pure, &pure_digest);
-    *checksum = qa_md4_fold(&ordinary_digest);
-    *pure_checksum = qa_md4_fold(&pure_digest);
-    return true;
-}
-
 static unsigned char ascii_lower(unsigned char value)
 {
     return value >= 'A' && value <= 'Z' ? (unsigned char)(value + 'a' - 'A') : value;

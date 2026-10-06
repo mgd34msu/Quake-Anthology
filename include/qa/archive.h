@@ -62,6 +62,11 @@ void qa_archive_close(qa_archive *archive);
 qa_archive_kind qa_archive_get_kind(const qa_archive *archive);
 /* Extension policy only. AUTO leaves format detection to the content bytes. */
 qa_archive_kind qa_archive_kind_for_path(const char *path);
+/* Q3 FS_LoadZipFile checksums use nonempty ZIP members' CRC32 words in
+ * central-directory order, with the feed prefixed for the pure checksum.
+ * Either output may be NULL. No member payload is read. */
+bool qa_archive_q3_checksums(const qa_archive *, uint32_t feed,
+    uint32_t *checksum, uint32_t *pure_checksum, qa_error *);
 size_t qa_archive_count(const qa_archive *archive);
 const qa_archive_entry *qa_archive_entry_at(const qa_archive *archive,
                                            size_t ordinal);

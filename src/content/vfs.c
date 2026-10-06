@@ -1245,35 +1245,6 @@ bool qa_vfs_archive_bytes(const qa_vfs *vfs, qa_mount_id id, qa_bytes *out, qa_e
     *out = (qa_bytes){archive->storage.data, archive->storage.size}; return true;
 }
 
-static bool archive_checksums(const package *archive, uint32_t feed,
-                               uint32_t *checksum, uint32_t *pure_checksum,
-                               qa_error *error)
-{
-    if (qa_archive_get_kind(archive->archive) == QA_ARCHIVE_PAK) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q3 checksums require a ZIP-family archive");
-        return false;
-    }
-    qa_md4_context normal, pure;
-    qa_md4_init(&normal);
-    qa_md4_init(&pure);
-    uint8_t word[4];
-    qa_store_u32le(word, feed);
-    qa_md4_update(&pure, (qa_bytes){word, sizeof(word)});
-    for (size_t i = 0; i < qa_archive_count(archive->archive); i++) {
-        const qa_archive_entry *entry = qa_archive_entry_at(archive->archive, i);
-        if (entry->size == 0) continue;
-        qa_store_u32le(word, entry->crc32);
-        qa_md4_update(&normal, (qa_bytes){word, sizeof(word)});
-        qa_md4_update(&pure, (qa_bytes){word, sizeof(word)});
-    }
-    qa_md4_digest first, second;
-    qa_md4_final(&normal, &first);
-    qa_md4_final(&pure, &second);
-    if (checksum != NULL) *checksum = qa_md4_fold(&first);
-    if (pure_checksum != NULL) *pure_checksum = qa_md4_fold(&second);
-    return true;
-}
-
 bool qa_vfs_archive_checksums(qa_vfs *vfs, qa_mount_id id, uint32_t feed,
                                uint32_t *checksum, uint32_t *pure_checksum,
                                qa_error *error)
@@ -1283,7 +1254,7 @@ bool qa_vfs_archive_checksums(qa_vfs *vfs, qa_mount_id id, uint32_t feed,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "checksums require an archive mount");
         return false;
     }
-    return archive_checksums(source->archive, feed, checksum, pure_checksum, error);
+    return qa_archive_q3_checksums(source->archive->archive, feed, checksum, pure_checksum, error);
 }
 
 bool vfs_demo_package_allowed(const package *archive, qa_error *error)
@@ -1293,7 +1264,7 @@ bool vfs_demo_package_allowed(const package *archive, qa_error *error)
         qa_error_set(error, QA_ERROR_FORMAT, 0, "restricted Q3 content requires PK3 archives");
         return false;
     }
-    if (!archive_checksums(archive, 0, &checksum, NULL, error)) return false;
+    if (!qa_archive_q3_checksums(archive->archive, 0, &checksum, NULL, error)) return false;
     if (checksum != UINT32_C(437558517)) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "invalid Q3 demo package checksum: %" PRIu32, checksum);
         return false;

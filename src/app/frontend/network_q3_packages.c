@@ -81,17 +81,7 @@ static bool package_fields(package_mount *mount, const qa_archive *archive,
     memcpy(mount->game, game, game_length + 1); memcpy(mount->basename, basename, name_length - 4);
     mount->basename[name_length - 4] = 0;
     mount->entry.game = mount->game; mount->entry.basename = mount->basename; mount->entry.archive_path = path;
-    size_t count = qa_archive_count(archive);
-    if (count > SIZE_MAX / sizeof(uint64_t)) return fail(error, QA_ERROR_MEMORY, "Q3 archive checksum directory extent");
-    uint32_t *crc = count ? malloc(count * sizeof(*crc)) : NULL;
-    uint64_t *sizes = count ? malloc(count * sizeof(*sizes)) : NULL;
-    if (count && (!crc || !sizes)) { free(crc); free(sizes); return fail(error, QA_ERROR_MEMORY, "Retaining Q3 CRC directory"); }
-    for (size_t i = 0; i < count; ++i) {
-        const qa_archive_entry *member = qa_archive_entry_at(archive, i);
-        crc[i] = member->crc32; sizes[i] = member->size;
-    }
-    bool ok = qa_q3_package_checksums(crc, sizes, count, feed, &mount->entry.checksum, &mount->entry.pure_checksum, error);
-    free(crc); free(sizes); return ok;
+    return qa_archive_q3_checksums(archive, feed, &mount->entry.checksum, &mount->entry.pure_checksum, error);
 }
 void frontend_q3_packages_destroy(frontend_q3_packages *packages)
 {

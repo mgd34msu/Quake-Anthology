@@ -187,20 +187,10 @@ static bool inspect(qa_q3_client_downloads *owner, const package_request *reques
     bool ok = bytes.size == (size_t)owner->advertised_size;
     if (!ok) fail(error, QA_ERROR_FORMAT, "Q3 downloaded stage differs from its advertised prefix");
     if (ok) ok = qa_archive_open_memory(bytes, QA_ARCHIVE_PK3, &archive, error);
-    size_t count = archive ? qa_archive_count(archive) : 0;
-    uint32_t *crc = NULL; uint64_t *sizes = NULL;
-    if (ok && count > SIZE_MAX / sizeof(*sizes)) ok = fail(error, QA_ERROR_MEMORY, "Q3 downloaded archive directory extent");
-    if (ok && count) {
-        crc = malloc(count * sizeof(*crc)); sizes = malloc(count * sizeof(*sizes));
-        if (!crc || !sizes) ok = fail(error, QA_ERROR_MEMORY, "Reading genuine Q3 downloaded CRC directory");
-    }
-    for (size_t i = 0; ok && i < count; ++i) {
-        const qa_archive_entry *entry = qa_archive_entry_at(archive, i); crc[i] = entry->crc32; sizes[i] = entry->size;
-    }
-    uint32_t checksum = 0, pure = 0;
-    if (ok) ok = qa_q3_package_checksums(crc, sizes, count, 0, &checksum, &pure, error);
+    uint32_t checksum = 0;
+    if (ok) ok = qa_archive_q3_checksums(archive, 0, &checksum, NULL, error);
     if (ok && checksum != request->checksum) ok = fail(error, QA_ERROR_FORMAT, "Downloaded Q3 package checksum differs from its server reference");
-    free(crc); free(sizes); qa_archive_close(archive); qa_fs_stage_unmap(mapping); return ok;
+    qa_archive_close(archive); qa_fs_stage_unmap(mapping); return ok;
 }
 static void retained_failure(qa_q3_client_downloads *owner,const qa_error *error)
 {
