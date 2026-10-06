@@ -1,4 +1,5 @@
 #include "q3/internal.h"
+#include "boxed_sky.h"
 #include "../resources_internal.h"
 #include "qa/scene_effects.h"
 #include "qa/scene_world_save.h"
@@ -413,6 +414,9 @@ static bool submit_material_sky(const qa_scene_world *world, qa_material_library
                              const qa_material_context *context, const qa_scene_world_input *input,
                              qa_scene_frame *frame, qa_error *error) {
     if (context->source_primitives && input->fast_sky) return true;
+    if (input->override_sky && input->boxed_sky && !context->source_primitives &&
+        !context->source_scratch && !frame->source_pending)
+        return qaw_boxed_sky_collect(input->boxed_sky, mesh, context, frame, error);
     qa_scene_mesh transformed = *mesh;
     if (mesh->vertex_count && !context->source_scratch) {
         qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage, mesh->vertex_count * sizeof(*vertices),
