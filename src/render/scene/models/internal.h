@@ -25,6 +25,8 @@ typedef struct scene_model_mesh {
     uint32_t *sources;
     uint8_t *normal_indices;
     scene_model_image **shaders;
+    qa_model_vertex *sampled;
+    const qa_model_pose *sampled_pose;
 } scene_model_mesh;
 
 typedef struct scene_model_shadow_identity {
@@ -44,6 +46,9 @@ struct qa_scene_model {
     uint8_t palette[768], translation[256];
     uint64_t identity;
     scene_model_mesh *meshes;
+    qa_model_pose *sampled_pose, *sampled_pose_frames;
+    float sampled_back_lerp;
+    bool sampled_pose_ready, sampled_frames_equal;
     scene_model_image **skins, **sprites;
     scene_model_image *images;
     struct qa_scene_model *replacement;

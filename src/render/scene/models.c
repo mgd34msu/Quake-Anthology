@@ -121,6 +121,15 @@ bool qa_scene_model_create(const qa_model *source, qa_scene_resources *resources
         model->options.mipmap = false;
     }
     void *allocation;
+    if (source->format == QA_MODEL_MD5) {
+        if (source->bone_count > UINT32_MAX / 2) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "model pose storage exceeds addressable extent"); goto fail;
+        }
+        if (!model_array(source->bone_count, sizeof(*model->sampled_pose), &allocation, error)) goto fail;
+        model->sampled_pose = allocation;
+        if (!model_array(source->bone_count * 2, sizeof(*model->sampled_pose_frames), &allocation, error)) goto fail;
+        model->sampled_pose_frames = allocation;
+    }
     if (!model_array(source->mesh_count, sizeof(*model->meshes), &allocation, error)) goto fail;
     model->meshes = allocation;
     for (uint32_t i = 0; i < source->mesh_count; ++i) if (!scene_model_topology(model, i, error)) goto fail;
@@ -173,6 +182,8 @@ void qa_scene_model_destroy(qa_scene_model *model) {
     if (model->replacement_parent || !qa_scene_model_idle(model)) return;
     replacement_destroy(model);
     scene_model_topology_destroy(model);
+    free(model->sampled_pose);
+    free(model->sampled_pose_frames);
     scene_model_images_destroy(model);
     scene_model_shadow_identity *identity = model->shadow_identities;
     while (identity) { scene_model_shadow_identity *next = identity->next; free(identity); identity = next; }
@@ -929,7 +940,7 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
     if (source_vertex_count > SIZE_MAX / sizeof(qa_model_vertex) || out->vertex_count > SIZE_MAX / sizeof(qa_scene_vertex)) {
         qa_error_set(error, QA_ERROR_MEMORY, index, "model frame geometry exceeds addressable storage"); return false;
     }
-    qa_model_vertex *sampled = qa_arena_alloc(&frame->storage, source->vertex_count * sizeof(*sampled), _Alignof(qa_model_vertex), error);
+    qa_model_vertex *sampled = retained->sampled;
     qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage, out->vertex_count * sizeof(*vertices), _Alignof(qa_scene_vertex), error);
     if (!sampled || !vertices) return false;
     bool alias = model->source->format == QA_MODEL_MDL || model->source->format == QA_MODEL_MD2;
@@ -947,8 +958,14 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
         if (!qa_model_sample_alias(model->source, input->frame, input->old_frame, input->back_lerp,
                                     delta, sampled, source->vertex_count, error)) return false;
     } else if (model->source->format == QA_MODEL_MD5) {
-        if (!qa_model_skin_md5(model->source, index, input->pose, input->pose_count,
-                                sampled, source->vertex_count, error)) return false;
+        bool reusable = input->pose && input->pose_count == model->source->bone_count &&
+            (input->pose == model->sampled_pose || input->pose == model->source->bind_pose);
+        if (!reusable || retained->sampled_pose != input->pose) {
+            retained->sampled_pose = NULL;
+            if (!qa_model_skin_md5(model->source, index, input->pose, input->pose_count,
+                                    sampled, source->vertex_count, error)) return false;
+            if (reusable) retained->sampled_pose = input->pose;
+        }
     } else if (!qa_model_sample_mesh(model->source, index, input->frame, input->old_frame,
                                       input->back_lerp, sampled, source->vertex_count, error)) return false;
     qa_scene_model_input lighting = *input;
@@ -1168,6 +1185,35 @@ static bool submit_attachments(qa_scene_model *model, const qa_scene_model_input
     return true;
 }
 
+static bool sample_animation_pose(qa_scene_model *model, qa_scene_model_input *input, qa_error *error)
+{
+    const qa_model_animation *animation = input->animation;
+    if (!animation->frame_count || animation->joint_count != model->source->bone_count) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "MD5 animation does not match retained mesh"); return false;
+    }
+    size_t count = animation->joint_count, bytes = count * sizeof(*model->sampled_pose);
+    const qa_model_pose *current = animation->poses + (size_t)(input->frame % animation->frame_count) * count;
+    const qa_model_pose *old = animation->poses + (size_t)(input->old_frame % animation->frame_count) * count;
+    bool frames_equal = input->frame == input->old_frame;
+    if (!model->sampled_pose_ready || model->sampled_frames_equal != frames_equal ||
+        (!frames_equal && memcmp(&model->sampled_back_lerp, &input->back_lerp, sizeof(input->back_lerp))) ||
+        memcmp(model->sampled_pose_frames, current, bytes) ||
+        memcmp(model->sampled_pose_frames + count, old, bytes)) {
+        model->sampled_pose_ready = false;
+        for (uint32_t i = 0; i < model->source->mesh_count; ++i) model->meshes[i].sampled_pose = NULL;
+        if (!qa_model_animation_sample(animation, input->frame, input->old_frame,
+            input->back_lerp, model->sampled_pose, count, error)) return false;
+        memcpy(model->sampled_pose_frames, current, bytes);
+        memcpy(model->sampled_pose_frames + count, old, bytes);
+        model->sampled_back_lerp = input->back_lerp;
+        model->sampled_frames_equal = frames_equal;
+        model->sampled_pose_ready = true;
+    }
+    input->pose = model->sampled_pose;
+    input->pose_count = count;
+    return true;
+}
+
 static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input *original,
                           qa_scene_frame *frame, unsigned depth, qa_error *error) {
     if (depth >= 64) { qa_error_set(error, QA_ERROR_ARGUMENT, depth, "model attachment graph is cyclic or too deep"); return false; }
@@ -1237,16 +1283,17 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
     }
     if (model->source->format == QA_MODEL_MD5 && !input.pose) {
         if (input.animation) {
-            size_t joint_count = input.animation->joint_count;
-            if (input.animation->joint_count != model->source->bone_count ||
-                joint_count > SIZE_MAX / sizeof(qa_model_pose)) {
-                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "MD5 animation does not match retained mesh"); return false;
-            }
-            qa_model_pose *pose = qa_arena_alloc(&frame->storage,
-                input.animation->joint_count * sizeof(*pose), _Alignof(qa_model_pose), error);
-            if (!pose || !qa_model_animation_sample(input.animation, input.frame, input.old_frame,
-                input.back_lerp, pose, input.animation->joint_count, error)) return false;
-            input.pose = pose; input.pose_count = input.animation->joint_count;
+            if (depth != 0 || model->active_submissions > 1) {
+                size_t count = input.animation->joint_count;
+                if (count != model->source->bone_count || count > SIZE_MAX / sizeof(qa_model_pose)) {
+                    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "MD5 animation does not match retained mesh"); return false;
+                }
+                qa_model_pose *pose = qa_arena_alloc(&frame->storage, count * sizeof(*pose),
+                    _Alignof(qa_model_pose), error);
+                if (!pose || !qa_model_animation_sample(input.animation, input.frame, input.old_frame,
+                    input.back_lerp, pose, count, error)) return false;
+                input.pose = pose; input.pose_count = count;
+            } else if (!sample_animation_pose(model, &input, error)) return false;
         } else { input.pose = model->source->bind_pose; input.pose_count = model->source->bone_count; }
     }
     bool visible = true;

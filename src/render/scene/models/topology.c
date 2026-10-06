@@ -23,13 +23,16 @@ bool scene_model_topology(qa_scene_model *model, uint32_t mesh_index, qa_error *
     if (mesh_index == 0) model->source_topology = qa_material_library_has_source_profile(model->materials) &&
         (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4);
     size_t allocated_vertices = model->source_topology ? source->vertex_count : corners;
+    size_t source_vertices = source->vertex_count;
     if (allocated_vertices > SIZE_MAX / sizeof(*mesh->vertices) ||
-        allocated_vertices > SIZE_MAX / sizeof(*mesh->sources) || corners > SIZE_MAX / sizeof(*mesh->indices)) goto too_large;
+        allocated_vertices > SIZE_MAX / sizeof(*mesh->sources) || corners > SIZE_MAX / sizeof(*mesh->indices) ||
+        source_vertices > SIZE_MAX / sizeof(*mesh->sampled)) goto too_large;
     mesh->vertices = calloc(allocated_vertices ? allocated_vertices : 1, sizeof(*mesh->vertices));
     mesh->sources = calloc(allocated_vertices ? allocated_vertices : 1, sizeof(*mesh->sources));
     mesh->indices = calloc(corners ? corners : 1, sizeof(*mesh->indices));
     mesh->shaders = calloc(source->shader_count ? source->shader_count : 1, sizeof(*mesh->shaders));
-    if (!mesh->vertices || !mesh->sources || !mesh->indices || !mesh->shaders) goto memory;
+    mesh->sampled = calloc(source->vertex_count ? source->vertex_count : 1, sizeof(*mesh->sampled));
+    if (!mesh->vertices || !mesh->sources || !mesh->indices || !mesh->shaders || !mesh->sampled) goto memory;
     size_t capacity = 0;
     corner_entry *table = NULL;
     if (!model->source_topology) {
@@ -137,6 +140,7 @@ void scene_model_topology_destroy(qa_scene_model *model) {
         else { free(mesh->vertices); free(mesh->indices); }
         free(mesh->sources);
         free(mesh->normal_indices); free(mesh->shaders);
+        free(mesh->sampled);
     }
     free(model->meshes);
 }
