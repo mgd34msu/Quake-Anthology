@@ -138,3 +138,33 @@ Each public quit exited zero. All game processes and the private display were
 removed, and owner settings and the installed artifact remained unchanged.
 Receipt: `owner-jump-slipgate-save-235e359a-proof.json`. The nonfatal demo warning
 still appears after load. No performance, audio or full-campaign claim is made.
+
+## Installed `41c128d0`: current owner acceptance
+
+The original-writer selection, scoped clock, host-owned client colors, hidden
+map metadata, empty-target callbacks and pickup-state changes passed complete
+GCC and Clang builds and their registered checks. The installed executable and
+12 sibling runtime files match the GCC build byte for byte.
+
+Three current shipped checks again passed default Space and raw mouse button 3
+jump/release/landing, raw mouse button 2 forward movement, Normal slipgate
+travel beyond fog expiry, and original v5 save/load/resave after real S-key
+movement. No binding changed during the checks.
+
+| Entry | Renderer | Y after moving away | Y restored by load |
+| --- | --- | ---: | ---: |
+| CLI | CPU | 1857.529419 | 2015.968750 |
+| CLI | GL | 1859.631226 | 2015.968750 |
+| Actual menu/preset | GL | 1857.738403 | 2015.968750 |
+
+The saved and resaved origin, angles, health, weapon, ammunition and item flags
+match exactly. Inspected photographs retain the stock ammo icon and 25 shells.
+All manual and level-entry files are original text, 32,208–32,601 bytes. All
+three public quits exited zero; game PIDs and the private display were removed.
+Owner settings and the installed artifact remained unchanged.
+
+Receipt: `owner-jump-slipgate-save-41c128d0-proof.json`. This is current live
+acceptance of MIKE-01, MIKE-21 and the owner start-map MIKE-22 path, without a
+private provider-pointer instrument, audio or performance qualification.
+The nonfatal demo warning after load remains. Actual original-progs import on
+other maps is a separate compatibility check and is not established here.
