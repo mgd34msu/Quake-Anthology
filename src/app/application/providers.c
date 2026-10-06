@@ -52,6 +52,7 @@
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
 #include "qa/game_q2_bots.h"
+#include "qa/game_q2_wire.h"
 #include "native_maps.h"
 #include "rankings.h"
 #include "q3_world_restart.h"
@@ -849,6 +850,15 @@ static bool construct_q2(qa_application *application,
         .fired = application_native_q1_source_fired};
     if (!qa_q2_create(&services, &options, &hooks, &provider->state.q2,
                       error))
+        return false;
+    int32_t clients, capacity;
+    if (!application_native_q2_source_integer(provider, "maxclients", &clients, error) ||
+        !application_native_q2_source_integer(provider, "maxentities", &capacity, error)) return false;
+    if (clients < 1 || clients > 256 || capacity <= clients || capacity > 65536 ||
+        choices->seat_count > (uint32_t)clients)
+        return application_fail(error, QA_ERROR_FORMAT,
+                                "Q2 source edict policy cannot reserve its real client rows");
+    if (!qa_q2_wire_configure(provider->state.q2, (uint32_t)capacity, (uint32_t)clients, error))
         return false;
     qa_q2_item_options items = {.context = provider, .supply_for = application_supplies_source_for,
         .instanced_coop = options.edition == QA_Q2_RERELEASE, .weapon_respawn_seconds = 30};

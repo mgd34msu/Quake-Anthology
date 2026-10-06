@@ -2641,15 +2641,8 @@ static bool q2_spawn_map(application_provider *provider,
                          const qa_entities *entities,
                          application_player_travel *players, qa_error *error)
 {
-    int32_t clients, capacity;
-    if (!application_native_q2_source_integer(provider, "maxclients", &clients, error) ||
-        !application_native_q2_source_integer(provider, "maxentities", &capacity, error)) return false;
-    if (clients < 1 || clients > 256 || capacity <= clients || capacity > 65536 ||
-        choices->seat_count > (uint32_t)clients)
-        return application_fail(error, QA_ERROR_FORMAT,
-                                "Q2 source edict policy cannot reserve its real client rows");
-    if (!qa_q2_wire_configure(provider->state.q2, (uint32_t)capacity, (uint32_t)clients, error))
-        return false;
+    int32_t clients;
+    if (!application_native_q2_source_integer(provider, "maxclients", &clients, error)) return false;
     qa_q2_entity_services services = q2_entity_services(provider, choices);
     services.spawn = q2_spawn;
     if (!qa_q2_entities_configure(provider->state.q2, &services, error))
