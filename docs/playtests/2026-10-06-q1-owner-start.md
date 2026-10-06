@@ -66,3 +66,47 @@ Private evidence receipts: `owner-default-space-baseline-87-proof.json`,
 `owner-settings-clone-space-baseline-87-proof.json`,
 `owner-jump-profile-repair-20261006.json`,
 `owner-jump-slipgate-save-ab43-proof.json`, and `shipped-ab43f9a1.json`.
+
+## Installed `b9140af8`: keyboard, slipgate and native load
+
+Commit `e9d2e4eb` resolves the original save against the qualified current game.
+Its four live checks restored position, but native admission rejected saved
+globals and map actors, so load switched to QuakeC and changed the ammo HUD.
+That result was incomplete. Commits `dff9f9c2` and `b9140af8` pair those globals,
+map continuations and monster view offsets with their existing native state.
+Mover vectors share one capture/admission/restore table; gameplay and saved
+monster admission share the same view-height calculation.
+
+Installed `b9140af8` passed all four requested classic `start.bsp` paths:
+
+| Entry | Renderer | Position after moving away (Y) | Position restored by load (Y) |
+| --- | --- | ---: | ---: |
+| CLI | CPU | 1860.981567 | 2015.968750 |
+| CLI | GL | 1853.435913 | 2015.968750 |
+| Actual menu/preset | CPU | 1857.634155 | 2015.968750 |
+| Actual menu/preset | GL | 1861.098877 | 2015.968750 |
+
+Every case used the corrected owner settings clone and real default Space,
+raw mouse button 3 and forward input. Photographs show jump rise and landing.
+Normal-gate travel survived fog expiry. Original v5 saves restored the exact
+saved player position after distinct movement, and the stock ammo icon and
+count remained intact. Each public quit exited zero. Owner settings and the
+installed artifact remained unchanged; all processes and the private display
+were removed. No rebinding, god mode, noclip or debugger was used.
+
+Both complete compiler builds and their registered checks passed. Separate
+GCC and Clang application component runs retained built-in Q1 through two
+load/save cycles, each reproducing the entire 32,661-byte owner save exactly.
+The live receipt is `owner-jump-slipgate-save-b914-proof.json`; installation
+receipts are `shipped-b9140af8.json` and `shipped-runtime-b9140af8.json`.
+
+Rerelease default Space also jumped and landed in installed `e9d2e4eb`, CPU and
+GL, with its separate fresh input profile. This is recorded in
+`owner-rerelease-default-space-e9d2-proof.json`; it does not qualify rerelease
+slipgate travel or loading.
+
+The classic owner start-map defects MIKE-01, MIKE-21 and MIKE-22 pass these
+live acceptance checks. The nonfatal demo-recording startup warning remains
+open. Native admission of placed items and additional mover types remains
+incomplete on other maps; these checks do not establish all-save or campaign
+completion.
