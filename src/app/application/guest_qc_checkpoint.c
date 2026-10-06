@@ -20,6 +20,17 @@ static bool write_text(qa_net_writer *writer, const char *text)
     return length <= UINT32_MAX && qa_net_write_u32(writer, (uint32_t)length) &&
            qa_net_write_data(writer, text, length);
 }
+static bool read_text_matches(qa_net_reader *reader, const char *text)
+{
+    uint32_t length = qa_net_read_u32(reader);
+    size_t expected = text ? strlen(text) : 0;
+    qa_bytes bytes;
+    if (reader->failed || length != expected ||
+        !qa_net_read_bytes(reader, length, &bytes) ||
+        (length && memcmp(bytes.data, text, length)))
+        return qa_net_reader_fail(reader, "QuakeC checkpoint source path differs");
+    return true;
+}
 static char *read_text(qa_net_reader *reader)
 {
     uint32_t length = qa_net_read_u32(reader);
@@ -241,7 +252,13 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
             client->actor, &seen, &sequence) || !seen || client->receipt_sequence > sequence))
             return application_fail(error, QA_ERROR_FORMAT, "QC receipt leaves its actual admitted control sequence");
     }
+    const qa_launch_instance *launch = engine->provider->launch;
+    const char *artifact = launch->selection.artifact;
+    const char *declaration = qa_resource_path(launch->declaration);
+    qa_qc_program_info program = qa_qc_program_describe(engine->provider->state.qc.program);
     size_t capacity = 256;
+    if (!add_size(&capacity, (artifact ? strlen(artifact) : 0) + 4, error) ||
+        !add_size(&capacity, (declaration ? strlen(declaration) : 0) + 4, error)) return false;
     if (engine->original_extension.size>UINT32_MAX ||
         (engine->original_extension.size && (!engine->original_extension.data ||
          memchr(engine->original_extension.data,0,engine->original_extension.size))) ||
@@ -308,11 +325,10 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
     if (data == NULL) { openings_free(openings,engine->resource_count); qa_buffer_free(&rerelease); qa_buffer_free(&registry); return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC engine checkpoint"); }
     qa_net_writer writer; qa_net_writer_init(&writer, data, capacity, error);
     const qa_actor_registry *actors = qa_session_actors(engine->services.session);
-    const qa_sha256_digest *declaration = qa_resource_digest(engine->provider->launch->declaration);
-    uint8_t empty_digest[32] = {0};
     bool ok = qa_net_write_u32(&writer, engine->max_clients) &&
         qa_net_write_u32(&writer, engine->profile) &&
-        qa_net_write_data(&writer, declaration ? declaration->bytes : empty_digest, 32) &&
+        write_text(&writer, artifact) && write_text(&writer, declaration) &&
+        qa_net_write_u32(&writer, program.system_crc) &&
         qa_net_write_u64(&writer, qa_collision_map_identity(qa_world_geometry(engine->world))) &&
         qa_net_write_u64(&writer, engine->source_time_ns) &&
         qa_net_write_f32(&writer, engine->serverflags) && qa_net_write_u8(&writer, engine->loading) &&
@@ -387,12 +403,13 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC engine restore requires an idle frame");
     if (!engine_console_safe(engine, error) || !application_qc_callbacks_ready(engine, error)) return false;
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    uint8_t saved_declaration[32], empty_digest[32] = {0};
-    const qa_sha256_digest *declaration = qa_resource_digest(engine->provider->launch->declaration);
+    const qa_launch_instance *launch = engine->provider->launch;
+    qa_qc_program_info program = qa_qc_program_describe(engine->provider->state.qc.program);
     if (qa_net_read_u32(&reader) != engine->max_clients ||
         qa_net_read_u32(&reader) != (uint32_t)engine->profile ||
-        !qa_net_read_data(&reader, saved_declaration, sizeof(saved_declaration)) ||
-        memcmp(saved_declaration, declaration ? declaration->bytes : empty_digest, sizeof(saved_declaration)) ||
+        !read_text_matches(&reader, launch->selection.artifact) ||
+        !read_text_matches(&reader, qa_resource_path(launch->declaration)) ||
+        qa_net_read_u32(&reader) != program.system_crc ||
         qa_net_read_u64(&reader) != qa_collision_map_identity(qa_world_geometry(engine->world)))
         return application_fail(error, QA_ERROR_FORMAT, "QuakeC engine checkpoint identity differs");
     application_provider *current=application_save_current_provider(engine->provider);

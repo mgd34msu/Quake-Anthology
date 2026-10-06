@@ -356,11 +356,10 @@ static bool source_word(double value,uint32_t *out,qa_error *error)
 }
 static bool hipnotic_ui(const qa_qc_program *program)
 {
-    static const qa_sha256_digest digest={{0x35,0xa2,0xfd,0xc3,0xac,0xb0,0x4b,0xda,
-        0xfe,0x8d,0x02,0x69,0xf5,0x32,0x7c,0xd1,0xd5,0xb4,0x79,0x71,0xf1,0xef,
-        0x02,0x44,0x29,0xf1,0x57,0x2d,0x32,0x01,0xdc,0x82}};
     qa_qc_program_info actual=qa_qc_program_describe(program);
-    return qa_sha256_equal(&actual.digest,&digest);
+    return actual.system_crc==5927u && actual.file_crc==10486u &&
+        actual.statement_count==36334u && actual.global_count==5980u &&
+        actual.field_count==270u && actual.function_count==2785u;
 }
 static bool selected_ui_basis(qa_application *app,application_provider *p,qa_actor_id actor,uint32_t slot)
 {

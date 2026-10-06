@@ -402,7 +402,6 @@ bool qa_qc_program_load(qa_bytes bytes, const char *source,
         .function_count = functions.count,
         .file_crc = qc_crc16(bytes)
     };
-    qa_sha256(bytes, &program->info.digest);
     program->string_bytes = strings.count;
 
     bool allocated = program->source != NULL

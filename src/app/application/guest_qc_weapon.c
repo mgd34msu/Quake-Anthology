@@ -157,13 +157,12 @@ bool qa_application_qc_weapon_settled(qa_application *app,qa_actor_id actor,bool
     application_qc_client *client=client_for(provider->state.qc.engine,actor);
     if(!client) return application_fail(error,QA_ERROR_NOT_FOUND,"QC weapon stage has no active full client");
     qa_qc_program_info program=qa_qc_program_describe(provider->state.qc.program);
-    static const qa_sha256_digest nq={{0xf2,0x61,0x97,0x87,0xf9,0xaa,0x0f,0x05,
-        0x72,0x46,0xee,0xa1,0x66,0x5b,0x62,0x2b,0x46,0x91,0xb5,0xc5,0xa8,0x00,
-        0xb1,0xa4,0x61,0x33,0xd1,0xfe,0x8b,0x77,0x15,0x80}};
-    static const qa_sha256_digest qw={{0xff,0x51,0xcb,0x5e,0x77,0x36,0x0d,0x72,
-        0xb9,0x34,0x87,0xd8,0x91,0x98,0xdc,0xf9,0x46,0x29,0xb9,0x2f,0x8b,0xae,
-        0x10,0x0f,0xc6,0xea,0x48,0xa6,0xc1,0x2a,0x78,0x30}};
-    bool netquake=qa_sha256_equal(&program.digest,&nq),quakeworld=qa_sha256_equal(&program.digest,&qw);
+    bool netquake=program.system_crc==5927u && program.file_crc==24778u &&
+        program.statement_count==20940u && program.global_count==4287u &&
+        program.field_count==218u && program.function_count==2091u;
+    bool quakeworld=program.system_crc==54730u && program.file_crc==21450u &&
+        program.statement_count==11738u && program.global_count==2114u &&
+        program.field_count==216u && program.function_count==482u;
     if(provider->state.qc.qualified || (!netquake && !quakeworld))
         return application_fail(error,QA_ERROR_UNSUPPORTED,"QC weapon stage lacks an artifact-qualified continuation declaration");
     const qa_qc_definition *field=qa_qc_program_find_field(provider->state.qc.program,"think"); int32_t think;
@@ -171,8 +170,8 @@ bool qa_application_qc_weapon_settled(qa_application *app,qa_actor_id actor,bool
         !qa_qc_actor_observation_int(provider->state.qc.instance,view.source_slot,actor,field->offset,&think,error)) return false;
     if(think<0 || !qa_qc_program_function(provider->state.qc.program,(uint32_t)think))
         return application_fail(error,QA_ERROR_FORMAT,"QC weapon continuation is outside its actual program");
-    /* Both exact artifacts place the qualified shot/axe/nail/light/rocket
-     * continuations consecutively. Their complete digests fix that table. */
+    /* These stock program layouts place the shot/axe/nail/light/rocket
+     * continuations consecutively. */
     uint32_t first=netquake?249u:217u;
     *out=(uint32_t)think<first || (uint32_t)think>=first+32u;
     return qa_application_qc_message_player_ui_current(app,&view);

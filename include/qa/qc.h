@@ -2,7 +2,6 @@
 #define QA_QC_H
 
 #include "qa/gameplay.h"
-#include "qa/hash.h"
 #include "qa/inventory.h"
 #include "qa/session.h"
 #include "qa/vfs.h"
@@ -166,7 +165,6 @@ typedef struct qa_qc_program_info {
     uint32_t system_crc, entity_field_words, global_words;
     uint32_t statement_count, global_count, field_count, function_count;
     uint16_t file_crc;
-    qa_sha256_digest digest;
 } qa_qc_program_info;
 
 /* Version 6 programs with the original NetQuake (5927) and QuakeWorld (54730)

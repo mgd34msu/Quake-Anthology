@@ -363,8 +363,7 @@ bool qa_qc_instance_create(const qa_qc_program *program,
     for (uint32_t slot = 1; slot < instance->entity_count; ++slot)
         set_free_metadata(instance, slot, true, 0.0f);
     instance->next_invocation = 0;
-    instance->random_state = qa_load_u32le(program->info.digest.bytes);
-    if (instance->random_state == 0) instance->random_state = UINT32_C(0x6d2b79f5);
+    instance->random_state = UINT32_C(0x6d2b79f5);
     for (uint32_t i = 0; i < instance->options.entity_capacity; ++i) {
         instance->bodies[i].instance = instance;
         instance->bodies[i].slot = i;

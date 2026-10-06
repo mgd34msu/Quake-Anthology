@@ -160,7 +160,7 @@ bool qa_qc_checkpoint_capture(qa_qc_instance *instance,
         instance->checkpointing = false;
         return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot allocate QuakeC checkpoint");
     }
-    checkpoint->program = instance->program->info.digest;
+    checkpoint->program_crc = instance->program->info.file_crc;
     checkpoint->profile = instance->options.profile;
     checkpoint->layout = instance->layout;
     checkpoint->first_dynamic_slot = instance->options.first_dynamic_slot;
@@ -275,7 +275,7 @@ static bool checkpoint_matches(const qa_qc_instance *instance,
                                const qa_qc_checkpoint *checkpoint, qa_error *error)
 {
     if (!checkpoint_valid(checkpoint, error)) return false;
-    if (!qa_sha256_equal(&instance->program->info.digest, &checkpoint->program)
+    if (instance->program->info.file_crc != checkpoint->program_crc
         || instance->options.profile != checkpoint->profile
         || instance->layout.stride_bytes != checkpoint->layout.stride_bytes
         || instance->layout.variables_offset_bytes != checkpoint->layout.variables_offset_bytes
@@ -549,7 +549,7 @@ static bool checkpoint_io(qa_source_save_io *io, qa_qc_checkpoint *checkpoint)
     if (!qa_source_save_u32(io, &magic)) return false;
     if (magic != QC_CHECKPOINT_MAGIC)
         return qc_fail(io->error, QA_ERROR_FORMAT, 0, "Invalid QuakeC checkpoint header");
-    if (!qa_source_save_bytes(io, checkpoint->program.bytes, sizeof(checkpoint->program.bytes))
+    if (!qa_source_save_u16(io, &checkpoint->program_crc)
         || !qa_source_save_u32(io, &profile)
         || !qa_source_save_u32(io, &checkpoint->layout.stride_bytes)
         || !qa_source_save_u32(io, &checkpoint->layout.variables_offset_bytes)

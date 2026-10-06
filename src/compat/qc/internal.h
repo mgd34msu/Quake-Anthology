@@ -129,7 +129,7 @@ typedef struct qc_saved_bytes {
 } qc_saved_bytes;
 
 struct qa_qc_checkpoint {
-    qa_sha256_digest program;
+    uint16_t program_crc;
     qa_qc_profile profile;
     qa_qc_entity_layout layout;
     uint32_t entity_count, first_dynamic_slot, global_words;

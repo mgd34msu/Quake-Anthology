@@ -590,14 +590,11 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
     if (!profile) { qa_json_destroy(doc); return application_fail(error, QA_ERROR_MEMORY, "Allocating QC qualification"); }
     provider->state.qc.qualified = profile;
     qa_json_id root = qa_json_root(doc), artifact = qa_json_get(doc, root, "program"); uint64_t version = 0;
-    char *digest = application_qc_declaration_string(doc, qa_json_get(doc, artifact, "digest"), error);
-    char *path = application_qc_declaration_string(doc, qa_json_get(doc, artifact, "path"), error); qa_sha256_digest expected;
-    qa_qc_program_info program = qa_qc_program_describe(provider->state.qc.program);
+    char *path = application_qc_declaration_string(doc, qa_json_get(doc, artifact, "path"), error);
     bool ok = qa_json_type(doc, root) == QA_JSON_OBJECT && qa_json_u64(doc, qa_json_get(doc, root, "version"), &version, error) && version == 1 &&
-        qa_json_string_equal(doc, qa_json_get(doc, root, "runtime"), "quakec") && digest && path &&
-        strcmp(path, provider->launch->selection.artifact) == 0 && qa_sha256_parse(digest, &expected, error) &&
-        qa_sha256_equal(&expected, &program.digest);
-    free(digest); free(path);
+        qa_json_string_equal(doc, qa_json_get(doc, root, "runtime"), "quakec") && path &&
+        strcmp(path, provider->launch->selection.artifact) == 0;
+    free(path);
     if (!ok && error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "QC declaration artifact identity differs");
     if (ok && (provider->launch->roles & QA_ROLE_BIT(QA_ROLE_ENTITIES)))
         ok = application_qc_authored_map_ready(provider, error);
