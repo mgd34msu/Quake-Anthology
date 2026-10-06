@@ -1570,8 +1570,9 @@ static bool image_from_rgba_complete(qa_scene_resources *resources, const char *
             levels[i] = (qa_scene_image_level){image->width, image->height, image->rgba.data, image->rgba.size};
         }
         qa_scene_image_kind kind = scene_resource_q3_image_kind(format);
+        qa_scene_filter filter = options->source_upload.mipmap ? options->filter : QA_SCENE_LINEAR;
         bool ok = qa_scene_image_create(resources, name, kind, levels, uploaded.count,
-            options->wrap, options->filter, (qa_scene_vec4){0}, out, error);
+            options->wrap, filter, (qa_scene_vec4){0}, out, error);
         if (ok) {
             (*out)->logical_width = source->width; (*out)->logical_height = source->height;
             owned_image *owned = (owned_image *)*out;
