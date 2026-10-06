@@ -235,15 +235,7 @@ static uint32_t stencil_operation(uint32_t current,
 static void sample_fragment_texture(const cpu_sampler *sampler,
                                     const cpu_derivative *derivative,
                                     const double uv[2], double out[4]) {
-  double rho = 0;
-  if (cpu_sampler_requires_derivatives(sampler)) {
-    const qa_scene_image_level *level = &sampler->image->levels[0];
-    rho = fmax(hypot(derivative->dudx * level->width,
-                     derivative->dvdx * level->height),
-               hypot(derivative->dudy * level->width,
-                     derivative->dvdy * level->height));
-  }
-  cpu_sample_texture(sampler, uv[0], uv[1], rho, out);
+  cpu_sample_texture_derivative(sampler, derivative, uv[0], uv[1], out);
 }
 static inline void lightmap_color(const qa_scene_draw *draw,
     const cpu_sampler samplers[2], const cpu_fragment *fragment,

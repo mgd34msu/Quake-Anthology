@@ -1,5 +1,6 @@
 #include "internal.h"
 #include <fenv.h>
+#include <float.h>
 #if defined(__SSE2__)
 #include <emmintrin.h>
 #endif
@@ -156,7 +157,8 @@ bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
     image = cpu_stream_image_read(renderer, image);
     sampler->image = image;
   }
-  if (renderer->texture_components_ready && fegetround() == FE_TONEAREST) {
+  bool nearest_rounding = fegetround() == FE_TONEAREST;
+  if (renderer->texture_components_ready && nearest_rounding) {
     size_t format = !image->source_q3 ? 0 :
         image->source_format == QA_Q3_TEXTURE_RGB5 ? 1 :
         image->source_format == QA_Q3_TEXTURE_RGBA4 ? 2 : 0;
@@ -201,20 +203,26 @@ bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
   sampler->magnification_limit = magnification_limit;
   sampler->blend = filter == QA_SCENE_NEAREST_MIPMAP_LINEAR ||
                     filter == QA_SCENE_LINEAR_MIPMAP_LINEAR;
+  sampler->nearest_mip = nearest_rounding && sampler->level_count > 1 &&
+      !sampler->blend && sampler->linear == sampler->magnification_linear;
+  return true;
+}
+static bool texture_coordinates(const cpu_sampler *sampler, double *u,
+                                double *v, double out[4]) {
+  out[0] = out[1] = out[2] = out[3] = 1;
+  if (!sampler->level_count || !isfinite(*u) || !isfinite(*v)) return false;
+  if (sampler->image->wrap == QA_SCENE_REPEAT) {
+    *u -= floor(*u);
+    *v -= floor(*v);
+  } else {
+    *u = cpu_clamp(*u);
+    *v = cpu_clamp(*v);
+  }
   return true;
 }
 void cpu_sample_texture(const cpu_sampler *sampler, double u, double v,
                         double rho, double out[4]) {
-  out[0] = out[1] = out[2] = out[3] = 1;
-  if (!sampler->level_count || !isfinite(u) || !isfinite(v)) return;
-  const qa_scene_image *image = sampler->image;
-  if (image->wrap == QA_SCENE_REPEAT) {
-    u -= floor(u);
-    v -= floor(v);
-  } else {
-    u = cpu_clamp(u);
-    v = cpu_clamp(v);
-  }
+  if (!texture_coordinates(sampler, &u, &v, out)) return;
   if (!(rho > sampler->magnification_limit) || sampler->level_count == 1) {
     bool magnification=!(rho>sampler->magnification_limit);
     bool sample_linear=magnification?sampler->magnification_linear:sampler->linear;
@@ -233,4 +241,54 @@ void cpu_sample_texture(const cpu_sampler *sampler, double u, double v,
     for (size_t c = 0; c < 4; ++c)
       out[c] = out[c] * (1 - fraction) + next[c] * fraction;
   }
+}
+
+static bool nearest_mip_level(const cpu_sampler *sampler, const double axes[4],
+                               size_t *out) {
+#if FLT_RADIX == 2 && DBL_MANT_DIG == 53 && DBL_MAX_EXP == 1024
+  if (!sampler->nearest_mip || sizeof(double) != sizeof(uint64_t) ||
+      fegetround() != FE_TONEAREST) return false;
+  for (size_t i = 0; i < 4; ++i) {
+    double value = fabs(axes[i]);
+    if (!isfinite(value) || (value != 0 &&
+        (value < 0x1p-450 || value > 0x1p450))) return false;
+  }
+  double x = axes[0] * axes[0] + axes[1] * axes[1];
+  double y = axes[2] * axes[2] + axes[3] * axes[3];
+  double squared = x > y ? x : y;
+  uint64_t bits;
+  memcpy(&bits, &squared, sizeof(bits));
+  int exponent = (int)((bits >> 52) & UINT64_C(0x7ff)) - 1023;
+  /* Nearest-mip transitions are squared lengths 2, 8, 32, ... .
+   * Keep a wide numerical uncertainty band on the original hypot/log2 path. */
+  int boundary_exponent = exponent < 1 ? 1 : exponent | 1;
+  uint64_t boundary = (uint64_t)(boundary_exponent + 1023) << 52;
+  uint64_t distance = bits > boundary ? bits - boundary : boundary - bits;
+  if (distance <= UINT64_C(16384)) return false;
+  size_t level = exponent < 1 ? 0 : (size_t)((exponent + 1) / 2);
+  *out = level < sampler->level_count ? level : sampler->level_count - 1;
+  return true;
+#else
+  (void)sampler; (void)axes; (void)out;
+  return false;
+#endif
+}
+void cpu_sample_texture_derivative(const cpu_sampler *sampler,
+    const cpu_derivative *derivative, double u, double v, double out[4]) {
+  if (!cpu_sampler_requires_derivatives(sampler)) {
+    cpu_sample_texture(sampler, u, v, 0, out);
+    return;
+  }
+  const qa_scene_image_level *level = &sampler->image->levels[0];
+  double axes[4] = {derivative->dudx * level->width,
+      derivative->dvdx * level->height, derivative->dudy * level->width,
+      derivative->dvdy * level->height};
+  size_t mip;
+  if (nearest_mip_level(sampler, axes, &mip)) {
+    if (texture_coordinates(sampler, &u, &v, out))
+      sample_level(sampler, mip, u, v, sampler->linear, out);
+    return;
+  }
+  double rho = fmax(hypot(axes[0], axes[1]), hypot(axes[2], axes[3]));
+  cpu_sample_texture(sampler, u, v, rho, out);
 }

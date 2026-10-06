@@ -120,7 +120,7 @@ typedef struct cpu_sampler {
   const cpu_framebuffer *target;
   const double *components, *target_components;
   size_t level_count;
-  bool linear, magnification_linear, blend, alpha;
+  bool linear, magnification_linear, blend, alpha, nearest_mip;
   double magnification_limit;
 } cpu_sampler;
 static inline bool cpu_sampler_requires_derivatives(const cpu_sampler *sampler) {
@@ -198,6 +198,8 @@ bool cpu_image_stream_admit(qa_cpu_renderer *, const qa_scene_image_stream *, qa
 bool cpu_texture_components_init(qa_cpu_renderer *renderer, qa_error *error);
 void cpu_sample_texture(const cpu_sampler *sampler, double u, double v,
                         double rho, double out[4]);
+void cpu_sample_texture_derivative(const cpu_sampler *, const cpu_derivative *,
+                                   double u, double v, double out[4]);
 bool cpu_depth_fog(qa_cpu_renderer *renderer, const qa_scene_fog *fog,
                    const qa_scene_view *view, qa_error *error);
 #endif
