@@ -287,8 +287,9 @@ bool qa_scene_world_image_policy_prepare(qa_scene_world *world, qa_scene_resourc
                     return world_error(error, QA_ERROR_FORMAT, "Prepared brush texture coordinates overflow");
                 }
             }
-            qa_scene_geometry *geometry = qa_scene_geometry_adopt(prepared->vertices, surface->mesh.vertex_count,
-                prepared->indices, surface->mesh.index_count, error);
+            qa_scene_geometry *geometry = qa_scene_geometry_adopt(&(qa_scene_geometry_input){
+                .vertices = prepared->vertices, .vertex_count = surface->mesh.vertex_count,
+                .indices = prepared->indices, .index_count = surface->mesh.index_count}, error);
             if (!geometry) {
                 free(prepared->vertices); free(prepared->indices); prepared->vertices = NULL; prepared->indices = NULL;
                 world_policy_dispose(ticket); return false;
@@ -449,7 +450,8 @@ bool qaw_mesh_allocate(qa_scene_world *world, qaw_surface *surface,
     if (vertices != 0 && surface->vertices == NULL) return false;
     surface->indices = world_array(indices, sizeof(*surface->indices), error);
     if (indices != 0 && surface->indices == NULL) return false;
-    qa_scene_geometry *geometry = qa_scene_geometry_adopt(surface->vertices, vertices, surface->indices, indices, error);
+    qa_scene_geometry *geometry = qa_scene_geometry_adopt(&(qa_scene_geometry_input){.vertices = surface->vertices,
+        .vertex_count = vertices, .indices = surface->indices, .index_count = indices}, error);
     if (geometry == NULL) return false;
     surface->mesh = (qa_scene_mesh){
         .identity = qa_scene_identity(),

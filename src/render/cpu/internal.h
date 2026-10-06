@@ -78,7 +78,7 @@ struct qa_cpu_renderer {
   uint8_t gamma[256], *output;
   struct cpu_vertex *vertices;
   size_t vertex_capacity;
-  struct cpu_raster_pool *raster_pool;
+  qa_render_workers *raster_pool;
   struct cpu_brush_context *brush_spans;
   struct cpu_surface_cache *surface_cache;
   const qa_scene_image *bound[2];
@@ -163,8 +163,8 @@ bool cpu_draw_queued(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                      qa_error *error);
 void cpu_raster_flush(qa_cpu_renderer *renderer);
 bool cpu_raster_image_pending(const qa_cpu_renderer *, const qa_scene_image *);
-void cpu_raster_pool_create(qa_cpu_renderer *renderer);
 void cpu_raster_pool_destroy(qa_cpu_renderer *renderer);
+bool cpu_raster_acquire(qa_cpu_renderer *, qa_error *);
 void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                         const cpu_sampler samplers[2], const cpu_fragment *fragment,
                         cpu_fragment_admission admission);

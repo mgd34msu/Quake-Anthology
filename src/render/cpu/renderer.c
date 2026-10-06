@@ -186,8 +186,17 @@ qa_cpu_renderer *qa_cpu_create(const qa_cpu_options *options, qa_error *error) {
     qa_cpu_destroy(renderer);
     return NULL;
   }
-  cpu_raster_pool_create(renderer);
+  if (options->workers) {
+    if (!qa_render_workers_retain(options->workers, error)) {
+      qa_cpu_destroy(renderer);
+      return NULL;
+    }
+    renderer->raster_pool = options->workers;
+  } else renderer->raster_pool = qa_render_workers_create(NULL);
   return renderer;
+}
+qa_render_workers *qa_cpu_workers(const qa_cpu_renderer *renderer) {
+  return renderer ? renderer->raster_pool : NULL;
 }
 void qa_cpu_destroy(qa_cpu_renderer *renderer) {
   if (!renderer)
@@ -771,6 +780,7 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
                  "Invalid CPU frame or renderer owner");
     return false;
   }
+  if (!cpu_raster_acquire(renderer, error)) return false;
   if (frame->source_backend) renderer->source_frame=true;
   if (frame->source_backend && frame->source_skip_backend) {
     if (finish) {

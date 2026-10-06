@@ -16,6 +16,7 @@ struct qa_scene_geometry {
     qa_scene_vertex *vertices;
     uint32_t *indices;
     size_t vertex_count, index_count;
+    qa_scene_skeletal_view skeletal;
 };
 
 static const char *const format_extensions[] = {".png", ".jpg", ".tga", ".jpeg", ".bmp", ".gif"};
@@ -157,31 +158,73 @@ void qa_scene_resources_capture_end(qa_scene_resources_capture *capture)
     free(capture->images); free(capture);
 }
 
-qa_scene_geometry *qa_scene_geometry_adopt(qa_scene_vertex *vertices, size_t vertex_count,
-                                         uint32_t *indices, size_t index_count, qa_error *error)
+qa_scene_geometry *qa_scene_geometry_adopt(const qa_scene_geometry_input *input, qa_error *error)
 {
-    if ((vertex_count && !vertices) || (index_count && !indices) ||
-        vertex_count > SIZE_MAX / sizeof(*vertices) || index_count > SIZE_MAX / sizeof(*indices)) {
+    if (!input || (input->vertex_count && !input->vertices) ||
+        (input->index_count && !input->indices) ||
+        input->vertex_count > SIZE_MAX / sizeof(*input->vertices) ||
+        input->index_count > SIZE_MAX / sizeof(*input->indices)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid scene geometry allocation extents");
         return NULL;
     }
-    qa_scene_geometry *geometry = malloc(sizeof(*geometry));
-    if (geometry == NULL) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate scene geometry ownership");
-        return NULL;
+    const qa_scene_skeletal_input *skin = input->skeletal;
+    if (skin) {
+        if (!skin->bone_count || skin->bone_count > UINT32_MAX ||
+            skin->vertex_count > input->vertex_count ||
+            skin->vertex_count > SIZE_MAX / sizeof(*skin->ranges) ||
+            skin->weight_count > UINT32_MAX || skin->weight_count > SIZE_MAX / sizeof(*skin->weights) ||
+            (skin->vertex_count && (!skin->ranges || !skin->sources)) ||
+            (skin->weight_count && !skin->weights)) goto invalid_skin;
+        for (size_t i = 0; i < skin->vertex_count; ++i) {
+            uint32_t source = skin->sources[i];
+            if (source >= skin->source_vertex_count) goto invalid_skin;
+            qa_model_weight_range range = skin->ranges[source];
+            if (range.first > skin->weight_count || range.count > skin->weight_count - range.first)
+                goto invalid_skin;
+        }
+        for (size_t i = 0; i < skin->weight_count; ++i) {
+            const qa_model_weight *weight = &skin->weights[i];
+            if (weight->bone >= skin->bone_count || !isfinite(weight->bias) ||
+                !isfinite(weight->offset[0]) ||
+                !isfinite(weight->offset[1]) || !isfinite(weight->offset[2])) goto invalid_skin;
+        }
+    }
+    qa_scene_geometry *geometry = calloc(1, sizeof(*geometry));
+    if (!geometry) goto memory;
+    if (skin) {
+        qa_model_weight *weights = skin->weight_count ? malloc(skin->weight_count * sizeof(*weights)) : NULL;
+        qa_model_weight_range *ranges = skin->vertex_count ? malloc(skin->vertex_count * sizeof(*ranges)) : NULL;
+        uint32_t *sources = skin->vertex_count ? malloc(skin->vertex_count * sizeof(*sources)) : NULL;
+        if ((skin->weight_count && !weights) || (skin->vertex_count && (!ranges || !sources))) {
+            free(weights); free(ranges); free(sources); free(geometry); goto memory;
+        }
+        if (skin->weight_count) memcpy(weights, skin->weights, skin->weight_count * sizeof(*weights));
+        for (size_t i = 0; i < skin->vertex_count; ++i) {
+            sources[i] = skin->sources[i]; ranges[i] = skin->ranges[sources[i]];
+        }
+        geometry->skeletal = (qa_scene_skeletal_view){.weights = weights, .ranges = ranges, .sources = sources,
+            .vertex_count = skin->vertex_count, .source_vertex_count = skin->source_vertex_count,
+            .weight_count = skin->weight_count, .bone_count = skin->bone_count};
     }
     atomic_init(&geometry->active, 1);
     atomic_init(&geometry->references, 1);
-    geometry->vertices = vertices;
-    geometry->indices = indices;
-    geometry->vertex_count = vertex_count;
-    geometry->index_count = index_count;
+    geometry->vertices = input->vertices;
+    geometry->indices = input->indices;
+    geometry->vertex_count = input->vertex_count;
+    geometry->index_count = input->index_count;
     return geometry;
+invalid_skin:
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid scene skeletal geometry spans");
+    return NULL;
+memory:
+    qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate scene geometry ownership");
+    return NULL;
 }
+
 bool qa_scene_geometry_read(const qa_scene_geometry *geometry, qa_scene_geometry_view *out)
 {
     if (!out || !qa_scene_geometry_active(geometry)) return false;
-    *out = (qa_scene_geometry_view){geometry->vertices,geometry->indices,geometry->vertex_count,geometry->index_count};
+    *out = (qa_scene_geometry_view){geometry->vertices,geometry->indices,geometry->vertex_count,geometry->index_count,geometry->skeletal};
     return true;
 }
 
@@ -215,6 +258,9 @@ void qa_scene_geometry_release(const qa_scene_geometry *borrowed)
     if (atomic_fetch_sub_explicit(&geometry->active, 1, memory_order_acq_rel) == 1) {
         free(geometry->vertices);
         free(geometry->indices);
+        free((void *)geometry->skeletal.weights);
+        free((void *)geometry->skeletal.ranges);
+        free((void *)geometry->skeletal.sources);
     }
     qa_scene_geometry_cache_release(geometry);
 }
@@ -222,6 +268,20 @@ void qa_scene_geometry_release(const qa_scene_geometry *borrowed)
 bool qa_scene_geometry_active(const qa_scene_geometry *geometry)
 {
     return geometry != NULL && atomic_load_explicit(&geometry->active, memory_order_acquire) != 0;
+}
+void qa_scene_skin_apply(const qa_scene_skinning *skin, const qa_model_vertex *sampled,
+                         const qa_scene_vertex *base, qa_scene_vertex *out)
+{
+    *out = *base;
+    out->position = qa_v3(sampled->position[0], sampled->position[1], sampled->position[2]);
+    out->normal = qa_v3(sampled->normal[0], sampled->normal[1], sampled->normal[2]);
+    if (skin->shell != 0) out->position = qa_vec_add(out->position, qa_vec_scale(out->normal, skin->shell));
+    float incoming = qa_vec_dot(out->normal, skin->shade_direction);
+    float shade = skin->shade ? 1 + (incoming < 0 ? incoming * .3f : incoming) : 1;
+    out->color = skin->tint;
+    out->color.x *= skin->light.x * shade;
+    out->color.y *= skin->light.y * shade;
+    out->color.z *= skin->light.z * shade;
 }
 static void policy_add_format(qa_scene_image_policy *policy, qa_scene_image_format format)
 {

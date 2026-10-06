@@ -41,6 +41,70 @@ static const char stage_vertex[] =
     "  clipDistance = u_clip_enabled == 0 ? 1.0 : dot(world, u_clip_plane);\n"
     "}\n";
 
+static const char skeletal_vertex[] =
+    "#version 430 compatibility\n"
+    "attribute vec3 a_position;\n"
+    "attribute vec3 a_normal;\n"
+    "attribute vec2 a_texcoord;\n"
+    "attribute vec2 a_lightmap;\n"
+    "attribute vec4 a_color;\n"
+    "uniform mat4 u_mvp;\n"
+    "uniform mat4 u_model;\n"
+    "uniform mat3 u_normal_matrix;\n"
+    "uniform int u_clip_enabled;\n"
+    "uniform vec4 u_clip_plane;\n"
+    "uniform int u_skin_weight_offset;\n"
+    "uniform vec3 u_skin_direction;\n"
+    "uniform vec3 u_skin_light;\n"
+    "uniform vec4 u_skin_tint;\n"
+    "uniform float u_skin_shell;\n"
+    "uniform int u_skin_shade;\n"
+    "uniform int u_skin_constant;\n"
+    "layout(std430,binding=0) readonly buffer SkinWeights { uint skinWords[]; };\n"
+    "layout(std430,binding=1) readonly buffer SkinPose { vec4 skinJoints[]; };\n"
+    "varying vec4 vertexColor;\n"
+    "varying vec2 coordinates0;\n"
+    "varying vec2 coordinates1;\n"
+    "varying vec3 worldPosition;\n"
+    "varying vec3 worldNormal;\n"
+    "varying float clipDistance;\n"
+    "vec3 axisRotate(vec4 q, vec3 p) {\n"
+    " precise vec3 result;\n"
+    " result.x=p.x*(2.0*(q.w*q.w+q.x*q.x)-1.0)+p.y*2.0*(q.x*q.y-q.w*q.z)+p.z*2.0*(q.x*q.z+q.w*q.y);\n"
+    " result.y=p.x*2.0*(q.x*q.y+q.w*q.z)+p.y*(2.0*(q.w*q.w+q.y*q.y)-1.0)+p.z*2.0*(q.y*q.z-q.w*q.x);\n"
+    " result.z=p.x*2.0*(q.x*q.z-q.w*q.y)+p.y*2.0*(q.y*q.z+q.w*q.x)+p.z*(2.0*(q.w*q.w+q.z*q.z)-1.0);\n"
+    " return result;\n"
+    "}\n"
+    "void main() {\n"
+    " uint vertex=uint(gl_VertexID);\n"
+    " uint first=skinWords[2u*vertex];\n"
+    " uint count=skinWords[2u*vertex+1u];\n"
+    " precise vec3 position=vec3(0.0), normal=vec3(0.0);\n"
+    " for(uint i=0u;i<count;++i) {\n"
+    "  uint base=uint(u_skin_weight_offset)+5u*(first+i);\n"
+    "  uint joint=skinWords[base];\n"
+    "  float bias=uintBitsToFloat(skinWords[base+1u]);\n"
+    "  vec3 offset=vec3(uintBitsToFloat(skinWords[base+2u]),uintBitsToFloat(skinWords[base+3u]),uintBitsToFloat(skinWords[base+4u]));\n"
+    "  vec4 q=skinJoints[2u*joint], transform=skinJoints[2u*joint+1u];\n"
+    "  position+=bias*(transform.xyz+transform.w*axisRotate(q,offset));\n"
+    "  normal+=bias*axisRotate(q,a_normal);\n"
+    " }\n"
+    " if(u_skin_shell!=0.0) position+=u_skin_shell*normal;\n"
+    " precise float incoming=normal.x*u_skin_direction.x+normal.y*u_skin_direction.y+normal.z*u_skin_direction.z;\n"
+    " float shade=u_skin_shade==0?1.0:1.0+(incoming<0.0?incoming*0.3:incoming);\n"
+    " vec4 color=u_skin_tint;\n"
+    " color.rgb*=u_skin_light*shade;\n"
+    " vertexColor=clamp(u_skin_constant!=0?a_color:color,0.0,1.0);\n"
+    " vec4 world=u_model*vec4(position,1.0);\n"
+    " gl_Position=u_mvp*vec4(position,1.0);\n"
+    " coordinates0=a_texcoord;\n"
+    " coordinates1=a_lightmap;\n"
+    " worldPosition=world.xyz;\n"
+    " worldNormal=u_normal_matrix*normal;\n"
+    " clipDistance=u_clip_enabled==0?1.0:dot(world,u_clip_plane);\n"
+    "}\n"
+    ;
+
 /* Q2 rerelease receiver equations retain the donor's bottom-left atlas UVs,
  * cone projection bias, 3x2 point-light faces, and 2x2 PCF. */
 static const char *const stage_fragment[] = {
@@ -332,13 +396,12 @@ static bool uniform(qa_gl_renderer *renderer, GLuint program, const char *name,
 
 #define STAGE_UNIFORM(field, name)                                               \
     do {                                                                         \
-        if (!uniform(renderer, p->stage, name, &p->stage_uniform.field, error))  \
+        if (!uniform(renderer, program, name, &u->field, error))  \
             return false;                                                        \
     } while (0)
 
-static bool stage_uniforms(qa_gl_renderer *renderer, qa_error *error)
+static bool stage_uniforms(qa_gl_renderer *renderer, GLuint program, gl_stage_uniforms *u, qa_error *error)
 {
-    gl_programs *p = &renderer->programs;
     gl_state_invalidate(renderer);
     STAGE_UNIFORM(mvp, "u_mvp");
     STAGE_UNIFORM(model, "u_model");
@@ -369,8 +432,8 @@ static bool stage_uniforms(qa_gl_renderer *renderer, qa_error *error)
 #define LIGHT_UNIFORM(field, base)                                               \
         do {                                                                     \
             snprintf(name, sizeof(name), base "[%u]", i);                      \
-            if (!uniform(renderer, p->stage, name,                              \
-                         &p->stage_uniform.field[i], error)) return false;       \
+            if (!uniform(renderer, program, name,                              \
+                         &u->field[i], error)) return false;       \
         } while (0)
         LIGHT_UNIFORM(light_position, "u_light_pos");
         LIGHT_UNIFORM(light_radius, "u_light_radius");
@@ -423,8 +486,8 @@ bool gl_programs_create(qa_gl_renderer *renderer, qa_error *error)
     gl_programs *p = &renderer->programs;
     gl_state_invalidate(renderer);
     if (!compile_program(renderer, stage_vertex, stage_fragment, 3, true,
-                         &p->stage, error) ||
-        !stage_uniforms(renderer, error) ||
+                         &p->stage[0], error) ||
+        !stage_uniforms(renderer, p->stage[0], &p->stage_uniform[0], error) ||
         !compile_program(renderer, quad_vertex, (const char *[]){opacity_fragment}, 1, false,
                          &p->opacity, error) ||
         !uniform(renderer, p->opacity, "backdrop",
@@ -447,11 +510,39 @@ bool gl_programs_create(qa_gl_renderer *renderer, qa_error *error)
         if (!compile_program(renderer, fog_vertex, fog_fragments+i, 1, false,
                              &p->fog[i], error) ||
             !fog_uniforms(renderer, i, error)) return false;
-    gl_state_program(renderer, p->stage);
-    renderer->gl.Uniform1i(p->stage_uniform.primary, 0);
-    renderer->gl.Uniform1i(p->stage_uniform.secondary, 1);
-    renderer->gl.Uniform1i(p->stage_uniform.shadow_map, 2);
-    renderer->gl.Uniform1i(p->stage_uniform.preblend_table, 2);
+    gl_state_program(renderer, p->stage[0]);
+    renderer->gl.Uniform1i(p->stage_uniform[0].primary, 0);
+    renderer->gl.Uniform1i(p->stage_uniform[0].secondary, 1);
+    renderer->gl.Uniform1i(p->stage_uniform[0].shadow_map, 2);
+    renderer->gl.Uniform1i(p->stage_uniform[0].preblend_table, 2);
+    if (renderer->capabilities.skeletal_skinning) {
+        qa_error optional = {0};
+        const char *fragments[] = {"#version 430 compatibility\n",
+            stage_fragment[0] + sizeof("#version 120\n") - 1, stage_fragment[1], stage_fragment[2]};
+        bool ok = compile_program(renderer, skeletal_vertex, fragments, 4, true, &p->stage[1], &optional) &&
+            stage_uniforms(renderer, p->stage[1], &p->stage_uniform[1], &optional);
+        gl_stage_uniforms *u = &p->stage_uniform[1];
+#define SKIN_UNIFORM(field, name) if (ok) ok = uniform(renderer, p->stage[1], name, &u->field, &optional)
+        SKIN_UNIFORM(skin_weight_offset, "u_skin_weight_offset");
+        SKIN_UNIFORM(skin_direction, "u_skin_direction");
+        SKIN_UNIFORM(skin_light, "u_skin_light");
+        SKIN_UNIFORM(skin_tint, "u_skin_tint");
+        SKIN_UNIFORM(skin_shell, "u_skin_shell");
+        SKIN_UNIFORM(skin_shade, "u_skin_shade");
+        SKIN_UNIFORM(skin_constant, "u_skin_constant");
+#undef SKIN_UNIFORM
+        if (ok) {
+            gl_state_program(renderer, p->stage[1]);
+            renderer->gl.Uniform1i(u->primary, 0);
+            renderer->gl.Uniform1i(u->secondary, 1);
+            renderer->gl.Uniform1i(u->shadow_map, 2);
+            renderer->gl.Uniform1i(u->preblend_table, 2);
+        } else {
+            if (p->stage[1]) renderer->gl.DeleteProgram(p->stage[1]);
+            p->stage[1] = 0;
+            renderer->capabilities.skeletal_skinning = false;
+        }
+    }
     gl_state_program(renderer, 0);
     return gl_check(renderer, "OpenGL program initialization", error);
 }
@@ -461,7 +552,7 @@ void gl_programs_destroy(qa_gl_renderer *renderer)
     gl_programs *p = &renderer->programs;
     gl_state_invalidate(renderer);
     if (!renderer->detached) gl_state_program(renderer, 0);
-    if (p->stage != 0) renderer->gl.DeleteProgram(p->stage);
+    for (unsigned i = 0; i < 2; ++i) if (p->stage[i]) renderer->gl.DeleteProgram(p->stage[i]);
     if (p->opacity != 0) renderer->gl.DeleteProgram(p->opacity);
     if (p->gamma != 0) renderer->gl.DeleteProgram(p->gamma);
     for (size_t i = 0; i < 3; ++i)
@@ -496,8 +587,8 @@ static int fog_mode(const qa_scene_fog *fog)
 static gl_cached_value *stage_value(qa_gl_renderer *renderer, const GLint *location)
 {
     size_t index = (size_t)((const unsigned char *)location -
-        (const unsigned char *)&renderer->programs.stage_uniform) / sizeof(GLint);
-    return &renderer->stage_values[index];
+        (const unsigned char *)&renderer->programs.stage_uniform[renderer->active_stage]) / sizeof(GLint);
+    return &renderer->stage_values[renderer->active_stage][index];
 }
 static void stage_uniform_1i(qa_gl_renderer *renderer, const GLint *location, GLint v0)
 {
@@ -537,14 +628,27 @@ static void stage_uniform_matrix4(qa_gl_renderer *renderer, const GLint *locatio
 bool gl_program_stage(qa_gl_renderer *renderer, const qa_scene_draw *draw,
                       qa_error *error)
 {
-    gl_stage_uniforms *u = &renderer->programs.stage_uniform;
+    renderer->active_stage = draw->skinning ? 1u : 0u;
+    gl_stage_uniforms *u = &renderer->programs.stage_uniform[renderer->active_stage];
     bool preblend=renderer->preblend_gamma && renderer->gamma!=1 &&
         !qa_display_gamma_applied_is(renderer->options.display);
     if (preblend && (draw->lighting!=QA_LIGHT_VERTEX || draw->shadow_atlas || !renderer->output.table)) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Generic overlay gamma requires its retained table and unlit primitive");
         return false;
     }
-    gl_state_program(renderer, renderer->programs.stage);
+    gl_state_program(renderer, renderer->programs.stage[renderer->active_stage]);
+    if (draw->skinning) {
+        qa_scene_geometry_view geometry;
+        if (!qa_scene_geometry_read(draw->mesh.geometry, &geometry)) return false;
+        const qa_scene_skinning *skin = draw->skinning;
+        stage_uniform_1i(renderer, &u->skin_weight_offset, (GLint)(geometry.skeletal.vertex_count * 2));
+        stage_uniform_3f(renderer, &u->skin_direction, skin->shade_direction.x, skin->shade_direction.y, skin->shade_direction.z);
+        stage_uniform_3f(renderer, &u->skin_light, skin->light.x, skin->light.y, skin->light.z);
+        stage_uniform_4f(renderer, &u->skin_tint, skin->tint.x, skin->tint.y, skin->tint.z, skin->tint.w);
+        stage_uniform_1f(renderer, &u->skin_shell, skin->shell);
+        stage_uniform_1i(renderer, &u->skin_shade, skin->shade ? 1 : 0);
+        stage_uniform_1i(renderer, &u->skin_constant, draw->vertex_inputs.constant_color ? 1 : 0);
+    }
     stage_uniform_1i(renderer, &u->preblend_gamma,preblend?1:0);
     stage_uniform_matrix4(renderer, &u->mvp, draw->mvp.m);
     stage_uniform_matrix4(renderer, &u->model, draw->model.m);

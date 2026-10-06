@@ -18,6 +18,8 @@ typedef struct qa_gl_capabilities {
     uint32_t maximum_texture_size, texture_units, vertex_attributes;
     /* Actual default color buffers: front-left, front-right, back-left, back-right. */
     uint32_t native_buffer_mask;
+    size_t skeletal_buffer_limit;
+    bool skeletal_skinning;
     bool stereo, floating_depth, compiled_vertex_arrays, s3tc;
     char vendor[128], renderer[128], version[128], shading_language[128];
 } qa_gl_capabilities;
@@ -28,6 +30,8 @@ qa_gl_renderer *qa_gl_create(const qa_gl_options *options, qa_error *error);
  * destruction until its checked abort or retirement closes the ticket. */
 void qa_gl_destroy(qa_gl_renderer *renderer);
 const qa_gl_capabilities *qa_gl_capabilities_get(const qa_gl_renderer *renderer);
+/* Actual optional program/limits; pure observation, no GL work. */
+bool qa_gl_skeletal_geometry_supported(const qa_gl_renderer *, const qa_scene_geometry *);
 /* Current GPU residency. Array in scratch; images borrow until backend
  * progress/destruction or resource mutation. Does not prune or upload. */
 bool qa_gl_resident_images(const qa_gl_renderer *, qa_arena *,

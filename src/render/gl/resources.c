@@ -1,6 +1,7 @@
 #include "internal.h"
 
 #include <limits.h>
+#include <fenv.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <SDL_video.h>
@@ -985,6 +986,149 @@ static bool reserve_stream(qa_gl_renderer *renderer, GLenum target, GLuint buffe
     return true;
 }
 
+_Static_assert(sizeof(float) == sizeof(uint32_t) &&
+    sizeof(qa_model_weight) == 5 * sizeof(uint32_t) &&
+    offsetof(qa_model_weight, bias) == sizeof(uint32_t) &&
+    offsetof(qa_model_weight, offset) == 2 * sizeof(uint32_t) &&
+    sizeof(qa_model_weight_range) == 2 * sizeof(uint32_t), "MD5 packed storage ABI");
+
+bool qa_gl_skeletal_geometry_supported(const qa_gl_renderer *renderer, const qa_scene_geometry *geometry)
+{
+    qa_scene_geometry_view view;
+    if (!renderer || renderer->closed || !renderer->capabilities.skeletal_skinning ||
+        !renderer->programs.stage[1] || !qa_scene_geometry_read(geometry, &view)) return false;
+    const qa_scene_skeletal_view *skin = &view.skeletal;
+    size_t limit = renderer->capabilities.skeletal_buffer_limit;
+    return skin->bone_count && skin->bone_count <= 256 && skin->vertex_count <= INT_MAX / 2 &&
+        skin->vertex_count <= limit / sizeof(*skin->ranges) &&
+        skin->weight_count <= (limit - skin->vertex_count * sizeof(*skin->ranges)) / sizeof(*skin->weights);
+}
+
+bool gl_skeletal_frame(qa_gl_renderer *renderer, const qa_scene_frame *frame, qa_error *error)
+{
+    renderer->skin_palette_count = 0;
+    if (!renderer->capabilities.skeletal_skinning) return true;
+    bool present = false;
+    for (size_t i = 0; i < frame->command_count; ++i)
+        if (frame->commands[i].kind == QA_SCENE_COMMAND_DRAW && frame->commands[i].data.draw.skinning &&
+            qa_gl_skeletal_geometry_supported(renderer, frame->commands[i].data.draw.mesh.geometry)) present = true;
+    if (!present) return true;
+    if (frame->command_count > (size_t)PTRDIFF_MAX / sizeof(*renderer->skin_palettes)) goto too_large;
+    if (frame->command_count > renderer->skin_palette_capacity) {
+        void *data = realloc(renderer->skin_palettes, frame->command_count * sizeof(*renderer->skin_palettes));
+        if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating skeletal palette slots"); return false; }
+        renderer->skin_palettes = data;
+        renderer->skin_palette_capacity = frame->command_count;
+    }
+    renderer->skin_palette_count = frame->command_count;
+    memset(renderer->skin_palettes, 0, frame->command_count * sizeof(*renderer->skin_palettes));
+    size_t bytes = 0, alignment = renderer->skin_palette_alignment;
+    for (size_t i = 0; i < frame->command_count; ++i) {
+        if (frame->commands[i].kind != QA_SCENE_COMMAND_DRAW) continue;
+        const qa_scene_draw *draw = &frame->commands[i].data.draw;
+        if (!draw->skinning ||
+            (draw->skinning->sample ? draw->skinning->sample->rounding : fegetround()) != FE_TONEAREST ||
+            !qa_gl_skeletal_geometry_supported(renderer, draw->mesh.geometry)) continue;
+        const qa_scene_skin_pose *pose = draw->skinning->pose;
+        if (!pose || !pose->joints || !pose->count || pose->count > 256 || pose->ordinal >= frame->command_count)
+            continue;
+        gl_skin_palette *slot = &renderer->skin_palettes[pose->ordinal];
+        if (slot->pose) {
+            if (slot->pose != pose) { qa_error_set(error, QA_ERROR_ARGUMENT, i, "Skeletal palette ordinal changed pose"); return false; }
+            continue;
+        }
+        for (size_t j = 0; j < pose->count; ++j) {
+            const qa_model_pose *joint = &pose->joints[j];
+            for (unsigned k = 0; k < 3; ++k) if (!isfinite(joint->position[k])) goto invalid_pose;
+            for (unsigned k = 0; k < 4; ++k) if (!isfinite(joint->orientation[k])) goto invalid_pose;
+            if (!isfinite(joint->scale)) goto invalid_pose;
+        }
+        size_t padding = (alignment - bytes % alignment) % alignment;
+        size_t required = pose->count * 8 * sizeof(GLfloat);
+        if (bytes > (size_t)PTRDIFF_MAX - padding || bytes + padding > (size_t)PTRDIFF_MAX - required) goto too_large;
+        bytes += padding;
+        *slot = (gl_skin_palette){.pose = pose, .offset = bytes, .bytes = required};
+        bytes += required;
+    }
+    if (!bytes) return true;
+    if (!renderer->skin_palette_buffer) renderer->gl.GenBuffers(1, &renderer->skin_palette_buffer);
+    if (!renderer->skin_palette_buffer) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating skeletal palette buffer"); return false; }
+    size_t padding = (alignment - renderer->skin_palette_cursor % alignment) % alignment;
+    if (renderer->skin_palette_cursor > (size_t)PTRDIFF_MAX - padding ||
+        renderer->skin_palette_cursor + padding > renderer->skin_palette_bytes ||
+        bytes > renderer->skin_palette_bytes - renderer->skin_palette_cursor - padding) {
+        size_t next = renderer->skin_palette_bytes ? renderer->skin_palette_bytes : 1048576;
+        while (next < bytes && next <= (size_t)PTRDIFF_MAX / 2) next *= 2;
+        if (next < bytes) next = bytes;
+        renderer->gl.BindBuffer(GL_SHADER_STORAGE_BUFFER, renderer->skin_palette_buffer);
+        renderer->gl.BufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)next, NULL, GL_STREAM_DRAW);
+        if (!gl_check(renderer, "Skeletal palette stream allocation", error)) return false;
+        renderer->skin_palette_bytes = next;
+        renderer->skin_palette_cursor = 0;
+        renderer->native_state.skin_known[1] = false;
+        padding = 0;
+    }
+    size_t start = renderer->skin_palette_cursor + padding;
+    for (size_t i = 0; i < renderer->skin_palette_count; ++i)
+        if (renderer->skin_palettes[i].pose) renderer->skin_palettes[i].offset += start;
+    renderer->skin_palette_cursor = start + bytes;
+    return true;
+invalid_pose:
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "non-finite MD5 pose"); return false;
+too_large:
+    qa_error_set(error, QA_ERROR_MEMORY, 0, "Skeletal palette stream exceeds addressable storage"); return false;
+}
+
+bool gl_skeletal_bind(qa_gl_renderer *renderer, const qa_scene_draw *draw, qa_error *error)
+{
+    const qa_scene_skin_pose *pose = draw->skinning->pose;
+    gl_skin_palette *slot = &renderer->skin_palettes[pose->ordinal];
+    gl_mesh_entry *entry = gl_mesh_resident(renderer, &draw->mesh);
+    qa_scene_geometry_view view;
+    if (!entry || !qa_scene_geometry_read(draw->mesh.geometry, &view) ||
+        view.skeletal.vertex_count != draw->mesh.vertex_count || pose->count < view.skeletal.bone_count) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Skeletal draw lost its resident geometry/pose"); return false;
+    }
+    if (!entry->skeletal_buffer) {
+        size_t ranges = view.skeletal.vertex_count * sizeof(*view.skeletal.ranges);
+        size_t weights = view.skeletal.weight_count * sizeof(*view.skeletal.weights);
+        renderer->gl.GenBuffers(1, &entry->skeletal_buffer);
+        if (!entry->skeletal_buffer) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating resident skeletal weights"); return false; }
+        renderer->gl.BindBuffer(GL_SHADER_STORAGE_BUFFER, entry->skeletal_buffer);
+        renderer->gl.BufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)(ranges + weights), NULL, GL_STATIC_DRAW);
+        if (ranges) renderer->gl.BufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)ranges, view.skeletal.ranges);
+        if (weights) renderer->gl.BufferSubData(GL_SHADER_STORAGE_BUFFER, (GLintptr)ranges, (GLsizeiptr)weights, view.skeletal.weights);
+        if (!gl_check(renderer, "Resident skeletal weight admission", error)) {
+            renderer->gl.DeleteBuffers(1, &entry->skeletal_buffer); entry->skeletal_buffer = 0; return false;
+        }
+    }
+    if (!slot->uploaded) {
+        GLfloat palette[256 * 8];
+        for (size_t i = 0; i < pose->count; ++i) {
+            memcpy(palette + i * 8, pose->joints[i].orientation, 4 * sizeof(GLfloat));
+            memcpy(palette + i * 8 + 4, pose->joints[i].position, 3 * sizeof(GLfloat));
+            palette[i * 8 + 7] = pose->joints[i].scale;
+        }
+        renderer->gl.BindBuffer(GL_SHADER_STORAGE_BUFFER, renderer->skin_palette_buffer);
+        renderer->gl.BufferSubData(GL_SHADER_STORAGE_BUFFER, (GLintptr)slot->offset, (GLsizeiptr)slot->bytes, palette);
+        if (!gl_check(renderer, "Skeletal pose palette upload", error)) return false;
+        slot->uploaded = true;
+    }
+    gl_state_skeletal_buffer(renderer, 0, entry->skeletal_buffer, 0, 0);
+    gl_state_skeletal_buffer(renderer, 1, renderer->skin_palette_buffer, slot->offset, slot->bytes);
+    return true;
+}
+
+void gl_skeletal_destroy(qa_gl_renderer *renderer, bool native)
+{
+    if (native && renderer->skin_palette_buffer) renderer->gl.DeleteBuffers(1, &renderer->skin_palette_buffer);
+    free(renderer->skin_palettes); free(renderer->skin_sampled); free(renderer->skin_vertices);
+    renderer->skin_palettes = NULL; renderer->skin_sampled = NULL; renderer->skin_vertices = NULL;
+    renderer->skin_palette_buffer = 0;
+    renderer->skin_palette_bytes = renderer->skin_palette_cursor = 0;
+    renderer->skin_palette_count = renderer->skin_palette_capacity = renderer->skin_vertex_capacity = 0;
+}
+
 gl_mesh_entry *gl_mesh_resident(const qa_gl_renderer *renderer,
                               const qa_scene_mesh *mesh)
 {
@@ -1258,6 +1402,10 @@ static void mesh_buffers_delete(qa_gl_renderer *renderer,gl_mesh_entry *entry)
     if (entry->world_page) --entry->world_page->references;
     else renderer->gl.DeleteBuffers(1,&entry->vertex_buffer);
     if (entry->index_buffer) renderer->gl.DeleteBuffers(1,&entry->index_buffer);
+    if (entry->skeletal_buffer) {
+        renderer->native_state.skin_known[0] = false;
+        renderer->gl.DeleteBuffers(1, &entry->skeletal_buffer);
+    }
 }
 
 void gl_meshes_prune(qa_gl_renderer *renderer)
@@ -1453,6 +1601,7 @@ void gl_resources_destroy(qa_gl_renderer *renderer)
         free(entry);
     }
     gl_world_pages_destroy(renderer, true);
+    gl_skeletal_destroy(renderer, true);
     if (renderer->stream.array.name)
         renderer->gl.DeleteVertexArrays(1,&renderer->stream.array.name);
     if (renderer->stream.vertex_buffer != 0)

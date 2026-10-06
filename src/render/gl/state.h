@@ -9,6 +9,20 @@ static inline void gl_state_invalidate(qa_gl_renderer *renderer)
     memset(renderer->stage_values, 0, sizeof(renderer->stage_values));
     renderer->vertex_array_known = false;
 }
+static inline void gl_state_skeletal_buffer(qa_gl_renderer *renderer, unsigned binding,
+                                            GLuint buffer, size_t offset, size_t bytes)
+{
+    gl_native_state *state = &renderer->native_state;
+    if (state->skin_known[binding] && state->skin_buffer[binding] == buffer &&
+        state->skin_offset[binding] == offset && state->skin_size[binding] == bytes) return;
+    if (bytes) renderer->gl.BindBufferRange(GL_SHADER_STORAGE_BUFFER, binding, buffer,
+        (GLintptr)offset, (GLsizeiptr)bytes);
+    else renderer->gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, binding, buffer);
+    state->skin_known[binding] = true;
+    state->skin_buffer[binding] = buffer;
+    state->skin_offset[binding] = offset;
+    state->skin_size[binding] = bytes;
+}
 static inline bool gl_state_changed(gl_cached_value *cached, const void *value, size_t size)
 {
     if (cached->size == size && memcmp(cached->value, value, size) == 0) return false;

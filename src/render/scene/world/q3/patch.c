@@ -93,7 +93,8 @@ static bool install(qaw_surface *surface, patch_work *work, unsigned width, unsi
         indices[cursor++] = a; indices[cursor++] = b; indices[cursor++] = a + 1;
         indices[cursor++] = a + 1; indices[cursor++] = b; indices[cursor++] = b + 1;
     }
-    qa_scene_geometry *geometry = qa_scene_geometry_adopt(vertices, vertex_count, indices, index_count, error);
+    qa_scene_geometry *geometry = qa_scene_geometry_adopt(&(qa_scene_geometry_input){.vertices = vertices,
+        .vertex_count = vertex_count, .indices = indices, .index_count = index_count}, error);
     if (!geometry) {
         free(vertices); free(indices);
         return false;

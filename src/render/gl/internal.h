@@ -21,6 +21,7 @@
 typedef struct gl_api {
     const GLubyte *(APIENTRY *GetString)(GLenum);
     void (APIENTRY *GetIntegerv)(GLenum, GLint *);
+    void (APIENTRY *GetInteger64v)(GLenum, GLint64 *);
     void (APIENTRY *GetFloatv)(GLenum, GLfloat *);
     GLenum (APIENTRY *GetError)(void);
     GLboolean (APIENTRY *IsEnabled)(GLenum);
@@ -72,6 +73,8 @@ typedef struct gl_api {
     void (APIENTRY *BindBuffer)(GLenum, GLuint);
     void (APIENTRY *BufferData)(GLenum, GLsizeiptr, const void *, GLenum);
     void (APIENTRY *BufferSubData)(GLenum, GLintptr, GLsizeiptr, const void *);
+    void (APIENTRY *BindBufferBase)(GLenum, GLuint, GLuint);
+    void (APIENTRY *BindBufferRange)(GLenum, GLuint, GLuint, GLintptr, GLsizeiptr);
     void (APIENTRY *GetBufferSubData)(GLenum, GLintptr, GLsizeiptr, void *);
     void (APIENTRY *GenVertexArrays)(GLsizei, GLuint *);
     void (APIENTRY *DeleteVertexArrays)(GLsizei, const GLuint *);
@@ -143,6 +146,7 @@ typedef struct gl_stage_uniforms {
     GLint lighting_mode, luminance_alpha, light_count;
     GLint shadow_map, shadow_texel, shadow_near;
     GLint shade_scale, model_shade_enabled;
+    GLint skin_weight_offset, skin_direction, skin_light, skin_tint, skin_shell, skin_shade, skin_constant;
     GLint light_position[GL_MAX_LIGHTS_QA];
     GLint light_radius[GL_MAX_LIGHTS_QA];
     GLint light_color[GL_MAX_LIGHTS_QA];
@@ -163,8 +167,8 @@ typedef struct gl_fog_uniforms {
 } gl_fog_uniforms;
 
 typedef struct gl_programs {
-    GLuint stage, opacity, gamma, fog[3];
-    gl_stage_uniforms stage_uniform;
+    GLuint stage[2], opacity, gamma, fog[3];
+    gl_stage_uniforms stage_uniform[2];
     struct { GLint backdrop, result, opacity; } opacity_uniform;
     struct { GLint raw, table, apply; } gamma_uniform;
     gl_fog_uniforms fog_uniform[3];
@@ -181,6 +185,9 @@ typedef struct gl_native_state {
     GLuint texture[3];
     uint32_t drawable_width, drawable_height;
     bool active_known, destination_valid;
+    bool skin_known[2];
+    GLuint skin_buffer[2];
+    size_t skin_offset[2], skin_size[2];
 } gl_native_state;
 
 typedef struct gl_texture_entry {
@@ -216,7 +223,7 @@ typedef struct gl_mesh_entry {
     uint64_t identity, revision;
     const qa_scene_geometry *geometry;
     size_t vertex_count, index_count;
-    GLuint vertex_buffer, index_buffer;
+    GLuint vertex_buffer, index_buffer, skeletal_buffer;
     size_t vertex_offset;
     gl_world_page *world_page;
     gl_vertex_array array;
@@ -235,6 +242,12 @@ typedef struct gl_stream_buffers {
     size_t vertex_cursor, index_cursor;
     gl_vertex_array array;
 } gl_stream_buffers;
+
+typedef struct gl_skin_palette {
+    const qa_scene_skin_pose *pose;
+    size_t offset, bytes;
+    bool uploaded;
+} gl_skin_palette;
 
 typedef struct gl_output_target {
     GLuint framebuffer, depth_stencil, table;
@@ -273,6 +286,13 @@ struct qa_gl_renderer {
     gl_mesh_entry *meshes;
     qa_render_resource_index mesh_index;
     gl_stream_buffers stream;
+    GLuint skin_palette_buffer;
+    size_t skin_palette_bytes, skin_palette_cursor, skin_palette_alignment;
+    gl_skin_palette *skin_palettes;
+    size_t skin_palette_capacity, skin_palette_count;
+    qa_model_vertex *skin_sampled;
+    qa_scene_vertex *skin_vertices;
+    size_t skin_vertex_capacity;
     gl_world_page *world_pages;
     GLuint world_index_buffer;
     uint32_t *world_indices;
@@ -283,7 +303,8 @@ struct qa_gl_renderer {
     GLuint bound_vertex_array;
     bool vertex_array_known;
     gl_native_state native_state;
-    gl_cached_value stage_values[sizeof(gl_stage_uniforms) / sizeof(GLint)];
+    gl_cached_value stage_values[2][sizeof(gl_stage_uniforms) / sizeof(GLint)];
+    unsigned active_stage;
     gl_output_target output;
     gl_opacity_target opacity;
     gl_presented_target presented_target;
@@ -311,7 +332,7 @@ struct qa_gl_renderer {
  * computes their product before the destination's one color conversion. */
 static inline bool gl_lightmap_combined(const qa_scene_draw *draw)
 {
-    return draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE &&
+    return !draw->skinning && draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE &&
         draw->environment <= QA_TEXTURE_LIGHTMAP_INVERT_ALPHA &&
         draw->single_coverage && draw->texture_count == 2 && draw->textures[0] && draw->textures[1] &&
         draw->state.blend_source == QA_BLEND_ONE && draw->state.blend_destination == QA_BLEND_ZERO &&
@@ -365,6 +386,9 @@ bool gl_world_group_prepare(qa_gl_renderer *, const qa_scene_command *, size_t,
 bool gl_world_group_bind(qa_gl_renderer *, const gl_world_group *,
                          const qa_scene_vertex_inputs *, size_t *, qa_error *);
 void gl_world_pages_destroy(qa_gl_renderer *, bool native);
+bool gl_skeletal_bind(qa_gl_renderer *, const qa_scene_draw *, qa_error *);
+bool gl_skeletal_frame(qa_gl_renderer *, const qa_scene_frame *, qa_error *);
+void gl_skeletal_destroy(qa_gl_renderer *, bool native);
 
 bool gl_bind_destination(qa_gl_renderer *renderer, qa_error *error);
 bool gl_select_target(qa_gl_renderer *renderer, const qa_scene_image *image,

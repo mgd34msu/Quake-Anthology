@@ -2,6 +2,7 @@
 #define QA_RENDER_CPU_H
 #include "qa/scene.h"
 #include "qa/render_controls.h"
+#include "qa/render_workers.h"
 
 typedef struct qa_cpu_renderer qa_cpu_renderer;
 typedef struct qa_cpu_surface_ticket qa_cpu_surface_ticket;
@@ -26,9 +27,11 @@ typedef struct qa_cpu_options {
   uint64_t owner;
   qa_cpu_present present;
   void *present_context;
+  qa_render_workers *workers; /* Optional borrowed handle, retained by create. */
 } qa_cpu_options;
 void qa_cpu_options_default(qa_cpu_options *options);
 qa_cpu_renderer *qa_cpu_create(const qa_cpu_options *options, qa_error *error);
+qa_render_workers *qa_cpu_workers(const qa_cpu_renderer *); /* Borrowed. */
 bool qa_cpu_capabilities_read(const qa_cpu_renderer *, qa_cpu_capabilities *, qa_error *);
 /* Optional totals retained until reset. Disabled collection preserves totals.
  * Read/reset require returned render jobs; fragments count kernel calls and

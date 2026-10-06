@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/render_workers.h"
 #include "particles.h"
 #include "qa/render_gl_save.h"
 #include "qa/display_settings.h"
@@ -8,6 +9,7 @@
 #include <SDL_loadso.h>
 #include <SDL_timer.h>
 #include <limits.h>
+#include <fenv.h>
 #include <stdio.h>
 
 struct qa_gl_surface_ticket {
@@ -291,6 +293,21 @@ static bool capabilities(qa_gl_renderer *renderer, qa_error *error)
     caps->compiled_vertex_arrays = gl->LockArraysEXT && gl->UnlockArraysEXT &&
         gl_extension(extensions, "GL_EXT_compiled_vertex_array");
     caps->s3tc=gl_extension(extensions,"GL_S3_s3tc");
+    if ((major > 4 || (major == 4 && minor >= 3)) && gl->GetInteger64v &&
+        gl->BindBufferBase && gl->BindBufferRange) {
+        GLint blocks = 0, bindings = 0, alignment = 0;
+        GLint64 limit = 0;
+        gl->GetIntegerv(GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS, &blocks);
+        gl->GetIntegerv(GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS, &bindings);
+        gl->GetIntegerv(GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT, &alignment);
+        gl->GetInteger64v(GL_MAX_SHADER_STORAGE_BLOCK_SIZE, &limit);
+        if (blocks >= 2 && bindings >= 2 && alignment > 0 && limit >= 8192 &&
+            (uint64_t)limit <= SIZE_MAX) {
+            caps->skeletal_buffer_limit = (size_t)limit;
+            caps->skeletal_skinning = true;
+            renderer->skin_palette_alignment = (size_t)alignment;
+        }
+    }
     return gl_check(renderer, "OpenGL capability query", error);
 }
 
@@ -401,6 +418,7 @@ void qa_gl_destroy(qa_gl_renderer *renderer)
             free(entry);
         }
         gl_world_pages_destroy(renderer, false);
+        gl_skeletal_destroy(renderer, false);
         render_resource_destroy(&renderer->texture_index);
         render_resource_destroy(&renderer->source_image_index);
         render_resource_destroy(&renderer->mesh_index);
@@ -785,6 +803,86 @@ static void draw_source_strips(qa_gl_renderer *renderer, const qa_scene_draw *dr
     }
 }
 
+static bool skeletal_draw_prepare(qa_gl_renderer *renderer, qa_scene_draw *draw, qa_error *error)
+{
+    const qa_scene_skinning *skin = draw->skinning;
+    if (!skin) return true;
+    qa_scene_geometry_view geometry;
+    if (!skin->pose || !skin->pose->joints || !draw->mesh.identity ||
+        !qa_scene_geometry_read(draw->mesh.geometry, &geometry) ||
+        geometry.skeletal.vertex_count != draw->mesh.vertex_count ||
+        skin->pose->count < geometry.skeletal.bone_count ||
+        !finite3(skin->shade_direction) || !finite3(skin->light) || !finite4(skin->tint) ||
+        !isfinite(skin->shell) || draw->source_primitives || draw->source_arrays ||
+        draw->source_direct || draw->source_stage_state || draw->source_vertex_storage) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid skeletal draw descriptor"); return false;
+    }
+    size_t ordinal = skin->pose->ordinal;
+    int rounding = skin->sample ? skin->sample->rounding : fegetround();
+    if (rounding == FE_TONEAREST && qa_gl_skeletal_geometry_supported(renderer, draw->mesh.geometry) &&
+        ordinal < renderer->skin_palette_count && renderer->skin_palettes[ordinal].pose == skin->pose)
+        return true;
+    size_t count = draw->mesh.vertex_count;
+    if (count > renderer->skin_vertex_capacity) {
+        if (count > (size_t)PTRDIFF_MAX / sizeof(*renderer->skin_vertices) ||
+            count > (size_t)PTRDIFF_MAX / sizeof(*renderer->skin_sampled)) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Skeletal fallback vertex span overflows"); return false;
+        }
+        qa_scene_vertex *vertices = malloc(count * sizeof(*vertices));
+        qa_model_vertex *sampled = malloc(count * sizeof(*sampled));
+        if (!vertices || !sampled) {
+            free(vertices); free(sampled); qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating skeletal fallback vertices"); return false;
+        }
+        free(renderer->skin_vertices); free(renderer->skin_sampled);
+        renderer->skin_vertices = vertices; renderer->skin_sampled = sampled;
+        renderer->skin_vertex_capacity = count;
+    }
+    const qa_model_vertex *sampled = renderer->skin_sampled;
+    if (skin->sample) {
+        qa_scene_skin_sample *sample = skin->sample;
+        if (!sample->ready) {
+            qa_render_model_job job = {.view = sample->view, .pose = skin->pose,
+                .vertices = sample->vertices, .vertex_count = sample->count, .rounding = sample->rounding};
+            if (!qa_render_workers_skin_batch(NULL, &job, 1, error)) return false;
+            sample->error = job.error;
+            sample->ready = job.completed && job.error.code == QA_OK;
+        }
+        if (!sample->ready || sample->error.code != QA_OK) {
+            if (error) *error = sample->error;
+            return false;
+        }
+        if (sample->count < geometry.skeletal.source_vertex_count || (count && !sample->vertices)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Skeletal fallback lost its source sample extent"); return false;
+        }
+        sampled = sample->vertices;
+    } else {
+        qa_render_model_job job = {.view = {.vertices = geometry.vertices,
+            .vertex_stride = sizeof(qa_scene_vertex), .normal_offset = offsetof(qa_scene_vertex, normal),
+            .weights = geometry.skeletal.weights, .ranges = geometry.skeletal.ranges,
+            .vertex_count = geometry.skeletal.vertex_count, .weight_count = geometry.skeletal.weight_count,
+            .bone_count = geometry.skeletal.bone_count}, .pose = skin->pose,
+            .vertices = renderer->skin_sampled, .vertex_count = count, .rounding = rounding};
+        if (!qa_render_workers_skin_batch(NULL, &job, 1, error)) return false;
+        if (!job.completed || job.error.code != QA_OK) {
+            if (error) *error = job.error;
+            return false;
+        }
+    }
+    int original_rounding = fegetround();
+    if (rounding != original_rounding && fesetround(rounding) != 0) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Skeletal draw has an unsupported rounding mode"); return false;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        size_t source = skin->sample ? geometry.skeletal.sources[i] : i;
+        qa_scene_skin_apply(skin, sampled + source, geometry.vertices + i, renderer->skin_vertices + i);
+    }
+    if (rounding != original_rounding) (void)fesetround(original_rounding);
+    draw->mesh.vertices = renderer->skin_vertices;
+    draw->mesh.identity = draw->mesh.revision = 0;
+    draw->skinning = NULL;
+    return true;
+}
+
 static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
                        const gl_world_group *group, qa_error *error)
 {
@@ -792,6 +890,7 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
     if (!gl_lightmap_combined(source) && qa_scene_draw_lightmap_split(source, &base, &lightmap))
         return draw_scene(renderer, &base, NULL, error) && draw_scene(renderer, &lightmap, NULL, error);
     qa_scene_draw draw = *source;
+    if (!skeletal_draw_prepare(renderer, &draw, error)) return false;
     gl_mesh_entry *resident = NULL;
     qa_render_source_direct_state(&draw.state,&renderer->pipeline,source);
     if ((unsigned)draw.source_direct>QA_SOURCE_DIRECT_IMAGE_GRID || !draw_valid(renderer,&draw,&resident,error)) {
@@ -880,6 +979,7 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
         if (!gl_world_group_bind(renderer, group, &draw.vertex_inputs, &index_offset, error)) return false;
     } else if (!gl_mesh_bind(renderer, &uploaded, resident, &draw.vertex_inputs,
                       !source_pipeline && !draw.source_primitives,&index_offset,&base_vertex,error)) return false;
+    if (draw.skinning && !gl_skeletal_bind(renderer, &draw, error)) return false;
     if (source_pipeline && draw.mesh.vertex_count) {
         qa_scene_vec4 color; qa_scene_vec2 uv[2];
         qa_render_source_attributes_vertex(&renderer->controls,&draw,mode,0,draw.mesh.vertices,&color,uv);
@@ -947,7 +1047,7 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
 
 static bool world_draw(const qa_scene_draw *draw)
 {
-    return draw->light_count <= GL_MAX_LIGHTS_QA && (!draw->light_count || draw->lights) &&
+    return !draw->skinning && draw->light_count <= GL_MAX_LIGHTS_QA && (!draw->light_count || draw->lights) &&
         draw->single_coverage && draw->mesh.identity && draw->mesh.geometry &&
         draw->mesh.vertex_count && draw->mesh.index_count && draw->mesh.primitive == QA_SCENE_TRIANGLES &&
         draw->state.blend_source == QA_BLEND_ONE && draw->state.blend_destination == QA_BLEND_ZERO &&
@@ -1181,6 +1281,7 @@ static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *fra
         gl_textures_prune(renderer);
         gl_meshes_prune(renderer);
         renderer->sequence = frame->sequence;
+        if (!gl_skeletal_frame(renderer, frame, error)) return false;
     }
     for (size_t i = first; i < frame->command_count; ++i) {
         renderer->frame_command=i;
@@ -1935,7 +2036,8 @@ static bool gl_surface_current(const qa_gl_surface_ticket *ticket)
         renderer->stream.index_buffer!=ticket->original.stream.index_buffer ||
         renderer->stream.vertex_bytes!=ticket->original.stream.vertex_bytes ||
         renderer->stream.index_bytes!=ticket->original.stream.index_bytes ||
-        renderer->programs.stage!=ticket->original.programs.stage || renderer->programs.gamma!=ticket->original.programs.gamma ||
+        renderer->programs.stage[0]!=ticket->original.programs.stage[0] ||
+        renderer->programs.stage[1]!=ticket->original.programs.stage[1] || renderer->programs.gamma!=ticket->original.programs.gamma ||
         renderer->programs.opacity!=ticket->original.programs.opacity ||
         ticket->targets.options.display!=ticket->candidate_display || ticket->targets.gamma!=ticket->gamma ||
         (ticket->targets.output.enabled && (!ticket->targets.output.table || !ticket->targets.output.framebuffer ||

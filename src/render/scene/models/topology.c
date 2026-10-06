@@ -163,8 +163,14 @@ bool scene_model_topology(qa_scene_model *model, uint32_t mesh_index, qa_error *
         if (!ok) return false;
     }
     size_t allocated_corners = corners ? corners : 1;
-    qa_scene_geometry *geometry = qa_scene_geometry_adopt(mesh->vertices,
-        allocated_vertices ? allocated_vertices : 1, mesh->indices, allocated_corners, error);
+    qa_scene_skeletal_input skeletal = {.weights = source->weights, .ranges = source->vertex_weights,
+        .sources = mesh->sources, .vertex_count = vertex_count, .source_vertex_count = source_vertices,
+        .weight_count = source->weight_count, .bone_count = model->source->bone_count};
+    qa_scene_geometry_input geometry_input = {.vertices = mesh->vertices,
+        .vertex_count = allocated_vertices ? allocated_vertices : 1,
+        .indices = mesh->indices, .index_count = allocated_corners,
+        .skeletal = model->source->format == QA_MODEL_MD5 ? &skeletal : NULL};
+    qa_scene_geometry *geometry = qa_scene_geometry_adopt(&geometry_input, error);
     if (!geometry) return false;
     mesh->retained = (qa_scene_mesh){.identity = qa_scene_identity(),
         .revision = 1, .vertices = mesh->vertices, .indices = mesh->indices,

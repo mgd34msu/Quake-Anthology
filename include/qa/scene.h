@@ -385,12 +385,33 @@ typedef struct qa_scene_vertex {
  * an existing active reference; cached retirement records cannot be revived.
  * References are atomic, but callers must synchronize frame publication and never reset a
  * frame while a backend consumes it. */
-qa_scene_geometry *qa_scene_geometry_adopt(qa_scene_vertex *, size_t vertex_allocation_count,
-                                          uint32_t *, size_t index_allocation_count, qa_error *);
+/* Ordered source weights/ranges and render-to-source indices are copied on
+ * successful adoption. Source ranges cover source_vertex_count; the map covers
+ * the used render vertex prefix, which may be shorter than its allocation. */
+typedef struct qa_scene_skeletal_input {
+    const qa_model_weight *weights;
+    const qa_model_weight_range *ranges;
+    const uint32_t *sources;
+    size_t vertex_count, source_vertex_count, weight_count, bone_count;
+} qa_scene_skeletal_input;
+typedef struct qa_scene_geometry_input {
+    qa_scene_vertex *vertices;
+    uint32_t *indices;
+    size_t vertex_count, index_count;
+    const qa_scene_skeletal_input *skeletal;
+} qa_scene_geometry_input;
+qa_scene_geometry *qa_scene_geometry_adopt(const qa_scene_geometry_input *, qa_error *);
+typedef struct qa_scene_skeletal_view {
+    const qa_model_weight *weights;
+    const qa_model_weight_range *ranges;
+    const uint32_t *sources;
+    size_t vertex_count, source_vertex_count, weight_count, bone_count;
+} qa_scene_skeletal_view;
 typedef struct qa_scene_geometry_view {
     const qa_scene_vertex *vertices;
     const uint32_t *indices;
     size_t vertex_count, index_count;
+    qa_scene_skeletal_view skeletal;
 } qa_scene_geometry_view;
 /* Actual allocated extents, which may exceed a particular mesh's used prefix.
  * Read requires an active owner reference; retirement-only caches have none. */
@@ -494,8 +515,34 @@ typedef struct qa_scene_brush_surface {
     qa_scene_rect lightmap_rect;
     uint64_t light_revision;
 } qa_scene_brush_surface;
+/* Final model-space joints are immutable frame storage shared by one instance's
+ * meshes/passes. Ordinal is the command count at that instance's admission. */
+typedef struct qa_scene_skin_pose {
+    const qa_model_pose *joints;
+    size_t count, ordinal;
+} qa_scene_skin_pose;
+/* Borrow an existing model cache slot under the producer's frame lease. */
+typedef struct qa_scene_skin_sample {
+    qa_model_md5_view view;
+    qa_model_vertex *vertices;
+    size_t count;
+    int rounding;
+    qa_error error;
+    bool ready;
+} qa_scene_skin_sample;
+typedef struct qa_scene_skinning {
+    const qa_scene_skin_pose *pose;
+    qa_vec3 shade_direction, light;
+    qa_scene_vec4 tint;
+    float shell;
+    bool shade;
+    qa_scene_skin_sample *sample;
+} qa_scene_skinning;
+void qa_scene_skin_apply(const qa_scene_skinning *, const qa_model_vertex *,
+                         const qa_scene_vertex *, qa_scene_vertex *);
 typedef struct qa_scene_draw {
     qa_scene_mesh mesh;
+    const qa_scene_skinning *skinning;
     qa_scene_brush_surface brush;
     qa_scene_vertex_inputs vertex_inputs;
     qa_scene_matrix model, mvp;
