@@ -7,6 +7,7 @@
 #include "qa/campaign.h"
 #include "qa/recovery.h"
 #include "qa/q1_save.h"
+#include "qa/scene.h"
 #include "qa/tools.h"
 
 #include <fcntl.h>
@@ -524,12 +525,47 @@ static void test_profiler_mode_changes(void)
     CHECK(qa_profiler_destroy(profiler, &error));
 }
 
+static void test_source_nonmipped_transparency(void)
+{
+    qa_error error = {0};
+    qa_scene_resources *resources = qa_scene_resources_create(NULL, &error);
+    CHECK(resources);
+    uint8_t tga[34] = {0};
+    tga[2] = 2;
+    qa_store_u16le(tga + 12, 2);
+    qa_store_u16le(tga + 14, 2);
+    tga[16] = 32;
+    tga[17] = 8;
+    for (size_t i = 0; i < 4; ++i) {
+        tga[18 + i * 4] = 30;
+        tga[19 + i * 4] = 20;
+        tga[20 + i * 4] = 10;
+        tga[21 + i * 4] = i ? 255 : 0;
+    }
+    qa_scene_image_options options = {.family = QA_SCENE_Q3, .wrap = QA_SCENE_REPEAT,
+        .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .usage = QA_IMAGE_USAGE_PICTURE,
+        .source_q3 = true,
+        .source_upload = {.color = {.device = {.color_bits = 24}, .gamma = 1, .intensity = 1}}};
+    qa_scene_image *image = NULL;
+    CHECK(qa_scene_image_decode_retained(resources, "nonmipped-font", "font.tga",
+        (qa_bytes){tga, sizeof(tga)}, &options, &image, &error));
+    CHECK(image->source_q3 && !image->source_mipmap && image->level_count == 1);
+    CHECK(image->filter == QA_SCENE_LINEAR && image->kind == QA_SCENE_RGBA8);
+    const uint8_t *pixels = image->levels[0].pixels;
+    size_t transparent = 0;
+    for (size_t i = 0; i < 4; ++i) transparent += pixels[i * 4 + 3] == 0;
+    CHECK(transparent == 1);
+    qa_scene_image_release(image);
+    qa_scene_resources_destroy(resources);
+}
+
 int main(int argc, char **argv)
 {
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
     test_profiler_mode_changes();
+    test_source_nonmipped_transparency();
     test_binary();
     test_spans();
     test_arena();
