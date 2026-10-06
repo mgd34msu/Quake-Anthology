@@ -32,13 +32,6 @@ static bool resource_path(const qa_json_document *d,qa_json_id id,qa_error *e)
     }
     free(path);return ok||application_fail(e,QA_ERROR_FORMAT,"Item media path is not a relative source resource");
 }
-static bool digest(const qa_json_document *d,qa_json_id id,qa_error *e)
-{
-    char *value=NULL;if(!application_mod_item_text(d,id,&value,e))return false;
-    bool ok=strlen(value)==71&&!memcmp(value,"sha256:",7);
-    for(size_t i=7;ok&&i<71;++i)ok=(value[i]>='0'&&value[i]<='9')||(value[i]>='a'&&value[i]<='f');
-    free(value);return ok||application_fail(e,QA_ERROR_FORMAT,"Held item model digest is not a source SHA256 identity");
-}
 static bool vector(const qa_json_document *d,qa_json_id id,double out[3],qa_error *e)
 {
     const char *names[]={"x","y","z"};
@@ -55,23 +48,22 @@ static bool held(const qa_json_document *d,qa_json_id id,qa_error *e)
     if(!qa_json_string_equal(d,kind,"model"))return false;
     qa_json_id model=qa_json_get(d,id,"model"),grip=qa_json_get(d,model,"grip"),
         axes=qa_json_get(d,grip,"axis"),scale=qa_json_get(d,grip,"scale"),
-        part=qa_json_get(d,model,"part"),hash=qa_json_get(d,model,"digest"),fallback=qa_json_get(d,model,"fallback");
-    uint64_t frame;double origin[3],axis[3][3],sizes[3]={1,1,1};
+        part=qa_json_get(d,model,"part"),length=qa_json_get(d,model,"byteLength"),fallback=qa_json_get(d,model,"fallback");
+    uint64_t frame,byte_length;double origin[3],axis[3][3],sizes[3]={1,1,1};
     if(!resource_path(d,qa_json_get(d,model,"path"),e)||
         !qa_json_u64(d,qa_json_get(d,model,"referenceFrame"),&frame,e)||frame>UINT64_C(9007199254740991)||
         !vector(d,qa_json_get(d,grip,"origin"),origin,e)||qa_json_type(d,axes)!=QA_JSON_ARRAY||qa_json_size(d,axes)!=3||
         (scale!=QA_JSON_NONE&&!vector(d,scale,sizes,e))||sizes[0]==0||sizes[1]==0||sizes[2]==0||
-        (hash!=QA_JSON_NONE&&!digest(d,hash,e))||(fallback!=QA_JSON_NONE&&!resource_path(d,fallback,e)))return false;
+        (length!=QA_JSON_NONE&&!qa_json_u64(d,length,&byte_length,e))||
+        (fallback!=QA_JSON_NONE&&!resource_path(d,fallback,e)))return false;
     for(size_t i=0;i<3;++i)if(!vector(d,qa_json_at(d,axes,i),axis[i],e)||fabs(dot(axis[i],axis[i])-1)>0.001)return false;
     double cross[3]={axis[0][1]*axis[1][2]-axis[0][2]*axis[1][1],
         axis[0][2]*axis[1][0]-axis[0][0]*axis[1][2],axis[0][0]*axis[1][1]-axis[0][1]*axis[1][0]};
     if(fabs(dot(axis[0],axis[1]))>0.001||fabs(dot(axis[0],axis[2]))>0.001||fabs(dot(axis[1],axis[2]))>0.001||dot(cross,axis[2])<0.999)return false;
-    if(part!=QA_JSON_NONE){qa_json_id hashes=qa_json_get(d,part,"digests"),vertices=qa_json_get(d,part,"vertices");
-        if(qa_json_type(d,hashes)!=QA_JSON_ARRAY||!qa_json_size(d,hashes)||
-            qa_json_type(d,vertices)!=QA_JSON_ARRAY||!qa_json_size(d,vertices))return false;
-        for(size_t i=0;i<qa_json_size(d,hashes);++i)if(!digest(d,qa_json_at(d,hashes,i),e))return false;
+    if(part!=QA_JSON_NONE){qa_json_id vertices=qa_json_get(d,part,"vertices");
+        if(qa_json_type(d,vertices)!=QA_JSON_ARRAY||!qa_json_size(d,vertices))return false;
         for(size_t i=0;i<qa_json_size(d,vertices);++i){uint64_t vertex;
-            if(!qa_json_u64(d,qa_json_at(d,vertices,i),&vertex,e)||vertex>UINT64_C(9007199254740991))return false;
+            if(!qa_json_u64(d,qa_json_at(d,vertices,i),&vertex,e)||vertex>UINT32_MAX)return false;
             for(size_t j=0;j<i;++j){uint64_t prior;if(!qa_json_u64(d,qa_json_at(d,vertices,j),&prior,e)||prior==vertex)return false;}
         }
     }

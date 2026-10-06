@@ -7,11 +7,11 @@
 typedef struct frontend_held_declaration {
     qa_resource *source;
     char *path, *fallback;
-    qa_sha256_digest digest, *part_digests;
     uint32_t reference_frame, *vertices;
-    size_t part_digest_count, vertex_count;
+    size_t vertex_count;
+    uint64_t byte_length;
     qa_model_transform grip;
-    bool none, has_digest;
+    bool none, has_byte_length;
 } frontend_held_declaration;
 
 /* Retains the exact admitted declaration. Output is unchanged on failure. */
@@ -30,7 +30,7 @@ typedef struct frontend_held_model {
 
 /* Borrows the real parsed holder. The enclosing media owner keeps it alive.
  * Subsets own only their triangle list, never the borrowed model arrays. */
-bool frontend_held_model_prepare(const frontend_held_declaration *, const qa_resource *,
+bool frontend_held_model_prepare(const frontend_held_declaration *, const char *source_path, const qa_resource *,
     const qa_model *, frontend_held_model *, qa_error *);
 void frontend_held_model_free(frontend_held_model *);
 

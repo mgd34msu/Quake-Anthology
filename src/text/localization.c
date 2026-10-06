@@ -19,7 +19,10 @@ struct qa_localization {
 typedef struct loc_cache {
     struct loc_cache *next;
     qa_localization *catalog;
-    qa_sha256_digest key;
+    qa_localization_profile profile;
+    bool platform_present;
+    char *platform;
+    qa_resource *resources[4];
 } loc_cache;
 struct qa_localization_pool {
     loc_cache *first;
@@ -396,13 +399,19 @@ qa_localization_pool *qa_localization_pool_create(qa_error *error) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating localization pool");
     return pool;
 }
+static void cache_free(loc_cache *entry) {
+    qa_localization_release(entry->catalog);
+    for (size_t i = 0; i < 4; ++i)
+        qa_resource_release(entry->resources[i]);
+    free(entry->platform);
+    free(entry);
+}
 void qa_localization_pool_destroy(qa_localization_pool *pool) {
     if (!pool)
         return;
     while (pool->first) {
         loc_cache *next = pool->first->next;
-        qa_localization_release(pool->first->catalog);
-        free(pool->first);
+        cache_free(pool->first);
         pool->first = next;
     }
     free(pool);
@@ -412,8 +421,7 @@ void qa_localization_pool_trim(qa_localization_pool *pool) {
         loc_cache *entry = *link;
         if (entry->catalog->references == 1) {
             *link = entry->next;
-            qa_localization_release(entry->catalog);
-            free(entry);
+            cache_free(entry);
         } else
             link = &entry->next;
     }
@@ -432,8 +440,6 @@ bool qa_localization_acquire(qa_localization_pool *pool, qa_vfs *view, const cha
     }
     qa_resource *resources[4] = {0};
     qa_bytes layers[4] = {0};
-    uint8_t identity[1 + 32 + 4 * 33] = {0};
-    identity[0] = (uint8_t)((unsigned)options->profile | (options->platform ? 2u : 0u));
     const char *platform = options->platform ? options->platform : "";
     size_t n = strlen(platform);
     char *folded = malloc(n + 1);
@@ -443,10 +449,6 @@ bool qa_localization_acquire(qa_localization_pool *pool, qa_vfs *view, const cha
     }
     for (size_t i = 0; i <= n; ++i)
         folded[i] = (char)lower((unsigned char)platform[i]);
-    qa_sha256_digest platform_digest;
-    qa_sha256((qa_bytes){(const uint8_t *)folded, n}, &platform_digest);
-    memcpy(identity + 1, &platform_digest, 32);
-    free(folded);
     size_t count = !strcmp(language, "english") ? 2 : 4;
     bool ok = true;
     for (size_t i = 0; i < count; ++i) {
@@ -475,16 +477,17 @@ bool qa_localization_acquire(qa_localization_pool *pool, qa_vfs *view, const cha
             break;
         }
         layers[i] = qa_resource_bytes(resources[i]);
-        identity[33 + i * 33] = 1;
-        memcpy(identity + 34 + i * 33, qa_resource_digest(resources[i]), 32);
     }
-    qa_sha256_digest key;
-    qa_sha256((qa_bytes){identity, sizeof(identity)}, &key);
     if (ok) {
         loc_cache *entry;
-        for (entry = pool->first; entry; entry = entry->next)
-            if (qa_sha256_equal(&key, &entry->key))
+        for (entry = pool->first; entry; entry = entry->next) {
+            bool same = entry->profile == options->profile &&
+                entry->platform_present == (options->platform != NULL) && !strcmp(entry->platform, folded);
+            for (size_t i = 0; same && i < 4; ++i)
+                same = entry->resources[i] == resources[i];
+            if (same)
                 break;
+        }
         if (!entry) {
             entry = calloc(1, sizeof(*entry));
             if (!entry) {
@@ -494,7 +497,13 @@ bool qa_localization_acquire(qa_localization_pool *pool, qa_vfs *view, const cha
                 free(entry);
                 ok = false;
             } else {
-                entry->key = key;
+                entry->profile = options->profile;
+                entry->platform_present = options->platform != NULL;
+                entry->platform = folded; folded = NULL;
+                for (size_t i = 0; i < 4; ++i) {
+                    entry->resources[i] = resources[i];
+                    qa_resource_retain(resources[i]);
+                }
                 entry->next = pool->first;
                 pool->first = entry;
             }
@@ -506,6 +515,7 @@ bool qa_localization_acquire(qa_localization_pool *pool, qa_vfs *view, const cha
     }
     for (size_t i = 0; i < 4; ++i)
         qa_resource_release(resources[i]);
+    free(folded);
     return ok;
 }
 bool qa_localization_pool_catalog_key(const qa_localization_pool *pool, const qa_localization *catalog, uint64_t *out)

@@ -214,12 +214,19 @@ static bool held_model(qa_frontend *frontend, frontend_equipment_media *row, qa_
     if (!frontend_visual_model_acquire(frontend, row->provider, row->family, path, NULL,
             &row->held_parent, error)) return false;
     qa_resource_retain((qa_resource *)row->held_parent.resource);
+    if (row->family == QA_GAME_Q1 && !row->declaration.source) {
+        const qa_model *model = row->held_parent.model;
+        if (model->format != QA_MODEL_MDL || model->mesh_count != 1 || model->frame_count != 143 ||
+            model->meshes[0].vertex_count != 212 || model->meshes[0].triangle_count != 408)
+            return frontend_fail(error, QA_ERROR_FORMAT, "Original held subset requires the stock Q1 player layout");
+    }
     if (row->family == QA_GAME_Q2 && !row->declaration.source) {
         bool known;
-        if (!frontend_held_stock_q2_grip(row->held_parent.resource,
+        if (!frontend_held_stock_q2_grip(row->held_parent.path, row->held_parent.resource,
+                row->held_parent.model,
                 &row->declaration.grip, &known, error)) return false;
     }
-    if (!frontend_held_model_prepare(&row->declaration, row->held_parent.resource,
+    if (!frontend_held_model_prepare(&row->declaration, row->held_parent.path, row->held_parent.resource,
             row->held_parent.model, &row->held, error)) return false;
     const qa_scene_image_options *options = qa_scene_model_image_options(row->held_parent.scene);
     if (!options) return frontend_fail(error, QA_ERROR_FORMAT, "Held parent has no actual scene image policy");
@@ -361,7 +368,7 @@ static bool source_media_prepare(qa_frontend *f,const qa_application_equipment_v
             if(!row->saved_parent_path)ok=frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual component held path");
             else memcpy(row->saved_parent_path,path,length);}
         row->held_parent.path=row->saved_parent_path;row->held_parent.model=row->source_model;
-        if(ok)ok=frontend_held_model_prepare(&row->declaration,resource,row->source_model,&row->held,error)&&
+        if(ok)ok=frontend_held_model_prepare(&row->declaration,path,resource,row->source_model,&row->held,error)&&
             qa_scene_model_create(row->held.model,row->owner.images,row->owner.materials,&images,&row->held_scene,error)&&
             qa_scene_model_source_resource_bind(row->held_scene,resource,error);
     }

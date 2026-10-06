@@ -55,8 +55,8 @@ qa_localization_pool *qa_localization_pool_create(qa_error *error);
 size_t qa_localization_pool_count(const qa_localization_pool *pool);
 void qa_localization_pool_destroy(qa_localization_pool *pool);
 void qa_localization_pool_trim(qa_localization_pool *pool);
-/* Resolve through the caller's mounts first, then share by ordered content
- * digests, profile and platform. English, English mod, selected, selected mod.
+/* Resolve through the caller's mounts first, then share by retained resources,
+ * profile and platform. English, English mod, selected, selected mod.
  * Held catalogs survive mount changes and pool destruction. */
 bool qa_localization_acquire(qa_localization_pool *pool, qa_vfs *view, const char *language,
                              const qa_localization_options *options, qa_localization **out,

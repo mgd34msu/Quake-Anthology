@@ -17,7 +17,7 @@ void frontend_held_declaration_free(frontend_held_declaration *declaration)
     if (!declaration) return;
     qa_resource_release(declaration->source);
     free(declaration->path); free(declaration->fallback);
-    free(declaration->part_digests); free(declaration->vertices);
+    free(declaration->vertices);
     *declaration = (frontend_held_declaration){0};
 }
 
@@ -40,21 +40,6 @@ static bool path(const qa_json_document *doc, qa_json_id id, char **out, qa_erro
     if (!normalized) return false;
     *out = normalized;
     return true;
-}
-
-static bool digest(const qa_json_document *doc, qa_json_id id, qa_sha256_digest *out,
-    qa_error *error)
-{
-    qa_buffer value = {0};
-    if (!string(doc, id, &value, error)) return false;
-    bool ok = value.size == 71 && !memcmp(value.data, "sha256:", 7);
-    for (size_t i = 7; ok && i < value.size; ++i)
-        ok = (value.data[i] >= '0' && value.data[i] <= '9') ||
-            (value.data[i] >= 'a' && value.data[i] <= 'f');
-    if (ok) ok = qa_sha256_parse((const char *)value.data, out, error);
-    else fail(error, QA_ERROR_FORMAT, "Held model requires a canonical SHA256 digest");
-    qa_buffer_free(&value);
-    return ok;
 }
 
 static bool index(const qa_json_document *doc, qa_json_id id, uint32_t *out, qa_error *error)
@@ -115,20 +100,15 @@ static bool grip(const qa_json_document *doc, qa_json_id id, qa_model_transform 
 static bool part(const qa_json_document *doc, qa_json_id id, frontend_held_declaration *out,
     qa_error *error)
 {
-    qa_json_id digests = qa_json_get(doc, id, "digests"), vertices = qa_json_get(doc, id, "vertices");
-    if (qa_json_type(doc, digests) != QA_JSON_ARRAY || qa_json_type(doc, vertices) != QA_JSON_ARRAY ||
-        !(out->part_digest_count = qa_json_size(doc, digests)) ||
+    qa_json_id vertices = qa_json_get(doc, id, "vertices");
+    if (qa_json_type(doc, vertices) != QA_JSON_ARRAY ||
         !(out->vertex_count = qa_json_size(doc, vertices)))
-        return fail(error, QA_ERROR_FORMAT, "Held subset requires source digests and vertices");
-    if (out->part_digest_count > SIZE_MAX / sizeof(*out->part_digests) ||
-        out->vertex_count > SIZE_MAX / sizeof(*out->vertices))
+        return fail(error, QA_ERROR_FORMAT, "Held subset requires source vertices");
+    if (out->vertex_count > SIZE_MAX / sizeof(*out->vertices))
         return fail(error, QA_ERROR_MEMORY, "Held subset exceeds address space");
-    out->part_digests = calloc(out->part_digest_count, sizeof(*out->part_digests));
     out->vertices = calloc(out->vertex_count, sizeof(*out->vertices));
-    if (!out->part_digests || !out->vertices)
+    if (!out->vertices)
         return fail(error, QA_ERROR_MEMORY, "Retaining held subset qualification");
-    for (size_t i = 0; i < out->part_digest_count; ++i)
-        if (!digest(doc, qa_json_at(doc, digests, i), out->part_digests + i, error)) return false;
     for (size_t i = 0; i < out->vertex_count; ++i) {
         if (!index(doc, qa_json_at(doc, vertices, i), out->vertices + i, error)) return false;
         for (size_t j = 0; j < i; ++j)
@@ -151,13 +131,13 @@ static bool declaration_read(qa_bytes bytes,bool file, frontend_held_declaration
     if (ok && qa_json_string_equal(doc, kind, "none")) result.none = true;
     else if (ok && qa_json_string_equal(doc, kind, "model")) {
         qa_json_id model = qa_json_get(doc, root, "model"), fallback = qa_json_get(doc, model, "fallback"),
-            hash = qa_json_get(doc, model, "digest"), subset = qa_json_get(doc, model, "part");
+            length = qa_json_get(doc, model, "byteLength"), subset = qa_json_get(doc, model, "part");
         ok = path(doc, qa_json_get(doc, model, "path"), &result.path, error) &&
             index(doc, qa_json_get(doc, model, "referenceFrame"), &result.reference_frame, error) &&
             grip(doc, qa_json_get(doc, model, "grip"), &result.grip, error);
         if (ok && fallback != QA_JSON_NONE) ok = path(doc, fallback, &result.fallback, error);
-        if (ok && hash != QA_JSON_NONE) {
-            result.has_digest = true; ok = digest(doc, hash, &result.digest, error);
+        if (ok && length != QA_JSON_NONE) {
+            result.has_byte_length = true; ok = qa_json_u64(doc, length, &result.byte_length, error);
         }
         if (ok && subset != QA_JSON_NONE) ok = part(doc, subset, &result, error);
     } else if (ok) ok = fail(error, QA_ERROR_FORMAT, "Held declaration requires none or model");
@@ -193,13 +173,17 @@ static bool contains(const frontend_held_declaration *declaration, uint32_t vert
 }
 
 bool frontend_held_model_prepare(const frontend_held_declaration *declaration,
-    const qa_resource *source, const qa_model *model, frontend_held_model *out, qa_error *error)
+    const char *source_path, const qa_resource *source, const qa_model *model,
+    frontend_held_model *out, qa_error *error)
 {
     if (!declaration || declaration->none || !source || !model || !out)
         return fail(error, QA_ERROR_ARGUMENT, "Held model requires its actual admitted source holder");
-    const qa_sha256_digest *hash = qa_resource_digest(source);
-    if (declaration->has_digest && !qa_sha256_equal(&declaration->digest, hash))
-        return fail(error, QA_ERROR_FORMAT, "Held model differs from declared digest");
+    if (!declaration->path || !source_path ||
+        (strcmp(source_path, declaration->path) &&
+         (!declaration->fallback || strcmp(source_path, declaration->fallback))))
+        return fail(error, QA_ERROR_FORMAT, "Held model differs from declared source path");
+    if (declaration->has_byte_length && declaration->byte_length != qa_resource_bytes(source).size)
+        return fail(error, QA_ERROR_FORMAT, "Held model differs from declared byte length");
     if (declaration->reference_frame >= model->frame_count)
         return fail(error, QA_ERROR_FORMAT, "Held reference frame exceeds source animation");
     frontend_held_model result = {0};
@@ -218,13 +202,13 @@ bool frontend_held_model_prepare(const frontend_held_declaration *declaration,
                 return fail(error, QA_ERROR_FORMAT, "Held alignment exceeds finite native axes");
     }
     result.reference_frame = declaration->reference_frame;
-    if (!declaration->part_digest_count) { result.model = model; *out = result; return true; }
-    bool matched = false;
-    for (size_t i = 0; i < declaration->part_digest_count; ++i)
-        if (qa_sha256_equal(declaration->part_digests + i, hash)) matched = true;
-    if (!matched || model->format != QA_MODEL_MDL || model->mesh_count != 1)
+    if (!declaration->vertex_count) { result.model = model; *out = result; return true; }
+    if (model->format != QA_MODEL_MDL || model->mesh_count != 1)
         return fail(error, QA_ERROR_FORMAT, "Held subset is not qualified for actual Q1 MDL holder");
     const qa_model_mesh *mesh = model->meshes;
+    for (size_t i = 0; i < declaration->vertex_count; ++i)
+        if (declaration->vertices[i] >= mesh->vertex_count)
+            return fail(error, QA_ERROR_FORMAT, "Held subset vertex exceeds actual source topology");
     uint32_t count = 0;
     for (uint32_t i = 0; i < mesh->triangle_count; ++i) {
         const qa_model_triangle *triangle = mesh->triangles + i;
