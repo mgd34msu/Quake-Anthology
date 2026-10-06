@@ -72,8 +72,8 @@ static bool actor(void *context, uint32_t number, frontend_remote_q2_effects_pos
     frontend_remote_q2_effects_pose pose = {.number = number};
     if (!row->options.entity_actor(row->options.context, &row->options.domain, number, &pose.actor, error) ||
         !qa_actors_get(qa_session_actor_registry(qa_application_session(row->options.domain.application)), pose.actor)) return false;
-    for (size_t i = 0; i < row->frame.entity_count; ++i) if (row->frame.entities[i].number == number) {
-        const qa_q2_entity *entity = row->frame.entities + i;
+    const qa_q2_entity *entity=remote_q2_frame_entity(&row->frame,number);
+    if (entity) {
         pose.origin = vector(entity->origin); pose.angles = vector(entity->angles);
         pose.frame = (int32_t)entity->frame; pose.effects = entity->effects; pose.event = entity->event;
         pose.model_index = entity->modelindex;
@@ -329,12 +329,26 @@ bool frontend_remote_q2_effects_records(frontend_remote_q2 *row,
     }
     return remote_q2_live(row, error);
 }
+static bool effect_poses_reserve(frontend_remote_q2 *row,qa_error *error)
+{
+    if (row->frame.entity_count<=row->effect_pose_capacity) return true;
+    size_t capacity=row->effect_pose_capacity?row->effect_pose_capacity:128;
+    while (capacity<row->frame.entity_count) {
+        if (capacity>SIZE_MAX/2) { capacity=row->frame.entity_count;break; }
+        capacity*=2;
+    }
+    if (capacity>SIZE_MAX/sizeof(*row->effect_poses))
+        return remote_q2_fail(error,QA_ERROR_MEMORY,"Q2 effect pose extent overflows");
+    frontend_remote_q2_effects_pose *poses=realloc(row->effect_poses,capacity*sizeof(*poses));
+    if (!poses) return remote_q2_fail(error,QA_ERROR_MEMORY,"Retaining Q2 effect pose capacity");
+    row->effect_poses=poses;row->effect_pose_capacity=capacity;return true;
+}
 bool remote_q2_effects_frame(frontend_remote_q2 *row, qa_error *error)
 {
     if (!row || !row->effects || !row->frame.valid || !remote_q2_live(row, error) ||
         row->frame.entity_count > SIZE_MAX / sizeof(frontend_remote_q2_effects_pose)) return false;
-    frontend_remote_q2_effects_pose *poses = row->frame.entity_count ? calloc(row->frame.entity_count, sizeof(*poses)) : NULL;
-    if (row->frame.entity_count && !poses) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 received frame event poses");
+    if (!effect_poses_reserve(row,error)) return false;
+    frontend_remote_q2_effects_pose *poses=row->effect_poses;
     bool ok = true;
     for (size_t i = 0; ok && i < row->frame.entity_count; ++i) ok = actor(row, row->frame.entities[i].number, poses + i, error);
     const qa_cvar_view *footsteps = qa_cvars_find(row->options.domain.cvars, "cl_footsteps");
@@ -344,29 +358,29 @@ bool remote_q2_effects_frame(frontend_remote_q2 *row, qa_error *error)
         .frame_sequence = (uint64_t)(uint32_t)row->frame.server_frame, .fraction = row->fraction,
         .entities = poses, .entity_count = row->frame.entity_count, .footsteps = footsteps ? (float)footsteps->number : 1};
     if (ok) ok = frontend_remote_q2_effects_frame(row->effects, &sample, error);
-    free(poses); return ok;
+    return ok;
 }
 bool remote_q2_effects_sample_prepare(frontend_remote_q2 *row, const qa_scene_view *view, float player_fov, qa_vec3 viewer_origin, qa_vec3 gun_offset,
-    int32_t viewer_number, frontend_remote_q2_effects_sample *sample, frontend_remote_q2_effects_pose **owned,
+    int32_t viewer_number, frontend_remote_q2_effects_sample *sample,
     const qa_scene_light **lights, size_t *count, qa_error *error)
 {
     if (!row || !row->effects || !view || !isfinite(player_fov) || player_fov <= 0 || player_fov >= 180 ||
-        !qa_vec_finite(viewer_origin) || !sample || !owned || *owned || !lights || !count ||
-        row->frame.entity_count > SIZE_MAX / sizeof(**owned)) return false;
-    frontend_remote_q2_effects_pose *poses = row->frame.entity_count ? calloc(row->frame.entity_count, sizeof(*poses)) : NULL;
-    if (row->frame.entity_count && !poses) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining actual Q2 effects view poses");
-    bool ok = true;
+        !qa_vec_finite(viewer_origin) || !sample || !lights || !count) return false;
+    if (!effect_poses_reserve(row,error)) return false;
+    frontend_remote_q2_effects_pose *poses=row->effect_poses;
+    bool ok = true;size_t previous_cursor=0;
     for (size_t i = 0; ok && i < row->frame.entity_count; ++i) {
         const qa_q2_entity *entity = row->frame.entities + i;
         ok = actor(row, entity->number, poses + i, error);
-        for (size_t j = 0; ok && row->previous.valid && j < row->previous.entity_count; ++j) {
-            const qa_q2_entity *previous = row->previous.entities + j;
-            if (previous->number != entity->number) continue;
+        while (row->previous.valid && previous_cursor<row->previous.entity_count &&
+            row->previous.entities[previous_cursor].number<entity->number) ++previous_cursor;
+        if (ok && row->previous.valid && previous_cursor<row->previous.entity_count &&
+            row->previous.entities[previous_cursor].number==entity->number) {
+            const qa_q2_entity *previous=row->previous.entities+previous_cursor;
             qa_vec3 delta = qa_vec_sub(vector(previous->origin), poses[i].origin);
             if (previous->modelindex == entity->modelindex && entity->event != 6 && entity->event != 7 &&
                 fabsf(delta.x) <= 512 && fabsf(delta.y) <= 512 && fabsf(delta.z) <= 512)
                 poses[i].origin = qa_vec_lerp(vector(previous->origin), poses[i].origin, row->fraction);
-            break;
         }
     }
     frontend_remote_q2_effects_pose viewer = {0};
@@ -383,6 +397,5 @@ bool remote_q2_effects_sample_prepare(frontend_remote_q2 *row, const qa_scene_vi
             (int32_t)hand->number : 0, .hardware = row->frontend->gl != NULL,
         .frame_seconds = (float)row->sample_frame_seconds, .per_pixel_lighting = false};
     if (ok) ok = frontend_remote_q2_effects_prepare(row->effects, sample, lights, count, error);
-    if (!ok) { free(poses); return false; }
-    *owned = poses; return true;
+    return ok;
 }

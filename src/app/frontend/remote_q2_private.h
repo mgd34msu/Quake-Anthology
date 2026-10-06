@@ -37,6 +37,7 @@ bool remote_q2_model_scope_required(const char *, qa_bytes);
 bool remote_q2_model_scope_current(const frontend_remote_q2 *, const remote_q2_model *, qa_error *);
 struct frontend_remote_q2_image_policy;
 struct frontend_remote_q2_effects;
+struct frontend_q2_entity_pose;
 struct remote_q2_footsteps;
 typedef struct remote_q2_sent_command {
     bool valid;
@@ -75,6 +76,8 @@ struct frontend_remote_q2 {
     qa_q2_entity *baselines;
     size_t baseline_count;
     qa_q2_wire_frame frame, previous;
+    struct frontend_q2_entity_pose *effect_poses;
+    size_t effect_pose_capacity;
     float fraction, frame_ms, height_previous, height_current;
     double sample_frame_seconds, demo_ms;
     double height_changed_ms;
@@ -159,6 +162,7 @@ bool remote_q2_records(frontend_remote_q2 *, const qa_q2_server_record *, size_t
 bool remote_q2_player_fog_receive(frontend_remote_q2 *, qa_error *);
 remote_q2_layout remote_q2_layout_read(qa_net_protocol_id);
 bool remote_q2_layout_adopt(frontend_remote_q2 *, const qa_q2_serverdata *, qa_error *);
+const qa_q2_entity *remote_q2_frame_entity(const qa_q2_wire_frame *, uint32_t);
 bool remote_q2_float_movement(const frontend_remote_q2 *);
 bool remote_q2_rerelease_presentation(const frontend_remote_q2 *);
 #endif

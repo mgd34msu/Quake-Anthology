@@ -606,9 +606,9 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     if (!isfinite(world.sky_rotation) || !qa_vec_finite(world.sky_axis))
         ok = remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 sky configuration has nonfinite received parameters");
     world.sky_auto_rotate = sky_auto;
-    frontend_remote_q2_effects_sample effects_sample = {0}; frontend_remote_q2_effects_pose *effects_poses = NULL;
+    frontend_remote_q2_effects_sample effects_sample = {0};
     if (ok) ok = remote_q2_effects_sample_prepare(row, &view, fov, viewer_origin, vector(frame->player.gunoffset), player_number,
-        &effects_sample, &effects_poses, &world.lights, &world.light_count, error);
+        &effects_sample, &world.lights, &world.light_count, error);
     effects_sample.world_input = &world;
     const qa_cvar_view *light_setting = qa_cvars_find(row->options.domain.cvars, "cl_lights");
     const qa_cvar_view *entities_setting = qa_cvars_find(row->options.domain.cvars, "cl_entities");
@@ -742,7 +742,6 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         alpha.legacy_phase = QA_LEGACY_WORLD_ALPHA;
         ok = qa_scene_world_submit(row->world, &alpha, &f->frame, error);
     }
-    free(effects_poses);
     world.fog.sky_drawn = !world.no_world && qa_scene_world_sky_drawn(row->world);
     if (ok) ok = qa_scene_frame_finish(&f->frame, &view, &world.fog, error);
     const qa_cvar_view *blend_setting = qa_cvars_find(row->options.domain.cvars, "cl_blend");

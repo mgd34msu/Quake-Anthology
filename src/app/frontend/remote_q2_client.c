@@ -523,10 +523,21 @@ bool frontend_remote_q2_player_number(const frontend_remote_q2 *row,
     }
     return true;
 }
+const qa_q2_entity *remote_q2_frame_entity(const qa_q2_wire_frame *frame,uint32_t number)
+{
+    size_t lower=0,upper=frame->entity_count;
+    while (lower<upper) {
+        size_t middle=lower+(upper-lower)/2;
+        if (frame->entities[middle].number<number) lower=middle+1;
+        else upper=middle;
+    }
+    return lower<frame->entity_count && frame->entities[lower].number==number ?
+        frame->entities+lower:NULL;
+}
 bool frontend_remote_q2_entity_received(const frontend_remote_q2 *row, uint32_t number)
 {
     if (!row || !linked(row) || row->retired || row->retiring || row->importing || !row->frame.valid || !number) return false;
-    for (size_t i = 0; i < row->frame.entity_count; ++i) if (row->frame.entities[i].number == number) return true;
+    if (remote_q2_frame_entity(&row->frame,number)) return true;
     for (size_t i = 0; i < row->frame.player_count; ++i) {
         int32_t player_number;
         if (frontend_remote_q2_player_number(row, &row->frame, i, &player_number) &&
@@ -602,7 +613,7 @@ bool frontend_remote_q2_destroy(frontend_remote_q2 **owned, qa_error *error)
         qa_network_connections(row->options.domain.runtime), row->options.domain.client))
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 receiver still owns its attached transport callbacks");
     if (!content_clear(row, error)) return false;
-    qa_catalog_release(row->options.domain.catalog); free(row->configs);
+    qa_catalog_release(row->options.domain.catalog); free(row->configs); free(row->effect_poses);
     frontend_remote_q2 **link = &row->frontend->remote_q2;
     while (*link != row) link = &(*link)->next;
     *link = row->next; free(row); *owned = NULL; return true;
