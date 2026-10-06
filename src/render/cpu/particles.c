@@ -50,7 +50,7 @@ bool cpu_particles(qa_cpu_renderer *renderer, const qa_scene_particle_batch *bat
         int inverse_word = (int)(inverse_depth * 32768);
         double sized = inverse_word * size_scale;
         int pixels = sized > maximum ? maximum : sized < minimum ? minimum : (int)sized;
-        double depth = cpu_clamp((clip[2] / clip[3] + 1) * .5);
+        float depth = cpu_clamp((float)((clip[2] / clip[3] + 1) * .5));
         unsigned blend = batch->family == QA_SCENE_Q1 || sample->color.w > .66f ? 3u :
             sample->color.w > .33f ? 2u : 1u;
         uint8_t color[3] = {cpu_byte(sample->color.x), cpu_byte(sample->color.y), cpu_byte(sample->color.z)};

@@ -7,24 +7,21 @@
 
 bool cpu_texture_components_init(qa_cpu_renderer *renderer, qa_error *error) {
   fenv_t environment;
+  bool captured = fegetenv(&environment) == 0;
   renderer->texture_components_ready = false;
-  if (fegetenv(&environment) != 0)
-    return true;
-  bool ready = fesetenv(FE_DFL_ENV) == 0 && fegetround() == FE_TONEAREST;
-  if (ready) {
-    const qa_q3_texture_format formats[3] = {
-        QA_Q3_TEXTURE_RGBA8, QA_Q3_TEXTURE_RGB5, QA_Q3_TEXTURE_RGBA4};
-    for (size_t format = 0; format < 3; ++format)
-      for (size_t value = 0; value < 256; ++value)
-        renderer->texture_components[format][value] =
-            qa_render_source_texture_component(formats[format], (uint8_t)value);
-  }
-  if (fesetenv(&environment) != 0) {
+  if (captured) (void)fesetenv(FE_DFL_ENV);
+  const qa_q3_texture_format formats[3] = {
+      QA_Q3_TEXTURE_RGBA8, QA_Q3_TEXTURE_RGB5, QA_Q3_TEXTURE_RGBA4};
+  for (size_t format = 0; format < 3; ++format)
+    for (size_t value = 0; value < 256; ++value)
+      renderer->texture_components[format][value] =
+          (float)qa_render_source_texture_component(formats[format], (uint8_t)value);
+  if (captured && fesetenv(&environment) != 0) {
     qa_error_set(error, QA_ERROR_UNSUPPORTED, 0,
                  "Restoring CPU texture floating-point environment");
     return false;
   }
-  renderer->texture_components_ready = ready;
+  renderer->texture_components_ready = true;
   return true;
 }
 
@@ -37,7 +34,7 @@ static int64_t texel_axis(qa_scene_wrap wrap, uint32_t extent,
 static void texel(const cpu_sampler *sampler,
                   const qa_scene_image_level *level,
                   const cpu_framebuffer *target, int64_t x, int64_t y,
-                  double out[4]) {
+                  float out[4]) {
   const qa_scene_image *image = sampler->image;
   if (image->wrap != QA_SCENE_REPEAT &&
       (x < 0 || y < 0 || x >= level->width || y >= level->height)) {
@@ -59,11 +56,11 @@ static void texel(const cpu_sampler *sampler,
       for (size_t c = 0; c < 3; ++c)
         out[c] = sampler->target_components
                      ? sampler->target_components[pixel[c]]
-                     : pixel[c] / 255.0;
+                     : pixel[c] / 255.0f;
       out[3] = sampler->alpha
                    ? (sampler->target_components
                           ? sampler->target_components[pixel[3]]
-                          : pixel[3] / 255.0)
+                          : pixel[3] / 255.0f)
                    : 1;
     }
   } else if (image->kind == QA_SCENE_DEPTH32F) {
@@ -76,78 +73,11 @@ static void texel(const cpu_sampler *sampler,
     const uint8_t *pixel = (const uint8_t *)level->pixels + index * 4;
     for (size_t c = 0; c < 3; ++c)
       out[c] = sampler->components ? sampler->components[pixel[c]] :
-          image->source_q3 ? qa_render_source_texture_component(image->source_format,pixel[c]) : pixel[c] / 255.0;
+          pixel[c] / 255.0f;
     out[3] = sampler->alpha ?
         (sampler->components ? sampler->components[pixel[3]] :
-         image->source_q3 ? qa_render_source_texture_component(image->source_format,pixel[3]) : pixel[3] / 255.0) : 1;
+         pixel[3] / 255.0f) : 1;
   }
-}
-static void sample_level(const cpu_sampler *sampler, size_t index, double u,
-                         double v, bool linear, double out[4]) {
-  const qa_scene_image *image = sampler->image;
-  const qa_scene_image_level *level = &image->levels[index];
-  const cpu_framebuffer *target =
-      index == 0 ? sampler->target : NULL;
-  if (!linear) {
-    int64_t x = (int64_t)fmin(level->width - 1, floor(u * level->width));
-    int64_t y = (int64_t)fmin(level->height - 1, floor(v * level->height));
-    texel(sampler, level, target,
-          texel_axis(image->wrap, level->width, x),
-          texel_axis(image->wrap, level->height, y), out);
-    return;
-  }
-  double x = u * level->width - 0.5, y = v * level->height - 0.5;
-  int64_t x0 = (int64_t)floor(x), y0 = (int64_t)floor(y);
-  double fx = x - (double)x0, fy = y - (double)y0;
-  int64_t sx0 = texel_axis(image->wrap, level->width, x0),
-          sx1 = texel_axis(image->wrap, level->width, x0 + 1),
-          sy0 = texel_axis(image->wrap, level->height, y0),
-          sy1 = texel_axis(image->wrap, level->height, y0 + 1);
-  if (!target && image->kind != QA_SCENE_DEPTH32F && sampler->components &&
-      sx0 >= 0 && sx1 >= 0 && sy0 >= 0 && sy1 >= 0 &&
-      sx0 < level->width && sx1 < level->width &&
-      sy0 < level->height && sy1 < level->height) {
-    const uint8_t *pixels = level->pixels;
-    const uint8_t *taps[4] = {
-        pixels + ((size_t)sy0 * level->width + (size_t)sx0) * 4,
-        pixels + ((size_t)sy0 * level->width + (size_t)sx1) * 4,
-        pixels + ((size_t)sy1 * level->width + (size_t)sx0) * 4,
-        pixels + ((size_t)sy1 * level->width + (size_t)sx1) * 4};
-    const double *components = sampler->components;
-#if defined(__SSE2__)
-    __m128d vx = _mm_set1_pd(fx), vy = _mm_set1_pd(fy);
-    __m128d inverse_x = _mm_set1_pd(1 - fx), inverse_y = _mm_set1_pd(1 - fy);
-    for (size_t c = 0; c < 4; c += 2) {
-      __m128d a = _mm_set_pd(components[taps[0][c + 1]], components[taps[0][c]]);
-      __m128d b = _mm_set_pd(components[taps[1][c + 1]], components[taps[1][c]]);
-      __m128d d = _mm_set_pd(components[taps[2][c + 1]], components[taps[2][c]]);
-      __m128d e = _mm_set_pd(components[taps[3][c + 1]], components[taps[3][c]]);
-      __m128d value = _mm_add_pd(_mm_mul_pd(_mm_mul_pd(a, inverse_x), inverse_y),
-                                _mm_mul_pd(_mm_mul_pd(b, vx), inverse_y));
-      value = _mm_add_pd(value, _mm_mul_pd(_mm_mul_pd(d, inverse_x), vy));
-      value = _mm_add_pd(value, _mm_mul_pd(_mm_mul_pd(e, vx), vy));
-      _mm_storeu_pd(out + c, value);
-    }
-#else
-    for (size_t c = 0; c < (sampler->alpha ? 4u : 3u); ++c)
-      out[c] = components[taps[0][c]] * (1 - fx) * (1 - fy) +
-               components[taps[1][c]] * fx * (1 - fy) +
-               components[taps[2][c]] * (1 - fx) * fy +
-               components[taps[3][c]] * fx * fy;
-#endif
-    if (!sampler->alpha)
-      out[3] = (1 - fx) * (1 - fy) + fx * (1 - fy) +
-               (1 - fx) * fy + fx * fy;
-    return;
-  }
-  double taps[4][4];
-  texel(sampler, level, target, sx0, sy0, taps[0]);
-  texel(sampler, level, target, sx1, sy0, taps[1]);
-  texel(sampler, level, target, sx0, sy1, taps[2]);
-  texel(sampler, level, target, sx1, sy1, taps[3]);
-  for (size_t c = 0; c < 4; ++c)
-    out[c] = taps[0][c] * (1 - fx) * (1 - fy) + taps[1][c] * fx * (1 - fy) +
-             taps[2][c] * (1 - fx) * fy + taps[3][c] * fx * fy;
 }
 bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
                           const qa_scene_image *image, cpu_sampler *sampler) {
@@ -157,8 +87,7 @@ bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
     image = cpu_stream_image_read(renderer, image);
     sampler->image = image;
   }
-  bool nearest_rounding = fegetround() == FE_TONEAREST;
-  if (renderer->texture_components_ready && nearest_rounding) {
+  if (renderer->texture_components_ready) {
     size_t format = !image->source_q3 ? 0 :
         image->source_format == QA_Q3_TEXTURE_RGB5 ? 1 :
         image->source_format == QA_Q3_TEXTURE_RGBA4 ? 2 : 0;
@@ -180,9 +109,9 @@ bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
                 filter == QA_SCENE_LINEAR_MIPMAP_LINEAR;
   bool mipmap =
       filter != QA_SCENE_NEAREST && filter != QA_SCENE_LINEAR;
-  double magnification_limit=magnification_linear &&
+  float magnification_limit=magnification_linear &&
       (filter==QA_SCENE_NEAREST_MIPMAP_NEAREST || filter==QA_SCENE_NEAREST_MIPMAP_LINEAR)?
-      1.4142135623730951:1;
+      2:1;
   size_t count = 1;
   bool image_mipmap = image->filter != QA_SCENE_NEAREST &&
                       image->filter != QA_SCENE_LINEAR;
@@ -203,91 +132,189 @@ bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
   sampler->magnification_limit = magnification_limit;
   sampler->blend = filter == QA_SCENE_NEAREST_MIPMAP_LINEAR ||
                     filter == QA_SCENE_LINEAR_MIPMAP_LINEAR;
-  sampler->nearest_mip = nearest_rounding && sampler->level_count > 1 &&
-      !sampler->blend && sampler->linear == sampler->magnification_linear;
   return true;
 }
-static bool texture_coordinates(const cpu_sampler *sampler, double *u,
-                                double *v, double out[4]) {
-  out[0] = out[1] = out[2] = out[3] = 1;
-  if (!sampler->level_count || !isfinite(*u) || !isfinite(*v)) return false;
-  if (sampler->image->wrap == QA_SCENE_REPEAT) {
-    *u -= floor(*u);
-    *v -= floor(*v);
-  } else {
-    *u = cpu_clamp(*u);
-    *v = cpu_clamp(*v);
-  }
-  return true;
-}
-void cpu_sample_texture(const cpu_sampler *sampler, double u, double v,
-                        double rho, double out[4]) {
-  if (!texture_coordinates(sampler, &u, &v, out)) return;
-  if (!(rho > sampler->magnification_limit) || sampler->level_count == 1) {
-    bool magnification=!(rho>sampler->magnification_limit);
-    bool sample_linear=magnification?sampler->magnification_linear:sampler->linear;
-    sample_level(sampler, 0, u, v, sample_linear, out);
-    return;
-  }
-  double lod = fmin((double)(sampler->level_count - 1), log2(rho));
-  bool blend = sampler->blend;
-  size_t first =
-      blend ? (size_t)floor(lod) : (size_t)fmax(0, ceil(lod + 0.5) - 1);
-  sample_level(sampler, first, u, v, sampler->linear, out);
-  double fraction = lod - (double)first;
-  if (blend && fraction > 0 && first + 1 < sampler->level_count) {
-    double next[4];
-    sample_level(sampler, first + 1, u, v, sampler->linear, next);
-    for (size_t c = 0; c < 4; ++c)
-      out[c] = out[c] * (1 - fraction) + next[c] * fraction;
-  }
-}
-
-static bool nearest_mip_level(const cpu_sampler *sampler, const double axes[4],
-                               size_t *out) {
-#if FLT_RADIX == 2 && DBL_MANT_DIG == 53 && DBL_MAX_EXP == 1024
-  if (!sampler->nearest_mip || sizeof(double) != sizeof(uint64_t)) return false;
-  for (size_t i = 0; i < 4; ++i) {
-    double value = fabs(axes[i]);
-    if (!isfinite(value) || (value != 0 &&
-        (value < 0x1p-450 || value > 0x1p450))) return false;
-  }
-  double x = axes[0] * axes[0] + axes[1] * axes[1];
-  double y = axes[2] * axes[2] + axes[3] * axes[3];
-  double squared = x > y ? x : y;
-  uint64_t bits;
+static size_t nearest_level(float squared, size_t count) {
+  if (!(squared > 2)) return 0;
+#if FLT_RADIX == 2 && FLT_MANT_DIG == 24 && FLT_MAX_EXP == 128
+  uint32_t bits;
   memcpy(&bits, &squared, sizeof(bits));
-  int exponent = (int)((bits >> 52) & UINT64_C(0x7ff)) - 1023;
-  /* Nearest-mip transitions are squared lengths 2, 8, 32, ... .
-   * Keep a wide numerical uncertainty band on the original hypot/log2 path. */
-  int boundary_exponent = exponent < 1 ? 1 : exponent | 1;
-  uint64_t boundary = (uint64_t)(boundary_exponent + 1023) << 52;
-  uint64_t distance = bits > boundary ? bits - boundary : boundary - bits;
-  if (distance <= UINT64_C(16384)) return false;
-  size_t level = exponent < 1 ? 0 : (size_t)((exponent + 1) / 2);
-  *out = level < sampler->level_count ? level : sampler->level_count - 1;
-  return true;
+  int exponent = (int)(bits >> 23) - 127;
+  size_t level = (size_t)((exponent + 1) / 2);
+  /* Exact 2,8,32,... ties select the lower mip. */
+  if ((exponent & 1) && !(bits & UINT32_C(0x7fffff))) --level;
+  return level < count ? level : count - 1;
 #else
-  (void)sampler; (void)axes; (void)out;
-  return false;
+  size_t level = 0;
+  float threshold = 2;
+  while (level + 1 < count && squared > threshold) {
+    ++level; threshold *= 4;
+  }
+  return level;
 #endif
 }
-void cpu_sample_texture_derivative(const cpu_sampler *sampler,
-    const cpu_derivative *derivative, double u, double v, double out[4]) {
-  if (!cpu_sampler_requires_derivatives(sampler)) {
-    cpu_sample_texture(sampler, u, v, 0, out);
+
+static void sample_levels(const cpu_sampler *sampler,
+    const size_t levels[CPU_PIXEL_LANES], const bool linear[CPU_PIXEL_LANES],
+    const float u[CPU_PIXEL_LANES], const float v[CPU_PIXEL_LANES],
+    uint8_t active, cpu_texture_color *out) {
+  float taps[4][4][CPU_PIXEL_LANES];
+  float fx[CPU_PIXEL_LANES] = {0}, fy[CPU_PIXEL_LANES] = {0};
+  const qa_scene_image *image = sampler->image;
+  bool single = !(active & (active - 1u));
+  for (size_t lane = 0; lane < CPU_PIXEL_LANES; ++lane) {
+    if (!(active & (1u << lane))) {
+      if (!single)
+        for (size_t tap = 0; tap < 4; ++tap)
+          for (size_t c = 0; c < 4; ++c) taps[tap][c][lane] = 0;
+      continue;
+    }
+    size_t mip = levels[lane];
+    const qa_scene_image_level *level = image->levels + mip;
+    const cpu_framebuffer *target = mip == 0 ? sampler->target : NULL;
+    int64_t x0, y0;
+    unsigned count = linear[lane] ? 4u : 1u;
+    if (linear[lane]) {
+      float x = u[lane] * (float)level->width - .5f;
+      float y = v[lane] * (float)level->height - .5f;
+      x0 = (int64_t)floorf(x); y0 = (int64_t)floorf(y);
+      fx[lane] = x - (float)x0; fy[lane] = y - (float)y0;
+    } else {
+      x0 = (int64_t)fminf((float)(level->width - 1), floorf(u[lane] * (float)level->width));
+      y0 = (int64_t)fminf((float)(level->height - 1), floorf(v[lane] * (float)level->height));
+    }
+    if (count == 1)
+      for (size_t tap = 1; tap < 4; ++tap)
+        for (size_t c = 0; c < 4; ++c) taps[tap][c][lane] = 0;
+    for (unsigned tap = 0; tap < count; ++tap) {
+      int64_t x = texel_axis(image->wrap, level->width, x0 + (tap & 1u));
+      int64_t y = texel_axis(image->wrap, level->height, y0 + (tap >> 1));
+      float value[4];
+      texel(sampler, level, target, x, y, value);
+      for (size_t c = 0; c < 4; ++c) taps[tap][c][lane] = value[c];
+    }
+  }
+  if (single) {
+    for (size_t c = 0; c < 4; ++c)
+      for (size_t lane = 0; lane < CPU_PIXEL_LANES; ++lane) {
+        if (!(active & (1u << lane))) { out->channel[c][lane] = 0; continue; }
+        out->channel[c][lane] = linear[lane] ?
+            taps[0][c][lane] * (1 - fx[lane]) * (1 - fy[lane]) +
+            taps[1][c][lane] * fx[lane] * (1 - fy[lane]) +
+            taps[2][c][lane] * (1 - fx[lane]) * fy[lane] +
+            taps[3][c][lane] * fx[lane] * fy[lane] : taps[0][c][lane];
+      }
     return;
   }
-  const qa_scene_image_level *level = &sampler->image->levels[0];
-  double axes[4] = {derivative->dudx * level->width,
-      derivative->dvdx * level->height, derivative->dudy * level->width,
-      derivative->dvdy * level->height};
-  size_t mip;
-  if (nearest_mip_level(sampler, axes, &mip)) {
-    if (texture_coordinates(sampler, &u, &v, out))
-      sample_level(sampler, mip, u, v, sampler->linear, out);
+#if defined(__SSE2__)
+  __m128 x = _mm_loadu_ps(fx), y = _mm_loadu_ps(fy);
+  __m128 ix = _mm_sub_ps(_mm_set1_ps(1), x), iy = _mm_sub_ps(_mm_set1_ps(1), y);
+  for (size_t c = 0; c < 4; ++c) {
+    __m128 value = _mm_add_ps(_mm_mul_ps(_mm_mul_ps(_mm_loadu_ps(taps[0][c]), ix), iy),
+        _mm_mul_ps(_mm_mul_ps(_mm_loadu_ps(taps[1][c]), x), iy));
+    value = _mm_add_ps(value, _mm_mul_ps(_mm_mul_ps(_mm_loadu_ps(taps[2][c]), ix), y));
+    value = _mm_add_ps(value, _mm_mul_ps(_mm_mul_ps(_mm_loadu_ps(taps[3][c]), x), y));
+    _mm_storeu_ps(out->channel[c], value);
+  }
+#else
+  for (size_t c = 0; c < 4; ++c)
+    for (size_t lane = 0; lane < CPU_PIXEL_LANES; ++lane)
+      out->channel[c][lane] =
+          taps[0][c][lane] * (1 - fx[lane]) * (1 - fy[lane]) +
+          taps[1][c][lane] * fx[lane] * (1 - fy[lane]) +
+          taps[2][c][lane] * (1 - fx[lane]) * fy[lane] +
+          taps[3][c][lane] * fx[lane] * fy[lane];
+#endif
+}
+
+void cpu_sample_texture(const cpu_sampler *sampler,
+    const cpu_texture_coordinates *coordinates, cpu_texture_color *out) {
+  float u[CPU_PIXEL_LANES] = {0}, v[CPU_PIXEL_LANES] = {0};
+  float squared[CPU_PIXEL_LANES] = {0}, fraction[CPU_PIXEL_LANES] = {0};
+  size_t first[CPU_PIXEL_LANES] = {0}, second[CPU_PIXEL_LANES] = {0};
+  bool linear[CPU_PIXEL_LANES] = {false};
+  uint8_t active = 0, blend = 0;
+  if (!sampler->level_count) {
+    for (size_t c = 0; c < 4; ++c)
+      for (size_t lane = 0; lane < CPU_PIXEL_LANES; ++lane) out->channel[c][lane] = 1;
     return;
   }
-  double rho = fmax(hypot(axes[0], axes[1]), hypot(axes[2], axes[3]));
-  cpu_sample_texture(sampler, u, v, rho, out);
+  if (cpu_sampler_requires_derivatives(sampler)) {
+    const qa_scene_image_level *level = sampler->image->levels;
+    float width = (float)level->width, height = (float)level->height;
+#if defined(__SSE2__)
+    if (coordinates->active & (coordinates->active - 1u)) {
+    __m128 dx = _mm_mul_ps(_mm_loadu_ps(coordinates->dudx), _mm_set1_ps(width));
+    __m128 dy = _mm_mul_ps(_mm_loadu_ps(coordinates->dvdx), _mm_set1_ps(height));
+    __m128 x = _mm_add_ps(_mm_mul_ps(dx, dx), _mm_mul_ps(dy, dy));
+    dx = _mm_mul_ps(_mm_loadu_ps(coordinates->dudy), _mm_set1_ps(width));
+    dy = _mm_mul_ps(_mm_loadu_ps(coordinates->dvdy), _mm_set1_ps(height));
+    __m128 y = _mm_add_ps(_mm_mul_ps(dx, dx), _mm_mul_ps(dy, dy));
+    __m128 value = _mm_max_ps(x, y);
+    /* fmaxf retains a finite norm when the other norm is NaN. */
+    value = _mm_or_ps(_mm_and_ps(_mm_cmpunord_ps(y, y), x),
+        _mm_andnot_ps(_mm_cmpunord_ps(y, y), value));
+    _mm_storeu_ps(squared, value);
+    } else
+#endif
+    {
+    for (size_t lane = 0; lane < CPU_PIXEL_LANES; ++lane) {
+      if (!(coordinates->active & (1u << lane))) continue;
+      float x = coordinates->dudx[lane] * width, y = coordinates->dvdx[lane] * height;
+      float a = x * x + y * y;
+      x = coordinates->dudy[lane] * width; y = coordinates->dvdy[lane] * height;
+      float b = x * x + y * y;
+      squared[lane] = isnan(b) || a > b ? a : b;
+    }
+    }
+
+  }
+  for (size_t lane = 0; lane < CPU_PIXEL_LANES; ++lane) {
+    if (!(coordinates->active & (1u << lane))) continue;
+    float x = coordinates->u[lane], y = coordinates->v[lane];
+    if (!isfinite(x) || !isfinite(y)) continue;
+    if (sampler->image->wrap == QA_SCENE_REPEAT) {
+      x -= floorf(x); y -= floorf(y);
+    } else { x = cpu_clamp(x); y = cpu_clamp(y); }
+    u[lane] = x; v[lane] = y; active |= (uint8_t)(1u << lane);
+    bool magnification = !(squared[lane] > sampler->magnification_limit);
+    linear[lane] = magnification ? sampler->magnification_linear : sampler->linear;
+    if (!magnification && sampler->level_count > 1) {
+      if (!sampler->blend) first[lane] = nearest_level(squared[lane], sampler->level_count);
+      else {
+        float lod = fminf((float)(sampler->level_count - 1), .5f * log2f(squared[lane]));
+        first[lane] = (size_t)floorf(lod);
+        fraction[lane] = lod - (float)first[lane];
+        if (fraction[lane] > 0 && first[lane] + 1 < sampler->level_count) {
+          second[lane] = first[lane] + 1; blend |= (uint8_t)(1u << lane);
+        }
+      }
+    }
+  }
+  if (!active) {
+    for (size_t c = 0; c < 4; ++c)
+      for (size_t lane = 0; lane < CPU_PIXEL_LANES; ++lane) out->channel[c][lane] = 1;
+    return;
+  }
+  cpu_texture_color sampled;
+  sample_levels(sampler, first, linear, u, v, active, &sampled);
+  if (blend) {
+    cpu_texture_color next;
+    sample_levels(sampler, second, linear, u, v, blend, &next);
+#if defined(__SSE2__)
+    __m128 f = _mm_loadu_ps(fraction), keep = _mm_sub_ps(_mm_set1_ps(1), f);
+    for (size_t c = 0; c < 4; ++c)
+      _mm_storeu_ps(sampled.channel[c], _mm_add_ps(
+          _mm_mul_ps(_mm_loadu_ps(sampled.channel[c]), keep),
+          _mm_mul_ps(_mm_loadu_ps(next.channel[c]), f)));
+#else
+    for (size_t c = 0; c < 4; ++c)
+      for (size_t lane = 0; lane < CPU_PIXEL_LANES; ++lane)
+        sampled.channel[c][lane] = sampled.channel[c][lane] * (1 - fraction[lane]) +
+                                    next.channel[c][lane] * fraction[lane];
+#endif
+  }
+  for (size_t c = 0; c < 4; ++c)
+    for (size_t lane = 0; lane < CPU_PIXEL_LANES; ++lane)
+      out->channel[c][lane] = active & (1u << lane) ? sampled.channel[c][lane] : 1;
 }

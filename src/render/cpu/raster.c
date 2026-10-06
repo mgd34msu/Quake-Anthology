@@ -842,16 +842,14 @@ static void trim(int64_t *left, int64_t *right, edge_equation edge, double y) {
 }
 static cpu_attribute_plane attribute_plane(const edge_equation edges[3],
     const double values[3], double inverse_area) {
-  cpu_attribute_plane plane = {0};
+  double x = 0, y = 0, c = 0;
   for (size_t i = 0; i < 3; ++i) {
-    plane.x += values[i] * edges[i].x;
-    plane.y += values[i] * edges[i].y;
-    plane.c += values[i] * edges[i].c;
+    x += values[i] * edges[i].x;
+    y += values[i] * edges[i].y;
+    c += values[i] * edges[i].c;
   }
-  plane.x *= inverse_area;
-  plane.y *= inverse_area;
-  plane.c *= inverse_area;
-  return plane;
+  return (cpu_attribute_plane){(float)(x * inverse_area),
+      (float)(y * inverse_area), (float)(c * inverse_area)};
 }
 static bool triangle_prepare(cpu_triangle *out, const qa_scene_draw *draw,
                      screen_vertex a, screen_vertex b, screen_vertex c,
@@ -918,15 +916,15 @@ static bool triangle_prepare(cpu_triangle *out, const qa_scene_draw *draw,
       vertices[0].z == vertices[1].z && vertices[1].z == vertices[2].z;
   *out = (cpu_triangle){
       .bounds = {(int64_t)min_x, (int64_t)min_y, (int64_t)max_x, (int64_t)max_y},
-      .attributes = {.inverse_area = inverse_area, .near_depth = near_depth,
-          .depth_range = far_depth - near_depth, .scale = vertices[0].scale,
-          .q = attribute_plane(attributes, q, inverse_area), .offset = offset,
+      .attributes = {.inverse_area = (float)inverse_area, .near_depth = (float)near_depth,
+          .depth_range = (float)(far_depth - near_depth), .scale = (float)vertices[0].scale,
+          .q = attribute_plane(attributes, q, inverse_area), .offset = (float)offset,
           .constant_depth = constant_depth, .unit_color = true}};
   memcpy(out->coverage, coverage, sizeof(coverage));
   for (size_t i = 0; i < 3; ++i) {
     out->attributes.weights[i] = (cpu_attribute_plane){
-        attributes[i].x, attributes[i].y, attributes[i].c};
-    out->attributes.z[i] = vertices[i].z;
+        (float)attributes[i].x, (float)attributes[i].y, (float)attributes[i].c};
+    out->attributes.z[i] = (float)vertices[i].z;
     if (memcmp(vertices[i].vertex->color, unit_color, sizeof(unit_color)) != 0)
       out->attributes.unit_color = false;
     out->vertices[i] = vertices[i];
@@ -939,7 +937,9 @@ static bool triangle_prepare(cpu_triangle *out, const qa_scene_draw *draw,
     if (draw->textures[unit])
       for (size_t axis = 0; axis < 2; ++axis) {
         out->attributes.uv[unit][axis] = attribute_plane(attributes, uv[unit][axis], inverse_area);
-        out->attributes.uv_anchor[unit][axis] = vertices[0].vertex->uv[unit][axis];
+        double anchor = vertices[0].vertex->uv[unit][axis];
+        if (draw->textures[unit]->wrap == QA_SCENE_REPEAT) anchor -= floor(anchor);
+        out->attributes.uv_anchor[unit][axis] = (float)anchor;
       }
   if (draw->lighting != QA_LIGHT_VERTEX)
     for (size_t axis = 0; axis < 3; ++axis) {
@@ -1085,7 +1085,7 @@ static void line(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   double dx = bx - ax, dy = by - ay, length_squared = dx * dx + dy * dy;
   if (!(length_squared > 0))
     return;
-  double length = sqrt(length_squared), inverse_a = 1 / a.clip[3],
+  double inverse_a = 1 / a.clip[3],
          inverse_b = 1 / b.clip[3];
   bool x_major = fabs(dx) >= fabs(dy);
   /* A line wider than twice its clipped viewport already covers every
@@ -1109,8 +1109,26 @@ static void line(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
           minor_max = x_major ? top : right;
   int64_t first_major = (int64_t)fmax((double)major_min, floor(fmin(major_a, major_b)));
   int64_t last_major = (int64_t)fmin((double)major_max, floor(fmax(major_a, major_b)));
-  double near_depth = cpu_clamp(draw->state.depth_near),
-         far_depth = cpu_clamp(draw->state.depth_far);
+  float near_depth = cpu_clamp(draw->state.depth_near), far_depth = cpu_clamp(draw->state.depth_far);
+  float dx_pixel = (float)dx, dy_pixel = (float)dy, ax_pixel = (float)ax, ay_pixel = (float)ay;
+  float length_squared_pixel = dx_pixel * dx_pixel + dy_pixel * dy_pixel;
+  float length_pixel = sqrtf(length_squared_pixel);
+  float qa = (float)inverse_a, qb = (float)inverse_b;
+  float za = (float)(a.clip[2] * inverse_a), zb = (float)(b.clip[2] * inverse_b);
+  float ca[4], cb[4], anchors[2][2] = {{0}}, differences[2][2] = {{0}};
+  float world_a[3], world_b[3], normal_a[3], normal_b[3];
+  for (size_t c = 0; c < 4; ++c) { ca[c] = (float)a.color[c]; cb[c] = (float)b.color[c]; }
+  for (size_t c = 0; c < 3; ++c) {
+    world_a[c] = (float)a.world[c]; world_b[c] = (float)b.world[c];
+    normal_a[c] = (float)a.normal[c]; normal_b[c] = (float)b.normal[c];
+  }
+  for (size_t unit = 0; unit < draw->texture_count; ++unit)
+    for (size_t c = 0; c < 2; ++c) {
+      double anchor = a.uv[unit][c];
+      differences[unit][c] = (float)(b.uv[unit][c] - anchor);
+      if (draw->textures[unit] && draw->textures[unit]->wrap == QA_SCENE_REPEAT) anchor -= floor(anchor);
+      anchors[unit][c] = (float)anchor;
+    }
   bool stencil = cpu_stencil_active(renderer, &draw->state);
   for (int64_t major = first_major; major <= last_major; ++major) {
     double fraction = ((double)major + 0.5 - major_a) / (major_b - major_a);
@@ -1121,48 +1139,32 @@ static void line(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
         continue;
       double base_x = (double)x + (x_major ? 0 : shift),
              base_y = (double)y + (x_major ? shift : 0);
-      double t =
-          cpu_clamp(((base_x + 0.5 - ax) * dx + (base_y + 0.5 - ay) * dy) /
-                    length_squared);
-      double q = (1 - t) * inverse_a + t * inverse_b, reciprocal = 1 / q;
-      double wa = (1 - t) * inverse_a * reciprocal,
-             wb = t * inverse_b * reciprocal;
+      float t = cpu_clamp((((float)base_x + .5f - ax_pixel) * dx_pixel +
+          ((float)base_y + .5f - ay_pixel) * dy_pixel) / length_squared_pixel);
+      float q = (1 - t) * qa + t * qb, reciprocal = 1 / q;
+      float wa = (1 - t) * qa * reciprocal, wb = t * qb * reciprocal;
       cpu_fragment fragment;
-      fragment.eye_depth = fabs(reciprocal);
-      fragment.depth = cpu_clamp(((1 - t) * a.clip[2] * inverse_a +
-                                  t * b.clip[2] * inverse_b) *
-                                     0.5 +
-                                 0.5) *
-                           (far_depth - near_depth) +
-                       near_depth;
+      fragment.eye_depth = fabsf(reciprocal);
+      fragment.depth = cpu_clamp(cpu_clamp(((1 - t) * za + t * zb) * .5f + .5f) *
+                                (far_depth - near_depth) + near_depth);
       for (size_t c = 0; c < 4; ++c)
-        fragment.color[c] = cpu_clamp(
-            (a.color[c] * (1 - t) * inverse_a + b.color[c] * t * inverse_b) *
-            reciprocal);
+        fragment.color[c] = cpu_clamp((ca[c] * (1 - t) * qa + cb[c] * t * qb) * reciprocal);
       for (size_t unit = 0; unit < draw->texture_count; ++unit) {
-        if (!draw->textures[unit])
-          continue;
-        double derivative[2];
+        if (!draw->textures[unit]) continue;
+        float derivative[2];
         for (size_t c = 0; c < 2; ++c) {
-          double difference = b.uv[unit][c] - a.uv[unit][c];
-          double residual = difference * t * inverse_b * reciprocal;
-          fragment.uv[unit][c] = a.uv[unit][c] + residual;
-          derivative[c] =
-              (difference * inverse_b - residual * (inverse_b - inverse_a)) *
-              reciprocal / length;
+          float difference = differences[unit][c];
+          float residual = difference * t * qb * reciprocal;
+          fragment.uv[unit][c] = anchors[unit][c] + residual;
+          derivative[c] = (difference * qb - residual * (qb - qa)) * reciprocal / length_pixel;
         }
-        fragment.derivative[unit] =
-            (cpu_derivative){derivative[0], derivative[1], 0, 0};
+        fragment.derivative[unit] = (cpu_derivative){derivative[0], derivative[1], 0, 0};
       }
       if (draw->lighting != QA_LIGHT_VERTEX) {
-        fragment.world_position =
-            (qa_vec3){(float)(a.world[0] * wa + b.world[0] * wb),
-                      (float)(a.world[1] * wa + b.world[1] * wb),
-                      (float)(a.world[2] * wa + b.world[2] * wb)};
-        fragment.world_normal =
-            (qa_vec3){(float)(a.normal[0] * wa + b.normal[0] * wb),
-                      (float)(a.normal[1] * wa + b.normal[1] * wb),
-                      (float)(a.normal[2] * wa + b.normal[2] * wb)};
+        fragment.world_position = (qa_vec3){world_a[0] * wa + world_b[0] * wb,
+            world_a[1] * wa + world_b[1] * wb, world_a[2] * wa + world_b[2] * wb};
+        fragment.world_normal = (qa_vec3){normal_a[0] * wa + normal_b[0] * wb,
+            normal_a[1] * wa + normal_b[1] * wb, normal_a[2] * wa + normal_b[2] * wb};
       }
       int64_t actual_min = minor > minor_min ? minor : minor_min;
       int64_t actual_max =
@@ -1254,7 +1256,7 @@ static cpu_vertex source_vertex(const qa_cpu_renderer *renderer, uint32_t index,
   cpu_vertex vertex = renderer->vertices[index];
   if (discrete) {
     for (size_t channel = 0; channel < 4; ++channel)
-      vertex.color[channel] = (double)cpu_byte(vertex.color[channel]) / 255.0;
+      vertex.color[channel] = (double)cpu_byte((float)vertex.color[channel]) / 255.0;
     for (size_t unit = 0; unit < 2; ++unit)
       for (size_t axis = 0; axis < 2; ++axis)
         vertex.uv[unit][axis] = (float)vertex.uv[unit][axis];
@@ -1329,17 +1331,6 @@ static void raster_geometry(const cpu_raster_job *job, cpu_triangle_output *outp
   }
 }
 static void raster_prepared_draw(const cpu_raster_job *job) {
-  cpu_raster_job entered;
-  cpu_sampler samplers[2];
-  if (job->rounding != FE_TONEAREST) {
-    entered = *job;
-    for (size_t i = 0; i < job->draw->texture_count; ++i) {
-      samplers[i] = job->samplers[i];
-      samplers[i].nearest_mip = false;
-    }
-    entered.samplers = samplers;
-    job = &entered;
-  }
   if (!job->triangles) {
     raster_geometry(job, NULL);
     return;

@@ -646,7 +646,7 @@ static void shade_span(qa_cpu_renderer *renderer, const brush_surface *surface,
         fog_end = i + fog.count;
       }
       float written_depth = depth < 0 ? 0 : depth > 1 ? 1 : depth;
-      if ((double)written_depth <= buffer->depth[index]) {
+      if (written_depth <= buffer->depth[index]) {
         uint8_t *output = buffer->color + index * 4;
         if (!surface->linear && blend == 0) {
           memcpy(output, mip_point(first, s, t), 4);

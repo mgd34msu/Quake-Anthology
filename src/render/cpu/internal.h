@@ -31,7 +31,7 @@ typedef struct cpu_framebuffer {
   uint32_t width, height;
   bool depth_only, alpha;
   uint8_t *color;
-  double *depth;
+  float *depth;
   uint32_t *stencil;
 } cpu_framebuffer;
 typedef struct cpu_target {
@@ -106,23 +106,22 @@ struct qa_cpu_renderer {
   qa_render_resource_index stream_image_index;
   cpu_stream_image *stream_images;
   uint32_t source_image_count;
-  double texture_components[3][256];
+  float texture_components[3][256];
   bool texture_components_ready;
   qa_cpu_statistics statistics;
   bool statistics_enabled;
 };
 typedef struct cpu_derivative {
-  double dudx, dvdx, dudy, dvdy;
+  float dudx, dvdx, dudy, dvdy;
 } cpu_derivative;
 void cpu_source_image_used(qa_cpu_renderer *, const qa_scene_image *);
 typedef struct cpu_sampler {
   const qa_scene_image *image;
   const cpu_framebuffer *target;
-  const double *components, *target_components;
+  const float *components, *target_components;
   size_t level_count;
   bool linear, magnification_linear, blend, alpha;
-  bool nearest_mip; /* Nearest rounding in the entered sampling scope. */
-  double magnification_limit;
+  float magnification_limit;
 } cpu_sampler;
 static inline bool cpu_sampler_requires_derivatives(const cpu_sampler *sampler) {
   return sampler->level_count > 1 ||
@@ -130,13 +129,13 @@ static inline bool cpu_sampler_requires_derivatives(const cpu_sampler *sampler) 
 }
 typedef struct cpu_fragment {
   uint32_t x, y;
-  double depth, eye_depth;
-  double color[4], uv[2][2];
+  float depth, eye_depth;
+  float color[4], uv[2][2];
   cpu_derivative derivative[2];
   qa_vec3 world_position, world_normal;
 } cpu_fragment;
-static inline bool cpu_depth_passes(qa_scene_depth test, double depth,
-                                    double old_depth) {
+static inline bool cpu_depth_passes(qa_scene_depth test, float depth,
+                                    float old_depth) {
   return test == QA_DEPTH_ALWAYS || test == QA_DEPTH_DISABLED ||
          (test == QA_DEPTH_LEQUAL && depth <= old_depth) ||
          (test == QA_DEPTH_EQUAL && depth == old_depth) ||
@@ -165,12 +164,12 @@ static inline cpu_fragment_admission cpu_fragment_admit(
                                      renderer->current->depth[index]),
       .stencil = stencil};
 }
-static inline double cpu_clamp(double value) {
-  return isnan(value) ? fmin(1, fmax(0, value))
+static inline float cpu_clamp(float value) {
+  return isnan(value) ? fminf(1, fmaxf(0, value))
                      : value <= 0 ? 0 : value < 1 ? value : 1;
 }
-static inline uint8_t cpu_byte(double value) {
-  return (uint8_t)floor(cpu_clamp(value) * 255 + 0.5);
+static inline uint8_t cpu_byte(float value) {
+  return (uint8_t)floorf(cpu_clamp(value) * 255 + 0.5f);
 }
 /* Target versions are backend-owned; returned storage borrows renderer
  * lifetime. */
@@ -197,10 +196,18 @@ const qa_scene_image *cpu_stream_image_read(const qa_cpu_renderer *, const qa_sc
 bool cpu_image_region_update(qa_cpu_renderer *, const qa_scene_image_region *, qa_error *);
 bool cpu_image_stream_admit(qa_cpu_renderer *, const qa_scene_image_stream *, qa_error *);
 bool cpu_texture_components_init(qa_cpu_renderer *renderer, qa_error *error);
-void cpu_sample_texture(const cpu_sampler *sampler, double u, double v,
-                        double rho, double out[4]);
-void cpu_sample_texture_derivative(const cpu_sampler *, const cpu_derivative *,
-                                   double u, double v, double out[4]);
+#define CPU_PIXEL_LANES 4u
+typedef struct cpu_texture_coordinates {
+  float u[CPU_PIXEL_LANES], v[CPU_PIXEL_LANES];
+  float dudx[CPU_PIXEL_LANES], dvdx[CPU_PIXEL_LANES];
+  float dudy[CPU_PIXEL_LANES], dvdy[CPU_PIXEL_LANES];
+  uint8_t active;
+} cpu_texture_coordinates;
+typedef struct cpu_texture_color {
+  float channel[4][CPU_PIXEL_LANES];
+} cpu_texture_color;
+void cpu_sample_texture(const cpu_sampler *, const cpu_texture_coordinates *,
+                         cpu_texture_color *);
 bool cpu_depth_fog(qa_cpu_renderer *renderer, const qa_scene_fog *fog,
                    const qa_scene_view *view, qa_error *error);
 #endif

@@ -130,8 +130,8 @@ static inline uint8_t cpu_fog_byte(float value) {
   return !(value > 0) ? 0 : value >= 255 ? 255 : (uint8_t)(value + .5f);
 }
 
-static inline void cpu_fog_color(const qa_scene_fog *fog, double distance,
-                                 double color[4]) {
+static inline void cpu_fog_color(const qa_scene_fog *fog, float distance,
+                                 float color[4]) {
   if (fog->kind != QA_FOG_CONSTANT && fog->kind != QA_FOG_EXP2) return;
   qa_scene_fog_effect effect = fog->kind == QA_FOG_CONSTANT ? QA_FOG_COLOR : fog->effect;
   if (effect == QA_FOG_NO_EFFECT) return;

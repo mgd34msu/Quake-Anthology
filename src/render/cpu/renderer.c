@@ -100,7 +100,7 @@ static bool dimensions(uint32_t width, uint32_t height, size_t *count,
                        qa_error *error) {
   if (!width || !height || width > INT32_MAX || height > INT32_MAX ||
       (size_t)width > SIZE_MAX / height ||
-      (size_t)width * height > SIZE_MAX / sizeof(double)) {
+      (size_t)width * height > SIZE_MAX / sizeof(float)) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                  "Invalid CPU framebuffer dimensions");
     return false;
@@ -499,12 +499,12 @@ static void clear_view(qa_cpu_renderer *renderer, const qa_scene_view *view) {
     }
   }
   if (view->clear_depth) {
-    double depth = cpu_clamp(view->depth), block[2] = {depth, depth};
+    float depth = cpu_clamp(view->depth), block[4] = {depth, depth, depth, depth};
     for (int64_t y = y0; y < y1; ++y) {
-      double *row = buffer->depth + (size_t)y * stride + (size_t)x0;
-      for (size_t x = 0; x < count / 2; ++x)
-        memcpy(row + x * 2, block, sizeof(block));
-      if (count % 2) row[count - 1] = depth;
+      float *row = buffer->depth + (size_t)y * stride + (size_t)x0;
+      size_t x = 0;
+      for (; x + 4 <= count; x += 4) memcpy(row + x, block, sizeof(block));
+      for (; x < count; ++x) row[x] = depth;
     }
   }
   if (view->clear_stencil && buffer->stencil)
@@ -565,14 +565,14 @@ static bool end_opacity(qa_cpu_renderer *renderer, qa_error *error) {
             bottom = (int64_t)rect.y + rect.height;
     int64_t x1 = right < parent->width ? right : parent->width;
     int64_t y1 = bottom < parent->height ? bottom : parent->height;
-    double alpha = renderer->opacity_value;
+    float alpha = renderer->opacity_value;
     for (int64_t y = y0; y < y1; ++y)
       for (int64_t x = x0; x < x1; ++x) {
         size_t index = ((size_t)y * parent->width + (size_t)x) * 4;
         for (size_t c = 0; c < 4; ++c)
           parent->color[index + c] =
-              (uint8_t)floor(parent->color[index + c] * (1 - alpha) +
-                             renderer->opacity.color[index + c] * alpha + 0.5);
+              (uint8_t)floorf(parent->color[index + c] * (1 - alpha) +
+                              renderer->opacity.color[index + c] * alpha + 0.5f);
         if (!parent->alpha)
           parent->color[index + 3] = 255;
       }
@@ -595,7 +595,7 @@ bool qa_cpu_set_gamma(qa_cpu_renderer *renderer, float gamma, qa_error *error) {
   renderer->gamma_enabled = gamma != 1;
   for (size_t i = 0; i < 256; ++i)
     renderer->gamma[i] =
-        gamma == 1 ? (uint8_t)i : cpu_byte(pow((float)i / 255, 1.0f / gamma));
+        gamma == 1 ? (uint8_t)i : (uint8_t)floor(pow((float)i / 255, 1.0f / gamma) * 255 + .5);
   renderer->gamma_value=gamma;
   return true;
 }
@@ -1730,7 +1730,7 @@ static bool cpu_surface_prepare(qa_cpu_renderer *renderer,uint32_t width,uint32_
   ticket->output=malloc(count*4);
   if (!ticket->output) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating prepared CPU presentation"); return false; }
   for (size_t i=0;i<256;++i)
-    ticket->gamma[i]=gamma==1?(uint8_t)i:cpu_byte(pow((float)i/255,1.0f/gamma));
+    ticket->gamma[i]=gamma==1?(uint8_t)i:(uint8_t)floor(pow((float)i/255,1.0f/gamma)*255+.5);
   const uint8_t *pixels=ticket->resized?ticket->next.color:renderer->display.color;
   for (size_t i=0;i<count;++i) {
     for (size_t c=0;c<3;++c) ticket->output[i*4+c]=ticket->gamma[pixels[i*4+c]];

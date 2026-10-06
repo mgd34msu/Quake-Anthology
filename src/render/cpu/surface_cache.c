@@ -271,22 +271,18 @@ static bool surface_supported(const qa_cpu_renderer *renderer,
       (draw->brush.lightmap_rect.width && draw->brush.lightmap_rect.height);
 }
 
-static double light_component(const cpu_sampler *sampler, uint8_t value) {
-  if (sampler->components) return sampler->components[value];
-  return sampler->image->source_q3
-             ? qa_render_source_texture_component(sampler->image->source_format,
-                                                    value)
-             : value / 255.0;
+static float light_component(const cpu_sampler *sampler, uint8_t value) {
+  return sampler->components[value];
 }
 
 static void light_sample(const cpu_sampler *sampler,
-    const qa_scene_rect *rect, double s, double t, double out[4]) {
-  s = fmin(rect->width - 1, fmax(0, s));
-  t = fmin(rect->height - 1, fmax(0, t));
+    const qa_scene_rect *rect, float s, float t, float out[4]) {
+  s = fminf((float)(rect->width - 1), fmaxf(0, s));
+  t = fminf((float)(rect->height - 1), fmaxf(0, t));
   const qa_scene_image_level *atlas = sampler->image->levels;
   const uint8_t *pixels = atlas->pixels;
   if (!sampler->magnification_linear) {
-    size_t x = (size_t)floor(s + 0.5), y = (size_t)floor(t + 0.5);
+    size_t x = (size_t)floorf(s + 0.5f), y = (size_t)floorf(t + 0.5f);
     const uint8_t *pixel = pixels +
         (((y + (size_t)rect->y) * atlas->width + x + (size_t)rect->x) * 4);
     for (unsigned c = 0; c < 3; ++c)
@@ -294,10 +290,10 @@ static void light_sample(const cpu_sampler *sampler,
     out[3] = sampler->alpha ? light_component(sampler, pixel[3]) : 1;
     return;
   }
-  size_t x0 = (size_t)floor(s), y0 = (size_t)floor(t);
+  size_t x0 = (size_t)floorf(s), y0 = (size_t)floorf(t);
   size_t x1 = x0 + 1 < rect->width ? x0 + 1 : x0;
   size_t y1 = y0 + 1 < rect->height ? y0 + 1 : y0;
-  double fx = s - (double)x0, fy = t - (double)y0;
+  float fx = s - (float)x0, fy = t - (float)y0;
   const uint8_t *taps[4] = {
       pixels + (((y0 + (size_t)rect->y) * atlas->width + x0 + (size_t)rect->x) * 4),
       pixels + (((y0 + (size_t)rect->y) * atlas->width + x1 + (size_t)rect->x) * 4),
@@ -316,23 +312,26 @@ static void surface_build(const qa_scene_draw *draw, unsigned mip,
     cpu_surface_slot *slot) {
   const qa_scene_brush_surface *brush = &draw->brush;
   uint8_t *pixels = (uint8_t *)(slot->block + 1);
-  const double color[4] = {draw->vertex_inputs.color.x,
+  const float color[4] = {draw->vertex_inputs.color.x,
       draw->vertex_inputs.color.y, draw->vertex_inputs.color.z,
       draw->vertex_inputs.color.w};
-  double step = (double)(1u << mip);
+  float step = (float)(1u << mip);
   bool lightmapped = draw->texture_count == 2;
   for (uint32_t y = 0; y < slot->height; ++y) {
-    double t = brush->texture_mins[1] + ((double)y + 0.5) * step;
+    float t = brush->texture_mins[1] + ((float)y + 0.5f) * step;
     for (uint32_t x = 0; x < slot->width; ++x) {
-      double s = brush->texture_mins[0] + ((double)x + 0.5) * step;
-      double texel[4], illumination[4];
-      cpu_sample_texture(base, s / brush->texture_size[0],
-                         t / brush->texture_size[1], 0, texel);
+      float s = brush->texture_mins[0] + ((float)x + 0.5f) * step;
+      float texel[4], illumination[4];
+      cpu_texture_coordinates coordinates = {
+          .u = {s / (float)brush->texture_size[0]}, .v = {t / (float)brush->texture_size[1]}, .active = 1};
+      cpu_texture_color sampled;
+      cpu_sample_texture(base, &coordinates, &sampled);
+      for (size_t c = 0; c < 4; ++c) texel[c] = sampled.channel[c][0];
       if (lightmapped) {
-        double ls = s * brush->lightmap_from_texel[0][0] +
+        float ls = s * brush->lightmap_from_texel[0][0] +
                     t * brush->lightmap_from_texel[0][1] +
                         brush->lightmap_from_texel[0][2];
-        double lt = s * brush->lightmap_from_texel[1][0] +
+        float lt = s * brush->lightmap_from_texel[1][0] +
                     t * brush->lightmap_from_texel[1][1] +
                         brush->lightmap_from_texel[1][2];
         /* Sample the face's grid directly: +0.5 texel center and atlas origin
@@ -343,15 +342,15 @@ static void surface_build(const qa_scene_draw *draw, unsigned mip,
       }
       uint8_t *pixel = pixels + ((size_t)y * slot->width + x) * 4;
       for (unsigned c = 0; c < 4; ++c) {
-        double value = texel[c] * color[c];
+        float value = texel[c] * color[c];
         if (lightmapped) {
-          double factor = draw->environment == QA_TEXTURE_LIGHTMAP_INVERT_ALPHA
+          float factor = draw->environment == QA_TEXTURE_LIGHTMAP_INVERT_ALPHA
                               ? 1 - cpu_clamp(illumination[3])
               : draw->environment == QA_TEXTURE_LIGHTMAP_INVERT_COLOR
                               ? 1 - cpu_clamp(illumination[c])
                               : cpu_clamp(illumination[c]);
           value = draw->environment == QA_TEXTURE_MODULATE ? value * factor :
-              (cpu_byte(value) / 255.0) * factor;
+              (cpu_byte(value) / 255.0f) * factor;
         }
         pixel[c] = cpu_byte(value);
       }

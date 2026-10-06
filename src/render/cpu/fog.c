@@ -214,9 +214,8 @@ static void q2_fog_four(const cpu_fog_rows *rows, size_t index,
                         cpu_fog_distance_span *span) {
   const qa_scene_fog *fog = rows->fog;
   cpu_framebuffer *buffer = rows->buffer;
-  const double *depths = buffer->depth + index;
-  __m128 depth = _mm_cvtpd_ps(_mm_loadu_pd(depths));
-  depth = _mm_movelh_ps(depth, _mm_cvtpd_ps(_mm_loadu_pd(depths + 2)));
+  const float *depths = buffer->depth + index;
+  __m128 depth = _mm_loadu_ps(depths);
   __m128 sky = _mm_cmpge_ps(depth, _mm_set1_ps(fog->far_depth));
   __m128 geometry = _mm_cmpnge_ps(depth, _mm_set1_ps(fog->far_depth));
   const __m128 one = _mm_set1_ps(1), zero = _mm_setzero_ps();
