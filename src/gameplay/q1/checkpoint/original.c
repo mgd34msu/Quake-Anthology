@@ -181,6 +181,8 @@ static const original_field mover_fields[] = {
     FIELD(q1_map_movement, dest2, "dest2", VECTOR),
     FIELD(q1_map_movement, destination, "finaldest", VECTOR)
 };
+static const original_field secret_origin = {"oldorigin", ORIGINAL_VECTOR,
+    offsetof(q1_map_movement, pos1)};
 static const unsigned mover_states[] = {1, 2, 0, 3};
 static const original_field world_fields[] = {
     FIELD(qa_q1_options, world_type, "worldtype", I32)
@@ -351,7 +353,11 @@ static const original_think_callback think_callbacks[] = {
     {Q1_THINK_TELEPORT_FOG, "SUB_Remove"}
 };
 static const char *entity_think(const q1_actor *entity) {
-    if (entity->think == Q1_THINK_NONE) return NULL;
+    if (entity->think == Q1_THINK_NONE) {
+        if (entity->map && q1_map_is_mover(entity->map->kind) &&
+            entity->map->pending.mover.done != Q1_MAP_IDLE) return map_think(Q1_MAP_MOVE_DONE);
+        return NULL;
+    }
     if (entity->think == Q1_THINK_MAP) return entity->map ? map_think(entity->map->action) : NULL;
     if (entity->think == Q1_THINK_MONSTER_FRAME)
         return entity->state.monster.next_frame < q1_frame_count ?
@@ -420,8 +426,8 @@ static bool source_order(const qa_qc_program *program, qa_q1_save_record *record
     if (!okay) { qa_q1_save_record_destroy(&ordered); return false; }
     *record = ordered; return true;
 }
-static bool map_functions(const q1_actor *entity, qa_q1_save_record *record, qa_error *error) {
-    const q1_map_state *map = entity->map; const char *touch = NULL, *use = NULL, *blocked = NULL;
+static bool map_functions(const q1_actor *entity, bool damageable, qa_q1_save_record *record, qa_error *error) {
+    const q1_map_state *map = entity->map; const char *touch = NULL, *use = NULL, *blocked = NULL, *pain = NULL, *die = NULL;
     switch (map->kind) {
     case Q1_MAP_MULTI: touch = "multi_touch"; use = map->dormant ? "trigger_multiple" : "multi_use"; break;
     case Q1_MAP_COUNTER: use = "counter_use"; break;
@@ -437,11 +443,25 @@ static bool map_functions(const q1_actor *entity, qa_q1_save_record *record, qa_
     case Q1_MAP_WALL: case Q1_MAP_GATE: use = "func_wall_use"; break;
     case Q1_MAP_PATH: touch = "t_movetarget"; break;
     case Q1_MAP_LIGHTNING: use = "lightning_use"; break;
-    case Q1_MAP_BARREL: break;
-    case Q1_MAP_DOOR: touch = "door_touch"; use = "door_use"; blocked = "door_blocked"; break;
-    case Q1_MAP_BUTTON: touch = "button_touch"; use = "button_use"; break;
-    case Q1_MAP_SECRET_DOOR: touch = "secret_touch"; use = "fd_secret_use"; blocked = "secret_blocked"; break;
-    case Q1_MAP_PLAT: use = map->dormant ? "plat_use" : "SUB_Null"; blocked = "plat_crush"; break;
+    case Q1_MAP_BARREL: die = "barrel_explode"; break;
+    case Q1_MAP_DOOR:
+        touch = "door_touch"; use = "door_use"; blocked = "door_blocked";
+        if (entity->max_health > 0) die = "door_killed";
+        break;
+    case Q1_MAP_BUTTON:
+        touch = "button_touch"; use = "button_use"; blocked = "button_blocked";
+        if (entity->max_health > 0) die = "button_killed";
+        break;
+    case Q1_MAP_SECRET_DOOR:
+        touch = "secret_touch"; use = "fd_secret_use"; blocked = "secret_blocked";
+        if (!entity->targetname || (entity->spawnflags & 16)) {
+            pain = damageable ? "fd_secret_use" : "SUB_Null"; die = "fd_secret_use";
+        }
+        break;
+    case Q1_MAP_PLAT:
+        use = !entity->targetname ? "plat_trigger_use" :
+            map->pending.mover.activated ? "SUB_Null" : "plat_use";
+        blocked = "plat_crush"; break;
     case Q1_MAP_TRAIN: case Q1_MAP_TRAIN2: use = "train_use"; blocked = "train_blocked"; break;
     case Q1_MAP_DOOR_TRIGGER: touch = "door_trigger_touch"; break;
     case Q1_MAP_PLAT_TRIGGER: touch = "plat_center_touch"; break;
@@ -454,7 +474,8 @@ static bool map_functions(const q1_actor *entity, qa_q1_save_record *record, qa_
         break;
     }
     return callback(record, "touch", map->touch_enabled ? touch : NULL, error) &&
-        callback(record, "use", map->use_enabled ? use : NULL, error) && callback(record, "blocked", blocked, error);
+        callback(record, "use", map->use_enabled ? use : NULL, error) && callback(record, "blocked", blocked, error) &&
+        callback(record, "th_pain", pain, error) && callback(record, "th_die", die, error);
 }
 static bool monster_functions(const q1_monster *monster, qa_q1_save_record *record, qa_error *error) {
     const q1_species *species = monster->species;
@@ -660,9 +681,21 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         return fail(error, "Original player lost its physical Source movement owner");
     if (!qa_world_body_read(game->services.world, id, &body, error) ||
         !qa_combat_read(game->services.combat, id, &combat, error)) return false;
-    q1_actor source_entity;
+    q1_actor source_entity; const char *source_class = NULL;
     if (entity) {
         source_entity = *entity;
+        if (entity->map) {
+            q1_map_kind kind = entity->map->kind;
+            if (game->options.edition == QA_Q1_CLASSIC) {
+                if (kind == Q1_MAP_DOOR || kind == Q1_MAP_SECRET_DOOR) source_class = "door";
+                else if (kind == Q1_MAP_PLAT) source_class = "plat";
+            }
+            if (source_class || kind == Q1_MAP_DOOR_TRIGGER || kind == Q1_MAP_PLAT_TRIGGER)
+                source_entity.classname = 0;
+            if (kind == Q1_MAP_PLAT_TRIGGER) {
+                physics.enemy = entity->owner; source_entity.owner = (q1_ref){0};
+            }
+        }
         if (entity->map && entity->map->kind == Q1_MAP_MULTI && entity->map->dormant)
             source_entity.model = entity->map->original_model;
         if (entity->kind == Q1_PROJECTILE || entity->think == Q1_THINK_WIZARD ||
@@ -672,7 +705,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         if (entity->think == Q1_THINK_SCOURGE_TRIGGER) source_entity.delay = 0;
     }
     if ((entity && !FIELDS(receipt, record, &source_entity, entity_fields, error)) ||
-        !FIELDS(receipt, record, &body, body_fields, error) || !FIELDS(receipt, record, &physics, physics_fields, error)) return false;
+        !FIELDS(receipt, record, &body, body_fields, error) || !FIELDS(receipt, record, &physics, physics_fields, error) ||
+        !text(record,"classname",source_class,QA_Q1_SAVE_STRING,error)) return false;
     if (entity && entity->kind != Q1_PROJECTILE && !entity->map &&
         (entity->think == Q1_THINK_SPRITE || sprite_remove(game,entity)) &&
         !text(record,"classname",sprite_classname(game,entity),QA_Q1_SAVE_STRING,error)) return false;
@@ -766,12 +800,11 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
             monster_functions(&entity->state.monster, record, error);
     }
     if (entity->map) {
-        if (entity->map->kind == Q1_MAP_BARREL && !callback(record,"th_die","barrel_explode",error)) return false;
         if (entity->map->kind == Q1_MAP_WORLD && !FIELDS(receipt,record,&game->options,world_fields,error)) return false;
         if (entity->map->action == Q1_MAP_DELAYED_USE &&
             !actor(receipt,record,"enemy",entity->activator,false,error)) return false;
         if (!FIELDS(receipt, record, entity->map, map_fields, error) ||
-            !mover_sounds(entity,record,error) || !map_functions(entity, record, error)) return false;
+            !mover_sounds(entity,record,error) || !map_functions(entity, combat.can_take_damage, record, error)) return false;
         if (q1_map_is_mover(entity->map->kind)) {
             const q1_map_movement *move = &entity->map->pending.mover;
             if (entity->map->kind == Q1_MAP_DOOR && move->group && move->group->count) {
@@ -781,7 +814,11 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
                 if (!actor(receipt,record,"owner",move->group->members[0],false,error) ||
                     !actor(receipt,record,"enemy",move->group->members[(member+1)%move->group->count],false,error)) return false;
             }
-            if (!FIELDS(receipt, record, move, mover_fields, error) ||
+            q1_map_movement source_move = *move;
+            if (entity->map->kind == Q1_MAP_SECRET_DOOR) source_move.pos1 = qa_v3(0,0,0);
+            if (!FIELDS(receipt, record, &source_move, mover_fields, error) ||
+                (entity->map->kind == Q1_MAP_SECRET_DOOR &&
+                    !fields(receipt,record,move,&secret_origin,1,false,error)) ||
                 !number(record, "state", mover_states[move->position], false, error) ||
                 !callback(record, "think1", map_think(move->done), error)) return false;
         }
@@ -1112,12 +1149,19 @@ typedef struct original_class {
 static bool original_classify(const qa_q1_save_record *record, original_class *out, qa_error *error) {
     const char *name = saved(record, "classname");
     const char *think = saved(record, "think");
-    const char *touch = saved(record, "touch");
+    const char *touch = saved(record, "touch"), *use = saved(record,"use");
     const char *model = saved(record, "model");
     bool explosion = think && !strcmp(think,"SUB_Remove") && model && !strcmp(model,"progs/s_explod.spr");
     const q1_species *species = name ? q1_species_find(name) : NULL;
     const original_projectile *projectile = saved_projectile(record);
     q1_map_kind map = name ? q1_map_classify(name) : Q1_MAP_FIELDS;
+    if (name && !strcmp(name,"door")) {
+        if (use && !strcmp(use,"door_use")) { map = Q1_MAP_DOOR; name = "func_door"; }
+        else if (use && !strcmp(use,"fd_secret_use")) { map = Q1_MAP_SECRET_DOOR; name = "func_door_secret"; }
+    } else if (name && !strcmp(name,"plat") && use &&
+        (!strcmp(use,"plat_use") || !strcmp(use,"plat_trigger_use") || !strcmp(use,"SUB_Null"))) {
+        map = Q1_MAP_PLAT; name = "func_plat";
+    }
     if (touch && !strcmp(touch,"door_trigger_touch")) map = Q1_MAP_DOOR_TRIGGER;
     if (touch && (!strcmp(touch,"plat_center_touch") || !strcmp(touch,"plat_outside_touch"))) map = Q1_MAP_PLAT_TRIGGER;
     if (think && !strcmp(think,"DelayThink")) map = Q1_MAP_DELAY;
@@ -1142,6 +1186,8 @@ static bool original_classify(const qa_q1_save_record *record, original_class *o
         else if (think && !strcmp(think,"ScourgeTriggerThink")) name = "scourge_trigger";
         else if (explosion || (think && !strncmp(think,"s_explode",9))) name = "explosion";
         else if (think && !strcmp(think,"DelayThink")) { name = "delayed_use"; map = Q1_MAP_DELAY; kind = Q1_MAP; }
+        else if (map == Q1_MAP_DOOR_TRIGGER) name = "door_trigger";
+        else if (map == Q1_MAP_PLAT_TRIGGER) name = "plat_trigger";
         else if (think && !strcmp(think,"SUB_Remove")) name = "gib";
         else return fail(error, "Original anonymous edict has no actual Source discriminator");
     }
@@ -1197,11 +1243,12 @@ static bool restore_map(qa_strings *strings,qa_actor_owner source,
     const qa_q1_save_record *record,q1_actor *entity,const qa_actor_id *slots,
     size_t count,qa_error *error) {
     q1_map_state *map = entity->map;
-    map->touch_enabled = saved(record,"touch") != NULL; map->use_enabled = saved(record,"use") != NULL;
+    map->touch_enabled = map->kind != Q1_MAP_FIELDS && saved(record,"touch") != NULL;
+    map->use_enabled = map->kind != Q1_MAP_FIELDS && saved(record,"use") != NULL;
     map->original_model = entity->model;
+    if (map->kind == Q1_MAP_PLAT_TRIGGER && saved(record,"enemy")) entity->owner = entity->physics.enemy;
     const char *use = saved(record,"use");
-    map->dormant = use && ((map->kind == Q1_MAP_PLAT && !strcmp(use,"plat_use")) ||
-        (map->kind == Q1_MAP_MULTI && !strcmp(use,"trigger_multiple")));
+    map->dormant = map->kind == Q1_MAP_MULTI && use && !strcmp(use,"trigger_multiple");
     const char *model = qa_strings_cstr(strings, entity->model);
     if (model && *model == '*') {
         char *end; unsigned long index = strtoul(model + 1, &end, 10);
@@ -1214,10 +1261,14 @@ static bool restore_map(qa_strings *strings,qa_actor_owner source,
         q1_map_movement *move = &map->pending.mover;
         if (!restore_fields(strings, source, record, move, mover_fields,
             sizeof(mover_fields) / sizeof(*mover_fields), slots, count, error)) return false;
+        if (map->kind == Q1_MAP_SECRET_DOOR && saved(record,"oldorigin") &&
+            !restore_fields(strings,source,record,move,&secret_origin,1,slots,count,error)) return false;
         float position = saved_number(record,"state");
         move->position = position == 0 ? Q1_MAP_TOP : position == 1 ? Q1_MAP_BOTTOM :
             position == 2 ? Q1_MAP_UP : Q1_MAP_DOWN;
-        move->moving = position == 2 || position == 3 || (saved(record,"think") && !strcmp(saved(record,"think"),"SUB_CalcMoveDone")); move->done = Q1_MAP_IDLE;
+        move->moving = entity->next_think > 0 && entity->think == Q1_THINK_MAP && map->action == Q1_MAP_MOVE_DONE;
+        move->done = Q1_MAP_IDLE;
+        if (map->kind == Q1_MAP_PLAT) move->activated = !use || strcmp(use,"plat_use") != 0;
         const char *done = saved(record,"think1");
         for (size_t i = 0; done && i < sizeof(map_callbacks) / sizeof(*map_callbacks); ++i)
             if (!strcmp(done, map_callbacks[i].name)) move->done = map_callbacks[i].action;
@@ -1307,12 +1358,16 @@ static bool admit_vector(original_admission *admission,const char *name,
     admitted_key(admission,name);return true;
 }
 static bool admit_callbacks(original_admission *admission,
-    const qa_q1_save_record *expected,qa_error *error) {
+    const qa_q1_save_record *expected,q1_map_kind defaults,qa_error *error) {
     static const char *const callbacks[]={"touch","use","blocked","th_stand","th_walk",
         "th_run","th_missile","th_melee","th_pain","th_die"};
     for (size_t i=0;i<sizeof(callbacks)/sizeof(*callbacks);++i) {
         const char *name=callbacks[i],*actual=saved(admission->record,name),*wanted=saved(expected,name);
-        if (strcmp(actual?actual:"",wanted?wanted:""))
+        bool derived=!actual &&
+            ((defaults==Q1_MAP_BUTTON && !strcmp(name,"blocked")) ||
+             ((defaults==Q1_MAP_DOOR || defaults==Q1_MAP_BUTTON) && !strcmp(name,"th_die")) ||
+             (defaults==Q1_MAP_SECRET_DOOR && (!strcmp(name,"th_pain") || !strcmp(name,"th_die"))));
+        if (!derived && strcmp(actual?actual:"",wanted?wanted:""))
             return unsupported(error,"Source callback differs from the compiled continuation");
         admitted_key(admission,name);
     }
@@ -1397,7 +1452,8 @@ static bool original_map_supported(q1_map_kind kind) {
     case Q1_MAP_MULTI: case Q1_MAP_COUNTER: case Q1_MAP_RELAY: case Q1_MAP_TELEPORT:
     case Q1_MAP_HURT: case Q1_MAP_PUSH: case Q1_MAP_CHANGELEVEL: case Q1_MAP_SETSKILL:
     case Q1_MAP_REGISTERED: case Q1_MAP_MONSTERJUMP: case Q1_MAP_LIGHT:
-    case Q1_MAP_DOOR: case Q1_MAP_DOOR_TRIGGER:
+    case Q1_MAP_DOOR: case Q1_MAP_DOOR_TRIGGER: case Q1_MAP_BUTTON:
+    case Q1_MAP_SECRET_DOOR: case Q1_MAP_PLAT: case Q1_MAP_PLAT_TRIGGER: case Q1_MAP_BARREL:
     case Q1_MAP_FIREBALL_SOURCE: case Q1_MAP_FIREBALL:
         return true;
     default:
@@ -1410,11 +1466,26 @@ static bool original_map_continuation(q1_map_kind kind,q1_map_action action) {
     case Q1_MAP_MULTI: return action==Q1_MAP_REARM || action==Q1_MAP_REMOVE;
     case Q1_MAP_HURT: return action==Q1_MAP_REARM;
     case Q1_MAP_CHANGELEVEL: return action==Q1_MAP_BEGIN_LEVEL;
-    case Q1_MAP_DOOR:
-        return action==Q1_MAP_MOVE_DONE || action==Q1_MAP_DOOR_TOP ||
-            action==Q1_MAP_DOOR_BOTTOM || action==Q1_MAP_DOOR_DOWN;
+    case Q1_MAP_DOOR: return action==Q1_MAP_MOVE_DONE || action==Q1_MAP_DOOR_DOWN;
+    case Q1_MAP_BUTTON: return action==Q1_MAP_MOVE_DONE || action==Q1_MAP_BUTTON_RETURN;
+    case Q1_MAP_SECRET_DOOR:
+        return action==Q1_MAP_MOVE_DONE || action==Q1_MAP_SECRET_SECOND ||
+            action==Q1_MAP_SECRET_RETURN || action==Q1_MAP_SECRET_LAST;
+    case Q1_MAP_PLAT: return action==Q1_MAP_MOVE_DONE || action==Q1_MAP_PLAT_DOWN;
     case Q1_MAP_FIREBALL_SOURCE: return action==Q1_MAP_FIREBALL_FLY;
     case Q1_MAP_FIREBALL: return action==Q1_MAP_REMOVE;
+    default: return false;
+    }
+}
+static bool original_mover_completion(q1_map_kind kind,q1_map_action action) {
+    if (action==Q1_MAP_IDLE) return true;
+    switch (kind) {
+    case Q1_MAP_DOOR: return action==Q1_MAP_DOOR_TOP || action==Q1_MAP_DOOR_BOTTOM;
+    case Q1_MAP_BUTTON: return action==Q1_MAP_BUTTON_TOP || action==Q1_MAP_BUTTON_BOTTOM;
+    case Q1_MAP_SECRET_DOOR:
+        return action==Q1_MAP_SECRET_FIRST || action==Q1_MAP_SECRET_TOP ||
+            action==Q1_MAP_SECRET_LAST_WAIT || action==Q1_MAP_SECRET_BOTTOM;
+    case Q1_MAP_PLAT: return action==Q1_MAP_PLAT_TOP || action==Q1_MAP_PLAT_BOTTOM;
     default: return false;
     }
 }
@@ -1438,7 +1509,7 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
     float damage=saved_number(record,"takedamage");
     if (damage!=0 && damage!=1 && damage!=2) return unsupported(error,"Source damage policy has no native state");
     admitted_key(admission,"takedamage");
-    qa_q1_save_record callbacks={0};bool okay=false;
+    qa_q1_save_record callbacks={0};q1_map_kind defaults=Q1_MAP_FIELDS;bool okay=false;
     if (slot==1) {
         q1_player player={0};
         if (!(saved_number(record,"health")>0)) {
@@ -1503,7 +1574,7 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
             source.kind==Q1_ENTITY) {
             unsupported(error,"Source map/item state still lacks its complete paired native inverse");goto done;
         }
-        q1_actor entity={.kind=source.kind};q1_map_state map={.kind=source.map};
+        q1_actor entity={.kind=source.kind,.physics=physics};q1_map_state map={.kind=source.map};
         if (!ADMIT_FIELDS(admission,&entity,entity_fields,error)) goto done;
         if (source.map!=Q1_MAP_FIELDS) entity.map=&map;
         if (!restore_think(NULL,&entity,record,error)) goto done;
@@ -1526,6 +1597,9 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
         } else if (entity.map) {
             if (!ADMIT_FIELDS(admission,&map,map_fields,error) ||
                 !restore_map(admission->strings,admission->source,record,&entity,NULL,admission->slots,error)) goto done;
+            if (source.map==Q1_MAP_PLAT_TRIGGER && saved(record,"enemy") && saved_number(record,"owner")!=0) {
+                unsupported(error,"Source platform helper has an unrepresented independent owner");goto done;
+            }
             if (source.map==Q1_MAP_WORLD) {
                 qa_q1_options options={0};
                 if (slot || !admit_text(admission,"classname","worldspawn",error) ||
@@ -1539,17 +1613,30 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
             }
             if (q1_map_is_mover(source.map)) {
                 q1_map_movement *move=&map.pending.mover;
-                if (!ADMIT_FIELDS(admission,move,mover_fields,error) ||
-                    !admit_number(admission,"state",(float)mover_states[move->position],error) ||
+                if (!ADMIT_FIELDS(admission,move,mover_fields,error)) goto done;
+                if (source.map==Q1_MAP_SECRET_DOOR && saved(record,"oldorigin")) {
+                    if (!admit_fields(admission,move,&secret_origin,1,error)) goto done;
+                    if (saved(record,"pos1") && !admit_vector(admission,"pos1",move->pos1,error)) goto done;
+                }
+                if (!admit_number(admission,"state",(float)mover_states[move->position],error) ||
                     !admit_text(admission,"think1",map_think(move->done),error)) goto done;
-                if (!original_map_continuation(source.map,move->done)) {
+                if (!original_mover_completion(source.map,move->done)) {
                     unsupported(error,"Source mover completion differs from its native owner");goto done;
                 }
-                if (source.map==Q1_MAP_DOOR &&
-                    (!admit_text(admission,"noise1",q1_map_door_sound(&entity,false),error) ||
-                     !admit_text(admission,"noise2",q1_map_door_sound(&entity,true),error))) goto done;
+                if (source.map==Q1_MAP_PLAT && !move->activated &&
+                    (move->position!=Q1_MAP_UP || entity.think!=Q1_THINK_NONE)) {
+                    unsupported(error,"Source dormant platform differs from its native activation");goto done;
+                }
+                if (!mover_sounds(&entity,&callbacks,error)) goto done;
+                static const char *const sounds[]={"noise","noise1","noise2","noise3"};
+                for (size_t i=0;i<sizeof(sounds)/sizeof(*sounds);++i)
+                    if (!admit_text(admission,sounds[i],saved(&callbacks,sounds[i]),error)) goto done;
             }
-            if (!map_functions(&entity,&callbacks,error)) goto done;
+            const char *classname=saved(record,"classname");
+            if (classname && !strcmp(classname,source.name) &&
+                (source.map==Q1_MAP_DOOR || source.map==Q1_MAP_BUTTON || source.map==Q1_MAP_SECRET_DOOR))
+                defaults=source.map;
+            if (!map_functions(&entity,damage!=0,&callbacks,error)) goto done;
         } else if (source.projectile) {
             entity.state.projectile.kind=source.projectile->kind;
             if (source.projectile->kind==Q1_HIP_LASER && !ADMIT_FIELDS(admission,&entity.state.projectile,hip_laser_fields,error)) goto done;
@@ -1560,7 +1647,7 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
             unsupported(error,"Source anonymous continuation needs its complete paired state admission");goto done;
         }
     }
-    okay=admit_callbacks(admission,&callbacks,error) && admit_complete(admission,error);
+    okay=admit_callbacks(admission,&callbacks,defaults,error) && admit_complete(admission,error);
 done:
     qa_q1_save_record_destroy(&callbacks);return okay;
 }
@@ -1698,7 +1785,10 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
     }
     qa_string_id native_classname = entity->classname;
     if (!RESTORE_FIELDS(game, record, entity, entity_fields, slots, count, error)) return false;
-    if (!entity->classname) entity->classname = native_classname;
+    const char *source_class = saved(record,"classname");
+    if (!entity->classname || (entity->map && source_class &&
+        (((entity->map->kind == Q1_MAP_DOOR || entity->map->kind == Q1_MAP_SECRET_DOOR) && !strcmp(source_class,"door")) ||
+         (entity->map->kind == Q1_MAP_PLAT && !strcmp(source_class,"plat"))))) entity->classname = native_classname;
     entity->physics = physics; entity->source_movement_flags = flags;
     entity->aimed_damage = saved_number(record, "takedamage") == 2;
     const char *source_touch = saved(record,"touch");
@@ -1884,7 +1974,12 @@ bool qa_q1_game_original_restore(qa_q1_game *game, const qa_qc_program *program,
     for (uint32_t slot=0; okay && slot<game->wire->next_dynamic; ++slot) {
         qa_actor_id id;
         if (!qa_q1_wire_actor_at(&receipt,slot,&id)) continue;
-        const char *name = slot<save->entity_count ? saved(save->entities+slot,"classname") : NULL;
+        const char *name = NULL;
+        if (slot<save->entity_count && save->entities[slot].count && slot>=2) {
+            original_class source;
+            if (!original_classify(save->entities+slot,&source,error)) {okay=false;break;}
+            name=source.name;
+        }
         q1_actor *entity = q1_entity(game,id);
         bool keep = slot<2 || (slot<save->entity_count && save->entities[slot].count && entity &&
             name && !strcmp(name,qa_strings_cstr(qa_session_strings(game->services.session),entity->classname)));

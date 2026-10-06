@@ -501,9 +501,11 @@ bool q1_map_mover_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa
     case Q1_MAP_SECRET_DOOR:
         return secret_fire(g, entity, activator, error);
     case Q1_MAP_PLAT:
-        if (entity->map->pending.mover.activated)
-            return true;
-        entity->map->pending.mover.activated = true;
+        if (q1_map_text(g, entity->targetname)) {
+            if (entity->map->pending.mover.activated) return true;
+            entity->map->pending.mover.activated = true;
+        } else if (entity->think != Q1_THINK_NONE ||
+            entity->map->pending.mover.done != Q1_MAP_IDLE) return true;
         return plat_move(g, entity, false, error);
     case Q1_MAP_TRAIN:
     case Q1_MAP_TRAIN2:
