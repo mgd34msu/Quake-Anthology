@@ -574,23 +574,35 @@ bool q2_brush_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contact,
     if (!g->services.actor_traits ||
         !g->services.actor_traits(g->services.context, contact->other, &traits))
         return true;
-    qa_combat_state health;
-    if (!qa_combat_read(g->services.combat, contact->other, &health, e))
-        return false;
     if (s->kind == Q2E_PLAT_TRIGGER) {
         q2_actor *plat = q2_ent(g, s->enemy);
-        if (!plat || health.health <= 0)
+        if (!plat)
             return true;
-        if (is_second(g, plat, "func_plat2"))
-            return (!traits.player && !traits.monster) || platform_operate(g, a, contact->other, e);
-        if (!traits.player)
+        bool second = is_second(g, plat, "func_plat2");
+        if (!traits.player && (!second || !traits.monster))
             return true;
+        qa_combat_state health;
+        if (!qa_combat_read(g->services.combat, contact->other, &health, e))
+            return false;
+        if (health.health <= 0)
+            return true;
+        if (second)
+            return platform_operate(g, a, contact->other, e);
         int phase = plat->entity->mover->phase;
         return phase == 0 ? platform_move(g, plat, true, e)
                           : phase != 2 || q2_entity_schedule(g, plat, Q2ET_PLAT_DOWN, 1);
     }
+    if (!traits.player)
+        return true;
     bool second = is_second(g, a, "func_door_secret2");
-    if (!traits.player || (second && health.health <= 0) || s->timestamp_ns > g->now_ns)
+    if (second) {
+        qa_combat_state health;
+        if (!qa_combat_read(g->services.combat, contact->other, &health, e))
+            return false;
+        if (health.health <= 0)
+            return true;
+    }
+    if (s->timestamp_ns > g->now_ns)
         return true;
     s->timestamp_ns = q2_deadline(g->now_ns, (second ? 2u : 5u) * Q2_NS);
     if (second && !s->message)
