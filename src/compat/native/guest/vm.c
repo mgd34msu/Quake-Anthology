@@ -1,28 +1,39 @@
 #include "internal.h"
 #include "unicorn_state.h"
 
+size_t guest_allocation_extent(const guest_allocation *allocation)
+{
+    size_t alignment = allocation->mapping ? QA_NATIVE_GUEST_PAGE : 16;
+    return (allocation->bytes + alignment - 1) & ~(alignment - 1);
+}
+
 bool guest_allocation_storage(const qa_native_guest *guest, const guest_allocation *allocation,
     uint64_t *backing, size_t *bytes, qa_error *error)
 {
-    if (!allocation->bytes || allocation->bytes > SIZE_MAX - (QA_NATIVE_GUEST_PAGE - 1))
-        return guest_fail(error, QA_ERROR_FORMAT, allocation->address, "native allocation page extent overflows");
-    size_t rounded = (allocation->bytes + QA_NATIVE_GUEST_PAGE - 1) & ~(size_t)(QA_NATIVE_GUEST_PAGE - 1);
+    size_t alignment = allocation->mapping ? QA_NATIVE_GUEST_PAGE : 16;
+    if (!allocation->bytes || allocation->bytes > SIZE_MAX - (alignment - 1) ||
+        allocation->address % alignment)
+        return guest_fail(error, QA_ERROR_FORMAT, allocation->address, "native allocation storage extent overflows or is misaligned");
+    size_t rounded = guest_allocation_extent(allocation);
     qa_native_guest_mapping *first = guest_mapping(guest, allocation->address);
-    if (!first || first->id != allocation->mapping || first->base != allocation->address ||
-        first->backing_offset || rounded > UINT64_MAX - allocation->address)
+    if (!first || rounded > UINT64_MAX - allocation->address)
         return guest_fail(error, QA_ERROR_FORMAT, allocation->address, "native allocation has no actual mapping anchor");
     guest_backing *owned = guest_backing_at(guest, first->backing);
-    if (!owned || owned->file || owned->bytes != rounded)
-        return guest_fail(error, QA_ERROR_FORMAT, allocation->address, "native allocation differs from its actual owned backing size");
+    size_t displacement = (size_t)(allocation->address - first->base);
+    uint64_t start = first->backing_offset + displacement;
+    if (!owned || owned->file || start > owned->bytes || rounded > owned->bytes - start ||
+        (allocation->mapping && (first->id != allocation->mapping || first->base != allocation->address ||
+            first->backing_offset || owned->bytes != rounded)))
+        return guest_fail(error, QA_ERROR_FORMAT, allocation->address, "native allocation differs from its actual owned backing extent");
     size_t offset = 0;
     while (offset < rounded) {
         qa_native_guest_mapping *mapping = guest_mapping(guest, allocation->address + offset);
-        if (!mapping || mapping->base != allocation->address + offset ||
-            mapping->backing != first->backing || mapping->backing_offset != offset ||
-            mapping->bytes > rounded - offset)
+        if (!mapping || mapping->backing != first->backing ||
+            mapping->backing_offset + allocation->address + offset - mapping->base != start + offset)
             return guest_fail(error, QA_ERROR_FORMAT, allocation->address + offset,
                 "native allocation fragments do not cover their actual backing extent");
-        offset += (size_t)mapping->bytes;
+        size_t available = (size_t)(mapping->bytes - (allocation->address + offset - mapping->base));
+        offset += available < rounded - offset ? available : rounded - offset;
     }
     if (backing) *backing = first->backing;
     if (bytes) *bytes = rounded;
@@ -62,7 +73,7 @@ static bool change(qa_native_guest *guest, uint64_t base, size_t bytes,
     }
     if (remove) for (size_t i = 0; i < guest->allocation_count; ++i) {
         const guest_allocation *allocation = &guest->allocations[i];
-        size_t rounded = (allocation->bytes + QA_NATIVE_GUEST_PAGE - 1) & ~(size_t)(QA_NATIVE_GUEST_PAGE - 1);
+        size_t rounded = guest_allocation_extent(allocation);
         if (!overlaps(base, bytes, allocation->address, rounded)) continue;
         if (!guest_allocation_storage(guest, allocation, NULL, NULL, error)) return false;
         return guest_fail(error, QA_ERROR_ARGUMENT, allocation->address, "free actual allocator storage before removing its pages");
@@ -119,6 +130,7 @@ static bool change(qa_native_guest *guest, uint64_t base, size_t bytes,
     }
     free(guest->mappings); guest->mappings = records;
     guest->mapping_count = count; guest->mapping_capacity = capacity; guest->next_mapping = next;
+    guest_heap_changed(guest, base, bytes);
     for (size_t i = 0; i < guest->backing_count; ) {
         guest_backing *backing = &guest->backings[i];
         if (backing->references) { ++i; continue; }

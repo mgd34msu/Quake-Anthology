@@ -251,12 +251,20 @@ static bool restore_allocations(qa_source_save_io *io, qa_native_guest *guest)
         if (!guest_allocation_storage(guest, &allocation, &backing, &rounded, io->error)) return false;
         if (address < guest->options.allocation_base || address + rounded > guest->allocation_cursor)
             return guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "native guest saved allocation exceeds its actual allocator cursor");
-        for (size_t j = 0; j < guest->allocation_count; ++j)
-            if (guest_mapping(guest, guest->allocations[j].address)->backing == backing)
-                return guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "native guest saved allocation repeats a mapping owner");
+        qa_native_guest_mapping *current = guest_mapping(guest, address);
+        uint64_t physical = current->backing_offset + address - current->base;
+        for (size_t j = 0; j < guest->allocation_count; ++j) {
+            const guest_allocation *prior = guest->allocations + j;
+            qa_native_guest_mapping *mapping = guest_mapping(guest, prior->address);
+            size_t extent = guest_allocation_extent(prior);
+            uint64_t start = mapping->backing_offset + prior->address - mapping->base;
+            if ((address < prior->address + extent && prior->address < address + rounded) ||
+                (mapping->backing == backing && physical < start + extent && start < physical + rounded))
+                return guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "native guest saved allocation repeats actual storage ownership");
+        }
         guest->allocations[guest->allocation_count++] = allocation;
     }
-    return true;
+    return guest_heap_restore(guest, io->error);
 }
 
 static bool restore_callbacks(qa_source_save_io *io, qa_native_guest *guest,

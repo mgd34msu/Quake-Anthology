@@ -205,7 +205,7 @@ static bool remove_pages(qa_native_sysv_program *owner, uint64_t base, size_t by
     /* Preflight every affected allocator record before any topology change. */
     for (size_t i = 0; i < owner->guest->allocation_count; ++i) {
         const guest_allocation *allocation = owner->guest->allocations + i;
-        uint64_t limit = allocation->address + ((allocation->bytes + 4095) & ~(size_t)4095);
+        uint64_t limit = allocation->address + guest_allocation_extent(allocation);
         if (base < limit && allocation->address < end)
             return guest_fail(error, QA_ERROR_ARGUMENT, allocation->address, "Linux range intersects retained kernel allocator storage");
     }

@@ -1,6 +1,24 @@
 #include "internal.h"
 #include "unicorn_state.h"
 
+typedef struct guest_heap_chunk {
+    uint64_t base, backing;
+    uint8_t *data;
+    size_t bytes, live;
+} guest_heap_chunk;
+typedef struct guest_heap_span {
+    uint64_t address;
+    size_t bytes, chunk;
+} guest_heap_span;
+struct guest_heap {
+    guest_heap_chunk *chunks;
+    size_t chunk_count, chunk_capacity;
+    guest_heap_span *spans;
+    size_t span_count, span_capacity;
+    bool dirty;
+};
+static void heap_destroy(struct guest_heap *);
+
 bool guest_fail(qa_error *error, qa_status code, uint64_t address, const char *message)
 {
     qa_error_set(error, code, (size_t)address, "%s", message);
@@ -120,6 +138,7 @@ bool qa_native_guest_destroy(qa_native_guest **owner, qa_error *error)
     }
     for (size_t i = 0; i < guest->backing_count; ++i)
         if (!guest->backings[i].child_owned) free(guest->backings[i].data);
+    heap_destroy(guest->heap);
     free(guest->backings); free(guest->mappings); free(guest->allocations); free(guest->callbacks);
     free(guest); *owner = NULL;
     return true;
@@ -187,6 +206,7 @@ bool guest_install_mapping(qa_native_guest *guest, const qa_native_guest_mapping
     if (!guest_backend_map(guest, mapping, error)) return false;
     guest->mappings[guest->mapping_count++] = *mapping;
     ++backing->references;
+    guest_heap_changed(guest, mapping->base, (size_t)mapping->bytes);
     return true;
 }
 
@@ -243,13 +263,15 @@ bool qa_native_guest_unmap(qa_native_guest *guest, uint64_t id, qa_error *error)
         if (guest->callbacks[i].address >= mapping.base && guest->callbacks[i].address - mapping.base < mapping.bytes)
             return guest_fail(error, QA_ERROR_ARGUMENT, id, "retire native guest callbacks before unmapping their traps");
     for (size_t i = 0; i < guest->allocation_count; ++i) {
-        const guest_allocation *allocation = &guest->allocations[i]; size_t rounded = 0;
-        if (!guest_allocation_storage(guest, allocation, NULL, &rounded, error)) return false;
-        if (mapping.base < allocation->address + rounded &&
-            allocation->address < mapping.base + mapping.bytes)
-            return guest_fail(error, QA_ERROR_ARGUMENT, id, "free the real allocation before unmapping its storage");
+        const guest_allocation *allocation = &guest->allocations[i];
+        size_t rounded = guest_allocation_extent(allocation);
+        if (mapping.base >= allocation->address + rounded ||
+            allocation->address >= mapping.base + mapping.bytes) continue;
+        if (!guest_allocation_storage(guest, allocation, NULL, NULL, error)) return false;
+        return guest_fail(error, QA_ERROR_ARGUMENT, id, "free the real allocation before unmapping its storage");
     }
     if (!guest_backend_change(guest, &mapping, 0, true, error)) return false;
+    guest_heap_changed(guest, mapping.base, (size_t)mapping.bytes);
     memmove(guest->mappings + index, guest->mappings + index + 1,
         (--guest->mapping_count - index) * sizeof(*guest->mappings));
     guest_backing *backing = guest_backing_at(guest, mapping.backing);
@@ -275,6 +297,7 @@ bool qa_native_guest_protect(qa_native_guest *guest, uint64_t id, uint32_t permi
                     return guest_fail(error, QA_ERROR_ARGUMENT, id, "bound native guest trap requires executable storage");
         if (!guest_backend_change(guest, mapping, permissions, false, error)) return false;
         mapping->permissions = permissions;
+        guest_heap_changed(guest, mapping->base, (size_t)mapping->bytes);
         return true;
     }
     return guest_fail(error, QA_ERROR_NOT_FOUND, id, "native guest mapping is absent");
@@ -420,11 +443,203 @@ bool qa_native_guest_allocate_aligned(qa_native_guest *guest, size_t bytes, size
     return true;
 }
 
+static void heap_destroy(struct guest_heap *heap)
+{
+    if (!heap) return;
+    free(heap->chunks); free(heap->spans); free(heap);
+}
+
+static bool heap_open(qa_native_guest *guest, qa_error *error)
+{
+    if (guest->heap) return true;
+    guest->heap = calloc(1, sizeof(*guest->heap));
+    return guest->heap || guest_fail(error, QA_ERROR_MEMORY, 0, "allocating native byte heap metadata");
+}
+
+void guest_heap_changed(qa_native_guest *guest, uint64_t base, size_t bytes)
+{
+    struct guest_heap *heap = guest->heap;
+    if (!heap) return;
+    for (size_t i = 0; i < heap->chunk_count; ++i) {
+        const guest_heap_chunk *chunk = heap->chunks + i;
+        if (chunk->backing && base < chunk->base + chunk->bytes && chunk->base < base + bytes) {
+            heap->dirty = true; return;
+        }
+    }
+}
+
+static int span_compare(const void *left, const void *right)
+{
+    uint64_t a = ((const guest_heap_span *)left)->address;
+    uint64_t b = ((const guest_heap_span *)right)->address;
+    return (a > b) - (a < b);
+}
+
+static bool heap_rebuild(qa_native_guest *guest, qa_error *error)
+{
+    struct guest_heap *heap = guest->heap;
+    heap->span_count = 0;
+    for (size_t c = 0; c < heap->chunk_count; ++c) {
+        const guest_heap_chunk *chunk = heap->chunks + c;
+        if (!chunk->backing) continue;
+        for (size_t i = 0; i < guest->mapping_count; ++i) {
+            const qa_native_guest_mapping *mapping = guest->mappings + i;
+            if (mapping->backing != chunk->backing || mapping->base < chunk->base ||
+                mapping->base - chunk->base != mapping->backing_offset ||
+                (mapping->permissions & (QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE)) !=
+                    (QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE)) continue;
+            if (!guest_grow((void **)&heap->spans, &heap->span_capacity,
+                heap->span_count + 1, sizeof(*heap->spans), error)) return false;
+            heap->spans[heap->span_count++] = (guest_heap_span){mapping->base, (size_t)mapping->bytes, c};
+        }
+    }
+    for (size_t a = 0; a < guest->allocation_count; ++a) {
+        const guest_allocation *allocation = guest->allocations + a;
+        if (allocation->mapping) continue;
+        uint64_t first = allocation->address, last = first + guest_allocation_extent(allocation);
+        for (size_t i = 0; i < heap->span_count; ++i) {
+            guest_heap_span span = heap->spans[i];
+            uint64_t end = span.address + span.bytes;
+            if (first >= end || last <= span.address) continue;
+            if (first > span.address && last < end) {
+                if (!guest_grow((void **)&heap->spans, &heap->span_capacity,
+                    heap->span_count + 1, sizeof(*heap->spans), error)) return false;
+                heap->spans[i].bytes = (size_t)(first - span.address);
+                heap->spans[heap->span_count++] = (guest_heap_span){last, (size_t)(end - last), span.chunk};
+            } else if (first > span.address) heap->spans[i].bytes = (size_t)(first - span.address);
+            else if (last < end) {
+                heap->spans[i].address = last; heap->spans[i].bytes = (size_t)(end - last);
+            } else {
+                heap->spans[i] = heap->spans[--heap->span_count]; --i;
+            }
+        }
+    }
+    if (heap->span_count > 1) qsort(heap->spans, heap->span_count, sizeof(*heap->spans), span_compare);
+    size_t count = 0;
+    for (size_t i = 0; i < heap->span_count; ++i) {
+        guest_heap_span span = heap->spans[i];
+        if (count && heap->spans[count - 1].chunk == span.chunk &&
+            heap->spans[count - 1].address + heap->spans[count - 1].bytes == span.address)
+            heap->spans[count - 1].bytes += span.bytes;
+        else heap->spans[count++] = span;
+    }
+    heap->span_count = count; heap->dirty = false;
+    return true;
+}
+
+bool guest_heap_restore(qa_native_guest *guest, qa_error *error)
+{
+    for (size_t i = 0; i < guest->allocation_count; ++i) {
+        const guest_allocation *allocation = guest->allocations + i;
+        if (allocation->mapping) continue;
+        if (!heap_open(guest, error)) return false;
+        qa_native_guest_mapping *mapping = guest_mapping(guest, allocation->address);
+        guest_backing *backing = guest_backing_at(guest, mapping->backing);
+        if (mapping->base < mapping->backing_offset)
+            return guest_fail(error, QA_ERROR_FORMAT, allocation->address, "native byte heap has an invalid root address");
+        uint64_t base = mapping->base - mapping->backing_offset;
+        if (base < guest->options.allocation_base || base > guest->allocation_cursor ||
+            backing->bytes > guest->allocation_cursor - base)
+            return guest_fail(error, QA_ERROR_FORMAT, base, "native byte heap backing exceeds its actual allocator cursor");
+        struct guest_heap *heap = guest->heap; size_t c = 0;
+        while (c < heap->chunk_count && heap->chunks[c].backing != backing->id) ++c;
+        if (c < heap->chunk_count && heap->chunks[c].base != base)
+            return guest_fail(error, QA_ERROR_FORMAT, allocation->address, "native byte heap allocation uses a different backing alias");
+        if (c == heap->chunk_count) {
+            if (!guest_grow((void **)&heap->chunks, &heap->chunk_capacity,
+                c + 1, sizeof(*heap->chunks), error)) return false;
+            heap->chunks[heap->chunk_count++] = (guest_heap_chunk){base, backing->id, backing->data, backing->bytes, 0};
+        }
+        ++heap->chunks[c].live;
+    }
+    return !guest->heap || heap_rebuild(guest, error);
+}
+
 bool qa_native_guest_allocate(qa_native_guest *guest, size_t bytes, int32_t tag,
     uint64_t *out, qa_error *error)
 {
-    return qa_native_guest_allocate_aligned(guest, bytes, QA_NATIVE_GUEST_PAGE,
+    if (!guest_mutable(guest, error)) return false;
+    size_t actual = bytes ? bytes : 1;
+    if (!out || actual > SIZE_MAX - 15)
+        return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native byte allocation size overflows");
+    if (actual > 32768) return qa_native_guest_allocate_aligned(guest, actual, QA_NATIVE_GUEST_PAGE,
         QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE, tag, out, error);
+    if (!heap_open(guest, error)) return false;
+    struct guest_heap *heap = guest->heap;
+    if (heap->dirty && !heap_rebuild(guest, error)) return false;
+    if (!guest_grow((void **)&guest->allocations, &guest->allocation_capacity,
+        guest->allocation_count + 1, sizeof(*guest->allocations), error)) return false;
+    size_t rounded = (actual + 15) & ~(size_t)15;
+    for (size_t i = 0; i < heap->span_count; ++i) {
+        guest_heap_span *span = heap->spans + i;
+        if (span->bytes < rounded) continue;
+        guest_heap_chunk *chunk = heap->chunks + span->chunk;
+        uint64_t address = span->address;
+        memset(chunk->data + (size_t)(address - chunk->base), 0, rounded);
+        guest->allocations[guest->allocation_count++] = (guest_allocation){address, 0, actual, tag};
+        ++chunk->live; span->address += rounded; span->bytes -= rounded;
+        if (!span->bytes) {
+            memmove(span, span + 1, (heap->span_count - i - 1) * sizeof(*span)); --heap->span_count;
+        }
+        *out = address; return true;
+    }
+    size_t c = 0;
+    while (c < heap->chunk_count && heap->chunks[c].backing) ++c;
+    if (!guest_grow((void **)&heap->chunks, &heap->chunk_capacity,
+        c + 1, sizeof(*heap->chunks), error) ||
+        !guest_grow((void **)&heap->spans, &heap->span_capacity,
+            heap->span_count + 1, sizeof(*heap->spans), error)) return false;
+    size_t available = guest->options.maximum_backing_bytes - guest->backing_bytes;
+    size_t size = available < 65536 ? available & ~(size_t)(QA_NATIVE_GUEST_PAGE - 1) : 65536;
+    if (size < rounded)
+        return guest_fail(error, QA_ERROR_MEMORY, 0, "native byte heap exceeds its admitted backing storage");
+    uint64_t address = 0;
+    if (!qa_native_guest_allocate_aligned(guest, size, QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE, tag, &address, error)) return false;
+    qa_native_guest_mapping *mapping = guest_mapping(guest, address);
+    guest_backing *backing = guest_backing_at(guest, mapping->backing);
+    heap->chunks[c] = (guest_heap_chunk){address, backing->id, backing->data, size, 1};
+    if (c == heap->chunk_count) ++heap->chunk_count;
+    guest->allocations[guest->allocation_count - 1] = (guest_allocation){address, 0, actual, tag};
+    if (rounded < size) heap->spans[heap->span_count++] = (guest_heap_span){address + rounded, size - rounded, c};
+    *out = address; return true;
+}
+
+static void heap_span_free(struct guest_heap *heap, guest_heap_span span)
+{
+    size_t i = 0;
+    while (i < heap->span_count && heap->spans[i].address < span.address) ++i;
+    memmove(heap->spans + i + 1, heap->spans + i, (heap->span_count - i) * sizeof(*heap->spans));
+    heap->spans[i] = span; ++heap->span_count;
+    if (i && heap->spans[i - 1].chunk == span.chunk &&
+        heap->spans[i - 1].address + heap->spans[i - 1].bytes == span.address) {
+        heap->spans[i - 1].bytes += span.bytes;
+        memmove(heap->spans + i, heap->spans + i + 1, (--heap->span_count - i) * sizeof(*heap->spans)); --i;
+    }
+    if (i + 1 < heap->span_count && heap->spans[i + 1].chunk == span.chunk &&
+        heap->spans[i].address + heap->spans[i].bytes == heap->spans[i + 1].address) {
+        heap->spans[i].bytes += heap->spans[i + 1].bytes;
+        memmove(heap->spans + i + 1, heap->spans + i + 2, (heap->span_count - i - 2) * sizeof(*heap->spans));
+        --heap->span_count;
+    }
+}
+
+static bool heap_chunk_free(qa_native_guest *guest, size_t c, qa_error *error)
+{
+    struct guest_heap *heap = guest->heap;
+    guest_heap_chunk chunk = heap->chunks[c];
+    for (size_t i = 0; i < guest->mapping_count; ) {
+        qa_native_guest_mapping mapping = guest->mappings[i];
+        if (mapping.backing == chunk.backing && mapping.base >= chunk.base &&
+            mapping.base - chunk.base == mapping.backing_offset) {
+            if (!qa_native_guest_unmap(guest, mapping.id, error)) return false;
+        } else ++i;
+    }
+    size_t count = 0;
+    for (size_t i = 0; i < heap->span_count; ++i)
+        if (heap->spans[i].chunk != c) heap->spans[count++] = heap->spans[i];
+    heap->span_count = count; heap->chunks[c] = (guest_heap_chunk){0};
+    return true;
 }
 
 bool qa_native_guest_free(qa_native_guest *guest, uint64_t address, qa_error *error)
@@ -438,14 +653,45 @@ bool qa_native_guest_free(qa_native_guest *guest, uint64_t address, qa_error *er
     guest_allocation allocation = guest->allocations[index];
     size_t rounded = 0;
     if (!guest_allocation_storage(guest, &allocation, NULL, &rounded, error)) return false;
+    size_t c = 0;
+    if (!allocation.mapping) {
+        struct guest_heap *heap = guest->heap;
+        if (heap->dirty && !heap_rebuild(guest, error)) return false;
+        while (c < heap->chunk_count && (!heap->chunks[c].backing || address < heap->chunks[c].base ||
+            address - heap->chunks[c].base >= heap->chunks[c].bytes)) ++c;
+        if (c == heap->chunk_count)
+            return guest_fail(error, QA_ERROR_FORMAT, address, "native byte allocation lost its heap chunk");
+        uint64_t base = heap->chunks[c].live == 1 ? heap->chunks[c].base : address;
+        size_t length = heap->chunks[c].live == 1 ? heap->chunks[c].bytes : rounded;
+        for (size_t i = 0; i < guest->callback_count; ++i)
+            if (guest->callbacks[i].address >= base && guest->callbacks[i].address - base < length)
+                return guest_fail(error, QA_ERROR_ARGUMENT, address, "retire the actual callback before freeing its storage");
+        if (heap->chunks[c].live != 1 && !guest_grow((void **)&heap->spans, &heap->span_capacity,
+            heap->span_count + 1, sizeof(*heap->spans), error)) return false;
+    }
     /* Retain the record if removing its storage is rejected. */
     memmove(guest->allocations + index, guest->allocations + index + 1,
         (--guest->allocation_count - index) * sizeof(*guest->allocations));
-    if (!qa_native_guest_unmap_range(guest, allocation.address, rounded, error)) {
+    bool okay = allocation.mapping ? qa_native_guest_unmap_range(guest, allocation.address, rounded, error) :
+        (guest->heap->chunks[c].live != 1 || heap_chunk_free(guest, c, error));
+    if (!okay) {
         memmove(guest->allocations + index + 1, guest->allocations + index,
             (guest->allocation_count - index) * sizeof(*guest->allocations));
         guest->allocations[index] = allocation; ++guest->allocation_count;
         return false;
+    }
+    if (!allocation.mapping && guest->heap->chunks[c].backing) {
+        --guest->heap->chunks[c].live;
+        size_t offset = 0;
+        while (offset < rounded) {
+            const qa_native_guest_mapping *mapping = guest_mapping(guest, address + offset);
+            if ((mapping->permissions & (QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE)) !=
+                (QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE)) break;
+            size_t available = (size_t)(mapping->bytes - (address + offset - mapping->base));
+            offset += available < rounded - offset ? available : rounded - offset;
+        }
+        if (offset == rounded) heap_span_free(guest->heap, (guest_heap_span){address, rounded, c});
+        else guest->heap->dirty = true;
     }
     return true;
 }
@@ -459,6 +705,8 @@ bool guest_allocation_transfer(qa_native_guest *guest, uint64_t address,
     if (index == guest->allocation_count)
         return guest_fail(error, QA_ERROR_ARGUMENT, address, "VM ownership transfer requires the actual allocation base");
     guest_allocation allocation = guest->allocations[index];
+    if (!allocation.mapping)
+        return guest_fail(error, QA_ERROR_ARGUMENT, address, "VM ownership transfer requires a page allocation");
     uint64_t owned = 0;
     if (!guest_allocation_storage(guest, &allocation, &owned, NULL, error)) return false;
     /* Only the allocator claim moves. Actual RAM, aliases, permissions and

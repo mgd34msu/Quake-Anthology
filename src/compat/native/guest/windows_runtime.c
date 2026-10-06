@@ -68,7 +68,8 @@ bool windows_zero(guest_windows *owner, uint64_t address, size_t bytes, qa_error
 }
 
 bool windows_storage(guest_windows *owner, size_t bytes, uint64_t *out, qa_error *error)
-{ return qa_native_guest_allocate(owner->guest, bytes, WINDOWS_STORAGE_TAG, out, error); }
+{ return qa_native_guest_allocate_aligned(owner->guest, bytes, QA_NATIVE_GUEST_PAGE,
+    QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE, WINDOWS_STORAGE_TAG, out, error); }
 
 bool windows_string(guest_windows *owner, uint64_t address, bool wide,
     uint16_t **out, size_t *length, qa_error *error)

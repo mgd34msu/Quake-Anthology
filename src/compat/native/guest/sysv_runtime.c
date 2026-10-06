@@ -81,8 +81,12 @@ bool sysv_allocate(guest_sysv_runtime *runtime, uint64_t bytes, bool heap,
     if (heap && !guest_grow((void **)&runtime->heap, &runtime->heap_capacity,
         runtime->heap_count + 1, sizeof(*runtime->heap), error)) return false;
     uint64_t address;
-    if (!qa_native_guest_allocate(runtime->guest, bytes ? (size_t)bytes : 1,
-        heap ? INT32_C(0x53595648) : INT32_C(0x53595652), &address, error)) return false;
+    bool okay = heap ? qa_native_guest_allocate(runtime->guest, bytes ? (size_t)bytes : 1,
+        INT32_C(0x53595648), &address, error) :
+        qa_native_guest_allocate_aligned(runtime->guest, bytes ? (size_t)bytes : 1,
+            QA_NATIVE_GUEST_PAGE, QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE,
+            INT32_C(0x53595652), &address, error);
+    if (!okay) return false;
     if (heap) runtime->heap[runtime->heap_count++] = (sysv_heap){address, bytes ? bytes : 1};
     *out = address; return true;
 }

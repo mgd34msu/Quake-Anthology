@@ -145,6 +145,8 @@ bool qa_native_guest_mapping_at(const qa_native_guest *, size_t,
     qa_native_guest_mapping *, qa_error *);
 bool qa_native_guest_read(const qa_native_guest *, uint64_t, void *, size_t, qa_error *);
 bool qa_native_guest_write(qa_native_guest *, uint64_t, qa_bytes, qa_error *);
+/* Byte heap allocations have 16-byte alignment and exact requested ownership.
+ * Page ownership, mapping permissions and explicit alignment use the aligned API. */
 bool qa_native_guest_allocate(qa_native_guest *, size_t, int32_t, uint64_t *, qa_error *);
 /* Alignment is the actual requested power of two. Only the requested page
  * extent is backed; alignment gaps consume addresses, not backing storage. */
