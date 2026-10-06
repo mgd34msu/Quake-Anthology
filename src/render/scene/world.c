@@ -514,6 +514,34 @@ static double precise_dot(qa_vec3 a, qa_vec3 b)
     return (double)a.x * b.x + (double)a.y * b.y + (double)a.z * b.z;
 }
 
+static bool world_visibility_topology(qa_scene_world *world, qa_error *error)
+{
+    size_t count = world->node_count + world->leaf_count;
+    world->visibility_parent_heads = world_array(count, sizeof(*world->visibility_parent_heads), error);
+    if (count && !world->visibility_parent_heads) return false;
+    world->visibility_parents = world_array(world->node_count * 2, sizeof(*world->visibility_parents), error);
+    world->pvs_node_marks = world_array(world->node_count, sizeof(*world->pvs_node_marks), error);
+    if (world->bsp.family == QA_BSP_Q3)
+        world->source_node_marks = world_array(world->node_count, sizeof(*world->source_node_marks), error);
+    if (world->node_count && (!world->visibility_parents || !world->pvs_node_marks ||
+        (world->bsp.family == QA_BSP_Q3 && !world->source_node_marks))) return false;
+    for (size_t i = 0; i < count; ++i) world->visibility_parent_heads[i] = UINT32_MAX;
+    /* A validated BSP can share children. Retain every incoming edge rather
+     * than choosing one parent and losing another visible ancestor. */
+    for (size_t i = 0; i < world->node_count; ++i) {
+        for (unsigned side = 0; side < 2; ++side) {
+            int32_t child = world->nodes[i].children[side];
+            size_t index = child >= 0 ? (size_t)child :
+                world->node_count + (size_t)(-1 - (int64_t)child);
+            uint32_t edge = (uint32_t)(i * 2 + side);
+            world->visibility_parents[edge] = (qaw_visibility_parent){(uint32_t)i,
+                world->visibility_parent_heads[index]};
+            world->visibility_parent_heads[index] = edge;
+        }
+    }
+    return true;
+}
+
 static bool world_topology(qa_scene_world *world, qa_error *error)
 {
     world->plane_count = qa_bsp_record_count(&world->bsp, QA_BSP_PLANES);
@@ -550,6 +578,7 @@ static bool world_topology(qa_scene_world *world, qa_error *error)
         if (!qa_bsp_read_plane(&world->bsp, i, &world->planes[i], error)) return false;
     for (size_t i = 0; i < world->node_count; ++i)
         if (!qa_bsp_read_node(&world->bsp, i, &world->nodes[i], error)) return false;
+    if (!world_visibility_topology(world, error)) return false;
     for (size_t i = 0; i < world->leaf_count; ++i) {
         if (!qa_bsp_read_leaf(&world->bsp, i, &world->leaves[i], error)) return false;
         int64_t cluster = world->leaves[i].cluster;
@@ -681,6 +710,8 @@ void qa_scene_world_destroy(qa_scene_world *world)
     free(world->models); free(world->surfaces); free(world->surface_marks);
     free(world->visible_surfaces); free(world->surface_lights); free(world->admitted_surfaces);
     free(world->admission_changes); free(world->pending);
+    free(world->visibility_parent_heads); free(world->visibility_parents);
+    free(world->pvs_node_marks); free(world->source_node_marks);
     free(world->pvs); free(world->secondary_pvs); free(world->sky_name);
     qa_buffer_free(&world->bytes); qa_buffer_free(&world->lit_bytes); qa_buffer_free(&world->entity_bytes);
     qa_buffer_free(&world->palette_bytes); qa_buffer_free(&world->translation_bytes);
@@ -747,6 +778,7 @@ static bool update_pvs(qa_scene_world *world, int32_t eye, qa_vec3 origin,
     }
     if (world->pvs_cached && selector == world->pvs_selector && second == world->pvs_secondary) return true;
     world->pvs_cached = false;
+    world->pvs_nodes_cached = false;
     world->pvs_all = selector < 0 || world->bsp.lumps[QA_BSP_VISIBILITY].bytes.size == 0;
     qa_bytes vis = world->bsp.lumps[QA_BSP_VISIBILITY].bytes;
     if (!world->pvs_all && world->bsp.family == QA_BSP_Q2) {
@@ -773,6 +805,41 @@ static bool update_pvs(qa_scene_world *world, int32_t eye, qa_vec3 origin,
     world->pvs_secondary = second;
     world->pvs_cached = true;
     return true;
+}
+
+static void mark_visibility_ancestors(qa_scene_world *world, size_t leaf,
+    uint32_t *marks, uint32_t generation)
+{
+    size_t pending = 0;
+    uint32_t edge = world->visibility_parent_heads[world->node_count + leaf];
+    for (;;) {
+        while (edge != UINT32_MAX) {
+            qaw_visibility_parent parent = world->visibility_parents[edge];
+            edge = parent.next;
+            if (marks[parent.node] == generation) continue;
+            marks[parent.node] = generation;
+            world->pending[pending++].child = (int32_t)parent.node;
+        }
+        if (pending == 0) return;
+        edge = world->visibility_parent_heads[(size_t)world->pending[--pending].child];
+    }
+}
+
+static void mark_pvs_nodes(qa_scene_world *world)
+{
+    if (world->pvs_nodes_cached) return;
+    if (++world->pvs_node_generation == 0) {
+        if (world->node_count)
+            memset(world->pvs_node_marks, 0, world->node_count * sizeof(*world->pvs_node_marks));
+        world->pvs_node_generation = 1;
+    }
+    for (size_t i = world->bsp.family == QA_BSP_Q1 ? 1u : 0u; i < world->leaf_count; ++i) {
+        int64_t bit = world->bsp.family == QA_BSP_Q1 ? (int64_t)i - 1 : world->leaves[i].cluster;
+        if (bit < 0 || (uint64_t)bit / 8 >= world->pvs_size ||
+            !(world->pvs[(size_t)bit / 8] & (1u << ((unsigned)bit & 7)))) continue;
+        mark_visibility_ancestors(world, i, world->pvs_node_marks, world->pvs_node_generation);
+    }
+    world->pvs_nodes_cached = true;
 }
 
 static bool remaining_planes(qa_bounds bounds, const qa_scene_plane *planes,
@@ -817,6 +884,8 @@ static bool source_mark_leaves(qa_scene_world *world, int32_t eye, qa_vec3 origi
     }
     if (++world->source_vis_generation == 0) {
         memset(world->source_leaf_marks, 0, world->leaf_count * sizeof(*world->source_leaf_marks));
+        if (world->node_count)
+            memset(world->source_node_marks, 0, world->node_count * sizeof(*world->source_node_marks));
         world->source_vis_generation = 1;
     }
     world->source_view_cluster = cluster;
@@ -834,7 +903,10 @@ static bool source_mark_leaves(qa_scene_world *world, int32_t eye, qa_vec3 origi
         }
         /* Q3 render leaves have zero contents, including cluster -1. The
          * source novis branch marks all non-solid nodes without area checks. */
-        if (leaf->contents != 1) world->source_leaf_marks[i] = world->source_vis_generation;
+        if (leaf->contents != 1) {
+            world->source_leaf_marks[i] = world->source_vis_generation;
+            mark_visibility_ancestors(world, i, world->source_node_marks, world->source_vis_generation);
+        }
     }
     return true;
 }
@@ -862,6 +934,10 @@ static bool world_visible(qa_scene_world *world, const qa_scene_world_input *inp
         if (input->source_scratch) input->source_scratch->owner->counters.view_cluster=(int32_t)world->leaves[eye].cluster;
         if (!source_mark_leaves(world, eye, origin, input, error)) return false;
     } else if (!input->no_vis && !update_pvs(world, eye, origin, input, error)) return false;
+    bool prune_pvs = !source && !input->no_vis && !world->pvs_all;
+    if (prune_pvs) mark_pvs_nodes(world);
+    const uint32_t *node_marks = source ? world->source_node_marks : prune_pvs ? world->pvs_node_marks : NULL;
+    uint32_t node_generation = source ? world->source_vis_generation : world->pvs_node_generation;
     if (++world->visibility_generation == 0) {
         memset(world->surface_marks, 0, world->surface_count * sizeof(*world->surface_marks));
         world->visibility_generation = 1;
@@ -877,6 +953,7 @@ static bool world_visible(qa_scene_world *world, const qa_scene_world_input *inp
     while (pending != 0) {
         qaw_pending item = world->pending[--pending];
         if (item.child >= 0) {
+            if (node_marks && node_marks[item.child] != node_generation) continue;
             const qa_bsp_node *node = &world->nodes[item.child];
             if (!remaining_planes(bsp_bounds(node->bounds), planes, plane_count, &item.planes)) continue;
             uint32_t masks[2] = {item.lights, item.lights};

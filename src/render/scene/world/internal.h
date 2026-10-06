@@ -31,6 +31,7 @@ typedef struct qaw_model {
 } qaw_model;
 
 typedef struct qaw_pending { int32_t child; uint32_t lights, planes; } qaw_pending;
+typedef struct qaw_visibility_parent { uint32_t node, next; } qaw_visibility_parent;
 typedef struct qaw_admission_change { uint32_t surface; uint64_t previous; } qaw_admission_change;
 
 struct qa_scene_world {
@@ -87,6 +88,11 @@ struct qa_scene_world {
     bool restore_pending;
     struct qa_scene_world_capture *capture;
     qa_scene_world_image_policy *image_policy;
+    uint32_t *visibility_parent_heads;
+    qaw_visibility_parent *visibility_parents;
+    uint32_t *pvs_node_marks, *source_node_marks;
+    uint32_t pvs_node_generation;
+    bool pvs_nodes_cached;
 };
 
 struct qa_scene_source_world_view {
