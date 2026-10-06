@@ -394,14 +394,14 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     qa_cpu_statistics *statistics = cpu_row_statistics; \
     uint64_t fragments = 0; \
     for (uint32_t x = left; x <= right; ++x) { \
-      cpu_fragment fragment; double reciprocal; \
-      if (!cpu_triangle_fragment_depth(attributes, &row, x, y, &fragment, &reciprocal)) continue; \
+      cpu_fragment fragment; double q; \
+      if (!cpu_triangle_fragment_depth(attributes, &row, x, y, &fragment, &q)) continue; \
       cpu_fragment_admission admission = {0}; \
       if (!stencil) { \
         admission = cpu_fragment_admit(renderer, &draw->state, &fragment, false); \
         if (!admission.depth_passed) continue; \
       } \
-      cpu_triangle_fragment_attributes(attributes, &row, draw, texture_count, derivatives, reciprocal, &fragment); \
+      cpu_triangle_fragment_attributes(attributes, &row, draw, texture_count, derivatives, q, &fragment); \
       if (stencil) admission = cpu_fragment_admit(renderer, &draw->state, &fragment, true); \
       pixel_kernel(renderer, draw, samplers, &fragment, admission); \
       if (statistics) ++fragments; \

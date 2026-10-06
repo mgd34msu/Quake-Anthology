@@ -42,11 +42,11 @@ static inline cpu_triangle_row cpu_triangle_row_prepare(
 }
 static inline bool cpu_triangle_fragment_depth(const cpu_triangle_attributes *a,
     const cpu_triangle_row *row, uint32_t x, uint32_t y,
-    cpu_fragment *fragment, double *reciprocal) {
+    cpu_fragment *fragment, double *q_out) {
   double pixel_x = (double)x + 0.5;
   double q = a->q.x * pixel_x + row->q;
   if (q == 0 || !isfinite(q)) return false;
-  *reciprocal = 1 / q;
+  *q_out = q;
   double z = a->z[0];
   if (!a->constant_depth) {
     /* Retain barycentric depth arithmetic for EQUAL-depth passes. */
@@ -58,19 +58,20 @@ static inline bool cpu_triangle_fragment_depth(const cpu_triangle_attributes *a,
     }
   }
   fragment->x = x; fragment->y = y;
-  fragment->eye_depth = a->scale * *reciprocal;
   fragment->depth = cpu_clamp(cpu_clamp(z * 0.5 + 0.5) * a->depth_range +
                              a->near_depth + a->offset);
-  if (a->unit_color) {
-    double color = cpu_clamp(q * *reciprocal);
-    for (size_t c = 0; c < 4; ++c) fragment->color[c] = color;
-  }
   return true;
 }
 static inline void cpu_triangle_fragment_attributes(
     const cpu_triangle_attributes *a, const cpu_triangle_row *row,
-    const qa_scene_draw *draw, size_t texture_count, const bool derivatives[2], double reciprocal,
+    const qa_scene_draw *draw, size_t texture_count, const bool derivatives[2], double q,
     cpu_fragment *fragment) {
+  double reciprocal = 1 / q;
+  fragment->eye_depth = a->scale * reciprocal;
+  if (a->unit_color) {
+    double color = cpu_clamp(q * reciprocal);
+    for (size_t c = 0; c < 4; ++c) fragment->color[c] = color;
+  }
   double pixel_x = (double)fragment->x + 0.5;
   if (!a->unit_color)
     for (size_t c = 0; c < 4; ++c)
