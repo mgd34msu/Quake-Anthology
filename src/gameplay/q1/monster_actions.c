@@ -639,7 +639,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         }
         return q1_link(g, entity, error);
     case Q1_ACTION_BOSS_DEATH9:
-        return q1_effect(g, QA_BUILTIN_IMPACT, entity->id, body.origin, 0, 9, error);
+        return q1_effect(g, QA_BUILTIN_IMPACT, entity->id, body.origin, 0, 10, error);
     case Q1_ACTION_BOSS_DEATH10:
         return q1_remove(g, entity, error);
     case Q1_ACTION_OLD_THRASH15:

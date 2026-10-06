@@ -264,7 +264,7 @@ bool q1_rogue_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error
                                      cause, error))
                     return false;
             }
-        } else if (!q1_effect(g, QA_BUILTIN_IMPACT, entity->id, body.origin, 0, powered ? 2 : 0,
+        } else if (!q1_effect(g, QA_BUILTIN_IMPACT, entity->id, body.origin, 0, powered ? 4 : 3,
                               error))
             return false;
         return !q1_alive(g, entity->id) || q1_remove(g, entity, error);
