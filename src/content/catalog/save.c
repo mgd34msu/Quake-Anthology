@@ -451,12 +451,3 @@ bool qa_catalog_restore(qa_resource_pool *resources, const qa_catalog_checkpoint
     catalog->mod_capacity = catalog->mod_count; catalog->behavior_capacity = catalog->behavior_count;
     *out = catalog; return true;
 }
-
-bool catalog_copy_metadata(const qa_catalog *source, const qa_catalog_checkpoint_refs *refs,
-    qa_catalog **out, qa_error *error)
-{
-    qa_buffer bytes = {0};
-    bool ok = qa_catalog_checkpoint(source, refs, &bytes, error) &&
-        qa_catalog_restore(source->resources, refs, (qa_bytes){bytes.data, bytes.size}, out, error);
-    qa_buffer_free(&bytes); return ok;
-}

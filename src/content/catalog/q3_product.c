@@ -21,30 +21,163 @@ bool qa_catalog_q3_restricted(const qa_catalog *catalog)
     return catalog && catalog->q3_demo_restricted;
 }
 
-/* Clone metadata with the shared codec and retain the native VFS handles.
- * Installed archive member indexes use the normal catalog constructor. */
-static bool clone_files_encode(void *context, const qa_vfs *files,
-    qa_buffer *out, qa_error *error)
+static bool copy_array(void **out, const void *source, size_t count,
+    size_t size, qa_error *error)
 {
-    (void)context; (void)files; (void)out; (void)error;
+    if (!count) { *out = NULL; return true; }
+    if (count > SIZE_MAX / size) return fail(error, QA_ERROR_MEMORY, "Content catalog table is too large");
+    void *copy = source ? malloc(count * size) : calloc(count, size);
+    if (!copy) return fail(error, QA_ERROR_MEMORY, "Copying content catalog table");
+    if (source) memcpy(copy, source, count * size);
+    *out = copy;
     return true;
 }
-static bool clone_files_decode(void *context, qa_resource_pool *resources,
-    qa_bytes bytes, qa_vfs **out, qa_error *error)
+
+
+static bool copy_text(qa_catalog *catalog, const char **value, qa_error *error)
 {
-    const qa_catalog *source = context;
-    if (bytes.size || resources != source->resources)
-        return fail(error, QA_ERROR_ARGUMENT, "Catalog clone changed its retained mount authority");
-    *out = qa_vfs_clone(source->mounts, error);
-    return *out != NULL;
+    if (!*value) return true;
+    *value = catalog_string(catalog, *value, error);
+    return *value != NULL;
 }
+
+static bool copy_text_array(qa_catalog *catalog, const char *const *source,
+    const char *const **out, size_t count, qa_error *error)
+{
+    const char **copy = NULL;
+    if (!copy_array((void **)&copy, source, count, sizeof(*copy), error)) return false;
+    *out = copy;
+    for (size_t i = 0; i < count; ++i)
+        if (!copy_text(catalog, &copy[i], error)) return false;
+    return true;
+}
+
+static bool copy_product(qa_catalog *catalog, const catalog_product *source,
+    catalog_product *product, qa_error *error)
+{
+    *product = *source;
+    product->view.requirements = NULL;
+    product->own_mounts = NULL; product->mounts = NULL;
+    product->maps = NULL; product->starts = NULL;
+#define TEXT(object, name) do { if (!copy_text(catalog, &(object)->name, error)) return false; } while (0)
+    qa_product *view = &product->view;
+    TEXT(view, key); TEXT(view, identity); TEXT(view, title); TEXT(view, campaign);
+    TEXT(view, directory); TEXT(view, program);
+    TEXT(product, installed_directory); TEXT(product, witness);
+    for (size_t i = 0; i < sizeof(product->required) / sizeof(*product->required); ++i)
+        if (!copy_text(catalog, &product->required[i], error)) return false;
+    TEXT((&product->episode), id); TEXT((&product->episode), command);
+    TEXT((&product->episode), name); TEXT((&product->episode), activity);
+    if (!copy_text_array(catalog, source->view.requirements, &view->requirements,
+            view->requirement_count, error) ||
+        !copy_array((void **)&product->own_mounts, source->own_mounts,
+            product->own_count, sizeof(*product->own_mounts), error) ||
+        !copy_array((void **)&product->mounts, source->mounts,
+            product->mount_count, sizeof(*product->mounts), error) ||
+        !copy_array((void **)&product->maps, source->maps,
+            product->map_count, sizeof(*product->maps), error) ||
+        !copy_array((void **)&product->starts, source->starts,
+            product->start_count, sizeof(*product->starts), error)) return false;
+    for (size_t i = 0; i < product->map_count; ++i)
+        TEXT((&product->maps[i]), path);
+    for (size_t i = 0; i < product->start_count; ++i) {
+        qa_catalog_start *start = &product->starts[i];
+        TEXT(start, episode); TEXT(start, bsp); TEXT(start, path);
+        TEXT(start, title); TEXT(start, start_items);
+    }
+#undef TEXT
+    return true;
+}
+
+static bool copy_mod(qa_catalog *catalog, const qa_catalog_mod *source,
+    qa_catalog_mod *mod, qa_error *error)
+{
+    *mod = *source;
+    mod->requires = NULL; mod->conflicts = NULL; mod->declaration.data = NULL;
+#define TEXT(name) do { if (!copy_text(catalog, &mod->name, error)) return false; } while (0)
+    TEXT(key); TEXT(id); TEXT(title); TEXT(declaration_path);
+    TEXT(program_path); TEXT(unavailable);
+#undef TEXT
+    return copy_text_array(catalog, source->requires, &mod->requires,
+            mod->requires_count, error) &&
+        copy_text_array(catalog, source->conflicts, &mod->conflicts,
+            mod->conflicts_count, error) &&
+        copy_array((void **)&mod->declaration.data, source->declaration.data,
+            mod->declaration.size, 1, error);
+}
+
+static bool copy_behavior(qa_catalog *catalog, const qa_catalog_weapon_behavior *source,
+    qa_catalog_weapon_behavior *behavior, qa_error *error)
+{
+    *behavior = *source; behavior->entry.data = NULL;
+#define TEXT(name) do { if (!copy_text(catalog, &behavior->name, error)) return false; } while (0)
+    TEXT(id); TEXT(title); TEXT(artifact_path); TEXT(declaration_path); TEXT(unavailable);
+#undef TEXT
+    return copy_array((void **)&behavior->entry.data, source->entry.data,
+        behavior->entry.size, 1, error);
+}
+
 bool qa_catalog_clone(const qa_catalog *source, qa_catalog **out, qa_error *error)
 {
     if (!source || !out || *out)
         return fail(error, QA_ERROR_ARGUMENT, "Catalog clone requires an actual retained snapshot");
-    qa_catalog_checkpoint_refs refs = {.context = (void *)source,
-        .files_encode = clone_files_encode, .files_decode = clone_files_decode};
-    return catalog_copy_metadata(source, &refs, out, error);
+    qa_catalog *copy = calloc(1, sizeof(*copy));
+    if (!copy) return fail(error, QA_ERROR_MEMORY, "Copying content catalog");
+    copy->references = 1;
+    copy->generation = source->generation;
+    copy->q3_demo_restricted = source->q3_demo_restricted;
+    copy->resources = source->resources;
+    copy->q3_install_mount = source->q3_install_mount;
+    copy->q3_download_mount = source->q3_download_mount;
+    copy->corpus_mount = source->corpus_mount;
+    memcpy(copy->q2_download_mount, source->q2_download_mount, sizeof(copy->q2_download_mount));
+    if (!qa_strings_create(&copy->strings, error)) goto fail;
+    copy->mounts = qa_vfs_clone(source->mounts, error);
+    if (!copy->mounts) goto fail;
+    copy->root = source->root; copy->user = source->user;
+    if (!copy_text(copy, &copy->root, error) || !copy_text(copy, &copy->user, error) ||
+        !copy_text_array(copy, source->install_roots, (const char *const **)&copy->install_roots,
+            source->install_root_count, error)) goto fail;
+    copy->install_root_count = source->install_root_count;
+    if (!copy_array((void **)&copy->locations, source->locations,
+            source->location_count, sizeof(*copy->locations), error)) goto fail;
+    copy->location_count = copy->location_capacity = source->location_count;
+    for (size_t i = 0; i < copy->location_count; ++i)
+        if (!copy_text(copy, &copy->locations[i].logical, error) ||
+            !copy_text(copy, &copy->locations[i].path, error)) goto fail;
+    if (!copy_array((void **)&copy->physical, NULL, source->physical_count,
+            sizeof(*copy->physical), error)) goto fail;
+    copy->physical_count = copy->physical_capacity = source->physical_count;
+    for (size_t i = 0; i < copy->physical_count; ++i) {
+        catalog_physical *physical = &copy->physical[i];
+        *physical = source->physical[i]; physical->members = NULL;
+        physical->view.identity = qa_vfs_archive_identity(copy->mounts, physical->view.id);
+        if (!copy_text(copy, &physical->view.path, error) ||
+            !copy_array((void **)&physical->members, source->physical[i].members,
+                physical->member_count, sizeof(*physical->members), error)) goto fail;
+        for (size_t j = 0; j < physical->member_count; ++j)
+            if (!copy_text(copy, &physical->members[j].path, error)) goto fail;
+    }
+    if (!copy_array((void **)&copy->products, NULL, source->product_count,
+            sizeof(*copy->products), error)) goto fail;
+    copy->product_count = copy->product_capacity = source->product_count;
+    for (size_t i = 0; i < copy->product_count; ++i)
+        if (!copy_product(copy, &source->products[i], &copy->products[i], error)) goto fail;
+    if (!copy_array((void **)&copy->mods, NULL, source->mod_count,
+            sizeof(*copy->mods), error)) goto fail;
+    copy->mod_count = copy->mod_capacity = source->mod_count;
+    for (size_t i = 0; i < copy->mod_count; ++i)
+        if (!copy_mod(copy, &source->mods[i], &copy->mods[i], error)) goto fail;
+    if (!copy_array((void **)&copy->behaviors, NULL, source->behavior_count,
+            sizeof(*copy->behaviors), error)) goto fail;
+    copy->behavior_count = copy->behavior_capacity = source->behavior_count;
+    for (size_t i = 0; i < copy->behavior_count; ++i)
+        if (!copy_behavior(copy, &source->behaviors[i], &copy->behaviors[i], error)) goto fail;
+    *out = copy;
+    return true;
+fail:
+    qa_catalog_release(copy);
+    return false;
 }
 
 bool catalog_q3_restriction_valid(const qa_catalog *catalog, qa_error *error)
@@ -103,17 +236,6 @@ static void replacement_free(catalog_product *replacement, size_t count)
     free(replacement);
 }
 
-static bool copy_array(void **out, const void *source, size_t count,
-    size_t size, qa_error *error)
-{
-    if (!count) { *out = NULL; return true; }
-    if (count > SIZE_MAX / size) return fail(error, QA_ERROR_MEMORY, "Q3 demo media table is too large");
-    void *copy = malloc(count * size);
-    if (!copy) return fail(error, QA_ERROR_MEMORY, "Retaining genuine Q3 demo media table");
-    memcpy(copy, source, count * size);
-    *out = copy;
-    return true;
-}
 
 static bool admitted_map(const catalog_product *media, const char *path)
 {

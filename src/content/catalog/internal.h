@@ -94,7 +94,6 @@ bool catalog_path(qa_catalog *, const char *root, const char *relative,
                    const char **out, qa_error *);
 bool catalog_has_path(qa_catalog *, const catalog_product *, const char *, bool own,
                        bool *, qa_error *);
-bool catalog_copy_metadata(const qa_catalog *, const qa_catalog_checkpoint_refs *, qa_catalog **, qa_error *);
 bool catalog_q3_restriction_valid(const qa_catalog *, qa_error *);
 
 #endif
