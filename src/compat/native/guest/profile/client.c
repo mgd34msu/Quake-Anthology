@@ -154,15 +154,10 @@ static profile_scope *scope_read(const guest_profile_guard_control *control)
         const qa_native_guest_mapping *m = &row->mappings[i].mapping;
         okay = m->id && m->backing && m->base && m->bytes && !(m->base & 4095) && !(m->bytes & 4095) &&
             m->bytes <= UINT64_MAX - m->base && m->bytes <= UINT64_MAX - m->backing_offset && !(m->permissions & ~7u);
-        for (size_t j = 0; okay && j < i; ++j) {
-            const qa_native_guest_mapping *old = &row->mappings[j].mapping;
-            okay = old->id != m->id && !(old->base < m->base + m->bytes && m->base < old->base + old->bytes);
-        }
     }
     for (size_t i = 0; okay && i < row->callback_count; ++i) {
         okay = row->callbacks[i].id && row->callbacks[i].address &&
             scope_range(row, row->callbacks[i].address, 1, QA_NATIVE_GUEST_EXECUTE, NULL);
-        for (size_t j = 0; okay && j < i; ++j) okay = row->callbacks[j].id != row->callbacks[i].id && row->callbacks[j].address != row->callbacks[i].address;
     }
     for (size_t i = 0; okay && i < row->interest_count; ++i) {
         const guest_profile_interest *interest = row->interests + i;
