@@ -188,6 +188,7 @@ static const original_field world_fields[] = {
     FIELD(qa_q1_options, world_type, "worldtype", I32)
 };
 static const original_field game_globals[] = {
+    FIELD(qa_q1_game, time, "time", DOUBLE),
     FIELD(qa_q1_game, elapsed, "frametime", DOUBLE),
     FIELD(qa_q1_game, force_retouch, "force_retouch", U32),
     FIELD(qa_q1_game, total_monsters, "total_monsters", U32),
@@ -839,7 +840,7 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
         return fail(error, "Cannot save an original Quake game in intermission");
     qa_q1_wire_receipt receipt = {0};
     if (!qa_q1_wire_read_begin(game, &receipt, error)) return false;
-    save->time = (float)game->time;
+    save->time = (float)((double)game->time_ns / 1000000000.0);
     save->entity_count = game->wire->next_dynamic;
     save->entities = calloc(save->entity_count, sizeof(*save->entities));
     bool okay = save->entities != NULL;
@@ -852,8 +853,7 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
         else memcpy(save->lightstyles[i], pattern, size + 1);
     }
     qa_q1_save_record *globals = &save->globals;
-    if (okay) okay = number(globals, "time", game->time, true, error) &&
-        text(globals, "mapname", save->map, QA_Q1_SAVE_STRING, error) &&
+    if (okay) okay = text(globals, "mapname", save->map, QA_Q1_SAVE_STRING, error) &&
         number(globals, "deathmatch", game->options.deathmatch, true, error) &&
         number(globals, "coop", game->options.coop, true, error) &&
         number(globals, "teamplay", game->options.teamplay, true, error) &&
@@ -1379,6 +1379,9 @@ static bool admit_complete(const original_admission *admission,qa_error *error) 
             return unsupported(error,"Source field lacks its paired native inverse");
     return true;
 }
+static bool original_callback_globals(qa_q1_program program) {
+    return program==QA_Q1_ID1 || program==QA_Q1_HIPNOTIC || program==QA_Q1_ROGUE;
+}
 static bool admit_globals(original_admission *admission,const qa_qc_program *program,
     qa_q1_program native_program,qa_q1_edition edition,const qa_q1_save_data *save,qa_error *error) {
     qa_q1_game game={.options={.program=native_program,.edition=edition}};
@@ -1389,8 +1392,7 @@ static bool admit_globals(original_admission *admission,const qa_qc_program *pro
         !ADMIT_FIELDS(admission,&maps,map_globals,error) ||
         !ADMIT_FIELDS(admission,&flags,server_globals,error) ||
         !admit_fields(admission,&game,enemy_globals+(edition==QA_Q1_RERELEASE),1,error)) return false;
-    if (!admit_number(admission,"time",(float)save->time,error) ||
-        !admit_text(admission,"mapname",save->map,error) ||
+    if (!admit_text(admission,"mapname",save->map,error) ||
         !admit_number(admission,"deathmatch",0,error) || !admit_number(admission,"coop",0,error) ||
         !admit_number(admission,"teamplay",0,error) || !admit_number(admission,"skill",(float)save->skill,error)) return false;
     for (unsigned i=0;i<16;++i) {
@@ -1428,11 +1430,15 @@ static bool admit_globals(original_admission *admission,const qa_qc_program *pro
             float actual=(float)parsed;
             uint32_t expected_bits,actual_bits;
             memcpy(&expected_bits,&expected,4);memcpy(&actual_bits,&actual,4);
-            if (actual_bits!=expected_bits)
+            bool callback=original_callback_globals(native_program) &&
+                (!strcmp(pair->key,"movedist") || !strcmp(pair->key,"framecount"));
+            if (callback ? !isfinite(actual) : actual_bits!=expected_bits)
                 return unsupported(error,"Mutable Source global lacks its paired native inverse");
         } else if (definition->type==QA_QC_ENTITY) {
             uint32_t slot;
-            if (initial || !qa_q1_save_entity_decode(pair->value,&slot,error) || slot)
+            bool callback=original_callback_globals(native_program) && !strcmp(pair->key,"activator");
+            if (!qa_q1_save_entity_decode(pair->value,&slot,error) ||
+                (callback ? slot>=admission->slots : initial || slot))
                 return unsupported(error,"Mutable Source reference global lacks its paired native inverse");
         } else if (definition->type==QA_QC_STRING) {
             char *decoded=NULL;
