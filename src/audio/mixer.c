@@ -1156,6 +1156,9 @@ static bool collect_loop_mixes(qa_audio_mixer *mixer, qa_error *error) {
     return true;
 }
 
+qa_vec3 qa_audio_mixer_listener_origin(const qa_audio_mixer *mixer) {
+    return mixer->listener.origin;
+}
 bool qa_audio_mixer_listener(qa_audio_mixer *mixer, const qa_audio_listener *listener,
                              qa_error *error) {
     if (!allow_mutation(mixer, error))

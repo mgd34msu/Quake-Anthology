@@ -402,7 +402,8 @@ bool q1_sound_resource(qa_q1_game *g, qa_actor_id actor, qa_string_id resource, 
                               .time_ns = g->time_ns,
                               .channel = channel,
                               .attenuation = attenuation,
-                              .volume = volume};
+                              .volume = volume,
+                              .flags = QA_BUILTIN_SOUND_POSITIONED};
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, actor, &body, error))
         return false;

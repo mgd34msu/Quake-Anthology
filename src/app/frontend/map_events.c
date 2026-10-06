@@ -991,6 +991,42 @@ static bool builtin_muzzle(qa_frontend *frontend, const qa_builtin_event *event,
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Muzzle lost its emitting Q2 Source profile");
     return q2_muzzle_deliver(frontend,event,NULL,NULL,monster,edition,error);
 }
+bool frontend_audio_actor_position(qa_frontend *frontend, qa_actor_id actor, uint64_t identity,
+    const qa_body_state *body, qa_vec3 *origin, qa_error *error)
+{
+    qa_world *world = qa_application_world(frontend->application);
+    qa_actor_collision collision;
+    qa_error observed = {0};
+    bool present = qa_world_get_link_collision(world, actor, &collision, &observed);
+    if (!present && observed.code) {
+        if (error) *error = observed;
+        return false;
+    }
+    *origin = present && collision.inline_model ?
+        qa_vec_add(body->origin, qa_vec_scale(qa_vec_add(body->bounds.mins, body->bounds.maxs), .5f)) :
+        body->origin;
+    if (!qa_audio_engine_position(frontend->audio, identity, *origin, error)) return false;
+    if (!present || !collision.inline_model || collision.family != QA_COLLISION_Q2) return true;
+    const qa_actor_record *record = qa_actors_get(qa_world_actors(world), actor);
+    qa_q2_edition edition;
+    bool found;
+    if (!qa_application_native_q2_source_profile_read(frontend->application, record->owner,
+        &edition, &found, error)) return false;
+    if (!found || edition != QA_Q2_RERELEASE) return true;
+    qa_vec3 mins = qa_vec_add(body->origin, body->bounds.mins);
+    qa_vec3 maxs = qa_vec_add(body->origin, body->bounds.maxs);
+    for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
+        qa_audio_mixer *mixer = qa_audio_engine_seat_mixer(frontend->audio, seat);
+        if (!mixer) continue;
+        qa_vec3 listener = qa_audio_mixer_listener_origin(mixer);
+        qa_vec3 nearest = {
+            fminf(fmaxf(listener.x, mins.x), maxs.x),
+            fminf(fmaxf(listener.y, mins.y), maxs.y),
+            fminf(fmaxf(listener.z, mins.z), maxs.z)};
+        if (!qa_audio_mixer_position(mixer, identity, nearest, error)) return false;
+    }
+    return true;
+}
 bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, qa_error *error)
 {
     if (!frontend->audio) return true;
@@ -1057,16 +1093,16 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
     if (!asset) return true;
     bool frame_loop = resources->gear && (event->flags & 1);
     bool live = event->actor.registry && qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), event->actor);
+    bool positioned = (event->flags & QA_BUILTIN_SOUND_POSITIONED) != 0;
     qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset, .name = name,
         .family = family, .actor = actor, .owner = event->provider, .audience = audience,
-        .origin_kind = private_sound ? QA_AUDIO_LOCAL : frame_loop ? QA_AUDIO_FIXED : live ? QA_AUDIO_ACTOR : QA_AUDIO_FIXED, .origin_actor = actor,
+        .origin_kind = private_sound ? QA_AUDIO_LOCAL : (frame_loop || positioned) ? QA_AUDIO_FIXED : live ? QA_AUDIO_ACTOR : QA_AUDIO_FIXED, .origin_actor = actor,
         .origin = private_sound ? (qa_vec3){0} : event->origin, .channel = event->channel,
         .volume = event->volume, .attenuation = private_sound ? 0 : event->attenuation};
-    if (live && !private_sound && !frame_loop) {
+    if (live && !private_sound && !frame_loop && !positioned) {
         qa_body_state body; qa_error observed = {0};
         if (qa_world_body_read(qa_application_world(frontend->application), event->actor, &body, &observed)) {
-            sound.origin = body.origin;
-            if (!qa_audio_engine_position(frontend->audio, actor, body.origin, error)) {
+            if (!frontend_audio_actor_position(frontend, event->actor, actor, &body, &sound.origin, error)) {
                 qa_audio_asset_release(asset); return false;
             }
         } else if (observed.code == QA_ERROR_NOT_FOUND) {
@@ -1134,8 +1170,9 @@ bool frontend_event_audio(qa_frontend *frontend, qa_error *error)
                 if (!qa_world_body_read(qa_application_world(frontend->application), entry->actor, &body, &observed)) {
                     if (observed.code != QA_ERROR_NOT_FOUND) { if (error) *error = observed; return false; }
                 } else if (entry->loop.sound.origin_kind!=QA_AUDIO_LOCAL) {
-                    entry->loop.velocity = body.velocity; entry->loop.sound.origin = body.origin;
-                    if (!qa_audio_engine_position(frontend->audio, entry->loop.sound.actor, body.origin, error)) return false;
+                    entry->loop.velocity = body.velocity;
+                    if (!frontend_audio_actor_position(frontend, entry->actor,
+                        entry->loop.sound.actor, &body, &entry->loop.sound.origin, error)) return false;
                 }
             }
             entry->loop.frame_number = (int32_t)(frontend->frame_number & INT32_MAX);

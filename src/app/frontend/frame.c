@@ -520,7 +520,8 @@ static bool audio_positions(qa_frontend *frontend, qa_error *error)
             if (error) *error = observed;
             return false;
         }
-        if (!qa_audio_engine_position(frontend->audio, identity.id, body.origin, error)) return false;
+        qa_vec3 origin;
+        if (!frontend_audio_actor_position(frontend, identity.actor, identity.id, &body, &origin, error)) return false;
     }
     return true;
 }

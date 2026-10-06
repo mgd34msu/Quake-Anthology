@@ -257,6 +257,7 @@ bool qa_audio_mixer_create(const qa_audio_mixer_options *options, qa_audio_mixer
 void qa_audio_mixer_destroy(qa_audio_mixer *mixer);
 bool qa_audio_mixer_listener(qa_audio_mixer *mixer, const qa_audio_listener *listener,
                              qa_error *error);
+qa_vec3 qa_audio_mixer_listener_origin(const qa_audio_mixer *mixer);
 bool qa_audio_mixer_position(qa_audio_mixer *mixer, uint64_t actor, qa_vec3 origin,
                              qa_error *error);
 /* Q3 providers may override positions per seat without changing shared actors.

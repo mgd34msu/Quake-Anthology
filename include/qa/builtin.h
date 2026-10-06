@@ -37,6 +37,8 @@ typedef enum qa_builtin_event_kind {
     QA_BUILTIN_Q2_ENTITY_EVENT
 } qa_builtin_event_kind;
 
+enum { QA_BUILTIN_SOUND_POSITIONED = 4u };
+
 typedef enum qa_builtin_message_arg_kind {
     QA_BUILTIN_MESSAGE_STRING,
     QA_BUILTIN_MESSAGE_NUMBER
